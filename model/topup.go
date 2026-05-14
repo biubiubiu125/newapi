@@ -16,12 +16,20 @@ type TopUp struct {
 	UserId          int     `json:"user_id" gorm:"index"`
 	Amount          int64   `json:"amount"`
 	Money           float64 `json:"money"`
+	PaidAmount      float64 `json:"paid_amount" gorm:"type:decimal(20,8);default:0"`
+	PaidCurrency    string  `json:"paid_currency" gorm:"type:varchar(16);default:''"`
 	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
 	PaymentProvider string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
 	CreateTime      int64   `json:"create_time"`
 	CompleteTime    int64   `json:"complete_time"`
 	Status          string  `json:"status"`
+	ReferralAffiliateId       int     `json:"referral_affiliate_id" gorm:"index"`
+	ReferralRate              float64 `json:"referral_rate" gorm:"type:decimal(10,4);default:0"`
+	ReferralBaseAmount        float64 `json:"referral_base_amount" gorm:"type:decimal(20,8);default:0"`
+	ReferralCommissionStatus  string  `json:"referral_commission_status" gorm:"type:varchar(32);default:'';index"`
+	ReferralCommissionError   string  `json:"referral_commission_error" gorm:"type:text"`
+	ReferralCommissionAt      int64   `json:"referral_commission_at" gorm:"default:0"`
 }
 
 const (

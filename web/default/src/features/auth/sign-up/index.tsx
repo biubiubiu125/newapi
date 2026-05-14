@@ -16,16 +16,27 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Link } from '@tanstack/react-router'
+import { Link, useSearch } from '@tanstack/react-router'
+import { useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useStatus } from '@/hooks/use-status'
+import { saveAffiliateCode } from '@/features/auth/lib/storage'
 import { AuthLayout } from '../auth-layout'
 import { TermsFooter } from '../components/terms-footer'
 import { SignUpForm } from './components/sign-up-form'
 
 export function SignUp() {
   const { t } = useTranslation()
+  const search = useSearch({ from: '/(auth)/sign-up' })
   const { status } = useStatus()
+  const referralError = (search.referral_error || '').trim()
+
+  useEffect(() => {
+    const code = (search.aff || search.aff_code || '').trim()
+    if (code) {
+      saveAffiliateCode(code)
+    }
+  }, [search.aff, search.aff_code])
 
   return (
     <AuthLayout>
@@ -34,6 +45,13 @@ export function SignUp() {
           <h2 className='text-center text-2xl font-semibold tracking-tight sm:text-left'>
             {t('Create an account')}
           </h2>
+          {referralError === 'invalid' && (
+            <p className='text-sm text-amber-600'>
+              {t(
+                'This referral link is invalid or no longer available. You can still sign up without it.'
+              )}
+            </p>
+          )}
           <p className='text-muted-foreground text-left text-sm sm:text-base'>
             {t('Already have an account?')}{' '}
             <Link

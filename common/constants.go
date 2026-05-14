@@ -18,6 +18,14 @@ var SystemName = "New API"
 var Footer = ""
 var Logo = ""
 var TopUpLink = ""
+var ReferralEnabled = false
+var ReferralCookieTTLDays = 30
+var ReferralDefaultRate = 0.0
+var ReferralSettleFreezeDays = 7
+var ReferralMinWithdrawAmount = 0.0
+var ReferralWithdrawFee = 0.0
+var ReferralRedirectPath = ""
+var ReferralRequireApproval = true
 
 var themeValue atomic.Value // stores string; safe for concurrent read/write
 

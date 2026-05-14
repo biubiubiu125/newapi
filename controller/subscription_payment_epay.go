@@ -51,6 +51,7 @@ func SubscriptionRequestEpay(c *gin.Context) {
 	}
 
 	userId := c.GetInt("id")
+	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, "USD")
 	if plan.MaxPurchasePerUser > 0 {
 		count, err := model.CountUserSubscriptionsByPlan(userId, plan.Id)
 		if err != nil {
@@ -88,11 +89,18 @@ func SubscriptionRequestEpay(c *gin.Context) {
 		UserId:          userId,
 		PlanId:          plan.Id,
 		Money:           plan.PriceAmount,
+		PaidAmount:      plan.PriceAmount,
+		PaidCurrency:    "USD",
 		TradeNo:         tradeNo,
 		PaymentMethod:   req.PaymentMethod,
 		PaymentProvider: model.PaymentProviderEpay,
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
+	}
+	if snapshot != nil {
+		order.ReferralAffiliateId = snapshot.AffiliateId
+		order.ReferralRate = snapshot.Rate
+		order.ReferralBaseAmount = snapshot.BaseAmount
 	}
 	if err := order.Insert(); err != nil {
 		common.ApiErrorMsg(c, "创建订单失败")
@@ -164,6 +172,7 @@ func SubscriptionEpayNotify(c *gin.Context) {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}
+	_ = referralService.ProcessSubscriptionCommission(verifyInfo.ServiceTradeNo)
 
 	_, _ = c.Writer.Write([]byte("success"))
 }
@@ -213,6 +222,7 @@ func SubscriptionEpayReturn(c *gin.Context) {
 			c.Redirect(http.StatusFound, paymentReturnPath("/console/topup?pay=fail"))
 			return
 		}
+		_ = referralService.ProcessSubscriptionCommission(verifyInfo.ServiceTradeNo)
 		c.Redirect(http.StatusFound, paymentReturnPath("/console/topup?pay=success"))
 		return
 	}

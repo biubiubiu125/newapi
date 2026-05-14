@@ -84,24 +84,6 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 
 	reference := "sub-creem-ref-" + randstr.String(6)
 	referenceId := "sub_ref_" + common.Sha1([]byte(reference+time.Now().String()+user.Username))
-
-	// create pending order first
-	order := &model.SubscriptionOrder{
-		UserId:          userId,
-		PlanId:          plan.Id,
-		Money:           plan.PriceAmount,
-		TradeNo:         referenceId,
-		PaymentMethod:   model.PaymentMethodCreem,
-		PaymentProvider: model.PaymentProviderCreem,
-		CreateTime:      time.Now().Unix(),
-		Status:          common.TopUpStatusPending,
-	}
-	if err := order.Insert(); err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
-		return
-	}
-
-	// Reuse Creem checkout generator by building a lightweight product reference.
 	currency := "USD"
 	switch operation_setting.GetGeneralSetting().QuotaDisplayType {
 	case operation_setting.QuotaDisplayTypeCNY:
@@ -111,6 +93,32 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 	default:
 		currency = "USD"
 	}
+	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, currency)
+
+	// create pending order first
+	order := &model.SubscriptionOrder{
+		UserId:          userId,
+		PlanId:          plan.Id,
+		Money:           plan.PriceAmount,
+		PaidAmount:      plan.PriceAmount,
+		PaidCurrency:    currency,
+		TradeNo:         referenceId,
+		PaymentMethod:   model.PaymentMethodCreem,
+		PaymentProvider: model.PaymentProviderCreem,
+		CreateTime:      time.Now().Unix(),
+		Status:          common.TopUpStatusPending,
+	}
+	if snapshot != nil {
+		order.ReferralAffiliateId = snapshot.AffiliateId
+		order.ReferralRate = snapshot.Rate
+		order.ReferralBaseAmount = snapshot.BaseAmount
+	}
+	if err := order.Insert(); err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
+		return
+	}
+
+	// Reuse Creem checkout generator by building a lightweight product reference.
 	product := &CreemProduct{
 		ProductId: plan.CreemProductId,
 		Name:      plan.Title,

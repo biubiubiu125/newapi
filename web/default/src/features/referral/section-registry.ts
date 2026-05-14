@@ -16,17 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { z } from 'zod'
-import { createFileRoute } from '@tanstack/react-router'
-import { SignUp } from '@/features/auth/sign-up'
+export const REFERRAL_SECTION_IDS = [
+  'center',
+  'commissions',
+  'withdraw',
+  'withdrawals',
+] as const
 
-const searchSchema = z.object({
-  aff: z.string().optional(),
-  aff_code: z.string().optional(),
-  referral_error: z.string().optional(),
-})
+export type ReferralSectionId = (typeof REFERRAL_SECTION_IDS)[number]
 
-export const Route = createFileRoute('/(auth)/sign-up')({
-  validateSearch: searchSchema,
-  component: SignUp,
-})
+export const REFERRAL_DEFAULT_SECTION: ReferralSectionId = 'center'
+
+export function isReferralSectionId(value: string): value is ReferralSectionId {
+  return (REFERRAL_SECTION_IDS as readonly string[]).includes(value)
+}

@@ -36,6 +36,7 @@ const routerMap = {
   token: '/console/token',
   redemption: '/console/redemption',
   topup: '/console/topup',
+  referral: '/console/referral',
   user: '/console/user',
   subscription: '/console/subscription',
   log: '/console/log',
@@ -128,6 +129,11 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('钱包管理'),
         itemKey: 'topup',
         to: '/topup',
+      },
+      {
+        text: t('推广中心'),
+        itemKey: 'referral',
+        to: '/console/referral',
       },
       {
         text: t('个人设置'),
@@ -290,6 +296,10 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       } else {
         matchingKey = 'chat';
       }
+    }
+
+    if (!matchingKey && currentPath.startsWith('/console/referral')) {
+      matchingKey = 'referral';
     }
 
     // 如果找到匹配的键，更新选中的键

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
@@ -23,7 +24,7 @@ func providerParams(name string) map[string]any {
 func GenerateOAuthCode(c *gin.Context) {
 	session := sessions.Default(c)
 	state := common.GetRandomString(12)
-	affCode := c.Query("aff")
+	affCode := referralService.ResolveAffiliateCode(c.Query("aff"), referralCookieValue(c))
 	if affCode != "" {
 		session.Set("aff", affCode)
 	}
@@ -265,8 +266,10 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	// Handle affiliate code
 	affCode := session.Get("aff")
 	inviterId := 0
+	referralCode := ""
 	if affCode != nil {
-		inviterId, _ = model.GetUserIdByAffCode(affCode.(string))
+		referralCode = strings.TrimSpace(affCode.(string))
+		inviterId, _ = model.GetUserIdByAffCode(referralCode)
 	}
 
 	// Use transaction to ensure user creation and OAuth binding are atomic
@@ -275,6 +278,9 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 		err := model.DB.Transaction(func(tx *gorm.DB) error {
 			// Create user
 			if err := user.InsertWithTx(tx, inviterId); err != nil {
+				return err
+			}
+			if err := referralService.BindInviteeByCodeWithTx(tx, user.Id, referralCode, referralBindSource(referralCode)); err != nil {
 				return err
 			}
 
@@ -301,6 +307,9 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 		err := model.DB.Transaction(func(tx *gorm.DB) error {
 			// Create user
 			if err := user.InsertWithTx(tx, inviterId); err != nil {
+				return err
+			}
+			if err := referralService.BindInviteeByCodeWithTx(tx, user.Id, referralCode, referralBindSource(referralCode)); err != nil {
 				return err
 			}
 

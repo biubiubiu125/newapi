@@ -153,6 +153,14 @@ func InitOptionMap() {
 	common.OptionMap["AudioRatio"] = ratio_setting.AudioRatio2JSONString()
 	common.OptionMap["AudioCompletionRatio"] = ratio_setting.AudioCompletionRatio2JSONString()
 	common.OptionMap["TopUpLink"] = common.TopUpLink
+	common.OptionMap["ReferralEnabled"] = strconv.FormatBool(common.ReferralEnabled)
+	common.OptionMap["ReferralCookieTTLDays"] = strconv.Itoa(common.ReferralCookieTTLDays)
+	common.OptionMap["ReferralDefaultRate"] = strconv.FormatFloat(common.ReferralDefaultRate, 'f', -1, 64)
+	common.OptionMap["ReferralSettleFreezeDays"] = strconv.Itoa(common.ReferralSettleFreezeDays)
+	common.OptionMap["ReferralMinWithdrawAmount"] = strconv.FormatFloat(common.ReferralMinWithdrawAmount, 'f', -1, 64)
+	common.OptionMap["ReferralWithdrawFee"] = strconv.FormatFloat(common.ReferralWithdrawFee, 'f', -1, 64)
+	common.OptionMap["ReferralRedirectPath"] = common.ReferralRedirectPath
+	common.OptionMap["ReferralRequireApproval"] = strconv.FormatBool(common.ReferralRequireApproval)
 	//common.OptionMap["ChatLink"] = common.ChatLink
 	//common.OptionMap["ChatLink2"] = common.ChatLink2
 	common.OptionMap["QuotaPerUnit"] = strconv.FormatFloat(common.QuotaPerUnit, 'f', -1, 64)
@@ -329,6 +337,10 @@ func updateOptionMap(key string, value string) (err error) {
 			setting.DefaultUseAutoGroup = boolValue
 		case "ExposeRatioEnabled":
 			ratio_setting.SetExposeRatioEnabled(boolValue)
+		case "ReferralEnabled":
+			common.ReferralEnabled = boolValue
+		case "ReferralRequireApproval":
+			common.ReferralRequireApproval = boolValue
 		}
 	}
 	switch key {
@@ -523,6 +535,18 @@ func updateOptionMap(key string, value string) (err error) {
 		err = ratio_setting.UpdateAudioCompletionRatioByJSONString(value)
 	case "TopUpLink":
 		common.TopUpLink = value
+	case "ReferralCookieTTLDays":
+		common.ReferralCookieTTLDays, _ = strconv.Atoi(value)
+	case "ReferralDefaultRate":
+		common.ReferralDefaultRate, _ = strconv.ParseFloat(value, 64)
+	case "ReferralSettleFreezeDays":
+		common.ReferralSettleFreezeDays, _ = strconv.Atoi(value)
+	case "ReferralMinWithdrawAmount":
+		common.ReferralMinWithdrawAmount, _ = strconv.ParseFloat(value, 64)
+	case "ReferralWithdrawFee":
+		common.ReferralWithdrawFee, _ = strconv.ParseFloat(value, 64)
+	case "ReferralRedirectPath":
+		common.ReferralRedirectPath = value
 	//case "ChatLink":
 	//	common.ChatLink = value
 	//case "ChatLink2":

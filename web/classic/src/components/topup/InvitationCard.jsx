@@ -20,44 +20,64 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import {
   Avatar,
-  Typography,
-  Card,
   Button,
+  Card,
   Input,
-  Badge,
   Space,
+  Tag,
+  Typography,
 } from '@douyinfe/semi-ui';
-import { Copy, Users, BarChart2, TrendingUp, Gift, Zap } from 'lucide-react';
+import { ArrowRight, Copy, Gift, Users, Wallet } from 'lucide-react';
 
 const { Text } = Typography;
 
+function buildStatusTag(status, t) {
+  const map = {
+    pending: { color: 'orange', text: t('待审核') },
+    approved: { color: 'green', text: t('已通过') },
+    rejected: { color: 'red', text: t('已拒绝') },
+    disabled: { color: 'grey', text: t('已禁用') },
+  };
+  const item = map[status] || { color: 'grey', text: status || '-' };
+  return <Tag color={item.color}>{item.text}</Tag>;
+}
+
 const InvitationCard = ({
   t,
-  userState,
-  renderQuota,
-  setOpenTransfer,
+  profile,
+  summary,
   affLink,
   handleAffLinkClick,
-  complianceConfirmed = true,
+  onOpenCenter,
+  referralEnabled = false,
+  referralRequireApproval = true,
 }) => {
+  const hasDashboard =
+    profile?.status === 'approved' || profile?.status === 'disabled';
+  const statusTextMap = {
+    pending: t('待审核'),
+    approved: t('已通过'),
+    rejected: t('已拒绝'),
+    disabled: t('已禁用'),
+  };
+
   return (
     <Card className='!rounded-2xl shadow-sm border-0'>
-      {/* 卡片头部 */}
       <div className='flex items-center mb-4'>
         <Avatar size='small' color='green' className='mr-3 shadow-md'>
           <Gift size={16} />
         </Avatar>
         <div>
           <Typography.Text className='text-lg font-medium'>
-            {t('邀请奖励')}
+            {t('推广中心')}
           </Typography.Text>
-          <div className='text-xs'>{t('邀请好友获得额外奖励')}</div>
+          <div className='text-xs'>
+            {t('查看推广状态、佣金明细和提现入口')}
+          </div>
         </div>
       </div>
 
-      {/* 收益展示区域 */}
       <Space vertical style={{ width: '100%' }}>
-        {/* 统计数据统一卡片 */}
         <Card
           className='!rounded-xl w-full'
           cover={
@@ -65,57 +85,64 @@ const InvitationCard = ({
               className='relative h-30'
               style={{
                 '--palette-primary-darkerChannel': '0 75 80',
-                backgroundImage: `linear-gradient(0deg, rgba(var(--palette-primary-darkerChannel) / 80%), rgba(var(--palette-primary-darkerChannel) / 80%)), url('/cover-4.webp')`,
+                backgroundImage:
+                  "linear-gradient(0deg, rgba(var(--palette-primary-darkerChannel) / 80%), rgba(var(--palette-primary-darkerChannel) / 80%)), url('/cover-4.webp')",
                 backgroundSize: 'cover',
                 backgroundPosition: 'center',
                 backgroundRepeat: 'no-repeat',
               }}
             >
-              {/* 标题和按钮 */}
               <div className='relative z-10 h-full flex flex-col justify-between p-4'>
                 <div className='flex justify-between items-center'>
                   <Text strong style={{ color: 'white', fontSize: '16px' }}>
-                    {t('收益统计')}
+                    {t('推广概览')}
                   </Text>
                   <Button
                     type='primary'
                     theme='solid'
                     size='small'
-                    disabled={
-                      !complianceConfirmed ||
-                      !userState?.user?.aff_quota ||
-                      userState?.user?.aff_quota <= 0
-                    }
-                    onClick={() => setOpenTransfer(true)}
+                    onClick={onOpenCenter}
                     className='!rounded-lg'
                   >
-                    <Zap size={12} className='mr-1' />
-                    {t('划转到余额')}
+                    <ArrowRight size={12} className='mr-1' />
+                    {t('打开推广中心')}
                   </Button>
                 </div>
-                {!complianceConfirmed && (
+                {!referralEnabled && (
                   <Text
                     style={{
                       color: 'rgba(255,255,255,0.8)',
                       fontSize: 12,
                     }}
                   >
-                    {t('邀请奖励划转已禁用，管理员需先确认合规声明。')}
+                    {t('推广返佣功能当前未启用，请联系管理员检查配置。')}
+                  </Text>
+                )}
+                {referralEnabled && !hasDashboard && (
+                  <Text
+                    style={{
+                      color: 'rgba(255,255,255,0.8)',
+                      fontSize: 12,
+                    }}
+                  >
+                    {referralRequireApproval
+                      ? t('提交推广申请并审核通过后即可开始推广。')
+                      : t('进入推广中心后可直接开始使用。')}
                   </Text>
                 )}
 
-                {/* 统计数据 */}
                 <div className='grid grid-cols-3 gap-6 mt-4'>
-                  {/* 待使用收益 */}
                   <div className='text-center'>
                     <div
                       className='text-base sm:text-2xl font-bold mb-2'
                       style={{ color: 'white' }}
                     >
-                      {renderQuota(userState?.user?.aff_quota || 0)}
+                      {hasDashboard
+                        ? Number(summary?.pending_amount || 0).toFixed(2)
+                        : statusTextMap[profile?.status] || t('未申请')}
                     </div>
                     <div className='flex items-center justify-center text-sm'>
-                      <TrendingUp
+                      <Wallet
                         size={14}
                         className='mr-1'
                         style={{ color: 'rgba(255,255,255,0.8)' }}
@@ -126,21 +153,22 @@ const InvitationCard = ({
                           fontSize: '12px',
                         }}
                       >
-                        {t('待使用收益')}
+                        {hasDashboard ? t('待结算') : t('状态')}
                       </Text>
                     </div>
                   </div>
 
-                  {/* 总收益 */}
                   <div className='text-center'>
                     <div
                       className='text-base sm:text-2xl font-bold mb-2'
                       style={{ color: 'white' }}
                     >
-                      {renderQuota(userState?.user?.aff_history_quota || 0)}
+                      {hasDashboard
+                        ? Number(summary?.available_amount || 0).toFixed(2)
+                        : summary?.invite_code || '-'}
                     </div>
                     <div className='flex items-center justify-center text-sm'>
-                      <BarChart2
+                      <Gift
                         size={14}
                         className='mr-1'
                         style={{ color: 'rgba(255,255,255,0.8)' }}
@@ -151,18 +179,19 @@ const InvitationCard = ({
                           fontSize: '12px',
                         }}
                       >
-                        {t('总收益')}
+                        {hasDashboard ? t('可提现') : t('推广码')}
                       </Text>
                     </div>
                   </div>
 
-                  {/* 邀请人数 */}
                   <div className='text-center'>
                     <div
                       className='text-base sm:text-2xl font-bold mb-2'
                       style={{ color: 'white' }}
                     >
-                      {userState?.user?.aff_count || 0}
+                      {hasDashboard
+                        ? summary?.bound_user_count || 0
+                        : summary?.paid_user_count || 0}
                     </div>
                     <div className='flex items-center justify-center text-sm'>
                       <Users
@@ -176,7 +205,7 @@ const InvitationCard = ({
                           fontSize: '12px',
                         }}
                       >
-                        {t('邀请人数')}
+                        {hasDashboard ? t('邀请人数') : t('付费用户')}
                       </Text>
                     </div>
                   </div>
@@ -185,7 +214,6 @@ const InvitationCard = ({
             </div>
           }
         >
-          {/* 邀请链接部分 */}
           <Input
             value={affLink}
             readonly
@@ -198,6 +226,7 @@ const InvitationCard = ({
                 onClick={handleAffLinkClick}
                 icon={<Copy size={14} />}
                 className='!rounded-lg'
+                disabled={!affLink}
               >
                 {t('复制')}
               </Button>
@@ -205,32 +234,26 @@ const InvitationCard = ({
           />
         </Card>
 
-        {/* 奖励说明 */}
         <Card
           className='!rounded-xl w-full'
-          title={<Text type='tertiary'>{t('奖励说明')}</Text>}
+          title={<Text type='tertiary'>{t('推广说明')}</Text>}
         >
           <div className='space-y-3'>
-            <div className='flex items-start gap-2'>
-              <Badge dot type='success' />
+            <Text type='tertiary' className='text-sm'>
+              {t('推广入口已独立为推广中心，在那里可以查看返佣列表、提现申请和提现记录。')}
+            </Text>
+            <Text type='tertiary' className='text-sm'>
+              {t('若您尚未开通推广账号，请先前往推广中心提交申请。')}
+            </Text>
+            {profile?.status && <div>{buildStatusTag(profile.status, t)}</div>}
+            {profile?.risk_reason && (
               <Text type='tertiary' className='text-sm'>
-                {t('邀请好友注册，好友充值后您可获得相应奖励')}
+                {profile.risk_reason}
               </Text>
-            </div>
-
-            <div className='flex items-start gap-2'>
-              <Badge dot type='success' />
-              <Text type='tertiary' className='text-sm'>
-                {t('通过划转功能将奖励额度转入到您的账户余额中')}
-              </Text>
-            </div>
-
-            <div className='flex items-start gap-2'>
-              <Badge dot type='success' />
-              <Text type='tertiary' className='text-sm'>
-                {t('邀请的好友越多，获得的奖励越多')}
-              </Text>
-            </div>
+            )}
+            <Button type='primary' theme='solid' onClick={onOpenCenter}>
+              {t('前往推广中心')}
+            </Button>
           </div>
         </Card>
       </Space>

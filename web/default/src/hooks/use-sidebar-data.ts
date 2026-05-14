@@ -33,6 +33,7 @@ import {
   CreditCard,
   ListTodo,
   Settings,
+  Share2,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { WORKSPACE_IDS } from '@/components/layout/lib/workspace-registry'
@@ -110,6 +111,11 @@ export function useSidebarData(): SidebarData {
             icon: Wallet,
           },
           {
+            title: t('Referral Center'),
+            url: '/referral/center',
+            icon: Share2,
+          },
+          {
             title: t('Profile'),
             url: '/profile',
             icon: User,
@@ -134,6 +140,11 @@ export function useSidebarData(): SidebarData {
             title: t('Users'),
             url: '/users',
             icon: Users,
+          },
+          {
+            title: t('Referral Management'),
+            url: '/admin-referral/overview',
+            icon: Share2,
           },
           {
             title: t('Redemption Codes'),
