@@ -1,22 +1,24 @@
-# New-API Docker Compose Configuration
-# 
-# Quick Start:
-#   1. docker-compose up -d
-#   2. Access at http://localhost:3000
+# newapi Docker Compose 配置
 #
-# Using MySQL instead of PostgreSQL:
-#   1. Comment out the postgres service and SQL_DSN line 15
-#   2. Uncomment the mysql service and SQL_DSN line 16
-#   3. Uncomment mysql in depends_on (line 28)
-#   4. Uncomment mysql_data in volumes section (line 64)
+# 快速启动：
+#   1. 按需修改数据库、Redis 和密码
+#   2. docker compose up -d --build
+#   3. 访问 http://localhost:3000
 #
-# ⚠️  IMPORTANT: Change all default passwords before deploying to production!
+# 如果要改用 MySQL：
+#   1. 注释 postgres 服务和 PostgreSQL 的 SQL_DSN
+#   2. 取消 mysql 服务和 MySQL 的 SQL_DSN 注释
+#   3. 同时取消 depends_on 里的 mysql
+#   4. 同时取消 volumes 里的 mysql_data
+#
+# 注意：生产环境请先修改所有默认密码。
 
 version: '3.4' # For compatibility with older Docker versions
 
 services:
   new-api:
-    image: calciumion/new-api:latest
+    build: .
+    image: biubiubiu125/newapi:local
     container_name: new-api
     restart: always
     command: --log-dir /app/logs
