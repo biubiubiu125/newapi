@@ -27,10 +27,6 @@ const UserInfoModal = ({
   userInfoData,
   t,
 }) => {
-  const infoItemStyle = {
-    marginBottom: '16px',
-  };
-
   const labelStyle = {
     display: 'flex',
     alignItems: 'center',
@@ -78,7 +74,6 @@ const UserInfoModal = ({
     >
       {userInfoData && (
         <div style={{ padding: 20 }}>
-          {/* 基本信息 */}
           <div style={rowStyle}>
             <div style={colStyle}>
               {renderLabel(t('用户名'), 'primary')}
@@ -92,7 +87,6 @@ const UserInfoModal = ({
             )}
           </div>
 
-          {/* 余额信息 */}
           <div style={rowStyle}>
             <div style={colStyle}>
               {renderLabel(t('余额'), 'success')}
@@ -106,7 +100,6 @@ const UserInfoModal = ({
             </div>
           </div>
 
-          {/* 统计信息 */}
           <div style={rowStyle}>
             <div style={colStyle}>
               {renderLabel(t('请求次数'), 'warning')}
@@ -122,38 +115,6 @@ const UserInfoModal = ({
             )}
           </div>
 
-          {/* 邀请信息 */}
-          {(userInfoData.aff_code || userInfoData.aff_count !== undefined) && (
-            <div style={rowStyle}>
-              {userInfoData.aff_code && (
-                <div style={colStyle}>
-                  {renderLabel(t('邀请码'), 'tertiary')}
-                  <div style={valueStyle}>{userInfoData.aff_code}</div>
-                </div>
-              )}
-              {userInfoData.aff_count !== undefined && (
-                <div style={colStyle}>
-                  {renderLabel(t('邀请人数'), 'tertiary')}
-                  <div style={valueStyle}>
-                    {renderNumber(userInfoData.aff_count)}
-                  </div>
-                </div>
-              )}
-            </div>
-          )}
-
-          {/* 邀请获得额度 */}
-          {userInfoData.aff_quota !== undefined &&
-            userInfoData.aff_quota > 0 && (
-              <div style={infoItemStyle}>
-                {renderLabel(t('邀请获得额度'), 'success')}
-                <div style={valueStyle}>
-                  {renderQuota(userInfoData.aff_quota)}
-                </div>
-              </div>
-            )}
-
-          {/* 备注 */}
           {userInfoData.remark && (
             <div style={{ marginBottom: 0 }}>
               {renderLabel(t('备注'), 'tertiary')}

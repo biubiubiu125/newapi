@@ -26,8 +26,6 @@ import {
 const defaultBillingSettings: BillingSettings = {
   QuotaForNewUser: 0,
   PreConsumedQuota: 0,
-  QuotaForInviter: 0,
-  QuotaForInvitee: 0,
   TopUpLink: '',
   'general_setting.docs_link': '',
   'quota_setting.enable_free_model_pre_consume': true,

@@ -131,6 +131,21 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 	return &userCache, nil
 }
 
+func CacheGetUserById(userId int) (*UserBase, error) {
+	return GetUserCache(userId)
+}
+
+func CacheUpdateUserQuota(userId int) error {
+	if !common.RedisEnabled {
+		return nil
+	}
+	user, err := GetUserById(userId, true)
+	if err != nil {
+		return err
+	}
+	return updateUserCache(*user)
+}
+
 // Add atomic quota operations using hash fields
 func cacheIncrUserQuota(userId int, delta int64) error {
 	if !common.RedisEnabled {

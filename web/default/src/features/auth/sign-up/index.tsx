@@ -32,11 +32,11 @@ export function SignUp() {
   const referralError = (search.referral_error || '').trim()
 
   useEffect(() => {
-    const code = (search.aff || search.aff_code || '').trim()
+    const code = (search.aff || '').trim()
     if (code) {
       saveAffiliateCode(code)
     }
-  }, [search.aff, search.aff_code])
+  }, [search.aff])
 
   return (
     <AuthLayout>

@@ -516,5 +516,6 @@ func AdminCompleteTopUp(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	_ = referralService.ProcessTopUpCommission(req.TradeNo)
 	common.ApiSuccess(c, nil)
 }

@@ -187,6 +187,7 @@ func RequestWaffoPay(c *gin.Context) {
 
 	group, _ := model.GetUserGroup(id, true)
 	payMoney := getWaffoPayMoney(float64(req.Amount), group)
+	snapshot, _ := referralService.BuildOrderSnapshot(id, payMoney, getWaffoCurrency())
 	if payMoney < 0.01 {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值金额过低"})
 		return
@@ -215,6 +216,13 @@ func RequestWaffoPay(c *gin.Context) {
 		PaymentProvider: model.PaymentProviderWaffo,
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
+	}
+	topUp.PaidAmount = payMoney
+	topUp.PaidCurrency = getWaffoCurrency()
+	if snapshot != nil {
+		topUp.ReferralAffiliateId = snapshot.AffiliateId
+		topUp.ReferralRate = snapshot.Rate
+		topUp.ReferralBaseAmount = snapshot.BaseAmount
 	}
 	if err := topUp.Insert(); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo 创建充值订单失败 user_id=%d trade_no=%s amount=%d error=%q", id, merchantOrderId, req.Amount, err.Error()))

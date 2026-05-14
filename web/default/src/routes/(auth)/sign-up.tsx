@@ -22,7 +22,6 @@ import { SignUp } from '@/features/auth/sign-up'
 
 const searchSchema = z.object({
   aff: z.string().optional(),
-  aff_code: z.string().optional(),
   referral_error: z.string().optional(),
 })
 

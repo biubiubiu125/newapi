@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 type wechatLoginResponse struct {
@@ -95,14 +97,27 @@ func WeChatAuth(c *gin.Context) {
 			user.DisplayName = "WeChat User"
 			user.Role = common.RoleCommonUser
 			user.Status = common.UserStatusEnabled
-
-			if err := user.Insert(0); err != nil {
+			session := sessions.Default(c)
+			sessionCode := ""
+			if raw := session.Get("aff"); raw != nil {
+				if value, ok := raw.(string); ok {
+					sessionCode = value
+				}
+			}
+			referralCode := referralService.ResolveAffiliateCode(c.Query("aff"), referralCookieValue(c), sessionCode)
+			if err := model.DB.Transaction(func(tx *gorm.DB) error {
+				if err := user.InsertWithTx(tx, 0); err != nil {
+					return err
+				}
+				return referralService.BindInviteeByCodeWithTx(tx, user.Id, referralCode, referralBindSource(strings.TrimSpace(c.Query("aff"))))
+			}); err != nil {
 				c.JSON(http.StatusOK, gin.H{
 					"success": false,
 					"message": err.Error(),
 				})
 				return
 			}
+			user.FinalizeOAuthUserCreation(0)
 		} else {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,

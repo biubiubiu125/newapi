@@ -254,6 +254,9 @@ func migrateDB() error {
 	if err := migrateTokenModelLimitsToText(); err != nil {
 		return err
 	}
+	if err := migrateReferralCleanup(); err != nil {
+		return err
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
@@ -265,6 +268,7 @@ func migrateDB() error {
 		&ReferralCommissionAccount{},
 		&ReferralCommission{},
 		&ReferralCommissionLedger{},
+		&ReferralAsset{},
 		&ReferralWithdrawal{},
 		&ReferralWithdrawalItem{},
 		&ReferralSettlementBatch{},
@@ -308,6 +312,37 @@ func migrateDB() error {
 	return nil
 }
 
+func migrateReferralCleanup() error {
+	// These legacy option keys and column names are intentionally kept here
+	// only as a schema cleanup list. They are not used by current business
+	// logic and exist solely so fresh deployments can drop the abandoned
+	// invite-system schema deterministically.
+	legacyOptionKeys := []string{
+		"QuotaForInviter",
+		"QuotaForInvitee",
+	}
+	if err := DB.Where("key IN ?", legacyOptionKeys).Delete(&Option{}).Error; err != nil {
+		return err
+	}
+
+	legacyColumns := []string{
+		"aff_code",
+		"aff_count",
+		"aff_quota",
+		"aff_history",
+		"inviter_id",
+	}
+	for _, column := range legacyColumns {
+		if !DB.Migrator().HasColumn("users", column) {
+			continue
+		}
+		if err := DB.Migrator().DropColumn("users", column); err != nil {
+			return fmt.Errorf("failed to drop users.%s: %w", column, err)
+		}
+	}
+	return nil
+}
+
 func migrateDBFast() error {
 
 	var wg sync.WaitGroup
@@ -325,6 +360,7 @@ func migrateDBFast() error {
 		{&ReferralCommissionAccount{}, "ReferralCommissionAccount"},
 		{&ReferralCommission{}, "ReferralCommission"},
 		{&ReferralCommissionLedger{}, "ReferralCommissionLedger"},
+		{&ReferralAsset{}, "ReferralAsset"},
 		{&ReferralWithdrawal{}, "ReferralWithdrawal"},
 		{&ReferralWithdrawalItem{}, "ReferralWithdrawalItem"},
 		{&ReferralSettlementBatch{}, "ReferralSettlementBatch"},

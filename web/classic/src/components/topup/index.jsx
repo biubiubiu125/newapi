@@ -34,7 +34,6 @@ import { UserContext } from '../../context/User';
 import { StatusContext } from '../../context/Status';
 
 import RechargeCard from './RechargeCard';
-import InvitationCard from './InvitationCard';
 import PaymentConfirmModal from './modals/PaymentConfirmModal';
 import TopupHistoryModal from './modals/TopupHistoryModal';
 
@@ -84,9 +83,6 @@ const TopUp = () => {
   const [payMethods, setPayMethods] = useState([]);
 
   // 推广相关状态
-  const [affLink, setAffLink] = useState('');
-  const [referralProfile, setReferralProfile] = useState(null);
-  const [referralSummary, setReferralSummary] = useState(null);
 
   // 账单Modal状态
   const [openHistory, setOpenHistory] = useState(false);
@@ -710,43 +706,6 @@ const TopUp = () => {
     showSuccess(t('邀请链接已复制到剪切板'));
   };
 
-  const openReferralCenter = () => {
-    navigate('/console/referral');
-  };
-
-  const getReferralData = async () => {
-    if (statusState?.status?.referral_enabled !== true) {
-      setReferralProfile(null);
-      setReferralSummary(null);
-      setAffLink('');
-      return;
-    }
-
-    try {
-      const [profileRes, summaryRes] = await Promise.all([
-        API.get('/api/user/referral/profile'),
-        API.get('/api/user/referral/summary').catch(() => ({
-          data: { success: false, data: null },
-        })),
-      ]);
-      const profile = profileRes?.data?.data || null;
-      const summary = summaryRes?.data?.data || null;
-      setReferralProfile(profile);
-      setReferralSummary(summary);
-      if (summary?.invite_code) {
-        setAffLink(
-          `${window.location.origin}/r/${encodeURIComponent(summary.invite_code)}`,
-        );
-      } else {
-        setAffLink('');
-      }
-    } catch (error) {
-      setReferralProfile(null);
-      setReferralSummary(null);
-      setAffLink('');
-    }
-  };
-
   // URL 参数自动打开账单弹窗（支付回跳时触发）
   useEffect(() => {
     if (searchParams.get('show_history') === 'true') {
@@ -760,10 +719,6 @@ const TopUp = () => {
     // 始终获取最新用户数据，确保余额等统计信息准确
     getUserQuota().then();
   }, []);
-
-  useEffect(() => {
-    getReferralData().then();
-  }, [statusState?.status?.referral_enabled]);
 
   // 在 statusState 可用时获取充值信息
   useEffect(() => {
@@ -982,18 +937,6 @@ const TopUp = () => {
           allSubscriptions={allSubscriptions}
           reloadSubscriptionSelf={getSubscriptionSelf}
           enableRedemption={topupInfo.enable_redemption !== false}
-        />
-        <InvitationCard
-          t={t}
-          profile={referralProfile}
-          summary={referralSummary}
-          affLink={affLink}
-          handleAffLinkClick={handleAffLinkClick}
-          onOpenCenter={openReferralCenter}
-          referralEnabled={statusState?.status?.referral_enabled === true}
-          referralRequireApproval={
-            statusState?.status?.referral_require_approval !== false
-          }
         />
       </div>
     </div>

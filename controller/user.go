@@ -175,23 +175,29 @@ func Register(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserExists)
 		return
 	}
-	affCode := referralService.ResolveAffiliateCode(user.AffCode, referralCookieValue(c))
-	inviterId, _ := model.GetUserIdByAffCode(affCode)
+	session := sessions.Default(c)
+	explicitCode := strings.TrimSpace(c.Query("aff"))
+	sessionCode := ""
+	if raw := session.Get("aff"); raw != nil {
+		if value, ok := raw.(string); ok {
+			sessionCode = value
+		}
+	}
+	referralCode := referralService.ResolveAffiliateCode(explicitCode, referralCookieValue(c), sessionCode)
 	cleanUser := model.User{
 		Username:    user.Username,
 		Password:    user.Password,
 		DisplayName: user.Username,
-		InviterId:   inviterId,
 		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
 	}
 	if common.EmailVerificationEnabled {
 		cleanUser.Email = user.Email
 	}
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
-		if err := cleanUser.InsertWithTx(tx, inviterId); err != nil {
+		if err := cleanUser.InsertWithTx(tx, 0); err != nil {
 			return err
 		}
-		return referralService.BindInviteeByCodeWithTx(tx, cleanUser.Id, affCode, referralBindSource(user.AffCode))
+		return referralService.BindInviteeByCodeWithTx(tx, cleanUser.Id, referralCode, referralBindSource(explicitCode))
 	}); err != nil {
 		common.ApiError(c, err)
 		return
@@ -326,57 +332,12 @@ func GenerateAccessToken(c *gin.Context) {
 	return
 }
 
-type TransferAffQuotaRequest struct {
-	Quota int `json:"quota" binding:"required"`
-}
-
 func TransferAffQuota(c *gin.Context) {
-	if !requirePaymentCompliance(c) {
-		return
-	}
-
-	id := c.GetInt("id")
-	user, err := model.GetUserById(id, true)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	tran := TransferAffQuotaRequest{}
-	if err := c.ShouldBindJSON(&tran); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	err = user.TransferAffQuotaToQuota(tran.Quota)
-	if err != nil {
-		common.ApiErrorI18n(c, i18n.MsgUserTransferFailed, map[string]any{"Error": err.Error()})
-		return
-	}
-	common.ApiSuccessI18n(c, i18n.MsgUserTransferSuccess, nil)
+	common.ApiErrorMsg(c, "legacy affiliate quota transfer is deprecated")
 }
 
 func GetAffCode(c *gin.Context) {
-	id := c.GetInt("id")
-	user, err := model.GetUserById(id, true)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if user.AffCode == "" {
-		user.AffCode = common.GetRandomString(4)
-		if err := user.Update(false); err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
-			return
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    user.AffCode,
-	})
-	return
+	common.ApiErrorMsg(c, "legacy affiliate code endpoint is deprecated")
 }
 
 func GetSelf(c *gin.Context) {
@@ -398,31 +359,26 @@ func GetSelf(c *gin.Context) {
 
 	// 构建响应数据，包含用户信息和权限
 	responseData := map[string]interface{}{
-		"id":                user.Id,
-		"username":          user.Username,
-		"display_name":      user.DisplayName,
-		"role":              user.Role,
-		"status":            user.Status,
-		"email":             user.Email,
-		"github_id":         user.GitHubId,
-		"discord_id":        user.DiscordId,
-		"oidc_id":           user.OidcId,
-		"wechat_id":         user.WeChatId,
-		"telegram_id":       user.TelegramId,
-		"group":             user.Group,
-		"quota":             user.Quota,
-		"used_quota":        user.UsedQuota,
-		"request_count":     user.RequestCount,
-		"aff_code":          user.AffCode,
-		"aff_count":         user.AffCount,
-		"aff_quota":         user.AffQuota,
-		"aff_history_quota": user.AffHistoryQuota,
-		"inviter_id":        user.InviterId,
-		"linux_do_id":       user.LinuxDOId,
-		"setting":           user.Setting,
-		"stripe_customer":   user.StripeCustomer,
-		"sidebar_modules":   userSetting.SidebarModules, // 正确提取sidebar_modules字段
-		"permissions":       permissions,                // 新增权限字段
+		"id":              user.Id,
+		"username":        user.Username,
+		"display_name":    user.DisplayName,
+		"role":            user.Role,
+		"status":          user.Status,
+		"email":           user.Email,
+		"github_id":       user.GitHubId,
+		"discord_id":      user.DiscordId,
+		"oidc_id":         user.OidcId,
+		"wechat_id":       user.WeChatId,
+		"telegram_id":     user.TelegramId,
+		"group":           user.Group,
+		"quota":           user.Quota,
+		"used_quota":      user.UsedQuota,
+		"request_count":   user.RequestCount,
+		"linux_do_id":     user.LinuxDOId,
+		"setting":         user.Setting,
+		"stripe_customer": user.StripeCustomer,
+		"sidebar_modules": userSetting.SidebarModules, // 正确提取sidebar_modules字段
+		"permissions":     permissions,                // 新增权限字段
 	}
 
 	c.JSON(http.StatusOK, gin.H{

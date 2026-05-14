@@ -103,6 +103,7 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 	// 生成唯一的订单引用ID
 	reference := fmt.Sprintf("creem-api-ref-%d-%d-%s", user.Id, time.Now().UnixMilli(), randstr.String(4))
 	referenceId := "ref_" + common.Sha1([]byte(reference))
+	snapshot, _ := referralService.BuildOrderSnapshot(id, selectedProduct.Price, selectedProduct.Currency)
 
 	// 先创建订单记录，使用产品配置的金额和充值额度
 	topUp := &model.TopUp{
@@ -114,6 +115,13 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 		PaymentProvider: model.PaymentProviderCreem,
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
+	}
+	topUp.PaidAmount = selectedProduct.Price
+	topUp.PaidCurrency = selectedProduct.Currency
+	if snapshot != nil {
+		topUp.ReferralAffiliateId = snapshot.AffiliateId
+		topUp.ReferralRate = snapshot.Rate
+		topUp.ReferralBaseAmount = snapshot.BaseAmount
 	}
 	err = topUp.Insert()
 	if err != nil {

@@ -20,13 +20,13 @@ For commercial licensing, please contact support@quantumnous.com
 import React from 'react';
 import {
   Button,
+  Dropdown,
+  Popover,
+  Progress,
   Space,
   Tag,
   Tooltip,
-  Progress,
-  Popover,
   Typography,
-  Dropdown,
 } from '@douyinfe/semi-ui';
 import { IconMore } from '@douyinfe/semi-icons';
 import {
@@ -38,9 +38,6 @@ import {
 
 const renderTimestamp = (text) => (text ? timestamp2string(text) : '-');
 
-/**
- * Render user role
- */
 const renderRole = (role, t) => {
   switch (role) {
     case 1:
@@ -70,9 +67,6 @@ const renderRole = (role, t) => {
   }
 };
 
-/**
- * Render username with remark
- */
 const renderUsername = (text, record) => {
   const remark = record.remark;
   if (!remark) {
@@ -99,13 +93,9 @@ const renderUsername = (text, record) => {
   );
 };
 
-/**
- * Render user statistics
- */
 const renderStatistics = (text, record, showEnableDisableModal, t) => {
   const isDeleted = record.DeletedAt !== null;
 
-  // Determine tag text & color like original status column
   let tagColor = 'grey';
   let tagText = t('未知状态');
   if (isDeleted) {
@@ -140,7 +130,6 @@ const renderStatistics = (text, record, showEnableDisableModal, t) => {
   );
 };
 
-// Render separate quota usage column
 const renderQuotaUsage = (text, record, t) => {
   const { Paragraph } = Typography;
   const used = parseInt(record.used_quota) || 0;
@@ -177,32 +166,6 @@ const renderQuotaUsage = (text, record, t) => {
   );
 };
 
-/**
- * Render invite information
- */
-const renderInviteInfo = (text, record, t) => {
-  return (
-    <div>
-      <Space spacing={1}>
-        <Tag color='white' shape='circle' className='!text-xs'>
-          {t('邀请')}: {renderNumber(record.aff_count)}
-        </Tag>
-        <Tag color='white' shape='circle' className='!text-xs'>
-          {t('收益')}: {renderQuota(record.aff_history_quota)}
-        </Tag>
-        <Tag color='white' shape='circle' className='!text-xs'>
-          {record.inviter_id === 0
-            ? t('无邀请人')
-            : `${t('邀请人')}: ${record.inviter_id}`}
-        </Tag>
-      </Space>
-    </div>
-  );
-};
-
-/**
- * Render operations column
- */
 const renderOperations = (
   text,
   record,
@@ -302,9 +265,6 @@ const renderOperations = (
   );
 };
 
-/**
- * Get users table column definitions
- */
 export const getUsersColumns = ({
   t,
   setEditingUser,
@@ -330,7 +290,7 @@ export const getUsersColumns = ({
     {
       title: t('状态'),
       dataIndex: 'info',
-      render: (text, record, index) =>
+      render: (text, record) =>
         renderStatistics(text, record, showEnableDisableModal, t),
     },
     {
@@ -341,21 +301,16 @@ export const getUsersColumns = ({
     {
       title: t('分组'),
       dataIndex: 'group',
-      render: (text, record, index) => {
+      render: (text) => {
         return <div>{renderGroup(text)}</div>;
       },
     },
     {
       title: t('角色'),
       dataIndex: 'role',
-      render: (text, record, index) => {
+      render: (text) => {
         return <div>{renderRole(text, t)}</div>;
       },
-    },
-    {
-      title: t('邀请信息'),
-      dataIndex: 'invite',
-      render: (text, record, index) => renderInviteInfo(text, record, t),
     },
     {
       title: t('创建时间'),
@@ -372,7 +327,7 @@ export const getUsersColumns = ({
       dataIndex: 'operate',
       fixed: 'right',
       width: 200,
-      render: (text, record, index) =>
+      render: (text, record) =>
         renderOperations(text, record, {
           setEditingUser,
           setShowEditUser,

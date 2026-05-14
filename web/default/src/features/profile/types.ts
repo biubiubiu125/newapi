@@ -55,16 +55,6 @@ export interface UserProfile {
   status: number
   /** Access token (system token) */
   access_token?: string
-  /** Affiliate code */
-  aff_code?: string
-  /** Number of successful affiliate invites */
-  aff_count: number
-  /** Affiliate quota (pending rewards) */
-  aff_quota: number
-  /** Total affiliate quota earned (historical) */
-  aff_history_quota: number
-  /** Invite user ID */
-  invite_user_id?: number
   /** Account creation timestamp */
   created_time: number
   /** User settings (JSON string) */

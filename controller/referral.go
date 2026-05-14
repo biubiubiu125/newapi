@@ -32,6 +32,10 @@ type referralWithdrawalCreateRequest struct {
 	IdempotencyKey string  `json:"idempotency_key"`
 }
 
+type referralUploadRequest struct {
+	Purpose string `form:"purpose"`
+}
+
 func ReferralLanding(c *gin.Context) {
 	if !referralService.IsEnabled() {
 		c.Redirect(http.StatusFound, common.ThemeAwarePath("/register"))
@@ -55,7 +59,7 @@ func ReferralLanding(c *gin.Context) {
 			Path:     "/",
 			MaxAge:   landing.CookieTTLDays * 24 * 60 * 60,
 			HttpOnly: true,
-			Secure:   c.Request.TLS != nil,
+			Secure:   referralRequestSecure(c),
 			SameSite: http.SameSiteLaxMode,
 		})
 	}
@@ -215,6 +219,13 @@ func UploadReferralAsset(c *gin.Context) {
 		common.ApiErrorMsg(c, "referral disabled")
 		return
 	}
+	userId := c.GetInt("id")
+	purpose := model.ReferralAssetPurposeWithdrawalQR
+	createdBy := "user"
+	if strings.TrimSpace(c.FullPath()) == "/api/user/admin/referral/upload" {
+		purpose = model.ReferralAssetPurposePaymentProof
+		createdBy = "admin"
+	}
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
 		common.ApiErrorMsg(c, "please choose image file")
@@ -236,13 +247,15 @@ func UploadReferralAsset(c *gin.Context) {
 		return
 	}
 	contentType := http.DetectContentType(data)
-	prefix := "referral"
-	if strings.Contains(strings.TrimSpace(c.Request.URL.Path), "/admin/") {
+	prefix := "withdrawal-qr"
+	if purpose == model.ReferralAssetPurposePaymentProof {
 		prefix = "payment-proof"
-	} else {
-		prefix = "withdrawal-qr"
 	}
-	assetURL, err := referralService.SaveAsset(data, contentType, prefix)
+	assetURL, err := referralService.SaveAsset(data, contentType, prefix, service.ReferralAssetInput{
+		OwnerUserId: userId,
+		Purpose:     purpose,
+		CreatedBy:   createdBy,
+	})
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -271,13 +284,16 @@ func GetReferralAsset(c *gin.Context) {
 }
 
 func referralRegisterRedirect(basePath string, code string) string {
-	target := sanitizeReferralRedirectPath(basePath)
+	target := referralDefaultRegisterPath()
+	if basePath != "" {
+		target = sanitizeReferralRedirectPath(basePath)
+	}
 	if target == "" {
-		target = "/register"
+		target = referralDefaultRegisterPath()
 	}
 	u, err := url.Parse(target)
 	if err != nil {
-		u = &url.URL{Path: "/register"}
+		u = &url.URL{Path: referralDefaultRegisterPath()}
 	}
 	q := u.Query()
 	q.Set("aff", strings.ToUpper(strings.TrimSpace(code)))
@@ -286,7 +302,7 @@ func referralRegisterRedirect(basePath string, code string) string {
 }
 
 func referralRegisterErrorRedirect() string {
-	target := common.ThemeAwarePath("/register")
+	target := referralDefaultRegisterPath()
 	u, err := url.Parse(target)
 	if err != nil {
 		return target
@@ -300,21 +316,17 @@ func referralRegisterErrorRedirect() string {
 func sanitizeReferralRedirectPath(value string) string {
 	path := strings.TrimSpace(value)
 	if path == "" {
-		return "/register"
+		return referralDefaultRegisterPath()
 	}
-	if !strings.HasPrefix(path, "/") {
-		return "/register"
+	path = strings.ReplaceAll(path, "\\", "/")
+	if strings.Contains(path, "://") || strings.HasPrefix(path, "//") || !strings.HasPrefix(path, "/") {
+		return ""
 	}
-	switch {
-	case strings.HasPrefix(path, "/register"),
-		strings.HasPrefix(path, "/sign-up"),
-		strings.HasPrefix(path, "/login"),
-		strings.HasPrefix(path, "/sign-in"),
-		strings.HasPrefix(path, "/pricing"),
-		strings.HasPrefix(path, "/"):
+	switch path {
+	case "/sign-up", "/register", "/sign-in", "/login", "/pricing":
 		return path
 	default:
-		return "/register"
+		return ""
 	}
 }
 
@@ -353,4 +365,18 @@ func referralBindSource(rawCode string) string {
 		return "code"
 	}
 	return "cookie"
+}
+
+func referralRequestSecure(c *gin.Context) bool {
+	if c.Request.TLS != nil {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(c.GetHeader("X-Forwarded-Proto")), "https")
+}
+
+func referralDefaultRegisterPath() string {
+	if common.GetTheme() == "default" {
+		return "/sign-up"
+	}
+	return "/register"
 }
