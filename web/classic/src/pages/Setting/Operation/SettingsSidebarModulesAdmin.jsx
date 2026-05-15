@@ -189,7 +189,12 @@ export default function SettingsSidebarModulesAdmin(props) {
             midjourney: true,
             task: true,
           },
-          personal: { enabled: true, topup: true, referral: true, personal: true },
+          personal: {
+            enabled: true,
+            topup: true,
+            referral: true,
+            personal: true,
+          },
           admin: {
             enabled: true,
             channel: true,
@@ -243,7 +248,11 @@ export default function SettingsSidebarModulesAdmin(props) {
       description: t('用户个人功能'),
       modules: [
         { key: 'topup', title: t('钱包管理'), description: t('余额充值管理') },
-        { key: 'referral', title: t('推广中心'), description: t('推广链接、佣金和提现') },
+        {
+          key: 'referral',
+          title: t('推广中心'),
+          description: t('推广链接、佣金和提现'),
+        },
         {
           key: 'personal',
           title: t('个人设置'),

@@ -192,7 +192,10 @@ export default function Referral() {
     }
   };
 
-  const loadCommissions = async (page = commissionPage, pageSize = commissionPageSize) => {
+  const loadCommissions = async (
+    page = commissionPage,
+    pageSize = commissionPageSize,
+  ) => {
     try {
       const res = await API.get('/api/user/referral/commissions', {
         params: { p: page, page_size: pageSize },
@@ -208,7 +211,10 @@ export default function Referral() {
     }
   };
 
-  const loadWithdrawals = async (page = withdrawalPage, pageSize = withdrawalPageSize) => {
+  const loadWithdrawals = async (
+    page = withdrawalPage,
+    pageSize = withdrawalPageSize,
+  ) => {
     try {
       const res = await API.get('/api/user/referral/withdrawals', {
         params: { p: page, page_size: pageSize },
@@ -239,7 +245,9 @@ export default function Referral() {
 
   const handleTabChange = (nextSection) => {
     const target = normalizeSection(nextSection);
-    navigate(target === 'center' ? '/console/referral' : `/console/referral/${target}`);
+    navigate(
+      target === 'center' ? '/console/referral' : `/console/referral/${target}`,
+    );
   };
 
   const handleCopyInviteLink = async () => {
@@ -317,7 +325,10 @@ export default function Referral() {
       showError(t('请输入收款账号'));
       return;
     }
-    if (withdrawForm.account_type !== 'usdt' && !withdrawForm.account_name.trim()) {
+    if (
+      withdrawForm.account_type !== 'usdt' &&
+      !withdrawForm.account_name.trim()
+    ) {
       showError(t('请输入收款人名称'));
       return;
     }
@@ -378,7 +389,9 @@ export default function Referral() {
       return;
     }
     try {
-      const res = await API.post(`/api/user/referral/withdrawals/${row.id}/cancel`);
+      const res = await API.post(
+        `/api/user/referral/withdrawals/${row.id}/cancel`,
+      );
       if (res.data.success) {
         showSuccess(t('提现申请已取消'));
         await loadBase();
@@ -530,7 +543,11 @@ export default function Referral() {
                         value={inviteLink}
                         readonly
                         suffix={
-                          <Button theme='solid' type='primary' onClick={handleCopyInviteLink}>
+                          <Button
+                            theme='solid'
+                            type='primary'
+                            onClick={handleCopyInviteLink}
+                          >
                             {t('复制')}
                           </Button>
                         }
@@ -541,10 +558,22 @@ export default function Referral() {
 
                 <Card className='!rounded-2xl shadow-sm border-0'>
                   <div className='grid grid-cols-2 lg:grid-cols-4 gap-4'>
-                    <AmountCard title={t('待结算')} value={formatMoney(summary.pending_amount)} />
-                    <AmountCard title={t('可提现')} value={formatMoney(summary.available_amount)} />
-                    <AmountCard title={t('冻结中')} value={formatMoney(summary.frozen_amount)} />
-                    <AmountCard title={t('已提现')} value={formatMoney(summary.withdrawn_amount)} />
+                    <AmountCard
+                      title={t('待结算')}
+                      value={formatMoney(summary.pending_amount)}
+                    />
+                    <AmountCard
+                      title={t('可提现')}
+                      value={formatMoney(summary.available_amount)}
+                    />
+                    <AmountCard
+                      title={t('冻结中')}
+                      value={formatMoney(summary.frozen_amount)}
+                    />
+                    <AmountCard
+                      title={t('已提现')}
+                      value={formatMoney(summary.withdrawn_amount)}
+                    />
                   </div>
                 </Card>
               </div>
@@ -555,10 +584,14 @@ export default function Referral() {
                     <Text strong>{t('推广说明')}</Text>
                     <div className='mt-2 space-y-2'>
                       <Text type='tertiary'>
-                        {t('邀请好友注册并完成充值或订阅后，系统会按照返佣比例计算推广佣金。')}
+                        {t(
+                          '邀请好友注册并完成充值或订阅后，系统会按照返佣比例计算推广佣金。',
+                        )}
                       </Text>
                       <Text type='tertiary'>
-                        {t('推广佣金会先进入待结算，达到结算时间后转为可提现余额。')}
+                        {t(
+                          '推广佣金会先进入待结算，达到结算时间后转为可提现余额。',
+                        )}
                       </Text>
                       <Text type='tertiary'>
                         {t('提现会进入审核流程，审核通过后由管理员手工打款。')}
@@ -568,7 +601,9 @@ export default function Referral() {
                   {profile?.status === 'disabled' && (
                     <Banner
                       type='warning'
-                      description={profile?.risk_reason || t('当前推广账号已被禁用')}
+                      description={
+                        profile?.risk_reason || t('当前推广账号已被禁用')
+                      }
                       fullMode={false}
                     />
                   )}
@@ -596,7 +631,10 @@ export default function Referral() {
                 {profile?.status === 'rejected' && (
                   <Banner
                     type='danger'
-                    description={profile?.risk_reason || t('推广申请未通过，请调整后重新提交。')}
+                    description={
+                      profile?.risk_reason ||
+                      t('推广申请未通过，请调整后重新提交。')
+                    }
                     fullMode={false}
                   />
                 )}
@@ -606,7 +644,9 @@ export default function Referral() {
                 {!profile && (
                   <Banner
                     type='info'
-                    description={t('提交推广申请后，审核通过即可获得专属推广链接和返佣账户。')}
+                    description={t(
+                      '提交推广申请后，审核通过即可获得专属推广链接和返佣账户。',
+                    )}
                     fullMode={false}
                   />
                 )}
@@ -619,7 +659,11 @@ export default function Referral() {
                       autosize={{ minRows: 5 }}
                       placeholder={t('填写推广渠道、目标用户群体或运营计划')}
                     />
-                    <Button type='primary' loading={applyLoading} onClick={handleApply}>
+                    <Button
+                      type='primary'
+                      loading={applyLoading}
+                      onClick={handleApply}
+                    >
                       {t('提交推广申请')}
                     </Button>
                   </>
@@ -660,7 +704,9 @@ export default function Referral() {
                 {!canWithdraw && (
                   <Banner
                     type='warning'
-                    description={t('当前账号暂不可提现，请先完成推广员审核或联系管理员。')}
+                    description={t(
+                      '当前账号暂不可提现，请先完成推广员审核或联系管理员。',
+                    )}
                     fullMode={false}
                   />
                 )}
@@ -676,7 +722,9 @@ export default function Referral() {
                   <Text strong>{t('收款方式')}</Text>
                   <Select
                     value={withdrawForm.account_type}
-                    onChange={(value) => updateWithdrawForm('account_type', value)}
+                    onChange={(value) =>
+                      updateWithdrawForm('account_type', value)
+                    }
                     optionList={[
                       { label: 'Alipay', value: 'alipay' },
                       { label: 'WeChat', value: 'wechat' },
@@ -689,7 +737,9 @@ export default function Referral() {
                     <Text strong>{t('链类型')}</Text>
                     <Select
                       value={withdrawForm.account_network}
-                      onChange={(value) => updateWithdrawForm('account_network', value)}
+                      onChange={(value) =>
+                        updateWithdrawForm('account_network', value)
+                      }
                       optionList={[
                         { label: 'TRC20', value: 'TRC20' },
                         { label: 'BEP20', value: 'BEP20' },
@@ -702,7 +752,9 @@ export default function Referral() {
                     <Text strong>{t('收款人姓名')}</Text>
                     <Input
                       value={withdrawForm.account_name}
-                      onChange={(value) => updateWithdrawForm('account_name', value)}
+                      onChange={(value) =>
+                        updateWithdrawForm('account_name', value)
+                      }
                       placeholder={t('请输入收款人姓名')}
                     />
                   </div>
@@ -711,14 +763,19 @@ export default function Referral() {
                   <Text strong>{t('收款账号')}</Text>
                   <Input
                     value={withdrawForm.account_no}
-                    onChange={(value) => updateWithdrawForm('account_no', value)}
+                    onChange={(value) =>
+                      updateWithdrawForm('account_no', value)
+                    }
                     placeholder={t('请输入收款账号')}
                   />
                 </div>
                 <div>
                   <Text strong>{t('收款二维码')}</Text>
                   <Space>
-                    <Button onClick={() => fileInputRef.current?.click()} loading={uploading}>
+                    <Button
+                      onClick={() => fileInputRef.current?.click()}
+                      loading={uploading}
+                    >
                       {t('上传图片')}
                     </Button>
                     <input
@@ -730,7 +787,9 @@ export default function Referral() {
                     />
                     <Input
                       value={withdrawForm.qr_image_url}
-                      onChange={(value) => updateWithdrawForm('qr_image_url', value)}
+                      onChange={(value) =>
+                        updateWithdrawForm('qr_image_url', value)
+                      }
                       placeholder={t('或直接填写图片链接')}
                     />
                   </Space>
@@ -739,7 +798,9 @@ export default function Referral() {
                   <Text strong>{t('申请备注')}</Text>
                   <TextArea
                     value={withdrawForm.applicant_note}
-                    onChange={(value) => updateWithdrawForm('applicant_note', value)}
+                    onChange={(value) =>
+                      updateWithdrawForm('applicant_note', value)
+                    }
                     autosize={{ minRows: 4 }}
                     placeholder={t('可填写补充说明，例如收款偏好或打款提醒')}
                   />
