@@ -16,7 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useRef,
+  useState,
+  type ReactNode,
+} from 'react'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -352,14 +359,18 @@ export function Referral() {
     return () => window.clearTimeout(timer)
   }, [])
 
+  const loadSectionData = useEffectEvent(async function loadSectionData() {
+    if (activeSection === 'commissions') {
+      await loadCommissions()
+    }
+    if (activeSection === 'withdrawals') {
+      await loadWithdrawals()
+    }
+  })
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      if (activeSection === 'commissions') {
-        void loadCommissions()
-      }
-      if (activeSection === 'withdrawals') {
-        void loadWithdrawals()
-      }
+      void loadSectionData()
     }, 0)
     return () => window.clearTimeout(timer)
   }, [activeSection])

@@ -11,6 +11,8 @@ import urllib.request
 BASE_URL = os.environ.get("REFERRAL_BASE_URL", "").rstrip("/")
 ADMIN_USERNAME = os.environ.get("REFERRAL_ADMIN_USERNAME", "")
 ADMIN_PASSWORD = os.environ.get("REFERRAL_ADMIN_PASSWORD", "")
+ADMIN_USER_ID = os.environ.get("REFERRAL_ADMIN_USER_ID", "1")
+ADMIN_TOKEN = os.environ.get("REFERRAL_ADMIN_TOKEN", "")
 USER_PASSWORD = os.environ.get("REFERRAL_USER_PASSWORD", "")
 TOPUP_PRODUCT_ID = os.environ.get("REFERRAL_TOPUP_PRODUCT_ID", "creem_topup_100")
 TOPUP_EVENT_SIGNATURE = os.environ.get("REFERRAL_EVENT_SIGNATURE", "test")
@@ -27,12 +29,13 @@ def require_env(name: str, value: str) -> None:
 class Client:
     def __init__(self) -> None:
         self.user_id = None
+        self.auth_token = ""
         self.cookie_jar = http.cookiejar.CookieJar()
         self.opener = urllib.request.build_opener(
             urllib.request.HTTPCookieProcessor(self.cookie_jar)
         )
 
-    def request(self, method: str, path: str, payload=None, headers=None):
+    def request(self, method: str, path: str, payload=None, headers=None, expect_json=True):
         data = None if payload is None else json.dumps(payload).encode()
         req = urllib.request.Request(
             BASE_URL + path,
@@ -43,6 +46,8 @@ class Client:
         try:
             with self.opener.open(req, timeout=30) as resp:
                 body = resp.read().decode("utf-8", "ignore")
+                if not expect_json:
+                    return resp.getcode(), body
                 if not body.strip():
                     parsed = {"success": True, "message": "", "data": None}
                 else:
@@ -50,6 +55,8 @@ class Client:
                 return resp.getcode(), parsed
         except urllib.error.HTTPError as exc:
             body = exc.read().decode("utf-8", "ignore")
+            if not expect_json:
+                return exc.code, body
             try:
                 parsed = json.loads(body)
             except json.JSONDecodeError:
@@ -74,13 +81,24 @@ class Client:
             "Content-Type": "application/json",
             "New-Api-User": str(self.user_id),
         }
+        if self.auth_token:
+            headers["Authorization"] = self.auth_token
         return self.request(method, path, payload, headers)
 
 
 def admin_client() -> Client:
     client = Client()
+    if ADMIN_TOKEN:
+        client.user_id = int(ADMIN_USER_ID)
+        client.auth_token = ADMIN_TOKEN
+        return client
     client.login(ADMIN_USERNAME, ADMIN_PASSWORD)
     return client
+
+
+def short_name(prefix: str, suffix: str) -> str:
+    raw = f"{prefix}_{suffix}"
+    return raw[:20]
 
 
 def create_affiliate(admin: Client, username: str) -> tuple[Client, str]:
@@ -114,7 +132,7 @@ def create_affiliate(admin: Client, username: str) -> tuple[Client, str]:
 
 def create_invitee(invite_code: str, username: str) -> Client:
     invitee = Client()
-    invitee.request("GET", f"/api/r/{invite_code}?redirect=/register")
+    invitee.request("GET", f"/api/r/{invite_code}?redirect=/register", expect_json=False)
     status, resp = invitee.request(
         "POST",
         "/api/user/register",
@@ -237,10 +255,10 @@ def list_admin_ledgers(admin: Client):
 
 def run_topup_webhook_idempotency() -> None:
     admin = admin_client()
-    affiliate, invite_code = create_affiliate(admin, f"aff_load_{RUN_ID}")
-    invitee = create_invitee(invite_code, f"invitee_load_{RUN_ID}")
+    affiliate, invite_code = create_affiliate(admin, short_name("aload", RUN_ID))
+    invitee = create_invitee(invite_code, short_name("iload", RUN_ID))
     order_id = create_topup_order(invitee)
-    event = build_topup_event(order_id, f"invitee_load_{RUN_ID}")
+    event = build_topup_event(order_id, short_name("eload", RUN_ID))
 
     started = time.perf_counter()
     with concurrent.futures.ThreadPoolExecutor(max_workers=10) as executor:
@@ -295,10 +313,10 @@ def run_settlement_concurrency() -> None:
 
 def run_withdrawal_idempotency() -> None:
     admin = admin_client()
-    affiliate, invite_code = create_affiliate(admin, f"aff_wd_{RUN_ID}")
-    invitee = create_invitee(invite_code, f"invitee_wd_{RUN_ID}")
+    affiliate, invite_code = create_affiliate(admin, short_name("awd", RUN_ID))
+    invitee = create_invitee(invite_code, short_name("iwd", RUN_ID))
     trade_no = create_topup_order(invitee)
-    event = build_topup_event(trade_no, f"invitee_wd_{RUN_ID}")
+    event = build_topup_event(trade_no, short_name("ewd", RUN_ID))
     post_creem_webhook(event)
     admin.authed("POST", "/api/user/admin/referral/settlements/run")
 
@@ -340,12 +358,12 @@ def run_withdrawal_idempotency() -> None:
 
 def run_binding_registration_concurrency() -> None:
     admin = admin_client()
-    _, invite_code = create_affiliate(admin, f"aff_bind_{RUN_ID}")
+    _, invite_code = create_affiliate(admin, short_name("abind", RUN_ID))
 
     def worker(index: int):
-        username = f"invitee_bind_{RUN_ID}_{index}"
+        username = short_name(f"ib{index}", RUN_ID)
         client = Client()
-        client.request("GET", f"/api/r/{invite_code}?redirect=/register")
+        client.request("GET", f"/api/r/{invite_code}?redirect=/register", expect_json=False)
         status, resp = client.request(
             "POST",
             "/api/user/register",
@@ -381,8 +399,9 @@ def run_binding_registration_concurrency() -> None:
 
 def main() -> None:
     require_env("REFERRAL_BASE_URL", BASE_URL)
-    require_env("REFERRAL_ADMIN_USERNAME", ADMIN_USERNAME)
-    require_env("REFERRAL_ADMIN_PASSWORD", ADMIN_PASSWORD)
+    if not ADMIN_TOKEN:
+        require_env("REFERRAL_ADMIN_USERNAME", ADMIN_USERNAME)
+        require_env("REFERRAL_ADMIN_PASSWORD", ADMIN_PASSWORD)
     require_env("REFERRAL_USER_PASSWORD", USER_PASSWORD)
     if MODE == "topup-webhook-idempotency":
         run_topup_webhook_idempotency()

@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useState, type ReactNode } from 'react'
+import {
+  useEffect,
+  useEffectEvent,
+  useState,
+  type ReactNode,
+} from 'react'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -243,7 +248,7 @@ export function AdminReferral() {
     setAuditLogItems(res.data?.items || [])
   }
 
-  async function loadCurrentSection() {
+  const loadCurrentSection = useEffectEvent(async function loadCurrentSection() {
     setLoading(true)
     try {
       if (activeSection === 'overview') await loadOverview()
@@ -257,7 +262,7 @@ export function AdminReferral() {
     } finally {
       setLoading(false)
     }
-  }
+  })
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
