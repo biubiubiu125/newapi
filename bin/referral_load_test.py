@@ -151,7 +151,7 @@ def create_topup_order(invitee: Client) -> str:
         "/api/user/creem/pay",
         {"product_id": TOPUP_PRODUCT_ID, "payment_method": "creem"},
     )
-    if status != 200 or not resp.get("success"):
+    if status != 200 or resp.get("message") != "success" or not resp.get("data"):
         raise RuntimeError(f"create topup order failed: {status} {resp}")
     return resp["data"]["order_id"]
 
