@@ -20,9 +20,15 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 	previousCryptoSecret := common.CryptoSecret
 	previousSessionSecret := common.SessionSecret
 	previousReferralEnabled := common.ReferralEnabled
+	previousUsingSQLite := common.UsingSQLite
+	previousUsingMySQL := common.UsingMySQL
+	previousUsingPostgreSQL := common.UsingPostgreSQL
+	previousRedisEnabled := common.RedisEnabled
 	previousCookieTTLDays := common.ReferralCookieTTLDays
 	previousDefaultRate := common.ReferralDefaultRate
 	previousSettleFreezeDays := common.ReferralSettleFreezeDays
+	previousMinWithdrawAmount := common.ReferralMinWithdrawAmount
+	previousWithdrawFee := common.ReferralWithdrawFee
 	previousRedirectPath := common.ReferralRedirectPath
 
 	common.UsingSQLite = true
@@ -62,12 +68,18 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 	t.Cleanup(func() {
 		model.DB = previousDB
 		model.LOG_DB = previousLogDB
+		common.UsingSQLite = previousUsingSQLite
+		common.UsingMySQL = previousUsingMySQL
+		common.UsingPostgreSQL = previousUsingPostgreSQL
+		common.RedisEnabled = previousRedisEnabled
 		common.CryptoSecret = previousCryptoSecret
 		common.SessionSecret = previousSessionSecret
 		common.ReferralEnabled = previousReferralEnabled
 		common.ReferralCookieTTLDays = previousCookieTTLDays
 		common.ReferralDefaultRate = previousDefaultRate
 		common.ReferralSettleFreezeDays = previousSettleFreezeDays
+		common.ReferralMinWithdrawAmount = previousMinWithdrawAmount
+		common.ReferralWithdrawFee = previousWithdrawFee
 		common.ReferralRedirectPath = previousRedirectPath
 		sqlDB, err := db.DB()
 		if err == nil {
@@ -171,6 +183,73 @@ func TestProcessTopUpCommissionIsIdempotent(t *testing.T) {
 	require.Equal(t, 2.0, account.PendingAmount)
 }
 
+func TestBuildOrderSnapshotWithoutBindingReturnsSkippedReason(t *testing.T) {
+	setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "nobind", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+
+	snapshot, err := service.BuildOrderSnapshot(user.Id, 12.34, "usd")
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	require.Equal(t, model.ReferralCommissionJobStatusSkipped, snapshot.Status)
+	require.Equal(t, "no_binding", snapshot.Error)
+	require.Equal(t, 12.34, snapshot.BaseAmount)
+	require.Equal(t, "USD", snapshot.Currency)
+}
+
+func TestBuildOrderSnapshotAllowsZeroRateOverride(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "invitee-zero", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	affiliateUser := &model.User{Username: "affiliate-zero", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	require.NoError(t, affiliateUser.Insert(0))
+
+	zero := 0.0
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "ZERO1234",
+		Status:             model.ReferralAffiliateStatusApproved,
+		RateOverride:       &zero,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralBinding{
+		InviteeUserId: invitee.Id,
+		InviterUserId: affiliateUser.Id,
+		AffiliateId:   affiliate.Id,
+		BindSource:    "code",
+		BindCode:      affiliate.InviteCode,
+		BoundAt:       time.Now().Unix(),
+	}).Error)
+
+	snapshot, err := service.BuildOrderSnapshot(invitee.Id, 20, "usd")
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	require.Equal(t, model.ReferralCommissionJobStatusSkipped, snapshot.Status)
+	require.Equal(t, "invalid_rate", snapshot.Error)
+	require.Zero(t, snapshot.Rate)
+}
+
+func TestBindInviteeByLegacyAffCodeLikeValueDoesNotCreateBinding(t *testing.T) {
+	setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "legacy-aff-user", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+
+	require.NoError(t, service.BindInviteeByCode(user.Id, "OLDAFF01", "code"))
+
+	var count int64
+	require.NoError(t, model.DB.Model(&model.ReferralBinding{}).Where("invitee_user_id = ?", user.Id).Count(&count).Error)
+	require.Zero(t, count)
+}
+
 func TestBindInviteeRejectsSelfInvite(t *testing.T) {
 	db := setupReferralServiceTestDB(t)
 	service := NewReferralService()
@@ -257,4 +336,196 @@ func TestCreateWithdrawalValidatesAssetOwnershipAndPurpose(t *testing.T) {
 		IdempotencyKey: "wd-key-1",
 	})
 	require.Error(t, err)
+}
+
+func TestAdjustAffiliateCommissionRejectsConflictingIdempotencyPayload(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	affiliateUser := &model.User{Username: "adjust-user", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "ADJUST01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:     affiliate.Id,
+		UserId:          affiliateUser.Id,
+		AvailableAmount: 100,
+	}).Error)
+
+	first, err := service.AdjustAffiliateCommission(ReferralAdjustInput{
+		UserId:         affiliateUser.Id,
+		AdminUserId:    999,
+		Delta:          10,
+		Remark:         "bonus",
+		IdempotencyKey: "same-key",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, first)
+
+	_, err = service.AdjustAffiliateCommission(ReferralAdjustInput{
+		UserId:         affiliateUser.Id,
+		AdminUserId:    999,
+		Delta:          9,
+		Remark:         "bonus",
+		IdempotencyKey: "same-key",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "idempotency key conflicts")
+}
+
+func TestUpdateSettingsRejectsUnsafeRedirectPath(t *testing.T) {
+	setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	_, err := service.UpdateSettings(ReferralSettings{
+		Enabled:           true,
+		CookieTTLDays:     30,
+		DefaultRate:       10,
+		SettleFreezeDays:  7,
+		MinWithdrawAmount: 1,
+		WithdrawFee:       0,
+		RedirectPath:      "//evil.com",
+		RequireApproval:   true,
+	}, 1, "127.0.0.1", "unit-test")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "redirect_path")
+}
+
+func TestListCommissionsDoesNotAutoSettle(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	affiliateUser := &model.User{Username: "settle-aff", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "SETTLE01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:   affiliate.Id,
+		UserId:        affiliateUser.Id,
+		PendingAmount: 5,
+	}).Error)
+	commission := &model.ReferralCommission{
+		AffiliateId:      affiliate.Id,
+		AffiliateUserId:  affiliateUser.Id,
+		InviteeUserId:    affiliateUser.Id + 100,
+		SourceType:       "topup",
+		SourceOrderId:    1,
+		SourceTradeNo:    "trade-auto-settle",
+		OrderType:        "topup",
+		BaseAmount:       50,
+		PaidAmount:       50,
+		PaidCurrency:     "USD",
+		Rate:             10,
+		CommissionAmount: 5,
+		Status:           model.ReferralCommissionStatusPending,
+		SettleAt:         time.Now().Add(-time.Hour).Unix(),
+	}
+	require.NoError(t, db.Create(commission).Error)
+
+	items, total, err := service.ListAffiliateCommissions(affiliateUser.Id, ReferralListParams{Page: 1, PageSize: 10})
+	require.NoError(t, err)
+	require.Len(t, items, 1)
+	require.EqualValues(t, 1, total)
+
+	reloaded := &model.ReferralCommission{}
+	require.NoError(t, db.First(reloaded, commission.Id).Error)
+	require.Equal(t, model.ReferralCommissionStatusPending, reloaded.Status)
+}
+
+func TestGetProfileSanitizesPendingAffiliateFlags(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "pending-aff", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+	require.NoError(t, db.Create(&model.ReferralAffiliate{
+		UserId:             user.Id,
+		InviteCode:         "PEND1234",
+		Status:             model.ReferralAffiliateStatusPending,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}).Error)
+
+	profile, err := service.GetProfile(user.Id)
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.False(t, profile.AcquisitionEnabled)
+	require.False(t, profile.SettlementEnabled)
+	require.False(t, profile.WithdrawalEnabled)
+}
+
+func TestMarkWithdrawalPaidRequiresTxnOrProof(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "withdraw-paid", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             user.Id,
+		InviteCode:         "PAID0001",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:  affiliate.Id,
+		UserId:       user.Id,
+		FrozenAmount: 10,
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralWithdrawal{
+		AffiliateId: affiliate.Id,
+		UserId:      user.Id,
+		Amount:      10,
+		NetAmount:   10,
+		AccountType: "alipay",
+		AccountName: "tester",
+		AccountNo:   "abc",
+		Status:      model.ReferralWithdrawalStatusApproved,
+		SubmittedAt: time.Now().Unix(),
+		ApprovedAt:  time.Now().Unix(),
+	}).Error)
+
+	_, err := service.MarkWithdrawalPaid(ReferralWithdrawalPayInput{
+		WithdrawalId: 1,
+		AdminUserId:  100,
+		AdminNote:    "offline paid",
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "payment_txn_no or payment_proof_url is required")
+}
+
+func TestApproveAffiliateCreatesAuditLogWhenAdminCreatesAffiliate(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "approve-created", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+
+	view, err := service.ApproveAffiliate(user.Id, 9001, nil, "127.0.0.1", "unit-test")
+	require.NoError(t, err)
+	require.NotNil(t, view)
+	require.Equal(t, model.ReferralAffiliateStatusApproved, view.Status)
+
+	var audit model.ReferralAdminAuditLog
+	require.NoError(t, db.Where("action = ? AND target_user_id = ?", "referral_affiliate_approve", user.Id).First(&audit).Error)
+	require.Equal(t, 9001, audit.AdminUserId)
+	require.Equal(t, "127.0.0.1", audit.Ip)
+	require.Equal(t, "unit-test", audit.UserAgent)
 }

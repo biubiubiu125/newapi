@@ -76,6 +76,13 @@ function formatMoney(value) {
   return convertUSDToCurrency(Number(value || 0));
 }
 
+function openConfirm(message) {
+  if (typeof window === 'undefined') {
+    return true;
+  }
+  return window.confirm(message);
+}
+
 function formatTime(value) {
   if (!value) {
     return '-';
@@ -367,6 +374,9 @@ export default function Referral() {
   };
 
   const handleCancelWithdrawal = async (row) => {
+    if (!openConfirm(t('确认取消提现吗？'))) {
+      return;
+    }
     try {
       const res = await API.post(`/api/user/referral/withdrawals/${row.id}/cancel`);
       if (res.data.success) {
@@ -589,6 +599,9 @@ export default function Referral() {
                     description={profile?.risk_reason || t('推广申请未通过，请调整后重新提交。')}
                     fullMode={false}
                   />
+                )}
+                {profile?.status === 'rejected' && profile?.risk_reason && (
+                  <Text type='danger'>{profile.risk_reason}</Text>
                 )}
                 {!profile && (
                   <Banner

@@ -264,6 +264,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 
 	// Handle affiliate code
 	referralCode := referralService.ResolveAffiliateCode(c.Query("aff"), referralCookieValue(c))
+	bindSource := referralBindSource(c.Query("aff"))
 	if referralCode == "" {
 		if affCode := session.Get("aff"); affCode != nil {
 			if value, ok := affCode.(string); ok {
@@ -280,7 +281,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 			if err := user.InsertWithTx(tx, 0); err != nil {
 				return err
 			}
-			if err := referralService.BindInviteeByCodeWithTx(tx, user.Id, referralCode, referralBindSource(referralCode)); err != nil {
+			if err := referralService.BindInviteeByCodeWithTx(tx, user.Id, referralCode, bindSource); err != nil {
 				return err
 			}
 
@@ -309,7 +310,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 			if err := user.InsertWithTx(tx, 0); err != nil {
 				return err
 			}
-			if err := referralService.BindInviteeByCodeWithTx(tx, user.Id, referralCode, referralBindSource(referralCode)); err != nil {
+			if err := referralService.BindInviteeByCodeWithTx(tx, user.Id, referralCode, bindSource); err != nil {
 				return err
 			}
 

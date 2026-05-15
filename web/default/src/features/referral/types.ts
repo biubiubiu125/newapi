@@ -173,6 +173,41 @@ export interface ReferralCommissionJob {
   updated_at: number
 }
 
+export interface ReferralLedger {
+  id: number
+  affiliate_id: number
+  user_id: number
+  username?: string
+  email?: string
+  commission_id: number
+  withdrawal_id: number
+  type: string
+  ref_type: string
+  ref_id: string
+  external_ref_id: string
+  delta_pending: number
+  delta_available: number
+  delta_frozen: number
+  delta_withdrawn: number
+  remark: string
+  operator: string
+  created_at: number
+}
+
+export interface ReferralAdminAuditLog {
+  id: number
+  action: string
+  target_user_id: number
+  affiliate_id: number
+  admin_user_id: number
+  reason: string
+  ip: string
+  user_agent: string
+  old_value: string
+  new_value: string
+  created_at: number
+}
+
 export interface ReferralOverview {
   total_affiliates: number
   pending_affiliates: number

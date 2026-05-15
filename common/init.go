@@ -61,6 +61,16 @@ func InitEnv() {
 	} else {
 		CryptoSecret = SessionSecret
 	}
+	if os.Getenv("REFERRAL_SIGNING_SECRET") != "" {
+		ReferralSigningSecret = os.Getenv("REFERRAL_SIGNING_SECRET")
+	} else {
+		ReferralSigningSecret = CryptoSecret
+	}
+	if os.Getenv("REFERRAL_ASSET_SIGNING_SECRET") != "" {
+		ReferralAssetSigningSecret = os.Getenv("REFERRAL_ASSET_SIGNING_SECRET")
+	} else {
+		ReferralAssetSigningSecret = ReferralSigningSecret
+	}
 	if os.Getenv("SQLITE_PATH") != "" {
 		SQLitePath = os.Getenv("SQLITE_PATH")
 	}

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -38,7 +39,7 @@ type referralUploadRequest struct {
 
 func ReferralLanding(c *gin.Context) {
 	if !referralService.IsEnabled() {
-		c.Redirect(http.StatusFound, common.ThemeAwarePath("/register"))
+		c.Redirect(http.StatusFound, referralDefaultRegisterPath())
 		return
 	}
 	code := strings.TrimSpace(c.Param("code"))
@@ -50,6 +51,15 @@ func ReferralLanding(c *gin.Context) {
 	if err != nil || landing == nil {
 		c.Redirect(http.StatusFound, referralRegisterErrorRedirect())
 		return
+	}
+	rawRedirect := strings.TrimSpace(c.Query("redirect"))
+	if rawRedirect != "" {
+		redirectPath := sanitizeReferralRedirectPath(rawRedirect)
+		if redirectPath == "" {
+			c.Redirect(http.StatusFound, referralRegisterErrorRedirect())
+			return
+		}
+		landing.RedirectPath = redirectPath
 	}
 	signed, err := referralService.BuildSignedCookieValue(landing.Code, time.Now())
 	if err == nil {
@@ -220,11 +230,15 @@ func UploadReferralAsset(c *gin.Context) {
 		return
 	}
 	userId := c.GetInt("id")
-	purpose := model.ReferralAssetPurposeWithdrawalQR
-	createdBy := "user"
-	if strings.TrimSpace(c.FullPath()) == "/api/user/admin/referral/upload" {
-		purpose = model.ReferralAssetPurposePaymentProof
-		createdBy = "admin"
+	var req referralUploadRequest
+	if err := c.ShouldBind(&req); err != nil && err.Error() != "EOF" {
+		common.ApiError(c, err)
+		return
+	}
+	purpose, createdBy, err := resolveReferralAssetUploadPurpose(c.FullPath(), strings.TrimSpace(req.Purpose))
+	if err != nil {
+		common.ApiErrorMsg(c, err.Error())
+		return
 	}
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
@@ -261,6 +275,24 @@ func UploadReferralAsset(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, gin.H{"url": referralService.SignAssetURL(assetURL)})
+}
+
+func resolveReferralAssetUploadPurpose(fullPath string, requestedPurpose string) (purpose string, createdBy string, err error) {
+	path := strings.TrimSpace(fullPath)
+	switch path {
+	case service.ReferralUserUploadPath:
+		if requestedPurpose != "" && requestedPurpose != model.ReferralAssetPurposeWithdrawalQR {
+			return "", "", errors.New("invalid referral asset purpose")
+		}
+		return model.ReferralAssetPurposeWithdrawalQR, "user", nil
+	case service.ReferralAdminUploadPath:
+		if requestedPurpose != "" && requestedPurpose != model.ReferralAssetPurposePaymentProof {
+			return "", "", errors.New("invalid referral asset purpose")
+		}
+		return model.ReferralAssetPurposePaymentProof, "admin", nil
+	default:
+		return "", "", errors.New("invalid referral asset upload endpoint")
+	}
 }
 
 func GetReferralAsset(c *gin.Context) {
@@ -357,7 +389,11 @@ func referralCookieValue(c *gin.Context) string {
 	if err != nil {
 		return ""
 	}
-	return strings.TrimSpace(cookie)
+	code, err := referralService.ParseSignedCookieValue(cookie)
+	if err != nil {
+		return ""
+	}
+	return code
 }
 
 func referralBindSource(rawCode string) string {

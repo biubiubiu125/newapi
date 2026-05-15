@@ -101,6 +101,8 @@ func SubscriptionRequestEpay(c *gin.Context) {
 		order.ReferralAffiliateId = snapshot.AffiliateId
 		order.ReferralRate = snapshot.Rate
 		order.ReferralBaseAmount = snapshot.BaseAmount
+		order.ReferralCommissionStatus = snapshot.Status
+		order.ReferralCommissionError = snapshot.Error
 	}
 	if err := order.Insert(); err != nil {
 		common.ApiErrorMsg(c, "创建订单失败")

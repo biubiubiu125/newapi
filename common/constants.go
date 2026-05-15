@@ -26,6 +26,8 @@ var ReferralMinWithdrawAmount = 0.0
 var ReferralWithdrawFee = 0.0
 var ReferralRedirectPath = ""
 var ReferralRequireApproval = true
+var ReferralSigningSecret = ""
+var ReferralAssetSigningSecret = ""
 
 var themeValue atomic.Value // stores string; safe for concurrent read/write
 

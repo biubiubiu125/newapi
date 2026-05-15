@@ -320,26 +320,17 @@ func migrateReferralCleanup() error {
 	legacyOptionKeys := []string{
 		"QuotaForInviter",
 		"QuotaForInvitee",
+		"InviteCode",
+		"InviteUserQuota",
+		"InviterBonus",
+		"InviteeBonus",
 	}
-	if err := DB.Where("key IN ?", legacyOptionKeys).Delete(&Option{}).Error; err != nil {
-		return err
+	if DB.Migrator().HasTable(&Option{}) {
+		if err := DB.Where("key IN ?", legacyOptionKeys).Delete(&Option{}).Error; err != nil {
+			return err
+		}
 	}
 
-	legacyColumns := []string{
-		"aff_code",
-		"aff_count",
-		"aff_quota",
-		"aff_history",
-		"inviter_id",
-	}
-	for _, column := range legacyColumns {
-		if !DB.Migrator().HasColumn("users", column) {
-			continue
-		}
-		if err := DB.Migrator().DropColumn("users", column); err != nil {
-			return fmt.Errorf("failed to drop users.%s: %w", column, err)
-		}
-	}
 	return nil
 }
 

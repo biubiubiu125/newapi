@@ -49,12 +49,15 @@ func TestCreemWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	originalAPIKey := setting.CreemApiKey
 	originalProducts := setting.CreemProducts
 	originalWebhookSecret := setting.CreemWebhookSecret
+	originalTestMode := setting.CreemTestMode
 	t.Cleanup(func() {
 		setting.CreemApiKey = originalAPIKey
 		setting.CreemProducts = originalProducts
 		setting.CreemWebhookSecret = originalWebhookSecret
+		setting.CreemTestMode = originalTestMode
 	})
 
+	setting.CreemTestMode = false
 	setting.CreemWebhookSecret = ""
 	setting.CreemApiKey = "creem_api_key"
 	setting.CreemProducts = `[{"productId":"prod_123"}]`
@@ -65,6 +68,11 @@ func TestCreemWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 
 	setting.CreemProducts = "[]"
 	require.False(t, isCreemWebhookEnabled())
+
+	setting.CreemProducts = `[{"productId":"prod_123"}]`
+	setting.CreemWebhookSecret = ""
+	setting.CreemTestMode = true
+	require.True(t, isCreemWebhookEnabled())
 }
 
 func TestWaffoWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {

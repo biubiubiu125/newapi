@@ -21,8 +21,8 @@ const (
 	ReferralCookieName      = "newapi_referral"
 	referralAssetURLPrefix  = "/referral-assets/"
 	referralDefaultRedirect = "/sign-up"
-	referralAdminUploadPath = "/api/user/admin/referral/upload"
-	referralUserUploadPath  = "/api/user/referral/upload"
+	ReferralAdminUploadPath = "/api/user/admin/referral/upload"
+	ReferralUserUploadPath  = "/api/user/referral/upload"
 )
 
 type ReferralLanding struct {
@@ -175,6 +175,41 @@ type ReferralWithdrawalView struct {
 	CanceledAt       int64   `json:"canceled_at"`
 }
 
+type ReferralLedgerView struct {
+	Id             int     `json:"id"`
+	AffiliateId    int     `json:"affiliate_id"`
+	UserId         int     `json:"user_id"`
+	Username       string  `json:"username,omitempty"`
+	Email          string  `json:"email,omitempty"`
+	CommissionId   int     `json:"commission_id"`
+	WithdrawalId   int     `json:"withdrawal_id"`
+	Type           string  `json:"type"`
+	RefType        string  `json:"ref_type"`
+	RefId          string  `json:"ref_id"`
+	ExternalRefId  string  `json:"external_ref_id"`
+	DeltaPending   float64 `json:"delta_pending"`
+	DeltaAvailable float64 `json:"delta_available"`
+	DeltaFrozen    float64 `json:"delta_frozen"`
+	DeltaWithdrawn float64 `json:"delta_withdrawn"`
+	Remark         string  `json:"remark"`
+	Operator       string  `json:"operator"`
+	CreatedAt      int64   `json:"created_at"`
+}
+
+type ReferralAdminAuditLogView struct {
+	Id           int    `json:"id"`
+	Action       string `json:"action"`
+	TargetUserId int    `json:"target_user_id"`
+	AffiliateId  int    `json:"affiliate_id"`
+	AdminUserId  int    `json:"admin_user_id"`
+	Reason       string `json:"reason"`
+	Ip           string `json:"ip"`
+	UserAgent    string `json:"user_agent"`
+	OldValue     string `json:"old_value"`
+	NewValue     string `json:"new_value"`
+	CreatedAt    int64  `json:"created_at"`
+}
+
 type ReferralOverview struct {
 	TotalAffiliates          int64   `json:"total_affiliates"`
 	PendingAffiliates        int64   `json:"pending_affiliates"`
@@ -207,6 +242,8 @@ type ReferralSnapshot struct {
 	BaseAmount  float64
 	PaidAmount  float64
 	Currency    string
+	Status      string
+	Error       string
 }
 
 type ReferralApplyInput struct {
@@ -301,7 +338,11 @@ func (s *ReferralService) UpdateSettings(input ReferralSettings, adminUserId int
 	if input.WithdrawFee < 0 || math.IsNaN(input.WithdrawFee) || math.IsInf(input.WithdrawFee, 0) {
 		return s.GetSettings(), errors.New("withdraw_fee must be a finite non-negative number")
 	}
-	input.RedirectPath = sanitizeReferralRedirectPath(strings.TrimSpace(input.RedirectPath))
+	rawRedirectPath := strings.TrimSpace(input.RedirectPath)
+	input.RedirectPath = sanitizeReferralRedirectPath(rawRedirectPath)
+	if rawRedirectPath != "" && input.RedirectPath == "" {
+		return s.GetSettings(), errors.New("redirect_path must be an allowed internal path")
+	}
 	if input.RedirectPath == "" {
 		input.RedirectPath = referralDefaultRedirect
 	}
@@ -334,11 +375,21 @@ func (s *ReferralService) UpdateSettings(input ReferralSettings, adminUserId int
 }
 
 func (s *ReferralService) cookieSecret() string {
-	secret := strings.TrimSpace(common.CryptoSecret)
-	if secret != "" {
+	if secret := strings.TrimSpace(common.ReferralSigningSecret); secret != "" {
+		return secret
+	}
+	if secret := strings.TrimSpace(common.CryptoSecret); secret != "" {
 		return secret
 	}
 	return strings.TrimSpace(common.SessionSecret)
+}
+
+func (s *ReferralService) assetSigningSecret() string {
+	secret := strings.TrimSpace(common.ReferralAssetSigningSecret)
+	if secret != "" {
+		return secret
+	}
+	return s.cookieSecret()
 }
 
 func (s *ReferralService) BuildSignedCookieValue(code string, issuedAt time.Time) (string, error) {
@@ -454,37 +505,50 @@ func (s *ReferralService) BuildOrderSnapshot(userId int, paidAmount float64, pai
 	if !s.IsEnabled() || userId <= 0 || paidAmount <= 0 {
 		return nil, nil
 	}
+	snapshot := &ReferralSnapshot{
+		BaseAmount: roundMoney(paidAmount),
+		PaidAmount: roundMoney(paidAmount),
+		Currency:   strings.ToUpper(strings.TrimSpace(paidCurrency)),
+		Status:     model.ReferralCommissionJobStatusSkipped,
+		Error:      "no_binding",
+	}
 	binding := &model.ReferralBinding{}
 	if err := model.DB.Where("invitee_user_id = ?", userId).First(binding).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
+			return snapshot, nil
 		}
 		return nil, err
 	}
 	affiliate := &model.ReferralAffiliate{}
 	if err := model.DB.Where("id = ?", binding.AffiliateId).First(affiliate).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, nil
+			snapshot.Error = "affiliate_not_found"
+			return snapshot, nil
 		}
 		return nil, err
 	}
-	if affiliate.Status != model.ReferralAffiliateStatusApproved || !affiliate.SettlementEnabled || !affiliate.AcquisitionEnabled {
-		return nil, nil
+	if affiliate.Status != model.ReferralAffiliateStatusApproved {
+		snapshot.Error = "affiliate_not_approved"
+		return snapshot, nil
 	}
-	rate := common.ReferralDefaultRate
-	if affiliate.RateOverride != nil && *affiliate.RateOverride > 0 {
-		rate = *affiliate.RateOverride
+	if !affiliate.AcquisitionEnabled {
+		snapshot.Error = "affiliate_acquisition_disabled"
+		return snapshot, nil
 	}
+	if !affiliate.SettlementEnabled {
+		snapshot.Error = "affiliate_settlement_disabled"
+		return snapshot, nil
+	}
+	rate := effectiveReferralRate(affiliate.RateOverride)
 	if rate <= 0 {
-		return nil, nil
+		snapshot.Error = "invalid_rate"
+		return snapshot, nil
 	}
-	return &ReferralSnapshot{
-		AffiliateId: affiliate.Id,
-		Rate:        rate,
-		BaseAmount:  paidAmount,
-		PaidAmount:  paidAmount,
-		Currency:    strings.ToUpper(strings.TrimSpace(paidCurrency)),
-	}, nil
+	snapshot.AffiliateId = affiliate.Id
+	snapshot.Rate = rate
+	snapshot.Status = model.ReferralCommissionJobStatusPending
+	snapshot.Error = ""
+	return snapshot, nil
 }
 
 func (s *ReferralService) BindInviteeByCodeWithTx(tx *gorm.DB, inviteeUserId int, code string, bindSource string) error {
@@ -554,9 +618,13 @@ func (s *ReferralService) ApplyAffiliate(input ReferralApplyInput) (*ReferralPro
 		err := tx.Where("user_id = ?", input.UserId).First(item).Error
 		switch {
 		case errors.Is(err, gorm.ErrRecordNotFound):
+			inviteCode, err := s.generateInviteCodeTx(tx)
+			if err != nil {
+				return err
+			}
 			profile := &model.ReferralAffiliate{
 				UserId:             input.UserId,
-				InviteCode:         s.generateInviteCode(),
+				InviteCode:         inviteCode,
 				Status:             model.ReferralAffiliateStatusPending,
 				SourceType:         "user_apply",
 				ApplicantNote:      strings.TrimSpace(input.ApplicantNote),
@@ -605,7 +673,11 @@ func (s *ReferralService) ApplyAffiliate(input ReferralApplyInput) (*ReferralPro
 				item.ApprovedAt = now
 			}
 			if item.InviteCode == "" {
-				item.InviteCode = s.generateInviteCode()
+				inviteCode, err := s.generateInviteCodeTx(tx)
+				if err != nil {
+					return err
+				}
+				item.InviteCode = inviteCode
 			}
 			if err := tx.Save(item).Error; err != nil {
 				return err
@@ -630,6 +702,7 @@ func (s *ReferralService) GetProfile(userId int) (*ReferralProfile, error) {
 		}
 		return nil, err
 	}
+	sanitizeAffiliateState(item)
 	return toReferralProfile(item), nil
 }
 
@@ -638,17 +711,18 @@ func (s *ReferralService) GetSummary(userId int) (*ReferralSummary, error) {
 	if err := model.DB.Where("user_id = ?", userId).First(affiliate).Error; err != nil {
 		return nil, err
 	}
-	account, _ := s.getOrCreateAccount(affiliate.Id, affiliate.UserId)
+	sanitizeAffiliateState(affiliate)
+	account, err := s.getOrCreateAccount(affiliate.Id, affiliate.UserId)
+	if err != nil {
+		return nil, err
+	}
 	clickCount := int64(0)
 	_ = model.DB.Model(&model.ReferralClick{}).Where("affiliate_id = ?", affiliate.Id).Count(&clickCount).Error
 	boundCount := int64(0)
 	_ = model.DB.Model(&model.ReferralBinding{}).Where("affiliate_id = ?", affiliate.Id).Count(&boundCount).Error
 	paidCount := int64(0)
 	_ = model.DB.Model(&model.ReferralCommission{}).Where("affiliate_id = ? AND commission_amount > 0", affiliate.Id).Distinct("invitee_user_id").Count(&paidCount).Error
-	rate := common.ReferralDefaultRate
-	if affiliate.RateOverride != nil && *affiliate.RateOverride > 0 {
-		rate = *affiliate.RateOverride
-	}
+	rate := effectiveReferralRate(affiliate.RateOverride)
 	return &ReferralSummary{
 		Status:             affiliate.Status,
 		InviteCode:         affiliate.InviteCode,
@@ -715,6 +789,107 @@ func (s *ReferralService) ListCommissionJobs(params ReferralListParams) ([]Refer
 			SucceededAt:   row.SucceededAt,
 			FailedAt:      row.FailedAt,
 			UpdatedAt:     row.UpdatedAt,
+		})
+	}
+	return items, total, nil
+}
+
+func sanitizeAffiliateState(item *model.ReferralAffiliate) {
+	if item == nil {
+		return
+	}
+	switch item.Status {
+	case model.ReferralAffiliateStatusApproved:
+		// Keep stored flags as the source of truth for approved affiliates.
+	case model.ReferralAffiliateStatusPending, model.ReferralAffiliateStatusRejected, model.ReferralAffiliateStatusDisabled:
+		item.AcquisitionEnabled = false
+		item.SettlementEnabled = false
+		item.WithdrawalEnabled = false
+	}
+}
+
+func (s *ReferralService) ListLedgers(params ReferralListParams) ([]ReferralLedgerView, int64, error) {
+	page, pageSize := normalizePage(params.Page, params.PageSize)
+	query := model.DB.Model(&model.ReferralCommissionLedger{})
+	if keyword := strings.TrimSpace(params.Keyword); keyword != "" {
+		query = query.Where(
+			"type LIKE ? OR ref_type LIKE ? OR external_ref_id LIKE ? OR remark LIKE ?",
+			"%"+keyword+"%",
+			"%"+keyword+"%",
+			"%"+keyword+"%",
+			"%"+keyword+"%",
+		)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var rows []model.ReferralCommissionLedger
+	if err := query.Order("created_at desc, id desc").Limit(pageSize).Offset((page - 1) * pageSize).Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	items := make([]ReferralLedgerView, 0, len(rows))
+	for _, row := range rows {
+		user := &model.User{}
+		_ = model.DB.Select("username,email").Where("id = ?", row.UserId).First(user).Error
+		items = append(items, ReferralLedgerView{
+			Id:             row.Id,
+			AffiliateId:    row.AffiliateId,
+			UserId:         row.UserId,
+			Username:       user.Username,
+			Email:          user.Email,
+			CommissionId:   row.CommissionId,
+			WithdrawalId:   row.WithdrawalId,
+			Type:           row.Type,
+			RefType:        row.RefType,
+			RefId:          row.RefId,
+			ExternalRefId:  row.ExternalRefId,
+			DeltaPending:   row.DeltaPending,
+			DeltaAvailable: row.DeltaAvailable,
+			DeltaFrozen:    row.DeltaFrozen,
+			DeltaWithdrawn: row.DeltaWithdrawn,
+			Remark:         row.Remark,
+			Operator:       row.Operator,
+			CreatedAt:      row.CreatedAt,
+		})
+	}
+	return items, total, nil
+}
+
+func (s *ReferralService) ListAdminAuditLogs(params ReferralListParams) ([]ReferralAdminAuditLogView, int64, error) {
+	page, pageSize := normalizePage(params.Page, params.PageSize)
+	query := model.DB.Model(&model.ReferralAdminAuditLog{})
+	if keyword := strings.TrimSpace(params.Keyword); keyword != "" {
+		query = query.Where(
+			"action LIKE ? OR reason LIKE ? OR old_value LIKE ? OR new_value LIKE ?",
+			"%"+keyword+"%",
+			"%"+keyword+"%",
+			"%"+keyword+"%",
+			"%"+keyword+"%",
+		)
+	}
+	var total int64
+	if err := query.Count(&total).Error; err != nil {
+		return nil, 0, err
+	}
+	var rows []model.ReferralAdminAuditLog
+	if err := query.Order("created_at desc, id desc").Limit(pageSize).Offset((page - 1) * pageSize).Find(&rows).Error; err != nil {
+		return nil, 0, err
+	}
+	items := make([]ReferralAdminAuditLogView, 0, len(rows))
+	for _, row := range rows {
+		items = append(items, ReferralAdminAuditLogView{
+			Id:           row.Id,
+			Action:       row.Action,
+			TargetUserId: row.TargetUserId,
+			AffiliateId:  row.AffiliateId,
+			AdminUserId:  row.AdminUserId,
+			Reason:       row.Reason,
+			Ip:           row.Ip,
+			UserAgent:    row.UserAgent,
+			OldValue:     row.OldValue,
+			NewValue:     row.NewValue,
+			CreatedAt:    row.CreatedAt,
 		})
 	}
 	return items, total, nil
@@ -850,7 +1025,7 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 		}); err != nil {
 			return err
 		}
-		return s.recordAdminAudit("referral_withdrawal_create", input.UserId, affiliate.Id, input.UserId, strings.TrimSpace(input.ApplicantNote), "", "", nil, map[string]any{
+		return s.recordAdminAuditTx(tx, "referral_withdrawal_create", input.UserId, affiliate.Id, input.UserId, strings.TrimSpace(input.ApplicantNote), "", "", nil, map[string]any{
 			"withdrawal_id":   withdrawal.Id,
 			"amount":          withdrawal.Amount,
 			"idempotency_key": withdrawal.IdempotencyKey,
@@ -924,7 +1099,7 @@ func (s *ReferralService) CancelWithdrawal(withdrawalId int, userId int) (*Refer
 		}); err != nil {
 			return err
 		}
-		return s.recordAdminAudit("referral_withdrawal_cancel", userId, withdrawal.AffiliateId, userId, "", "", "", nil, map[string]any{
+		return s.recordAdminAuditTx(tx, "referral_withdrawal_cancel", userId, withdrawal.AffiliateId, userId, "", "", "", nil, map[string]any{
 			"withdrawal_id": withdrawal.Id,
 			"amount":        withdrawal.Amount,
 		})
@@ -956,7 +1131,7 @@ func (s *ReferralService) ApproveWithdrawal(input ReferralWithdrawalReviewInput)
 		if res.RowsAffected != 1 {
 			return errors.New("only pending withdrawals can be approved")
 		}
-		return s.recordAdminAudit("referral_withdrawal_approve", withdrawal.UserId, withdrawal.AffiliateId, input.AdminUserId, strings.TrimSpace(input.AdminNote), "", "", nil, map[string]any{
+		return s.recordAdminAuditTx(tx, "referral_withdrawal_approve", withdrawal.UserId, withdrawal.AffiliateId, input.AdminUserId, strings.TrimSpace(input.AdminNote), "", "", nil, map[string]any{
 			"withdrawal_id": withdrawal.Id,
 		})
 	})
@@ -1025,7 +1200,7 @@ func (s *ReferralService) RejectWithdrawal(input ReferralWithdrawalReviewInput) 
 		}); err != nil {
 			return err
 		}
-		return s.recordAdminAudit("referral_withdrawal_reject", withdrawal.UserId, withdrawal.AffiliateId, input.AdminUserId, strings.TrimSpace(input.RejectReason), "", "", nil, map[string]any{
+		return s.recordAdminAuditTx(tx, "referral_withdrawal_reject", withdrawal.UserId, withdrawal.AffiliateId, input.AdminUserId, strings.TrimSpace(input.RejectReason), "", "", nil, map[string]any{
 			"withdrawal_id": withdrawal.Id,
 		})
 	})
@@ -1036,7 +1211,7 @@ func (s *ReferralService) RejectWithdrawal(input ReferralWithdrawalReviewInput) 
 }
 
 func (s *ReferralService) MarkWithdrawalPaid(input ReferralWithdrawalPayInput) (*ReferralWithdrawalView, error) {
-	if strings.TrimSpace(input.PaymentTxnNo) == "" && strings.TrimSpace(input.PaymentProofURL) == "" && strings.TrimSpace(input.AdminNote) == "" {
+	if strings.TrimSpace(input.PaymentTxnNo) == "" && strings.TrimSpace(input.PaymentProofURL) == "" {
 		return nil, errors.New("payment_txn_no or payment_proof_url is required")
 	}
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
@@ -1100,7 +1275,7 @@ func (s *ReferralService) MarkWithdrawalPaid(input ReferralWithdrawalPayInput) (
 		}); err != nil {
 			return err
 		}
-		return s.recordAdminAudit("referral_withdrawal_paid", withdrawal.UserId, withdrawal.AffiliateId, input.AdminUserId, strings.TrimSpace(input.AdminNote), "", "", nil, map[string]any{
+		return s.recordAdminAuditTx(tx, "referral_withdrawal_paid", withdrawal.UserId, withdrawal.AffiliateId, input.AdminUserId, strings.TrimSpace(input.AdminNote), "", "", nil, map[string]any{
 			"withdrawal_id":     withdrawal.Id,
 			"payment_txn_no":    strings.TrimSpace(input.PaymentTxnNo),
 			"payment_proof_url": strings.TrimSpace(input.PaymentProofURL),
@@ -1155,9 +1330,21 @@ func (s *ReferralService) AdjustAffiliateCommission(input ReferralAdjustInput) (
 			Remark:         strings.TrimSpace(input.Remark),
 			CreatedAt:      time.Now().Unix(),
 		}
+		existingLedger := &model.ReferralCommissionLedger{}
+		if err := tx.Where("external_ref_id = ?", ledger.ExternalRefId).First(existingLedger).Error; err == nil {
+			if sameAdjustmentPayload(existingLedger, affiliate.Id, affiliate.UserId, input.Delta, input.Remark) {
+				return nil
+			}
+			return errors.New("idempotency key conflicts with different payload")
+		} else if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
 		if err := s.createLedgerTx(tx, ledger); err != nil {
 			if isDuplicateError(err) {
-				return nil
+				if err := tx.Where("external_ref_id = ?", ledger.ExternalRefId).First(existingLedger).Error; err == nil && sameAdjustmentPayload(existingLedger, affiliate.Id, affiliate.UserId, input.Delta, input.Remark) {
+					return nil
+				}
+				return errors.New("idempotency key conflicts with different payload")
 			}
 			return err
 		}
@@ -1172,7 +1359,7 @@ func (s *ReferralService) AdjustAffiliateCommission(input ReferralAdjustInput) (
 		if res.RowsAffected != 1 {
 			return errors.New("available referral balance is insufficient")
 		}
-		return s.recordAdminAudit("referral_affiliate_adjust", input.UserId, affiliate.Id, input.AdminUserId, strings.TrimSpace(input.Remark), "", "", nil, map[string]any{
+		return s.recordAdminAuditTx(tx, "referral_affiliate_adjust", input.UserId, affiliate.Id, input.AdminUserId, strings.TrimSpace(input.Remark), "", "", nil, map[string]any{
 			"amount":          roundMoney(input.Delta),
 			"idempotency_key": strings.TrimSpace(input.IdempotencyKey),
 		})
@@ -1267,17 +1454,25 @@ func (s *ReferralService) ListAffiliateBindings(affiliateUserId int, params Refe
 
 func (s *ReferralService) ApproveAffiliate(userId int, adminUserId int, rateOverride *float64, ip, userAgent string) (*ReferralAffiliateView, error) {
 	now := time.Now().Unix()
-	err := model.DB.Transaction(func(tx *gorm.DB) error {
+	normalizedRate, err := normalizeReferralRateOverride(rateOverride)
+	if err != nil {
+		return nil, err
+	}
+	err = model.DB.Transaction(func(tx *gorm.DB) error {
 		item := &model.ReferralAffiliate{}
-		err := tx.Where("user_id = ?", userId).First(item).Error
+		lookupErr := tx.Where("user_id = ?", userId).First(item).Error
 		switch {
-		case errors.Is(err, gorm.ErrRecordNotFound):
+		case errors.Is(lookupErr, gorm.ErrRecordNotFound):
+			inviteCode, err := s.generateInviteCodeTx(tx)
+			if err != nil {
+				return err
+			}
 			item = &model.ReferralAffiliate{
 				UserId:             userId,
-				InviteCode:         s.generateInviteCode(),
+				InviteCode:         inviteCode,
 				Status:             model.ReferralAffiliateStatusApproved,
 				SourceType:         "admin_created",
-				RateOverride:       rateOverride,
+				RateOverride:       normalizedRate,
 				AcquisitionEnabled: true,
 				SettlementEnabled:  true,
 				WithdrawalEnabled:  true,
@@ -1287,13 +1482,22 @@ func (s *ReferralService) ApproveAffiliate(userId int, adminUserId int, rateOver
 			if err := tx.Create(item).Error; err != nil {
 				return err
 			}
+			if err := s.recordAdminAuditTx(tx, "referral_affiliate_approve", userId, item.Id, adminUserId, "", ip, userAgent, map[string]any{
+				"status":        nil,
+				"rate_override": nil,
+			}, map[string]any{
+				"status":        item.Status,
+				"rate_override": item.RateOverride,
+			}); err != nil {
+				return err
+			}
 			return s.ensureCommissionAccountTx(tx, item.Id, item.UserId)
-		case err != nil:
-			return err
+		case lookupErr != nil:
+			return lookupErr
 		default:
 			oldValue := map[string]any{"status": item.Status, "rate_override": item.RateOverride}
 			item.Status = model.ReferralAffiliateStatusApproved
-			item.RateOverride = rateOverride
+			item.RateOverride = normalizedRate
 			item.AcquisitionEnabled = true
 			item.SettlementEnabled = true
 			item.WithdrawalEnabled = true
@@ -1303,7 +1507,11 @@ func (s *ReferralService) ApproveAffiliate(userId int, adminUserId int, rateOver
 			item.DisabledBy = 0
 			item.RiskReason = ""
 			if item.InviteCode == "" {
-				item.InviteCode = s.generateInviteCode()
+				inviteCode, err := s.generateInviteCodeTx(tx)
+				if err != nil {
+					return err
+				}
+				item.InviteCode = inviteCode
 			}
 			if err := tx.Save(item).Error; err != nil {
 				return err
@@ -1311,7 +1519,7 @@ func (s *ReferralService) ApproveAffiliate(userId int, adminUserId int, rateOver
 			if err := s.ensureCommissionAccountTx(tx, item.Id, item.UserId); err != nil {
 				return err
 			}
-			_ = s.recordAdminAudit("referral_affiliate_approve", userId, item.Id, adminUserId, "", ip, userAgent, oldValue, map[string]any{"status": item.Status, "rate_override": item.RateOverride})
+			_ = s.recordAdminAuditTx(tx, "referral_affiliate_approve", userId, item.Id, adminUserId, "", ip, userAgent, oldValue, map[string]any{"status": item.Status, "rate_override": item.RateOverride})
 			return nil
 		}
 	})
@@ -1322,17 +1530,21 @@ func (s *ReferralService) ApproveAffiliate(userId int, adminUserId int, rateOver
 }
 
 func (s *ReferralService) SetAffiliateRateOverride(userId int, adminUserId int, rateOverride *float64, reason, ip, userAgent string) (*ReferralAffiliateView, error) {
-	err := model.DB.Transaction(func(tx *gorm.DB) error {
+	normalizedRate, err := normalizeReferralRateOverride(rateOverride)
+	if err != nil {
+		return nil, err
+	}
+	err = model.DB.Transaction(func(tx *gorm.DB) error {
 		item := &model.ReferralAffiliate{}
 		if err := tx.Where("user_id = ?", userId).First(item).Error; err != nil {
 			return err
 		}
 		oldValue := map[string]any{"rate_override": item.RateOverride}
-		item.RateOverride = rateOverride
+		item.RateOverride = normalizedRate
 		if err := tx.Save(item).Error; err != nil {
 			return err
 		}
-		return s.recordAdminAudit("referral_affiliate_rate", userId, item.Id, adminUserId, reason, ip, userAgent, oldValue, map[string]any{"rate_override": rateOverride})
+		return s.recordAdminAuditTx(tx, "referral_affiliate_rate", userId, item.Id, adminUserId, reason, ip, userAgent, oldValue, map[string]any{"rate_override": normalizedRate})
 	})
 	if err != nil {
 		return nil, err
@@ -1392,7 +1604,11 @@ func (s *ReferralService) RunSettlementBatch() (*model.ReferralSettlementBatch, 
 	}
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		var commissions []model.ReferralCommission
-		if err := tx.Where("status = ? AND settle_at > 0 AND settle_at <= ?", model.ReferralCommissionStatusPending, now).Order("settle_at asc, id asc").Limit(200).Find(&commissions).Error; err != nil {
+		locking := clause.Locking{Strength: "UPDATE"}
+		if !common.UsingSQLite {
+			locking.Options = "SKIP LOCKED"
+		}
+		if err := tx.Clauses(locking).Where("status = ? AND settle_at > 0 AND settle_at <= ?", model.ReferralCommissionStatusPending, now).Order("settle_at asc, id asc").Limit(200).Find(&commissions).Error; err != nil {
 			return err
 		}
 		batch.ScannedCount = len(commissions)
@@ -1475,7 +1691,11 @@ func (s *ReferralService) RunSettlementBatchInline() (int, error) {
 	settled := 0
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		var commissions []model.ReferralCommission
-		if err := tx.Where("status = ? AND settle_at > 0 AND settle_at <= ?", model.ReferralCommissionStatusPending, now).Order("settle_at asc, id asc").Limit(200).Find(&commissions).Error; err != nil {
+		locking := clause.Locking{Strength: "UPDATE"}
+		if !common.UsingSQLite {
+			locking.Options = "SKIP LOCKED"
+		}
+		if err := tx.Clauses(locking).Where("status = ? AND settle_at > 0 AND settle_at <= ?", model.ReferralCommissionStatusPending, now).Order("settle_at asc, id asc").Limit(200).Find(&commissions).Error; err != nil {
 			return err
 		}
 		for _, commission := range commissions {
@@ -1747,7 +1967,7 @@ func (s *ReferralService) SignAssetURL(publicPath string) string {
 	if publicPath == "" {
 		return ""
 	}
-	secret := s.cookieSecret()
+	secret := s.assetSigningSecret()
 	if secret == "" {
 		return ""
 	}
@@ -1758,7 +1978,7 @@ func (s *ReferralService) SignAssetURL(publicPath string) string {
 }
 
 func (s *ReferralService) VerifyAssetURL(publicPath, expires, sig string) bool {
-	secret := s.cookieSecret()
+	secret := s.assetSigningSecret()
 	if secret == "" {
 		return false
 	}
@@ -1863,6 +2083,20 @@ func (s *ReferralService) generateInviteCode() string {
 	return strings.ToUpper(common.GetRandomString(8))
 }
 
+func (s *ReferralService) generateInviteCodeTx(tx *gorm.DB) (string, error) {
+	for range 16 {
+		code := s.generateInviteCode()
+		var count int64
+		if err := tx.Model(&model.ReferralAffiliate{}).Where("invite_code = ?", code).Count(&count).Error; err != nil {
+			return "", err
+		}
+		if count == 0 {
+			return code, nil
+		}
+	}
+	return "", errors.New("failed to generate unique invite code")
+}
+
 func (s *ReferralService) hasBindingCycle(tx *gorm.DB, inviteeUserId, inviterUserId int) (bool, error) {
 	current := inviterUserId
 	visited := map[int]struct{}{inviteeUserId: {}}
@@ -1921,6 +2155,24 @@ func validateReferralRate(rate float64) error {
 	return nil
 }
 
+func normalizeReferralRateOverride(rate *float64) (*float64, error) {
+	if rate == nil {
+		return nil, nil
+	}
+	if err := validateReferralRate(*rate); err != nil {
+		return nil, err
+	}
+	normalized := roundMoney(*rate)
+	return &normalized, nil
+}
+
+func effectiveReferralRate(rateOverride *float64) float64 {
+	if rateOverride != nil {
+		return roundMoney(*rateOverride)
+	}
+	return roundMoney(common.ReferralDefaultRate)
+}
+
 func (s *ReferralService) validateWithdrawalAssetTx(tx *gorm.DB, userId int, assetURL string, purpose string) error {
 	assetURL = strings.TrimSpace(assetURL)
 	if assetURL == "" {
@@ -1971,8 +2223,18 @@ func sameWithdrawalRequest(existing *model.ReferralWithdrawal, input ReferralWit
 		strings.TrimSpace(existing.AccountName) == strings.TrimSpace(input.AccountName) &&
 		strings.TrimSpace(existing.AccountNo) == strings.TrimSpace(input.AccountNo) &&
 		strings.EqualFold(strings.TrimSpace(existing.AccountNetwork), strings.TrimSpace(input.AccountNetwork)) &&
-		strings.TrimSpace(existing.QRImageURL) == strings.TrimSpace(input.QRImageURL) &&
+		stripAssetSignature(existing.QRImageURL) == stripAssetSignature(input.QRImageURL) &&
 		strings.TrimSpace(existing.ApplicantNote) == strings.TrimSpace(input.ApplicantNote)
+}
+
+func sameAdjustmentPayload(existing *model.ReferralCommissionLedger, affiliateId int, userId int, delta float64, remark string) bool {
+	if existing == nil {
+		return false
+	}
+	return existing.AffiliateId == affiliateId &&
+		existing.UserId == userId &&
+		roundMoney(existing.DeltaAvailable) == roundMoney(delta) &&
+		strings.TrimSpace(existing.Remark) == strings.TrimSpace(remark)
 }
 
 func (s *ReferralService) createLedgerTx(tx *gorm.DB, ledger *model.ReferralCommissionLedger) error {
@@ -2014,7 +2276,13 @@ func (s *ReferralService) getOrCreateAccountTx(tx *gorm.DB, affiliateId int, use
 			UserId:      userId,
 		}
 		if err := tx.Create(account).Error; err != nil {
-			return nil, err
+			if !isDuplicateError(err) {
+				return nil, err
+			}
+			account = &model.ReferralCommissionAccount{}
+			if err := tx.Where("affiliate_id = ?", affiliateId).First(account).Error; err != nil {
+				return nil, err
+			}
 		}
 	}
 	return account, nil
@@ -2026,19 +2294,20 @@ func (s *ReferralService) ensureCommissionAccountTx(tx *gorm.DB, affiliateId int
 }
 
 func (s *ReferralService) buildAffiliateView(affiliate *model.ReferralAffiliate) (*ReferralAffiliateView, error) {
+	sanitizeAffiliateState(affiliate)
 	user := &model.User{}
 	_ = model.DB.Select("username,email").Where("id = ?", affiliate.UserId).First(user).Error
-	account, _ := s.getOrCreateAccount(affiliate.Id, affiliate.UserId)
+	account, err := s.getOrCreateAccount(affiliate.Id, affiliate.UserId)
+	if err != nil {
+		return nil, err
+	}
 	clickCount := int64(0)
 	boundCount := int64(0)
 	paidCount := int64(0)
 	_ = model.DB.Model(&model.ReferralClick{}).Where("affiliate_id = ?", affiliate.Id).Count(&clickCount).Error
 	_ = model.DB.Model(&model.ReferralBinding{}).Where("affiliate_id = ?", affiliate.Id).Count(&boundCount).Error
 	_ = model.DB.Model(&model.ReferralCommission{}).Where("affiliate_id = ? AND commission_amount > 0", affiliate.Id).Distinct("invitee_user_id").Count(&paidCount).Error
-	rate := common.ReferralDefaultRate
-	if affiliate.RateOverride != nil && *affiliate.RateOverride > 0 {
-		rate = *affiliate.RateOverride
-	}
+	rate := effectiveReferralRate(affiliate.RateOverride)
 	return &ReferralAffiliateView{
 		Id:                 affiliate.Id,
 		UserId:             affiliate.UserId,
@@ -2089,9 +2358,6 @@ func toReferralProfile(item *model.ReferralAffiliate) *ReferralProfile {
 }
 
 func (s *ReferralService) listCommissions(params ReferralListParams, affiliateId int, global bool) ([]ReferralCommissionView, int64, error) {
-	if err := s.SettleDueCommissions(); err != nil {
-		return nil, 0, err
-	}
 	page, pageSize := normalizePage(params.Page, params.PageSize)
 	query := model.DB.Model(&model.ReferralCommission{})
 	if !global {
@@ -2222,7 +2488,7 @@ func (s *ReferralService) buildWithdrawalView(row *model.ReferralWithdrawal, adm
 func (s *ReferralService) allocateWithdrawalItemsTx(tx *gorm.DB, affiliateId int, withdrawalId int, amount float64) error {
 	remaining := roundMoney(amount)
 	var commissions []model.ReferralCommission
-	if err := tx.Where("affiliate_id = ? AND status IN ?", affiliateId, []string{model.ReferralCommissionStatusAvailable, model.ReferralCommissionStatusFrozen, model.ReferralCommissionStatusPaid}).Order("available_at asc, id asc").Find(&commissions).Error; err != nil {
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("affiliate_id = ? AND status IN ?", affiliateId, []string{model.ReferralCommissionStatusAvailable, model.ReferralCommissionStatusFrozen, model.ReferralCommissionStatusPaid}).Order("available_at asc, id asc").Find(&commissions).Error; err != nil {
 		return err
 	}
 	for _, commission := range commissions {
@@ -2384,7 +2650,7 @@ func (s *ReferralService) updateAffiliateStatus(userId, adminUserId int, status 
 		if err := tx.Save(item).Error; err != nil {
 			return err
 		}
-		return s.recordAdminAudit(action, userId, item.Id, adminUserId, reason, ip, userAgent, oldValue, map[string]any{
+		return s.recordAdminAuditTx(tx, action, userId, item.Id, adminUserId, reason, ip, userAgent, oldValue, map[string]any{
 			"status":              item.Status,
 			"acquisition_enabled": item.AcquisitionEnabled,
 			"settlement_enabled":  item.SettlementEnabled,
@@ -2416,7 +2682,7 @@ func (s *ReferralService) updateAffiliateFlags(userId, adminUserId int, settleme
 		if err := tx.Save(item).Error; err != nil {
 			return err
 		}
-		return s.recordAdminAudit(action, userId, item.Id, adminUserId, reason, ip, userAgent, oldValue, map[string]any{
+		return s.recordAdminAuditTx(tx, action, userId, item.Id, adminUserId, reason, ip, userAgent, oldValue, map[string]any{
 			"settlement_enabled": item.SettlementEnabled,
 			"withdrawal_enabled": item.WithdrawalEnabled,
 		})
@@ -2428,6 +2694,10 @@ func (s *ReferralService) updateAffiliateFlags(userId, adminUserId int, settleme
 }
 
 func (s *ReferralService) recordAdminAudit(action string, targetUserId int, affiliateId int, adminUserId int, reason, ip, userAgent string, oldValue, newValue map[string]any) error {
+	return s.recordAdminAuditTx(nil, action, targetUserId, affiliateId, adminUserId, reason, ip, userAgent, oldValue, newValue)
+}
+
+func (s *ReferralService) recordAdminAuditTx(tx *gorm.DB, action string, targetUserId int, affiliateId int, adminUserId int, reason, ip, userAgent string, oldValue, newValue map[string]any) error {
 	log := &model.ReferralAdminAuditLog{
 		Action:       strings.TrimSpace(action),
 		TargetUserId: targetUserId,
@@ -2439,7 +2709,11 @@ func (s *ReferralService) recordAdminAudit(action string, targetUserId int, affi
 		OldValue:     common.MapToJsonStr(oldValue),
 		NewValue:     common.MapToJsonStr(newValue),
 	}
-	return model.DB.Create(log).Error
+	db := model.DB
+	if tx != nil {
+		db = tx
+	}
+	return db.Create(log).Error
 }
 
 func maskAccountNo(value string) string {
@@ -2455,7 +2729,7 @@ func maskAccountNo(value string) string {
 }
 
 func roundMoney(value float64) float64 {
-	return float64(int64(value*1e8+0.5)) / 1e8
+	return math.Round(value*1e8) / 1e8
 }
 
 func normalizePage(page, pageSize int) (int, int) {

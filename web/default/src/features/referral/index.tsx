@@ -16,14 +16,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { formatTimestamp } from '@/lib/format'
+import { formatCurrencyUSD, formatTimestamp } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SectionPageLayout } from '@/components/layout'
 import {
@@ -34,6 +42,7 @@ import {
   getReferralSummary,
   listReferralCommissions,
   listReferralWithdrawals,
+  uploadReferralAsset,
 } from './api'
 import type {
   ReferralCommission,
@@ -71,28 +80,43 @@ const SECTION_META: Record<
   },
 }
 
+const ACCOUNT_TYPE_OPTIONS = [
+  { value: 'alipay', label: 'Alipay' },
+  { value: 'wechat', label: 'WeChat Pay' },
+  { value: 'usdt', label: 'USDT' },
+] as const
+
+const ACCOUNT_NETWORK_OPTIONS = ['TRC20', 'BEP20', 'POLYGON'] as const
+
 function formatMoney(value: number): string {
-  return `¥${(value || 0).toFixed(2)}`
+  return formatCurrencyUSD(value || 0)
 }
 
-function statusLabel(value: string): string {
+function buildIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function statusLabel(value: string, t: (key: string) => string): string {
   switch (value) {
     case 'pending':
-      return 'Pending'
+      return t('Pending')
     case 'approved':
-      return 'Approved'
+      return t('Approved')
     case 'paid':
-      return 'Paid'
+      return t('Paid')
     case 'rejected':
-      return 'Rejected'
+      return t('Rejected')
     case 'canceled':
-      return 'Canceled'
+      return t('Canceled')
     case 'available':
-      return 'Available'
+      return t('Available')
     case 'frozen':
-      return 'Frozen'
+      return t('Frozen')
     case 'disabled':
-      return 'Disabled'
+      return t('Disabled')
     default:
       return value || '-'
   }
@@ -112,25 +136,46 @@ export function Referral() {
   const [summary, setSummary] = useState<ReferralSummary | null>(null)
   const [commissions, setCommissions] = useState<ReferralCommission[]>([])
   const [withdrawals, setWithdrawals] = useState<ReferralWithdrawal[]>([])
+  const [commissionPage, setCommissionPage] = useState(1)
+  const [commissionPageSize, setCommissionPageSize] = useState(20)
+  const [commissionTotal, setCommissionTotal] = useState(0)
+  const [withdrawalPage, setWithdrawalPage] = useState(1)
+  const [withdrawalPageSize, setWithdrawalPageSize] = useState(20)
+  const [withdrawalTotal, setWithdrawalTotal] = useState(0)
   const [applicantNote, setApplicantNote] = useState('')
-  const [withdrawAmount, setWithdrawAmount] = useState('')
-  const [accountType, setAccountType] = useState('alipay')
-  const [accountName, setAccountName] = useState('')
-  const [accountNo, setAccountNo] = useState('')
-  const [accountNetwork, setAccountNetwork] = useState('TRC20')
+  const [withdrawForm, setWithdrawForm] = useState({
+    amount: '',
+    account_type: 'alipay',
+    account_name: '',
+    account_no: '',
+    account_network: 'TRC20',
+    qr_image_url: '',
+    applicant_note: '',
+  })
   const [applying, setApplying] = useState(false)
   const [submittingWithdrawal, setSubmittingWithdrawal] = useState(false)
+  const [uploading, setUploading] = useState(false)
+  const [cancelTarget, setCancelTarget] = useState<ReferralWithdrawal | null>(null)
+  const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const canViewDashboard =
     profile?.status === 'approved' || profile?.status === 'disabled'
   const canWithdraw = profile?.status === 'approved' && profile.withdrawal_enabled
-
   const pageMeta = SECTION_META[activeSection]
 
   const inviteLink = useMemo(() => {
     if (!summary?.invite_code || typeof window === 'undefined') return ''
     return `${window.location.origin}/r/${encodeURIComponent(summary.invite_code)}`
   }, [summary?.invite_code])
+
+  const rejectedReason = profile?.risk_reason || profile?.risk_note || ''
+
+  function updateWithdrawForm(
+    key: keyof typeof withdrawForm,
+    value: string
+  ): void {
+    setWithdrawForm((prev) => ({ ...prev, [key]: value }))
+  }
 
   async function loadBase() {
     setLoading(true)
@@ -152,88 +197,171 @@ export function Referral() {
     }
   }
 
-  async function loadCommissions() {
-    const res = await listReferralCommissions({ p: 1, page_size: 20 })
+  async function loadCommissions(page = commissionPage, pageSize = commissionPageSize) {
+    const res = await listReferralCommissions({
+      p: page,
+      page_size: pageSize,
+    })
     setCommissions(res.data?.items || [])
+    setCommissionTotal(res.data?.total || 0)
   }
 
-  async function loadWithdrawals() {
-    const res = await listReferralWithdrawals({ p: 1, page_size: 20 })
+  async function loadWithdrawals(page = withdrawalPage, pageSize = withdrawalPageSize) {
+    const res = await listReferralWithdrawals({
+      p: page,
+      page_size: pageSize,
+    })
     setWithdrawals(res.data?.items || [])
+    setWithdrawalTotal(res.data?.total || 0)
+  }
+
+  async function handleCopyInviteLink() {
+    if (!inviteLink) {
+      toast.error(t('No referral link is available yet'))
+      return
+    }
+    try {
+      await navigator.clipboard.writeText(inviteLink)
+      toast.success(t('Referral link copied'))
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : t('Copy failed'))
+    }
   }
 
   async function handleApply() {
     setApplying(true)
     try {
-      const res = await applyReferralAffiliate(applicantNote)
+      const res = await applyReferralAffiliate(applicantNote.trim())
       if (res.success) {
         toast.success(t('Application submitted'))
         setApplicantNote('')
         await loadBase()
+      } else {
+        toast.error(res.message || t('Application failed'))
       }
     } finally {
       setApplying(false)
     }
   }
 
+  async function handleUploadReferralAsset(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    setUploading(true)
+    try {
+      const res = await uploadReferralAsset(file)
+      if (res.success && res.data?.url) {
+        updateWithdrawForm('qr_image_url', res.data.url)
+        toast.success(t('QR code uploaded'))
+      } else {
+        toast.error(res.message || t('Upload failed'))
+      }
+    } finally {
+      setUploading(false)
+      if (fileInputRef.current) {
+        fileInputRef.current.value = ''
+      }
+    }
+  }
+
   async function handleWithdrawalSubmit() {
-    const amount = Number(withdrawAmount)
-    if (!amount || amount <= 0) {
+    if (withdrawForm.amount.trim() === '') {
       toast.error(t('Please enter a valid amount'))
       return
     }
+    const amount = Number(withdrawForm.amount)
+    if (!Number.isFinite(amount) || amount <= 0) {
+      toast.error(t('Please enter a valid amount'))
+      return
+    }
+    if (!withdrawForm.account_no.trim()) {
+      toast.error(t('Please enter an account number'))
+      return
+    }
+    if (withdrawForm.account_type !== 'usdt' && !withdrawForm.account_name.trim()) {
+      toast.error(t('Please enter the payee name'))
+      return
+    }
+    if (withdrawForm.account_type === 'usdt' && !withdrawForm.account_network.trim()) {
+      toast.error(t('Please select the network'))
+      return
+    }
+
     setSubmittingWithdrawal(true)
     try {
-      const idempotencyKey =
-        globalThis.crypto?.randomUUID?.() ||
-        `${Date.now()}-${Math.random().toString(36).slice(2)}`
+      const idempotencyKey = buildIdempotencyKey()
       const res = await createReferralWithdrawal({
         amount,
-        account_type: accountType,
-        account_name: accountType === 'usdt' ? '' : accountName,
-        account_no: accountNo,
-        account_network: accountType === 'usdt' ? accountNetwork : '',
-        applicant_note: applicantNote,
+        account_type: withdrawForm.account_type,
+        account_name:
+          withdrawForm.account_type === 'usdt'
+            ? ''
+            : withdrawForm.account_name.trim(),
+        account_no: withdrawForm.account_no.trim(),
+        account_network:
+          withdrawForm.account_type === 'usdt'
+            ? withdrawForm.account_network.trim()
+            : '',
+        qr_image_url: withdrawForm.qr_image_url.trim(),
+        applicant_note: withdrawForm.applicant_note.trim(),
         idempotency_key: idempotencyKey,
       })
       if (res.success) {
         toast.success(t('Withdrawal request submitted'))
-        setWithdrawAmount('')
-        setAccountName('')
-        setAccountNo('')
-        setApplicantNote('')
+        setWithdrawForm({
+          amount: '',
+          account_type: 'alipay',
+          account_name: '',
+          account_no: '',
+          account_network: 'TRC20',
+          qr_image_url: '',
+          applicant_note: '',
+        })
         await loadBase()
-        await loadWithdrawals()
+        setWithdrawalPage(1)
+        await loadWithdrawals(1, withdrawalPageSize)
         void navigate({
           to: '/referral/$section',
           params: { section: 'withdrawals' },
         })
+      } else {
+        toast.error(res.message || t('Withdrawal request failed'))
       }
     } finally {
       setSubmittingWithdrawal(false)
     }
   }
 
-  async function handleCancelWithdrawal(id: number) {
-    const res = await cancelReferralWithdrawal(id)
+  async function handleConfirmCancelWithdrawal() {
+    if (!cancelTarget) return
+    const res = await cancelReferralWithdrawal(cancelTarget.id)
     if (res.success) {
       toast.success(t('Withdrawal canceled'))
+      setCancelTarget(null)
       await loadBase()
-      await loadWithdrawals()
+      await loadWithdrawals(withdrawalPage, withdrawalPageSize)
+    } else {
+      toast.error(res.message || t('Failed to cancel withdrawal'))
     }
   }
 
   useEffect(() => {
-    void loadBase()
+    const timer = window.setTimeout(() => {
+      void loadBase()
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [])
 
   useEffect(() => {
-    if (activeSection === 'commissions') {
-      void loadCommissions()
-    }
-    if (activeSection === 'withdrawals') {
-      void loadWithdrawals()
-    }
+    const timer = window.setTimeout(() => {
+      if (activeSection === 'commissions') {
+        void loadCommissions()
+      }
+      if (activeSection === 'withdrawals') {
+        void loadWithdrawals()
+      }
+    }, 0)
+    return () => window.clearTimeout(timer)
   }, [activeSection])
 
   return (
@@ -293,27 +421,37 @@ export function Referral() {
                   />
                   <MetricCard
                     title={t('Current Rate')}
-                    value={summary.rate ? `${summary.rate}%` : '-'}
+                    value={summary.rate != null ? `${summary.rate}%` : '-'}
                   />
                 </div>
-                <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]'>
+                <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]'>
                   <Card>
                     <CardHeader>
-                      <CardTitle>{t('Invite Link')}</CardTitle>
+                      <CardTitle>{t('Referral Link')}</CardTitle>
                     </CardHeader>
                     <CardContent className='space-y-4'>
                       <div className='space-y-2'>
                         <div className='text-sm text-muted-foreground'>
                           {t('Invite Code')}
                         </div>
-                        <Input value={summary.invite_code} readOnly />
+                        <Input value={summary.invite_code || ''} readOnly />
                       </div>
                       <div className='space-y-2'>
                         <div className='text-sm text-muted-foreground'>
                           {t('Invite Link')}
                         </div>
-                        <Input value={inviteLink} readOnly />
+                        <div className='flex gap-2'>
+                          <Input value={inviteLink} readOnly />
+                          <Button onClick={() => void handleCopyInviteLink()}>
+                            {t('Copy')}
+                          </Button>
+                        </div>
                       </div>
+                      {profile?.status === 'disabled' && (
+                        <div className='rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700'>
+                          {rejectedReason || t('Your affiliate account is disabled.')}
+                        </div>
+                      )}
                     </CardContent>
                   </Card>
                   <Card>
@@ -337,6 +475,10 @@ export function Referral() {
                         label={t('Withdrawn')}
                         value={formatMoney(summary.withdrawn_amount)}
                       />
+                      <BalanceLine
+                        label={t('Min Withdraw Amount')}
+                        value={formatMoney(summary.min_withdraw_amount)}
+                      />
                     </CardContent>
                   </Card>
                 </div>
@@ -350,9 +492,11 @@ export function Referral() {
                   <p className='text-sm text-muted-foreground'>
                     {profile?.status === 'pending'
                       ? t('Your affiliate application is under review.')
-                      : profile?.status === 'disabled'
-                        ? t('Your affiliate account is disabled.')
-                        : t('Affiliate access requires admin approval.')}
+                      : profile?.status === 'rejected'
+                        ? rejectedReason || t('Your affiliate application was rejected.')
+                        : profile?.status === 'disabled'
+                          ? rejectedReason || t('Your affiliate account is disabled.')
+                          : t('Affiliate access requires admin approval.')}
                   </p>
                   {(profile?.status === 'rejected' || !profile) && (
                     <div className='space-y-3'>
@@ -362,7 +506,7 @@ export function Referral() {
                         onChange={(e) => setApplicantNote(e.target.value)}
                         placeholder={t('Describe your promotion plan or channels')}
                       />
-                      <Button onClick={handleApply} disabled={applying}>
+                      <Button onClick={() => void handleApply()} disabled={applying}>
                         {applying ? t('Submitting...') : t('Submit Application')}
                       </Button>
                     </div>
@@ -377,21 +521,33 @@ export function Referral() {
                 key: item.id,
                 cells: [
                   item.order_type,
-                  formatMoney(item.commission_amount),
-                  statusLabel(item.status),
+                  item.invitee_username || item.invitee_email || '-',
+                  `${item.rate}%`,
+                  `${formatMoney(item.commission_amount)} ${item.paid_currency || ''}`.trim(),
+                  statusLabel(item.status, t),
                   formatTimestamp(item.available_at || item.settle_at || item.created_at),
                 ],
               }))}
               headers={[
                 t('Order Type'),
+                t('Invitee'),
+                t('Rate'),
                 t('Commission Amount'),
                 t('Status'),
                 t('Settlement Time'),
               ]}
               emptyText={t('No commission records')}
+              page={commissionPage}
+              pageSize={commissionPageSize}
+              total={commissionTotal}
+              onPageChange={(page, pageSize) => {
+                setCommissionPage(page)
+                setCommissionPageSize(pageSize)
+                void loadCommissions(page, pageSize)
+              }}
             />
           ) : activeSection === 'withdraw' ? (
-            <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_320px]'>
+            <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]'>
               <Card>
                 <CardHeader>
                   <CardTitle>{t('Withdraw Application')}</CardTitle>
@@ -399,43 +555,100 @@ export function Referral() {
                 <CardContent className='space-y-4'>
                   <Input
                     type='number'
-                    value={withdrawAmount}
-                    onChange={(e) => setWithdrawAmount(e.target.value)}
+                    value={withdrawForm.amount}
+                    onChange={(e) => updateWithdrawForm('amount', e.target.value)}
                     placeholder={t('Withdraw Amount')}
                   />
                   <div className='grid gap-3 md:grid-cols-2'>
-                    <Input
-                      value={accountType}
-                      onChange={(e) => setAccountType(e.target.value)}
-                      placeholder={t('Account Type')}
-                    />
-                    {accountType === 'usdt' ? (
-                      <Input
-                        value={accountNetwork}
-                        onChange={(e) => setAccountNetwork(e.target.value)}
-                        placeholder={t('Network')}
-                      />
+                    <Select
+                      value={withdrawForm.account_type}
+                      onValueChange={(value) =>
+                        updateWithdrawForm('account_type', value || '')
+                      }
+                    >
+                      <SelectTrigger className='w-full'>
+                        <SelectValue placeholder={t('Account Type')} />
+                      </SelectTrigger>
+                      <SelectContent>
+                        {ACCOUNT_TYPE_OPTIONS.map((option) => (
+                          <SelectItem key={option.value} value={option.value}>
+                            {option.label}
+                          </SelectItem>
+                        ))}
+                      </SelectContent>
+                    </Select>
+                    {withdrawForm.account_type === 'usdt' ? (
+                      <Select
+                        value={withdrawForm.account_network}
+                        onValueChange={(value) =>
+                          updateWithdrawForm('account_network', value || '')
+                        }
+                      >
+                        <SelectTrigger className='w-full'>
+                          <SelectValue placeholder={t('Network')} />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {ACCOUNT_NETWORK_OPTIONS.map((network) => (
+                            <SelectItem key={network} value={network}>
+                              {network}
+                            </SelectItem>
+                          ))}
+                        </SelectContent>
+                      </Select>
                     ) : (
                       <Input
-                        value={accountName}
-                        onChange={(e) => setAccountName(e.target.value)}
+                        value={withdrawForm.account_name}
+                        onChange={(e) =>
+                          updateWithdrawForm('account_name', e.target.value)
+                        }
                         placeholder={t('Account Name')}
                       />
                     )}
                   </div>
                   <Input
-                    value={accountNo}
-                    onChange={(e) => setAccountNo(e.target.value)}
+                    value={withdrawForm.account_no}
+                    onChange={(e) => updateWithdrawForm('account_no', e.target.value)}
                     placeholder={t('Account Number')}
                   />
+                  <div className='space-y-2'>
+                    <div className='text-sm text-muted-foreground'>
+                      {t('QR Code')}
+                    </div>
+                    <div className='flex gap-2'>
+                      <Button
+                        type='button'
+                        variant='outline'
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploading}
+                      >
+                        {uploading ? t('Uploading...') : t('Upload Image')}
+                      </Button>
+                      <Input
+                        value={withdrawForm.qr_image_url}
+                        onChange={(e) =>
+                          updateWithdrawForm('qr_image_url', e.target.value)
+                        }
+                        placeholder={t('QR code URL')}
+                      />
+                    </div>
+                    <input
+                      ref={fileInputRef}
+                      type='file'
+                      accept='image/*'
+                      className='hidden'
+                      onChange={(event) => void handleUploadReferralAsset(event)}
+                    />
+                  </div>
                   <textarea
                     className='border-input min-h-[110px] w-full rounded-md border bg-transparent px-3 py-2 text-sm'
-                    value={applicantNote}
-                    onChange={(e) => setApplicantNote(e.target.value)}
+                    value={withdrawForm.applicant_note}
+                    onChange={(e) =>
+                      updateWithdrawForm('applicant_note', e.target.value)
+                    }
                     placeholder={t('Notes')}
                   />
                   <Button
-                    onClick={handleWithdrawalSubmit}
+                    onClick={() => void handleWithdrawalSubmit()}
                     disabled={!canWithdraw || submittingWithdrawal}
                   >
                     {submittingWithdrawal
@@ -458,6 +671,10 @@ export function Referral() {
                     value={formatMoney(summary?.pending_amount || 0)}
                   />
                   <BalanceLine
+                    label={t('Frozen')}
+                    value={formatMoney(summary?.frozen_amount || 0)}
+                  />
+                  <BalanceLine
                     label={t('Withdrawn')}
                     value={formatMoney(summary?.withdrawn_amount || 0)}
                   />
@@ -473,7 +690,7 @@ export function Referral() {
                   formatMoney(item.amount),
                   formatMoney(item.net_amount),
                   `${item.account_type}${item.account_network ? ` / ${item.account_network}` : ''}`,
-                  statusLabel(item.status),
+                  statusLabel(item.status, t),
                   formatTimestamp(item.submitted_at),
                 ],
                 action:
@@ -481,7 +698,7 @@ export function Referral() {
                     <Button
                       variant='outline'
                       size='sm'
-                      onClick={() => void handleCancelWithdrawal(item.id)}
+                      onClick={() => setCancelTarget(item)}
                     >
                       {t('Cancel')}
                     </Button>
@@ -495,10 +712,28 @@ export function Referral() {
                 t('Submitted At'),
               ]}
               emptyText={t('No withdrawal records')}
+              page={withdrawalPage}
+              pageSize={withdrawalPageSize}
+              total={withdrawalTotal}
+              onPageChange={(page, pageSize) => {
+                setWithdrawalPage(page)
+                setWithdrawalPageSize(pageSize)
+                void loadWithdrawals(page, pageSize)
+              }}
             />
           )}
         </div>
       </SectionPageLayout.Content>
+      <ConfirmDialog
+        open={!!cancelTarget}
+        onOpenChange={(open) => {
+          if (!open) setCancelTarget(null)
+        }}
+        title={t('Cancel withdrawal?')}
+        desc={t('This will release the frozen amount back to your available balance.')}
+        confirmText={t('Cancel Withdrawal')}
+        handleConfirm={() => void handleConfirmCancelWithdrawal()}
+      />
     </SectionPageLayout>
   )
 }
@@ -532,13 +767,19 @@ function SimpleTableCard(props: {
     action?: ReactNode
   }>
   emptyText: string
+  page: number
+  pageSize: number
+  total: number
+  onPageChange: (page: number, pageSize: number) => void
 }) {
+  const totalPages = Math.max(1, Math.ceil(props.total / props.pageSize))
+
   return (
     <Card>
       <CardHeader>
         <CardTitle>{props.title}</CardTitle>
       </CardHeader>
-      <CardContent className='overflow-x-auto'>
+      <CardContent className='space-y-4 overflow-x-auto'>
         {props.rows.length === 0 ? (
           <div className='py-10 text-sm text-muted-foreground'>
             {props.emptyText}
@@ -569,6 +810,34 @@ function SimpleTableCard(props: {
             </tbody>
           </table>
         )}
+        <div className='flex items-center justify-between text-sm text-muted-foreground'>
+          <span>
+            {props.total > 0
+              ? `${(props.page - 1) * props.pageSize + 1}-${Math.min(
+                  props.page * props.pageSize,
+                  props.total
+                )} / ${props.total}`
+              : '0 / 0'}
+          </span>
+          <div className='flex gap-2'>
+            <Button
+              size='sm'
+              variant='outline'
+              onClick={() => props.onPageChange(props.page - 1, props.pageSize)}
+              disabled={props.page <= 1}
+            >
+              Prev
+            </Button>
+            <Button
+              size='sm'
+              variant='outline'
+              onClick={() => props.onPageChange(props.page + 1, props.pageSize)}
+              disabled={props.page >= totalPages}
+            >
+              Next
+            </Button>
+          </div>
+        </div>
       </CardContent>
     </Card>
   )

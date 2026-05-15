@@ -23,6 +23,8 @@ export const ADMIN_REFERRAL_SECTION_IDS = [
   'affiliates',
   'commissions',
   'withdrawals',
+  'ledgers',
+  'audit-logs',
 ] as const
 
 export type AdminReferralSectionId =

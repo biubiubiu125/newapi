@@ -24,11 +24,13 @@ import type {
   ReferralBinding,
   ReferralCommission,
   ReferralCommissionJob,
+  ReferralLedger,
   ReferralOverview,
   ReferralProfile,
   ReferralSettings,
   ReferralSummary,
   ReferralWithdrawal,
+  ReferralAdminAuditLog,
 } from './types'
 
 export async function getReferralProfile(): Promise<ApiResponse<ReferralProfile | null>> {
@@ -156,6 +158,24 @@ export async function listAdminReferralCommissionJobs(params: {
   status?: string
 }): Promise<ApiResponse<PaginatedData<ReferralCommissionJob>>> {
   const res = await api.get('/api/user/admin/referral/commission-jobs', { params })
+  return res.data
+}
+
+export async function listAdminReferralLedgers(params: {
+  p?: number
+  page_size?: number
+  keyword?: string
+}): Promise<ApiResponse<PaginatedData<ReferralLedger>>> {
+  const res = await api.get('/api/user/admin/referral/ledgers', { params })
+  return res.data
+}
+
+export async function listAdminReferralAuditLogs(params: {
+  p?: number
+  page_size?: number
+  keyword?: string
+}): Promise<ApiResponse<PaginatedData<ReferralAdminAuditLog>>> {
+  const res = await api.get('/api/user/admin/referral/audit-logs', { params })
   return res.data
 }
 

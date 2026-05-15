@@ -39,6 +39,9 @@ func isCreemTopUpEnabled() bool {
 }
 
 func isCreemWebhookConfigured() bool {
+	if setting.CreemTestMode {
+		return true
+	}
 	return strings.TrimSpace(setting.CreemWebhookSecret) != ""
 }
 

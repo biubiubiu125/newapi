@@ -188,6 +188,38 @@ func GetReferralCommissionJobs(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+func GetReferralLedgers(c *gin.Context) {
+	pageInfo := common.GetPageQuery(c)
+	items, total, err := referralService.ListLedgers(service.ReferralListParams{
+		Page:     pageInfo.Page,
+		PageSize: pageInfo.PageSize,
+		Keyword:  strings.TrimSpace(c.Query("keyword")),
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(items)
+	common.ApiSuccess(c, pageInfo)
+}
+
+func GetReferralAdminAuditLogs(c *gin.Context) {
+	pageInfo := common.GetPageQuery(c)
+	items, total, err := referralService.ListAdminAuditLogs(service.ReferralListParams{
+		Page:     pageInfo.Page,
+		PageSize: pageInfo.PageSize,
+		Keyword:  strings.TrimSpace(c.Query("keyword")),
+	})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	pageInfo.SetTotal(int(total))
+	pageInfo.SetItems(items)
+	common.ApiSuccess(c, pageInfo)
+}
+
 func ApproveReferralAffiliate(c *gin.Context) {
 	adminId, userId, ok := parseAdminReferralTarget(c)
 	if !ok {
@@ -467,11 +499,11 @@ func MarkReferralWithdrawalPaid(c *gin.Context) {
 		return
 	}
 	item, err := referralService.MarkWithdrawalPaid(service.ReferralWithdrawalPayInput{
-		WithdrawalId:   withdrawalId,
-		AdminUserId:    adminId,
-		AdminNote:      strings.TrimSpace(req.AdminNote),
+		WithdrawalId:    withdrawalId,
+		AdminUserId:     adminId,
+		AdminNote:       strings.TrimSpace(req.AdminNote),
 		PaymentProofURL: strings.TrimSpace(req.PaymentProofURL),
-		PaymentTxnNo:   strings.TrimSpace(req.PaymentTxnNo),
+		PaymentTxnNo:    strings.TrimSpace(req.PaymentTxnNo),
 	})
 	if err != nil {
 		common.ApiError(c, err)
