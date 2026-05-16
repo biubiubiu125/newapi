@@ -2564,6 +2564,21 @@ func (s *ReferralService) allocateWithdrawalItemsTx(tx *gorm.DB, affiliateId int
 		remaining = roundMoney(remaining - useAmount)
 	}
 	if remaining > 0.00000001 {
+		// Admin adjustments can legitimately increase available_amount without creating
+		// a backing commission row. Preserve withdrawal/account consistency by storing
+		// the unmatched portion as an account-level allocation placeholder.
+		item := &model.ReferralWithdrawalItem{
+			WithdrawalId:    withdrawalId,
+			CommissionId:    0,
+			AllocatedAmount: remaining,
+			Status:          model.ReferralWithdrawalItemStatusFrozen,
+		}
+		if err := tx.Create(item).Error; err != nil {
+			return err
+		}
+		remaining = 0
+	}
+	if remaining > 0.00000001 {
 		return errors.New("insufficient available commission allocations")
 	}
 	return nil
@@ -2579,6 +2594,9 @@ func (s *ReferralService) releaseWithdrawalItemsTx(tx *gorm.DB, withdrawalId int
 		item.AllocatedAmount = 0
 		if err := tx.Save(&item).Error; err != nil {
 			return err
+		}
+		if item.CommissionId <= 0 {
+			continue
 		}
 		if err := s.syncCommissionStatusTx(tx, item.CommissionId); err != nil {
 			return err
@@ -2596,6 +2614,9 @@ func (s *ReferralService) markWithdrawalItemsPaidTx(tx *gorm.DB, withdrawalId in
 		item.Status = model.ReferralWithdrawalItemStatusWithdrawn
 		if err := tx.Save(&item).Error; err != nil {
 			return err
+		}
+		if item.CommissionId <= 0 {
+			continue
 		}
 		if err := s.syncCommissionStatusTx(tx, item.CommissionId); err != nil {
 			return err

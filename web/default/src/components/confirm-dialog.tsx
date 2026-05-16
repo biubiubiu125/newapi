@@ -19,14 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import {
-  AlertDialog,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { Button } from '@/components/ui/button'
 
 type ConfirmDialogProps = {
@@ -34,7 +33,7 @@ type ConfirmDialogProps = {
   onOpenChange: (open: boolean) => void
   title: React.ReactNode
   disabled?: boolean
-  desc: React.JSX.Element | string
+  desc: React.ReactNode
   cancelBtnText?: string
   confirmText?: React.ReactNode
   destructive?: boolean
@@ -57,22 +56,25 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
     isLoading,
     disabled = false,
     handleConfirm,
-    ...actions
   } = props
   return (
-    <AlertDialog {...actions}>
-      <AlertDialogContent className={cn(className && className)}>
-        <AlertDialogHeader className='text-start'>
-          <AlertDialogTitle>{title}</AlertDialogTitle>
-          <AlertDialogDescription render={<div />}>
+    <Dialog open={props.open} onOpenChange={props.onOpenChange}>
+      <DialogContent className={cn(className && className)} showCloseButton={false}>
+        <DialogHeader className='text-start'>
+          <DialogTitle>{title}</DialogTitle>
+          <DialogDescription render={<div />}>
             {desc}
-          </AlertDialogDescription>
-        </AlertDialogHeader>
+          </DialogDescription>
+        </DialogHeader>
         {children}
-        <AlertDialogFooter>
-          <AlertDialogCancel disabled={isLoading}>
+        <DialogFooter>
+          <Button
+            variant='outline'
+            onClick={() => props.onOpenChange(false)}
+            disabled={isLoading}
+          >
             {cancelBtnText ?? t('Cancel')}
-          </AlertDialogCancel>
+          </Button>
           <Button
             variant={destructive ? 'destructive' : 'default'}
             onClick={handleConfirm}
@@ -80,8 +82,8 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
           >
             {confirmText ?? t('Continue')}
           </Button>
-        </AlertDialogFooter>
-      </AlertDialogContent>
-    </AlertDialog>
+        </DialogFooter>
+      </DialogContent>
+    </Dialog>
   )
 }

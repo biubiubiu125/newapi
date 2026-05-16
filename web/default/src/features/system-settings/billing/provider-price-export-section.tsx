@@ -74,7 +74,7 @@ function createRow(index: number): ProviderPriceRow {
 
 function parseInitialRows(value: string): ProviderPriceRow[] {
   try {
-    const normalized = normalizeJsonString(value, '[]')
+    const normalized = normalizeJsonString(value || '[]')
     const parsed = JSON.parse(normalized) as unknown
     if (!Array.isArray(parsed)) {
       return []
@@ -201,8 +201,8 @@ export const ProviderPriceExportSection = memo(
       }
       const payload = JSON.stringify(rowsToPayload(rows))
       const validation = validateJsonString(payload, {
-        type: 'array',
-        fallback: '[]',
+        predicate: (value) => Array.isArray(value),
+        predicateMessage: t('JSON structure is invalid'),
       })
       if (!validation.valid) {
         return

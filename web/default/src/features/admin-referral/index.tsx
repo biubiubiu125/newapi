@@ -167,6 +167,160 @@ function buildIdempotencyKey(): string {
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+function affiliateStatusLabel(
+  value: string,
+  t: (key: string) => string
+): string {
+  switch (value) {
+    case 'pending':
+      return t('Pending')
+    case 'approved':
+      return t('Approved')
+    case 'rejected':
+      return t('Rejected')
+    case 'disabled':
+      return t('Disabled')
+    default:
+      return value || '-'
+  }
+}
+
+function commissionStatusLabel(
+  value: string,
+  t: (key: string) => string
+): string {
+  switch (value) {
+    case 'pending':
+      return t('Pending')
+    case 'available':
+      return t('Available')
+    case 'frozen':
+      return t('Frozen')
+    case 'paid':
+      return t('Paid')
+    default:
+      return value || '-'
+  }
+}
+
+function commissionJobStatusLabel(
+  value: string,
+  t: (key: string) => string
+): string {
+  switch (value) {
+    case 'pending':
+      return t('Pending')
+    case 'processing':
+      return t('Processing')
+    case 'skipped':
+      return t('Skipped')
+    case 'succeeded':
+      return t('Succeeded')
+    case 'failed':
+      return t('Failed')
+    default:
+      return value || '-'
+  }
+}
+
+function withdrawalStatusLabel(
+  value: string,
+  t: (key: string) => string
+): string {
+  switch (value) {
+    case 'pending':
+      return t('Pending')
+    case 'approved':
+      return t('Approved')
+    case 'paid':
+      return t('Paid')
+    case 'rejected':
+      return t('Rejected')
+    case 'canceled':
+      return t('Canceled')
+    default:
+      return value || '-'
+  }
+}
+
+function ledgerTypeLabel(
+  value: string,
+  t: (key: string) => string
+): string {
+  switch (value) {
+    case 'commission_settle':
+      return t('Commission Settlement')
+    case 'withdrawal_paid':
+      return t('Withdrawal Paid')
+    case 'withdrawal_approve':
+      return t('Withdrawal Approved')
+    case 'withdrawal_freeze':
+      return t('Withdrawal Frozen')
+    case 'commission_adjust_increase':
+      return t('Commission Adjustment Increase')
+    case 'commission_adjust_decrease':
+      return t('Commission Adjustment Decrease')
+    case 'commission_accrue':
+      return t('Commission Accrual')
+    default:
+      return value || '-'
+  }
+}
+
+function operatorLabel(
+  value: string,
+  t: (key: string) => string
+): string {
+  switch (value) {
+    case 'system':
+      return t('System')
+    case 'admin':
+      return t('Admin')
+    case 'user':
+      return t('User')
+    default:
+      return value || '-'
+  }
+}
+
+function auditActionLabel(
+  value: string,
+  t: (key: string) => string
+): string {
+  switch (value) {
+    case 'referral_affiliate_approve':
+      return t('Affiliate Approved')
+    case 'referral_affiliate_reject':
+      return t('Affiliate Rejected')
+    case 'referral_affiliate_disable':
+      return t('Affiliate Disabled')
+    case 'referral_affiliate_restore':
+      return t('Affiliate Restored')
+    case 'referral_withdrawal_create':
+      return t('Withdrawal Created')
+    case 'referral_withdrawal_cancel':
+      return t('Withdrawal Canceled')
+    case 'referral_withdrawal_approve':
+      return t('Withdrawal Approved')
+    case 'referral_withdrawal_reject':
+      return t('Withdrawal Rejected')
+    case 'referral_withdrawal_paid':
+      return t('Withdrawal Paid')
+    case 'referral_settings_update':
+      return t('Referral Settings Updated')
+    case 'referral_withdrawal_freeze':
+      return t('Withdrawal Frozen')
+    case 'referral_withdrawal_restore':
+      return t('Withdrawal Restored')
+    case 'referral_settlement_freeze':
+      return t('Settlement Frozen')
+    case 'referral_settlement_restore':
+      return t('Settlement Restored')
+    default:
+      return value || '-'
+  }
+}
+
 export function AdminReferral() {
   const { t } = useTranslation()
   const navigate = useNavigate()
@@ -880,7 +1034,7 @@ export function AdminReferral() {
                     item.invite_code,
                     item.rate != null ? `${item.rate}%` : '-',
                     formatMoney(item.available_amount),
-                    item.status,
+                    affiliateStatusLabel(item.status, t),
                   ],
                   action: (
                     <div className='flex flex-wrap gap-2'>
@@ -1018,7 +1172,7 @@ export function AdminReferral() {
                     item.order_type,
                     item.invitee_username || item.invitee_email || '-',
                     `${formatMoney(item.commission_amount)} ${item.paid_currency || ''}`.trim(),
-                    item.status,
+                    commissionStatusLabel(item.status, t),
                     formatTimestamp(item.created_at),
                   ],
                 }))}
@@ -1036,7 +1190,7 @@ export function AdminReferral() {
                   cells: [
                     item.source_trade_no,
                     String(item.affiliate_id),
-                    item.status,
+                    commissionJobStatusLabel(item.status, t),
                     String(item.attempt_count),
                     item.last_error || '-',
                   ],
@@ -1073,8 +1227,8 @@ export function AdminReferral() {
                 rows={ledgerItems.map((item) => ({
                   key: item.id,
                   cells: [
-                    item.type,
-                    item.operator,
+                    ledgerTypeLabel(item.type, t),
+                    operatorLabel(item.operator, t),
                     formatMoney(item.delta_available),
                     formatMoney(item.delta_frozen),
                     item.external_ref_id,
@@ -1102,7 +1256,7 @@ export function AdminReferral() {
                 rows={auditLogItems.map((item) => ({
                   key: item.id,
                   cells: [
-                    item.action,
+                    auditActionLabel(item.action, t),
                     String(item.admin_user_id),
                     String(item.target_user_id),
                     item.reason || '-',
@@ -1135,7 +1289,7 @@ export function AdminReferral() {
                     formatMoney(item.amount),
                     formatMoney(item.net_amount),
                     item.account_no_masked || '-',
-                    item.status,
+                    withdrawalStatusLabel(item.status, t),
                     formatTimestamp(item.submitted_at),
                   ],
                   action: (
@@ -1386,11 +1540,14 @@ function SimpleAdminTable(props: {
     action?: ReactNode
   }>
 }) {
+  const { t } = useTranslation()
   return (
     <Card>
       <CardContent className='overflow-x-auto pt-6'>
         {props.rows.length === 0 ? (
-          <div className='py-10 text-sm text-muted-foreground'>No data</div>
+          <div className='py-10 text-sm text-muted-foreground'>
+            {t('No data')}
+          </div>
         ) : (
           <table className='w-full min-w-[820px] text-left text-sm'>
             <thead>
@@ -1429,6 +1586,7 @@ function Toolbar(props: {
   onKeywordChange: (value: string) => void
   onSearch: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <Card>
       <CardContent className='flex flex-col gap-3 pt-6 md:flex-row'>
@@ -1437,7 +1595,7 @@ function Toolbar(props: {
           onChange={(e) => props.onKeywordChange(e.target.value)}
           placeholder={props.keywordPlaceholder}
         />
-        <Button onClick={props.onSearch}>Search</Button>
+        <Button onClick={props.onSearch}>{t('Search')}</Button>
       </CardContent>
     </Card>
   )
@@ -1448,15 +1606,16 @@ function StatusToolbar(props: {
   onStatusChange: (value: string) => void
   onSearch: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <Card>
       <CardContent className='flex flex-col gap-3 pt-6 md:flex-row'>
         <Input
           value={props.status}
           onChange={(e) => props.onStatusChange(e.target.value)}
-          placeholder='pending / approved / paid / rejected'
+          placeholder={t('pending / approved / paid / rejected')}
         />
-        <Button onClick={props.onSearch}>Filter</Button>
+        <Button onClick={props.onSearch}>{t('Filter')}</Button>
       </CardContent>
     </Card>
   )

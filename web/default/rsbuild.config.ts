@@ -81,11 +81,8 @@ export default defineConfig(({ envMode }) => {
     performance: {
       // Remove console in production
       removeConsole: isProd ? ['log'] : false,
-      // Speed up repeated `rsbuild build` (local + CI when node_modules/.cache is preserved).
-      // @see https://v2.rsbuild.dev/config/performance/build-cache
-      buildCache: {
-        cacheDigest: [process.env.VITE_REACT_APP_VERSION],
-      },
+      // Temporarily disable build cache while investigating stale route chunks.
+      buildCache: false,
     },
     tools: {
       rspack: {

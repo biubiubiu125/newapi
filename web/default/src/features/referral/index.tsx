@@ -99,6 +99,17 @@ function formatMoney(value: number): string {
   return formatCurrencyUSD(value || 0)
 }
 
+function orderTypeLabel(value: string, t: (key: string) => string): string {
+  switch (value) {
+    case 'topup':
+      return t('Top-up')
+    case 'subscription':
+      return t('Subscription')
+    default:
+      return value || '-'
+  }
+}
+
 function buildIdempotencyKey(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
@@ -531,7 +542,7 @@ export function Referral() {
               rows={commissions.map((item) => ({
                 key: item.id,
                 cells: [
-                  item.order_type,
+                  orderTypeLabel(item.order_type, t),
                   item.invitee_username || item.invitee_email || '-',
                   `${item.rate}%`,
                   `${formatMoney(item.commission_amount)} ${item.paid_currency || ''}`.trim(),
@@ -783,6 +794,7 @@ function SimpleTableCard(props: {
   total: number
   onPageChange: (page: number, pageSize: number) => void
 }) {
+  const { t } = useTranslation()
   const totalPages = Math.max(1, Math.ceil(props.total / props.pageSize))
 
   return (
@@ -804,7 +816,7 @@ function SimpleTableCard(props: {
                     {header}
                   </th>
                 ))}
-                <th className='px-3 py-2 font-medium'>Action</th>
+                <th className='px-3 py-2 font-medium'>{t('Action')}</th>
               </tr>
             </thead>
             <tbody>
@@ -837,7 +849,7 @@ function SimpleTableCard(props: {
               onClick={() => props.onPageChange(props.page - 1, props.pageSize)}
               disabled={props.page <= 1}
             >
-              Prev
+              {t('Previous')}
             </Button>
             <Button
               size='sm'
@@ -845,7 +857,7 @@ function SimpleTableCard(props: {
               onClick={() => props.onPageChange(props.page + 1, props.pageSize)}
               disabled={props.page >= totalPages}
             >
-              Next
+              {t('Next')}
             </Button>
           </div>
         </div>

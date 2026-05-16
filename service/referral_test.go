@@ -517,6 +517,35 @@ func TestGetProfileSanitizesPendingAffiliateFlags(t *testing.T) {
 	require.False(t, profile.WithdrawalEnabled)
 }
 
+func TestApplyAffiliateAutoApprovesWhenApprovalDisabled(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	common.ReferralRequireApproval = false
+
+	user := &model.User{Username: "auto-approve", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+
+	profile, err := service.ApplyAffiliate(ReferralApplyInput{
+		UserId:        user.Id,
+		ApplicantNote: "auto approve",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.Equal(t, model.ReferralAffiliateStatusApproved, profile.Status)
+	require.True(t, profile.AcquisitionEnabled)
+	require.True(t, profile.SettlementEnabled)
+	require.True(t, profile.WithdrawalEnabled)
+
+	stored := &model.ReferralAffiliate{}
+	require.NoError(t, db.Where("user_id = ?", user.Id).First(stored).Error)
+	require.Equal(t, model.ReferralAffiliateStatusApproved, stored.Status)
+	require.True(t, stored.AcquisitionEnabled)
+	require.True(t, stored.SettlementEnabled)
+	require.True(t, stored.WithdrawalEnabled)
+	require.NotZero(t, stored.ApprovedAt)
+}
+
 func TestMarkWithdrawalPaidRequiresTxnOrProof(t *testing.T) {
 	db := setupReferralServiceTestDB(t)
 	service := NewReferralService()

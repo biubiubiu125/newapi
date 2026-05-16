@@ -31,6 +31,11 @@ type LoginRequest struct {
 	Password string `json:"password"`
 }
 
+type registerRequest struct {
+	model.User
+	Aff string `json:"aff"`
+}
+
 func Login(c *gin.Context) {
 	if !common.PasswordLoginEnabled {
 		common.ApiErrorI18n(c, i18n.MsgUserPasswordLoginDisabled)
@@ -145,12 +150,13 @@ func Register(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserPasswordRegisterDisabled)
 		return
 	}
-	var user model.User
-	err := json.NewDecoder(c.Request.Body).Decode(&user)
+	var req registerRequest
+	err := json.NewDecoder(c.Request.Body).Decode(&req)
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
+	user := req.User
 	if err := common.Validate.Struct(&user); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
 		return
@@ -176,7 +182,10 @@ func Register(c *gin.Context) {
 		return
 	}
 	session := sessions.Default(c)
-	explicitCode := strings.TrimSpace(c.Query("aff"))
+	explicitCode := strings.TrimSpace(req.Aff)
+	if explicitCode == "" {
+		explicitCode = strings.TrimSpace(c.Query("aff"))
+	}
 	sessionCode := ""
 	if raw := session.Get("aff"); raw != nil {
 		if value, ok := raw.(string); ok {

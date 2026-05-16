@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -9,6 +10,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
@@ -211,4 +214,54 @@ func TestReferralCookieValueRejectsUnsignedCookie(t *testing.T) {
 	c.Request = req
 
 	require.Equal(t, "", referralCookieValue(c))
+}
+
+func TestRegisterBindsReferralCodeFromRequestBody(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.User{}))
+
+	affiliateUser := &model.User{
+		Username:    "aff-owner",
+		Password:    "12345678",
+		DisplayName: "aff-owner",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, db.Create(affiliateUser).Error)
+	require.NoError(t, db.Create(&model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "BODYAFF1",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+		CreatedAt:          time.Now().Unix(),
+		UpdatedAt:          time.Now().Unix(),
+	}).Error)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, router := gin.CreateTestContext(w)
+	store := cookie.NewStore([]byte(common.SessionSecret))
+	router.Use(sessions.Sessions("session", store))
+	router.POST("/api/user/register", Register)
+
+	body := []byte(`{"username":"invitee-body","password":"12345678","aff":"BODYAFF1"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/user/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	c.Request = req
+
+	router.HandleContext(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), `"success":true`)
+
+	invitee := &model.User{}
+	require.NoError(t, db.Where("username = ?", "invitee-body").First(invitee).Error)
+
+	binding := &model.ReferralBinding{}
+	require.NoError(t, db.Where("invitee_user_id = ?", invitee.Id).First(binding).Error)
+	require.Equal(t, affiliateUser.Id, binding.InviterUserId)
+	require.Equal(t, "BODYAFF1", binding.BindCode)
+	require.Equal(t, "code", binding.BindSource)
 }
