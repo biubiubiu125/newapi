@@ -32,9 +32,9 @@ import {
 import {
   Sheet,
   SheetContent,
+  SheetDescription,
   SheetHeader,
   SheetTitle,
-  SheetDescription,
 } from '@/components/ui/sheet'
 import {
   Table,
@@ -47,11 +47,11 @@ import {
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { StatusBadge } from '@/components/status-badge'
 import {
+  createUserSubscription,
+  deleteUserSubscription,
   getAdminPlans,
   getUserSubscriptions,
-  createUserSubscription,
   invalidateUserSubscription,
-  deleteUserSubscription,
 } from '../../api'
 import { formatTimestamp } from '../../lib'
 import type { PlanRecord, UserSubscriptionRecord } from '../../types'
@@ -67,11 +67,10 @@ function SubscriptionStatusBadge(props: {
   sub: UserSubscriptionRecord['subscription']
   t: (key: string) => string
 }) {
-  // eslint-disable-next-line react-hooks/purity
   const now = Date.now() / 1000
   const isExpired = (props.sub.end_time || 0) > 0 && props.sub.end_time < now
   const isActive = props.sub.status === 'active' && !isExpired
-  if (isActive)
+  if (isActive) {
     return (
       <StatusBadge
         label={props.t('Active')}
@@ -79,7 +78,8 @@ function SubscriptionStatusBadge(props: {
         copyable={false}
       />
     )
-  if (props.sub.status === 'cancelled')
+  }
+  if (props.sub.status === 'cancelled') {
     return (
       <StatusBadge
         label={props.t('Invalidated')}
@@ -87,6 +87,7 @@ function SubscriptionStatusBadge(props: {
         copyable={false}
       />
     )
+  }
   return (
     <StatusBadge
       label={props.t('Expired')}
@@ -207,7 +208,7 @@ export function UserSubscriptionsDialog(props: Props) {
                     value: String(p.plan.id),
                     label: (
                       <>
-                        {p.plan.title}($
+                        {p.plan.title}(¥
                         {Number(p.plan.price_amount || 0).toFixed(2)})
                       </>
                     ),
@@ -223,7 +224,7 @@ export function UserSubscriptionsDialog(props: Props) {
                   <SelectGroup>
                     {plans.map((p) => (
                       <SelectItem key={p.plan.id} value={String(p.plan.id)}>
-                        {p.plan.title} ($
+                        {p.plan.title} (¥
                         {Number(p.plan.price_amount || 0).toFixed(2)})
                       </SelectItem>
                     ))}

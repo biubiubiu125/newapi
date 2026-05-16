@@ -16,8 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, useEffect } from 'react'
-import { Crown, CalendarClock, Package } from 'lucide-react'
+import { useEffect, useState } from 'react'
+import { CalendarClock, Crown, Package } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Alert, AlertDescription } from '@/components/ui/alert'
@@ -39,9 +39,9 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { GroupBadge } from '@/components/group-badge'
 import {
-  paySubscriptionStripe,
   paySubscriptionCreem,
   paySubscriptionEpay,
+  paySubscriptionStripe,
 } from '../../api'
 import { formatDuration, formatResetPeriod } from '../../lib'
 import type { PlanRecord } from '../../types'
@@ -244,7 +244,12 @@ export function SubscriptionPurchaseDialog(props: Props) {
             <Separator />
             <div className='flex items-center justify-between'>
               <span className='text-sm font-medium'>{t('Amount Due')}</span>
-              <span className='text-primary text-lg font-bold'>${price}</span>
+              <span className='text-primary text-lg font-bold'>¥{price}</span>
+            </div>
+            <div className='text-muted-foreground text-xs'>
+              {t(
+                'Displayed as CNY for user-facing sales. The actual payment currency is still recorded from the payment channel.'
+              )}
             </div>
           </div>
 

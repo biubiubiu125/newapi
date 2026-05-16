@@ -38,6 +38,7 @@ const routerMap = {
   topup: '/console/topup',
   referral: '/console/referral',
   adminReferral: '/console/admin-referral',
+  providerPricing: '/console/provider-pricing',
   user: '/console/user',
   subscription: '/console/subscription',
   log: '/console/log',
@@ -170,6 +171,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('推广管理'),
         itemKey: 'adminReferral',
         to: '/console/admin-referral',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: '公开价格导出',
+        itemKey: 'providerPricing',
+        to: '/console/provider-pricing',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {
@@ -307,6 +314,10 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
     if (!matchingKey && currentPath.startsWith('/console/admin-referral')) {
       matchingKey = 'adminReferral';
+    }
+
+    if (!matchingKey && currentPath.startsWith('/console/provider-pricing')) {
+      matchingKey = 'providerPricing';
     }
 
     if (!matchingKey && currentPath.startsWith('/console/referral')) {

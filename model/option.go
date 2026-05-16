@@ -159,6 +159,7 @@ func InitOptionMap() {
 	common.OptionMap["ReferralWithdrawFee"] = strconv.FormatFloat(common.ReferralWithdrawFee, 'f', -1, 64)
 	common.OptionMap["ReferralRedirectPath"] = common.ReferralRedirectPath
 	common.OptionMap["ReferralRequireApproval"] = strconv.FormatBool(common.ReferralRequireApproval)
+	common.OptionMap["ProviderPriceOverrides"] = "[]"
 	//common.OptionMap["ChatLink"] = common.ChatLink
 	//common.OptionMap["ChatLink2"] = common.ChatLink2
 	common.OptionMap["QuotaPerUnit"] = strconv.FormatFloat(common.QuotaPerUnit, 'f', -1, 64)

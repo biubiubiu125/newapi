@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   Avatar,
   Button,
@@ -41,8 +41,8 @@ import {
 import { Clock, RefreshCw } from 'lucide-react';
 import { API, showError, showSuccess } from '../../../../helpers';
 import {
-  quotaToDisplayAmount,
   displayAmountToQuota,
+  quotaToDisplayAmount,
 } from '../../../../helpers/quota';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 
@@ -53,7 +53,7 @@ const durationUnitOptions = [
   { value: 'month', label: '月' },
   { value: 'day', label: '日' },
   { value: 'hour', label: '小时' },
-  { value: 'custom', label: '自定义(秒)' },
+  { value: 'custom', label: '自定义秒数' },
 ];
 
 const resetPeriodOptions = [
@@ -61,7 +61,7 @@ const resetPeriodOptions = [
   { value: 'daily', label: '每天' },
   { value: 'weekly', label: '每周' },
   { value: 'monthly', label: '每月' },
-  { value: 'custom', label: '自定义(秒)' },
+  { value: 'custom', label: '自定义秒数' },
 ];
 
 const AddEditSubscriptionModal = ({
@@ -196,357 +196,354 @@ const AddEditSubscriptionModal = ({
   };
 
   return (
-    <>
-      <SideSheet
-        placement={placement}
-        title={
+    <SideSheet
+      placement={placement}
+      title={
+        <Space>
+          {isEdit ? (
+            <Tag color='blue' shape='circle'>
+              {t('更新')}
+            </Tag>
+          ) : (
+            <Tag color='green' shape='circle'>
+              {t('新建')}
+            </Tag>
+          )}
+          <Title heading={4} className='m-0'>
+            {isEdit ? t('更新套餐信息') : t('创建新的订阅套餐')}
+          </Title>
+        </Space>
+      }
+      bodyStyle={{ padding: '0' }}
+      visible={visible}
+      width={isMobile ? '100%' : 600}
+      footer={
+        <div className='flex justify-end bg-white'>
           <Space>
-            {isEdit ? (
-              <Tag color='blue' shape='circle'>
-                {t('更新')}
-              </Tag>
-            ) : (
-              <Tag color='green' shape='circle'>
-                {t('新建')}
-              </Tag>
-            )}
-            <Title heading={4} className='m-0'>
-              {isEdit ? t('更新套餐信息') : t('创建新的订阅套餐')}
-            </Title>
+            <Button
+              theme='solid'
+              onClick={() => formApiRef.current?.submitForm()}
+              icon={<IconSave />}
+              loading={loading}
+            >
+              {t('提交')}
+            </Button>
+            <Button
+              theme='light'
+              type='primary'
+              onClick={handleClose}
+              icon={<IconClose />}
+            >
+              {t('取消')}
+            </Button>
           </Space>
-        }
-        bodyStyle={{ padding: '0' }}
-        visible={visible}
-        width={isMobile ? '100%' : 600}
-        footer={
-          <div className='flex justify-end bg-white'>
-            <Space>
-              <Button
-                theme='solid'
-                onClick={() => formApiRef.current?.submitForm()}
-                icon={<IconSave />}
-                loading={loading}
-              >
-                {t('提交')}
-              </Button>
-              <Button
-                theme='light'
-                type='primary'
-                onClick={handleClose}
-                icon={<IconClose />}
-              >
-                {t('取消')}
-              </Button>
-            </Space>
-          </div>
-        }
-        closeIcon={null}
-        onCancel={handleClose}
-      >
-        <Spin spinning={loading}>
-          <Form
-            key={formKey}
-            initValues={buildFormValues()}
-            getFormApi={(api) => (formApiRef.current = api)}
-            onSubmit={submit}
-          >
-            {({ values }) => (
-              <div className='p-2'>
-                {/* 基本信息 */}
-                <Card className='!rounded-2xl shadow-sm border-0 mb-4'>
-                  <div className='flex items-center mb-2'>
-                    <Avatar
-                      size='small'
-                      color='blue'
-                      className='mr-2 shadow-md'
-                    >
-                      <IconCalendarClock size={16} />
-                    </Avatar>
-                    <div>
-                      <Text className='text-lg font-medium'>
-                        {t('基本信息')}
-                      </Text>
-                      <div className='text-xs text-gray-600'>
-                        {t('套餐的基本信息和定价')}
-                      </div>
+        </div>
+      }
+      closeIcon={null}
+      onCancel={handleClose}
+    >
+      <Spin spinning={loading}>
+        <Form
+          key={formKey}
+          initValues={buildFormValues()}
+          getFormApi={(api) => (formApiRef.current = api)}
+          onSubmit={submit}
+        >
+          {({ values }) => (
+            <div className='p-2'>
+              <Card className='!rounded-2xl shadow-sm border-0 mb-4'>
+                <div className='flex items-center mb-2'>
+                  <Avatar size='small' color='blue' className='mr-2 shadow-md'>
+                    <IconCalendarClock size={16} />
+                  </Avatar>
+                  <div>
+                    <Text className='text-lg font-medium'>{t('基本信息')}</Text>
+                    <div className='text-xs text-gray-600'>
+                      {t('套餐的基本信息和定价')}
                     </div>
                   </div>
+                </div>
 
-                  <Row gutter={12}>
-                    <Col span={24}>
-                      <Form.Input
-                        field='title'
-                        label={t('套餐标题')}
-                        placeholder={t('例如：基础套餐')}
-                        required
-                        rules={[
-                          { required: true, message: t('请输入套餐标题') },
-                        ]}
-                        showClear
-                      />
-                    </Col>
+                <Row gutter={12}>
+                  <Col span={24}>
+                    <Form.Input
+                      field='title'
+                      label={t('套餐标题')}
+                      placeholder={t('例如：基础套餐')}
+                      required
+                      rules={[{ required: true, message: t('请输入套餐标题') }]}
+                      showClear
+                    />
+                  </Col>
 
-                    <Col span={24}>
-                      <Form.Input
-                        field='subtitle'
-                        label={t('套餐副标题')}
-                        placeholder={t('例如：适合轻度使用')}
-                        showClear
-                      />
-                    </Col>
+                  <Col span={24}>
+                    <Form.Input
+                      field='subtitle'
+                      label={t('套餐副标题')}
+                      placeholder={t('例如：适合轻度使用')}
+                      showClear
+                    />
+                  </Col>
 
-                    <Col span={12}>
-                      <Form.InputNumber
-                        field='price_amount'
-                        label={t('实付金额')}
-                        required
-                        min={0}
-                        precision={2}
-                        rules={[{ required: true, message: t('请输入金额') }]}
-                        style={{ width: '100%' }}
-                      />
-                    </Col>
+                  <Col span={12}>
+                    <Form.InputNumber
+                      field='price_amount'
+                      label={t('人民币售价')}
+                      required
+                      min={0}
+                      precision={2}
+                      rules={[{ required: true, message: t('请输入金额') }]}
+                      extraText={t(
+                        '按人民币录入前台展示售价，不改变订单里记录的真实支付币种。'
+                      )}
+                      style={{ width: '100%' }}
+                    />
+                  </Col>
 
-                    <Col span={12}>
-                      <Form.InputNumber
-                        field='total_amount'
-                        label={t('总额度')}
-                        required
-                        min={0}
-                        precision={2}
-                        rules={[{ required: true, message: t('请输入总额度') }]}
-                        extraText={`${t('0 表示不限')} · ${t('原生额度')}：${displayAmountToQuota(
-                          values.total_amount,
-                        )}`}
-                        style={{ width: '100%' }}
-                      />
-                    </Col>
+                  <Col span={12}>
+                    <Form.InputNumber
+                      field='total_amount'
+                      label={t('总额度')}
+                      required
+                      min={0}
+                      precision={2}
+                      rules={[{ required: true, message: t('请输入总额度') }]}
+                      extraText={`${t('0 表示不限')} · ${t('原生额度')}：${displayAmountToQuota(
+                        values.total_amount,
+                      )}`}
+                      style={{ width: '100%' }}
+                    />
+                  </Col>
 
-                    <Col span={12}>
-                      <Form.Select
-                        field='upgrade_group'
-                        label={t('升级分组')}
-                        showClear
-                        loading={groupLoading}
-                        placeholder={t('不升级')}
-                        extraText={t(
-                          '购买或手动新增订阅会升级到该分组；当套餐失效/过期或手动作废/删除后，将回退到升级前分组。回退不会立即生效，通常会有几分钟延迟。',
-                        )}
+                  <Col span={12}>
+                    <Form.Select
+                      field='upgrade_group'
+                      label={t('升级分组')}
+                      showClear
+                      loading={groupLoading}
+                      placeholder={t('不升级')}
+                      extraText={t(
+                        '购买或手动新增订阅会升级到该分组；当套餐失效、过期、作废或删除后，将回退到升级前分组。回退不会立即生效，通常会有几分钟延迟。'
+                      )}
+                    >
+                      <Select.Option value=''>{t('不升级')}</Select.Option>
+                      {(groupOptions || []).map((g) => (
+                        <Select.Option key={g} value={g}>
+                          {g}
+                        </Select.Option>
+                      ))}
+                    </Form.Select>
+                  </Col>
+
+                  <Col span={12}>
+                    <Form.Slot
+                      label={t('售价币种')}
+                      extraText={t(
+                        '订阅套餐按人民币展示和录入，余额与模型计费仍按站内额度口径显示。'
+                      )}
+                    >
+                      <div
+                        style={{
+                          height: 38,
+                          display: 'flex',
+                          alignItems: 'center',
+                          padding: '0 12px',
+                          borderRadius: 8,
+                          background: 'var(--semi-color-fill-0)',
+                          color: 'var(--semi-color-text-0)',
+                          border: '1px solid var(--semi-color-border)',
+                        }}
                       >
-                        <Select.Option value=''>{t('不升级')}</Select.Option>
-                        {(groupOptions || []).map((g) => (
-                          <Select.Option key={g} value={g}>
-                            {g}
-                          </Select.Option>
-                        ))}
-                      </Form.Select>
-                    </Col>
+                        CNY (¥)
+                      </div>
+                    </Form.Slot>
+                  </Col>
 
-                    <Col span={12}>
-                      <Form.Input
-                        field='currency'
-                        label={t('币种')}
+                  <Col span={12}>
+                    <Form.InputNumber
+                      field='sort_order'
+                      label={t('排序')}
+                      precision={0}
+                      style={{ width: '100%' }}
+                    />
+                  </Col>
+
+                  <Col span={12}>
+                    <Form.InputNumber
+                      field='max_purchase_per_user'
+                      label={t('购买上限')}
+                      min={0}
+                      precision={0}
+                      extraText={t('0 表示不限')}
+                      style={{ width: '100%' }}
+                    />
+                  </Col>
+
+                  <Col span={12}>
+                    <Form.Switch
+                      field='enabled'
+                      label={t('启用状态')}
+                      size='large'
+                    />
+                  </Col>
+                </Row>
+              </Card>
+
+              <Card className='!rounded-2xl shadow-sm border-0 mb-4'>
+                <div className='flex items-center mb-2'>
+                  <Avatar
+                    size='small'
+                    color='green'
+                    className='mr-2 shadow-md'
+                  >
+                    <Clock size={16} />
+                  </Avatar>
+                  <div>
+                    <Text className='text-lg font-medium'>{t('有效期设置')}</Text>
+                    <div className='text-xs text-gray-600'>
+                      {t('配置套餐的有效时长')}
+                    </div>
+                  </div>
+                </div>
+
+                <Row gutter={12}>
+                  <Col span={12}>
+                    <Form.Select
+                      field='duration_unit'
+                      label={t('有效期单位')}
+                      required
+                      rules={[{ required: true }]}
+                    >
+                      {durationUnitOptions.map((o) => (
+                        <Select.Option key={o.value} value={o.value}>
+                          {o.label}
+                        </Select.Option>
+                      ))}
+                    </Form.Select>
+                  </Col>
+
+                  <Col span={12}>
+                    {values.duration_unit === 'custom' ? (
+                      <Form.InputNumber
+                        field='custom_seconds'
+                        label={t('自定义秒数')}
+                        required
+                        min={1}
+                        precision={0}
+                        rules={[{ required: true, message: t('请输入秒数') }]}
+                        style={{ width: '100%' }}
+                      />
+                    ) : (
+                      <Form.InputNumber
+                        field='duration_value'
+                        label={t('有效期数值')}
+                        required
+                        min={1}
+                        precision={0}
+                        rules={[{ required: true, message: t('请输入数值') }]}
+                        style={{ width: '100%' }}
+                      />
+                    )}
+                  </Col>
+                </Row>
+              </Card>
+
+              <Card className='!rounded-2xl shadow-sm border-0 mb-4'>
+                <div className='flex items-center mb-2'>
+                  <Avatar
+                    size='small'
+                    color='orange'
+                    className='mr-2 shadow-md'
+                  >
+                    <RefreshCw size={16} />
+                  </Avatar>
+                  <div>
+                    <Text className='text-lg font-medium'>{t('额度重置')}</Text>
+                    <div className='text-xs text-gray-600'>
+                      {t('支持周期性重置套餐权益额度')}
+                    </div>
+                  </div>
+                </div>
+
+                <Row gutter={12}>
+                  <Col span={12}>
+                    <Form.Select field='quota_reset_period' label={t('重置周期')}>
+                      {resetPeriodOptions.map((o) => (
+                        <Select.Option key={o.value} value={o.value}>
+                          {o.label}
+                        </Select.Option>
+                      ))}
+                    </Form.Select>
+                  </Col>
+                  <Col span={12}>
+                    {values.quota_reset_period === 'custom' ? (
+                      <Form.InputNumber
+                        field='quota_reset_custom_seconds'
+                        label={t('自定义秒数')}
+                        required
+                        min={60}
+                        precision={0}
+                        rules={[{ required: true, message: t('请输入秒数') }]}
+                        style={{ width: '100%' }}
+                      />
+                    ) : (
+                      <Form.InputNumber
+                        field='quota_reset_custom_seconds'
+                        label={t('自定义秒数')}
+                        min={0}
+                        precision={0}
+                        style={{ width: '100%' }}
                         disabled
-                        extraText={t('由全站货币展示设置统一控制')}
                       />
-                    </Col>
+                    )}
+                  </Col>
+                </Row>
+              </Card>
 
-                    <Col span={12}>
-                      <Form.InputNumber
-                        field='sort_order'
-                        label={t('排序')}
-                        precision={0}
-                        style={{ width: '100%' }}
-                      />
-                    </Col>
-
-                    <Col span={12}>
-                      <Form.InputNumber
-                        field='max_purchase_per_user'
-                        label={t('购买上限')}
-                        min={0}
-                        precision={0}
-                        extraText={t('0 表示不限')}
-                        style={{ width: '100%' }}
-                      />
-                    </Col>
-
-                    <Col span={12}>
-                      <Form.Switch
-                        field='enabled'
-                        label={t('启用状态')}
-                        size='large'
-                      />
-                    </Col>
-                  </Row>
-                </Card>
-
-                {/* 有效期设置 */}
-                <Card className='!rounded-2xl shadow-sm border-0 mb-4'>
-                  <div className='flex items-center mb-2'>
-                    <Avatar
-                      size='small'
-                      color='green'
-                      className='mr-2 shadow-md'
-                    >
-                      <Clock size={16} />
-                    </Avatar>
-                    <div>
-                      <Text className='text-lg font-medium'>
-                        {t('有效期设置')}
-                      </Text>
-                      <div className='text-xs text-gray-600'>
-                        {t('配置套餐的有效时长')}
-                      </div>
+              <Card className='!rounded-2xl shadow-sm border-0 mb-4'>
+                <div className='flex items-center mb-2'>
+                  <Avatar
+                    size='small'
+                    color='purple'
+                    className='mr-2 shadow-md'
+                  >
+                    <IconCreditCard size={16} />
+                  </Avatar>
+                  <div>
+                    <Text className='text-lg font-medium'>
+                      {t('第三方支付配置')}
+                    </Text>
+                    <div className='text-xs text-gray-600'>
+                      {t('Stripe/Creem 商品 ID（可选）')}
                     </div>
                   </div>
+                </div>
 
-                  <Row gutter={12}>
-                    <Col span={12}>
-                      <Form.Select
-                        field='duration_unit'
-                        label={t('有效期单位')}
-                        required
-                        rules={[{ required: true }]}
-                      >
-                        {durationUnitOptions.map((o) => (
-                          <Select.Option key={o.value} value={o.value}>
-                            {o.label}
-                          </Select.Option>
-                        ))}
-                      </Form.Select>
-                    </Col>
+                <Row gutter={12}>
+                  <Col span={24}>
+                    <Form.Input
+                      field='stripe_price_id'
+                      label='Stripe PriceId'
+                      placeholder='price_...'
+                      showClear
+                    />
+                  </Col>
 
-                    <Col span={12}>
-                      {values.duration_unit === 'custom' ? (
-                        <Form.InputNumber
-                          field='custom_seconds'
-                          label={t('自定义秒数')}
-                          required
-                          min={1}
-                          precision={0}
-                          rules={[{ required: true, message: t('请输入秒数') }]}
-                          style={{ width: '100%' }}
-                        />
-                      ) : (
-                        <Form.InputNumber
-                          field='duration_value'
-                          label={t('有效期数值')}
-                          required
-                          min={1}
-                          precision={0}
-                          rules={[{ required: true, message: t('请输入数值') }]}
-                          style={{ width: '100%' }}
-                        />
-                      )}
-                    </Col>
-                  </Row>
-                </Card>
-
-                {/* 额度重置 */}
-                <Card className='!rounded-2xl shadow-sm border-0 mb-4'>
-                  <div className='flex items-center mb-2'>
-                    <Avatar
-                      size='small'
-                      color='orange'
-                      className='mr-2 shadow-md'
-                    >
-                      <RefreshCw size={16} />
-                    </Avatar>
-                    <div>
-                      <Text className='text-lg font-medium'>
-                        {t('额度重置')}
-                      </Text>
-                      <div className='text-xs text-gray-600'>
-                        {t('支持周期性重置套餐权益额度')}
-                      </div>
-                    </div>
-                  </div>
-
-                  <Row gutter={12}>
-                    <Col span={12}>
-                      <Form.Select
-                        field='quota_reset_period'
-                        label={t('重置周期')}
-                      >
-                        {resetPeriodOptions.map((o) => (
-                          <Select.Option key={o.value} value={o.value}>
-                            {o.label}
-                          </Select.Option>
-                        ))}
-                      </Form.Select>
-                    </Col>
-                    <Col span={12}>
-                      {values.quota_reset_period === 'custom' ? (
-                        <Form.InputNumber
-                          field='quota_reset_custom_seconds'
-                          label={t('自定义秒数')}
-                          required
-                          min={60}
-                          precision={0}
-                          rules={[{ required: true, message: t('请输入秒数') }]}
-                          style={{ width: '100%' }}
-                        />
-                      ) : (
-                        <Form.InputNumber
-                          field='quota_reset_custom_seconds'
-                          label={t('自定义秒数')}
-                          min={0}
-                          precision={0}
-                          style={{ width: '100%' }}
-                          disabled
-                        />
-                      )}
-                    </Col>
-                  </Row>
-                </Card>
-
-                {/* 第三方支付配置 */}
-                <Card className='!rounded-2xl shadow-sm border-0 mb-4'>
-                  <div className='flex items-center mb-2'>
-                    <Avatar
-                      size='small'
-                      color='purple'
-                      className='mr-2 shadow-md'
-                    >
-                      <IconCreditCard size={16} />
-                    </Avatar>
-                    <div>
-                      <Text className='text-lg font-medium'>
-                        {t('第三方支付配置')}
-                      </Text>
-                      <div className='text-xs text-gray-600'>
-                        {t('Stripe/Creem 商品ID（可选）')}
-                      </div>
-                    </div>
-                  </div>
-
-                  <Row gutter={12}>
-                    <Col span={24}>
-                      <Form.Input
-                        field='stripe_price_id'
-                        label='Stripe PriceId'
-                        placeholder='price_...'
-                        showClear
-                      />
-                    </Col>
-
-                    <Col span={24}>
-                      <Form.Input
-                        field='creem_product_id'
-                        label='Creem ProductId'
-                        placeholder='prod_...'
-                        showClear
-                      />
-                    </Col>
-                  </Row>
-                </Card>
-              </div>
-            )}
-          </Form>
-        </Spin>
-      </SideSheet>
-    </>
+                  <Col span={24}>
+                    <Form.Input
+                      field='creem_product_id'
+                      label='Creem ProductId'
+                      placeholder='prod_...'
+                      showClear
+                    />
+                  </Col>
+                </Row>
+              </Card>
+            </div>
+          )}
+        </Form>
+      </Spin>
+    </SideSheet>
   );
 };
 

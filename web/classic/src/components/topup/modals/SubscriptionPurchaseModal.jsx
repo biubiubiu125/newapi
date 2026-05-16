@@ -32,7 +32,6 @@ import { Crown, CalendarClock, Package } from 'lucide-react';
 import { SiStripe } from 'react-icons/si';
 import { IconCreditCard } from '@douyinfe/semi-icons';
 import { renderQuota } from '../../../helpers';
-import { getCurrencyConfig } from '../../../helpers/render';
 import {
   formatSubscriptionDuration,
   formatSubscriptionResetPeriod,
@@ -59,11 +58,9 @@ const SubscriptionPurchaseModal = ({
 }) => {
   const plan = selectedPlan?.plan;
   const totalAmount = Number(plan?.total_amount || 0);
-  const { symbol, rate } = getCurrencyConfig();
   const price = plan ? Number(plan.price_amount || 0) : 0;
-  const convertedPrice = price * rate;
-  const displayPrice = convertedPrice.toFixed(
-    Number.isInteger(convertedPrice) ? 0 : 2,
+  const displayPrice = price.toFixed(
+    Number.isInteger(price) ? 0 : 2,
   );
   // 只有当管理员开启支付网关 AND 套餐配置了对应的支付ID时才显示
   const hasStripe = enableStripeTopUp && !!plan?.stripe_price_id;
@@ -161,10 +158,14 @@ const SubscriptionPurchaseModal = ({
                 <Text strong className='text-slate-700 dark:text-slate-200'>
                   {t('应付金额')}：
                 </Text>
-                <Text strong className='text-xl text-purple-600'>
-                  {symbol}
-                  {displayPrice}
-                </Text>
+                <div className='text-right'>
+                  <Text strong className='text-xl text-purple-600'>
+                    ¥{displayPrice}
+                  </Text>
+                  <div className='text-xs text-slate-500 mt-1'>
+                    {t('按人民币展示售价，不改变真实支付币种记录')}
+                  </div>
+                </div>
               </div>
             </div>
           </Card>

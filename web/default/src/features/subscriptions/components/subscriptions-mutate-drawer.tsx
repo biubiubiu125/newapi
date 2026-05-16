@@ -206,7 +206,7 @@ export function SubscriptionsMutateDrawer({
                   name='price_amount'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t('Actual Amount')}</FormLabel>
+                      <FormLabel>{t('人民币售价')}</FormLabel>
                       <FormControl>
                         <Input
                           {...field}
@@ -218,6 +218,11 @@ export function SubscriptionsMutateDrawer({
                           }
                         />
                       </FormControl>
+                      <FormDescription>
+                        {t(
+                          '面向用户展示的套餐售价，按人民币录入。不会改变订单里记录的真实支付币种。'
+                        )}
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}

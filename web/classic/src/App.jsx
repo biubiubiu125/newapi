@@ -49,6 +49,7 @@ import OAuth2Callback from './components/auth/OAuth2Callback';
 import PersonalSetting from './components/settings/PersonalSetting';
 import Referral from './pages/Referral';
 import AdminReferral from './pages/AdminReferral';
+import ProviderPricing from './pages/ProviderPricing';
 import Setup from './pages/Setup';
 import SetupCheck from './components/layout/SetupCheck';
 
@@ -315,6 +316,16 @@ function App() {
             <AdminRoute>
               <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                 <AdminReferral />
+              </Suspense>
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/provider-pricing'
+          element={
+            <AdminRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <ProviderPricing />
               </Suspense>
             </AdminRoute>
           }

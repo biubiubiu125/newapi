@@ -19,25 +19,26 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import {
+  Badge,
   Button,
+  Divider,
   Modal,
+  Popover,
   Space,
   Tag,
-  Typography,
-  Popover,
-  Divider,
-  Badge,
   Tooltip,
+  Typography,
 } from '@douyinfe/semi-ui';
 import { renderQuota } from '../../../helpers';
-import { convertUSDToCurrency } from '../../../helpers/render';
 
 const { Text } = Typography;
 
+const formatPlanPrice = (value) => `¥${Number(value || 0).toFixed(2)}`;
+
 function formatDuration(plan, t) {
   if (!plan) return '';
-  const u = plan.duration_unit || 'month';
-  if (u === 'custom') {
+  const unit = plan.duration_unit || 'month';
+  if (unit === 'custom') {
     return `${t('自定义')} ${plan.custom_seconds || 0}s`;
   }
   const unitMap = {
@@ -46,7 +47,7 @@ function formatDuration(plan, t) {
     day: t('日'),
     hour: t('小时'),
   };
-  return `${plan.duration_value || 0}${unitMap[u] || u}`;
+  return `${plan.duration_value || 0}${unitMap[unit] || unit}`;
 }
 
 function formatResetPeriod(plan, t) {
@@ -79,7 +80,7 @@ const renderPlanTitle = (text, record, t) => {
       <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8 }}>
         <Text type='tertiary'>{t('价格')}</Text>
         <Text strong style={{ color: 'var(--semi-color-success)' }}>
-          {convertUSDToCurrency(Number(plan?.price_amount || 0), 2)}
+          {formatPlanPrice(plan?.price_amount)}
         </Text>
         <Text type='tertiary'>{t('总额度')}</Text>
         {plan?.total_amount > 0 ? (
@@ -125,13 +126,11 @@ const renderPlanTitle = (text, record, t) => {
   );
 };
 
-const renderPrice = (text) => {
-  return (
-    <Text strong style={{ color: 'var(--semi-color-success)' }}>
-      {convertUSDToCurrency(Number(text || 0), 2)}
-    </Text>
-  );
-};
+const renderPrice = (text) => (
+  <Text strong style={{ color: 'var(--semi-color-success)' }}>
+    {formatPlanPrice(text)}
+  </Text>
+);
 
 const renderPurchaseLimit = (text, record, t) => {
   const limit = Number(record?.plan?.max_purchase_per_user || 0);
@@ -142,12 +141,12 @@ const renderPurchaseLimit = (text, record, t) => {
   );
 };
 
-const renderDuration = (text, record, t) => {
-  return <Text type='secondary'>{formatDuration(record?.plan, t)}</Text>;
-};
+const renderDuration = (text, record, t) => (
+  <Text type='secondary'>{formatDuration(record?.plan, t)}</Text>
+);
 
-const renderEnabled = (text, record, t) => {
-  return text ? (
+const renderEnabled = (text, record, t) =>
+  text ? (
     <Tag
       color='white'
       shape='circle'
@@ -166,7 +165,6 @@ const renderEnabled = (text, record, t) => {
       {t('禁用')}
     </Tag>
   );
-};
 
 const renderTotalAmount = (text, record, t) => {
   const total = Number(record?.plan?.total_amount || 0);
@@ -239,7 +237,9 @@ const renderOperations = (
     if (isEnabled) {
       Modal.confirm({
         title: t('确认禁用'),
-        content: t('禁用后用户端不再展示，但历史订单不受影响。是否继续？'),
+        content: t(
+          '禁用后用户端不再展示，但历史订单不受影响。是否继续？'
+        ),
         centered: true,
         onOk: () => setPlanEnabled(record, false),
       });
@@ -295,81 +295,79 @@ export const getSubscriptionsColumns = ({
   setPlanEnabled,
   enableEpay,
   complianceConfirmed = true,
-}) => {
-  return [
-    {
-      title: 'ID',
-      dataIndex: ['plan', 'id'],
-      width: 60,
-      render: (text) => <Text type='tertiary'>#{text}</Text>,
-    },
-    {
-      title: t('套餐'),
-      dataIndex: ['plan', 'title'],
-      width: 200,
-      render: (text, record) => renderPlanTitle(text, record, t),
-    },
-    {
-      title: t('价格'),
-      dataIndex: ['plan', 'price_amount'],
-      width: 100,
-      render: (text) => renderPrice(text),
-    },
-    {
-      title: t('购买上限'),
-      width: 90,
-      render: (text, record) => renderPurchaseLimit(text, record, t),
-    },
-    {
-      title: t('优先级'),
-      dataIndex: ['plan', 'sort_order'],
-      width: 80,
-      render: (text) => <Text type='tertiary'>{Number(text || 0)}</Text>,
-    },
-    {
-      title: t('有效期'),
-      width: 100,
-      render: (text, record) => renderDuration(text, record, t),
-    },
-    {
-      title: t('重置'),
-      width: 80,
-      render: (text, record) => renderResetPeriod(text, record, t),
-    },
-    {
-      title: t('状态'),
-      dataIndex: ['plan', 'enabled'],
-      width: 80,
-      render: (text, record) => renderEnabled(text, record, t),
-    },
-    {
-      title: t('支付渠道'),
-      width: 180,
-      render: (text, record) =>
-        renderPaymentConfig(text, record, t, enableEpay),
-    },
-    {
-      title: t('总额度'),
-      width: 100,
-      render: (text, record) => renderTotalAmount(text, record, t),
-    },
-    {
-      title: t('升级分组'),
-      width: 100,
-      render: (text, record) => renderUpgradeGroup(text, record, t),
-    },
-    {
-      title: t('操作'),
-      dataIndex: 'operate',
-      fixed: 'right',
-      width: 160,
-      render: (text, record) =>
-        renderOperations(text, record, {
-          openEdit,
-          setPlanEnabled,
-          t,
-          complianceConfirmed,
-        }),
-    },
-  ];
-};
+}) => [
+  {
+    title: 'ID',
+    dataIndex: ['plan', 'id'],
+    width: 60,
+    render: (text) => <Text type='tertiary'>#{text}</Text>,
+  },
+  {
+    title: t('套餐'),
+    dataIndex: ['plan', 'title'],
+    width: 200,
+    render: (text, record) => renderPlanTitle(text, record, t),
+  },
+  {
+    title: t('价格'),
+    dataIndex: ['plan', 'price_amount'],
+    width: 100,
+    render: (text) => renderPrice(text),
+  },
+  {
+    title: t('购买上限'),
+    width: 90,
+    render: (text, record) => renderPurchaseLimit(text, record, t),
+  },
+  {
+    title: t('优先级'),
+    dataIndex: ['plan', 'sort_order'],
+    width: 80,
+    render: (text) => <Text type='tertiary'>{Number(text || 0)}</Text>,
+  },
+  {
+    title: t('有效期'),
+    width: 100,
+    render: (text, record) => renderDuration(text, record, t),
+  },
+  {
+    title: t('重置'),
+    width: 80,
+    render: (text, record) => renderResetPeriod(text, record, t),
+  },
+  {
+    title: t('状态'),
+    dataIndex: ['plan', 'enabled'],
+    width: 80,
+    render: (text, record) => renderEnabled(text, record, t),
+  },
+  {
+    title: t('支付渠道'),
+    width: 180,
+    render: (text, record) =>
+      renderPaymentConfig(text, record, t, enableEpay),
+  },
+  {
+    title: t('总额度'),
+    width: 100,
+    render: (text, record) => renderTotalAmount(text, record, t),
+  },
+  {
+    title: t('升级分组'),
+    width: 100,
+    render: (text, record) => renderUpgradeGroup(text, record, t),
+  },
+  {
+    title: t('操作'),
+    dataIndex: 'operate',
+    fixed: 'right',
+    width: 160,
+    render: (text, record) =>
+      renderOperations(text, record, {
+        openEdit,
+        setPlanEnabled,
+        t,
+        complianceConfirmed,
+      }),
+  },
+];
