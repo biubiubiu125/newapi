@@ -338,6 +338,54 @@ func TestCreateWithdrawalValidatesAssetOwnershipAndPurpose(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestCreateWithdrawalStripsSignedQRURLBeforePersisting(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	affiliateUser := &model.User{Username: "withdraw-signature", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "WDSIGN01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:     affiliate.Id,
+		UserId:          affiliateUser.Id,
+		AvailableAmount: 100,
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralAsset{
+		OwnerUserId: affiliateUser.Id,
+		Purpose:     model.ReferralAssetPurposeWithdrawalQR,
+		StoragePath: "/referral-assets/withdraw-qr.png",
+		ContentType: "image/png",
+		Size:        123,
+		CreatedBy:   "user",
+		CreatedAt:   time.Now().Unix(),
+	}).Error)
+
+	view, err := service.CreateWithdrawal(ReferralWithdrawalCreateInput{
+		UserId:         affiliateUser.Id,
+		Amount:         10,
+		AccountType:    "alipay",
+		AccountName:    "tester",
+		AccountNo:      "abc123",
+		QRImageURL:     "/referral-assets/withdraw-qr.png?expires=1&sig=test",
+		IdempotencyKey: "wd-strip-signature",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, view)
+	require.Equal(t, "/referral-assets/withdraw-qr.png", stripAssetSignature(view.QRImageURL))
+
+	stored := &model.ReferralWithdrawal{}
+	require.NoError(t, db.First(stored, view.Id).Error)
+	require.Equal(t, "/referral-assets/withdraw-qr.png", stored.QRImageURL)
+}
+
 func TestAdjustAffiliateCommissionRejectsConflictingIdempotencyPayload(t *testing.T) {
 	db := setupReferralServiceTestDB(t)
 	service := NewReferralService()
@@ -509,6 +557,105 @@ func TestMarkWithdrawalPaidRequiresTxnOrProof(t *testing.T) {
 	})
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "payment_txn_no or payment_proof_url is required")
+}
+
+func TestApproveWithdrawalCreatesLedgerEntry(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "withdraw-approve-ledger", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             user.Id,
+		InviteCode:         "APRVLED1",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	withdrawal := &model.ReferralWithdrawal{
+		AffiliateId: affiliate.Id,
+		UserId:      user.Id,
+		Amount:      10,
+		NetAmount:   10,
+		AccountType: "alipay",
+		AccountName: "tester",
+		AccountNo:   "abc",
+		Status:      model.ReferralWithdrawalStatusPending,
+		SubmittedAt: time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(withdrawal).Error)
+
+	view, err := service.ApproveWithdrawal(ReferralWithdrawalReviewInput{
+		WithdrawalId: withdrawal.Id,
+		AdminUserId:  100,
+		AdminNote:    "checked",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, view)
+
+	var ledger model.ReferralCommissionLedger
+	require.NoError(t, db.Where("external_ref_id = ?", fmt.Sprintf("withdrawal_approve:%d", withdrawal.Id)).First(&ledger).Error)
+	require.Equal(t, "withdrawal_approve", ledger.Type)
+	require.Equal(t, "admin", ledger.Operator)
+}
+
+func TestMarkWithdrawalPaidStripsSignedProofURLBeforePersisting(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "withdraw-proof-strip", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             user.Id,
+		InviteCode:         "PRFSTR01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:  affiliate.Id,
+		UserId:       user.Id,
+		FrozenAmount: 10,
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralAsset{
+		OwnerUserId: user.Id,
+		Purpose:     model.ReferralAssetPurposePaymentProof,
+		StoragePath: "/referral-assets/payment-proof.png",
+		ContentType: "image/png",
+		Size:        123,
+		CreatedBy:   "admin",
+		CreatedAt:   time.Now().Unix(),
+	}).Error)
+	withdrawal := &model.ReferralWithdrawal{
+		AffiliateId: affiliate.Id,
+		UserId:      user.Id,
+		Amount:      10,
+		NetAmount:   10,
+		AccountType: "alipay",
+		AccountName: "tester",
+		AccountNo:   "abc",
+		Status:      model.ReferralWithdrawalStatusApproved,
+		SubmittedAt: time.Now().Unix(),
+		ApprovedAt:  time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(withdrawal).Error)
+
+	view, err := service.MarkWithdrawalPaid(ReferralWithdrawalPayInput{
+		WithdrawalId:    withdrawal.Id,
+		AdminUserId:     100,
+		AdminNote:       "paid",
+		PaymentProofURL: "/referral-assets/payment-proof.png?expires=1&sig=test",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, view)
+
+	stored := &model.ReferralWithdrawal{}
+	require.NoError(t, db.First(stored, withdrawal.Id).Error)
+	require.Equal(t, "/referral-assets/payment-proof.png", stored.PaymentProofURL)
 }
 
 func TestApproveAffiliateCreatesAuditLogWhenAdminCreatesAffiliate(t *testing.T) {

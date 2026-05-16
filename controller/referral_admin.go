@@ -46,6 +46,11 @@ type referralWithdrawalPayRequest struct {
 	PaymentTxnNo    string `json:"payment_txn_no"`
 }
 
+type referralCommissionRetryRequest struct {
+	SourceType string `json:"source_type"`
+	TradeNo    string `json:"trade_no"`
+}
+
 func GetReferralOverview(c *gin.Context) {
 	item, err := referralService.GetOverview()
 	if err != nil {
@@ -325,6 +330,8 @@ func AdjustReferralAffiliate(c *gin.Context) {
 		Delta:          req.Amount,
 		Remark:         strings.TrimSpace(req.Remark),
 		IdempotencyKey: idempotencyKey,
+		IP:             c.ClientIP(),
+		UserAgent:      c.GetHeader("User-Agent"),
 	})
 	if err != nil {
 		common.ApiError(c, err)
@@ -455,6 +462,8 @@ func ApproveReferralWithdrawal(c *gin.Context) {
 		WithdrawalId: withdrawalId,
 		AdminUserId:  adminId,
 		AdminNote:    strings.TrimSpace(req.AdminNote),
+		IP:           c.ClientIP(),
+		UserAgent:    c.GetHeader("User-Agent"),
 	})
 	if err != nil {
 		common.ApiError(c, err)
@@ -479,6 +488,8 @@ func RejectReferralWithdrawal(c *gin.Context) {
 		AdminUserId:  adminId,
 		AdminNote:    strings.TrimSpace(req.AdminNote),
 		RejectReason: strings.TrimSpace(req.RejectReason),
+		IP:           c.ClientIP(),
+		UserAgent:    c.GetHeader("User-Agent"),
 	})
 	if err != nil {
 		common.ApiError(c, err)
@@ -504,12 +515,30 @@ func MarkReferralWithdrawalPaid(c *gin.Context) {
 		AdminNote:       strings.TrimSpace(req.AdminNote),
 		PaymentProofURL: strings.TrimSpace(req.PaymentProofURL),
 		PaymentTxnNo:    strings.TrimSpace(req.PaymentTxnNo),
+		IP:              c.ClientIP(),
+		UserAgent:       c.GetHeader("User-Agent"),
 	})
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	common.ApiSuccess(c, item)
+}
+
+func RetryReferralCommissionJob(c *gin.Context) {
+	var req referralCommissionRetryRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := referralService.RetryCommissionJob(req.SourceType, req.TradeNo); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"source_type": strings.ToLower(strings.TrimSpace(req.SourceType)),
+		"trade_no":    strings.TrimSpace(req.TradeNo),
+	})
 }
 
 func parseAdminReferralTarget(c *gin.Context) (adminId int, userId int, ok bool) {

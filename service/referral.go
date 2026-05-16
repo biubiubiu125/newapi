@@ -75,6 +75,7 @@ type ReferralCommissionView struct {
 	Id               int     `json:"id"`
 	AffiliateId      int     `json:"affiliate_id"`
 	AffiliateUserId  int     `json:"affiliate_user_id"`
+	AffiliateUsername string `json:"affiliate_username,omitempty"`
 	AffiliateEmail   string  `json:"affiliate_email,omitempty"`
 	SourceType       string  `json:"source_type"`
 	SourceOrderId    int     `json:"source_order_id"`
@@ -268,6 +269,8 @@ type ReferralWithdrawalReviewInput struct {
 	AdminUserId  int
 	AdminNote    string
 	RejectReason string
+	IP           string
+	UserAgent    string
 }
 
 type ReferralWithdrawalPayInput struct {
@@ -276,6 +279,8 @@ type ReferralWithdrawalPayInput struct {
 	AdminNote       string
 	PaymentProofURL string
 	PaymentTxnNo    string
+	IP              string
+	UserAgent       string
 }
 
 type ReferralAdjustInput struct {
@@ -284,6 +289,8 @@ type ReferralAdjustInput struct {
 	Delta          float64
 	Remark         string
 	IdempotencyKey string
+	IP             string
+	UserAgent      string
 }
 
 type ReferralListParams struct {
@@ -956,9 +963,11 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 		if fee > input.Amount {
 			return errors.New("withdraw fee exceeds withdrawal amount")
 		}
-		if err := s.validateWithdrawalAssetTx(tx, input.UserId, strings.TrimSpace(input.QRImageURL), model.ReferralAssetPurposeWithdrawalQR); err != nil {
+		qrImageURL := strings.TrimSpace(input.QRImageURL)
+		if err := s.validateWithdrawalAssetTx(tx, input.UserId, qrImageURL, model.ReferralAssetPurposeWithdrawalQR); err != nil {
 			return err
 		}
+		qrImagePath := stripAssetSignature(qrImageURL)
 		withdrawal := &model.ReferralWithdrawal{
 			AffiliateId:    affiliate.Id,
 			UserId:         input.UserId,
@@ -969,7 +978,7 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 			AccountName:    strings.TrimSpace(input.AccountName),
 			AccountNo:      strings.TrimSpace(input.AccountNo),
 			AccountNetwork: strings.TrimSpace(input.AccountNetwork),
-			QRImageURL:     strings.TrimSpace(input.QRImageURL),
+			QRImageURL:     qrImagePath,
 			ApplicantNote:  strings.TrimSpace(input.ApplicantNote),
 			Status:         model.ReferralWithdrawalStatusPending,
 			IdempotencyKey: strings.TrimSpace(input.IdempotencyKey),
@@ -1131,7 +1140,21 @@ func (s *ReferralService) ApproveWithdrawal(input ReferralWithdrawalReviewInput)
 		if res.RowsAffected != 1 {
 			return errors.New("only pending withdrawals can be approved")
 		}
-		return s.recordAdminAuditTx(tx, "referral_withdrawal_approve", withdrawal.UserId, withdrawal.AffiliateId, input.AdminUserId, strings.TrimSpace(input.AdminNote), "", "", nil, map[string]any{
+		if err := s.createLedgerTx(tx, &model.ReferralCommissionLedger{
+			AffiliateId:   withdrawal.AffiliateId,
+			UserId:        withdrawal.UserId,
+			WithdrawalId:  withdrawal.Id,
+			Type:          "withdrawal_approve",
+			RefType:       "withdrawal",
+			RefId:         fmt.Sprintf("%d", withdrawal.Id),
+			ExternalRefId: fmt.Sprintf("withdrawal_approve:%d", withdrawal.Id),
+			Operator:      "admin",
+			Remark:        strings.TrimSpace(input.AdminNote),
+			CreatedAt:     time.Now().Unix(),
+		}); err != nil {
+			return err
+		}
+		return s.recordAdminAuditTx(tx, "referral_withdrawal_approve", withdrawal.UserId, withdrawal.AffiliateId, input.AdminUserId, strings.TrimSpace(input.AdminNote), strings.TrimSpace(input.IP), strings.TrimSpace(input.UserAgent), nil, map[string]any{
 			"withdrawal_id": withdrawal.Id,
 		})
 	})
@@ -1200,7 +1223,7 @@ func (s *ReferralService) RejectWithdrawal(input ReferralWithdrawalReviewInput) 
 		}); err != nil {
 			return err
 		}
-		return s.recordAdminAuditTx(tx, "referral_withdrawal_reject", withdrawal.UserId, withdrawal.AffiliateId, input.AdminUserId, strings.TrimSpace(input.RejectReason), "", "", nil, map[string]any{
+		return s.recordAdminAuditTx(tx, "referral_withdrawal_reject", withdrawal.UserId, withdrawal.AffiliateId, input.AdminUserId, strings.TrimSpace(input.RejectReason), strings.TrimSpace(input.IP), strings.TrimSpace(input.UserAgent), nil, map[string]any{
 			"withdrawal_id": withdrawal.Id,
 		})
 	})
@@ -1222,9 +1245,11 @@ func (s *ReferralService) MarkWithdrawalPaid(input ReferralWithdrawalPayInput) (
 		if withdrawal.Status != model.ReferralWithdrawalStatusApproved {
 			return errors.New("only approved withdrawals can be marked paid")
 		}
-		if err := s.validatePaymentProofAssetTx(tx, strings.TrimSpace(input.PaymentProofURL)); err != nil {
+		paymentProofURL := strings.TrimSpace(input.PaymentProofURL)
+		if err := s.validatePaymentProofAssetTx(tx, paymentProofURL); err != nil {
 			return err
 		}
+		paymentProofPath := stripAssetSignature(paymentProofURL)
 		account := &model.ReferralCommissionAccount{}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("affiliate_id = ?", withdrawal.AffiliateId).First(account).Error; err != nil {
 			return err
@@ -1235,7 +1260,7 @@ func (s *ReferralService) MarkWithdrawalPaid(input ReferralWithdrawalPayInput) (
 				"status":            model.ReferralWithdrawalStatusPaid,
 				"paid_at":           time.Now().Unix(),
 				"admin_note":        strings.TrimSpace(input.AdminNote),
-				"payment_proof_url": strings.TrimSpace(input.PaymentProofURL),
+				"payment_proof_url": paymentProofPath,
 				"payment_txn_no":    strings.TrimSpace(input.PaymentTxnNo),
 			})
 		if res.Error != nil {
@@ -1275,10 +1300,10 @@ func (s *ReferralService) MarkWithdrawalPaid(input ReferralWithdrawalPayInput) (
 		}); err != nil {
 			return err
 		}
-		return s.recordAdminAuditTx(tx, "referral_withdrawal_paid", withdrawal.UserId, withdrawal.AffiliateId, input.AdminUserId, strings.TrimSpace(input.AdminNote), "", "", nil, map[string]any{
+		return s.recordAdminAuditTx(tx, "referral_withdrawal_paid", withdrawal.UserId, withdrawal.AffiliateId, input.AdminUserId, strings.TrimSpace(input.AdminNote), strings.TrimSpace(input.IP), strings.TrimSpace(input.UserAgent), nil, map[string]any{
 			"withdrawal_id":     withdrawal.Id,
 			"payment_txn_no":    strings.TrimSpace(input.PaymentTxnNo),
-			"payment_proof_url": strings.TrimSpace(input.PaymentProofURL),
+			"payment_proof_url": paymentProofPath,
 		})
 	})
 	if err != nil {
@@ -1359,7 +1384,7 @@ func (s *ReferralService) AdjustAffiliateCommission(input ReferralAdjustInput) (
 		if res.RowsAffected != 1 {
 			return errors.New("available referral balance is insufficient")
 		}
-		return s.recordAdminAuditTx(tx, "referral_affiliate_adjust", input.UserId, affiliate.Id, input.AdminUserId, strings.TrimSpace(input.Remark), "", "", nil, map[string]any{
+		return s.recordAdminAuditTx(tx, "referral_affiliate_adjust", input.UserId, affiliate.Id, input.AdminUserId, strings.TrimSpace(input.Remark), strings.TrimSpace(input.IP), strings.TrimSpace(input.UserAgent), nil, map[string]any{
 			"amount":          roundMoney(input.Delta),
 			"idempotency_key": strings.TrimSpace(input.IdempotencyKey),
 		})
@@ -1784,6 +1809,22 @@ func (s *ReferralService) ProcessSubscriptionCommission(tradeNo string) error {
 			return tx.Save(order).Error
 		})
 	})
+}
+
+func (s *ReferralService) RetryCommissionJob(sourceType string, tradeNo string) error {
+	sourceType = strings.ToLower(strings.TrimSpace(sourceType))
+	tradeNo = strings.TrimSpace(tradeNo)
+	if tradeNo == "" {
+		return errors.New("trade_no is required")
+	}
+	switch sourceType {
+	case "topup":
+		return s.ProcessTopUpCommission(tradeNo)
+	case "subscription":
+		return s.ProcessSubscriptionCommission(tradeNo)
+	default:
+		return errors.New("unsupported source_type")
+	}
 }
 
 func (s *ReferralService) processCommissionTx(
@@ -2391,6 +2432,7 @@ func (s *ReferralService) listCommissions(params ReferralListParams, affiliateId
 			Id:               commission.Id,
 			AffiliateId:      commission.AffiliateId,
 			AffiliateUserId:  commission.AffiliateUserId,
+			AffiliateUsername: affiliateUser.Username,
 			AffiliateEmail:   affiliateUser.Email,
 			SourceType:       commission.SourceType,
 			SourceOrderId:    commission.SourceOrderId,

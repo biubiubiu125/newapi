@@ -48,6 +48,7 @@ import Subscription from './pages/Subscription';
 import OAuth2Callback from './components/auth/OAuth2Callback';
 import PersonalSetting from './components/settings/PersonalSetting';
 import Referral from './pages/Referral';
+import AdminReferral from './pages/AdminReferral';
 import Setup from './pages/Setup';
 import SetupCheck from './components/layout/SetupCheck';
 
@@ -296,6 +297,26 @@ function App() {
                 <Referral />
               </Suspense>
             </PrivateRoute>
+          }
+        />
+        <Route
+          path='/console/admin-referral'
+          element={
+            <AdminRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <AdminReferral />
+              </Suspense>
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/admin-referral/:section'
+          element={
+            <AdminRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <AdminReferral />
+              </Suspense>
+            </AdminRoute>
           }
         />
         <Route

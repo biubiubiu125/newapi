@@ -37,6 +37,7 @@ const routerMap = {
   redemption: '/console/redemption',
   topup: '/console/topup',
   referral: '/console/referral',
+  adminReferral: '/console/admin-referral',
   user: '/console/user',
   subscription: '/console/subscription',
   log: '/console/log',
@@ -163,6 +164,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('订阅管理'),
         itemKey: 'subscription',
         to: '/subscription',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
+        text: t('推广管理'),
+        itemKey: 'adminReferral',
+        to: '/console/admin-referral',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {
@@ -296,6 +303,10 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       } else {
         matchingKey = 'chat';
       }
+    }
+
+    if (!matchingKey && currentPath.startsWith('/console/admin-referral')) {
+      matchingKey = 'adminReferral';
     }
 
     if (!matchingKey && currentPath.startsWith('/console/referral')) {

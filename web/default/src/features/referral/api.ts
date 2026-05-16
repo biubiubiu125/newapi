@@ -161,6 +161,14 @@ export async function listAdminReferralCommissionJobs(params: {
   return res.data
 }
 
+export async function retryAdminReferralCommissionJob(payload: {
+  source_type: string
+  trade_no: string
+}): Promise<ApiResponse<{ source_type: string; trade_no: string }>> {
+  const res = await api.post('/api/user/admin/referral/commission-jobs/retry', payload)
+  return res.data
+}
+
 export async function listAdminReferralLedgers(params: {
   p?: number
   page_size?: number

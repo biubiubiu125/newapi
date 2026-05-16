@@ -173,6 +173,11 @@ export interface ReferralCommissionJob {
   updated_at: number
 }
 
+export interface RetryReferralCommissionJobResponse {
+  source_type: string
+  trade_no: string
+}
+
 export interface ReferralLedger {
   id: number
   affiliate_id: number

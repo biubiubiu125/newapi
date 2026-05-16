@@ -34,6 +34,7 @@ import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SectionPageLayout } from '@/components/layout'
 import {
+  adjustReferralAffiliate,
   approveReferralAffiliate,
   approveReferralWithdrawal,
   disableReferralAffiliate,
@@ -43,6 +44,7 @@ import {
   getAdminReferralSettings,
   listAdminPendingReferralAffiliates,
   listAdminReferralAffiliates,
+  listAdminReferralBindings,
   listAdminReferralCommissions,
   listAdminReferralCommissionJobs,
   listAdminReferralLedgers,
@@ -51,15 +53,18 @@ import {
   markReferralWithdrawalPaid,
   rejectReferralAffiliate,
   rejectReferralWithdrawal,
+  retryAdminReferralCommissionJob,
   restoreReferralAffiliate,
   restoreReferralSettlement,
   restoreReferralWithdrawal,
   runReferralSettlementBatch,
+  uploadAdminReferralAsset,
   updateAdminReferralSettings,
   updateReferralAffiliateRate,
 } from '@/features/referral/api'
 import type {
   ReferralAffiliate,
+  ReferralBinding,
   ReferralCommission,
   ReferralCommissionJob,
   ReferralLedger,
@@ -127,6 +132,8 @@ type AffiliateAction =
   | { kind: 'freeze_withdrawal'; item: ReferralAffiliate }
   | { kind: 'restore_withdrawal'; item: ReferralAffiliate }
   | { kind: 'update_rate'; item: ReferralAffiliate }
+  | { kind: 'adjust_increase'; item: ReferralAffiliate }
+  | { kind: 'adjust_decrease'; item: ReferralAffiliate }
   | null
 
 type WithdrawalAction =
@@ -137,6 +144,27 @@ type WithdrawalAction =
 
 function formatMoney(value: number): string {
   return formatCurrencyUSD(value || 0)
+}
+
+function parseOptionalNumber(value: string): number | undefined {
+  const trimmed = value.trim()
+  if (trimmed === '') {
+    return undefined
+  }
+  const parsed = Number(trimmed)
+  return Number.isFinite(parsed) ? parsed : undefined
+}
+
+function parseRequiredNumber(value: string, fallback: number): number {
+  const parsed = parseOptionalNumber(value)
+  return parsed ?? fallback
+}
+
+function buildIdempotencyKey(): string {
+  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+    return crypto.randomUUID()
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
 export function AdminReferral() {
@@ -153,6 +181,7 @@ export function AdminReferral() {
   const [settings, setSettings] = useState<ReferralSettings | null>(null)
   const [pendingItems, setPendingItems] = useState<ReferralAffiliate[]>([])
   const [affiliateItems, setAffiliateItems] = useState<ReferralAffiliate[]>([])
+  const [bindingItems, setBindingItems] = useState<ReferralBinding[]>([])
   const [commissionItems, setCommissionItems] = useState<ReferralCommission[]>([])
   const [commissionJobs, setCommissionJobs] = useState<ReferralCommissionJob[]>([])
   const [withdrawalItems, setWithdrawalItems] = useState<ReferralWithdrawal[]>([])
@@ -173,6 +202,9 @@ export function AdminReferral() {
   const [adminNote, setAdminNote] = useState('')
   const [runningSettlement, setRunningSettlement] = useState(false)
   const [savingSettings, setSavingSettings] = useState(false)
+  const [adjustAmountInput, setAdjustAmountInput] = useState('')
+  const [detailAffiliate, setDetailAffiliate] = useState<ReferralAffiliate | null>(null)
+  const [detailMode, setDetailMode] = useState<'bindings' | 'commissions' | 'withdrawals' | null>(null)
 
   const pageMeta = SECTION_META[activeSection]
 
@@ -228,6 +260,14 @@ export function AdminReferral() {
       status: withdrawalStatus || undefined,
     })
     setWithdrawalItems(res.data?.items || [])
+  }
+
+  async function loadAffiliateBindings(userId: number) {
+    const res = await listAdminReferralBindings(userId, {
+      p: 1,
+      page_size: 100,
+    })
+    setBindingItems(res.data?.items || [])
   }
 
   async function loadLedgers() {
@@ -310,8 +350,8 @@ export function AdminReferral() {
     const { item } = pendingDecision
     if (pendingDecision.kind === 'approve') {
       const rateOverride =
-        rateOverrideInput.trim() === '' ? undefined : Number(rateOverrideInput)
-      if (rateOverrideInput.trim() !== '' && !Number.isFinite(rateOverride)) {
+        parseOptionalNumber(rateOverrideInput)
+      if (rateOverrideInput.trim() !== '' && rateOverride === undefined) {
         toast.error(t('Please enter a valid rate'))
         return
       }
@@ -390,8 +430,8 @@ export function AdminReferral() {
         break
       }
       case 'update_rate': {
-        const value = Number(rateOverrideInput)
-        if (!Number.isFinite(value)) {
+        const value = parseOptionalNumber(rateOverrideInput)
+        if (rateOverrideInput.trim() !== '' && value === undefined) {
           toast.error(t('Please enter a valid rate'))
           return
         }
@@ -401,6 +441,25 @@ export function AdminReferral() {
         })
         success = res.success
         message = res.message || t('Rate update failed')
+        break
+      }
+      case 'adjust_increase':
+      case 'adjust_decrease': {
+        const amount = parseOptionalNumber(adjustAmountInput)
+        if (amount === undefined || amount <= 0) {
+          toast.error(t('Please enter a valid amount'))
+          return
+        }
+        const signedAmount =
+          affiliateAction.kind === 'adjust_increase' ? amount : -amount
+        const res = await adjustReferralAffiliate({
+          user_id: item.user_id,
+          amount: signedAmount,
+          remark: reasonInput.trim(),
+          idempotency_key: buildIdempotencyKey(),
+        })
+        success = res.success
+        message = res.message || t('Adjust failed')
         break
       }
     }
@@ -413,7 +472,19 @@ export function AdminReferral() {
     setAffiliateAction(null)
     setReasonInput('')
     setRateOverrideInput('')
+    setAdjustAmountInput('')
     await loadAffiliates()
+    if (detailAffiliate?.user_id === item.user_id) {
+      const refreshed = await listAdminReferralAffiliates({
+        p: 1,
+        page_size: 1,
+        keyword: item.username || item.invite_code,
+      })
+      const latest = refreshed.data?.items?.find((candidate) => candidate.user_id === item.user_id)
+      if (latest) {
+        setDetailAffiliate(latest)
+      }
+    }
   }
 
   async function handleWithdrawalAction() {
@@ -452,6 +523,73 @@ export function AdminReferral() {
     setPaymentTxnNo('')
     setPaymentProofURL('')
     await loadWithdrawals()
+    await loadLedgers()
+    await loadAuditLogs()
+    if (detailMode === 'withdrawals' && detailAffiliate) {
+      const res = await listAdminReferralWithdrawals({
+        p: 1,
+        page_size: 100,
+        affiliate_user_id: detailAffiliate.user_id,
+      })
+      setWithdrawalItems(res.data?.items || [])
+    }
+  }
+
+  async function handleUploadPaymentProof(event: React.ChangeEvent<HTMLInputElement>) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const res = await uploadAdminReferralAsset(file)
+      if (res.success && res.data?.url) {
+        setPaymentProofURL(res.data.url)
+        toast.success(t('Payment proof uploaded'))
+      } else {
+        toast.error(res.message || t('Upload failed'))
+      }
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  async function handleRetryCommissionJob(item: ReferralCommissionJob) {
+    const res = await retryAdminReferralCommissionJob({
+      source_type: item.source_type,
+      trade_no: item.source_trade_no,
+    })
+    if (!res.success) {
+      toast.error(res.message || t('Retry failed'))
+      return
+    }
+    toast.success(t('Commission retry submitted'))
+    await loadCommissions()
+    await loadOverview()
+  }
+
+  async function openAffiliateDetail(
+    item: ReferralAffiliate,
+    mode: 'bindings' | 'commissions' | 'withdrawals'
+  ) {
+    setDetailAffiliate(item)
+    setDetailMode(mode)
+    if (mode === 'bindings') {
+      await loadAffiliateBindings(item.user_id)
+      return
+    }
+    if (mode === 'commissions') {
+      const res = await listAdminReferralCommissions({
+        p: 1,
+        page_size: 100,
+        affiliate_user_id: item.user_id,
+      })
+      setCommissionItems(res.data?.items || [])
+      return
+    }
+    const res = await listAdminReferralWithdrawals({
+      p: 1,
+      page_size: 100,
+      affiliate_user_id: item.user_id,
+    })
+    setWithdrawalItems(res.data?.items || [])
   }
 
   const actionTitle = (() => {
@@ -573,7 +711,15 @@ export function AdminReferral() {
                   value={String(settings.cookie_ttl_days)}
                   onChange={(value) =>
                     setSettings((prev) =>
-                      prev ? { ...prev, cookie_ttl_days: Number(value) } : prev
+                      prev
+                        ? {
+                            ...prev,
+                            cookie_ttl_days: parseRequiredNumber(
+                              value,
+                              prev.cookie_ttl_days
+                            ),
+                          }
+                        : prev
                     )
                   }
                 />
@@ -582,7 +728,15 @@ export function AdminReferral() {
                   value={String(settings.default_rate)}
                   onChange={(value) =>
                     setSettings((prev) =>
-                      prev ? { ...prev, default_rate: Number(value) } : prev
+                      prev
+                        ? {
+                            ...prev,
+                            default_rate: parseRequiredNumber(
+                              value,
+                              prev.default_rate
+                            ),
+                          }
+                        : prev
                     )
                   }
                 />
@@ -591,7 +745,15 @@ export function AdminReferral() {
                   value={String(settings.settle_freeze_days)}
                   onChange={(value) =>
                     setSettings((prev) =>
-                      prev ? { ...prev, settle_freeze_days: Number(value) } : prev
+                      prev
+                        ? {
+                            ...prev,
+                            settle_freeze_days: parseRequiredNumber(
+                              value,
+                              prev.settle_freeze_days
+                            ),
+                          }
+                        : prev
                     )
                   }
                 />
@@ -600,7 +762,15 @@ export function AdminReferral() {
                   value={String(settings.min_withdraw_amount)}
                   onChange={(value) =>
                     setSettings((prev) =>
-                      prev ? { ...prev, min_withdraw_amount: Number(value) } : prev
+                      prev
+                        ? {
+                            ...prev,
+                            min_withdraw_amount: parseRequiredNumber(
+                              value,
+                              prev.min_withdraw_amount
+                            ),
+                          }
+                        : prev
                     )
                   }
                 />
@@ -609,7 +779,15 @@ export function AdminReferral() {
                   value={String(settings.withdraw_fee)}
                   onChange={(value) =>
                     setSettings((prev) =>
-                      prev ? { ...prev, withdraw_fee: Number(value) } : prev
+                      prev
+                        ? {
+                            ...prev,
+                            withdraw_fee: parseRequiredNumber(
+                              value,
+                              prev.withdraw_fee
+                            ),
+                          }
+                        : prev
                     )
                   }
                 />
@@ -769,6 +947,49 @@ export function AdminReferral() {
                       >
                         {t('Set Rate')}
                       </Button>
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        onClick={() => {
+                          setAffiliateAction({ kind: 'adjust_increase', item })
+                          setAdjustAmountInput('')
+                          setReasonInput('')
+                        }}
+                      >
+                        {t('Increase')}
+                      </Button>
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        onClick={() => {
+                          setAffiliateAction({ kind: 'adjust_decrease', item })
+                          setAdjustAmountInput('')
+                          setReasonInput('')
+                        }}
+                      >
+                        {t('Decrease')}
+                      </Button>
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        onClick={() => void openAffiliateDetail(item, 'bindings')}
+                      >
+                        {t('Bindings')}
+                      </Button>
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        onClick={() => void openAffiliateDetail(item, 'commissions')}
+                      >
+                        {t('Commissions')}
+                      </Button>
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        onClick={() => void openAffiliateDetail(item, 'withdrawals')}
+                      >
+                        {t('Withdrawals')}
+                      </Button>
                     </div>
                   ),
                 }))}
@@ -819,6 +1040,16 @@ export function AdminReferral() {
                     String(item.attempt_count),
                     item.last_error || '-',
                   ],
+                  action:
+                    item.status === 'failed' ? (
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        onClick={() => void handleRetryCommissionJob(item)}
+                      >
+                        {t('Retry')}
+                      </Button>
+                    ) : undefined,
                 }))}
               />
             </div>
@@ -969,6 +1200,7 @@ export function AdminReferral() {
             setAffiliateAction(null)
             setReasonInput('')
             setRateOverrideInput('')
+            setAdjustAmountInput('')
           }
         }}
         title={actionTitle}
@@ -979,6 +1211,14 @@ export function AdminReferral() {
                 label={t('Rate Override')}
                 value={rateOverrideInput}
                 onChange={setRateOverrideInput}
+              />
+            )}
+            {(affiliateAction?.kind === 'adjust_increase' ||
+              affiliateAction?.kind === 'adjust_decrease') && (
+              <LabeledInput
+                label={t('Amount')}
+                value={adjustAmountInput}
+                onChange={setAdjustAmountInput}
               />
             )}
             <div className='space-y-2'>
@@ -1045,12 +1285,83 @@ export function AdminReferral() {
                   value={paymentProofURL}
                   onChange={setPaymentProofURL}
                 />
+                <div className='space-y-2'>
+                  <div className='text-sm font-medium'>{t('Upload Payment Proof')}</div>
+                  <Input type='file' accept='image/*' onChange={(e) => void handleUploadPaymentProof(e)} />
+                </div>
               </>
             )}
           </div>
         }
         confirmText={t('Confirm')}
         handleConfirm={() => void handleWithdrawalAction()}
+      />
+
+      <ConfirmDialog
+        open={!!detailAffiliate && !!detailMode}
+        onOpenChange={(open) => {
+          if (!open) {
+            setDetailAffiliate(null)
+            setDetailMode(null)
+            setBindingItems([])
+          }
+        }}
+        title={
+          detailMode === 'bindings'
+            ? t('Affiliate Bindings')
+            : detailMode === 'commissions'
+              ? t('Affiliate Commissions')
+              : t('Affiliate Withdrawals')
+        }
+        desc={
+          <div className='max-h-[420px] overflow-auto'>
+            {detailMode === 'bindings' ? (
+              <SimpleAdminTable
+                headers={[t('Invitee'), t('Email'), t('Bound At')]}
+                rows={bindingItems.map((item) => ({
+                  key: item.id,
+                  cells: [
+                    item.invitee_username || '-',
+                    item.invitee_email || '-',
+                    formatTimestamp(item.bound_at),
+                  ],
+                }))}
+              />
+            ) : detailMode === 'commissions' ? (
+              <SimpleAdminTable
+                headers={[t('Trade No'), t('Invitee'), t('Commission'), t('Status')]}
+                rows={commissionItems.map((item) => ({
+                  key: item.id,
+                  cells: [
+                    item.source_trade_no,
+                    item.invitee_username || item.invitee_email || '-',
+                    formatMoney(item.commission_amount),
+                    item.status,
+                  ],
+                }))}
+              />
+            ) : (
+              <SimpleAdminTable
+                headers={[t('Amount'), t('Account'), t('Status'), t('Submitted')]}
+                rows={withdrawalItems.map((item) => ({
+                  key: item.id,
+                  cells: [
+                    formatMoney(item.amount),
+                    item.account_no_masked || '-',
+                    item.status,
+                    formatTimestamp(item.submitted_at),
+                  ],
+                }))}
+              />
+            )}
+          </div>
+        }
+        confirmText={t('Close')}
+        handleConfirm={() => {
+          setDetailAffiliate(null)
+          setDetailMode(null)
+          setBindingItems([])
+        }}
       />
     </SectionPageLayout>
   )

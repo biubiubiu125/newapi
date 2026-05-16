@@ -153,6 +153,7 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.POST("/admin/referral/affiliates/:user_id/withdrawal/restore", controller.RestoreReferralWithdrawal)
 				adminRoute.GET("/admin/referral/commissions", controller.GetAdminReferralCommissions)
 				adminRoute.GET("/admin/referral/commission-jobs", controller.GetReferralCommissionJobs)
+				adminRoute.POST("/admin/referral/commission-jobs/retry", controller.RetryReferralCommissionJob)
 				adminRoute.GET("/admin/referral/ledgers", controller.GetReferralLedgers)
 				adminRoute.GET("/admin/referral/audit-logs", controller.GetReferralAdminAuditLogs)
 				adminRoute.POST("/admin/referral/settlements/run", controller.RunReferralSettlementBatch)
