@@ -16,6 +16,7 @@ type rechargeAuditOrder struct {
 	UserID                   int     `json:"user_id"`
 	Username                 string  `json:"username"`
 	Amount                   int64   `json:"amount"`
+	CreditAmount             float64 `json:"credit_amount"`
 	Money                    float64 `json:"money"`
 	PaidAmount               float64 `json:"paid_amount"`
 	PaidCurrency             string  `json:"paid_currency"`
@@ -67,8 +68,8 @@ func GetRechargeAudit(c *gin.Context) {
 	startTime, _ := strconv.ParseInt(c.Query("start_time"), 10, 64)
 	endTime, _ := strconv.ParseInt(c.Query("end_time"), 10, 64)
 
+	creditExpr, creditArgs := rechargeAuditCreditAmountExpr()
 	query := model.DB.Table("top_ups AS t").
-		Select("t.id, t.user_id, u.username, t.amount, t.money, t.paid_amount, t.paid_currency, t.trade_no, t.payment_method, t.payment_provider, t.create_time, t.complete_time, t.status, t.referral_commission_status, t.referral_commission_error").
 		Joins("LEFT JOIN users u ON u.id = t.user_id")
 	query = applyRechargeAuditFilters(query, keyword, status, provider, startTime, endTime)
 
@@ -79,7 +80,8 @@ func GetRechargeAudit(c *gin.Context) {
 	}
 
 	var orders []rechargeAuditOrder
-	if err := query.Order("t.id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Scan(&orders).Error; err != nil {
+	selectSQL := fmt.Sprintf("t.id, t.user_id, u.username, t.amount, %s AS credit_amount, t.money, t.paid_amount, t.paid_currency, t.trade_no, t.payment_method, t.payment_provider, t.create_time, t.complete_time, t.status, t.referral_commission_status, t.referral_commission_error", creditExpr)
+	if err := query.Select(selectSQL, creditArgs...).Order("t.id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Scan(&orders).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -98,6 +100,7 @@ func GetRechargeAuditSummary(c *gin.Context) {
 
 	base := model.DB.Table("top_ups AS t").Joins("LEFT JOIN users u ON u.id = t.user_id")
 	base = applyRechargeAuditFilters(base, keyword, status, provider, startTime, endTime)
+	creditExpr, creditArgs := rechargeAuditCreditAmountExpr()
 
 	var totals struct {
 		TotalCount   int64   `json:"total_count"`
@@ -105,16 +108,19 @@ func GetRechargeAuditSummary(c *gin.Context) {
 		PendingCount int64   `json:"pending_count"`
 		FailedCount  int64   `json:"failed_count"`
 		PaidAmount   float64 `json:"paid_amount"`
-		CreditAmount int64   `json:"credit_amount"`
+		CreditAmount float64 `json:"credit_amount"`
 	}
-	if err := base.Select(`
+	selectSQL := fmt.Sprintf(`
 		count(*) AS total_count,
 		coalesce(sum(case when t.status = ? then 1 else 0 end), 0) AS success_count,
 		coalesce(sum(case when t.status = ? then 1 else 0 end), 0) AS pending_count,
 		coalesce(sum(case when t.status in (?, ?) then 1 else 0 end), 0) AS failed_count,
 		coalesce(sum(case when t.status = ? then t.paid_amount else 0 end), 0) AS paid_amount,
-		coalesce(sum(case when t.status = ? then t.amount else 0 end), 0) AS credit_amount
-	`, common.TopUpStatusSuccess, common.TopUpStatusPending, common.TopUpStatusFailed, common.TopUpStatusExpired, common.TopUpStatusSuccess, common.TopUpStatusSuccess).Scan(&totals).Error; err != nil {
+		coalesce(sum(case when t.status = ? then %s else 0 end), 0) AS credit_amount
+	`, creditExpr)
+	selectArgs := []interface{}{common.TopUpStatusSuccess, common.TopUpStatusPending, common.TopUpStatusFailed, common.TopUpStatusExpired, common.TopUpStatusSuccess, common.TopUpStatusSuccess}
+	selectArgs = append(selectArgs, creditArgs...)
+	if err := base.Select(selectSQL, selectArgs...).Scan(&totals).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -187,6 +193,14 @@ func applyRechargeAuditFilters(query *gorm.DB, keyword string, status string, pr
 		query = query.Where("t.create_time <= ?", endTime)
 	}
 	return query
+}
+
+func rechargeAuditCreditAmountExpr() (string, []interface{}) {
+	quotaPerUnit := common.QuotaPerUnit
+	if quotaPerUnit <= 0 {
+		quotaPerUnit = 1
+	}
+	return "case when t.payment_provider = ? then t.amount * 1.0 / ? else t.amount end", []interface{}{model.PaymentProviderCreem, quotaPerUnit}
 }
 
 func buildRechargeAnomalies(keyword string, status string, provider string, startTime int64, endTime int64) ([]auditAnomaly, error) {

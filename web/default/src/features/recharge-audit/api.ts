@@ -23,6 +23,7 @@ export interface RechargeAuditOrder {
   user_id: number
   username: string
   amount: number
+  credit_amount: number
   money: number
   paid_amount: number
   paid_currency: string

@@ -75,6 +75,63 @@ function statusVariant(status: string) {
   }
 }
 
+function referralStatusVariant(status: string) {
+  switch (status) {
+    case 'succeeded':
+    case 'skipped':
+      return 'success'
+    case 'pending':
+    case 'processing':
+      return 'warning'
+    case 'failed':
+      return 'danger'
+    default:
+      return 'neutral'
+  }
+}
+
+function commissionJobStatusLabel(
+  value: string,
+  t: (key: string) => string
+): string {
+  switch (value) {
+    case 'pending':
+      return t('Pending')
+    case 'processing':
+      return t('Processing')
+    case 'skipped':
+      return t('Skipped')
+    case 'succeeded':
+      return t('Succeeded')
+    case 'failed':
+      return t('Failed')
+    default:
+      return value || '-'
+  }
+}
+
+function referralErrorLabel(value: string, t: (key: string) => string): string {
+  switch (value) {
+    case 'fx_rate_missing':
+      return t('Missing referral FX rate')
+    default:
+      return value || '-'
+  }
+}
+
+function referralStatusText(
+  order: RechargeAuditOrder,
+  t: (key: string) => string
+) {
+  const status = order.referral_commission_status
+  if (!status) return '-'
+  const label = commissionJobStatusLabel(status, t)
+  if (status === 'failed' && order.referral_commission_error) {
+    return `${label}: ${referralErrorLabel(order.referral_commission_error, t)}`
+  }
+  return label
+}
+
 export function RechargeAudit() {
   const { t } = useTranslation()
   const [summary, setSummary] = useState<RechargeAuditSummary | null>(null)
@@ -112,7 +169,10 @@ export function RechargeAudit() {
   }, [params])
 
   const totals = summary?.totals
-  const revenueText = formatMoneyBreakdown(summary?.by_currency)
+  const paidRevenueText = formatMoneyBreakdown(summary?.by_currency)
+  const siteCreditRevenueText = formatSiteCreditAmount(
+    totals?.credit_amount || 0
+  )
 
   return (
     <SectionPageLayout>
@@ -122,10 +182,14 @@ export function RechargeAudit() {
       </SectionPageLayout.Description>
       <SectionPageLayout.Content>
         <div className='space-y-4'>
-          <div className='grid gap-3 md:grid-cols-4'>
+          <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-5'>
             <SummaryCard
-              label={t('Successful Revenue')}
-              value={revenueText}
+              label={t('Actual Paid Revenue')}
+              value={paidRevenueText}
+            />
+            <SummaryCard
+              label={t('Site Credit Revenue')}
+              value={siteCreditRevenueText}
             />
             <SummaryCard
               label={t('Successful Orders')}
@@ -157,7 +221,7 @@ export function RechargeAudit() {
                 <Input
                   value={provider}
                   onChange={(e) => setProvider(e.target.value)}
-                  placeholder={t('Provider')}
+                  placeholder={t('Payment Gateway')}
                 />
                 <Button onClick={load} disabled={loading}>
                   {loading ? t('Loading...') : t('Refresh')}
@@ -192,11 +256,11 @@ export function RechargeAudit() {
                     <TableRow>
                       <TableHead>{t('Order')}</TableHead>
                       <TableHead>{t('User')}</TableHead>
-                      <TableHead>{t('Provider')}</TableHead>
-                      <TableHead>{t('Payment')}</TableHead>
-                      <TableHead>{t('Credit')}</TableHead>
+                      <TableHead>{t('Payment Gateway')}</TableHead>
+                      <TableHead>{t('Paid Amount')}</TableHead>
+                      <TableHead>{t('Site Credit Credited')}</TableHead>
                       <TableHead>{t('Status')}</TableHead>
-                      <TableHead>{t('Referral')}</TableHead>
+                      <TableHead>{t('Referral Status')}</TableHead>
                       <TableHead>{t('Created At')}</TableHead>
                     </TableRow>
                   </TableHeader>
@@ -214,7 +278,11 @@ export function RechargeAudit() {
                             order.paid_currency || 'CNY'
                           )}
                         </TableCell>
-                        <TableCell>{formatSiteCreditAmount(order.amount)}</TableCell>
+                        <TableCell>
+                          {formatSiteCreditAmount(
+                            order.credit_amount ?? order.amount
+                          )}
+                        </TableCell>
                         <TableCell>
                           <StatusBadge
                             label={t(order.status)}
@@ -223,7 +291,13 @@ export function RechargeAudit() {
                           />
                         </TableCell>
                         <TableCell>
-                          {order.referral_commission_status || '-'}
+                          <StatusBadge
+                            label={referralStatusText(order, t)}
+                            variant={referralStatusVariant(
+                              order.referral_commission_status
+                            )}
+                            copyable={false}
+                          />
                         </TableCell>
                         <TableCell>{formatTime(order.create_time)}</TableCell>
                       </TableRow>
@@ -244,7 +318,9 @@ function SummaryCard(props: { label: string; value: string }) {
     <Card>
       <CardContent className='p-4'>
         <div className='text-muted-foreground text-sm'>{props.label}</div>
-        <div className='mt-2 text-2xl font-semibold'>{props.value}</div>
+        <div className='mt-2 break-words text-2xl font-semibold'>
+          {props.value}
+        </div>
       </CardContent>
     </Card>
   )
