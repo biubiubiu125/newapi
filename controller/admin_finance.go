@@ -200,7 +200,7 @@ func rechargeAuditCreditAmountExpr() (string, []interface{}) {
 	if quotaPerUnit <= 0 {
 		quotaPerUnit = 1
 	}
-	return "case when t.payment_provider = ? then t.amount * 1.0 / ? else t.amount end", []interface{}{model.PaymentProviderCreem, quotaPerUnit}
+	return "case when t.payment_provider = ? then t.amount * 1.0 / ? when t.payment_provider = ? then t.money else t.amount end", []interface{}{model.PaymentProviderCreem, quotaPerUnit, model.PaymentProviderStripe}
 }
 
 func buildRechargeAnomalies(keyword string, status string, provider string, startTime int64, endTime int64) ([]auditAnomaly, error) {
