@@ -6,6 +6,7 @@ const baseUrl = __ENV.BASE_URL || 'http://127.0.0.1:3000'
 const promoters = Number(__ENV.PROMOTERS || 100)
 const inviteesPerPromoter = Number(__ENV.INVITEES_PER_PROMOTER || 100)
 const timestamp = __ENV.RUN_ID || `${Date.now()}`
+const shortRunId = `${timestamp}`.replace(/\D/g, '').slice(-4).padStart(4, '0')
 const password = __ENV.TEST_PASSWORD || 'AuditLoadTest123!'
 const codes = (__ENV.INVITE_CODES || '').split(',').map((s) => s.trim()).filter(Boolean)
 
@@ -29,7 +30,7 @@ export default function () {
   const promoterIndex = Math.floor(i / inviteesPerPromoter)
   const userIndex = i % inviteesPerPromoter
   const code = codes[promoterIndex]
-  const username = `load_invitee_${promoterIndex}_${userIndex}_${timestamp}`
+  const username = `u${shortRunId}${String(promoterIndex).padStart(3, '0')}${String(userIndex).padStart(3, '0')}`
   const payload = JSON.stringify({
     username,
     password,
