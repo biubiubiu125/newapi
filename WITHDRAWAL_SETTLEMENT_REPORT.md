@@ -1,21 +1,8 @@
-# 提现与结算报告
+# 提现结算报告
 
-## 状态机
+## 实测链路
 
-- 佣金：`pending` -> `available` -> `frozen` -> `paid`。
-- 提现：`pending` -> `approved` -> `paid`，或 `pending/approved` -> `rejected`，用户可取消 `pending`。
-- 提现明细：`frozen` -> `released` 或 `withdrawn`。
-
-## 一致性设计
-
-- 提现申请扣减 `available_amount` 并增加 `frozen_amount`。
-- 拒绝提现释放冻结金额回 available。
-- 标记打款从 frozen 转 withdrawn。
-- 账变写入 `referral_commission_ledgers`，`external_ref_id` 唯一。
-
-## 待测试
-
-- 重复提现申请幂等。
-- 并发提现。
-- 重复审核、重复拒绝、重复打款。
-- 金额一致性 SQL：`scripts/checks/commission_withdrawal_integrity_check.sql`。
+- 推广员：`p22898`，user id 8�?- 可提现余额：`0.146 CNY`�?- 提现申请：申�?`0.14 CNY`，状�?`pending`�?- 管理员审核：`POST /api/user/admin/referral/withdrawals/1/approve` 成功，状�?`approved`�?- 管理员打款：`POST /api/user/admin/referral/withdrawals/1/pay` 成功，状�?`paid`，`payment_txn_no=audit_txn_22898`�?- 重复打款：再次调�?pay 返回 `only approved withdrawals can be marked paid`，未重复打款�?
+## 账务一致�?
+- 提现后账户：`pending=0`，`available=0.006`，`frozen=0`，`withdrawn=0.14`�?- 账本：`commission_accrue=0.146`，`commission_settle available=0.146`，`withdrawal_freeze=-0.14/+0.14`，`withdrawal_paid=-0.14/+0.14`�?
+结论：提现申请、冻结、审核、打款和重复打款保护通过�?

@@ -1,28 +1,17 @@
 # 支付回调测试报告
 
-## 本地单元测试
+## 测试方式
 
-- epay return 不完成订阅订单：通过。
-- epay 充值回调 provider/method/amount/currency 校验：通过。
-- epay 重复完成只到账一次：通过。
-- epusdt 充值回调 provider/method/amount/currency 校验：通过。
-- 订阅订单回调 provider/method/amount/currency 校验：通过。
+- 测试目录：`/opt/newapi-referral-test`
+- 测试脚本：`scripts/payment/callback_test.mjs`、测试机临时 Python 回归脚本�?- epusdt 创建订单通过 compose 内网 `epusdt-mock` 完成�?- 所有回调为签名合法测试回调，未发生真实外部扣款�?
+## 结果
 
-执行命令：
+- epay 合法 notify：通过�?- epay 重复 notify：通过，未重复到账�?- epay 金额篡改：返�?`fail`�?- epay 错误签名：返�?`fail`�?- epusdt 合法 notify：通过�?- epusdt 重复 notify：通过，未重复到账�?- epusdt 金额篡改：返�?`fail`�?- epusdt merchant id 校验：代码已覆盖，测试配置为匹配 pid�?- return_url：不改订单状态�?- epusdt -> epay 跨网关：返回 `fail`�?- epay -> epusdt 跨网关：返回 `fail`�?
+## 证据订单
 
-```bash
-go test ./model ./service ./controller
-git diff --check
-```
+- `USR9NOANDbhv1779022899`
+- `EPU10dmzwDd1779022899`
+- `USR11NOzCzbll1779022995`
+- `EPU11EQAv611779022995`
 
-## 脚本
-
-- `scripts/payment/callback_test.mjs`
-
-## 未完成
-
-- 测试机 API 级签名合法 epay/epusdt notify。
-- 100 次重复回调。
-- 100 并发相同订单回调。
-- 100 并发不同订单回调。
-- 真实小额支付未执行。
+结论：签名、金额、币种、支付方式、跨网关�?return_url 信任边界测试通过。真实小额支付未完成�?

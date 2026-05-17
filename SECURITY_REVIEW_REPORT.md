@@ -1,26 +1,10 @@
 # 安全审查报告
 
-## 已修
+## 已修�?
+- epay 充�?notify 不再�?ack 后处理�?- epay/epusdt notify 增加 provider、method、amount、currency 校验�?- epay 订阅 return_url 不再可信完成订单�?- epusdt 回调币种解析不再�?token `USDT` 当作订单计价币种�?- Compose 不再硬编�?PostgreSQL/Redis 默认密码，并强制 `SESSION_SECRET`�?- Compose 支持限流环境变量透传，默认值不变�?
+## 已验�?
+- 管理员登录成功，root 接口需�?session + `New-Api-User` 头�?- 普通用户注�?登录成功�?- epay 错误签名返回 `fail`�?- epay 金额篡改返回 `fail`�?- epusdt 金额篡改返回 `fail`�?- return_url 不改订单状态�?- epusdt 回调 epay 订单返回 `fail`�?- epay 回调 epusdt 订单返回 `fail`�?- 重复支付回调未重复到账、未重复生成佣金�?- 重复提现打款被拒绝�?- PostgreSQL/Redis 未映射公网端口，只在 compose 网络内暴露�?
+## 未完成或仍有风险
 
-- epay 充值 notify 不再先 ack 后处理。
-- epay/epusdt notify 增加 provider、method、amount、currency 校验。
-- epay 订阅 return 不再可信完成订单。
-- Compose 不再硬编码数据库/Redis 默认密码，并强制 `SESSION_SECRET`。
-
-## 已有防护
-
-- 管理接口使用 `AdminAuth`。
-- 普通用户返佣接口使用 `UserAuth`。
-- 邀请绑定 `invitee_user_id` 唯一，防止覆盖绑定。
-- 佣金唯一键防止同订单重复佣金。
-- 提现 idempotency key 和账变 external ref 唯一。
-
-## 待验证
-
-- CSRF/Cookie 安全属性。
-- 普通用户访问管理员返佣/提现接口。
-- 推广员访问其他推广员数据。
-- 回调伪造签名、金额/币种/网关/订单类型篡改。
-- 前端 bundle 是否无密钥。
-- 数据库/Redis 未公网暴露。
-- 日志密钥脱敏。
+- 未完成真实外�?epay/epusdt 小额支付�?- 未完成浏览器�?CSRF、Cookie Secure/SameSite、前�?bundle 密钥扫描�?- 未完�?default/classic 模板完整截图验证�?- 10,000 注册压测出现 17.62% 客户端超时，属于上线阻塞�?- 测试机存�?`epusdt-mock` 测试容器，生产前必须删除�?- 压测期间 `.env` 临时放宽限流，生产前必须恢复�?- 日志包含完整测试订单号和部分 SQL 慢查询信息，生产前应确认日志脱敏策略�?
+结论：支付回调核心安全问题已修复并通过签名合法测试回调验证，但整体仍未达到生产上线安全标准�?
