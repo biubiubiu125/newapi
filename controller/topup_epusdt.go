@@ -78,6 +78,10 @@ func RequestEpusdtPay(c *gin.Context) {
 	if currency == "" {
 		currency = "CNY"
 	}
+	if currency != "CNY" {
+		common.ApiErrorMsg(c, "Epusdt 订单计价币种必须为 CNY")
+		return
+	}
 	snapshot, _ := referralService.BuildOrderSnapshot(id, payMoney, currency)
 	tradeNo := fmt.Sprintf("EPU%d%s%d", id, common.GetRandomString(6), time.Now().Unix())
 	callbackAddress := service.GetCallbackAddress()

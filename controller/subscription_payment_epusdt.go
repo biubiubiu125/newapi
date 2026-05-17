@@ -2,6 +2,7 @@ package controller
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -64,9 +65,13 @@ func SubscriptionRequestEpusdt(c *gin.Context) {
 		}
 	}
 
-	currency := setting.EpusdtCurrency
+	currency := strings.ToUpper(strings.TrimSpace(setting.EpusdtCurrency))
 	if currency == "" {
 		currency = "CNY"
+	}
+	if currency != "CNY" {
+		common.ApiErrorMsg(c, "Epusdt 订单计价币种必须为 CNY")
+		return
 	}
 	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, currency)
 	tradeNo := fmt.Sprintf("SEPU%d%s%d", userId, common.GetRandomString(6), time.Now().Unix())

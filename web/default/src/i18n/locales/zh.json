@@ -4727,6 +4727,8 @@
     "Epusdt Secret Key": "Epusdt 密钥",
     "Leave blank unless updating": "不修改则留空",
     "Settlement Currency": "结算币种",
+    "Order Pricing Currency": "订单计价币种",
+    "Currency for the fiat order amount sent to Epusdt, usually CNY. USDT amount is calculated by Epusdt from token and network.": "发送给 Epusdt 的法币订单金额币种，固定为 CNY。USDT 数量由 Epusdt 根据 token 和 network 计算。",
     "Minimum Topup": "最低充值",
     "Chain Display Names": "链显示名称",
     "Asset display names must be valid JSON": "链显示名称必须是有效 JSON",

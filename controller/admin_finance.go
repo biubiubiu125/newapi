@@ -31,12 +31,20 @@ type rechargeAuditOrder struct {
 
 type providerSummary struct {
 	PaymentProvider string  `json:"payment_provider"`
+	PaidCurrency    string  `json:"paid_currency"`
 	Count           int64   `json:"count"`
 	PaidAmount      float64 `json:"paid_amount"`
 }
 
 type statusSummary struct {
 	Status     string  `json:"status"`
+	Currency   string  `json:"currency"`
+	Count      int64   `json:"count"`
+	PaidAmount float64 `json:"paid_amount"`
+}
+
+type currencySummary struct {
+	Currency   string  `json:"currency"`
 	Count      int64   `json:"count"`
 	PaidAmount float64 `json:"paid_amount"`
 }
@@ -111,10 +119,21 @@ func GetRechargeAuditSummary(c *gin.Context) {
 		return
 	}
 
+	var byCurrency []currencySummary
+	if err := applyRechargeAuditFilters(model.DB.Table("top_ups AS t").Joins("LEFT JOIN users u ON u.id = t.user_id"), keyword, status, provider, startTime, endTime).
+		Select("upper(coalesce(nullif(t.paid_currency, ''), 'CNY')) AS currency, count(*) AS count, coalesce(sum(t.paid_amount), 0) AS paid_amount").
+		Where("t.status = ?", common.TopUpStatusSuccess).
+		Group("upper(coalesce(nullif(t.paid_currency, ''), 'CNY'))").
+		Order("paid_amount desc").
+		Scan(&byCurrency).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
 	var byProvider []providerSummary
 	if err := applyRechargeAuditFilters(model.DB.Table("top_ups AS t").Joins("LEFT JOIN users u ON u.id = t.user_id"), keyword, status, provider, startTime, endTime).
-		Select("coalesce(nullif(t.payment_provider, ''), 'unknown') AS payment_provider, count(*) AS count, coalesce(sum(t.paid_amount), 0) AS paid_amount").
-		Group("coalesce(nullif(t.payment_provider, ''), 'unknown')").
+		Select("coalesce(nullif(t.payment_provider, ''), 'unknown') AS payment_provider, upper(coalesce(nullif(t.paid_currency, ''), 'CNY')) AS paid_currency, count(*) AS count, coalesce(sum(t.paid_amount), 0) AS paid_amount").
+		Group("coalesce(nullif(t.payment_provider, ''), 'unknown'), upper(coalesce(nullif(t.paid_currency, ''), 'CNY'))").
 		Order("paid_amount desc").
 		Scan(&byProvider).Error; err != nil {
 		common.ApiError(c, err)
@@ -123,8 +142,8 @@ func GetRechargeAuditSummary(c *gin.Context) {
 
 	var byStatus []statusSummary
 	if err := applyRechargeAuditFilters(model.DB.Table("top_ups AS t").Joins("LEFT JOIN users u ON u.id = t.user_id"), keyword, status, provider, startTime, endTime).
-		Select("t.status, count(*) AS count, coalesce(sum(t.paid_amount), 0) AS paid_amount").
-		Group("t.status").
+		Select("t.status, upper(coalesce(nullif(t.paid_currency, ''), 'CNY')) AS currency, count(*) AS count, coalesce(sum(t.paid_amount), 0) AS paid_amount").
+		Group("t.status, upper(coalesce(nullif(t.paid_currency, ''), 'CNY'))").
 		Order("count desc").
 		Scan(&byStatus).Error; err != nil {
 		common.ApiError(c, err)
@@ -139,6 +158,7 @@ func GetRechargeAuditSummary(c *gin.Context) {
 
 	common.ApiSuccess(c, gin.H{
 		"totals":      totals,
+		"by_currency": byCurrency,
 		"by_provider": byProvider,
 		"by_status":   byStatus,
 		"anomalies":   anomalies,

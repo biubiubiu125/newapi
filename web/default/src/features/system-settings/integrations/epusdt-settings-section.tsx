@@ -72,7 +72,7 @@ export function EpusdtSettingsSection(props: Props) {
         { key: 'EpusdtEnabled', value: String(values.EpusdtEnabled) },
         { key: 'EpusdtBaseURL', value: values.EpusdtBaseURL.trim() },
         { key: 'EpusdtPID', value: values.EpusdtPID.trim() },
-        { key: 'EpusdtCurrency', value: values.EpusdtCurrency.trim() || 'CNY' },
+        { key: 'EpusdtCurrency', value: 'CNY' },
         {
           key: 'EpusdtDisplayName',
           value: values.EpusdtDisplayName.trim() || 'USDT',
@@ -145,8 +145,13 @@ export function EpusdtSettingsSection(props: Props) {
             />
           </div>
           <div className='space-y-2'>
-            <Label>{t('Settlement Currency')}</Label>
-            <Input {...form.register('EpusdtCurrency')} placeholder='CNY' />
+            <Label>{t('Order Pricing Currency')}</Label>
+            <Input value='CNY' readOnly />
+            <p className='text-muted-foreground text-xs'>
+              {t(
+                'Currency for the fiat order amount sent to Epusdt, usually CNY. USDT amount is calculated by Epusdt from token and network.'
+              )}
+            </p>
           </div>
           <div className='space-y-2'>
             <Label>{t('Display Name')}</Label>

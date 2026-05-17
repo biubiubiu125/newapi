@@ -31,11 +31,29 @@ import {
 } from '@/components/ui/table'
 import { SectionPageLayout } from '@/components/layout'
 import { StatusBadge } from '@/components/status-badge'
+import { formatSiteCreditAmount } from '@/features/wallet/lib'
 import { getRechargeAudit, getRechargeAuditSummary } from './api'
 import type { RechargeAuditOrder, RechargeAuditSummary } from './api'
 
 function formatMoney(value: number, currency = 'CNY') {
-  return `${currency === 'CNY' ? '¥' : currency + ' '}${Number(value || 0).toFixed(2)}`
+  const normalizedCurrency = (currency || 'CNY').toUpperCase()
+  const amount = Number(value || 0)
+  if (normalizedCurrency === 'CNY') {
+    return `\u00a5${amount.toFixed(2)}`
+  }
+  if (normalizedCurrency === 'USD') {
+    return `$${amount.toFixed(2)}`
+  }
+  return `${normalizedCurrency} ${amount.toFixed(2)}`
+}
+
+function formatMoneyBreakdown(
+  items: Array<{ currency: string; paid_amount: number }> | undefined
+) {
+  if (!items || items.length === 0) return formatMoney(0)
+  return items
+    .map((item) => formatMoney(item.paid_amount, item.currency))
+    .join(' / ')
 }
 
 function formatTime(timestamp: number) {
@@ -94,6 +112,7 @@ export function RechargeAudit() {
   }, [params])
 
   const totals = summary?.totals
+  const revenueText = formatMoneyBreakdown(summary?.by_currency)
 
   return (
     <SectionPageLayout>
@@ -106,7 +125,7 @@ export function RechargeAudit() {
           <div className='grid gap-3 md:grid-cols-4'>
             <SummaryCard
               label={t('Successful Revenue')}
-              value={formatMoney(totals?.paid_amount || 0)}
+              value={revenueText}
             />
             <SummaryCard
               label={t('Successful Orders')}
@@ -195,7 +214,7 @@ export function RechargeAudit() {
                             order.paid_currency || 'CNY'
                           )}
                         </TableCell>
-                        <TableCell>${order.amount}</TableCell>
+                        <TableCell>{formatSiteCreditAmount(order.amount)}</TableCell>
                         <TableCell>
                           <StatusBadge
                             label={t(order.status)}

@@ -417,7 +417,11 @@ func updateOptionMap(key string, value string) (err error) {
 	case "EpusdtSecretKey":
 		setting.EpusdtSecretKey = value
 	case "EpusdtCurrency":
-		setting.EpusdtCurrency = value
+		currency := strings.ToUpper(strings.TrimSpace(value))
+		if currency == "" {
+			currency = "CNY"
+		}
+		setting.EpusdtCurrency = currency
 	case "EpusdtDisplayName":
 		setting.EpusdtDisplayName = value
 	case "EpusdtAssetDisplayNames":

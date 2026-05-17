@@ -45,13 +45,20 @@ export interface RechargeAuditSummary {
     paid_amount: number
     credit_amount: number
   }
+  by_currency: Array<{
+    currency: string
+    count: number
+    paid_amount: number
+  }>
   by_provider: Array<{
     payment_provider: string
+    paid_currency: string
     count: number
     paid_amount: number
   }>
   by_status: Array<{
     status: string
+    currency: string
     count: number
     paid_amount: number
   }>
