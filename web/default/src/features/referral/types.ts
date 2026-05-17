@@ -86,6 +86,9 @@ export interface ReferralCommission {
   base_amount: number
   paid_amount: number
   paid_currency: string
+  paid_amount_cny: number
+  paid_cny_fx_rate: number
+  paid_cny_fx_missing: boolean
   settlement_currency: string
   settlement_fx_rate: number
   settlement_base_amount: number

@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
@@ -91,6 +92,9 @@ type ReferralCommissionView struct {
 	BaseAmount           float64 `json:"base_amount"`
 	PaidAmount           float64 `json:"paid_amount"`
 	PaidCurrency         string  `json:"paid_currency"`
+	PaidAmountCNY        float64 `json:"paid_amount_cny"`
+	PaidCNYFxRate        float64 `json:"paid_cny_fx_rate"`
+	PaidCNYFxMissing     bool    `json:"paid_cny_fx_missing"`
 	SettlementCurrency   string  `json:"settlement_currency"`
 	SettlementFxRate     float64 `json:"settlement_fx_rate"`
 	SettlementBaseAmount float64 `json:"settlement_base_amount"`
@@ -548,12 +552,19 @@ func (s *ReferralService) BuildOrderSnapshot(userId int, paidAmount float64, pai
 	if !s.IsEnabled() || userId <= 0 || paidAmount <= 0 {
 		return nil, nil
 	}
+	baseAmount := roundMoney(paidAmount)
+	status := model.ReferralCommissionJobStatusSkipped
+	snapshotError := "no_binding"
+	if _, _, _, err := resolveReferralSettlementAmount(paidAmount, paidCurrency); err != nil {
+		status = model.ReferralCommissionJobStatusFailed
+		snapshotError = err.Error()
+	}
 	snapshot := &ReferralSnapshot{
-		BaseAmount: roundMoney(paidAmount),
+		BaseAmount: baseAmount,
 		PaidAmount: roundMoney(paidAmount),
 		Currency:   strings.ToUpper(strings.TrimSpace(paidCurrency)),
-		Status:     model.ReferralCommissionJobStatusSkipped,
-		Error:      "no_binding",
+		Status:     status,
+		Error:      snapshotError,
 	}
 	binding := &model.ReferralBinding{}
 	if err := model.DB.Where("invitee_user_id = ?", userId).First(binding).Error; err != nil {
@@ -582,6 +593,9 @@ func (s *ReferralService) BuildOrderSnapshot(userId int, paidAmount float64, pai
 		snapshot.Error = "affiliate_settlement_disabled"
 		return snapshot, nil
 	}
+	if snapshotError != "" && snapshotError != "no_binding" {
+		return snapshot, nil
+	}
 	rate := effectiveReferralRate(affiliate.RateOverride)
 	if rate <= 0 {
 		snapshot.Error = "invalid_rate"
@@ -589,8 +603,10 @@ func (s *ReferralService) BuildOrderSnapshot(userId int, paidAmount float64, pai
 	}
 	snapshot.AffiliateId = affiliate.Id
 	snapshot.Rate = rate
-	snapshot.Status = model.ReferralCommissionJobStatusPending
-	snapshot.Error = ""
+	if snapshotError == "" || snapshotError == "no_binding" {
+		snapshot.Status = model.ReferralCommissionJobStatusPending
+		snapshot.Error = ""
+	}
 	return snapshot, nil
 }
 
@@ -2374,11 +2390,41 @@ func resolveReferralSettlementAmount(paidAmount float64, paidCurrency string) (f
 	if currency == settlementCurrency {
 		return roundMoney(paidAmount), settlementCurrency, 1, nil
 	}
-	rate, ok := common.ReferralSettlementFxRatesSnapshot()[currency]
+	rate, ok := referralSettlementFxRate(currency)
 	if !ok || rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
 		return 0, settlementCurrency, 0, errReferralFxRateMissing
 	}
 	return roundMoney(paidAmount * rate), settlementCurrency, roundMoney(rate), nil
+}
+
+func referralSettlementFxRate(currency string) (float64, bool) {
+	currency = strings.ToUpper(strings.TrimSpace(currency))
+	if currency == "" {
+		return 0, false
+	}
+	if currency == referralSettlementCurrency() {
+		return 1, true
+	}
+	if rate, ok := common.ReferralSettlementFxRatesSnapshot()[currency]; ok && rate > 0 && !math.IsNaN(rate) && !math.IsInf(rate, 0) {
+		return rate, true
+	}
+	if currency == "USD" && operation_setting.USDExchangeRate > 0 && !math.IsNaN(operation_setting.USDExchangeRate) && !math.IsInf(operation_setting.USDExchangeRate, 0) {
+		return operation_setting.USDExchangeRate, true
+	}
+	return 0, false
+}
+
+func PaidAmountCNY(paidAmount float64, paidCurrency string, paymentProvider string) (float64, float64, bool) {
+	provider := strings.ToLower(strings.TrimSpace(paymentProvider))
+	currency := strings.ToUpper(strings.TrimSpace(paidCurrency))
+	if provider == model.PaymentProviderEpay || provider == model.PaymentProviderEpusdt {
+		currency = "CNY"
+	}
+	amount, _, rate, err := resolveReferralSettlementAmount(paidAmount, currency)
+	if err != nil {
+		return 0, 0, true
+	}
+	return amount, rate, false
 }
 
 func (s *ReferralService) validateWithdrawalAssetTx(tx *gorm.DB, userId int, assetURL string, purpose string) error {
@@ -2603,6 +2649,11 @@ func (s *ReferralService) listCommissions(params ReferralListParams, affiliateId
 				status = derived
 			}
 		}
+		paidAmountCNY, paidCNYFxRate, paidCNYFxMissing := PaidAmountCNY(
+			commission.PaidAmount,
+			commission.PaidCurrency,
+			"",
+		)
 		items = append(items, ReferralCommissionView{
 			Id:                   commission.Id,
 			AffiliateId:          commission.AffiliateId,
@@ -2619,6 +2670,9 @@ func (s *ReferralService) listCommissions(params ReferralListParams, affiliateId
 			BaseAmount:           commission.BaseAmount,
 			PaidAmount:           commission.PaidAmount,
 			PaidCurrency:         commission.PaidCurrency,
+			PaidAmountCNY:        paidAmountCNY,
+			PaidCNYFxRate:        paidCNYFxRate,
+			PaidCNYFxMissing:     paidCNYFxMissing,
 			SettlementCurrency:   accountSettlementCurrency(commission.SettlementCurrency),
 			SettlementFxRate:     commission.SettlementFxRate,
 			SettlementBaseAmount: settlementBaseAmountForView(commission),

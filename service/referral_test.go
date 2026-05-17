@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -33,6 +34,7 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 	previousRedirectPath := common.ReferralRedirectPath
 	previousSettlementCurrency := common.ReferralSettlementCurrency
 	previousSettlementFxRates := common.ReferralSettlementFxRates
+	previousUSDExchangeRate := operation_setting.USDExchangeRate
 
 	common.UsingSQLite = true
 	common.UsingMySQL = false
@@ -44,6 +46,7 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 	common.ReferralSettleFreezeDays = 7
 	common.ReferralSettlementCurrency = "CNY"
 	common.ReferralSettlementFxRates = map[string]float64{"CNY": 1}
+	operation_setting.USDExchangeRate = 7.3
 	common.CryptoSecret = "test-secret"
 	common.SessionSecret = "test-session-secret"
 
@@ -91,6 +94,7 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 		common.ReferralRedirectPath = previousRedirectPath
 		common.ReferralSettlementCurrency = previousSettlementCurrency
 		common.ReferralSettlementFxRates = previousSettlementFxRates
+		operation_setting.USDExchangeRate = previousUSDExchangeRate
 		sqlDB, err := db.DB()
 		if err == nil {
 			_ = sqlDB.Close()
@@ -233,7 +237,7 @@ func TestProcessTopUpCommissionFailsWhenFxRateMissingAndRetriesAfterConfigured(t
 		Amount:              100,
 		Money:               10,
 		PaidAmount:          10,
-		PaidCurrency:        "USD",
+		PaidCurrency:        "EUR",
 		TradeNo:             "topup-fx-missing",
 		Status:              common.TopUpStatusSuccess,
 		ReferralAffiliateId: affiliate.Id,
@@ -261,7 +265,7 @@ func TestProcessTopUpCommissionFailsWhenFxRateMissingAndRetriesAfterConfigured(t
 	require.Equal(t, model.ReferralCommissionJobStatusFailed, job.Status)
 	require.Equal(t, model.ReferralCommissionErrorFxRateMissing, job.LastError)
 
-	common.ReferralSettlementFxRates = map[string]float64{"CNY": 1, "USD": 7}
+	common.ReferralSettlementFxRates = map[string]float64{"CNY": 1, "EUR": 7}
 	require.NoError(t, service.RetryCommissionJob("topup", topup.TradeNo))
 
 	commission := &model.ReferralCommission{}
@@ -272,6 +276,101 @@ func TestProcessTopUpCommissionFailsWhenFxRateMissingAndRetriesAfterConfigured(t
 
 	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "topup", topup.TradeNo).First(job).Error)
 	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, job.Status)
+}
+
+func TestProcessTopUpCommissionFallsBackToUSDExchangeRate(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	common.ReferralSettlementFxRates = map[string]float64{"CNY": 1}
+	operation_setting.USDExchangeRate = 2
+
+	invitee := &model.User{Username: "usd-fallback-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "usd-fallback-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "USDFX001",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralBinding{
+		InviteeUserId: invitee.Id,
+		InviterUserId: affiliateUser.Id,
+		AffiliateId:   affiliate.Id,
+		BindSource:    "code",
+		BindCode:      affiliate.InviteCode,
+		BoundAt:       time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      affiliateUser.Id,
+	}).Error)
+
+	topup := &model.TopUp{
+		UserId:              invitee.Id,
+		Amount:              100,
+		Money:               10,
+		PaidAmount:          10,
+		PaidCurrency:        "USD",
+		TradeNo:             "topup-usd-fallback",
+		Status:              common.TopUpStatusSuccess,
+		ReferralAffiliateId: affiliate.Id,
+		ReferralRate:        10,
+		ReferralBaseAmount:  10,
+		PaymentMethod:       model.PaymentMethodStripe,
+		PaymentProvider:     model.PaymentProviderStripe,
+		CreateTime:          time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(topup).Error)
+	require.NoError(t, service.ProcessTopUpCommission(topup.TradeNo))
+
+	commission := &model.ReferralCommission{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "topup", topup.TradeNo).First(commission).Error)
+	require.Equal(t, "USD", commission.PaidCurrency)
+	require.Equal(t, 10.0, commission.PaidAmount)
+	require.Equal(t, "CNY", commission.SettlementCurrency)
+	require.Equal(t, 2.0, commission.SettlementFxRate)
+	require.Equal(t, 20.0, commission.SettlementBaseAmount)
+	require.Equal(t, 2.0, commission.CommissionAmount)
+}
+
+func TestBuildOrderSnapshotMarksMissingFxRate(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "snapshot-fx-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "snapshot-fx-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "SNAPFX01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralBinding{
+		InviteeUserId: invitee.Id,
+		InviterUserId: affiliateUser.Id,
+		AffiliateId:   affiliate.Id,
+		BindSource:    "code",
+		BindCode:      affiliate.InviteCode,
+		BoundAt:       time.Now().Unix(),
+	}).Error)
+
+	snapshot, err := service.BuildOrderSnapshot(invitee.Id, 10, "EUR")
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	require.Equal(t, model.ReferralCommissionJobStatusFailed, snapshot.Status)
+	require.Equal(t, model.ReferralCommissionErrorFxRateMissing, snapshot.Error)
 }
 
 func TestBuildOrderSnapshotWithoutBindingReturnsSkippedReason(t *testing.T) {
@@ -732,7 +831,7 @@ func TestListCommissionsDoesNotAutoSettle(t *testing.T) {
 		OrderType:        "topup",
 		BaseAmount:       50,
 		PaidAmount:       50,
-		PaidCurrency:     "USD",
+		PaidCurrency:     "CNY",
 		Rate:             10,
 		CommissionAmount: 5,
 		Status:           model.ReferralCommissionStatusPending,

@@ -56,6 +56,25 @@ function formatMoneyBreakdown(
     .join(' / ')
 }
 
+function formatPaidAmountCNY(order: RechargeAuditOrder, t: (key: string) => string) {
+  if (order.paid_cny_fx_missing) {
+    return t('Missing referral FX rate')
+  }
+  return formatMoney(order.paid_amount_cny || 0, 'CNY')
+}
+
+function formatOriginalPaidAmount(order: RechargeAuditOrder) {
+  return formatMoney(
+    order.paid_amount || order.money,
+    order.paid_currency || 'CNY'
+  )
+}
+
+function shouldShowOriginalPaid(order: RechargeAuditOrder) {
+  const currency = (order.paid_currency || 'CNY').toUpperCase()
+  return currency !== 'CNY' || order.paid_cny_fx_missing
+}
+
 function formatTime(timestamp: number) {
   if (!timestamp) return '-'
   return new Date(timestamp * 1000).toLocaleString()
@@ -169,7 +188,8 @@ export function RechargeAudit() {
   }, [params])
 
   const totals = summary?.totals
-  const paidRevenueText = formatMoneyBreakdown(summary?.by_currency)
+  const paidRevenueText = formatMoney(totals?.paid_amount_cny || 0, 'CNY')
+  const paidRevenueDetail = formatMoneyBreakdown(summary?.by_currency)
   const siteCreditRevenueText = formatSiteCreditAmount(
     totals?.credit_amount || 0
   )
@@ -186,6 +206,11 @@ export function RechargeAudit() {
             <SummaryCard
               label={t('Actual Paid Revenue')}
               value={paidRevenueText}
+              description={
+                paidRevenueDetail !== paidRevenueText
+                  ? `${t('Original paid')}: ${paidRevenueDetail}`
+                  : undefined
+              }
             />
             <SummaryCard
               label={t('Site Credit Revenue')}
@@ -257,7 +282,7 @@ export function RechargeAudit() {
                       <TableHead>{t('Order')}</TableHead>
                       <TableHead>{t('User')}</TableHead>
                       <TableHead>{t('Payment Gateway')}</TableHead>
-                      <TableHead>{t('Paid Amount')}</TableHead>
+                      <TableHead>{t('Paid Amount CNY')}</TableHead>
                       <TableHead>{t('Site Credit Credited')}</TableHead>
                       <TableHead>{t('Status')}</TableHead>
                       <TableHead>{t('Referral Status')}</TableHead>
@@ -273,10 +298,17 @@ export function RechargeAudit() {
                         <TableCell>{order.username || order.user_id}</TableCell>
                         <TableCell>{order.payment_provider || '-'}</TableCell>
                         <TableCell>
-                          {formatMoney(
-                            order.paid_amount || order.money,
-                            order.paid_currency || 'CNY'
-                          )}
+                          <div className='font-medium'>
+                            {formatPaidAmountCNY(order, t)}
+                          </div>
+                          {shouldShowOriginalPaid(order) ? (
+                            <div className='text-muted-foreground text-xs'>
+                              {t('Original paid')}: {formatOriginalPaidAmount(order)}
+                              {!order.paid_cny_fx_missing && order.paid_cny_fx_rate > 0
+                                ? ` · ${t('FX Rate')}: ${order.paid_cny_fx_rate}`
+                                : ''}
+                            </div>
+                          ) : null}
                         </TableCell>
                         <TableCell>
                           {formatSiteCreditAmount(
@@ -313,7 +345,11 @@ export function RechargeAudit() {
   )
 }
 
-function SummaryCard(props: { label: string; value: string }) {
+function SummaryCard(props: {
+  label: string
+  value: string
+  description?: string
+}) {
   return (
     <Card>
       <CardContent className='p-4'>
@@ -321,6 +357,11 @@ function SummaryCard(props: { label: string; value: string }) {
         <div className='mt-2 break-words text-2xl font-semibold'>
           {props.value}
         </div>
+        {props.description ? (
+          <div className='text-muted-foreground mt-1 break-words text-xs'>
+            {props.description}
+          </div>
+        ) : null}
       </CardContent>
     </Card>
   )

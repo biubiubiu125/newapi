@@ -27,6 +27,9 @@ export interface RechargeAuditOrder {
   money: number
   paid_amount: number
   paid_currency: string
+  paid_amount_cny: number
+  paid_cny_fx_rate: number
+  paid_cny_fx_missing: boolean
   trade_no: string
   payment_method: string
   payment_provider: string
@@ -44,24 +47,35 @@ export interface RechargeAuditSummary {
     pending_count: number
     failed_count: number
     paid_amount: number
+    paid_amount_cny: number
+    fx_missing_count: number
     credit_amount: number
   }
   by_currency: Array<{
     currency: string
     count: number
     paid_amount: number
+    paid_amount_cny: number
+    paid_cny_fx_rate: number
+    fx_missing_count: number
   }>
   by_provider: Array<{
     payment_provider: string
     paid_currency: string
     count: number
     paid_amount: number
+    paid_amount_cny: number
+    paid_cny_fx_rate: number
+    fx_missing_count: number
   }>
   by_status: Array<{
     status: string
     currency: string
     count: number
     paid_amount: number
+    paid_amount_cny: number
+    paid_cny_fx_rate: number
+    fx_missing_count: number
   }>
   anomalies: Array<{
     type: string

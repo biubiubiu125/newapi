@@ -162,6 +162,38 @@ function formatSettlementMoney(value: number, currency?: string): string {
   return `${symbol}${formatted}`
 }
 
+function formatOriginalPaidAmount(item: ReferralCommission): string {
+  const currency = (item.paid_currency || '-').toUpperCase()
+  const amount = Number.isFinite(item.paid_amount) ? item.paid_amount : 0
+  const formatted = new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: Math.abs(amount) >= 1 ? 2 : 4,
+  }).format(amount)
+  return `${currency} ${formatted}`
+}
+
+function formatPaidAmountCNY(item: ReferralCommission, t: (key: string) => string): string {
+  if (item.paid_cny_fx_missing) {
+    return t('Missing referral FX rate')
+  }
+  return formatSettlementMoney(item.paid_amount_cny || 0, 'CNY')
+}
+
+function paidAmountDetail(item: ReferralCommission, t: (key: string) => string): string {
+  const currency = (item.paid_currency || '').toUpperCase()
+  if (!currency) {
+    return ''
+  }
+  const rateDetail =
+    !item.paid_cny_fx_missing && item.paid_cny_fx_rate > 0
+      ? ` · ${t('FX Rate')}: ${item.paid_cny_fx_rate}`
+      : ''
+  if (currency === 'CNY' && !rateDetail) {
+    return ''
+  }
+  return `${t('Original paid')}: ${formatOriginalPaidAmount(item)}${rateDetail}`
+}
+
 function parseOptionalNumber(value: string): number | undefined {
   const trimmed = value.trim()
   if (trimmed === '') {
@@ -1246,7 +1278,7 @@ export function AdminReferral() {
                   t('Trade No'),
                   t('Order Type'),
                   t('Invitee'),
-                  t('Paid Amount'),
+                  t('Paid Amount CNY'),
                   t('Settlement Base'),
                   t('Commission'),
                   t('Status'),
@@ -1258,7 +1290,21 @@ export function AdminReferral() {
                     item.source_trade_no,
                     orderTypeLabel(item.order_type, t),
                     item.invitee_username || item.invitee_email || '-',
-                    `${item.paid_currency || '-'} ${item.paid_amount}`,
+                    (() => {
+                      const detail = paidAmountDetail(item, t)
+                      return (
+                        <div className='min-w-[140px]'>
+                          <div className='font-medium'>
+                            {formatPaidAmountCNY(item, t)}
+                          </div>
+                          {detail ? (
+                            <div className='text-muted-foreground text-xs'>
+                              {detail}
+                            </div>
+                          ) : null}
+                        </div>
+                      )
+                    })(),
                     formatSettlementMoney(
                       item.settlement_base_amount || item.base_amount,
                       item.settlement_currency
@@ -1648,7 +1694,7 @@ function SimpleAdminTable(props: {
   headers: string[]
   rows: Array<{
     key: number | string
-    cells: string[]
+    cells: ReactNode[]
     action?: ReactNode
   }>
 }) {

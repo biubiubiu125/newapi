@@ -4760,6 +4760,9 @@
     "JSON object for order paid currency to CNY, for example {\"USD\":7.2,\"EUR\":7.8}. CNY is always 1.": "订单实付币种换算到人民币的 JSON 配置，例如 {\"USD\":7.2,\"EUR\":7.8}。CNY 永远按 1 处理。",
     "Missing referral FX rate": "缺少返佣汇率",
     "Paid Amount": "实付金额",
+    "Paid Amount CNY": "人民币实付金额",
+    "Original paid": "原始实付",
+    "FX Rate": "汇率",
     "Settlement Base": "结算基数"
   }
 }

@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	referralservice "github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
@@ -20,6 +21,9 @@ type rechargeAuditOrder struct {
 	Money                    float64 `json:"money"`
 	PaidAmount               float64 `json:"paid_amount"`
 	PaidCurrency             string  `json:"paid_currency"`
+	PaidAmountCNY            float64 `json:"paid_amount_cny"`
+	PaidCNYFxRate            float64 `json:"paid_cny_fx_rate"`
+	PaidCNYFxMissing         bool    `json:"paid_cny_fx_missing"`
 	TradeNo                  string  `json:"trade_no"`
 	PaymentMethod            string  `json:"payment_method"`
 	PaymentProvider          string  `json:"payment_provider"`
@@ -35,19 +39,39 @@ type providerSummary struct {
 	PaidCurrency    string  `json:"paid_currency"`
 	Count           int64   `json:"count"`
 	PaidAmount      float64 `json:"paid_amount"`
+	PaidAmountCNY   float64 `json:"paid_amount_cny"`
+	PaidCNYFxRate   float64 `json:"paid_cny_fx_rate"`
+	FxMissingCount  int64   `json:"fx_missing_count"`
 }
 
 type statusSummary struct {
-	Status     string  `json:"status"`
-	Currency   string  `json:"currency"`
-	Count      int64   `json:"count"`
-	PaidAmount float64 `json:"paid_amount"`
+	Status         string  `json:"status"`
+	Currency       string  `json:"currency"`
+	Count          int64   `json:"count"`
+	PaidAmount     float64 `json:"paid_amount"`
+	PaidAmountCNY  float64 `json:"paid_amount_cny"`
+	PaidCNYFxRate  float64 `json:"paid_cny_fx_rate"`
+	FxMissingCount int64   `json:"fx_missing_count"`
 }
 
 type currencySummary struct {
-	Currency   string  `json:"currency"`
-	Count      int64   `json:"count"`
-	PaidAmount float64 `json:"paid_amount"`
+	Currency       string  `json:"currency"`
+	Count          int64   `json:"count"`
+	PaidAmount     float64 `json:"paid_amount"`
+	PaidAmountCNY  float64 `json:"paid_amount_cny"`
+	PaidCNYFxRate  float64 `json:"paid_cny_fx_rate"`
+	FxMissingCount int64   `json:"fx_missing_count"`
+}
+
+type rechargeAuditTotals struct {
+	TotalCount     int64   `json:"total_count"`
+	SuccessCount   int64   `json:"success_count"`
+	PendingCount   int64   `json:"pending_count"`
+	FailedCount    int64   `json:"failed_count"`
+	PaidAmount     float64 `json:"paid_amount"`
+	PaidAmountCNY  float64 `json:"paid_amount_cny"`
+	FxMissingCount int64   `json:"fx_missing_count"`
+	CreditAmount   float64 `json:"credit_amount"`
 }
 
 type auditAnomaly struct {
@@ -85,6 +109,13 @@ func GetRechargeAudit(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	for i := range orders {
+		orders[i].PaidAmountCNY, orders[i].PaidCNYFxRate, orders[i].PaidCNYFxMissing = referralservice.PaidAmountCNY(
+			firstPositiveFloat(orders[i].PaidAmount, orders[i].Money),
+			orders[i].PaidCurrency,
+			orders[i].PaymentProvider,
+		)
+	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(orders)
 
@@ -102,14 +133,7 @@ func GetRechargeAuditSummary(c *gin.Context) {
 	base = applyRechargeAuditFilters(base, keyword, status, provider, startTime, endTime)
 	creditExpr, creditArgs := rechargeAuditCreditAmountExpr()
 
-	var totals struct {
-		TotalCount   int64   `json:"total_count"`
-		SuccessCount int64   `json:"success_count"`
-		PendingCount int64   `json:"pending_count"`
-		FailedCount  int64   `json:"failed_count"`
-		PaidAmount   float64 `json:"paid_amount"`
-		CreditAmount float64 `json:"credit_amount"`
-	}
+	var totals rechargeAuditTotals
 	selectSQL := fmt.Sprintf(`
 		count(*) AS total_count,
 		coalesce(sum(case when t.status = ? then 1 else 0 end), 0) AS success_count,
@@ -135,6 +159,7 @@ func GetRechargeAuditSummary(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	applyRechargeAuditCNYSummary(&totals, byCurrency, nil, nil)
 
 	var byProvider []providerSummary
 	if err := applyRechargeAuditFilters(model.DB.Table("top_ups AS t").Joins("LEFT JOIN users u ON u.id = t.user_id"), keyword, status, provider, startTime, endTime).
@@ -145,6 +170,7 @@ func GetRechargeAuditSummary(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	applyRechargeAuditCNYSummary(nil, nil, byProvider, nil)
 
 	var byStatus []statusSummary
 	if err := applyRechargeAuditFilters(model.DB.Table("top_ups AS t").Joins("LEFT JOIN users u ON u.id = t.user_id"), keyword, status, provider, startTime, endTime).
@@ -155,6 +181,7 @@ func GetRechargeAuditSummary(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	applyRechargeAuditCNYSummary(nil, nil, nil, byStatus)
 
 	anomalies, err := buildRechargeAnomalies(keyword, status, provider, startTime, endTime)
 	if err != nil {
@@ -201,6 +228,64 @@ func rechargeAuditCreditAmountExpr() (string, []interface{}) {
 		quotaPerUnit = 1
 	}
 	return "case when t.payment_provider = ? then t.amount * 1.0 / ? when t.payment_provider = ? then t.money else t.amount end", []interface{}{model.PaymentProviderCreem, quotaPerUnit, model.PaymentProviderStripe}
+}
+
+func firstPositiveFloat(values ...float64) float64 {
+	for _, value := range values {
+		if value > 0 {
+			return value
+		}
+	}
+	return 0
+}
+
+func applyRechargeAuditCNYSummary(
+	totals *rechargeAuditTotals,
+	byCurrency []currencySummary,
+	byProvider []providerSummary,
+	byStatus []statusSummary,
+) {
+	if totals != nil && byCurrency != nil {
+		for i := range byCurrency {
+			cny, rate, missing := referralservice.PaidAmountCNY(
+				byCurrency[i].PaidAmount,
+				byCurrency[i].Currency,
+				"",
+			)
+			byCurrency[i].PaidAmountCNY = cny
+			byCurrency[i].PaidCNYFxRate = rate
+			if missing {
+				byCurrency[i].FxMissingCount = byCurrency[i].Count
+				totals.FxMissingCount += byCurrency[i].Count
+				continue
+			}
+			totals.PaidAmountCNY += cny
+		}
+	}
+	for i := range byProvider {
+		cny, rate, missing := referralservice.PaidAmountCNY(
+			byProvider[i].PaidAmount,
+			byProvider[i].PaidCurrency,
+			byProvider[i].PaymentProvider,
+		)
+		byProvider[i].PaidAmountCNY = cny
+		byProvider[i].PaidCNYFxRate = rate
+		if missing {
+			byProvider[i].FxMissingCount = byProvider[i].Count
+		}
+	}
+	for i := range byStatus {
+		cny, rate, missing := referralservice.PaidAmountCNY(
+			byStatus[i].PaidAmount,
+			byStatus[i].Currency,
+			"",
+		)
+		byStatus[i].PaidAmountCNY = cny
+		byStatus[i].PaidCNYFxRate = rate
+		if missing {
+			byStatus[i].FxMissingCount = byStatus[i].Count
+		}
+	}
 }
 
 func buildRechargeAnomalies(keyword string, status string, provider string, startTime int64, endTime int64) ([]auditAnomaly, error) {
