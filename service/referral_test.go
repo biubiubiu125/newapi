@@ -137,6 +137,7 @@ func TestProcessTopUpCommissionIsIdempotent(t *testing.T) {
 	service := NewReferralService()
 
 	common.ReferralSettlementFxRates = map[string]float64{"CNY": 1, "USD": 7.2}
+	operation_setting.USDExchangeRate = 2
 
 	invitee := &model.User{Username: "invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
 	require.NoError(t, invitee.Insert(0))
@@ -196,7 +197,7 @@ func TestProcessTopUpCommissionIsIdempotent(t *testing.T) {
 
 	account := &model.ReferralCommissionAccount{}
 	require.NoError(t, db.Where("affiliate_id = ?", affiliate.Id).First(account).Error)
-	require.Equal(t, 14.4, account.PendingAmount)
+	require.Equal(t, 4.0, account.PendingAmount)
 	require.Equal(t, "CNY", account.SettlementCurrency)
 
 	commission := &model.ReferralCommission{}
@@ -204,9 +205,9 @@ func TestProcessTopUpCommissionIsIdempotent(t *testing.T) {
 	require.Equal(t, "USD", commission.PaidCurrency)
 	require.Equal(t, 10.0, commission.PaidAmount)
 	require.Equal(t, "CNY", commission.SettlementCurrency)
-	require.Equal(t, 7.2, commission.SettlementFxRate)
-	require.Equal(t, 72.0, commission.SettlementBaseAmount)
-	require.Equal(t, 14.4, commission.CommissionAmount)
+	require.Equal(t, 2.0, commission.SettlementFxRate)
+	require.Equal(t, 20.0, commission.SettlementBaseAmount)
+	require.Equal(t, 4.0, commission.CommissionAmount)
 }
 
 func TestProcessTopUpCommissionFailsWhenFxRateMissingAndRetriesAfterConfigured(t *testing.T) {

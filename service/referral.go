@@ -2405,11 +2405,11 @@ func referralSettlementFxRate(currency string) (float64, bool) {
 	if currency == referralSettlementCurrency() {
 		return 1, true
 	}
-	if rate, ok := common.ReferralSettlementFxRatesSnapshot()[currency]; ok && rate > 0 && !math.IsNaN(rate) && !math.IsInf(rate, 0) {
-		return rate, true
-	}
 	if currency == "USD" && operation_setting.USDExchangeRate > 0 && !math.IsNaN(operation_setting.USDExchangeRate) && !math.IsInf(operation_setting.USDExchangeRate, 0) {
 		return operation_setting.USDExchangeRate, true
+	}
+	if rate, ok := common.ReferralSettlementFxRatesSnapshot()[currency]; ok && rate > 0 && !math.IsNaN(rate) && !math.IsInf(rate, 0) {
+		return rate, true
 	}
 	return 0, false
 }
