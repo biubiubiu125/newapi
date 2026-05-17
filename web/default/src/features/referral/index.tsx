@@ -27,6 +27,7 @@ import {
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import { copyToClipboard } from '@/lib/copy-to-clipboard'
 import { formatTimestamp } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -243,11 +244,11 @@ export function Referral() {
       toast.error(t('No referral link is available yet'))
       return
     }
-    try {
-      await navigator.clipboard.writeText(inviteLink)
+    const copied = await copyToClipboard(inviteLink)
+    if (copied) {
       toast.success(t('Referral link copied'))
-    } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('Copy failed'))
+    } else {
+      toast.error(t('Failed to copy to clipboard'))
     }
   }
 
