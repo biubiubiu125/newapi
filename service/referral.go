@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -72,28 +73,28 @@ type ReferralSummary struct {
 }
 
 type ReferralCommissionView struct {
-	Id               int     `json:"id"`
-	AffiliateId      int     `json:"affiliate_id"`
-	AffiliateUserId  int     `json:"affiliate_user_id"`
-	AffiliateUsername string `json:"affiliate_username,omitempty"`
-	AffiliateEmail   string  `json:"affiliate_email,omitempty"`
-	SourceType       string  `json:"source_type"`
-	SourceOrderId    int     `json:"source_order_id"`
-	SourceTradeNo    string  `json:"source_trade_no"`
-	InviteeUserId    int     `json:"invitee_user_id"`
-	InviteeUsername  string  `json:"invitee_username,omitempty"`
-	InviteeEmail     string  `json:"invitee_email,omitempty"`
-	OrderType        string  `json:"order_type"`
-	BaseAmount       float64 `json:"base_amount"`
-	PaidAmount       float64 `json:"paid_amount"`
-	PaidCurrency     string  `json:"paid_currency"`
-	Rate             float64 `json:"rate"`
-	CommissionAmount float64 `json:"commission_amount"`
-	Status           string  `json:"status"`
-	SettleAt         int64   `json:"settle_at"`
-	AvailableAt      int64   `json:"available_at"`
-	FrozenAt         int64   `json:"frozen_at"`
-	CreatedAt        int64   `json:"created_at"`
+	Id                int     `json:"id"`
+	AffiliateId       int     `json:"affiliate_id"`
+	AffiliateUserId   int     `json:"affiliate_user_id"`
+	AffiliateUsername string  `json:"affiliate_username,omitempty"`
+	AffiliateEmail    string  `json:"affiliate_email,omitempty"`
+	SourceType        string  `json:"source_type"`
+	SourceOrderId     int     `json:"source_order_id"`
+	SourceTradeNo     string  `json:"source_trade_no"`
+	InviteeUserId     int     `json:"invitee_user_id"`
+	InviteeUsername   string  `json:"invitee_username,omitempty"`
+	InviteeEmail      string  `json:"invitee_email,omitempty"`
+	OrderType         string  `json:"order_type"`
+	BaseAmount        float64 `json:"base_amount"`
+	PaidAmount        float64 `json:"paid_amount"`
+	PaidCurrency      string  `json:"paid_currency"`
+	Rate              float64 `json:"rate"`
+	CommissionAmount  float64 `json:"commission_amount"`
+	Status            string  `json:"status"`
+	SettleAt          int64   `json:"settle_at"`
+	AvailableAt       int64   `json:"available_at"`
+	FrozenAt          int64   `json:"frozen_at"`
+	CreatedAt         int64   `json:"created_at"`
 }
 
 type ReferralCommissionJobView struct {
@@ -198,17 +199,18 @@ type ReferralLedgerView struct {
 }
 
 type ReferralAdminAuditLogView struct {
-	Id           int    `json:"id"`
-	Action       string `json:"action"`
-	TargetUserId int    `json:"target_user_id"`
-	AffiliateId  int    `json:"affiliate_id"`
-	AdminUserId  int    `json:"admin_user_id"`
-	Reason       string `json:"reason"`
-	Ip           string `json:"ip"`
-	UserAgent    string `json:"user_agent"`
-	OldValue     string `json:"old_value"`
-	NewValue     string `json:"new_value"`
-	CreatedAt    int64  `json:"created_at"`
+	Id             int    `json:"id"`
+	Action         string `json:"action"`
+	TargetUserId   int    `json:"target_user_id"`
+	TargetUsername string `json:"target_username,omitempty"`
+	AffiliateId    int    `json:"affiliate_id"`
+	AdminUserId    int    `json:"admin_user_id"`
+	Reason         string `json:"reason"`
+	Ip             string `json:"ip"`
+	UserAgent      string `json:"user_agent"`
+	OldValue       string `json:"old_value"`
+	NewValue       string `json:"new_value"`
+	CreatedAt      int64  `json:"created_at"`
 }
 
 type ReferralOverview struct {
@@ -579,6 +581,9 @@ func (s *ReferralService) BindInviteeByCodeWithTx(tx *gorm.DB, inviteeUserId int
 	if affiliate.UserId == inviteeUserId {
 		return errors.New("self invite is not allowed")
 	}
+	if err := s.lockReferralBindingUsersTx(tx, inviteeUserId, affiliate.UserId); err != nil {
+		return err
+	}
 	existing := &model.ReferralBinding{}
 	if err := tx.Where("invitee_user_id = ?", inviteeUserId).First(existing).Error; err == nil {
 		return nil
@@ -867,8 +872,10 @@ func (s *ReferralService) ListAdminAuditLogs(params ReferralListParams) ([]Refer
 	page, pageSize := normalizePage(params.Page, params.PageSize)
 	query := model.DB.Model(&model.ReferralAdminAuditLog{})
 	if keyword := strings.TrimSpace(params.Keyword); keyword != "" {
+		query = query.Joins("LEFT JOIN users AS target_users ON target_users.id = referral_admin_audit_logs.target_user_id")
 		query = query.Where(
-			"action LIKE ? OR reason LIKE ? OR old_value LIKE ? OR new_value LIKE ?",
+			"referral_admin_audit_logs.action LIKE ? OR referral_admin_audit_logs.reason LIKE ? OR referral_admin_audit_logs.old_value LIKE ? OR referral_admin_audit_logs.new_value LIKE ? OR target_users.username LIKE ?",
+			"%"+keyword+"%",
 			"%"+keyword+"%",
 			"%"+keyword+"%",
 			"%"+keyword+"%",
@@ -880,23 +887,43 @@ func (s *ReferralService) ListAdminAuditLogs(params ReferralListParams) ([]Refer
 		return nil, 0, err
 	}
 	var rows []model.ReferralAdminAuditLog
-	if err := query.Order("created_at desc, id desc").Limit(pageSize).Offset((page - 1) * pageSize).Find(&rows).Error; err != nil {
+	if err := query.Order("referral_admin_audit_logs.created_at desc, referral_admin_audit_logs.id desc").Limit(pageSize).Offset((page - 1) * pageSize).Find(&rows).Error; err != nil {
 		return nil, 0, err
+	}
+	targetUsernames := map[int]string{}
+	targetUserIds := make([]int, 0, len(rows))
+	for _, row := range rows {
+		if row.TargetUserId > 0 {
+			targetUserIds = append(targetUserIds, row.TargetUserId)
+		}
+	}
+	if len(targetUserIds) > 0 {
+		var users []struct {
+			Id       int
+			Username string
+		}
+		if err := model.DB.Model(&model.User{}).Select("id, username").Where("id IN ?", targetUserIds).Scan(&users).Error; err != nil {
+			return nil, 0, err
+		}
+		for _, user := range users {
+			targetUsernames[user.Id] = user.Username
+		}
 	}
 	items := make([]ReferralAdminAuditLogView, 0, len(rows))
 	for _, row := range rows {
 		items = append(items, ReferralAdminAuditLogView{
-			Id:           row.Id,
-			Action:       row.Action,
-			TargetUserId: row.TargetUserId,
-			AffiliateId:  row.AffiliateId,
-			AdminUserId:  row.AdminUserId,
-			Reason:       row.Reason,
-			Ip:           row.Ip,
-			UserAgent:    row.UserAgent,
-			OldValue:     row.OldValue,
-			NewValue:     row.NewValue,
-			CreatedAt:    row.CreatedAt,
+			Id:             row.Id,
+			Action:         row.Action,
+			TargetUserId:   row.TargetUserId,
+			TargetUsername: targetUsernames[row.TargetUserId],
+			AffiliateId:    row.AffiliateId,
+			AdminUserId:    row.AdminUserId,
+			Reason:         row.Reason,
+			Ip:             row.Ip,
+			UserAgent:      row.UserAgent,
+			OldValue:       row.OldValue,
+			NewValue:       row.NewValue,
+			CreatedAt:      row.CreatedAt,
 		})
 	}
 	return items, total, nil
@@ -1888,7 +1915,7 @@ func (s *ReferralService) processCommissionTx(
 	if err := tx.Save(job).Error; err != nil {
 		return err
 	}
-	commissionAmount := roundMoney(baseAmount * rate / 100)
+	commissionAmount := calculateCommissionAmount(baseAmount, rate)
 	if commissionAmount <= 0 {
 		job.Status = model.ReferralCommissionJobStatusSkipped
 		job.LastError = ""
@@ -2136,6 +2163,28 @@ func (s *ReferralService) generateInviteCodeTx(tx *gorm.DB) (string, error) {
 		}
 	}
 	return "", errors.New("failed to generate unique invite code")
+}
+
+func (s *ReferralService) lockReferralBindingUsersTx(tx *gorm.DB, inviteeUserId, inviterUserId int) error {
+	if tx == nil || inviteeUserId <= 0 || inviterUserId <= 0 {
+		return errors.New("invalid referral binding users")
+	}
+	ids := []int{inviteeUserId, inviterUserId}
+	if inviterUserId < inviteeUserId {
+		ids[0], ids[1] = inviterUserId, inviteeUserId
+	}
+	var users []model.User
+	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Select("id").
+		Where("id IN ?", ids).
+		Order("id asc").
+		Find(&users).Error; err != nil {
+		return err
+	}
+	if len(users) != len(ids) {
+		return errors.New("referral binding user not found")
+	}
+	return nil
 }
 
 func (s *ReferralService) hasBindingCycle(tx *gorm.DB, inviteeUserId, inviterUserId int) (bool, error) {
@@ -2429,28 +2478,28 @@ func (s *ReferralService) listCommissions(params ReferralListParams, affiliateId
 			}
 		}
 		items = append(items, ReferralCommissionView{
-			Id:               commission.Id,
-			AffiliateId:      commission.AffiliateId,
-			AffiliateUserId:  commission.AffiliateUserId,
+			Id:                commission.Id,
+			AffiliateId:       commission.AffiliateId,
+			AffiliateUserId:   commission.AffiliateUserId,
 			AffiliateUsername: affiliateUser.Username,
-			AffiliateEmail:   affiliateUser.Email,
-			SourceType:       commission.SourceType,
-			SourceOrderId:    commission.SourceOrderId,
-			SourceTradeNo:    commission.SourceTradeNo,
-			InviteeUserId:    commission.InviteeUserId,
-			InviteeUsername:  inviteeUser.Username,
-			InviteeEmail:     inviteeUser.Email,
-			OrderType:        commission.OrderType,
-			BaseAmount:       commission.BaseAmount,
-			PaidAmount:       commission.PaidAmount,
-			PaidCurrency:     commission.PaidCurrency,
-			Rate:             commission.Rate,
-			CommissionAmount: commission.CommissionAmount,
-			Status:           status,
-			SettleAt:         commission.SettleAt,
-			AvailableAt:      commission.AvailableAt,
-			FrozenAt:         commission.FrozenAt,
-			CreatedAt:        commission.CreatedAt,
+			AffiliateEmail:    affiliateUser.Email,
+			SourceType:        commission.SourceType,
+			SourceOrderId:     commission.SourceOrderId,
+			SourceTradeNo:     commission.SourceTradeNo,
+			InviteeUserId:     commission.InviteeUserId,
+			InviteeUsername:   inviteeUser.Username,
+			InviteeEmail:      inviteeUser.Email,
+			OrderType:         commission.OrderType,
+			BaseAmount:        commission.BaseAmount,
+			PaidAmount:        commission.PaidAmount,
+			PaidCurrency:      commission.PaidCurrency,
+			Rate:              commission.Rate,
+			CommissionAmount:  commission.CommissionAmount,
+			Status:            status,
+			SettleAt:          commission.SettleAt,
+			AvailableAt:       commission.AvailableAt,
+			FrozenAt:          commission.FrozenAt,
+			CreatedAt:         commission.CreatedAt,
 		})
 	}
 	return items, total, nil
@@ -2792,7 +2841,27 @@ func maskAccountNo(value string) string {
 }
 
 func roundMoney(value float64) float64 {
-	return math.Round(value*1e8) / 1e8
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return value
+	}
+	out, _ := moneyDecimal(value).Float64()
+	return out
+}
+
+func moneyDecimal(value float64) decimal.Decimal {
+	if math.IsNaN(value) || math.IsInf(value, 0) {
+		return decimal.Zero
+	}
+	return decimal.NewFromFloat(value).Round(8)
+}
+
+func calculateCommissionAmount(baseAmount, rate float64) float64 {
+	if baseAmount <= 0 || rate <= 0 || math.IsNaN(baseAmount) || math.IsNaN(rate) || math.IsInf(baseAmount, 0) || math.IsInf(rate, 0) {
+		return 0
+	}
+	amount := moneyDecimal(baseAmount).Mul(moneyDecimal(rate)).Div(decimal.NewFromInt(100)).Round(8)
+	out, _ := amount.Float64()
+	return out
 }
 
 func normalizePage(page, pageSize int) (int, int) {

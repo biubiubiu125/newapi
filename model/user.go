@@ -16,36 +16,39 @@ import (
 )
 
 const UserNameMaxLength = 20
+const RegisterUserNameMaxLength = 12
 
 // User if you add sensitive fields, don't forget to clean them in setupLogin function.
 // Otherwise, the sensitive information will be saved on local storage in plain text!
 type User struct {
-	Id               int            `json:"id"`
-	Username         string         `json:"username" gorm:"unique;index" validate:"max=20"`
-	Password         string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`
-	OriginalPassword string         `json:"original_password" gorm:"-:all"`
-	DisplayName      string         `json:"display_name" gorm:"index" validate:"max=20"`
-	Role             int            `json:"role" gorm:"type:int;default:1"`
-	Status           int            `json:"status" gorm:"type:int;default:1"`
-	Email            string         `json:"email" gorm:"index" validate:"max=50"`
-	GitHubId         string         `json:"github_id" gorm:"column:github_id;index"`
-	DiscordId        string         `json:"discord_id" gorm:"column:discord_id;index"`
-	OidcId           string         `json:"oidc_id" gorm:"column:oidc_id;index"`
-	WeChatId         string         `json:"wechat_id" gorm:"column:wechat_id;index"`
-	TelegramId       string         `json:"telegram_id" gorm:"column:telegram_id;index"`
-	VerificationCode string         `json:"verification_code" gorm:"-:all"`
-	AccessToken      *string        `json:"access_token" gorm:"type:char(32);column:access_token;uniqueIndex"`
-	Quota            int            `json:"quota" gorm:"type:int;default:0"`
-	UsedQuota        int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"`
-	RequestCount     int            `json:"request_count" gorm:"type:int;default:0;"`
-	Group            string         `json:"group" gorm:"type:varchar(64);default:'default'"`
-	DeletedAt        gorm.DeletedAt `gorm:"index"`
-	LinuxDOId        string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
-	Setting          string         `json:"setting" gorm:"type:text;column:setting"`
-	Remark           string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
-	StripeCustomer   string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
-	CreatedAt        int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
-	LastLoginAt      int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
+	Id                      int            `json:"id"`
+	Username                string         `json:"username" gorm:"unique;index" validate:"max=20"`
+	Password                string         `json:"password" gorm:"not null;" validate:"min=8,max=20"`
+	OriginalPassword        string         `json:"original_password" gorm:"-:all"`
+	DisplayName             string         `json:"display_name" gorm:"index" validate:"max=20"`
+	Role                    int            `json:"role" gorm:"type:int;default:1"`
+	Status                  int            `json:"status" gorm:"type:int;default:1"`
+	Email                   string         `json:"email" gorm:"index" validate:"max=50"`
+	GitHubId                string         `json:"github_id" gorm:"column:github_id;index"`
+	DiscordId               string         `json:"discord_id" gorm:"column:discord_id;index"`
+	OidcId                  string         `json:"oidc_id" gorm:"column:oidc_id;index"`
+	WeChatId                string         `json:"wechat_id" gorm:"column:wechat_id;index"`
+	TelegramId              string         `json:"telegram_id" gorm:"column:telegram_id;index"`
+	VerificationCode        string         `json:"verification_code" gorm:"-:all"`
+	AccessToken             *string        `json:"access_token" gorm:"type:char(32);column:access_token;uniqueIndex"`
+	Quota                   int            `json:"quota" gorm:"type:int;default:0"`
+	UsedQuota               int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"`
+	RequestCount            int            `json:"request_count" gorm:"type:int;default:0;"`
+	Group                   string         `json:"group" gorm:"type:varchar(64);default:'default'"`
+	ReferralInviterId       int            `json:"referral_inviter_id,omitempty" gorm:"-"`
+	ReferralInviterUsername string         `json:"referral_inviter_username,omitempty" gorm:"-"`
+	DeletedAt               gorm.DeletedAt `gorm:"index"`
+	LinuxDOId               string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
+	Setting                 string         `json:"setting" gorm:"type:text;column:setting"`
+	Remark                  string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
+	StripeCustomer          string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
+	CreatedAt               int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
+	LastLoginAt             int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -90,6 +93,18 @@ func (user *User) SetSetting(setting dto.UserSetting) {
 		return
 	}
 	user.Setting = string(settingBytes)
+}
+
+func (user *User) initializeDefaultSettingForRole() {
+	setting := user.GetSetting()
+	role := user.Role
+	if role == 0 {
+		role = common.RoleCommonUser
+	}
+	if setting.SidebarModules == "" {
+		setting.SidebarModules = generateDefaultSidebarConfigForRole(role)
+	}
+	user.SetSetting(setting)
 }
 
 func generateDefaultSidebarConfigForRole(userRole int) string {
@@ -190,6 +205,7 @@ func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err err
 	if err = tx.Commit().Error; err != nil {
 		return nil, 0, err
 	}
+	populateReferralInviters(users)
 
 	return users, total, nil
 }
@@ -209,26 +225,29 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, 
 		}
 	}()
 
-	query := tx.Unscoped().Model(&User{})
-	likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ?"
+	query := tx.Unscoped().Model(&User{}).
+		Joins("LEFT JOIN referral_bindings rb ON rb.invitee_user_id = users.id").
+		Joins("LEFT JOIN users inviter_users ON inviter_users.id = rb.inviter_user_id")
+	groupColumn := "users." + commonGroupCol
+	likeCondition := "users.username LIKE ? OR users.email LIKE ? OR users.display_name LIKE ? OR inviter_users.username LIKE ?"
 
 	keywordInt, err := strconv.Atoi(keyword)
 	if err == nil {
-		likeCondition = "id = ? OR " + likeCondition
+		likeCondition = "users.id = ? OR " + likeCondition
 		if group != "" {
-			query = query.Where("("+likeCondition+") AND "+commonGroupCol+" = ?",
-				keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", group)
+			query = query.Where("("+likeCondition+") AND "+groupColumn+" = ?",
+				keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", group)
 		} else {
 			query = query.Where(likeCondition,
-				keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+				keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
 		}
 	} else {
 		if group != "" {
-			query = query.Where("("+likeCondition+") AND "+commonGroupCol+" = ?",
-				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", group)
+			query = query.Where("("+likeCondition+") AND "+groupColumn+" = ?",
+				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", group)
 		} else {
 			query = query.Where(likeCondition,
-				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
+				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
 		}
 	}
 
@@ -238,7 +257,7 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, 
 		return nil, 0, err
 	}
 
-	err = query.Omit("password").Order("id desc").Limit(num).Offset(startIdx).Find(&users).Error
+	err = query.Omit("password").Order("users.id desc").Limit(num).Offset(startIdx).Find(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -247,8 +266,51 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, 
 	if err = tx.Commit().Error; err != nil {
 		return nil, 0, err
 	}
+	populateReferralInviters(users)
 
 	return users, total, nil
+}
+
+func populateReferralInviters(users []*User) {
+	if len(users) == 0 {
+		return
+	}
+	userIds := make([]int, 0, len(users))
+	userById := make(map[int]*User, len(users))
+	for _, user := range users {
+		if user == nil || user.Id == 0 {
+			continue
+		}
+		userIds = append(userIds, user.Id)
+		userById[user.Id] = user
+	}
+	if len(userIds) == 0 {
+		return
+	}
+
+	type inviterRow struct {
+		InviteeUserId   int
+		InviterUserId   int
+		InviterUsername string
+	}
+	var rows []inviterRow
+	err := DB.Table("referral_bindings AS rb").
+		Select("rb.invitee_user_id, rb.inviter_user_id, inviter_users.username AS inviter_username").
+		Joins("LEFT JOIN users inviter_users ON inviter_users.id = rb.inviter_user_id").
+		Where("rb.invitee_user_id IN ?", userIds).
+		Scan(&rows).Error
+	if err != nil {
+		common.SysLog("failed to populate referral inviters: " + err.Error())
+		return
+	}
+	for _, row := range rows {
+		user := userById[row.InviteeUserId]
+		if user == nil {
+			continue
+		}
+		user.ReferralInviterId = row.InviterUserId
+		user.ReferralInviterUsername = row.InviterUsername
+	}
 }
 
 func GetUserById(id int, selectAll bool) (*User, error) {
@@ -291,26 +353,11 @@ func (user *User) Insert(_ int) error {
 	}
 	user.Quota = common.QuotaForNewUser
 
-	if user.Setting == "" {
-		defaultSetting := dto.UserSetting{}
-		user.SetSetting(defaultSetting)
-	}
+	user.initializeDefaultSettingForRole()
 
 	result := DB.Create(user)
 	if result.Error != nil {
 		return result.Error
-	}
-
-	var createdUser User
-	if err := DB.Where("username = ?", user.Username).First(&createdUser).Error; err == nil {
-		defaultSidebarConfig := generateDefaultSidebarConfigForRole(createdUser.Role)
-		if defaultSidebarConfig != "" {
-			currentSetting := createdUser.GetSetting()
-			currentSetting.SidebarModules = defaultSidebarConfig
-			createdUser.SetSetting(currentSetting)
-			createdUser.Update(false)
-			common.SysLog(fmt.Sprintf("为新用户 %s (角色: %d) 初始化边栏配置", createdUser.Username, createdUser.Role))
-		}
 	}
 
 	if common.QuotaForNewUser > 0 {
@@ -329,10 +376,7 @@ func (user *User) InsertWithTx(tx *gorm.DB, _ int) error {
 	}
 	user.Quota = common.QuotaForNewUser
 
-	if user.Setting == "" {
-		defaultSetting := dto.UserSetting{}
-		user.SetSetting(defaultSetting)
-	}
+	user.initializeDefaultSettingForRole()
 
 	result := tx.Create(user)
 	if result.Error != nil {
@@ -342,18 +386,6 @@ func (user *User) InsertWithTx(tx *gorm.DB, _ int) error {
 }
 
 func (user *User) FinalizeOAuthUserCreation(_ int) {
-	var createdUser User
-	if err := DB.Where("id = ?", user.Id).First(&createdUser).Error; err == nil {
-		defaultSidebarConfig := generateDefaultSidebarConfigForRole(createdUser.Role)
-		if defaultSidebarConfig != "" {
-			currentSetting := createdUser.GetSetting()
-			currentSetting.SidebarModules = defaultSidebarConfig
-			createdUser.SetSetting(currentSetting)
-			createdUser.Update(false)
-			common.SysLog(fmt.Sprintf("为新用户 %s (角色: %d) 初始化边栏配置", createdUser.Username, createdUser.Role))
-		}
-	}
-
 	if common.QuotaForNewUser > 0 {
 		RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("新用户注册赠送 %s", logger.LogQuota(common.QuotaForNewUser)))
 	}
@@ -618,8 +650,21 @@ func IncreaseUserQuota(id int, quota int, db bool) (err error) {
 	}
 	if db {
 		err = increaseUserQuota(id, quota)
+		if err != nil {
+			return err
+		}
+		return CacheUpdateUserQuota(id)
 	}
-	if err != nil {
+	if common.BatchUpdateEnabled {
+		addNewRecord(BatchUpdateTypeUserQuota, id, quota)
+		if common.RedisEnabled {
+			if err := cacheIncrUserQuota(id, int64(quota)); err != nil {
+				common.SysLog("failed to increase user quota cache: " + err.Error())
+			}
+		}
+		return nil
+	}
+	if err = increaseUserQuota(id, quota); err != nil {
 		return err
 	}
 	return CacheUpdateUserQuota(id)
@@ -635,8 +680,21 @@ func DecreaseUserQuota(id int, quota int, db bool) (err error) {
 	}
 	if db {
 		err = decreaseUserQuota(id, quota)
+		if err != nil {
+			return err
+		}
+		return CacheUpdateUserQuota(id)
 	}
-	if err != nil {
+	if common.BatchUpdateEnabled {
+		addNewRecord(BatchUpdateTypeUserQuota, id, -quota)
+		if common.RedisEnabled {
+			if err := cacheDecrUserQuota(id, int64(quota)); err != nil {
+				common.SysLog("failed to decrease user quota cache: " + err.Error())
+			}
+		}
+		return nil
+	}
+	if err = decreaseUserQuota(id, quota); err != nil {
 		return err
 	}
 	return CacheUpdateUserQuota(id)

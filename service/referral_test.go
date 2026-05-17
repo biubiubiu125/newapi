@@ -296,6 +296,26 @@ func TestBindInviteeRejectsCycle(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestBindInviteeRequiresBothUsersForBindingLock(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	affiliateUser := &model.User{Username: "lock-aff", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "LOCK1234",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+
+	err := service.BindInviteeByCode(affiliateUser.Id+99999, affiliate.InviteCode, "code")
+	require.Error(t, err)
+}
+
 func TestCreateWithdrawalValidatesAssetOwnershipAndPurpose(t *testing.T) {
 	db := setupReferralServiceTestDB(t)
 	service := NewReferralService()

@@ -28,6 +28,7 @@ var ReferralRedirectPath = ""
 var ReferralRequireApproval = true
 var ReferralSigningSecret = ""
 var ReferralAssetSigningSecret = ""
+var ReferralTestMode = false
 
 var themeValue atomic.Value // stores string; safe for concurrent read/write
 

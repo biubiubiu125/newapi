@@ -61,6 +61,16 @@ export function formatCurrency(amount: number | string): string {
   }).format(numeric)
 }
 
+export function formatSiteCreditAmount(amount: number | string): string {
+  const formatted = formatCurrency(amount)
+  return formatted === '-' ? formatted : `$${formatted}`
+}
+
+export function formatPaymentCnyAmount(amount: number | string): string {
+  const formatted = formatCurrency(amount)
+  return formatted === '-' ? formatted : `\u00a5${formatted}`
+}
+
 /**
  * Get discount label for display (e.g., "20% OFF")
  */

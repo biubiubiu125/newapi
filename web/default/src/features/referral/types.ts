@@ -203,6 +203,7 @@ export interface ReferralAdminAuditLog {
   id: number
   action: string
   target_user_id: number
+  target_username?: string
   affiliate_id: number
   admin_user_id: number
   reason: string

@@ -17,12 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useState, useEffect, useCallback, useMemo } from 'react'
-import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { getSelf } from '@/lib/api'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
-import { Button } from '@/components/ui/button'
 import { SectionPageLayout } from '@/components/layout'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
@@ -296,17 +294,6 @@ export function Wallet(props: WalletProps) {
                 topupInfo={topupInfo}
                 onAvailabilityChange={handleSubscriptionAvailabilityChange}
               />
-            </div>
-
-            <div className='flex justify-end'>
-              <Button
-                variant='outline'
-                render={
-                  <Link to='/referral/$section' params={{ section: 'center' }} />
-                }
-              >
-                {t('Open Referral Center')}
-              </Button>
             </div>
           </div>
         </SectionPageLayout.Content>

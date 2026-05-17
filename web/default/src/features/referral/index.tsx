@@ -27,7 +27,7 @@ import {
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { formatCurrencyUSD, formatTimestamp } from '@/lib/format'
+import { formatTimestamp } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -96,7 +96,12 @@ const ACCOUNT_TYPE_OPTIONS = [
 const ACCOUNT_NETWORK_OPTIONS = ['TRC20', 'BEP20', 'POLYGON'] as const
 
 function formatMoney(value: number): string {
-  return formatCurrencyUSD(value || 0)
+  const amount = Number.isFinite(value) ? value : 0
+  const formatted = new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: Math.abs(amount) >= 1 ? 2 : 4,
+  }).format(amount)
+  return `\u00a5${formatted}`
 }
 
 function orderTypeLabel(value: string, t: (key: string) => string): string {
@@ -545,7 +550,7 @@ export function Referral() {
                   orderTypeLabel(item.order_type, t),
                   item.invitee_username || item.invitee_email || '-',
                   `${item.rate}%`,
-                  `${formatMoney(item.commission_amount)} ${item.paid_currency || ''}`.trim(),
+                  formatMoney(item.commission_amount),
                   statusLabel(item.status, t),
                   formatTimestamp(item.available_at || item.settle_at || item.created_at),
                 ],

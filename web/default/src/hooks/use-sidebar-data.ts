@@ -31,6 +31,7 @@ import {
   FlaskConical,
   MessageSquare,
   CreditCard,
+  BadgeDollarSign,
   ListTodo,
   Settings,
   Share2,
@@ -155,6 +156,11 @@ export function useSidebarData(): SidebarData {
             title: t('Subscription Management'),
             url: '/subscriptions',
             icon: CreditCard,
+          },
+          {
+            title: t('Public Price Export'),
+            url: '/provider-price-export',
+            icon: BadgeDollarSign,
           },
           {
             title: t('System Settings'),

@@ -24,7 +24,6 @@ import { PaymentSettingsSection } from '../integrations/payment-settings-section
 import { RatioSettingsCard } from '../models/ratio-settings-card'
 import type { BillingSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
-import { ProviderPriceExportSection } from './provider-price-export-section'
 
 const getModelDefaults = (settings: BillingSettings) => ({
   ModelPrice: settings.ModelPrice,
@@ -207,16 +206,6 @@ const BILLING_SECTIONS = [
           minQuota: settings['checkin_setting.min_quota'],
           maxQuota: settings['checkin_setting.max_quota'],
         }}
-      />
-    ),
-  },
-  {
-    id: 'public-price-export',
-    titleKey: 'Public Price Export',
-    descriptionKey: 'Configure a display-only public pricing feed for external sites',
-    build: (settings: BillingSettings) => (
-      <ProviderPriceExportSection
-        defaultValue={settings.ProviderPriceOverrides}
       />
     ),
   },

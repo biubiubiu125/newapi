@@ -3,6 +3,7 @@ package controller
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/stretchr/testify/require"
@@ -50,13 +51,16 @@ func TestCreemWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	originalProducts := setting.CreemProducts
 	originalWebhookSecret := setting.CreemWebhookSecret
 	originalTestMode := setting.CreemTestMode
+	originalReferralTestMode := common.ReferralTestMode
 	t.Cleanup(func() {
 		setting.CreemApiKey = originalAPIKey
 		setting.CreemProducts = originalProducts
 		setting.CreemWebhookSecret = originalWebhookSecret
 		setting.CreemTestMode = originalTestMode
+		common.ReferralTestMode = originalReferralTestMode
 	})
 
+	common.ReferralTestMode = false
 	setting.CreemTestMode = false
 	setting.CreemWebhookSecret = ""
 	setting.CreemApiKey = "creem_api_key"
@@ -72,6 +76,9 @@ func TestCreemWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	setting.CreemProducts = `[{"productId":"prod_123"}]`
 	setting.CreemWebhookSecret = ""
 	setting.CreemTestMode = true
+	require.False(t, isCreemWebhookEnabled())
+
+	common.ReferralTestMode = true
 	require.True(t, isCreemWebhookEnabled())
 }
 

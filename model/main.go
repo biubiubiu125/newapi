@@ -25,6 +25,12 @@ var commonFalseVal string
 var logKeyCol string
 var logGroupCol string
 
+const (
+	defaultSQLMaxIdleConns = 25
+	defaultSQLMaxOpenConns = 80
+	defaultSQLMaxLifetime  = 60
+)
+
 func initCol() {
 	// init common column names
 	if common.UsingPostgreSQL {
@@ -191,9 +197,7 @@ func InitDB() (err error) {
 		if err != nil {
 			return err
 		}
-		sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
-		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
-		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
+		configureSQLPool(sqlDB)
 
 		if !common.IsMasterNode {
 			return nil
@@ -231,9 +235,7 @@ func InitLogDB() (err error) {
 		if err != nil {
 			return err
 		}
-		sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", 100))
-		sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", 1000))
-		sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", 60)))
+		configureSQLPool(sqlDB)
 
 		if !common.IsMasterNode {
 			return nil
@@ -245,6 +247,18 @@ func InitLogDB() (err error) {
 		common.FatalLog(err)
 	}
 	return err
+}
+
+type sqlPool interface {
+	SetMaxIdleConns(n int)
+	SetMaxOpenConns(n int)
+	SetConnMaxLifetime(d time.Duration)
+}
+
+func configureSQLPool(sqlDB sqlPool) {
+	sqlDB.SetMaxIdleConns(common.GetEnvOrDefault("SQL_MAX_IDLE_CONNS", defaultSQLMaxIdleConns))
+	sqlDB.SetMaxOpenConns(common.GetEnvOrDefault("SQL_MAX_OPEN_CONNS", defaultSQLMaxOpenConns))
+	sqlDB.SetConnMaxLifetime(time.Second * time.Duration(common.GetEnvOrDefault("SQL_MAX_LIFETIME", defaultSQLMaxLifetime)))
 }
 
 func migrateDB() error {

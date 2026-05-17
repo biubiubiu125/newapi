@@ -3,6 +3,7 @@ package controller
 import (
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 )
@@ -39,7 +40,7 @@ func isCreemTopUpEnabled() bool {
 }
 
 func isCreemWebhookConfigured() bool {
-	if setting.CreemTestMode {
+	if isReferralTestCreemSandboxEnabled() {
 		return true
 	}
 	return strings.TrimSpace(setting.CreemWebhookSecret) != ""
@@ -47,6 +48,10 @@ func isCreemWebhookConfigured() bool {
 
 func isCreemWebhookEnabled() bool {
 	return isCreemTopUpEnabled() && isCreemWebhookConfigured()
+}
+
+func isReferralTestCreemSandboxEnabled() bool {
+	return setting.CreemTestMode && common.ReferralTestMode
 }
 
 func isWaffoTopUpEnabled() bool {

@@ -25,7 +25,7 @@ import {
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { formatCurrencyUSD, formatTimestamp } from '@/lib/format'
+import { formatTimestamp } from '@/lib/format'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -103,7 +103,7 @@ const SECTION_META: Record<
   },
   commissions: {
     title: 'Referral Commissions',
-    description: 'Review commission records and background jobs',
+    description: 'Review commission records and settlement status',
   },
   withdrawals: {
     title: 'Referral Withdrawals',
@@ -143,7 +143,12 @@ type WithdrawalAction =
   | null
 
 function formatMoney(value: number): string {
-  return formatCurrencyUSD(value || 0)
+  const amount = Number.isFinite(value) ? value : 0
+  const formatted = new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: Math.abs(amount) >= 1 ? 2 : 4,
+  }).format(amount)
+  return `\u00a5${formatted}`
 }
 
 function parseOptionalNumber(value: string): number | undefined {
@@ -283,6 +288,44 @@ function operatorLabel(
   }
 }
 
+function orderTypeLabel(value: string, t: (key: string) => string): string {
+  switch (value) {
+    case 'topup':
+      return t('Top-up')
+    case 'subscription':
+      return t('Subscription')
+    default:
+      return value || '-'
+  }
+}
+
+function auditReasonLabel(value: string, t: (key: string) => string): string {
+  switch (value) {
+    case 'settings updated':
+      return t('Settings updated')
+    case 'batch approve':
+      return t('Batch approved')
+    case 'batch paid':
+      return t('Batch paid')
+    case 'ui button smoke test':
+      return t('UI button smoke test')
+    case 'approve e2e':
+      return t('Approve E2E')
+    case 'paid e2e':
+      return t('Paid E2E')
+    case 'approve flow':
+      return t('Approve flow')
+    case 'paid flow':
+      return t('Paid flow')
+    case 'withdrawal flow':
+      return t('Withdrawal flow')
+    case 'e2e':
+      return t('E2E test')
+    default:
+      return value || '-'
+  }
+}
+
 function auditActionLabel(
   value: string,
   t: (key: string) => string
@@ -391,19 +434,19 @@ export function AdminReferral() {
   }
 
   async function loadCommissions() {
-    const [commissionRes, jobsRes] = await Promise.all([
-      listAdminReferralCommissions({
-        p: 1,
-        page_size: 50,
-        status: commissionStatus || undefined,
-      }),
-      listAdminReferralCommissionJobs({
-        p: 1,
-        page_size: 50,
-        status: commissionStatus || undefined,
-      }),
-    ])
+    const commissionRes = await listAdminReferralCommissions({
+      p: 1,
+      page_size: 50,
+      status: commissionStatus || undefined,
+    })
     setCommissionItems(commissionRes.data?.items || [])
+  }
+
+  async function loadCommissionJobs() {
+    const jobsRes = await listAdminReferralCommissionJobs({
+      p: 1,
+      page_size: 50,
+    })
     setCommissionJobs(jobsRes.data?.items || [])
   }
 
@@ -452,7 +495,10 @@ export function AdminReferral() {
       if (activeSection === 'commissions') await loadCommissions()
       if (activeSection === 'withdrawals') await loadWithdrawals()
       if (activeSection === 'ledgers') await loadLedgers()
-      if (activeSection === 'audit-logs') await loadAuditLogs()
+      if (activeSection === 'audit-logs') {
+        await loadAuditLogs()
+        await loadCommissionJobs()
+      }
     } finally {
       setLoading(false)
     }
@@ -474,6 +520,8 @@ export function AdminReferral() {
         await loadOverview()
         if (activeSection === 'commissions') {
           await loadCommissions()
+        } else if (activeSection === 'audit-logs') {
+          await loadCommissionJobs()
         }
       } else {
         toast.error(res.message || t('Settlement run failed'))
@@ -715,7 +763,7 @@ export function AdminReferral() {
       return
     }
     toast.success(t('Commission retry submitted'))
-    await loadCommissions()
+    await loadCommissionJobs()
     await loadOverview()
   }
 
@@ -770,7 +818,8 @@ export function AdminReferral() {
   })()
 
   return (
-    <SectionPageLayout>
+    <>
+      <SectionPageLayout>
       <SectionPageLayout.Title>{t(pageMeta.title)}</SectionPageLayout.Title>
       <SectionPageLayout.Description>
         {t(pageMeta.description)}
@@ -801,18 +850,18 @@ export function AdminReferral() {
             <TabsList className='h-auto flex-wrap justify-start'>
               {(
                 [
-                  ['overview', t('Overview')],
-                  ['settings', t('Settings')],
-                  ['pending', t('Pending')],
-                  ['affiliates', t('Affiliates')],
-                  ['commissions', t('Commissions')],
-                  ['withdrawals', t('Withdrawals')],
-                  ['ledgers', t('Ledgers')],
-                  ['audit-logs', t('Audit Logs')],
-                ] as const
-              ).map(([value, label]) => (
-                <TabsTrigger key={value} value={value}>
-                  {label}
+                  'overview',
+                  'settings',
+                  'pending',
+                  'affiliates',
+                  'commissions',
+                  'withdrawals',
+                  'ledgers',
+                  'audit-logs',
+                ] as AdminReferralSectionId[]
+              ).map((section) => (
+                <TabsTrigger key={section} value={section}>
+                  {t(SECTION_META[section].title)}
                 </TabsTrigger>
               ))}
             </TabsList>
@@ -1169,41 +1218,12 @@ export function AdminReferral() {
                   key: item.id,
                   cells: [
                     item.source_trade_no,
-                    item.order_type,
+                    orderTypeLabel(item.order_type, t),
                     item.invitee_username || item.invitee_email || '-',
-                    `${formatMoney(item.commission_amount)} ${item.paid_currency || ''}`.trim(),
+                    formatMoney(item.commission_amount),
                     commissionStatusLabel(item.status, t),
                     formatTimestamp(item.created_at),
                   ],
-                }))}
-              />
-              <SimpleAdminTable
-                headers={[
-                  t('Trade No'),
-                  t('Affiliate ID'),
-                  t('Status'),
-                  t('Attempts'),
-                  t('Last Error'),
-                ]}
-                rows={commissionJobs.map((item) => ({
-                  key: item.id,
-                  cells: [
-                    item.source_trade_no,
-                    String(item.affiliate_id),
-                    commissionJobStatusLabel(item.status, t),
-                    String(item.attempt_count),
-                    item.last_error || '-',
-                  ],
-                  action:
-                    item.status === 'failed' ? (
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        onClick={() => void handleRetryCommissionJob(item)}
-                      >
-                        {t('Retry')}
-                      </Button>
-                    ) : undefined,
                 }))}
               />
             </div>
@@ -1249,7 +1269,7 @@ export function AdminReferral() {
                 headers={[
                   t('Action'),
                   t('Admin User ID'),
-                  t('Target User ID'),
+                  t('Target Username'),
                   t('Reason'),
                   t('Created'),
                 ]}
@@ -1258,10 +1278,44 @@ export function AdminReferral() {
                   cells: [
                     auditActionLabel(item.action, t),
                     String(item.admin_user_id),
-                    String(item.target_user_id),
-                    item.reason || '-',
+                    item.target_username ||
+                      (item.target_user_id > 0 ? `#${item.target_user_id}` : '-'),
+                    auditReasonLabel(item.reason, t),
                     formatTimestamp(item.created_at),
                   ],
+                }))}
+              />
+              <SectionTitle
+                title={t('Commission Jobs')}
+                description={t('Background commission generation and retry status')}
+              />
+              <SimpleAdminTable
+                headers={[
+                  t('Trade No'),
+                  t('Affiliate ID'),
+                  t('Status'),
+                  t('Attempts'),
+                  t('Last Error'),
+                ]}
+                rows={commissionJobs.map((item) => ({
+                  key: item.id,
+                  cells: [
+                    item.source_trade_no,
+                    String(item.affiliate_id),
+                    commissionJobStatusLabel(item.status, t),
+                    String(item.attempt_count),
+                    item.last_error || '-',
+                  ],
+                  action:
+                    item.status === 'failed' ? (
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        onClick={() => void handleRetryCommissionJob(item)}
+                      >
+                        {t('Retry')}
+                      </Button>
+                    ) : undefined,
                 }))}
               />
             </>
@@ -1345,6 +1399,7 @@ export function AdminReferral() {
           )}
         </div>
       </SectionPageLayout.Content>
+      </SectionPageLayout>
 
       <ConfirmDialog
         open={!!pendingDecision || !!affiliateAction}
@@ -1517,7 +1572,7 @@ export function AdminReferral() {
           setBindingItems([])
         }}
       />
-    </SectionPageLayout>
+    </>
   )
 }
 
@@ -1529,6 +1584,17 @@ function MetricCard(props: { title: string; value: string }) {
         <div className='mt-2 text-2xl font-semibold'>{props.value}</div>
       </CardContent>
     </Card>
+  )
+}
+
+function SectionTitle(props: { title: string; description?: string }) {
+  return (
+    <div className='space-y-1'>
+      <h3 className='text-sm font-semibold'>{props.title}</h3>
+      {props.description && (
+        <p className='text-sm text-muted-foreground'>{props.description}</p>
+      )}
+    </div>
   )
 }
 

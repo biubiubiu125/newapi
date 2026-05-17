@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
-	"strings"
 	"sync"
 	"time"
 
@@ -205,7 +204,7 @@ func RequestEpay(c *gin.Context) {
 		return
 	}
 	payMoney := getPayMoney(req.Amount, group)
-	snapshot, _ := referralService.BuildOrderSnapshot(id, payMoney, strings.ToUpper(operation_setting.GetQuotaDisplayType()))
+	snapshot, _ := referralService.BuildOrderSnapshot(id, payMoney, "CNY")
 	if payMoney < 0.01 {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "充值金额过低"})
 		return
@@ -251,7 +250,7 @@ func RequestEpay(c *gin.Context) {
 		Amount:          amount,
 		Money:           payMoney,
 		PaidAmount:      payMoney,
-		PaidCurrency:    strings.ToUpper(operation_setting.GetQuotaDisplayType()),
+		PaidCurrency:    "CNY",
 		TradeNo:         tradeNo,
 		PaymentMethod:   req.PaymentMethod,
 		PaymentProvider: model.PaymentProviderEpay,

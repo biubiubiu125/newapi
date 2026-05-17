@@ -46,6 +46,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
   return [
     {
       id: 'select',
+      size: 36,
       header: ({ table }) => (
         <Checkbox
           checked={table.getIsAllPageRowsSelected()}
@@ -69,6 +70,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'id',
+      size: 64,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title='ID' />
       ),
@@ -79,6 +81,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'username',
+      size: 210,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Username')} />
       ),
@@ -88,11 +91,9 @@ export function useUsersColumns(): ColumnDef<User>[] {
         const remark = row.original.remark
 
         return (
-          <div className='flex min-w-[160px] flex-col gap-1'>
+          <div className='flex min-w-[180px] flex-col gap-1 pr-2'>
             <div className='flex items-center gap-2'>
-              <LongText className='max-w-[140px] font-medium'>
-                {username}
-              </LongText>
+              <span className='font-medium whitespace-nowrap'>{username}</span>
               {remark && (
                 <Tooltip>
                   <TooltipTrigger
@@ -107,7 +108,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
               )}
             </div>
             {displayName && displayName !== username && (
-              <LongText className='text-muted-foreground max-w-[180px] text-xs'>
+              <LongText className='text-muted-foreground max-w-[140px] text-xs'>
                 {displayName}
               </LongText>
             )}
@@ -118,7 +119,25 @@ export function useUsersColumns(): ColumnDef<User>[] {
       meta: { label: t('Username'), mobileTitle: true },
     },
     {
+      accessorKey: 'referral_inviter_username',
+      size: 190,
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t('Promoter')} />
+      ),
+      cell: ({ row }) => {
+        const username = row.original.referral_inviter_username
+        return username ? (
+          <span className='whitespace-nowrap text-sm'>{username}</span>
+        ) : (
+          <span className='text-muted-foreground text-sm'>{t('None')}</span>
+        )
+      },
+      enableSorting: false,
+      meta: { label: t('Promoter'), mobileHidden: true },
+    },
+    {
       accessorKey: 'status',
+      size: 96,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Status')} />
       ),
@@ -161,6 +180,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     {
       id: 'quota',
       accessorKey: 'quota',
+      size: 128,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Quota')} />
       ),
@@ -184,7 +204,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
         return (
           <Tooltip>
             <TooltipTrigger
-              render={<div className='w-[150px] cursor-help space-y-1' />}
+              render={<div className='w-[120px] cursor-help space-y-1' />}
             >
               <div className='flex justify-between text-xs'>
                 <span className='font-medium tabular-nums'>
@@ -222,6 +242,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'group',
+      size: 112,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Group')} />
       ),
@@ -238,6 +259,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'role',
+      size: 88,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Role')} />
       ),
@@ -266,6 +288,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'created_at',
+      size: 154,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Created At')} />
       ),
@@ -281,6 +304,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'last_login_at',
+      size: 154,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Last Login')} />
       ),
@@ -296,6 +320,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       id: 'actions',
+      size: 48,
       cell: ({ row }) => <DataTableRowActions row={row} />,
       meta: { label: t('Actions') },
     },

@@ -51,7 +51,7 @@ func SubscriptionRequestEpay(c *gin.Context) {
 	}
 
 	userId := c.GetInt("id")
-	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, "USD")
+	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, "CNY")
 	if plan.MaxPurchasePerUser > 0 {
 		count, err := model.CountUserSubscriptionsByPlan(userId, plan.Id)
 		if err != nil {
@@ -90,7 +90,7 @@ func SubscriptionRequestEpay(c *gin.Context) {
 		PlanId:          plan.Id,
 		Money:           plan.PriceAmount,
 		PaidAmount:      plan.PriceAmount,
-		PaidCurrency:    "USD",
+		PaidCurrency:    "CNY",
 		TradeNo:         tradeNo,
 		PaymentMethod:   req.PaymentMethod,
 		PaymentProvider: model.PaymentProviderEpay,

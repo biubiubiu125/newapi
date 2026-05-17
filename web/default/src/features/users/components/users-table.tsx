@@ -142,6 +142,7 @@ export function UsersTable() {
       const searchValue = String(filterValue).toLowerCase()
       const fields = [
         row.getValue('username'),
+        row.original.referral_inviter_username,
         row.original.display_name,
         row.original.email,
       ]
@@ -180,8 +181,9 @@ export function UsersTable() {
         'No users available. Try adjusting your search or filters.'
       )}
       skeletonKeyPrefix='users-skeleton'
+      applyHeaderSize
       toolbarProps={{
-        searchPlaceholder: t('Filter by username, name or email...'),
+        searchPlaceholder: t('Filter by username, promoter, name or email...'),
         filters: [
           {
             columnId: 'status',

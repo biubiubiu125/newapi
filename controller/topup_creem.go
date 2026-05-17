@@ -36,9 +36,9 @@ func generateCreemSignature(payload string, secret string) string {
 // 验证Creem webhook签名
 func verifyCreemSignature(payload string, signature string, secret string) bool {
 	if secret == "" {
-		logger.LogWarn(context.Background(), fmt.Sprintf("Creem webhook secret 未配置 test_mode=%t body_size=%d", setting.CreemTestMode, len(payload)))
-		if setting.CreemTestMode {
-			logger.LogInfo(context.Background(), fmt.Sprintf("Creem webhook 验签已跳过 reason=test_mode body_size=%d", len(payload)))
+		logger.LogWarn(context.Background(), fmt.Sprintf("Creem webhook secret 未配置 test_mode=%t referral_test_mode=%t body_size=%d", setting.CreemTestMode, common.ReferralTestMode, len(payload)))
+		if isReferralTestCreemSandboxEnabled() {
+			logger.LogInfo(context.Background(), fmt.Sprintf("Creem webhook 验签已跳过 reason=referral_test_mode body_size=%d", len(payload)))
 			return true
 		}
 		return false
@@ -386,7 +386,7 @@ type CreemCheckoutResponse struct {
 }
 
 func genCreemLink(ctx context.Context, referenceId string, product *CreemProduct, email string, username string) (string, error) {
-	if setting.CreemTestMode && strings.HasPrefix(setting.CreemApiKey, "test_dummy_") {
+	if isReferralTestCreemSandboxEnabled() && strings.HasPrefix(setting.CreemApiKey, "test_dummy_") {
 		mockURL := paymentReturnPath("/console/topup?pay=mock")
 		logger.LogInfo(ctx, fmt.Sprintf("Creem test mode uses local mock checkout trade_no=%s product_id=%s mock_url=%q", referenceId, product.ProductId, mockURL))
 		return mockURL, nil
