@@ -407,6 +407,48 @@ func TestBindInviteeRequiresBothUsersForBindingLock(t *testing.T) {
 	require.Error(t, err)
 }
 
+func TestApplyAffiliateDoesNotDowngradeApprovedAffiliate(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+	common.ReferralRequireApproval = true
+
+	user := &model.User{Username: "approved-reapply", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             user.Id,
+		InviteCode:         "REAPPLY1",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+		ApprovedAt:         time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      user.Id,
+	}).Error)
+
+	profile, err := service.ApplyAffiliate(ReferralApplyInput{
+		UserId:        user.Id,
+		ApplicantNote: "repeat application",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, profile)
+	require.Equal(t, model.ReferralAffiliateStatusApproved, profile.Status)
+	require.True(t, profile.AcquisitionEnabled)
+	require.True(t, profile.SettlementEnabled)
+	require.True(t, profile.WithdrawalEnabled)
+	require.Equal(t, "REAPPLY1", profile.InviteCode)
+
+	stored := &model.ReferralAffiliate{}
+	require.NoError(t, db.Where("user_id = ?", user.Id).First(stored).Error)
+	require.Equal(t, model.ReferralAffiliateStatusApproved, stored.Status)
+	require.True(t, stored.AcquisitionEnabled)
+	require.True(t, stored.SettlementEnabled)
+	require.True(t, stored.WithdrawalEnabled)
+}
+
 func TestCreateWithdrawalValidatesAssetOwnershipAndPurpose(t *testing.T) {
 	db := setupReferralServiceTestDB(t)
 	service := NewReferralService()
@@ -495,6 +537,45 @@ func TestCreateWithdrawalStripsSignedQRURLBeforePersisting(t *testing.T) {
 	stored := &model.ReferralWithdrawal{}
 	require.NoError(t, db.First(stored, view.Id).Error)
 	require.Equal(t, "/referral-assets/withdraw-qr.png", stored.QRImageURL)
+}
+
+func TestUserWithdrawalViewMasksAccountNumber(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "withdraw-mask", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             user.Id,
+		InviteCode:         "MASK0001",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	withdrawal := &model.ReferralWithdrawal{
+		AffiliateId: affiliate.Id,
+		UserId:      user.Id,
+		Amount:      10,
+		NetAmount:   10,
+		AccountType: "alipay",
+		AccountName: "tester",
+		AccountNo:   "acct1234567890",
+		Status:      model.ReferralWithdrawalStatusPending,
+		SubmittedAt: time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(withdrawal).Error)
+
+	userView, err := service.GetWithdrawalById(withdrawal.Id, false)
+	require.NoError(t, err)
+	require.Equal(t, "acct******7890", userView.AccountNo)
+	require.Equal(t, "acct******7890", userView.AccountNoMasked)
+
+	adminView, err := service.GetWithdrawalById(withdrawal.Id, true)
+	require.NoError(t, err)
+	require.Equal(t, "acct1234567890", adminView.AccountNo)
+	require.Equal(t, "acct******7890", adminView.AccountNoMasked)
 }
 
 func TestAdjustAffiliateCommissionRejectsConflictingIdempotencyPayload(t *testing.T) {

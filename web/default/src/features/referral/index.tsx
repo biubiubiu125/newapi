@@ -188,9 +188,15 @@ export function Referral() {
   const pageMeta = SECTION_META[activeSection]
 
   const inviteLink = useMemo(() => {
-    if (!summary?.invite_code || typeof window === 'undefined') return ''
+    if (
+      !summary?.invite_code ||
+      !summary.acquisition_enabled ||
+      profile?.status !== 'approved' ||
+      typeof window === 'undefined'
+    )
+      return ''
     return `${window.location.origin}/r/${encodeURIComponent(summary.invite_code)}`
-  }, [summary?.invite_code])
+  }, [profile?.status, summary?.acquisition_enabled, summary?.invite_code])
 
   const rejectedReason = profile?.risk_reason || profile?.risk_note || ''
 

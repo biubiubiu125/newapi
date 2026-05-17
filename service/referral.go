@@ -698,6 +698,19 @@ func (s *ReferralService) ApplyAffiliate(input ReferralApplyInput) (*ReferralPro
 			if item.Status == model.ReferralAffiliateStatusDisabled {
 				return errors.New("referral affiliate is disabled")
 			}
+			if item.Status == model.ReferralAffiliateStatusApproved {
+				if item.InviteCode == "" {
+					inviteCode, err := s.generateInviteCodeTx(tx)
+					if err != nil {
+						return err
+					}
+					item.InviteCode = inviteCode
+					if err := tx.Save(item).Error; err != nil {
+						return err
+					}
+				}
+				return s.ensureCommissionAccountTx(tx, item.Id, item.UserId)
+			}
 			item.SourceType = "user_apply"
 			item.ApplicantNote = strings.TrimSpace(input.ApplicantNote)
 			item.RiskReason = ""
@@ -2652,6 +2665,7 @@ func (s *ReferralService) listWithdrawals(params ReferralListParams, affiliateUs
 func (s *ReferralService) buildWithdrawalView(row *model.ReferralWithdrawal, adminView bool) (*ReferralWithdrawalView, error) {
 	user := &model.User{}
 	_ = model.DB.Select("username,email").Where("id = ?", row.UserId).First(user).Error
+	maskedAccountNo := maskAccountNo(row.AccountNo)
 	view := &ReferralWithdrawalView{
 		Id:                 row.Id,
 		AffiliateId:        row.AffiliateId,
@@ -2664,8 +2678,8 @@ func (s *ReferralService) buildWithdrawalView(row *model.ReferralWithdrawal, adm
 		NetAmount:          row.NetAmount,
 		AccountType:        row.AccountType,
 		AccountName:        row.AccountName,
-		AccountNo:          row.AccountNo,
-		AccountNoMasked:    maskAccountNo(row.AccountNo),
+		AccountNo:          maskedAccountNo,
+		AccountNoMasked:    maskedAccountNo,
 		AccountNetwork:     row.AccountNetwork,
 		QRImageURL:         row.QRImageURL,
 		ApplicantNote:      row.ApplicantNote,
@@ -2681,7 +2695,7 @@ func (s *ReferralService) buildWithdrawalView(row *model.ReferralWithdrawal, adm
 		RejectedAt:         row.RejectedAt,
 		CanceledAt:         row.CanceledAt,
 	}
-	if !adminView {
+	if adminView {
 		view.AccountNo = row.AccountNo
 	}
 	if row.QRImageURL != "" {
