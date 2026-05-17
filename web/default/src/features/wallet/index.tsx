@@ -18,9 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+import { useQueryClient } from '@tanstack/react-query'
 import { getSelf } from '@/lib/api'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
+import { subscribeSettingsRefresh } from '@/lib/settings-refresh'
 import { SectionPageLayout } from '@/components/layout'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
@@ -70,9 +72,15 @@ export function Wallet(props: WalletProps) {
     useState<CreemProduct | null>(null)
   const [showSubscriptionPanel, setShowSubscriptionPanel] = useState(true)
 
+  const queryClient = useQueryClient()
   const { status } = useStatus()
   const { currency } = useSystemConfig()
-  const { topupInfo, presetAmounts, loading: topupLoading } = useTopupInfo()
+  const {
+    topupInfo,
+    presetAmounts,
+    loading: topupLoading,
+    refetch: refetchTopupInfo,
+  } = useTopupInfo()
 
   // Calculate effective exchange rate - when display type is USD, use rate of 1
   const effectiveUsdExchangeRate = useMemo(() => {
@@ -237,6 +245,47 @@ export function Wallet(props: WalletProps) {
     },
     []
   )
+
+  const refreshWalletPricing = useCallback(async () => {
+    const [, latestTopupInfo] = await Promise.all([
+      queryClient.invalidateQueries({ queryKey: ['status'] }),
+      refetchTopupInfo(),
+    ])
+    const paymentType =
+      selectedPaymentMethod?.type ||
+      getDefaultPaymentType(latestTopupInfo || topupInfo)
+    calculatePaymentAmount(topupAmount, paymentType)
+  }, [
+    calculatePaymentAmount,
+    queryClient,
+    refetchTopupInfo,
+    selectedPaymentMethod?.type,
+    topupInfo,
+    topupAmount,
+  ])
+
+  useEffect(() => {
+    return subscribeSettingsRefresh((payload) => {
+      const keys = payload.keys || []
+      const shouldRefresh =
+        keys.length === 0 ||
+        keys.some((key) =>
+          [
+            'Price',
+            'USDExchangeRate',
+            'QuotaPerUnit',
+            'DisplayInCurrencyEnabled',
+            'general_setting.quota_display_type',
+            'general_setting.custom_currency_symbol',
+            'general_setting.custom_currency_exchange_rate',
+          ].includes(key)
+        )
+
+      if (shouldRefresh) {
+        void refreshWalletPricing()
+      }
+    })
+  }, [refreshWalletPricing])
 
   return (
     <>

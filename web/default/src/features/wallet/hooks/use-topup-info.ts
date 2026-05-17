@@ -175,7 +175,7 @@ export function useTopupInfo() {
       if (!response.success || !response.data) {
         // eslint-disable-next-line no-console
         console.error('Failed to fetch topup info:', response.message)
-        return
+        return undefined
       }
 
       const processedData: TopupInfo = {
@@ -205,9 +205,11 @@ export function useTopupInfo() {
         const defaultPresets = generatePresetAmounts(minTopup)
         setPresetAmounts(defaultPresets)
       }
+      return processedData
     } catch (err) {
       // eslint-disable-next-line no-console
       console.error('Failed to fetch topup info:', err)
+      return undefined
     } finally {
       setLoading(false)
     }
