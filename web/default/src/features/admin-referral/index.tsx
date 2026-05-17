@@ -32,6 +32,7 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Textarea } from '@/components/ui/textarea'
 import { SectionPageLayout } from '@/components/layout'
 import {
   adjustReferralAffiliate,
@@ -151,6 +152,16 @@ function formatMoney(value: number): string {
   return `\u00a5${formatted}`
 }
 
+function formatSettlementMoney(value: number, currency?: string): string {
+  const symbol = (currency || 'CNY').toUpperCase() === 'CNY' ? '\u00a5' : `${currency || ''} `
+  const amount = Number.isFinite(value) ? value : 0
+  const formatted = new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 0,
+    maximumFractionDigits: Math.abs(amount) >= 1 ? 2 : 4,
+  }).format(amount)
+  return `${symbol}${formatted}`
+}
+
 function parseOptionalNumber(value: string): number | undefined {
   const trimmed = value.trim()
   if (trimmed === '') {
@@ -223,6 +234,15 @@ function commissionJobStatusLabel(
       return t('Succeeded')
     case 'failed':
       return t('Failed')
+    default:
+      return value || '-'
+  }
+}
+
+function referralErrorLabel(value: string, t: (key: string) => string): string {
+  switch (value) {
+    case 'fx_rate_missing':
+      return t('Missing referral FX rate')
     default:
       return value || '-'
   }
@@ -1003,6 +1023,22 @@ export function AdminReferral() {
                     )
                   }
                 />
+                <LabeledInput
+                  label={t('Referral Settlement Currency')}
+                  value={settings.settlement_currency || 'CNY'}
+                  readOnly
+                  onChange={() => undefined}
+                />
+                <LabeledTextarea
+                  label={t('Referral FX Rates')}
+                  description={t('JSON object for order paid currency to CNY, for example {"USD":7.2,"EUR":7.8}. CNY is always 1.')}
+                  value={settings.settlement_fx_rates || '{"CNY":1}'}
+                  onChange={(value) =>
+                    setSettings((prev) =>
+                      prev ? { ...prev, settlement_fx_rates: value } : prev
+                    )
+                  }
+                />
               </CardContent>
             </Card>
           ) : activeSection === 'pending' ? (
@@ -1210,6 +1246,8 @@ export function AdminReferral() {
                   t('Trade No'),
                   t('Order Type'),
                   t('Invitee'),
+                  t('Paid Amount'),
+                  t('Settlement Base'),
                   t('Commission'),
                   t('Status'),
                   t('Created'),
@@ -1220,7 +1258,15 @@ export function AdminReferral() {
                     item.source_trade_no,
                     orderTypeLabel(item.order_type, t),
                     item.invitee_username || item.invitee_email || '-',
-                    formatMoney(item.commission_amount),
+                    `${item.paid_currency || '-'} ${item.paid_amount}`,
+                    formatSettlementMoney(
+                      item.settlement_base_amount || item.base_amount,
+                      item.settlement_currency
+                    ),
+                    formatSettlementMoney(
+                      item.commission_amount,
+                      item.settlement_currency
+                    ),
                     commissionStatusLabel(item.status, t),
                     formatTimestamp(item.created_at),
                   ],
@@ -1304,7 +1350,7 @@ export function AdminReferral() {
                     String(item.affiliate_id),
                     commissionJobStatusLabel(item.status, t),
                     String(item.attempt_count),
-                    item.last_error || '-',
+                    referralErrorLabel(item.last_error, t),
                   ],
                   action:
                     item.status === 'failed' ? (
@@ -1691,11 +1737,37 @@ function LabeledInput(props: {
   label: string
   value: string
   onChange: (value: string) => void
+  readOnly?: boolean
 }) {
   return (
     <div className='space-y-2'>
       <div className='text-sm font-medium'>{props.label}</div>
-      <Input value={props.value} onChange={(e) => props.onChange(e.target.value)} />
+      <Input
+        value={props.value}
+        readOnly={props.readOnly}
+        onChange={(e) => props.onChange(e.target.value)}
+      />
+    </div>
+  )
+}
+
+function LabeledTextarea(props: {
+  label: string
+  description?: string
+  value: string
+  onChange: (value: string) => void
+}) {
+  return (
+    <div className='space-y-2 md:col-span-2'>
+      <div className='text-sm font-medium'>{props.label}</div>
+      {props.description && (
+        <div className='text-xs text-muted-foreground'>{props.description}</div>
+      )}
+      <Textarea
+        rows={5}
+        value={props.value}
+        onChange={(e) => props.onChange(e.target.value)}
+      />
     </div>
   )
 }

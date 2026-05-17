@@ -10,14 +10,16 @@ import (
 )
 
 type referralSettingsRequest struct {
-	Enabled           bool    `json:"enabled"`
-	CookieTTLDays     int     `json:"cookie_ttl_days"`
-	DefaultRate       float64 `json:"default_rate"`
-	SettleFreezeDays  int     `json:"settle_freeze_days"`
-	MinWithdrawAmount float64 `json:"min_withdraw_amount"`
-	WithdrawFee       float64 `json:"withdraw_fee"`
-	RedirectPath      string  `json:"redirect_path"`
-	RequireApproval   bool    `json:"require_approval"`
+	Enabled            bool    `json:"enabled"`
+	CookieTTLDays      int     `json:"cookie_ttl_days"`
+	DefaultRate        float64 `json:"default_rate"`
+	SettleFreezeDays   int     `json:"settle_freeze_days"`
+	MinWithdrawAmount  float64 `json:"min_withdraw_amount"`
+	WithdrawFee        float64 `json:"withdraw_fee"`
+	RedirectPath       string  `json:"redirect_path"`
+	RequireApproval    bool    `json:"require_approval"`
+	SettlementCurrency string  `json:"settlement_currency"`
+	SettlementFxRates  string  `json:"settlement_fx_rates"`
 }
 
 type referralApproveRequest struct {
@@ -72,14 +74,16 @@ func UpdateReferralSettings(c *gin.Context) {
 		return
 	}
 	item, err := referralService.UpdateSettings(service.ReferralSettings{
-		Enabled:           req.Enabled,
-		CookieTTLDays:     req.CookieTTLDays,
-		DefaultRate:       req.DefaultRate,
-		SettleFreezeDays:  req.SettleFreezeDays,
-		MinWithdrawAmount: req.MinWithdrawAmount,
-		WithdrawFee:       req.WithdrawFee,
-		RedirectPath:      strings.TrimSpace(req.RedirectPath),
-		RequireApproval:   req.RequireApproval,
+		Enabled:            req.Enabled,
+		CookieTTLDays:      req.CookieTTLDays,
+		DefaultRate:        req.DefaultRate,
+		SettleFreezeDays:   req.SettleFreezeDays,
+		MinWithdrawAmount:  req.MinWithdrawAmount,
+		WithdrawFee:        req.WithdrawFee,
+		RedirectPath:       strings.TrimSpace(req.RedirectPath),
+		RequireApproval:    req.RequireApproval,
+		SettlementCurrency: strings.TrimSpace(req.SettlementCurrency),
+		SettlementFxRates:  strings.TrimSpace(req.SettlementFxRates),
 	}, adminId, c.ClientIP(), c.GetHeader("User-Agent"))
 	if err != nil {
 		common.ApiError(c, err)

@@ -167,6 +167,8 @@ func InitOptionMap() {
 	common.OptionMap["ReferralWithdrawFee"] = strconv.FormatFloat(common.ReferralWithdrawFee, 'f', -1, 64)
 	common.OptionMap["ReferralRedirectPath"] = common.ReferralRedirectPath
 	common.OptionMap["ReferralRequireApproval"] = strconv.FormatBool(common.ReferralRequireApproval)
+	common.OptionMap["ReferralSettlementCurrency"] = common.NormalizeReferralSettlementCurrency(common.ReferralSettlementCurrency)
+	common.OptionMap["ReferralSettlementFxRates"] = common.ReferralSettlementFxRatesToJSONString()
 	common.OptionMap["ProviderPriceOverrides"] = "[]"
 	//common.OptionMap["ChatLink"] = common.ChatLink
 	//common.OptionMap["ChatLink2"] = common.ChatLink2
@@ -570,6 +572,10 @@ func updateOptionMap(key string, value string) (err error) {
 		common.ReferralWithdrawFee, _ = strconv.ParseFloat(value, 64)
 	case "ReferralRedirectPath":
 		common.ReferralRedirectPath = value
+	case "ReferralSettlementCurrency":
+		common.ReferralSettlementCurrency = common.NormalizeReferralSettlementCurrency(value)
+	case "ReferralSettlementFxRates":
+		err = common.UpdateReferralSettlementFxRatesByJSONString(value)
 	//case "ChatLink":
 	//	common.ChatLink = value
 	//case "ChatLink2":

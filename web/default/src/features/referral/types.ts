@@ -66,6 +66,7 @@ export interface ReferralSummary {
   available_amount: number
   frozen_amount: number
   withdrawn_amount: number
+  settlement_currency: string
   min_withdraw_amount: number
 }
 
@@ -73,6 +74,7 @@ export interface ReferralCommission {
   id: number
   affiliate_id: number
   affiliate_user_id: number
+  affiliate_username?: string
   affiliate_email?: string
   source_type: string
   source_order_id: number
@@ -84,6 +86,9 @@ export interface ReferralCommission {
   base_amount: number
   paid_amount: number
   paid_currency: string
+  settlement_currency: string
+  settlement_fx_rate: number
+  settlement_base_amount: number
   rate: number
   commission_amount: number
   status: string
@@ -99,6 +104,7 @@ export interface ReferralWithdrawal {
   user_id: number
   username?: string
   email?: string
+  settlement_currency: string
   amount: number
   fee_amount: number
   net_amount: number
@@ -145,6 +151,7 @@ export interface ReferralAffiliate {
   available_amount: number
   frozen_amount: number
   withdrawn_amount: number
+  settlement_currency: string
   approved_at: number
   disabled_at: number
   created_at: number
@@ -190,6 +197,7 @@ export interface ReferralLedger {
   ref_type: string
   ref_id: string
   external_ref_id: string
+  settlement_currency: string
   delta_pending: number
   delta_available: number
   delta_frozen: number
@@ -226,6 +234,7 @@ export interface ReferralOverview {
   available_amount: number
   frozen_amount: number
   withdrawn_amount: number
+  settlement_currency: string
   failed_commission_job_count: number
 }
 
@@ -238,4 +247,6 @@ export interface ReferralSettings {
   withdraw_fee: number
   redirect_path: string
   require_approval: boolean
+  settlement_currency: string
+  settlement_fx_rates: string
 }

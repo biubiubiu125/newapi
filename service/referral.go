@@ -26,6 +26,8 @@ const (
 	ReferralUserUploadPath  = "/api/user/referral/upload"
 )
 
+var errReferralFxRateMissing = errors.New(model.ReferralCommissionErrorFxRateMissing)
+
 type ReferralLanding struct {
 	Code          string `json:"code"`
 	RedirectPath  string `json:"redirect_path"`
@@ -69,32 +71,36 @@ type ReferralSummary struct {
 	AvailableAmount    float64  `json:"available_amount"`
 	FrozenAmount       float64  `json:"frozen_amount"`
 	WithdrawnAmount    float64  `json:"withdrawn_amount"`
+	SettlementCurrency string   `json:"settlement_currency"`
 	MinWithdrawAmount  float64  `json:"min_withdraw_amount"`
 }
 
 type ReferralCommissionView struct {
-	Id                int     `json:"id"`
-	AffiliateId       int     `json:"affiliate_id"`
-	AffiliateUserId   int     `json:"affiliate_user_id"`
-	AffiliateUsername string  `json:"affiliate_username,omitempty"`
-	AffiliateEmail    string  `json:"affiliate_email,omitempty"`
-	SourceType        string  `json:"source_type"`
-	SourceOrderId     int     `json:"source_order_id"`
-	SourceTradeNo     string  `json:"source_trade_no"`
-	InviteeUserId     int     `json:"invitee_user_id"`
-	InviteeUsername   string  `json:"invitee_username,omitempty"`
-	InviteeEmail      string  `json:"invitee_email,omitempty"`
-	OrderType         string  `json:"order_type"`
-	BaseAmount        float64 `json:"base_amount"`
-	PaidAmount        float64 `json:"paid_amount"`
-	PaidCurrency      string  `json:"paid_currency"`
-	Rate              float64 `json:"rate"`
-	CommissionAmount  float64 `json:"commission_amount"`
-	Status            string  `json:"status"`
-	SettleAt          int64   `json:"settle_at"`
-	AvailableAt       int64   `json:"available_at"`
-	FrozenAt          int64   `json:"frozen_at"`
-	CreatedAt         int64   `json:"created_at"`
+	Id                   int     `json:"id"`
+	AffiliateId          int     `json:"affiliate_id"`
+	AffiliateUserId      int     `json:"affiliate_user_id"`
+	AffiliateUsername    string  `json:"affiliate_username,omitempty"`
+	AffiliateEmail       string  `json:"affiliate_email,omitempty"`
+	SourceType           string  `json:"source_type"`
+	SourceOrderId        int     `json:"source_order_id"`
+	SourceTradeNo        string  `json:"source_trade_no"`
+	InviteeUserId        int     `json:"invitee_user_id"`
+	InviteeUsername      string  `json:"invitee_username,omitempty"`
+	InviteeEmail         string  `json:"invitee_email,omitempty"`
+	OrderType            string  `json:"order_type"`
+	BaseAmount           float64 `json:"base_amount"`
+	PaidAmount           float64 `json:"paid_amount"`
+	PaidCurrency         string  `json:"paid_currency"`
+	SettlementCurrency   string  `json:"settlement_currency"`
+	SettlementFxRate     float64 `json:"settlement_fx_rate"`
+	SettlementBaseAmount float64 `json:"settlement_base_amount"`
+	Rate                 float64 `json:"rate"`
+	CommissionAmount     float64 `json:"commission_amount"`
+	Status               string  `json:"status"`
+	SettleAt             int64   `json:"settle_at"`
+	AvailableAt          int64   `json:"available_at"`
+	FrozenAt             int64   `json:"frozen_at"`
+	CreatedAt            int64   `json:"created_at"`
 }
 
 type ReferralCommissionJobView struct {
@@ -142,6 +148,7 @@ type ReferralAffiliateView struct {
 	AvailableAmount    float64  `json:"available_amount"`
 	FrozenAmount       float64  `json:"frozen_amount"`
 	WithdrawnAmount    float64  `json:"withdrawn_amount"`
+	SettlementCurrency string   `json:"settlement_currency"`
 	ApprovedAt         int64    `json:"approved_at"`
 	DisabledAt         int64    `json:"disabled_at"`
 	CreatedAt          int64    `json:"created_at"`
@@ -149,53 +156,55 @@ type ReferralAffiliateView struct {
 }
 
 type ReferralWithdrawalView struct {
-	Id               int     `json:"id"`
-	AffiliateId      int     `json:"affiliate_id"`
-	UserId           int     `json:"user_id"`
-	Username         string  `json:"username,omitempty"`
-	Email            string  `json:"email,omitempty"`
-	Amount           float64 `json:"amount"`
-	FeeAmount        float64 `json:"fee_amount"`
-	NetAmount        float64 `json:"net_amount"`
-	AccountType      string  `json:"account_type"`
-	AccountName      string  `json:"account_name"`
-	AccountNo        string  `json:"account_no"`
-	AccountNoMasked  string  `json:"account_no_masked"`
-	AccountNetwork   string  `json:"account_network"`
-	QRImageURL       string  `json:"qr_image_url"`
-	ApplicantNote    string  `json:"applicant_note"`
-	AdminNote        string  `json:"admin_note"`
-	PaymentProofURL  string  `json:"payment_proof_url"`
-	PaymentTxnNo     string  `json:"payment_txn_no"`
-	Status           string  `json:"status"`
-	RejectReason     string  `json:"reject_reason"`
-	SubmittedAt      int64   `json:"submitted_at"`
-	ApprovedAt       int64   `json:"approved_at"`
-	PayoutDeadlineAt int64   `json:"payout_deadline_at"`
-	PaidAt           int64   `json:"paid_at"`
-	RejectedAt       int64   `json:"rejected_at"`
-	CanceledAt       int64   `json:"canceled_at"`
+	Id                 int     `json:"id"`
+	AffiliateId        int     `json:"affiliate_id"`
+	UserId             int     `json:"user_id"`
+	Username           string  `json:"username,omitempty"`
+	Email              string  `json:"email,omitempty"`
+	SettlementCurrency string  `json:"settlement_currency"`
+	Amount             float64 `json:"amount"`
+	FeeAmount          float64 `json:"fee_amount"`
+	NetAmount          float64 `json:"net_amount"`
+	AccountType        string  `json:"account_type"`
+	AccountName        string  `json:"account_name"`
+	AccountNo          string  `json:"account_no"`
+	AccountNoMasked    string  `json:"account_no_masked"`
+	AccountNetwork     string  `json:"account_network"`
+	QRImageURL         string  `json:"qr_image_url"`
+	ApplicantNote      string  `json:"applicant_note"`
+	AdminNote          string  `json:"admin_note"`
+	PaymentProofURL    string  `json:"payment_proof_url"`
+	PaymentTxnNo       string  `json:"payment_txn_no"`
+	Status             string  `json:"status"`
+	RejectReason       string  `json:"reject_reason"`
+	SubmittedAt        int64   `json:"submitted_at"`
+	ApprovedAt         int64   `json:"approved_at"`
+	PayoutDeadlineAt   int64   `json:"payout_deadline_at"`
+	PaidAt             int64   `json:"paid_at"`
+	RejectedAt         int64   `json:"rejected_at"`
+	CanceledAt         int64   `json:"canceled_at"`
 }
 
 type ReferralLedgerView struct {
-	Id             int     `json:"id"`
-	AffiliateId    int     `json:"affiliate_id"`
-	UserId         int     `json:"user_id"`
-	Username       string  `json:"username,omitempty"`
-	Email          string  `json:"email,omitempty"`
-	CommissionId   int     `json:"commission_id"`
-	WithdrawalId   int     `json:"withdrawal_id"`
-	Type           string  `json:"type"`
-	RefType        string  `json:"ref_type"`
-	RefId          string  `json:"ref_id"`
-	ExternalRefId  string  `json:"external_ref_id"`
-	DeltaPending   float64 `json:"delta_pending"`
-	DeltaAvailable float64 `json:"delta_available"`
-	DeltaFrozen    float64 `json:"delta_frozen"`
-	DeltaWithdrawn float64 `json:"delta_withdrawn"`
-	Remark         string  `json:"remark"`
-	Operator       string  `json:"operator"`
-	CreatedAt      int64   `json:"created_at"`
+	Id                 int     `json:"id"`
+	AffiliateId        int     `json:"affiliate_id"`
+	UserId             int     `json:"user_id"`
+	Username           string  `json:"username,omitempty"`
+	Email              string  `json:"email,omitempty"`
+	CommissionId       int     `json:"commission_id"`
+	WithdrawalId       int     `json:"withdrawal_id"`
+	Type               string  `json:"type"`
+	RefType            string  `json:"ref_type"`
+	RefId              string  `json:"ref_id"`
+	ExternalRefId      string  `json:"external_ref_id"`
+	SettlementCurrency string  `json:"settlement_currency"`
+	DeltaPending       float64 `json:"delta_pending"`
+	DeltaAvailable     float64 `json:"delta_available"`
+	DeltaFrozen        float64 `json:"delta_frozen"`
+	DeltaWithdrawn     float64 `json:"delta_withdrawn"`
+	Remark             string  `json:"remark"`
+	Operator           string  `json:"operator"`
+	CreatedAt          int64   `json:"created_at"`
 }
 
 type ReferralAdminAuditLogView struct {
@@ -225,18 +234,21 @@ type ReferralOverview struct {
 	AvailableAmount          float64 `json:"available_amount"`
 	FrozenAmount             float64 `json:"frozen_amount"`
 	WithdrawnAmount          float64 `json:"withdrawn_amount"`
+	SettlementCurrency       string  `json:"settlement_currency"`
 	FailedCommissionJobCount int64   `json:"failed_commission_job_count"`
 }
 
 type ReferralSettings struct {
-	Enabled           bool    `json:"enabled"`
-	CookieTTLDays     int     `json:"cookie_ttl_days"`
-	DefaultRate       float64 `json:"default_rate"`
-	SettleFreezeDays  int     `json:"settle_freeze_days"`
-	MinWithdrawAmount float64 `json:"min_withdraw_amount"`
-	WithdrawFee       float64 `json:"withdraw_fee"`
-	RedirectPath      string  `json:"redirect_path"`
-	RequireApproval   bool    `json:"require_approval"`
+	Enabled            bool    `json:"enabled"`
+	CookieTTLDays      int     `json:"cookie_ttl_days"`
+	DefaultRate        float64 `json:"default_rate"`
+	SettleFreezeDays   int     `json:"settle_freeze_days"`
+	MinWithdrawAmount  float64 `json:"min_withdraw_amount"`
+	WithdrawFee        float64 `json:"withdraw_fee"`
+	RedirectPath       string  `json:"redirect_path"`
+	RequireApproval    bool    `json:"require_approval"`
+	SettlementCurrency string  `json:"settlement_currency"`
+	SettlementFxRates  string  `json:"settlement_fx_rates"`
 }
 
 type ReferralSnapshot struct {
@@ -320,14 +332,16 @@ func (s *ReferralService) GetSettings() ReferralSettings {
 		redirectPath = referralDefaultRedirect
 	}
 	return ReferralSettings{
-		Enabled:           common.ReferralEnabled,
-		CookieTTLDays:     common.ReferralCookieTTLDays,
-		DefaultRate:       common.ReferralDefaultRate,
-		SettleFreezeDays:  common.ReferralSettleFreezeDays,
-		MinWithdrawAmount: common.ReferralMinWithdrawAmount,
-		WithdrawFee:       common.ReferralWithdrawFee,
-		RedirectPath:      redirectPath,
-		RequireApproval:   common.ReferralRequireApproval,
+		Enabled:            common.ReferralEnabled,
+		CookieTTLDays:      common.ReferralCookieTTLDays,
+		DefaultRate:        common.ReferralDefaultRate,
+		SettleFreezeDays:   common.ReferralSettleFreezeDays,
+		MinWithdrawAmount:  common.ReferralMinWithdrawAmount,
+		WithdrawFee:        common.ReferralWithdrawFee,
+		RedirectPath:       redirectPath,
+		RequireApproval:    common.ReferralRequireApproval,
+		SettlementCurrency: common.NormalizeReferralSettlementCurrency(common.ReferralSettlementCurrency),
+		SettlementFxRates:  common.ReferralSettlementFxRatesToJSONString(),
 	}
 }
 
@@ -346,6 +360,24 @@ func (s *ReferralService) UpdateSettings(input ReferralSettings, adminUserId int
 	}
 	if input.WithdrawFee < 0 || math.IsNaN(input.WithdrawFee) || math.IsInf(input.WithdrawFee, 0) {
 		return s.GetSettings(), errors.New("withdraw_fee must be a finite non-negative number")
+	}
+	rawSettlementCurrency := strings.ToUpper(strings.TrimSpace(input.SettlementCurrency))
+	if rawSettlementCurrency != "" && rawSettlementCurrency != "CNY" {
+		return s.GetSettings(), errors.New("settlement_currency currently only supports CNY")
+	}
+	input.SettlementCurrency = "CNY"
+	if strings.TrimSpace(input.SettlementFxRates) == "" {
+		input.SettlementFxRates = common.ReferralSettlementFxRatesToJSONString()
+	} else {
+		fxRates, err := common.ParseReferralSettlementFxRatesJSONString(input.SettlementFxRates)
+		if err != nil {
+			return s.GetSettings(), err
+		}
+		fxRatesJSONBytes, err := common.Marshal(fxRates)
+		if err != nil {
+			return s.GetSettings(), err
+		}
+		input.SettlementFxRates = string(fxRatesJSONBytes)
 	}
 	rawRedirectPath := strings.TrimSpace(input.RedirectPath)
 	input.RedirectPath = sanitizeReferralRedirectPath(rawRedirectPath)
@@ -369,6 +401,8 @@ func (s *ReferralService) UpdateSettings(input ReferralSettings, adminUserId int
 		{"ReferralWithdrawFee", fmt.Sprintf("%g", input.WithdrawFee)},
 		{"ReferralRedirectPath", input.RedirectPath},
 		{"ReferralRequireApproval", fmt.Sprintf("%t", input.RequireApproval)},
+		{"ReferralSettlementCurrency", input.SettlementCurrency},
+		{"ReferralSettlementFxRates", input.SettlementFxRates},
 	}
 	for _, update := range updates {
 		if err := model.UpdateOption(update.key, update.value); err != nil {
@@ -750,6 +784,7 @@ func (s *ReferralService) GetSummary(userId int) (*ReferralSummary, error) {
 		FrozenAmount:       account.FrozenAmount,
 		WithdrawnAmount:    account.WithdrawnAmount,
 		MinWithdrawAmount:  common.ReferralMinWithdrawAmount,
+		SettlementCurrency: accountSettlementCurrency(account.SettlementCurrency),
 	}, nil
 }
 
@@ -845,24 +880,25 @@ func (s *ReferralService) ListLedgers(params ReferralListParams) ([]ReferralLedg
 		user := &model.User{}
 		_ = model.DB.Select("username,email").Where("id = ?", row.UserId).First(user).Error
 		items = append(items, ReferralLedgerView{
-			Id:             row.Id,
-			AffiliateId:    row.AffiliateId,
-			UserId:         row.UserId,
-			Username:       user.Username,
-			Email:          user.Email,
-			CommissionId:   row.CommissionId,
-			WithdrawalId:   row.WithdrawalId,
-			Type:           row.Type,
-			RefType:        row.RefType,
-			RefId:          row.RefId,
-			ExternalRefId:  row.ExternalRefId,
-			DeltaPending:   row.DeltaPending,
-			DeltaAvailable: row.DeltaAvailable,
-			DeltaFrozen:    row.DeltaFrozen,
-			DeltaWithdrawn: row.DeltaWithdrawn,
-			Remark:         row.Remark,
-			Operator:       row.Operator,
-			CreatedAt:      row.CreatedAt,
+			Id:                 row.Id,
+			AffiliateId:        row.AffiliateId,
+			UserId:             row.UserId,
+			Username:           user.Username,
+			Email:              user.Email,
+			CommissionId:       row.CommissionId,
+			WithdrawalId:       row.WithdrawalId,
+			Type:               row.Type,
+			RefType:            row.RefType,
+			RefId:              row.RefId,
+			ExternalRefId:      row.ExternalRefId,
+			SettlementCurrency: accountSettlementCurrency(row.SettlementCurrency),
+			DeltaPending:       row.DeltaPending,
+			DeltaAvailable:     row.DeltaAvailable,
+			DeltaFrozen:        row.DeltaFrozen,
+			DeltaWithdrawn:     row.DeltaWithdrawn,
+			Remark:             row.Remark,
+			Operator:           row.Operator,
+			CreatedAt:          row.CreatedAt,
 		})
 	}
 	return items, total, nil
@@ -996,20 +1032,21 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 		}
 		qrImagePath := stripAssetSignature(qrImageURL)
 		withdrawal := &model.ReferralWithdrawal{
-			AffiliateId:    affiliate.Id,
-			UserId:         input.UserId,
-			Amount:         roundMoney(input.Amount),
-			FeeAmount:      fee,
-			NetAmount:      roundMoney(input.Amount - fee),
-			AccountType:    strings.ToLower(strings.TrimSpace(input.AccountType)),
-			AccountName:    strings.TrimSpace(input.AccountName),
-			AccountNo:      strings.TrimSpace(input.AccountNo),
-			AccountNetwork: strings.TrimSpace(input.AccountNetwork),
-			QRImageURL:     qrImagePath,
-			ApplicantNote:  strings.TrimSpace(input.ApplicantNote),
-			Status:         model.ReferralWithdrawalStatusPending,
-			IdempotencyKey: strings.TrimSpace(input.IdempotencyKey),
-			SubmittedAt:    time.Now().Unix(),
+			AffiliateId:        affiliate.Id,
+			UserId:             input.UserId,
+			Amount:             roundMoney(input.Amount),
+			FeeAmount:          fee,
+			NetAmount:          roundMoney(input.Amount - fee),
+			SettlementCurrency: accountSettlementCurrency(account.SettlementCurrency),
+			AccountType:        strings.ToLower(strings.TrimSpace(input.AccountType)),
+			AccountName:        strings.TrimSpace(input.AccountName),
+			AccountNo:          strings.TrimSpace(input.AccountNo),
+			AccountNetwork:     strings.TrimSpace(input.AccountNetwork),
+			QRImageURL:         qrImagePath,
+			ApplicantNote:      strings.TrimSpace(input.ApplicantNote),
+			Status:             model.ReferralWithdrawalStatusPending,
+			IdempotencyKey:     strings.TrimSpace(input.IdempotencyKey),
+			SubmittedAt:        time.Now().Unix(),
 		}
 		if withdrawal.AccountNo == "" {
 			return errors.New("withdrawal account is required")
@@ -1046,18 +1083,19 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 			return err
 		}
 		if err := s.createLedgerTx(tx, &model.ReferralCommissionLedger{
-			AffiliateId:    affiliate.Id,
-			UserId:         affiliate.UserId,
-			WithdrawalId:   withdrawal.Id,
-			Type:           "withdrawal_freeze",
-			RefType:        "withdrawal",
-			RefId:          fmt.Sprintf("%d", withdrawal.Id),
-			ExternalRefId:  "withdrawal_freeze:" + withdrawal.IdempotencyKey,
-			DeltaAvailable: roundMoney(-withdrawal.Amount),
-			DeltaFrozen:    roundMoney(withdrawal.Amount),
-			Operator:       "user",
-			Remark:         "user created referral withdrawal",
-			CreatedAt:      time.Now().Unix(),
+			AffiliateId:        affiliate.Id,
+			UserId:             affiliate.UserId,
+			WithdrawalId:       withdrawal.Id,
+			Type:               "withdrawal_freeze",
+			RefType:            "withdrawal",
+			RefId:              fmt.Sprintf("%d", withdrawal.Id),
+			ExternalRefId:      "withdrawal_freeze:" + withdrawal.IdempotencyKey,
+			SettlementCurrency: withdrawal.SettlementCurrency,
+			DeltaAvailable:     roundMoney(-withdrawal.Amount),
+			DeltaFrozen:        roundMoney(withdrawal.Amount),
+			Operator:           "user",
+			Remark:             "user created referral withdrawal",
+			CreatedAt:          time.Now().Unix(),
 		}); err != nil {
 			return err
 		}
@@ -1120,18 +1158,19 @@ func (s *ReferralService) CancelWithdrawal(withdrawalId int, userId int) (*Refer
 			return err
 		}
 		if err := s.createLedgerTx(tx, &model.ReferralCommissionLedger{
-			AffiliateId:    withdrawal.AffiliateId,
-			UserId:         withdrawal.UserId,
-			WithdrawalId:   withdrawal.Id,
-			Type:           "withdrawal_cancel_release",
-			RefType:        "withdrawal",
-			RefId:          fmt.Sprintf("%d", withdrawal.Id),
-			ExternalRefId:  fmt.Sprintf("withdrawal_cancel_release:%d", withdrawal.Id),
-			DeltaAvailable: roundMoney(withdrawal.Amount),
-			DeltaFrozen:    roundMoney(-withdrawal.Amount),
-			Operator:       "user",
-			Remark:         "user canceled referral withdrawal",
-			CreatedAt:      time.Now().Unix(),
+			AffiliateId:        withdrawal.AffiliateId,
+			UserId:             withdrawal.UserId,
+			WithdrawalId:       withdrawal.Id,
+			Type:               "withdrawal_cancel_release",
+			RefType:            "withdrawal",
+			RefId:              fmt.Sprintf("%d", withdrawal.Id),
+			ExternalRefId:      fmt.Sprintf("withdrawal_cancel_release:%d", withdrawal.Id),
+			SettlementCurrency: withdrawal.SettlementCurrency,
+			DeltaAvailable:     roundMoney(withdrawal.Amount),
+			DeltaFrozen:        roundMoney(-withdrawal.Amount),
+			Operator:           "user",
+			Remark:             "user canceled referral withdrawal",
+			CreatedAt:          time.Now().Unix(),
 		}); err != nil {
 			return err
 		}
@@ -1168,16 +1207,17 @@ func (s *ReferralService) ApproveWithdrawal(input ReferralWithdrawalReviewInput)
 			return errors.New("only pending withdrawals can be approved")
 		}
 		if err := s.createLedgerTx(tx, &model.ReferralCommissionLedger{
-			AffiliateId:   withdrawal.AffiliateId,
-			UserId:        withdrawal.UserId,
-			WithdrawalId:  withdrawal.Id,
-			Type:          "withdrawal_approve",
-			RefType:       "withdrawal",
-			RefId:         fmt.Sprintf("%d", withdrawal.Id),
-			ExternalRefId: fmt.Sprintf("withdrawal_approve:%d", withdrawal.Id),
-			Operator:      "admin",
-			Remark:        strings.TrimSpace(input.AdminNote),
-			CreatedAt:     time.Now().Unix(),
+			AffiliateId:        withdrawal.AffiliateId,
+			UserId:             withdrawal.UserId,
+			WithdrawalId:       withdrawal.Id,
+			Type:               "withdrawal_approve",
+			RefType:            "withdrawal",
+			RefId:              fmt.Sprintf("%d", withdrawal.Id),
+			ExternalRefId:      fmt.Sprintf("withdrawal_approve:%d", withdrawal.Id),
+			SettlementCurrency: withdrawal.SettlementCurrency,
+			Operator:           "admin",
+			Remark:             strings.TrimSpace(input.AdminNote),
+			CreatedAt:          time.Now().Unix(),
 		}); err != nil {
 			return err
 		}
@@ -1235,18 +1275,19 @@ func (s *ReferralService) RejectWithdrawal(input ReferralWithdrawalReviewInput) 
 			return err
 		}
 		if err := s.createLedgerTx(tx, &model.ReferralCommissionLedger{
-			AffiliateId:    withdrawal.AffiliateId,
-			UserId:         withdrawal.UserId,
-			WithdrawalId:   withdrawal.Id,
-			Type:           "withdrawal_reject_release",
-			RefType:        "withdrawal",
-			RefId:          fmt.Sprintf("%d", withdrawal.Id),
-			ExternalRefId:  fmt.Sprintf("withdrawal_reject_release:%d", withdrawal.Id),
-			DeltaAvailable: roundMoney(withdrawal.Amount),
-			DeltaFrozen:    roundMoney(-withdrawal.Amount),
-			Operator:       "admin",
-			Remark:         strings.TrimSpace(input.RejectReason),
-			CreatedAt:      time.Now().Unix(),
+			AffiliateId:        withdrawal.AffiliateId,
+			UserId:             withdrawal.UserId,
+			WithdrawalId:       withdrawal.Id,
+			Type:               "withdrawal_reject_release",
+			RefType:            "withdrawal",
+			RefId:              fmt.Sprintf("%d", withdrawal.Id),
+			ExternalRefId:      fmt.Sprintf("withdrawal_reject_release:%d", withdrawal.Id),
+			SettlementCurrency: withdrawal.SettlementCurrency,
+			DeltaAvailable:     roundMoney(withdrawal.Amount),
+			DeltaFrozen:        roundMoney(-withdrawal.Amount),
+			Operator:           "admin",
+			Remark:             strings.TrimSpace(input.RejectReason),
+			CreatedAt:          time.Now().Unix(),
 		}); err != nil {
 			return err
 		}
@@ -1312,18 +1353,19 @@ func (s *ReferralService) MarkWithdrawalPaid(input ReferralWithdrawalPayInput) (
 			return err
 		}
 		if err := s.createLedgerTx(tx, &model.ReferralCommissionLedger{
-			AffiliateId:    withdrawal.AffiliateId,
-			UserId:         withdrawal.UserId,
-			WithdrawalId:   withdrawal.Id,
-			Type:           "withdrawal_paid",
-			RefType:        "withdrawal",
-			RefId:          fmt.Sprintf("%d", withdrawal.Id),
-			ExternalRefId:  fmt.Sprintf("withdrawal_paid:%d", withdrawal.Id),
-			DeltaFrozen:    roundMoney(-withdrawal.Amount),
-			DeltaWithdrawn: roundMoney(withdrawal.Amount),
-			Operator:       "admin",
-			Remark:         strings.TrimSpace(input.PaymentTxnNo),
-			CreatedAt:      time.Now().Unix(),
+			AffiliateId:        withdrawal.AffiliateId,
+			UserId:             withdrawal.UserId,
+			WithdrawalId:       withdrawal.Id,
+			Type:               "withdrawal_paid",
+			RefType:            "withdrawal",
+			RefId:              fmt.Sprintf("%d", withdrawal.Id),
+			ExternalRefId:      fmt.Sprintf("withdrawal_paid:%d", withdrawal.Id),
+			SettlementCurrency: withdrawal.SettlementCurrency,
+			DeltaFrozen:        roundMoney(-withdrawal.Amount),
+			DeltaWithdrawn:     roundMoney(withdrawal.Amount),
+			Operator:           "admin",
+			Remark:             strings.TrimSpace(input.PaymentTxnNo),
+			CreatedAt:          time.Now().Unix(),
 		}); err != nil {
 			return err
 		}
@@ -1371,16 +1413,17 @@ func (s *ReferralService) AdjustAffiliateCommission(input ReferralAdjustInput) (
 			ledgerType = "commission_adjust_decrease"
 		}
 		ledger := &model.ReferralCommissionLedger{
-			AffiliateId:    affiliate.Id,
-			UserId:         affiliate.UserId,
-			Type:           ledgerType,
-			RefType:        "affiliate",
-			RefId:          fmt.Sprintf("%d", affiliate.Id),
-			ExternalRefId:  "adjust:" + strings.TrimSpace(input.IdempotencyKey),
-			DeltaAvailable: roundMoney(input.Delta),
-			Operator:       "admin",
-			Remark:         strings.TrimSpace(input.Remark),
-			CreatedAt:      time.Now().Unix(),
+			AffiliateId:        affiliate.Id,
+			UserId:             affiliate.UserId,
+			Type:               ledgerType,
+			RefType:            "affiliate",
+			RefId:              fmt.Sprintf("%d", affiliate.Id),
+			ExternalRefId:      "adjust:" + strings.TrimSpace(input.IdempotencyKey),
+			SettlementCurrency: accountSettlementCurrency(account.SettlementCurrency),
+			DeltaAvailable:     roundMoney(input.Delta),
+			Operator:           "admin",
+			Remark:             strings.TrimSpace(input.Remark),
+			CreatedAt:          time.Now().Unix(),
 		}
 		existingLedger := &model.ReferralCommissionLedger{}
 		if err := tx.Where("external_ref_id = ?", ledger.ExternalRefId).First(existingLedger).Error; err == nil {
@@ -1424,6 +1467,7 @@ func (s *ReferralService) AdjustAffiliateCommission(input ReferralAdjustInput) (
 
 func (s *ReferralService) GetOverview() (*ReferralOverview, error) {
 	out := &ReferralOverview{}
+	out.SettlementCurrency = referralSettlementCurrency()
 	_ = model.DB.Model(&model.ReferralAffiliate{}).Count(&out.TotalAffiliates).Error
 	_ = model.DB.Model(&model.ReferralAffiliate{}).Where("status = ?", model.ReferralAffiliateStatusPending).Count(&out.PendingAffiliates).Error
 	_ = model.DB.Model(&model.ReferralAffiliate{}).Where("status = ?", model.ReferralAffiliateStatusApproved).Count(&out.ApprovedAffiliates).Error
@@ -1704,17 +1748,18 @@ func (s *ReferralService) RunSettlementBatch() (*model.ReferralSettlementBatch, 
 				return errors.New("referral settlement account balance mismatch")
 			}
 			if err := s.createLedgerTx(tx, &model.ReferralCommissionLedger{
-				AffiliateId:    commission.AffiliateId,
-				UserId:         affiliate.UserId,
-				CommissionId:   commission.Id,
-				Type:           "commission_settle",
-				RefType:        "commission",
-				RefId:          fmt.Sprintf("%d", commission.Id),
-				ExternalRefId:  fmt.Sprintf("settle:%d", commission.Id),
-				DeltaPending:   roundMoney(-commission.CommissionAmount),
-				DeltaAvailable: roundMoney(commission.CommissionAmount),
-				Operator:       "system",
-				CreatedAt:      now,
+				AffiliateId:        commission.AffiliateId,
+				UserId:             affiliate.UserId,
+				CommissionId:       commission.Id,
+				Type:               "commission_settle",
+				RefType:            "commission",
+				RefId:              fmt.Sprintf("%d", commission.Id),
+				ExternalRefId:      fmt.Sprintf("settle:%d", commission.Id),
+				SettlementCurrency: accountSettlementCurrency(commission.SettlementCurrency),
+				DeltaPending:       roundMoney(-commission.CommissionAmount),
+				DeltaAvailable:     roundMoney(commission.CommissionAmount),
+				Operator:           "system",
+				CreatedAt:          now,
 			}); err != nil {
 				return err
 			}
@@ -1787,17 +1832,18 @@ func (s *ReferralService) RunSettlementBatchInline() (int, error) {
 				return errors.New("referral settlement account balance mismatch")
 			}
 			if err := s.createLedgerTx(tx, &model.ReferralCommissionLedger{
-				AffiliateId:    commission.AffiliateId,
-				UserId:         affiliate.UserId,
-				CommissionId:   commission.Id,
-				Type:           "commission_settle",
-				RefType:        "commission",
-				RefId:          fmt.Sprintf("%d", commission.Id),
-				ExternalRefId:  fmt.Sprintf("settle:%d", commission.Id),
-				DeltaPending:   roundMoney(-commission.CommissionAmount),
-				DeltaAvailable: roundMoney(commission.CommissionAmount),
-				Operator:       "system",
-				CreatedAt:      now,
+				AffiliateId:        commission.AffiliateId,
+				UserId:             affiliate.UserId,
+				CommissionId:       commission.Id,
+				Type:               "commission_settle",
+				RefType:            "commission",
+				RefId:              fmt.Sprintf("%d", commission.Id),
+				ExternalRefId:      fmt.Sprintf("settle:%d", commission.Id),
+				SettlementCurrency: accountSettlementCurrency(commission.SettlementCurrency),
+				DeltaPending:       roundMoney(-commission.CommissionAmount),
+				DeltaAvailable:     roundMoney(commission.CommissionAmount),
+				Operator:           "system",
+				CreatedAt:          now,
 			}); err != nil {
 				return err
 			}
@@ -1897,7 +1943,7 @@ func (s *ReferralService) processCommissionTx(
 	if job.Status == model.ReferralCommissionJobStatusSucceeded || job.Status == model.ReferralCommissionJobStatusSkipped {
 		return nil
 	}
-	if affiliateId <= 0 || rate <= 0 || baseAmount <= 0 {
+	if affiliateId <= 0 || rate <= 0 {
 		job.Status = model.ReferralCommissionJobStatusSkipped
 		job.LastError = ""
 		job.SucceededAt = now
@@ -1915,7 +1961,24 @@ func (s *ReferralService) processCommissionTx(
 	if err := tx.Save(job).Error; err != nil {
 		return err
 	}
-	commissionAmount := calculateCommissionAmount(baseAmount, rate)
+	sourcePaidAmount := paidAmount
+	if sourcePaidAmount <= 0 {
+		sourcePaidAmount = baseAmount
+	}
+	settlementBaseAmount, settlementCurrency, settlementFxRate, err := resolveReferralSettlementAmount(sourcePaidAmount, paidCurrency)
+	if err != nil {
+		job.Status = model.ReferralCommissionJobStatusFailed
+		job.LastError = err.Error()
+		job.FailedAt = now
+		*statusPtr = "failed"
+		*errorPtr = err.Error()
+		*atPtr = now
+		if err := tx.Save(job).Error; err != nil {
+			return err
+		}
+		return save()
+	}
+	commissionAmount := calculateCommissionAmount(settlementBaseAmount, rate)
 	if commissionAmount <= 0 {
 		job.Status = model.ReferralCommissionJobStatusSkipped
 		job.LastError = ""
@@ -1929,20 +1992,23 @@ func (s *ReferralService) processCommissionTx(
 		return save()
 	}
 	commission := &model.ReferralCommission{
-		AffiliateId:      affiliateId,
-		AffiliateUserId:  0,
-		InviteeUserId:    userId,
-		SourceType:       sourceType,
-		SourceOrderId:    sourceOrderId,
-		SourceTradeNo:    tradeNo,
-		OrderType:        strings.TrimSpace(orderType),
-		BaseAmount:       roundMoney(baseAmount),
-		PaidAmount:       roundMoney(paidAmount),
-		PaidCurrency:     strings.ToUpper(strings.TrimSpace(paidCurrency)),
-		Rate:             roundMoney(rate),
-		CommissionAmount: commissionAmount,
-		Status:           model.ReferralCommissionStatusPending,
-		SettleAt:         time.Now().Add(time.Duration(maxInt(common.ReferralSettleFreezeDays, 0)) * 24 * time.Hour).Unix(),
+		AffiliateId:          affiliateId,
+		AffiliateUserId:      0,
+		InviteeUserId:        userId,
+		SourceType:           sourceType,
+		SourceOrderId:        sourceOrderId,
+		SourceTradeNo:        tradeNo,
+		OrderType:            strings.TrimSpace(orderType),
+		BaseAmount:           settlementBaseAmount,
+		PaidAmount:           roundMoney(sourcePaidAmount),
+		PaidCurrency:         strings.ToUpper(strings.TrimSpace(paidCurrency)),
+		SettlementCurrency:   settlementCurrency,
+		SettlementFxRate:     settlementFxRate,
+		SettlementBaseAmount: settlementBaseAmount,
+		Rate:                 roundMoney(rate),
+		CommissionAmount:     commissionAmount,
+		Status:               model.ReferralCommissionStatusPending,
+		SettleAt:             time.Now().Add(time.Duration(maxInt(common.ReferralSettleFreezeDays, 0)) * 24 * time.Hour).Unix(),
 	}
 	affiliate := &model.ReferralAffiliate{}
 	if err := tx.Where("id = ?", affiliateId).First(affiliate).Error; err != nil {
@@ -2005,16 +2071,17 @@ func (s *ReferralService) processCommissionTx(
 		return errors.New("failed to update referral pending amount")
 	}
 	if err := s.createLedgerTx(tx, &model.ReferralCommissionLedger{
-		AffiliateId:   affiliateId,
-		UserId:        affiliate.UserId,
-		CommissionId:  commission.Id,
-		Type:          "commission_accrue",
-		RefType:       sourceType,
-		RefId:         tradeNo,
-		ExternalRefId: fmt.Sprintf("accrue:%s:%s", sourceType, tradeNo),
-		DeltaPending:  commissionAmount,
-		Operator:      "system",
-		CreatedAt:     now,
+		AffiliateId:        affiliateId,
+		UserId:             affiliate.UserId,
+		CommissionId:       commission.Id,
+		Type:               "commission_accrue",
+		RefType:            sourceType,
+		RefId:              tradeNo,
+		ExternalRefId:      fmt.Sprintf("accrue:%s:%s", sourceType, tradeNo),
+		SettlementCurrency: settlementCurrency,
+		DeltaPending:       commissionAmount,
+		Operator:           "system",
+		CreatedAt:          now,
 	}); err != nil {
 		return err
 	}
@@ -2263,6 +2330,44 @@ func effectiveReferralRate(rateOverride *float64) float64 {
 	return roundMoney(common.ReferralDefaultRate)
 }
 
+func referralSettlementCurrency() string {
+	return common.NormalizeReferralSettlementCurrency(common.ReferralSettlementCurrency)
+}
+
+func accountSettlementCurrency(value string) string {
+	currency := strings.ToUpper(strings.TrimSpace(value))
+	if currency == "" {
+		return referralSettlementCurrency()
+	}
+	return currency
+}
+
+func settlementBaseAmountForView(commission model.ReferralCommission) float64 {
+	if commission.SettlementBaseAmount > 0 {
+		return commission.SettlementBaseAmount
+	}
+	return commission.BaseAmount
+}
+
+func resolveReferralSettlementAmount(paidAmount float64, paidCurrency string) (float64, string, float64, error) {
+	currency := strings.ToUpper(strings.TrimSpace(paidCurrency))
+	if currency == "" {
+		return 0, referralSettlementCurrency(), 0, errReferralFxRateMissing
+	}
+	if paidAmount <= 0 || math.IsNaN(paidAmount) || math.IsInf(paidAmount, 0) {
+		return 0, referralSettlementCurrency(), 0, errors.New("paid_amount must be a positive finite number")
+	}
+	settlementCurrency := referralSettlementCurrency()
+	if currency == settlementCurrency {
+		return roundMoney(paidAmount), settlementCurrency, 1, nil
+	}
+	rate, ok := common.ReferralSettlementFxRatesSnapshot()[currency]
+	if !ok || rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return 0, settlementCurrency, 0, errReferralFxRateMissing
+	}
+	return roundMoney(paidAmount * rate), settlementCurrency, roundMoney(rate), nil
+}
+
 func (s *ReferralService) validateWithdrawalAssetTx(tx *gorm.DB, userId int, assetURL string, purpose string) error {
 	assetURL = strings.TrimSpace(assetURL)
 	if assetURL == "" {
@@ -2362,8 +2467,9 @@ func (s *ReferralService) getOrCreateAccountTx(tx *gorm.DB, affiliateId int, use
 			return nil, err
 		}
 		account = &model.ReferralCommissionAccount{
-			AffiliateId: affiliateId,
-			UserId:      userId,
+			AffiliateId:        affiliateId,
+			UserId:             userId,
+			SettlementCurrency: referralSettlementCurrency(),
 		}
 		if err := tx.Create(account).Error; err != nil {
 			if !isDuplicateError(err) {
@@ -2373,6 +2479,12 @@ func (s *ReferralService) getOrCreateAccountTx(tx *gorm.DB, affiliateId int, use
 			if err := tx.Where("affiliate_id = ?", affiliateId).First(account).Error; err != nil {
 				return nil, err
 			}
+		}
+	}
+	if strings.TrimSpace(account.SettlementCurrency) == "" {
+		account.SettlementCurrency = referralSettlementCurrency()
+		if err := tx.Model(&model.ReferralCommissionAccount{}).Where("id = ?", account.Id).Update("settlement_currency", account.SettlementCurrency).Error; err != nil {
+			return nil, err
 		}
 	}
 	return account, nil
@@ -2421,6 +2533,7 @@ func (s *ReferralService) buildAffiliateView(affiliate *model.ReferralAffiliate)
 		AvailableAmount:    account.AvailableAmount,
 		FrozenAmount:       account.FrozenAmount,
 		WithdrawnAmount:    account.WithdrawnAmount,
+		SettlementCurrency: accountSettlementCurrency(account.SettlementCurrency),
 		ApprovedAt:         affiliate.ApprovedAt,
 		DisabledAt:         affiliate.DisabledAt,
 		CreatedAt:          affiliate.CreatedAt,
@@ -2478,28 +2591,31 @@ func (s *ReferralService) listCommissions(params ReferralListParams, affiliateId
 			}
 		}
 		items = append(items, ReferralCommissionView{
-			Id:                commission.Id,
-			AffiliateId:       commission.AffiliateId,
-			AffiliateUserId:   commission.AffiliateUserId,
-			AffiliateUsername: affiliateUser.Username,
-			AffiliateEmail:    affiliateUser.Email,
-			SourceType:        commission.SourceType,
-			SourceOrderId:     commission.SourceOrderId,
-			SourceTradeNo:     commission.SourceTradeNo,
-			InviteeUserId:     commission.InviteeUserId,
-			InviteeUsername:   inviteeUser.Username,
-			InviteeEmail:      inviteeUser.Email,
-			OrderType:         commission.OrderType,
-			BaseAmount:        commission.BaseAmount,
-			PaidAmount:        commission.PaidAmount,
-			PaidCurrency:      commission.PaidCurrency,
-			Rate:              commission.Rate,
-			CommissionAmount:  commission.CommissionAmount,
-			Status:            status,
-			SettleAt:          commission.SettleAt,
-			AvailableAt:       commission.AvailableAt,
-			FrozenAt:          commission.FrozenAt,
-			CreatedAt:         commission.CreatedAt,
+			Id:                   commission.Id,
+			AffiliateId:          commission.AffiliateId,
+			AffiliateUserId:      commission.AffiliateUserId,
+			AffiliateUsername:    affiliateUser.Username,
+			AffiliateEmail:       affiliateUser.Email,
+			SourceType:           commission.SourceType,
+			SourceOrderId:        commission.SourceOrderId,
+			SourceTradeNo:        commission.SourceTradeNo,
+			InviteeUserId:        commission.InviteeUserId,
+			InviteeUsername:      inviteeUser.Username,
+			InviteeEmail:         inviteeUser.Email,
+			OrderType:            commission.OrderType,
+			BaseAmount:           commission.BaseAmount,
+			PaidAmount:           commission.PaidAmount,
+			PaidCurrency:         commission.PaidCurrency,
+			SettlementCurrency:   accountSettlementCurrency(commission.SettlementCurrency),
+			SettlementFxRate:     commission.SettlementFxRate,
+			SettlementBaseAmount: settlementBaseAmountForView(commission),
+			Rate:                 commission.Rate,
+			CommissionAmount:     commission.CommissionAmount,
+			Status:               status,
+			SettleAt:             commission.SettleAt,
+			AvailableAt:          commission.AvailableAt,
+			FrozenAt:             commission.FrozenAt,
+			CreatedAt:            commission.CreatedAt,
 		})
 	}
 	return items, total, nil
@@ -2537,32 +2653,33 @@ func (s *ReferralService) buildWithdrawalView(row *model.ReferralWithdrawal, adm
 	user := &model.User{}
 	_ = model.DB.Select("username,email").Where("id = ?", row.UserId).First(user).Error
 	view := &ReferralWithdrawalView{
-		Id:               row.Id,
-		AffiliateId:      row.AffiliateId,
-		UserId:           row.UserId,
-		Username:         user.Username,
-		Email:            user.Email,
-		Amount:           row.Amount,
-		FeeAmount:        row.FeeAmount,
-		NetAmount:        row.NetAmount,
-		AccountType:      row.AccountType,
-		AccountName:      row.AccountName,
-		AccountNo:        row.AccountNo,
-		AccountNoMasked:  maskAccountNo(row.AccountNo),
-		AccountNetwork:   row.AccountNetwork,
-		QRImageURL:       row.QRImageURL,
-		ApplicantNote:    row.ApplicantNote,
-		AdminNote:        row.AdminNote,
-		PaymentProofURL:  row.PaymentProofURL,
-		PaymentTxnNo:     row.PaymentTxnNo,
-		Status:           row.Status,
-		RejectReason:     row.RejectReason,
-		SubmittedAt:      row.SubmittedAt,
-		ApprovedAt:       row.ApprovedAt,
-		PayoutDeadlineAt: row.PayoutDeadlineAt,
-		PaidAt:           row.PaidAt,
-		RejectedAt:       row.RejectedAt,
-		CanceledAt:       row.CanceledAt,
+		Id:                 row.Id,
+		AffiliateId:        row.AffiliateId,
+		UserId:             row.UserId,
+		Username:           user.Username,
+		Email:              user.Email,
+		SettlementCurrency: accountSettlementCurrency(row.SettlementCurrency),
+		Amount:             row.Amount,
+		FeeAmount:          row.FeeAmount,
+		NetAmount:          row.NetAmount,
+		AccountType:        row.AccountType,
+		AccountName:        row.AccountName,
+		AccountNo:          row.AccountNo,
+		AccountNoMasked:    maskAccountNo(row.AccountNo),
+		AccountNetwork:     row.AccountNetwork,
+		QRImageURL:         row.QRImageURL,
+		ApplicantNote:      row.ApplicantNote,
+		AdminNote:          row.AdminNote,
+		PaymentProofURL:    row.PaymentProofURL,
+		PaymentTxnNo:       row.PaymentTxnNo,
+		Status:             row.Status,
+		RejectReason:       row.RejectReason,
+		SubmittedAt:        row.SubmittedAt,
+		ApprovedAt:         row.ApprovedAt,
+		PayoutDeadlineAt:   row.PayoutDeadlineAt,
+		PaidAt:             row.PaidAt,
+		RejectedAt:         row.RejectedAt,
+		CanceledAt:         row.CanceledAt,
 	}
 	if !adminView {
 		view.AccountNo = row.AccountNo

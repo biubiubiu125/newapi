@@ -17,6 +17,7 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 
 	previousDB := model.DB
 	previousLogDB := model.LOG_DB
+	previousOptionMap := common.OptionMap
 	previousCryptoSecret := common.CryptoSecret
 	previousSessionSecret := common.SessionSecret
 	previousReferralEnabled := common.ReferralEnabled
@@ -30,6 +31,8 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 	previousMinWithdrawAmount := common.ReferralMinWithdrawAmount
 	previousWithdrawFee := common.ReferralWithdrawFee
 	previousRedirectPath := common.ReferralRedirectPath
+	previousSettlementCurrency := common.ReferralSettlementCurrency
+	previousSettlementFxRates := common.ReferralSettlementFxRates
 
 	common.UsingSQLite = true
 	common.UsingMySQL = false
@@ -39,6 +42,8 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 	common.ReferralCookieTTLDays = 30
 	common.ReferralDefaultRate = 20
 	common.ReferralSettleFreezeDays = 7
+	common.ReferralSettlementCurrency = "CNY"
+	common.ReferralSettlementFxRates = map[string]float64{"CNY": 1}
 	common.CryptoSecret = "test-secret"
 	common.SessionSecret = "test-session-secret"
 
@@ -50,6 +55,7 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 	model.LOG_DB = db
 	require.NoError(t, db.AutoMigrate(
 		&model.User{},
+		&model.Option{},
 		&model.TopUp{},
 		&model.ReferralAffiliate{},
 		&model.ReferralBinding{},
@@ -64,10 +70,12 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 		&model.ReferralAdminAuditLog{},
 		&model.ReferralAsset{},
 	))
+	common.OptionMap = map[string]string{}
 
 	t.Cleanup(func() {
 		model.DB = previousDB
 		model.LOG_DB = previousLogDB
+		common.OptionMap = previousOptionMap
 		common.UsingSQLite = previousUsingSQLite
 		common.UsingMySQL = previousUsingMySQL
 		common.UsingPostgreSQL = previousUsingPostgreSQL
@@ -81,6 +89,8 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 		common.ReferralMinWithdrawAmount = previousMinWithdrawAmount
 		common.ReferralWithdrawFee = previousWithdrawFee
 		common.ReferralRedirectPath = previousRedirectPath
+		common.ReferralSettlementCurrency = previousSettlementCurrency
+		common.ReferralSettlementFxRates = previousSettlementFxRates
 		sqlDB, err := db.DB()
 		if err == nil {
 			_ = sqlDB.Close()
@@ -121,6 +131,8 @@ func TestReferralAssetSignatureRequiresSecretAndUsesConstantTimeVerify(t *testin
 func TestProcessTopUpCommissionIsIdempotent(t *testing.T) {
 	db := setupReferralServiceTestDB(t)
 	service := NewReferralService()
+
+	common.ReferralSettlementFxRates = map[string]float64{"CNY": 1, "USD": 7.2}
 
 	invitee := &model.User{Username: "invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
 	require.NoError(t, invitee.Insert(0))
@@ -180,7 +192,86 @@ func TestProcessTopUpCommissionIsIdempotent(t *testing.T) {
 
 	account := &model.ReferralCommissionAccount{}
 	require.NoError(t, db.Where("affiliate_id = ?", affiliate.Id).First(account).Error)
-	require.Equal(t, 2.0, account.PendingAmount)
+	require.Equal(t, 14.4, account.PendingAmount)
+	require.Equal(t, "CNY", account.SettlementCurrency)
+
+	commission := &model.ReferralCommission{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "topup", topup.TradeNo).First(commission).Error)
+	require.Equal(t, "USD", commission.PaidCurrency)
+	require.Equal(t, 10.0, commission.PaidAmount)
+	require.Equal(t, "CNY", commission.SettlementCurrency)
+	require.Equal(t, 7.2, commission.SettlementFxRate)
+	require.Equal(t, 72.0, commission.SettlementBaseAmount)
+	require.Equal(t, 14.4, commission.CommissionAmount)
+}
+
+func TestProcessTopUpCommissionFailsWhenFxRateMissingAndRetriesAfterConfigured(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "fx-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "fx-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "FXRATE01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      affiliateUser.Id,
+	}).Error)
+
+	topup := &model.TopUp{
+		UserId:              invitee.Id,
+		Amount:              100,
+		Money:               10,
+		PaidAmount:          10,
+		PaidCurrency:        "USD",
+		TradeNo:             "topup-fx-missing",
+		Status:              common.TopUpStatusSuccess,
+		ReferralAffiliateId: affiliate.Id,
+		ReferralRate:        10,
+		ReferralBaseAmount:  10,
+		PaymentMethod:       model.PaymentMethodStripe,
+		PaymentProvider:     model.PaymentProviderStripe,
+		CreateTime:          time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(topup).Error)
+
+	require.NoError(t, service.ProcessTopUpCommission(topup.TradeNo))
+
+	var commissions int64
+	require.NoError(t, db.Model(&model.ReferralCommission{}).Where("source_type = ? AND source_trade_no = ?", "topup", topup.TradeNo).Count(&commissions).Error)
+	require.Zero(t, commissions)
+
+	reloadedTopup := &model.TopUp{}
+	require.NoError(t, db.Where("trade_no = ?", topup.TradeNo).First(reloadedTopup).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusFailed, reloadedTopup.ReferralCommissionStatus)
+	require.Equal(t, model.ReferralCommissionErrorFxRateMissing, reloadedTopup.ReferralCommissionError)
+
+	job := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "topup", topup.TradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusFailed, job.Status)
+	require.Equal(t, model.ReferralCommissionErrorFxRateMissing, job.LastError)
+
+	common.ReferralSettlementFxRates = map[string]float64{"CNY": 1, "USD": 7}
+	require.NoError(t, service.RetryCommissionJob("topup", topup.TradeNo))
+
+	commission := &model.ReferralCommission{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "topup", topup.TradeNo).First(commission).Error)
+	require.Equal(t, 70.0, commission.SettlementBaseAmount)
+	require.Equal(t, 7.0, commission.SettlementFxRate)
+	require.Equal(t, 7.0, commission.CommissionAmount)
+
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "topup", topup.TradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, job.Status)
 }
 
 func TestBuildOrderSnapshotWithoutBindingReturnsSkippedReason(t *testing.T) {
@@ -453,17 +544,81 @@ func TestUpdateSettingsRejectsUnsafeRedirectPath(t *testing.T) {
 	service := NewReferralService()
 
 	_, err := service.UpdateSettings(ReferralSettings{
-		Enabled:           true,
-		CookieTTLDays:     30,
-		DefaultRate:       10,
-		SettleFreezeDays:  7,
-		MinWithdrawAmount: 1,
-		WithdrawFee:       0,
-		RedirectPath:      "//evil.com",
-		RequireApproval:   true,
+		Enabled:            true,
+		CookieTTLDays:      30,
+		DefaultRate:        10,
+		SettleFreezeDays:   7,
+		MinWithdrawAmount:  1,
+		WithdrawFee:        0,
+		RedirectPath:       "//evil.com",
+		RequireApproval:    true,
+		SettlementCurrency: "CNY",
+		SettlementFxRates:  `{"CNY":1}`,
 	}, 1, "127.0.0.1", "unit-test")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "redirect_path")
+}
+
+func TestUpdateSettingsNormalizesReferralFxRates(t *testing.T) {
+	setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	settings, err := service.UpdateSettings(ReferralSettings{
+		Enabled:            true,
+		CookieTTLDays:      30,
+		DefaultRate:        10,
+		SettleFreezeDays:   7,
+		MinWithdrawAmount:  1,
+		WithdrawFee:        0,
+		RedirectPath:       "/sign-up",
+		RequireApproval:    true,
+		SettlementCurrency: "CNY",
+		SettlementFxRates:  `{"usd":7.1,"EUR":8}`,
+	}, 1, "127.0.0.1", "unit-test")
+	require.NoError(t, err)
+	require.Equal(t, "CNY", settings.SettlementCurrency)
+	require.JSONEq(t, `{"CNY":1,"USD":7.1,"EUR":8}`, settings.SettlementFxRates)
+}
+
+func TestUpdateSettingsRejectsUnsupportedSettlementCurrency(t *testing.T) {
+	setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	_, err := service.UpdateSettings(ReferralSettings{
+		Enabled:            true,
+		CookieTTLDays:      30,
+		DefaultRate:        10,
+		SettleFreezeDays:   7,
+		MinWithdrawAmount:  1,
+		WithdrawFee:        0,
+		RedirectPath:       "/sign-up",
+		RequireApproval:    true,
+		SettlementCurrency: "USD",
+		SettlementFxRates:  `{"USD":7.1}`,
+	}, 1, "127.0.0.1", "unit-test")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "settlement_currency")
+}
+
+func TestUpdateSettingsPreservesFxRatesWhenOmitted(t *testing.T) {
+	setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	common.ReferralSettlementFxRates = map[string]float64{"CNY": 1, "USD": 7.3}
+
+	settings, err := service.UpdateSettings(ReferralSettings{
+		Enabled:            true,
+		CookieTTLDays:      30,
+		DefaultRate:        10,
+		SettleFreezeDays:   7,
+		MinWithdrawAmount:  1,
+		WithdrawFee:        0,
+		RedirectPath:       "/sign-up",
+		RequireApproval:    true,
+		SettlementCurrency: "CNY",
+	}, 1, "127.0.0.1", "unit-test")
+	require.NoError(t, err)
+	require.JSONEq(t, `{"CNY":1,"USD":7.3}`, settings.SettlementFxRates)
 }
 
 func TestListCommissionsDoesNotAutoSettle(t *testing.T) {

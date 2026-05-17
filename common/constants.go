@@ -29,6 +29,8 @@ var ReferralRequireApproval = true
 var ReferralSigningSecret = ""
 var ReferralAssetSigningSecret = ""
 var ReferralTestMode = false
+var ReferralSettlementCurrency = "CNY"
+var ReferralSettlementFxRates = map[string]float64{"CNY": 1}
 
 var themeValue atomic.Value // stores string; safe for concurrent read/write
 

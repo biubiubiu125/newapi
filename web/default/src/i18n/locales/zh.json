@@ -4740,6 +4740,12 @@
     "high": "高风险",
     "warning": "警告",
     "info": "提示",
-    "normal": "正常"
+    "normal": "正常",
+    "Referral Settlement Currency": "返佣结算币种",
+    "Referral FX Rates": "返佣汇率配置",
+    "JSON object for order paid currency to CNY, for example {\"USD\":7.2,\"EUR\":7.8}. CNY is always 1.": "订单实付币种换算到人民币的 JSON 配置，例如 {\"USD\":7.2,\"EUR\":7.8}。CNY 永远按 1 处理。",
+    "Missing referral FX rate": "缺少返佣汇率",
+    "Paid Amount": "实付金额",
+    "Settlement Base": "结算基数"
   }
 }
