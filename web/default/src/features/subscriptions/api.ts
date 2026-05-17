@@ -132,6 +132,13 @@ export async function paySubscriptionEpay(
   }
 }
 
+export async function paySubscriptionEpusdt(
+  data: SubscriptionPayRequest & { payment_method: string }
+): Promise<SubscriptionPayResponse> {
+  const res = await api.post('/api/subscription/epusdt/pay', data)
+  return res.data
+}
+
 // ============================================================================
 // User Self Subscriptions
 // ============================================================================

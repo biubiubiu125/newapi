@@ -66,8 +66,16 @@ interface SubscriptionPlansCardProps {
 
 function getEpayMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
   return payMethods.filter(
-    (m) => m?.type && m.type !== 'stripe' && m.type !== 'creem'
+    (m) =>
+      m?.type &&
+      m.type !== 'stripe' &&
+      m.type !== 'creem' &&
+      !m.type.startsWith('epusdt:')
   )
+}
+
+function getEpusdtMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
+  return payMethods.filter((m) => m?.type?.startsWith('epusdt:'))
 }
 
 function getBillingPreferenceLabel(
@@ -112,8 +120,13 @@ export function SubscriptionPlansCard({
   const enableStripe = !!topupInfo?.enable_stripe_topup
   const enableCreem = !!topupInfo?.enable_creem_topup
   const enableOnlineTopUp = !!topupInfo?.enable_online_topup
+  const enableEpusdtTopUp = !!topupInfo?.enable_epusdt_topup
   const epayMethods = useMemo(
     () => getEpayMethods(topupInfo?.pay_methods),
+    [topupInfo?.pay_methods]
+  )
+  const epusdtMethods = useMemo(
+    () => getEpusdtMethods(topupInfo?.pay_methods),
     [topupInfo?.pay_methods]
   )
 
@@ -631,6 +644,8 @@ export function SubscriptionPlansCard({
         enableCreem={enableCreem}
         enableOnlineTopUp={enableOnlineTopUp}
         epayMethods={epayMethods}
+        enableEpusdt={enableEpusdtTopUp}
+        epusdtMethods={epusdtMethods}
         purchaseLimit={
           selectedPlan?.plan?.max_purchase_per_user
             ? Number(selectedPlan.plan.max_purchase_per_user)

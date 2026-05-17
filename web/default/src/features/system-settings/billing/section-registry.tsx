@@ -153,6 +153,18 @@ const BILLING_SECTIONS = [
           CreemTestMode: settings.CreemTestMode,
           CreemProducts: settings.CreemProducts,
         }}
+        epusdtDefaultValues={{
+          EpusdtEnabled: settings.EpusdtEnabled ?? false,
+          EpusdtBaseURL: settings.EpusdtBaseURL ?? '',
+          EpusdtPID: settings.EpusdtPID ?? '',
+          EpusdtSecretKey: settings.EpusdtSecretKey ?? '',
+          EpusdtCurrency: settings.EpusdtCurrency ?? 'CNY',
+          EpusdtDisplayName: settings.EpusdtDisplayName ?? 'USDT',
+          EpusdtAssetDisplayNames:
+            settings.EpusdtAssetDisplayNames ??
+            '{"epusdt:usdt:tron":"USDT-TRC20","epusdt:usdt:polygon":"USDT-Polygon","epusdt:usdt:bsc":"USDT-BEP20"}',
+          EpusdtMinTopUp: settings.EpusdtMinTopUp ?? 1,
+        }}
         waffoDefaultValues={{
           WaffoEnabled: settings.WaffoEnabled ?? false,
           WaffoApiKey: settings.WaffoApiKey ?? '',

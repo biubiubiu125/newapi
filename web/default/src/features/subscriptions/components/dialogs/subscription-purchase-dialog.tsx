@@ -41,6 +41,7 @@ import { GroupBadge } from '@/components/group-badge'
 import {
   paySubscriptionCreem,
   paySubscriptionEpay,
+  paySubscriptionEpusdt,
   paySubscriptionStripe,
 } from '../../api'
 import { formatDuration, formatResetPeriod } from '../../lib'
@@ -59,6 +60,8 @@ interface Props {
   enableCreem?: boolean
   enableOnlineTopUp?: boolean
   epayMethods?: PaymentMethod[]
+  enableEpusdt?: boolean
+  epusdtMethods?: PaymentMethod[]
   purchaseLimit?: number
   purchaseCount?: number
 }
@@ -67,6 +70,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
   const { t } = useTranslation()
   const [paying, setPaying] = useState(false)
   const [selectedEpayMethod, setSelectedEpayMethod] = useState('')
+  const [selectedEpusdtMethod, setSelectedEpusdtMethod] = useState('')
 
   useEffect(() => {
     if (props.open && props.epayMethods && props.epayMethods.length > 0) {
@@ -76,6 +80,14 @@ export function SubscriptionPurchaseDialog(props: Props) {
     }
   }, [props.open, props.epayMethods])
 
+  useEffect(() => {
+    if (props.open && props.epusdtMethods && props.epusdtMethods.length > 0) {
+      setSelectedEpusdtMethod(props.epusdtMethods[0].type)
+    } else if (!props.open) {
+      setSelectedEpusdtMethod('')
+    }
+  }, [props.open, props.epusdtMethods])
+
   const plan = props.plan?.plan
   if (!plan) return null
 
@@ -83,11 +95,17 @@ export function SubscriptionPurchaseDialog(props: Props) {
   const hasCreem = props.enableCreem && !!plan.creem_product_id
   const hasEpay =
     props.enableOnlineTopUp && (props.epayMethods || []).length > 0
-  const hasAnyPayment = hasStripe || hasCreem || hasEpay
+  const hasEpusdt = props.enableEpusdt && (props.epusdtMethods || []).length > 0
+  const hasAnyPayment = hasStripe || hasCreem || hasEpay || hasEpusdt
   const selectedEpayMethodLabel =
     (props.epayMethods || []).find((m) => m.type === selectedEpayMethod)
       ?.name ||
     selectedEpayMethod ||
+    t('Select payment method')
+  const selectedEpusdtMethodLabel =
+    (props.epusdtMethods || []).find((m) => m.type === selectedEpusdtMethod)
+      ?.name ||
+    selectedEpusdtMethod ||
     t('Select payment method')
   const totalAmount = Number(plan.total_amount || 0)
   const price = Number(plan.price_amount || 0).toFixed(2)
@@ -172,6 +190,35 @@ export function SubscriptionPurchaseDialog(props: Props) {
         form.submit()
         document.body.removeChild(form)
         toast.success(t('Payment initiated'))
+        props.onOpenChange(false)
+      } else {
+        toast.error(
+          res.message && res.message !== 'success'
+            ? res.message
+            : t('Payment request failed')
+        )
+      }
+    } catch {
+      toast.error(t('Payment request failed'))
+    } finally {
+      setPaying(false)
+    }
+  }
+
+  const handlePayEpusdt = async () => {
+    if (!selectedEpusdtMethod) {
+      toast.error(t('Please select a payment method'))
+      return
+    }
+    setPaying(true)
+    try {
+      const res = await paySubscriptionEpusdt({
+        plan_id: plan.id,
+        payment_method: selectedEpusdtMethod,
+      })
+      if (res.message === 'success' && res.data?.payment_url) {
+        window.open(res.data.payment_url, '_blank')
+        toast.success(t('Payment page opened'))
         props.onOpenChange(false)
       } else {
         toast.error(
@@ -322,6 +369,42 @@ export function SubscriptionPurchaseDialog(props: Props) {
                   <Button
                     onClick={handlePayEpay}
                     disabled={paying || !selectedEpayMethod || limitReached}
+                  >
+                    {t('Pay')}
+                  </Button>
+                </div>
+              )}
+              {hasEpusdt && (
+                <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
+                  <Select
+                    items={[
+                      ...(props.epusdtMethods || []).map((m) => ({
+                        value: m.type,
+                        label: m.name || m.type,
+                      })),
+                    ]}
+                    value={selectedEpusdtMethod}
+                    onValueChange={(v) =>
+                      v !== null && setSelectedEpusdtMethod(v)
+                    }
+                    disabled={limitReached}
+                  >
+                    <SelectTrigger className='flex-1'>
+                      <SelectValue>{selectedEpusdtMethodLabel}</SelectValue>
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        {(props.epusdtMethods || []).map((m) => (
+                          <SelectItem key={m.type} value={m.type}>
+                            {m.name || m.type}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    onClick={handlePayEpusdt}
+                    disabled={paying || !selectedEpusdtMethod || limitReached}
                   >
                     {t('Pay')}
                   </Button>

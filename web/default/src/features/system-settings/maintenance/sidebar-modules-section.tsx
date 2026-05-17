@@ -144,6 +144,14 @@ export function SidebarModulesSection({
         title: t('Subscription Management'),
         description: t('Manage subscription plans and pricing.'),
       },
+      recharge_audit: {
+        title: t('Recharge Audit'),
+        description: t('Review recharge orders and financial anomalies.'),
+      },
+      risk_center: {
+        title: t('Risk Center'),
+        description: t('Review account, payment, and usage risk signals.'),
+      },
     },
   }
   const formDefaults = useMemo(() => config, [config])

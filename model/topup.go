@@ -12,24 +12,25 @@ import (
 )
 
 type TopUp struct {
-	Id              int     `json:"id"`
-	UserId          int     `json:"user_id" gorm:"index"`
-	Amount          int64   `json:"amount"`
-	Money           float64 `json:"money"`
-	PaidAmount      float64 `json:"paid_amount" gorm:"type:decimal(20,8);default:0"`
-	PaidCurrency    string  `json:"paid_currency" gorm:"type:varchar(16);default:''"`
-	TradeNo         string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod   string  `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	CreateTime      int64   `json:"create_time"`
-	CompleteTime    int64   `json:"complete_time"`
-	Status          string  `json:"status"`
-	ReferralAffiliateId       int     `json:"referral_affiliate_id" gorm:"index"`
-	ReferralRate              float64 `json:"referral_rate" gorm:"type:decimal(10,4);default:0"`
-	ReferralBaseAmount        float64 `json:"referral_base_amount" gorm:"type:decimal(20,8);default:0"`
-	ReferralCommissionStatus  string  `json:"referral_commission_status" gorm:"type:varchar(32);default:'';index"`
-	ReferralCommissionError   string  `json:"referral_commission_error" gorm:"type:text"`
-	ReferralCommissionAt      int64   `json:"referral_commission_at" gorm:"default:0"`
+	Id                       int     `json:"id"`
+	UserId                   int     `json:"user_id" gorm:"index"`
+	Amount                   int64   `json:"amount"`
+	Money                    float64 `json:"money"`
+	PaidAmount               float64 `json:"paid_amount" gorm:"type:decimal(20,8);default:0"`
+	PaidCurrency             string  `json:"paid_currency" gorm:"type:varchar(16);default:''"`
+	TradeNo                  string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod            string  `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider          string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	ProviderPayload          string  `json:"provider_payload" gorm:"type:text"`
+	CreateTime               int64   `json:"create_time"`
+	CompleteTime             int64   `json:"complete_time"`
+	Status                   string  `json:"status"`
+	ReferralAffiliateId      int     `json:"referral_affiliate_id" gorm:"index"`
+	ReferralRate             float64 `json:"referral_rate" gorm:"type:decimal(10,4);default:0"`
+	ReferralBaseAmount       float64 `json:"referral_base_amount" gorm:"type:decimal(20,8);default:0"`
+	ReferralCommissionStatus string  `json:"referral_commission_status" gorm:"type:varchar(32);default:'';index"`
+	ReferralCommissionError  string  `json:"referral_commission_error" gorm:"type:text"`
+	ReferralCommissionAt     int64   `json:"referral_commission_at" gorm:"default:0"`
 }
 
 const (
@@ -37,6 +38,7 @@ const (
 	PaymentMethodCreem        = "creem"
 	PaymentMethodWaffo        = "waffo"
 	PaymentMethodWaffoPancake = "waffo_pancake"
+	PaymentMethodEpusdtPrefix = "epusdt:"
 )
 
 const (
@@ -45,6 +47,7 @@ const (
 	PaymentProviderCreem        = "creem"
 	PaymentProviderWaffo        = "waffo"
 	PaymentProviderWaffoPancake = "waffo_pancake"
+	PaymentProviderEpusdt       = "epusdt"
 )
 
 var (
@@ -589,6 +592,75 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 
 	if quotaToAdd > 0 {
 		RecordLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("Waffo Pancake充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money))
+	}
+
+	return nil
+}
+
+func RechargeEpusdt(tradeNo string, providerPayload string, actualPaymentMethod string, callerIp string) (err error) {
+	if tradeNo == "" {
+		return errors.New("未提供支付单号")
+	}
+
+	var quotaToAdd int
+	topUp := &TopUp{}
+
+	refCol := "`trade_no`"
+	if common.UsingPostgreSQL {
+		refCol = `"trade_no"`
+	}
+
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(topUp).Error
+		if err != nil {
+			return errors.New("充值订单不存在")
+		}
+
+		if topUp.PaymentProvider != PaymentProviderEpusdt {
+			return ErrPaymentMethodMismatch
+		}
+
+		if topUp.Status == common.TopUpStatusSuccess {
+			return nil
+		}
+
+		if topUp.Status != common.TopUpStatusPending {
+			return errors.New("充值订单状态错误")
+		}
+
+		dAmount := decimal.NewFromInt(topUp.Amount)
+		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+		quotaToAdd = int(dAmount.Mul(dQuotaPerUnit).IntPart())
+		if quotaToAdd <= 0 {
+			return errors.New("无效的充值额度")
+		}
+
+		if actualPaymentMethod != "" && topUp.PaymentMethod != actualPaymentMethod {
+			topUp.PaymentMethod = actualPaymentMethod
+		}
+		if providerPayload != "" {
+			topUp.ProviderPayload = providerPayload
+		}
+		topUp.CompleteTime = common.GetTimestamp()
+		topUp.Status = common.TopUpStatusSuccess
+		if err := tx.Save(topUp).Error; err != nil {
+			return err
+		}
+
+		if err := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error; err != nil {
+			return err
+		}
+
+		return nil
+	})
+
+	if err != nil {
+		common.SysError("epusdt topup failed: " + err.Error())
+		return errors.New("充值失败，请稍后重试")
+	}
+
+	if quotaToAdd > 0 {
+		RecordTopupLog(topUp.UserId, fmt.Sprintf("Epusdt充值成功，充值额度: %v，支付金额：%.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), callerIp, topUp.PaymentMethod, PaymentProviderEpusdt)
 	}
 
 	return nil

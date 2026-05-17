@@ -193,19 +193,19 @@ func (p *SubscriptionPlan) BeforeUpdate(tx *gorm.DB) error {
 
 // Subscription order (payment -> webhook -> create UserSubscription)
 type SubscriptionOrder struct {
-	Id     int     `json:"id"`
-	UserId int     `json:"user_id" gorm:"index"`
-	PlanId int     `json:"plan_id" gorm:"index"`
-	Money  float64 `json:"money"`
+	Id           int     `json:"id"`
+	UserId       int     `json:"user_id" gorm:"index"`
+	PlanId       int     `json:"plan_id" gorm:"index"`
+	Money        float64 `json:"money"`
 	PaidAmount   float64 `json:"paid_amount" gorm:"type:decimal(20,8);default:0"`
 	PaidCurrency string  `json:"paid_currency" gorm:"type:varchar(16);default:''"`
 
-	TradeNo         string `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod   string `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider string `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	Status          string `json:"status"`
-	CreateTime      int64  `json:"create_time"`
-	CompleteTime    int64  `json:"complete_time"`
+	TradeNo                  string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod            string  `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider          string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	Status                   string  `json:"status"`
+	CreateTime               int64   `json:"create_time"`
+	CompleteTime             int64   `json:"complete_time"`
 	ReferralAffiliateId      int     `json:"referral_affiliate_id" gorm:"index"`
 	ReferralRate             float64 `json:"referral_rate" gorm:"type:decimal(10,4);default:0"`
 	ReferralBaseAmount       float64 `json:"referral_base_amount" gorm:"type:decimal(20,8);default:0"`
@@ -555,17 +555,17 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		if err != nil {
 			return err
 		}
-		if err := upsertSubscriptionTopUpTx(tx, &order); err != nil {
-			return err
-		}
-		order.Status = common.TopUpStatusSuccess
-		order.CompleteTime = common.GetTimestamp()
 		if providerPayload != "" {
 			order.ProviderPayload = providerPayload
 		}
 		if actualPaymentMethod != "" && order.PaymentMethod != actualPaymentMethod {
 			order.PaymentMethod = actualPaymentMethod
 		}
+		if err := upsertSubscriptionTopUpTx(tx, &order); err != nil {
+			return err
+		}
+		order.Status = common.TopUpStatusSuccess
+		order.CompleteTime = common.GetTimestamp()
 		if err := tx.Save(&order).Error; err != nil {
 			return err
 		}
@@ -597,20 +597,34 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 	if err := tx.Where("trade_no = ?", order.TradeNo).First(&topup).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			topup = TopUp{
-				UserId:        order.UserId,
-				Amount:        0,
-				Money:         order.Money,
-				TradeNo:       order.TradeNo,
-				PaymentMethod: order.PaymentMethod,
-				CreateTime:    order.CreateTime,
-				CompleteTime:  now,
-				Status:        common.TopUpStatusSuccess,
+				UserId:                   order.UserId,
+				Amount:                   0,
+				Money:                    order.Money,
+				PaidAmount:               order.PaidAmount,
+				PaidCurrency:             order.PaidCurrency,
+				TradeNo:                  order.TradeNo,
+				PaymentMethod:            order.PaymentMethod,
+				PaymentProvider:          order.PaymentProvider,
+				ProviderPayload:          order.ProviderPayload,
+				CreateTime:               order.CreateTime,
+				CompleteTime:             now,
+				Status:                   common.TopUpStatusSuccess,
+				ReferralAffiliateId:      order.ReferralAffiliateId,
+				ReferralRate:             order.ReferralRate,
+				ReferralBaseAmount:       order.ReferralBaseAmount,
+				ReferralCommissionStatus: order.ReferralCommissionStatus,
+				ReferralCommissionError:  order.ReferralCommissionError,
+				ReferralCommissionAt:     order.ReferralCommissionAt,
 			}
 			return tx.Create(&topup).Error
 		}
 		return err
 	}
 	topup.Money = order.Money
+	topup.PaidAmount = order.PaidAmount
+	topup.PaidCurrency = order.PaidCurrency
+	topup.PaymentProvider = order.PaymentProvider
+	topup.ProviderPayload = order.ProviderPayload
 	if topup.PaymentMethod == "" {
 		topup.PaymentMethod = order.PaymentMethod
 	} else if topup.PaymentMethod != order.PaymentMethod {

@@ -90,6 +90,14 @@ func InitOptionMap() {
 	common.OptionMap["CreemProducts"] = setting.CreemProducts
 	common.OptionMap["CreemTestMode"] = strconv.FormatBool(setting.CreemTestMode)
 	common.OptionMap["CreemWebhookSecret"] = setting.CreemWebhookSecret
+	common.OptionMap["EpusdtEnabled"] = strconv.FormatBool(setting.EpusdtEnabled)
+	common.OptionMap["EpusdtBaseURL"] = setting.EpusdtBaseURL
+	common.OptionMap["EpusdtPID"] = setting.EpusdtPID
+	common.OptionMap["EpusdtSecretKey"] = setting.EpusdtSecretKey
+	common.OptionMap["EpusdtCurrency"] = setting.EpusdtCurrency
+	common.OptionMap["EpusdtDisplayName"] = setting.EpusdtDisplayName
+	common.OptionMap["EpusdtAssetDisplayNames"] = setting.EpusdtAssetDisplayNames
+	common.OptionMap["EpusdtMinTopUp"] = strconv.Itoa(setting.EpusdtMinTopUp)
 	common.OptionMap["WaffoEnabled"] = strconv.FormatBool(setting.WaffoEnabled)
 	common.OptionMap["WaffoApiKey"] = setting.WaffoApiKey
 	common.OptionMap["WaffoPrivateKey"] = setting.WaffoPrivateKey
@@ -400,6 +408,22 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.CreemTestMode = value == "true"
 	case "CreemWebhookSecret":
 		setting.CreemWebhookSecret = value
+	case "EpusdtEnabled":
+		setting.EpusdtEnabled = value == "true"
+	case "EpusdtBaseURL":
+		setting.EpusdtBaseURL = value
+	case "EpusdtPID":
+		setting.EpusdtPID = value
+	case "EpusdtSecretKey":
+		setting.EpusdtSecretKey = value
+	case "EpusdtCurrency":
+		setting.EpusdtCurrency = value
+	case "EpusdtDisplayName":
+		setting.EpusdtDisplayName = value
+	case "EpusdtAssetDisplayNames":
+		setting.EpusdtAssetDisplayNames = value
+	case "EpusdtMinTopUp":
+		setting.EpusdtMinTopUp, _ = strconv.Atoi(value)
 	case "WaffoEnabled":
 		setting.WaffoEnabled = value == "true"
 	case "WaffoApiKey":

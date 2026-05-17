@@ -40,8 +40,10 @@ import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authentic
 import { Route as AuthenticatedUsageLogsIndexRouteImport } from './routes/_authenticated/usage-logs/index'
 import { Route as AuthenticatedSystemSettingsIndexRouteImport } from './routes/_authenticated/system-settings/index'
 import { Route as AuthenticatedSubscriptionsIndexRouteImport } from './routes/_authenticated/subscriptions/index'
+import { Route as AuthenticatedRiskCenterIndexRouteImport } from './routes/_authenticated/risk-center/index'
 import { Route as AuthenticatedReferralIndexRouteImport } from './routes/_authenticated/referral/index'
 import { Route as AuthenticatedRedemptionCodesIndexRouteImport } from './routes/_authenticated/redemption-codes/index'
+import { Route as AuthenticatedRechargeAuditIndexRouteImport } from './routes/_authenticated/recharge-audit/index'
 import { Route as AuthenticatedProviderPriceExportIndexRouteImport } from './routes/_authenticated/provider-price-export/index'
 import { Route as AuthenticatedProfileIndexRouteImport } from './routes/_authenticated/profile/index'
 import { Route as AuthenticatedPlaygroundIndexRouteImport } from './routes/_authenticated/playground/index'
@@ -231,6 +233,12 @@ const AuthenticatedSubscriptionsIndexRoute =
     path: '/subscriptions/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedRiskCenterIndexRoute =
+  AuthenticatedRiskCenterIndexRouteImport.update({
+    id: '/risk-center/',
+    path: '/risk-center/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedReferralIndexRoute =
   AuthenticatedReferralIndexRouteImport.update({
     id: '/referral/',
@@ -241,6 +249,12 @@ const AuthenticatedRedemptionCodesIndexRoute =
   AuthenticatedRedemptionCodesIndexRouteImport.update({
     id: '/redemption-codes/',
     path: '/redemption-codes/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
+const AuthenticatedRechargeAuditIndexRoute =
+  AuthenticatedRechargeAuditIndexRouteImport.update({
+    id: '/recharge-audit/',
+    path: '/recharge-audit/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedProviderPriceExportIndexRoute =
@@ -461,8 +475,10 @@ export interface FileRoutesByFullPath {
   '/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/profile/': typeof AuthenticatedProfileIndexRoute
   '/provider-price-export/': typeof AuthenticatedProviderPriceExportIndexRoute
+  '/recharge-audit/': typeof AuthenticatedRechargeAuditIndexRoute
   '/redemption-codes/': typeof AuthenticatedRedemptionCodesIndexRoute
   '/referral/': typeof AuthenticatedReferralIndexRoute
+  '/risk-center/': typeof AuthenticatedRiskCenterIndexRoute
   '/subscriptions/': typeof AuthenticatedSubscriptionsIndexRoute
   '/system-settings/': typeof AuthenticatedSystemSettingsIndexRoute
   '/usage-logs/': typeof AuthenticatedUsageLogsIndexRoute
@@ -523,8 +539,10 @@ export interface FileRoutesByTo {
   '/playground': typeof AuthenticatedPlaygroundIndexRoute
   '/profile': typeof AuthenticatedProfileIndexRoute
   '/provider-price-export': typeof AuthenticatedProviderPriceExportIndexRoute
+  '/recharge-audit': typeof AuthenticatedRechargeAuditIndexRoute
   '/redemption-codes': typeof AuthenticatedRedemptionCodesIndexRoute
   '/referral': typeof AuthenticatedReferralIndexRoute
+  '/risk-center': typeof AuthenticatedRiskCenterIndexRoute
   '/subscriptions': typeof AuthenticatedSubscriptionsIndexRoute
   '/system-settings': typeof AuthenticatedSystemSettingsIndexRoute
   '/usage-logs': typeof AuthenticatedUsageLogsIndexRoute
@@ -589,8 +607,10 @@ export interface FileRoutesById {
   '/_authenticated/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/_authenticated/profile/': typeof AuthenticatedProfileIndexRoute
   '/_authenticated/provider-price-export/': typeof AuthenticatedProviderPriceExportIndexRoute
+  '/_authenticated/recharge-audit/': typeof AuthenticatedRechargeAuditIndexRoute
   '/_authenticated/redemption-codes/': typeof AuthenticatedRedemptionCodesIndexRoute
   '/_authenticated/referral/': typeof AuthenticatedReferralIndexRoute
+  '/_authenticated/risk-center/': typeof AuthenticatedRiskCenterIndexRoute
   '/_authenticated/subscriptions/': typeof AuthenticatedSubscriptionsIndexRoute
   '/_authenticated/system-settings/': typeof AuthenticatedSystemSettingsIndexRoute
   '/_authenticated/usage-logs/': typeof AuthenticatedUsageLogsIndexRoute
@@ -654,8 +674,10 @@ export interface FileRouteTypes {
     | '/playground/'
     | '/profile/'
     | '/provider-price-export/'
+    | '/recharge-audit/'
     | '/redemption-codes/'
     | '/referral/'
+    | '/risk-center/'
     | '/subscriptions/'
     | '/system-settings/'
     | '/usage-logs/'
@@ -716,8 +738,10 @@ export interface FileRouteTypes {
     | '/playground'
     | '/profile'
     | '/provider-price-export'
+    | '/recharge-audit'
     | '/redemption-codes'
     | '/referral'
+    | '/risk-center'
     | '/subscriptions'
     | '/system-settings'
     | '/usage-logs'
@@ -781,8 +805,10 @@ export interface FileRouteTypes {
     | '/_authenticated/playground/'
     | '/_authenticated/profile/'
     | '/_authenticated/provider-price-export/'
+    | '/_authenticated/recharge-audit/'
     | '/_authenticated/redemption-codes/'
     | '/_authenticated/referral/'
+    | '/_authenticated/risk-center/'
     | '/_authenticated/subscriptions/'
     | '/_authenticated/system-settings/'
     | '/_authenticated/usage-logs/'
@@ -1045,6 +1071,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedSubscriptionsIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/risk-center/': {
+      id: '/_authenticated/risk-center/'
+      path: '/risk-center'
+      fullPath: '/risk-center/'
+      preLoaderRoute: typeof AuthenticatedRiskCenterIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/referral/': {
       id: '/_authenticated/referral/'
       path: '/referral'
@@ -1057,6 +1090,13 @@ declare module '@tanstack/react-router' {
       path: '/redemption-codes'
       fullPath: '/redemption-codes/'
       preLoaderRoute: typeof AuthenticatedRedemptionCodesIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
+    '/_authenticated/recharge-audit/': {
+      id: '/_authenticated/recharge-audit/'
+      path: '/recharge-audit'
+      fullPath: '/recharge-audit/'
+      preLoaderRoute: typeof AuthenticatedRechargeAuditIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/provider-price-export/': {
@@ -1371,8 +1411,10 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
   AuthenticatedProfileIndexRoute: typeof AuthenticatedProfileIndexRoute
   AuthenticatedProviderPriceExportIndexRoute: typeof AuthenticatedProviderPriceExportIndexRoute
+  AuthenticatedRechargeAuditIndexRoute: typeof AuthenticatedRechargeAuditIndexRoute
   AuthenticatedRedemptionCodesIndexRoute: typeof AuthenticatedRedemptionCodesIndexRoute
   AuthenticatedReferralIndexRoute: typeof AuthenticatedReferralIndexRoute
+  AuthenticatedRiskCenterIndexRoute: typeof AuthenticatedRiskCenterIndexRoute
   AuthenticatedSubscriptionsIndexRoute: typeof AuthenticatedSubscriptionsIndexRoute
   AuthenticatedUsageLogsIndexRoute: typeof AuthenticatedUsageLogsIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
@@ -1400,9 +1442,11 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedProfileIndexRoute: AuthenticatedProfileIndexRoute,
   AuthenticatedProviderPriceExportIndexRoute:
     AuthenticatedProviderPriceExportIndexRoute,
+  AuthenticatedRechargeAuditIndexRoute: AuthenticatedRechargeAuditIndexRoute,
   AuthenticatedRedemptionCodesIndexRoute:
     AuthenticatedRedemptionCodesIndexRoute,
   AuthenticatedReferralIndexRoute: AuthenticatedReferralIndexRoute,
+  AuthenticatedRiskCenterIndexRoute: AuthenticatedRiskCenterIndexRoute,
   AuthenticatedSubscriptionsIndexRoute: AuthenticatedSubscriptionsIndexRoute,
   AuthenticatedUsageLogsIndexRoute: AuthenticatedUsageLogsIndexRoute,
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,

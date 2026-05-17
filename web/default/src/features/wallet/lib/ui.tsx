@@ -84,6 +84,15 @@ export function getPaymentIcon(
     return <CreditCard className={className} />
   }
 
+  if (paymentType.startsWith(PAYMENT_TYPES.EPUSDT_PREFIX)) {
+    return (
+      <CreditCard
+        className={className}
+        style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.EPUSDT_PREFIX] }}
+      />
+    )
+  }
+
   switch (paymentType) {
     case PAYMENT_TYPES.ALIPAY:
       return (

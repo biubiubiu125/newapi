@@ -64,6 +64,8 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
     referral: true,
     setting: true,
     subscription: true,
+    recharge_audit: true,
+    risk_center: true,
   },
 }
 
@@ -117,6 +119,8 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/admin-referral': { section: 'admin', module: 'referral' },
   '/redemption-codes': { section: 'admin', module: 'redemption' },
   '/subscriptions': { section: 'admin', module: 'subscription' },
+  '/recharge-audit': { section: 'admin', module: 'recharge_audit' },
+  '/risk-center': { section: 'admin', module: 'risk_center' },
   '/system-settings': { section: 'admin', module: 'setting' },
   '/system-settings/site': { section: 'admin', module: 'setting' },
 }
