@@ -116,6 +116,48 @@ function orderTypeLabel(value: string, t: (key: string) => string): string {
   }
 }
 
+function accountTypeLabel(value: string, t: (key: string) => string): string {
+  switch (value) {
+    case 'alipay':
+      return t('Alipay')
+    case 'wechat':
+      return t('WeChat Pay')
+    case 'usdt':
+      return 'USDT'
+    default:
+      return value || '-'
+  }
+}
+
+function accountNetworkLabel(value: string, t: (key: string) => string): string {
+  switch (value) {
+    case 'TRC20':
+      return t('TRC20 (Tron)')
+    case 'BEP20':
+      return t('BEP20 (BSC)')
+    case 'POLYGON':
+      return t('Polygon')
+    default:
+      return value || '-'
+  }
+}
+
+function accountNumberPlaceholder(
+  accountType: string,
+  t: (key: string) => string
+): string {
+  switch (accountType) {
+    case 'alipay':
+      return t('Alipay account')
+    case 'wechat':
+      return t('WeChat account')
+    case 'usdt':
+      return t('USDT wallet address')
+    default:
+      return t('Account Number')
+  }
+}
+
 function buildIdempotencyKey(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID()
@@ -594,55 +636,78 @@ export function Referral() {
                     placeholder={t('Withdraw Amount')}
                   />
                   <div className='grid gap-3 md:grid-cols-2'>
-                    <Select
-                      value={withdrawForm.account_type}
-                      onValueChange={(value) =>
-                        updateWithdrawForm('account_type', value || '')
-                      }
-                    >
-                      <SelectTrigger className='w-full'>
-                        <SelectValue placeholder={t('Account Type')} />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {ACCOUNT_TYPE_OPTIONS.map((option) => (
-                          <SelectItem key={option.value} value={option.value}>
-                            {option.label}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                    {withdrawForm.account_type === 'usdt' ? (
+                    <div className='space-y-1.5'>
+                      <div className='text-sm font-medium'>
+                        {t('Withdrawal Method')}
+                      </div>
                       <Select
-                        value={withdrawForm.account_network}
+                        value={withdrawForm.account_type}
                         onValueChange={(value) =>
-                          updateWithdrawForm('account_network', value || '')
+                          updateWithdrawForm('account_type', value || '')
                         }
                       >
                         <SelectTrigger className='w-full'>
-                          <SelectValue placeholder={t('Network')} />
+                          <SelectValue placeholder={t('Withdrawal Method')} />
                         </SelectTrigger>
-                        <SelectContent>
-                          {ACCOUNT_NETWORK_OPTIONS.map((network) => (
-                            <SelectItem key={network} value={network}>
-                              {network}
+                        <SelectContent alignItemWithTrigger={false}>
+                          {ACCOUNT_TYPE_OPTIONS.map((option) => (
+                            <SelectItem key={option.value} value={option.value}>
+                              {accountTypeLabel(option.value, t)}
                             </SelectItem>
                           ))}
                         </SelectContent>
                       </Select>
+                    </div>
+                    {withdrawForm.account_type === 'usdt' ? (
+                      <div className='space-y-1.5'>
+                        <div className='text-sm font-medium'>
+                          {t('USDT Blockchain Network')}
+                        </div>
+                        <Select
+                          value={withdrawForm.account_network}
+                          onValueChange={(value) =>
+                            updateWithdrawForm('account_network', value || '')
+                          }
+                        >
+                          <SelectTrigger className='w-full'>
+                            <SelectValue placeholder={t('Select USDT network')} />
+                          </SelectTrigger>
+                          <SelectContent alignItemWithTrigger={false}>
+                            {ACCOUNT_NETWORK_OPTIONS.map((network) => (
+                              <SelectItem key={network} value={network}>
+                                {accountNetworkLabel(network, t)}
+                              </SelectItem>
+                            ))}
+                          </SelectContent>
+                        </Select>
+                        <div className='text-xs text-muted-foreground'>
+                          {t(
+                            'Please select the same blockchain network as your receiving address.'
+                          )}
+                        </div>
+                      </div>
                     ) : (
-                      <Input
-                        value={withdrawForm.account_name}
-                        onChange={(e) =>
-                          updateWithdrawForm('account_name', e.target.value)
-                        }
-                        placeholder={t('Account Name')}
-                      />
+                      <div className='space-y-1.5'>
+                        <div className='text-sm font-medium'>
+                          {t('Account Name')}
+                        </div>
+                        <Input
+                          value={withdrawForm.account_name}
+                          onChange={(e) =>
+                            updateWithdrawForm('account_name', e.target.value)
+                          }
+                          placeholder={t('Account Name')}
+                        />
+                      </div>
                     )}
                   </div>
                   <Input
                     value={withdrawForm.account_no}
                     onChange={(e) => updateWithdrawForm('account_no', e.target.value)}
-                    placeholder={t('Account Number')}
+                    placeholder={accountNumberPlaceholder(
+                      withdrawForm.account_type,
+                      t
+                    )}
                   />
                   <div className='space-y-2'>
                     <div className='text-sm text-muted-foreground'>
@@ -723,7 +788,11 @@ export function Referral() {
                 cells: [
                   formatMoney(item.amount),
                   formatMoney(item.net_amount),
-                  `${item.account_type}${item.account_network ? ` / ${item.account_network}` : ''}`,
+                  `${accountTypeLabel(item.account_type, t)}${
+                    item.account_network
+                      ? ` / ${accountNetworkLabel(item.account_network, t)}`
+                      : ''
+                  }`,
                   statusLabel(item.status, t),
                   formatTimestamp(item.submitted_at),
                 ],
