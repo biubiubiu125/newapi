@@ -784,6 +784,12 @@ func (s *ReferralService) GetProfile(userId int) (*ReferralProfile, error) {
 func (s *ReferralService) GetSummary(userId int) (*ReferralSummary, error) {
 	affiliate := &model.ReferralAffiliate{}
 	if err := model.DB.Where("user_id = ?", userId).First(affiliate).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return &ReferralSummary{
+				MinWithdrawAmount:  common.ReferralMinWithdrawAmount,
+				SettlementCurrency: referralSettlementCurrency(),
+			}, nil
+		}
 		return nil, err
 	}
 	sanitizeAffiliateState(affiliate)
@@ -820,6 +826,9 @@ func (s *ReferralService) GetSummary(userId int) (*ReferralSummary, error) {
 func (s *ReferralService) ListUserCommissions(userId int, params ReferralListParams) ([]ReferralCommissionView, int64, error) {
 	affiliate := &model.ReferralAffiliate{}
 	if err := model.DB.Where("user_id = ?", userId).First(affiliate).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return []ReferralCommissionView{}, 0, nil
+		}
 		return nil, 0, err
 	}
 	return s.listCommissions(params, affiliate.Id, false)
@@ -995,6 +1004,13 @@ func (s *ReferralService) ListAdminAuditLogs(params ReferralListParams) ([]Refer
 }
 
 func (s *ReferralService) ListUserWithdrawals(userId int, params ReferralListParams) ([]ReferralWithdrawalView, int64, error) {
+	affiliate := &model.ReferralAffiliate{}
+	if err := model.DB.Where("user_id = ?", userId).First(affiliate).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return []ReferralWithdrawalView{}, 0, nil
+		}
+		return nil, 0, err
+	}
 	return s.listWithdrawals(params, userId, false)
 }
 
@@ -1081,12 +1097,15 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 			return errors.New("withdrawal account is required")
 		}
 		switch withdrawal.AccountType {
-		case "alipay", "wechat":
+		case "alipay":
+			if withdrawal.AccountName == "" {
+				return errors.New("withdrawal account name is required")
+			}
 			withdrawal.AccountNetwork = ""
 		case "usdt":
 			withdrawal.AccountName = ""
-			withdrawal.AccountNetwork = strings.ToUpper(withdrawal.AccountNetwork)
-			if withdrawal.AccountNetwork != "TRC20" && withdrawal.AccountNetwork != "BEP20" && withdrawal.AccountNetwork != "POLYGON" {
+			withdrawal.AccountNetwork = normalizeWithdrawalNetwork(withdrawal.AccountNetwork)
+			if withdrawal.AccountNetwork == "" {
 				return errors.New("invalid withdraw network")
 			}
 		default:
@@ -1143,75 +1162,7 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 }
 
 func (s *ReferralService) CancelWithdrawal(withdrawalId int, userId int) (*ReferralWithdrawalView, error) {
-	if withdrawalId <= 0 || userId <= 0 {
-		return nil, errors.New("invalid withdrawal")
-	}
-	err := model.DB.Transaction(func(tx *gorm.DB) error {
-		withdrawal := &model.ReferralWithdrawal{}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ? AND user_id = ?", withdrawalId, userId).First(withdrawal).Error; err != nil {
-			return err
-		}
-		if withdrawal.Status != model.ReferralWithdrawalStatusPending {
-			return errors.New("only pending withdrawals can be canceled")
-		}
-		account := &model.ReferralCommissionAccount{}
-		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("affiliate_id = ?", withdrawal.AffiliateId).First(account).Error; err != nil {
-			return err
-		}
-		res := tx.Model(&model.ReferralWithdrawal{}).
-			Where("id = ? AND status = ?", withdrawal.Id, model.ReferralWithdrawalStatusPending).
-			Updates(map[string]any{
-				"status":      model.ReferralWithdrawalStatusCanceled,
-				"canceled_at": time.Now().Unix(),
-				"canceled_by": userId,
-			})
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected != 1 {
-			return errors.New("only pending withdrawals can be canceled")
-		}
-		res = tx.Model(&model.ReferralCommissionAccount{}).
-			Where("id = ? AND frozen_amount >= ?", account.Id, withdrawal.Amount).
-			Updates(map[string]any{
-				"frozen_amount":    gorm.Expr("frozen_amount - ?", withdrawal.Amount),
-				"available_amount": gorm.Expr("available_amount + ?", withdrawal.Amount),
-			})
-		if res.Error != nil {
-			return res.Error
-		}
-		if res.RowsAffected != 1 {
-			return errors.New("withdrawal frozen balance is invalid")
-		}
-		if err := s.releaseWithdrawalItemsTx(tx, withdrawal.Id); err != nil {
-			return err
-		}
-		if err := s.createLedgerTx(tx, &model.ReferralCommissionLedger{
-			AffiliateId:        withdrawal.AffiliateId,
-			UserId:             withdrawal.UserId,
-			WithdrawalId:       withdrawal.Id,
-			Type:               "withdrawal_cancel_release",
-			RefType:            "withdrawal",
-			RefId:              fmt.Sprintf("%d", withdrawal.Id),
-			ExternalRefId:      fmt.Sprintf("withdrawal_cancel_release:%d", withdrawal.Id),
-			SettlementCurrency: withdrawal.SettlementCurrency,
-			DeltaAvailable:     roundMoney(withdrawal.Amount),
-			DeltaFrozen:        roundMoney(-withdrawal.Amount),
-			Operator:           "user",
-			Remark:             "user canceled referral withdrawal",
-			CreatedAt:          time.Now().Unix(),
-		}); err != nil {
-			return err
-		}
-		return s.recordAdminAuditTx(tx, "referral_withdrawal_cancel", userId, withdrawal.AffiliateId, userId, "", "", "", nil, map[string]any{
-			"withdrawal_id": withdrawal.Id,
-			"amount":        withdrawal.Amount,
-		})
-	})
-	if err != nil {
-		return nil, err
-	}
-	return s.GetWithdrawalById(withdrawalId, false)
+	return nil, errors.New("withdrawal requests cannot be manually canceled after submission")
 }
 
 func (s *ReferralService) ApproveWithdrawal(input ReferralWithdrawalReviewInput) (*ReferralWithdrawalView, error) {
@@ -2476,9 +2427,22 @@ func sameWithdrawalRequest(existing *model.ReferralWithdrawal, input ReferralWit
 		strings.EqualFold(strings.TrimSpace(existing.AccountType), strings.TrimSpace(input.AccountType)) &&
 		strings.TrimSpace(existing.AccountName) == strings.TrimSpace(input.AccountName) &&
 		strings.TrimSpace(existing.AccountNo) == strings.TrimSpace(input.AccountNo) &&
-		strings.EqualFold(strings.TrimSpace(existing.AccountNetwork), strings.TrimSpace(input.AccountNetwork)) &&
+		strings.EqualFold(normalizeWithdrawalNetwork(existing.AccountNetwork), normalizeWithdrawalNetwork(input.AccountNetwork)) &&
 		stripAssetSignature(existing.QRImageURL) == stripAssetSignature(input.QRImageURL) &&
 		strings.TrimSpace(existing.ApplicantNote) == strings.TrimSpace(input.ApplicantNote)
+}
+
+func normalizeWithdrawalNetwork(value string) string {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "trc20":
+		return "TRC20"
+	case "bep20":
+		return "BEP20"
+	case "polygon":
+		return "Polygon"
+	default:
+		return ""
+	}
 }
 
 func sameAdjustmentPayload(existing *model.ReferralCommissionLedger, affiliateId int, userId int, delta float64, remark string) bool {

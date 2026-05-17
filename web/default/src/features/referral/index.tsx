@@ -22,7 +22,6 @@ import {
   useMemo,
   useRef,
   useState,
-  type ReactNode,
 } from 'react'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
@@ -44,7 +43,6 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { SectionPageLayout } from '@/components/layout'
 import {
   applyReferralAffiliate,
-  cancelReferralWithdrawal,
   createReferralWithdrawal,
   getReferralProfile,
   getReferralSummary,
@@ -90,11 +88,24 @@ const SECTION_META: Record<
 
 const ACCOUNT_TYPE_OPTIONS = [
   { value: 'alipay', label: 'Alipay' },
-  { value: 'wechat', label: 'WeChat Pay' },
   { value: 'usdt', label: 'USDT' },
 ] as const
 
-const ACCOUNT_NETWORK_OPTIONS = ['TRC20', 'BEP20', 'POLYGON'] as const
+const ACCOUNT_NETWORK_OPTIONS = [
+  { value: 'TRC20', label: 'TRC20' },
+  { value: 'BEP20', label: 'BEP20' },
+  { value: 'Polygon', label: 'Polygon' },
+] as const
+
+type WithdrawalSubmission = {
+  amount: number
+  account_type: string
+  account_name: string
+  account_no: string
+  account_network: string
+  qr_image_url: string
+  applicant_note: string
+}
 
 function formatMoney(value: number): string {
   const amount = Number.isFinite(value) ? value : 0
@@ -120,8 +131,6 @@ function accountTypeLabel(value: string, t: (key: string) => string): string {
   switch (value) {
     case 'alipay':
       return t('Alipay')
-    case 'wechat':
-      return t('WeChat Pay')
     case 'usdt':
       return 'USDT'
     default:
@@ -132,10 +141,11 @@ function accountTypeLabel(value: string, t: (key: string) => string): string {
 function accountNetworkLabel(value: string, t: (key: string) => string): string {
   switch (value) {
     case 'TRC20':
-      return t('TRC20 (Tron)')
+      return 'TRC20'
     case 'BEP20':
-      return t('BEP20 (BSC)')
+      return 'BEP20'
     case 'POLYGON':
+    case 'Polygon':
       return t('Polygon')
     default:
       return value || '-'
@@ -149,8 +159,6 @@ function accountNumberPlaceholder(
   switch (accountType) {
     case 'alipay':
       return t('Alipay account')
-    case 'wechat':
-      return t('WeChat account')
     case 'usdt':
       return t('USDT wallet address')
     default:
@@ -221,7 +229,8 @@ export function Referral() {
   const [applying, setApplying] = useState(false)
   const [submittingWithdrawal, setSubmittingWithdrawal] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [cancelTarget, setCancelTarget] = useState<ReferralWithdrawal | null>(null)
+  const [withdrawConfirm, setWithdrawConfirm] =
+    useState<WithdrawalSubmission | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
 
   const canViewDashboard =
@@ -246,7 +255,19 @@ export function Referral() {
     key: keyof typeof withdrawForm,
     value: string
   ): void {
-    setWithdrawForm((prev) => ({ ...prev, [key]: value }))
+    setWithdrawForm((prev) => {
+      if (key === 'account_type') {
+        return {
+          ...prev,
+          account_type: value,
+          account_name: '',
+          account_no: '',
+          account_network: value === 'usdt' ? prev.account_network || 'TRC20' : 'TRC20',
+          qr_image_url: '',
+        }
+      }
+      return { ...prev, [key]: value }
+    })
   }
 
   async function loadBase() {
@@ -336,50 +357,72 @@ export function Referral() {
     }
   }
 
-  async function handleWithdrawalSubmit() {
+  function buildWithdrawalSubmission(): WithdrawalSubmission | null {
     if (withdrawForm.amount.trim() === '') {
       toast.error(t('Please enter a valid amount'))
-      return
+      return null
     }
     const amount = Number(withdrawForm.amount)
     if (!Number.isFinite(amount) || amount <= 0) {
       toast.error(t('Please enter a valid amount'))
-      return
+      return null
     }
-    if (!withdrawForm.account_no.trim()) {
-      toast.error(t('Please enter an account number'))
-      return
+    if (withdrawForm.account_type !== 'alipay' && withdrawForm.account_type !== 'usdt') {
+      toast.error(t('Please select a withdrawal method'))
+      return null
     }
-    if (withdrawForm.account_type !== 'usdt' && !withdrawForm.account_name.trim()) {
+    if (withdrawForm.account_type === 'alipay' && !withdrawForm.account_name.trim()) {
       toast.error(t('Please enter the payee name'))
-      return
+      return null
+    }
+    if (withdrawForm.account_type === 'alipay' && !withdrawForm.account_no.trim()) {
+      toast.error(t('Please enter an Alipay account'))
+      return null
     }
     if (withdrawForm.account_type === 'usdt' && !withdrawForm.account_network.trim()) {
       toast.error(t('Please select the network'))
-      return
+      return null
+    }
+    if (withdrawForm.account_type === 'usdt' && !withdrawForm.account_no.trim()) {
+      toast.error(t('Please enter the USDT wallet address'))
+      return null
     }
 
+    return {
+      amount,
+      account_type: withdrawForm.account_type,
+      account_name:
+        withdrawForm.account_type === 'usdt'
+          ? ''
+          : withdrawForm.account_name.trim(),
+      account_no: withdrawForm.account_no.trim(),
+      account_network:
+        withdrawForm.account_type === 'usdt'
+          ? withdrawForm.account_network.trim()
+          : '',
+      qr_image_url: withdrawForm.qr_image_url.trim(),
+      applicant_note: withdrawForm.applicant_note.trim(),
+    }
+  }
+
+  function handleWithdrawalSubmit() {
+    const submission = buildWithdrawalSubmission()
+    if (!submission) return
+    setWithdrawConfirm(submission)
+  }
+
+  async function handleConfirmWithdrawalSubmit() {
+    if (!withdrawConfirm) return
     setSubmittingWithdrawal(true)
     try {
       const idempotencyKey = buildIdempotencyKey()
       const res = await createReferralWithdrawal({
-        amount,
-        account_type: withdrawForm.account_type,
-        account_name:
-          withdrawForm.account_type === 'usdt'
-            ? ''
-            : withdrawForm.account_name.trim(),
-        account_no: withdrawForm.account_no.trim(),
-        account_network:
-          withdrawForm.account_type === 'usdt'
-            ? withdrawForm.account_network.trim()
-            : '',
-        qr_image_url: withdrawForm.qr_image_url.trim(),
-        applicant_note: withdrawForm.applicant_note.trim(),
+        ...withdrawConfirm,
         idempotency_key: idempotencyKey,
       })
       if (res.success) {
         toast.success(t('Withdrawal request submitted'))
+        setWithdrawConfirm(null)
         setWithdrawForm({
           amount: '',
           account_type: 'alipay',
@@ -401,19 +444,6 @@ export function Referral() {
       }
     } finally {
       setSubmittingWithdrawal(false)
-    }
-  }
-
-  async function handleConfirmCancelWithdrawal() {
-    if (!cancelTarget) return
-    const res = await cancelReferralWithdrawal(cancelTarget.id)
-    if (res.success) {
-      toast.success(t('Withdrawal canceled'))
-      setCancelTarget(null)
-      await loadBase()
-      await loadWithdrawals(withdrawalPage, withdrawalPageSize)
-    } else {
-      toast.error(res.message || t('Failed to cancel withdrawal'))
     }
   }
 
@@ -629,12 +659,17 @@ export function Referral() {
                   <CardTitle>{t('Withdraw Application')}</CardTitle>
                 </CardHeader>
                 <CardContent className='space-y-4'>
-                  <Input
-                    type='number'
-                    value={withdrawForm.amount}
-                    onChange={(e) => updateWithdrawForm('amount', e.target.value)}
-                    placeholder={t('Withdraw Amount')}
-                  />
+                  <div className='space-y-1.5'>
+                    <div className='text-sm font-medium'>
+                      {t('Withdraw Amount')}
+                    </div>
+                    <Input
+                      type='number'
+                      value={withdrawForm.amount}
+                      onChange={(e) => updateWithdrawForm('amount', e.target.value)}
+                      placeholder={t('Withdraw Amount')}
+                    />
+                  </div>
                   <div className='grid gap-3 md:grid-cols-2'>
                     <div className='space-y-1.5'>
                       <div className='text-sm font-medium'>
@@ -647,7 +682,9 @@ export function Referral() {
                         }
                       >
                         <SelectTrigger className='w-full'>
-                          <SelectValue placeholder={t('Withdrawal Method')} />
+                          <SelectValue>
+                            {accountTypeLabel(withdrawForm.account_type, t)}
+                          </SelectValue>
                         </SelectTrigger>
                         <SelectContent alignItemWithTrigger={false}>
                           {ACCOUNT_TYPE_OPTIONS.map((option) => (
@@ -670,12 +707,17 @@ export function Referral() {
                           }
                         >
                           <SelectTrigger className='w-full'>
-                            <SelectValue placeholder={t('Select USDT network')} />
+                            <SelectValue>
+                              {accountNetworkLabel(
+                                withdrawForm.account_network,
+                                t
+                              )}
+                            </SelectValue>
                           </SelectTrigger>
                           <SelectContent alignItemWithTrigger={false}>
                             {ACCOUNT_NETWORK_OPTIONS.map((network) => (
-                              <SelectItem key={network} value={network}>
-                                {accountNetworkLabel(network, t)}
+                              <SelectItem key={network.value} value={network.value}>
+                                {network.label}
                               </SelectItem>
                             ))}
                           </SelectContent>
@@ -701,17 +743,24 @@ export function Referral() {
                       </div>
                     )}
                   </div>
-                  <Input
-                    value={withdrawForm.account_no}
-                    onChange={(e) => updateWithdrawForm('account_no', e.target.value)}
-                    placeholder={accountNumberPlaceholder(
-                      withdrawForm.account_type,
-                      t
-                    )}
-                  />
+                  <div className='space-y-1.5'>
+                    <div className='text-sm font-medium'>
+                      {accountNumberPlaceholder(withdrawForm.account_type, t)}
+                    </div>
+                    <Input
+                      value={withdrawForm.account_no}
+                      onChange={(e) =>
+                        updateWithdrawForm('account_no', e.target.value)
+                      }
+                      placeholder={accountNumberPlaceholder(
+                        withdrawForm.account_type,
+                        t
+                      )}
+                    />
+                  </div>
                   <div className='space-y-2'>
-                    <div className='text-sm text-muted-foreground'>
-                      {t('QR Code')}
+                    <div className='text-sm font-medium'>
+                      {t('QR Code Optional')}
                     </div>
                     <div className='flex gap-2'>
                       <Button
@@ -723,6 +772,7 @@ export function Referral() {
                         {uploading ? t('Uploading...') : t('Upload Image')}
                       </Button>
                       <Input
+                        className='min-w-0 flex-1'
                         value={withdrawForm.qr_image_url}
                         onChange={(e) =>
                           updateWithdrawForm('qr_image_url', e.target.value)
@@ -738,14 +788,19 @@ export function Referral() {
                       onChange={(event) => void handleUploadReferralAsset(event)}
                     />
                   </div>
-                  <textarea
-                    className='border-input min-h-[110px] w-full rounded-md border bg-transparent px-3 py-2 text-sm'
-                    value={withdrawForm.applicant_note}
-                    onChange={(e) =>
-                      updateWithdrawForm('applicant_note', e.target.value)
-                    }
-                    placeholder={t('Notes')}
-                  />
+                  <div className='space-y-1.5'>
+                    <div className='text-sm font-medium'>
+                      {t('Notes Optional')}
+                    </div>
+                    <textarea
+                      className='border-input min-h-[110px] w-full rounded-md border bg-transparent px-3 py-2 text-sm'
+                      value={withdrawForm.applicant_note}
+                      onChange={(e) =>
+                        updateWithdrawForm('applicant_note', e.target.value)
+                      }
+                      placeholder={t('Notes')}
+                    />
+                  </div>
                   <Button
                     onClick={() => void handleWithdrawalSubmit()}
                     disabled={!canWithdraw || submittingWithdrawal}
@@ -796,16 +851,6 @@ export function Referral() {
                   statusLabel(item.status, t),
                   formatTimestamp(item.submitted_at),
                 ],
-                action:
-                  item.status === 'pending' ? (
-                    <Button
-                      variant='outline'
-                      size='sm'
-                      onClick={() => setCancelTarget(item)}
-                    >
-                      {t('Cancel')}
-                    </Button>
-                  ) : null,
               }))}
               headers={[
                 t('Amount'),
@@ -828,15 +873,74 @@ export function Referral() {
         </div>
       </SectionPageLayout.Content>
       <ConfirmDialog
-        open={!!cancelTarget}
+        open={!!withdrawConfirm}
         onOpenChange={(open) => {
-          if (!open) setCancelTarget(null)
+          if (!open && !submittingWithdrawal) setWithdrawConfirm(null)
         }}
-        title={t('Cancel withdrawal?')}
-        desc={t('This will release the frozen amount back to your available balance.')}
-        confirmText={t('Cancel Withdrawal')}
-        handleConfirm={() => void handleConfirmCancelWithdrawal()}
-      />
+        title={t('Confirm withdrawal information')}
+        desc={t(
+          'Please confirm the withdrawal information below. The request cannot be manually canceled after submission.'
+        )}
+        confirmText={
+          submittingWithdrawal ? t('Submitting...') : t('Confirm and Submit')
+        }
+        cancelBtnText={t('Back to Edit')}
+        isLoading={submittingWithdrawal}
+        handleConfirm={() => void handleConfirmWithdrawalSubmit()}
+      >
+        {withdrawConfirm && (
+          <div className='space-y-3 rounded-md border p-3 text-sm'>
+            <BalanceLine
+              label={t('Withdraw Amount')}
+              value={formatMoney(withdrawConfirm.amount)}
+            />
+            <BalanceLine
+              label={t('Withdrawal Method')}
+              value={accountTypeLabel(withdrawConfirm.account_type, t)}
+            />
+            {withdrawConfirm.account_type === 'alipay' ? (
+              <>
+                <BalanceLine
+                  label={t('Account Name')}
+                  value={withdrawConfirm.account_name}
+                />
+                <BalanceLine
+                  label={t('Alipay account')}
+                  value={withdrawConfirm.account_no}
+                />
+              </>
+            ) : (
+              <>
+                <BalanceLine
+                  label={t('USDT Blockchain Network')}
+                  value={accountNetworkLabel(withdrawConfirm.account_network, t)}
+                />
+                <BalanceLine
+                  label={t('USDT wallet address')}
+                  value={withdrawConfirm.account_no}
+                />
+              </>
+            )}
+            {withdrawConfirm.qr_image_url && (
+              <BalanceLine
+                label={t('QR Code Optional')}
+                value={withdrawConfirm.qr_image_url}
+              />
+            )}
+            {withdrawConfirm.applicant_note && (
+              <BalanceLine
+                label={t('Notes Optional')}
+                value={withdrawConfirm.applicant_note}
+              />
+            )}
+            <div className='text-destructive pt-2 text-xs leading-relaxed'>
+              {t(
+                'If incorrect receiving information or blockchain network causes funds not to arrive, you are responsible for the loss.'
+              )}
+            </div>
+          </div>
+        )}
+      </ConfirmDialog>
     </SectionPageLayout>
   )
 }
@@ -867,7 +971,6 @@ function SimpleTableCard(props: {
   rows: Array<{
     key: number | string
     cells: string[]
-    action?: ReactNode
   }>
   emptyText: string
   page: number
@@ -897,7 +1000,6 @@ function SimpleTableCard(props: {
                     {header}
                   </th>
                 ))}
-                <th className='px-3 py-2 font-medium'>{t('Action')}</th>
               </tr>
             </thead>
             <tbody>
@@ -908,7 +1010,6 @@ function SimpleTableCard(props: {
                       {cell}
                     </td>
                   ))}
-                  <td className='px-3 py-2'>{row.action}</td>
                 </tr>
               ))}
             </tbody>

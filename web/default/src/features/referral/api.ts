@@ -84,11 +84,6 @@ export async function createReferralWithdrawal(payload: {
   return res.data
 }
 
-export async function cancelReferralWithdrawal(id: number): Promise<ApiResponse<ReferralWithdrawal>> {
-  const res = await api.post(`/api/user/referral/withdrawals/${id}/cancel`)
-  return res.data
-}
-
 export async function uploadReferralAsset(file: File): Promise<ApiResponse<{ url: string }>> {
   const formData = new FormData()
   formData.append('file', file)

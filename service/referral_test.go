@@ -44,6 +44,8 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 	common.ReferralCookieTTLDays = 30
 	common.ReferralDefaultRate = 20
 	common.ReferralSettleFreezeDays = 7
+	common.ReferralMinWithdrawAmount = 0
+	common.ReferralWithdrawFee = 0
 	common.ReferralSettlementCurrency = "CNY"
 	common.ReferralSettlementFxRates = map[string]float64{"CNY": 1}
 	operation_setting.USDExchangeRate = 7.3
@@ -637,6 +639,87 @@ func TestCreateWithdrawalStripsSignedQRURLBeforePersisting(t *testing.T) {
 	stored := &model.ReferralWithdrawal{}
 	require.NoError(t, db.First(stored, view.Id).Error)
 	require.Equal(t, "/referral-assets/withdraw-qr.png", stored.QRImageURL)
+}
+
+func TestCreateWithdrawalRejectsWechatAndNormalizesUSDTNetwork(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "withdraw-usdt", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             user.Id,
+		InviteCode:         "WDUSDT01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:     affiliate.Id,
+		UserId:          user.Id,
+		AvailableAmount: 100,
+	}).Error)
+
+	_, err := service.CreateWithdrawal(ReferralWithdrawalCreateInput{
+		UserId:         user.Id,
+		Amount:         10,
+		AccountType:    "wechat",
+		AccountName:    "tester",
+		AccountNo:      "wx-1",
+		IdempotencyKey: "wd-wechat",
+	})
+	require.ErrorContains(t, err, "invalid withdraw type")
+
+	view, err := service.CreateWithdrawal(ReferralWithdrawalCreateInput{
+		UserId:         user.Id,
+		Amount:         10,
+		AccountType:    "usdt",
+		AccountNo:      "0x1234567890",
+		AccountNetwork: "polygon",
+		IdempotencyKey: "wd-usdt-polygon",
+	})
+	require.NoError(t, err)
+	require.Equal(t, "Polygon", view.AccountNetwork)
+
+	stored := &model.ReferralWithdrawal{}
+	require.NoError(t, db.First(stored, view.Id).Error)
+	require.Equal(t, "Polygon", stored.AccountNetwork)
+	require.Empty(t, stored.AccountName)
+}
+
+func TestCancelWithdrawalRejectedForUserSubmittedRequests(t *testing.T) {
+	setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	_, err := service.CancelWithdrawal(1, 1)
+	require.ErrorContains(t, err, "cannot be manually canceled")
+}
+
+func TestGetSummaryReturnsEmptySummaryWhenAffiliateMissing(t *testing.T) {
+	setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "no-affiliate", Password: "12345678", Role: common.RoleAdminUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+
+	summary, err := service.GetSummary(user.Id)
+	require.NoError(t, err)
+	require.NotNil(t, summary)
+	require.Equal(t, "CNY", summary.SettlementCurrency)
+	require.False(t, summary.AcquisitionEnabled)
+	require.Zero(t, summary.AvailableAmount)
+
+	commissions, commissionTotal, err := service.ListUserCommissions(user.Id, ReferralListParams{})
+	require.NoError(t, err)
+	require.Zero(t, commissionTotal)
+	require.Empty(t, commissions)
+
+	withdrawals, withdrawalTotal, err := service.ListUserWithdrawals(user.Id, ReferralListParams{})
+	require.NoError(t, err)
+	require.Zero(t, withdrawalTotal)
+	require.Empty(t, withdrawals)
 }
 
 func TestUserWithdrawalViewMasksAccountNumber(t *testing.T) {
