@@ -175,6 +175,7 @@ export function EpusdtSettingsSection(props: Props) {
         </div>
 
         <Button
+          type='button'
           onClick={handleSave}
           disabled={loading || updateOption.isPending}
         >

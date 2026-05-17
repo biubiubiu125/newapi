@@ -1099,6 +1099,10 @@ export function PaymentSettingsSection({
 
           <Separator />
 
+          <EpusdtSettingsSection defaultValues={epusdtDefaultValues} />
+
+          <Separator />
+
           <div className='space-y-4'>
             <div>
               <h3 className='text-lg font-medium'>{t('Stripe Gateway')}</h3>
@@ -1471,10 +1475,6 @@ export function PaymentSettingsSection({
           </Button>
         </form>
       </Form>
-
-      <Separator />
-
-      <EpusdtSettingsSection defaultValues={epusdtDefaultValues} />
 
       <Separator />
 
