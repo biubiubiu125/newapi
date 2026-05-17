@@ -175,7 +175,19 @@ func EpusdtTopUpNotify(c *gin.Context) {
 	LockOrder(tradeNo)
 	defer UnlockOrder(tradeNo)
 	method := service.EpusdtCallbackMethod(params)
-	if err := model.RechargeEpusdt(tradeNo, common.GetJsonString(params), method, c.ClientIP()); err != nil {
+	merchantID := service.EpusdtCallbackMerchantID(params)
+	if merchantID != "" && merchantID != setting.EpusdtPID {
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Epusdt webhook merchant mismatch trade_no=%s callback_pid=%s client_ip=%s", tradeNo, merchantID, c.ClientIP()))
+		_, _ = c.Writer.Write([]byte("fail"))
+		return
+	}
+	if err := model.RechargeEpusdtWithValidation(tradeNo, common.GetJsonString(params), model.PaymentCallbackValidation{
+		ExpectedPaymentProvider: model.PaymentProviderEpusdt,
+		ActualPaymentMethod:     method,
+		PaidAmount:              service.EpusdtCallbackPaidAmount(params),
+		PaidCurrency:            service.EpusdtCallbackPaidCurrency(params),
+		RequirePaymentFacts:     true,
+	}, c.ClientIP()); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Epusdt 充值处理失败 trade_no=%s client_ip=%s error=%q", tradeNo, c.ClientIP(), err.Error()))
 		_, _ = c.Writer.Write([]byte("fail"))
 		return

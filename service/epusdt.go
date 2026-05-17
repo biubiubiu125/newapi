@@ -331,6 +331,33 @@ func EpusdtCallbackMethod(values map[string]interface{}) string {
 	return BuildEpusdtPaymentMethod(token, network)
 }
 
+func EpusdtCallbackPaidAmount(values map[string]interface{}) float64 {
+	amountText := firstString(values, "amount", "money", "paid_amount", "total_amount", "order_amount")
+	if amountText == "" {
+		return -1
+	}
+	amount, err := strconv.ParseFloat(amountText, 64)
+	if err != nil {
+		return -1
+	}
+	return amount
+}
+
+func EpusdtCallbackPaidCurrency(values map[string]interface{}) string {
+	currency := firstString(values, "settlement_currency", "fiat_currency", "order_currency")
+	if currency == "" {
+		token := firstString(values, "token", "symbol", "coin")
+		if token == "" {
+			currency = firstString(values, "currency")
+		}
+	}
+	return strings.ToUpper(strings.TrimSpace(currency))
+}
+
+func EpusdtCallbackMerchantID(values map[string]interface{}) string {
+	return firstString(values, "pid", "merchant_id", "merchantId")
+}
+
 func IsEpusdtPaidStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "paid", "success", "succeeded", "completed", "confirmed", "trade_success":

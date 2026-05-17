@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 
@@ -325,6 +326,80 @@ func UnlockOrder(tradeNo string) {
 
 func EpayNotify(c *gin.Context) {
 	if !isEpayWebhookEnabled() {
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("epay webhook rejected reason=webhook_disabled path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
+		_, _ = c.Writer.Write([]byte("fail"))
+		return
+	}
+
+	var params map[string]string
+	if c.Request.Method == "POST" {
+		if err := c.Request.ParseForm(); err != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("epay webhook form parse failed path=%q client_ip=%s error=%q", c.Request.RequestURI, c.ClientIP(), err.Error()))
+			_, _ = c.Writer.Write([]byte("fail"))
+			return
+		}
+		params = lo.Reduce(lo.Keys(c.Request.PostForm), func(r map[string]string, t string, i int) map[string]string {
+			r[t] = c.Request.PostForm.Get(t)
+			return r
+		}, map[string]string{})
+	} else {
+		params = lo.Reduce(lo.Keys(c.Request.URL.Query()), func(r map[string]string, t string, i int) map[string]string {
+			r[t] = c.Request.URL.Query().Get(t)
+			return r
+		}, map[string]string{})
+	}
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("epay webhook received path=%q client_ip=%s method=%s param_count=%d", c.Request.RequestURI, c.ClientIP(), c.Request.Method, len(params)))
+
+	if len(params) == 0 {
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("epay webhook rejected reason=empty_params path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
+		_, _ = c.Writer.Write([]byte("fail"))
+		return
+	}
+	client := GetEpayClient()
+	if client == nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("epay webhook rejected reason=client_not_configured path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
+		_, _ = c.Writer.Write([]byte("fail"))
+		return
+	}
+	verifyInfo, err := client.Verify(params)
+	if err != nil || !verifyInfo.VerifyStatus {
+		if err != nil {
+			logger.LogWarn(c.Request.Context(), fmt.Sprintf("epay webhook signature verification failed path=%q client_ip=%s error=%q", c.Request.RequestURI, c.ClientIP(), err.Error()))
+		} else {
+			logger.LogWarn(c.Request.Context(), fmt.Sprintf("epay webhook signature verification failed path=%q client_ip=%s verify_status=false", c.Request.RequestURI, c.ClientIP()))
+		}
+		_, _ = c.Writer.Write([]byte("fail"))
+		return
+	}
+
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("epay webhook signature verified trade_no=%s callback_type=%s trade_status=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, c.ClientIP()))
+	if verifyInfo.TradeStatus != epay.StatusTradeSuccess {
+		logger.LogInfo(c.Request.Context(), fmt.Sprintf("epay webhook ignored non-success event trade_no=%s callback_type=%s trade_status=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, c.ClientIP()))
+		_, _ = c.Writer.Write([]byte("success"))
+		return
+	}
+
+	LockOrder(verifyInfo.ServiceTradeNo)
+	defer UnlockOrder(verifyInfo.ServiceTradeNo)
+
+	if err := model.RechargeEpayWithValidation(verifyInfo.ServiceTradeNo, common.GetJsonString(verifyInfo), model.PaymentCallbackValidation{
+		ExpectedPaymentProvider: model.PaymentProviderEpay,
+		ActualPaymentMethod:     verifyInfo.Type,
+		PaidAmount:              parseCallbackAmount(verifyInfo.Money),
+		PaidCurrency:            "CNY",
+		RequirePaymentFacts:     true,
+	}, c.ClientIP()); err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("epay topup processing failed trade_no=%s callback_type=%s client_ip=%s error=%q", verifyInfo.ServiceTradeNo, verifyInfo.Type, c.ClientIP(), err.Error()))
+		_, _ = c.Writer.Write([]byte("fail"))
+		return
+	}
+	_ = referralService.ProcessTopUpCommission(verifyInfo.ServiceTradeNo)
+	_, _ = c.Writer.Write([]byte("success"))
+}
+
+/*
+func epayNotifyLegacy(c *gin.Context) {
+	if !isEpayWebhookEnabled() {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("易支付 webhook 被拒绝 reason=webhook_disabled path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
@@ -398,6 +473,18 @@ func EpayNotify(c *gin.Context) {
 			logger.LogWarn(c.Request.Context(), fmt.Sprintf("易支付 订单支付网关不匹配 trade_no=%s order_provider=%s callback_type=%s client_ip=%s", verifyInfo.ServiceTradeNo, topUp.PaymentProvider, verifyInfo.Type, c.ClientIP()))
 			return
 		}
+		if topUp.PaymentMethod != verifyInfo.Type {
+			logger.LogWarn(c.Request.Context(), fmt.Sprintf("epay callback payment method mismatch trade_no=%s order_payment_method=%s actual_type=%s client_ip=%s", verifyInfo.ServiceTradeNo, topUp.PaymentMethod, verifyInfo.Type, c.ClientIP()))
+			return
+		}
+		if !callbackAmountMatches(topUp.PaidAmount, verifyInfo.Money) {
+			logger.LogWarn(c.Request.Context(), fmt.Sprintf("epay callback amount mismatch trade_no=%s order_amount=%.8f callback_amount=%s client_ip=%s", verifyInfo.ServiceTradeNo, topUp.PaidAmount, verifyInfo.Money, c.ClientIP()))
+			return
+		}
+		if !callbackCurrencyMatches(topUp.PaidCurrency, "CNY") {
+			logger.LogWarn(c.Request.Context(), fmt.Sprintf("epay callback currency mismatch trade_no=%s order_currency=%s callback_currency=CNY client_ip=%s", verifyInfo.ServiceTradeNo, topUp.PaidCurrency, c.ClientIP()))
+			return
+		}
 		if topUp.Status == common.TopUpStatusPending {
 			if topUp.PaymentMethod != verifyInfo.Type {
 				logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 实际支付方式与订单不同 trade_no=%s order_payment_method=%s actual_type=%s client_ip=%s", verifyInfo.ServiceTradeNo, topUp.PaymentMethod, verifyInfo.Type, c.ClientIP()))
@@ -427,6 +514,7 @@ func EpayNotify(c *gin.Context) {
 		logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 webhook 忽略事件 trade_no=%s callback_type=%s trade_status=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, c.ClientIP()))
 	}
 }
+*/
 
 func RequestAmount(c *gin.Context) {
 	var req AmountRequest
@@ -452,6 +540,31 @@ func RequestAmount(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "success", "data": strconv.FormatFloat(payMoney, 'f', 2, 64)})
+}
+
+func parseCallbackAmount(value string) float64 {
+	amount, err := strconv.ParseFloat(value, 64)
+	if err != nil {
+		return -1
+	}
+	return amount
+}
+
+func callbackAmountMatches(expected float64, actual string) bool {
+	actualAmount := parseCallbackAmount(actual)
+	if actualAmount <= 0 {
+		return false
+	}
+	return decimal.NewFromFloat(expected).Round(8).Equal(decimal.NewFromFloat(actualAmount).Round(8))
+}
+
+func callbackCurrencyMatches(expected string, actual string) bool {
+	expected = strings.ToUpper(strings.TrimSpace(expected))
+	actual = strings.ToUpper(strings.TrimSpace(actual))
+	if expected == "" || actual == "" {
+		return expected == actual
+	}
+	return expected == actual
 }
 
 func GetUserTopUps(c *gin.Context) {

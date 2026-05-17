@@ -152,7 +152,18 @@ func SubscriptionEpusdtNotify(c *gin.Context) {
 	}
 	LockOrder(tradeNo)
 	defer UnlockOrder(tradeNo)
-	if err := model.CompleteSubscriptionOrder(tradeNo, common.GetJsonString(params), model.PaymentProviderEpusdt, service.EpusdtCallbackMethod(params)); err != nil {
+	merchantID := service.EpusdtCallbackMerchantID(params)
+	if merchantID != "" && merchantID != setting.EpusdtPID {
+		_, _ = c.Writer.Write([]byte("fail"))
+		return
+	}
+	if err := model.CompleteSubscriptionOrderWithValidation(tradeNo, common.GetJsonString(params), model.PaymentCallbackValidation{
+		ExpectedPaymentProvider: model.PaymentProviderEpusdt,
+		ActualPaymentMethod:     service.EpusdtCallbackMethod(params),
+		PaidAmount:              service.EpusdtCallbackPaidAmount(params),
+		PaidCurrency:            service.EpusdtCallbackPaidCurrency(params),
+		RequirePaymentFacts:     true,
+	}); err != nil {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}

@@ -42,6 +42,8 @@ func insertSubscriptionOrderForPaymentGuardTest(t *testing.T, tradeNo string, us
 		UserId:          userID,
 		PlanId:          planID,
 		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
 		TradeNo:         tradeNo,
 		PaymentMethod:   paymentProvider,
 		PaymentProvider: paymentProvider,
@@ -57,6 +59,8 @@ func insertTopUpForPaymentGuardTest(t *testing.T, tradeNo string, userID int, pa
 		UserId:          userID,
 		Amount:          2,
 		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
 		TradeNo:         tradeNo,
 		PaymentMethod:   paymentProvider,
 		PaymentProvider: paymentProvider,
@@ -156,6 +160,213 @@ func TestCompleteSubscriptionOrder_RejectsMismatchedPaymentProvider(t *testing.T
 
 	topUp := GetTopUpByTradeNo("sub-guard-order")
 	assert.Nil(t, topUp)
+}
+
+func TestCompleteSubscriptionOrder_RejectsMismatchedCallbackFacts(t *testing.T) {
+	testCases := []struct {
+		name          string
+		validation    PaymentCallbackValidation
+		expectedError error
+	}{
+		{
+			name: "payment method mismatch",
+			validation: PaymentCallbackValidation{
+				ExpectedPaymentProvider: PaymentProviderEpay,
+				ActualPaymentMethod:     "wxpay",
+				PaidAmount:              9.99,
+				PaidCurrency:            "CNY",
+				RequirePaymentFacts:     true,
+			},
+			expectedError: ErrPaymentMethodMismatch,
+		},
+		{
+			name: "amount mismatch",
+			validation: PaymentCallbackValidation{
+				ExpectedPaymentProvider: PaymentProviderEpay,
+				ActualPaymentMethod:     PaymentProviderEpay,
+				PaidAmount:              9.98,
+				PaidCurrency:            "CNY",
+				RequirePaymentFacts:     true,
+			},
+			expectedError: ErrPaymentAmountMismatch,
+		},
+		{
+			name: "currency mismatch",
+			validation: PaymentCallbackValidation{
+				ExpectedPaymentProvider: PaymentProviderEpay,
+				ActualPaymentMethod:     PaymentProviderEpay,
+				PaidAmount:              9.99,
+				PaidCurrency:            "USDT",
+				RequirePaymentFacts:     true,
+			},
+			expectedError: ErrPaymentCurrencyMismatch,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			truncateTables(t)
+			insertUserForPaymentGuardTest(t, 212, 0)
+			plan := insertSubscriptionPlanForPaymentGuardTest(t, 312)
+			insertSubscriptionOrderForPaymentGuardTest(t, "sub-callback-facts", 212, plan.Id, PaymentProviderEpay)
+
+			err := CompleteSubscriptionOrderWithValidation("sub-callback-facts", `{"provider":"epay"}`, tc.validation)
+			require.ErrorIs(t, err, tc.expectedError)
+
+			order := GetSubscriptionOrderByTradeNo("sub-callback-facts")
+			require.NotNil(t, order)
+			assert.Equal(t, common.TopUpStatusPending, order.Status)
+			assert.Zero(t, countUserSubscriptionsForPaymentGuardTest(t, 212))
+		})
+	}
+}
+
+func TestRechargeEpusdtWithValidation_RejectsMismatchedCallbackFacts(t *testing.T) {
+	testCases := []struct {
+		name          string
+		validation    PaymentCallbackValidation
+		expectedError error
+	}{
+		{
+			name: "payment method mismatch",
+			validation: PaymentCallbackValidation{
+				ExpectedPaymentProvider: PaymentProviderEpusdt,
+				ActualPaymentMethod:     "epusdt:usdt:polygon",
+				PaidAmount:              9.99,
+				PaidCurrency:            "CNY",
+				RequirePaymentFacts:     true,
+			},
+			expectedError: ErrPaymentMethodMismatch,
+		},
+		{
+			name: "amount mismatch",
+			validation: PaymentCallbackValidation{
+				ExpectedPaymentProvider: PaymentProviderEpusdt,
+				ActualPaymentMethod:     PaymentProviderEpusdt,
+				PaidAmount:              10.01,
+				PaidCurrency:            "CNY",
+				RequirePaymentFacts:     true,
+			},
+			expectedError: ErrPaymentAmountMismatch,
+		},
+		{
+			name: "currency mismatch",
+			validation: PaymentCallbackValidation{
+				ExpectedPaymentProvider: PaymentProviderEpusdt,
+				ActualPaymentMethod:     PaymentProviderEpusdt,
+				PaidAmount:              9.99,
+				PaidCurrency:            "USDT",
+				RequirePaymentFacts:     true,
+			},
+			expectedError: ErrPaymentCurrencyMismatch,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			truncateTables(t)
+			insertUserForPaymentGuardTest(t, 404, 0)
+			insertTopUpForPaymentGuardTest(t, "epusdt-callback-facts", 404, PaymentProviderEpusdt)
+
+			err := RechargeEpusdtWithValidation("epusdt-callback-facts", `{"provider":"epusdt"}`, tc.validation, "127.0.0.1")
+			require.ErrorIs(t, err, tc.expectedError)
+
+			assert.Equal(t, common.TopUpStatusPending, getTopUpStatusForPaymentGuardTest(t, "epusdt-callback-facts"))
+			assert.Equal(t, 0, getUserQuotaForPaymentGuardTest(t, 404))
+		})
+	}
+}
+
+func TestRechargeEpayWithValidation_RejectsMismatchedCallbackFacts(t *testing.T) {
+	testCases := []struct {
+		name          string
+		validation    PaymentCallbackValidation
+		expectedError error
+	}{
+		{
+			name: "payment method mismatch",
+			validation: PaymentCallbackValidation{
+				ExpectedPaymentProvider: PaymentProviderEpay,
+				ActualPaymentMethod:     "wxpay",
+				PaidAmount:              9.99,
+				PaidCurrency:            "CNY",
+				RequirePaymentFacts:     true,
+			},
+			expectedError: ErrPaymentMethodMismatch,
+		},
+		{
+			name: "amount mismatch",
+			validation: PaymentCallbackValidation{
+				ExpectedPaymentProvider: PaymentProviderEpay,
+				ActualPaymentMethod:     PaymentProviderEpay,
+				PaidAmount:              10.01,
+				PaidCurrency:            "CNY",
+				RequirePaymentFacts:     true,
+			},
+			expectedError: ErrPaymentAmountMismatch,
+		},
+		{
+			name: "currency mismatch",
+			validation: PaymentCallbackValidation{
+				ExpectedPaymentProvider: PaymentProviderEpay,
+				ActualPaymentMethod:     PaymentProviderEpay,
+				PaidAmount:              9.99,
+				PaidCurrency:            "USDT",
+				RequirePaymentFacts:     true,
+			},
+			expectedError: ErrPaymentCurrencyMismatch,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			truncateTables(t)
+			insertUserForPaymentGuardTest(t, 414, 0)
+			insertTopUpForPaymentGuardTest(t, "epay-callback-facts", 414, PaymentProviderEpay)
+
+			err := RechargeEpayWithValidation("epay-callback-facts", `{"provider":"epay"}`, tc.validation, "127.0.0.1")
+			require.ErrorIs(t, err, tc.expectedError)
+
+			assert.Equal(t, common.TopUpStatusPending, getTopUpStatusForPaymentGuardTest(t, "epay-callback-facts"))
+			assert.Equal(t, 0, getUserQuotaForPaymentGuardTest(t, 414))
+		})
+	}
+}
+
+func TestRechargeEpayWithValidation_CompletesOnce(t *testing.T) {
+	truncateTables(t)
+	common.QuotaPerUnit = 500000
+	insertUserForPaymentGuardTest(t, 424, 0)
+	insertTopUpForPaymentGuardTest(t, "epay-success-once", 424, PaymentProviderEpay)
+
+	validation := PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderEpay,
+		ActualPaymentMethod:     PaymentProviderEpay,
+		PaidAmount:              9.99,
+		PaidCurrency:            "CNY",
+		RequirePaymentFacts:     true,
+	}
+	require.NoError(t, RechargeEpayWithValidation("epay-success-once", `{"provider":"epay"}`, validation, "127.0.0.1"))
+	require.NoError(t, RechargeEpayWithValidation("epay-success-once", `{"provider":"epay"}`, validation, "127.0.0.1"))
+
+	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "epay-success-once"))
+	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 424))
+}
+
+func TestRechargeEpayWithValidation_RejectsMissingCallbackFacts(t *testing.T) {
+	truncateTables(t)
+	insertUserForPaymentGuardTest(t, 434, 0)
+	insertTopUpForPaymentGuardTest(t, "epay-missing-facts", 434, PaymentProviderEpay)
+
+	err := RechargeEpayWithValidation("epay-missing-facts", `{"provider":"epay"}`, PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderEpay,
+		ActualPaymentMethod:     PaymentProviderEpay,
+		RequirePaymentFacts:     true,
+	}, "127.0.0.1")
+	require.ErrorIs(t, err, ErrPaymentCurrencyMismatch)
+
+	assert.Equal(t, common.TopUpStatusPending, getTopUpStatusForPaymentGuardTest(t, "epay-missing-facts"))
+	assert.Equal(t, 0, getUserQuotaForPaymentGuardTest(t, 434))
 }
 
 func TestExpireSubscriptionOrder_RejectsMismatchedPaymentProvider(t *testing.T) {

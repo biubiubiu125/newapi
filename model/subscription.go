@@ -517,6 +517,13 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 // expectedPaymentProvider guards against cross-gateway callback attacks (empty skips the check).
 // actualPaymentMethod updates the order's PaymentMethod to reflect the real payment type used (empty skips update).
 func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedPaymentProvider string, actualPaymentMethod string) error {
+	return CompleteSubscriptionOrderWithValidation(tradeNo, providerPayload, PaymentCallbackValidation{
+		ExpectedPaymentProvider: expectedPaymentProvider,
+		ActualPaymentMethod:     actualPaymentMethod,
+	})
+}
+
+func CompleteSubscriptionOrderWithValidation(tradeNo string, providerPayload string, validation PaymentCallbackValidation) error {
 	if tradeNo == "" {
 		return errors.New("tradeNo is empty")
 	}
@@ -534,8 +541,17 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		if err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
 			return ErrSubscriptionOrderNotFound
 		}
-		if expectedPaymentProvider != "" && order.PaymentProvider != expectedPaymentProvider {
+		if validation.ExpectedPaymentProvider != "" && order.PaymentProvider != validation.ExpectedPaymentProvider {
 			return ErrPaymentMethodMismatch
+		}
+		if validation.ActualPaymentMethod != "" && order.PaymentMethod != validation.ActualPaymentMethod {
+			return ErrPaymentMethodMismatch
+		}
+		if validation.RequirePaymentFacts && !samePaymentCurrency(order.PaidCurrency, validation.PaidCurrency) {
+			return ErrPaymentCurrencyMismatch
+		}
+		if validation.RequirePaymentFacts && !samePaymentAmount(order.PaidAmount, validation.PaidAmount) {
+			return ErrPaymentAmountMismatch
 		}
 		if order.Status == common.TopUpStatusSuccess {
 			return nil
@@ -557,9 +573,6 @@ func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedP
 		}
 		if providerPayload != "" {
 			order.ProviderPayload = providerPayload
-		}
-		if actualPaymentMethod != "" && order.PaymentMethod != actualPaymentMethod {
-			order.PaymentMethod = actualPaymentMethod
 		}
 		if err := upsertSubscriptionTopUpTx(tx, &order); err != nil {
 			return err

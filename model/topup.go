@@ -3,6 +3,7 @@ package model
 import (
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -51,10 +52,20 @@ const (
 )
 
 var (
-	ErrPaymentMethodMismatch = errors.New("payment method mismatch")
-	ErrTopUpNotFound         = errors.New("topup not found")
-	ErrTopUpStatusInvalid    = errors.New("topup status invalid")
+	ErrPaymentMethodMismatch   = errors.New("payment method mismatch")
+	ErrTopUpNotFound           = errors.New("topup not found")
+	ErrTopUpStatusInvalid      = errors.New("topup status invalid")
+	ErrPaymentAmountMismatch   = errors.New("payment amount mismatch")
+	ErrPaymentCurrencyMismatch = errors.New("payment currency mismatch")
 )
+
+type PaymentCallbackValidation struct {
+	ExpectedPaymentProvider string
+	ActualPaymentMethod     string
+	PaidAmount              float64
+	PaidCurrency            string
+	RequirePaymentFacts     bool
+}
 
 func (topUp *TopUp) Insert() error {
 	var err error
@@ -477,7 +488,6 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 	if tradeNo == "" {
 		return errors.New("未提供支付单号")
 	}
-
 	var quotaToAdd int
 	topUp := &TopUp{}
 
@@ -597,7 +607,86 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 	return nil
 }
 
+func RechargeEpayWithValidation(tradeNo string, providerPayload string, validation PaymentCallbackValidation, callerIp string) (err error) {
+	if tradeNo == "" {
+		return errors.New("missing payment order number")
+	}
+	if validation.ExpectedPaymentProvider == "" {
+		validation.ExpectedPaymentProvider = PaymentProviderEpay
+	}
+
+	var quotaToAdd int
+	topUp := &TopUp{}
+
+	refCol := "`trade_no`"
+	if common.UsingPostgreSQL {
+		refCol = `"trade_no"`
+	}
+
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(topUp).Error
+		if err != nil {
+			return ErrTopUpNotFound
+		}
+
+		if topUp.PaymentProvider != validation.ExpectedPaymentProvider {
+			return ErrPaymentMethodMismatch
+		}
+		if validation.ActualPaymentMethod != "" && topUp.PaymentMethod != validation.ActualPaymentMethod {
+			return ErrPaymentMethodMismatch
+		}
+		if validation.RequirePaymentFacts && !samePaymentCurrency(topUp.PaidCurrency, validation.PaidCurrency) {
+			return ErrPaymentCurrencyMismatch
+		}
+		if validation.RequirePaymentFacts && !samePaymentAmount(topUp.PaidAmount, validation.PaidAmount) {
+			return ErrPaymentAmountMismatch
+		}
+
+		if topUp.Status == common.TopUpStatusSuccess {
+			return nil
+		}
+		if topUp.Status != common.TopUpStatusPending {
+			return ErrTopUpStatusInvalid
+		}
+
+		quotaToAdd = int(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).IntPart())
+		if quotaToAdd <= 0 {
+			return errors.New("invalid topup quota")
+		}
+
+		if providerPayload != "" {
+			topUp.ProviderPayload = providerPayload
+		}
+		topUp.CompleteTime = common.GetTimestamp()
+		topUp.Status = common.TopUpStatusSuccess
+		if err := tx.Save(topUp).Error; err != nil {
+			return err
+		}
+
+		return tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quotaToAdd)).Error
+	})
+
+	if err != nil {
+		common.SysError("epay topup failed: " + err.Error())
+		return err
+	}
+
+	if quotaToAdd > 0 {
+		_ = CacheUpdateUserQuota(topUp.UserId)
+		RecordTopupLog(topUp.UserId, fmt.Sprintf("Epay topup succeeded, quota: %v, paid amount: %.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), callerIp, topUp.PaymentMethod, PaymentProviderEpay)
+	}
+
+	return nil
+}
+
 func RechargeEpusdt(tradeNo string, providerPayload string, actualPaymentMethod string, callerIp string) (err error) {
+	return RechargeEpusdtWithValidation(tradeNo, providerPayload, PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderEpusdt,
+		ActualPaymentMethod:     actualPaymentMethod,
+	}, callerIp)
+}
+
+func RechargeEpusdtWithValidation(tradeNo string, providerPayload string, validation PaymentCallbackValidation, callerIp string) (err error) {
 	if tradeNo == "" {
 		return errors.New("未提供支付单号")
 	}
@@ -616,8 +705,17 @@ func RechargeEpusdt(tradeNo string, providerPayload string, actualPaymentMethod 
 			return errors.New("充值订单不存在")
 		}
 
-		if topUp.PaymentProvider != PaymentProviderEpusdt {
+		if topUp.PaymentProvider != validation.ExpectedPaymentProvider {
 			return ErrPaymentMethodMismatch
+		}
+		if validation.ActualPaymentMethod != "" && topUp.PaymentMethod != validation.ActualPaymentMethod {
+			return ErrPaymentMethodMismatch
+		}
+		if validation.RequirePaymentFacts && !samePaymentCurrency(topUp.PaidCurrency, validation.PaidCurrency) {
+			return ErrPaymentCurrencyMismatch
+		}
+		if validation.RequirePaymentFacts && !samePaymentAmount(topUp.PaidAmount, validation.PaidAmount) {
+			return ErrPaymentAmountMismatch
 		}
 
 		if topUp.Status == common.TopUpStatusSuccess {
@@ -635,9 +733,6 @@ func RechargeEpusdt(tradeNo string, providerPayload string, actualPaymentMethod 
 			return errors.New("无效的充值额度")
 		}
 
-		if actualPaymentMethod != "" && topUp.PaymentMethod != actualPaymentMethod {
-			topUp.PaymentMethod = actualPaymentMethod
-		}
 		if providerPayload != "" {
 			topUp.ProviderPayload = providerPayload
 		}
@@ -656,6 +751,12 @@ func RechargeEpusdt(tradeNo string, providerPayload string, actualPaymentMethod 
 
 	if err != nil {
 		common.SysError("epusdt topup failed: " + err.Error())
+		if errors.Is(err, ErrPaymentMethodMismatch) ||
+			errors.Is(err, ErrPaymentAmountMismatch) ||
+			errors.Is(err, ErrPaymentCurrencyMismatch) ||
+			errors.Is(err, ErrTopUpStatusInvalid) {
+			return err
+		}
 		return errors.New("充值失败，请稍后重试")
 	}
 
@@ -664,4 +765,19 @@ func RechargeEpusdt(tradeNo string, providerPayload string, actualPaymentMethod 
 	}
 
 	return nil
+}
+
+func samePaymentCurrency(expected string, actual string) bool {
+	expected = strings.ToUpper(strings.TrimSpace(expected))
+	actual = strings.ToUpper(strings.TrimSpace(actual))
+	if expected == "" || actual == "" {
+		return expected == actual
+	}
+	return expected == actual
+}
+
+func samePaymentAmount(expected float64, actual float64) bool {
+	expectedAmount := decimal.NewFromFloat(expected).Round(8)
+	actualAmount := decimal.NewFromFloat(actual).Round(8)
+	return expectedAmount.Equal(actualAmount)
 }

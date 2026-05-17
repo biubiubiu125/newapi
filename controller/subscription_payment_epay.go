@@ -170,7 +170,13 @@ func SubscriptionEpayNotify(c *gin.Context) {
 	LockOrder(verifyInfo.ServiceTradeNo)
 	defer UnlockOrder(verifyInfo.ServiceTradeNo)
 
-	if err := model.CompleteSubscriptionOrder(verifyInfo.ServiceTradeNo, common.GetJsonString(verifyInfo), model.PaymentProviderEpay, verifyInfo.Type); err != nil {
+	if err := model.CompleteSubscriptionOrderWithValidation(verifyInfo.ServiceTradeNo, common.GetJsonString(verifyInfo), model.PaymentCallbackValidation{
+		ExpectedPaymentProvider: model.PaymentProviderEpay,
+		ActualPaymentMethod:     verifyInfo.Type,
+		PaidAmount:              parseCallbackAmount(verifyInfo.Money),
+		PaidCurrency:            "CNY",
+		RequirePaymentFacts:     true,
+	}); err != nil {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}
@@ -180,7 +186,7 @@ func SubscriptionEpayNotify(c *gin.Context) {
 }
 
 // SubscriptionEpayReturn handles browser return after payment.
-// It verifies the payload and completes the order, then redirects to console.
+// Browser return is not trusted for fulfillment; only notify_url can complete orders.
 func SubscriptionEpayReturn(c *gin.Context) {
 	var params map[string]string
 
@@ -218,13 +224,6 @@ func SubscriptionEpayReturn(c *gin.Context) {
 		return
 	}
 	if verifyInfo.TradeStatus == epay.StatusTradeSuccess {
-		LockOrder(verifyInfo.ServiceTradeNo)
-		defer UnlockOrder(verifyInfo.ServiceTradeNo)
-		if err := model.CompleteSubscriptionOrder(verifyInfo.ServiceTradeNo, common.GetJsonString(verifyInfo), model.PaymentProviderEpay, verifyInfo.Type); err != nil {
-			c.Redirect(http.StatusFound, paymentReturnPath("/console/topup?pay=fail"))
-			return
-		}
-		_ = referralService.ProcessSubscriptionCommission(verifyInfo.ServiceTradeNo)
 		c.Redirect(http.StatusFound, paymentReturnPath("/console/topup?pay=success"))
 		return
 	}
