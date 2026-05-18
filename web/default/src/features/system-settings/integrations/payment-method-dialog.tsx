@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useMemo } from 'react'
+import { type ReactNode, useEffect, useMemo } from 'react'
 import * as z from 'zod'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -41,6 +41,7 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import { getPaymentIcon } from '@/features/wallet/lib'
 
 const createPaymentMethodDialogSchema = (t: (key: string) => string) =>
   z.object({
@@ -69,10 +70,28 @@ type PaymentMethodDialogProps = {
 }
 
 const PAYMENT_TYPES = [
-  { value: 'alipay', label: 'Alipay' },
-  { value: 'wxpay', label: 'WeChat Pay' },
-  { value: 'stripe', label: 'Stripe' },
+  { value: 'alipay', label: 'Alipay', icon: getPaymentIcon('alipay') },
+  { value: 'wxpay', label: 'WeChat Pay', icon: getPaymentIcon('wxpay') },
+  { value: 'stripe', label: 'Stripe', icon: getPaymentIcon('stripe') },
+  {
+    value: 'epusdt:usdt',
+    label: 'USDT',
+    icon: getPaymentIcon('epusdt:usdt'),
+  },
 ]
+
+type PaymentTypeOption = {
+  value: string
+  label: string
+  icon?: ReactNode
+}
+
+function paymentTypeOptions(t: (key: string) => string): PaymentTypeOption[] {
+  return PAYMENT_TYPES.map((item) => ({
+    ...item,
+    label: item.value.startsWith('epusdt:') ? item.label : t(item.label),
+  }))
+}
 
 const getColorPreview = (color: string) => {
   if (color.includes('var(--')) {
@@ -114,6 +133,7 @@ export function PaymentMethodDialog({
   const { t } = useTranslation()
   const isEditMode = !!editData
   const paymentMethodDialogSchema = createPaymentMethodDialogSchema(t)
+  const paymentTypeOptionsMemo = useMemo(() => paymentTypeOptions(t), [t])
 
   const form = useForm<PaymentMethodDialogFormValues>({
     resolver: zodResolver(paymentMethodDialogSchema),
@@ -210,7 +230,7 @@ export function PaymentMethodDialog({
                   <FormLabel>{t('Type')}</FormLabel>
                   <FormControl>
                     <Combobox
-                      options={PAYMENT_TYPES}
+                      options={paymentTypeOptionsMemo}
                       value={field.value}
                       onValueChange={field.onChange}
                       placeholder={t('Select or enter payment type')}

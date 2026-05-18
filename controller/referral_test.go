@@ -246,7 +246,7 @@ func TestRegisterBindsReferralCodeFromRequestBody(t *testing.T) {
 	router.Use(sessions.Sessions("session", store))
 	router.POST("/api/user/register", Register)
 
-	body := []byte(`{"username":"invitee-body","password":"12345678","aff":"BODYAFF1"}`)
+	body := []byte(`{"username":"invitee-body","password":"12345678","email":"invitee-body@example.com","aff":"BODYAFF1"}`)
 	req := httptest.NewRequest(http.MethodPost, "/api/user/register", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	c.Request = req
@@ -258,6 +258,7 @@ func TestRegisterBindsReferralCodeFromRequestBody(t *testing.T) {
 
 	invitee := &model.User{}
 	require.NoError(t, db.Where("username = ?", "invitee-body").First(invitee).Error)
+	require.Equal(t, "invitee-body@example.com", invitee.Email)
 
 	binding := &model.ReferralBinding{}
 	require.NoError(t, db.Where("invitee_user_id = ?", invitee.Id).First(binding).Error)

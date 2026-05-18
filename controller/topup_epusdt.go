@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -62,6 +63,9 @@ func RequestEpusdtPay(c *gin.Context) {
 		common.ApiErrorMsg(c, "支付链不存在或未启用")
 		return
 	}
+	if network == "" {
+		network = "tron"
+	}
 
 	id := c.GetInt("id")
 	group, err := model.GetUserGroup(id, true)
@@ -94,7 +98,7 @@ func RequestEpusdtPay(c *gin.Context) {
 		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 		amount = dAmount.Div(dQuotaPerUnit).IntPart()
 	}
-	method := service.BuildEpusdtPaymentMethod(token, network)
+	method := service.BuildEpusdtPaymentMethod(token, "")
 	topUp := &model.TopUp{
 		UserId:          id,
 		Amount:          amount,
@@ -107,10 +111,18 @@ func RequestEpusdtPay(c *gin.Context) {
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
 	}
+	applyTopUpOrderSnapshot(topUp, topUpOrderSnapshotInput{
+		RequestAmount: req.Amount,
+		CreditAmount:  amount,
+		PaidAmount:    payMoney,
+		PaidCurrency:  currency,
+		UserGroup:     group,
+	})
 	if snapshot != nil {
 		topUp.ReferralAffiliateId = snapshot.AffiliateId
 		topUp.ReferralRate = snapshot.Rate
 		topUp.ReferralBaseAmount = snapshot.BaseAmount
+		topUp.ReferralBaseCurrency = snapshot.Currency
 		topUp.ReferralCommissionStatus = snapshot.Status
 		topUp.ReferralCommissionError = snapshot.Error
 	}
@@ -133,7 +145,15 @@ func RequestEpusdtPay(c *gin.Context) {
 	})
 	if err != nil {
 		_ = model.UpdatePendingTopUpStatus(tradeNo, model.PaymentProviderEpusdt, common.TopUpStatusExpired)
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Epusdt 拉起支付失败 user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, method, req.Amount, err.Error()))
+		var gatewayErr service.EpusdtGatewayError
+		if errors.As(err, &gatewayErr) {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Epusdt gateway rejected topup order user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, method, req.Amount, err.Error()))
+			if message := gatewayErr.PublicMessage(); message != "" {
+				common.ApiErrorMsg(c, message)
+				return
+			}
+		}
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Epusdt topup payment create failed user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, method, req.Amount, err.Error()))
 		common.ApiErrorMsg(c, "拉起支付失败")
 		return
 	}
@@ -174,18 +194,17 @@ func EpusdtTopUpNotify(c *gin.Context) {
 	}
 	LockOrder(tradeNo)
 	defer UnlockOrder(tradeNo)
-	method := service.EpusdtCallbackMethod(params)
 	merchantID := service.EpusdtCallbackMerchantID(params)
-	if merchantID != "" && merchantID != setting.EpusdtPID {
+	if !epusdtCallbackMerchantMatches(merchantID) {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Epusdt webhook merchant mismatch trade_no=%s callback_pid=%s client_ip=%s", tradeNo, merchantID, c.ClientIP()))
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}
 	if err := model.RechargeEpusdtWithValidation(tradeNo, common.GetJsonString(params), model.PaymentCallbackValidation{
 		ExpectedPaymentProvider: model.PaymentProviderEpusdt,
-		ActualPaymentMethod:     method,
+		ActualPaymentToken:      service.EpusdtCallbackToken(params),
 		PaidAmount:              service.EpusdtCallbackPaidAmount(params),
-		PaidCurrency:            service.EpusdtCallbackPaidCurrency(params),
+		PaidCurrency:            epusdtCallbackPaidCurrency(params),
 		RequirePaymentFacts:     true,
 	}, c.ClientIP()); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Epusdt 充值处理失败 trade_no=%s client_ip=%s error=%q", tradeNo, c.ClientIP(), err.Error()))
@@ -194,6 +213,20 @@ func EpusdtTopUpNotify(c *gin.Context) {
 	}
 	_ = referralService.ProcessTopUpCommission(tradeNo)
 	_, _ = c.Writer.Write([]byte("ok"))
+}
+
+func epusdtCallbackMerchantMatches(merchantID string) bool {
+	expected := strings.TrimSpace(setting.EpusdtPID)
+	actual := strings.TrimSpace(merchantID)
+	return expected != "" && actual != "" && actual == expected
+}
+
+func epusdtCallbackPaidCurrency(params map[string]interface{}) string {
+	currency := service.EpusdtCallbackPaidCurrency(params)
+	if currency != "" {
+		return currency
+	}
+	return strings.ToUpper(strings.TrimSpace(setting.EpusdtCurrency))
 }
 
 func readEpusdtCallback(c *gin.Context) (map[string]interface{}, error) {

@@ -200,18 +200,34 @@ type SubscriptionOrder struct {
 	PaidAmount   float64 `json:"paid_amount" gorm:"type:decimal(20,8);default:0"`
 	PaidCurrency string  `json:"paid_currency" gorm:"type:varchar(16);default:''"`
 
-	TradeNo                  string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod            string  `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider          string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	Status                   string  `json:"status"`
-	CreateTime               int64   `json:"create_time"`
-	CompleteTime             int64   `json:"complete_time"`
-	ReferralAffiliateId      int     `json:"referral_affiliate_id" gorm:"index"`
-	ReferralRate             float64 `json:"referral_rate" gorm:"type:decimal(10,4);default:0"`
-	ReferralBaseAmount       float64 `json:"referral_base_amount" gorm:"type:decimal(20,8);default:0"`
-	ReferralCommissionStatus string  `json:"referral_commission_status" gorm:"type:varchar(32);default:'';index"`
-	ReferralCommissionError  string  `json:"referral_commission_error" gorm:"type:text"`
-	ReferralCommissionAt     int64   `json:"referral_commission_at" gorm:"default:0"`
+	TradeNo                             string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod                       string  `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider                     string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	Status                              string  `json:"status"`
+	OrderSnapshotVersion                int     `json:"order_snapshot_version" gorm:"type:int;default:0"`
+	PlanTitleSnapshot                   string  `json:"plan_title_snapshot" gorm:"type:varchar(128);default:''"`
+	PlanPriceSnapshot                   float64 `json:"plan_price_snapshot" gorm:"type:decimal(20,8);default:0"`
+	PlanCurrencySnapshot                string  `json:"plan_currency_snapshot" gorm:"type:varchar(16);default:''"`
+	PlanDurationUnitSnapshot            string  `json:"plan_duration_unit_snapshot" gorm:"type:varchar(16);default:''"`
+	PlanDurationValueSnapshot           int     `json:"plan_duration_value_snapshot" gorm:"type:int;default:0"`
+	PlanCustomSecondsSnapshot           int64   `json:"plan_custom_seconds_snapshot" gorm:"type:bigint;default:0"`
+	PlanTotalAmountSnapshot             int64   `json:"plan_total_amount_snapshot" gorm:"type:bigint;default:0"`
+	PlanQuotaResetPeriodSnapshot        string  `json:"plan_quota_reset_period_snapshot" gorm:"type:varchar(16);default:''"`
+	PlanQuotaResetCustomSecondsSnapshot int64   `json:"plan_quota_reset_custom_seconds_snapshot" gorm:"type:bigint;default:0"`
+	PlanUpgradeGroupSnapshot            string  `json:"plan_upgrade_group_snapshot" gorm:"type:varchar(64);default:''"`
+	USDExchangeRateSnapshot             float64 `json:"usd_exchange_rate_snapshot" gorm:"type:decimal(20,8);default:0"`
+	CustomExchangeRateSnapshot          float64 `json:"custom_exchange_rate_snapshot" gorm:"type:decimal(20,8);default:0"`
+	QuotaDisplayTypeSnapshot            string  `json:"quota_display_type_snapshot" gorm:"type:varchar(32);default:''"`
+	DisplayCurrencySnapshot             string  `json:"display_currency_snapshot" gorm:"type:varchar(16);default:''"`
+	CreateTime                          int64   `json:"create_time"`
+	CompleteTime                        int64   `json:"complete_time"`
+	ReferralAffiliateId                 int     `json:"referral_affiliate_id" gorm:"index"`
+	ReferralRate                        float64 `json:"referral_rate" gorm:"type:decimal(10,4);default:0"`
+	ReferralBaseAmount                  float64 `json:"referral_base_amount" gorm:"type:decimal(20,8);default:0"`
+	ReferralBaseCurrency                string  `json:"referral_base_currency" gorm:"type:varchar(16);default:''"`
+	ReferralCommissionStatus            string  `json:"referral_commission_status" gorm:"type:varchar(32);default:'';index"`
+	ReferralCommissionError             string  `json:"referral_commission_error" gorm:"type:text"`
+	ReferralCommissionAt                int64   `json:"referral_commission_at" gorm:"default:0"`
 
 	ProviderPayload string `json:"provider_payload" gorm:"type:text"`
 }
@@ -236,6 +252,43 @@ func GetSubscriptionOrderByTradeNo(tradeNo string) *SubscriptionOrder {
 		return nil
 	}
 	return &order
+}
+
+func (o *SubscriptionOrder) ApplyPlanSnapshot(plan *SubscriptionPlan) *SubscriptionPlan {
+	if plan == nil {
+		return nil
+	}
+	snapshot := *plan
+	if o == nil || o.OrderSnapshotVersion <= 0 {
+		return &snapshot
+	}
+	if strings.TrimSpace(o.PlanTitleSnapshot) != "" {
+		snapshot.Title = o.PlanTitleSnapshot
+	}
+	if o.PlanPriceSnapshot > 0 {
+		snapshot.PriceAmount = o.PlanPriceSnapshot
+	}
+	if strings.TrimSpace(o.PlanCurrencySnapshot) != "" {
+		snapshot.Currency = strings.ToUpper(strings.TrimSpace(o.PlanCurrencySnapshot))
+	}
+	if strings.TrimSpace(o.PlanDurationUnitSnapshot) != "" {
+		snapshot.DurationUnit = o.PlanDurationUnitSnapshot
+	}
+	if o.PlanDurationValueSnapshot > 0 {
+		snapshot.DurationValue = o.PlanDurationValueSnapshot
+	}
+	if o.PlanCustomSecondsSnapshot > 0 {
+		snapshot.CustomSeconds = o.PlanCustomSecondsSnapshot
+	}
+	snapshot.TotalAmount = o.PlanTotalAmountSnapshot
+	if strings.TrimSpace(o.PlanQuotaResetPeriodSnapshot) != "" {
+		snapshot.QuotaResetPeriod = o.PlanQuotaResetPeriodSnapshot
+	}
+	if o.PlanQuotaResetCustomSecondsSnapshot > 0 {
+		snapshot.QuotaResetCustomSeconds = o.PlanQuotaResetCustomSecondsSnapshot
+	}
+	snapshot.UpgradeGroup = strings.TrimSpace(o.PlanUpgradeGroupSnapshot)
+	return &snapshot
 }
 
 // User subscription instance
@@ -402,7 +455,7 @@ func getUserGroupByIdTx(tx *gorm.DB, userId int) (string, error) {
 		tx = DB
 	}
 	var group string
-	if err := tx.Model(&User{}).Where("id = ?", userId).Select(commonGroupCol).Find(&group).Error; err != nil {
+	if err := tx.Model(&User{}).Where("id = ?", userId).Select("group").Find(&group).Error; err != nil {
 		return "", err
 	}
 	return group, nil
@@ -464,7 +517,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 			return nil, errors.New("已达到该套餐购买上限")
 		}
 	}
-	nowUnix := GetDBTimestamp()
+	nowUnix := getDBTimestampTx(tx)
 	now := time.Unix(nowUnix, 0)
 	endUnix, err := calcPlanEndTime(now, plan)
 	if err != nil {
@@ -544,7 +597,10 @@ func CompleteSubscriptionOrderWithValidation(tradeNo string, providerPayload str
 		if validation.ExpectedPaymentProvider != "" && order.PaymentProvider != validation.ExpectedPaymentProvider {
 			return ErrPaymentMethodMismatch
 		}
-		if validation.ActualPaymentMethod != "" && order.PaymentMethod != validation.ActualPaymentMethod {
+		if validation.ActualPaymentMethod != "" && !callbackPaymentMethodMatches(order.PaymentMethod, validation.ActualPaymentMethod, validation.ExpectedPaymentProvider) {
+			return ErrPaymentMethodMismatch
+		}
+		if validation.ActualPaymentToken != "" && !paymentMethodMatchesEpusdtToken(order.PaymentMethod, validation.ActualPaymentToken) {
 			return ErrPaymentMethodMismatch
 		}
 		if validation.RequirePaymentFacts && !samePaymentCurrency(order.PaidCurrency, validation.PaidCurrency) {
@@ -559,13 +615,14 @@ func CompleteSubscriptionOrderWithValidation(tradeNo string, providerPayload str
 		if order.Status != common.TopUpStatusPending {
 			return ErrSubscriptionOrderStatusInvalid
 		}
-		plan, err := GetSubscriptionPlanById(order.PlanId)
+		plan, err := getSubscriptionPlanByIdTx(tx, order.PlanId)
 		if err != nil {
 			return err
 		}
 		if !plan.Enabled {
 			// still allow completion for already purchased orders
 		}
+		plan = order.ApplyPlanSnapshot(plan)
 		upgradeGroup = strings.TrimSpace(plan.UpgradeGroup)
 		_, err = CreateUserSubscriptionFromPlanTx(tx, order.UserId, plan, "order")
 		if err != nil {
@@ -610,24 +667,36 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 	if err := tx.Where("trade_no = ?", order.TradeNo).First(&topup).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			topup = TopUp{
-				UserId:                   order.UserId,
-				Amount:                   0,
-				Money:                    order.Money,
-				PaidAmount:               order.PaidAmount,
-				PaidCurrency:             order.PaidCurrency,
-				TradeNo:                  order.TradeNo,
-				PaymentMethod:            order.PaymentMethod,
-				PaymentProvider:          order.PaymentProvider,
-				ProviderPayload:          order.ProviderPayload,
-				CreateTime:               order.CreateTime,
-				CompleteTime:             now,
-				Status:                   common.TopUpStatusSuccess,
-				ReferralAffiliateId:      order.ReferralAffiliateId,
-				ReferralRate:             order.ReferralRate,
-				ReferralBaseAmount:       order.ReferralBaseAmount,
-				ReferralCommissionStatus: order.ReferralCommissionStatus,
-				ReferralCommissionError:  order.ReferralCommissionError,
-				ReferralCommissionAt:     order.ReferralCommissionAt,
+				UserId:                     order.UserId,
+				Amount:                     0,
+				Money:                      order.Money,
+				PaidAmount:                 order.PaidAmount,
+				PaidCurrency:               order.PaidCurrency,
+				TradeNo:                    order.TradeNo,
+				PaymentMethod:              order.PaymentMethod,
+				PaymentProvider:            order.PaymentProvider,
+				ProviderPayload:            order.ProviderPayload,
+				OrderSnapshotVersion:       order.OrderSnapshotVersion,
+				RequestAmountSnapshot:      0,
+				CreditQuotaSnapshot:        order.PlanTotalAmountSnapshot,
+				QuotaPerUnitSnapshot:       1,
+				PriceSnapshot:              order.PlanPriceSnapshot,
+				USDExchangeRateSnapshot:    order.USDExchangeRateSnapshot,
+				CustomExchangeRateSnapshot: order.CustomExchangeRateSnapshot,
+				QuotaDisplayTypeSnapshot:   order.QuotaDisplayTypeSnapshot,
+				DisplayCurrencySnapshot:    order.DisplayCurrencySnapshot,
+				TopupGroupRatioSnapshot:    1,
+				AmountDiscountSnapshot:     1,
+				CreateTime:                 order.CreateTime,
+				CompleteTime:               now,
+				Status:                     common.TopUpStatusSuccess,
+				ReferralAffiliateId:        order.ReferralAffiliateId,
+				ReferralRate:               order.ReferralRate,
+				ReferralBaseAmount:         order.ReferralBaseAmount,
+				ReferralBaseCurrency:       order.ReferralBaseCurrency,
+				ReferralCommissionStatus:   order.ReferralCommissionStatus,
+				ReferralCommissionError:    order.ReferralCommissionError,
+				ReferralCommissionAt:       order.ReferralCommissionAt,
 			}
 			return tx.Create(&topup).Error
 		}
@@ -638,6 +707,14 @@ func upsertSubscriptionTopUpTx(tx *gorm.DB, order *SubscriptionOrder) error {
 	topup.PaidCurrency = order.PaidCurrency
 	topup.PaymentProvider = order.PaymentProvider
 	topup.ProviderPayload = order.ProviderPayload
+	topup.OrderSnapshotVersion = order.OrderSnapshotVersion
+	topup.CreditQuotaSnapshot = order.PlanTotalAmountSnapshot
+	topup.PriceSnapshot = order.PlanPriceSnapshot
+	topup.USDExchangeRateSnapshot = order.USDExchangeRateSnapshot
+	topup.CustomExchangeRateSnapshot = order.CustomExchangeRateSnapshot
+	topup.QuotaDisplayTypeSnapshot = order.QuotaDisplayTypeSnapshot
+	topup.DisplayCurrencySnapshot = order.DisplayCurrencySnapshot
+	topup.ReferralBaseCurrency = order.ReferralBaseCurrency
 	if topup.PaymentMethod == "" {
 		topup.PaymentMethod = order.PaymentMethod
 	} else if topup.PaymentMethod != order.PaymentMethod {

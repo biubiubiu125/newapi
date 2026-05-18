@@ -23,6 +23,7 @@ import {
   mergePresetAmounts,
   getMinTopupAmount,
 } from '../lib'
+import { PAYMENT_TYPES } from '../constants'
 import type {
   TopupInfo,
   PresetAmount,
@@ -70,6 +71,8 @@ function parsePaymentMethods(
         name: typeof item.name === 'string' ? item.name : '',
         type,
         color: typeof item.color === 'string' ? item.color : undefined,
+        icon: typeof item.icon === 'string' ? item.icon : undefined,
+        provider: typeof item.provider === 'string' ? item.provider : undefined,
         min_topup:
           type === 'stripe' && normalizedMinTopup <= 0
             ? stripeMinTopup
@@ -77,6 +80,28 @@ function parsePaymentMethods(
       }
     })
     .filter((item) => item.name && item.type && item.type !== 'waffo')
+}
+
+function mergePaymentMethods(methods: PaymentMethod[]): PaymentMethod[] {
+  const result: PaymentMethod[] = []
+  const seen = new Set<string>()
+
+  for (const method of methods) {
+    const type = method.type.trim()
+    if (!type || seen.has(type)) {
+      continue
+    }
+    seen.add(type)
+    result.push({ ...method, type })
+  }
+
+  return result
+}
+
+function hasEpusdtPaymentMethod(methods: PaymentMethod[]): boolean {
+  return methods.some((method) =>
+    method.type.startsWith(PAYMENT_TYPES.EPUSDT_PREFIX)
+  )
 }
 
 function parseWaffoPayMethods(data: unknown): WaffoPayMethod[] {
@@ -178,12 +203,33 @@ export function useTopupInfo() {
         return undefined
       }
 
+      const standardPayMethods = parsePaymentMethods(
+        response.data.pay_methods,
+        response.data.stripe_min_topup
+      )
+      const epusdtPayMethods = parsePaymentMethods(
+        response.data.epusdt_pay_methods,
+        response.data.stripe_min_topup
+      )
+      const payMethods = mergePaymentMethods(standardPayMethods)
+      const canUseEpusdt =
+        response.data.enable_epusdt_topup &&
+        response.data.payment_compliance_confirmed !== false
+
+      if (canUseEpusdt && !hasEpusdtPaymentMethod(payMethods)) {
+        payMethods.push({
+          name: 'USDT',
+          type: `${PAYMENT_TYPES.EPUSDT_PREFIX}usdt`,
+          color: '#14B8A6',
+          min_topup: response.data.epusdt_min_topup || 1,
+          provider: 'epusdt',
+        })
+      }
+
       const processedData: TopupInfo = {
         ...response.data,
-        pay_methods: parsePaymentMethods(
-          response.data.pay_methods,
-          response.data.stripe_min_topup
-        ),
+        pay_methods: payMethods,
+        epusdt_pay_methods: epusdtPayMethods,
         amount_options: parseAmountOptions(response.data.amount_options),
         discount: parseDiscountMap(response.data.discount),
         creem_products: parseCreemProducts(response.data.creem_products),

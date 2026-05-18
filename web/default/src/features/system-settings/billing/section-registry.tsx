@@ -162,7 +162,7 @@ const BILLING_SECTIONS = [
           EpusdtDisplayName: settings.EpusdtDisplayName ?? 'USDT',
           EpusdtAssetDisplayNames:
             settings.EpusdtAssetDisplayNames ??
-            '{"epusdt:usdt:tron":"USDT-TRC20","epusdt:usdt:polygon":"USDT-Polygon","epusdt:usdt:bsc":"USDT-BEP20"}',
+            '{"epusdt:usdt":"USDT","epusdt:usdt:tron":"USDT-TRC20","epusdt:usdt:bsc":"USDT-BEP20","epusdt:usdt:polygon":"USDT-Polygon"}',
           EpusdtMinTopUp: settings.EpusdtMinTopUp ?? 1,
         }}
         waffoDefaultValues={{

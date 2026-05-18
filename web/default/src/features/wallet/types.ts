@@ -101,6 +101,8 @@ export interface PaymentMethod {
   min_topup?: number
   /** Optional icon URL provided by backend (preferred over built-in icons) */
   icon?: string
+  /** Optional payment provider marker returned by backend */
+  provider?: string
 }
 
 /**
@@ -153,6 +155,8 @@ export interface TopupInfo {
   waffo_pancake_min_topup?: number
   /** Whether Epusdt topup is enabled */
   enable_epusdt_topup?: boolean
+  /** Epusdt payment methods read from the Epusdt asset config */
+  epusdt_pay_methods?: PaymentMethod[]
   /** Minimum topup amount for Epusdt */
   epusdt_min_topup?: number
   /** Whether redemption code usage is enabled */
@@ -215,7 +219,7 @@ export interface WaffoPancakePaymentRequest {
 export interface EpusdtPaymentRequest {
   /** Topup amount */
   amount: number
-  /** Epusdt chain payment method, e.g. epusdt:usdt:tron */
+  /** Epusdt payment method, e.g. epusdt:usdt */
   payment_method: string
 }
 

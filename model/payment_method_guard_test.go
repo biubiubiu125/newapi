@@ -38,6 +38,10 @@ func insertSubscriptionPlanForPaymentGuardTest(t *testing.T, id int) *Subscripti
 
 func insertSubscriptionOrderForPaymentGuardTest(t *testing.T, tradeNo string, userID int, planID int, paymentProvider string) {
 	t.Helper()
+	paymentMethod := paymentProvider
+	if paymentProvider == PaymentProviderEpusdt {
+		paymentMethod = PaymentMethodEpusdtPrefix + "usdt"
+	}
 	order := &SubscriptionOrder{
 		UserId:          userID,
 		PlanId:          planID,
@@ -45,7 +49,7 @@ func insertSubscriptionOrderForPaymentGuardTest(t *testing.T, tradeNo string, us
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
 		TradeNo:         tradeNo,
-		PaymentMethod:   paymentProvider,
+		PaymentMethod:   paymentMethod,
 		PaymentProvider: paymentProvider,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
@@ -55,6 +59,10 @@ func insertSubscriptionOrderForPaymentGuardTest(t *testing.T, tradeNo string, us
 
 func insertTopUpForPaymentGuardTest(t *testing.T, tradeNo string, userID int, paymentProvider string) {
 	t.Helper()
+	paymentMethod := paymentProvider
+	if paymentProvider == PaymentProviderEpusdt {
+		paymentMethod = PaymentMethodEpusdtPrefix + "usdt"
+	}
 	topUp := &TopUp{
 		UserId:          userID,
 		Amount:          2,
@@ -62,7 +70,7 @@ func insertTopUpForPaymentGuardTest(t *testing.T, tradeNo string, userID int, pa
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
 		TradeNo:         tradeNo,
-		PaymentMethod:   paymentProvider,
+		PaymentMethod:   paymentMethod,
 		PaymentProvider: paymentProvider,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
@@ -231,7 +239,18 @@ func TestRechargeEpusdtWithValidation_RejectsMismatchedCallbackFacts(t *testing.
 			name: "payment method mismatch",
 			validation: PaymentCallbackValidation{
 				ExpectedPaymentProvider: PaymentProviderEpusdt,
-				ActualPaymentMethod:     "epusdt:usdt:polygon",
+				ActualPaymentMethod:     "epusdt:trx:tron",
+				PaidAmount:              9.99,
+				PaidCurrency:            "CNY",
+				RequirePaymentFacts:     true,
+			},
+			expectedError: ErrPaymentMethodMismatch,
+		},
+		{
+			name: "payment token mismatch",
+			validation: PaymentCallbackValidation{
+				ExpectedPaymentProvider: PaymentProviderEpusdt,
+				ActualPaymentToken:      "trx",
 				PaidAmount:              9.99,
 				PaidCurrency:            "CNY",
 				RequirePaymentFacts:     true,
@@ -242,7 +261,7 @@ func TestRechargeEpusdtWithValidation_RejectsMismatchedCallbackFacts(t *testing.
 			name: "amount mismatch",
 			validation: PaymentCallbackValidation{
 				ExpectedPaymentProvider: PaymentProviderEpusdt,
-				ActualPaymentMethod:     PaymentProviderEpusdt,
+				ActualPaymentToken:      "usdt",
 				PaidAmount:              10.01,
 				PaidCurrency:            "CNY",
 				RequirePaymentFacts:     true,
@@ -253,7 +272,7 @@ func TestRechargeEpusdtWithValidation_RejectsMismatchedCallbackFacts(t *testing.
 			name: "currency mismatch",
 			validation: PaymentCallbackValidation{
 				ExpectedPaymentProvider: PaymentProviderEpusdt,
-				ActualPaymentMethod:     PaymentProviderEpusdt,
+				ActualPaymentToken:      "usdt",
 				PaidAmount:              9.99,
 				PaidCurrency:            "USDT",
 				RequirePaymentFacts:     true,
@@ -275,6 +294,28 @@ func TestRechargeEpusdtWithValidation_RejectsMismatchedCallbackFacts(t *testing.
 			assert.Equal(t, 0, getUserQuotaForPaymentGuardTest(t, 404))
 		})
 	}
+}
+
+func TestRechargeEpusdtWithValidation_AllowsGatewayNetworkSwitch(t *testing.T) {
+	truncateTables(t)
+	common.QuotaPerUnit = 500000
+	insertUserForPaymentGuardTest(t, 405, 0)
+	insertTopUpForPaymentGuardTest(t, "epusdt-network-switch", 405, PaymentProviderEpusdt)
+
+	validation := PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderEpusdt,
+		ActualPaymentMethod:     "epusdt:usdt:polygon",
+		ActualPaymentToken:      "USDT",
+		PaidAmount:              9.99,
+		PaidCurrency:            "CNY",
+		RequirePaymentFacts:     true,
+	}
+
+	require.NoError(t, RechargeEpusdtWithValidation("epusdt-network-switch", `{"provider":"epusdt","network":"polygon"}`, validation, "127.0.0.1"))
+	require.NoError(t, RechargeEpusdtWithValidation("epusdt-network-switch", `{"provider":"epusdt","network":"polygon"}`, validation, "127.0.0.1"))
+
+	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "epusdt-network-switch"))
+	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 405))
 }
 
 func TestRechargeEpayWithValidation_RejectsMismatchedCallbackFacts(t *testing.T) {
@@ -351,6 +392,99 @@ func TestRechargeEpayWithValidation_CompletesOnce(t *testing.T) {
 
 	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "epay-success-once"))
 	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 424))
+}
+
+func TestRechargeEpusdtWithValidation_UsesFrozenCreditQuotaSnapshot(t *testing.T) {
+	truncateTables(t)
+	originalQuotaPerUnit := common.QuotaPerUnit
+	t.Cleanup(func() {
+		common.QuotaPerUnit = originalQuotaPerUnit
+	})
+
+	common.QuotaPerUnit = 500000
+	insertUserForPaymentGuardTest(t, 425, 0)
+	topUp := &TopUp{
+		UserId:                 425,
+		Amount:                 2,
+		Money:                  2,
+		PaidAmount:             2,
+		PaidCurrency:           "CNY",
+		TradeNo:                "epusdt-frozen-quota",
+		PaymentMethod:          PaymentMethodEpusdtPrefix + "usdt",
+		PaymentProvider:        PaymentProviderEpusdt,
+		Status:                 common.TopUpStatusPending,
+		CreateTime:             time.Now().Unix(),
+		OrderSnapshotVersion:   1,
+		RequestAmountSnapshot:  2,
+		CreditQuotaSnapshot:    1000000,
+		QuotaPerUnitSnapshot:   500000,
+		AmountDiscountSnapshot: 1,
+	}
+	require.NoError(t, topUp.Insert())
+
+	common.QuotaPerUnit = 1
+	validation := PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderEpusdt,
+		ActualPaymentToken:      "USDT",
+		PaidAmount:              2,
+		PaidCurrency:            "CNY",
+		RequirePaymentFacts:     true,
+	}
+	require.NoError(t, RechargeEpusdtWithValidation(topUp.TradeNo, `{"provider":"epusdt"}`, validation, "127.0.0.1"))
+
+	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, topUp.TradeNo))
+	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 425))
+}
+
+func TestCompleteSubscriptionOrder_UsesFrozenPlanSnapshot(t *testing.T) {
+	truncateTables(t)
+
+	insertUserForPaymentGuardTest(t, 426, 0)
+	plan := insertSubscriptionPlanForPaymentGuardTest(t, 426)
+	order := &SubscriptionOrder{
+		UserId:                              426,
+		PlanId:                              plan.Id,
+		Money:                               9.99,
+		PaidAmount:                          9.99,
+		PaidCurrency:                        "CNY",
+		TradeNo:                             "sub-frozen-plan",
+		PaymentMethod:                       "alipay",
+		PaymentProvider:                     PaymentProviderEpay,
+		Status:                              common.TopUpStatusPending,
+		CreateTime:                          time.Now().Unix(),
+		OrderSnapshotVersion:                1,
+		PlanTitleSnapshot:                   "Frozen Plan",
+		PlanPriceSnapshot:                   9.99,
+		PlanCurrencySnapshot:                "CNY",
+		PlanDurationUnitSnapshot:            SubscriptionDurationDay,
+		PlanDurationValueSnapshot:           7,
+		PlanTotalAmountSnapshot:             12345,
+		PlanQuotaResetPeriodSnapshot:        SubscriptionResetNever,
+		PlanQuotaResetCustomSecondsSnapshot: 0,
+		PlanUpgradeGroupSnapshot:            "frozen-group",
+	}
+	require.NoError(t, order.Insert())
+	require.NoError(t, DB.Model(&SubscriptionPlan{}).Where("id = ?", plan.Id).Updates(map[string]interface{}{
+		"total_amount":   int64(999999),
+		"duration_unit":  SubscriptionDurationMonth,
+		"duration_value": 6,
+		"upgrade_group":  "changed-group",
+	}).Error)
+
+	validation := PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderEpay,
+		ActualPaymentMethod:     "alipay",
+		PaidAmount:              9.99,
+		PaidCurrency:            "CNY",
+		RequirePaymentFacts:     true,
+	}
+	require.NoError(t, CompleteSubscriptionOrderWithValidation(order.TradeNo, `{"provider":"epay"}`, validation))
+
+	var sub UserSubscription
+	require.NoError(t, DB.Where("user_id = ?", 426).First(&sub).Error)
+	assert.Equal(t, int64(12345), sub.AmountTotal)
+	assert.Equal(t, "frozen-group", sub.UpgradeGroup)
+	assert.InDelta(t, float64(7*24*60*60), float64(sub.EndTime-sub.StartTime), 5)
 }
 
 func TestRechargeEpayWithValidation_RejectsMissingCallbackFacts(t *testing.T) {

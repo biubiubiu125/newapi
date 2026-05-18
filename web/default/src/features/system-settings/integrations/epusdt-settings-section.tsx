@@ -170,11 +170,11 @@ export function EpusdtSettingsSection(props: Props) {
           <Textarea
             className='min-h-28 font-mono text-xs'
             {...form.register('EpusdtAssetDisplayNames')}
-            placeholder='{"epusdt:usdt:tron":"USDT-TRC20"}'
+            placeholder='{"epusdt:usdt":"USDT"}'
           />
           <p className='text-muted-foreground text-xs'>
             {t(
-              'Map epusdt payment method keys to user-facing names, for example epusdt:usdt:tron -> USDT-TRC20.'
+              'Map epusdt payment method keys to user-facing names, for example epusdt:usdt -> USDT.'
             )}
           </p>
         </div>

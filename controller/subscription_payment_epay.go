@@ -97,10 +97,12 @@ func SubscriptionRequestEpay(c *gin.Context) {
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
 	}
+	applySubscriptionOrderSnapshot(order, plan, "CNY")
 	if snapshot != nil {
 		order.ReferralAffiliateId = snapshot.AffiliateId
 		order.ReferralRate = snapshot.Rate
 		order.ReferralBaseAmount = snapshot.BaseAmount
+		order.ReferralBaseCurrency = snapshot.Currency
 		order.ReferralCommissionStatus = snapshot.Status
 		order.ReferralCommissionError = snapshot.Error
 	}
@@ -158,6 +160,10 @@ func SubscriptionEpayNotify(c *gin.Context) {
 	}
 	verifyInfo, err := client.Verify(params)
 	if err != nil || !verifyInfo.VerifyStatus {
+		_, _ = c.Writer.Write([]byte("fail"))
+		return
+	}
+	if !epayCallbackMerchantMatches(params) {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}
@@ -220,6 +226,10 @@ func SubscriptionEpayReturn(c *gin.Context) {
 	}
 	verifyInfo, err := client.Verify(params)
 	if err != nil || !verifyInfo.VerifyStatus {
+		c.Redirect(http.StatusFound, paymentReturnPath("/console/topup?pay=fail"))
+		return
+	}
+	if !epayCallbackMerchantMatches(params) {
 		c.Redirect(http.StatusFound, paymentReturnPath("/console/topup?pay=fail"))
 		return
 	}

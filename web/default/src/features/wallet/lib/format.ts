@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { DEFAULT_DISCOUNT_RATE } from '../constants'
+import { formatCurrencyFromUSD } from '@/lib/currency'
 
 // ============================================================================
 // Wallet-specific Formatting Functions
@@ -62,13 +63,30 @@ export function formatCurrency(amount: number | string): string {
 }
 
 export function formatSiteCreditAmount(amount: number | string): string {
-  const formatted = formatCurrency(amount)
-  return formatted === '-' ? formatted : `$${formatted}`
+  const numeric =
+    typeof amount === 'number' ? amount : Number.parseFloat(String(amount))
+  if (!Number.isFinite(numeric)) return '-'
+  return formatCurrencyFromUSD(numeric, {
+    digitsLarge: Math.abs(numeric) >= 1 ? 2 : 4,
+    digitsSmall: 4,
+    abbreviate: false,
+  })
 }
 
 export function formatPaymentCnyAmount(amount: number | string): string {
   const formatted = formatCurrency(amount)
   return formatted === '-' ? formatted : `\u00a5${formatted}`
+}
+
+export function formatCnyPrice(amount: number | string): string {
+  const numeric =
+    typeof amount === 'number' ? amount : Number.parseFloat(String(amount))
+  if (!Number.isFinite(numeric)) return '-'
+  const formatted = new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(numeric)
+  return `\u00a5${formatted}`
 }
 
 /**

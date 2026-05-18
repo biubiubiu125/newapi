@@ -13,25 +13,37 @@ import (
 )
 
 type TopUp struct {
-	Id                       int     `json:"id"`
-	UserId                   int     `json:"user_id" gorm:"index"`
-	Amount                   int64   `json:"amount"`
-	Money                    float64 `json:"money"`
-	PaidAmount               float64 `json:"paid_amount" gorm:"type:decimal(20,8);default:0"`
-	PaidCurrency             string  `json:"paid_currency" gorm:"type:varchar(16);default:''"`
-	TradeNo                  string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
-	PaymentMethod            string  `json:"payment_method" gorm:"type:varchar(50)"`
-	PaymentProvider          string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
-	ProviderPayload          string  `json:"provider_payload" gorm:"type:text"`
-	CreateTime               int64   `json:"create_time"`
-	CompleteTime             int64   `json:"complete_time"`
-	Status                   string  `json:"status"`
-	ReferralAffiliateId      int     `json:"referral_affiliate_id" gorm:"index"`
-	ReferralRate             float64 `json:"referral_rate" gorm:"type:decimal(10,4);default:0"`
-	ReferralBaseAmount       float64 `json:"referral_base_amount" gorm:"type:decimal(20,8);default:0"`
-	ReferralCommissionStatus string  `json:"referral_commission_status" gorm:"type:varchar(32);default:'';index"`
-	ReferralCommissionError  string  `json:"referral_commission_error" gorm:"type:text"`
-	ReferralCommissionAt     int64   `json:"referral_commission_at" gorm:"default:0"`
+	Id                         int     `json:"id"`
+	UserId                     int     `json:"user_id" gorm:"index"`
+	Amount                     int64   `json:"amount"`
+	Money                      float64 `json:"money"`
+	PaidAmount                 float64 `json:"paid_amount" gorm:"type:decimal(20,8);default:0"`
+	PaidCurrency               string  `json:"paid_currency" gorm:"type:varchar(16);default:''"`
+	TradeNo                    string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
+	PaymentMethod              string  `json:"payment_method" gorm:"type:varchar(50)"`
+	PaymentProvider            string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	ProviderPayload            string  `json:"provider_payload" gorm:"type:text"`
+	OrderSnapshotVersion       int     `json:"order_snapshot_version" gorm:"type:int;default:0"`
+	RequestAmountSnapshot      int64   `json:"request_amount_snapshot" gorm:"type:bigint;default:0"`
+	CreditQuotaSnapshot        int64   `json:"credit_quota_snapshot" gorm:"type:bigint;default:0"`
+	QuotaPerUnitSnapshot       float64 `json:"quota_per_unit_snapshot" gorm:"type:decimal(20,8);default:0"`
+	PriceSnapshot              float64 `json:"price_snapshot" gorm:"type:decimal(20,8);default:0"`
+	USDExchangeRateSnapshot    float64 `json:"usd_exchange_rate_snapshot" gorm:"type:decimal(20,8);default:0"`
+	CustomExchangeRateSnapshot float64 `json:"custom_exchange_rate_snapshot" gorm:"type:decimal(20,8);default:0"`
+	QuotaDisplayTypeSnapshot   string  `json:"quota_display_type_snapshot" gorm:"type:varchar(32);default:''"`
+	DisplayCurrencySnapshot    string  `json:"display_currency_snapshot" gorm:"type:varchar(16);default:''"`
+	TopupGroupRatioSnapshot    float64 `json:"topup_group_ratio_snapshot" gorm:"type:decimal(20,8);default:0"`
+	AmountDiscountSnapshot     float64 `json:"amount_discount_snapshot" gorm:"type:decimal(20,8);default:0"`
+	CreateTime                 int64   `json:"create_time"`
+	CompleteTime               int64   `json:"complete_time"`
+	Status                     string  `json:"status"`
+	ReferralAffiliateId        int     `json:"referral_affiliate_id" gorm:"index"`
+	ReferralRate               float64 `json:"referral_rate" gorm:"type:decimal(10,4);default:0"`
+	ReferralBaseAmount         float64 `json:"referral_base_amount" gorm:"type:decimal(20,8);default:0"`
+	ReferralBaseCurrency       string  `json:"referral_base_currency" gorm:"type:varchar(16);default:''"`
+	ReferralCommissionStatus   string  `json:"referral_commission_status" gorm:"type:varchar(32);default:'';index"`
+	ReferralCommissionError    string  `json:"referral_commission_error" gorm:"type:text"`
+	ReferralCommissionAt       int64   `json:"referral_commission_at" gorm:"default:0"`
 }
 
 const (
@@ -62,6 +74,7 @@ var (
 type PaymentCallbackValidation struct {
 	ExpectedPaymentProvider string
 	ActualPaymentMethod     string
+	ActualPaymentToken      string
 	PaidAmount              float64
 	PaidCurrency            string
 	RequirePaymentFacts     bool
@@ -77,6 +90,29 @@ func (topUp *TopUp) Update() error {
 	var err error
 	err = DB.Save(topUp).Error
 	return err
+}
+
+func (topUp *TopUp) CreditQuotaAmount() int {
+	if topUp == nil {
+		return 0
+	}
+	if topUp.CreditQuotaSnapshot > 0 {
+		return int(topUp.CreditQuotaSnapshot)
+	}
+	quotaPerUnit := topUp.QuotaPerUnitSnapshot
+	if quotaPerUnit <= 0 {
+		quotaPerUnit = common.QuotaPerUnit
+	}
+	if quotaPerUnit <= 0 {
+		return 0
+	}
+	if topUp.PaymentProvider == PaymentProviderCreem {
+		return int(topUp.Amount)
+	}
+	if topUp.PaymentProvider == PaymentProviderStripe {
+		return int(decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(quotaPerUnit)).IntPart())
+	}
+	return int(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(quotaPerUnit)).IntPart())
 }
 
 func GetTopUpById(id int) *TopUp {
@@ -160,7 +196,10 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 			return err
 		}
 
-		quota = topUp.Money * common.QuotaPerUnit
+		quota = float64(topUp.CreditQuotaAmount())
+		if quota <= 0 {
+			return errors.New("invalid topup quota")
+		}
 		err = tx.Model(&User{}).Where("id = ?", topUp.UserId).Updates(map[string]interface{}{"stripe_customer": customerId, "quota": gorm.Expr("quota + ?", quota)}).Error
 		if err != nil {
 			return err
@@ -371,14 +410,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		// 计算应充值额度：
 		// - Stripe 订单：Money 代表经分组倍率换算后的美元数量，直接 * QuotaPerUnit
 		// - 其他订单（如易支付）：Amount 为美元数量，* QuotaPerUnit
-		if topUp.PaymentProvider == PaymentProviderStripe {
-			dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-			quotaToAdd = int(decimal.NewFromFloat(topUp.Money).Mul(dQuotaPerUnit).IntPart())
-		} else {
-			dAmount := decimal.NewFromInt(topUp.Amount)
-			dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-			quotaToAdd = int(dAmount.Mul(dQuotaPerUnit).IntPart())
-		}
+		quotaToAdd = topUp.CreditQuotaAmount()
 		if quotaToAdd <= 0 {
 			return errors.New("无效的充值额度")
 		}
@@ -514,9 +546,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 			return errors.New("充值订单状态错误")
 		}
 
-		dAmount := decimal.NewFromInt(topUp.Amount)
-		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-		quotaToAdd = int(dAmount.Mul(dQuotaPerUnit).IntPart())
+		quotaToAdd = topUp.CreditQuotaAmount()
 		if quotaToAdd <= 0 {
 			return errors.New("无效的充值额度")
 		}
@@ -577,7 +607,7 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return errors.New("充值订单状态错误")
 		}
 
-		quotaToAdd = int(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).IntPart())
+		quotaToAdd = topUp.CreditQuotaAmount()
 		if quotaToAdd <= 0 {
 			return errors.New("无效的充值额度")
 		}
@@ -632,7 +662,10 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 		if topUp.PaymentProvider != validation.ExpectedPaymentProvider {
 			return ErrPaymentMethodMismatch
 		}
-		if validation.ActualPaymentMethod != "" && topUp.PaymentMethod != validation.ActualPaymentMethod {
+		if validation.ActualPaymentMethod != "" && !callbackPaymentMethodMatches(topUp.PaymentMethod, validation.ActualPaymentMethod, validation.ExpectedPaymentProvider) {
+			return ErrPaymentMethodMismatch
+		}
+		if validation.ActualPaymentToken != "" && !paymentMethodMatchesEpusdtToken(topUp.PaymentMethod, validation.ActualPaymentToken) {
 			return ErrPaymentMethodMismatch
 		}
 		if validation.RequirePaymentFacts && !samePaymentCurrency(topUp.PaidCurrency, validation.PaidCurrency) {
@@ -649,7 +682,7 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 			return ErrTopUpStatusInvalid
 		}
 
-		quotaToAdd = int(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).IntPart())
+		quotaToAdd = topUp.CreditQuotaAmount()
 		if quotaToAdd <= 0 {
 			return errors.New("invalid topup quota")
 		}
@@ -708,7 +741,10 @@ func RechargeEpusdtWithValidation(tradeNo string, providerPayload string, valida
 		if topUp.PaymentProvider != validation.ExpectedPaymentProvider {
 			return ErrPaymentMethodMismatch
 		}
-		if validation.ActualPaymentMethod != "" && topUp.PaymentMethod != validation.ActualPaymentMethod {
+		if validation.ActualPaymentMethod != "" && !callbackPaymentMethodMatches(topUp.PaymentMethod, validation.ActualPaymentMethod, validation.ExpectedPaymentProvider) {
+			return ErrPaymentMethodMismatch
+		}
+		if validation.ActualPaymentToken != "" && !paymentMethodMatchesEpusdtToken(topUp.PaymentMethod, validation.ActualPaymentToken) {
 			return ErrPaymentMethodMismatch
 		}
 		if validation.RequirePaymentFacts && !samePaymentCurrency(topUp.PaidCurrency, validation.PaidCurrency) {
@@ -726,9 +762,7 @@ func RechargeEpusdtWithValidation(tradeNo string, providerPayload string, valida
 			return errors.New("充值订单状态错误")
 		}
 
-		dAmount := decimal.NewFromInt(topUp.Amount)
-		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-		quotaToAdd = int(dAmount.Mul(dQuotaPerUnit).IntPart())
+		quotaToAdd = topUp.CreditQuotaAmount()
 		if quotaToAdd <= 0 {
 			return errors.New("无效的充值额度")
 		}
@@ -780,4 +814,46 @@ func samePaymentAmount(expected float64, actual float64) bool {
 	expectedAmount := decimal.NewFromFloat(expected).Round(8)
 	actualAmount := decimal.NewFromFloat(actual).Round(8)
 	return expectedAmount.Equal(actualAmount)
+}
+
+func paymentMethodMatchesEpusdtToken(paymentMethod string, token string) bool {
+	token = strings.ToLower(strings.TrimSpace(token))
+	if token == "" {
+		return true
+	}
+	paymentMethod = strings.ToLower(strings.TrimSpace(paymentMethod))
+	if paymentMethod == PaymentMethodEpusdtPrefix+token {
+		return true
+	}
+	expectedPrefix := PaymentMethodEpusdtPrefix + token + ":"
+	return strings.HasPrefix(paymentMethod, expectedPrefix)
+}
+
+func callbackPaymentMethodMatches(expected string, actual string, provider string) bool {
+	expected = strings.ToLower(strings.TrimSpace(expected))
+	actual = strings.ToLower(strings.TrimSpace(actual))
+	if expected == "" || actual == "" {
+		return expected == actual
+	}
+	if provider != PaymentProviderEpusdt {
+		return expected == actual
+	}
+	token, ok := epusdtPaymentMethodToken(actual)
+	if !ok {
+		return false
+	}
+	return paymentMethodMatchesEpusdtToken(expected, token)
+}
+
+func epusdtPaymentMethodToken(paymentMethod string) (string, bool) {
+	paymentMethod = strings.ToLower(strings.TrimSpace(paymentMethod))
+	if !strings.HasPrefix(paymentMethod, PaymentMethodEpusdtPrefix) {
+		return "", false
+	}
+	parts := strings.Split(strings.TrimPrefix(paymentMethod, PaymentMethodEpusdtPrefix), ":")
+	if len(parts) < 1 || len(parts) > 2 {
+		return "", false
+	}
+	token := strings.TrimSpace(parts[0])
+	return token, token != ""
 }

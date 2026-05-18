@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -36,6 +37,9 @@ func SubscriptionRequestEpusdt(c *gin.Context) {
 	if !ok || !service.IsValidEpusdtPaymentMethod(req.PaymentMethod) {
 		common.ApiErrorMsg(c, "支付链不存在或未启用")
 		return
+	}
+	if network == "" {
+		network = "tron"
 	}
 
 	plan, err := model.GetSubscriptionPlanById(req.PlanId)
@@ -75,7 +79,7 @@ func SubscriptionRequestEpusdt(c *gin.Context) {
 	}
 	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, currency)
 	tradeNo := fmt.Sprintf("SEPU%d%s%d", userId, common.GetRandomString(6), time.Now().Unix())
-	method := service.BuildEpusdtPaymentMethod(token, network)
+	method := service.BuildEpusdtPaymentMethod(token, "")
 	order := &model.SubscriptionOrder{
 		UserId:          userId,
 		PlanId:          plan.Id,
@@ -88,10 +92,12 @@ func SubscriptionRequestEpusdt(c *gin.Context) {
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
 	}
+	applySubscriptionOrderSnapshot(order, plan, currency)
 	if snapshot != nil {
 		order.ReferralAffiliateId = snapshot.AffiliateId
 		order.ReferralRate = snapshot.Rate
 		order.ReferralBaseAmount = snapshot.BaseAmount
+		order.ReferralBaseCurrency = snapshot.Currency
 		order.ReferralCommissionStatus = snapshot.Status
 		order.ReferralCommissionError = snapshot.Error
 	}
@@ -114,7 +120,15 @@ func SubscriptionRequestEpusdt(c *gin.Context) {
 	})
 	if err != nil {
 		_ = model.ExpireSubscriptionOrder(tradeNo, model.PaymentProviderEpusdt)
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Epusdt 拉起订阅支付失败 user_id=%d trade_no=%s payment_method=%s plan_id=%d error=%q", userId, tradeNo, method, plan.Id, err.Error()))
+		var gatewayErr service.EpusdtGatewayError
+		if errors.As(err, &gatewayErr) {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Epusdt gateway rejected subscription order user_id=%d trade_no=%s payment_method=%s plan_id=%d error=%q", userId, tradeNo, method, plan.Id, err.Error()))
+			if message := gatewayErr.PublicMessage(); message != "" {
+				common.ApiErrorMsg(c, message)
+				return
+			}
+		}
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Epusdt subscription payment create failed user_id=%d trade_no=%s payment_method=%s plan_id=%d error=%q", userId, tradeNo, method, plan.Id, err.Error()))
 		common.ApiErrorMsg(c, "拉起支付失败")
 		return
 	}
@@ -153,15 +167,15 @@ func SubscriptionEpusdtNotify(c *gin.Context) {
 	LockOrder(tradeNo)
 	defer UnlockOrder(tradeNo)
 	merchantID := service.EpusdtCallbackMerchantID(params)
-	if merchantID != "" && merchantID != setting.EpusdtPID {
+	if !epusdtCallbackMerchantMatches(merchantID) {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}
 	if err := model.CompleteSubscriptionOrderWithValidation(tradeNo, common.GetJsonString(params), model.PaymentCallbackValidation{
 		ExpectedPaymentProvider: model.PaymentProviderEpusdt,
-		ActualPaymentMethod:     service.EpusdtCallbackMethod(params),
+		ActualPaymentToken:      service.EpusdtCallbackToken(params),
 		PaidAmount:              service.EpusdtCallbackPaidAmount(params),
-		PaidCurrency:            service.EpusdtCallbackPaidCurrency(params),
+		PaidCurrency:            epusdtCallbackPaidCurrency(params),
 		RequirePaymentFacts:     true,
 	}); err != nil {
 		_, _ = c.Writer.Write([]byte("fail"))

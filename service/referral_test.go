@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"sync"
 	"testing"
 	"time"
 
@@ -210,6 +211,97 @@ func TestProcessTopUpCommissionIsIdempotent(t *testing.T) {
 	require.Equal(t, 2.0, commission.SettlementFxRate)
 	require.Equal(t, 20.0, commission.SettlementBaseAmount)
 	require.Equal(t, 4.0, commission.CommissionAmount)
+}
+
+func TestProcessTopUpCommissionConcurrentCallbacksAreIdempotent(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	sqlDB.SetMaxIdleConns(1)
+
+	service := NewReferralService()
+	common.ReferralSettlementFxRates = map[string]float64{"CNY": 1}
+	operation_setting.USDExchangeRate = 1
+
+	invitee := &model.User{Username: "concurrent-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "concurrent-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "CONCUR01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralBinding{
+		InviteeUserId: invitee.Id,
+		InviterUserId: affiliateUser.Id,
+		AffiliateId:   affiliate.Id,
+		BindSource:    "code",
+		BindCode:      affiliate.InviteCode,
+		BoundAt:       time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      affiliateUser.Id,
+	}).Error)
+
+	topup := &model.TopUp{
+		UserId:              invitee.Id,
+		Amount:              100,
+		Money:               100,
+		PaidAmount:          100,
+		PaidCurrency:        "CNY",
+		TradeNo:             "topup-concurrent",
+		Status:              common.TopUpStatusSuccess,
+		ReferralAffiliateId: affiliate.Id,
+		ReferralRate:        10,
+		ReferralBaseAmount:  100,
+		PaymentMethod:       "alipay",
+		PaymentProvider:     model.PaymentProviderEpay,
+		CreateTime:          time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(topup).Error)
+
+	const attempts = 50
+	errCh := make(chan error, attempts)
+	var wg sync.WaitGroup
+	wg.Add(attempts)
+	for i := 0; i < attempts; i++ {
+		go func() {
+			defer wg.Done()
+			errCh <- service.ProcessTopUpCommission(topup.TradeNo)
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+
+	var commissions int64
+	require.NoError(t, db.Model(&model.ReferralCommission{}).Where("source_type = ? AND source_trade_no = ?", "topup", topup.TradeNo).Count(&commissions).Error)
+	require.EqualValues(t, 1, commissions)
+
+	var ledgers int64
+	require.NoError(t, db.Model(&model.ReferralCommissionLedger{}).Where("external_ref_id = ?", "accrue:topup:topup-concurrent").Count(&ledgers).Error)
+	require.EqualValues(t, 1, ledgers)
+
+	account := &model.ReferralCommissionAccount{}
+	require.NoError(t, db.Where("affiliate_id = ?", affiliate.Id).First(account).Error)
+	require.Equal(t, 10.0, account.PendingAmount)
+	require.Zero(t, account.AvailableAmount)
+	require.Zero(t, account.FrozenAmount)
+	require.Zero(t, account.WithdrawnAmount)
+
+	job := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "topup", topup.TradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, job.Status)
 }
 
 func TestProcessTopUpCommissionFailsWhenFxRateMissingAndRetriesAfterConfigured(t *testing.T) {

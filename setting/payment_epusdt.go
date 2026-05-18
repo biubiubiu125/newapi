@@ -13,7 +13,7 @@ var (
 	EpusdtSecretKey         string
 	EpusdtCurrency          string = "cny"
 	EpusdtDisplayName       string = "USDT"
-	EpusdtAssetDisplayNames string = `{"usdt:tron":"USDT-TRC20","usdt:polygon":"USDT-Polygon","usdt:bsc":"USDT-BEP20","usdt:bep20":"USDT-BEP20"}`
+	EpusdtAssetDisplayNames string = `{"usdt":"USDT","usdt:tron":"USDT-TRC20","usdt:bsc":"USDT-BEP20","usdt:polygon":"USDT-Polygon"}`
 	EpusdtMinTopUp          int    = 1
 )
 

@@ -86,7 +86,7 @@ const defaultBillingSettings: BillingSettings = {
   EpusdtCurrency: 'CNY',
   EpusdtDisplayName: 'USDT',
   EpusdtAssetDisplayNames:
-    '{"epusdt:usdt:tron":"USDT-TRC20","epusdt:usdt:polygon":"USDT-Polygon","epusdt:usdt:bsc":"USDT-BEP20"}',
+    '{"epusdt:usdt":"USDT","epusdt:usdt:tron":"USDT-TRC20","epusdt:usdt:bsc":"USDT-BEP20","epusdt:usdt:polygon":"USDT-Polygon"}',
   EpusdtMinTopUp: 1,
   WaffoEnabled: false,
   WaffoApiKey: '',

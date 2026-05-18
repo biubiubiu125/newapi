@@ -72,6 +72,15 @@ const PAYMENT_TEMPLATES = [
     },
   },
   {
+    name: 'USDT',
+    template: {
+      color: 'rgba(var(--semi-teal-5), 1)',
+      min_topup: '1',
+      name: 'USDT',
+      type: 'epusdt:usdt',
+    },
+  },
+  {
     name: 'Custom',
     template: {
       color: 'black',

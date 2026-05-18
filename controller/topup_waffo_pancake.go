@@ -170,10 +170,18 @@ func RequestWaffoPancakePay(c *gin.Context) {
 	}
 	topUp.PaidAmount = payMoney
 	topUp.PaidCurrency = strings.ToUpper(strings.TrimSpace(setting.WaffoPancakeCurrency))
+	applyTopUpOrderSnapshot(topUp, topUpOrderSnapshotInput{
+		RequestAmount: req.Amount,
+		CreditAmount:  topUp.Amount,
+		PaidAmount:    payMoney,
+		PaidCurrency:  topUp.PaidCurrency,
+		UserGroup:     group,
+	})
 	if snapshot != nil {
 		topUp.ReferralAffiliateId = snapshot.AffiliateId
 		topUp.ReferralRate = snapshot.Rate
 		topUp.ReferralBaseAmount = snapshot.BaseAmount
+		topUp.ReferralBaseCurrency = snapshot.Currency
 		topUp.ReferralCommissionStatus = snapshot.Status
 		topUp.ReferralCommissionError = snapshot.Error
 	}

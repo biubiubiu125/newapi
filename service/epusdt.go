@@ -20,6 +20,7 @@ import (
 )
 
 const EpusdtPaymentMethodPrefix = "epusdt:"
+const epusdtUserAgent = "Mozilla/5.0 (compatible; NewAPI-Epusdt/1.0)"
 
 type EpusdtAsset struct {
 	Token       string `json:"token"`
@@ -52,6 +53,34 @@ type EpusdtCreateOrderResponse struct {
 	Raw             map[string]interface{} `json:"raw,omitempty"`
 }
 
+type EpusdtGatewayError struct {
+	StatusCode int
+	Body       string
+}
+
+func (err EpusdtGatewayError) Error() string {
+	if strings.TrimSpace(err.Body) == "" {
+		return fmt.Sprintf("epusdt create order status %d", err.StatusCode)
+	}
+	return fmt.Sprintf("epusdt create order status %d: %s", err.StatusCode, err.Body)
+}
+
+func (err EpusdtGatewayError) PublicMessage() string {
+	var payload map[string]interface{}
+	if common.UnmarshalJsonStr(err.Body, &payload) != nil {
+		return ""
+	}
+	message := firstString(payload, "message", "msg", "error")
+	if message == "" {
+		return ""
+	}
+	statusCode := firstString(payload, "status_code", "code")
+	if statusCode != "" {
+		return fmt.Sprintf("Epusdt 网关拒绝订单：%s（%s）", message, statusCode)
+	}
+	return fmt.Sprintf("Epusdt 网关拒绝订单：%s", message)
+}
+
 func IsEpusdtConfigured() bool {
 	return setting.EpusdtEnabled &&
 		strings.TrimSpace(setting.EpusdtBaseURL) != "" &&
@@ -73,19 +102,24 @@ func NormalizeEpusdtPaymentMethod(paymentMethod string) string {
 func ParseEpusdtPaymentMethod(paymentMethod string) (token string, network string, ok bool) {
 	normalized := strings.TrimPrefix(NormalizeEpusdtPaymentMethod(paymentMethod), EpusdtPaymentMethodPrefix)
 	parts := strings.Split(normalized, ":")
-	if len(parts) != 2 {
+	if len(parts) < 1 || len(parts) > 2 {
 		return "", "", false
 	}
 	token = strings.TrimSpace(strings.ToLower(parts[0]))
-	network = strings.TrimSpace(strings.ToLower(parts[1]))
-	return token, network, token != "" && network != ""
+	if len(parts) == 2 {
+		network = strings.TrimSpace(strings.ToLower(parts[1]))
+	}
+	return token, network, token != ""
 }
 
 func BuildEpusdtPaymentMethod(token string, network string) string {
 	token = strings.TrimSpace(strings.ToLower(token))
 	network = strings.TrimSpace(strings.ToLower(network))
-	if token == "" || network == "" {
+	if token == "" {
 		return ""
+	}
+	if network == "" {
+		return EpusdtPaymentMethodPrefix + token
 	}
 	return EpusdtPaymentMethodPrefix + token + ":" + network
 }
@@ -94,17 +128,24 @@ func GetEpusdtAssets() ([]EpusdtAsset, error) {
 	if !IsEpusdtConfigured() {
 		return []EpusdtAsset{}, nil
 	}
-	assets, err := getEpusdtAssetsFromPath("/payments/gmpay/v1/config")
-	if err != nil || len(assets) == 0 {
-		fallbackAssets, fallbackErr := getEpusdtAssetsFromPath("/payments/gmpay/v1/supported-assets")
-		if fallbackErr == nil && len(fallbackAssets) > 0 {
-			return fallbackAssets, nil
+	var lastErr error
+	for _, path := range []string{
+		"/payments/gmpay/v1/config",
+		"/payments/gmpay/v1/supported-assets",
+	} {
+		assets, err := getEpusdtAssetsFromPath(path)
+		if err != nil {
+			lastErr = err
+			continue
+		}
+		if len(assets) > 0 {
+			return assets, nil
 		}
 	}
-	if err != nil {
-		return nil, err
+	if lastErr != nil {
+		common.SysError("failed to fetch epusdt assets, using configured fallback: " + lastErr.Error())
 	}
-	return assets, nil
+	return defaultEpusdtAssets(), nil
 }
 
 func getEpusdtAssetsFromPath(path string) ([]EpusdtAsset, error) {
@@ -112,7 +153,13 @@ func getEpusdtAssetsFromPath(path string) ([]EpusdtAsset, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := epusdtHTTPClient().Get(endpoint)
+	req, err := http.NewRequest(http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", epusdtUserAgent)
+	resp, err := epusdtHTTPClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -128,14 +175,7 @@ func getEpusdtAssetsFromPath(path string) ([]EpusdtAsset, error) {
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
-	data := extractEpusdtData(payload)
-	rawAssets, ok := data["supported_assets"].([]interface{})
-	if !ok {
-		rawAssets, ok = payload["supported_assets"].([]interface{})
-	}
-	if !ok {
-		rawAssets, ok = data["items"].([]interface{})
-	}
+	rawAssets, ok := extractEpusdtAssetItems(payload)
 	if !ok {
 		return []EpusdtAsset{}, nil
 	}
@@ -146,25 +186,22 @@ func getEpusdtAssetsFromPath(path string) ([]EpusdtAsset, error) {
 		if !ok {
 			continue
 		}
-		token := firstString(obj, "token", "currency", "symbol", "coin")
-		network := firstString(obj, "network", "chain", "protocol")
-		method := BuildEpusdtPaymentMethod(token, network)
-		if method == "" {
+		tokenItems, ok := firstArray(obj, "tokens")
+		if !ok {
+			token := firstString(obj, "token", "currency", "symbol", "coin")
+			network := firstString(obj, "network", "chain", "protocol")
+			if asset := buildEpusdtAsset(token, network, displayNames); asset.PaymentType != "" {
+				assets = append(assets, asset)
+			}
 			continue
 		}
-		displayName := strings.TrimSpace(displayNames[strings.TrimPrefix(method, EpusdtPaymentMethodPrefix)])
-		if displayName == "" {
-			displayName = strings.TrimSpace(displayNames[method])
+		network := firstString(obj, "network", "chain", "protocol")
+		for _, rawToken := range tokenItems {
+			token := stringify(rawToken)
+			if asset := buildEpusdtAsset(token, network, displayNames); asset.PaymentType != "" {
+				assets = append(assets, asset)
+			}
 		}
-		if displayName == "" {
-			displayName = fmt.Sprintf("%s-%s", strings.ToUpper(token), normalizeEpusdtNetworkLabel(network))
-		}
-		assets = append(assets, EpusdtAsset{
-			Token:       strings.ToLower(token),
-			Network:     strings.ToLower(network),
-			PaymentType: method,
-			DisplayName: displayName,
-		})
 	}
 	return assets, nil
 }
@@ -173,6 +210,13 @@ func IsValidEpusdtPaymentMethod(paymentMethod string) bool {
 	token, network, ok := ParseEpusdtPaymentMethod(paymentMethod)
 	if !ok {
 		return false
+	}
+	if network == "" {
+		for _, asset := range defaultEpusdtAssets() {
+			if strings.EqualFold(asset.Token, token) {
+				return true
+			}
+		}
 	}
 	assets, err := GetEpusdtAssets()
 	if err != nil {
@@ -190,6 +234,23 @@ func IsValidEpusdtPaymentMethod(paymentMethod string) bool {
 	return false
 }
 
+func defaultEpusdtAssets() []EpusdtAsset {
+	displayNames := setting.GetEpusdtAssetDisplayNames()
+	defaults := [][2]string{
+		{"usdt", "tron"},
+		{"usdt", "bsc"},
+		{"usdt", "polygon"},
+	}
+	assets := make([]EpusdtAsset, 0, len(defaults))
+	for _, item := range defaults {
+		asset := buildEpusdtAsset(item[0], item[1], displayNames)
+		if asset.PaymentType != "" {
+			assets = append(assets, asset)
+		}
+	}
+	return assets
+}
+
 func CreateEpusdtOrder(req EpusdtCreateOrderRequest) (*EpusdtCreateOrderResponse, error) {
 	if !IsEpusdtConfigured() {
 		return nil, errors.New("epusdt is not configured")
@@ -203,7 +264,7 @@ func CreateEpusdtOrder(req EpusdtCreateOrderRequest) (*EpusdtCreateOrderResponse
 	bodyMap := map[string]interface{}{
 		"pid":          setting.EpusdtPID,
 		"order_id":     req.OrderID,
-		"amount":       formatMoney(req.Amount),
+		"amount":       req.Amount,
 		"currency":     strings.ToLower(req.Currency),
 		"token":        strings.ToLower(req.Token),
 		"network":      strings.ToLower(req.Network),
@@ -227,6 +288,8 @@ func CreateEpusdtOrder(req EpusdtCreateOrderRequest) (*EpusdtCreateOrderResponse
 		return nil, err
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Accept", "application/json")
+	httpReq.Header.Set("User-Agent", epusdtUserAgent)
 	resp, err := epusdtHTTPClient().Do(httpReq)
 	if err != nil {
 		return nil, err
@@ -237,7 +300,10 @@ func CreateEpusdtOrder(req EpusdtCreateOrderRequest) (*EpusdtCreateOrderResponse
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("epusdt create order status %d", resp.StatusCode)
+		return nil, EpusdtGatewayError{
+			StatusCode: resp.StatusCode,
+			Body:       strings.TrimSpace(string(respBody)),
+		}
 	}
 	var payload map[string]interface{}
 	if err := json.Unmarshal(respBody, &payload); err != nil {
@@ -245,15 +311,18 @@ func CreateEpusdtOrder(req EpusdtCreateOrderRequest) (*EpusdtCreateOrderResponse
 	}
 	data := extractEpusdtData(payload)
 	result := &EpusdtCreateOrderResponse{
-		OrderID:         firstString(data, "order_id", "orderId", "trade_no"),
+		OrderID:         firstString(data, "order_id", "orderId"),
 		PaymentURL:      firstString(data, "payment_url", "paymentUrl"),
 		PayURL:          firstString(data, "pay_url", "payUrl"),
 		CheckoutURL:     firstString(data, "checkout_url", "checkoutUrl", "url"),
-		TransactionID:   firstString(data, "transaction_id", "transactionId", "tx_id"),
-		PaymentAddress:  firstString(data, "payment_address", "paymentAddress", "address"),
+		TransactionID:   firstString(data, "trade_id", "tradeId", "transaction_id", "transactionId", "tx_id"),
+		PaymentAddress:  firstString(data, "receive_address", "receiveAddress", "payment_address", "paymentAddress", "address"),
 		PaymentAmount:   firstString(data, "payment_amount", "paymentAmount", "actual_amount"),
 		PaymentCurrency: firstString(data, "payment_currency", "paymentCurrency", "token"),
 		Raw:             payload,
+	}
+	if result.OrderID == "" {
+		result.OrderID = req.OrderID
 	}
 	if result.PaymentURL == "" {
 		result.PaymentURL = result.PayURL
@@ -331,6 +400,10 @@ func EpusdtCallbackMethod(values map[string]interface{}) string {
 	return BuildEpusdtPaymentMethod(token, network)
 }
 
+func EpusdtCallbackToken(values map[string]interface{}) string {
+	return strings.ToLower(firstString(values, "token", "symbol", "coin"))
+}
+
 func EpusdtCallbackPaidAmount(values map[string]interface{}) float64 {
 	amountText := firstString(values, "amount", "money", "paid_amount", "total_amount", "order_amount")
 	if amountText == "" {
@@ -346,10 +419,7 @@ func EpusdtCallbackPaidAmount(values map[string]interface{}) float64 {
 func EpusdtCallbackPaidCurrency(values map[string]interface{}) string {
 	currency := firstString(values, "settlement_currency", "fiat_currency", "order_currency")
 	if currency == "" {
-		token := firstString(values, "token", "symbol", "coin")
-		if token == "" {
-			currency = firstString(values, "currency")
-		}
+		currency = firstString(values, "currency")
 	}
 	return strings.ToUpper(strings.TrimSpace(currency))
 }
@@ -360,7 +430,7 @@ func EpusdtCallbackMerchantID(values map[string]interface{}) string {
 
 func IsEpusdtPaidStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
-	case "paid", "success", "succeeded", "completed", "confirmed", "trade_success":
+	case "2", "paid", "success", "succeeded", "completed", "confirmed", "trade_success":
 		return true
 	default:
 		return false
@@ -388,6 +458,23 @@ func extractEpusdtData(payload map[string]interface{}) map[string]interface{} {
 		return data
 	}
 	return payload
+}
+
+func extractEpusdtAssetItems(payload map[string]interface{}) ([]interface{}, bool) {
+	if payload == nil {
+		return nil, false
+	}
+	if data, ok := payload["data"]; ok {
+		switch v := data.(type) {
+		case []interface{}:
+			return v, true
+		case map[string]interface{}:
+			if items, ok := firstArray(v, "supported_assets", "assets", "items", "chains"); ok {
+				return items, true
+			}
+		}
+	}
+	return firstArray(payload, "supported_assets", "assets", "items", "chains")
 }
 
 func epusdtHTTPClient() *http.Client {
@@ -421,6 +508,50 @@ func firstString(obj map[string]interface{}, keys ...string) string {
 	return ""
 }
 
+func firstArray(obj map[string]interface{}, keys ...string) ([]interface{}, bool) {
+	for _, key := range keys {
+		value, ok := obj[key]
+		if !ok {
+			continue
+		}
+		switch v := value.(type) {
+		case []interface{}:
+			return v, true
+		case []string:
+			out := make([]interface{}, 0, len(v))
+			for _, item := range v {
+				out = append(out, item)
+			}
+			return out, true
+		}
+	}
+	return nil, false
+}
+
+func buildEpusdtAsset(token string, network string, displayNames map[string]string) EpusdtAsset {
+	method := BuildEpusdtPaymentMethod(token, network)
+	if method == "" {
+		return EpusdtAsset{}
+	}
+	displayName := strings.TrimSpace(displayNames[strings.TrimPrefix(method, EpusdtPaymentMethodPrefix)])
+	if displayName == "" {
+		displayName = strings.TrimSpace(displayNames[method])
+	}
+	if displayName == "" {
+		if strings.TrimSpace(network) == "" {
+			displayName = strings.ToUpper(token)
+		} else {
+			displayName = fmt.Sprintf("%s-%s", strings.ToUpper(token), normalizeEpusdtNetworkLabel(network))
+		}
+	}
+	return EpusdtAsset{
+		Token:       strings.ToLower(strings.TrimSpace(token)),
+		Network:     strings.ToLower(strings.TrimSpace(network)),
+		PaymentType: method,
+		DisplayName: displayName,
+	}
+}
+
 func stringify(value interface{}) string {
 	switch v := value.(type) {
 	case nil:
@@ -450,7 +581,7 @@ func stringify(value interface{}) string {
 }
 
 func formatMoney(amount float64) string {
-	return strconv.FormatFloat(amount, 'f', 2, 64)
+	return strconv.FormatFloat(amount, 'f', -1, 64)
 }
 
 func normalizeEpusdtNetworkLabel(network string) string {
@@ -472,19 +603,25 @@ func EpusdtAssetsForTopupMethods() []map[string]string {
 		common.SysError("failed to get epusdt assets: " + err.Error())
 		return []map[string]string{}
 	}
-	methods := make([]map[string]string, 0, len(assets))
+	hasUSDT := false
+	for _, asset := range assets {
+		if strings.EqualFold(asset.Token, "usdt") {
+			hasUSDT = true
+			break
+		}
+	}
+	if len(assets) == 0 || !hasUSDT {
+		return []map[string]string{}
+	}
 	minTopup := setting.EpusdtMinTopUp
 	if minTopup <= 0 {
 		minTopup = 1
 	}
-	for _, asset := range assets {
-		methods = append(methods, map[string]string{
-			"name":      asset.DisplayName,
-			"type":      asset.PaymentType,
-			"color":     "rgba(var(--semi-teal-5), 1)",
-			"min_topup": strconv.Itoa(minTopup),
-			"provider":  "epusdt",
-		})
-	}
-	return methods
+	return []map[string]string{{
+		"name":      "USDT",
+		"type":      BuildEpusdtPaymentMethod("usdt", ""),
+		"color":     "rgba(var(--semi-teal-5), 1)",
+		"min_topup": strconv.Itoa(minTopup),
+		"provider":  "epusdt",
+	}}
 }

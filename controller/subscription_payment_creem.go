@@ -108,10 +108,12 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
 	}
+	applySubscriptionOrderSnapshot(order, plan, currency)
 	if snapshot != nil {
 		order.ReferralAffiliateId = snapshot.AffiliateId
 		order.ReferralRate = snapshot.Rate
 		order.ReferralBaseAmount = snapshot.BaseAmount
+		order.ReferralBaseCurrency = snapshot.Currency
 		order.ReferralCommissionStatus = snapshot.Status
 		order.ReferralCommissionError = snapshot.Error
 	}

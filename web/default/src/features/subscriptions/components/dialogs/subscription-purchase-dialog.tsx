@@ -44,7 +44,8 @@ import {
   paySubscriptionEpusdt,
   paySubscriptionStripe,
 } from '../../api'
-import { formatDuration, formatResetPeriod } from '../../lib'
+import { getPaymentIcon } from '@/features/wallet/lib'
+import { formatCnyPrice, formatDuration, formatResetPeriod } from '../../lib'
 import type { PlanRecord } from '../../types'
 
 interface PaymentMethod {
@@ -108,7 +109,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
     selectedEpusdtMethod ||
     t('Select payment method')
   const totalAmount = Number(plan.total_amount || 0)
-  const price = Number(plan.price_amount || 0).toFixed(2)
+  const price = formatCnyPrice(plan.price_amount || 0)
   const limitReached =
     (props.purchaseLimit || 0) > 0 &&
     (props.purchaseCount || 0) >= (props.purchaseLimit || 0)
@@ -291,7 +292,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
             <Separator />
             <div className='flex items-center justify-between'>
               <span className='text-sm font-medium'>{t('Amount Due')}</span>
-              <span className='text-primary text-lg font-bold'>¥{price}</span>
+              <span className='text-primary text-lg font-bold'>{price}</span>
             </div>
             <div className='text-muted-foreground text-xs'>
               {t(
@@ -390,13 +391,28 @@ export function SubscriptionPurchaseDialog(props: Props) {
                     disabled={limitReached}
                   >
                     <SelectTrigger className='flex-1'>
-                      <SelectValue>{selectedEpusdtMethodLabel}</SelectValue>
+                      <SelectValue>
+                        <span className='flex min-w-0 items-center gap-2'>
+                          {getPaymentIcon(
+                            selectedEpusdtMethod,
+                            'h-4 w-4 shrink-0'
+                          )}
+                          <span className='truncate'>
+                            {selectedEpusdtMethodLabel}
+                          </span>
+                        </span>
+                      </SelectValue>
                     </SelectTrigger>
                     <SelectContent alignItemWithTrigger={false}>
                       <SelectGroup>
                         {(props.epusdtMethods || []).map((m) => (
                           <SelectItem key={m.type} value={m.type}>
-                            {m.name || m.type}
+                            <span className='flex min-w-0 items-center gap-2'>
+                              {getPaymentIcon(m.type, 'h-4 w-4 shrink-0')}
+                              <span className='truncate'>
+                                {m.name || m.type}
+                              </span>
+                            </span>
                           </SelectItem>
                         ))}
                       </SelectGroup>
@@ -405,7 +421,9 @@ export function SubscriptionPurchaseDialog(props: Props) {
                   <Button
                     onClick={handlePayEpusdt}
                     disabled={paying || !selectedEpusdtMethod || limitReached}
+                    className='gap-2'
                   >
+                    {getPaymentIcon(selectedEpusdtMethod, 'h-4 w-4')}
                     {t('Pay')}
                   </Button>
                 </div>

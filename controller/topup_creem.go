@@ -119,10 +119,18 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 	}
 	topUp.PaidAmount = selectedProduct.Price
 	topUp.PaidCurrency = selectedProduct.Currency
+	applyTopUpOrderSnapshot(topUp, topUpOrderSnapshotInput{
+		RequestAmount: selectedProduct.Quota,
+		CreditAmount:  selectedProduct.Quota,
+		PaidAmount:    selectedProduct.Price,
+		PaidCurrency:  selectedProduct.Currency,
+		UserGroup:     user.Group,
+	})
 	if snapshot != nil {
 		topUp.ReferralAffiliateId = snapshot.AffiliateId
 		topUp.ReferralRate = snapshot.Rate
 		topUp.ReferralBaseAmount = snapshot.BaseAmount
+		topUp.ReferralBaseCurrency = snapshot.Currency
 		topUp.ReferralCommissionStatus = snapshot.Status
 		topUp.ReferralCommissionError = snapshot.Error
 	}

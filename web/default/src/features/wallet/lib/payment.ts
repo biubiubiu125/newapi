@@ -103,6 +103,10 @@ export function getDefaultPaymentType(topupInfo: TopupInfo | null): string {
     return topupInfo.pay_methods[0].type
   }
 
+  if (topupInfo.enable_epusdt_topup) {
+    return `${PAYMENT_TYPES.EPUSDT_PREFIX}usdt`
+  }
+
   if (topupInfo.enable_stripe_topup) {
     return PAYMENT_TYPES.STRIPE
   }
@@ -126,24 +130,40 @@ export function getMinTopupAmount(topupInfo: TopupInfo | null): number {
     return DEFAULT_MIN_TOPUP
   }
 
+  const candidates: number[] = []
+  if (Array.isArray(topupInfo.pay_methods)) {
+    for (const method of topupInfo.pay_methods) {
+      if (method.min_topup && method.min_topup > 0) {
+        candidates.push(method.min_topup)
+      }
+    }
+  }
+
   if (topupInfo.enable_online_topup) {
-    return topupInfo.min_topup
+    candidates.push(topupInfo.min_topup)
   }
 
   if (topupInfo.enable_stripe_topup) {
-    return topupInfo.stripe_min_topup
+    candidates.push(topupInfo.stripe_min_topup)
   }
 
   if (topupInfo.enable_waffo_topup) {
-    return topupInfo.waffo_min_topup || DEFAULT_MIN_TOPUP
+    candidates.push(topupInfo.waffo_min_topup || DEFAULT_MIN_TOPUP)
   }
 
   if (topupInfo.enable_waffo_pancake_topup) {
-    return topupInfo.waffo_pancake_min_topup || DEFAULT_MIN_TOPUP
+    candidates.push(topupInfo.waffo_pancake_min_topup || DEFAULT_MIN_TOPUP)
   }
 
   if (topupInfo.enable_epusdt_topup) {
-    return topupInfo.epusdt_min_topup || DEFAULT_MIN_TOPUP
+    candidates.push(topupInfo.epusdt_min_topup || DEFAULT_MIN_TOPUP)
+  }
+
+  const validCandidates = candidates.filter(
+    (item) => Number.isFinite(item) && item > 0
+  )
+  if (validCandidates.length > 0) {
+    return Math.min(...validCandidates)
   }
 
   return DEFAULT_MIN_TOPUP

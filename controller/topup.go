@@ -26,7 +26,7 @@ func GetTopUpInfo(c *gin.Context) {
 	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
 
 	// 获取支付方式
-	payMethods := operation_setting.PayMethods
+	payMethods := clonePayMethods(operation_setting.PayMethods)
 	if !complianceConfirmed {
 		payMethods = []map[string]string{}
 	}
@@ -49,7 +49,7 @@ func GetTopUpInfo(c *gin.Context) {
 				"color":     "rgba(var(--semi-purple-5), 1)",
 				"min_topup": strconv.Itoa(setting.StripeMinTopUp),
 			}
-			payMethods = append(payMethods, stripeMethod)
+			payMethods = appendUniquePayMethod(payMethods, stripeMethod)
 		}
 	}
 
@@ -71,7 +71,7 @@ func GetTopUpInfo(c *gin.Context) {
 				"color":     "rgba(var(--semi-blue-5), 1)",
 				"min_topup": strconv.Itoa(setting.WaffoMinTopUp),
 			}
-			payMethods = append(payMethods, waffoMethod)
+			payMethods = appendUniquePayMethod(payMethods, waffoMethod)
 		}
 	}
 
@@ -86,7 +86,7 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 
 		if !hasWaffoPancake {
-			payMethods = append(payMethods, map[string]string{
+			payMethods = appendUniquePayMethod(payMethods, map[string]string{
 				"name":      "Waffo Pancake",
 				"type":      model.PaymentMethodWaffoPancake,
 				"color":     "rgba(var(--semi-orange-5), 1)",
@@ -96,8 +96,9 @@ func GetTopUpInfo(c *gin.Context) {
 	}
 
 	enableEpusdt := service.IsEpusdtConfigured()
+	epusdtPayMethods := []map[string]string{}
 	if enableEpusdt && complianceConfirmed {
-		payMethods = append(payMethods, service.EpusdtAssetsForTopupMethods()...)
+		epusdtPayMethods = service.EpusdtAssetsForTopupMethods()
 	}
 
 	data := gin.H{
@@ -118,6 +119,7 @@ func GetTopUpInfo(c *gin.Context) {
 		}(),
 		"creem_products":          setting.CreemProducts,
 		"pay_methods":             payMethods,
+		"epusdt_pay_methods":      epusdtPayMethods,
 		"min_topup":               operation_setting.MinTopUp,
 		"stripe_min_topup":        setting.StripeMinTopUp,
 		"waffo_min_topup":         setting.WaffoMinTopUp,
@@ -130,6 +132,38 @@ func GetTopUpInfo(c *gin.Context) {
 	common.ApiSuccess(c, data)
 }
 
+func clonePayMethods(methods []map[string]string) []map[string]string {
+	cloned := make([]map[string]string, 0, len(methods))
+	for _, method := range methods {
+		item := make(map[string]string, len(method))
+		for key, value := range method {
+			item[key] = value
+		}
+		cloned = append(cloned, item)
+	}
+	return cloned
+}
+
+func appendUniquePayMethods(methods []map[string]string, additions ...map[string]string) []map[string]string {
+	for _, addition := range additions {
+		methods = appendUniquePayMethod(methods, addition)
+	}
+	return methods
+}
+
+func appendUniquePayMethod(methods []map[string]string, addition map[string]string) []map[string]string {
+	paymentType := strings.TrimSpace(addition["type"])
+	if paymentType == "" {
+		return methods
+	}
+	for _, method := range methods {
+		if strings.TrimSpace(method["type"]) == paymentType {
+			return methods
+		}
+	}
+	return append(methods, addition)
+}
+
 type EpayRequest struct {
 	Amount        int64  `json:"amount"`
 	PaymentMethod string `json:"payment_method"`
@@ -137,6 +171,108 @@ type EpayRequest struct {
 
 type AmountRequest struct {
 	Amount int64 `json:"amount"`
+}
+
+type topUpOrderSnapshotInput struct {
+	RequestAmount int64
+	CreditAmount  int64
+	PaidAmount    float64
+	PaidCurrency  string
+	UserGroup     string
+}
+
+func paymentDisplayCurrencySnapshot() string {
+	switch operation_setting.GetQuotaDisplayType() {
+	case operation_setting.QuotaDisplayTypeCNY:
+		return "CNY"
+	case operation_setting.QuotaDisplayTypeUSD:
+		return "USD"
+	case operation_setting.QuotaDisplayTypeCustom:
+		return strings.TrimSpace(operation_setting.GetGeneralSetting().CustomCurrencySymbol)
+	case operation_setting.QuotaDisplayTypeTokens:
+		return "TOKENS"
+	default:
+		return strings.TrimSpace(operation_setting.GetQuotaDisplayType())
+	}
+}
+
+func paymentAmountDiscountSnapshot(amount int64) float64 {
+	if discount, ok := operation_setting.GetPaymentSetting().AmountDiscount[int(amount)]; ok && discount > 0 {
+		return discount
+	}
+	return 1
+}
+
+func applyTopUpOrderSnapshot(topUp *model.TopUp, input topUpOrderSnapshotInput) {
+	if topUp == nil {
+		return
+	}
+	quotaPerUnit := common.QuotaPerUnit
+	if quotaPerUnit <= 0 {
+		quotaPerUnit = 1
+	}
+	groupRatio := common.GetTopupGroupRatio(input.UserGroup)
+	if groupRatio <= 0 {
+		groupRatio = 1
+	}
+	creditAmount := input.CreditAmount
+	if creditAmount <= 0 {
+		creditAmount = topUp.Amount
+	}
+	topUp.OrderSnapshotVersion = 1
+	topUp.RequestAmountSnapshot = input.RequestAmount
+	switch topUp.PaymentProvider {
+	case model.PaymentProviderCreem:
+		topUp.CreditQuotaSnapshot = creditAmount
+	case model.PaymentProviderStripe:
+		topUp.CreditQuotaSnapshot = decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(quotaPerUnit)).IntPart()
+	default:
+		topUp.CreditQuotaSnapshot = decimal.NewFromInt(creditAmount).Mul(decimal.NewFromFloat(quotaPerUnit)).IntPart()
+	}
+	topUp.QuotaPerUnitSnapshot = quotaPerUnit
+	topUp.PriceSnapshot = operation_setting.Price
+	topUp.USDExchangeRateSnapshot = operation_setting.USDExchangeRate
+	topUp.CustomExchangeRateSnapshot = operation_setting.GetGeneralSetting().CustomCurrencyExchangeRate
+	topUp.QuotaDisplayTypeSnapshot = operation_setting.GetQuotaDisplayType()
+	topUp.DisplayCurrencySnapshot = paymentDisplayCurrencySnapshot()
+	topUp.TopupGroupRatioSnapshot = groupRatio
+	topUp.AmountDiscountSnapshot = paymentAmountDiscountSnapshot(input.RequestAmount)
+	if topUp.PaidAmount <= 0 {
+		topUp.PaidAmount = input.PaidAmount
+	}
+	if strings.TrimSpace(topUp.PaidCurrency) == "" {
+		topUp.PaidCurrency = strings.ToUpper(strings.TrimSpace(input.PaidCurrency))
+	}
+	if strings.TrimSpace(topUp.ReferralBaseCurrency) == "" {
+		topUp.ReferralBaseCurrency = strings.ToUpper(strings.TrimSpace(topUp.PaidCurrency))
+	}
+}
+
+func applySubscriptionOrderSnapshot(order *model.SubscriptionOrder, plan *model.SubscriptionPlan, paidCurrency string) {
+	if order == nil || plan == nil {
+		return
+	}
+	order.OrderSnapshotVersion = 1
+	order.PlanTitleSnapshot = plan.Title
+	order.PlanPriceSnapshot = plan.PriceAmount
+	order.PlanCurrencySnapshot = strings.ToUpper(strings.TrimSpace(plan.Currency))
+	if strings.TrimSpace(order.PlanCurrencySnapshot) == "" {
+		order.PlanCurrencySnapshot = strings.ToUpper(strings.TrimSpace(paidCurrency))
+	}
+	order.PlanDurationUnitSnapshot = plan.DurationUnit
+	order.PlanDurationValueSnapshot = plan.DurationValue
+	order.PlanCustomSecondsSnapshot = plan.CustomSeconds
+	order.PlanTotalAmountSnapshot = plan.TotalAmount
+	order.PlanQuotaResetPeriodSnapshot = plan.QuotaResetPeriod
+	order.PlanQuotaResetCustomSecondsSnapshot = plan.QuotaResetCustomSeconds
+	order.PlanUpgradeGroupSnapshot = strings.TrimSpace(plan.UpgradeGroup)
+	order.USDExchangeRateSnapshot = operation_setting.USDExchangeRate
+	order.CustomExchangeRateSnapshot = operation_setting.GetGeneralSetting().CustomCurrencyExchangeRate
+	order.QuotaDisplayTypeSnapshot = operation_setting.GetQuotaDisplayType()
+	order.DisplayCurrencySnapshot = paymentDisplayCurrencySnapshot()
+	if strings.TrimSpace(order.ReferralBaseCurrency) == "" {
+		order.ReferralBaseCurrency = strings.ToUpper(strings.TrimSpace(order.PaidCurrency))
+	}
 }
 
 func GetEpayClient() *epay.Client {
@@ -265,10 +401,18 @@ func RequestEpay(c *gin.Context) {
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
 	}
+	applyTopUpOrderSnapshot(topUp, topUpOrderSnapshotInput{
+		RequestAmount: req.Amount,
+		CreditAmount:  amount,
+		PaidAmount:    payMoney,
+		PaidCurrency:  "CNY",
+		UserGroup:     group,
+	})
 	if snapshot != nil {
 		topUp.ReferralAffiliateId = snapshot.AffiliateId
 		topUp.ReferralRate = snapshot.Rate
 		topUp.ReferralBaseAmount = snapshot.BaseAmount
+		topUp.ReferralBaseCurrency = snapshot.Currency
 		topUp.ReferralCommissionStatus = snapshot.Status
 		topUp.ReferralCommissionError = snapshot.Error
 	}
@@ -371,6 +515,11 @@ func EpayNotify(c *gin.Context) {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}
+	if !epayCallbackMerchantMatches(params) {
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("epay webhook merchant mismatch trade_no=%s callback_pid=%s client_ip=%s", verifyInfo.ServiceTradeNo, strings.TrimSpace(params["pid"]), c.ClientIP()))
+		_, _ = c.Writer.Write([]byte("fail"))
+		return
+	}
 
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("epay webhook signature verified trade_no=%s callback_type=%s trade_status=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, c.ClientIP()))
 	if verifyInfo.TradeStatus != epay.StatusTradeSuccess {
@@ -395,6 +544,10 @@ func EpayNotify(c *gin.Context) {
 	}
 	_ = referralService.ProcessTopUpCommission(verifyInfo.ServiceTradeNo)
 	_, _ = c.Writer.Write([]byte("success"))
+}
+
+func epayCallbackMerchantMatches(params map[string]string) bool {
+	return strings.TrimSpace(params["pid"]) != "" && strings.TrimSpace(params["pid"]) == strings.TrimSpace(operation_setting.EpayId)
 }
 
 /*

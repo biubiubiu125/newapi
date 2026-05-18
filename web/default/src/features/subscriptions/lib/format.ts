@@ -64,3 +64,14 @@ export function formatTimestamp(ts: number): string {
   if (!ts) return '-'
   return dayjs(ts * 1000).format('YYYY-MM-DD HH:mm:ss')
 }
+
+export function formatCnyPrice(amount: number | string): string {
+  const numeric =
+    typeof amount === 'number' ? amount : Number.parseFloat(String(amount))
+  if (!Number.isFinite(numeric)) return '-'
+  const formatted = new Intl.NumberFormat(undefined, {
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(numeric)
+  return `\u00a5${formatted}`
+}

@@ -204,10 +204,8 @@ func Register(c *gin.Context) {
 		Username:    user.Username,
 		Password:    user.Password,
 		DisplayName: user.Username,
+		Email:       strings.TrimSpace(user.Email),
 		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
-	}
-	if common.EmailVerificationEnabled {
-		cleanUser.Email = user.Email
 	}
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
 		if err := cleanUser.InsertWithTx(tx, 0); err != nil {

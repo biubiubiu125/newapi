@@ -112,10 +112,18 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
 	}
+	applyTopUpOrderSnapshot(topUp, topUpOrderSnapshotInput{
+		RequestAmount: req.Amount,
+		CreditAmount:  req.Amount,
+		PaidAmount:    chargedMoney,
+		PaidCurrency:  "USD",
+		UserGroup:     user.Group,
+	})
 	if snapshot != nil {
 		topUp.ReferralAffiliateId = snapshot.AffiliateId
 		topUp.ReferralRate = snapshot.Rate
 		topUp.ReferralBaseAmount = snapshot.BaseAmount
+		topUp.ReferralBaseCurrency = snapshot.Currency
 		topUp.ReferralCommissionStatus = snapshot.Status
 		topUp.ReferralCommissionError = snapshot.Error
 	}
