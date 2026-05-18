@@ -177,7 +177,8 @@ export default function ProviderPricing() {
             公开价格导出配置
           </Title>
           <Text type='tertiary'>
-            在这里维护 `/api/provider/pricing` 的公开展示价格。这份价格只提供给外部网站读取展示，不参与真实计费，也不会影响实际扣费。
+            在这里维护 `/api/provider/pricing`
+            的公开展示价格。这份价格只提供给外部网站读取展示，不参与真实计费，也不会影响实际扣费。
           </Text>
         </div>
 
@@ -200,7 +201,10 @@ export default function ProviderPricing() {
               </div>
 
               <div className='flex flex-wrap items-center gap-3'>
-                <Button onClick={() => void load()} disabled={loading || saving}>
+                <Button
+                  onClick={() => void load()}
+                  disabled={loading || saving}
+                >
                   刷新
                 </Button>
                 <Button onClick={addRow} disabled={saving}>
@@ -236,7 +240,10 @@ export default function ProviderPricing() {
                       <div className='flex flex-wrap items-center justify-between gap-3'>
                         <div className='flex items-center gap-3'>
                           <Text strong>导出项 {index + 1}</Text>
-                          <Tag color={row.enabled ? 'green' : 'grey'} shape='circle'>
+                          <Tag
+                            color={row.enabled ? 'green' : 'grey'}
+                            shape='circle'
+                          >
                             {row.enabled ? '已启用' : '已关闭'}
                           </Tag>
                         </div>
@@ -255,12 +262,16 @@ export default function ProviderPricing() {
                         <div className='grid grid-cols-1 md:grid-cols-2 gap-4'>
                           <Input
                             value={row.group_name}
-                            onChange={(value) => updateRow(index, 'group_name', value)}
+                            onChange={(value) =>
+                              updateRow(index, 'group_name', value)
+                            }
                             addonBefore='分组名称'
                           />
                           <Input
                             value={row.model_name}
-                            onChange={(value) => updateRow(index, 'model_name', value)}
+                            onChange={(value) =>
+                              updateRow(index, 'model_name', value)
+                            }
                             addonBefore='模型名称'
                           />
                         </div>
@@ -283,7 +294,9 @@ export default function ProviderPricing() {
                               </Text>
                               <Input
                                 value={row[field]}
-                                onChange={(value) => updateRow(index, field, value)}
+                                onChange={(value) =>
+                                  updateRow(index, field, value)
+                                }
                                 suffix='CNY'
                               />
                             </div>
@@ -296,19 +309,25 @@ export default function ProviderPricing() {
                         <div className='grid grid-cols-1 md:grid-cols-[minmax(0,1fr)_180px_150px] gap-4 items-center'>
                           <Input
                             value={row.note}
-                            onChange={(value) => updateRow(index, 'note', value)}
+                            onChange={(value) =>
+                              updateRow(index, 'note', value)
+                            }
                             addonBefore='备注'
                           />
                           <Input
                             value={toText(row.sort_order)}
-                            onChange={(value) => updateRow(index, 'sort_order', value)}
+                            onChange={(value) =>
+                              updateRow(index, 'sort_order', value)
+                            }
                             addonBefore='排序'
                           />
                           <div className='flex items-center justify-center gap-3 rounded-xl border border-[var(--semi-color-border)] bg-[var(--semi-color-fill-0)] px-4 py-3'>
                             <Text>启用</Text>
                             <Switch
                               checked={row.enabled}
-                              onChange={(checked) => updateRow(index, 'enabled', checked)}
+                              onChange={(checked) =>
+                                updateRow(index, 'enabled', checked)
+                              }
                             />
                           </div>
                         </div>

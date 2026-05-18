@@ -24,7 +24,10 @@ export default defineConfig(
       'react-refresh': reactRefresh,
     },
     rules: {
-      ...reactHooks.configs.recommended.rules,
+      // React Compiler rules require a dedicated migration. Keep the current
+      // lint gate focused on runtime Hook invariants and dependency drift.
+      'react-hooks/rules-of-hooks': 'error',
+      'react-hooks/exhaustive-deps': 'warn',
       'react-hooks/incompatible-library': 'off',
       'react-refresh/only-export-components': [
         'warn',

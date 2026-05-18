@@ -40,6 +40,14 @@ electron/dist/
 .eslintcache
 tiktoken_cache/
 
+# Test / coverage / browser artifacts
+coverage/
+coverage.out
+playwright-report/
+test-results/
+trace.zip
+*.trace.zip
+
 # Binaries / temp
 *.exe
 /__debug_bin*

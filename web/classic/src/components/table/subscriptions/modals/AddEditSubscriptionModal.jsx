@@ -294,7 +294,7 @@ const AddEditSubscriptionModal = ({
                       precision={2}
                       rules={[{ required: true, message: t('请输入金额') }]}
                       extraText={t(
-                        '按人民币录入前台展示售价，不改变订单里记录的真实支付币种。'
+                        '按人民币录入前台展示售价，不改变订单里记录的真实支付币种。',
                       )}
                       style={{ width: '100%' }}
                     />
@@ -323,7 +323,7 @@ const AddEditSubscriptionModal = ({
                       loading={groupLoading}
                       placeholder={t('不升级')}
                       extraText={t(
-                        '购买或手动新增订阅会升级到该分组；当套餐失效、过期、作废或删除后，将回退到升级前分组。回退不会立即生效，通常会有几分钟延迟。'
+                        '购买或手动新增订阅会升级到该分组；当套餐失效、过期、作废或删除后，将回退到升级前分组。回退不会立即生效，通常会有几分钟延迟。',
                       )}
                     >
                       <Select.Option value=''>{t('不升级')}</Select.Option>
@@ -339,7 +339,7 @@ const AddEditSubscriptionModal = ({
                     <Form.Slot
                       label={t('售价币种')}
                       extraText={t(
-                        '订阅套餐按人民币展示和录入，余额与模型计费仍按站内额度口径显示。'
+                        '订阅套餐按人民币展示和录入，余额与模型计费仍按站内额度口径显示。',
                       )}
                     >
                       <div
@@ -391,15 +391,13 @@ const AddEditSubscriptionModal = ({
 
               <Card className='!rounded-2xl shadow-sm border-0 mb-4'>
                 <div className='flex items-center mb-2'>
-                  <Avatar
-                    size='small'
-                    color='green'
-                    className='mr-2 shadow-md'
-                  >
+                  <Avatar size='small' color='green' className='mr-2 shadow-md'>
                     <Clock size={16} />
                   </Avatar>
                   <div>
-                    <Text className='text-lg font-medium'>{t('有效期设置')}</Text>
+                    <Text className='text-lg font-medium'>
+                      {t('有效期设置')}
+                    </Text>
                     <div className='text-xs text-gray-600'>
                       {t('配置套餐的有效时长')}
                     </div>
@@ -467,7 +465,10 @@ const AddEditSubscriptionModal = ({
 
                 <Row gutter={12}>
                   <Col span={12}>
-                    <Form.Select field='quota_reset_period' label={t('重置周期')}>
+                    <Form.Select
+                      field='quota_reset_period'
+                      label={t('重置周期')}
+                    >
                       {resetPeriodOptions.map((o) => (
                         <Select.Option key={o.value} value={o.value}>
                           {o.label}

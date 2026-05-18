@@ -17,6 +17,11 @@ electron/dist
 .gomodcache
 .cache
 .eslintcache
+coverage
+playwright-report
+test-results
+*.trace.zip
+trace.zip
 artifacts
 AUDIT_*.md
 *_REPORT.md

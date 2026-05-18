@@ -1,6 +1,7 @@
 package model
 
 import (
+	"sync"
 	"testing"
 	"time"
 
@@ -403,6 +404,74 @@ func TestRechargeEpayWithValidation_CompletesOnce(t *testing.T) {
 
 	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "epay-success-once"))
 	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 424))
+}
+
+func TestRechargeEpayWithValidation_ConcurrentCallbacksCompleteOnce(t *testing.T) {
+	truncateTables(t)
+	common.QuotaPerUnit = 500000
+	insertUserForPaymentGuardTest(t, 427, 0)
+	insertTopUpForPaymentGuardTest(t, "epay-concurrent-once", 427, PaymentProviderEpay)
+
+	validation := PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderEpay,
+		ActualPaymentMethod:     PaymentProviderEpay,
+		PaidAmount:              9.99,
+		PaidCurrency:            "CNY",
+		RequirePaymentFacts:     true,
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 100)
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- RechargeEpayWithValidation("epay-concurrent-once", `{"provider":"epay"}`, validation, "127.0.0.1")
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "epay-concurrent-once"))
+	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 427))
+}
+
+func TestCompleteSubscriptionOrderWithValidation_ConcurrentCallbacksCompleteOnce(t *testing.T) {
+	truncateTables(t)
+	insertUserForPaymentGuardTest(t, 428, 0)
+	plan := insertSubscriptionPlanForPaymentGuardTest(t, 428)
+	insertSubscriptionOrderForPaymentGuardTest(t, "sub-concurrent-once", 428, plan.Id, PaymentProviderEpay)
+
+	validation := PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderEpay,
+		ActualPaymentMethod:     PaymentProviderEpay,
+		PaidAmount:              9.99,
+		PaidCurrency:            "CNY",
+		RequirePaymentFacts:     true,
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 100)
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- CompleteSubscriptionOrderWithValidation("sub-concurrent-once", `{"provider":"epay"}`, validation)
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+
+	order := GetSubscriptionOrderByTradeNo("sub-concurrent-once")
+	require.NotNil(t, order)
+	assert.Equal(t, common.TopUpStatusSuccess, order.Status)
+	assert.Equal(t, int64(1), countUserSubscriptionsForPaymentGuardTest(t, 428))
 }
 
 func TestRechargeEpusdtWithValidation_UsesFrozenCreditQuotaSnapshot(t *testing.T) {

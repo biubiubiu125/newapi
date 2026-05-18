@@ -31,8 +31,12 @@ import {
 } from '@/components/ui/table'
 import { SectionPageLayout } from '@/components/layout'
 import { StatusBadge } from '@/components/status-badge'
-import { getRiskOverview, getRiskUsers } from './api'
-import type { RiskSignal, RiskUser } from './api'
+import {
+  getRiskOverview,
+  getRiskUsers,
+  type RiskSignal,
+  type RiskUser,
+} from './api'
 
 function formatTime(timestamp?: number) {
   if (!timestamp) return '-'

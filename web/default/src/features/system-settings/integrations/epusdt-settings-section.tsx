@@ -58,7 +58,7 @@ export function EpusdtSettingsSection(props: Props) {
 
   const handleSave = async () => {
     const values = form.getValues()
-    let displayNames = values.EpusdtAssetDisplayNames || '{}'
+    const displayNames = values.EpusdtAssetDisplayNames || '{}'
     try {
       JSON.parse(displayNames)
     } catch {

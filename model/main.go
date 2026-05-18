@@ -29,6 +29,9 @@ const (
 	defaultSQLMaxIdleConns = 25
 	defaultSQLMaxOpenConns = 80
 	defaultSQLMaxLifetime  = 60
+
+	defaultDBStartupConnectTimeoutSeconds  = 60
+	defaultDBStartupConnectRetryIntervalMs = 1000
 )
 
 func initCol() {
@@ -180,13 +183,22 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, error) {
 	})
 }
 
-func InitDB() (err error) {
+func InitDB() error {
+	return withDatabaseStartupRetry("main database", initDBOnce)
+}
+
+func initDBOnce() (err error) {
 	db, err := chooseDB("SQL_DSN", false)
 	if err == nil {
 		if common.DebugEnabled {
 			db = db.Debug()
 		}
 		DB = db
+		defer func() {
+			if err != nil {
+				_ = closeDB(DB)
+			}
+		}()
 		// MySQL charset/collation startup check: ensure Chinese-capable charset
 		if common.UsingMySQL {
 			if err := checkMySQLChineseSupport(DB); err != nil {
@@ -208,8 +220,6 @@ func InitDB() (err error) {
 		common.SysLog("database migration started")
 		err = migrateDB()
 		return err
-	} else {
-		common.FatalLog(err)
 	}
 	return err
 }
@@ -219,12 +229,21 @@ func InitLogDB() (err error) {
 		LOG_DB = DB
 		return
 	}
+	return withDatabaseStartupRetry("log database", initLogDBOnce)
+}
+
+func initLogDBOnce() (err error) {
 	db, err := chooseDB("LOG_SQL_DSN", true)
 	if err == nil {
 		if common.DebugEnabled {
 			db = db.Debug()
 		}
 		LOG_DB = db
+		defer func() {
+			if err != nil {
+				_ = closeDB(LOG_DB)
+			}
+		}()
 		// If log DB is MySQL, also ensure Chinese-capable charset
 		if common.LogSqlType == common.DatabaseTypeMySQL {
 			if err := checkMySQLChineseSupport(LOG_DB); err != nil {
@@ -243,10 +262,33 @@ func InitLogDB() (err error) {
 		common.SysLog("database migration started")
 		err = migrateLOGDB()
 		return err
-	} else {
-		common.FatalLog(err)
 	}
 	return err
+}
+
+func withDatabaseStartupRetry(label string, fn func() error) error {
+	timeoutSeconds := common.GetEnvOrDefault("DB_STARTUP_CONNECT_TIMEOUT_SECONDS", defaultDBStartupConnectTimeoutSeconds)
+	intervalMs := common.GetEnvOrDefault("DB_STARTUP_CONNECT_RETRY_INTERVAL_MS", defaultDBStartupConnectRetryIntervalMs)
+	if timeoutSeconds <= 0 || intervalMs <= 0 {
+		return fn()
+	}
+
+	deadline := time.Now().Add(time.Duration(timeoutSeconds) * time.Second)
+	attempt := 0
+	for {
+		attempt++
+		err := fn()
+		if err == nil {
+			return nil
+		}
+		if time.Now().Add(time.Duration(intervalMs) * time.Millisecond).After(deadline) {
+			return err
+		}
+		// Startup only: Docker Compose and managed databases can report healthy before
+		// PostgreSQL/MySQL accepts every migration query. Keep retry finite and visible.
+		common.SysLog(fmt.Sprintf("%s initialization failed on attempt %d, retrying in %dms: %v", label, attempt, intervalMs, err))
+		time.Sleep(time.Duration(intervalMs) * time.Millisecond)
+	}
 }
 
 type sqlPool interface {

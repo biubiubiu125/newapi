@@ -568,7 +568,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 
 // Complete a subscription order (idempotent). Creates a UserSubscription snapshot from the plan.
 // expectedPaymentProvider guards against cross-gateway callback attacks (empty skips the check).
-// actualPaymentMethod updates the order's PaymentMethod to reflect the real payment type used (empty skips update).
+// actualPaymentMethod must match the frozen order payment method; callbacks never rewrite it.
 func CompleteSubscriptionOrder(tradeNo string, providerPayload string, expectedPaymentProvider string, actualPaymentMethod string) error {
 	return CompleteSubscriptionOrderWithValidation(tradeNo, providerPayload, PaymentCallbackValidation{
 		ExpectedPaymentProvider: expectedPaymentProvider,

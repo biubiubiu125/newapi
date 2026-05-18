@@ -32,8 +32,12 @@ import {
 import { SectionPageLayout } from '@/components/layout'
 import { StatusBadge } from '@/components/status-badge'
 import { formatSiteCreditAmount } from '@/features/wallet/lib'
-import { getRechargeAudit, getRechargeAuditSummary } from './api'
-import type { RechargeAuditOrder, RechargeAuditSummary } from './api'
+import {
+  getRechargeAudit,
+  getRechargeAuditSummary,
+  type RechargeAuditOrder,
+  type RechargeAuditSummary,
+} from './api'
 
 function formatMoney(value: number, currency = 'CNY') {
   const normalizedCurrency = (currency || 'CNY').toUpperCase()

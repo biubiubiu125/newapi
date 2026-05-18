@@ -598,6 +598,68 @@ func TestSubscriptionEpayNotifyRejectsMismatchedMerchant(t *testing.T) {
 	require.Zero(t, subscriptionCount)
 }
 
+func TestSubscriptionEpayNotifyRejectsWhenWebhookDisabled(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	paymentSetting := operation_setting.GetPaymentSetting()
+	paymentSetting.ComplianceConfirmed = false
+
+	user := &model.User{Id: 919, Username: "sub_epay_disabled_guard_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	plan := &model.SubscriptionPlan{
+		Id:            813,
+		Title:         "Disabled Webhook Guard Plan",
+		PriceAmount:   9.99,
+		Currency:      "CNY",
+		DurationUnit:  model.SubscriptionDurationMonth,
+		DurationValue: 1,
+		Enabled:       true,
+		TotalAmount:   1000,
+	}
+	require.NoError(t, model.DB.Create(plan).Error)
+	order := &model.SubscriptionOrder{
+		UserId:          user.Id,
+		PlanId:          plan.Id,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "sub-epay-disabled-webhook",
+		PaymentMethod:   "alipay",
+		PaymentProvider: model.PaymentProviderEpay,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, order.Insert())
+
+	params := signedEpayCallback(map[string]string{
+		"pid":          operation_setting.EpayId,
+		"type":         "alipay",
+		"out_trade_no": order.TradeNo,
+		"trade_no":     "gateway-sub-disabled-webhook",
+		"name":         "SUB:Disabled Webhook Guard Plan",
+		"money":        "9.99",
+		"trade_status": epay.StatusTradeSuccess,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/epay/notify", strings.NewReader(params.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	SubscriptionEpayNotify(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "fail", w.Body.String())
+	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
+	var subscriptionCount int64
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("user_id = ?", user.Id).Count(&subscriptionCount).Error)
+	require.Zero(t, subscriptionCount)
+}
+
 func TestSubscriptionEpayReturnDoesNotCompleteOrder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)

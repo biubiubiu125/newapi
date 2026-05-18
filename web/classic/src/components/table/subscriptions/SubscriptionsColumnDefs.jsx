@@ -237,9 +237,7 @@ const renderOperations = (
     if (isEnabled) {
       Modal.confirm({
         title: t('确认禁用'),
-        content: t(
-          '禁用后用户端不再展示，但历史订单不受影响。是否继续？'
-        ),
+        content: t('禁用后用户端不再展示，但历史订单不受影响。是否继续？'),
         centered: true,
         onOk: () => setPlanEnabled(record, false),
       });
@@ -344,8 +342,7 @@ export const getSubscriptionsColumns = ({
   {
     title: t('支付渠道'),
     width: 180,
-    render: (text, record) =>
-      renderPaymentConfig(text, record, t, enableEpay),
+    render: (text, record) => renderPaymentConfig(text, record, t, enableEpay),
   },
   {
     title: t('总额度'),
