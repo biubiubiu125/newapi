@@ -296,11 +296,23 @@ func TestRechargeEpusdtWithValidation_RejectsMismatchedCallbackFacts(t *testing.
 	}
 }
 
-func TestRechargeEpusdtWithValidation_AllowsGatewayNetworkSwitch(t *testing.T) {
+func TestRechargeEpusdtWithValidation_RejectsGatewayNetworkSwitch(t *testing.T) {
 	truncateTables(t)
 	common.QuotaPerUnit = 500000
 	insertUserForPaymentGuardTest(t, 405, 0)
-	insertTopUpForPaymentGuardTest(t, "epusdt-network-switch", 405, PaymentProviderEpusdt)
+	topUp := &TopUp{
+		UserId:          405,
+		Amount:          2,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "epusdt-network-switch",
+		PaymentMethod:   PaymentMethodEpusdtPrefix + "usdt:tron",
+		PaymentProvider: PaymentProviderEpusdt,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, topUp.Insert())
 
 	validation := PaymentCallbackValidation{
 		ExpectedPaymentProvider: PaymentProviderEpusdt,
@@ -311,11 +323,10 @@ func TestRechargeEpusdtWithValidation_AllowsGatewayNetworkSwitch(t *testing.T) {
 		RequirePaymentFacts:     true,
 	}
 
-	require.NoError(t, RechargeEpusdtWithValidation("epusdt-network-switch", `{"provider":"epusdt","network":"polygon"}`, validation, "127.0.0.1"))
-	require.NoError(t, RechargeEpusdtWithValidation("epusdt-network-switch", `{"provider":"epusdt","network":"polygon"}`, validation, "127.0.0.1"))
+	require.ErrorIs(t, RechargeEpusdtWithValidation("epusdt-network-switch", `{"provider":"epusdt","network":"polygon"}`, validation, "127.0.0.1"), ErrPaymentMethodMismatch)
 
-	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "epusdt-network-switch"))
-	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 405))
+	assert.Equal(t, common.TopUpStatusPending, getTopUpStatusForPaymentGuardTest(t, "epusdt-network-switch"))
+	assert.Equal(t, 0, getUserQuotaForPaymentGuardTest(t, 405))
 }
 
 func TestRechargeEpayWithValidation_RejectsMismatchedCallbackFacts(t *testing.T) {

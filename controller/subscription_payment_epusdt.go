@@ -79,7 +79,7 @@ func SubscriptionRequestEpusdt(c *gin.Context) {
 	}
 	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, currency)
 	tradeNo := fmt.Sprintf("SEPU%d%s%d", userId, common.GetRandomString(6), time.Now().Unix())
-	method := service.BuildEpusdtPaymentMethod(token, "")
+	method := service.BuildEpusdtPaymentMethod(token, network)
 	order := &model.SubscriptionOrder{
 		UserId:          userId,
 		PlanId:          plan.Id,
@@ -173,6 +173,7 @@ func SubscriptionEpusdtNotify(c *gin.Context) {
 	}
 	if err := model.CompleteSubscriptionOrderWithValidation(tradeNo, common.GetJsonString(params), model.PaymentCallbackValidation{
 		ExpectedPaymentProvider: model.PaymentProviderEpusdt,
+		ActualPaymentMethod:     service.EpusdtCallbackMethod(params),
 		ActualPaymentToken:      service.EpusdtCallbackToken(params),
 		PaidAmount:              service.EpusdtCallbackPaidAmount(params),
 		PaidCurrency:            epusdtCallbackPaidCurrency(params),

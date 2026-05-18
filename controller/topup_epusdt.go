@@ -98,7 +98,7 @@ func RequestEpusdtPay(c *gin.Context) {
 		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 		amount = dAmount.Div(dQuotaPerUnit).IntPart()
 	}
-	method := service.BuildEpusdtPaymentMethod(token, "")
+	method := service.BuildEpusdtPaymentMethod(token, network)
 	topUp := &model.TopUp{
 		UserId:          id,
 		Amount:          amount,
@@ -202,6 +202,7 @@ func EpusdtTopUpNotify(c *gin.Context) {
 	}
 	if err := model.RechargeEpusdtWithValidation(tradeNo, common.GetJsonString(params), model.PaymentCallbackValidation{
 		ExpectedPaymentProvider: model.PaymentProviderEpusdt,
+		ActualPaymentMethod:     service.EpusdtCallbackMethod(params),
 		ActualPaymentToken:      service.EpusdtCallbackToken(params),
 		PaidAmount:              service.EpusdtCallbackPaidAmount(params),
 		PaidCurrency:            epusdtCallbackPaidCurrency(params),

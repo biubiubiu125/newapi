@@ -838,22 +838,41 @@ func callbackPaymentMethodMatches(expected string, actual string, provider strin
 	if provider != PaymentProviderEpusdt {
 		return expected == actual
 	}
-	token, ok := epusdtPaymentMethodToken(actual)
+	expectedToken, expectedNetwork, ok := epusdtPaymentMethodParts(expected)
 	if !ok {
 		return false
 	}
-	return paymentMethodMatchesEpusdtToken(expected, token)
+	actualToken, actualNetwork, ok := epusdtPaymentMethodParts(actual)
+	if !ok {
+		return false
+	}
+	if expectedToken != actualToken {
+		return false
+	}
+	if expectedNetwork != "" {
+		return actualNetwork != "" && expectedNetwork == actualNetwork
+	}
+	return true
 }
 
 func epusdtPaymentMethodToken(paymentMethod string) (string, bool) {
+	token, _, ok := epusdtPaymentMethodParts(paymentMethod)
+	return token, ok
+}
+
+func epusdtPaymentMethodParts(paymentMethod string) (string, string, bool) {
 	paymentMethod = strings.ToLower(strings.TrimSpace(paymentMethod))
 	if !strings.HasPrefix(paymentMethod, PaymentMethodEpusdtPrefix) {
-		return "", false
+		return "", "", false
 	}
 	parts := strings.Split(strings.TrimPrefix(paymentMethod, PaymentMethodEpusdtPrefix), ":")
 	if len(parts) < 1 || len(parts) > 2 {
-		return "", false
+		return "", "", false
 	}
 	token := strings.TrimSpace(parts[0])
-	return token, token != ""
+	network := ""
+	if len(parts) == 2 {
+		network = strings.TrimSpace(parts[1])
+	}
+	return token, network, token != ""
 }

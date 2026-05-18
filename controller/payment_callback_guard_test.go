@@ -34,8 +34,12 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 	previousPayAddress := operation_setting.PayAddress
 	previousEpayID := operation_setting.EpayId
 	previousEpayKey := operation_setting.EpayKey
+	previousPayMethods := operation_setting.PayMethods
 	previousEpusdtPID := setting.EpusdtPID
 	previousEpusdtSecretKey := setting.EpusdtSecretKey
+	paymentSetting := operation_setting.GetPaymentSetting()
+	previousComplianceConfirmed := paymentSetting.ComplianceConfirmed
+	previousComplianceTermsVersion := paymentSetting.ComplianceTermsVersion
 
 	common.UsingSQLite = true
 	common.UsingMySQL = false
@@ -45,6 +49,9 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 	operation_setting.PayAddress = "https://pay.example.com"
 	operation_setting.EpayId = "pid-test"
 	operation_setting.EpayKey = "key-test"
+	operation_setting.PayMethods = []map[string]string{{"type": "alipay"}}
+	paymentSetting.ComplianceConfirmed = true
+	paymentSetting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
 	setting.EpusdtPID = "epusdt-pid-test"
 	setting.EpusdtSecretKey = "epusdt-key-test"
 
@@ -59,6 +66,7 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 		&model.SubscriptionPlan{},
 		&model.SubscriptionOrder{},
 		&model.UserSubscription{},
+		&model.ReferralCommissionJob{},
 	))
 
 	t.Cleanup(func() {
@@ -72,6 +80,9 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 		operation_setting.PayAddress = previousPayAddress
 		operation_setting.EpayId = previousEpayID
 		operation_setting.EpayKey = previousEpayKey
+		operation_setting.PayMethods = previousPayMethods
+		paymentSetting.ComplianceConfirmed = previousComplianceConfirmed
+		paymentSetting.ComplianceTermsVersion = previousComplianceTermsVersion
 		setting.EpusdtPID = previousEpusdtPID
 		setting.EpusdtSecretKey = previousEpusdtSecretKey
 		sqlDB, err := db.DB()
@@ -131,6 +142,54 @@ func TestEpayTopupNotifyRejectsMismatchedMerchant(t *testing.T) {
 		"name":         "Topup Merchant Guard",
 		"money":        "9.99",
 		"trade_status": epay.StatusTradeSuccess,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/user/epay/notify", strings.NewReader(params.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	EpayNotify(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "fail", w.Body.String())
+	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
+	var updatedUser model.User
+	require.NoError(t, model.DB.Where("id = ?", user.Id).First(&updatedUser).Error)
+	require.Zero(t, updatedUser.Quota)
+}
+
+func TestEpayTopupNotifyRejectsNonSuccessStatus(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 916, Username: "epay_status_guard_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	topUp := &model.TopUp{
+		UserId:          user.Id,
+		Amount:          2,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "topup-status-guard",
+		PaymentMethod:   "alipay",
+		PaymentProvider: model.PaymentProviderEpay,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, topUp.Insert())
+
+	params := signedEpayCallback(map[string]string{
+		"pid":          operation_setting.EpayId,
+		"type":         "alipay",
+		"out_trade_no": topUp.TradeNo,
+		"trade_no":     "gateway-status-guard",
+		"name":         "Topup Status Guard",
+		"money":        "9.99",
+		"trade_status": "TRADE_CLOSED",
 	})
 
 	req := httptest.NewRequest(http.MethodPost, "/api/user/epay/notify", strings.NewReader(params.Encode()))
@@ -248,6 +307,55 @@ func TestEpusdtTopupNotifyAcceptsGMwalletCallback(t *testing.T) {
 	var updatedUser model.User
 	require.NoError(t, model.DB.Where("id = ?", user.Id).First(&updatedUser).Error)
 	require.Positive(t, updatedUser.Quota)
+}
+
+func TestEpusdtTopupNotifyRejectsNetworkMismatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 917, Username: "epusdt_network_guard_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	topUp := &model.TopUp{
+		UserId:          user.Id,
+		Amount:          2,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "epusdt-network-guard",
+		PaymentMethod:   service.BuildEpusdtPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderEpusdt,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, topUp.Insert())
+
+	body := signedEpusdtCallback(map[string]interface{}{
+		"pid":            setting.EpusdtPID,
+		"trade_id":       "T202605180003",
+		"order_id":       topUp.TradeNo,
+		"amount":         "9.99",
+		"order_currency": "CNY",
+		"token":          "USDT",
+		"network":        "polygon",
+		"status":         2,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/user/epusdt/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	EpusdtTopUpNotify(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "fail", w.Body.String())
+	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
+	var updatedUser model.User
+	require.NoError(t, model.DB.Where("id = ?", user.Id).First(&updatedUser).Error)
+	require.Zero(t, updatedUser.Quota)
 }
 
 func TestSubscriptionEpusdtNotifyRejectsMissingMerchant(t *testing.T) {
@@ -369,6 +477,66 @@ func TestSubscriptionEpusdtNotifyAcceptsGMwalletCallback(t *testing.T) {
 	var subscriptionCount int64
 	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("user_id = ?", user.Id).Count(&subscriptionCount).Error)
 	require.Equal(t, int64(1), subscriptionCount)
+}
+
+func TestSubscriptionEpusdtNotifyRejectsNetworkMismatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 918, Username: "sub_epusdt_network_guard_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	plan := &model.SubscriptionPlan{
+		Id:            812,
+		Title:         "Epusdt Network Guard Plan",
+		PriceAmount:   9.99,
+		Currency:      "CNY",
+		DurationUnit:  model.SubscriptionDurationMonth,
+		DurationValue: 1,
+		Enabled:       true,
+		TotalAmount:   1000,
+	}
+	require.NoError(t, model.DB.Create(plan).Error)
+	order := &model.SubscriptionOrder{
+		UserId:          user.Id,
+		PlanId:          plan.Id,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "sub-epusdt-network-guard",
+		PaymentMethod:   service.BuildEpusdtPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderEpusdt,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, order.Insert())
+
+	body := signedEpusdtCallback(map[string]interface{}{
+		"pid":            setting.EpusdtPID,
+		"trade_id":       "T202605180004",
+		"order_id":       order.TradeNo,
+		"amount":         "9.99",
+		"order_currency": "CNY",
+		"token":          "USDT",
+		"network":        "polygon",
+		"status":         2,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/epusdt/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	SubscriptionEpusdtNotify(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "fail", w.Body.String())
+	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
+	var subscriptionCount int64
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("user_id = ?", user.Id).Count(&subscriptionCount).Error)
+	require.Zero(t, subscriptionCount)
 }
 
 func TestSubscriptionEpayNotifyRejectsMismatchedMerchant(t *testing.T) {
