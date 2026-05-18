@@ -37,3 +37,23 @@ token_estimator_test.go
 skills-lock.json
 .tmp_py/
 newapi-referral-test-src.tar.gz
+
+# Local audit, deployment, load-test, and browser evidence artifacts.
+# These files may contain environment details and should not be published
+# with the open-source code repository.
+AUDIT_*.md
+AUDIT_BASE_COMMIT.txt
+AUDIT_INITIAL_BRANCH.txt
+AUDIT_INITIAL_GIT_STATUS.txt
+LOAD_TEST_*.md
+CURRENCY_*_AUDIT.md
+*_REPORT.md
+*_CHECKLIST.md
+PATCH_SUMMARY.md
+CURRENCY_PRECISION_REPORT.md
+artifacts/
+scripts/load/
+scripts/payment/
+scripts/checks/
+bin/referral_load_test.py
+bin/referral_test_machine_checks.py

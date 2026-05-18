@@ -44,9 +44,6 @@ oauth/                       OAuth 供应商实现
 pkg/                         内部包，例如 cachex、billingexpr、ionet
 web/default/                 默认前端模板
 web/classic/                 classic 前端模板
-scripts/payment/             支付回调、签名、重放和跨网关测试脚本
-scripts/load/                邀请注册和支付返佣混合压测脚本
-scripts/checks/              数据库一致性校验 SQL
 docs/                        项目文档
 ```
 
@@ -168,7 +165,7 @@ docs/                        项目文档
 - 佣金生成、待结算、可提现、冻结、提现、拒绝释放、打款完成都必须有流水或可审计记录。
 - 可提现金额不足、重复提现、并发提现、重复审核、重复打款、拒绝后再次通过、通过后再次拒绝等场景必须被状态机阻断。
 - 推广员只能访问自己的返佣、提现和素材；管理员接口必须走管理员鉴权；普通用户不能伪造推广员 ID 或提现用户 ID。
-- 返佣和提现相关唯一键、事务、行锁或乐观锁不能被移除。修改这些逻辑时必须同时更新对应测试和 `scripts/checks/commission_withdrawal_integrity_check.sql`。
+- 返佣和提现相关唯一键、事务、行锁或乐观锁不能被移除。修改这些逻辑时必须同时更新对应自动化测试；如需数据库一致性 SQL，应放在本地审查产物或私有运维仓库，不提交到公开源码仓库。
 
 ### 规则 11：敏感配置和部署安全不能降级
 
@@ -196,13 +193,13 @@ docs/                        项目文档
 - 前端 classic 模板：在 `web/classic/` 按 `package.json` 执行 build、lint 或 i18n 检查。
 - 容器验证：`docker compose config`、`docker compose up -d --build`、`docker compose ps`、服务健康检查、重启和日志检查。
 - 支付验证：使用真实小额支付、沙箱或签名合法测试回调，不得把 mock 测试描述为真实扣款成功。
-- 压测验证：脚本放在 `scripts/load/`，结果必须配数据库一致性校验 SQL，不能只看 HTTP 成功率。
+- 压测验证：压测脚本和数据库一致性校验 SQL 应作为本地审查或私有运维产物保存，不提交到公开源码仓库；压测结论不能只看 HTTP 成功率。
 
 ## 报告和脚本约定
 
-上线前审查、修复、测试和压测报告应放在项目根目录，脚本按功能放入 `scripts/payment/`、`scripts/load/`、`scripts/checks/`。报告中的测试数据必须有统一前缀，清理 SQL 只能清理带测试前缀的数据，不能误删真实业务数据。
+上线前审查、修复、测试和压测报告应作为本地或私有运维产物保存，不提交到公开源码仓库。报告中的测试数据必须有统一前缀，清理 SQL 只能清理带测试前缀的数据，不能误删真实业务数据。
 
-已有报告文件包括 `AUDIT_REPORT.md`、`ORDER_PAYMENT_FULLCHAIN_REPORT.md`、`PAYMENT_CALLBACK_TEST_REPORT.md`、`CURRENCY_PRECISION_REPORT.md`、`REFERRAL_FULLCHAIN_TEST_REPORT.md`、`WITHDRAWAL_SETTLEMENT_REPORT.md`、`LOAD_TEST_10000_REFERRAL_REGISTRATION.md`、`LOAD_TEST_PAYMENT_REFERRAL_MIXED.md`、`FRONTEND_TEMPLATE_REPRO_REPORT.md`、`SECURITY_REVIEW_REPORT.md`、`DEPLOYMENT_TEST_MACHINE_REPORT.md`、`PRODUCTION_READINESS_CHECKLIST.md`、`PATCH_SUMMARY.md`。
+公开仓库只保留产品源码、必要项目配置、文档和可复现的单元测试。浏览器截图、测试机部署报告、压测结果、签名回调演练脚本、测试机 IP、测试账号和环境凭据不得进入 Git 跟踪。
 
 ## 协作与提交
 
