@@ -135,6 +135,8 @@ func CacheGetUserById(userId int) (*UserBase, error) {
 	return GetUserCache(userId)
 }
 
+var cacheUpdateUserQuota = CacheUpdateUserQuota
+
 func CacheUpdateUserQuota(userId int) error {
 	if !common.RedisEnabled {
 		return nil

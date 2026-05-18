@@ -439,6 +439,90 @@ func TestRechargeEpayWithValidation_ConcurrentCallbacksCompleteOnce(t *testing.T
 	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 427))
 }
 
+func TestRechargeEpusdtWithValidation_CompletesOnce(t *testing.T) {
+	truncateTables(t)
+	common.QuotaPerUnit = 500000
+	insertUserForPaymentGuardTest(t, 435, 0)
+	insertTopUpForPaymentGuardTest(t, "epusdt-success-once", 435, PaymentProviderEpusdt)
+
+	validation := PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderEpusdt,
+		ActualPaymentToken:      "USDT",
+		PaidAmount:              9.99,
+		PaidCurrency:            "CNY",
+		RequirePaymentFacts:     true,
+	}
+	require.NoError(t, RechargeEpusdtWithValidation("epusdt-success-once", `{"provider":"epusdt"}`, validation, "127.0.0.1"))
+	require.NoError(t, RechargeEpusdtWithValidation("epusdt-success-once", `{"provider":"epusdt"}`, validation, "127.0.0.1"))
+
+	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "epusdt-success-once"))
+	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 435))
+}
+
+func TestRechargeEpusdtWithValidation_RefreshesQuotaCache(t *testing.T) {
+	truncateTables(t)
+	common.QuotaPerUnit = 500000
+	insertUserForPaymentGuardTest(t, 437, 0)
+	insertTopUpForPaymentGuardTest(t, "epusdt-refresh-cache", 437, PaymentProviderEpusdt)
+
+	called := false
+	originalCacheUpdate := cacheUpdateUserQuota
+	cacheUpdateUserQuota = func(userID int) error {
+		called = true
+		assert.Equal(t, 437, userID)
+		return nil
+	}
+	t.Cleanup(func() {
+		cacheUpdateUserQuota = originalCacheUpdate
+	})
+
+	validation := PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderEpusdt,
+		ActualPaymentToken:      "USDT",
+		PaidAmount:              9.99,
+		PaidCurrency:            "CNY",
+		RequirePaymentFacts:     true,
+	}
+	require.NoError(t, RechargeEpusdtWithValidation("epusdt-refresh-cache", `{"provider":"epusdt"}`, validation, "127.0.0.1"))
+
+	assert.True(t, called)
+	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "epusdt-refresh-cache"))
+	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 437))
+}
+
+func TestRechargeEpusdtWithValidation_ConcurrentCallbacksCompleteOnce(t *testing.T) {
+	truncateTables(t)
+	common.QuotaPerUnit = 500000
+	insertUserForPaymentGuardTest(t, 436, 0)
+	insertTopUpForPaymentGuardTest(t, "epusdt-concurrent-once", 436, PaymentProviderEpusdt)
+
+	validation := PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderEpusdt,
+		ActualPaymentToken:      "USDT",
+		PaidAmount:              9.99,
+		PaidCurrency:            "CNY",
+		RequirePaymentFacts:     true,
+	}
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, 100)
+	for i := 0; i < 100; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			errCh <- RechargeEpusdtWithValidation("epusdt-concurrent-once", `{"provider":"epusdt"}`, validation, "127.0.0.1")
+		}()
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		require.NoError(t, err)
+	}
+
+	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "epusdt-concurrent-once"))
+	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 436))
+}
+
 func TestCompleteSubscriptionOrderWithValidation_ConcurrentCallbacksCompleteOnce(t *testing.T) {
 	truncateTables(t)
 	insertUserForPaymentGuardTest(t, 428, 0)

@@ -705,7 +705,7 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 	}
 
 	if quotaToAdd > 0 {
-		_ = CacheUpdateUserQuota(topUp.UserId)
+		_ = cacheUpdateUserQuota(topUp.UserId)
 		RecordTopupLog(topUp.UserId, fmt.Sprintf("Epay topup succeeded, quota: %v, paid amount: %.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), callerIp, topUp.PaymentMethod, PaymentProviderEpay)
 	}
 
@@ -795,6 +795,7 @@ func RechargeEpusdtWithValidation(tradeNo string, providerPayload string, valida
 	}
 
 	if quotaToAdd > 0 {
+		_ = cacheUpdateUserQuota(topUp.UserId)
 		RecordTopupLog(topUp.UserId, fmt.Sprintf("Epusdt充值成功，充值额度: %v，支付金额：%.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), callerIp, topUp.PaymentMethod, PaymentProviderEpusdt)
 	}
 
