@@ -163,7 +163,7 @@ Epusdt 在本 fork 中采用“用户侧只展示一个 USDT 通道”的方式�
 └── docker-compose.dev.yml  本地开发示例
 ```
 
-## 快速部署
+## Docker Compose 快速部署
 
 ### 1. 准备环境
 
@@ -239,15 +239,42 @@ docker compose logs -f new-api
 docker compose restart new-api
 ```
 
-### 7. 更新
+### 7. 更新与回滚
+
+更新前先确认工作区状态，生产环境建议先备份数据库：
 
 ```bash
-git pull
-docker compose up -d --build
-docker compose ps
+cd /path/to/newapi
+git status --short
+mkdir -p backups
+docker compose exec -T postgres pg_dump -U "${POSTGRES_USER:-root}" "${POSTGRES_DB:-new-api}" > "backups/newapi-$(date +%F-%H%M%S).sql"
 ```
 
-如果你本地有二次开发，请先确认 `git status` 和冲突情况，不要直接覆盖本地修改。
+拉取最新代码并重新构建：
+
+```bash
+git fetch --all --prune
+git pull --ff-only
+docker compose config
+docker compose up -d --build
+docker compose ps
+docker compose logs --tail=100 new-api
+curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
+```
+
+如果你本地有二次开发，请先提交或备份本地修改，不要直接覆盖。更新后至少验证管理员登录、普通用户登录、渠道测试、充值订单、支付回调、额度到账、推广返佣和提现审核。
+
+如需回滚到旧版本，先确认要回滚的提交号，再在维护窗口执行：
+
+```bash
+git log --oneline -5
+git checkout <old-commit>
+docker compose up -d --build
+docker compose ps
+curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
+```
+
+如果本次更新已经执行了数据库结构变更，回滚前必须先确认数据库是否兼容旧代码，必要时从备份恢复。
 
 ## Docker Compose 说明
 
@@ -289,125 +316,6 @@ docker compose ps
 | `CRITICAL_RATE_LIMIT_ENABLE` | 是否启用关键接口限流 |
 | `CRITICAL_RATE_LIMIT` | 登录、注册、支付等关键接口限流次数 |
 | `CRITICAL_RATE_LIMIT_DURATION` | 关键接口限流窗口秒数 |
-
-## Docker Compose 生产部署教程
-
-本仓库推荐的主流部署方式是 Docker Compose。根目录 `docker-compose.yml` 会从当前源码构建镜像，适合二开仓库、私有仓库和需要可复现更新的生产部署；不要在二开环境里直接把镜像换成上游 `calciumion/new-api:latest`，否则会绕过本仓库代码。
-
-### 单机生产部署
-
-1. 准备服务器。
-
-   建议使用 Linux 服务器，安装 Docker Engine 和 Docker Compose plugin，并确认命令可用：
-
-   ```bash
-   docker --version
-   docker compose version
-   git --version
-   ```
-
-2. 拉取本仓库源码。
-
-   ```bash
-   git clone https://github.com/biubiubiu125/newapi.git
-   cd newapi
-   ```
-
-3. 创建生产 `.env`。
-
-   ```bash
-   cp .env.example .env
-   openssl rand -hex 32
-   openssl rand -hex 32
-   ```
-
-   至少要修改这些值：
-
-   ```env
-   POSTGRES_USER=root
-   POSTGRES_PASSWORD=<强随机数据库密码>
-   POSTGRES_DB=new-api
-   REDIS_PASSWORD=<强随机 Redis 密码>
-   SESSION_SECRET=<强随机会话密钥>
-   APP_PORT=3000
-   CONTAINER_PREFIX=newapi
-   NODE_NAME=newapi-main
-   TRUSTED_REDIRECT_DOMAINS=your-domain.com
-   REFERRAL_TEST_MODE=false
-   GLOBAL_API_RATE_LIMIT_ENABLE=true
-   CRITICAL_RATE_LIMIT_ENABLE=true
-   ```
-
-   生产环境不要使用示例密码。`SESSION_SECRET` 必须是强随机字符串；多节点部署时所有节点必须一致。
-
-4. 启动并检查配置。
-
-   ```bash
-   docker compose config
-   docker compose up -d --build
-   docker compose ps
-   docker compose logs --tail=100 new-api
-   ```
-
-5. 做本机健康检查。
-
-   ```bash
-   curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
-   ```
-
-6. 配置反向代理。
-
-   生产环境建议只让 Nginx、Caddy、HAProxy 或云负载均衡器暴露公网入口，PostgreSQL 和 Redis 不要映射公网端口。Nginx 反代应保留 `Host`、`X-Forwarded-*`，并为流式响应关闭 buffering：
-
-   ```nginx
-   map $http_upgrade $connection_upgrade {
-       default upgrade;
-       '' close;
-   }
-
-   server {
-       listen 80;
-       server_name your-domain.com;
-
-       location / {
-           proxy_pass http://127.0.0.1:3000;
-           proxy_http_version 1.1;
-           proxy_set_header Host $host;
-           proxy_set_header X-Real-IP $remote_addr;
-           proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
-           proxy_set_header X-Forwarded-Proto $scheme;
-           proxy_set_header Upgrade $http_upgrade;
-           proxy_set_header Connection $connection_upgrade;
-           proxy_buffering off;
-           proxy_read_timeout 3600s;
-       }
-   }
-   ```
-
-### 单机更新教程
-
-更新前先确认工作区没有未提交的本地修改；如果你有二开改动，应先提交或备份，再更新。
-
-```bash
-cd /path/to/newapi
-git status --short
-git fetch --all --prune
-git pull --ff-only
-docker compose config
-docker compose up -d --build
-docker compose ps
-docker compose logs --tail=100 new-api
-curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
-```
-
-更新前建议备份数据库：
-
-```bash
-mkdir -p backups
-docker compose exec -T postgres pg_dump -U "${POSTGRES_USER:-root}" "${POSTGRES_DB:-new-api}" > "backups/newapi-$(date +%F-%H%M%S).sql"
-```
-
-如果更新涉及数据库结构或支付、额度、返佣、提现逻辑，建议在低峰期执行，并在更新后验证登录、充值、支付回调、额度到账、返佣和提现审核链路。
 
 ## 多机 / 多集群 Docker Compose 部署
 
@@ -458,16 +366,18 @@ CRYPTO_SECRET=<所有节点一致的强随机密钥>
 SQL_DSN=newapi:<db-password>@tcp(db.example.internal:3306)/new-api?charset=utf8mb4&parseTime=true&loc=Asia%2FShanghai
 ```
 
-### 主节点 Compose 示例
+### 应用节点 Compose 模板
 
-主节点负责正常业务入口，并承担主节点职责。下面示例适合每台应用服务器单独维护一个 `docker-compose.yml`，数据库和 Redis 使用外部共享服务：
+多机部署时，不建议把根目录单机版 `docker-compose.yml` 原样复制到每台应用服务器，因为它会在每台机器上各自启动 PostgreSQL 和 Redis。应用节点应使用共享数据库和共享 Redis，只启动 `new-api` 服务。
+
+在每台应用服务器的 `/opt/newapi` 放置同一份应用节点 Compose 文件，例如 `docker-compose.cluster.yml`：
 
 ```yaml
 services:
-  new-api-master:
+  new-api:
     build: .
     image: biubiubiu125/newapi:local
-    container_name: newapi-master
+    container_name: ${CONTAINER_PREFIX:-newapi}-${NODE_NAME:-node}
     restart: always
     ports:
       - "${APP_PORT:-3000}:3000"
@@ -480,8 +390,8 @@ services:
       - REDIS_CONN_STRING=${REDIS_CONN_STRING:?set REDIS_CONN_STRING}
       - SESSION_SECRET=${SESSION_SECRET:?set SESSION_SECRET}
       - CRYPTO_SECRET=${CRYPTO_SECRET:?set CRYPTO_SECRET}
-      - NODE_TYPE=master
-      - NODE_NAME=${NODE_NAME:-newapi-master}
+      - NODE_TYPE=${NODE_TYPE:-slave}
+      - NODE_NAME=${NODE_NAME:?set NODE_NAME}
       - SYNC_FREQUENCY=${SYNC_FREQUENCY:-60}
       - TZ=Asia/Shanghai
       - GLOBAL_API_RATE_LIMIT_ENABLE=${GLOBAL_API_RATE_LIMIT_ENABLE:-true}
@@ -489,54 +399,74 @@ services:
       - TRUSTED_REDIRECT_DOMAINS=${TRUSTED_REDIRECT_DOMAINS:-}
 ```
 
-启动：
+### 主节点 `.env`
+
+第一台应用节点作为主节点，`NODE_TYPE` 设置为 `master`。主节点应先启动成功，让数据库迁移和主节点任务完成初始化。
+
+```env
+APP_PORT=3000
+CONTAINER_PREFIX=newapi
+NODE_NAME=master-1
+NODE_TYPE=master
+
+SQL_DSN=postgresql://newapi:<db-password>@db.example.internal:5432/new-api
+REDIS_CONN_STRING=redis://:<redis-password>@redis.example.internal:6379/0
+SESSION_SECRET=<所有节点一致的强随机密钥>
+CRYPTO_SECRET=<所有节点一致的强随机密钥>
+
+TRUSTED_REDIRECT_DOMAINS=your-domain.com
+REFERRAL_TEST_MODE=false
+GLOBAL_API_RATE_LIMIT_ENABLE=true
+CRITICAL_RATE_LIMIT_ENABLE=true
+```
+
+主节点启动：
 
 ```bash
-docker compose config
-docker compose up -d --build
-docker compose ps
+cd /opt/newapi
+docker compose -f docker-compose.cluster.yml config
+docker compose -f docker-compose.cluster.yml up -d --build
+docker compose -f docker-compose.cluster.yml ps
 curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
 ```
 
-### 从节点 Compose 示例
+### 从节点 `.env`
 
-从节点配置与主节点基本一致，但必须设置 `NODE_TYPE=slave`，并使用同一套数据库、Redis、`SESSION_SECRET` 和 `CRYPTO_SECRET`：
+从节点使用同一份 `docker-compose.cluster.yml`，只改 `.env`。关键差异是 `NODE_TYPE=slave` 和唯一的 `NODE_NAME`。
 
-```yaml
-services:
-  new-api-slave:
-    build: .
-    image: biubiubiu125/newapi:local
-    container_name: newapi-slave-1
-    restart: always
-    ports:
-      - "${APP_PORT:-3000}:3000"
-    command: --log-dir /app/logs
-    volumes:
-      - ./data:/data
-      - ./logs:/app/logs
-    environment:
-      - SQL_DSN=${SQL_DSN:?set SQL_DSN}
-      - REDIS_CONN_STRING=${REDIS_CONN_STRING:?set REDIS_CONN_STRING}
-      - SESSION_SECRET=${SESSION_SECRET:?set SESSION_SECRET}
-      - CRYPTO_SECRET=${CRYPTO_SECRET:?set CRYPTO_SECRET}
-      - NODE_TYPE=slave
-      - NODE_NAME=${NODE_NAME:-newapi-slave-1}
-      - SYNC_FREQUENCY=${SYNC_FREQUENCY:-60}
-      - TZ=Asia/Shanghai
-      - GLOBAL_API_RATE_LIMIT_ENABLE=${GLOBAL_API_RATE_LIMIT_ENABLE:-true}
-      - CRITICAL_RATE_LIMIT_ENABLE=${CRITICAL_RATE_LIMIT_ENABLE:-true}
-      - TRUSTED_REDIRECT_DOMAINS=${TRUSTED_REDIRECT_DOMAINS:-}
+```env
+APP_PORT=3000
+CONTAINER_PREFIX=newapi
+NODE_NAME=slave-1
+NODE_TYPE=slave
+
+SQL_DSN=postgresql://newapi:<db-password>@db.example.internal:5432/new-api
+REDIS_CONN_STRING=redis://:<redis-password>@redis.example.internal:6379/0
+SESSION_SECRET=<必须与主节点完全一致>
+CRYPTO_SECRET=<必须与主节点完全一致>
+
+TRUSTED_REDIRECT_DOMAINS=your-domain.com
+REFERRAL_TEST_MODE=false
+GLOBAL_API_RATE_LIMIT_ENABLE=true
+CRITICAL_RATE_LIMIT_ENABLE=true
 ```
 
-从节点启动后也要做健康检查：
+每台从节点启动：
 
 ```bash
-docker compose config
-docker compose up -d --build
-docker compose ps
+cd /opt/newapi
+docker compose -f docker-compose.cluster.yml config
+docker compose -f docker-compose.cluster.yml up -d --build
+docker compose -f docker-compose.cluster.yml ps
 curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
 ```
+
+启动顺序建议：
+
+1. 先启动共享数据库和 Redis，并确认应用节点能连通。
+2. 启动主节点，确认日志中没有数据库迁移错误。
+3. 逐台启动从节点，确认每台 `/api/status` 正常。
+4. 所有节点健康后，再加入负载均衡。
 
 ### 负载均衡示例
 
@@ -602,11 +532,11 @@ server {
    git status --short
    git fetch --all --prune
    git pull --ff-only
-   docker compose config
-   docker compose up -d --build
-   docker compose ps
+   docker compose -f docker-compose.cluster.yml config
+   docker compose -f docker-compose.cluster.yml up -d --build
+   docker compose -f docker-compose.cluster.yml ps
    curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
-   docker compose logs --tail=100 new-api-slave
+   docker compose -f docker-compose.cluster.yml logs --tail=100 new-api
    ```
 
 4. 验证该节点登录、接口、支付页和基础 API 正常后，再加回负载均衡。
@@ -619,8 +549,8 @@ server {
 
    ```bash
    curl -fsS https://your-domain.com/api/status
-   docker compose ps
-   docker compose logs --tail=200
+   docker compose -f docker-compose.cluster.yml ps
+   docker compose -f docker-compose.cluster.yml logs --tail=200
    ```
 
 8. 验证管理后台登录、普通用户登录、渠道测试、充值订单、支付回调、额度到账、返佣、提现审核和日志查询。
