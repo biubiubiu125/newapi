@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
+  useCallback,
   useEffect,
   useEffectEvent,
   useMemo,
@@ -28,9 +29,8 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 import { formatTimestamp } from '@/lib/format'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Input } from '@/components/ui/input'
 import {
   Select,
@@ -229,9 +229,49 @@ export function Referral() {
   const [applying, setApplying] = useState(false)
   const [submittingWithdrawal, setSubmittingWithdrawal] = useState(false)
   const [uploading, setUploading] = useState(false)
-  const [withdrawConfirm, setWithdrawConfirm] =
-    useState<WithdrawalSubmission | null>(null)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const withdrawFormRef = useRef<HTMLFormElement | null>(null)
+  const withdrawSubmitButtonRef = useRef<HTMLButtonElement | null>(null)
+  const withdrawSubmitTriggerRef = useRef<() => void>(() => {})
+
+  const handleNativeWithdrawalTrigger = useCallback((event: Event) => {
+    event.preventDefault()
+    withdrawSubmitTriggerRef.current()
+  }, [])
+
+  const bindWithdrawalForm = useCallback(
+    (node: HTMLFormElement | null) => {
+      if (withdrawFormRef.current === node) return
+      if (withdrawFormRef.current) {
+        withdrawFormRef.current.removeEventListener(
+          'submit',
+          handleNativeWithdrawalTrigger
+        )
+      }
+      withdrawFormRef.current = node
+      if (node) {
+        node.addEventListener('submit', handleNativeWithdrawalTrigger)
+      }
+    },
+    [handleNativeWithdrawalTrigger]
+  )
+
+  const bindWithdrawalSubmitButton = useCallback(
+    (node: HTMLButtonElement | null) => {
+      if (withdrawSubmitButtonRef.current === node) return
+      if (withdrawSubmitButtonRef.current) {
+        withdrawSubmitButtonRef.current.removeEventListener(
+          'click',
+          handleNativeWithdrawalTrigger
+        )
+      }
+      withdrawSubmitButtonRef.current = node
+      if (node) {
+        node.addEventListener('click', handleNativeWithdrawalTrigger)
+      }
+    },
+    [handleNativeWithdrawalTrigger]
+  )
 
   const canViewDashboard =
     profile?.status === 'approved' || profile?.status === 'disabled'
@@ -357,12 +397,14 @@ export function Referral() {
     }
   }
 
-  function buildWithdrawalSubmission(): WithdrawalSubmission | null {
-    if (withdrawForm.amount.trim() === '') {
+  function buildWithdrawalSubmission(
+    source: typeof withdrawForm = withdrawForm
+  ): WithdrawalSubmission | null {
+    if (source.amount.trim() === '') {
       toast.error(t('Please enter a valid amount'))
       return null
     }
-    const amount = Number(withdrawForm.amount)
+    const amount = Number(source.amount)
     if (!Number.isFinite(amount) || amount <= 0) {
       toast.error(t('Please enter a valid amount'))
       return null
@@ -379,63 +421,81 @@ export function Referral() {
       toast.error(t('Available referral balance is insufficient'))
       return null
     }
-    if (withdrawForm.account_type !== 'alipay' && withdrawForm.account_type !== 'usdt') {
+    if (source.account_type !== 'alipay' && source.account_type !== 'usdt') {
       toast.error(t('Please select a withdrawal method'))
       return null
     }
-    if (withdrawForm.account_type === 'alipay' && !withdrawForm.account_name.trim()) {
+    if (source.account_type === 'alipay' && !source.account_name.trim()) {
       toast.error(t('Please enter the payee name'))
       return null
     }
-    if (withdrawForm.account_type === 'alipay' && !withdrawForm.account_no.trim()) {
+    if (source.account_type === 'alipay' && !source.account_no.trim()) {
       toast.error(t('Please enter an Alipay account'))
       return null
     }
-    if (withdrawForm.account_type === 'usdt' && !withdrawForm.account_network.trim()) {
+    if (source.account_type === 'usdt' && !source.account_network.trim()) {
       toast.error(t('Please select the network'))
       return null
     }
-    if (withdrawForm.account_type === 'usdt' && !withdrawForm.account_no.trim()) {
+    if (source.account_type === 'usdt' && !source.account_no.trim()) {
       toast.error(t('Please enter the USDT wallet address'))
       return null
     }
 
     return {
       amount,
-      account_type: withdrawForm.account_type,
+      account_type: source.account_type,
       account_name:
-        withdrawForm.account_type === 'usdt'
+        source.account_type === 'usdt'
           ? ''
-          : withdrawForm.account_name.trim(),
-      account_no: withdrawForm.account_no.trim(),
+          : source.account_name.trim(),
+      account_no: source.account_no.trim(),
       account_network:
-        withdrawForm.account_type === 'usdt'
-          ? withdrawForm.account_network.trim()
+        source.account_type === 'usdt'
+          ? source.account_network.trim()
           : '',
-      qr_image_url: withdrawForm.qr_image_url.trim(),
-      applicant_note: withdrawForm.applicant_note.trim(),
+      qr_image_url: source.qr_image_url.trim(),
+      applicant_note: source.applicant_note.trim(),
+    }
+  }
+
+  function readWithdrawalFormElement(): typeof withdrawForm {
+    const formData = new FormData(withdrawFormRef.current ?? undefined)
+    return {
+      amount: String(formData.get('amount') ?? withdrawForm.amount),
+      account_type: String(formData.get('account_type') ?? withdrawForm.account_type),
+      account_name: String(formData.get('account_name') ?? withdrawForm.account_name),
+      account_no: String(formData.get('account_no') ?? withdrawForm.account_no),
+      account_network: String(
+        formData.get('account_network') ?? withdrawForm.account_network
+      ),
+      qr_image_url: String(formData.get('qr_image_url') ?? withdrawForm.qr_image_url),
+      applicant_note: String(
+        formData.get('applicant_note') ?? withdrawForm.applicant_note
+      ),
     }
   }
 
   function handleWithdrawalSubmit(event?: React.FormEvent<HTMLFormElement>) {
     event?.preventDefault()
-    const submission = buildWithdrawalSubmission()
+    if (submittingWithdrawal) return
+    const submission = buildWithdrawalSubmission(readWithdrawalFormElement())
     if (!submission) return
-    setWithdrawConfirm(submission)
+    void submitWithdrawal(submission)
   }
 
-  async function handleConfirmWithdrawalSubmit() {
-    if (!withdrawConfirm) return
+  withdrawSubmitTriggerRef.current = () => handleWithdrawalSubmit()
+
+  async function submitWithdrawal(submission: WithdrawalSubmission) {
     setSubmittingWithdrawal(true)
     try {
       const idempotencyKey = buildIdempotencyKey()
       const res = await createReferralWithdrawal({
-        ...withdrawConfirm,
+        ...submission,
         idempotency_key: idempotencyKey,
       })
       if (res.success) {
         toast.success(t('Withdrawal request submitted'))
-        setWithdrawConfirm(null)
         setWithdrawForm({
           amount: '',
           account_type: 'alipay',
@@ -673,14 +733,25 @@ export function Referral() {
                 </CardHeader>
                 <CardContent>
                   <form
+                    ref={bindWithdrawalForm}
                     className='space-y-4'
-                    onSubmit={(event) => handleWithdrawalSubmit(event)}
                   >
+                  <input
+                    type='hidden'
+                    name='account_type'
+                    value={withdrawForm.account_type}
+                  />
+                  <input
+                    type='hidden'
+                    name='account_network'
+                    value={withdrawForm.account_network}
+                  />
                   <div className='space-y-1.5'>
                     <div className='text-sm font-medium'>
                       {t('Withdraw Amount')}
                     </div>
                     <Input
+                      name='amount'
                       type='number'
                       value={withdrawForm.amount}
                       onChange={(e) => updateWithdrawForm('amount', e.target.value)}
@@ -751,6 +822,7 @@ export function Referral() {
                           {t('Account Name')}
                         </div>
                         <Input
+                          name='account_name'
                           value={withdrawForm.account_name}
                           onChange={(e) =>
                             updateWithdrawForm('account_name', e.target.value)
@@ -765,6 +837,7 @@ export function Referral() {
                       {accountNumberPlaceholder(withdrawForm.account_type, t)}
                     </div>
                     <Input
+                      name='account_no'
                       value={withdrawForm.account_no}
                       onChange={(e) =>
                         updateWithdrawForm('account_no', e.target.value)
@@ -789,6 +862,7 @@ export function Referral() {
                         {uploading ? t('Uploading...') : t('Upload Image')}
                       </Button>
                       <Input
+                        name='qr_image_url'
                         className='min-w-0 flex-1'
                         value={withdrawForm.qr_image_url}
                         onChange={(e) =>
@@ -810,6 +884,7 @@ export function Referral() {
                       {t('Notes Optional')}
                     </div>
                     <textarea
+                      name='applicant_note'
                       className='border-input min-h-[110px] w-full rounded-md border bg-transparent px-3 py-2 text-sm'
                       value={withdrawForm.applicant_note}
                       onChange={(e) =>
@@ -818,14 +893,19 @@ export function Referral() {
                       placeholder={t('Notes')}
                     />
                   </div>
-                  <Button
+                  <button
+                    ref={bindWithdrawalSubmitButton}
                     type='submit'
+                    className={buttonVariants({
+                      variant: 'default',
+                      size: 'default',
+                    })}
                     disabled={!canWithdraw || submittingWithdrawal}
                   >
                     {submittingWithdrawal
                       ? t('Submitting...')
                       : t('Submit Withdrawal')}
-                  </Button>
+                  </button>
                   </form>
                 </CardContent>
               </Card>
@@ -890,75 +970,6 @@ export function Referral() {
           )}
         </div>
       </SectionPageLayout.Content>
-      <ConfirmDialog
-        open={!!withdrawConfirm}
-        onOpenChange={(open) => {
-          if (!open && !submittingWithdrawal) setWithdrawConfirm(null)
-        }}
-        title={t('Confirm withdrawal information')}
-        desc={t(
-          'Please confirm the withdrawal information below. The request cannot be manually canceled after submission.'
-        )}
-        confirmText={
-          submittingWithdrawal ? t('Submitting...') : t('Confirm and Submit')
-        }
-        cancelBtnText={t('Back to Edit')}
-        isLoading={submittingWithdrawal}
-        handleConfirm={() => void handleConfirmWithdrawalSubmit()}
-      >
-        {withdrawConfirm && (
-          <div className='space-y-3 rounded-md border p-3 text-sm'>
-            <BalanceLine
-              label={t('Withdraw Amount')}
-              value={formatMoney(withdrawConfirm.amount)}
-            />
-            <BalanceLine
-              label={t('Withdrawal Method')}
-              value={accountTypeLabel(withdrawConfirm.account_type, t)}
-            />
-            {withdrawConfirm.account_type === 'alipay' ? (
-              <>
-                <BalanceLine
-                  label={t('Account Name')}
-                  value={withdrawConfirm.account_name}
-                />
-                <BalanceLine
-                  label={t('Alipay account')}
-                  value={withdrawConfirm.account_no}
-                />
-              </>
-            ) : (
-              <>
-                <BalanceLine
-                  label={t('USDT Blockchain Network')}
-                  value={accountNetworkLabel(withdrawConfirm.account_network, t)}
-                />
-                <BalanceLine
-                  label={t('USDT wallet address')}
-                  value={withdrawConfirm.account_no}
-                />
-              </>
-            )}
-            {withdrawConfirm.qr_image_url && (
-              <BalanceLine
-                label={t('QR Code Optional')}
-                value={withdrawConfirm.qr_image_url}
-              />
-            )}
-            {withdrawConfirm.applicant_note && (
-              <BalanceLine
-                label={t('Notes Optional')}
-                value={withdrawConfirm.applicant_note}
-              />
-            )}
-            <div className='text-destructive pt-2 text-xs leading-relaxed'>
-              {t(
-                'If incorrect receiving information or blockchain network causes funds not to arrive, you are responsible for the loss.'
-              )}
-            </div>
-          </div>
-        )}
-      </ConfirmDialog>
     </SectionPageLayout>
   )
 }
