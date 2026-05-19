@@ -679,9 +679,12 @@ func (s *ReferralService) ApplyAffiliate(input ReferralApplyInput) (*ReferralPro
 	now := time.Now().Unix()
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		item := &model.ReferralAffiliate{}
-		err := tx.Where("user_id = ?", input.UserId).First(item).Error
+		result := tx.Where("user_id = ?", input.UserId).Find(item)
+		if result.Error != nil {
+			return result.Error
+		}
 		switch {
-		case errors.Is(err, gorm.ErrRecordNotFound):
+		case result.RowsAffected == 0:
 			inviteCode, err := s.generateInviteCodeTx(tx)
 			if err != nil {
 				return err
@@ -710,8 +713,6 @@ func (s *ReferralService) ApplyAffiliate(input ReferralApplyInput) (*ReferralPro
 				return s.ensureCommissionAccountTx(tx, profile.Id, profile.UserId)
 			}
 			return nil
-		case err != nil:
-			return err
 		default:
 			if item.Status == model.ReferralAffiliateStatusDisabled {
 				return errors.New("referral affiliate is disabled")
@@ -1057,14 +1058,16 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 			return err
 		}
 		existing := &model.ReferralWithdrawal{}
-		if err := tx.Where("user_id = ? AND idempotency_key = ?", input.UserId, strings.TrimSpace(input.IdempotencyKey)).First(existing).Error; err == nil {
+		result := tx.Where("user_id = ? AND idempotency_key = ?", input.UserId, strings.TrimSpace(input.IdempotencyKey)).Find(existing)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected > 0 {
 			if sameWithdrawalRequest(existing, input) {
 				withdrawalId = existing.Id
 				return nil
 			}
 			return errors.New("idempotency key conflicts with different payload")
-		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return err
 		}
 		fee := roundMoney(common.ReferralWithdrawFee)
 		if fee < 0 {
@@ -2498,10 +2501,11 @@ func (s *ReferralService) getOrCreateAccount(affiliateId int, userId int) (*mode
 
 func (s *ReferralService) getOrCreateAccountTx(tx *gorm.DB, affiliateId int, userId int) (*model.ReferralCommissionAccount, error) {
 	account := &model.ReferralCommissionAccount{}
-	if err := tx.Where("affiliate_id = ?", affiliateId).First(account).Error; err != nil {
-		if !errors.Is(err, gorm.ErrRecordNotFound) {
-			return nil, err
-		}
+	result := tx.Where("affiliate_id = ?", affiliateId).Find(account)
+	if result.Error != nil {
+		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
 		account = &model.ReferralCommissionAccount{
 			AffiliateId:        affiliateId,
 			UserId:             userId,
@@ -2512,8 +2516,12 @@ func (s *ReferralService) getOrCreateAccountTx(tx *gorm.DB, affiliateId int, use
 				return nil, err
 			}
 			account = &model.ReferralCommissionAccount{}
-			if err := tx.Where("affiliate_id = ?", affiliateId).First(account).Error; err != nil {
-				return nil, err
+			result = tx.Where("affiliate_id = ?", affiliateId).Find(account)
+			if result.Error != nil {
+				return nil, result.Error
+			}
+			if result.RowsAffected == 0 {
+				return nil, gorm.ErrRecordNotFound
 			}
 		}
 	}
