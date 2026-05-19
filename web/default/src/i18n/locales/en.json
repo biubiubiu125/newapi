@@ -4506,6 +4506,8 @@
     "Paid Amount CNY": "Paid Amount (CNY)",
     "Original paid": "Original paid",
     "FX Rate": "FX Rate",
+    "Affiliate Adjusted": "Affiliate Adjusted",
+    "Affiliate Rate Updated": "Affiliate Rate Updated",
     "Order Pricing Currency": "Order Pricing Currency",
     "Currency for the fiat order amount sent to Epusdt, usually CNY. USDT amount is calculated by Epusdt from token and network.": "Currency for the fiat order amount sent to Epusdt, usually CNY. USDT amount is calculated by Epusdt from token and network.",
     "，": ", ",

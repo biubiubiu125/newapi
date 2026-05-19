@@ -412,6 +412,10 @@ function auditActionLabel(
       return t('Affiliate Disabled')
     case 'referral_affiliate_restore':
       return t('Affiliate Restored')
+    case 'referral_affiliate_adjust':
+      return t('Affiliate Adjusted')
+    case 'referral_affiliate_rate':
+      return t('Affiliate Rate Updated')
     case 'referral_withdrawal_create':
       return t('Withdrawal Created')
     case 'referral_withdrawal_cancel':
@@ -1640,6 +1644,7 @@ export function AdminReferral() {
 
       <ConfirmDialog
         open={!!detailAffiliate && !!detailMode}
+        className='sm:max-w-4xl'
         onOpenChange={(open) => {
           if (!open) {
             setDetailAffiliate(null)
@@ -1655,7 +1660,7 @@ export function AdminReferral() {
               : t('Affiliate Withdrawals')
         }
         desc={
-          <div className='max-h-[420px] overflow-auto'>
+          <div className='max-h-[60vh] overflow-auto'>
             {detailMode === 'bindings' ? (
               <SimpleAdminTable
                 headers={[t('Invitee'), t('Email'), t('Bound At')]}
