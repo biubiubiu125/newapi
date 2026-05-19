@@ -33,17 +33,23 @@ import type {
   ReferralAdminAuditLog,
 } from './types'
 
-export async function getReferralProfile(): Promise<ApiResponse<ReferralProfile | null>> {
+export async function getReferralProfile(): Promise<
+  ApiResponse<ReferralProfile | null>
+> {
   const res = await api.get('/api/user/referral/profile')
   return res.data
 }
 
-export async function getReferralSummary(): Promise<ApiResponse<ReferralSummary>> {
+export async function getReferralSummary(): Promise<
+  ApiResponse<ReferralSummary>
+> {
   const res = await api.get('/api/user/referral/summary')
   return res.data
 }
 
-export async function applyReferralAffiliate(applicantNote?: string): Promise<ApiResponse<ReferralProfile>> {
+export async function applyReferralAffiliate(
+  applicantNote?: string
+): Promise<ApiResponse<ReferralProfile>> {
   const res = await api.post('/api/user/referral/apply', {
     applicant_note: applicantNote || '',
   })
@@ -84,7 +90,16 @@ export async function createReferralWithdrawal(payload: {
   return res.data
 }
 
-export async function uploadReferralAsset(file: File): Promise<ApiResponse<{ url: string }>> {
+export async function cancelReferralWithdrawal(
+  id: number
+): Promise<ApiResponse<ReferralWithdrawal>> {
+  const res = await api.post(`/api/user/referral/withdrawals/${id}/cancel`)
+  return res.data
+}
+
+export async function uploadReferralAsset(
+  file: File
+): Promise<ApiResponse<{ url: string }>> {
   const formData = new FormData()
   formData.append('file', file)
   const res = await api.post('/api/user/referral/upload', formData, {
@@ -93,17 +108,23 @@ export async function uploadReferralAsset(file: File): Promise<ApiResponse<{ url
   return res.data
 }
 
-export async function getAdminReferralOverview(): Promise<ApiResponse<ReferralOverview>> {
+export async function getAdminReferralOverview(): Promise<
+  ApiResponse<ReferralOverview>
+> {
   const res = await api.get('/api/user/admin/referral/overview')
   return res.data
 }
 
-export async function getAdminReferralSettings(): Promise<ApiResponse<ReferralSettings>> {
+export async function getAdminReferralSettings(): Promise<
+  ApiResponse<ReferralSettings>
+> {
   const res = await api.get('/api/user/admin/referral/settings')
   return res.data
 }
 
-export async function updateAdminReferralSettings(payload: ReferralSettings): Promise<ApiResponse<ReferralSettings>> {
+export async function updateAdminReferralSettings(
+  payload: ReferralSettings
+): Promise<ApiResponse<ReferralSettings>> {
   const res = await api.put('/api/user/admin/referral/settings', payload)
   return res.data
 }
@@ -131,9 +152,12 @@ export async function listAdminReferralBindings(
   userId: number,
   params: { p?: number; page_size?: number }
 ): Promise<ApiResponse<PaginatedData<ReferralBinding>>> {
-  const res = await api.get(`/api/user/admin/referral/affiliates/${userId}/bindings`, {
-    params,
-  })
+  const res = await api.get(
+    `/api/user/admin/referral/affiliates/${userId}/bindings`,
+    {
+      params,
+    }
+  )
   return res.data
 }
 
@@ -152,7 +176,9 @@ export async function listAdminReferralCommissionJobs(params: {
   page_size?: number
   status?: string
 }): Promise<ApiResponse<PaginatedData<ReferralCommissionJob>>> {
-  const res = await api.get('/api/user/admin/referral/commission-jobs', { params })
+  const res = await api.get('/api/user/admin/referral/commission-jobs', {
+    params,
+  })
   return res.data
 }
 
@@ -160,7 +186,10 @@ export async function retryAdminReferralCommissionJob(payload: {
   source_type: string
   trade_no: string
 }): Promise<ApiResponse<{ source_type: string; trade_no: string }>> {
-  const res = await api.post('/api/user/admin/referral/commission-jobs/retry', payload)
+  const res = await api.post(
+    '/api/user/admin/referral/commission-jobs/retry',
+    payload
+  )
   return res.data
 }
 
@@ -186,7 +215,10 @@ export async function approveReferralAffiliate(
   userId: number,
   payload?: { rate_override?: number | null; reason?: string }
 ): Promise<ApiResponse<ReferralAffiliate>> {
-  const res = await api.post(`/api/user/admin/referral/affiliates/${userId}/approve`, payload || {})
+  const res = await api.post(
+    `/api/user/admin/referral/affiliates/${userId}/approve`,
+    payload || {}
+  )
   return res.data
 }
 
@@ -194,7 +226,10 @@ export async function updateReferralAffiliateRate(
   userId: number,
   payload: { rate_override?: number | null; reason?: string }
 ): Promise<ApiResponse<ReferralAffiliate>> {
-  const res = await api.post(`/api/user/admin/referral/affiliates/${userId}/rate`, payload)
+  const res = await api.post(
+    `/api/user/admin/referral/affiliates/${userId}/rate`,
+    payload
+  )
   return res.data
 }
 
@@ -202,7 +237,10 @@ export async function rejectReferralAffiliate(
   userId: number,
   payload?: { reason?: string }
 ): Promise<ApiResponse<ReferralAffiliate>> {
-  const res = await api.post(`/api/user/admin/referral/affiliates/${userId}/reject`, payload || {})
+  const res = await api.post(
+    `/api/user/admin/referral/affiliates/${userId}/reject`,
+    payload || {}
+  )
   return res.data
 }
 
@@ -210,12 +248,19 @@ export async function disableReferralAffiliate(
   userId: number,
   payload?: { reason?: string }
 ): Promise<ApiResponse<ReferralAffiliate>> {
-  const res = await api.post(`/api/user/admin/referral/affiliates/${userId}/disable`, payload || {})
+  const res = await api.post(
+    `/api/user/admin/referral/affiliates/${userId}/disable`,
+    payload || {}
+  )
   return res.data
 }
 
-export async function restoreReferralAffiliate(userId: number): Promise<ApiResponse<ReferralAffiliate>> {
-  const res = await api.post(`/api/user/admin/referral/affiliates/${userId}/restore`)
+export async function restoreReferralAffiliate(
+  userId: number
+): Promise<ApiResponse<ReferralAffiliate>> {
+  const res = await api.post(
+    `/api/user/admin/referral/affiliates/${userId}/restore`
+  )
   return res.data
 }
 
@@ -235,27 +280,45 @@ export async function adjustReferralAffiliate(payload: {
   return res.data
 }
 
-export async function freezeReferralSettlement(userId: number, payload?: { reason?: string }) {
-  const res = await api.post(`/api/user/admin/referral/affiliates/${userId}/settlement/freeze`, payload || {})
+export async function freezeReferralSettlement(
+  userId: number,
+  payload?: { reason?: string }
+) {
+  const res = await api.post(
+    `/api/user/admin/referral/affiliates/${userId}/settlement/freeze`,
+    payload || {}
+  )
   return res.data
 }
 
 export async function restoreReferralSettlement(userId: number) {
-  const res = await api.post(`/api/user/admin/referral/affiliates/${userId}/settlement/restore`)
+  const res = await api.post(
+    `/api/user/admin/referral/affiliates/${userId}/settlement/restore`
+  )
   return res.data
 }
 
-export async function freezeReferralWithdrawal(userId: number, payload?: { reason?: string }) {
-  const res = await api.post(`/api/user/admin/referral/affiliates/${userId}/withdrawal/freeze`, payload || {})
+export async function freezeReferralWithdrawal(
+  userId: number,
+  payload?: { reason?: string }
+) {
+  const res = await api.post(
+    `/api/user/admin/referral/affiliates/${userId}/withdrawal/freeze`,
+    payload || {}
+  )
   return res.data
 }
 
 export async function restoreReferralWithdrawal(userId: number) {
-  const res = await api.post(`/api/user/admin/referral/affiliates/${userId}/withdrawal/restore`)
+  const res = await api.post(
+    `/api/user/admin/referral/affiliates/${userId}/withdrawal/restore`
+  )
   return res.data
 }
 
-export async function runReferralSettlementBatch(): Promise<ApiResponse<unknown>> {
+export async function runReferralSettlementBatch(): Promise<
+  ApiResponse<unknown>
+> {
   const res = await api.post('/api/user/admin/referral/settlements/run')
   return res.data
 }
@@ -270,30 +333,53 @@ export async function listAdminReferralWithdrawals(params: {
   return res.data
 }
 
-export async function approveReferralWithdrawal(id: number, payload?: { admin_note?: string }) {
-  const res = await api.post(`/api/user/admin/referral/withdrawals/${id}/approve`, payload || {})
+export async function approveReferralWithdrawal(
+  id: number,
+  payload?: { admin_note?: string }
+) {
+  const res = await api.post(
+    `/api/user/admin/referral/withdrawals/${id}/approve`,
+    payload || {}
+  )
   return res.data
 }
 
 export async function rejectReferralWithdrawal(
   id: number,
-  payload: { admin_note?: string; reject_reason: string }
+  payload: {
+    admin_note?: string
+    reject_reason?: string
+    reject_proof_url?: string
+  }
 ) {
-  const res = await api.post(`/api/user/admin/referral/withdrawals/${id}/reject`, payload)
+  const res = await api.post(
+    `/api/user/admin/referral/withdrawals/${id}/reject`,
+    payload
+  )
   return res.data
 }
 
 export async function markReferralWithdrawalPaid(
   id: number,
-  payload?: { admin_note?: string; payment_proof_url?: string; payment_txn_no?: string }
+  payload?: {
+    admin_note?: string
+    payment_proof_url?: string
+    payment_txn_no?: string
+  }
 ) {
-  const res = await api.post(`/api/user/admin/referral/withdrawals/${id}/pay`, payload || {})
+  const res = await api.post(
+    `/api/user/admin/referral/withdrawals/${id}/pay`,
+    payload || {}
+  )
   return res.data
 }
 
-export async function uploadAdminReferralAsset(file: File): Promise<ApiResponse<{ url: string }>> {
+export async function uploadAdminReferralAsset(
+  file: File
+): Promise<ApiResponse<{ url: string }>> {
   const formData = new FormData()
   formData.append('file', file)
+  formData.append('purpose', 'payment_proof')
   const res = await api.post('/api/user/admin/referral/upload', formData, {
     headers: { 'Content-Type': 'multipart/form-data' },
   })

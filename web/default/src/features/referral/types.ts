@@ -121,6 +121,7 @@ export interface ReferralWithdrawal {
   admin_note: string
   payment_proof_url: string
   payment_txn_no: string
+  reject_proof_url: string
   status: string
   reject_reason: string
   submitted_at: number

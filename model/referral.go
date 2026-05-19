@@ -131,6 +131,7 @@ type ReferralWithdrawal struct {
 	AdminNote          string  `json:"admin_note" gorm:"type:text"`
 	PaymentProofURL    string  `json:"payment_proof_url" gorm:"type:text"`
 	PaymentTxnNo       string  `json:"payment_txn_no" gorm:"type:varchar(128)"`
+	RejectProofURL     string  `json:"reject_proof_url" gorm:"type:text"`
 	Status             string  `json:"status" gorm:"type:varchar(32);index"`
 	IdempotencyKey     string  `json:"idempotency_key" gorm:"type:varchar(128);uniqueIndex:idx_referral_withdrawal_idempotency"`
 	SubmittedAt        int64   `json:"submitted_at" gorm:"default:0;index"`

@@ -16,13 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  useEffect,
-  useEffectEvent,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -39,9 +33,11 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { SectionPageLayout } from '@/components/layout'
 import {
   applyReferralAffiliate,
+  cancelReferralWithdrawal,
   createReferralWithdrawal,
   getReferralProfile,
   getReferralSummary,
@@ -49,6 +45,10 @@ import {
   listReferralWithdrawals,
   uploadReferralAsset,
 } from './api'
+import {
+  isReferralSectionId,
+  REFERRAL_DEFAULT_SECTION,
+} from './section-registry'
 import type {
   ReferralCommission,
   ReferralProfile,
@@ -56,10 +56,6 @@ import type {
   ReferralSummary,
   ReferralWithdrawal,
 } from './types'
-import {
-  isReferralSectionId,
-  REFERRAL_DEFAULT_SECTION,
-} from './section-registry'
 
 const route = getRouteApi('/_authenticated/referral/$section')
 
@@ -137,7 +133,10 @@ function accountTypeLabel(value: string, t: (key: string) => string): string {
   }
 }
 
-function accountNetworkLabel(value: string, t: (key: string) => string): string {
+function accountNetworkLabel(
+  value: string,
+  t: (key: string) => string
+): string {
   switch (value) {
     case 'TRC20':
       return 'TRC20'
@@ -166,7 +165,10 @@ function accountNumberPlaceholder(
 }
 
 function buildIdempotencyKey(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+  if (
+    typeof crypto !== 'undefined' &&
+    typeof crypto.randomUUID === 'function'
+  ) {
     return crypto.randomUUID()
   }
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -227,6 +229,8 @@ export function Referral() {
   })
   const [applying, setApplying] = useState(false)
   const [submittingWithdrawal, setSubmittingWithdrawal] = useState(false)
+  const [pendingWithdrawalSubmission, setPendingWithdrawalSubmission] =
+    useState<WithdrawalSubmission | null>(null)
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const withdrawFormRef = useRef<HTMLFormElement | null>(null)
@@ -234,7 +238,8 @@ export function Referral() {
 
   const canViewDashboard =
     profile?.status === 'approved' || profile?.status === 'disabled'
-  const canWithdraw = profile?.status === 'approved' && profile.withdrawal_enabled
+  const canWithdraw =
+    profile?.status === 'approved' && profile.withdrawal_enabled
   const pageMeta = SECTION_META[activeSection]
 
   const inviteLink = useMemo(() => {
@@ -261,7 +266,8 @@ export function Referral() {
           account_type: value,
           account_name: '',
           account_no: '',
-          account_network: value === 'usdt' ? prev.account_network || 'TRC20' : 'TRC20',
+          account_network:
+            value === 'usdt' ? prev.account_network || 'TRC20' : 'TRC20',
           qr_image_url: '',
         }
       }
@@ -289,7 +295,10 @@ export function Referral() {
     }
   }
 
-  async function loadCommissions(page = commissionPage, pageSize = commissionPageSize) {
+  async function loadCommissions(
+    page = commissionPage,
+    pageSize = commissionPageSize
+  ) {
     const res = await listReferralCommissions({
       p: page,
       page_size: pageSize,
@@ -298,7 +307,10 @@ export function Referral() {
     setCommissionTotal(res.data?.total || 0)
   }
 
-  async function loadWithdrawals(page = withdrawalPage, pageSize = withdrawalPageSize) {
+  async function loadWithdrawals(
+    page = withdrawalPage,
+    pageSize = withdrawalPageSize
+  ) {
     const res = await listReferralWithdrawals({
       p: page,
       page_size: pageSize,
@@ -336,7 +348,9 @@ export function Referral() {
     }
   }
 
-  async function handleUploadReferralAsset(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleUploadReferralAsset(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
     const file = event.target.files?.[0]
     if (!file) return
     setUploading(true)
@@ -376,7 +390,10 @@ export function Referral() {
       )
       return null
     }
-    if (summary?.available_amount != null && amount > summary.available_amount) {
+    if (
+      summary?.available_amount != null &&
+      amount > summary.available_amount
+    ) {
       toast.error(t('Available referral balance is insufficient'))
       return null
     }
@@ -405,14 +422,10 @@ export function Referral() {
       amount,
       account_type: source.account_type,
       account_name:
-        source.account_type === 'usdt'
-          ? ''
-          : source.account_name.trim(),
+        source.account_type === 'usdt' ? '' : source.account_name.trim(),
       account_no: source.account_no.trim(),
       account_network:
-        source.account_type === 'usdt'
-          ? source.account_network.trim()
-          : '',
+        source.account_type === 'usdt' ? source.account_network.trim() : '',
       qr_image_url: source.qr_image_url.trim(),
       applicant_note: source.applicant_note.trim(),
     }
@@ -422,13 +435,19 @@ export function Referral() {
     const formData = new FormData(withdrawFormRef.current ?? undefined)
     return {
       amount: String(formData.get('amount') ?? withdrawForm.amount),
-      account_type: String(formData.get('account_type') ?? withdrawForm.account_type),
-      account_name: String(formData.get('account_name') ?? withdrawForm.account_name),
+      account_type: String(
+        formData.get('account_type') ?? withdrawForm.account_type
+      ),
+      account_name: String(
+        formData.get('account_name') ?? withdrawForm.account_name
+      ),
       account_no: String(formData.get('account_no') ?? withdrawForm.account_no),
       account_network: String(
         formData.get('account_network') ?? withdrawForm.account_network
       ),
-      qr_image_url: String(formData.get('qr_image_url') ?? withdrawForm.qr_image_url),
+      qr_image_url: String(
+        formData.get('qr_image_url') ?? withdrawForm.qr_image_url
+      ),
       applicant_note: String(
         formData.get('applicant_note') ?? withdrawForm.applicant_note
       ),
@@ -440,7 +459,7 @@ export function Referral() {
     if (submittingWithdrawal || submittingWithdrawalRef.current) return
     const submission = buildWithdrawalSubmission(readWithdrawalFormElement())
     if (!submission) return
-    void submitWithdrawal(submission)
+    setPendingWithdrawalSubmission(submission)
   }
 
   async function submitWithdrawal(submission: WithdrawalSubmission) {
@@ -455,6 +474,7 @@ export function Referral() {
       })
       if (res.success) {
         toast.success(t('Withdrawal request submitted'))
+        setPendingWithdrawalSubmission(null)
         setWithdrawForm({
           amount: '',
           account_type: 'alipay',
@@ -481,6 +501,17 @@ export function Referral() {
     } finally {
       submittingWithdrawalRef.current = false
       setSubmittingWithdrawal(false)
+    }
+  }
+
+  async function handleCancelWithdrawal(item: ReferralWithdrawal) {
+    const res = await cancelReferralWithdrawal(item.id)
+    if (res.success) {
+      toast.success(t('Withdrawal canceled'))
+      await loadBase()
+      await loadWithdrawals()
+    } else {
+      toast.error(res.message || t('Cancel withdrawal failed'))
     }
   }
 
@@ -542,7 +573,7 @@ export function Referral() {
 
           {loading ? (
             <Card>
-              <CardContent className='py-10 text-sm text-muted-foreground'>
+              <CardContent className='text-muted-foreground py-10 text-sm'>
                 {t('Loading...')}
               </CardContent>
             </Card>
@@ -574,13 +605,13 @@ export function Referral() {
                     </CardHeader>
                     <CardContent className='space-y-4'>
                       <div className='space-y-2'>
-                        <div className='text-sm text-muted-foreground'>
+                        <div className='text-muted-foreground text-sm'>
                           {t('Invite Code')}
                         </div>
                         <Input value={summary.invite_code || ''} readOnly />
                       </div>
                       <div className='space-y-2'>
-                        <div className='text-sm text-muted-foreground'>
+                        <div className='text-muted-foreground text-sm'>
                           {t('Invite Link')}
                         </div>
                         <div className='flex gap-2'>
@@ -592,7 +623,8 @@ export function Referral() {
                       </div>
                       {profile?.status === 'disabled' && (
                         <div className='rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700'>
-                          {rejectedReason || t('Your affiliate account is disabled.')}
+                          {rejectedReason ||
+                            t('Your affiliate account is disabled.')}
                         </div>
                       )}
                     </CardContent>
@@ -632,13 +664,15 @@ export function Referral() {
                   <CardTitle>{t('Referral Center')}</CardTitle>
                 </CardHeader>
                 <CardContent className='space-y-4'>
-                  <p className='text-sm text-muted-foreground'>
+                  <p className='text-muted-foreground text-sm'>
                     {profile?.status === 'pending'
                       ? t('Your affiliate application is under review.')
                       : profile?.status === 'rejected'
-                        ? rejectedReason || t('Your affiliate application was rejected.')
+                        ? rejectedReason ||
+                          t('Your affiliate application was rejected.')
                         : profile?.status === 'disabled'
-                          ? rejectedReason || t('Your affiliate account is disabled.')
+                          ? rejectedReason ||
+                            t('Your affiliate account is disabled.')
                           : t('Affiliate access requires admin approval.')}
                   </p>
                   {(profile?.status === 'rejected' || !profile) && (
@@ -647,10 +681,17 @@ export function Referral() {
                         className='border-input min-h-[140px] w-full rounded-md border bg-transparent px-3 py-2 text-sm'
                         value={applicantNote}
                         onChange={(e) => setApplicantNote(e.target.value)}
-                        placeholder={t('Describe your promotion plan or channels')}
+                        placeholder={t(
+                          'Describe your promotion plan or channels'
+                        )}
                       />
-                      <Button onClick={() => void handleApply()} disabled={applying}>
-                        {applying ? t('Submitting...') : t('Submit Application')}
+                      <Button
+                        onClick={() => void handleApply()}
+                        disabled={applying}
+                      >
+                        {applying
+                          ? t('Submitting...')
+                          : t('Submit Application')}
                       </Button>
                     </div>
                   )}
@@ -668,7 +709,9 @@ export function Referral() {
                   `${item.rate}%`,
                   formatMoney(item.commission_amount),
                   statusLabel(item.status, t),
-                  formatTimestamp(item.available_at || item.settle_at || item.created_at),
+                  formatTimestamp(
+                    item.available_at || item.settle_at || item.created_at
+                  ),
                 ],
               }))}
               headers={[
@@ -701,175 +744,195 @@ export function Referral() {
                     onSubmit={handleWithdrawalSubmit}
                     className='space-y-4'
                   >
-                  <input
-                    type='hidden'
-                    name='account_type'
-                    value={withdrawForm.account_type}
-                  />
-                  <input
-                    type='hidden'
-                    name='account_network'
-                    value={withdrawForm.account_network}
-                  />
-                  <div className='space-y-1.5'>
-                    <div className='text-sm font-medium'>
-                      {t('Withdraw Amount')}
-                    </div>
-                    <Input
-                      name='amount'
-                      type='number'
-                      value={withdrawForm.amount}
-                      onChange={(e) => updateWithdrawForm('amount', e.target.value)}
-                      placeholder={t('Withdraw Amount')}
+                    <input
+                      type='hidden'
+                      name='account_type'
+                      value={withdrawForm.account_type}
                     />
-                  </div>
-                  <div className='grid gap-3 md:grid-cols-2'>
+                    <input
+                      type='hidden'
+                      name='account_network'
+                      value={withdrawForm.account_network}
+                    />
                     <div className='space-y-1.5'>
                       <div className='text-sm font-medium'>
-                        {t('Withdrawal Method')}
+                        {t('Withdraw Amount')}
                       </div>
-                      <Select
-                        value={withdrawForm.account_type}
-                        onValueChange={(value) =>
-                          updateWithdrawForm('account_type', value || '')
+                      <Input
+                        name='amount'
+                        type='number'
+                        value={withdrawForm.amount}
+                        onChange={(e) =>
+                          updateWithdrawForm('amount', e.target.value)
                         }
-                      >
-                        <SelectTrigger type='button' className='w-full'>
-                          <SelectValue>
-                            {accountTypeLabel(withdrawForm.account_type, t)}
-                          </SelectValue>
-                        </SelectTrigger>
-                        <SelectContent alignItemWithTrigger={false}>
-                          {ACCOUNT_TYPE_OPTIONS.map((option) => (
-                            <SelectItem key={option.value} value={option.value}>
-                              {accountTypeLabel(option.value, t)}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        placeholder={t('Withdraw Amount')}
+                      />
                     </div>
-                    {withdrawForm.account_type === 'usdt' ? (
+                    <div className='grid gap-3 md:grid-cols-2'>
                       <div className='space-y-1.5'>
                         <div className='text-sm font-medium'>
-                          {t('USDT Blockchain Network')}
+                          {t('Withdrawal Method')}
                         </div>
                         <Select
-                          value={withdrawForm.account_network}
+                          value={withdrawForm.account_type}
                           onValueChange={(value) =>
-                            updateWithdrawForm('account_network', value || '')
+                            updateWithdrawForm('account_type', value || '')
                           }
                         >
                           <SelectTrigger type='button' className='w-full'>
                             <SelectValue>
-                              {accountNetworkLabel(
-                                withdrawForm.account_network,
-                                t
-                              )}
+                              {accountTypeLabel(withdrawForm.account_type, t)}
                             </SelectValue>
                           </SelectTrigger>
                           <SelectContent alignItemWithTrigger={false}>
-                            {ACCOUNT_NETWORK_OPTIONS.map((network) => (
-                              <SelectItem key={network.value} value={network.value}>
-                                {network.label}
+                            {ACCOUNT_TYPE_OPTIONS.map((option) => (
+                              <SelectItem
+                                key={option.value}
+                                value={option.value}
+                              >
+                                {accountTypeLabel(option.value, t)}
                               </SelectItem>
                             ))}
                           </SelectContent>
                         </Select>
-                        <div className='text-xs text-muted-foreground'>
-                          {t(
-                            'Please select the same blockchain network as your receiving address.'
-                          )}
-                        </div>
                       </div>
-                    ) : (
-                      <div className='space-y-1.5'>
-                        <div className='text-sm font-medium'>
-                          {t('Account Name')}
+                      {withdrawForm.account_type === 'usdt' ? (
+                        <div className='space-y-1.5'>
+                          <div className='text-sm font-medium'>
+                            {t('USDT Blockchain Network')}
+                          </div>
+                          <Select
+                            value={withdrawForm.account_network}
+                            onValueChange={(value) =>
+                              updateWithdrawForm('account_network', value || '')
+                            }
+                          >
+                            <SelectTrigger type='button' className='w-full'>
+                              <SelectValue>
+                                {accountNetworkLabel(
+                                  withdrawForm.account_network,
+                                  t
+                                )}
+                              </SelectValue>
+                            </SelectTrigger>
+                            <SelectContent alignItemWithTrigger={false}>
+                              {ACCOUNT_NETWORK_OPTIONS.map((network) => (
+                                <SelectItem
+                                  key={network.value}
+                                  value={network.value}
+                                >
+                                  {network.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <div className='text-muted-foreground text-xs'>
+                            {t(
+                              'Please select the same blockchain network as your receiving address.'
+                            )}
+                          </div>
                         </div>
-                        <Input
-                          name='account_name'
-                          value={withdrawForm.account_name}
-                          onChange={(e) =>
-                            updateWithdrawForm('account_name', e.target.value)
-                          }
-                          placeholder={t('Account Name')}
-                        />
-                      </div>
-                    )}
-                  </div>
-                  <div className='space-y-1.5'>
-                    <div className='text-sm font-medium'>
-                      {accountNumberPlaceholder(withdrawForm.account_type, t)}
-                    </div>
-                    <Input
-                      name='account_no'
-                      value={withdrawForm.account_no}
-                      onChange={(e) =>
-                        updateWithdrawForm('account_no', e.target.value)
-                      }
-                      placeholder={accountNumberPlaceholder(
-                        withdrawForm.account_type,
-                        t
+                      ) : (
+                        <div className='space-y-1.5'>
+                          <div className='text-sm font-medium'>
+                            {t('Account Name')}
+                          </div>
+                          <Input
+                            name='account_name'
+                            value={withdrawForm.account_name}
+                            onChange={(e) =>
+                              updateWithdrawForm('account_name', e.target.value)
+                            }
+                            placeholder={t('Account Name')}
+                          />
+                        </div>
                       )}
-                    />
-                  </div>
-                  <div className='space-y-2'>
-                    <div className='text-sm font-medium'>
-                      {t('QR Code Optional')}
                     </div>
-                    <div className='flex gap-2'>
-                      <Button
-                        type='button'
-                        variant='outline'
-                        onClick={() => fileInputRef.current?.click()}
-                        disabled={uploading}
-                      >
-                        {uploading ? t('Uploading...') : t('Upload Image')}
-                      </Button>
+                    <div className='space-y-1.5'>
+                      <div className='text-sm font-medium'>
+                        {accountNumberPlaceholder(withdrawForm.account_type, t)}
+                      </div>
                       <Input
-                        name='qr_image_url'
-                        className='min-w-0 flex-1'
-                        value={withdrawForm.qr_image_url}
+                        name='account_no'
+                        value={withdrawForm.account_no}
                         onChange={(e) =>
-                          updateWithdrawForm('qr_image_url', e.target.value)
+                          updateWithdrawForm('account_no', e.target.value)
                         }
-                        placeholder={t('QR code URL')}
+                        placeholder={accountNumberPlaceholder(
+                          withdrawForm.account_type,
+                          t
+                        )}
                       />
                     </div>
-                    <input
-                      ref={fileInputRef}
-                      type='file'
-                      accept='image/*'
-                      className='hidden'
-                      onChange={(event) => void handleUploadReferralAsset(event)}
-                    />
-                  </div>
-                  <div className='space-y-1.5'>
-                    <div className='text-sm font-medium'>
-                      {t('Notes Optional')}
+                    <div className='space-y-2'>
+                      <div className='text-sm font-medium'>
+                        {t('QR Code Optional')}
+                      </div>
+                      <div className='flex gap-2'>
+                        <Button
+                          type='button'
+                          variant='outline'
+                          onClick={() => fileInputRef.current?.click()}
+                          disabled={uploading}
+                        >
+                          {uploading ? t('Uploading...') : t('Upload Image')}
+                        </Button>
+                        <Input
+                          name='qr_image_url'
+                          type='hidden'
+                          value={withdrawForm.qr_image_url}
+                        />
+                        <div className='border-input text-muted-foreground flex min-h-9 min-w-0 flex-1 items-center rounded-md border px-3 text-sm'>
+                          {withdrawForm.qr_image_url
+                            ? t('QR code uploaded')
+                            : t('No QR code uploaded')}
+                        </div>
+                      </div>
+                      {withdrawForm.qr_image_url ? (
+                        <div className='overflow-hidden rounded-md border'>
+                          <img
+                            src={withdrawForm.qr_image_url}
+                            alt={t('QR Code')}
+                            className='max-h-48 w-full object-contain'
+                          />
+                        </div>
+                      ) : null}
+                      <input
+                        ref={fileInputRef}
+                        type='file'
+                        accept='image/*'
+                        className='hidden'
+                        onChange={(event) =>
+                          void handleUploadReferralAsset(event)
+                        }
+                      />
                     </div>
-                    <textarea
-                      name='applicant_note'
-                      className='border-input min-h-[110px] w-full rounded-md border bg-transparent px-3 py-2 text-sm'
-                      value={withdrawForm.applicant_note}
-                      onChange={(e) =>
-                        updateWithdrawForm('applicant_note', e.target.value)
-                      }
-                      placeholder={t('Notes')}
-                    />
-                  </div>
-                  <button
-                    type='submit'
-                    className={buttonVariants({
-                      variant: 'default',
-                      size: 'default',
-                    })}
-                    disabled={!canWithdraw || submittingWithdrawal}
-                  >
-                    {submittingWithdrawal
-                      ? t('Submitting...')
-                      : t('Submit Withdrawal')}
-                  </button>
+                    <div className='space-y-1.5'>
+                      <div className='text-sm font-medium'>
+                        {t('Notes Optional')}
+                      </div>
+                      <textarea
+                        name='applicant_note'
+                        className='border-input min-h-[110px] w-full rounded-md border bg-transparent px-3 py-2 text-sm'
+                        value={withdrawForm.applicant_note}
+                        onChange={(e) =>
+                          updateWithdrawForm('applicant_note', e.target.value)
+                        }
+                        placeholder={t('Notes')}
+                      />
+                    </div>
+                    <button
+                      type='submit'
+                      className={buttonVariants({
+                        variant: 'default',
+                        size: 'default',
+                      })}
+                      disabled={!canWithdraw || submittingWithdrawal}
+                    >
+                      {submittingWithdrawal
+                        ? t('Submitting...')
+                        : t('Submit Withdrawal')}
+                    </button>
                   </form>
                 </CardContent>
               </Card>
@@ -898,30 +961,8 @@ export function Referral() {
               </Card>
             </div>
           ) : (
-            <SimpleTableCard
-              title={t('Withdrawal Records')}
-              rows={withdrawals.map((item) => ({
-                key: item.id,
-                cells: [
-                  formatMoney(item.amount),
-                  formatMoney(item.net_amount),
-                  `${accountTypeLabel(item.account_type, t)}${
-                    item.account_network
-                      ? ` / ${accountNetworkLabel(item.account_network, t)}`
-                      : ''
-                  }`,
-                  statusLabel(item.status, t),
-                  formatTimestamp(item.submitted_at),
-                ],
-              }))}
-              headers={[
-                t('Amount'),
-                t('Net Amount'),
-                t('Account'),
-                t('Status'),
-                t('Submitted At'),
-              ]}
-              emptyText={t('No withdrawal records')}
+            <WithdrawalRecordsCard
+              rows={withdrawals}
               page={withdrawalPage}
               pageSize={withdrawalPageSize}
               total={withdrawalTotal}
@@ -930,10 +971,81 @@ export function Referral() {
                 setWithdrawalPageSize(pageSize)
                 void loadWithdrawals(page, pageSize)
               }}
+              onCancel={(item) => void handleCancelWithdrawal(item)}
             />
           )}
         </div>
       </SectionPageLayout.Content>
+      <ConfirmDialog
+        open={!!pendingWithdrawalSubmission}
+        onOpenChange={(open) => {
+          if (!open) {
+            setPendingWithdrawalSubmission(null)
+          }
+        }}
+        title={t('Confirm withdrawal information')}
+        desc={
+          <div className='space-y-3 text-sm'>
+            <p>
+              {t(
+                'Please carefully verify that the receiving information you entered is correct. If losses are caused by incorrect receiving information, you shall bear them yourself and this site assumes no responsibility.'
+              )}
+            </p>
+            {pendingWithdrawalSubmission && (
+              <div className='space-y-2 rounded-md border p-3'>
+                <BalanceLine
+                  label={t('Withdraw Amount')}
+                  value={formatMoney(pendingWithdrawalSubmission.amount)}
+                />
+                <BalanceLine
+                  label={t('Withdrawal Method')}
+                  value={`${accountTypeLabel(pendingWithdrawalSubmission.account_type, t)}${
+                    pendingWithdrawalSubmission.account_network
+                      ? ` / ${accountNetworkLabel(pendingWithdrawalSubmission.account_network, t)}`
+                      : ''
+                  }`}
+                />
+                <BalanceLine
+                  label={
+                    pendingWithdrawalSubmission.account_type === 'usdt'
+                      ? t('Blockchain')
+                      : t('Account Name')
+                  }
+                  value={
+                    pendingWithdrawalSubmission.account_type === 'usdt'
+                      ? pendingWithdrawalSubmission.account_network || '-'
+                      : pendingWithdrawalSubmission.account_name || '-'
+                  }
+                />
+                <BalanceLine
+                  label={accountNumberPlaceholder(
+                    pendingWithdrawalSubmission.account_type,
+                    t
+                  )}
+                  value={pendingWithdrawalSubmission.account_no || '-'}
+                />
+                <BalanceLine
+                  label={t('QR Code')}
+                  value={
+                    pendingWithdrawalSubmission.qr_image_url
+                      ? t('Uploaded')
+                      : t('Not uploaded')
+                  }
+                />
+              </div>
+            )}
+          </div>
+        }
+        cancelBtnText={t('Back to Edit')}
+        confirmText={t('Confirm and Submit')}
+        handleConfirm={() => {
+          if (pendingWithdrawalSubmission) {
+            void submitWithdrawal(pendingWithdrawalSubmission)
+          }
+        }}
+        disabled={submittingWithdrawal}
+        isLoading={submittingWithdrawal}
+      />
     </SectionPageLayout>
   )
 }
@@ -942,7 +1054,7 @@ function MetricCard(props: { title: string; value: string }) {
   return (
     <Card>
       <CardContent className='p-5'>
-        <div className='text-sm text-muted-foreground'>{props.title}</div>
+        <div className='text-muted-foreground text-sm'>{props.title}</div>
         <div className='mt-2 text-2xl font-semibold'>{props.value}</div>
       </CardContent>
     </Card>
@@ -955,6 +1067,157 @@ function BalanceLine(props: { label: string; value: string }) {
       <span className='text-muted-foreground'>{props.label}</span>
       <span className='font-medium tabular-nums'>{props.value}</span>
     </div>
+  )
+}
+
+function canCancelWithdrawal(item: ReferralWithdrawal): boolean {
+  if (item.status !== 'pending' || !item.submitted_at) {
+    return false
+  }
+  return Math.floor(Date.now() / 1000) - item.submitted_at <= 30 * 60
+}
+
+function withdrawalAccountDetail(
+  item: ReferralWithdrawal,
+  t: (key: string) => string
+): string {
+  const method = `${accountTypeLabel(item.account_type, t)}${
+    item.account_network
+      ? ` / ${accountNetworkLabel(item.account_network, t)}`
+      : ''
+  }`
+  const name =
+    item.account_type === 'usdt'
+      ? item.account_network || '-'
+      : item.account_name || '-'
+  return `${method} | ${name} | ${item.account_no || item.account_no_masked || '-'}`
+}
+
+function WithdrawalRecordsCard(props: {
+  rows: ReferralWithdrawal[]
+  page: number
+  pageSize: number
+  total: number
+  onPageChange: (page: number, pageSize: number) => void
+  onCancel: (item: ReferralWithdrawal) => void
+}) {
+  const { t } = useTranslation()
+  const totalPages = Math.max(1, Math.ceil(props.total / props.pageSize))
+
+  return (
+    <Card>
+      <CardHeader>
+        <CardTitle>{t('Withdrawal Records')}</CardTitle>
+      </CardHeader>
+      <CardContent className='space-y-4 overflow-x-auto'>
+        {props.rows.length === 0 ? (
+          <div className='text-muted-foreground py-10 text-sm'>
+            {t('No withdrawal records')}
+          </div>
+        ) : (
+          <table className='w-full min-w-[980px] text-left text-sm'>
+            <thead>
+              <tr className='border-b'>
+                {[
+                  t('Amount'),
+                  t('Net Amount'),
+                  t('Withdrawal Info'),
+                  t('QR Code'),
+                  t('Status'),
+                  t('Submitted At'),
+                  t('Action'),
+                ].map((header) => (
+                  <th key={header} className='px-3 py-2 font-medium'>
+                    {header}
+                  </th>
+                ))}
+              </tr>
+            </thead>
+            <tbody>
+              {props.rows.map((item) => (
+                <tr key={item.id} className='border-b last:border-b-0'>
+                  <td className='px-3 py-2'>{formatMoney(item.amount)}</td>
+                  <td className='px-3 py-2'>{formatMoney(item.net_amount)}</td>
+                  <td className='max-w-[360px] px-3 py-2'>
+                    <div className='break-words'>
+                      {withdrawalAccountDetail(item, t)}
+                    </div>
+                    {item.applicant_note ? (
+                      <div className='text-muted-foreground mt-1 text-xs break-words'>
+                        {item.applicant_note}
+                      </div>
+                    ) : null}
+                  </td>
+                  <td className='px-3 py-2'>
+                    {item.qr_image_url ? (
+                      <a
+                        href={item.qr_image_url}
+                        target='_blank'
+                        rel='noreferrer'
+                        className='inline-block overflow-hidden rounded border'
+                      >
+                        <img
+                          src={item.qr_image_url}
+                          alt={t('QR Code')}
+                          className='h-14 w-14 object-cover'
+                        />
+                      </a>
+                    ) : (
+                      '-'
+                    )}
+                  </td>
+                  <td className='px-3 py-2'>{statusLabel(item.status, t)}</td>
+                  <td className='px-3 py-2'>
+                    {formatTimestamp(item.submitted_at)}
+                  </td>
+                  <td className='px-3 py-2'>
+                    {canCancelWithdrawal(item) ? (
+                      <Button
+                        size='sm'
+                        variant='outline'
+                        onClick={() => props.onCancel(item)}
+                      >
+                        {t('Cancel Withdrawal')}
+                      </Button>
+                    ) : (
+                      '-'
+                    )}
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        )}
+        <div className='text-muted-foreground flex items-center justify-between text-sm'>
+          <span>
+            {props.total > 0
+              ? `${(props.page - 1) * props.pageSize + 1}-${Math.min(
+                  props.page * props.pageSize,
+                  props.total
+                )} / ${props.total}`
+              : '0 / 0'}
+          </span>
+          <div className='flex gap-2'>
+            <Button
+              size='sm'
+              variant='outline'
+              onClick={() => props.onPageChange(props.page - 1, props.pageSize)}
+              disabled={props.page <= 1}
+            >
+              {t('Previous')}
+            </Button>
+            <Button
+              size='sm'
+              variant='outline'
+              onClick={() => props.onPageChange(props.page + 1, props.pageSize)}
+              disabled={props.page >= totalPages}
+            >
+              {t('Next')}
+            </Button>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
   )
 }
 
@@ -981,7 +1244,7 @@ function SimpleTableCard(props: {
       </CardHeader>
       <CardContent className='space-y-4 overflow-x-auto'>
         {props.rows.length === 0 ? (
-          <div className='py-10 text-sm text-muted-foreground'>
+          <div className='text-muted-foreground py-10 text-sm'>
             {props.emptyText}
           </div>
         ) : (
@@ -1008,7 +1271,7 @@ function SimpleTableCard(props: {
             </tbody>
           </table>
         )}
-        <div className='flex items-center justify-between text-sm text-muted-foreground'>
+        <div className='text-muted-foreground flex items-center justify-between text-sm'>
           <span>
             {props.total > 0
               ? `${(props.page - 1) * props.pageSize + 1}-${Math.min(

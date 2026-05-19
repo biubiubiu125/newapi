@@ -265,7 +265,7 @@ func UploadReferralAsset(c *gin.Context) {
 	if purpose == model.ReferralAssetPurposePaymentProof {
 		prefix = "payment-proof"
 	}
-	assetURL, err := referralService.SaveAsset(data, contentType, prefix, service.ReferralAssetInput{
+	_, assetId, err := referralService.SaveAsset(data, contentType, prefix, service.ReferralAssetInput{
 		OwnerUserId: userId,
 		Purpose:     purpose,
 		CreatedBy:   createdBy,
@@ -274,7 +274,7 @@ func UploadReferralAsset(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"url": referralService.SignAssetURL(assetURL)})
+	common.ApiSuccess(c, gin.H{"url": referralService.SignAssetAliasURL(assetId)})
 }
 
 func resolveReferralAssetUploadPurpose(fullPath string, requestedPurpose string) (purpose string, createdBy string, err error) {
@@ -305,8 +305,7 @@ func GetReferralAsset(c *gin.Context) {
 		c.AbortWithStatus(http.StatusForbidden)
 		return
 	}
-	name := strings.TrimPrefix(publicPath, "/referral-assets/")
-	fullPath, err := service.ReferralAssetPath(name)
+	fullPath, err := referralService.ReferralAssetPathByPublicPath(publicPath)
 	if err != nil {
 		c.AbortWithStatus(http.StatusNotFound)
 		return

@@ -38,8 +38,9 @@ type referralAdjustRequest struct {
 }
 
 type referralWithdrawalReviewRequest struct {
-	AdminNote    string `json:"admin_note"`
-	RejectReason string `json:"reject_reason"`
+	AdminNote      string `json:"admin_note"`
+	RejectReason   string `json:"reject_reason"`
+	RejectProofURL string `json:"reject_proof_url"`
 }
 
 type referralWithdrawalPayRequest struct {
@@ -488,12 +489,13 @@ func RejectReferralWithdrawal(c *gin.Context) {
 		return
 	}
 	item, err := referralService.RejectWithdrawal(service.ReferralWithdrawalReviewInput{
-		WithdrawalId: withdrawalId,
-		AdminUserId:  adminId,
-		AdminNote:    strings.TrimSpace(req.AdminNote),
-		RejectReason: strings.TrimSpace(req.RejectReason),
-		IP:           c.ClientIP(),
-		UserAgent:    c.GetHeader("User-Agent"),
+		WithdrawalId:   withdrawalId,
+		AdminUserId:    adminId,
+		AdminNote:      strings.TrimSpace(req.AdminNote),
+		RejectReason:   strings.TrimSpace(req.RejectReason),
+		RejectProofURL: strings.TrimSpace(req.RejectProofURL),
+		IP:             c.ClientIP(),
+		UserAgent:      c.GetHeader("User-Agent"),
 	})
 	if err != nil {
 		common.ApiError(c, err)

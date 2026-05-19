@@ -20,11 +20,13 @@ import (
 )
 
 const (
-	ReferralCookieName      = "newapi_referral"
-	referralAssetURLPrefix  = "/referral-assets/"
-	referralDefaultRedirect = "/sign-up"
-	ReferralAdminUploadPath = "/api/user/admin/referral/upload"
-	ReferralUserUploadPath  = "/api/user/referral/upload"
+	ReferralCookieName                    = "newapi_referral"
+	referralAssetURLPrefix                = "/referral-assets/"
+	referralAssetAliasPrefix              = "/referral-assets/a/"
+	referralDefaultRedirect               = "/sign-up"
+	ReferralAdminUploadPath               = "/api/user/admin/referral/upload"
+	ReferralUserUploadPath                = "/api/user/referral/upload"
+	referralWithdrawalCancelWindowSeconds = 30 * 60
 )
 
 var errReferralFxRateMissing = errors.New(model.ReferralCommissionErrorFxRateMissing)
@@ -179,6 +181,7 @@ type ReferralWithdrawalView struct {
 	AdminNote          string  `json:"admin_note"`
 	PaymentProofURL    string  `json:"payment_proof_url"`
 	PaymentTxnNo       string  `json:"payment_txn_no"`
+	RejectProofURL     string  `json:"reject_proof_url"`
 	Status             string  `json:"status"`
 	RejectReason       string  `json:"reject_reason"`
 	SubmittedAt        int64   `json:"submitted_at"`
@@ -283,12 +286,13 @@ type ReferralWithdrawalCreateInput struct {
 }
 
 type ReferralWithdrawalReviewInput struct {
-	WithdrawalId int
-	AdminUserId  int
-	AdminNote    string
-	RejectReason string
-	IP           string
-	UserAgent    string
+	WithdrawalId   int
+	AdminUserId    int
+	AdminNote      string
+	RejectReason   string
+	RejectProofURL string
+	IP             string
+	UserAgent      string
 }
 
 type ReferralWithdrawalPayInput struct {
@@ -1057,13 +1061,20 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("affiliate_id = ?", affiliate.Id).First(account).Error; err != nil {
 			return err
 		}
+		qrImageURL := strings.TrimSpace(input.QRImageURL)
+		qrImagePath, err := s.validateWithdrawalAssetTx(tx, input.UserId, qrImageURL, model.ReferralAssetPurposeWithdrawalQR)
+		if err != nil {
+			return err
+		}
+		canonicalInput := input
+		canonicalInput.QRImageURL = qrImagePath
 		existing := &model.ReferralWithdrawal{}
 		result := tx.Where("user_id = ? AND idempotency_key = ?", input.UserId, strings.TrimSpace(input.IdempotencyKey)).Find(existing)
 		if result.Error != nil {
 			return result.Error
 		}
 		if result.RowsAffected > 0 {
-			if sameWithdrawalRequest(existing, input) {
+			if sameWithdrawalRequest(existing, canonicalInput) {
 				withdrawalId = existing.Id
 				return nil
 			}
@@ -1076,11 +1087,6 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 		if fee > input.Amount {
 			return errors.New("withdraw fee exceeds withdrawal amount")
 		}
-		qrImageURL := strings.TrimSpace(input.QRImageURL)
-		if err := s.validateWithdrawalAssetTx(tx, input.UserId, qrImageURL, model.ReferralAssetPurposeWithdrawalQR); err != nil {
-			return err
-		}
-		qrImagePath := stripAssetSignature(qrImageURL)
 		withdrawal := &model.ReferralWithdrawal{
 			AffiliateId:        affiliate.Id,
 			UserId:             input.UserId,
@@ -1167,7 +1173,81 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 }
 
 func (s *ReferralService) CancelWithdrawal(withdrawalId int, userId int) (*ReferralWithdrawalView, error) {
-	return nil, errors.New("withdrawal requests cannot be manually canceled after submission")
+	if withdrawalId <= 0 || userId <= 0 {
+		return nil, errors.New("invalid withdrawal")
+	}
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		withdrawal := &model.ReferralWithdrawal{}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", withdrawalId).First(withdrawal).Error; err != nil {
+			return err
+		}
+		if withdrawal.UserId != userId {
+			return errors.New("withdrawal does not belong to current user")
+		}
+		if withdrawal.Status != model.ReferralWithdrawalStatusPending {
+			return errors.New("only pending withdrawals can be canceled")
+		}
+		now := time.Now().Unix()
+		if withdrawal.SubmittedAt <= 0 || now-withdrawal.SubmittedAt > referralWithdrawalCancelWindowSeconds {
+			return errors.New("withdrawal can only be canceled within 30 minutes after submission")
+		}
+		account := &model.ReferralCommissionAccount{}
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("affiliate_id = ?", withdrawal.AffiliateId).First(account).Error; err != nil {
+			return err
+		}
+		res := tx.Model(&model.ReferralWithdrawal{}).
+			Where("id = ? AND status = ?", withdrawal.Id, model.ReferralWithdrawalStatusPending).
+			Updates(map[string]any{
+				"status":      model.ReferralWithdrawalStatusCanceled,
+				"canceled_at": now,
+				"canceled_by": userId,
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return errors.New("only pending withdrawals can be canceled")
+		}
+		res = tx.Model(&model.ReferralCommissionAccount{}).
+			Where("id = ? AND frozen_amount >= ?", account.Id, withdrawal.Amount).
+			Updates(map[string]any{
+				"frozen_amount":    gorm.Expr("frozen_amount - ?", withdrawal.Amount),
+				"available_amount": gorm.Expr("available_amount + ?", withdrawal.Amount),
+			})
+		if res.Error != nil {
+			return res.Error
+		}
+		if res.RowsAffected != 1 {
+			return errors.New("withdrawal frozen balance is invalid")
+		}
+		if err := s.releaseWithdrawalItemsTx(tx, withdrawal.Id); err != nil {
+			return err
+		}
+		if err := s.createLedgerTx(tx, &model.ReferralCommissionLedger{
+			AffiliateId:        withdrawal.AffiliateId,
+			UserId:             withdrawal.UserId,
+			WithdrawalId:       withdrawal.Id,
+			Type:               "withdrawal_cancel_release",
+			RefType:            "withdrawal",
+			RefId:              fmt.Sprintf("%d", withdrawal.Id),
+			ExternalRefId:      fmt.Sprintf("withdrawal_cancel_release:%d", withdrawal.Id),
+			SettlementCurrency: withdrawal.SettlementCurrency,
+			DeltaAvailable:     roundMoney(withdrawal.Amount),
+			DeltaFrozen:        roundMoney(-withdrawal.Amount),
+			Operator:           "user",
+			Remark:             "user canceled referral withdrawal",
+			CreatedAt:          now,
+		}); err != nil {
+			return err
+		}
+		return s.recordAdminAuditTx(tx, "referral_withdrawal_cancel", withdrawal.UserId, withdrawal.AffiliateId, userId, "user canceled within 30 minutes", "", "", nil, map[string]any{
+			"withdrawal_id": withdrawal.Id,
+		})
+	})
+	if err != nil {
+		return nil, err
+	}
+	return s.GetWithdrawalById(withdrawalId, false)
 }
 
 func (s *ReferralService) ApproveWithdrawal(input ReferralWithdrawalReviewInput) (*ReferralWithdrawalView, error) {
@@ -1229,14 +1309,19 @@ func (s *ReferralService) RejectWithdrawal(input ReferralWithdrawalReviewInput) 
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("affiliate_id = ?", withdrawal.AffiliateId).First(account).Error; err != nil {
 			return err
 		}
+		rejectProofPath, err := s.validatePaymentProofAssetTx(tx, strings.TrimSpace(input.RejectProofURL))
+		if err != nil {
+			return err
+		}
 		res := tx.Model(&model.ReferralWithdrawal{}).
 			Where("id = ? AND status IN ?", withdrawal.Id, []string{model.ReferralWithdrawalStatusPending, model.ReferralWithdrawalStatusApproved}).
 			Updates(map[string]any{
-				"status":        model.ReferralWithdrawalStatusRejected,
-				"rejected_at":   time.Now().Unix(),
-				"rejected_by":   input.AdminUserId,
-				"reject_reason": strings.TrimSpace(input.RejectReason),
-				"admin_note":    strings.TrimSpace(input.AdminNote),
+				"status":           model.ReferralWithdrawalStatusRejected,
+				"rejected_at":      time.Now().Unix(),
+				"rejected_by":      input.AdminUserId,
+				"reject_reason":    strings.TrimSpace(input.RejectReason),
+				"reject_proof_url": rejectProofPath,
+				"admin_note":       strings.TrimSpace(input.AdminNote),
 			})
 		if res.Error != nil {
 			return res.Error
@@ -1277,7 +1362,8 @@ func (s *ReferralService) RejectWithdrawal(input ReferralWithdrawalReviewInput) 
 			return err
 		}
 		return s.recordAdminAuditTx(tx, "referral_withdrawal_reject", withdrawal.UserId, withdrawal.AffiliateId, input.AdminUserId, strings.TrimSpace(input.RejectReason), strings.TrimSpace(input.IP), strings.TrimSpace(input.UserAgent), nil, map[string]any{
-			"withdrawal_id": withdrawal.Id,
+			"withdrawal_id":    withdrawal.Id,
+			"reject_proof_url": rejectProofPath,
 		})
 	})
 	if err != nil {
@@ -1287,9 +1373,6 @@ func (s *ReferralService) RejectWithdrawal(input ReferralWithdrawalReviewInput) 
 }
 
 func (s *ReferralService) MarkWithdrawalPaid(input ReferralWithdrawalPayInput) (*ReferralWithdrawalView, error) {
-	if strings.TrimSpace(input.PaymentTxnNo) == "" && strings.TrimSpace(input.PaymentProofURL) == "" {
-		return nil, errors.New("payment_txn_no or payment_proof_url is required")
-	}
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		withdrawal := &model.ReferralWithdrawal{}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", input.WithdrawalId).First(withdrawal).Error; err != nil {
@@ -1299,10 +1382,10 @@ func (s *ReferralService) MarkWithdrawalPaid(input ReferralWithdrawalPayInput) (
 			return errors.New("only approved withdrawals can be marked paid")
 		}
 		paymentProofURL := strings.TrimSpace(input.PaymentProofURL)
-		if err := s.validatePaymentProofAssetTx(tx, paymentProofURL); err != nil {
+		paymentProofPath, err := s.validatePaymentProofAssetTx(tx, paymentProofURL)
+		if err != nil {
 			return err
 		}
-		paymentProofPath := stripAssetSignature(paymentProofURL)
 		account := &model.ReferralCommissionAccount{}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("affiliate_id = ?", withdrawal.AffiliateId).First(account).Error; err != nil {
 			return err
@@ -2124,22 +2207,50 @@ func (s *ReferralService) VerifyAssetURL(publicPath, expires, sig string) bool {
 	return hmac.Equal([]byte(expected), []byte(strings.TrimSpace(sig)))
 }
 
-func (s *ReferralService) SaveAsset(data []byte, contentType string, prefix string, input ReferralAssetInput) (string, error) {
+func (s *ReferralService) AssetAliasURL(assetId int) string {
+	if assetId <= 0 {
+		return ""
+	}
+	return fmt.Sprintf("%s%d", referralAssetAliasPrefix, assetId)
+}
+
+func (s *ReferralService) SignAssetAliasURL(assetId int) string {
+	return s.SignAssetURL(s.AssetAliasURL(assetId))
+}
+
+func (s *ReferralService) SignAssetReferenceURL(storagePath string) string {
+	storagePath = strings.TrimSpace(storagePath)
+	if storagePath == "" {
+		return ""
+	}
+	if strings.HasPrefix(storagePath, referralAssetAliasPrefix) {
+		return s.SignAssetURL(storagePath)
+	}
+	asset := &model.ReferralAsset{}
+	if model.DB != nil {
+		if err := model.DB.Where("storage_path = ?", storagePath).First(asset).Error; err == nil && asset.Id > 0 {
+			return s.SignAssetAliasURL(asset.Id)
+		}
+	}
+	return s.SignAssetURL(storagePath)
+}
+
+func (s *ReferralService) SaveAsset(data []byte, contentType string, prefix string, input ReferralAssetInput) (string, int, error) {
 	if len(data) == 0 {
-		return "", errors.New("empty asset")
+		return "", 0, errors.New("empty asset")
 	}
 	if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
-		return "", errors.New("only image upload is supported")
+		return "", 0, errors.New("only image upload is supported")
 	}
 	dir, err := ensureReferralAssetDir()
 	if err != nil {
-		return "", err
+		return "", 0, err
 	}
 	ext := assetExtensionFromContentType(contentType)
 	name := fmt.Sprintf("%s-%d-%s%s", strings.TrimSpace(prefix), time.Now().UnixMilli(), strings.ToLower(common.GetRandomString(8)), ext)
 	fullPath := filepath.Join(dir, name)
 	if err := os.WriteFile(fullPath, data, 0o644); err != nil {
-		return "", err
+		return "", 0, err
 	}
 	publicPath := referralAssetURLPrefix + name
 	asset := &model.ReferralAsset{
@@ -2153,9 +2264,29 @@ func (s *ReferralService) SaveAsset(data []byte, contentType string, prefix stri
 	}
 	if err := model.DB.Create(asset).Error; err != nil {
 		_ = os.Remove(fullPath)
-		return "", err
+		return "", 0, err
 	}
-	return publicPath, nil
+	return publicPath, asset.Id, nil
+}
+
+func (s *ReferralService) ReferralAssetPathByPublicPath(publicPath string) (string, error) {
+	publicPath = strings.TrimSpace(publicPath)
+	if strings.HasPrefix(publicPath, referralAssetAliasPrefix) {
+		rawId := strings.TrimPrefix(publicPath, referralAssetAliasPrefix)
+		assetId, err := parseInt64(rawId)
+		if err != nil || assetId <= 0 {
+			return "", errors.New("invalid asset id")
+		}
+		asset := &model.ReferralAsset{}
+		if err := model.DB.Where("id = ?", assetId).First(asset).Error; err != nil {
+			return "", err
+		}
+		return ReferralAssetPath(strings.TrimPrefix(asset.StoragePath, referralAssetURLPrefix))
+	}
+	if !strings.HasPrefix(publicPath, referralAssetURLPrefix) {
+		return "", errors.New("invalid asset path")
+	}
+	return ReferralAssetPath(strings.TrimPrefix(publicPath, referralAssetURLPrefix))
 }
 
 func ReferralAssetPath(name string) (string, error) {
@@ -2394,37 +2525,50 @@ func PaidAmountCNY(paidAmount float64, paidCurrency string, paymentProvider stri
 	return amount, rate, false
 }
 
-func (s *ReferralService) validateWithdrawalAssetTx(tx *gorm.DB, userId int, assetURL string, purpose string) error {
+func (s *ReferralService) validateWithdrawalAssetTx(tx *gorm.DB, userId int, assetURL string, purpose string) (string, error) {
 	assetURL = strings.TrimSpace(assetURL)
 	if assetURL == "" {
-		return nil
+		return "", nil
 	}
 	asset := &model.ReferralAsset{}
-	if err := tx.Where("storage_path = ?", stripAssetSignature(assetURL)).First(asset).Error; err != nil {
-		return errors.New("referral asset not found")
+	if err := s.findAssetByURLTx(tx, assetURL, asset).Error; err != nil {
+		return "", errors.New("referral asset not found")
 	}
 	if asset.OwnerUserId != userId {
-		return errors.New("referral asset does not belong to current user")
+		return "", errors.New("referral asset does not belong to current user")
 	}
 	if asset.Purpose != purpose {
-		return errors.New("referral asset purpose is invalid")
+		return "", errors.New("referral asset purpose is invalid")
 	}
-	return nil
+	return asset.StoragePath, nil
 }
 
-func (s *ReferralService) validatePaymentProofAssetTx(tx *gorm.DB, assetURL string) error {
+func (s *ReferralService) validatePaymentProofAssetTx(tx *gorm.DB, assetURL string) (string, error) {
 	assetURL = strings.TrimSpace(assetURL)
 	if assetURL == "" {
-		return nil
+		return "", nil
 	}
 	asset := &model.ReferralAsset{}
-	if err := tx.Where("storage_path = ?", stripAssetSignature(assetURL)).First(asset).Error; err != nil {
-		return errors.New("payment proof asset not found")
+	if err := s.findAssetByURLTx(tx, assetURL, asset).Error; err != nil {
+		return "", errors.New("payment proof asset not found")
 	}
 	if asset.CreatedBy != "admin" || asset.Purpose != model.ReferralAssetPurposePaymentProof {
-		return errors.New("payment proof asset purpose is invalid")
+		return "", errors.New("payment proof asset purpose is invalid")
 	}
-	return nil
+	return asset.StoragePath, nil
+}
+
+func (s *ReferralService) findAssetByURLTx(tx *gorm.DB, assetURL string, asset *model.ReferralAsset) *gorm.DB {
+	publicPath := stripAssetSignature(assetURL)
+	if strings.HasPrefix(publicPath, referralAssetAliasPrefix) {
+		rawId := strings.TrimPrefix(publicPath, referralAssetAliasPrefix)
+		assetId, err := parseInt64(rawId)
+		if err != nil || assetId <= 0 {
+			return tx.Where("id = ?", -1).First(asset)
+		}
+		return tx.Where("id = ?", assetId).First(asset)
+	}
+	return tx.Where("storage_path = ?", publicPath).First(asset)
 }
 
 func stripAssetSignature(value string) string {
@@ -2701,7 +2845,7 @@ func (s *ReferralService) listWithdrawals(params ReferralListParams, affiliateUs
 	return items, total, nil
 }
 
-func (s *ReferralService) buildWithdrawalView(row *model.ReferralWithdrawal, adminView bool) (*ReferralWithdrawalView, error) {
+func (s *ReferralService) buildWithdrawalView(row *model.ReferralWithdrawal, _ bool) (*ReferralWithdrawalView, error) {
 	user := &model.User{}
 	_ = model.DB.Select("username,email").Where("id = ?", row.UserId).First(user).Error
 	maskedAccountNo := maskAccountNo(row.AccountNo)
@@ -2717,7 +2861,7 @@ func (s *ReferralService) buildWithdrawalView(row *model.ReferralWithdrawal, adm
 		NetAmount:          row.NetAmount,
 		AccountType:        row.AccountType,
 		AccountName:        row.AccountName,
-		AccountNo:          maskedAccountNo,
+		AccountNo:          row.AccountNo,
 		AccountNoMasked:    maskedAccountNo,
 		AccountNetwork:     row.AccountNetwork,
 		QRImageURL:         row.QRImageURL,
@@ -2734,14 +2878,14 @@ func (s *ReferralService) buildWithdrawalView(row *model.ReferralWithdrawal, adm
 		RejectedAt:         row.RejectedAt,
 		CanceledAt:         row.CanceledAt,
 	}
-	if adminView {
-		view.AccountNo = row.AccountNo
-	}
 	if row.QRImageURL != "" {
-		view.QRImageURL = s.SignAssetURL(row.QRImageURL)
+		view.QRImageURL = s.SignAssetReferenceURL(row.QRImageURL)
 	}
 	if row.PaymentProofURL != "" {
-		view.PaymentProofURL = s.SignAssetURL(row.PaymentProofURL)
+		view.PaymentProofURL = s.SignAssetReferenceURL(row.PaymentProofURL)
+	}
+	if row.RejectProofURL != "" {
+		view.RejectProofURL = s.SignAssetReferenceURL(row.RejectProofURL)
 	}
 	return view, nil
 }

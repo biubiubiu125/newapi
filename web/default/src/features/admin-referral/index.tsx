@@ -16,24 +16,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  useEffect,
-  useEffectEvent,
-  useState,
-  type ReactNode,
-} from 'react'
+import { useEffect, useEffectEvent, useState, type ReactNode } from 'react'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { formatTimestamp } from '@/lib/format'
-import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { ConfirmDialog } from '@/components/confirm-dialog'
 import { SectionPageLayout } from '@/components/layout'
 import {
   adjustReferralAffiliate,
@@ -76,14 +71,14 @@ import type {
   ReferralAdminAuditLog,
 } from '@/features/referral/types'
 import {
+  formatAdminReferralBadgeCount,
+  useAdminReferralBadges,
+} from './hooks/use-admin-referral-badges'
+import {
   ADMIN_REFERRAL_DEFAULT_SECTION,
   type AdminReferralSectionId,
   isAdminReferralSectionId,
 } from './section-registry'
-import {
-  formatAdminReferralBadgeCount,
-  useAdminReferralBadges,
-} from './hooks/use-admin-referral-badges'
 
 const route = getRouteApi('/_authenticated/admin-referral/$section')
 
@@ -158,7 +153,10 @@ function formatMoney(value: number): string {
 }
 
 function formatSettlementMoney(value: number, currency?: string): string {
-  const symbol = (currency || 'CNY').toUpperCase() === 'CNY' ? '\u00a5' : `${currency || ''} `
+  const symbol =
+    (currency || 'CNY').toUpperCase() === 'CNY'
+      ? '\u00a5'
+      : `${currency || ''} `
   const amount = Number.isFinite(value) ? value : 0
   const formatted = new Intl.NumberFormat(undefined, {
     minimumFractionDigits: 0,
@@ -177,14 +175,20 @@ function formatOriginalPaidAmount(item: ReferralCommission): string {
   return `${currency} ${formatted}`
 }
 
-function formatPaidAmountCNY(item: ReferralCommission, t: (key: string) => string): string {
+function formatPaidAmountCNY(
+  item: ReferralCommission,
+  t: (key: string) => string
+): string {
   if (item.paid_cny_fx_missing) {
     return t('Missing referral FX rate')
   }
   return formatSettlementMoney(item.paid_amount_cny || 0, 'CNY')
 }
 
-function paidAmountDetail(item: ReferralCommission, t: (key: string) => string): string {
+function paidAmountDetail(
+  item: ReferralCommission,
+  t: (key: string) => string
+): string {
   const currency = (item.paid_currency || '').toUpperCase()
   if (!currency) {
     return ''
@@ -214,7 +218,10 @@ function parseRequiredNumber(value: string, fallback: number): number {
 }
 
 function buildIdempotencyKey(): string {
-  if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
+  if (
+    typeof crypto !== 'undefined' &&
+    typeof crypto.randomUUID === 'function'
+  ) {
     return crypto.randomUUID()
   }
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
@@ -321,10 +328,7 @@ function withdrawalStatusLabel(
   }
 }
 
-function ledgerTypeLabel(
-  value: string,
-  t: (key: string) => string
-): string {
+function ledgerTypeLabel(value: string, t: (key: string) => string): string {
   switch (value) {
     case 'commission_settle':
       return t('Commission Settlement')
@@ -345,10 +349,7 @@ function ledgerTypeLabel(
   }
 }
 
-function operatorLabel(
-  value: string,
-  t: (key: string) => string
-): string {
+function operatorLabel(value: string, t: (key: string) => string): string {
   switch (value) {
     case 'system':
       return t('System')
@@ -399,10 +400,7 @@ function auditReasonLabel(value: string, t: (key: string) => string): string {
   }
 }
 
-function auditActionLabel(
-  value: string,
-  t: (key: string) => string
-): string {
+function auditActionLabel(value: string, t: (key: string) => string): string {
   switch (value) {
     case 'referral_affiliate_approve':
       return t('Affiliate Approved')
@@ -456,11 +454,19 @@ export function AdminReferral() {
   const [pendingItems, setPendingItems] = useState<ReferralAffiliate[]>([])
   const [affiliateItems, setAffiliateItems] = useState<ReferralAffiliate[]>([])
   const [bindingItems, setBindingItems] = useState<ReferralBinding[]>([])
-  const [commissionItems, setCommissionItems] = useState<ReferralCommission[]>([])
-  const [commissionJobs, setCommissionJobs] = useState<ReferralCommissionJob[]>([])
-  const [withdrawalItems, setWithdrawalItems] = useState<ReferralWithdrawal[]>([])
+  const [commissionItems, setCommissionItems] = useState<ReferralCommission[]>(
+    []
+  )
+  const [commissionJobs, setCommissionJobs] = useState<ReferralCommissionJob[]>(
+    []
+  )
+  const [withdrawalItems, setWithdrawalItems] = useState<ReferralWithdrawal[]>(
+    []
+  )
   const [ledgerItems, setLedgerItems] = useState<ReferralLedger[]>([])
-  const [auditLogItems, setAuditLogItems] = useState<ReferralAdminAuditLog[]>([])
+  const [auditLogItems, setAuditLogItems] = useState<ReferralAdminAuditLog[]>(
+    []
+  )
   const [affiliateKeyword, setAffiliateKeyword] = useState('')
   const [commissionStatus, setCommissionStatus] = useState('')
   const [withdrawalStatus, setWithdrawalStatus] = useState('')
@@ -468,17 +474,22 @@ export function AdminReferral() {
   const [auditKeyword, setAuditKeyword] = useState('')
   const [pendingDecision, setPendingDecision] = useState<PendingDecision>(null)
   const [affiliateAction, setAffiliateAction] = useState<AffiliateAction>(null)
-  const [withdrawalAction, setWithdrawalAction] = useState<WithdrawalAction>(null)
+  const [withdrawalAction, setWithdrawalAction] =
+    useState<WithdrawalAction>(null)
   const [reasonInput, setReasonInput] = useState('')
   const [rateOverrideInput, setRateOverrideInput] = useState('')
   const [paymentTxnNo, setPaymentTxnNo] = useState('')
   const [paymentProofURL, setPaymentProofURL] = useState('')
+  const [rejectProofURL, setRejectProofURL] = useState('')
   const [adminNote, setAdminNote] = useState('')
   const [runningSettlement, setRunningSettlement] = useState(false)
   const [savingSettings, setSavingSettings] = useState(false)
   const [adjustAmountInput, setAdjustAmountInput] = useState('')
-  const [detailAffiliate, setDetailAffiliate] = useState<ReferralAffiliate | null>(null)
-  const [detailMode, setDetailMode] = useState<'bindings' | 'commissions' | 'withdrawals' | null>(null)
+  const [detailAffiliate, setDetailAffiliate] =
+    useState<ReferralAffiliate | null>(null)
+  const [detailMode, setDetailMode] = useState<
+    'bindings' | 'commissions' | 'withdrawals' | null
+  >(null)
   const { counts: badgeCounts, refetch: refetchBadges } =
     useAdminReferralBadges()
 
@@ -570,24 +581,26 @@ export function AdminReferral() {
     setAuditLogItems(res.data?.items || [])
   }
 
-  const loadCurrentSection = useEffectEvent(async function loadCurrentSection() {
-    setLoading(true)
-    try {
-      if (activeSection === 'overview') await loadOverview()
-      if (activeSection === 'settings') await loadSettings()
-      if (activeSection === 'pending') await loadPending()
-      if (activeSection === 'affiliates') await loadAffiliates()
-      if (activeSection === 'commissions') await loadCommissions()
-      if (activeSection === 'withdrawals') await loadWithdrawals()
-      if (activeSection === 'ledgers') await loadLedgers()
-      if (activeSection === 'audit-logs') {
-        await loadAuditLogs()
-        await loadCommissionJobs()
+  const loadCurrentSection = useEffectEvent(
+    async function loadCurrentSection() {
+      setLoading(true)
+      try {
+        if (activeSection === 'overview') await loadOverview()
+        if (activeSection === 'settings') await loadSettings()
+        if (activeSection === 'pending') await loadPending()
+        if (activeSection === 'affiliates') await loadAffiliates()
+        if (activeSection === 'commissions') await loadCommissions()
+        if (activeSection === 'withdrawals') await loadWithdrawals()
+        if (activeSection === 'ledgers') await loadLedgers()
+        if (activeSection === 'audit-logs') {
+          await loadAuditLogs()
+          await loadCommissionJobs()
+        }
+      } finally {
+        setLoading(false)
       }
-    } finally {
-      setLoading(false)
     }
-  })
+  )
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -636,8 +649,7 @@ export function AdminReferral() {
     if (!pendingDecision) return
     const { item } = pendingDecision
     if (pendingDecision.kind === 'approve') {
-      const rateOverride =
-        parseOptionalNumber(rateOverrideInput)
+      const rateOverride = parseOptionalNumber(rateOverrideInput)
       if (rateOverrideInput.trim() !== '' && rateOverride === undefined) {
         toast.error(t('Please enter a valid rate'))
         return
@@ -768,7 +780,9 @@ export function AdminReferral() {
         page_size: 1,
         keyword: item.username || item.invite_code,
       })
-      const latest = refreshed.data?.items?.find((candidate) => candidate.user_id === item.user_id)
+      const latest = refreshed.data?.items?.find(
+        (candidate) => candidate.user_id === item.user_id
+      )
       if (latest) {
         setDetailAffiliate(latest)
       }
@@ -789,6 +803,7 @@ export function AdminReferral() {
         res = await rejectReferralWithdrawal(item.id, {
           admin_note: adminNote.trim(),
           reject_reason: reasonInput.trim(),
+          reject_proof_url: rejectProofURL.trim(),
         })
         break
       case 'pay':
@@ -810,6 +825,7 @@ export function AdminReferral() {
     setAdminNote('')
     setPaymentTxnNo('')
     setPaymentProofURL('')
+    setRejectProofURL('')
     await loadWithdrawals()
     await loadLedgers()
     await loadAuditLogs()
@@ -824,7 +840,9 @@ export function AdminReferral() {
     }
   }
 
-  async function handleUploadPaymentProof(event: React.ChangeEvent<HTMLInputElement>) {
+  async function handleUploadPaymentProof(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
     const file = event.target.files?.[0]
     if (!file) return
     try {
@@ -832,6 +850,24 @@ export function AdminReferral() {
       if (res.success && res.data?.url) {
         setPaymentProofURL(res.data.url)
         toast.success(t('Payment proof uploaded'))
+      } else {
+        toast.error(res.message || t('Upload failed'))
+      }
+    } finally {
+      event.target.value = ''
+    }
+  }
+
+  async function handleUploadRejectProof(
+    event: React.ChangeEvent<HTMLInputElement>
+  ) {
+    const file = event.target.files?.[0]
+    if (!file) return
+    try {
+      const res = await uploadAdminReferralAsset(file)
+      if (res.success && res.data?.url) {
+        setRejectProofURL(res.data.url)
+        toast.success(t('Reject proof uploaded'))
       } else {
         toast.error(res.message || t('Upload failed'))
       }
@@ -907,634 +943,726 @@ export function AdminReferral() {
   return (
     <>
       <SectionPageLayout>
-      <SectionPageLayout.Title>{t(pageMeta.title)}</SectionPageLayout.Title>
-      <SectionPageLayout.Description>
-        {t(pageMeta.description)}
-      </SectionPageLayout.Description>
-      <SectionPageLayout.Actions>
-        {activeSection === 'overview' && (
-          <Button onClick={() => void handleRunSettlement()} disabled={runningSettlement}>
-            {runningSettlement ? t('Running...') : t('Run Settlement')}
-          </Button>
-        )}
-        {activeSection === 'settings' && (
-          <Button onClick={() => void handleSaveSettings()} disabled={savingSettings}>
-            {savingSettings ? t('Saving...') : t('Save Settings')}
-          </Button>
-        )}
-      </SectionPageLayout.Actions>
-      <SectionPageLayout.Content>
-        <div className='space-y-4'>
-          <Tabs
-            value={activeSection}
-            onValueChange={(section) =>
-              void navigate({
-                to: '/admin-referral/$section',
-                params: { section: section as AdminReferralSectionId },
-              })
-            }
-          >
-            <TabsList className='h-auto flex-wrap justify-start'>
-              {(
-                [
-                  'overview',
-                  'settings',
-                  'pending',
-                  'affiliates',
-                  'commissions',
-                  'withdrawals',
-                  'ledgers',
-                  'audit-logs',
-                ] as AdminReferralSectionId[]
-              ).map((section) => (
-                <TabsTrigger key={section} value={section}>
-                  <AdminReferralTabLabel
-                    label={t(SECTION_META[section].title)}
-                    badge={
-                      section === 'pending'
-                        ? pendingAffiliateBadge
-                        : section === 'withdrawals'
-                          ? pendingWithdrawalBadge
-                          : undefined
+        <SectionPageLayout.Title>{t(pageMeta.title)}</SectionPageLayout.Title>
+        <SectionPageLayout.Description>
+          {t(pageMeta.description)}
+        </SectionPageLayout.Description>
+        <SectionPageLayout.Actions>
+          {activeSection === 'overview' && (
+            <Button
+              onClick={() => void handleRunSettlement()}
+              disabled={runningSettlement}
+            >
+              {runningSettlement ? t('Running...') : t('Run Settlement')}
+            </Button>
+          )}
+          {activeSection === 'settings' && (
+            <Button
+              onClick={() => void handleSaveSettings()}
+              disabled={savingSettings}
+            >
+              {savingSettings ? t('Saving...') : t('Save Settings')}
+            </Button>
+          )}
+        </SectionPageLayout.Actions>
+        <SectionPageLayout.Content>
+          <div className='space-y-4'>
+            <Tabs
+              value={activeSection}
+              onValueChange={(section) =>
+                void navigate({
+                  to: '/admin-referral/$section',
+                  params: { section: section as AdminReferralSectionId },
+                })
+              }
+            >
+              <TabsList className='h-auto flex-wrap justify-start'>
+                {(
+                  [
+                    'overview',
+                    'settings',
+                    'pending',
+                    'affiliates',
+                    'commissions',
+                    'withdrawals',
+                    'ledgers',
+                    'audit-logs',
+                  ] as AdminReferralSectionId[]
+                ).map((section) => (
+                  <TabsTrigger key={section} value={section}>
+                    <AdminReferralTabLabel
+                      label={t(SECTION_META[section].title)}
+                      badge={
+                        section === 'pending'
+                          ? pendingAffiliateBadge
+                          : section === 'withdrawals'
+                            ? pendingWithdrawalBadge
+                            : undefined
+                      }
+                    />
+                  </TabsTrigger>
+                ))}
+              </TabsList>
+            </Tabs>
+
+            {loading ? (
+              <Card>
+                <CardContent className='text-muted-foreground py-10 text-sm'>
+                  {t('Loading...')}
+                </CardContent>
+              </Card>
+            ) : activeSection === 'overview' && overview ? (
+              <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-4'>
+                <MetricCard
+                  title={t('Total Affiliates')}
+                  value={String(overview.total_affiliates)}
+                />
+                <MetricCard
+                  title={t('Pending Affiliates')}
+                  value={String(overview.pending_affiliates)}
+                />
+                <MetricCard
+                  title={t('Approved Affiliates')}
+                  value={String(overview.approved_affiliates)}
+                />
+                <MetricCard
+                  title={t('Referral Clicks')}
+                  value={String(overview.referral_click_count)}
+                />
+                <MetricCard
+                  title={t('Bound Users')}
+                  value={String(overview.bound_user_count)}
+                />
+                <MetricCard
+                  title={t('Paid Users')}
+                  value={String(overview.effective_paid_user_count)}
+                />
+                <MetricCard
+                  title={t('Pending Amount')}
+                  value={formatMoney(overview.pending_amount)}
+                />
+                <MetricCard
+                  title={t('Available Amount')}
+                  value={formatMoney(overview.available_amount)}
+                />
+                <MetricCard
+                  title={t('Frozen Amount')}
+                  value={formatMoney(overview.frozen_amount)}
+                />
+                <MetricCard
+                  title={t('Withdrawn Amount')}
+                  value={formatMoney(overview.withdrawn_amount)}
+                />
+                <MetricCard
+                  title={t('Failed Jobs')}
+                  value={String(overview.failed_commission_job_count)}
+                />
+              </div>
+            ) : activeSection === 'settings' && settings ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>{t('Referral Settings')}</CardTitle>
+                </CardHeader>
+                <CardContent className='grid gap-4 md:grid-cols-2'>
+                  <SettingSwitch
+                    label={t('Enabled')}
+                    checked={settings.enabled}
+                    onCheckedChange={(checked) =>
+                      setSettings((prev) =>
+                        prev ? { ...prev, enabled: checked } : prev
+                      )
                     }
                   />
-                </TabsTrigger>
-              ))}
-            </TabsList>
-          </Tabs>
-
-          {loading ? (
-            <Card>
-              <CardContent className='py-10 text-sm text-muted-foreground'>
-                {t('Loading...')}
-              </CardContent>
-            </Card>
-          ) : activeSection === 'overview' && overview ? (
-            <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-4'>
-              <MetricCard title={t('Total Affiliates')} value={String(overview.total_affiliates)} />
-              <MetricCard title={t('Pending Affiliates')} value={String(overview.pending_affiliates)} />
-              <MetricCard title={t('Approved Affiliates')} value={String(overview.approved_affiliates)} />
-              <MetricCard title={t('Referral Clicks')} value={String(overview.referral_click_count)} />
-              <MetricCard title={t('Bound Users')} value={String(overview.bound_user_count)} />
-              <MetricCard title={t('Paid Users')} value={String(overview.effective_paid_user_count)} />
-              <MetricCard title={t('Pending Amount')} value={formatMoney(overview.pending_amount)} />
-              <MetricCard title={t('Available Amount')} value={formatMoney(overview.available_amount)} />
-              <MetricCard title={t('Frozen Amount')} value={formatMoney(overview.frozen_amount)} />
-              <MetricCard title={t('Withdrawn Amount')} value={formatMoney(overview.withdrawn_amount)} />
-              <MetricCard title={t('Failed Jobs')} value={String(overview.failed_commission_job_count)} />
-            </div>
-          ) : activeSection === 'settings' && settings ? (
-            <Card>
-              <CardHeader>
-                <CardTitle>{t('Referral Settings')}</CardTitle>
-              </CardHeader>
-              <CardContent className='grid gap-4 md:grid-cols-2'>
-                <SettingSwitch
-                  label={t('Enabled')}
-                  checked={settings.enabled}
-                  onCheckedChange={(checked) =>
-                    setSettings((prev) => (prev ? { ...prev, enabled: checked } : prev))
-                  }
-                />
-                <SettingSwitch
-                  label={t('Require Approval')}
-                  checked={settings.require_approval}
-                  onCheckedChange={(checked) =>
-                    setSettings((prev) =>
-                      prev ? { ...prev, require_approval: checked } : prev
-                    )
-                  }
-                />
-                <LabeledInput
-                  label={t('Cookie TTL Days')}
-                  value={String(settings.cookie_ttl_days)}
-                  onChange={(value) =>
-                    setSettings((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            cookie_ttl_days: parseRequiredNumber(
-                              value,
-                              prev.cookie_ttl_days
-                            ),
-                          }
-                        : prev
-                    )
-                  }
-                />
-                <LabeledInput
-                  label={t('Default Rate')}
-                  value={String(settings.default_rate)}
-                  onChange={(value) =>
-                    setSettings((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            default_rate: parseRequiredNumber(
-                              value,
-                              prev.default_rate
-                            ),
-                          }
-                        : prev
-                    )
-                  }
-                />
-                <LabeledInput
-                  label={t('Settlement Freeze Days')}
-                  value={String(settings.settle_freeze_days)}
-                  onChange={(value) =>
-                    setSettings((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            settle_freeze_days: parseRequiredNumber(
-                              value,
-                              prev.settle_freeze_days
-                            ),
-                          }
-                        : prev
-                    )
-                  }
-                />
-                <LabeledInput
-                  label={t('Min Withdraw Amount')}
-                  value={String(settings.min_withdraw_amount)}
-                  onChange={(value) =>
-                    setSettings((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            min_withdraw_amount: parseRequiredNumber(
-                              value,
-                              prev.min_withdraw_amount
-                            ),
-                          }
-                        : prev
-                    )
-                  }
-                />
-                <LabeledInput
-                  label={t('Withdraw Fee')}
-                  value={String(settings.withdraw_fee)}
-                  onChange={(value) =>
-                    setSettings((prev) =>
-                      prev
-                        ? {
-                            ...prev,
-                            withdraw_fee: parseRequiredNumber(
-                              value,
-                              prev.withdraw_fee
-                            ),
-                          }
-                        : prev
-                    )
-                  }
-                />
-                <LabeledInput
-                  label={t('Redirect Path')}
-                  value={settings.redirect_path}
-                  onChange={(value) =>
-                    setSettings((prev) =>
-                      prev ? { ...prev, redirect_path: value } : prev
-                    )
-                  }
-                />
-                <LabeledInput
-                  label={t('Referral Settlement Currency')}
-                  value={settings.settlement_currency || 'CNY'}
-                  readOnly
-                  onChange={() => undefined}
-                />
-                <LabeledTextarea
-                  label={t('Referral FX Rates')}
-                  description={t('JSON object for order paid currency to CNY, for example {"USD":7.2,"EUR":7.8}. CNY is always 1.')}
-                  value={settings.settlement_fx_rates || '{"CNY":1}'}
-                  onChange={(value) =>
-                    setSettings((prev) =>
-                      prev ? { ...prev, settlement_fx_rates: value } : prev
-                    )
-                  }
-                />
-              </CardContent>
-            </Card>
-          ) : activeSection === 'pending' ? (
-            <>
-              <Toolbar
-                keyword={affiliateKeyword}
-                keywordPlaceholder={t('Search username or invite code')}
-                onKeywordChange={setAffiliateKeyword}
-                onSearch={() => void loadPending()}
-              />
-              <SimpleAdminTable
-                headers={[
-                  t('Username'),
-                  t('Invite Code'),
-                  t('Applicant Note'),
-                  t('Submitted'),
-                  t('Action'),
-                ]}
-                rows={pendingItems.map((item) => ({
-                  key: item.id,
-                  cells: [
-                    item.username,
-                    item.invite_code,
-                    item.applicant_note || '-',
-                    formatTimestamp(item.created_at),
-                  ],
-                  action: (
-                    <div className='flex gap-2'>
-                      <Button
-                        size='sm'
-                        onClick={() => {
-                          setPendingDecision({ kind: 'approve', item })
-                          setReasonInput('')
-                          setRateOverrideInput(
-                            item.rate_override == null ? '' : String(item.rate_override)
-                          )
-                        }}
-                      >
-                        {t('Approve')}
-                      </Button>
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        onClick={() => {
-                          setPendingDecision({ kind: 'reject', item })
-                          setReasonInput(item.risk_reason || '')
-                          setRateOverrideInput('')
-                        }}
-                      >
-                        {t('Reject')}
-                      </Button>
-                    </div>
-                  ),
-                }))}
-              />
-            </>
-          ) : activeSection === 'affiliates' ? (
-            <>
-              <Toolbar
-                keyword={affiliateKeyword}
-                keywordPlaceholder={t('Search username or invite code')}
-                onKeywordChange={setAffiliateKeyword}
-                onSearch={() => void loadAffiliates()}
-              />
-              <SimpleAdminTable
-                headers={[
-                  t('Username'),
-                  t('Invite Code'),
-                  t('Rate'),
-                  t('Available'),
-                  t('Status'),
-                  t('Action'),
-                ]}
-                rows={affiliateItems.map((item) => ({
-                  key: item.id,
-                  cells: [
-                    item.username,
-                    item.invite_code,
-                    item.rate != null ? `${item.rate}%` : '-',
-                    formatMoney(item.available_amount),
-                    affiliateStatusLabel(item.status, t),
-                  ],
-                  action: (
-                    <div className='flex flex-wrap gap-2'>
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        onClick={() => {
-                          setAffiliateAction({
-                            kind: item.status === 'approved' ? 'disable' : 'restore',
-                            item,
-                          })
-                          setReasonInput(item.risk_reason || '')
-                          setRateOverrideInput('')
-                        }}
-                      >
-                        {item.status === 'approved' ? t('Disable') : t('Restore')}
-                      </Button>
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        onClick={() => {
-                          setAffiliateAction({
-                            kind: item.settlement_enabled
-                              ? 'freeze_settlement'
-                              : 'restore_settlement',
-                            item,
-                          })
-                          setReasonInput(item.risk_reason || '')
-                          setRateOverrideInput('')
-                        }}
-                      >
-                        {item.settlement_enabled
-                          ? t('Freeze Settlement')
-                          : t('Restore Settlement')}
-                      </Button>
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        onClick={() => {
-                          setAffiliateAction({
-                            kind: item.withdrawal_enabled
-                              ? 'freeze_withdrawal'
-                              : 'restore_withdrawal',
-                            item,
-                          })
-                          setReasonInput(item.risk_reason || '')
-                          setRateOverrideInput('')
-                        }}
-                      >
-                        {item.withdrawal_enabled
-                          ? t('Freeze Withdrawal')
-                          : t('Restore Withdrawal')}
-                      </Button>
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        onClick={() => {
-                          setAffiliateAction({ kind: 'update_rate', item })
-                          setReasonInput('')
-                          setRateOverrideInput(
-                            item.rate_override == null ? '' : String(item.rate_override)
-                          )
-                        }}
-                      >
-                        {t('Set Rate')}
-                      </Button>
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        onClick={() => {
-                          setAffiliateAction({ kind: 'adjust_increase', item })
-                          setAdjustAmountInput('')
-                          setReasonInput('')
-                        }}
-                      >
-                        {t('Increase')}
-                      </Button>
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        onClick={() => {
-                          setAffiliateAction({ kind: 'adjust_decrease', item })
-                          setAdjustAmountInput('')
-                          setReasonInput('')
-                        }}
-                      >
-                        {t('Decrease')}
-                      </Button>
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        onClick={() => void openAffiliateDetail(item, 'bindings')}
-                      >
-                        {t('Bindings')}
-                      </Button>
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        onClick={() => void openAffiliateDetail(item, 'commissions')}
-                      >
-                        {t('Commissions')}
-                      </Button>
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        onClick={() => void openAffiliateDetail(item, 'withdrawals')}
-                      >
-                        {t('Withdrawals')}
-                      </Button>
-                    </div>
-                  ),
-                }))}
-              />
-            </>
-          ) : activeSection === 'commissions' ? (
-            <div className='space-y-4'>
-              <StatusToolbar
-                status={commissionStatus}
-                onStatusChange={setCommissionStatus}
-                onSearch={() => void loadCommissions()}
-              />
-              <SimpleAdminTable
-                headers={[
-                  t('Trade No'),
-                  t('Order Type'),
-                  t('Invitee'),
-                  t('Paid Amount CNY'),
-                  t('Settlement Base'),
-                  t('Commission'),
-                  t('Status'),
-                  t('Created'),
-                ]}
-                rows={commissionItems.map((item) => ({
-                  key: item.id,
-                  cells: [
-                    item.source_trade_no,
-                    orderTypeLabel(item.order_type, t),
-                    item.invitee_username || item.invitee_email || '-',
-                    (() => {
-                      const detail = paidAmountDetail(item, t)
-                      return (
-                        <div className='min-w-[140px]'>
-                          <div className='font-medium'>
-                            {formatPaidAmountCNY(item, t)}
-                          </div>
-                          {detail ? (
-                            <div className='text-muted-foreground text-xs'>
-                              {detail}
-                            </div>
-                          ) : null}
-                        </div>
+                  <SettingSwitch
+                    label={t('Require Approval')}
+                    checked={settings.require_approval}
+                    onCheckedChange={(checked) =>
+                      setSettings((prev) =>
+                        prev ? { ...prev, require_approval: checked } : prev
                       )
-                    })(),
-                    formatSettlementMoney(
-                      item.settlement_base_amount || item.base_amount,
-                      item.settlement_currency
-                    ),
-                    formatSettlementMoney(
-                      item.commission_amount,
-                      item.settlement_currency
-                    ),
-                    commissionStatusLabel(item.status, t),
-                    formatTimestamp(item.created_at),
-                  ],
-                }))}
-              />
-            </div>
-          ) : activeSection === 'ledgers' ? (
-            <>
-              <Toolbar
-                keyword={ledgerKeyword}
-                keywordPlaceholder={t('Search ledger type or external ref')}
-                onKeywordChange={setLedgerKeyword}
-                onSearch={() => void loadLedgers()}
-              />
-              <SimpleAdminTable
-                headers={[
-                  t('Type'),
-                  t('Operator'),
-                  t('Delta Available'),
-                  t('Delta Frozen'),
-                  t('External Ref'),
-                  t('Created'),
-                ]}
-                rows={ledgerItems.map((item) => ({
-                  key: item.id,
-                  cells: [
-                    ledgerTypeLabel(item.type, t),
-                    operatorLabel(item.operator, t),
-                    formatMoney(item.delta_available),
-                    formatMoney(item.delta_frozen),
-                    item.external_ref_id,
-                    formatTimestamp(item.created_at),
-                  ],
-                }))}
-              />
-            </>
-          ) : activeSection === 'audit-logs' ? (
-            <>
-              <Toolbar
-                keyword={auditKeyword}
-                keywordPlaceholder={t('Search action or reason')}
-                onKeywordChange={setAuditKeyword}
-                onSearch={() => void loadAuditLogs()}
-              />
-              <SimpleAdminTable
-                headers={[
-                  t('Action'),
-                  t('Admin User ID'),
-                  t('Target Username'),
-                  t('Reason'),
-                  t('Created'),
-                ]}
-                rows={auditLogItems.map((item) => ({
-                  key: item.id,
-                  cells: [
-                    auditActionLabel(item.action, t),
-                    String(item.admin_user_id),
-                    item.target_username ||
-                      (item.target_user_id > 0 ? `#${item.target_user_id}` : '-'),
-                    auditReasonLabel(item.reason, t),
-                    formatTimestamp(item.created_at),
-                  ],
-                }))}
-              />
-              <SectionTitle
-                title={t('Commission Jobs')}
-                description={t('Background commission generation and retry status')}
-              />
-              <SimpleAdminTable
-                headers={[
-                  t('Trade No'),
-                  t('Affiliate ID'),
-                  t('Status'),
-                  t('Attempts'),
-                  t('Last Error'),
-                ]}
-                rows={commissionJobs.map((item) => ({
-                  key: item.id,
-                  cells: [
-                    item.source_trade_no,
-                    String(item.affiliate_id),
-                    commissionJobStatusLabel(item.status, t),
-                    String(item.attempt_count),
-                    referralErrorLabel(item.last_error, t),
-                  ],
-                  action:
-                    item.status === 'failed' ? (
-                      <Button
-                        size='sm'
-                        variant='outline'
-                        onClick={() => void handleRetryCommissionJob(item)}
-                      >
-                        {t('Retry')}
-                      </Button>
-                    ) : undefined,
-                }))}
-              />
-            </>
-          ) : (
-            <>
-              <StatusToolbar
-                status={withdrawalStatus}
-                onStatusChange={setWithdrawalStatus}
-                onSearch={() => void loadWithdrawals()}
-              />
-              <SimpleAdminTable
-                headers={[
-                  t('Username'),
-                  t('Amount'),
-                  t('Net Amount'),
-                  t('Account'),
-                  t('Status'),
-                  t('Submitted'),
-                  t('Action'),
-                ]}
-                rows={withdrawalItems.map((item) => ({
-                  key: item.id,
-                  cells: [
-                    item.username || item.email || '-',
-                    formatMoney(item.amount),
-                    formatMoney(item.net_amount),
-                    item.account_no_masked || '-',
-                    withdrawalStatusLabel(item.status, t),
-                    formatTimestamp(item.submitted_at),
-                  ],
-                  action: (
-                    <div className='flex gap-2'>
-                      {item.status === 'pending' && (
-                        <>
-                          <Button
-                            size='sm'
-                            onClick={() => {
-                              setWithdrawalAction({ kind: 'approve', item })
-                              setReasonInput('')
-                              setAdminNote('')
-                              setPaymentTxnNo('')
-                              setPaymentProofURL('')
-                            }}
-                          >
-                            {t('Approve')}
-                          </Button>
-                          <Button
-                            size='sm'
-                            variant='outline'
-                            onClick={() => {
-                              setWithdrawalAction({ kind: 'reject', item })
-                              setReasonInput('')
-                              setAdminNote('')
-                              setPaymentTxnNo('')
-                              setPaymentProofURL('')
-                            }}
-                          >
-                            {t('Reject')}
-                          </Button>
-                        </>
-                      )}
-                      {item.status === 'approved' && (
+                    }
+                  />
+                  <LabeledInput
+                    label={t('Cookie TTL Days')}
+                    value={String(settings.cookie_ttl_days)}
+                    onChange={(value) =>
+                      setSettings((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              cookie_ttl_days: parseRequiredNumber(
+                                value,
+                                prev.cookie_ttl_days
+                              ),
+                            }
+                          : prev
+                      )
+                    }
+                  />
+                  <LabeledInput
+                    label={t('Default Rate')}
+                    value={String(settings.default_rate)}
+                    onChange={(value) =>
+                      setSettings((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              default_rate: parseRequiredNumber(
+                                value,
+                                prev.default_rate
+                              ),
+                            }
+                          : prev
+                      )
+                    }
+                  />
+                  <LabeledInput
+                    label={t('Settlement Freeze Days')}
+                    value={String(settings.settle_freeze_days)}
+                    onChange={(value) =>
+                      setSettings((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              settle_freeze_days: parseRequiredNumber(
+                                value,
+                                prev.settle_freeze_days
+                              ),
+                            }
+                          : prev
+                      )
+                    }
+                  />
+                  <LabeledInput
+                    label={t('Min Withdraw Amount')}
+                    value={String(settings.min_withdraw_amount)}
+                    onChange={(value) =>
+                      setSettings((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              min_withdraw_amount: parseRequiredNumber(
+                                value,
+                                prev.min_withdraw_amount
+                              ),
+                            }
+                          : prev
+                      )
+                    }
+                  />
+                  <LabeledInput
+                    label={t('Withdraw Fee')}
+                    value={String(settings.withdraw_fee)}
+                    onChange={(value) =>
+                      setSettings((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              withdraw_fee: parseRequiredNumber(
+                                value,
+                                prev.withdraw_fee
+                              ),
+                            }
+                          : prev
+                      )
+                    }
+                  />
+                  <LabeledInput
+                    label={t('Redirect Path')}
+                    value={settings.redirect_path}
+                    onChange={(value) =>
+                      setSettings((prev) =>
+                        prev ? { ...prev, redirect_path: value } : prev
+                      )
+                    }
+                  />
+                  <LabeledInput
+                    label={t('Referral Settlement Currency')}
+                    value={settings.settlement_currency || 'CNY'}
+                    readOnly
+                    onChange={() => undefined}
+                  />
+                  <LabeledTextarea
+                    label={t('Referral FX Rates')}
+                    description={t(
+                      'JSON object for order paid currency to CNY, for example {"USD":7.2,"EUR":7.8}. CNY is always 1.'
+                    )}
+                    value={settings.settlement_fx_rates || '{"CNY":1}'}
+                    onChange={(value) =>
+                      setSettings((prev) =>
+                        prev ? { ...prev, settlement_fx_rates: value } : prev
+                      )
+                    }
+                  />
+                </CardContent>
+              </Card>
+            ) : activeSection === 'pending' ? (
+              <>
+                <Toolbar
+                  keyword={affiliateKeyword}
+                  keywordPlaceholder={t('Search username or invite code')}
+                  onKeywordChange={setAffiliateKeyword}
+                  onSearch={() => void loadPending()}
+                />
+                <SimpleAdminTable
+                  headers={[
+                    t('Username'),
+                    t('Invite Code'),
+                    t('Applicant Note'),
+                    t('Submitted'),
+                    t('Action'),
+                  ]}
+                  rows={pendingItems.map((item) => ({
+                    key: item.id,
+                    cells: [
+                      item.username,
+                      item.invite_code,
+                      item.applicant_note || '-',
+                      formatTimestamp(item.created_at),
+                    ],
+                    action: (
+                      <div className='flex gap-2'>
                         <Button
                           size='sm'
                           onClick={() => {
-                            setWithdrawalAction({ kind: 'pay', item })
+                            setPendingDecision({ kind: 'approve', item })
                             setReasonInput('')
-                            setAdminNote(item.admin_note || '')
-                            setPaymentTxnNo(item.payment_txn_no || '')
-                            setPaymentProofURL(item.payment_proof_url || '')
+                            setRateOverrideInput(
+                              item.rate_override == null
+                                ? ''
+                                : String(item.rate_override)
+                            )
                           }}
                         >
-                          {t('Mark Paid')}
+                          {t('Approve')}
                         </Button>
-                      )}
-                    </div>
-                  ),
-                }))}
-              />
-            </>
-          )}
-        </div>
-      </SectionPageLayout.Content>
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          onClick={() => {
+                            setPendingDecision({ kind: 'reject', item })
+                            setReasonInput(item.risk_reason || '')
+                            setRateOverrideInput('')
+                          }}
+                        >
+                          {t('Reject')}
+                        </Button>
+                      </div>
+                    ),
+                  }))}
+                />
+              </>
+            ) : activeSection === 'affiliates' ? (
+              <>
+                <Toolbar
+                  keyword={affiliateKeyword}
+                  keywordPlaceholder={t('Search username or invite code')}
+                  onKeywordChange={setAffiliateKeyword}
+                  onSearch={() => void loadAffiliates()}
+                />
+                <SimpleAdminTable
+                  headers={[
+                    t('Username'),
+                    t('Invite Code'),
+                    t('Rate'),
+                    t('Available'),
+                    t('Status'),
+                    t('Action'),
+                  ]}
+                  rows={affiliateItems.map((item) => ({
+                    key: item.id,
+                    cells: [
+                      item.username,
+                      item.invite_code,
+                      item.rate != null ? `${item.rate}%` : '-',
+                      formatMoney(item.available_amount),
+                      affiliateStatusLabel(item.status, t),
+                    ],
+                    action: (
+                      <div className='flex flex-wrap gap-2'>
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          onClick={() => {
+                            setAffiliateAction({
+                              kind:
+                                item.status === 'approved'
+                                  ? 'disable'
+                                  : 'restore',
+                              item,
+                            })
+                            setReasonInput(item.risk_reason || '')
+                            setRateOverrideInput('')
+                          }}
+                        >
+                          {item.status === 'approved'
+                            ? t('Disable')
+                            : t('Restore')}
+                        </Button>
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          onClick={() => {
+                            setAffiliateAction({
+                              kind: item.settlement_enabled
+                                ? 'freeze_settlement'
+                                : 'restore_settlement',
+                              item,
+                            })
+                            setReasonInput(item.risk_reason || '')
+                            setRateOverrideInput('')
+                          }}
+                        >
+                          {item.settlement_enabled
+                            ? t('Freeze Settlement')
+                            : t('Restore Settlement')}
+                        </Button>
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          onClick={() => {
+                            setAffiliateAction({
+                              kind: item.withdrawal_enabled
+                                ? 'freeze_withdrawal'
+                                : 'restore_withdrawal',
+                              item,
+                            })
+                            setReasonInput(item.risk_reason || '')
+                            setRateOverrideInput('')
+                          }}
+                        >
+                          {item.withdrawal_enabled
+                            ? t('Freeze Withdrawal')
+                            : t('Restore Withdrawal')}
+                        </Button>
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          onClick={() => {
+                            setAffiliateAction({ kind: 'update_rate', item })
+                            setReasonInput('')
+                            setRateOverrideInput(
+                              item.rate_override == null
+                                ? ''
+                                : String(item.rate_override)
+                            )
+                          }}
+                        >
+                          {t('Set Rate')}
+                        </Button>
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          onClick={() => {
+                            setAffiliateAction({
+                              kind: 'adjust_increase',
+                              item,
+                            })
+                            setAdjustAmountInput('')
+                            setReasonInput('')
+                          }}
+                        >
+                          {t('Increase')}
+                        </Button>
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          onClick={() => {
+                            setAffiliateAction({
+                              kind: 'adjust_decrease',
+                              item,
+                            })
+                            setAdjustAmountInput('')
+                            setReasonInput('')
+                          }}
+                        >
+                          {t('Decrease')}
+                        </Button>
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          onClick={() =>
+                            void openAffiliateDetail(item, 'bindings')
+                          }
+                        >
+                          {t('Bindings')}
+                        </Button>
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          onClick={() =>
+                            void openAffiliateDetail(item, 'commissions')
+                          }
+                        >
+                          {t('Commissions')}
+                        </Button>
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          onClick={() =>
+                            void openAffiliateDetail(item, 'withdrawals')
+                          }
+                        >
+                          {t('Withdrawals')}
+                        </Button>
+                      </div>
+                    ),
+                  }))}
+                />
+              </>
+            ) : activeSection === 'commissions' ? (
+              <div className='space-y-4'>
+                <StatusToolbar
+                  status={commissionStatus}
+                  onStatusChange={setCommissionStatus}
+                  onSearch={() => void loadCommissions()}
+                />
+                <SimpleAdminTable
+                  headers={[
+                    t('Trade No'),
+                    t('Order Type'),
+                    t('Invitee'),
+                    t('Paid Amount CNY'),
+                    t('Settlement Base'),
+                    t('Commission'),
+                    t('Status'),
+                    t('Created'),
+                  ]}
+                  rows={commissionItems.map((item) => ({
+                    key: item.id,
+                    cells: [
+                      item.source_trade_no,
+                      orderTypeLabel(item.order_type, t),
+                      item.invitee_username || item.invitee_email || '-',
+                      (() => {
+                        const detail = paidAmountDetail(item, t)
+                        return (
+                          <div className='min-w-[140px]'>
+                            <div className='font-medium'>
+                              {formatPaidAmountCNY(item, t)}
+                            </div>
+                            {detail ? (
+                              <div className='text-muted-foreground text-xs'>
+                                {detail}
+                              </div>
+                            ) : null}
+                          </div>
+                        )
+                      })(),
+                      formatSettlementMoney(
+                        item.settlement_base_amount || item.base_amount,
+                        item.settlement_currency
+                      ),
+                      formatSettlementMoney(
+                        item.commission_amount,
+                        item.settlement_currency
+                      ),
+                      commissionStatusLabel(item.status, t),
+                      formatTimestamp(item.created_at),
+                    ],
+                  }))}
+                />
+              </div>
+            ) : activeSection === 'ledgers' ? (
+              <>
+                <Toolbar
+                  keyword={ledgerKeyword}
+                  keywordPlaceholder={t('Search ledger type or external ref')}
+                  onKeywordChange={setLedgerKeyword}
+                  onSearch={() => void loadLedgers()}
+                />
+                <SimpleAdminTable
+                  headers={[
+                    t('Type'),
+                    t('Operator'),
+                    t('Delta Available'),
+                    t('Delta Frozen'),
+                    t('External Ref'),
+                    t('Created'),
+                  ]}
+                  rows={ledgerItems.map((item) => ({
+                    key: item.id,
+                    cells: [
+                      ledgerTypeLabel(item.type, t),
+                      operatorLabel(item.operator, t),
+                      formatMoney(item.delta_available),
+                      formatMoney(item.delta_frozen),
+                      item.external_ref_id,
+                      formatTimestamp(item.created_at),
+                    ],
+                  }))}
+                />
+              </>
+            ) : activeSection === 'audit-logs' ? (
+              <>
+                <Toolbar
+                  keyword={auditKeyword}
+                  keywordPlaceholder={t('Search action or reason')}
+                  onKeywordChange={setAuditKeyword}
+                  onSearch={() => void loadAuditLogs()}
+                />
+                <SimpleAdminTable
+                  headers={[
+                    t('Action'),
+                    t('Admin User ID'),
+                    t('Target Username'),
+                    t('Reason'),
+                    t('Created'),
+                  ]}
+                  rows={auditLogItems.map((item) => ({
+                    key: item.id,
+                    cells: [
+                      auditActionLabel(item.action, t),
+                      String(item.admin_user_id),
+                      item.target_username ||
+                        (item.target_user_id > 0
+                          ? `#${item.target_user_id}`
+                          : '-'),
+                      auditReasonLabel(item.reason, t),
+                      formatTimestamp(item.created_at),
+                    ],
+                  }))}
+                />
+                <SectionTitle
+                  title={t('Commission Jobs')}
+                  description={t(
+                    'Background commission generation and retry status'
+                  )}
+                />
+                <SimpleAdminTable
+                  headers={[
+                    t('Trade No'),
+                    t('Affiliate ID'),
+                    t('Status'),
+                    t('Attempts'),
+                    t('Last Error'),
+                  ]}
+                  rows={commissionJobs.map((item) => ({
+                    key: item.id,
+                    cells: [
+                      item.source_trade_no,
+                      String(item.affiliate_id),
+                      commissionJobStatusLabel(item.status, t),
+                      String(item.attempt_count),
+                      referralErrorLabel(item.last_error, t),
+                    ],
+                    action:
+                      item.status === 'failed' ? (
+                        <Button
+                          size='sm'
+                          variant='outline'
+                          onClick={() => void handleRetryCommissionJob(item)}
+                        >
+                          {t('Retry')}
+                        </Button>
+                      ) : undefined,
+                  }))}
+                />
+              </>
+            ) : (
+              <>
+                <StatusToolbar
+                  status={withdrawalStatus}
+                  onStatusChange={setWithdrawalStatus}
+                  onSearch={() => void loadWithdrawals()}
+                />
+                <SimpleAdminTable
+                  headers={[
+                    t('Username'),
+                    t('Amount'),
+                    t('Net Amount'),
+                    t('Withdrawal Info'),
+                    t('QR Code'),
+                    t('Status'),
+                    t('Submitted'),
+                    t('Action'),
+                  ]}
+                  rows={withdrawalItems.map((item) => ({
+                    key: item.id,
+                    cells: [
+                      item.username || item.email || '-',
+                      formatMoney(item.amount),
+                      formatMoney(item.net_amount),
+                      <WithdrawalInfo item={item} />,
+                      <AssetPreview
+                        url={item.qr_image_url}
+                        label={t('QR Code')}
+                      />,
+                      withdrawalStatusLabel(item.status, t),
+                      formatTimestamp(item.submitted_at),
+                    ],
+                    action: (
+                      <div className='flex gap-2'>
+                        {item.status === 'pending' && (
+                          <>
+                            <Button
+                              size='sm'
+                              onClick={() => {
+                                setWithdrawalAction({ kind: 'approve', item })
+                                setReasonInput('')
+                                setAdminNote('')
+                                setPaymentTxnNo('')
+                                setPaymentProofURL('')
+                                setRejectProofURL('')
+                              }}
+                            >
+                              {t('Approve')}
+                            </Button>
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              onClick={() => {
+                                setWithdrawalAction({ kind: 'reject', item })
+                                setReasonInput('')
+                                setAdminNote('')
+                                setPaymentTxnNo('')
+                                setPaymentProofURL('')
+                                setRejectProofURL('')
+                              }}
+                            >
+                              {t('Reject')}
+                            </Button>
+                          </>
+                        )}
+                        {item.status === 'approved' && (
+                          <>
+                            <Button
+                              size='sm'
+                              onClick={() => {
+                                setWithdrawalAction({ kind: 'pay', item })
+                                setReasonInput('')
+                                setAdminNote(item.admin_note || '')
+                                setPaymentTxnNo(item.payment_txn_no || '')
+                                setPaymentProofURL(item.payment_proof_url || '')
+                                setRejectProofURL('')
+                              }}
+                            >
+                              {t('Mark Paid')}
+                            </Button>
+                            <Button
+                              size='sm'
+                              variant='outline'
+                              onClick={() => {
+                                setWithdrawalAction({ kind: 'reject', item })
+                                setReasonInput(item.reject_reason || '')
+                                setAdminNote(item.admin_note || '')
+                                setPaymentTxnNo('')
+                                setPaymentProofURL('')
+                                setRejectProofURL(item.reject_proof_url || '')
+                              }}
+                            >
+                              {t('Reject')}
+                            </Button>
+                          </>
+                        )}
+                      </div>
+                    ),
+                  }))}
+                />
+              </>
+            )}
+          </div>
+        </SectionPageLayout.Content>
       </SectionPageLayout>
 
       <ConfirmDialog
@@ -1551,7 +1679,8 @@ export function AdminReferral() {
         title={actionTitle}
         desc={
           <div className='space-y-3'>
-            {(pendingDecision?.kind === 'approve' || affiliateAction?.kind === 'update_rate') && (
+            {(pendingDecision?.kind === 'approve' ||
+              affiliateAction?.kind === 'update_rate') && (
               <LabeledInput
                 label={t('Rate Override')}
                 value={rateOverrideInput}
@@ -1577,7 +1706,11 @@ export function AdminReferral() {
           </div>
         }
         confirmText={t('Confirm')}
-        handleConfirm={() => void (pendingDecision ? handlePendingDecision() : handleAffiliateAction())}
+        handleConfirm={() =>
+          void (pendingDecision
+            ? handlePendingDecision()
+            : handleAffiliateAction())
+        }
       />
 
       <ConfirmDialog
@@ -1589,6 +1722,7 @@ export function AdminReferral() {
             setAdminNote('')
             setPaymentTxnNo('')
             setPaymentProofURL('')
+            setRejectProofURL('')
           }
         }}
         title={
@@ -1601,14 +1735,39 @@ export function AdminReferral() {
         desc={
           <div className='space-y-3'>
             {withdrawalAction?.kind === 'reject' && (
-              <div className='space-y-2'>
-                <div className='text-sm font-medium'>{t('Reject Reason')}</div>
-                <textarea
-                  className='border-input min-h-[96px] w-full rounded-md border bg-transparent px-3 py-2 text-sm'
-                  value={reasonInput}
-                  onChange={(e) => setReasonInput(e.target.value)}
-                />
-              </div>
+              <>
+                <div className='space-y-2'>
+                  <div className='text-sm font-medium'>
+                    {t('Reject Reason')}
+                  </div>
+                  <textarea
+                    className='border-input min-h-[96px] w-full rounded-md border bg-transparent px-3 py-2 text-sm'
+                    value={reasonInput}
+                    onChange={(e) => setReasonInput(e.target.value)}
+                  />
+                </div>
+                <div className='space-y-2'>
+                  <div className='text-sm font-medium'>
+                    {t('Upload Reject Proof Optional')}
+                  </div>
+                  <div className='flex items-center gap-2'>
+                    <Input
+                      type='file'
+                      accept='image/*'
+                      onChange={(e) => void handleUploadRejectProof(e)}
+                    />
+                    <span className='text-muted-foreground text-xs whitespace-nowrap'>
+                      {rejectProofURL ? t('Uploaded') : t('Not uploaded')}
+                    </span>
+                  </div>
+                  {rejectProofURL ? (
+                    <AssetPreview
+                      url={rejectProofURL}
+                      label={t('Reject Proof')}
+                    />
+                  ) : null}
+                </div>
+              </>
             )}
             <div className='space-y-2'>
               <div className='text-sm font-medium'>{t('Admin Note')}</div>
@@ -1625,14 +1784,26 @@ export function AdminReferral() {
                   value={paymentTxnNo}
                   onChange={setPaymentTxnNo}
                 />
-                <LabeledInput
-                  label={t('Payment Proof URL')}
-                  value={paymentProofURL}
-                  onChange={setPaymentProofURL}
-                />
                 <div className='space-y-2'>
-                  <div className='text-sm font-medium'>{t('Upload Payment Proof')}</div>
-                  <Input type='file' accept='image/*' onChange={(e) => void handleUploadPaymentProof(e)} />
+                  <div className='text-sm font-medium'>
+                    {t('Upload Payment Proof')}
+                  </div>
+                  <div className='flex items-center gap-2'>
+                    <Input
+                      type='file'
+                      accept='image/*'
+                      onChange={(e) => void handleUploadPaymentProof(e)}
+                    />
+                    <span className='text-muted-foreground text-xs whitespace-nowrap'>
+                      {paymentProofURL ? t('Uploaded') : t('Not uploaded')}
+                    </span>
+                  </div>
+                  {paymentProofURL ? (
+                    <AssetPreview
+                      url={paymentProofURL}
+                      label={t('Payment Proof')}
+                    />
+                  ) : null}
                 </div>
               </>
             )}
@@ -1675,7 +1846,12 @@ export function AdminReferral() {
               />
             ) : detailMode === 'commissions' ? (
               <SimpleAdminTable
-                headers={[t('Trade No'), t('Invitee'), t('Commission'), t('Status')]}
+                headers={[
+                  t('Trade No'),
+                  t('Invitee'),
+                  t('Commission'),
+                  t('Status'),
+                ]}
                 rows={commissionItems.map((item) => ({
                   key: item.id,
                   cells: [
@@ -1688,13 +1864,23 @@ export function AdminReferral() {
               />
             ) : (
               <SimpleAdminTable
-                headers={[t('Amount'), t('Account'), t('Status'), t('Submitted')]}
+                headers={[
+                  t('Amount'),
+                  t('Withdrawal Info'),
+                  t('QR Code'),
+                  t('Status'),
+                  t('Submitted'),
+                ]}
                 rows={withdrawalItems.map((item) => ({
                   key: item.id,
                   cells: [
                     formatMoney(item.amount),
-                    item.account_no_masked || '-',
-                    item.status,
+                    <WithdrawalInfo item={item} />,
+                    <AssetPreview
+                      url={item.qr_image_url}
+                      label={t('QR Code')}
+                    />,
+                    withdrawalStatusLabel(item.status, t),
                     formatTimestamp(item.submitted_at),
                   ],
                 }))}
@@ -1717,10 +1903,88 @@ function MetricCard(props: { title: string; value: string }) {
   return (
     <Card>
       <CardContent className='p-5'>
-        <div className='text-sm text-muted-foreground'>{props.title}</div>
+        <div className='text-muted-foreground text-sm'>{props.title}</div>
         <div className='mt-2 text-2xl font-semibold'>{props.value}</div>
       </CardContent>
     </Card>
+  )
+}
+
+function accountTypeLabel(value: string, t: (key: string) => string): string {
+  switch (value) {
+    case 'alipay':
+      return t('Alipay')
+    case 'usdt':
+      return 'USDT'
+    default:
+      return value || '-'
+  }
+}
+
+function accountNetworkLabel(
+  value: string,
+  t: (key: string) => string
+): string {
+  switch (value) {
+    case 'TRC20':
+      return 'TRC20'
+    case 'BEP20':
+      return 'BEP20'
+    case 'POLYGON':
+    case 'Polygon':
+      return t('Polygon')
+    default:
+      return value || '-'
+  }
+}
+
+function WithdrawalInfo(props: { item: ReferralWithdrawal }) {
+  const { t } = useTranslation()
+  const item = props.item
+  return (
+    <div className='min-w-[260px] space-y-1 text-sm'>
+      <div>
+        {accountTypeLabel(item.account_type, t)}
+        {item.account_network
+          ? ` / ${accountNetworkLabel(item.account_network, t)}`
+          : ''}
+      </div>
+      <div className='break-words'>
+        {item.account_type === 'usdt' ? t('Blockchain') : t('Account Name')}:{' '}
+        {item.account_type === 'usdt'
+          ? item.account_network || '-'
+          : item.account_name || '-'}
+      </div>
+      <div className='break-words'>
+        {t('Account Number')}:{' '}
+        {item.account_no || item.account_no_masked || '-'}
+      </div>
+      {item.applicant_note ? (
+        <div className='text-muted-foreground text-xs break-words'>
+          {t('Applicant Note')}: {item.applicant_note}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+function AssetPreview(props: { url?: string; label: string }) {
+  if (!props.url) {
+    return <span>-</span>
+  }
+  return (
+    <a
+      href={props.url}
+      target='_blank'
+      rel='noreferrer'
+      className='inline-block overflow-hidden rounded border'
+    >
+      <img
+        src={props.url}
+        alt={props.label}
+        className='h-14 w-14 object-cover'
+      />
+    </a>
   )
 }
 
@@ -1729,7 +1993,7 @@ function SectionTitle(props: { title: string; description?: string }) {
     <div className='space-y-1'>
       <h3 className='text-sm font-semibold'>{props.title}</h3>
       {props.description && (
-        <p className='text-sm text-muted-foreground'>{props.description}</p>
+        <p className='text-muted-foreground text-sm'>{props.description}</p>
       )}
     </div>
   )
@@ -1748,7 +2012,7 @@ function SimpleAdminTable(props: {
     <Card>
       <CardContent className='overflow-x-auto pt-6'>
         {props.rows.length === 0 ? (
-          <div className='py-10 text-sm text-muted-foreground'>
+          <div className='text-muted-foreground py-10 text-sm'>
             {t('No data')}
           </div>
         ) : (
@@ -1766,7 +2030,10 @@ function SimpleAdminTable(props: {
               {props.rows.map((row) => (
                 <tr key={row.key} className='border-b last:border-b-0'>
                   {row.cells.map((cell, index) => (
-                    <td key={`${row.key}-${index}`} className='px-3 py-2 align-top'>
+                    <td
+                      key={`${row.key}-${index}`}
+                      className='px-3 py-2 align-top'
+                    >
                       {cell}
                     </td>
                   ))}
@@ -1852,7 +2119,7 @@ function LabeledTextarea(props: {
     <div className='space-y-2 md:col-span-2'>
       <div className='text-sm font-medium'>{props.label}</div>
       {props.description && (
-        <div className='text-xs text-muted-foreground'>{props.description}</div>
+        <div className='text-muted-foreground text-xs'>{props.description}</div>
       )}
       <Textarea
         rows={5}
