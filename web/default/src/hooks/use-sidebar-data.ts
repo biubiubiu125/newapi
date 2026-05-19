@@ -40,9 +40,19 @@ import {
 import { useTranslation } from 'react-i18next'
 import { WORKSPACE_IDS } from '@/components/layout/lib/workspace-registry'
 import { type SidebarData } from '@/components/layout/types'
+import {
+  formatAdminReferralBadgeCount,
+  useAdminReferralBadges,
+} from '@/features/admin-referral/hooks/use-admin-referral-badges'
+import { ROLE } from '@/lib/roles'
+import { useAuthStore } from '@/stores/auth-store'
 
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
+  const userRole = useAuthStore((state) => state.auth.user?.role)
+  const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
+  const { counts } = useAdminReferralBadges(isAdmin)
+  const referralManagementBadge = formatAdminReferralBadgeCount(counts.total)
 
   return {
     workspaces: [
@@ -147,6 +157,7 @@ export function useSidebarData(): SidebarData {
             title: t('Referral Management'),
             url: '/admin-referral/overview',
             icon: Share2,
+            badge: referralManagementBadge,
           },
           {
             title: t('Redemption Codes'),
@@ -159,7 +170,7 @@ export function useSidebarData(): SidebarData {
             icon: CreditCard,
           },
           {
-            title: t('Recharge Audit'),
+            title: t('Order Management'),
             url: '/recharge-audit',
             icon: BadgeDollarSign,
           },

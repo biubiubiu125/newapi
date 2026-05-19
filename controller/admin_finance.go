@@ -13,11 +13,14 @@ import (
 )
 
 type rechargeAuditOrder struct {
+	OrderType                string  `json:"order_type"`
 	ID                       int     `json:"id"`
 	UserID                   int     `json:"user_id"`
 	Username                 string  `json:"username"`
 	Amount                   int64   `json:"amount"`
 	CreditAmount             float64 `json:"credit_amount"`
+	CreditQuota              int64   `json:"credit_quota"`
+	ProductName              string  `json:"product_name"`
 	Money                    float64 `json:"money"`
 	PaidAmount               float64 `json:"paid_amount"`
 	PaidCurrency             string  `json:"paid_currency"`
@@ -27,6 +30,9 @@ type rechargeAuditOrder struct {
 	TradeNo                  string  `json:"trade_no"`
 	PaymentMethod            string  `json:"payment_method"`
 	PaymentProvider          string  `json:"payment_provider"`
+	PriceSnapshot            float64 `json:"price_snapshot"`
+	USDExchangeRateSnapshot  float64 `json:"usd_exchange_rate_snapshot"`
+	QuotaDisplayTypeSnapshot string  `json:"quota_display_type_snapshot"`
 	CreateTime               int64   `json:"create_time"`
 	CompleteTime             int64   `json:"complete_time"`
 	Status                   string  `json:"status"`
@@ -89,23 +95,26 @@ func GetRechargeAudit(c *gin.Context) {
 	keyword := strings.TrimSpace(c.Query("keyword"))
 	status := strings.TrimSpace(c.Query("status"))
 	provider := strings.TrimSpace(c.Query("provider"))
+	orderType := strings.TrimSpace(c.Query("order_type"))
 	startTime, _ := strconv.ParseInt(c.Query("start_time"), 10, 64)
 	endTime, _ := strconv.ParseInt(c.Query("end_time"), 10, 64)
 
-	creditExpr, creditArgs := rechargeAuditCreditAmountExpr()
-	query := model.DB.Table("top_ups AS t").
-		Joins("LEFT JOIN users u ON u.id = t.user_id")
-	query = applyRechargeAuditFilters(query, keyword, status, provider, startTime, endTime)
+	baseSQL, baseArgs := orderManagementBaseSQL()
+	whereSQL, whereArgs := orderManagementWhereSQL(keyword, status, provider, orderType, startTime, endTime)
 
 	var total int64
-	if err := query.Count(&total).Error; err != nil {
+	countArgs := append([]interface{}{}, baseArgs...)
+	countArgs = append(countArgs, whereArgs...)
+	if err := model.DB.Raw(fmt.Sprintf("SELECT count(*) FROM (%s) AS o %s", baseSQL, whereSQL), countArgs...).Scan(&total).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
 
 	var orders []rechargeAuditOrder
-	selectSQL := fmt.Sprintf("t.id, t.user_id, u.username, t.amount, %s AS credit_amount, t.money, t.paid_amount, t.paid_currency, t.trade_no, t.payment_method, t.payment_provider, t.create_time, t.complete_time, t.status, t.referral_commission_status, t.referral_commission_error", creditExpr)
-	if err := query.Select(selectSQL, creditArgs...).Order("t.id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Scan(&orders).Error; err != nil {
+	queryArgs := append([]interface{}{}, baseArgs...)
+	queryArgs = append(queryArgs, whereArgs...)
+	queryArgs = append(queryArgs, pageInfo.GetPageSize(), pageInfo.GetStartIdx())
+	if err := model.DB.Raw(fmt.Sprintf("SELECT * FROM (%s) AS o %s ORDER BY o.create_time DESC, o.id DESC LIMIT ? OFFSET ?", baseSQL, whereSQL), queryArgs...).Scan(&orders).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -126,64 +135,61 @@ func GetRechargeAuditSummary(c *gin.Context) {
 	keyword := strings.TrimSpace(c.Query("keyword"))
 	status := strings.TrimSpace(c.Query("status"))
 	provider := strings.TrimSpace(c.Query("provider"))
+	orderType := strings.TrimSpace(c.Query("order_type"))
 	startTime, _ := strconv.ParseInt(c.Query("start_time"), 10, 64)
 	endTime, _ := strconv.ParseInt(c.Query("end_time"), 10, 64)
 
-	base := model.DB.Table("top_ups AS t").Joins("LEFT JOIN users u ON u.id = t.user_id")
-	base = applyRechargeAuditFilters(base, keyword, status, provider, startTime, endTime)
-	creditExpr, creditArgs := rechargeAuditCreditAmountExpr()
+	baseSQL, baseArgs := orderManagementBaseSQL()
+	whereSQL, whereArgs := orderManagementWhereSQL(keyword, status, provider, orderType, startTime, endTime)
+	baseAndWhereArgs := append([]interface{}{}, baseArgs...)
+	baseAndWhereArgs = append(baseAndWhereArgs, whereArgs...)
 
 	var totals rechargeAuditTotals
 	selectSQL := fmt.Sprintf(`
 		count(*) AS total_count,
-		coalesce(sum(case when t.status = ? then 1 else 0 end), 0) AS success_count,
-		coalesce(sum(case when t.status = ? then 1 else 0 end), 0) AS pending_count,
-		coalesce(sum(case when t.status in (?, ?) then 1 else 0 end), 0) AS failed_count,
-		coalesce(sum(case when t.status = ? then t.paid_amount else 0 end), 0) AS paid_amount,
-		coalesce(sum(case when t.status = ? then %s else 0 end), 0) AS credit_amount
-	`, creditExpr)
+		coalesce(sum(case when o.status = ? then 1 else 0 end), 0) AS success_count,
+		coalesce(sum(case when o.status = ? then 1 else 0 end), 0) AS pending_count,
+		coalesce(sum(case when o.status in (?, ?) then 1 else 0 end), 0) AS failed_count,
+		coalesce(sum(case when o.status = ? then o.paid_amount else 0 end), 0) AS paid_amount,
+		coalesce(sum(case when o.status = ? and o.order_type = 'topup' then o.credit_amount else 0 end), 0) AS credit_amount
+	FROM (%s) AS o %s`, baseSQL, whereSQL)
 	selectArgs := []interface{}{common.TopUpStatusSuccess, common.TopUpStatusPending, common.TopUpStatusFailed, common.TopUpStatusExpired, common.TopUpStatusSuccess, common.TopUpStatusSuccess}
-	selectArgs = append(selectArgs, creditArgs...)
-	if err := base.Select(selectSQL, selectArgs...).Scan(&totals).Error; err != nil {
+	selectArgs = append(selectArgs, baseArgs...)
+	selectArgs = append(selectArgs, whereArgs...)
+	if err := model.DB.Raw("SELECT "+selectSQL, selectArgs...).Scan(&totals).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
 
 	var byCurrency []currencySummary
-	if err := applyRechargeAuditFilters(model.DB.Table("top_ups AS t").Joins("LEFT JOIN users u ON u.id = t.user_id"), keyword, status, provider, startTime, endTime).
-		Select("upper(coalesce(nullif(t.paid_currency, ''), 'CNY')) AS currency, count(*) AS count, coalesce(sum(t.paid_amount), 0) AS paid_amount").
-		Where("t.status = ?", common.TopUpStatusSuccess).
-		Group("upper(coalesce(nullif(t.paid_currency, ''), 'CNY'))").
-		Order("paid_amount desc").
-		Scan(&byCurrency).Error; err != nil {
+	currencySQL := fmt.Sprintf("SELECT upper(coalesce(nullif(o.paid_currency, ''), 'CNY')) AS currency, count(*) AS count, coalesce(sum(o.paid_amount), 0) AS paid_amount FROM (%s) AS o %s GROUP BY upper(coalesce(nullif(o.paid_currency, ''), 'CNY')) ORDER BY paid_amount DESC", baseSQL, appendOrderManagementCondition(whereSQL, "o.status = ?"))
+	currencyArgs := append([]interface{}{}, baseAndWhereArgs...)
+	currencyArgs = append(currencyArgs, common.TopUpStatusSuccess)
+	if err := model.DB.Raw(currencySQL, currencyArgs...).Scan(&byCurrency).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	applyRechargeAuditCNYSummary(&totals, byCurrency, nil, nil)
 
 	var byProvider []providerSummary
-	if err := applyRechargeAuditFilters(model.DB.Table("top_ups AS t").Joins("LEFT JOIN users u ON u.id = t.user_id"), keyword, status, provider, startTime, endTime).
-		Select("coalesce(nullif(t.payment_provider, ''), 'unknown') AS payment_provider, upper(coalesce(nullif(t.paid_currency, ''), 'CNY')) AS paid_currency, count(*) AS count, coalesce(sum(t.paid_amount), 0) AS paid_amount").
-		Group("coalesce(nullif(t.payment_provider, ''), 'unknown'), upper(coalesce(nullif(t.paid_currency, ''), 'CNY'))").
-		Order("paid_amount desc").
-		Scan(&byProvider).Error; err != nil {
+	providerSQL := fmt.Sprintf("SELECT coalesce(nullif(o.payment_provider, ''), 'unknown') AS payment_provider, upper(coalesce(nullif(o.paid_currency, ''), 'CNY')) AS paid_currency, count(*) AS count, coalesce(sum(o.paid_amount), 0) AS paid_amount FROM (%s) AS o %s GROUP BY coalesce(nullif(o.payment_provider, ''), 'unknown'), upper(coalesce(nullif(o.paid_currency, ''), 'CNY')) ORDER BY paid_amount DESC", baseSQL, appendOrderManagementCondition(whereSQL, "o.status = ?"))
+	providerArgs := append([]interface{}{}, baseAndWhereArgs...)
+	providerArgs = append(providerArgs, common.TopUpStatusSuccess)
+	if err := model.DB.Raw(providerSQL, providerArgs...).Scan(&byProvider).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	applyRechargeAuditCNYSummary(nil, nil, byProvider, nil)
 
 	var byStatus []statusSummary
-	if err := applyRechargeAuditFilters(model.DB.Table("top_ups AS t").Joins("LEFT JOIN users u ON u.id = t.user_id"), keyword, status, provider, startTime, endTime).
-		Select("t.status, upper(coalesce(nullif(t.paid_currency, ''), 'CNY')) AS currency, count(*) AS count, coalesce(sum(t.paid_amount), 0) AS paid_amount").
-		Group("t.status, upper(coalesce(nullif(t.paid_currency, ''), 'CNY'))").
-		Order("count desc").
-		Scan(&byStatus).Error; err != nil {
+	statusSQL := fmt.Sprintf("SELECT o.status, upper(coalesce(nullif(o.paid_currency, ''), 'CNY')) AS currency, count(*) AS count, coalesce(sum(o.paid_amount), 0) AS paid_amount FROM (%s) AS o %s GROUP BY o.status, upper(coalesce(nullif(o.paid_currency, ''), 'CNY')) ORDER BY count DESC", baseSQL, whereSQL)
+	if err := model.DB.Raw(statusSQL, baseAndWhereArgs...).Scan(&byStatus).Error; err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	applyRechargeAuditCNYSummary(nil, nil, nil, byStatus)
 
-	anomalies, err := buildRechargeAnomalies(keyword, status, provider, startTime, endTime)
+	anomalies, err := buildRechargeAnomalies(keyword, status, provider, orderType, startTime, endTime)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -196,6 +202,113 @@ func GetRechargeAuditSummary(c *gin.Context) {
 		"by_status":   byStatus,
 		"anomalies":   anomalies,
 	})
+}
+
+func orderManagementBaseSQL() (string, []interface{}) {
+	creditExpr, creditArgs := rechargeAuditCreditAmountExpr()
+	sql := fmt.Sprintf(`
+SELECT
+	'topup' AS order_type,
+	t.id,
+	t.user_id,
+	u.username,
+	t.amount,
+	%s AS credit_amount,
+	t.credit_quota_snapshot AS credit_quota,
+	'' AS product_name,
+	t.money,
+	t.paid_amount,
+	t.paid_currency,
+	t.trade_no,
+	t.payment_method,
+	t.payment_provider,
+	t.price_snapshot,
+	t.usd_exchange_rate_snapshot,
+	t.quota_display_type_snapshot,
+	t.create_time,
+	t.complete_time,
+	t.status,
+	t.referral_commission_status,
+	t.referral_commission_error
+FROM top_ups AS t
+LEFT JOIN users u ON u.id = t.user_id
+WHERE NOT EXISTS (
+	SELECT 1 FROM subscription_orders AS so WHERE so.trade_no = t.trade_no
+)
+UNION ALL
+SELECT
+	'subscription' AS order_type,
+	s.id,
+	s.user_id,
+	u.username,
+	0 AS amount,
+	0 AS credit_amount,
+	s.plan_total_amount_snapshot AS credit_quota,
+	coalesce(nullif(s.plan_title_snapshot, ''), p.title, '') AS product_name,
+	s.money,
+	s.paid_amount,
+	s.paid_currency,
+	s.trade_no,
+	s.payment_method,
+	s.payment_provider,
+	s.plan_price_snapshot AS price_snapshot,
+	s.usd_exchange_rate_snapshot,
+	s.quota_display_type_snapshot,
+	s.create_time,
+	s.complete_time,
+	s.status,
+	s.referral_commission_status,
+	s.referral_commission_error
+FROM subscription_orders AS s
+LEFT JOIN users u ON u.id = s.user_id
+LEFT JOIN subscription_plans p ON p.id = s.plan_id`, creditExpr)
+	return sql, creditArgs
+}
+
+func orderManagementWhereSQL(keyword string, status string, provider string, orderType string, startTime int64, endTime int64) (string, []interface{}) {
+	clauses := make([]string, 0)
+	args := make([]interface{}, 0)
+	if keyword != "" {
+		like := "%" + keyword + "%"
+		if parsedUserID, err := strconv.Atoi(keyword); err == nil {
+			clauses = append(clauses, "(o.trade_no LIKE ? OR o.username LIKE ? OR o.user_id = ?)")
+			args = append(args, like, like, parsedUserID)
+		} else {
+			clauses = append(clauses, "(o.trade_no LIKE ? OR o.username LIKE ? OR o.product_name LIKE ?)")
+			args = append(args, like, like, like)
+		}
+	}
+	if status != "" {
+		clauses = append(clauses, "o.status = ?")
+		args = append(args, status)
+	}
+	if provider != "" {
+		clauses = append(clauses, "o.payment_provider = ?")
+		args = append(args, provider)
+	}
+	if orderType != "" && orderType != "all" {
+		clauses = append(clauses, "o.order_type = ?")
+		args = append(args, orderType)
+	}
+	if startTime > 0 {
+		clauses = append(clauses, "o.create_time >= ?")
+		args = append(args, startTime)
+	}
+	if endTime > 0 {
+		clauses = append(clauses, "o.create_time <= ?")
+		args = append(args, endTime)
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return "WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func appendOrderManagementCondition(whereSQL string, condition string) string {
+	if strings.TrimSpace(whereSQL) == "" {
+		return "WHERE " + condition
+	}
+	return whereSQL + " AND " + condition
 }
 
 func applyRechargeAuditFilters(query *gorm.DB, keyword string, status string, provider string, startTime int64, endTime int64) *gorm.DB {
@@ -288,12 +401,10 @@ func applyRechargeAuditCNYSummary(
 	}
 }
 
-func buildRechargeAnomalies(keyword string, status string, provider string, startTime int64, endTime int64) ([]auditAnomaly, error) {
+func buildRechargeAnomalies(keyword string, status string, provider string, orderType string, startTime int64, endTime int64) ([]auditAnomaly, error) {
 	now := common.GetTimestamp()
-	query := model.DB.Table("top_ups AS t").
-		Select("t.trade_no, t.user_id, u.username, t.create_time, t.status, t.paid_amount, t.money, t.payment_provider, t.referral_commission_status, t.referral_commission_error").
-		Joins("LEFT JOIN users u ON u.id = t.user_id")
-	query = applyRechargeAuditFilters(query, keyword, status, provider, startTime, endTime)
+	baseSQL, baseArgs := orderManagementBaseSQL()
+	whereSQL, whereArgs := orderManagementWhereSQL(keyword, status, provider, orderType, startTime, endTime)
 
 	var rows []struct {
 		TradeNo                  string
@@ -307,7 +418,9 @@ func buildRechargeAnomalies(keyword string, status string, provider string, star
 		ReferralCommissionStatus string
 		ReferralCommissionError  string
 	}
-	if err := query.Order("t.id desc").Limit(300).Scan(&rows).Error; err != nil {
+	queryArgs := append([]interface{}{}, baseArgs...)
+	queryArgs = append(queryArgs, whereArgs...)
+	if err := model.DB.Raw(fmt.Sprintf("SELECT o.trade_no, o.user_id, o.username, o.create_time, o.status, o.paid_amount, o.money, o.payment_provider, o.referral_commission_status, o.referral_commission_error FROM (%s) AS o %s ORDER BY o.create_time DESC, o.id DESC LIMIT 300", baseSQL, whereSQL), queryArgs...).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 

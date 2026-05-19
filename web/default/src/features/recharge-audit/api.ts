@@ -19,11 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 import { api } from '@/lib/api'
 
 export interface RechargeAuditOrder {
+  order_type: 'topup' | 'subscription' | string
   id: number
   user_id: number
   username: string
   amount: number
   credit_amount: number
+  credit_quota: number
+  product_name: string
   money: number
   paid_amount: number
   paid_currency: string
@@ -33,6 +36,9 @@ export interface RechargeAuditOrder {
   trade_no: string
   payment_method: string
   payment_provider: string
+  price_snapshot: number
+  usd_exchange_rate_snapshot: number
+  quota_display_type_snapshot: string
   create_time: number
   complete_time: number
   status: string

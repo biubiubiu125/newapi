@@ -27,6 +27,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { formatTimestamp } from '@/lib/format'
 import { Button } from '@/components/ui/button'
+import { Badge } from '@/components/ui/badge'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Input } from '@/components/ui/input'
@@ -79,6 +80,10 @@ import {
   type AdminReferralSectionId,
   isAdminReferralSectionId,
 } from './section-registry'
+import {
+  formatAdminReferralBadgeCount,
+  useAdminReferralBadges,
+} from './hooks/use-admin-referral-badges'
 
 const route = getRouteApi('/_authenticated/admin-referral/$section')
 
@@ -213,6 +218,22 @@ function buildIdempotencyKey(): string {
     return crypto.randomUUID()
   }
   return `${Date.now()}-${Math.random().toString(36).slice(2)}`
+}
+
+function AdminReferralTabLabel(props: { label: string; badge?: string }) {
+  return (
+    <span className='inline-flex items-center gap-1.5'>
+      <span>{props.label}</span>
+      {props.badge && (
+        <Badge
+          variant='destructive'
+          className='h-4 min-w-4 rounded-full px-1 text-[10px] leading-none tabular-nums'
+        >
+          {props.badge}
+        </Badge>
+      )}
+    </span>
+  )
 }
 
 function affiliateStatusLabel(
@@ -454,8 +475,16 @@ export function AdminReferral() {
   const [adjustAmountInput, setAdjustAmountInput] = useState('')
   const [detailAffiliate, setDetailAffiliate] = useState<ReferralAffiliate | null>(null)
   const [detailMode, setDetailMode] = useState<'bindings' | 'commissions' | 'withdrawals' | null>(null)
+  const { counts: badgeCounts, refetch: refetchBadges } =
+    useAdminReferralBadges()
 
   const pageMeta = SECTION_META[activeSection]
+  const pendingAffiliateBadge = formatAdminReferralBadgeCount(
+    badgeCounts.pendingAffiliates
+  )
+  const pendingWithdrawalBadge = formatAdminReferralBadgeCount(
+    badgeCounts.pendingWithdrawals
+  )
 
   async function loadOverview() {
     const res = await getAdminReferralOverview()
@@ -633,6 +662,7 @@ export function AdminReferral() {
     setRateOverrideInput('')
     await loadPending()
     await loadAffiliates()
+    void refetchBadges()
   }
 
   async function handleAffiliateAction() {
@@ -779,6 +809,7 @@ export function AdminReferral() {
     await loadWithdrawals()
     await loadLedgers()
     await loadAuditLogs()
+    void refetchBadges()
     if (detailMode === 'withdrawals' && detailAffiliate) {
       const res = await listAdminReferralWithdrawals({
         p: 1,
@@ -913,7 +944,16 @@ export function AdminReferral() {
                 ] as AdminReferralSectionId[]
               ).map((section) => (
                 <TabsTrigger key={section} value={section}>
-                  {t(SECTION_META[section].title)}
+                  <AdminReferralTabLabel
+                    label={t(SECTION_META[section].title)}
+                    badge={
+                      section === 'pending'
+                        ? pendingAffiliateBadge
+                        : section === 'withdrawals'
+                          ? pendingWithdrawalBadge
+                          : undefined
+                    }
+                  />
                 </TabsTrigger>
               ))}
             </TabsList>

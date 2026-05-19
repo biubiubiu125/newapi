@@ -22,6 +22,14 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
   Table,
   TableBody,
   TableCell,
@@ -31,6 +39,7 @@ import {
 } from '@/components/ui/table'
 import { SectionPageLayout } from '@/components/layout'
 import { StatusBadge } from '@/components/status-badge'
+import { formatQuota } from '@/lib/format'
 import { formatSiteCreditAmount } from '@/features/wallet/lib'
 import {
   getRechargeAudit,
@@ -82,6 +91,27 @@ function shouldShowOriginalPaid(order: RechargeAuditOrder) {
 function formatTime(timestamp: number) {
   if (!timestamp) return '-'
   return new Date(timestamp * 1000).toLocaleString()
+}
+
+function orderTypeLabel(orderType: string, t: (key: string) => string) {
+  switch (orderType) {
+    case 'topup':
+      return t('Top-up')
+    case 'subscription':
+      return t('Subscription Purchase')
+    default:
+      return orderType || '-'
+  }
+}
+
+function formatOrderBenefit(order: RechargeAuditOrder, t: (key: string) => string) {
+  if (order.order_type === 'subscription') {
+    if (order.credit_quota > 0) {
+      return `${t('Subscription Quota')}: ${formatQuota(order.credit_quota)}`
+    }
+    return t('Subscription Rights')
+  }
+  return formatSiteCreditAmount(order.credit_amount ?? order.amount)
 }
 
 function statusVariant(status: string) {
@@ -162,6 +192,7 @@ export function RechargeAudit() {
   const [keyword, setKeyword] = useState('')
   const [status, setStatus] = useState('')
   const [provider, setProvider] = useState('')
+  const [orderType, setOrderType] = useState('all')
   const [loading, setLoading] = useState(false)
 
   const params = useMemo(() => {
@@ -169,8 +200,9 @@ export function RechargeAudit() {
     if (keyword.trim()) p.set('keyword', keyword.trim())
     if (status.trim()) p.set('status', status.trim())
     if (provider.trim()) p.set('provider', provider.trim())
+    if (orderType !== 'all') p.set('order_type', orderType)
     return p
-  }, [keyword, status, provider])
+  }, [keyword, status, provider, orderType])
 
   const load = async () => {
     setLoading(true)
@@ -200,9 +232,9 @@ export function RechargeAudit() {
 
   return (
     <SectionPageLayout>
-      <SectionPageLayout.Title>{t('Recharge Audit')}</SectionPageLayout.Title>
+      <SectionPageLayout.Title>{t('Order Management')}</SectionPageLayout.Title>
       <SectionPageLayout.Description>
-        {t('Review recharge orders, payment channels, and financial anomalies')}
+        {t('Review recharge and subscription orders, payment channels, and financial anomalies')}
       </SectionPageLayout.Description>
       <SectionPageLayout.Content>
         <div className='space-y-4'>
@@ -217,7 +249,7 @@ export function RechargeAudit() {
               }
             />
             <SummaryCard
-              label={t('Site Credit Revenue')}
+              label={t('Site Credit Credited')}
               value={siteCreditRevenueText}
             />
             <SummaryCard
@@ -236,7 +268,7 @@ export function RechargeAudit() {
 
           <Card>
             <CardContent className='space-y-3 p-4'>
-              <div className='grid gap-2 md:grid-cols-[minmax(0,1fr)_160px_160px_auto]'>
+              <div className='grid gap-2 md:grid-cols-[minmax(0,1fr)_160px_160px_180px_auto]'>
                 <Input
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
@@ -252,6 +284,23 @@ export function RechargeAudit() {
                   onChange={(e) => setProvider(e.target.value)}
                   placeholder={t('Payment Gateway')}
                 />
+                <Select
+                  value={orderType}
+                  onValueChange={(value) => setOrderType(value || 'all')}
+                >
+                  <SelectTrigger className='w-full'>
+                    <SelectValue placeholder={t('Order Type')} />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      <SelectItem value='all'>{t('All Orders')}</SelectItem>
+                      <SelectItem value='topup'>{t('Top-up')}</SelectItem>
+                      <SelectItem value='subscription'>
+                        {t('Subscription Purchase')}
+                      </SelectItem>
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
                 <Button onClick={load} disabled={loading}>
                   {loading ? t('Loading...') : t('Refresh')}
                 </Button>
@@ -284,10 +333,11 @@ export function RechargeAudit() {
                   <TableHeader>
                     <TableRow>
                       <TableHead>{t('Order')}</TableHead>
+                      <TableHead>{t('Order Type')}</TableHead>
                       <TableHead>{t('User')}</TableHead>
                       <TableHead>{t('Payment Gateway')}</TableHead>
                       <TableHead>{t('Paid Amount CNY')}</TableHead>
-                      <TableHead>{t('Site Credit Credited')}</TableHead>
+                      <TableHead>{t('Benefit')}</TableHead>
                       <TableHead>{t('Status')}</TableHead>
                       <TableHead>{t('Referral Status')}</TableHead>
                       <TableHead>{t('Created At')}</TableHead>
@@ -295,9 +345,17 @@ export function RechargeAudit() {
                   </TableHeader>
                   <TableBody>
                     {orders.map((order) => (
-                      <TableRow key={order.id}>
+                      <TableRow key={`${order.order_type}-${order.id}`}>
                         <TableCell className='font-mono text-xs'>
-                          {order.trade_no}
+                          <div>{order.trade_no}</div>
+                          {order.product_name ? (
+                            <div className='text-muted-foreground mt-1 max-w-48 truncate font-sans text-xs'>
+                              {order.product_name}
+                            </div>
+                          ) : null}
+                        </TableCell>
+                        <TableCell>
+                          {orderTypeLabel(order.order_type, t)}
                         </TableCell>
                         <TableCell>{order.username || order.user_id}</TableCell>
                         <TableCell>{order.payment_provider || '-'}</TableCell>
@@ -314,11 +372,7 @@ export function RechargeAudit() {
                             </div>
                           ) : null}
                         </TableCell>
-                        <TableCell>
-                          {formatSiteCreditAmount(
-                            order.credit_amount ?? order.amount
-                          )}
-                        </TableCell>
+                        <TableCell>{formatOrderBenefit(order, t)}</TableCell>
                         <TableCell>
                           <StatusBadge
                             label={t(order.status)}

@@ -145,8 +145,8 @@ export function SidebarModulesSection({
         description: t('Manage subscription plans and pricing.'),
       },
       recharge_audit: {
-        title: t('Recharge Audit'),
-        description: t('Review recharge orders and financial anomalies.'),
+        title: t('Order Management'),
+        description: t('Review recharge and subscription orders.'),
       },
       risk_center: {
         title: t('Risk Center'),
