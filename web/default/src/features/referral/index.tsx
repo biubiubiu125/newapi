@@ -367,6 +367,18 @@ export function Referral() {
       toast.error(t('Please enter a valid amount'))
       return null
     }
+    if (summary?.min_withdraw_amount && amount < summary.min_withdraw_amount) {
+      toast.error(
+        t('Withdraw amount must be at least {{amount}}', {
+          amount: formatMoney(summary.min_withdraw_amount),
+        })
+      )
+      return null
+    }
+    if (summary?.available_amount != null && amount > summary.available_amount) {
+      toast.error(t('Available referral balance is insufficient'))
+      return null
+    }
     if (withdrawForm.account_type !== 'alipay' && withdrawForm.account_type !== 'usdt') {
       toast.error(t('Please select a withdrawal method'))
       return null
@@ -405,7 +417,8 @@ export function Referral() {
     }
   }
 
-  function handleWithdrawalSubmit() {
+  function handleWithdrawalSubmit(event?: React.FormEvent<HTMLFormElement>) {
+    event?.preventDefault()
     const submission = buildWithdrawalSubmission()
     if (!submission) return
     setWithdrawConfirm(submission)
@@ -658,7 +671,11 @@ export function Referral() {
                 <CardHeader>
                   <CardTitle>{t('Withdraw Application')}</CardTitle>
                 </CardHeader>
-                <CardContent className='space-y-4'>
+                <CardContent>
+                  <form
+                    className='space-y-4'
+                    onSubmit={(event) => handleWithdrawalSubmit(event)}
+                  >
                   <div className='space-y-1.5'>
                     <div className='text-sm font-medium'>
                       {t('Withdraw Amount')}
@@ -681,7 +698,7 @@ export function Referral() {
                           updateWithdrawForm('account_type', value || '')
                         }
                       >
-                        <SelectTrigger className='w-full'>
+                        <SelectTrigger type='button' className='w-full'>
                           <SelectValue>
                             {accountTypeLabel(withdrawForm.account_type, t)}
                           </SelectValue>
@@ -706,7 +723,7 @@ export function Referral() {
                             updateWithdrawForm('account_network', value || '')
                           }
                         >
-                          <SelectTrigger className='w-full'>
+                          <SelectTrigger type='button' className='w-full'>
                             <SelectValue>
                               {accountNetworkLabel(
                                 withdrawForm.account_network,
@@ -802,13 +819,14 @@ export function Referral() {
                     />
                   </div>
                   <Button
-                    onClick={() => void handleWithdrawalSubmit()}
+                    type='submit'
                     disabled={!canWithdraw || submittingWithdrawal}
                   >
                     {submittingWithdrawal
                       ? t('Submitting...')
                       : t('Submit Withdrawal')}
                   </Button>
+                  </form>
                 </CardContent>
               </Card>
               <Card>

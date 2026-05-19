@@ -4498,6 +4498,8 @@
     "Please enter an Alipay account": "Please enter an Alipay account",
     "Please enter the USDT wallet address": "Please enter the USDT wallet address",
     "Please select a withdrawal method": "Please select a withdrawal method",
+    "Withdraw amount must be at least {{amount}}": "Withdraw amount must be at least {{amount}}",
+    "Available referral balance is insufficient": "Available referral balance is insufficient",
     "Skipped": "Skipped",
     "Succeeded": "Succeeded",
     "Missing referral FX rate": "Missing referral FX rate",

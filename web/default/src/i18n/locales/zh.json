@@ -4631,6 +4631,8 @@
     "Please enter the USDT wallet address": "请输入 USDT 钱包地址",
     "Please select the network": "请选择网络",
     "Please select a withdrawal method": "请选择提现方式",
+    "Withdraw amount must be at least {{amount}}": "提现金额不能低于 {{amount}}",
+    "Available referral balance is insufficient": "可提现余额不足",
     "QR code uploaded": "二维码已上传",
     "Rate": "比例",
     "Rate update failed": "比例更新失败",
