@@ -810,6 +810,9 @@ func updateUserRequestCount(id int, count int) {
 }
 
 func GetUsernameById(id int, fromDB bool) (username string, err error) {
+	if id <= 0 {
+		return "", nil
+	}
 	var user User
 	if !fromDB {
 		userCache, cacheErr := CacheGetUserById(id)

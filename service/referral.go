@@ -1899,21 +1899,31 @@ func (s *ReferralService) processCommissionTx(
 ) error {
 	now := time.Now().Unix()
 	job := &model.ReferralCommissionJob{}
-	if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("source_type = ? AND source_trade_no = ?", sourceType, tradeNo).First(job).Error; err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			job = &model.ReferralCommissionJob{
-				SourceType:    sourceType,
-				SourceTradeNo: tradeNo,
-				AffiliateId:   affiliateId,
-				Status:        model.ReferralCommissionJobStatusPending,
-			}
-			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(job).Error; err != nil {
-				return err
-			}
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("source_type = ? AND source_trade_no = ?", sourceType, tradeNo).First(job).Error; err != nil {
-				return err
-			}
-		} else {
+	findJob := func() error {
+		result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("source_type = ? AND source_trade_no = ?", sourceType, tradeNo).Find(job)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		return nil
+	}
+	if err := findJob(); err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+		job = &model.ReferralCommissionJob{
+			SourceType:    sourceType,
+			SourceTradeNo: tradeNo,
+			AffiliateId:   affiliateId,
+			Status:        model.ReferralCommissionJobStatusPending,
+		}
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(job).Error; err != nil {
+			return err
+		}
+		job = &model.ReferralCommissionJob{}
+		if err := findJob(); err != nil {
 			return err
 		}
 	}
