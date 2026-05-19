@@ -358,6 +358,56 @@ func TestEpusdtTopupNotifyRejectsNetworkMismatch(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
+func TestEpusdtTopupNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 919, Username: "epusdt_payment_type_guard_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	topUp := &model.TopUp{
+		UserId:          user.Id,
+		Amount:          2,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "epusdt-payment-type-guard",
+		PaymentMethod:   service.BuildEpusdtPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderEpusdt,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, topUp.Insert())
+
+	body := signedEpusdtCallback(map[string]interface{}{
+		"pid":            setting.EpusdtPID,
+		"trade_id":       "T202605190001",
+		"order_id":       topUp.TradeNo,
+		"amount":         "9.99",
+		"order_currency": "CNY",
+		"token":          "USDT",
+		"network":        "tron",
+		"payment_type":   "epay:alipay",
+		"status":         2,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/user/epusdt/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	EpusdtTopUpNotify(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "fail", w.Body.String())
+	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
+	var updatedUser model.User
+	require.NoError(t, model.DB.Where("id = ?", user.Id).First(&updatedUser).Error)
+	require.Zero(t, updatedUser.Quota)
+}
+
 func TestSubscriptionEpusdtNotifyRejectsMissingMerchant(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
@@ -518,6 +568,67 @@ func TestSubscriptionEpusdtNotifyRejectsNetworkMismatch(t *testing.T) {
 		"order_currency": "CNY",
 		"token":          "USDT",
 		"network":        "polygon",
+		"status":         2,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/epusdt/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	SubscriptionEpusdtNotify(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "fail", w.Body.String())
+	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
+	var subscriptionCount int64
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("user_id = ?", user.Id).Count(&subscriptionCount).Error)
+	require.Zero(t, subscriptionCount)
+}
+
+func TestSubscriptionEpusdtNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 920, Username: "sub_epusdt_payment_type_guard_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	plan := &model.SubscriptionPlan{
+		Id:            813,
+		Title:         "Epusdt Payment Type Guard Plan",
+		PriceAmount:   9.99,
+		Currency:      "CNY",
+		DurationUnit:  model.SubscriptionDurationMonth,
+		DurationValue: 1,
+		Enabled:       true,
+		TotalAmount:   1000,
+	}
+	require.NoError(t, model.DB.Create(plan).Error)
+	order := &model.SubscriptionOrder{
+		UserId:          user.Id,
+		PlanId:          plan.Id,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "sub-epusdt-payment-type-guard",
+		PaymentMethod:   service.BuildEpusdtPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderEpusdt,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, order.Insert())
+
+	body := signedEpusdtCallback(map[string]interface{}{
+		"pid":            setting.EpusdtPID,
+		"trade_id":       "T202605190002",
+		"order_id":       order.TradeNo,
+		"amount":         "9.99",
+		"order_currency": "CNY",
+		"token":          "USDT",
+		"network":        "tron",
+		"payment_type":   "epay:alipay",
 		"status":         2,
 	})
 

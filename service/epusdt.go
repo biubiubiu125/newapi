@@ -395,8 +395,23 @@ func EpusdtCallbackStatus(values map[string]interface{}) string {
 }
 
 func EpusdtCallbackMethod(values map[string]interface{}) string {
+	if method := normalizeEpusdtCallbackMethod(firstString(values, "payment_type", "paymentType", "payment_method", "paymentMethod")); method != "" {
+		return method
+	}
 	token := firstString(values, "token", "currency", "symbol", "coin")
 	network := firstString(values, "network", "chain", "protocol")
+	return BuildEpusdtPaymentMethod(token, network)
+}
+
+func normalizeEpusdtCallbackMethod(paymentMethod string) string {
+	paymentMethod = strings.ToLower(strings.TrimSpace(paymentMethod))
+	if paymentMethod == "" {
+		return ""
+	}
+	token, network, ok := ParseEpusdtPaymentMethod(paymentMethod)
+	if !ok {
+		return paymentMethod
+	}
 	return BuildEpusdtPaymentMethod(token, network)
 }
 
