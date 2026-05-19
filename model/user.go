@@ -179,20 +179,17 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 
 func CheckUserExistOrDeleted(username string, email string) (bool, error) {
 	var user User
-	var err error
+	var result *gorm.DB
 	email = NormalizeUserEmail(email)
 	if email == "" {
-		err = DB.Unscoped().First(&user, "username = ?", username).Error
+		result = DB.Unscoped().Where("username = ?", username).Find(&user)
 	} else {
-		err = DB.Unscoped().First(&user, "username = ? or email_canonical = ?", username, email).Error
+		result = DB.Unscoped().Where("username = ? or email_canonical = ?", username, email).Find(&user)
 	}
-	if err != nil {
-		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return false, nil
-		}
-		return false, err
+	if result.Error != nil {
+		return false, result.Error
 	}
-	return true, nil
+	return result.RowsAffected > 0, nil
 }
 
 func GetMaxUserId() int {

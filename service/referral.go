@@ -635,10 +635,12 @@ func (s *ReferralService) BindInviteeByCodeWithTx(tx *gorm.DB, inviteeUserId int
 		return err
 	}
 	existing := &model.ReferralBinding{}
-	if err := tx.Where("invitee_user_id = ?", inviteeUserId).First(existing).Error; err == nil {
+	result := tx.Where("invitee_user_id = ?", inviteeUserId).Find(existing)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
 		return nil
-	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
-		return err
 	}
 	cyclic, err := s.hasBindingCycle(tx, inviteeUserId, affiliate.UserId)
 	if err != nil {
@@ -2256,11 +2258,12 @@ func (s *ReferralService) hasBindingCycle(tx *gorm.DB, inviteeUserId, inviterUse
 		}
 		visited[current] = struct{}{}
 		binding := &model.ReferralBinding{}
-		if err := tx.Where("invitee_user_id = ?", current).First(binding).Error; err != nil {
-			if errors.Is(err, gorm.ErrRecordNotFound) {
-				return false, nil
-			}
-			return false, err
+		result := tx.Where("invitee_user_id = ?", current).Find(binding)
+		if result.Error != nil {
+			return false, result.Error
+		}
+		if result.RowsAffected == 0 {
+			return false, nil
 		}
 		current = binding.InviterUserId
 	}
