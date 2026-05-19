@@ -2,6 +2,7 @@ package controller
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -37,6 +38,8 @@ func setupReferralControllerTestDB(t *testing.T) *gorm.DB {
 	model.DB = db
 	model.LOG_DB = db
 	require.NoError(t, db.AutoMigrate(
+		&model.User{},
+		&model.Log{},
 		&model.ReferralAffiliate{},
 		&model.ReferralBinding{},
 		&model.ReferralClick{},
@@ -218,7 +221,6 @@ func TestReferralCookieValueRejectsUnsignedCookie(t *testing.T) {
 
 func TestRegisterBindsReferralCodeFromRequestBody(t *testing.T) {
 	db := setupReferralControllerTestDB(t)
-	require.NoError(t, db.AutoMigrate(&model.User{}))
 
 	affiliateUser := &model.User{
 		Username:    "aff-owner",
@@ -265,4 +267,87 @@ func TestRegisterBindsReferralCodeFromRequestBody(t *testing.T) {
 	require.Equal(t, affiliateUser.Id, binding.InviterUserId)
 	require.Equal(t, "BODYAFF1", binding.BindCode)
 	require.Equal(t, "code", binding.BindSource)
+}
+
+func TestRegisterRejectsDuplicateEmailCaseInsensitive(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+	existing := &model.User{
+		Username:    "existing-user",
+		Password:    "12345678",
+		DisplayName: "existing-user",
+		Email:       "dupe@example.com",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, existing.Insert(0))
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+	store := cookie.NewStore([]byte(common.SessionSecret))
+	router.Use(sessions.Sessions("session", store))
+	router.POST("/api/user/register", Register)
+
+	body := []byte(`{"username":"new-user","password":"12345678","email":"DUPE@example.com"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/user/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, false, response["success"])
+
+	var count int64
+	require.NoError(t, db.Model(&model.User{}).Where("email_canonical = ?", "dupe@example.com").Count(&count).Error)
+	require.Equal(t, int64(1), count)
+}
+
+func TestEmailBindRejectsEmailOwnedByAnotherUser(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+	first := &model.User{
+		Username:    "email-owner",
+		Password:    "12345678",
+		DisplayName: "email-owner",
+		Email:       "taken@example.com",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	second := &model.User{
+		Username:    "email-binder",
+		Password:    "12345678",
+		DisplayName: "email-binder",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, first.Insert(0))
+	require.NoError(t, second.Insert(0))
+	common.RegisterVerificationCodeWithKey("taken@example.com", "123456", common.EmailVerificationPurpose)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+	store := cookie.NewStore([]byte(common.SessionSecret))
+	router.Use(sessions.Sessions("session", store))
+	router.Use(func(c *gin.Context) {
+		session := sessions.Default(c)
+		session.Set("id", second.Id)
+		require.NoError(t, session.Save())
+		c.Next()
+	})
+	router.POST("/api/user/email", EmailBind)
+
+	body := []byte(`{"email":"TAKEN@example.com","code":"123456"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/user/email", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, false, response["success"])
+
+	var reloaded model.User
+	require.NoError(t, db.Where("id = ?", second.Id).First(&reloaded).Error)
+	require.Empty(t, reloaded.Email)
 }

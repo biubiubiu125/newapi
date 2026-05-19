@@ -93,5 +93,8 @@
     "singleQuote": true,
     "jsxSingleQuote": true
   },
+  "overrides": {
+    "minimist": "1.2.8"
+  },
   "proxy": "http://localhost:3000"
 }

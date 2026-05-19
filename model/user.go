@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
@@ -29,6 +30,7 @@ type User struct {
 	Role                    int            `json:"role" gorm:"type:int;default:1"`
 	Status                  int            `json:"status" gorm:"type:int;default:1"`
 	Email                   string         `json:"email" gorm:"index" validate:"max=50"`
+	EmailCanonical          *string        `json:"-" gorm:"column:email_canonical;type:varchar(191)"`
 	GitHubId                string         `json:"github_id" gorm:"column:github_id;index"`
 	DiscordId               string         `json:"discord_id" gorm:"column:discord_id;index"`
 	OidcId                  string         `json:"oidc_id" gorm:"column:oidc_id;index"`
@@ -49,6 +51,25 @@ type User struct {
 	StripeCustomer          string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
 	CreatedAt               int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
 	LastLoginAt             int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
+}
+
+func NormalizeUserEmail(email string) string {
+	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func (user *User) normalizeEmailForPersistence() {
+	email := NormalizeUserEmail(user.Email)
+	user.Email = email
+	if email == "" {
+		user.EmailCanonical = nil
+		return
+	}
+	user.EmailCanonical = &email
+}
+
+func (user *User) BeforeSave(tx *gorm.DB) error {
+	user.normalizeEmailForPersistence()
+	return nil
 }
 
 func (user *User) ToBaseUser() *UserBase {
@@ -159,10 +180,11 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 func CheckUserExistOrDeleted(username string, email string) (bool, error) {
 	var user User
 	var err error
+	email = NormalizeUserEmail(email)
 	if email == "" {
 		err = DB.Unscoped().First(&user, "username = ?", username).Error
 	} else {
-		err = DB.Unscoped().First(&user, "username = ? or email = ?", username, email).Error
+		err = DB.Unscoped().First(&user, "username = ? or email_canonical = ?", username, email).Error
 	}
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -345,6 +367,7 @@ func HardDeleteUserById(id int) error {
 
 func (user *User) Insert(_ int) error {
 	var err error
+	user.normalizeEmailForPersistence()
 	if user.Password != "" {
 		user.Password, err = common.Password2Hash(user.Password)
 		if err != nil {
@@ -368,6 +391,7 @@ func (user *User) Insert(_ int) error {
 
 func (user *User) InsertWithTx(tx *gorm.DB, _ int) error {
 	var err error
+	user.normalizeEmailForPersistence()
 	if user.Password != "" {
 		user.Password, err = common.Password2Hash(user.Password)
 		if err != nil {
@@ -393,6 +417,7 @@ func (user *User) FinalizeOAuthUserCreation(_ int) {
 
 func (user *User) Update(updatePassword bool) error {
 	var err error
+	user.normalizeEmailForPersistence()
 	if updatePassword {
 		user.Password, err = common.Password2Hash(user.Password)
 		if err != nil {
@@ -439,8 +464,20 @@ func (user *User) ClearBinding(bindingType string) error {
 		return errors.New("user id is empty")
 	}
 
+	if bindingType == "email" {
+		if err := DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]any{
+			"email":           "",
+			"email_canonical": nil,
+		}).Error; err != nil {
+			return err
+		}
+		if err := DB.Where("id = ?", user.Id).First(user).Error; err != nil {
+			return err
+		}
+		return updateUserCache(*user)
+	}
+
 	bindingColumnMap := map[string]string{
-		"email":    "email",
 		"github":   "github_id",
 		"discord":  "discord_id",
 		"oidc":     "oidc_id",
@@ -500,7 +537,8 @@ func (user *User) FillUserById() error {
 }
 
 func (user *User) FillUserByEmail() error {
-	return DB.First(user, "email = ?", user.Email).Error
+	user.Email = NormalizeUserEmail(user.Email)
+	return DB.First(user, "email_canonical = ?", user.Email).Error
 }
 
 func (user *User) FillUserByGitHubId() error {
@@ -528,7 +566,19 @@ func (user *User) FillUserByTelegramId() error {
 }
 
 func IsEmailAlreadyTaken(email string) bool {
-	return DB.Unscoped().Where("email = ?", email).First(&User{}).RowsAffected > 0
+	email = NormalizeUserEmail(email)
+	if email == "" {
+		return false
+	}
+	return DB.Unscoped().Where("email_canonical = ?", email).First(&User{}).RowsAffected > 0
+}
+
+func IsEmailAlreadyTakenByOther(email string, userId int) bool {
+	email = NormalizeUserEmail(email)
+	if email == "" {
+		return false
+	}
+	return DB.Unscoped().Where("email_canonical = ? AND id <> ?", email, userId).First(&User{}).RowsAffected > 0
 }
 
 func IsWeChatIdAlreadyTaken(wechatId string) bool {
@@ -552,6 +602,7 @@ func IsTelegramIdAlreadyTaken(telegramId string) bool {
 }
 
 func ResetUserPasswordByEmail(email string, password string) error {
+	email = NormalizeUserEmail(email)
 	if email == "" || password == "" {
 		return errors.New("email or password is empty")
 	}
@@ -559,7 +610,7 @@ func ResetUserPasswordByEmail(email string, password string) error {
 	if err != nil {
 		return err
 	}
-	return DB.Model(&User{}).Where("email = ?", email).Update("password", hashedPassword).Error
+	return DB.Model(&User{}).Where("email_canonical = ?", email).Update("password", hashedPassword).Error
 }
 
 var (
@@ -567,6 +618,18 @@ var (
 	ErrUserDeleted           = errors.New("user deleted")
 	ErrUserPasswordIncorrect = errors.New("password incorrect")
 )
+
+func IsUserEmailUniqueError(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "idx_users_email_canonical_unique") ||
+		(strings.Contains(message, "email_canonical") &&
+			(strings.Contains(message, "duplicate") ||
+				strings.Contains(message, "unique") ||
+				strings.Contains(message, "constraint")))
+}
 
 func IsAdmin(userId int) bool {
 	user := User{Id: userId}

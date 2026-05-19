@@ -365,6 +365,9 @@ func migrateDB() error {
 			return err
 		}
 	}
+	if err := ensureUserEmailCanonicalUniqueIndex(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -468,6 +471,9 @@ func migrateDBFast() error {
 			return err
 		}
 	}
+	if err := ensureUserEmailCanonicalUniqueIndex(); err != nil {
+		return err
+	}
 	common.SysLog("database migrated")
 	return nil
 }
@@ -478,6 +484,48 @@ func migrateLOGDB() error {
 		return err
 	}
 	return nil
+}
+
+func ensureUserEmailCanonicalUniqueIndex() error {
+	if !DB.Migrator().HasColumn(&User{}, "email_canonical") {
+		if err := DB.Migrator().AddColumn(&User{}, "EmailCanonical"); err != nil {
+			return err
+		}
+	}
+	if err := DB.Model(&User{}).
+		Where("email IS NULL OR TRIM(email) = ''").
+		Update("email_canonical", nil).Error; err != nil {
+		return err
+	}
+	if err := DB.Model(&User{}).
+		Where("email IS NOT NULL AND TRIM(email) <> ''").
+		Update("email_canonical", gorm.Expr("LOWER(TRIM(email))")).Error; err != nil {
+		return err
+	}
+
+	type duplicateEmail struct {
+		EmailCanonical string
+		Count          int64
+	}
+	var duplicate duplicateEmail
+	if err := DB.Model(&User{}).
+		Select("email_canonical, COUNT(*) AS count").
+		Where("email_canonical IS NOT NULL AND email_canonical <> ''").
+		Group("email_canonical").
+		Having("COUNT(*) > 1").
+		Limit(1).
+		Scan(&duplicate).Error; err != nil {
+		return err
+	}
+	if duplicate.Count > 1 {
+		return fmt.Errorf("duplicate user email exists before creating unique index: %s", duplicate.EmailCanonical)
+	}
+
+	const indexName = "idx_users_email_canonical_unique"
+	if DB.Migrator().HasIndex(&User{}, indexName) {
+		return nil
+	}
+	return DB.Exec("CREATE UNIQUE INDEX " + indexName + " ON users (email_canonical)").Error
 }
 
 type sqliteColumnDef struct {

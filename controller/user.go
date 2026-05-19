@@ -158,6 +158,7 @@ func Register(c *gin.Context) {
 	}
 	user := req.User
 	user.Username = strings.TrimSpace(user.Username)
+	user.Email = model.NormalizeUserEmail(user.Email)
 	if len([]rune(user.Username)) > model.RegisterUserNameMaxLength {
 		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{
 			"Error": fmt.Sprintf("username must be at most %d characters long", model.RegisterUserNameMaxLength),
@@ -213,6 +214,10 @@ func Register(c *gin.Context) {
 		}
 		return referralService.BindInviteeByCodeWithTx(tx, cleanUser.Id, referralCode, referralBindSource(explicitCode))
 	}); err != nil {
+		if model.IsUserEmailUniqueError(err) {
+			common.ApiErrorI18n(c, i18n.MsgUserExists)
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}
@@ -986,7 +991,7 @@ func EmailBind(c *gin.Context) {
 		common.ApiError(c, errors.New("invalid request body"))
 		return
 	}
-	email := req.Email
+	email := model.NormalizeUserEmail(req.Email)
 	code := req.Code
 	if !common.VerifyCodeWithKey(email, code, common.EmailVerificationPurpose) {
 		common.ApiErrorI18n(c, i18n.MsgUserVerificationCodeError)
@@ -1002,10 +1007,17 @@ func EmailBind(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if model.IsEmailAlreadyTakenByOther(email, user.Id) {
+		common.ApiErrorI18n(c, i18n.MsgUserExists)
+		return
+	}
 	user.Email = email
-	// no need to check if this email already taken, because we have used verification code to check it
 	err = user.Update(false)
 	if err != nil {
+		if model.IsUserEmailUniqueError(err) {
+			common.ApiErrorI18n(c, i18n.MsgUserExists)
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}
