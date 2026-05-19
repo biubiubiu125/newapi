@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import {
-  useCallback,
   useEffect,
   useEffectEvent,
   useMemo,
@@ -231,47 +230,7 @@ export function Referral() {
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const withdrawFormRef = useRef<HTMLFormElement | null>(null)
-  const withdrawSubmitButtonRef = useRef<HTMLButtonElement | null>(null)
-  const withdrawSubmitTriggerRef = useRef<() => void>(() => {})
-
-  const handleNativeWithdrawalTrigger = useCallback((event: Event) => {
-    event.preventDefault()
-    withdrawSubmitTriggerRef.current()
-  }, [])
-
-  const bindWithdrawalForm = useCallback(
-    (node: HTMLFormElement | null) => {
-      if (withdrawFormRef.current === node) return
-      if (withdrawFormRef.current) {
-        withdrawFormRef.current.removeEventListener(
-          'submit',
-          handleNativeWithdrawalTrigger
-        )
-      }
-      withdrawFormRef.current = node
-      if (node) {
-        node.addEventListener('submit', handleNativeWithdrawalTrigger)
-      }
-    },
-    [handleNativeWithdrawalTrigger]
-  )
-
-  const bindWithdrawalSubmitButton = useCallback(
-    (node: HTMLButtonElement | null) => {
-      if (withdrawSubmitButtonRef.current === node) return
-      if (withdrawSubmitButtonRef.current) {
-        withdrawSubmitButtonRef.current.removeEventListener(
-          'click',
-          handleNativeWithdrawalTrigger
-        )
-      }
-      withdrawSubmitButtonRef.current = node
-      if (node) {
-        node.addEventListener('click', handleNativeWithdrawalTrigger)
-      }
-    },
-    [handleNativeWithdrawalTrigger]
-  )
+  const submittingWithdrawalRef = useRef(false)
 
   const canViewDashboard =
     profile?.status === 'approved' || profile?.status === 'disabled'
@@ -478,15 +437,15 @@ export function Referral() {
 
   function handleWithdrawalSubmit(event?: React.FormEvent<HTMLFormElement>) {
     event?.preventDefault()
-    if (submittingWithdrawal) return
+    if (submittingWithdrawal || submittingWithdrawalRef.current) return
     const submission = buildWithdrawalSubmission(readWithdrawalFormElement())
     if (!submission) return
     void submitWithdrawal(submission)
   }
 
-  withdrawSubmitTriggerRef.current = () => handleWithdrawalSubmit()
-
   async function submitWithdrawal(submission: WithdrawalSubmission) {
+    if (submittingWithdrawalRef.current) return
+    submittingWithdrawalRef.current = true
     setSubmittingWithdrawal(true)
     try {
       const idempotencyKey = buildIdempotencyKey()
@@ -515,7 +474,12 @@ export function Referral() {
       } else {
         toast.error(res.message || t('Withdrawal request failed'))
       }
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message ? error.message : ''
+      toast.error(message || t('Withdrawal request failed'))
     } finally {
+      submittingWithdrawalRef.current = false
       setSubmittingWithdrawal(false)
     }
   }
@@ -733,7 +697,8 @@ export function Referral() {
                 </CardHeader>
                 <CardContent>
                   <form
-                    ref={bindWithdrawalForm}
+                    ref={withdrawFormRef}
+                    onSubmit={handleWithdrawalSubmit}
                     className='space-y-4'
                   >
                   <input
@@ -894,7 +859,6 @@ export function Referral() {
                     />
                   </div>
                   <button
-                    ref={bindWithdrawalSubmitButton}
                     type='submit'
                     className={buttonVariants({
                       variant: 'default',

@@ -781,6 +781,238 @@ func TestCreateWithdrawalRejectsWechatAndNormalizesUSDTNetwork(t *testing.T) {
 	require.Empty(t, stored.AccountName)
 }
 
+func TestCreateWithdrawalFreezesAccountAndAllocatesCommission(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "withdraw-freeze", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             user.Id,
+		InviteCode:         "WDFRZ001",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:        affiliate.Id,
+		UserId:             user.Id,
+		AvailableAmount:    100,
+		SettlementCurrency: "CNY",
+	}).Error)
+	commission := &model.ReferralCommission{
+		AffiliateId:        affiliate.Id,
+		AffiliateUserId:    user.Id,
+		InviteeUserId:      user.Id + 10,
+		SourceType:         "topup",
+		SourceTradeNo:      "withdraw-freeze-trade",
+		OrderType:          "topup",
+		BaseAmount:         100,
+		PaidAmount:         100,
+		PaidCurrency:       "CNY",
+		SettlementCurrency: "CNY",
+		SettlementFxRate:   1,
+		Rate:               10,
+		CommissionAmount:   100,
+		Status:             model.ReferralCommissionStatusAvailable,
+		AvailableAt:        time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(commission).Error)
+
+	view, err := service.CreateWithdrawal(ReferralWithdrawalCreateInput{
+		UserId:         user.Id,
+		Amount:         40,
+		AccountType:    "alipay",
+		AccountName:    "tester",
+		AccountNo:      "acct-freeze",
+		IdempotencyKey: "wd-freeze-key",
+	})
+	require.NoError(t, err)
+	require.Equal(t, model.ReferralWithdrawalStatusPending, view.Status)
+
+	account := &model.ReferralCommissionAccount{}
+	require.NoError(t, db.Where("affiliate_id = ?", affiliate.Id).First(account).Error)
+	require.Equal(t, 60.0, account.AvailableAmount)
+	require.Equal(t, 40.0, account.FrozenAmount)
+
+	item := &model.ReferralWithdrawalItem{}
+	require.NoError(t, db.Where("withdrawal_id = ? AND commission_id = ?", view.Id, commission.Id).First(item).Error)
+	require.Equal(t, 40.0, item.AllocatedAmount)
+	require.Equal(t, model.ReferralWithdrawalItemStatusFrozen, item.Status)
+
+	ledger := &model.ReferralCommissionLedger{}
+	require.NoError(t, db.Where("external_ref_id = ?", "withdrawal_freeze:wd-freeze-key").First(ledger).Error)
+	require.Equal(t, -40.0, ledger.DeltaAvailable)
+	require.Equal(t, 40.0, ledger.DeltaFrozen)
+}
+
+func TestRejectWithdrawalReleasesFrozenBalanceAndItems(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "withdraw-reject", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             user.Id,
+		InviteCode:         "WDREJ001",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:     affiliate.Id,
+		UserId:          user.Id,
+		FrozenAmount:    30,
+		AvailableAmount: 70,
+	}).Error)
+	commission := &model.ReferralCommission{
+		AffiliateId:        affiliate.Id,
+		AffiliateUserId:    user.Id,
+		InviteeUserId:      user.Id + 20,
+		SourceType:         "topup",
+		SourceTradeNo:      "withdraw-reject-trade",
+		OrderType:          "topup",
+		BaseAmount:         100,
+		PaidAmount:         100,
+		PaidCurrency:       "CNY",
+		SettlementCurrency: "CNY",
+		SettlementFxRate:   1,
+		Rate:               10,
+		CommissionAmount:   100,
+		Status:             model.ReferralCommissionStatusFrozen,
+		AvailableAt:        time.Now().Unix(),
+		FrozenAt:           time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(commission).Error)
+	withdrawal := &model.ReferralWithdrawal{
+		AffiliateId:        affiliate.Id,
+		UserId:             user.Id,
+		SettlementCurrency: "CNY",
+		Amount:             30,
+		NetAmount:          30,
+		AccountType:        "alipay",
+		AccountName:        "tester",
+		AccountNo:          "acct-reject",
+		Status:             model.ReferralWithdrawalStatusPending,
+		SubmittedAt:        time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(withdrawal).Error)
+	require.NoError(t, db.Create(&model.ReferralWithdrawalItem{
+		WithdrawalId:    withdrawal.Id,
+		CommissionId:    commission.Id,
+		AllocatedAmount: 30,
+		Status:          model.ReferralWithdrawalItemStatusFrozen,
+	}).Error)
+
+	view, err := service.RejectWithdrawal(ReferralWithdrawalReviewInput{
+		WithdrawalId: withdrawal.Id,
+		AdminUserId:  100,
+		RejectReason: "invalid account",
+	})
+	require.NoError(t, err)
+	require.Equal(t, model.ReferralWithdrawalStatusRejected, view.Status)
+
+	account := &model.ReferralCommissionAccount{}
+	require.NoError(t, db.Where("affiliate_id = ?", affiliate.Id).First(account).Error)
+	require.Equal(t, 100.0, account.AvailableAmount)
+	require.Zero(t, account.FrozenAmount)
+
+	item := &model.ReferralWithdrawalItem{}
+	require.NoError(t, db.Where("withdrawal_id = ?", withdrawal.Id).First(item).Error)
+	require.Equal(t, model.ReferralWithdrawalItemStatusReleased, item.Status)
+	require.Zero(t, item.AllocatedAmount)
+
+	reloadedCommission := &model.ReferralCommission{}
+	require.NoError(t, db.First(reloadedCommission, commission.Id).Error)
+	require.Equal(t, model.ReferralCommissionStatusAvailable, reloadedCommission.Status)
+}
+
+func TestMarkWithdrawalPaidMovesFrozenToWithdrawnAndMarksItems(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "withdraw-paid-flow", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             user.Id,
+		InviteCode:         "WDPAID01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:  affiliate.Id,
+		UserId:       user.Id,
+		FrozenAmount: 25,
+	}).Error)
+	commission := &model.ReferralCommission{
+		AffiliateId:        affiliate.Id,
+		AffiliateUserId:    user.Id,
+		InviteeUserId:      user.Id + 30,
+		SourceType:         "topup",
+		SourceTradeNo:      "withdraw-paid-flow-trade",
+		OrderType:          "topup",
+		BaseAmount:         100,
+		PaidAmount:         100,
+		PaidCurrency:       "CNY",
+		SettlementCurrency: "CNY",
+		SettlementFxRate:   1,
+		Rate:               10,
+		CommissionAmount:   25,
+		Status:             model.ReferralCommissionStatusFrozen,
+		AvailableAt:        time.Now().Unix(),
+		FrozenAt:           time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(commission).Error)
+	withdrawal := &model.ReferralWithdrawal{
+		AffiliateId:        affiliate.Id,
+		UserId:             user.Id,
+		SettlementCurrency: "CNY",
+		Amount:             25,
+		NetAmount:          25,
+		AccountType:        "alipay",
+		AccountName:        "tester",
+		AccountNo:          "acct-paid",
+		Status:             model.ReferralWithdrawalStatusApproved,
+		SubmittedAt:        time.Now().Unix(),
+		ApprovedAt:         time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(withdrawal).Error)
+	require.NoError(t, db.Create(&model.ReferralWithdrawalItem{
+		WithdrawalId:    withdrawal.Id,
+		CommissionId:    commission.Id,
+		AllocatedAmount: 25,
+		Status:          model.ReferralWithdrawalItemStatusFrozen,
+	}).Error)
+
+	view, err := service.MarkWithdrawalPaid(ReferralWithdrawalPayInput{
+		WithdrawalId: withdrawal.Id,
+		AdminUserId:  100,
+		PaymentTxnNo: "txn-paid-flow",
+	})
+	require.NoError(t, err)
+	require.Equal(t, model.ReferralWithdrawalStatusPaid, view.Status)
+
+	account := &model.ReferralCommissionAccount{}
+	require.NoError(t, db.Where("affiliate_id = ?", affiliate.Id).First(account).Error)
+	require.Zero(t, account.FrozenAmount)
+	require.Equal(t, 25.0, account.WithdrawnAmount)
+
+	item := &model.ReferralWithdrawalItem{}
+	require.NoError(t, db.Where("withdrawal_id = ?", withdrawal.Id).First(item).Error)
+	require.Equal(t, model.ReferralWithdrawalItemStatusWithdrawn, item.Status)
+
+	reloadedCommission := &model.ReferralCommission{}
+	require.NoError(t, db.First(reloadedCommission, commission.Id).Error)
+	require.Equal(t, model.ReferralCommissionStatusPaid, reloadedCommission.Status)
+}
+
 func TestCancelWithdrawalRejectedForUserSubmittedRequests(t *testing.T) {
 	setupReferralServiceTestDB(t)
 	service := NewReferralService()
