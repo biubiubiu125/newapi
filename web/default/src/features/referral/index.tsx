@@ -922,11 +922,12 @@ export function Referral() {
                       />
                     </div>
                     <button
-                      type='submit'
+                      type='button'
                       className={buttonVariants({
                         variant: 'default',
                         size: 'default',
                       })}
+                      onClick={() => handleWithdrawalSubmit()}
                       disabled={!canWithdraw || submittingWithdrawal}
                     >
                       {submittingWithdrawal
