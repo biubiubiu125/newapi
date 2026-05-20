@@ -4649,6 +4649,7 @@
     "Available referral balance is insufficient": "可提现余额不足",
     "Please wait for the upload to finish": "请等待图片上传完成",
     "Only approved affiliates can submit withdrawals": "只有已通过审核的推广员可以申请提现",
+    "Referral profile is still loading": "推广员资料仍在加载，请稍后再试",
     "Withdrawal is disabled for this affiliate account": "该推广员账号已被禁用提现",
     "QR code uploaded": "二维码已上传",
     "Rate": "比例",

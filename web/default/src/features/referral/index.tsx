@@ -22,7 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 import { formatTimestamp } from '@/lib/format'
-import { Button } from '@/components/ui/button'
+import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import {
@@ -433,6 +433,10 @@ export function Referral() {
     if (submittingWithdrawal || submittingWithdrawalRef.current) return
     if (uploading) {
       toast.error(t('Please wait for the upload to finish'))
+      return
+    }
+    if (!profile) {
+      toast.error(t('Referral profile is still loading'))
       return
     }
     if (profile?.status !== 'approved') {
@@ -901,16 +905,27 @@ export function Referral() {
                         placeholder={t('Notes')}
                       />
                     </div>
-                    <Button
+                    <button
                       type='button'
-                      variant='default'
-                      onClick={() => handleWithdrawalSubmit()}
+                      className={buttonVariants({ variant: 'default' })}
+                      onPointerDown={(event) => {
+                        event.preventDefault()
+                        event.stopPropagation()
+                        handleWithdrawalSubmit()
+                      }}
+                      onKeyDown={(event) => {
+                        if (event.key === 'Enter' || event.key === ' ') {
+                          event.preventDefault()
+                          event.stopPropagation()
+                          handleWithdrawalSubmit()
+                        }
+                      }}
                       disabled={submittingWithdrawal || uploading}
                     >
                       {submittingWithdrawal
                         ? t('Submitting...')
                         : t('Submit Withdrawal')}
-                    </Button>
+                    </button>
                   </div>
                 </CardContent>
               </Card>
