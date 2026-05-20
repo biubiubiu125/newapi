@@ -240,6 +240,7 @@ export function Referral() {
   const withdrawalFormSubmitListenerRef = useRef<((event: Event) => void) | null>(
     null
   )
+  const handleWithdrawalSubmitRef = useRef<(() => void) | null>(null)
   const submittingWithdrawalRef = useRef(false)
 
   const canViewDashboard =
@@ -494,6 +495,8 @@ export function Referral() {
     setPendingWithdrawalSubmission(submission)
   }
 
+  handleWithdrawalSubmitRef.current = handleWithdrawalSubmit
+
   async function submitWithdrawal(submission: WithdrawalSubmission) {
     if (submittingWithdrawalRef.current) return
     submittingWithdrawalRef.current = true
@@ -570,7 +573,7 @@ export function Referral() {
       const submitListener = (event: Event) => {
         event.preventDefault()
         event.stopPropagation()
-        handleWithdrawalSubmit()
+        handleWithdrawalSubmitRef.current?.()
       }
       node.addEventListener('submit', submitListener, true)
       withdrawalFormListenerRef.current = node
