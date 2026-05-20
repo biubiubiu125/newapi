@@ -232,8 +232,10 @@ export function Referral() {
   const [submittingWithdrawal, setSubmittingWithdrawal] = useState(false)
   const [pendingWithdrawalSubmission, setPendingWithdrawalSubmission] =
     useState<WithdrawalSubmission | null>(null)
+  const [withdrawalSubmitError, setWithdrawalSubmitError] = useState('')
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
+  const withdrawalFormRef = useRef<HTMLFormElement | null>(null)
   const submittingWithdrawalRef = useRef(false)
 
   const canViewDashboard =
@@ -368,20 +370,50 @@ export function Referral() {
     }
   }
 
-  function buildWithdrawalSubmission(
-    source: typeof withdrawForm = withdrawForm
-  ): WithdrawalSubmission | null {
+  function getWithdrawalFormSnapshot(): typeof withdrawForm {
+    const form = withdrawalFormRef.current
+    if (!form) return withdrawForm
+
+    const formData = new FormData(form)
+    return {
+      amount: String(formData.get('amount') ?? withdrawForm.amount),
+      account_type: String(
+        formData.get('account_type') ?? withdrawForm.account_type
+      ),
+      account_name: String(
+        formData.get('account_name') ?? withdrawForm.account_name
+      ),
+      account_no: String(formData.get('account_no') ?? withdrawForm.account_no),
+      account_network: String(
+        formData.get('account_network') ?? withdrawForm.account_network
+      ),
+      qr_image_url: String(
+        formData.get('qr_image_url') ?? withdrawForm.qr_image_url
+      ),
+      applicant_note: String(
+        formData.get('applicant_note') ?? withdrawForm.applicant_note
+      ),
+    }
+  }
+
+  function showWithdrawalSubmitError(message: string) {
+    setWithdrawalSubmitError(message)
+    toast.error(message)
+  }
+
+  function buildWithdrawalSubmission(source: typeof withdrawForm): WithdrawalSubmission | null {
+    setWithdrawalSubmitError('')
     if (source.amount.trim() === '') {
-      toast.error(t('Please enter a valid amount'))
+      showWithdrawalSubmitError(t('Please enter a valid amount'))
       return null
     }
     const amount = Number(source.amount)
     if (!Number.isFinite(amount) || amount <= 0) {
-      toast.error(t('Please enter a valid amount'))
+      showWithdrawalSubmitError(t('Please enter a valid amount'))
       return null
     }
     if (summary?.min_withdraw_amount && amount < summary.min_withdraw_amount) {
-      toast.error(
+      showWithdrawalSubmitError(
         t('Withdraw amount must be at least {{amount}}', {
           amount: formatMoney(summary.min_withdraw_amount),
         })
@@ -392,27 +424,27 @@ export function Referral() {
       summary?.available_amount != null &&
       amount > summary.available_amount
     ) {
-      toast.error(t('Available referral balance is insufficient'))
+      showWithdrawalSubmitError(t('Available referral balance is insufficient'))
       return null
     }
     if (source.account_type !== 'alipay' && source.account_type !== 'usdt') {
-      toast.error(t('Please select a withdrawal method'))
+      showWithdrawalSubmitError(t('Please select a withdrawal method'))
       return null
     }
     if (source.account_type === 'alipay' && !source.account_name.trim()) {
-      toast.error(t('Please enter the payee name'))
+      showWithdrawalSubmitError(t('Please enter the payee name'))
       return null
     }
     if (source.account_type === 'alipay' && !source.account_no.trim()) {
-      toast.error(t('Please enter an Alipay account'))
+      showWithdrawalSubmitError(t('Please enter an Alipay account'))
       return null
     }
     if (source.account_type === 'usdt' && !source.account_network.trim()) {
-      toast.error(t('Please select the network'))
+      showWithdrawalSubmitError(t('Please select the network'))
       return null
     }
     if (source.account_type === 'usdt' && !source.account_no.trim()) {
-      toast.error(t('Please enter the USDT wallet address'))
+      showWithdrawalSubmitError(t('Please enter the USDT wallet address'))
       return null
     }
 
@@ -432,22 +464,28 @@ export function Referral() {
   function handleWithdrawalSubmit() {
     if (submittingWithdrawal || submittingWithdrawalRef.current) return
     if (uploading) {
-      toast.error(t('Please wait for the upload to finish'))
+      showWithdrawalSubmitError(t('Please wait for the upload to finish'))
       return
     }
     if (!profile) {
-      toast.error(t('Referral profile is still loading'))
+      showWithdrawalSubmitError(t('Referral profile is still loading'))
       return
     }
     if (profile?.status !== 'approved') {
-      toast.error(t('Only approved affiliates can submit withdrawals'))
+      showWithdrawalSubmitError(
+        t('Only approved affiliates can submit withdrawals')
+      )
       return
     }
     if (!profile.withdrawal_enabled) {
-      toast.error(t('Withdrawal is disabled for this affiliate account'))
+      showWithdrawalSubmitError(
+        t('Withdrawal is disabled for this affiliate account')
+      )
       return
     }
-    const submission = buildWithdrawalSubmission(withdrawForm)
+    const snapshot = getWithdrawalFormSnapshot()
+    setWithdrawForm(snapshot)
+    const submission = buildWithdrawalSubmission(snapshot)
     if (!submission) return
     setPendingWithdrawalSubmission(submission)
   }
@@ -464,6 +502,7 @@ export function Referral() {
       })
       if (res.success) {
         toast.success(t('Withdrawal request submitted'))
+        setWithdrawalSubmitError('')
         setPendingWithdrawalSubmission(null)
         setWithdrawForm({
           amount: '',
@@ -482,12 +521,14 @@ export function Referral() {
           params: { section: 'withdrawals' },
         })
       } else {
-        toast.error(res.message || t('Withdrawal request failed'))
+        showWithdrawalSubmitError(
+          res.message || t('Withdrawal request failed')
+        )
       }
     } catch (error) {
       const message =
         error instanceof Error && error.message ? error.message : ''
-      toast.error(message || t('Withdrawal request failed'))
+      showWithdrawalSubmitError(message || t('Withdrawal request failed'))
     } finally {
       submittingWithdrawalRef.current = false
       setSubmittingWithdrawal(false)
@@ -729,7 +770,14 @@ export function Referral() {
                   <CardTitle>{t('Withdraw Application')}</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <div className='space-y-4'>
+                  <form
+                    ref={withdrawalFormRef}
+                    className='space-y-4'
+                    onSubmit={(event) => {
+                      event.preventDefault()
+                      handleWithdrawalSubmit()
+                    }}
+                  >
                     <input
                       type='hidden'
                       name='account_type'
@@ -905,19 +953,31 @@ export function Referral() {
                         placeholder={t('Notes')}
                       />
                     </div>
+                    {withdrawalSubmitError ? (
+                      <div
+                        className='border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm'
+                        role='alert'
+                      >
+                        {withdrawalSubmitError}
+                      </div>
+                    ) : null}
                     <button
-                      type='button'
+                      type='submit'
                       className={buttonVariants({ variant: 'default' })}
                       onPointerDown={(event) => {
-                        event.preventDefault()
-                        event.stopPropagation()
-                        handleWithdrawalSubmit()
+                        if (event.button !== 0) return
+                        const form = event.currentTarget.form
+                        if (form?.requestSubmit) {
+                          event.preventDefault()
+                          form.requestSubmit(event.currentTarget)
+                        }
                       }}
                       onKeyDown={(event) => {
                         if (event.key === 'Enter' || event.key === ' ') {
                           event.preventDefault()
-                          event.stopPropagation()
-                          handleWithdrawalSubmit()
+                          event.currentTarget.form?.requestSubmit(
+                            event.currentTarget
+                          )
                         }
                       }}
                       disabled={submittingWithdrawal || uploading}
@@ -926,7 +986,7 @@ export function Referral() {
                         ? t('Submitting...')
                         : t('Submit Withdrawal')}
                     </button>
-                  </div>
+                  </form>
                 </CardContent>
               </Card>
               <Card>
