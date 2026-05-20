@@ -546,6 +546,12 @@ export function Referral() {
     }
   }
 
+  const handleNativeWithdrawalFormSubmit = useEffectEvent((event: Event) => {
+    event.preventDefault()
+    event.stopPropagation()
+    handleWithdrawalSubmit()
+  })
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
       void loadBase()
@@ -567,6 +573,17 @@ export function Referral() {
       void loadSectionData()
     }, 0)
     return () => window.clearTimeout(timer)
+  }, [activeSection])
+
+  useEffect(() => {
+    if (activeSection !== 'withdraw') return
+    const form = withdrawalFormRef.current
+    if (!form) return
+
+    form.addEventListener('submit', handleNativeWithdrawalFormSubmit, true)
+    return () => {
+      form.removeEventListener('submit', handleNativeWithdrawalFormSubmit, true)
+    }
   }, [activeSection])
 
   return (
