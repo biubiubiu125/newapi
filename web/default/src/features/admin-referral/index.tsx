@@ -1922,23 +1922,6 @@ function accountTypeLabel(value: string, t: (key: string) => string): string {
   }
 }
 
-function accountNetworkLabel(
-  value: string,
-  t: (key: string) => string
-): string {
-  switch (value) {
-    case 'TRC20':
-      return 'TRC20'
-    case 'BEP20':
-      return 'BEP20'
-    case 'POLYGON':
-    case 'Polygon':
-      return t('Polygon')
-    default:
-      return value || '-'
-  }
-}
-
 function WithdrawalInfo(props: { item: ReferralWithdrawal }) {
   const { t } = useTranslation()
   const item = props.item
@@ -1946,9 +1929,6 @@ function WithdrawalInfo(props: { item: ReferralWithdrawal }) {
     <div className='min-w-[260px] space-y-1 text-sm'>
       <div>
         {accountTypeLabel(item.account_type, t)}
-        {item.account_network
-          ? ` / ${accountNetworkLabel(item.account_network, t)}`
-          : ''}
       </div>
       <div className='break-words'>
         {item.account_type === 'usdt' ? t('Blockchain') : t('Account Name')}:{' '}

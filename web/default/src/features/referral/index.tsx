@@ -1069,11 +1069,10 @@ export function Referral() {
                     />
                     <BalanceLine
                       label={t('Withdrawal Method')}
-                      value={`${accountTypeLabel(pendingWithdrawalSubmission.account_type, t)}${
-                        pendingWithdrawalSubmission.account_network
-                          ? ` / ${accountNetworkLabel(pendingWithdrawalSubmission.account_network, t)}`
-                          : ''
-                      }`}
+                      value={accountTypeLabel(
+                        pendingWithdrawalSubmission.account_type,
+                        t
+                      )}
                     />
                     <BalanceLine
                       label={
@@ -1149,9 +1148,6 @@ function WithdrawalInfo(props: { item: ReferralWithdrawal }) {
     <div className='min-w-[260px] space-y-1 text-sm'>
       <div>
         {accountTypeLabel(item.account_type, t)}
-        {item.account_network
-          ? ` / ${accountNetworkLabel(item.account_network, t)}`
-          : ''}
       </div>
       <div className='break-words'>
         {item.account_type === 'usdt' ? t('Blockchain') : t('Account Name')}:{' '}
