@@ -573,7 +573,7 @@ export function Referral() {
       void loadSectionData()
     }, 0)
     return () => window.clearTimeout(timer)
-  }, [activeSection])
+  }, [activeSection, loading])
 
   useEffect(() => {
     if (activeSection !== 'withdraw') return
@@ -981,22 +981,6 @@ export function Referral() {
                     <button
                       type='submit'
                       className={buttonVariants({ variant: 'default' })}
-                      onPointerDown={(event) => {
-                        if (event.button !== 0) return
-                        const form = event.currentTarget.form
-                        if (form?.requestSubmit) {
-                          event.preventDefault()
-                          form.requestSubmit(event.currentTarget)
-                        }
-                      }}
-                      onKeyDown={(event) => {
-                        if (event.key === 'Enter' || event.key === ' ') {
-                          event.preventDefault()
-                          event.currentTarget.form?.requestSubmit(
-                            event.currentTarget
-                          )
-                        }
-                      }}
                       disabled={submittingWithdrawal || uploading}
                     >
                       {submittingWithdrawal
