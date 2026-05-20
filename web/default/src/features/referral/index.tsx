@@ -236,6 +236,10 @@ export function Referral() {
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const withdrawalFormRef = useRef<HTMLFormElement | null>(null)
+  const withdrawalFormListenerRef = useRef<HTMLFormElement | null>(null)
+  const withdrawalFormSubmitListenerRef = useRef<((event: Event) => void) | null>(
+    null
+  )
   const submittingWithdrawalRef = useRef(false)
 
   const canViewDashboard =
@@ -546,11 +550,33 @@ export function Referral() {
     }
   }
 
-  const handleNativeWithdrawalFormSubmit = useEffectEvent((event: Event) => {
-    event.preventDefault()
-    event.stopPropagation()
-    handleWithdrawalSubmit()
-  })
+  function setWithdrawalFormNode(node: HTMLFormElement | null) {
+    if (
+      withdrawalFormListenerRef.current &&
+      withdrawalFormSubmitListenerRef.current
+    ) {
+      withdrawalFormListenerRef.current.removeEventListener(
+        'submit',
+        withdrawalFormSubmitListenerRef.current,
+        true
+      )
+    }
+    withdrawalFormListenerRef.current = null
+    withdrawalFormSubmitListenerRef.current = null
+
+    withdrawalFormRef.current = node
+
+    if (node) {
+      const submitListener = (event: Event) => {
+        event.preventDefault()
+        event.stopPropagation()
+        handleWithdrawalSubmit()
+      }
+      node.addEventListener('submit', submitListener, true)
+      withdrawalFormListenerRef.current = node
+      withdrawalFormSubmitListenerRef.current = submitListener
+    }
+  }
 
   useEffect(() => {
     const timer = window.setTimeout(() => {
@@ -574,17 +600,6 @@ export function Referral() {
     }, 0)
     return () => window.clearTimeout(timer)
   }, [activeSection, loading])
-
-  useEffect(() => {
-    if (activeSection !== 'withdraw') return
-    const form = withdrawalFormRef.current
-    if (!form) return
-
-    form.addEventListener('submit', handleNativeWithdrawalFormSubmit, true)
-    return () => {
-      form.removeEventListener('submit', handleNativeWithdrawalFormSubmit, true)
-    }
-  }, [activeSection])
 
   return (
     <SectionPageLayout>
@@ -788,7 +803,7 @@ export function Referral() {
                 </CardHeader>
                 <CardContent>
                   <form
-                    ref={withdrawalFormRef}
+                    ref={setWithdrawalFormNode}
                     className='space-y-4'
                     onSubmit={(event) => {
                       event.preventDefault()
