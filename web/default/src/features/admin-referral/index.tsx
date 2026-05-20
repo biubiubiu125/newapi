@@ -30,6 +30,7 @@ import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { SectionPageLayout } from '@/components/layout'
+import { AssetImagePreview } from '@/features/referral/components/asset-image-preview'
 import {
   adjustReferralAffiliate,
   approveReferralAffiliate,
@@ -1969,23 +1970,7 @@ function WithdrawalInfo(props: { item: ReferralWithdrawal }) {
 }
 
 function AssetPreview(props: { url?: string; label: string }) {
-  if (!props.url) {
-    return <span>-</span>
-  }
-  return (
-    <a
-      href={props.url}
-      target='_blank'
-      rel='noreferrer'
-      className='inline-block overflow-hidden rounded border'
-    >
-      <img
-        src={props.url}
-        alt={props.label}
-        className='h-14 w-14 object-cover'
-      />
-    </a>
-  )
+  return <AssetImagePreview url={props.url} label={props.label} />
 }
 
 function SectionTitle(props: { title: string; description?: string }) {

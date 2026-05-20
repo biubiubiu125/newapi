@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-contrib/sessions"
@@ -39,6 +40,21 @@ func TestReferralAdminAndUserRoutesAreDistinct(t *testing.T) {
 	require.True(t, paths["GET /api/user/admin/referral/commissions"])
 	require.True(t, paths["POST /api/user/admin/referral/upload"])
 	require.True(t, paths["POST /api/user/referral/upload"])
+}
+
+func TestReferralAssetRoutesSupportApiAndPublicPaths(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	engine.GET("/referral-assets/*path", controller.GetReferralAsset)
+	SetApiRouter(engine)
+
+	paths := map[string]bool{}
+	for _, route := range engine.Routes() {
+		paths[route.Method+" "+route.Path] = true
+	}
+
+	require.True(t, paths["GET /api/referral-assets/*path"])
+	require.True(t, paths["GET /referral-assets/*path"])
 }
 
 func setupRouterAuthTestDB(t *testing.T) *gorm.DB {

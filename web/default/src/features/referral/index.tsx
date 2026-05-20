@@ -22,7 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 import { formatTimestamp } from '@/lib/format'
-import { Button, buttonVariants } from '@/components/ui/button'
+import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import {
@@ -35,6 +35,7 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { SectionPageLayout } from '@/components/layout'
+import { AssetImagePreview } from './components/asset-image-preview'
 import {
   applyReferralAffiliate,
   cancelReferralWithdrawal,
@@ -233,13 +234,10 @@ export function Referral() {
     useState<WithdrawalSubmission | null>(null)
   const [uploading, setUploading] = useState(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const withdrawFormRef = useRef<HTMLFormElement | null>(null)
   const submittingWithdrawalRef = useRef(false)
 
   const canViewDashboard =
     profile?.status === 'approved' || profile?.status === 'disabled'
-  const canWithdraw =
-    profile?.status === 'approved' && profile.withdrawal_enabled
   const pageMeta = SECTION_META[activeSection]
 
   const inviteLink = useMemo(() => {
@@ -431,33 +429,21 @@ export function Referral() {
     }
   }
 
-  function readWithdrawalFormElement(): typeof withdrawForm {
-    const formData = new FormData(withdrawFormRef.current ?? undefined)
-    return {
-      amount: String(formData.get('amount') ?? withdrawForm.amount),
-      account_type: String(
-        formData.get('account_type') ?? withdrawForm.account_type
-      ),
-      account_name: String(
-        formData.get('account_name') ?? withdrawForm.account_name
-      ),
-      account_no: String(formData.get('account_no') ?? withdrawForm.account_no),
-      account_network: String(
-        formData.get('account_network') ?? withdrawForm.account_network
-      ),
-      qr_image_url: String(
-        formData.get('qr_image_url') ?? withdrawForm.qr_image_url
-      ),
-      applicant_note: String(
-        formData.get('applicant_note') ?? withdrawForm.applicant_note
-      ),
-    }
-  }
-
-  function handleWithdrawalSubmit(event?: React.FormEvent<HTMLFormElement>) {
-    event?.preventDefault()
+  function handleWithdrawalSubmit() {
     if (submittingWithdrawal || submittingWithdrawalRef.current) return
-    const submission = buildWithdrawalSubmission(readWithdrawalFormElement())
+    if (uploading) {
+      toast.error(t('Please wait for the upload to finish'))
+      return
+    }
+    if (profile?.status !== 'approved') {
+      toast.error(t('Only approved affiliates can submit withdrawals'))
+      return
+    }
+    if (!profile.withdrawal_enabled) {
+      toast.error(t('Withdrawal is disabled for this affiliate account'))
+      return
+    }
+    const submission = buildWithdrawalSubmission(withdrawForm)
     if (!submission) return
     setPendingWithdrawalSubmission(submission)
   }
@@ -739,11 +725,7 @@ export function Referral() {
                   <CardTitle>{t('Withdraw Application')}</CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <form
-                    ref={withdrawFormRef}
-                    onSubmit={handleWithdrawalSubmit}
-                    className='space-y-4'
-                  >
+                  <div className='space-y-4'>
                     <input
                       type='hidden'
                       name='account_type'
@@ -889,13 +871,11 @@ export function Referral() {
                         </div>
                       </div>
                       {withdrawForm.qr_image_url ? (
-                        <div className='overflow-hidden rounded-md border'>
-                          <img
-                            src={withdrawForm.qr_image_url}
-                            alt={t('QR Code')}
-                            className='max-h-48 w-full object-contain'
-                          />
-                        </div>
+                        <AssetImagePreview
+                          url={withdrawForm.qr_image_url}
+                          label={t('QR Code')}
+                          thumbnailClassName='h-28 w-28'
+                        />
                       ) : null}
                       <input
                         ref={fileInputRef}
@@ -921,20 +901,17 @@ export function Referral() {
                         placeholder={t('Notes')}
                       />
                     </div>
-                    <button
+                    <Button
                       type='button'
-                      className={buttonVariants({
-                        variant: 'default',
-                        size: 'default',
-                      })}
+                      variant='default'
                       onClick={() => handleWithdrawalSubmit()}
-                      disabled={!canWithdraw || submittingWithdrawal}
+                      disabled={submittingWithdrawal || uploading}
                     >
                       {submittingWithdrawal
                         ? t('Submitting...')
                         : t('Submit Withdrawal')}
-                    </button>
-                  </form>
+                    </Button>
+                  </div>
                 </CardContent>
               </Card>
               <Card>
@@ -1071,27 +1048,40 @@ function BalanceLine(props: { label: string; value: string }) {
   )
 }
 
+function WithdrawalInfo(props: { item: ReferralWithdrawal }) {
+  const { t } = useTranslation()
+  const item = props.item
+  return (
+    <div className='min-w-[260px] space-y-1 text-sm'>
+      <div>
+        {accountTypeLabel(item.account_type, t)}
+        {item.account_network
+          ? ` / ${accountNetworkLabel(item.account_network, t)}`
+          : ''}
+      </div>
+      <div className='break-words'>
+        {item.account_type === 'usdt' ? t('Blockchain') : t('Account Name')}:{' '}
+        {item.account_type === 'usdt'
+          ? item.account_network || '-'
+          : item.account_name || '-'}
+      </div>
+      <div className='break-words'>
+        {t('Account Number')}: {item.account_no || item.account_no_masked || '-'}
+      </div>
+      {item.applicant_note ? (
+        <div className='text-muted-foreground text-xs break-words'>
+          {t('Applicant Note')}: {item.applicant_note}
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
 function canCancelWithdrawal(item: ReferralWithdrawal): boolean {
   if (item.status !== 'pending' || !item.submitted_at) {
     return false
   }
   return Math.floor(Date.now() / 1000) - item.submitted_at <= 30 * 60
-}
-
-function withdrawalAccountDetail(
-  item: ReferralWithdrawal,
-  t: (key: string) => string
-): string {
-  const method = `${accountTypeLabel(item.account_type, t)}${
-    item.account_network
-      ? ` / ${accountNetworkLabel(item.account_network, t)}`
-      : ''
-  }`
-  const name =
-    item.account_type === 'usdt'
-      ? item.account_network || '-'
-      : item.account_name || '-'
-  return `${method} | ${name} | ${item.account_no || item.account_no_masked || '-'}`
 }
 
 function WithdrawalRecordsCard(props: {
@@ -1140,29 +1130,14 @@ function WithdrawalRecordsCard(props: {
                   <td className='px-3 py-2'>{formatMoney(item.amount)}</td>
                   <td className='px-3 py-2'>{formatMoney(item.net_amount)}</td>
                   <td className='max-w-[360px] px-3 py-2'>
-                    <div className='break-words'>
-                      {withdrawalAccountDetail(item, t)}
-                    </div>
-                    {item.applicant_note ? (
-                      <div className='text-muted-foreground mt-1 text-xs break-words'>
-                        {item.applicant_note}
-                      </div>
-                    ) : null}
+                    <WithdrawalInfo item={item} />
                   </td>
                   <td className='px-3 py-2'>
                     {item.qr_image_url ? (
-                      <a
-                        href={item.qr_image_url}
-                        target='_blank'
-                        rel='noreferrer'
-                        className='inline-block overflow-hidden rounded border'
-                      >
-                        <img
-                          src={item.qr_image_url}
-                          alt={t('QR Code')}
-                          className='h-14 w-14 object-cover'
-                        />
-                      </a>
+                      <AssetImagePreview
+                        url={item.qr_image_url}
+                        label={t('QR Code')}
+                      />
                     ) : (
                       '-'
                     )}
