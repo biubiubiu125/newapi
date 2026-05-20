@@ -697,23 +697,23 @@ export function Referral() {
                   </Card>
                   <Card>
                     <CardHeader>
-                      <CardTitle>{t('Commission Balance')}</CardTitle>
+                      <CardTitle>{t('Commission Details')}</CardTitle>
                     </CardHeader>
                     <CardContent className='space-y-3'>
                       <BalanceLine
-                        label={t('Pending')}
+                        label={t('Pending Commission')}
                         value={formatMoney(summary.pending_amount)}
                       />
                       <BalanceLine
-                        label={t('Available')}
+                        label={t('Withdrawable Amount')}
                         value={formatMoney(summary.available_amount)}
                       />
                       <BalanceLine
-                        label={t('Frozen')}
+                        label={t('Withdrawing Amount')}
                         value={formatMoney(summary.frozen_amount)}
                       />
                       <BalanceLine
-                        label={t('Withdrawn')}
+                        label={t('Withdrawn Amount')}
                         value={formatMoney(summary.withdrawn_amount)}
                       />
                       <BalanceLine
@@ -1010,24 +1010,28 @@ export function Referral() {
               </Card>
               <Card>
                 <CardHeader>
-                  <CardTitle>{t('Available Balance')}</CardTitle>
+                  <CardTitle>{t('Commission Details')}</CardTitle>
                 </CardHeader>
                 <CardContent className='space-y-3'>
                   <BalanceLine
-                    label={t('Available')}
-                    value={formatMoney(summary?.available_amount || 0)}
-                  />
-                  <BalanceLine
-                    label={t('Pending')}
+                    label={t('Pending Commission')}
                     value={formatMoney(summary?.pending_amount || 0)}
                   />
                   <BalanceLine
-                    label={t('Frozen')}
+                    label={t('Withdrawable Amount')}
+                    value={formatMoney(summary?.available_amount || 0)}
+                  />
+                  <BalanceLine
+                    label={t('Withdrawing Amount')}
                     value={formatMoney(summary?.frozen_amount || 0)}
                   />
                   <BalanceLine
-                    label={t('Withdrawn')}
+                    label={t('Withdrawn Amount')}
                     value={formatMoney(summary?.withdrawn_amount || 0)}
+                  />
+                  <BalanceLine
+                    label={t('Min Withdraw Amount')}
+                    value={formatMoney(summary?.min_withdraw_amount || 0)}
                   />
                 </CardContent>
               </Card>
