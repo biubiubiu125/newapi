@@ -1046,78 +1046,78 @@ export function Referral() {
               onCancel={(item) => void handleCancelWithdrawal(item)}
             />
           )}
+          <ConfirmDialog
+            open={!!pendingWithdrawalSubmission}
+            onOpenChange={(open) => {
+              if (!open) {
+                setPendingWithdrawalSubmission(null)
+              }
+            }}
+            title={t('Confirm withdrawal information')}
+            desc={
+              <div className='space-y-3 text-sm'>
+                <p>
+                  {t(
+                    'Please carefully verify that the receiving information you entered is correct. If losses are caused by incorrect receiving information, you shall bear them yourself and this site assumes no responsibility.'
+                  )}
+                </p>
+                {pendingWithdrawalSubmission && (
+                  <div className='space-y-2 rounded-md border p-3'>
+                    <BalanceLine
+                      label={t('Withdraw Amount')}
+                      value={formatMoney(pendingWithdrawalSubmission.amount)}
+                    />
+                    <BalanceLine
+                      label={t('Withdrawal Method')}
+                      value={`${accountTypeLabel(pendingWithdrawalSubmission.account_type, t)}${
+                        pendingWithdrawalSubmission.account_network
+                          ? ` / ${accountNetworkLabel(pendingWithdrawalSubmission.account_network, t)}`
+                          : ''
+                      }`}
+                    />
+                    <BalanceLine
+                      label={
+                        pendingWithdrawalSubmission.account_type === 'usdt'
+                          ? t('Blockchain')
+                          : t('Account Name')
+                      }
+                      value={
+                        pendingWithdrawalSubmission.account_type === 'usdt'
+                          ? pendingWithdrawalSubmission.account_network || '-'
+                          : pendingWithdrawalSubmission.account_name || '-'
+                      }
+                    />
+                    <BalanceLine
+                      label={accountNumberPlaceholder(
+                        pendingWithdrawalSubmission.account_type,
+                        t
+                      )}
+                      value={pendingWithdrawalSubmission.account_no || '-'}
+                    />
+                    <BalanceLine
+                      label={t('QR Code')}
+                      value={
+                        pendingWithdrawalSubmission.qr_image_url
+                          ? t('Uploaded')
+                          : t('Not uploaded')
+                      }
+                    />
+                  </div>
+                )}
+              </div>
+            }
+            cancelBtnText={t('Back to Edit')}
+            confirmText={t('Confirm and Submit')}
+            handleConfirm={() => {
+              if (pendingWithdrawalSubmission) {
+                void submitWithdrawal(pendingWithdrawalSubmission)
+              }
+            }}
+            disabled={submittingWithdrawal}
+            isLoading={submittingWithdrawal}
+          />
         </div>
       </SectionPageLayout.Content>
-      <ConfirmDialog
-        open={!!pendingWithdrawalSubmission}
-        onOpenChange={(open) => {
-          if (!open) {
-            setPendingWithdrawalSubmission(null)
-          }
-        }}
-        title={t('Confirm withdrawal information')}
-        desc={
-          <div className='space-y-3 text-sm'>
-            <p>
-              {t(
-                'Please carefully verify that the receiving information you entered is correct. If losses are caused by incorrect receiving information, you shall bear them yourself and this site assumes no responsibility.'
-              )}
-            </p>
-            {pendingWithdrawalSubmission && (
-              <div className='space-y-2 rounded-md border p-3'>
-                <BalanceLine
-                  label={t('Withdraw Amount')}
-                  value={formatMoney(pendingWithdrawalSubmission.amount)}
-                />
-                <BalanceLine
-                  label={t('Withdrawal Method')}
-                  value={`${accountTypeLabel(pendingWithdrawalSubmission.account_type, t)}${
-                    pendingWithdrawalSubmission.account_network
-                      ? ` / ${accountNetworkLabel(pendingWithdrawalSubmission.account_network, t)}`
-                      : ''
-                  }`}
-                />
-                <BalanceLine
-                  label={
-                    pendingWithdrawalSubmission.account_type === 'usdt'
-                      ? t('Blockchain')
-                      : t('Account Name')
-                  }
-                  value={
-                    pendingWithdrawalSubmission.account_type === 'usdt'
-                      ? pendingWithdrawalSubmission.account_network || '-'
-                      : pendingWithdrawalSubmission.account_name || '-'
-                  }
-                />
-                <BalanceLine
-                  label={accountNumberPlaceholder(
-                    pendingWithdrawalSubmission.account_type,
-                    t
-                  )}
-                  value={pendingWithdrawalSubmission.account_no || '-'}
-                />
-                <BalanceLine
-                  label={t('QR Code')}
-                  value={
-                    pendingWithdrawalSubmission.qr_image_url
-                      ? t('Uploaded')
-                      : t('Not uploaded')
-                  }
-                />
-              </div>
-            )}
-          </div>
-        }
-        cancelBtnText={t('Back to Edit')}
-        confirmText={t('Confirm and Submit')}
-        handleConfirm={() => {
-          if (pendingWithdrawalSubmission) {
-            void submitWithdrawal(pendingWithdrawalSubmission)
-          }
-        }}
-        disabled={submittingWithdrawal}
-        isLoading={submittingWithdrawal}
-      />
     </SectionPageLayout>
   )
 }
