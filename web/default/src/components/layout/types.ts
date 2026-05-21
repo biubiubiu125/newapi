@@ -35,6 +35,8 @@ export type Workspace = {
 type BaseNavItem = {
   title: string
   badge?: string
+  badgeKey?: string
+  badgeValue?: number
   icon?: React.ElementType
   activeUrls?: (LinkProps['to'] | (string & {}))[]
   configUrls?: (LinkProps['to'] | (string & {}))[]

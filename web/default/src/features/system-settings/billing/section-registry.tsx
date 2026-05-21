@@ -153,17 +153,17 @@ const BILLING_SECTIONS = [
           CreemTestMode: settings.CreemTestMode,
           CreemProducts: settings.CreemProducts,
         }}
-        epusdtDefaultValues={{
-          EpusdtEnabled: settings.EpusdtEnabled ?? false,
-          EpusdtBaseURL: settings.EpusdtBaseURL ?? '',
-          EpusdtPID: settings.EpusdtPID ?? '',
-          EpusdtSecretKey: settings.EpusdtSecretKey ?? '',
-          EpusdtCurrency: settings.EpusdtCurrency ?? 'CNY',
-          EpusdtDisplayName: settings.EpusdtDisplayName ?? 'USDT',
-          EpusdtAssetDisplayNames:
-            settings.EpusdtAssetDisplayNames ??
-            '{"epusdt:usdt":"USDT","epusdt:usdt:tron":"USDT-TRC20","epusdt:usdt:bsc":"USDT-BEP20","epusdt:usdt:polygon":"USDT-Polygon"}',
-          EpusdtMinTopUp: settings.EpusdtMinTopUp ?? 1,
+        gmpayDefaultValues={{
+          GMPayEnabled: settings.GMPayEnabled ?? false,
+          GMPayBaseURL: settings.GMPayBaseURL ?? '',
+          GMPayPID: settings.GMPayPID ?? '',
+          GMPaySecretKey: settings.GMPaySecretKey ?? '',
+          GMPayCurrency: settings.GMPayCurrency ?? 'CNY',
+          GMPayDisplayName: settings.GMPayDisplayName ?? 'GMPay',
+          GMPayAssetDisplayNames:
+            settings.GMPayAssetDisplayNames ??
+            '{"gmpay:usdt":"GMPay USDT","gmpay:usdt:tron":"GMPay USDT-TRC20","gmpay:usdt:bsc":"GMPay USDT-BEP20","gmpay:usdt:polygon":"GMPay USDT-Polygon"}',
+          GMPayMinTopUp: settings.GMPayMinTopUp ?? 1,
         }}
         waffoDefaultValues={{
           WaffoEnabled: settings.WaffoEnabled ?? false,

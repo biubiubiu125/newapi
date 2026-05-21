@@ -41,7 +41,7 @@ import { GroupBadge } from '@/components/group-badge'
 import {
   paySubscriptionCreem,
   paySubscriptionEpay,
-  paySubscriptionEpusdt,
+  paySubscriptionGMPay,
   paySubscriptionStripe,
 } from '../../api'
 import { getPaymentIcon } from '@/features/wallet/lib'
@@ -61,8 +61,8 @@ interface Props {
   enableCreem?: boolean
   enableOnlineTopUp?: boolean
   epayMethods?: PaymentMethod[]
-  enableEpusdt?: boolean
-  epusdtMethods?: PaymentMethod[]
+  enableGMPay?: boolean
+  gmpayMethods?: PaymentMethod[]
   purchaseLimit?: number
   purchaseCount?: number
 }
@@ -71,7 +71,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
   const { t } = useTranslation()
   const [paying, setPaying] = useState(false)
   const [selectedEpayMethod, setSelectedEpayMethod] = useState('')
-  const [selectedEpusdtMethod, setSelectedEpusdtMethod] = useState('')
+  const [selectedGMPayMethod, setSelectedGMPayMethod] = useState('')
 
   useEffect(() => {
     if (props.open && props.epayMethods && props.epayMethods.length > 0) {
@@ -82,12 +82,12 @@ export function SubscriptionPurchaseDialog(props: Props) {
   }, [props.open, props.epayMethods])
 
   useEffect(() => {
-    if (props.open && props.epusdtMethods && props.epusdtMethods.length > 0) {
-      setSelectedEpusdtMethod(props.epusdtMethods[0].type)
+    if (props.open && props.gmpayMethods && props.gmpayMethods.length > 0) {
+      setSelectedGMPayMethod(props.gmpayMethods[0].type)
     } else if (!props.open) {
-      setSelectedEpusdtMethod('')
+      setSelectedGMPayMethod('')
     }
-  }, [props.open, props.epusdtMethods])
+  }, [props.open, props.gmpayMethods])
 
   const plan = props.plan?.plan
   if (!plan) return null
@@ -96,17 +96,17 @@ export function SubscriptionPurchaseDialog(props: Props) {
   const hasCreem = props.enableCreem && !!plan.creem_product_id
   const hasEpay =
     props.enableOnlineTopUp && (props.epayMethods || []).length > 0
-  const hasEpusdt = props.enableEpusdt && (props.epusdtMethods || []).length > 0
-  const hasAnyPayment = hasStripe || hasCreem || hasEpay || hasEpusdt
+  const hasGMPay = props.enableGMPay && (props.gmpayMethods || []).length > 0
+  const hasAnyPayment = hasStripe || hasCreem || hasEpay || hasGMPay
   const selectedEpayMethodLabel =
     (props.epayMethods || []).find((m) => m.type === selectedEpayMethod)
       ?.name ||
     selectedEpayMethod ||
     t('Select payment method')
-  const selectedEpusdtMethodLabel =
-    (props.epusdtMethods || []).find((m) => m.type === selectedEpusdtMethod)
+  const selectedGMPayMethodLabel =
+    (props.gmpayMethods || []).find((m) => m.type === selectedGMPayMethod)
       ?.name ||
-    selectedEpusdtMethod ||
+    selectedGMPayMethod ||
     t('Select payment method')
   const totalAmount = Number(plan.total_amount || 0)
   const price = formatCnyPrice(plan.price_amount || 0)
@@ -206,16 +206,16 @@ export function SubscriptionPurchaseDialog(props: Props) {
     }
   }
 
-  const handlePayEpusdt = async () => {
-    if (!selectedEpusdtMethod) {
+  const handlePayGMPay = async () => {
+    if (!selectedGMPayMethod) {
       toast.error(t('Please select a payment method'))
       return
     }
     setPaying(true)
     try {
-      const res = await paySubscriptionEpusdt({
+      const res = await paySubscriptionGMPay({
         plan_id: plan.id,
-        payment_method: selectedEpusdtMethod,
+        payment_method: selectedGMPayMethod,
       })
       if (res.message === 'success' && res.data?.payment_url) {
         window.open(res.data.payment_url, '_blank')
@@ -375,18 +375,18 @@ export function SubscriptionPurchaseDialog(props: Props) {
                   </Button>
                 </div>
               )}
-              {hasEpusdt && (
+              {hasGMPay && (
                 <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
                   <Select
                     items={[
-                      ...(props.epusdtMethods || []).map((m) => ({
+                      ...(props.gmpayMethods || []).map((m) => ({
                         value: m.type,
                         label: m.name || m.type,
                       })),
                     ]}
-                    value={selectedEpusdtMethod}
+                    value={selectedGMPayMethod}
                     onValueChange={(v) =>
-                      v !== null && setSelectedEpusdtMethod(v)
+                      v !== null && setSelectedGMPayMethod(v)
                     }
                     disabled={limitReached}
                   >
@@ -394,18 +394,18 @@ export function SubscriptionPurchaseDialog(props: Props) {
                       <SelectValue>
                         <span className='flex min-w-0 items-center gap-2'>
                           {getPaymentIcon(
-                            selectedEpusdtMethod,
+                            selectedGMPayMethod,
                             'h-4 w-4 shrink-0'
                           )}
                           <span className='truncate'>
-                            {selectedEpusdtMethodLabel}
+                            {selectedGMPayMethodLabel}
                           </span>
                         </span>
                       </SelectValue>
                     </SelectTrigger>
                     <SelectContent alignItemWithTrigger={false}>
                       <SelectGroup>
-                        {(props.epusdtMethods || []).map((m) => (
+                        {(props.gmpayMethods || []).map((m) => (
                           <SelectItem key={m.type} value={m.type}>
                             <span className='flex min-w-0 items-center gap-2'>
                               {getPaymentIcon(m.type, 'h-4 w-4 shrink-0')}
@@ -419,11 +419,11 @@ export function SubscriptionPurchaseDialog(props: Props) {
                     </SelectContent>
                   </Select>
                   <Button
-                    onClick={handlePayEpusdt}
-                    disabled={paying || !selectedEpusdtMethod || limitReached}
+                    onClick={handlePayGMPay}
+                    disabled={paying || !selectedGMPayMethod || limitReached}
                     className='gap-2'
                   >
-                    {getPaymentIcon(selectedEpusdtMethod, 'h-4 w-4')}
+                    {getPaymentIcon(selectedGMPayMethod, 'h-4 w-4')}
                     {t('Pay')}
                   </Button>
                 </div>

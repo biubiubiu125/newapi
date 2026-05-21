@@ -63,6 +63,9 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 		&model.User{},
 		&model.Option{},
 		&model.TopUp{},
+		&model.SubscriptionPlan{},
+		&model.SubscriptionOrder{},
+		&model.UserSubscription{},
 		&model.ReferralAffiliate{},
 		&model.ReferralBinding{},
 		&model.ReferralClick{},
@@ -304,6 +307,34 @@ func TestProcessTopUpCommissionConcurrentCallbacksAreIdempotent(t *testing.T) {
 	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, job.Status)
 }
 
+func TestGetOrCreateAccountTxRejectsConflictingUserUniqueIndex(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "account-conflict", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+
+	existing := &model.ReferralCommissionAccount{
+		AffiliateId:        101,
+		UserId:             user.Id,
+		SettlementCurrency: "CNY",
+	}
+	require.NoError(t, db.Create(existing).Error)
+
+	err := db.Transaction(func(tx *gorm.DB) error {
+		account, err := service.getOrCreateAccountTx(tx, 202, user.Id)
+		require.Nil(t, account)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "referral account uniqueness mismatch")
+		return nil
+	})
+	require.NoError(t, err)
+
+	var accounts int64
+	require.NoError(t, db.Model(&model.ReferralCommissionAccount{}).Where("user_id = ?", user.Id).Count(&accounts).Error)
+	require.EqualValues(t, 1, accounts)
+}
+
 func TestProcessTopUpCommissionFailsWhenFxRateMissingAndRetriesAfterConfigured(t *testing.T) {
 	db := setupReferralServiceTestDB(t)
 	service := NewReferralService()
@@ -371,6 +402,308 @@ func TestProcessTopUpCommissionFailsWhenFxRateMissingAndRetriesAfterConfigured(t
 
 	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "topup", topup.TradeNo).First(job).Error)
 	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, job.Status)
+}
+
+func TestRetryCommissionJobRoutesSyntheticTopUpTradeNoToSubscription(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "sub-retry-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "sub-retry-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "SUBRETRY",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      affiliateUser.Id,
+	}).Error)
+
+	tradeNo := "same-trade-subscription"
+	order := &model.SubscriptionOrder{
+		UserId:                   invitee.Id,
+		PlanId:                   1,
+		Money:                    9.9,
+		PaidAmount:               9.9,
+		PaidCurrency:             "CNY",
+		TradeNo:                  tradeNo,
+		PaymentMethod:            model.PaymentProviderEpay,
+		PaymentProvider:          model.PaymentProviderEpay,
+		Status:                   common.TopUpStatusSuccess,
+		ReferralAffiliateId:      affiliate.Id,
+		ReferralRate:             10,
+		ReferralBaseAmount:       9.9,
+		ReferralBaseCurrency:     "CNY",
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusFailed,
+		ReferralCommissionError:  model.ReferralCommissionErrorFxRateMissing,
+		CreateTime:               time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(order).Error)
+	require.NoError(t, db.Create(&model.TopUp{
+		UserId:                   invitee.Id,
+		Amount:                   0,
+		Money:                    order.Money,
+		PaidAmount:               order.PaidAmount,
+		PaidCurrency:             order.PaidCurrency,
+		TradeNo:                  order.TradeNo,
+		PaymentMethod:            order.PaymentMethod,
+		PaymentProvider:          order.PaymentProvider,
+		Status:                   common.TopUpStatusSuccess,
+		ReferralAffiliateId:      order.ReferralAffiliateId,
+		ReferralRate:             order.ReferralRate,
+		ReferralBaseAmount:       order.ReferralBaseAmount,
+		ReferralBaseCurrency:     order.ReferralBaseCurrency,
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusFailed,
+		ReferralCommissionError:  model.ReferralCommissionErrorFxRateMissing,
+		CreateTime:               order.CreateTime,
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "topup",
+		SourceTradeNo: tradeNo,
+		AffiliateId:   affiliate.Id,
+		Status:        model.ReferralCommissionJobStatusFailed,
+		AttemptCount:  3,
+		LastError:     model.ReferralCommissionErrorFxRateMissing,
+		FailedAt:      time.Now().Unix(),
+	}).Error)
+
+	require.NoError(t, service.RetryCommissionJob("topup", tradeNo))
+
+	var commission model.ReferralCommission
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "subscription", tradeNo).First(&commission).Error)
+	require.Equal(t, order.Id, commission.SourceOrderId)
+	require.Equal(t, "subscription", commission.OrderType)
+	require.InDelta(t, 0.99, commission.CommissionAmount, 0.000001)
+
+	var canonicalJob model.ReferralCommissionJob
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "subscription", tradeNo).First(&canonicalJob).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, canonicalJob.Status)
+
+	var topUpJobCount int64
+	require.NoError(t, db.Model(&model.ReferralCommissionJob{}).Where("source_type = ? AND source_trade_no = ?", "topup", tradeNo).Count(&topUpJobCount).Error)
+	require.Zero(t, topUpJobCount)
+
+	var reloadedOrder model.SubscriptionOrder
+	require.NoError(t, db.Where("trade_no = ?", tradeNo).First(&reloadedOrder).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, reloadedOrder.ReferralCommissionStatus)
+	require.Empty(t, reloadedOrder.ReferralCommissionError)
+
+	var reloadedTopUp model.TopUp
+	require.NoError(t, db.Where("trade_no = ?", tradeNo).First(&reloadedTopUp).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, reloadedTopUp.ReferralCommissionStatus)
+	require.Empty(t, reloadedTopUp.ReferralCommissionError)
+}
+
+func TestListCommissionJobsResolvesRealOrderTypeAndTradeNo(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "job-list-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "job-list-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "JOBLIST",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+
+	subscriptionTradeNo := "job-list-subscription"
+	require.NoError(t, db.Create(&model.SubscriptionOrder{
+		UserId:            invitee.Id,
+		PlanId:            1,
+		Money:             9.9,
+		PaidAmount:        9.9,
+		PaidCurrency:      "CNY",
+		TradeNo:           subscriptionTradeNo,
+		PaymentMethod:     model.PaymentProviderEpay,
+		PaymentProvider:   model.PaymentProviderEpay,
+		Status:            common.TopUpStatusSuccess,
+		PlanTitleSnapshot: "测试订阅套餐",
+		CreateTime:        time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.TopUp{
+		UserId:          invitee.Id,
+		Money:           9.9,
+		PaidAmount:      9.9,
+		PaidCurrency:    "CNY",
+		TradeNo:         subscriptionTradeNo,
+		PaymentMethod:   model.PaymentProviderEpay,
+		PaymentProvider: model.PaymentProviderEpay,
+		Status:          common.TopUpStatusSuccess,
+		CreateTime:      time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "topup",
+		SourceTradeNo: subscriptionTradeNo,
+		AffiliateId:   affiliate.Id,
+		Status:        model.ReferralCommissionJobStatusFailed,
+		LastError:     model.ReferralCommissionErrorFxRateMissing,
+	}).Error)
+
+	topupTradeNo := "job-list-topup"
+	require.NoError(t, db.Create(&model.TopUp{
+		UserId:          invitee.Id,
+		Money:           12,
+		PaidAmount:      12,
+		PaidCurrency:    "CNY",
+		TradeNo:         topupTradeNo,
+		PaymentMethod:   model.PaymentProviderGMPay,
+		PaymentProvider: model.PaymentProviderGMPay,
+		Status:          common.TopUpStatusSuccess,
+		CreateTime:      time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "topup",
+		SourceTradeNo: topupTradeNo,
+		AffiliateId:   affiliate.Id,
+		Status:        model.ReferralCommissionJobStatusFailed,
+		LastError:     model.ReferralCommissionErrorFxRateMissing,
+	}).Error)
+
+	items, total, err := service.ListCommissionJobs(ReferralListParams{Page: 1, PageSize: 20})
+	require.NoError(t, err)
+	require.Equal(t, int64(2), total)
+
+	byTradeNo := make(map[string]ReferralCommissionJobView, len(items))
+	for _, item := range items {
+		byTradeNo[item.SourceTradeNo] = item
+	}
+
+	subscriptionJob := byTradeNo[subscriptionTradeNo]
+	require.Equal(t, "topup", subscriptionJob.SourceType)
+	require.Equal(t, "subscription", subscriptionJob.OrderType)
+	require.Equal(t, "subscription", subscriptionJob.RetrySourceType)
+	require.Equal(t, subscriptionTradeNo, subscriptionJob.OrderTradeNo)
+	require.True(t, subscriptionJob.OrderExists)
+	require.Equal(t, "测试订阅套餐", subscriptionJob.OrderLabel)
+
+	topupJob := byTradeNo[topupTradeNo]
+	require.Equal(t, "topup", topupJob.SourceType)
+	require.Equal(t, "topup", topupJob.OrderType)
+	require.Equal(t, "topup", topupJob.RetrySourceType)
+	require.Equal(t, topupTradeNo, topupJob.OrderTradeNo)
+	require.True(t, topupJob.OrderExists)
+}
+
+func TestBuildOrderSnapshotPreservesAffiliateWhenFxRateMissing(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	operation_setting.USDExchangeRate = 0
+	common.ReferralSettlementFxRates = map[string]float64{"CNY": 1}
+
+	invitee := &model.User{Username: "snapshot-fx-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "snapshot-fx-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	rateOverride := 15.0
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "SNAPFX01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+		RateOverride:       &rateOverride,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralBinding{
+		InviteeUserId: invitee.Id,
+		InviterUserId: affiliateUser.Id,
+		AffiliateId:   affiliate.Id,
+		BindSource:    "code",
+		BindCode:      affiliate.InviteCode,
+		BoundAt:       time.Now().Unix(),
+	}).Error)
+
+	snapshot, err := service.BuildOrderSnapshot(invitee.Id, 10, "EUR")
+	require.NoError(t, err)
+	require.NotNil(t, snapshot)
+	require.Equal(t, affiliate.Id, snapshot.AffiliateId)
+	require.Equal(t, 15.0, snapshot.Rate)
+	require.Equal(t, model.ReferralCommissionJobStatusFailed, snapshot.Status)
+	require.Equal(t, model.ReferralCommissionErrorFxRateMissing, snapshot.Error)
+}
+
+func TestProcessSubscriptionCommissionSyncsSyntheticTopUpState(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "sub-sync-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "sub-sync-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "SUBSYNC1",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      affiliateUser.Id,
+	}).Error)
+
+	order := &model.SubscriptionOrder{
+		UserId:                   invitee.Id,
+		PlanId:                   1,
+		Money:                    100,
+		PaidAmount:               100,
+		PaidCurrency:             "CNY",
+		TradeNo:                  "sub-sync-order",
+		PaymentMethod:            model.PaymentProviderEpay,
+		PaymentProvider:          model.PaymentProviderEpay,
+		Status:                   common.TopUpStatusSuccess,
+		ReferralAffiliateId:      affiliate.Id,
+		ReferralRate:             20,
+		ReferralBaseAmount:       100,
+		ReferralBaseCurrency:     "CNY",
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusPending,
+		CreateTime:               time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(order).Error)
+	require.NoError(t, db.Create(&model.TopUp{
+		UserId:                   invitee.Id,
+		Amount:                   0,
+		Money:                    order.Money,
+		PaidAmount:               order.PaidAmount,
+		PaidCurrency:             order.PaidCurrency,
+		TradeNo:                  order.TradeNo,
+		PaymentMethod:            order.PaymentMethod,
+		PaymentProvider:          order.PaymentProvider,
+		Status:                   common.TopUpStatusSuccess,
+		ReferralAffiliateId:      order.ReferralAffiliateId,
+		ReferralRate:             order.ReferralRate,
+		ReferralBaseAmount:       order.ReferralBaseAmount,
+		ReferralBaseCurrency:     order.ReferralBaseCurrency,
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusPending,
+		CreateTime:               order.CreateTime,
+	}).Error)
+
+	require.NoError(t, service.ProcessSubscriptionCommission(order.TradeNo))
+
+	var topUp model.TopUp
+	require.NoError(t, db.Where("trade_no = ?", order.TradeNo).First(&topUp).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, topUp.ReferralCommissionStatus)
+	require.Empty(t, topUp.ReferralCommissionError)
+	require.NotZero(t, topUp.ReferralCommissionAt)
 }
 
 func TestProcessTopUpCommissionFallsBackToUSDExchangeRate(t *testing.T) {
@@ -782,6 +1115,60 @@ func TestCreateWithdrawalRejectsWechatAndNormalizesUSDTNetwork(t *testing.T) {
 	require.NoError(t, db.First(stored, view.Id).Error)
 	require.Equal(t, "Polygon", stored.AccountNetwork)
 	require.Empty(t, stored.AccountName)
+}
+
+func TestCreateWithdrawalUSDTIdempotencyUsesCanonicalPayload(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "wd-usdt-idem", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             user.Id,
+		InviteCode:         "WDUIDEM1",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:     affiliate.Id,
+		UserId:          user.Id,
+		AvailableAmount: 100,
+	}).Error)
+
+	first, err := service.CreateWithdrawal(ReferralWithdrawalCreateInput{
+		UserId:         user.Id,
+		Amount:         10,
+		AccountType:    "usdt",
+		AccountName:    "ignored name",
+		AccountNo:      "TTESTADDRESS",
+		AccountNetwork: "trc20",
+		IdempotencyKey: "wd-usdt-idem",
+	})
+	require.NoError(t, err)
+
+	second, err := service.CreateWithdrawal(ReferralWithdrawalCreateInput{
+		UserId:         user.Id,
+		Amount:         10,
+		AccountType:    "USDT",
+		AccountName:    "different ignored name",
+		AccountNo:      "TTESTADDRESS",
+		AccountNetwork: "TRC20",
+		IdempotencyKey: "wd-usdt-idem",
+	})
+	require.NoError(t, err)
+	require.Equal(t, first.Id, second.Id)
+
+	account := &model.ReferralCommissionAccount{}
+	require.NoError(t, db.Where("affiliate_id = ?", affiliate.Id).First(account).Error)
+	require.Equal(t, 90.0, account.AvailableAmount)
+	require.Equal(t, 10.0, account.FrozenAmount)
+
+	var count int64
+	require.NoError(t, db.Model(&model.ReferralWithdrawal{}).Where("idempotency_key = ?", "wd-usdt-idem").Count(&count).Error)
+	require.Equal(t, int64(1), count)
 }
 
 func TestCreateWithdrawalFreezesAccountAndAllocatesCommission(t *testing.T) {

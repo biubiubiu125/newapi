@@ -2,9 +2,13 @@ package controller
 
 import (
 	"fmt"
+	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -16,6 +20,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 )
+
+const systemLogoPublicPrefix = "/system-assets/"
 
 var completionRatioMetaOptionKeys = []string{
 	"ModelPrice",
@@ -81,6 +87,93 @@ func buildCompletionRatioMetaValue(optionValues map[string]string) string {
 		return "{}"
 	}
 	return string(jsonBytes)
+}
+
+func UploadSystemLogo(c *gin.Context) {
+	fileHeader, err := c.FormFile("file")
+	if err != nil {
+		common.ApiErrorMsg(c, "please choose image file")
+		return
+	}
+	file, err := fileHeader.Open()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	defer func() { _ = file.Close() }()
+
+	data, err := io.ReadAll(io.LimitReader(file, 5*1024*1024+1))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if len(data) > 5*1024*1024 {
+		common.ApiErrorMsg(c, "image size must not exceed 5 MB")
+		return
+	}
+	contentType := http.DetectContentType(data)
+	if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
+		common.ApiErrorMsg(c, "only image upload is supported")
+		return
+	}
+	dir, err := ensureSystemAssetDir()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	ext := systemAssetExtensionFromContentType(contentType)
+	name := fmt.Sprintf("logo-%d-%s%s", time.Now().UnixMilli(), strings.ToLower(common.GetRandomString(8)), ext)
+	fullPath := filepath.Join(dir, name)
+	if err := os.WriteFile(fullPath, data, 0o644); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{"url": systemLogoPublicPrefix + name})
+}
+
+func GetSystemAsset(c *gin.Context) {
+	name := filepath.Base(strings.TrimSpace(c.Param("name")))
+	if name == "" || name == "." || strings.Contains(name, string(filepath.Separator)) {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+	dir, err := ensureSystemAssetDir()
+	if err != nil {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+	fullPath := filepath.Join(dir, name)
+	if _, err := os.Stat(fullPath); err != nil {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+	c.Header("Cache-Control", "public, max-age=31536000, immutable")
+	c.File(fullPath)
+}
+
+func ensureSystemAssetDir() (string, error) {
+	dir := filepath.Join(".", "uploads", "system-assets")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		return "", err
+	}
+	return dir, nil
+}
+
+func systemAssetExtensionFromContentType(contentType string) string {
+	switch strings.ToLower(strings.TrimSpace(contentType)) {
+	case "image/png":
+		return ".png"
+	case "image/jpeg":
+		return ".jpg"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	case "image/svg+xml":
+		return ".svg"
+	default:
+		return ".bin"
+	}
 }
 
 func GetOptions(c *gin.Context) {

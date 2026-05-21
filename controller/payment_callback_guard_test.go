@@ -35,8 +35,9 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 	previousEpayID := operation_setting.EpayId
 	previousEpayKey := operation_setting.EpayKey
 	previousPayMethods := operation_setting.PayMethods
-	previousEpusdtPID := setting.EpusdtPID
-	previousEpusdtSecretKey := setting.EpusdtSecretKey
+	previousGMPayPID := setting.GMPayPID
+	previousGMPaySecretKey := setting.GMPaySecretKey
+	previousGMPayCurrency := setting.GMPayCurrency
 	paymentSetting := operation_setting.GetPaymentSetting()
 	previousComplianceConfirmed := paymentSetting.ComplianceConfirmed
 	previousComplianceTermsVersion := paymentSetting.ComplianceTermsVersion
@@ -52,8 +53,9 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 	operation_setting.PayMethods = []map[string]string{{"type": "alipay"}}
 	paymentSetting.ComplianceConfirmed = true
 	paymentSetting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
-	setting.EpusdtPID = "epusdt-pid-test"
-	setting.EpusdtSecretKey = "epusdt-key-test"
+	setting.GMPayPID = "gmpay-pid-test"
+	setting.GMPaySecretKey = "gmpay-key-test"
+	setting.GMPayCurrency = "cny"
 
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
@@ -83,8 +85,9 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 		operation_setting.PayMethods = previousPayMethods
 		paymentSetting.ComplianceConfirmed = previousComplianceConfirmed
 		paymentSetting.ComplianceTermsVersion = previousComplianceTermsVersion
-		setting.EpusdtPID = previousEpusdtPID
-		setting.EpusdtSecretKey = previousEpusdtSecretKey
+		setting.GMPayPID = previousGMPayPID
+		setting.GMPaySecretKey = previousGMPaySecretKey
+		setting.GMPayCurrency = previousGMPayCurrency
 		sqlDB, err := db.DB()
 		if err == nil {
 			_ = sqlDB.Close()
@@ -105,12 +108,12 @@ func signedEpayCallback(values map[string]string) url.Values {
 	return out
 }
 
-func signedEpusdtCallback(values map[string]interface{}) string {
+func signedGMPayCallback(values map[string]interface{}) string {
 	params := map[string]interface{}{}
 	for key, value := range values {
 		params[key] = value
 	}
-	params["signature"] = service.EpusdtSign(params, setting.EpusdtSecretKey)
+	params["signature"] = service.GMPaySign(params, setting.GMPaySecretKey)
 	return common.GetJsonString(params)
 }
 
@@ -210,11 +213,11 @@ func TestEpayTopupNotifyRejectsNonSuccessStatus(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestEpusdtTopupNotifyRejectsMissingMerchant(t *testing.T) {
+func TestGMPayTopupNotifyRejectsMissingMerchant(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 912, Username: "epusdt_merchant_guard_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 912, Username: "gmpay_merchant_guard_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	topUp := &model.TopUp{
 		UserId:          user.Id,
@@ -222,17 +225,17 @@ func TestEpusdtTopupNotifyRejectsMissingMerchant(t *testing.T) {
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "epusdt-missing-merchant-guard",
-		PaymentMethod:   service.BuildEpusdtPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderEpusdt,
+		TradeNo:         "gmpay-missing-merchant-guard",
+		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderGMPay,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, topUp.Insert())
 
-	body := signedEpusdtCallback(map[string]interface{}{
+	body := signedGMPayCallback(map[string]interface{}{
 		"order_id":       topUp.TradeNo,
-		"transaction_id": "epusdt-gateway-merchant-guard",
+		"transaction_id": "gmpay-gateway-merchant-guard",
 		"amount":         "9.99",
 		"order_currency": "CNY",
 		"token":          "usdt",
@@ -240,13 +243,13 @@ func TestEpusdtTopupNotifyRejectsMissingMerchant(t *testing.T) {
 		"status":         "paid",
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/user/epusdt/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/user/gmpay/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	EpusdtTopUpNotify(c)
+	GMPayTopUpNotify(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "fail", w.Body.String())
@@ -258,11 +261,11 @@ func TestEpusdtTopupNotifyRejectsMissingMerchant(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestEpusdtTopupNotifyAcceptsGMwalletCallback(t *testing.T) {
+func TestGMPayTopupNotifyAcceptsGMwalletCallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 914, Username: "epusdt_gmpay_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 914, Username: "gmpay_gmpay_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	topUp := &model.TopUp{
 		UserId:          user.Id,
@@ -270,50 +273,52 @@ func TestEpusdtTopupNotifyAcceptsGMwalletCallback(t *testing.T) {
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "epusdt-gmpay-success",
-		PaymentMethod:   service.BuildEpusdtPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderEpusdt,
+		TradeNo:         "gmpay-gmpay-success",
+		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderGMPay,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, topUp.Insert())
 
-	body := signedEpusdtCallback(map[string]interface{}{
-		"pid":                  setting.EpusdtPID,
+	body := signedGMPayCallback(map[string]interface{}{
+		"pid":                  setting.GMPayPID,
 		"trade_id":             "T202605180001",
 		"order_id":             topUp.TradeNo,
 		"amount":               "9.99",
 		"actual_amount":        "1.4285",
 		"receive_address":      "TTestAddress",
 		"token":                "USDT",
+		"currency":             "USDT",
 		"network":              "tron",
 		"block_transaction_id": "0xtesttx",
 		"status":               2,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/user/epusdt/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/user/gmpay/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	EpusdtTopUpNotify(c)
+	GMPayTopUpNotify(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "ok", w.Body.String())
 	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusSuccess, reloaded.Status)
+	require.Equal(t, "CNY", reloaded.PaidCurrency)
 	var updatedUser model.User
 	require.NoError(t, model.DB.Where("id = ?", user.Id).First(&updatedUser).Error)
 	require.Positive(t, updatedUser.Quota)
 }
 
-func TestEpusdtTopupNotifyRejectsNetworkMismatch(t *testing.T) {
+func TestGMPayTopupNotifyRejectsNetworkMismatch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 917, Username: "epusdt_network_guard_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 917, Username: "gmpay_network_guard_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	topUp := &model.TopUp{
 		UserId:          user.Id,
@@ -321,16 +326,16 @@ func TestEpusdtTopupNotifyRejectsNetworkMismatch(t *testing.T) {
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "epusdt-network-guard",
-		PaymentMethod:   service.BuildEpusdtPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderEpusdt,
+		TradeNo:         "gmpay-network-guard",
+		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderGMPay,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, topUp.Insert())
 
-	body := signedEpusdtCallback(map[string]interface{}{
-		"pid":            setting.EpusdtPID,
+	body := signedGMPayCallback(map[string]interface{}{
+		"pid":            setting.GMPayPID,
 		"trade_id":       "T202605180003",
 		"order_id":       topUp.TradeNo,
 		"amount":         "9.99",
@@ -340,13 +345,13 @@ func TestEpusdtTopupNotifyRejectsNetworkMismatch(t *testing.T) {
 		"status":         2,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/user/epusdt/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/user/gmpay/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	EpusdtTopUpNotify(c)
+	GMPayTopUpNotify(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "fail", w.Body.String())
@@ -358,11 +363,11 @@ func TestEpusdtTopupNotifyRejectsNetworkMismatch(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestEpusdtTopupNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T) {
+func TestGMPayTopupNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 919, Username: "epusdt_payment_type_guard_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 919, Username: "gmpay_payment_type_guard_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	topUp := &model.TopUp{
 		UserId:          user.Id,
@@ -370,16 +375,16 @@ func TestEpusdtTopupNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T) {
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "epusdt-payment-type-guard",
-		PaymentMethod:   service.BuildEpusdtPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderEpusdt,
+		TradeNo:         "gmpay-payment-type-guard",
+		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderGMPay,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, topUp.Insert())
 
-	body := signedEpusdtCallback(map[string]interface{}{
-		"pid":            setting.EpusdtPID,
+	body := signedGMPayCallback(map[string]interface{}{
+		"pid":            setting.GMPayPID,
 		"trade_id":       "T202605190001",
 		"order_id":       topUp.TradeNo,
 		"amount":         "9.99",
@@ -390,13 +395,13 @@ func TestEpusdtTopupNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T) {
 		"status":         2,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/user/epusdt/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/user/gmpay/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	EpusdtTopUpNotify(c)
+	GMPayTopUpNotify(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "fail", w.Body.String())
@@ -408,15 +413,15 @@ func TestEpusdtTopupNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestSubscriptionEpusdtNotifyRejectsMissingMerchant(t *testing.T) {
+func TestSubscriptionGMPayNotifyRejectsMissingMerchant(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 913, Username: "sub_epusdt_merchant_guard_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 913, Username: "sub_gmpay_merchant_guard_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	plan := &model.SubscriptionPlan{
 		Id:            810,
-		Title:         "Epusdt Merchant Guard Plan",
+		Title:         "GMPay Merchant Guard Plan",
 		PriceAmount:   9.99,
 		Currency:      "CNY",
 		DurationUnit:  model.SubscriptionDurationMonth,
@@ -431,17 +436,17 @@ func TestSubscriptionEpusdtNotifyRejectsMissingMerchant(t *testing.T) {
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "sub-epusdt-missing-merchant-guard",
-		PaymentMethod:   service.BuildEpusdtPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderEpusdt,
+		TradeNo:         "sub-gmpay-missing-merchant-guard",
+		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderGMPay,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, order.Insert())
 
-	body := signedEpusdtCallback(map[string]interface{}{
+	body := signedGMPayCallback(map[string]interface{}{
 		"order_id":       order.TradeNo,
-		"transaction_id": "epusdt-gateway-sub-merchant-guard",
+		"transaction_id": "gmpay-gateway-sub-merchant-guard",
 		"amount":         "9.99",
 		"order_currency": "CNY",
 		"token":          "usdt",
@@ -449,13 +454,13 @@ func TestSubscriptionEpusdtNotifyRejectsMissingMerchant(t *testing.T) {
 		"status":         "paid",
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/subscription/epusdt/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/gmpay/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	SubscriptionEpusdtNotify(c)
+	SubscriptionGMPayNotify(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "fail", w.Body.String())
@@ -467,15 +472,15 @@ func TestSubscriptionEpusdtNotifyRejectsMissingMerchant(t *testing.T) {
 	require.Zero(t, subscriptionCount)
 }
 
-func TestSubscriptionEpusdtNotifyAcceptsGMwalletCallback(t *testing.T) {
+func TestSubscriptionGMPayNotifyAcceptsGMwalletCallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 915, Username: "sub_epusdt_gmpay_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 915, Username: "sub_gmpay_gmpay_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	plan := &model.SubscriptionPlan{
 		Id:            811,
-		Title:         "Epusdt GMPay Plan",
+		Title:         "GMPay GMPay Plan",
 		PriceAmount:   9.99,
 		Currency:      "CNY",
 		DurationUnit:  model.SubscriptionDurationMonth,
@@ -490,54 +495,56 @@ func TestSubscriptionEpusdtNotifyAcceptsGMwalletCallback(t *testing.T) {
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "sub-epusdt-gmpay-success",
-		PaymentMethod:   service.BuildEpusdtPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderEpusdt,
+		TradeNo:         "sub-gmpay-gmpay-success",
+		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderGMPay,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, order.Insert())
 
-	body := signedEpusdtCallback(map[string]interface{}{
-		"pid":                  setting.EpusdtPID,
+	body := signedGMPayCallback(map[string]interface{}{
+		"pid":                  setting.GMPayPID,
 		"trade_id":             "T202605180002",
 		"order_id":             order.TradeNo,
 		"amount":               "9.99",
 		"actual_amount":        "1.4285",
 		"receive_address":      "TTestAddress",
 		"token":                "USDT",
+		"currency":             "USDT",
 		"network":              "tron",
 		"block_transaction_id": "0xtesttxsub",
 		"status":               2,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/subscription/epusdt/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/gmpay/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	SubscriptionEpusdtNotify(c)
+	SubscriptionGMPayNotify(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "ok", w.Body.String())
 	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusSuccess, reloaded.Status)
+	require.Equal(t, "CNY", reloaded.PaidCurrency)
 	var subscriptionCount int64
 	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("user_id = ?", user.Id).Count(&subscriptionCount).Error)
 	require.Equal(t, int64(1), subscriptionCount)
 }
 
-func TestSubscriptionEpusdtNotifyRejectsNetworkMismatch(t *testing.T) {
+func TestSubscriptionGMPayNotifyRejectsNetworkMismatch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 918, Username: "sub_epusdt_network_guard_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 918, Username: "sub_gmpay_network_guard_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	plan := &model.SubscriptionPlan{
 		Id:            812,
-		Title:         "Epusdt Network Guard Plan",
+		Title:         "GMPay Network Guard Plan",
 		PriceAmount:   9.99,
 		Currency:      "CNY",
 		DurationUnit:  model.SubscriptionDurationMonth,
@@ -552,16 +559,16 @@ func TestSubscriptionEpusdtNotifyRejectsNetworkMismatch(t *testing.T) {
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "sub-epusdt-network-guard",
-		PaymentMethod:   service.BuildEpusdtPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderEpusdt,
+		TradeNo:         "sub-gmpay-network-guard",
+		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderGMPay,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, order.Insert())
 
-	body := signedEpusdtCallback(map[string]interface{}{
-		"pid":            setting.EpusdtPID,
+	body := signedGMPayCallback(map[string]interface{}{
+		"pid":            setting.GMPayPID,
 		"trade_id":       "T202605180004",
 		"order_id":       order.TradeNo,
 		"amount":         "9.99",
@@ -571,13 +578,13 @@ func TestSubscriptionEpusdtNotifyRejectsNetworkMismatch(t *testing.T) {
 		"status":         2,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/subscription/epusdt/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/gmpay/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	SubscriptionEpusdtNotify(c)
+	SubscriptionGMPayNotify(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "fail", w.Body.String())
@@ -589,15 +596,15 @@ func TestSubscriptionEpusdtNotifyRejectsNetworkMismatch(t *testing.T) {
 	require.Zero(t, subscriptionCount)
 }
 
-func TestSubscriptionEpusdtNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T) {
+func TestSubscriptionGMPayNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 920, Username: "sub_epusdt_payment_type_guard_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 920, Username: "sub_gmpay_payment_type_guard_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	plan := &model.SubscriptionPlan{
 		Id:            813,
-		Title:         "Epusdt Payment Type Guard Plan",
+		Title:         "GMPay Payment Type Guard Plan",
 		PriceAmount:   9.99,
 		Currency:      "CNY",
 		DurationUnit:  model.SubscriptionDurationMonth,
@@ -612,16 +619,16 @@ func TestSubscriptionEpusdtNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "sub-epusdt-payment-type-guard",
-		PaymentMethod:   service.BuildEpusdtPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderEpusdt,
+		TradeNo:         "sub-gmpay-payment-type-guard",
+		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderGMPay,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, order.Insert())
 
-	body := signedEpusdtCallback(map[string]interface{}{
-		"pid":            setting.EpusdtPID,
+	body := signedGMPayCallback(map[string]interface{}{
+		"pid":            setting.GMPayPID,
 		"trade_id":       "T202605190002",
 		"order_id":       order.TradeNo,
 		"amount":         "9.99",
@@ -632,13 +639,13 @@ func TestSubscriptionEpusdtNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T
 		"status":         2,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/subscription/epusdt/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/gmpay/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	SubscriptionEpusdtNotify(c)
+	SubscriptionGMPayNotify(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "fail", w.Body.String())

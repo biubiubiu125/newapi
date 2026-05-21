@@ -72,12 +72,12 @@ const PAYMENT_TEMPLATES = [
     },
   },
   {
-    name: 'USDT',
+    name: 'GMPay USDT',
     template: {
       color: 'rgba(var(--semi-teal-5), 1)',
       min_topup: '1',
-      name: 'USDT',
-      type: 'epusdt:usdt',
+      name: 'GMPay USDT',
+      type: 'gmpay:usdt',
     },
   },
   {
@@ -90,6 +90,16 @@ const PAYMENT_TEMPLATES = [
     },
   },
 ]
+
+function getPaymentMethodDisplayName(method: PaymentMethodData): string {
+  if (!method.type.startsWith('gmpay:')) {
+    return method.name
+  }
+
+  const [, token, network] = method.type.split(':')
+  const tokenLabel = (token || 'USDT').toUpperCase()
+  return `GMPay ${tokenLabel}${network ? `-${network}` : ''}`
+}
 
 export function PaymentMethodsVisualEditor({
   value,
@@ -314,10 +324,11 @@ export function PaymentMethodsVisualEditor({
               <TableBody>
                 {filteredMethods.map((method, index) => {
                   const colorPreview = getColorPreview(method.color)
+                  const displayName = getPaymentMethodDisplayName(method)
                   return (
                     <TableRow key={`${method.type}-${index}`}>
                       <TableCell className='font-medium'>
-                        {method.name}
+                        {displayName}
                       </TableCell>
                       <TableCell>
                         <code className='bg-muted rounded px-1.5 py-0.5 text-xs'>
@@ -387,11 +398,12 @@ export function PaymentMethodsVisualEditor({
           <div className='divide-y md:hidden'>
             {filteredMethods.map((method, index) => {
               const colorPreview = getColorPreview(method.color)
+              const displayName = getPaymentMethodDisplayName(method)
               return (
                 <div key={`${method.type}-${index}`} className='p-4'>
                   <div className='mb-3 flex items-start justify-between'>
                     <div className='flex-1'>
-                      <div className='mb-1 font-medium'>{method.name}</div>
+                      <div className='mb-1 font-medium'>{displayName}</div>
                       <code className='bg-muted rounded px-1.5 py-0.5 text-xs'>
                         {method.type}
                       </code>

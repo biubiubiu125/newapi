@@ -174,6 +174,11 @@ export interface ReferralCommissionJob {
   id: number
   source_type: string
   source_trade_no: string
+  order_type: string
+  order_trade_no: string
+  order_exists: boolean
+  order_label: string
+  retry_source_type: string
   affiliate_id: number
   status: string
   attempt_count: number

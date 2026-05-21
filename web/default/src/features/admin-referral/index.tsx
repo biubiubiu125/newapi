@@ -16,7 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useEffectEvent, useState, type ReactNode } from 'react'
+import {
+  useCallback,
+  useEffect,
+  useEffectEvent,
+  useMemo,
+  useState,
+  type ReactNode,
+} from 'react'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -144,6 +151,13 @@ type WithdrawalAction =
   | { kind: 'pay'; item: ReferralWithdrawal }
   | null
 
+type AuditTimelineItem = {
+  key: string
+  time: number
+  cells: ReactNode[]
+  action?: ReactNode
+}
+
 function formatMoney(value: number): string {
   const amount = Number.isFinite(value) ? value : 0
   const formatted = new Intl.NumberFormat(undefined, {
@@ -202,6 +216,16 @@ function paidAmountDetail(
     return ''
   }
   return `${t('Original paid')}: ${formatOriginalPaidAmount(item)}${rateDetail}`
+}
+
+function commissionJobDisplaySource(item: ReferralCommissionJob) {
+  const orderType = item.order_type || item.source_type || ''
+  const tradeNo = item.order_trade_no || item.source_trade_no || ''
+  return {
+    orderType,
+    tradeNo,
+    retrySourceType: item.retry_source_type || orderType || item.source_type,
+  }
 }
 
 function parseOptionalNumber(value: string): number | undefined {
@@ -286,24 +310,79 @@ function commissionJobStatusLabel(
 ): string {
   switch (value) {
     case 'pending':
-      return t('Pending')
+      return '待处理'
     case 'processing':
-      return t('Processing')
+      return '处理中'
     case 'skipped':
-      return t('Skipped')
+      return '已跳过'
     case 'succeeded':
-      return t('Succeeded')
+      return '已成功'
     case 'failed':
-      return t('Failed')
+      return '失败'
     default:
-      return value || '-'
+      return value ? t(value) : '-'
   }
 }
 
 function referralErrorLabel(value: string, t: (key: string) => string): string {
-  switch (value) {
+  const normalized = (value || '').trim()
+  if (!normalized) {
+    return '-'
+  }
+  switch (normalized) {
     case 'fx_rate_missing':
-      return t('Missing referral FX rate')
+      return '返佣汇率缺失'
+    case 'missing_referral_snapshot':
+      return '订单没有返佣快照，已跳过佣金生成'
+    case 'zero_commission_amount':
+      return '佣金金额为 0，已跳过佣金生成'
+    case 'affiliate_not_eligible':
+      return '推广员未通过审核或结算已关闭'
+    case 'unsupported source_type':
+      return '不支持的订单来源类型'
+    case 'trade_no is required':
+      return '缺少订单号'
+    case 'failed to update referral pending amount':
+      return '更新推广员待结算余额失败'
+    case 'record not found':
+      return '关联记录不存在'
+    case 'subscription order not found':
+      return '订阅订单不存在'
+    case 'topup order not found':
+      return '充值订单不存在'
+    case 'duplicate_job_superseded_by_subscription':
+      return '同一订单已按订阅订单重新生成佣金'
+    case 'paid_amount must be a positive finite number':
+      return '实付金额必须大于 0'
+    default:
+      if (normalized.includes('UNIQUE constraint failed')) {
+        return '佣金记录已存在或唯一约束冲突'
+      }
+      if (normalized.includes('duplicate key value')) {
+        return '佣金记录已存在或唯一约束冲突'
+      }
+      if (normalized.includes('record not found')) {
+        return '关联记录不存在'
+      }
+      if (normalized.includes('subscription order not found')) {
+        return '订阅订单不存在'
+      }
+      if (normalized.includes('topup order not found')) {
+        return '充值订单不存在'
+      }
+      return normalized || t('Unknown error')
+  }
+}
+
+function commissionJobSourceLabel(
+  value: string,
+  t: (key: string) => string
+): string {
+  switch (value) {
+    case 'topup':
+      return t('Top-up')
+    case 'subscription':
+      return t('Subscription')
     default:
       return value || '-'
   }
@@ -374,67 +453,141 @@ function orderTypeLabel(value: string, t: (key: string) => string): string {
   }
 }
 
-function auditReasonLabel(value: string, t: (key: string) => string): string {
-  switch (value) {
+function auditReasonLabel(value: string): string {
+  const normalized = (value || '').trim()
+  if (!normalized) {
+    return '-'
+  }
+  const lower = normalized.toLowerCase()
+  switch (lower) {
+    case '':
+      return '-'
     case 'settings updated':
-      return t('Settings updated')
+      return '设置已更新'
     case 'batch approve':
-      return t('Batch approved')
+      return '批量审核通过'
     case 'batch paid':
-      return t('Batch paid')
+      return '批量标记已打款'
     case 'ui button smoke test':
-      return t('UI button smoke test')
+      return '界面按钮冒烟测试'
     case 'approve e2e':
-      return t('Approve E2E')
+      return '审核端到端测试'
     case 'paid e2e':
-      return t('Paid E2E')
+      return '打款端到端测试'
     case 'approve flow':
-      return t('Approve flow')
+      return '审核流程'
     case 'paid flow':
-      return t('Paid flow')
+      return '打款流程'
     case 'withdrawal flow':
-      return t('Withdrawal flow')
+      return '提现流程'
     case 'e2e':
-      return t('E2E test')
+      return '端到端测试'
+    case 'test reject release':
+      return '测试拒绝后释放冻结金额'
+    case 'test machine withdrawal':
+      return '测试机提现申请'
+    case 'paid in test-machine chain':
+      return '测试机链路已打款'
+    case 'approved in test-machine chain':
+      return '测试机链路审核通过'
+    case 'test machine paid':
+      return '测试机打款测试'
+    case 'test machine approve':
+      return '测试机审核测试'
+    case 'manual retry':
+    case 'retry':
+      return '手动重试'
+    case 'fx_rate_missing':
+      return '返佣结算汇率缺失'
+    case 'missing_referral_snapshot':
+      return '订单缺少推广快照'
+    case 'zero_commission_amount':
+      return '佣金金额为 0'
+    case 'affiliate_not_eligible':
+      return '推广员当前不可结算'
+    case 'affiliate_not_found':
+      return '推广员不存在'
+    case 'affiliate_not_approved':
+      return '推广员未审核通过'
+    case 'affiliate_acquisition_disabled':
+      return '推广员拉新已冻结'
+    case 'affiliate_settlement_disabled':
+      return '推广员结算已冻结'
+    case 'no_binding':
+      return '订单用户没有有效邀请绑定'
+    case 'invalid_rate':
+      return '返佣比例无效'
+    case 'record not found':
+      return '关联记录不存在'
+    case 'subscription order not found':
+      return '订阅订单不存在'
+    case 'topup order not found':
+      return '充值订单不存在'
+    case 'duplicate_job_superseded_by_subscription':
+      return '同一订单已按订阅订单重新生成佣金'
     default:
-      return value || '-'
+      return auditReasonPatternLabel(normalized)
   }
 }
 
-function auditActionLabel(value: string, t: (key: string) => string): string {
+function auditReasonPatternLabel(value: string): string {
+  const lower = value.toLowerCase()
+  if (lower.includes('reject') && lower.includes('release')) {
+    return '拒绝后释放冻结金额'
+  }
+  if (lower.includes('approved') || lower.includes('approve')) {
+    return lower.includes('test')
+      ? '测试链路审核通过'
+      : '审核通过'
+  }
+  if (lower.includes('paid') || lower.includes('payment')) {
+    return lower.includes('test')
+      ? '测试链路已打款'
+      : '已打款'
+  }
+  if (lower.includes('withdrawal')) {
+    return lower.includes('test') ? '测试提现流程' : '提现流程'
+  }
+  if (lower.includes('test-machine') || lower.includes('test machine')) {
+    return `测试机记录：${value.replace(/test-machine|test machine/gi, '').trim() || value}`
+  }
+  return value || '-'
+}
+
+function auditActionLabel(value: string): string {
   switch (value) {
     case 'referral_affiliate_approve':
-      return t('Affiliate Approved')
+      return '推广员审核通过'
     case 'referral_affiliate_reject':
-      return t('Affiliate Rejected')
+      return '推广员审核拒绝'
     case 'referral_affiliate_disable':
-      return t('Affiliate Disabled')
+      return '推广员已禁用'
     case 'referral_affiliate_restore':
-      return t('Affiliate Restored')
+      return '推广员已恢复'
     case 'referral_affiliate_adjust':
-      return t('Affiliate Adjusted')
+      return '推广员余额调整'
     case 'referral_affiliate_rate':
-      return t('Affiliate Rate Updated')
+      return '推广员比例更新'
     case 'referral_withdrawal_create':
-      return t('Withdrawal Created')
+      return '提现申请创建'
     case 'referral_withdrawal_cancel':
-      return t('Withdrawal Canceled')
+      return '提现申请取消'
     case 'referral_withdrawal_approve':
-      return t('Withdrawal Approved')
+      return '提现审核通过'
     case 'referral_withdrawal_reject':
-      return t('Withdrawal Rejected')
+      return '提现审核拒绝'
     case 'referral_withdrawal_paid':
-      return t('Withdrawal Paid')
+      return '提现已打款'
     case 'referral_settings_update':
-      return t('Referral Settings Updated')
+      return '推广设置更新'
     case 'referral_withdrawal_freeze':
-      return t('Withdrawal Frozen')
+      return '提现已冻结'
     case 'referral_withdrawal_restore':
-      return t('Withdrawal Restored')
+      return '提现已恢复'
     case 'referral_settlement_freeze':
-      return t('Settlement Frozen')
+      return '结算已冻结'
     case 'referral_settlement_restore':
-      return t('Settlement Restored')
+      return '结算已恢复'
     default:
       return value || '-'
   }
@@ -582,6 +735,113 @@ export function AdminReferral() {
     setAuditLogItems(res.data?.items || [])
   }
 
+  const handleRetryCommissionJob = useCallback(
+    async (item: ReferralCommissionJob) => {
+      const displaySource = commissionJobDisplaySource(item)
+      const res = await retryAdminReferralCommissionJob({
+        source_type: displaySource.retrySourceType,
+        trade_no: displaySource.tradeNo,
+      })
+      if (!res.success) {
+        toast.error(res.message || t('Retry failed'))
+        return
+      }
+      toast.success(t('Commission retry submitted'))
+      const [jobsRes, overviewRes] = await Promise.all([
+        listAdminReferralCommissionJobs({
+          p: 1,
+          page_size: 50,
+        }),
+        getAdminReferralOverview(),
+      ])
+      setCommissionJobs(jobsRes.data?.items || [])
+      setOverview((overviewRes.data as ReferralOverview | null) || null)
+    },
+    [t]
+  )
+
+  const auditTimelineRows = useMemo<AuditTimelineItem[]>(() => {
+    const rows: AuditTimelineItem[] = []
+    for (const item of auditLogItems) {
+      rows.push({
+        key: `audit-${item.id}`,
+        time: item.created_at,
+        cells: [
+          '管理员操作',
+          auditActionLabel(item.action),
+          item.admin_user_id > 0 ? `管理员 #${item.admin_user_id}` : '-',
+          item.target_username ||
+            (item.target_user_id > 0 ? `#${item.target_user_id}` : '-'),
+          auditReasonLabel(item.reason),
+          formatTimestamp(item.created_at),
+        ],
+      })
+    }
+    for (const item of commissionJobs) {
+      const time =
+        item.failed_at || item.succeeded_at || item.updated_at || item.locked_at
+      const displaySource = commissionJobDisplaySource(item)
+      const detailParts = [
+        `${commissionJobSourceLabel(displaySource.orderType, t)} ${displaySource.tradeNo || '-'}`,
+        `推广员 #${item.affiliate_id || '-'}`,
+      ]
+      if (item.order_label) {
+        detailParts.push(item.order_label)
+      }
+      if (!item.order_exists) {
+        detailParts.push('订单未找到')
+      }
+      if (
+        item.source_type &&
+        item.source_trade_no &&
+        (item.source_type !== displaySource.orderType ||
+          item.source_trade_no !== displaySource.tradeNo)
+      ) {
+        detailParts.push(
+          `任务来源 ${commissionJobSourceLabel(item.source_type, t)} ${item.source_trade_no}`
+        )
+      }
+      if (item.attempt_count > 0) {
+        detailParts.push(`尝试 ${item.attempt_count} 次`)
+      }
+      rows.push({
+        key: `commission-job-${item.id}`,
+        time,
+        cells: [
+          '佣金任务',
+          '佣金生成任务',
+          '系统',
+          detailParts.join(' / '),
+          item.last_error
+            ? referralErrorLabel(item.last_error, t)
+            : commissionJobStatusLabel(item.status, t),
+          formatTimestamp(time),
+        ],
+        action:
+          item.status === 'failed' ? (
+            <Button
+              size='sm'
+              variant='outline'
+              onClick={() => void handleRetryCommissionJob(item)}
+            >
+              重试生成佣金
+            </Button>
+          ) : undefined,
+      })
+    }
+    const keyword = auditKeyword.trim().toLowerCase()
+    const filtered = keyword
+      ? rows.filter((row) =>
+          row.cells.some((cell) =>
+            String(cell || '')
+              .toLowerCase()
+              .includes(keyword)
+          )
+        )
+      : rows
+    return filtered.sort((a, b) => b.time - a.time)
+  }, [auditKeyword, auditLogItems, commissionJobs, handleRetryCommissionJob, t])
+
   const loadCurrentSection = useEffectEvent(
     async function loadCurrentSection() {
       setLoading(true)
@@ -620,6 +880,7 @@ export function AdminReferral() {
         if (activeSection === 'commissions') {
           await loadCommissions()
         } else if (activeSection === 'audit-logs') {
+          await loadAuditLogs()
           await loadCommissionJobs()
         }
       } else {
@@ -875,20 +1136,6 @@ export function AdminReferral() {
     } finally {
       event.target.value = ''
     }
-  }
-
-  async function handleRetryCommissionJob(item: ReferralCommissionJob) {
-    const res = await retryAdminReferralCommissionJob({
-      source_type: item.source_type,
-      trade_no: item.source_trade_no,
-    })
-    if (!res.success) {
-      toast.error(res.message || t('Retry failed'))
-      return
-    }
-    toast.success(t('Commission retry submitted'))
-    await loadCommissionJobs()
-    await loadOverview()
   }
 
   async function openAffiliateDetail(
@@ -1186,7 +1433,7 @@ export function AdminReferral() {
                   <LabeledTextarea
                     label={t('Referral FX Rates')}
                     description={t(
-                      'JSON object for order paid currency to CNY, for example {"USD":7.2,"EUR":7.8}. CNY is always 1.'
+                      'Commission is paid_amount * commission_rate. This JSON is only used when the order paid currency is different from the settlement currency, for example {"USD":7.2,"EUR":7.8}. CNY is always 1.'
                     )}
                     value={settings.settlement_fx_rates || '{"CNY":1}'}
                     onChange={(value) =>
@@ -1504,60 +1751,14 @@ export function AdminReferral() {
                 />
                 <SimpleAdminTable
                   headers={[
+                    '类型',
                     t('Action'),
-                    t('Admin User ID'),
-                    t('Target Username'),
-                    t('Reason'),
+                    '执行方',
+                    '对象',
+                    '原因/错误',
                     t('Created'),
                   ]}
-                  rows={auditLogItems.map((item) => ({
-                    key: item.id,
-                    cells: [
-                      auditActionLabel(item.action, t),
-                      String(item.admin_user_id),
-                      item.target_username ||
-                        (item.target_user_id > 0
-                          ? `#${item.target_user_id}`
-                          : '-'),
-                      auditReasonLabel(item.reason, t),
-                      formatTimestamp(item.created_at),
-                    ],
-                  }))}
-                />
-                <SectionTitle
-                  title={t('Commission Jobs')}
-                  description={t(
-                    'Background commission generation and retry status'
-                  )}
-                />
-                <SimpleAdminTable
-                  headers={[
-                    t('Trade No'),
-                    t('Affiliate ID'),
-                    t('Status'),
-                    t('Attempts'),
-                    t('Last Error'),
-                  ]}
-                  rows={commissionJobs.map((item) => ({
-                    key: item.id,
-                    cells: [
-                      item.source_trade_no,
-                      String(item.affiliate_id),
-                      commissionJobStatusLabel(item.status, t),
-                      String(item.attempt_count),
-                      referralErrorLabel(item.last_error, t),
-                    ],
-                    action:
-                      item.status === 'failed' ? (
-                        <Button
-                          size='sm'
-                          variant='outline'
-                          onClick={() => void handleRetryCommissionJob(item)}
-                        >
-                          {t('Retry')}
-                        </Button>
-                      ) : undefined,
-                  }))}
+                  rows={auditTimelineRows}
                 />
               </>
             ) : (
@@ -1916,7 +2117,7 @@ function accountTypeLabel(value: string, t: (key: string) => string): string {
     case 'alipay':
       return t('Alipay')
     case 'usdt':
-      return 'USDT'
+      return 'GMPay USDT'
     default:
       return value || '-'
   }
@@ -1951,17 +2152,6 @@ function WithdrawalInfo(props: { item: ReferralWithdrawal }) {
 
 function AssetPreview(props: { url?: string; label: string }) {
   return <AssetImagePreview url={props.url} label={props.label} />
-}
-
-function SectionTitle(props: { title: string; description?: string }) {
-  return (
-    <div className='space-y-1'>
-      <h3 className='text-sm font-semibold'>{props.title}</h3>
-      {props.description && (
-        <p className='text-muted-foreground text-sm'>{props.description}</p>
-      )}
-    </div>
-  )
 }
 
 function SimpleAdminTable(props: {

@@ -20,6 +20,7 @@ func SetRouter(router *gin.Engine, assets ThemeAssets) {
 	SetVideoRouter(router)
 	router.GET("/r/:code", controller.ReferralLanding)
 	router.GET("/referral-assets/*path", controller.GetReferralAsset)
+	router.GET("/system-assets/:name", controller.GetSystemAsset)
 	frontendBaseUrl := os.Getenv("FRONTEND_BASE_URL")
 	if common.IsMasterNode && frontendBaseUrl != "" {
 		frontendBaseUrl = ""

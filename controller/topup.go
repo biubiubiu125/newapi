@@ -95,10 +95,10 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 	}
 
-	enableEpusdt := service.IsEpusdtConfigured()
-	epusdtPayMethods := []map[string]string{}
-	if enableEpusdt && complianceConfirmed {
-		epusdtPayMethods = service.EpusdtAssetsForTopupMethods()
+	enableGMPay := service.IsGMPayConfigured()
+	gmpayPayMethods := []map[string]string{}
+	if enableGMPay && complianceConfirmed {
+		gmpayPayMethods = service.GMPayAssetsForTopupMethods()
 	}
 
 	data := gin.H{
@@ -107,7 +107,7 @@ func GetTopUpInfo(c *gin.Context) {
 		"enable_creem_topup":               isCreemTopUpEnabled(),
 		"enable_waffo_topup":               enableWaffo,
 		"enable_waffo_pancake_topup":       enableWaffoPancake,
-		"enable_epusdt_topup":              enableEpusdt,
+		"enable_gmpay_topup":               enableGMPay,
 		"enable_redemption":                complianceConfirmed,
 		"payment_compliance_confirmed":     complianceConfirmed,
 		"payment_compliance_terms_version": operation_setting.CurrentComplianceTermsVersion,
@@ -119,12 +119,12 @@ func GetTopUpInfo(c *gin.Context) {
 		}(),
 		"creem_products":          setting.CreemProducts,
 		"pay_methods":             payMethods,
-		"epusdt_pay_methods":      epusdtPayMethods,
+		"gmpay_pay_methods":       gmpayPayMethods,
 		"min_topup":               operation_setting.MinTopUp,
 		"stripe_min_topup":        setting.StripeMinTopUp,
 		"waffo_min_topup":         setting.WaffoMinTopUp,
 		"waffo_pancake_min_topup": setting.WaffoPancakeMinTopUp,
-		"epusdt_min_topup":        setting.EpusdtMinTopUp,
+		"gmpay_min_topup":         setting.GMPayMinTopUp,
 		"amount_options":          operation_setting.GetPaymentSetting().AmountOptions,
 		"discount":                operation_setting.GetPaymentSetting().AmountDiscount,
 		"topup_link":              common.TopUpLink,
@@ -552,7 +552,10 @@ func EpayNotify(c *gin.Context) {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}
-	_ = referralService.ProcessTopUpCommission(verifyInfo.ServiceTradeNo)
+	if err := processPaidTopUpCommission(c.Request.Context(), verifyInfo.ServiceTradeNo); err != nil {
+		_, _ = c.Writer.Write([]byte("fail"))
+		return
+	}
 	_, _ = c.Writer.Write([]byte("success"))
 }
 
@@ -800,6 +803,9 @@ func AdminCompleteTopUp(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	_ = referralService.ProcessTopUpCommission(req.TradeNo)
+	if err := processPaidTopUpCommission(c.Request.Context(), req.TradeNo); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	common.ApiSuccess(c, nil)
 }

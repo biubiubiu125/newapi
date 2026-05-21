@@ -54,6 +54,24 @@ import {
 } from '../types'
 import { ChatPresetsItem } from './chat-presets-item'
 
+const ADMIN_BADGE_ACK_STORAGE_KEY = 'admin-sidebar-alert-badge-ack-v1'
+
+function acknowledgeNavBadge(item: NavLink | NavCollapsible) {
+  if (!item.badgeKey || !item.badgeValue || item.badgeValue <= 0) return
+  try {
+    const raw = window.localStorage.getItem(ADMIN_BADGE_ACK_STORAGE_KEY)
+    const parsed = raw ? (JSON.parse(raw) as Record<string, number>) : {}
+    parsed[item.badgeKey] = item.badgeValue
+    window.localStorage.setItem(
+      ADMIN_BADGE_ACK_STORAGE_KEY,
+      JSON.stringify(parsed)
+    )
+    window.dispatchEvent(new Event('admin-sidebar-badge-ack'))
+  } catch {
+    // Ignore localStorage failures; the badge will simply remain visible.
+  }
+}
+
 /**
  * Sidebar navigation group component
  * Renders a group of navigation items, supporting regular links and collapsible submenus
@@ -125,7 +143,15 @@ function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
       <SidebarMenuButton
         isActive={checkIsActive(href, item)}
         tooltip={item.title}
-        render={<Link to={item.url} onClick={() => setOpenMobile(false)} />}
+        render={
+          <Link
+            to={item.url}
+            onClick={() => {
+              acknowledgeNavBadge(item)
+              setOpenMobile(false)
+            }}
+          />
+        }
       >
         {item.icon && <item.icon />}
         <span>{item.title}</span>

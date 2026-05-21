@@ -51,7 +51,7 @@ const (
 	PaymentMethodCreem        = "creem"
 	PaymentMethodWaffo        = "waffo"
 	PaymentMethodWaffoPancake = "waffo_pancake"
-	PaymentMethodEpusdtPrefix = "epusdt:"
+	PaymentMethodGMPayPrefix  = "gmpay:"
 )
 
 const (
@@ -60,7 +60,7 @@ const (
 	PaymentProviderCreem        = "creem"
 	PaymentProviderWaffo        = "waffo"
 	PaymentProviderWaffoPancake = "waffo_pancake"
-	PaymentProviderEpusdt       = "epusdt"
+	PaymentProviderGMPay        = "gmpay"
 )
 
 var (
@@ -665,7 +665,7 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 		if validation.ActualPaymentMethod != "" && !callbackPaymentMethodMatches(topUp.PaymentMethod, validation.ActualPaymentMethod, validation.ExpectedPaymentProvider) {
 			return ErrPaymentMethodMismatch
 		}
-		if validation.ActualPaymentToken != "" && !paymentMethodMatchesEpusdtToken(topUp.PaymentMethod, validation.ActualPaymentToken) {
+		if validation.ActualPaymentToken != "" && !paymentMethodMatchesGMPayToken(topUp.PaymentMethod, validation.ActualPaymentToken) {
 			return ErrPaymentMethodMismatch
 		}
 		if validation.RequirePaymentFacts && !samePaymentCurrency(topUp.PaidCurrency, validation.PaidCurrency) {
@@ -712,14 +712,14 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 	return nil
 }
 
-func RechargeEpusdt(tradeNo string, providerPayload string, actualPaymentMethod string, callerIp string) (err error) {
-	return RechargeEpusdtWithValidation(tradeNo, providerPayload, PaymentCallbackValidation{
-		ExpectedPaymentProvider: PaymentProviderEpusdt,
+func RechargeGMPay(tradeNo string, providerPayload string, actualPaymentMethod string, callerIp string) (err error) {
+	return RechargeGMPayWithValidation(tradeNo, providerPayload, PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderGMPay,
 		ActualPaymentMethod:     actualPaymentMethod,
 	}, callerIp)
 }
 
-func RechargeEpusdtWithValidation(tradeNo string, providerPayload string, validation PaymentCallbackValidation, callerIp string) (err error) {
+func RechargeGMPayWithValidation(tradeNo string, providerPayload string, validation PaymentCallbackValidation, callerIp string) (err error) {
 	if tradeNo == "" {
 		return errors.New("未提供支付单号")
 	}
@@ -744,7 +744,7 @@ func RechargeEpusdtWithValidation(tradeNo string, providerPayload string, valida
 		if validation.ActualPaymentMethod != "" && !callbackPaymentMethodMatches(topUp.PaymentMethod, validation.ActualPaymentMethod, validation.ExpectedPaymentProvider) {
 			return ErrPaymentMethodMismatch
 		}
-		if validation.ActualPaymentToken != "" && !paymentMethodMatchesEpusdtToken(topUp.PaymentMethod, validation.ActualPaymentToken) {
+		if validation.ActualPaymentToken != "" && !paymentMethodMatchesGMPayToken(topUp.PaymentMethod, validation.ActualPaymentToken) {
 			return ErrPaymentMethodMismatch
 		}
 		if validation.RequirePaymentFacts && !samePaymentCurrency(topUp.PaidCurrency, validation.PaidCurrency) {
@@ -784,7 +784,7 @@ func RechargeEpusdtWithValidation(tradeNo string, providerPayload string, valida
 	})
 
 	if err != nil {
-		common.SysError("epusdt topup failed: " + err.Error())
+		common.SysError("gmpay topup failed: " + err.Error())
 		if errors.Is(err, ErrPaymentMethodMismatch) ||
 			errors.Is(err, ErrPaymentAmountMismatch) ||
 			errors.Is(err, ErrPaymentCurrencyMismatch) ||
@@ -796,7 +796,7 @@ func RechargeEpusdtWithValidation(tradeNo string, providerPayload string, valida
 
 	if quotaToAdd > 0 {
 		_ = cacheUpdateUserQuota(topUp.UserId)
-		RecordTopupLog(topUp.UserId, fmt.Sprintf("Epusdt充值成功，充值额度: %v，支付金额：%.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), callerIp, topUp.PaymentMethod, PaymentProviderEpusdt)
+		RecordTopupLog(topUp.UserId, fmt.Sprintf("GMPay充值成功，充值额度: %v，支付金额：%.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), callerIp, topUp.PaymentMethod, PaymentProviderGMPay)
 	}
 
 	return nil
@@ -817,16 +817,16 @@ func samePaymentAmount(expected float64, actual float64) bool {
 	return expectedAmount.Equal(actualAmount)
 }
 
-func paymentMethodMatchesEpusdtToken(paymentMethod string, token string) bool {
+func paymentMethodMatchesGMPayToken(paymentMethod string, token string) bool {
 	token = strings.ToLower(strings.TrimSpace(token))
 	if token == "" {
 		return true
 	}
 	paymentMethod = strings.ToLower(strings.TrimSpace(paymentMethod))
-	if paymentMethod == PaymentMethodEpusdtPrefix+token {
+	if paymentMethod == PaymentMethodGMPayPrefix+token {
 		return true
 	}
-	expectedPrefix := PaymentMethodEpusdtPrefix + token + ":"
+	expectedPrefix := PaymentMethodGMPayPrefix + token + ":"
 	return strings.HasPrefix(paymentMethod, expectedPrefix)
 }
 
@@ -836,14 +836,14 @@ func callbackPaymentMethodMatches(expected string, actual string, provider strin
 	if expected == "" || actual == "" {
 		return expected == actual
 	}
-	if provider != PaymentProviderEpusdt {
+	if provider != PaymentProviderGMPay {
 		return expected == actual
 	}
-	expectedToken, expectedNetwork, ok := epusdtPaymentMethodParts(expected)
+	expectedToken, expectedNetwork, ok := gmpayPaymentMethodParts(expected)
 	if !ok {
 		return false
 	}
-	actualToken, actualNetwork, ok := epusdtPaymentMethodParts(actual)
+	actualToken, actualNetwork, ok := gmpayPaymentMethodParts(actual)
 	if !ok {
 		return false
 	}
@@ -856,17 +856,17 @@ func callbackPaymentMethodMatches(expected string, actual string, provider strin
 	return true
 }
 
-func epusdtPaymentMethodToken(paymentMethod string) (string, bool) {
-	token, _, ok := epusdtPaymentMethodParts(paymentMethod)
+func gmpayPaymentMethodToken(paymentMethod string) (string, bool) {
+	token, _, ok := gmpayPaymentMethodParts(paymentMethod)
 	return token, ok
 }
 
-func epusdtPaymentMethodParts(paymentMethod string) (string, string, bool) {
+func gmpayPaymentMethodParts(paymentMethod string) (string, string, bool) {
 	paymentMethod = strings.ToLower(strings.TrimSpace(paymentMethod))
-	if !strings.HasPrefix(paymentMethod, PaymentMethodEpusdtPrefix) {
+	if !strings.HasPrefix(paymentMethod, PaymentMethodGMPayPrefix) {
 		return "", "", false
 	}
-	parts := strings.Split(strings.TrimPrefix(paymentMethod, PaymentMethodEpusdtPrefix), ":")
+	parts := strings.Split(strings.TrimPrefix(paymentMethod, PaymentMethodGMPayPrefix), ":")
 	if len(parts) < 1 || len(parts) > 2 {
 		return "", "", false
 	}

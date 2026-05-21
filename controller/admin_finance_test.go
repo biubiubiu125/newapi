@@ -83,8 +83,8 @@ func TestGetRechargeAuditReturnsTopupAndSubscriptionOrders(t *testing.T) {
 		PaidAmount:              29.9,
 		PaidCurrency:            "CNY",
 		TradeNo:                 "SUB-1",
-		PaymentMethod:           "epusdt:usdt:tron",
-		PaymentProvider:         model.PaymentProviderEpusdt,
+		PaymentMethod:           "gmpay:usdt:tron",
+		PaymentProvider:         model.PaymentProviderGMPay,
 		PlanTitleSnapshot:       "Pro Snapshot",
 		PlanPriceSnapshot:       29.9,
 		PlanTotalAmountSnapshot: 9000000,
@@ -98,8 +98,8 @@ func TestGetRechargeAuditReturnsTopupAndSubscriptionOrders(t *testing.T) {
 		PaidAmount:      29.9,
 		PaidCurrency:    "CNY",
 		TradeNo:         "SUB-1",
-		PaymentMethod:   "epusdt:usdt:tron",
-		PaymentProvider: model.PaymentProviderEpusdt,
+		PaymentMethod:   "gmpay:usdt:tron",
+		PaymentProvider: model.PaymentProviderGMPay,
 		CreateTime:      200,
 		Status:          common.TopUpStatusSuccess,
 	}).Error)
@@ -130,6 +130,58 @@ func TestGetRechargeAuditReturnsTopupAndSubscriptionOrders(t *testing.T) {
 	require.InDelta(t, 21.9, payload.Data.Items[1].PaidAmountCNY, 0.000001)
 }
 
+func TestGetRechargeAuditPreservesStoredPaidCurrencyForFutureGateways(t *testing.T) {
+	setupAdminFinanceTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	require.NoError(t, model.DB.Create(&model.User{Id: 1, Username: "alice", Password: "password123"}).Error)
+	require.NoError(t, model.DB.Create(&model.User{Id: 2, Username: "bob", Password: "password123"}).Error)
+	require.NoError(t, model.DB.Create(&model.TopUp{
+		UserId:          1,
+		Amount:          3,
+		Money:           12,
+		PaidAmount:      12,
+		PaidCurrency:    "USD",
+		TradeNo:         "STRIPE-CURRENCY-TOPUP",
+		PaymentMethod:   "stripe",
+		PaymentProvider: model.PaymentProviderStripe,
+		CreateTime:      100,
+		Status:          common.TopUpStatusSuccess,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.SubscriptionOrder{
+		UserId:          2,
+		PlanId:          10,
+		Money:           9.9,
+		PaidAmount:      9.9,
+		PaidCurrency:    "USD",
+		TradeNo:         "STRIPE-CURRENCY-SUBSCRIPTION",
+		PaymentMethod:   "stripe",
+		PaymentProvider: model.PaymentProviderStripe,
+		CreateTime:      200,
+		Status:          common.TopUpStatusSuccess,
+	}).Error)
+
+	router := gin.New()
+	router.GET("/audit", GetRechargeAudit)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/audit?p=1&page_size=10", nil)
+	router.ServeHTTP(recorder, req)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Items []rechargeAuditOrder `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.Len(t, payload.Data.Items, 2)
+	for _, item := range payload.Data.Items {
+		require.Equal(t, "USD", item.PaidCurrency)
+	}
+}
+
 func TestGetRechargeAuditSummaryCountsUnifiedOrders(t *testing.T) {
 	setupAdminFinanceTestDB(t)
 	gin.SetMode(gin.TestMode)
@@ -154,8 +206,8 @@ func TestGetRechargeAuditSummaryCountsUnifiedOrders(t *testing.T) {
 		PaidAmount:      29.9,
 		PaidCurrency:    "CNY",
 		TradeNo:         "SUB-SUMMARY",
-		PaymentMethod:   "epusdt:usdt:tron",
-		PaymentProvider: model.PaymentProviderEpusdt,
+		PaymentMethod:   "gmpay:usdt:tron",
+		PaymentProvider: model.PaymentProviderGMPay,
 		CreateTime:      200,
 		Status:          common.TopUpStatusPending,
 	}).Error)
@@ -166,8 +218,8 @@ func TestGetRechargeAuditSummaryCountsUnifiedOrders(t *testing.T) {
 		PaidAmount:      29.9,
 		PaidCurrency:    "CNY",
 		TradeNo:         "SUB-SUMMARY",
-		PaymentMethod:   "epusdt:usdt:tron",
-		PaymentProvider: model.PaymentProviderEpusdt,
+		PaymentMethod:   "gmpay:usdt:tron",
+		PaymentProvider: model.PaymentProviderGMPay,
 		CreateTime:      200,
 		Status:          common.TopUpStatusSuccess,
 	}).Error)

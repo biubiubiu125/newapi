@@ -62,7 +62,7 @@ export const PAYMENT_METHOD_NAMES: Record<string, string> = {
   alipay: 'Alipay',
   wxpay: 'WeChat Pay',
   waffo: 'Waffo',
-  epusdt: 'USDT',
+  gmpay: 'GMPay USDT',
 }
 
 /**
@@ -73,10 +73,11 @@ export function getPaymentMethodName(
   t?: (key: string) => string
 ): string {
   const name = PAYMENT_METHOD_NAMES[method] || method
-  if (method?.startsWith('epusdt:')) {
+  if (method?.startsWith('gmpay:')) {
     const [, token, network] = method.split(':')
-    const label = `${(token || 'USDT').toUpperCase()}-${network || ''}`
-    return label.endsWith('-') ? 'USDT' : label
+    const tokenLabel = (token || 'USDT').toUpperCase()
+    const label = `GMPay ${tokenLabel}${network ? `-${network}` : ''}`
+    return label
   }
   return t ? t(name) : name
 }

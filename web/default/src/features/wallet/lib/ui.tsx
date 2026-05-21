@@ -84,11 +84,11 @@ export function getPaymentIcon(
     return <CreditCard className={className} />
   }
 
-  if (paymentType.startsWith(PAYMENT_TYPES.EPUSDT_PREFIX)) {
+  if (paymentType.startsWith(PAYMENT_TYPES.GMPAY_PREFIX)) {
     return (
       <SiTether
         className={className}
-        style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.EPUSDT_PREFIX] }}
+        style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.GMPAY_PREFIX] }}
       />
     )
   }

@@ -37,6 +37,8 @@ import {
   Share2,
   ShieldAlert,
 } from 'lucide-react'
+import { useQuery } from '@tanstack/react-query'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { WORKSPACE_IDS } from '@/components/layout/lib/workspace-registry'
 import { type SidebarData } from '@/components/layout/types'
@@ -44,15 +46,122 @@ import {
   formatAdminReferralBadgeCount,
   useAdminReferralBadges,
 } from '@/features/admin-referral/hooks/use-admin-referral-badges'
+import { getRechargeAuditSummary } from '@/features/recharge-audit/api'
+import { getRiskOverview } from '@/features/risk-center/api'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
+
+type AdminAlertBadges = {
+  newUsers: number
+  orderIssues: number
+  riskSignals: number
+}
+
+const EMPTY_ADMIN_ALERT_BADGES: AdminAlertBadges = {
+  newUsers: 0,
+  orderIssues: 0,
+  riskSignals: 0,
+}
+
+const ADMIN_BADGE_ACK_STORAGE_KEY = 'admin-sidebar-alert-badge-ack-v1'
+
+function normalizeBadgeCount(value: number | undefined): number {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return 0
+  }
+  return Math.floor(value)
+}
+
+function readBadgeAck(key: string, version: number): number {
+  void version
+  if (typeof window === 'undefined') return 0
+  try {
+    const raw = window.localStorage.getItem(ADMIN_BADGE_ACK_STORAGE_KEY)
+    if (!raw) return 0
+    const parsed = JSON.parse(raw) as Record<string, number>
+    const value = parsed[key]
+    return typeof value === 'number' && Number.isFinite(value) ? value : 0
+  } catch {
+    return 0
+  }
+}
+
+function unreadBadgeCount(
+  key: string,
+  value: number,
+  ackVersion: number
+): number {
+  const normalized = normalizeBadgeCount(value)
+  const acknowledged = readBadgeAck(key, ackVersion)
+  return Math.max(0, normalized - acknowledged)
+}
 
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
   const userRole = useAuthStore((state) => state.auth.user?.role)
+  const [badgeAckVersion, setBadgeAckVersion] = useState(0)
   const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
   const { counts } = useAdminReferralBadges(isAdmin)
-  const referralManagementBadge = formatAdminReferralBadgeCount(counts.total)
+  const adminAlertQuery = useQuery({
+    queryKey: ['admin-sidebar-alert-badges'],
+    enabled: isAdmin,
+    queryFn: async (): Promise<AdminAlertBadges> => {
+      const riskParams = new URLSearchParams({ window_hours: '24' })
+      const orderParams = new URLSearchParams({ window_hours: '24' })
+      const [riskRes, orderRes] = await Promise.all([
+        getRiskOverview(riskParams),
+        getRechargeAuditSummary(orderParams),
+      ])
+      const failedOrders = normalizeBadgeCount(
+        orderRes.data?.totals?.failed_count
+      )
+      const orderAnomalies = normalizeBadgeCount(
+        orderRes.data?.anomalies?.length
+      )
+
+      return {
+        newUsers: normalizeBadgeCount(riskRes.data?.new_user_count),
+        orderIssues: failedOrders + orderAnomalies,
+        riskSignals: normalizeBadgeCount(riskRes.data?.signal_count),
+      }
+    },
+  })
+  const adminAlerts = adminAlertQuery.data ?? EMPTY_ADMIN_ALERT_BADGES
+  const referralManagementUnread = unreadBadgeCount(
+    'admin-referral',
+    counts.total,
+    badgeAckVersion
+  )
+  const usersUnread = unreadBadgeCount(
+    'users',
+    adminAlerts.newUsers,
+    badgeAckVersion
+  )
+  const orderManagementUnread = unreadBadgeCount(
+    'recharge-audit',
+    adminAlerts.orderIssues,
+    badgeAckVersion
+  )
+  const riskCenterUnread = unreadBadgeCount(
+    'risk-center',
+    adminAlerts.riskSignals,
+    badgeAckVersion
+  )
+  const usersBadge = formatAdminReferralBadgeCount(usersUnread)
+  const orderManagementBadge = formatAdminReferralBadgeCount(
+    orderManagementUnread
+  )
+  const riskCenterBadge = formatAdminReferralBadgeCount(riskCenterUnread)
+
+  useEffect(() => {
+    const onAck = () => setBadgeAckVersion((value) => value + 1)
+    window.addEventListener('admin-sidebar-badge-ack', onAck)
+    window.addEventListener('storage', onAck)
+    return () => {
+      window.removeEventListener('admin-sidebar-badge-ack', onAck)
+      window.removeEventListener('storage', onAck)
+    }
+  }, [])
 
   return {
     workspaces: [
@@ -152,12 +261,17 @@ export function useSidebarData(): SidebarData {
             title: t('Users'),
             url: '/users',
             icon: Users,
+            badge: usersBadge,
+            badgeKey: 'users',
+            badgeValue: adminAlerts.newUsers,
           },
           {
             title: t('Referral Management'),
             url: '/admin-referral/overview',
             icon: Share2,
-            badge: referralManagementBadge,
+            badge: formatAdminReferralBadgeCount(referralManagementUnread),
+            badgeKey: 'admin-referral',
+            badgeValue: counts.total,
           },
           {
             title: t('Redemption Codes'),
@@ -173,11 +287,17 @@ export function useSidebarData(): SidebarData {
             title: t('Order Management'),
             url: '/recharge-audit',
             icon: BadgeDollarSign,
+            badge: orderManagementBadge,
+            badgeKey: 'recharge-audit',
+            badgeValue: adminAlerts.orderIssues,
           },
           {
             title: t('Risk Center'),
             url: '/risk-center',
             icon: ShieldAlert,
+            badge: riskCenterBadge,
+            badgeKey: 'risk-center',
+            badgeValue: adminAlerts.riskSignals,
           },
           {
             title: t('Public Price Export'),

@@ -1,8 +1,13 @@
 package middleware
 
 import (
+	"fmt"
+
+	"github.com/QuantumNous/new-api/common"
 	"github.com/gin-gonic/gin"
 )
+
+var frontendCacheVersion = fmt.Sprintf("%s-%d", common.Version, common.StartTime)
 
 func Cache() func(c *gin.Context) {
 	return func(c *gin.Context) {
@@ -11,7 +16,7 @@ func Cache() func(c *gin.Context) {
 		} else {
 			c.Header("Cache-Control", "max-age=604800") // one week
 		}
-		c.Header("Cache-Version", "b688f2fb5be447c25e5aa3bd063087a83db32a288bf6a4f35f2d8db310e40b14")
+		c.Header("Cache-Version", frontendCacheVersion)
 		c.Next()
 	}
 }

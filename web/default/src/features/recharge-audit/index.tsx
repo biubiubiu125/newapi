@@ -69,23 +69,43 @@ function formatMoneyBreakdown(
     .join(' / ')
 }
 
-function formatPaidAmountCNY(order: RechargeAuditOrder, t: (key: string) => string) {
-  if (order.paid_cny_fx_missing) {
-    return t('Missing referral FX rate')
+function formatPaidAmount(order: RechargeAuditOrder) {
+  return formatMoney(order.paid_amount || order.money, orderPaidCurrency(order))
+}
+
+function orderPaidCurrency(order: RechargeAuditOrder) {
+  const provider = (order.payment_provider || '').toLowerCase()
+  if (provider === 'epay' || provider === 'gmpay') {
+    return 'CNY'
   }
-  return formatMoney(order.paid_amount_cny || 0, 'CNY')
+  return order.paid_currency || 'CNY'
 }
 
-function formatOriginalPaidAmount(order: RechargeAuditOrder) {
-  return formatMoney(
-    order.paid_amount || order.money,
-    order.paid_currency || 'CNY'
-  )
+function paymentProviderLabel(provider: string) {
+  switch ((provider || '').toLowerCase()) {
+    case 'gmpay':
+      return 'GMPay'
+    default:
+      return provider || '-'
+  }
 }
 
-function shouldShowOriginalPaid(order: RechargeAuditOrder) {
-  const currency = (order.paid_currency || 'CNY').toUpperCase()
-  return currency !== 'CNY' || order.paid_cny_fx_missing
+function paidAmountDetail(
+  order: RechargeAuditOrder,
+  t: (key: string) => string
+) {
+  const currency = orderPaidCurrency(order).toUpperCase()
+  if (order.paid_cny_fx_missing) {
+    return `折合人民币: ${t('Missing referral FX rate')}`
+  }
+  if (currency !== 'CNY' && (order.paid_amount_cny || 0) > 0) {
+    const rateDetail =
+      order.paid_cny_fx_rate > 0
+        ? ` / ${t('FX Rate')}: ${order.paid_cny_fx_rate}`
+        : ''
+    return `折合人民币: ${formatMoney(order.paid_amount_cny || 0, 'CNY')}${rateDetail}`
+  }
+  return ''
 }
 
 function formatTime(timestamp: number) {
@@ -104,14 +124,23 @@ function orderTypeLabel(orderType: string, t: (key: string) => string) {
   }
 }
 
-function formatOrderBenefit(order: RechargeAuditOrder, t: (key: string) => string) {
+function formatOrderDelivery(
+  order: RechargeAuditOrder,
+  t: (key: string) => string
+) {
   if (order.order_type === 'subscription') {
-    if (order.credit_quota > 0) {
-      return `${t('Subscription Quota')}: ${formatQuota(order.credit_quota)}`
+    const parts: string[] = []
+    if (order.product_name) {
+      parts.push(`订阅套餐: ${order.product_name}`)
     }
-    return t('Subscription Rights')
+    if (order.credit_quota > 0) {
+      parts.push(
+        `${t('Subscription Quota')}: ${formatQuota(order.credit_quota)}`
+      )
+    }
+    return parts.length > 0 ? parts.join(' / ') : '订阅服务: 已开通'
   }
-  return formatSiteCreditAmount(order.credit_amount ?? order.amount)
+  return `站内额度: ${formatSiteCreditAmount(order.credit_amount ?? order.amount)}`
 }
 
 function statusVariant(status: string) {
@@ -187,9 +216,13 @@ function referralStatusText(
 
 export function RechargeAudit() {
   const { t } = useTranslation()
+  const initialKeyword =
+    typeof window === 'undefined'
+      ? ''
+      : new URLSearchParams(window.location.search).get('keyword') || ''
   const [summary, setSummary] = useState<RechargeAuditSummary | null>(null)
   const [orders, setOrders] = useState<RechargeAuditOrder[]>([])
-  const [keyword, setKeyword] = useState('')
+  const [keyword, setKeyword] = useState(initialKeyword)
   const [status, setStatus] = useState('')
   const [provider, setProvider] = useState('')
   const [orderType, setOrderType] = useState('all')
@@ -336,8 +369,8 @@ export function RechargeAudit() {
                       <TableHead>{t('Order Type')}</TableHead>
                       <TableHead>{t('User')}</TableHead>
                       <TableHead>{t('Payment Gateway')}</TableHead>
-                      <TableHead>{t('Paid Amount CNY')}</TableHead>
-                      <TableHead>{t('Benefit')}</TableHead>
+                      <TableHead>金额</TableHead>
+                      <TableHead>交付内容</TableHead>
                       <TableHead>{t('Status')}</TableHead>
                       <TableHead>{t('Referral Status')}</TableHead>
                       <TableHead>{t('Created At')}</TableHead>
@@ -358,21 +391,20 @@ export function RechargeAudit() {
                           {orderTypeLabel(order.order_type, t)}
                         </TableCell>
                         <TableCell>{order.username || order.user_id}</TableCell>
-                        <TableCell>{order.payment_provider || '-'}</TableCell>
+                        <TableCell>
+                          {paymentProviderLabel(order.payment_provider)}
+                        </TableCell>
                         <TableCell>
                           <div className='font-medium'>
-                            {formatPaidAmountCNY(order, t)}
+                            {formatPaidAmount(order)}
                           </div>
-                          {shouldShowOriginalPaid(order) ? (
+                          {paidAmountDetail(order, t) ? (
                             <div className='text-muted-foreground text-xs'>
-                              {t('Original paid')}: {formatOriginalPaidAmount(order)}
-                              {!order.paid_cny_fx_missing && order.paid_cny_fx_rate > 0
-                                ? ` · ${t('FX Rate')}: ${order.paid_cny_fx_rate}`
-                                : ''}
+                              {paidAmountDetail(order, t)}
                             </div>
                           ) : null}
                         </TableCell>
-                        <TableCell>{formatOrderBenefit(order, t)}</TableCell>
+                        <TableCell>{formatOrderDelivery(order, t)}</TableCell>
                         <TableCell>
                           <StatusBadge
                             label={t(order.status)}

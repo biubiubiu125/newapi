@@ -191,7 +191,10 @@ func SubscriptionEpayNotify(c *gin.Context) {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}
-	_ = referralService.ProcessSubscriptionCommission(verifyInfo.ServiceTradeNo)
+	if err := processPaidSubscriptionCommission(c.Request.Context(), verifyInfo.ServiceTradeNo); err != nil {
+		_, _ = c.Writer.Write([]byte("fail"))
+		return
+	}
 
 	_, _ = c.Writer.Write([]byte("success"))
 }

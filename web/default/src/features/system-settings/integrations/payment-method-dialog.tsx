@@ -74,9 +74,9 @@ const PAYMENT_TYPES = [
   { value: 'wxpay', label: 'WeChat Pay', icon: getPaymentIcon('wxpay') },
   { value: 'stripe', label: 'Stripe', icon: getPaymentIcon('stripe') },
   {
-    value: 'epusdt:usdt',
-    label: 'USDT',
-    icon: getPaymentIcon('epusdt:usdt'),
+    value: 'gmpay:usdt',
+    label: 'GMPay USDT',
+    icon: getPaymentIcon('gmpay:usdt'),
   },
 ]
 
@@ -89,7 +89,7 @@ type PaymentTypeOption = {
 function paymentTypeOptions(t: (key: string) => string): PaymentTypeOption[] {
   return PAYMENT_TYPES.map((item) => ({
     ...item,
-    label: item.value.startsWith('epusdt:') ? item.label : t(item.label),
+    label: item.value.startsWith('gmpay:') ? item.label : t(item.label),
   }))
 }
 

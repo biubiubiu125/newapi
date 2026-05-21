@@ -17,10 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import * as z from 'zod'
+import { useState } from 'react'
 import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
-import { RotateCcw } from 'lucide-react'
+import { RotateCcw, Upload } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -46,6 +48,20 @@ import { FormNavigationGuard } from '../components/form-navigation-guard'
 import { SettingsSection } from '../components/settings-section'
 import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { uploadSystemLogo } from '../api'
+
+function isValidLogoValue(value: string): boolean {
+  const trimmed = value.trim()
+  if (!trimmed) return true
+  if (/^\/system-assets\/[A-Za-z0-9._-]+$/.test(trimmed)) return true
+  if (!/^https?:\/\//i.test(trimmed)) return false
+  try {
+    const parsed = new URL(trimmed)
+    return parsed.protocol === 'http:' || parsed.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
 
 const _systemInfoSchema = z.object({
   theme: z.object({
@@ -53,7 +69,7 @@ const _systemInfoSchema = z.object({
   }),
   SystemName: z.string().min(1),
   ServerAddress: z.string().optional(),
-  Logo: z.string().url().optional().or(z.literal('')),
+  Logo: z.string().refine(isValidLogoValue).optional(),
   Footer: z.string().optional(),
   About: z.string().optional(),
   HomePageContent: z.string().optional(),
@@ -77,6 +93,7 @@ function normalizeValue(value: unknown): string {
 export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+  const [logoUploading, setLogoUploading] = useState(false)
 
   const normalizedDefaults: SystemInfoFormValues = {
     theme: {
@@ -103,7 +120,10 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       error: () => t('System name is required'),
     }),
     ServerAddress: z.string().optional(),
-    Logo: z.string().url().optional().or(z.literal('')),
+    Logo: z.string().refine(isValidLogoValue, {
+      error: () =>
+        t('Logo must be an http(s) URL or an uploaded system asset path'),
+    }),
     Footer: z.string().optional(),
     About: z.string().optional(),
     HomePageContent: z.string().optional(),
@@ -126,6 +146,9 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
           let v = normalizeValue(value)
           if (key === 'ServerAddress') {
             v = v.replace(/\/+$/, '')
+          }
+          if (key === 'Logo') {
+            v = v.trim()
           }
           await updateOption.mutateAsync({
             key,
@@ -230,15 +253,66 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
               name='Logo'
               render={({ field }) => (
                 <FormItem>
-                  <FormLabel>{t('Logo URL')}</FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder={t('https://example.com/logo.png')}
-                      {...field}
-                    />
-                  </FormControl>
+                  <FormLabel>{t('Logo')}</FormLabel>
+                  <div className='grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]'>
+                    <FormControl>
+                      <Input
+                        type='text'
+                        inputMode='url'
+                        placeholder={t('https://example.com/logo.png')}
+                        {...field}
+                      />
+                    </FormControl>
+                    <Button
+                      type='button'
+                      variant='outline'
+                      disabled={logoUploading}
+                      onClick={() => {
+                        document.getElementById('system-logo-upload')?.click()
+                      }}
+                    >
+                      <Upload />
+                      {logoUploading ? t('Uploading...') : t('Upload Image')}
+                    </Button>
+                  </div>
+                  <input
+                    id='system-logo-upload'
+                    type='file'
+                    accept='image/*'
+                    className='hidden'
+                    onChange={async (event) => {
+                      const file = event.target.files?.[0]
+                      event.target.value = ''
+                      if (!file) return
+                      setLogoUploading(true)
+                      try {
+                        const res = await uploadSystemLogo(file)
+                        const url = res.data?.url || ''
+                        if (!res.success || !url) {
+                          toast.error(res.message || t('Upload failed'))
+                          return
+                        }
+                        form.setValue('Logo', url, {
+                          shouldDirty: true,
+                          shouldTouch: true,
+                          shouldValidate: true,
+                        })
+                        toast.success(t('Logo uploaded'))
+                      } catch (error) {
+                        toast.error(
+                          error instanceof Error
+                            ? error.message
+                            : t('Upload failed')
+                        )
+                      } finally {
+                        setLogoUploading(false)
+                      }
+                    }}
+                  />
                   <FormDescription>
-                    {t('URL to your logo image (optional)')}
+                    {t(
+                      'Use an image URL or upload a logo image. Uploaded images are stored on the server and the returned URL is saved after you submit.'
+                    )}
                   </FormDescription>
                   <FormMessage />
                 </FormItem>

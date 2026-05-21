@@ -23,15 +23,30 @@ import {
   calculateAmount,
   calculateStripeAmount,
   requestPayment,
-  requestEpusdtPayment,
+  requestGMPayPayment,
   requestStripePayment,
   isApiSuccess,
 } from '../api'
-import { isStripePayment, isEpusdtPayment, submitPaymentForm } from '../lib'
+import { isStripePayment, isGMPayPayment, submitPaymentForm } from '../lib'
 
 // ============================================================================
 // Payment Hook
 // ============================================================================
+
+function getPaymentErrorMessage(response: unknown): string {
+  const payload = response as
+    | {
+        message?: unknown
+        data?: unknown
+      }
+    | undefined
+  const message =
+    typeof payload?.message === 'string' && payload.message !== 'error'
+      ? payload.message
+      : ''
+  const dataMessage = typeof payload?.data === 'string' ? payload.data : ''
+  return message || dataMessage || i18next.t('Payment request failed')
+}
 
 export function usePayment() {
   const [amount, setAmount] = useState<number>(0)
@@ -75,7 +90,7 @@ export function usePayment() {
         setProcessing(true)
 
         const isStripe = isStripePayment(paymentType)
-        const isEpusdt = isEpusdtPayment(paymentType)
+        const isGMPay = isGMPayPayment(paymentType)
         const amount = Math.floor(topupAmount)
 
         const response = isStripe
@@ -83,8 +98,8 @@ export function usePayment() {
               amount,
               payment_method: 'stripe',
             })
-          : isEpusdt
-            ? await requestEpusdtPayment({
+          : isGMPay
+            ? await requestGMPayPayment({
                 amount,
                 payment_method: paymentType,
               })
@@ -94,7 +109,7 @@ export function usePayment() {
               })
 
         if (!isApiSuccess(response)) {
-          toast.error(response.message || i18next.t('Payment request failed'))
+          toast.error(getPaymentErrorMessage(response))
           return false
         }
 
@@ -102,7 +117,7 @@ export function usePayment() {
         const paymentData = response.data as Record<string, unknown> | undefined
         const stripePayLink =
           typeof paymentData?.pay_link === 'string' ? paymentData.pay_link : ''
-        const epusdtPaymentUrl =
+        const gmpayPaymentUrl =
           typeof paymentData?.payment_url === 'string'
             ? paymentData.payment_url
             : ''
@@ -113,14 +128,14 @@ export function usePayment() {
           return true
         }
 
-        if (isEpusdt && epusdtPaymentUrl) {
-          window.open(epusdtPaymentUrl, '_blank')
+        if (isGMPay && gmpayPaymentUrl) {
+          window.open(gmpayPaymentUrl, '_blank')
           toast.success(i18next.t('Redirecting to payment page...'))
           return true
         }
 
         // Handle non-Stripe payment
-        if (!isStripe && !isEpusdt && response.data) {
+        if (!isStripe && !isGMPay && response.data) {
           const url = (response as unknown as { url?: string }).url
           if (url) {
             submitPaymentForm(url, response.data)

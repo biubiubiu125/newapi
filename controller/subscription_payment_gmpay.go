@@ -14,27 +14,27 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-type SubscriptionEpusdtPayRequest struct {
+type SubscriptionGMPayPayRequest struct {
 	PlanId        int    `json:"plan_id"`
 	PaymentMethod string `json:"payment_method"`
 }
 
-func SubscriptionRequestEpusdt(c *gin.Context) {
+func SubscriptionRequestGMPay(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
 	}
-	if !service.IsEpusdtConfigured() {
-		common.ApiErrorMsg(c, "Epusdt 未启用或配置不完整")
+	if !service.IsGMPayConfigured() {
+		common.ApiErrorMsg(c, "GMPay 未启用或配置不完整")
 		return
 	}
 
-	var req SubscriptionEpusdtPayRequest
+	var req SubscriptionGMPayPayRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.PlanId <= 0 {
 		common.ApiErrorMsg(c, "参数错误")
 		return
 	}
-	token, network, ok := service.ParseEpusdtPaymentMethod(req.PaymentMethod)
-	if !ok || !service.IsValidEpusdtPaymentMethod(req.PaymentMethod) {
+	token, network, ok := service.ParseGMPayPaymentMethod(req.PaymentMethod)
+	if !ok || !service.IsValidGMPayPaymentMethod(req.PaymentMethod) {
 		common.ApiErrorMsg(c, "支付链不存在或未启用")
 		return
 	}
@@ -69,17 +69,17 @@ func SubscriptionRequestEpusdt(c *gin.Context) {
 		}
 	}
 
-	currency := strings.ToUpper(strings.TrimSpace(setting.EpusdtCurrency))
+	currency := strings.ToUpper(strings.TrimSpace(setting.GMPayCurrency))
 	if currency == "" {
 		currency = "CNY"
 	}
 	if currency != "CNY" {
-		common.ApiErrorMsg(c, "Epusdt 订单计价币种必须为 CNY")
+		common.ApiErrorMsg(c, "GMPay 订单计价币种必须为 CNY")
 		return
 	}
 	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, currency)
 	tradeNo := fmt.Sprintf("SEPU%d%s%d", userId, common.GetRandomString(6), time.Now().Unix())
-	method := service.BuildEpusdtPaymentMethod(token, network)
+	method := service.BuildGMPayPaymentMethod(token, network)
 	order := &model.SubscriptionOrder{
 		UserId:          userId,
 		PlanId:          plan.Id,
@@ -88,7 +88,7 @@ func SubscriptionRequestEpusdt(c *gin.Context) {
 		PaidCurrency:    currency,
 		TradeNo:         tradeNo,
 		PaymentMethod:   method,
-		PaymentProvider: model.PaymentProviderEpusdt,
+		PaymentProvider: model.PaymentProviderGMPay,
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
 	}
@@ -107,29 +107,29 @@ func SubscriptionRequestEpusdt(c *gin.Context) {
 	}
 
 	callbackAddress := service.GetCallbackAddress()
-	paymentOrder, err := service.CreateEpusdtOrder(service.EpusdtCreateOrderRequest{
+	paymentOrder, err := service.CreateGMPayOrder(service.GMPayCreateOrderRequest{
 		OrderID:     tradeNo,
 		Amount:      plan.PriceAmount,
 		Currency:    currency,
 		Token:       token,
 		Network:     network,
-		NotifyURL:   callbackAddress + "/api/subscription/epusdt/notify",
+		NotifyURL:   callbackAddress + "/api/subscription/gmpay/notify",
 		RedirectURL: paymentReturnPath("/console/topup?show_history=true"),
 		Name:        fmt.Sprintf("Subscription %s", plan.Title),
 		PaymentType: method,
 	})
 	if err != nil {
-		_ = model.ExpireSubscriptionOrder(tradeNo, model.PaymentProviderEpusdt)
-		var gatewayErr service.EpusdtGatewayError
+		_ = model.ExpireSubscriptionOrder(tradeNo, model.PaymentProviderGMPay)
+		var gatewayErr service.GMPayGatewayError
 		if errors.As(err, &gatewayErr) {
-			logger.LogError(c.Request.Context(), fmt.Sprintf("Epusdt gateway rejected subscription order user_id=%d trade_no=%s payment_method=%s plan_id=%d error=%q", userId, tradeNo, method, plan.Id, err.Error()))
+			logger.LogError(c.Request.Context(), fmt.Sprintf("GMPay gateway rejected subscription order user_id=%d trade_no=%s payment_method=%s plan_id=%d error=%q", userId, tradeNo, method, plan.Id, err.Error()))
 			if message := gatewayErr.PublicMessage(); message != "" {
 				common.ApiErrorMsg(c, message)
 				return
 			}
 		}
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Epusdt subscription payment create failed user_id=%d trade_no=%s payment_method=%s plan_id=%d error=%q", userId, tradeNo, method, plan.Id, err.Error()))
-		common.ApiErrorMsg(c, "拉起支付失败")
+		logger.LogError(c.Request.Context(), fmt.Sprintf("GMPay subscription payment create failed user_id=%d trade_no=%s payment_method=%s plan_id=%d error=%q", userId, tradeNo, method, plan.Id, err.Error()))
+		common.ApiErrorMsg(c, "GMPay 网关连接失败，请检查 GMPay 端点、商户号和密钥配置")
 		return
 	}
 	order.ProviderPayload = common.GetJsonString(paymentOrder.Raw)
@@ -144,44 +144,47 @@ func SubscriptionRequestEpusdt(c *gin.Context) {
 	})
 }
 
-func SubscriptionEpusdtNotify(c *gin.Context) {
-	params, err := readEpusdtCallback(c)
+func SubscriptionGMPayNotify(c *gin.Context) {
+	params, err := readGMPayCallback(c)
 	if err != nil {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}
-	if !service.VerifyEpusdtSignature(params) {
+	if !service.VerifyGMPaySignature(params) {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}
-	tradeNo := service.EpusdtCallbackTradeNo(params)
+	tradeNo := service.GMPayCallbackTradeNo(params)
 	if tradeNo == "" {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}
-	status := service.EpusdtCallbackStatus(params)
-	if !service.IsEpusdtPaidStatus(status) {
+	status := service.GMPayCallbackStatus(params)
+	if !service.IsGMPayPaidStatus(status) {
 		_, _ = c.Writer.Write([]byte("ok"))
 		return
 	}
 	LockOrder(tradeNo)
 	defer UnlockOrder(tradeNo)
-	merchantID := service.EpusdtCallbackMerchantID(params)
-	if !epusdtCallbackMerchantMatches(merchantID) {
+	merchantID := service.GMPayCallbackMerchantID(params)
+	if !gmpayCallbackMerchantMatches(merchantID) {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}
 	if err := model.CompleteSubscriptionOrderWithValidation(tradeNo, common.GetJsonString(params), model.PaymentCallbackValidation{
-		ExpectedPaymentProvider: model.PaymentProviderEpusdt,
-		ActualPaymentMethod:     service.EpusdtCallbackMethod(params),
-		ActualPaymentToken:      service.EpusdtCallbackToken(params),
-		PaidAmount:              service.EpusdtCallbackPaidAmount(params),
-		PaidCurrency:            epusdtCallbackPaidCurrency(params),
+		ExpectedPaymentProvider: model.PaymentProviderGMPay,
+		ActualPaymentMethod:     service.GMPayCallbackMethod(params),
+		ActualPaymentToken:      service.GMPayCallbackToken(params),
+		PaidAmount:              service.GMPayCallbackPaidAmount(params),
+		PaidCurrency:            gmpayCallbackPaidCurrency(params),
 		RequirePaymentFacts:     true,
 	}); err != nil {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}
-	_ = referralService.ProcessSubscriptionCommission(tradeNo)
+	if err := processPaidSubscriptionCommission(c.Request.Context(), tradeNo); err != nil {
+		_, _ = c.Writer.Write([]byte("fail"))
+		return
+	}
 	_, _ = c.Writer.Write([]byte("ok"))
 }

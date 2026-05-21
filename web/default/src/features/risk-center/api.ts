@@ -50,6 +50,42 @@ export interface RiskUser {
   severity: string
 }
 
+export interface RiskLog {
+  id: number
+  user_id: number
+  username: string
+  type: number
+  content: string
+  quota: number
+  ip: string
+  created_at: number
+}
+
+export interface RiskOrder {
+  order_type: string
+  trade_no: string
+  user_id: number
+  username: string
+  status: string
+  paid_amount: number
+  paid_currency: string
+  payment_provider: string
+  payment_method: string
+  referral_commission_status: string
+  referral_commission_error: string
+  created_at: number
+}
+
+export interface RiskDetail {
+  type: string
+  window_hours: number
+  ip?: string
+  user_id?: number
+  users: RiskUser[]
+  logs: RiskLog[]
+  orders: RiskOrder[]
+}
+
 export async function getRiskOverview(params: URLSearchParams) {
   const res = await api.get(
     `/api/user/admin/risk/overview?${params.toString()}`
@@ -61,8 +97,18 @@ export async function getRiskOverview(params: URLSearchParams) {
       window_hours: number
       signal_count: number
       disabled_users: number
+      new_user_count: number
       signals: RiskSignal[]
     }
+  }
+}
+
+export async function getRiskDetail(params: URLSearchParams) {
+  const res = await api.get(`/api/user/admin/risk/detail?${params.toString()}`)
+  return res.data as {
+    success: boolean
+    message?: string
+    data: RiskDetail
   }
 }
 

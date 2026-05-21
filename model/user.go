@@ -44,6 +44,8 @@ type User struct {
 	Group                   string         `json:"group" gorm:"type:varchar(64);default:'default'"`
 	ReferralInviterId       int            `json:"referral_inviter_id,omitempty" gorm:"-"`
 	ReferralInviterUsername string         `json:"referral_inviter_username,omitempty" gorm:"-"`
+	RegisterIP              string         `json:"register_ip" gorm:"column:register_ip;type:varchar(64);default:''"`
+	LastActiveAt            int64          `json:"last_active_at" gorm:"-"`
 	DeletedAt               gorm.DeletedAt `gorm:"index"`
 	LinuxDOId               string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
 	Setting                 string         `json:"setting" gorm:"type:text;column:setting"`
@@ -225,6 +227,7 @@ func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err err
 		return nil, 0, err
 	}
 	populateReferralInviters(users)
+	populateUserActivity(users)
 
 	return users, total, nil
 }
@@ -286,8 +289,75 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, 
 		return nil, 0, err
 	}
 	populateReferralInviters(users)
+	populateUserActivity(users)
 
 	return users, total, nil
+}
+
+func populateUserActivity(users []*User) {
+	if len(users) == 0 {
+		return
+	}
+	userIds := make([]int, 0, len(users))
+	userById := make(map[int]*User, len(users))
+	for _, user := range users {
+		if user == nil || user.Id == 0 {
+			continue
+		}
+		userIds = append(userIds, user.Id)
+		userById[user.Id] = user
+	}
+	if len(userIds) == 0 {
+		return
+	}
+
+	type activeRow struct {
+		UserID       int
+		LastActiveAt int64
+	}
+	var activeRows []activeRow
+	if err := LOG_DB.Table("logs").
+		Select("user_id, max(created_at) AS last_active_at").
+		Where("user_id IN ? AND type = ?", userIds, LogTypeConsume).
+		Group("user_id").
+		Scan(&activeRows).Error; err != nil {
+		common.SysLog("failed to populate user last active time: " + err.Error())
+	} else {
+		for _, row := range activeRows {
+			if user := userById[row.UserID]; user != nil {
+				user.LastActiveAt = row.LastActiveAt
+			}
+		}
+	}
+
+	type ipRow struct {
+		UserID    int
+		IP        string
+		CreatedAt int64
+	}
+	var ipRows []ipRow
+	if err := LOG_DB.Table("logs").
+		Select("user_id, ip, created_at").
+		Where("user_id IN ? AND ip <> ''", userIds).
+		Order("created_at asc").
+		Scan(&ipRows).Error; err != nil {
+		common.SysLog("failed to populate user register ip fallback: " + err.Error())
+		return
+	}
+	seen := make(map[int]bool, len(userIds))
+	for _, row := range ipRows {
+		if seen[row.UserID] {
+			continue
+		}
+		user := userById[row.UserID]
+		if user == nil {
+			continue
+		}
+		if strings.TrimSpace(user.RegisterIP) == "" {
+			user.RegisterIP = strings.TrimSpace(row.IP)
+		}
+		seen[row.UserID] = true
+	}
 }
 
 func populateReferralInviters(users []*User) {

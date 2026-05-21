@@ -1,6 +1,6 @@
 # newapi
 
-`newapi` 是基于上游 `QuantumNous/new-api` 二次维护的多模型网关与 AI 资产管理系统。项目保留上游的统一 OpenAI 兼容中继、渠道管理、模型计费、用户额度、令牌管理、日志统计等核心能力，并在当前 fork 中补充了中文默认文档、源码构建部署、订阅套餐、支付网关、Epusdt USDT 支付、推广返佣、提现审核和新模板适配等功能。
+`newapi` 是基于上游 `QuantumNous/new-api` 二次维护的多模型网关与 AI 资产管理系统。项目保留上游的统一 OpenAI 兼容中继、渠道管理、模型计费、用户额度、令牌管理、日志统计等核心能力，并在当前 fork 中补充了中文默认文档、源码构建部署、订阅套餐、支付网关、GMPay USDT 支付、推广返佣、提现审核和新模板适配等功能。
 
 当前仓库以中文说明为准。功能细节如果与上游文档不一致，请以本仓库当前代码、`docker-compose.yml`、前端页面和实际运行结果为准。
 
@@ -71,19 +71,19 @@ https://docs.newapi.pro/zh/docs
 当前代码包含以下支付能力：
 
 - epay：支持支付宝、微信等 epay 支付方式，包含充值订单、订阅订单、return 和 notify。
-- Epusdt：对接 `GMwalletApp/epusdt` 风格网关，创建 USDT 支付订单，Epusdt 支付页由用户选择网络和币种。
+- GMPay：对接 `GMwalletApp/gmpay` 风格网关，创建 USDT 支付订单，GMPay 支付页由用户选择网络和币种。
 - Stripe：支持充值和订阅支付。
 - Creem：支持充值和订阅支付。
 - Waffo：支持充值支付。
 - Waffo Pancake：支持充值支付。
 
-Epusdt 在本 fork 中采用“用户侧只展示一个 USDT 通道”的方式。后台支付方式只需要配置一个 `USDT`，后端向 Epusdt 创建订单时传递 `epusdt:usdt`，具体 TRON、BSC、Polygon 等网络由 Epusdt 支付页让付款用户选择。这样避免在 newapi 钱包里重复展示 `USDT-TRC20`、`USDT-BEP20`、`USDT-Polygon` 等多个按钮。
+GMPay 在本 fork 中采用“用户侧只展示一个 USDT 通道”的方式。后台支付方式只需要配置一个 `USDT`，后端向 GMPay 创建订单时传递 `gmpay:usdt`，具体 TRON、BSC、Polygon 等网络由 GMPay 支付页让付款用户选择。这样避免在 newapi 钱包里重复展示 `USDT-TRC20`、`USDT-BEP20`、`USDT-Polygon` 等多个按钮。
 
 ### 订阅套餐
 
 - 管理员可创建、修改、启停订阅套餐，配置价格、有效期、额度重置、优先级、总额度等信息。
 - 用户可在钱包页面购买订阅套餐。
-- 支持 epay、Epusdt、Stripe、Creem 等订阅支付入口。
+- 支持 epay、GMPay、Stripe、Creem 等订阅支付入口。
 - 订阅支付创建时会固化套餐价格、货币、额度、有效期、支付方式和返佣快照。
 - 订阅生效后可用于模型访问权限和额度消耗，用户可配置优先使用钱包或订阅额度。
 
@@ -646,7 +646,7 @@ server {
 4. 配置站点名称、主题、侧边栏模块、用户注册策略。
 5. 配置渠道、模型、分组和价格。
 6. 在 `系统设置 -> 计费设置 -> 支付网关` 确认支付合规声明。
-7. 配置充值金额、支付方式、epay、Epusdt、Stripe、Creem 等支付网关。
+7. 配置充值金额、支付方式、epay、GMPay、Stripe、Creem 等支付网关。
 8. 如果启用订阅，先创建订阅套餐，再开放用户购买。
 9. 如果启用推广返佣，先配置返佣规则，再审批推广员。
 
@@ -678,22 +678,22 @@ server {
 
 `return` 只用于页面跳转展示，不作为到账依据。
 
-### Epusdt / USDT
+### GMPay / USDT
 
-本 fork 对接 `GMwalletApp/epusdt` 风格接口。
+本 fork 对接 `GMwalletApp/gmpay` 风格接口。
 
 后台路径：
 
 ```text
-系统设置 -> 计费设置 -> 支付网关 -> Epusdt USDT 支付
+系统设置 -> 计费设置 -> 支付网关 -> GMPay USDT 支付
 ```
 
 需要配置：
 
-- 启用 Epusdt
-- Epusdt 地址，例如 `https://upay.example.com`
-- Epusdt 商户号
-- Epusdt 密钥
+- 启用 GMPay
+- GMPay 地址，例如 `https://upay.example.com`
+- GMPay 商户号
+- GMPay 密钥
 - 订单计价币种，当前固定为 `CNY`
 - 显示名称，建议为 `USDT`
 - 最低充值
@@ -704,25 +704,25 @@ server {
 [
   {
     "name": "USDT",
-    "type": "epusdt:usdt",
+    "type": "gmpay:usdt",
     "color": "#1890FF"
   }
 ]
 ```
 
-用户在 newapi 钱包里只看到一个 USDT 按钮。点击后拉起 Epusdt 支付页，网络和币种由 Epusdt 支付页选择，例如 TRON、BSC、Polygon。
+用户在 newapi 钱包里只看到一个 USDT 按钮。点击后拉起 GMPay 支付页，网络和币种由 GMPay 支付页选择，例如 TRON、BSC、Polygon。
 
 回调入口：
 
-- 充值：`/api/user/epusdt/notify`
-- 订阅：`/api/subscription/epusdt/notify`
+- 充值：`/api/user/gmpay/notify`
+- 订阅：`/api/subscription/gmpay/notify`
 
 注意：
 
-- Epusdt 网关必须能访问 newapi 的 notify URL。
-- newapi 必须能访问 Epusdt API 地址。
-- Epusdt 密钥不得写入前端、Git 或公开日志。
-- 如果 Epusdt 返回 `rate calculation failed`，优先检查 Epusdt 自身 token、network、汇率和资产配置。
+- GMPay 网关必须能访问 newapi 的 notify URL。
+- newapi 必须能访问 GMPay API 地址。
+- GMPay 密钥不得写入前端、Git 或公开日志。
+- 如果 GMPay 返回 `rate calculation failed`，优先检查 GMPay 自身 token、network、汇率和资产配置。
 
 ### Stripe / Creem / Waffo
 
@@ -911,21 +911,21 @@ docker compose ps
 
 检查：
 
-1. 后台是否启用 Epusdt。
-2. Epusdt 地址、商户号、密钥是否完整。
-3. 支付方式列表是否包含 `epusdt:usdt`。
+1. 后台是否启用 GMPay。
+2. GMPay 地址、商户号、密钥是否完整。
+3. 支付方式列表是否包含 `gmpay:usdt`。
 4. 用户钱包页是否刷新了 `/api/user/topup/info`。
 
-建议只配置一个 `USDT` 支付按钮，由 Epusdt 支付页选择网络。
+建议只配置一个 `USDT` 支付按钮，由 GMPay 支付页选择网络。
 
-### Epusdt 拉起失败
+### GMPay 拉起失败
 
 优先检查：
 
-1. newapi 后端日志里的 Epusdt 错误。
-2. Epusdt 网关是否能访问。
-3. Epusdt 商户号和密钥是否匹配。
-4. Epusdt 的 token、network、汇率是否配置完整。
+1. newapi 后端日志里的 GMPay 错误。
+2. GMPay 网关是否能访问。
+3. GMPay 商户号和密钥是否匹配。
+4. GMPay 的 token、network、汇率是否配置完整。
 5. newapi 订单计价币种是否为 `CNY`。
 6. 回调地址是否为公网可访问 HTTPS 地址。
 

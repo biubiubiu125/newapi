@@ -86,8 +86,8 @@ export function isWaffoPancakePayment(paymentType: string): boolean {
   return paymentType === PAYMENT_TYPES.WAFFO_PANCAKE
 }
 
-export function isEpusdtPayment(paymentType: string): boolean {
-  return paymentType.startsWith(PAYMENT_TYPES.EPUSDT_PREFIX)
+export function isGMPayPayment(paymentType: string): boolean {
+  return paymentType.startsWith(PAYMENT_TYPES.GMPAY_PREFIX)
 }
 
 /**
@@ -103,8 +103,8 @@ export function getDefaultPaymentType(topupInfo: TopupInfo | null): string {
     return topupInfo.pay_methods[0].type
   }
 
-  if (topupInfo.enable_epusdt_topup) {
-    return `${PAYMENT_TYPES.EPUSDT_PREFIX}usdt`
+  if (topupInfo.enable_gmpay_topup) {
+    return `${PAYMENT_TYPES.GMPAY_PREFIX}usdt`
   }
 
   if (topupInfo.enable_stripe_topup) {
@@ -155,8 +155,8 @@ export function getMinTopupAmount(topupInfo: TopupInfo | null): number {
     candidates.push(topupInfo.waffo_pancake_min_topup || DEFAULT_MIN_TOPUP)
   }
 
-  if (topupInfo.enable_epusdt_topup) {
-    candidates.push(topupInfo.epusdt_min_topup || DEFAULT_MIN_TOPUP)
+  if (topupInfo.enable_gmpay_topup) {
+    candidates.push(topupInfo.gmpay_min_topup || DEFAULT_MIN_TOPUP)
   }
 
   const validCandidates = candidates.filter(

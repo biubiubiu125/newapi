@@ -900,6 +900,11 @@ export function Referral() {
                               'Please select the same blockchain network as your receiving address.'
                             )}
                           </div>
+                          <div className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100'>
+                            {t(
+                              'USDT withdrawals are converted using OKX merchant real-time exchange rates at review or payout time.'
+                            )}
+                          </div>
                         </div>
                       ) : (
                         <div className='space-y-1.5'>

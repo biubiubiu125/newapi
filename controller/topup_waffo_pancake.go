@@ -271,7 +271,10 @@ func WaffoPancakeWebhook(c *gin.Context) {
 		c.String(http.StatusInternalServerError, "retry")
 		return
 	}
-	_ = referralService.ProcessTopUpCommission(tradeNo)
+	if err := processPaidTopUpCommission(c.Request.Context(), tradeNo); err != nil {
+		c.String(http.StatusInternalServerError, "retry")
+		return
+	}
 
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 充值成功 trade_no=%s event_id=%s order_id=%s client_ip=%s", tradeNo, event.ID, event.Data.OrderID, c.ClientIP()))
 	c.String(http.StatusOK, "OK")

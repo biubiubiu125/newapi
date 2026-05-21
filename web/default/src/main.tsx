@@ -44,6 +44,51 @@ import './styles/index.css'
 // Ensure VChart theme is initialized before any chart mounts (prevents white default theme flash)
 // VChart theme is driven by our ThemeProvider (html.light/html.dark) via per-chart `theme` prop.
 
+const FRONTEND_CACHE_VERSION_KEY = 'newapi:frontend-cache-version'
+
+function initFrontendVersionGuard() {
+  if (typeof window === 'undefined' || typeof document === 'undefined') return
+
+  let checking = false
+  const check = async () => {
+    if (checking || document.visibilityState === 'hidden') return
+    checking = true
+    try {
+      const response = await fetch(
+        `${window.location.pathname}${window.location.search}`,
+        {
+          method: 'GET',
+          cache: 'no-store',
+          headers: { 'Cache-Control': 'no-cache' },
+        }
+      )
+      const version = response.headers.get('Cache-Version')
+      if (!version) return
+      const savedVersion = localStorage.getItem(FRONTEND_CACHE_VERSION_KEY)
+      if (savedVersion && savedVersion !== version) {
+        localStorage.setItem(FRONTEND_CACHE_VERSION_KEY, version)
+        window.location.reload()
+        return
+      }
+      if (!savedVersion) {
+        localStorage.setItem(FRONTEND_CACHE_VERSION_KEY, version)
+      }
+    } catch {
+      /* empty */
+    } finally {
+      checking = false
+    }
+  }
+
+  void check()
+  window.addEventListener('focus', () => void check())
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'visible') void check()
+  })
+  // Keep long-running admin tabs aligned after a test-machine redeploy.
+  window.setInterval(() => void check(), 60_000)
+}
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -151,6 +196,7 @@ const rootElement = document.getElementById('root')!
     /* empty */
   }
 })()
+initFrontendVersionGuard()
 if (!rootElement.innerHTML) {
   const root = ReactDOM.createRoot(rootElement)
   root.render(

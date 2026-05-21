@@ -417,7 +417,10 @@ func handleWaffoPayment(c *gin.Context, wh *core.WebhookHandler, result *core.Pa
 		sendWaffoWebhookResponse(c, wh, false, err.Error())
 		return
 	}
-	_ = referralService.ProcessTopUpCommission(merchantOrderId)
+	if err := processPaidTopUpCommission(c.Request.Context(), merchantOrderId); err != nil {
+		sendWaffoWebhookResponse(c, wh, false, err.Error())
+		return
+	}
 
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo 充值成功 trade_no=%s client_ip=%s", merchantOrderId, c.ClientIP()))
 	sendWaffoWebhookResponse(c, wh, true, "")

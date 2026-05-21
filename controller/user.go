@@ -206,6 +206,7 @@ func Register(c *gin.Context) {
 		Password:    user.Password,
 		DisplayName: user.Username,
 		Email:       strings.TrimSpace(user.Email),
+		RegisterIP:  c.ClientIP(),
 		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
 	}
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {

@@ -110,17 +110,29 @@ type ReferralCommissionView struct {
 }
 
 type ReferralCommissionJobView struct {
-	Id            int    `json:"id"`
-	SourceType    string `json:"source_type"`
-	SourceTradeNo string `json:"source_trade_no"`
-	AffiliateId   int    `json:"affiliate_id"`
-	Status        string `json:"status"`
-	AttemptCount  int    `json:"attempt_count"`
-	LastError     string `json:"last_error"`
-	LockedAt      int64  `json:"locked_at"`
-	SucceededAt   int64  `json:"succeeded_at"`
-	FailedAt      int64  `json:"failed_at"`
-	UpdatedAt     int64  `json:"updated_at"`
+	Id              int    `json:"id"`
+	SourceType      string `json:"source_type"`
+	SourceTradeNo   string `json:"source_trade_no"`
+	OrderType       string `json:"order_type"`
+	OrderTradeNo    string `json:"order_trade_no"`
+	OrderExists     bool   `json:"order_exists"`
+	OrderLabel      string `json:"order_label"`
+	RetrySourceType string `json:"retry_source_type"`
+	AffiliateId     int    `json:"affiliate_id"`
+	Status          string `json:"status"`
+	AttemptCount    int    `json:"attempt_count"`
+	LastError       string `json:"last_error"`
+	LockedAt        int64  `json:"locked_at"`
+	SucceededAt     int64  `json:"succeeded_at"`
+	FailedAt        int64  `json:"failed_at"`
+	UpdatedAt       int64  `json:"updated_at"`
+}
+
+type referralCommissionJobOrderView struct {
+	OrderType    string
+	OrderTradeNo string
+	OrderExists  bool
+	OrderLabel   string
 }
 
 type ReferralBindingView struct {
@@ -597,9 +609,6 @@ func (s *ReferralService) BuildOrderSnapshot(userId int, paidAmount float64, pai
 		snapshot.Error = "affiliate_settlement_disabled"
 		return snapshot, nil
 	}
-	if snapshotError != "" && snapshotError != "no_binding" {
-		return snapshot, nil
-	}
 	rate := effectiveReferralRate(affiliate.RateOverride)
 	if rate <= 0 {
 		snapshot.Error = "invalid_rate"
@@ -607,6 +616,9 @@ func (s *ReferralService) BuildOrderSnapshot(userId int, paidAmount float64, pai
 	}
 	snapshot.AffiliateId = affiliate.Id
 	snapshot.Rate = rate
+	if snapshotError != "" && snapshotError != "no_binding" {
+		return snapshot, nil
+	}
 	if snapshotError == "" || snapshotError == "no_binding" {
 		snapshot.Status = model.ReferralCommissionJobStatusPending
 		snapshot.Error = ""
@@ -869,21 +881,59 @@ func (s *ReferralService) ListCommissionJobs(params ReferralListParams) ([]Refer
 	}
 	items := make([]ReferralCommissionJobView, 0, len(rows))
 	for _, row := range rows {
+		orderView := s.resolveCommissionJobOrderView(row.SourceType, row.SourceTradeNo)
 		items = append(items, ReferralCommissionJobView{
-			Id:            row.Id,
-			SourceType:    row.SourceType,
-			SourceTradeNo: row.SourceTradeNo,
-			AffiliateId:   row.AffiliateId,
-			Status:        row.Status,
-			AttemptCount:  row.AttemptCount,
-			LastError:     row.LastError,
-			LockedAt:      row.LockedAt,
-			SucceededAt:   row.SucceededAt,
-			FailedAt:      row.FailedAt,
-			UpdatedAt:     row.UpdatedAt,
+			Id:              row.Id,
+			SourceType:      row.SourceType,
+			SourceTradeNo:   row.SourceTradeNo,
+			OrderType:       orderView.OrderType,
+			OrderTradeNo:    orderView.OrderTradeNo,
+			OrderExists:     orderView.OrderExists,
+			OrderLabel:      orderView.OrderLabel,
+			RetrySourceType: orderView.OrderType,
+			AffiliateId:     row.AffiliateId,
+			Status:          row.Status,
+			AttemptCount:    row.AttemptCount,
+			LastError:       row.LastError,
+			LockedAt:        row.LockedAt,
+			SucceededAt:     row.SucceededAt,
+			FailedAt:        row.FailedAt,
+			UpdatedAt:       row.UpdatedAt,
 		})
 	}
 	return items, total, nil
+}
+
+func (s *ReferralService) resolveCommissionJobOrderView(sourceType string, tradeNo string) referralCommissionJobOrderView {
+	sourceType = strings.ToLower(strings.TrimSpace(sourceType))
+	tradeNo = strings.TrimSpace(tradeNo)
+	view := referralCommissionJobOrderView{
+		OrderType:    sourceType,
+		OrderTradeNo: tradeNo,
+		OrderExists:  false,
+	}
+	if tradeNo == "" {
+		return view
+	}
+
+	var order model.SubscriptionOrder
+	if err := model.DB.Where("trade_no = ?", tradeNo).First(&order).Error; err == nil {
+		view.OrderType = "subscription"
+		view.OrderTradeNo = order.TradeNo
+		view.OrderExists = true
+		view.OrderLabel = strings.TrimSpace(order.PlanTitleSnapshot)
+		return view
+	}
+
+	var topup model.TopUp
+	if err := model.DB.Where("trade_no = ?", tradeNo).First(&topup).Error; err == nil {
+		view.OrderType = "topup"
+		view.OrderTradeNo = topup.TradeNo
+		view.OrderExists = true
+		return view
+	}
+
+	return view
 }
 
 func sanitizeAffiliateState(item *model.ReferralAffiliate) {
@@ -1067,6 +1117,17 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 			return err
 		}
 		canonicalInput := input
+		canonicalInput.AccountType = strings.ToLower(strings.TrimSpace(canonicalInput.AccountType))
+		canonicalInput.AccountName = strings.TrimSpace(canonicalInput.AccountName)
+		canonicalInput.AccountNo = strings.TrimSpace(canonicalInput.AccountNo)
+		canonicalInput.AccountNetwork = strings.TrimSpace(canonicalInput.AccountNetwork)
+		switch canonicalInput.AccountType {
+		case "alipay":
+			canonicalInput.AccountNetwork = ""
+		case "usdt":
+			canonicalInput.AccountName = ""
+			canonicalInput.AccountNetwork = normalizeWithdrawalNetwork(canonicalInput.AccountNetwork)
+		}
 		canonicalInput.QRImageURL = qrImagePath
 		existing := &model.ReferralWithdrawal{}
 		result := tx.Where("user_id = ? AND idempotency_key = ?", input.UserId, strings.TrimSpace(input.IdempotencyKey)).Find(existing)
@@ -1923,6 +1984,9 @@ func (s *ReferralService) RunSettlementBatchInline() (int, error) {
 }
 
 func (s *ReferralService) ProcessTopUpCommission(tradeNo string) error {
+	if s.subscriptionOrderExists(tradeNo) {
+		return s.ProcessSubscriptionCommission(tradeNo)
+	}
 	return model.DB.Transaction(func(tx *gorm.DB) error {
 		topup := &model.TopUp{}
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("trade_no = ?", tradeNo).First(topup).Error; err != nil {
@@ -1947,9 +2011,27 @@ func (s *ReferralService) ProcessSubscriptionCommission(tradeNo string) error {
 			return nil
 		}
 		return s.processCommissionTx(tx, "subscription", tradeNo, order.UserId, order.Id, "subscription", order.ReferralAffiliateId, order.ReferralRate, order.ReferralBaseAmount, order.PaidAmount, order.PaidCurrency, &order.ReferralCommissionStatus, &order.ReferralCommissionError, &order.ReferralCommissionAt, func() error {
-			return tx.Save(order).Error
+			if err := tx.Save(order).Error; err != nil {
+				return err
+			}
+			return s.syncSubscriptionTopUpReferralStateTx(tx, order)
 		})
 	})
+}
+
+func (s *ReferralService) syncSubscriptionTopUpReferralStateTx(tx *gorm.DB, order *model.SubscriptionOrder) error {
+	if tx == nil || order == nil || strings.TrimSpace(order.TradeNo) == "" {
+		return nil
+	}
+	return tx.Model(&model.TopUp{}).Where("trade_no = ?", order.TradeNo).Updates(map[string]interface{}{
+		"referral_affiliate_id":      order.ReferralAffiliateId,
+		"referral_rate":              order.ReferralRate,
+		"referral_base_amount":       order.ReferralBaseAmount,
+		"referral_base_currency":     order.ReferralBaseCurrency,
+		"referral_commission_status": order.ReferralCommissionStatus,
+		"referral_commission_error":  order.ReferralCommissionError,
+		"referral_commission_at":     order.ReferralCommissionAt,
+	}).Error
 }
 
 func (s *ReferralService) RetryCommissionJob(sourceType string, tradeNo string) error {
@@ -1957,6 +2039,16 @@ func (s *ReferralService) RetryCommissionJob(sourceType string, tradeNo string) 
 	tradeNo = strings.TrimSpace(tradeNo)
 	if tradeNo == "" {
 		return errors.New("trade_no is required")
+	}
+	canonicalSourceType, err := s.canonicalCommissionSourceType(sourceType, tradeNo)
+	if err != nil {
+		return err
+	}
+	if canonicalSourceType != sourceType {
+		if err := s.moveCommissionJobToCanonicalSource(sourceType, canonicalSourceType, tradeNo); err != nil {
+			return err
+		}
+		sourceType = canonicalSourceType
 	}
 	switch sourceType {
 	case "topup":
@@ -1966,6 +2058,91 @@ func (s *ReferralService) RetryCommissionJob(sourceType string, tradeNo string) 
 	default:
 		return errors.New("unsupported source_type")
 	}
+}
+
+func (s *ReferralService) subscriptionOrderExists(tradeNo string) bool {
+	tradeNo = strings.TrimSpace(tradeNo)
+	if tradeNo == "" {
+		return false
+	}
+	var count int64
+	if err := model.DB.Model(&model.SubscriptionOrder{}).Where("trade_no = ?", tradeNo).Count(&count).Error; err != nil {
+		return false
+	}
+	return count > 0
+}
+
+func (s *ReferralService) canonicalCommissionSourceType(sourceType string, tradeNo string) (string, error) {
+	sourceType = strings.ToLower(strings.TrimSpace(sourceType))
+	tradeNo = strings.TrimSpace(tradeNo)
+	switch sourceType {
+	case "topup", "subscription":
+	default:
+		return "", errors.New("unsupported source_type")
+	}
+	if s.subscriptionOrderExists(tradeNo) {
+		return "subscription", nil
+	}
+	if sourceType == "subscription" {
+		return "", model.ErrSubscriptionOrderNotFound
+	}
+	return "topup", nil
+}
+
+func (s *ReferralService) moveCommissionJobToCanonicalSource(oldSourceType string, newSourceType string, tradeNo string) error {
+	oldSourceType = strings.ToLower(strings.TrimSpace(oldSourceType))
+	newSourceType = strings.ToLower(strings.TrimSpace(newSourceType))
+	tradeNo = strings.TrimSpace(tradeNo)
+	if oldSourceType == "" || newSourceType == "" || oldSourceType == newSourceType || tradeNo == "" {
+		return nil
+	}
+	return model.DB.Transaction(func(tx *gorm.DB) error {
+		var oldJob model.ReferralCommissionJob
+		oldResult := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("source_type = ? AND source_trade_no = ?", oldSourceType, tradeNo).
+			First(&oldJob)
+		if oldResult.Error != nil {
+			if errors.Is(oldResult.Error, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return oldResult.Error
+		}
+
+		var existing model.ReferralCommissionJob
+		existingResult := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("source_type = ? AND source_trade_no = ?", newSourceType, tradeNo).
+			First(&existing)
+		if existingResult.Error != nil && !errors.Is(existingResult.Error, gorm.ErrRecordNotFound) {
+			return existingResult.Error
+		}
+		if existingResult.Error == nil {
+			if existing.Status != model.ReferralCommissionJobStatusSucceeded {
+				existing.Status = model.ReferralCommissionJobStatusPending
+				existing.LastError = ""
+				existing.LockedAt = 0
+				existing.FailedAt = 0
+				existing.SucceededAt = 0
+				if oldJob.AttemptCount > existing.AttemptCount {
+					existing.AttemptCount = oldJob.AttemptCount
+				}
+				if err := tx.Save(&existing).Error; err != nil {
+					return err
+				}
+			}
+			oldJob.Status = model.ReferralCommissionJobStatusSkipped
+			oldJob.LastError = "duplicate_job_superseded_by_subscription"
+			oldJob.SucceededAt = time.Now().Unix()
+			return tx.Save(&oldJob).Error
+		}
+
+		oldJob.SourceType = newSourceType
+		oldJob.Status = model.ReferralCommissionJobStatusPending
+		oldJob.LastError = ""
+		oldJob.LockedAt = 0
+		oldJob.FailedAt = 0
+		oldJob.SucceededAt = 0
+		return tx.Save(&oldJob).Error
+	})
 }
 
 func (s *ReferralService) processCommissionTx(
@@ -1986,6 +2163,10 @@ func (s *ReferralService) processCommissionTx(
 	save func() error,
 ) error {
 	now := time.Now().Unix()
+	if *statusPtr == model.ReferralCommissionJobStatusSucceeded || *statusPtr == model.ReferralCommissionJobStatusSkipped {
+		return nil
+	}
+
 	job := &model.ReferralCommissionJob{}
 	findJob := func() error {
 		result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("source_type = ? AND source_trade_no = ?", sourceType, tradeNo).Find(job)
@@ -2015,11 +2196,12 @@ func (s *ReferralService) processCommissionTx(
 			return err
 		}
 	}
-	if *statusPtr == "succeeded" || *statusPtr == "skipped" {
-		return nil
-	}
 	if job.Status == model.ReferralCommissionJobStatusSucceeded || job.Status == model.ReferralCommissionJobStatusSkipped {
 		return nil
+	}
+	if *statusPtr == model.ReferralCommissionJobStatusFailed {
+		*statusPtr = model.ReferralCommissionJobStatusPending
+		*errorPtr = ""
 	}
 	if affiliateId <= 0 || rate <= 0 {
 		job.Status = model.ReferralCommissionJobStatusSkipped
@@ -2515,7 +2697,7 @@ func referralSettlementFxRate(currency string) (float64, bool) {
 func PaidAmountCNY(paidAmount float64, paidCurrency string, paymentProvider string) (float64, float64, bool) {
 	provider := strings.ToLower(strings.TrimSpace(paymentProvider))
 	currency := strings.ToUpper(strings.TrimSpace(paidCurrency))
-	if provider == model.PaymentProviderEpay || provider == model.PaymentProviderEpusdt {
+	if provider == model.PaymentProviderEpay || provider == model.PaymentProviderGMPay {
 		currency = "CNY"
 	}
 	amount, _, rate, err := resolveReferralSettlementAmount(paidAmount, currency)
@@ -2645,9 +2827,18 @@ func (s *ReferralService) getOrCreateAccount(affiliateId int, userId int) (*mode
 
 func (s *ReferralService) getOrCreateAccountTx(tx *gorm.DB, affiliateId int, userId int) (*model.ReferralCommissionAccount, error) {
 	account := &model.ReferralCommissionAccount{}
-	result := tx.Where("affiliate_id = ?", affiliateId).Find(account)
+	result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("affiliate_id = ?", affiliateId).Find(account)
 	if result.Error != nil {
 		return nil, result.Error
+	}
+	if result.RowsAffected == 0 {
+		result = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", userId).Find(account)
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.RowsAffected > 0 && account.AffiliateId != affiliateId {
+			return nil, fmt.Errorf("referral account uniqueness mismatch: affiliate_id=%d user_id=%d existing_affiliate_id=%d", affiliateId, userId, account.AffiliateId)
+		}
 	}
 	if result.RowsAffected == 0 {
 		account = &model.ReferralCommissionAccount{
@@ -2655,17 +2846,24 @@ func (s *ReferralService) getOrCreateAccountTx(tx *gorm.DB, affiliateId int, use
 			UserId:             userId,
 			SettlementCurrency: referralSettlementCurrency(),
 		}
-		if err := tx.Create(account).Error; err != nil {
-			if !isDuplicateError(err) {
-				return nil, err
-			}
-			account = &model.ReferralCommissionAccount{}
-			result = tx.Where("affiliate_id = ?", affiliateId).Find(account)
+		if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(account).Error; err != nil {
+			return nil, err
+		}
+		account = &model.ReferralCommissionAccount{}
+		result = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("affiliate_id = ?", affiliateId).Find(account)
+		if result.Error != nil {
+			return nil, result.Error
+		}
+		if result.RowsAffected == 0 {
+			result = tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", userId).Find(account)
 			if result.Error != nil {
 				return nil, result.Error
 			}
 			if result.RowsAffected == 0 {
 				return nil, gorm.ErrRecordNotFound
+			}
+			if account.AffiliateId != affiliateId {
+				return nil, fmt.Errorf("referral account uniqueness mismatch: affiliate_id=%d user_id=%d existing_affiliate_id=%d", affiliateId, userId, account.AffiliateId)
 			}
 		}
 	}

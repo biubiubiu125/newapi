@@ -52,7 +52,7 @@ export type WaffoPancakePaymentResponse = ApiResponse<
     }
   | string
 >
-export type EpusdtPaymentResponse = ApiResponse<{
+export type GMPayPaymentResponse = ApiResponse<{
   payment_url?: string
   order_id?: string
   transaction_id?: string
@@ -153,12 +153,12 @@ export interface TopupInfo {
   enable_waffo_pancake_topup?: boolean
   /** Minimum topup amount for Waffo Pancake */
   waffo_pancake_min_topup?: number
-  /** Whether Epusdt topup is enabled */
-  enable_epusdt_topup?: boolean
-  /** Epusdt payment methods read from the Epusdt asset config */
-  epusdt_pay_methods?: PaymentMethod[]
-  /** Minimum topup amount for Epusdt */
-  epusdt_min_topup?: number
+  /** Whether GMPay topup is enabled */
+  enable_gmpay_topup?: boolean
+  /** GMPay payment methods read from the GMPay asset config */
+  gmpay_pay_methods?: PaymentMethod[]
+  /** Minimum topup amount for GMPay */
+  gmpay_min_topup?: number
   /** Whether redemption code usage is enabled */
   enable_redemption?: boolean
   /** Whether compliance confirmation has been completed */
@@ -214,12 +214,12 @@ export interface WaffoPancakePaymentRequest {
 }
 
 /**
- * Epusdt payment request parameters
+ * GMPay payment request parameters
  */
-export interface EpusdtPaymentRequest {
+export interface GMPayPaymentRequest {
   /** Topup amount */
   amount: number
-  /** Epusdt payment method, e.g. epusdt:usdt */
+  /** GMPay payment method, e.g. gmpay:usdt */
   payment_method: string
 }
 

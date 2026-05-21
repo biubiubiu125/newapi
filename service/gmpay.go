@@ -19,17 +19,22 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 )
 
-const EpusdtPaymentMethodPrefix = "epusdt:"
-const epusdtUserAgent = "Mozilla/5.0 (compatible; NewAPI-Epusdt/1.0)"
+const GMPayPaymentMethodPrefix = "gmpay:"
+const gmpayUserAgent = "Mozilla/5.0 (compatible; NewAPI-GMPay/1.0)"
 
-type EpusdtAsset struct {
+var gmpayCreateOrderPaths = []string{
+	"/api/v1/order/create-transaction",
+	"/payments/gmpay/v1/order/create-transaction",
+}
+
+type GMPayAsset struct {
 	Token       string `json:"token"`
 	Network     string `json:"network"`
 	PaymentType string `json:"payment_type"`
 	DisplayName string `json:"display_name"`
 }
 
-type EpusdtCreateOrderRequest struct {
+type GMPayCreateOrderRequest struct {
 	OrderID     string  `json:"order_id"`
 	Amount      float64 `json:"amount"`
 	Currency    string  `json:"currency"`
@@ -41,7 +46,7 @@ type EpusdtCreateOrderRequest struct {
 	PaymentType string  `json:"payment_type"`
 }
 
-type EpusdtCreateOrderResponse struct {
+type GMPayCreateOrderResponse struct {
 	OrderID         string                 `json:"order_id"`
 	PaymentURL      string                 `json:"payment_url"`
 	PayURL          string                 `json:"pay_url"`
@@ -53,19 +58,27 @@ type EpusdtCreateOrderResponse struct {
 	Raw             map[string]interface{} `json:"raw,omitempty"`
 }
 
-type EpusdtGatewayError struct {
+type GMPayGatewayError struct {
 	StatusCode int
 	Body       string
+	Endpoint   string
 }
 
-func (err EpusdtGatewayError) Error() string {
+func (err GMPayGatewayError) Error() string {
+	endpoint := strings.TrimSpace(err.Endpoint)
 	if strings.TrimSpace(err.Body) == "" {
-		return fmt.Sprintf("epusdt create order status %d", err.StatusCode)
+		if endpoint != "" {
+			return fmt.Sprintf("gmpay create order %s status %d", endpoint, err.StatusCode)
+		}
+		return fmt.Sprintf("gmpay create order status %d", err.StatusCode)
 	}
-	return fmt.Sprintf("epusdt create order status %d: %s", err.StatusCode, err.Body)
+	if endpoint != "" {
+		return fmt.Sprintf("gmpay create order %s status %d: %s", endpoint, err.StatusCode, err.Body)
+	}
+	return fmt.Sprintf("gmpay create order status %d: %s", err.StatusCode, err.Body)
 }
 
-func (err EpusdtGatewayError) PublicMessage() string {
+func (err GMPayGatewayError) PublicMessage() string {
 	var payload map[string]interface{}
 	if common.UnmarshalJsonStr(err.Body, &payload) != nil {
 		return ""
@@ -76,31 +89,31 @@ func (err EpusdtGatewayError) PublicMessage() string {
 	}
 	statusCode := firstString(payload, "status_code", "code")
 	if statusCode != "" {
-		return fmt.Sprintf("Epusdt 网关拒绝订单：%s（%s）", message, statusCode)
+		return fmt.Sprintf("GMPay 网关拒绝订单：%s（%s）", message, statusCode)
 	}
-	return fmt.Sprintf("Epusdt 网关拒绝订单：%s", message)
+	return fmt.Sprintf("GMPay 网关拒绝订单：%s", message)
 }
 
-func IsEpusdtConfigured() bool {
-	return setting.EpusdtEnabled &&
-		strings.TrimSpace(setting.EpusdtBaseURL) != "" &&
-		strings.TrimSpace(setting.EpusdtPID) != "" &&
-		strings.TrimSpace(setting.EpusdtSecretKey) != ""
+func IsGMPayConfigured() bool {
+	return setting.GMPayEnabled &&
+		strings.TrimSpace(setting.GMPayBaseURL) != "" &&
+		strings.TrimSpace(setting.GMPayPID) != "" &&
+		strings.TrimSpace(setting.GMPaySecretKey) != ""
 }
 
-func NormalizeEpusdtPaymentMethod(paymentMethod string) string {
+func NormalizeGMPayPaymentMethod(paymentMethod string) string {
 	paymentMethod = strings.TrimSpace(strings.ToLower(paymentMethod))
 	if paymentMethod == "" {
 		return ""
 	}
-	if strings.HasPrefix(paymentMethod, EpusdtPaymentMethodPrefix) {
+	if strings.HasPrefix(paymentMethod, GMPayPaymentMethodPrefix) {
 		return paymentMethod
 	}
-	return EpusdtPaymentMethodPrefix + paymentMethod
+	return GMPayPaymentMethodPrefix + paymentMethod
 }
 
-func ParseEpusdtPaymentMethod(paymentMethod string) (token string, network string, ok bool) {
-	normalized := strings.TrimPrefix(NormalizeEpusdtPaymentMethod(paymentMethod), EpusdtPaymentMethodPrefix)
+func ParseGMPayPaymentMethod(paymentMethod string) (token string, network string, ok bool) {
+	normalized := strings.TrimPrefix(NormalizeGMPayPaymentMethod(paymentMethod), GMPayPaymentMethodPrefix)
 	parts := strings.Split(normalized, ":")
 	if len(parts) < 1 || len(parts) > 2 {
 		return "", "", false
@@ -112,28 +125,28 @@ func ParseEpusdtPaymentMethod(paymentMethod string) (token string, network strin
 	return token, network, token != ""
 }
 
-func BuildEpusdtPaymentMethod(token string, network string) string {
+func BuildGMPayPaymentMethod(token string, network string) string {
 	token = strings.TrimSpace(strings.ToLower(token))
 	network = strings.TrimSpace(strings.ToLower(network))
 	if token == "" {
 		return ""
 	}
 	if network == "" {
-		return EpusdtPaymentMethodPrefix + token
+		return GMPayPaymentMethodPrefix + token
 	}
-	return EpusdtPaymentMethodPrefix + token + ":" + network
+	return GMPayPaymentMethodPrefix + token + ":" + network
 }
 
-func GetEpusdtAssets() ([]EpusdtAsset, error) {
-	if !IsEpusdtConfigured() {
-		return []EpusdtAsset{}, nil
+func GetGMPayAssets() ([]GMPayAsset, error) {
+	if !IsGMPayConfigured() {
+		return []GMPayAsset{}, nil
 	}
 	var lastErr error
 	for _, path := range []string{
 		"/payments/gmpay/v1/config",
 		"/payments/gmpay/v1/supported-assets",
 	} {
-		assets, err := getEpusdtAssetsFromPath(path)
+		assets, err := getGMPayAssetsFromPath(path)
 		if err != nil {
 			lastErr = err
 			continue
@@ -143,13 +156,13 @@ func GetEpusdtAssets() ([]EpusdtAsset, error) {
 		}
 	}
 	if lastErr != nil {
-		common.SysError("failed to fetch epusdt assets, using configured fallback: " + lastErr.Error())
+		common.SysError("failed to fetch gmpay assets, using configured fallback: " + lastErr.Error())
 	}
-	return defaultEpusdtAssets(), nil
+	return defaultGMPayAssets(), nil
 }
 
-func getEpusdtAssetsFromPath(path string) ([]EpusdtAsset, error) {
-	endpoint, err := epusdtURL(path)
+func getGMPayAssetsFromPath(path string) ([]GMPayAsset, error) {
+	endpoint, err := gmpayURL(path)
 	if err != nil {
 		return nil, err
 	}
@@ -158,8 +171,8 @@ func getEpusdtAssetsFromPath(path string) ([]EpusdtAsset, error) {
 		return nil, err
 	}
 	req.Header.Set("Accept", "application/json")
-	req.Header.Set("User-Agent", epusdtUserAgent)
-	resp, err := epusdtHTTPClient().Do(req)
+	req.Header.Set("User-Agent", gmpayUserAgent)
+	resp, err := gmpayHTTPClient().Do(req)
 	if err != nil {
 		return nil, err
 	}
@@ -169,18 +182,18 @@ func getEpusdtAssetsFromPath(path string) ([]EpusdtAsset, error) {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, fmt.Errorf("epusdt config status %d", resp.StatusCode)
+		return nil, fmt.Errorf("gmpay config status %d", resp.StatusCode)
 	}
 	var payload map[string]interface{}
 	if err := json.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
-	rawAssets, ok := extractEpusdtAssetItems(payload)
+	rawAssets, ok := extractGMPayAssetItems(payload)
 	if !ok {
-		return []EpusdtAsset{}, nil
+		return []GMPayAsset{}, nil
 	}
-	displayNames := setting.GetEpusdtAssetDisplayNames()
-	assets := make([]EpusdtAsset, 0, len(rawAssets))
+	displayNames := setting.GetGMPayAssetDisplayNames()
+	assets := make([]GMPayAsset, 0, len(rawAssets))
 	for _, raw := range rawAssets {
 		obj, ok := raw.(map[string]interface{})
 		if !ok {
@@ -190,7 +203,7 @@ func getEpusdtAssetsFromPath(path string) ([]EpusdtAsset, error) {
 		if !ok {
 			token := firstString(obj, "token", "currency", "symbol", "coin")
 			network := firstString(obj, "network", "chain", "protocol")
-			if asset := buildEpusdtAsset(token, network, displayNames); asset.PaymentType != "" {
+			if asset := buildGMPayAsset(token, network, displayNames); asset.PaymentType != "" {
 				assets = append(assets, asset)
 			}
 			continue
@@ -198,7 +211,7 @@ func getEpusdtAssetsFromPath(path string) ([]EpusdtAsset, error) {
 		network := firstString(obj, "network", "chain", "protocol")
 		for _, rawToken := range tokenItems {
 			token := stringify(rawToken)
-			if asset := buildEpusdtAsset(token, network, displayNames); asset.PaymentType != "" {
+			if asset := buildGMPayAsset(token, network, displayNames); asset.PaymentType != "" {
 				assets = append(assets, asset)
 			}
 		}
@@ -206,26 +219,26 @@ func getEpusdtAssetsFromPath(path string) ([]EpusdtAsset, error) {
 	return assets, nil
 }
 
-func IsValidEpusdtPaymentMethod(paymentMethod string) bool {
-	token, network, ok := ParseEpusdtPaymentMethod(paymentMethod)
+func IsValidGMPayPaymentMethod(paymentMethod string) bool {
+	token, network, ok := ParseGMPayPaymentMethod(paymentMethod)
 	if !ok {
 		return false
 	}
 	if network == "" {
-		for _, asset := range defaultEpusdtAssets() {
+		for _, asset := range defaultGMPayAssets() {
 			if strings.EqualFold(asset.Token, token) {
 				return true
 			}
 		}
 	}
-	assets, err := GetEpusdtAssets()
+	assets, err := GetGMPayAssets()
 	if err != nil {
 		return false
 	}
 	if len(assets) == 0 {
 		return false
 	}
-	target := BuildEpusdtPaymentMethod(token, network)
+	target := BuildGMPayPaymentMethod(token, network)
 	for _, asset := range assets {
 		if asset.PaymentType == target {
 			return true
@@ -234,16 +247,16 @@ func IsValidEpusdtPaymentMethod(paymentMethod string) bool {
 	return false
 }
 
-func defaultEpusdtAssets() []EpusdtAsset {
-	displayNames := setting.GetEpusdtAssetDisplayNames()
+func defaultGMPayAssets() []GMPayAsset {
+	displayNames := setting.GetGMPayAssetDisplayNames()
 	defaults := [][2]string{
 		{"usdt", "tron"},
 		{"usdt", "bsc"},
 		{"usdt", "polygon"},
 	}
-	assets := make([]EpusdtAsset, 0, len(defaults))
+	assets := make([]GMPayAsset, 0, len(defaults))
 	for _, item := range defaults {
-		asset := buildEpusdtAsset(item[0], item[1], displayNames)
+		asset := buildGMPayAsset(item[0], item[1], displayNames)
 		if asset.PaymentType != "" {
 			assets = append(assets, asset)
 		}
@@ -251,20 +264,39 @@ func defaultEpusdtAssets() []EpusdtAsset {
 	return assets
 }
 
-func CreateEpusdtOrder(req EpusdtCreateOrderRequest) (*EpusdtCreateOrderResponse, error) {
-	if !IsEpusdtConfigured() {
-		return nil, errors.New("epusdt is not configured")
+func CreateGMPayOrder(req GMPayCreateOrderRequest) (*GMPayCreateOrderResponse, error) {
+	if !IsGMPayConfigured() {
+		return nil, errors.New("gmpay is not configured")
 	}
 	if req.OrderID == "" || req.Amount <= 0 || req.Token == "" || req.Network == "" || req.NotifyURL == "" {
-		return nil, errors.New("invalid epusdt order")
+		return nil, errors.New("invalid gmpay order")
 	}
+	bodyMap, err := buildGMPayOrderBody(req)
+	if err != nil {
+		return nil, err
+	}
+	var lastErr error
+	for _, path := range gmpayCreateOrderPaths {
+		order, err := createGMPayOrderAtPath(path, bodyMap, req.OrderID)
+		if err == nil {
+			return order, nil
+		}
+		lastErr = err
+	}
+	if lastErr != nil {
+		return nil, lastErr
+	}
+	return nil, errors.New("gmpay create order paths are empty")
+}
+
+func buildGMPayOrderBody(req GMPayCreateOrderRequest) (map[string]interface{}, error) {
 	if req.Currency == "" {
-		req.Currency = setting.EpusdtCurrency
+		req.Currency = setting.GMPayCurrency
 	}
 	bodyMap := map[string]interface{}{
-		"pid":          setting.EpusdtPID,
+		"pid":          setting.GMPayPID,
 		"order_id":     req.OrderID,
-		"amount":       req.Amount,
+		"amount":       formatMoney(req.Amount),
 		"currency":     strings.ToLower(req.Currency),
 		"token":        strings.ToLower(req.Token),
 		"network":      strings.ToLower(req.Network),
@@ -273,13 +305,16 @@ func CreateEpusdtOrder(req EpusdtCreateOrderRequest) (*EpusdtCreateOrderResponse
 		"name":         req.Name,
 		"payment_type": req.PaymentType,
 	}
-	bodyMap["signature"] = EpusdtSign(bodyMap, setting.EpusdtSecretKey)
+	bodyMap["signature"] = GMPaySign(bodyMap, setting.GMPaySecretKey)
+	return bodyMap, nil
+}
 
+func createGMPayOrderAtPath(path string, bodyMap map[string]interface{}, fallbackOrderID string) (*GMPayCreateOrderResponse, error) {
 	body, err := json.Marshal(bodyMap)
 	if err != nil {
 		return nil, err
 	}
-	endpoint, err := epusdtURL("/payments/gmpay/v1/order/create-transaction")
+	endpoint, err := gmpayURL(path)
 	if err != nil {
 		return nil, err
 	}
@@ -289,8 +324,8 @@ func CreateEpusdtOrder(req EpusdtCreateOrderRequest) (*EpusdtCreateOrderResponse
 	}
 	httpReq.Header.Set("Content-Type", "application/json")
 	httpReq.Header.Set("Accept", "application/json")
-	httpReq.Header.Set("User-Agent", epusdtUserAgent)
-	resp, err := epusdtHTTPClient().Do(httpReq)
+	httpReq.Header.Set("User-Agent", gmpayUserAgent)
+	resp, err := gmpayHTTPClient().Do(httpReq)
 	if err != nil {
 		return nil, err
 	}
@@ -300,17 +335,25 @@ func CreateEpusdtOrder(req EpusdtCreateOrderRequest) (*EpusdtCreateOrderResponse
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return nil, EpusdtGatewayError{
+		return nil, GMPayGatewayError{
 			StatusCode: resp.StatusCode,
 			Body:       strings.TrimSpace(string(respBody)),
+			Endpoint:   path,
 		}
 	}
 	var payload map[string]interface{}
 	if err := json.Unmarshal(respBody, &payload); err != nil {
 		return nil, err
 	}
-	data := extractEpusdtData(payload)
-	result := &EpusdtCreateOrderResponse{
+	if gmpayBusinessCodeFailed(payload) {
+		return nil, GMPayGatewayError{
+			StatusCode: resp.StatusCode,
+			Body:       strings.TrimSpace(string(respBody)),
+			Endpoint:   path,
+		}
+	}
+	data := extractGMPayData(payload)
+	result := &GMPayCreateOrderResponse{
 		OrderID:         firstString(data, "order_id", "orderId"),
 		PaymentURL:      firstString(data, "payment_url", "paymentUrl"),
 		PayURL:          firstString(data, "pay_url", "payUrl"),
@@ -322,7 +365,7 @@ func CreateEpusdtOrder(req EpusdtCreateOrderRequest) (*EpusdtCreateOrderResponse
 		Raw:             payload,
 	}
 	if result.OrderID == "" {
-		result.OrderID = req.OrderID
+		result.OrderID = fallbackOrderID
 	}
 	if result.PaymentURL == "" {
 		result.PaymentURL = result.PayURL
@@ -331,12 +374,23 @@ func CreateEpusdtOrder(req EpusdtCreateOrderRequest) (*EpusdtCreateOrderResponse
 		result.PaymentURL = result.CheckoutURL
 	}
 	if result.PaymentURL == "" {
-		return nil, errors.New("epusdt response missing payment url")
+		return nil, errors.New("gmpay response missing payment url")
 	}
 	return result, nil
 }
 
-func EpusdtSign(values map[string]interface{}, secretKey string) string {
+func gmpayBusinessCodeFailed(payload map[string]interface{}) bool {
+	if payload == nil {
+		return false
+	}
+	code := strings.ToLower(strings.TrimSpace(firstString(payload, "code", "status_code")))
+	if code == "" || code == "0" || code == "1" || code == "200" || code == "success" {
+		return false
+	}
+	return true
+}
+
+func GMPaySign(values map[string]interface{}, secretKey string) string {
 	keys := make([]string, 0, len(values))
 	for key, value := range values {
 		if key == "signature" || key == "sign" {
@@ -356,16 +410,16 @@ func EpusdtSign(values map[string]interface{}, secretKey string) string {
 	return strings.ToLower(hex.EncodeToString(sum[:]))
 }
 
-func VerifyEpusdtSignature(values map[string]interface{}) bool {
+func VerifyGMPaySignature(values map[string]interface{}) bool {
 	signature := strings.ToLower(firstString(values, "signature", "sign"))
-	if signature == "" || setting.EpusdtSecretKey == "" {
+	if signature == "" || setting.GMPaySecretKey == "" {
 		return false
 	}
-	return signature == EpusdtSign(values, setting.EpusdtSecretKey) ||
-		signature == epusdtSignWithSecretKeyField(values, setting.EpusdtSecretKey)
+	return signature == GMPaySign(values, setting.GMPaySecretKey) ||
+		signature == gmpaySignWithSecretKeyField(values, setting.GMPaySecretKey)
 }
 
-func epusdtSignWithSecretKeyField(values map[string]interface{}, secretKey string) string {
+func gmpaySignWithSecretKeyField(values map[string]interface{}, secretKey string) string {
 	keys := make([]string, 0, len(values))
 	for key, value := range values {
 		if key == "signature" || key == "sign" {
@@ -386,40 +440,40 @@ func epusdtSignWithSecretKeyField(values map[string]interface{}, secretKey strin
 	return strings.ToLower(hex.EncodeToString(sum[:]))
 }
 
-func EpusdtCallbackTradeNo(values map[string]interface{}) string {
+func GMPayCallbackTradeNo(values map[string]interface{}) string {
 	return firstString(values, "order_id", "orderId", "out_trade_no", "trade_no")
 }
 
-func EpusdtCallbackStatus(values map[string]interface{}) string {
+func GMPayCallbackStatus(values map[string]interface{}) string {
 	return strings.ToLower(firstString(values, "status", "trade_status", "payment_status"))
 }
 
-func EpusdtCallbackMethod(values map[string]interface{}) string {
-	if method := normalizeEpusdtCallbackMethod(firstString(values, "payment_type", "paymentType", "payment_method", "paymentMethod")); method != "" {
+func GMPayCallbackMethod(values map[string]interface{}) string {
+	if method := normalizeGMPayCallbackMethod(firstString(values, "payment_type", "paymentType", "payment_method", "paymentMethod")); method != "" {
 		return method
 	}
 	token := firstString(values, "token", "currency", "symbol", "coin")
 	network := firstString(values, "network", "chain", "protocol")
-	return BuildEpusdtPaymentMethod(token, network)
+	return BuildGMPayPaymentMethod(token, network)
 }
 
-func normalizeEpusdtCallbackMethod(paymentMethod string) string {
+func normalizeGMPayCallbackMethod(paymentMethod string) string {
 	paymentMethod = strings.ToLower(strings.TrimSpace(paymentMethod))
 	if paymentMethod == "" {
 		return ""
 	}
-	token, network, ok := ParseEpusdtPaymentMethod(paymentMethod)
+	token, network, ok := ParseGMPayPaymentMethod(paymentMethod)
 	if !ok {
 		return paymentMethod
 	}
-	return BuildEpusdtPaymentMethod(token, network)
+	return BuildGMPayPaymentMethod(token, network)
 }
 
-func EpusdtCallbackToken(values map[string]interface{}) string {
+func GMPayCallbackToken(values map[string]interface{}) string {
 	return strings.ToLower(firstString(values, "token", "symbol", "coin"))
 }
 
-func EpusdtCallbackPaidAmount(values map[string]interface{}) float64 {
+func GMPayCallbackPaidAmount(values map[string]interface{}) float64 {
 	amountText := firstString(values, "amount", "money", "paid_amount", "total_amount", "order_amount")
 	if amountText == "" {
 		return -1
@@ -431,7 +485,7 @@ func EpusdtCallbackPaidAmount(values map[string]interface{}) float64 {
 	return amount
 }
 
-func EpusdtCallbackPaidCurrency(values map[string]interface{}) string {
+func GMPayCallbackPaidCurrency(values map[string]interface{}) string {
 	currency := firstString(values, "settlement_currency", "fiat_currency", "order_currency")
 	if currency == "" {
 		currency = firstString(values, "currency")
@@ -439,11 +493,11 @@ func EpusdtCallbackPaidCurrency(values map[string]interface{}) string {
 	return strings.ToUpper(strings.TrimSpace(currency))
 }
 
-func EpusdtCallbackMerchantID(values map[string]interface{}) string {
+func GMPayCallbackMerchantID(values map[string]interface{}) string {
 	return firstString(values, "pid", "merchant_id", "merchantId")
 }
 
-func IsEpusdtPaidStatus(status string) bool {
+func IsGMPayPaidStatus(status string) bool {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "2", "paid", "success", "succeeded", "completed", "confirmed", "trade_success":
 		return true
@@ -452,10 +506,10 @@ func IsEpusdtPaidStatus(status string) bool {
 	}
 }
 
-func epusdtURL(path string) (string, error) {
-	base := strings.TrimRight(strings.TrimSpace(setting.EpusdtBaseURL), "/")
+func gmpayURL(path string) (string, error) {
+	base := strings.TrimRight(strings.TrimSpace(setting.GMPayBaseURL), "/")
 	if base == "" {
-		return "", errors.New("epusdt base url is empty")
+		return "", errors.New("gmpay base url is empty")
 	}
 	u, err := url.Parse(base)
 	if err != nil {
@@ -465,7 +519,7 @@ func epusdtURL(path string) (string, error) {
 	return u.String(), nil
 }
 
-func extractEpusdtData(payload map[string]interface{}) map[string]interface{} {
+func extractGMPayData(payload map[string]interface{}) map[string]interface{} {
 	if payload == nil {
 		return map[string]interface{}{}
 	}
@@ -475,7 +529,7 @@ func extractEpusdtData(payload map[string]interface{}) map[string]interface{} {
 	return payload
 }
 
-func extractEpusdtAssetItems(payload map[string]interface{}) ([]interface{}, bool) {
+func extractGMPayAssetItems(payload map[string]interface{}) ([]interface{}, bool) {
 	if payload == nil {
 		return nil, false
 	}
@@ -492,7 +546,7 @@ func extractEpusdtAssetItems(payload map[string]interface{}) ([]interface{}, boo
 	return firstArray(payload, "supported_assets", "assets", "items", "chains")
 }
 
-func epusdtHTTPClient() *http.Client {
+func gmpayHTTPClient() *http.Client {
 	if client := GetHttpClient(); client != nil {
 		return client
 	}
@@ -543,12 +597,12 @@ func firstArray(obj map[string]interface{}, keys ...string) ([]interface{}, bool
 	return nil, false
 }
 
-func buildEpusdtAsset(token string, network string, displayNames map[string]string) EpusdtAsset {
-	method := BuildEpusdtPaymentMethod(token, network)
+func buildGMPayAsset(token string, network string, displayNames map[string]string) GMPayAsset {
+	method := BuildGMPayPaymentMethod(token, network)
 	if method == "" {
-		return EpusdtAsset{}
+		return GMPayAsset{}
 	}
-	displayName := strings.TrimSpace(displayNames[strings.TrimPrefix(method, EpusdtPaymentMethodPrefix)])
+	displayName := strings.TrimSpace(displayNames[strings.TrimPrefix(method, GMPayPaymentMethodPrefix)])
 	if displayName == "" {
 		displayName = strings.TrimSpace(displayNames[method])
 	}
@@ -556,10 +610,10 @@ func buildEpusdtAsset(token string, network string, displayNames map[string]stri
 		if strings.TrimSpace(network) == "" {
 			displayName = strings.ToUpper(token)
 		} else {
-			displayName = fmt.Sprintf("%s-%s", strings.ToUpper(token), normalizeEpusdtNetworkLabel(network))
+			displayName = fmt.Sprintf("%s-%s", strings.ToUpper(token), normalizeGMPayNetworkLabel(network))
 		}
 	}
-	return EpusdtAsset{
+	return GMPayAsset{
 		Token:       strings.ToLower(strings.TrimSpace(token)),
 		Network:     strings.ToLower(strings.TrimSpace(network)),
 		PaymentType: method,
@@ -599,7 +653,7 @@ func formatMoney(amount float64) string {
 	return strconv.FormatFloat(amount, 'f', -1, 64)
 }
 
-func normalizeEpusdtNetworkLabel(network string) string {
+func normalizeGMPayNetworkLabel(network string) string {
 	switch strings.ToLower(strings.TrimSpace(network)) {
 	case "tron", "trc20":
 		return "TRC20"
@@ -612,10 +666,10 @@ func normalizeEpusdtNetworkLabel(network string) string {
 	}
 }
 
-func EpusdtAssetsForTopupMethods() []map[string]string {
-	assets, err := GetEpusdtAssets()
+func GMPayAssetsForTopupMethods() []map[string]string {
+	assets, err := GetGMPayAssets()
 	if err != nil {
-		common.SysError("failed to get epusdt assets: " + err.Error())
+		common.SysError("failed to get gmpay assets: " + err.Error())
 		return []map[string]string{}
 	}
 	hasUSDT := false
@@ -628,15 +682,15 @@ func EpusdtAssetsForTopupMethods() []map[string]string {
 	if len(assets) == 0 || !hasUSDT {
 		return []map[string]string{}
 	}
-	minTopup := setting.EpusdtMinTopUp
+	minTopup := setting.GMPayMinTopUp
 	if minTopup <= 0 {
 		minTopup = 1
 	}
 	return []map[string]string{{
-		"name":      "USDT",
-		"type":      BuildEpusdtPaymentMethod("usdt", ""),
+		"name":      "GMPay USDT",
+		"type":      BuildGMPayPaymentMethod("usdt", ""),
 		"color":     "rgba(var(--semi-teal-5), 1)",
 		"min_topup": strconv.Itoa(minTopup),
-		"provider":  "epusdt",
+		"provider":  "gmpay",
 	}}
 }

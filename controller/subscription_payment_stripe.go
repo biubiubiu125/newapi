@@ -78,7 +78,11 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 
 	reference := fmt.Sprintf("sub-stripe-ref-%d-%d-%s", user.Id, time.Now().UnixMilli(), randstr.String(4))
 	referenceId := "sub_ref_" + common.Sha1([]byte(reference))
-	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, "USD")
+	paidCurrency := strings.ToUpper(strings.TrimSpace(plan.Currency))
+	if paidCurrency == "" {
+		paidCurrency = "USD"
+	}
+	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, paidCurrency)
 
 	payLink, err := genStripeSubscriptionLink(referenceId, user.StripeCustomer, user.Email, plan.StripePriceId)
 	if err != nil {
@@ -92,14 +96,14 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 		PlanId:          plan.Id,
 		Money:           plan.PriceAmount,
 		PaidAmount:      plan.PriceAmount,
-		PaidCurrency:    "USD",
+		PaidCurrency:    paidCurrency,
 		TradeNo:         referenceId,
 		PaymentMethod:   model.PaymentMethodStripe,
 		PaymentProvider: model.PaymentProviderStripe,
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
 	}
-	applySubscriptionOrderSnapshot(order, plan, "USD")
+	applySubscriptionOrderSnapshot(order, plan, paidCurrency)
 	if snapshot != nil {
 		order.ReferralAffiliateId = snapshot.AffiliateId
 		order.ReferralRate = snapshot.Rate

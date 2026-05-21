@@ -40,8 +40,8 @@ func insertSubscriptionPlanForPaymentGuardTest(t *testing.T, id int) *Subscripti
 func insertSubscriptionOrderForPaymentGuardTest(t *testing.T, tradeNo string, userID int, planID int, paymentProvider string) {
 	t.Helper()
 	paymentMethod := paymentProvider
-	if paymentProvider == PaymentProviderEpusdt {
-		paymentMethod = PaymentMethodEpusdtPrefix + "usdt"
+	if paymentProvider == PaymentProviderGMPay {
+		paymentMethod = PaymentMethodGMPayPrefix + "usdt"
 	}
 	order := &SubscriptionOrder{
 		UserId:          userID,
@@ -61,8 +61,8 @@ func insertSubscriptionOrderForPaymentGuardTest(t *testing.T, tradeNo string, us
 func insertTopUpForPaymentGuardTest(t *testing.T, tradeNo string, userID int, paymentProvider string) {
 	t.Helper()
 	paymentMethod := paymentProvider
-	if paymentProvider == PaymentProviderEpusdt {
-		paymentMethod = PaymentMethodEpusdtPrefix + "usdt"
+	if paymentProvider == PaymentProviderGMPay {
+		paymentMethod = PaymentMethodGMPayPrefix + "usdt"
 	}
 	topUp := &TopUp{
 		UserId:          userID,
@@ -230,7 +230,7 @@ func TestCompleteSubscriptionOrder_RejectsMismatchedCallbackFacts(t *testing.T) 
 	}
 }
 
-func TestRechargeEpusdtWithValidation_RejectsMismatchedCallbackFacts(t *testing.T) {
+func TestRechargeGMPayWithValidation_RejectsMismatchedCallbackFacts(t *testing.T) {
 	testCases := []struct {
 		name          string
 		validation    PaymentCallbackValidation
@@ -239,8 +239,8 @@ func TestRechargeEpusdtWithValidation_RejectsMismatchedCallbackFacts(t *testing.
 		{
 			name: "payment method mismatch",
 			validation: PaymentCallbackValidation{
-				ExpectedPaymentProvider: PaymentProviderEpusdt,
-				ActualPaymentMethod:     "epusdt:trx:tron",
+				ExpectedPaymentProvider: PaymentProviderGMPay,
+				ActualPaymentMethod:     "gmpay:trx:tron",
 				PaidAmount:              9.99,
 				PaidCurrency:            "CNY",
 				RequirePaymentFacts:     true,
@@ -250,7 +250,7 @@ func TestRechargeEpusdtWithValidation_RejectsMismatchedCallbackFacts(t *testing.
 		{
 			name: "payment token mismatch",
 			validation: PaymentCallbackValidation{
-				ExpectedPaymentProvider: PaymentProviderEpusdt,
+				ExpectedPaymentProvider: PaymentProviderGMPay,
 				ActualPaymentToken:      "trx",
 				PaidAmount:              9.99,
 				PaidCurrency:            "CNY",
@@ -261,7 +261,7 @@ func TestRechargeEpusdtWithValidation_RejectsMismatchedCallbackFacts(t *testing.
 		{
 			name: "amount mismatch",
 			validation: PaymentCallbackValidation{
-				ExpectedPaymentProvider: PaymentProviderEpusdt,
+				ExpectedPaymentProvider: PaymentProviderGMPay,
 				ActualPaymentToken:      "usdt",
 				PaidAmount:              10.01,
 				PaidCurrency:            "CNY",
@@ -272,7 +272,7 @@ func TestRechargeEpusdtWithValidation_RejectsMismatchedCallbackFacts(t *testing.
 		{
 			name: "currency mismatch",
 			validation: PaymentCallbackValidation{
-				ExpectedPaymentProvider: PaymentProviderEpusdt,
+				ExpectedPaymentProvider: PaymentProviderGMPay,
 				ActualPaymentToken:      "usdt",
 				PaidAmount:              9.99,
 				PaidCurrency:            "USDT",
@@ -286,18 +286,18 @@ func TestRechargeEpusdtWithValidation_RejectsMismatchedCallbackFacts(t *testing.
 		t.Run(tc.name, func(t *testing.T) {
 			truncateTables(t)
 			insertUserForPaymentGuardTest(t, 404, 0)
-			insertTopUpForPaymentGuardTest(t, "epusdt-callback-facts", 404, PaymentProviderEpusdt)
+			insertTopUpForPaymentGuardTest(t, "gmpay-callback-facts", 404, PaymentProviderGMPay)
 
-			err := RechargeEpusdtWithValidation("epusdt-callback-facts", `{"provider":"epusdt"}`, tc.validation, "127.0.0.1")
+			err := RechargeGMPayWithValidation("gmpay-callback-facts", `{"provider":"gmpay"}`, tc.validation, "127.0.0.1")
 			require.ErrorIs(t, err, tc.expectedError)
 
-			assert.Equal(t, common.TopUpStatusPending, getTopUpStatusForPaymentGuardTest(t, "epusdt-callback-facts"))
+			assert.Equal(t, common.TopUpStatusPending, getTopUpStatusForPaymentGuardTest(t, "gmpay-callback-facts"))
 			assert.Equal(t, 0, getUserQuotaForPaymentGuardTest(t, 404))
 		})
 	}
 }
 
-func TestRechargeEpusdtWithValidation_RejectsGatewayNetworkSwitch(t *testing.T) {
+func TestRechargeGMPayWithValidation_RejectsGatewayNetworkSwitch(t *testing.T) {
 	truncateTables(t)
 	common.QuotaPerUnit = 500000
 	insertUserForPaymentGuardTest(t, 405, 0)
@@ -307,26 +307,26 @@ func TestRechargeEpusdtWithValidation_RejectsGatewayNetworkSwitch(t *testing.T) 
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "epusdt-network-switch",
-		PaymentMethod:   PaymentMethodEpusdtPrefix + "usdt:tron",
-		PaymentProvider: PaymentProviderEpusdt,
+		TradeNo:         "gmpay-network-switch",
+		PaymentMethod:   PaymentMethodGMPayPrefix + "usdt:tron",
+		PaymentProvider: PaymentProviderGMPay,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, topUp.Insert())
 
 	validation := PaymentCallbackValidation{
-		ExpectedPaymentProvider: PaymentProviderEpusdt,
-		ActualPaymentMethod:     "epusdt:usdt:polygon",
+		ExpectedPaymentProvider: PaymentProviderGMPay,
+		ActualPaymentMethod:     "gmpay:usdt:polygon",
 		ActualPaymentToken:      "USDT",
 		PaidAmount:              9.99,
 		PaidCurrency:            "CNY",
 		RequirePaymentFacts:     true,
 	}
 
-	require.ErrorIs(t, RechargeEpusdtWithValidation("epusdt-network-switch", `{"provider":"epusdt","network":"polygon"}`, validation, "127.0.0.1"), ErrPaymentMethodMismatch)
+	require.ErrorIs(t, RechargeGMPayWithValidation("gmpay-network-switch", `{"provider":"gmpay","network":"polygon"}`, validation, "127.0.0.1"), ErrPaymentMethodMismatch)
 
-	assert.Equal(t, common.TopUpStatusPending, getTopUpStatusForPaymentGuardTest(t, "epusdt-network-switch"))
+	assert.Equal(t, common.TopUpStatusPending, getTopUpStatusForPaymentGuardTest(t, "gmpay-network-switch"))
 	assert.Equal(t, 0, getUserQuotaForPaymentGuardTest(t, 405))
 }
 
@@ -439,31 +439,31 @@ func TestRechargeEpayWithValidation_ConcurrentCallbacksCompleteOnce(t *testing.T
 	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 427))
 }
 
-func TestRechargeEpusdtWithValidation_CompletesOnce(t *testing.T) {
+func TestRechargeGMPayWithValidation_CompletesOnce(t *testing.T) {
 	truncateTables(t)
 	common.QuotaPerUnit = 500000
 	insertUserForPaymentGuardTest(t, 435, 0)
-	insertTopUpForPaymentGuardTest(t, "epusdt-success-once", 435, PaymentProviderEpusdt)
+	insertTopUpForPaymentGuardTest(t, "gmpay-success-once", 435, PaymentProviderGMPay)
 
 	validation := PaymentCallbackValidation{
-		ExpectedPaymentProvider: PaymentProviderEpusdt,
+		ExpectedPaymentProvider: PaymentProviderGMPay,
 		ActualPaymentToken:      "USDT",
 		PaidAmount:              9.99,
 		PaidCurrency:            "CNY",
 		RequirePaymentFacts:     true,
 	}
-	require.NoError(t, RechargeEpusdtWithValidation("epusdt-success-once", `{"provider":"epusdt"}`, validation, "127.0.0.1"))
-	require.NoError(t, RechargeEpusdtWithValidation("epusdt-success-once", `{"provider":"epusdt"}`, validation, "127.0.0.1"))
+	require.NoError(t, RechargeGMPayWithValidation("gmpay-success-once", `{"provider":"gmpay"}`, validation, "127.0.0.1"))
+	require.NoError(t, RechargeGMPayWithValidation("gmpay-success-once", `{"provider":"gmpay"}`, validation, "127.0.0.1"))
 
-	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "epusdt-success-once"))
+	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "gmpay-success-once"))
 	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 435))
 }
 
-func TestRechargeEpusdtWithValidation_RefreshesQuotaCache(t *testing.T) {
+func TestRechargeGMPayWithValidation_RefreshesQuotaCache(t *testing.T) {
 	truncateTables(t)
 	common.QuotaPerUnit = 500000
 	insertUserForPaymentGuardTest(t, 437, 0)
-	insertTopUpForPaymentGuardTest(t, "epusdt-refresh-cache", 437, PaymentProviderEpusdt)
+	insertTopUpForPaymentGuardTest(t, "gmpay-refresh-cache", 437, PaymentProviderGMPay)
 
 	called := false
 	originalCacheUpdate := cacheUpdateUserQuota
@@ -477,27 +477,27 @@ func TestRechargeEpusdtWithValidation_RefreshesQuotaCache(t *testing.T) {
 	})
 
 	validation := PaymentCallbackValidation{
-		ExpectedPaymentProvider: PaymentProviderEpusdt,
+		ExpectedPaymentProvider: PaymentProviderGMPay,
 		ActualPaymentToken:      "USDT",
 		PaidAmount:              9.99,
 		PaidCurrency:            "CNY",
 		RequirePaymentFacts:     true,
 	}
-	require.NoError(t, RechargeEpusdtWithValidation("epusdt-refresh-cache", `{"provider":"epusdt"}`, validation, "127.0.0.1"))
+	require.NoError(t, RechargeGMPayWithValidation("gmpay-refresh-cache", `{"provider":"gmpay"}`, validation, "127.0.0.1"))
 
 	assert.True(t, called)
-	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "epusdt-refresh-cache"))
+	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "gmpay-refresh-cache"))
 	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 437))
 }
 
-func TestRechargeEpusdtWithValidation_ConcurrentCallbacksCompleteOnce(t *testing.T) {
+func TestRechargeGMPayWithValidation_ConcurrentCallbacksCompleteOnce(t *testing.T) {
 	truncateTables(t)
 	common.QuotaPerUnit = 500000
 	insertUserForPaymentGuardTest(t, 436, 0)
-	insertTopUpForPaymentGuardTest(t, "epusdt-concurrent-once", 436, PaymentProviderEpusdt)
+	insertTopUpForPaymentGuardTest(t, "gmpay-concurrent-once", 436, PaymentProviderGMPay)
 
 	validation := PaymentCallbackValidation{
-		ExpectedPaymentProvider: PaymentProviderEpusdt,
+		ExpectedPaymentProvider: PaymentProviderGMPay,
 		ActualPaymentToken:      "USDT",
 		PaidAmount:              9.99,
 		PaidCurrency:            "CNY",
@@ -510,7 +510,7 @@ func TestRechargeEpusdtWithValidation_ConcurrentCallbacksCompleteOnce(t *testing
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			errCh <- RechargeEpusdtWithValidation("epusdt-concurrent-once", `{"provider":"epusdt"}`, validation, "127.0.0.1")
+			errCh <- RechargeGMPayWithValidation("gmpay-concurrent-once", `{"provider":"gmpay"}`, validation, "127.0.0.1")
 		}()
 	}
 	wg.Wait()
@@ -519,7 +519,7 @@ func TestRechargeEpusdtWithValidation_ConcurrentCallbacksCompleteOnce(t *testing
 		require.NoError(t, err)
 	}
 
-	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "epusdt-concurrent-once"))
+	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "gmpay-concurrent-once"))
 	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 436))
 }
 
@@ -558,7 +558,7 @@ func TestCompleteSubscriptionOrderWithValidation_ConcurrentCallbacksCompleteOnce
 	assert.Equal(t, int64(1), countUserSubscriptionsForPaymentGuardTest(t, 428))
 }
 
-func TestRechargeEpusdtWithValidation_UsesFrozenCreditQuotaSnapshot(t *testing.T) {
+func TestRechargeGMPayWithValidation_UsesFrozenCreditQuotaSnapshot(t *testing.T) {
 	truncateTables(t)
 	originalQuotaPerUnit := common.QuotaPerUnit
 	t.Cleanup(func() {
@@ -573,9 +573,9 @@ func TestRechargeEpusdtWithValidation_UsesFrozenCreditQuotaSnapshot(t *testing.T
 		Money:                  2,
 		PaidAmount:             2,
 		PaidCurrency:           "CNY",
-		TradeNo:                "epusdt-frozen-quota",
-		PaymentMethod:          PaymentMethodEpusdtPrefix + "usdt",
-		PaymentProvider:        PaymentProviderEpusdt,
+		TradeNo:                "gmpay-frozen-quota",
+		PaymentMethod:          PaymentMethodGMPayPrefix + "usdt",
+		PaymentProvider:        PaymentProviderGMPay,
 		Status:                 common.TopUpStatusPending,
 		CreateTime:             time.Now().Unix(),
 		OrderSnapshotVersion:   1,
@@ -588,13 +588,13 @@ func TestRechargeEpusdtWithValidation_UsesFrozenCreditQuotaSnapshot(t *testing.T
 
 	common.QuotaPerUnit = 1
 	validation := PaymentCallbackValidation{
-		ExpectedPaymentProvider: PaymentProviderEpusdt,
+		ExpectedPaymentProvider: PaymentProviderGMPay,
 		ActualPaymentToken:      "USDT",
 		PaidAmount:              2,
 		PaidCurrency:            "CNY",
 		RequirePaymentFacts:     true,
 	}
-	require.NoError(t, RechargeEpusdtWithValidation(topUp.TradeNo, `{"provider":"epusdt"}`, validation, "127.0.0.1"))
+	require.NoError(t, RechargeGMPayWithValidation(topUp.TradeNo, `{"provider":"gmpay"}`, validation, "127.0.0.1"))
 
 	assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, topUp.TradeNo))
 	assert.Equal(t, 1000000, getUserQuotaForPaymentGuardTest(t, 425))
