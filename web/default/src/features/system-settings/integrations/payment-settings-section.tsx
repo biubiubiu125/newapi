@@ -51,11 +51,11 @@ import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { AmountDiscountVisualEditor } from './amount-discount-visual-editor'
 import { AmountOptionsVisualEditor } from './amount-options-visual-editor'
-import { CreemProductsVisualEditor } from './creem-products-visual-editor'
 import {
-  GMPaySettingsSection,
-  type GMPaySettingsValues,
-} from './gmpay-settings-section'
+  BEpusdtSettingsSection,
+  type BEpusdtSettingsValues,
+} from './bepusdt-settings-section'
+import { CreemProductsVisualEditor } from './creem-products-visual-editor'
 import { PaymentMethodsVisualEditor } from './payment-methods-visual-editor'
 import {
   formatJsonForEditor,
@@ -153,7 +153,7 @@ type PaymentSettingsSectionProps = {
   defaultValues: PaymentFormValues
   waffoDefaultValues: WaffoSettingsValues
   waffoPancakeDefaultValues: WaffoPancakeSettingsValues
-  gmpayDefaultValues: GMPaySettingsValues
+  bepusdtDefaultValues: BEpusdtSettingsValues
   complianceDefaults: PaymentComplianceDefaults
 }
 
@@ -161,7 +161,7 @@ export function PaymentSettingsSection({
   defaultValues,
   waffoDefaultValues,
   waffoPancakeDefaultValues,
-  gmpayDefaultValues,
+  bepusdtDefaultValues,
   complianceDefaults,
 }: PaymentSettingsSectionProps) {
   const { t } = useTranslation()
@@ -1099,7 +1099,7 @@ export function PaymentSettingsSection({
 
           <Separator />
 
-          <GMPaySettingsSection defaultValues={gmpayDefaultValues} />
+          <BEpusdtSettingsSection defaultValues={bepusdtDefaultValues} />
 
           <Separator />
 

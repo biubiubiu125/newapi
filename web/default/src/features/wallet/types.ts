@@ -153,12 +153,12 @@ export interface TopupInfo {
   enable_waffo_pancake_topup?: boolean
   /** Minimum topup amount for Waffo Pancake */
   waffo_pancake_min_topup?: number
-  /** Whether GMPay topup is enabled */
-  enable_gmpay_topup?: boolean
-  /** GMPay payment methods read from the GMPay asset config */
-  gmpay_pay_methods?: PaymentMethod[]
-  /** Minimum topup amount for GMPay */
-  gmpay_min_topup?: number
+  /** Whether BEpusdt USDT topup is enabled */
+  enable_bepusdt_topup?: boolean
+  /** BEpusdt USDT payment methods */
+  bepusdt_pay_methods?: PaymentMethod[]
+  /** Minimum topup amount for BEpusdt USDT */
+  bepusdt_min_topup?: number
   /** Whether redemption code usage is enabled */
   enable_redemption?: boolean
   /** Whether compliance confirmation has been completed */
@@ -219,7 +219,7 @@ export interface WaffoPancakePaymentRequest {
 export interface GMPayPaymentRequest {
   /** Topup amount */
   amount: number
-  /** GMPay payment method, e.g. gmpay:usdt */
+  /** USDT payment method. BEpusdt orders use "usdt". */
   payment_method: string
 }
 

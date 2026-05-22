@@ -91,6 +91,7 @@ func InitOptionMap() {
 	common.OptionMap["CreemTestMode"] = strconv.FormatBool(setting.CreemTestMode)
 	common.OptionMap["CreemWebhookSecret"] = setting.CreemWebhookSecret
 	common.OptionMap["GMPayEnabled"] = strconv.FormatBool(setting.GMPayEnabled)
+	common.OptionMap["USDTGatewayType"] = setting.GetUSDTGatewayType()
 	common.OptionMap["GMPayBaseURL"] = setting.GMPayBaseURL
 	common.OptionMap["GMPayPID"] = setting.GMPayPID
 	common.OptionMap["GMPaySecretKey"] = setting.GMPaySecretKey
@@ -412,6 +413,8 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.CreemWebhookSecret = value
 	case "GMPayEnabled":
 		setting.GMPayEnabled = value == "true"
+	case "USDTGatewayType":
+		setting.USDTGatewayType = setting.NormalizeUSDTGatewayType(value)
 	case "GMPayBaseURL":
 		setting.GMPayBaseURL = value
 	case "GMPayPID":

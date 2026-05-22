@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"net/http"
 	"strings"
 	"time"
 
@@ -17,13 +18,13 @@ import (
 	"github.com/shopspring/decimal"
 )
 
-type GMPayPayRequest struct {
+type BEpusdtPayRequest struct {
 	Amount        int64  `json:"amount"`
 	PaymentMethod string `json:"payment_method"`
 }
 
-func GetGMPayAssets(c *gin.Context) {
-	if !service.IsGMPayConfigured() {
+func GetBEpusdtAssets(c *gin.Context) {
+	if !service.IsUSDTGatewayConfigured() {
 		common.ApiSuccess(c, []service.GMPayAsset{})
 		return
 	}
@@ -35,16 +36,16 @@ func GetGMPayAssets(c *gin.Context) {
 	common.ApiSuccess(c, assets)
 }
 
-func RequestGMPayPay(c *gin.Context) {
+func RequestBEpusdtPay(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
 	}
-	if !service.IsGMPayConfigured() {
-		common.ApiErrorMsg(c, "GMPay 未启用或配置不完整")
+	if !service.IsUSDTGatewayConfigured() {
+		common.ApiErrorMsg(c, "USDT 网关未启用或配置不完整")
 		return
 	}
 
-	var req GMPayPayRequest
+	var req BEpusdtPayRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		common.ApiErrorMsg(c, "参数错误")
 		return
@@ -58,12 +59,9 @@ func RequestGMPayPay(c *gin.Context) {
 		return
 	}
 	token, network, ok := service.ParseGMPayPaymentMethod(req.PaymentMethod)
-	if !ok || !service.IsValidGMPayPaymentMethod(req.PaymentMethod) {
+	if !ok || token != "usdt" || network != "" {
 		common.ApiErrorMsg(c, "支付链不存在或未启用")
 		return
-	}
-	if network == "" {
-		network = "tron"
 	}
 
 	id := c.GetInt("id")
@@ -82,14 +80,24 @@ func RequestGMPayPay(c *gin.Context) {
 		currency = "CNY"
 	}
 	if currency != "CNY" {
-		common.ApiErrorMsg(c, "GMPay 订单计价币种必须为 CNY")
+		common.ApiErrorMsg(c, "USDT 网关订单计价币种必须为 CNY")
 		return
 	}
 	snapshot, _ := referralService.BuildOrderSnapshot(id, payMoney, currency)
 	tradeNo := fmt.Sprintf("EPU%d%s%d", id, common.GetRandomString(6), time.Now().Unix())
-	callbackAddress := service.GetCallbackAddress()
-	notifyURL := callbackAddress + "/api/user/gmpay/notify"
-	returnURL := paymentReturnPath("/console/topup?show_history=true")
+	method := service.USDTPaymentMethod
+	provider := service.ActiveUSDTGatewayProvider()
+	callbackAddress := paymentPublicBaseURLForRequest(c)
+	if callbackAddress == "" {
+		common.ApiErrorMsg(c, "USDT 网关回调地址必须配置为公网地址，不能使用 localhost")
+		return
+	}
+	notifyURL := callbackAddress + "/api/user/bepusdt/notify"
+	returnURL := paymentWalletReturnPathForRequest(c, "pending", provider, "topup", tradeNo)
+	if returnURL == "" {
+		common.ApiErrorMsg(c, "USDT 网关返回地址必须配置为公网地址，不能使用 localhost")
+		return
+	}
 
 	amount := req.Amount
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
@@ -97,7 +105,6 @@ func RequestGMPayPay(c *gin.Context) {
 		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 		amount = dAmount.Div(dQuotaPerUnit).IntPart()
 	}
-	method := service.BuildGMPayPaymentMethod(token, network)
 	topUp := &model.TopUp{
 		UserId:          id,
 		Amount:          amount,
@@ -106,7 +113,7 @@ func RequestGMPayPay(c *gin.Context) {
 		PaidCurrency:    currency,
 		TradeNo:         tradeNo,
 		PaymentMethod:   method,
-		PaymentProvider: model.PaymentProviderGMPay,
+		PaymentProvider: provider,
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
 	}
@@ -126,34 +133,32 @@ func RequestGMPayPay(c *gin.Context) {
 		topUp.ReferralCommissionError = snapshot.Error
 	}
 	if err := topUp.Insert(); err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("GMPay 创建充值订单失败 user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, method, req.Amount, err.Error()))
+		logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt 创建充值订单失败 user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, method, req.Amount, err.Error()))
 		common.ApiErrorMsg(c, "创建订单失败")
 		return
 	}
 
-	paymentOrder, err := service.CreateGMPayOrder(service.GMPayCreateOrderRequest{
+	paymentOrder, err := service.CreateUSDTGatewayOrder(service.USDTGatewayOrderRequest{
 		OrderID:     tradeNo,
 		Amount:      payMoney,
 		Currency:    currency,
-		Token:       token,
-		Network:     network,
 		NotifyURL:   notifyURL,
 		RedirectURL: returnURL,
 		Name:        fmt.Sprintf("Topup %d", req.Amount),
-		PaymentType: method,
+		PaymentType: req.PaymentMethod,
 	})
 	if err != nil {
-		_ = model.UpdatePendingTopUpStatus(tradeNo, model.PaymentProviderGMPay, common.TopUpStatusExpired)
+		_ = model.UpdatePendingTopUpStatus(tradeNo, provider, common.TopUpStatusExpired)
 		var gatewayErr service.GMPayGatewayError
 		if errors.As(err, &gatewayErr) {
-			logger.LogError(c.Request.Context(), fmt.Sprintf("GMPay gateway rejected topup order user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, method, req.Amount, err.Error()))
+			logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt gateway rejected topup order user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, method, req.Amount, err.Error()))
 			if message := gatewayErr.PublicMessage(); message != "" {
 				common.ApiErrorMsg(c, message)
 				return
 			}
 		}
-		logger.LogError(c.Request.Context(), fmt.Sprintf("GMPay topup payment create failed user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, method, req.Amount, err.Error()))
-		common.ApiErrorMsg(c, "GMPay 网关连接失败，请检查 GMPay 端点、商户号和密钥配置")
+		logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt topup payment create failed user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, method, req.Amount, err.Error()))
+		common.ApiErrorMsg(c, "BEpusdt 网关连接失败，请检查 BEpusdt 端点和密钥配置")
 		return
 	}
 	topUp.ProviderPayload = common.GetJsonString(paymentOrder.Raw)
@@ -168,70 +173,87 @@ func RequestGMPayPay(c *gin.Context) {
 	})
 }
 
-func GMPayTopUpNotify(c *gin.Context) {
+func BEpusdtTopUpNotify(c *gin.Context) {
 	params, err := readGMPayCallback(c)
 	if err != nil {
-		logger.LogWarn(c.Request.Context(), fmt.Sprintf("GMPay webhook 参数解析失败 path=%q client_ip=%s error=%q", c.Request.RequestURI, c.ClientIP(), err.Error()))
-		_, _ = c.Writer.Write([]byte("fail"))
-		return
-	}
-	if !service.VerifyGMPaySignature(params) {
-		logger.LogWarn(c.Request.Context(), fmt.Sprintf("GMPay webhook 验签失败 path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
-		_, _ = c.Writer.Write([]byte("fail"))
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt webhook 参数解析失败 path=%q client_ip=%s error=%q", c.Request.RequestURI, c.ClientIP(), err.Error()))
+		c.String(http.StatusBadRequest, "fail")
 		return
 	}
 	tradeNo := service.GMPayCallbackTradeNo(params)
 	if tradeNo == "" {
-		_, _ = c.Writer.Write([]byte("fail"))
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt webhook rejected reason=missing_order_id path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
+		c.String(http.StatusBadRequest, "fail")
 		return
 	}
 	status := service.GMPayCallbackStatus(params)
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt topup webhook received trade_no=%s status=%s amount=%s fiat=%s client_ip=%s", tradeNo, status, gmpayCallbackString(params, "amount"), gmpayCallbackString(params, "fiat"), c.ClientIP()))
+	facts, err := validateUSDTGatewayCallback(c, tradeNo, params, false)
+	if err != nil {
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("USDT gateway webhook rejected trade_no=%s path=%q client_ip=%s error=%q", tradeNo, c.Request.RequestURI, c.ClientIP(), err.Error()))
+		c.String(http.StatusBadRequest, "fail")
+		return
+	}
 	if !service.IsGMPayPaidStatus(status) {
-		logger.LogInfo(c.Request.Context(), fmt.Sprintf("GMPay webhook 忽略非成功事件 trade_no=%s status=%s client_ip=%s", tradeNo, status, c.ClientIP()))
+		logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt webhook 忽略非成功事件 trade_no=%s status=%s client_ip=%s", tradeNo, status, c.ClientIP()))
 		_, _ = c.Writer.Write([]byte("ok"))
 		return
 	}
 	LockOrder(tradeNo)
 	defer UnlockOrder(tradeNo)
-	merchantID := service.GMPayCallbackMerchantID(params)
-	if !gmpayCallbackMerchantMatches(merchantID) {
-		logger.LogWarn(c.Request.Context(), fmt.Sprintf("GMPay webhook merchant mismatch trade_no=%s callback_pid=%s client_ip=%s", tradeNo, merchantID, c.ClientIP()))
-		_, _ = c.Writer.Write([]byte("fail"))
-		return
-	}
 	if err := model.RechargeGMPayWithValidation(tradeNo, common.GetJsonString(params), model.PaymentCallbackValidation{
-		ExpectedPaymentProvider: model.PaymentProviderGMPay,
-		ActualPaymentMethod:     service.GMPayCallbackMethod(params),
-		ActualPaymentToken:      service.GMPayCallbackToken(params),
-		PaidAmount:              service.GMPayCallbackPaidAmount(params),
-		PaidCurrency:            gmpayCallbackPaidCurrency(params),
+		ExpectedPaymentProvider: facts.Provider,
+		ActualPaymentMethod:     facts.PaymentMethod,
+		ActualPaymentToken:      facts.Token,
+		PaidAmount:              facts.PaidAmount,
+		PaidCurrency:            facts.PaidCurrency,
 		RequirePaymentFacts:     true,
 	}, c.ClientIP()); err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("GMPay 充值处理失败 trade_no=%s client_ip=%s error=%q", tradeNo, c.ClientIP(), err.Error()))
-		_, _ = c.Writer.Write([]byte("fail"))
+		logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt 充值处理失败 trade_no=%s client_ip=%s error=%q", tradeNo, c.ClientIP(), err.Error()))
+		c.String(http.StatusInternalServerError, "fail")
 		return
 	}
 	if err := processPaidTopUpCommission(c.Request.Context(), tradeNo); err != nil {
-		_, _ = c.Writer.Write([]byte("fail"))
+		logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt topup commission failed trade_no=%s client_ip=%s error=%q", tradeNo, c.ClientIP(), err.Error()))
+		c.String(http.StatusInternalServerError, "fail")
 		return
 	}
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt topup webhook processed trade_no=%s client_ip=%s", tradeNo, c.ClientIP()))
 	_, _ = c.Writer.Write([]byte("ok"))
 }
 
-func gmpayCallbackMerchantMatches(merchantID string) bool {
-	expected := strings.TrimSpace(setting.GMPayPID)
-	actual := strings.TrimSpace(merchantID)
-	return expected != "" && actual != "" && actual == expected
-}
-
-func gmpayCallbackPaidCurrency(params map[string]interface{}) string {
-	for _, key := range []string{"settlement_currency", "fiat_currency", "order_currency"} {
-		currency := strings.ToUpper(strings.TrimSpace(gmpayCallbackString(params, key)))
-		if currency != "" {
-			return currency
+func validateUSDTGatewayCallback(c *gin.Context, tradeNo string, params map[string]interface{}, subscription bool) (service.USDTGatewayCallbackFacts, error) {
+	provider := ""
+	if subscription {
+		order := model.GetSubscriptionOrderByTradeNo(tradeNo)
+		if order == nil {
+			return service.USDTGatewayCallbackFacts{}, model.ErrSubscriptionOrderNotFound
 		}
+		provider = order.PaymentProvider
+	} else {
+		topUp := model.GetTopUpByTradeNo(tradeNo)
+		if topUp == nil {
+			return service.USDTGatewayCallbackFacts{}, model.ErrTopUpNotFound
+		}
+		provider = topUp.PaymentProvider
 	}
-	return strings.ToUpper(strings.TrimSpace(setting.GMPayCurrency))
+	if provider != model.PaymentProviderBEpusdt {
+		return service.USDTGatewayCallbackFacts{}, model.ErrPaymentMethodMismatch
+	}
+	if !service.VerifyGMPaySignature(params) {
+		return service.USDTGatewayCallbackFacts{}, errors.New("invalid signature")
+	}
+	method := service.GMPayCallbackMethod(params)
+	if method == "" {
+		method = service.USDTPaymentMethod
+	}
+	return service.USDTGatewayCallbackFacts{
+		Provider:      provider,
+		PaymentMethod: method,
+		Token:         "",
+		PaidAmount:    service.GMPayCallbackPaidAmount(params),
+		PaidCurrency:  service.GMPayCallbackPaidCurrency(params),
+	}, nil
 }
 
 func gmpayCallbackString(params map[string]interface{}, key string) string {

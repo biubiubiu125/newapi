@@ -135,7 +135,7 @@ export async function paySubscriptionEpay(
 export async function paySubscriptionGMPay(
   data: SubscriptionPayRequest & { payment_method: string }
 ): Promise<SubscriptionPayResponse> {
-  const res = await api.post('/api/subscription/gmpay/pay', data)
+  const res = await api.post('/api/subscription/bepusdt/pay', data)
   return res.data
 }
 

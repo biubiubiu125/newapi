@@ -26,8 +26,9 @@ import { Label } from '@/components/ui/label'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 
-export interface GMPaySettingsValues {
+export interface BEpusdtSettingsValues {
   GMPayEnabled: boolean
+  USDTGatewayType: string
   GMPayBaseURL: string
   GMPayPID: string
   GMPaySecretKey: string
@@ -38,20 +39,19 @@ export interface GMPaySettingsValues {
 }
 
 interface Props {
-  defaultValues: GMPaySettingsValues
+  defaultValues: BEpusdtSettingsValues
 }
 
 const GMPAY_ASSET_DISPLAY_NAMES =
-  '{"gmpay:usdt":"GMPay USDT","gmpay:usdt:tron":"GMPay USDT-TRC20","gmpay:usdt:bsc":"GMPay USDT-BEP20","gmpay:usdt:polygon":"GMPay USDT-Polygon"}'
+  '{"usdt":"USDT"}'
 
-export function GMPaySettingsSection(props: Props) {
+export function BEpusdtSettingsSection(props: Props) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
   const [loading, setLoading] = useState(false)
-  const form = useForm<GMPaySettingsValues>({
+  const form = useForm<BEpusdtSettingsValues>({
     defaultValues: props.defaultValues,
   })
-
   useEffect(() => {
     form.reset(props.defaultValues)
   }, [form, props.defaultValues])
@@ -63,12 +63,16 @@ export function GMPaySettingsSection(props: Props) {
     try {
       const options: { key: string; value: string }[] = [
         { key: 'GMPayEnabled', value: 'true' },
+        {
+          key: 'USDTGatewayType',
+          value: 'bepusdt',
+        },
         { key: 'GMPayBaseURL', value: values.GMPayBaseURL.trim() },
-        { key: 'GMPayPID', value: values.GMPayPID.trim() },
+        { key: 'GMPayPID', value: '' },
         { key: 'GMPayCurrency', value: 'CNY' },
         {
           key: 'GMPayDisplayName',
-          value: 'GMPay',
+          value: 'USDT',
         },
         {
           key: 'GMPayMinTopUp',
@@ -95,15 +99,13 @@ export function GMPaySettingsSection(props: Props) {
 
   return (
     <SettingsSection
-      title={t('GMPay Gateway')}
-      description={t(
-        'GMPay payment integration for USDT topup and subscription payment.'
-      )}
+      title={t('USDT Gateway')}
+      description='BEpusdt USDT 充值与订阅支付集成。'
     >
       <div className='space-y-5'>
         <div className='grid gap-4 md:grid-cols-2'>
           <div className='space-y-2'>
-            <Label>{t('GMPay Endpoint')}</Label>
+            <Label>{t('Gateway endpoint')}</Label>
             <Input
               {...form.register('GMPayBaseURL')}
               placeholder='https://pay.example.com'
@@ -111,19 +113,15 @@ export function GMPaySettingsSection(props: Props) {
           </div>
           <div className='space-y-2'>
             <Label>{t('Callback address')}</Label>
-            <Input value='/api/user/gmpay/notify' readOnly />
+            <Input value='/api/user/bepusdt/notify' readOnly />
             <p className='text-muted-foreground text-xs'>
-              {t(
-                'Topup uses /api/user/gmpay/notify and subscription uses /api/subscription/gmpay/notify.'
-              )}
+              在服务器地址或回调覆盖中填写公网地址。充值回调：
+              /api/user/bepusdt/notify。订阅回调：
+              /api/subscription/bepusdt/notify。
             </p>
           </div>
           <div className='space-y-2'>
-            <Label>{t('GMPay Merchant ID')}</Label>
-            <Input {...form.register('GMPayPID')} />
-          </div>
-          <div className='space-y-2'>
-            <Label>{t('GMPay Secret Key')}</Label>
+            <Label>{t('Secret Key')}</Label>
             <Input
               type='password'
               autoComplete='new-password'
@@ -140,7 +138,7 @@ export function GMPaySettingsSection(props: Props) {
         >
           {loading || updateOption.isPending
             ? t('Saving...')
-            : t('Save GMPay settings')}
+            : t('Save USDT gateway settings')}
         </Button>
       </div>
     </SettingsSection>

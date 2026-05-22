@@ -59,10 +59,10 @@ export function getStatusConfig(status: TopupStatus): StatusConfig {
  */
 export const PAYMENT_METHOD_NAMES: Record<string, string> = {
   stripe: 'Stripe',
-  alipay: 'Alipay',
-  wxpay: 'WeChat Pay',
+  alipay: '支付宝',
+  wxpay: '微信支付',
   waffo: 'Waffo',
-  gmpay: 'GMPay USDT',
+  usdt: 'USDT',
 }
 
 /**
@@ -73,11 +73,8 @@ export function getPaymentMethodName(
   t?: (key: string) => string
 ): string {
   const name = PAYMENT_METHOD_NAMES[method] || method
-  if (method?.startsWith('gmpay:')) {
-    const [, token, network] = method.split(':')
-    const tokenLabel = (token || 'USDT').toUpperCase()
-    const label = `GMPay ${tokenLabel}${network ? `-${network}` : ''}`
-    return label
+  if (method === 'usdt') {
+    return 'USDT'
   }
   return t ? t(name) : name
 }

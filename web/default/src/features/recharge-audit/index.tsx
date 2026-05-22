@@ -75,7 +75,7 @@ function formatPaidAmount(order: RechargeAuditOrder) {
 
 function orderPaidCurrency(order: RechargeAuditOrder) {
   const provider = (order.payment_provider || '').toLowerCase()
-  if (provider === 'epay' || provider === 'gmpay') {
+  if (provider === 'epay' || provider === 'bepusdt') {
     return 'CNY'
   }
   return order.paid_currency || 'CNY'
@@ -83,8 +83,8 @@ function orderPaidCurrency(order: RechargeAuditOrder) {
 
 function paymentProviderLabel(provider: string) {
   switch ((provider || '').toLowerCase()) {
-    case 'gmpay':
-      return 'GMPay'
+    case 'bepusdt':
+      return 'BEpusdt'
     default:
       return provider || '-'
   }

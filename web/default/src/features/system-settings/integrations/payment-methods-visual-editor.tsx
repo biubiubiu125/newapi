@@ -48,7 +48,7 @@ type PaymentMethodsVisualEditorProps = {
 
 const PAYMENT_TEMPLATES = [
   {
-    name: 'Alipay',
+    name: '支付宝',
     template: {
       color: 'rgba(var(--semi-blue-5), 1)',
       name: '支付宝',
@@ -56,10 +56,10 @@ const PAYMENT_TEMPLATES = [
     },
   },
   {
-    name: 'WeChat Pay',
+    name: '微信支付',
     template: {
       color: 'rgba(var(--semi-green-5), 1)',
-      name: '微信',
+      name: '微信支付',
       type: 'wxpay',
     },
   },
@@ -72,12 +72,12 @@ const PAYMENT_TEMPLATES = [
     },
   },
   {
-    name: 'GMPay USDT',
+    name: 'USDT',
     template: {
       color: 'rgba(var(--semi-teal-5), 1)',
       min_topup: '1',
-      name: 'GMPay USDT',
-      type: 'gmpay:usdt',
+      name: 'USDT',
+      type: 'usdt',
     },
   },
   {
@@ -92,13 +92,7 @@ const PAYMENT_TEMPLATES = [
 ]
 
 function getPaymentMethodDisplayName(method: PaymentMethodData): string {
-  if (!method.type.startsWith('gmpay:')) {
-    return method.name
-  }
-
-  const [, token, network] = method.type.split(':')
-  const tokenLabel = (token || 'USDT').toUpperCase()
-  return `GMPay ${tokenLabel}${network ? `-${network}` : ''}`
+  return method.name
 }
 
 export function PaymentMethodsVisualEditor({

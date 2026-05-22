@@ -51,6 +51,7 @@ const (
 	PaymentMethodCreem        = "creem"
 	PaymentMethodWaffo        = "waffo"
 	PaymentMethodWaffoPancake = "waffo_pancake"
+	PaymentMethodUSDT         = "usdt"
 	PaymentMethodGMPayPrefix  = "gmpay:"
 )
 
@@ -61,6 +62,7 @@ const (
 	PaymentProviderWaffo        = "waffo"
 	PaymentProviderWaffoPancake = "waffo_pancake"
 	PaymentProviderGMPay        = "gmpay"
+	PaymentProviderBEpusdt      = "bepusdt"
 )
 
 var (
@@ -714,7 +716,7 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 
 func RechargeGMPay(tradeNo string, providerPayload string, actualPaymentMethod string, callerIp string) (err error) {
 	return RechargeGMPayWithValidation(tradeNo, providerPayload, PaymentCallbackValidation{
-		ExpectedPaymentProvider: PaymentProviderGMPay,
+		ExpectedPaymentProvider: PaymentProviderBEpusdt,
 		ActualPaymentMethod:     actualPaymentMethod,
 	}, callerIp)
 }
@@ -784,7 +786,7 @@ func RechargeGMPayWithValidation(tradeNo string, providerPayload string, validat
 	})
 
 	if err != nil {
-		common.SysError("gmpay topup failed: " + err.Error())
+		common.SysError("bepusdt topup failed: " + err.Error())
 		if errors.Is(err, ErrPaymentMethodMismatch) ||
 			errors.Is(err, ErrPaymentAmountMismatch) ||
 			errors.Is(err, ErrPaymentCurrencyMismatch) ||
@@ -796,7 +798,7 @@ func RechargeGMPayWithValidation(tradeNo string, providerPayload string, validat
 
 	if quotaToAdd > 0 {
 		_ = cacheUpdateUserQuota(topUp.UserId)
-		RecordTopupLog(topUp.UserId, fmt.Sprintf("GMPay充值成功，充值额度: %v，支付金额：%.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), callerIp, topUp.PaymentMethod, PaymentProviderGMPay)
+		RecordTopupLog(topUp.UserId, fmt.Sprintf("BEpusdt USDT充值成功，充值额度: %v，支付金额：%.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), callerIp, topUp.PaymentMethod, PaymentProviderBEpusdt)
 	}
 
 	return nil
@@ -823,6 +825,9 @@ func paymentMethodMatchesGMPayToken(paymentMethod string, token string) bool {
 		return true
 	}
 	paymentMethod = strings.ToLower(strings.TrimSpace(paymentMethod))
+	if paymentMethod == PaymentMethodUSDT {
+		return token == PaymentMethodUSDT
+	}
 	if paymentMethod == PaymentMethodGMPayPrefix+token {
 		return true
 	}
@@ -836,8 +841,18 @@ func callbackPaymentMethodMatches(expected string, actual string, provider strin
 	if expected == "" || actual == "" {
 		return expected == actual
 	}
+	if provider == PaymentProviderBEpusdt {
+		return expected == PaymentMethodUSDT && actual == PaymentMethodUSDT
+	}
 	if provider != PaymentProviderGMPay {
 		return expected == actual
+	}
+	if expected == PaymentMethodUSDT {
+		actualToken, _, ok := gmpayPaymentMethodParts(actual)
+		if ok {
+			return actualToken == PaymentMethodUSDT
+		}
+		return actual == PaymentMethodUSDT
 	}
 	expectedToken, expectedNetwork, ok := gmpayPaymentMethodParts(expected)
 	if !ok {

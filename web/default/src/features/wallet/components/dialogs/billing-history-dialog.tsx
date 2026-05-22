@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Search, Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
@@ -62,12 +62,10 @@ import { formatPaymentCnyAmount, formatSiteCreditAmount } from '../../lib'
 interface BillingHistoryDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
+  refreshKey?: number
 }
 
-export function BillingHistoryDialog({
-  open,
-  onOpenChange,
-}: BillingHistoryDialogProps) {
+export function BillingHistoryDialog(props: BillingHistoryDialogProps) {
   const { t } = useTranslation()
   const {
     records,
@@ -82,12 +80,18 @@ export function BillingHistoryDialog({
     handlePageSizeChange,
     handleSearch,
     handleCompleteOrder,
+    refresh,
   } = useBillingHistory()
 
   const [confirmTradeNo, setConfirmTradeNo] = useState<string | null>(null)
   const { copyToClipboard, copiedText } = useCopyToClipboard({ notify: false })
 
   const totalPages = Math.ceil(total / pageSize)
+
+  useEffect(() => {
+    if (!props.open || !props.refreshKey) return
+    void refresh()
+  }, [props.open, props.refreshKey, refresh])
 
   const handleConfirmComplete = async () => {
     if (confirmTradeNo) {
@@ -100,7 +104,7 @@ export function BillingHistoryDialog({
 
   return (
     <>
-      <Dialog open={open} onOpenChange={onOpenChange}>
+      <Dialog open={props.open} onOpenChange={props.onOpenChange}>
         <DialogContent className='flex max-h-[calc(100dvh-2rem)] flex-col max-sm:h-dvh max-sm:w-screen max-sm:max-w-none max-sm:rounded-none max-sm:p-4 sm:max-w-4xl'>
           <DialogHeader>
             <DialogTitle>{t('Billing History')}</DialogTitle>

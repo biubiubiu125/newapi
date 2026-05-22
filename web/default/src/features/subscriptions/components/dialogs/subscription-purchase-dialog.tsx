@@ -217,7 +217,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
         plan_id: plan.id,
         payment_method: selectedGMPayMethod,
       })
-      if (res.message === 'success' && res.data?.payment_url) {
+      if ((res.success || res.message === 'success') && res.data?.payment_url) {
         window.open(res.data.payment_url, '_blank')
         toast.success(t('Payment page opened'))
         props.onOpenChange(false)

@@ -70,13 +70,13 @@ type PaymentMethodDialogProps = {
 }
 
 const PAYMENT_TYPES = [
-  { value: 'alipay', label: 'Alipay', icon: getPaymentIcon('alipay') },
-  { value: 'wxpay', label: 'WeChat Pay', icon: getPaymentIcon('wxpay') },
+  { value: 'alipay', label: '支付宝', icon: getPaymentIcon('alipay') },
+  { value: 'wxpay', label: '微信支付', icon: getPaymentIcon('wxpay') },
   { value: 'stripe', label: 'Stripe', icon: getPaymentIcon('stripe') },
   {
-    value: 'gmpay:usdt',
-    label: 'GMPay USDT',
-    icon: getPaymentIcon('gmpay:usdt'),
+    value: 'usdt',
+    label: 'USDT',
+    icon: getPaymentIcon('usdt'),
   },
 ]
 
@@ -86,10 +86,10 @@ type PaymentTypeOption = {
   icon?: ReactNode
 }
 
-function paymentTypeOptions(t: (key: string) => string): PaymentTypeOption[] {
+function paymentTypeOptions(): PaymentTypeOption[] {
   return PAYMENT_TYPES.map((item) => ({
     ...item,
-    label: item.value.startsWith('gmpay:') ? item.label : t(item.label),
+    label: item.label,
   }))
 }
 
@@ -101,8 +101,8 @@ const getColorPreview = (color: string) => {
 }
 
 const COLOR_PRESETS = [
-  { value: '#1677FF', label: 'Blue (Alipay)' },
-  { value: '#07C160', label: 'Green (WeChat)' },
+  { value: '#1677FF', label: '支付宝蓝' },
+  { value: '#07C160', label: '微信绿' },
   { value: '#635BFF', label: 'Purple (Stripe)' },
   { value: '#1890FF', label: 'Sky Blue' },
   { value: '#52C41A', label: 'Lime Green' },
@@ -133,7 +133,7 @@ export function PaymentMethodDialog({
   const { t } = useTranslation()
   const isEditMode = !!editData
   const paymentMethodDialogSchema = createPaymentMethodDialogSchema(t)
-  const paymentTypeOptionsMemo = useMemo(() => paymentTypeOptions(t), [t])
+  const paymentTypeOptionsMemo = useMemo(() => paymentTypeOptions(), [])
 
   const form = useForm<PaymentMethodDialogFormValues>({
     resolver: zodResolver(paymentMethodDialogSchema),

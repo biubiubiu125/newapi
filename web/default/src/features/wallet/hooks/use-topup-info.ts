@@ -85,13 +85,10 @@ function parsePaymentMethods(
 }
 
 function normalizePaymentMethodName(type: string, name: string): string {
-  if (!type.startsWith(PAYMENT_TYPES.GMPAY_PREFIX)) {
-    return name
+  if (type === PAYMENT_TYPES.USDT) {
+    return 'USDT'
   }
-
-  const [, token, network] = type.split(':')
-  const tokenLabel = (token || 'USDT').toUpperCase()
-  return `GMPay ${tokenLabel}${network ? `-${network}` : ''}`
+  return name
 }
 
 function mergePaymentMethods(methods: PaymentMethod[]): PaymentMethod[] {
@@ -110,10 +107,8 @@ function mergePaymentMethods(methods: PaymentMethod[]): PaymentMethod[] {
   return result
 }
 
-function hasGMPayPaymentMethod(methods: PaymentMethod[]): boolean {
-  return methods.some((method) =>
-    method.type.startsWith(PAYMENT_TYPES.GMPAY_PREFIX)
-  )
+function hasBEpusdtPaymentMethod(methods: PaymentMethod[]): boolean {
+  return methods.some((method) => method.type === PAYMENT_TYPES.USDT)
 }
 
 function parseWaffoPayMethods(data: unknown): WaffoPayMethod[] {
@@ -219,29 +214,29 @@ export function useTopupInfo() {
         response.data.pay_methods,
         response.data.stripe_min_topup
       )
-      const gmpayPayMethods = parsePaymentMethods(
-        response.data.gmpay_pay_methods,
+      const bepusdtPayMethods = parsePaymentMethods(
+        response.data.bepusdt_pay_methods,
         response.data.stripe_min_topup
       )
       const payMethods = mergePaymentMethods(standardPayMethods)
-      const canUseGMPay =
-        response.data.enable_gmpay_topup &&
+      const canUseBEpusdt =
+        response.data.enable_bepusdt_topup &&
         response.data.payment_compliance_confirmed !== false
 
-      if (canUseGMPay && !hasGMPayPaymentMethod(payMethods)) {
+      if (canUseBEpusdt && !hasBEpusdtPaymentMethod(payMethods)) {
         payMethods.push({
-          name: 'GMPay USDT',
-          type: `${PAYMENT_TYPES.GMPAY_PREFIX}usdt`,
+          name: 'USDT',
+          type: PAYMENT_TYPES.USDT,
           color: '#14B8A6',
-          min_topup: response.data.gmpay_min_topup || 1,
-          provider: 'gmpay',
+          min_topup: response.data.bepusdt_min_topup || 1,
+          provider: 'bepusdt',
         })
       }
 
       const processedData: TopupInfo = {
         ...response.data,
         pay_methods: payMethods,
-        gmpay_pay_methods: gmpayPayMethods,
+        bepusdt_pay_methods: bepusdtPayMethods,
         amount_options: parseAmountOptions(response.data.amount_options),
         discount: parseDiscountMap(response.data.discount),
         creem_products: parseCreemProducts(response.data.creem_products),

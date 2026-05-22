@@ -95,10 +95,10 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 	}
 
-	enableGMPay := service.IsGMPayConfigured()
-	gmpayPayMethods := []map[string]string{}
-	if enableGMPay && complianceConfirmed {
-		gmpayPayMethods = service.GMPayAssetsForTopupMethods()
+	enableBEpusdt := service.IsUSDTGatewayConfigured()
+	bepusdtPayMethods := []map[string]string{}
+	if enableBEpusdt && complianceConfirmed {
+		bepusdtPayMethods = service.GMPayAssetsForTopupMethods()
 	}
 
 	data := gin.H{
@@ -107,7 +107,7 @@ func GetTopUpInfo(c *gin.Context) {
 		"enable_creem_topup":               isCreemTopUpEnabled(),
 		"enable_waffo_topup":               enableWaffo,
 		"enable_waffo_pancake_topup":       enableWaffoPancake,
-		"enable_gmpay_topup":               enableGMPay,
+		"enable_bepusdt_topup":             enableBEpusdt,
 		"enable_redemption":                complianceConfirmed,
 		"payment_compliance_confirmed":     complianceConfirmed,
 		"payment_compliance_terms_version": operation_setting.CurrentComplianceTermsVersion,
@@ -119,12 +119,12 @@ func GetTopUpInfo(c *gin.Context) {
 		}(),
 		"creem_products":          setting.CreemProducts,
 		"pay_methods":             payMethods,
-		"gmpay_pay_methods":       gmpayPayMethods,
+		"bepusdt_pay_methods":     bepusdtPayMethods,
 		"min_topup":               operation_setting.MinTopUp,
 		"stripe_min_topup":        setting.StripeMinTopUp,
 		"waffo_min_topup":         setting.WaffoMinTopUp,
 		"waffo_pancake_min_topup": setting.WaffoPancakeMinTopUp,
-		"gmpay_min_topup":         setting.GMPayMinTopUp,
+		"bepusdt_min_topup":       setting.GMPayMinTopUp,
 		"amount_options":          operation_setting.GetPaymentSetting().AmountOptions,
 		"discount":                operation_setting.GetPaymentSetting().AmountDiscount,
 		"topup_link":              common.TopUpLink,
@@ -370,10 +370,10 @@ func RequestEpay(c *gin.Context) {
 	}
 
 	callBackAddress := service.GetCallbackAddress()
-	returnUrl, _ := url.Parse(paymentReturnPath("/console/log"))
-	notifyUrl, _ := url.Parse(callBackAddress + "/api/user/epay/notify")
 	tradeNo := fmt.Sprintf("%s%d", common.GetRandomString(6), time.Now().Unix())
 	tradeNo = fmt.Sprintf("USR%dNO%s", id, tradeNo)
+	returnUrl, _ := url.Parse(callBackAddress + "/api/user/epay/return")
+	notifyUrl, _ := url.Parse(callBackAddress + "/api/user/epay/notify")
 	client := GetEpayClient()
 	if client == nil {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "当前管理员未配置支付信息"})
@@ -557,6 +557,47 @@ func EpayNotify(c *gin.Context) {
 		return
 	}
 	_, _ = c.Writer.Write([]byte("success"))
+}
+
+// EpayReturn handles browser return after recharge payment.
+// Browser return is only used for display refresh; notify_url is the only fulfillment path.
+func EpayReturn(c *gin.Context) {
+	var params map[string]string
+	if c.Request.Method == "POST" {
+		if err := c.Request.ParseForm(); err != nil {
+			c.Redirect(http.StatusFound, paymentWalletReturnPath("fail", model.PaymentProviderEpay, "topup", ""))
+			return
+		}
+		params = lo.Reduce(lo.Keys(c.Request.PostForm), func(r map[string]string, t string, i int) map[string]string {
+			r[t] = c.Request.PostForm.Get(t)
+			return r
+		}, map[string]string{})
+	} else {
+		params = lo.Reduce(lo.Keys(c.Request.URL.Query()), func(r map[string]string, t string, i int) map[string]string {
+			r[t] = c.Request.URL.Query().Get(t)
+			return r
+		}, map[string]string{})
+	}
+
+	if len(params) == 0 {
+		c.Redirect(http.StatusFound, paymentWalletReturnPath("fail", model.PaymentProviderEpay, "topup", ""))
+		return
+	}
+	client := GetEpayClient()
+	if client == nil {
+		c.Redirect(http.StatusFound, paymentWalletReturnPath("fail", model.PaymentProviderEpay, "topup", params["out_trade_no"]))
+		return
+	}
+	verifyInfo, err := client.Verify(params)
+	if err != nil || !verifyInfo.VerifyStatus || !epayCallbackMerchantMatches(params) {
+		c.Redirect(http.StatusFound, paymentWalletReturnPath("fail", model.PaymentProviderEpay, "topup", params["out_trade_no"]))
+		return
+	}
+	status := "pending"
+	if verifyInfo.TradeStatus == epay.StatusTradeSuccess {
+		status = "success"
+	}
+	c.Redirect(http.StatusFound, paymentWalletReturnPath(status, model.PaymentProviderEpay, "topup", verifyInfo.ServiceTradeNo))
 }
 
 func epayCallbackMerchantMatches(params map[string]string) bool {

@@ -240,6 +240,7 @@ export type BillingSettings = {
   CreemTestMode: boolean
   CreemProducts: string
   GMPayEnabled: boolean
+  USDTGatewayType: string
   GMPayBaseURL: string
   GMPayPID: string
   GMPaySecretKey: string

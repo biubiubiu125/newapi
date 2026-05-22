@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQueryClient } from '@tanstack/react-query'
+import { toast } from 'sonner'
 import { getSelf } from '@/lib/api'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
@@ -53,6 +54,13 @@ import type {
 
 interface WalletProps {
   initialShowHistory?: boolean
+  paymentReturn?: {
+    show_history?: boolean
+    pay?: 'success' | 'pending' | 'fail'
+    payment_provider?: string
+    order_type?: 'topup' | 'subscription'
+    trade_no?: string
+  }
 }
 
 export function Wallet(props: WalletProps) {
@@ -71,6 +79,7 @@ export function Wallet(props: WalletProps) {
   const [selectedCreemProduct, setSelectedCreemProduct] =
     useState<CreemProduct | null>(null)
   const [showSubscriptionPanel, setShowSubscriptionPanel] = useState(true)
+  const [paymentRefreshKey, setPaymentRefreshKey] = useState(0)
 
   const queryClient = useQueryClient()
   const { status } = useStatus()
@@ -127,6 +136,36 @@ export function Wallet(props: WalletProps) {
       window.history.replaceState({}, '', window.location.pathname)
     }
   }, [props.initialShowHistory])
+
+  const returnedPay = props.paymentReturn?.pay
+  const returnedShowHistory = props.paymentReturn?.show_history
+  const returnedTradeNo = props.paymentReturn?.trade_no
+
+  useEffect(() => {
+    if (!returnedPay && !returnedShowHistory) return
+
+    setBillingDialogOpen(true)
+    void fetchUser()
+    void refetchTopupInfo()
+    setPaymentRefreshKey((key) => key + 1)
+
+    if (returnedPay === 'success') {
+      toast.success(t('Payment completed. Refreshing account data...'))
+    } else if (returnedPay === 'pending') {
+      toast.info(t('Payment returned. Waiting for payment confirmation...'))
+    } else if (returnedPay === 'fail') {
+      toast.error(t('Payment verification failed. Please check your order history.'))
+    }
+
+    window.history.replaceState({}, '', window.location.pathname)
+  }, [
+    fetchUser,
+    refetchTopupInfo,
+    returnedPay,
+    returnedShowHistory,
+    returnedTradeNo,
+    t,
+  ])
 
   // Initialize topup amount when topup info is loaded
   useEffect(() => {
@@ -342,6 +381,7 @@ export function Wallet(props: WalletProps) {
               <SubscriptionPlansCard
                 topupInfo={topupInfo}
                 onAvailabilityChange={handleSubscriptionAvailabilityChange}
+                refreshKey={paymentRefreshKey}
               />
             </div>
           </div>
@@ -364,6 +404,7 @@ export function Wallet(props: WalletProps) {
       <BillingHistoryDialog
         open={billingDialogOpen}
         onOpenChange={setBillingDialogOpen}
+        refreshKey={paymentRefreshKey}
       />
 
       <CreemConfirmDialog

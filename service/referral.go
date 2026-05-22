@@ -2697,7 +2697,7 @@ func referralSettlementFxRate(currency string) (float64, bool) {
 func PaidAmountCNY(paidAmount float64, paidCurrency string, paymentProvider string) (float64, float64, bool) {
 	provider := strings.ToLower(strings.TrimSpace(paymentProvider))
 	currency := strings.ToUpper(strings.TrimSpace(paidCurrency))
-	if provider == model.PaymentProviderEpay || provider == model.PaymentProviderGMPay {
+	if provider == model.PaymentProviderEpay || provider == model.PaymentProviderBEpusdt {
 		currency = "CNY"
 	}
 	amount, _, rate, err := resolveReferralSettlementAmount(paidAmount, currency)

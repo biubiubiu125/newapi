@@ -153,16 +153,16 @@ const BILLING_SECTIONS = [
           CreemTestMode: settings.CreemTestMode,
           CreemProducts: settings.CreemProducts,
         }}
-        gmpayDefaultValues={{
+        bepusdtDefaultValues={{
           GMPayEnabled: settings.GMPayEnabled ?? false,
+          USDTGatewayType: 'bepusdt',
           GMPayBaseURL: settings.GMPayBaseURL ?? '',
           GMPayPID: settings.GMPayPID ?? '',
           GMPaySecretKey: settings.GMPaySecretKey ?? '',
           GMPayCurrency: settings.GMPayCurrency ?? 'CNY',
-          GMPayDisplayName: settings.GMPayDisplayName ?? 'GMPay',
+          GMPayDisplayName: settings.GMPayDisplayName ?? 'USDT',
           GMPayAssetDisplayNames:
-            settings.GMPayAssetDisplayNames ??
-            '{"gmpay:usdt":"GMPay USDT","gmpay:usdt:tron":"GMPay USDT-TRC20","gmpay:usdt:bsc":"GMPay USDT-BEP20","gmpay:usdt:polygon":"GMPay USDT-Polygon"}',
+            settings.GMPayAssetDisplayNames ?? '{"usdt":"USDT"}',
           GMPayMinTopUp: settings.GMPayMinTopUp ?? 1,
         }}
         waffoDefaultValues={{

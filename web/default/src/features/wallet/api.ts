@@ -168,12 +168,12 @@ export async function requestWaffoPancakePayment(
 }
 
 /**
- * Request GMPay payment
+ * Request BEpusdt USDT payment
  */
 export async function requestGMPayPayment(
   request: GMPayPaymentRequest
 ): Promise<GMPayPaymentResponse> {
-  const res = await api.post('/api/user/gmpay/pay', request, {
+  const res = await api.post('/api/user/bepusdt/pay', request, {
     skipBusinessError: true,
   } as Record<string, unknown>)
   return res.data

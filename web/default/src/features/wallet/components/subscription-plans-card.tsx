@@ -63,20 +63,21 @@ import type { PaymentMethod, TopupInfo } from '../types'
 interface SubscriptionPlansCardProps {
   topupInfo: TopupInfo | null
   onAvailabilityChange?: (available: boolean) => void
+  refreshKey?: number
 }
 
 function getEpayMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
   return payMethods.filter(
     (m) =>
       m?.type &&
+      m.type !== 'usdt' &&
       m.type !== 'stripe' &&
-      m.type !== 'creem' &&
-      !m.type.startsWith('gmpay:')
+      m.type !== 'creem'
   )
 }
 
-function getGMPayMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
-  return payMethods.filter((m) => m?.type?.startsWith('gmpay:'))
+function getBEpusdtMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
+  return payMethods.filter((m) => m?.type === 'usdt')
 }
 
 function getBillingPreferenceLabel(
@@ -100,6 +101,7 @@ function getBillingPreferenceLabel(
 export function SubscriptionPlansCard({
   topupInfo,
   onAvailabilityChange,
+  refreshKey,
 }: SubscriptionPlansCardProps) {
   const { t } = useTranslation()
 
@@ -121,13 +123,13 @@ export function SubscriptionPlansCard({
   const enableStripe = !!topupInfo?.enable_stripe_topup
   const enableCreem = !!topupInfo?.enable_creem_topup
   const enableOnlineTopUp = !!topupInfo?.enable_online_topup
-  const enableGMPayTopUp = !!topupInfo?.enable_gmpay_topup
+  const enableBEpusdtTopUp = !!topupInfo?.enable_bepusdt_topup
   const epayMethods = useMemo(
     () => getEpayMethods(topupInfo?.pay_methods),
     [topupInfo?.pay_methods]
   )
-  const gmpayMethods = useMemo(
-    () => getGMPayMethods(topupInfo?.pay_methods),
+  const bepusdtMethods = useMemo(
+    () => getBEpusdtMethods(topupInfo?.pay_methods),
     [topupInfo?.pay_methods]
   )
 
@@ -166,14 +168,19 @@ export function SubscriptionPlansCard({
     init()
   }, [fetchPlans, fetchSelfSubscription])
 
-  const handleRefresh = async () => {
+  const handleRefresh = useCallback(async () => {
     setRefreshing(true)
     try {
       await fetchSelfSubscription()
     } finally {
       setRefreshing(false)
     }
-  }
+  }, [fetchSelfSubscription])
+
+  useEffect(() => {
+    if (!refreshKey) return
+    void handleRefresh()
+  }, [handleRefresh, refreshKey])
 
   const handlePreferenceChange = async (pref: string) => {
     const previous = billingPreference
@@ -645,8 +652,8 @@ export function SubscriptionPlansCard({
         enableCreem={enableCreem}
         enableOnlineTopUp={enableOnlineTopUp}
         epayMethods={epayMethods}
-        enableGMPay={enableGMPayTopUp}
-        gmpayMethods={gmpayMethods}
+        enableGMPay={enableBEpusdtTopUp}
+        gmpayMethods={bepusdtMethods}
         purchaseLimit={
           selectedPlan?.plan?.max_purchase_per_user
             ? Number(selectedPlan.plan.max_purchase_per_user)

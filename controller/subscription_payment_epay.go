@@ -207,7 +207,7 @@ func SubscriptionEpayReturn(c *gin.Context) {
 	if c.Request.Method == "POST" {
 		// POST 请求：从 POST body 解析参数
 		if err := c.Request.ParseForm(); err != nil {
-			c.Redirect(http.StatusFound, paymentReturnPath("/console/topup?pay=fail"))
+			c.Redirect(http.StatusFound, paymentWalletReturnPath("fail", model.PaymentProviderEpay, "subscription", ""))
 			return
 		}
 		params = lo.Reduce(lo.Keys(c.Request.PostForm), func(r map[string]string, t string, i int) map[string]string {
@@ -223,27 +223,27 @@ func SubscriptionEpayReturn(c *gin.Context) {
 	}
 
 	if len(params) == 0 {
-		c.Redirect(http.StatusFound, paymentReturnPath("/console/topup?pay=fail"))
+		c.Redirect(http.StatusFound, paymentWalletReturnPath("fail", model.PaymentProviderEpay, "subscription", ""))
 		return
 	}
 
 	client := GetEpayClient()
 	if client == nil {
-		c.Redirect(http.StatusFound, paymentReturnPath("/console/topup?pay=fail"))
+		c.Redirect(http.StatusFound, paymentWalletReturnPath("fail", model.PaymentProviderEpay, "subscription", params["out_trade_no"]))
 		return
 	}
 	verifyInfo, err := client.Verify(params)
 	if err != nil || !verifyInfo.VerifyStatus {
-		c.Redirect(http.StatusFound, paymentReturnPath("/console/topup?pay=fail"))
+		c.Redirect(http.StatusFound, paymentWalletReturnPath("fail", model.PaymentProviderEpay, "subscription", params["out_trade_no"]))
 		return
 	}
 	if !epayCallbackMerchantMatches(params) {
-		c.Redirect(http.StatusFound, paymentReturnPath("/console/topup?pay=fail"))
+		c.Redirect(http.StatusFound, paymentWalletReturnPath("fail", model.PaymentProviderEpay, "subscription", params["out_trade_no"]))
 		return
 	}
 	if verifyInfo.TradeStatus == epay.StatusTradeSuccess {
-		c.Redirect(http.StatusFound, paymentReturnPath("/console/topup?pay=success"))
+		c.Redirect(http.StatusFound, paymentWalletReturnPath("success", model.PaymentProviderEpay, "subscription", verifyInfo.ServiceTradeNo))
 		return
 	}
-	c.Redirect(http.StatusFound, paymentReturnPath("/console/topup?pay=pending"))
+	c.Redirect(http.StatusFound, paymentWalletReturnPath("pending", model.PaymentProviderEpay, "subscription", verifyInfo.ServiceTradeNo))
 }

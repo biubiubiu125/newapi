@@ -494,6 +494,12 @@ function auditReasonLabel(value: string): string {
       return '测试机打款测试'
     case 'test machine approve':
       return '测试机审核测试'
+    case 'user canceled within 30 minutes':
+    case 'user cancelled within 30 minutes':
+      return '用户在 30 分钟内取消'
+    case 'user canceled':
+    case 'user cancelled':
+      return '用户取消'
     case 'manual retry':
     case 'retry':
       return '手动重试'
@@ -547,6 +553,9 @@ function auditReasonPatternLabel(value: string): string {
   }
   if (lower.includes('withdrawal')) {
     return lower.includes('test') ? '测试提现流程' : '提现流程'
+  }
+  if (lower.includes('canceled') || lower.includes('cancelled')) {
+    return lower.includes('30 minutes') ? '用户在 30 分钟内取消' : '用户取消'
   }
   if (lower.includes('test-machine') || lower.includes('test machine')) {
     return `测试机记录：${value.replace(/test-machine|test machine/gi, '').trim() || value}`
@@ -2117,7 +2126,7 @@ function accountTypeLabel(value: string, t: (key: string) => string): string {
     case 'alipay':
       return t('Alipay')
     case 'usdt':
-      return 'GMPay USDT'
+      return 'USDT'
     default:
       return value || '-'
   }

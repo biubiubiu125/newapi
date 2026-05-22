@@ -213,7 +213,7 @@ func TestEpayTopupNotifyRejectsNonSuccessStatus(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestGMPayTopupNotifyRejectsMissingMerchant(t *testing.T) {
+func TestBEpusdtTopupNotifyRejectsLegacyGMPayOrder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -243,15 +243,15 @@ func TestGMPayTopupNotifyRejectsMissingMerchant(t *testing.T) {
 		"status":         "paid",
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/user/gmpay/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/user/bepusdt/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	GMPayTopUpNotify(c)
+	BEpusdtTopUpNotify(c)
 
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Equal(t, "fail", w.Body.String())
 	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, reloaded)
@@ -261,7 +261,7 @@ func TestGMPayTopupNotifyRejectsMissingMerchant(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestGMPayTopupNotifyAcceptsGMwalletCallback(t *testing.T) {
+func TestBEpusdtTopupNotifyRejectsLegacyGMPayPayload(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -295,26 +295,124 @@ func TestGMPayTopupNotifyAcceptsGMwalletCallback(t *testing.T) {
 		"status":               2,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/user/gmpay/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/user/bepusdt/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	GMPayTopUpNotify(c)
+	BEpusdtTopUpNotify(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Equal(t, "fail", w.Body.String())
+	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
+	var updatedUser model.User
+	require.NoError(t, model.DB.Where("id = ?", user.Id).First(&updatedUser).Error)
+	require.Zero(t, updatedUser.Quota)
+}
+
+func TestBEpusdtTopupNotifyAcceptsCashierCallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 916, Username: "bepusdt_cashier_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	topUp := &model.TopUp{
+		UserId:          user.Id,
+		Amount:          2,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "bepusdt-cashier-success",
+		PaymentMethod:   model.PaymentMethodUSDT,
+		PaymentProvider: model.PaymentProviderBEpusdt,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, topUp.Insert())
+
+	body := signedGMPayCallback(map[string]interface{}{
+		"trade_id":      "BEPAY202605220001",
+		"order_id":      topUp.TradeNo,
+		"amount":        "9.99",
+		"actual_amount": "1.4285",
+		"token":         "TReceiveAddressFromBEpusdt",
+		"status":        2,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/user/bepusdt/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	BEpusdtTopUpNotify(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "ok", w.Body.String())
 	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusSuccess, reloaded.Status)
-	require.Equal(t, "CNY", reloaded.PaidCurrency)
+	var updatedUser model.User
+	require.NoError(t, model.DB.Where("id = ?", user.Id).First(&updatedUser).Error)
+	require.Positive(t, updatedUser.Quota)
+	var topupLog model.Log
+	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", user.Id, model.LogTypeTopup).First(&topupLog).Error)
+	require.Contains(t, topupLog.Content, "BEpusdt USDT")
+}
+
+func TestBEpusdtTopupNotifyAcceptsNativeCallbackEvenWithLegacyExtraFields(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 921, Username: "bepusdt_cross_gateway_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	topUp := &model.TopUp{
+		UserId:          user.Id,
+		Amount:          2,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "bepusdt-cross-gateway-guard",
+		PaymentMethod:   model.PaymentMethodUSDT,
+		PaymentProvider: model.PaymentProviderBEpusdt,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, topUp.Insert())
+
+	body := signedGMPayCallback(map[string]interface{}{
+		"pid":            setting.GMPayPID,
+		"trade_id":       "T202605220002",
+		"order_id":       topUp.TradeNo,
+		"amount":         "9.99",
+		"order_currency": "CNY",
+		"token":          "USDT",
+		"network":        "tron",
+		"status":         2,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/user/bepusdt/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	BEpusdtTopUpNotify(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusSuccess, reloaded.Status)
 	var updatedUser model.User
 	require.NoError(t, model.DB.Where("id = ?", user.Id).First(&updatedUser).Error)
 	require.Positive(t, updatedUser.Quota)
 }
 
-func TestGMPayTopupNotifyRejectsNetworkMismatch(t *testing.T) {
+func TestBEpusdtTopupNotifyRejectsLegacyGMPayNetworkOrder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -345,15 +443,15 @@ func TestGMPayTopupNotifyRejectsNetworkMismatch(t *testing.T) {
 		"status":         2,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/user/gmpay/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/user/bepusdt/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	GMPayTopUpNotify(c)
+	BEpusdtTopUpNotify(c)
 
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Equal(t, "fail", w.Body.String())
 	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, reloaded)
@@ -363,7 +461,7 @@ func TestGMPayTopupNotifyRejectsNetworkMismatch(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestGMPayTopupNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T) {
+func TestBEpusdtTopupNotifyRejectsLegacyGMPayPaymentTypeOrder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -395,15 +493,15 @@ func TestGMPayTopupNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T) {
 		"status":         2,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/user/gmpay/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/user/bepusdt/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	GMPayTopUpNotify(c)
+	BEpusdtTopUpNotify(c)
 
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Equal(t, "fail", w.Body.String())
 	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, reloaded)
@@ -413,7 +511,7 @@ func TestGMPayTopupNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestSubscriptionGMPayNotifyRejectsMissingMerchant(t *testing.T) {
+func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayOrder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -454,15 +552,15 @@ func TestSubscriptionGMPayNotifyRejectsMissingMerchant(t *testing.T) {
 		"status":         "paid",
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/subscription/gmpay/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/bepusdt/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	SubscriptionGMPayNotify(c)
+	SubscriptionBEpusdtNotify(c)
 
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Equal(t, "fail", w.Body.String())
 	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
 	require.NotNil(t, reloaded)
@@ -472,7 +570,7 @@ func TestSubscriptionGMPayNotifyRejectsMissingMerchant(t *testing.T) {
 	require.Zero(t, subscriptionCount)
 }
 
-func TestSubscriptionGMPayNotifyAcceptsGMwalletCallback(t *testing.T) {
+func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayPayload(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -517,26 +615,86 @@ func TestSubscriptionGMPayNotifyAcceptsGMwalletCallback(t *testing.T) {
 		"status":               2,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/subscription/gmpay/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/bepusdt/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	SubscriptionGMPayNotify(c)
+	SubscriptionBEpusdtNotify(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Equal(t, "fail", w.Body.String())
+	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
+	var subscriptionCount int64
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("user_id = ?", user.Id).Count(&subscriptionCount).Error)
+	require.Zero(t, subscriptionCount)
+}
+
+func TestSubscriptionBEpusdtNotifyAcceptsCashierCallback(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 922, Username: "sub_bepusdt_cashier_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	plan := &model.SubscriptionPlan{
+		Id:            814,
+		Title:         "BEpusdt Plan",
+		PriceAmount:   9.99,
+		Currency:      "CNY",
+		DurationUnit:  model.SubscriptionDurationMonth,
+		DurationValue: 1,
+		Enabled:       true,
+		TotalAmount:   1000,
+	}
+	require.NoError(t, model.DB.Create(plan).Error)
+	order := &model.SubscriptionOrder{
+		UserId:          user.Id,
+		PlanId:          plan.Id,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "sub-bepusdt-cashier-success",
+		PaymentMethod:   model.PaymentMethodUSDT,
+		PaymentProvider: model.PaymentProviderBEpusdt,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, order.Insert())
+
+	body := signedGMPayCallback(map[string]interface{}{
+		"trade_id":      "BEPAY202605220002",
+		"order_id":      order.TradeNo,
+		"amount":        "9.99",
+		"actual_amount": "1.4285",
+		"token":         "TReceiveAddressFromBEpusdt",
+		"status":        2,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/bepusdt/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	SubscriptionBEpusdtNotify(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "ok", w.Body.String())
 	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusSuccess, reloaded.Status)
-	require.Equal(t, "CNY", reloaded.PaidCurrency)
 	var subscriptionCount int64
 	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("user_id = ?", user.Id).Count(&subscriptionCount).Error)
 	require.Equal(t, int64(1), subscriptionCount)
+	var topupLog model.Log
+	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", user.Id, model.LogTypeTopup).First(&topupLog).Error)
+	require.Contains(t, topupLog.Content, "订阅")
 }
 
-func TestSubscriptionGMPayNotifyRejectsNetworkMismatch(t *testing.T) {
+func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayNetworkOrder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -578,15 +736,15 @@ func TestSubscriptionGMPayNotifyRejectsNetworkMismatch(t *testing.T) {
 		"status":         2,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/subscription/gmpay/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/bepusdt/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	SubscriptionGMPayNotify(c)
+	SubscriptionBEpusdtNotify(c)
 
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Equal(t, "fail", w.Body.String())
 	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
 	require.NotNil(t, reloaded)
@@ -596,7 +754,7 @@ func TestSubscriptionGMPayNotifyRejectsNetworkMismatch(t *testing.T) {
 	require.Zero(t, subscriptionCount)
 }
 
-func TestSubscriptionGMPayNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T) {
+func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayPaymentTypeOrder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -639,15 +797,15 @@ func TestSubscriptionGMPayNotifyRejectsExplicitPaymentTypeMismatch(t *testing.T)
 		"status":         2,
 	})
 
-	req := httptest.NewRequest(http.MethodPost, "/api/subscription/gmpay/notify", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/bepusdt/notify", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	w := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(w)
 	c.Request = req
 
-	SubscriptionGMPayNotify(c)
+	SubscriptionBEpusdtNotify(c)
 
-	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Equal(t, "fail", w.Body.String())
 	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
 	require.NotNil(t, reloaded)
