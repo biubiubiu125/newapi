@@ -154,6 +154,8 @@ type PaymentSettingsSectionProps = {
   waffoDefaultValues: WaffoSettingsValues
   waffoPancakeDefaultValues: WaffoPancakeSettingsValues
   bepusdtDefaultValues: BEpusdtSettingsValues
+  waffoPancakeProvisionedStoreID?: string
+  waffoPancakeProvisionedProductID?: string
   complianceDefaults: PaymentComplianceDefaults
 }
 
@@ -162,6 +164,8 @@ export function PaymentSettingsSection({
   waffoDefaultValues,
   waffoPancakeDefaultValues,
   bepusdtDefaultValues,
+  waffoPancakeProvisionedStoreID,
+  waffoPancakeProvisionedProductID,
   complianceDefaults,
 }: PaymentSettingsSectionProps) {
   const { t } = useTranslation()
@@ -1478,11 +1482,15 @@ export function PaymentSettingsSection({
 
       <Separator />
 
-      <WaffoSettingsSection defaultValues={waffoDefaultValues} />
+      <WaffoPancakeSettingsSection
+        defaultValues={waffoPancakeDefaultValues}
+        provisionedStoreID={waffoPancakeProvisionedStoreID}
+        provisionedProductID={waffoPancakeProvisionedProductID}
+      />
 
       <Separator />
 
-      <WaffoPancakeSettingsSection defaultValues={waffoPancakeDefaultValues} />
+      <WaffoSettingsSection defaultValues={waffoDefaultValues} />
       {/* eslint-enable react-hooks/refs */}
     </SettingsSection>
   )

@@ -37,7 +37,7 @@ type User struct {
 	WeChatId                string         `json:"wechat_id" gorm:"column:wechat_id;index"`
 	TelegramId              string         `json:"telegram_id" gorm:"column:telegram_id;index"`
 	VerificationCode        string         `json:"verification_code" gorm:"-:all"`
-	AccessToken             *string        `json:"access_token" gorm:"type:char(32);column:access_token;uniqueIndex"`
+	AccessToken             *string        `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"`
 	Quota                   int            `json:"quota" gorm:"type:int;default:0"`
 	UsedQuota               int            `json:"used_quota" gorm:"type:int;default:0;column:used_quota"`
 	RequestCount            int            `json:"request_count" gorm:"type:int;default:0;"`

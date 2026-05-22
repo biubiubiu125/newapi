@@ -151,6 +151,8 @@ export function SignUpForm({
       }
     }
 
+    if (!validateTurnstile()) return
+
     setIsLoading(true)
     try {
       const res = await register({
@@ -158,7 +160,7 @@ export function SignUpForm({
         password: data.password,
         email: data.email || undefined,
         verification_code: verificationCode || undefined,
-        aff: getAffiliateCode(),
+        aff_code: getAffiliateCode(),
         turnstile: turnstileToken,
       })
 
@@ -325,16 +327,17 @@ export function SignUpForm({
               </Button>
             </div>
 
-            {/* Turnstile */}
-            {isTurnstileEnabled && (
-              <div className='mt-2'>
-                <Turnstile
-                  siteKey={turnstileSiteKey}
-                  onVerify={setTurnstileToken}
-                />
-              </div>
-            )}
           </>
+        )}
+
+        {/* Turnstile */}
+        {isTurnstileEnabled && (
+          <div className='mt-2'>
+            <Turnstile
+              siteKey={turnstileSiteKey}
+              onVerify={setTurnstileToken}
+            />
+          </div>
         )}
 
         <LegalConsent
