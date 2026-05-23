@@ -76,6 +76,7 @@ type ReferralSummary struct {
 	WithdrawnAmount    float64  `json:"withdrawn_amount"`
 	SettlementCurrency string   `json:"settlement_currency"`
 	MinWithdrawAmount  float64  `json:"min_withdraw_amount"`
+	SettleFreezeDays   int      `json:"settle_freeze_days"`
 }
 
 type ReferralCommissionView struct {
@@ -347,10 +348,6 @@ func (s *ReferralService) IsEnabled() bool {
 }
 
 func (s *ReferralService) GetSettings() ReferralSettings {
-	redirectPath := sanitizeReferralRedirectPath(strings.TrimSpace(common.ReferralRedirectPath))
-	if redirectPath == "" {
-		redirectPath = referralDefaultRedirect
-	}
 	return ReferralSettings{
 		Enabled:            common.ReferralEnabled,
 		CookieTTLDays:      common.ReferralCookieTTLDays,
@@ -358,7 +355,7 @@ func (s *ReferralService) GetSettings() ReferralSettings {
 		SettleFreezeDays:   common.ReferralSettleFreezeDays,
 		MinWithdrawAmount:  common.ReferralMinWithdrawAmount,
 		WithdrawFee:        common.ReferralWithdrawFee,
-		RedirectPath:       redirectPath,
+		RedirectPath:       referralDefaultRedirect,
 		RequireApproval:    common.ReferralRequireApproval,
 		SettlementCurrency: common.NormalizeReferralSettlementCurrency(common.ReferralSettlementCurrency),
 		SettlementFxRates:  common.ReferralSettlementFxRatesToJSONString(),
@@ -399,14 +396,7 @@ func (s *ReferralService) UpdateSettings(input ReferralSettings, adminUserId int
 		}
 		input.SettlementFxRates = string(fxRatesJSONBytes)
 	}
-	rawRedirectPath := strings.TrimSpace(input.RedirectPath)
-	input.RedirectPath = sanitizeReferralRedirectPath(rawRedirectPath)
-	if rawRedirectPath != "" && input.RedirectPath == "" {
-		return s.GetSettings(), errors.New("redirect_path must be an allowed internal path")
-	}
-	if input.RedirectPath == "" {
-		input.RedirectPath = referralDefaultRedirect
-	}
+	input.RedirectPath = referralDefaultRedirect
 
 	settingsBefore := s.GetSettings()
 	updates := []struct {
@@ -538,14 +528,9 @@ func (s *ReferralService) HandleLanding(code string, click model.ReferralClick) 
 	go func(item model.ReferralClick) {
 		_ = model.DB.Create(&item).Error
 	}(click)
-	redirectPath := strings.TrimSpace(common.ReferralRedirectPath)
-	redirectPath = sanitizeReferralRedirectPath(redirectPath)
-	if redirectPath == "" {
-		redirectPath = referralDefaultRedirect
-	}
 	return &ReferralLanding{
 		Code:          affiliate.InviteCode,
-		RedirectPath:  redirectPath,
+		RedirectPath:  referralDefaultRedirect,
 		CookieTTLDays: maxInt(common.ReferralCookieTTLDays, 30),
 	}, nil
 }
@@ -806,6 +791,7 @@ func (s *ReferralService) GetSummary(userId int) (*ReferralSummary, error) {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return &ReferralSummary{
 				MinWithdrawAmount:  common.ReferralMinWithdrawAmount,
+				SettleFreezeDays:   maxInt(common.ReferralSettleFreezeDays, 0),
 				SettlementCurrency: referralSettlementCurrency(),
 			}, nil
 		}
@@ -838,6 +824,7 @@ func (s *ReferralService) GetSummary(userId int) (*ReferralSummary, error) {
 		FrozenAmount:       account.FrozenAmount,
 		WithdrawnAmount:    account.WithdrawnAmount,
 		MinWithdrawAmount:  common.ReferralMinWithdrawAmount,
+		SettleFreezeDays:   maxInt(common.ReferralSettleFreezeDays, 0),
 		SettlementCurrency: accountSettlementCurrency(account.SettlementCurrency),
 	}, nil
 }
@@ -1677,8 +1664,9 @@ func (s *ReferralService) ListAffiliateBindings(affiliateUserId int, params Refe
 	return items, total, nil
 }
 
-func (s *ReferralService) ApproveAffiliate(userId int, adminUserId int, rateOverride *float64, ip, userAgent string) (*ReferralAffiliateView, error) {
+func (s *ReferralService) ApproveAffiliate(userId int, adminUserId int, rateOverride *float64, reason, ip, userAgent string) (*ReferralAffiliateView, error) {
 	now := time.Now().Unix()
+	reason = strings.TrimSpace(reason)
 	normalizedRate, err := normalizeReferralRateOverride(rateOverride)
 	if err != nil {
 		return nil, err
@@ -1707,7 +1695,7 @@ func (s *ReferralService) ApproveAffiliate(userId int, adminUserId int, rateOver
 			if err := tx.Create(item).Error; err != nil {
 				return err
 			}
-			if err := s.recordAdminAuditTx(tx, "referral_affiliate_approve", userId, item.Id, adminUserId, "", ip, userAgent, map[string]any{
+			if err := s.recordAdminAuditTx(tx, "referral_affiliate_approve", userId, item.Id, adminUserId, reason, ip, userAgent, map[string]any{
 				"status":        nil,
 				"rate_override": nil,
 			}, map[string]any{
@@ -1744,7 +1732,7 @@ func (s *ReferralService) ApproveAffiliate(userId int, adminUserId int, rateOver
 			if err := s.ensureCommissionAccountTx(tx, item.Id, item.UserId); err != nil {
 				return err
 			}
-			_ = s.recordAdminAuditTx(tx, "referral_affiliate_approve", userId, item.Id, adminUserId, "", ip, userAgent, oldValue, map[string]any{"status": item.Status, "rate_override": item.RateOverride})
+			_ = s.recordAdminAuditTx(tx, "referral_affiliate_approve", userId, item.Id, adminUserId, reason, ip, userAgent, oldValue, map[string]any{"status": item.Status, "rate_override": item.RateOverride})
 			return nil
 		}
 	})
@@ -2598,14 +2586,7 @@ func sanitizeReferralRedirectPath(value string) string {
 	if !strings.HasPrefix(path, "/") {
 		return ""
 	}
-	allowed := map[string]struct{}{
-		"/sign-up":  {},
-		"/register": {},
-		"/sign-in":  {},
-		"/login":    {},
-		"/pricing":  {},
-	}
-	if _, ok := allowed[path]; ok {
+	if path == referralDefaultRedirect {
 		return path
 	}
 	return ""

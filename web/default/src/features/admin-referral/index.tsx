@@ -89,6 +89,7 @@ import {
 } from './section-registry'
 
 const route = getRouteApi('/_authenticated/admin-referral/$section')
+const FIXED_REFERRAL_REDIRECT_PATH = '/sign-up'
 
 const SECTION_META: Record<
   AdminReferralSectionId,
@@ -904,7 +905,10 @@ export function AdminReferral() {
     if (!settings) return
     setSavingSettings(true)
     try {
-      const res = await updateAdminReferralSettings(settings)
+      const res = await updateAdminReferralSettings({
+        ...settings,
+        redirect_path: FIXED_REFERRAL_REDIRECT_PATH,
+      })
       if (res.success && res.data) {
         toast.success(t('Settings saved'))
         setSettings(res.data)
@@ -1426,12 +1430,12 @@ export function AdminReferral() {
                   />
                   <LabeledInput
                     label={t('Redirect Path')}
-                    value={settings.redirect_path}
-                    onChange={(value) =>
-                      setSettings((prev) =>
-                        prev ? { ...prev, redirect_path: value } : prev
-                      )
-                    }
+                    description={t(
+                      'Referral links will open this internal frontend path with ?aff=invite_code appended. Use /sign-up for the default template. /register is only kept as a legacy compatibility redirect.'
+                    )}
+                    value={FIXED_REFERRAL_REDIRECT_PATH}
+                    readOnly
+                    onChange={() => undefined}
                   />
                   <LabeledInput
                     label={t('Referral Settlement Currency')}
@@ -1442,7 +1446,7 @@ export function AdminReferral() {
                   <LabeledTextarea
                     label={t('Referral FX Rates')}
                     description={t(
-                      'Commission is paid_amount * commission_rate. This JSON is only used when the order paid currency is different from the settlement currency, for example {"USD":7.2,"EUR":7.8}. CNY is always 1.'
+                      'JSON object for converting the order paid currency to CNY before commission settlement, for example {"USD":7.2,"EUR":7.8}. CNY is always 1. BEpusdt orders are currently recorded as CNY, so {"CNY":1} is enough unless other currencies are enabled.'
                     )}
                     value={settings.settlement_fx_rates || '{"CNY":1}'}
                     onChange={(value) =>
@@ -2257,6 +2261,7 @@ function StatusToolbar(props: {
 
 function LabeledInput(props: {
   label: string
+  description?: string
   value: string
   onChange: (value: string) => void
   readOnly?: boolean
@@ -2264,6 +2269,9 @@ function LabeledInput(props: {
   return (
     <div className='space-y-2'>
       <div className='text-sm font-medium'>{props.label}</div>
+      {props.description && (
+        <div className='text-muted-foreground text-xs'>{props.description}</div>
+      )}
       <Input
         value={props.value}
         readOnly={props.readOnly}

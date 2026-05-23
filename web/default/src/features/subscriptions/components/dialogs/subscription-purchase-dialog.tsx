@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import { CalendarClock, Crown, Package } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -28,31 +28,24 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { GroupBadge } from '@/components/group-badge'
+import { getPaymentIcon } from '@/features/wallet/lib'
+import type { PaymentInitiationResult } from '@/features/wallet/types'
 import {
   paySubscriptionCreem,
   paySubscriptionEpay,
-  paySubscriptionGMPay,
+  paySubscriptionBEpusdt,
   paySubscriptionStripe,
   paySubscriptionWaffoPancake,
 } from '../../api'
-import { getPaymentIcon } from '@/features/wallet/lib'
-import type { PaymentInitiationResult } from '@/features/wallet/types'
 import { formatCnyPrice, formatDuration, formatResetPeriod } from '../../lib'
 import type { PlanRecord, SubscriptionPayResponse } from '../../types'
 
 interface PaymentMethod {
   type: string
   name?: string
+  icon?: string
 }
 
 interface Props {
@@ -64,8 +57,8 @@ interface Props {
   enableWaffoPancake?: boolean
   enableOnlineTopUp?: boolean
   epayMethods?: PaymentMethod[]
-  enableGMPay?: boolean
-  gmpayMethods?: PaymentMethod[]
+  enableBEpusdt?: boolean
+  bepusdtMethods?: PaymentMethod[]
   purchaseLimit?: number
   purchaseCount?: number
   onPaymentStarted?: (payment?: PaymentInitiationResult | string) => void
@@ -74,24 +67,6 @@ interface Props {
 export function SubscriptionPurchaseDialog(props: Props) {
   const { t } = useTranslation()
   const [paying, setPaying] = useState(false)
-  const [selectedEpayMethod, setSelectedEpayMethod] = useState('')
-  const [selectedGMPayMethod, setSelectedGMPayMethod] = useState('')
-
-  useEffect(() => {
-    if (props.open && props.epayMethods && props.epayMethods.length > 0) {
-      setSelectedEpayMethod(props.epayMethods[0].type)
-    } else if (!props.open) {
-      setSelectedEpayMethod('')
-    }
-  }, [props.open, props.epayMethods])
-
-  useEffect(() => {
-    if (props.open && props.gmpayMethods && props.gmpayMethods.length > 0) {
-      setSelectedGMPayMethod(props.gmpayMethods[0].type)
-    } else if (!props.open) {
-      setSelectedGMPayMethod('')
-    }
-  }, [props.open, props.gmpayMethods])
 
   const plan = props.plan?.plan
   if (!plan) return null
@@ -102,19 +77,10 @@ export function SubscriptionPurchaseDialog(props: Props) {
     props.enableWaffoPancake && !!plan.waffo_pancake_product_id
   const hasEpay =
     props.enableOnlineTopUp && (props.epayMethods || []).length > 0
-  const hasGMPay = props.enableGMPay && (props.gmpayMethods || []).length > 0
+  const hasBEpusdt =
+    props.enableBEpusdt && (props.bepusdtMethods || []).length > 0
   const hasAnyPayment =
-    hasStripe || hasCreem || hasWaffoPancake || hasEpay || hasGMPay
-  const selectedEpayMethodLabel =
-    (props.epayMethods || []).find((m) => m.type === selectedEpayMethod)
-      ?.name ||
-    selectedEpayMethod ||
-    t('Select payment method')
-  const selectedGMPayMethodLabel =
-    (props.gmpayMethods || []).find((m) => m.type === selectedGMPayMethod)
-      ?.name ||
-    selectedGMPayMethod ||
-    t('Select payment method')
+    hasStripe || hasCreem || hasWaffoPancake || hasEpay || hasBEpusdt
   const totalAmount = Number(plan.total_amount || 0)
   const price = formatCnyPrice(plan.price_amount || 0)
   const limitReached =
@@ -191,9 +157,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
       if (res.message === 'success' && res.data?.checkout_url) {
         toast.success(t('Redirecting to payment page...'))
         props.onOpenChange(false)
-        props.onPaymentStarted?.(
-          getPaymentStartedPayload(res, 'waffo_pancake')
-        )
+        props.onPaymentStarted?.(getPaymentStartedPayload(res, 'waffo_pancake'))
         window.location.href = res.data.checkout_url
       } else {
         toast.error(
@@ -213,8 +177,8 @@ export function SubscriptionPurchaseDialog(props: Props) {
     typeof navigator !== 'undefined' &&
     /^((?!chrome|android).)*safari/i.test(navigator.userAgent)
 
-  const handlePayEpay = async () => {
-    if (!selectedEpayMethod) {
+  const handlePayEpay = async (paymentMethod: string) => {
+    if (!paymentMethod) {
       toast.error(t('Please select a payment method'))
       return
     }
@@ -222,7 +186,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
     try {
       const res = await paySubscriptionEpay({
         plan_id: plan.id,
-        payment_method: selectedEpayMethod,
+        payment_method: paymentMethod,
       })
       if (res.message === 'success' && res.url) {
         const form = document.createElement('form')
@@ -243,9 +207,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
         document.body.removeChild(form)
         toast.success(t('Payment initiated'))
         props.onOpenChange(false)
-        props.onPaymentStarted?.(
-          getPaymentStartedPayload(res, selectedEpayMethod)
-        )
+        props.onPaymentStarted?.(getPaymentStartedPayload(res, paymentMethod))
       } else {
         toast.error(
           res.message && res.message !== 'success'
@@ -260,24 +222,22 @@ export function SubscriptionPurchaseDialog(props: Props) {
     }
   }
 
-  const handlePayGMPay = async () => {
-    if (!selectedGMPayMethod) {
+  const handlePayBEpusdt = async (paymentMethod: string) => {
+    if (!paymentMethod) {
       toast.error(t('Please select a payment method'))
       return
     }
     setPaying(true)
     try {
-      const res = await paySubscriptionGMPay({
+      const res = await paySubscriptionBEpusdt({
         plan_id: plan.id,
-        payment_method: selectedGMPayMethod,
+        payment_method: paymentMethod,
       })
       if ((res.success || res.message === 'success') && res.data?.payment_url) {
         window.open(res.data.payment_url, '_blank')
         toast.success(t('Payment page opened'))
         props.onOpenChange(false)
-        props.onPaymentStarted?.(
-          getPaymentStartedPayload(res, selectedGMPayMethod)
-        )
+        props.onPaymentStarted?.(getPaymentStartedPayload(res, paymentMethod))
       } else {
         toast.error(
           res.message && res.message !== 'success'
@@ -402,92 +362,49 @@ export function SubscriptionPurchaseDialog(props: Props) {
                 </div>
               )}
               {hasEpay && (
-                <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
-                  <Select
-                    items={[
-                      ...(props.epayMethods || []).map((m) => ({
-                        value: m.type,
-                        label: m.name || m.type,
-                      })),
-                    ]}
-                    value={selectedEpayMethod}
-                    onValueChange={(v) =>
-                      v !== null && setSelectedEpayMethod(v)
-                    }
-                    disabled={limitReached}
-                  >
-                    <SelectTrigger className='flex-1'>
-                      <SelectValue>{selectedEpayMethodLabel}</SelectValue>
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      <SelectGroup>
-                        {(props.epayMethods || []).map((m) => (
-                          <SelectItem key={m.type} value={m.type}>
-                            {m.name || m.type}
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    onClick={handlePayEpay}
-                    disabled={paying || !selectedEpayMethod || limitReached}
-                  >
-                    {t('Pay')}
-                  </Button>
+                <div className='grid grid-cols-2 gap-2 sm:flex sm:flex-wrap'>
+                  {(props.epayMethods || []).map((method) => (
+                    <Button
+                      key={`epay-${method.type}`}
+                      variant='outline'
+                      onClick={() => void handlePayEpay(method.type)}
+                      disabled={paying || limitReached}
+                      className='h-9 min-w-0 justify-center gap-2 rounded-lg px-3 text-center sm:w-36'
+                    >
+                      {getPaymentIcon(
+                        method.type,
+                        'h-4 w-4 shrink-0',
+                        method.icon,
+                        method.name
+                      )}
+                      <span className='truncate'>
+                        {method.name || method.type}
+                      </span>
+                    </Button>
+                  ))}
                 </div>
               )}
-              {hasGMPay && (
-                <div className='grid grid-cols-[minmax(0,1fr)_auto] gap-2'>
-                  <Select
-                    items={[
-                      ...(props.gmpayMethods || []).map((m) => ({
-                        value: m.type,
-                        label: m.name || m.type,
-                      })),
-                    ]}
-                    value={selectedGMPayMethod}
-                    onValueChange={(v) =>
-                      v !== null && setSelectedGMPayMethod(v)
-                    }
-                    disabled={limitReached}
-                  >
-                    <SelectTrigger className='flex-1'>
-                      <SelectValue>
-                        <span className='flex min-w-0 items-center gap-2'>
-                          {getPaymentIcon(
-                            selectedGMPayMethod,
-                            'h-4 w-4 shrink-0'
-                          )}
-                          <span className='truncate'>
-                            {selectedGMPayMethodLabel}
-                          </span>
-                        </span>
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectContent alignItemWithTrigger={false}>
-                      <SelectGroup>
-                        {(props.gmpayMethods || []).map((m) => (
-                          <SelectItem key={m.type} value={m.type}>
-                            <span className='flex min-w-0 items-center gap-2'>
-                              {getPaymentIcon(m.type, 'h-4 w-4 shrink-0')}
-                              <span className='truncate'>
-                                {m.name || m.type}
-                              </span>
-                            </span>
-                          </SelectItem>
-                        ))}
-                      </SelectGroup>
-                    </SelectContent>
-                  </Select>
-                  <Button
-                    onClick={handlePayGMPay}
-                    disabled={paying || !selectedGMPayMethod || limitReached}
-                    className='gap-2'
-                  >
-                    {getPaymentIcon(selectedGMPayMethod, 'h-4 w-4')}
-                    {t('Pay')}
-                  </Button>
+              {hasBEpusdt && (
+                <div className='grid grid-cols-2 gap-2 sm:flex sm:flex-wrap'>
+                  {(props.bepusdtMethods || []).map((method) => (
+                    <Button
+                      key={`bepusdt-${method.type}`}
+                      variant='outline'
+                      onClick={() => void handlePayBEpusdt(method.type)}
+                      disabled={paying || limitReached}
+                      className='h-9 min-w-0 justify-center gap-2 rounded-lg px-3 text-center sm:w-36'
+                    >
+                      {getPaymentIcon(
+                        method.type,
+                        'h-4 w-4 shrink-0',
+                        method.icon,
+                        method.name
+                      )}
+                      <span className='truncate'>
+                        {method.name || method.type}
+                      </span>
+                    </Button>
+                  ))}
                 </div>
               )}
             </div>

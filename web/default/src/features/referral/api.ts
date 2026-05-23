@@ -102,9 +102,8 @@ export async function uploadReferralAsset(
 ): Promise<ApiResponse<{ url: string }>> {
   const formData = new FormData()
   formData.append('file', file)
-  const res = await api.post('/api/user/referral/upload', formData, {
-    headers: { 'Content-Type': 'multipart/form-data' },
-  })
+  formData.append('purpose', 'withdrawal_qr')
+  const res = await api.post('/api/user/referral/upload', formData)
   return res.data
 }
 

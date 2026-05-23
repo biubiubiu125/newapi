@@ -91,15 +91,15 @@ func InitOptionMap() {
 	common.OptionMap["CreemProducts"] = setting.CreemProducts
 	common.OptionMap["CreemTestMode"] = strconv.FormatBool(setting.CreemTestMode)
 	common.OptionMap["CreemWebhookSecret"] = setting.CreemWebhookSecret
-	common.OptionMap["GMPayEnabled"] = strconv.FormatBool(setting.GMPayEnabled)
+	common.OptionMap["BEpusdtEnabled"] = strconv.FormatBool(setting.BEpusdtEnabled)
 	common.OptionMap["USDTGatewayType"] = setting.GetUSDTGatewayType()
-	common.OptionMap["GMPayBaseURL"] = setting.GMPayBaseURL
-	common.OptionMap["GMPayPID"] = setting.GMPayPID
-	common.OptionMap["GMPaySecretKey"] = setting.GMPaySecretKey
-	common.OptionMap["GMPayCurrency"] = setting.GMPayCurrency
-	common.OptionMap["GMPayDisplayName"] = setting.GMPayDisplayName
-	common.OptionMap["GMPayAssetDisplayNames"] = setting.GMPayAssetDisplayNames
-	common.OptionMap["GMPayMinTopUp"] = strconv.Itoa(setting.GMPayMinTopUp)
+	common.OptionMap["BEpusdtBaseURL"] = setting.BEpusdtBaseURL
+	common.OptionMap["BEpusdtPID"] = setting.BEpusdtPID
+	common.OptionMap["BEpusdtSecretKey"] = setting.BEpusdtSecretKey
+	common.OptionMap["BEpusdtCurrency"] = setting.BEpusdtCurrency
+	common.OptionMap["BEpusdtDisplayName"] = setting.BEpusdtDisplayName
+	common.OptionMap["BEpusdtAssetDisplayNames"] = setting.BEpusdtAssetDisplayNames
+	common.OptionMap["BEpusdtMinTopUp"] = strconv.Itoa(setting.BEpusdtMinTopUp)
 	common.OptionMap["WaffoEnabled"] = strconv.FormatBool(setting.WaffoEnabled)
 	common.OptionMap["WaffoApiKey"] = setting.WaffoApiKey
 	common.OptionMap["WaffoPrivateKey"] = setting.WaffoPrivateKey
@@ -441,28 +441,28 @@ func updateOptionMap(key string, value string) (err error) {
 		setting.CreemTestMode = value == "true"
 	case "CreemWebhookSecret":
 		setting.CreemWebhookSecret = value
-	case "GMPayEnabled":
-		setting.GMPayEnabled = value == "true"
+	case "BEpusdtEnabled":
+		setting.BEpusdtEnabled = value == "true"
 	case "USDTGatewayType":
 		setting.USDTGatewayType = setting.NormalizeUSDTGatewayType(value)
-	case "GMPayBaseURL":
-		setting.GMPayBaseURL = value
-	case "GMPayPID":
-		setting.GMPayPID = value
-	case "GMPaySecretKey":
-		setting.GMPaySecretKey = value
-	case "GMPayCurrency":
+	case "BEpusdtBaseURL":
+		setting.BEpusdtBaseURL = value
+	case "BEpusdtPID":
+		setting.BEpusdtPID = value
+	case "BEpusdtSecretKey":
+		setting.BEpusdtSecretKey = value
+	case "BEpusdtCurrency":
 		currency := strings.ToUpper(strings.TrimSpace(value))
 		if currency == "" {
 			currency = "CNY"
 		}
-		setting.GMPayCurrency = currency
-	case "GMPayDisplayName":
-		setting.GMPayDisplayName = value
-	case "GMPayAssetDisplayNames":
-		setting.GMPayAssetDisplayNames = value
-	case "GMPayMinTopUp":
-		setting.GMPayMinTopUp, _ = strconv.Atoi(value)
+		setting.BEpusdtCurrency = currency
+	case "BEpusdtDisplayName":
+		setting.BEpusdtDisplayName = value
+	case "BEpusdtAssetDisplayNames":
+		setting.BEpusdtAssetDisplayNames = value
+	case "BEpusdtMinTopUp":
+		setting.BEpusdtMinTopUp, _ = strconv.Atoi(value)
 	case "WaffoEnabled":
 		setting.WaffoEnabled = value == "true"
 	case "WaffoApiKey":

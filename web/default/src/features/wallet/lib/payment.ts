@@ -86,7 +86,7 @@ export function isWaffoPancakePayment(paymentType: string): boolean {
   return paymentType === PAYMENT_TYPES.WAFFO_PANCAKE
 }
 
-export function isGMPayPayment(paymentType: string): boolean {
+export function isBEpusdtPayment(paymentType: string): boolean {
   return paymentType === PAYMENT_TYPES.USDT
 }
 

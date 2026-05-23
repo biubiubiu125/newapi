@@ -389,6 +389,13 @@ function safeParams(params: Record<string, string | number | undefined>) {
   return search
 }
 
+function riskSignalMatchesEvent(signal: RiskSignal, event: RiskEvent) {
+  if (signal.type !== event.type) return false
+  if (signal.ip && signal.ip !== event.ip) return false
+  if (signal.user_id && signal.user_id !== event.user_id) return false
+  return true
+}
+
 function useRiskCenterData(windowHours: number, keyword: string) {
   const [overview, setOverview] = useState<OverviewData | null>(null)
   const [events, setEvents] = useState<RiskEvent[]>([])
@@ -600,6 +607,27 @@ export function RiskCenter() {
     }
   }
 
+  const handleProcessSignal = async (signal: RiskSignal) => {
+    setScanLoading(true)
+    try {
+      const res = await scanRiskEvents(safeParams({ window_hours: windowHours }))
+      if (!res.success) throw new Error(res.message)
+      await load()
+      const event =
+        res.data.events.find((item) => riskSignalMatchesEvent(signal, item)) ||
+        res.data.events.find((item) => item.type === signal.type)
+      if (!event) {
+        toast.error('没有找到可处理的风险事件，请刷新后重试')
+        return
+      }
+      openEvent(event)
+    } catch (error) {
+      toast.error(error instanceof Error ? error.message : '生成风险事件失败')
+    } finally {
+      setScanLoading(false)
+    }
+  }
+
   const currentEvent = detail?.event
   const primaryUser = detail?.users?.[0]
   const primaryToken = detail?.tokens?.[0]
@@ -690,7 +718,11 @@ export function RiskCenter() {
             </TabsList>
 
             <TabsContent value='queue' className='space-y-3'>
-              <RiskSignals signals={overview?.signals || []} />
+              <RiskSignals
+                signals={overview?.signals || []}
+                processing={scanLoading || detailLoading}
+                onProcessSignal={handleProcessSignal}
+              />
               <RiskEventQueue events={events} onOpenEvent={openEvent} />
             </TabsContent>
 
@@ -922,7 +954,11 @@ function OverviewCards(props: { overview: OverviewData | null; loading: boolean 
   )
 }
 
-function RiskSignals(props: { signals: RiskSignal[] }) {
+function RiskSignals(props: {
+  signals: RiskSignal[]
+  processing: boolean
+  onProcessSignal: (signal: RiskSignal) => void
+}) {
   if (props.signals.length === 0) {
     return (
       <Card>
@@ -952,6 +988,17 @@ function RiskSignals(props: { signals: RiskSignal[] }) {
               <span>命中 {formatNumber(signal.count)} 次</span>
               <span>{formatTime(signal.last_seen_at)}</span>
             </div>
+            <Button
+              type='button'
+              variant='outline'
+              size='sm'
+              className='mt-3 w-full'
+              disabled={props.processing}
+              onClick={() => props.onProcessSignal(signal)}
+            >
+              <ShieldCheck className='size-4' />
+              处理
+            </Button>
           </CardContent>
         </Card>
       ))}
@@ -977,6 +1024,7 @@ function RiskEventQueue(props: {
               <TableHead>命中</TableHead>
               <TableHead>状态</TableHead>
               <TableHead>最近发现</TableHead>
+              <TableHead className='text-right'>操作</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -1012,6 +1060,19 @@ function RiskEventQueue(props: {
                   />
                 </TableCell>
                 <TableCell>{formatTime(event.last_seen_at)}</TableCell>
+                <TableCell className='text-right'>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    onClick={(clickEvent) => {
+                      clickEvent.stopPropagation()
+                      props.onOpenEvent(event)
+                    }}
+                  >
+                    处理
+                  </Button>
+                </TableCell>
               </TableRow>
             ))}
           </TableBody>

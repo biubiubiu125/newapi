@@ -656,8 +656,8 @@ export function SubscriptionPlansCard({
         enableWaffoPancake={enableWaffoPancake}
         enableOnlineTopUp={enableOnlineTopUp}
         epayMethods={epayMethods}
-        enableGMPay={enableBEpusdtTopUp}
-        gmpayMethods={bepusdtMethods}
+        enableBEpusdt={enableBEpusdtTopUp}
+        bepusdtMethods={bepusdtMethods}
         purchaseLimit={
           selectedPlan?.plan?.max_purchase_per_user
             ? Number(selectedPlan.plan.max_purchase_per_user)

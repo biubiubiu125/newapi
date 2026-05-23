@@ -30,6 +30,7 @@ import {
   ShieldAlert,
   Link2,
   CreditCard,
+  Share2,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -43,6 +44,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { approveReferralAffiliate } from '@/features/referral/api'
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
 import { manageUser, resetUserPasskey, resetUserTwoFA } from '../api'
 import {
@@ -68,6 +70,8 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
+  const [openAffiliateConfirm, setOpenAffiliateConfirm] = useState(false)
+  const [openingAffiliate, setOpeningAffiliate] = useState(false)
 
   const handleEdit = () => {
     setCurrentRow(user)
@@ -124,6 +128,26 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
       toast.error(t(ERROR_MESSAGES.UNEXPECTED))
     } finally {
       setResetTwoFAOpen(false)
+    }
+  }
+
+  const handleOpenAffiliate = async () => {
+    setOpeningAffiliate(true)
+    try {
+      const result = await approveReferralAffiliate(user.id, {
+        reason: '管理员从用户列表手动开通推广员',
+      })
+      if (result.success) {
+        toast.success(t('Affiliate access enabled'))
+        triggerRefresh()
+      } else {
+        toast.error(result.message || t('Failed to enable affiliate access'))
+      }
+    } catch (_error) {
+      toast.error(t(ERROR_MESSAGES.UNEXPECTED))
+    } finally {
+      setOpeningAffiliate(false)
+      setOpenAffiliateConfirm(false)
     }
   }
 
@@ -220,6 +244,19 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuShortcut>
           </DropdownMenuItem>
 
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
+              setOpenAffiliateConfirm(true)
+            }}
+            disabled={isRoot}
+          >
+            {t('Enable Affiliate Access')}
+            <DropdownMenuShortcut>
+              <Share2 size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+
           <DropdownMenuSeparator />
 
           <DropdownMenuItem
@@ -279,6 +316,18 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         desc={`Reset 2FA for ${user.username}? The user must set up 2FA again to continue using it.`}
         confirmText='Reset 2FA'
         handleConfirm={handleResetTwoFA}
+      />
+
+      <ConfirmDialog
+        open={openAffiliateConfirm}
+        onOpenChange={setOpenAffiliateConfirm}
+        title={t('Enable Affiliate Access')}
+        desc={t('Enable affiliate access for {{username}}?', {
+          username: user.username,
+        })}
+        confirmText={t('Enable Affiliate Access')}
+        handleConfirm={handleOpenAffiliate}
+        isLoading={openingAffiliate}
       />
 
       <UserBindingDialog

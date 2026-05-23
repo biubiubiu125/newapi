@@ -83,6 +83,7 @@ export function useAdminReferralBadges(enabled = true) {
     error: query.error,
     isFetching: query.isFetching,
     isLoading: query.isLoading,
+    isSuccess: query.isSuccess,
     refetch: query.refetch,
   }
 }

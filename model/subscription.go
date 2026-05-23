@@ -604,7 +604,7 @@ func CompleteSubscriptionOrderWithValidation(tradeNo string, providerPayload str
 		if validation.ActualPaymentMethod != "" && !callbackPaymentMethodMatches(order.PaymentMethod, validation.ActualPaymentMethod, validation.ExpectedPaymentProvider) {
 			return ErrPaymentMethodMismatch
 		}
-		if validation.ActualPaymentToken != "" && !paymentMethodMatchesGMPayToken(order.PaymentMethod, validation.ActualPaymentToken) {
+		if validation.ActualPaymentToken != "" && !paymentMethodMatchesBEpusdtToken(order.PaymentMethod, validation.ActualPaymentToken) {
 			return ErrPaymentMethodMismatch
 		}
 		if validation.RequirePaymentFacts && !samePaymentCurrency(order.PaidCurrency, validation.PaidCurrency) {

@@ -12,40 +12,40 @@ import (
 
 func withBEpusdtSettings(t *testing.T, baseURL string) {
 	t.Helper()
-	previousEnabled := setting.GMPayEnabled
+	previousEnabled := setting.BEpusdtEnabled
 	previousGatewayType := setting.USDTGatewayType
-	previousBaseURL := setting.GMPayBaseURL
-	previousPID := setting.GMPayPID
-	previousSecretKey := setting.GMPaySecretKey
-	previousCurrency := setting.GMPayCurrency
-	setting.GMPayEnabled = true
+	previousBaseURL := setting.BEpusdtBaseURL
+	previousPID := setting.BEpusdtPID
+	previousSecretKey := setting.BEpusdtSecretKey
+	previousCurrency := setting.BEpusdtCurrency
+	setting.BEpusdtEnabled = true
 	setting.USDTGatewayType = setting.USDTGatewayTypeBEpusdt
-	setting.GMPayBaseURL = baseURL
-	setting.GMPayPID = ""
-	setting.GMPaySecretKey = "secret"
-	setting.GMPayCurrency = "cny"
+	setting.BEpusdtBaseURL = baseURL
+	setting.BEpusdtPID = ""
+	setting.BEpusdtSecretKey = "secret"
+	setting.BEpusdtCurrency = "cny"
 	t.Cleanup(func() {
-		setting.GMPayEnabled = previousEnabled
+		setting.BEpusdtEnabled = previousEnabled
 		setting.USDTGatewayType = previousGatewayType
-		setting.GMPayBaseURL = previousBaseURL
-		setting.GMPayPID = previousPID
-		setting.GMPaySecretKey = previousSecretKey
-		setting.GMPayCurrency = previousCurrency
+		setting.BEpusdtBaseURL = previousBaseURL
+		setting.BEpusdtPID = previousPID
+		setting.BEpusdtSecretKey = previousSecretKey
+		setting.BEpusdtCurrency = previousCurrency
 	})
 }
 
 func TestUSDTGatewayAssetsOnlyExposeBEpusdtUSDT(t *testing.T) {
 	withBEpusdtSettings(t, "https://pay.example.com")
 
-	assets, err := GetGMPayAssets()
+	assets, err := GetBEpusdtAssets()
 	require.NoError(t, err)
-	require.Equal(t, []GMPayAsset{{
+	require.Equal(t, []BEpusdtAsset{{
 		Token:       "usdt",
 		PaymentType: "usdt",
 		DisplayName: "USDT",
 	}}, assets)
 
-	methods := GMPayAssetsForTopupMethods()
+	methods := BEpusdtAssetsForTopupMethods()
 	require.Equal(t, []map[string]string{{
 		"name":      "USDT",
 		"type":      "usdt",
@@ -53,13 +53,13 @@ func TestUSDTGatewayAssetsOnlyExposeBEpusdtUSDT(t *testing.T) {
 		"min_topup": "1",
 		"provider":  "bepusdt",
 	}}, methods)
-	require.True(t, IsValidGMPayPaymentMethod("usdt"))
-	require.False(t, IsValidGMPayPaymentMethod("gmpay:usdt:tron"))
+	require.True(t, IsValidBEpusdtPaymentMethod("usdt"))
+	require.False(t, IsValidBEpusdtPaymentMethod("bepusdt:usdt:tron"))
 }
 
 func TestBEpusdtConfigurationDoesNotRequireMerchantID(t *testing.T) {
 	withBEpusdtSettings(t, "https://pay.example.com")
-	setting.GMPayPID = ""
+	setting.BEpusdtPID = ""
 
 	require.True(t, IsUSDTGatewayConfigured())
 	require.Equal(t, "bepusdt", ActiveUSDTGatewayProvider())
@@ -85,7 +85,7 @@ func TestCreateUSDTGatewayOrderUsesBEpusdtCreateOrder(t *testing.T) {
 		require.NotContains(t, body, "network")
 		require.NotContains(t, body, "trade_type")
 		require.NotContains(t, body, "payment_type")
-		require.True(t, VerifyGMPaySignature(body))
+		require.True(t, VerifyBEpusdtSignature(body))
 
 		w.Header().Set("Content-Type", "application/json")
 		_, _ = w.Write([]byte(`{"status_code":200,"message":"success","data":{"trade_id":"BEPAY-1","order_id":"order-bepusdt-1","amount":"12.5","status":1,"payment_url":"https://pay.example.com/pay/cashier/BEPAY-1"}}`))
@@ -117,21 +117,21 @@ func TestBEpusdtSignAndNotifyHelpers(t *testing.T) {
 		"fiat":          "CNY",
 		"status":        2,
 	}
-	values["signature"] = GMPaySign(values, "secret")
+	values["signature"] = BEpusdtSign(values, "secret")
 
 	withBEpusdtSettings(t, "https://pay.example.com")
-	require.True(t, VerifyGMPaySignature(values))
+	require.True(t, VerifyBEpusdtSignature(values))
 	values["signature"] = "invalid"
-	require.False(t, VerifyGMPaySignature(values))
-	values["signature"] = GMPaySign(values, "secret")
-	require.Equal(t, "merchant-order-1", GMPayCallbackTradeNo(values))
-	require.Equal(t, "2", GMPayCallbackStatus(values))
-	require.True(t, IsGMPayPaidStatus(GMPayCallbackStatus(values)))
-	require.Empty(t, GMPayCallbackToken(values))
-	require.Equal(t, 100.0, GMPayCallbackPaidAmount(values))
-	require.Equal(t, "CNY", GMPayCallbackPaidCurrency(values))
+	require.False(t, VerifyBEpusdtSignature(values))
+	values["signature"] = BEpusdtSign(values, "secret")
+	require.Equal(t, "merchant-order-1", BEpusdtCallbackTradeNo(values))
+	require.Equal(t, "2", BEpusdtCallbackStatus(values))
+	require.True(t, IsBEpusdtPaidStatus(BEpusdtCallbackStatus(values)))
+	require.Empty(t, BEpusdtCallbackToken(values))
+	require.Equal(t, 100.0, BEpusdtCallbackPaidAmount(values))
+	require.Equal(t, "CNY", BEpusdtCallbackPaidCurrency(values))
 
 	values["currencies"] = "USDT"
-	values["signature"] = GMPaySign(values, "secret")
-	require.Equal(t, "usdt", GMPayCallbackToken(values))
+	values["signature"] = BEpusdtSign(values, "secret")
+	require.Equal(t, "usdt", BEpusdtCallbackToken(values))
 }

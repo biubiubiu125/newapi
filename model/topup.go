@@ -52,7 +52,6 @@ const (
 	PaymentMethodWaffo        = "waffo"
 	PaymentMethodWaffoPancake = "waffo_pancake"
 	PaymentMethodUSDT         = "usdt"
-	PaymentMethodGMPayPrefix  = "gmpay:"
 )
 
 const (
@@ -61,7 +60,6 @@ const (
 	PaymentProviderCreem        = "creem"
 	PaymentProviderWaffo        = "waffo"
 	PaymentProviderWaffoPancake = "waffo_pancake"
-	PaymentProviderGMPay        = "gmpay"
 	PaymentProviderBEpusdt      = "bepusdt"
 )
 
@@ -668,7 +666,7 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 		if validation.ActualPaymentMethod != "" && !callbackPaymentMethodMatches(topUp.PaymentMethod, validation.ActualPaymentMethod, validation.ExpectedPaymentProvider) {
 			return ErrPaymentMethodMismatch
 		}
-		if validation.ActualPaymentToken != "" && !paymentMethodMatchesGMPayToken(topUp.PaymentMethod, validation.ActualPaymentToken) {
+		if validation.ActualPaymentToken != "" && !paymentMethodMatchesBEpusdtToken(topUp.PaymentMethod, validation.ActualPaymentToken) {
 			return ErrPaymentMethodMismatch
 		}
 		if validation.RequirePaymentFacts && !samePaymentCurrency(topUp.PaidCurrency, validation.PaidCurrency) {
@@ -723,14 +721,14 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 	return nil
 }
 
-func RechargeGMPay(tradeNo string, providerPayload string, actualPaymentMethod string, callerIp string) (err error) {
-	return RechargeGMPayWithValidation(tradeNo, providerPayload, PaymentCallbackValidation{
+func RechargeBEpusdt(tradeNo string, providerPayload string, actualPaymentMethod string, callerIp string) (err error) {
+	return RechargeBEpusdtWithValidation(tradeNo, providerPayload, PaymentCallbackValidation{
 		ExpectedPaymentProvider: PaymentProviderBEpusdt,
 		ActualPaymentMethod:     actualPaymentMethod,
 	}, callerIp)
 }
 
-func RechargeGMPayWithValidation(tradeNo string, providerPayload string, validation PaymentCallbackValidation, callerIp string) (err error) {
+func RechargeBEpusdtWithValidation(tradeNo string, providerPayload string, validation PaymentCallbackValidation, callerIp string) (err error) {
 	if tradeNo == "" {
 		return errors.New("未提供支付单号")
 	}
@@ -746,7 +744,7 @@ func RechargeGMPayWithValidation(tradeNo string, providerPayload string, validat
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		err := tx.Set("gorm:query_option", "FOR UPDATE").Where(refCol+" = ?", tradeNo).First(topUp).Error
 		if err != nil {
-			return errors.New("充值订单不存在")
+			return ErrTopUpNotFound
 		}
 
 		if topUp.PaymentProvider != validation.ExpectedPaymentProvider {
@@ -755,7 +753,7 @@ func RechargeGMPayWithValidation(tradeNo string, providerPayload string, validat
 		if validation.ActualPaymentMethod != "" && !callbackPaymentMethodMatches(topUp.PaymentMethod, validation.ActualPaymentMethod, validation.ExpectedPaymentProvider) {
 			return ErrPaymentMethodMismatch
 		}
-		if validation.ActualPaymentToken != "" && !paymentMethodMatchesGMPayToken(topUp.PaymentMethod, validation.ActualPaymentToken) {
+		if validation.ActualPaymentToken != "" && !paymentMethodMatchesBEpusdtToken(topUp.PaymentMethod, validation.ActualPaymentToken) {
 			return ErrPaymentMethodMismatch
 		}
 		if validation.RequirePaymentFacts && !samePaymentCurrency(topUp.PaidCurrency, validation.PaidCurrency) {
@@ -770,7 +768,7 @@ func RechargeGMPayWithValidation(tradeNo string, providerPayload string, validat
 		}
 
 		if topUp.Status != common.TopUpStatusPending {
-			return errors.New("充值订单状态错误")
+			return ErrTopUpStatusInvalid
 		}
 
 		quotaToAdd = topUp.CreditQuotaAmount()
@@ -797,6 +795,7 @@ func RechargeGMPayWithValidation(tradeNo string, providerPayload string, validat
 	if err != nil {
 		common.SysError("bepusdt topup failed: " + err.Error())
 		if errors.Is(err, ErrPaymentMethodMismatch) ||
+			errors.Is(err, ErrTopUpNotFound) ||
 			errors.Is(err, ErrPaymentAmountMismatch) ||
 			errors.Is(err, ErrPaymentCurrencyMismatch) ||
 			errors.Is(err, ErrTopUpStatusInvalid) {
@@ -836,20 +835,13 @@ func samePaymentAmount(expected float64, actual float64) bool {
 	return expectedAmount.Equal(actualAmount)
 }
 
-func paymentMethodMatchesGMPayToken(paymentMethod string, token string) bool {
+func paymentMethodMatchesBEpusdtToken(paymentMethod string, token string) bool {
 	token = strings.ToLower(strings.TrimSpace(token))
 	if token == "" {
 		return true
 	}
 	paymentMethod = strings.ToLower(strings.TrimSpace(paymentMethod))
-	if paymentMethod == PaymentMethodUSDT {
-		return token == PaymentMethodUSDT
-	}
-	if paymentMethod == PaymentMethodGMPayPrefix+token {
-		return true
-	}
-	expectedPrefix := PaymentMethodGMPayPrefix + token + ":"
-	return strings.HasPrefix(paymentMethod, expectedPrefix)
+	return paymentMethod == PaymentMethodUSDT && token == PaymentMethodUSDT
 }
 
 func callbackPaymentMethodMatches(expected string, actual string, provider string) bool {
@@ -861,51 +853,5 @@ func callbackPaymentMethodMatches(expected string, actual string, provider strin
 	if provider == PaymentProviderBEpusdt {
 		return expected == PaymentMethodUSDT && actual == PaymentMethodUSDT
 	}
-	if provider != PaymentProviderGMPay {
-		return expected == actual
-	}
-	if expected == PaymentMethodUSDT {
-		actualToken, _, ok := gmpayPaymentMethodParts(actual)
-		if ok {
-			return actualToken == PaymentMethodUSDT
-		}
-		return actual == PaymentMethodUSDT
-	}
-	expectedToken, expectedNetwork, ok := gmpayPaymentMethodParts(expected)
-	if !ok {
-		return false
-	}
-	actualToken, actualNetwork, ok := gmpayPaymentMethodParts(actual)
-	if !ok {
-		return false
-	}
-	if expectedToken != actualToken {
-		return false
-	}
-	if expectedNetwork != "" {
-		return actualNetwork != "" && expectedNetwork == actualNetwork
-	}
-	return true
-}
-
-func gmpayPaymentMethodToken(paymentMethod string) (string, bool) {
-	token, _, ok := gmpayPaymentMethodParts(paymentMethod)
-	return token, ok
-}
-
-func gmpayPaymentMethodParts(paymentMethod string) (string, string, bool) {
-	paymentMethod = strings.ToLower(strings.TrimSpace(paymentMethod))
-	if !strings.HasPrefix(paymentMethod, PaymentMethodGMPayPrefix) {
-		return "", "", false
-	}
-	parts := strings.Split(strings.TrimPrefix(paymentMethod, PaymentMethodGMPayPrefix), ":")
-	if len(parts) < 1 || len(parts) > 2 {
-		return "", "", false
-	}
-	token := strings.TrimSpace(parts[0])
-	network := ""
-	if len(parts) == 2 {
-		network = strings.TrimSpace(parts[1])
-	}
-	return token, network, token != ""
+	return expected == actual
 }

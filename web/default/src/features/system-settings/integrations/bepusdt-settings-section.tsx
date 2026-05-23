@@ -27,22 +27,22 @@ import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 export interface BEpusdtSettingsValues {
-  GMPayEnabled: boolean
+  BEpusdtEnabled: boolean
   USDTGatewayType: string
-  GMPayBaseURL: string
-  GMPayPID: string
-  GMPaySecretKey: string
-  GMPayCurrency: string
-  GMPayDisplayName: string
-  GMPayAssetDisplayNames: string
-  GMPayMinTopUp: number
+  BEpusdtBaseURL: string
+  BEpusdtPID: string
+  BEpusdtSecretKey: string
+  BEpusdtCurrency: string
+  BEpusdtDisplayName: string
+  BEpusdtAssetDisplayNames: string
+  BEpusdtMinTopUp: number
 }
 
 interface Props {
   defaultValues: BEpusdtSettingsValues
 }
 
-const GMPAY_ASSET_DISPLAY_NAMES =
+const BEPUSDT_ASSET_DISPLAY_NAMES =
   '{"usdt":"USDT"}'
 
 export function BEpusdtSettingsSection(props: Props) {
@@ -62,28 +62,28 @@ export function BEpusdtSettingsSection(props: Props) {
     setLoading(true)
     try {
       const options: { key: string; value: string }[] = [
-        { key: 'GMPayEnabled', value: 'true' },
+        { key: 'BEpusdtEnabled', value: 'true' },
         {
           key: 'USDTGatewayType',
           value: 'bepusdt',
         },
-        { key: 'GMPayBaseURL', value: values.GMPayBaseURL.trim() },
-        { key: 'GMPayPID', value: '' },
-        { key: 'GMPayCurrency', value: 'CNY' },
+        { key: 'BEpusdtBaseURL', value: values.BEpusdtBaseURL.trim() },
+        { key: 'BEpusdtPID', value: '' },
+        { key: 'BEpusdtCurrency', value: 'CNY' },
         {
-          key: 'GMPayDisplayName',
+          key: 'BEpusdtDisplayName',
           value: 'USDT',
         },
         {
-          key: 'GMPayMinTopUp',
-          value: String(values.GMPayMinTopUp || 1),
+          key: 'BEpusdtMinTopUp',
+          value: String(values.BEpusdtMinTopUp || 1),
         },
-        { key: 'GMPayAssetDisplayNames', value: GMPAY_ASSET_DISPLAY_NAMES },
+        { key: 'BEpusdtAssetDisplayNames', value: BEPUSDT_ASSET_DISPLAY_NAMES },
       ]
-      if (values.GMPaySecretKey.trim()) {
+      if (values.BEpusdtSecretKey.trim()) {
         options.push({
-          key: 'GMPaySecretKey',
-          value: values.GMPaySecretKey.trim(),
+          key: 'BEpusdtSecretKey',
+          value: values.BEpusdtSecretKey.trim(),
         })
       }
       for (const opt of options) {
@@ -107,7 +107,7 @@ export function BEpusdtSettingsSection(props: Props) {
           <div className='space-y-2'>
             <Label>{t('Gateway endpoint')}</Label>
             <Input
-              {...form.register('GMPayBaseURL')}
+              {...form.register('BEpusdtBaseURL')}
               placeholder='https://pay.example.com'
             />
           </div>
@@ -125,7 +125,7 @@ export function BEpusdtSettingsSection(props: Props) {
             <Input
               type='password'
               autoComplete='new-password'
-              {...form.register('GMPaySecretKey')}
+              {...form.register('BEpusdtSecretKey')}
               placeholder={t('Leave blank unless updating')}
             />
           </div>

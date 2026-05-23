@@ -9,6 +9,7 @@
     "build:check": "tsc -b && rsbuild build",
     "typecheck": "tsc -b",
     "lint": "eslint .",
+    "test": "node --import tsx --test src/components/ui/dropdown-menu.test.tsx src/components/layout/lib/admin-sidebar-badge-ack.test.ts",
     "preview": "rsbuild preview",
     "format:check": "prettier --check .",
     "format": "prettier --write .",
@@ -94,6 +95,7 @@
     "prettier": "^3.8.1",
     "prettier-plugin-tailwindcss": "^0.7.2",
     "shadcn": "^3.7.0",
+    "tsx": "^4.20.6",
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.57.2"
   },

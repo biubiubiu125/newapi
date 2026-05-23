@@ -35,9 +35,9 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 	previousEpayID := operation_setting.EpayId
 	previousEpayKey := operation_setting.EpayKey
 	previousPayMethods := operation_setting.PayMethods
-	previousGMPayPID := setting.GMPayPID
-	previousGMPaySecretKey := setting.GMPaySecretKey
-	previousGMPayCurrency := setting.GMPayCurrency
+	previousBEpusdtPID := setting.BEpusdtPID
+	previousBEpusdtSecretKey := setting.BEpusdtSecretKey
+	previousBEpusdtCurrency := setting.BEpusdtCurrency
 	paymentSetting := operation_setting.GetPaymentSetting()
 	previousComplianceConfirmed := paymentSetting.ComplianceConfirmed
 	previousComplianceTermsVersion := paymentSetting.ComplianceTermsVersion
@@ -53,9 +53,9 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 	operation_setting.PayMethods = []map[string]string{{"type": "alipay"}}
 	paymentSetting.ComplianceConfirmed = true
 	paymentSetting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
-	setting.GMPayPID = "gmpay-pid-test"
-	setting.GMPaySecretKey = "gmpay-key-test"
-	setting.GMPayCurrency = "cny"
+	setting.BEpusdtPID = "bepusdt-pid-test"
+	setting.BEpusdtSecretKey = "bepusdt-key-test"
+	setting.BEpusdtCurrency = "cny"
 
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
@@ -85,9 +85,9 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 		operation_setting.PayMethods = previousPayMethods
 		paymentSetting.ComplianceConfirmed = previousComplianceConfirmed
 		paymentSetting.ComplianceTermsVersion = previousComplianceTermsVersion
-		setting.GMPayPID = previousGMPayPID
-		setting.GMPaySecretKey = previousGMPaySecretKey
-		setting.GMPayCurrency = previousGMPayCurrency
+		setting.BEpusdtPID = previousBEpusdtPID
+		setting.BEpusdtSecretKey = previousBEpusdtSecretKey
+		setting.BEpusdtCurrency = previousBEpusdtCurrency
 		sqlDB, err := db.DB()
 		if err == nil {
 			_ = sqlDB.Close()
@@ -108,12 +108,12 @@ func signedEpayCallback(values map[string]string) url.Values {
 	return out
 }
 
-func signedGMPayCallback(values map[string]interface{}) string {
+func signedBEpusdtCallback(values map[string]interface{}) string {
 	params := map[string]interface{}{}
 	for key, value := range values {
 		params[key] = value
 	}
-	params["signature"] = service.GMPaySign(params, setting.GMPaySecretKey)
+	params["signature"] = service.BEpusdtSign(params, setting.BEpusdtSecretKey)
 	return common.GetJsonString(params)
 }
 
@@ -213,11 +213,11 @@ func TestEpayTopupNotifyRejectsNonSuccessStatus(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestBEpusdtTopupNotifyRejectsLegacyGMPayOrder(t *testing.T) {
+func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtOrder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 912, Username: "gmpay_merchant_guard_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 912, Username: "bepusdt_merchant_guard_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	topUp := &model.TopUp{
 		UserId:          user.Id,
@@ -225,17 +225,17 @@ func TestBEpusdtTopupNotifyRejectsLegacyGMPayOrder(t *testing.T) {
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "gmpay-missing-merchant-guard",
-		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderGMPay,
+		TradeNo:         "bepusdt-missing-merchant-guard",
+		PaymentMethod:   service.BuildBEpusdtPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderBEpusdt,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, topUp.Insert())
 
-	body := signedGMPayCallback(map[string]interface{}{
+	body := signedBEpusdtCallback(map[string]interface{}{
 		"order_id":       topUp.TradeNo,
-		"transaction_id": "gmpay-gateway-merchant-guard",
+		"transaction_id": "bepusdt-gateway-merchant-guard",
 		"amount":         "9.99",
 		"order_currency": "CNY",
 		"token":          "usdt",
@@ -261,11 +261,11 @@ func TestBEpusdtTopupNotifyRejectsLegacyGMPayOrder(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestBEpusdtTopupNotifyRejectsLegacyGMPayPayload(t *testing.T) {
+func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtPayload(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 914, Username: "gmpay_gmpay_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 914, Username: "bepusdt_bepusdt_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	topUp := &model.TopUp{
 		UserId:          user.Id,
@@ -273,16 +273,16 @@ func TestBEpusdtTopupNotifyRejectsLegacyGMPayPayload(t *testing.T) {
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "gmpay-gmpay-success",
-		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderGMPay,
+		TradeNo:         "bepusdt-bepusdt-success",
+		PaymentMethod:   service.BuildBEpusdtPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderBEpusdt,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, topUp.Insert())
 
-	body := signedGMPayCallback(map[string]interface{}{
-		"pid":                  setting.GMPayPID,
+	body := signedBEpusdtCallback(map[string]interface{}{
+		"pid":                  setting.BEpusdtPID,
 		"trade_id":             "T202605180001",
 		"order_id":             topUp.TradeNo,
 		"amount":               "9.99",
@@ -333,7 +333,7 @@ func TestBEpusdtTopupNotifyAcceptsCashierCallback(t *testing.T) {
 	}
 	require.NoError(t, topUp.Insert())
 
-	body := signedGMPayCallback(map[string]interface{}{
+	body := signedBEpusdtCallback(map[string]interface{}{
 		"trade_id":      "BEPAY202605220001",
 		"order_id":      topUp.TradeNo,
 		"amount":        "9.99",
@@ -383,7 +383,7 @@ func TestBEpusdtTopupNotifyRejectsTokenMismatch(t *testing.T) {
 	}
 	require.NoError(t, topUp.Insert())
 
-	body := signedGMPayCallback(map[string]interface{}{
+	body := signedBEpusdtCallback(map[string]interface{}{
 		"trade_id":   "BEPAY202605220003",
 		"order_id":   topUp.TradeNo,
 		"amount":     "9.99",
@@ -400,11 +400,127 @@ func TestBEpusdtTopupNotifyRejectsTokenMismatch(t *testing.T) {
 
 	BEpusdtTopUpNotify(c)
 
-	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Equal(t, "fail", w.Body.String())
 	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
+	var updatedUser model.User
+	require.NoError(t, model.DB.Where("id = ?", user.Id).First(&updatedUser).Error)
+	require.Zero(t, updatedUser.Quota)
+}
+
+func TestBEpusdtTopupNotifyRejectsAmountMismatchWithBadRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 925, Username: "bepusdt_amount_guard_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	topUp := &model.TopUp{
+		UserId:          user.Id,
+		Amount:          2,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "bepusdt-amount-mismatch",
+		PaymentMethod:   model.PaymentMethodUSDT,
+		PaymentProvider: model.PaymentProviderBEpusdt,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, topUp.Insert())
+
+	body := signedBEpusdtCallback(map[string]interface{}{
+		"trade_id": "BEPAY202605220005",
+		"order_id": topUp.TradeNo,
+		"amount":   "9.98",
+		"fiat":     "CNY",
+		"status":   2,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/user/bepusdt/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	BEpusdtTopUpNotify(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Equal(t, "fail", w.Body.String())
+	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
+	var updatedUser model.User
+	require.NoError(t, model.DB.Where("id = ?", user.Id).First(&updatedUser).Error)
+	require.Zero(t, updatedUser.Quota)
+}
+
+func TestBEpusdtTopupNotifyRejectsMissingOrderWithBadRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	body := signedBEpusdtCallback(map[string]interface{}{
+		"trade_id": "BEPAY202605220007",
+		"order_id": "bepusdt-missing-order",
+		"amount":   "9.99",
+		"fiat":     "CNY",
+		"status":   2,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/user/bepusdt/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	BEpusdtTopUpNotify(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Equal(t, "fail", w.Body.String())
+}
+
+func TestBEpusdtTopupNotifyRejectsInvalidOrderStatusWithBadRequest(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 927, Username: "bepusdt_status_guard_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	topUp := &model.TopUp{
+		UserId:          user.Id,
+		Amount:          2,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "bepusdt-invalid-status",
+		PaymentMethod:   model.PaymentMethodUSDT,
+		PaymentProvider: model.PaymentProviderBEpusdt,
+		Status:          common.TopUpStatusFailed,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, topUp.Insert())
+
+	body := signedBEpusdtCallback(map[string]interface{}{
+		"trade_id": "BEPAY202605220008",
+		"order_id": topUp.TradeNo,
+		"amount":   "9.99",
+		"fiat":     "CNY",
+		"status":   2,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/user/bepusdt/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	BEpusdtTopUpNotify(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Equal(t, "fail", w.Body.String())
+	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusFailed, reloaded.Status)
 	var updatedUser model.User
 	require.NoError(t, model.DB.Where("id = ?", user.Id).First(&updatedUser).Error)
 	require.Zero(t, updatedUser.Quota)
@@ -430,8 +546,8 @@ func TestBEpusdtTopupNotifyAcceptsNativeCallbackEvenWithLegacyExtraFields(t *tes
 	}
 	require.NoError(t, topUp.Insert())
 
-	body := signedGMPayCallback(map[string]interface{}{
-		"pid":            setting.GMPayPID,
+	body := signedBEpusdtCallback(map[string]interface{}{
+		"pid":            setting.BEpusdtPID,
 		"trade_id":       "T202605220002",
 		"order_id":       topUp.TradeNo,
 		"amount":         "9.99",
@@ -459,11 +575,11 @@ func TestBEpusdtTopupNotifyAcceptsNativeCallbackEvenWithLegacyExtraFields(t *tes
 	require.Positive(t, updatedUser.Quota)
 }
 
-func TestBEpusdtTopupNotifyRejectsLegacyGMPayNetworkOrder(t *testing.T) {
+func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtNetworkOrder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 917, Username: "gmpay_network_guard_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 917, Username: "bepusdt_network_guard_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	topUp := &model.TopUp{
 		UserId:          user.Id,
@@ -471,16 +587,16 @@ func TestBEpusdtTopupNotifyRejectsLegacyGMPayNetworkOrder(t *testing.T) {
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "gmpay-network-guard",
-		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderGMPay,
+		TradeNo:         "bepusdt-network-guard",
+		PaymentMethod:   service.BuildBEpusdtPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderBEpusdt,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, topUp.Insert())
 
-	body := signedGMPayCallback(map[string]interface{}{
-		"pid":            setting.GMPayPID,
+	body := signedBEpusdtCallback(map[string]interface{}{
+		"pid":            setting.BEpusdtPID,
 		"trade_id":       "T202605180003",
 		"order_id":       topUp.TradeNo,
 		"amount":         "9.99",
@@ -508,11 +624,11 @@ func TestBEpusdtTopupNotifyRejectsLegacyGMPayNetworkOrder(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestBEpusdtTopupNotifyRejectsLegacyGMPayPaymentTypeOrder(t *testing.T) {
+func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtPaymentTypeOrder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 919, Username: "gmpay_payment_type_guard_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 919, Username: "bepusdt_payment_type_guard_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	topUp := &model.TopUp{
 		UserId:          user.Id,
@@ -520,16 +636,16 @@ func TestBEpusdtTopupNotifyRejectsLegacyGMPayPaymentTypeOrder(t *testing.T) {
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "gmpay-payment-type-guard",
-		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderGMPay,
+		TradeNo:         "bepusdt-payment-type-guard",
+		PaymentMethod:   service.BuildBEpusdtPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderBEpusdt,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, topUp.Insert())
 
-	body := signedGMPayCallback(map[string]interface{}{
-		"pid":            setting.GMPayPID,
+	body := signedBEpusdtCallback(map[string]interface{}{
+		"pid":            setting.BEpusdtPID,
 		"trade_id":       "T202605190001",
 		"order_id":       topUp.TradeNo,
 		"amount":         "9.99",
@@ -558,15 +674,15 @@ func TestBEpusdtTopupNotifyRejectsLegacyGMPayPaymentTypeOrder(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayOrder(t *testing.T) {
+func TestSubscriptionBEpusdtNotifyRejectsLegacyBEpusdtOrder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 913, Username: "sub_gmpay_merchant_guard_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 913, Username: "sub_bepusdt_merchant_guard_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	plan := &model.SubscriptionPlan{
 		Id:            810,
-		Title:         "GMPay Merchant Guard Plan",
+		Title:         "BEpusdt Merchant Guard Plan",
 		PriceAmount:   9.99,
 		Currency:      "CNY",
 		DurationUnit:  model.SubscriptionDurationMonth,
@@ -581,17 +697,17 @@ func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayOrder(t *testing.T) {
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "sub-gmpay-missing-merchant-guard",
-		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderGMPay,
+		TradeNo:         "sub-bepusdt-missing-merchant-guard",
+		PaymentMethod:   service.BuildBEpusdtPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderBEpusdt,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, order.Insert())
 
-	body := signedGMPayCallback(map[string]interface{}{
+	body := signedBEpusdtCallback(map[string]interface{}{
 		"order_id":       order.TradeNo,
-		"transaction_id": "gmpay-gateway-sub-merchant-guard",
+		"transaction_id": "bepusdt-gateway-sub-merchant-guard",
 		"amount":         "9.99",
 		"order_currency": "CNY",
 		"token":          "usdt",
@@ -617,15 +733,15 @@ func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayOrder(t *testing.T) {
 	require.Zero(t, subscriptionCount)
 }
 
-func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayPayload(t *testing.T) {
+func TestSubscriptionBEpusdtNotifyRejectsLegacyBEpusdtPayload(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 915, Username: "sub_gmpay_gmpay_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 915, Username: "sub_bepusdt_bepusdt_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	plan := &model.SubscriptionPlan{
 		Id:            811,
-		Title:         "GMPay GMPay Plan",
+		Title:         "BEpusdt BEpusdt Plan",
 		PriceAmount:   9.99,
 		Currency:      "CNY",
 		DurationUnit:  model.SubscriptionDurationMonth,
@@ -640,16 +756,16 @@ func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayPayload(t *testing.T) {
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "sub-gmpay-gmpay-success",
-		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderGMPay,
+		TradeNo:         "sub-bepusdt-bepusdt-success",
+		PaymentMethod:   service.BuildBEpusdtPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderBEpusdt,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, order.Insert())
 
-	body := signedGMPayCallback(map[string]interface{}{
-		"pid":                  setting.GMPayPID,
+	body := signedBEpusdtCallback(map[string]interface{}{
+		"pid":                  setting.BEpusdtPID,
 		"trade_id":             "T202605180002",
 		"order_id":             order.TradeNo,
 		"amount":               "9.99",
@@ -711,7 +827,7 @@ func TestSubscriptionBEpusdtNotifyAcceptsCashierCallback(t *testing.T) {
 	}
 	require.NoError(t, order.Insert())
 
-	body := signedGMPayCallback(map[string]interface{}{
+	body := signedBEpusdtCallback(map[string]interface{}{
 		"trade_id":      "BEPAY202605220002",
 		"order_id":      order.TradeNo,
 		"amount":        "9.99",
@@ -772,7 +888,7 @@ func TestSubscriptionBEpusdtNotifyRejectsTokenMismatch(t *testing.T) {
 	}
 	require.NoError(t, order.Insert())
 
-	body := signedGMPayCallback(map[string]interface{}{
+	body := signedBEpusdtCallback(map[string]interface{}{
 		"trade_id":   "BEPAY202605220004",
 		"order_id":   order.TradeNo,
 		"amount":     "9.99",
@@ -789,7 +905,7 @@ func TestSubscriptionBEpusdtNotifyRejectsTokenMismatch(t *testing.T) {
 
 	SubscriptionBEpusdtNotify(c)
 
-	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.Equal(t, http.StatusBadRequest, w.Code)
 	require.Equal(t, "fail", w.Body.String())
 	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
 	require.NotNil(t, reloaded)
@@ -799,15 +915,15 @@ func TestSubscriptionBEpusdtNotifyRejectsTokenMismatch(t *testing.T) {
 	require.Zero(t, subscriptionCount)
 }
 
-func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayNetworkOrder(t *testing.T) {
+func TestSubscriptionBEpusdtNotifyRejectsCurrencyMismatchWithBadRequest(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 918, Username: "sub_gmpay_network_guard_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 926, Username: "sub_bepusdt_currency_guard_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	plan := &model.SubscriptionPlan{
-		Id:            812,
-		Title:         "GMPay Network Guard Plan",
+		Id:            816,
+		Title:         "BEpusdt Currency Guard Plan",
 		PriceAmount:   9.99,
 		Currency:      "CNY",
 		DurationUnit:  model.SubscriptionDurationMonth,
@@ -822,16 +938,73 @@ func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayNetworkOrder(t *testing.T) {
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "sub-gmpay-network-guard",
-		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderGMPay,
+		TradeNo:         "sub-bepusdt-currency-mismatch",
+		PaymentMethod:   model.PaymentMethodUSDT,
+		PaymentProvider: model.PaymentProviderBEpusdt,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, order.Insert())
 
-	body := signedGMPayCallback(map[string]interface{}{
-		"pid":            setting.GMPayPID,
+	body := signedBEpusdtCallback(map[string]interface{}{
+		"trade_id": "BEPAY202605220006",
+		"order_id": order.TradeNo,
+		"amount":   "9.99",
+		"fiat":     "USD",
+		"status":   2,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/bepusdt/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	SubscriptionBEpusdtNotify(c)
+
+	require.Equal(t, http.StatusBadRequest, w.Code)
+	require.Equal(t, "fail", w.Body.String())
+	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
+	var subscriptionCount int64
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("user_id = ?", user.Id).Count(&subscriptionCount).Error)
+	require.Zero(t, subscriptionCount)
+}
+
+func TestSubscriptionBEpusdtNotifyRejectsLegacyBEpusdtNetworkOrder(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 918, Username: "sub_bepusdt_network_guard_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	plan := &model.SubscriptionPlan{
+		Id:            812,
+		Title:         "BEpusdt Network Guard Plan",
+		PriceAmount:   9.99,
+		Currency:      "CNY",
+		DurationUnit:  model.SubscriptionDurationMonth,
+		DurationValue: 1,
+		Enabled:       true,
+		TotalAmount:   1000,
+	}
+	require.NoError(t, model.DB.Create(plan).Error)
+	order := &model.SubscriptionOrder{
+		UserId:          user.Id,
+		PlanId:          plan.Id,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "sub-bepusdt-network-guard",
+		PaymentMethod:   service.BuildBEpusdtPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderBEpusdt,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, order.Insert())
+
+	body := signedBEpusdtCallback(map[string]interface{}{
+		"pid":            setting.BEpusdtPID,
 		"trade_id":       "T202605180004",
 		"order_id":       order.TradeNo,
 		"amount":         "9.99",
@@ -859,15 +1032,15 @@ func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayNetworkOrder(t *testing.T) {
 	require.Zero(t, subscriptionCount)
 }
 
-func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayPaymentTypeOrder(t *testing.T) {
+func TestSubscriptionBEpusdtNotifyRejectsLegacyBEpusdtPaymentTypeOrder(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
-	user := &model.User{Id: 920, Username: "sub_gmpay_payment_type_guard_user", Status: common.UserStatusEnabled}
+	user := &model.User{Id: 920, Username: "sub_bepusdt_payment_type_guard_user", Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 	plan := &model.SubscriptionPlan{
 		Id:            813,
-		Title:         "GMPay Payment Type Guard Plan",
+		Title:         "BEpusdt Payment Type Guard Plan",
 		PriceAmount:   9.99,
 		Currency:      "CNY",
 		DurationUnit:  model.SubscriptionDurationMonth,
@@ -882,16 +1055,16 @@ func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayPaymentTypeOrder(t *testing.
 		Money:           9.99,
 		PaidAmount:      9.99,
 		PaidCurrency:    "CNY",
-		TradeNo:         "sub-gmpay-payment-type-guard",
-		PaymentMethod:   service.BuildGMPayPaymentMethod("usdt", "tron"),
-		PaymentProvider: model.PaymentProviderGMPay,
+		TradeNo:         "sub-bepusdt-payment-type-guard",
+		PaymentMethod:   service.BuildBEpusdtPaymentMethod("usdt", "tron"),
+		PaymentProvider: model.PaymentProviderBEpusdt,
 		Status:          common.TopUpStatusPending,
 		CreateTime:      time.Now().Unix(),
 	}
 	require.NoError(t, order.Insert())
 
-	body := signedGMPayCallback(map[string]interface{}{
-		"pid":            setting.GMPayPID,
+	body := signedBEpusdtCallback(map[string]interface{}{
+		"pid":            setting.BEpusdtPID,
 		"trade_id":       "T202605190002",
 		"order_id":       order.TradeNo,
 		"amount":         "9.99",

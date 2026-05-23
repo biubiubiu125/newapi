@@ -34,7 +34,7 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 		common.ApiErrorMsg(c, "参数错误")
 		return
 	}
-	token, network, ok := service.ParseGMPayPaymentMethod(req.PaymentMethod)
+	token, network, ok := service.ParseBEpusdtPaymentMethod(req.PaymentMethod)
 	if !ok || token != "usdt" || network != "" {
 		common.ApiErrorMsg(c, "支付链不存在或未启用")
 		return
@@ -67,7 +67,7 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 		}
 	}
 
-	currency := strings.ToUpper(strings.TrimSpace(setting.GMPayCurrency))
+	currency := strings.ToUpper(strings.TrimSpace(setting.BEpusdtCurrency))
 	if currency == "" {
 		currency = "CNY"
 	}
@@ -127,7 +127,7 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 	})
 	if err != nil {
 		_ = model.ExpireSubscriptionOrder(tradeNo, provider)
-		var gatewayErr service.GMPayGatewayError
+		var gatewayErr service.BEpusdtGatewayError
 		if errors.As(err, &gatewayErr) {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt gateway rejected subscription order user_id=%d trade_no=%s payment_method=%s plan_id=%d error=%q", userId, tradeNo, method, plan.Id, err.Error()))
 			if message := gatewayErr.PublicMessage(); message != "" {
@@ -153,27 +153,27 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 }
 
 func SubscriptionBEpusdtNotify(c *gin.Context) {
-	params, err := readGMPayCallback(c)
+	params, err := readBEpusdtCallback(c)
 	if err != nil {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt subscription webhook 参数解析失败 path=%q client_ip=%s error=%q", c.Request.RequestURI, c.ClientIP(), err.Error()))
 		c.String(http.StatusBadRequest, "fail")
 		return
 	}
-	tradeNo := service.GMPayCallbackTradeNo(params)
+	tradeNo := service.BEpusdtCallbackTradeNo(params)
 	if tradeNo == "" {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt subscription webhook rejected reason=missing_order_id path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
 		c.String(http.StatusBadRequest, "fail")
 		return
 	}
-	status := service.GMPayCallbackStatus(params)
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt subscription webhook received trade_no=%s status=%s amount=%s fiat=%s client_ip=%s", tradeNo, status, gmpayCallbackString(params, "amount"), gmpayCallbackString(params, "fiat"), c.ClientIP()))
+	status := service.BEpusdtCallbackStatus(params)
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt subscription webhook received trade_no=%s status=%s amount=%s fiat=%s client_ip=%s", tradeNo, status, bepusdtCallbackString(params, "amount"), bepusdtCallbackString(params, "fiat"), c.ClientIP()))
 	facts, err := validateUSDTGatewayCallback(c, tradeNo, params, true)
 	if err != nil {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt subscription webhook rejected trade_no=%s path=%q client_ip=%s error=%q", tradeNo, c.Request.RequestURI, c.ClientIP(), err.Error()))
 		c.String(http.StatusBadRequest, "fail")
 		return
 	}
-	if !service.IsGMPayPaidStatus(status) {
+	if !service.IsBEpusdtPaidStatus(status) {
 		logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt subscription webhook 忽略非成功事件 trade_no=%s status=%s client_ip=%s", tradeNo, status, c.ClientIP()))
 		_, _ = c.Writer.Write([]byte("ok"))
 		return
@@ -189,6 +189,11 @@ func SubscriptionBEpusdtNotify(c *gin.Context) {
 		RequirePaymentFacts:     true,
 		CallerIP:                c.ClientIP(),
 	}); err != nil {
+		if isPaymentCallbackRejection(err) {
+			logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt subscription webhook rejected trade_no=%s client_ip=%s error=%q", tradeNo, c.ClientIP(), err.Error()))
+			c.String(http.StatusBadRequest, "fail")
+			return
+		}
 		logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt subscription processing failed trade_no=%s client_ip=%s error=%q", tradeNo, c.ClientIP(), err.Error()))
 		c.String(http.StatusInternalServerError, "fail")
 		return

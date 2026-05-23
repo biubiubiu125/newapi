@@ -689,7 +689,7 @@ server {
 
 ### BEpusdt / USDT
 
-本 fork 的 USDT 网关只保留 BEpusdt 兼容链路。部分后端配置键和历史文件名仍沿用 `GMPay*` 命名，这是兼容旧配置的内部实现细节，不代表当前还启用 GMPay/Epusdt 支付链路。
+本 fork 的 USDT 网关只保留 BEpusdt 链路。后端配置键、文件名、路由、日志和前端文案均统一使用 BEpusdt 命名，不再保留旧 USDT 网关入口。
 
 后台路径：
 

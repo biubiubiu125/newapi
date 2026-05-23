@@ -3,8 +3,11 @@ package controller
 import (
 	"bytes"
 	"encoding/json"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -87,7 +90,7 @@ func TestReferralLandingRejectsProtocolRelativeRedirect(t *testing.T) {
 	require.Equal(t, "", sanitizeReferralRedirectPath("\\\\evil.com"))
 }
 
-func TestReferralLandingUsesClassicRegisterPath(t *testing.T) {
+func TestReferralLandingAlwaysUsesSignUpPath(t *testing.T) {
 	db := setupReferralControllerTestDB(t)
 	common.SetTheme("classic")
 	common.ReferralRedirectPath = "/register"
@@ -110,17 +113,17 @@ func TestReferralLandingUsesClassicRegisterPath(t *testing.T) {
 
 	ReferralLanding(c)
 	require.Equal(t, http.StatusFound, w.Code)
-	require.Contains(t, w.Header().Get("Location"), "/register")
+	require.Contains(t, w.Header().Get("Location"), "/sign-up")
 	require.Contains(t, w.Header().Get("Location"), "aff=CLASSIC01")
 }
 
-func TestReferralRegisterRedirectAcceptsWhitelistedPath(t *testing.T) {
+func TestReferralRegisterRedirectUsesFixedSignUpPath(t *testing.T) {
 	common.SetTheme("default")
-	require.Contains(t, referralRegisterRedirect("/pricing", "TEST123"), "/pricing?aff=TEST123")
+	require.Contains(t, referralRegisterRedirect("/pricing", "TEST123"), "/sign-up?aff=TEST123")
 	require.Contains(t, referralRegisterRedirect("", "TEST123"), "/sign-up?aff=TEST123")
 }
 
-func TestReferralLandingHonorsSafeRedirectQuery(t *testing.T) {
+func TestReferralLandingIgnoresRedirectQuery(t *testing.T) {
 	db := setupReferralControllerTestDB(t)
 	require.NoError(t, db.Create(&model.ReferralAffiliate{
 		UserId:             1,
@@ -141,11 +144,11 @@ func TestReferralLandingHonorsSafeRedirectQuery(t *testing.T) {
 
 	ReferralLanding(c)
 	require.Equal(t, http.StatusFound, w.Code)
-	require.Contains(t, w.Header().Get("Location"), "/pricing")
+	require.Contains(t, w.Header().Get("Location"), "/sign-up")
 	require.Contains(t, w.Header().Get("Location"), "aff=REDIR001")
 }
 
-func TestReferralLandingRejectsUnsafeRedirectQuery(t *testing.T) {
+func TestReferralLandingIgnoresUnsafeRedirectQuery(t *testing.T) {
 	db := setupReferralControllerTestDB(t)
 	require.NoError(t, db.Create(&model.ReferralAffiliate{
 		UserId:             1,
@@ -166,7 +169,8 @@ func TestReferralLandingRejectsUnsafeRedirectQuery(t *testing.T) {
 
 	ReferralLanding(c)
 	require.Equal(t, http.StatusFound, w.Code)
-	require.Contains(t, w.Header().Get("Location"), "referral_error=invalid")
+	require.Contains(t, w.Header().Get("Location"), "/sign-up")
+	require.Contains(t, w.Header().Get("Location"), "aff=REDIR002")
 }
 
 func TestReferralLandingDisabledUsesThemeRegisterPath(t *testing.T) {
@@ -201,6 +205,77 @@ func TestResolveReferralAssetUploadPurpose(t *testing.T) {
 
 	_, _, err = resolveReferralAssetUploadPurpose("/api/user/referral/unknown", "")
 	require.Error(t, err)
+}
+
+func TestUploadReferralAssetAcceptsWithdrawalQRMultipart(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+	require.NoError(t, db.Create(&model.User{
+		Id:          1,
+		Username:    "asset-user",
+		Password:    "12345678",
+		DisplayName: "asset-user",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+	}).Error)
+
+	wd := t.TempDir()
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(wd))
+	t.Cleanup(func() {
+		require.NoError(t, os.Chdir(oldWD))
+	})
+
+	var body bytes.Buffer
+	writer := multipart.NewWriter(&body)
+	require.NoError(t, writer.WriteField("purpose", model.ReferralAssetPurposeWithdrawalQR))
+	part, err := writer.CreateFormFile("file", "qr.png")
+	require.NoError(t, err)
+	_, err = part.Write([]byte{
+		0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a,
+		0x00, 0x00, 0x00, 0x0d, 0x49, 0x48, 0x44, 0x52,
+		0x00, 0x00, 0x00, 0x01, 0x00, 0x00, 0x00, 0x01,
+		0x08, 0x06, 0x00, 0x00, 0x00, 0x1f, 0x15, 0xc4,
+		0x89, 0x00, 0x00, 0x00, 0x0a, 0x49, 0x44, 0x41,
+		0x54, 0x78, 0x9c, 0x63, 0x00, 0x01, 0x00, 0x00,
+		0x05, 0x00, 0x01, 0x0d, 0x0a, 0x2d, 0xb4, 0x00,
+		0x00, 0x00, 0x00, 0x49, 0x45, 0x4e, 0x44, 0xae,
+		0x42, 0x60, 0x82,
+	})
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, router := gin.CreateTestContext(w)
+	router.POST(service.ReferralUserUploadPath, func(c *gin.Context) {
+		c.Set("id", 1)
+		UploadReferralAsset(c)
+	})
+	req := httptest.NewRequest(http.MethodPost, service.ReferralUserUploadPath, &body)
+	req.Header.Set("Content-Type", writer.FormDataContentType())
+	c.Request = req
+
+	router.HandleContext(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), `"success":true`)
+	require.Contains(t, w.Body.String(), `/referral-assets/a/`)
+	require.Contains(t, w.Body.String(), `expires=`)
+	require.Contains(t, w.Body.String(), `sig=`)
+
+	var count int64
+	require.NoError(t, db.Model(&model.ReferralAsset{}).Where("owner_user_id = ? AND purpose = ?", 1, model.ReferralAssetPurposeWithdrawalQR).Count(&count).Error)
+	require.Equal(t, int64(1), count)
+	require.NotEmpty(t, mustGlob(t, filepath.Join(wd, "uploads", "referral-assets", "withdrawal-qr-*.png")))
+}
+
+func mustGlob(t *testing.T, pattern string) []string {
+	t.Helper()
+	matches, err := filepath.Glob(pattern)
+	require.NoError(t, err)
+	return matches
 }
 
 func TestReferralCookieValueRejectsUnsignedCookie(t *testing.T) {

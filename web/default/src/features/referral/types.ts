@@ -68,6 +68,7 @@ export interface ReferralSummary {
   withdrawn_amount: number
   settlement_currency: string
   min_withdraw_amount: number
+  settle_freeze_days: number
 }
 
 export interface ReferralCommission {

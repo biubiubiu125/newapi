@@ -46,6 +46,12 @@ import {
   formatAdminReferralBadgeCount,
   useAdminReferralBadges,
 } from '@/features/admin-referral/hooks/use-admin-referral-badges'
+import {
+  ADMIN_SIDEBAR_BADGE_ACK_EVENT,
+  lowerAdminSidebarBadgeAckBaselines,
+  normalizeSidebarBadgeCount,
+  unreadAdminSidebarBadgeCount,
+} from '@/components/layout/lib/admin-sidebar-badge-ack'
 import { getRechargeAuditSummary } from '@/features/recharge-audit/api'
 import { getRiskOverview } from '@/features/risk-center/api'
 import { ROLE } from '@/lib/roles'
@@ -63,78 +69,17 @@ const EMPTY_ADMIN_ALERT_BADGES: AdminAlertBadges = {
   riskSignals: 0,
 }
 
-const ADMIN_BADGE_ACK_STORAGE_KEY = 'admin-sidebar-alert-badge-ack-v2'
-
-function normalizeBadgeCount(value: number | undefined): number {
-  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
-    return 0
-  }
-  return Math.floor(value)
-}
-
-function readBadgeAck(key: string, version: number): number {
-  void version
-  if (typeof window === 'undefined') return 0
-  try {
-    const raw = window.localStorage.getItem(ADMIN_BADGE_ACK_STORAGE_KEY)
-    if (!raw) return 0
-    const parsed = JSON.parse(raw) as Record<string, number>
-    const value = parsed[key]
-    return typeof value === 'number' && Number.isFinite(value) ? value : 0
-  } catch {
-    return 0
-  }
-}
-
-function lowerBadgeAckBaselines(counts: Record<string, number>): boolean {
-  if (typeof window === 'undefined') return false
-  try {
-    const raw = window.localStorage.getItem(ADMIN_BADGE_ACK_STORAGE_KEY)
-    if (!raw) return false
-    const parsed = JSON.parse(raw) as Record<string, number>
-    let changed = false
-
-    Object.entries(counts).forEach(([key, value]) => {
-      const acknowledged = parsed[key]
-      const normalized = normalizeBadgeCount(value)
-      if (
-        typeof acknowledged === 'number' &&
-        Number.isFinite(acknowledged) &&
-        acknowledged > normalized
-      ) {
-        parsed[key] = normalized
-        changed = true
-      }
-    })
-
-    if (changed) {
-      window.localStorage.setItem(
-        ADMIN_BADGE_ACK_STORAGE_KEY,
-        JSON.stringify(parsed)
-      )
-    }
-    return changed
-  } catch {
-    return false
-  }
-}
-
-function unreadBadgeCount(
-  key: string,
-  value: number,
-  ackVersion: number
-): number {
-  const normalized = normalizeBadgeCount(value)
-  const acknowledged = readBadgeAck(key, ackVersion)
-  return Math.max(0, normalized - acknowledged)
-}
-
 export function useSidebarData(): SidebarData {
   const { t } = useTranslation()
-  const userRole = useAuthStore((state) => state.auth.user?.role)
+  const user = useAuthStore((state) => state.auth.user)
+  const userRole = user?.role
+  const userId = user?.id
   const [badgeAckVersion, setBadgeAckVersion] = useState(0)
   const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
-  const { counts } = useAdminReferralBadges(isAdmin)
+  const {
+    counts,
+    isSuccess: adminReferralBadgesLoaded,
+  } = useAdminReferralBadges(isAdmin)
   const adminAlertQuery = useQuery({
     queryKey: ['admin-sidebar-alert-badges'],
     enabled: isAdmin,
@@ -145,40 +90,42 @@ export function useSidebarData(): SidebarData {
         getRiskOverview(riskParams),
         getRechargeAuditSummary(orderParams),
       ])
-      const failedOrders = normalizeBadgeCount(
+      const failedOrders = normalizeSidebarBadgeCount(
         orderRes.data?.totals?.failed_count
       )
-      const orderAnomalies = normalizeBadgeCount(
+      const orderAnomalies = normalizeSidebarBadgeCount(
         orderRes.data?.anomalies?.length
       )
 
       return {
-        newUsers: normalizeBadgeCount(riskRes.data?.new_user_count),
+        newUsers: normalizeSidebarBadgeCount(riskRes.data?.new_user_count),
         orderIssues: failedOrders + orderAnomalies,
-        riskSignals: normalizeBadgeCount(riskRes.data?.signal_count),
+        riskSignals: normalizeSidebarBadgeCount(riskRes.data?.signal_count),
       }
     },
   })
   const adminAlerts = adminAlertQuery.data ?? EMPTY_ADMIN_ALERT_BADGES
-  const referralManagementUnread = unreadBadgeCount(
+  const adminAlertsLoaded = adminAlertQuery.isSuccess
+  void badgeAckVersion
+  const referralManagementUnread = unreadAdminSidebarBadgeCount(
     'admin-referral',
     counts.total,
-    badgeAckVersion
+    userId
   )
-  const usersUnread = unreadBadgeCount(
+  const usersUnread = unreadAdminSidebarBadgeCount(
     'users',
     adminAlerts.newUsers,
-    badgeAckVersion
+    userId
   )
-  const orderManagementUnread = unreadBadgeCount(
+  const orderManagementUnread = unreadAdminSidebarBadgeCount(
     'recharge-audit',
     adminAlerts.orderIssues,
-    badgeAckVersion
+    userId
   )
-  const riskCenterUnread = unreadBadgeCount(
+  const riskCenterUnread = unreadAdminSidebarBadgeCount(
     'risk-center',
     adminAlerts.riskSignals,
-    badgeAckVersion
+    userId
   )
   const usersBadge = formatAdminReferralBadgeCount(usersUnread)
   const orderManagementBadge = formatAdminReferralBadgeCount(
@@ -187,26 +134,35 @@ export function useSidebarData(): SidebarData {
   const riskCenterBadge = formatAdminReferralBadgeCount(riskCenterUnread)
 
   useEffect(() => {
-    const lowered = lowerBadgeAckBaselines({
-      'admin-referral': counts.total,
-      users: adminAlerts.newUsers,
-      'recharge-audit': adminAlerts.orderIssues,
-      'risk-center': adminAlerts.riskSignals,
-    })
+    if (!adminAlertsLoaded || !adminReferralBadgesLoaded) return
+
+    const lowered = lowerAdminSidebarBadgeAckBaselines(
+      {
+        'admin-referral': counts.total,
+        users: adminAlerts.newUsers,
+        'recharge-audit': adminAlerts.orderIssues,
+        'risk-center': adminAlerts.riskSignals,
+      },
+      userId,
+      true
+    )
     if (lowered) setBadgeAckVersion((value) => value + 1)
   }, [
+    userId,
     counts.total,
     adminAlerts.newUsers,
     adminAlerts.orderIssues,
     adminAlerts.riskSignals,
+    adminAlertsLoaded,
+    adminReferralBadgesLoaded,
   ])
 
   useEffect(() => {
     const onAck = () => setBadgeAckVersion((value) => value + 1)
-    window.addEventListener('admin-sidebar-badge-ack', onAck)
+    window.addEventListener(ADMIN_SIDEBAR_BADGE_ACK_EVENT, onAck)
     window.addEventListener('storage', onAck)
     return () => {
-      window.removeEventListener('admin-sidebar-badge-ack', onAck)
+      window.removeEventListener(ADMIN_SIDEBAR_BADGE_ACK_EVENT, onAck)
       window.removeEventListener('storage', onAck)
     }
   }, [])

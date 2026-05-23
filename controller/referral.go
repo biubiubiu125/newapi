@@ -52,15 +52,6 @@ func ReferralLanding(c *gin.Context) {
 		c.Redirect(http.StatusFound, referralRegisterErrorRedirect())
 		return
 	}
-	rawRedirect := strings.TrimSpace(c.Query("redirect"))
-	if rawRedirect != "" {
-		redirectPath := sanitizeReferralRedirectPath(rawRedirect)
-		if redirectPath == "" {
-			c.Redirect(http.StatusFound, referralRegisterErrorRedirect())
-			return
-		}
-		landing.RedirectPath = redirectPath
-	}
 	signed, err := referralService.BuildSignedCookieValue(landing.Code, time.Now())
 	if err == nil {
 		http.SetCookie(c.Writer, &http.Cookie{
@@ -316,12 +307,6 @@ func GetReferralAsset(c *gin.Context) {
 
 func referralRegisterRedirect(basePath string, code string) string {
 	target := referralDefaultRegisterPath()
-	if basePath != "" {
-		target = sanitizeReferralRedirectPath(basePath)
-	}
-	if target == "" {
-		target = referralDefaultRegisterPath()
-	}
 	u, err := url.Parse(target)
 	if err != nil {
 		u = &url.URL{Path: referralDefaultRegisterPath()}
@@ -354,7 +339,7 @@ func sanitizeReferralRedirectPath(value string) string {
 		return ""
 	}
 	switch path {
-	case "/sign-up", "/register", "/sign-in", "/login", "/pricing":
+	case "/sign-up":
 		return path
 	default:
 		return ""
@@ -410,8 +395,5 @@ func referralRequestSecure(c *gin.Context) bool {
 }
 
 func referralDefaultRegisterPath() string {
-	if common.GetTheme() == "default" {
-		return "/sign-up"
-	}
-	return "/register"
+	return "/sign-up"
 }

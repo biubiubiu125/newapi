@@ -47,6 +47,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "prettier . --check",
+    "test": "node --test src/helpers/boolean.test.js",
     "lint:fix": "prettier . --write",
     "eslint": "bunx eslint \"**/*.{js,jsx}\" --cache",
     "eslint:fix": "bunx eslint \"**/*.{js,jsx}\" --fix --cache",

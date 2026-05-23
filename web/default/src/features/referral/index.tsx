@@ -16,7 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useEffectEvent, useMemo, useRef, useState } from 'react'
+import {
+  useEffect,
+  useEffectEvent,
+  useId,
+  useMemo,
+  useRef,
+  useState,
+} from 'react'
 import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
@@ -35,7 +42,6 @@ import {
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { SectionPageLayout } from '@/components/layout'
-import { AssetImagePreview } from './components/asset-image-preview'
 import {
   applyReferralAffiliate,
   cancelReferralWithdrawal,
@@ -46,6 +52,7 @@ import {
   listReferralWithdrawals,
   uploadReferralAsset,
 } from './api'
+import { AssetImagePreview } from './components/asset-image-preview'
 import {
   isReferralSectionId,
   REFERRAL_DEFAULT_SECTION,
@@ -198,9 +205,23 @@ function statusLabel(value: string, t: (key: string) => string): string {
   }
 }
 
+function disabledAffiliateMessage(
+  profile: ReferralProfile | null,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
+  const reason = (profile?.risk_reason || profile?.risk_note || '').trim()
+  if (reason) {
+    return t('Your affiliate account is disabled due to {{reason}}.', {
+      reason,
+    })
+  }
+  return t('Your affiliate account is disabled.')
+}
+
 export function Referral() {
   const { t } = useTranslation()
   const navigate = useNavigate()
+  const withdrawalQrInputId = useId()
   const params = route.useParams()
   const activeSection: ReferralSectionId =
     params.section && isReferralSectionId(params.section)
@@ -237,15 +258,37 @@ export function Referral() {
   const fileInputRef = useRef<HTMLInputElement | null>(null)
   const withdrawalFormRef = useRef<HTMLFormElement | null>(null)
   const withdrawalFormListenerRef = useRef<HTMLFormElement | null>(null)
-  const withdrawalFormSubmitListenerRef = useRef<((event: Event) => void) | null>(
-    null
-  )
+  const withdrawalFormSubmitListenerRef = useRef<
+    ((event: Event) => void) | null
+  >(null)
   const handleWithdrawalSubmitRef = useRef<(() => void) | null>(null)
   const submittingWithdrawalRef = useRef(false)
+  const uploadingRef = useRef(false)
+  const suppressFocusRefreshUntilRef = useRef(0)
 
   const canViewDashboard =
     profile?.status === 'approved' || profile?.status === 'disabled'
-  const pageMeta = SECTION_META[activeSection]
+  const canViewAffiliateHistory = canViewDashboard
+  const canSubmitWithdrawal = profile?.status === 'approved'
+  const visibleSections = useMemo(() => {
+    const sections: Array<[ReferralSectionId, string]> = [
+      ['center', t('Referral Center')],
+    ]
+    if (canViewAffiliateHistory) {
+      sections.push(['commissions', t('Commission Details')])
+      if (canSubmitWithdrawal) {
+        sections.push(['withdraw', t('Withdraw Application')])
+      }
+      sections.push(['withdrawals', t('Withdrawal Records')])
+    }
+    return sections
+  }, [canSubmitWithdrawal, canViewAffiliateHistory, t])
+  const effectiveSection = visibleSections.some(
+    ([value]) => value === activeSection
+  )
+    ? activeSection
+    : REFERRAL_DEFAULT_SECTION
+  const pageMeta = SECTION_META[effectiveSection]
 
   const inviteLink = useMemo(() => {
     if (
@@ -259,6 +302,24 @@ export function Referral() {
   }, [profile?.status, summary?.acquisition_enabled, summary?.invite_code])
 
   const rejectedReason = profile?.risk_reason || profile?.risk_note || ''
+  const disabledReasonText = disabledAffiliateMessage(profile, t)
+
+  useEffect(() => {
+    if (loading) return
+    if (visibleSections.some(([value]) => value === activeSection)) return
+    void navigate({
+      to: '/referral/$section',
+      params: { section: 'center' },
+      replace: true,
+    })
+  }, [activeSection, loading, navigate, visibleSections])
+
+  function handleSectionChange(section: ReferralSectionId): void {
+    void navigate({
+      to: '/referral/$section',
+      params: { section },
+    })
+  }
 
   function updateWithdrawForm(
     key: keyof typeof withdrawForm,
@@ -356,8 +417,12 @@ export function Referral() {
   async function handleUploadReferralAsset(
     event: React.ChangeEvent<HTMLInputElement>
   ) {
+    event.preventDefault()
+    event.stopPropagation()
     const file = event.target.files?.[0]
     if (!file) return
+    suppressFocusRefreshUntilRef.current = Date.now() + 5000
+    uploadingRef.current = true
     setUploading(true)
     try {
       const res = await uploadReferralAsset(file)
@@ -367,7 +432,12 @@ export function Referral() {
       } else {
         toast.error(res.message || t('Upload failed'))
       }
+    } catch (error) {
+      const message =
+        error instanceof Error && error.message ? error.message : ''
+      toast.error(message || t('Upload failed'))
     } finally {
+      uploadingRef.current = false
       setUploading(false)
       if (fileInputRef.current) {
         fileInputRef.current.value = ''
@@ -406,7 +476,9 @@ export function Referral() {
     toast.error(message)
   }
 
-  function buildWithdrawalSubmission(source: typeof withdrawForm): WithdrawalSubmission | null {
+  function buildWithdrawalSubmission(
+    source: typeof withdrawForm
+  ): WithdrawalSubmission | null {
     setWithdrawalSubmitError('')
     if (source.amount.trim() === '') {
       showWithdrawalSubmitError(t('Please enter a valid amount'))
@@ -528,9 +600,7 @@ export function Referral() {
           params: { section: 'withdrawals' },
         })
       } else {
-        showWithdrawalSubmitError(
-          res.message || t('Withdrawal request failed')
-        )
+        showWithdrawalSubmitError(res.message || t('Withdrawal request failed'))
       }
     } catch (error) {
       const message =
@@ -581,18 +651,41 @@ export function Referral() {
     }
   }
 
+  const loadBaseData = useEffectEvent(async function loadBaseData() {
+    await loadBase()
+  })
+
   useEffect(() => {
     const timer = window.setTimeout(() => {
-      void loadBase()
+      void loadBaseData()
     }, 0)
     return () => window.clearTimeout(timer)
   }, [])
 
+  useEffect(() => {
+    const refreshVisiblePage = () => {
+      if (document.visibilityState === 'hidden') return
+      if (
+        uploadingRef.current ||
+        Date.now() < suppressFocusRefreshUntilRef.current
+      ) {
+        return
+      }
+      void loadBaseData()
+    }
+    window.addEventListener('focus', refreshVisiblePage)
+    document.addEventListener('visibilitychange', refreshVisiblePage)
+    return () => {
+      window.removeEventListener('focus', refreshVisiblePage)
+      document.removeEventListener('visibilitychange', refreshVisiblePage)
+    }
+  }, [])
+
   const loadSectionData = useEffectEvent(async function loadSectionData() {
-    if (activeSection === 'commissions') {
+    if (effectiveSection === 'commissions') {
       await loadCommissions()
     }
-    if (activeSection === 'withdrawals') {
+    if (effectiveSection === 'withdrawals') {
       await loadWithdrawals()
     }
   })
@@ -613,24 +706,20 @@ export function Referral() {
       <SectionPageLayout.Content>
         <div className='space-y-4'>
           <Tabs
-            value={activeSection}
-            onValueChange={(section) =>
-              void navigate({
-                to: '/referral/$section',
-                params: { section: section as ReferralSectionId },
-              })
-            }
+            value={effectiveSection}
+            onValueChange={(section) => {
+              if (isReferralSectionId(section)) {
+                handleSectionChange(section)
+              }
+            }}
           >
             <TabsList className='h-auto flex-wrap justify-start'>
-              {(
-                [
-                  ['center', t('Referral Center')],
-                  ['commissions', t('Commission Details')],
-                  ['withdraw', t('Withdraw Application')],
-                  ['withdrawals', t('Withdrawal Records')],
-                ] as const
-              ).map(([value, label]) => (
-                <TabsTrigger key={value} value={value}>
+              {visibleSections.map(([value, label]) => (
+                <TabsTrigger
+                  key={value}
+                  value={value}
+                  onClick={() => handleSectionChange(value)}
+                >
                   {label}
                 </TabsTrigger>
               ))}
@@ -643,56 +732,411 @@ export function Referral() {
                 {t('Loading...')}
               </CardContent>
             </Card>
-          ) : activeSection === 'center' ? (
-            canViewDashboard && summary ? (
-              <div className='space-y-4'>
-                <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-4'>
-                  <MetricCard
-                    title={t('Referral Link Clicks')}
-                    value={String(summary.click_count)}
-                  />
-                  <MetricCard
-                    title={t('Bound Users')}
-                    value={String(summary.bound_user_count)}
-                  />
-                  <MetricCard
-                    title={t('Paid Users')}
-                    value={String(summary.paid_user_count)}
-                  />
-                  <MetricCard
-                    title={t('Current Rate')}
-                    value={summary.rate != null ? `${summary.rate}%` : '-'}
-                  />
-                </div>
-                <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]'>
+          ) : (
+            <>
+              {effectiveSection === 'center' ? (
+                canViewDashboard && summary ? (
+                  <div className='space-y-4'>
+                    <ReferralRules summary={summary} />
+                    <div className='grid gap-4 md:grid-cols-2 xl:grid-cols-4'>
+                      <MetricCard
+                        title={t('Referral Link Clicks')}
+                        value={String(summary.click_count)}
+                      />
+                      <MetricCard
+                        title={t('Bound Users')}
+                        value={String(summary.bound_user_count)}
+                      />
+                      <MetricCard
+                        title={t('Paid Users')}
+                        value={String(summary.paid_user_count)}
+                      />
+                      <MetricCard
+                        title={t('Current Rate')}
+                        value={summary.rate != null ? `${summary.rate}%` : '-'}
+                      />
+                    </div>
+                    <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_360px]'>
+                      <Card>
+                        <CardHeader>
+                          <CardTitle>{t('Referral Link')}</CardTitle>
+                        </CardHeader>
+                        <CardContent className='space-y-4'>
+                          <div className='space-y-2'>
+                            <div className='text-muted-foreground text-sm'>
+                              {t('Invite Code')}
+                            </div>
+                            <Input value={summary.invite_code || ''} readOnly />
+                          </div>
+                          <div className='space-y-2'>
+                            <div className='text-muted-foreground text-sm'>
+                              {t('Invite Link')}
+                            </div>
+                            <div className='flex gap-2'>
+                              <Input value={inviteLink} readOnly />
+                              <Button
+                                onClick={() => void handleCopyInviteLink()}
+                              >
+                                {t('Copy')}
+                              </Button>
+                            </div>
+                          </div>
+                          {profile?.status === 'disabled' && (
+                            <div className='rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700'>
+                              {disabledReasonText}
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                      <Card>
+                        <CardHeader>
+                          <CardTitle>{t('Commission Details')}</CardTitle>
+                        </CardHeader>
+                        <CardContent className='space-y-3'>
+                          <BalanceLine
+                            label={t('Pending Commission')}
+                            value={formatMoney(summary.pending_amount)}
+                          />
+                          <BalanceLine
+                            label={t('Withdrawable Amount')}
+                            value={formatMoney(summary.available_amount)}
+                          />
+                          <BalanceLine
+                            label={t('Withdrawing Amount')}
+                            value={formatMoney(summary.frozen_amount)}
+                          />
+                          <BalanceLine
+                            label={t('Withdrawn Amount')}
+                            value={formatMoney(summary.withdrawn_amount)}
+                          />
+                          <BalanceLine
+                            label={t('Min Withdraw Amount')}
+                            value={formatMoney(summary.min_withdraw_amount)}
+                          />
+                        </CardContent>
+                      </Card>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <ReferralRules summary={summary} />
+                    <Card>
+                      <CardHeader>
+                        <CardTitle>{t('Referral Center')}</CardTitle>
+                      </CardHeader>
+                      <CardContent className='space-y-4'>
+                        <p className='text-muted-foreground text-sm'>
+                          {profile?.status === 'pending'
+                            ? t('Your affiliate application is under review.')
+                            : profile?.status === 'rejected'
+                              ? rejectedReason ||
+                                t('Your affiliate application was rejected.')
+                              : profile?.status === 'disabled'
+                                ? disabledReasonText
+                                : t('Affiliate access requires admin approval.')}
+                        </p>
+                        {(profile?.status === 'rejected' || !profile) && (
+                          <div className='space-y-3'>
+                            <textarea
+                              className='border-input min-h-[140px] w-full rounded-md border bg-transparent px-3 py-2 text-sm'
+                              value={applicantNote}
+                              onChange={(e) =>
+                                setApplicantNote(e.target.value)
+                              }
+                              placeholder={t(
+                                'Describe your promotion plan or channels'
+                              )}
+                            />
+                            <Button
+                              onClick={() => void handleApply()}
+                              disabled={applying}
+                            >
+                              {applying
+                                ? t('Submitting...')
+                                : t('Submit Application')}
+                            </Button>
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </>
+                )
+              ) : effectiveSection === 'commissions' ? (
+                <SimpleTableCard
+                  title={t('Commission Details')}
+                  rows={commissions.map((item) => ({
+                    key: item.id,
+                    cells: [
+                      orderTypeLabel(item.order_type, t),
+                      item.invitee_username || item.invitee_email || '-',
+                      `${item.rate}%`,
+                      formatMoney(item.commission_amount),
+                      statusLabel(item.status, t),
+                      formatTimestamp(
+                        item.available_at || item.settle_at || item.created_at
+                      ),
+                    ],
+                  }))}
+                  headers={[
+                    t('Order Type'),
+                    t('Invitee'),
+                    t('Rate'),
+                    t('Commission Amount'),
+                    t('Status'),
+                    t('Settlement Time'),
+                  ]}
+                  emptyText={t('No commission records')}
+                  page={commissionPage}
+                  pageSize={commissionPageSize}
+                  total={commissionTotal}
+                  onPageChange={(page, pageSize) => {
+                    setCommissionPage(page)
+                    setCommissionPageSize(pageSize)
+                    void loadCommissions(page, pageSize)
+                  }}
+                />
+              ) : effectiveSection === 'withdraw' ? (
+                <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]'>
                   <Card>
                     <CardHeader>
-                      <CardTitle>{t('Referral Link')}</CardTitle>
+                      <CardTitle>{t('Withdraw Application')}</CardTitle>
                     </CardHeader>
-                    <CardContent className='space-y-4'>
-                      <div className='space-y-2'>
-                        <div className='text-muted-foreground text-sm'>
-                          {t('Invite Code')}
+                    <CardContent>
+                      <form
+                        ref={setWithdrawalFormNode}
+                        className='space-y-4'
+                        onSubmit={(event) => {
+                          event.preventDefault()
+                          handleWithdrawalSubmit()
+                        }}
+                      >
+                        <input
+                          type='hidden'
+                          name='account_type'
+                          value={withdrawForm.account_type}
+                        />
+                        <input
+                          type='hidden'
+                          name='account_network'
+                          value={withdrawForm.account_network}
+                        />
+                        <div className='space-y-1.5'>
+                          <div className='text-sm font-medium'>
+                            {t('Withdraw Amount')}
+                          </div>
+                          <Input
+                            name='amount'
+                            type='number'
+                            value={withdrawForm.amount}
+                            onChange={(e) =>
+                              updateWithdrawForm('amount', e.target.value)
+                            }
+                            placeholder={t('Withdraw Amount')}
+                          />
                         </div>
-                        <Input value={summary.invite_code || ''} readOnly />
-                      </div>
-                      <div className='space-y-2'>
-                        <div className='text-muted-foreground text-sm'>
-                          {t('Invite Link')}
+                        <div className='grid gap-3 md:grid-cols-2'>
+                          <div className='space-y-1.5'>
+                            <div className='text-sm font-medium'>
+                              {t('Withdrawal Method')}
+                            </div>
+                            <Select
+                              value={withdrawForm.account_type}
+                              onValueChange={(value) =>
+                                updateWithdrawForm('account_type', value || '')
+                              }
+                            >
+                              <SelectTrigger type='button' className='w-full'>
+                                <SelectValue>
+                                  {accountTypeLabel(
+                                    withdrawForm.account_type,
+                                    t
+                                  )}
+                                </SelectValue>
+                              </SelectTrigger>
+                              <SelectContent alignItemWithTrigger={false}>
+                                {ACCOUNT_TYPE_OPTIONS.map((option) => (
+                                  <SelectItem
+                                    key={option.value}
+                                    value={option.value}
+                                  >
+                                    {accountTypeLabel(option.value, t)}
+                                  </SelectItem>
+                                ))}
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          {withdrawForm.account_type === 'usdt' ? (
+                            <div className='space-y-1.5'>
+                              <div className='text-sm font-medium'>
+                                {t('USDT Blockchain Network')}
+                              </div>
+                              <Select
+                                value={withdrawForm.account_network}
+                                onValueChange={(value) =>
+                                  updateWithdrawForm(
+                                    'account_network',
+                                    value || ''
+                                  )
+                                }
+                              >
+                                <SelectTrigger type='button' className='w-full'>
+                                  <SelectValue>
+                                    {accountNetworkLabel(
+                                      withdrawForm.account_network,
+                                      t
+                                    )}
+                                  </SelectValue>
+                                </SelectTrigger>
+                                <SelectContent alignItemWithTrigger={false}>
+                                  {ACCOUNT_NETWORK_OPTIONS.map((network) => (
+                                    <SelectItem
+                                      key={network.value}
+                                      value={network.value}
+                                    >
+                                      {network.label}
+                                    </SelectItem>
+                                  ))}
+                                </SelectContent>
+                              </Select>
+                              <div className='text-muted-foreground text-xs'>
+                                {t(
+                                  'Please select the same blockchain network as your receiving address.'
+                                )}
+                              </div>
+                              <div className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100'>
+                                {t(
+                                  'USDT withdrawals are converted using OKX merchant real-time exchange rates at review or payout time.'
+                                )}
+                              </div>
+                            </div>
+                          ) : (
+                            <div className='space-y-1.5'>
+                              <div className='text-sm font-medium'>
+                                {t('Account Name')}
+                              </div>
+                              <Input
+                                name='account_name'
+                                value={withdrawForm.account_name}
+                                onChange={(e) =>
+                                  updateWithdrawForm(
+                                    'account_name',
+                                    e.target.value
+                                  )
+                                }
+                                placeholder={t('Account Name')}
+                              />
+                            </div>
+                          )}
                         </div>
-                        <div className='flex gap-2'>
-                          <Input value={inviteLink} readOnly />
-                          <Button onClick={() => void handleCopyInviteLink()}>
-                            {t('Copy')}
-                          </Button>
+                        <div className='space-y-1.5'>
+                          <div className='text-sm font-medium'>
+                            {accountNumberPlaceholder(
+                              withdrawForm.account_type,
+                              t
+                            )}
+                          </div>
+                          <Input
+                            name='account_no'
+                            value={withdrawForm.account_no}
+                            onChange={(e) =>
+                              updateWithdrawForm('account_no', e.target.value)
+                            }
+                            placeholder={accountNumberPlaceholder(
+                              withdrawForm.account_type,
+                              t
+                            )}
+                          />
                         </div>
-                      </div>
-                      {profile?.status === 'disabled' && (
-                        <div className='rounded-md border border-red-200 bg-red-50 p-3 text-sm text-red-700'>
-                          {rejectedReason ||
-                            t('Your affiliate account is disabled.')}
+                        <div className='space-y-2'>
+                          <div className='text-sm font-medium'>
+                            {t('QR Code Optional')}
+                          </div>
+                          <div className='flex gap-2'>
+                            <label
+                              htmlFor={withdrawalQrInputId}
+                              className={buttonVariants({
+                                variant: 'outline',
+                                className: uploading
+                                  ? 'pointer-events-none opacity-50'
+                                  : 'cursor-pointer',
+                              })}
+                              aria-disabled={uploading}
+                              onClick={() => {
+                                suppressFocusRefreshUntilRef.current =
+                                  Date.now() + 5000
+                              }}
+                            >
+                              {uploading
+                                ? t('Uploading...')
+                                : t('Upload Image')}
+                            </label>
+                            <input
+                              name='qr_image_url'
+                              type='hidden'
+                              value={withdrawForm.qr_image_url}
+                              readOnly
+                            />
+                            <div className='border-input text-muted-foreground flex min-h-9 min-w-0 flex-1 items-center rounded-md border px-3 text-sm'>
+                              {withdrawForm.qr_image_url
+                                ? t('QR code uploaded')
+                                : t('No QR code uploaded')}
+                            </div>
+                          </div>
+                          {withdrawForm.qr_image_url ? (
+                            <AssetImagePreview
+                              url={withdrawForm.qr_image_url}
+                              label={t('QR Code')}
+                              thumbnailClassName='h-28 w-28'
+                            />
+                          ) : null}
+                          <input
+                            id={withdrawalQrInputId}
+                            ref={fileInputRef}
+                            type='file'
+                            accept='image/*'
+                            className='hidden'
+                            disabled={uploading}
+                            form='referral-withdrawal-upload-file-input'
+                            onChange={(event) =>
+                              void handleUploadReferralAsset(event)
+                            }
+                          />
                         </div>
-                      )}
+                        <div className='space-y-1.5'>
+                          <div className='text-sm font-medium'>
+                            {t('Notes Optional')}
+                          </div>
+                          <textarea
+                            name='applicant_note'
+                            className='border-input min-h-[110px] w-full rounded-md border bg-transparent px-3 py-2 text-sm'
+                            value={withdrawForm.applicant_note}
+                            onChange={(e) =>
+                              updateWithdrawForm(
+                                'applicant_note',
+                                e.target.value
+                              )
+                            }
+                            placeholder={t('Notes')}
+                          />
+                        </div>
+                        {withdrawalSubmitError ? (
+                          <div
+                            className='border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm'
+                            role='alert'
+                          >
+                            {withdrawalSubmitError}
+                          </div>
+                        ) : null}
+                        <button
+                          type='submit'
+                          className={buttonVariants({ variant: 'default' })}
+                          disabled={submittingWithdrawal || uploading}
+                        >
+                          {submittingWithdrawal
+                            ? t('Submitting...')
+                            : t('Submit Withdrawal')}
+                        </button>
+                      </form>
                     </CardContent>
                   </Card>
                   <Card>
@@ -702,358 +1146,42 @@ export function Referral() {
                     <CardContent className='space-y-3'>
                       <BalanceLine
                         label={t('Pending Commission')}
-                        value={formatMoney(summary.pending_amount)}
+                        value={formatMoney(summary?.pending_amount || 0)}
                       />
                       <BalanceLine
                         label={t('Withdrawable Amount')}
-                        value={formatMoney(summary.available_amount)}
+                        value={formatMoney(summary?.available_amount || 0)}
                       />
                       <BalanceLine
                         label={t('Withdrawing Amount')}
-                        value={formatMoney(summary.frozen_amount)}
+                        value={formatMoney(summary?.frozen_amount || 0)}
                       />
                       <BalanceLine
                         label={t('Withdrawn Amount')}
-                        value={formatMoney(summary.withdrawn_amount)}
+                        value={formatMoney(summary?.withdrawn_amount || 0)}
                       />
                       <BalanceLine
                         label={t('Min Withdraw Amount')}
-                        value={formatMoney(summary.min_withdraw_amount)}
+                        value={formatMoney(summary?.min_withdraw_amount || 0)}
                       />
                     </CardContent>
                   </Card>
                 </div>
-              </div>
-            ) : (
-              <Card>
-                <CardHeader>
-                  <CardTitle>{t('Referral Center')}</CardTitle>
-                </CardHeader>
-                <CardContent className='space-y-4'>
-                  <p className='text-muted-foreground text-sm'>
-                    {profile?.status === 'pending'
-                      ? t('Your affiliate application is under review.')
-                      : profile?.status === 'rejected'
-                        ? rejectedReason ||
-                          t('Your affiliate application was rejected.')
-                        : profile?.status === 'disabled'
-                          ? rejectedReason ||
-                            t('Your affiliate account is disabled.')
-                          : t('Affiliate access requires admin approval.')}
-                  </p>
-                  {(profile?.status === 'rejected' || !profile) && (
-                    <div className='space-y-3'>
-                      <textarea
-                        className='border-input min-h-[140px] w-full rounded-md border bg-transparent px-3 py-2 text-sm'
-                        value={applicantNote}
-                        onChange={(e) => setApplicantNote(e.target.value)}
-                        placeholder={t(
-                          'Describe your promotion plan or channels'
-                        )}
-                      />
-                      <Button
-                        onClick={() => void handleApply()}
-                        disabled={applying}
-                      >
-                        {applying
-                          ? t('Submitting...')
-                          : t('Submit Application')}
-                      </Button>
-                    </div>
-                  )}
-                </CardContent>
-              </Card>
-            )
-          ) : activeSection === 'commissions' ? (
-            <SimpleTableCard
-              title={t('Commission Details')}
-              rows={commissions.map((item) => ({
-                key: item.id,
-                cells: [
-                  orderTypeLabel(item.order_type, t),
-                  item.invitee_username || item.invitee_email || '-',
-                  `${item.rate}%`,
-                  formatMoney(item.commission_amount),
-                  statusLabel(item.status, t),
-                  formatTimestamp(
-                    item.available_at || item.settle_at || item.created_at
-                  ),
-                ],
-              }))}
-              headers={[
-                t('Order Type'),
-                t('Invitee'),
-                t('Rate'),
-                t('Commission Amount'),
-                t('Status'),
-                t('Settlement Time'),
-              ]}
-              emptyText={t('No commission records')}
-              page={commissionPage}
-              pageSize={commissionPageSize}
-              total={commissionTotal}
-              onPageChange={(page, pageSize) => {
-                setCommissionPage(page)
-                setCommissionPageSize(pageSize)
-                void loadCommissions(page, pageSize)
-              }}
-            />
-          ) : activeSection === 'withdraw' ? (
-            <div className='grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px]'>
-              <Card>
-                <CardHeader>
-                  <CardTitle>{t('Withdraw Application')}</CardTitle>
-                </CardHeader>
-                <CardContent>
-                  <form
-                    ref={setWithdrawalFormNode}
-                    className='space-y-4'
-                    onSubmit={(event) => {
-                      event.preventDefault()
-                      handleWithdrawalSubmit()
-                    }}
-                  >
-                    <input
-                      type='hidden'
-                      name='account_type'
-                      value={withdrawForm.account_type}
-                    />
-                    <input
-                      type='hidden'
-                      name='account_network'
-                      value={withdrawForm.account_network}
-                    />
-                    <div className='space-y-1.5'>
-                      <div className='text-sm font-medium'>
-                        {t('Withdraw Amount')}
-                      </div>
-                      <Input
-                        name='amount'
-                        type='number'
-                        value={withdrawForm.amount}
-                        onChange={(e) =>
-                          updateWithdrawForm('amount', e.target.value)
-                        }
-                        placeholder={t('Withdraw Amount')}
-                      />
-                    </div>
-                    <div className='grid gap-3 md:grid-cols-2'>
-                      <div className='space-y-1.5'>
-                        <div className='text-sm font-medium'>
-                          {t('Withdrawal Method')}
-                        </div>
-                        <Select
-                          value={withdrawForm.account_type}
-                          onValueChange={(value) =>
-                            updateWithdrawForm('account_type', value || '')
-                          }
-                        >
-                          <SelectTrigger type='button' className='w-full'>
-                            <SelectValue>
-                              {accountTypeLabel(withdrawForm.account_type, t)}
-                            </SelectValue>
-                          </SelectTrigger>
-                          <SelectContent alignItemWithTrigger={false}>
-                            {ACCOUNT_TYPE_OPTIONS.map((option) => (
-                              <SelectItem
-                                key={option.value}
-                                value={option.value}
-                              >
-                                {accountTypeLabel(option.value, t)}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      {withdrawForm.account_type === 'usdt' ? (
-                        <div className='space-y-1.5'>
-                          <div className='text-sm font-medium'>
-                            {t('USDT Blockchain Network')}
-                          </div>
-                          <Select
-                            value={withdrawForm.account_network}
-                            onValueChange={(value) =>
-                              updateWithdrawForm('account_network', value || '')
-                            }
-                          >
-                            <SelectTrigger type='button' className='w-full'>
-                              <SelectValue>
-                                {accountNetworkLabel(
-                                  withdrawForm.account_network,
-                                  t
-                                )}
-                              </SelectValue>
-                            </SelectTrigger>
-                            <SelectContent alignItemWithTrigger={false}>
-                              {ACCOUNT_NETWORK_OPTIONS.map((network) => (
-                                <SelectItem
-                                  key={network.value}
-                                  value={network.value}
-                                >
-                                  {network.label}
-                                </SelectItem>
-                              ))}
-                            </SelectContent>
-                          </Select>
-                          <div className='text-muted-foreground text-xs'>
-                            {t(
-                              'Please select the same blockchain network as your receiving address.'
-                            )}
-                          </div>
-                          <div className='rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-xs leading-5 text-amber-900 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100'>
-                            {t(
-                              'USDT withdrawals are converted using OKX merchant real-time exchange rates at review or payout time.'
-                            )}
-                          </div>
-                        </div>
-                      ) : (
-                        <div className='space-y-1.5'>
-                          <div className='text-sm font-medium'>
-                            {t('Account Name')}
-                          </div>
-                          <Input
-                            name='account_name'
-                            value={withdrawForm.account_name}
-                            onChange={(e) =>
-                              updateWithdrawForm('account_name', e.target.value)
-                            }
-                            placeholder={t('Account Name')}
-                          />
-                        </div>
-                      )}
-                    </div>
-                    <div className='space-y-1.5'>
-                      <div className='text-sm font-medium'>
-                        {accountNumberPlaceholder(withdrawForm.account_type, t)}
-                      </div>
-                      <Input
-                        name='account_no'
-                        value={withdrawForm.account_no}
-                        onChange={(e) =>
-                          updateWithdrawForm('account_no', e.target.value)
-                        }
-                        placeholder={accountNumberPlaceholder(
-                          withdrawForm.account_type,
-                          t
-                        )}
-                      />
-                    </div>
-                    <div className='space-y-2'>
-                      <div className='text-sm font-medium'>
-                        {t('QR Code Optional')}
-                      </div>
-                      <div className='flex gap-2'>
-                        <Button
-                          type='button'
-                          variant='outline'
-                          onClick={() => fileInputRef.current?.click()}
-                          disabled={uploading}
-                        >
-                          {uploading ? t('Uploading...') : t('Upload Image')}
-                        </Button>
-                        <Input
-                          name='qr_image_url'
-                          type='hidden'
-                          value={withdrawForm.qr_image_url}
-                        />
-                        <div className='border-input text-muted-foreground flex min-h-9 min-w-0 flex-1 items-center rounded-md border px-3 text-sm'>
-                          {withdrawForm.qr_image_url
-                            ? t('QR code uploaded')
-                            : t('No QR code uploaded')}
-                        </div>
-                      </div>
-                      {withdrawForm.qr_image_url ? (
-                        <AssetImagePreview
-                          url={withdrawForm.qr_image_url}
-                          label={t('QR Code')}
-                          thumbnailClassName='h-28 w-28'
-                        />
-                      ) : null}
-                      <input
-                        ref={fileInputRef}
-                        type='file'
-                        accept='image/*'
-                        className='hidden'
-                        onChange={(event) =>
-                          void handleUploadReferralAsset(event)
-                        }
-                      />
-                    </div>
-                    <div className='space-y-1.5'>
-                      <div className='text-sm font-medium'>
-                        {t('Notes Optional')}
-                      </div>
-                      <textarea
-                        name='applicant_note'
-                        className='border-input min-h-[110px] w-full rounded-md border bg-transparent px-3 py-2 text-sm'
-                        value={withdrawForm.applicant_note}
-                        onChange={(e) =>
-                          updateWithdrawForm('applicant_note', e.target.value)
-                        }
-                        placeholder={t('Notes')}
-                      />
-                    </div>
-                    {withdrawalSubmitError ? (
-                      <div
-                        className='border-destructive/30 bg-destructive/10 text-destructive rounded-md border px-3 py-2 text-sm'
-                        role='alert'
-                      >
-                        {withdrawalSubmitError}
-                      </div>
-                    ) : null}
-                    <button
-                      type='submit'
-                      className={buttonVariants({ variant: 'default' })}
-                      disabled={submittingWithdrawal || uploading}
-                    >
-                      {submittingWithdrawal
-                        ? t('Submitting...')
-                        : t('Submit Withdrawal')}
-                    </button>
-                  </form>
-                </CardContent>
-              </Card>
-              <Card>
-                <CardHeader>
-                  <CardTitle>{t('Commission Details')}</CardTitle>
-                </CardHeader>
-                <CardContent className='space-y-3'>
-                  <BalanceLine
-                    label={t('Pending Commission')}
-                    value={formatMoney(summary?.pending_amount || 0)}
-                  />
-                  <BalanceLine
-                    label={t('Withdrawable Amount')}
-                    value={formatMoney(summary?.available_amount || 0)}
-                  />
-                  <BalanceLine
-                    label={t('Withdrawing Amount')}
-                    value={formatMoney(summary?.frozen_amount || 0)}
-                  />
-                  <BalanceLine
-                    label={t('Withdrawn Amount')}
-                    value={formatMoney(summary?.withdrawn_amount || 0)}
-                  />
-                  <BalanceLine
-                    label={t('Min Withdraw Amount')}
-                    value={formatMoney(summary?.min_withdraw_amount || 0)}
-                  />
-                </CardContent>
-              </Card>
-            </div>
-          ) : (
-            <WithdrawalRecordsCard
-              rows={withdrawals}
-              page={withdrawalPage}
-              pageSize={withdrawalPageSize}
-              total={withdrawalTotal}
-              onPageChange={(page, pageSize) => {
-                setWithdrawalPage(page)
-                setWithdrawalPageSize(pageSize)
-                void loadWithdrawals(page, pageSize)
-              }}
-              onCancel={(item) => void handleCancelWithdrawal(item)}
-            />
+              ) : (
+                <WithdrawalRecordsCard
+                  rows={withdrawals}
+                  page={withdrawalPage}
+                  pageSize={withdrawalPageSize}
+                  total={withdrawalTotal}
+                  onPageChange={(page, pageSize) => {
+                    setWithdrawalPage(page)
+                    setWithdrawalPageSize(pageSize)
+                    void loadWithdrawals(page, pageSize)
+                  }}
+                  onCancel={(item) => void handleCancelWithdrawal(item)}
+                />
+              )}
+            </>
           )}
           <ConfirmDialog
             open={!!pendingWithdrawalSubmission}
@@ -1141,6 +1269,45 @@ function MetricCard(props: { title: string; value: string }) {
   )
 }
 
+function ReferralRules(props: { summary: ReferralSummary | null }) {
+  const { t } = useTranslation()
+  const rate =
+    props.summary?.rate != null && Number.isFinite(props.summary.rate)
+      ? `${props.summary.rate}%`
+      : '-'
+  const minWithdrawAmount = formatMoney(props.summary?.min_withdraw_amount || 0)
+  const settleFreezeDays = props.summary?.settle_freeze_days ?? 0
+
+  return (
+    <div className='bg-muted/30 space-y-2 rounded-md border p-3 text-sm'>
+      <div className='font-medium'>{t('Referral Qualification and Rules')}</div>
+      <ul className='text-muted-foreground list-disc space-y-1 pl-5'>
+        <li>
+          {t('Current commission rate is {{rate}}.', {
+            rate,
+          })}
+        </li>
+        <li>
+          {t('Withdrawals require at least {{amount}} available balance.', {
+            amount: minWithdrawAmount,
+          })}
+        </li>
+        <li>
+          {t(
+            'Each valid paid order from invited users generates commission, withdrawable by Alipay or USDT after the {{days}} day settlement freeze ends.',
+            { days: settleFreezeDays }
+          )}
+        </li>
+      </ul>
+      <div className='text-destructive font-medium'>
+        {t(
+          'Ban rules: fake registrations, self-invites, order farming, malicious refunds, dispute orders, or illegal promotion may disable the affiliate account. Disabled accounts cannot create new referrals, settle commissions, or submit withdrawals. Historical invite and commission records are retained for audit.'
+        )}
+      </div>
+    </div>
+  )
+}
+
 function BalanceLine(props: { label: string; value: string }) {
   return (
     <div className='flex items-center justify-between text-sm'>
@@ -1155,9 +1322,7 @@ function WithdrawalInfo(props: { item: ReferralWithdrawal }) {
   const item = props.item
   return (
     <div className='min-w-[260px] space-y-1 text-sm'>
-      <div>
-        {accountTypeLabel(item.account_type, t)}
-      </div>
+      <div>{accountTypeLabel(item.account_type, t)}</div>
       <div className='break-words'>
         {item.account_type === 'usdt' ? t('Blockchain') : t('Account Name')}:{' '}
         {item.account_type === 'usdt'
@@ -1165,7 +1330,8 @@ function WithdrawalInfo(props: { item: ReferralWithdrawal }) {
           : item.account_name || '-'}
       </div>
       <div className='break-words'>
-        {t('Account Number')}: {item.account_no || item.account_no_masked || '-'}
+        {t('Account Number')}:{' '}
+        {item.account_no || item.account_no_masked || '-'}
       </div>
       {item.applicant_note ? (
         <div className='text-muted-foreground text-xs break-words'>

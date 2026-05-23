@@ -25,10 +25,10 @@ type BEpusdtPayRequest struct {
 
 func GetBEpusdtAssets(c *gin.Context) {
 	if !service.IsUSDTGatewayConfigured() {
-		common.ApiSuccess(c, []service.GMPayAsset{})
+		common.ApiSuccess(c, []service.BEpusdtAsset{})
 		return
 	}
-	assets, err := service.GetGMPayAssets()
+	assets, err := service.GetBEpusdtAssets()
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -50,7 +50,7 @@ func RequestBEpusdtPay(c *gin.Context) {
 		common.ApiErrorMsg(c, "参数错误")
 		return
 	}
-	minTopup := int64(setting.GMPayMinTopUp)
+	minTopup := int64(setting.BEpusdtMinTopUp)
 	if minTopup <= 0 {
 		minTopup = getMinTopup()
 	}
@@ -58,7 +58,7 @@ func RequestBEpusdtPay(c *gin.Context) {
 		common.ApiErrorMsg(c, fmt.Sprintf("充值数量不能小于 %d", minTopup))
 		return
 	}
-	token, network, ok := service.ParseGMPayPaymentMethod(req.PaymentMethod)
+	token, network, ok := service.ParseBEpusdtPaymentMethod(req.PaymentMethod)
 	if !ok || token != "usdt" || network != "" {
 		common.ApiErrorMsg(c, "支付链不存在或未启用")
 		return
@@ -75,7 +75,7 @@ func RequestBEpusdtPay(c *gin.Context) {
 		common.ApiErrorMsg(c, "充值金额过低")
 		return
 	}
-	currency := strings.ToUpper(strings.TrimSpace(setting.GMPayCurrency))
+	currency := strings.ToUpper(strings.TrimSpace(setting.BEpusdtCurrency))
 	if currency == "" {
 		currency = "CNY"
 	}
@@ -149,7 +149,7 @@ func RequestBEpusdtPay(c *gin.Context) {
 	})
 	if err != nil {
 		_ = model.UpdatePendingTopUpStatus(tradeNo, provider, common.TopUpStatusExpired)
-		var gatewayErr service.GMPayGatewayError
+		var gatewayErr service.BEpusdtGatewayError
 		if errors.As(err, &gatewayErr) {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt gateway rejected topup order user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, method, req.Amount, err.Error()))
 			if message := gatewayErr.PublicMessage(); message != "" {
@@ -175,34 +175,34 @@ func RequestBEpusdtPay(c *gin.Context) {
 }
 
 func BEpusdtTopUpNotify(c *gin.Context) {
-	params, err := readGMPayCallback(c)
+	params, err := readBEpusdtCallback(c)
 	if err != nil {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt webhook 参数解析失败 path=%q client_ip=%s error=%q", c.Request.RequestURI, c.ClientIP(), err.Error()))
 		c.String(http.StatusBadRequest, "fail")
 		return
 	}
-	tradeNo := service.GMPayCallbackTradeNo(params)
+	tradeNo := service.BEpusdtCallbackTradeNo(params)
 	if tradeNo == "" {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt webhook rejected reason=missing_order_id path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
 		c.String(http.StatusBadRequest, "fail")
 		return
 	}
-	status := service.GMPayCallbackStatus(params)
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt topup webhook received trade_no=%s status=%s amount=%s fiat=%s client_ip=%s", tradeNo, status, gmpayCallbackString(params, "amount"), gmpayCallbackString(params, "fiat"), c.ClientIP()))
+	status := service.BEpusdtCallbackStatus(params)
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt topup webhook received trade_no=%s status=%s amount=%s fiat=%s client_ip=%s", tradeNo, status, bepusdtCallbackString(params, "amount"), bepusdtCallbackString(params, "fiat"), c.ClientIP()))
 	facts, err := validateUSDTGatewayCallback(c, tradeNo, params, false)
 	if err != nil {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("USDT gateway webhook rejected trade_no=%s path=%q client_ip=%s error=%q", tradeNo, c.Request.RequestURI, c.ClientIP(), err.Error()))
 		c.String(http.StatusBadRequest, "fail")
 		return
 	}
-	if !service.IsGMPayPaidStatus(status) {
+	if !service.IsBEpusdtPaidStatus(status) {
 		logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt webhook 忽略非成功事件 trade_no=%s status=%s client_ip=%s", tradeNo, status, c.ClientIP()))
 		_, _ = c.Writer.Write([]byte("ok"))
 		return
 	}
 	LockOrder(tradeNo)
 	defer UnlockOrder(tradeNo)
-	if err := model.RechargeGMPayWithValidation(tradeNo, common.GetJsonString(params), model.PaymentCallbackValidation{
+	if err := model.RechargeBEpusdtWithValidation(tradeNo, common.GetJsonString(params), model.PaymentCallbackValidation{
 		ExpectedPaymentProvider: facts.Provider,
 		ActualPaymentMethod:     facts.PaymentMethod,
 		ActualPaymentToken:      facts.Token,
@@ -210,6 +210,11 @@ func BEpusdtTopUpNotify(c *gin.Context) {
 		PaidCurrency:            facts.PaidCurrency,
 		RequirePaymentFacts:     true,
 	}, c.ClientIP()); err != nil {
+		if isPaymentCallbackRejection(err) {
+			logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt topup webhook rejected trade_no=%s client_ip=%s error=%q", tradeNo, c.ClientIP(), err.Error()))
+			c.String(http.StatusBadRequest, "fail")
+			return
+		}
 		logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt 充值处理失败 trade_no=%s client_ip=%s error=%q", tradeNo, c.ClientIP(), err.Error()))
 		c.String(http.StatusInternalServerError, "fail")
 		return
@@ -221,6 +226,16 @@ func BEpusdtTopUpNotify(c *gin.Context) {
 	}
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt topup webhook processed trade_no=%s client_ip=%s", tradeNo, c.ClientIP()))
 	_, _ = c.Writer.Write([]byte("ok"))
+}
+
+func isPaymentCallbackRejection(err error) bool {
+	return errors.Is(err, model.ErrPaymentMethodMismatch) ||
+		errors.Is(err, model.ErrPaymentAmountMismatch) ||
+		errors.Is(err, model.ErrPaymentCurrencyMismatch) ||
+		errors.Is(err, model.ErrTopUpNotFound) ||
+		errors.Is(err, model.ErrTopUpStatusInvalid) ||
+		errors.Is(err, model.ErrSubscriptionOrderNotFound) ||
+		errors.Is(err, model.ErrSubscriptionOrderStatusInvalid)
 }
 
 func validateUSDTGatewayCallback(c *gin.Context, tradeNo string, params map[string]interface{}, subscription bool) (service.USDTGatewayCallbackFacts, error) {
@@ -241,23 +256,23 @@ func validateUSDTGatewayCallback(c *gin.Context, tradeNo string, params map[stri
 	if provider != model.PaymentProviderBEpusdt {
 		return service.USDTGatewayCallbackFacts{}, model.ErrPaymentMethodMismatch
 	}
-	if !service.VerifyGMPaySignature(params) {
+	if !service.VerifyBEpusdtSignature(params) {
 		return service.USDTGatewayCallbackFacts{}, errors.New("invalid signature")
 	}
-	method := service.GMPayCallbackMethod(params)
+	method := service.BEpusdtCallbackMethod(params)
 	if method == "" {
 		method = service.USDTPaymentMethod
 	}
 	return service.USDTGatewayCallbackFacts{
 		Provider:      provider,
 		PaymentMethod: method,
-		Token:         service.GMPayCallbackToken(params),
-		PaidAmount:    service.GMPayCallbackPaidAmount(params),
-		PaidCurrency:  service.GMPayCallbackPaidCurrency(params),
+		Token:         service.BEpusdtCallbackToken(params),
+		PaidAmount:    service.BEpusdtCallbackPaidAmount(params),
+		PaidCurrency:  service.BEpusdtCallbackPaidCurrency(params),
 	}, nil
 }
 
-func gmpayCallbackString(params map[string]interface{}, key string) string {
+func bepusdtCallbackString(params map[string]interface{}, key string) string {
 	value, ok := params[key]
 	if !ok || value == nil {
 		return ""
@@ -265,7 +280,7 @@ func gmpayCallbackString(params map[string]interface{}, key string) string {
 	return fmt.Sprint(value)
 }
 
-func readGMPayCallback(c *gin.Context) (map[string]interface{}, error) {
+func readBEpusdtCallback(c *gin.Context) (map[string]interface{}, error) {
 	params := map[string]interface{}{}
 	contentType := strings.ToLower(c.GetHeader("Content-Type"))
 	if strings.Contains(contentType, "application/json") {

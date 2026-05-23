@@ -23,11 +23,11 @@ import {
   calculateAmount,
   calculateStripeAmount,
   requestPayment,
-  requestGMPayPayment,
+  requestBEpusdtPayment,
   requestStripePayment,
   isApiSuccess,
 } from '../api'
-import { isStripePayment, isGMPayPayment, submitPaymentForm } from '../lib'
+import { isStripePayment, isBEpusdtPayment, submitPaymentForm } from '../lib'
 import type { PaymentInitiationResult } from '../types'
 
 // ============================================================================
@@ -118,7 +118,7 @@ export function usePayment() {
         setProcessing(true)
 
         const isStripe = isStripePayment(paymentType)
-        const isGMPay = isGMPayPayment(paymentType)
+        const isBEpusdt = isBEpusdtPayment(paymentType)
         const amount = Math.floor(topupAmount)
 
         const response = isStripe
@@ -126,8 +126,8 @@ export function usePayment() {
               amount,
               payment_method: 'stripe',
             })
-          : isGMPay
-            ? await requestGMPayPayment({
+          : isBEpusdt
+            ? await requestBEpusdtPayment({
                 amount,
                 payment_method: paymentType,
               })
@@ -145,7 +145,7 @@ export function usePayment() {
         const paymentData = response.data as Record<string, unknown> | undefined
         const stripePayLink =
           typeof paymentData?.pay_link === 'string' ? paymentData.pay_link : ''
-        const gmpayPaymentUrl =
+        const bepusdtPaymentUrl =
           typeof paymentData?.payment_url === 'string'
             ? paymentData.payment_url
             : ''
@@ -163,8 +163,8 @@ export function usePayment() {
           }
         }
 
-        if (isGMPay && gmpayPaymentUrl) {
-          window.open(gmpayPaymentUrl, '_blank')
+        if (isBEpusdt && bepusdtPaymentUrl) {
+          window.open(bepusdtPaymentUrl, '_blank')
           toast.success(i18next.t('Redirecting to payment page...'))
           return {
             ok: true,
@@ -177,7 +177,7 @@ export function usePayment() {
         }
 
         // Handle non-Stripe payment
-        if (!isStripe && !isGMPay && response.data) {
+        if (!isStripe && !isBEpusdt && response.data) {
           const url = (response as unknown as { url?: string }).url
           if (url) {
             submitPaymentForm(url, response.data)

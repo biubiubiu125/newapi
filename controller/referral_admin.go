@@ -240,7 +240,7 @@ func ApproveReferralAffiliate(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	item, err := referralService.ApproveAffiliate(userId, adminId, req.RateOverride, c.ClientIP(), c.GetHeader("User-Agent"))
+	item, err := referralService.ApproveAffiliate(userId, adminId, req.RateOverride, strings.TrimSpace(req.Reason), c.ClientIP(), c.GetHeader("User-Agent"))
 	if err != nil {
 		common.ApiError(c, err)
 		return

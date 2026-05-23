@@ -439,32 +439,6 @@ export function DetailsDialog(props: DetailsDialogProps) {
     }
     return labels[normalized] ?? provider ?? ''
   }
-  const isPaymentProviderValue = (value?: string) => {
-    const normalized = String(value ?? '').trim().toLowerCase()
-    return [
-      'epay',
-      'bepusdt',
-      'gmpay',
-      'stripe',
-      'creem',
-      'waffo',
-      'waffo_pancake',
-    ].includes(normalized)
-  }
-  const isPrivateOrLocalAddress = (value?: string) => {
-    const normalized = String(value ?? '').trim().toLowerCase()
-    if (!normalized) return true
-    if (normalized === 'localhost' || normalized === '::1') return true
-    const parts = normalized.split('.').map((part) => Number(part))
-    if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) {
-      return false
-    }
-    const [first, second] = parts
-    if (first === 10 || first === 127 || first === 0) return true
-    if (first === 172 && second >= 16 && second <= 31) return true
-    if (first === 192 && second === 168) return true
-    return false
-  }
   const formatOrderType = (value?: string) => {
     const normalized = String(value ?? '').trim().toLowerCase()
     if (normalized === 'topup') return t('Top-up')
@@ -480,22 +454,6 @@ export function DetailsDialog(props: DetailsDialogProps) {
     })
     return normalizedCurrency ? `${formattedAmount} ${normalizedCurrency}` : formattedAmount
   }
-  const inferredPaymentProvider =
-    adminInfo?.payment_provider ||
-    (isPaymentProviderValue(adminInfo?.callback_payment_method)
-      ? adminInfo?.callback_payment_method
-      : '')
-  const shouldShowCallbackPaymentMethod =
-    !!adminInfo?.callback_payment_method &&
-    !isPaymentProviderValue(adminInfo.callback_payment_method)
-  const serverAddress = adminInfo?.server_address
-  const serverHost = adminInfo?.server_host
-  const legacyServerHost =
-    !serverAddress &&
-    !serverHost &&
-    !isPrivateOrLocalAddress(adminInfo?.server_ip)
-      ? adminInfo?.server_ip
-      : ''
   const topupAuditFields =
     isTopup && props.isAdmin && adminInfo
       ? ([
@@ -503,13 +461,9 @@ export function DetailsDialog(props: DetailsDialogProps) {
             label: t('Order Payment Method'),
             value: formatPaymentMethod(adminInfo.payment_method),
           },
-          shouldShowCallbackPaymentMethod && {
-            label: t('Callback Payment Method'),
-            value: formatPaymentMethod(adminInfo.callback_payment_method),
-          },
-          inferredPaymentProvider && {
+          adminInfo.payment_provider && {
             label: t('Payment Gateway'),
-            value: formatPaymentProvider(inferredPaymentProvider),
+            value: formatPaymentProvider(adminInfo.payment_provider),
           },
           adminInfo.order_type && {
             label: t('Order Type'),
@@ -525,34 +479,6 @@ export function DetailsDialog(props: DetailsDialogProps) {
               Number(adminInfo.paid_amount),
               adminInfo.paid_currency
             ),
-          },
-          adminInfo.caller_ip && {
-            label: t('Callback Caller IP'),
-            value: adminInfo.caller_ip,
-          },
-          serverAddress && {
-            label: t('Server Address'),
-            value: serverAddress,
-          },
-          !serverAddress && serverHost && {
-            label: t('Server Host'),
-            value: serverHost,
-          },
-          legacyServerHost && {
-            label: t('Server Host'),
-            value: legacyServerHost,
-          },
-          serverHost && serverAddress && serverHost !== serverAddress && {
-            label: t('Server Host'),
-            value: serverHost,
-          },
-          adminInfo.node_name && {
-            label: t('Node Name'),
-            value: adminInfo.node_name,
-          },
-          adminInfo.version && {
-            label: t('System Version'),
-            value: adminInfo.version,
           },
         ].filter(Boolean) as Array<{ label: string; value: string }>)
       : []

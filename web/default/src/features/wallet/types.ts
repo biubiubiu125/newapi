@@ -68,7 +68,7 @@ export type WaffoPancakePaymentResponse = ApiResponse<
     }
   | string
 >
-export type GMPayPaymentResponse = ApiResponse<{
+export type BEpusdtPaymentResponse = ApiResponse<{
   payment_url?: string
   order_id?: string
   trade_no?: string
@@ -241,9 +241,9 @@ export interface WaffoPancakePaymentRequest {
 }
 
 /**
- * GMPay payment request parameters
+ * BEpusdt payment request parameters
  */
-export interface GMPayPaymentRequest {
+export interface BEpusdtPaymentRequest {
   /** Topup amount */
   amount: number
   /** USDT payment method. BEpusdt orders use "usdt". */

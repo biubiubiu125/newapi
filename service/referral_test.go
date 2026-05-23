@@ -307,6 +307,72 @@ func TestProcessTopUpCommissionConcurrentCallbacksAreIdempotent(t *testing.T) {
 	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, job.Status)
 }
 
+func TestProcessTopUpCommissionSkipsWhenAffiliateDisabledAfterOrderSnapshot(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "disabled-snapshot-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "disabled-snapshot-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "DISABLED1",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      affiliateUser.Id,
+	}).Error)
+
+	topup := &model.TopUp{
+		UserId:              invitee.Id,
+		Amount:              100,
+		Money:               100,
+		PaidAmount:          100,
+		PaidCurrency:        "CNY",
+		TradeNo:             "topup-disabled-after-snapshot",
+		Status:              common.TopUpStatusSuccess,
+		ReferralAffiliateId: affiliate.Id,
+		ReferralRate:        10,
+		ReferralBaseAmount:  100,
+		PaymentMethod:       "alipay",
+		PaymentProvider:     model.PaymentProviderEpay,
+		CreateTime:          time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(topup).Error)
+
+	require.NoError(t, db.Model(affiliate).Updates(map[string]any{
+		"status":              model.ReferralAffiliateStatusDisabled,
+		"acquisition_enabled": false,
+		"settlement_enabled":  false,
+		"withdrawal_enabled":  false,
+		"risk_reason":         "order farming",
+	}).Error)
+
+	require.NoError(t, service.ProcessTopUpCommission(topup.TradeNo))
+
+	var commissions int64
+	require.NoError(t, db.Model(&model.ReferralCommission{}).Where("source_type = ? AND source_trade_no = ?", "topup", topup.TradeNo).Count(&commissions).Error)
+	require.Zero(t, commissions)
+
+	account := &model.ReferralCommissionAccount{}
+	require.NoError(t, db.Where("affiliate_id = ?", affiliate.Id).First(account).Error)
+	require.Zero(t, account.PendingAmount)
+	require.Zero(t, account.AvailableAmount)
+	require.Zero(t, account.FrozenAmount)
+
+	reloadedTopup := &model.TopUp{}
+	require.NoError(t, db.Where("trade_no = ?", topup.TradeNo).First(reloadedTopup).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSkipped, reloadedTopup.ReferralCommissionStatus)
+	require.Equal(t, "affiliate_not_eligible", reloadedTopup.ReferralCommissionError)
+}
+
 func TestGetOrCreateAccountTxRejectsConflictingUserUniqueIndex(t *testing.T) {
 	db := setupReferralServiceTestDB(t)
 	service := NewReferralService()
@@ -561,8 +627,8 @@ func TestListCommissionJobsResolvesRealOrderTypeAndTradeNo(t *testing.T) {
 		PaidAmount:      12,
 		PaidCurrency:    "CNY",
 		TradeNo:         topupTradeNo,
-		PaymentMethod:   model.PaymentProviderGMPay,
-		PaymentProvider: model.PaymentProviderGMPay,
+		PaymentMethod:   model.PaymentProviderBEpusdt,
+		PaymentProvider: model.PaymentProviderBEpusdt,
 		Status:          common.TopUpStatusSuccess,
 		CreateTime:      time.Now().Unix(),
 	}).Error)
@@ -1616,11 +1682,11 @@ func TestAdjustAffiliateCommissionRejectsConflictingIdempotencyPayload(t *testin
 	require.Contains(t, err.Error(), "idempotency key conflicts")
 }
 
-func TestUpdateSettingsRejectsUnsafeRedirectPath(t *testing.T) {
+func TestUpdateSettingsForcesFixedRedirectPath(t *testing.T) {
 	setupReferralServiceTestDB(t)
 	service := NewReferralService()
 
-	_, err := service.UpdateSettings(ReferralSettings{
+	settings, err := service.UpdateSettings(ReferralSettings{
 		Enabled:            true,
 		CookieTTLDays:      30,
 		DefaultRate:        10,
@@ -1632,8 +1698,8 @@ func TestUpdateSettingsRejectsUnsafeRedirectPath(t *testing.T) {
 		SettlementCurrency: "CNY",
 		SettlementFxRates:  `{"CNY":1}`,
 	}, 1, "127.0.0.1", "unit-test")
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "redirect_path")
+	require.NoError(t, err)
+	require.Equal(t, "/sign-up", settings.RedirectPath)
 }
 
 func TestUpdateSettingsNormalizesReferralFxRates(t *testing.T) {
@@ -2035,7 +2101,7 @@ func TestApproveAffiliateCreatesAuditLogWhenAdminCreatesAffiliate(t *testing.T) 
 	user := &model.User{Username: "approve-created", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
 	require.NoError(t, user.Insert(0))
 
-	view, err := service.ApproveAffiliate(user.Id, 9001, nil, "127.0.0.1", "unit-test")
+	view, err := service.ApproveAffiliate(user.Id, 9001, nil, "manual enable", "127.0.0.1", "unit-test")
 	require.NoError(t, err)
 	require.NotNil(t, view)
 	require.Equal(t, model.ReferralAffiliateStatusApproved, view.Status)
@@ -2043,6 +2109,7 @@ func TestApproveAffiliateCreatesAuditLogWhenAdminCreatesAffiliate(t *testing.T) 
 	var audit model.ReferralAdminAuditLog
 	require.NoError(t, db.Where("action = ? AND target_user_id = ?", "referral_affiliate_approve", user.Id).First(&audit).Error)
 	require.Equal(t, 9001, audit.AdminUserId)
+	require.Equal(t, "manual enable", audit.Reason)
 	require.Equal(t, "127.0.0.1", audit.Ip)
 	require.Equal(t, "unit-test", audit.UserAgent)
 }

@@ -154,16 +154,16 @@ const BILLING_SECTIONS = [
           CreemProducts: settings.CreemProducts,
         }}
         bepusdtDefaultValues={{
-          GMPayEnabled: settings.GMPayEnabled ?? false,
+          BEpusdtEnabled: settings.BEpusdtEnabled ?? false,
           USDTGatewayType: 'bepusdt',
-          GMPayBaseURL: settings.GMPayBaseURL ?? '',
-          GMPayPID: settings.GMPayPID ?? '',
-          GMPaySecretKey: settings.GMPaySecretKey ?? '',
-          GMPayCurrency: settings.GMPayCurrency ?? 'CNY',
-          GMPayDisplayName: settings.GMPayDisplayName ?? 'USDT',
-          GMPayAssetDisplayNames:
-            settings.GMPayAssetDisplayNames ?? '{"usdt":"USDT"}',
-          GMPayMinTopUp: settings.GMPayMinTopUp ?? 1,
+          BEpusdtBaseURL: settings.BEpusdtBaseURL ?? '',
+          BEpusdtPID: settings.BEpusdtPID ?? '',
+          BEpusdtSecretKey: settings.BEpusdtSecretKey ?? '',
+          BEpusdtCurrency: settings.BEpusdtCurrency ?? 'CNY',
+          BEpusdtDisplayName: settings.BEpusdtDisplayName ?? 'USDT',
+          BEpusdtAssetDisplayNames:
+            settings.BEpusdtAssetDisplayNames ?? '{"usdt":"USDT"}',
+          BEpusdtMinTopUp: settings.BEpusdtMinTopUp ?? 1,
         }}
         waffoDefaultValues={{
           WaffoEnabled: settings.WaffoEnabled ?? false,

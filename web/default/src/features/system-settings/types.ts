@@ -239,15 +239,15 @@ export type BillingSettings = {
   CreemWebhookSecret: string
   CreemTestMode: boolean
   CreemProducts: string
-  GMPayEnabled: boolean
+  BEpusdtEnabled: boolean
   USDTGatewayType: string
-  GMPayBaseURL: string
-  GMPayPID: string
-  GMPaySecretKey: string
-  GMPayCurrency: string
-  GMPayDisplayName: string
-  GMPayAssetDisplayNames: string
-  GMPayMinTopUp: number
+  BEpusdtBaseURL: string
+  BEpusdtPID: string
+  BEpusdtSecretKey: string
+  BEpusdtCurrency: string
+  BEpusdtDisplayName: string
+  BEpusdtAssetDisplayNames: string
+  BEpusdtMinTopUp: number
   WaffoEnabled: boolean
   WaffoApiKey: string
   WaffoPrivateKey: string

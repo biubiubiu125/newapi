@@ -18,7 +18,7 @@
 - 数据库：SQLite、MySQL、PostgreSQL，后端持久化逻辑必须同时兼容三者。
 - 缓存：Redis 与内存缓存。
 - 鉴权：JWT、WebAuthn、Passkeys、OAuth、2FA。
-- 支付：epay、gmpay、Stripe、Creem、Waffo、Waffo Pancake。
+- 支付：epay、BEpusdt、Stripe、Creem、Waffo、Waffo Pancake。
 - 账务：用户额度、充值订单、订阅订单、使用日志、返佣账户、返佣流水、提现单。
 - 前端包管理：优先使用 Bun，脚本以各前端目录的 `package.json` 为准。
 
@@ -47,7 +47,7 @@ web/classic/                 classic 前端模板
 docs/                        项目文档
 ```
 
-关键业务入口以当前代码为准。支付与返佣相关路由主要在 `router/api-router.go`，核心模型主要在 `model/topup.go`、`model/subscription.go`、`model/referral.go`，核心服务主要在 `service/referral.go`、`service/referral_settlement_task.go`、`service/epay.go`、`service/gmpay.go`。
+关键业务入口以当前代码为准。支付与返佣相关路由主要在 `router/api-router.go`，核心模型主要在 `model/topup.go`、`model/subscription.go`、`model/referral.go`，核心服务主要在 `service/referral.go`、`service/referral_settlement_task.go`、`service/epay.go`、`service/bepusdt.go`。
 
 ## 关键业务域
 
@@ -59,9 +59,9 @@ docs/                        项目文档
 
 ### 充值与订单支付
 
-- 普通充值入口包括 `/api/user/topup`、`/api/user/pay`、`/api/user/gmpay/pay` 及其他网关支付入口。
-- 订阅支付入口包括 `/api/subscription/epay/pay`、`/api/subscription/gmpay/pay`、`/api/subscription/stripe/pay`、`/api/subscription/creem/pay`。
-- 支付回调入口包括 `/api/user/epay/notify`、`/api/user/gmpay/notify`、`/api/subscription/epay/notify`、`/api/subscription/epay/return`、`/api/subscription/gmpay/notify` 和各 webhook。
+- 普通充值入口包括 `/api/user/topup`、`/api/user/pay`、`/api/user/bepusdt/pay` 及其他网关支付入口。
+- 订阅支付入口包括 `/api/subscription/epay/pay`、`/api/subscription/bepusdt/pay`、`/api/subscription/stripe/pay`、`/api/subscription/creem/pay`。
+- 支付回调入口包括 `/api/user/epay/notify`、`/api/user/bepusdt/notify`、`/api/subscription/epay/notify`、`/api/subscription/epay/return`、`/api/subscription/bepusdt/notify` 和各 webhook。
 - `return_url` 只能展示支付结果或引导刷新，不能作为到账依据。只有已验签、金额匹配、币种匹配、网关匹配、订单状态允许流转的 `notify_url` 或 webhook 才能推进订单成功。
 - 支付成功后必须保证订单状态、用户额度或订阅权益、日志、返佣触发、幂等标记一致。能放在同一事务中的操作优先放在同一事务中，跨服务流程必须有可重试且不重复入账的设计。
 
@@ -148,7 +148,7 @@ docs/                        项目文档
 
 - 支付创建时，前端传入的金额、额度、币种、折扣、佣金比例、订阅权益只能作为请求意图，最终金额和权益必须由后端根据配置、计划和订单快照计算。
 - 支付回调必须校验签名、商户号、订单号、订单类型、支付网关、支付方式、金额、币种、订单归属和当前状态。
-- epay 与 gmpay 不能互相完成对方订单；充值订单和订阅订单不能互相通过对方回调入口完成。
+- epay 与 BEpusdt 不能互相完成对方订单；充值订单和订阅订单不能互相通过对方回调入口完成。
 - 重复回调、并发回调、成功后失败回调、失败后成功回调都必须有确定状态机，不得重复到账、重复发放订阅、重复生成佣金或非法回退。
 - 支付日志不得泄露密钥、密码、token、完整签名或敏感回调原文；需要排查时记录可追踪但脱敏的信息。
 - 测试 mock、签名合法测试回调和压测脚本不能在生产环境无开关暴露。
@@ -224,7 +224,7 @@ docs/                        项目文档
 
 - 不要先执行 `git pull upstream main`、直接 merge 或 rebase 后再看冲突。
 - 不要用 `git checkout --ours .`、`git checkout --theirs .` 或任何整侧覆盖方式解决冲突。
-- 不要因为文件名包含 `gmpay` 就恢复独立 GMPay 网关行为；当前 USDT 链路以实际代码中的 BEpusdt 对外语义为准。
+- 不要恢复已剥离的旧 USDT 独立网关行为；当前 USDT 链路以实际代码中的 BEpusdt 对外语义为准。
 - 不要让上游改动放宽支付签名、金额、币种、商户、网关、支付方式、订单类型、订单归属、状态机、幂等或权限校验。
 - 不要让 `return_url`、前端页面状态或用户提交参数重新成为到账、订阅生效或佣金生成依据。
 

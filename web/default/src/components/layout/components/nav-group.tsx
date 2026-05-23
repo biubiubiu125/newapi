@@ -52,25 +52,9 @@ import {
   type NavLink,
   type NavGroup as NavGroupProps,
 } from '../types'
+import { acknowledgeAdminSidebarBadge } from '../lib/admin-sidebar-badge-ack'
 import { ChatPresetsItem } from './chat-presets-item'
-
-const ADMIN_BADGE_ACK_STORAGE_KEY = 'admin-sidebar-alert-badge-ack-v2'
-
-function acknowledgeNavBadge(item: NavLink | NavCollapsible) {
-  if (!item.badgeKey || !item.badgeValue || item.badgeValue <= 0) return
-  try {
-    const raw = window.localStorage.getItem(ADMIN_BADGE_ACK_STORAGE_KEY)
-    const parsed = raw ? (JSON.parse(raw) as Record<string, number>) : {}
-    parsed[item.badgeKey] = item.badgeValue
-    window.localStorage.setItem(
-      ADMIN_BADGE_ACK_STORAGE_KEY,
-      JSON.stringify(parsed)
-    )
-    window.dispatchEvent(new Event('admin-sidebar-badge-ack'))
-  } catch {
-    // Ignore localStorage failures; the badge will simply remain visible.
-  }
-}
+import { useAuthStore } from '@/stores/auth-store'
 
 /**
  * Sidebar navigation group component
@@ -138,6 +122,7 @@ function NavBadge({ children }: { children: ReactNode }) {
  */
 function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
   const { setOpenMobile } = useSidebar()
+  const userId = useAuthStore((state) => state.auth.user?.id)
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
@@ -147,7 +132,11 @@ function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
           <Link
             to={item.url}
             onClick={() => {
-              acknowledgeNavBadge(item)
+              acknowledgeAdminSidebarBadge(
+                item.badgeKey,
+                item.badgeValue,
+                userId
+              )
               setOpenMobile(false)
             }}
           />
@@ -172,6 +161,7 @@ function SidebarMenuCollapsible({
   href: string
 }) {
   const { setOpenMobile } = useSidebar()
+  const userId = useAuthStore((state) => state.auth.user?.id)
   // 检查当前路径是否匹配子菜单项
   const isSubItemActive = checkIsActive(href, item)
   // 使用受控状态，初始值基于当前路径是否匹配
@@ -180,7 +170,6 @@ function SidebarMenuCollapsible({
   // 当路径变化时，如果匹配子菜单项，自动展开父级菜单
   useEffect(() => {
     if (isSubItemActive) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
       setIsOpen(true)
     }
   }, [isSubItemActive])
@@ -208,7 +197,17 @@ function SidebarMenuCollapsible({
               <SidebarMenuSubButton
                 isActive={checkIsActive(href, subItem)}
                 render={
-                  <Link to={subItem.url} onClick={() => setOpenMobile(false)} />
+                  <Link
+                    to={subItem.url}
+                    onClick={() => {
+                      acknowledgeAdminSidebarBadge(
+                        subItem.badgeKey,
+                        subItem.badgeValue,
+                        userId
+                      )
+                      setOpenMobile(false)
+                    }}
+                  />
                 }
               >
                 {subItem.icon && <subItem.icon />}
@@ -233,6 +232,8 @@ function SidebarMenuCollapsedDropdown({
   item: NavCollapsible
   href: string
 }) {
+  const userId = useAuthStore((state) => state.auth.user?.id)
+
   return (
     <SidebarMenuItem>
       <DropdownMenu>
@@ -263,6 +264,13 @@ function SidebarMenuCollapsedDropdown({
                   <Link
                     to={sub.url}
                     className={`${checkIsActive(href, sub) ? 'bg-secondary' : ''}`}
+                    onClick={() => {
+                      acknowledgeAdminSidebarBadge(
+                        sub.badgeKey,
+                        sub.badgeValue,
+                        userId
+                      )
+                    }}
                   />
                 }
               >

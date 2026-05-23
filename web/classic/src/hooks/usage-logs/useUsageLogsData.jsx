@@ -673,34 +673,32 @@ export const useLogsData = () => {
               value: adminInfo.payment_method,
             });
           }
-          if (adminInfo.callback_payment_method) {
+          if (adminInfo.payment_provider) {
             expandDataLocal.push({
-              key: t('回调支付方式'),
-              value: adminInfo.callback_payment_method,
+              key: t('支付网关'),
+              value: adminInfo.payment_provider,
             });
           }
-          if (adminInfo.caller_ip) {
+          if (adminInfo.order_type) {
             expandDataLocal.push({
-              key: t('回调调用者IP'),
-              value: adminInfo.caller_ip,
+              key: t('订单类型'),
+              value: adminInfo.order_type,
             });
           }
-          if (adminInfo.server_ip) {
+          if (adminInfo.product_name) {
             expandDataLocal.push({
-              key: t('服务器IP'),
-              value: adminInfo.server_ip,
+              key: t('商品'),
+              value: adminInfo.product_name,
             });
           }
-          if (adminInfo.node_name) {
+          if (
+            adminInfo.paid_amount !== undefined &&
+            adminInfo.paid_amount !== null
+          ) {
             expandDataLocal.push({
-              key: t('节点名称'),
-              value: adminInfo.node_name,
-            });
-          }
-          if (adminInfo.version) {
-            expandDataLocal.push({
-              key: t('系统版本'),
-              value: adminInfo.version,
+              key: t('实付金额'),
+              value:
+                `${adminInfo.paid_amount} ${adminInfo.paid_currency || ''}`.trim(),
             });
           }
         } else {
