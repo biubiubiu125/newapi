@@ -313,6 +313,7 @@ func RequestWaffoPay(c *gin.Context) {
 		"data": gin.H{
 			"payment_url": paymentUrl,
 			"order_id":    merchantOrderId,
+			"trade_no":    merchantOrderId,
 		},
 	})
 }

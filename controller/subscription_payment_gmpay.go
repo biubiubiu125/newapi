@@ -144,6 +144,7 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
 		"payment_url":      paymentOrder.PaymentURL,
 		"order_id":         paymentOrder.OrderID,
+		"trade_no":         tradeNo,
 		"transaction_id":   paymentOrder.TransactionID,
 		"payment_address":  paymentOrder.PaymentAddress,
 		"payment_amount":   paymentOrder.PaymentAmount,
@@ -186,6 +187,7 @@ func SubscriptionBEpusdtNotify(c *gin.Context) {
 		PaidAmount:              facts.PaidAmount,
 		PaidCurrency:            facts.PaidCurrency,
 		RequirePaymentFacts:     true,
+		CallerIP:                c.ClientIP(),
 	}); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt subscription processing failed trade_no=%s client_ip=%s error=%q", tradeNo, c.ClientIP(), err.Error()))
 		c.String(http.StatusInternalServerError, "fail")

@@ -143,6 +143,7 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 		"data": gin.H{
 			"checkout_url": checkoutUrl,
 			"order_id":     referenceId,
+			"trade_no":     referenceId,
 		},
 	})
 }

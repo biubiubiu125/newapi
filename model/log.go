@@ -4,11 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -18,24 +21,24 @@ import (
 )
 
 type Log struct {
-	Id               int    `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
-	UserId           int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
-	CreatedAt        int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
-	Type             int    `json:"type" gorm:"index:idx_created_at_type"`
-	Content          string `json:"content"`
-	Username         string `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
-	TokenName        string `json:"token_name" gorm:"index;default:''"`
-	ModelName        string `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
-	Quota            int    `json:"quota" gorm:"default:0"`
-	PromptTokens     int    `json:"prompt_tokens" gorm:"default:0"`
-	CompletionTokens int    `json:"completion_tokens" gorm:"default:0"`
-	UseTime          int    `json:"use_time" gorm:"default:0"`
-	IsStream         bool   `json:"is_stream"`
-	ChannelId        int    `json:"channel" gorm:"index"`
-	ChannelName      string `json:"channel_name" gorm:"->"`
-	TokenId          int    `json:"token_id" gorm:"default:0;index"`
-	Group            string `json:"group" gorm:"index"`
-	Ip               string `json:"ip" gorm:"index;default:''"`
+	Id                int    `json:"id" gorm:"index:idx_created_at_id,priority:1;index:idx_user_id_id,priority:2"`
+	UserId            int    `json:"user_id" gorm:"index;index:idx_user_id_id,priority:1"`
+	CreatedAt         int64  `json:"created_at" gorm:"bigint;index:idx_created_at_id,priority:2;index:idx_created_at_type"`
+	Type              int    `json:"type" gorm:"index:idx_created_at_type"`
+	Content           string `json:"content"`
+	Username          string `json:"username" gorm:"index;index:index_username_model_name,priority:2;default:''"`
+	TokenName         string `json:"token_name" gorm:"index;default:''"`
+	ModelName         string `json:"model_name" gorm:"index;index:index_username_model_name,priority:1;default:''"`
+	Quota             int    `json:"quota" gorm:"default:0"`
+	PromptTokens      int    `json:"prompt_tokens" gorm:"default:0"`
+	CompletionTokens  int    `json:"completion_tokens" gorm:"default:0"`
+	UseTime           int    `json:"use_time" gorm:"default:0"`
+	IsStream          bool   `json:"is_stream"`
+	ChannelId         int    `json:"channel" gorm:"index"`
+	ChannelName       string `json:"channel_name" gorm:"->"`
+	TokenId           int    `json:"token_id" gorm:"default:0;index"`
+	Group             string `json:"group" gorm:"index"`
+	Ip                string `json:"ip" gorm:"index;default:''"`
 	RequestId         string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
 	UpstreamRequestId string `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
 	Other             string `json:"other"`
@@ -116,15 +119,67 @@ func RecordLogWithAdminInfo(userId int, logType int, content string, adminInfo m
 	}
 }
 
-func RecordTopupLog(userId int, content string, callerIp string, paymentMethod string, callbackPaymentMethod string) {
+type PaymentAuditLogInfo struct {
+	CallerIP              string
+	PaymentMethod         string
+	CallbackPaymentMethod string
+	PaymentProvider       string
+	OrderType             string
+	ProductName           string
+	PaidAmount            float64
+	PaidCurrency          string
+}
+
+func paymentAuditServerAddress() (string, string) {
+	raw := strings.TrimSpace(operation_setting.CustomCallbackAddress)
+	if !isPublicPaymentAuditAddress(raw) {
+		raw = strings.TrimSpace(system_setting.ServerAddress)
+	}
+	if !isPublicPaymentAuditAddress(raw) {
+		return "", ""
+	}
+	raw = strings.TrimRight(raw, "/")
+	parsed, err := url.Parse(raw)
+	if err != nil || strings.TrimSpace(parsed.Hostname()) == "" {
+		return raw, raw
+	}
+	return raw, parsed.Hostname()
+}
+
+func isPublicPaymentAuditAddress(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return false
+	}
+	host := strings.ToLower(strings.TrimSpace(parsed.Hostname()))
+	return host != "" && host != "localhost" && host != "127.0.0.1" && host != "::1"
+}
+
+func RecordPaymentAuditLog(userId int, content string, info PaymentAuditLogInfo) {
 	username, _ := GetUsernameById(userId, false)
+	serverAddress, serverHost := paymentAuditServerAddress()
 	adminInfo := map[string]interface{}{
-		"server_ip":               common.GetIp(),
 		"node_name":               common.NodeName,
-		"caller_ip":               callerIp,
-		"payment_method":          paymentMethod,
-		"callback_payment_method": callbackPaymentMethod,
+		"caller_ip":               strings.TrimSpace(info.CallerIP),
+		"payment_method":          strings.TrimSpace(info.PaymentMethod),
+		"callback_payment_method": strings.TrimSpace(info.CallbackPaymentMethod),
+		"payment_provider":        strings.TrimSpace(info.PaymentProvider),
+		"order_type":              strings.TrimSpace(info.OrderType),
+		"product_name":            strings.TrimSpace(info.ProductName),
 		"version":                 common.Version,
+	}
+	if serverAddress != "" {
+		adminInfo["server_address"] = serverAddress
+	}
+	if serverHost != "" {
+		adminInfo["server_host"] = serverHost
+		adminInfo["server_ip"] = serverHost
+	}
+	if info.PaidAmount > 0 {
+		adminInfo["paid_amount"] = info.PaidAmount
+	}
+	if strings.TrimSpace(info.PaidCurrency) != "" {
+		adminInfo["paid_currency"] = strings.TrimSpace(info.PaidCurrency)
 	}
 	other := map[string]interface{}{
 		"admin_info": adminInfo,
@@ -135,13 +190,22 @@ func RecordTopupLog(userId int, content string, callerIp string, paymentMethod s
 		CreatedAt: common.GetTimestamp(),
 		Type:      LogTypeTopup,
 		Content:   content,
-		Ip:        callerIp,
+		Ip:        strings.TrimSpace(info.CallerIP),
 		Other:     common.MapToJsonStr(other),
 	}
 	err := LOG_DB.Create(log).Error
 	if err != nil {
 		common.SysLog("failed to record topup log: " + err.Error())
 	}
+}
+
+func RecordTopupLog(userId int, content string, callerIp string, paymentMethod string, callbackPaymentMethod string) {
+	RecordPaymentAuditLog(userId, content, PaymentAuditLogInfo{
+		CallerIP:              callerIp,
+		PaymentMethod:         paymentMethod,
+		CallbackPaymentMethod: callbackPaymentMethod,
+		OrderType:             "topup",
+	})
 }
 
 func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string, tokenName string, content string, tokenId int, useTimeSeconds int,

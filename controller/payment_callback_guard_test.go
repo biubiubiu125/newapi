@@ -363,6 +363,53 @@ func TestBEpusdtTopupNotifyAcceptsCashierCallback(t *testing.T) {
 	require.Contains(t, topupLog.Content, "BEpusdt USDT")
 }
 
+func TestBEpusdtTopupNotifyRejectsTokenMismatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 923, Username: "bepusdt_token_guard_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	topUp := &model.TopUp{
+		UserId:          user.Id,
+		Amount:          2,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "bepusdt-token-mismatch",
+		PaymentMethod:   model.PaymentMethodUSDT,
+		PaymentProvider: model.PaymentProviderBEpusdt,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, topUp.Insert())
+
+	body := signedGMPayCallback(map[string]interface{}{
+		"trade_id":   "BEPAY202605220003",
+		"order_id":   topUp.TradeNo,
+		"amount":     "9.99",
+		"fiat":       "CNY",
+		"currencies": "BTC",
+		"status":     2,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/user/bepusdt/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	BEpusdtTopUpNotify(c)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.Equal(t, "fail", w.Body.String())
+	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
+	var updatedUser model.User
+	require.NoError(t, model.DB.Where("id = ?", user.Id).First(&updatedUser).Error)
+	require.Zero(t, updatedUser.Quota)
+}
+
 func TestBEpusdtTopupNotifyAcceptsNativeCallbackEvenWithLegacyExtraFields(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
@@ -692,6 +739,64 @@ func TestSubscriptionBEpusdtNotifyAcceptsCashierCallback(t *testing.T) {
 	var topupLog model.Log
 	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", user.Id, model.LogTypeTopup).First(&topupLog).Error)
 	require.Contains(t, topupLog.Content, "订阅")
+}
+
+func TestSubscriptionBEpusdtNotifyRejectsTokenMismatch(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 924, Username: "sub_bepusdt_token_guard_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	plan := &model.SubscriptionPlan{
+		Id:            815,
+		Title:         "BEpusdt Token Guard Plan",
+		PriceAmount:   9.99,
+		Currency:      "CNY",
+		DurationUnit:  model.SubscriptionDurationMonth,
+		DurationValue: 1,
+		Enabled:       true,
+		TotalAmount:   1000,
+	}
+	require.NoError(t, model.DB.Create(plan).Error)
+	order := &model.SubscriptionOrder{
+		UserId:          user.Id,
+		PlanId:          plan.Id,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "CNY",
+		TradeNo:         "sub-bepusdt-token-mismatch",
+		PaymentMethod:   model.PaymentMethodUSDT,
+		PaymentProvider: model.PaymentProviderBEpusdt,
+		Status:          common.TopUpStatusPending,
+		CreateTime:      time.Now().Unix(),
+	}
+	require.NoError(t, order.Insert())
+
+	body := signedGMPayCallback(map[string]interface{}{
+		"trade_id":   "BEPAY202605220004",
+		"order_id":   order.TradeNo,
+		"amount":     "9.99",
+		"fiat":       "CNY",
+		"currencies": "ETH",
+		"status":     2,
+	})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/subscription/bepusdt/notify", strings.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	SubscriptionBEpusdtNotify(c)
+
+	require.Equal(t, http.StatusInternalServerError, w.Code)
+	require.Equal(t, "fail", w.Body.String())
+	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
+	var subscriptionCount int64
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("user_id = ?", user.Id).Count(&subscriptionCount).Error)
+	require.Zero(t, subscriptionCount)
 }
 
 func TestSubscriptionBEpusdtNotifyRejectsLegacyGMPayNetworkOrder(t *testing.T) {

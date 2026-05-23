@@ -46,8 +46,9 @@ import {
   paySubscriptionWaffoPancake,
 } from '../../api'
 import { getPaymentIcon } from '@/features/wallet/lib'
+import type { PaymentInitiationResult } from '@/features/wallet/types'
 import { formatCnyPrice, formatDuration, formatResetPeriod } from '../../lib'
-import type { PlanRecord } from '../../types'
+import type { PlanRecord, SubscriptionPayResponse } from '../../types'
 
 interface PaymentMethod {
   type: string
@@ -67,6 +68,7 @@ interface Props {
   gmpayMethods?: PaymentMethod[]
   purchaseLimit?: number
   purchaseCount?: number
+  onPaymentStarted?: (payment?: PaymentInitiationResult | string) => void
 }
 
 export function SubscriptionPurchaseDialog(props: Props) {
@@ -119,6 +121,21 @@ export function SubscriptionPurchaseDialog(props: Props) {
     (props.purchaseLimit || 0) > 0 &&
     (props.purchaseCount || 0) >= (props.purchaseLimit || 0)
 
+  const getTradeNo = (res?: SubscriptionPayResponse): string | undefined =>
+    res?.trade_no || res?.order_id || res?.data?.trade_no || res?.data?.order_id
+
+  const getPaymentStartedPayload = (
+    res: SubscriptionPayResponse,
+    paymentMethod: string
+  ): PaymentInitiationResult => ({
+    ok: true,
+    tradeNo: getTradeNo(res),
+    amount: plan.price_amount || 0,
+    paymentMethod,
+    paymentKind: 'subscription',
+    title: plan.title,
+  })
+
   const handlePayStripe = async () => {
     setPaying(true)
     try {
@@ -127,6 +144,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
         window.open(res.data.pay_link, '_blank')
         toast.success(t('Payment page opened'))
         props.onOpenChange(false)
+        props.onPaymentStarted?.(getPaymentStartedPayload(res, 'stripe'))
       } else {
         toast.error(
           res.message && res.message !== 'success'
@@ -149,6 +167,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
         window.open(res.data.checkout_url, '_blank')
         toast.success(t('Payment page opened'))
         props.onOpenChange(false)
+        props.onPaymentStarted?.(getPaymentStartedPayload(res, 'creem'))
       } else {
         toast.error(
           res.message && res.message !== 'success'
@@ -171,6 +190,10 @@ export function SubscriptionPurchaseDialog(props: Props) {
       const res = await paySubscriptionWaffoPancake({ plan_id: plan.id })
       if (res.message === 'success' && res.data?.checkout_url) {
         toast.success(t('Redirecting to payment page...'))
+        props.onOpenChange(false)
+        props.onPaymentStarted?.(
+          getPaymentStartedPayload(res, 'waffo_pancake')
+        )
         window.location.href = res.data.checkout_url
       } else {
         toast.error(
@@ -220,6 +243,9 @@ export function SubscriptionPurchaseDialog(props: Props) {
         document.body.removeChild(form)
         toast.success(t('Payment initiated'))
         props.onOpenChange(false)
+        props.onPaymentStarted?.(
+          getPaymentStartedPayload(res, selectedEpayMethod)
+        )
       } else {
         toast.error(
           res.message && res.message !== 'success'
@@ -249,6 +275,9 @@ export function SubscriptionPurchaseDialog(props: Props) {
         window.open(res.data.payment_url, '_blank')
         toast.success(t('Payment page opened'))
         props.onOpenChange(false)
+        props.onPaymentStarted?.(
+          getPaymentStartedPayload(res, selectedGMPayMethod)
+        )
       } else {
         toast.error(
           res.message && res.message !== 'success'
@@ -321,11 +350,6 @@ export function SubscriptionPurchaseDialog(props: Props) {
             <div className='flex items-center justify-between'>
               <span className='text-sm font-medium'>{t('Amount Due')}</span>
               <span className='text-primary text-lg font-bold'>{price}</span>
-            </div>
-            <div className='text-muted-foreground text-xs'>
-              {t(
-                'Displayed as CNY for user-facing sales. The actual payment currency is still recorded from the payment channel.'
-              )}
             </div>
           </div>
 

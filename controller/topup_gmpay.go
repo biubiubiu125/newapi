@@ -166,6 +166,7 @@ func RequestBEpusdtPay(c *gin.Context) {
 	common.ApiSuccess(c, gin.H{
 		"payment_url":      paymentOrder.PaymentURL,
 		"order_id":         paymentOrder.OrderID,
+		"trade_no":         tradeNo,
 		"transaction_id":   paymentOrder.TransactionID,
 		"payment_address":  paymentOrder.PaymentAddress,
 		"payment_amount":   paymentOrder.PaymentAmount,
@@ -250,7 +251,7 @@ func validateUSDTGatewayCallback(c *gin.Context, tradeNo string, params map[stri
 	return service.USDTGatewayCallbackFacts{
 		Provider:      provider,
 		PaymentMethod: method,
-		Token:         "",
+		Token:         service.GMPayCallbackToken(params),
 		PaidAmount:    service.GMPayCallbackPaidAmount(params),
 		PaidCurrency:  service.GMPayCallbackPaidCurrency(params),
 	}, nil

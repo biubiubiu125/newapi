@@ -129,7 +129,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
         return username ? (
           <span className='whitespace-nowrap text-sm'>{username}</span>
         ) : (
-          <span className='text-muted-foreground text-sm'>{t('None')}</span>
+          <span className='text-muted-foreground text-sm'>-</span>
         )
       },
       enableSorting: false,
@@ -239,6 +239,25 @@ export function useUsersColumns(): ColumnDef<User>[] {
         )
       },
       meta: { label: t('Quota') },
+    },
+    {
+      accessorKey: 'active_subscription_name',
+      size: 140,
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t('Subscription')} />
+      ),
+      cell: ({ row }) => {
+        const subscriptionName = row.original.active_subscription_name
+        return subscriptionName ? (
+          <LongText className='max-w-[132px] text-sm'>
+            {subscriptionName}
+          </LongText>
+        ) : (
+          <span className='text-muted-foreground text-sm'>-</span>
+        )
+      },
+      enableSorting: false,
+      meta: { label: t('Subscription'), mobileHidden: true },
     },
     {
       accessorKey: 'group',

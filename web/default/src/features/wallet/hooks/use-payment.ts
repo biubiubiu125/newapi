@@ -28,6 +28,7 @@ import {
   isApiSuccess,
 } from '../api'
 import { isStripePayment, isGMPayPayment, submitPaymentForm } from '../lib'
+import type { PaymentInitiationResult } from '../types'
 
 // ============================================================================
 // Payment Hook
@@ -83,9 +84,36 @@ export function usePayment() {
     []
   )
 
+  const getResponseTradeNo = useCallback(
+    (response: unknown, paymentData?: Record<string, unknown>) => {
+      for (const key of ['trade_no', 'order_id', 'out_trade_no']) {
+        const value = paymentData?.[key]
+        if (typeof value === 'string' && value.trim()) {
+          return value
+        }
+      }
+
+      const payload =
+        response && typeof response === 'object'
+          ? (response as Record<string, unknown>)
+          : undefined
+      const tradeNo = payload?.trade_no
+      const orderId = payload?.order_id
+      return (
+        (typeof tradeNo === 'string' && tradeNo) ||
+        (typeof orderId === 'string' && orderId) ||
+        undefined
+      )
+    },
+    []
+  )
+
   // Process payment
   const processPayment = useCallback(
-    async (topupAmount: number, paymentType: string) => {
+    async (
+      topupAmount: number,
+      paymentType: string
+    ): Promise<PaymentInitiationResult> => {
       try {
         setProcessing(true)
 
@@ -110,7 +138,7 @@ export function usePayment() {
 
         if (!isApiSuccess(response)) {
           toast.error(getPaymentErrorMessage(response))
-          return false
+          return { ok: false }
         }
 
         // Handle Stripe payment
@@ -125,13 +153,27 @@ export function usePayment() {
         if (isStripe && stripePayLink) {
           window.open(stripePayLink, '_blank')
           toast.success(i18next.t('Redirecting to payment page...'))
-          return true
+          return {
+            ok: true,
+            tradeNo: getResponseTradeNo(response, paymentData),
+            amount: topupAmount,
+            payAmount: amount,
+            paymentMethod: paymentType,
+            paymentKind: 'topup',
+          }
         }
 
         if (isGMPay && gmpayPaymentUrl) {
           window.open(gmpayPaymentUrl, '_blank')
           toast.success(i18next.t('Redirecting to payment page...'))
-          return true
+          return {
+            ok: true,
+            tradeNo: getResponseTradeNo(response, paymentData),
+            amount: topupAmount,
+            payAmount: amount,
+            paymentMethod: paymentType,
+            paymentKind: 'topup',
+          }
         }
 
         // Handle non-Stripe payment
@@ -140,19 +182,26 @@ export function usePayment() {
           if (url) {
             submitPaymentForm(url, response.data)
             toast.success(i18next.t('Redirecting to payment page...'))
-            return true
+            return {
+              ok: true,
+              tradeNo: getResponseTradeNo(response, paymentData),
+              amount: topupAmount,
+              payAmount: amount,
+              paymentMethod: paymentType,
+              paymentKind: 'topup',
+            }
           }
         }
 
-        return false
+        return { ok: false }
       } catch (_error) {
         toast.error(i18next.t('Payment request failed'))
-        return false
+        return { ok: false }
       } finally {
         setProcessing(false)
       }
     },
-    []
+    [getResponseTradeNo]
   )
 
   return {

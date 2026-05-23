@@ -104,6 +104,13 @@ export interface LogOtherData {
     callback_payment_method?: string
     caller_ip?: string
     server_ip?: string
+    server_address?: string
+    server_host?: string
+    payment_provider?: string
+    order_type?: string
+    product_name?: string
+    paid_amount?: number
+    paid_currency?: string
     version?: string
     node_name?: string
     // Manage audit fields (type=3, admin only)

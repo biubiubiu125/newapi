@@ -130,4 +130,8 @@ func TestBEpusdtSignAndNotifyHelpers(t *testing.T) {
 	require.Empty(t, GMPayCallbackToken(values))
 	require.Equal(t, 100.0, GMPayCallbackPaidAmount(values))
 	require.Equal(t, "CNY", GMPayCallbackPaidCurrency(values))
+
+	values["currencies"] = "USDT"
+	values["signature"] = GMPaySign(values, "secret")
+	require.Equal(t, "usdt", GMPayCallbackToken(values))
 }

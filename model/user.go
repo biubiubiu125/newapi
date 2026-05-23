@@ -44,6 +44,7 @@ type User struct {
 	Group                   string         `json:"group" gorm:"type:varchar(64);default:'default'"`
 	ReferralInviterId       int            `json:"referral_inviter_id,omitempty" gorm:"-"`
 	ReferralInviterUsername string         `json:"referral_inviter_username,omitempty" gorm:"-"`
+	ActiveSubscriptionName  string         `json:"active_subscription_name,omitempty" gorm:"-"`
 	RegisterIP              string         `json:"register_ip" gorm:"column:register_ip;type:varchar(64);default:''"`
 	LastActiveAt            int64          `json:"last_active_at" gorm:"-"`
 	DeletedAt               gorm.DeletedAt `gorm:"index"`
@@ -227,6 +228,7 @@ func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err err
 		return nil, 0, err
 	}
 	populateReferralInviters(users)
+	populateActiveSubscriptionNames(users)
 	populateUserActivity(users)
 
 	return users, total, nil
@@ -289,6 +291,7 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, 
 		return nil, 0, err
 	}
 	populateReferralInviters(users)
+	populateActiveSubscriptionNames(users)
 	populateUserActivity(users)
 
 	return users, total, nil
@@ -399,6 +402,48 @@ func populateReferralInviters(users []*User) {
 		}
 		user.ReferralInviterId = row.InviterUserId
 		user.ReferralInviterUsername = row.InviterUsername
+	}
+}
+
+func populateActiveSubscriptionNames(users []*User) {
+	if len(users) == 0 {
+		return
+	}
+	userIds := make([]int, 0, len(users))
+	userById := make(map[int]*User, len(users))
+	for _, user := range users {
+		if user == nil || user.Id == 0 {
+			continue
+		}
+		userIds = append(userIds, user.Id)
+		userById[user.Id] = user
+	}
+	if len(userIds) == 0 {
+		return
+	}
+
+	type subscriptionRow struct {
+		UserID int
+		Title  string
+	}
+	var rows []subscriptionRow
+	now := common.GetTimestamp()
+	err := DB.Table("user_subscriptions AS us").
+		Select("us.user_id, sp.title").
+		Joins("LEFT JOIN subscription_plans sp ON sp.id = us.plan_id").
+		Where("us.user_id IN ? AND us.status = ? AND us.end_time > ?", userIds, "active", now).
+		Order("us.end_time desc, us.id desc").
+		Scan(&rows).Error
+	if err != nil {
+		common.SysLog("failed to populate active subscriptions: " + err.Error())
+		return
+	}
+	for _, row := range rows {
+		user := userById[row.UserID]
+		if user == nil || user.ActiveSubscriptionName != "" {
+			continue
+		}
+		user.ActiveSubscriptionName = strings.TrimSpace(row.Title)
 	}
 }
 

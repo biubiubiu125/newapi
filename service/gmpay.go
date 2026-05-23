@@ -354,7 +354,7 @@ func GMPayCallbackMethod(values map[string]interface{}) string {
 }
 
 func GMPayCallbackToken(values map[string]interface{}) string {
-	return strings.ToLower(firstString(values, "currency", "symbol", "coin", "currencies", "crypto"))
+	return strings.ToLower(firstString(values, "currencies", "currency", "symbol", "coin", "crypto", "payment_currency"))
 }
 
 func GMPayCallbackPaidAmount(values map[string]interface{}) float64 {

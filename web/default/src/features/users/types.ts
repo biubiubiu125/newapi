@@ -46,6 +46,7 @@ export const userSchema = z.object({
   group: z.string(),
   referral_inviter_id: z.number().optional(),
   referral_inviter_username: z.string().optional(),
+  active_subscription_name: z.string().optional(),
   linux_do_id: z.string().optional(),
   status: userStatusSchema,
   role: userRoleSchema,

@@ -20,6 +20,7 @@ import { useState, useCallback } from 'react'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 import { requestWaffoPayment, isApiSuccess } from '../api'
+import type { PaymentInitiationResult } from '../types'
 
 function getPaymentUrl(data: unknown): string | null {
   if (!data || typeof data !== 'object') {
@@ -31,6 +32,22 @@ function getPaymentUrl(data: unknown): string | null {
   }
 
   return null
+}
+
+function getTradeNo(data: unknown): string | undefined {
+  if (!data || typeof data !== 'object') {
+    return undefined
+  }
+
+  if ('trade_no' in data && typeof data.trade_no === 'string') {
+    return data.trade_no
+  }
+
+  if ('order_id' in data && typeof data.order_id === 'string') {
+    return data.order_id
+  }
+
+  return undefined
 }
 
 function getErrorMessage(message: string | undefined, data: unknown): string {
@@ -48,7 +65,10 @@ export function useWaffoPayment() {
   const [processing, setProcessing] = useState(false)
 
   const processWaffoPayment = useCallback(
-    async (topupAmount: number, payMethodIndex?: number) => {
+    async (
+      topupAmount: number,
+      payMethodIndex?: number
+    ): Promise<PaymentInitiationResult> => {
       setProcessing(true)
 
       try {
@@ -63,15 +83,22 @@ export function useWaffoPayment() {
           if (paymentUrl) {
             window.open(paymentUrl, '_blank')
             toast.success(i18next.t('Redirecting to payment page...'))
-            return true
+            return {
+              ok: true,
+              tradeNo: getTradeNo(response.data),
+              amount: topupAmount,
+              payAmount: Math.floor(topupAmount),
+              paymentKind: 'topup',
+              paymentMethod: 'waffo',
+            }
           }
         }
 
         toast.error(getErrorMessage(response.message, response.data))
-        return false
+        return { ok: false }
       } catch (_error) {
         toast.error(i18next.t('Payment request failed'))
-        return false
+        return { ok: false }
       } finally {
         setProcessing(false)
       }

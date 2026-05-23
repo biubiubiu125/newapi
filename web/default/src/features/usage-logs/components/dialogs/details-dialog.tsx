@@ -35,6 +35,7 @@ import { formatBillingCurrencyFromUSD } from '@/lib/currency'
 import { formatLogQuota, formatTokens, formatUseTime } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { getPaymentMethodName } from '@/features/wallet/lib/billing'
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -418,27 +419,132 @@ export function DetailsDialog(props: DetailsDialogProps) {
     !!other?.expr_b64
   const hasAudioTokens = other?.ws || other?.audio
   const showTiming = isTimingLogType(props.log.type)
-  const showAdminIp =
-    !!props.log.ip && (showTiming || (props.isAdmin && isTopup))
+  const showAdminIp = !!props.log.ip && showTiming
   const adminInfo = other?.admin_info
+  const formatPaymentMethod = (method?: string) => {
+    const normalized = String(method ?? '').trim()
+    if (!normalized) return ''
+    return getPaymentMethodName(normalized, t)
+  }
+  const formatPaymentProvider = (provider?: string) => {
+    const normalized = String(provider ?? '').trim().toLowerCase()
+    if (!normalized) return ''
+    const labels: Record<string, string> = {
+      epay: 'Epay',
+      bepusdt: 'BEpusdt',
+      stripe: 'Stripe',
+      creem: 'Creem',
+      waffo: 'Waffo',
+      waffo_pancake: 'Waffo Pancake',
+    }
+    return labels[normalized] ?? provider ?? ''
+  }
+  const isPaymentProviderValue = (value?: string) => {
+    const normalized = String(value ?? '').trim().toLowerCase()
+    return [
+      'epay',
+      'bepusdt',
+      'gmpay',
+      'stripe',
+      'creem',
+      'waffo',
+      'waffo_pancake',
+    ].includes(normalized)
+  }
+  const isPrivateOrLocalAddress = (value?: string) => {
+    const normalized = String(value ?? '').trim().toLowerCase()
+    if (!normalized) return true
+    if (normalized === 'localhost' || normalized === '::1') return true
+    const parts = normalized.split('.').map((part) => Number(part))
+    if (parts.length !== 4 || parts.some((part) => Number.isNaN(part))) {
+      return false
+    }
+    const [first, second] = parts
+    if (first === 10 || first === 127 || first === 0) return true
+    if (first === 172 && second >= 16 && second <= 31) return true
+    if (first === 192 && second === 168) return true
+    return false
+  }
+  const formatOrderType = (value?: string) => {
+    const normalized = String(value ?? '').trim().toLowerCase()
+    if (normalized === 'topup') return t('Top-up')
+    if (normalized === 'subscription') return t('Subscription')
+    return value ?? ''
+  }
+  const formatPaidAmount = (amount?: number, currency?: string) => {
+    if (amount == null || Number.isNaN(amount)) return ''
+    const normalizedCurrency = String(currency ?? '').trim().toUpperCase()
+    const formattedAmount = amount.toLocaleString(undefined, {
+      minimumFractionDigits: 2,
+      maximumFractionDigits: 8,
+    })
+    return normalizedCurrency ? `${formattedAmount} ${normalizedCurrency}` : formattedAmount
+  }
+  const inferredPaymentProvider =
+    adminInfo?.payment_provider ||
+    (isPaymentProviderValue(adminInfo?.callback_payment_method)
+      ? adminInfo?.callback_payment_method
+      : '')
+  const shouldShowCallbackPaymentMethod =
+    !!adminInfo?.callback_payment_method &&
+    !isPaymentProviderValue(adminInfo.callback_payment_method)
+  const serverAddress = adminInfo?.server_address
+  const serverHost = adminInfo?.server_host
+  const legacyServerHost =
+    !serverAddress &&
+    !serverHost &&
+    !isPrivateOrLocalAddress(adminInfo?.server_ip)
+      ? adminInfo?.server_ip
+      : ''
   const topupAuditFields =
     isTopup && props.isAdmin && adminInfo
       ? ([
           adminInfo.payment_method && {
             label: t('Order Payment Method'),
-            value: adminInfo.payment_method,
+            value: formatPaymentMethod(adminInfo.payment_method),
           },
-          adminInfo.callback_payment_method && {
+          shouldShowCallbackPaymentMethod && {
             label: t('Callback Payment Method'),
-            value: adminInfo.callback_payment_method,
+            value: formatPaymentMethod(adminInfo.callback_payment_method),
+          },
+          inferredPaymentProvider && {
+            label: t('Payment Gateway'),
+            value: formatPaymentProvider(inferredPaymentProvider),
+          },
+          adminInfo.order_type && {
+            label: t('Order Type'),
+            value: formatOrderType(adminInfo.order_type),
+          },
+          adminInfo.product_name && {
+            label: t('Product'),
+            value: adminInfo.product_name,
+          },
+          adminInfo.paid_amount != null && {
+            label: t('Paid Amount'),
+            value: formatPaidAmount(
+              Number(adminInfo.paid_amount),
+              adminInfo.paid_currency
+            ),
           },
           adminInfo.caller_ip && {
             label: t('Callback Caller IP'),
             value: adminInfo.caller_ip,
           },
-          adminInfo.server_ip && {
-            label: t('Server IP'),
-            value: adminInfo.server_ip,
+          serverAddress && {
+            label: t('Server Address'),
+            value: serverAddress,
+          },
+          !serverAddress && serverHost && {
+            label: t('Server Host'),
+            value: serverHost,
+          },
+          legacyServerHost && {
+            label: t('Server Host'),
+            value: legacyServerHost,
+          },
+          serverHost && serverAddress && serverHost !== serverAddress && {
+            label: t('Server Host'),
+            value: serverHost,
           },
           adminInfo.node_name && {
             label: t('Node Name'),
@@ -731,7 +837,7 @@ export function DetailsDialog(props: DetailsDialogProps) {
                     />
                     <span>
                       {t(
-                        'This record was written by a pre-upgrade instance and lacks audit info. Upgrade the instance to record server IP, callback IP, payment method and system version.'
+                        'This record does not contain payment audit details. It may have been created by redemption, manual adjustment, or an older payment flow.'
                       )}
                     </span>
                   </div>

@@ -94,6 +94,8 @@ export interface SubscriptionPayRequest {
 export interface SubscriptionPayResponse {
   success: boolean
   message?: string
+  order_id?: string
+  trade_no?: string
   data?: {
     // Stripe-style hosted checkout link.
     pay_link?: string
@@ -104,6 +106,7 @@ export interface SubscriptionPayResponse {
     payment_address?: string
     payment_amount?: string
     payment_currency?: string
+    trade_no?: string
     // Pancake-only: order metadata + self-service buyer session token,
     // surfaced for future flows (refund / cancel from new-api's own UI).
     session_id?: string

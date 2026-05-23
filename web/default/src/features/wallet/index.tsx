@@ -16,15 +16,28 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { useQueryClient } from '@tanstack/react-query'
+import { CheckCircle2, Clock3, RefreshCw } from 'lucide-react'
 import { toast } from 'sonner'
 import { getSelf } from '@/lib/api'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { subscribeSettingsRefresh } from '@/lib/settings-refresh'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from '@/components/ui/alert-dialog'
 import { SectionPageLayout } from '@/components/layout'
+import { getUserBillingHistory, isApiSuccess } from './api'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
@@ -44,12 +57,16 @@ import {
   getDefaultPaymentType,
   getMinTopupAmount,
   isWaffoPancakePayment,
+  formatPaymentCnyAmount,
+  formatSiteCreditAmount,
+  getPaymentMethodName,
 } from './lib'
 import type {
   UserWalletData,
   PaymentMethod,
   PresetAmount,
   CreemProduct,
+  PaymentInitiationResult,
 } from './types'
 
 interface WalletProps {
@@ -61,6 +78,25 @@ interface WalletProps {
     order_type?: 'topup' | 'subscription'
     trade_no?: string
   }
+}
+
+interface PendingPaymentState {
+  tradeNo?: string
+  amount?: number
+  payAmount?: number
+  paymentMethod?: string
+  paymentKind?: PaymentInitiationResult['paymentKind']
+  title?: string
+  status: 'waiting' | 'completed'
+  dialogOpen: boolean
+}
+
+const PAYMENT_POLL_INTERVAL_MS = 3000
+
+type PaymentSuccessMessageSource = {
+  paymentKind?: PaymentInitiationResult['paymentKind']
+  amount?: number
+  title?: string
 }
 
 export function Wallet(props: WalletProps) {
@@ -80,6 +116,9 @@ export function Wallet(props: WalletProps) {
     useState<CreemProduct | null>(null)
   const [showSubscriptionPanel, setShowSubscriptionPanel] = useState(true)
   const [paymentRefreshKey, setPaymentRefreshKey] = useState(0)
+  const [pendingPayment, setPendingPayment] =
+    useState<PendingPaymentState | null>(null)
+  const processedPaymentReturnKeyRef = useRef('')
 
   const queryClient = useQueryClient()
   const { status } = useStatus()
@@ -126,9 +165,160 @@ export function Wallet(props: WalletProps) {
     }
   }, [])
 
+  const refreshPaymentData = useCallback(async () => {
+    await Promise.all([
+      fetchUser(),
+      refetchTopupInfo(),
+      queryClient.invalidateQueries({ queryKey: ['referral'] }),
+      queryClient.invalidateQueries({ queryKey: ['referral-summary'] }),
+      queryClient.invalidateQueries({ queryKey: ['referral-commissions'] }),
+      queryClient.invalidateQueries({ queryKey: ['referral-withdrawals'] }),
+      queryClient.invalidateQueries({ queryKey: ['user-subscriptions'] }),
+      queryClient.invalidateQueries({ queryKey: ['subscriptions'] }),
+    ])
+    setPaymentRefreshKey((key) => key + 1)
+  }, [fetchUser, queryClient, refetchTopupInfo])
+
+  const checkPaymentStatus = useCallback(
+    async (tradeNo?: string): Promise<boolean> => {
+      if (!tradeNo) return false
+
+      const response = await getUserBillingHistory(1, 1, tradeNo)
+      if (!isApiSuccess(response) || !response.data) return false
+
+      const record = (response.data.items || []).find(
+        (item) => item.trade_no === tradeNo
+      )
+      return record?.status === 'success'
+    },
+    []
+  )
+
+  const getPaymentSuccessMessage = useCallback(
+    (payment?: PaymentSuccessMessageSource) => {
+      if (
+        payment?.paymentKind === 'topup' &&
+        typeof payment.amount === 'number'
+      ) {
+        return t('Payment completed. Top-up balance {{amount}} has been credited.', {
+          amount: formatSiteCreditAmount(payment.amount),
+        })
+      }
+
+      if (payment?.paymentKind === 'subscription') {
+        return t('Payment completed. {{title}} subscription is now active.', {
+          title: payment.title || t('Subscription'),
+        })
+      }
+
+      return t('Payment completed. Refreshing account data...')
+    },
+    [t]
+  )
+
+  const startPendingPayment = useCallback(
+    (payment?: PaymentInitiationResult | string) => {
+      const payload =
+        typeof payment === 'string'
+          ? ({ ok: true, tradeNo: payment } satisfies PaymentInitiationResult)
+          : payment
+      setPendingPayment({
+        tradeNo: payload?.tradeNo,
+        amount: payload?.amount,
+        payAmount: payload?.payAmount,
+        paymentMethod: payload?.paymentMethod,
+        paymentKind: payload?.paymentKind,
+        title: payload?.title,
+        status: 'waiting',
+        dialogOpen: true,
+      })
+    },
+    []
+  )
+
+  const markPendingPaymentCompleted = useCallback((tradeNo: string) => {
+    setPendingPayment((current) => {
+      if (!current || current.tradeNo !== tradeNo) return current
+      return { ...current, status: 'completed' }
+    })
+  }, [])
+
   useEffect(() => {
     fetchUser()
   }, [fetchUser])
+
+  useEffect(() => {
+    if (!pendingPayment || pendingPayment.status !== 'waiting') return
+    if (!pendingPayment.tradeNo) return
+
+    const pendingTradeNo = pendingPayment.tradeNo
+    let canceled = false
+
+    const poll = async () => {
+      if (canceled) return
+
+      const completed = await checkPaymentStatus(pendingTradeNo)
+      if (canceled) return
+
+      if (completed) {
+        markPendingPaymentCompleted(pendingTradeNo)
+        await refreshPaymentData()
+        toast.success(getPaymentSuccessMessage(pendingPayment))
+        setPendingPayment(null)
+      }
+    }
+
+    void poll()
+    const intervalId = window.setInterval(() => {
+      void poll()
+    }, PAYMENT_POLL_INTERVAL_MS)
+
+    return () => {
+      canceled = true
+      window.clearInterval(intervalId)
+    }
+  }, [
+    checkPaymentStatus,
+    getPaymentSuccessMessage,
+    markPendingPaymentCompleted,
+    pendingPayment,
+    refreshPaymentData,
+    t,
+  ])
+
+  useEffect(() => {
+    if (!pendingPayment || pendingPayment.status !== 'waiting') return
+    const pendingTradeNo = pendingPayment.tradeNo
+
+    const refreshOnReturn = () => {
+      if (document.visibilityState === 'hidden') return
+      void (async () => {
+        await refreshPaymentData()
+        if (pendingTradeNo) {
+          const completed = await checkPaymentStatus(pendingTradeNo)
+          if (completed) {
+            markPendingPaymentCompleted(pendingTradeNo)
+            toast.success(getPaymentSuccessMessage(pendingPayment))
+            setPendingPayment(null)
+          }
+        }
+      })()
+    }
+
+    window.addEventListener('focus', refreshOnReturn)
+    document.addEventListener('visibilitychange', refreshOnReturn)
+    return () => {
+      window.removeEventListener('focus', refreshOnReturn)
+      document.removeEventListener('visibilitychange', refreshOnReturn)
+    }
+  }, [
+    checkPaymentStatus,
+    getPaymentSuccessMessage,
+    markPendingPaymentCompleted,
+    pendingPayment,
+    refreshPaymentData,
+    t,
+  ])
 
   useEffect(() => {
     if (props.initialShowHistory) {
@@ -140,9 +330,21 @@ export function Wallet(props: WalletProps) {
   const returnedPay = props.paymentReturn?.pay
   const returnedShowHistory = props.paymentReturn?.show_history
   const returnedTradeNo = props.paymentReturn?.trade_no
+  const returnedPaymentProvider = props.paymentReturn?.payment_provider
+  const returnedOrderType = props.paymentReturn?.order_type
 
   useEffect(() => {
     if (!returnedPay && !returnedShowHistory) return
+
+    const paymentReturnKey = [
+      returnedPay || '',
+      returnedShowHistory ? '1' : '0',
+      returnedPaymentProvider || '',
+      returnedOrderType || '',
+      returnedTradeNo || '',
+    ].join('|')
+    if (processedPaymentReturnKeyRef.current === paymentReturnKey) return
+    processedPaymentReturnKeyRef.current = paymentReturnKey
 
     setBillingDialogOpen(true)
     void fetchUser()
@@ -150,7 +352,11 @@ export function Wallet(props: WalletProps) {
     setPaymentRefreshKey((key) => key + 1)
 
     if (returnedPay === 'success') {
-      toast.success(t('Payment completed. Refreshing account data...'))
+      toast.success(
+        getPaymentSuccessMessage({
+          paymentKind: returnedOrderType,
+        })
+      )
     } else if (returnedPay === 'pending') {
       toast.info(t('Payment returned. Waiting for payment confirmation...'))
     } else if (returnedPay === 'fail') {
@@ -162,8 +368,11 @@ export function Wallet(props: WalletProps) {
     fetchUser,
     refetchTopupInfo,
     returnedPay,
+    returnedPaymentProvider,
+    returnedOrderType,
     returnedShowHistory,
     returnedTradeNo,
+    getPaymentSuccessMessage,
     t,
   ])
 
@@ -223,13 +432,14 @@ export function Wallet(props: WalletProps) {
     if (!selectedPaymentMethod) return
 
     const isPancake = isWaffoPancakePayment(selectedPaymentMethod.type)
-    const success = isPancake
+    const paymentResult = isPancake
       ? await processWaffoPancakePayment(topupAmount)
       : await processPayment(topupAmount, selectedPaymentMethod.type)
 
-    if (success) {
+    if (paymentResult.ok) {
       setConfirmDialogOpen(false)
-      await fetchUser()
+      startPendingPayment(paymentResult)
+      await refreshPaymentData()
     }
   }
 
@@ -254,11 +464,21 @@ export function Wallet(props: WalletProps) {
   const handleCreemConfirm = async () => {
     if (!selectedCreemProduct) return
 
-    const success = await processCreemPayment(selectedCreemProduct.productId)
-    if (success) {
+    const paymentResult = await processCreemPayment(
+      selectedCreemProduct.productId
+    )
+    if (paymentResult.ok) {
       setCreemDialogOpen(false)
       setSelectedCreemProduct(null)
-      await fetchUser()
+      startPendingPayment({
+        ...paymentResult,
+        amount: selectedCreemProduct.quota,
+        payAmount: selectedCreemProduct.price,
+        paymentMethod: selectedCreemProduct.currency,
+        paymentKind: 'topup',
+        title: selectedCreemProduct.name,
+      })
+      await refreshPaymentData()
     }
   }
 
@@ -267,11 +487,80 @@ export function Wallet(props: WalletProps) {
     setPaymentLoading(loadingKey)
 
     try {
-      await processWaffoPayment(topupAmount, index)
+      const paymentResult = await processWaffoPayment(topupAmount, index)
+      if (paymentResult.ok) {
+        startPendingPayment(paymentResult)
+        await refreshPaymentData()
+      }
     } finally {
       setPaymentLoading(null)
     }
   }
+
+  const handleManualPaymentRefresh = async () => {
+    await refreshPaymentData()
+    if (!pendingPayment?.tradeNo) return
+
+    const completed = await checkPaymentStatus(pendingPayment.tradeNo)
+    if (completed) {
+      markPendingPaymentCompleted(pendingPayment.tradeNo)
+      setPendingPayment(null)
+      toast.success(getPaymentSuccessMessage(pendingPayment))
+    } else {
+      toast.info(t('Payment is still pending. Please check again later.'))
+    }
+  }
+
+  const handlePendingPaymentOpenChange = (open: boolean) => {
+    setPendingPayment((current) => {
+      if (!current) return current
+      if (!open && current.status === 'completed') return null
+      return { ...current, dialogOpen: open }
+    })
+  }
+
+  const pendingPaymentRows = [
+    pendingPayment?.paymentKind
+      ? {
+          label: t('Order Type'),
+          value:
+            pendingPayment.paymentKind === 'subscription'
+              ? t('Subscription')
+              : t('Top-up'),
+        }
+      : null,
+    pendingPayment?.title
+      ? {
+          label: t('Product'),
+          value: pendingPayment.title,
+        }
+      : null,
+    typeof pendingPayment?.amount === 'number'
+      ? {
+          label:
+            pendingPayment.paymentKind === 'subscription'
+              ? t('Amount Due')
+              : t('Topup Amount'),
+          value:
+            pendingPayment.paymentKind === 'subscription'
+              ? `¥${pendingPayment.amount.toFixed(2)}`
+              : formatSiteCreditAmount(pendingPayment.amount),
+        }
+      : null,
+    pendingPayment?.paymentKind === 'topup' &&
+    typeof pendingPayment?.payAmount === 'number'
+      ? {
+          label: t('You Pay'),
+          value: formatPaymentCnyAmount(pendingPayment.payAmount),
+        }
+      : null,
+    pendingPayment?.paymentMethod
+      ? {
+          label: t('Payment Method'),
+          value: getPaymentMethodName(pendingPayment.paymentMethod, t),
+        }
+      : null,
+  ].filter(Boolean) as Array<{ label: string; value: string }>
 
   // Get discount rate for current topup amount
   const getDiscountRate = useCallback(() => {
@@ -382,6 +671,7 @@ export function Wallet(props: WalletProps) {
                 topupInfo={topupInfo}
                 onAvailabilityChange={handleSubscriptionAvailabilityChange}
                 refreshKey={paymentRefreshKey}
+                onPaymentStarted={startPendingPayment}
               />
             </div>
           </div>
@@ -414,6 +704,82 @@ export function Wallet(props: WalletProps) {
         product={selectedCreemProduct}
         processing={creemProcessing}
       />
+
+      <AlertDialog
+        open={Boolean(pendingPayment?.dialogOpen)}
+        onOpenChange={handlePendingPaymentOpenChange}
+      >
+        <AlertDialogContent className='max-sm:w-[calc(100vw-1.5rem)] sm:max-w-md'>
+          <AlertDialogHeader>
+            <AlertDialogMedia
+              className={
+                pendingPayment?.status === 'completed'
+                  ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-950 dark:text-emerald-300'
+                  : 'bg-muted text-muted-foreground'
+              }
+            >
+              {pendingPayment?.status === 'completed' ? (
+                <CheckCircle2 className='h-6 w-6' />
+              ) : (
+                <Clock3 className='h-6 w-6' />
+              )}
+            </AlertDialogMedia>
+            <AlertDialogTitle className='text-xl font-semibold'>
+              {pendingPayment?.status === 'completed'
+                ? t('Payment completed')
+                : t('Waiting for payment confirmation')}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              {pendingPayment?.status === 'completed'
+                ? t('Account data has been refreshed.')
+                : t('The payment page has opened. If payment is confirmed, this page will refresh automatically.')}
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+
+          <div className='space-y-3 py-3 sm:space-y-4 sm:py-4'>
+            <div className='bg-muted/50 rounded-lg p-3'>
+              <div className='text-muted-foreground text-xs'>
+                {t('Order Number')}
+              </div>
+              <div className='mt-1 break-all text-sm font-medium'>
+                {pendingPayment?.tradeNo || t('Pending payment order')}
+              </div>
+            </div>
+
+            {pendingPaymentRows.length > 0 && (
+              <div className='bg-muted/50 divide-y rounded-lg p-3'>
+                {pendingPaymentRows.map((row) => (
+                  <div
+                    key={row.label}
+                    className='flex items-center justify-between gap-3 py-2 first:pt-0 last:pb-0'
+                  >
+                    <span className='text-muted-foreground text-xs'>
+                      {row.label}
+                    </span>
+                    <span className='max-w-[220px] truncate text-right text-sm font-medium'>
+                      {row.value}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {pendingPayment?.status === 'waiting' && (
+              <div className='text-muted-foreground text-sm'>
+                {t('You can close this dialog. We will keep checking in the background and refresh your account after the payment is confirmed.')}
+              </div>
+            )}
+          </div>
+
+          <AlertDialogFooter className='grid grid-cols-2 gap-2 sm:flex'>
+            <AlertDialogCancel>{t('Close')}</AlertDialogCancel>
+            <AlertDialogAction onClick={handleManualPaymentRefresh}>
+              <RefreshCw className='mr-2 h-4 w-4' />
+              {t('Refresh')}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </>
   )
 }

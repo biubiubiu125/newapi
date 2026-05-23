@@ -95,6 +95,7 @@
     "jsxSingleQuote": true
   },
   "overrides": {
+    "js-cookie": "3.0.7",
     "minimist": "1.2.8"
   },
   "proxy": "http://localhost:3000"

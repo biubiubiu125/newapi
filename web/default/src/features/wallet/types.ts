@@ -36,12 +36,22 @@ export type TopupInfoResponse = ApiResponse<TopupInfo>
 export type RedemptionResponse = ApiResponse<number>
 export type AmountResponse = ApiResponse<string>
 export type PaymentResponse = ApiResponse<Record<string, unknown>> & {
+  order_id?: string
+  trade_no?: string
   url?: string
 }
-export type StripePaymentResponse = ApiResponse<{ pay_link: string }>
-export type CreemPaymentResponse = ApiResponse<{ checkout_url: string }>
+export type StripePaymentResponse = ApiResponse<{
+  pay_link: string
+  order_id?: string
+  trade_no?: string
+}>
+export type CreemPaymentResponse = ApiResponse<{
+  checkout_url: string
+  order_id?: string
+  trade_no?: string
+}>
 export type WaffoPaymentResponse = ApiResponse<
-  { payment_url?: string } | string
+  { payment_url?: string; order_id?: string; trade_no?: string } | string
 >
 export type WaffoPancakePaymentResponse = ApiResponse<
   | {
@@ -49,6 +59,7 @@ export type WaffoPancakePaymentResponse = ApiResponse<
       session_id?: string
       expires_at?: number | string
       order_id?: string
+      trade_no?: string
       // Self-service session token + expiry — surfaced by the backend so
       // future flows (refund / cancel from new-api's own UI) can use them
       // without re-issuing checkout. Not consumed by the current handler.
@@ -60,6 +71,7 @@ export type WaffoPancakePaymentResponse = ApiResponse<
 export type GMPayPaymentResponse = ApiResponse<{
   payment_url?: string
   order_id?: string
+  trade_no?: string
   transaction_id?: string
   payment_address?: string
   payment_amount?: string
@@ -198,6 +210,16 @@ export interface PaymentRequest {
   amount: number
   /** Payment method identifier */
   payment_method: string
+}
+
+export interface PaymentInitiationResult {
+  ok: boolean
+  tradeNo?: string
+  amount?: number
+  payAmount?: number
+  paymentMethod?: string
+  paymentKind?: 'topup' | 'subscription'
+  title?: string
 }
 
 /**

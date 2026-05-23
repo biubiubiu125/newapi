@@ -140,7 +140,7 @@ function formatOrderDelivery(
     }
     return parts.length > 0 ? parts.join(' / ') : '订阅服务: 已开通'
   }
-  return `站内额度: ${formatSiteCreditAmount(order.credit_amount ?? order.amount)}`
+  return `余额充值: ${formatSiteCreditAmount(order.credit_amount ?? order.amount)}`
 }
 
 function statusVariant(status: string) {

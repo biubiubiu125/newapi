@@ -80,6 +80,7 @@ type PaymentCallbackValidation struct {
 	PaidAmount              float64
 	PaidCurrency            string
 	RequirePaymentFacts     bool
+	CallerIP                string
 }
 
 func (topUp *TopUp) Insert() error {
@@ -708,7 +709,15 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 
 	if quotaToAdd > 0 {
 		_ = cacheUpdateUserQuota(topUp.UserId)
-		RecordTopupLog(topUp.UserId, fmt.Sprintf("Epay topup succeeded, quota: %v, paid amount: %.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), callerIp, topUp.PaymentMethod, PaymentProviderEpay)
+		RecordPaymentAuditLog(topUp.UserId, fmt.Sprintf("Epay topup succeeded, quota: %v, paid amount: %.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), PaymentAuditLogInfo{
+			CallerIP:              callerIp,
+			PaymentMethod:         topUp.PaymentMethod,
+			CallbackPaymentMethod: validation.ActualPaymentMethod,
+			PaymentProvider:       PaymentProviderEpay,
+			OrderType:             "topup",
+			PaidAmount:            topUp.PaidAmount,
+			PaidCurrency:          topUp.PaidCurrency,
+		})
 	}
 
 	return nil
@@ -798,7 +807,15 @@ func RechargeGMPayWithValidation(tradeNo string, providerPayload string, validat
 
 	if quotaToAdd > 0 {
 		_ = cacheUpdateUserQuota(topUp.UserId)
-		RecordTopupLog(topUp.UserId, fmt.Sprintf("BEpusdt USDT充值成功，充值额度: %v，支付金额：%.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), callerIp, topUp.PaymentMethod, PaymentProviderBEpusdt)
+		RecordPaymentAuditLog(topUp.UserId, fmt.Sprintf("BEpusdt USDT充值成功，充值额度: %v，支付金额：%.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), PaymentAuditLogInfo{
+			CallerIP:              callerIp,
+			PaymentMethod:         topUp.PaymentMethod,
+			CallbackPaymentMethod: validation.ActualPaymentMethod,
+			PaymentProvider:       PaymentProviderBEpusdt,
+			OrderType:             "topup",
+			PaidAmount:            topUp.PaidAmount,
+			PaidCurrency:          topUp.PaidCurrency,
+		})
 	}
 
 	return nil

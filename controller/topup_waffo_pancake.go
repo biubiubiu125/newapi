@@ -445,6 +445,7 @@ func RequestWaffoPancakePay(c *gin.Context) {
 			"session_id":       session.SessionID,
 			"expires_at":       session.ExpiresAt,
 			"order_id":         tradeNo,
+			"trade_no":         tradeNo,
 			"token":            session.Token,
 			"token_expires_at": session.TokenExpiresAt,
 		},

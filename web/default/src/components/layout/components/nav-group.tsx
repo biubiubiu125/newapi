@@ -54,7 +54,7 @@ import {
 } from '../types'
 import { ChatPresetsItem } from './chat-presets-item'
 
-const ADMIN_BADGE_ACK_STORAGE_KEY = 'admin-sidebar-alert-badge-ack-v1'
+const ADMIN_BADGE_ACK_STORAGE_KEY = 'admin-sidebar-alert-badge-ack-v2'
 
 function acknowledgeNavBadge(item: NavLink | NavCollapsible) {
   if (!item.badgeKey || !item.badgeValue || item.badgeValue <= 0) return

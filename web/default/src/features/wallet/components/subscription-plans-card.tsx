@@ -58,12 +58,13 @@ import type {
   UserSubscriptionRecord,
 } from '@/features/subscriptions/types'
 import { formatCnyPrice } from '../lib'
-import type { PaymentMethod, TopupInfo } from '../types'
+import type { PaymentInitiationResult, PaymentMethod, TopupInfo } from '../types'
 
 interface SubscriptionPlansCardProps {
   topupInfo: TopupInfo | null
   onAvailabilityChange?: (available: boolean) => void
   refreshKey?: number
+  onPaymentStarted?: (payment?: PaymentInitiationResult | string) => void
 }
 
 function getEpayMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
@@ -102,6 +103,7 @@ export function SubscriptionPlansCard({
   topupInfo,
   onAvailabilityChange,
   refreshKey,
+  onPaymentStarted,
 }: SubscriptionPlansCardProps) {
   const { t } = useTranslation()
 
@@ -666,6 +668,7 @@ export function SubscriptionPlansCard({
             ? planPurchaseCountMap.get(selectedPlan.plan.id)
             : undefined
         }
+        onPaymentStarted={onPaymentStarted}
       />
     </>
   )

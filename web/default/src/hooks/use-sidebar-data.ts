@@ -63,7 +63,7 @@ const EMPTY_ADMIN_ALERT_BADGES: AdminAlertBadges = {
   riskSignals: 0,
 }
 
-const ADMIN_BADGE_ACK_STORAGE_KEY = 'admin-sidebar-alert-badge-ack-v1'
+const ADMIN_BADGE_ACK_STORAGE_KEY = 'admin-sidebar-alert-badge-ack-v2'
 
 function normalizeBadgeCount(value: number | undefined): number {
   if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
@@ -83,6 +83,39 @@ function readBadgeAck(key: string, version: number): number {
     return typeof value === 'number' && Number.isFinite(value) ? value : 0
   } catch {
     return 0
+  }
+}
+
+function lowerBadgeAckBaselines(counts: Record<string, number>): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    const raw = window.localStorage.getItem(ADMIN_BADGE_ACK_STORAGE_KEY)
+    if (!raw) return false
+    const parsed = JSON.parse(raw) as Record<string, number>
+    let changed = false
+
+    Object.entries(counts).forEach(([key, value]) => {
+      const acknowledged = parsed[key]
+      const normalized = normalizeBadgeCount(value)
+      if (
+        typeof acknowledged === 'number' &&
+        Number.isFinite(acknowledged) &&
+        acknowledged > normalized
+      ) {
+        parsed[key] = normalized
+        changed = true
+      }
+    })
+
+    if (changed) {
+      window.localStorage.setItem(
+        ADMIN_BADGE_ACK_STORAGE_KEY,
+        JSON.stringify(parsed)
+      )
+    }
+    return changed
+  } catch {
+    return false
   }
 }
 
@@ -152,6 +185,21 @@ export function useSidebarData(): SidebarData {
     orderManagementUnread
   )
   const riskCenterBadge = formatAdminReferralBadgeCount(riskCenterUnread)
+
+  useEffect(() => {
+    const lowered = lowerBadgeAckBaselines({
+      'admin-referral': counts.total,
+      users: adminAlerts.newUsers,
+      'recharge-audit': adminAlerts.orderIssues,
+      'risk-center': adminAlerts.riskSignals,
+    })
+    if (lowered) setBadgeAckVersion((value) => value + 1)
+  }, [
+    counts.total,
+    adminAlerts.newUsers,
+    adminAlerts.orderIssues,
+    adminAlerts.riskSignals,
+  ])
 
   useEffect(() => {
     const onAck = () => setBadgeAckVersion((value) => value + 1)

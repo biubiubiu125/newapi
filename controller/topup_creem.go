@@ -156,6 +156,7 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 		"data": gin.H{
 			"checkout_url": checkoutUrl,
 			"order_id":     referenceId,
+			"trade_no":     referenceId,
 		},
 	})
 }

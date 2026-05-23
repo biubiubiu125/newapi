@@ -124,7 +124,7 @@ func SubscriptionRequestEpay(c *gin.Context) {
 		common.ApiErrorMsg(c, "拉起支付失败")
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"message": "success", "data": params, "url": uri})
+	c.JSON(http.StatusOK, gin.H{"message": "success", "data": params, "url": uri, "order_id": tradeNo, "trade_no": tradeNo})
 }
 
 func SubscriptionEpayNotify(c *gin.Context) {
@@ -187,6 +187,7 @@ func SubscriptionEpayNotify(c *gin.Context) {
 		PaidAmount:              parseCallbackAmount(verifyInfo.Money),
 		PaidCurrency:            "CNY",
 		RequirePaymentFacts:     true,
+		CallerIP:                c.ClientIP(),
 	}); err != nil {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
