@@ -183,6 +183,62 @@ docs/                        项目文档
 - 注册页、登录页、邀请落地页、`/api/r/:code`、默认模板和 classic 模板之间的邀请码传递要保持一致，不得在切换页面后丢失或错绑。
 - 用户可见金额必须标明真实货币或站内 quota 口径，避免把 CNY、USD、USDT 和 quota 混用展示。
 
+## 同步上游升级规则
+
+本仓库是基于 `QuantumNous/new-api` 的定制 fork。同步上游前，不得把任何历史二开清单、文件名或旧记忆当作当前事实；每次都必须重新理解当前 fork 和当前 upstream，再做只读比对和变更分类。
+
+### 同步前只读勘察
+
+在任何 merge、rebase、cherry-pick 或代码修改前，先执行只读勘察：
+
+- 确认当前状态：`git status --short`、`git branch --show-current`、`git rev-parse HEAD`、`git remote -v`。
+- 拉取上游元数据：`git fetch upstream`。如网络需要代理，只在当前 shell 设置代理，不写入仓库文件。
+- 确认共同祖先：`git merge-base main upstream/main`。
+- 查看双向提交：`git log --oneline --left-right --cherry-pick upstream/main...main` 和 `git log --oneline --left-right --cherry-pick main...upstream/main`。
+- 查看双向文件差异：`git diff --stat main..upstream/main`、`git diff --name-status main..upstream/main`、`git diff --stat upstream/main..main`、`git diff --name-status upstream/main..main`。
+- 阅读上游新增提交的 patch：对每个候选提交使用 `git show --stat --patch <commit>`，先理解行为变化，再决定是否引入。
+
+### 动态二开保护清单
+
+每轮同步都必须动态整理“本轮二开保护清单”，不能只沿用本文件中的示例清单。整理方式：
+
+- 从当前 fork 相对 upstream 的差异、近期本地提交、当前业务代码入口和实际用户需求中识别二开范围。
+- 至少沿 `router -> controller -> service -> model -> frontend -> config -> tests` 串起证据链，判断哪些行为是本 fork 的业务语义。
+- 静态高风险方向只作为提醒，包括支付、订单状态机、BEpusdt/USDT、epay、返佣、提现、风控中心、充值审计、钱包支付交互、用户/订单角标、provider price export、Docker/env/runtime。
+- 如果当前代码已经新增、删除或重构了某个二开模块，以当前 checkout 为准更新本轮保护清单；不要因为本文件没列到就认为可以覆盖，也不要因为本文件列过就认为永远存在。
+
+### 引入上游变更的判定
+
+上游变更先分类，再决定处理方式：
+
+- security fix 或明确 bug fix：优先评估引入。
+- dependency/build update：确认锁文件、构建脚本和运行时影响后引入。
+- relay/provider 普通兼容性更新：若不碰资金链路，可优先 cherry-pick 或手工移植。
+- UI update 或 new feature：先讨论产品价值和冲突面，不默认合并。
+- docs-only update：确认没有覆盖本 fork 部署和支付说明后再引入。
+- 与本地二开冲突：不得整文件覆盖，必须按函数、状态机、字段和用户行为逐项合并。
+
+如果上游 bug fix 改到了本 fork 的二开区域，处理原则是：保留本 fork 的业务语义，吸收上游修 bug 的最小必要逻辑。不能简单“全部用自己的”，也不能简单“全部用上游”。例如支付回调、返佣、提现、审计日志和钱包交互冲突时，必须先明确上游修复的真实 bug，再把修复点手工嵌入本 fork 的校验、状态机和审计链路。
+
+### 冲突处理禁令
+
+- 不要先执行 `git pull upstream main`、直接 merge 或 rebase 后再看冲突。
+- 不要用 `git checkout --ours .`、`git checkout --theirs .` 或任何整侧覆盖方式解决冲突。
+- 不要因为文件名包含 `gmpay` 就恢复独立 GMPay 网关行为；当前 USDT 链路以实际代码中的 BEpusdt 对外语义为准。
+- 不要让上游改动放宽支付签名、金额、币种、商户、网关、支付方式、订单类型、订单归属、状态机、幂等或权限校验。
+- 不要让 `return_url`、前端页面状态或用户提交参数重新成为到账、订阅生效或佣金生成依据。
+
+### 同步后验证
+
+同步后至少执行：
+
+- `git diff --check`
+- `go test ./controller ./service ./model`
+- 如果涉及 relay/provider，补充对应 relay 或 channel 测试。
+- 如果涉及前端，按受影响模板执行 `bun run typecheck`、`bun run build`，必要时执行 lint。
+- 如果涉及支付、订阅、返佣、提现、钱包、充值审计、使用日志、风控中心或权限，必须在测试机跑真实业务链路和数据库一致性校验后，才能宣称同步完成。
+- 提交前检查不得包含 artifacts、logs、data、browser traces、screenshots、temporary scripts、`.env`、credentials、tokens、merchant keys、server passwords、admin passwords 或代理配置。
+
 ## 测试与验证
 
 根据改动范围选择最小但充分的验证。涉及资金、订单、返佣、提现、鉴权、安全和部署时，不允许只跑表面测试。
