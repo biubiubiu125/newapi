@@ -328,45 +328,45 @@ curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
 
 ## 多机 / 多集群 Docker Compose 部署
 
-上游官方集群部署教程的核心要求是：多个 New API 节点共享同一个数据库、共享同一个 Redis、所有节点使用相同的 `SESSION_SECRET` 和 `CRYPTO_SECRET`，并通过 `NODE_TYPE` 区分主节点和从节点。本仓库二开部署时仍然遵守这些原则，但镜像应来自当前仓库源码或你自己构建推送的镜像。
+本节参考上游官方集群部署教程整理，部署思路保持一致：多个 New API 节点共享同一个数据库、共享同一个 Redis，所有节点使用相同的 `SESSION_SECRET` 和 `CRYPTO_SECRET`，并通过 `NODE_TYPE` 区分主节点和从节点。
 
 上游官方参考：<https://docs.newapi.pro/zh/docs/installation/deployment-methods/cluster-deployment>
 
-### 集群架构
+下面内容按上游教程的结构整理，主要把源码仓库改为当前 fork：
 
-推荐架构：
+- 源码仓库使用 `https://github.com/biubiubiu125/newapi.git`。
+- 示例镜像从当前仓库源码构建为 `biubiubiu125/newapi:local`；如果你已经发布自己的镜像，可以改成自己的镜像 tag。
+- 集群环境不要使用 SQLite。SQLite 只适合单容器试用或本地开发，多节点必须使用所有节点可访问的共享数据库。
 
-```text
-用户流量
-  -> Nginx / HAProxy / 云负载均衡
-      -> newapi-master  (NODE_TYPE=master)
-      -> newapi-slave-1 (NODE_TYPE=slave)
-      -> newapi-slave-2 (NODE_TYPE=slave)
-  -> 共享 PostgreSQL / MySQL
-  -> 共享 Redis
-```
+### 前置要求
 
-部署规则：
+- 多台服务器，至少一台主节点和一台从节点。
+- 每台应用服务器已安装 Docker 和 Docker Compose。
+- 一个所有应用节点都能访问的共享 PostgreSQL 数据库。
+- 一个所有应用节点都能访问的共享 Redis 服务。
+- 可选：Nginx、HAProxy 或云负载均衡。
 
-- 只使用一个统一数据库入口，所有应用节点的 `SQL_DSN` 指向同一个数据库或数据库代理。
-- 只使用一个统一 Redis 入口，所有应用节点的 `REDIS_CONN_STRING` 指向同一个 Redis。
-- 所有节点的 `SESSION_SECRET` 必须相同，否则登录态、会话和 cookie 会在节点间失效。
-- 所有节点的 `CRYPTO_SECRET` 必须相同，否则加密数据、签名 cookie 或相关安全字段可能无法跨节点验证。
-- 主节点使用 `NODE_TYPE=master` 或不设置 `NODE_TYPE`；从节点必须设置 `NODE_TYPE=slave`。
-- 从节点不会执行数据库迁移和部分主节点定时任务；首次部署或结构升级必须先让主节点启动成功并完成迁移。
-- 每个节点设置唯一 `NODE_NAME`，便于日志、监控和排障。
-- 不要在每台应用服务器上各自启动一套独立 PostgreSQL / Redis，否则会形成多个数据孤岛。
-- 如果使用本地 `./data` 保存上传文件，多节点场景需要改用共享存储或确保文件只由一个节点处理；否则不同节点之间看不到彼此本地文件。
+### 集群架构概述
 
-### 共享数据库和 Redis
+New API 集群采用主从架构：
 
-可以选择托管 PostgreSQL / MySQL、云 Redis，或单独服务器上的数据库和缓存。应用侧只需要拿到一个统一入口：
+1. 主节点：处理写操作、部分读操作、数据库迁移和主节点任务。
+2. 从节点：主要处理读请求和普通 Web/API 流量，提高整体吞吐量。
+
+集群部署的关键配置：
+
+1. 所有节点访问同一个数据库，`SQL_DSN` 必须一致。
+2. 所有节点访问同一个 Redis，`REDIS_CONN_STRING` 必须一致。
+3. 所有节点使用相同的 `SESSION_SECRET` 和 `CRYPTO_SECRET`。
+4. 主节点使用 `NODE_TYPE=master` 或不设置 `NODE_TYPE`，从节点设置 `NODE_TYPE=slave`。
+
+### 1. 准备共享数据库和 Redis
+
+准备所有节点共用的 PostgreSQL 和 Redis。应用节点只需要拿到统一连接信息：
 
 ```env
 SQL_DSN=postgresql://newapi:<db-password>@db.example.internal:5432/new-api
 REDIS_CONN_STRING=redis://:<redis-password>@redis.example.internal:6379/0
-SESSION_SECRET=<所有节点一致的强随机密钥>
-CRYPTO_SECRET=<所有节点一致的强随机密钥>
 ```
 
 如果使用 MySQL，`SQL_DSN` 使用 MySQL DSN，例如：
@@ -375,11 +375,20 @@ CRYPTO_SECRET=<所有节点一致的强随机密钥>
 SQL_DSN=newapi:<db-password>@tcp(db.example.internal:3306)/new-api?charset=utf8mb4&parseTime=true&loc=Asia%2FShanghai
 ```
 
-### 应用节点 Compose 模板
+### 2. 克隆当前仓库
 
-多机部署时，不建议把根目录单机版 `docker-compose.yml` 原样复制到每台应用服务器，因为它会在每台机器上各自启动 PostgreSQL 和 Redis。应用节点应使用共享数据库和共享 Redis，只启动 `new-api` 服务。
+```bash
+mkdir -p /opt/newapi
+cd /opt/newapi
+git clone https://github.com/biubiubiu125/newapi.git .
+git rev-parse HEAD
+```
 
-在每台应用服务器的 `/opt/newapi` 放置同一份应用节点 Compose 文件，例如 `docker-compose.cluster.yml`：
+每台应用节点都使用同一个仓库版本或同一个镜像 tag。
+
+### 3. 创建应用节点 Compose 文件
+
+在每台应用服务器的 `/opt/newapi` 放置同一份 `docker-compose.cluster.yml`。这个文件只启动应用服务，不启动本地 PostgreSQL、Redis 或 SQLite。
 
 ```yaml
 services:
@@ -395,22 +404,27 @@ services:
       - ./data:/data
       - ./logs:/app/logs
     environment:
+      # 所有节点必须使用同一个数据库和 Redis
       - SQL_DSN=${SQL_DSN:?set SQL_DSN}
       - REDIS_CONN_STRING=${REDIS_CONN_STRING:?set REDIS_CONN_STRING}
+      # 多机部署必须显式设置，并保持所有节点一致
       - SESSION_SECRET=${SESSION_SECRET:?set SESSION_SECRET}
       - CRYPTO_SECRET=${CRYPTO_SECRET:?set CRYPTO_SECRET}
+      # 主节点设置 master，从节点设置 slave
       - NODE_TYPE=${NODE_TYPE:-slave}
-      - NODE_NAME=${NODE_NAME:?set NODE_NAME}
       - SYNC_FREQUENCY=${SYNC_FREQUENCY:-60}
-      - TZ=Asia/Shanghai
-      - GLOBAL_API_RATE_LIMIT_ENABLE=${GLOBAL_API_RATE_LIMIT_ENABLE:-true}
-      - CRITICAL_RATE_LIMIT_ENABLE=${CRITICAL_RATE_LIMIT_ENABLE:-true}
-      - TRUSTED_REDIRECT_DOMAINS=${TRUSTED_REDIRECT_DOMAINS:-}
+      - TZ=${TZ:-Asia/Shanghai}
 ```
 
-### 主节点 `.env`
+如果使用已经构建好的镜像，改成：
 
-第一台应用节点作为主节点，`NODE_TYPE` 设置为 `master`。主节点应先启动成功，让数据库迁移和主节点任务完成初始化。
+```yaml
+services:
+  new-api:
+    image: your-registry/newapi:<tag>
+```
+
+### 4. 配置主节点
 
 ```env
 APP_PORT=3000
@@ -422,11 +436,6 @@ SQL_DSN=postgresql://newapi:<db-password>@db.example.internal:5432/new-api
 REDIS_CONN_STRING=redis://:<redis-password>@redis.example.internal:6379/0
 SESSION_SECRET=<所有节点一致的强随机密钥>
 CRYPTO_SECRET=<所有节点一致的强随机密钥>
-
-TRUSTED_REDIRECT_DOMAINS=your-domain.com
-REFERRAL_TEST_MODE=false
-GLOBAL_API_RATE_LIMIT_ENABLE=true
-CRITICAL_RATE_LIMIT_ENABLE=true
 ```
 
 主节点启动：
@@ -437,11 +446,12 @@ docker compose -f docker-compose.cluster.yml config
 docker compose -f docker-compose.cluster.yml up -d --build
 docker compose -f docker-compose.cluster.yml ps
 curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
+docker compose -f docker-compose.cluster.yml logs --tail=100 new-api
 ```
 
-### 从节点 `.env`
+### 5. 配置从节点
 
-从节点使用同一份 `docker-compose.cluster.yml`，只改 `.env`。关键差异是 `NODE_TYPE=slave` 和唯一的 `NODE_NAME`。
+从节点使用同一份 `docker-compose.cluster.yml`，只改 `.env`。`NODE_TYPE` 设置为 `slave`，`NODE_NAME` 每台机器唯一。`SQL_DSN`、`REDIS_CONN_STRING`、`SESSION_SECRET` 和 `CRYPTO_SECRET` 必须与主节点一致。
 
 ```env
 APP_PORT=3000
@@ -453,11 +463,6 @@ SQL_DSN=postgresql://newapi:<db-password>@db.example.internal:5432/new-api
 REDIS_CONN_STRING=redis://:<redis-password>@redis.example.internal:6379/0
 SESSION_SECRET=<必须与主节点完全一致>
 CRYPTO_SECRET=<必须与主节点完全一致>
-
-TRUSTED_REDIRECT_DOMAINS=your-domain.com
-REFERRAL_TEST_MODE=false
-GLOBAL_API_RATE_LIMIT_ENABLE=true
-CRITICAL_RATE_LIMIT_ENABLE=true
 ```
 
 每台从节点启动：
@@ -468,16 +473,17 @@ docker compose -f docker-compose.cluster.yml config
 docker compose -f docker-compose.cluster.yml up -d --build
 docker compose -f docker-compose.cluster.yml ps
 curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
+docker compose -f docker-compose.cluster.yml logs --tail=100 new-api
 ```
 
-启动顺序建议：
+### 6. 启动顺序
 
 1. 先启动共享数据库和 Redis，并确认应用节点能连通。
 2. 启动主节点，确认日志中没有数据库迁移错误。
 3. 逐台启动从节点，确认每台 `/api/status` 正常。
 4. 所有节点健康后，再加入负载均衡。
 
-### 负载均衡示例
+### 7. 配置负载均衡
 
 Nginx 示例：
 
@@ -515,7 +521,24 @@ server {
 
 如果你的业务有长连接、流式输出或大响应，`proxy_buffering off` 和较长 `proxy_read_timeout` 很重要。生产环境还应配置 HTTPS、访问日志、错误日志、限流和上游健康检查。
 
-### 集群更新教程
+### 8. 验证集群
+
+逐台验证节点状态：
+
+```bash
+curl -fsS https://your-domain.com/api/status
+
+for host in 10.0.0.11 10.0.0.12 10.0.0.13; do
+  curl -fsS "http://${host}:3000/api/status"
+done
+
+docker compose -f docker-compose.cluster.yml ps
+docker compose -f docker-compose.cluster.yml logs --tail=200 new-api
+```
+
+至少验证登录、管理后台、渠道测试、充值订单、支付回调、额度到账、订阅、返佣、提现审核和日志查询。
+
+### 9. 集群更新
 
 集群更新不要同时重启所有节点。普通代码更新可以滚动更新从节点，确认稳定后再更新主节点；如果本次更新可能包含数据库结构变更，建议安排维护窗口，先启动主节点完成迁移，再更新从节点。
 
@@ -569,6 +592,7 @@ server {
 - [ ] 所有节点运行同一个仓库版本或同一个镜像 tag。
 - [ ] 所有节点 `SQL_DSN` 指向同一数据库入口。
 - [ ] 所有节点 `REDIS_CONN_STRING` 指向同一 Redis。
+- [ ] 集群节点没有使用 SQLite 或本地独立数据库文件。
 - [ ] 所有节点 `SESSION_SECRET` 完全一致。
 - [ ] 所有节点 `CRYPTO_SECRET` 完全一致。
 - [ ] 只有主节点是 `NODE_TYPE=master`，从节点是 `NODE_TYPE=slave`。
