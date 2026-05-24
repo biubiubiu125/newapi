@@ -362,14 +362,14 @@ export function SubscriptionPurchaseDialog(props: Props) {
                 </div>
               )}
               {hasEpay && (
-                <div className='grid grid-cols-2 gap-2 sm:flex sm:flex-wrap'>
+                <div className='flex flex-wrap gap-2'>
                   {(props.epayMethods || []).map((method) => (
                     <Button
                       key={`epay-${method.type}`}
                       variant='outline'
                       onClick={() => void handlePayEpay(method.type)}
                       disabled={paying || limitReached}
-                      className='h-9 min-w-0 justify-center gap-2 rounded-lg px-3 text-center sm:w-36'
+                      className='h-9 shrink-0 justify-center gap-2 rounded-lg px-3 text-center sm:min-w-36'
                     >
                       {getPaymentIcon(
                         method.type,
@@ -377,7 +377,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
                         method.icon,
                         method.name
                       )}
-                      <span className='truncate'>
+                      <span className='whitespace-nowrap'>
                         {method.name || method.type}
                       </span>
                     </Button>
@@ -385,14 +385,14 @@ export function SubscriptionPurchaseDialog(props: Props) {
                 </div>
               )}
               {hasBEpusdt && (
-                <div className='grid grid-cols-2 gap-2 sm:flex sm:flex-wrap'>
+                <div className='flex flex-wrap gap-2'>
                   {(props.bepusdtMethods || []).map((method) => (
                     <Button
                       key={`bepusdt-${method.type}`}
                       variant='outline'
                       onClick={() => void handlePayBEpusdt(method.type)}
                       disabled={paying || limitReached}
-                      className='h-9 min-w-0 justify-center gap-2 rounded-lg px-3 text-center sm:w-36'
+                      className='h-9 shrink-0 justify-center gap-2 rounded-lg px-3 text-center sm:min-w-36'
                     >
                       {getPaymentIcon(
                         method.type,
@@ -400,7 +400,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
                         method.icon,
                         method.name
                       )}
-                      <span className='truncate'>
+                      <span className='whitespace-nowrap'>
                         {method.name || method.type}
                       </span>
                     </Button>

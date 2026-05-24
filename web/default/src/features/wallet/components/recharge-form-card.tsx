@@ -322,7 +322,7 @@ export function RechargeFormCard({
                   {t('Payment Method')}
                 </Label>
                 {hasStandardPaymentMethods ? (
-                  <div className='grid grid-cols-2 gap-2 sm:flex sm:flex-wrap'>
+                  <div className='flex flex-wrap gap-2'>
                     {topupInfo?.pay_methods?.map((method) => {
                       const minTopup = method.min_topup || 0
                       const disabled = minTopup > topupAmount
@@ -333,19 +333,21 @@ export function RechargeFormCard({
                           variant='outline'
                           onClick={() => onPaymentMethodSelect(method)}
                           disabled={disabled || !!paymentLoading}
-                          className='h-9 min-w-0 justify-center gap-2 rounded-lg px-3 text-center sm:w-36'
+                          className='h-9 shrink-0 justify-center gap-2 rounded-lg px-3 text-center sm:min-w-36'
                         >
                           {paymentLoading === method.type ? (
-                            <Loader2 className='h-4 w-4 animate-spin' />
+                            <Loader2 className='h-4 w-4 shrink-0 animate-spin' />
                           ) : (
                             getPaymentIcon(
                               method.type,
-                              'h-4 w-4',
+                              'h-4 w-4 shrink-0',
                               method.icon,
                               method.name
                             )
                           )}
-                          <span className='truncate'>{method.name}</span>
+                          <span className='whitespace-nowrap'>
+                            {method.name}
+                          </span>
                         </Button>
                       )
 
