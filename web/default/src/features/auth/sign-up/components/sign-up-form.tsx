@@ -326,7 +326,6 @@ export function SignUpForm({
                 )}
               </Button>
             </div>
-
           </>
         )}
 
