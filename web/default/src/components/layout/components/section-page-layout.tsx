@@ -90,7 +90,7 @@ export function SectionPageLayout(props: SectionPageLayoutProps) {
             <div className='mb-2 sm:mb-3'>{breadcrumb}</div>
           )}
           <div className='flex flex-wrap items-center justify-between gap-x-3 gap-y-2 sm:gap-x-4'>
-            <div className='min-w-0'>
+            <div className='min-w-0 flex-1'>
               <h2 className='truncate text-base font-bold tracking-tight sm:text-lg'>
                 {title}
               </h2>
@@ -101,7 +101,7 @@ export function SectionPageLayout(props: SectionPageLayoutProps) {
               )}
             </div>
             {actions != null && (
-              <div className='flex shrink-0 flex-wrap items-center gap-2 sm:gap-x-4'>
+              <div className='flex shrink-0 flex-wrap items-center justify-end gap-2 sm:gap-x-4'>
                 {actions}
               </div>
             )}

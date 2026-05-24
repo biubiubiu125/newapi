@@ -41,6 +41,8 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { SettingsForm } from '../components/settings-form-layout'
+import { SettingsPageActionsPortal } from '../components/settings-page-context'
 import { removeTrailingSlash } from './utils'
 import {
   type CatalogStore,
@@ -452,6 +454,16 @@ export function WaffoPancakeSettingsSection(props: Props) {
 
   return (
     <div className='space-y-4 pt-4'>
+      <SettingsPageActionsPortal>
+        <Button
+          type='button'
+          size='sm'
+          onClick={handleSave}
+          disabled={saving || !chosenStoreID || !chosenProductID}
+        >
+          {saving ? t('Saving...') : t('Save Waffo Pancake settings')}
+        </Button>
+      </SettingsPageActionsPortal>
       <div>
         <h3 className='text-lg font-medium'>{t('Waffo Pancake MoR')}</h3>
         <p className='text-muted-foreground text-sm'>
@@ -461,9 +473,9 @@ export function WaffoPancakeSettingsSection(props: Props) {
         </p>
       </div>
       <Form {...form}>
-        <form
+        <SettingsForm
           onSubmit={(e) => e.preventDefault()}
-          className='space-y-4'
+          className='gap-y-4'
           data-no-autosubmit='true'
         >
           {/* Blue box — webhook configuration only. */}
@@ -686,13 +698,6 @@ export function WaffoPancakeSettingsSection(props: Props) {
             ) : null}
 
             <div className='flex items-center gap-3'>
-              <Button
-                type='button'
-                onClick={handleSave}
-                disabled={saving || !chosenStoreID || !chosenProductID}
-              >
-                {saving ? t('Saving...') : t('Save Waffo Pancake settings')}
-              </Button>
               {storeID || productID ? (
                 <div className='text-muted-foreground flex flex-wrap gap-x-3 gap-y-1 text-xs'>
                   {storeID ? (
@@ -715,7 +720,7 @@ export function WaffoPancakeSettingsSection(props: Props) {
               ) : null}
             </div>
           </div>
-        </form>
+        </SettingsForm>
       </Form>
     </div>
   )
