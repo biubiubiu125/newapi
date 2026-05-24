@@ -429,6 +429,9 @@ func buildBEpusdtAsset(token string, network string, displayNames map[string]str
 		return BEpusdtAsset{}
 	}
 	displayName := strings.TrimSpace(displayNames[method])
+	if displayName == "" && method == USDTPaymentMethod {
+		displayName = strings.TrimSpace(setting.BEpusdtDisplayName)
+	}
 	if displayName == "" {
 		displayName = strings.ToUpper(token)
 	}
@@ -492,8 +495,15 @@ func BEpusdtAssetsForTopupMethods() []map[string]string {
 	if minTopup <= 0 {
 		minTopup = 1
 	}
+	displayName := "USDT"
+	for _, asset := range assets {
+		if strings.EqualFold(asset.PaymentType, USDTPaymentMethod) && strings.TrimSpace(asset.DisplayName) != "" {
+			displayName = strings.TrimSpace(asset.DisplayName)
+			break
+		}
+	}
 	return []map[string]string{{
-		"name":      "USDT",
+		"name":      displayName,
 		"type":      USDTPaymentMethod,
 		"color":     "rgba(var(--semi-teal-5), 1)",
 		"min_topup": strconv.Itoa(minTopup),

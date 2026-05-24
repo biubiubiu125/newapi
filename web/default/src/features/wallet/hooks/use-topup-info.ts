@@ -66,8 +66,7 @@ function parsePaymentMethods(
       const rawMinTopup = Number(item.min_topup)
       const normalizedMinTopup = Number.isFinite(rawMinTopup) ? rawMinTopup : 0
       const type = typeof item.type === 'string' ? item.type : ''
-      const name =
-        typeof item.name === 'string' ? normalizePaymentMethodName(type, item.name) : ''
+      const name = typeof item.name === 'string' ? item.name : ''
 
       return {
         name,
@@ -82,13 +81,6 @@ function parsePaymentMethods(
       }
     })
     .filter((item) => item.name && item.type && item.type !== 'waffo')
-}
-
-function normalizePaymentMethodName(type: string, name: string): string {
-  if (type === PAYMENT_TYPES.USDT) {
-    return 'USDT'
-  }
-  return name
 }
 
 function mergePaymentMethods(methods: PaymentMethod[]): PaymentMethod[] {
@@ -224,13 +216,18 @@ export function useTopupInfo() {
         response.data.payment_compliance_confirmed !== false
 
       if (canUseBEpusdt && !hasBEpusdtPaymentMethod(payMethods)) {
-        payMethods.push({
-          name: 'USDT',
-          type: PAYMENT_TYPES.USDT,
-          color: '#14B8A6',
-          min_topup: response.data.bepusdt_min_topup || 1,
-          provider: 'bepusdt',
-        })
+        const bepusdtMethod = bepusdtPayMethods.find(
+          (method) => method.type === PAYMENT_TYPES.USDT
+        )
+        payMethods.push(
+          bepusdtMethod || {
+            name: 'USDT',
+            type: PAYMENT_TYPES.USDT,
+            color: '#14B8A6',
+            min_topup: response.data.bepusdt_min_topup || 1,
+            provider: 'bepusdt',
+          }
+        )
       }
 
       const processedData: TopupInfo = {

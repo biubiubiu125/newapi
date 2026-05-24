@@ -18,12 +18,16 @@ func withBEpusdtSettings(t *testing.T, baseURL string) {
 	previousPID := setting.BEpusdtPID
 	previousSecretKey := setting.BEpusdtSecretKey
 	previousCurrency := setting.BEpusdtCurrency
+	previousDisplayName := setting.BEpusdtDisplayName
+	previousAssetDisplayNames := setting.BEpusdtAssetDisplayNames
 	setting.BEpusdtEnabled = true
 	setting.USDTGatewayType = setting.USDTGatewayTypeBEpusdt
 	setting.BEpusdtBaseURL = baseURL
 	setting.BEpusdtPID = ""
 	setting.BEpusdtSecretKey = "secret"
 	setting.BEpusdtCurrency = "cny"
+	setting.BEpusdtDisplayName = "USDT"
+	setting.BEpusdtAssetDisplayNames = `{"usdt":"USDT"}`
 	t.Cleanup(func() {
 		setting.BEpusdtEnabled = previousEnabled
 		setting.USDTGatewayType = previousGatewayType
@@ -31,6 +35,8 @@ func withBEpusdtSettings(t *testing.T, baseURL string) {
 		setting.BEpusdtPID = previousPID
 		setting.BEpusdtSecretKey = previousSecretKey
 		setting.BEpusdtCurrency = previousCurrency
+		setting.BEpusdtDisplayName = previousDisplayName
+		setting.BEpusdtAssetDisplayNames = previousAssetDisplayNames
 	})
 }
 
@@ -55,6 +61,29 @@ func TestUSDTGatewayAssetsOnlyExposeBEpusdtUSDT(t *testing.T) {
 	}}, methods)
 	require.True(t, IsValidBEpusdtPaymentMethod("usdt"))
 	require.False(t, IsValidBEpusdtPaymentMethod("bepusdt:usdt:tron"))
+}
+
+func TestBEpusdtTopupMethodUsesConfiguredDisplayName(t *testing.T) {
+	withBEpusdtSettings(t, "https://pay.example.com")
+	setting.BEpusdtAssetDisplayNames = `{"usdt":"USDT (TRC20)"}`
+
+	assets, err := GetBEpusdtAssets()
+	require.NoError(t, err)
+	require.Equal(t, "USDT (TRC20)", assets[0].DisplayName)
+
+	methods := BEpusdtAssetsForTopupMethods()
+	require.Equal(t, "USDT (TRC20)", methods[0]["name"])
+	require.Equal(t, "usdt", methods[0]["type"])
+}
+
+func TestBEpusdtAssetDisplayNameFallsBackToGatewayDisplayName(t *testing.T) {
+	withBEpusdtSettings(t, "https://pay.example.com")
+	setting.BEpusdtAssetDisplayNames = `{}`
+	setting.BEpusdtDisplayName = "Crypto Pay"
+
+	assets, err := GetBEpusdtAssets()
+	require.NoError(t, err)
+	require.Equal(t, "Crypto Pay", assets[0].DisplayName)
 }
 
 func TestBEpusdtConfigurationDoesNotRequireMerchantID(t *testing.T) {

@@ -42,9 +42,6 @@ interface Props {
   defaultValues: BEpusdtSettingsValues
 }
 
-const BEPUSDT_ASSET_DISPLAY_NAMES =
-  '{"usdt":"USDT"}'
-
 export function BEpusdtSettingsSection(props: Props) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
@@ -71,14 +68,9 @@ export function BEpusdtSettingsSection(props: Props) {
         { key: 'BEpusdtPID', value: '' },
         { key: 'BEpusdtCurrency', value: 'CNY' },
         {
-          key: 'BEpusdtDisplayName',
-          value: 'USDT',
-        },
-        {
           key: 'BEpusdtMinTopUp',
           value: String(values.BEpusdtMinTopUp || 1),
         },
-        { key: 'BEpusdtAssetDisplayNames', value: BEPUSDT_ASSET_DISPLAY_NAMES },
       ]
       if (values.BEpusdtSecretKey.trim()) {
         options.push({
