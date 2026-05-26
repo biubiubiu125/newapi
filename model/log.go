@@ -373,9 +373,11 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 		tx = LOG_DB.Where("logs.type = ?", logType)
 	}
 
-	tx = applyLogContainsFilter(tx, "logs.model_name", modelName)
-	tx = applyLogContainsFilter(tx, "logs.username", username)
-	tx = applyLogContainsFilter(tx, "logs.token_name", tokenName)
+	tx = applyExplicitLogTextFilter(tx, "logs.model_name", modelName)
+	tx = applyExplicitLogTextFilter(tx, "logs.username", username)
+	if tokenName != "" {
+		tx = tx.Where("logs.token_name = ?", tokenName)
+	}
 	if requestId != "" {
 		tx = tx.Where("logs.request_id = ?", requestId)
 	}
@@ -456,8 +458,10 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		tx = LOG_DB.Where("logs.user_id = ? and logs.type = ?", userId, logType)
 	}
 
-	tx = applyLogContainsFilter(tx, "logs.model_name", modelName)
-	tx = applyLogContainsFilter(tx, "logs.token_name", tokenName)
+	tx = applyExplicitLogTextFilter(tx, "logs.model_name", modelName)
+	if tokenName != "" {
+		tx = tx.Where("logs.token_name = ?", tokenName)
+	}
 	if requestId != "" {
 		tx = tx.Where("logs.request_id = ?", requestId)
 	}
@@ -512,24 +516,38 @@ func applyLogContainsFilter(tx *gorm.DB, column string, value string) *gorm.DB {
 	return tx.Where(column+" LIKE ? ESCAPE '!'", pattern)
 }
 
+func applyExplicitLogTextFilter(tx *gorm.DB, column string, value string) *gorm.DB {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return tx
+	}
+	if strings.Contains(value, "%") {
+		replacer := strings.NewReplacer("!", "!!", "_", "!_")
+		return tx.Where(column+" LIKE ? ESCAPE '!'", replacer.Replace(value))
+	}
+	return tx.Where(column+" = ?", value)
+}
+
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
 	tx := LOG_DB.Table("logs").Select("sum(quota) quota")
 
 	// 为rpm和tpm创建单独的查询
 	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, sum(prompt_tokens) + sum(completion_tokens) tpm")
 
-	tx = applyLogContainsFilter(tx, "username", username)
-	rpmTpmQuery = applyLogContainsFilter(rpmTpmQuery, "username", username)
-	tx = applyLogContainsFilter(tx, "token_name", tokenName)
-	rpmTpmQuery = applyLogContainsFilter(rpmTpmQuery, "token_name", tokenName)
+	tx = applyExplicitLogTextFilter(tx, "username", username)
+	rpmTpmQuery = applyExplicitLogTextFilter(rpmTpmQuery, "username", username)
+	if tokenName != "" {
+		tx = tx.Where("token_name = ?", tokenName)
+		rpmTpmQuery = rpmTpmQuery.Where("token_name = ?", tokenName)
+	}
 	if startTimestamp != 0 {
 		tx = tx.Where("created_at >= ?", startTimestamp)
 	}
 	if endTimestamp != 0 {
 		tx = tx.Where("created_at <= ?", endTimestamp)
 	}
-	tx = applyLogContainsFilter(tx, "model_name", modelName)
-	rpmTpmQuery = applyLogContainsFilter(rpmTpmQuery, "model_name", modelName)
+	tx = applyExplicitLogTextFilter(tx, "model_name", modelName)
+	rpmTpmQuery = applyExplicitLogTextFilter(rpmTpmQuery, "model_name", modelName)
 	if channel != 0 {
 		tx = tx.Where("channel_id = ?", channel)
 		rpmTpmQuery = rpmTpmQuery.Where("channel_id = ?", channel)

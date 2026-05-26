@@ -234,7 +234,7 @@ func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err err
 	return users, total, nil
 }
 
-func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, int64, error) {
+func SearchUsers(keyword string, group string, role *int, status *int, startIdx int, num int) ([]*User, int64, error) {
 	var users []*User
 	var total int64
 	var err error
@@ -254,25 +254,23 @@ func SearchUsers(keyword string, group string, startIdx int, num int) ([]*User, 
 		Joins("LEFT JOIN users inviter_users ON inviter_users.id = rb.inviter_user_id")
 	groupColumn := "users." + commonGroupCol
 	likeCondition := "users.username LIKE ? OR users.email LIKE ? OR users.display_name LIKE ? OR inviter_users.username LIKE ?"
+	likeArgs := []interface{}{"%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%"}
 
 	keywordInt, err := strconv.Atoi(keyword)
 	if err == nil {
 		likeCondition = "users.id = ? OR " + likeCondition
-		if group != "" {
-			query = query.Where("("+likeCondition+") AND "+groupColumn+" = ?",
-				keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", group)
-		} else {
-			query = query.Where(likeCondition,
-				keywordInt, "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
-		}
-	} else {
-		if group != "" {
-			query = query.Where("("+likeCondition+") AND "+groupColumn+" = ?",
-				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", group)
-		} else {
-			query = query.Where(likeCondition,
-				"%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%", "%"+keyword+"%")
-		}
+		likeArgs = append([]interface{}{keywordInt}, likeArgs...)
+	}
+
+	query = query.Where("("+likeCondition+")", likeArgs...)
+	if group != "" {
+		query = query.Where(groupColumn+" = ?", group)
+	}
+	if role != nil {
+		query = query.Where("users.role = ?", *role)
+	}
+	if status != nil {
+		query = query.Where("users.status = ?", *status)
 	}
 
 	err = query.Count(&total).Error

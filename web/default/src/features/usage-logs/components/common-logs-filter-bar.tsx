@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useMemo } from 'react'
 import { useQueryClient, useIsFetching } from '@tanstack/react-query'
 import { useNavigate, getRouteApi } from '@tanstack/react-router'
 import { type Table } from '@tanstack/react-table'
@@ -39,7 +39,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { DataTableToolbar } from '@/components/data-table'
-import { LOG_TYPES } from '../constants'
+import { LOG_TYPE_ALL_VALUE, LOG_TYPE_FILTERS } from '../constants'
 import { buildSearchParams } from '../lib/filter'
 import { getDefaultTimeRange } from '../lib/utils'
 import type { CommonLogFilters } from '../types'
@@ -48,7 +48,16 @@ import { CompactDateTimeRangePicker } from './compact-date-time-range-picker'
 import { useUsageLogsContext } from './usage-logs-provider'
 
 const route = getRouteApi('/_authenticated/usage-logs/$section')
-const logTypeValues = ['0', '1', '2', '3', '4', '5', '6'] as const
+const logTypeValues = [
+  LOG_TYPE_ALL_VALUE,
+  '0',
+  '1',
+  '2',
+  '3',
+  '4',
+  '5',
+  '6',
+] as const
 
 type LogTypeValue = (typeof logTypeValues)[number]
 
@@ -75,30 +84,32 @@ export function CommonLogsFilterBar<TData>(
     const { start, end } = getDefaultTimeRange()
     return { startTime: start, endTime: end }
   })
-  const [logType, setLogType] = useState<LogTypeValue | ''>('')
+  const [logType, setLogType] = useState<LogTypeValue>(LOG_TYPE_ALL_VALUE)
 
   useEffect(() => {
-    const next: Partial<CommonLogFilters> = {}
-    if (searchParams.startTime)
-      next.startTime = new Date(searchParams.startTime)
-    if (searchParams.endTime) next.endTime = new Date(searchParams.endTime)
-    if (searchParams.channel) next.channel = String(searchParams.channel)
-    if (searchParams.model) next.model = searchParams.model
-    if (searchParams.token) next.token = searchParams.token
-    if (searchParams.group) next.group = searchParams.group
-    if (searchParams.username) next.username = searchParams.username
-    if (searchParams.requestId) next.requestId = searchParams.requestId
-    if (searchParams.upstreamRequestId)
-      next.upstreamRequestId = searchParams.upstreamRequestId
-
-    if (Object.keys(next).length > 0) {
-      setFilters((prev) => ({ ...prev, ...next }))
-    }
+    const { start, end } = getDefaultTimeRange()
+    setFilters({
+      startTime: searchParams.startTime
+        ? new Date(searchParams.startTime)
+        : start,
+      endTime: searchParams.endTime ? new Date(searchParams.endTime) : end,
+      channel: searchParams.channel ? String(searchParams.channel) : undefined,
+      model: searchParams.model || undefined,
+      token: searchParams.token || undefined,
+      group: searchParams.group || undefined,
+      username: searchParams.username || undefined,
+      requestId: searchParams.requestId || undefined,
+      upstreamRequestId: searchParams.upstreamRequestId || undefined,
+    })
 
     const typeArr = searchParams.type
-    if (Array.isArray(typeArr) && typeArr.length === 1) {
-      setLogType(typeArr[0])
-    }
+    const nextLogType =
+      Array.isArray(typeArr) &&
+      typeArr.length === 1 &&
+      isLogTypeValue(typeArr[0])
+        ? typeArr[0]
+        : LOG_TYPE_ALL_VALUE
+    setLogType(nextLogType)
   }, [
     searchParams.startTime,
     searchParams.endTime,
@@ -126,7 +137,7 @@ export function CommonLogsFilterBar<TData>(
       params: { section: 'common' },
       search: {
         ...filterParams,
-        ...(logType ? { type: [logType] } : {}),
+        ...(logType !== LOG_TYPE_ALL_VALUE ? { type: [logType] } : {}),
         page: 1,
       },
     })
@@ -138,7 +149,7 @@ export function CommonLogsFilterBar<TData>(
     const { start, end } = getDefaultTimeRange()
     const resetFilters: CommonLogFilters = { startTime: start, endTime: end }
     setFilters(resetFilters)
-    setLogType('')
+    setLogType(LOG_TYPE_ALL_VALUE)
 
     navigate({
       to: '/usage-logs/$section',
@@ -167,11 +178,22 @@ export function CommonLogsFilterBar<TData>(
     !!filters.requestId ||
     !!filters.upstreamRequestId
 
+  const hasTypeFilter = logType !== LOG_TYPE_ALL_VALUE
   const hasAdditionalFilters =
-    !!filters.model || !!filters.group || !!logType || hasExpandedFilters
+    !!filters.model || !!filters.group || hasTypeFilter || hasExpandedFilters
 
   const inputClass = 'w-full sm:w-[140px] lg:w-[160px]'
   const sensitiveType = sensitiveVisible ? 'text' : 'password'
+  const logTypeItems = useMemo(
+    () =>
+      LOG_TYPE_FILTERS.map((type) => ({
+        value: type.value,
+        label: t(type.label),
+      })),
+    [t]
+  )
+  const logTypeLabel =
+    logTypeItems.find((type) => type.value === logType)?.label ?? t('All Types')
 
   const statsBar = (
     <div className='flex flex-wrap items-center gap-2'>
@@ -230,26 +252,23 @@ export function CommonLogsFilterBar<TData>(
             className={inputClass}
           />
           <Select
-            items={[
-              { value: 'all', label: t('All Types') },
-              ...LOG_TYPES.map((type) => ({
-                value: String(type.value),
-                label: t(type.label),
-              })),
-            ]}
+            items={logTypeItems}
             value={logType}
             onValueChange={(value) => {
-              setLogType(value !== null && isLogTypeValue(value) ? value : '')
+              setLogType(
+                value !== null && isLogTypeValue(value)
+                  ? value
+                  : LOG_TYPE_ALL_VALUE
+              )
             }}
           >
             <SelectTrigger className={inputClass}>
-              <SelectValue placeholder={t('All Types')} />
+              <SelectValue>{logTypeLabel}</SelectValue>
             </SelectTrigger>
             <SelectContent alignItemWithTrigger={false}>
               <SelectGroup>
-                <SelectItem value='all'>{t('All Types')}</SelectItem>
-                {LOG_TYPES.map((type) => (
-                  <SelectItem key={type.value} value={String(type.value)}>
+                {LOG_TYPE_FILTERS.map((type) => (
+                  <SelectItem key={type.value} value={type.value}>
                     {t(type.label)}
                   </SelectItem>
                 ))}
