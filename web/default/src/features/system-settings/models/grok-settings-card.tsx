@@ -46,6 +46,12 @@ import { safeNumberFieldProps } from '../utils/numeric-field'
 const XAI_VIOLATION_FEE_DOC_URL =
   'https://docs.x.ai/docs/models#usage-guidelines-violation-fee'
 
+/**
+ * The schema uses a nested object so the dotted FormField `name` props line
+ * up with react-hook-form's path semantics. Using flat keys like
+ * `'grok.violation_deduction_enabled'` causes RHF to silently maintain two
+ * parallel value trees and saves never see the user input.
+ */
 const grokSchema = z.object({
   grok: z.object({
     violation_deduction_enabled: z.boolean(),

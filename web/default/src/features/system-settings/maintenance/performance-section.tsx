@@ -70,6 +70,14 @@ import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { safeNumberFieldProps } from '../utils/numeric-field'
 
+/**
+ * IMPORTANT: react-hook-form 7 interprets dotted `name` strings as nested
+ * paths. If we declare the schema with literal flat keys like
+ * `'performance_setting.disk_cache_enabled'`, the form state diverges from
+ * what zod validates and saves silently turn into no-ops. So we model the
+ * form internally with proper nested objects and only flatten back to the
+ * server-side key format right before persisting.
+ */
 const perfSchema = z.object({
   performance_setting: z.object({
     disk_cache_enabled: z.boolean(),
@@ -278,12 +286,14 @@ export function PerformanceSection(props: Props) {
       toast.info(t('No changes to save'))
       return
     }
+
     for (const key of changedKeys) {
       await updateOption.mutateAsync({
         key,
         value: normalized[key],
       })
     }
+
     baselineRef.current = normalized
     baselineSerializedRef.current = JSON.stringify(normalized)
     form.reset(buildFormDefaults(normalized))
