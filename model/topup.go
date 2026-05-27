@@ -578,6 +578,16 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 }
 
 func RechargeWaffoPancake(tradeNo string) (err error) {
+	return RechargeWaffoPancakeWithValidation(tradeNo, "", PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderWaffoPancake,
+		ActualPaymentMethod:     PaymentMethodWaffoPancake,
+	}, "")
+}
+
+func RechargeWaffoPancakeWithValidation(tradeNo string, providerPayload string, validation PaymentCallbackValidation, callerIp string) (err error) {
+	if validation.ExpectedPaymentProvider == "" {
+		validation.ExpectedPaymentProvider = PaymentProviderWaffoPancake
+	}
 	if tradeNo == "" {
 		return errors.New("未提供支付单号")
 	}
@@ -596,8 +606,17 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return errors.New("充值订单不存在")
 		}
 
-		if topUp.PaymentProvider != PaymentProviderWaffoPancake {
+		if topUp.PaymentProvider != validation.ExpectedPaymentProvider {
 			return ErrPaymentMethodMismatch
+		}
+		if validation.ActualPaymentMethod != "" && !callbackPaymentMethodMatches(topUp.PaymentMethod, validation.ActualPaymentMethod, validation.ExpectedPaymentProvider) {
+			return ErrPaymentMethodMismatch
+		}
+		if validation.RequirePaymentFacts && !samePaymentCurrency(topUp.PaidCurrency, validation.PaidCurrency) {
+			return ErrPaymentCurrencyMismatch
+		}
+		if validation.RequirePaymentFacts && !samePaymentAmount(topUp.PaidAmount, validation.PaidAmount) {
+			return ErrPaymentAmountMismatch
 		}
 
 		if topUp.Status == common.TopUpStatusSuccess {
@@ -613,6 +632,9 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 			return errors.New("无效的充值额度")
 		}
 
+		if providerPayload != "" {
+			topUp.ProviderPayload = providerPayload
+		}
 		topUp.CompleteTime = common.GetTimestamp()
 		topUp.Status = common.TopUpStatusSuccess
 		if err := tx.Save(topUp).Error; err != nil {
@@ -628,11 +650,24 @@ func RechargeWaffoPancake(tradeNo string) (err error) {
 
 	if err != nil {
 		common.SysError("waffo pancake topup failed: " + err.Error())
+		if errors.Is(err, ErrPaymentMethodMismatch) ||
+			errors.Is(err, ErrPaymentAmountMismatch) ||
+			errors.Is(err, ErrPaymentCurrencyMismatch) {
+			return err
+		}
 		return errors.New("充值失败，请稍后重试")
 	}
 
 	if quotaToAdd > 0 {
-		RecordLog(topUp.UserId, LogTypeTopup, fmt.Sprintf("Waffo Pancake充值成功，充值额度: %v，支付金额: %.2f", logger.FormatQuota(quotaToAdd), topUp.Money))
+		RecordPaymentAuditLog(topUp.UserId, fmt.Sprintf("Waffo Pancake充值成功，充值额度: %v，支付金额: %.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), PaymentAuditLogInfo{
+			CallerIP:              callerIp,
+			PaymentMethod:         topUp.PaymentMethod,
+			CallbackPaymentMethod: validation.ActualPaymentMethod,
+			PaymentProvider:       PaymentProviderWaffoPancake,
+			OrderType:             "topup",
+			PaidAmount:            topUp.PaidAmount,
+			PaidCurrency:          topUp.PaidCurrency,
+		})
 	}
 
 	return nil

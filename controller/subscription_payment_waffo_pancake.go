@@ -78,16 +78,29 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 	// WAFFO_PANCAKE_SUB- prefix (vs. wallet's WAFFO_PANCAKE-) drives webhook
 	// dispatch in WaffoPancakeWebhook.
 	tradeNo := fmt.Sprintf("WAFFO_PANCAKE_SUB-%d-%d-%s", userId, time.Now().UnixMilli(), randstr.String(6))
+	paidCurrency := "USD"
+	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, paidCurrency)
 
 	order := &model.SubscriptionOrder{
 		UserId:          userId,
 		PlanId:          plan.Id,
 		Money:           plan.PriceAmount,
+		PaidAmount:      plan.PriceAmount,
+		PaidCurrency:    paidCurrency,
 		TradeNo:         tradeNo,
 		PaymentMethod:   model.PaymentMethodWaffoPancake,
 		PaymentProvider: model.PaymentProviderWaffoPancake,
 		CreateTime:      time.Now().Unix(),
 		Status:          common.TopUpStatusPending,
+	}
+	applySubscriptionOrderSnapshot(order, plan, paidCurrency)
+	if snapshot != nil {
+		order.ReferralAffiliateId = snapshot.AffiliateId
+		order.ReferralRate = snapshot.Rate
+		order.ReferralBaseAmount = snapshot.BaseAmount
+		order.ReferralBaseCurrency = snapshot.Currency
+		order.ReferralCommissionStatus = snapshot.Status
+		order.ReferralCommissionError = snapshot.Error
 	}
 	if err := order.Insert(); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅订单创建失败 user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))

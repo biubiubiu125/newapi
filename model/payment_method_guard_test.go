@@ -115,6 +115,62 @@ func TestRechargeWaffoPancake_RejectsMismatchedPaymentMethod(t *testing.T) {
 	assert.Equal(t, 0, getUserQuotaForPaymentGuardTest(t, 101))
 }
 
+func TestRechargeWaffoPancakeWithValidation_RejectsMismatchedCallbackFacts(t *testing.T) {
+	testCases := []struct {
+		name          string
+		validation    PaymentCallbackValidation
+		expectedError error
+	}{
+		{
+			name: "amount mismatch",
+			validation: PaymentCallbackValidation{
+				ExpectedPaymentProvider: PaymentProviderWaffoPancake,
+				ActualPaymentMethod:     PaymentMethodWaffoPancake,
+				PaidAmount:              9.98,
+				PaidCurrency:            "USD",
+				RequirePaymentFacts:     true,
+			},
+			expectedError: ErrPaymentAmountMismatch,
+		},
+		{
+			name: "currency mismatch",
+			validation: PaymentCallbackValidation{
+				ExpectedPaymentProvider: PaymentProviderWaffoPancake,
+				ActualPaymentMethod:     PaymentMethodWaffoPancake,
+				PaidAmount:              9.99,
+				PaidCurrency:            "CNY",
+				RequirePaymentFacts:     true,
+			},
+			expectedError: ErrPaymentCurrencyMismatch,
+		},
+	}
+
+	for _, tc := range testCases {
+		t.Run(tc.name, func(t *testing.T) {
+			truncateTables(t)
+			insertUserForPaymentGuardTest(t, 102, 0)
+			topUp := &TopUp{
+				UserId:          102,
+				Amount:          2,
+				Money:           9.99,
+				PaidAmount:      9.99,
+				PaidCurrency:    "USD",
+				TradeNo:         "waffo-pancake-callback-facts",
+				PaymentMethod:   PaymentMethodWaffoPancake,
+				PaymentProvider: PaymentProviderWaffoPancake,
+				Status:          common.TopUpStatusPending,
+				CreateTime:      time.Now().Unix(),
+			}
+			require.NoError(t, topUp.Insert())
+
+			err := RechargeWaffoPancakeWithValidation(topUp.TradeNo, `{"provider":"waffo_pancake"}`, tc.validation, "127.0.0.1")
+			require.ErrorIs(t, err, tc.expectedError)
+			assert.Equal(t, common.TopUpStatusPending, getTopUpStatusForPaymentGuardTest(t, topUp.TradeNo))
+			assert.Equal(t, 0, getUserQuotaForPaymentGuardTest(t, 102))
+		})
+	}
+}
+
 func TestUpdatePendingTopUpStatus_RejectsMismatchedPaymentProvider(t *testing.T) {
 	testCases := []struct {
 		name                    string

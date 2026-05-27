@@ -68,6 +68,11 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 		&model.SubscriptionPlan{},
 		&model.SubscriptionOrder{},
 		&model.UserSubscription{},
+		&model.ReferralAffiliate{},
+		&model.ReferralBinding{},
+		&model.ReferralCommissionAccount{},
+		&model.ReferralCommission{},
+		&model.ReferralCommissionLedger{},
 		&model.ReferralCommissionJob{},
 	))
 

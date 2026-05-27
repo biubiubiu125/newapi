@@ -92,6 +92,28 @@ func formatWaffoPancakeAmount(payMoney float64) string {
 	return decimal.NewFromFloat(payMoney).StringFixed(2)
 }
 
+func waffoPancakeEventPaidAmount(event *service.WaffoPancakeWebhookEvent) float64 {
+	if event == nil {
+		return -1
+	}
+	amountText := strings.TrimSpace(event.Data.Amount)
+	if amountText == "" {
+		return -1
+	}
+	amount, err := decimal.NewFromString(amountText)
+	if err != nil {
+		return -1
+	}
+	return amount.InexactFloat64()
+}
+
+func waffoPancakeEventPaidCurrency(event *service.WaffoPancakeWebhookEvent) string {
+	if event == nil {
+		return ""
+	}
+	return strings.ToUpper(strings.TrimSpace(event.Data.Currency))
+}
+
 func getWaffoPancakeBuyerEmail(user *model.User) string {
 	if user != nil && strings.TrimSpace(user.Email) != "" {
 		return user.Email
@@ -519,8 +541,19 @@ func WaffoPancakeWebhook(c *gin.Context) {
 		}
 		LockOrder(tradeNo)
 		defer UnlockOrder(tradeNo)
-		if err := model.CompleteSubscriptionOrder(tradeNo, string(bodyBytes), model.PaymentProviderWaffoPancake, ""); err != nil {
+		if err := model.CompleteSubscriptionOrderWithValidation(tradeNo, string(bodyBytes), model.PaymentCallbackValidation{
+			ExpectedPaymentProvider: model.PaymentProviderWaffoPancake,
+			ActualPaymentMethod:     model.PaymentMethodWaffoPancake,
+			PaidAmount:              waffoPancakeEventPaidAmount(event),
+			PaidCurrency:            waffoPancakeEventPaidCurrency(event),
+			RequirePaymentFacts:     true,
+			CallerIP:                c.ClientIP(),
+		}); err != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅完成失败 trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err.Error()))
+			c.String(http.StatusInternalServerError, "retry")
+			return
+		}
+		if err := processPaidSubscriptionCommission(c.Request.Context(), tradeNo); err != nil {
 			c.String(http.StatusInternalServerError, "retry")
 			return
 		}
@@ -545,7 +578,14 @@ func WaffoPancakeWebhook(c *gin.Context) {
 	LockOrder(tradeNo)
 	defer UnlockOrder(tradeNo)
 
-	if err := model.RechargeWaffoPancake(tradeNo); err != nil {
+	if err := model.RechargeWaffoPancakeWithValidation(tradeNo, string(bodyBytes), model.PaymentCallbackValidation{
+		ExpectedPaymentProvider: model.PaymentProviderWaffoPancake,
+		ActualPaymentMethod:     model.PaymentMethodWaffoPancake,
+		PaidAmount:              waffoPancakeEventPaidAmount(event),
+		PaidCurrency:            waffoPancakeEventPaidCurrency(event),
+		RequirePaymentFacts:     true,
+		CallerIP:                c.ClientIP(),
+	}, c.ClientIP()); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 充值处理失败 trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err.Error()))
 		c.String(http.StatusInternalServerError, "retry")
 		return
