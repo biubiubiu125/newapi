@@ -64,9 +64,11 @@ export default function SettingsSidebarModulesAdmin(props) {
       channel: true,
       models: true,
       deployment: true,
+      providerPricing: true,
       redemption: true,
       user: true,
       subscription: true,
+      adminReferral: true,
       setting: true,
     },
   });
@@ -126,9 +128,11 @@ export default function SettingsSidebarModulesAdmin(props) {
         channel: true,
         models: true,
         deployment: true,
+        providerPricing: true,
         redemption: true,
         user: true,
         subscription: true,
+        adminReferral: true,
         setting: true,
       },
     };
@@ -176,7 +180,20 @@ export default function SettingsSidebarModulesAdmin(props) {
     if (props.options && props.options.SidebarModulesAdmin) {
       try {
         const modules = JSON.parse(props.options.SidebarModulesAdmin);
-        setSidebarModulesAdmin(modules);
+        setSidebarModulesAdmin({
+          ...modules,
+          admin: {
+            ...(modules.admin || {}),
+            adminReferral:
+              modules.admin?.adminReferral ??
+              modules.admin?.referral ??
+              true,
+            providerPricing:
+              modules.admin?.providerPricing ??
+              modules.admin?.provider_price_export ??
+              true,
+          },
+        });
       } catch (error) {
         // 使用默认配置
         const defaultModules = {
@@ -200,9 +217,11 @@ export default function SettingsSidebarModulesAdmin(props) {
             channel: true,
             models: true,
             deployment: true,
+            providerPricing: true,
             redemption: true,
             user: true,
             subscription: true,
+            adminReferral: true,
             setting: true,
           },
         };
@@ -276,6 +295,16 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'subscription',
           title: t('订阅管理'),
           description: t('订阅套餐管理'),
+        },
+        {
+          key: 'adminReferral',
+          title: t('Referral Management'),
+          description: t('Referral affiliates, commissions, withdrawals, and audit logs'),
+        },
+        {
+          key: 'providerPricing',
+          title: t('Public Price Export'),
+          description: t('Public provider pricing export'),
         },
         {
           key: 'redemption',

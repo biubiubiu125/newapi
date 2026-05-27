@@ -120,6 +120,10 @@ export function SidebarModulesSection({
         title: t('Wallet'),
         description: t('Top up balance and view billing history.'),
       },
+      referral: {
+        title: t('Referral Center'),
+        description: t('Referral links, commissions, and withdrawals.'),
+      },
       personal: {
         title: t('Profile'),
         description: t('Personal settings and profile management.'),
@@ -157,6 +161,10 @@ export function SidebarModulesSection({
       risk_center: {
         title: t('Risk Center'),
         description: t('Review account, payment, and usage risk signals.'),
+      },
+      provider_price_export: {
+        title: t('Public Price Export'),
+        description: t('Publish public provider pricing data.'),
       },
     },
   }

@@ -70,13 +70,15 @@ import {
   normalizeJsonForComparison,
   removeTrailingSlash,
 } from './utils'
+import { saveWaffoPancakeConfig } from './waffo-pancake-api'
 import {
   WaffoPancakeSettingsSection,
+  type WaffoPancakeBinding,
   type WaffoPancakeSettingsValues,
 } from './waffo-pancake-settings-section'
 import {
-  WaffoSettingsSection,
   type PayMethod,
+  WaffoSettingsSection,
   type WaffoSettingsValues,
 } from './waffo-settings-section'
 
@@ -158,13 +160,16 @@ const paymentSchema = z.object({
   WaffoMinTopUp: z.coerce.number().min(1),
   WaffoNotifyUrl: z.string(),
   WaffoReturnUrl: z.string(),
+  WaffoPancakeMerchantID: z.string(),
+  WaffoPancakePrivateKey: z.string(),
+  WaffoPancakeReturnURL: z.string(),
 })
 
 type PaymentFormValues = z.infer<typeof paymentSchema>
 type WaffoFormFieldValues = Omit<WaffoSettingsValues, 'WaffoPayMethods'>
 type PaymentBaseFormValues = Omit<
   PaymentFormValues,
-  keyof WaffoFormFieldValues
+  keyof WaffoFormFieldValues | keyof WaffoPancakeSettingsValues
 >
 
 const CURRENT_COMPLIANCE_TERMS_VERSION = 'v1'
@@ -211,8 +216,9 @@ export function PaymentSettingsSection({
     () => ({
       ...defaultValues,
       ...waffoDefaultValues,
+      ...waffoPancakeDefaultValues,
     }),
-    [defaultValues, waffoDefaultValues]
+    [defaultValues, waffoDefaultValues, waffoPancakeDefaultValues]
   )
   const initialRef = React.useRef(initialFormValues)
   const defaultsSignature = React.useMemo(
@@ -231,10 +237,29 @@ export function PaymentSettingsSection({
   const [waffoPayMethods, setWaffoPayMethods] = React.useState<PayMethod[]>(
     () => parseWaffoPayMethods(waffoDefaultValues.WaffoPayMethods)
   )
+  const [waffoPancakeSelection, setWaffoPancakeSelection] =
+    React.useState<WaffoPancakeBinding>({
+      storeID: waffoPancakeProvisionedStoreID ?? '',
+      productID: waffoPancakeProvisionedProductID ?? '',
+    })
+  const [waffoPancakeSavedBinding, setWaffoPancakeSavedBinding] =
+    React.useState<WaffoPancakeBinding>({
+      storeID: waffoPancakeProvisionedStoreID ?? '',
+      productID: waffoPancakeProvisionedProductID ?? '',
+    })
 
   React.useEffect(() => {
     setWaffoPayMethods(parseWaffoPayMethods(waffoDefaultValues.WaffoPayMethods))
   }, [waffoDefaultValues.WaffoPayMethods])
+
+  React.useEffect(() => {
+    const nextBinding = {
+      storeID: waffoPancakeProvisionedStoreID ?? '',
+      productID: waffoPancakeProvisionedProductID ?? '',
+    }
+    setWaffoPancakeSelection(nextBinding)
+    setWaffoPancakeSavedBinding(nextBinding)
+  }, [waffoPancakeProvisionedProductID, waffoPancakeProvisionedStoreID])
 
   const complianceStatements = React.useMemo(
     () => [
@@ -322,6 +347,8 @@ export function PaymentSettingsSection({
     },
   })
 
+  const { isSubmitting } = form.formState
+
   const setPaymentValue = React.useCallback(
     (
       key: keyof PaymentFormValues,
@@ -343,6 +370,19 @@ export function PaymentSettingsSection({
     <K extends keyof WaffoFormFieldValues>(
       key: K,
       value: WaffoFormFieldValues[K]
+    ) => {
+      setPaymentValue(
+        key as keyof PaymentFormValues,
+        value as PaymentFormValues[keyof PaymentFormValues]
+      )
+    },
+    [setPaymentValue]
+  )
+
+  const setWaffoPancakeValue = React.useCallback(
+    <K extends keyof WaffoPancakeSettingsValues>(
+      key: K,
+      value: WaffoPancakeSettingsValues[K]
     ) => {
       setPaymentValue(
         key as keyof PaymentFormValues,
@@ -400,6 +440,11 @@ export function PaymentSettingsSection({
       WaffoSandboxApiKey: values.WaffoSandboxApiKey.trim(),
       WaffoSandboxPrivateKey: values.WaffoSandboxPrivateKey.trim(),
       WaffoPayMethods: JSON.stringify(waffoPayMethods),
+      WaffoPancakeMerchantID: values.WaffoPancakeMerchantID.trim(),
+      WaffoPancakePrivateKey: values.WaffoPancakePrivateKey.trim(),
+      WaffoPancakeReturnURL: removeTrailingSlash(
+        values.WaffoPancakeReturnURL.trim()
+      ),
     }
 
     const initial = {
@@ -441,6 +486,11 @@ export function PaymentSettingsSection({
       WaffoSandboxPrivateKey: initialRef.current.WaffoSandboxPrivateKey.trim(),
       WaffoPayMethods: JSON.stringify(
         parseWaffoPayMethods(waffoDefaultValues.WaffoPayMethods)
+      ),
+      WaffoPancakeMerchantID: initialRef.current.WaffoPancakeMerchantID.trim(),
+      WaffoPancakePrivateKey: initialRef.current.WaffoPancakePrivateKey.trim(),
+      WaffoPancakeReturnURL: removeTrailingSlash(
+        initialRef.current.WaffoPancakeReturnURL.trim()
       ),
     }
 
@@ -639,12 +689,78 @@ export function PaymentSettingsSection({
       updates.push({ key: 'WaffoPayMethods', value: sanitized.WaffoPayMethods })
     }
 
-    if (updates.length === 0) {
+    const hasWaffoPancakeChanges =
+      sanitized.WaffoPancakeMerchantID !== initial.WaffoPancakeMerchantID ||
+      sanitized.WaffoPancakePrivateKey.length > 0 ||
+      sanitized.WaffoPancakeReturnURL !== initial.WaffoPancakeReturnURL ||
+      waffoPancakeSelection.storeID !== waffoPancakeSavedBinding.storeID ||
+      waffoPancakeSelection.productID !== waffoPancakeSavedBinding.productID
+
+    if (updates.length === 0 && !hasWaffoPancakeChanges) {
+      toast.info(t('No changes to save'))
       return
+    }
+
+    if (hasWaffoPancakeChanges) {
+      if (!sanitized.WaffoPancakeMerchantID) {
+        toast.error(t('Merchant ID is required'))
+        return
+      }
+
+      if (!waffoPancakeSelection.storeID || !waffoPancakeSelection.productID) {
+        toast.error(
+          t('Pick or create both a store and a product before saving.')
+        )
+        return
+      }
     }
 
     for (const update of updates) {
       await updateOption.mutateAsync(update)
+    }
+
+    if (!hasWaffoPancakeChanges) {
+      return
+    }
+
+    try {
+      const body = await saveWaffoPancakeConfig({
+        merchantID: sanitized.WaffoPancakeMerchantID,
+        privateKey: sanitized.WaffoPancakePrivateKey,
+        returnURL: sanitized.WaffoPancakeReturnURL,
+        storeID: waffoPancakeSelection.storeID,
+        productID: waffoPancakeSelection.productID,
+      })
+
+      if (
+        body?.message === 'success' &&
+        typeof body.data === 'object' &&
+        body.data
+      ) {
+        const saved = body.data as { product_id: string; store_id: string }
+        const savedBinding = {
+          storeID: saved.store_id,
+          productID: saved.product_id,
+        }
+        setWaffoPancakeSavedBinding(savedBinding)
+        setWaffoPancakeSelection(savedBinding)
+        queryClient.invalidateQueries({ queryKey: ['system-options'] })
+        toast.success(t('Waffo Pancake settings saved'))
+        return
+      }
+
+      const reason = typeof body?.data === 'string' ? body.data : undefined
+      toast.error(
+        reason
+          ? `${t('Waffo Pancake save failed')}: ${reason}`
+          : t('Waffo Pancake save failed')
+      )
+    } catch (error) {
+      toast.error(
+        `${t('Waffo Pancake save failed')}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
     }
   }
 
@@ -665,6 +781,11 @@ export function PaymentSettingsSection({
     WaffoNotifyUrl: currentFormValues.WaffoNotifyUrl,
     WaffoReturnUrl: currentFormValues.WaffoReturnUrl,
     WaffoPayMethods: JSON.stringify(waffoPayMethods),
+  }
+  const waffoPancakeValues: WaffoPancakeSettingsValues = {
+    WaffoPancakeMerchantID: currentFormValues.WaffoPancakeMerchantID,
+    WaffoPancakePrivateKey: currentFormValues.WaffoPancakePrivateKey,
+    WaffoPancakeReturnURL: currentFormValues.WaffoPancakeReturnURL,
   }
 
   return (
@@ -732,7 +853,6 @@ export function PaymentSettingsSection({
         onConfirm={() => confirmComplianceMutation.mutate()}
       />
 
-      {/* eslint-disable react-hooks/refs */}
       <Form {...form}>
         <SettingsForm
           onSubmit={form.handleSubmit(onSubmit)}
@@ -744,7 +864,7 @@ export function PaymentSettingsSection({
         >
           <SettingsPageFormActions
             onSave={form.handleSubmit(onSubmit)}
-            isSaving={updateOption.isPending}
+            isSaving={updateOption.isPending || isSubmitting}
             saveLabel='Save all settings'
           />
           <div className='space-y-4'>
@@ -1405,6 +1525,18 @@ export function PaymentSettingsSection({
               )}
             />
           </div>
+
+          <Separator />
+
+          <WaffoPancakeSettingsSection
+            defaultValues={waffoPancakeDefaultValues}
+            values={waffoPancakeValues}
+            onValueChange={setWaffoPancakeValue}
+            selectedBinding={waffoPancakeSelection}
+            savedBinding={waffoPancakeSavedBinding}
+            onSelectedBindingChange={setWaffoPancakeSelection}
+          />
+
           <Separator />
 
           <WaffoSettingsSection
@@ -1413,18 +1545,8 @@ export function PaymentSettingsSection({
             payMethods={waffoPayMethods}
             onPayMethodsChange={setWaffoPayMethods}
           />
-
         </SettingsForm>
       </Form>
-
-      <Separator />
-
-      <WaffoPancakeSettingsSection
-        defaultValues={waffoPancakeDefaultValues}
-        provisionedStoreID={waffoPancakeProvisionedStoreID}
-        provisionedProductID={waffoPancakeProvisionedProductID}
-      />
-      {/* eslint-enable react-hooks/refs */}
     </SettingsSection>
   )
 }

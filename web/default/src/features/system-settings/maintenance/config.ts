@@ -70,6 +70,7 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
   personal: {
     enabled: true,
     topup: true,
+    referral: true,
     personal: true,
   },
   admin: {
@@ -78,10 +79,19 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     models: true,
     redemption: true,
     user: true,
+    referral: true,
     setting: true,
     subscription: true,
     recharge_audit: true,
     risk_center: true,
+    provider_price_export: true,
+  },
+}
+
+const SIDEBAR_MODULE_ALIASES: Record<string, Record<string, string[]>> = {
+  admin: {
+    referral: ['adminReferral'],
+    provider_price_export: ['providerPricing'],
   },
 }
 
@@ -134,6 +144,37 @@ const cloneSidebarDefault = (): SidebarModulesAdminConfig =>
     },
     {}
   )
+
+const normalizeSidebarAliases = (
+  config: SidebarModulesAdminConfig
+): SidebarModulesAdminConfig => {
+  const normalized: SidebarModulesAdminConfig = { ...config }
+
+  Object.entries(SIDEBAR_MODULE_ALIASES).forEach(
+    ([sectionKey, moduleAliases]) => {
+      const section = normalized[sectionKey]
+      if (!section) return
+
+      normalized[sectionKey] = { ...section }
+      Object.entries(moduleAliases).forEach(([canonicalKey, aliases]) => {
+        if (normalized[sectionKey][canonicalKey] === undefined) {
+          const alias = aliases.find(
+            (aliasKey) => normalized[sectionKey][aliasKey] !== undefined
+          )
+          if (alias) {
+            normalized[sectionKey][canonicalKey] =
+              normalized[sectionKey][alias]
+          }
+        }
+        aliases.forEach((aliasKey) => {
+          delete normalized[sectionKey][aliasKey]
+        })
+      })
+    }
+  )
+
+  return normalized
+}
 
 export function parseHeaderNavModules(
   value: string | null | undefined
@@ -191,9 +232,13 @@ export function parseSidebarModulesAdmin(
 
   try {
     const parsed = JSON.parse(value) as Record<string, unknown>
+    const aliasNormalized =
+      parsed && typeof parsed === 'object'
+        ? normalizeSidebarAliases(parsed as SidebarModulesAdminConfig)
+        : parsed
     const result: SidebarModulesAdminConfig = {}
 
-    Object.entries(parsed).forEach(([sectionKey, raw]) => {
+    Object.entries(aliasNormalized).forEach(([sectionKey, raw]) => {
       if (!raw || typeof raw !== 'object') return
 
       const defaultSection = defaults[sectionKey] ?? { enabled: true }

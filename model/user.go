@@ -149,26 +149,41 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 	defaultConfig["personal"] = map[string]interface{}{
 		"enabled":  true,
 		"topup":    true,
+		"referral": true,
 		"personal": true,
 	}
 
 	if userRole == common.RoleAdminUser {
 		defaultConfig["admin"] = map[string]interface{}{
-			"enabled":    true,
-			"channel":    true,
-			"models":     true,
-			"redemption": true,
-			"user":       true,
-			"setting":    false,
+			"enabled":               true,
+			"channel":               true,
+			"models":                true,
+			"redemption":            true,
+			"user":                  true,
+			"subscription":          true,
+			"referral":              true,
+			"adminReferral":         true,
+			"recharge_audit":        true,
+			"risk_center":           true,
+			"provider_price_export": true,
+			"providerPricing":       true,
+			"setting":               false,
 		}
 	} else if userRole == common.RoleRootUser {
 		defaultConfig["admin"] = map[string]interface{}{
-			"enabled":    true,
-			"channel":    true,
-			"models":     true,
-			"redemption": true,
-			"user":       true,
-			"setting":    true,
+			"enabled":               true,
+			"channel":               true,
+			"models":                true,
+			"redemption":            true,
+			"user":                  true,
+			"subscription":          true,
+			"referral":              true,
+			"adminReferral":         true,
+			"recharge_audit":        true,
+			"risk_center":           true,
+			"provider_price_export": true,
+			"providerPricing":       true,
+			"setting":               true,
 		}
 	}
 

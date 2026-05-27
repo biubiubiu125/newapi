@@ -76,6 +76,21 @@ export const mergeAdminConfig = (savedConfig) => {
     merged[sectionKey] = { ...merged[sectionKey], ...sectionConfig };
   }
 
+  if (merged.admin) {
+    if (
+      savedConfig.admin?.adminReferral === undefined &&
+      merged.admin.referral !== undefined
+    ) {
+      merged.admin.adminReferral = merged.admin.referral ?? true;
+    }
+    if (
+      savedConfig.admin?.providerPricing === undefined &&
+      merged.admin.provider_price_export !== undefined
+    ) {
+      merged.admin.providerPricing = merged.admin.provider_price_export ?? true;
+    }
+  }
+
   return merged;
 };
 
