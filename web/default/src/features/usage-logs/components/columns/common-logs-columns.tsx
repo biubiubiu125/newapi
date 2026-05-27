@@ -330,6 +330,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                       autoColor={String(log.channel)}
                       copyText={String(log.channel)}
                       size='sm'
+                      showDot={false}
                       className='font-mono'
                     />
                     {affinity && (
@@ -355,7 +356,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                     )}
                   </div>
                   {log.channel_name && (
-                    <span className='text-muted-foreground/70 truncate text-[11px]'>
+                    <span className='text-muted-foreground/70 truncate !text-xs [font-family:var(--font-body)]'>
                       {channelName}
                     </span>
                   )}
@@ -558,7 +559,7 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
             ? log.completion_tokens / useTime
             : null
         const timeVariant = getResponseTimeColor(useTime, log.completion_tokens)
-        const frtVariant = frt ? getFirstResponseTimeColor(frt / 1000) : null
+        const frtVariant = frt ? getFirstResponseTimeColor(frt / 1000) : 'neutral'
 
         const pillBg: Record<string, string> = {
           success:
