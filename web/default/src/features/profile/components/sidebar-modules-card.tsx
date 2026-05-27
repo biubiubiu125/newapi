@@ -114,6 +114,11 @@ export function SidebarModulesCard() {
           description: t('Balance and top-up management'),
         },
         {
+          key: 'referral',
+          title: t('Referral Center'),
+          description: t('Referral links, commissions, and withdrawals'),
+        },
+        {
           key: 'personal',
           title: t('Personal Settings'),
           description: t('Personal info settings'),

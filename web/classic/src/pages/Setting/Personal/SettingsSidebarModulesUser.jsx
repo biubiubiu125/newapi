@@ -106,7 +106,10 @@ export default function SettingsSidebarModulesUser() {
         channel: isSidebarModuleAllowed('admin', 'channel'),
         models: isSidebarModuleAllowed('admin', 'models'),
         deployment: isSidebarModuleAllowed('admin', 'deployment'),
+        providerPricing: isSidebarModuleAllowed('admin', 'providerPricing'),
         redemption: isSidebarModuleAllowed('admin', 'redemption'),
+        subscription: isSidebarModuleAllowed('admin', 'subscription'),
+        adminReferral: isSidebarModuleAllowed('admin', 'adminReferral'),
         user: isSidebarModuleAllowed('admin', 'user'),
         setting: isSidebarModuleAllowed('admin', 'setting'),
       };
@@ -234,6 +237,17 @@ export default function SettingsSidebarModulesUser() {
 
           // 确保用户配置也经过权限过滤
           const filteredUserConf = {};
+          if (userConf?.admin) {
+            userConf.admin = {
+              ...userConf.admin,
+              adminReferral:
+                userConf.admin.adminReferral ?? userConf.admin.referral ?? true,
+              providerPricing:
+                userConf.admin.providerPricing ??
+                userConf.admin.provider_price_export ??
+                true,
+            };
+          }
           Object.keys(userConf).forEach((sectionKey) => {
             if (isSidebarSectionAllowed(sectionKey)) {
               filteredUserConf[sectionKey] = { ...userConf[sectionKey] };
@@ -356,6 +370,21 @@ export default function SettingsSidebarModulesUser() {
           description: t('兑换码生成管理'),
         },
         { key: 'user', title: t('用户管理'), description: t('用户账户管理') },
+        {
+          key: 'subscription',
+          title: t('Subscription Management'),
+          description: t('Manage subscription plans and pricing'),
+        },
+        {
+          key: 'adminReferral',
+          title: t('Referral Management'),
+          description: t('Referral affiliates, commissions, withdrawals, and audit logs'),
+        },
+        {
+          key: 'providerPricing',
+          title: t('Public Price Export'),
+          description: t('Public provider pricing export'),
+        },
         {
           key: 'setting',
           title: t('系统设置'),

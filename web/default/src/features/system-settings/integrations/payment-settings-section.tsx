@@ -47,6 +47,12 @@ import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { RiskAcknowledgementDialog } from '@/components/risk-acknowledgement-dialog'
 import { confirmPaymentCompliance } from '../api'
+import {
+  SettingsForm,
+  SettingsSwitchContent,
+  SettingsSwitchItem,
+} from '../components/settings-form-layout'
+import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { safeNumberFieldProps } from '../utils/numeric-field'
@@ -64,13 +70,15 @@ import {
   normalizeJsonForComparison,
   removeTrailingSlash,
 } from './utils'
+import { saveWaffoPancakeConfig } from './waffo-pancake-api'
 import {
   WaffoPancakeSettingsSection,
+  type WaffoPancakeBinding,
   type WaffoPancakeSettingsValues,
 } from './waffo-pancake-settings-section'
 import {
-  WaffoSettingsSection,
   type PayMethod,
+  WaffoSettingsSection,
   type WaffoSettingsValues,
 } from './waffo-settings-section'
 
@@ -152,13 +160,16 @@ const paymentSchema = z.object({
   WaffoMinTopUp: z.coerce.number().min(1),
   WaffoNotifyUrl: z.string(),
   WaffoReturnUrl: z.string(),
+  WaffoPancakeMerchantID: z.string(),
+  WaffoPancakePrivateKey: z.string(),
+  WaffoPancakeReturnURL: z.string(),
 })
 
 type PaymentFormValues = z.infer<typeof paymentSchema>
 type WaffoFormFieldValues = Omit<WaffoSettingsValues, 'WaffoPayMethods'>
 type PaymentBaseFormValues = Omit<
   PaymentFormValues,
-  keyof WaffoFormFieldValues
+  keyof WaffoFormFieldValues | keyof WaffoPancakeSettingsValues
 >
 
 const CURRENT_COMPLIANCE_TERMS_VERSION = 'v1'
@@ -205,8 +216,9 @@ export function PaymentSettingsSection({
     () => ({
       ...defaultValues,
       ...waffoDefaultValues,
+      ...waffoPancakeDefaultValues,
     }),
-    [defaultValues, waffoDefaultValues]
+    [defaultValues, waffoDefaultValues, waffoPancakeDefaultValues]
   )
   const initialRef = React.useRef(initialFormValues)
   const defaultsSignature = React.useMemo(
@@ -225,10 +237,29 @@ export function PaymentSettingsSection({
   const [waffoPayMethods, setWaffoPayMethods] = React.useState<PayMethod[]>(
     () => parseWaffoPayMethods(waffoDefaultValues.WaffoPayMethods)
   )
+  const [waffoPancakeSelection, setWaffoPancakeSelection] =
+    React.useState<WaffoPancakeBinding>({
+      storeID: waffoPancakeProvisionedStoreID ?? '',
+      productID: waffoPancakeProvisionedProductID ?? '',
+    })
+  const [waffoPancakeSavedBinding, setWaffoPancakeSavedBinding] =
+    React.useState<WaffoPancakeBinding>({
+      storeID: waffoPancakeProvisionedStoreID ?? '',
+      productID: waffoPancakeProvisionedProductID ?? '',
+    })
 
   React.useEffect(() => {
     setWaffoPayMethods(parseWaffoPayMethods(waffoDefaultValues.WaffoPayMethods))
   }, [waffoDefaultValues.WaffoPayMethods])
+
+  React.useEffect(() => {
+    const nextBinding = {
+      storeID: waffoPancakeProvisionedStoreID ?? '',
+      productID: waffoPancakeProvisionedProductID ?? '',
+    }
+    setWaffoPancakeSelection(nextBinding)
+    setWaffoPancakeSavedBinding(nextBinding)
+  }, [waffoPancakeProvisionedProductID, waffoPancakeProvisionedStoreID])
 
   const complianceStatements = React.useMemo(
     () => [
@@ -316,6 +347,8 @@ export function PaymentSettingsSection({
     },
   })
 
+  const { isSubmitting } = form.formState
+
   const setPaymentValue = React.useCallback(
     (
       key: keyof PaymentFormValues,
@@ -346,6 +379,19 @@ export function PaymentSettingsSection({
     [setPaymentValue]
   )
 
+  const setWaffoPancakeValue = React.useCallback(
+    <K extends keyof WaffoPancakeSettingsValues>(
+      key: K,
+      value: WaffoPancakeSettingsValues[K]
+    ) => {
+      setPaymentValue(
+        key as keyof PaymentFormValues,
+        value as PaymentFormValues[keyof PaymentFormValues]
+      )
+    },
+    [setPaymentValue]
+  )
+
   React.useEffect(() => {
     const parsedDefaults = JSON.parse(defaultsSignature) as PaymentFormValues
     initialRef.current = parsedDefaults
@@ -358,25 +404,109 @@ export function PaymentSettingsSection({
     })
   }, [defaultsSignature, form])
 
-  const saveGeneralSettings = async () => {
-    const values = form.getValues()
+  const onSubmit = async (values: PaymentFormValues) => {
     const sanitized = {
-      Price: values.Price as number,
-      MinTopUp: values.MinTopUp as number,
+      PayAddress: removeTrailingSlash(values.PayAddress),
+      EpayId: values.EpayId.trim(),
+      EpayKey: values.EpayKey.trim(),
+      Price: values.Price,
+      MinTopUp: values.MinTopUp,
+      CustomCallbackAddress: removeTrailingSlash(values.CustomCallbackAddress),
       PayMethods: values.PayMethods.trim(),
       AmountOptions: values.AmountOptions.trim(),
       AmountDiscount: values.AmountDiscount.trim(),
+      StripeApiSecret: values.StripeApiSecret.trim(),
+      StripeWebhookSecret: values.StripeWebhookSecret.trim(),
+      StripePriceId: values.StripePriceId.trim(),
+      StripeUnitPrice: values.StripeUnitPrice,
+      StripeMinTopUp: values.StripeMinTopUp,
+      StripePromotionCodesEnabled: values.StripePromotionCodesEnabled,
+      CreemApiKey: values.CreemApiKey.trim(),
+      CreemWebhookSecret: values.CreemWebhookSecret.trim(),
+      CreemTestMode: values.CreemTestMode,
+      CreemProducts: values.CreemProducts.trim(),
+      WaffoEnabled: values.WaffoEnabled,
+      WaffoSandbox: values.WaffoSandbox,
+      WaffoMerchantId: values.WaffoMerchantId.trim(),
+      WaffoCurrency: values.WaffoCurrency.trim() || 'USD',
+      WaffoUnitPrice: values.WaffoUnitPrice,
+      WaffoMinTopUp: values.WaffoMinTopUp,
+      WaffoNotifyUrl: values.WaffoNotifyUrl.trim(),
+      WaffoReturnUrl: values.WaffoReturnUrl.trim(),
+      WaffoPublicCert: values.WaffoPublicCert.trim(),
+      WaffoSandboxPublicCert: values.WaffoSandboxPublicCert.trim(),
+      WaffoApiKey: values.WaffoApiKey.trim(),
+      WaffoPrivateKey: values.WaffoPrivateKey.trim(),
+      WaffoSandboxApiKey: values.WaffoSandboxApiKey.trim(),
+      WaffoSandboxPrivateKey: values.WaffoSandboxPrivateKey.trim(),
+      WaffoPayMethods: JSON.stringify(waffoPayMethods),
+      WaffoPancakeMerchantID: values.WaffoPancakeMerchantID.trim(),
+      WaffoPancakePrivateKey: values.WaffoPancakePrivateKey.trim(),
+      WaffoPancakeReturnURL: removeTrailingSlash(
+        values.WaffoPancakeReturnURL.trim()
+      ),
     }
 
     const initial = {
+      PayAddress: removeTrailingSlash(initialRef.current.PayAddress),
+      EpayId: initialRef.current.EpayId.trim(),
+      EpayKey: initialRef.current.EpayKey.trim(),
       Price: initialRef.current.Price,
       MinTopUp: initialRef.current.MinTopUp,
+      CustomCallbackAddress: removeTrailingSlash(
+        initialRef.current.CustomCallbackAddress
+      ),
       PayMethods: initialRef.current.PayMethods.trim(),
       AmountOptions: initialRef.current.AmountOptions.trim(),
       AmountDiscount: initialRef.current.AmountDiscount.trim(),
+      StripeApiSecret: initialRef.current.StripeApiSecret.trim(),
+      StripeWebhookSecret: initialRef.current.StripeWebhookSecret.trim(),
+      StripePriceId: initialRef.current.StripePriceId.trim(),
+      StripeUnitPrice: initialRef.current.StripeUnitPrice,
+      StripeMinTopUp: initialRef.current.StripeMinTopUp,
+      StripePromotionCodesEnabled:
+        initialRef.current.StripePromotionCodesEnabled,
+      CreemApiKey: initialRef.current.CreemApiKey.trim(),
+      CreemWebhookSecret: initialRef.current.CreemWebhookSecret.trim(),
+      CreemTestMode: initialRef.current.CreemTestMode,
+      CreemProducts: initialRef.current.CreemProducts.trim(),
+      WaffoEnabled: initialRef.current.WaffoEnabled,
+      WaffoSandbox: initialRef.current.WaffoSandbox,
+      WaffoMerchantId: initialRef.current.WaffoMerchantId.trim(),
+      WaffoCurrency: initialRef.current.WaffoCurrency.trim() || 'USD',
+      WaffoUnitPrice: initialRef.current.WaffoUnitPrice,
+      WaffoMinTopUp: initialRef.current.WaffoMinTopUp,
+      WaffoNotifyUrl: initialRef.current.WaffoNotifyUrl.trim(),
+      WaffoReturnUrl: initialRef.current.WaffoReturnUrl.trim(),
+      WaffoPublicCert: initialRef.current.WaffoPublicCert.trim(),
+      WaffoSandboxPublicCert: initialRef.current.WaffoSandboxPublicCert.trim(),
+      WaffoApiKey: initialRef.current.WaffoApiKey.trim(),
+      WaffoPrivateKey: initialRef.current.WaffoPrivateKey.trim(),
+      WaffoSandboxApiKey: initialRef.current.WaffoSandboxApiKey.trim(),
+      WaffoSandboxPrivateKey: initialRef.current.WaffoSandboxPrivateKey.trim(),
+      WaffoPayMethods: JSON.stringify(
+        parseWaffoPayMethods(waffoDefaultValues.WaffoPayMethods)
+      ),
+      WaffoPancakeMerchantID: initialRef.current.WaffoPancakeMerchantID.trim(),
+      WaffoPancakePrivateKey: initialRef.current.WaffoPancakePrivateKey.trim(),
+      WaffoPancakeReturnURL: removeTrailingSlash(
+        initialRef.current.WaffoPancakeReturnURL.trim()
+      ),
     }
 
-    const updates: Array<{ key: string; value: string | number }> = []
+    const updates: Array<{ key: string; value: string | number | boolean }> = []
+
+    if (sanitized.PayAddress !== initial.PayAddress) {
+      updates.push({ key: 'PayAddress', value: sanitized.PayAddress })
+    }
+
+    if (sanitized.EpayId !== initial.EpayId) {
+      updates.push({ key: 'EpayId', value: sanitized.EpayId })
+    }
+
+    if (sanitized.EpayKey && sanitized.EpayKey !== initial.EpayKey) {
+      updates.push({ key: 'EpayKey', value: sanitized.EpayKey })
+    }
 
     if (sanitized.Price !== initial.Price) {
       updates.push({ key: 'Price', value: sanitized.Price })
@@ -384,6 +514,13 @@ export function PaymentSettingsSection({
 
     if (sanitized.MinTopUp !== initial.MinTopUp) {
       updates.push({ key: 'MinTopUp', value: sanitized.MinTopUp })
+    }
+
+    if (sanitized.CustomCallbackAddress !== initial.CustomCallbackAddress) {
+      updates.push({
+        key: 'CustomCallbackAddress',
+        value: sanitized.CustomCallbackAddress,
+      })
     }
 
     if (
@@ -412,87 +549,6 @@ export function PaymentSettingsSection({
         value: sanitized.AmountDiscount,
       })
     }
-
-    if (updates.length === 0) {
-      return
-    }
-
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
-    }
-  }
-
-  const saveEpaySettings = async () => {
-    const values = form.getValues()
-    const sanitized = {
-      PayAddress: removeTrailingSlash(values.PayAddress),
-      EpayId: values.EpayId.trim(),
-      EpayKey: values.EpayKey.trim(),
-      CustomCallbackAddress: removeTrailingSlash(values.CustomCallbackAddress),
-    }
-
-    const initial = {
-      PayAddress: removeTrailingSlash(initialRef.current.PayAddress),
-      EpayId: initialRef.current.EpayId.trim(),
-      EpayKey: initialRef.current.EpayKey.trim(),
-      CustomCallbackAddress: removeTrailingSlash(
-        initialRef.current.CustomCallbackAddress
-      ),
-    }
-
-    const updates: Array<{ key: string; value: string }> = []
-
-    if (sanitized.PayAddress !== initial.PayAddress) {
-      updates.push({ key: 'PayAddress', value: sanitized.PayAddress })
-    }
-
-    if (sanitized.EpayId !== initial.EpayId) {
-      updates.push({ key: 'EpayId', value: sanitized.EpayId })
-    }
-
-    if (sanitized.EpayKey && sanitized.EpayKey !== initial.EpayKey) {
-      updates.push({ key: 'EpayKey', value: sanitized.EpayKey })
-    }
-
-    if (sanitized.CustomCallbackAddress !== initial.CustomCallbackAddress) {
-      updates.push({
-        key: 'CustomCallbackAddress',
-        value: sanitized.CustomCallbackAddress,
-      })
-    }
-
-    if (updates.length === 0) {
-      return
-    }
-
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
-    }
-  }
-
-  const saveStripeSettings = async () => {
-    const values = form.getValues()
-    const sanitized = {
-      StripeApiSecret: values.StripeApiSecret.trim(),
-      StripeWebhookSecret: values.StripeWebhookSecret.trim(),
-      StripePriceId: values.StripePriceId.trim(),
-      StripeUnitPrice: values.StripeUnitPrice as number,
-      StripeMinTopUp: values.StripeMinTopUp as number,
-      StripePromotionCodesEnabled:
-        values.StripePromotionCodesEnabled as boolean,
-    }
-
-    const initial = {
-      StripeApiSecret: initialRef.current.StripeApiSecret.trim(),
-      StripeWebhookSecret: initialRef.current.StripeWebhookSecret.trim(),
-      StripePriceId: initialRef.current.StripePriceId.trim(),
-      StripeUnitPrice: initialRef.current.StripeUnitPrice,
-      StripeMinTopUp: initialRef.current.StripeMinTopUp,
-      StripePromotionCodesEnabled:
-        initialRef.current.StripePromotionCodesEnabled,
-    }
-
-    const updates: Array<{ key: string; value: string | number | boolean }> = []
 
     if (
       sanitized.StripeApiSecret &&
@@ -532,33 +588,6 @@ export function PaymentSettingsSection({
         value: sanitized.StripePromotionCodesEnabled,
       })
     }
-
-    if (updates.length === 0) {
-      return
-    }
-
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
-    }
-  }
-
-  const saveCreemSettings = async () => {
-    const values = form.getValues()
-    const sanitized = {
-      CreemApiKey: values.CreemApiKey.trim(),
-      CreemWebhookSecret: values.CreemWebhookSecret.trim(),
-      CreemTestMode: values.CreemTestMode as boolean,
-      CreemProducts: values.CreemProducts.trim(),
-    }
-
-    const initial = {
-      CreemApiKey: initialRef.current.CreemApiKey.trim(),
-      CreemWebhookSecret: initialRef.current.CreemWebhookSecret.trim(),
-      CreemTestMode: initialRef.current.CreemTestMode,
-      CreemProducts: initialRef.current.CreemProducts.trim(),
-    }
-
-    const updates: Array<{ key: string; value: string | boolean }> = []
 
     if (
       sanitized.CreemApiKey &&
@@ -586,182 +615,6 @@ export function PaymentSettingsSection({
       normalizeJsonForComparison(initial.CreemProducts)
     ) {
       updates.push({ key: 'CreemProducts', value: sanitized.CreemProducts })
-    }
-
-    if (updates.length === 0) {
-      return
-    }
-
-    for (const update of updates) {
-      await updateOption.mutateAsync(update)
-    }
-  }
-
-  const onSubmit = async (values: PaymentFormValues) => {
-    const sanitized = {
-      PayAddress: removeTrailingSlash(values.PayAddress),
-      EpayId: values.EpayId.trim(),
-      EpayKey: values.EpayKey.trim(),
-      Price: values.Price,
-      MinTopUp: values.MinTopUp,
-      CustomCallbackAddress: removeTrailingSlash(values.CustomCallbackAddress),
-      PayMethods: values.PayMethods.trim(),
-      AmountOptions: values.AmountOptions.trim(),
-      AmountDiscount: values.AmountDiscount.trim(),
-      StripeApiSecret: values.StripeApiSecret.trim(),
-      StripeWebhookSecret: values.StripeWebhookSecret.trim(),
-      StripePriceId: values.StripePriceId.trim(),
-      StripeUnitPrice: values.StripeUnitPrice,
-      StripeMinTopUp: values.StripeMinTopUp,
-      StripePromotionCodesEnabled: values.StripePromotionCodesEnabled,
-      WaffoEnabled: values.WaffoEnabled,
-      WaffoSandbox: values.WaffoSandbox,
-      WaffoMerchantId: values.WaffoMerchantId.trim(),
-      WaffoCurrency: values.WaffoCurrency.trim() || 'USD',
-      WaffoUnitPrice: values.WaffoUnitPrice,
-      WaffoMinTopUp: values.WaffoMinTopUp,
-      WaffoNotifyUrl: values.WaffoNotifyUrl.trim(),
-      WaffoReturnUrl: values.WaffoReturnUrl.trim(),
-      WaffoPublicCert: values.WaffoPublicCert.trim(),
-      WaffoSandboxPublicCert: values.WaffoSandboxPublicCert.trim(),
-      WaffoApiKey: values.WaffoApiKey.trim(),
-      WaffoPrivateKey: values.WaffoPrivateKey.trim(),
-      WaffoSandboxApiKey: values.WaffoSandboxApiKey.trim(),
-      WaffoSandboxPrivateKey: values.WaffoSandboxPrivateKey.trim(),
-      WaffoPayMethods: JSON.stringify(waffoPayMethods),
-    }
-
-    const initial = {
-      PayAddress: removeTrailingSlash(initialRef.current.PayAddress),
-      EpayId: initialRef.current.EpayId.trim(),
-      EpayKey: initialRef.current.EpayKey.trim(),
-      Price: initialRef.current.Price,
-      MinTopUp: initialRef.current.MinTopUp,
-      CustomCallbackAddress: removeTrailingSlash(
-        initialRef.current.CustomCallbackAddress
-      ),
-      PayMethods: initialRef.current.PayMethods.trim(),
-      AmountOptions: initialRef.current.AmountOptions.trim(),
-      AmountDiscount: initialRef.current.AmountDiscount.trim(),
-      StripeApiSecret: initialRef.current.StripeApiSecret.trim(),
-      StripeWebhookSecret: initialRef.current.StripeWebhookSecret.trim(),
-      StripePriceId: initialRef.current.StripePriceId.trim(),
-      StripeUnitPrice: initialRef.current.StripeUnitPrice,
-      StripeMinTopUp: initialRef.current.StripeMinTopUp,
-      StripePromotionCodesEnabled:
-        initialRef.current.StripePromotionCodesEnabled,
-      WaffoEnabled: initialRef.current.WaffoEnabled,
-      WaffoSandbox: initialRef.current.WaffoSandbox,
-      WaffoMerchantId: initialRef.current.WaffoMerchantId.trim(),
-      WaffoCurrency: initialRef.current.WaffoCurrency.trim() || 'USD',
-      WaffoUnitPrice: initialRef.current.WaffoUnitPrice,
-      WaffoMinTopUp: initialRef.current.WaffoMinTopUp,
-      WaffoNotifyUrl: initialRef.current.WaffoNotifyUrl.trim(),
-      WaffoReturnUrl: initialRef.current.WaffoReturnUrl.trim(),
-      WaffoPublicCert: initialRef.current.WaffoPublicCert.trim(),
-      WaffoSandboxPublicCert: initialRef.current.WaffoSandboxPublicCert.trim(),
-      WaffoApiKey: initialRef.current.WaffoApiKey.trim(),
-      WaffoPrivateKey: initialRef.current.WaffoPrivateKey.trim(),
-      WaffoSandboxApiKey: initialRef.current.WaffoSandboxApiKey.trim(),
-      WaffoSandboxPrivateKey: initialRef.current.WaffoSandboxPrivateKey.trim(),
-      WaffoPayMethods: JSON.stringify(
-        parseWaffoPayMethods(waffoDefaultValues.WaffoPayMethods)
-      ),
-    }
-
-    const updates: Array<{ key: string; value: string | number | boolean }> = []
-
-    if (sanitized.PayAddress !== initial.PayAddress) {
-      updates.push({ key: 'PayAddress', value: sanitized.PayAddress })
-    }
-
-    if (sanitized.EpayId !== initial.EpayId) {
-      updates.push({ key: 'EpayId', value: sanitized.EpayId })
-    }
-
-    if (sanitized.EpayKey && sanitized.EpayKey !== initial.EpayKey) {
-      updates.push({ key: 'EpayKey', value: sanitized.EpayKey })
-    }
-
-    if (sanitized.Price !== initial.Price) {
-      updates.push({ key: 'Price', value: sanitized.Price })
-    }
-
-    if (sanitized.MinTopUp !== initial.MinTopUp) {
-      updates.push({ key: 'MinTopUp', value: sanitized.MinTopUp })
-    }
-
-    if (sanitized.CustomCallbackAddress !== initial.CustomCallbackAddress) {
-      updates.push({
-        key: 'CustomCallbackAddress',
-        value: sanitized.CustomCallbackAddress,
-      })
-    }
-
-    if (
-      normalizeJsonForComparison(sanitized.PayMethods) !==
-      normalizeJsonForComparison(initial.PayMethods)
-    ) {
-      updates.push({ key: 'PayMethods', value: sanitized.PayMethods })
-    }
-
-    if (
-      normalizeJsonForComparison(sanitized.AmountOptions) !==
-      normalizeJsonForComparison(initial.AmountOptions)
-    ) {
-      updates.push({
-        key: 'payment_setting.amount_options',
-        value: sanitized.AmountOptions,
-      })
-    }
-
-    if (
-      normalizeJsonForComparison(sanitized.AmountDiscount) !==
-      normalizeJsonForComparison(initial.AmountDiscount)
-    ) {
-      updates.push({
-        key: 'payment_setting.amount_discount',
-        value: sanitized.AmountDiscount,
-      })
-    }
-
-    if (
-      sanitized.StripeApiSecret &&
-      sanitized.StripeApiSecret !== initial.StripeApiSecret
-    ) {
-      updates.push({ key: 'StripeApiSecret', value: sanitized.StripeApiSecret })
-    }
-
-    if (
-      sanitized.StripeWebhookSecret &&
-      sanitized.StripeWebhookSecret !== initial.StripeWebhookSecret
-    ) {
-      updates.push({
-        key: 'StripeWebhookSecret',
-        value: sanitized.StripeWebhookSecret,
-      })
-    }
-
-    if (sanitized.StripePriceId !== initial.StripePriceId) {
-      updates.push({ key: 'StripePriceId', value: sanitized.StripePriceId })
-    }
-
-    if (sanitized.StripeUnitPrice !== initial.StripeUnitPrice) {
-      updates.push({ key: 'StripeUnitPrice', value: sanitized.StripeUnitPrice })
-    }
-
-    if (sanitized.StripeMinTopUp !== initial.StripeMinTopUp) {
-      updates.push({ key: 'StripeMinTopUp', value: sanitized.StripeMinTopUp })
-    }
-
-    if (
-      sanitized.StripePromotionCodesEnabled !==
-      initial.StripePromotionCodesEnabled
-    ) {
-      updates.push({
-        key: 'StripePromotionCodesEnabled',
-        value: sanitized.StripePromotionCodesEnabled,
-      })
     }
 
     if (sanitized.WaffoEnabled !== initial.WaffoEnabled) {
@@ -836,8 +689,78 @@ export function PaymentSettingsSection({
       updates.push({ key: 'WaffoPayMethods', value: sanitized.WaffoPayMethods })
     }
 
+    const hasWaffoPancakeChanges =
+      sanitized.WaffoPancakeMerchantID !== initial.WaffoPancakeMerchantID ||
+      sanitized.WaffoPancakePrivateKey.length > 0 ||
+      sanitized.WaffoPancakeReturnURL !== initial.WaffoPancakeReturnURL ||
+      waffoPancakeSelection.storeID !== waffoPancakeSavedBinding.storeID ||
+      waffoPancakeSelection.productID !== waffoPancakeSavedBinding.productID
+
+    if (updates.length === 0 && !hasWaffoPancakeChanges) {
+      toast.info(t('No changes to save'))
+      return
+    }
+
+    if (hasWaffoPancakeChanges) {
+      if (!sanitized.WaffoPancakeMerchantID) {
+        toast.error(t('Merchant ID is required'))
+        return
+      }
+
+      if (!waffoPancakeSelection.storeID || !waffoPancakeSelection.productID) {
+        toast.error(
+          t('Pick or create both a store and a product before saving.')
+        )
+        return
+      }
+    }
+
     for (const update of updates) {
       await updateOption.mutateAsync(update)
+    }
+
+    if (!hasWaffoPancakeChanges) {
+      return
+    }
+
+    try {
+      const body = await saveWaffoPancakeConfig({
+        merchantID: sanitized.WaffoPancakeMerchantID,
+        privateKey: sanitized.WaffoPancakePrivateKey,
+        returnURL: sanitized.WaffoPancakeReturnURL,
+        storeID: waffoPancakeSelection.storeID,
+        productID: waffoPancakeSelection.productID,
+      })
+
+      if (
+        body?.message === 'success' &&
+        typeof body.data === 'object' &&
+        body.data
+      ) {
+        const saved = body.data as { product_id: string; store_id: string }
+        const savedBinding = {
+          storeID: saved.store_id,
+          productID: saved.product_id,
+        }
+        setWaffoPancakeSavedBinding(savedBinding)
+        setWaffoPancakeSelection(savedBinding)
+        queryClient.invalidateQueries({ queryKey: ['system-options'] })
+        toast.success(t('Waffo Pancake settings saved'))
+        return
+      }
+
+      const reason = typeof body?.data === 'string' ? body.data : undefined
+      toast.error(
+        reason
+          ? `${t('Waffo Pancake save failed')}: ${reason}`
+          : t('Waffo Pancake save failed')
+      )
+    } catch (error) {
+      toast.error(
+        `${t('Waffo Pancake save failed')}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
+      )
     }
   }
 
@@ -859,14 +782,14 @@ export function PaymentSettingsSection({
     WaffoReturnUrl: currentFormValues.WaffoReturnUrl,
     WaffoPayMethods: JSON.stringify(waffoPayMethods),
   }
+  const waffoPancakeValues: WaffoPancakeSettingsValues = {
+    WaffoPancakeMerchantID: currentFormValues.WaffoPancakeMerchantID,
+    WaffoPancakePrivateKey: currentFormValues.WaffoPancakePrivateKey,
+    WaffoPancakeReturnURL: currentFormValues.WaffoPancakeReturnURL,
+  }
 
   return (
-    <SettingsSection
-      title={t('Payment Gateway')}
-      description={t(
-        'Configure recharge pricing and payment gateway integrations'
-      )}
-    >
+    <SettingsSection title={t('Payment Gateway')}>
       {!complianceConfirmed ? (
         <Alert variant='destructive' className='mb-6'>
           <ShieldAlert className='h-4 w-4' />
@@ -930,16 +853,20 @@ export function PaymentSettingsSection({
         onConfirm={() => confirmComplianceMutation.mutate()}
       />
 
-      {/* eslint-disable react-hooks/refs */}
       <Form {...form}>
-        <form
+        <SettingsForm
           onSubmit={form.handleSubmit(onSubmit)}
           className={cn(
-            'space-y-8',
+            'gap-y-8',
             !complianceConfirmed && 'pointer-events-none opacity-40'
           )}
           data-no-autosubmit='true'
         >
+          <SettingsPageFormActions
+            onSave={form.handleSubmit(onSubmit)}
+            isSaving={updateOption.isPending || isSubmitting}
+            saveLabel='Save all settings'
+          />
           <div className='space-y-4'>
             <div>
               <h3 className='text-lg font-medium'>{t('General Settings')}</h3>
@@ -1161,20 +1088,6 @@ export function PaymentSettingsSection({
                 )}
               />
             </div>
-
-            <Button
-              type='button'
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                saveGeneralSettings()
-              }}
-              disabled={updateOption.isPending}
-            >
-              {updateOption.isPending
-                ? t('Saving...')
-                : t('Save general settings')}
-            </Button>
           </div>
 
           <Separator />
@@ -1276,20 +1189,6 @@ export function PaymentSettingsSection({
                 )}
               />
             </div>
-
-            <Button
-              type='button'
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                saveEpaySettings()
-              }}
-              disabled={updateOption.isPending}
-            >
-              {updateOption.isPending
-                ? t('Saving...')
-                : t('Save Epay settings')}
-            </Button>
           </div>
 
           <Separator />
@@ -1461,39 +1360,23 @@ export function PaymentSettingsSection({
                 control={form.control}
                 name='StripePromotionCodesEnabled'
                 render={({ field }) => (
-                  <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                    <div className='space-y-0.5'>
-                      <FormLabel className='text-base'>
-                        {t('Promotion codes')}
-                      </FormLabel>
+                  <SettingsSwitchItem>
+                    <SettingsSwitchContent>
+                      <FormLabel>{t('Promotion codes')}</FormLabel>
                       <FormDescription>
                         {t('Allow users to enter promo codes')}
                       </FormDescription>
-                    </div>
+                    </SettingsSwitchContent>
                     <FormControl>
                       <Switch
                         checked={field.value}
                         onCheckedChange={field.onChange}
                       />
                     </FormControl>
-                  </FormItem>
+                  </SettingsSwitchItem>
                 )}
               />
             </div>
-
-            <Button
-              type='button'
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                saveStripeSettings()
-              }}
-              disabled={updateOption.isPending}
-            >
-              {updateOption.isPending
-                ? t('Saving...')
-                : t('Save Stripe settings')}
-            </Button>
           </div>
 
           <Separator />
@@ -1573,22 +1456,20 @@ export function PaymentSettingsSection({
               control={form.control}
               name='CreemTestMode'
               render={({ field }) => (
-                <FormItem className='flex flex-row items-center justify-between rounded-lg border p-4'>
-                  <div className='space-y-0.5'>
-                    <FormLabel className='text-base'>
-                      {t('Test Mode')}
-                    </FormLabel>
+                <SettingsSwitchItem>
+                  <SettingsSwitchContent>
+                    <FormLabel>{t('Test Mode')}</FormLabel>
                     <FormDescription>
                       {t('Enable test mode for Creem payments')}
                     </FormDescription>
-                  </div>
+                  </SettingsSwitchContent>
                   <FormControl>
                     <Switch
                       checked={field.value}
                       onCheckedChange={field.onChange}
                     />
                   </FormControl>
-                </FormItem>
+                </SettingsSwitchItem>
               )}
             />
 
@@ -1643,21 +1524,18 @@ export function PaymentSettingsSection({
                 </FormItem>
               )}
             />
-
-            <Button
-              type='button'
-              onClick={(e) => {
-                e.preventDefault()
-                e.stopPropagation()
-                saveCreemSettings()
-              }}
-              disabled={updateOption.isPending}
-            >
-              {updateOption.isPending
-                ? t('Saving...')
-                : t('Save Creem settings')}
-            </Button>
           </div>
+
+          <Separator />
+
+          <WaffoPancakeSettingsSection
+            defaultValues={waffoPancakeDefaultValues}
+            values={waffoPancakeValues}
+            onValueChange={setWaffoPancakeValue}
+            selectedBinding={waffoPancakeSelection}
+            savedBinding={waffoPancakeSavedBinding}
+            onSelectedBindingChange={setWaffoPancakeSelection}
+          />
 
           <Separator />
 
@@ -1667,21 +1545,8 @@ export function PaymentSettingsSection({
             payMethods={waffoPayMethods}
             onPayMethodsChange={setWaffoPayMethods}
           />
-
-          <Button type='submit' disabled={updateOption.isPending}>
-            {updateOption.isPending ? t('Saving...') : t('Save all settings')}
-          </Button>
-        </form>
+        </SettingsForm>
       </Form>
-
-      <Separator />
-
-      <WaffoPancakeSettingsSection
-        defaultValues={waffoPancakeDefaultValues}
-        provisionedStoreID={waffoPancakeProvisionedStoreID}
-        provisionedProductID={waffoPancakeProvisionedProductID}
-      />
-      {/* eslint-enable react-hooks/refs */}
     </SettingsSection>
   )
 }

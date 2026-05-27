@@ -172,7 +172,7 @@ export function WaffoSettingsSection({
           </AlertDescription>
         </Alert>
 
-        <div className='grid grid-cols-2 gap-4'>
+        <div className='grid gap-4 sm:grid-cols-2'>
           <div className='flex items-center gap-2'>
             <Switch
               checked={values.WaffoEnabled}

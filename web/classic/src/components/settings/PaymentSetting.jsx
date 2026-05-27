@@ -24,6 +24,7 @@ import SettingsPaymentGateway from '../../pages/Setting/Payment/SettingsPaymentG
 import SettingsPaymentGatewayStripe from '../../pages/Setting/Payment/SettingsPaymentGatewayStripe';
 import SettingsPaymentGatewayCreem from '../../pages/Setting/Payment/SettingsPaymentGatewayCreem';
 import SettingsPaymentGatewayWaffo from '../../pages/Setting/Payment/SettingsPaymentGatewayWaffo';
+import SettingsPaymentGatewayWaffoPancake from '../../pages/Setting/Payment/SettingsPaymentGatewayWaffoPancake';
 import { API, showError, showSuccess, toBoolean } from '../../helpers';
 import { useTranslation } from 'react-i18next';
 import RiskAcknowledgementModal from '../common/modals/RiskAcknowledgementModal';
@@ -55,6 +56,7 @@ const PaymentSetting = () => {
     WaffoPancakeMerchantID: '',
     WaffoPancakePrivateKey: '',
     WaffoPancakeReturnURL: '',
+
     'payment_setting.compliance_confirmed': false,
     'payment_setting.compliance_terms_version': '',
     'payment_setting.compliance_confirmed_at': 0,
@@ -164,11 +166,6 @@ const PaymentSetting = () => {
           case 'StripeUnitPrice':
           case 'StripeMinTopUp':
             newInputs[item.key] = parseFloat(item.value);
-            break;
-          case 'WaffoPancakeMerchantID':
-          case 'WaffoPancakePrivateKey':
-          case 'WaffoPancakeReturnURL':
-            newInputs[item.key] = item.value;
             break;
           default:
             if (item.key.endsWith('Enabled')) {
@@ -306,6 +303,13 @@ const PaymentSetting = () => {
               </Tabs.TabPane>
               <Tabs.TabPane tab={t('Waffo 设置')} itemKey='waffo'>
                 <SettingsPaymentGatewayWaffo
+                  options={inputs}
+                  refresh={onRefresh}
+                  hideSectionTitle
+                />
+              </Tabs.TabPane>
+              <Tabs.TabPane tab='Waffo Pancake' itemKey='waffo-pancake'>
+                <SettingsPaymentGatewayWaffoPancake
                   options={inputs}
                   refresh={onRefresh}
                   hideSectionTitle

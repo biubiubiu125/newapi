@@ -374,9 +374,9 @@ export function FetchModelsDialog({
           <DialogDescription>
             {activeChannel ? (
               <>
-                  {t('Fetch available models for:')}{' '}
-                  <strong>{activeChannel.name}</strong>
-                </>
+                {t('Fetch available models for:')}{' '}
+                <strong>{activeChannel.name}</strong>
+              </>
             ) : channelName ? (
               <>
                 {t('Fetch available models for:')}{' '}

@@ -181,7 +181,7 @@ export async function getFreshModuleAccess(
     cacheStatus(status)
     return getModuleAccessFromStatus(status, module)
   } catch {
-    return getModuleAccess(module)
+    return { enabled: false, requireAuth: true }
   }
 }
 
@@ -203,7 +203,15 @@ export function isSidebarModuleEnabled(
     const sectionConfig = parsed[section]
     if (!sectionConfig) return true
     if (sectionConfig.enabled === false) return false
-    if (sectionConfig[module] === false) return false
+    const aliases: Record<string, string[]> = {
+      provider_price_export: ['providerPricing'],
+      referral: ['adminReferral'],
+    }
+    const aliasKeys = aliases[module] ?? []
+    const moduleValues = [module, ...aliasKeys]
+      .filter((key) => sectionConfig[key] !== undefined)
+      .map((key) => sectionConfig[key])
+    if (moduleValues.some((enabled) => enabled === false)) return false
     return true
   } catch {
     return true

@@ -66,13 +66,53 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
     subscription: true,
     recharge_audit: true,
     risk_center: true,
+    provider_price_export: true,
   },
+}
+
+const SIDEBAR_MODULE_ALIASES: Record<string, Record<string, string[]>> = {
+  admin: {
+    referral: ['adminReferral'],
+    provider_price_export: ['providerPricing'],
+  },
+}
+
+function normalizeSidebarModuleAliases(
+  config: SidebarModulesAdminConfig
+): SidebarModulesAdminConfig {
+  const normalized: SidebarModulesAdminConfig = { ...config }
+
+  Object.entries(SIDEBAR_MODULE_ALIASES).forEach(
+    ([sectionKey, moduleAliases]) => {
+      const section = normalized[sectionKey]
+      if (!section) return
+
+      normalized[sectionKey] = { ...section }
+      Object.entries(moduleAliases).forEach(([canonicalKey, aliases]) => {
+        if (normalized[sectionKey][canonicalKey] === undefined) {
+          const alias = aliases.find(
+            (aliasKey) => normalized[sectionKey][aliasKey] !== undefined
+          )
+          if (alias) {
+            normalized[sectionKey][canonicalKey] =
+              normalized[sectionKey][alias]
+          }
+        }
+        aliases.forEach((aliasKey) => {
+          delete normalized[sectionKey][aliasKey]
+        })
+      })
+    }
+  )
+
+  return normalized
 }
 
 const mergeWithDefaultSidebarModules = (
   config: SidebarModulesAdminConfig
 ): SidebarModulesAdminConfig => {
-  const merged: SidebarModulesAdminConfig = { ...config }
+  const merged: SidebarModulesAdminConfig =
+    normalizeSidebarModuleAliases(config)
 
   Object.entries(DEFAULT_SIDEBAR_MODULES).forEach(
     ([sectionKey, defaultSection]) => {
@@ -121,6 +161,10 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/subscriptions': { section: 'admin', module: 'subscription' },
   '/recharge-audit': { section: 'admin', module: 'recharge_audit' },
   '/risk-center': { section: 'admin', module: 'risk_center' },
+  '/provider-price-export': {
+    section: 'admin',
+    module: 'provider_price_export',
+  },
   '/system-settings': { section: 'admin', module: 'setting' },
   '/system-settings/site': { section: 'admin', module: 'setting' },
 }
@@ -160,7 +204,7 @@ function parseUserSidebarConfig(
   try {
     const parsed = JSON.parse(value) as SidebarModulesAdminConfig
     if (!parsed || typeof parsed !== 'object') return null
-    return parsed
+    return normalizeSidebarModuleAliases(parsed)
   } catch {
     return null
   }
