@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -63,6 +64,7 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 	model.LOG_DB = db
 	require.NoError(t, db.AutoMigrate(
 		&model.User{},
+		&model.Token{},
 		&model.Log{},
 		&model.TopUp{},
 		&model.SubscriptionPlan{},
@@ -74,6 +76,11 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 		&model.ReferralCommission{},
 		&model.ReferralCommissionLedger{},
 		&model.ReferralCommissionJob{},
+		&model.ReferralWithdrawal{},
+		&model.ReferralWithdrawalItem{},
+		&model.RiskEvent{},
+		&model.RiskAction{},
+		&model.RiskWhitelist{},
 	))
 
 	t.Cleanup(func() {
@@ -1275,4 +1282,66 @@ func TestSubscriptionEpayReturnDoesNotCompleteOrder(t *testing.T) {
 	var subscriptionCount int64
 	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("user_id = ?", user.Id).Count(&subscriptionCount).Error)
 	require.Zero(t, subscriptionCount)
+}
+
+func TestProcessPaidTopUpCommissionDoesNotBlockPaidOrderOnReferralFailure(t *testing.T) {
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 920, Username: "topup_referral_failure_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	topUp := &model.TopUp{
+		UserId:                   user.Id,
+		Amount:                   2,
+		Money:                    9.99,
+		PaidAmount:               9.99,
+		PaidCurrency:             "XXX",
+		TradeNo:                  "topup-referral-failure",
+		PaymentMethod:            "alipay",
+		PaymentProvider:          model.PaymentProviderEpay,
+		Status:                   common.TopUpStatusSuccess,
+		CreateTime:               time.Now().Unix(),
+		ReferralAffiliateId:      1,
+		ReferralRate:             10,
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusPending,
+	}
+	require.NoError(t, topUp.Insert())
+
+	require.NoError(t, processPaidTopUpCommission(context.Background(), topUp.TradeNo))
+
+	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusSuccess, reloaded.Status)
+	require.Equal(t, model.ReferralCommissionJobStatusFailed, reloaded.ReferralCommissionStatus)
+	require.NotEmpty(t, reloaded.ReferralCommissionError)
+}
+
+func TestProcessPaidSubscriptionCommissionDoesNotBlockPaidOrderOnReferralFailure(t *testing.T) {
+	setupPaymentCallbackGuardDB(t)
+
+	user := &model.User{Id: 921, Username: "sub_referral_failure_user", Status: common.UserStatusEnabled}
+	require.NoError(t, model.DB.Create(user).Error)
+	order := &model.SubscriptionOrder{
+		UserId:                   user.Id,
+		PlanId:                   1,
+		Money:                    9.99,
+		PaidAmount:               9.99,
+		PaidCurrency:             "XXX",
+		TradeNo:                  "sub-referral-failure",
+		PaymentMethod:            "alipay",
+		PaymentProvider:          model.PaymentProviderEpay,
+		Status:                   common.TopUpStatusSuccess,
+		CreateTime:               time.Now().Unix(),
+		ReferralAffiliateId:      1,
+		ReferralRate:             10,
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusPending,
+	}
+	require.NoError(t, order.Insert())
+
+	require.NoError(t, processPaidSubscriptionCommission(context.Background(), order.TradeNo))
+
+	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusSuccess, reloaded.Status)
+	require.Equal(t, model.ReferralCommissionJobStatusFailed, reloaded.ReferralCommissionStatus)
+	require.NotEmpty(t, reloaded.ReferralCommissionError)
 }

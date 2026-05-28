@@ -110,6 +110,7 @@ export default function SettingsSidebarModulesUser() {
         redemption: isSidebarModuleAllowed('admin', 'redemption'),
         subscription: isSidebarModuleAllowed('admin', 'subscription'),
         adminReferral: isSidebarModuleAllowed('admin', 'adminReferral'),
+        riskCenter: isSidebarModuleAllowed('admin', 'riskCenter'),
         user: isSidebarModuleAllowed('admin', 'user'),
         setting: isSidebarModuleAllowed('admin', 'setting'),
       };
@@ -242,6 +243,7 @@ export default function SettingsSidebarModulesUser() {
               ...userConf.admin,
               adminReferral:
                 userConf.admin.adminReferral ?? userConf.admin.referral ?? true,
+              riskCenter: userConf.admin.riskCenter ?? true,
               providerPricing:
                 userConf.admin.providerPricing ??
                 userConf.admin.provider_price_export ??
@@ -379,6 +381,11 @@ export default function SettingsSidebarModulesUser() {
           key: 'adminReferral',
           title: t('Referral Management'),
           description: t('Referral affiliates, commissions, withdrawals, and audit logs'),
+        },
+        {
+          key: 'riskCenter',
+          title: t('风控中心'),
+          description: t('风险信号、事件处理、白名单和审计记录'),
         },
         {
           key: 'providerPricing',

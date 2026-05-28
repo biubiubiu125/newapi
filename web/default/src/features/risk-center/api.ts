@@ -21,9 +21,14 @@ import { api } from '@/lib/api'
 export interface RiskSignal {
   type: string
   severity: string
+  event_key?: string
+  target_type?: string
+  target_id?: string
   user_id?: number
   username?: string
   ip?: string
+  token_id?: number
+  trade_no?: string
   count: number
   amount?: number
   message: string
