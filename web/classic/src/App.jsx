@@ -50,6 +50,7 @@ import PersonalSetting from './components/settings/PersonalSetting';
 import Referral from './pages/Referral';
 import AdminReferral from './pages/AdminReferral';
 import ProviderPricing from './pages/ProviderPricing';
+import RiskCenter from './pages/RiskCenter';
 import Setup from './pages/Setup';
 import SetupCheck from './components/layout/SetupCheck';
 
@@ -316,6 +317,16 @@ function App() {
             <AdminRoute>
               <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                 <AdminReferral />
+              </Suspense>
+            </AdminRoute>
+          }
+        />
+        <Route
+          path='/console/risk-center'
+          element={
+            <AdminRoute>
+              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <RiskCenter />
               </Suspense>
             </AdminRoute>
           }

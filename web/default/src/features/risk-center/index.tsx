@@ -260,6 +260,8 @@ function actionLabel(action?: string) {
       return '禁用 Token'
     case 'whitelist':
       return '加入白名单'
+    case 'remove_whitelist':
+      return '移除白名单'
     case 'note':
       return '备注'
     default:
@@ -390,9 +392,14 @@ function safeParams(params: Record<string, string | number | undefined>) {
 }
 
 function riskSignalMatchesEvent(signal: RiskSignal, event: RiskEvent) {
+  if (signal.event_key) return signal.event_key === event.event_key
   if (signal.type !== event.type) return false
+  if (signal.target_type && signal.target_type !== event.target_type) return false
+  if (signal.target_id && signal.target_id !== event.target_id) return false
   if (signal.ip && signal.ip !== event.ip) return false
   if (signal.user_id && signal.user_id !== event.user_id) return false
+  if (signal.token_id && signal.token_id !== event.token_id) return false
+  if (signal.trade_no && signal.trade_no !== event.trade_no) return false
   return true
 }
 
@@ -613,9 +620,9 @@ export function RiskCenter() {
       const res = await scanRiskEvents(safeParams({ window_hours: windowHours }))
       if (!res.success) throw new Error(res.message)
       await load()
-      const event =
-        res.data.events.find((item) => riskSignalMatchesEvent(signal, item)) ||
-        res.data.events.find((item) => item.type === signal.type)
+      const event = res.data.events.find((item) =>
+        riskSignalMatchesEvent(signal, item)
+      )
       if (!event) {
         toast.error('没有找到可处理的风险事件，请刷新后重试')
         return

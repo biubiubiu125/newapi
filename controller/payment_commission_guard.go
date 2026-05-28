@@ -9,49 +9,49 @@ import (
 )
 
 func processPaidTopUpCommission(ctx context.Context, tradeNo string) error {
+	// Payment fulfillment already succeeded before this hook runs; referral
+	// issues are audited manually and must not make gateways retry paid orders.
 	if err := referralService.ProcessTopUpCommission(tradeNo); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("referral topup commission processing failed trade_no=%s error=%q", tradeNo, err.Error()))
-		return err
+		return nil
 	}
 
 	status, detail, err := topUpReferralCommissionStatus(tradeNo)
 	if err != nil {
 		logger.LogError(ctx, fmt.Sprintf("referral topup commission status check failed trade_no=%s error=%q", tradeNo, err.Error()))
-		return err
+		return nil
 	}
 	if status == model.ReferralCommissionJobStatusFailed {
-		err := fmt.Errorf("referral topup commission failed: %s", detail)
 		logger.LogError(ctx, fmt.Sprintf("referral topup commission failed trade_no=%s error=%q", tradeNo, detail))
-		return err
+		return nil
 	}
 	if status != model.ReferralCommissionJobStatusSucceeded && status != model.ReferralCommissionJobStatusSkipped {
-		err := fmt.Errorf("referral topup commission incomplete: %s", status)
 		logger.LogError(ctx, fmt.Sprintf("referral topup commission incomplete trade_no=%s status=%s", tradeNo, status))
-		return err
+		return nil
 	}
 	return nil
 }
 
 func processPaidSubscriptionCommission(ctx context.Context, tradeNo string) error {
+	// Payment fulfillment already succeeded before this hook runs; referral
+	// issues are audited manually and must not make gateways retry paid orders.
 	if err := referralService.ProcessSubscriptionCommission(tradeNo); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("referral subscription commission processing failed trade_no=%s error=%q", tradeNo, err.Error()))
-		return err
+		return nil
 	}
 
 	status, detail, err := subscriptionReferralCommissionStatus(tradeNo)
 	if err != nil {
 		logger.LogError(ctx, fmt.Sprintf("referral subscription commission status check failed trade_no=%s error=%q", tradeNo, err.Error()))
-		return err
+		return nil
 	}
 	if status == model.ReferralCommissionJobStatusFailed {
-		err := fmt.Errorf("referral subscription commission failed: %s", detail)
 		logger.LogError(ctx, fmt.Sprintf("referral subscription commission failed trade_no=%s error=%q", tradeNo, detail))
-		return err
+		return nil
 	}
 	if status != model.ReferralCommissionJobStatusSucceeded && status != model.ReferralCommissionJobStatusSkipped {
-		err := fmt.Errorf("referral subscription commission incomplete: %s", status)
 		logger.LogError(ctx, fmt.Sprintf("referral subscription commission incomplete trade_no=%s status=%s", tradeNo, status))
-		return err
+		return nil
 	}
 	return nil
 }

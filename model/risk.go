@@ -24,14 +24,15 @@ const (
 	RiskWhitelistToken    = "token"
 	RiskWhitelistReferral = "referral"
 
-	RiskActionViewed       = "viewed"
-	RiskActionResolved     = "resolved"
-	RiskActionIgnored      = "ignored"
-	RiskActionBanUser      = "ban_user"
-	RiskActionUnbanUser    = "unban_user"
-	RiskActionDisableToken = "disable_token"
-	RiskActionWhitelist    = "whitelist"
-	RiskActionNote         = "note"
+	RiskActionViewed          = "viewed"
+	RiskActionResolved        = "resolved"
+	RiskActionIgnored         = "ignored"
+	RiskActionBanUser         = "ban_user"
+	RiskActionUnbanUser       = "unban_user"
+	RiskActionDisableToken    = "disable_token"
+	RiskActionWhitelist       = "whitelist"
+	RiskActionRemoveWhitelist = "remove_whitelist"
+	RiskActionNote            = "note"
 )
 
 type RiskEvent struct {

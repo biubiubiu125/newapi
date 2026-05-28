@@ -55,6 +55,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     user: true,
     subscription: true,
     adminReferral: true,
+    riskCenter: true,
     setting: true,
   },
 };
@@ -88,6 +89,9 @@ export const mergeAdminConfig = (savedConfig) => {
       merged.admin.provider_price_export !== undefined
     ) {
       merged.admin.providerPricing = merged.admin.provider_price_export ?? true;
+    }
+    if (savedConfig.admin?.riskCenter === undefined) {
+      merged.admin.riskCenter = true;
     }
   }
 

@@ -69,6 +69,7 @@ export default function SettingsSidebarModulesAdmin(props) {
       user: true,
       subscription: true,
       adminReferral: true,
+      riskCenter: true,
       setting: true,
     },
   });
@@ -133,6 +134,7 @@ export default function SettingsSidebarModulesAdmin(props) {
         user: true,
         subscription: true,
         adminReferral: true,
+        riskCenter: true,
         setting: true,
       },
     };
@@ -188,6 +190,7 @@ export default function SettingsSidebarModulesAdmin(props) {
               modules.admin?.adminReferral ??
               modules.admin?.referral ??
               true,
+            riskCenter: modules.admin?.riskCenter ?? true,
             providerPricing:
               modules.admin?.providerPricing ??
               modules.admin?.provider_price_export ??
@@ -222,6 +225,7 @@ export default function SettingsSidebarModulesAdmin(props) {
             user: true,
             subscription: true,
             adminReferral: true,
+            riskCenter: true,
             setting: true,
           },
         };
@@ -300,6 +304,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'adminReferral',
           title: t('Referral Management'),
           description: t('Referral affiliates, commissions, withdrawals, and audit logs'),
+        },
+        {
+          key: 'riskCenter',
+          title: t('风控中心'),
+          description: t('风险信号、事件处理、白名单和审计记录'),
         },
         {
           key: 'providerPricing',

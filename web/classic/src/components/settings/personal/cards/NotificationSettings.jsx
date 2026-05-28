@@ -88,6 +88,7 @@ const NotificationSettings = ({
       models: true,
       deployment: true,
       subscription: true,
+      riskCenter: true,
       redemption: true,
       user: true,
       setting: true,
@@ -172,6 +173,7 @@ const NotificationSettings = ({
         models: true,
         deployment: true,
         subscription: true,
+        riskCenter: true,
         redemption: true,
         user: true,
         setting: true,
@@ -303,6 +305,11 @@ const NotificationSettings = ({
           key: 'subscription',
           title: t('订阅管理'),
           description: t('订阅套餐管理'),
+        },
+        {
+          key: 'riskCenter',
+          title: t('风控中心'),
+          description: t('风险信号、事件处理、白名单和审计记录'),
         },
         {
           key: 'redemption',
