@@ -358,8 +358,13 @@ export async function createRiskWhitelist(payload: RiskActionPayload) {
   }
 }
 
-export async function deleteRiskWhitelist(id: number) {
-  const res = await api.delete(`/api/user/admin/risk/whitelist/${id}`)
+export async function deleteRiskWhitelist(
+  id: number,
+  payload: Pick<RiskActionPayload, 'reason'>
+) {
+  const res = await api.delete(`/api/user/admin/risk/whitelist/${id}`, {
+    data: payload,
+  })
   return res.data as { success: boolean; message?: string; data: unknown }
 }
 

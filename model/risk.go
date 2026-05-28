@@ -1,6 +1,11 @@
 package model
 
-import "github.com/QuantumNous/new-api/common"
+import (
+	"errors"
+
+	"github.com/QuantumNous/new-api/common"
+	"gorm.io/gorm"
+)
 
 const (
 	RiskEventStatusOpen     = "open"
@@ -148,41 +153,10 @@ func UpsertRiskEvent(input RiskEventUpsert) (*RiskEvent, error) {
 	var existing RiskEvent
 	err := DB.Where("event_key = ?", input.EventKey).First(&existing).Error
 	if err == nil {
-		updates := map[string]interface{}{
-			"type":             input.Type,
-			"target_type":      input.TargetType,
-			"target_id":        input.TargetId,
-			"user_id":          input.UserId,
-			"username":         input.Username,
-			"ip":               input.Ip,
-			"token_id":         input.TokenId,
-			"token_name":       input.TokenName,
-			"order_type":       input.OrderType,
-			"trade_no":         input.TradeNo,
-			"referral_user_id": input.ReferralUserId,
-			"severity":         input.Severity,
-			"title":            input.Title,
-			"summary":          input.Summary,
-			"evidence":         evidence,
-			"hit_count":        input.HitCount,
-			"amount":           input.Amount,
-			"window_hours":     input.WindowHours,
-			"last_seen_at":     input.LastSeenAt,
-		}
-		if existing.FirstSeenAt == 0 || input.FirstSeenAt < existing.FirstSeenAt {
-			updates["first_seen_at"] = input.FirstSeenAt
-		}
-		if existing.Status == RiskEventStatusResolved || existing.Status == RiskEventStatusIgnored {
-			updates["status"] = RiskEventStatusOpen
-			updates["resolved_at"] = int64(0)
-			updates["resolved_by"] = 0
-			updates["resolve_note"] = ""
-		}
-		if err := DB.Model(&RiskEvent{}).Where("id = ?", existing.Id).Updates(updates).Error; err != nil {
-			return nil, err
-		}
-		_ = DB.Where("id = ?", existing.Id).First(&existing).Error
-		return &existing, nil
+		return updateRiskEventFromInput(existing, input, evidence)
+	}
+	if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, err
 	}
 	event := RiskEvent{
 		EventKey:       input.EventKey,
@@ -209,7 +183,48 @@ func UpsertRiskEvent(input RiskEventUpsert) (*RiskEvent, error) {
 		LastSeenAt:     input.LastSeenAt,
 	}
 	if err := DB.Create(&event).Error; err != nil {
+		if readErr := DB.Where("event_key = ?", input.EventKey).First(&existing).Error; readErr == nil {
+			return updateRiskEventFromInput(existing, input, evidence)
+		}
 		return nil, err
 	}
 	return &event, nil
+}
+
+func updateRiskEventFromInput(existing RiskEvent, input RiskEventUpsert, evidence string) (*RiskEvent, error) {
+	updates := map[string]interface{}{
+		"type":             input.Type,
+		"target_type":      input.TargetType,
+		"target_id":        input.TargetId,
+		"user_id":          input.UserId,
+		"username":         input.Username,
+		"ip":               input.Ip,
+		"token_id":         input.TokenId,
+		"token_name":       input.TokenName,
+		"order_type":       input.OrderType,
+		"trade_no":         input.TradeNo,
+		"referral_user_id": input.ReferralUserId,
+		"severity":         input.Severity,
+		"title":            input.Title,
+		"summary":          input.Summary,
+		"evidence":         evidence,
+		"hit_count":        input.HitCount,
+		"amount":           input.Amount,
+		"window_hours":     input.WindowHours,
+		"last_seen_at":     input.LastSeenAt,
+	}
+	if existing.FirstSeenAt == 0 || input.FirstSeenAt < existing.FirstSeenAt {
+		updates["first_seen_at"] = input.FirstSeenAt
+	}
+	if existing.Status == RiskEventStatusResolved || existing.Status == RiskEventStatusIgnored {
+		updates["status"] = RiskEventStatusOpen
+		updates["resolved_at"] = int64(0)
+		updates["resolved_by"] = 0
+		updates["resolve_note"] = ""
+	}
+	if err := DB.Model(&RiskEvent{}).Where("id = ?", existing.Id).Updates(updates).Error; err != nil {
+		return nil, err
+	}
+	_ = DB.Where("id = ?", existing.Id).First(&existing).Error
+	return &existing, nil
 }

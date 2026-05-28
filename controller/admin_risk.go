@@ -3,6 +3,8 @@ package controller
 import (
 	"errors"
 	"fmt"
+	"io"
+	"net"
 	"sort"
 	"strconv"
 	"strings"
@@ -160,23 +162,72 @@ type riskActionRequest struct {
 	ExpiresAt  int64  `json:"expires_at"`
 }
 
+const (
+	// 风控总览和手动扫描在管理页同步触发，候选结果需要有边界，避免一次请求写入或返回过多事件。
+	riskScanCandidateLimit        = 40
+	riskScanConsumeCandidateLimit = 80
+	// Internal batch size for role filtering; this does not cap the final result set.
+	riskFilterBatchSize = 100
+)
+
+var errRiskPermissionDenied = errors.New("risk permission denied")
+
+type riskPermissionDeniedError struct {
+	message string
+}
+
+func (err riskPermissionDeniedError) Error() string {
+	if err.message != "" {
+		return err.message
+	}
+	return errRiskPermissionDenied.Error()
+}
+
+func (err riskPermissionDeniedError) Is(target error) bool {
+	return target == errRiskPermissionDenied
+}
+
+func newRiskPermissionDeniedError(message string) error {
+	return riskPermissionDeniedError{message: message}
+}
+
 func GetRiskOverview(c *gin.Context) {
 	windowHours := parseRiskWindowHours(c.Query("window_hours"))
 	since := common.GetTimestamp() - int64(windowHours*3600)
-	signals, err := collectRiskSignals(since, windowHours)
+	signals, err := collectRiskSignalsForContext(c, since, windowHours)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 
+	userCountQuery := func() *gorm.DB {
+		query := model.DB.Model(&model.User{})
+		if role := c.GetInt("role"); role != common.RoleRootUser {
+			query = query.Where("role < ?", role)
+		}
+		return query
+	}
+
 	var disabledUsers int64
-	_ = model.DB.Model(&model.User{}).Where("status = ?", common.UserStatusDisabled).Count(&disabledUsers).Error
+	if err := userCountQuery().Where("status = ?", common.UserStatusDisabled).Count(&disabledUsers).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	var newUsers int64
-	_ = model.DB.Model(&model.User{}).Where("created_at >= ?", since).Count(&newUsers).Error
-	var openEvents int64
-	_ = model.DB.Model(&model.RiskEvent{}).Where("status IN ?", []string{model.RiskEventStatusOpen, model.RiskEventStatusViewed}).Count(&openEvents).Error
-	var highEvents int64
-	_ = model.DB.Model(&model.RiskEvent{}).Where("status IN ? AND severity = ?", []string{model.RiskEventStatusOpen, model.RiskEventStatusViewed}, model.RiskSeverityHigh).Count(&highEvents).Error
+	if err := userCountQuery().Where("created_at >= ?", since).Count(&newUsers).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	openEvents, err := countManageableRiskEvents(c, model.DB.Model(&model.RiskEvent{}).Where("status IN ?", []string{model.RiskEventStatusOpen, model.RiskEventStatusViewed}))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	highEvents, err := countManageableRiskEvents(c, model.DB.Model(&model.RiskEvent{}).Where("status IN ? AND severity = ?", []string{model.RiskEventStatusOpen, model.RiskEventStatusViewed}, model.RiskSeverityHigh))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	common.ApiSuccess(c, gin.H{
 		"window_hours":     windowHours,
@@ -191,7 +242,7 @@ func GetRiskOverview(c *gin.Context) {
 
 func ScanRiskEvents(c *gin.Context) {
 	windowHours := parseRiskWindowHours(c.Query("window_hours"))
-	events, err := scanAndPersistRiskEvents(windowHours)
+	events, err := scanAndPersistRiskEvents(c, windowHours)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -227,20 +278,32 @@ func GetRiskEvents(c *gin.Context) {
 		like := "%" + keyword + "%"
 		query = query.Where("event_key LIKE ? OR username LIKE ? OR ip LIKE ? OR trade_no LIKE ? OR token_name LIKE ? OR summary LIKE ?", like, like, like, like, like, like)
 	}
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		common.ApiError(c, err)
-		return
-	}
 	var events []model.RiskEvent
-	if err := query.Order("case severity when 'high' then 0 when 'warning' then 1 else 2 end, last_seen_at desc, id desc").
-		Limit(pageInfo.GetPageSize()).
-		Offset(pageInfo.GetStartIdx()).
-		Find(&events).Error; err != nil {
+	orderExpr := "case severity when 'high' then 0 when 'warning' then 1 else 2 end, last_seen_at desc, id desc"
+	if c.GetInt("role") == common.RoleRootUser {
+		var total int64
+		if err := query.Count(&total).Error; err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if err := query.Order(orderExpr).
+			Limit(pageInfo.GetPageSize()).
+			Offset(pageInfo.GetStartIdx()).
+			Find(&events).Error; err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		pageInfo.SetTotal(int(total))
+		pageInfo.SetItems(events)
+		common.ApiSuccess(c, pageInfo)
+		return
+	}
+	events, total, err := paginateManageableRiskEvents(c, query, orderExpr, pageInfo)
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	pageInfo.SetTotal(int(total))
+	pageInfo.SetTotal(total)
 	pageInfo.SetItems(events)
 	common.ApiSuccess(c, pageInfo)
 }
@@ -259,6 +322,10 @@ func GetRiskDetail(c *gin.Context) {
 	if eventID > 0 {
 		var item model.RiskEvent
 		if err := model.DB.Where("id = ?", eventID).First(&item).Error; err == nil {
+			if err := validateRiskEventManageable(c, item, "no permission to view this risk event"); err != nil {
+				common.ApiError(c, err)
+				return
+			}
 			event = &item
 			if riskType == "" {
 				riskType = item.Type
@@ -275,6 +342,9 @@ func GetRiskDetail(c *gin.Context) {
 			if tradeNo == "" {
 				tradeNo = item.TradeNo
 			}
+		} else {
+			common.ApiError(c, err)
+			return
 		}
 	}
 
@@ -300,6 +370,12 @@ func GetRiskDetail(c *gin.Context) {
 				return
 			}
 			userIDs = append(userIDs, ids...)
+			ownerIDs, err := riskTokenOwnerUserIDs([]int{tokenID})
+			if err != nil {
+				common.ApiError(c, err)
+				return
+			}
+			userIDs = append(userIDs, ownerIDs...)
 		}
 	case "order_detail":
 		ids, err := riskUserIDsByTradeNo(tradeNo)
@@ -309,14 +385,14 @@ func GetRiskDetail(c *gin.Context) {
 		}
 		userIDs = append(userIDs, ids...)
 	case "new_users":
-		ids, err := riskNewUserIDs(since)
+		ids, err := riskNewUserIDs(c, since)
 		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
 		userIDs = append(userIDs, ids...)
 	case "disabled_users":
-		ids, err := riskUserIDsByStatus(common.UserStatusDisabled)
+		ids, err := riskUserIDsByStatus(c, common.UserStatusDisabled)
 		if err != nil {
 			common.ApiError(c, err)
 			return
@@ -324,6 +400,10 @@ func GetRiskDetail(c *gin.Context) {
 		userIDs = append(userIDs, ids...)
 	}
 	userIDs = uniquePositiveInts(userIDs)
+	if err := validateRiskUserIDsManageable(c, userIDs, "no permission to view this risk detail"); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	users, err := riskUsersByIDs(userIDs, since)
 	if err != nil {
@@ -353,7 +433,11 @@ func GetRiskDetail(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	ips, err := riskIPsForDetail(ip, userIDs, since)
+	if err := validateRiskTokensManageable(c, tokens, "no permission to view this token risk detail"); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	ips, err := riskIPsForDetail(c, ip, userIDs, since)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -363,7 +447,7 @@ func GetRiskDetail(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	actions, err := riskActionsForDetail(eventID, userID, tokenID, ip)
+	actions, err := riskActionsForDetail(c, riskType, eventID, userID, tokenID, ip, tradeNo)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -373,8 +457,11 @@ func GetRiskDetail(c *gin.Context) {
 	if event != nil {
 		eventTargetType = event.TargetType
 		eventTargetID = event.TargetId
+	} else if riskType == "order_detail" && tradeNo != "" {
+		eventTargetType = model.RiskTargetOrder
+		eventTargetID = tradeNo
 	}
-	whitelists, err := riskWhitelistsForDetail(userID, tokenID, ip, eventTargetType, eventTargetID)
+	whitelists, err := riskWhitelistsForDetail(c, userID, tokenID, ip, eventTargetType, eventTargetID)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -404,6 +491,7 @@ func GetRiskUsers(c *gin.Context) {
 	windowHours := parseRiskWindowHours(c.Query("window_hours"))
 	keyword := strings.TrimSpace(c.Query("keyword"))
 	since := common.GetTimestamp() - int64(windowHours*3600)
+	myRole := c.GetInt("role")
 
 	query := model.DB.Table("users AS u").
 		Select(`
@@ -434,6 +522,9 @@ func GetRiskUsers(c *gin.Context) {
 			WHERE deleted_at IS NULL
 			GROUP BY user_id
 		) token_stats ON token_stats.user_id = u.id`)
+	if myRole != common.RoleRootUser {
+		query = query.Where("u.role < ?", myRole)
+	}
 	if keyword != "" {
 		like := "%" + keyword + "%"
 		if _, err := strconv.Atoi(keyword); err == nil {
@@ -479,6 +570,10 @@ func MarkRiskEventViewed(c *gin.Context) {
 	adminName := c.GetString("username")
 	var event model.RiskEvent
 	if err := model.DB.Where("id = ?", id).First(&event).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := validateRiskEventManageable(c, event, "no permission to view this risk event"); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -533,19 +628,30 @@ func DisableRiskToken(c *gin.Context) {
 		common.ApiError(c, errors.New("invalid token id"))
 		return
 	}
+	reason, err := requireRiskReason(req.Reason)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	token, err := model.GetTokenById(tokenID)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	var owner model.User
-	if err := model.DB.Where("id = ?", token.UserId).First(&owner).Error; err == nil {
-		if !canManageTargetRole(c.GetInt("role"), owner.Role) {
-			common.ApiError(c, errors.New("no permission to manage this user's token"))
-			return
-		}
+	if err := model.DB.Where("id = ?", token.UserId).First(&owner).Error; err != nil {
+		common.ApiError(c, err)
+		return
 	}
-	event := eventForAction(req.EventID)
+	if !canManageTargetRole(c.GetInt("role"), owner.Role) {
+		common.ApiError(c, errors.New("no permission to manage this user's token"))
+		return
+	}
+	event, err := eventForRiskActionRequest(c, req.EventID, "no permission to use this risk event")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if event.Id == 0 {
 		event = model.RiskEvent{
 			TargetType: model.RiskTargetToken,
@@ -559,7 +665,6 @@ func DisableRiskToken(c *gin.Context) {
 	actionEvent.TargetId = strconv.Itoa(tokenID)
 	actionEvent.TokenId = tokenID
 	actionEvent.UserId = token.UserId
-	reason := normalizeRiskReason(req.Reason, "风控中心禁用 Token")
 	oldStatus := token.Status
 	newStatus := common.TokenStatusDisabled
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
@@ -590,12 +695,21 @@ func CreateRiskWhitelist(c *gin.Context) {
 		common.ApiError(c, errors.New("target_type and target_id are required"))
 		return
 	}
+	reason, err := requireRiskReason(req.Reason)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := validateRiskWhitelistTargetForCreate(c, targetType, targetID); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	adminId := c.GetInt("id")
 	adminName := c.GetString("username")
 	whitelist := model.RiskWhitelist{
 		TargetType:     targetType,
 		TargetId:       targetID,
-		Reason:         strings.TrimSpace(req.Reason),
+		Reason:         reason,
 		OperatorUserId: adminId,
 		OperatorName:   adminName,
 		ExpiresAt:      req.ExpiresAt,
@@ -622,11 +736,14 @@ func CreateRiskWhitelist(c *gin.Context) {
 		} else {
 			return err
 		}
-		event := eventForActionWithDB(tx, req.EventID)
+		event, err := eventForRiskActionRequestWithDB(c, tx, req.EventID, "no permission to use this risk event")
+		if err != nil {
+			return err
+		}
 		if event.Id == 0 {
 			event = model.RiskEvent{TargetType: targetType, TargetId: targetID}
 		}
-		return createRiskActionWithDB(tx, event, model.RiskActionWhitelist, adminId, adminName, normalizeRiskReason(req.Reason, "加入风控白名单"), "", targetType+":"+targetID, c)
+		return createRiskActionWithDB(tx, event, model.RiskActionWhitelist, adminId, adminName, reason, "", targetType+":"+targetID, c)
 	}); err != nil {
 		common.ApiError(c, err)
 		return
@@ -640,8 +757,22 @@ func DeleteRiskWhitelist(c *gin.Context) {
 		common.ApiError(c, errors.New("invalid whitelist id"))
 		return
 	}
+	var req riskActionRequest
+	if err := decodeOptionalRiskActionRequest(c, &req); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	reason, err := requireRiskReason(req.Reason)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	var whitelist model.RiskWhitelist
 	if err := model.DB.Where("id = ?", id).First(&whitelist).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := validateRiskWhitelistTargetForDelete(c, whitelist.TargetType, whitelist.TargetId); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -662,7 +793,7 @@ func DeleteRiskWhitelist(c *gin.Context) {
 		if err := tx.Delete(&model.RiskWhitelist{}, id).Error; err != nil {
 			return err
 		}
-		return createRiskActionWithDB(tx, event, model.RiskActionRemoveWhitelist, c.GetInt("id"), c.GetString("username"), "移除风控白名单", whitelist.TargetType+":"+whitelist.TargetId, "", c)
+		return createRiskActionWithDB(tx, event, model.RiskActionRemoveWhitelist, c.GetInt("id"), c.GetString("username"), reason, whitelist.TargetType+":"+whitelist.TargetId, "", c)
 	}); err != nil {
 		common.ApiError(c, err)
 		return
@@ -676,20 +807,31 @@ func GetRiskActions(c *gin.Context) {
 	if action := strings.TrimSpace(c.Query("action")); action != "" && action != "all" {
 		query = query.Where("action = ?", action)
 	}
-	var total int64
-	if err := query.Count(&total).Error; err != nil {
-		common.ApiError(c, err)
-		return
-	}
 	var rows []model.RiskAction
-	if err := query.Order("id desc").
-		Limit(pageInfo.GetPageSize()).
-		Offset(pageInfo.GetStartIdx()).
-		Find(&rows).Error; err != nil {
+	if c.GetInt("role") == common.RoleRootUser {
+		var total int64
+		if err := query.Count(&total).Error; err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if err := query.Order("id desc").
+			Limit(pageInfo.GetPageSize()).
+			Offset(pageInfo.GetStartIdx()).
+			Find(&rows).Error; err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		pageInfo.SetTotal(int(total))
+		pageInfo.SetItems(rows)
+		common.ApiSuccess(c, pageInfo)
+		return
+	}
+	rows, total, err := paginateManageableRiskActions(c, query, pageInfo)
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	pageInfo.SetTotal(int(total))
+	pageInfo.SetTotal(total)
 	pageInfo.SetItems(rows)
 	common.ApiSuccess(c, pageInfo)
 }
@@ -710,6 +852,19 @@ func updateRiskEventStatus(c *gin.Context, status string, action string) {
 		common.ApiError(c, err)
 		return
 	}
+	reason, err := requireRiskReason(req.Reason)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if event.Status == model.RiskEventStatusResolved || event.Status == model.RiskEventStatusIgnored {
+		common.ApiError(c, errors.New("risk event is already closed"))
+		return
+	}
+	if err := validateRiskEventManageable(c, event, "no permission to update this risk event"); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	adminId := c.GetInt("id")
 	adminName := c.GetString("username")
 	now := common.GetTimestamp()
@@ -718,11 +873,11 @@ func updateRiskEventStatus(c *gin.Context, status string, action string) {
 			"status":       status,
 			"resolved_at":  now,
 			"resolved_by":  adminId,
-			"resolve_note": strings.TrimSpace(req.Reason),
+			"resolve_note": reason,
 		}).Error; err != nil {
 			return err
 		}
-		return createRiskActionWithDB(tx, event, action, adminId, adminName, normalizeRiskReason(req.Reason, "更新风险事件状态"), event.Status, status, c)
+		return createRiskActionWithDB(tx, event, action, adminId, adminName, reason, event.Status, status, c)
 	}); err != nil {
 		common.ApiError(c, err)
 		return
@@ -744,6 +899,11 @@ func setRiskUserStatus(c *gin.Context, status int, action string) {
 		common.ApiError(c, errors.New("invalid user id"))
 		return
 	}
+	reason, err := requireRiskReason(req.Reason)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	var user model.User
 	if err := model.DB.Where("id = ?", userID).First(&user).Error; err != nil {
 		common.ApiError(c, err)
@@ -758,7 +918,11 @@ func setRiskUserStatus(c *gin.Context, status int, action string) {
 		return
 	}
 	oldStatus := user.Status
-	event := eventForAction(req.EventID)
+	event, err := eventForRiskActionRequest(c, req.EventID, "no permission to use this risk event")
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	if event.Id == 0 {
 		event = model.RiskEvent{
 			TargetType: model.RiskTargetUser,
@@ -772,7 +936,6 @@ func setRiskUserStatus(c *gin.Context, status int, action string) {
 	actionEvent.TargetId = strconv.Itoa(userID)
 	actionEvent.UserId = userID
 	actionEvent.Username = user.Username
-	reason := normalizeRiskReason(req.Reason, "风控中心更新用户状态")
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
 		if err := tx.Model(&model.User{}).Where("id = ?", userID).Update("status", status).Error; err != nil {
 			return err
@@ -824,8 +987,524 @@ func createRiskActionWithDB(db *gorm.DB, event model.RiskEvent, action string, a
 	return db.Create(&record).Error
 }
 
+func validateRiskWhitelistTargetForCreate(c *gin.Context, targetType string, targetID string) error {
+	switch targetType {
+	case model.RiskWhitelistUser, model.RiskWhitelistReferral:
+		userID, err := strconv.Atoi(targetID)
+		if err != nil || userID <= 0 {
+			return errors.New("invalid whitelist user target")
+		}
+		var user model.User
+		if err := model.DB.Select("id", "role").Where("id = ?", userID).First(&user).Error; err != nil {
+			return err
+		}
+		if !canManageTargetRole(c.GetInt("role"), user.Role) {
+			return errors.New("no permission to whitelist this user")
+		}
+	case model.RiskWhitelistToken:
+		tokenID, err := strconv.Atoi(targetID)
+		if err != nil || tokenID <= 0 {
+			return errors.New("invalid whitelist token target")
+		}
+		token, err := model.GetTokenById(tokenID)
+		if err != nil {
+			return err
+		}
+		var owner model.User
+		if err := model.DB.Select("id", "role").Where("id = ?", token.UserId).First(&owner).Error; err != nil {
+			return err
+		}
+		if !canManageTargetRole(c.GetInt("role"), owner.Role) {
+			return errors.New("no permission to whitelist this user's token")
+		}
+	case model.RiskWhitelistIP:
+		if c.GetInt("role") != common.RoleRootUser {
+			return errors.New("only root user can manage ip whitelist")
+		}
+		if net.ParseIP(targetID) == nil {
+			return errors.New("invalid whitelist ip target")
+		}
+	case model.RiskTargetOrder:
+		userIDs, err := riskOrderTargetUserIDs(targetID)
+		if err != nil {
+			return err
+		}
+		if len(userIDs) == 0 {
+			return errors.New("risk whitelist order target does not exist")
+		}
+		if err := validateRiskUserIDsManageable(c, userIDs, "no permission to whitelist this user's order"); err != nil {
+			return err
+		}
+	default:
+		return errors.New("invalid whitelist target type")
+	}
+	return nil
+}
+
+func validateRiskWhitelistTargetForDelete(c *gin.Context, targetType string, targetID string) error {
+	switch targetType {
+	case model.RiskWhitelistUser, model.RiskWhitelistReferral:
+		userID, err := strconv.Atoi(targetID)
+		if err != nil || userID <= 0 {
+			return nil
+		}
+		var user model.User
+		if err := model.DB.Select("id", "role").Where("id = ?", userID).First(&user).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		if !canManageTargetRole(c.GetInt("role"), user.Role) {
+			return errors.New("no permission to remove this user's whitelist")
+		}
+	case model.RiskWhitelistToken:
+		tokenID, err := strconv.Atoi(targetID)
+		if err != nil || tokenID <= 0 {
+			return nil
+		}
+		token, err := model.GetTokenById(tokenID)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		var owner model.User
+		if err := model.DB.Select("id", "role").Where("id = ?", token.UserId).First(&owner).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		if !canManageTargetRole(c.GetInt("role"), owner.Role) {
+			return errors.New("no permission to remove this token's whitelist")
+		}
+	case model.RiskWhitelistIP:
+		if c.GetInt("role") != common.RoleRootUser {
+			return errors.New("only root user can manage ip whitelist")
+		}
+		if net.ParseIP(targetID) == nil {
+			return nil
+		}
+	case model.RiskTargetOrder:
+		userIDs, err := riskOrderTargetUserIDs(targetID)
+		if err != nil {
+			return err
+		}
+		if len(userIDs) == 0 {
+			return nil
+		}
+		if err := validateRiskUserIDsManageable(c, userIDs, "no permission to remove this order's whitelist"); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func riskOrderTargetUserIDs(tradeNo string) ([]int, error) {
+	tradeNo = strings.TrimSpace(tradeNo)
+	if tradeNo == "" {
+		return []int{}, nil
+	}
+	ids := make([]int, 0, 2)
+	var topups []struct {
+		UserID int
+	}
+	if err := model.DB.Model(&model.TopUp{}).Select("user_id").Where("trade_no = ?", tradeNo).Scan(&topups).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range topups {
+		ids = append(ids, row.UserID)
+	}
+	var subs []struct {
+		UserID int
+	}
+	if err := model.DB.Model(&model.SubscriptionOrder{}).Select("user_id").Where("trade_no = ?", tradeNo).Scan(&subs).Error; err != nil {
+		return nil, err
+	}
+	for _, row := range subs {
+		ids = append(ids, row.UserID)
+	}
+	return uniquePositiveInts(ids), nil
+}
+
+func validateRiskUserIDsManageable(c *gin.Context, userIDs []int, message string) error {
+	userIDs = uniquePositiveInts(userIDs)
+	if len(userIDs) == 0 {
+		if c.GetInt("role") == common.RoleRootUser {
+			return nil
+		}
+		return newRiskPermissionDeniedError(message)
+	}
+	var users []model.User
+	if err := model.DB.Unscoped().Select("id", "role").Where("id IN ?", userIDs).Find(&users).Error; err != nil {
+		return err
+	}
+	if len(users) != len(userIDs) {
+		return errors.New("risk target user does not exist")
+	}
+	myRole := c.GetInt("role")
+	for _, user := range users {
+		if !canManageTargetRole(myRole, user.Role) {
+			return newRiskPermissionDeniedError(message)
+		}
+	}
+	return nil
+}
+
+func riskEventInputManageable(c *gin.Context, input model.RiskEventUpsert) (bool, error) {
+	if c.GetInt("role") == common.RoleRootUser {
+		return true, nil
+	}
+	event := model.RiskEvent{
+		TargetType:     input.TargetType,
+		TargetId:       input.TargetId,
+		UserId:         input.UserId,
+		Ip:             input.Ip,
+		TokenId:        input.TokenId,
+		TradeNo:        input.TradeNo,
+		ReferralUserId: input.ReferralUserId,
+	}
+	err := validateRiskEventManageable(c, event, "")
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, errRiskPermissionDenied) {
+		return false, nil
+	}
+	return false, err
+}
+
+func countManageableRiskEvents(c *gin.Context, query *gorm.DB) (int64, error) {
+	if c.GetInt("role") == common.RoleRootUser {
+		var total int64
+		if err := query.Count(&total).Error; err != nil {
+			return 0, err
+		}
+		return total, nil
+	}
+	var events []model.RiskEvent
+	if err := query.Find(&events).Error; err != nil {
+		return 0, err
+	}
+	filtered, err := filterRiskEventsManageable(c, events)
+	if err != nil {
+		return 0, err
+	}
+	return int64(len(filtered)), nil
+}
+
+func filterRiskEventsManageable(c *gin.Context, events []model.RiskEvent) ([]model.RiskEvent, error) {
+	if c.GetInt("role") == common.RoleRootUser {
+		return events, nil
+	}
+	result := make([]model.RiskEvent, 0, len(events))
+	for _, event := range events {
+		if err := validateRiskEventManageable(c, event, ""); err != nil {
+			if errors.Is(err, errRiskPermissionDenied) {
+				continue
+			}
+			return nil, err
+		}
+		result = append(result, event)
+	}
+	return result, nil
+}
+
+func filterRiskActionsManageable(c *gin.Context, actions []model.RiskAction) ([]model.RiskAction, error) {
+	if c.GetInt("role") == common.RoleRootUser {
+		return actions, nil
+	}
+	result := make([]model.RiskAction, 0, len(actions))
+	for _, action := range actions {
+		userIDs, err := riskActionTargetUserIDs(c, action)
+		if err != nil {
+			return nil, err
+		}
+		if err := validateRiskUserIDsManageable(c, userIDs, ""); err != nil {
+			if errors.Is(err, errRiskPermissionDenied) {
+				continue
+			}
+			return nil, err
+		}
+		result = append(result, action)
+	}
+	return result, nil
+}
+
+func paginateManageableRiskEvents(c *gin.Context, query *gorm.DB, orderExpr string, pageInfo *common.PageInfo) ([]model.RiskEvent, int, error) {
+	start := pageInfo.GetStartIdx()
+	pageSize := pageInfo.GetPageSize()
+	offset := 0
+	total := 0
+	items := make([]model.RiskEvent, 0, pageSize)
+	for {
+		var batch []model.RiskEvent
+		if err := query.Session(&gorm.Session{}).Order(orderExpr).Limit(riskFilterBatchSize).Offset(offset).Find(&batch).Error; err != nil {
+			return nil, 0, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		filtered, err := filterRiskEventsManageable(c, batch)
+		if err != nil {
+			return nil, 0, err
+		}
+		for _, item := range filtered {
+			if total >= start && len(items) < pageSize {
+				items = append(items, item)
+			}
+			total++
+		}
+		if len(batch) < riskFilterBatchSize {
+			break
+		}
+		offset += len(batch)
+	}
+	return items, total, nil
+}
+
+func paginateManageableRiskActions(c *gin.Context, query *gorm.DB, pageInfo *common.PageInfo) ([]model.RiskAction, int, error) {
+	start := pageInfo.GetStartIdx()
+	pageSize := pageInfo.GetPageSize()
+	offset := 0
+	total := 0
+	items := make([]model.RiskAction, 0, pageSize)
+	for {
+		var batch []model.RiskAction
+		if err := query.Session(&gorm.Session{}).Order("id desc").Limit(riskFilterBatchSize).Offset(offset).Find(&batch).Error; err != nil {
+			return nil, 0, err
+		}
+		if len(batch) == 0 {
+			break
+		}
+		filtered, err := filterRiskActionsManageable(c, batch)
+		if err != nil {
+			return nil, 0, err
+		}
+		for _, item := range filtered {
+			if total >= start && len(items) < pageSize {
+				items = append(items, item)
+			}
+			total++
+		}
+		if len(batch) < riskFilterBatchSize {
+			break
+		}
+		offset += len(batch)
+	}
+	return items, total, nil
+}
+
+func riskActionTargetUserIDs(c *gin.Context, action model.RiskAction) ([]int, error) {
+	ids := make([]int, 0, 4)
+	if action.EventId > 0 {
+		var event model.RiskEvent
+		err := model.DB.Where("id = ?", action.EventId).First(&event).Error
+		if err == nil {
+			eventIDs, err := riskEventTargetUserIDs(c, event)
+			if err != nil {
+				return nil, err
+			}
+			ids = append(ids, eventIDs...)
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, err
+		}
+	}
+	if action.UserId > 0 {
+		ids = append(ids, action.UserId)
+	}
+	switch action.TargetType {
+	case model.RiskTargetUser, model.RiskTargetReferral:
+		if targetID, err := strconv.Atoi(action.TargetId); err == nil && targetID > 0 {
+			ids = append(ids, targetID)
+		}
+	case model.RiskTargetToken:
+		if targetID, err := strconv.Atoi(action.TargetId); err == nil && targetID > 0 {
+			ownerIDs, err := riskTokenOwnerUserIDs([]int{targetID})
+			if err != nil {
+				return nil, err
+			}
+			ids = append(ids, ownerIDs...)
+		}
+	case model.RiskTargetOrder:
+		orderIDs, err := riskOrderTargetUserIDs(action.TargetId)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, orderIDs...)
+	case model.RiskTargetIP:
+		ipIDs, err := riskUserIDsByIP(action.TargetId, 0)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, ipIDs...)
+	}
+	if action.TokenId > 0 {
+		ownerIDs, err := riskTokenOwnerUserIDs([]int{action.TokenId})
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, ownerIDs...)
+	}
+	if action.Ip != "" {
+		ipIDs, err := riskUserIDsByIP(action.Ip, 0)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, ipIDs...)
+	}
+	return uniquePositiveInts(ids), nil
+}
+
+func paginateRiskEvents(events []model.RiskEvent, pageInfo *common.PageInfo) []model.RiskEvent {
+	start := pageInfo.GetStartIdx()
+	if start >= len(events) {
+		return []model.RiskEvent{}
+	}
+	end := pageInfo.GetEndIdx()
+	if end > len(events) {
+		end = len(events)
+	}
+	return events[start:end]
+}
+
+func paginateRiskActions(actions []model.RiskAction, pageInfo *common.PageInfo) []model.RiskAction {
+	start := pageInfo.GetStartIdx()
+	if start >= len(actions) {
+		return []model.RiskAction{}
+	}
+	end := pageInfo.GetEndIdx()
+	if end > len(actions) {
+		end = len(actions)
+	}
+	return actions[start:end]
+}
+
+func validateRiskTokensManageable(c *gin.Context, tokens []riskTokenRow, message string) error {
+	if len(tokens) == 0 {
+		return nil
+	}
+	userIDs := make([]int, 0, len(tokens))
+	tokenIDs := make([]int, 0, len(tokens))
+	for _, token := range tokens {
+		if token.UserID > 0 {
+			userIDs = append(userIDs, token.UserID)
+		}
+		if token.TokenID > 0 {
+			tokenIDs = append(tokenIDs, token.TokenID)
+		}
+	}
+	ownerIDs, err := riskTokenOwnerUserIDs(tokenIDs)
+	if err != nil {
+		return err
+	}
+	userIDs = append(userIDs, ownerIDs...)
+	return validateRiskUserIDsManageable(c, userIDs, message)
+}
+
+func validateRiskEventManageable(c *gin.Context, event model.RiskEvent, message string) error {
+	userIDs, err := riskEventTargetUserIDs(c, event)
+	if err != nil {
+		return err
+	}
+	return validateRiskUserIDsManageable(c, userIDs, message)
+}
+
+func riskEventTargetUserIDs(c *gin.Context, event model.RiskEvent) ([]int, error) {
+	ids := make([]int, 0, 4)
+	if event.UserId > 0 {
+		ids = append(ids, event.UserId)
+	}
+	if event.ReferralUserId > 0 {
+		ids = append(ids, event.ReferralUserId)
+	}
+	switch event.TargetType {
+	case model.RiskTargetUser, model.RiskTargetReferral:
+		if targetID, err := strconv.Atoi(event.TargetId); err == nil && targetID > 0 {
+			ids = append(ids, targetID)
+		}
+	case model.RiskTargetToken:
+		if tokenID, err := strconv.Atoi(event.TargetId); err == nil && tokenID > 0 {
+			ownerIDs, err := riskTokenOwnerUserIDs([]int{tokenID})
+			if err != nil {
+				return nil, err
+			}
+			ids = append(ids, ownerIDs...)
+		}
+	case model.RiskTargetOrder:
+		orderIDs, err := riskOrderTargetUserIDs(event.TargetId)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, orderIDs...)
+	case model.RiskTargetIP:
+		ip := event.TargetId
+		if ip == "" {
+			ip = event.Ip
+		}
+		ipIDs, err := riskUserIDsByIP(ip, 0)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, ipIDs...)
+	}
+	if event.TokenId > 0 {
+		ownerIDs, err := riskTokenOwnerUserIDs([]int{event.TokenId})
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, ownerIDs...)
+	}
+	if event.TradeNo != "" {
+		orderIDs, err := riskOrderTargetUserIDs(event.TradeNo)
+		if err != nil {
+			return nil, err
+		}
+		ids = append(ids, orderIDs...)
+	}
+	return uniquePositiveInts(ids), nil
+}
+
+func riskTokenOwnerUserIDs(tokenIDs []int) ([]int, error) {
+	tokenIDs = uniquePositiveInts(tokenIDs)
+	if len(tokenIDs) == 0 {
+		return []int{}, nil
+	}
+	var rows []struct {
+		UserID int
+	}
+	if err := model.DB.Unscoped().Model(&model.Token{}).Select("user_id").Where("id IN ?", tokenIDs).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]int, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.UserID)
+	}
+	return uniquePositiveInts(ids), nil
+}
+
 func eventForAction(eventID int) model.RiskEvent {
 	return eventForActionWithDB(model.DB, eventID)
+}
+
+func eventForRiskActionRequest(c *gin.Context, eventID int, message string) (model.RiskEvent, error) {
+	return eventForRiskActionRequestWithDB(c, model.DB, eventID, message)
+}
+
+func eventForRiskActionRequestWithDB(c *gin.Context, db *gorm.DB, eventID int, message string) (model.RiskEvent, error) {
+	if eventID <= 0 {
+		return model.RiskEvent{}, nil
+	}
+	var event model.RiskEvent
+	if err := db.Where("id = ?", eventID).First(&event).Error; err != nil {
+		return model.RiskEvent{}, err
+	}
+	if err := validateRiskEventManageable(c, event, message); err != nil {
+		return model.RiskEvent{}, err
+	}
+	return event, nil
 }
 
 func eventForActionWithDB(db *gorm.DB, eventID int) model.RiskEvent {
@@ -839,29 +1518,37 @@ func eventForActionWithDB(db *gorm.DB, eventID int) model.RiskEvent {
 	return event
 }
 
-func normalizeRiskReason(value string, fallback string) string {
+func requireRiskReason(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		return fallback
+		return "", errors.New("reason is required")
 	}
-	return value
+	return value, nil
 }
 
-func scanAndPersistRiskEvents(windowHours int) ([]model.RiskEvent, error) {
+func decodeOptionalRiskActionRequest(c *gin.Context, req *riskActionRequest) error {
+	if c.Request.Body == nil {
+		return nil
+	}
+	err := common.DecodeJson(c.Request.Body, req)
+	if errors.Is(err, io.EOF) {
+		return nil
+	}
+	return err
+}
+
+func scanAndPersistRiskEvents(c *gin.Context, windowHours int) ([]model.RiskEvent, error) {
 	since := common.GetTimestamp() - int64(windowHours*3600)
 	inputs, err := buildRiskEventInputs(since, windowHours)
 	if err != nil {
 		return nil, err
 	}
+	inputs, err = filterRiskEventInputsForContext(c, inputs)
+	if err != nil {
+		return nil, err
+	}
 	events := make([]model.RiskEvent, 0, len(inputs))
 	for _, input := range inputs {
-		whitelisted, err := isRiskWhitelisted(input.TargetType, input.TargetId)
-		if err != nil {
-			return nil, err
-		}
-		if whitelisted {
-			continue
-		}
 		event, err := model.UpsertRiskEvent(input)
 		if err != nil {
 			return nil, err
@@ -881,7 +1568,6 @@ func buildRiskEventInputs(since int64, windowHours int) ([]model.RiskEventUpsert
 		Group("ip").
 		Having("count(distinct user_id) >= ?", 5).
 		Order("count desc").
-		Limit(40).
 		Scan(&sharedIPs).Error; err != nil {
 		return nil, err
 	}
@@ -916,7 +1602,6 @@ func buildRiskEventInputs(since int64, windowHours int) ([]model.RiskEventUpsert
 		Group("user_id, username").
 		Having("count(*) >= ?", 20).
 		Order("count desc").
-		Limit(40).
 		Scan(&highErrors).Error; err != nil {
 		return nil, err
 	}
@@ -952,7 +1637,6 @@ func buildRiskEventInputs(since int64, windowHours int) ([]model.RiskEventUpsert
 		Group("t.user_id, u.username").
 		Having("count(*) >= ? OR coalesce(sum(t.paid_amount), 0) >= ?", 5, 1000).
 		Order("amount desc").
-		Limit(40).
 		Scan(&highTopups).Error; err != nil {
 		return nil, err
 	}
@@ -989,7 +1673,6 @@ func buildRiskEventInputs(since int64, windowHours int) ([]model.RiskEventUpsert
 		Group("user_id").
 		Having("coalesce(sum(quota), 0) >= ?", 1000000).
 		Order("amount desc").
-		Limit(80).
 		Scan(&consumeCandidates).Error; err != nil {
 		return nil, err
 	}
@@ -1100,6 +1783,77 @@ func collectRiskSignals(since int64, windowHours int) ([]riskSignal, error) {
 	return signals, nil
 }
 
+func collectRiskSignalsForContext(c *gin.Context, since int64, windowHours int) ([]riskSignal, error) {
+	inputs, err := buildRiskEventInputs(since, windowHours)
+	if err != nil {
+		return nil, err
+	}
+	inputs, err = filterRiskEventInputsForContext(c, inputs)
+	if err != nil {
+		return nil, err
+	}
+	signals := make([]riskSignal, 0, len(inputs))
+	for _, item := range inputs {
+		signals = append(signals, riskSignal{
+			Type:        item.Type,
+			Severity:    item.Severity,
+			EventKey:    item.EventKey,
+			TargetType:  item.TargetType,
+			TargetId:    item.TargetId,
+			UserID:      item.UserId,
+			Username:    item.Username,
+			IP:          item.Ip,
+			TokenID:     item.TokenId,
+			TradeNo:     item.TradeNo,
+			Count:       item.HitCount,
+			Amount:      item.Amount,
+			Message:     item.Summary,
+			FirstSeenAt: item.FirstSeenAt,
+			LastSeenAt:  item.LastSeenAt,
+		})
+	}
+	return signals, nil
+}
+
+func filterRiskEventInputsForContext(c *gin.Context, inputs []model.RiskEventUpsert) ([]model.RiskEventUpsert, error) {
+	filtered := make([]model.RiskEventUpsert, 0, len(inputs))
+	counts := make(map[string]int)
+	for _, input := range inputs {
+		whitelisted, err := isRiskWhitelisted(input.TargetType, input.TargetId)
+		if err != nil {
+			return nil, err
+		}
+		if whitelisted {
+			continue
+		}
+		manageable, err := riskEventInputManageable(c, input)
+		if err != nil {
+			return nil, err
+		}
+		if !manageable {
+			continue
+		}
+		limit := riskInputLimitForType(input.Type)
+		if limit > 0 && counts[input.Type] >= limit {
+			continue
+		}
+		filtered = append(filtered, input)
+		counts[input.Type]++
+	}
+	return filtered, nil
+}
+
+func riskInputLimitForType(riskType string) int {
+	switch riskType {
+	case "new_user_high_consume":
+		return riskScanConsumeCandidateLimit
+	case "shared_ip", "high_error_count", "high_topup_activity", "token_rotation", "payment_anomaly":
+		return riskScanCandidateLimit
+	default:
+		return 0
+	}
+}
+
 func buildTokenRotationEvents(since int64, windowHours int) ([]model.RiskEventUpsert, error) {
 	var rows []riskTokenRow
 	if err := model.LOG_DB.Table("logs AS l").
@@ -1118,7 +1872,6 @@ func buildTokenRotationEvents(since int64, windowHours int) ([]model.RiskEventUp
 		Group("l.token_id").
 		Having("count(distinct nullif(l.ip, '')) >= ?", 5).
 		Order("unique_ip_count desc, request_count desc").
-		Limit(40).
 		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -1157,7 +1910,7 @@ func buildTokenRotationEvents(since int64, windowHours int) ([]model.RiskEventUp
 }
 
 func buildReferralRiskEvents(since int64, windowHours int) ([]model.RiskEventUpsert, error) {
-	rows, err := queryReferralRiskRows(since, 20)
+	rows, err := queryReferralRiskRows(since, 0)
 	if err != nil {
 		return nil, err
 	}
@@ -1218,7 +1971,6 @@ func buildPaymentRiskEvents(since int64, windowHours int) ([]model.RiskEventUpse
 		Joins("LEFT JOIN subscription_orders so ON so.trade_no = t.trade_no AND t.trade_no <> ''").
 		Where("t.create_time >= ? AND t.status = ? AND so.id IS NULL AND (t.referral_commission_status = ? OR t.paid_amount <= 0)", since, common.TopUpStatusSuccess, model.ReferralCommissionJobStatusFailed).
 		Order("t.create_time desc").
-		Limit(40).
 		Scan(&topups).Error; err != nil {
 		return nil, err
 	}
@@ -1249,7 +2001,6 @@ func buildPaymentRiskEvents(since int64, windowHours int) ([]model.RiskEventUpse
 		Joins("LEFT JOIN users u ON u.id = s.user_id").
 		Where("s.create_time >= ? AND s.status = ? AND (s.referral_commission_status = ? OR s.paid_amount <= 0)", since, common.TopUpStatusSuccess, model.ReferralCommissionJobStatusFailed).
 		Order("s.create_time desc").
-		Limit(40).
 		Scan(&subs).Error; err != nil {
 		return nil, err
 	}
@@ -1315,10 +2066,13 @@ func riskUserIDsByIP(ip string, since int64) ([]int, error) {
 	var rows []struct {
 		UserID int
 	}
-	if err := model.LOG_DB.Table("logs").
+	query := model.LOG_DB.Table("logs").
 		Select("distinct user_id").
-		Where("created_at >= ? AND ip = ? AND user_id > 0", since, ip).
-		Limit(200).
+		Where("ip = ? AND user_id > 0", ip)
+	if since > 0 {
+		query = query.Where("created_at >= ?", since)
+	}
+	if err := query.
 		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
@@ -1370,13 +2124,17 @@ func riskUserIDsByTradeNo(tradeNo string) ([]int, error) {
 	return uniquePositiveInts(ids), nil
 }
 
-func riskUserIDsByStatus(status int) ([]int, error) {
+func riskUserIDsByStatus(c *gin.Context, status int) ([]int, error) {
 	var rows []struct {
 		UserID int
 	}
-	if err := model.DB.Table("users").
+	query := model.DB.Table("users").
 		Select("id AS user_id").
-		Where("status = ?", status).
+		Where("status = ?", status)
+	if c.GetInt("role") != common.RoleRootUser {
+		query = query.Where("role < ?", c.GetInt("role"))
+	}
+	if err := query.
 		Order("id desc").
 		Limit(200).
 		Scan(&rows).Error; err != nil {
@@ -1389,13 +2147,17 @@ func riskUserIDsByStatus(status int) ([]int, error) {
 	return ids, nil
 }
 
-func riskNewUserIDs(since int64) ([]int, error) {
+func riskNewUserIDs(c *gin.Context, since int64) ([]int, error) {
 	var rows []struct {
 		UserID int
 	}
-	if err := model.DB.Table("users").
+	query := model.DB.Table("users").
 		Select("id AS user_id").
-		Where("created_at >= ?", since).
+		Where("created_at >= ?", since)
+	if c.GetInt("role") != common.RoleRootUser {
+		query = query.Where("role < ?", c.GetInt("role"))
+	}
+	if err := query.
 		Order("id desc").
 		Limit(200).
 		Scan(&rows).Error; err != nil {
@@ -1744,7 +2506,7 @@ func riskTokenStatusesByID(tokenIDs []int) (map[int]int, error) {
 	return statusByID, nil
 }
 
-func riskIPsForDetail(ip string, userIDs []int, since int64) ([]riskIPRow, error) {
+func riskIPsForDetail(c *gin.Context, ip string, userIDs []int, since int64) ([]riskIPRow, error) {
 	query := model.LOG_DB.Table("logs").
 		Select(`
 			ip,
@@ -1773,39 +2535,40 @@ func riskIPsForDetail(ip string, userIDs []int, since int64) ([]riskIPRow, error
 		if rows[i].RequestCount > 0 {
 			rows[i].FailureRate = float64(rows[i].ErrorCount) / float64(rows[i].RequestCount)
 		}
-		var whitelist model.RiskWhitelist
-		if err := model.DB.Where("target_type = ? AND target_id = ? AND (expires_at = 0 OR expires_at > ?)", model.RiskWhitelistIP, rows[i].IP, common.GetTimestamp()).First(&whitelist).Error; err == nil {
-			rows[i].Whitelisted = true
-			rows[i].WhitelistNote = whitelist.Reason
+		if c.GetInt("role") == common.RoleRootUser {
+			var whitelist model.RiskWhitelist
+			if err := model.DB.Where("target_type = ? AND target_id = ? AND (expires_at = 0 OR expires_at > ?)", model.RiskWhitelistIP, rows[i].IP, common.GetTimestamp()).First(&whitelist).Error; err == nil {
+				rows[i].Whitelisted = true
+				rows[i].WhitelistNote = whitelist.Reason
+			}
 		}
 	}
 	return rows, nil
 }
 
 func riskReferralsForDetail(userIDs []int, since int64) ([]riskReferralRow, error) {
+	userIDs = uniquePositiveInts(userIDs)
 	if len(userIDs) == 0 {
-		return queryReferralRiskRows(since, 20)
+		return []riskReferralRow{}, nil
 	}
-	rows, err := queryReferralRiskRows(since, 80)
+	rows, err := queryReferralRiskRowsForUsers(since, userIDs)
 	if err != nil {
 		return nil, err
 	}
-	allowed := make(map[int]struct{}, len(userIDs))
-	for _, id := range userIDs {
-		allowed[id] = struct{}{}
-	}
-	result := make([]riskReferralRow, 0, len(rows))
-	for _, row := range rows {
-		if _, ok := allowed[row.InviterUserID]; ok {
-			result = append(result, row)
-		}
-	}
-	return result, nil
+	return rows, nil
 }
 
 func queryReferralRiskRows(since int64, limit int) ([]riskReferralRow, error) {
+	return queryReferralRiskRowsWithScope(since, limit, nil)
+}
+
+func queryReferralRiskRowsForUsers(since int64, userIDs []int) ([]riskReferralRow, error) {
+	return queryReferralRiskRowsWithScope(since, 0, uniquePositiveInts(userIDs))
+}
+
+func queryReferralRiskRowsWithScope(since int64, limit int, userIDs []int) ([]riskReferralRow, error) {
 	var rows []riskReferralRow
-	if err := model.DB.Table("referral_affiliates AS a").
+	query := model.DB.Table("referral_affiliates AS a").
 		Select(`
 			a.id AS affiliate_id,
 			a.user_id AS inviter_user_id,
@@ -1835,9 +2598,14 @@ func queryReferralRiskRows(since int64, limit int) ([]riskReferralRow, error) {
 			WHERE created_at >= ?
 			GROUP BY user_id
 		) withdrawal ON withdrawal.user_id = a.user_id`, since).
-		Order("invitee_count desc, commission_amount desc").
-		Limit(limit).
-		Scan(&rows).Error; err != nil {
+		Order("invitee_count desc, commission_amount desc")
+	if len(userIDs) > 0 {
+		query = query.Where("a.user_id IN ?", userIDs)
+	}
+	if limit > 0 {
+		query = query.Limit(limit)
+	}
+	if err := query.Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	for i := range rows {
@@ -1859,10 +2627,12 @@ func queryReferralRiskRows(since int64, limit int) ([]riskReferralRow, error) {
 	return rows, nil
 }
 
-func riskActionsForDetail(eventID int, userID int, tokenID int, ip string) ([]model.RiskAction, error) {
+func riskActionsForDetail(c *gin.Context, riskType string, eventID int, userID int, tokenID int, ip string, tradeNo string) ([]model.RiskAction, error) {
 	query := model.DB.Model(&model.RiskAction{})
 	if eventID > 0 {
 		query = query.Where("event_id = ?", eventID)
+	} else if riskType == "order_detail" && tradeNo != "" {
+		query = query.Where("target_type = ? AND target_id = ?", model.RiskTargetOrder, tradeNo)
 	} else if userID > 0 {
 		query = query.Where("user_id = ?", userID)
 	} else if tokenID > 0 {
@@ -1876,10 +2646,10 @@ func riskActionsForDetail(eventID int, userID int, tokenID int, ip string) ([]mo
 	if err := query.Order("id desc").Limit(50).Find(&rows).Error; err != nil {
 		return nil, err
 	}
-	return rows, nil
+	return filterRiskActionsManageable(c, rows)
 }
 
-func riskWhitelistsForDetail(userID int, tokenID int, ip string, eventTargetType string, eventTargetID string) ([]model.RiskWhitelist, error) {
+func riskWhitelistsForDetail(c *gin.Context, userID int, tokenID int, ip string, eventTargetType string, eventTargetID string) ([]model.RiskWhitelist, error) {
 	conditions := make([]string, 0, 4)
 	args := make([]interface{}, 0, 8)
 	if userID > 0 {
@@ -1890,7 +2660,7 @@ func riskWhitelistsForDetail(userID int, tokenID int, ip string, eventTargetType
 		conditions = append(conditions, "(target_type = ? AND target_id = ?)")
 		args = append(args, model.RiskWhitelistToken, strconv.Itoa(tokenID))
 	}
-	if ip != "" {
+	if ip != "" && c.GetInt("role") == common.RoleRootUser {
 		conditions = append(conditions, "(target_type = ? AND target_id = ?)")
 		args = append(args, model.RiskWhitelistIP, ip)
 	}
@@ -1902,7 +2672,8 @@ func riskWhitelistsForDetail(userID int, tokenID int, ip string, eventTargetType
 		return []model.RiskWhitelist{}, nil
 	}
 	var rows []model.RiskWhitelist
-	if err := model.DB.Where(strings.Join(conditions, " OR "), args...).Order("id desc").Find(&rows).Error; err != nil {
+	now := common.GetTimestamp()
+	if err := model.DB.Where("("+strings.Join(conditions, " OR ")+") AND (expires_at = 0 OR expires_at > ?)", append(args, now)...).Order("id desc").Find(&rows).Error; err != nil {
 		return nil, err
 	}
 	return rows, nil

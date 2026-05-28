@@ -885,8 +885,10 @@ export function RiskCenter() {
                     )
                   }}
                   onDeleteWhitelist={(id) => {
+                    const text = requireReason()
+                    if (!text) return
                     void runAction(
-                      () => deleteRiskWhitelist(id),
+                      () => deleteRiskWhitelist(id, { reason: text }),
                       '白名单已移除'
                     )
                   }}
@@ -1694,6 +1696,13 @@ function getPrimaryWhitelistTarget(
       target_type: 'token',
       target_id: String(detail.token_id),
       label: String(detail.token_id),
+    }
+  }
+  if (kind === 'order' && detail.trade_no) {
+    return {
+      target_type: 'order',
+      target_id: detail.trade_no,
+      label: detail.trade_no,
     }
   }
   if (kind === 'referral' && detail.users[0]) {

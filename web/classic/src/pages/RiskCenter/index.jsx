@@ -186,7 +186,7 @@ export default function RiskCenter() {
     () =>
       safeParams({
         window_hours: windowHours,
-        page: eventPage,
+        p: eventPage,
         page_size: 20,
         status,
         keyword: keyword.trim(),
@@ -302,11 +302,16 @@ export default function RiskCenter() {
 
   async function eventAction(action) {
     if (!selectedEvent?.id) return;
+    const text = reason.trim();
+    if (!text) {
+      showError('请填写处理原因');
+      return;
+    }
     setDetailLoading(true);
     try {
       await requestApi(
         API.post(`/api/user/admin/risk/events/${selectedEvent.id}/${action}`, {
-          reason: reason.trim(),
+          reason: text,
         }),
       );
       showSuccess('操作成功');
@@ -324,6 +329,11 @@ export default function RiskCenter() {
       showError('缺少白名单对象');
       return;
     }
+    const text = reason.trim();
+    if (!text) {
+      showError('请填写处理原因');
+      return;
+    }
     setDetailLoading(true);
     try {
       await requestApi(
@@ -331,7 +341,7 @@ export default function RiskCenter() {
           event_id: selectedEvent?.id,
           target_type: targetType,
           target_id: targetId,
-          reason: reason.trim() || '人工确认加入白名单',
+          reason: text,
         }),
       );
       showSuccess('已加入白名单');
@@ -349,9 +359,14 @@ export default function RiskCenter() {
 
   async function deleteWhitelist(id) {
     if (!id) return;
+    const text = reason.trim();
+    if (!text) {
+      showError('请填写处理原因');
+      return;
+    }
     setDetailLoading(true);
     try {
-      await requestApi(API.delete(`/api/user/admin/risk/whitelist/${id}`));
+      await requestApi(API.delete(`/api/user/admin/risk/whitelist/${id}`, { data: { reason: text } }));
       showSuccess('已移除白名单');
       if (selectedEvent) {
         await openEvent(selectedEvent);
@@ -367,12 +382,17 @@ export default function RiskCenter() {
 
   async function banUser(userId) {
     if (!userId) return;
+    const text = reason.trim();
+    if (!text) {
+      showError('请填写处理原因');
+      return;
+    }
     setDetailLoading(true);
     try {
       await requestApi(
         API.post(`/api/user/admin/risk/users/${userId}/ban`, {
           event_id: selectedEvent?.id,
-          reason: reason.trim(),
+          reason: text,
         }),
       );
       showSuccess('已封禁用户');
@@ -386,12 +406,17 @@ export default function RiskCenter() {
 
   async function disableToken(tokenId) {
     if (!tokenId) return;
+    const text = reason.trim();
+    if (!text) {
+      showError('请填写处理原因');
+      return;
+    }
     setDetailLoading(true);
     try {
       await requestApi(
         API.post(`/api/user/admin/risk/tokens/${tokenId}/disable`, {
           event_id: selectedEvent?.id,
-          reason: reason.trim(),
+          reason: text,
         }),
       );
       showSuccess('已禁用 Token');
