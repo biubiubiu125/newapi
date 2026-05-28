@@ -380,7 +380,9 @@ export default function SettingsSidebarModulesUser() {
         {
           key: 'adminReferral',
           title: t('Referral Management'),
-          description: t('Referral affiliates, commissions, withdrawals, and audit logs'),
+          description: t(
+            'Referral affiliates, commissions, withdrawals, and audit logs',
+          ),
         },
         {
           key: 'riskCenter',

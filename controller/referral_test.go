@@ -378,6 +378,65 @@ func TestRegisterRejectsDuplicateEmailCaseInsensitive(t *testing.T) {
 	require.Equal(t, int64(1), count)
 }
 
+func TestRegisterRejectsDuplicateUsernameWithoutServerError(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+	existing := &model.User{
+		Username:    "same-user",
+		Password:    "12345678",
+		DisplayName: "same-user",
+		Email:       "same-user@example.com",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, existing.Insert(0))
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+	store := cookie.NewStore([]byte(common.SessionSecret))
+	router.Use(sessions.Sessions("session", store))
+	router.POST("/api/user/register", Register)
+
+	body := []byte(`{"username":"same-user","password":"12345678","email":"same-user-2@example.com"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/user/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, false, response["success"])
+
+	var count int64
+	require.NoError(t, db.Model(&model.User{}).Where("username = ?", "same-user").Count(&count).Error)
+	require.Equal(t, int64(1), count)
+}
+
+func TestRegisterRejectsInvalidEmailWithoutCreatingUser(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+	store := cookie.NewStore([]byte(common.SessionSecret))
+	router.Use(sessions.Sessions("session", store))
+	router.POST("/api/user/register", Register)
+
+	body := []byte(`{"username":"bad-email","password":"12345678","email":"bad-email"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/user/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, false, response["success"])
+
+	var count int64
+	require.NoError(t, db.Model(&model.User{}).Where("username = ?", "bad-email").Count(&count).Error)
+	require.Equal(t, int64(0), count)
+}
+
 func TestEmailBindRejectsEmailOwnedByAnotherUser(t *testing.T) {
 	db := setupReferralControllerTestDB(t)
 	first := &model.User{

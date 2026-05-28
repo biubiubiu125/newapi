@@ -138,7 +138,8 @@ function normalizeDetail(data) {
 function signalMatchesEvent(signal, event) {
   if (signal.event_key) return signal.event_key === event.event_key;
   if (signal.type !== event.type) return false;
-  if (signal.target_type && signal.target_type !== event.target_type) return false;
+  if (signal.target_type && signal.target_type !== event.target_type)
+    return false;
   if (signal.target_id && signal.target_id !== event.target_id) return false;
   if (signal.ip && signal.ip !== event.ip) return false;
   if (signal.user_id && signal.user_id !== event.user_id) return false;
@@ -171,9 +172,21 @@ export default function RiskCenter() {
   const [status, setStatus] = useState('open');
   const [eventPage, setEventPage] = useState(1);
   const [overview, setOverview] = useState(null);
-  const [eventsPage, setEventsPage] = useState({ items: [], total: 0, page_size: 20 });
-  const [usersPage, setUsersPage] = useState({ items: [], total: 0, page_size: 20 });
-  const [actionsPage, setActionsPage] = useState({ items: [], total: 0, page_size: 20 });
+  const [eventsPage, setEventsPage] = useState({
+    items: [],
+    total: 0,
+    page_size: 20,
+  });
+  const [usersPage, setUsersPage] = useState({
+    items: [],
+    total: 0,
+    page_size: 20,
+  });
+  const [actionsPage, setActionsPage] = useState({
+    items: [],
+    total: 0,
+    page_size: 20,
+  });
   const [loading, setLoading] = useState(false);
   const [scanLoading, setScanLoading] = useState(false);
   const [detailOpen, setDetailOpen] = useState(false);
@@ -211,12 +224,20 @@ export default function RiskCenter() {
         page_size: 20,
         keyword: keyword.trim(),
       });
-      const [overviewData, eventData, userData, actionData] = await Promise.all([
-        requestApi(API.get(`/api/user/admin/risk/overview?${baseParams.toString()}`)),
-        requestApi(API.get(`/api/user/admin/risk/events?${eventParams.toString()}`)),
-        requestApi(API.get(`/api/user/admin/risk/users?${listParams.toString()}`)),
-        requestApi(API.get('/api/user/admin/risk/actions?page_size=20')),
-      ]);
+      const [overviewData, eventData, userData, actionData] = await Promise.all(
+        [
+          requestApi(
+            API.get(`/api/user/admin/risk/overview?${baseParams.toString()}`),
+          ),
+          requestApi(
+            API.get(`/api/user/admin/risk/events?${eventParams.toString()}`),
+          ),
+          requestApi(
+            API.get(`/api/user/admin/risk/users?${listParams.toString()}`),
+          ),
+          requestApi(API.get('/api/user/admin/risk/actions?page_size=20')),
+        ],
+      );
       setOverview(overviewData);
       setEventsPage(eventData || { items: [], total: 0, page_size: 20 });
       setUsersPage(userData || { items: [], total: 0, page_size: 20 });
@@ -278,7 +299,9 @@ export default function RiskCenter() {
     setDetail(null);
     setReason('');
     try {
-      await requestApi(API.post(`/api/user/admin/risk/events/${event.id}/view`));
+      await requestApi(
+        API.post(`/api/user/admin/risk/events/${event.id}/view`),
+      );
       const params = safeParams({
         window_hours: windowHours,
         type: event.type,
@@ -366,7 +389,11 @@ export default function RiskCenter() {
     }
     setDetailLoading(true);
     try {
-      await requestApi(API.delete(`/api/user/admin/risk/whitelist/${id}`, { data: { reason: text } }));
+      await requestApi(
+        API.delete(`/api/user/admin/risk/whitelist/${id}`, {
+          data: { reason: text },
+        }),
+      );
       showSuccess('已移除白名单');
       if (selectedEvent) {
         await openEvent(selectedEvent);
@@ -441,8 +468,16 @@ export default function RiskCenter() {
         </Space>
       ),
     },
-    { title: '类型', dataIndex: 'type', render: (value) => riskTypeLabel(value) },
-    { title: '级别', dataIndex: 'severity', render: (value) => severityTag(value) },
+    {
+      title: '类型',
+      dataIndex: 'type',
+      render: (value) => riskTypeLabel(value),
+    },
+    {
+      title: '级别',
+      dataIndex: 'severity',
+      render: (value) => severityTag(value),
+    },
     { title: '状态', dataIndex: 'status', render: (value) => statusTag(value) },
     {
       title: '对象',
@@ -462,8 +497,16 @@ export default function RiskCenter() {
   ];
 
   const userColumns = [
-    { title: '用户', dataIndex: 'username', render: (_, row) => row.username || `#${row.user_id}` },
-    { title: '级别', dataIndex: 'severity', render: (value) => severityTag(value) },
+    {
+      title: '用户',
+      dataIndex: 'username',
+      render: (_, row) => row.username || `#${row.user_id}`,
+    },
+    {
+      title: '级别',
+      dataIndex: 'severity',
+      render: (value) => severityTag(value),
+    },
     { title: '信号', dataIndex: 'signal_count' },
     { title: '错误', dataIndex: 'error_count' },
     { title: '消费额度', dataIndex: 'consume_quota' },
@@ -473,7 +516,10 @@ export default function RiskCenter() {
 
   const actionColumns = [
     { title: '操作', dataIndex: 'action', render: actionLabel },
-    { title: '对象', render: (_, row) => targetLabel(row.target_type, row.target_id) },
+    {
+      title: '对象',
+      render: (_, row) => targetLabel(row.target_type, row.target_id),
+    },
     { title: '管理员', dataIndex: 'operator_name' },
     { title: '原因', dataIndex: 'reason' },
     { title: '时间', dataIndex: 'created_at', render: formatTime },
@@ -528,7 +574,12 @@ export default function RiskCenter() {
             <Button onClick={() => void load()} loading={loading}>
               刷新
             </Button>
-            <Button type='primary' theme='solid' onClick={scan} loading={scanLoading}>
+            <Button
+              type='primary'
+              theme='solid'
+              onClick={scan}
+              loading={scanLoading}
+            >
               扫描风险
             </Button>
           </Space>
@@ -542,8 +593,14 @@ export default function RiskCenter() {
 
         <div className='grid grid-cols-1 md:grid-cols-5 gap-4'>
           <MetricCard title='实时信号' value={overview?.signal_count || 0} />
-          <MetricCard title='未处理事件' value={overview?.open_event_count || 0} />
-          <MetricCard title='高危事件' value={overview?.high_event_count || 0} />
+          <MetricCard
+            title='未处理事件'
+            value={overview?.open_event_count || 0}
+          />
+          <MetricCard
+            title='高危事件'
+            value={overview?.high_event_count || 0}
+          />
           <MetricCard title='禁用用户' value={overview?.disabled_users || 0} />
           <MetricCard title='新用户' value={overview?.new_user_count || 0} />
         </div>
@@ -564,7 +621,12 @@ export default function RiskCenter() {
                         padding: 14,
                       }}
                     >
-                      <Space vertical align='start' spacing='tight' style={{ width: '100%' }}>
+                      <Space
+                        vertical
+                        align='start'
+                        spacing='tight'
+                        style={{ width: '100%' }}
+                      >
                         <Space>
                           {severityTag(signal.severity)}
                           <Text strong>{riskTypeLabel(signal.type)}</Text>
@@ -656,7 +718,10 @@ export default function RiskCenter() {
                   </Space>
                   <Text>{selectedEvent.summary}</Text>
                   <Text type='tertiary'>
-                    {targetLabel(selectedEvent.target_type, selectedEvent.target_id)}
+                    {targetLabel(
+                      selectedEvent.target_type,
+                      selectedEvent.target_id,
+                    )}
                   </Text>
                 </Space>
               </Card>
@@ -670,7 +735,11 @@ export default function RiskCenter() {
             />
 
             <Space wrap>
-              <Button type='primary' theme='solid' onClick={() => void eventAction('resolve')}>
+              <Button
+                type='primary'
+                theme='solid'
+                onClick={() => void eventAction('resolve')}
+              >
                 标记已处理
               </Button>
               <Button onClick={() => void eventAction('ignore')}>忽略</Button>
@@ -678,19 +747,28 @@ export default function RiskCenter() {
                 <Button
                   type='warning'
                   onClick={() =>
-                    void whitelistTarget(selectedEvent.target_type, selectedEvent.target_id)
+                    void whitelistTarget(
+                      selectedEvent.target_type,
+                      selectedEvent.target_id,
+                    )
                   }
                 >
                   加入白名单
                 </Button>
               )}
               {detailUsers[0]?.user_id && (
-                <Button type='danger' onClick={() => void banUser(detailUsers[0].user_id)}>
+                <Button
+                  type='danger'
+                  onClick={() => void banUser(detailUsers[0].user_id)}
+                >
                   封禁用户
                 </Button>
               )}
               {detailTokens[0]?.token_id && (
-                <Button type='danger' onClick={() => void disableToken(detailTokens[0].token_id)}>
+                <Button
+                  type='danger'
+                  onClick={() => void disableToken(detailTokens[0].token_id)}
+                >
                   禁用 Token
                 </Button>
               )}
@@ -716,9 +794,19 @@ export default function RiskCenter() {
                     { title: '状态', dataIndex: 'status' },
                     { title: '实付', dataIndex: 'paid_amount' },
                     { title: '币种', dataIndex: 'paid_currency' },
-                    { title: '返佣状态', dataIndex: 'referral_commission_status' },
-                    { title: '返佣错误', dataIndex: 'referral_commission_error' },
-                    { title: '创建时间', dataIndex: 'created_at', render: formatTime },
+                    {
+                      title: '返佣状态',
+                      dataIndex: 'referral_commission_status',
+                    },
+                    {
+                      title: '返佣错误',
+                      dataIndex: 'referral_commission_error',
+                    },
+                    {
+                      title: '创建时间',
+                      dataIndex: 'created_at',
+                      render: formatTime,
+                    },
                   ]}
                 />
               </TabPane>
@@ -744,7 +832,11 @@ export default function RiskCenter() {
                     { title: '用户数', dataIndex: 'user_count' },
                     { title: '请求数', dataIndex: 'request_count' },
                     { title: '错误数', dataIndex: 'error_count' },
-                    { title: '白名单', dataIndex: 'whitelisted', render: (value) => (value ? '是' : '否') },
+                    {
+                      title: '白名单',
+                      dataIndex: 'whitelisted',
+                      render: (value) => (value ? '是' : '否'),
+                    },
                   ]}
                 />
               </TabPane>
@@ -754,14 +846,26 @@ export default function RiskCenter() {
                   dataSource={detailWhitelists}
                   pagination={false}
                   columns={[
-                    { title: '对象', render: (_, row) => targetLabel(row.target_type, row.target_id) },
+                    {
+                      title: '对象',
+                      render: (_, row) =>
+                        targetLabel(row.target_type, row.target_id),
+                    },
                     { title: '原因', dataIndex: 'reason' },
                     { title: '操作人', dataIndex: 'operator_name' },
-                    { title: '过期时间', dataIndex: 'expires_at', render: formatTime },
+                    {
+                      title: '过期时间',
+                      dataIndex: 'expires_at',
+                      render: formatTime,
+                    },
                     {
                       title: '操作',
                       render: (_, row) => (
-                        <Button size='small' type='danger' onClick={() => void deleteWhitelist(row.id)}>
+                        <Button
+                          size='small'
+                          type='danger'
+                          onClick={() => void deleteWhitelist(row.id)}
+                        >
                           移除
                         </Button>
                       ),

@@ -187,9 +187,7 @@ export default function SettingsSidebarModulesAdmin(props) {
           admin: {
             ...(modules.admin || {}),
             adminReferral:
-              modules.admin?.adminReferral ??
-              modules.admin?.referral ??
-              true,
+              modules.admin?.adminReferral ?? modules.admin?.referral ?? true,
             riskCenter: modules.admin?.riskCenter ?? true,
             providerPricing:
               modules.admin?.providerPricing ??
@@ -303,7 +301,9 @@ export default function SettingsSidebarModulesAdmin(props) {
         {
           key: 'adminReferral',
           title: t('Referral Management'),
-          description: t('Referral affiliates, commissions, withdrawals, and audit logs'),
+          description: t(
+            'Referral affiliates, commissions, withdrawals, and audit logs',
+          ),
         },
         {
           key: 'riskCenter',

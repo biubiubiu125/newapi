@@ -54,7 +54,7 @@ export function Playground() {
 
   // Load models
   const { data: modelsData, isLoading: isLoadingModels } = useQuery({
-    queryKey: ['playground-models'],
+    queryKey: ['playground-models', t],
     queryFn: async () => {
       try {
         return await getUserModels()
@@ -71,7 +71,7 @@ export function Playground() {
 
   // Load groups
   const { data: groupsData } = useQuery({
-    queryKey: ['playground-groups'],
+    queryKey: ['playground-groups', t],
     queryFn: async () => {
       try {
         return await getUserGroups()
