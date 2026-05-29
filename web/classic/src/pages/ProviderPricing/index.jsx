@@ -43,7 +43,6 @@ function createRow(index = 0) {
     cache_input_price: '',
     cache_create_price: '',
     cache_create_price_1h: '',
-    image_output_price: '',
     enabled: true,
     note: '',
     sort_order: index,
@@ -89,7 +88,6 @@ export default function ProviderPricing() {
           cache_input_price: toText(item.cache_input_price),
           cache_create_price: toText(item.cache_create_price),
           cache_create_price_1h: toText(item.cache_create_price_1h),
-          image_output_price: toText(item.image_output_price),
           enabled: item.enabled !== false,
           note: item.note || '',
           sort_order: item.sort_order ?? index,
@@ -144,7 +142,6 @@ export default function ProviderPricing() {
         row.cache_input_price,
         row.cache_create_price,
         row.cache_create_price_1h,
-        row.image_output_price,
       ].some((value) => {
         const price = parsePrice(value);
         return price != null && price < 0;
@@ -172,7 +169,6 @@ export default function ProviderPricing() {
             cache_input_price: parsePrice(row.cache_input_price),
             cache_create_price: parsePrice(row.cache_create_price),
             cache_create_price_1h: parsePrice(row.cache_create_price_1h),
-            image_output_price: parsePrice(row.image_output_price),
             enabled: row.enabled,
             note: row.note.trim(),
             sort_order: Number.isFinite(Number(row.sort_order))
@@ -204,7 +200,6 @@ export default function ProviderPricing() {
     ['cache_input_price', '缓存读取价格'],
     ['cache_create_price', '缓存创建价格'],
     ['cache_create_price_1h', '1h 缓存创建价格'],
-    ['image_output_price', '图片输出价格'],
   ];
 
   return (

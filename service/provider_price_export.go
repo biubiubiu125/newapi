@@ -24,7 +24,6 @@ type ProviderPriceOverride struct {
 	CacheInputPrice    *float64 `json:"cache_input_price,omitempty"`
 	CacheCreatePrice   *float64 `json:"cache_create_price,omitempty"`
 	CacheCreatePrice1h *float64 `json:"cache_create_price_1h,omitempty"`
-	ImageOutputPrice   *float64 `json:"image_output_price,omitempty"`
 	Enabled            bool     `json:"enabled"`
 	Note               string   `json:"note,omitempty"`
 	SortOrder          int      `json:"sort_order"`
@@ -97,7 +96,6 @@ func hasAnyProviderPriceValue(item ProviderPriceOverride) bool {
 		item.CacheInputPrice,
 		item.CacheCreatePrice,
 		item.CacheCreatePrice1h,
-		item.ImageOutputPrice,
 	} {
 		if value != nil && *value > 0 {
 			return true

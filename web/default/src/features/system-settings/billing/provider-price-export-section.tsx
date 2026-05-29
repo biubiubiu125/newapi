@@ -45,7 +45,6 @@ type ProviderPriceRow = {
   cache_input_price: string
   cache_create_price: string
   cache_create_price_1h: string
-  image_output_price: string
   enabled: boolean
   note: string
   sort_order: string
@@ -65,7 +64,6 @@ function createRow(index: number): ProviderPriceRow {
     cache_input_price: '',
     cache_create_price: '',
     cache_create_price_1h: '',
-    image_output_price: '',
     enabled: true,
     note: '',
     sort_order: String(index),
@@ -100,8 +98,6 @@ function parseInitialRows(value: string): ProviderPriceRow[] {
         item?.cache_create_price_1h == null
           ? ''
           : String(item.cache_create_price_1h),
-      image_output_price:
-        item?.image_output_price == null ? '' : String(item.image_output_price),
       enabled: item?.enabled !== false,
       note: typeof item?.note === 'string' ? item.note : '',
       sort_order:
@@ -133,7 +129,6 @@ function rowsToPayload(rows: ProviderPriceRow[]) {
         cache_input_price: parsePrice(row.cache_input_price),
         cache_create_price: parsePrice(row.cache_create_price),
         cache_create_price_1h: parsePrice(row.cache_create_price_1h),
-        image_output_price: parsePrice(row.image_output_price),
         enabled: row.enabled,
         note: row.note.trim(),
         sort_order: Number.isFinite(Number(row.sort_order))
@@ -166,7 +161,6 @@ function validateRows(rows: ProviderPriceRow[]) {
       row.cache_input_price,
       row.cache_create_price,
       row.cache_create_price_1h,
-      row.image_output_price,
     ].some((value) => {
       const parsed = parsePrice(value)
       return parsed != null && parsed < 0
@@ -284,7 +278,6 @@ export const ProviderPriceExportSection = memo(
                 <TableHead>{t('Cache read')}</TableHead>
                 <TableHead>{t('Cache create')}</TableHead>
                 <TableHead>{t('Cache create (1h)')}</TableHead>
-                <TableHead>{t('Image output')}</TableHead>
                 <TableHead>{t('Note')}</TableHead>
                 <TableHead>{t('Sort')}</TableHead>
                 <TableHead>{t('Action')}</TableHead>
@@ -293,7 +286,7 @@ export const ProviderPriceExportSection = memo(
             <TableBody>
               {rows.length === 0 ? (
                 <TableRow>
-                  <TableCell colSpan={12} className='text-center text-muted-foreground'>
+                  <TableCell colSpan={11} className='text-center text-muted-foreground'>
                     {t('No public provider price rows yet.')}
                   </TableCell>
                 </TableRow>
@@ -361,14 +354,6 @@ export const ProviderPriceExportSection = memo(
                         value={row.cache_create_price_1h}
                         onChange={(e) =>
                           updateRow(row.id, 'cache_create_price_1h', e.target.value)
-                        }
-                      />
-                    </TableCell>
-                    <TableCell>
-                      <Input
-                        value={row.image_output_price}
-                        onChange={(e) =>
-                          updateRow(row.id, 'image_output_price', e.target.value)
                         }
                       />
                     </TableCell>

@@ -58,7 +58,6 @@ func UpdateProviderPriceOverrides(c *gin.Context) {
 			item.CacheInputPrice,
 			item.CacheCreatePrice,
 			item.CacheCreatePrice1h,
-			item.ImageOutputPrice,
 		} {
 			if value != nil && *value < 0 {
 				common.ApiErrorMsg(c, "price fields must not be negative")
