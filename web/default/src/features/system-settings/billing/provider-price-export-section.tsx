@@ -158,7 +158,7 @@ function validateRows(rows: ProviderPriceRow[]) {
     }
     seenModelGroups.add(modelGroupKey)
     const inputPrice = parsePrice(row.input_price)
-    if (inputPrice == null || inputPrice <= 0) {
+    if (inputPrice == null || inputPrice < 0) {
       return false
     }
     const hasNegativePrice = [
@@ -267,7 +267,7 @@ export const ProviderPriceExportSection = memo(
         {!canSave && (
           <div className='text-sm text-red-500'>
             {t(
-              'Each configured row must include a unique group and model pair, input price greater than 0, and no negative prices.'
+                'Each configured row must include a unique group and model pair, input price, and no negative prices.'
             )}
           </div>
         )}

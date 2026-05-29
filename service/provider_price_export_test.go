@@ -88,6 +88,13 @@ func TestGetPublicProviderPriceExportMatchesHvoyShape(t *testing.T) {
 			"model_name":"gpt-test",
 			"input_price":9,
 			"enabled":true
+		},
+		{
+			"id":"row-5",
+			"group_name":"free-group",
+			"model_name":"gpt-free",
+			"input_price":0,
+			"enabled":true
 		}
 	]`
 	common.OptionMapRWMutex.Unlock()
@@ -100,16 +107,20 @@ func TestGetPublicProviderPriceExportMatchesHvoyShape(t *testing.T) {
 
 	data, err := GetPublicProviderPriceExport()
 	require.NoError(t, err)
-	require.Len(t, data.Models, 2)
+	require.Len(t, data.Models, 3)
 
 	var activeModel ProviderPriceExportModel
 	var disabledModel ProviderPriceExportModel
+	var freeModel ProviderPriceExportModel
 	for _, model := range data.Models {
 		if model.ModelName == "gpt-test" {
 			activeModel = model
 		}
 		if model.ModelName == "gpt-disabled" {
 			disabledModel = model
+		}
+		if model.ModelName == "gpt-free" {
+			freeModel = model
 		}
 	}
 	require.Equal(t, "stable-group", activeModel.GroupName)
@@ -119,6 +130,11 @@ func TestGetPublicProviderPriceExportMatchesHvoyShape(t *testing.T) {
 	require.NotNil(t, activeModel.InputPrice)
 	require.NotNil(t, activeModel.OutputPrice)
 	require.Equal(t, *activeModel.InputPrice, *activeModel.OutputPrice)
+	require.Equal(t, "free-group", freeModel.GroupName)
+	require.NotNil(t, freeModel.InputPrice)
+	require.NotNil(t, freeModel.OutputPrice)
+	require.Equal(t, float64(0), *freeModel.InputPrice)
+	require.Equal(t, float64(0), *freeModel.OutputPrice)
 
 	modelJSON, err := common.Marshal(activeModel)
 	require.NoError(t, err)

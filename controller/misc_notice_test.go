@@ -49,10 +49,10 @@ func performGetNotice() map[string]interface{} {
 	return payload
 }
 
-func TestGetNoticeKeepsLegacyStringDataAndAddsAnnouncements(t *testing.T) {
-	setupNoticeTest(t, "legacy notice", `[{
+func TestGetNoticePrefersConsoleAnnouncementsOverSystemNotice(t *testing.T) {
+	setupNoticeTest(t, "system notice", `[{
 		"id":1,
-		"content":"new announcement",
+		"content":"console announcement",
 		"publishDate":"2026-05-29T01:00:00Z",
 		"type":"default",
 		"extra":""
@@ -61,8 +61,9 @@ func TestGetNoticeKeepsLegacyStringDataAndAddsAnnouncements(t *testing.T) {
 	payload := performGetNotice()
 
 	require.Equal(t, true, payload["success"])
-	require.Equal(t, "legacy notice", payload["data"])
-	require.Equal(t, "legacy notice", payload["notice"])
+	require.Contains(t, payload["data"], "console announcement")
+	require.Contains(t, payload["notice"], "console announcement")
+	require.NotContains(t, payload["data"], "system notice")
 	require.Len(t, payload["announcements"], 1)
 }
 
@@ -81,4 +82,21 @@ func TestGetNoticeFallsBackToAnnouncementTextWhenLegacyNoticeIsEmpty(t *testing.
 	require.Contains(t, payload["data"], "structured announcement")
 	require.Contains(t, payload["notice"], "extra note")
 	require.Len(t, payload["announcements"], 1)
+}
+
+func TestGetNoticeFallsBackToSystemNoticeWhenAnnouncementsDisabled(t *testing.T) {
+	setupNoticeTest(t, "1", `[{
+		"id":3,
+		"content":"real announcement",
+		"publishDate":"2026-05-29T03:00:00Z",
+		"type":"default",
+		"extra":""
+	}]`, false)
+
+	payload := performGetNotice()
+
+	require.Equal(t, true, payload["success"])
+	require.Equal(t, "1", payload["data"])
+	require.Equal(t, "1", payload["notice"])
+	require.Len(t, payload["announcements"], 0)
 }

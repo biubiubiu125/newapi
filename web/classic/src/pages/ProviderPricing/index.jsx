@@ -136,7 +136,7 @@ export default function ProviderPricing() {
       }
       seenModelGroups.add(modelGroupKey);
       const inputPrice = parsePrice(row.input_price);
-      if (inputPrice == null || inputPrice <= 0) {
+      if (inputPrice == null || inputPrice < 0) {
         return true;
       }
       return [

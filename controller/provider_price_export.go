@@ -49,8 +49,8 @@ func UpdateProviderPriceOverrides(c *gin.Context) {
 			return
 		}
 		seenModelGroups[modelGroupKey] = struct{}{}
-		if item.InputPrice == nil || *item.InputPrice <= 0 {
-			common.ApiErrorMsg(c, "input_price must be greater than 0")
+		if item.InputPrice == nil || *item.InputPrice < 0 {
+			common.ApiErrorMsg(c, "input_price must be a non-negative number")
 			return
 		}
 		for _, value := range []*float64{

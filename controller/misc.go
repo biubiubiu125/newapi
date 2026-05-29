@@ -179,9 +179,10 @@ func GetNotice(c *gin.Context) {
 	}
 
 	common.OptionMapRWMutex.RLock()
-	notice := common.OptionMap["Notice"]
+	systemNotice := common.OptionMap["Notice"]
 	common.OptionMapRWMutex.RUnlock()
-	if strings.TrimSpace(notice) == "" && len(announcements) > 0 {
+	notice := systemNotice
+	if len(announcements) > 0 {
 		notice = renderAnnouncementsNotice(announcements)
 	}
 	c.JSON(http.StatusOK, gin.H{

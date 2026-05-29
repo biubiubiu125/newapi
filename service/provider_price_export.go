@@ -107,7 +107,7 @@ func hasAnyProviderPriceValue(item ProviderPriceOverride) bool {
 }
 
 func hasRequiredProviderInputPrice(item ProviderPriceOverride) bool {
-	return item.InputPrice != nil && *item.InputPrice > 0
+	return item.InputPrice != nil && *item.InputPrice >= 0
 }
 
 func providerPriceExportOutputPrice(item ProviderPriceOverride) *float64 {
