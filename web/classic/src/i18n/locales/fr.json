@@ -1,5 +1,11 @@
 {
   "translation": {
+    "Created Redemption Codes": "Codes de recharge créés",
+    "Copy all redemption codes": "Copier tous les codes de recharge",
+    "Copy all only copies redemption codes, not quotas.": "Tout copier ne copie que les codes de recharge, pas les quotas.",
+    "Copied to clipboard": "Copié dans le presse-papiers",
+    "Failed to copy to clipboard": "Échec de la copie dans le presse-papiers",
+    "Redeemed By": "Utilisé par",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_one": " + Recherche Web {{count}} fois / 1K fois * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_many": " + Recherche Web {{count}} fois / 1K fois * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_other": " + Recherche Web {{count}} fois / 1K fois * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",

@@ -1,5 +1,11 @@
 {
   "translation": {
+    "Created Redemption Codes": "Created Redemption Codes",
+    "Copy all redemption codes": "Copy all redemption codes",
+    "Copy all only copies redemption codes, not quotas.": "Copy all only copies redemption codes, not quotas.",
+    "Copied to clipboard": "Copied to clipboard",
+    "Failed to copy to clipboard": "Failed to copy to clipboard",
+    "Redeemed By": "Redeemed By",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_one": " + Web search {{count}} time / 1K times * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_other": " + Web search {{count}} times / 1K times * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + 图片生成调用 {{symbol}}{{price}} / 1次 * {{ratioType}} {{ratio}}": " + Image generation call {{symbol}}{{price}} / 1 time * {{ratioType}} {{ratio}}",

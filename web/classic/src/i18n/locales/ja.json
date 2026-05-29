@@ -1,5 +1,11 @@
 {
   "translation": {
+    "Created Redemption Codes": "作成された引換コード",
+    "Copy all redemption codes": "すべての引換コードをコピー",
+    "Copy all only copies redemption codes, not quotas.": "一括コピーでは引換コードのみをコピーし、割当額はコピーしません。",
+    "Copied to clipboard": "クリップボードにコピーしました",
+    "Failed to copy to clipboard": "クリップボードにコピーできませんでした",
+    "Redeemed By": "引き換えたユーザー",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_one": " + Web検索 {{count}}回 / 1K回 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_one",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_other": " + Web検索 {{count}}回 / 1K回 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_other",
     " + 图片生成调用 {{symbol}}{{price}} / 1次 * {{ratioType}} {{ratio}}": " + 画像生成APIコール {{symbol}}{{price}} / 1回 * {{ratioType}} {{ratio}}",

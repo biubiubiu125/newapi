@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
+import { useSystemConfigStore } from '@/stores/system-config-store'
+import { DEFAULT_LOGO } from '@/lib/constants'
 import { emitSettingsRefresh } from '@/lib/settings-refresh'
 import { updateSystemOption } from '../api'
 import type { UpdateOptionRequest } from '../types'
@@ -26,7 +28,9 @@ import type { UpdateOptionRequest } from '../types'
 // Configuration keys that require status refresh
 const STATUS_RELATED_KEYS = [
   'theme.frontend',
+  'SystemName',
   'Logo',
+  'Footer',
   'HeaderNavModules',
   'SidebarModulesAdmin',
   'Notice',
@@ -41,6 +45,25 @@ const STATUS_RELATED_KEYS = [
   'general_setting.custom_currency_exchange_rate',
 ]
 
+function syncDisplayOptionToSystemConfig(request: UpdateOptionRequest) {
+  const value = String(request.value ?? '')
+  const { setConfig } = useSystemConfigStore.getState()
+
+  switch (request.key) {
+    case 'SystemName':
+      setConfig({ systemName: value })
+      break
+    case 'Logo':
+      setConfig({ logo: value || DEFAULT_LOGO })
+      break
+    case 'Footer':
+      setConfig({ footerHtml: value })
+      break
+    default:
+      break
+  }
+}
+
 export function useUpdateOption() {
   const queryClient = useQueryClient()
 
@@ -53,6 +76,7 @@ export function useUpdateOption() {
 
         // If updating frontend-display-related config, also refresh status
         if (STATUS_RELATED_KEYS.includes(variables.key)) {
+          syncDisplayOptionToSystemConfig(variables)
           queryClient.invalidateQueries({ queryKey: ['status'] })
           try {
             window.localStorage.removeItem('status')

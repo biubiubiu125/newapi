@@ -102,8 +102,9 @@ export const useRedemptionsData = () => {
 
     setSearching(true);
     try {
+      const encodedKeyword = encodeURIComponent(searchKeyword);
       const res = await API.get(
-        `/api/redemption/search?keyword=${searchKeyword}&p=1&page_size=${pageSize}`,
+        `/api/redemption/search?keyword=${encodedKeyword}&p=1&page_size=${pageSize}`,
       );
       const { success, message, data } = res.data;
       if (success) {

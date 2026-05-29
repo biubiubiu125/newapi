@@ -45,7 +45,7 @@ export async function searchRedemptions(
 ): Promise<GetRedemptionsResponse> {
   const { keyword = '', p = 1, page_size = 10 } = params
   const res = await api.get(
-    `/api/redemption/search?keyword=${keyword}&p=${p}&page_size=${page_size}`
+    `/api/redemption/search?keyword=${encodeURIComponent(keyword)}&p=${p}&page_size=${page_size}`
   )
   return res.data
 }

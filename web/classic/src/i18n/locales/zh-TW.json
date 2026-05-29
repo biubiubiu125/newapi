@@ -1,5 +1,11 @@
 {
   "translation": {
+    "Created Redemption Codes": "已建立的兌換碼",
+    "Copy all redemption codes": "複製全部兌換碼",
+    "Copy all only copies redemption codes, not quotas.": "複製全部只會複製兌換碼，不會複製額度。",
+    "Copied to clipboard": "已複製到剪貼簿",
+    "Failed to copy to clipboard": "複製到剪貼簿失敗",
+    "Redeemed By": "兌換人",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_other": " + Web搜尋 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + 图片生成调用 {{symbol}}{{price}} / 1次 * {{ratioType}} {{ratio}}": " + 圖片生成調用 {{symbol}}{{price}} / 1次 * {{ratioType}} {{ratio}}",
     " + 文件搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_other": " + 檔案搜尋 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",

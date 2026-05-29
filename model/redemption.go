@@ -22,6 +22,7 @@ type Redemption struct {
 	RedeemedTime int64          `json:"redeemed_time" gorm:"bigint"`
 	Count        int            `json:"count" gorm:"-:all"` // only for api request
 	UsedUserId   int            `json:"used_user_id"`
+	UsedUsername string         `json:"used_username" gorm:"->;-:migration;column:used_username"`
 	DeletedAt    gorm.DeletedAt `gorm:"index"`
 	ExpiredTime  int64          `json:"expired_time" gorm:"bigint"` // 过期时间，0 表示不过期
 }
@@ -46,7 +47,13 @@ func GetAllRedemptions(startIdx int, num int) (redemptions []*Redemption, total 
 	}
 
 	// 获取分页数据
-	err = tx.Order("id desc").Limit(num).Offset(startIdx).Find(&redemptions).Error
+	err = tx.Model(&Redemption{}).
+		Select("redemptions.*, users.username AS used_username").
+		Joins("LEFT JOIN users ON users.id = redemptions.used_user_id").
+		Order("redemptions.id desc").
+		Limit(num).
+		Offset(startIdx).
+		Find(&redemptions).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -72,13 +79,14 @@ func SearchRedemptions(keyword string, startIdx int, num int) (redemptions []*Re
 	}()
 
 	// Build query based on keyword type
-	query := tx.Model(&Redemption{})
+	query := tx.Model(&Redemption{}).
+		Joins("LEFT JOIN users ON users.id = redemptions.used_user_id")
 
 	// Only try to convert to ID if the string represents a valid integer
 	if id, err := strconv.Atoi(keyword); err == nil {
-		query = query.Where("id = ? OR name LIKE ?", id, keyword+"%")
+		query = query.Where("redemptions.id = ? OR redemptions.name LIKE ? OR users.username LIKE ?", id, keyword+"%", keyword+"%")
 	} else {
-		query = query.Where("name LIKE ?", keyword+"%")
+		query = query.Where("redemptions.name LIKE ? OR users.username LIKE ?", keyword+"%", keyword+"%")
 	}
 
 	// Get total count
@@ -89,7 +97,12 @@ func SearchRedemptions(keyword string, startIdx int, num int) (redemptions []*Re
 	}
 
 	// Get paginated data
-	err = query.Order("id desc").Limit(num).Offset(startIdx).Find(&redemptions).Error
+	err = query.
+		Select("redemptions.*, users.username AS used_username").
+		Order("redemptions.id desc").
+		Limit(num).
+		Offset(startIdx).
+		Find(&redemptions).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err

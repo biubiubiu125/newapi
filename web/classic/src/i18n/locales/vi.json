@@ -1,5 +1,11 @@
 {
   "translation": {
+    "Created Redemption Codes": "Mã đổi đã tạo",
+    "Copy all redemption codes": "Sao chép tất cả mã đổi",
+    "Copy all only copies redemption codes, not quotas.": "Sao chép tất cả chỉ sao chép mã đổi, không sao chép hạn mức.",
+    "Copied to clipboard": "Đã sao chép vào bộ nhớ tạm",
+    "Failed to copy to clipboard": "Không thể sao chép vào bộ nhớ tạm",
+    "Redeemed By": "Người đổi",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_one": " + Tìm kiếm Web {{count}} lần / 1K lần * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_other": " + Tìm kiếm Web {{count}} lần / 1K lần * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + 图片生成调用 {{symbol}}{{price}} / 1次 * {{ratioType}} {{ratio}}": " + Gọi tạo hình ảnh {{symbol}}{{price}} / 1 lần * {{ratioType}} {{ratio}}",

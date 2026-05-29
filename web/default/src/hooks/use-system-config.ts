@@ -129,6 +129,16 @@ function preloadImage(
   }
 }
 
+function applySystemNameToDom(name: string) {
+  if (typeof document === 'undefined' || !name) return
+  document.title = name
+  const titleMeta =
+    document.querySelector<HTMLMetaElement>('meta[name="title"]')
+  if (titleMeta) {
+    titleMeta.content = name
+  }
+}
+
 /**
  * System configuration hook with auto-loading and logo preloading
  *
@@ -168,6 +178,16 @@ export function useSystemConfig(options: UseSystemConfigOptions = {}) {
   useEffect(() => {
     if (autoLoad) loadConfig()
   }, [autoLoad, loadConfig])
+
+  useEffect(() => {
+    applySystemNameToDom(config.systemName)
+  }, [config.systemName])
+
+  useEffect(() => {
+    if (config.logo) {
+      applyFaviconToDom(config.logo)
+    }
+  }, [config.logo])
 
   // Preload logo image when URL changes
   useEffect(() => {

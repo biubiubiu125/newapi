@@ -1,5 +1,11 @@
 {
   "translation": {
+    "Created Redemption Codes": "Созданные коды активации",
+    "Copy all redemption codes": "Скопировать все коды активации",
+    "Copy all only copies redemption codes, not quotas.": "Копирование всех скопирует только коды активации, без квот.",
+    "Copied to clipboard": "Скопировано в буфер обмена",
+    "Failed to copy to clipboard": "Не удалось скопировать в буфер обмена",
+    "Redeemed By": "Активировано пользователем",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_one": " + Web-поиск {{count}} раз / 1K раз * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_few": " + Web-поиск {{count}} раза / 1K раз * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",
     " + Web搜索 {{count}}次 / 1K 次 * {{symbol}}{{price}} * {{ratioType}} {{ratio}}_many": " + Web-поиск {{count}} раз / 1K раз * {{symbol}}{{price}} * {{ratioType}} {{ratio}}",

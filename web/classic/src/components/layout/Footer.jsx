@@ -25,18 +25,12 @@ import { StatusContext } from '../../context/Status';
 
 const FooterBar = () => {
   const { t } = useTranslation();
-  const [footer, setFooter] = useState(getFooterHTML());
+  const [footer, setFooter] = useState(getFooterHTML() || '');
   const systemName = getSystemName();
   const logo = getLogo();
   const [statusState] = useContext(StatusContext);
   const isDemoSiteMode = statusState?.status?.demo_site_enabled || false;
-
-  const loadFooter = () => {
-    let footer_html = localStorage.getItem('footer_html');
-    if (footer_html) {
-      setFooter(footer_html);
-    }
-  };
+  const statusFooterHtml = statusState?.status?.footer_html;
 
   const currentYear = new Date().getFullYear();
 
@@ -215,8 +209,12 @@ const FooterBar = () => {
   );
 
   useEffect(() => {
-    loadFooter();
-  }, []);
+    if (statusFooterHtml !== undefined && statusFooterHtml !== null) {
+      setFooter(statusFooterHtml);
+      return;
+    }
+    setFooter(getFooterHTML() || '');
+  }, [statusFooterHtml]);
 
   return (
     <div className='w-full'>

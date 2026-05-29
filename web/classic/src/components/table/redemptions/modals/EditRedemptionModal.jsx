@@ -21,7 +21,7 @@ import React, { useEffect, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   API,
-  downloadTextAsFile,
+  copy,
   showError,
   showSuccess,
   renderQuota,
@@ -55,6 +55,29 @@ import {
 } from '@douyinfe/semi-icons';
 
 const { Text, Title } = Typography;
+
+const CreatedRedemptionCodes = ({ codes, quota, t }) => {
+  return (
+    <div className='max-h-[45vh] overflow-y-auto'>
+      {codes.map((code) => (
+        <div
+          key={code}
+          className='mb-2 flex flex-col gap-2 rounded-lg border border-gray-200 p-3 sm:flex-row sm:items-center sm:justify-between'
+        >
+          <Text code copyable={false} className='break-all'>
+            {code}
+          </Text>
+          <Tag color='grey' shape='circle'>
+            {renderQuota(quota)}
+          </Tag>
+        </div>
+      ))}
+      <Text type='tertiary'>
+        {t('Copy all only copies redemption codes, not quotas.')}
+      </Text>
+    </div>
+  );
+};
 
 const EditRedemptionModal = (props) => {
   const { t } = useTranslation();
@@ -153,20 +176,26 @@ const EditRedemptionModal = (props) => {
       showError(message);
     }
     if (!isEdit && data) {
-      let text = '';
-      for (let i = 0; i < data.length; i++) {
-        text += data[i] + '\n';
-      }
-      Modal.confirm({
-        title: t('兑换码创建成功'),
+      const text = data.join('\n');
+      Modal.info({
+        title: t('Created Redemption Codes'),
         content: (
-          <div>
-            <p>{t('兑换码创建成功，是否下载兑换码？')}</p>
-            <p>{t('兑换码将以文本文件的形式下载，文件名为兑换码的名称。')}</p>
-          </div>
+          <CreatedRedemptionCodes
+            codes={data}
+            quota={localInputs.quota}
+            t={t}
+          />
         ),
-        onOk: () => {
-          downloadTextAsFile(text, `${localInputs.name}.txt`);
+        okText: t('Copy all redemption codes'),
+        cancelText: t('Close'),
+        hasCancel: true,
+        onOk: async () => {
+          if (await copy(text)) {
+            showSuccess(t('Copied to clipboard'));
+            return;
+          }
+          showError(t('Failed to copy to clipboard'));
+          throw new Error('failed to copy redemption codes');
         },
       });
     }

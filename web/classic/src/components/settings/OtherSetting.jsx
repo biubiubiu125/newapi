@@ -28,7 +28,14 @@ import {
   Space,
   Card,
 } from '@douyinfe/semi-ui';
-import { API, showError, showSuccess, timestamp2string } from '../../helpers';
+import {
+  API,
+  applySystemBrandToDom,
+  setSystemBrandCache,
+  showError,
+  showSuccess,
+  timestamp2string,
+} from '../../helpers';
 import { marked } from 'marked';
 import { useTranslation } from 'react-i18next';
 import { StatusContext } from '../../context/Status';
@@ -66,6 +73,24 @@ const OtherSetting = () => {
     const { success, message } = res.data;
     if (success) {
       setInputs((inputs) => ({ ...inputs, [key]: value }));
+      if (key === 'SystemName' || key === 'Logo' || key === 'Footer') {
+        const nextStatus = {
+          ...(statusState?.status || {}),
+          ...(key === 'SystemName' ? { system_name: value } : {}),
+          ...(key === 'Logo' ? { logo: value } : {}),
+          ...(key === 'Footer' ? { footer_html: value } : {}),
+        };
+        statusDispatch({ type: 'set', payload: nextStatus });
+        setSystemBrandCache({
+          systemName: nextStatus.system_name,
+          logo: nextStatus.logo,
+          footerHtml: nextStatus.footer_html,
+        });
+        applySystemBrandToDom({
+          systemName: nextStatus.system_name,
+          logo: nextStatus.logo,
+        });
+      }
     } else {
       showError(message);
     }

@@ -62,6 +62,40 @@ export function getLogo() {
   return logo;
 }
 
+export function setSystemBrandCache({ systemName, logo, footerHtml } = {}) {
+  if (systemName !== undefined) {
+    localStorage.setItem('system_name', systemName);
+  }
+  if (logo !== undefined) {
+    localStorage.setItem('logo', logo);
+  }
+  if (footerHtml !== undefined) {
+    localStorage.setItem('footer_html', footerHtml);
+  }
+}
+
+export function applySystemBrandToDom({ systemName, logo } = {}) {
+  const nextSystemName = systemName || getSystemName();
+  if (nextSystemName) {
+    document.title = nextSystemName;
+    const titleMeta = document.querySelector("meta[name='title']");
+    if (titleMeta) {
+      titleMeta.setAttribute('content', nextSystemName);
+    }
+  }
+
+  const nextLogo = logo || getLogo();
+  if (!nextLogo) return;
+
+  let linkElement = document.querySelector("link[rel~='icon']");
+  if (!linkElement) {
+    linkElement = document.createElement('link');
+    linkElement.rel = 'icon';
+    document.head.appendChild(linkElement);
+  }
+  linkElement.href = nextLogo;
+}
+
 export function getUserIdFromLocalStorage() {
   let user = localStorage.getItem('user');
   if (!user) return -1;
@@ -74,28 +108,39 @@ export function getFooterHTML() {
 }
 
 export async function copy(text) {
-  let okay = true;
   try {
-    await navigator.clipboard.writeText(text);
-  } catch (e) {
-    try {
-      // 构建 textarea 执行复制命令，保留多行文本格式
-      const textarea = window.document.createElement('textarea');
-      textarea.value = text;
-      textarea.setAttribute('readonly', '');
-      textarea.style.position = 'fixed';
-      textarea.style.left = '-9999px';
-      textarea.style.top = '-9999px';
-      window.document.body.appendChild(textarea);
-      textarea.select();
-      window.document.execCommand('copy');
-      window.document.body.removeChild(textarea);
-    } catch (e) {
-      okay = false;
-      console.error(e);
+    if (navigator.clipboard?.writeText) {
+      await navigator.clipboard.writeText(text);
+      return true;
     }
+  } catch (e) {
+    console.warn(e);
   }
-  return okay;
+
+  const textarea = window.document.createElement('textarea');
+  try {
+    // 构建 textarea 执行复制命令，保留多行文本格式
+    textarea.value = text;
+    textarea.setAttribute('readonly', '');
+    textarea.style.position = 'fixed';
+    textarea.style.left = '-9999px';
+    textarea.style.top = '-9999px';
+
+    window.document.body.appendChild(textarea);
+    textarea.focus();
+    textarea.select();
+    textarea.setSelectionRange(0, text.length);
+
+    return window.document.execCommand('copy');
+  } catch (e) {
+    console.error(e);
+    return false;
+  } finally {
+    if (textarea.parentNode) {
+      window.document.body.removeChild(textarea);
+    }
+    window.getSelection()?.removeAllRanges();
+  }
 }
 
 // isMobile 函数已移除，请改用 useIsMobile Hook

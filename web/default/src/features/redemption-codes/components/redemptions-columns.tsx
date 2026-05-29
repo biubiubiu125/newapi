@@ -227,6 +227,7 @@ export function useRedemptionsColumns(): ColumnDef<Redemption>[] {
       cell: ({ row }) => {
         const userId = row.getValue('used_user_id') as number
         const redemption = row.original
+        const username = redemption.used_username?.trim()
 
         if (userId === 0) {
           return <span className='text-muted-foreground text-sm'>-</span>
@@ -237,7 +238,7 @@ export function useRedemptionsColumns(): ColumnDef<Redemption>[] {
             <TooltipTrigger
               render={
                 <StatusBadge
-                  label={t('User {{id}}', { id: userId })}
+                  label={username || t('User {{id}}', { id: userId })}
                   variant='neutral'
                   copyable={false}
                   className='cursor-help'
@@ -246,6 +247,11 @@ export function useRedemptionsColumns(): ColumnDef<Redemption>[] {
             ></TooltipTrigger>
             <TooltipContent>
               <div className='space-y-1 text-xs'>
+                {username && (
+                  <div>
+                    {t('Username:')} {username}
+                  </div>
+                )}
                 <div>
                   {t('User ID:')} {userId}
                 </div>
