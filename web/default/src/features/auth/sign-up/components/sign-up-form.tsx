@@ -291,31 +291,30 @@ export function SignUpForm({
           )}
         />
 
-        {/* Email Verification Section */}
+        <FormField
+          control={form.control}
+          name='email'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>
+                {emailVerificationRequired
+                  ? t('Email (required for verification)')
+                  : t('Email')}
+              </FormLabel>
+              <FormControl>
+                <Input
+                  placeholder={t('name@example.com')}
+                  type='email'
+                  {...field}
+                />
+              </FormControl>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
         {emailVerificationRequired && (
           <>
-            {/* Email Field */}
-            <FormField
-              control={form.control}
-              name='email'
-              render={({ field }) => (
-                <FormItem>
-                  <FormLabel>
-                    {t('Email (required for verification)')}
-                  </FormLabel>
-                  <FormControl>
-                    <Input
-                      placeholder={t('name@example.com')}
-                      type='email'
-                      {...field}
-                    />
-                  </FormControl>
-                  <FormMessage />
-                </FormItem>
-              )}
-            />
-
-            {/* Verification Code Field */}
             <div className='flex items-end gap-2'>
               <div className='flex-1'>
                 <Input

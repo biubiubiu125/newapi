@@ -56,6 +56,15 @@ type User struct {
 	LastLoginAt             int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
 }
 
+type UserLoginIdentifier struct {
+	Id         int            `json:"id"`
+	UserId     int            `json:"user_id" gorm:"index;not null"`
+	Identifier string         `json:"identifier" gorm:"type:varchar(191);uniqueIndex:idx_user_login_identifiers_identifier;not null"`
+	Kind       string         `json:"kind" gorm:"type:varchar(16);not null"`
+	CreatedAt  int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
+	DeletedAt  gorm.DeletedAt `gorm:"index"`
+}
+
 func NormalizeUserEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
@@ -196,18 +205,151 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 }
 
 func CheckUserExistOrDeleted(username string, email string) (bool, error) {
-	var user User
-	var result *gorm.DB
+	return IsLoginIdentifierTakenByOther(username, email, 0)
+}
+
+func IsLoginIdentifierTakenByOther(username string, email string, userId int) (bool, error) {
+	return isLoginIdentifierTakenByOtherWithTx(DB, username, email, userId)
+}
+
+func getUserLoginIdentifiers(username string, email string) map[string]string {
+	username = strings.TrimSpace(username)
 	email = NormalizeUserEmail(email)
-	if email == "" {
-		result = DB.Unscoped().Where("username = ?", username).Find(&user)
-	} else {
-		result = DB.Unscoped().Where("username = ? or email_canonical = ?", username, email).Find(&user)
+	identifiers := map[string]string{}
+	if username != "" {
+		if strings.Contains(username, "@") {
+			username = NormalizeUserEmail(username)
+		}
+		identifiers[username] = "username"
 	}
+	if email != "" {
+		identifiers[email] = "email"
+	}
+	return identifiers
+}
+
+func hasDuplicateUserLoginIdentifiers(username string, email string) bool {
+	username = strings.TrimSpace(username)
+	if strings.Contains(username, "@") {
+		username = NormalizeUserEmail(username)
+	}
+	email = NormalizeUserEmail(email)
+	return username != "" && email != "" && username == email
+}
+
+func isLoginIdentifierTakenByOtherWithTx(tx *gorm.DB, username string, email string, userId int) (bool, error) {
+	if hasDuplicateUserLoginIdentifiers(username, email) {
+		return true, nil
+	}
+	identifierMap := getUserLoginIdentifiers(username, email)
+	identifiers := make([]string, 0, len(identifierMap))
+	for identifier := range identifierMap {
+		identifiers = append(identifiers, identifier)
+	}
+	if len(identifiers) == 0 {
+		return false, nil
+	}
+
+	var loginIdentifier UserLoginIdentifier
+	result := tx.Unscoped().
+		Where("user_id <> ? AND identifier IN ?", userId, identifiers).
+		First(&loginIdentifier)
 	if result.Error != nil {
+		if !errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return false, result.Error
+		}
+	} else {
+		return true, nil
+	}
+
+	var user User
+	result = tx.Unscoped().
+		Where("id <> ? AND (username IN ? OR email_canonical IN ?)", userId, identifiers, identifiers).
+		First(&user)
+	if result.Error != nil {
+		if errors.Is(result.Error, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
 		return false, result.Error
 	}
-	return result.RowsAffected > 0, nil
+	return true, nil
+}
+
+func syncUserLoginIdentifiersWithTx(tx *gorm.DB, userId int, username string, email string) error {
+	if userId == 0 {
+		return errors.New("user id is empty")
+	}
+	if hasDuplicateUserLoginIdentifiers(username, email) {
+		return ErrUserLoginIdentifierTaken
+	}
+	identifiers := getUserLoginIdentifiers(username, email)
+	if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Where("user_id = ?", userId).Delete(&UserLoginIdentifier{}).Error; err != nil {
+		return err
+	}
+	for identifier, kind := range identifiers {
+		loginIdentifier := UserLoginIdentifier{
+			UserId:     userId,
+			Identifier: identifier,
+			Kind:       kind,
+		}
+		if err := tx.Create(&loginIdentifier).Error; err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func SyncUserLoginIdentifiers(userId int) error {
+	var user User
+	if err := DB.Unscoped().First(&user, userId).Error; err != nil {
+		return err
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		return syncUserLoginIdentifiersWithTx(tx, user.Id, user.Username, user.Email)
+	})
+}
+
+func setUserEmailIfEmptyWithTx(tx *gorm.DB, userId int, email string) (bool, error) {
+	email = NormalizeUserEmail(email)
+	if email == "" {
+		return false, nil
+	}
+	if err := common.Validate.Var(email, "email"); err != nil {
+		return false, err
+	}
+
+	updated := false
+	err := tx.Transaction(func(tx *gorm.DB) error {
+		var user User
+		if err := tx.First(&user, userId).Error; err != nil {
+			return err
+		}
+		if user.Email != "" {
+			return nil
+		}
+		exists, err := isLoginIdentifierTakenByOtherWithTx(tx, user.Username, email, user.Id)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return ErrUserLoginIdentifierTaken
+		}
+
+		user.Email = email
+		user.normalizeEmailForPersistence()
+		if err := tx.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
+			"email":           user.Email,
+			"email_canonical": user.EmailCanonical,
+		}).Error; err != nil {
+			return err
+		}
+		if err := syncUserLoginIdentifiersWithTx(tx, user.Id, user.Username, user.Email); err != nil {
+			return err
+		}
+		updated = true
+		return nil
+	})
+	return updated, err
 }
 
 func GetMaxUserId() int {
@@ -474,6 +616,21 @@ func GetUserById(id int, selectAll bool) (*User, error) {
 	return &user, err
 }
 
+func GetUserByIdUnscoped(id int, selectAll bool) (*User, error) {
+	if id == 0 {
+		return nil, errors.New("id 为空")
+	}
+	user := User{Id: id}
+	query := DB.Unscoped()
+	var err error
+	if selectAll {
+		err = query.First(&user, "id = ?", id).Error
+	} else {
+		err = query.Omit("password").First(&user, "id = ?", id).Error
+	}
+	return &user, err
+}
+
 func DeleteUserById(id int) (err error) {
 	if id == 0 {
 		return errors.New("id 为空")
@@ -486,26 +643,53 @@ func HardDeleteUserById(id int) error {
 	if id == 0 {
 		return errors.New("id 为空")
 	}
-	err := DB.Unscoped().Delete(&User{}, "id = ?", id).Error
-	return err
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Unscoped().Where("user_id = ?", id).Delete(&UserLoginIdentifier{}).Error; err != nil {
+			return err
+		}
+		return tx.Unscoped().Delete(&User{}, "id = ?", id).Error
+	})
 }
 
 func (user *User) Insert(_ int) error {
+	return user.insert(false)
+}
+
+func (user *User) InsertPreserveQuota(_ int) error {
+	return user.insert(true)
+}
+
+func (user *User) insert(preserveQuota bool) error {
 	var err error
 	user.normalizeEmailForPersistence()
+	exists, err := IsLoginIdentifierTakenByOther(user.Username, user.Email, 0)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ErrUserLoginIdentifierTaken
+	}
 	if user.Password != "" {
 		user.Password, err = common.Password2Hash(user.Password)
 		if err != nil {
 			return err
 		}
 	}
-	user.Quota = common.QuotaForNewUser
+	if !preserveQuota {
+		user.Quota = common.QuotaForNewUser
+	}
 
 	user.initializeDefaultSettingForRole()
 
-	result := DB.Create(user)
-	if result.Error != nil {
-		return result.Error
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		result := tx.Create(user)
+		if result.Error != nil {
+			return result.Error
+		}
+		return syncUserLoginIdentifiersWithTx(tx, user.Id, user.Username, user.Email)
+	})
+	if err != nil {
+		return err
 	}
 
 	if common.QuotaForNewUser > 0 {
@@ -517,6 +701,13 @@ func (user *User) Insert(_ int) error {
 func (user *User) InsertWithTx(tx *gorm.DB, _ int) error {
 	var err error
 	user.normalizeEmailForPersistence()
+	exists, err := isLoginIdentifierTakenByOtherWithTx(tx, user.Username, user.Email, 0)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ErrUserLoginIdentifierTaken
+	}
 	if user.Password != "" {
 		user.Password, err = common.Password2Hash(user.Password)
 		if err != nil {
@@ -531,6 +722,9 @@ func (user *User) InsertWithTx(tx *gorm.DB, _ int) error {
 	if result.Error != nil {
 		return result.Error
 	}
+	if err = syncUserLoginIdentifiersWithTx(tx, user.Id, user.Username, user.Email); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -543,6 +737,24 @@ func (user *User) FinalizeOAuthUserCreation(_ int) {
 func (user *User) Update(updatePassword bool) error {
 	var err error
 	user.normalizeEmailForPersistence()
+	currentUser := User{}
+	if err = DB.First(&currentUser, user.Id).Error; err != nil {
+		return err
+	}
+	if user.Username == "" {
+		user.Username = currentUser.Username
+	}
+	if user.Email == "" {
+		user.Email = currentUser.Email
+		user.normalizeEmailForPersistence()
+	}
+	exists, err := IsLoginIdentifierTakenByOther(user.Username, user.Email, user.Id)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ErrUserLoginIdentifierTaken
+	}
 	if updatePassword {
 		user.Password, err = common.Password2Hash(user.Password)
 		if err != nil {
@@ -550,15 +762,25 @@ func (user *User) Update(updatePassword bool) error {
 		}
 	}
 	newUser := *user
-	DB.First(&user, user.Id)
-	if err = DB.Model(user).Updates(newUser).Error; err != nil {
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		if err = tx.Model(user).Updates(newUser).Error; err != nil {
+			return err
+		}
+		return syncUserLoginIdentifiersWithTx(tx, user.Id, user.Username, user.Email)
+	})
+	if err != nil {
+		return err
+	}
+	if err = DB.First(user, user.Id).Error; err != nil {
 		return err
 	}
 	return updateUserCache(*user)
 }
 
-func (user *User) Edit(updatePassword bool) error {
+func (user *User) Edit(updatePassword bool, updateEmail ...bool) error {
 	var err error
+	shouldUpdateEmail := len(updateEmail) > 0 && updateEmail[0]
+	user.normalizeEmailForPersistence()
 	if updatePassword {
 		user.Password, err = common.Password2Hash(user.Password)
 		if err != nil {
@@ -567,18 +789,44 @@ func (user *User) Edit(updatePassword bool) error {
 	}
 
 	newUser := *user
+	currentUser := User{}
+	if err = DB.First(&currentUser, user.Id).Error; err != nil {
+		return err
+	}
+	if !shouldUpdateEmail {
+		newUser.Email = currentUser.Email
+		newUser.normalizeEmailForPersistence()
+	}
+	exists, err := IsLoginIdentifierTakenByOther(newUser.Username, newUser.Email, user.Id)
+	if err != nil {
+		return err
+	}
+	if exists {
+		return ErrUserLoginIdentifierTaken
+	}
+
 	updates := map[string]interface{}{
-		"username":     newUser.Username,
-		"display_name": newUser.DisplayName,
-		"group":        newUser.Group,
-		"remark":       newUser.Remark,
+		"username":        newUser.Username,
+		"display_name":    newUser.DisplayName,
+		"email":           newUser.Email,
+		"email_canonical": newUser.EmailCanonical,
+		"group":           newUser.Group,
+		"remark":          newUser.Remark,
 	}
 	if updatePassword {
 		updates["password"] = newUser.Password
 	}
 
-	DB.First(&user, user.Id)
-	if err = DB.Model(user).Updates(updates).Error; err != nil {
+	err = DB.Transaction(func(tx *gorm.DB) error {
+		if err = tx.Model(user).Updates(updates).Error; err != nil {
+			return err
+		}
+		return syncUserLoginIdentifiersWithTx(tx, user.Id, newUser.Username, newUser.Email)
+	})
+	if err != nil {
+		return err
+	}
+	if err = DB.First(user, user.Id).Error; err != nil {
 		return err
 	}
 	return updateUserCache(*user)
@@ -590,10 +838,16 @@ func (user *User) ClearBinding(bindingType string) error {
 	}
 
 	if bindingType == "email" {
-		if err := DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]any{
-			"email":           "",
-			"email_canonical": nil,
-		}).Error; err != nil {
+		err := DB.Transaction(func(tx *gorm.DB) error {
+			if err := tx.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]any{
+				"email":           "",
+				"email_canonical": nil,
+			}).Error; err != nil {
+				return err
+			}
+			return syncUserLoginIdentifiersWithTx(tx, user.Id, user.Username, "")
+		})
+		if err != nil {
 			return err
 		}
 		if err := DB.Where("id = ?", user.Id).First(user).Error; err != nil {
@@ -630,7 +884,12 @@ func (user *User) Delete() error {
 }
 
 func (user *User) HardDelete() error {
-	return DB.Unscoped().Delete(user).Error
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Unscoped().Where("user_id = ?", user.Id).Delete(&UserLoginIdentifier{}).Error; err != nil {
+			return err
+		}
+		return tx.Unscoped().Delete(user).Error
+	})
 }
 
 func (user *User) ValidateAndFill() (err error) {
@@ -639,7 +898,7 @@ func (user *User) ValidateAndFill() (err error) {
 	}
 
 	originalPassword := user.Password
-	if err := user.FillUserByUsername(); err != nil {
+	if err := user.FillUserByUsernameOrEmail(); err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return ErrUserPasswordIncorrect
 		}
@@ -664,6 +923,19 @@ func (user *User) FillUserById() error {
 func (user *User) FillUserByEmail() error {
 	user.Email = NormalizeUserEmail(user.Email)
 	return DB.First(user, "email_canonical = ?", user.Email).Error
+}
+
+func (user *User) FillUserByUsernameOrEmail() error {
+	loginIdentifier := user.Username
+	if err := user.FillUserByUsername(); err == nil {
+		return nil
+	} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+
+	user.Username = loginIdentifier
+	user.Email = loginIdentifier
+	return user.FillUserByEmail()
 }
 
 func (user *User) FillUserByGitHubId() error {
@@ -739,21 +1011,27 @@ func ResetUserPasswordByEmail(email string, password string) error {
 }
 
 var (
-	ErrUserDisabled          = errors.New("user disabled")
-	ErrUserDeleted           = errors.New("user deleted")
-	ErrUserPasswordIncorrect = errors.New("password incorrect")
+	ErrUserDisabled             = errors.New("user disabled")
+	ErrUserDeleted              = errors.New("user deleted")
+	ErrUserPasswordIncorrect    = errors.New("password incorrect")
+	ErrUserLoginIdentifierTaken = errors.New("user login identifier taken")
 )
 
 func IsUserEmailUniqueError(err error) bool {
 	if err == nil {
 		return false
 	}
+	if errors.Is(err, ErrUserLoginIdentifierTaken) {
+		return true
+	}
 	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "idx_users_email_canonical_unique") ||
-		(strings.Contains(message, "email_canonical") &&
-			(strings.Contains(message, "duplicate") ||
-				strings.Contains(message, "unique") ||
-				strings.Contains(message, "constraint")))
+	hasUniqueSignal := strings.Contains(message, "duplicate") ||
+		strings.Contains(message, "unique") ||
+		strings.Contains(message, "constraint")
+	return (strings.Contains(message, "idx_users_email_canonical_unique") && hasUniqueSignal) ||
+		(strings.Contains(message, "idx_user_login_identifiers_identifier") && hasUniqueSignal) ||
+		(strings.Contains(message, "user_login_identifiers") && hasUniqueSignal) ||
+		(strings.Contains(message, "email_canonical") && hasUniqueSignal)
 }
 
 func IsAdmin(userId int) bool {

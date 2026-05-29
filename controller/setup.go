@@ -102,7 +102,7 @@ func PostSetup(c *gin.Context) {
 		}
 
 		// Create root user
-		hashedPassword, err := common.Password2Hash(req.Password)
+		_, err := common.Password2Hash(req.Password)
 		if err != nil {
 			c.JSON(200, gin.H{
 				"success": false,
@@ -112,14 +112,14 @@ func PostSetup(c *gin.Context) {
 		}
 		rootUser := model.User{
 			Username:    req.Username,
-			Password:    hashedPassword,
+			Password:    req.Password,
 			Role:        common.RoleRootUser,
 			Status:      common.UserStatusEnabled,
 			DisplayName: "Root User",
 			AccessToken: nil,
 			Quota:       100000000,
 		}
-		err = model.DB.Create(&rootUser).Error
+		err = rootUser.InsertPreserveQuota(0)
 		if err != nil {
 			c.JSON(200, gin.H{
 				"success": false,

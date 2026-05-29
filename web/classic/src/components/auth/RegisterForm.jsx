@@ -602,28 +602,30 @@ const RegisterForm = () => {
                   prefix={<IconLock />}
                 />
 
+                <Form.Input
+                  field='email'
+                  label={t('邮箱')}
+                  placeholder={t('输入邮箱地址')}
+                  name='email'
+                  type='email'
+                  onChange={(value) => handleChange('email', value)}
+                  prefix={<IconMail />}
+                  suffix={
+                    showEmailVerification ? (
+                      <Button
+                        onClick={sendVerificationCode}
+                        loading={verificationCodeLoading}
+                        disabled={disableButton || verificationCodeLoading}
+                      >
+                        {disableButton
+                          ? `${t('重新发送')} (${countdown})`
+                          : t('获取验证码')}
+                      </Button>
+                    ) : null
+                  }
+                />
                 {showEmailVerification && (
                   <>
-                    <Form.Input
-                      field='email'
-                      label={t('邮箱')}
-                      placeholder={t('输入邮箱地址')}
-                      name='email'
-                      type='email'
-                      onChange={(value) => handleChange('email', value)}
-                      prefix={<IconMail />}
-                      suffix={
-                        <Button
-                          onClick={sendVerificationCode}
-                          loading={verificationCodeLoading}
-                          disabled={disableButton || verificationCodeLoading}
-                        >
-                          {disableButton
-                            ? `${t('重新发送')} (${countdown})`
-                            : t('获取验证码')}
-                        </Button>
-                      }
-                    />
                     <Form.Input
                       field='verification_code'
                       label={t('验证码')}

@@ -320,6 +320,16 @@ const EditUserModal = (props) => {
 
                     <Col span={24}>
                       <Form.Input
+                        field='email'
+                        label={t('邮箱')}
+                        placeholder={t('输入邮箱地址')}
+                        type='email'
+                        showClear
+                      />
+                    </Col>
+
+                    <Col span={24}>
+                      <Form.Input
                         field='display_name'
                         label={t('显示名称')}
                         placeholder={t('请输入新的显示名称')}

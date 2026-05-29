@@ -294,6 +294,24 @@ export function UsersMutateDrawer({
 
                 <FormField
                   control={form.control}
+                  name='email'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Email')}</FormLabel>
+                      <FormControl>
+                        <Input
+                          {...field}
+                          type='email'
+                          placeholder={t('name@example.com')}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+
+                <FormField
+                  control={form.control}
                   name='password'
                   render={({ field }) => (
                     <FormItem>

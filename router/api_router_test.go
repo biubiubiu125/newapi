@@ -74,6 +74,7 @@ func setupRouterAuthTestDB(t *testing.T) *gorm.DB {
 	model.LOG_DB = db
 	require.NoError(t, db.AutoMigrate(
 		&model.User{},
+		&model.UserLoginIdentifier{},
 		&model.ReferralAffiliate{},
 		&model.ReferralBinding{},
 		&model.ReferralClick{},

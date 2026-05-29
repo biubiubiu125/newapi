@@ -311,7 +311,10 @@ func SendEmailVerification(c *gin.Context) {
 		}
 	}
 
-	if model.IsEmailAlreadyTaken(email) {
+	if exists, err := model.IsLoginIdentifierTakenByOther("", email, 0); err != nil {
+		common.ApiError(c, err)
+		return
+	} else if exists {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "邮箱地址已被占用",

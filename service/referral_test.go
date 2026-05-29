@@ -61,6 +61,7 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 	model.LOG_DB = db
 	require.NoError(t, db.AutoMigrate(
 		&model.User{},
+		&model.UserLoginIdentifier{},
 		&model.Option{},
 		&model.TopUp{},
 		&model.SubscriptionPlan{},

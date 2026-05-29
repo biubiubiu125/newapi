@@ -36,7 +36,11 @@ export const registerFormSchema = z
       .string()
       .min(1, 'Please enter your username')
       .max(12, 'Username must be at most 12 characters long'),
-    email: z.string().optional(),
+    email: z
+      .string()
+      .email('Please enter a valid email address')
+      .or(z.literal(''))
+      .optional(),
     password: z
       .string()
       .min(1, 'Please enter your password')

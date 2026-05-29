@@ -112,6 +112,10 @@ func HandleOAuth(c *gin.Context) {
 		case *OAuthRegistrationDisabledError:
 			common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
 		default:
+			if model.IsUserEmailUniqueError(err) {
+				common.ApiErrorI18n(c, i18n.MsgUserExists)
+				return
+			}
 			common.ApiError(c, err)
 		}
 		return

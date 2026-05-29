@@ -33,6 +33,7 @@ func setupAdminFinanceTestDB(t *testing.T) {
 	model.DB = db
 	require.NoError(t, db.AutoMigrate(
 		&model.User{},
+		&model.UserLoginIdentifier{},
 		&model.TopUp{},
 		&model.SubscriptionPlan{},
 		&model.SubscriptionOrder{},

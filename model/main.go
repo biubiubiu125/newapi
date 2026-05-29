@@ -79,20 +79,18 @@ func createRootAccountIfNeed() error {
 	//if user.Status != common.UserStatusEnabled {
 	if err := DB.First(&user).Error; err != nil {
 		common.SysLog("no user exists, create a root user for you: username is root, password is 123456")
-		hashedPassword, err := common.Password2Hash("123456")
-		if err != nil {
-			return err
-		}
 		rootUser := User{
 			Username:    "root",
-			Password:    hashedPassword,
+			Password:    "123456",
 			Role:        common.RoleRootUser,
 			Status:      common.UserStatusEnabled,
 			DisplayName: "Root User",
 			AccessToken: nil,
 			Quota:       100000000,
 		}
-		DB.Create(&rootUser)
+		if err := rootUser.InsertPreserveQuota(0); err != nil {
+			return err
+		}
 	}
 	return nil
 }
@@ -349,6 +347,7 @@ func migrateDB() error {
 		&TwoFA{},
 		&TwoFABackupCode{},
 		&Checkin{},
+		&UserLoginIdentifier{},
 		&SubscriptionOrder{},
 		&UserSubscription{},
 		&SubscriptionPreConsumeRecord{},
@@ -369,6 +368,9 @@ func migrateDB() error {
 		}
 	}
 	if err := ensureUserEmailCanonicalUniqueIndex(); err != nil {
+		return err
+	}
+	if err := ensureUserLoginIdentifiers(); err != nil {
 		return err
 	}
 	return nil
@@ -438,6 +440,7 @@ func migrateDBFast() error {
 		{&TwoFA{}, "TwoFA"},
 		{&TwoFABackupCode{}, "TwoFABackupCode"},
 		{&Checkin{}, "Checkin"},
+		{&UserLoginIdentifier{}, "UserLoginIdentifier"},
 		{&SubscriptionOrder{}, "SubscriptionOrder"},
 		{&UserSubscription{}, "UserSubscription"},
 		{&SubscriptionPreConsumeRecord{}, "SubscriptionPreConsumeRecord"},
@@ -478,6 +481,9 @@ func migrateDBFast() error {
 		}
 	}
 	if err := ensureUserEmailCanonicalUniqueIndex(); err != nil {
+		return err
+	}
+	if err := ensureUserLoginIdentifiers(); err != nil {
 		return err
 	}
 	common.SysLog("database migrated")
@@ -532,6 +538,54 @@ func ensureUserEmailCanonicalUniqueIndex() error {
 		return nil
 	}
 	return DB.Exec("CREATE UNIQUE INDEX " + indexName + " ON users (email_canonical)").Error
+}
+
+func ensureUserLoginIdentifiers() error {
+	if err := DB.AutoMigrate(&UserLoginIdentifier{}); err != nil {
+		return err
+	}
+	if err := rejectExistingUserLoginIdentifierConflicts(); err != nil {
+		return err
+	}
+	var users []User
+	if err := DB.Unscoped().Find(&users).Error; err != nil {
+		return err
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Session(&gorm.Session{AllowGlobalUpdate: true}).Unscoped().Delete(&UserLoginIdentifier{}).Error; err != nil {
+			return err
+		}
+		for _, user := range users {
+			if err := syncUserLoginIdentifiersWithTx(tx, user.Id, user.Username, user.Email); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
+func rejectExistingUserLoginIdentifierConflicts() error {
+	var users []User
+	if err := DB.Unscoped().Select("id", "username", "email_canonical").Find(&users).Error; err != nil {
+		return err
+	}
+	ownerByIdentifier := map[string]int{}
+	for _, user := range users {
+		email := ""
+		if user.EmailCanonical != nil {
+			email = *user.EmailCanonical
+		}
+		if hasDuplicateUserLoginIdentifiers(user.Username, email) {
+			return fmt.Errorf("duplicate user login identifier exists on user %d: %s", user.Id, strings.TrimSpace(user.Username))
+		}
+		for identifier := range getUserLoginIdentifiers(user.Username, email) {
+			if ownerId, ok := ownerByIdentifier[identifier]; ok && ownerId != user.Id {
+				return fmt.Errorf("duplicate user login identifier exists before syncing login identifiers: %s", identifier)
+			}
+			ownerByIdentifier[identifier] = user.Id
+		}
+	}
+	return nil
 }
 
 type sqliteColumnDef struct {

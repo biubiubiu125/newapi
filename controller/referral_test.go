@@ -3,11 +3,13 @@ package controller
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -42,6 +44,7 @@ func setupReferralControllerTestDB(t *testing.T) *gorm.DB {
 	model.LOG_DB = db
 	require.NoError(t, db.AutoMigrate(
 		&model.User{},
+		&model.UserLoginIdentifier{},
 		&model.Log{},
 		&model.ReferralAffiliate{},
 		&model.ReferralBinding{},
@@ -412,6 +415,99 @@ func TestRegisterRejectsDuplicateUsernameWithoutServerError(t *testing.T) {
 	require.Equal(t, int64(1), count)
 }
 
+func TestRegisterRejectsEmailThatMatchesExistingUsername(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+	existing := &model.User{
+		Username:    "owner@example.com",
+		Password:    "12345678",
+		DisplayName: "owner",
+		Email:       "owner-real@example.com",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, existing.Insert(0))
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+	store := cookie.NewStore([]byte(common.SessionSecret))
+	router.Use(sessions.Sessions("session", store))
+	router.POST("/api/user/register", Register)
+
+	body := []byte(`{"username":"new-user","password":"12345678","email":"owner@example.com"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/user/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, false, response["success"])
+
+	var count int64
+	require.NoError(t, db.Model(&model.User{}).Where("username = ?", "new-user").Count(&count).Error)
+	require.Equal(t, int64(0), count)
+}
+
+func TestRegisterRejectsUsernameThatMatchesExistingEmail(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+	existing := &model.User{
+		Username:    "email-owner",
+		Password:    "12345678",
+		DisplayName: "email-owner",
+		Email:       "owner@example.com",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, existing.Insert(0))
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+	store := cookie.NewStore([]byte(common.SessionSecret))
+	router.Use(sessions.Sessions("session", store))
+	router.POST("/api/user/register", Register)
+
+	body := []byte(`{"username":"owner@example.com","password":"12345678","email":"new-user@example.com"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/user/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, false, response["success"])
+
+	var count int64
+	require.NoError(t, db.Model(&model.User{}).Where("username = ?", "owner@example.com").Count(&count).Error)
+	require.Equal(t, int64(0), count)
+}
+
+func TestRegisterRejectsSameUsernameAndEmail(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+	store := cookie.NewStore([]byte(common.SessionSecret))
+	router.Use(sessions.Sessions("session", store))
+	router.POST("/api/user/register", Register)
+
+	body := []byte(`{"username":"same@example.com","password":"12345678","email":"same@example.com"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/user/register", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, false, response["success"])
+
+	var count int64
+	require.NoError(t, db.Model(&model.User{}).Where("username = ?", "same@example.com").Count(&count).Error)
+	require.Equal(t, int64(0), count)
+}
+
 func TestRegisterRejectsInvalidEmailWithoutCreatingUser(t *testing.T) {
 	db := setupReferralControllerTestDB(t)
 
@@ -484,4 +580,306 @@ func TestEmailBindRejectsEmailOwnedByAnotherUser(t *testing.T) {
 	var reloaded model.User
 	require.NoError(t, db.Where("id = ?", second.Id).First(&reloaded).Error)
 	require.Empty(t, reloaded.Email)
+}
+
+func TestEmailBindRejectsMissingLoginSessionWithoutPanic(t *testing.T) {
+	setupReferralControllerTestDB(t)
+	common.RegisterVerificationCodeWithKey("bind-no-session@example.com", "123456", common.EmailVerificationPurpose)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+	store := cookie.NewStore([]byte(common.SessionSecret))
+	router.Use(sessions.Sessions("session", store))
+	router.POST("/api/user/email", EmailBind)
+
+	body := []byte(`{"email":"bind-no-session@example.com","code":"123456"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/user/email", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, false, response["success"])
+}
+
+func TestEmailBindRejectsEmailMatchingAnotherUsername(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+	first := &model.User{
+		Username:    "taken@example.com",
+		Password:    "12345678",
+		DisplayName: "taken",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	second := &model.User{
+		Username:    "email-binder-cross",
+		Password:    "12345678",
+		DisplayName: "email-binder-cross",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, first.Insert(0))
+	require.NoError(t, second.Insert(0))
+	common.RegisterVerificationCodeWithKey("taken@example.com", "123456", common.EmailVerificationPurpose)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+	store := cookie.NewStore([]byte(common.SessionSecret))
+	router.Use(sessions.Sessions("session", store))
+	router.Use(func(c *gin.Context) {
+		session := sessions.Default(c)
+		session.Set("id", second.Id)
+		require.NoError(t, session.Save())
+		c.Next()
+	})
+	router.POST("/api/user/email", EmailBind)
+
+	body := []byte(`{"email":"TAKEN@example.com","code":"123456"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/user/email", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, false, response["success"])
+
+	var reloaded model.User
+	require.NoError(t, db.Where("id = ?", second.Id).First(&reloaded).Error)
+	require.Empty(t, reloaded.Email)
+}
+
+func TestEmailBindRejectsEmailMatchingOwnUsername(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+	user := &model.User{
+		Username:    "own@example.com",
+		Password:    "12345678",
+		DisplayName: "own",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, user.Insert(0))
+	common.RegisterVerificationCodeWithKey("own@example.com", "123456", common.EmailVerificationPurpose)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+	store := cookie.NewStore([]byte(common.SessionSecret))
+	router.Use(sessions.Sessions("session", store))
+	router.Use(func(c *gin.Context) {
+		session := sessions.Default(c)
+		session.Set("id", user.Id)
+		require.NoError(t, session.Save())
+		c.Next()
+	})
+	router.POST("/api/user/email", EmailBind)
+
+	body := []byte(`{"email":"OWN@example.com","code":"123456"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/user/email", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, false, response["success"])
+
+	var reloaded model.User
+	require.NoError(t, db.Where("id = ?", user.Id).First(&reloaded).Error)
+	require.Empty(t, reloaded.Email)
+}
+
+func TestAdminHardDeleteSoftDeletedUserReleasesLoginIdentifiers(t *testing.T) {
+	setupReferralControllerTestDB(t)
+	user := &model.User{
+		Username:    "deleted@example.com",
+		Password:    "12345678",
+		DisplayName: "deleted",
+		Email:       "deleted-real@example.com",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, user.Insert(0))
+	require.NoError(t, model.DeleteUserById(user.Id))
+
+	exists, err := model.IsLoginIdentifierTakenByOther("", "deleted@example.com", 0)
+	require.NoError(t, err)
+	require.True(t, exists)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(user.Id)}}
+	c.Set("role", common.RoleAdminUser)
+	c.Request = httptest.NewRequest(http.MethodDelete, "/api/user/"+strconv.Itoa(user.Id), nil)
+
+	DeleteUser(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, true, response["success"])
+
+	exists, err = model.IsLoginIdentifierTakenByOther("", "deleted@example.com", 0)
+	require.NoError(t, err)
+	require.False(t, exists)
+	reuse := &model.User{
+		Username:    "reuse-after-hard-delete",
+		Password:    "12345678",
+		DisplayName: "reuse",
+		Email:       "deleted@example.com",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, reuse.Insert(0))
+}
+
+func TestAdminCreateUserWithEmailAllowsEmailLogin(t *testing.T) {
+	setupReferralControllerTestDB(t)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("role", common.RoleAdminUser)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/user/", bytes.NewReader([]byte(`{
+		"username":"admin-created",
+		"display_name":"Admin Created",
+		"password":"12345678",
+		"email":"Admin-Created@Example.com",
+		"role":1
+	}`)))
+
+	CreateUser(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, true, response["success"])
+
+	login := &model.User{
+		Username: "admin-created@example.com",
+		Password: "12345678",
+	}
+	require.NoError(t, login.ValidateAndFill())
+	require.Equal(t, "admin-created", login.Username)
+}
+
+func TestAdminUpdateUserEmailAllowsEmailLogin(t *testing.T) {
+	setupReferralControllerTestDB(t)
+	user := &model.User{
+		Username:    "admin-edit-email",
+		Password:    "12345678",
+		DisplayName: "admin-edit-email",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, user.Insert(0))
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("role", common.RoleAdminUser)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/user/", bytes.NewReader([]byte(fmt.Sprintf(`{
+		"id":%d,
+		"username":"admin-edit-email",
+		"display_name":"admin-edit-email",
+		"password":"",
+		"email":"Edited@Example.com",
+		"role":1,
+		"group":"default"
+	}`, user.Id))))
+
+	UpdateUser(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, true, response["success"])
+
+	login := &model.User{
+		Username: "edited@example.com",
+		Password: "12345678",
+	}
+	require.NoError(t, login.ValidateAndFill())
+	require.Equal(t, user.Id, login.Id)
+}
+
+func TestAdminUpdateUserCanClearEmail(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+	user := &model.User{
+		Username:    "admin-clear-email",
+		Password:    "12345678",
+		DisplayName: "admin-clear-email",
+		Email:       "clear-me@example.com",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+	}
+	require.NoError(t, user.Insert(0))
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("role", common.RoleAdminUser)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/user/", bytes.NewReader([]byte(fmt.Sprintf(`{
+		"id":%d,
+		"username":"admin-clear-email",
+		"display_name":"admin-clear-email",
+		"password":"",
+		"email":"",
+		"role":1,
+		"group":"default"
+	}`, user.Id))))
+
+	UpdateUser(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, true, response["success"])
+
+	var reloaded model.User
+	require.NoError(t, db.First(&reloaded, user.Id).Error)
+	require.Empty(t, reloaded.Email)
+	require.Nil(t, reloaded.EmailCanonical)
+
+	login := &model.User{
+		Username: "clear-me@example.com",
+		Password: "12345678",
+	}
+	require.ErrorIs(t, login.ValidateAndFill(), model.ErrUserPasswordIncorrect)
+}
+
+func TestAdminCreateUserRejectsEmailMatchingExistingUsername(t *testing.T) {
+	setupReferralControllerTestDB(t)
+	existing := &model.User{
+		Username:    "taken-admin@example.com",
+		Password:    "12345678",
+		DisplayName: "taken",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, existing.Insert(0))
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("role", common.RoleAdminUser)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/user/", bytes.NewReader([]byte(`{
+		"username":"new-admin-user",
+		"display_name":"New Admin User",
+		"password":"12345678",
+		"email":"taken-admin@example.com",
+		"role":1
+	}`)))
+
+	CreateUser(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, false, response["success"])
 }

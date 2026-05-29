@@ -564,11 +564,26 @@ func GetUserModels(c *gin.Context) {
 }
 
 func UpdateUser(c *gin.Context) {
-	var updatedUser model.User
-	err := json.NewDecoder(c.Request.Body).Decode(&updatedUser)
+	var req struct {
+		model.User
+		Email *string `json:"email"`
+	}
+	err := json.NewDecoder(c.Request.Body).Decode(&req)
+	updatedUser := req.User
+	emailProvided := req.Email != nil
+	if emailProvided {
+		updatedUser.Email = *req.Email
+	}
 	if err != nil || updatedUser.Id == 0 {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
+	}
+	updatedUser.Email = model.NormalizeUserEmail(updatedUser.Email)
+	if updatedUser.Email != "" {
+		if err := common.Validate.Var(updatedUser.Email, "email"); err != nil {
+			common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+			return
+		}
 	}
 	if updatedUser.Password == "" {
 		updatedUser.Password = "$I_LOVE_U" // make Validator happy :)
@@ -595,7 +610,11 @@ func UpdateUser(c *gin.Context) {
 		updatedUser.Password = "" // rollback to what it should be
 	}
 	updatePassword := updatedUser.Password != ""
-	if err := updatedUser.Edit(updatePassword); err != nil {
+	if err := updatedUser.Edit(updatePassword, emailProvided); err != nil {
+		if model.IsUserEmailUniqueError(err) {
+			common.ApiErrorI18n(c, i18n.MsgUserExists)
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}
@@ -745,6 +764,10 @@ func UpdateSelf(c *gin.Context) {
 		return
 	}
 	if err := cleanUser.Update(updatePassword); err != nil {
+		if model.IsUserEmailUniqueError(err) {
+			common.ApiErrorI18n(c, i18n.MsgUserExists)
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}
@@ -782,7 +805,7 @@ func DeleteUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	originUser, err := model.GetUserById(id, false)
+	originUser, err := model.GetUserByIdUnscoped(id, false)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -829,9 +852,16 @@ func CreateUser(c *gin.Context) {
 	var user model.User
 	err := json.NewDecoder(c.Request.Body).Decode(&user)
 	user.Username = strings.TrimSpace(user.Username)
+	user.Email = model.NormalizeUserEmail(user.Email)
 	if err != nil || user.Username == "" || user.Password == "" {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
+	}
+	if user.Email != "" {
+		if err := common.Validate.Var(user.Email, "email"); err != nil {
+			common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+			return
+		}
 	}
 	if err := common.Validate.Struct(&user); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
@@ -850,9 +880,14 @@ func CreateUser(c *gin.Context) {
 		Username:    user.Username,
 		Password:    user.Password,
 		DisplayName: user.DisplayName,
+		Email:       user.Email,
 		Role:        user.Role, // 保持管理员设置的角色
 	}
 	if err := cleanUser.Insert(0); err != nil {
+		if model.IsUserEmailUniqueError(err) {
+			common.ApiErrorI18n(c, i18n.MsgUserExists)
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}
@@ -1035,16 +1070,23 @@ func EmailBind(c *gin.Context) {
 		return
 	}
 	session := sessions.Default(c)
-	id := session.Get("id")
+	id, ok := session.Get("id").(int)
+	if !ok || id == 0 {
+		common.ApiErrorI18n(c, i18n.MsgAuthNotLoggedIn)
+		return
+	}
 	user := model.User{
-		Id: id.(int),
+		Id: id,
 	}
 	err := user.FillUserById()
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if model.IsEmailAlreadyTakenByOther(email, user.Id) {
+	if exists, err := model.IsLoginIdentifierTakenByOther(user.Username, email, user.Id); err != nil {
+		common.ApiError(c, err)
+		return
+	} else if exists {
 		common.ApiErrorI18n(c, i18n.MsgUserExists)
 		return
 	}

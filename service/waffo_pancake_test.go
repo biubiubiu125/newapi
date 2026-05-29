@@ -29,7 +29,7 @@ func setupWaffoPancakeTestDB(t *testing.T) *gorm.DB {
 	model.DB = db
 	model.LOG_DB = db
 
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.TopUp{}, &model.SubscriptionOrder{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserLoginIdentifier{}, &model.TopUp{}, &model.SubscriptionOrder{}))
 
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()

@@ -64,6 +64,7 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 	model.LOG_DB = db
 	require.NoError(t, db.AutoMigrate(
 		&model.User{},
+		&model.UserLoginIdentifier{},
 		&model.Token{},
 		&model.Log{},
 		&model.TopUp{},
