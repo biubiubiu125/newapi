@@ -1,7 +1,6 @@
 package service
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/url"
 	"sort"
@@ -32,27 +31,24 @@ type ProviderPriceOverride struct {
 }
 
 type ProviderPriceExportData struct {
-	Currency      string                      `json:"currency"`
-	PriceUnit     string                      `json:"price_unit"`
-	SiteName      string                      `json:"site_name,omitempty"`
-	SiteDomain    string                      `json:"site_domain,omitempty"`
-	UpdatedAt     string                      `json:"updated_at"`
-	DisplayOnly   bool                        `json:"display_only"`
-	AffectsBilling bool                       `json:"affects_billing"`
-	Models        []ProviderPriceExportModel  `json:"models"`
+	Currency   string                     `json:"currency"`
+	PriceUnit  string                     `json:"price_unit"`
+	SiteName   string                     `json:"site_name,omitempty"`
+	SiteDomain string                     `json:"site_domain,omitempty"`
+	UpdatedAt  string                     `json:"updated_at"`
+	Models     []ProviderPriceExportModel `json:"models"`
 }
 
 type ProviderPriceExportModel struct {
 	GroupName          string   `json:"group_name"`
 	ModelName          string   `json:"model_name"`
-	InputPrice         *float64 `json:"input_price,omitempty"`
-	OutputPrice        *float64 `json:"output_price,omitempty"`
-	CacheInputPrice    *float64 `json:"cache_input_price,omitempty"`
-	CacheCreatePrice   *float64 `json:"cache_create_price,omitempty"`
-	CacheCreatePrice1h *float64 `json:"cache_create_price_1h,omitempty"`
-	ImageOutputPrice   *float64 `json:"image_output_price,omitempty"`
+	InputPrice         *float64 `json:"input_price"`
+	OutputPrice        *float64 `json:"output_price"`
+	CacheInputPrice    *float64 `json:"cache_input_price"`
+	CacheCreatePrice   *float64 `json:"cache_create_price"`
+	CacheCreatePrice1h *float64 `json:"cache_create_price_1h"`
 	Enabled            bool     `json:"enabled"`
-	Note               string   `json:"note,omitempty"`
+	Note               string   `json:"note"`
 }
 
 func normalizeProviderPriceOverrides(items []ProviderPriceOverride) []ProviderPriceOverride {
@@ -110,13 +106,35 @@ func hasAnyProviderPriceValue(item ProviderPriceOverride) bool {
 	return false
 }
 
+func hasRequiredProviderInputPrice(item ProviderPriceOverride) bool {
+	return item.InputPrice != nil && *item.InputPrice > 0
+}
+
+func providerPriceExportOutputPrice(item ProviderPriceOverride) *float64 {
+	if item.OutputPrice != nil && *item.OutputPrice >= 0 {
+		return item.OutputPrice
+	}
+	if item.InputPrice == nil {
+		return nil
+	}
+	value := *item.InputPrice
+	return &value
+}
+
+func providerPriceExportOptionalPrice(value *float64) *float64 {
+	if value == nil || *value < 0 {
+		return nil
+	}
+	return value
+}
+
 func parseProviderPriceOverrides(raw string) []ProviderPriceOverride {
 	raw = strings.TrimSpace(raw)
 	if raw == "" || raw == "[]" {
 		return nil
 	}
 	var items []ProviderPriceOverride
-	if err := json.Unmarshal([]byte(raw), &items); err != nil {
+	if err := common.UnmarshalJsonStr(raw, &items); err != nil {
 		return nil
 	}
 	return normalizeProviderPriceOverrides(items)
@@ -127,7 +145,7 @@ func marshalProviderPriceOverrides(items []ProviderPriceOverride) (string, error
 	if len(normalized) == 0 {
 		return "[]", nil
 	}
-	data, err := json.Marshal(normalized)
+	data, err := common.Marshal(normalized)
 	if err != nil {
 		return "", fmt.Errorf("marshal provider price overrides: %w", err)
 	}
@@ -161,35 +179,35 @@ func GetPublicProviderPriceExport() (*ProviderPriceExportData, error) {
 		return nil, err
 	}
 	models := make([]ProviderPriceExportModel, 0, len(items))
+	seenModelGroups := make(map[string]struct{}, len(items))
 	for _, item := range items {
-		if !item.Enabled {
+		if !hasRequiredProviderInputPrice(item) {
 			continue
 		}
-		if !hasAnyProviderPriceValue(item) {
+		modelGroupKey := strings.ToLower(item.ModelName) + "\x00" + strings.ToLower(item.GroupName)
+		if _, exists := seenModelGroups[modelGroupKey]; exists {
 			continue
 		}
+		seenModelGroups[modelGroupKey] = struct{}{}
 		models = append(models, ProviderPriceExportModel{
 			GroupName:          item.GroupName,
 			ModelName:          item.ModelName,
 			InputPrice:         item.InputPrice,
-			OutputPrice:        item.OutputPrice,
-			CacheInputPrice:    item.CacheInputPrice,
-			CacheCreatePrice:   item.CacheCreatePrice,
-			CacheCreatePrice1h: item.CacheCreatePrice1h,
-			ImageOutputPrice:   item.ImageOutputPrice,
+			OutputPrice:        providerPriceExportOutputPrice(item),
+			CacheInputPrice:    providerPriceExportOptionalPrice(item.CacheInputPrice),
+			CacheCreatePrice:   providerPriceExportOptionalPrice(item.CacheCreatePrice),
+			CacheCreatePrice1h: providerPriceExportOptionalPrice(item.CacheCreatePrice1h),
 			Enabled:            item.Enabled,
 			Note:               item.Note,
 		})
 	}
 	return &ProviderPriceExportData{
-		Currency:       "CNY",
-		PriceUnit:      "per_1m_tokens",
-		SiteName:       strings.TrimSpace(common.SystemName),
-		SiteDomain:     providerPriceExportSiteDomain(),
-		UpdatedAt:      time.Now().UTC().Format(time.RFC3339),
-		DisplayOnly:    true,
-		AffectsBilling: false,
-		Models:         models,
+		Currency:   "CNY",
+		PriceUnit:  "per_1m_tokens",
+		SiteName:   strings.TrimSpace(common.SystemName),
+		SiteDomain: providerPriceExportSiteDomain(),
+		UpdatedAt:  time.Now().UTC().Format(time.RFC3339),
+		Models:     models,
 	}, nil
 }
 

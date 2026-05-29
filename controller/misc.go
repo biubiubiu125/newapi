@@ -172,14 +172,45 @@ func GetStatus(c *gin.Context) {
 }
 
 func GetNotice(c *gin.Context) {
+	cs := console_setting.GetConsoleSetting()
+	announcements := []map[string]interface{}{}
+	if cs.AnnouncementsEnabled {
+		announcements = console_setting.GetAnnouncements()
+	}
+
 	common.OptionMapRWMutex.RLock()
-	defer common.OptionMapRWMutex.RUnlock()
+	notice := common.OptionMap["Notice"]
+	common.OptionMapRWMutex.RUnlock()
+	if strings.TrimSpace(notice) == "" && len(announcements) > 0 {
+		notice = renderAnnouncementsNotice(announcements)
+	}
 	c.JSON(http.StatusOK, gin.H{
-		"success": true,
-		"message": "",
-		"data":    common.OptionMap["Notice"],
+		"success":       true,
+		"message":       "",
+		"data":          notice,
+		"notice":        notice,
+		"announcements": announcements,
 	})
 	return
+}
+
+func renderAnnouncementsNotice(announcements []map[string]interface{}) string {
+	lines := make([]string, 0, len(announcements)*3)
+	for _, item := range announcements {
+		content, _ := item["content"].(string)
+		content = strings.TrimSpace(content)
+		if content == "" {
+			continue
+		}
+		if publishDate, ok := item["publishDate"].(string); ok && strings.TrimSpace(publishDate) != "" {
+			lines = append(lines, fmt.Sprintf("### %s", strings.TrimSpace(publishDate)))
+		}
+		lines = append(lines, content)
+		if extra, ok := item["extra"].(string); ok && strings.TrimSpace(extra) != "" {
+			lines = append(lines, strings.TrimSpace(extra))
+		}
+	}
+	return strings.Join(lines, "\n\n")
 }
 
 func GetAbout(c *gin.Context) {

@@ -121,32 +121,47 @@ function parsePrice(value: string) {
 
 function rowsToPayload(rows: ProviderPriceRow[]) {
   return rows
-    .map((row, index) => ({
-      id: row.id.trim() || `provider-price-${index + 1}`,
-      group_name: row.group_name.trim(),
-      model_name: row.model_name.trim(),
-      input_price: parsePrice(row.input_price),
-      output_price: parsePrice(row.output_price),
-      cache_input_price: parsePrice(row.cache_input_price),
-      cache_create_price: parsePrice(row.cache_create_price),
-      cache_create_price_1h: parsePrice(row.cache_create_price_1h),
-      image_output_price: parsePrice(row.image_output_price),
-      enabled: row.enabled,
-      note: row.note.trim(),
-      sort_order: Number.isFinite(Number(row.sort_order))
-        ? Number(row.sort_order)
-        : index,
-    }))
+    .map((row, index) => {
+      const inputPrice = parsePrice(row.input_price)
+      const outputPrice = parsePrice(row.output_price)
+      return {
+        id: row.id.trim() || `provider-price-${index + 1}`,
+        group_name: row.group_name.trim(),
+        model_name: row.model_name.trim(),
+        input_price: inputPrice,
+        output_price: outputPrice ?? inputPrice,
+        cache_input_price: parsePrice(row.cache_input_price),
+        cache_create_price: parsePrice(row.cache_create_price),
+        cache_create_price_1h: parsePrice(row.cache_create_price_1h),
+        image_output_price: parsePrice(row.image_output_price),
+        enabled: row.enabled,
+        note: row.note.trim(),
+        sort_order: Number.isFinite(Number(row.sort_order))
+          ? Number(row.sort_order)
+          : index,
+      }
+    })
     .filter((row) => row.group_name && row.model_name)
 }
 
 function validateRows(rows: ProviderPriceRow[]) {
+  const seenModelGroups = new Set<string>()
   for (const row of rows) {
-    if (!row.group_name.trim() || !row.model_name.trim()) {
+    const groupName = row.group_name.trim()
+    const modelName = row.model_name.trim()
+    if (!groupName || !modelName) {
       continue
     }
-    const hasAnyPrice = [
-      row.input_price,
+    const modelGroupKey = `${modelName.toLowerCase()}\u0000${groupName.toLowerCase()}`
+    if (seenModelGroups.has(modelGroupKey)) {
+      return false
+    }
+    seenModelGroups.add(modelGroupKey)
+    const inputPrice = parsePrice(row.input_price)
+    if (inputPrice == null || inputPrice <= 0) {
+      return false
+    }
+    const hasNegativePrice = [
       row.output_price,
       row.cache_input_price,
       row.cache_create_price,
@@ -154,9 +169,9 @@ function validateRows(rows: ProviderPriceRow[]) {
       row.image_output_price,
     ].some((value) => {
       const parsed = parsePrice(value)
-      return parsed != null && parsed > 0
+      return parsed != null && parsed < 0
     })
-    if (!hasAnyPrice) {
+    if (hasNegativePrice) {
       return false
     }
   }
@@ -227,6 +242,11 @@ export const ProviderPriceExportSection = memo(
                 'Amounts are exported in CNY per 1M tokens. Other sites can read them from `/api/provider/pricing`.'
               )}
             </div>
+            <div>
+              {t(
+                'For Hvoy matching, the group name must be the upstream channel name used by Hvoy, and the model name must match its model id.'
+              )}
+            </div>
           </AlertDescription>
         </Alert>
 
@@ -247,7 +267,7 @@ export const ProviderPriceExportSection = memo(
         {!canSave && (
           <div className='text-sm text-red-500'>
             {t(
-              'Each configured row must include a group name, model name, and at least one price greater than 0.'
+              'Each configured row must include a unique group and model pair, input price greater than 0, and no negative prices.'
             )}
           </div>
         )}

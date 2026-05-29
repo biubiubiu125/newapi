@@ -122,26 +122,64 @@ export default function ProviderPricing() {
     setRows((prev) => prev.filter((_, rowIndex) => rowIndex !== index));
   }
 
+  function hasInvalidExportRow(rows) {
+    const seenModelGroups = new Set();
+    return rows.some((row) => {
+      const groupName = row.group_name.trim();
+      const modelName = row.model_name.trim();
+      if (!groupName || !modelName) {
+        return false;
+      }
+      const modelGroupKey = `${modelName.toLowerCase()}\u0000${groupName.toLowerCase()}`;
+      if (seenModelGroups.has(modelGroupKey)) {
+        return true;
+      }
+      seenModelGroups.add(modelGroupKey);
+      const inputPrice = parsePrice(row.input_price);
+      if (inputPrice == null || inputPrice <= 0) {
+        return true;
+      }
+      return [
+        row.output_price,
+        row.cache_input_price,
+        row.cache_create_price,
+        row.cache_create_price_1h,
+        row.image_output_price,
+      ].some((value) => {
+        const price = parsePrice(value);
+        return price != null && price < 0;
+      });
+    });
+  }
+
   async function save() {
+    if (hasInvalidExportRow(rows)) {
+      showError('每个导出项都必须有唯一的模型和分组组合，输入价格需大于 0，且不能包含负价格');
+      return;
+    }
     setSaving(true);
     try {
       const payload = rows
-        .map((row, index) => ({
-          id: row.id,
-          group_name: row.group_name.trim(),
-          model_name: row.model_name.trim(),
-          input_price: parsePrice(row.input_price),
-          output_price: parsePrice(row.output_price),
-          cache_input_price: parsePrice(row.cache_input_price),
-          cache_create_price: parsePrice(row.cache_create_price),
-          cache_create_price_1h: parsePrice(row.cache_create_price_1h),
-          image_output_price: parsePrice(row.image_output_price),
-          enabled: row.enabled,
-          note: row.note.trim(),
-          sort_order: Number.isFinite(Number(row.sort_order))
-            ? Number(row.sort_order)
-            : index,
-        }))
+        .map((row, index) => {
+          const inputPrice = parsePrice(row.input_price);
+          const outputPrice = parsePrice(row.output_price);
+          return {
+            id: row.id,
+            group_name: row.group_name.trim(),
+            model_name: row.model_name.trim(),
+            input_price: inputPrice,
+            output_price: outputPrice ?? inputPrice,
+            cache_input_price: parsePrice(row.cache_input_price),
+            cache_create_price: parsePrice(row.cache_create_price),
+            cache_create_price_1h: parsePrice(row.cache_create_price_1h),
+            image_output_price: parsePrice(row.image_output_price),
+            enabled: row.enabled,
+            note: row.note.trim(),
+            sort_order: Number.isFinite(Number(row.sort_order))
+              ? Number(row.sort_order)
+              : index,
+          };
+        })
         .filter((row) => row.group_name && row.model_name);
 
       const res = await API.put('/api/user/admin/provider-pricing', {

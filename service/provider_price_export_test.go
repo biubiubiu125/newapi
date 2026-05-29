@@ -1,8 +1,10 @@
 package service
 
 import (
+	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/require"
 )
 
@@ -47,4 +49,91 @@ func TestHasAnyProviderPriceValue(t *testing.T) {
 	nonZero := zero
 	nonZero.InputPrice = &price
 	require.True(t, hasAnyProviderPriceValue(nonZero))
+}
+
+func TestGetPublicProviderPriceExportMatchesHvoyShape(t *testing.T) {
+	common.OptionMapRWMutex.Lock()
+	if common.OptionMap == nil {
+		common.OptionMap = make(map[string]string)
+	}
+	oldRaw := common.OptionMap[ProviderPriceOverridesOptionKey]
+	oldSystemName := common.SystemName
+	common.SystemName = "Test API"
+	common.OptionMap[ProviderPriceOverridesOptionKey] = `[
+		{
+			"id":"row-1",
+			"group_name":"stable-group",
+			"model_name":"gpt-test",
+			"input_price":7.5,
+			"cache_create_price":-1,
+			"enabled":true
+		},
+		{
+			"id":"row-2",
+			"group_name":"cache-only",
+			"model_name":"ignored",
+			"cache_input_price":1,
+			"enabled":true
+		},
+		{
+			"id":"row-3",
+			"group_name":"disabled",
+			"model_name":"gpt-disabled",
+			"input_price":1,
+			"enabled":false
+		},
+		{
+			"id":"row-4",
+			"group_name":"stable-group",
+			"model_name":"gpt-test",
+			"input_price":9,
+			"enabled":true
+		}
+	]`
+	common.OptionMapRWMutex.Unlock()
+	t.Cleanup(func() {
+		common.OptionMapRWMutex.Lock()
+		common.OptionMap[ProviderPriceOverridesOptionKey] = oldRaw
+		common.SystemName = oldSystemName
+		common.OptionMapRWMutex.Unlock()
+	})
+
+	data, err := GetPublicProviderPriceExport()
+	require.NoError(t, err)
+	require.Len(t, data.Models, 2)
+
+	var activeModel ProviderPriceExportModel
+	var disabledModel ProviderPriceExportModel
+	for _, model := range data.Models {
+		if model.ModelName == "gpt-test" {
+			activeModel = model
+		}
+		if model.ModelName == "gpt-disabled" {
+			disabledModel = model
+		}
+	}
+	require.Equal(t, "stable-group", activeModel.GroupName)
+	require.True(t, activeModel.Enabled)
+	require.Equal(t, "disabled", disabledModel.GroupName)
+	require.False(t, disabledModel.Enabled)
+	require.NotNil(t, activeModel.InputPrice)
+	require.NotNil(t, activeModel.OutputPrice)
+	require.Equal(t, *activeModel.InputPrice, *activeModel.OutputPrice)
+
+	modelJSON, err := common.Marshal(activeModel)
+	require.NoError(t, err)
+	modelPayload := string(modelJSON)
+	require.Contains(t, modelPayload, `"output_price":7.5`)
+	require.Contains(t, modelPayload, `"cache_input_price":null`)
+	require.Contains(t, modelPayload, `"cache_create_price":null`)
+	require.Contains(t, modelPayload, `"note":""`)
+	require.NotContains(t, modelPayload, "image_output_price")
+
+	dataJSON, err := common.Marshal(data)
+	require.NoError(t, err)
+	dataPayload := string(dataJSON)
+	require.NotContains(t, dataPayload, "display_only")
+	require.NotContains(t, dataPayload, "affects_billing")
+	require.False(t, strings.Contains(dataPayload, "cache-only"))
+	require.False(t, strings.Contains(dataPayload, `"input_price":9`))
 }
