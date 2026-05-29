@@ -377,6 +377,13 @@ type PasswordResetRequest struct {
 func ResetPassword(c *gin.Context) {
 	var req PasswordResetRequest
 	err := json.NewDecoder(c.Request.Body).Decode(&req)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "invalid params",
+		})
+		return
+	}
 	email := model.NormalizeUserEmail(req.Email)
 	if email == "" || req.Token == "" {
 		c.JSON(http.StatusOK, gin.H{
