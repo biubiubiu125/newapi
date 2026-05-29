@@ -970,6 +970,14 @@ func IsEmailAlreadyTaken(email string) bool {
 	return DB.Unscoped().Where("email_canonical = ?", email).First(&User{}).RowsAffected > 0
 }
 
+func IsActiveEmailAlreadyTaken(email string) bool {
+	email = NormalizeUserEmail(email)
+	if email == "" {
+		return false
+	}
+	return DB.Where("email_canonical = ?", email).First(&User{}).RowsAffected > 0
+}
+
 func IsEmailAlreadyTakenByOther(email string, userId int) bool {
 	email = NormalizeUserEmail(email)
 	if email == "" {
@@ -1007,7 +1015,14 @@ func ResetUserPasswordByEmail(email string, password string) error {
 	if err != nil {
 		return err
 	}
-	return DB.Model(&User{}).Where("email_canonical = ?", email).Update("password", hashedPassword).Error
+	result := DB.Model(&User{}).Where("email_canonical = ?", email).Update("password", hashedPassword)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 var (

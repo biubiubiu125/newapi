@@ -415,7 +415,19 @@ func TestRechargeCreemBackfillsEmailLoginIdentifiers(t *testing.T) {
 	}
 	require.NoError(t, db.Create(topUp).Error)
 
+	cacheRefreshCalled := false
+	originalCacheUpdateUserQuota := cacheUpdateUserQuota
+	cacheUpdateUserQuota = func(userId int) error {
+		cacheRefreshCalled = true
+		require.Equal(t, user.Id, userId)
+		return nil
+	}
+	t.Cleanup(func() {
+		cacheUpdateUserQuota = originalCacheUpdateUserQuota
+	})
+
 	require.NoError(t, RechargeCreem(topUp.TradeNo, " Buyer@Example.COM ", "Buyer", "127.0.0.1"))
+	require.True(t, cacheRefreshCalled)
 
 	var stored User
 	require.NoError(t, db.First(&stored, user.Id).Error)

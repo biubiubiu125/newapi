@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"net/url"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -340,7 +341,7 @@ func SendEmailVerification(c *gin.Context) {
 }
 
 func SendPasswordResetEmail(c *gin.Context) {
-	email := c.Query("email")
+	email := model.NormalizeUserEmail(c.Query("email"))
 	if err := common.Validate.Var(email, "required,email"); err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -348,10 +349,10 @@ func SendPasswordResetEmail(c *gin.Context) {
 		})
 		return
 	}
-	if model.IsEmailAlreadyTaken(email) {
+	if model.IsActiveEmailAlreadyTaken(email) {
 		code := common.GenerateVerificationCode(0)
 		common.RegisterVerificationCodeWithKey(email, code, common.PasswordResetPurpose)
-		link := fmt.Sprintf("%s/user/reset?email=%s&token=%s", system_setting.ServerAddress, email, code)
+		link := fmt.Sprintf("%s/user/reset?email=%s&token=%s", system_setting.ServerAddress, url.QueryEscape(email), url.QueryEscape(code))
 		subject := fmt.Sprintf("%s密码重置", common.SystemName)
 		content := fmt.Sprintf("<p>您好，你正在进行%s密码重置。</p>"+
 			"<p>点击 <a href='%s'>此处</a> 进行密码重置。</p>"+
@@ -376,14 +377,15 @@ type PasswordResetRequest struct {
 func ResetPassword(c *gin.Context) {
 	var req PasswordResetRequest
 	err := json.NewDecoder(c.Request.Body).Decode(&req)
-	if req.Email == "" || req.Token == "" {
+	email := model.NormalizeUserEmail(req.Email)
+	if email == "" || req.Token == "" {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "无效的参数",
 		})
 		return
 	}
-	if !common.VerifyCodeWithKey(req.Email, req.Token, common.PasswordResetPurpose) {
+	if !common.VerifyCodeWithKey(email, req.Token, common.PasswordResetPurpose) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "重置链接非法或已过期",
@@ -391,12 +393,12 @@ func ResetPassword(c *gin.Context) {
 		return
 	}
 	password := common.GenerateVerificationCode(12)
-	err = model.ResetUserPasswordByEmail(req.Email, password)
+	err = model.ResetUserPasswordByEmail(email, password)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	common.DeleteKey(req.Email, common.PasswordResetPurpose)
+	common.DeleteKey(email, common.PasswordResetPurpose)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
