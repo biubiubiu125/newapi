@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -133,7 +132,7 @@ func GitHubOAuth(c *gin.Context) {
 		}
 	} else {
 		if common.RegisterEnabled {
-			user.Username = "github_" + strconv.Itoa(model.GetMaxUserId()+1)
+			user.Username = model.SelectNewUserUsername(githubUser.Login, "github")
 			if githubUser.Name != "" {
 				user.DisplayName = githubUser.Name
 			} else {

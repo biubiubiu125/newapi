@@ -165,10 +165,8 @@ func Register(c *gin.Context) {
 			return
 		}
 	}
-	if len([]rune(user.Username)) > model.RegisterUserNameMaxLength {
-		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{
-			"Error": fmt.Sprintf("username must be at most %d characters long", model.RegisterUserNameMaxLength),
-		})
+	if err := model.ValidateNewUserUsername(user.Username); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
 		return
 	}
 	if err := common.Validate.Struct(&user); err != nil {
@@ -597,6 +595,12 @@ func UpdateUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if updatedUser.Username != originUser.Username {
+		if err := model.ValidateNewUserUsername(updatedUser.Username); err != nil {
+			common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+			return
+		}
+	}
 	myRole := c.GetInt("role")
 	if !canManageTargetRole(myRole, originUser.Role) {
 		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
@@ -740,6 +744,20 @@ func UpdateSelf(c *gin.Context) {
 		return
 	}
 
+	if user.Username != "" {
+		currentUser, err := model.GetUserById(c.GetInt("id"), false)
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		if user.Username != currentUser.Username {
+			if err := model.ValidateNewUserUsername(user.Username); err != nil {
+				common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+				return
+			}
+		}
+	}
+
 	if user.Password == "" {
 		user.Password = "$I_LOVE_U" // make Validator happy :)
 	}
@@ -862,6 +880,10 @@ func CreateUser(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
 			return
 		}
+	}
+	if err := model.ValidateNewUserUsername(user.Username); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+		return
 	}
 	if err := common.Validate.Struct(&user); err != nil {
 		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})

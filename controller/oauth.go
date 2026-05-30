@@ -3,7 +3,7 @@ package controller
 import (
 	"fmt"
 	"net/http"
-	"strconv"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
@@ -13,6 +13,10 @@ import (
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
 )
+
+func buildOAuthUsername(provider oauth.Provider, oauthUser *oauth.OAuthUser) string {
+	return model.SelectNewUserUsername(oauthUser.Username, strings.TrimSuffix(provider.GetProviderPrefix(), "_"))
+}
 
 // providerParams returns map with Provider key for i18n templates
 func providerParams(name string) map[string]any {
@@ -242,16 +246,7 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	}
 
 	// Set up new user
-	user.Username = provider.GetProviderPrefix() + strconv.Itoa(model.GetMaxUserId()+1)
-
-	if oauthUser.Username != "" {
-		if exists, err := model.CheckUserExistOrDeleted(oauthUser.Username, ""); err == nil && !exists {
-			// 防止索引退化
-			if len(oauthUser.Username) <= model.UserNameMaxLength {
-				user.Username = oauthUser.Username
-			}
-		}
-	}
+	user.Username = buildOAuthUsername(provider, oauthUser)
 
 	if oauthUser.DisplayName != "" {
 		user.DisplayName = oauthUser.DisplayName

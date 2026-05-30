@@ -37,6 +37,7 @@ import { Skeleton } from '@/components/ui/skeleton'
 import { ErrorState } from '@/components/error-state'
 import { LanguageSwitcher } from '@/components/language-switcher'
 import { LoadingState } from '@/components/loading-state'
+import { REGISTER_USERNAME_MAX_LENGTH } from '@/features/auth/constants'
 import { buildSetupPayload, getSetupStatus, submitSetup } from './api'
 import { AdminStep } from './components/admin-step'
 import { CompleteStep } from './components/complete-step'
@@ -70,6 +71,7 @@ const DEFAULT_FORM_VALUES: SetupFormValues = {
   confirmPassword: '',
   usageMode: 'external',
 }
+const USERNAME_PATTERN = /^[A-Za-z0-9]+$/
 
 export function SetupWizard() {
   const { t } = useTranslation()
@@ -215,6 +217,24 @@ export function SetupWizard() {
         message: t('Please enter an administrator username'),
       })
       toast.error(t('Please enter an administrator username'))
+      return false
+    }
+
+    if (!USERNAME_PATTERN.test(username)) {
+      form.setError('username', {
+        type: 'manual',
+        message: t('Username can only contain letters and numbers'),
+      })
+      toast.error(t('Username can only contain letters and numbers'))
+      return false
+    }
+
+    if (username.length > REGISTER_USERNAME_MAX_LENGTH) {
+      form.setError('username', {
+        type: 'manual',
+        message: t('Username must be at most 12 characters long'),
+      })
+      toast.error(t('Username must be at most 12 characters long'))
       return false
     }
 

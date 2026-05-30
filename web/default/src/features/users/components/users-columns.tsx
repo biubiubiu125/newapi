@@ -82,6 +82,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'username',
+      size: 200,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Username')} />
       ),
@@ -91,9 +92,9 @@ export function useUsersColumns(): ColumnDef<User>[] {
         const remark = row.original.remark
 
         return (
-          <div className='flex min-w-[160px] flex-col gap-1'>
-            <div className='flex items-center gap-2'>
-              <LongText className='max-w-[140px] font-medium'>
+          <div className='flex w-[192px] flex-col gap-1'>
+            <div className='flex items-center gap-2 overflow-hidden'>
+              <LongText className='min-w-0 flex-1 font-medium'>
                 {username}
               </LongText>
               {remark && (
@@ -101,7 +102,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
                   <TooltipTrigger
                     render={<StatusBadge variant='success' copyable={false} />}
                   >
-                    <LongText className='max-w-[80px]'>{remark}</LongText>
+                    <LongText className='max-w-[64px] shrink-0'>{remark}</LongText>
                   </TooltipTrigger>
                   <TooltipContent>
                     <p className='text-xs'>{remark}</p>
@@ -110,7 +111,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
               )}
             </div>
             {displayName && displayName !== username && (
-              <LongText className='text-muted-foreground max-w-[180px] text-xs'>
+              <LongText className='text-muted-foreground max-w-[192px] text-xs'>
                 {displayName}
               </LongText>
             )}
@@ -119,6 +120,25 @@ export function useUsersColumns(): ColumnDef<User>[] {
       },
       enableHiding: false,
       meta: { label: t('Username'), mobileTitle: true },
+    },
+    {
+      accessorKey: 'email',
+      size: 200,
+      header: ({ column }) => (
+        <DataTableColumnHeader column={column} title={t('Email')} />
+      ),
+      cell: ({ row }) => {
+        const email = row.original.email
+        return email ? (
+          <LongText className='text-muted-foreground max-w-[192px] text-sm'>
+            {email}
+          </LongText>
+        ) : (
+          <span className='text-muted-foreground text-sm'>-</span>
+        )
+      },
+      enableSorting: false,
+      meta: { label: t('Email'), mobileHidden: true },
     },
     {
       accessorKey: 'referral_inviter_username',

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"regexp"
 	"strconv"
 	"strings"
 
@@ -18,6 +19,9 @@ import (
 
 const UserNameMaxLength = 20
 const RegisterUserNameMaxLength = 12
+const NewUserUsernameFormatError = "username can only contain letters and numbers"
+
+var usernameNonAlphanumericRegex = regexp.MustCompile(`[^A-Za-z0-9]+`)
 
 // User if you add sensitive fields, don't forget to clean them in setupLogin function.
 // Otherwise, the sensitive information will be saved on local storage in plain text!
@@ -67,6 +71,76 @@ type UserLoginIdentifier struct {
 
 func NormalizeUserEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
+}
+
+func isAlphanumericUsername(username string) bool {
+	if username == "" {
+		return false
+	}
+	for _, r := range username {
+		if r >= 'a' && r <= 'z' {
+			continue
+		}
+		if r >= 'A' && r <= 'Z' {
+			continue
+		}
+		if r >= '0' && r <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func IsValidNewUserUsername(username string) bool {
+	return isAlphanumericUsername(username) && len([]rune(username)) <= RegisterUserNameMaxLength
+}
+
+func ValidateNewUserUsername(username string) error {
+	if !isAlphanumericUsername(username) {
+		return ErrUserUsernameInvalid
+	}
+	if len([]rune(username)) > RegisterUserNameMaxLength {
+		return ErrUserUsernameTooLong
+	}
+	return nil
+}
+
+func NormalizeNewUserUsernameCandidate(username string) string {
+	username = usernameNonAlphanumericRegex.ReplaceAllString(strings.TrimSpace(username), "")
+	usernameRunes := []rune(username)
+	if len(usernameRunes) > RegisterUserNameMaxLength {
+		return string(usernameRunes[:RegisterUserNameMaxLength])
+	}
+	return username
+}
+
+func GenerateNewUserUsername(prefix string) string {
+	prefix = NormalizeNewUserUsernameCandidate(prefix)
+	if prefix == "" {
+		prefix = "user"
+	}
+	idPart := strconv.Itoa(GetMaxUserId()+1) + common.GetRandomString(6)
+	maxPrefixLength := RegisterUserNameMaxLength - len([]rune(idPart))
+	if maxPrefixLength <= 0 {
+		idRunes := []rune(idPart)
+		return string(idRunes[len(idRunes)-RegisterUserNameMaxLength:])
+	}
+	prefixRunes := []rune(prefix)
+	if len(prefixRunes) > maxPrefixLength {
+		prefix = string(prefixRunes[:maxPrefixLength])
+	}
+	return prefix + idPart
+}
+
+func SelectNewUserUsername(preferredUsername, fallbackPrefix string) string {
+	preferredUsername = NormalizeNewUserUsernameCandidate(preferredUsername)
+	if IsValidNewUserUsername(preferredUsername) {
+		if exists, err := CheckUserExistOrDeleted(preferredUsername, ""); err == nil && !exists {
+			return preferredUsername
+		}
+	}
+	return GenerateNewUserUsername(fallbackPrefix)
 }
 
 func (user *User) normalizeEmailForPersistence() {
@@ -1030,6 +1104,8 @@ var (
 	ErrUserDeleted              = errors.New("user deleted")
 	ErrUserPasswordIncorrect    = errors.New("password incorrect")
 	ErrUserLoginIdentifierTaken = errors.New("user login identifier taken")
+	ErrUserUsernameInvalid      = errors.New(NewUserUsernameFormatError)
+	ErrUserUsernameTooLong      = fmt.Errorf("username must be at most %d characters long", RegisterUserNameMaxLength)
 )
 
 func IsUserEmailUniqueError(err error) bool {
@@ -1046,7 +1122,9 @@ func IsUserEmailUniqueError(err error) bool {
 	return (strings.Contains(message, "idx_users_email_canonical_unique") && hasUniqueSignal) ||
 		(strings.Contains(message, "idx_user_login_identifiers_identifier") && hasUniqueSignal) ||
 		(strings.Contains(message, "user_login_identifiers") && hasUniqueSignal) ||
-		(strings.Contains(message, "email_canonical") && hasUniqueSignal)
+		(strings.Contains(message, "email_canonical") && hasUniqueSignal) ||
+		(strings.Contains(message, "users.username") && hasUniqueSignal) ||
+		(strings.Contains(message, "idx_users_username") && hasUniqueSignal)
 }
 
 func IsAdmin(userId int) bool {

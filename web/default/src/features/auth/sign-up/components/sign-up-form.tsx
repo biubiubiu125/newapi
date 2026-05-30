@@ -37,6 +37,7 @@ import {
 import {
   Form,
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -68,6 +69,7 @@ export function SignUpForm({
   const { t } = useTranslation()
   const [isLoading, setIsLoading] = useState(false)
   const [verificationCode, setVerificationCode] = useState('')
+  const [isVerificationCodeSent, setIsVerificationCodeSent] = useState(false)
   const [agreedToLegal, setAgreedToLegal] = useState(false)
   const [wechatCode, setWeChatCode] = useState('')
   const [isWeChatDialogOpen, setIsWeChatDialogOpen] = useState(false)
@@ -144,6 +146,10 @@ export function SignUpForm({
     }
   }, [])
 
+  useEffect(() => {
+    setIsVerificationCodeSent(false)
+  }, [emailValue])
+
   async function onSubmit(data: z.infer<typeof registerFormSchema>) {
     if (requiresLegalConsent && !agreedToLegal) {
       toast.error(legalConsentErrorMessage)
@@ -189,7 +195,10 @@ export function SignUpForm({
   }
 
   async function handleSendVerificationCode() {
-    await sendCode(emailValue || '')
+    const sent = await sendCode(emailValue || '')
+    if (sent) {
+      setIsVerificationCodeSent(true)
+    }
   }
 
   const handleOpenWeChatDialog = () => {
@@ -253,6 +262,11 @@ export function SignUpForm({
                   {...field}
                 />
               </FormControl>
+              <FormDescription>
+                {t(
+                  'Only letters and numbers are supported, up to 12 characters. This username will be used for sign-in and account identification.'
+                )}
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -271,6 +285,9 @@ export function SignUpForm({
                   {...field}
                 />
               </FormControl>
+              <FormDescription>
+                {t('Password length must be 8-20 characters.')}
+              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -296,11 +313,7 @@ export function SignUpForm({
           name='email'
           render={({ field }) => (
             <FormItem>
-              <FormLabel>
-                {emailVerificationRequired
-                  ? t('Email (required for verification)')
-                  : t('Email')}
-              </FormLabel>
+              <FormLabel>{t('Email')}</FormLabel>
               <FormControl>
                 <Input
                   placeholder={t('name@example.com')}
@@ -308,6 +321,13 @@ export function SignUpForm({
                   {...field}
                 />
               </FormControl>
+              {emailVerificationRequired && (
+                <FormDescription>
+                  {t(
+                    'This email is used to receive verification codes. Verification email delivery may be briefly delayed. Please check your inbox, spam, or promotions folder.'
+                  )}
+                </FormDescription>
+              )}
               <FormMessage />
             </FormItem>
           )}
@@ -344,6 +364,13 @@ export function SignUpForm({
                 )}
               </Button>
             </div>
+            {isVerificationCodeSent && (
+              <p className='text-muted-foreground text-xs'>
+                {t(
+                  'Verification code sent. If it does not arrive, check spam or promotions, or try again later.'
+                )}
+              </p>
+            )}
           </>
         )}
 

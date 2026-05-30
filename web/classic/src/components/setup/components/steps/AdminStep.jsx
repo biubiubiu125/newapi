@@ -21,6 +21,9 @@ import React from 'react';
 import { Banner, Form } from '@douyinfe/semi-ui';
 import { IconUser, IconLock } from '@douyinfe/semi-icons';
 
+const USERNAME_PATTERN = /^[A-Za-z0-9]+$/;
+const REGISTER_USERNAME_MAX_LENGTH = 12;
+
 /**
  * 管理员账号设置步骤组件
  * 提供管理员用户名和密码的设置界面
@@ -54,9 +57,29 @@ const AdminStep = ({
             placeholder={t('请输入管理员用户名')}
             prefix={<IconUser />}
             showClear
+            maxLength={REGISTER_USERNAME_MAX_LENGTH}
+            extraText={t(
+              '仅支持英文字母和数字，最多 12 个字符，注册后将用于登录和账户识别。',
+            )}
             noLabel={false}
             validateStatus='default'
-            rules={[{ required: true, message: t('请输入管理员用户名') }]}
+            rules={[
+              { required: true, message: t('请输入管理员用户名') },
+              {
+                validator: (_rule, value) => {
+                  if (!value) {
+                    return Promise.resolve();
+                  }
+                  if (!USERNAME_PATTERN.test(value)) {
+                    return Promise.reject(t('用户名只能包含英文字母和数字'));
+                  }
+                  if (value.length > REGISTER_USERNAME_MAX_LENGTH) {
+                    return Promise.reject(t('用户名最多 12 个字符'));
+                  }
+                  return Promise.resolve();
+                },
+              },
+            ]}
             initValue={formData.username || ''}
             onChange={(value) => {
               setFormData({ ...formData, username: value });

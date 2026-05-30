@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -142,11 +141,7 @@ func DiscordOAuth(c *gin.Context) {
 		}
 	} else {
 		if common.RegisterEnabled {
-			if discordUser.ID != "" {
-				user.Username = discordUser.ID
-			} else {
-				user.Username = "discord_" + strconv.Itoa(model.GetMaxUserId()+1)
-			}
+			user.Username = model.SelectNewUserUsername(discordUser.ID, "discord")
 			if discordUser.Name != "" {
 				user.DisplayName = discordUser.Name
 			} else {

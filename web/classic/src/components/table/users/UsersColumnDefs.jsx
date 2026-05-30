@@ -38,6 +38,20 @@ import {
 
 const renderTimestamp = (text) => (text ? timestamp2string(text) : '-');
 
+const renderEmail = (text) => {
+  if (!text) {
+    return '-';
+  }
+  return (
+    <Typography.Text
+      ellipsis={{ showTooltip: true }}
+      style={{ maxWidth: 220 }}
+    >
+      {text}
+    </Typography.Text>
+  );
+};
+
 const renderRole = (role, t) => {
   switch (role) {
     case 1:
@@ -69,27 +83,38 @@ const renderRole = (role, t) => {
 
 const renderUsername = (text, record) => {
   const remark = record.remark;
-  if (!remark) {
-    return <span>{text}</span>;
-  }
+  const displayName = record.display_name;
   const maxLen = 10;
   const displayRemark =
-    remark.length > maxLen ? remark.slice(0, maxLen) + '…' : remark;
+    remark && remark.length > maxLen ? remark.slice(0, maxLen) + '…' : remark;
   return (
-    <Space spacing={2}>
-      <span>{text}</span>
-      <Tooltip content={remark} position='top' showArrow>
-        <Tag color='white' shape='circle' className='!text-xs'>
-          <div className='flex items-center gap-1'>
-            <div
-              className='w-2 h-2 flex-shrink-0 rounded-full'
-              style={{ backgroundColor: '#10b981' }}
-            />
-            {displayRemark}
-          </div>
-        </Tag>
-      </Tooltip>
-    </Space>
+    <div className='flex flex-col gap-1 min-w-[160px]'>
+      <Space spacing={2}>
+        <Typography.Text ellipsis={{ showTooltip: true }}>{text}</Typography.Text>
+        {remark && (
+          <Tooltip content={remark} position='top' showArrow>
+            <Tag color='white' shape='circle' className='!text-xs'>
+              <div className='flex items-center gap-1'>
+                <div
+                  className='w-2 h-2 flex-shrink-0 rounded-full'
+                  style={{ backgroundColor: '#10b981' }}
+                />
+                {displayRemark}
+              </div>
+            </Tag>
+          </Tooltip>
+        )}
+      </Space>
+      {displayName && displayName !== text && (
+        <Typography.Text
+          type='tertiary'
+          size='small'
+          ellipsis={{ showTooltip: true }}
+        >
+          {displayName}
+        </Typography.Text>
+      )}
+    </div>
   );
 };
 
@@ -286,6 +311,11 @@ export const getUsersColumns = ({
       title: t('用户名'),
       dataIndex: 'username',
       render: (text, record) => renderUsername(text, record),
+    },
+    {
+      title: t('邮箱'),
+      dataIndex: 'email',
+      render: renderEmail,
     },
     {
       title: t('状态'),

@@ -28,6 +28,9 @@ import AdminStep from './components/steps/AdminStep';
 import UsageModeStep from './components/steps/UsageModeStep';
 import CompleteStep from './components/steps/CompleteStep';
 
+const USERNAME_PATTERN = /^[A-Za-z0-9]+$/;
+const REGISTER_USERNAME_MAX_LENGTH = 12;
+
 const SetupWizard = () => {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
@@ -146,6 +149,15 @@ const SetupWizard = () => {
           showError(t('密码长度至少为8个字符'));
           return false;
         }
+        const username = formData.username.trim();
+        if (!USERNAME_PATTERN.test(username)) {
+          showError(t('用户名只能包含英文字母和数字'));
+          return false;
+        }
+        if (username.length > REGISTER_USERNAME_MAX_LENGTH) {
+          showError(t('用户名最多 12 个字符'));
+          return false;
+        }
         return true;
       case 2: // 使用模式步骤
         if (!formData.usageMode) {
@@ -176,6 +188,17 @@ const SetupWizard = () => {
     if (!setupStatus.root_init) {
       if (!values.username || !values.username.trim()) {
         showError(t('请输入管理员用户名'));
+        return;
+      }
+
+      const username = values.username.trim();
+      if (!USERNAME_PATTERN.test(username)) {
+        showError(t('用户名只能包含英文字母和数字'));
+        return;
+      }
+
+      if (username.length > REGISTER_USERNAME_MAX_LENGTH) {
+        showError(t('用户名最多 12 个字符'));
         return;
       }
 

@@ -65,6 +65,9 @@ import { StatusContext } from '../../context/Status';
 import { useTranslation } from 'react-i18next';
 import { SiDiscord } from 'react-icons/si';
 
+const USERNAME_PATTERN = /^[A-Za-z0-9]+$/;
+const REGISTER_USERNAME_MAX_LENGTH = 12;
+
 const RegisterForm = () => {
   let navigate = useNavigate();
   const { t } = useTranslation();
@@ -216,8 +219,20 @@ const RegisterForm = () => {
   }
 
   async function handleSubmit(e) {
+    if (!USERNAME_PATTERN.test(username)) {
+      showInfo(t('用户名只能包含英文字母和数字'));
+      return;
+    }
+    if (username.length > REGISTER_USERNAME_MAX_LENGTH) {
+      showInfo(t('用户名最多 12 个字符'));
+      return;
+    }
     if (password.length < 8) {
       showInfo('密码长度不得小于 8 位！');
+      return;
+    }
+    if (password.length > 20) {
+      showInfo(t('密码长度为 8-20 个字符。'));
       return;
     }
     if (password !== password2) {
@@ -267,8 +282,8 @@ const RegisterForm = () => {
       );
       const { success, message } = res.data;
       if (success) {
-        showSuccess('验证码发送成功，请检查你的邮箱！');
-        setDisableButton(true); // 发送成功后禁用按钮，开始倒计时
+        showSuccess(t('验证码已发送。如暂未收到，请检查垃圾邮件或广告邮件，或稍后再试。'));
+        setDisableButton(true);
       } else {
         showError(message);
       }
@@ -578,8 +593,12 @@ const RegisterForm = () => {
                   label={t('用户名')}
                   placeholder={t('请输入用户名')}
                   name='username'
+                  maxLength={REGISTER_USERNAME_MAX_LENGTH}
                   onChange={(value) => handleChange('username', value)}
                   prefix={<IconUser />}
+                  extraText={t(
+                    '仅支持英文字母和数字，最多 12 个字符，注册后将用于登录和账户识别。',
+                  )}
                 />
 
                 <Form.Input
@@ -590,6 +609,7 @@ const RegisterForm = () => {
                   mode='password'
                   onChange={(value) => handleChange('password', value)}
                   prefix={<IconLock />}
+                  extraText={t('密码长度为 8-20 个字符。')}
                 />
 
                 <Form.Input
@@ -610,6 +630,13 @@ const RegisterForm = () => {
                   type='email'
                   onChange={(value) => handleChange('email', value)}
                   prefix={<IconMail />}
+                  extraText={
+                    showEmailVerification
+                      ? t(
+                          '用于接收验证码。验证码邮件可能会有短暂延迟，请留意收件箱、垃圾邮件或广告邮件。',
+                        )
+                      : undefined
+                  }
                   suffix={
                     showEmailVerification ? (
                       <Button

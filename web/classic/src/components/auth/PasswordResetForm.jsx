@@ -95,7 +95,11 @@ const PasswordResetForm = () => {
     );
     const { success, message } = res.data;
     if (success) {
-      showSuccess(t('重置邮件发送成功，请检查邮箱！'));
+      showSuccess(
+        t(
+          '如果该邮箱已注册，重置邮件将发送到该邮箱。请检查收件箱、垃圾邮件或广告邮件。',
+        ),
+      );
       setInputs({ ...inputs, email: '' });
     } else {
       showError(message);
@@ -140,6 +144,9 @@ const PasswordResetForm = () => {
                     value={email}
                     onChange={handleChange}
                     prefix={<IconMail />}
+                    extraText={t(
+                      '输入注册时使用的邮箱。如果该邮箱已注册，我们会发送重置密码链接。',
+                    )}
                   />
 
                   <div className='space-y-2 pt-2'>

@@ -25,6 +25,8 @@ export { getUserActionMessage } from './user-actions'
 // Form Utilities
 // ============================================================================
 export {
+  newUserFormSchema,
+  REGISTER_USERNAME_MAX_LENGTH,
   userFormSchema,
   type UserFormValues,
   USER_FORM_DEFAULT_VALUES,

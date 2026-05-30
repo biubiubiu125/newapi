@@ -58,7 +58,11 @@ export function useEmailVerification(options?: UseEmailVerificationOptions) {
       const res = await sendEmailVerification(email, options?.turnstileToken)
       if (res?.success) {
         startCountdown()
-        toast.success(i18next.t('Verification email sent'))
+        toast.success(
+          i18next.t(
+            'Verification code sent. If it does not arrive, check spam or promotions, or try again later.'
+          )
+        )
         return true
       }
       toast.error(

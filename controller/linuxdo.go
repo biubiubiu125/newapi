@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
-	"strconv"
 	"strings"
 	"time"
 
@@ -45,7 +44,7 @@ func LinuxDoBind(c *gin.Context) {
 	}
 
 	user := model.User{
-		LinuxDOId: strconv.Itoa(linuxdoUser.Id),
+		LinuxDOId: fmt.Sprintf("%d", linuxdoUser.Id),
 	}
 
 	if model.IsLinuxDOIdAlreadyTaken(user.LinuxDOId) {
@@ -66,7 +65,7 @@ func LinuxDoBind(c *gin.Context) {
 		return
 	}
 
-	user.LinuxDOId = strconv.Itoa(linuxdoUser.Id)
+	user.LinuxDOId = fmt.Sprintf("%d", linuxdoUser.Id)
 	err = user.Update(false)
 	if err != nil {
 		common.ApiError(c, err)
@@ -200,7 +199,7 @@ func LinuxdoOAuth(c *gin.Context) {
 	}
 
 	user := model.User{
-		LinuxDOId: strconv.Itoa(linuxdoUser.Id),
+		LinuxDOId: fmt.Sprintf("%d", linuxdoUser.Id),
 	}
 
 	// Check if user exists
@@ -223,7 +222,7 @@ func LinuxdoOAuth(c *gin.Context) {
 	} else {
 		if common.RegisterEnabled {
 			if linuxdoUser.TrustLevel >= common.LinuxDOMinimumTrustLevel {
-				user.Username = "linuxdo_" + strconv.Itoa(model.GetMaxUserId()+1)
+				user.Username = model.SelectNewUserUsername(linuxdoUser.Username, "linuxdo")
 				user.DisplayName = linuxdoUser.Name
 				user.Role = common.RoleCommonUser
 				user.Status = common.UserStatusEnabled

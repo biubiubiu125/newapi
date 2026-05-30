@@ -74,8 +74,8 @@ export function ChangePasswordDialog({
       return
     }
 
-    if (formData.newPassword.length < 8) {
-      toast.error(t('Password must be at least 8 characters'))
+    if (formData.newPassword.length < 8 || formData.newPassword.length > 20) {
+      toast.error(t('Password length must be 8-20 characters.'))
       return
     }
 
@@ -150,10 +150,11 @@ export function ChangePasswordDialog({
                 disabled={loading}
                 required
                 minLength={8}
+                maxLength={20}
                 autoComplete='new-password'
               />
               <p className='text-muted-foreground text-xs'>
-                {t('Must be at least 8 characters')}
+                {t('Password length must be 8-20 characters.')}
               </p>
             </div>
 

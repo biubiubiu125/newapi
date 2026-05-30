@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   FormControl,
+  FormDescription,
   FormField,
   FormItem,
   FormLabel,
@@ -29,6 +30,7 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { PasswordInput } from '@/components/password-input'
+import { REGISTER_USERNAME_MAX_LENGTH } from '@/features/auth/constants'
 import type { SetupFormValues } from '../types'
 
 interface AdminStepProps {
@@ -64,12 +66,18 @@ export function AdminStep({ form, rootInitialized }: AdminStepProps) {
                 {...field}
                 placeholder={t('Choose a username')}
                 autoComplete='username'
+                maxLength={REGISTER_USERNAME_MAX_LENGTH}
                 onChange={(event) => {
                   form.clearErrors('username')
                   field.onChange(event)
                 }}
               />
             </FormControl>
+            <FormDescription>
+              {t(
+                'Only letters and numbers are supported, up to 12 characters. This username will be used for sign-in and account identification.'
+              )}
+            </FormDescription>
             <FormMessage />
           </FormItem>
         )}

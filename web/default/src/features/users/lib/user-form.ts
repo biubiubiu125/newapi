@@ -25,6 +25,15 @@ import { type UserFormData, type User } from '../types'
 // Form Schema
 // ============================================================================
 
+export const USERNAME_FORMAT_MESSAGE =
+  'Username can only contain letters and numbers'
+export const REGISTER_USERNAME_MAX_LENGTH = 12
+const newUsernameSchema = z
+  .string()
+  .min(1, 'Username is required')
+  .regex(/^[A-Za-z0-9]+$/, USERNAME_FORMAT_MESSAGE)
+  .max(REGISTER_USERNAME_MAX_LENGTH, 'Username must be at most 12 characters long')
+
 export const userFormSchema = z.object({
   username: z.string().min(1, 'Username is required'),
   display_name: z.string().optional(),
@@ -34,6 +43,10 @@ export const userFormSchema = z.object({
   quota_dollars: z.number().min(0).optional(),
   group: z.string().optional(),
   remark: z.string().optional(),
+})
+
+export const newUserFormSchema = userFormSchema.extend({
+  username: newUsernameSchema,
 })
 
 export type UserFormValues = z.infer<typeof userFormSchema>

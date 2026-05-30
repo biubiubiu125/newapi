@@ -65,6 +65,8 @@ import {
 import { createUser, updateUser, getUser, getGroups } from '../api'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
+  newUserFormSchema,
+  REGISTER_USERNAME_MAX_LENGTH,
   userFormSchema,
   type UserFormValues,
   USER_FORM_DEFAULT_VALUES,
@@ -102,7 +104,7 @@ export function UsersMutateDrawer({
   const groups = groupsData?.data || []
 
   const form = useForm<UserFormValues>({
-    resolver: zodResolver(userFormSchema),
+    resolver: zodResolver(isUpdate ? userFormSchema : newUserFormSchema),
     defaultValues: USER_FORM_DEFAULT_VALUES,
   })
 
@@ -225,8 +227,18 @@ export function UsersMutateDrawer({
                           {...field}
                           placeholder={t('Enter username')}
                           disabled={isUpdate}
+                          maxLength={
+                            isUpdate ? undefined : REGISTER_USERNAME_MAX_LENGTH
+                          }
                         />
                       </FormControl>
+                      {!isUpdate && (
+                        <FormDescription>
+                          {t(
+                            'Only letters and numbers are supported, up to 12 characters. This username will be used for sign-in and account identification.'
+                          )}
+                        </FormDescription>
+                      )}
                       <FormMessage />
                     </FormItem>
                   )}

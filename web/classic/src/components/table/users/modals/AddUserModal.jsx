@@ -37,6 +37,8 @@ import { IconSave, IconClose, IconUserAdd } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
 
 const { Text, Title } = Typography;
+const USERNAME_PATTERN = /^[A-Za-z0-9]+$/;
+const REGISTER_USERNAME_MAX_LENGTH = 12;
 
 const AddUserModal = (props) => {
   const { t } = useTranslation();
@@ -144,7 +146,27 @@ const AddUserModal = (props) => {
                       field='username'
                       label={t('用户名')}
                       placeholder={t('请输入用户名')}
-                      rules={[{ required: true, message: t('请输入用户名') }]}
+                      maxLength={REGISTER_USERNAME_MAX_LENGTH}
+                      extraText={t(
+                        '仅支持英文字母和数字，最多 12 个字符，注册后将用于登录和账户识别。',
+                      )}
+                      rules={[
+                        { required: true, message: t('请输入用户名') },
+                        {
+                          validator: (_rule, value) => {
+                            if (!value) {
+                              return true;
+                            }
+                            if (!USERNAME_PATTERN.test(value)) {
+                              return new Error(t('用户名只能包含英文字母和数字'));
+                            }
+                            if (value.length > REGISTER_USERNAME_MAX_LENGTH) {
+                              return new Error(t('用户名最多 12 个字符'));
+                            }
+                            return true;
+                          },
+                        },
+                      ]}
                       showClear
                     />
                   </Col>
