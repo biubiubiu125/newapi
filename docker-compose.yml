@@ -11,8 +11,8 @@ services:
       - ./data:/data
       - ./logs:/app/logs
     environment:
-      - SQL_DSN=postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/${POSTGRES_DB:-new-api}
-      - REDIS_CONN_STRING=redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379
+      - SQL_DSN=postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@newapi-postgres:5432/${POSTGRES_DB:-new-api}
+      - REDIS_CONN_STRING=redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@newapi-redis:6379
       - SESSION_SECRET=${SESSION_SECRET:?set SESSION_SECRET in .env}
       - TZ=${TZ:-Asia/Shanghai}
       - ERROR_LOG_ENABLED=${ERROR_LOG_ENABLED:-true}
@@ -33,9 +33,9 @@ services:
       - CRITICAL_RATE_LIMIT=${CRITICAL_RATE_LIMIT:-20}
       - CRITICAL_RATE_LIMIT_DURATION=${CRITICAL_RATE_LIMIT_DURATION:-1200}
     depends_on:
-      redis:
+      newapi-redis:
         condition: service_healthy
-      postgres:
+      newapi-postgres:
         condition: service_healthy
     networks:
       - new-api-network
@@ -45,7 +45,7 @@ services:
       timeout: 10s
       retries: 3
 
-  redis:
+  newapi-redis:
     image: redis:7-alpine
     container_name: ${CONTAINER_PREFIX:-newapi}-redis
     restart: always
@@ -60,7 +60,7 @@ services:
     networks:
       - new-api-network
 
-  postgres:
+  newapi-postgres:
     image: postgres:15-alpine
     container_name: ${CONTAINER_PREFIX:-newapi}-postgres
     restart: always
