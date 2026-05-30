@@ -74,27 +74,6 @@ var DB *gorm.DB
 
 var LOG_DB *gorm.DB
 
-func createRootAccountIfNeed() error {
-	var user User
-	//if user.Status != common.UserStatusEnabled {
-	if err := DB.First(&user).Error; err != nil {
-		common.SysLog("no user exists, create a root user for you: username is root, password is 123456")
-		rootUser := User{
-			Username:    "root",
-			Password:    "123456",
-			Role:        common.RoleRootUser,
-			Status:      common.UserStatusEnabled,
-			DisplayName: "Root User",
-			AccessToken: nil,
-			Quota:       100000000,
-		}
-		if err := rootUser.InsertPreserveQuota(0); err != nil {
-			return err
-		}
-	}
-	return nil
-}
-
 func CheckSetup() {
 	setup := GetSetup()
 	if setup == nil {

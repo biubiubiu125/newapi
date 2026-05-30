@@ -186,10 +186,11 @@ func RequestCreemPay(c *gin.Context) {
 
 // 新的Creem Webhook结构体，匹配实际的webhook数据格式
 type CreemWebhookEvent struct {
-	Id        string `json:"id"`
-	EventType string `json:"eventType"`
-	CreatedAt int64  `json:"created_at"`
-	Object    struct {
+	Id             string `json:"id"`
+	EventType      string `json:"eventType"`
+	EventTypeSnake string `json:"event_type"`
+	CreatedAt      int64  `json:"created_at"`
+	Object         struct {
 		Id        string `json:"id"`
 		Object    string `json:"object"`
 		RequestId string `json:"request_id"`
@@ -245,6 +246,17 @@ type CreemWebhookEvent struct {
 	} `json:"object"`
 }
 
+func (event *CreemWebhookEvent) NormalizedEventType() string {
+	if event == nil {
+		return ""
+	}
+	eventType := strings.TrimSpace(event.EventTypeSnake)
+	if eventType == "" {
+		eventType = strings.TrimSpace(event.EventType)
+	}
+	return eventType
+}
+
 func CreemWebhook(c *gin.Context) {
 	if !isCreemWebhookEnabled() {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Creem webhook 被拒绝 reason=webhook_disabled path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
@@ -289,14 +301,15 @@ func CreemWebhook(c *gin.Context) {
 		return
 	}
 
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Creem webhook 解析成功 event_type=%s event_id=%s request_id=%s order_id=%s order_status=%s", webhookEvent.EventType, webhookEvent.Id, webhookEvent.Object.RequestId, webhookEvent.Object.Order.Id, webhookEvent.Object.Order.Status))
+	eventType := webhookEvent.NormalizedEventType()
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Creem webhook 解析成功 event_type=%s event_id=%s request_id=%s order_id=%s order_status=%s", eventType, webhookEvent.Id, webhookEvent.Object.RequestId, webhookEvent.Object.Order.Id, webhookEvent.Object.Order.Status))
 
 	// 根据事件类型处理不同的webhook
-	switch webhookEvent.EventType {
+	switch eventType {
 	case "checkout.completed":
 		handleCheckoutCompleted(c, &webhookEvent)
 	default:
-		logger.LogInfo(c.Request.Context(), fmt.Sprintf("Creem webhook 忽略事件 event_type=%s event_id=%s", webhookEvent.EventType, webhookEvent.Id))
+		logger.LogInfo(c.Request.Context(), fmt.Sprintf("Creem webhook 忽略事件 event_type=%s event_id=%s", eventType, webhookEvent.Id))
 		c.Status(http.StatusOK)
 	}
 }
