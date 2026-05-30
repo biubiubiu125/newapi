@@ -78,14 +78,32 @@ func redisSlidingWindowAllowed(ctx context.Context, key string, maxRequestNum in
 func abortOnRateLimitResult(c *gin.Context, allowed bool, err error) {
 	if err != nil {
 		fmt.Println(err.Error())
-		c.Status(http.StatusInternalServerError)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": "rate limiter error",
+		})
 		c.Abort()
 		return
 	}
 	if !allowed {
-		c.Status(http.StatusTooManyRequests)
-		c.Abort()
+		abortTooManyRequests(c)
 	}
+}
+
+func abortTooManyRequests(c *gin.Context) {
+	c.JSON(http.StatusTooManyRequests, gin.H{
+		"success": false,
+		"message": "Too many requests",
+	})
+	c.Abort()
+}
+
+func abortUnauthorized(c *gin.Context) {
+	c.JSON(http.StatusUnauthorized, gin.H{
+		"success": false,
+		"message": "Unauthorized",
+	})
+	c.Abort()
 }
 
 func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark string) {
@@ -98,8 +116,7 @@ func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark st
 func memoryRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark string) {
 	key := mark + c.ClientIP()
 	if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
-		c.Status(http.StatusTooManyRequests)
-		c.Abort()
+		abortTooManyRequests(c)
 		return
 	}
 }
@@ -155,8 +172,7 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 		return func(c *gin.Context) {
 			userId := c.GetInt("id")
 			if userId == 0 {
-				c.Status(http.StatusUnauthorized)
-				c.Abort()
+				abortUnauthorized(c)
 				return
 			}
 			key := fmt.Sprintf("rateLimit:%s:user:%d", mark, userId)
@@ -168,14 +184,12 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 	return func(c *gin.Context) {
 		userId := c.GetInt("id")
 		if userId == 0 {
-			c.Status(http.StatusUnauthorized)
-			c.Abort()
+			abortUnauthorized(c)
 			return
 		}
 		key := fmt.Sprintf("%s:user:%d", mark, userId)
 		if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
-			c.Status(http.StatusTooManyRequests)
-			c.Abort()
+			abortTooManyRequests(c)
 			return
 		}
 	}

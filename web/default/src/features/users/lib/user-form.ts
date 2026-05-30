@@ -26,13 +26,13 @@ import { type UserFormData, type User } from '../types'
 // ============================================================================
 
 export const USERNAME_FORMAT_MESSAGE =
-  'Username can only contain letters and numbers'
-export const REGISTER_USERNAME_MAX_LENGTH = 12
+  'Username can only contain letters, numbers, underscores, and hyphens'
+export const REGISTER_USERNAME_MAX_LENGTH = 20
 const newUsernameSchema = z
   .string()
   .min(1, 'Username is required')
-  .regex(/^[A-Za-z0-9]+$/, USERNAME_FORMAT_MESSAGE)
-  .max(REGISTER_USERNAME_MAX_LENGTH, 'Username must be at most 12 characters long')
+  .regex(/^[A-Za-z0-9_-]+$/, USERNAME_FORMAT_MESSAGE)
+  .max(REGISTER_USERNAME_MAX_LENGTH, 'Username must be at most 20 characters long')
 
 export const userFormSchema = z.object({
   username: z.string().min(1, 'Username is required'),

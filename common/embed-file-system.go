@@ -15,6 +15,16 @@ type embedFileSystem struct {
 	http.FileSystem
 }
 
+type emptyFileSystem struct{}
+
+func (e *emptyFileSystem) Exists(prefix string, path string) bool {
+	return false
+}
+
+func (e *emptyFileSystem) Open(name string) (http.File, error) {
+	return nil, os.ErrNotExist
+}
+
 func (e *embedFileSystem) Exists(prefix string, path string) bool {
 	_, err := e.Open(path)
 	if err != nil {
@@ -35,7 +45,7 @@ func (e *embedFileSystem) Open(name string) (http.File, error) {
 func EmbedFolder(fsEmbed embed.FS, targetPath string) static.ServeFileSystem {
 	efs, err := fs.Sub(fsEmbed, targetPath)
 	if err != nil {
-		panic(err)
+		return &emptyFileSystem{}
 	}
 	return &embedFileSystem{
 		FileSystem: http.FS(efs),

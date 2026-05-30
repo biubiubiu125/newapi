@@ -71,7 +71,7 @@ const DEFAULT_FORM_VALUES: SetupFormValues = {
   confirmPassword: '',
   usageMode: 'external',
 }
-const USERNAME_PATTERN = /^[A-Za-z0-9]+$/
+const USERNAME_PATTERN = /^[A-Za-z0-9_-]+$/
 
 export function SetupWizard() {
   const { t } = useTranslation()
@@ -223,18 +223,22 @@ export function SetupWizard() {
     if (!USERNAME_PATTERN.test(username)) {
       form.setError('username', {
         type: 'manual',
-        message: t('Username can only contain letters and numbers'),
+        message: t(
+          'Username can only contain letters, numbers, underscores, and hyphens'
+        ),
       })
-      toast.error(t('Username can only contain letters and numbers'))
+      toast.error(
+        t('Username can only contain letters, numbers, underscores, and hyphens')
+      )
       return false
     }
 
     if (username.length > REGISTER_USERNAME_MAX_LENGTH) {
       form.setError('username', {
         type: 'manual',
-        message: t('Username must be at most 12 characters long'),
+        message: t('Username must be at most 20 characters long'),
       })
-      toast.error(t('Username must be at most 12 characters long'))
+      toast.error(t('Username must be at most 20 characters long'))
       return false
     }
 

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -81,7 +82,7 @@ func PostSetup(c *gin.Context) {
 		if len([]rune(req.Username)) > model.RegisterUserNameMaxLength {
 			c.JSON(200, gin.H{
 				"success": false,
-				"message": "用户名长度不能超过12个字符",
+				"message": fmt.Sprintf("用户名长度不能超过%d个字符", model.RegisterUserNameMaxLength),
 			})
 			return
 		}

@@ -233,11 +233,11 @@ export function UsersMutateDrawer({
                         />
                       </FormControl>
                       {!isUpdate && (
-                        <FormDescription>
-                          {t(
-                            'Only letters and numbers are supported, up to 12 characters. This username will be used for sign-in and account identification.'
-                          )}
-                        </FormDescription>
+                          <FormDescription>
+                            {t(
+                              'Only letters, numbers, underscores, and hyphens are supported, up to 20 characters. This username will be used for sign-in and account identification.'
+                            )}
+                          </FormDescription>
                       )}
                       <FormMessage />
                     </FormItem>

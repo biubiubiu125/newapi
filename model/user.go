@@ -18,10 +18,10 @@ import (
 )
 
 const UserNameMaxLength = 20
-const RegisterUserNameMaxLength = 12
-const NewUserUsernameFormatError = "username can only contain letters and numbers"
+const RegisterUserNameMaxLength = UserNameMaxLength
+const NewUserUsernameFormatError = "username can only contain letters, numbers, underscores, and hyphens"
 
-var usernameNonAlphanumericRegex = regexp.MustCompile(`[^A-Za-z0-9]+`)
+var usernameInvalidCharacterRegex = regexp.MustCompile(`[^A-Za-z0-9_-]+`)
 
 // User if you add sensitive fields, don't forget to clean them in setupLogin function.
 // Otherwise, the sensitive information will be saved on local storage in plain text!
@@ -73,7 +73,7 @@ func NormalizeUserEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
-func isAlphanumericUsername(username string) bool {
+func isValidUsernameChars(username string) bool {
 	if username == "" {
 		return false
 	}
@@ -87,17 +87,20 @@ func isAlphanumericUsername(username string) bool {
 		if r >= '0' && r <= '9' {
 			continue
 		}
+		if r == '_' || r == '-' {
+			continue
+		}
 		return false
 	}
 	return true
 }
 
 func IsValidNewUserUsername(username string) bool {
-	return isAlphanumericUsername(username) && len([]rune(username)) <= RegisterUserNameMaxLength
+	return isValidUsernameChars(username) && len([]rune(username)) <= RegisterUserNameMaxLength
 }
 
 func ValidateNewUserUsername(username string) error {
-	if !isAlphanumericUsername(username) {
+	if !isValidUsernameChars(username) {
 		return ErrUserUsernameInvalid
 	}
 	if len([]rune(username)) > RegisterUserNameMaxLength {
@@ -107,7 +110,7 @@ func ValidateNewUserUsername(username string) error {
 }
 
 func NormalizeNewUserUsernameCandidate(username string) string {
-	username = usernameNonAlphanumericRegex.ReplaceAllString(strings.TrimSpace(username), "")
+	username = usernameInvalidCharacterRegex.ReplaceAllString(strings.TrimSpace(username), "")
 	usernameRunes := []rune(username)
 	if len(usernameRunes) > RegisterUserNameMaxLength {
 		return string(usernameRunes[:RegisterUserNameMaxLength])

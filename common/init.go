@@ -48,16 +48,22 @@ func InitEnv() {
 
 	if os.Getenv("SESSION_SECRET") != "" {
 		ss := os.Getenv("SESSION_SECRET")
-		if ss == "random_string" {
-			log.Println("WARNING: SESSION_SECRET is set to the default value 'random_string', please change it to a random string.")
-			log.Println("警告：SESSION_SECRET被设置为默认值'random_string'，请修改为随机字符串。")
+		if isInsecureSecretPlaceholder(ss) {
+			log.Println("WARNING: SESSION_SECRET is set to an insecure placeholder, please change it to a random string.")
+			log.Println("警告：SESSION_SECRET 被设置为不安全的占位值，请修改为随机字符串。")
 			log.Fatal("Please set SESSION_SECRET to a random string.")
 		} else {
 			SessionSecret = ss
 		}
 	}
 	if os.Getenv("CRYPTO_SECRET") != "" {
-		CryptoSecret = os.Getenv("CRYPTO_SECRET")
+		cs := os.Getenv("CRYPTO_SECRET")
+		if isInsecureSecretPlaceholder(cs) {
+			log.Println("WARNING: CRYPTO_SECRET is set to an insecure placeholder, please change it to a random string.")
+			log.Println("警告：CRYPTO_SECRET 被设置为不安全的占位值，请修改为随机字符串。")
+			log.Fatal("Please set CRYPTO_SECRET to a random string.")
+		}
+		CryptoSecret = cs
 	} else {
 		CryptoSecret = SessionSecret
 	}
@@ -138,6 +144,14 @@ func InitEnv() {
 	SearchRateLimitNum = GetEnvOrDefault("SEARCH_RATE_LIMIT", 10)
 	SearchRateLimitDuration = int64(GetEnvOrDefault("SEARCH_RATE_LIMIT_DURATION", 60))
 	initConstantEnv()
+}
+
+func isInsecureSecretPlaceholder(secret string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(secret))
+	return normalized == "random_string" ||
+		strings.HasPrefix(normalized, "change_me") ||
+		strings.Contains(normalized, "your_session_secret") ||
+		strings.Contains(normalized, "your-random-session-secret")
 }
 
 func initConstantEnv() {
