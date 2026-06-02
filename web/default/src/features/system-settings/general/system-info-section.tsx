@@ -330,7 +330,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                     <FormControl>
                       <Textarea
                         placeholder={t(
-                          '\u00a9 2025 Your Company. All rights reserved.'
+                          '© 2025 Your Company. All rights reserved.'
                         )}
                         rows={4}
                         {...field}

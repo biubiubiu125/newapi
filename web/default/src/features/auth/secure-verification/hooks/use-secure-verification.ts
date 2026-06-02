@@ -93,7 +93,9 @@ export function useSecureVerification(
         )
         onError?.(
           new Error(
-            'No verification methods available. Enable 2FA or Passkey to continue.'
+            i18next.t(
+              'No verification methods available. Enable 2FA or Passkey to continue.'
+            )
           )
         )
         return false

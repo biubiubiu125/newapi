@@ -103,7 +103,7 @@ export function OtpForm({ className, ...props }: OtpFormProps) {
       // Handle user data from 2FA login response
       const userData = res.data
       if (!userData) {
-        throw new Error('No user data received from login')
+        throw new Error(t('No user data received from login'))
       }
 
       // Update auth store

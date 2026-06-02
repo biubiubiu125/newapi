@@ -49,6 +49,7 @@ export function BEpusdtSettingsSection(props: Props) {
   const form = useForm<BEpusdtSettingsValues>({
     defaultValues: props.defaultValues,
   })
+
   useEffect(() => {
     form.reset(props.defaultValues)
   }, [form, props.defaultValues])
@@ -60,10 +61,7 @@ export function BEpusdtSettingsSection(props: Props) {
     try {
       const options: { key: string; value: string }[] = [
         { key: 'BEpusdtEnabled', value: 'true' },
-        {
-          key: 'USDTGatewayType',
-          value: 'bepusdt',
-        },
+        { key: 'USDTGatewayType', value: 'bepusdt' },
         { key: 'BEpusdtBaseURL', value: values.BEpusdtBaseURL.trim() },
         { key: 'BEpusdtPID', value: '' },
         { key: 'BEpusdtCurrency', value: 'CNY' },
@@ -72,12 +70,14 @@ export function BEpusdtSettingsSection(props: Props) {
           value: String(values.BEpusdtMinTopUp || 1),
         },
       ]
+
       if (values.BEpusdtSecretKey.trim()) {
         options.push({
           key: 'BEpusdtSecretKey',
           value: values.BEpusdtSecretKey.trim(),
         })
       }
+
       for (const opt of options) {
         await updateOption.mutateAsync(opt)
       }
@@ -90,11 +90,15 @@ export function BEpusdtSettingsSection(props: Props) {
   }
 
   return (
-    <SettingsSection
-      title={t('USDT Gateway')}
-      description='BEpusdt USDT 充值与订阅支付集成。'
-    >
+    <SettingsSection title={t('USDT Gateway')}>
       <div className='space-y-5'>
+        <div>
+          <h3 className='text-lg font-medium'>{t('USDT Gateway')}</h3>
+          <p className='text-muted-foreground text-sm'>
+            {t('BEpusdt USDT top-up and subscription payment integration.')}
+          </p>
+        </div>
+
         <div className='grid gap-4 md:grid-cols-2'>
           <div className='space-y-2'>
             <Label>{t('Gateway endpoint')}</Label>
@@ -107,9 +111,9 @@ export function BEpusdtSettingsSection(props: Props) {
             <Label>{t('Callback address')}</Label>
             <Input value='/api/user/bepusdt/notify' readOnly />
             <p className='text-muted-foreground text-xs'>
-              在服务器地址或回调覆盖中填写公网地址。充值回调：
-              /api/user/bepusdt/notify。订阅回调：
-              /api/subscription/bepusdt/notify。
+              {t(
+                'Set the public site URL in server address or callback override. Top-up callback: /api/user/bepusdt/notify. Subscription callback: /api/subscription/bepusdt/notify.'
+              )}
             </p>
           </div>
           <div className='space-y-2'>

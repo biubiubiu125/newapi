@@ -4534,6 +4534,12 @@
     "Zero retention": "データ保持なし",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V 4",
+    "USDT Gateway": "USDT ゲートウェイ",
+    "BEpusdt USDT top-up and subscription payment integration.": "BEpusdt の USDT チャージとサブスクリプション決済連携。",
+    "Gateway type": "ゲートウェイ種別",
+    "Gateway endpoint": "ゲートウェイエンドポイント",
+    "Set the public site URL in server address or callback override. Top-up callback: /api/user/bepusdt/notify. Subscription callback: /api/subscription/bepusdt/notify.": "サーバーアドレスまたはコールバック上書きに公開サイト URL を設定してください。チャージコールバック: /api/user/bepusdt/notify。サブスクリプションコールバック: /api/subscription/bepusdt/notify。",
+    "Save USDT gateway settings": "USDT ゲートウェイ設定を保存",
     "Zoom": "ズーム"
   }
 }

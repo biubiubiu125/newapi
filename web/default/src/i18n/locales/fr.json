@@ -4534,6 +4534,12 @@
     "Zero retention": "Aucune rétention",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
+    "USDT Gateway": "Passerelle USDT",
+    "BEpusdt USDT top-up and subscription payment integration.": "Intégration BEpusdt pour les recharges USDT et les paiements d'abonnement.",
+    "Gateway type": "Type de passerelle",
+    "Gateway endpoint": "Point de terminaison de la passerelle",
+    "Set the public site URL in server address or callback override. Top-up callback: /api/user/bepusdt/notify. Subscription callback: /api/subscription/bepusdt/notify.": "Définissez l'URL publique du site dans l'adresse du serveur ou le remplacement du callback. Callback de recharge : /api/user/bepusdt/notify. Callback d'abonnement : /api/subscription/bepusdt/notify.",
+    "Save USDT gateway settings": "Enregistrer les paramètres de la passerelle USDT",
     "Zoom": "Zoom"
   }
 }

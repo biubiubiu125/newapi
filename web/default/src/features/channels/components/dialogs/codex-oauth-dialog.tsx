@@ -83,7 +83,7 @@ export function CodexOAuthDialog({
 
       const url = res.data?.authorize_url || ''
       if (!url) {
-        throw new Error('Missing authorize_url in response')
+        throw new Error(t('Missing authorize_url in response'))
       }
 
       setState((prev) => ({ ...prev, authorizeUrl: url }))
@@ -115,7 +115,7 @@ export function CodexOAuthDialog({
 
       const rawKey = res.data?.key || ''
       if (!rawKey) {
-        throw new Error('Missing key in response')
+        throw new Error(t('Missing key in response'))
       }
 
       onKeyGenerated(tryPrettyJson(rawKey))

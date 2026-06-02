@@ -33,17 +33,20 @@ const STATUS_RELATED_KEYS = [
   'Footer',
   'HeaderNavModules',
   'SidebarModulesAdmin',
-  'Notice',
   'LogConsumeEnabled',
   'Price',
   'QuotaPerUnit',
   'USDExchangeRate',
   'DisplayInCurrencyEnabled',
   'DisplayTokenStatEnabled',
+  'console_setting.announcements',
+  'console_setting.announcements_enabled',
   'general_setting.quota_display_type',
   'general_setting.custom_currency_symbol',
   'general_setting.custom_currency_exchange_rate',
 ]
+
+const NOTICE_RELATED_KEYS = ['Notice']
 
 function syncDisplayOptionToSystemConfig(request: UpdateOptionRequest) {
   const value = String(request.value ?? '')
@@ -73,6 +76,12 @@ export function useUpdateOption() {
       if (data.success) {
         // Always refresh system-options
         queryClient.invalidateQueries({ queryKey: ['system-options'] })
+
+        // Notice is loaded from /api/notice, not /api/status.
+        if (NOTICE_RELATED_KEYS.includes(variables.key)) {
+          queryClient.invalidateQueries({ queryKey: ['notice'] })
+          emitSettingsRefresh([variables.key])
+        }
 
         // If updating frontend-display-related config, also refresh status
         if (STATUS_RELATED_KEYS.includes(variables.key)) {

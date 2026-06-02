@@ -49,7 +49,7 @@ func performGetNotice() map[string]interface{} {
 	return payload
 }
 
-func TestGetNoticePrefersConsoleAnnouncementsOverSystemNotice(t *testing.T) {
+func TestGetNoticeReturnsSystemNoticeWhenConsoleAnnouncementsExist(t *testing.T) {
 	setupNoticeTest(t, "system notice", `[{
 		"id":1,
 		"content":"console announcement",
@@ -61,13 +61,12 @@ func TestGetNoticePrefersConsoleAnnouncementsOverSystemNotice(t *testing.T) {
 	payload := performGetNotice()
 
 	require.Equal(t, true, payload["success"])
-	require.Contains(t, payload["data"], "console announcement")
-	require.Contains(t, payload["notice"], "console announcement")
-	require.NotContains(t, payload["data"], "system notice")
-	require.Len(t, payload["announcements"], 1)
+	require.Equal(t, "system notice", payload["data"])
+	require.Equal(t, "system notice", payload["notice"])
+	require.Len(t, payload["announcements"], 0)
 }
 
-func TestGetNoticeFallsBackToAnnouncementTextWhenLegacyNoticeIsEmpty(t *testing.T) {
+func TestGetNoticeDoesNotFallBackToConsoleAnnouncements(t *testing.T) {
 	setupNoticeTest(t, "", `[{
 		"id":2,
 		"content":"structured announcement",
@@ -79,9 +78,9 @@ func TestGetNoticeFallsBackToAnnouncementTextWhenLegacyNoticeIsEmpty(t *testing.
 	payload := performGetNotice()
 
 	require.Equal(t, true, payload["success"])
-	require.Contains(t, payload["data"], "structured announcement")
-	require.Contains(t, payload["notice"], "extra note")
-	require.Len(t, payload["announcements"], 1)
+	require.Equal(t, "", payload["data"])
+	require.Equal(t, "", payload["notice"])
+	require.Len(t, payload["announcements"], 0)
 }
 
 func TestGetNoticeFallsBackToSystemNoticeWhenAnnouncementsDisabled(t *testing.T) {

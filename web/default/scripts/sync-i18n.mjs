@@ -219,7 +219,8 @@ async function main() {
     .map((e) => e.name)
     .sort((a, b) => a.localeCompare(b))
 
-  // Auto-pick base locale as the one with the most leaf keys under translation (most "rich").
+  // Keep English as the canonical key source. Other locales can temporarily
+  // contain extra historical keys without becoming the sync base.
   const parsedByLocale = {}
   for (const filename of localeFiles) {
     const locale = filename.replace(/\.json$/i, '')
@@ -227,13 +228,17 @@ async function main() {
     parsedByLocale[locale] = JSON.parse(raw)
   }
 
-  const baseLocale = Object.keys(parsedByLocale)
-    .map((locale) => {
-      const json = parsedByLocale[locale]
-      const trans = json?.translation ?? {}
-      return { locale, score: countLeafKeys(trans) }
-    })
-    .sort((a, b) => b.score - a.score || a.locale.localeCompare(b.locale))[0]?.locale
+  const baseLocale = parsedByLocale[FALLBACK_COMPARE_LOCALE]
+    ? FALLBACK_COMPARE_LOCALE
+    : Object.keys(parsedByLocale)
+        .map((locale) => {
+          const json = parsedByLocale[locale]
+          const trans = json?.translation ?? {}
+          return { locale, score: countLeafKeys(trans) }
+        })
+        .sort(
+          (a, b) => b.score - a.score || a.locale.localeCompare(b.locale)
+        )[0]?.locale
 
   if (!baseLocale) throw new Error('No locale files found.')
 

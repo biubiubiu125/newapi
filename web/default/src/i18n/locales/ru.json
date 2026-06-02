@@ -4534,6 +4534,12 @@
     "Zero retention": "Без хранения данных",
     "Zhipu": "Zhipu",
     "Zhipu V4": "Zhipu V4",
+    "USDT Gateway": "USDT-шлюз",
+    "BEpusdt USDT top-up and subscription payment integration.": "Интеграция BEpusdt для пополнений USDT и оплаты подписок.",
+    "Gateway type": "Тип шлюза",
+    "Gateway endpoint": "Эндпоинт шлюза",
+    "Set the public site URL in server address or callback override. Top-up callback: /api/user/bepusdt/notify. Subscription callback: /api/subscription/bepusdt/notify.": "Укажите публичный URL сайта в адресе сервера или переопределении callback. Callback пополнения: /api/user/bepusdt/notify. Callback подписки: /api/subscription/bepusdt/notify.",
+    "Save USDT gateway settings": "Сохранить настройки USDT-шлюза",
     "Zoom": "Zoom"
   }
 }

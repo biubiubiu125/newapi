@@ -669,7 +669,7 @@ export function ChannelMutateDrawer({
 
   const fetchChannelKey = useCallback(async () => {
     if (!channelId) {
-      throw new Error('Channel is not selected')
+      throw new Error(t('Channel is not selected'))
     }
 
     setIsChannelKeyLoading(true)
@@ -694,9 +694,10 @@ export function ChannelMutateDrawer({
     try {
       await withVerification(fetchChannelKey, {
         preferredMethod: 'passkey',
-        title: 'Verify to view channel key',
-        description:
-          'Use Passkey or 2FA to confirm your identity before revealing this channel key.',
+        title: t('Verify to view channel key'),
+        description: t(
+          'Use Passkey or 2FA to confirm your identity before revealing this channel key.'
+        ),
       })
     } catch (error) {
       if (error instanceof Error) {
