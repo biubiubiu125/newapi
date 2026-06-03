@@ -297,8 +297,13 @@ function renderDesktop<TData>(
 ): React.ReactNode {
   if (showMobile) return null
 
+  return <DesktopTable {...props} />
+}
+
+function DesktopTable<TData>(props: DataTablePageProps<TData>) {
   const rows = props.table.getRowModel().rows
   const isFetchingOnly = props.isFetching && !props.isLoading
+  const scrollContainerRef = React.useRef<HTMLDivElement | null>(null)
   const tableStyle = props.applyHeaderSize
     ? { minWidth: props.table.getTotalSize() }
     : undefined
@@ -311,7 +316,7 @@ function renderDesktop<TData>(
         props.tableClassName
       )}
     >
-      <Table style={tableStyle}>
+      <Table containerRef={scrollContainerRef} style={tableStyle}>
         <TableHeader className={props.tableHeaderClassName}>
           {props.table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>
@@ -368,7 +373,101 @@ function renderDesktop<TData>(
           )}
         </TableBody>
       </Table>
+      {props.applyHeaderSize && (
+        <SyncedHorizontalScrollbar
+          scrollContainerRef={scrollContainerRef}
+          contentWidth={props.table.getTotalSize()}
+        />
+      )}
     </div>
+  )
+}
+
+function SyncedHorizontalScrollbar(props: {
+  scrollContainerRef: React.RefObject<HTMLDivElement | null>
+  contentWidth: number
+}) {
+  const scrollbarRef = React.useRef<HTMLDivElement | null>(null)
+  const [metrics, setMetrics] = React.useState({
+    clientWidth: 0,
+    scrollWidth: props.contentWidth,
+  })
+
+  React.useLayoutEffect(() => {
+    const tableScroller = props.scrollContainerRef.current
+    if (!tableScroller) return
+
+    const updateMetrics = () => {
+      setMetrics({
+        clientWidth: tableScroller.clientWidth,
+        scrollWidth: Math.max(tableScroller.scrollWidth, props.contentWidth),
+      })
+      if (scrollbarRef.current) {
+        scrollbarRef.current.scrollLeft = tableScroller.scrollLeft
+      }
+    }
+
+    updateMetrics()
+    const resizeObserver = new ResizeObserver(updateMetrics)
+    resizeObserver.observe(tableScroller)
+
+    const table = tableScroller.querySelector('[data-slot="table"]')
+    if (table) {
+      resizeObserver.observe(table)
+    }
+
+    return () => resizeObserver.disconnect()
+  }, [props.contentWidth, props.scrollContainerRef])
+
+  React.useEffect(() => {
+    const tableScroller = props.scrollContainerRef.current
+    const scrollbar = scrollbarRef.current
+    if (!tableScroller || !scrollbar) return
+
+    let syncingFromTable = false
+    let syncingFromScrollbar = false
+
+    const syncScrollbar = () => {
+      if (syncingFromScrollbar) return
+      syncingFromTable = true
+      scrollbar.scrollLeft = tableScroller.scrollLeft
+      syncingFromTable = false
+    }
+
+    const syncTable = () => {
+      if (syncingFromTable) return
+      syncingFromScrollbar = true
+      tableScroller.scrollLeft = scrollbar.scrollLeft
+      syncingFromScrollbar = false
+    }
+
+    tableScroller.addEventListener('scroll', syncScrollbar, { passive: true })
+    scrollbar.addEventListener('scroll', syncTable, { passive: true })
+
+    syncScrollbar()
+
+    return () => {
+      tableScroller.removeEventListener('scroll', syncScrollbar)
+      scrollbar.removeEventListener('scroll', syncTable)
+    }
+  }, [props.scrollContainerRef, metrics.clientWidth, metrics.scrollWidth])
+
+  if (metrics.scrollWidth <= metrics.clientWidth + 1) {
+    return null
+  }
+
+  return (
+    <PageFooterPortal>
+      <div className='border-border/80 bg-background/95 -mx-3 border-b px-3 pb-2 sm:-mx-4 sm:px-4'>
+        <div
+          ref={scrollbarRef}
+          className='h-3 w-full overflow-x-auto overflow-y-hidden'
+          aria-label='表格横向滚动条'
+        >
+          <div style={{ width: metrics.scrollWidth, height: 1 }} />
+        </div>
+      </div>
+    </PageFooterPortal>
   )
 }
 
