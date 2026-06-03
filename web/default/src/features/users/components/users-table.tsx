@@ -209,6 +209,7 @@ export function UsersTable() {
       )}
       skeletonKeyPrefix='users-skeleton'
       applyHeaderSize
+      useColumnSizeAsTableWidth
       stickyHorizontalScrollbar
       toolbarProps={{
         searchPlaceholder: t('Filter by username, promoter, name or email...'),

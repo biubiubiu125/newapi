@@ -156,6 +156,12 @@ export type DataTablePageProps<TData> = {
   applyHeaderSize?: boolean
 
   /**
+   * With `applyHeaderSize`, use the total column size as the table width instead
+   * of stretching the table to fill the container.
+   */
+  useColumnSizeAsTableWidth?: boolean
+
+  /**
    * Render a synchronized horizontal scrollbar in the page footer without
    * forcing TanStack column sizes.
    */
@@ -312,6 +318,8 @@ function DesktopTable<TData>(props: DataTablePageProps<TData>) {
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null)
   const applyColumnSize = props.applyHeaderSize === true
   const totalColumnSize = props.table.getTotalSize()
+  const useColumnSizeAsTableWidth =
+    applyColumnSize && props.useColumnSizeAsTableWidth === true
   const showStickyHorizontalScrollbar =
     props.stickyHorizontalScrollbar || applyColumnSize
   const tableClassName = applyColumnSize
@@ -320,10 +328,15 @@ function DesktopTable<TData>(props: DataTablePageProps<TData>) {
       ? 'w-max'
       : undefined
   const tableStyle = applyColumnSize
-    ? {
-        width: '100%',
-        minWidth: totalColumnSize,
-      }
+    ? useColumnSizeAsTableWidth
+      ? {
+          width: totalColumnSize,
+          minWidth: totalColumnSize,
+        }
+      : {
+          width: '100%',
+          minWidth: totalColumnSize,
+        }
     : undefined
 
   return (
