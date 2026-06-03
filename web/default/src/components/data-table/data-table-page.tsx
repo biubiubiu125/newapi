@@ -156,6 +156,12 @@ export type DataTablePageProps<TData> = {
   applyHeaderSize?: boolean
 
   /**
+   * Render a synchronized horizontal scrollbar in the page footer without
+   * forcing TanStack column sizes.
+   */
+  stickyHorizontalScrollbar?: boolean
+
+  /**
    * Optional skeleton key prefix for stable React keys across re-renders.
    */
   skeletonKeyPrefix?: string
@@ -304,7 +310,10 @@ function DesktopTable<TData>(props: DataTablePageProps<TData>) {
   const rows = props.table.getRowModel().rows
   const isFetchingOnly = props.isFetching && !props.isLoading
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null)
-  const tableStyle = props.applyHeaderSize
+  const applyColumnSize = props.applyHeaderSize === true
+  const showStickyHorizontalScrollbar =
+    props.stickyHorizontalScrollbar || applyColumnSize
+  const tableStyle = applyColumnSize
     ? { minWidth: props.table.getTotalSize() }
     : undefined
 
@@ -325,9 +334,7 @@ function DesktopTable<TData>(props: DataTablePageProps<TData>) {
                   key={header.id}
                   colSpan={header.colSpan}
                   style={
-                    props.applyHeaderSize
-                      ? { width: header.getSize() }
-                      : undefined
+                    applyColumnSize ? { width: header.getSize() } : undefined
                   }
                 >
                   {header.isPlaceholder
@@ -365,7 +372,7 @@ function DesktopTable<TData>(props: DataTablePageProps<TData>) {
                 <DefaultRow
                   key={row.id}
                   row={row}
-                  applyColumnSize={props.applyHeaderSize}
+                  applyColumnSize={applyColumnSize}
                   className={props.getRowClassName?.(row, { isMobile: false })}
                 />
               )
@@ -373,10 +380,10 @@ function DesktopTable<TData>(props: DataTablePageProps<TData>) {
           )}
         </TableBody>
       </Table>
-      {props.applyHeaderSize && (
+      {showStickyHorizontalScrollbar && (
         <SyncedHorizontalScrollbar
           scrollContainerRef={scrollContainerRef}
-          contentWidth={props.table.getTotalSize()}
+          contentWidth={applyColumnSize ? props.table.getTotalSize() : 0}
         />
       )}
     </div>

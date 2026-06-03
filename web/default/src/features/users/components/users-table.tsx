@@ -208,7 +208,7 @@ export function UsersTable() {
         'No users available. Try adjusting your search or filters.'
       )}
       skeletonKeyPrefix='users-skeleton'
-      applyHeaderSize
+      stickyHorizontalScrollbar
       toolbarProps={{
         searchPlaceholder: t('Filter by username, promoter, name or email...'),
         filters: [
