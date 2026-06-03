@@ -161,7 +161,6 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'status',
-      size: 92,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Status')} />
       ),
@@ -203,7 +202,6 @@ export function useUsersColumns(): ColumnDef<User>[] {
     {
       id: 'quota',
       accessorKey: 'quota',
-      size: 160,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Quota')} />
       ),
@@ -265,7 +263,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'active_subscription_name',
-      size: 96,
+      size: 140,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Subscription')} />
       ),
@@ -284,7 +282,6 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'group',
-      size: 108,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Group')} />
       ),
@@ -301,7 +298,6 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'role',
-      size: 96,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Role')} />
       ),
@@ -330,7 +326,6 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'created_at',
-      size: 148,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Created At')} />
       ),
