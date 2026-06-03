@@ -78,6 +78,7 @@ export interface RiskUser {
   group?: string
   created_at: number
   last_login_at: number
+  register_ip?: string
   quota: number
   used_quota: number
   request_count: number
@@ -319,11 +320,11 @@ export async function ignoreRiskEvent(
   return res.data as { success: boolean; message?: string; data: unknown }
 }
 
-export async function banRiskUser(
-  userId: number,
-  payload: RiskActionPayload
-) {
-  const res = await api.post(`/api/user/admin/risk/users/${userId}/ban`, payload)
+export async function banRiskUser(userId: number, payload: RiskActionPayload) {
+  const res = await api.post(
+    `/api/user/admin/risk/users/${userId}/ban`,
+    payload
+  )
   return res.data as { success: boolean; message?: string; data: unknown }
 }
 

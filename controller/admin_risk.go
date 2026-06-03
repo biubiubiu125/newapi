@@ -42,6 +42,7 @@ type riskUserRow struct {
 	Group           string  `json:"group,omitempty"`
 	CreatedAt       int64   `json:"created_at"`
 	LastLoginAt     int64   `json:"last_login_at"`
+	RegisterIP      string  `json:"register_ip,omitempty"`
 	Quota           int     `json:"quota"`
 	UsedQuota       int     `json:"used_quota"`
 	RequestCount    int     `json:"request_count"`
@@ -149,6 +150,20 @@ type riskDetailResponse struct {
 	Referrals   []riskReferralRow     `json:"referrals"`
 	Actions     []model.RiskAction    `json:"actions"`
 	Whitelists  []model.RiskWhitelist `json:"whitelists"`
+}
+
+type riskDetailTimeRange struct {
+	Since int64
+	Until int64
+}
+
+func applyRiskDetailUntil(column string, until int64) func(*gorm.DB) *gorm.DB {
+	return func(db *gorm.DB) *gorm.DB {
+		if until <= 0 {
+			return db
+		}
+		return db.Where(column+" <= ?", until)
+	}
 }
 
 type riskActionRequest struct {
@@ -310,7 +325,6 @@ func GetRiskEvents(c *gin.Context) {
 
 func GetRiskDetail(c *gin.Context) {
 	windowHours := parseRiskWindowHours(c.Query("window_hours"))
-	since := common.GetTimestamp() - int64(windowHours*3600)
 	riskType := strings.TrimSpace(c.Query("type"))
 	ip := strings.TrimSpace(c.Query("ip"))
 	userID, _ := strconv.Atoi(strings.TrimSpace(c.Query("user_id")))
@@ -347,15 +361,22 @@ func GetRiskDetail(c *gin.Context) {
 			return
 		}
 	}
+	windowHours, timeRange := riskDetailQueryWindow(windowHours, event)
 
 	userIDs := make([]int, 0, 16)
 	if userID > 0 {
 		userIDs = append(userIDs, userID)
 	}
 	switch riskType {
-	case "shared_ip", "ip_detail":
+	case "shared_ip", "shared_log_ip", "shared_register_ip", "ip_detail":
 		if ip != "" {
-			ids, err := riskUserIDsByIP(ip, since)
+			var ids []int
+			var err error
+			if riskType == "shared_register_ip" {
+				ids, err = riskUserIDsByRegisterIPRange(ip, timeRange)
+			} else {
+				ids, err = riskUserIDsByIPRange(ip, timeRange)
+			}
 			if err != nil {
 				common.ApiError(c, err)
 				return
@@ -364,7 +385,7 @@ func GetRiskDetail(c *gin.Context) {
 		}
 	case "token_rotation", "token_detail":
 		if tokenID > 0 {
-			ids, err := riskUserIDsByTokenID(tokenID, since)
+			ids, err := riskUserIDsByTokenIDRange(tokenID, timeRange)
 			if err != nil {
 				common.ApiError(c, err)
 				return
@@ -385,7 +406,7 @@ func GetRiskDetail(c *gin.Context) {
 		}
 		userIDs = append(userIDs, ids...)
 	case "new_users":
-		ids, err := riskNewUserIDs(c, since)
+		ids, err := riskNewUserIDsRange(c, timeRange)
 		if err != nil {
 			common.ApiError(c, err)
 			return
@@ -405,17 +426,17 @@ func GetRiskDetail(c *gin.Context) {
 		return
 	}
 
-	users, err := riskUsersByIDs(userIDs, since)
+	users, err := riskUsersByIDs(userIDs, timeRange)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	logs, err := riskLogsForDetail(riskType, ip, tokenID, userIDs, since)
+	logs, err := riskLogsForDetail(riskType, ip, tokenID, userIDs, timeRange)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	orders, err := riskOrdersByUserIDs(userIDs, since)
+	orders, err := riskOrdersByUserIDs(userIDs, timeRange)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -428,7 +449,7 @@ func GetRiskDetail(c *gin.Context) {
 		}
 		orders = append(orderRows, orders...)
 	}
-	tokens, err := riskTokensForDetail(userIDs, tokenID, since)
+	tokens, err := riskTokensForDetail(userIDs, tokenID, timeRange)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -437,12 +458,12 @@ func GetRiskDetail(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	ips, err := riskIPsForDetail(c, ip, userIDs, since)
+	ips, err := riskIPsForDetail(c, riskType, ip, userIDs, timeRange)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	referrals, err := riskReferralsForDetail(userIDs, since)
+	referrals, err := riskReferralsForDetail(userIDs, timeRange)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -503,6 +524,7 @@ func GetRiskUsers(c *gin.Context) {
 			`+commonGroupColSelect("u")+` AS `+commonGroupAliasSelect()+`,
 			u.created_at,
 			u.last_login_at,
+			u.register_ip,
 			u.quota,
 			u.used_quota,
 			u.request_count,
@@ -548,7 +570,7 @@ func GetRiskUsers(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if err := fillRiskUserLogMetrics(rows, since); err != nil {
+	if err := fillRiskUserLogMetrics(rows, riskDetailTimeRange{Since: since}); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -981,7 +1003,7 @@ func createRiskActionWithDB(db *gorm.DB, event model.RiskEvent, action string, a
 		OldValue:       oldValue,
 		NewValue:       newValue,
 		Evidence:       event.Evidence,
-		ClientIP:       c.ClientIP(),
+		ClientIP:       common.GetClientIP(c),
 		UserAgent:      c.GetHeader("User-Agent"),
 	}
 	return db.Create(&record).Error
@@ -1158,6 +1180,7 @@ func riskEventInputManageable(c *gin.Context, input model.RiskEventUpsert) (bool
 		return true, nil
 	}
 	event := model.RiskEvent{
+		Type:           input.Type,
 		TargetType:     input.TargetType,
 		TargetId:       input.TargetId,
 		UserId:         input.UserId,
@@ -1165,6 +1188,9 @@ func riskEventInputManageable(c *gin.Context, input model.RiskEventUpsert) (bool
 		TokenId:        input.TokenId,
 		TradeNo:        input.TradeNo,
 		ReferralUserId: input.ReferralUserId,
+		WindowHours:    input.WindowHours,
+		FirstSeenAt:    input.FirstSeenAt,
+		LastSeenAt:     input.LastSeenAt,
 	}
 	err := validateRiskEventManageable(c, event, "")
 	if err == nil {
@@ -1444,7 +1470,7 @@ func riskEventTargetUserIDs(c *gin.Context, event model.RiskEvent) ([]int, error
 		if ip == "" {
 			ip = event.Ip
 		}
-		ipIDs, err := riskUserIDsByIP(ip, 0)
+		ipIDs, err := riskUserIDsByIPTargetRange(event.Type, ip, riskEventTimeRange(event))
 		if err != nil {
 			return nil, err
 		}
@@ -1561,6 +1587,12 @@ func scanAndPersistRiskEvents(c *gin.Context, windowHours int) ([]model.RiskEven
 func buildRiskEventInputs(since int64, windowHours int) ([]model.RiskEventUpsert, error) {
 	inputs := make([]model.RiskEventUpsert, 0)
 
+	registerIPEvents, err := buildSharedRegisterIPEvents(since, windowHours)
+	if err != nil {
+		return nil, err
+	}
+	inputs = append(inputs, registerIPEvents...)
+
 	var sharedIPs []riskSignal
 	if err := model.LOG_DB.Table("logs").
 		Select("ip, count(distinct user_id) AS count, min(created_at) AS first_seen_at, max(created_at) AS last_seen_at").
@@ -1572,21 +1604,25 @@ func buildRiskEventInputs(since int64, windowHours int) ([]model.RiskEventUpsert
 		return nil, err
 	}
 	for _, item := range sharedIPs {
+		if !isRiskIPCandidate(item.IP) {
+			continue
+		}
 		inputs = append(inputs, model.RiskEventUpsert{
 			EventKey:    "shared_ip:" + item.IP,
-			Type:        "shared_ip",
+			Type:        "shared_log_ip",
 			TargetType:  model.RiskTargetIP,
 			TargetId:    item.IP,
 			Ip:          item.IP,
 			Severity:    model.RiskSeverityWarning,
-			Title:       "同 IP 多账号",
-			Summary:     fmt.Sprintf("同一 IP 在 %d 小时内关联 %d 个账号", windowHours, item.Count),
+			Title:       "同访问 IP 多账号",
+			Summary:     fmt.Sprintf("同一访问/API IP 在 %d 小时内关联 %d 个账号", windowHours, item.Count),
 			HitCount:    item.Count,
 			WindowHours: windowHours,
 			FirstSeenAt: item.FirstSeenAt,
 			LastSeenAt:  item.LastSeenAt,
 			Evidence: map[string]interface{}{
 				"ip":            item.IP,
+				"ip_source":     "log",
 				"user_count":    item.Count,
 				"window_hours":  windowHours,
 				"first_seen_at": item.FirstSeenAt,
@@ -1748,6 +1784,48 @@ func buildRiskEventInputs(since int64, windowHours int) ([]model.RiskEventUpsert
 	return inputs, nil
 }
 
+func buildSharedRegisterIPEvents(since int64, windowHours int) ([]model.RiskEventUpsert, error) {
+	var rows []riskSignal
+	if err := model.DB.Table("users").
+		Select("register_ip AS ip, count(*) AS count, min(created_at) AS first_seen_at, max(created_at) AS last_seen_at").
+		Where("created_at >= ? AND register_ip <> '' AND deleted_at IS NULL", since).
+		Group("register_ip").
+		Having("count(*) >= ?", 5).
+		Order("count desc").
+		Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	events := make([]model.RiskEventUpsert, 0, len(rows))
+	for _, item := range rows {
+		if !isRiskIPCandidate(item.IP) {
+			continue
+		}
+		events = append(events, model.RiskEventUpsert{
+			EventKey:    "shared_register_ip:" + item.IP,
+			Type:        "shared_register_ip",
+			TargetType:  model.RiskTargetIP,
+			TargetId:    item.IP,
+			Ip:          item.IP,
+			Severity:    model.RiskSeverityWarning,
+			Title:       "同注册 IP 多账号",
+			Summary:     fmt.Sprintf("同一注册 IP 在 %d 小时内关联 %d 个账号", windowHours, item.Count),
+			HitCount:    item.Count,
+			WindowHours: windowHours,
+			FirstSeenAt: item.FirstSeenAt,
+			LastSeenAt:  item.LastSeenAt,
+			Evidence: map[string]interface{}{
+				"ip":            item.IP,
+				"ip_source":     "register",
+				"user_count":    item.Count,
+				"window_hours":  windowHours,
+				"first_seen_at": item.FirstSeenAt,
+				"last_seen_at":  item.LastSeenAt,
+			},
+		})
+	}
+	return events, nil
+}
+
 func collectRiskSignals(since int64, windowHours int) ([]riskSignal, error) {
 	inputs, err := buildRiskEventInputs(since, windowHours)
 	if err != nil {
@@ -1847,7 +1925,7 @@ func riskInputLimitForType(riskType string) int {
 	switch riskType {
 	case "new_user_high_consume":
 		return riskScanConsumeCandidateLimit
-	case "shared_ip", "high_error_count", "high_topup_activity", "token_rotation", "payment_anomaly":
+	case "shared_ip", "shared_log_ip", "shared_register_ip", "high_error_count", "high_topup_activity", "token_rotation", "payment_anomaly":
 		return riskScanCandidateLimit
 	default:
 		return 0
@@ -2063,14 +2141,21 @@ func isRiskWhitelisted(targetType string, targetID string) (bool, error) {
 }
 
 func riskUserIDsByIP(ip string, since int64) ([]int, error) {
+	return riskUserIDsByIPRange(ip, riskDetailTimeRange{Since: since})
+}
+
+func riskUserIDsByIPRange(ip string, timeRange riskDetailTimeRange) ([]int, error) {
 	var rows []struct {
 		UserID int
 	}
 	query := model.LOG_DB.Table("logs").
 		Select("distinct user_id").
 		Where("ip = ? AND user_id > 0", ip)
-	if since > 0 {
-		query = query.Where("created_at >= ?", since)
+	if timeRange.Since > 0 {
+		query = query.Where("created_at >= ?", timeRange.Since)
+	}
+	if timeRange.Until > 0 {
+		query = query.Where("created_at <= ?", timeRange.Until)
 	}
 	if err := query.
 		Scan(&rows).Error; err != nil {
@@ -2083,18 +2168,81 @@ func riskUserIDsByIP(ip string, since int64) ([]int, error) {
 	return ids, nil
 }
 
+func riskUserIDsByIPTarget(riskType string, ip string, since int64) ([]int, error) {
+	return riskUserIDsByIPTargetRange(riskType, ip, riskDetailTimeRange{Since: since})
+}
+
+func riskUserIDsByIPTargetRange(riskType string, ip string, timeRange riskDetailTimeRange) ([]int, error) {
+	if riskType == "shared_register_ip" {
+		return riskUserIDsByRegisterIPRange(ip, timeRange)
+	}
+	return riskUserIDsByIPRange(ip, timeRange)
+}
+
+func riskUserIDsByRegisterIP(ip string, since int64) ([]int, error) {
+	return riskUserIDsByRegisterIPRange(ip, riskDetailTimeRange{Since: since})
+}
+
+func riskUserIDsByRegisterIPRange(ip string, timeRange riskDetailTimeRange) ([]int, error) {
+	ip = strings.TrimSpace(ip)
+	if ip == "" {
+		return []int{}, nil
+	}
+	var rows []struct {
+		UserID int
+	}
+	query := model.DB.Table("users").
+		Select("id AS user_id").
+		Where("register_ip = ? AND deleted_at IS NULL", ip)
+	if timeRange.Since > 0 {
+		query = query.Where("created_at >= ?", timeRange.Since)
+	}
+	if timeRange.Until > 0 {
+		query = query.Where("created_at <= ?", timeRange.Until)
+	}
+	if err := query.Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	ids := make([]int, 0, len(rows))
+	for _, row := range rows {
+		ids = append(ids, row.UserID)
+	}
+	return ids, nil
+}
+
+func isRiskIPCandidate(value string) bool {
+	normalized := common.NormalizeIP(value)
+	if normalized == "" {
+		return false
+	}
+	ip := net.ParseIP(normalized)
+	if ip == nil {
+		return false
+	}
+	if common.IsPrivateIP(ip) || ip.IsUnspecified() || ip.IsMulticast() {
+		return false
+	}
+	return !common.IsTrustedProxyIP(normalized)
+}
+
 func riskUserIDsByTokenID(tokenID int, since int64) ([]int, error) {
+	return riskUserIDsByTokenIDRange(tokenID, riskDetailTimeRange{Since: since})
+}
+
+func riskUserIDsByTokenIDRange(tokenID int, timeRange riskDetailTimeRange) ([]int, error) {
 	if tokenID <= 0 {
 		return []int{}, nil
 	}
 	var rows []struct {
 		UserID int
 	}
-	if err := model.LOG_DB.Table("logs").
+	query := model.LOG_DB.Table("logs").
 		Select("distinct user_id").
-		Where("created_at >= ? AND token_id = ? AND user_id > 0", since, tokenID).
-		Limit(200).
-		Scan(&rows).Error; err != nil {
+		Where("created_at >= ? AND token_id = ? AND user_id > 0", timeRange.Since, tokenID)
+	if timeRange.Until > 0 {
+		query = query.Where("created_at <= ?", timeRange.Until)
+	}
+	if err := query.Limit(200).Scan(&rows).Error; err != nil {
 		return nil, err
 	}
 	ids := make([]int, 0, len(rows))
@@ -2148,12 +2296,19 @@ func riskUserIDsByStatus(c *gin.Context, status int) ([]int, error) {
 }
 
 func riskNewUserIDs(c *gin.Context, since int64) ([]int, error) {
+	return riskNewUserIDsRange(c, riskDetailTimeRange{Since: since})
+}
+
+func riskNewUserIDsRange(c *gin.Context, timeRange riskDetailTimeRange) ([]int, error) {
 	var rows []struct {
 		UserID int
 	}
 	query := model.DB.Table("users").
 		Select("id AS user_id").
-		Where("created_at >= ?", since)
+		Where("created_at >= ?", timeRange.Since)
+	if timeRange.Until > 0 {
+		query = query.Where("created_at <= ?", timeRange.Until)
+	}
 	if c.GetInt("role") != common.RoleRootUser {
 		query = query.Where("role < ?", c.GetInt("role"))
 	}
@@ -2170,12 +2325,18 @@ func riskNewUserIDs(c *gin.Context, since int64) ([]int, error) {
 	return ids, nil
 }
 
-func riskUsersByIDs(userIDs []int, since int64) ([]riskUserRow, error) {
+func riskUsersByIDs(userIDs []int, timeRange riskDetailTimeRange) ([]riskUserRow, error) {
 	userIDs = uniquePositiveInts(userIDs)
 	if len(userIDs) == 0 {
 		return []riskUserRow{}, nil
 	}
 	var rows []riskUserRow
+	topupQuery := "create_time >= ? AND status = ?"
+	topupArgs := []interface{}{timeRange.Since, common.TopUpStatusSuccess}
+	if timeRange.Until > 0 {
+		topupQuery += " AND create_time <= ?"
+		topupArgs = append(topupArgs, timeRange.Until)
+	}
 	if err := model.DB.Table("users AS u").
 		Select(`
 			u.id AS user_id,
@@ -2186,6 +2347,7 @@ func riskUsersByIDs(userIDs []int, since int64) ([]riskUserRow, error) {
 			`+commonGroupColSelect("u")+` AS `+commonGroupAliasSelect()+`,
 			u.created_at,
 			u.last_login_at,
+			u.register_ip,
 			u.quota,
 			u.used_quota,
 			u.request_count,
@@ -2196,9 +2358,9 @@ func riskUsersByIDs(userIDs []int, since int64) ([]riskUserRow, error) {
 		Joins(`LEFT JOIN (
 			SELECT user_id, count(*) AS topup_count, coalesce(sum(paid_amount), 0) AS topup_paid_amount
 			FROM top_ups
-			WHERE create_time >= ? AND status = ?
+			WHERE `+topupQuery+`
 			GROUP BY user_id
-		) topup ON topup.user_id = u.id`, since, common.TopUpStatusSuccess).
+		) topup ON topup.user_id = u.id`, topupArgs...).
 		Joins(`LEFT JOIN (
 			SELECT user_id, count(*) AS token_count
 			FROM tokens
@@ -2210,7 +2372,7 @@ func riskUsersByIDs(userIDs []int, since int64) ([]riskUserRow, error) {
 		Scan(&rows).Error; err != nil {
 		return nil, err
 	}
-	if err := fillRiskUserLogMetrics(rows, since); err != nil {
+	if err := fillRiskUserLogMetrics(rows, timeRange); err != nil {
 		return nil, err
 	}
 	for i := range rows {
@@ -2219,7 +2381,7 @@ func riskUsersByIDs(userIDs []int, since int64) ([]riskUserRow, error) {
 	return rows, nil
 }
 
-func fillRiskUserLogMetrics(rows []riskUserRow, since int64) error {
+func fillRiskUserLogMetrics(rows []riskUserRow, timeRange riskDetailTimeRange) error {
 	if len(rows) == 0 {
 		return nil
 	}
@@ -2228,7 +2390,7 @@ func fillRiskUserLogMetrics(rows []riskUserRow, since int64) error {
 		ids = append(ids, row.UserID)
 	}
 	var metrics []riskLogMetric
-	if err := model.LOG_DB.Table("logs").
+	query := model.LOG_DB.Table("logs").
 		Select(`
 			user_id,
 			coalesce(sum(case when type = ? then 1 else 0 end), 0) AS error_count,
@@ -2236,9 +2398,11 @@ func fillRiskUserLogMetrics(rows []riskUserRow, since int64) error {
 			coalesce(sum(case when type = ? then quota else 0 end), 0) AS consume_quota,
 			count(distinct nullif(ip, '')) AS unique_ip_count
 		`, model.LogTypeError, model.LogTypeConsume, model.LogTypeConsume).
-		Where("created_at >= ? AND user_id IN ?", since, ids).
-		Group("user_id").
-		Scan(&metrics).Error; err != nil {
+		Where("created_at >= ? AND user_id IN ?", timeRange.Since, ids)
+	if timeRange.Until > 0 {
+		query = query.Where("created_at <= ?", timeRange.Until)
+	}
+	if err := query.Group("user_id").Scan(&metrics).Error; err != nil {
 		return err
 	}
 	byUser := make(map[int]riskLogMetric, len(metrics))
@@ -2255,16 +2419,22 @@ func fillRiskUserLogMetrics(rows []riskUserRow, since int64) error {
 	return nil
 }
 
-func riskLogsForDetail(riskType string, ip string, tokenID int, userIDs []int, since int64) ([]riskLogRow, error) {
+func riskLogsForDetail(riskType string, ip string, tokenID int, userIDs []int, timeRange riskDetailTimeRange) ([]riskLogRow, error) {
 	query := model.LOG_DB.Table("logs").
 		Select("id, user_id, username, type, content, quota, ip, token_id, token_name, model_name, created_at").
-		Where("created_at >= ?", since)
+		Where("created_at >= ?", timeRange.Since).
+		Scopes(applyRiskDetailUntil("created_at", timeRange.Until))
 	switch riskType {
-	case "shared_ip", "ip_detail":
+	case "shared_ip", "shared_log_ip", "ip_detail":
 		if ip == "" {
 			return []riskLogRow{}, nil
 		}
 		query = query.Where("ip = ?", ip)
+	case "shared_register_ip":
+		if len(userIDs) == 0 {
+			return []riskLogRow{}, nil
+		}
+		query = query.Where("user_id IN ?", userIDs)
 	case "token_rotation", "token_detail":
 		if tokenID <= 0 {
 			return []riskLogRow{}, nil
@@ -2297,7 +2467,7 @@ func riskLogsForDetail(riskType string, ip string, tokenID int, userIDs []int, s
 	return rows, nil
 }
 
-func riskOrdersByUserIDs(userIDs []int, since int64) ([]riskOrderRow, error) {
+func riskOrdersByUserIDs(userIDs []int, timeRange riskDetailTimeRange) ([]riskOrderRow, error) {
 	userIDs = uniquePositiveInts(userIDs)
 	if len(userIDs) == 0 {
 		return []riskOrderRow{}, nil
@@ -2320,7 +2490,8 @@ func riskOrdersByUserIDs(userIDs []int, since int64) ([]riskOrderRow, error) {
 			t.create_time AS created_at
 		`).
 		Joins("LEFT JOIN users u ON u.id = t.user_id").
-		Where("t.create_time >= ? AND t.user_id IN ?", since, userIDs).
+		Where("t.create_time >= ? AND t.user_id IN ?", timeRange.Since, userIDs).
+		Scopes(applyRiskDetailUntil("t.create_time", timeRange.Until)).
 		Order("t.create_time desc").
 		Limit(80).
 		Scan(&topups).Error; err != nil {
@@ -2345,7 +2516,8 @@ func riskOrdersByUserIDs(userIDs []int, since int64) ([]riskOrderRow, error) {
 			s.create_time AS created_at
 		`).
 		Joins("LEFT JOIN users u ON u.id = s.user_id").
-		Where("s.create_time >= ? AND s.user_id IN ?", since, userIDs).
+		Where("s.create_time >= ? AND s.user_id IN ?", timeRange.Since, userIDs).
+		Scopes(applyRiskDetailUntil("s.create_time", timeRange.Until)).
 		Order("s.create_time desc").
 		Limit(80).
 		Scan(&subscriptions).Error; err != nil {
@@ -2427,7 +2599,7 @@ func uniqueRiskOrders(rows []riskOrderRow) []riskOrderRow {
 	return result
 }
 
-func riskTokensForDetail(userIDs []int, tokenID int, since int64) ([]riskTokenRow, error) {
+func riskTokensForDetail(userIDs []int, tokenID int, timeRange riskDetailTimeRange) ([]riskTokenRow, error) {
 	query := model.LOG_DB.Table("logs AS l").
 		Select(`
 			l.token_id,
@@ -2440,7 +2612,8 @@ func riskTokensForDetail(userIDs []int, tokenID int, since int64) ([]riskTokenRo
 			count(distinct nullif(l.ip, '')) AS unique_ip_count,
 			max(l.created_at) AS last_seen_at
 		`, model.LogTypeError, model.LogTypeConsume).
-		Where("l.created_at >= ? AND l.token_id > 0", since).
+		Where("l.created_at >= ? AND l.token_id > 0", timeRange.Since).
+		Scopes(applyRiskDetailUntil("l.created_at", timeRange.Until)).
 		Group("l.token_id")
 	if tokenID > 0 {
 		query = query.Where("l.token_id = ?", tokenID)
@@ -2506,7 +2679,10 @@ func riskTokenStatusesByID(tokenIDs []int) (map[int]int, error) {
 	return statusByID, nil
 }
 
-func riskIPsForDetail(c *gin.Context, ip string, userIDs []int, since int64) ([]riskIPRow, error) {
+func riskIPsForDetail(c *gin.Context, riskType string, ip string, userIDs []int, timeRange riskDetailTimeRange) ([]riskIPRow, error) {
+	if riskType == "shared_register_ip" {
+		return riskRegisterIPsForDetail(c, ip, userIDs, timeRange)
+	}
 	query := model.LOG_DB.Table("logs").
 		Select(`
 			ip,
@@ -2518,7 +2694,8 @@ func riskIPsForDetail(c *gin.Context, ip string, userIDs []int, since int64) ([]
 			min(created_at) AS first_seen_at,
 			max(created_at) AS last_seen_at
 		`, model.LogTypeError, model.LogTypeConsume).
-		Where("created_at >= ? AND ip <> ''", since).
+		Where("created_at >= ? AND ip <> ''", timeRange.Since).
+		Scopes(applyRiskDetailUntil("created_at", timeRange.Until)).
 		Group("ip")
 	if ip != "" {
 		query = query.Where("ip = ?", ip)
@@ -2546,12 +2723,50 @@ func riskIPsForDetail(c *gin.Context, ip string, userIDs []int, since int64) ([]
 	return rows, nil
 }
 
-func riskReferralsForDetail(userIDs []int, since int64) ([]riskReferralRow, error) {
+func riskRegisterIPsForDetail(c *gin.Context, ip string, userIDs []int, timeRange riskDetailTimeRange) ([]riskIPRow, error) {
+	query := model.DB.Table("users").
+		Select(`
+			register_ip AS ip,
+			count(*) AS user_count,
+			0 AS token_count,
+			0 AS request_count,
+			0 AS error_count,
+			0 AS consume_quota,
+			min(created_at) AS first_seen_at,
+			max(created_at) AS last_seen_at
+		`).
+		Where("created_at >= ? AND register_ip <> '' AND deleted_at IS NULL", timeRange.Since).
+		Scopes(applyRiskDetailUntil("created_at", timeRange.Until)).
+		Group("register_ip")
+	if ip != "" {
+		query = query.Where("register_ip = ?", ip)
+	} else if len(userIDs) > 0 {
+		query = query.Where("id IN ?", userIDs)
+	} else {
+		return []riskIPRow{}, nil
+	}
+	var rows []riskIPRow
+	if err := query.Order("user_count desc").Limit(80).Scan(&rows).Error; err != nil {
+		return nil, err
+	}
+	for i := range rows {
+		if c.GetInt("role") == common.RoleRootUser {
+			var whitelist model.RiskWhitelist
+			if err := model.DB.Where("target_type = ? AND target_id = ? AND (expires_at = 0 OR expires_at > ?)", model.RiskWhitelistIP, rows[i].IP, common.GetTimestamp()).First(&whitelist).Error; err == nil {
+				rows[i].Whitelisted = true
+				rows[i].WhitelistNote = whitelist.Reason
+			}
+		}
+	}
+	return rows, nil
+}
+
+func riskReferralsForDetail(userIDs []int, timeRange riskDetailTimeRange) ([]riskReferralRow, error) {
 	userIDs = uniquePositiveInts(userIDs)
 	if len(userIDs) == 0 {
 		return []riskReferralRow{}, nil
 	}
-	rows, err := queryReferralRiskRowsForUsers(since, userIDs)
+	rows, err := queryReferralRiskRowsForUsers(timeRange, userIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -2559,15 +2774,29 @@ func riskReferralsForDetail(userIDs []int, since int64) ([]riskReferralRow, erro
 }
 
 func queryReferralRiskRows(since int64, limit int) ([]riskReferralRow, error) {
-	return queryReferralRiskRowsWithScope(since, limit, nil)
+	return queryReferralRiskRowsWithScope(riskDetailTimeRange{Since: since}, limit, nil)
 }
 
-func queryReferralRiskRowsForUsers(since int64, userIDs []int) ([]riskReferralRow, error) {
-	return queryReferralRiskRowsWithScope(since, 0, uniquePositiveInts(userIDs))
+func queryReferralRiskRowsForUsers(timeRange riskDetailTimeRange, userIDs []int) ([]riskReferralRow, error) {
+	return queryReferralRiskRowsWithScope(timeRange, 0, uniquePositiveInts(userIDs))
 }
 
-func queryReferralRiskRowsWithScope(since int64, limit int, userIDs []int) ([]riskReferralRow, error) {
+func queryReferralRiskRowsWithScope(timeRange riskDetailTimeRange, limit int, userIDs []int) ([]riskReferralRow, error) {
 	var rows []riskReferralRow
+	bindingWhere := "created_at >= ?"
+	bindingArgs := []interface{}{timeRange.Since}
+	commissionWhere := "created_at >= ?"
+	commissionArgs := []interface{}{timeRange.Since}
+	withdrawalWhere := "created_at >= ?"
+	withdrawalArgs := []interface{}{timeRange.Since}
+	if timeRange.Until > 0 {
+		bindingWhere += " AND created_at <= ?"
+		bindingArgs = append(bindingArgs, timeRange.Until)
+		commissionWhere += " AND created_at <= ?"
+		commissionArgs = append(commissionArgs, timeRange.Until)
+		withdrawalWhere += " AND created_at <= ?"
+		withdrawalArgs = append(withdrawalArgs, timeRange.Until)
+	}
 	query := model.DB.Table("referral_affiliates AS a").
 		Select(`
 			a.id AS affiliate_id,
@@ -2583,21 +2812,21 @@ func queryReferralRiskRowsWithScope(since int64, limit int, userIDs []int) ([]ri
 		Joins(`LEFT JOIN (
 			SELECT inviter_user_id, count(*) AS invitee_count
 			FROM referral_bindings
-			WHERE created_at >= ?
+			WHERE `+bindingWhere+`
 			GROUP BY inviter_user_id
-		) binding ON binding.inviter_user_id = a.user_id`, since).
+		) binding ON binding.inviter_user_id = a.user_id`, bindingArgs...).
 		Joins(`LEFT JOIN (
 			SELECT affiliate_user_id, count(*) AS commission_count, coalesce(sum(commission_amount), 0) AS commission_amount
 			FROM referral_commissions
-			WHERE created_at >= ?
+			WHERE `+commissionWhere+`
 			GROUP BY affiliate_user_id
-		) comm ON comm.affiliate_user_id = a.user_id`, since).
+		) comm ON comm.affiliate_user_id = a.user_id`, commissionArgs...).
 		Joins(`LEFT JOIN (
 			SELECT user_id, count(*) AS withdrawal_count, coalesce(sum(amount), 0) AS withdrawal_amount
 			FROM referral_withdrawals
-			WHERE created_at >= ?
+			WHERE `+withdrawalWhere+`
 			GROUP BY user_id
-		) withdrawal ON withdrawal.user_id = a.user_id`, since).
+		) withdrawal ON withdrawal.user_id = a.user_id`, withdrawalArgs...).
 		Order("invitee_count desc, commission_amount desc")
 	if len(userIDs) > 0 {
 		query = query.Where("a.user_id IN ?", userIDs)
@@ -2705,6 +2934,32 @@ func parseRiskWindowHours(value string) int {
 	default:
 		return window
 	}
+}
+
+func riskEventTimeRange(event model.RiskEvent) riskDetailTimeRange {
+	if event.FirstSeenAt <= 0 && event.LastSeenAt <= 0 {
+		return riskDetailTimeRange{}
+	}
+	_, timeRange := riskDetailQueryWindow(parseRiskWindowHours(strconv.Itoa(event.WindowHours)), &event)
+	return timeRange
+}
+
+func riskDetailQueryWindow(windowHours int, event *model.RiskEvent) (int, riskDetailTimeRange) {
+	if event != nil {
+		if event.WindowHours > 0 {
+			windowHours = event.WindowHours
+		}
+		if event.FirstSeenAt > 0 {
+			return windowHours, riskDetailTimeRange{Since: event.FirstSeenAt, Until: event.LastSeenAt}
+		}
+		if event.LastSeenAt > 0 {
+			return windowHours, riskDetailTimeRange{
+				Since: event.LastSeenAt - int64(windowHours*3600),
+				Until: event.LastSeenAt,
+			}
+		}
+	}
+	return windowHours, riskDetailTimeRange{Since: common.GetTimestamp() - int64(windowHours*3600)}
 }
 
 func scoreRiskUser(row riskUserRow) (int, string) {

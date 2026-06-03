@@ -187,7 +187,7 @@ func SubscriptionEpayNotify(c *gin.Context) {
 		PaidAmount:              parseCallbackAmount(verifyInfo.Money),
 		PaidCurrency:            "CNY",
 		RequirePaymentFacts:     true,
-		CallerIP:                c.ClientIP(),
+		CallerIP:                common.GetClientIP(c),
 	}); err != nil {
 		_, _ = c.Writer.Write([]byte("fail"))
 		return

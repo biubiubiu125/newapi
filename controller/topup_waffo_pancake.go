@@ -474,7 +474,7 @@ func RequestWaffoPancakePay(c *gin.Context) {
 
 func WaffoPancakeWebhook(c *gin.Context) {
 	if !isWaffoPancakeWebhookEnabled() {
-		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 被拒绝 reason=webhook_disabled path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 被拒绝 reason=webhook_disabled path=%q client_ip=%s", c.Request.RequestURI, common.GetClientIP(c)))
 		c.String(http.StatusForbidden, "webhook disabled")
 		return
 	}
@@ -486,7 +486,7 @@ func WaffoPancakeWebhook(c *gin.Context) {
 	if expectedEnv != "test" && expectedEnv != "prod" {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf(
 			"Waffo Pancake webhook 路径环境段无效 env=%q path=%q client_ip=%s",
-			expectedEnv, c.Request.RequestURI, c.ClientIP(),
+			expectedEnv, c.Request.RequestURI, common.GetClientIP(c),
 		))
 		c.String(http.StatusNotFound, "unknown env")
 		return
@@ -494,17 +494,17 @@ func WaffoPancakeWebhook(c *gin.Context) {
 
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 读取请求体失败 path=%q client_ip=%s error=%q", c.Request.RequestURI, c.ClientIP(), err.Error()))
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 读取请求体失败 path=%q client_ip=%s error=%q", c.Request.RequestURI, common.GetClientIP(c), err.Error()))
 		c.String(http.StatusBadRequest, "bad request")
 		return
 	}
 
 	signature := c.GetHeader("X-Waffo-Signature")
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 收到请求 path=%q client_ip=%s body_size=%d", c.Request.RequestURI, c.ClientIP(), len(bodyBytes)))
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 收到请求 path=%q client_ip=%s body_size=%d", c.Request.RequestURI, common.GetClientIP(c), len(bodyBytes)))
 
 	event, err := service.VerifyConfiguredWaffoPancakeWebhook(string(bodyBytes), signature)
 	if err != nil {
-		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 验签失败 path=%q client_ip=%s body_size=%d error=%q", c.Request.RequestURI, c.ClientIP(), len(bodyBytes), err.Error()))
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 验签失败 path=%q client_ip=%s body_size=%d error=%q", c.Request.RequestURI, common.GetClientIP(c), len(bodyBytes), err.Error()))
 		c.String(http.StatusUnauthorized, "invalid signature")
 		return
 	}
@@ -512,13 +512,13 @@ func WaffoPancakeWebhook(c *gin.Context) {
 	if !strings.EqualFold(strings.TrimSpace(event.Mode), expectedEnv) {
 		logger.LogError(c.Request.Context(), fmt.Sprintf(
 			"Waffo Pancake webhook 环境不匹配 expected=%q actual_mode=%q event_id=%s order_id=%s client_ip=%s",
-			expectedEnv, event.Mode, event.ID, event.Data.OrderID, c.ClientIP(),
+			expectedEnv, event.Mode, event.ID, event.Data.OrderID, common.GetClientIP(c),
 		))
 		c.String(http.StatusOK, "OK")
 		return
 	}
 
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 验签成功 event_type=%s event_id=%s order_id=%s client_ip=%s", event.NormalizedEventType(), event.ID, event.Data.OrderID, c.ClientIP()))
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake webhook 验签成功 event_type=%s event_id=%s order_id=%s client_ip=%s", event.NormalizedEventType(), event.ID, event.Data.OrderID, common.GetClientIP(c)))
 	if event.NormalizedEventType() != "order.completed" {
 		c.String(http.StatusOK, "OK")
 		return
@@ -534,7 +534,7 @@ func WaffoPancakeWebhook(c *gin.Context) {
 		if err != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf(
 				"Waffo Pancake webhook 订阅订单解析失败 event_id=%s order_id=%s buyer_identity=%q client_ip=%s error=%q",
-				event.ID, event.Data.OrderID, event.Data.MerchantProvidedBuyerIdentity, c.ClientIP(), err.Error(),
+				event.ID, event.Data.OrderID, event.Data.MerchantProvidedBuyerIdentity, common.GetClientIP(c), err.Error(),
 			))
 			c.String(http.StatusOK, "OK")
 			return
@@ -547,9 +547,9 @@ func WaffoPancakeWebhook(c *gin.Context) {
 			PaidAmount:              waffoPancakeEventPaidAmount(event),
 			PaidCurrency:            waffoPancakeEventPaidCurrency(event),
 			RequirePaymentFacts:     true,
-			CallerIP:                c.ClientIP(),
+			CallerIP:                common.GetClientIP(c),
 		}); err != nil {
-			logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅完成失败 trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err.Error()))
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅完成失败 trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, common.GetClientIP(c), err.Error()))
 			c.String(http.StatusInternalServerError, "retry")
 			return
 		}
@@ -557,7 +557,7 @@ func WaffoPancakeWebhook(c *gin.Context) {
 			c.String(http.StatusInternalServerError, "retry")
 			return
 		}
-		logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅完成 trade_no=%s event_id=%s order_id=%s client_ip=%s", tradeNo, event.ID, event.Data.OrderID, c.ClientIP()))
+		logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅完成 trade_no=%s event_id=%s order_id=%s client_ip=%s", tradeNo, event.ID, event.Data.OrderID, common.GetClientIP(c)))
 		c.String(http.StatusOK, "OK")
 		return
 	}
@@ -569,7 +569,7 @@ func WaffoPancakeWebhook(c *gin.Context) {
 		// retry a permanently-unresolvable webhook.
 		logger.LogError(c.Request.Context(), fmt.Sprintf(
 			"Waffo Pancake webhook 订单解析失败 event_id=%s order_id=%s buyer_identity=%q client_ip=%s error=%q",
-			event.ID, event.Data.OrderID, event.Data.MerchantProvidedBuyerIdentity, c.ClientIP(), err.Error(),
+			event.ID, event.Data.OrderID, event.Data.MerchantProvidedBuyerIdentity, common.GetClientIP(c), err.Error(),
 		))
 		c.String(http.StatusOK, "OK")
 		return
@@ -584,9 +584,9 @@ func WaffoPancakeWebhook(c *gin.Context) {
 		PaidAmount:              waffoPancakeEventPaidAmount(event),
 		PaidCurrency:            waffoPancakeEventPaidCurrency(event),
 		RequirePaymentFacts:     true,
-		CallerIP:                c.ClientIP(),
-	}, c.ClientIP()); err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 充值处理失败 trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, c.ClientIP(), err.Error()))
+		CallerIP:                common.GetClientIP(c),
+	}, common.GetClientIP(c)); err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 充值处理失败 trade_no=%s event_id=%s order_id=%s client_ip=%s error=%q", tradeNo, event.ID, event.Data.OrderID, common.GetClientIP(c), err.Error()))
 		c.String(http.StatusInternalServerError, "retry")
 		return
 	}
@@ -595,6 +595,6 @@ func WaffoPancakeWebhook(c *gin.Context) {
 		return
 	}
 
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 充值成功 trade_no=%s event_id=%s order_id=%s client_ip=%s", tradeNo, event.ID, event.Data.OrderID, c.ClientIP()))
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 充值成功 trade_no=%s event_id=%s order_id=%s client_ip=%s", tradeNo, event.ID, event.Data.OrderID, common.GetClientIP(c)))
 	c.String(http.StatusOK, "OK")
 }

@@ -24,8 +24,6 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
 import {
   AlertTriangle,
   Ban,
@@ -38,14 +36,18 @@ import {
   ShieldCheck,
   UserRound,
 } from 'lucide-react'
-import { SectionPageLayout } from '@/components/layout'
-import { StatusBadge, type StatusVariant } from '@/components/status-badge'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
+import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Sheet, SheetContent, SheetHeader, SheetTitle } from '@/components/ui/sheet'
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { Textarea } from '@/components/ui/textarea'
+import {
+  Sheet,
+  SheetContent,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import {
   Table,
   TableBody,
@@ -54,7 +56,10 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { cn } from '@/lib/utils'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { Textarea } from '@/components/ui/textarea'
+import { SectionPageLayout } from '@/components/layout'
+import { StatusBadge, type StatusVariant } from '@/components/status-badge'
 import {
   banRiskUser,
   createRiskWhitelist,
@@ -191,7 +196,11 @@ function eventStatusLabel(status?: string) {
 function riskTypeLabel(type?: string) {
   switch (type) {
     case 'shared_ip':
-      return '同 IP 多账号'
+      return '同访问 IP 多账号'
+    case 'shared_log_ip':
+      return '同访问 IP 多账号'
+    case 'shared_register_ip':
+      return '同注册 IP 多账号'
     case 'high_error_count':
     case 'errors':
       return '错误日志过多'
@@ -223,6 +232,35 @@ function riskTypeLabel(type?: string) {
     default:
       return type || '风险详情'
   }
+}
+
+function shouldUseSharedLogIPCopy(
+  event?: Pick<RiskEvent, 'type' | 'event_key'> | null
+) {
+  return (
+    event?.type === 'shared_ip' ||
+    event?.type === 'shared_log_ip' ||
+    event?.event_key?.startsWith('shared_ip:')
+  )
+}
+
+function riskEventTitle(event?: RiskEvent | null) {
+  if (!event) return ''
+  if (shouldUseSharedLogIPCopy(event)) return riskTypeLabel('shared_log_ip')
+  return event.title || riskTypeLabel(event.type)
+}
+
+function riskEventSummary(event?: RiskEvent | null) {
+  if (!event) return ''
+  if (shouldUseSharedLogIPCopy(event)) {
+    const target = event.ip || event.target_id
+    const windowHours = event.window_hours || DEFAULT_WINDOW_HOURS
+    const hitCount = formatNumber(event.hit_count)
+    return target
+      ? `同一访问/API IP ${target} 在 ${windowHours} 小时内关联 ${hitCount} 个账号`
+      : `同一访问/API IP 在 ${windowHours} 小时内关联 ${hitCount} 个账号`
+  }
+  return event.summary || event.event_key
 }
 
 function targetTypeLabel(type?: string) {
@@ -394,7 +432,8 @@ function safeParams(params: Record<string, string | number | undefined>) {
 function riskSignalMatchesEvent(signal: RiskSignal, event: RiskEvent) {
   if (signal.event_key) return signal.event_key === event.event_key
   if (signal.type !== event.type) return false
-  if (signal.target_type && signal.target_type !== event.target_type) return false
+  if (signal.target_type && signal.target_type !== event.target_type)
+    return false
   if (signal.target_id && signal.target_id !== event.target_id) return false
   if (signal.ip && signal.ip !== event.ip) return false
   if (signal.user_id && signal.user_id !== event.user_id) return false
@@ -491,15 +530,21 @@ export function RiskCenter() {
           event.target_type === 'ip' ||
           event.target_type === 'token' ||
           event.type === 'shared_ip' ||
+          event.type === 'shared_log_ip' ||
+          event.type === 'shared_register_ip' ||
           event.type === 'token_rotation'
       ),
     [events]
   )
 
-  const openDetail = async (nextSelection: DetailSelection, markViewed = false) => {
+  const openDetail = async (
+    nextSelection: DetailSelection,
+    markViewed = false
+  ) => {
     setSelection(nextSelection)
     setDetailOpen(true)
     setDetailLoading(true)
+    setDetail(null)
     setReason('')
     try {
       if (markViewed) {
@@ -525,7 +570,7 @@ export function RiskCenter() {
     void openDetail(
       {
         kind: 'event',
-        title: event.title || riskTypeLabel(event.type),
+        title: riskEventTitle(event),
         params: safeParams({
           window_hours: windowHours,
           type: event.type,
@@ -603,7 +648,9 @@ export function RiskCenter() {
   const handleScan = async () => {
     setScanLoading(true)
     try {
-      const res = await scanRiskEvents(safeParams({ window_hours: windowHours }))
+      const res = await scanRiskEvents(
+        safeParams({ window_hours: windowHours })
+      )
       if (!res.success) throw new Error(res.message)
       toast.success(`扫描完成，发现 ${res.data.count} 个风险事件`)
       await load()
@@ -617,7 +664,9 @@ export function RiskCenter() {
   const handleProcessSignal = async (signal: RiskSignal) => {
     setScanLoading(true)
     try {
-      const res = await scanRiskEvents(safeParams({ window_hours: windowHours }))
+      const res = await scanRiskEvents(
+        safeParams({ window_hours: windowHours })
+      )
       if (!res.success) throw new Error(res.message)
       await load()
       const event = res.data.events.find((item) =>
@@ -649,7 +698,10 @@ export function RiskCenter() {
     await openDetail(selection)
   }
 
-  const runAction = async (action: () => Promise<{ success: boolean; message?: string }>, successText: string) => {
+  const runAction = async (
+    action: () => Promise<{ success: boolean; message?: string }>,
+    successText: string
+  ) => {
     setActionLoading(true)
     try {
       const res = await action()
@@ -703,12 +755,18 @@ export function RiskCenter() {
           }
           className='h-8 w-24'
         />
-        <Button variant='outline' onClick={() => void load()} disabled={loading}>
+        <Button
+          variant='outline'
+          onClick={() => void load()}
+          disabled={loading}
+        >
           <RefreshCw className={cn('size-4', loading && 'animate-spin')} />
           刷新
         </Button>
         <Button onClick={handleScan} disabled={scanLoading}>
-          <ShieldAlert className={cn('size-4', scanLoading && 'animate-pulse')} />
+          <ShieldAlert
+            className={cn('size-4', scanLoading && 'animate-pulse')}
+          />
           扫描风险
         </Button>
       </SectionPageLayout.Actions>
@@ -755,10 +813,14 @@ export function RiskCenter() {
         <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
           <SheetContent className='w-full overflow-y-auto sm:max-w-4xl'>
             <SheetHeader className='border-b'>
-              <SheetTitle>{selection?.title || '风险详情'}</SheetTitle>
+              <SheetTitle>
+                {!detailLoading && detail?.event
+                  ? riskEventTitle(detail.event)
+                  : selection?.title || '风险详情'}
+              </SheetTitle>
             </SheetHeader>
             {detailLoading ? (
-              <div className='flex min-h-80 items-center justify-center text-sm text-muted-foreground'>
+              <div className='text-muted-foreground flex min-h-80 items-center justify-center text-sm'>
                 正在加载风险详情...
               </div>
             ) : detail ? (
@@ -768,13 +830,24 @@ export function RiskCenter() {
                 <DetailGrid>
                   {detail.users.length > 0 && (
                     <DetailBlock title='关联用户'>
-                      <RiskUserCards users={detail.users} onOpenUser={openUser} />
+                      <RiskUserCards
+                        users={detail.users}
+                        onOpenUser={openUser}
+                      />
                     </DetailBlock>
                   )}
 
                   {detail.ips.length > 0 && (
                     <DetailBlock title='关联 IP'>
-                      <RiskIPCards ips={detail.ips} onOpenIP={openIP} />
+                      <RiskIPCards
+                        ips={detail.ips}
+                        source={
+                          detail.type === 'shared_register_ip'
+                            ? 'register'
+                            : 'log'
+                        }
+                        onOpenIP={openIP}
+                      />
                     </DetailBlock>
                   )}
 
@@ -789,7 +862,10 @@ export function RiskCenter() {
 
                   {detail.orders.length > 0 && (
                     <DetailBlock title='关联订单'>
-                      <RiskOrderCards orders={detail.orders} onOpenOrder={openOrder} />
+                      <RiskOrderCards
+                        orders={detail.orders}
+                        onOpenOrder={openOrder}
+                      />
                     </DetailBlock>
                   )}
 
@@ -803,7 +879,13 @@ export function RiskCenter() {
                   )}
 
                   {detail.logs.length > 0 && (
-                    <DetailBlock title='近期日志'>
+                    <DetailBlock
+                      title={
+                        detail.type === 'shared_register_ip'
+                          ? '关联账号近期日志'
+                          : '近期日志'
+                      }
+                    >
                       <RiskLogCards logs={detail.logs} />
                     </DetailBlock>
                   )}
@@ -895,7 +977,7 @@ export function RiskCenter() {
                 />
               </div>
             ) : (
-              <div className='p-4 text-sm text-muted-foreground'>暂无数据</div>
+              <div className='text-muted-foreground p-4 text-sm'>暂无数据</div>
             )}
           </SheetContent>
         </Sheet>
@@ -904,7 +986,10 @@ export function RiskCenter() {
   )
 }
 
-function OverviewCards(props: { overview: OverviewData | null; loading: boolean }) {
+function OverviewCards(props: {
+  overview: OverviewData | null
+  loading: boolean
+}) {
   const { overview, loading } = props
   const cards = [
     {
@@ -944,7 +1029,9 @@ function OverviewCards(props: { overview: OverviewData | null; loading: boolean 
           <Card key={card.title}>
             <CardContent className='flex items-center justify-between gap-3 p-4'>
               <div className='min-w-0'>
-                <div className='text-muted-foreground text-sm'>{card.title}</div>
+                <div className='text-muted-foreground text-sm'>
+                  {card.title}
+                </div>
                 <div className='mt-1 text-2xl font-semibold'>
                   {loading ? '-' : formatNumber(card.value)}
                 </div>
@@ -971,7 +1058,7 @@ function RiskSignals(props: {
   if (props.signals.length === 0) {
     return (
       <Card>
-        <CardContent className='p-4 text-sm text-muted-foreground'>
+        <CardContent className='text-muted-foreground p-4 text-sm'>
           当前窗口没有新的实时信号。可以点击“扫描风险”生成待处理事件。
         </CardContent>
       </Card>
@@ -1038,7 +1125,11 @@ function RiskEventQueue(props: {
           </TableHeader>
           <TableBody>
             {props.events.map((event) => (
-              <TableRow key={event.id} className='cursor-pointer' onClick={() => props.onOpenEvent(event)}>
+              <TableRow
+                key={event.id}
+                className='cursor-pointer'
+                onClick={() => props.onOpenEvent(event)}
+              >
                 <TableCell>
                   <div className='flex min-w-0 flex-col gap-1'>
                     <div className='flex items-center gap-2'>
@@ -1047,17 +1138,25 @@ function RiskEventQueue(props: {
                         variant={severityVariant(event.severity)}
                         copyable={false}
                       />
-                      <span className='font-medium'>{event.title || riskTypeLabel(event.type)}</span>
+                      <span className='font-medium'>
+                        {riskEventTitle(event)}
+                      </span>
                     </div>
                     <div className='text-muted-foreground line-clamp-1 text-xs'>
-                      {event.summary || event.event_key}
+                      {riskEventSummary(event)}
                     </div>
                   </div>
                 </TableCell>
                 <TableCell>
-                  <div className='text-sm'>{targetTypeLabel(event.target_type)}</div>
+                  <div className='text-sm'>
+                    {targetTypeLabel(event.target_type)}
+                  </div>
                   <div className='text-muted-foreground max-w-52 truncate text-xs'>
-                    {event.username || event.ip || event.token_name || event.trade_no || event.target_id}
+                    {event.username ||
+                      event.ip ||
+                      event.token_name ||
+                      event.trade_no ||
+                      event.target_id}
                   </div>
                 </TableCell>
                 <TableCell>{formatNumber(event.hit_count)}</TableCell>
@@ -1108,15 +1207,22 @@ function RiskUserTable(props: {
               <TableHead>风险</TableHead>
               <TableHead>充值</TableHead>
               <TableHead>错误</TableHead>
-              <TableHead>IP / Token</TableHead>
+              <TableHead>注册 IP</TableHead>
+              <TableHead>访问 IP / Token</TableHead>
               <TableHead>状态</TableHead>
             </TableRow>
           </TableHeader>
           <TableBody>
             {props.users.map((user) => (
-              <TableRow key={user.user_id} className='cursor-pointer' onClick={() => props.onOpenUser(user)}>
+              <TableRow
+                key={user.user_id}
+                className='cursor-pointer'
+                onClick={() => props.onOpenUser(user)}
+              >
                 <TableCell>
-                  <div className='font-medium'>{user.username || `#${user.user_id}`}</div>
+                  <div className='font-medium'>
+                    {user.username || `#${user.user_id}`}
+                  </div>
                   <div className='text-muted-foreground text-xs'>
                     ID {user.user_id} · {user.email || '-'}
                   </div>
@@ -1136,12 +1242,22 @@ function RiskUserTable(props: {
                 </TableCell>
                 <TableCell>{formatNumber(user.error_count)}</TableCell>
                 <TableCell>
-                  {formatNumber(user.unique_ip_count)} / {formatNumber(user.token_count)}
+                  <span className='font-mono text-xs'>
+                    {user.register_ip || '-'}
+                  </span>
+                </TableCell>
+                <TableCell>
+                  {formatNumber(user.unique_ip_count)} /{' '}
+                  {formatNumber(user.token_count)}
                 </TableCell>
                 <TableCell>
                   <StatusBadge
                     label={userStatusLabel(user.status)}
-                    variant={user.status === USER_STATUS_DISABLED ? 'danger' : 'success'}
+                    variant={
+                      user.status === USER_STATUS_DISABLED
+                        ? 'danger'
+                        : 'success'
+                    }
                     copyable={false}
                   />
                 </TableCell>
@@ -1181,7 +1297,7 @@ function IPTokenPanel(props: {
                   onClick={() => props.onOpenEvent(event)}
                 >
                   <div className='min-w-0'>
-                    <div className='font-medium'>{event.title || riskTypeLabel(event.type)}</div>
+                    <div className='font-medium'>{riskEventTitle(event)}</div>
                     <div className='text-muted-foreground truncate text-xs'>
                       {event.ip || event.token_name || event.target_id}
                     </div>
@@ -1202,10 +1318,10 @@ function IPTokenPanel(props: {
         <CardContent className='space-y-3 p-4'>
           <div className='flex items-center gap-2 font-medium'>
             <KeyRound className='size-4' />
-            多 IP / Token 用户
+            多访问 IP / Token 用户
           </div>
           {topIPUsers.length === 0 ? (
-            <EmptyText text='暂无明显多 IP 或多 Token 用户。' />
+            <EmptyText text='暂无明显多访问 IP 或多 Token 用户。' />
           ) : (
             <div className='space-y-2'>
               {topIPUsers.slice(0, 12).map((user) => (
@@ -1268,8 +1384,12 @@ function RiskActionList(props: { actions: RiskAction[] }) {
                     {action.target_id || action.ip || action.user_id || '-'}
                   </div>
                 </TableCell>
-                <TableCell>{action.operator_name || `#${action.operator_user_id}`}</TableCell>
-                <TableCell className='max-w-80 truncate'>{action.reason || '-'}</TableCell>
+                <TableCell>
+                  {action.operator_name || `#${action.operator_user_id}`}
+                </TableCell>
+                <TableCell className='max-w-80 truncate'>
+                  {action.reason || '-'}
+                </TableCell>
                 <TableCell>{formatTime(action.created_at)}</TableCell>
               </TableRow>
             ))}
@@ -1292,10 +1412,14 @@ function RiskDetailSummary(props: {
         <div className='flex flex-wrap items-center justify-between gap-2'>
           <div>
             <div className='text-base font-medium'>
-              {event?.title || selection?.title || riskTypeLabel(detail.type)}
+              {event
+                ? riskEventTitle(event)
+                : selection?.title || riskTypeLabel(detail.type)}
             </div>
             <div className='text-muted-foreground mt-1 text-sm'>
-              {event?.summary || `${detail.window_hours} 小时窗口内的关联风险数据`}
+              {event
+                ? riskEventSummary(event)
+                : `${detail.window_hours} 小时窗口内的关联风险数据`}
             </div>
           </div>
           <div className='flex items-center gap-2'>
@@ -1318,7 +1442,10 @@ function RiskDetailSummary(props: {
         <div className='grid gap-2 text-sm md:grid-cols-4'>
           <InfoItem label='详情类型' value={riskTypeLabel(detail.type)} />
           <InfoItem label='窗口' value={`${detail.window_hours} 小时`} />
-          <InfoItem label='对象' value={event?.target_id || detail.ip || detail.trade_no || '-'} />
+          <InfoItem
+            label='对象'
+            value={event?.target_id || detail.ip || detail.trade_no || '-'}
+          />
           <InfoItem label='最近发现' value={formatTime(event?.last_seen_at)} />
         </div>
       </CardContent>
@@ -1480,15 +1607,19 @@ function RiskUserCards(props: {
           onClick={() => props.onOpenUser(user)}
         >
           <div className='flex items-center justify-between gap-2'>
-            <div className='font-medium'>{user.username || `#${user.user_id}`}</div>
+            <div className='font-medium'>
+              {user.username || `#${user.user_id}`}
+            </div>
             <StatusBadge
               label={userStatusLabel(user.status)}
-              variant={user.status === USER_STATUS_DISABLED ? 'danger' : 'success'}
+              variant={
+                user.status === USER_STATUS_DISABLED ? 'danger' : 'success'
+              }
               copyable={false}
             />
           </div>
           <div className='text-muted-foreground mt-1 text-xs'>
-            ID {user.user_id} · 充值 {formatMoney(user.topup_paid_amount, 'CNY')} · 错误{' '}
+            ID {user.user_id} · 注册 IP {user.register_ip || '-'} · 错误{' '}
             {formatNumber(user.error_count)}
           </div>
         </button>
@@ -1497,27 +1628,43 @@ function RiskUserCards(props: {
   )
 }
 
-function RiskIPCards(props: { ips: RiskIP[]; onOpenIP: (ip: string) => void }) {
+function RiskIPCards(props: {
+  ips: RiskIP[]
+  source?: 'register' | 'log'
+  onOpenIP: (ip: string) => void
+}) {
+  const isRegisterSource = props.source === 'register'
   return (
     <div className='space-y-2'>
       {props.ips.map((ip) => (
         <button
           key={ip.ip}
           type='button'
-          className='hover:bg-muted w-full rounded-lg border p-3 text-left'
-          onClick={() => props.onOpenIP(ip.ip)}
+          disabled={isRegisterSource}
+          className={cn(
+            'w-full rounded-lg border p-3 text-left',
+            isRegisterSource ? 'cursor-default' : 'hover:bg-muted'
+          )}
+          onClick={() => {
+            if (!isRegisterSource) props.onOpenIP(ip.ip)
+          }}
         >
           <div className='flex items-center justify-between gap-2'>
             <div className='font-medium'>{ip.ip || '-'}</div>
             <StatusBadge
-              label={ip.whitelisted ? '白名单' : `${formatNumber(ip.user_count)} 用户`}
+              label={
+                ip.whitelisted
+                  ? '白名单'
+                  : `${formatNumber(ip.user_count)} 用户`
+              }
               variant={ip.whitelisted ? 'success' : 'warning'}
               copyable={false}
             />
           </div>
           <div className='text-muted-foreground mt-1 text-xs'>
-            Token {formatNumber(ip.token_count)} · 请求 {formatNumber(ip.request_count)} · 错误{' '}
-            {formatNumber(ip.error_count)}
+            {isRegisterSource
+              ? `注册来源 · ${formatNumber(ip.user_count)} 个用户`
+              : `访问来源 · Token ${formatNumber(ip.token_count)} · 请求 ${formatNumber(ip.request_count)} · 错误 ${formatNumber(ip.error_count)}`}
           </div>
         </button>
       ))}
@@ -1539,7 +1686,9 @@ function RiskTokenCards(props: {
           onClick={() => props.onOpenToken(token.token_id, token.token_name)}
         >
           <div className='flex items-center justify-between gap-2'>
-            <div className='font-medium'>{token.token_name || `Token #${token.token_id}`}</div>
+            <div className='font-medium'>
+              {token.token_name || `Token #${token.token_id}`}
+            </div>
             <StatusBadge
               label={token.status === 1 ? '启用' : '禁用'}
               variant={token.status === 1 ? 'success' : 'danger'}
@@ -1547,7 +1696,8 @@ function RiskTokenCards(props: {
             />
           </div>
           <div className='text-muted-foreground mt-1 text-xs'>
-            {token.username || `#${token.user_id}`} · IP {formatNumber(token.unique_ip_count)} · 错误{' '}
+            {token.username || `#${token.user_id}`} · IP{' '}
+            {formatNumber(token.unique_ip_count)} · 错误{' '}
             {formatNumber(token.error_count)}
           </div>
         </button>
@@ -1578,12 +1728,16 @@ function RiskOrderCards(props: {
             />
           </div>
           <div className='text-muted-foreground mt-1 text-xs'>
-            {orderTypeLabel(order.order_type)} · {order.payment_provider || '-'} ·{' '}
-            {paymentMethodLabel(order.payment_method)} ·{' '}
+            {orderTypeLabel(order.order_type)} · {order.payment_provider || '-'}{' '}
+            · {paymentMethodLabel(order.payment_method)} ·{' '}
             {formatMoney(order.paid_amount, order.paid_currency)}
           </div>
           <div className='text-muted-foreground mt-1 text-xs'>
-            佣金：{referralStatusLabel(order.referral_commission_status, order.referral_commission_error)}
+            佣金：
+            {referralStatusLabel(
+              order.referral_commission_status,
+              order.referral_commission_error
+            )}
           </div>
         </button>
       ))}
@@ -1619,7 +1773,9 @@ function RiskReferralCards(props: {
             {formatMoney(row.commission_amount, 'CNY')} · 提现{' '}
             {formatMoney(row.withdrawal_amount, 'CNY')}
           </div>
-          <div className='text-muted-foreground mt-1 text-xs'>{row.reason || '-'}</div>
+          <div className='text-muted-foreground mt-1 text-xs'>
+            {row.reason || '-'}
+          </div>
         </button>
       ))}
     </div>
@@ -1633,12 +1789,15 @@ function RiskLogCards(props: { logs: RiskLog[] }) {
         <div key={log.id} className='rounded-lg border p-3'>
           <div className='flex items-center justify-between gap-2'>
             <div className='font-medium'>{logTypeLabel(log.type)}</div>
-            <div className='text-muted-foreground text-xs'>{formatTime(log.created_at)}</div>
+            <div className='text-muted-foreground text-xs'>
+              {formatTime(log.created_at)}
+            </div>
           </div>
           <div className='mt-1 line-clamp-2 text-sm'>{log.content || '-'}</div>
           <div className='text-muted-foreground mt-1 text-xs'>
             {log.username || `#${log.user_id}`} · IP {log.ip || '-'} · Token{' '}
-            {log.token_name || log.token_id || '-'} · 模型 {log.model_name || '-'}
+            {log.token_name || log.token_id || '-'} · 模型{' '}
+            {log.model_name || '-'}
           </div>
         </div>
       ))}
@@ -1658,7 +1817,7 @@ function InfoItem(props: { label: string; value: ReactNode }) {
 function EmptyPanel(props: { text: string }) {
   return (
     <Card>
-      <CardContent className='p-6 text-center text-sm text-muted-foreground'>
+      <CardContent className='text-muted-foreground p-6 text-center text-sm'>
         {props.text}
       </CardContent>
     </Card>
@@ -1666,7 +1825,7 @@ function EmptyPanel(props: { text: string }) {
 }
 
 function EmptyText(props: { text: string }) {
-  return <div className='text-sm text-muted-foreground'>{props.text}</div>
+  return <div className='text-muted-foreground text-sm'>{props.text}</div>
 }
 
 function getPrimaryWhitelistTarget(

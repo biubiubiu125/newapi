@@ -255,7 +255,7 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 		Group:            group,
 		Ip: func() string {
 			if needRecordIp {
-				return c.ClientIP()
+				return common.GetClientIP(c)
 			}
 			return ""
 		}(),
@@ -318,7 +318,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 		Group:            params.Group,
 		Ip: func() string {
 			if needRecordIp {
-				return c.ClientIP()
+				return common.GetClientIP(c)
 			}
 			return ""
 		}(),

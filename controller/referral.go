@@ -362,7 +362,7 @@ func serviceModelReferralClick(c *gin.Context) model.ReferralClick {
 	return model.ReferralClick{
 		Referer:       c.GetHeader("Referer"),
 		LandingPath:   c.Request.URL.Path,
-		IpHash:        service.HashReferralRiskValue(c.ClientIP()),
+		IpHash:        service.HashReferralRiskValue(common.GetClientIP(c)),
 		UserAgentHash: service.HashReferralRiskValue(c.GetHeader("User-Agent")),
 		CreatedAt:     time.Now().Unix(),
 	}

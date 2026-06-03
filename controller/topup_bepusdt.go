@@ -177,26 +177,26 @@ func RequestBEpusdtPay(c *gin.Context) {
 func BEpusdtTopUpNotify(c *gin.Context) {
 	params, err := readBEpusdtCallback(c)
 	if err != nil {
-		logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt webhook 参数解析失败 path=%q client_ip=%s error=%q", c.Request.RequestURI, c.ClientIP(), err.Error()))
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt webhook 参数解析失败 path=%q client_ip=%s error=%q", c.Request.RequestURI, common.GetClientIP(c), err.Error()))
 		c.String(http.StatusBadRequest, "fail")
 		return
 	}
 	tradeNo := service.BEpusdtCallbackTradeNo(params)
 	if tradeNo == "" {
-		logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt webhook rejected reason=missing_order_id path=%q client_ip=%s", c.Request.RequestURI, c.ClientIP()))
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt webhook rejected reason=missing_order_id path=%q client_ip=%s", c.Request.RequestURI, common.GetClientIP(c)))
 		c.String(http.StatusBadRequest, "fail")
 		return
 	}
 	status := service.BEpusdtCallbackStatus(params)
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt topup webhook received trade_no=%s status=%s amount=%s fiat=%s client_ip=%s", tradeNo, status, bepusdtCallbackString(params, "amount"), bepusdtCallbackString(params, "fiat"), c.ClientIP()))
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt topup webhook received trade_no=%s status=%s amount=%s fiat=%s client_ip=%s", tradeNo, status, bepusdtCallbackString(params, "amount"), bepusdtCallbackString(params, "fiat"), common.GetClientIP(c)))
 	facts, err := validateUSDTGatewayCallback(c, tradeNo, params, false)
 	if err != nil {
-		logger.LogWarn(c.Request.Context(), fmt.Sprintf("USDT gateway webhook rejected trade_no=%s path=%q client_ip=%s error=%q", tradeNo, c.Request.RequestURI, c.ClientIP(), err.Error()))
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("USDT gateway webhook rejected trade_no=%s path=%q client_ip=%s error=%q", tradeNo, c.Request.RequestURI, common.GetClientIP(c), err.Error()))
 		c.String(http.StatusBadRequest, "fail")
 		return
 	}
 	if !service.IsBEpusdtPaidStatus(status) {
-		logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt webhook 忽略非成功事件 trade_no=%s status=%s client_ip=%s", tradeNo, status, c.ClientIP()))
+		logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt webhook 忽略非成功事件 trade_no=%s status=%s client_ip=%s", tradeNo, status, common.GetClientIP(c)))
 		_, _ = c.Writer.Write([]byte("ok"))
 		return
 	}
@@ -209,22 +209,22 @@ func BEpusdtTopUpNotify(c *gin.Context) {
 		PaidAmount:              facts.PaidAmount,
 		PaidCurrency:            facts.PaidCurrency,
 		RequirePaymentFacts:     true,
-	}, c.ClientIP()); err != nil {
+	}, common.GetClientIP(c)); err != nil {
 		if isPaymentCallbackRejection(err) {
-			logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt topup webhook rejected trade_no=%s client_ip=%s error=%q", tradeNo, c.ClientIP(), err.Error()))
+			logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt topup webhook rejected trade_no=%s client_ip=%s error=%q", tradeNo, common.GetClientIP(c), err.Error()))
 			c.String(http.StatusBadRequest, "fail")
 			return
 		}
-		logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt 充值处理失败 trade_no=%s client_ip=%s error=%q", tradeNo, c.ClientIP(), err.Error()))
+		logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt 充值处理失败 trade_no=%s client_ip=%s error=%q", tradeNo, common.GetClientIP(c), err.Error()))
 		c.String(http.StatusInternalServerError, "fail")
 		return
 	}
 	if err := processPaidTopUpCommission(c.Request.Context(), tradeNo); err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt topup commission failed trade_no=%s client_ip=%s error=%q", tradeNo, c.ClientIP(), err.Error()))
+		logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt topup commission failed trade_no=%s client_ip=%s error=%q", tradeNo, common.GetClientIP(c), err.Error()))
 		c.String(http.StatusInternalServerError, "fail")
 		return
 	}
-	logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt topup webhook processed trade_no=%s client_ip=%s", tradeNo, c.ClientIP()))
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt topup webhook processed trade_no=%s client_ip=%s", tradeNo, common.GetClientIP(c)))
 	_, _ = c.Writer.Write([]byte("ok"))
 }
 

@@ -299,6 +299,9 @@ function renderDesktop<TData>(
 
   const rows = props.table.getRowModel().rows
   const isFetchingOnly = props.isFetching && !props.isLoading
+  const tableStyle = props.applyHeaderSize
+    ? { minWidth: props.table.getTotalSize() }
+    : undefined
 
   return (
     <div
@@ -308,7 +311,7 @@ function renderDesktop<TData>(
         props.tableClassName
       )}
     >
-      <Table>
+      <Table style={tableStyle}>
         <TableHeader className={props.tableHeaderClassName}>
           {props.table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>

@@ -57,6 +57,29 @@ func TestBuildPaymentRiskEventsIgnoresSkippedReferralWithoutBinding(t *testing.T
 	require.Empty(t, events)
 }
 
+func TestRiskDetailQueryWindowUsesEventWindowAndFirstSeen(t *testing.T) {
+	windowHours, timeRange := riskDetailQueryWindow(24, &model.RiskEvent{
+		WindowHours: 72,
+		FirstSeenAt: 1000,
+		LastSeenAt:  2000,
+	})
+
+	require.Equal(t, 72, windowHours)
+	require.Equal(t, int64(1000), timeRange.Since)
+	require.Equal(t, int64(2000), timeRange.Until)
+}
+
+func TestRiskDetailQueryWindowFallsBackToEventLastSeen(t *testing.T) {
+	windowHours, timeRange := riskDetailQueryWindow(24, &model.RiskEvent{
+		WindowHours: 2,
+		LastSeenAt:  10000,
+	})
+
+	require.Equal(t, 2, windowHours)
+	require.Equal(t, int64(2800), timeRange.Since)
+	require.Equal(t, int64(10000), timeRange.Until)
+}
+
 func TestBuildPaymentRiskEventsIncludesFailedReferralCommission(t *testing.T) {
 	setupPaymentCallbackGuardDB(t)
 	now := time.Now().Unix()
@@ -403,6 +426,118 @@ func TestGetRiskDetailWithoutEventIDDoesNotPanic(t *testing.T) {
 	require.Contains(t, w.Body.String(), `"user_id":706`)
 }
 
+func TestGetRiskDetailWithEventIDUsesEventTimeUpperBound(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+	ip := "203.0.113.91"
+
+	require.NoError(t, model.DB.Create(&model.User{Id: 731, Username: "risk_event_old_user"}).Error)
+	require.NoError(t, model.DB.Create(&model.User{Id: 732, Username: "risk_event_new_user"}).Error)
+	require.NoError(t, model.LOG_DB.Create(&model.Log{
+		UserId:    731,
+		Username:  "risk_event_old_user",
+		Ip:        ip,
+		Type:      model.LogTypeConsume,
+		CreatedAt: 1000,
+	}).Error)
+	require.NoError(t, model.LOG_DB.Create(&model.Log{
+		UserId:    732,
+		Username:  "risk_event_new_user",
+		Ip:        ip,
+		Type:      model.LogTypeConsume,
+		CreatedAt: 3000,
+	}).Error)
+	event := model.RiskEvent{
+		EventKey:    "risk-event-upper-bound",
+		Type:        "shared_log_ip",
+		TargetType:  model.RiskTargetIP,
+		TargetId:    ip,
+		Ip:          ip,
+		Status:      model.RiskEventStatusOpen,
+		WindowHours: 1,
+		FirstSeenAt: 900,
+		LastSeenAt:  1100,
+	}
+	require.NoError(t, model.DB.Create(&event).Error)
+
+	router := gin.New()
+	router.GET("/api/user/admin/risk/detail", func(c *gin.Context) {
+		c.Set("role", common.RoleRootUser)
+		GetRiskDetail(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/user/admin/risk/detail?event_id=%d", event.Id), nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), `"success":true`)
+	require.Contains(t, w.Body.String(), "risk_event_old_user")
+	require.NotContains(t, w.Body.String(), "risk_event_new_user")
+}
+
+func TestGetRiskDetailEventPermissionUsesEventTimeRange(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+	ip := "203.0.113.92"
+
+	require.NoError(t, model.DB.Create(&model.User{
+		Id:       733,
+		Username: "risk_event_normal_window_user",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.User{
+		Id:       734,
+		Username: "risk_event_late_root_user",
+		Role:     common.RoleRootUser,
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, model.LOG_DB.Create(&model.Log{
+		UserId:    733,
+		Username:  "risk_event_normal_window_user",
+		Ip:        ip,
+		Type:      model.LogTypeConsume,
+		CreatedAt: 1000,
+	}).Error)
+	require.NoError(t, model.LOG_DB.Create(&model.Log{
+		UserId:    734,
+		Username:  "risk_event_late_root_user",
+		Ip:        ip,
+		Type:      model.LogTypeConsume,
+		CreatedAt: 3000,
+	}).Error)
+	event := model.RiskEvent{
+		EventKey:    "risk-event-permission-window",
+		Type:        "shared_log_ip",
+		TargetType:  model.RiskTargetIP,
+		TargetId:    ip,
+		Ip:          ip,
+		Status:      model.RiskEventStatusOpen,
+		WindowHours: 1,
+		FirstSeenAt: 900,
+		LastSeenAt:  1100,
+	}
+	require.NoError(t, model.DB.Create(&event).Error)
+
+	router := gin.New()
+	router.GET("/api/user/admin/risk/detail", func(c *gin.Context) {
+		c.Set("id", 2)
+		c.Set("username", "admin")
+		c.Set("role", common.RoleAdminUser)
+		GetRiskDetail(c)
+	})
+
+	req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/user/admin/risk/detail?event_id=%d", event.Id), nil)
+	w := httptest.NewRecorder()
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), `"success":true`)
+	require.Contains(t, w.Body.String(), "risk_event_normal_window_user")
+	require.NotContains(t, w.Body.String(), "risk_event_late_root_user")
+}
+
 func TestRiskTokensForDetailUsesTokenStatusFromTokenTable(t *testing.T) {
 	setupPaymentCallbackGuardDB(t)
 	now := time.Now().Unix()
@@ -424,7 +559,7 @@ func TestRiskTokensForDetailUsesTokenStatusFromTokenTable(t *testing.T) {
 		CreatedAt: now,
 	}).Error)
 
-	rows, err := riskTokensForDetail([]int{707}, 0, now-3600)
+	rows, err := riskTokensForDetail([]int{707}, 0, riskDetailTimeRange{Since: now - 3600})
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	require.Equal(t, 8801, rows[0].TokenID)
@@ -1348,7 +1483,7 @@ func TestRiskReferralsForDetailDoesNotReturnGlobalRowsWithoutTargetUsers(t *test
 		}).Error)
 	}
 
-	rows, err := riskReferralsForDetail(nil, now-3600)
+	rows, err := riskReferralsForDetail(nil, riskDetailTimeRange{Since: now - 3600})
 
 	require.NoError(t, err)
 	require.Empty(t, rows)
@@ -1523,7 +1658,7 @@ func TestRiskReferralsForDetailFindsTargetBeyondGlobalTopLimit(t *testing.T) {
 		}).Error)
 	}
 
-	rows, err := riskReferralsForDetail([]int{targetUserID}, now-3600)
+	rows, err := riskReferralsForDetail([]int{targetUserID}, riskDetailTimeRange{Since: now - 3600})
 
 	require.NoError(t, err)
 	require.Len(t, rows, 1)

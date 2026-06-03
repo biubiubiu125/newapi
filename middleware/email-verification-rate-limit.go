@@ -20,7 +20,7 @@ const (
 func redisEmailVerificationRateLimiter(c *gin.Context) {
 	ctx := context.Background()
 	rdb := common.RDB
-	key := "emailVerification:" + EmailVerificationRateLimitMark + ":" + c.ClientIP()
+	key := "emailVerification:" + EmailVerificationRateLimitMark + ":" + common.GetClientIP(c)
 
 	count, err := rdb.Incr(ctx, key).Result()
 	if err != nil {
@@ -55,7 +55,7 @@ func redisEmailVerificationRateLimiter(c *gin.Context) {
 }
 
 func memoryEmailVerificationRateLimiter(c *gin.Context) {
-	key := EmailVerificationRateLimitMark + ":" + c.ClientIP()
+	key := EmailVerificationRateLimitMark + ":" + common.GetClientIP(c)
 
 	if !inMemoryRateLimiter.Request(key, EmailVerificationMaxRequests, EmailVerificationDuration) {
 		c.JSON(http.StatusTooManyRequests, gin.H{

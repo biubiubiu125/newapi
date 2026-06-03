@@ -85,7 +85,7 @@ func UpdateReferralSettings(c *gin.Context) {
 		RequireApproval:    req.RequireApproval,
 		SettlementCurrency: strings.TrimSpace(req.SettlementCurrency),
 		SettlementFxRates:  strings.TrimSpace(req.SettlementFxRates),
-	}, adminId, c.ClientIP(), c.GetHeader("User-Agent"))
+	}, adminId, common.GetClientIP(c), c.GetHeader("User-Agent"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -240,7 +240,7 @@ func ApproveReferralAffiliate(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	item, err := referralService.ApproveAffiliate(userId, adminId, req.RateOverride, strings.TrimSpace(req.Reason), c.ClientIP(), c.GetHeader("User-Agent"))
+	item, err := referralService.ApproveAffiliate(userId, adminId, req.RateOverride, strings.TrimSpace(req.Reason), common.GetClientIP(c), c.GetHeader("User-Agent"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -258,7 +258,7 @@ func SetReferralAffiliateRate(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	item, err := referralService.SetAffiliateRateOverride(userId, adminId, req.RateOverride, strings.TrimSpace(req.Reason), c.ClientIP(), c.GetHeader("User-Agent"))
+	item, err := referralService.SetAffiliateRateOverride(userId, adminId, req.RateOverride, strings.TrimSpace(req.Reason), common.GetClientIP(c), c.GetHeader("User-Agent"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -276,7 +276,7 @@ func RejectReferralAffiliate(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	item, err := referralService.RejectAffiliate(userId, adminId, strings.TrimSpace(req.Reason), c.ClientIP(), c.GetHeader("User-Agent"))
+	item, err := referralService.RejectAffiliate(userId, adminId, strings.TrimSpace(req.Reason), common.GetClientIP(c), c.GetHeader("User-Agent"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -294,7 +294,7 @@ func DisableReferralAffiliate(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	item, err := referralService.DisableAffiliate(userId, adminId, strings.TrimSpace(req.Reason), c.ClientIP(), c.GetHeader("User-Agent"))
+	item, err := referralService.DisableAffiliate(userId, adminId, strings.TrimSpace(req.Reason), common.GetClientIP(c), c.GetHeader("User-Agent"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -307,7 +307,7 @@ func RestoreReferralAffiliate(c *gin.Context) {
 	if !ok {
 		return
 	}
-	item, err := referralService.RestoreAffiliate(userId, adminId, c.ClientIP(), c.GetHeader("User-Agent"))
+	item, err := referralService.RestoreAffiliate(userId, adminId, common.GetClientIP(c), c.GetHeader("User-Agent"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -335,7 +335,7 @@ func AdjustReferralAffiliate(c *gin.Context) {
 		Delta:          req.Amount,
 		Remark:         strings.TrimSpace(req.Remark),
 		IdempotencyKey: idempotencyKey,
-		IP:             c.ClientIP(),
+		IP:             common.GetClientIP(c),
 		UserAgent:      c.GetHeader("User-Agent"),
 	})
 	if err != nil {
@@ -355,7 +355,7 @@ func FreezeReferralSettlement(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	item, err := referralService.FreezeSettlement(userId, adminId, strings.TrimSpace(req.Reason), c.ClientIP(), c.GetHeader("User-Agent"))
+	item, err := referralService.FreezeSettlement(userId, adminId, strings.TrimSpace(req.Reason), common.GetClientIP(c), c.GetHeader("User-Agent"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -368,7 +368,7 @@ func RestoreReferralSettlement(c *gin.Context) {
 	if !ok {
 		return
 	}
-	item, err := referralService.RestoreSettlement(userId, adminId, c.ClientIP(), c.GetHeader("User-Agent"))
+	item, err := referralService.RestoreSettlement(userId, adminId, common.GetClientIP(c), c.GetHeader("User-Agent"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -386,7 +386,7 @@ func FreezeReferralWithdrawal(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	item, err := referralService.FreezeWithdrawal(userId, adminId, strings.TrimSpace(req.Reason), c.ClientIP(), c.GetHeader("User-Agent"))
+	item, err := referralService.FreezeWithdrawal(userId, adminId, strings.TrimSpace(req.Reason), common.GetClientIP(c), c.GetHeader("User-Agent"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -399,7 +399,7 @@ func RestoreReferralWithdrawal(c *gin.Context) {
 	if !ok {
 		return
 	}
-	item, err := referralService.RestoreWithdrawal(userId, adminId, c.ClientIP(), c.GetHeader("User-Agent"))
+	item, err := referralService.RestoreWithdrawal(userId, adminId, common.GetClientIP(c), c.GetHeader("User-Agent"))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -467,7 +467,7 @@ func ApproveReferralWithdrawal(c *gin.Context) {
 		WithdrawalId: withdrawalId,
 		AdminUserId:  adminId,
 		AdminNote:    strings.TrimSpace(req.AdminNote),
-		IP:           c.ClientIP(),
+		IP:           common.GetClientIP(c),
 		UserAgent:    c.GetHeader("User-Agent"),
 	})
 	if err != nil {
@@ -494,7 +494,7 @@ func RejectReferralWithdrawal(c *gin.Context) {
 		AdminNote:      strings.TrimSpace(req.AdminNote),
 		RejectReason:   strings.TrimSpace(req.RejectReason),
 		RejectProofURL: strings.TrimSpace(req.RejectProofURL),
-		IP:             c.ClientIP(),
+		IP:             common.GetClientIP(c),
 		UserAgent:      c.GetHeader("User-Agent"),
 	})
 	if err != nil {
@@ -521,7 +521,7 @@ func MarkReferralWithdrawalPaid(c *gin.Context) {
 		AdminNote:       strings.TrimSpace(req.AdminNote),
 		PaymentProofURL: strings.TrimSpace(req.PaymentProofURL),
 		PaymentTxnNo:    strings.TrimSpace(req.PaymentTxnNo),
-		IP:              c.ClientIP(),
+		IP:              common.GetClientIP(c),
 		UserAgent:       c.GetHeader("User-Agent"),
 	})
 	if err != nil {

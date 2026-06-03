@@ -108,13 +108,13 @@ func abortUnauthorized(c *gin.Context) {
 
 func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark string) {
 	ctx := context.Background()
-	key := "rateLimit:" + mark + c.ClientIP()
+	key := "rateLimit:" + mark + common.GetClientIP(c)
 	allowed, err := redisSlidingWindowAllowed(ctx, key, maxRequestNum, duration)
 	abortOnRateLimitResult(c, allowed, err)
 }
 
 func memoryRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark string) {
-	key := mark + c.ClientIP()
+	key := mark + common.GetClientIP(c)
 	if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
 		abortTooManyRequests(c)
 		return
