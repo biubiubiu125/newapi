@@ -313,6 +313,8 @@ function DesktopTable<TData>(props: DataTablePageProps<TData>) {
   const applyColumnSize = props.applyHeaderSize === true
   const showStickyHorizontalScrollbar =
     props.stickyHorizontalScrollbar || applyColumnSize
+  const tableClassName =
+    props.stickyHorizontalScrollbar && !applyColumnSize ? 'w-max' : undefined
   const tableStyle = applyColumnSize
     ? { minWidth: props.table.getTotalSize() }
     : undefined
@@ -325,7 +327,11 @@ function DesktopTable<TData>(props: DataTablePageProps<TData>) {
         props.tableClassName
       )}
     >
-      <Table containerRef={scrollContainerRef} style={tableStyle}>
+      <Table
+        containerRef={scrollContainerRef}
+        className={tableClassName}
+        style={tableStyle}
+      >
         <TableHeader className={props.tableHeaderClassName}>
           {props.table.getHeaderGroups().map((headerGroup) => (
             <TableRow key={headerGroup.id}>
