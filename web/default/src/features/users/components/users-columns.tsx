@@ -47,6 +47,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
   return [
     {
       id: 'select',
+      size: 36,
       header: ({ table }) => (
         <Checkbox
           checked={table.getIsAllPageRowsSelected()}
@@ -70,12 +71,16 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'id',
+      size: 80,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title='ID' />
       ),
       cell: ({ row }) => {
         return (
-          <TableId value={row.getValue('id') as number} className='w-[60px]' />
+          <TableId
+            value={row.getValue('id') as number}
+            className='max-w-full'
+          />
         )
       },
       meta: { label: t('ID'), mobileHidden: true },
@@ -92,7 +97,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
         const remark = row.original.remark
 
         return (
-          <div className='flex w-[192px] flex-col gap-1'>
+          <div className='flex max-w-full min-w-0 flex-col gap-1'>
             <div className='flex items-center gap-2 overflow-hidden'>
               <LongText className='min-w-0 flex-1 font-medium'>
                 {username}
@@ -161,6 +166,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'status',
+      size: 96,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Status')} />
       ),
@@ -202,6 +208,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     {
       id: 'quota',
       accessorKey: 'quota',
+      size: 164,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Quota')} />
       ),
@@ -225,7 +232,9 @@ export function useUsersColumns(): ColumnDef<User>[] {
         return (
           <Tooltip>
             <TooltipTrigger
-              render={<div className='w-[150px] cursor-help space-y-1' />}
+              render={
+                <div className='w-full max-w-[150px] cursor-help space-y-1' />
+              }
             >
               <div className='flex justify-between text-xs'>
                 <span className='font-medium tabular-nums'>
@@ -282,6 +291,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'group',
+      size: 108,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Group')} />
       ),
@@ -298,6 +308,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'role',
+      size: 92,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Role')} />
       ),
@@ -326,6 +337,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'created_at',
+      size: 160,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Created At')} />
       ),
@@ -358,6 +370,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'last_login_at',
+      size: 160,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Last Login')} />
       ),

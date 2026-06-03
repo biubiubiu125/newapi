@@ -311,12 +311,19 @@ function DesktopTable<TData>(props: DataTablePageProps<TData>) {
   const isFetchingOnly = props.isFetching && !props.isLoading
   const scrollContainerRef = React.useRef<HTMLDivElement | null>(null)
   const applyColumnSize = props.applyHeaderSize === true
+  const totalColumnSize = props.table.getTotalSize()
   const showStickyHorizontalScrollbar =
     props.stickyHorizontalScrollbar || applyColumnSize
-  const tableClassName =
-    props.stickyHorizontalScrollbar && !applyColumnSize ? 'w-max' : undefined
+  const tableClassName = applyColumnSize
+    ? 'table-fixed'
+    : props.stickyHorizontalScrollbar
+      ? 'w-max'
+      : undefined
   const tableStyle = applyColumnSize
-    ? { minWidth: props.table.getTotalSize() }
+    ? {
+        width: '100%',
+        minWidth: totalColumnSize,
+      }
     : undefined
 
   return (
@@ -389,7 +396,7 @@ function DesktopTable<TData>(props: DataTablePageProps<TData>) {
       {showStickyHorizontalScrollbar && (
         <SyncedHorizontalScrollbar
           scrollContainerRef={scrollContainerRef}
-          contentWidth={applyColumnSize ? props.table.getTotalSize() : 0}
+          contentWidth={applyColumnSize ? totalColumnSize : 0}
         />
       )}
     </div>
