@@ -28,6 +28,7 @@ type BaseNavItem = {
   badgeKey?: string
   badgeValue?: number
   icon?: React.ElementType
+  external?: boolean
   activeUrls?: (LinkProps['to'] | (string & {}))[]
   configUrls?: (LinkProps['to'] | (string & {}))[]
 }

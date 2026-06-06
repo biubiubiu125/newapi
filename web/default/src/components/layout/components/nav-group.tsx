@@ -123,23 +123,27 @@ function NavBadge({ children }: { children: ReactNode }) {
 function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
   const { setOpenMobile } = useSidebar()
   const userId = useAuthStore((state) => state.auth.user?.id)
+  const handleClick = () => {
+    acknowledgeAdminSidebarBadge(item.badgeKey, item.badgeValue, userId)
+    setOpenMobile(false)
+  }
+
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
         isActive={checkIsActive(href, item)}
         tooltip={item.title}
         render={
-          <Link
-            to={item.url}
-            onClick={() => {
-              acknowledgeAdminSidebarBadge(
-                item.badgeKey,
-                item.badgeValue,
-                userId
-              )
-              setOpenMobile(false)
-            }}
-          />
+          item.external ? (
+            <a
+              href={String(item.url)}
+              target='_blank'
+              rel='noopener noreferrer'
+              onClick={handleClick}
+            />
+          ) : (
+            <Link to={item.url} onClick={handleClick} />
+          )
         }
       >
         {item.icon && <item.icon className='shrink-0' />}
@@ -197,17 +201,33 @@ function SidebarMenuCollapsible({
               <SidebarMenuSubButton
                 isActive={checkIsActive(href, subItem)}
                 render={
-                  <Link
-                    to={subItem.url}
-                    onClick={() => {
-                      acknowledgeAdminSidebarBadge(
-                        subItem.badgeKey,
-                        subItem.badgeValue,
-                        userId
-                      )
-                      setOpenMobile(false)
-                    }}
-                  />
+                  subItem.external ? (
+                    <a
+                      href={String(subItem.url)}
+                      target='_blank'
+                      rel='noopener noreferrer'
+                      onClick={() => {
+                        acknowledgeAdminSidebarBadge(
+                          subItem.badgeKey,
+                          subItem.badgeValue,
+                          userId
+                        )
+                        setOpenMobile(false)
+                      }}
+                    />
+                  ) : (
+                    <Link
+                      to={subItem.url}
+                      onClick={() => {
+                        acknowledgeAdminSidebarBadge(
+                          subItem.badgeKey,
+                          subItem.badgeValue,
+                          userId
+                        )
+                        setOpenMobile(false)
+                      }}
+                    />
+                  )
                 }
               >
                 {subItem.icon && <subItem.icon className='shrink-0' />}
@@ -261,17 +281,33 @@ function SidebarMenuCollapsedDropdown({
               <DropdownMenuItem
                 key={`${sub.title}-${sub.url}`}
                 render={
-                  <Link
-                    to={sub.url}
-                    className={`${checkIsActive(href, sub) ? 'bg-secondary' : ''}`}
-                    onClick={() => {
-                      acknowledgeAdminSidebarBadge(
-                        sub.badgeKey,
-                        sub.badgeValue,
-                        userId
-                      )
-                    }}
-                  />
+                  sub.external ? (
+                    <a
+                      href={String(sub.url)}
+                      target='_blank'
+                      rel='noopener noreferrer'
+                      className={`${checkIsActive(href, sub) ? 'bg-secondary' : ''}`}
+                      onClick={() => {
+                        acknowledgeAdminSidebarBadge(
+                          sub.badgeKey,
+                          sub.badgeValue,
+                          userId
+                        )
+                      }}
+                    />
+                  ) : (
+                    <Link
+                      to={sub.url}
+                      className={`${checkIsActive(href, sub) ? 'bg-secondary' : ''}`}
+                      onClick={() => {
+                        acknowledgeAdminSidebarBadge(
+                          sub.badgeKey,
+                          sub.badgeValue,
+                          userId
+                        )
+                      }}
+                    />
+                  )
                 }
               >
                 {sub.icon && <sub.icon />}

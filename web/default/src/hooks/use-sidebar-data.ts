@@ -22,6 +22,7 @@ import {
   CreditCard,
   FileText,
   FlaskConical,
+  Image,
   Key,
   LayoutDashboard,
   ListTodo,
@@ -207,6 +208,13 @@ export function useSidebarData(): SidebarData {
             title: t('API Keys'),
             url: '/keys',
             icon: Key,
+          },
+          {
+            title: 'Image2生图',
+            url: 'https://image.rkai6.com',
+            icon: Image,
+            external: true,
+            configUrls: ['/keys'],
           },
           {
             title: t('Usage Logs'),

@@ -94,6 +94,12 @@ export function useTopNavLinks(): TopNavLink[] {
     }
   }
 
+  links.push({
+    title: 'Image2生图',
+    href: 'https://image.rkai6.com',
+    external: true,
+  })
+
   // About
   if (modules?.about !== false) {
     links.push({ title: t('About'), href: '/about' })

@@ -265,13 +265,25 @@ export function MobileDrawer({
                         className='border-border border-b p-2.5 last:border-b-0'
                         variants={MOBILE_DRAWER_ANIMATION.menuItem as Variants}
                       >
-                        <Link
-                          to={link.href}
-                          className='text-primary/60 hover:text-primary/80 transition-colors'
-                          onClick={onClose}
-                        >
-                          {link.title}
-                        </Link>
+                        {link.external ? (
+                          <a
+                            href={link.href}
+                            target='_blank'
+                            rel='noopener noreferrer'
+                            className='text-primary/60 hover:text-primary/80 transition-colors'
+                            onClick={onClose}
+                          >
+                            {link.title}
+                          </a>
+                        ) : (
+                          <Link
+                            to={link.href}
+                            className='text-primary/60 hover:text-primary/80 transition-colors'
+                            onClick={onClose}
+                          >
+                            {link.title}
+                          </Link>
+                        )}
                       </motion.div>
                     ))}
                   </AnimatePresence>

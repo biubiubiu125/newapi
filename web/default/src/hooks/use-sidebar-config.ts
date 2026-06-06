@@ -32,6 +32,11 @@ type SidebarModulesAdminConfig = Record<string, SidebarSectionConfig>
 // to signal "no narrowing" (empty/invalid/legacy users).
 type SidebarModulesUserConfig = SidebarModulesAdminConfig | null
 
+type ConfigurableNavUrl = {
+  url: unknown
+  configUrls?: unknown[]
+}
+
 /**
  * Default sidebar modules configuration
  */
@@ -242,6 +247,17 @@ function isModuleEnabled(
   return userSection[module] !== false
 }
 
+function isNavUrlEnabled(
+  item: ConfigurableNavUrl,
+  adminConfig: SidebarModulesAdminConfig,
+  userConfig: SidebarModulesUserConfig
+): boolean {
+  const configUrls = item.configUrls ?? [item.url]
+  return configUrls.some((url) =>
+    isModuleEnabled(String(url), adminConfig, userConfig)
+  )
+}
+
 /**
  * Check if a navigation item should be visible
  */
@@ -264,17 +280,14 @@ function isNavItemVisible(
 
   // Handle direct link type
   if ('url' in item && item.url) {
-    const configUrls = item.configUrls ?? [item.url]
-    return configUrls.some((url) =>
-      isModuleEnabled(url as string, adminConfig, userConfig)
-    )
+    return isNavUrlEnabled(item, adminConfig, userConfig)
   }
 
   // Handle collapsible type (with sub-items)
   if ('items' in item && item.items) {
     // If has sub-items, show this collapsible item if at least one sub-item is visible
     return item.items.some((subItem) =>
-      isModuleEnabled(subItem.url as string, adminConfig, userConfig)
+      isNavUrlEnabled(subItem, adminConfig, userConfig)
     )
   }
 
@@ -294,7 +307,7 @@ function filterNavItems(
       // If collapsible item, also filter its sub-items
       if ('items' in item && item.items) {
         const filteredSubItems = item.items.filter((subItem) =>
-          isModuleEnabled(subItem.url as string, adminConfig, userConfig)
+          isNavUrlEnabled(subItem, adminConfig, userConfig)
         )
 
         return {
