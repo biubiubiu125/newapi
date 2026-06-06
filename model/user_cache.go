@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -25,7 +26,7 @@ type UserBase struct {
 }
 
 func (user *UserBase) WriteContext(c *gin.Context) {
-	common.SetContextKey(c, constant.ContextKeyUserGroup, user.Group)
+	common.SetContextKey(c, constant.ContextKeyUserGroup, strings.TrimSpace(user.Group))
 	common.SetContextKey(c, constant.ContextKeyUserQuota, user.Quota)
 	common.SetContextKey(c, constant.ContextKeyUserStatus, user.Status)
 	common.SetContextKey(c, constant.ContextKeyUserEmail, user.Email)
@@ -224,7 +225,7 @@ func updateUserGroupCache(userId int, group string) error {
 	if !common.RedisEnabled {
 		return nil
 	}
-	return common.RedisHSetField(getUserCacheKey(userId), "Group", group)
+	return common.RedisHSetField(getUserCacheKey(userId), "Group", strings.TrimSpace(group))
 }
 
 func UpdateUserGroupCache(userId int, group string) error {

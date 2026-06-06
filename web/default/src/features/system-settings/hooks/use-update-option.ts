@@ -25,6 +25,11 @@ import { emitSettingsRefresh } from '@/lib/settings-refresh'
 import { updateSystemOption } from '../api'
 import type { UpdateOptionRequest } from '../types'
 
+type UpdateOptionMutationRequest = UpdateOptionRequest & {
+  skipInvalidate?: boolean
+  skipToast?: boolean
+}
+
 // Configuration keys that require status refresh
 const STATUS_RELATED_KEYS = [
   'theme.frontend',
@@ -48,7 +53,7 @@ const STATUS_RELATED_KEYS = [
 
 const NOTICE_RELATED_KEYS = ['Notice']
 
-function syncDisplayOptionToSystemConfig(request: UpdateOptionRequest) {
+function syncDisplayOptionToSystemConfig(request: UpdateOptionMutationRequest) {
   const value = String(request.value ?? '')
   const { setConfig } = useSystemConfigStore.getState()
 
@@ -71,11 +76,14 @@ export function useUpdateOption() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (request: UpdateOptionRequest) => updateSystemOption(request),
+    mutationFn: (request: UpdateOptionMutationRequest) =>
+      updateSystemOption({ key: request.key, value: request.value }),
     onSuccess: (data, variables) => {
       if (data.success) {
         // Always refresh system-options
-        queryClient.invalidateQueries({ queryKey: ['system-options'] })
+        if (!variables.skipInvalidate) {
+          queryClient.invalidateQueries({ queryKey: ['system-options'] })
+        }
 
         // Notice is loaded from /api/notice, not /api/status.
         if (NOTICE_RELATED_KEYS.includes(variables.key)) {
@@ -95,7 +103,9 @@ export function useUpdateOption() {
           emitSettingsRefresh([variables.key])
         }
 
-        toast.success(i18next.t('Setting updated successfully'))
+        if (!variables.skipToast) {
+          toast.success(i18next.t('Setting updated successfully'))
+        }
       } else {
         toast.error(data.message || i18next.t('Failed to update setting'))
       }

@@ -107,7 +107,11 @@ function buildGroupPricingRows(
     fallback: {},
     context: 'user usable groups',
   })
-  const names = new Set([...Object.keys(ratioMap), ...Object.keys(usableMap)])
+  const names = new Set(
+    [...Object.keys(ratioMap), ...Object.keys(usableMap)]
+      .map((name) => name.trim())
+      .filter(Boolean)
+  )
 
   return Array.from(names).map((name) => ({
     _id: createGroupPricingId(),
@@ -127,7 +131,7 @@ function serializeGroupPricingRows(rows: GroupPricingRow[]) {
     if (!name) continue
     groupRatio[name] = normalizeRatio(row.ratio)
     if (row.selectable) {
-      userUsableGroups[name] = row.description
+      userUsableGroups[name] = row.description.trim()
     }
   }
 
@@ -206,10 +210,11 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
 
   // Parse auto groups
   const autoGroupsList = useMemo(() => {
-    return safeJsonParse<string[]>(autoGroups, {
+    const list = safeJsonParse<string[]>(autoGroups, {
       fallback: [],
       context: 'auto groups',
     })
+    return Array.from(new Set(list.map((group) => group.trim()).filter(Boolean)))
   }, [autoGroups])
 
   // Parse group-group ratios
@@ -248,6 +253,8 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
 
   const handleSimpleSave = (name: string, value: string) => {
     if (!simpleDialogType) return
+    const cleanName = name.trim()
+    if (!cleanName) return
 
     const fieldName =
       simpleDialogType === 'groupRatio' ? groupRatio : topupGroupRatio
@@ -256,11 +263,11 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
       silent: true,
     })
 
-    if (simpleEditData && simpleEditData.name !== name) {
+    if (simpleEditData && simpleEditData.name !== cleanName) {
       delete map[simpleEditData.name]
     }
 
-    map[name] = parseFloat(value)
+    map[cleanName] = parseFloat(value)
 
     const field =
       simpleDialogType === 'groupRatio' ? 'GroupRatio' : 'TopupGroupRatio'
@@ -292,7 +299,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
   const handleAutoGroupSave = () => {
     if (!autoGroupInput.trim()) return
 
-    const list = [...autoGroupsList, autoGroupInput.trim()]
+    const list = Array.from(new Set([...autoGroupsList, autoGroupInput.trim()]))
     onChange('AutoGroups', JSON.stringify(list, null, 2))
     setAutoGroupDialogOpen(false)
   }
@@ -318,7 +325,8 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
   }
 
   const handleUserGroupSave = () => {
-    if (!userGroupInput.trim()) return
+    const cleanUserGroup = userGroupInput.trim()
+    if (!cleanUserGroup) return
 
     const map = safeJsonParse<Record<string, Record<string, number>>>(
       groupGroupRatio,
@@ -328,8 +336,8 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
       }
     )
 
-    if (!map[userGroupInput.trim()]) {
-      map[userGroupInput.trim()] = {}
+    if (!map[cleanUserGroup]) {
+      map[cleanUserGroup] = {}
     }
 
     onChange('GroupGroupRatio', JSON.stringify(map, null, 2))
@@ -365,7 +373,9 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
     ratio: number,
     oldTargetGroup?: string
   ) => {
-    if (!groupOverrideUserGroup) return
+    const cleanUserGroup = groupOverrideUserGroup?.trim()
+    const cleanTargetGroup = targetGroup.trim()
+    if (!cleanUserGroup || !cleanTargetGroup) return
 
     const map = safeJsonParse<Record<string, Record<string, number>>>(
       groupGroupRatio,
@@ -375,15 +385,15 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
       }
     )
 
-    if (!map[groupOverrideUserGroup]) {
-      map[groupOverrideUserGroup] = {}
+    if (!map[cleanUserGroup]) {
+      map[cleanUserGroup] = {}
     }
 
-    if (oldTargetGroup && oldTargetGroup !== targetGroup) {
-      delete map[groupOverrideUserGroup][oldTargetGroup]
+    if (oldTargetGroup && oldTargetGroup !== cleanTargetGroup) {
+      delete map[cleanUserGroup][oldTargetGroup]
     }
 
-    map[groupOverrideUserGroup][targetGroup] = ratio
+    map[cleanUserGroup][cleanTargetGroup] = ratio
 
     onChange('GroupGroupRatio', JSON.stringify(map, null, 2))
     setGroupOverrideDialogOpen(false)

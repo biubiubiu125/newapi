@@ -57,6 +57,15 @@ func (m *RWMap[K, V]) Clear() {
 	m.data = make(map[K]V)
 }
 
+func (m *RWMap[K, V]) ReplaceAll(other map[K]V) {
+	m.mutex.Lock()
+	defer m.mutex.Unlock()
+	m.data = make(map[K]V, len(other))
+	for k, v := range other {
+		m.data[k] = v
+	}
+}
+
 // ReadAll returns a copy of the entire map.
 func (m *RWMap[K, V]) ReadAll() map[K]V {
 	m.mutex.RLock()

@@ -91,12 +91,13 @@ func Distribute() func(c *gin.Context) {
 						abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": err.Error()}))
 						return
 					}
-					if playgroundRequest.Group != "" {
-						if !service.GroupInUserUsableGroups(usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
+					playgroundGroup := strings.TrimSpace(playgroundRequest.Group)
+					if playgroundGroup != "" {
+						if !service.GroupInUserUsableGroups(usingGroup, playgroundGroup) && playgroundGroup != usingGroup {
 							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
 							return
 						}
-						usingGroup = playgroundRequest.Group
+						usingGroup = playgroundGroup
 						common.SetContextKey(c, constant.ContextKeyUsingGroup, usingGroup)
 					}
 				}
@@ -386,7 +387,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			return nil, false, err
 		}
 		modelRequest.Model = req.Model
-		modelRequest.Group = req.Group
+		modelRequest.Group = strings.TrimSpace(req.Group)
 		common.SetContextKey(c, constant.ContextKeyTokenGroup, modelRequest.Group)
 	}
 

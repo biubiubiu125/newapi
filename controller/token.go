@@ -7,9 +7,12 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -29,6 +32,31 @@ func buildMaskedTokenResponses(tokens []*model.Token) []*model.Token {
 		maskedTokens = append(maskedTokens, buildMaskedTokenResponse(token))
 	}
 	return maskedTokens
+}
+
+func normalizeAndValidateTokenGroup(c *gin.Context, group string) (string, bool) {
+	group = strings.TrimSpace(group)
+	if group == "" {
+		common.ApiErrorMsg(c, "请选择 API 密钥分组")
+		return "", false
+	}
+	if group == "auto" {
+		common.ApiErrorMsg(c, "当前未启用 auto 分组，请选择明确分组")
+		return "", false
+	}
+	userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+	if userGroup == "" {
+		userGroup, _ = model.GetUserGroup(c.GetInt("id"), false)
+	}
+	if !service.GroupInUserUsableGroups(userGroup, group) {
+		common.ApiErrorMsg(c, fmt.Sprintf("无权访问 %s 分组", group))
+		return "", false
+	}
+	if !ratio_setting.ContainsGroupRatio(group) {
+		common.ApiErrorMsg(c, fmt.Sprintf("分组 %s 已被弃用", group))
+		return "", false
+	}
+	return group, true
 }
 
 func GetAllTokens(c *gin.Context) {
@@ -201,6 +229,10 @@ func AddToken(c *gin.Context) {
 		})
 		return
 	}
+	tokenGroup, ok := normalizeAndValidateTokenGroup(c, token.Group)
+	if !ok {
+		return
+	}
 	key, err := common.GenerateKey()
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgTokenGenerateFailed)
@@ -219,8 +251,8 @@ func AddToken(c *gin.Context) {
 		ModelLimitsEnabled: token.ModelLimitsEnabled,
 		ModelLimits:        token.ModelLimits,
 		AllowIps:           token.AllowIps,
-		Group:              token.Group,
-		CrossGroupRetry:    token.CrossGroupRetry,
+		Group:              tokenGroup,
+		CrossGroupRetry:    false,
 	}
 	err = cleanToken.Insert()
 	if err != nil {
@@ -289,6 +321,10 @@ func UpdateToken(c *gin.Context) {
 	if statusOnly != "" {
 		cleanToken.Status = token.Status
 	} else {
+		tokenGroup, ok := normalizeAndValidateTokenGroup(c, token.Group)
+		if !ok {
+			return
+		}
 		// If you add more fields, please also update token.Update()
 		cleanToken.Name = token.Name
 		cleanToken.ExpiredTime = token.ExpiredTime
@@ -297,8 +333,8 @@ func UpdateToken(c *gin.Context) {
 		cleanToken.ModelLimitsEnabled = token.ModelLimitsEnabled
 		cleanToken.ModelLimits = token.ModelLimits
 		cleanToken.AllowIps = token.AllowIps
-		cleanToken.Group = token.Group
-		cleanToken.CrossGroupRetry = token.CrossGroupRetry
+		cleanToken.Group = tokenGroup
+		cleanToken.CrossGroupRetry = false
 	}
 	err = cleanToken.Update()
 	if err != nil {

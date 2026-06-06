@@ -66,9 +66,11 @@ function uid() {
 }
 
 function parsePrefix(rawKey: string): { op: OpType; groupName: string } {
-  if (rawKey.startsWith('+:')) return { op: OP_ADD, groupName: rawKey.slice(2) }
+  rawKey = rawKey.trim()
+  if (rawKey.startsWith('+:'))
+    return { op: OP_ADD, groupName: rawKey.slice(2).trim() }
   if (rawKey.startsWith('-:'))
-    return { op: OP_REMOVE, groupName: rawKey.slice(2) }
+    return { op: OP_REMOVE, groupName: rawKey.slice(2).trim() }
   return { op: OP_APPEND, groupName: rawKey }
 }
 
@@ -109,9 +111,12 @@ function flattenRules(nested: Record<string, Record<string, string>>): Rule[] {
 function nestRules(rules: Rule[]): Record<string, Record<string, string>> {
   const result: Record<string, Record<string, string>> = {}
   for (const { userGroup, op, targetGroup, description } of rules) {
-    if (!userGroup || !targetGroup) continue
-    if (!result[userGroup]) result[userGroup] = {}
-    result[userGroup][toRawKey(op, targetGroup)] = description
+    const cleanUserGroup = userGroup.trim()
+    const cleanTargetGroup = targetGroup.trim()
+    if (!cleanUserGroup || !cleanTargetGroup) continue
+    if (!result[cleanUserGroup]) result[cleanUserGroup] = {}
+    result[cleanUserGroup][toRawKey(op, cleanTargetGroup)] =
+      description.trim()
   }
   return result
 }

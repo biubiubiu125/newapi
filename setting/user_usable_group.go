@@ -2,6 +2,7 @@ package setting
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
@@ -36,11 +37,24 @@ func UserUsableGroups2JSONString() string {
 }
 
 func UpdateUserUsableGroupsByJSONString(jsonStr string) error {
+	next := make(map[string]string)
+	if err := json.Unmarshal([]byte(jsonStr), &next); err != nil {
+		return err
+	}
+	cleaned := make(map[string]string, len(next))
+	for name, desc := range next {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		cleaned[name] = strings.TrimSpace(desc)
+	}
+
 	userUsableGroupsMutex.Lock()
 	defer userUsableGroupsMutex.Unlock()
 
-	userUsableGroups = make(map[string]string)
-	return json.Unmarshal([]byte(jsonStr), &userUsableGroups)
+	userUsableGroups = cleaned
+	return nil
 }
 
 func GetUsableGroupDescription(groupName string) string {

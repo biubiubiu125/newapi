@@ -15,7 +15,6 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/QuantumNous/new-api/constant"
@@ -231,6 +230,14 @@ func Register(c *gin.Context) {
 	insertedUser := cleanUser
 	// 生成默认令牌
 	if constant.GenerateDefaultToken {
+		defaultTokenGroup, err := model.GetUserGroup(insertedUser.Id, true)
+		if err != nil {
+			common.SysLog("failed to get default token group: " + err.Error())
+		}
+		defaultTokenGroup = strings.TrimSpace(defaultTokenGroup)
+		if defaultTokenGroup == "" || defaultTokenGroup == "auto" {
+			defaultTokenGroup = "default"
+		}
 		key, err := common.GenerateKey()
 		if err != nil {
 			common.ApiErrorI18n(c, i18n.MsgUserDefaultTokenFailed)
@@ -248,9 +255,7 @@ func Register(c *gin.Context) {
 			RemainQuota:        500000, // 示例额度
 			UnlimitedQuota:     true,
 			ModelLimitsEnabled: false,
-		}
-		if setting.DefaultUseAutoGroup {
-			token.Group = "auto"
+			Group:              defaultTokenGroup,
 		}
 		if err := token.Insert(); err != nil {
 			common.ApiErrorI18n(c, i18n.MsgCreateDefaultTokenErr)

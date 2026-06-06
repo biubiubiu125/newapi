@@ -427,10 +427,22 @@ export function RatioSettingsCard({
 
       for (const key of updates) {
         const apiKey = apiKeyMap[key] || key
-        await updateOption.mutateAsync({ key: apiKey, value: normalized[key] })
+        const result = await updateOption.mutateAsync({
+          key: apiKey,
+          value: normalized[key],
+          skipInvalidate: true,
+          skipToast: true,
+        })
+        if (!result.success) {
+          queryClient.invalidateQueries({ queryKey: ['system-options'] })
+          return
+        }
       }
+      groupNormalizedDefaults.current = normalized
+      queryClient.invalidateQueries({ queryKey: ['system-options'] })
+      toast.success(t('Setting updated successfully'))
     },
-    [updateOption]
+    [queryClient, t, updateOption]
   )
 
   const handleResetRatios = useCallback(() => {

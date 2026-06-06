@@ -112,6 +112,7 @@ func GetAllModels(offset int, limit int) ([]*Model, error) {
 
 func GetBoundChannelsByModelsMap(modelNames []string) (map[string][]BoundChannel, error) {
 	result := make(map[string][]BoundChannel)
+	modelNames = normalizeLookupValues(modelNames)
 	if len(modelNames) == 0 {
 		return result, nil
 	}
@@ -122,9 +123,9 @@ func GetBoundChannelsByModelsMap(modelNames []string) (map[string][]BoundChannel
 	}
 	var rows []row
 	err := DB.Table("channels").
-		Select("abilities.model as model, channels.name as name, channels.type as type").
+		Select("TRIM(abilities.model) as model, channels.name as name, channels.type as type").
 		Joins("JOIN abilities ON abilities.channel_id = channels.id").
-		Where("abilities.model IN ? AND abilities.enabled = ?", modelNames, true).
+		Where("TRIM(abilities.model) IN ? AND abilities.enabled = ?", modelNames, true).
 		Distinct().
 		Scan(&rows).Error
 	if err != nil {
@@ -167,16 +168,16 @@ func GetPreferredModelOwnerChannelTypes(modelNames []string, groups []string) (m
 	var rows []row
 
 	query := DB.Table("abilities").
-		Select("abilities.model as model, channels.type as channel_type").
+		Select("TRIM(abilities.model) as model, channels.type as channel_type").
 		Joins("JOIN channels ON abilities.channel_id = channels.id").
-		Where("abilities.model IN ? AND abilities.enabled = ? AND channels.status = ?", modelNames, true, common.ChannelStatusEnabled).
+		Where("TRIM(abilities.model) IN ? AND abilities.enabled = ? AND channels.status = ?", modelNames, true, common.ChannelStatusEnabled).
 		Order("COALESCE(abilities.priority, 0) DESC").
 		Order("abilities.weight DESC").
 		Order("abilities.channel_id ASC")
 
 	groups = normalizeLookupValues(groups)
 	if len(groups) > 0 {
-		query = query.Where("abilities."+commonGroupCol+" IN ?", groups)
+		query = query.Where("TRIM(abilities."+commonGroupCol+") IN ?", groups)
 	}
 
 	if err := query.Scan(&rows).Error; err != nil {

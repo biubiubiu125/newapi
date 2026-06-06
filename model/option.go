@@ -206,7 +206,23 @@ func InitOptionMap() {
 func loadOptionsFromDatabase() {
 	options, _ := AllOption()
 	for _, option := range options {
-		err := updateOptionMap(option.Key, option.Value)
+		if option == nil {
+			continue
+		}
+		value := option.Value
+		normalizedValue, err := normalizeOptionValueForStorage(option.Key, option.Value)
+		if err != nil {
+			common.SysLog("failed to normalize option value: " + option.Key + ", " + err.Error())
+		} else {
+			value = normalizedValue
+			if value != option.Value {
+				option.Value = value
+				if err := DB.Save(option).Error; err != nil {
+					common.SysLog("failed to save normalized option: " + option.Key + ", " + err.Error())
+				}
+			}
+		}
+		err = updateOptionMap(option.Key, value)
 		if err != nil {
 			common.SysLog("failed to update option map: " + err.Error())
 		}
@@ -222,17 +238,26 @@ func SyncOptions(frequency int) {
 }
 
 func UpdateOption(key string, value string) error {
+	normalizedValue, err := normalizeOptionValueForStorage(key, value)
+	if err != nil {
+		return err
+	}
+	value = normalizedValue
 	// Save to database first
 	option := Option{
 		Key: key,
 	}
 	// https://gorm.io/docs/update.html#Save-All-Fields
-	DB.FirstOrCreate(&option, Option{Key: key})
+	if err := DB.FirstOrCreate(&option, Option{Key: key}).Error; err != nil {
+		return err
+	}
 	option.Value = value
 	// Save is a combination function.
 	// If save value does not contain primary key, it will execute Create,
 	// otherwise it will execute Update (with all fields).
-	DB.Save(&option)
+	if err := DB.Save(&option).Error; err != nil {
+		return err
+	}
 	// Update OptionMap
 	return updateOptionMap(key, value)
 }
@@ -246,6 +271,15 @@ func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
 	}
+	normalizedValues := make(map[string]string, len(values))
+	for k, v := range values {
+		normalizedValue, err := normalizeOptionValueForStorage(k, v)
+		if err != nil {
+			return err
+		}
+		normalizedValues[k] = normalizedValue
+	}
+	values = normalizedValues
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		for k, v := range values {
 			option := Option{Key: k}
@@ -665,6 +699,8 @@ func handleConfigUpdate(key, value string) bool {
 		ratio_setting.InvalidateExposedDataCache()
 	} else if configName == "theme" {
 		system_setting.UpdateAndSyncTheme()
+	} else if configName == "group_ratio_setting" && configKey == "group_special_usable_group" {
+		ratio_setting.NormalizeGroupSpecialUsableGroup()
 	}
 
 	return true // 已处理

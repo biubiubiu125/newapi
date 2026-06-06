@@ -736,12 +736,16 @@ export function parseGroups(groups: string): string[] {
  * Format models array to string
  */
 export function formatModels(models: string[]): string {
-  return models.join(',')
+  return Array.from(
+    new Set(models.map((model) => model.trim()).filter(Boolean))
+  ).join(',')
 }
 
 /**
  * Format groups array to string
  */
 export function formatGroups(groups: string[]): string {
-  return groups.join(',')
+  return Array.from(
+    new Set(groups.map((group) => group.trim()).filter(Boolean))
+  ).join(',')
 }

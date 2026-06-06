@@ -290,18 +290,14 @@ func (channel *Channel) GetModels() []string {
 	if channel.Models == "" {
 		return []string{}
 	}
-	return strings.Split(strings.Trim(channel.Models, ","), ",")
+	return common.SplitCommaSeparated(channel.Models)
 }
 
 func (channel *Channel) GetGroups() []string {
 	if channel.Group == "" {
 		return []string{}
 	}
-	groups := strings.Split(strings.Trim(channel.Group, ","), ",")
-	for i, group := range groups {
-		groups[i] = strings.TrimSpace(group)
-	}
-	return groups
+	return common.SplitCommaSeparated(channel.Group)
 }
 
 func (channel *Channel) GetOtherInfo() map[string]interface{} {
@@ -438,6 +434,10 @@ func BatchInsertChannels(channels []Channel) error {
 	}()
 
 	for _, chunk := range lo.Chunk(channels, 50) {
+		for i := range chunk {
+			chunk[i].Models = common.NormalizeCommaSeparated(chunk[i].Models)
+			chunk[i].Group = common.NormalizeCommaSeparated(chunk[i].Group)
+		}
 		if err := tx.Create(&chunk).Error; err != nil {
 			tx.Rollback()
 			return err
@@ -514,6 +514,8 @@ func (channel *Channel) GetStatusCodeMapping() string {
 }
 
 func (channel *Channel) Insert() error {
+	channel.Models = common.NormalizeCommaSeparated(channel.Models)
+	channel.Group = common.NormalizeCommaSeparated(channel.Group)
 	var err error
 	err = DB.Create(channel).Error
 	if err != nil {
@@ -524,6 +526,8 @@ func (channel *Channel) Insert() error {
 }
 
 func (channel *Channel) Update() error {
+	channel.Models = common.NormalizeCommaSeparated(channel.Models)
+	channel.Group = common.NormalizeCommaSeparated(channel.Group)
 	// If this is a multi-key channel, recalculate MultiKeySize based on the current key list to avoid inconsistency after editing keys
 	if channel.ChannelInfo.IsMultiKey {
 		var keyStr string
@@ -810,11 +814,11 @@ func EditChannelByTag(tag string, newTag *string, modelMapping *string, models *
 	}
 	if models != nil && *models != "" {
 		shouldReCreateAbilities = true
-		updateData.Models = *models
+		updateData.Models = common.NormalizeCommaSeparated(*models)
 	}
 	if group != nil && *group != "" {
 		shouldReCreateAbilities = true
-		updateData.Group = *group
+		updateData.Group = common.NormalizeCommaSeparated(*group)
 	}
 	if priority != nil {
 		updateData.Priority = priority

@@ -2,6 +2,7 @@ package common
 
 import (
 	"encoding/json"
+	"strings"
 	"sync"
 )
 
@@ -23,13 +24,27 @@ func TopupGroupRatio2JSONString() string {
 }
 
 func UpdateTopupGroupRatioByJSONString(jsonStr string) error {
+	next := make(map[string]float64)
+	if err := json.Unmarshal([]byte(jsonStr), &next); err != nil {
+		return err
+	}
+	cleaned := make(map[string]float64, len(next))
+	for name, ratio := range next {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		cleaned[name] = ratio
+	}
+
 	topupGroupRatioMutex.Lock()
 	defer topupGroupRatioMutex.Unlock()
-	topupGroupRatio = make(map[string]float64)
-	return json.Unmarshal([]byte(jsonStr), &topupGroupRatio)
+	topupGroupRatio = cleaned
+	return nil
 }
 
 func GetTopupGroupRatio(name string) float64 {
+	name = strings.TrimSpace(name)
 	topupGroupRatioMutex.RLock()
 	defer topupGroupRatioMutex.RUnlock()
 	ratio, ok := topupGroupRatio[name]

@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useForm, type SubmitErrorHandler } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
@@ -115,16 +115,20 @@ export function ApiKeysMutateDrawer({
   })
 
   const models = modelsData?.data || []
-  const groupsRaw = groupsData?.data || {}
-  const groups: ApiKeyGroupOption[] = Object.entries(groupsRaw).map(
-    ([key, info]) => ({
-      value: key,
-      label: key,
-      desc: info.desc || key,
-      ratio: info.ratio,
-    })
-  )
-  const backendHasAuto = groups.some((g) => g.value === 'auto')
+  const groups = useMemo<ApiKeyGroupOption[]>(() => {
+    const groupsRaw = groupsData?.data || {}
+    return Object.entries(groupsRaw)
+      .map(([key, info]) => {
+        const value = key.trim()
+        return {
+          value,
+          label: value,
+          desc: info.desc || value,
+          ratio: info.ratio,
+        }
+      })
+      .filter((group) => group.value !== '' && group.value !== 'auto')
+  }, [groupsData])
   const schema = getApiKeyFormSchema(t)
 
   const form = useForm<ApiKeyFormValues>({
@@ -137,30 +141,29 @@ export function ApiKeysMutateDrawer({
     if (open && isUpdate && currentRow) {
       getApiKey(currentRow.id).then((result) => {
         if (result.success && result.data) {
-          form.reset(transformApiKeyToFormDefaults(result.data))
+          const defaults = transformApiKeyToFormDefaults(result.data)
+          defaults.group =
+            defaults.group && defaults.group !== 'auto' ? defaults.group : ''
+          form.reset(defaults)
         }
       })
     } else if (open && !isUpdate) {
-      form.reset(
-        getApiKeyFormDefaultValues(defaultUseAutoGroup && backendHasAuto)
-      )
+      form.reset(getApiKeyFormDefaultValues(defaultUseAutoGroup))
     }
-  }, [open, isUpdate, currentRow, form, defaultUseAutoGroup, backendHasAuto])
+  }, [open, isUpdate, currentRow, form, defaultUseAutoGroup])
 
   // Correct group after groups load: if the form value is not in available groups, fall back
   useEffect(() => {
     if (groups.length === 0) return
     const currentGroup = form.getValues('group')
-    if (currentGroup && !groups.some((g) => g.value === currentGroup)) {
+    if (!currentGroup || !groups.some((g) => g.value === currentGroup)) {
       const fallback =
         groups.find((g) => g.value === 'default')?.value ??
         groups[0]?.value ??
         ''
       form.setValue('group', fallback)
-      if (currentGroup === 'auto') {
-        form.setValue('cross_group_retry', false)
-      }
     }
+    form.setValue('cross_group_retry', false)
   }, [groups, form])
 
   const onSubmit = async (data: ApiKeyFormValues) => {
@@ -243,7 +246,6 @@ export function ApiKeysMutateDrawer({
   const quotaPlaceholder = tokensOnly
     ? t('Enter quota in tokens')
     : t('Enter quota in {{currency}}', { currency: currencyLabel })
-  const selectedGroup = form.watch('group')
   const unlimitedQuota = form.watch('unlimited_quota')
 
   return (
@@ -307,39 +309,13 @@ export function ApiKeysMutateDrawer({
                         value={field.value}
                         onValueChange={field.onChange}
                         placeholder={t('Select a group')}
+                        disabled={groups.length === 0}
                       />
                     </FormControl>
                     <FormMessage />
                   </FormItem>
                 )}
               />
-
-              {selectedGroup === 'auto' && (
-                <FormField
-                  control={form.control}
-                  name='cross_group_retry'
-                  render={({ field }) => (
-                    <FormItem className={sideDrawerSwitchItemClassName()}>
-                      <div className='flex flex-col gap-0.5'>
-                        <FormLabel className='text-sm'>
-                          {t('Cross-group retry')}
-                        </FormLabel>
-                        <FormDescription className='line-clamp-2 text-xs sm:line-clamp-none'>
-                          {t(
-                            'When enabled, if channels in the current group fail, it will try channels in the next group in order.'
-                          )}
-                        </FormDescription>
-                      </div>
-                      <FormControl>
-                        <Switch
-                          checked={!!field.value}
-                          onCheckedChange={field.onChange}
-                        />
-                      </FormControl>
-                    </FormItem>
-                  )}
-                />
-              )}
 
               <FormField
                 control={form.control}
@@ -585,7 +561,7 @@ export function ApiKeysMutateDrawer({
           <Button
             type='button'
             onClick={form.handleSubmit(onSubmit, onInvalid)}
-            disabled={isSubmitting}
+            disabled={isSubmitting || groups.length === 0}
             className='w-full sm:w-auto'
           >
             {isSubmitting ? t('Saving...') : t('Save changes')}

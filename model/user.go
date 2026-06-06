@@ -164,7 +164,7 @@ func (user *User) BeforeSave(tx *gorm.DB) error {
 func (user *User) ToBaseUser() *UserBase {
 	cache := &UserBase{
 		Id:       user.Id,
-		Group:    user.Group,
+		Group:    strings.TrimSpace(user.Group),
 		Quota:    user.Quota,
 		Status:   user.Status,
 		Username: user.Username,
@@ -1178,11 +1178,11 @@ func GetUserGroup(id int, fromDB bool) (group string, err error) {
 	if !fromDB {
 		userCache, cacheErr := CacheGetUserById(id)
 		if cacheErr == nil && userCache != nil {
-			return userCache.Group, nil
+			return strings.TrimSpace(userCache.Group), nil
 		}
 	}
 	err = DB.Select("group").First(&user, id).Error
-	return user.Group, err
+	return strings.TrimSpace(user.Group), err
 }
 
 func GetUserSetting(id int, fromDB bool) (settingMap dto.UserSetting, err error) {
