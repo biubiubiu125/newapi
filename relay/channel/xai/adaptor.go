@@ -42,6 +42,7 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		Model:          request.Model,
 		Prompt:         request.Prompt,
 		N:              int(lo.FromPtrOr(request.N, uint(1))),
+		Stream:         request.Stream,
 		ResponseFormat: request.ResponseFormat,
 	}
 	return xaiRequest, nil
@@ -114,7 +115,7 @@ func (a *Adaptor) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, request
 func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (usage any, err *types.NewAPIError) {
 	switch info.RelayMode {
 	case constant.RelayModeImagesGenerations, constant.RelayModeImagesEdits:
-		usage, err = openai.OpenaiHandlerWithUsage(c, info, resp)
+		usage, err = openai.OpenaiImageResponseHandler(c, info, resp)
 	case constant.RelayModeResponses:
 		if info.IsStream {
 			usage, err = openai.OaiResponsesStreamHandler(c, info, resp)

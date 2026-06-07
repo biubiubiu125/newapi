@@ -623,7 +623,7 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	case relayconstant.RelayModeAudioTranscription:
 		err, usage = OpenaiSTTHandler(c, resp, info, a.ResponseFormat)
 	case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:
-		usage, err = OpenaiHandlerWithUsage(c, info, resp)
+		usage, err = OpenaiImageResponseHandler(c, info, resp)
 	case relayconstant.RelayModeRerank:
 		usage, err = common_handler.RerankHandler(c, info, resp)
 	case relayconstant.RelayModeResponses:

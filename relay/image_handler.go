@@ -2,9 +2,12 @@ package relay
 
 import (
 	"bytes"
+	"encoding/json"
 	"fmt"
 	"io"
+	"mime/multipart"
 	"net/http"
+	"net/textproto"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -20,8 +23,11 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+const contextKeyImageStreamAllowed = "image_stream_allowed"
+
 func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
+	resetImageRelayAttemptState(info)
 
 	imageReq, ok := info.Request.(*dto.ImageRequest)
 	if !ok {
@@ -32,6 +38,7 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	if err != nil {
 		return types.NewError(fmt.Errorf("failed to copy request to ImageRequest: %w", err), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
 	}
+	imageStreamDisabled := applyImageStreamSupportForChannel(c, info, request)
 
 	err = helper.ModelMappedHelper(c, info, request)
 	if err != nil {
@@ -47,11 +54,14 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	var requestBody io.Reader
 
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || info.ChannelSetting.PassThroughBodyEnabled {
-		storage, err := common.GetBodyStorage(c)
+		body, cleanup, err := buildImagePassThroughBody(c, info, imageStreamDisabled)
 		if err != nil {
 			return types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 		}
-		requestBody = common.ReaderOnly(storage)
+		if cleanup != nil {
+			defer cleanup()
+		}
+		requestBody = body
 	} else {
 		convertedRequest, err := adaptor.ConvertImageRequest(c, info, *request)
 		if err != nil {
@@ -159,4 +169,167 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), logContent)
 	return nil
+}
+
+func resetImageRelayAttemptState(info *relaycommon.RelayInfo) {
+	if info == nil {
+		return
+	}
+	info.UpstreamRequestBodySize = 0
+}
+
+func applyImageStreamSupportForChannel(c *gin.Context, info *relaycommon.RelayInfo, imageReq *dto.ImageRequest) bool {
+	if info == nil || imageReq == nil {
+		return false
+	}
+	info.IsStream = imageReq.Stream
+	if c != nil {
+		c.Set(string(constant.ContextKeyIsStream), imageReq.Stream)
+		c.Set(contextKeyImageStreamAllowed, imageReq.Stream)
+	}
+	if !imageReq.Stream {
+		return false
+	}
+	if info.ApiType == constant.APITypeOpenAI || info.ApiType == constant.APITypeXai {
+		return false
+	}
+	imageReq.Stream = false
+	info.IsStream = false
+	if c != nil {
+		c.Set(string(constant.ContextKeyIsStream), false)
+		c.Set(contextKeyImageStreamAllowed, false)
+	}
+	return true
+}
+
+func buildImagePassThroughBody(c *gin.Context, info *relaycommon.RelayInfo, imageStreamDisabled bool) (io.Reader, func(), error) {
+	contentType := c.Request.Header.Get("Content-Type")
+	if strings.Contains(contentType, "multipart/form-data") && c.Request.MultipartForm != nil {
+		return buildImageMultipartPassThroughBody(c, info, imageStreamDisabled)
+	}
+
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return nil, nil, err
+	}
+	if !imageStreamDisabled {
+		return common.ReaderOnly(storage), nil, nil
+	}
+
+	if strings.HasPrefix(contentType, "application/json") {
+		return buildImageJSONPassThroughBodyWithoutStream(info, storage)
+	}
+	if strings.Contains(contentType, "multipart/form-data") {
+		return buildImageMultipartPassThroughBody(c, info, true)
+	}
+	return common.ReaderOnly(storage), nil, nil
+}
+
+func buildImageJSONPassThroughBodyWithoutStream(info *relaycommon.RelayInfo, storage common.BodyStorage) (io.Reader, func(), error) {
+	requestBody, err := storage.Bytes()
+	if err != nil {
+		return nil, nil, err
+	}
+
+	var bodyMap map[string]json.RawMessage
+	if err := common.Unmarshal(requestBody, &bodyMap); err != nil {
+		return nil, nil, err
+	}
+	bodyMap["stream"] = json.RawMessage("false")
+
+	jsonData, err := common.Marshal(bodyMap)
+	if err != nil {
+		return nil, nil, err
+	}
+	body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+	if err != nil {
+		return nil, nil, err
+	}
+	if info != nil {
+		info.UpstreamRequestBodySize = size
+	}
+	return body, func() {
+		_ = closer.Close()
+	}, nil
+}
+
+func buildImageMultipartPassThroughBody(c *gin.Context, info *relaycommon.RelayInfo, disableStream bool) (io.Reader, func(), error) {
+	originalContentType := c.Request.Header.Get("Content-Type")
+	form, removeForm, err := getImageMultipartFormForPassThrough(c)
+	if err != nil {
+		return nil, nil, err
+	}
+	if removeForm {
+		defer form.RemoveAll()
+	}
+
+	var requestBody bytes.Buffer
+	writer := multipart.NewWriter(&requestBody)
+
+	for key, values := range form.Value {
+		if disableStream && key == "stream" {
+			continue
+		}
+		for _, value := range values {
+			if err := writer.WriteField(key, value); err != nil {
+				return nil, nil, err
+			}
+		}
+	}
+
+	for fieldName, fileHeaders := range form.File {
+		for _, fileHeader := range fileHeaders {
+			file, err := fileHeader.Open()
+			if err != nil {
+				return nil, nil, err
+			}
+
+			partHeader := make(textproto.MIMEHeader)
+			partHeader.Set("Content-Disposition", fmt.Sprintf(
+				`form-data; name="%s"; filename="%s"`,
+				escapeMultipartHeaderValue(fieldName),
+				escapeMultipartHeaderValue(fileHeader.Filename),
+			))
+			if fileContentType := fileHeader.Header.Get("Content-Type"); fileContentType != "" {
+				partHeader.Set("Content-Type", fileContentType)
+			}
+			part, err := writer.CreatePart(partHeader)
+			if err != nil {
+				_ = file.Close()
+				return nil, nil, err
+			}
+			if _, err := io.Copy(part, file); err != nil {
+				_ = file.Close()
+				return nil, nil, err
+			}
+			_ = file.Close()
+		}
+	}
+
+	if err := writer.Close(); err != nil {
+		return nil, nil, err
+	}
+
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	if info != nil {
+		info.UpstreamRequestBodySize = int64(requestBody.Len())
+	}
+	return &requestBody, func() {
+		c.Request.Header.Set("Content-Type", originalContentType)
+	}, nil
+}
+
+func getImageMultipartFormForPassThrough(c *gin.Context) (*multipart.Form, bool, error) {
+	if c == nil || c.Request == nil {
+		return nil, false, fmt.Errorf("request is nil")
+	}
+	if c.Request.MultipartForm != nil {
+		return c.Request.MultipartForm, false, nil
+	}
+	form, err := common.ParseMultipartFormReusable(c)
+	return form, true, err
+}
+
+func escapeMultipartHeaderValue(value string) string {
+	return strings.NewReplacer("\\", "\\\\", `"`, "\\\"").Replace(value)
 }

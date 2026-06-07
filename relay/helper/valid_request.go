@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -154,6 +155,9 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			imageRequest.N = common.GetPointer(uint(common.String2Int(formData.Get("n"))))
 			imageRequest.Quality = formData.Get("quality")
 			imageRequest.Size = formData.Get("size")
+			if formData.Has("stream") {
+				imageRequest.Stream, _ = strconv.ParseBool(formData.Get("stream"))
+			}
 			if imageValue := formData.Get("image"); imageValue != "" {
 				imageRequest.Image, _ = common.Marshal(imageValue)
 			}
