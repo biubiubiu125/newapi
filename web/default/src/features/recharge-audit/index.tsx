@@ -220,9 +220,14 @@ export function RechargeAudit() {
     typeof window === 'undefined'
       ? ''
       : new URLSearchParams(window.location.search).get('keyword') || ''
+  const initialUserId =
+    typeof window === 'undefined'
+      ? ''
+      : new URLSearchParams(window.location.search).get('user_id') || ''
   const [summary, setSummary] = useState<RechargeAuditSummary | null>(null)
   const [orders, setOrders] = useState<RechargeAuditOrder[]>([])
   const [keyword, setKeyword] = useState(initialKeyword)
+  const [userId, setUserId] = useState(initialUserId)
   const [status, setStatus] = useState('')
   const [provider, setProvider] = useState('')
   const [orderType, setOrderType] = useState('all')
@@ -231,11 +236,12 @@ export function RechargeAudit() {
   const params = useMemo(() => {
     const p = new URLSearchParams({ p: '1', page_size: '20' })
     if (keyword.trim()) p.set('keyword', keyword.trim())
+    if (userId.trim()) p.set('user_id', userId.trim())
     if (status.trim()) p.set('status', status.trim())
     if (provider.trim()) p.set('provider', provider.trim())
     if (orderType !== 'all') p.set('order_type', orderType)
     return p
-  }, [keyword, status, provider, orderType])
+  }, [keyword, userId, status, provider, orderType])
 
   const load = async () => {
     setLoading(true)
@@ -301,11 +307,16 @@ export function RechargeAudit() {
 
           <Card>
             <CardContent className='space-y-3 p-4'>
-              <div className='grid gap-2 md:grid-cols-[minmax(0,1fr)_160px_160px_180px_auto]'>
+              <div className='grid gap-2 md:grid-cols-[minmax(0,1fr)_120px_150px_150px_180px_auto]'>
                 <Input
                   value={keyword}
                   onChange={(e) => setKeyword(e.target.value)}
                   placeholder={t('Search order, user, or user ID')}
+                />
+                <Input
+                  value={userId}
+                  onChange={(e) => setUserId(e.target.value)}
+                  placeholder={t('User ID')}
                 />
                 <Input
                   value={status}

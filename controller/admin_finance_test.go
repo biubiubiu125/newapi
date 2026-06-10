@@ -131,6 +131,117 @@ func TestGetRechargeAuditReturnsTopupAndSubscriptionOrders(t *testing.T) {
 	require.InDelta(t, 21.9, payload.Data.Items[1].PaidAmountCNY, 0.000001)
 }
 
+func TestGetRechargeAuditFiltersByUserID(t *testing.T) {
+	setupAdminFinanceTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	require.NoError(t, model.DB.Create(&model.User{Id: 1, Username: "alice", Password: "password123"}).Error)
+	require.NoError(t, model.DB.Create(&model.User{Id: 2, Username: "bob", Password: "password123"}).Error)
+	require.NoError(t, model.DB.Create(&model.TopUp{
+		UserId:          1,
+		Amount:          3,
+		Money:           21.9,
+		PaidAmount:      21.9,
+		PaidCurrency:    "CNY",
+		TradeNo:         "ALICE-TOPUP",
+		PaymentMethod:   "alipay",
+		PaymentProvider: model.PaymentProviderEpay,
+		CreateTime:      100,
+		Status:          common.TopUpStatusSuccess,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.SubscriptionOrder{
+		UserId:                  1,
+		PlanId:                  10,
+		Money:                   29.9,
+		PaidAmount:              29.9,
+		PaidCurrency:            "CNY",
+		TradeNo:                 "ALICE-SUB",
+		PaymentMethod:           model.PaymentMethodUSDT,
+		PaymentProvider:         model.PaymentProviderBEpusdt,
+		PlanTitleSnapshot:       "Alice Pro",
+		PlanPriceSnapshot:       29.9,
+		PlanTotalAmountSnapshot: 9000000,
+		CreateTime:              200,
+		Status:                  common.TopUpStatusSuccess,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.TopUp{
+		UserId:          2,
+		Amount:          9,
+		Money:           59.9,
+		PaidAmount:      59.9,
+		PaidCurrency:    "CNY",
+		TradeNo:         "BOB-TOPUP",
+		PaymentMethod:   "alipay",
+		PaymentProvider: model.PaymentProviderEpay,
+		CreateTime:      300,
+		Status:          common.TopUpStatusSuccess,
+	}).Error)
+
+	router := gin.New()
+	router.GET("/audit", GetRechargeAudit)
+	router.GET("/audit/summary", GetRechargeAuditSummary)
+
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/audit?p=1&page_size=10&user_id=1", nil)
+	router.ServeHTTP(recorder, req)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var listPayload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Total int                  `json:"total"`
+			Items []rechargeAuditOrder `json:"items"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &listPayload))
+	require.True(t, listPayload.Success)
+	require.Equal(t, 2, listPayload.Data.Total)
+	require.Len(t, listPayload.Data.Items, 2)
+	for _, item := range listPayload.Data.Items {
+		require.Equal(t, 1, item.UserID)
+		require.NotEqual(t, "BOB-TOPUP", item.TradeNo)
+	}
+
+	recorder = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodGet, "/audit/summary?user_id=1", nil)
+	router.ServeHTTP(recorder, req)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var summaryPayload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Totals rechargeAuditTotals `json:"totals"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &summaryPayload))
+	require.True(t, summaryPayload.Success)
+	require.EqualValues(t, 2, summaryPayload.Data.Totals.TotalCount)
+	require.EqualValues(t, 2, summaryPayload.Data.Totals.SuccessCount)
+	require.InDelta(t, 51.8, summaryPayload.Data.Totals.PaidAmountCNY, 0.000001)
+	require.InDelta(t, 3, summaryPayload.Data.Totals.CreditAmount, 0.000001)
+}
+
+func TestOrderManagementBaseSQLPushesFiltersIntoOrderBranches(t *testing.T) {
+	sql, args := orderManagementBaseSQL(rechargeAuditFilters{userID: 42})
+	require.Contains(t, sql, "FROM top_ups AS t")
+	require.Contains(t, sql, "FROM subscription_orders AS s")
+	require.Contains(t, sql, "t.user_id = ?")
+	require.Contains(t, sql, "s.user_id = ?")
+	require.Len(t, args, 5)
+	require.Equal(t, 42, args[3])
+	require.Equal(t, 42, args[4])
+
+	sql, args = orderManagementBaseSQL(rechargeAuditFilters{
+		orderType: "topup",
+		userID:    42,
+	})
+	require.Contains(t, sql, "FROM top_ups AS t")
+	require.NotContains(t, sql, "FROM subscription_orders AS s")
+	require.Contains(t, sql, "t.user_id = ?")
+	require.Len(t, args, 4)
+	require.Equal(t, 42, args[3])
+}
+
 func TestGetRechargeAuditPreservesStoredPaidCurrencyForFutureGateways(t *testing.T) {
 	setupAdminFinanceTestDB(t)
 	gin.SetMode(gin.TestMode)

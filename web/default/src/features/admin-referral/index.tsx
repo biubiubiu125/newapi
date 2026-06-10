@@ -1525,6 +1525,7 @@ export function AdminReferral() {
                   headers={[
                     t('Username'),
                     t('Invite Code'),
+                    t('打开次数'),
                     t('Rate'),
                     t('Available'),
                     t('Status'),
@@ -1535,6 +1536,7 @@ export function AdminReferral() {
                     cells: [
                       item.username,
                       item.invite_code,
+                      String(item.click_count || 0),
                       item.rate != null ? `${item.rate}%` : '-',
                       formatMoney(item.available_amount),
                       affiliateStatusLabel(item.status, t),

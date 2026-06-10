@@ -30,6 +30,7 @@ import {
   ShieldAlert,
   Link2,
   CreditCard,
+  Receipt,
   Share2,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -56,6 +57,7 @@ import {
 import { getUserActionMessage } from '../lib'
 import { type User, type ManageUserAction } from '../types'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
+import { UserRechargeRecordsDialog } from './dialogs/user-recharge-records-dialog'
 import { useUsers } from './users-provider'
 
 interface DataTableRowActionsProps {
@@ -70,6 +72,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
   const [subscriptionsDialogOpen, setSubscriptionsDialogOpen] = useState(false)
+  const [rechargeRecordsOpen, setRechargeRecordsOpen] = useState(false)
   const [openAffiliateConfirm, setOpenAffiliateConfirm] = useState(false)
   const [openingAffiliate, setOpeningAffiliate] = useState(false)
 
@@ -247,6 +250,18 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           <DropdownMenuItem
             onSelect={(event) => {
               event.preventDefault()
+              setRechargeRecordsOpen(true)
+            }}
+          >
+            {t('充值记录')}
+            <DropdownMenuShortcut>
+              <Receipt size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+
+          <DropdownMenuItem
+            onSelect={(event) => {
+              event.preventDefault()
               setOpenAffiliateConfirm(true)
             }}
             disabled={isRoot}
@@ -342,6 +357,12 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         onOpenChange={setSubscriptionsDialogOpen}
         user={{ id: user.id, username: user.username }}
         onSuccess={triggerRefresh}
+      />
+
+      <UserRechargeRecordsDialog
+        open={rechargeRecordsOpen}
+        onOpenChange={setRechargeRecordsOpen}
+        user={{ id: user.id, username: user.username }}
       />
     </>
   )

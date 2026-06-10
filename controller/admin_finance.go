@@ -90,17 +90,40 @@ type auditAnomaly struct {
 	CreatedAt int64  `json:"created_at,omitempty"`
 }
 
+type rechargeAuditFilters struct {
+	keyword   string
+	status    string
+	provider  string
+	orderType string
+	userID    int
+	startTime int64
+	endTime   int64
+}
+
 func GetRechargeAudit(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	keyword := strings.TrimSpace(c.Query("keyword"))
 	status := strings.TrimSpace(c.Query("status"))
 	provider := strings.TrimSpace(c.Query("provider"))
 	orderType := strings.TrimSpace(c.Query("order_type"))
+	userID, ok := parseRechargeAuditUserID(c)
+	if !ok {
+		return
+	}
 	startTime, _ := strconv.ParseInt(c.Query("start_time"), 10, 64)
 	endTime, _ := strconv.ParseInt(c.Query("end_time"), 10, 64)
+	filters := rechargeAuditFilters{
+		keyword:   keyword,
+		status:    status,
+		provider:  provider,
+		orderType: orderType,
+		userID:    userID,
+		startTime: startTime,
+		endTime:   endTime,
+	}
 
-	baseSQL, baseArgs := orderManagementBaseSQL()
-	whereSQL, whereArgs := orderManagementWhereSQL(keyword, status, provider, orderType, startTime, endTime)
+	baseSQL, baseArgs := orderManagementBaseSQL(filters)
+	whereSQL, whereArgs := orderManagementWhereSQL(filters)
 
 	var total int64
 	countArgs := append([]interface{}{}, baseArgs...)
@@ -136,11 +159,24 @@ func GetRechargeAuditSummary(c *gin.Context) {
 	status := strings.TrimSpace(c.Query("status"))
 	provider := strings.TrimSpace(c.Query("provider"))
 	orderType := strings.TrimSpace(c.Query("order_type"))
+	userID, ok := parseRechargeAuditUserID(c)
+	if !ok {
+		return
+	}
 	startTime, _ := strconv.ParseInt(c.Query("start_time"), 10, 64)
 	endTime, _ := strconv.ParseInt(c.Query("end_time"), 10, 64)
+	filters := rechargeAuditFilters{
+		keyword:   keyword,
+		status:    status,
+		provider:  provider,
+		orderType: orderType,
+		userID:    userID,
+		startTime: startTime,
+		endTime:   endTime,
+	}
 
-	baseSQL, baseArgs := orderManagementBaseSQL()
-	whereSQL, whereArgs := orderManagementWhereSQL(keyword, status, provider, orderType, startTime, endTime)
+	baseSQL, baseArgs := orderManagementBaseSQL(filters)
+	whereSQL, whereArgs := orderManagementWhereSQL(filters)
 	baseAndWhereArgs := append([]interface{}{}, baseArgs...)
 	baseAndWhereArgs = append(baseAndWhereArgs, whereArgs...)
 
@@ -189,7 +225,7 @@ func GetRechargeAuditSummary(c *gin.Context) {
 	}
 	applyRechargeAuditCNYSummary(nil, nil, nil, byStatus)
 
-	anomalies, err := buildRechargeAnomalies(keyword, status, provider, orderType, startTime, endTime)
+	anomalies, err := buildRechargeAnomalies(filters)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -204,9 +240,18 @@ func GetRechargeAuditSummary(c *gin.Context) {
 	})
 }
 
-func orderManagementBaseSQL() (string, []interface{}) {
-	creditExpr, creditArgs := rechargeAuditCreditAmountExpr()
-	sql := fmt.Sprintf(`
+func orderManagementBaseSQL(filters rechargeAuditFilters) (string, []interface{}) {
+	branches := make([]string, 0, 2)
+	args := make([]interface{}, 0)
+	includeTopup := filters.orderType == "" || filters.orderType == "all" || filters.orderType == "topup"
+	includeSubscription := filters.orderType == "" || filters.orderType == "all" || filters.orderType == "subscription"
+
+	if includeTopup {
+		creditExpr, creditArgs := rechargeAuditCreditAmountExpr()
+		topupWhereSQL, topupWhereArgs := orderManagementBranchWhereSQL("t", []string{`NOT EXISTS (
+	SELECT 1 FROM subscription_orders AS so WHERE so.trade_no = t.trade_no
+)`}, filters)
+		branches = append(branches, fmt.Sprintf(`
 SELECT
 	'topup' AS order_type,
 	t.id,
@@ -232,10 +277,14 @@ SELECT
 	t.referral_commission_error
 FROM top_ups AS t
 LEFT JOIN users u ON u.id = t.user_id
-WHERE NOT EXISTS (
-	SELECT 1 FROM subscription_orders AS so WHERE so.trade_no = t.trade_no
-)
-UNION ALL
+%s`, creditExpr, topupWhereSQL))
+		args = append(args, creditArgs...)
+		args = append(args, topupWhereArgs...)
+	}
+
+	if includeSubscription {
+		subscriptionWhereSQL, subscriptionWhereArgs := orderManagementBranchWhereSQL("s", nil, filters)
+		branches = append(branches, fmt.Sprintf(`
 SELECT
 	'subscription' AS order_type,
 	s.id,
@@ -261,42 +310,100 @@ SELECT
 	s.referral_commission_error
 FROM subscription_orders AS s
 LEFT JOIN users u ON u.id = s.user_id
-LEFT JOIN subscription_plans p ON p.id = s.plan_id`, creditExpr)
-	return sql, creditArgs
+LEFT JOIN subscription_plans p ON p.id = s.plan_id
+%s`, subscriptionWhereSQL))
+		args = append(args, subscriptionWhereArgs...)
+	}
+
+	if len(branches) == 0 {
+		return emptyRechargeAuditBaseSQL(), nil
+	}
+
+	return strings.Join(branches, "\nUNION ALL\n"), args
 }
 
-func orderManagementWhereSQL(keyword string, status string, provider string, orderType string, startTime int64, endTime int64) (string, []interface{}) {
+func parseRechargeAuditUserID(c *gin.Context) (int, bool) {
+	raw := strings.TrimSpace(c.Query("user_id"))
+	if raw == "" {
+		return 0, true
+	}
+	userID, err := strconv.Atoi(raw)
+	if err != nil || userID <= 0 {
+		common.ApiErrorMsg(c, "invalid user_id")
+		return 0, false
+	}
+	return userID, true
+}
+
+func orderManagementBranchWhereSQL(alias string, baseClauses []string, filters rechargeAuditFilters) (string, []interface{}) {
+	clauses := append([]string{}, baseClauses...)
+	args := make([]interface{}, 0)
+	if filters.userID > 0 {
+		clauses = append(clauses, alias+".user_id = ?")
+		args = append(args, filters.userID)
+	}
+	if filters.status != "" {
+		clauses = append(clauses, alias+".status = ?")
+		args = append(args, filters.status)
+	}
+	if filters.provider != "" {
+		clauses = append(clauses, alias+".payment_provider = ?")
+		args = append(args, filters.provider)
+	}
+	if filters.startTime > 0 {
+		clauses = append(clauses, alias+".create_time >= ?")
+		args = append(args, filters.startTime)
+	}
+	if filters.endTime > 0 {
+		clauses = append(clauses, alias+".create_time <= ?")
+		args = append(args, filters.endTime)
+	}
+	if len(clauses) == 0 {
+		return "", args
+	}
+	return "WHERE " + strings.Join(clauses, " AND "), args
+}
+
+func emptyRechargeAuditBaseSQL() string {
+	return `
+SELECT
+	'' AS order_type,
+	0 AS id,
+	0 AS user_id,
+	'' AS username,
+	0 AS amount,
+	0 AS credit_amount,
+	0 AS credit_quota,
+	'' AS product_name,
+	0 AS money,
+	0 AS paid_amount,
+	'' AS paid_currency,
+	'' AS trade_no,
+	'' AS payment_method,
+	'' AS payment_provider,
+	0 AS price_snapshot,
+	0 AS usd_exchange_rate_snapshot,
+	'' AS quota_display_type_snapshot,
+	0 AS create_time,
+	0 AS complete_time,
+	'' AS status,
+	'' AS referral_commission_status,
+	'' AS referral_commission_error
+WHERE 1 = 0`
+}
+
+func orderManagementWhereSQL(filters rechargeAuditFilters) (string, []interface{}) {
 	clauses := make([]string, 0)
 	args := make([]interface{}, 0)
-	if keyword != "" {
-		like := "%" + keyword + "%"
-		if parsedUserID, err := strconv.Atoi(keyword); err == nil {
+	if filters.keyword != "" {
+		like := "%" + filters.keyword + "%"
+		if parsedUserID, err := strconv.Atoi(filters.keyword); err == nil {
 			clauses = append(clauses, "(o.trade_no LIKE ? OR o.username LIKE ? OR o.user_id = ?)")
 			args = append(args, like, like, parsedUserID)
 		} else {
 			clauses = append(clauses, "(o.trade_no LIKE ? OR o.username LIKE ? OR o.product_name LIKE ?)")
 			args = append(args, like, like, like)
 		}
-	}
-	if status != "" {
-		clauses = append(clauses, "o.status = ?")
-		args = append(args, status)
-	}
-	if provider != "" {
-		clauses = append(clauses, "o.payment_provider = ?")
-		args = append(args, provider)
-	}
-	if orderType != "" && orderType != "all" {
-		clauses = append(clauses, "o.order_type = ?")
-		args = append(args, orderType)
-	}
-	if startTime > 0 {
-		clauses = append(clauses, "o.create_time >= ?")
-		args = append(args, startTime)
-	}
-	if endTime > 0 {
-		clauses = append(clauses, "o.create_time <= ?")
-		args = append(args, endTime)
 	}
 	if len(clauses) == 0 {
 		return "", args
@@ -401,10 +508,10 @@ func applyRechargeAuditCNYSummary(
 	}
 }
 
-func buildRechargeAnomalies(keyword string, status string, provider string, orderType string, startTime int64, endTime int64) ([]auditAnomaly, error) {
+func buildRechargeAnomalies(filters rechargeAuditFilters) ([]auditAnomaly, error) {
 	now := common.GetTimestamp()
-	baseSQL, baseArgs := orderManagementBaseSQL()
-	whereSQL, whereArgs := orderManagementWhereSQL(keyword, status, provider, orderType, startTime, endTime)
+	baseSQL, baseArgs := orderManagementBaseSQL(filters)
+	whereSQL, whereArgs := orderManagementWhereSQL(filters)
 
 	var rows []struct {
 		TradeNo                  string
