@@ -49,14 +49,13 @@ type User struct {
 	ReferralInviterId       int            `json:"referral_inviter_id,omitempty" gorm:"-"`
 	ReferralInviterUsername string         `json:"referral_inviter_username,omitempty" gorm:"-"`
 	ActiveSubscriptionName  string         `json:"active_subscription_name,omitempty" gorm:"-"`
-	RegisterIP              string         `json:"register_ip" gorm:"column:register_ip;type:varchar(64);default:''"`
 	LastActiveAt            int64          `json:"last_active_at" gorm:"-"`
 	DeletedAt               gorm.DeletedAt `gorm:"index"`
 	LinuxDOId               string         `json:"linux_do_id" gorm:"column:linux_do_id;index"`
 	Setting                 string         `json:"setting" gorm:"type:text;column:setting"`
 	Remark                  string         `json:"remark,omitempty" gorm:"type:varchar(255)" validate:"max=255"`
 	StripeCustomer          string         `json:"stripe_customer" gorm:"type:varchar(64);column:stripe_customer;index"`
-	CreatedAt               int64          `json:"created_at" gorm:"autoCreateTime;column:created_at"`
+	CreatedAt               int64          `json:"created_at" gorm:"autoCreateTime;column:created_at;index"`
 	LastLoginAt             int64          `json:"last_login_at" gorm:"default:0;column:last_login_at"`
 }
 
@@ -250,7 +249,6 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 			"referral":              true,
 			"adminReferral":         true,
 			"recharge_audit":        true,
-			"risk_center":           true,
 			"provider_price_export": true,
 			"providerPricing":       true,
 			"setting":               false,
@@ -266,7 +264,6 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 			"referral":              true,
 			"adminReferral":         true,
 			"recharge_audit":        true,
-			"risk_center":           true,
 			"provider_price_export": true,
 			"providerPricing":       true,
 			"setting":               true,
@@ -468,6 +465,31 @@ func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err err
 	return users, total, nil
 }
 
+func CountUsersAfterID(afterID int) (int64, int, error) {
+	var summary struct {
+		Count    int64 `gorm:"column:count"`
+		LatestID int   `gorm:"column:latest_id"`
+	}
+	if err := DB.Unscoped().Model(&User{}).
+		Select("count(*) AS count, coalesce(max(id), 0) AS latest_id").
+		Where("id > ?", afterID).
+		Scan(&summary).Error; err != nil {
+		return 0, 0, err
+	}
+	if summary.Count == 0 {
+		return 0, afterID, nil
+	}
+	return summary.Count, summary.LatestID, nil
+}
+
+func GetLatestUserID() (int, error) {
+	var latestID int
+	if err := DB.Unscoped().Model(&User{}).Select("coalesce(max(id), 0)").Scan(&latestID).Error; err != nil {
+		return 0, err
+	}
+	return latestID, nil
+}
+
 func SearchUsers(keyword string, group string, role *int, status *int, startIdx int, num int) ([]*User, int64, error) {
 	var users []*User
 	var total int64
@@ -563,35 +585,6 @@ func populateUserActivity(users []*User) {
 				user.LastActiveAt = row.LastActiveAt
 			}
 		}
-	}
-
-	type ipRow struct {
-		UserID    int
-		IP        string
-		CreatedAt int64
-	}
-	var ipRows []ipRow
-	if err := LOG_DB.Table("logs").
-		Select("user_id, ip, created_at").
-		Where("user_id IN ? AND ip <> ''", userIds).
-		Order("created_at asc").
-		Scan(&ipRows).Error; err != nil {
-		common.SysLog("failed to populate user register ip fallback: " + err.Error())
-		return
-	}
-	seen := make(map[int]bool, len(userIds))
-	for _, row := range ipRows {
-		if seen[row.UserID] {
-			continue
-		}
-		user := userById[row.UserID]
-		if user == nil {
-			continue
-		}
-		if strings.TrimSpace(user.RegisterIP) == "" {
-			user.RegisterIP = strings.TrimSpace(row.IP)
-		}
-		seen[row.UserID] = true
 	}
 }
 

@@ -17,6 +17,7 @@ type ReferralAffiliate struct {
 	ApprovedAt         int64    `json:"approved_at" gorm:"default:0"`
 	DisabledBy         int      `json:"disabled_by" gorm:"index"`
 	DisabledAt         int64    `json:"disabled_at" gorm:"default:0"`
+	PendingReviewCursor int64    `json:"pending_review_cursor" gorm:"default:0;index"`
 	CreatedAt          int64    `json:"created_at" gorm:"autoCreateTime"`
 	UpdatedAt          int64    `json:"updated_at" gorm:"autoUpdateTime"`
 }

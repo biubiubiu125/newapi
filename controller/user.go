@@ -208,7 +208,6 @@ func Register(c *gin.Context) {
 		Password:    user.Password,
 		DisplayName: user.Username,
 		Email:       strings.TrimSpace(user.Email),
-		RegisterIP:  common.GetClientIP(c),
 		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
 	}
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
@@ -283,6 +282,37 @@ func GetAllUsers(c *gin.Context) {
 
 	common.ApiSuccess(c, pageInfo)
 	return
+}
+
+func GetAdminUsersSummary(c *gin.Context) {
+	afterID := parseAdminUsersSummaryAfterID(c.Query("after_id"))
+	var (
+		newUserCount int64
+		latestUserID int
+		err          error
+	)
+	if afterID > 0 {
+		newUserCount, latestUserID, err = model.CountUsersAfterID(afterID)
+	} else {
+		latestUserID, err = model.GetLatestUserID()
+	}
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"after_id":       afterID,
+		"latest_user_id": latestUserID,
+		"new_user_count": newUserCount,
+	})
+}
+
+func parseAdminUsersSummaryAfterID(raw string) int {
+	afterID, err := strconv.Atoi(strings.TrimSpace(raw))
+	if err != nil || afterID < 0 {
+		return 0
+	}
+	return afterID
 }
 
 func SearchUsers(c *gin.Context) {
@@ -502,7 +532,6 @@ func generateDefaultSidebarConfig(userRole int) string {
 			"adminReferral":         true,
 			"subscription":          true,
 			"recharge_audit":        true,
-			"risk_center":           true,
 			"provider_price_export": true,
 			"providerPricing":       true,
 			"user":                  true,
@@ -519,7 +548,6 @@ func generateDefaultSidebarConfig(userRole int) string {
 			"adminReferral":         true,
 			"subscription":          true,
 			"recharge_audit":        true,
-			"risk_center":           true,
 			"provider_price_export": true,
 			"providerPricing":       true,
 			"user":                  true,

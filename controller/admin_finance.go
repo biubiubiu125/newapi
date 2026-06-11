@@ -80,6 +80,17 @@ type rechargeAuditTotals struct {
 	CreditAmount   float64 `json:"credit_amount"`
 }
 
+type rechargeAuditOrderCursor struct {
+	CompleteTime int64 `gorm:"column:complete_time"`
+	OrderRank    int   `gorm:"column:order_rank"`
+	ID           int   `gorm:"column:id"`
+}
+
+const (
+	rechargeAuditTopupOrderRank        = 1
+	rechargeAuditSubscriptionOrderRank = 2
+)
+
 type auditAnomaly struct {
 	Type      string `json:"type"`
 	Severity  string `json:"severity"`
@@ -103,15 +114,17 @@ type rechargeAuditFilters struct {
 func GetRechargeAudit(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	keyword := strings.TrimSpace(c.Query("keyword"))
-	status := strings.TrimSpace(c.Query("status"))
+	status, ok := parseRechargeAuditStatus(c)
+	if !ok {
+		return
+	}
 	provider := strings.TrimSpace(c.Query("provider"))
 	orderType := strings.TrimSpace(c.Query("order_type"))
 	userID, ok := parseRechargeAuditUserID(c)
 	if !ok {
 		return
 	}
-	startTime, _ := strconv.ParseInt(c.Query("start_time"), 10, 64)
-	endTime, _ := strconv.ParseInt(c.Query("end_time"), 10, 64)
+	startTime, endTime := parseRechargeAuditTimeRange(c)
 	filters := rechargeAuditFilters{
 		keyword:   keyword,
 		status:    status,
@@ -156,15 +169,17 @@ func GetRechargeAudit(c *gin.Context) {
 
 func GetRechargeAuditSummary(c *gin.Context) {
 	keyword := strings.TrimSpace(c.Query("keyword"))
-	status := strings.TrimSpace(c.Query("status"))
+	status, ok := parseRechargeAuditStatus(c)
+	if !ok {
+		return
+	}
 	provider := strings.TrimSpace(c.Query("provider"))
 	orderType := strings.TrimSpace(c.Query("order_type"))
 	userID, ok := parseRechargeAuditUserID(c)
 	if !ok {
 		return
 	}
-	startTime, _ := strconv.ParseInt(c.Query("start_time"), 10, 64)
-	endTime, _ := strconv.ParseInt(c.Query("end_time"), 10, 64)
+	startTime, endTime := parseRechargeAuditTimeRange(c)
 	filters := rechargeAuditFilters{
 		keyword:   keyword,
 		status:    status,
@@ -173,6 +188,24 @@ func GetRechargeAuditSummary(c *gin.Context) {
 		userID:    userID,
 		startTime: startTime,
 		endTime:   endTime,
+	}
+
+	if isRechargeAuditBadgeOnly(c) {
+		latestOrderCursor, newOrderCount, err := rechargeAuditBadgeSummary(filters, c.Query("after_order_cursor"))
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		common.ApiSuccess(c, gin.H{
+			"totals":              rechargeAuditTotals{},
+			"by_currency":         []currencySummary{},
+			"by_provider":         []providerSummary{},
+			"by_status":           []statusSummary{},
+			"anomalies":           []auditAnomaly{},
+			"new_order_count":     newOrderCount,
+			"latest_order_cursor": formatRechargeAuditOrderCursor(latestOrderCursor),
+		})
+		return
 	}
 
 	baseSQL, baseArgs := orderManagementBaseSQL(filters)
@@ -193,6 +226,16 @@ func GetRechargeAuditSummary(c *gin.Context) {
 	selectArgs = append(selectArgs, baseArgs...)
 	selectArgs = append(selectArgs, whereArgs...)
 	if err := model.DB.Raw("SELECT "+selectSQL, selectArgs...).Scan(&totals).Error; err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	latestOrderCursor, err := latestRechargeAuditOrderCursor(baseSQL, baseArgs, whereSQL, whereArgs)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	newOrderCount, err := countRechargeAuditOrdersAfterCursor(c.Query("after_order_cursor"), baseSQL, baseArgs, whereSQL, whereArgs)
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -232,11 +275,13 @@ func GetRechargeAuditSummary(c *gin.Context) {
 	}
 
 	common.ApiSuccess(c, gin.H{
-		"totals":      totals,
-		"by_currency": byCurrency,
-		"by_provider": byProvider,
-		"by_status":   byStatus,
-		"anomalies":   anomalies,
+		"totals":              totals,
+		"by_currency":         byCurrency,
+		"by_provider":         byProvider,
+		"by_status":           byStatus,
+		"anomalies":           anomalies,
+		"new_order_count":     newOrderCount,
+		"latest_order_cursor": formatRechargeAuditOrderCursor(latestOrderCursor),
 	})
 }
 
@@ -322,6 +367,106 @@ LEFT JOIN subscription_plans p ON p.id = s.plan_id
 	return strings.Join(branches, "\nUNION ALL\n"), args
 }
 
+func orderManagementBadgeBaseSQL(filters rechargeAuditFilters) (string, []interface{}) {
+	branches := make([]string, 0, 2)
+	args := make([]interface{}, 0)
+	includeTopup := filters.orderType == "" || filters.orderType == "all" || filters.orderType == "topup"
+	includeSubscription := filters.orderType == "" || filters.orderType == "all" || filters.orderType == "subscription"
+
+	if includeTopup {
+		topupWhereSQL, topupWhereArgs := orderManagementBranchWhereSQL("t", []string{`NOT EXISTS (
+	SELECT 1 FROM subscription_orders AS so WHERE so.trade_no = t.trade_no
+)`}, filters)
+		branches = append(branches, fmt.Sprintf(`
+SELECT
+	'topup' AS order_type,
+	t.id,
+	t.user_id,
+	u.username,
+	'' AS product_name,
+	t.trade_no,
+	t.payment_provider,
+	t.create_time,
+	t.complete_time,
+	t.status
+FROM top_ups AS t
+LEFT JOIN users u ON u.id = t.user_id
+%s`, topupWhereSQL))
+		args = append(args, topupWhereArgs...)
+	}
+
+	if includeSubscription {
+		subscriptionWhereSQL, subscriptionWhereArgs := orderManagementBranchWhereSQL("s", nil, filters)
+		branches = append(branches, fmt.Sprintf(`
+SELECT
+	'subscription' AS order_type,
+	s.id,
+	s.user_id,
+	u.username,
+	coalesce(nullif(s.plan_title_snapshot, ''), p.title, '') AS product_name,
+	s.trade_no,
+	s.payment_provider,
+	s.create_time,
+	s.complete_time,
+	s.status
+FROM subscription_orders AS s
+LEFT JOIN users u ON u.id = s.user_id
+LEFT JOIN subscription_plans p ON p.id = s.plan_id
+%s`, subscriptionWhereSQL))
+		args = append(args, subscriptionWhereArgs...)
+	}
+
+	if len(branches) == 0 {
+		return emptyRechargeAuditBadgeBaseSQL(), nil
+	}
+
+	return strings.Join(branches, "\nUNION ALL\n"), args
+}
+
+func parseRechargeAuditStatus(c *gin.Context) (string, bool) {
+	status := strings.TrimSpace(c.Query("status"))
+	if status == "" || status == "all" {
+		return "", true
+	}
+	switch status {
+	case common.TopUpStatusPending,
+		common.TopUpStatusSuccess,
+		common.TopUpStatusFailed,
+		common.TopUpStatusExpired:
+		return status, true
+	default:
+		common.ApiErrorMsg(c, "invalid status")
+		return "", false
+	}
+}
+
+func parseRechargeAuditTimeRange(c *gin.Context) (int64, int64) {
+	startTime, _ := strconv.ParseInt(strings.TrimSpace(c.Query("start_time")), 10, 64)
+	endTime, _ := strconv.ParseInt(strings.TrimSpace(c.Query("end_time")), 10, 64)
+	if startTime > 0 || endTime > 0 {
+		return startTime, endTime
+	}
+
+	windowHoursRaw := strings.TrimSpace(c.Query("window_hours"))
+	if windowHoursRaw == "" {
+		return 0, 0
+	}
+	windowHours, err := strconv.ParseFloat(windowHoursRaw, 64)
+	if err != nil || windowHours <= 0 {
+		return 0, 0
+	}
+	const maxWindowHours = 24 * 365
+	if windowHours > maxWindowHours {
+		windowHours = maxWindowHours
+	}
+	endTime = common.GetTimestamp()
+	startTime = endTime - int64(windowHours*60*60)
+	if startTime < 0 {
+		startTime = 0
+	}
+	return startTime, endTime
+}
+
 func parseRechargeAuditUserID(c *gin.Context) (int, bool) {
 	raw := strings.TrimSpace(c.Query("user_id"))
 	if raw == "" {
@@ -333,6 +478,309 @@ func parseRechargeAuditUserID(c *gin.Context) (int, bool) {
 		return 0, false
 	}
 	return userID, true
+}
+
+func isRechargeAuditBadgeOnly(c *gin.Context) bool {
+	switch strings.ToLower(strings.TrimSpace(c.Query("badge_only"))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
+
+func parseRechargeAuditOrderCursor(raw string) (rechargeAuditOrderCursor, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return rechargeAuditOrderCursor{}, false
+	}
+	parts := strings.Split(raw, ":")
+	if len(parts) != 3 {
+		return rechargeAuditOrderCursor{}, false
+	}
+	completeTime, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || completeTime < 0 {
+		return rechargeAuditOrderCursor{}, false
+	}
+	orderRank, err := strconv.Atoi(parts[1])
+	if err != nil || orderRank < 0 {
+		return rechargeAuditOrderCursor{}, false
+	}
+	id, err := strconv.Atoi(parts[2])
+	if err != nil || id < 0 {
+		return rechargeAuditOrderCursor{}, false
+	}
+	return rechargeAuditOrderCursor{
+		CompleteTime: completeTime,
+		OrderRank:    orderRank,
+		ID:           id,
+	}, true
+}
+
+func formatRechargeAuditOrderCursor(cursor rechargeAuditOrderCursor) string {
+	if cursor.CompleteTime < 0 || cursor.OrderRank < 0 || cursor.ID < 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d:%d", cursor.CompleteTime, cursor.OrderRank, cursor.ID)
+}
+
+func rechargeAuditOrderRankSQL() string {
+	return "CASE WHEN o.order_type = 'subscription' THEN 2 ELSE 1 END"
+}
+
+func rechargeAuditBadgeSummary(filters rechargeAuditFilters, rawCursor string) (rechargeAuditOrderCursor, int64, error) {
+	if strings.TrimSpace(filters.keyword) != "" {
+		baseSQL, baseArgs := orderManagementBadgeBaseSQL(filters)
+		whereSQL, whereArgs := orderManagementWhereSQL(filters)
+		latestOrderCursor, err := latestRechargeAuditOrderCursor(baseSQL, baseArgs, whereSQL, whereArgs)
+		if err != nil {
+			return rechargeAuditOrderCursor{}, 0, err
+		}
+		newOrderCount, err := countRechargeAuditOrdersAfterCursor(rawCursor, baseSQL, baseArgs, whereSQL, whereArgs)
+		if err != nil {
+			return rechargeAuditOrderCursor{}, 0, err
+		}
+		return latestOrderCursor, newOrderCount, nil
+	}
+
+	latestOrderCursor, err := latestRechargeAuditBadgeOrderCursor(filters)
+	if err != nil {
+		return rechargeAuditOrderCursor{}, 0, err
+	}
+	newOrderCount, err := countRechargeAuditBadgeOrdersAfterCursor(rawCursor, filters)
+	if err != nil {
+		return rechargeAuditOrderCursor{}, 0, err
+	}
+	return latestOrderCursor, newOrderCount, nil
+}
+
+func latestRechargeAuditBadgeOrderCursor(filters rechargeAuditFilters) (rechargeAuditOrderCursor, error) {
+	latest := rechargeAuditOrderCursor{}
+
+	if rechargeAuditIncludesTopup(filters) {
+		cursor, err := latestRechargeAuditBadgeTopupCursor(filters)
+		if err != nil {
+			return rechargeAuditOrderCursor{}, err
+		}
+		if compareRechargeAuditOrderCursor(cursor, latest) > 0 {
+			latest = cursor
+		}
+	}
+
+	if rechargeAuditIncludesSubscription(filters) {
+		cursor, err := latestRechargeAuditBadgeSubscriptionCursor(filters)
+		if err != nil {
+			return rechargeAuditOrderCursor{}, err
+		}
+		if compareRechargeAuditOrderCursor(cursor, latest) > 0 {
+			latest = cursor
+		}
+	}
+
+	return latest, nil
+}
+
+func latestRechargeAuditBadgeTopupCursor(filters rechargeAuditFilters) (rechargeAuditOrderCursor, error) {
+	whereSQL, whereArgs := orderManagementBranchWhereSQL("t", []string{`NOT EXISTS (
+	SELECT 1 FROM subscription_orders AS so WHERE so.trade_no = t.trade_no
+)`}, filters)
+	whereSQL = appendOrderManagementCondition(whereSQL, "t.status IN (?, ?, ?) AND t.complete_time > 0")
+	args := append([]interface{}{}, whereArgs...)
+	args = append(args, common.TopUpStatusSuccess, common.TopUpStatusFailed, common.TopUpStatusExpired)
+
+	cursor := rechargeAuditOrderCursor{}
+	querySQL := fmt.Sprintf(
+		"SELECT t.complete_time, %d AS order_rank, t.id FROM top_ups AS t %s ORDER BY t.complete_time DESC, t.id DESC LIMIT 1",
+		rechargeAuditTopupOrderRank,
+		whereSQL,
+	)
+	if err := model.DB.Raw(querySQL, args...).Scan(&cursor).Error; err != nil {
+		return rechargeAuditOrderCursor{}, err
+	}
+	return cursor, nil
+}
+
+func latestRechargeAuditBadgeSubscriptionCursor(filters rechargeAuditFilters) (rechargeAuditOrderCursor, error) {
+	whereSQL, whereArgs := orderManagementBranchWhereSQL("s", nil, filters)
+	whereSQL = appendOrderManagementCondition(whereSQL, "s.status IN (?, ?, ?) AND s.complete_time > 0")
+	args := append([]interface{}{}, whereArgs...)
+	args = append(args, common.TopUpStatusSuccess, common.TopUpStatusFailed, common.TopUpStatusExpired)
+
+	cursor := rechargeAuditOrderCursor{}
+	querySQL := fmt.Sprintf(
+		"SELECT s.complete_time, %d AS order_rank, s.id FROM subscription_orders AS s %s ORDER BY s.complete_time DESC, s.id DESC LIMIT 1",
+		rechargeAuditSubscriptionOrderRank,
+		whereSQL,
+	)
+	if err := model.DB.Raw(querySQL, args...).Scan(&cursor).Error; err != nil {
+		return rechargeAuditOrderCursor{}, err
+	}
+	return cursor, nil
+}
+
+func countRechargeAuditBadgeOrdersAfterCursor(rawCursor string, filters rechargeAuditFilters) (int64, error) {
+	cursor, ok := parseRechargeAuditOrderCursor(rawCursor)
+	if !ok {
+		return 0, nil
+	}
+
+	var total int64
+	if rechargeAuditIncludesTopup(filters) {
+		count, err := countRechargeAuditBadgeTopupsAfterCursor(cursor, filters)
+		if err != nil {
+			return 0, err
+		}
+		total += count
+	}
+	if rechargeAuditIncludesSubscription(filters) {
+		count, err := countRechargeAuditBadgeSubscriptionsAfterCursor(cursor, filters)
+		if err != nil {
+			return 0, err
+		}
+		total += count
+	}
+	return total, nil
+}
+
+func countRechargeAuditBadgeTopupsAfterCursor(cursor rechargeAuditOrderCursor, filters rechargeAuditFilters) (int64, error) {
+	whereSQL, whereArgs := orderManagementBranchWhereSQL("t", []string{`NOT EXISTS (
+	SELECT 1 FROM subscription_orders AS so WHERE so.trade_no = t.trade_no
+)`}, filters)
+	cursorSQL, cursorArgs := rechargeAuditBranchCursorCondition("t", rechargeAuditTopupOrderRank, cursor)
+	whereSQL = appendOrderManagementCondition(whereSQL, "t.status IN (?, ?, ?) AND t.complete_time > 0")
+	whereSQL = appendOrderManagementCondition(whereSQL, cursorSQL)
+	args := append([]interface{}{}, whereArgs...)
+	args = append(args, common.TopUpStatusSuccess, common.TopUpStatusFailed, common.TopUpStatusExpired)
+	args = append(args, cursorArgs...)
+
+	var count int64
+	if err := model.DB.Raw(fmt.Sprintf("SELECT count(*) FROM top_ups AS t %s", whereSQL), args...).Scan(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func countRechargeAuditBadgeSubscriptionsAfterCursor(cursor rechargeAuditOrderCursor, filters rechargeAuditFilters) (int64, error) {
+	whereSQL, whereArgs := orderManagementBranchWhereSQL("s", nil, filters)
+	cursorSQL, cursorArgs := rechargeAuditBranchCursorCondition("s", rechargeAuditSubscriptionOrderRank, cursor)
+	whereSQL = appendOrderManagementCondition(whereSQL, "s.status IN (?, ?, ?) AND s.complete_time > 0")
+	whereSQL = appendOrderManagementCondition(whereSQL, cursorSQL)
+	args := append([]interface{}{}, whereArgs...)
+	args = append(args, common.TopUpStatusSuccess, common.TopUpStatusFailed, common.TopUpStatusExpired)
+	args = append(args, cursorArgs...)
+
+	var count int64
+	if err := model.DB.Raw(fmt.Sprintf("SELECT count(*) FROM subscription_orders AS s %s", whereSQL), args...).Scan(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func rechargeAuditBranchCursorCondition(alias string, orderRank int, cursor rechargeAuditOrderCursor) (string, []interface{}) {
+	completeColumn := alias + ".complete_time"
+	if orderRank > cursor.OrderRank {
+		return fmt.Sprintf("(%s > ? OR %s = ?)", completeColumn, completeColumn), []interface{}{
+			cursor.CompleteTime,
+			cursor.CompleteTime,
+		}
+	}
+	if orderRank == cursor.OrderRank {
+		return fmt.Sprintf("(%s > ? OR (%s = ? AND %s.id > ?))", completeColumn, completeColumn, alias), []interface{}{
+			cursor.CompleteTime,
+			cursor.CompleteTime,
+			cursor.ID,
+		}
+	}
+	return completeColumn + " > ?", []interface{}{cursor.CompleteTime}
+}
+
+func compareRechargeAuditOrderCursor(left rechargeAuditOrderCursor, right rechargeAuditOrderCursor) int {
+	if left.CompleteTime != right.CompleteTime {
+		if left.CompleteTime > right.CompleteTime {
+			return 1
+		}
+		return -1
+	}
+	if left.OrderRank != right.OrderRank {
+		if left.OrderRank > right.OrderRank {
+			return 1
+		}
+		return -1
+	}
+	if left.ID != right.ID {
+		if left.ID > right.ID {
+			return 1
+		}
+		return -1
+	}
+	return 0
+}
+
+func rechargeAuditIncludesTopup(filters rechargeAuditFilters) bool {
+	return filters.orderType == "" || filters.orderType == "all" || filters.orderType == "topup"
+}
+
+func rechargeAuditIncludesSubscription(filters rechargeAuditFilters) bool {
+	return filters.orderType == "" || filters.orderType == "all" || filters.orderType == "subscription"
+}
+
+func countRechargeAuditOrdersAfterCursor(rawCursor string, baseSQL string, baseArgs []interface{}, whereSQL string, whereArgs []interface{}) (int64, error) {
+	cursor, ok := parseRechargeAuditOrderCursor(rawCursor)
+	if !ok {
+		return 0, nil
+	}
+	rankSQL := rechargeAuditOrderRankSQL()
+	newOrderCondition := fmt.Sprintf(`o.status IN (?, ?, ?) AND o.complete_time > 0 AND (
+	o.complete_time > ?
+	OR (o.complete_time = ? AND %s > ?)
+	OR (o.complete_time = ? AND %s = ? AND o.id > ?)
+)`, rankSQL, rankSQL)
+	querySQL := fmt.Sprintf(
+		"SELECT count(*) FROM (%s) AS o %s",
+		baseSQL,
+		appendOrderManagementCondition(whereSQL, newOrderCondition),
+	)
+	queryArgs := append([]interface{}{}, baseArgs...)
+	queryArgs = append(queryArgs, whereArgs...)
+	queryArgs = append(queryArgs,
+		common.TopUpStatusSuccess,
+		common.TopUpStatusFailed,
+		common.TopUpStatusExpired,
+		cursor.CompleteTime,
+		cursor.CompleteTime,
+		cursor.OrderRank,
+		cursor.CompleteTime,
+		cursor.OrderRank,
+		cursor.ID,
+	)
+	var count int64
+	if err := model.DB.Raw(querySQL, queryArgs...).Scan(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func latestRechargeAuditOrderCursor(baseSQL string, baseArgs []interface{}, whereSQL string, whereArgs []interface{}) (rechargeAuditOrderCursor, error) {
+	rankSQL := rechargeAuditOrderRankSQL()
+	querySQL := fmt.Sprintf(
+		"SELECT o.complete_time, %s AS order_rank, o.id FROM (%s) AS o %s ORDER BY o.complete_time DESC, %s DESC, o.id DESC LIMIT 1",
+		rankSQL,
+		baseSQL,
+		appendOrderManagementCondition(whereSQL, "o.status IN (?, ?, ?) AND o.complete_time > 0"),
+		rankSQL,
+	)
+	queryArgs := append([]interface{}{}, baseArgs...)
+	queryArgs = append(queryArgs, whereArgs...)
+	queryArgs = append(queryArgs,
+		common.TopUpStatusSuccess,
+		common.TopUpStatusFailed,
+		common.TopUpStatusExpired,
+	)
+	cursor := rechargeAuditOrderCursor{}
+	if err := model.DB.Raw(querySQL, queryArgs...).Scan(&cursor).Error; err != nil {
+		return rechargeAuditOrderCursor{}, err
+	}
+	return cursor, nil
 }
 
 func orderManagementBranchWhereSQL(alias string, baseClauses []string, filters rechargeAuditFilters) (string, []interface{}) {
@@ -389,6 +837,22 @@ SELECT
 	'' AS status,
 	'' AS referral_commission_status,
 	'' AS referral_commission_error
+WHERE 1 = 0`
+}
+
+func emptyRechargeAuditBadgeBaseSQL() string {
+	return `
+SELECT
+	'' AS order_type,
+	0 AS id,
+	0 AS user_id,
+	'' AS username,
+	'' AS product_name,
+	'' AS trade_no,
+	'' AS payment_provider,
+	0 AS create_time,
+	0 AS complete_time,
+	'' AS status
 WHERE 1 = 0`
 }
 

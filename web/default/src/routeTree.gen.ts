@@ -20,7 +20,6 @@ import { Route as PricingIndexRouteImport } from './routes/pricing/index'
 import { Route as AboutIndexRouteImport } from './routes/about/index'
 import { Route as OauthProviderRouteImport } from './routes/oauth/$provider'
 import { Route as ConsoleTopupRouteImport } from './routes/console/topup'
-import { Route as ConsoleRiskCenterRouteImport } from './routes/console/risk-center'
 import { Route as ConsoleLogRouteImport } from './routes/console/log'
 import { Route as AuthenticatedChat2linkRouteImport } from './routes/_authenticated/chat2link'
 import { Route as errors503RouteImport } from './routes/(errors)/503'
@@ -43,7 +42,6 @@ import { Route as AuthenticatedUsersIndexRouteImport } from './routes/_authentic
 import { Route as AuthenticatedUsageLogsIndexRouteImport } from './routes/_authenticated/usage-logs/index'
 import { Route as AuthenticatedSystemSettingsIndexRouteImport } from './routes/_authenticated/system-settings/index'
 import { Route as AuthenticatedSubscriptionsIndexRouteImport } from './routes/_authenticated/subscriptions/index'
-import { Route as AuthenticatedRiskCenterIndexRouteImport } from './routes/_authenticated/risk-center/index'
 import { Route as AuthenticatedReferralIndexRouteImport } from './routes/_authenticated/referral/index'
 import { Route as AuthenticatedRedemptionCodesIndexRouteImport } from './routes/_authenticated/redemption-codes/index'
 import { Route as AuthenticatedRechargeAuditIndexRouteImport } from './routes/_authenticated/recharge-audit/index'
@@ -129,11 +127,6 @@ const OauthProviderRoute = OauthProviderRouteImport.update({
 const ConsoleTopupRoute = ConsoleTopupRouteImport.update({
   id: '/console/topup',
   path: '/console/topup',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const ConsoleRiskCenterRoute = ConsoleRiskCenterRouteImport.update({
-  id: '/console/risk-center',
-  path: '/console/risk-center',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConsoleLogRoute = ConsoleLogRouteImport.update({
@@ -249,12 +242,6 @@ const AuthenticatedSubscriptionsIndexRoute =
   AuthenticatedSubscriptionsIndexRouteImport.update({
     id: '/subscriptions/',
     path: '/subscriptions/',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
-const AuthenticatedRiskCenterIndexRoute =
-  AuthenticatedRiskCenterIndexRouteImport.update({
-    id: '/risk-center/',
-    path: '/risk-center/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
 const AuthenticatedReferralIndexRoute =
@@ -473,7 +460,6 @@ export interface FileRoutesByFullPath {
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
   '/console/log': typeof ConsoleLogRoute
-  '/console/risk-center': typeof ConsoleRiskCenterRoute
   '/console/topup': typeof ConsoleTopupRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
@@ -499,7 +485,6 @@ export interface FileRoutesByFullPath {
   '/recharge-audit/': typeof AuthenticatedRechargeAuditIndexRoute
   '/redemption-codes/': typeof AuthenticatedRedemptionCodesIndexRoute
   '/referral/': typeof AuthenticatedReferralIndexRoute
-  '/risk-center/': typeof AuthenticatedRiskCenterIndexRoute
   '/subscriptions/': typeof AuthenticatedSubscriptionsIndexRoute
   '/system-settings/': typeof AuthenticatedSystemSettingsIndexRoute
   '/usage-logs/': typeof AuthenticatedUsageLogsIndexRoute
@@ -540,7 +525,6 @@ export interface FileRoutesByTo {
   '/503': typeof errors503Route
   '/chat2link': typeof AuthenticatedChat2linkRoute
   '/console/log': typeof ConsoleLogRoute
-  '/console/risk-center': typeof ConsoleRiskCenterRoute
   '/console/topup': typeof ConsoleTopupRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about': typeof AboutIndexRoute
@@ -566,7 +550,6 @@ export interface FileRoutesByTo {
   '/recharge-audit': typeof AuthenticatedRechargeAuditIndexRoute
   '/redemption-codes': typeof AuthenticatedRedemptionCodesIndexRoute
   '/referral': typeof AuthenticatedReferralIndexRoute
-  '/risk-center': typeof AuthenticatedRiskCenterIndexRoute
   '/subscriptions': typeof AuthenticatedSubscriptionsIndexRoute
   '/system-settings': typeof AuthenticatedSystemSettingsIndexRoute
   '/usage-logs': typeof AuthenticatedUsageLogsIndexRoute
@@ -611,7 +594,6 @@ export interface FileRoutesById {
   '/(errors)/503': typeof errors503Route
   '/_authenticated/chat2link': typeof AuthenticatedChat2linkRoute
   '/console/log': typeof ConsoleLogRoute
-  '/console/risk-center': typeof ConsoleRiskCenterRoute
   '/console/topup': typeof ConsoleTopupRoute
   '/oauth/$provider': typeof OauthProviderRoute
   '/about/': typeof AboutIndexRoute
@@ -637,7 +619,6 @@ export interface FileRoutesById {
   '/_authenticated/recharge-audit/': typeof AuthenticatedRechargeAuditIndexRoute
   '/_authenticated/redemption-codes/': typeof AuthenticatedRedemptionCodesIndexRoute
   '/_authenticated/referral/': typeof AuthenticatedReferralIndexRoute
-  '/_authenticated/risk-center/': typeof AuthenticatedRiskCenterIndexRoute
   '/_authenticated/subscriptions/': typeof AuthenticatedSubscriptionsIndexRoute
   '/_authenticated/system-settings/': typeof AuthenticatedSystemSettingsIndexRoute
   '/_authenticated/usage-logs/': typeof AuthenticatedUsageLogsIndexRoute
@@ -681,7 +662,6 @@ export interface FileRouteTypes {
     | '/503'
     | '/chat2link'
     | '/console/log'
-    | '/console/risk-center'
     | '/console/topup'
     | '/oauth/$provider'
     | '/about/'
@@ -707,7 +687,6 @@ export interface FileRouteTypes {
     | '/recharge-audit/'
     | '/redemption-codes/'
     | '/referral/'
-    | '/risk-center/'
     | '/subscriptions/'
     | '/system-settings/'
     | '/usage-logs/'
@@ -748,7 +727,6 @@ export interface FileRouteTypes {
     | '/503'
     | '/chat2link'
     | '/console/log'
-    | '/console/risk-center'
     | '/console/topup'
     | '/oauth/$provider'
     | '/about'
@@ -774,7 +752,6 @@ export interface FileRouteTypes {
     | '/recharge-audit'
     | '/redemption-codes'
     | '/referral'
-    | '/risk-center'
     | '/subscriptions'
     | '/system-settings'
     | '/usage-logs'
@@ -818,7 +795,6 @@ export interface FileRouteTypes {
     | '/(errors)/503'
     | '/_authenticated/chat2link'
     | '/console/log'
-    | '/console/risk-center'
     | '/console/topup'
     | '/oauth/$provider'
     | '/about/'
@@ -844,7 +820,6 @@ export interface FileRouteTypes {
     | '/_authenticated/recharge-audit/'
     | '/_authenticated/redemption-codes/'
     | '/_authenticated/referral/'
-    | '/_authenticated/risk-center/'
     | '/_authenticated/subscriptions/'
     | '/_authenticated/system-settings/'
     | '/_authenticated/usage-logs/'
@@ -879,7 +854,6 @@ export interface RootRouteChildren {
   errors500Route: typeof errors500Route
   errors503Route: typeof errors503Route
   ConsoleLogRoute: typeof ConsoleLogRoute
-  ConsoleRiskCenterRoute: typeof ConsoleRiskCenterRoute
   ConsoleTopupRoute: typeof ConsoleTopupRoute
   OauthProviderRoute: typeof OauthProviderRoute
   AboutIndexRoute: typeof AboutIndexRoute
@@ -966,13 +940,6 @@ declare module '@tanstack/react-router' {
       path: '/console/topup'
       fullPath: '/console/topup'
       preLoaderRoute: typeof ConsoleTopupRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/console/risk-center': {
-      id: '/console/risk-center'
-      path: '/console/risk-center'
-      fullPath: '/console/risk-center'
-      preLoaderRoute: typeof ConsoleRiskCenterRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/console/log': {
@@ -1127,13 +1094,6 @@ declare module '@tanstack/react-router' {
       path: '/subscriptions'
       fullPath: '/subscriptions/'
       preLoaderRoute: typeof AuthenticatedSubscriptionsIndexRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/risk-center/': {
-      id: '/_authenticated/risk-center/'
-      path: '/risk-center'
-      fullPath: '/risk-center/'
-      preLoaderRoute: typeof AuthenticatedRiskCenterIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/referral/': {
@@ -1476,7 +1436,6 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedRechargeAuditIndexRoute: typeof AuthenticatedRechargeAuditIndexRoute
   AuthenticatedRedemptionCodesIndexRoute: typeof AuthenticatedRedemptionCodesIndexRoute
   AuthenticatedReferralIndexRoute: typeof AuthenticatedReferralIndexRoute
-  AuthenticatedRiskCenterIndexRoute: typeof AuthenticatedRiskCenterIndexRoute
   AuthenticatedSubscriptionsIndexRoute: typeof AuthenticatedSubscriptionsIndexRoute
   AuthenticatedUsageLogsIndexRoute: typeof AuthenticatedUsageLogsIndexRoute
   AuthenticatedUsersIndexRoute: typeof AuthenticatedUsersIndexRoute
@@ -1508,7 +1467,6 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedRedemptionCodesIndexRoute:
     AuthenticatedRedemptionCodesIndexRoute,
   AuthenticatedReferralIndexRoute: AuthenticatedReferralIndexRoute,
-  AuthenticatedRiskCenterIndexRoute: AuthenticatedRiskCenterIndexRoute,
   AuthenticatedSubscriptionsIndexRoute: AuthenticatedSubscriptionsIndexRoute,
   AuthenticatedUsageLogsIndexRoute: AuthenticatedUsageLogsIndexRoute,
   AuthenticatedUsersIndexRoute: AuthenticatedUsersIndexRoute,
@@ -1530,7 +1488,6 @@ const rootRouteChildren: RootRouteChildren = {
   errors500Route: errors500Route,
   errors503Route: errors503Route,
   ConsoleLogRoute: ConsoleLogRoute,
-  ConsoleRiskCenterRoute: ConsoleRiskCenterRoute,
   ConsoleTopupRoute: ConsoleTopupRoute,
   OauthProviderRoute: OauthProviderRoute,
   AboutIndexRoute: AboutIndexRoute,

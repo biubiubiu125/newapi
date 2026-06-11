@@ -32,6 +32,8 @@ const (
 
 	defaultDBStartupConnectTimeoutSeconds  = 60
 	defaultDBStartupConnectRetryIntervalMs = 1000
+
+	dropLegacyRiskTablesEnv = "DROP_LEGACY_RISK_TABLES"
 )
 
 func initCol() {
@@ -290,6 +292,9 @@ func migrateDB() error {
 	if err := migrateReferralCleanup(); err != nil {
 		return err
 	}
+	if err := migrateRiskCleanup(); err != nil {
+		return err
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
@@ -307,9 +312,6 @@ func migrateDB() error {
 		&ReferralSettlementBatch{},
 		&ReferralCommissionJob{},
 		&ReferralAdminAuditLog{},
-		&RiskEvent{},
-		&RiskAction{},
-		&RiskWhitelist{},
 		&PasskeyCredential{},
 		&Option{},
 		&Redemption{},
@@ -352,6 +354,9 @@ func migrateDB() error {
 	if err := ensureUserLoginIdentifiers(); err != nil {
 		return err
 	}
+	if err := ensureRechargeOrderIndexes(); err != nil {
+		return err
+	}
 	return nil
 }
 
@@ -377,7 +382,33 @@ func migrateReferralCleanup() error {
 	return nil
 }
 
+func migrateRiskCleanup() error {
+	if !common.GetEnvOrDefaultBool(dropLegacyRiskTablesEnv, false) {
+		common.SysLog("legacy risk table cleanup skipped; set " + dropLegacyRiskTablesEnv + "=true to drop legacy risk tables")
+		return nil
+	}
+
+	legacyRiskTables := []string{
+		"risk_whitelists",
+		"risk_actions",
+		"risk_events",
+	}
+	for _, tableName := range legacyRiskTables {
+		if !DB.Migrator().HasTable(tableName) {
+			continue
+		}
+		if err := DB.Migrator().DropTable(tableName); err != nil {
+			return fmt.Errorf("drop legacy risk table %s: %w", tableName, err)
+		}
+		common.SysLog("dropped legacy risk table: " + tableName)
+	}
+	return nil
+}
+
 func migrateDBFast() error {
+	if err := migrateRiskCleanup(); err != nil {
+		return err
+	}
 
 	var wg sync.WaitGroup
 
@@ -400,9 +431,6 @@ func migrateDBFast() error {
 		{&ReferralSettlementBatch{}, "ReferralSettlementBatch"},
 		{&ReferralCommissionJob{}, "ReferralCommissionJob"},
 		{&ReferralAdminAuditLog{}, "ReferralAdminAuditLog"},
-		{&RiskEvent{}, "RiskEvent"},
-		{&RiskAction{}, "RiskAction"},
-		{&RiskWhitelist{}, "RiskWhitelist"},
 		{&PasskeyCredential{}, "PasskeyCredential"},
 		{&Option{}, "Option"},
 		{&Redemption{}, "Redemption"},
@@ -463,6 +491,9 @@ func migrateDBFast() error {
 		return err
 	}
 	if err := ensureUserLoginIdentifiers(); err != nil {
+		return err
+	}
+	if err := ensureRechargeOrderIndexes(); err != nil {
 		return err
 	}
 	common.SysLog("database migrated")

@@ -38,7 +38,6 @@ const routerMap = {
   topup: '/console/topup',
   referral: '/console/referral',
   adminReferral: '/console/admin-referral',
-  riskCenter: '/console/risk-center',
   providerPricing: '/console/provider-pricing',
   user: '/console/user',
   subscription: '/console/subscription',
@@ -172,12 +171,6 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('推广管理'),
         itemKey: 'adminReferral',
         to: '/console/admin-referral',
-        className: isAdmin() ? '' : 'tableHiddle',
-      },
-      {
-        text: t('风控中心'),
-        itemKey: 'riskCenter',
-        to: '/console/risk-center',
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {
@@ -321,10 +314,6 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
     if (!matchingKey && currentPath.startsWith('/console/admin-referral')) {
       matchingKey = 'adminReferral';
-    }
-
-    if (!matchingKey && currentPath.startsWith('/console/risk-center')) {
-      matchingKey = 'riskCenter';
     }
 
     if (!matchingKey && currentPath.startsWith('/console/provider-pricing')) {

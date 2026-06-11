@@ -79,9 +79,6 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 		&model.ReferralCommissionJob{},
 		&model.ReferralWithdrawal{},
 		&model.ReferralWithdrawalItem{},
-		&model.RiskEvent{},
-		&model.RiskAction{},
-		&model.RiskWhitelist{},
 	))
 
 	t.Cleanup(func() {

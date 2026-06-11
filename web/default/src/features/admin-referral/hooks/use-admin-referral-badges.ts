@@ -17,20 +17,25 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import {
-  getAdminReferralOverview,
-  listAdminReferralWithdrawals,
-} from '@/features/referral/api'
+import { getAdminReferralBadges } from '@/features/referral/api'
 
 export type AdminReferralBadgeCounts = {
   pendingAffiliates: number
   pendingWithdrawals: number
+  latestPendingAffiliateId: number
+  latestPendingWithdrawalId: number
+  latestPendingAffiliateCursor?: string
+  latestPendingWithdrawalCursor?: string
   total: number
 }
 
 const EMPTY_COUNTS: AdminReferralBadgeCounts = {
   pendingAffiliates: 0,
   pendingWithdrawals: 0,
+  latestPendingAffiliateId: 0,
+  latestPendingWithdrawalId: 0,
+  latestPendingAffiliateCursor: undefined,
+  latestPendingWithdrawalCursor: undefined,
   total: 0,
 }
 
@@ -39,6 +44,11 @@ function normalizeCount(value: number | undefined): number {
     return 0
   }
   return Math.floor(value)
+}
+
+function normalizeCursor(value: string | undefined): string | undefined {
+  const normalized = String(value ?? '').trim()
+  return normalized || undefined
 }
 
 export function formatAdminReferralBadgeCount(count: number): string | undefined {
@@ -53,28 +63,42 @@ export function useAdminReferralBadges(enabled = true) {
     queryKey: ['admin-referral-badges'],
     enabled,
     queryFn: async (): Promise<AdminReferralBadgeCounts> => {
-      const [overviewRes, pendingWithdrawalRes] = await Promise.all([
-        getAdminReferralOverview(),
-        listAdminReferralWithdrawals({
-          p: 1,
-          page_size: 1,
-          status: 'pending',
-        }),
-      ])
-
+      const badgeRes = await getAdminReferralBadges()
       const pendingAffiliates = normalizeCount(
-        overviewRes.data?.pending_affiliates
+        badgeRes.data?.pending_affiliates
       )
       const pendingWithdrawals = normalizeCount(
-        pendingWithdrawalRes.data?.total
+        badgeRes.data?.pending_withdrawals
       )
+      const latestPendingAffiliateId = normalizeCount(
+        badgeRes.data?.latest_pending_affiliate_id
+      )
+      const latestPendingWithdrawalId = normalizeCount(
+        badgeRes.data?.latest_pending_withdrawal_id
+      )
+      const latestPendingAffiliateCursor =
+        normalizeCursor(badgeRes.data?.latest_pending_affiliate_cursor) ||
+        (latestPendingAffiliateId > 0
+          ? String(latestPendingAffiliateId)
+          : undefined)
+      const latestPendingWithdrawalCursor =
+        normalizeCursor(badgeRes.data?.latest_pending_withdrawal_cursor) ||
+        (latestPendingWithdrawalId > 0
+          ? String(latestPendingWithdrawalId)
+          : undefined)
 
       return {
         pendingAffiliates,
         pendingWithdrawals,
+        latestPendingAffiliateId,
+        latestPendingWithdrawalId,
+        latestPendingAffiliateCursor,
+        latestPendingWithdrawalCursor,
         total: pendingAffiliates + pendingWithdrawals,
       }
     },
+    refetchOnWindowFocus: false,
+    staleTime: 60 * 1000,
   })
 
   return {

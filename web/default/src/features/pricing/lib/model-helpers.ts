@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { EXCLUDED_GROUPS, QUOTA_TYPE_VALUES } from '../constants'
-import type { PricingModel } from '../types'
+import type { PricingModel, PricingUsableGroupMap } from '../types'
 
 // ----------------------------------------------------------------------------
 // Model Helper Utilities
@@ -28,7 +28,7 @@ import type { PricingModel } from '../types'
  */
 export function getAvailableGroups(
   model: PricingModel,
-  usableGroup: Record<string, { desc: string; ratio: number }>
+  usableGroup: PricingUsableGroupMap
 ): string[] {
   const modelEnableGroups = Array.isArray(model.enable_groups)
     ? model.enable_groups

@@ -70,7 +70,6 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
     setting: true,
     subscription: true,
     recharge_audit: true,
-    risk_center: true,
     provider_price_export: true,
   },
 }
@@ -80,6 +79,29 @@ const SIDEBAR_MODULE_ALIASES: Record<string, Record<string, string[]>> = {
     referral: ['adminReferral'],
     provider_price_export: ['providerPricing'],
   },
+}
+
+const REMOVED_SIDEBAR_MODULES: Record<string, string[]> = {
+  admin: ['risk_center', 'riskCenter'],
+}
+
+function removeRemovedSidebarModules(
+  config: SidebarModulesAdminConfig
+): SidebarModulesAdminConfig {
+  const normalized: SidebarModulesAdminConfig = { ...config }
+
+  Object.entries(REMOVED_SIDEBAR_MODULES).forEach(
+    ([sectionKey, moduleKeys]) => {
+      const section = normalized[sectionKey]
+      if (!section) return
+      normalized[sectionKey] = { ...section }
+      moduleKeys.forEach((moduleKey) => {
+        delete normalized[sectionKey][moduleKey]
+      })
+    }
+  )
+
+  return normalized
 }
 
 function normalizeSidebarModuleAliases(
@@ -110,7 +132,7 @@ function normalizeSidebarModuleAliases(
     }
   )
 
-  return normalized
+  return removeRemovedSidebarModules(normalized)
 }
 
 const mergeWithDefaultSidebarModules = (
@@ -165,7 +187,6 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/redemption-codes': { section: 'admin', module: 'redemption' },
   '/subscriptions': { section: 'admin', module: 'subscription' },
   '/recharge-audit': { section: 'admin', module: 'recharge_audit' },
-  '/risk-center': { section: 'admin', module: 'risk_center' },
   '/provider-price-export': {
     section: 'admin',
     module: 'provider_price_export',

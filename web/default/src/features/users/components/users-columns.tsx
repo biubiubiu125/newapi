@@ -87,7 +87,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'username',
-      size: 164,
+      size: 172,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Username')} />
       ),
@@ -130,7 +130,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'email',
-      size: 184,
+      size: 220,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Email')} />
       ),
@@ -149,7 +149,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'referral_inviter_username',
-      size: 96,
+      size: 116,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Promoter')} />
       ),
@@ -166,7 +166,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'status',
-      size: 84,
+      size: 88,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Status')} />
       ),
@@ -208,7 +208,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     {
       id: 'quota',
       accessorKey: 'quota',
-      size: 128,
+      size: 124,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Quota')} />
       ),
@@ -272,7 +272,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'active_subscription_name',
-      size: 96,
+      size: 128,
       header: ({ column }) => (
         <DataTableColumnHeader
           column={column}
@@ -295,7 +295,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'group',
-      size: 96,
+      size: 104,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Group')} />
       ),
@@ -312,7 +312,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'role',
-      size: 84,
+      size: 80,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Role')} />
       ),
@@ -346,7 +346,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'created_at',
-      size: 142,
+      size: 150,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Created At')} />
       ),
@@ -361,25 +361,8 @@ export function useUsersColumns(): ColumnDef<User>[] {
       meta: { label: t('Created At'), mobileHidden: true },
     },
     {
-      accessorKey: 'register_ip',
-      size: 116,
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title='注册 IP' />
-      ),
-      cell: ({ row }) => {
-        const ip = row.getValue('register_ip') as string | undefined
-        return (
-          <span className='text-muted-foreground inline-block max-w-full truncate font-mono text-xs'>
-            {ip || '-'}
-          </span>
-        )
-      },
-      enableSorting: false,
-      meta: { label: '注册 IP', mobileHidden: true },
-    },
-    {
       accessorKey: 'last_login_at',
-      size: 142,
+      size: 150,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Last Login')} />
       ),
@@ -395,7 +378,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       accessorKey: 'last_active_at',
-      size: 116,
+      size: 132,
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title='最近活跃' />
       ),
@@ -411,7 +394,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
     },
     {
       id: 'actions',
-      size: 44,
+      size: 48,
       cell: ({ row }) => <DataTableRowActions row={row} />,
       meta: { label: t('Actions') },
     },

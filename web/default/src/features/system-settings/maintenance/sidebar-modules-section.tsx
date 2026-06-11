@@ -158,10 +158,6 @@ export function SidebarModulesSection({
         title: t('Order Management'),
         description: t('Review recharge and subscription orders.'),
       },
-      risk_center: {
-        title: t('Risk Center'),
-        description: t('Review account, payment, and usage risk signals.'),
-      },
       provider_price_export: {
         title: t('Public Price Export'),
         description: t('Publish public provider pricing data.'),

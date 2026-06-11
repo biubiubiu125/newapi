@@ -83,7 +83,6 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     setting: true,
     subscription: true,
     recharge_audit: true,
-    risk_center: true,
     provider_price_export: true,
   },
 }
@@ -93,6 +92,10 @@ const SIDEBAR_MODULE_ALIASES: Record<string, Record<string, string[]>> = {
     referral: ['adminReferral'],
     provider_price_export: ['providerPricing'],
   },
+}
+
+const REMOVED_SIDEBAR_MODULES: Record<string, string[]> = {
+  admin: ['risk_center', 'riskCenter'],
 }
 
 const toBoolean = (value: unknown, fallback: boolean): boolean => {
@@ -169,6 +172,25 @@ const normalizeSidebarAliases = (
         aliases.forEach((aliasKey) => {
           delete normalized[sectionKey][aliasKey]
         })
+      })
+    }
+  )
+
+  return removeRemovedSidebarModules(normalized)
+}
+
+const removeRemovedSidebarModules = (
+  config: SidebarModulesAdminConfig
+): SidebarModulesAdminConfig => {
+  const normalized: SidebarModulesAdminConfig = { ...config }
+
+  Object.entries(REMOVED_SIDEBAR_MODULES).forEach(
+    ([sectionKey, moduleKeys]) => {
+      const section = normalized[sectionKey]
+      if (!section) return
+      normalized[sectionKey] = { ...section }
+      moduleKeys.forEach((moduleKey) => {
+        delete normalized[sectionKey][moduleKey]
       })
     }
   )
@@ -252,6 +274,7 @@ export function parseSidebarModulesAdmin(
       Object.entries(raw as Record<string, unknown>).forEach(
         ([moduleKey, moduleValue]) => {
           if (moduleKey === 'enabled') return
+          if (REMOVED_SIDEBAR_MODULES[sectionKey]?.includes(moduleKey)) return
           sectionConfig[moduleKey] = toBoolean(
             moduleValue,
             defaultSection[moduleKey] ?? true
@@ -285,5 +308,5 @@ export function parseSidebarModulesAdmin(
 export function serializeSidebarModulesAdmin(
   config: SidebarModulesAdminConfig
 ): string {
-  return JSON.stringify(config)
+  return JSON.stringify(removeRemovedSidebarModules(config))
 }

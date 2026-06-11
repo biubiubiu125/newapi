@@ -241,6 +241,9 @@ func (o *SubscriptionOrder) Insert() error {
 }
 
 func (o *SubscriptionOrder) Update() error {
+	if o.Status != "" && o.Status != common.TopUpStatusPending && o.CompleteTime <= 0 {
+		o.CompleteTime = common.GetTimestamp()
+	}
 	return DB.Save(o).Error
 }
 

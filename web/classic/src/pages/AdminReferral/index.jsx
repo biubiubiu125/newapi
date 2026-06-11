@@ -727,6 +727,10 @@ export default function AdminReferral() {
         dataIndex: 'invite_code',
       },
       {
+        title: '推广点击',
+        render: (_, row) => String(row.click_count || 0),
+      },
+      {
         title: '返佣比例',
         render: (_, row) =>
           row.rate_override != null

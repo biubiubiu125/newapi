@@ -55,12 +55,24 @@ export const DEFAULT_ADMIN_CONFIG = {
     user: true,
     subscription: true,
     adminReferral: true,
-    riskCenter: true,
     setting: true,
   },
 };
 
 const deepClone = (value) => JSON.parse(JSON.stringify(value));
+const removedAdminModuleKeys = ['riskCenter', 'risk_center'];
+
+export const sanitizeSidebarConfig = (config) => {
+  if (!config || typeof config !== 'object') return config;
+  const sanitized = { ...config };
+  if (sanitized.admin && typeof sanitized.admin === 'object') {
+    sanitized.admin = { ...sanitized.admin };
+    removedAdminModuleKeys.forEach((key) => {
+      delete sanitized.admin[key];
+    });
+  }
+  return sanitized;
+};
 
 export const mergeAdminConfig = (savedConfig) => {
   const merged = deepClone(DEFAULT_ADMIN_CONFIG);
@@ -90,9 +102,9 @@ export const mergeAdminConfig = (savedConfig) => {
     ) {
       merged.admin.providerPricing = merged.admin.provider_price_export ?? true;
     }
-    if (savedConfig.admin?.riskCenter === undefined) {
-      merged.admin.riskCenter = true;
-    }
+    removedAdminModuleKeys.forEach((key) => {
+      delete merged.admin[key];
+    });
   }
 
   return merged;
@@ -144,7 +156,7 @@ export const useSidebar = () => {
         } else {
           config = res.data.data.sidebar_modules;
         }
-        setUserConfig(config);
+        setUserConfig(sanitizeSidebarConfig(config));
       } else {
         // 当用户没有配置时，生成一个基于管理员配置的默认用户配置
         // 这样可以确保权限控制正确生效

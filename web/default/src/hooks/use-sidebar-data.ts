@@ -33,7 +33,6 @@ import {
   User,
   BadgeDollarSign,
   Share2,
-  ShieldAlert,
   Users,
   Wallet,
 } from 'lucide-react'
@@ -47,25 +46,29 @@ import {
 } from '@/features/admin-referral/hooks/use-admin-referral-badges'
 import {
   ADMIN_SIDEBAR_BADGE_ACK_EVENT,
-  lowerAdminSidebarBadgeAckBaselines,
+  hasAdminSidebarBadgeAck,
+  initializeAdminSidebarBadgeCursors,
   normalizeSidebarBadgeCount,
+  readAdminSidebarBadgeAck,
   unreadAdminSidebarBadgeCount,
 } from '@/components/layout/lib/admin-sidebar-badge-ack'
 import { getRechargeAuditSummary } from '@/features/recharge-audit/api'
-import { getRiskOverview } from '@/features/risk-center/api'
+import { getAdminUsersSummary } from '@/features/users/api'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
 type AdminAlertBadges = {
   newUsers: number
+  latestUserId: number
   orderIssues: number
-  riskSignals: number
+  latestOrderCursor?: string
 }
 
 const EMPTY_ADMIN_ALERT_BADGES: AdminAlertBadges = {
   newUsers: 0,
+  latestUserId: 0,
   orderIssues: 0,
-  riskSignals: 0,
+  latestOrderCursor: undefined,
 }
 
 /**
@@ -81,85 +84,104 @@ export function useSidebarData(): SidebarData {
   const userId = user?.id
   const [badgeAckVersion, setBadgeAckVersion] = useState(0)
   const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
-  const {
-    counts,
-    isSuccess: adminReferralBadgesLoaded,
-  } = useAdminReferralBadges(isAdmin)
+  const { counts } = useAdminReferralBadges(isAdmin)
   const adminAlertQuery = useQuery({
-    queryKey: ['admin-sidebar-alert-badges'],
+    queryKey: ['admin-sidebar-alert-badges', userId],
     enabled: isAdmin,
     queryFn: async (): Promise<AdminAlertBadges> => {
-      const riskParams = new URLSearchParams({ window_hours: '24' })
-      const orderParams = new URLSearchParams({ window_hours: '24' })
-      const [riskRes, orderRes] = await Promise.all([
-        getRiskOverview(riskParams),
+      const userAck = readAdminSidebarBadgeAck('users', userId, {
+        mode: 'cursor',
+      })
+      const orderAck = readAdminSidebarBadgeAck('recharge-audit', userId, {
+        mode: 'cursor',
+      })
+      const hasUserAck = hasAdminSidebarBadgeAck('users', userId, {
+        mode: 'cursor',
+      })
+      const hasOrderAck = hasAdminSidebarBadgeAck('recharge-audit', userId, {
+        mode: 'cursor',
+      })
+      const userParams = new URLSearchParams()
+      const orderParams = new URLSearchParams()
+      orderParams.set('badge_only', '1')
+      if (hasUserAck && typeof userAck === 'number' && userAck >= 0) {
+        userParams.set('after_id', String(userAck))
+      } else if (hasUserAck && typeof userAck === 'string' && userAck.trim()) {
+        userParams.set('after_id', userAck.trim())
+      }
+      if (hasOrderAck && typeof orderAck === 'string' && orderAck.trim()) {
+        orderParams.set('after_order_cursor', orderAck.trim())
+      }
+      const [userRes, orderRes] = await Promise.all([
+        getAdminUsersSummary(userParams),
         getRechargeAuditSummary(orderParams),
       ])
-      const failedOrders = normalizeSidebarBadgeCount(
-        orderRes.data?.totals?.failed_count
-      )
-      const orderAnomalies = normalizeSidebarBadgeCount(
-        orderRes.data?.anomalies?.length
-      )
 
       return {
-        newUsers: normalizeSidebarBadgeCount(riskRes.data?.new_user_count),
-        orderIssues: failedOrders + orderAnomalies,
-        riskSignals: normalizeSidebarBadgeCount(riskRes.data?.signal_count),
+        newUsers: hasUserAck
+          ? normalizeSidebarBadgeCount(userRes.data?.new_user_count)
+          : 0,
+        latestUserId: normalizeSidebarBadgeCount(userRes.data?.latest_user_id),
+        orderIssues: hasOrderAck
+          ? normalizeSidebarBadgeCount(orderRes.data?.new_order_count)
+          : 0,
+        latestOrderCursor: orderRes.data?.latest_order_cursor || undefined,
       }
     },
+    refetchOnWindowFocus: false,
+    staleTime: 60 * 1000,
   })
   const adminAlerts = adminAlertQuery.data ?? EMPTY_ADMIN_ALERT_BADGES
   const adminAlertsLoaded = adminAlertQuery.isSuccess
   void badgeAckVersion
-  const referralManagementUnread = unreadAdminSidebarBadgeCount(
-    'admin-referral',
-    counts.total,
-    userId
+  const referralPendingAffiliatesUnread = unreadAdminSidebarBadgeCount(
+    'admin-referral:pending-affiliates',
+    counts.pendingAffiliates,
+    userId,
+    { mode: 'cursor', cursor: counts.latestPendingAffiliateCursor }
   )
+  const referralPendingWithdrawalsUnread = unreadAdminSidebarBadgeCount(
+    'admin-referral:pending-withdrawals',
+    counts.pendingWithdrawals,
+    userId,
+    { mode: 'cursor', cursor: counts.latestPendingWithdrawalCursor }
+  )
+  const referralManagementUnread =
+    referralPendingAffiliatesUnread + referralPendingWithdrawalsUnread
   const usersUnread = unreadAdminSidebarBadgeCount(
     'users',
     adminAlerts.newUsers,
-    userId
+    userId,
+    { mode: 'cursor', cursor: adminAlerts.latestUserId }
   )
   const orderManagementUnread = unreadAdminSidebarBadgeCount(
     'recharge-audit',
     adminAlerts.orderIssues,
-    userId
-  )
-  const riskCenterUnread = unreadAdminSidebarBadgeCount(
-    'risk-center',
-    adminAlerts.riskSignals,
-    userId
+    userId,
+    { mode: 'cursor', cursor: adminAlerts.latestOrderCursor }
   )
   const usersBadge = formatAdminReferralBadgeCount(usersUnread)
   const orderManagementBadge = formatAdminReferralBadgeCount(
     orderManagementUnread
   )
-  const riskCenterBadge = formatAdminReferralBadgeCount(riskCenterUnread)
 
   useEffect(() => {
-    if (!adminAlertsLoaded || !adminReferralBadgesLoaded) return
+    if (!adminAlertsLoaded) return
 
-    const lowered = lowerAdminSidebarBadgeAckBaselines(
+    const cursorInitialized = initializeAdminSidebarBadgeCursors(
       {
-        'admin-referral': counts.total,
-        users: adminAlerts.newUsers,
-        'recharge-audit': adminAlerts.orderIssues,
-        'risk-center': adminAlerts.riskSignals,
+        users: adminAlerts.latestUserId,
+        'recharge-audit': adminAlerts.latestOrderCursor,
       },
       userId,
       true
     )
-    if (lowered) setBadgeAckVersion((value) => value + 1)
+    if (cursorInitialized) setBadgeAckVersion((value) => value + 1)
   }, [
     userId,
-    counts.total,
-    adminAlerts.newUsers,
-    adminAlerts.orderIssues,
-    adminAlerts.riskSignals,
+    adminAlerts.latestUserId,
+    adminAlerts.latestOrderCursor,
     adminAlertsLoaded,
-    adminReferralBadgesLoaded,
   ])
 
   useEffect(() => {
@@ -272,6 +294,8 @@ export function useSidebarData(): SidebarData {
             badge: usersBadge,
             badgeKey: 'users',
             badgeValue: adminAlerts.newUsers,
+            badgeCursor: adminAlerts.latestUserId,
+            badgeMode: 'cursor',
           },
           {
             title: t('Referral Management'),
@@ -280,6 +304,20 @@ export function useSidebarData(): SidebarData {
             badge: formatAdminReferralBadgeCount(referralManagementUnread),
             badgeKey: 'admin-referral',
             badgeValue: counts.total,
+            badgeAcks: [
+              {
+                key: 'admin-referral:pending-affiliates',
+                value: counts.pendingAffiliates,
+                cursor: counts.latestPendingAffiliateCursor,
+                mode: 'cursor',
+              },
+              {
+                key: 'admin-referral:pending-withdrawals',
+                value: counts.pendingWithdrawals,
+                cursor: counts.latestPendingWithdrawalCursor,
+                mode: 'cursor',
+              },
+            ],
           },
           {
             title: t('Redemption Codes'),
@@ -298,14 +336,8 @@ export function useSidebarData(): SidebarData {
             badge: orderManagementBadge,
             badgeKey: 'recharge-audit',
             badgeValue: adminAlerts.orderIssues,
-          },
-          {
-            title: t('Risk Center'),
-            url: '/risk-center',
-            icon: ShieldAlert,
-            badge: riskCenterBadge,
-            badgeKey: 'risk-center',
-            badgeValue: adminAlerts.riskSignals,
+            badgeCursor: adminAlerts.latestOrderCursor,
+            badgeMode: 'cursor',
           },
           {
             title: t('Public Price Export'),

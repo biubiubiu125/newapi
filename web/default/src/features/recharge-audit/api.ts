@@ -92,6 +92,8 @@ export interface RechargeAuditSummary {
     message: string
     created_at?: number
   }>
+  new_order_count?: number
+  latest_order_cursor?: string
 }
 
 export interface PageResponse<T> {

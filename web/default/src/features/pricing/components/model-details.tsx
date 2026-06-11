@@ -68,6 +68,7 @@ import type {
   ModelCapability,
   PriceType,
   PricingModel,
+  PricingUsableGroupMap,
   TokenUnit,
 } from '../types'
 import { DynamicPricingBreakdown } from './dynamic-pricing-breakdown'
@@ -592,7 +593,7 @@ function AutoGroupChain(props: { model: PricingModel; autoGroups: string[] }) {
 function GroupPricingSection(props: {
   model: PricingModel
   groupRatio: Record<string, number>
-  usableGroup: Record<string, { desc: string; ratio: number }>
+  usableGroup: PricingUsableGroupMap
   autoGroups: string[]
   priceRate: number
   usdExchangeRate: number
@@ -898,7 +899,7 @@ const TAB_META: Record<
 export interface ModelDetailsContentProps {
   model: PricingModel
   groupRatio: Record<string, number>
-  usableGroup: Record<string, { desc: string; ratio: number }>
+  usableGroup: PricingUsableGroupMap
   endpointMap: Record<string, { path?: string; method?: string }>
   autoGroups: string[]
   priceRate: number

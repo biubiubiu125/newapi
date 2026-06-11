@@ -63,6 +63,49 @@ func TestEnsureUserEmailCanonicalUniqueIndexBackfillsAndEnforcesUniqueness(t *te
 	require.Error(t, duplicate.Insert(0))
 }
 
+func TestCountUsersAfterIDMatchesAdminUserListVisibility(t *testing.T) {
+	db := setupUserEmailTestDB(t)
+	commonUser := &User{
+		Username:    "summary-common",
+		Password:    "12345678",
+		DisplayName: "summary-common",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, commonUser.Insert(0))
+	deletedUser := &User{
+		Username:    "summary-deleted",
+		Password:    "12345678",
+		DisplayName: "summary-deleted",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, deletedUser.Insert(0))
+	require.NoError(t, db.Delete(deletedUser).Error)
+	rootUser := &User{
+		Username:    "summary-root",
+		Password:    "12345678",
+		DisplayName: "summary-root",
+		Role:        common.RoleRootUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, rootUser.Insert(0))
+
+	latestID, err := GetLatestUserID()
+	require.NoError(t, err)
+	require.Equal(t, rootUser.Id, latestID)
+
+	count, latestID, err := CountUsersAfterID(commonUser.Id)
+	require.NoError(t, err)
+	require.Equal(t, int64(2), count)
+	require.Equal(t, rootUser.Id, latestID)
+
+	count, latestID, err = CountUsersAfterID(rootUser.Id)
+	require.NoError(t, err)
+	require.Equal(t, int64(0), count)
+	require.Equal(t, rootUser.Id, latestID)
+}
+
 func TestEnsureUserEmailCanonicalUniqueIndexRejectsExistingDuplicates(t *testing.T) {
 	db := setupUserEmailTestDB(t)
 

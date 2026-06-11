@@ -71,6 +71,15 @@ export interface ReferralSummary {
   settle_freeze_days: number
 }
 
+export interface ReferralAdminBadgeCounts {
+  pending_affiliates: number
+  pending_withdrawals: number
+  latest_pending_affiliate_id: number
+  latest_pending_withdrawal_id: number
+  latest_pending_affiliate_cursor?: string
+  latest_pending_withdrawal_cursor?: string
+}
+
 export interface ReferralCommission {
   id: number
   affiliate_id: number

@@ -46,6 +46,22 @@ type SectionDef = {
   modules: { key: string; title: string; description: string }[]
 }
 
+const REMOVED_ADMIN_MODULE_KEYS = ['risk_center', 'riskCenter'] as const
+
+function sanitizeSidebarModulesConfig(
+  config: SidebarModulesConfig
+): SidebarModulesConfig {
+  const sanitized: SidebarModulesConfig = { ...config }
+  const admin = sanitized.admin
+  if (admin) {
+    sanitized.admin = { ...admin }
+    REMOVED_ADMIN_MODULE_KEYS.forEach((key) => {
+      delete sanitized.admin[key]
+    })
+  }
+  return sanitized
+}
+
 export function SidebarModulesCard() {
   const { t } = useTranslation()
   const [loading, setLoading] = useState(false)
@@ -133,7 +149,7 @@ export function SidebarModulesCard() {
       if (res.data.success && res.data.data?.sidebar_modules) {
         const raw = res.data.data.sidebar_modules
         const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
-        setConfig(parsed)
+        setConfig(sanitizeSidebarModulesConfig(parsed))
       } else {
         const defaults: SidebarModulesConfig = {}
         for (const sec of sectionDefs) {
@@ -173,11 +189,13 @@ export function SidebarModulesCard() {
   const handleSave = async () => {
     setLoading(true)
     try {
-      const serialized = JSON.stringify(config)
+      const sanitizedConfig = sanitizeSidebarModulesConfig(config)
+      const serialized = JSON.stringify(sanitizedConfig)
       const res = await api.put('/api/user/self', {
         sidebar_modules: serialized,
       })
       if (res.data.success) {
+        setConfig(sanitizedConfig)
         // Sync to auth-store so useSidebarConfig re-runs and the sidebar
         // updates immediately without needing a page refresh.
         if (currentUser) {

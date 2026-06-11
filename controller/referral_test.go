@@ -49,6 +49,7 @@ func setupReferralControllerTestDB(t *testing.T) *gorm.DB {
 		&model.ReferralAffiliate{},
 		&model.ReferralBinding{},
 		&model.ReferralClick{},
+		&model.ReferralWithdrawal{},
 		&model.ReferralAsset{},
 	))
 	t.Cleanup(func() {
@@ -882,4 +883,64 @@ func TestAdminCreateUserRejectsEmailMatchingExistingUsername(t *testing.T) {
 	var response map[string]any
 	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
 	require.Equal(t, false, response["success"])
+}
+
+func TestGetReferralAdminBadgesReturnsOnlyPendingCounts(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+	pendingAffiliate := &model.ReferralAffiliate{
+		UserId:     101,
+		InviteCode: "PENDING1",
+		Status:     model.ReferralAffiliateStatusPending,
+	}
+	require.NoError(t, db.Create(pendingAffiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralAffiliate{
+		UserId:     102,
+		InviteCode: "APPROVED1",
+		Status:     model.ReferralAffiliateStatusApproved,
+	}).Error)
+	latestPendingAffiliate := &model.ReferralAffiliate{
+		UserId:     103,
+		InviteCode: "PENDING2",
+		Status:     model.ReferralAffiliateStatusPending,
+	}
+	require.NoError(t, db.Create(latestPendingAffiliate).Error)
+	pendingWithdrawal := &model.ReferralWithdrawal{
+		AffiliateId: 1,
+		UserId:      101,
+		Status:      model.ReferralWithdrawalStatusPending,
+	}
+	require.NoError(t, db.Create(pendingWithdrawal).Error)
+	require.NoError(t, db.Create(&model.ReferralWithdrawal{
+		AffiliateId: 2,
+		UserId:      102,
+		Status:      model.ReferralWithdrawalStatusApproved,
+	}).Error)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/user/admin/referral/badges", nil)
+
+	GetReferralAdminBadges(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			PendingAffiliates             int64  `json:"pending_affiliates"`
+			PendingWithdrawals            int64  `json:"pending_withdrawals"`
+			LatestPendingAffiliateID      int    `json:"latest_pending_affiliate_id"`
+			LatestPendingWithdrawalID     int    `json:"latest_pending_withdrawal_id"`
+			LatestPendingAffiliateCursor  string `json:"latest_pending_affiliate_cursor"`
+			LatestPendingWithdrawalCursor string `json:"latest_pending_withdrawal_cursor"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	require.Equal(t, int64(2), response.Data.PendingAffiliates)
+	require.Equal(t, int64(1), response.Data.PendingWithdrawals)
+	require.Equal(t, latestPendingAffiliate.Id, response.Data.LatestPendingAffiliateID)
+	require.Equal(t, pendingWithdrawal.Id, response.Data.LatestPendingWithdrawalID)
+	require.NotEmpty(t, response.Data.LatestPendingAffiliateCursor)
+	require.NotEmpty(t, response.Data.LatestPendingWithdrawalCursor)
 }

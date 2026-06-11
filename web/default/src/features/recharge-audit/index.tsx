@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
@@ -214,6 +214,16 @@ function referralStatusText(
   return label
 }
 
+const ORDER_STATUS_OPTIONS = [
+  { value: 'all', labelKey: 'All Statuses' },
+  { value: 'pending', labelKey: 'pending' },
+  { value: 'success', labelKey: 'success' },
+  { value: 'failed', labelKey: 'failed' },
+  { value: 'expired', labelKey: 'expired' },
+]
+
+const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
+
 export function RechargeAudit() {
   const { t } = useTranslation()
   const initialKeyword =
@@ -226,41 +236,69 @@ export function RechargeAudit() {
       : new URLSearchParams(window.location.search).get('user_id') || ''
   const [summary, setSummary] = useState<RechargeAuditSummary | null>(null)
   const [orders, setOrders] = useState<RechargeAuditOrder[]>([])
+  const [total, setTotal] = useState(0)
+  const [keywordDraft, setKeywordDraft] = useState(initialKeyword)
+  const [userIdDraft, setUserIdDraft] = useState(initialUserId)
+  const [providerDraft, setProviderDraft] = useState('')
+  const [statusDraft, setStatusDraft] = useState('all')
+  const [orderTypeDraft, setOrderTypeDraft] = useState('all')
   const [keyword, setKeyword] = useState(initialKeyword)
   const [userId, setUserId] = useState(initialUserId)
-  const [status, setStatus] = useState('')
+  const [status, setStatus] = useState('all')
   const [provider, setProvider] = useState('')
   const [orderType, setOrderType] = useState('all')
+  const [page, setPage] = useState(1)
+  const [pageSize, setPageSize] = useState(20)
   const [loading, setLoading] = useState(false)
+  const [refreshTick, setRefreshTick] = useState(0)
+  const requestSequence = useRef(0)
 
   const params = useMemo(() => {
-    const p = new URLSearchParams({ p: '1', page_size: '20' })
+    const p = new URLSearchParams({
+      p: String(page),
+      page_size: String(pageSize),
+    })
     if (keyword.trim()) p.set('keyword', keyword.trim())
     if (userId.trim()) p.set('user_id', userId.trim())
-    if (status.trim()) p.set('status', status.trim())
+    if (status !== 'all') p.set('status', status)
     if (provider.trim()) p.set('provider', provider.trim())
     if (orderType !== 'all') p.set('order_type', orderType)
     return p
-  }, [keyword, userId, status, provider, orderType])
+  }, [keyword, userId, status, provider, orderType, page, pageSize])
 
-  const load = async () => {
+  const load = useCallback(async () => {
+    const requestId = requestSequence.current + 1
+    requestSequence.current = requestId
     setLoading(true)
     try {
       const [summaryRes, orderRes] = await Promise.all([
         getRechargeAuditSummary(params),
         getRechargeAudit(params),
       ])
+      if (requestId !== requestSequence.current) return
       if (summaryRes.success) setSummary(summaryRes.data)
-      if (orderRes.success) setOrders(orderRes.data?.items || [])
+      if (orderRes.success) {
+        setOrders(orderRes.data?.items || [])
+        setTotal(orderRes.data?.total || 0)
+      }
     } finally {
-      setLoading(false)
+      if (requestId === requestSequence.current) setLoading(false)
     }
-  }
+  }, [params])
+
+  const applyFilters = useCallback(() => {
+    setKeyword(keywordDraft.trim())
+    setUserId(userIdDraft.trim())
+    setProvider(providerDraft.trim())
+    setStatus(statusDraft || 'all')
+    setOrderType(orderTypeDraft || 'all')
+    setPage(1)
+    setRefreshTick((value) => value + 1)
+  }, [keywordDraft, orderTypeDraft, providerDraft, statusDraft, userIdDraft])
 
   useEffect(() => {
-    load()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [params])
+    void load()
+  }, [load, refreshTick])
 
   const totals = summary?.totals
   const paidRevenueText = formatMoney(totals?.paid_amount_cny || 0, 'CNY')
@@ -268,6 +306,13 @@ export function RechargeAudit() {
   const siteCreditRevenueText = formatSiteCreditAmount(
     totals?.credit_amount || 0
   )
+  const totalPages = Math.max(1, Math.ceil(total / pageSize))
+
+  useEffect(() => {
+    if (page > totalPages) {
+      setPage(totalPages)
+    }
+  }, [page, totalPages])
 
   return (
     <SectionPageLayout>
@@ -307,30 +352,58 @@ export function RechargeAudit() {
 
           <Card>
             <CardContent className='space-y-3 p-4'>
-              <div className='grid gap-2 md:grid-cols-[minmax(0,1fr)_120px_150px_150px_180px_auto]'>
+              <form
+                className='grid gap-2 md:grid-cols-[minmax(0,1fr)_120px_150px_150px_180px_auto]'
+                onSubmit={(event) => {
+                  event.preventDefault()
+                  applyFilters()
+                }}
+              >
                 <Input
-                  value={keyword}
-                  onChange={(e) => setKeyword(e.target.value)}
+                  value={keywordDraft}
+                  onChange={(e) => {
+                    setKeywordDraft(e.target.value)
+                  }}
                   placeholder={t('Search order, user, or user ID')}
                 />
                 <Input
-                  value={userId}
-                  onChange={(e) => setUserId(e.target.value)}
+                  value={userIdDraft}
+                  onChange={(e) => {
+                    setUserIdDraft(e.target.value)
+                  }}
                   placeholder={t('User ID')}
                 />
+                <Select
+                  value={statusDraft}
+                  onValueChange={(value) => {
+                    setStatusDraft(value || 'all')
+                  }}
+                >
+                  <SelectTrigger className='w-full'>
+                    <SelectValue placeholder={t('Status')} />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {ORDER_STATUS_OPTIONS.map((option) => (
+                        <SelectItem key={option.value} value={option.value}>
+                          {t(option.labelKey)}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
                 <Input
-                  value={status}
-                  onChange={(e) => setStatus(e.target.value)}
-                  placeholder={t('Status')}
-                />
-                <Input
-                  value={provider}
-                  onChange={(e) => setProvider(e.target.value)}
+                  value={providerDraft}
+                  onChange={(e) => {
+                    setProviderDraft(e.target.value)
+                  }}
                   placeholder={t('Payment Gateway')}
                 />
                 <Select
-                  value={orderType}
-                  onValueChange={(value) => setOrderType(value || 'all')}
+                  value={orderTypeDraft}
+                  onValueChange={(value) => {
+                    setOrderTypeDraft(value || 'all')
+                  }}
                 >
                   <SelectTrigger className='w-full'>
                     <SelectValue placeholder={t('Order Type')} />
@@ -345,10 +418,10 @@ export function RechargeAudit() {
                     </SelectGroup>
                   </SelectContent>
                 </Select>
-                <Button onClick={load} disabled={loading}>
-                  {loading ? t('Loading...') : t('Refresh')}
+                <Button type='submit' disabled={loading}>
+                  {loading ? t('Loading...') : t('Search')}
                 </Button>
-              </div>
+              </form>
 
               {summary?.anomalies?.length ? (
                 <div className='rounded-md border p-3'>
@@ -388,55 +461,137 @@ export function RechargeAudit() {
                     </TableRow>
                   </TableHeader>
                   <TableBody>
-                    {orders.map((order) => (
-                      <TableRow key={`${order.order_type}-${order.id}`}>
-                        <TableCell className='font-mono text-xs'>
-                          <div>{order.trade_no}</div>
-                          {order.product_name ? (
-                            <div className='text-muted-foreground mt-1 max-w-48 truncate font-sans text-xs'>
-                              {order.product_name}
+                    {orders.length > 0 ? (
+                      orders.map((order) => (
+                        <TableRow key={`${order.order_type}-${order.id}`}>
+                          <TableCell className='font-mono text-xs'>
+                            <div>{order.trade_no}</div>
+                            {order.product_name ? (
+                              <div className='text-muted-foreground mt-1 max-w-48 truncate font-sans text-xs'>
+                                {order.product_name}
+                              </div>
+                            ) : null}
+                          </TableCell>
+                          <TableCell>
+                            {orderTypeLabel(order.order_type, t)}
+                          </TableCell>
+                          <TableCell>
+                            {order.username || order.user_id}
+                          </TableCell>
+                          <TableCell>
+                            {paymentProviderLabel(order.payment_provider)}
+                          </TableCell>
+                          <TableCell>
+                            <div className='font-medium'>
+                              {formatPaidAmount(order)}
                             </div>
-                          ) : null}
+                            {paidAmountDetail(order, t) ? (
+                              <div className='text-muted-foreground text-xs'>
+                                {paidAmountDetail(order, t)}
+                              </div>
+                            ) : null}
+                          </TableCell>
+                          <TableCell>{formatOrderDelivery(order, t)}</TableCell>
+                          <TableCell>
+                            <StatusBadge
+                              label={t(order.status)}
+                              variant={statusVariant(order.status)}
+                              copyable={false}
+                            />
+                          </TableCell>
+                          <TableCell>
+                            <StatusBadge
+                              label={referralStatusText(order, t)}
+                              variant={referralStatusVariant(
+                                order.referral_commission_status
+                              )}
+                              copyable={false}
+                            />
+                          </TableCell>
+                          <TableCell>{formatTime(order.create_time)}</TableCell>
+                        </TableRow>
+                      ))
+                    ) : (
+                      <TableRow>
+                        <TableCell
+                          colSpan={9}
+                          className='text-muted-foreground h-24 text-center'
+                        >
+                          {loading ? t('Loading...') : t('No results found.')}
                         </TableCell>
-                        <TableCell>
-                          {orderTypeLabel(order.order_type, t)}
-                        </TableCell>
-                        <TableCell>{order.username || order.user_id}</TableCell>
-                        <TableCell>
-                          {paymentProviderLabel(order.payment_provider)}
-                        </TableCell>
-                        <TableCell>
-                          <div className='font-medium'>
-                            {formatPaidAmount(order)}
-                          </div>
-                          {paidAmountDetail(order, t) ? (
-                            <div className='text-muted-foreground text-xs'>
-                              {paidAmountDetail(order, t)}
-                            </div>
-                          ) : null}
-                        </TableCell>
-                        <TableCell>{formatOrderDelivery(order, t)}</TableCell>
-                        <TableCell>
-                          <StatusBadge
-                            label={t(order.status)}
-                            variant={statusVariant(order.status)}
-                            copyable={false}
-                          />
-                        </TableCell>
-                        <TableCell>
-                          <StatusBadge
-                            label={referralStatusText(order, t)}
-                            variant={referralStatusVariant(
-                              order.referral_commission_status
-                            )}
-                            copyable={false}
-                          />
-                        </TableCell>
-                        <TableCell>{formatTime(order.create_time)}</TableCell>
                       </TableRow>
-                    ))}
+                    )}
                   </TableBody>
                 </Table>
+              </div>
+              <div className='flex flex-col gap-2 text-sm sm:flex-row sm:items-center sm:justify-between'>
+                <div className='text-muted-foreground'>
+                  {t('Page {{page}} of {{totalPages}}, {{total}} items', {
+                    page,
+                    totalPages,
+                    total,
+                  })}
+                </div>
+                <div className='flex flex-wrap items-center gap-2'>
+                  <Select
+                    value={String(pageSize)}
+                    onValueChange={(value) => {
+                      setPageSize(Number(value) || 20)
+                      setPage(1)
+                    }}
+                  >
+                    <SelectTrigger className='h-8 w-[112px]'>
+                      <SelectValue placeholder={t('Page Size')} />
+                    </SelectTrigger>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        {PAGE_SIZE_OPTIONS.map((size) => (
+                          <SelectItem key={size} value={String(size)}>
+                            {size} / {t('Page')}
+                          </SelectItem>
+                        ))}
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    onClick={() => setPage(1)}
+                    disabled={loading || page <= 1}
+                  >
+                    {t('First page')}
+                  </Button>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    onClick={() => setPage((value) => Math.max(1, value - 1))}
+                    disabled={loading || page <= 1}
+                  >
+                    {t('Previous page')}
+                  </Button>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    onClick={() =>
+                      setPage((value) => Math.min(totalPages, value + 1))
+                    }
+                    disabled={loading || page >= totalPages}
+                  >
+                    {t('Next page')}
+                  </Button>
+                  <Button
+                    type='button'
+                    variant='outline'
+                    size='sm'
+                    onClick={() => setPage(totalPages)}
+                    disabled={loading || page >= totalPages}
+                  >
+                    {t('Last page')}
+                  </Button>
+                </div>
               </div>
             </CardContent>
           </Card>

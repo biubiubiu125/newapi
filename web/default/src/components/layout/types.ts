@@ -27,6 +27,14 @@ type BaseNavItem = {
   badge?: string
   badgeKey?: string
   badgeValue?: number
+  badgeCursor?: number | string
+  badgeMode?: 'count' | 'cursor'
+  badgeAcks?: Array<{
+    key: string
+    value?: number
+    cursor?: number | string
+    mode?: 'count' | 'cursor'
+  }>
   icon?: React.ElementType
   external?: boolean
   activeUrls?: (LinkProps['to'] | (string & {}))[]

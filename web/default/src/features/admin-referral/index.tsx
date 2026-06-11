@@ -1287,7 +1287,7 @@ export function AdminReferral() {
                   value={String(overview.approved_affiliates)}
                 />
                 <MetricCard
-                  title={t('Referral Clicks')}
+                  title={t('Referral Link Clicks')}
                   value={String(overview.referral_click_count)}
                 />
                 <MetricCard
@@ -1525,7 +1525,7 @@ export function AdminReferral() {
                   headers={[
                     t('Username'),
                     t('Invite Code'),
-                    t('打开次数'),
+                    t('Referral Link Clicks'),
                     t('Rate'),
                     t('Available'),
                     t('Status'),

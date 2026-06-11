@@ -357,3 +357,184 @@ func TestGetRechargeAuditSummaryCountsUnifiedOrders(t *testing.T) {
 	require.InDelta(t, 21.9, payload.Data.Totals.PaidAmountCNY, 0.000001)
 	require.InDelta(t, 3, payload.Data.Totals.CreditAmount, 0.000001)
 }
+
+func TestGetRechargeAuditSummaryRespectsWindowHours(t *testing.T) {
+	setupAdminFinanceTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	now := common.GetTimestamp()
+	require.NoError(t, model.DB.Create(&model.User{Id: 1, Username: "alice", Password: "password123"}).Error)
+	require.NoError(t, model.DB.Create(&model.TopUp{
+		UserId:          1,
+		Amount:          3,
+		Money:           21.9,
+		PaidAmount:      21.9,
+		PaidCurrency:    "CNY",
+		TradeNo:         "RECENT-TOPUP",
+		PaymentMethod:   "alipay",
+		PaymentProvider: model.PaymentProviderEpay,
+		CreateTime:      now - 60,
+		Status:          common.TopUpStatusSuccess,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.TopUp{
+		UserId:          1,
+		Amount:          9,
+		Money:           59.9,
+		PaidAmount:      59.9,
+		PaidCurrency:    "CNY",
+		TradeNo:         "OLD-TOPUP",
+		PaymentMethod:   "alipay",
+		PaymentProvider: model.PaymentProviderEpay,
+		CreateTime:      now - 25*60*60,
+		Status:          common.TopUpStatusSuccess,
+	}).Error)
+
+	router := gin.New()
+	router.GET("/audit/summary", GetRechargeAuditSummary)
+	recorder := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/audit/summary?window_hours=24", nil)
+	router.ServeHTTP(recorder, req)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			Totals rechargeAuditTotals `json:"totals"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.EqualValues(t, 1, payload.Data.Totals.TotalCount)
+	require.EqualValues(t, 1, payload.Data.Totals.SuccessCount)
+	require.InDelta(t, 21.9, payload.Data.Totals.PaidAmountCNY, 0.000001)
+}
+
+func TestGetRechargeAuditSummaryCountsNewOrdersAfterCursor(t *testing.T) {
+	setupAdminFinanceTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	require.NoError(t, model.DB.Create(&model.User{Id: 1, Username: "alice", Password: "password123"}).Error)
+	ackedTopUp := model.TopUp{
+		UserId:       1,
+		TradeNo:      "ACKED-TOPUP",
+		CreateTime:   100,
+		CompleteTime: 500,
+		Status:       common.TopUpStatusSuccess,
+	}
+	require.NoError(t, model.DB.Create(&ackedTopUp).Error)
+	require.NoError(t, model.DB.Create(&model.TopUp{
+		UserId:       1,
+		TradeNo:      "NEW-TOPUP",
+		CreateTime:   200,
+		CompleteTime: 600,
+		Status:       common.TopUpStatusSuccess,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.TopUp{
+		UserId:       1,
+		TradeNo:      "PENDING-TOPUP",
+		CreateTime:   300,
+		CompleteTime: 700,
+		Status:       common.TopUpStatusPending,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.SubscriptionOrder{
+		UserId:       1,
+		TradeNo:      "NEW-SUB",
+		CreateTime:   400,
+		CompleteTime: 700,
+		Status:       common.TopUpStatusFailed,
+	}).Error)
+
+	router := gin.New()
+	router.GET("/audit/summary", GetRechargeAuditSummary)
+	recorder := httptest.NewRecorder()
+	afterCursor := formatRechargeAuditOrderCursor(rechargeAuditOrderCursor{
+		CompleteTime: 500,
+		OrderRank:    1,
+		ID:           ackedTopUp.Id,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/audit/summary?after_order_cursor="+afterCursor, nil)
+	router.ServeHTTP(recorder, req)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			NewOrderCount     int64  `json:"new_order_count"`
+			LatestOrderCursor string `json:"latest_order_cursor"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.EqualValues(t, 2, payload.Data.NewOrderCount)
+	require.NotEmpty(t, payload.Data.LatestOrderCursor)
+}
+
+func TestGetRechargeAuditBadgeOnlyCountsNewOrdersAfterCursor(t *testing.T) {
+	setupAdminFinanceTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	require.NoError(t, model.DB.Create(&model.User{Id: 1, Username: "alice", Password: "password123"}).Error)
+	ackedTopUp := model.TopUp{
+		UserId:       1,
+		TradeNo:      "BADGE-ACKED-TOPUP",
+		CreateTime:   100,
+		CompleteTime: 500,
+		Status:       common.TopUpStatusSuccess,
+	}
+	require.NoError(t, model.DB.Create(&ackedTopUp).Error)
+	require.NoError(t, model.DB.Create(&model.TopUp{
+		UserId:       1,
+		TradeNo:      "BADGE-NEW-TOPUP",
+		CreateTime:   200,
+		CompleteTime: 600,
+		Status:       common.TopUpStatusExpired,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.TopUp{
+		UserId:       1,
+		TradeNo:      "BADGE-PENDING-TOPUP",
+		CreateTime:   300,
+		CompleteTime: 700,
+		Status:       common.TopUpStatusPending,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.SubscriptionOrder{
+		UserId:       1,
+		TradeNo:      "BADGE-NEW-SUB",
+		CreateTime:   400,
+		CompleteTime: 700,
+		Status:       common.TopUpStatusFailed,
+	}).Error)
+
+	router := gin.New()
+	router.GET("/audit/summary", GetRechargeAuditSummary)
+	recorder := httptest.NewRecorder()
+	afterCursor := formatRechargeAuditOrderCursor(rechargeAuditOrderCursor{
+		CompleteTime: 500,
+		OrderRank:    rechargeAuditTopupOrderRank,
+		ID:           ackedTopUp.Id,
+	})
+	req := httptest.NewRequest(http.MethodGet, "/audit/summary?badge_only=1&after_order_cursor="+afterCursor, nil)
+	router.ServeHTTP(recorder, req)
+	require.Equal(t, http.StatusOK, recorder.Code)
+
+	var payload struct {
+		Success bool `json:"success"`
+		Data    struct {
+			NewOrderCount     int64  `json:"new_order_count"`
+			LatestOrderCursor string `json:"latest_order_cursor"`
+			Anomalies         []any  `json:"anomalies"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.True(t, payload.Success)
+	require.EqualValues(t, 2, payload.Data.NewOrderCount)
+	require.Equal(
+		t,
+		formatRechargeAuditOrderCursor(rechargeAuditOrderCursor{
+			CompleteTime: 700,
+			OrderRank:    rechargeAuditSubscriptionOrderRank,
+			ID:           1,
+		}),
+		payload.Data.LatestOrderCursor,
+	)
+	require.Empty(t, payload.Data.Anomalies)
+}

@@ -2,6 +2,8 @@ package service
 
 import (
 	"fmt"
+	"strconv"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -33,6 +35,7 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 	previousMinWithdrawAmount := common.ReferralMinWithdrawAmount
 	previousWithdrawFee := common.ReferralWithdrawFee
 	previousRedirectPath := common.ReferralRedirectPath
+	previousRequireApproval := common.ReferralRequireApproval
 	previousSettlementCurrency := common.ReferralSettlementCurrency
 	previousSettlementFxRates := common.ReferralSettlementFxRates
 	previousUSDExchangeRate := operation_setting.USDExchangeRate
@@ -99,6 +102,7 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 		common.ReferralMinWithdrawAmount = previousMinWithdrawAmount
 		common.ReferralWithdrawFee = previousWithdrawFee
 		common.ReferralRedirectPath = previousRedirectPath
+		common.ReferralRequireApproval = previousRequireApproval
 		common.ReferralSettlementCurrency = previousSettlementCurrency
 		common.ReferralSettlementFxRates = previousSettlementFxRates
 		operation_setting.USDExchangeRate = previousUSDExchangeRate
@@ -1041,6 +1045,116 @@ func TestApplyAffiliateDoesNotDowngradeApprovedAffiliate(t *testing.T) {
 	require.True(t, stored.AcquisitionEnabled)
 	require.True(t, stored.SettlementEnabled)
 	require.True(t, stored.WithdrawalEnabled)
+}
+
+func TestReferralAdminBadgeCursorTracksReappliedAffiliate(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+	common.ReferralRequireApproval = true
+
+	lowUser := &model.User{Username: "reapply-low", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, lowUser.Insert(0))
+	highUser := &model.User{Username: "reapply-high", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, highUser.Insert(0))
+
+	_, err := service.ApplyAffiliate(ReferralApplyInput{UserId: lowUser.Id})
+	require.NoError(t, err)
+	_, err = service.ApplyAffiliate(ReferralApplyInput{UserId: highUser.Id})
+	require.NoError(t, err)
+	var lowAffiliate model.ReferralAffiliate
+	require.NoError(t, db.Where("user_id = ?", lowUser.Id).First(&lowAffiliate).Error)
+	var highAffiliate model.ReferralAffiliate
+	require.NoError(t, db.Where("user_id = ?", highUser.Id).First(&highAffiliate).Error)
+
+	before, err := service.GetAdminBadgeCounts()
+	require.NoError(t, err)
+	require.Equal(t, highAffiliate.Id, before.LatestPendingAffiliateID)
+	require.NotEmpty(t, before.LatestPendingAffiliateCursor)
+
+	require.NoError(t, db.Model(&model.ReferralAffiliate{}).
+		Where("user_id = ?", lowUser.Id).
+		Updates(map[string]any{
+			"status": model.ReferralAffiliateStatusRejected,
+		}).Error)
+	_, err = service.ApplyAffiliate(ReferralApplyInput{UserId: lowUser.Id})
+	require.NoError(t, err)
+
+	after, err := service.GetAdminBadgeCounts()
+	require.NoError(t, err)
+	require.Equal(t, int64(2), after.PendingAffiliates)
+	require.Equal(t, lowAffiliate.Id, after.LatestPendingAffiliateID)
+	require.Contains(t, after.LatestPendingAffiliateCursor, ":")
+	beforeCursor, err := strconv.ParseInt(strings.Split(before.LatestPendingAffiliateCursor, ":")[0], 10, 64)
+	require.NoError(t, err)
+	afterCursor, err := strconv.ParseInt(strings.Split(after.LatestPendingAffiliateCursor, ":")[0], 10, 64)
+	require.NoError(t, err)
+	require.Greater(t, afterCursor, beforeCursor)
+}
+
+func TestPendingAffiliateBadgeCursorRowFallsBackWithinSummaryCursor(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+
+	newer := &model.ReferralAffiliate{
+		UserId:              1,
+		InviteCode:          "NEWCUR01",
+		Status:              model.ReferralAffiliateStatusApproved,
+		PendingReviewCursor: 300,
+	}
+	require.NoError(t, db.Create(newer).Error)
+	older := &model.ReferralAffiliate{
+		UserId:              2,
+		InviteCode:          "OLDCUR01",
+		Status:              model.ReferralAffiliateStatusPending,
+		PendingReviewCursor: 200,
+	}
+	require.NoError(t, db.Create(older).Error)
+
+	row, err := pendingAffiliateBadgeCursorRow(300)
+	require.NoError(t, err)
+	require.Equal(t, older.Id, row.ID)
+	require.Equal(t, int64(200), row.CursorValue)
+
+	require.NoError(t, db.Model(&model.ReferralAffiliate{}).
+		Where("id = ?", older.Id).
+		Update("status", model.ReferralAffiliateStatusRejected).Error)
+	row, err = pendingAffiliateBadgeCursorRow(300)
+	require.NoError(t, err)
+	require.Zero(t, row.ID)
+	require.Zero(t, row.CursorValue)
+}
+
+func TestPendingWithdrawalBadgeCursorRowFallsBackWithinSummaryCursor(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+
+	older := &model.ReferralWithdrawal{
+		AffiliateId: 1,
+		UserId:      1,
+		Status:      model.ReferralWithdrawalStatusPending,
+		Amount:      10,
+		NetAmount:   10,
+	}
+	require.NoError(t, db.Create(older).Error)
+	newer := &model.ReferralWithdrawal{
+		AffiliateId: 2,
+		UserId:      2,
+		Status:      model.ReferralWithdrawalStatusApproved,
+		Amount:      20,
+		NetAmount:   20,
+	}
+	require.NoError(t, db.Create(newer).Error)
+
+	row, err := pendingWithdrawalBadgeCursorRow(int64(newer.Id))
+	require.NoError(t, err)
+	require.Equal(t, older.Id, row.ID)
+	require.Equal(t, int64(older.Id), row.CursorValue)
+
+	require.NoError(t, db.Model(&model.ReferralWithdrawal{}).
+		Where("id = ?", older.Id).
+		Update("status", model.ReferralWithdrawalStatusRejected).Error)
+	row, err = pendingWithdrawalBadgeCursorRow(int64(newer.Id))
+	require.NoError(t, err)
+	require.Zero(t, row.ID)
+	require.Zero(t, row.CursorValue)
 }
 
 func TestCreateWithdrawalValidatesAssetOwnershipAndPurpose(t *testing.T) {

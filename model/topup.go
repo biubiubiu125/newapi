@@ -88,6 +88,9 @@ func (topUp *TopUp) Insert() error {
 }
 
 func (topUp *TopUp) Update() error {
+	if topUp.Status != "" && topUp.Status != common.TopUpStatusPending && topUp.CompleteTime <= 0 {
+		topUp.CompleteTime = common.GetTimestamp()
+	}
 	var err error
 	err = DB.Save(topUp).Error
 	return err
@@ -159,6 +162,9 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 		}
 
 		topUp.Status = targetStatus
+		if targetStatus != common.TopUpStatusPending && topUp.CompleteTime <= 0 {
+			topUp.CompleteTime = common.GetTimestamp()
+		}
 		return tx.Save(topUp).Error
 	})
 }

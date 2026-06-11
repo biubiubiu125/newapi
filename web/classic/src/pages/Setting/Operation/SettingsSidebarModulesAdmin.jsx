@@ -33,6 +33,20 @@ import { StatusContext } from '../../../context/Status';
 
 const { Text } = Typography;
 
+const removedAdminModuleKeys = ['riskCenter', 'risk_center'];
+
+const sanitizeSidebarModulesConfig = (config) => {
+  if (!config || typeof config !== 'object') return config;
+  const sanitized = { ...config };
+  if (sanitized.admin && typeof sanitized.admin === 'object') {
+    sanitized.admin = { ...sanitized.admin };
+    removedAdminModuleKeys.forEach((key) => {
+      delete sanitized.admin[key];
+    });
+  }
+  return sanitized;
+};
+
 export default function SettingsSidebarModulesAdmin(props) {
   const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
@@ -69,7 +83,6 @@ export default function SettingsSidebarModulesAdmin(props) {
       user: true,
       subscription: true,
       adminReferral: true,
-      riskCenter: true,
       setting: true,
     },
   });
@@ -134,7 +147,6 @@ export default function SettingsSidebarModulesAdmin(props) {
         user: true,
         subscription: true,
         adminReferral: true,
-        riskCenter: true,
         setting: true,
       },
     };
@@ -146,20 +158,22 @@ export default function SettingsSidebarModulesAdmin(props) {
   async function onSubmit() {
     setLoading(true);
     try {
+      const sanitizedModules = sanitizeSidebarModulesConfig(sidebarModulesAdmin);
       const res = await API.put('/api/option/', {
         key: 'SidebarModulesAdmin',
-        value: JSON.stringify(sidebarModulesAdmin),
+        value: JSON.stringify(sanitizedModules),
       });
       const { success, message } = res.data;
       if (success) {
         showSuccess(t('保存成功'));
+        setSidebarModulesAdmin(sanitizedModules);
 
         // 立即更新StatusContext中的状态
         statusDispatch({
           type: 'set',
           payload: {
             ...statusState.status,
-            SidebarModulesAdmin: JSON.stringify(sidebarModulesAdmin),
+            SidebarModulesAdmin: JSON.stringify(sanitizedModules),
           },
         });
 
@@ -182,19 +196,18 @@ export default function SettingsSidebarModulesAdmin(props) {
     if (props.options && props.options.SidebarModulesAdmin) {
       try {
         const modules = JSON.parse(props.options.SidebarModulesAdmin);
-        setSidebarModulesAdmin({
+        setSidebarModulesAdmin(sanitizeSidebarModulesConfig({
           ...modules,
           admin: {
             ...(modules.admin || {}),
             adminReferral:
               modules.admin?.adminReferral ?? modules.admin?.referral ?? true,
-            riskCenter: modules.admin?.riskCenter ?? true,
             providerPricing:
               modules.admin?.providerPricing ??
               modules.admin?.provider_price_export ??
               true,
           },
-        });
+        }));
       } catch (error) {
         // 使用默认配置
         const defaultModules = {
@@ -223,7 +236,6 @@ export default function SettingsSidebarModulesAdmin(props) {
             user: true,
             subscription: true,
             adminReferral: true,
-            riskCenter: true,
             setting: true,
           },
         };
@@ -304,11 +316,6 @@ export default function SettingsSidebarModulesAdmin(props) {
           description: t(
             'Referral affiliates, commissions, withdrawals, and audit logs',
           ),
-        },
-        {
-          key: 'riskCenter',
-          title: t('风控中心'),
-          description: t('风险信号、事件处理、白名单和审计记录'),
         },
         {
           key: 'providerPricing',

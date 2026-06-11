@@ -106,6 +106,9 @@ func main() {
 	// Subscription quota reset task (daily/weekly/monthly/custom)
 	service.StartSubscriptionQuotaResetTask()
 
+	// Recharge order maintenance task (pending expiration and expired cleanup)
+	service.StartRechargeOrderMaintenanceTask()
+
 	// Referral settlement task (pending -> available)
 	service.StartReferralSettlementTask()
 

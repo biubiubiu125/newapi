@@ -46,6 +46,7 @@ import { UserContext } from '../../../../context/User';
 import { useUserPermissions } from '../../../../hooks/common/useUserPermissions';
 import {
   mergeAdminConfig,
+  sanitizeSidebarConfig,
   useSidebar,
 } from '../../../../hooks/common/useSidebar';
 
@@ -88,7 +89,6 @@ const NotificationSettings = ({
       models: true,
       deployment: true,
       subscription: true,
-      riskCenter: true,
       redemption: true,
       user: true,
       setting: true,
@@ -138,11 +138,13 @@ const NotificationSettings = ({
   const saveSidebarSettings = async () => {
     setSidebarLoading(true);
     try {
+      const sanitizedModules = sanitizeSidebarConfig(sidebarModulesUser);
       const res = await API.put('/api/user/self', {
-        sidebar_modules: JSON.stringify(sidebarModulesUser),
+        sidebar_modules: JSON.stringify(sanitizedModules),
       });
       if (res.data.success) {
         showSuccess(t('侧边栏设置保存成功'));
+        setSidebarModulesUser(sanitizedModules);
 
         // 刷新useSidebar钩子中的用户配置，实现实时更新
         await refreshUserConfig();
@@ -173,7 +175,6 @@ const NotificationSettings = ({
         models: true,
         deployment: true,
         subscription: true,
-        riskCenter: true,
         redemption: true,
         user: true,
         setting: true,
@@ -209,7 +210,7 @@ const NotificationSettings = ({
           } else {
             userConf = userRes.data.data.sidebar_modules;
           }
-          setSidebarModulesUser(userConf);
+          setSidebarModulesUser(sanitizeSidebarConfig(userConf));
         }
       } catch (error) {
         console.error('加载边栏配置失败:', error);
@@ -305,11 +306,6 @@ const NotificationSettings = ({
           key: 'subscription',
           title: t('订阅管理'),
           description: t('订阅套餐管理'),
-        },
-        {
-          key: 'riskCenter',
-          title: t('风控中心'),
-          description: t('风险信号、事件处理、白名单和审计记录'),
         },
         {
           key: 'redemption',

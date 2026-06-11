@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -30,6 +31,86 @@ const (
 )
 
 var errReferralFxRateMissing = errors.New(model.ReferralCommissionErrorFxRateMissing)
+
+var referralPendingReviewCursorSeed int64
+
+type referralBadgeCursorRow struct {
+	ID          int   `gorm:"column:id"`
+	CursorValue int64 `gorm:"column:cursor_value"`
+}
+
+type referralBadgeSummaryRow struct {
+	Count       int64 `gorm:"column:count"`
+	CursorValue int64 `gorm:"column:cursor_value"`
+}
+
+func nextReferralPendingReviewCursor() int64 {
+	now := time.Now().UnixNano() / int64(time.Microsecond)
+	for {
+		previous := atomic.LoadInt64(&referralPendingReviewCursorSeed)
+		next := now
+		if next <= previous {
+			next = previous + 1
+		}
+		if atomic.CompareAndSwapInt64(&referralPendingReviewCursorSeed, previous, next) {
+			return next
+		}
+	}
+}
+
+func formatReferralBadgeCursor(cursorValue int64, id int) string {
+	if cursorValue <= 0 || id <= 0 {
+		return ""
+	}
+	if cursorValue == int64(id) {
+		return fmt.Sprintf("%d", id)
+	}
+	return fmt.Sprintf("%d:%d", cursorValue, id)
+}
+
+func pendingAffiliateBadgeSummaryRow() (referralBadgeSummaryRow, error) {
+	subQuery := model.DB.Model(&model.ReferralAffiliate{}).
+		Where("status = ?", model.ReferralAffiliateStatusPending).
+		Select("COALESCE(NULLIF(pending_review_cursor, 0), id) AS cursor_value, id")
+	var summary referralBadgeSummaryRow
+	err := model.DB.Table("(?) AS pending_affiliates", subQuery).
+		Select("count(*) AS count, COALESCE(max(cursor_value), 0) AS cursor_value").
+		Scan(&summary).Error
+	return summary, err
+}
+
+func pendingAffiliateBadgeCursorRow(cursorValue int64) (referralBadgeCursorRow, error) {
+	var row referralBadgeCursorRow
+	subQuery := model.DB.Model(&model.ReferralAffiliate{}).
+		Where("status = ?", model.ReferralAffiliateStatusPending).
+		Select("COALESCE(NULLIF(pending_review_cursor, 0), id) AS cursor_value, id")
+	err := model.DB.Table("(?) AS pending_affiliates", subQuery).
+		Where("cursor_value <= ?", cursorValue).
+		Order("cursor_value DESC, id DESC").
+		Limit(1).
+		Scan(&row).Error
+	return row, err
+}
+
+func pendingWithdrawalBadgeSummaryRow() (referralBadgeSummaryRow, error) {
+	var summary referralBadgeSummaryRow
+	err := model.DB.Model(&model.ReferralWithdrawal{}).
+		Where("status = ?", model.ReferralWithdrawalStatusPending).
+		Select("count(*) AS count, COALESCE(max(id), 0) AS cursor_value").
+		Scan(&summary).Error
+	return summary, err
+}
+
+func pendingWithdrawalBadgeCursorRow(cursorValue int64) (referralBadgeCursorRow, error) {
+	var row referralBadgeCursorRow
+	err := model.DB.Model(&model.ReferralWithdrawal{}).
+		Where("status = ? AND id <= ?", model.ReferralWithdrawalStatusPending, cursorValue).
+		Select("id AS cursor_value, id").
+		Order("id DESC").
+		Limit(1).
+		Scan(&row).Error
+	return row, err
+}
 
 type ReferralLanding struct {
 	Code          string `json:"code"`
@@ -256,6 +337,15 @@ type ReferralOverview struct {
 	WithdrawnAmount          float64 `json:"withdrawn_amount"`
 	SettlementCurrency       string  `json:"settlement_currency"`
 	FailedCommissionJobCount int64   `json:"failed_commission_job_count"`
+}
+
+type ReferralAdminBadgeCounts struct {
+	PendingAffiliates             int64  `json:"pending_affiliates"`
+	PendingWithdrawals            int64  `json:"pending_withdrawals"`
+	LatestPendingAffiliateID      int    `json:"latest_pending_affiliate_id"`
+	LatestPendingWithdrawalID     int    `json:"latest_pending_withdrawal_id"`
+	LatestPendingAffiliateCursor  string `json:"latest_pending_affiliate_cursor"`
+	LatestPendingWithdrawalCursor string `json:"latest_pending_withdrawal_cursor"`
 }
 
 type ReferralSettings struct {
@@ -690,15 +780,20 @@ func (s *ReferralService) ApplyAffiliate(input ReferralApplyInput) (*ReferralPro
 			if err != nil {
 				return err
 			}
+			pendingReviewCursor := int64(0)
+			if common.ReferralRequireApproval {
+				pendingReviewCursor = nextReferralPendingReviewCursor()
+			}
 			profile := &model.ReferralAffiliate{
-				UserId:             input.UserId,
-				InviteCode:         inviteCode,
-				Status:             model.ReferralAffiliateStatusPending,
-				SourceType:         "user_apply",
-				ApplicantNote:      strings.TrimSpace(input.ApplicantNote),
-				AcquisitionEnabled: false,
-				SettlementEnabled:  false,
-				WithdrawalEnabled:  false,
+				UserId:              input.UserId,
+				InviteCode:          inviteCode,
+				Status:              model.ReferralAffiliateStatusPending,
+				SourceType:          "user_apply",
+				ApplicantNote:       strings.TrimSpace(input.ApplicantNote),
+				AcquisitionEnabled:  false,
+				SettlementEnabled:   false,
+				WithdrawalEnabled:   false,
+				PendingReviewCursor: pendingReviewCursor,
 			}
 			if !common.ReferralRequireApproval {
 				profile.Status = model.ReferralAffiliateStatusApproved
@@ -706,6 +801,7 @@ func (s *ReferralService) ApplyAffiliate(input ReferralApplyInput) (*ReferralPro
 				profile.SettlementEnabled = true
 				profile.WithdrawalEnabled = true
 				profile.ApprovedAt = now
+				profile.PendingReviewCursor = 0
 			}
 			if err := tx.Create(profile).Error; err != nil {
 				return err
@@ -725,6 +821,7 @@ func (s *ReferralService) ApplyAffiliate(input ReferralApplyInput) (*ReferralPro
 						return err
 					}
 					item.InviteCode = inviteCode
+					item.PendingReviewCursor = 0
 					if err := tx.Save(item).Error; err != nil {
 						return err
 					}
@@ -744,12 +841,14 @@ func (s *ReferralService) ApplyAffiliate(input ReferralApplyInput) (*ReferralPro
 				item.WithdrawalEnabled = false
 				item.ApprovedAt = 0
 				item.ApprovedBy = 0
+				item.PendingReviewCursor = nextReferralPendingReviewCursor()
 			} else {
 				item.Status = model.ReferralAffiliateStatusApproved
 				item.AcquisitionEnabled = true
 				item.SettlementEnabled = true
 				item.WithdrawalEnabled = true
 				item.ApprovedAt = now
+				item.PendingReviewCursor = 0
 			}
 			if item.InviteCode == "" {
 				inviteCode, err := s.generateInviteCodeTx(tx)
@@ -1605,6 +1704,44 @@ func (s *ReferralService) GetOverview() (*ReferralOverview, error) {
 	return out, nil
 }
 
+func (s *ReferralService) GetAdminBadgeCounts() (*ReferralAdminBadgeCounts, error) {
+	out := &ReferralAdminBadgeCounts{}
+	affiliateSummary, err := pendingAffiliateBadgeSummaryRow()
+	if err != nil {
+		return nil, err
+	}
+	out.PendingAffiliates = affiliateSummary.Count
+	if affiliateSummary.Count > 0 {
+		row, err := pendingAffiliateBadgeCursorRow(affiliateSummary.CursorValue)
+		if err != nil {
+			return nil, err
+		}
+		if row.ID <= 0 {
+			out.PendingAffiliates = 0
+		}
+		out.LatestPendingAffiliateID = row.ID
+		out.LatestPendingAffiliateCursor = formatReferralBadgeCursor(row.CursorValue, row.ID)
+	}
+
+	withdrawalSummary, err := pendingWithdrawalBadgeSummaryRow()
+	if err != nil {
+		return nil, err
+	}
+	out.PendingWithdrawals = withdrawalSummary.Count
+	if withdrawalSummary.Count > 0 {
+		row, err := pendingWithdrawalBadgeCursorRow(withdrawalSummary.CursorValue)
+		if err != nil {
+			return nil, err
+		}
+		if row.ID <= 0 {
+			out.PendingWithdrawals = 0
+		}
+		out.LatestPendingWithdrawalID = row.ID
+		out.LatestPendingWithdrawalCursor = formatReferralBadgeCursor(row.CursorValue, row.ID)
+	}
+	return out, nil
+}
+
 func (s *ReferralService) ListAffiliates(params ReferralListParams) ([]ReferralAffiliateView, int64, error) {
 	page, pageSize := normalizePage(params.Page, params.PageSize)
 	query := model.DB.Model(&model.ReferralAffiliate{})
@@ -1691,6 +1828,7 @@ func (s *ReferralService) ApproveAffiliate(userId int, adminUserId int, rateOver
 				WithdrawalEnabled:  true,
 				ApprovedBy:         adminUserId,
 				ApprovedAt:         now,
+				PendingReviewCursor: 0,
 			}
 			if err := tx.Create(item).Error; err != nil {
 				return err
@@ -1719,6 +1857,7 @@ func (s *ReferralService) ApproveAffiliate(userId int, adminUserId int, rateOver
 			item.DisabledAt = 0
 			item.DisabledBy = 0
 			item.RiskReason = ""
+			item.PendingReviewCursor = 0
 			if item.InviteCode == "" {
 				inviteCode, err := s.generateInviteCodeTx(tx)
 				if err != nil {
@@ -3242,6 +3381,11 @@ func (s *ReferralService) updateAffiliateStatus(userId, adminUserId int, status 
 		item.SettlementEnabled = settlementEnabled
 		item.WithdrawalEnabled = withdrawalEnabled
 		item.RiskReason = strings.TrimSpace(reason)
+		if status == model.ReferralAffiliateStatusPending {
+			item.PendingReviewCursor = nextReferralPendingReviewCursor()
+		} else {
+			item.PendingReviewCursor = 0
+		}
 		if status == model.ReferralAffiliateStatusDisabled {
 			item.DisabledAt = time.Now().Unix()
 			item.DisabledBy = adminUserId

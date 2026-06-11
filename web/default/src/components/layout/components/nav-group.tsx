@@ -49,12 +49,32 @@ import { checkIsActive } from '../lib/url-utils'
 import {
   type NavCollapsible,
   type NavChatPresets,
+  type NavItem,
   type NavLink,
   type NavGroup as NavGroupProps,
 } from '../types'
 import { acknowledgeAdminSidebarBadge } from '../lib/admin-sidebar-badge-ack'
 import { ChatPresetsItem } from './chat-presets-item'
 import { useAuthStore } from '@/stores/auth-store'
+
+function acknowledgeNavItemBadges(
+  item: Pick<
+    NavItem,
+    'badgeKey' | 'badgeValue' | 'badgeMode' | 'badgeCursor' | 'badgeAcks'
+  >,
+  userId?: number | string | null
+) {
+  acknowledgeAdminSidebarBadge(item.badgeKey, item.badgeValue, userId, {
+    mode: item.badgeMode,
+    cursor: item.badgeCursor,
+  })
+  item.badgeAcks?.forEach((ack) => {
+    acknowledgeAdminSidebarBadge(ack.key, ack.value, userId, {
+      mode: ack.mode,
+      cursor: ack.cursor,
+    })
+  })
+}
 
 /**
  * Sidebar navigation group component
@@ -124,7 +144,7 @@ function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
   const { setOpenMobile } = useSidebar()
   const userId = useAuthStore((state) => state.auth.user?.id)
   const handleClick = () => {
-    acknowledgeAdminSidebarBadge(item.badgeKey, item.badgeValue, userId)
+    acknowledgeNavItemBadges(item, userId)
     setOpenMobile(false)
   }
 
@@ -207,11 +227,7 @@ function SidebarMenuCollapsible({
                       target='_blank'
                       rel='noopener noreferrer'
                       onClick={() => {
-                        acknowledgeAdminSidebarBadge(
-                          subItem.badgeKey,
-                          subItem.badgeValue,
-                          userId
-                        )
+                        acknowledgeNavItemBadges(subItem, userId)
                         setOpenMobile(false)
                       }}
                     />
@@ -219,11 +235,7 @@ function SidebarMenuCollapsible({
                     <Link
                       to={subItem.url}
                       onClick={() => {
-                        acknowledgeAdminSidebarBadge(
-                          subItem.badgeKey,
-                          subItem.badgeValue,
-                          userId
-                        )
+                        acknowledgeNavItemBadges(subItem, userId)
                         setOpenMobile(false)
                       }}
                     />
@@ -288,11 +300,7 @@ function SidebarMenuCollapsedDropdown({
                       rel='noopener noreferrer'
                       className={`${checkIsActive(href, sub) ? 'bg-secondary' : ''}`}
                       onClick={() => {
-                        acknowledgeAdminSidebarBadge(
-                          sub.badgeKey,
-                          sub.badgeValue,
-                          userId
-                        )
+                        acknowledgeNavItemBadges(sub, userId)
                       }}
                     />
                   ) : (
@@ -300,11 +308,7 @@ function SidebarMenuCollapsedDropdown({
                       to={sub.url}
                       className={`${checkIsActive(href, sub) ? 'bg-secondary' : ''}`}
                       onClick={() => {
-                        acknowledgeAdminSidebarBadge(
-                          sub.badgeKey,
-                          sub.badgeValue,
-                          userId
-                        )
+                        acknowledgeNavItemBadges(sub, userId)
                       }}
                     />
                   )

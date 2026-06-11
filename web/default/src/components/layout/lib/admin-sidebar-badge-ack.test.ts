@@ -34,13 +34,13 @@ beforeEach(() => {
 
 describe('admin sidebar badge acknowledgement', () => {
   test('clears the viewed badge for the current user and keeps future increments unread', () => {
-    assert.equal(unreadAdminSidebarBadgeCount('risk-center', 21, 1), 21)
+    assert.equal(unreadAdminSidebarBadgeCount('admin-referral', 21, 1), 21)
 
-    acknowledgeAdminSidebarBadge('risk-center', 21, 1)
+    acknowledgeAdminSidebarBadge('admin-referral', 21, 1)
 
     assert.equal(eventCount, 1)
-    assert.equal(unreadAdminSidebarBadgeCount('risk-center', 21, 1), 0)
-    assert.equal(unreadAdminSidebarBadgeCount('risk-center', 23, 1), 2)
+    assert.equal(unreadAdminSidebarBadgeCount('admin-referral', 21, 1), 0)
+    assert.equal(unreadAdminSidebarBadgeCount('admin-referral', 23, 1), 2)
   })
 
   test('keeps acknowledgements scoped by user', () => {
@@ -66,5 +66,36 @@ describe('admin sidebar badge acknowledgement', () => {
 
     assert.equal(lowerAdminSidebarBadgeAckBaselines({ users: 0 }, 1, false), false)
     assert.equal(unreadAdminSidebarBadgeCount('users', 99, 1), 0)
+  })
+
+  test('cursor badges use backend unread counts until the current cursor is acknowledged', () => {
+    assert.equal(
+      unreadAdminSidebarBadgeCount('users', 1, 1, {
+        mode: 'cursor',
+        cursor: 192,
+      }),
+      1
+    )
+
+    acknowledgeAdminSidebarBadge('users', 1, 1, {
+      mode: 'cursor',
+      cursor: 192,
+    })
+
+    assert.equal(eventCount, 1)
+    assert.equal(
+      unreadAdminSidebarBadgeCount('users', 1, 1, {
+        mode: 'cursor',
+        cursor: 192,
+      }),
+      0
+    )
+    assert.equal(
+      unreadAdminSidebarBadgeCount('users', 1, 1, {
+        mode: 'cursor',
+        cursor: 193,
+      }),
+      1
+    )
   })
 })

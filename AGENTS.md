@@ -204,7 +204,7 @@ docs/                        项目文档
 
 - 从当前 fork 相对 upstream 的差异、近期本地提交、当前业务代码入口和实际用户需求中识别二开范围。
 - 至少沿 `router -> controller -> service -> model -> frontend -> config -> tests` 串起证据链，判断哪些行为是本 fork 的业务语义。
-- 静态高风险方向只作为提醒，包括支付、订单状态机、BEpusdt/USDT、epay、返佣、提现、风控中心、充值审计、钱包支付交互、用户/订单角标、provider price export、Docker/env/runtime。
+- 静态高风险方向只作为提醒，包括支付、订单状态机、BEpusdt/USDT、epay、返佣、提现、充值审计、钱包支付交互、用户/订单角标、provider price export、Docker/env/runtime。
 - 如果当前代码已经新增、删除或重构了某个二开模块，以当前 checkout 为准更新本轮保护清单；不要因为本文件没列到就认为可以覆盖，也不要因为本文件列过就认为永远存在。
 
 ### 引入上游变更的判定
@@ -236,7 +236,7 @@ docs/                        项目文档
 - `go test ./controller ./service ./model`
 - 如果涉及 relay/provider，补充对应 relay 或 channel 测试。
 - 如果涉及前端，按受影响模板执行 `bun run typecheck`、`bun run build`，必要时执行 lint。
-- 如果涉及支付、订阅、返佣、提现、钱包、充值审计、使用日志、风控中心或权限，必须在测试机跑真实业务链路和数据库一致性校验后，才能宣称同步完成。
+- 如果涉及支付、订阅、返佣、提现、钱包、充值审计、使用日志或权限，必须在测试机跑真实业务链路和数据库一致性校验后，才能宣称同步完成。
 - 提交前检查不得包含 artifacts、logs、data、browser traces、screenshots、temporary scripts、`.env`、credentials、tokens、merchant keys、server passwords、admin passwords 或代理配置。
 
 ## 测试与验证

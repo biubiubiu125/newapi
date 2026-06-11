@@ -53,7 +53,6 @@ export const userSchema = z.object({
   created_at: z.number().optional(),
   updated_at: z.number().optional(),
   last_login_at: z.number().optional(),
-  register_ip: z.string().optional(),
   last_active_at: z.number().optional(),
   DeletedAt: z.any().nullable().optional(),
   remark: z.string().optional(),
@@ -87,6 +86,12 @@ export interface GetUsersResponse {
     page: number
     page_size: number
   }
+}
+
+export interface AdminUsersSummary {
+  after_id: number
+  latest_user_id: number
+  new_user_count: number
 }
 
 export interface SearchUsersParams {

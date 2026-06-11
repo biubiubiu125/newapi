@@ -38,8 +38,22 @@ func TestReferralAdminAndUserRoutesAreDistinct(t *testing.T) {
 
 	require.True(t, paths["GET /api/user/referral/commissions"])
 	require.True(t, paths["GET /api/user/admin/referral/commissions"])
+	require.True(t, paths["GET /api/user/admin/referral/badges"])
 	require.True(t, paths["POST /api/user/admin/referral/upload"])
 	require.True(t, paths["POST /api/user/referral/upload"])
+}
+
+func TestAdminUsersSummaryRouteIsRegistered(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	SetApiRouter(engine)
+
+	paths := map[string]bool{}
+	for _, route := range engine.Routes() {
+		paths[route.Method+" "+route.Path] = true
+	}
+
+	require.True(t, paths["GET /api/user/admin/users/summary"])
 }
 
 func TestReferralAssetRoutesSupportApiAndPublicPaths(t *testing.T) {

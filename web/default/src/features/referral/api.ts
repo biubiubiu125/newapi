@@ -31,6 +31,7 @@ import type {
   ReferralSummary,
   ReferralWithdrawal,
   ReferralAdminAuditLog,
+  ReferralAdminBadgeCounts,
 } from './types'
 
 export async function getReferralProfile(): Promise<
@@ -111,6 +112,13 @@ export async function getAdminReferralOverview(): Promise<
   ApiResponse<ReferralOverview>
 > {
   const res = await api.get('/api/user/admin/referral/overview')
+  return res.data
+}
+
+export async function getAdminReferralBadges(): Promise<
+  ApiResponse<ReferralAdminBadgeCounts>
+> {
+  const res = await api.get('/api/user/admin/referral/badges')
   return res.data
 }
 

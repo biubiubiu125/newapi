@@ -63,6 +63,15 @@ func GetReferralOverview(c *gin.Context) {
 	common.ApiSuccess(c, item)
 }
 
+func GetReferralAdminBadges(c *gin.Context) {
+	item, err := referralService.GetAdminBadgeCounts()
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, item)
+}
+
 func GetReferralSettings(c *gin.Context) {
 	common.ApiSuccess(c, referralService.GetSettings())
 }

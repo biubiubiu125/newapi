@@ -32,7 +32,11 @@ import { API, showSuccess, showError } from '../../../helpers';
 import { StatusContext } from '../../../context/Status';
 import { UserContext } from '../../../context/User';
 import { useUserPermissions } from '../../../hooks/common/useUserPermissions';
-import { mergeAdminConfig, useSidebar } from '../../../hooks/common/useSidebar';
+import {
+  mergeAdminConfig,
+  sanitizeSidebarConfig,
+  useSidebar,
+} from '../../../hooks/common/useSidebar';
 import { Settings } from 'lucide-react';
 
 const { Text } = Typography;
@@ -110,7 +114,6 @@ export default function SettingsSidebarModulesUser() {
         redemption: isSidebarModuleAllowed('admin', 'redemption'),
         subscription: isSidebarModuleAllowed('admin', 'subscription'),
         adminReferral: isSidebarModuleAllowed('admin', 'adminReferral'),
-        riskCenter: isSidebarModuleAllowed('admin', 'riskCenter'),
         user: isSidebarModuleAllowed('admin', 'user'),
         setting: isSidebarModuleAllowed('admin', 'setting'),
       };
@@ -173,13 +176,15 @@ export default function SettingsSidebarModulesUser() {
   async function onSubmit() {
     setLoading(true);
     try {
-      console.log('保存用户边栏配置:', sidebarModulesUser);
+      const sanitizedModules = sanitizeSidebarConfig(sidebarModulesUser);
+      console.log('保存用户边栏配置:', sanitizedModules);
       const res = await API.put('/api/user/self', {
-        sidebar_modules: JSON.stringify(sidebarModulesUser),
+        sidebar_modules: JSON.stringify(sanitizedModules),
       });
       const { success, message } = res.data;
       if (success) {
         showSuccess(t('保存成功'));
+        setSidebarModulesUser(sanitizedModules);
         console.log('用户边栏配置保存成功');
 
         // 刷新useSidebar钩子中的用户配置，实现实时更新
@@ -243,12 +248,12 @@ export default function SettingsSidebarModulesUser() {
               ...userConf.admin,
               adminReferral:
                 userConf.admin.adminReferral ?? userConf.admin.referral ?? true,
-              riskCenter: userConf.admin.riskCenter ?? true,
               providerPricing:
                 userConf.admin.providerPricing ??
                 userConf.admin.provider_price_export ??
                 true,
             };
+            userConf.admin = sanitizeSidebarConfig({ admin: userConf.admin }).admin;
           }
           Object.keys(userConf).forEach((sectionKey) => {
             if (isSidebarSectionAllowed(sectionKey)) {
@@ -264,8 +269,9 @@ export default function SettingsSidebarModulesUser() {
               });
             }
           });
-          setSidebarModulesUser(filteredUserConf);
-          console.log('权限过滤后的用户配置:', filteredUserConf);
+          const sanitizedUserConf = sanitizeSidebarConfig(filteredUserConf);
+          setSidebarModulesUser(sanitizedUserConf);
+          console.log('权限过滤后的用户配置:', sanitizedUserConf);
         } else {
           // 如果用户没有配置，使用权限过滤后的默认配置
           const defaultConfig = generateDefaultConfig();
@@ -383,11 +389,6 @@ export default function SettingsSidebarModulesUser() {
           description: t(
             'Referral affiliates, commissions, withdrawals, and audit logs',
           ),
-        },
-        {
-          key: 'riskCenter',
-          title: t('风控中心'),
-          description: t('风险信号、事件处理、白名单和审计记录'),
         },
         {
           key: 'providerPricing',

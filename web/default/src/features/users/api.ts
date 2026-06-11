@@ -26,6 +26,7 @@ import type {
   ManageUserAction,
   ManageUserQuotaPayload,
   ApiResponse,
+  AdminUsersSummary,
 } from './types'
 
 // ============================================================================
@@ -40,6 +41,16 @@ export async function getUsers(
 ): Promise<GetUsersResponse> {
   const { p = 1, page_size = 10 } = params
   const res = await api.get(`/api/user/?p=${p}&page_size=${page_size}`)
+  return res.data
+}
+
+export async function getAdminUsersSummary(
+  params = new URLSearchParams()
+): Promise<ApiResponse<AdminUsersSummary>> {
+  const query = params.toString()
+  const res = await api.get(
+    `/api/user/admin/users/summary${query ? `?${query}` : ''}`
+  )
   return res.data
 }
 
