@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
 )
@@ -18,9 +20,13 @@ const (
 )
 
 func redisEmailVerificationRateLimiter(c *gin.Context) {
+	key := emailQueryRateLimitKey(c, EmailVerificationRateLimitMark)
+	if key == "" {
+		c.Next()
+		return
+	}
 	ctx := context.Background()
 	rdb := common.RDB
-	key := "emailVerification:" + EmailVerificationRateLimitMark + ":" + common.GetClientIP(c)
 
 	count, err := rdb.Incr(ctx, key).Result()
 	if err != nil {
@@ -55,7 +61,11 @@ func redisEmailVerificationRateLimiter(c *gin.Context) {
 }
 
 func memoryEmailVerificationRateLimiter(c *gin.Context) {
-	key := EmailVerificationRateLimitMark + ":" + common.GetClientIP(c)
+	key := emailQueryRateLimitKey(c, EmailVerificationRateLimitMark)
+	if key == "" {
+		c.Next()
+		return
+	}
 
 	if !inMemoryRateLimiter.Request(key, EmailVerificationMaxRequests, EmailVerificationDuration) {
 		c.JSON(http.StatusTooManyRequests, gin.H{
@@ -69,6 +79,17 @@ func memoryEmailVerificationRateLimiter(c *gin.Context) {
 	c.Next()
 }
 
+func emailQueryRateLimitKey(c *gin.Context, mark string) string {
+	email := model.NormalizeUserEmail(c.Query("email"))
+	if strings.TrimSpace(email) == "" {
+		if key := fallbackRateLimitKey(c, mark); key != "" {
+			return "emailRateLimit:" + key
+		}
+		return ""
+	}
+	return "emailRateLimit:" + mark + ":email:" + common.Sha1([]byte(email))
+}
+
 func EmailVerificationRateLimit() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		if common.RedisEnabled {
@@ -77,5 +98,30 @@ func EmailVerificationRateLimit() gin.HandlerFunc {
 			inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
 			memoryEmailVerificationRateLimiter(c)
 		}
+	}
+}
+
+func EmailQueryRateLimit(mark string) gin.HandlerFunc {
+	if !common.CriticalRateLimitEnable {
+		return defNext
+	}
+	return func(c *gin.Context) {
+		key := emailQueryRateLimitKey(c, mark)
+		if key == "" {
+			c.Next()
+			return
+		}
+		if common.RedisEnabled {
+			ctx := context.Background()
+			allowed, err := redisSlidingWindowAllowed(ctx, key, common.CriticalRateLimitNum, common.CriticalRateLimitDuration)
+			abortOnRateLimitResult(c, allowed, err)
+			return
+		}
+		inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
+		if !inMemoryRateLimiter.Request(key, common.CriticalRateLimitNum, common.CriticalRateLimitDuration) {
+			abortTooManyRequests(c)
+			return
+		}
+		c.Next()
 	}
 }

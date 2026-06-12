@@ -2173,7 +2173,6 @@ export function ChannelMutateDrawer({
                                   )}
                                   allowCreate
                                   createLabel='Add custom model "{{value}}"'
-                                  maxVisibleChips={8}
                                 />
                               </FormControl>
                               {modelMappingGuardrail.exposedTargetModels

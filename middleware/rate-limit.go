@@ -3,10 +3,14 @@ package middleware
 import (
 	"context"
 	"fmt"
+	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -106,15 +110,13 @@ func abortUnauthorized(c *gin.Context) {
 	c.Abort()
 }
 
-func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark string) {
+func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string) {
 	ctx := context.Background()
-	key := "rateLimit:" + mark + common.GetClientIP(c)
-	allowed, err := redisSlidingWindowAllowed(ctx, key, maxRequestNum, duration)
+	allowed, err := redisSlidingWindowAllowed(ctx, "rateLimit:"+key, maxRequestNum, duration)
 	abortOnRateLimitResult(c, allowed, err)
 }
 
-func memoryRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark string) {
-	key := mark + common.GetClientIP(c)
+func memoryRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string) {
 	if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
 		abortTooManyRequests(c)
 		return
@@ -122,29 +124,335 @@ func memoryRateLimiter(c *gin.Context, maxRequestNum int, duration int64, mark s
 }
 
 func rateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gin.Context) {
+	return rateLimitFactoryWithKeyFunc(maxRequestNum, duration, mark, fallbackRateLimitKey)
+}
+
+func rateLimitFactoryWithKeyFunc(maxRequestNum int, duration int64, mark string, keyFunc func(*gin.Context, string) string) func(c *gin.Context) {
 	if common.RedisEnabled {
 		return func(c *gin.Context) {
-			redisRateLimiter(c, maxRequestNum, duration, mark)
+			key := keyFunc(c, mark)
+			if key == "" {
+				if !c.IsAborted() {
+					c.Next()
+				}
+				return
+			}
+			redisRateLimiter(c, maxRequestNum, duration, key)
 		}
 	} else {
 		// It's safe to call multi times.
 		inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
 		return func(c *gin.Context) {
-			memoryRateLimiter(c, maxRequestNum, duration, mark)
+			key := keyFunc(c, mark)
+			if key == "" {
+				if !c.IsAborted() {
+					c.Next()
+				}
+				return
+			}
+			memoryRateLimiter(c, maxRequestNum, duration, key)
 		}
 	}
 }
 
+func identityAwareRateLimitKey(c *gin.Context, mark string) string {
+	if identity := requestRateLimitIdentity(c); identity != "" {
+		return fmt.Sprintf("%s:%s", mark, identity)
+	}
+	return ""
+}
+
+func requestRateLimitIdentity(c *gin.Context) string {
+	if identity := authenticatedRateLimitIdentity(c); identity != "" {
+		return identity
+	}
+	if identity := authorizationRateLimitIdentity(c); identity != "" {
+		return identity
+	}
+	return sessionRateLimitIdentity(c)
+}
+
+func authorizationRateLimitIdentity(c *gin.Context) (identity string) {
+	defer func() {
+		if recover() != nil {
+			identity = ""
+		}
+	}()
+	key := normalizedAuthorizationKey(c)
+	if key == "" {
+		return ""
+	}
+	token, err := model.GetTokenByKey(key, false)
+	if err == nil && token != nil && token.Id > 0 {
+		return fmt.Sprintf("token:%d", token.Id)
+	}
+	user, err := model.ValidateAccessToken(c.Request.Header.Get("Authorization"))
+	if err == nil && user != nil && user.Id > 0 {
+		return fmt.Sprintf("user:%d", user.Id)
+	}
+	return ""
+}
+
+func submittedAuthorizationValue(c *gin.Context) string {
+	key := c.Request.Header.Get("Authorization")
+	if strings.HasPrefix(key, "Bearer ") || strings.HasPrefix(key, "bearer ") {
+		key = strings.TrimSpace(key[7:])
+	}
+	key = strings.TrimSpace(key)
+	if key == "" || key == "midjourney-proxy" {
+		key = c.Request.Header.Get("mj-api-secret")
+		if strings.HasPrefix(key, "Bearer ") || strings.HasPrefix(key, "bearer ") {
+			key = strings.TrimSpace(key[7:])
+		}
+		key = strings.TrimSpace(key)
+	}
+	if key == "" || key == "midjourney-proxy" {
+		return ""
+	}
+	return key
+}
+
+func normalizedAuthorizationKey(c *gin.Context) string {
+	key := submittedAuthorizationValue(c)
+	if key == "" {
+		return ""
+	}
+	key = strings.TrimPrefix(key, "sk-")
+	parts := strings.Split(key, "-")
+	return strings.TrimSpace(parts[0])
+}
+
+func sessionRateLimitIdentity(c *gin.Context) (identity string) {
+	defer func() {
+		if recover() != nil {
+			identity = ""
+		}
+	}()
+	session := sessions.Default(c)
+	if userId := rateLimitInt(session.Get("id")); userId > 0 {
+		return fmt.Sprintf("user:%d", userId)
+	}
+	return ""
+}
+
+func authenticatedRateLimitIdentity(c *gin.Context) string {
+	if tokenId := c.GetInt("token_id"); tokenId > 0 {
+		return fmt.Sprintf("token:%d", tokenId)
+	}
+	if userId := c.GetInt("id"); userId > 0 {
+		return fmt.Sprintf("user:%d", userId)
+	}
+	return ""
+}
+
+func rateLimitInt(value any) int {
+	switch typed := value.(type) {
+	case int:
+		return typed
+	case int64:
+		return int(typed)
+	case int32:
+		return int(typed)
+	case float64:
+		return int(typed)
+	case string:
+		var parsed int
+		if _, err := fmt.Sscanf(strings.TrimSpace(typed), "%d", &parsed); err == nil {
+			return parsed
+		}
+	}
+	return 0
+}
+
+func hashedRateLimitValue(prefix string, value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
+	}
+	return prefix + ":" + common.Sha1([]byte(value))
+}
+
+func submittedCredentialRateLimitKey(c *gin.Context, mark string) string {
+	if value := submittedAuthorizationValue(c); value != "" {
+		return mark + ":credential:" + common.Sha1([]byte(value))
+	}
+	return ""
+}
+
+func preAuthRateLimitKey(c *gin.Context, mark string) string {
+	if key := submittedCredentialRateLimitKey(c, mark); key != "" {
+		return key
+	}
+	if key := identityAwareRateLimitKey(c, mark); key != "" {
+		return key
+	}
+	return mark + ":anonymous"
+}
+
+func fallbackRateLimitKey(c *gin.Context, mark string) string {
+	if key := identityAwareRateLimitKey(c, mark); key != "" {
+		return key
+	}
+	if key := submittedCredentialRateLimitKey(c, mark); key != "" {
+		return key
+	}
+	return sessionNonceRateLimitKey("critical_rate_limit_nonce")(c, mark)
+}
+
+func queryRateLimitKey(param string, normalizer func(string) string) func(*gin.Context, string) string {
+	return func(c *gin.Context, mark string) string {
+		value := c.Query(param)
+		if normalizer != nil {
+			value = normalizer(value)
+		}
+		if key := hashedRateLimitValue(param, value); key != "" {
+			return mark + ":" + key
+		}
+		return fallbackRateLimitKey(c, mark)
+	}
+}
+
+func sessionFieldRateLimitKey(field string) func(*gin.Context, string) string {
+	return func(c *gin.Context, mark string) string {
+		if value := sessionRateLimitString(c, field); value != "" {
+			return mark + ":session:" + field + ":" + common.Sha1([]byte(value))
+		}
+		return fallbackRateLimitKey(c, mark)
+	}
+}
+
+func sessionNonceRateLimitKey(field string) func(*gin.Context, string) string {
+	return func(c *gin.Context, mark string) (key string) {
+		defer func() {
+			if recover() != nil {
+				key = identityAwareRateLimitKey(c, mark)
+			}
+		}()
+		session := sessions.Default(c)
+		nonce, _ := session.Get(field).(string)
+		nonce = strings.TrimSpace(nonce)
+		if nonce == "" {
+			nonce = common.GetRandomString(32)
+			session.Set(field, nonce)
+			if err := session.Save(); err != nil {
+				abortOnRateLimitResult(c, false, err)
+				return ""
+			}
+		}
+		return mark + ":session_nonce:" + field + ":" + common.Sha1([]byte(nonce))
+	}
+}
+
+func sessionRateLimitString(c *gin.Context, field string) (value string) {
+	defer func() {
+		if recover() != nil {
+			value = ""
+		}
+	}()
+	raw := sessions.Default(c).Get(field)
+	switch typed := raw.(type) {
+	case string:
+		return strings.TrimSpace(typed)
+	case int:
+		if typed > 0 {
+			return fmt.Sprintf("%d", typed)
+		}
+	case int64:
+		if typed > 0 {
+			return fmt.Sprintf("%d", typed)
+		}
+	case int32:
+		if typed > 0 {
+			return fmt.Sprintf("%d", typed)
+		}
+	case float64:
+		if typed > 0 {
+			return fmt.Sprintf("%.0f", typed)
+		}
+	}
+	return ""
+}
+
+func jsonFieldRateLimitKey(field string, normalizer func(string) string) func(*gin.Context, string) string {
+	return func(c *gin.Context, mark string) string {
+		value := requestJSONField(c, field)
+		if normalizer != nil {
+			value = normalizer(value)
+		}
+		if key := hashedRateLimitValue(field, value); key != "" {
+			return mark + ":" + key
+		}
+		return fallbackRateLimitKey(c, mark)
+	}
+}
+
+func registerRateLimitKey(c *gin.Context, mark string) string {
+	email := model.NormalizeUserEmail(requestJSONField(c, "email"))
+	if key := hashedRateLimitValue("email", email); key != "" {
+		return mark + ":" + key
+	}
+	username := strings.ToLower(requestJSONField(c, "username"))
+	if key := hashedRateLimitValue("username", username); key != "" {
+		return mark + ":" + key
+	}
+	return fallbackRateLimitKey(c, mark)
+}
+
+func requestJSONField(c *gin.Context, field string) string {
+	storage, err := common.GetBodyStorage(c)
+	if err != nil {
+		return ""
+	}
+	defer func() {
+		_, _ = storage.Seek(0, io.SeekStart)
+		c.Request.Body = io.NopCloser(storage)
+	}()
+	var payload map[string]any
+	if err := common.DecodeJson(storage, &payload); err != nil {
+		return ""
+	}
+	value, ok := payload[field]
+	if !ok {
+		return ""
+	}
+	switch typed := value.(type) {
+	case string:
+		return typed
+	case float64:
+		return fmt.Sprintf("%.0f", typed)
+	case int:
+		return fmt.Sprintf("%d", typed)
+	case int64:
+		return fmt.Sprintf("%d", typed)
+	default:
+		return fmt.Sprintf("%v", typed)
+	}
+}
+
+func telegramRateLimitKey(c *gin.Context, mark string) string {
+	if key := hashedRateLimitValue("telegram", c.Query("id")); key != "" {
+		return mark + ":" + key
+	}
+	return fallbackRateLimitKey(c, mark)
+}
+
 func GlobalWebRateLimit() func(c *gin.Context) {
 	if common.GlobalWebRateLimitEnable {
-		return rateLimitFactory(common.GlobalWebRateLimitNum, common.GlobalWebRateLimitDuration, "GW")
+		return rateLimitFactoryWithKeyFunc(common.GlobalWebRateLimitNum, common.GlobalWebRateLimitDuration, "GW", fallbackRateLimitKey)
 	}
 	return defNext
 }
 
 func GlobalAPIRateLimit() func(c *gin.Context) {
 	if common.GlobalApiRateLimitEnable {
-		return rateLimitFactory(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "GA")
+		return rateLimitFactoryWithKeyFunc(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "GA", fallbackRateLimitKey)
+	}
+	return defNext
+}
+
+func GlobalAPIPreAuthRateLimit() func(c *gin.Context) {
+	if common.GlobalApiRateLimitEnable {
+		return rateLimitFactoryWithKeyFunc(common.GlobalApiRateLimitNum, common.GlobalApiRateLimitDuration, "GA:pre", preAuthRateLimitKey)
 	}
 	return defNext
 }
@@ -152,6 +460,76 @@ func GlobalAPIRateLimit() func(c *gin.Context) {
 func CriticalRateLimit() func(c *gin.Context) {
 	if common.CriticalRateLimitEnable {
 		return rateLimitFactory(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, "CT")
+	}
+	return defNext
+}
+
+func UsernameCriticalRateLimit(mark string) func(c *gin.Context) {
+	if common.CriticalRateLimitEnable {
+		return rateLimitFactoryWithKeyFunc(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, mark, jsonFieldRateLimitKey("username", strings.ToLower))
+	}
+	return defNext
+}
+
+func EmailBodyCriticalRateLimit(mark string) func(c *gin.Context) {
+	if common.CriticalRateLimitEnable {
+		return rateLimitFactoryWithKeyFunc(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, mark, jsonFieldRateLimitKey("email", model.NormalizeUserEmail))
+	}
+	return defNext
+}
+
+func RegisterCriticalRateLimit(mark string) func(c *gin.Context) {
+	if common.CriticalRateLimitEnable {
+		return rateLimitFactoryWithKeyFunc(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, mark, registerRateLimitKey)
+	}
+	return defNext
+}
+
+func QueryCriticalRateLimit(mark string, param string) func(c *gin.Context) {
+	if common.CriticalRateLimitEnable {
+		return rateLimitFactoryWithKeyFunc(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, mark, queryRateLimitKey(param, nil))
+	}
+	return defNext
+}
+
+func SessionNonceCriticalRateLimit(mark string, field string) func(c *gin.Context) {
+	if common.CriticalRateLimitEnable {
+		return rateLimitFactoryWithKeyFunc(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, mark, sessionNonceRateLimitKey(field))
+	}
+	return defNext
+}
+
+func SessionFieldCriticalRateLimit(mark string, field string) func(c *gin.Context) {
+	if common.CriticalRateLimitEnable {
+		return rateLimitFactoryWithKeyFunc(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, mark, sessionFieldRateLimitKey(field))
+	}
+	return defNext
+}
+
+func TelegramCriticalRateLimit(mark string) func(c *gin.Context) {
+	if common.CriticalRateLimitEnable {
+		return rateLimitFactoryWithKeyFunc(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, mark, telegramRateLimitKey)
+	}
+	return defNext
+}
+
+func UserCriticalRateLimit(mark string) func(c *gin.Context) {
+	if common.CriticalRateLimitEnable {
+		return userRateLimitFactory(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, mark)
+	}
+	return defNext
+}
+
+func SessionUserCriticalRateLimit(mark string) func(c *gin.Context) {
+	if common.CriticalRateLimitEnable {
+		return sessionUserRateLimitFactory(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, mark)
+	}
+	return defNext
+}
+
+func AuthenticatedCriticalRateLimit(mark string) func(c *gin.Context) {
+	if common.CriticalRateLimitEnable {
+		return authenticatedRateLimitFactory(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, mark)
 	}
 	return defNext
 }
@@ -188,6 +566,62 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 			return
 		}
 		key := fmt.Sprintf("%s:user:%d", mark, userId)
+		if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
+			abortTooManyRequests(c)
+			return
+		}
+	}
+}
+
+func sessionUserRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gin.Context) {
+	if common.RedisEnabled {
+		return func(c *gin.Context) {
+			identity := sessionRateLimitIdentity(c)
+			if identity == "" {
+				abortUnauthorized(c)
+				return
+			}
+			key := fmt.Sprintf("rateLimit:%s:%s", mark, identity)
+			userRedisRateLimiter(c, maxRequestNum, duration, key)
+		}
+	}
+	// It's safe to call multi times.
+	inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
+	return func(c *gin.Context) {
+		identity := sessionRateLimitIdentity(c)
+		if identity == "" {
+			abortUnauthorized(c)
+			return
+		}
+		key := fmt.Sprintf("%s:%s", mark, identity)
+		if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
+			abortTooManyRequests(c)
+			return
+		}
+	}
+}
+
+func authenticatedRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c *gin.Context) {
+	if common.RedisEnabled {
+		return func(c *gin.Context) {
+			identity := authenticatedRateLimitIdentity(c)
+			if identity == "" {
+				abortUnauthorized(c)
+				return
+			}
+			key := fmt.Sprintf("rateLimit:%s:%s", mark, identity)
+			userRedisRateLimiter(c, maxRequestNum, duration, key)
+		}
+	}
+	// It's safe to call multi times.
+	inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
+	return func(c *gin.Context) {
+		identity := authenticatedRateLimitIdentity(c)
+		if identity == "" {
+			abortUnauthorized(c)
+			return
+		}
+		key := fmt.Sprintf("%s:%s", mark, identity)
 		if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
 			abortTooManyRequests(c)
 			return
