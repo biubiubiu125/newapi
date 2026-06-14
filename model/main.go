@@ -206,7 +206,7 @@ func initDBOnce() (err error) {
 func InitLogDB() (err error) {
 	if os.Getenv("LOG_SQL_DSN") == "" {
 		LOG_DB = DB
-		return
+		return migrateLOGDB()
 	}
 	return withDatabaseStartupRetry("log database", initLogDBOnce)
 }
@@ -335,6 +335,13 @@ func migrateDB() error {
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
 		&PerfMetric{},
+		&TokenUsageReset{},
+		&TokenUsageDaily{},
+		&Ticket{},
+		&TicketMessage{},
+		&TicketAttachment{},
+		&TicketSequence{},
+		&TelegramPushRecord{},
 	)
 	if err != nil {
 		return err
@@ -454,6 +461,13 @@ func migrateDBFast() error {
 		{&CustomOAuthProvider{}, "CustomOAuthProvider"},
 		{&UserOAuthBinding{}, "UserOAuthBinding"},
 		{&PerfMetric{}, "PerfMetric"},
+		{&TokenUsageReset{}, "TokenUsageReset"},
+		{&TokenUsageDaily{}, "TokenUsageDaily"},
+		{&Ticket{}, "Ticket"},
+		{&TicketMessage{}, "TicketMessage"},
+		{&TicketAttachment{}, "TicketAttachment"},
+		{&TicketSequence{}, "TicketSequence"},
+		{&TelegramPushRecord{}, "TelegramPushRecord"},
 	}
 	// 动态计算migration数量，确保errChan缓冲区足够大
 	errChan := make(chan error, len(migrations))
@@ -503,6 +517,9 @@ func migrateDBFast() error {
 func migrateLOGDB() error {
 	var err error
 	if err = LOG_DB.AutoMigrate(&Log{}); err != nil {
+		return err
+	}
+	if err = LOG_DB.AutoMigrate(&ConversationSnapshot{}, &ConversationExportTask{}); err != nil {
 		return err
 	}
 	return nil

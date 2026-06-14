@@ -49,7 +49,13 @@ type AnnouncementItem = {
   link?: string
 }
 
-function toAnnouncementItem(item: Record<string, unknown>): AnnouncementItem {
+function toAnnouncementItem(
+  item: Record<string, unknown> | string
+): AnnouncementItem {
+  if (typeof item === 'string') {
+    return { content: item }
+  }
+
   return {
     id:
       typeof item.id === 'string' || typeof item.id === 'number'
@@ -144,6 +150,9 @@ function AnnouncementsPanel(props: {
                 <div className='flex items-start gap-3'>
                   <AnnouncementDot type={item.type} />
                   <div className='flex min-w-0 flex-1 flex-col gap-2'>
+                    {item.title ? (
+                      <div className='text-sm font-medium'>{item.title}</div>
+                    ) : null}
                     <div className='text-sm'>
                       <Markdown>{item.content || ''}</Markdown>
                     </div>

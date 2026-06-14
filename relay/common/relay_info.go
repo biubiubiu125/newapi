@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -121,6 +122,7 @@ type RelayInfo struct {
 	RelayFormat            types.RelayFormat
 	SendResponseCount      int
 	ReceivedResponseCount  int
+	ClientStreamWriteCount int64
 	FinalPreConsumedQuota  int // 最终预消耗的配额
 	// ForcePreConsume 为 true 时禁用 BillingSession 的信任额度旁路，
 	// 强制预扣全额。用于异步任务（视频/音乐生成等），因为请求返回后任务仍在运行，
@@ -259,6 +261,7 @@ func (info *RelayInfo) ToString() string {
 	fmt.Fprintf(b, "ShouldIncludeUsage: %t, ", info.ShouldIncludeUsage)
 	fmt.Fprintf(b, "DisablePing: %t, ", info.DisablePing)
 	fmt.Fprintf(b, "SendResponseCount: %d, ", info.SendResponseCount)
+	fmt.Fprintf(b, "ClientStreamWriteCount: %d, ", atomic.LoadInt64(&info.ClientStreamWriteCount))
 	fmt.Fprintf(b, "FinalPreConsumedQuota: %d, ", info.FinalPreConsumedQuota)
 
 	// User & token info (mask secrets)
@@ -664,6 +667,17 @@ func (info *RelayInfo) SetFirstResponseTime() {
 
 func (info *RelayInfo) HasSendResponse() bool {
 	return info.FirstResponseTime.After(info.StartTime)
+}
+
+func (info *RelayInfo) MarkClientStreamWrite() {
+	if info == nil {
+		return
+	}
+	atomic.AddInt64(&info.ClientStreamWriteCount, 1)
+}
+
+func (info *RelayInfo) HasClientStreamWrite() bool {
+	return info != nil && atomic.LoadInt64(&info.ClientStreamWriteCount) > 0
 }
 
 type TaskRelayInfo struct {

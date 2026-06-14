@@ -94,6 +94,14 @@ export interface ApiKeyFormData {
   cross_group_retry: boolean
 }
 
+export interface ApiKeyUsageStats {
+  today_quota: number
+  month_quota: number
+  cumulative_quota: number
+  last_used_at: number
+  reset_at: number
+}
+
 // ============================================================================
 // Dialog Types
 // ============================================================================

@@ -50,7 +50,7 @@ const numericString = z.string().refine((value) => {
   const trimmed = value.trim()
   if (!trimmed) return true
   return !Number.isNaN(Number(trimmed)) && Number(trimmed) >= 0
-}, 'Enter a non-negative number or leave empty')
+}, '请输入非负数字，或留空')
 
 const monitoringSchema = z
   .object({
@@ -66,7 +66,7 @@ const monitoringSchema = z
       auto_test_channel_minutes: z.coerce
         .number()
         .int()
-        .min(1, 'Interval must be at least 1 minute'),
+        .min(1, '测试间隔至少为 1 分钟'),
     }),
   })
   .superRefine((values, ctx) => {
@@ -77,7 +77,7 @@ const monitoringSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['AutomaticDisableStatusCodes'],
-        message: `Invalid status code rules: ${disableParsed.invalidTokens.join(
+        message: `状态码规则不正确：${disableParsed.invalidTokens.join(
           ', '
         )}`,
       })
@@ -90,7 +90,7 @@ const monitoringSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['AutomaticRetryStatusCodes'],
-        message: `Invalid status code rules: ${retryParsed.invalidTokens.join(
+        message: `状态码规则不正确：${retryParsed.invalidTokens.join(
           ', '
         )}`,
       })
@@ -255,7 +255,7 @@ export function MonitoringSettingsSection({
           <SettingsPageFormActions
             onSave={form.handleSubmit(onSubmit)}
             isSaving={updateOption.isPending}
-            saveLabel='Save monitoring rules'
+            saveLabel='保存监控规则'
           />
           <div className='grid gap-6 md:grid-cols-2'>
             <FormField
@@ -414,6 +414,8 @@ export function MonitoringSettingsSection({
                   {t(
                     'If an upstream error contains any of these keywords (case insensitive), the channel will be disabled automatically.'
                   )}
+                  <br />
+                  余额不足类错误会额外按内置关键词识别：balance、quota、insufficient、billing、credit、余额不足、额度不足。
                 </FormDescription>
                 <FormMessage />
               </FormItem>
@@ -438,6 +440,7 @@ export function MonitoringSettingsSection({
                     {t(
                       'Accepts comma-separated status codes and inclusive ranges.'
                     )}{' '}
+                    这里只填写状态码或范围，不填写关键词。
                     {autoDisableParsed.ok &&
                       autoDisableParsed.normalized &&
                       autoDisableParsed.normalized !== field.value.trim() && (
@@ -468,6 +471,7 @@ export function MonitoringSettingsSection({
                     {t(
                       'Accepts comma-separated status codes and inclusive ranges.'
                     )}{' '}
+                    这里只填写状态码或范围；默认 400-599 会进入渠道切换判断。
                     {autoRetryParsed.ok &&
                       autoRetryParsed.normalized &&
                       autoRetryParsed.normalized !== field.value.trim() && (

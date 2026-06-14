@@ -1380,6 +1380,10 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		}
 	})
 
+	if streamErr := helper.ErrorBeforeFirstStreamResponse(info); streamErr != nil {
+		return nil, streamErr
+	}
+
 	if imageCount != 0 {
 		if usage.CompletionTokens == 0 {
 			usage.CompletionTokens = imageCount * 1400

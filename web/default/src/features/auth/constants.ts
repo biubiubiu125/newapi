@@ -51,6 +51,14 @@ export const registerFormSchema = z
       .min(8, 'Password must be at least 8 characters long')
       .max(20, 'Password must be at most 20 characters long'),
     confirmPassword: z.string().min(1, 'Please confirm your password'),
+    affiliateCode: z
+      .string()
+      .regex(
+        /^[A-Za-z0-9_-]*$/,
+        'Referral code can only contain letters, numbers, underscores, and hyphens'
+      )
+      .max(32, 'Referral code must be at most 32 characters long')
+      .optional(),
   })
   .refine((data) => data.password === data.confirmPassword, {
     message: "Passwords don't match.",

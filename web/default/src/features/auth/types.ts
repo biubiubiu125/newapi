@@ -37,6 +37,7 @@ export interface RegisterPayload {
   password: string
   email?: string
   verification_code?: string
+  aff?: string
   aff_code?: string
   turnstile?: string
 }
@@ -129,6 +130,7 @@ export interface SystemStatus {
     password_login_enabled?: boolean
     password_register_enabled?: boolean
     referral_enabled?: boolean
+    referral_cookie_ttl_days?: number
     referral_require_approval?: boolean
     custom_oauth_providers?: CustomOAuthProviderInfo[]
     [key: string]: unknown
@@ -174,6 +176,7 @@ export interface SystemStatus {
   password_login_enabled?: boolean
   password_register_enabled?: boolean
   referral_enabled?: boolean
+  referral_cookie_ttl_days?: number
   referral_require_approval?: boolean
   custom_oauth_providers?: CustomOAuthProviderInfo[]
   [key: string]: unknown

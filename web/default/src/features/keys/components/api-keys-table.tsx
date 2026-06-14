@@ -52,14 +52,15 @@ import {
   DataTablePage,
 } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
-import { getApiKeys, searchApiKeys } from '../api'
+import { getApiKeyUsageStatsBatch, getApiKeys, searchApiKeys } from '../api'
 import {
   API_KEY_STATUS,
   API_KEY_STATUS_OPTIONS,
   API_KEY_STATUSES,
   ERROR_MESSAGES,
 } from '../constants'
-import { type ApiKey } from '../types'
+import { type ApiKey, type ApiKeyUsageStats } from '../types'
+import { ApiKeyUsageCell } from './api-key-usage-cell'
 import { ApiKeyCell } from './api-keys-cells'
 import { useApiKeysColumns } from './api-keys-columns'
 import { useApiKeys } from './api-keys-provider'
@@ -98,9 +99,15 @@ function ApiKeysMobileSkeleton() {
 function ApiKeysMobileList({
   table,
   isLoading,
+  usageStats,
+  usageLoading,
+  usageError,
 }: {
   table: ReturnType<typeof useReactTable<ApiKey>>
   isLoading: boolean
+  usageStats: Record<number, ApiKeyUsageStats>
+  usageLoading: boolean
+  usageError: boolean
 }) {
   const { t } = useTranslation()
   const rows = table.getRowModel().rows
@@ -181,6 +188,14 @@ function ApiKeysMobileList({
                 </span>
               )}
             </div>
+            <div className='bg-muted/20 rounded-md border p-2'>
+              <ApiKeyUsageCell
+                apiKey={apiKey}
+                usage={usageStats[apiKey.id]}
+                isLoading={usageLoading}
+                isError={usageError}
+              />
+            </div>
           </div>
         )
       })}
@@ -191,7 +206,6 @@ function ApiKeysMobileList({
 export function ApiKeysTable() {
   const { t } = useTranslation()
   const { refreshTrigger } = useApiKeys()
-  const columns = useApiKeysColumns()
   const [rowSelection, setRowSelection] = useState({})
   const [sorting, setSorting] = useState<SortingState>([])
   const [columnVisibility, setColumnVisibility] = useState<VisibilityState>({})
@@ -283,6 +297,26 @@ export function ApiKeysTable() {
   })
 
   const apiKeys = data?.items || []
+  const apiKeyIds = apiKeys.map((apiKey) => apiKey.id)
+  const apiKeyUsageQueryKey = apiKeyIds.join(',')
+
+  const {
+    data: usageStats = {},
+    isLoading: usageLoading,
+    isError: usageError,
+  } = useQuery({
+    queryKey: ['api-key-usage-batch', apiKeyUsageQueryKey, refreshTrigger],
+    enabled: apiKeyIds.length > 0,
+    queryFn: async () => {
+      const res = await getApiKeyUsageStatsBatch(apiKeyIds)
+      if (!res.success || !res.data) {
+        throw new Error(res.message || '获取 API Key 用量失败')
+      }
+      return res.data
+    },
+    staleTime: 60 * 1000,
+  })
+  const columns = useApiKeysColumns(usageStats, usageLoading, usageError)
 
   const table = useReactTable({
     data: apiKeys,
@@ -349,7 +383,15 @@ export function ApiKeysTable() {
           },
         ],
       }}
-      mobile={<ApiKeysMobileList table={table} isLoading={isLoading} />}
+      mobile={
+        <ApiKeysMobileList
+          table={table}
+          isLoading={isLoading}
+          usageStats={usageStats}
+          usageLoading={usageLoading}
+          usageError={usageError}
+        />
+      }
       getRowClassName={(row) =>
         isDisabledApiKeyRow(row.original) ? DISABLED_ROW_DESKTOP : undefined
       }

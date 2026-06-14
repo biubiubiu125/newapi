@@ -24,6 +24,7 @@ import type {
   GetApiKeysResponse,
   SearchApiKeysParams,
   ApiKeyFormData,
+  ApiKeyUsageStats,
 } from './types'
 
 // ============================================================================
@@ -113,5 +114,26 @@ export async function fetchTokenKeysBatch(ids: number[]): Promise<{
   data?: { keys: Record<number, string> }
 }> {
   const res = await api.post('/api/token/batch/keys', { ids })
+  return res.data
+}
+
+export async function getApiKeyUsageStats(
+  id: number
+): Promise<ApiResponse<ApiKeyUsageStats>> {
+  const res = await api.get(`/api/token/${id}/usage`)
+  return res.data
+}
+
+export async function getApiKeyUsageStatsBatch(
+  ids: number[]
+): Promise<ApiResponse<Record<number, ApiKeyUsageStats>>> {
+  const res = await api.post('/api/token/usage/batch', { ids })
+  return res.data
+}
+
+export async function resetApiKeyUsageStats(
+  id: number
+): Promise<ApiResponse<{ reset_at: number }>> {
+  const res = await api.post(`/api/token/${id}/usage/reset`)
   return res.data
 }

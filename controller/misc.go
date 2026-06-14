@@ -71,6 +71,7 @@ func GetStatus(c *gin.Context) {
 		"turnstile_check":             common.TurnstileCheckEnabled,
 		"turnstile_site_key":          common.TurnstileSiteKey,
 		"referral_enabled":            common.ReferralEnabled,
+		"referral_cookie_ttl_days":    common.ReferralCookieTTLDays,
 		"referral_require_approval":   common.ReferralRequireApproval,
 		"docs_link":                   operation_setting.GetGeneralSetting().DocsLink,
 		"quota_per_unit":              common.QuotaPerUnit,

@@ -199,6 +199,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 								} else {
 									model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
 									model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
+									model.RecordTokenUsage(task.PrivateData.TokenId, task.UserId, quotaDelta, common.GetTimestamp())
 									task.Quota = actualQuota // 更新任务记录的实际扣费额度
 
 									// 记录消费日志
@@ -220,6 +221,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 								if err := model.IncreaseUserQuota(task.UserId, refundQuota, false); err != nil {
 									logger.LogError(ctx, fmt.Sprintf("退还预扣费失败: %s", err.Error()))
 								} else {
+									model.RecordTokenUsage(task.PrivateData.TokenId, task.UserId, -refundQuota, common.GetTimestamp())
 									task.Quota = actualQuota // 更新任务记录的实际扣费额度
 
 									// 记录退款日志

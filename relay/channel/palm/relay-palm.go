@@ -51,6 +51,11 @@ func streamResponsePaLM2OpenAI(palmResponse *PaLMChatResponse) *dto.ChatCompleti
 }
 
 func palmStreamHandler(c *gin.Context, resp *http.Response) (*types.NewAPIError, string) {
+	var info *relaycommon.RelayInfo
+	if relayInfo, ok := c.Get("relay_info"); ok {
+		info, _ = relayInfo.(*relaycommon.RelayInfo)
+	}
+	helper.EnsureStreamStatus(c, info)
 	responseText := ""
 	responseId := helper.GetResponseID(c)
 	createdTime := common.GetTimestamp()
@@ -60,6 +65,7 @@ func palmStreamHandler(c *gin.Context, resp *http.Response) (*types.NewAPIError,
 		responseBody, err := io.ReadAll(resp.Body)
 		if err != nil {
 			common.SysLog("error reading stream response: " + err.Error())
+			helper.MarkStreamEnd(info, relaycommon.StreamEndReasonScannerErr, err)
 			stopChan <- true
 			return
 		}
@@ -68,6 +74,7 @@ func palmStreamHandler(c *gin.Context, resp *http.Response) (*types.NewAPIError,
 		err = json.Unmarshal(responseBody, &palmResponse)
 		if err != nil {
 			common.SysLog("error unmarshalling stream response: " + err.Error())
+			helper.MarkStreamEnd(info, relaycommon.StreamEndReasonHandlerStop, err)
 			stopChan <- true
 			return
 		}
@@ -80,24 +87,41 @@ func palmStreamHandler(c *gin.Context, resp *http.Response) (*types.NewAPIError,
 		jsonResponse, err := json.Marshal(fullTextResponse)
 		if err != nil {
 			common.SysLog("error marshalling stream response: " + err.Error())
+			helper.MarkStreamEnd(info, relaycommon.StreamEndReasonHandlerStop, err)
 			stopChan <- true
 			return
 		}
 		dataChan <- string(jsonResponse)
+		helper.MarkStreamEnd(info, relaycommon.StreamEndReasonEOF, nil)
 		stopChan <- true
 	}()
 	helper.SetEventStreamHeaders(c)
+	var streamErr *types.NewAPIError
 	c.Stream(func(w io.Writer) bool {
 		select {
 		case data := <-dataChan:
-			c.Render(-1, common.CustomEvent{Data: "data: " + data})
+			if err := helper.StreamData(c, info, data); err != nil {
+				helper.MarkStreamEnd(info, relaycommon.StreamEndReasonHandlerStop, err)
+				return false
+			}
 			return true
 		case <-stopChan:
-			c.Render(-1, common.CustomEvent{Data: "data: [DONE]"})
+			if streamErr = helper.ShouldFailoverBeforeStreamDone(info); streamErr != nil {
+				return false
+			}
+			if err := helper.StreamDone(c, info); err != nil {
+				helper.MarkStreamEnd(info, relaycommon.StreamEndReasonHandlerStop, err)
+			}
 			return false
 		}
 	})
 	service.CloseResponseBodyGracefully(resp)
+	if streamErr != nil {
+		return streamErr, responseText
+	}
+	if streamErr := helper.ErrorBeforeFirstStreamResponse(info); streamErr != nil {
+		return streamErr, responseText
+	}
 	return nil, responseText
 }
 

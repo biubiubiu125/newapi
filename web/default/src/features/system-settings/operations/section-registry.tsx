@@ -16,12 +16,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { TFunction } from 'i18next'
 import { SystemBehaviorSection } from '../general/system-behavior-section'
 import { EmailSettingsSection } from '../integrations/email-settings-section'
 import { MonitoringSettingsSection } from '../integrations/monitoring-settings-section'
 import { WorkerSettingsSection } from '../integrations/worker-settings-section'
 import { LogSettingsSection } from '../maintenance/log-settings-section'
+import { ConversationExportSection } from '../maintenance/conversation-export-section'
 import { PerformanceSection } from '../maintenance/performance-section'
+import { TelegramPushSection } from '../maintenance/telegram-push-section'
+import { TicketNotificationSection } from '../maintenance/ticket-notification-section'
 import { UpdateCheckerSection } from '../maintenance/update-checker-section'
 import type { OperationsSettings } from '../types'
 import { createSectionRegistry } from '../utils/section-registry'
@@ -91,6 +95,30 @@ const OPERATIONS_SECTIONS = [
           WorkerAllowHttpImageRequestEnabled:
             settings.WorkerAllowHttpImageRequestEnabled,
         }}
+      />
+    ),
+  },
+  {
+    id: 'export',
+    titleKey: '导出',
+    build: (settings: OperationsSettings) => (
+      <ConversationExportSection
+        retentionDays={settings.ConversationSnapshotRetentionDays}
+      />
+    ),
+  },
+  {
+    id: 'telegram-push',
+    titleKey: 'Telegram 推送',
+    build: () => <TelegramPushSection />,
+  },
+  {
+    id: 'tickets',
+    titleKey: '工单中心',
+    build: (settings: OperationsSettings) => (
+      <TicketNotificationSection
+        badgeEnabled={settings.TicketSiteBadgeEnabled}
+        emailEnabled={settings.TicketEmailNotificationEnabled}
       />
     ),
   },
@@ -168,7 +196,9 @@ const operationsRegistry = createSectionRegistry<
 
 export const OPERATIONS_SECTION_IDS = operationsRegistry.sectionIds
 export const OPERATIONS_DEFAULT_SECTION = operationsRegistry.defaultSection
-export const getOperationsSectionNavItems =
-  operationsRegistry.getSectionNavItems
+export const getOperationsSectionNavItems = (t: TFunction) =>
+  operationsRegistry
+    .getSectionNavItems(t)
+    .filter((item) => item.url !== '/system-settings/operations/tickets')
 export const getOperationsSectionContent = operationsRegistry.getSectionContent
 export const getOperationsSectionMeta = operationsRegistry.getSectionMeta

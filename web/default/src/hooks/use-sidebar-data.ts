@@ -53,6 +53,7 @@ import {
   unreadAdminSidebarBadgeCount,
 } from '@/components/layout/lib/admin-sidebar-badge-ack'
 import { getRechargeAuditSummary } from '@/features/recharge-audit/api'
+import { getTicketBadge } from '@/features/tickets/api'
 import { getAdminUsersSummary } from '@/features/users/api'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
@@ -85,6 +86,16 @@ export function useSidebarData(): SidebarData {
   const [badgeAckVersion, setBadgeAckVersion] = useState(0)
   const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
   const { counts } = useAdminReferralBadges(isAdmin)
+  const ticketBadgeQuery = useQuery({
+    queryKey: ['sidebar-ticket-badge', userId, isAdmin],
+    enabled: Boolean(userId),
+    queryFn: async () => {
+      const data = await getTicketBadge(isAdmin)
+      return normalizeSidebarBadgeCount(data?.count)
+    },
+    refetchOnWindowFocus: false,
+    staleTime: 60 * 1000,
+  })
   const adminAlertQuery = useQuery({
     queryKey: ['admin-sidebar-alert-badges', userId],
     enabled: isAdmin,
@@ -164,6 +175,7 @@ export function useSidebarData(): SidebarData {
   const orderManagementBadge = formatAdminReferralBadgeCount(
     orderManagementUnread
   )
+  const ticketBadge = formatAdminReferralBadgeCount(ticketBadgeQuery.data ?? 0)
 
   useEffect(() => {
     if (!adminAlertsLoaded) return
@@ -242,6 +254,12 @@ export function useSidebarData(): SidebarData {
             title: t('Usage Logs'),
             url: '/usage-logs/common',
             icon: FileText,
+          },
+          {
+            title: '工单中心',
+            url: '/tickets',
+            icon: Ticket,
+            badge: ticketBadge,
           },
           {
             title: t('Task Logs'),

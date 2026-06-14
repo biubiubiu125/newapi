@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+import { getAffiliateCode } from './lib/storage'
 import type {
   LoginPayload,
   LoginResponse,
@@ -85,17 +86,21 @@ export async function githubOAuthStart(clientId: string, state: string) {
 }
 
 // Get OAuth state for CSRF protection
-export async function getOAuthState(): Promise<string> {
-  const aff =
-    typeof window !== 'undefined' ? (localStorage.getItem('aff') ?? '') : ''
+export async function getOAuthState(affiliateCode?: string): Promise<string> {
+  const aff = affiliateCode?.trim() || getAffiliateCode()
   const res = await api.get('/api/oauth/state', { params: { aff } })
   if (res.data?.success) return res.data.data
   return ''
 }
 
 // WeChat login by authorization code
-export async function wechatLoginByCode(code: string): Promise<ApiResponse> {
-  const res = await api.get('/api/oauth/wechat', { params: { code } })
+export async function wechatLoginByCode(
+  code: string,
+  aff?: string
+): Promise<ApiResponse> {
+  const res = await api.get('/api/oauth/wechat', {
+    params: { code, aff: aff || undefined },
+  })
   return res.data
 }
 

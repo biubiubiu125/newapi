@@ -561,9 +561,11 @@ func (m *Message) ParseContent() []MediaContent {
 		switch contentType {
 		case ContentTypeText:
 			if text, ok := contentItem["text"].(string); ok {
+				cacheControl, _ := common.Any2Type[json.RawMessage](contentItem["cache_control"])
 				contentList = append(contentList, MediaContent{
-					Type: ContentTypeText,
-					Text: text,
+					Type:         ContentTypeText,
+					Text:         text,
+					CacheControl: cacheControl,
 				})
 			}
 
@@ -959,11 +961,12 @@ type Input struct {
 }
 
 type MediaInput struct {
-	Type     string `json:"type"`
-	Text     string `json:"text,omitempty"`
-	FileUrl  string `json:"file_url,omitempty"`
-	ImageUrl string `json:"image_url,omitempty"`
-	Detail   string `json:"detail,omitempty"` // 仅 input_image 有效
+	Type         string          `json:"type"`
+	Text         string          `json:"text,omitempty"`
+	FileUrl      string          `json:"file_url,omitempty"`
+	ImageUrl     string          `json:"image_url,omitempty"`
+	CacheControl json.RawMessage `json:"cache_control,omitempty"`
+	Detail       string          `json:"detail,omitempty"` // 仅 input_image 有效
 }
 
 // ParseInput parses the Responses API `input` field into a normalized slice of MediaInput.
@@ -1024,7 +1027,8 @@ func (r *OpenAIResponsesRequest) ParseInput() []MediaInput {
 					switch typeVal {
 					case "input_text":
 						text, _ := item["text"].(string)
-						mediaInputs = append(mediaInputs, MediaInput{Type: "input_text", Text: text})
+						cacheControl, _ := common.Any2Type[json.RawMessage](item["cache_control"])
+						mediaInputs = append(mediaInputs, MediaInput{Type: "input_text", Text: text, CacheControl: cacheControl})
 					case "input_image":
 						// image_url may be string or object with url field
 						var imageUrl string

@@ -53,6 +53,12 @@ func InitOptionMap() {
 	common.OptionMap["DrawingEnabled"] = strconv.FormatBool(common.DrawingEnabled)
 	common.OptionMap["TaskEnabled"] = strconv.FormatBool(common.TaskEnabled)
 	common.OptionMap["DataExportEnabled"] = strconv.FormatBool(common.DataExportEnabled)
+	common.OptionMap["ConversationSnapshotRetentionDays"] = strconv.Itoa(common.ConversationSnapshotRetentionDays)
+	common.OptionMap["TicketSiteBadgeEnabled"] = strconv.FormatBool(common.TicketSiteBadgeEnabled)
+	common.OptionMap["TicketEmailNotificationEnabled"] = strconv.FormatBool(common.TicketEmailNotificationEnabled)
+	common.OptionMap["TelegramPushBotToken"] = common.TelegramPushBotToken
+	common.OptionMap["TelegramPushChatId"] = common.TelegramPushChatId
+	common.OptionMap["TelegramPushDisplayName"] = common.TelegramPushDisplayName
 	common.OptionMap["ChannelDisableThreshold"] = strconv.FormatFloat(common.ChannelDisableThreshold, 'f', -1, 64)
 	common.OptionMap["EmailDomainRestrictionEnabled"] = strconv.FormatBool(common.EmailDomainRestrictionEnabled)
 	common.OptionMap["EmailAliasRestrictionEnabled"] = strconv.FormatBool(common.EmailAliasRestrictionEnabled)
@@ -377,6 +383,10 @@ func updateOptionMap(key string, value string) (err error) {
 			common.TaskEnabled = boolValue
 		case "DataExportEnabled":
 			common.DataExportEnabled = boolValue
+		case "TicketSiteBadgeEnabled":
+			common.TicketSiteBadgeEnabled = boolValue
+		case "TicketEmailNotificationEnabled":
+			common.TicketEmailNotificationEnabled = boolValue
 		case "DefaultCollapseSidebar":
 			common.DefaultCollapseSidebar = boolValue
 		case "MjNotifyEnabled":
@@ -599,6 +609,14 @@ func updateOptionMap(key string, value string) (err error) {
 		common.DataExportInterval, _ = strconv.Atoi(value)
 	case "DataExportDefaultTime":
 		common.DataExportDefaultTime = value
+	case "ConversationSnapshotRetentionDays":
+		common.ConversationSnapshotRetentionDays, _ = strconv.Atoi(value)
+	case "TelegramPushBotToken":
+		common.TelegramPushBotToken = value
+	case "TelegramPushChatId":
+		common.TelegramPushChatId = value
+	case "TelegramPushDisplayName":
+		common.TelegramPushDisplayName = value
 	case "ModelRatio":
 		err = ratio_setting.UpdateModelRatioByJSONString(value)
 	case "GroupRatio":

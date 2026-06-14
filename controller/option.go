@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -229,6 +230,10 @@ func UpdateOption(c *gin.Context) {
 	default:
 		option.Value = fmt.Sprintf("%v", option.Value)
 	}
+	previousAnnouncements := ""
+	if option.Key == "console_setting.announcements" {
+		previousAnnouncements = console_setting.GetConsoleSetting().Announcements
+	}
 	switch option.Key {
 	default:
 		if isPaymentComplianceOptionKey(option.Key) {
@@ -382,6 +387,15 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
+	case "ConversationSnapshotRetentionDays":
+		days, parseErr := strconv.Atoi(strings.TrimSpace(option.Value.(string)))
+		if parseErr != nil || days < 0 || days > 3650 {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": "对话快照保留天数必须是 0-3650 的整数，0 表示不自动清理",
+			})
+			return
+		}
 	case "console_setting.api_info":
 		err = console_setting.ValidateConsoleSettings(option.Value.(string), "ApiInfo")
 		if err != nil {
@@ -423,6 +437,11 @@ func UpdateOption(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if option.Key == "console_setting.announcements" {
+		if _, err := service.AutoPushChangedAnnouncements(previousAnnouncements, option.Value.(string)); err != nil {
+			common.SysLog("failed to create automatic telegram announcement push: " + err.Error())
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

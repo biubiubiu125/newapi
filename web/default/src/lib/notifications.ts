@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-export type AnnouncementLike = {
+export type AnnouncementLike = string | {
   id?: unknown
   publishDate?: unknown
   content?: unknown
@@ -44,6 +44,9 @@ export function getAnnouncementKey(
   item: AnnouncementLike | null | undefined
 ): string {
   if (!item) return ''
+  if (typeof item === 'string') {
+    return `hash:${hashString(item)}`
+  }
 
   if (item.id !== undefined && item.id !== null) {
     return `id:${item.id}`

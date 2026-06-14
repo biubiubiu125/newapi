@@ -3,6 +3,8 @@ package controller
 import (
 	"context"
 	"fmt"
+	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
@@ -13,6 +15,7 @@ func processPaidTopUpCommission(ctx context.Context, tradeNo string) error {
 	// issues are audited manually and must not make gateways retry paid orders.
 	if err := referralService.ProcessTopUpCommission(tradeNo); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("referral topup commission processing failed trade_no=%s error=%q", tradeNo, err.Error()))
+		markPaidTopUpCommissionFailed(ctx, tradeNo, err)
 		return nil
 	}
 
@@ -37,6 +40,7 @@ func processPaidSubscriptionCommission(ctx context.Context, tradeNo string) erro
 	// issues are audited manually and must not make gateways retry paid orders.
 	if err := referralService.ProcessSubscriptionCommission(tradeNo); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("referral subscription commission processing failed trade_no=%s error=%q", tradeNo, err.Error()))
+		markPaidSubscriptionCommissionFailed(ctx, tradeNo, err)
 		return nil
 	}
 
@@ -64,6 +68,70 @@ func topUpReferralCommissionStatus(tradeNo string) (string, string, error) {
 		return "", "", err
 	}
 	return topUp.ReferralCommissionStatus, topUp.ReferralCommissionError, nil
+}
+
+func markPaidTopUpCommissionFailed(ctx context.Context, tradeNo string, cause error) {
+	var topUp model.TopUp
+	if err := model.DB.Select("referral_affiliate_id").Where("trade_no = ?", tradeNo).First(&topUp).Error; err != nil {
+		logger.LogError(ctx, fmt.Sprintf("referral topup commission failed-state lookup failed trade_no=%s error=%q", tradeNo, err.Error()))
+		return
+	}
+	if err := referralService.MarkCommissionJobFailed("topup", tradeNo, topUp.ReferralAffiliateId, cause); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("referral topup commission failed-state job update failed trade_no=%s error=%q", tradeNo, err.Error()))
+	}
+	update := map[string]interface{}{
+		"referral_commission_status": model.ReferralCommissionJobStatusFailed,
+		"referral_commission_error":  referralFailureMessage(cause),
+		"referral_commission_at":     time.Now().Unix(),
+	}
+	if err := model.DB.Model(&model.TopUp{}).
+		Where("trade_no = ? AND referral_commission_status NOT IN ?", tradeNo, []string{
+			model.ReferralCommissionJobStatusSucceeded,
+			model.ReferralCommissionJobStatusSkipped,
+		}).
+		Updates(update).Error; err != nil {
+		logger.LogError(ctx, fmt.Sprintf("referral topup commission failed-state order update failed trade_no=%s error=%q", tradeNo, err.Error()))
+	}
+}
+
+func markPaidSubscriptionCommissionFailed(ctx context.Context, tradeNo string, cause error) {
+	var order model.SubscriptionOrder
+	if err := model.DB.Select("referral_affiliate_id").Where("trade_no = ?", tradeNo).First(&order).Error; err != nil {
+		logger.LogError(ctx, fmt.Sprintf("referral subscription commission failed-state lookup failed trade_no=%s error=%q", tradeNo, err.Error()))
+		return
+	}
+	if err := referralService.MarkCommissionJobFailed("subscription", tradeNo, order.ReferralAffiliateId, cause); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("referral subscription commission failed-state job update failed trade_no=%s error=%q", tradeNo, err.Error()))
+	}
+	update := map[string]interface{}{
+		"referral_commission_status": model.ReferralCommissionJobStatusFailed,
+		"referral_commission_error":  referralFailureMessage(cause),
+		"referral_commission_at":     time.Now().Unix(),
+	}
+	if err := model.DB.Model(&model.SubscriptionOrder{}).
+		Where("trade_no = ? AND referral_commission_status NOT IN ?", tradeNo, []string{
+			model.ReferralCommissionJobStatusSucceeded,
+			model.ReferralCommissionJobStatusSkipped,
+		}).
+		Updates(update).Error; err != nil {
+		logger.LogError(ctx, fmt.Sprintf("referral subscription commission failed-state order update failed trade_no=%s error=%q", tradeNo, err.Error()))
+	}
+	if err := model.DB.Model(&model.TopUp{}).
+		Where("trade_no = ? AND referral_commission_status NOT IN ?", tradeNo, []string{
+			model.ReferralCommissionJobStatusSucceeded,
+			model.ReferralCommissionJobStatusSkipped,
+		}).
+		Updates(update).Error; err != nil {
+		logger.LogError(ctx, fmt.Sprintf("referral subscription commission failed-state synthetic topup update failed trade_no=%s error=%q", tradeNo, err.Error()))
+	}
+}
+
+func referralFailureMessage(cause error) string {
+	message := strings.TrimSpace(fmt.Sprint(cause))
+	if message == "" {
+		return "referral commission processing failed"
+	}
+	return message
 }
 
 func subscriptionReferralCommissionStatus(tradeNo string) (string, string, error) {

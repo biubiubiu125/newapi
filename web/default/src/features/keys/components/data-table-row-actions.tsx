@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useCallback, useState } from 'react'
+import { useQueryClient } from '@tanstack/react-query'
 import { type Row } from '@tanstack/react-table'
 import {
   Trash2,
@@ -28,6 +29,7 @@ import {
   Copy,
   Link,
   Loader2,
+  RotateCcw,
   MoreHorizontal as DotsHorizontalIcon,
 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
@@ -53,7 +55,7 @@ import {
 import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
 import { resolveChatUrl, type ChatPreset } from '@/features/chat/lib/chat-links'
 import { sendToFluent } from '@/features/chat/lib/send-to-fluent'
-import { updateApiKeyStatus } from '../api'
+import { resetApiKeyUsageStats, updateApiKeyStatus } from '../api'
 import { API_KEY_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import { apiKeySchema } from '../types'
 import { useApiKeys } from './api-keys-provider'
@@ -87,6 +89,7 @@ export function DataTableRowActions<TData>({
   row,
 }: DataTableRowActionsProps<TData>) {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const apiKey = apiKeySchema.parse(row.original)
   const {
     setOpen,
@@ -100,6 +103,7 @@ export function DataTableRowActions<TData>({
   const isEnabled = apiKey.status === API_KEY_STATUS.ENABLED
   const { chatPresets, serverAddress } = useChatPresets()
   const [isTogglingStatus, setIsTogglingStatus] = useState(false)
+  const [isResettingUsage, setIsResettingUsage] = useState(false)
   const resolvedRealKey = resolvedKeys[apiKey.id]
   const isRealKeyLoading = Boolean(loadingKeys[apiKey.id])
 
@@ -186,6 +190,24 @@ export function DataTableRowActions<TData>({
       toast.error(t(ERROR_MESSAGES.UNEXPECTED))
     } finally {
       setIsTogglingStatus(false)
+    }
+  }
+
+  const handleResetUsage = async () => {
+    setIsResettingUsage(true)
+    try {
+      const result = await resetApiKeyUsageStats(apiKey.id)
+      if (!result.success) {
+        toast.error(result.message || '重置累计用量失败')
+        return
+      }
+      toast.success('累计用量已重置')
+      queryClient.invalidateQueries({ queryKey: ['api-key-usage', apiKey.id] })
+      triggerRefresh()
+    } catch {
+      toast.error(t(ERROR_MESSAGES.UNEXPECTED))
+    } finally {
+      setIsResettingUsage(false)
     }
   }
 
@@ -288,6 +310,16 @@ export function DataTableRowActions<TData>({
             {t('CC Switch')}
             <DropdownMenuShortcut>
               <ArrowRightLeft size={16} />
+            </DropdownMenuShortcut>
+          </DropdownMenuItem>
+          <DropdownMenuItem onClick={handleResetUsage} disabled={isResettingUsage}>
+            重置累计用量
+            <DropdownMenuShortcut>
+              {isResettingUsage ? (
+                <Loader2 size={16} className='animate-spin' />
+              ) : (
+                <RotateCcw size={16} />
+              )}
             </DropdownMenuShortcut>
           </DropdownMenuItem>
           {hasChatPresets && (

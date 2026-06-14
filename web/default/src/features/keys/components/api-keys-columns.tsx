@@ -33,12 +33,13 @@ import { DataTableColumnHeader } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { API_KEY_STATUSES } from '../constants'
-import { type ApiKey } from '../types'
+import { type ApiKey, type ApiKeyUsageStats } from '../types'
 import {
   ApiKeyCell,
   ModelLimitsCell,
   IpRestrictionsCell,
 } from './api-keys-cells'
+import { ApiKeyUsageCell } from './api-key-usage-cell'
 import { DataTableRowActions } from './data-table-row-actions'
 
 function getQuotaProgressColor(percentage: number): string {
@@ -67,7 +68,11 @@ function useGroupRatios(): Record<string, number> {
   return data ?? {}
 }
 
-export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
+export function useApiKeysColumns(
+  usageStats: Record<number, ApiKeyUsageStats> = {},
+  usageLoading = false,
+  usageError = false
+): ColumnDef<ApiKey>[] {
   const { t } = useTranslation()
   const groupRatios = useGroupRatios()
   return [
@@ -265,18 +270,34 @@ export function useApiKeysColumns(): ColumnDef<ApiKey>[] {
       meta: { label: t('Created'), mobileHidden: true },
     },
     {
+      id: 'usage',
+      header: 'API Key 用量',
+      cell: ({ row }) => (
+        <ApiKeyUsageCell
+          apiKey={row.original}
+          usage={usageStats[row.original.id]}
+          isLoading={usageLoading}
+          isError={usageError}
+        />
+      ),
+      enableSorting: false,
+      meta: { label: 'API Key 用量' },
+    },
+    {
       accessorKey: 'accessed_time',
       header: ({ column }) => (
         <DataTableColumnHeader column={column} title={t('Last Used')} />
       ),
       cell: ({ row }) => {
-        const accessedTime = row.getValue('accessed_time') as number
-        if (!accessedTime) {
+        const lastUsedAt =
+          usageStats[row.original.id]?.last_used_at ??
+          (row.getValue('accessed_time') as number)
+        if (!lastUsedAt) {
           return <span className='text-muted-foreground text-xs'>-</span>
         }
         return (
           <span className='text-muted-foreground font-mono text-xs tabular-nums'>
-            {formatTimestampToDate(accessedTime)}
+            {formatTimestampToDate(lastUsedAt)}
           </span>
         )
       },

@@ -296,7 +296,21 @@ func fallbackRateLimitKey(c *gin.Context, mark string) string {
 	if key := submittedCredentialRateLimitKey(c, mark); key != "" {
 		return key
 	}
-	return sessionNonceRateLimitKey("critical_rate_limit_nonce")(c, mark)
+	if key := sessionNonceRateLimitKey("critical_rate_limit_nonce")(c, mark); key != "" {
+		return key
+	}
+	if c.IsAborted() {
+		return ""
+	}
+	return clientIPRateLimitKey(c, mark)
+}
+
+func clientIPRateLimitKey(c *gin.Context, mark string) string {
+	ip := common.GetClientIP(c)
+	if ip == "" {
+		return ""
+	}
+	return mark + ":ip:" + common.Sha1([]byte(ip))
 }
 
 func queryRateLimitKey(param string, normalizer func(string) string) func(*gin.Context, string) string {

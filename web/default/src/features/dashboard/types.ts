@@ -116,13 +116,16 @@ export interface ProcessedUserChartData {
 // Announcement Types
 // ============================================================================
 
-export interface AnnouncementItem {
+export type AnnouncementObject = {
   id?: number
+  title?: string
   content: string
   publishDate?: string
   type?: 'default' | 'ongoing' | 'success' | 'warning' | 'error'
   extra?: string
 }
+
+export type AnnouncementItem = string | AnnouncementObject
 
 // ============================================================================
 // FAQ Types

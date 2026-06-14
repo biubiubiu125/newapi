@@ -26,7 +26,7 @@ import {
 } from './section-registry.tsx'
 
 const defaultOperationsSettings: OperationsSettings = {
-  RetryTimes: 0,
+  RetryTimes: 1,
   DefaultCollapseSidebar: false,
   DemoSiteEnabled: false,
   SelfUseModeEnabled: false,
@@ -36,8 +36,10 @@ const defaultOperationsSettings: OperationsSettings = {
   AutomaticEnableChannelEnabled: false,
   AutomaticDisableKeywords: '',
   AutomaticDisableStatusCodes: '401',
-  AutomaticRetryStatusCodes:
-    '100-199,300-399,401-407,409-499,500-503,505-523,525-599',
+  AutomaticRetryStatusCodes: '400-599',
+  ConversationSnapshotRetentionDays: 30,
+  TicketSiteBadgeEnabled: true,
+  TicketEmailNotificationEnabled: false,
   'monitor_setting.auto_test_channel_enabled': false,
   'monitor_setting.auto_test_channel_minutes': 10,
   SMTPServer: '',
@@ -79,7 +81,7 @@ export function OperationsSettings() {
         status?.version as string | undefined,
         status?.start_time as number | null | undefined,
       ]}
-      loadingMessage='Loading maintenance settings...'
+      loadingMessage='正在加载运维设置...'
     />
   )
 }

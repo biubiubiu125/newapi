@@ -156,6 +156,7 @@ func streamMetaResponseZhipu2OpenAI(zhipuResponse *ZhipuStreamMetaResponse) (*dt
 }
 
 func zhipuStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	helper.EnsureStreamStatus(c, info)
 	var usage *dto.Usage
 	scanner := bufio.NewScanner(resp.Body)
 	scanner.Split(bufio.ScanLines)
@@ -180,9 +181,15 @@ func zhipuStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 				}
 			}
 		}
+		if err := scanner.Err(); err != nil {
+			helper.MarkStreamEnd(info, relaycommon.StreamEndReasonScannerErr, err)
+		} else {
+			helper.MarkStreamEnd(info, relaycommon.StreamEndReasonEOF, nil)
+		}
 		stopChan <- true
 	}()
 	helper.SetEventStreamHeaders(c)
+	var streamErr *types.NewAPIError
 	c.Stream(func(w io.Writer) bool {
 		select {
 		case data := <-dataChan:
@@ -192,7 +199,11 @@ func zhipuStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 				common.SysLog("error marshalling stream response: " + err.Error())
 				return true
 			}
-			c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonResponse)})
+			if err := helper.StreamData(c, info, string(jsonResponse)); err != nil {
+				helper.MarkStreamEnd(info, relaycommon.StreamEndReasonHandlerStop, err)
+				common.SysLog("error writing stream response: " + err.Error())
+				return false
+			}
 			return true
 		case data := <-metaChan:
 			var zhipuResponse ZhipuStreamMetaResponse
@@ -208,14 +219,29 @@ func zhipuStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 				return true
 			}
 			usage = zhipuUsage
-			c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonResponse)})
+			if err := helper.StreamData(c, info, string(jsonResponse)); err != nil {
+				helper.MarkStreamEnd(info, relaycommon.StreamEndReasonHandlerStop, err)
+				common.SysLog("error writing stream response: " + err.Error())
+				return false
+			}
 			return true
 		case <-stopChan:
-			c.Render(-1, common.CustomEvent{Data: "data: [DONE]"})
+			if streamErr = helper.ShouldFailoverBeforeStreamDone(info); streamErr != nil {
+				return false
+			}
+			if err := helper.StreamDone(c, info); err != nil {
+				helper.MarkStreamEnd(info, relaycommon.StreamEndReasonHandlerStop, err)
+			}
 			return false
 		}
 	})
 	service.CloseResponseBodyGracefully(resp)
+	if streamErr != nil {
+		return usage, streamErr
+	}
+	if streamErr := helper.ErrorBeforeFirstStreamResponse(info); streamErr != nil {
+		return usage, streamErr
+	}
 	return usage, nil
 }
 

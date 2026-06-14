@@ -290,6 +290,9 @@ export type OperationsSettings = {
   AutomaticDisableKeywords: string
   AutomaticDisableStatusCodes: string
   AutomaticRetryStatusCodes: string
+  ConversationSnapshotRetentionDays: number
+  TicketSiteBadgeEnabled: boolean
+  TicketEmailNotificationEnabled: boolean
   'monitor_setting.auto_test_channel_enabled': boolean
   'monitor_setting.auto_test_channel_minutes': number
   SMTPServer: string

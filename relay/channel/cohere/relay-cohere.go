@@ -82,6 +82,7 @@ func stopReasonCohere2OpenAI(reason string) string {
 }
 
 func cohereStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	helper.EnsureStreamStatus(c, info)
 	responseId := helper.GetResponseID(c)
 	createdTime := common.GetTimestamp()
 	usage := &dto.Usage{}
@@ -101,10 +102,16 @@ func cohereStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	})
 	dataChan := make(chan string)
 	stopChan := make(chan bool)
+	var streamErr *types.NewAPIError
 	go func() {
 		for scanner.Scan() {
 			data := scanner.Text()
 			dataChan <- data
+		}
+		if err := scanner.Err(); err != nil {
+			helper.MarkStreamEnd(info, relaycommon.StreamEndReasonScannerErr, err)
+		} else {
+			helper.MarkStreamEnd(info, relaycommon.StreamEndReasonEOF, nil)
 		}
 		stopChan <- true
 	}()
@@ -159,15 +166,30 @@ func cohereStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 				common.SysLog("error marshalling stream response: " + err.Error())
 				return true
 			}
-			c.Render(-1, common.CustomEvent{Data: "data: " + string(jsonStr)})
+			if err := helper.StreamData(c, info, string(jsonStr)); err != nil {
+				helper.MarkStreamEnd(info, relaycommon.StreamEndReasonHandlerStop, err)
+				common.SysLog("error writing stream response: " + err.Error())
+				return false
+			}
 			return true
 		case <-stopChan:
-			c.Render(-1, common.CustomEvent{Data: "data: [DONE]"})
+			if streamErr = helper.ShouldFailoverBeforeStreamDone(info); streamErr != nil {
+				return false
+			}
+			if err := helper.StreamDone(c, info); err != nil {
+				helper.MarkStreamEnd(info, relaycommon.StreamEndReasonHandlerStop, err)
+			}
 			return false
 		}
 	})
 	if usage.PromptTokens == 0 {
 		usage = service.ResponseText2Usage(c, responseText, info.UpstreamModelName, info.GetEstimatePromptTokens())
+	}
+	if streamErr != nil {
+		return usage, streamErr
+	}
+	if streamErr := helper.ErrorBeforeFirstStreamResponse(info); streamErr != nil {
+		return usage, streamErr
 	}
 	return usage, nil
 }

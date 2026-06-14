@@ -147,6 +147,10 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	})
 
 	// 对音频模型，从倒数第二个stream data中提取usage信息
+	if streamErr := helper.ErrorBeforeFirstStreamResponse(info); streamErr != nil {
+		return nil, streamErr
+	}
+
 	if isAudioModel && secondLastStreamData != "" {
 		var streamResp struct {
 			Usage *dto.Usage `json:"usage"`

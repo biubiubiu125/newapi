@@ -15,6 +15,16 @@ var AutomaticDisableKeywords = []string{
 	"Your account is not authorized",
 }
 
+var BalanceInsufficientKeywords = []string{
+	"balance",
+	"quota",
+	"insufficient",
+	"billing",
+	"credit",
+	"余额不足",
+	"额度不足",
+}
+
 func AutomaticDisableKeywordsToString() string {
 	return strings.Join(AutomaticDisableKeywords, "\n")
 }

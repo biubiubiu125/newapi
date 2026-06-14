@@ -102,10 +102,12 @@ export function SignUpForm({
       email: '',
       password: '',
       confirmPassword: '',
+      affiliateCode: '',
     },
   })
 
   const emailValue = form.watch('email')
+  const affiliateCodeValue = form.watch('affiliateCode')?.trim() ?? ''
   const emailVerificationRequired = !!status?.email_verification
   const hasUserAgreement = Boolean(status?.user_agreement_enabled)
   const hasPrivacyPolicy = Boolean(status?.privacy_policy_enabled)
@@ -114,6 +116,10 @@ export function SignUpForm({
     status?.oauth_register_enabled ??
     status?.data?.oauth_register_enabled ??
     true
+  const referralCookieTTLDays =
+    Number(
+      status?.referral_cookie_ttl_days ?? status?.data?.referral_cookie_ttl_days
+    ) || undefined
   const hasWeChatLogin = Boolean(status?.wechat_login)
   const turnstileReady = !isTurnstileEnabled || Boolean(turnstileToken)
 
@@ -142,9 +148,10 @@ export function SignUpForm({
   useEffect(() => {
     const aff = new URLSearchParams(window.location.search).get('aff')?.trim()
     if (aff) {
-      saveAffiliateCode(aff)
+      saveAffiliateCode(aff, referralCookieTTLDays)
+      form.setValue('affiliateCode', aff, { shouldValidate: true })
     }
-  }, [])
+  }, [form, referralCookieTTLDays])
 
   useEffect(() => {
     setIsVerificationCodeSent(false)
@@ -172,12 +179,14 @@ export function SignUpForm({
 
     setIsLoading(true)
     try {
+      const affiliateCode = affiliateCodeValue || getAffiliateCode()
       const res = await register({
         username: data.username,
         password: data.password,
         email: data.email || undefined,
         verification_code: verificationCode || undefined,
-        aff_code: getAffiliateCode(),
+        aff: affiliateCode,
+        aff_code: affiliateCode,
         turnstile: turnstileToken,
       })
 
@@ -226,7 +235,10 @@ export function SignUpForm({
 
     setIsWeChatSubmitting(true)
     try {
-      const res = await wechatLoginByCode(wechatCode)
+      const res = await wechatLoginByCode(
+        wechatCode,
+        affiliateCodeValue || getAffiliateCode()
+      )
       if (res?.success) {
         await handleLoginSuccess(res.data as { id?: number } | null)
         toast.success(t('Signed in via WeChat'))
@@ -374,6 +386,31 @@ export function SignUpForm({
           </>
         )}
 
+        <FormField
+          control={form.control}
+          name='affiliateCode'
+          render={({ field }) => (
+            <FormItem>
+              <FormLabel>{t('Referral code')}</FormLabel>
+              <FormControl>
+                <Input
+                  placeholder={t('Optional referral code')}
+                  autoCapitalize='characters'
+                  maxLength={32}
+                  {...field}
+                  value={field.value ?? ''}
+                />
+              </FormControl>
+              <FormDescription>
+                {t(
+                  'Optional. If you open a referral link, the code is filled automatically. A manually entered code takes priority.'
+                )}
+              </FormDescription>
+              <FormMessage />
+            </FormItem>
+          )}
+        />
+
         {/* Turnstile */}
         {isTurnstileEnabled && (
           <div className='mt-2'>
@@ -409,6 +446,7 @@ export function SignUpForm({
           <OAuthProviders
             status={status}
             disabled={isLoading || (requiresLegalConsent && !agreedToLegal)}
+            affiliateCode={affiliateCodeValue || getAffiliateCode()}
             onWeChatLogin={hasWeChatLogin ? handleOpenWeChatDialog : undefined}
             isWeChatLoading={isWeChatSubmitting}
             className='pt-2'

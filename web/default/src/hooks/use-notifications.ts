@@ -47,9 +47,12 @@ export function useNotifications() {
   // Fetch Announcements from status
   const { status, loading: statusLoading } = useStatus()
   const announcementsEnabled = status?.announcements_enabled ?? false
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  const announcements: Record<string, unknown>[] = announcementsEnabled
-    ? ((status?.announcements || []) as Record<string, unknown>[]).slice(0, 20)
+  const announcements: (Record<string, unknown> | string)[] =
+    announcementsEnabled
+      ? ((status?.announcements || []) as (Record<string, unknown> | string)[]).slice(
+          0,
+          20
+        )
     : []
 
   // Notification store
@@ -71,7 +74,7 @@ export function useNotifications() {
       noticeContent && noticeContent !== lastReadNotice ? 1 : 0
 
     const announcementsUnread = announcements.filter(
-      (item: Record<string, unknown>) => {
+      (item: Record<string, unknown> | string) => {
         const key = getAnnouncementKey(item)
         return !isAnnouncementRead(key)
       }
@@ -86,9 +89,7 @@ export function useNotifications() {
 
   const markAnnouncementsAsRead = () => {
     if (announcements.length > 0) {
-      const allKeys = announcements.map((item: Record<string, unknown>) =>
-        getAnnouncementKey(item)
-      )
+      const allKeys = announcements.map((item) => getAnnouncementKey(item))
       markAnnouncementsRead(allKeys)
     }
   }

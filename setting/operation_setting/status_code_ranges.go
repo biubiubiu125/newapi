@@ -16,22 +16,13 @@ type StatusCodeRange struct {
 
 var AutomaticDisableStatusCodeRanges = []StatusCodeRange{{Start: 401, End: 401}}
 
-// Default behavior matches legacy hardcoded retry rules in controller/relay.go shouldRetry:
-// retry for 1xx, 3xx, 4xx(except 400/408), 5xx(except 504/524), and no retry for 2xx.
+// Default behavior retries all upstream 4xx/5xx statuses so another usable
+// channel can be tried before returning the upstream error to the user.
 var AutomaticRetryStatusCodeRanges = []StatusCodeRange{
-	{Start: 100, End: 199},
-	{Start: 300, End: 399},
-	{Start: 401, End: 407},
-	{Start: 409, End: 499},
-	{Start: 500, End: 503},
-	{Start: 505, End: 523},
-	{Start: 525, End: 599},
+	{Start: 400, End: 599},
 }
 
-var alwaysSkipRetryStatusCodes = map[int]struct{}{
-	504: {},
-	524: {},
-}
+var alwaysSkipRetryStatusCodes = map[int]struct{}{}
 
 var alwaysSkipRetryCodes = map[types.ErrorCode]struct{}{
 	types.ErrorCodeBadResponseBody: {},
@@ -140,7 +131,7 @@ func ParseHTTPStatusCodeRanges(input string) ([]StatusCodeRange, error) {
 	}
 
 	if len(invalid) > 0 {
-		return nil, fmt.Errorf("invalid http status code rules: %s", strings.Join(invalid, ", "))
+		return nil, fmt.Errorf("状态码规则不正确：%s", strings.Join(invalid, ", "))
 	}
 	if len(ranges) == 0 {
 		return nil, nil

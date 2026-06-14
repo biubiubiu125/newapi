@@ -62,6 +62,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) {
 	})
 	model.UpdateUserUsedQuotaAndRequestCount(info.UserId, info.PriceData.Quota)
 	model.UpdateChannelUsedQuota(info.ChannelId, info.PriceData.Quota)
+	model.RecordTokenUsage(info.TokenId, info.UserId, info.PriceData.Quota, common.GetTimestamp())
 }
 
 // ---------------------------------------------------------------------------
@@ -163,6 +164,7 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) {
 
 	// 2. 退还令牌额度
 	taskAdjustTokenQuota(ctx, task, -quota)
+	model.RecordTokenUsage(task.PrivateData.TokenId, task.UserId, -quota, common.GetTimestamp())
 
 	// 3. 记录日志
 	other := taskBillingOther(task)
@@ -223,9 +225,11 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		logQuota = quotaDelta
 		model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
 		model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
+		model.RecordTokenUsage(task.PrivateData.TokenId, task.UserId, quotaDelta, common.GetTimestamp())
 	} else {
 		logType = model.LogTypeRefund
 		logQuota = -quotaDelta
+		model.RecordTokenUsage(task.PrivateData.TokenId, task.UserId, quotaDelta, common.GetTimestamp())
 	}
 	other := taskBillingOther(task)
 	other["task_id"] = task.TaskID

@@ -33,6 +33,7 @@ type OAuthProvidersProps = {
   status: SystemStatus | null
   disabled?: boolean
   className?: string
+  affiliateCode?: string
   onWeChatLogin?: () => void
   isWeChatLoading?: boolean
 }
@@ -49,6 +50,7 @@ export function OAuthProviders({
   status,
   disabled = false,
   className,
+  affiliateCode = '',
   onWeChatLogin,
   isWeChatLoading = false,
 }: OAuthProvidersProps) {
@@ -63,7 +65,7 @@ export function OAuthProviders({
     handleLinuxDOLogin,
     handleTelegramLogin,
     handleCustomOAuthLogin,
-  } = useOAuthLogin(status)
+  } = useOAuthLogin(status, affiliateCode)
 
   const providerButtons: ProviderButton[] = []
 

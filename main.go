@@ -112,6 +112,15 @@ func main() {
 	// Referral settlement task (pending -> available)
 	service.StartReferralSettlementTask()
 
+	// Conversation snapshot/export retention task
+	service.StartConversationSnapshotMaintenanceTask()
+
+	// Ticket maintenance task (auto-close tickets waiting on user reply)
+	service.StartTicketMaintenanceTask()
+
+	// Telegram push retry task
+	service.StartTelegramPushRetryTask()
+
 	// Wire task polling adaptor factory (breaks service -> relay import cycle)
 	service.GetTaskAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPollingAdaptor {
 		a := relay.GetTaskAdaptor(platform)

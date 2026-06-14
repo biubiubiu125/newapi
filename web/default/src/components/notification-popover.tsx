@@ -43,12 +43,15 @@ import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 
-interface AnnouncementItem {
+interface AnnouncementObject {
   type?: string
+  title?: string
   content?: string
   extra?: string
   publishDate?: string | Date
 }
+
+type AnnouncementItem = AnnouncementObject | Record<string, unknown> | string
 
 interface NotificationPopoverProps {
   open: boolean
@@ -113,6 +116,28 @@ function getRelativeTime(publishDate: string | Date, t: TFunction): string {
 
   // Over 2 years, show specific date
   return formatDateTimeObject(pubDate)
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === 'string' ? value : undefined
+}
+
+function dateValue(value: unknown): string | Date | undefined {
+  return typeof value === 'string' || value instanceof Date ? value : undefined
+}
+
+function normalizeAnnouncementItem(item: AnnouncementItem): AnnouncementObject {
+  if (typeof item === 'string') {
+    return { content: item }
+  }
+
+  return {
+    type: stringValue(item.type),
+    title: stringValue(item.title),
+    content: stringValue(item.content),
+    extra: stringValue(item.extra),
+    publishDate: dateValue(item.publishDate),
+  }
 }
 
 /**
@@ -220,7 +245,8 @@ function AnnouncementsContent({
   return (
     <ScrollArea className='h-[min(52vh,28rem)] pr-3'>
       <div className='flex flex-col'>
-        {announcements.map((item, idx) => {
+        {announcements.map((rawItem, idx) => {
+          const item = normalizeAnnouncementItem(rawItem)
           const publishDate = item.publishDate
             ? new Date(item.publishDate)
             : null
@@ -237,6 +263,9 @@ function AnnouncementsContent({
                 <div className='flex items-start gap-3'>
                   <AnnouncementDot type={item.type} />
                   <div className='flex min-w-0 flex-1 flex-col gap-2'>
+                    {item.title ? (
+                      <div className='text-sm font-medium'>{item.title}</div>
+                    ) : null}
                     <div className='text-sm'>
                       <Markdown>{item.content || ''}</Markdown>
                     </div>

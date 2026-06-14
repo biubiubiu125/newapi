@@ -82,6 +82,12 @@ var DataExportEnabled = true
 var DataExportInterval = 5         // unit: minute
 var DataExportDefaultTime = "hour" // unit: minute
 var DefaultCollapseSidebar = false // default value of collapse sidebar
+var ConversationSnapshotRetentionDays = 30
+var TicketSiteBadgeEnabled = true
+var TicketEmailNotificationEnabled = false
+var TelegramPushBotToken = ""
+var TelegramPushChatId = ""
+var TelegramPushDisplayName = "RKAPI"
 
 // Any options with "Secret", "Token" in its key won't be return by GetOptions
 
@@ -161,7 +167,7 @@ var AutomaticEnableChannelEnabled = false
 var QuotaRemindThreshold = 1000
 var PreConsumedQuota = 500
 
-var RetryTimes = 0
+var RetryTimes = 1
 
 //var RootUserEmail = ""
 

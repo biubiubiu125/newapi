@@ -330,6 +330,11 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	adminRejectReason := common.GetContextKeyString(ctx, constant.ContextKeyAdminRejectReason)
 	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
+	ctx.Set(conversationSnapshotQuotaKey, summary.Quota)
+	ctx.Set(conversationSnapshotPromptTokensKey, summary.PromptTokens)
+	ctx.Set(conversationSnapshotCompletionTokensKey, summary.CompletionTokens)
+	ctx.Set(conversationSnapshotTotalTokensKey, summary.TotalTokens)
+	ctx.Set(conversationSnapshotCacheTokensKey, summary.CacheTokens)
 
 	var tieredResult *billingexpr.TieredResult
 	tieredBillingApplied := false
@@ -343,6 +348,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			tieredBillingApplied = true
 			tieredResult = tieredRes
 			summary.Quota = composeTieredTextQuota(relayInfo, summary, tieredQuota, tieredRes)
+			ctx.Set(conversationSnapshotQuotaKey, summary.Quota)
 		}
 	}
 
@@ -368,6 +374,7 @@ func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	} else {
 		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, summary.Quota)
 		model.UpdateChannelUsedQuota(relayInfo.ChannelId, summary.Quota)
+		model.RecordTokenUsage(relayInfo.TokenId, relayInfo.UserId, summary.Quota, common.GetTimestamp())
 	}
 
 	if err := SettleBilling(ctx, relayInfo, summary.Quota); err != nil {

@@ -31,7 +31,20 @@ type LoginRequest struct {
 
 type registerRequest struct {
 	model.User
-	Aff string `json:"aff"`
+	Aff           string `json:"aff"`
+	AffCode       string `json:"aff_code"`
+	AffiliateCode string `json:"affiliate_code"`
+	InviteCode    string `json:"invite_code"`
+}
+
+func referralCodeFromRegisterRequest(req registerRequest) string {
+	for _, code := range []string{req.Aff, req.AffCode, req.AffiliateCode, req.InviteCode} {
+		code = strings.TrimSpace(code)
+		if code != "" {
+			return code
+		}
+	}
+	return ""
 }
 
 func Login(c *gin.Context) {
@@ -192,7 +205,7 @@ func Register(c *gin.Context) {
 		return
 	}
 	session := sessions.Default(c)
-	explicitCode := strings.TrimSpace(req.Aff)
+	explicitCode := referralCodeFromRegisterRequest(req)
 	if explicitCode == "" {
 		explicitCode = strings.TrimSpace(c.Query("aff"))
 	}

@@ -432,6 +432,34 @@ func decreaseTokenQuota(id int, quota int) (err error) {
 	return err
 }
 
+func TouchTokenAccessedTime(id int, accessedAt int64) error {
+	if id <= 0 {
+		return nil
+	}
+	if accessedAt <= 0 {
+		accessedAt = common.GetTimestamp()
+	}
+	var token Token
+	if err := DB.Model(&Token{}).
+		Where("id = ?", id).
+		Select("key").
+		First(&token).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	err := DB.Model(&Token{}).Where("id = ?", id).Update("accessed_time", accessedAt).Error
+	if err == nil && common.RedisEnabled && token.Key != "" {
+		gopool.Go(func() {
+			if cacheErr := cacheSetTokenField(token.Key, "accessed_time", fmt.Sprintf("%d", accessedAt)); cacheErr != nil {
+				common.SysLog("failed to update token accessed time cache: " + cacheErr.Error())
+			}
+		})
+	}
+	return err
+}
+
 // CountUserTokens returns total number of tokens for the given user, used for pagination
 func CountUserTokens(userId int) (int64, error) {
 	var total int64

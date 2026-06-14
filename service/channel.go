@@ -2,6 +2,7 @@ package service
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -11,16 +12,22 @@ import (
 	"github.com/QuantumNous/new-api/types"
 )
 
+const BalanceInsufficientDisableReasonPrefix = "[balance_insufficient]"
+
 func formatNotifyType(channelId int, status int) string {
 	return fmt.Sprintf("%s_%d_%d", dto.NotifyTypeChannelUpdate, channelId, status)
 }
 
 // disable & notify
 func DisableChannel(channelError types.ChannelError, reason string) {
+	isBalanceInsufficient := IsBalanceInsufficientMessage(reason)
+	if isBalanceInsufficient && !strings.HasPrefix(reason, BalanceInsufficientDisableReasonPrefix) {
+		reason = BalanceInsufficientDisableReasonPrefix + " " + reason
+	}
 	common.SysLog(fmt.Sprintf("通道「%s」（#%d）发生错误，准备禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, common.LocalLogPreview(reason)))
 
 	// 检查是否启用自动禁用功能
-	if !channelError.AutoBan {
+	if !channelError.AutoBan && !isBalanceInsufficient {
 		common.SysLog(fmt.Sprintf("通道「%s」（#%d）未启用自动禁用功能，跳过禁用操作", channelError.ChannelName, channelError.ChannelId))
 		return
 	}
@@ -43,10 +50,13 @@ func EnableChannel(channelId int, usingKey string, channelName string) {
 }
 
 func ShouldDisableChannel(err *types.NewAPIError) bool {
-	if !common.AutomaticDisableChannelEnabled {
+	if err == nil {
 		return false
 	}
-	if err == nil {
+	if IsBalanceInsufficientError(err) {
+		return true
+	}
+	if !common.AutomaticDisableChannelEnabled {
 		return false
 	}
 	if types.IsChannelError(err) {
@@ -75,4 +85,55 @@ func ShouldEnableChannel(newAPIError *types.NewAPIError, status int) bool {
 		return false
 	}
 	return true
+}
+
+func ShouldEnableChannelForChannel(newAPIError *types.NewAPIError, channel *model.Channel) bool {
+	if channel == nil {
+		return false
+	}
+	if !ShouldEnableChannel(newAPIError, channel.Status) {
+		return false
+	}
+	if ChannelHasBalanceInsufficientDisableReason(channel) {
+		return false
+	}
+	return true
+}
+
+func IsBalanceInsufficientError(err *types.NewAPIError) bool {
+	if err == nil {
+		return false
+	}
+	if err.StatusCode >= http.StatusBadRequest && err.StatusCode <= http.StatusNetworkAuthenticationRequired {
+		return IsBalanceInsufficientMessage(err.Error())
+	}
+	return IsBalanceInsufficientMessage(err.Error())
+}
+
+func IsBalanceInsufficientMessage(message string) bool {
+	message = strings.ToLower(strings.TrimSpace(message))
+	if message == "" {
+		return false
+	}
+	if strings.Contains(message, BalanceInsufficientDisableReasonPrefix) {
+		return true
+	}
+	search, _ := AcSearch(message, operation_setting.BalanceInsufficientKeywords, true)
+	return search
+}
+
+func ChannelHasBalanceInsufficientDisableReason(channel *model.Channel) bool {
+	if channel == nil {
+		return false
+	}
+	info := channel.GetOtherInfo()
+	if reason, ok := info["status_reason"].(string); ok && IsBalanceInsufficientMessage(reason) {
+		return true
+	}
+	for _, reason := range channel.ChannelInfo.MultiKeyDisabledReason {
+		if IsBalanceInsufficientMessage(reason) {
+			return true
+		}
+	}
+	return false
 }

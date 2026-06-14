@@ -16,11 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { Link, useSearch } from '@tanstack/react-router'
 import { useEffect } from 'react'
+import { Link, useSearch } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { useStatus } from '@/hooks/use-status'
-import { saveAffiliateCode } from '@/features/auth/lib/storage'
+import {
+  removeAffiliateCode,
+  saveAffiliateCode,
+} from '@/features/auth/lib/storage'
 import { AuthLayout } from '../auth-layout'
 import { TermsFooter } from '../components/terms-footer'
 import { SignUpForm } from './components/sign-up-form'
@@ -30,13 +33,21 @@ export function SignUp() {
   const search = useSearch({ from: '/(auth)/sign-up' })
   const { status } = useStatus()
   const referralError = (search.referral_error || '').trim()
+  const referralCookieTTLDays =
+    Number(
+      status?.referral_cookie_ttl_days ?? status?.data?.referral_cookie_ttl_days
+    ) || undefined
 
   useEffect(() => {
+    if (referralError === 'invalid') {
+      removeAffiliateCode()
+      return
+    }
     const code = (search.aff || '').trim()
     if (code) {
-      saveAffiliateCode(code)
+      saveAffiliateCode(code, referralCookieTTLDays)
     }
-  }, [search.aff])
+  }, [referralCookieTTLDays, referralError, search.aff])
 
   return (
     <AuthLayout>

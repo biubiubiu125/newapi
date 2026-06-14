@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
 
@@ -49,6 +50,7 @@ func ReferralLanding(c *gin.Context) {
 	}
 	landing, err := referralService.HandleLanding(code, serviceModelReferralClick(c))
 	if err != nil || landing == nil {
+		clearReferralAttribution(c)
 		c.Redirect(http.StatusFound, referralRegisterErrorRedirect())
 		return
 	}
@@ -327,6 +329,23 @@ func referralRegisterErrorRedirect() string {
 	q.Set("referral_error", "invalid")
 	u.RawQuery = q.Encode()
 	return u.String()
+}
+
+func clearReferralAttribution(c *gin.Context) {
+	http.SetCookie(c.Writer, &http.Cookie{
+		Name:     service.ReferralCookieName,
+		Value:    "",
+		Path:     "/",
+		MaxAge:   -1,
+		HttpOnly: true,
+		Secure:   referralRequestSecure(c),
+		SameSite: http.SameSiteLaxMode,
+	})
+	if _, exists := c.Get(sessions.DefaultKey); exists {
+		session := sessions.Default(c)
+		session.Delete("aff")
+		_ = session.Save()
+	}
 }
 
 func sanitizeReferralRedirectPath(value string) string {

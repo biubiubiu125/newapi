@@ -44,6 +44,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 	if info.StreamStatus == nil {
 		info.StreamStatus = relaycommon.NewStreamStatus()
 	}
+	if _, exists := c.Get("relay_info"); !exists {
+		c.Set("relay_info", info)
+	}
 
 	// 确保响应体总是被关闭
 	defer func() {
@@ -143,6 +146,9 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			for {
 				select {
 				case <-pingTicker.C:
+					if !info.HasClientStreamWrite() {
+						continue
+					}
 					// 使用超时机制防止写操作阻塞
 					done := make(chan error, 1)
 					gopool.Go(func() {
@@ -238,14 +244,15 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			data := scanner.Text()
 			logger.LogDebug(c, "stream scanner data: %s", data)
 
-			if len(data) < 6 {
-				continue
-			}
-			if data[:5] != "data:" && data[:6] != "[DONE]" {
-				continue
-			}
-			data = data[5:]
 			data = strings.TrimSpace(data)
+			if data == "" {
+				continue
+			}
+			if strings.HasPrefix(data, "data:") {
+				data = strings.TrimSpace(strings.TrimPrefix(data, "data:"))
+			} else if !strings.HasPrefix(data, "[DONE]") {
+				continue
+			}
 			if data == "" {
 				continue
 			}

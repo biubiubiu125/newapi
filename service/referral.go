@@ -618,10 +618,14 @@ func (s *ReferralService) HandleLanding(code string, click model.ReferralClick) 
 	go func(item model.ReferralClick) {
 		_ = model.DB.Create(&item).Error
 	}(click)
+	ttlDays := common.ReferralCookieTTLDays
+	if ttlDays <= 0 {
+		ttlDays = 30
+	}
 	return &ReferralLanding{
 		Code:          affiliate.InviteCode,
 		RedirectPath:  referralDefaultRedirect,
-		CookieTTLDays: maxInt(common.ReferralCookieTTLDays, 30),
+		CookieTTLDays: ttlDays,
 	}, nil
 }
 
@@ -1818,16 +1822,16 @@ func (s *ReferralService) ApproveAffiliate(userId int, adminUserId int, rateOver
 				return err
 			}
 			item = &model.ReferralAffiliate{
-				UserId:             userId,
-				InviteCode:         inviteCode,
-				Status:             model.ReferralAffiliateStatusApproved,
-				SourceType:         "admin_created",
-				RateOverride:       normalizedRate,
-				AcquisitionEnabled: true,
-				SettlementEnabled:  true,
-				WithdrawalEnabled:  true,
-				ApprovedBy:         adminUserId,
-				ApprovedAt:         now,
+				UserId:              userId,
+				InviteCode:          inviteCode,
+				Status:              model.ReferralAffiliateStatusApproved,
+				SourceType:          "admin_created",
+				RateOverride:        normalizedRate,
+				AcquisitionEnabled:  true,
+				SettlementEnabled:   true,
+				WithdrawalEnabled:   true,
+				ApprovedBy:          adminUserId,
+				ApprovedAt:          now,
 				PendingReviewCursor: 0,
 			}
 			if err := tx.Create(item).Error; err != nil {
@@ -2269,6 +2273,55 @@ func (s *ReferralService) moveCommissionJobToCanonicalSource(oldSourceType strin
 		oldJob.FailedAt = 0
 		oldJob.SucceededAt = 0
 		return tx.Save(&oldJob).Error
+	})
+}
+
+func (s *ReferralService) MarkCommissionJobFailed(sourceType string, tradeNo string, affiliateId int, reason error) error {
+	sourceType = strings.ToLower(strings.TrimSpace(sourceType))
+	tradeNo = strings.TrimSpace(tradeNo)
+	if sourceType == "" || tradeNo == "" {
+		return nil
+	}
+	message := strings.TrimSpace(fmt.Sprint(reason))
+	if message == "" {
+		message = "referral commission processing failed"
+	}
+	now := time.Now().Unix()
+	return model.DB.Transaction(func(tx *gorm.DB) error {
+		job := &model.ReferralCommissionJob{}
+		result := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+			Where("source_type = ? AND source_trade_no = ?", sourceType, tradeNo).
+			Find(job)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			job = &model.ReferralCommissionJob{
+				SourceType:    sourceType,
+				SourceTradeNo: tradeNo,
+				AffiliateId:   affiliateId,
+			}
+			if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(job).Error; err != nil {
+				return err
+			}
+			job = &model.ReferralCommissionJob{}
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+				Where("source_type = ? AND source_trade_no = ?", sourceType, tradeNo).
+				First(job).Error; err != nil {
+				return err
+			}
+		}
+		if job.Status == model.ReferralCommissionJobStatusSucceeded || job.Status == model.ReferralCommissionJobStatusSkipped {
+			return nil
+		}
+		if job.AffiliateId <= 0 && affiliateId > 0 {
+			job.AffiliateId = affiliateId
+		}
+		job.Status = model.ReferralCommissionJobStatusFailed
+		job.LastError = message
+		job.FailedAt = now
+		job.LockedAt = 0
+		return tx.Save(job).Error
 	})
 }
 

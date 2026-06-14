@@ -50,7 +50,9 @@ export function AnnouncementDetailModal({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className='sm:max-w-lg'>
         <DialogHeader>
-          <DialogTitle>{t('Announcement Details')}</DialogTitle>
+          <DialogTitle>
+            {announcement?.title || t('Announcement Details')}
+          </DialogTitle>
           {announcement?.publishDate && (
             <DialogDescription>
               {t('Published:')}{' '}
