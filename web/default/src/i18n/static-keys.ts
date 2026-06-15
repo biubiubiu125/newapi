@@ -215,6 +215,8 @@ export const STATIC_I18N_KEYS = [
 
   // Channel Affinity section
   'Channel Affinity',
+  'Keep affinity when channel is disabled',
+  'When enabled, keep the affinity entry even if the affinity channel is disabled or no longer usable for the current group/model. Leave it off to delete the entry and select another channel.',
 
   // Models constants
   'Exact Match',

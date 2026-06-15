@@ -17,9 +17,10 @@ func SetApiRouter(router *gin.Engine) {
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))
 	apiRouter.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
 	apiRouter.Use(middleware.GlobalAPIRateLimit())
+	anonymousRequestBodyLimit := middleware.AnonymousRequestBodyLimit()
 	{
 		apiRouter.GET("/setup", controller.GetSetup)
-		apiRouter.POST("/setup", controller.PostSetup)
+		apiRouter.POST("/setup", anonymousRequestBodyLimit, controller.PostSetup)
 		apiRouter.GET("/status", controller.GetStatus)
 		apiRouter.GET("/uptime/status", controller.GetUptimeKumaStatus)
 		apiRouter.GET("/models", middleware.UserAuth(), controller.DashboardListModels)
@@ -44,43 +45,43 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.GET("/rankings", middleware.HeaderNavModuleAuth("rankings"), controller.GetRankings)
 		apiRouter.GET("/verification", middleware.EmailVerificationRateLimit(), middleware.TurnstileCheck(), controller.SendEmailVerification)
 		apiRouter.GET("/reset_password", middleware.SetupRequired(), middleware.EmailQueryRateLimit("CT:password-reset-email"), middleware.TurnstileCheck(), controller.SendPasswordResetEmail)
-		apiRouter.POST("/user/reset", middleware.SetupRequired(), middleware.EmailBodyCriticalRateLimit("CT:password-reset-submit"), controller.ResetPassword)
+		apiRouter.POST("/user/reset", middleware.SetupRequired(), anonymousRequestBodyLimit, middleware.EmailBodyCriticalRateLimit("CT:password-reset-submit"), controller.ResetPassword)
 		// OAuth routes - specific routes must come before :provider wildcard
 		apiRouter.GET("/oauth/state", middleware.SetupRequired(), middleware.SessionNonceCriticalRateLimit("CT:oauth-state", "rate_limit_oauth_state"), controller.GenerateOAuthCode)
-		apiRouter.POST("/oauth/email/bind", middleware.SetupRequired(), middleware.UserAuth(), middleware.UserCriticalRateLimit("CT:oauth-email-bind"), controller.EmailBind)
+		apiRouter.POST("/oauth/email/bind", middleware.SetupRequired(), middleware.UserAuth(), anonymousRequestBodyLimit, middleware.UserCriticalRateLimit("CT:oauth-email-bind"), controller.EmailBind)
 		// Non-standard OAuth (WeChat, Telegram) - keep original routes
 		apiRouter.GET("/oauth/wechat", middleware.SetupRequired(), middleware.SessionNonceCriticalRateLimit("CT:oauth-wechat-login", "rate_limit_oauth_wechat"), controller.WeChatAuth)
-		apiRouter.POST("/oauth/wechat/bind", middleware.SetupRequired(), middleware.UserAuth(), middleware.UserCriticalRateLimit("CT:oauth-wechat-bind"), controller.WeChatBind)
+		apiRouter.POST("/oauth/wechat/bind", middleware.SetupRequired(), middleware.UserAuth(), anonymousRequestBodyLimit, middleware.UserCriticalRateLimit("CT:oauth-wechat-bind"), controller.WeChatBind)
 		apiRouter.GET("/oauth/telegram/login", middleware.SetupRequired(), middleware.TelegramCriticalRateLimit("CT:oauth-telegram-login"), controller.TelegramLogin)
 		apiRouter.GET("/oauth/telegram/bind", middleware.SetupRequired(), middleware.SessionUserCriticalRateLimit("CT:oauth-telegram-bind"), controller.TelegramBind)
 		// Standard OAuth providers (GitHub, Discord, OIDC, LinuxDO) - unified route
 		apiRouter.GET("/oauth/:provider", middleware.SetupRequired(), middleware.SessionFieldCriticalRateLimit("CT:oauth-callback", "oauth_state"), controller.HandleOAuth)
 		apiRouter.GET("/ratio_config", middleware.SessionNonceCriticalRateLimit("CT:ratio-config", "rate_limit_ratio_config"), controller.GetRatioConfig)
 
-		apiRouter.POST("/stripe/webhook", controller.StripeWebhook)
-		apiRouter.POST("/creem/webhook", controller.CreemWebhook)
-		apiRouter.POST("/waffo/webhook", controller.WaffoWebhook)
+		apiRouter.POST("/stripe/webhook", anonymousRequestBodyLimit, controller.StripeWebhook)
+		apiRouter.POST("/creem/webhook", anonymousRequestBodyLimit, controller.CreemWebhook)
+		apiRouter.POST("/waffo/webhook", anonymousRequestBodyLimit, controller.WaffoWebhook)
 		// :env separates test vs prod URLs so the operator can register each
 		// in Pancake's matching webhook slot; handler enforces env match.
-		apiRouter.POST("/waffo-pancake/webhook/:env", controller.WaffoPancakeWebhook)
+		apiRouter.POST("/waffo-pancake/webhook/:env", anonymousRequestBodyLimit, controller.WaffoPancakeWebhook)
 
 		// Universal secure verification routes
 		apiRouter.POST("/verify", middleware.UserAuth(), middleware.UserCriticalRateLimit("CT:secure-verify"), controller.UniversalVerify)
 
 		userRoute := apiRouter.Group("/user")
 		{
-			userRoute.POST("/register", middleware.SetupRequired(), middleware.RegisterCriticalRateLimit("CT:user-register"), middleware.TurnstileCheck(), controller.Register)
-			userRoute.POST("/login", middleware.SetupRequired(), middleware.UsernameCriticalRateLimit("CT:user-login"), middleware.TurnstileCheck(), controller.Login)
-			userRoute.POST("/login/2fa", middleware.SetupRequired(), middleware.SessionFieldCriticalRateLimit("CT:user-login-2fa", "pending_user_id"), controller.Verify2FALogin)
-			userRoute.POST("/passkey/login/begin", middleware.SetupRequired(), middleware.SessionNonceCriticalRateLimit("CT:passkey-login-begin", "rate_limit_passkey_login_begin"), controller.PasskeyLoginBegin)
-			userRoute.POST("/passkey/login/finish", middleware.SetupRequired(), middleware.SessionFieldCriticalRateLimit("CT:passkey-login-finish", "passkey_login_session"), controller.PasskeyLoginFinish)
+			userRoute.POST("/register", middleware.SetupRequired(), anonymousRequestBodyLimit, middleware.RegisterCriticalRateLimit("CT:user-register"), middleware.TurnstileCheck(), controller.Register)
+			userRoute.POST("/login", middleware.SetupRequired(), anonymousRequestBodyLimit, middleware.UsernameCriticalRateLimit("CT:user-login"), middleware.TurnstileCheck(), controller.Login)
+			userRoute.POST("/login/2fa", middleware.SetupRequired(), anonymousRequestBodyLimit, middleware.SessionFieldCriticalRateLimit("CT:user-login-2fa", "pending_user_id"), controller.Verify2FALogin)
+			userRoute.POST("/passkey/login/begin", middleware.SetupRequired(), anonymousRequestBodyLimit, middleware.SessionNonceCriticalRateLimit("CT:passkey-login-begin", "rate_limit_passkey_login_begin"), controller.PasskeyLoginBegin)
+			userRoute.POST("/passkey/login/finish", middleware.SetupRequired(), anonymousRequestBodyLimit, middleware.SessionFieldCriticalRateLimit("CT:passkey-login-finish", "passkey_login_session"), controller.PasskeyLoginFinish)
 			//userRoute.POST("/tokenlog", middleware.UserCriticalRateLimit("CT:token-log"), controller.TokenLog)
 			userRoute.GET("/logout", controller.Logout)
-			userRoute.POST("/epay/notify", controller.EpayNotify)
+			userRoute.POST("/epay/notify", anonymousRequestBodyLimit, controller.EpayNotify)
 			userRoute.GET("/epay/notify", controller.EpayNotify)
-			userRoute.POST("/epay/return", controller.EpayReturn)
+			userRoute.POST("/epay/return", anonymousRequestBodyLimit, controller.EpayReturn)
 			userRoute.GET("/epay/return", controller.EpayReturn)
-			userRoute.POST("/bepusdt/notify", controller.BEpusdtTopUpNotify)
+			userRoute.POST("/bepusdt/notify", anonymousRequestBodyLimit, controller.BEpusdtTopUpNotify)
 			userRoute.GET("/bepusdt/notify", controller.BEpusdtTopUpNotify)
 			userRoute.GET("/groups", controller.GetUserGroups)
 
@@ -241,11 +242,11 @@ func SetApiRouter(router *gin.Engine) {
 		}
 
 		// Subscription payment callbacks (no auth)
-		apiRouter.POST("/subscription/epay/notify", controller.SubscriptionEpayNotify)
+		apiRouter.POST("/subscription/epay/notify", anonymousRequestBodyLimit, controller.SubscriptionEpayNotify)
 		apiRouter.GET("/subscription/epay/notify", controller.SubscriptionEpayNotify)
 		apiRouter.GET("/subscription/epay/return", controller.SubscriptionEpayReturn)
-		apiRouter.POST("/subscription/epay/return", controller.SubscriptionEpayReturn)
-		apiRouter.POST("/subscription/bepusdt/notify", controller.SubscriptionBEpusdtNotify)
+		apiRouter.POST("/subscription/epay/return", anonymousRequestBodyLimit, controller.SubscriptionEpayReturn)
+		apiRouter.POST("/subscription/bepusdt/notify", anonymousRequestBodyLimit, controller.SubscriptionBEpusdtNotify)
 		apiRouter.GET("/subscription/bepusdt/notify", controller.SubscriptionBEpusdtNotify)
 		optionRoute := apiRouter.Group("/option")
 		optionRoute.Use(middleware.RootAuth())

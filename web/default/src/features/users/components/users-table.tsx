@@ -189,6 +189,7 @@ export function UsersTable() {
     onGlobalFilterChange,
     onColumnFiltersChange,
     manualPagination: true,
+    manualFiltering: true,
     pageCount: Math.ceil((data?.total || 0) / pagination.pageSize),
   })
 

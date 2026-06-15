@@ -5009,6 +5009,10 @@
     "Must be at least 0.1": "必须至少为 0.1",
     "Must be at least 0.002": "必须至少为 0.002",
     "Must be 1 or less": "必须小于或等于 1",
-    "Invalid items format": "项目格式无效"
+    "Invalid items format": "项目格式无效",
+    "Keep affinity when channel is disabled": "渠道禁用后保留亲和",
+    "When enabled, keep the affinity entry even if the affinity channel is disabled or no longer usable for the current group/model. Leave it off to delete the entry and select another channel.": "开启后，亲和到的渠道被禁用，或不再适用于当前分组/模型时，仍保留这条亲和；关闭时会删除并重新选择渠道。",
+    "渠道禁用后保留亲和": "渠道禁用后保留亲和",
+    "开启后，亲和到的渠道被禁用，或不再适用于当前分组/模型时，仍保留这条亲和；关闭时会删除并重新选择渠道。": "开启后，亲和到的渠道被禁用，或不再适用于当前分组/模型时，仍保留这条亲和；关闭时会删除并重新选择渠道。"
   }
 }

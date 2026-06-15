@@ -527,7 +527,11 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 		query = query.Where("users.role = ?", *role)
 	}
 	if status != nil {
-		query = query.Where("users.status = ?", *status)
+		if *status == -1 {
+			query = query.Where("users.deleted_at IS NOT NULL")
+		} else {
+			query = query.Where("users.deleted_at IS NULL").Where("users.status = ?", *status)
+		}
 	}
 
 	err = query.Count(&total).Error
