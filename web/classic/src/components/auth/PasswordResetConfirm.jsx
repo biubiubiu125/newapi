@@ -23,13 +23,12 @@ import {
   copy,
   showError,
   showNotice,
-  getLogo,
-  getSystemName,
 } from '../../helpers';
 import { useSearchParams, Link } from 'react-router-dom';
 import { Button, Card, Form, Typography, Banner } from '@douyinfe/semi-ui';
 import { IconMail, IconLock, IconCopy } from '@douyinfe/semi-icons';
 import { useTranslation } from 'react-i18next';
+import { useAuthBrand } from '../../hooks/common/useAuthBrand';
 
 const { Text, Title } = Typography;
 
@@ -49,8 +48,7 @@ const PasswordResetConfirm = () => {
   const [searchParams, setSearchParams] = useSearchParams();
   const [formApi, setFormApi] = useState(null);
 
-  const logo = getLogo();
-  const systemName = getSystemName();
+  const { logo, systemName } = useAuthBrand();
 
   useEffect(() => {
     let token = searchParams.get('token');

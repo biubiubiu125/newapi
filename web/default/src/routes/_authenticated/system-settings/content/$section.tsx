@@ -22,11 +22,13 @@ import {
   CONTENT_DEFAULT_SECTION,
   CONTENT_SECTION_IDS,
 } from '@/features/system-settings/content/section-registry.tsx'
+import { requireSystemSettingsModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute(
   '/_authenticated/system-settings/content/$section'
 )({
-  beforeLoad: ({ params }) => {
+  beforeLoad: async ({ params }) => {
+    await requireSystemSettingsModule()
     const validSections = CONTENT_SECTION_IDS as unknown as string[]
     if (!validSections.includes(params.section)) {
       throw redirect({

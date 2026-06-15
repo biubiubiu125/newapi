@@ -22,11 +22,13 @@ import {
   SECURITY_DEFAULT_SECTION,
   SECURITY_SECTION_IDS,
 } from '@/features/system-settings/security/section-registry.tsx'
+import { requireSystemSettingsModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute(
   '/_authenticated/system-settings/security/$section'
 )({
-  beforeLoad: ({ params }) => {
+  beforeLoad: async ({ params }) => {
+    await requireSystemSettingsModule()
     const validSections = SECURITY_SECTION_IDS as unknown as string[]
     if (!validSections.includes(params.section)) {
       throw redirect({

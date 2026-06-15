@@ -75,7 +75,7 @@ export function AdminStep({ form, rootInitialized }: AdminStepProps) {
             </FormControl>
             <FormDescription>
               {t(
-                'Only letters, numbers, underscores, and hyphens are supported, up to 20 characters. This username will be used for sign-in and account identification.'
+                'Only letters, numbers, underscores, and hyphens are supported, up to 20 characters.'
               )}
             </FormDescription>
             <FormMessage />

@@ -101,8 +101,9 @@ export const useHeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
     setLogoLoaded(false);
     if (!logo) return;
     const img = new Image();
-    img.src = logo;
     img.onload = () => setLogoLoaded(true);
+    img.onerror = () => setLogoLoaded(true);
+    img.src = logo;
   }, [logo]);
 
   // Send theme to iframe

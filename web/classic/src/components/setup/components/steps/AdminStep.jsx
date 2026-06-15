@@ -21,8 +21,8 @@ import React from 'react';
 import { Banner, Form } from '@douyinfe/semi-ui';
 import { IconUser, IconLock } from '@douyinfe/semi-icons';
 
-const USERNAME_PATTERN = /^[A-Za-z0-9]+$/;
-const REGISTER_USERNAME_MAX_LENGTH = 12;
+const USERNAME_PATTERN = /^[A-Za-z0-9_-]+$/;
+const REGISTER_USERNAME_MAX_LENGTH = 20;
 
 /**
  * 管理员账号设置步骤组件
@@ -59,7 +59,7 @@ const AdminStep = ({
             showClear
             maxLength={REGISTER_USERNAME_MAX_LENGTH}
             extraText={t(
-              '仅支持英文字母和数字，最多 12 个字符，注册后将用于登录和账户识别。',
+              '仅支持英文字母、数字、下划线和连字符，最多 20 个字符。',
             )}
             noLabel={false}
             validateStatus='default'
@@ -71,10 +71,10 @@ const AdminStep = ({
                     return Promise.resolve();
                   }
                   if (!USERNAME_PATTERN.test(value)) {
-                    return Promise.reject(t('用户名只能包含英文字母和数字'));
+                    return Promise.reject(t('用户名只能包含英文字母、数字、下划线和连字符'));
                   }
                   if (value.length > REGISTER_USERNAME_MAX_LENGTH) {
-                    return Promise.reject(t('用户名最多 12 个字符'));
+                    return Promise.reject(t('用户名最多 20 个字符'));
                   }
                   return Promise.resolve();
                 },

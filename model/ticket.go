@@ -267,34 +267,3 @@ func CountTicketAttachmentsTx(tx *gorm.DB, ticketId int) (int64, int64, error) {
 		Scan(&totalBytes).Error
 	return count, totalBytes, err
 }
-
-func AutoCloseTicketsWithoutUserReply(before int64, now int64, limit int) (int64, error) {
-	if limit <= 0 {
-		limit = 300
-	}
-	statuses := []string{TicketStatusAdminReplied, TicketStatusWaitingUser}
-	var ids []int
-	if err := DB.Model(&Ticket{}).
-		Where("status IN ?", statuses).
-		Where("last_reply_by = ?", TicketSenderAdmin).
-		Where("last_reply_at > 0 AND last_reply_at <= ?", before).
-		Order("id asc").
-		Limit(limit).
-		Pluck("id", &ids).Error; err != nil {
-		return 0, err
-	}
-	if len(ids) == 0 {
-		return 0, nil
-	}
-	tx := DB.Model(&Ticket{}).
-		Where("id IN ?", ids).
-		Where("status IN ?", statuses).
-		Where("last_reply_by = ?", TicketSenderAdmin).
-		Where("last_reply_at > 0 AND last_reply_at <= ?", before).
-		Updates(map[string]interface{}{
-			"status":     TicketStatusClosed,
-			"closed_at":  now,
-			"updated_at": now,
-		})
-	return tx.RowsAffected, tx.Error
-}

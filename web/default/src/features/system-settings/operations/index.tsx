@@ -38,7 +38,6 @@ const defaultOperationsSettings: OperationsSettings = {
   AutomaticDisableStatusCodes: '401',
   AutomaticRetryStatusCodes: '400-599',
   ConversationSnapshotRetentionDays: 30,
-  TicketSiteBadgeEnabled: true,
   TicketEmailNotificationEnabled: false,
   'monitor_setting.auto_test_channel_enabled': false,
   'monitor_setting.auto_test_channel_minutes': 10,

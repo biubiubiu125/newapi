@@ -23,12 +23,10 @@ import { UserContext } from '../../context/User';
 import { StatusContext } from '../../context/Status';
 import {
   API,
-  getLogo,
   showError,
   showInfo,
   showSuccess,
   updateAPI,
-  getSystemName,
   getOAuthProviderIcon,
   setUserData,
   onGitHubOAuthClicked,
@@ -66,6 +64,7 @@ import LinuxDoIcon from '../common/logo/LinuxDoIcon';
 import TwoFAVerification from './TwoFAVerification';
 import { useTranslation } from 'react-i18next';
 import { SiDiscord } from 'react-icons/si';
+import { useAuthBrand } from '../../hooks/common/useAuthBrand';
 
 const LoginForm = () => {
   let navigate = useNavigate();
@@ -113,8 +112,7 @@ const LoginForm = () => {
   const githubButtonText = t(githubButtonTextKeyByState[githubButtonState]);
   const [customOAuthLoading, setCustomOAuthLoading] = useState({});
 
-  const logo = getLogo();
-  const systemName = getSystemName();
+  const { logo, systemName } = useAuthBrand();
 
   let affCode = new URLSearchParams(window.location.search).get('aff');
   if (affCode) {

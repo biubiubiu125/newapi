@@ -50,6 +50,45 @@ import {
   useSidebar,
 } from '../../../../hooks/common/useSidebar';
 
+const defaultSidebarModules = {
+  chat: {
+    enabled: true,
+    playground: true,
+    chat: true,
+  },
+  console: {
+    enabled: true,
+    detail: true,
+    token: true,
+    tickets: true,
+    image2: true,
+    model_check: true,
+    log: true,
+    midjourney: true,
+    task: true,
+  },
+  personal: {
+    enabled: true,
+    topup: true,
+    referral: true,
+    personal: true,
+  },
+  admin: {
+    enabled: true,
+    channel: true,
+    models: true,
+    deployment: true,
+    subscription: true,
+    redemption: true,
+    user: true,
+    adminReferral: true,
+    recharge_audit: true,
+    ticket_management: true,
+    providerPricing: true,
+    setting: true,
+  },
+};
+
 const NotificationSettings = ({
   t,
   notificationSettings,
@@ -64,36 +103,8 @@ const NotificationSettings = ({
   // 左侧边栏设置相关状态
   const [sidebarLoading, setSidebarLoading] = useState(false);
   const [activeTabKey, setActiveTabKey] = useState('notification');
-  const [sidebarModulesUser, setSidebarModulesUser] = useState({
-    chat: {
-      enabled: true,
-      playground: true,
-      chat: true,
-    },
-    console: {
-      enabled: true,
-      detail: true,
-      token: true,
-      log: true,
-      midjourney: true,
-      task: true,
-    },
-    personal: {
-      enabled: true,
-      topup: true,
-      personal: true,
-    },
-    admin: {
-      enabled: true,
-      channel: true,
-      models: true,
-      deployment: true,
-      subscription: true,
-      redemption: true,
-      user: true,
-      setting: true,
-    },
-  });
+  const [sidebarModulesUser, setSidebarModulesUser] =
+    useState(defaultSidebarModules);
   const [adminConfig, setAdminConfig] = useState(null);
 
   // 使用后端权限验证替代前端角色判断
@@ -158,29 +169,7 @@ const NotificationSettings = ({
   };
 
   const resetSidebarModules = () => {
-    const defaultConfig = {
-      chat: { enabled: true, playground: true, chat: true },
-      console: {
-        enabled: true,
-        detail: true,
-        token: true,
-        log: true,
-        midjourney: true,
-        task: true,
-      },
-      personal: { enabled: true, topup: true, personal: true },
-      admin: {
-        enabled: true,
-        channel: true,
-        models: true,
-        deployment: true,
-        subscription: true,
-        redemption: true,
-        user: true,
-        setting: true,
-      },
-    };
-    setSidebarModulesUser(defaultConfig);
+    setSidebarModulesUser(defaultSidebarModules);
   };
 
   // 加载左侧边栏配置
@@ -210,7 +199,41 @@ const NotificationSettings = ({
           } else {
             userConf = userRes.data.data.sidebar_modules;
           }
-          setSidebarModulesUser(sanitizeSidebarConfig(userConf));
+          setSidebarModulesUser(
+            sanitizeSidebarConfig({
+              ...defaultSidebarModules,
+              ...userConf,
+              chat: {
+                ...defaultSidebarModules.chat,
+                ...(userConf.chat || {}),
+              },
+              console: {
+                ...defaultSidebarModules.console,
+                ...(userConf.console || {}),
+              },
+              personal: {
+                ...defaultSidebarModules.personal,
+                ...(userConf.personal || {}),
+              },
+              admin: {
+                ...defaultSidebarModules.admin,
+                ...(userConf.admin || {}),
+                adminReferral:
+                  userConf.admin?.adminReferral ??
+                  userConf.admin?.referral ??
+                  true,
+                providerPricing:
+                  userConf.admin?.providerPricing ??
+                  userConf.admin?.provider_price_export ??
+                  true,
+                recharge_audit:
+                  userConf.admin?.recharge_audit ??
+                  userConf.admin?.order_management ??
+                  true,
+                setting: true,
+              },
+            }),
+          );
         }
       } catch (error) {
         console.error('加载边栏配置失败:', error);
@@ -249,82 +272,62 @@ const NotificationSettings = ({
   const sectionConfigs = [
     {
       key: 'chat',
-      title: t('聊天区域'),
-      description: t('操练场和聊天功能'),
+      title: '聊天区域',
+      description: 'Playground 和聊天功能',
       modules: [
         {
           key: 'playground',
-          title: t('操练场'),
-          description: t('AI模型测试环境'),
+          title: 'Playground',
+          description: 'AI 模型测试环境',
         },
-        { key: 'chat', title: t('聊天'), description: t('聊天会话管理') },
+        { key: 'chat', title: '聊天', description: '聊天会话管理' },
       ],
     },
     {
       key: 'console',
-      title: t('控制台区域'),
-      description: t('数据管理和日志查看'),
+      title: '控制台区域',
+      description: '数据管理和日志查看',
       modules: [
-        { key: 'detail', title: t('数据看板'), description: t('系统数据统计') },
-        { key: 'token', title: t('令牌管理'), description: t('API令牌管理') },
-        { key: 'log', title: t('使用日志'), description: t('API使用记录') },
-        {
-          key: 'midjourney',
-          title: t('绘图日志'),
-          description: t('绘图任务记录'),
-        },
-        { key: 'task', title: t('任务日志'), description: t('系统任务记录') },
+        { key: 'detail', title: '数据看板', description: '系统数据统计' },
+        { key: 'token', title: '令牌管理', description: 'API 令牌管理' },
+        { key: 'tickets', title: '工单中心', description: '创建、查看和回复自己的工单' },
+        { key: 'image2', title: 'Image2生图', description: '外部图片生成入口' },
+        { key: 'model_check', title: '模型检测', description: '外部模型检测入口' },
+        { key: 'log', title: '使用日志', description: 'API 使用记录' },
+        { key: 'midjourney', title: '绘图日志', description: '绘图任务记录' },
+        { key: 'task', title: '任务日志', description: '系统任务记录' },
       ],
     },
     {
       key: 'personal',
-      title: t('个人中心区域'),
-      description: t('用户个人功能'),
+      title: '个人中心区域',
+      description: '用户个人功能',
       modules: [
-        { key: 'topup', title: t('钱包管理'), description: t('余额充值管理') },
-        {
-          key: 'personal',
-          title: t('个人设置'),
-          description: t('个人信息设置'),
-        },
+        { key: 'topup', title: '钱包管理', description: '余额充值管理' },
+        { key: 'referral', title: '推广中心', description: '邀请链接、佣金和提现' },
+        { key: 'personal', title: '个人设置', description: '个人信息设置' },
       ],
     },
-    // 管理员区域：根据后端权限控制显示
     {
       key: 'admin',
-      title: t('管理员区域'),
-      description: t('系统管理功能'),
+      title: '管理员区域',
+      description: '系统管理功能',
       modules: [
-        { key: 'channel', title: t('渠道管理'), description: t('API渠道配置') },
-        { key: 'models', title: t('模型管理'), description: t('AI模型配置') },
-        {
-          key: 'deployment',
-          title: t('模型部署'),
-          description: t('模型部署管理'),
-        },
-        {
-          key: 'subscription',
-          title: t('订阅管理'),
-          description: t('订阅套餐管理'),
-        },
-        {
-          key: 'redemption',
-          title: t('兑换码管理'),
-          description: t('兑换码生成管理'),
-        },
-        { key: 'user', title: t('用户管理'), description: t('用户账户管理') },
-        {
-          key: 'setting',
-          title: t('系统设置'),
-          description: t('系统参数配置'),
-        },
+        { key: 'channel', title: '渠道管理', description: 'API 渠道配置' },
+        { key: 'models', title: '模型管理', description: 'AI 模型配置' },
+        { key: 'deployment', title: '模型部署', description: '模型部署管理' },
+        { key: 'subscription', title: '订阅管理', description: '订阅套餐管理' },
+        { key: 'adminReferral', title: '推广管理', description: '推广员、返佣和提现管理' },
+        { key: 'recharge_audit', title: '订单管理', description: '查看充值和订阅订单' },
+        { key: 'ticket_management', title: '工单管理', description: '查看和处理用户工单' },
+        { key: 'providerPricing', title: '公开价格导出', description: '公开供应商价格数据' },
+        { key: 'redemption', title: '兑换码管理', description: '兑换码生成管理' },
+        { key: 'user', title: '用户管理', description: '用户账户管理' },
+        { key: 'setting', title: '系统设置', description: '系统设置为必需入口，不能隐藏' },
       ],
     },
   ]
-    .filter((section) => {
-      // 使用后端权限验证替代前端角色判断
-      return isSidebarSectionAllowed(section.key);
-    })
+    .filter((section) => isSidebarSectionAllowed(section.key))
     .map((section) => ({
       ...section,
       modules: section.modules.filter((module) =>
@@ -333,11 +336,9 @@ const NotificationSettings = ({
     }))
     .filter(
       (section) =>
-        // 过滤掉没有可用模块的区域
         section.modules.length > 0 && isAllowedByAdmin(section.key),
     );
 
-  // 表单提交
   const handleSubmit = () => {
     if (formApiRef.current) {
       formApiRef.current
@@ -878,66 +879,78 @@ const NotificationSettings = ({
                             .filter((module) =>
                               isAllowedByAdmin(section.key, module.key),
                             )
-                            .map((module) => (
-                              <Col
-                                key={module.key}
-                                xs={24}
-                                sm={24}
-                                md={12}
-                                lg={8}
-                                xl={8}
-                              >
-                                <Card
-                                  className={`!rounded-xl border border-gray-200 hover:border-blue-300 transition-all duration-200 ${
-                                    sidebarModulesUser[section.key]?.enabled !==
-                                    false
-                                      ? ''
-                                      : 'opacity-50'
-                                  }`}
-                                  bodyStyle={{ padding: '16px' }}
-                                  hoverable
+                            .map((module) => {
+                              const forcedVisible =
+                                section.key === 'admin' &&
+                                module.key === 'setting';
+                              return (
+                                <Col
+                                  key={module.key}
+                                  xs={24}
+                                  sm={24}
+                                  md={12}
+                                  lg={8}
+                                  xl={8}
                                 >
-                                  <div className='flex justify-between items-center h-full'>
-                                    <div className='flex-1 text-left'>
-                                      <div className='font-semibold text-sm text-gray-900 mb-1'>
-                                        {module.title}
+                                  <Card
+                                    className={`!rounded-xl border border-gray-200 hover:border-blue-300 transition-all duration-200 ${
+                                      sidebarModulesUser[section.key]
+                                        ?.enabled !== false
+                                        ? ''
+                                        : 'opacity-50'
+                                    }`}
+                                    bodyStyle={{ padding: '16px' }}
+                                    hoverable
+                                  >
+                                    <div className='flex justify-between items-center h-full'>
+                                      <div className='flex-1 text-left'>
+                                        <div className='font-semibold text-sm text-gray-900 mb-1'>
+                                          {module.title}
+                                        </div>
+                                        <Typography.Text
+                                          type='secondary'
+                                          size='small'
+                                          className='block'
+                                          style={{
+                                            fontSize: '12px',
+                                            lineHeight: '1.5',
+                                            color: 'var(--semi-color-text-2)',
+                                            marginTop: '4px',
+                                          }}
+                                        >
+                                          {module.description}
+                                        </Typography.Text>
                                       </div>
-                                      <Typography.Text
-                                        type='secondary'
-                                        size='small'
-                                        className='block'
-                                        style={{
-                                          fontSize: '12px',
-                                          lineHeight: '1.5',
-                                          color: 'var(--semi-color-text-2)',
-                                          marginTop: '4px',
-                                        }}
-                                      >
-                                        {module.description}
-                                      </Typography.Text>
+                                      <div className='ml-4'>
+                                        <Switch
+                                          checked={
+                                            forcedVisible
+                                              ? true
+                                              : sidebarModulesUser[
+                                                  section.key
+                                                ]?.[module.key] !== false
+                                          }
+                                          onChange={
+                                            forcedVisible
+                                              ? undefined
+                                              : handleModuleChange(
+                                                  section.key,
+                                                  module.key,
+                                                )
+                                          }
+                                          size='default'
+                                          disabled={
+                                            forcedVisible ||
+                                            sidebarModulesUser[section.key]
+                                              ?.enabled === false
+                                          }
+                                        />
+                                      </div>
                                     </div>
-                                    <div className='ml-4'>
-                                      <Switch
-                                        checked={
-                                          sidebarModulesUser[section.key]?.[
-                                            module.key
-                                          ] !== false
-                                        }
-                                        onChange={handleModuleChange(
-                                          section.key,
-                                          module.key,
-                                        )}
-                                        size='default'
-                                        disabled={
-                                          sidebarModulesUser[section.key]
-                                            ?.enabled === false
-                                        }
-                                      />
-                                    </div>
-                                  </div>
-                                </Card>
-                              </Col>
-                            ))}
+                                  </Card>
+                                </Col>
+                              );
+                            })}
                         </Row>
                       </div>
                     ))}

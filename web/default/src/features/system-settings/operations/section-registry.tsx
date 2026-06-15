@@ -114,10 +114,9 @@ const OPERATIONS_SECTIONS = [
   },
   {
     id: 'tickets',
-    titleKey: '工单中心',
+    titleKey: '工单通知',
     build: (settings: OperationsSettings) => (
       <TicketNotificationSection
-        badgeEnabled={settings.TicketSiteBadgeEnabled}
         emailEnabled={settings.TicketEmailNotificationEnabled}
       />
     ),
@@ -197,8 +196,6 @@ const operationsRegistry = createSectionRegistry<
 export const OPERATIONS_SECTION_IDS = operationsRegistry.sectionIds
 export const OPERATIONS_DEFAULT_SECTION = operationsRegistry.defaultSection
 export const getOperationsSectionNavItems = (t: TFunction) =>
-  operationsRegistry
-    .getSectionNavItems(t)
-    .filter((item) => item.url !== '/system-settings/operations/tickets')
+  operationsRegistry.getSectionNavItems(t)
 export const getOperationsSectionContent = operationsRegistry.getSectionContent
 export const getOperationsSectionMeta = operationsRegistry.getSectionMeta

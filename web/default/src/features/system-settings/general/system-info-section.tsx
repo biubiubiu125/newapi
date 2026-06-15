@@ -16,8 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import * as z from 'zod'
 import { useState } from 'react'
+import * as z from 'zod'
 import type { Resolver } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Upload } from 'lucide-react'
@@ -43,6 +43,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { uploadSystemLogo } from '../api'
 import { FormDirtyIndicator } from '../components/form-dirty-indicator'
 import { FormNavigationGuard } from '../components/form-navigation-guard'
 import {
@@ -54,7 +55,6 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
-import { uploadSystemLogo } from '../api'
 
 function isValidLogoValue(value: string): boolean {
   const trimmed = value.trim()
@@ -219,7 +219,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                   <FormItem>
                     <FormLabel>{t('System Name')}</FormLabel>
                     <FormControl>
-                      <Input placeholder={t('New API')} {...field} />
+                      <Input placeholder={t('RKAPI')} {...field} />
                     </FormControl>
                     <FormDescription>
                       {t('The name displayed across the application')}
@@ -268,9 +268,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                         variant='outline'
                         disabled={logoUploading}
                         onClick={() => {
-                          document
-                            .getElementById('system-logo-upload')
-                            ?.click()
+                          document.getElementById('system-logo-upload')?.click()
                         }}
                       >
                         <Upload />
@@ -280,7 +278,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                     <input
                       id='system-logo-upload'
                       type='file'
-                      accept='image/*'
+                      accept='image/png,image/jpeg,image/webp,image/gif,image/x-icon,image/vnd.microsoft.icon'
                       className='hidden'
                       onChange={async (event) => {
                         const file = event.target.files?.[0]
@@ -313,7 +311,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                     />
                     <FormDescription>
                       {t(
-                        'Use an image URL or upload a logo image. Uploaded images are stored on the server and the returned URL is saved after you submit.'
+                        'Use an image URL or upload a png, jpg, webp, gif or ico image. Uploaded images are stored on the server and the returned URL is saved after you submit.'
                       )}
                     </FormDescription>
                     <FormMessage />

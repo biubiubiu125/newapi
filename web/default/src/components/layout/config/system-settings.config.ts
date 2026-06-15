@@ -21,7 +21,6 @@ import {
   Box,
   CreditCard,
   Layout,
-  LifeBuoy,
   Settings,
   Shield,
   ShieldAlert,
@@ -78,12 +77,6 @@ function getSystemSettingsNavGroups(t: TFunction): NavGroup[] {
           title: t('Console Content'),
           icon: Layout,
           items: getContentSectionNavItems(t),
-        },
-        {
-          title: t('工单中心'),
-          icon: LifeBuoy,
-          url: '/system-settings/operations/tickets',
-          activeUrls: ['/system-settings/operations/tickets'],
         },
         {
           title: t('Operations'),

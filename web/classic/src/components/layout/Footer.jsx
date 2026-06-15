@@ -197,9 +197,11 @@ const FooterBar = () => {
               href='https://github.com/QuantumNous/new-api'
               target='_blank'
               rel='noopener noreferrer'
+              title={systemName}
+              aria-label={systemName}
               className='!text-semi-color-primary font-medium'
             >
-              New API
+              {systemName}
             </a>
           </div>
         </div>
@@ -233,9 +235,11 @@ const FooterBar = () => {
                 href='https://github.com/QuantumNous/new-api'
                 target='_blank'
                 rel='noopener noreferrer'
+                title={systemName}
+                aria-label={systemName}
                 className='!text-semi-color-primary font-medium'
               >
-                New API
+                {systemName}
               </a>
             </div>
           </div>

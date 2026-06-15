@@ -18,9 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { REFERRAL_DEFAULT_SECTION } from '@/features/referral/section-registry'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute('/_authenticated/referral/')({
-  beforeLoad: () => {
+  beforeLoad: async () => {
+    await requireSidebarModule({
+      section: 'personal',
+      module: 'referral',
+    })
     throw redirect({
       to: '/referral/$section',
       params: { section: REFERRAL_DEFAULT_SECTION },

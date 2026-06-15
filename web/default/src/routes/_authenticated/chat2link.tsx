@@ -24,8 +24,14 @@ import { toast } from 'sonner'
 import { useActiveChatKey } from '@/features/chat/hooks/use-active-chat-key'
 import { useChatPresets } from '@/features/chat/hooks/use-chat-presets'
 import { resolveChatUrl } from '@/features/chat/lib/chat-links'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute('/_authenticated/chat2link')({
+  beforeLoad: () =>
+    requireSidebarModule({
+      section: 'chat',
+      module: 'chat',
+    }),
   component: Chat2LinkPage,
 })
 

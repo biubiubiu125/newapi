@@ -17,10 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import z from 'zod'
-import { createFileRoute, redirect } from '@tanstack/react-router'
-import { useAuthStore } from '@/stores/auth-store'
+import { createFileRoute } from '@tanstack/react-router'
 import { ROLE } from '@/lib/roles'
 import { Channels } from '@/features/channels'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 const channelsSearchSchema = z.object({
   page: z.number().optional().catch(1),
@@ -33,15 +33,12 @@ const channelsSearchSchema = z.object({
 })
 
 export const Route = createFileRoute('/_authenticated/channels/')({
-  beforeLoad: () => {
-    const { auth } = useAuthStore.getState()
-
-    if (!auth.user || auth.user.role < ROLE.ADMIN) {
-      throw redirect({
-        to: '/403',
-      })
-    }
-  },
+  beforeLoad: () =>
+    requireSidebarModule({
+      section: 'admin',
+      module: 'channel',
+      minRole: ROLE.ADMIN,
+    }),
   validateSearch: channelsSearchSchema,
   component: Channels,
 })

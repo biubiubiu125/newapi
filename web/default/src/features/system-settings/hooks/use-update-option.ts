@@ -34,6 +34,7 @@ type UpdateOptionMutationRequest = UpdateOptionRequest & {
 const STATUS_RELATED_KEYS = [
   'theme.frontend',
   'SystemName',
+  'ServerAddress',
   'Logo',
   'Footer',
   'HeaderNavModules',
@@ -55,7 +56,7 @@ const NOTICE_RELATED_KEYS = ['Notice']
 
 function syncDisplayOptionToSystemConfig(request: UpdateOptionMutationRequest) {
   const value = String(request.value ?? '')
-  const { setConfig } = useSystemConfigStore.getState()
+  const { setConfig, setLoadedLogoUrl } = useSystemConfigStore.getState()
 
   switch (request.key) {
     case 'SystemName':
@@ -63,6 +64,10 @@ function syncDisplayOptionToSystemConfig(request: UpdateOptionMutationRequest) {
       break
     case 'Logo':
       setConfig({ logo: value || DEFAULT_LOGO })
+      setLoadedLogoUrl('')
+      break
+    case 'ServerAddress':
+      setConfig({ serverAddress: value.replace(/\/+$/, '') })
       break
     case 'Footer':
       setConfig({ footerHtml: value })

@@ -23,12 +23,10 @@ import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 type TicketNotificationSectionProps = {
-  badgeEnabled: boolean
   emailEnabled: boolean
 }
 
 export function TicketNotificationSection({
-  badgeEnabled,
   emailEnabled,
 }: TicketNotificationSectionProps) {
   const updateOption = useUpdateOption()
@@ -44,25 +42,16 @@ export function TicketNotificationSection({
 
   return (
     <SettingsSection
-      title='工单中心'
-      description='控制工单中心的侧边栏角标和普通邮件提醒；不启用独立站内消息中心。'
+      title='工单通知'
+      description='工单角标默认启用；这里仅控制普通邮件提醒，不启用独立站内消息中心。'
     >
-      <SettingsSwitchField
-        checked={badgeEnabled}
-        onCheckedChange={(value) =>
-          updateBoolean('TicketSiteBadgeEnabled', value)
-        }
-        label='站内角标'
-        description='侧边栏只显示待处理工单数量，用户显示自己的待处理工单，管理员显示全部待处理工单。'
-        disabled={updateOption.isPending}
-      />
       <SettingsSwitchField
         checked={emailEnabled}
         onCheckedChange={(value) =>
           updateBoolean('TicketEmailNotificationEnabled', value)
         }
         label='邮件通知'
-        description='新工单通知管理员，管理员回复通知用户；用户回复不发送邮件，邮件只包含提醒和站内链接。'
+        description='新工单通知管理员，管理员回复通知用户；用户回复不发送邮件，邮件只包含提醒和站内链接。开启前请先在系统信息中配置站点地址。'
         disabled={updateOption.isPending}
       />
     </SettingsSection>

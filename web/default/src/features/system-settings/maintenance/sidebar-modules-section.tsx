@@ -50,6 +50,9 @@ type SidebarModulesSectionProps = {
 
 type SidebarFormValues = SidebarModulesAdminConfig
 
+const isForcedEnabledModule = (sectionKey: string, moduleKey: string) =>
+  sectionKey === 'admin' && moduleKey === 'setting'
+
 const toTitleCase = (value: string) =>
   value.replace(/[_-]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
 
@@ -102,9 +105,21 @@ export function SidebarModulesSection({
         title: t('Token management'),
         description: t('Create, revoke, and audit API tokens.'),
       },
+      image2: {
+        title: 'Image2 生图',
+        description: '外部图片生成入口。',
+      },
+      model_check: {
+        title: '模型检测',
+        description: '外部模型检测入口。',
+      },
       log: {
         title: t('Usage logs'),
         description: t('Detailed request logs for investigations.'),
+      },
+      tickets: {
+        title: '工单中心',
+        description: '用户创建、查看和回复自己的工单。',
       },
       midjourney: {
         title: t('Drawing logs'),
@@ -145,6 +160,14 @@ export function SidebarModulesSection({
       user: {
         title: t('Users'),
         description: t('Administer user accounts and roles.'),
+      },
+      referral: {
+        title: t('Referral Management'),
+        description: '推广员、返佣和提现管理。',
+      },
+      ticket_management: {
+        title: '工单管理',
+        description: '管理员查看和处理所有用户工单。',
       },
       setting: {
         title: t('System settings'),
@@ -242,6 +265,10 @@ export function SidebarModulesSection({
                       title: toTitleCase(moduleKey),
                       description: t('Custom module'),
                     }
+                    const forcedEnabled = isForcedEnabledModule(
+                      sectionKey,
+                      moduleKey
+                    )
                     return (
                       <FormField
                         key={`${sectionKey}.${moduleKey}`}
@@ -253,14 +280,21 @@ export function SidebarModulesSection({
                             <SettingsSwitchContent>
                               <FormLabel>{moduleInfo.title}</FormLabel>
                               <FormDescription>
-                                {moduleInfo.description}
+                                {forcedEnabled
+                                  ? '系统设置为必需入口，不能隐藏。'
+                                  : moduleInfo.description}
                               </FormDescription>
                             </SettingsSwitchContent>
                             <FormControl>
                               <Switch
-                                checked={Boolean(field.value)}
-                                onCheckedChange={field.onChange}
+                                checked={
+                                  forcedEnabled ? true : Boolean(field.value)
+                                }
+                                onCheckedChange={
+                                  forcedEnabled ? undefined : field.onChange
+                                }
                                 disabled={
+                                  forcedEnabled ||
                                   // eslint-disable-next-line @typescript-eslint/no-explicit-any
                                   !form.watch(`${sectionKey}.enabled` as any)
                                 }

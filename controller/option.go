@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -23,6 +24,24 @@ import (
 )
 
 const systemLogoPublicPrefix = "/system-assets/"
+
+func normalizeSystemLogoURL(value string) string {
+	logo := strings.TrimSpace(value)
+	if logo == "" {
+		return ""
+	}
+	lower := strings.ToLower(logo)
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") {
+		if parsed, err := url.Parse(logo); err == nil && strings.HasPrefix(parsed.Path, systemLogoPublicPrefix) {
+			return parsed.Path
+		}
+		return logo
+	}
+	if strings.HasPrefix(lower, "http://") || strings.HasPrefix(lower, "https://") || strings.HasPrefix(lower, "data:") {
+		return logo
+	}
+	return logo
+}
 
 var completionRatioMetaOptionKeys = []string{
 	"ModelPrice",
@@ -84,7 +103,7 @@ func buildCompletionRatioMetaValue(optionValues map[string]string) string {
 func UploadSystemLogo(c *gin.Context) {
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
-		common.ApiErrorMsg(c, "please choose image file")
+		common.ApiErrorMsg(c, "请选择图片文件")
 		return
 	}
 	file, err := fileHeader.Open()
@@ -100,12 +119,13 @@ func UploadSystemLogo(c *gin.Context) {
 		return
 	}
 	if len(data) > 5*1024*1024 {
-		common.ApiErrorMsg(c, "image size must not exceed 5 MB")
+		common.ApiErrorMsg(c, "图片大小不能超过 5 MB")
 		return
 	}
 	contentType := http.DetectContentType(data)
-	if !strings.HasPrefix(strings.ToLower(contentType), "image/") {
-		common.ApiErrorMsg(c, "only image upload is supported")
+	ext, ok := systemAssetExtensionFromContentType(contentType)
+	if !ok {
+		common.ApiErrorMsg(c, "仅支持 png、jpg、jpeg、webp、gif、ico 图片")
 		return
 	}
 	dir, err := ensureSystemAssetDir()
@@ -113,14 +133,15 @@ func UploadSystemLogo(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	ext := systemAssetExtensionFromContentType(contentType)
 	name := fmt.Sprintf("logo-%d-%s%s", time.Now().UnixMilli(), strings.ToLower(common.GetRandomString(8)), ext)
 	fullPath := filepath.Join(dir, name)
 	if err := os.WriteFile(fullPath, data, 0o644); err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"url": systemLogoPublicPrefix + name})
+	common.ApiSuccess(c, gin.H{
+		"url": normalizeSystemLogoURL(systemLogoPublicPrefix + name),
+	})
 }
 
 func GetSystemAsset(c *gin.Context) {
@@ -151,20 +172,20 @@ func ensureSystemAssetDir() (string, error) {
 	return dir, nil
 }
 
-func systemAssetExtensionFromContentType(contentType string) string {
+func systemAssetExtensionFromContentType(contentType string) (string, bool) {
 	switch strings.ToLower(strings.TrimSpace(contentType)) {
 	case "image/png":
-		return ".png"
+		return ".png", true
 	case "image/jpeg":
-		return ".jpg"
+		return ".jpg", true
 	case "image/webp":
-		return ".webp"
+		return ".webp", true
 	case "image/gif":
-		return ".gif"
-	case "image/svg+xml":
-		return ".svg"
+		return ".gif", true
+	case "image/x-icon", "image/vnd.microsoft.icon":
+		return ".ico", true
 	default:
-		return ".bin"
+		return "", false
 	}
 }
 

@@ -16,19 +16,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, redirect } from '@tanstack/react-router'
-import { useAuthStore } from '@/stores/auth-store'
+import { createFileRoute } from '@tanstack/react-router'
 import { ProviderPriceExport } from '@/features/provider-price-export'
 import { ROLE } from '@/lib/roles'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute(
   '/_authenticated/provider-price-export/'
 )({
-  beforeLoad: () => {
-    const { auth } = useAuthStore.getState()
-    if (!auth.user || auth.user.role < ROLE.ADMIN) {
-      throw redirect({ to: '/403' })
-    }
-  },
+  beforeLoad: () =>
+    requireSidebarModule({
+      section: 'admin',
+      module: 'provider_price_export',
+      minRole: ROLE.ADMIN,
+    }),
   component: ProviderPriceExport,
 })

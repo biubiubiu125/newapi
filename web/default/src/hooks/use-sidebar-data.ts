@@ -23,6 +23,7 @@ import {
   FileText,
   FlaskConical,
   Image,
+  ScanSearch,
   Key,
   LayoutDashboard,
   ListTodo,
@@ -85,12 +86,23 @@ export function useSidebarData(): SidebarData {
   const userId = user?.id
   const [badgeAckVersion, setBadgeAckVersion] = useState(0)
   const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
+  const isRoot = Boolean(userRole && userRole >= ROLE.SUPER_ADMIN)
   const { counts } = useAdminReferralBadges(isAdmin)
-  const ticketBadgeQuery = useQuery({
-    queryKey: ['sidebar-ticket-badge', userId, isAdmin],
+  const userTicketBadgeQuery = useQuery({
+    queryKey: ['sidebar-ticket-badge', userId, 'self'],
     enabled: Boolean(userId),
     queryFn: async () => {
-      const data = await getTicketBadge(isAdmin)
+      const data = await getTicketBadge(false)
+      return normalizeSidebarBadgeCount(data?.count)
+    },
+    refetchOnWindowFocus: false,
+    staleTime: 60 * 1000,
+  })
+  const adminTicketBadgeQuery = useQuery({
+    queryKey: ['sidebar-ticket-badge', userId, 'admin'],
+    enabled: Boolean(userId && isAdmin),
+    queryFn: async () => {
+      const data = await getTicketBadge(true)
       return normalizeSidebarBadgeCount(data?.count)
     },
     refetchOnWindowFocus: false,
@@ -175,7 +187,12 @@ export function useSidebarData(): SidebarData {
   const orderManagementBadge = formatAdminReferralBadgeCount(
     orderManagementUnread
   )
-  const ticketBadge = formatAdminReferralBadgeCount(ticketBadgeQuery.data ?? 0)
+  const userTicketBadge = formatAdminReferralBadgeCount(
+    userTicketBadgeQuery.data ?? 0
+  )
+  const adminTicketBadge = formatAdminReferralBadgeCount(
+    adminTicketBadgeQuery.data ?? 0
+  )
 
   useEffect(() => {
     if (!adminAlertsLoaded) return
@@ -248,7 +265,14 @@ export function useSidebarData(): SidebarData {
             url: 'https://image.rkai6.com',
             icon: Image,
             external: true,
-            configUrls: ['/keys'],
+            configUrls: ['sidebar:console.image2'],
+          },
+          {
+            title: '模型检测',
+            url: 'https://cx.rkai6.com/',
+            icon: ScanSearch,
+            external: true,
+            configUrls: ['sidebar:console.model_check'],
           },
           {
             title: t('Usage Logs'),
@@ -256,16 +280,22 @@ export function useSidebarData(): SidebarData {
             icon: FileText,
           },
           {
+            title: t('Drawing Logs'),
+            url: '/usage-logs/drawing',
+            configUrls: ['/usage-logs/drawing'],
+            icon: Image,
+          },
+          {
             title: '工单中心',
             url: '/tickets',
             icon: Ticket,
-            badge: ticketBadge,
+            configUrls: ['/tickets'],
+            badge: userTicketBadge,
           },
           {
             title: t('Task Logs'),
             url: '/usage-logs/task',
-            activeUrls: ['/usage-logs/drawing'],
-            configUrls: ['/usage-logs/drawing', '/usage-logs/task'],
+            configUrls: ['/usage-logs/task'],
             icon: ListTodo,
           },
         ],
@@ -338,6 +368,13 @@ export function useSidebarData(): SidebarData {
             ],
           },
           {
+            title: '工单管理',
+            url: '/admin-tickets',
+            icon: Ticket,
+            configUrls: ['/admin-tickets'],
+            badge: adminTicketBadge,
+          },
+          {
             title: t('Redemption Codes'),
             url: '/redemption-codes',
             icon: Ticket,
@@ -362,12 +399,16 @@ export function useSidebarData(): SidebarData {
             url: '/provider-price-export',
             icon: BadgeDollarSign,
           },
-          {
-            title: t('System Settings'),
-            url: '/system-settings/site',
-            activeUrls: ['/system-settings'],
-            icon: Settings,
-          },
+          ...(isRoot
+            ? [
+                {
+                  title: t('System Settings'),
+                  url: '/system-settings/site',
+                  activeUrls: ['/system-settings'],
+                  icon: Settings,
+                },
+              ]
+            : []),
         ],
       },
     ],

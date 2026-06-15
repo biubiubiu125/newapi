@@ -53,6 +53,7 @@ import { Route as AuthenticatedModelsIndexRouteImport } from './routes/_authenti
 import { Route as AuthenticatedKeysIndexRouteImport } from './routes/_authenticated/keys/index'
 import { Route as AuthenticatedDashboardIndexRouteImport } from './routes/_authenticated/dashboard/index'
 import { Route as AuthenticatedChannelsIndexRouteImport } from './routes/_authenticated/channels/index'
+import { Route as AuthenticatedAdminTicketsIndexRouteImport } from './routes/_authenticated/admin-tickets/index'
 import { Route as AuthenticatedAdminReferralIndexRouteImport } from './routes/_authenticated/admin-referral/index'
 import { Route as AuthenticatedUsageLogsSectionRouteImport } from './routes/_authenticated/usage-logs/$section'
 import { Route as AuthenticatedReferralSectionRouteImport } from './routes/_authenticated/referral/$section'
@@ -310,6 +311,12 @@ const AuthenticatedChannelsIndexRoute =
     path: '/channels/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
+const AuthenticatedAdminTicketsIndexRoute =
+  AuthenticatedAdminTicketsIndexRouteImport.update({
+    id: '/admin-tickets/',
+    path: '/admin-tickets/',
+    getParentRoute: () => AuthenticatedRouteRoute,
+  } as any)
 const AuthenticatedAdminReferralIndexRoute =
   AuthenticatedAdminReferralIndexRouteImport.update({
     id: '/admin-referral/',
@@ -482,6 +489,7 @@ export interface FileRoutesByFullPath {
   '/referral/$section': typeof AuthenticatedReferralSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/admin-referral/': typeof AuthenticatedAdminReferralIndexRoute
+  '/admin-tickets/': typeof AuthenticatedAdminTicketsIndexRoute
   '/channels/': typeof AuthenticatedChannelsIndexRoute
   '/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/keys/': typeof AuthenticatedKeysIndexRoute
@@ -548,6 +556,7 @@ export interface FileRoutesByTo {
   '/referral/$section': typeof AuthenticatedReferralSectionRoute
   '/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/admin-referral': typeof AuthenticatedAdminReferralIndexRoute
+  '/admin-tickets': typeof AuthenticatedAdminTicketsIndexRoute
   '/channels': typeof AuthenticatedChannelsIndexRoute
   '/dashboard': typeof AuthenticatedDashboardIndexRoute
   '/keys': typeof AuthenticatedKeysIndexRoute
@@ -618,6 +627,7 @@ export interface FileRoutesById {
   '/_authenticated/referral/$section': typeof AuthenticatedReferralSectionRoute
   '/_authenticated/usage-logs/$section': typeof AuthenticatedUsageLogsSectionRoute
   '/_authenticated/admin-referral/': typeof AuthenticatedAdminReferralIndexRoute
+  '/_authenticated/admin-tickets/': typeof AuthenticatedAdminTicketsIndexRoute
   '/_authenticated/channels/': typeof AuthenticatedChannelsIndexRoute
   '/_authenticated/dashboard/': typeof AuthenticatedDashboardIndexRoute
   '/_authenticated/keys/': typeof AuthenticatedKeysIndexRoute
@@ -687,6 +697,7 @@ export interface FileRouteTypes {
     | '/referral/$section'
     | '/usage-logs/$section'
     | '/admin-referral/'
+    | '/admin-tickets/'
     | '/channels/'
     | '/dashboard/'
     | '/keys/'
@@ -753,6 +764,7 @@ export interface FileRouteTypes {
     | '/referral/$section'
     | '/usage-logs/$section'
     | '/admin-referral'
+    | '/admin-tickets'
     | '/channels'
     | '/dashboard'
     | '/keys'
@@ -822,6 +834,7 @@ export interface FileRouteTypes {
     | '/_authenticated/referral/$section'
     | '/_authenticated/usage-logs/$section'
     | '/_authenticated/admin-referral/'
+    | '/_authenticated/admin-tickets/'
     | '/_authenticated/channels/'
     | '/_authenticated/dashboard/'
     | '/_authenticated/keys/'
@@ -1186,6 +1199,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AuthenticatedChannelsIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
+    '/_authenticated/admin-tickets/': {
+      id: '/_authenticated/admin-tickets/'
+      path: '/admin-tickets'
+      fullPath: '/admin-tickets/'
+      preLoaderRoute: typeof AuthenticatedAdminTicketsIndexRouteImport
+      parentRoute: typeof AuthenticatedRouteRoute
+    }
     '/_authenticated/admin-referral/': {
       id: '/_authenticated/admin-referral/'
       path: '/admin-referral'
@@ -1446,6 +1466,7 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedReferralSectionRoute: typeof AuthenticatedReferralSectionRoute
   AuthenticatedUsageLogsSectionRoute: typeof AuthenticatedUsageLogsSectionRoute
   AuthenticatedAdminReferralIndexRoute: typeof AuthenticatedAdminReferralIndexRoute
+  AuthenticatedAdminTicketsIndexRoute: typeof AuthenticatedAdminTicketsIndexRoute
   AuthenticatedChannelsIndexRoute: typeof AuthenticatedChannelsIndexRoute
   AuthenticatedDashboardIndexRoute: typeof AuthenticatedDashboardIndexRoute
   AuthenticatedKeysIndexRoute: typeof AuthenticatedKeysIndexRoute
@@ -1476,6 +1497,7 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedReferralSectionRoute: AuthenticatedReferralSectionRoute,
   AuthenticatedUsageLogsSectionRoute: AuthenticatedUsageLogsSectionRoute,
   AuthenticatedAdminReferralIndexRoute: AuthenticatedAdminReferralIndexRoute,
+  AuthenticatedAdminTicketsIndexRoute: AuthenticatedAdminTicketsIndexRoute,
   AuthenticatedChannelsIndexRoute: AuthenticatedChannelsIndexRoute,
   AuthenticatedDashboardIndexRoute: AuthenticatedDashboardIndexRoute,
   AuthenticatedKeysIndexRoute: AuthenticatedKeysIndexRoute,

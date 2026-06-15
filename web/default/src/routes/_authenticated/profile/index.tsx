@@ -18,7 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute } from '@tanstack/react-router'
 import { Profile } from '@/features/profile'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute('/_authenticated/profile/')({
+  beforeLoad: () =>
+    requireSidebarModule({
+      section: 'personal',
+      module: 'personal',
+      redirectTo: '/403',
+    }),
   component: Profile,
 })

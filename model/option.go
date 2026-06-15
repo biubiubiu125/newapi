@@ -54,7 +54,6 @@ func InitOptionMap() {
 	common.OptionMap["TaskEnabled"] = strconv.FormatBool(common.TaskEnabled)
 	common.OptionMap["DataExportEnabled"] = strconv.FormatBool(common.DataExportEnabled)
 	common.OptionMap["ConversationSnapshotRetentionDays"] = strconv.Itoa(common.ConversationSnapshotRetentionDays)
-	common.OptionMap["TicketSiteBadgeEnabled"] = strconv.FormatBool(common.TicketSiteBadgeEnabled)
 	common.OptionMap["TicketEmailNotificationEnabled"] = strconv.FormatBool(common.TicketEmailNotificationEnabled)
 	common.OptionMap["TelegramPushBotToken"] = common.TelegramPushBotToken
 	common.OptionMap["TelegramPushChatId"] = common.TelegramPushChatId
@@ -383,8 +382,6 @@ func updateOptionMap(key string, value string) (err error) {
 			common.TaskEnabled = boolValue
 		case "DataExportEnabled":
 			common.DataExportEnabled = boolValue
-		case "TicketSiteBadgeEnabled":
-			common.TicketSiteBadgeEnabled = boolValue
 		case "TicketEmailNotificationEnabled":
 			common.TicketEmailNotificationEnabled = boolValue
 		case "DefaultCollapseSidebar":

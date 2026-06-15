@@ -28,8 +28,8 @@ import AdminStep from './components/steps/AdminStep';
 import UsageModeStep from './components/steps/UsageModeStep';
 import CompleteStep from './components/steps/CompleteStep';
 
-const USERNAME_PATTERN = /^[A-Za-z0-9]+$/;
-const REGISTER_USERNAME_MAX_LENGTH = 12;
+const USERNAME_PATTERN = /^[A-Za-z0-9_-]+$/;
+const REGISTER_USERNAME_MAX_LENGTH = 20;
 
 const SetupWizard = () => {
   const { t } = useTranslation();
@@ -151,11 +151,11 @@ const SetupWizard = () => {
         }
         const username = formData.username.trim();
         if (!USERNAME_PATTERN.test(username)) {
-          showError(t('用户名只能包含英文字母和数字'));
+          showError(t('用户名只能包含英文字母、数字、下划线和连字符'));
           return false;
         }
         if (username.length > REGISTER_USERNAME_MAX_LENGTH) {
-          showError(t('用户名最多 12 个字符'));
+          showError(t('用户名最多 20 个字符'));
           return false;
         }
         return true;
@@ -193,12 +193,12 @@ const SetupWizard = () => {
 
       const username = values.username.trim();
       if (!USERNAME_PATTERN.test(username)) {
-        showError(t('用户名只能包含英文字母和数字'));
+        showError(t('用户名只能包含英文字母、数字、下划线和连字符'));
         return;
       }
 
       if (username.length > REGISTER_USERNAME_MAX_LENGTH) {
-        showError(t('用户名最多 12 个字符'));
+        showError(t('用户名最多 20 个字符'));
         return;
       }
 

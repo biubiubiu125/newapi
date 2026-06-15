@@ -21,12 +21,10 @@ import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import {
   API,
-  getLogo,
   showError,
   showInfo,
   showSuccess,
   updateAPI,
-  getSystemName,
   getOAuthProviderIcon,
   setUserData,
   onDiscordOAuthClicked,
@@ -64,9 +62,10 @@ import { UserContext } from '../../context/User';
 import { StatusContext } from '../../context/Status';
 import { useTranslation } from 'react-i18next';
 import { SiDiscord } from 'react-icons/si';
+import { useAuthBrand } from '../../hooks/common/useAuthBrand';
 
-const USERNAME_PATTERN = /^[A-Za-z0-9]+$/;
-const REGISTER_USERNAME_MAX_LENGTH = 12;
+const USERNAME_PATTERN = /^[A-Za-z0-9_-]+$/;
+const REGISTER_USERNAME_MAX_LENGTH = 20;
 
 const RegisterForm = () => {
   let navigate = useNavigate();
@@ -83,6 +82,7 @@ const RegisterForm = () => {
     email: '',
     verification_code: '',
     wechat_verification_code: '',
+    aff: '',
   });
   const { username, password, password2 } = inputs;
   const [userState, userDispatch] = useContext(UserContext);
@@ -114,13 +114,19 @@ const RegisterForm = () => {
   const githubTimeoutRef = useRef(null);
   const githubButtonText = t(githubButtonTextKeyByState[githubButtonState]);
 
-  const logo = getLogo();
-  const systemName = getSystemName();
+  const { logo, systemName } = useAuthBrand();
 
   let affCode = new URLSearchParams(window.location.search).get('aff');
   if (affCode) {
     localStorage.setItem('aff', affCode);
   }
+
+  useEffect(() => {
+    const storedAffCode = localStorage.getItem('aff') || '';
+    if (storedAffCode) {
+      setInputs((prev) => (prev.aff ? prev : { ...prev, aff: storedAffCode }));
+    }
+  }, []);
 
   const status = useMemo(() => {
     if (statusState?.status) return statusState.status;
@@ -192,8 +198,14 @@ const RegisterForm = () => {
     }
     setWechatCodeSubmitLoading(true);
     try {
+      const finalAffCode =
+        String(inputs.aff || '').trim() ||
+        localStorage.getItem('aff') ||
+        '';
       const res = await API.get(
-        `/api/oauth/wechat?code=${inputs.wechat_verification_code}`,
+        `/api/oauth/wechat?code=${encodeURIComponent(
+          inputs.wechat_verification_code,
+        )}&aff=${encodeURIComponent(finalAffCode)}`,
       );
       const { success, message, data } = res.data;
       if (success) {
@@ -220,11 +232,11 @@ const RegisterForm = () => {
 
   async function handleSubmit(e) {
     if (!USERNAME_PATTERN.test(username)) {
-      showInfo(t('用户名只能包含英文字母和数字'));
+      showInfo(t('用户名只能包含英文字母、数字、下划线和连字符'));
       return;
     }
     if (username.length > REGISTER_USERNAME_MAX_LENGTH) {
-      showInfo(t('用户名最多 12 个字符'));
+      showInfo(t('用户名最多 20 个字符'));
       return;
     }
     if (password.length < 8) {
@@ -246,13 +258,19 @@ const RegisterForm = () => {
       }
       setRegisterLoading(true);
       try {
-        if (!affCode) {
-          affCode = localStorage.getItem('aff');
-        }
-        inputs.aff = affCode;
+        const finalAffCode =
+          String(inputs.aff || '').trim() ||
+          affCode ||
+          localStorage.getItem('aff') ||
+          '';
+        const payload = {
+          ...inputs,
+          aff: finalAffCode,
+          aff_code: finalAffCode,
+        };
         const res = await API.post(
           `/api/user/register?turnstile=${turnstileToken}`,
-          inputs,
+          payload,
         );
         const { success, message } = res.data;
         if (success) {
@@ -596,9 +614,6 @@ const RegisterForm = () => {
                   maxLength={REGISTER_USERNAME_MAX_LENGTH}
                   onChange={(value) => handleChange('username', value)}
                   prefix={<IconUser />}
-                  extraText={t(
-                    '仅支持英文字母和数字，最多 12 个字符，注册后将用于登录和账户识别。',
-                  )}
                 />
 
                 <Form.Input
@@ -665,6 +680,23 @@ const RegisterForm = () => {
                     />
                   </>
                 )}
+
+                <Form.Input
+                  field='aff'
+                  label='推广码'
+                  placeholder='可选推广码'
+                  name='aff'
+                  onChange={(value) => {
+                    handleChange('aff', value);
+                    const nextAff = String(value || '').trim();
+                    if (nextAff) {
+                      localStorage.setItem('aff', nextAff);
+                    } else {
+                      localStorage.removeItem('aff');
+                    }
+                  }}
+                  prefix={<IconKey />}
+                />
 
                 {(hasUserAgreement || hasPrivacyPolicy) && (
                   <div className='pt-4'>

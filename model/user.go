@@ -224,12 +224,15 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 		"chat":       true,
 	}
 	defaultConfig["console"] = map[string]interface{}{
-		"enabled":    true,
-		"detail":     true,
-		"token":      true,
-		"log":        true,
-		"midjourney": true,
-		"task":       true,
+		"enabled":     true,
+		"detail":      true,
+		"token":       true,
+		"image2":      true,
+		"model_check": true,
+		"log":         true,
+		"tickets":     true,
+		"midjourney":  true,
+		"task":        true,
 	}
 	defaultConfig["personal"] = map[string]interface{}{
 		"enabled":  true,
@@ -248,6 +251,7 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 			"subscription":          true,
 			"referral":              true,
 			"adminReferral":         true,
+			"ticket_management":     true,
 			"recharge_audit":        true,
 			"provider_price_export": true,
 			"providerPricing":       true,
@@ -263,6 +267,7 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 			"subscription":          true,
 			"referral":              true,
 			"adminReferral":         true,
+			"ticket_management":     true,
 			"recharge_audit":        true,
 			"provider_price_export": true,
 			"providerPricing":       true,

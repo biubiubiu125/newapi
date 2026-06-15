@@ -59,8 +59,8 @@ import {
 import UserBindingManagementModal from './UserBindingManagementModal';
 
 const { Text, Title } = Typography;
-const USERNAME_PATTERN = /^[A-Za-z0-9]+$/;
-const REGISTER_USERNAME_MAX_LENGTH = 12;
+const USERNAME_PATTERN = /^[A-Za-z0-9_-]+$/;
+const REGISTER_USERNAME_MAX_LENGTH = 20;
 
 const EditUserModal = (props) => {
   const { t } = useTranslation();
@@ -150,11 +150,11 @@ const EditUserModal = (props) => {
   const submit = async (values) => {
     if (values.username && values.username !== inputs?.username) {
       if (!USERNAME_PATTERN.test(values.username)) {
-        showError(t('用户名只能包含英文字母和数字'));
+        showError(t('用户名只能包含英文字母、数字、下划线和连字符'));
         return;
       }
       if (values.username.length > REGISTER_USERNAME_MAX_LENGTH) {
-        showError(t('用户名最多 12 个字符'));
+        showError(t('用户名最多 20 个字符'));
         return;
       }
     }
@@ -317,7 +317,7 @@ const EditUserModal = (props) => {
                         placeholder={t('请输入新的用户名')}
                         maxLength={REGISTER_USERNAME_MAX_LENGTH}
                         extraText={t(
-                          '仅支持英文字母和数字，最多 12 个字符，注册后将用于登录和账户识别。',
+                          '仅支持英文字母、数字、下划线和连字符，最多 20 个字符。',
                         )}
                         rules={[
                           { required: true, message: t('请输入用户名') },
@@ -327,10 +327,10 @@ const EditUserModal = (props) => {
                                 return true;
                               }
                               if (!USERNAME_PATTERN.test(value)) {
-                                return new Error(t('用户名只能包含英文字母和数字'));
+                                return new Error(t('用户名只能包含英文字母、数字、下划线和连字符'));
                               }
                               if (value.length > REGISTER_USERNAME_MAX_LENGTH) {
-                                return new Error(t('用户名最多 12 个字符'));
+                                return new Error(t('用户名最多 20 个字符'));
                               }
                               return true;
                             },

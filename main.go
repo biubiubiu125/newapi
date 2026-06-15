@@ -115,9 +115,6 @@ func main() {
 	// Conversation snapshot/export retention task
 	service.StartConversationSnapshotMaintenanceTask()
 
-	// Ticket maintenance task (auto-close tickets waiting on user reply)
-	service.StartTicketMaintenanceTask()
-
 	// Telegram push retry task
 	service.StartTelegramPushRetryTask()
 

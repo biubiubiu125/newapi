@@ -949,12 +949,12 @@ func testAllChannels(notify bool) error {
 			}
 
 			// disable channel
-			if isChannelEnabled && shouldBanChannel && channel.GetAutoBan() {
+			if isChannelEnabled && shouldBanChannel && (channel.GetAutoBan() || service.IsBalanceInsufficientError(newAPIError)) {
 				processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
 			}
 
 			// enable channel
-			if !isChannelEnabled && service.ShouldEnableChannel(newAPIError, channel.Status) {
+			if !isChannelEnabled && service.ShouldEnableChannelForChannel(newAPIError, channel) {
 				service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
 			}
 

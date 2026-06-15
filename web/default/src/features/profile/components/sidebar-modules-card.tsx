@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
+import { ROLE } from '@/lib/roles'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -48,16 +49,60 @@ type SectionDef = {
 
 const REMOVED_ADMIN_MODULE_KEYS = ['risk_center', 'riskCenter'] as const
 
+const isForcedVisibleModule = (section: string, module: string) =>
+  section === 'admin' && module === 'setting'
+
+const MODULE_TEXT_OVERRIDES: Record<
+  string,
+  { title: string; description: string }
+> = {
+  'console.image2': {
+    title: 'Image2\u751f\u56fe',
+    description: '\u5916\u90e8\u56fe\u7247\u751f\u6210\u5165\u53e3',
+  },
+  'console.model_check': {
+    title: '\u6a21\u578b\u68c0\u6d4b',
+    description: '\u5916\u90e8\u6a21\u578b\u68c0\u6d4b\u5165\u53e3',
+  },
+  'console.tickets': {
+    title: '\u5de5\u5355\u4e2d\u5fc3',
+    description: '\u521b\u5efa\u3001\u67e5\u770b\u548c\u56de\u590d\u5de5\u5355',
+  },
+  'admin.setting': {
+    title: '\u7cfb\u7edf\u8bbe\u7f6e',
+    description:
+      '\u7cfb\u7edf\u8bbe\u7f6e\u4e3a\u5fc5\u9700\u5165\u53e3\uff0c\u4e0d\u80fd\u9690\u85cf',
+  },
+}
+
+function getModuleDisplayText(
+  sectionKey: string,
+  module: { key: string; title: string; description: string }
+) {
+  return MODULE_TEXT_OVERRIDES[`${sectionKey}.${module.key}`] ?? module
+}
+
 function sanitizeSidebarModulesConfig(
-  config: SidebarModulesConfig
+  config: SidebarModulesConfig,
+  role?: number
 ): SidebarModulesConfig {
   const sanitized: SidebarModulesConfig = { ...config }
+  if ((role ?? ROLE.USER) < ROLE.ADMIN) {
+    delete sanitized.admin
+    return sanitized
+  }
+
   const admin = sanitized.admin
   if (admin) {
     sanitized.admin = { ...admin }
     REMOVED_ADMIN_MODULE_KEYS.forEach((key) => {
       delete sanitized.admin[key]
     })
+    if ((role ?? ROLE.USER) >= ROLE.SUPER_ADMIN) {
+      sanitized.admin.setting = true
+    } else {
+      delete sanitized.admin.setting
+    }
   }
   return sanitized
 }
@@ -68,8 +113,11 @@ export function SidebarModulesCard() {
   const [config, setConfig] = useState<SidebarModulesConfig>({})
   const currentUser = useAuthStore((s) => s.auth.user)
   const setUser = useAuthStore((s) => s.auth.setUser)
+  const userRole = currentUser?.role ?? ROLE.USER
+  const canConfigureAdmin = userRole >= ROLE.ADMIN
+  const canConfigureSystemSettings = userRole >= ROLE.SUPER_ADMIN
 
-  const sectionDefs: SectionDef[] = [
+  const allSectionDefs: SectionDef[] = [
     {
       key: 'chat',
       title: t('Chat Area'),
@@ -103,9 +151,24 @@ export function SidebarModulesCard() {
           description: t('API token management'),
         },
         {
+          key: 'image2',
+          title: 'Image2 生图',
+          description: '外部图片生成入口',
+        },
+        {
+          key: 'model_check',
+          title: '模型检测',
+          description: '外部模型检测入口',
+        },
+        {
           key: 'log',
           title: t('Usage Logs'),
           description: t('API usage records'),
+        },
+        {
+          key: 'tickets',
+          title: '工单中心',
+          description: '创建、查看和回复工单',
         },
         {
           key: 'midjourney',
@@ -141,7 +204,77 @@ export function SidebarModulesCard() {
         },
       ],
     },
+    {
+      key: 'admin',
+      title: '管理员区域',
+      description: '系统管理功能',
+      modules: [
+        {
+          key: 'channel',
+          title: t('Channels'),
+          description: 'API 渠道配置',
+        },
+        {
+          key: 'models',
+          title: t('Models'),
+          description: '模型目录和元数据管理',
+        },
+        {
+          key: 'user',
+          title: t('Users'),
+          description: '用户账户和角色管理',
+        },
+        {
+          key: 'referral',
+          title: t('Referral Management'),
+          description: '推广员、返佣和提现管理',
+        },
+        {
+          key: 'ticket_management',
+          title: '工单管理',
+          description: '管理员查看和处理所有用户工单',
+        },
+        {
+          key: 'redemption',
+          title: t('Redemption Codes'),
+          description: '兑换码生成管理',
+        },
+        {
+          key: 'subscription',
+          title: t('Subscription Management'),
+          description: '订阅套餐管理',
+        },
+        {
+          key: 'recharge_audit',
+          title: t('Order Management'),
+          description: '充值和订阅订单管理',
+        },
+        {
+          key: 'provider_price_export',
+          title: t('Public Price Export'),
+          description: '公开供应商价格数据',
+        },
+        {
+          key: 'setting',
+          title: t('System Settings'),
+          description: '系统设置为必需入口，不能隐藏',
+        },
+      ],
+    },
   ]
+
+  const sectionDefs = allSectionDefs
+    .map((section) => {
+      if (section.key !== 'admin') return section
+      if (!canConfigureAdmin) return null
+      return {
+        ...section,
+        modules: section.modules.filter(
+          (module) => module.key !== 'setting' || canConfigureSystemSettings
+        ),
+      }
+    })
+    .filter((section): section is SectionDef => Boolean(section))
 
   const loadConfig = useCallback(async () => {
     try {
@@ -149,7 +282,7 @@ export function SidebarModulesCard() {
       if (res.data.success && res.data.data?.sidebar_modules) {
         const raw = res.data.data.sidebar_modules
         const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
-        setConfig(sanitizeSidebarModulesConfig(parsed))
+        setConfig(sanitizeSidebarModulesConfig(parsed, userRole))
       } else {
         const defaults: SidebarModulesConfig = {}
         for (const sec of sectionDefs) {
@@ -162,7 +295,7 @@ export function SidebarModulesCard() {
       /* ignore */
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [userRole])
 
   useEffect(() => {
     loadConfig()
@@ -189,7 +322,7 @@ export function SidebarModulesCard() {
   const handleSave = async () => {
     setLoading(true)
     try {
-      const sanitizedConfig = sanitizeSidebarModulesConfig(config)
+      const sanitizedConfig = sanitizeSidebarModulesConfig(config, userRole)
       const serialized = JSON.stringify(sanitizedConfig)
       const res = await api.put('/api/user/self', {
         sidebar_modules: serialized,
@@ -260,30 +393,43 @@ export function SidebarModulesCard() {
                 />
               </div>
               <div className='mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-1'>
-                {section.modules.map((mod) => (
-                  <div
-                    key={mod.key}
-                    className={`flex min-h-16 items-center justify-between rounded-lg border p-3 transition-opacity ${
-                      sectionEnabled ? '' : 'opacity-50'
-                    }`}
-                  >
-                    <div className='mr-2 min-w-0'>
-                      <p className='truncate text-sm font-medium'>
-                        {mod.title}
-                      </p>
-                      <p className='text-muted-foreground truncate text-xs'>
-                        {mod.description}
-                      </p>
+                {section.modules.map((mod) => {
+                  const display = getModuleDisplayText(section.key, mod)
+                  const forcedVisible = isForcedVisibleModule(
+                    section.key,
+                    mod.key
+                  )
+                  return (
+                    <div
+                      key={mod.key}
+                      className={`flex min-h-16 items-center justify-between rounded-lg border p-3 transition-opacity ${
+                        sectionEnabled || forcedVisible ? '' : 'opacity-50'
+                      }`}
+                    >
+                      <div className='mr-2 min-w-0'>
+                        <p className='truncate text-sm font-medium'>
+                          {display.title}
+                        </p>
+                        <p className='text-muted-foreground truncate text-xs'>
+                          {display.description}
+                        </p>
+                      </div>
+                      <Switch
+                        checked={
+                          forcedVisible
+                            ? true
+                            : config[section.key]?.[mod.key] !== false
+                        }
+                        onCheckedChange={
+                          forcedVisible
+                            ? undefined
+                            : (v) => toggleModule(section.key, mod.key, v)
+                        }
+                        disabled={forcedVisible || !sectionEnabled}
+                      />
                     </div>
-                    <Switch
-                      checked={config[section.key]?.[mod.key] !== false}
-                      onCheckedChange={(v) =>
-                        toggleModule(section.key, mod.key, v)
-                      }
-                      disabled={!sectionEnabled}
-                    />
-                  </div>
-                ))}
+                  )
+                })}
               </div>
             </div>
           )

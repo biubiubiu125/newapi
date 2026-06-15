@@ -58,6 +58,33 @@ func ListTickets(c *gin.Context) {
 	if category := strings.TrimSpace(c.Query("category")); category != "" {
 		tx = tx.Where("category = ?", category)
 	}
+	if priority := strings.TrimSpace(c.Query("priority")); priority != "" {
+		tx = tx.Where("priority = ?", priority)
+	}
+	if assigneeId := strings.TrimSpace(c.Query("assignee_id")); assigneeId != "" {
+		if id, err := strconv.Atoi(assigneeId); err == nil && id >= 0 {
+			tx = tx.Where("assignee_id = ?", id)
+		}
+	}
+	if startTime := strings.TrimSpace(c.Query("start_time")); startTime != "" {
+		if ts, err := strconv.ParseInt(startTime, 10, 64); err == nil && ts > 0 {
+			tx = tx.Where("created_at >= ?", ts)
+		}
+	}
+	if endTime := strings.TrimSpace(c.Query("end_time")); endTime != "" {
+		if ts, err := strconv.ParseInt(endTime, 10, 64); err == nil && ts > 0 {
+			tx = tx.Where("created_at <= ?", ts)
+		}
+	}
+	if keyword := strings.TrimSpace(c.Query("keyword")); keyword != "" {
+		like := "%" + keyword + "%"
+		tx = tx.Where(
+			"number LIKE ? OR title LIKE ? OR username LIKE ?",
+			like,
+			like,
+			like,
+		)
+	}
 	var total int64
 	if err := tx.Count(&total).Error; err != nil {
 		common.ApiError(c, err)
@@ -266,7 +293,8 @@ func UpdateTicket(c *gin.Context) {
 		common.ApiErrorMsg(c, "无效的工单更新参数")
 		return
 	}
-	updates := map[string]interface{}{"updated_at": common.GetTimestamp()}
+	now := common.GetTimestamp()
+	updates := map[string]interface{}{"updated_at": now}
 	if req.Category != nil {
 		category := strings.TrimSpace(*req.Category)
 		if !model.ValidTicketCategory(category) {
@@ -291,7 +319,7 @@ func UpdateTicket(c *gin.Context) {
 		}
 		updates["status"] = status
 		if status == model.TicketStatusClosed {
-			updates["closed_at"] = common.GetTimestamp()
+			updates["closed_at"] = now
 		} else {
 			updates["closed_at"] = int64(0)
 		}
@@ -330,10 +358,6 @@ func UpdateTicket(c *gin.Context) {
 }
 
 func GetTicketBadge(c *gin.Context) {
-	if !common.TicketSiteBadgeEnabled {
-		common.ApiSuccess(c, gin.H{"count": 0})
-		return
-	}
 	isAdmin := isTicketAdminRequest(c)
 	tx := model.DB.Model(&model.Ticket{}).Where("status = ?", model.TicketStatusPending)
 	if !isAdmin {
@@ -620,7 +644,11 @@ func notifyTicketCreated(ticket *model.Ticket) {
 		return
 	}
 	subject := fmt.Sprintf("%s 工单提醒", common.SystemName)
-	content := ticketNotificationEmailHTML("有新的工单需要处理，请进入站内查看。", ticket, true)
+	content, ok := ticketNotificationEmailHTML("有新的工单需要处理，请进入站内查看。", ticket, true)
+	if !ok {
+		common.SysLog("工单邮件通知跳过：站点地址未配置，无法生成站内链接")
+		return
+	}
 	gopool.Go(func() {
 		var admins []model.User
 		if err := model.DB.Select("email").Where("status = ? AND role >= ?", common.UserStatusEnabled, common.RoleAdminUser).Find(&admins).Error; err != nil {
@@ -640,7 +668,11 @@ func notifyTicketAdminReply(ticket *model.Ticket) {
 		return
 	}
 	subject := fmt.Sprintf("%s 工单提醒", common.SystemName)
-	content := ticketNotificationEmailHTML("管理员已回复你的工单，请进入站内查看。", ticket, false)
+	content, ok := ticketNotificationEmailHTML("管理员已回复你的工单，请进入站内查看。", ticket, false)
+	if !ok {
+		common.SysLog("工单邮件通知跳过：站点地址未配置，无法生成站内链接")
+		return
+	}
 	gopool.Go(func() {
 		if email, err := model.GetUserEmail(ticket.UserId); err == nil && strings.TrimSpace(email) != "" {
 			_ = common.SendEmail(subject, email, content)
@@ -648,25 +680,36 @@ func notifyTicketAdminReply(ticket *model.Ticket) {
 	})
 }
 
-func ticketNotificationEmailHTML(message string, ticket *model.Ticket, admin bool) string {
-	link := ticketLink(ticket, admin)
+func ticketNotificationEmailHTML(message string, ticket *model.Ticket, admin bool) (string, bool) {
+	link, ok := ticketLink(ticket, admin)
+	if !ok {
+		return "", false
+	}
+	targetName := "工单中心"
+	if admin {
+		targetName = "工单管理"
+	}
 	return fmt.Sprintf(
-		"<p>%s</p><p><a href=\"%s\">点击进入工单中心查看</a></p>",
+		"<p>%s</p><p><a href=\"%s\">点击进入%s查看</a></p>",
 		html.EscapeString(message),
 		html.EscapeString(link),
-	)
+		html.EscapeString(targetName),
+	), true
 }
 
-func ticketLink(ticket *model.Ticket, admin bool) string {
+func ticketLink(ticket *model.Ticket, admin bool) (string, bool) {
 	base := strings.TrimRight(strings.TrimSpace(system_setting.ServerAddress), "/")
 	if base == "" {
-		base = "http://localhost:3000"
+		return "", false
 	}
 	if ticket != nil && ticket.Id > 0 {
 		if admin {
-			return fmt.Sprintf("%s/tickets?admin=1&ticket_id=%d", base, ticket.Id)
+			return base + common.ThemeAwarePath(fmt.Sprintf("/console/admin-tickets?ticket_id=%d", ticket.Id)), true
 		}
-		return fmt.Sprintf("%s/tickets?ticket_id=%d", base, ticket.Id)
+		return base + common.ThemeAwarePath(fmt.Sprintf("/console/tickets?ticket_id=%d", ticket.Id)), true
 	}
-	return base + "/tickets"
+	if admin {
+		return base + common.ThemeAwarePath("/console/admin-tickets"), true
+	}
+	return base + common.ThemeAwarePath("/console/tickets"), true
 }

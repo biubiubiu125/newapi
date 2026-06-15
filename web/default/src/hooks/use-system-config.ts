@@ -25,6 +25,7 @@ import {
   DEFAULT_CURRENCY_CONFIG,
 } from '@/stores/system-config-store'
 import { DEFAULT_SYSTEM_NAME, DEFAULT_LOGO } from '@/lib/constants'
+import { resolveAssetUrl } from '@/lib/asset-url'
 import { applyFaviconToDom } from '@/lib/dom-utils'
 
 interface UseSystemConfigOptions {
@@ -46,6 +47,7 @@ interface StatusApiResponse {
     usd_exchange_rate?: number
     custom_currency_symbol?: string
     custom_currency_exchange_rate?: number
+    server_address?: string
   }
 }
 
@@ -94,6 +96,7 @@ export function mapStatusDataToConfig(
   return {
     systemName: data.system_name || DEFAULT_SYSTEM_NAME,
     logo: data.logo || DEFAULT_LOGO,
+    serverAddress: data.server_address,
     footerHtml: data.footer_html,
     demoSiteEnabled: data.demo_site_enabled,
     displayTokenStatEnabled: data.display_token_stat_enabled,
@@ -185,39 +188,51 @@ export function useSystemConfig(options: UseSystemConfigOptions = {}) {
 
   useEffect(() => {
     if (config.logo) {
-      applyFaviconToDom(config.logo)
+      applyFaviconToDom(config.logo, config.serverAddress)
     }
-  }, [config.logo])
+  }, [config.logo, config.serverAddress])
 
   // Preload logo image when URL changes
   useEffect(() => {
     const { logo } = config
 
     // Skip if logo is already loaded
-    if (!logo || logo === loadedLogoUrl) return
+    const resolvedLogo = resolveAssetUrl(logo, DEFAULT_LOGO, config.serverAddress)
+    if (!logo || resolvedLogo === loadedLogoUrl) return
 
     // Preload new logo
     return preloadImage(
-      logo,
+      resolvedLogo,
       () => {
-        setLoadedLogoUrl(logo)
-        applyFaviconToDom(logo)
+        setLoadedLogoUrl(resolvedLogo)
+        applyFaviconToDom(resolvedLogo, config.serverAddress)
       },
       () => {
         if (logo !== DEFAULT_LOGO) {
           // eslint-disable-next-line no-console
-          console.error('Failed to load logo:', logo)
+          console.error('Failed to load logo:', resolvedLogo)
         }
-        // Mark as loaded even on error to prevent infinite retry
-        setLoadedLogoUrl(logo)
+        setLoadedLogoUrl(DEFAULT_LOGO)
+        applyFaviconToDom(DEFAULT_LOGO)
       }
     )
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.logo, loadedLogoUrl, setLoadedLogoUrl])
+  }, [config.logo, config.serverAddress, loadedLogoUrl, setLoadedLogoUrl])
+
+  const resolvedLogo = resolveAssetUrl(
+    config.logo,
+    DEFAULT_LOGO,
+    config.serverAddress
+  )
+  const displayLogo =
+    loadedLogoUrl === resolvedLogo || resolvedLogo === DEFAULT_LOGO
+      ? resolvedLogo
+      : DEFAULT_LOGO
 
   return {
     ...config,
+    logo: displayLogo,
     loading,
-    logoLoaded: config.logo === loadedLogoUrl && !!loadedLogoUrl,
+    logoLoaded: displayLogo === loadedLogoUrl && !!loadedLogoUrl,
   }
 }

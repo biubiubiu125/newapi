@@ -22,9 +22,14 @@ import {
   isReferralSectionId,
   REFERRAL_DEFAULT_SECTION,
 } from '@/features/referral/section-registry'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute('/_authenticated/referral/$section')({
-  beforeLoad: ({ params }) => {
+  beforeLoad: async ({ params }) => {
+    await requireSidebarModule({
+      section: 'personal',
+      module: 'referral',
+    })
     if (!isReferralSectionId(params.section)) {
       throw redirect({
         to: '/referral/$section',

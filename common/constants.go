@@ -14,7 +14,7 @@ import (
 
 var StartTime = time.Now().Unix() // unit: second
 var Version = "v0.0.0"            // this hard coding will be replaced automatically when building, no need to manually change
-var SystemName = "New API"
+var SystemName = "RKAPI"
 var Footer = ""
 var Logo = ""
 var TopUpLink = ""
@@ -60,6 +60,10 @@ func ThemeAwarePath(suffix string) string {
 		return suffix
 	}
 	switch {
+	case strings.HasPrefix(suffix, "/console/tickets"):
+		return strings.Replace(suffix, "/console/tickets", "/tickets", 1)
+	case strings.HasPrefix(suffix, "/console/admin-tickets"):
+		return strings.Replace(suffix, "/console/admin-tickets", "/admin-tickets", 1)
 	case strings.HasPrefix(suffix, "/console/topup"):
 		return strings.Replace(suffix, "/console/topup", "/wallet", 1)
 	case strings.HasPrefix(suffix, "/console/log"):
@@ -83,7 +87,6 @@ var DataExportInterval = 5         // unit: minute
 var DataExportDefaultTime = "hour" // unit: minute
 var DefaultCollapseSidebar = false // default value of collapse sidebar
 var ConversationSnapshotRetentionDays = 30
-var TicketSiteBadgeEnabled = true
 var TicketEmailNotificationEnabled = false
 var TelegramPushBotToken = ""
 var TelegramPushChatId = ""

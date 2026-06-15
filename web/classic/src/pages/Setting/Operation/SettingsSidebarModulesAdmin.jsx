@@ -34,6 +34,44 @@ import { StatusContext } from '../../../context/Status';
 const { Text } = Typography;
 
 const removedAdminModuleKeys = ['riskCenter', 'risk_center'];
+const defaultSidebarModules = {
+  chat: {
+    enabled: true,
+    playground: true,
+    chat: true,
+  },
+  console: {
+    enabled: true,
+    detail: true,
+    token: true,
+    tickets: true,
+    image2: true,
+    model_check: true,
+    log: true,
+    midjourney: true,
+    task: true,
+  },
+  personal: {
+    enabled: true,
+    topup: true,
+    referral: true,
+    personal: true,
+  },
+  admin: {
+    enabled: true,
+    channel: true,
+    models: true,
+    deployment: true,
+    recharge_audit: true,
+    providerPricing: true,
+    redemption: true,
+    user: true,
+    subscription: true,
+    adminReferral: true,
+    ticket_management: true,
+    setting: true,
+  },
+};
 
 const sanitizeSidebarModulesConfig = (config) => {
   if (!config || typeof config !== 'object') return config;
@@ -43,6 +81,7 @@ const sanitizeSidebarModulesConfig = (config) => {
     removedAdminModuleKeys.forEach((key) => {
       delete sanitized.admin[key];
     });
+    sanitized.admin.setting = true;
   }
   return sanitized;
 };
@@ -53,39 +92,9 @@ export default function SettingsSidebarModulesAdmin(props) {
   const [statusState, statusDispatch] = useContext(StatusContext);
 
   // 左侧边栏模块管理状态（管理员全局控制）
-  const [sidebarModulesAdmin, setSidebarModulesAdmin] = useState({
-    chat: {
-      enabled: true,
-      playground: true,
-      chat: true,
-    },
-    console: {
-      enabled: true,
-      detail: true,
-      token: true,
-      log: true,
-      midjourney: true,
-      task: true,
-    },
-    personal: {
-      enabled: true,
-      topup: true,
-      referral: true,
-      personal: true,
-    },
-    admin: {
-      enabled: true,
-      channel: true,
-      models: true,
-      deployment: true,
-      providerPricing: true,
-      redemption: true,
-      user: true,
-      subscription: true,
-      adminReferral: true,
-      setting: true,
-    },
-  });
+  const [sidebarModulesAdmin, setSidebarModulesAdmin] = useState(
+    defaultSidebarModules,
+  );
 
   // 处理区域级别开关变更
   function handleSectionChange(sectionKey) {
@@ -117,40 +126,7 @@ export default function SettingsSidebarModulesAdmin(props) {
 
   // 重置为默认配置
   function resetSidebarModules() {
-    const defaultModules = {
-      chat: {
-        enabled: true,
-        playground: true,
-        chat: true,
-      },
-      console: {
-        enabled: true,
-        detail: true,
-        token: true,
-        log: true,
-        midjourney: true,
-        task: true,
-      },
-      personal: {
-        enabled: true,
-        topup: true,
-        referral: true,
-        personal: true,
-      },
-      admin: {
-        enabled: true,
-        channel: true,
-        models: true,
-        deployment: true,
-        providerPricing: true,
-        redemption: true,
-        user: true,
-        subscription: true,
-        adminReferral: true,
-        setting: true,
-      },
-    };
-    setSidebarModulesAdmin(defaultModules);
+    setSidebarModulesAdmin(defaultSidebarModules);
     showSuccess(t('已重置为默认配置'));
   }
 
@@ -158,7 +134,8 @@ export default function SettingsSidebarModulesAdmin(props) {
   async function onSubmit() {
     setLoading(true);
     try {
-      const sanitizedModules = sanitizeSidebarModulesConfig(sidebarModulesAdmin);
+      const sanitizedModules =
+        sanitizeSidebarModulesConfig(sidebarModulesAdmin);
       const res = await API.put('/api/option/', {
         key: 'SidebarModulesAdmin',
         value: JSON.stringify(sanitizedModules),
@@ -196,50 +173,40 @@ export default function SettingsSidebarModulesAdmin(props) {
     if (props.options && props.options.SidebarModulesAdmin) {
       try {
         const modules = JSON.parse(props.options.SidebarModulesAdmin);
-        setSidebarModulesAdmin(sanitizeSidebarModulesConfig({
-          ...modules,
-          admin: {
-            ...(modules.admin || {}),
-            adminReferral:
-              modules.admin?.adminReferral ?? modules.admin?.referral ?? true,
-            providerPricing:
-              modules.admin?.providerPricing ??
-              modules.admin?.provider_price_export ??
-              true,
-          },
-        }));
+        setSidebarModulesAdmin(
+          sanitizeSidebarModulesConfig({
+            ...defaultSidebarModules,
+            ...modules,
+            chat: {
+              ...defaultSidebarModules.chat,
+              ...(modules.chat || {}),
+            },
+            console: {
+              ...defaultSidebarModules.console,
+              ...(modules.console || {}),
+            },
+            personal: {
+              ...defaultSidebarModules.personal,
+              ...(modules.personal || {}),
+            },
+            admin: {
+              ...defaultSidebarModules.admin,
+              ...(modules.admin || {}),
+              adminReferral:
+                modules.admin?.adminReferral ?? modules.admin?.referral ?? true,
+              providerPricing:
+                modules.admin?.providerPricing ??
+                modules.admin?.provider_price_export ??
+                true,
+              recharge_audit:
+                modules.admin?.recharge_audit ??
+                modules.admin?.order_management ??
+                true,
+            },
+          }),
+        );
       } catch (error) {
-        // 使用默认配置
-        const defaultModules = {
-          chat: { enabled: true, playground: true, chat: true },
-          console: {
-            enabled: true,
-            detail: true,
-            token: true,
-            log: true,
-            midjourney: true,
-            task: true,
-          },
-          personal: {
-            enabled: true,
-            topup: true,
-            referral: true,
-            personal: true,
-          },
-          admin: {
-            enabled: true,
-            channel: true,
-            models: true,
-            deployment: true,
-            providerPricing: true,
-            redemption: true,
-            user: true,
-            subscription: true,
-            adminReferral: true,
-            setting: true,
-          },
-        };
-        setSidebarModulesAdmin(defaultModules);
+        setSidebarModulesAdmin(defaultSidebarModules);
       }
     }
   }, [props.options]);
@@ -266,6 +233,21 @@ export default function SettingsSidebarModulesAdmin(props) {
       modules: [
         { key: 'detail', title: t('数据看板'), description: t('系统数据统计') },
         { key: 'token', title: t('令牌管理'), description: t('API令牌管理') },
+        {
+          key: 'tickets',
+          title: '工单中心',
+          description: '用户创建、查看和回复工单',
+        },
+        {
+          key: 'image2',
+          title: 'Image2生图',
+          description: '外部图片生成入口',
+        },
+        {
+          key: 'model_check',
+          title: '模型检测',
+          description: '外部模型检测入口',
+        },
         { key: 'log', title: t('使用日志'), description: t('API使用记录') },
         {
           key: 'midjourney',
@@ -312,10 +294,18 @@ export default function SettingsSidebarModulesAdmin(props) {
         },
         {
           key: 'adminReferral',
-          title: t('Referral Management'),
-          description: t(
-            'Referral affiliates, commissions, withdrawals, and audit logs',
-          ),
+          title: t('推广管理'),
+          description: t('推广员、返佣和提现管理'),
+        },
+        {
+          key: 'recharge_audit',
+          title: '订单管理',
+          description: '查看充值和订阅订单',
+        },
+        {
+          key: 'ticket_management',
+          title: '工单管理',
+          description: '管理员查看和处理用户工单',
         },
         {
           key: 'providerPricing',
@@ -331,7 +321,7 @@ export default function SettingsSidebarModulesAdmin(props) {
         {
           key: 'setting',
           title: t('系统设置'),
-          description: t('系统参数配置'),
+          description: t('系统设置为必需入口，不能隐藏'),
         },
       ],
     },
@@ -398,9 +388,11 @@ export default function SettingsSidebarModulesAdmin(props) {
                     bodyStyle={{ padding: '16px' }}
                     hoverable
                     style={{
-                      opacity: sidebarModulesAdmin[section.key]?.enabled
-                        ? 1
-                        : 0.5,
+                      opacity:
+                        sidebarModulesAdmin[section.key]?.enabled ||
+                        module.key === 'setting'
+                          ? 1
+                          : 0.5,
                       transition: 'opacity 0.2s',
                     }}
                   >
@@ -439,11 +431,20 @@ export default function SettingsSidebarModulesAdmin(props) {
                       <div style={{ marginLeft: '16px' }}>
                         <Switch
                           checked={
-                            sidebarModulesAdmin[section.key]?.[module.key]
+                            module.key === 'setting'
+                              ? true
+                              : sidebarModulesAdmin[section.key]?.[module.key]
                           }
-                          onChange={handleModuleChange(section.key, module.key)}
+                          onChange={
+                            module.key === 'setting'
+                              ? undefined
+                              : handleModuleChange(section.key, module.key)
+                          }
                           size='default'
-                          disabled={!sidebarModulesAdmin[section.key]?.enabled}
+                          disabled={
+                            module.key === 'setting' ||
+                            !sidebarModulesAdmin[section.key]?.enabled
+                          }
                         />
                       </div>
                     </div>

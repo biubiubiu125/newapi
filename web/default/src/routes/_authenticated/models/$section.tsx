@@ -18,13 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import z from 'zod'
 import { createFileRoute, redirect } from '@tanstack/react-router'
-import { useAuthStore } from '@/stores/auth-store'
 import { ROLE } from '@/lib/roles'
 import { Models } from '@/features/models'
 import {
   MODELS_SECTION_IDS,
   MODELS_DEFAULT_SECTION,
 } from '@/features/models/section-registry'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 const modelsSearchSchema = z.object({
   page: z.number().optional().catch(1),
@@ -40,14 +40,12 @@ const modelsSearchSchema = z.object({
 })
 
 export const Route = createFileRoute('/_authenticated/models/$section')({
-  beforeLoad: ({ params }) => {
-    const { auth } = useAuthStore.getState()
-
-    if (!auth.user || auth.user.role < ROLE.ADMIN) {
-      throw redirect({
-        to: '/403',
-      })
-    }
+  beforeLoad: async ({ params }) => {
+    await requireSidebarModule({
+      section: 'admin',
+      module: 'models',
+      minRole: ROLE.ADMIN,
+    })
 
     const validSections = MODELS_SECTION_IDS as unknown as string[]
     if (!validSections.includes(params.section)) {

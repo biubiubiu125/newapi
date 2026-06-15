@@ -50,7 +50,10 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
     enabled: true,
     detail: true,
     token: true,
+    image2: true,
+    model_check: true,
     log: true,
+    tickets: true,
     midjourney: true,
     task: true,
   },
@@ -67,6 +70,7 @@ const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
     redemption: true,
     user: true,
     referral: true,
+    ticket_management: true,
     setting: true,
     subscription: true,
     recharge_audit: true,
@@ -84,6 +88,9 @@ const SIDEBAR_MODULE_ALIASES: Record<string, Record<string, string[]>> = {
 const REMOVED_SIDEBAR_MODULES: Record<string, string[]> = {
   admin: ['risk_center', 'riskCenter'],
 }
+
+const isForcedVisibleModule = (section: string, module: string) =>
+  section === 'admin' && module === 'setting'
 
 function removeRemovedSidebarModules(
   config: SidebarModulesAdminConfig
@@ -171,12 +178,19 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/dashboard/models': { section: 'console', module: 'detail' },
   '/dashboard/users': { section: 'console', module: 'detail' },
   '/keys': { section: 'console', module: 'token' },
+  'sidebar:console.image2': { section: 'console', module: 'image2' },
+  'sidebar:console.model_check': {
+    section: 'console',
+    module: 'model_check',
+  },
   '/usage-logs': { section: 'console', module: 'log' },
   '/usage-logs/common': { section: 'console', module: 'log' },
   '/usage-logs/drawing': { section: 'console', module: 'midjourney' },
   '/usage-logs/task': { section: 'console', module: 'task' },
+  '/tickets': { section: 'console', module: 'tickets' },
   '/wallet': { section: 'personal', module: 'topup' },
   '/referral': { section: 'personal', module: 'referral' },
+  '/referral/center': { section: 'personal', module: 'referral' },
   '/profile': { section: 'personal', module: 'personal' },
   '/channels': { section: 'admin', module: 'channel' },
   '/models': { section: 'admin', module: 'models' },
@@ -184,6 +198,8 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/models/deployments': { section: 'admin', module: 'models' },
   '/users': { section: 'admin', module: 'user' },
   '/admin-referral': { section: 'admin', module: 'referral' },
+  '/admin-referral/overview': { section: 'admin', module: 'referral' },
+  '/admin-tickets': { section: 'admin', module: 'ticket_management' },
   '/redemption-codes': { section: 'admin', module: 'redemption' },
   '/subscriptions': { section: 'admin', module: 'subscription' },
   '/recharge-audit': { section: 'admin', module: 'recharge_audit' },
@@ -254,6 +270,8 @@ function isModuleEnabled(
   }
 
   const { section, module } = mapping
+  if (isForcedVisibleModule(section, module)) return true
+
   const adminSection = adminConfig[section]
   const adminAllowed = Boolean(
     adminSection && adminSection.enabled && adminSection[module] === true

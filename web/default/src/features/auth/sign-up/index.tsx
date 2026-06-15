@@ -25,7 +25,6 @@ import {
   saveAffiliateCode,
 } from '@/features/auth/lib/storage'
 import { AuthLayout } from '../auth-layout'
-import { TermsFooter } from '../components/terms-footer'
 import { SignUpForm } from './components/sign-up-form'
 
 export function SignUp() {
@@ -76,12 +75,6 @@ export function SignUp() {
         </div>
 
         <SignUpForm />
-
-        <TermsFooter
-          variant='sign-up'
-          status={status}
-          className='text-center'
-        />
       </div>
     </AuthLayout>
   )

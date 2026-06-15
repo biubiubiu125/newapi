@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
+import { DEFAULT_LOGO, DEFAULT_SYSTEM_NAME } from '@/lib/constants'
+import { resolveAssetUrl } from '@/lib/asset-url'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import {
@@ -47,10 +49,16 @@ type SystemBrandProps = {
 export function SystemBrand(props: SystemBrandProps) {
   const { t } = useTranslation()
   const { status } = useStatus()
-  const { logo } = useSystemConfig()
+  const { systemName, logo } = useSystemConfig()
 
   const variant = props.variant ?? 'sidebar'
-  const name = status?.system_name || props.defaultName || 'New API'
+  const name =
+    systemName || status?.system_name || props.defaultName || DEFAULT_SYSTEM_NAME
+  const logoSrc = resolveAssetUrl(
+    logo,
+    DEFAULT_LOGO,
+    status?.server_address as string | undefined
+  )
   const version =
     status?.version || props.defaultVersion || t('Unknown version')
 
@@ -66,7 +74,7 @@ export function SystemBrand(props: SystemBrandProps) {
       >
         <div className='flex size-5 items-center justify-center overflow-hidden rounded-md'>
           <img
-            src={logo}
+            src={logoSrc}
             alt={t('Logo')}
             className='size-full rounded-md object-cover'
           />
@@ -86,7 +94,7 @@ export function SystemBrand(props: SystemBrandProps) {
         >
           <div className='flex aspect-square size-8 items-center justify-center overflow-hidden rounded-lg'>
             <img
-              src={logo}
+              src={logoSrc}
               alt={t('Logo')}
               className='size-full rounded-lg object-cover'
             />

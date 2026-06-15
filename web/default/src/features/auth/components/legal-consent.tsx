@@ -35,9 +35,13 @@ export function LegalConsent({
   onCheckedChange,
   className,
 }: LegalConsentProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const hasUserAgreement = Boolean(status?.user_agreement_enabled)
   const hasPrivacyPolicy = Boolean(status?.privacy_policy_enabled)
+  const isChineseLanguage = i18n.language?.toLowerCase().startsWith('zh')
+  const leadSpacing = isChineseLanguage ? '' : ' '
+  const agreementSeparator = isChineseLanguage ? '和' : ' and the '
+  const sentenceEnding = isChineseLanguage ? '。' : '.'
 
   if (!hasUserAgreement && !hasPrivacyPolicy) {
     return null
@@ -65,7 +69,8 @@ export function LegalConsent({
         className='text-muted-foreground items-start gap-1 text-left text-xs leading-5 font-normal'
       >
         <span>
-          {t('I have read and agree to the')}{' '}
+          {t('I have read and agree to the')}
+          {leadSpacing}
           {hasUserAgreement && (
             <a
               href='/user-agreement'
@@ -76,7 +81,7 @@ export function LegalConsent({
               {t('User Agreement')}
             </a>
           )}
-          {hasUserAgreement && hasPrivacyPolicy && ' and the '}
+          {hasUserAgreement && hasPrivacyPolicy && agreementSeparator}
           {hasPrivacyPolicy && (
             <a
               href='/privacy-policy'
@@ -87,7 +92,7 @@ export function LegalConsent({
               {t('Privacy Policy')}
             </a>
           )}
-          .
+          {sentenceEnding}
         </span>
       </Label>
     </div>

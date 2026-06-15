@@ -22,9 +22,14 @@ import {
   DASHBOARD_SECTION_IDS,
   DASHBOARD_DEFAULT_SECTION,
 } from '@/features/dashboard/section-registry'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute('/_authenticated/dashboard/$section')({
-  beforeLoad: ({ params }) => {
+  beforeLoad: async ({ params }) => {
+    await requireSidebarModule({
+      section: 'console',
+      module: 'detail',
+    })
     const validSections = DASHBOARD_SECTION_IDS as unknown as string[]
     if (!validSections.includes(params.section)) {
       throw redirect({

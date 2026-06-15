@@ -27,6 +27,7 @@ import SettingsLog from '../../pages/Setting/Operation/SettingsLog';
 import SettingsMonitoring from '../../pages/Setting/Operation/SettingsMonitoring';
 import SettingsCreditLimit from '../../pages/Setting/Operation/SettingsCreditLimit';
 import SettingsCheckin from '../../pages/Setting/Operation/SettingsCheckin';
+import SettingsTicketNotification from '../../pages/Setting/Operation/SettingsTicketNotification';
 import { API, showError, toBoolean } from '../../helpers';
 
 const OperationSetting = () => {
@@ -78,6 +79,7 @@ const OperationSetting = () => {
     'checkin_setting.max_quota': 10000,
 
     /* 令牌设置 */
+    TicketEmailNotificationEnabled: false,
     'token_setting.max_user_tokens': 1000,
   });
 
@@ -143,6 +145,9 @@ const OperationSetting = () => {
         {/* 监控设置 */}
         <Card style={{ marginTop: '10px' }}>
           <SettingsMonitoring options={inputs} refresh={onRefresh} />
+        </Card>
+        <Card style={{ marginTop: '10px' }}>
+          <SettingsTicketNotification options={inputs} refresh={onRefresh} />
         </Card>
         {/* 额度设置 */}
         <Card style={{ marginTop: '10px' }}>

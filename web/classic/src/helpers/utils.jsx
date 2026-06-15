@@ -52,14 +52,34 @@ export function isRoot() {
 
 export function getSystemName() {
   let system_name = localStorage.getItem('system_name');
-  if (!system_name) return 'New API';
+  if (!system_name) return 'RKAPI';
   return system_name;
 }
 
 export function getLogo() {
   let logo = localStorage.getItem('logo');
   if (!logo) return '/logo.png';
-  return logo;
+  return resolveSystemAssetUrl(logo);
+}
+
+export function resolveSystemAssetUrl(url, fallback = '/logo.png') {
+  const raw = (url || '').trim();
+  if (!raw) return fallback;
+  if (/^https?:\/\//i.test(raw) || raw.startsWith('data:')) return raw;
+  const serverAddress = (localStorage.getItem('server_address') || '').replace(
+    /\/+$/,
+    '',
+  );
+  const isBundledAsset =
+    raw === fallback || raw === '/logo.png' || raw === '/favicon.ico';
+  if (serverAddress && raw.startsWith('/') && !isBundledAsset) {
+    return `${serverAddress}${raw}`;
+  }
+  try {
+    return new URL(raw, window.location.origin).href;
+  } catch {
+    return fallback;
+  }
 }
 
 export function setSystemBrandCache({ systemName, logo, footerHtml } = {}) {
@@ -93,7 +113,7 @@ export function applySystemBrandToDom({ systemName, logo } = {}) {
     linkElement.rel = 'icon';
     document.head.appendChild(linkElement);
   }
-  linkElement.href = nextLogo;
+  linkElement.href = resolveSystemAssetUrl(nextLogo);
 }
 
 export function getUserIdFromLocalStorage() {

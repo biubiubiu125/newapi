@@ -16,17 +16,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, redirect } from '@tanstack/react-router'
-import { useAuthStore } from '@/stores/auth-store'
+import { createFileRoute } from '@tanstack/react-router'
 import { ROLE } from '@/lib/roles'
 import { RechargeAudit } from '@/features/recharge-audit'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute('/_authenticated/recharge-audit/')({
-  beforeLoad: () => {
-    const { auth } = useAuthStore.getState()
-    if (!auth.user || auth.user.role < ROLE.ADMIN) {
-      throw redirect({ to: '/403' })
-    }
-  },
+  beforeLoad: () =>
+    requireSidebarModule({
+      section: 'admin',
+      module: 'recharge_audit',
+      minRole: ROLE.ADMIN,
+    }),
   component: RechargeAudit,
 })

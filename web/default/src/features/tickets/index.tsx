@@ -17,7 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useMemo, useRef, useState } from 'react'
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import {
+  useMutation,
+  useQuery,
+  useQueryClient,
+  type UseQueryResult,
+} from '@tanstack/react-query'
 import {
   CheckCircle2,
   Check,
@@ -34,7 +39,6 @@ import {
   X,
 } from 'lucide-react'
 import { toast } from 'sonner'
-import { useAuthStore } from '@/stores/auth-store'
 import dayjs from '@/lib/dayjs'
 import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
@@ -66,6 +70,13 @@ import {
 import { Textarea } from '@/components/ui/textarea'
 import { SectionPageLayout } from '@/components/layout'
 import {
+  Sheet,
+  SheetContent,
+  SheetDescription,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
+import {
   closeTicket,
   createTicket,
   fetchTicketAttachmentBlob,
@@ -85,6 +96,7 @@ import {
   type TicketAttachment,
   type TicketAttachmentInput,
   type TicketCategory,
+  type TicketListResponse,
   type TicketPriority,
   type TicketStatus,
 } from './types'
@@ -95,6 +107,7 @@ const TICKET_LIST_PAGE_SIZE = 50
 const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp']
 
 type BadgeVariant = 'default' | 'secondary' | 'outline'
+type TicketsPageMode = 'user' | 'admin'
 
 const statusVariants: Record<TicketStatus, BadgeVariant> = {
   待处理: 'default',
@@ -259,10 +272,12 @@ function TicketListItem({
   ticket,
   selected,
   onSelect,
+  showUser,
 }: {
   ticket: Ticket
   selected: boolean
   onSelect: () => void
+  showUser?: boolean
 }) {
   return (
     <button
@@ -286,7 +301,7 @@ function TicketListItem({
           {ticket.priority}
         </Badge>
         <span>{formatTime(ticket.updated_at)}</span>
-        {ticket.username && <span>{ticket.username}</span>}
+        {showUser && ticket.username && <span>{ticket.username}</span>}
       </div>
     </button>
   )
@@ -726,7 +741,7 @@ function TicketDetailPanel({
   if (!ticketId) {
     return (
       <div className='border-border text-muted-foreground flex h-full min-h-[360px] items-center justify-center rounded-md border'>
-        请选择左侧工单
+        请选择工单
       </div>
     )
   }
@@ -926,45 +941,305 @@ function TicketDetailPanel({
   )
 }
 
-export function TicketsPage() {
+function TicketListPanel({
+  title,
+  tickets,
+  selectedId,
+  listQuery,
+  statusFilter,
+  categoryFilter,
+  priorityFilter,
+  assigneeFilter,
+  startDate,
+  endDate,
+  keyword,
+  ticketPage,
+  ticketTotalPages,
+  ticketTotal,
+  hasPrevTicketPage,
+  hasNextTicketPage,
+  showUser,
+  showPriorityFilter,
+  onRefresh,
+  onSelect,
+  onStatusFilterChange,
+  onCategoryFilterChange,
+  onPriorityFilterChange,
+  onAssigneeFilterChange,
+  onStartDateChange,
+  onEndDateChange,
+  onKeywordChange,
+  onPrevPage,
+  onNextPage,
+}: {
+  title: string
+  tickets: Ticket[]
+  selectedId?: number
+  listQuery: UseQueryResult<TicketListResponse, Error>
+  statusFilter: string
+  categoryFilter: string
+  priorityFilter: string
+  assigneeFilter: string
+  startDate: string
+  endDate: string
+  keyword: string
+  ticketPage: number
+  ticketTotalPages: number
+  ticketTotal: number
+  hasPrevTicketPage: boolean
+  hasNextTicketPage: boolean
+  showUser?: boolean
+  showPriorityFilter?: boolean
+  onRefresh: () => void
+  onSelect: (id: number) => void
+  onStatusFilterChange: (value: string) => void
+  onCategoryFilterChange: (value: string) => void
+  onPriorityFilterChange: (value: string) => void
+  onAssigneeFilterChange: (value: string) => void
+  onStartDateChange: (value: string) => void
+  onEndDateChange: (value: string) => void
+  onKeywordChange: (value: string) => void
+  onPrevPage: () => void
+  onNextPage: () => void
+}) {
+  return (
+    <div className='border-border flex min-h-[320px] w-full flex-col rounded-md border'>
+      <div className='border-b p-3'>
+        <div className='flex flex-wrap items-center justify-between gap-2'>
+          <div className='flex items-center gap-2 font-medium'>
+            <LifeBuoy className='h-4 w-4' />
+            {title}
+          </div>
+          <Button size='sm' variant='outline' onClick={onRefresh}>
+            <RefreshCw className='h-4 w-4' />
+            刷新
+          </Button>
+        </div>
+        <div
+          className={cn(
+            'mt-3 grid gap-2',
+            showPriorityFilter
+              ? 'md:grid-cols-3 xl:grid-cols-[minmax(0,1.3fr)_repeat(6,minmax(0,1fr))]'
+              : 'sm:grid-cols-2'
+          )}
+        >
+          {showPriorityFilter && (
+            <Input
+              value={keyword}
+              onChange={(event) => onKeywordChange(event.target.value)}
+              placeholder='搜索编号、标题、用户名'
+            />
+          )}
+          <Select
+            value={statusFilter || 'all'}
+            onValueChange={(value) => {
+              if (value) onStatusFilterChange(value === 'all' ? '' : value)
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder='全部状态' />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='all'>全部状态</SelectItem>
+              {TICKET_STATUSES.map((status) => (
+                <SelectItem key={status} value={status}>
+                  {status}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          <Select
+            value={categoryFilter || 'all'}
+            onValueChange={(value) => {
+              if (value) onCategoryFilterChange(value === 'all' ? '' : value)
+            }}
+          >
+            <SelectTrigger>
+              <SelectValue placeholder='全部分类' />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value='all'>全部分类</SelectItem>
+              {TICKET_CATEGORIES.map((category) => (
+                <SelectItem key={category} value={category}>
+                  {category}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+          {showPriorityFilter && (
+            <>
+              <Select
+                value={priorityFilter || 'all'}
+                onValueChange={(value) => {
+                  if (value)
+                    onPriorityFilterChange(value === 'all' ? '' : value)
+                }}
+              >
+                <SelectTrigger>
+                  <SelectValue placeholder='全部优先级' />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value='all'>全部优先级</SelectItem>
+                  {TICKET_PRIORITIES.map((priority) => (
+                    <SelectItem key={priority} value={priority}>
+                      {priority}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+              <Input
+                value={assigneeFilter}
+                onChange={(event) =>
+                  onAssigneeFilterChange(event.target.value)
+                }
+                inputMode='numeric'
+                placeholder='处理人 ID'
+              />
+              <Input
+                value={startDate}
+                onChange={(event) => onStartDateChange(event.target.value)}
+                type='date'
+                aria-label='开始日期'
+              />
+              <Input
+                value={endDate}
+                onChange={(event) => onEndDateChange(event.target.value)}
+                type='date'
+                aria-label='结束日期'
+              />
+            </>
+          )}
+        </div>
+      </div>
+      <div className='flex-1 overflow-y-auto'>
+        {listQuery.isLoading ? (
+          <div className='text-muted-foreground p-4 text-sm'>
+            正在加载工单...
+          </div>
+        ) : listQuery.isError ? (
+          <div className='text-destructive flex h-full min-h-[180px] items-center justify-center p-4 text-sm'>
+            工单列表加载失败，请稍后重试
+          </div>
+        ) : tickets.length === 0 ? (
+          <div className='text-muted-foreground flex h-full min-h-[180px] items-center justify-center p-4 text-sm'>
+            暂无工单
+          </div>
+        ) : (
+          <>
+            {tickets.map((ticket) => (
+              <TicketListItem
+                key={ticket.id}
+                ticket={ticket}
+                selected={ticket.id === selectedId}
+                showUser={showUser}
+                onSelect={() => onSelect(ticket.id)}
+              />
+            ))}
+            <div className='border-t p-3'>
+              <div className='text-muted-foreground mb-2 text-center text-xs'>
+                第 {ticketPage} / {ticketTotalPages} 页，共 {ticketTotal}{' '}
+                个工单
+              </div>
+              <div className='grid grid-cols-2 gap-2'>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  className='w-full'
+                  onClick={onPrevPage}
+                  disabled={!hasPrevTicketPage || listQuery.isFetching}
+                >
+                  上一页
+                </Button>
+                <Button
+                  type='button'
+                  variant='outline'
+                  size='sm'
+                  className='w-full'
+                  onClick={onNextPage}
+                  disabled={!hasNextTicketPage || listQuery.isFetching}
+                >
+                  下一页
+                </Button>
+              </div>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function TicketSecurityNote() {
+  return (
+    <div className='border-border bg-muted/20 rounded-md border p-4'>
+      <ImagePlus className='text-muted-foreground mb-3 h-6 w-6' />
+      <div className='font-medium'>附件安全规则</div>
+      <div className='text-muted-foreground mt-2 text-sm leading-6'>
+        工单仅接受 png、jpg、jpeg、webp 图片。单张图片不超过 5MB，单次回复最多
+        5 张；不接受压缩包、文档、脚本或可执行文件。
+      </div>
+    </div>
+  )
+}
+
+export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
   const queryClient = useQueryClient()
-  const user = useAuthStore((state) => state.auth.user)
-  const isAdmin = Boolean(user?.role && user.role >= ROLE.ADMIN)
   const initialSearchParams = useMemo(() => {
     if (typeof window === 'undefined') return new URLSearchParams()
     return new URLSearchParams(window.location.search)
   }, [])
-  const requestedAdminMode = initialSearchParams.get('admin') === '1'
+  const adminMode = mode === 'admin'
   const requestedTicketId = useMemo(() => {
     const id = Number(initialSearchParams.get('ticket_id'))
     return Number.isFinite(id) && id > 0 ? id : undefined
   }, [initialSearchParams])
   const urlSelectedIdRef = useRef<number | undefined>(requestedTicketId)
-  const [adminMode, setAdminMode] = useState(() =>
-    Boolean(isAdmin && requestedAdminMode)
-  )
   const [selectedId, setSelectedId] = useState<number | undefined>(
     requestedTicketId
   )
+  const [detailOpen, setDetailOpen] = useState(Boolean(requestedTicketId))
+  const [createOpen, setCreateOpen] = useState(false)
   const [statusFilter, setStatusFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
+  const [priorityFilter, setPriorityFilter] = useState('')
+  const [assigneeFilter, setAssigneeFilter] = useState('')
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
+  const [keyword, setKeyword] = useState('')
   const [ticketPage, setTicketPage] = useState(1)
-
-  useEffect(() => {
-    if (!isAdmin) {
-      setAdminMode(false)
-      return
-    }
-    if (requestedAdminMode) setAdminMode(true)
-  }, [isAdmin, requestedAdminMode])
+  const debouncedKeyword = useDebounce(keyword, 300)
+  const debouncedAssigneeFilter = useDebounce(assigneeFilter, 300)
+  const assigneeId = useMemo(() => {
+    const parsed = Number(debouncedAssigneeFilter.trim())
+    return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined
+  }, [debouncedAssigneeFilter])
+  const startTime = startDate ? dayjs(startDate).startOf('day').unix() : undefined
+  const endTime = endDate ? dayjs(endDate).endOf('day').unix() : undefined
 
   const listQuery = useQuery({
-    queryKey: ['tickets', adminMode, statusFilter, categoryFilter, ticketPage],
+    queryKey: [
+      'tickets',
+      adminMode,
+      statusFilter,
+      categoryFilter,
+      priorityFilter,
+      assigneeId,
+      startTime,
+      endTime,
+      debouncedKeyword,
+      ticketPage,
+    ],
     queryFn: () =>
       listTickets({
         admin: adminMode,
         status: statusFilter,
         category: categoryFilter,
+        priority: priorityFilter,
+        assigneeId,
+        startTime,
+        endTime,
+        keyword: debouncedKeyword.trim(),
         page: ticketPage,
         pageSize: TICKET_LIST_PAGE_SIZE,
       }),
@@ -986,29 +1261,19 @@ export function TicketsPage() {
   }, [ticketPage, ticketTotalPages])
 
   useEffect(() => {
-    const keepUrlSelected = Boolean(
-      selectedId && urlSelectedIdRef.current === selectedId
-    )
-    if (tickets.length === 0) {
-      if (!keepUrlSelected) setSelectedId(undefined)
-      return
-    }
+    if (!selectedId) return
+    const keepUrlSelected = urlSelectedIdRef.current === selectedId
     const selectedInList = tickets.some((ticket) => ticket.id === selectedId)
-    if (!selectedId || (!selectedInList && !keepUrlSelected)) {
-      setSelectedId(tickets[0].id)
+    if (!selectedInList && !keepUrlSelected) {
+      setSelectedId(undefined)
+      setDetailOpen(false)
     }
   }, [selectedId, tickets])
-
-  const switchAdminMode = (nextAdminMode: boolean) => {
-    urlSelectedIdRef.current = undefined
-    setSelectedId(undefined)
-    setTicketPage(1)
-    setAdminMode(nextAdminMode)
-  }
 
   const selectTicket = (id: number) => {
     urlSelectedIdRef.current = undefined
     setSelectedId(id)
+    setDetailOpen(true)
   }
 
   const updateStatusFilter = (value: string) => {
@@ -1021,8 +1286,49 @@ export function TicketsPage() {
   const updateCategoryFilter = (value: string) => {
     urlSelectedIdRef.current = undefined
     setSelectedId(undefined)
+    setDetailOpen(false)
     setTicketPage(1)
     setCategoryFilter(value)
+  }
+
+  const updatePriorityFilter = (value: string) => {
+    urlSelectedIdRef.current = undefined
+    setSelectedId(undefined)
+    setDetailOpen(false)
+    setTicketPage(1)
+    setPriorityFilter(value)
+  }
+
+  const updateAssigneeFilter = (value: string) => {
+    urlSelectedIdRef.current = undefined
+    setSelectedId(undefined)
+    setDetailOpen(false)
+    setTicketPage(1)
+    setAssigneeFilter(value.replace(/[^\d]/g, ''))
+  }
+
+  const updateStartDate = (value: string) => {
+    urlSelectedIdRef.current = undefined
+    setSelectedId(undefined)
+    setDetailOpen(false)
+    setTicketPage(1)
+    setStartDate(value)
+  }
+
+  const updateEndDate = (value: string) => {
+    urlSelectedIdRef.current = undefined
+    setSelectedId(undefined)
+    setDetailOpen(false)
+    setTicketPage(1)
+    setEndDate(value)
+  }
+
+  const updateKeyword = (value: string) => {
+    urlSelectedIdRef.current = undefined
+    setSelectedId(undefined)
+    setDetailOpen(false)
+    setTicketPage(1)
+    setKeyword(value)
   }
 
   const refreshList = () => {
@@ -1032,166 +1338,103 @@ export function TicketsPage() {
   const goPrevTicketPage = () => setTicketPage((page) => Math.max(1, page - 1))
   const goNextTicketPage = () =>
     setTicketPage((page) => Math.min(ticketTotalPages, page + 1))
+  const title = adminMode ? '工单管理' : '工单中心'
+  const description = adminMode
+    ? '查看和处理用户提交的工单。'
+    : '创建、查看和回复自己的工单。'
 
   return (
     <SectionPageLayout>
-      <SectionPageLayout.Title>工单中心</SectionPageLayout.Title>
-      <SectionPageLayout.Description>
-        创建、回复和跟踪 API 调用、账户与财务问题。
-      </SectionPageLayout.Description>
-      <SectionPageLayout.Content>
-        <div className='flex h-[calc(100vh-9rem)] min-h-[620px] flex-col gap-4 lg:flex-row'>
-          <div className='border-border flex min-h-[320px] w-full flex-col rounded-md border lg:w-[360px]'>
-            <div className='border-b p-3'>
-              <div className='flex flex-wrap items-center justify-between gap-2'>
-                <div className='flex items-center gap-2 font-medium'>
-                  <LifeBuoy className='h-4 w-4' />
-                  工单列表
-                </div>
-                <Button size='sm' variant='outline' onClick={refreshList}>
-                  <RefreshCw className='h-4 w-4' />
-                  刷新
-                </Button>
-              </div>
-              {isAdmin && (
-                <div className='mt-3 grid grid-cols-2 gap-2'>
-                  <Button
-                    size='sm'
-                    variant={!adminMode ? 'default' : 'outline'}
-                    onClick={() => switchAdminMode(false)}
-                  >
-                    我的工单
-                  </Button>
-                  <Button
-                    size='sm'
-                    variant={adminMode ? 'default' : 'outline'}
-                    onClick={() => switchAdminMode(true)}
-                  >
-                    全部工单
-                  </Button>
-                </div>
-              )}
-              <div className='mt-3 grid grid-cols-2 gap-2'>
-                <Select
-                  value={statusFilter || 'all'}
-                  onValueChange={(value) => {
-                    if (value) updateStatusFilter(value === 'all' ? '' : value)
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder='全部状态' />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value='all'>全部状态</SelectItem>
-                    {TICKET_STATUSES.map((status) => (
-                      <SelectItem key={status} value={status}>
-                        {status}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-                <Select
-                  value={categoryFilter || 'all'}
-                  onValueChange={(value) => {
-                    if (value)
-                      updateCategoryFilter(value === 'all' ? '' : value)
-                  }}
-                >
-                  <SelectTrigger>
-                    <SelectValue placeholder='全部分类' />
-                  </SelectTrigger>
-                  <SelectContent>
-                    <SelectItem value='all'>全部分类</SelectItem>
-                    {TICKET_CATEGORIES.map((category) => (
-                      <SelectItem key={category} value={category}>
-                        {category}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
-              </div>
-            </div>
-            <div className='flex-1 overflow-y-auto'>
-              {listQuery.isLoading ? (
-                <div className='text-muted-foreground p-4 text-sm'>
-                  正在加载工单...
-                </div>
-              ) : listQuery.isError ? (
-                <div className='text-destructive flex h-full min-h-[180px] items-center justify-center p-4 text-sm'>
-                  工单列表加载失败，请稍后重试
-                </div>
-              ) : tickets.length === 0 ? (
-                <div className='text-muted-foreground flex h-full min-h-[180px] items-center justify-center p-4 text-sm'>
-                  暂无工单
-                </div>
-              ) : (
-                <>
-                  {tickets.map((ticket) => (
-                    <TicketListItem
-                      key={ticket.id}
-                      ticket={ticket}
-                      selected={ticket.id === selectedId}
-                      onSelect={() => selectTicket(ticket.id)}
-                    />
-                  ))}
-                  <div className='border-t p-3'>
-                    <div className='text-muted-foreground mb-2 text-center text-xs'>
-                      第 {ticketPage} / {ticketTotalPages} 页，共 {ticketTotal}{' '}
-                      个工单
-                    </div>
-                    <div className='grid grid-cols-2 gap-2'>
-                      <Button
-                        type='button'
-                        variant='outline'
-                        size='sm'
-                        className='w-full'
-                        onClick={goPrevTicketPage}
-                        disabled={!hasPrevTicketPage || listQuery.isFetching}
-                      >
-                        上一页
-                      </Button>
-                      <Button
-                        type='button'
-                        variant='outline'
-                        size='sm'
-                        className='w-full'
-                        onClick={goNextTicketPage}
-                        disabled={!hasNextTicketPage || listQuery.isFetching}
-                      >
-                        下一页
-                      </Button>
-                    </div>
-                  </div>
-                </>
-              )}
-            </div>
-          </div>
-          <div className='grid min-h-0 flex-1 gap-4 xl:grid-cols-[minmax(0,1fr)_380px]'>
-            <TicketDetailPanel
-              ticketId={selectedId}
-              adminMode={adminMode}
-              onChanged={refreshList}
-            />
-            {!adminMode && (
-              <CreateTicketPanel
-                onCreated={(ticket) => {
-                  refreshList()
-                  setSelectedId(ticket.id)
-                }}
-              />
-            )}
-            {adminMode && (
-              <div className='border-border bg-muted/20 flex min-h-[280px] flex-col justify-center rounded-md border p-6'>
-                <ImagePlus className='text-muted-foreground mb-3 h-8 w-8' />
-                <div className='font-medium'>附件安全规则</div>
-                <div className='text-muted-foreground mt-2 text-sm leading-6'>
-                  工单仅接受 png、jpg、jpeg、webp 图片。单张图片不超过
-                  5MB，单次回复最多 5 张；不接受压缩包、文档、脚本或可执行文件。
-                </div>
-              </div>
-            )}
-          </div>
+      <div className='flex flex-wrap items-start justify-between gap-3'>
+        <div>
+          <SectionPageLayout.Title>{title}</SectionPageLayout.Title>
+          <SectionPageLayout.Description>
+            {description}
+          </SectionPageLayout.Description>
         </div>
+        {!adminMode && (
+          <Button onClick={() => setCreateOpen(true)}>
+            <Plus className='h-4 w-4' />
+            创建工单
+          </Button>
+        )}
+      </div>
+      <SectionPageLayout.Content>
+        <div className='grid gap-4'>
+          <TicketListPanel
+            title='工单列表'
+            tickets={tickets}
+            selectedId={selectedId}
+            listQuery={listQuery}
+            statusFilter={statusFilter}
+            categoryFilter={categoryFilter}
+            priorityFilter={priorityFilter}
+            assigneeFilter={assigneeFilter}
+            startDate={startDate}
+            endDate={endDate}
+            keyword={keyword}
+            ticketPage={ticketPage}
+            ticketTotalPages={ticketTotalPages}
+            ticketTotal={ticketTotal}
+            hasPrevTicketPage={hasPrevTicketPage}
+            hasNextTicketPage={hasNextTicketPage}
+            showUser={adminMode}
+            showPriorityFilter={adminMode}
+            onRefresh={refreshList}
+            onSelect={selectTicket}
+            onStatusFilterChange={updateStatusFilter}
+            onCategoryFilterChange={updateCategoryFilter}
+            onPriorityFilterChange={updatePriorityFilter}
+            onAssigneeFilterChange={updateAssigneeFilter}
+            onStartDateChange={updateStartDate}
+            onEndDateChange={updateEndDate}
+            onKeywordChange={updateKeyword}
+            onPrevPage={goPrevTicketPage}
+            onNextPage={goNextTicketPage}
+          />
+          <TicketSecurityNote />
+        </div>
+        <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
+          <SheetContent className='w-full sm:max-w-5xl'>
+            <SheetHeader>
+              <SheetTitle>{adminMode ? '处理工单' : '工单详情'}</SheetTitle>
+              <SheetDescription>
+                {adminMode
+                  ? '查看回复记录，继续回复或调整工单状态。'
+                  : '查看回复记录，继续回复工单。'}
+              </SheetDescription>
+            </SheetHeader>
+            <div className='min-h-0 flex-1 px-4 pb-4'>
+              <TicketDetailPanel
+                ticketId={selectedId}
+                adminMode={adminMode}
+                onChanged={refreshList}
+              />
+            </div>
+          </SheetContent>
+        </Sheet>
+        {!adminMode && (
+          <Sheet open={createOpen} onOpenChange={setCreateOpen}>
+            <SheetContent className='w-full sm:max-w-xl'>
+              <SheetHeader>
+                <SheetTitle>创建工单</SheetTitle>
+                <SheetDescription>
+                  提交问题描述和图片附件，客服或财务人员会在工单内回复。
+                </SheetDescription>
+              </SheetHeader>
+              <div className='min-h-0 flex-1 px-4 pb-4'>
+                <CreateTicketPanel
+                  onCreated={(ticket) => {
+                    refreshList()
+                    setCreateOpen(false)
+                    setSelectedId(ticket.id)
+                    setDetailOpen(true)
+                  }}
+                />
+              </div>
+            </SheetContent>
+          </Sheet>
+        )}
       </SectionPageLayout.Content>
     </SectionPageLayout>
   )

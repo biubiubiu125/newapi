@@ -28,9 +28,14 @@ import {
   chatLinkRequiresApiKey,
   resolveChatUrl,
 } from '@/features/chat/lib/chat-links'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute('/_authenticated/chat/$chatId')({
   loader: async ({ params }) => {
+    await requireSidebarModule({
+      section: 'chat',
+      module: 'chat',
+    })
     if (!Number.isInteger(Number(params.chatId))) {
       throw redirect({ to: '/dashboard' })
     }

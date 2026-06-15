@@ -17,21 +17,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
-import { useAuthStore } from '@/stores/auth-store'
 import { ROLE } from '@/lib/roles'
 import { AdminReferral } from '@/features/admin-referral'
 import {
   ADMIN_REFERRAL_DEFAULT_SECTION,
   isAdminReferralSectionId,
 } from '@/features/admin-referral/section-registry'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute('/_authenticated/admin-referral/$section')(
   {
-    beforeLoad: ({ params }) => {
-      const { auth } = useAuthStore.getState()
-      if (!auth.user || auth.user.role < ROLE.ADMIN) {
-        throw redirect({ to: '/403' })
-      }
+    beforeLoad: async ({ params }) => {
+      await requireSidebarModule({
+        section: 'admin',
+        module: 'referral',
+        minRole: ROLE.ADMIN,
+      })
       if (!isAdminReferralSectionId(params.section)) {
         throw redirect({
           to: '/admin-referral/$section',

@@ -38,6 +38,11 @@ type ListTicketsParams = {
   pageSize?: number
   status?: string
   category?: string
+  priority?: string
+  assigneeId?: number
+  startTime?: number
+  endTime?: number
+  keyword?: string
 }
 
 type TicketCreatePayload = {
@@ -82,6 +87,13 @@ export async function listTickets(params: ListTicketsParams) {
     page_size: params.pageSize ?? 20,
     status: params.status || undefined,
     category: params.category || undefined,
+    priority: params.priority || undefined,
+    assignee_id:
+      params.assigneeId !== undefined ? String(params.assigneeId) : undefined,
+    start_time:
+      params.startTime !== undefined ? String(params.startTime) : undefined,
+    end_time: params.endTime !== undefined ? String(params.endTime) : undefined,
+    keyword: params.keyword || undefined,
   }
   const res = await api.get(ticketBase(params.admin), { params: query })
   return unwrapTicketResponse<TicketListResponse>(res.data)

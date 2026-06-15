@@ -63,7 +63,10 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     enabled: true,
     detail: true,
     token: true,
+    image2: true,
+    model_check: true,
     log: true,
+    tickets: true,
     midjourney: true,
     task: true,
   },
@@ -80,11 +83,16 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     redemption: true,
     user: true,
     referral: true,
+    ticket_management: true,
     setting: true,
     subscription: true,
     recharge_audit: true,
     provider_price_export: true,
   },
+}
+
+const FORCE_ENABLED_SIDEBAR_MODULES: Record<string, string[]> = {
+  admin: ['setting'],
 }
 
 const SIDEBAR_MODULE_ALIASES: Record<string, Record<string, string[]>> = {
@@ -165,8 +173,7 @@ const normalizeSidebarAliases = (
             (aliasKey) => normalized[sectionKey][aliasKey] !== undefined
           )
           if (alias) {
-            normalized[sectionKey][canonicalKey] =
-              normalized[sectionKey][alias]
+            normalized[sectionKey][canonicalKey] = normalized[sectionKey][alias]
           }
         }
         aliases.forEach((aliasKey) => {
@@ -191,6 +198,25 @@ const removeRemovedSidebarModules = (
       normalized[sectionKey] = { ...section }
       moduleKeys.forEach((moduleKey) => {
         delete normalized[sectionKey][moduleKey]
+      })
+    }
+  )
+
+  return normalized
+}
+
+const applyForcedSidebarModules = (
+  config: SidebarModulesAdminConfig
+): SidebarModulesAdminConfig => {
+  const normalized: SidebarModulesAdminConfig = { ...config }
+
+  Object.entries(FORCE_ENABLED_SIDEBAR_MODULES).forEach(
+    ([sectionKey, moduleKeys]) => {
+      normalized[sectionKey] = {
+        ...(normalized[sectionKey] ?? {}),
+      }
+      moduleKeys.forEach((moduleKey) => {
+        normalized[sectionKey][moduleKey] = true
       })
     }
   )
@@ -299,14 +325,16 @@ export function parseSidebarModulesAdmin(
       })
     })
 
-    return result
+    return applyForcedSidebarModules(result)
   } catch {
-    return defaults
+    return applyForcedSidebarModules(defaults)
   }
 }
 
 export function serializeSidebarModulesAdmin(
   config: SidebarModulesAdminConfig
 ): string {
-  return JSON.stringify(removeRemovedSidebarModules(config))
+  return JSON.stringify(
+    applyForcedSidebarModules(removeRemovedSidebarModules(config))
+  )
 }

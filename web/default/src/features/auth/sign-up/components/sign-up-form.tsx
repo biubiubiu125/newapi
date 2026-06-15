@@ -274,11 +274,6 @@ export function SignUpForm({
                   {...field}
                 />
               </FormControl>
-              <FormDescription>
-                {t(
-                  'Only letters, numbers, underscores, and hyphens are supported, up to 20 characters. This username will be used for sign-in and account identification.'
-                )}
-              </FormDescription>
               <FormMessage />
             </FormItem>
           )}
@@ -401,11 +396,6 @@ export function SignUpForm({
                   value={field.value ?? ''}
                 />
               </FormControl>
-              <FormDescription>
-                {t(
-                  'Optional. If you open a referral link, the code is filled automatically. A manually entered code takes priority.'
-                )}
-              </FormDescription>
               <FormMessage />
             </FormItem>
           )}

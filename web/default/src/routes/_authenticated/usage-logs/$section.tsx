@@ -22,7 +22,15 @@ import { UsageLogs } from '@/features/usage-logs'
 import {
   isUsageLogsSectionId,
   USAGE_LOGS_DEFAULT_SECTION,
+  type UsageLogsSectionId,
 } from '@/features/usage-logs/section-registry'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
+
+const usageLogsSidebarModules: Record<UsageLogsSectionId, string> = {
+  common: 'log',
+  drawing: 'midjourney',
+  task: 'task',
+}
 
 const logTypeValues = ['0', '1', '2', '3', '4', '5', '6'] as const
 const logTypeSearchSchema = z
@@ -52,13 +60,17 @@ const usageLogsSearchSchema = z.object({
 })
 
 export const Route = createFileRoute('/_authenticated/usage-logs/$section')({
-  beforeLoad: ({ params, search }) => {
+  beforeLoad: async ({ params, search }) => {
     if (!isUsageLogsSectionId(params.section)) {
       throw redirect({
         to: '/usage-logs/$section',
         params: { section: USAGE_LOGS_DEFAULT_SECTION },
       })
     }
+    await requireSidebarModule({
+      section: 'console',
+      module: usageLogsSidebarModules[params.section],
+    })
     // type 仅 common 使用，非 common 时清掉 URL 里的 type
     const hasTypeSearch = Array.isArray(search?.type)
       ? search.type.length > 0

@@ -78,6 +78,8 @@ import {
   Package,
   Server,
   CalendarClock,
+  ReceiptText,
+  Ticket,
 } from 'lucide-react';
 import {
   SiAtlassian,
@@ -133,6 +135,9 @@ export function getLucideIcon(key, selected = false) {
       return <ImageIcon {...commonProps} color={iconColor} />;
     case 'task':
       return <CheckSquare {...commonProps} color={iconColor} />;
+    case 'tickets':
+    case 'ticket_management':
+      return <Ticket {...commonProps} color={iconColor} />;
     case 'topup':
       return <CreditCard {...commonProps} color={iconColor} />;
     case 'referral':
@@ -150,6 +155,8 @@ export function getLucideIcon(key, selected = false) {
       return <Server {...commonProps} color={iconColor} />;
     case 'subscription':
       return <CalendarClock {...commonProps} color={iconColor} />;
+    case 'recharge_audit':
+      return <ReceiptText {...commonProps} color={iconColor} />;
     case 'setting':
       return <Settings {...commonProps} color={iconColor} />;
     default:

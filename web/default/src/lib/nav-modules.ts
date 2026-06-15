@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { getStatus } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 export type ModuleAccess = { enabled: boolean; requireAuth: boolean }
 
@@ -185,35 +186,79 @@ export async function getFreshModuleAccess(
   }
 }
 
+type SidebarSectionConfig = Record<string, boolean>
+type SidebarModulesConfig = Record<string, SidebarSectionConfig>
+
+const SIDEBAR_MODULE_ALIASES: Record<string, string[]> = {
+  provider_price_export: ['providerPricing'],
+  referral: ['adminReferral'],
+}
+
+const isForcedSidebarModule = (section: string, module: string) =>
+  section === 'admin' && module === 'setting'
+
+function parseSidebarModules(raw: unknown): SidebarModulesConfig | null {
+  if (!raw || String(raw).trim() === '') return null
+  try {
+    if (typeof raw === 'object') return raw as SidebarModulesConfig
+    return JSON.parse(String(raw)) as SidebarModulesConfig
+  } catch {
+    return null
+  }
+}
+
+function isModuleAllowedByConfig(
+  config: SidebarModulesConfig | null,
+  section: string,
+  module: string,
+  defaultAllowed: boolean
+): boolean {
+  if (isForcedSidebarModule(section, module)) return true
+  if (!config) return defaultAllowed
+  const sectionConfig = config[section]
+  if (!sectionConfig) return defaultAllowed
+  if (sectionConfig.enabled === false) return false
+  const aliasKeys = SIDEBAR_MODULE_ALIASES[module] ?? []
+  const moduleValues = [module, ...aliasKeys]
+    .filter((key) => sectionConfig[key] !== undefined)
+    .map((key) => sectionConfig[key])
+  if (moduleValues.some((enabled) => enabled === false)) return false
+  return defaultAllowed
+}
+
 export function isSidebarModuleEnabled(
   section: string,
   module: string
 ): boolean {
-  const status = getCachedStatus()
-  if (!status) return true
+  return isSidebarModuleEnabledFromStatus(getCachedStatus(), section, module)
+}
 
-  const raw = status.SidebarModulesAdmin
-  if (!raw || String(raw).trim() === '') return true
+export function isSidebarModuleEnabledFromStatus(
+  status: Record<string, unknown> | null,
+  section: string,
+  module: string
+): boolean {
+  const adminConfig = parseSidebarModules(status?.SidebarModulesAdmin)
+  if (!isModuleAllowedByConfig(adminConfig, section, module, true)) {
+    return false
+  }
 
+  const user = useAuthStore.getState().auth.user
+  if (user?.permissions?.sidebar_settings === false) return true
+
+  const userConfig = parseSidebarModules(user?.sidebar_modules)
+  return isModuleAllowedByConfig(userConfig, section, module, true)
+}
+
+export async function isFreshSidebarModuleEnabled(
+  section: string,
+  module: string
+): Promise<boolean> {
   try {
-    const parsed = JSON.parse(String(raw)) as Record<
-      string,
-      Record<string, boolean>
-    >
-    const sectionConfig = parsed[section]
-    if (!sectionConfig) return true
-    if (sectionConfig.enabled === false) return false
-    const aliases: Record<string, string[]> = {
-      provider_price_export: ['providerPricing'],
-      referral: ['adminReferral'],
-    }
-    const aliasKeys = aliases[module] ?? []
-    const moduleValues = [module, ...aliasKeys]
-      .filter((key) => sectionConfig[key] !== undefined)
-      .map((key) => sectionConfig[key])
-    if (moduleValues.some((enabled) => enabled === false)) return false
-    return true
+    const status = (await getStatus()) as Record<string, unknown> | null
+    cacheStatus(status)
+    return isSidebarModuleEnabledFromStatus(status, section, module)
   } catch {
-    return true
+    return false
   }
 }

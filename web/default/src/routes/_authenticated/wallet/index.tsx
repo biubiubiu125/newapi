@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { z } from 'zod'
 import { createFileRoute } from '@tanstack/react-router'
 import { Wallet } from '@/features/wallet'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 const boolSearchSchema = z.preprocess((value) => {
   if (value === 'true') return true
@@ -35,6 +36,11 @@ const walletSearchSchema = z.object({
 })
 
 export const Route = createFileRoute('/_authenticated/wallet/')({
+  beforeLoad: () =>
+    requireSidebarModule({
+      section: 'personal',
+      module: 'topup',
+    }),
   component: RouteComponent,
   validateSearch: walletSearchSchema,
 })

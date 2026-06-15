@@ -25,19 +25,22 @@ import { ChevronLeft } from 'lucide-react';
 import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
 import { useSidebar } from '../../hooks/common/useSidebar';
 import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
-import { isAdmin, isRoot, showError } from '../../helpers';
+import { API, isAdmin, isRoot, showError } from '../../helpers';
 import SkeletonWrapper from './components/SkeletonWrapper';
 
-import { Nav, Divider, Button } from '@douyinfe/semi-ui';
+import { Nav, Divider, Button, Badge } from '@douyinfe/semi-ui';
 
 const routerMap = {
   home: '/',
   channel: '/console/channel',
   token: '/console/token',
+  tickets: '/console/tickets',
   redemption: '/console/redemption',
   topup: '/console/topup',
   referral: '/console/referral',
   adminReferral: '/console/admin-referral',
+  ticket_management: '/console/admin-tickets',
+  recharge_audit: '/console/recharge-audit',
   providerPricing: '/console/provider-pricing',
   user: '/console/user',
   subscription: '/console/subscription',
@@ -50,6 +53,8 @@ const routerMap = {
   task: '/console/task',
   models: '/console/models',
   deployment: '/console/deployment',
+  image2: 'https://image.rkai6.com',
+  model_check: 'https://cx.rkai6.com/',
   playground: '/console/playground',
   personal: '/console/personal',
 };
@@ -68,6 +73,8 @@ const SiderBar = ({ onNavigate = () => {} }) => {
   const [selectedKeys, setSelectedKeys] = useState(['home']);
   const [chatItems, setChatItems] = useState([]);
   const [openedKeys, setOpenedKeys] = useState([]);
+  const [ticketBadge, setTicketBadge] = useState(0);
+  const [adminTicketBadge, setAdminTicketBadge] = useState(0);
   const location = useLocation();
   const [routerMapState, setRouterMapState] = useState(routerMap);
 
@@ -86,6 +93,24 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('令牌管理'),
         itemKey: 'token',
         to: '/token',
+      },
+      {
+        text: '工单中心',
+        itemKey: 'tickets',
+        to: '/console/tickets',
+        badge: ticketBadge,
+      },
+      {
+        text: 'Image2生图',
+        itemKey: 'image2',
+        to: 'https://image.rkai6.com',
+        external: true,
+      },
+      {
+        text: '模型检测',
+        itemKey: 'model_check',
+        to: 'https://cx.rkai6.com/',
+        external: true,
       },
       {
         text: t('使用日志'),
@@ -121,6 +146,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     localStorage.getItem('enable_data_export'),
     localStorage.getItem('enable_drawing'),
     localStorage.getItem('enable_task'),
+    ticketBadge,
     t,
     isModuleVisible,
   ]);
@@ -174,6 +200,19 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         className: isAdmin() ? '' : 'tableHiddle',
       },
       {
+        text: '工单管理',
+        itemKey: 'ticket_management',
+        to: '/console/admin-tickets',
+        className: isAdmin() ? '' : 'tableHiddle',
+        badge: adminTicketBadge,
+      },
+      {
+        text: '订单管理',
+        itemKey: 'recharge_audit',
+        to: '/console/recharge-audit',
+        className: isAdmin() ? '' : 'tableHiddle',
+      },
+      {
         text: '公开价格导出',
         itemKey: 'providerPricing',
         to: '/console/provider-pricing',
@@ -213,12 +252,13 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
     // 根据配置过滤项目
     const filteredItems = items.filter((item) => {
+      if (item.className === 'tableHiddle') return false;
       const configVisible = isModuleVisible('admin', item.itemKey);
       return configVisible;
     });
 
     return filteredItems;
-  }, [isAdmin(), isRoot(), t, isModuleVisible]);
+  }, [adminTicketBadge, isAdmin(), isRoot(), t, isModuleVisible]);
 
   const chatMenuItems = useMemo(() => {
     const items = [
@@ -242,6 +282,40 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
     return filteredItems;
   }, [chatItems, t, isModuleVisible]);
+
+  const normalizeBadgeCount = (value) => {
+    const count = Number(value);
+    return Number.isFinite(count) && count > 0 ? Math.min(count, 99) : 0;
+  };
+
+  const loadTicketBadges = async () => {
+    try {
+      const res = await API.get('/api/user/tickets/badge', {
+        disableDuplicate: true,
+      });
+      if (res?.data?.success) {
+        setTicketBadge(normalizeBadgeCount(res.data.data?.count));
+      }
+    } catch {
+      setTicketBadge(0);
+    }
+
+    if (!isAdmin()) {
+      setAdminTicketBadge(0);
+      return;
+    }
+
+    try {
+      const res = await API.get('/api/user/admin/tickets/badge', {
+        disableDuplicate: true,
+      });
+      if (res?.data?.success) {
+        setAdminTicketBadge(normalizeBadgeCount(res.data.data?.count));
+      }
+    } catch {
+      setAdminTicketBadge(0);
+    }
+  };
 
   // 更新路由映射，添加聊天路由
   const updateRouterMapWithChats = (chats) => {
@@ -295,6 +369,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     }
   }, []);
 
+  useEffect(() => {
+    loadTicketBadges();
+    const timer = setInterval(loadTicketBadges, 60 * 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   // 根据当前路径设置选中的菜单项
   useEffect(() => {
     const currentPath = location.pathname;
@@ -318,6 +398,10 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
     if (!matchingKey && currentPath.startsWith('/console/provider-pricing')) {
       matchingKey = 'providerPricing';
+    }
+
+    if (!matchingKey && currentPath.startsWith('/console/recharge-audit')) {
+      matchingKey = 'recharge_audit';
     }
 
     if (!matchingKey && currentPath.startsWith('/console/referral')) {
@@ -349,18 +433,27 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
     const isSelected = selectedKeys.includes(item.itemKey);
     const textColor = isSelected ? SELECTED_COLOR : 'inherit';
+    const content = (
+      <span
+        className='truncate font-medium text-sm'
+        style={{ color: textColor }}
+      >
+        {item.text}
+      </span>
+    );
 
     return (
       <Nav.Item
         key={item.itemKey}
         itemKey={item.itemKey}
         text={
-          <span
-            className='truncate font-medium text-sm'
-            style={{ color: textColor }}
-          >
-            {item.text}
-          </span>
+          item.badge ? (
+            <Badge count={item.badge} type='danger' overflowCount={99}>
+              {content}
+            </Badge>
+          ) : (
+            content
+          )
         }
         icon={
           <div className='sidebar-icon-container flex-shrink-0'>
@@ -452,6 +545,20 @@ const SiderBar = ({ onNavigate = () => {} }) => {
             // 如果没有路由，直接返回元素
             if (!to) return itemElement;
 
+            if (/^https?:\/\//i.test(to)) {
+              return (
+                <a
+                  style={{ textDecoration: 'none' }}
+                  href={to}
+                  target='_blank'
+                  rel='noopener noreferrer'
+                  onClick={onNavigate}
+                >
+                  {itemElement}
+                </a>
+              );
+            }
+
             return (
               <Link
                 style={{ textDecoration: 'none' }}
@@ -512,17 +619,19 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           )}
 
           {/* 管理员区域 - 只在管理员时显示且配置允许时显示 */}
-          {isAdmin() && hasSectionVisibleModules('admin') && (
-            <>
-              <Divider className='sidebar-divider' />
-              <div>
-                {!collapsed && (
-                  <div className='sidebar-group-label'>{t('管理员')}</div>
-                )}
-                {adminItems.map((item) => renderNavItem(item))}
-              </div>
-            </>
-          )}
+          {isAdmin() &&
+            hasSectionVisibleModules('admin') &&
+            adminItems.length > 0 && (
+              <>
+                <Divider className='sidebar-divider' />
+                <div>
+                  {!collapsed && (
+                    <div className='sidebar-group-label'>{t('管理员')}</div>
+                  )}
+                  {adminItems.map((item) => renderNavItem(item))}
+                </div>
+              </>
+            )}
         </Nav>
       </SkeletonWrapper>
 

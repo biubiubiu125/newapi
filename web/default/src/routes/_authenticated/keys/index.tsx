@@ -20,6 +20,7 @@ import z from 'zod'
 import { createFileRoute } from '@tanstack/react-router'
 import { ApiKeys } from '@/features/keys'
 import { API_KEY_STATUS_OPTIONS } from '@/features/keys/constants'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 const apiKeySearchSchema = z.object({
   page: z.number().optional().catch(1),
@@ -33,6 +34,11 @@ const apiKeySearchSchema = z.object({
 })
 
 export const Route = createFileRoute('/_authenticated/keys/')({
+  beforeLoad: () =>
+    requireSidebarModule({
+      section: 'console',
+      module: 'token',
+    }),
   validateSearch: apiKeySearchSchema,
   component: ApiKeys,
 })

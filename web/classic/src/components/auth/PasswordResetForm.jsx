@@ -20,17 +20,16 @@ For commercial licensing, please contact support@quantumnous.com
 import React, { useEffect, useState } from 'react';
 import {
   API,
-  getLogo,
   showError,
   showInfo,
   showSuccess,
-  getSystemName,
 } from '../../helpers';
 import Turnstile from 'react-turnstile';
 import { Button, Card, Form, Typography } from '@douyinfe/semi-ui';
 import { IconMail } from '@douyinfe/semi-icons';
 import { Link } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
+import { useAuthBrand } from '../../hooks/common/useAuthBrand';
 
 const { Text, Title } = Typography;
 
@@ -48,8 +47,7 @@ const PasswordResetForm = () => {
   const [disableButton, setDisableButton] = useState(false);
   const [countdown, setCountdown] = useState(30);
 
-  const logo = getLogo();
-  const systemName = getSystemName();
+  const { logo, systemName } = useAuthBrand();
 
   useEffect(() => {
     let status = localStorage.getItem('status');

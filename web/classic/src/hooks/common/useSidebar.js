@@ -35,6 +35,9 @@ export const DEFAULT_ADMIN_CONFIG = {
     enabled: true,
     detail: true,
     token: true,
+    tickets: true,
+    image2: true,
+    model_check: true,
     log: true,
     midjourney: true,
     task: true,
@@ -50,11 +53,13 @@ export const DEFAULT_ADMIN_CONFIG = {
     channel: true,
     models: true,
     deployment: true,
+    recharge_audit: true,
     providerPricing: true,
     redemption: true,
     user: true,
     subscription: true,
     adminReferral: true,
+    ticket_management: true,
     setting: true,
   },
 };
@@ -70,6 +75,7 @@ export const sanitizeSidebarConfig = (config) => {
     removedAdminModuleKeys.forEach((key) => {
       delete sanitized.admin[key];
     });
+    sanitized.admin.setting = true;
   }
   return sanitized;
 };
@@ -102,6 +108,13 @@ export const mergeAdminConfig = (savedConfig) => {
     ) {
       merged.admin.providerPricing = merged.admin.provider_price_export ?? true;
     }
+    if (
+      savedConfig.admin?.recharge_audit === undefined &&
+      merged.admin.order_management !== undefined
+    ) {
+      merged.admin.recharge_audit = merged.admin.order_management ?? true;
+    }
+    merged.admin.setting = true;
     removedAdminModuleKeys.forEach((key) => {
       delete merged.admin[key];
     });
@@ -263,21 +276,31 @@ export const useSidebar = () => {
     Object.keys(adminConfig).forEach((sectionKey) => {
       const adminSection = adminConfig[sectionKey];
       const userSection = userConfig[sectionKey];
-
+      const hasForcedSetting = sectionKey === 'admin' && adminSection?.setting;
       // 如果管理员禁用了整个区域，则该区域不显示
       if (!adminSection?.enabled) {
-        result[sectionKey] = { enabled: false };
+        result[sectionKey] = { enabled: Boolean(hasForcedSetting) };
+        if (hasForcedSetting) {
+          result[sectionKey].setting = true;
+        }
         return;
       }
 
       // 区域级别：用户可以选择隐藏管理员允许的区域
       // 当userSection存在时检查enabled状态，否则默认为true
       const sectionEnabled = userSection ? userSection.enabled !== false : true;
-      result[sectionKey] = { enabled: sectionEnabled };
+      result[sectionKey] = {
+        enabled: sectionEnabled || Boolean(hasForcedSetting),
+      };
 
       // 功能级别：只有管理员和用户都允许的功能才显示
       Object.keys(adminSection).forEach((moduleKey) => {
         if (moduleKey === 'enabled') return;
+
+        if (sectionKey === 'admin' && moduleKey === 'setting') {
+          result[sectionKey][moduleKey] = true;
+          return;
+        }
 
         const adminAllowed = adminSection[moduleKey];
         // 当userSection存在时检查模块状态，否则默认为true

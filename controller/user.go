@@ -517,12 +517,15 @@ func generateDefaultSidebarConfig(userRole int) string {
 
 	// 控制台区域 - 所有用户都可以访问
 	defaultConfig["console"] = map[string]interface{}{
-		"enabled":    true,
-		"detail":     true,
-		"token":      true,
-		"log":        true,
-		"midjourney": true,
-		"task":       true,
+		"enabled":     true,
+		"detail":      true,
+		"token":       true,
+		"image2":      true,
+		"model_check": true,
+		"log":         true,
+		"tickets":     true,
+		"midjourney":  true,
+		"task":        true,
 	}
 
 	// 个人中心区域 - 所有用户都可以访问
@@ -543,6 +546,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 			"redemption":            true,
 			"referral":              true,
 			"adminReferral":         true,
+			"ticket_management":     true,
 			"subscription":          true,
 			"recharge_audit":        true,
 			"provider_price_export": true,
@@ -559,6 +563,7 @@ func generateDefaultSidebarConfig(userRole int) string {
 			"redemption":            true,
 			"referral":              true,
 			"adminReferral":         true,
+			"ticket_management":     true,
 			"subscription":          true,
 			"recharge_audit":        true,
 			"provider_price_export": true,
@@ -576,6 +581,35 @@ func generateDefaultSidebarConfig(userRole int) string {
 		return ""
 	}
 
+	return string(configBytes)
+}
+
+func sanitizeSidebarModulesForRole(raw string, role int) string {
+	var config map[string]map[string]interface{}
+	if err := common.UnmarshalJsonStr(raw, &config); err != nil || config == nil {
+		return generateDefaultSidebarConfig(role)
+	}
+
+	admin, hasAdmin := config["admin"]
+	if role < common.RoleAdminUser {
+		if hasAdmin {
+			delete(config, "admin")
+		}
+	} else if hasAdmin {
+		delete(admin, "risk_center")
+		delete(admin, "riskCenter")
+		if role < common.RoleRootUser {
+			delete(admin, "setting")
+		} else {
+			admin["setting"] = true
+		}
+	}
+
+	configBytes, err := common.Marshal(config)
+	if err != nil {
+		common.SysLog("清理边栏配置失败: " + err.Error())
+		return generateDefaultSidebarConfig(role)
+	}
 	return string(configBytes)
 }
 
@@ -734,7 +768,7 @@ func UpdateSelf(c *gin.Context) {
 
 		// 更新sidebar_modules字段
 		if sidebarModulesStr, ok := sidebarModules.(string); ok {
-			currentSetting.SidebarModules = sidebarModulesStr
+			currentSetting.SidebarModules = sanitizeSidebarModulesForRole(sidebarModulesStr, user.Role)
 		}
 
 		// 保存更新后的设置

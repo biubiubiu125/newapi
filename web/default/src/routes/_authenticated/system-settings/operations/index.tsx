@@ -18,11 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
 import { OPERATIONS_DEFAULT_SECTION } from '@/features/system-settings/operations/section-registry.tsx'
+import { requireSystemSettingsModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute(
   '/_authenticated/system-settings/operations/'
 )({
-  beforeLoad: () => {
+  beforeLoad: async () => {
+    await requireSystemSettingsModule()
     throw redirect({
       to: '/system-settings/operations/$section',
       params: { section: OPERATIONS_DEFAULT_SECTION },

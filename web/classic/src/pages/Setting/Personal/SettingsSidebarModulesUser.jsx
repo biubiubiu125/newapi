@@ -87,6 +87,9 @@ export default function SettingsSidebarModulesUser() {
         enabled: true,
         detail: isSidebarModuleAllowed('console', 'detail'),
         token: isSidebarModuleAllowed('console', 'token'),
+        tickets: isSidebarModuleAllowed('console', 'tickets'),
+        image2: isSidebarModuleAllowed('console', 'image2'),
+        model_check: isSidebarModuleAllowed('console', 'model_check'),
         log: isSidebarModuleAllowed('console', 'log'),
         midjourney: isSidebarModuleAllowed('console', 'midjourney'),
         task: isSidebarModuleAllowed('console', 'task'),
@@ -110,12 +113,14 @@ export default function SettingsSidebarModulesUser() {
         channel: isSidebarModuleAllowed('admin', 'channel'),
         models: isSidebarModuleAllowed('admin', 'models'),
         deployment: isSidebarModuleAllowed('admin', 'deployment'),
+        recharge_audit: isSidebarModuleAllowed('admin', 'recharge_audit'),
         providerPricing: isSidebarModuleAllowed('admin', 'providerPricing'),
         redemption: isSidebarModuleAllowed('admin', 'redemption'),
         subscription: isSidebarModuleAllowed('admin', 'subscription'),
         adminReferral: isSidebarModuleAllowed('admin', 'adminReferral'),
+        ticket_management: isSidebarModuleAllowed('admin', 'ticket_management'),
         user: isSidebarModuleAllowed('admin', 'user'),
-        setting: isSidebarModuleAllowed('admin', 'setting'),
+        setting: true,
       };
     }
 
@@ -252,8 +257,15 @@ export default function SettingsSidebarModulesUser() {
                 userConf.admin.providerPricing ??
                 userConf.admin.provider_price_export ??
                 true,
+              recharge_audit:
+                userConf.admin.recharge_audit ??
+                userConf.admin.order_management ??
+                true,
+              setting: true,
             };
-            userConf.admin = sanitizeSidebarConfig({ admin: userConf.admin }).admin;
+            userConf.admin = sanitizeSidebarConfig({
+              admin: userConf.admin,
+            }).admin;
           }
           Object.keys(userConf).forEach((sectionKey) => {
             if (isSidebarSectionAllowed(sectionKey)) {
@@ -333,6 +345,21 @@ export default function SettingsSidebarModulesUser() {
       modules: [
         { key: 'detail', title: t('数据看板'), description: t('系统数据统计') },
         { key: 'token', title: t('令牌管理'), description: t('API令牌管理') },
+        {
+          key: 'tickets',
+          title: '工单中心',
+          description: '创建、查看和回复自己的工单',
+        },
+        {
+          key: 'image2',
+          title: 'Image2生图',
+          description: '外部图片生成入口',
+        },
+        {
+          key: 'model_check',
+          title: '模型检测',
+          description: '外部模型检测入口',
+        },
         { key: 'log', title: t('使用日志'), description: t('API使用记录') },
         {
           key: 'midjourney',
@@ -380,15 +407,23 @@ export default function SettingsSidebarModulesUser() {
         { key: 'user', title: t('用户管理'), description: t('用户账户管理') },
         {
           key: 'subscription',
-          title: t('Subscription Management'),
-          description: t('Manage subscription plans and pricing'),
+          title: t('订阅管理'),
+          description: t('订阅套餐管理'),
         },
         {
           key: 'adminReferral',
-          title: t('Referral Management'),
-          description: t(
-            'Referral affiliates, commissions, withdrawals, and audit logs',
-          ),
+          title: t('推广管理'),
+          description: t('推广员、返佣和提现管理'),
+        },
+        {
+          key: 'recharge_audit',
+          title: '订单管理',
+          description: '查看充值和订阅订单',
+        },
+        {
+          key: 'ticket_management',
+          title: '工单管理',
+          description: '查看和处理用户工单',
         },
         {
           key: 'providerPricing',
@@ -398,7 +433,7 @@ export default function SettingsSidebarModulesUser() {
         {
           key: 'setting',
           title: t('系统设置'),
-          description: t('系统参数配置'),
+          description: t('系统设置为必需入口，不能隐藏'),
         },
       ],
     },
@@ -486,12 +521,19 @@ export default function SettingsSidebarModulesUser() {
                     <div className='ml-4'>
                       <Switch
                         checked={
-                          sidebarModulesUser[section.key]?.[module.key] !==
-                          false
+                          module.key === 'setting'
+                            ? true
+                            : sidebarModulesUser[section.key]?.[module.key] !==
+                              false
                         }
-                        onChange={handleModuleChange(section.key, module.key)}
+                        onChange={
+                          module.key === 'setting'
+                            ? undefined
+                            : handleModuleChange(section.key, module.key)
+                        }
                         size='default'
                         disabled={
+                          module.key === 'setting' ||
                           sidebarModulesUser[section.key]?.enabled === false
                         }
                       />
