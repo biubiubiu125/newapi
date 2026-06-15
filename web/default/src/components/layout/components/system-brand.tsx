@@ -28,6 +28,7 @@ import {
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
+import { BrandImage } from './brand-image'
 
 type SystemBrandProps = {
   defaultName?: string
@@ -49,7 +50,7 @@ type SystemBrandProps = {
 export function SystemBrand(props: SystemBrandProps) {
   const { t } = useTranslation()
   const { status } = useStatus()
-  const { systemName, logo } = useSystemConfig()
+  const { systemName, logo, serverAddress } = useSystemConfig()
 
   const variant = props.variant ?? 'sidebar'
   const name =
@@ -57,7 +58,7 @@ export function SystemBrand(props: SystemBrandProps) {
   const logoSrc = resolveAssetUrl(
     logo,
     DEFAULT_LOGO,
-    status?.server_address as string | undefined
+    serverAddress || (status?.server_address as string | undefined)
   )
   const version =
     status?.version || props.defaultVersion || t('Unknown version')
@@ -73,7 +74,7 @@ export function SystemBrand(props: SystemBrandProps) {
         )}
       >
         <div className='flex size-5 items-center justify-center overflow-hidden rounded-md'>
-          <img
+          <BrandImage
             src={logoSrc}
             alt={t('Logo')}
             className='size-full rounded-md object-cover'
@@ -93,7 +94,7 @@ export function SystemBrand(props: SystemBrandProps) {
           render={<div />}
         >
           <div className='flex aspect-square size-8 items-center justify-center overflow-hidden rounded-lg'>
-            <img
+            <BrandImage
               src={logoSrc}
               alt={t('Logo')}
               className='size-full rounded-lg object-cover'

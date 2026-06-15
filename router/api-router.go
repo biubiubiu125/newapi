@@ -292,18 +292,6 @@ func SetApiRouter(router *gin.Engine) {
 			ratioSyncRoute.GET("/channels", controller.GetSyncableChannels)
 			ratioSyncRoute.POST("/fetch", controller.FetchUpstreamRatios)
 		}
-		conversationExportRoute := apiRouter.Group("/conversation_export")
-		conversationExportRoute.Use(middleware.RootAuth())
-		{
-			conversationExportRoute.POST("/", controller.CreateConversationExport)
-			conversationExportRoute.GET("/", controller.ListConversationExports)
-			conversationExportRoute.GET("/tokens/search", controller.SearchConversationExportTokens)
-			conversationExportRoute.GET("/snapshots/count", controller.CountConversationSnapshots)
-			conversationExportRoute.DELETE("/snapshots", controller.DeleteConversationSnapshots)
-			conversationExportRoute.POST("/cleanup", controller.TriggerConversationExportCleanup)
-			conversationExportRoute.GET("/:id/download", controller.DownloadConversationExport)
-			conversationExportRoute.DELETE("/:id", controller.DeleteConversationExport)
-		}
 		telegramPushRoute := apiRouter.Group("/telegram_push")
 		telegramPushRoute.Use(middleware.RootAuth())
 		{

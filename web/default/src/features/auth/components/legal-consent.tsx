@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
@@ -35,13 +34,8 @@ export function LegalConsent({
   onCheckedChange,
   className,
 }: LegalConsentProps) {
-  const { t, i18n } = useTranslation()
   const hasUserAgreement = Boolean(status?.user_agreement_enabled)
   const hasPrivacyPolicy = Boolean(status?.privacy_policy_enabled)
-  const isChineseLanguage = i18n.language?.toLowerCase().startsWith('zh')
-  const leadSpacing = isChineseLanguage ? '' : ' '
-  const agreementSeparator = isChineseLanguage ? '和' : ' and the '
-  const sentenceEnding = isChineseLanguage ? '。' : '.'
 
   if (!hasUserAgreement && !hasPrivacyPolicy) {
     return null
@@ -69,8 +63,7 @@ export function LegalConsent({
         className='text-muted-foreground items-start gap-1 text-left text-xs leading-5 font-normal'
       >
         <span>
-          {t('I have read and agree to the')}
-          {leadSpacing}
+          我已阅读并同意
           {hasUserAgreement && (
             <a
               href='/user-agreement'
@@ -78,10 +71,10 @@ export function LegalConsent({
               rel='noopener noreferrer'
               className='text-primary hover:underline'
             >
-              {t('User Agreement')}
+              用户协议
             </a>
           )}
-          {hasUserAgreement && hasPrivacyPolicy && agreementSeparator}
+          {hasUserAgreement && hasPrivacyPolicy && '和'}
           {hasPrivacyPolicy && (
             <a
               href='/privacy-policy'
@@ -89,10 +82,10 @@ export function LegalConsent({
               rel='noopener noreferrer'
               className='text-primary hover:underline'
             >
-              {t('Privacy Policy')}
+              隐私政策
             </a>
           )}
-          {sentenceEnding}
+          。
         </span>
       </Label>
     </div>

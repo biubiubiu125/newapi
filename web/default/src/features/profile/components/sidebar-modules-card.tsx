@@ -18,11 +18,20 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useCallback, useEffect, useState } from 'react'
 import { LayoutDashboard } from 'lucide-react'
-import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { useAuthStore } from '@/stores/auth-store'
 import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
+import {
+  SIDEBAR_MODULES_DEFAULT,
+  SIDEBAR_MODULES_META,
+  applyForcedSidebarModules,
+  cloneSidebarModulesDefault,
+  isForcedVisibleSidebarModule,
+  normalizeSidebarModuleAliases,
+  removeRemovedSidebarModules,
+  type SidebarModulesAdminConfig,
+} from '@/lib/sidebar-modules'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -33,13 +42,6 @@ import {
 } from '@/components/ui/card'
 import { Switch } from '@/components/ui/switch'
 
-type SidebarModuleConfig = {
-  enabled: boolean
-  [key: string]: boolean
-}
-
-type SidebarModulesConfig = Record<string, SidebarModuleConfig>
-
 type SectionDef = {
   key: string
   title: string
@@ -47,46 +49,13 @@ type SectionDef = {
   modules: { key: string; title: string; description: string }[]
 }
 
-const REMOVED_ADMIN_MODULE_KEYS = ['risk_center', 'riskCenter'] as const
-
-const isForcedVisibleModule = (section: string, module: string) =>
-  section === 'admin' && module === 'setting'
-
-const MODULE_TEXT_OVERRIDES: Record<
-  string,
-  { title: string; description: string }
-> = {
-  'console.image2': {
-    title: 'Image2\u751f\u56fe',
-    description: '\u5916\u90e8\u56fe\u7247\u751f\u6210\u5165\u53e3',
-  },
-  'console.model_check': {
-    title: '\u6a21\u578b\u68c0\u6d4b',
-    description: '\u5916\u90e8\u6a21\u578b\u68c0\u6d4b\u5165\u53e3',
-  },
-  'console.tickets': {
-    title: '\u5de5\u5355\u4e2d\u5fc3',
-    description: '\u521b\u5efa\u3001\u67e5\u770b\u548c\u56de\u590d\u5de5\u5355',
-  },
-  'admin.setting': {
-    title: '\u7cfb\u7edf\u8bbe\u7f6e',
-    description:
-      '\u7cfb\u7edf\u8bbe\u7f6e\u4e3a\u5fc5\u9700\u5165\u53e3\uff0c\u4e0d\u80fd\u9690\u85cf',
-  },
-}
-
-function getModuleDisplayText(
-  sectionKey: string,
-  module: { key: string; title: string; description: string }
-) {
-  return MODULE_TEXT_OVERRIDES[`${sectionKey}.${module.key}`] ?? module
-}
-
 function sanitizeSidebarModulesConfig(
-  config: SidebarModulesConfig,
+  config: SidebarModulesAdminConfig,
   role?: number
-): SidebarModulesConfig {
-  const sanitized: SidebarModulesConfig = { ...config }
+): SidebarModulesAdminConfig {
+  const sanitized = applyForcedSidebarModules(
+    removeRemovedSidebarModules(normalizeSidebarModuleAliases(config))
+  )
   if ((role ?? ROLE.USER) < ROLE.ADMIN) {
     delete sanitized.admin
     return sanitized
@@ -95,9 +64,6 @@ function sanitizeSidebarModulesConfig(
   const admin = sanitized.admin
   if (admin) {
     sanitized.admin = { ...admin }
-    REMOVED_ADMIN_MODULE_KEYS.forEach((key) => {
-      delete sanitized.admin[key]
-    })
     if ((role ?? ROLE.USER) >= ROLE.SUPER_ADMIN) {
       sanitized.admin.setting = true
     } else {
@@ -107,161 +73,46 @@ function sanitizeSidebarModulesConfig(
   return sanitized
 }
 
+function buildSidebarDefaults(
+  sections: SectionDef[],
+  role?: number
+): SidebarModulesAdminConfig {
+  const defaults = cloneSidebarModulesDefault()
+  const allowedSections = new Set(sections.map((section) => section.key))
+  Object.keys(defaults).forEach((sectionKey) => {
+    if (!allowedSections.has(sectionKey)) delete defaults[sectionKey]
+  })
+  return sanitizeSidebarModulesConfig(defaults, role)
+}
+
 export function SidebarModulesCard() {
-  const { t } = useTranslation()
   const [loading, setLoading] = useState(false)
-  const [config, setConfig] = useState<SidebarModulesConfig>({})
+  const [config, setConfig] = useState<SidebarModulesAdminConfig>({})
   const currentUser = useAuthStore((s) => s.auth.user)
   const setUser = useAuthStore((s) => s.auth.setUser)
   const userRole = currentUser?.role ?? ROLE.USER
   const canConfigureAdmin = userRole >= ROLE.ADMIN
   const canConfigureSystemSettings = userRole >= ROLE.SUPER_ADMIN
 
-  const allSectionDefs: SectionDef[] = [
-    {
-      key: 'chat',
-      title: t('Chat Area'),
-      description: t('Playground and chat functions'),
-      modules: [
-        {
-          key: 'playground',
-          title: t('Playground'),
-          description: t('AI model testing environment'),
-        },
-        {
-          key: 'chat',
-          title: t('Chat'),
-          description: t('Chat session management'),
-        },
-      ],
-    },
-    {
-      key: 'console',
-      title: t('Console Area'),
-      description: t('Data management and log viewing'),
-      modules: [
-        {
-          key: 'detail',
-          title: t('Dashboard'),
-          description: t('System data statistics'),
-        },
-        {
-          key: 'token',
-          title: t('Token Management'),
-          description: t('API token management'),
-        },
-        {
-          key: 'image2',
-          title: 'Image2 生图',
-          description: '外部图片生成入口',
-        },
-        {
-          key: 'model_check',
-          title: '模型检测',
-          description: '外部模型检测入口',
-        },
-        {
-          key: 'log',
-          title: t('Usage Logs'),
-          description: t('API usage records'),
-        },
-        {
-          key: 'tickets',
-          title: '工单中心',
-          description: '创建、查看和回复工单',
-        },
-        {
-          key: 'midjourney',
-          title: t('Drawing Logs'),
-          description: t('Drawing task records'),
-        },
-        {
-          key: 'task',
-          title: t('Task Logs'),
-          description: t('System task records'),
-        },
-      ],
-    },
-    {
-      key: 'personal',
-      title: t('Personal Center Area'),
-      description: t('User personal functions'),
-      modules: [
-        {
-          key: 'topup',
-          title: t('Wallet Management'),
-          description: t('Balance and top-up management'),
-        },
-        {
-          key: 'referral',
-          title: t('Referral Center'),
-          description: t('Referral links, commissions, and withdrawals'),
-        },
-        {
-          key: 'personal',
-          title: t('Personal Settings'),
-          description: t('Personal info settings'),
-        },
-      ],
-    },
-    {
-      key: 'admin',
-      title: '管理员区域',
-      description: '系统管理功能',
-      modules: [
-        {
-          key: 'channel',
-          title: t('Channels'),
-          description: 'API 渠道配置',
-        },
-        {
-          key: 'models',
-          title: t('Models'),
-          description: '模型目录和元数据管理',
-        },
-        {
-          key: 'user',
-          title: t('Users'),
-          description: '用户账户和角色管理',
-        },
-        {
-          key: 'referral',
-          title: t('Referral Management'),
-          description: '推广员、返佣和提现管理',
-        },
-        {
-          key: 'ticket_management',
-          title: '工单管理',
-          description: '管理员查看和处理所有用户工单',
-        },
-        {
-          key: 'redemption',
-          title: t('Redemption Codes'),
-          description: '兑换码生成管理',
-        },
-        {
-          key: 'subscription',
-          title: t('Subscription Management'),
-          description: '订阅套餐管理',
-        },
-        {
-          key: 'recharge_audit',
-          title: t('Order Management'),
-          description: '充值和订阅订单管理',
-        },
-        {
-          key: 'provider_price_export',
-          title: t('Public Price Export'),
-          description: '公开供应商价格数据',
-        },
-        {
-          key: 'setting',
-          title: t('System Settings'),
-          description: '系统设置为必需入口，不能隐藏',
-        },
-      ],
-    },
-  ]
+  const allSectionDefs: SectionDef[] = Object.entries(SIDEBAR_MODULES_DEFAULT)
+    .map(([sectionKey, sectionConfig]) => {
+      const sectionMeta = SIDEBAR_MODULES_META[sectionKey]
+      if (!sectionMeta) return null
+      const modules = Object.keys(sectionConfig)
+        .filter((moduleKey) => moduleKey !== 'enabled')
+        .map((moduleKey) => ({
+          key: moduleKey,
+          title: sectionMeta.modules[moduleKey]?.title ?? moduleKey,
+          description: sectionMeta.modules[moduleKey]?.description ?? '',
+        }))
+      return {
+        key: sectionKey,
+        title: sectionMeta.title,
+        description: sectionMeta.description,
+        modules,
+      }
+    })
+    .filter((section): section is SectionDef => Boolean(section))
 
   const sectionDefs = allSectionDefs
     .map((section) => {
@@ -284,12 +135,7 @@ export function SidebarModulesCard() {
         const parsed = typeof raw === 'string' ? JSON.parse(raw) : raw
         setConfig(sanitizeSidebarModulesConfig(parsed, userRole))
       } else {
-        const defaults: SidebarModulesConfig = {}
-        for (const sec of sectionDefs) {
-          defaults[sec.key] = { enabled: true }
-          for (const mod of sec.modules) defaults[sec.key][mod.key] = true
-        }
-        setConfig(defaults)
+        setConfig(buildSidebarDefaults(sectionDefs, userRole))
       }
     } catch {
       /* ignore */
@@ -334,25 +180,20 @@ export function SidebarModulesCard() {
         if (currentUser) {
           setUser({ ...currentUser, sidebar_modules: serialized })
         }
-        toast.success(t('Saved successfully'))
+        toast.success('侧边栏设置已保存')
       } else {
-        toast.error(res.data.message || t('Save failed'))
+        toast.error(res.data.message || '侧边栏设置保存失败')
       }
     } catch {
-      toast.error(t('Save failed, please retry'))
+      toast.error('侧边栏设置保存失败，请稍后重试')
     } finally {
       setLoading(false)
     }
   }
 
   const handleReset = () => {
-    const defaults: SidebarModulesConfig = {}
-    for (const sec of sectionDefs) {
-      defaults[sec.key] = { enabled: true }
-      for (const mod of sec.modules) defaults[sec.key][mod.key] = true
-    }
-    setConfig(defaults)
-    toast.success(t('Reset to default configuration'))
+    setConfig(buildSidebarDefaults(sectionDefs, userRole))
+    toast.success('已重置为默认配置')
   }
 
   return (
@@ -364,10 +205,10 @@ export function SidebarModulesCard() {
           </div>
           <div className='min-w-0'>
             <CardTitle className='text-lg tracking-tight sm:text-xl'>
-              {t('Sidebar Personal Settings')}
+              侧边栏个人设置
             </CardTitle>
             <CardDescription className='text-xs sm:text-sm'>
-              {t('Customize sidebar display content')}
+              自定义侧边栏显示内容。
             </CardDescription>
           </div>
         </div>
@@ -394,8 +235,7 @@ export function SidebarModulesCard() {
               </div>
               <div className='mt-3 grid grid-cols-1 gap-2 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-1'>
                 {section.modules.map((mod) => {
-                  const display = getModuleDisplayText(section.key, mod)
-                  const forcedVisible = isForcedVisibleModule(
+                  const forcedVisible = isForcedVisibleSidebarModule(
                     section.key,
                     mod.key
                   )
@@ -408,10 +248,12 @@ export function SidebarModulesCard() {
                     >
                       <div className='mr-2 min-w-0'>
                         <p className='truncate text-sm font-medium'>
-                          {display.title}
+                          {mod.title}
                         </p>
                         <p className='text-muted-foreground truncate text-xs'>
-                          {display.description}
+                          {forcedVisible
+                            ? '系统设置为必需入口，不能隐藏。'
+                            : mod.description}
                         </p>
                       </div>
                       <Switch
@@ -437,10 +279,10 @@ export function SidebarModulesCard() {
 
         <div className='flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end'>
           <Button variant='outline' onClick={handleReset}>
-            {t('Reset to Default')}
+            重置为默认
           </Button>
           <Button onClick={handleSave} disabled={loading}>
-            {loading ? t('Saving...') : t('Save Changes')}
+            {loading ? '保存中...' : '保存更改'}
           </Button>
         </div>
       </CardContent>

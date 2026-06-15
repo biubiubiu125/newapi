@@ -21,9 +21,9 @@ import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { cn } from '@/lib/utils'
 import { DEFAULT_LOGO, DEFAULT_SYSTEM_NAME } from '@/lib/constants'
-import { resolveAssetUrl } from '@/lib/asset-url'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
+import { BrandImage } from './brand-image'
 
 interface FooterLink {
   text: string
@@ -77,24 +77,21 @@ function FooterLinkItem(props: { link: FooterLink }) {
   )
 }
 
-// Renders User Agreement / Privacy Policy links inline with the parent's
-// copyright row when either is configured in System Settings → Site. Emits
-// fragmented siblings so the parent flex container's gap controls spacing.
+// Render legal links inline so the parent flex gap controls spacing.
 function LegalLinks(props: { leadingSeparator?: boolean }) {
-  const { t } = useTranslation()
   const { status } = useStatus()
   const items: { key: string; label: string; href: string }[] = []
   if (status?.user_agreement_enabled) {
     items.push({
       key: 'user-agreement',
-      label: t('User Agreement'),
+      label: '用户协议',
       href: '/user-agreement',
     })
   }
   if (status?.privacy_policy_enabled) {
     items.push({
       key: 'privacy-policy',
-      label: t('Privacy Policy'),
+      label: '隐私政策',
       href: '/privacy-policy',
     })
   }
@@ -161,12 +158,11 @@ export function Footer(props: FooterProps) {
   const {
     systemName,
     logo: systemLogo,
-    serverAddress,
     footerHtml,
     demoSiteEnabled,
   } = useSystemConfig()
 
-  const displayLogo = resolveAssetUrl(systemLogo, DEFAULT_LOGO, serverAddress)
+  const displayLogo = systemLogo || DEFAULT_LOGO
   const displayName = systemName || DEFAULT_SYSTEM_NAME
   const isDemoSiteMode = Boolean(demoSiteEnabled)
   const currentYear = new Date().getFullYear()
@@ -267,7 +263,7 @@ export function Footer(props: FooterProps) {
           {/* Brand column */}
           <div className='shrink-0'>
             <Link to='/' className='group flex items-center gap-2.5'>
-              <img
+              <BrandImage
                 src={displayLogo}
                 alt={displayName}
                 className='size-7 rounded-lg object-contain'

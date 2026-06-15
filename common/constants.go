@@ -86,7 +86,6 @@ var DataExportEnabled = true
 var DataExportInterval = 5         // unit: minute
 var DataExportDefaultTime = "hour" // unit: minute
 var DefaultCollapseSidebar = false // default value of collapse sidebar
-var ConversationSnapshotRetentionDays = 30
 var TicketEmailNotificationEnabled = false
 var TelegramPushBotToken = ""
 var TelegramPushChatId = ""

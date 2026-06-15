@@ -24,6 +24,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { cn } from '@/lib/utils'
 import { useSystemConfig } from '@/hooks/use-system-config'
+import { BrandImage } from '@/components/layout/components/brand-image'
 import {
   Card,
   CardContent,
@@ -311,7 +312,7 @@ export function SetupWizard() {
             {systemConfigLoading ? (
               <Skeleton className='absolute inset-0 rounded-full' />
             ) : (
-              <img
+              <BrandImage
                 src={logo}
                 alt={t('System logo')}
                 className='h-12 w-12 rounded-full object-cover shadow-sm'

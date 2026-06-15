@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useCallback } from 'react'
+import { useEffect, useCallback, useMemo } from 'react'
 import {
   useSystemConfigStore,
   type CurrencyConfig,
@@ -192,13 +192,15 @@ export function useSystemConfig(options: UseSystemConfigOptions = {}) {
     }
   }, [config.logo, config.serverAddress])
 
+  const resolvedLogo = useMemo(
+    () => resolveAssetUrl(config.logo, DEFAULT_LOGO, config.serverAddress),
+    [config.logo, config.serverAddress]
+  )
+
   // Preload logo image when URL changes
   useEffect(() => {
     const { logo } = config
-
-    // Skip if logo is already loaded
-    const resolvedLogo = resolveAssetUrl(logo, DEFAULT_LOGO, config.serverAddress)
-    if (!logo || resolvedLogo === loadedLogoUrl) return
+    if (!logo) return
 
     // Preload new logo
     return preloadImage(
@@ -216,14 +218,8 @@ export function useSystemConfig(options: UseSystemConfigOptions = {}) {
         applyFaviconToDom(DEFAULT_LOGO)
       }
     )
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [config.logo, config.serverAddress, loadedLogoUrl, setLoadedLogoUrl])
+  }, [config.logo, config.serverAddress, resolvedLogo, setLoadedLogoUrl])
 
-  const resolvedLogo = resolveAssetUrl(
-    config.logo,
-    DEFAULT_LOGO,
-    config.serverAddress
-  )
   const displayLogo =
     loadedLogoUrl === resolvedLogo || resolvedLogo === DEFAULT_LOGO
       ? resolvedLogo

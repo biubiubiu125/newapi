@@ -18,6 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { getStatus } from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
+import {
+  isForcedVisibleSidebarModule,
+  normalizeSidebarModuleAliases,
+  type SidebarModulesAdminConfig,
+} from './sidebar-modules'
 
 export type ModuleAccess = { enabled: boolean; requireAuth: boolean }
 
@@ -186,43 +191,32 @@ export async function getFreshModuleAccess(
   }
 }
 
-type SidebarSectionConfig = Record<string, boolean>
-type SidebarModulesConfig = Record<string, SidebarSectionConfig>
-
-const SIDEBAR_MODULE_ALIASES: Record<string, string[]> = {
-  provider_price_export: ['providerPricing'],
-  referral: ['adminReferral'],
-}
-
-const isForcedSidebarModule = (section: string, module: string) =>
-  section === 'admin' && module === 'setting'
-
-function parseSidebarModules(raw: unknown): SidebarModulesConfig | null {
+function parseSidebarModules(raw: unknown): SidebarModulesAdminConfig | null {
   if (!raw || String(raw).trim() === '') return null
   try {
-    if (typeof raw === 'object') return raw as SidebarModulesConfig
-    return JSON.parse(String(raw)) as SidebarModulesConfig
+    const parsed =
+      typeof raw === 'object'
+        ? (raw as SidebarModulesAdminConfig)
+        : (JSON.parse(String(raw)) as SidebarModulesAdminConfig)
+    return normalizeSidebarModuleAliases(parsed)
   } catch {
     return null
   }
 }
 
 function isModuleAllowedByConfig(
-  config: SidebarModulesConfig | null,
+  config: SidebarModulesAdminConfig | null,
   section: string,
   module: string,
   defaultAllowed: boolean
 ): boolean {
-  if (isForcedSidebarModule(section, module)) return true
+  if (isForcedVisibleSidebarModule(section, module)) return true
   if (!config) return defaultAllowed
   const sectionConfig = config[section]
   if (!sectionConfig) return defaultAllowed
   if (sectionConfig.enabled === false) return false
-  const aliasKeys = SIDEBAR_MODULE_ALIASES[module] ?? []
-  const moduleValues = [module, ...aliasKeys]
-    .filter((key) => sectionConfig[key] !== undefined)
-    .map((key) => sectionConfig[key])
-  if (moduleValues.some((enabled) => enabled === false)) return false
+  if (sectionConfig[module] === false) return false
+  if (sectionConfig[module] === true) return true
   return defaultAllowed
 }
 

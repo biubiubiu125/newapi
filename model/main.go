@@ -36,6 +36,15 @@ const (
 	dropLegacyRiskTablesEnv = "DROP_LEGACY_RISK_TABLES"
 )
 
+var legacyConversationArtifactTables = []string{
+	"conversation_snapshots",
+	"conversation_export_tasks",
+}
+
+var legacyConversationArtifactOptions = []string{
+	"ConversationSnapshotRetentionDays",
+}
+
 func initCol() {
 	// init common column names
 	if common.UsingPostgreSQL {
@@ -364,6 +373,7 @@ func migrateDB() error {
 	if err := ensureRechargeOrderIndexes(); err != nil {
 		return err
 	}
+	cleanupConversationArtifactOptions()
 	return nil
 }
 
@@ -510,6 +520,7 @@ func migrateDBFast() error {
 	if err := ensureRechargeOrderIndexes(); err != nil {
 		return err
 	}
+	cleanupConversationArtifactOptions()
 	common.SysLog("database migrated")
 	return nil
 }
@@ -519,10 +530,31 @@ func migrateLOGDB() error {
 	if err = LOG_DB.AutoMigrate(&Log{}); err != nil {
 		return err
 	}
-	if err = LOG_DB.AutoMigrate(&ConversationSnapshot{}, &ConversationExportTask{}); err != nil {
-		return err
-	}
+	cleanupConversationArtifacts()
 	return nil
+}
+
+func cleanupConversationArtifacts() {
+	if LOG_DB == nil {
+		return
+	}
+	for _, tableName := range legacyConversationArtifactTables {
+		if err := LOG_DB.Migrator().DropTable(tableName); err != nil {
+			common.SysLog(fmt.Sprintf("failed to drop legacy conversation table %s: %v", tableName, err))
+		}
+	}
+	if err := os.RemoveAll("data/conversation-exports"); err != nil {
+		common.SysLog("failed to remove legacy conversation export files: " + err.Error())
+	}
+}
+
+func cleanupConversationArtifactOptions() {
+	if DB == nil {
+		return
+	}
+	if err := DB.Delete(&Option{}, legacyConversationArtifactOptions).Error; err != nil {
+		common.SysLog("failed to remove legacy conversation options: " + err.Error())
+	}
 }
 
 func ensureUserEmailCanonicalUniqueIndex() error {

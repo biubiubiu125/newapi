@@ -74,7 +74,7 @@ export function SignUpForm({
   const [wechatCode, setWeChatCode] = useState('')
   const [isWeChatDialogOpen, setIsWeChatDialogOpen] = useState(false)
   const [isWeChatSubmitting, setIsWeChatSubmitting] = useState(false)
-  const legalConsentErrorMessage = t('Please agree to the legal terms first')
+  const legalConsentErrorMessage = '请先阅读并同意协议'
 
   const { status } = useStatus()
   const {
@@ -269,7 +269,7 @@ export function SignUpForm({
               <FormLabel>{t('Username')}</FormLabel>
               <FormControl>
                 <Input
-                  placeholder={t('Enter your username')}
+                  placeholder='请输入您的用户名'
                   maxLength={REGISTER_USERNAME_MAX_LENGTH}
                   {...field}
                 />
@@ -288,12 +288,12 @@ export function SignUpForm({
               <FormLabel>{t('Password')}</FormLabel>
               <FormControl>
                 <PasswordInput
-                  placeholder={t('Enter password (8-20 characters)')}
+                  placeholder='请输入密码（8-20 个字符）'
                   {...field}
                 />
               </FormControl>
               <FormDescription>
-                {t('Password length must be 8-20 characters.')}
+                密码长度为 8-20 个字符。
               </FormDescription>
               <FormMessage />
             </FormItem>
@@ -308,7 +308,7 @@ export function SignUpForm({
             <FormItem>
               <FormLabel>{t('Confirm password')}</FormLabel>
               <FormControl>
-                <PasswordInput placeholder={t('Confirm password')} {...field} />
+                <PasswordInput placeholder='确认密码' {...field} />
               </FormControl>
               <FormMessage />
             </FormItem>
@@ -367,7 +367,7 @@ export function SignUpForm({
                 ) : isSendingCode ? (
                   <Loader2 className='h-4 w-4 animate-spin' />
                 ) : (
-                  t('Send code')
+                  '发送验证码'
                 )}
               </Button>
             </div>
@@ -389,7 +389,7 @@ export function SignUpForm({
               <FormLabel>{t('Referral code')}</FormLabel>
               <FormControl>
                 <Input
-                  placeholder={t('Optional referral code')}
+                  placeholder='可选推广码'
                   autoCapitalize='characters'
                   maxLength={32}
                   {...field}
@@ -451,11 +451,9 @@ export function SignUpForm({
         >
           <DialogContent className='max-w-sm'>
             <DialogHeader className='text-left'>
-              <DialogTitle>{t('WeChat sign in')}</DialogTitle>
+              <DialogTitle>微信登录</DialogTitle>
               <DialogDescription>
-                {t(
-                  'Scan the QR code to follow the official account and reply with “验证码” to receive your verification code.'
-                )}
+                扫码关注公众号，并回复“验证码”获取验证码。
               </DialogDescription>
             </DialogHeader>
 
@@ -463,21 +461,21 @@ export function SignUpForm({
               <div className='flex justify-center'>
                 <img
                   src={wechatQrCodeUrl}
-                  alt={t('WeChat login QR code')}
+                  alt='微信登录二维码'
                   className='h-40 w-40 rounded-md border object-contain'
                 />
               </div>
             ) : (
               <p className='text-muted-foreground text-sm'>
-                {t('QR code is not configured. Please contact support.')}
+                暂未配置二维码，请联系管理员。
               </p>
             )}
 
             <div className='grid gap-2'>
-              <Label htmlFor='wechat-code'>{t('Verification code')}</Label>
+              <Label htmlFor='wechat-code'>验证码</Label>
               <Input
                 id='wechat-code'
-                placeholder={t('Enter the verification code')}
+                placeholder='请输入验证码'
                 value={wechatCode}
                 onChange={(event) => setWeChatCode(event.target.value)}
                 autoComplete='one-time-code'
@@ -491,7 +489,7 @@ export function SignUpForm({
                 onClick={() => handleWeChatDialogChange(false)}
                 disabled={isWeChatSubmitting}
               >
-                {t('Cancel')}
+                取消
               </Button>
               <Button
                 type='button'
@@ -506,7 +504,7 @@ export function SignUpForm({
                 {isWeChatSubmitting ? (
                   <Loader2 className='h-4 w-4 animate-spin' />
                 ) : null}
-                {t('Confirm')}
+                确认
               </Button>
             </DialogFooter>
           </DialogContent>

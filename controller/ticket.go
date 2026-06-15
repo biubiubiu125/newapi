@@ -359,7 +359,11 @@ func UpdateTicket(c *gin.Context) {
 
 func GetTicketBadge(c *gin.Context) {
 	isAdmin := isTicketAdminRequest(c)
-	tx := model.DB.Model(&model.Ticket{}).Where("status = ?", model.TicketStatusPending)
+	todoStatuses := []string{model.TicketStatusPending}
+	if !isAdmin {
+		todoStatuses = []string{model.TicketStatusWaitingUser, model.TicketStatusAdminReplied}
+	}
+	tx := model.DB.Model(&model.Ticket{}).Where("status IN ?", todoStatuses)
 	if !isAdmin {
 		tx = tx.Where("user_id = ?", c.GetInt("id"))
 	}

@@ -211,12 +211,12 @@ func (user *User) initializeDefaultSettingForRole() {
 		role = common.RoleCommonUser
 	}
 	if setting.SidebarModules == "" {
-		setting.SidebarModules = generateDefaultSidebarConfigForRole(role)
+		setting.SidebarModules = GenerateDefaultSidebarConfigForRole(role)
 	}
 	user.SetSetting(setting)
 }
 
-func generateDefaultSidebarConfigForRole(userRole int) string {
+func GenerateDefaultSidebarConfigForRole(userRole int) string {
 	defaultConfig := map[string]interface{}{}
 	defaultConfig["chat"] = map[string]interface{}{
 		"enabled":    true,
@@ -250,11 +250,9 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 			"user":                  true,
 			"subscription":          true,
 			"referral":              true,
-			"adminReferral":         true,
 			"ticket_management":     true,
 			"recharge_audit":        true,
 			"provider_price_export": true,
-			"providerPricing":       true,
 			"setting":               false,
 		}
 	} else if userRole == common.RoleRootUser {
@@ -266,11 +264,9 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 			"user":                  true,
 			"subscription":          true,
 			"referral":              true,
-			"adminReferral":         true,
 			"ticket_management":     true,
 			"recharge_audit":        true,
 			"provider_price_export": true,
-			"providerPricing":       true,
 			"setting":               true,
 		}
 	}

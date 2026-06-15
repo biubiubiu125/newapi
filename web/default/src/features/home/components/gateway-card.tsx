@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
+import { BrandImage } from '@/components/layout/components/brand-image'
 import { Separator } from '@/components/ui/separator'
 import { getGatewayFeatures } from '../constants'
 
@@ -43,7 +44,7 @@ export function GatewayCard({ logo, systemName }: GatewayCardProps) {
       <div className='relative'>
         {/* Gateway Header */}
         <div className='mb-8 flex items-center justify-center gap-3'>
-          <img
+          <BrandImage
             src={logo}
             alt={systemName}
             className='h-12 w-12 rounded-lg object-cover'

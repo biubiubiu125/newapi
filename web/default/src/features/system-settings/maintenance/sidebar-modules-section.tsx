@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useMemo } from 'react'
 import { useForm } from 'react-hook-form'
-import { useTranslation } from 'react-i18next'
 import {
   Form,
   FormControl,
@@ -39,6 +38,7 @@ import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import {
   SIDEBAR_MODULES_DEFAULT,
+  SIDEBAR_MODULES_META,
   type SidebarModulesAdminConfig,
   serializeSidebarModulesAdmin,
 } from './config'
@@ -50,9 +50,6 @@ type SidebarModulesSectionProps = {
 
 type SidebarFormValues = SidebarModulesAdminConfig
 
-const isForcedEnabledModule = (sectionKey: string, moduleKey: string) =>
-  sectionKey === 'admin' && moduleKey === 'setting'
-
 const toTitleCase = (value: string) =>
   value.replace(/[_-]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
 
@@ -60,133 +57,7 @@ export function SidebarModulesSection({
   config,
   initialSerialized,
 }: SidebarModulesSectionProps) {
-  const { t } = useTranslation()
   const updateOption = useUpdateOption()
-
-  const sectionMeta: Record<string, { title: string; description: string }> = {
-    chat: {
-      title: t('Chat area'),
-      description: t('Playground experiments and live conversations.'),
-    },
-    console: {
-      title: t('Console area'),
-      description: t('Dashboards, tokens, and usage analytics.'),
-    },
-    personal: {
-      title: t('Personal area'),
-      description: t('Wallet management and personal preferences.'),
-    },
-    admin: {
-      title: t('Admin area'),
-      description: t('Global configuration and administrative tools.'),
-    },
-  }
-
-  const moduleMeta: Record<
-    string,
-    Record<string, { title: string; description: string }>
-  > = {
-    chat: {
-      playground: {
-        title: t('Playground'),
-        description: t('Experiment with prompts and models in real time.'),
-      },
-      chat: {
-        title: t('Chat'),
-        description: t('Access previous conversations and start new ones.'),
-      },
-    },
-    console: {
-      detail: {
-        title: t('Dashboard'),
-        description: t('Aggregated usage metrics and trend charts.'),
-      },
-      token: {
-        title: t('Token management'),
-        description: t('Create, revoke, and audit API tokens.'),
-      },
-      image2: {
-        title: 'Image2 生图',
-        description: '外部图片生成入口。',
-      },
-      model_check: {
-        title: '模型检测',
-        description: '外部模型检测入口。',
-      },
-      log: {
-        title: t('Usage logs'),
-        description: t('Detailed request logs for investigations.'),
-      },
-      tickets: {
-        title: '工单中心',
-        description: '用户创建、查看和回复自己的工单。',
-      },
-      midjourney: {
-        title: t('Drawing logs'),
-        description: t('History of Midjourney-style image tasks.'),
-      },
-      task: {
-        title: t('Task logs'),
-        description: t('Background job tracker for queued work.'),
-      },
-    },
-    personal: {
-      topup: {
-        title: t('Wallet'),
-        description: t('Top up balance and view billing history.'),
-      },
-      referral: {
-        title: t('Referral Center'),
-        description: t('Referral links, commissions, and withdrawals.'),
-      },
-      personal: {
-        title: t('Profile'),
-        description: t('Personal settings and profile management.'),
-      },
-    },
-    admin: {
-      channel: {
-        title: t('Channels'),
-        description: t('Configure upstream providers and routing.'),
-      },
-      models: {
-        title: t('Models'),
-        description: t('Manage catalog visibility and pricing.'),
-      },
-      redemption: {
-        title: t('Redeem codes'),
-        description: t('Create and review invite or credit codes.'),
-      },
-      user: {
-        title: t('Users'),
-        description: t('Administer user accounts and roles.'),
-      },
-      referral: {
-        title: t('Referral Management'),
-        description: '推广员、返佣和提现管理。',
-      },
-      ticket_management: {
-        title: '工单管理',
-        description: '管理员查看和处理所有用户工单。',
-      },
-      setting: {
-        title: t('System settings'),
-        description: t('Advanced platform configuration.'),
-      },
-      subscription: {
-        title: t('Subscription Management'),
-        description: t('Manage subscription plans and pricing.'),
-      },
-      recharge_audit: {
-        title: t('Order Management'),
-        description: t('Review recharge and subscription orders.'),
-      },
-      provider_price_export: {
-        title: t('Public Price Export'),
-        description: t('Publish public provider pricing data.'),
-      },
-    },
-  }
   const formDefaults = useMemo(() => config, [config])
 
   const form = useForm<SidebarFormValues>({
@@ -216,20 +87,21 @@ export function SidebarModulesSection({
   const sections = Object.entries(config)
 
   return (
-    <SettingsSection title={t('Sidebar modules')}>
+    <SettingsSection title='侧边栏模块'>
       <Form {...form}>
         <SettingsForm onSubmit={form.handleSubmit(onSubmit)}>
           <SettingsPageFormActions
             onSave={form.handleSubmit(onSubmit)}
             onReset={resetToDefault}
             isSaving={updateOption.isPending}
-            resetLabel='Reset to default'
-            saveLabel='Save sidebar modules'
+            resetLabel='重置为默认'
+            saveLabel='保存侧边栏模块'
           />
           {sections.map(([sectionKey, sectionConfig]) => {
-            const sectionInfo = sectionMeta[sectionKey] ?? {
+            const sectionInfo = SIDEBAR_MODULES_META[sectionKey] ?? {
               title: toTitleCase(sectionKey),
-              description: t('Custom sidebar section'),
+              description: '自定义侧边栏分区。',
+              modules: {},
             }
             const modules = Object.entries(sectionConfig).filter(
               ([moduleKey]) => moduleKey !== 'enabled'
@@ -261,13 +133,15 @@ export function SidebarModulesSection({
 
                 <SettingsControlChildren className='grid gap-3 md:grid-cols-2'>
                   {modules.map(([moduleKey]) => {
-                    const moduleInfo = moduleMeta[sectionKey]?.[moduleKey] ?? {
+                    const moduleInfo = sectionInfo.modules[moduleKey] ?? {
                       title: toTitleCase(moduleKey),
-                      description: t('Custom module'),
+                      description: '自定义模块。',
                     }
-                    const forcedEnabled = isForcedEnabledModule(
-                      sectionKey,
-                      moduleKey
+                    const forcedEnabled = sectionKey === 'admin' && moduleKey === 'setting'
+                    const disabled = Boolean(
+                      forcedEnabled ||
+                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                        !form.watch(`${sectionKey}.enabled` as any)
                     )
                     return (
                       <FormField
@@ -293,11 +167,7 @@ export function SidebarModulesSection({
                                 onCheckedChange={
                                   forcedEnabled ? undefined : field.onChange
                                 }
-                                disabled={
-                                  forcedEnabled ||
-                                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                                  !form.watch(`${sectionKey}.enabled` as any)
-                                }
+                                disabled={disabled}
                               />
                             </FormControl>
                           </SettingsSwitchItem>

@@ -22,7 +22,6 @@ import { EmailSettingsSection } from '../integrations/email-settings-section'
 import { MonitoringSettingsSection } from '../integrations/monitoring-settings-section'
 import { WorkerSettingsSection } from '../integrations/worker-settings-section'
 import { LogSettingsSection } from '../maintenance/log-settings-section'
-import { ConversationExportSection } from '../maintenance/conversation-export-section'
 import { PerformanceSection } from '../maintenance/performance-section'
 import { TelegramPushSection } from '../maintenance/telegram-push-section'
 import { TicketNotificationSection } from '../maintenance/ticket-notification-section'
@@ -95,15 +94,6 @@ const OPERATIONS_SECTIONS = [
           WorkerAllowHttpImageRequestEnabled:
             settings.WorkerAllowHttpImageRequestEnabled,
         }}
-      />
-    ),
-  },
-  {
-    id: 'export',
-    titleKey: '导出',
-    build: (settings: OperationsSettings) => (
-      <ConversationExportSection
-        retentionDays={settings.ConversationSnapshotRetentionDays}
       />
     ),
   },

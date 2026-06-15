@@ -16,37 +16,34 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { cn } from '@/lib/utils'
-import { BrandImage } from './brand-image'
+import type { ComponentProps } from 'react'
+import { DEFAULT_LOGO } from '@/lib/constants'
 
-interface HeaderLogoProps {
-  src: string
-  alt?: string
-  loading: boolean
-  logoLoaded: boolean
-  className?: string
-}
+type BrandImageProps = ComponentProps<'img'>
 
-/**
- * Logo component for header with loading state
- * Shows image only when fully loaded for smooth UX
- */
-export function HeaderLogo({
+export function BrandImage({
   src,
-  alt = 'logo',
-  loading,
-  logoLoaded,
-  className,
-}: HeaderLogoProps) {
+  onError,
+  onLoad,
+  ...props
+}: BrandImageProps) {
+  const requestedSrc = src || DEFAULT_LOGO
+
   return (
-    <BrandImage
-      src={src}
-      alt={alt}
-      className={cn(
-        'h-6 w-6 rounded-full transition-opacity duration-200',
-        !loading && logoLoaded ? 'opacity-100' : 'opacity-0',
-        className
-      )}
+    <img
+      src={requestedSrc}
+      onError={(event) => {
+        onError?.(event)
+        if (event.defaultPrevented) return
+        if (event.currentTarget.dataset.fallbackFor === requestedSrc) return
+        event.currentTarget.dataset.fallbackFor = requestedSrc
+        event.currentTarget.src = DEFAULT_LOGO
+      }}
+      onLoad={(event) => {
+        delete event.currentTarget.dataset.fallbackFor
+        onLoad?.(event)
+      }}
+      {...props}
     />
   )
 }

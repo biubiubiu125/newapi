@@ -53,7 +53,6 @@ func InitOptionMap() {
 	common.OptionMap["DrawingEnabled"] = strconv.FormatBool(common.DrawingEnabled)
 	common.OptionMap["TaskEnabled"] = strconv.FormatBool(common.TaskEnabled)
 	common.OptionMap["DataExportEnabled"] = strconv.FormatBool(common.DataExportEnabled)
-	common.OptionMap["ConversationSnapshotRetentionDays"] = strconv.Itoa(common.ConversationSnapshotRetentionDays)
 	common.OptionMap["TicketEmailNotificationEnabled"] = strconv.FormatBool(common.TicketEmailNotificationEnabled)
 	common.OptionMap["TelegramPushBotToken"] = common.TelegramPushBotToken
 	common.OptionMap["TelegramPushChatId"] = common.TelegramPushChatId
@@ -606,8 +605,6 @@ func updateOptionMap(key string, value string) (err error) {
 		common.DataExportInterval, _ = strconv.Atoi(value)
 	case "DataExportDefaultTime":
 		common.DataExportDefaultTime = value
-	case "ConversationSnapshotRetentionDays":
-		common.ConversationSnapshotRetentionDays, _ = strconv.Atoi(value)
 	case "TelegramPushBotToken":
 		common.TelegramPushBotToken = value
 	case "TelegramPushChatId":

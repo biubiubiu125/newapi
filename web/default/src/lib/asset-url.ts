@@ -4,6 +4,15 @@ function normalizeBaseUrl(value?: string | null): string {
   return (value || '').trim().replace(/\/+$/, '')
 }
 
+function isSameOrigin(value: string): boolean {
+  if (typeof window === 'undefined') return false
+  try {
+    return new URL(value).origin === window.location.origin
+  } catch {
+    return false
+  }
+}
+
 export function resolveAssetUrl(
   url?: string | null,
   fallback = DEFAULT_LOGO,
@@ -18,7 +27,12 @@ export function resolveAssetUrl(
   const base = normalizeBaseUrl(serverAddress)
   const isBundledAsset =
     raw === fallbackUrl || raw === DEFAULT_LOGO || raw === '/favicon.ico'
-  if (base && raw.startsWith('/') && !isBundledAsset) {
+  if (
+    base &&
+    raw.startsWith('/') &&
+    !isBundledAsset &&
+    (typeof window === 'undefined' || isSameOrigin(base))
+  ) {
     return `${base}${raw}`
   }
 

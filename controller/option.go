@@ -408,15 +408,6 @@ func UpdateOption(c *gin.Context) {
 			})
 			return
 		}
-	case "ConversationSnapshotRetentionDays":
-		days, parseErr := strconv.Atoi(strings.TrimSpace(option.Value.(string)))
-		if parseErr != nil || days < 0 || days > 3650 {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "对话快照保留天数必须是 0-3650 的整数，0 表示不自动清理",
-			})
-			return
-		}
 	case "console_setting.api_info":
 		err = console_setting.ValidateConsoleSettings(option.Value.(string), "ApiInfo")
 		if err != nil {

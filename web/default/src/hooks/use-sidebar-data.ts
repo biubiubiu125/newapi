@@ -56,6 +56,8 @@ import {
 import { getRechargeAuditSummary } from '@/features/recharge-audit/api'
 import { getTicketBadge } from '@/features/tickets/api'
 import { getAdminUsersSummary } from '@/features/users/api'
+import { useStatus } from '@/hooks/use-status'
+import { isSidebarModuleEnabledFromStatus } from '@/lib/nav-modules'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -85,12 +87,42 @@ export function useSidebarData(): SidebarData {
   const userRole = user?.role
   const userId = user?.id
   const [badgeAckVersion, setBadgeAckVersion] = useState(0)
+  const { status } = useStatus()
+  const hasSidebarStatus = Boolean(status)
   const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
   const isRoot = Boolean(userRole && userRole >= ROLE.SUPER_ADMIN)
-  const { counts } = useAdminReferralBadges(isAdmin)
+  const statusRecord = status as Record<string, unknown> | null
+  const userTicketsEnabled = isSidebarModuleEnabledFromStatus(
+    statusRecord,
+    'console',
+    'tickets'
+  )
+  const adminTicketsEnabled = isSidebarModuleEnabledFromStatus(
+    statusRecord,
+    'admin',
+    'ticket_management'
+  )
+  const adminUsersEnabled = isSidebarModuleEnabledFromStatus(
+    statusRecord,
+    'admin',
+    'user'
+  )
+  const adminReferralEnabled = isSidebarModuleEnabledFromStatus(
+    statusRecord,
+    'admin',
+    'referral'
+  )
+  const adminRechargeAuditEnabled = isSidebarModuleEnabledFromStatus(
+    statusRecord,
+    'admin',
+    'recharge_audit'
+  )
+  const { counts } = useAdminReferralBadges(
+    Boolean(isAdmin && hasSidebarStatus && adminReferralEnabled)
+  )
   const userTicketBadgeQuery = useQuery({
     queryKey: ['sidebar-ticket-badge', userId, 'self'],
-    enabled: Boolean(userId),
+    enabled: Boolean(userId && hasSidebarStatus && userTicketsEnabled),
     queryFn: async () => {
       const data = await getTicketBadge(false)
       return normalizeSidebarBadgeCount(data?.count)
@@ -100,7 +132,7 @@ export function useSidebarData(): SidebarData {
   })
   const adminTicketBadgeQuery = useQuery({
     queryKey: ['sidebar-ticket-badge', userId, 'admin'],
-    enabled: Boolean(userId && isAdmin),
+    enabled: Boolean(userId && isAdmin && hasSidebarStatus && adminTicketsEnabled),
     queryFn: async () => {
       const data = await getTicketBadge(true)
       return normalizeSidebarBadgeCount(data?.count)
@@ -109,8 +141,17 @@ export function useSidebarData(): SidebarData {
     staleTime: 60 * 1000,
   })
   const adminAlertQuery = useQuery({
-    queryKey: ['admin-sidebar-alert-badges', userId],
-    enabled: isAdmin,
+    queryKey: [
+      'admin-sidebar-alert-badges',
+      userId,
+      adminUsersEnabled,
+      adminRechargeAuditEnabled,
+    ],
+    enabled: Boolean(
+      isAdmin &&
+        hasSidebarStatus &&
+        (adminUsersEnabled || adminRechargeAuditEnabled)
+    ),
     queryFn: async (): Promise<AdminAlertBadges> => {
       const userAck = readAdminSidebarBadgeAck('users', userId, {
         mode: 'cursor',
@@ -136,19 +177,27 @@ export function useSidebarData(): SidebarData {
         orderParams.set('after_order_cursor', orderAck.trim())
       }
       const [userRes, orderRes] = await Promise.all([
-        getAdminUsersSummary(userParams),
-        getRechargeAuditSummary(orderParams),
+        adminUsersEnabled
+          ? getAdminUsersSummary(userParams)
+          : Promise.resolve(undefined),
+        adminRechargeAuditEnabled
+          ? getRechargeAuditSummary(orderParams)
+          : Promise.resolve(undefined),
       ])
 
       return {
-        newUsers: hasUserAck
-          ? normalizeSidebarBadgeCount(userRes.data?.new_user_count)
+        newUsers: adminUsersEnabled && hasUserAck
+          ? normalizeSidebarBadgeCount(userRes?.data?.new_user_count)
           : 0,
-        latestUserId: normalizeSidebarBadgeCount(userRes.data?.latest_user_id),
-        orderIssues: hasOrderAck
-          ? normalizeSidebarBadgeCount(orderRes.data?.new_order_count)
+        latestUserId: adminUsersEnabled
+          ? normalizeSidebarBadgeCount(userRes?.data?.latest_user_id)
           : 0,
-        latestOrderCursor: orderRes.data?.latest_order_cursor || undefined,
+        orderIssues: adminRechargeAuditEnabled && hasOrderAck
+          ? normalizeSidebarBadgeCount(orderRes?.data?.new_order_count)
+          : 0,
+        latestOrderCursor: adminRechargeAuditEnabled
+          ? orderRes?.data?.latest_order_cursor || undefined
+          : undefined,
       }
     },
     refetchOnWindowFocus: false,

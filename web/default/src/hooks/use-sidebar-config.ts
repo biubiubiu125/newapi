@@ -19,14 +19,15 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMemo } from 'react'
 import { useAuthStore } from '@/stores/auth-store'
 import { useStatus } from '@/hooks/use-status'
+import {
+  SIDEBAR_MODULES_DEFAULT,
+  isForcedVisibleSidebarModule,
+  mergeWithDefaultSidebarModules,
+  normalizeSidebarModuleAliases,
+  type SidebarModulesAdminConfig,
+  type SidebarSectionConfig,
+} from '@/lib/sidebar-modules'
 import type { NavGroup, NavItem } from '@/components/layout/types'
-
-type SidebarSectionConfig = {
-  enabled: boolean
-  [key: string]: boolean
-}
-
-type SidebarModulesAdminConfig = Record<string, SidebarSectionConfig>
 
 // User-layer config is shape-identical to admin, but may be null
 // to signal "no narrowing" (empty/invalid/legacy users).
@@ -37,136 +38,6 @@ type ConfigurableNavUrl = {
   configUrls?: unknown[]
 }
 
-/**
- * Default sidebar modules configuration
- */
-const DEFAULT_SIDEBAR_MODULES: SidebarModulesAdminConfig = {
-  chat: {
-    enabled: true,
-    playground: true,
-    chat: true,
-  },
-  console: {
-    enabled: true,
-    detail: true,
-    token: true,
-    image2: true,
-    model_check: true,
-    log: true,
-    tickets: true,
-    midjourney: true,
-    task: true,
-  },
-  personal: {
-    enabled: true,
-    topup: true,
-    referral: true,
-    personal: true,
-  },
-  admin: {
-    enabled: true,
-    channel: true,
-    models: true,
-    redemption: true,
-    user: true,
-    referral: true,
-    ticket_management: true,
-    setting: true,
-    subscription: true,
-    recharge_audit: true,
-    provider_price_export: true,
-  },
-}
-
-const SIDEBAR_MODULE_ALIASES: Record<string, Record<string, string[]>> = {
-  admin: {
-    referral: ['adminReferral'],
-    provider_price_export: ['providerPricing'],
-  },
-}
-
-const REMOVED_SIDEBAR_MODULES: Record<string, string[]> = {
-  admin: ['risk_center', 'riskCenter'],
-}
-
-const isForcedVisibleModule = (section: string, module: string) =>
-  section === 'admin' && module === 'setting'
-
-function removeRemovedSidebarModules(
-  config: SidebarModulesAdminConfig
-): SidebarModulesAdminConfig {
-  const normalized: SidebarModulesAdminConfig = { ...config }
-
-  Object.entries(REMOVED_SIDEBAR_MODULES).forEach(
-    ([sectionKey, moduleKeys]) => {
-      const section = normalized[sectionKey]
-      if (!section) return
-      normalized[sectionKey] = { ...section }
-      moduleKeys.forEach((moduleKey) => {
-        delete normalized[sectionKey][moduleKey]
-      })
-    }
-  )
-
-  return normalized
-}
-
-function normalizeSidebarModuleAliases(
-  config: SidebarModulesAdminConfig
-): SidebarModulesAdminConfig {
-  const normalized: SidebarModulesAdminConfig = { ...config }
-
-  Object.entries(SIDEBAR_MODULE_ALIASES).forEach(
-    ([sectionKey, moduleAliases]) => {
-      const section = normalized[sectionKey]
-      if (!section) return
-
-      normalized[sectionKey] = { ...section }
-      Object.entries(moduleAliases).forEach(([canonicalKey, aliases]) => {
-        if (normalized[sectionKey][canonicalKey] === undefined) {
-          const alias = aliases.find(
-            (aliasKey) => normalized[sectionKey][aliasKey] !== undefined
-          )
-          if (alias) {
-            normalized[sectionKey][canonicalKey] =
-              normalized[sectionKey][alias]
-          }
-        }
-        aliases.forEach((aliasKey) => {
-          delete normalized[sectionKey][aliasKey]
-        })
-      })
-    }
-  )
-
-  return removeRemovedSidebarModules(normalized)
-}
-
-const mergeWithDefaultSidebarModules = (
-  config: SidebarModulesAdminConfig
-): SidebarModulesAdminConfig => {
-  const merged: SidebarModulesAdminConfig =
-    normalizeSidebarModuleAliases(config)
-
-  Object.entries(DEFAULT_SIDEBAR_MODULES).forEach(
-    ([sectionKey, defaultSection]) => {
-      const existingSection = merged[sectionKey]
-      if (!existingSection) {
-        merged[sectionKey] = { ...defaultSection }
-        return
-      }
-
-      merged[sectionKey] = { ...defaultSection, ...existingSection }
-      Object.keys(defaultSection).forEach((moduleKey) => {
-        if (merged[sectionKey][moduleKey] === undefined) {
-          merged[sectionKey][moduleKey] = defaultSection[moduleKey]
-        }
-      })
-    }
-  )
-
-  return merged
-}
 
 /**
  * Mapping from URL to configuration keys
@@ -219,7 +90,7 @@ function parseSidebarConfig(
 ): SidebarModulesAdminConfig {
   // If empty string, null, or undefined, use default config
   if (!value || value.trim() === '') {
-    return DEFAULT_SIDEBAR_MODULES
+    return SIDEBAR_MODULES_DEFAULT
   }
 
   try {
@@ -228,7 +99,7 @@ function parseSidebarConfig(
   } catch {
     // eslint-disable-next-line no-console
     console.error('Failed to parse sidebar modules configuration')
-    return DEFAULT_SIDEBAR_MODULES
+    return SIDEBAR_MODULES_DEFAULT
   }
 }
 
@@ -270,7 +141,7 @@ function isModuleEnabled(
   }
 
   const { section, module } = mapping
-  if (isForcedVisibleModule(section, module)) return true
+  if (isForcedVisibleSidebarModule(section, module)) return true
 
   const adminSection = adminConfig[section]
   const adminAllowed = Boolean(
@@ -364,7 +235,7 @@ function filterNavItems(
  *
  * Two layers, AND-combined:
  *   1. Admin (status.SidebarModulesAdmin) — authoritative, falls back to
- *      DEFAULT_SIDEBAR_MODULES when empty/invalid. Disabling here hides the
+ *      SIDEBAR_MODULES_DEFAULT when empty/invalid. Disabling here hides the
  *      item for everyone regardless of user preference.
  *   2. User (auth.user.sidebar_modules) — narrower overlay, null sentinel
  *      means "don't narrow". A section/module is only hidden if the user

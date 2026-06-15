@@ -112,9 +112,6 @@ func main() {
 	// Referral settlement task (pending -> available)
 	service.StartReferralSettlementTask()
 
-	// Conversation snapshot/export retention task
-	service.StartConversationSnapshotMaintenanceTask()
-
 	// Telegram push retry task
 	service.StartTelegramPushRetryTask()
 

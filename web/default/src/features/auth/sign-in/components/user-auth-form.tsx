@@ -418,11 +418,9 @@ export function UserAuthForm({
         >
           <DialogContent className='max-w-sm'>
             <DialogHeader className='text-left'>
-              <DialogTitle>{t('WeChat sign in')}</DialogTitle>
+              <DialogTitle>微信登录</DialogTitle>
               <DialogDescription>
-                {t(
-                  'Scan the QR code to follow the official account and reply with “验证码” to receive your verification code.'
-                )}
+                扫码关注公众号，并回复“验证码”获取验证码。
               </DialogDescription>
             </DialogHeader>
 
@@ -430,21 +428,21 @@ export function UserAuthForm({
               <div className='flex justify-center'>
                 <img
                   src={wechatQrCodeUrl}
-                  alt={t('WeChat login QR code')}
+                  alt='微信登录二维码'
                   className='h-40 w-40 rounded-md border object-contain'
                 />
               </div>
             ) : (
               <p className='text-muted-foreground text-sm'>
-                {t('QR code is not configured. Please contact support.')}
+                暂未配置二维码，请联系管理员。
               </p>
             )}
 
             <div className='grid gap-2'>
-              <Label htmlFor='wechat-code'>{t('Verification code')}</Label>
+              <Label htmlFor='wechat-code'>验证码</Label>
               <Input
                 id='wechat-code'
-                placeholder={t('Enter the verification code')}
+                placeholder='请输入验证码'
                 value={wechatCode}
                 onChange={(event) => setWeChatCode(event.target.value)}
                 autoComplete='one-time-code'
@@ -458,7 +456,7 @@ export function UserAuthForm({
                 onClick={() => handleWeChatDialogChange(false)}
                 disabled={isWeChatSubmitting}
               >
-                {t('Cancel')}
+                取消
               </Button>
               <Button
                 type='button'
@@ -473,7 +471,7 @@ export function UserAuthForm({
                 {isWeChatSubmitting ? (
                   <Loader2 className='h-4 w-4 animate-spin' />
                 ) : null}
-                {t('Confirm')}
+                确认
               </Button>
             </DialogFooter>
           </DialogContent>

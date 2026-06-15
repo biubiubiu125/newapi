@@ -131,12 +131,9 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		return
 	}
 	c.Set("relay_info", relayInfo)
-	conversationCapture := service.BeginConversationSnapshotCapture(c, relayInfo, request)
 	defer func() {
-		snapshotError := newAPIError
 		writeRelayErrorResponse()
 		newAPIError = nil
-		service.FinishConversationSnapshotCapture(c, relayInfo, conversationCapture, snapshotError)
 	}()
 
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()

@@ -31,12 +31,29 @@ export type HeaderNavModulesConfig = {
   [key: string]: boolean | HeaderNavAccessConfig
 }
 
-export type SidebarSectionConfig = {
-  enabled: boolean
-  [key: string]: boolean
-}
+export type {
+  SidebarModulesAdminConfig,
+  SidebarSectionConfig,
+} from '@/lib/sidebar-modules'
+export {
+  SIDEBAR_MODULES_DEFAULT,
+  SIDEBAR_MODULES_META,
+  applyForcedSidebarModules,
+  cloneSidebarModulesDefault,
+  mergeWithDefaultSidebarModules,
+  normalizeSidebarModuleAliases,
+} from '@/lib/sidebar-modules'
 
-export type SidebarModulesAdminConfig = Record<string, SidebarSectionConfig>
+import {
+  applyForcedSidebarModules,
+  cloneSidebarModulesDefault,
+  normalizeSidebarModuleAliases,
+  removeRemovedSidebarModules,
+} from '@/lib/sidebar-modules'
+import type {
+  SidebarModulesAdminConfig,
+  SidebarSectionConfig,
+} from '@/lib/sidebar-modules'
 
 export const HEADER_NAV_DEFAULT: HeaderNavModulesConfig = {
   home: true,
@@ -51,59 +68,6 @@ export const HEADER_NAV_DEFAULT: HeaderNavModulesConfig = {
   },
   docs: true,
   about: true,
-}
-
-export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
-  chat: {
-    enabled: true,
-    playground: true,
-    chat: true,
-  },
-  console: {
-    enabled: true,
-    detail: true,
-    token: true,
-    image2: true,
-    model_check: true,
-    log: true,
-    tickets: true,
-    midjourney: true,
-    task: true,
-  },
-  personal: {
-    enabled: true,
-    topup: true,
-    referral: true,
-    personal: true,
-  },
-  admin: {
-    enabled: true,
-    channel: true,
-    models: true,
-    redemption: true,
-    user: true,
-    referral: true,
-    ticket_management: true,
-    setting: true,
-    subscription: true,
-    recharge_audit: true,
-    provider_price_export: true,
-  },
-}
-
-const FORCE_ENABLED_SIDEBAR_MODULES: Record<string, string[]> = {
-  admin: ['setting'],
-}
-
-const SIDEBAR_MODULE_ALIASES: Record<string, Record<string, string[]>> = {
-  admin: {
-    referral: ['adminReferral'],
-    provider_price_export: ['providerPricing'],
-  },
-}
-
-const REMOVED_SIDEBAR_MODULES: Record<string, string[]> = {
-  admin: ['risk_center', 'riskCenter'],
 }
 
 const toBoolean = (value: unknown, fallback: boolean): boolean => {
@@ -145,83 +109,6 @@ const parseAccessModule = (
     }
   }
   return { ...fallback }
-}
-
-const cloneSidebarDefault = (): SidebarModulesAdminConfig =>
-  Object.entries(SIDEBAR_MODULES_DEFAULT).reduce<SidebarModulesAdminConfig>(
-    (acc, [section, config]) => {
-      acc[section] = { ...config }
-      return acc
-    },
-    {}
-  )
-
-const normalizeSidebarAliases = (
-  config: SidebarModulesAdminConfig
-): SidebarModulesAdminConfig => {
-  const normalized: SidebarModulesAdminConfig = { ...config }
-
-  Object.entries(SIDEBAR_MODULE_ALIASES).forEach(
-    ([sectionKey, moduleAliases]) => {
-      const section = normalized[sectionKey]
-      if (!section) return
-
-      normalized[sectionKey] = { ...section }
-      Object.entries(moduleAliases).forEach(([canonicalKey, aliases]) => {
-        if (normalized[sectionKey][canonicalKey] === undefined) {
-          const alias = aliases.find(
-            (aliasKey) => normalized[sectionKey][aliasKey] !== undefined
-          )
-          if (alias) {
-            normalized[sectionKey][canonicalKey] = normalized[sectionKey][alias]
-          }
-        }
-        aliases.forEach((aliasKey) => {
-          delete normalized[sectionKey][aliasKey]
-        })
-      })
-    }
-  )
-
-  return removeRemovedSidebarModules(normalized)
-}
-
-const removeRemovedSidebarModules = (
-  config: SidebarModulesAdminConfig
-): SidebarModulesAdminConfig => {
-  const normalized: SidebarModulesAdminConfig = { ...config }
-
-  Object.entries(REMOVED_SIDEBAR_MODULES).forEach(
-    ([sectionKey, moduleKeys]) => {
-      const section = normalized[sectionKey]
-      if (!section) return
-      normalized[sectionKey] = { ...section }
-      moduleKeys.forEach((moduleKey) => {
-        delete normalized[sectionKey][moduleKey]
-      })
-    }
-  )
-
-  return normalized
-}
-
-const applyForcedSidebarModules = (
-  config: SidebarModulesAdminConfig
-): SidebarModulesAdminConfig => {
-  const normalized: SidebarModulesAdminConfig = { ...config }
-
-  Object.entries(FORCE_ENABLED_SIDEBAR_MODULES).forEach(
-    ([sectionKey, moduleKeys]) => {
-      normalized[sectionKey] = {
-        ...(normalized[sectionKey] ?? {}),
-      }
-      moduleKeys.forEach((moduleKey) => {
-        normalized[sectionKey][moduleKey] = true
-      })
-    }
-  )
-
-  return normalized
 }
 
 export function parseHeaderNavModules(
@@ -274,7 +161,7 @@ export function serializeHeaderNavModules(
 export function parseSidebarModulesAdmin(
   value: string | null | undefined
 ): SidebarModulesAdminConfig {
-  const defaults = cloneSidebarDefault()
+  const defaults = cloneSidebarModulesDefault()
   // If empty string, null, or undefined, use default config
   if (!value || value.trim() === '') return defaults
 
@@ -282,7 +169,7 @@ export function parseSidebarModulesAdmin(
     const parsed = JSON.parse(value) as Record<string, unknown>
     const aliasNormalized =
       parsed && typeof parsed === 'object'
-        ? normalizeSidebarAliases(parsed as SidebarModulesAdminConfig)
+        ? normalizeSidebarModuleAliases(parsed as SidebarModulesAdminConfig)
         : parsed
     const result: SidebarModulesAdminConfig = {}
 
@@ -300,7 +187,6 @@ export function parseSidebarModulesAdmin(
       Object.entries(raw as Record<string, unknown>).forEach(
         ([moduleKey, moduleValue]) => {
           if (moduleKey === 'enabled') return
-          if (REMOVED_SIDEBAR_MODULES[sectionKey]?.includes(moduleKey)) return
           sectionConfig[moduleKey] = toBoolean(
             moduleValue,
             defaultSection[moduleKey] ?? true

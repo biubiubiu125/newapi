@@ -4656,6 +4656,7 @@
     "If incorrect receiving information or blockchain network causes funds not to arrive, you are responsible for the loss.": "如果因收款信息或区块链网络填写错误导致款项无法到账，责任由您自行承担。",
     "Upload Image": "上传图片",
     "Use an image URL or upload a logo image. Uploaded images are stored on the server and the returned URL is saved after you submit.": "可以填写图片 URL，也可以上传徽标图片。上传后的图片会保存在服务器，提交保存后使用返回的 URL。",
+    "Use an image URL or upload a png, jpg, webp, gif or ico image. Uploaded images are stored on the server and the returned URL is saved after you submit.": "可以填写图片 URL，也可以上传 png、jpg、webp、gif 或 ico 图片。上传后的图片会保存在服务器，提交保存后使用返回的 URL。",
     "USDT withdrawals are converted using OKX merchant real-time exchange rates at review or payout time.": "USDT 提现会按欧意商家实时汇率在审核或打款时折算。",
     "No QR code uploaded": "未上传二维码",
     "Image unavailable": "图片无法显示",
