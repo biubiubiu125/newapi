@@ -45,7 +45,6 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     image2: true,
     model_check: true,
     log: true,
-    tickets: true,
     midjourney: true,
     task: true,
   },
@@ -53,6 +52,7 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     enabled: true,
     topup: true,
     referral: true,
+    tickets: true,
     personal: true,
   },
   admin: {
@@ -118,16 +118,12 @@ export const SIDEBAR_MODULES_META: Record<string, SidebarSectionMeta> = {
         description: '外部图片生成入口。',
       },
       model_check: {
-        title: '模型检测',
-        description: '外部模型检测入口。',
+        title: '模型状态监测',
+        description: '外部模型状态监测入口。',
       },
       log: {
         title: '使用日志',
         description: '用于调查的详细请求日志。',
-      },
-      tickets: {
-        title: '工单中心',
-        description: '用户创建、查看和回复自己的工单。',
       },
       midjourney: {
         title: '绘制日志',
@@ -150,6 +146,10 @@ export const SIDEBAR_MODULES_META: Record<string, SidebarSectionMeta> = {
       referral: {
         title: '推广中心',
         description: '邀请链接、佣金和提现。',
+      },
+      tickets: {
+        title: '工单中心',
+        description: '用户创建、查看和回复自己的工单。',
       },
       personal: {
         title: '个人资料',
@@ -264,6 +264,15 @@ export const normalizeSidebarModuleAliases = (
       })
     }
   )
+
+  if (normalized.console?.tickets !== undefined) {
+    normalized.personal = { enabled: true, ...normalized.personal }
+    if (normalized.personal.tickets === undefined) {
+      normalized.personal.tickets = normalized.console.tickets
+    }
+    normalized.console = { ...normalized.console }
+    delete normalized.console.tickets
+  }
 
   return removeRemovedSidebarModules(normalized)
 }

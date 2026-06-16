@@ -959,7 +959,9 @@ function TicketListPanel({
   hasPrevTicketPage,
   hasNextTicketPage,
   showUser,
+  showFilters,
   showPriorityFilter,
+  onCreate,
   onRefresh,
   onSelect,
   onStatusFilterChange,
@@ -989,7 +991,9 @@ function TicketListPanel({
   hasPrevTicketPage: boolean
   hasNextTicketPage: boolean
   showUser?: boolean
+  showFilters?: boolean
   showPriorityFilter?: boolean
+  onCreate?: () => void
   onRefresh: () => void
   onSelect: (id: number) => void
   onStatusFilterChange: (value: string) => void
@@ -1010,106 +1014,116 @@ function TicketListPanel({
             <LifeBuoy className='h-4 w-4' />
             {title}
           </div>
-          <Button size='sm' variant='outline' onClick={onRefresh}>
-            <RefreshCw className='h-4 w-4' />
-            刷新
-          </Button>
+          <div className='flex items-center gap-2'>
+            {onCreate && (
+              <Button size='sm' onClick={onCreate}>
+                <Plus className='h-4 w-4' />
+                创建工单
+              </Button>
+            )}
+            <Button size='sm' variant='outline' onClick={onRefresh}>
+              <RefreshCw className='h-4 w-4' />
+              刷新
+            </Button>
+          </div>
         </div>
-        <div
-          className={cn(
-            'mt-3 grid gap-2',
-            showPriorityFilter
-              ? 'md:grid-cols-3 xl:grid-cols-[minmax(0,1.3fr)_repeat(6,minmax(0,1fr))]'
-              : 'sm:grid-cols-2'
-          )}
-        >
-          {showPriorityFilter && (
-            <Input
-              value={keyword}
-              onChange={(event) => onKeywordChange(event.target.value)}
-              placeholder='搜索编号、标题、用户名'
-            />
-          )}
-          <Select
-            value={statusFilter || 'all'}
-            onValueChange={(value) => {
-              if (value) onStatusFilterChange(value === 'all' ? '' : value)
-            }}
+        {showFilters && (
+          <div
+            className={cn(
+              'mt-3 grid gap-2',
+              showPriorityFilter
+                ? 'md:grid-cols-3 xl:grid-cols-[minmax(0,1.3fr)_repeat(6,minmax(0,1fr))]'
+                : 'sm:grid-cols-2'
+            )}
           >
-            <SelectTrigger>
-              <SelectValue placeholder='全部状态' />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value='all'>全部状态</SelectItem>
-              {TICKET_STATUSES.map((status) => (
-                <SelectItem key={status} value={status}>
-                  {status}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          <Select
-            value={categoryFilter || 'all'}
-            onValueChange={(value) => {
-              if (value) onCategoryFilterChange(value === 'all' ? '' : value)
-            }}
-          >
-            <SelectTrigger>
-              <SelectValue placeholder='全部分类' />
-            </SelectTrigger>
-            <SelectContent>
-              <SelectItem value='all'>全部分类</SelectItem>
-              {TICKET_CATEGORIES.map((category) => (
-                <SelectItem key={category} value={category}>
-                  {category}
-                </SelectItem>
-              ))}
-            </SelectContent>
-          </Select>
-          {showPriorityFilter && (
-            <>
-              <Select
-                value={priorityFilter || 'all'}
-                onValueChange={(value) => {
-                  if (value)
-                    onPriorityFilterChange(value === 'all' ? '' : value)
-                }}
-              >
-                <SelectTrigger>
-                  <SelectValue placeholder='全部优先级' />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value='all'>全部优先级</SelectItem>
-                  {TICKET_PRIORITIES.map((priority) => (
-                    <SelectItem key={priority} value={priority}>
-                      {priority}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
+            {showPriorityFilter && (
               <Input
-                value={assigneeFilter}
-                onChange={(event) =>
-                  onAssigneeFilterChange(event.target.value)
-                }
-                inputMode='numeric'
-                placeholder='处理人 ID'
+                value={keyword}
+                onChange={(event) => onKeywordChange(event.target.value)}
+                placeholder='搜索编号、标题、用户名'
               />
-              <Input
-                value={startDate}
-                onChange={(event) => onStartDateChange(event.target.value)}
-                type='date'
-                aria-label='开始日期'
-              />
-              <Input
-                value={endDate}
-                onChange={(event) => onEndDateChange(event.target.value)}
-                type='date'
-                aria-label='结束日期'
-              />
-            </>
-          )}
-        </div>
+            )}
+            <Select
+              value={statusFilter || 'all'}
+              onValueChange={(value) => {
+                if (value) onStatusFilterChange(value === 'all' ? '' : value)
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder='全部状态' />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='all'>全部状态</SelectItem>
+                {TICKET_STATUSES.map((status) => (
+                  <SelectItem key={status} value={status}>
+                    {status}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <Select
+              value={categoryFilter || 'all'}
+              onValueChange={(value) => {
+                if (value) onCategoryFilterChange(value === 'all' ? '' : value)
+              }}
+            >
+              <SelectTrigger>
+                <SelectValue placeholder='全部分类' />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value='all'>全部分类</SelectItem>
+                {TICKET_CATEGORIES.map((category) => (
+                  <SelectItem key={category} value={category}>
+                    {category}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            {showPriorityFilter && (
+              <>
+                <Select
+                  value={priorityFilter || 'all'}
+                  onValueChange={(value) => {
+                    if (value)
+                      onPriorityFilterChange(value === 'all' ? '' : value)
+                  }}
+                >
+                  <SelectTrigger>
+                    <SelectValue placeholder='全部优先级' />
+                  </SelectTrigger>
+                  <SelectContent>
+                    <SelectItem value='all'>全部优先级</SelectItem>
+                    {TICKET_PRIORITIES.map((priority) => (
+                      <SelectItem key={priority} value={priority}>
+                        {priority}
+                      </SelectItem>
+                    ))}
+                  </SelectContent>
+                </Select>
+                <Input
+                  value={assigneeFilter}
+                  onChange={(event) =>
+                    onAssigneeFilterChange(event.target.value)
+                  }
+                  inputMode='numeric'
+                  placeholder='处理人 ID'
+                />
+                <Input
+                  value={startDate}
+                  onChange={(event) => onStartDateChange(event.target.value)}
+                  type='date'
+                  aria-label='开始日期'
+                />
+                <Input
+                  value={endDate}
+                  onChange={(event) => onEndDateChange(event.target.value)}
+                  type='date'
+                  aria-label='结束日期'
+                />
+              </>
+            )}
+          </div>
+        )}
       </div>
       <div className='flex-1 overflow-y-auto'>
         {listQuery.isLoading ? (
@@ -1345,20 +1359,10 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
 
   return (
     <SectionPageLayout>
-      <div className='flex flex-wrap items-start justify-between gap-3'>
-        <div>
-          <SectionPageLayout.Title>{title}</SectionPageLayout.Title>
-          <SectionPageLayout.Description>
-            {description}
-          </SectionPageLayout.Description>
-        </div>
-        {!adminMode && (
-          <Button onClick={() => setCreateOpen(true)}>
-            <Plus className='h-4 w-4' />
-            创建工单
-          </Button>
-        )}
-      </div>
+      <SectionPageLayout.Title>{title}</SectionPageLayout.Title>
+      <SectionPageLayout.Description>
+        {description}
+      </SectionPageLayout.Description>
       <SectionPageLayout.Content>
         <div className='grid gap-4'>
           <TicketListPanel
@@ -1379,7 +1383,9 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
             hasPrevTicketPage={hasPrevTicketPage}
             hasNextTicketPage={hasNextTicketPage}
             showUser={adminMode}
+            showFilters={adminMode}
             showPriorityFilter={adminMode}
+            onCreate={adminMode ? undefined : () => setCreateOpen(true)}
             onRefresh={refreshList}
             onSelect={selectTicket}
             onStatusFilterChange={updateStatusFilter}

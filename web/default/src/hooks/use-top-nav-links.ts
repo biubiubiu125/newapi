@@ -101,7 +101,7 @@ export function useTopNavLinks(): TopNavLink[] {
   })
 
   links.push({
-    title: '模型检测',
+    title: '模型状态监测',
     href: 'https://cx.rkai6.com/',
     external: true,
   })

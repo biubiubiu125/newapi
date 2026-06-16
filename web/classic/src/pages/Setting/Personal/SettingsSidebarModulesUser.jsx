@@ -87,7 +87,6 @@ export default function SettingsSidebarModulesUser() {
         enabled: true,
         detail: isSidebarModuleAllowed('console', 'detail'),
         token: isSidebarModuleAllowed('console', 'token'),
-        tickets: isSidebarModuleAllowed('console', 'tickets'),
         image2: isSidebarModuleAllowed('console', 'image2'),
         model_check: isSidebarModuleAllowed('console', 'model_check'),
         log: isSidebarModuleAllowed('console', 'log'),
@@ -102,6 +101,7 @@ export default function SettingsSidebarModulesUser() {
         enabled: true,
         topup: isSidebarModuleAllowed('personal', 'topup'),
         referral: isSidebarModuleAllowed('personal', 'referral'),
+        tickets: isSidebarModuleAllowed('personal', 'tickets'),
         personal: isSidebarModuleAllowed('personal', 'personal'),
       };
     }
@@ -346,19 +346,14 @@ export default function SettingsSidebarModulesUser() {
         { key: 'detail', title: t('数据看板'), description: t('系统数据统计') },
         { key: 'token', title: t('令牌管理'), description: t('API令牌管理') },
         {
-          key: 'tickets',
-          title: '工单中心',
-          description: '创建、查看和回复自己的工单',
-        },
-        {
           key: 'image2',
           title: 'Image2生图',
           description: '外部图片生成入口',
         },
         {
           key: 'model_check',
-          title: '模型检测',
-          description: '外部模型检测入口',
+          title: '模型状态监测',
+          description: '外部模型状态监测入口',
         },
         { key: 'log', title: t('使用日志'), description: t('API使用记录') },
         {
@@ -379,6 +374,11 @@ export default function SettingsSidebarModulesUser() {
           key: 'referral',
           title: t('推广中心'),
           description: t('推广链接、佣金和提现'),
+        },
+        {
+          key: 'tickets',
+          title: '工单中心',
+          description: '创建、查看和回复自己的工单',
         },
         {
           key: 'personal',

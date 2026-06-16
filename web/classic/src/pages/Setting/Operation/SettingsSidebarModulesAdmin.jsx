@@ -44,7 +44,6 @@ const defaultSidebarModules = {
     enabled: true,
     detail: true,
     token: true,
-    tickets: true,
     image2: true,
     model_check: true,
     log: true,
@@ -55,6 +54,7 @@ const defaultSidebarModules = {
     enabled: true,
     topup: true,
     referral: true,
+    tickets: true,
     personal: true,
   },
   admin: {
@@ -76,6 +76,14 @@ const defaultSidebarModules = {
 const sanitizeSidebarModulesConfig = (config) => {
   if (!config || typeof config !== 'object') return config;
   const sanitized = { ...config };
+  if (sanitized.console?.tickets !== undefined) {
+    sanitized.personal = { enabled: true, ...(sanitized.personal || {}) };
+    if (sanitized.personal.tickets === undefined) {
+      sanitized.personal.tickets = sanitized.console.tickets;
+    }
+    sanitized.console = { ...sanitized.console };
+    delete sanitized.console.tickets;
+  }
   if (sanitized.admin && typeof sanitized.admin === 'object') {
     sanitized.admin = { ...sanitized.admin };
     removedAdminModuleKeys.forEach((key) => {
@@ -234,19 +242,14 @@ export default function SettingsSidebarModulesAdmin(props) {
         { key: 'detail', title: t('数据看板'), description: t('系统数据统计') },
         { key: 'token', title: t('令牌管理'), description: t('API令牌管理') },
         {
-          key: 'tickets',
-          title: '工单中心',
-          description: '用户创建、查看和回复工单',
-        },
-        {
           key: 'image2',
           title: 'Image2生图',
           description: '外部图片生成入口',
         },
         {
           key: 'model_check',
-          title: '模型检测',
-          description: '外部模型检测入口',
+          title: '模型状态监测',
+          description: '外部模型状态监测入口',
         },
         { key: 'log', title: t('使用日志'), description: t('API使用记录') },
         {
@@ -267,6 +270,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'referral',
           title: t('推广中心'),
           description: t('推广链接、佣金和提现'),
+        },
+        {
+          key: 'tickets',
+          title: '工单中心',
+          description: '用户创建、查看和回复工单',
         },
         {
           key: 'personal',

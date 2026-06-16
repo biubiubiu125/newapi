@@ -35,7 +35,6 @@ export const DEFAULT_ADMIN_CONFIG = {
     enabled: true,
     detail: true,
     token: true,
-    tickets: true,
     image2: true,
     model_check: true,
     log: true,
@@ -46,6 +45,7 @@ export const DEFAULT_ADMIN_CONFIG = {
     enabled: true,
     topup: true,
     referral: true,
+    tickets: true,
     personal: true,
   },
   admin: {
@@ -70,6 +70,14 @@ const removedAdminModuleKeys = ['riskCenter', 'risk_center'];
 export const sanitizeSidebarConfig = (config) => {
   if (!config || typeof config !== 'object') return config;
   const sanitized = { ...config };
+  if (sanitized.console?.tickets !== undefined) {
+    sanitized.personal = { enabled: true, ...(sanitized.personal || {}) };
+    if (sanitized.personal.tickets === undefined) {
+      sanitized.personal.tickets = sanitized.console.tickets;
+    }
+    sanitized.console = { ...sanitized.console };
+    delete sanitized.console.tickets;
+  }
   if (sanitized.admin && typeof sanitized.admin === 'object') {
     sanitized.admin = { ...sanitized.admin };
     removedAdminModuleKeys.forEach((key) => {
@@ -83,6 +91,11 @@ export const sanitizeSidebarConfig = (config) => {
 export const mergeAdminConfig = (savedConfig) => {
   const merged = deepClone(DEFAULT_ADMIN_CONFIG);
   if (!savedConfig || typeof savedConfig !== 'object') return merged;
+  const hasLegacyTickets = savedConfig.console?.tickets !== undefined;
+  const hasPersonalTickets = Object.prototype.hasOwnProperty.call(
+    savedConfig.personal || {},
+    'tickets',
+  );
 
   for (const [sectionKey, sectionConfig] of Object.entries(savedConfig)) {
     if (!sectionConfig || typeof sectionConfig !== 'object') continue;
@@ -118,6 +131,17 @@ export const mergeAdminConfig = (savedConfig) => {
     removedAdminModuleKeys.forEach((key) => {
       delete merged.admin[key];
     });
+  }
+
+  if (merged.console?.tickets !== undefined) {
+    merged.personal = { enabled: true, ...(merged.personal || {}) };
+    if (hasLegacyTickets && !hasPersonalTickets) {
+      merged.personal.tickets = savedConfig.console.tickets;
+    } else if (merged.personal.tickets === undefined) {
+      merged.personal.tickets = merged.console.tickets;
+    }
+    merged.console = { ...merged.console };
+    delete merged.console.tickets;
   }
 
   return merged;

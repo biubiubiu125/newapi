@@ -680,45 +680,60 @@ export default function Tickets({ adminMode = false }) {
 
       <Row gutter={[16, 16]} className='mt-4'>
         <Col xs={24} lg={adminMode ? 8 : 18}>
-          <Card title='工单列表'>
-            <Space wrap className='mb-3'>
-              <Input
-                prefix={<IconSearch />}
-                placeholder={
-                  adminMode ? '搜索标题、编号或用户名' : '搜索标题或编号'
-                }
-                value={keyword}
-                onChange={setKeyword}
-                onEnterPress={resetAndSearch}
-                style={{ width: 220 }}
-              />
-              <Select
-                placeholder='状态'
-                value={status}
-                onChange={setStatus}
-                style={{ width: 150 }}
-                showClear
-              >
-                {STATUS_OPTIONS.map((item) => (
-                  <Select.Option key={item} value={item}>
-                    {item}
-                  </Select.Option>
-                ))}
-              </Select>
-              <Select
-                placeholder='分类'
-                value={category}
-                onChange={setCategory}
-                style={{ width: 120 }}
-                showClear
-              >
-                {CATEGORY_OPTIONS.map((item) => (
-                  <Select.Option key={item} value={item}>
-                    {item}
-                  </Select.Option>
-                ))}
-              </Select>
-              {adminMode && (
+          <Card
+            title='工单列表'
+            headerExtraContent={
+              !adminMode ? (
+                <Button
+                  type='primary'
+                  icon={<IconPlus />}
+                  onClick={() => {
+                    document
+                      .querySelector('#user-ticket-create-card input')
+                      ?.focus();
+                  }}
+                >
+                  创建工单
+                </Button>
+              ) : null
+            }
+          >
+            {adminMode && (
+              <Space wrap className='mb-3'>
+                <Input
+                  prefix={<IconSearch />}
+                  placeholder='搜索标题、编号或用户名'
+                  value={keyword}
+                  onChange={setKeyword}
+                  onEnterPress={resetAndSearch}
+                  style={{ width: 220 }}
+                />
+                <Select
+                  placeholder='状态'
+                  value={status}
+                  onChange={setStatus}
+                  style={{ width: 150 }}
+                  showClear
+                >
+                  {STATUS_OPTIONS.map((item) => (
+                    <Select.Option key={item} value={item}>
+                      {item}
+                    </Select.Option>
+                  ))}
+                </Select>
+                <Select
+                  placeholder='分类'
+                  value={category}
+                  onChange={setCategory}
+                  style={{ width: 120 }}
+                  showClear
+                >
+                  {CATEGORY_OPTIONS.map((item) => (
+                    <Select.Option key={item} value={item}>
+                      {item}
+                    </Select.Option>
+                  ))}
+                </Select>
                 <Select
                   placeholder='优先级'
                   value={priority}
@@ -732,9 +747,9 @@ export default function Tickets({ adminMode = false }) {
                     </Select.Option>
                   ))}
                 </Select>
-              )}
-              <Button onClick={resetAndSearch}>筛选</Button>
-            </Space>
+                <Button onClick={resetAndSearch}>筛选</Button>
+              </Space>
+            )}
             <Spin spinning={loading}>
               {tickets.length === 0 ? (
                 <Empty description='暂无工单' />
@@ -818,6 +833,7 @@ export default function Tickets({ adminMode = false }) {
         {!adminMode && (
           <Col xs={24} lg={6}>
             <Card
+              id='user-ticket-create-card'
               title={
                 <>
                   <IconPlus /> 创建工单

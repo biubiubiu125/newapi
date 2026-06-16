@@ -515,6 +515,20 @@ func sanitizeSidebarModulesForRole(raw string, role int) string {
 		return generateDefaultSidebarConfig(role)
 	}
 
+	if console, ok := config["console"]; ok {
+		if tickets, exists := console["tickets"]; exists {
+			personal, hasPersonal := config["personal"]
+			if !hasPersonal || personal == nil {
+				personal = map[string]interface{}{"enabled": true}
+				config["personal"] = personal
+			}
+			if _, hasTickets := personal["tickets"]; !hasTickets {
+				personal["tickets"] = tickets
+			}
+			delete(console, "tickets")
+		}
+	}
+
 	admin, hasAdmin := config["admin"]
 	if role < common.RoleAdminUser {
 		if hasAdmin {

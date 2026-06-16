@@ -60,7 +60,6 @@ const defaultSidebarModules = {
     enabled: true,
     detail: true,
     token: true,
-    tickets: true,
     image2: true,
     model_check: true,
     log: true,
@@ -71,6 +70,7 @@ const defaultSidebarModules = {
     enabled: true,
     topup: true,
     referral: true,
+    tickets: true,
     personal: true,
   },
   admin: {
@@ -103,8 +103,9 @@ const NotificationSettings = ({
   // 左侧边栏设置相关状态
   const [sidebarLoading, setSidebarLoading] = useState(false);
   const [activeTabKey, setActiveTabKey] = useState('notification');
-  const [sidebarModulesUser, setSidebarModulesUser] =
-    useState(defaultSidebarModules);
+  const [sidebarModulesUser, setSidebarModulesUser] = useState(
+    defaultSidebarModules,
+  );
   const [adminConfig, setAdminConfig] = useState(null);
 
   // 使用后端权限验证替代前端角色判断
@@ -290,9 +291,12 @@ const NotificationSettings = ({
       modules: [
         { key: 'detail', title: '数据看板', description: '系统数据统计' },
         { key: 'token', title: '令牌管理', description: 'API 令牌管理' },
-        { key: 'tickets', title: '工单中心', description: '创建、查看和回复自己的工单' },
         { key: 'image2', title: 'Image2生图', description: '外部图片生成入口' },
-        { key: 'model_check', title: '模型检测', description: '外部模型检测入口' },
+        {
+          key: 'model_check',
+          title: '模型状态监测',
+          description: '外部模型状态监测入口',
+        },
         { key: 'log', title: '使用日志', description: 'API 使用记录' },
         { key: 'midjourney', title: '绘图日志', description: '绘图任务记录' },
         { key: 'task', title: '任务日志', description: '系统任务记录' },
@@ -304,7 +308,16 @@ const NotificationSettings = ({
       description: '用户个人功能',
       modules: [
         { key: 'topup', title: '钱包管理', description: '余额充值管理' },
-        { key: 'referral', title: '推广中心', description: '邀请链接、佣金和提现' },
+        {
+          key: 'referral',
+          title: '推广中心',
+          description: '邀请链接、佣金和提现',
+        },
+        {
+          key: 'tickets',
+          title: '工单中心',
+          description: '创建、查看和回复自己的工单',
+        },
         { key: 'personal', title: '个人设置', description: '个人信息设置' },
       ],
     },
@@ -317,13 +330,37 @@ const NotificationSettings = ({
         { key: 'models', title: '模型管理', description: 'AI 模型配置' },
         { key: 'deployment', title: '模型部署', description: '模型部署管理' },
         { key: 'subscription', title: '订阅管理', description: '订阅套餐管理' },
-        { key: 'adminReferral', title: '推广管理', description: '推广员、返佣和提现管理' },
-        { key: 'recharge_audit', title: '订单管理', description: '查看充值和订阅订单' },
-        { key: 'ticket_management', title: '工单管理', description: '查看和处理用户工单' },
-        { key: 'providerPricing', title: '公开价格导出', description: '公开供应商价格数据' },
-        { key: 'redemption', title: '兑换码管理', description: '兑换码生成管理' },
+        {
+          key: 'adminReferral',
+          title: '推广管理',
+          description: '推广员、返佣和提现管理',
+        },
+        {
+          key: 'recharge_audit',
+          title: '订单管理',
+          description: '查看充值和订阅订单',
+        },
+        {
+          key: 'ticket_management',
+          title: '工单管理',
+          description: '查看和处理用户工单',
+        },
+        {
+          key: 'providerPricing',
+          title: '公开价格导出',
+          description: '公开供应商价格数据',
+        },
+        {
+          key: 'redemption',
+          title: '兑换码管理',
+          description: '兑换码生成管理',
+        },
         { key: 'user', title: '用户管理', description: '用户账户管理' },
-        { key: 'setting', title: '系统设置', description: '系统设置为必需入口，不能隐藏' },
+        {
+          key: 'setting',
+          title: '系统设置',
+          description: '系统设置为必需入口，不能隐藏',
+        },
       ],
     },
   ]
@@ -335,8 +372,7 @@ const NotificationSettings = ({
       ),
     }))
     .filter(
-      (section) =>
-        section.modules.length > 0 && isAllowedByAdmin(section.key),
+      (section) => section.modules.length > 0 && isAllowedByAdmin(section.key),
     );
 
   const handleSubmit = () => {

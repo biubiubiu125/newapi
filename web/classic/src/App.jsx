@@ -341,7 +341,7 @@ function App() {
           path='/console/tickets'
           element={
             <PrivateRoute>
-              <SidebarModuleRoute section='console' module='tickets'>
+              <SidebarModuleRoute section='personal' module='tickets'>
                 <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                   <Tickets />
                 </Suspense>

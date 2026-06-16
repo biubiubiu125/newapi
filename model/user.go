@@ -230,7 +230,6 @@ func GenerateDefaultSidebarConfigForRole(userRole int) string {
 		"image2":      true,
 		"model_check": true,
 		"log":         true,
-		"tickets":     true,
 		"midjourney":  true,
 		"task":        true,
 	}
@@ -238,6 +237,7 @@ func GenerateDefaultSidebarConfigForRole(userRole int) string {
 		"enabled":  true,
 		"topup":    true,
 		"referral": true,
+		"tickets":  true,
 		"personal": true,
 	}
 

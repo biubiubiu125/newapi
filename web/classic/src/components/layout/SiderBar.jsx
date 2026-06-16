@@ -95,19 +95,13 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         to: '/token',
       },
       {
-        text: '工单中心',
-        itemKey: 'tickets',
-        to: '/console/tickets',
-        badge: ticketBadge,
-      },
-      {
         text: 'Image2生图',
         itemKey: 'image2',
         to: 'https://image.rkai6.com',
         external: true,
       },
       {
-        text: '模型检测',
+        text: '模型状态监测',
         itemKey: 'model_check',
         to: 'https://cx.rkai6.com/',
         external: true,
@@ -162,6 +156,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         text: t('推广中心'),
         itemKey: 'referral',
         to: '/console/referral',
+      },
+      {
+        text: '工单中心',
+        itemKey: 'tickets',
+        to: '/console/tickets',
+        badge: ticketBadge,
       },
       {
         text: t('个人设置'),

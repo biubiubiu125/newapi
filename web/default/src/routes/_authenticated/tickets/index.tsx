@@ -24,7 +24,7 @@ import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 export const Route = createFileRoute('/_authenticated/tickets/')({
   beforeLoad: () =>
     requireSidebarModule({
-      section: 'console',
+      section: 'personal',
       module: 'tickets',
     }),
   component: TicketsPage,

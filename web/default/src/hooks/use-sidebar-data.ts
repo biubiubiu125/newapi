@@ -94,7 +94,7 @@ export function useSidebarData(): SidebarData {
   const statusRecord = status as Record<string, unknown> | null
   const userTicketsEnabled = isSidebarModuleEnabledFromStatus(
     statusRecord,
-    'console',
+    'personal',
     'tickets'
   )
   const adminTicketsEnabled = isSidebarModuleEnabledFromStatus(
@@ -317,7 +317,7 @@ export function useSidebarData(): SidebarData {
             configUrls: ['sidebar:console.image2'],
           },
           {
-            title: '模型检测',
+            title: '模型状态监测',
             url: 'https://cx.rkai6.com/',
             icon: ScanSearch,
             external: true,
@@ -333,13 +333,6 @@ export function useSidebarData(): SidebarData {
             url: '/usage-logs/drawing',
             configUrls: ['/usage-logs/drawing'],
             icon: Image,
-          },
-          {
-            title: '工单中心',
-            url: '/tickets',
-            icon: Ticket,
-            configUrls: ['/tickets'],
-            badge: userTicketBadge,
           },
           {
             title: t('Task Logs'),
@@ -362,6 +355,13 @@ export function useSidebarData(): SidebarData {
             title: t('Referral Center'),
             url: '/referral/center',
             icon: Share2,
+          },
+          {
+            title: '工单中心',
+            url: '/tickets',
+            icon: Ticket,
+            configUrls: ['/tickets'],
+            badge: userTicketBadge,
           },
           {
             title: t('Profile'),
