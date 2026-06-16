@@ -238,11 +238,74 @@ export const processGroupsData = (data, userGroup) => {
 
 // 原来components中的utils.js
 
+const AFFILIATE_STORAGE_KEY = 'aff';
+const AFFILIATE_EXPIRES_AT_STORAGE_KEY = 'aff_expires_at';
+const DEFAULT_AFFILIATE_TTL_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+function normalizeAffiliateTTLDays(ttlDays) {
+  const parsed = Number(ttlDays);
+  return Number.isFinite(parsed) && parsed > 0
+    ? parsed
+    : DEFAULT_AFFILIATE_TTL_DAYS;
+}
+
+export function removeAffiliateCode() {
+  try {
+    localStorage.removeItem(AFFILIATE_STORAGE_KEY);
+    localStorage.removeItem(AFFILIATE_EXPIRES_AT_STORAGE_KEY);
+  } catch (error) {
+    console.error('Failed to remove affiliate code:', error);
+  }
+}
+
+export function getAffiliateCode() {
+  try {
+    const code = (localStorage.getItem(AFFILIATE_STORAGE_KEY) || '').trim();
+    if (!code) return '';
+
+    const expiresAtRaw = localStorage.getItem(AFFILIATE_EXPIRES_AT_STORAGE_KEY);
+    if (!expiresAtRaw) {
+      removeAffiliateCode();
+      return '';
+    }
+
+    const expiresAt = Number(expiresAtRaw);
+    if (!Number.isFinite(expiresAt) || expiresAt <= Date.now()) {
+      removeAffiliateCode();
+      return '';
+    }
+
+    return code;
+  } catch (error) {
+    console.error('Failed to get affiliate code:', error);
+    return '';
+  }
+}
+
+export function saveAffiliateCode(code, ttlDays = DEFAULT_AFFILIATE_TTL_DAYS) {
+  try {
+    const trimmed = String(code || '').trim();
+    if (!trimmed) {
+      removeAffiliateCode();
+      return;
+    }
+
+    localStorage.setItem(AFFILIATE_STORAGE_KEY, trimmed);
+    localStorage.setItem(
+      AFFILIATE_EXPIRES_AT_STORAGE_KEY,
+      String(Date.now() + normalizeAffiliateTTLDays(ttlDays) * DAY_MS),
+    );
+  } catch (error) {
+    console.error('Failed to save affiliate code:', error);
+  }
+}
+
 export async function getOAuthState() {
   let path = '/api/oauth/state';
-  let affCode = localStorage.getItem('aff');
+  let affCode = getAffiliateCode();
   if (affCode && affCode.length > 0) {
-    path += `?aff=${affCode}`;
+    path += `?aff=${encodeURIComponent(affCode)}`;
   }
   const res = await API.get(path);
   const { success, message, data } = res.data;

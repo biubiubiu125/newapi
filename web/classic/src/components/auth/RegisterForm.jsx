@@ -29,6 +29,9 @@ import {
   setUserData,
   onDiscordOAuthClicked,
   onCustomOAuthClicked,
+  getAffiliateCode,
+  saveAffiliateCode,
+  removeAffiliateCode,
 } from '../../helpers';
 import Turnstile from 'react-turnstile';
 import {
@@ -116,17 +119,9 @@ const RegisterForm = () => {
 
   const { logo, systemName } = useAuthBrand();
 
-  let affCode = new URLSearchParams(window.location.search).get('aff');
-  if (affCode) {
-    localStorage.setItem('aff', affCode);
-  }
-
-  useEffect(() => {
-    const storedAffCode = localStorage.getItem('aff') || '';
-    if (storedAffCode) {
-      setInputs((prev) => (prev.aff ? prev : { ...prev, aff: storedAffCode }));
-    }
-  }, []);
+  const searchParams = new URLSearchParams(window.location.search);
+  const affCode = searchParams.get('aff')?.trim() || '';
+  const referralError = searchParams.get('referral_error')?.trim() || '';
 
   const status = useMemo(() => {
     if (statusState?.status) return statusState.status;
@@ -138,6 +133,28 @@ const RegisterForm = () => {
       return {};
     }
   }, [statusState?.status]);
+  const referralCookieTTLDays =
+    Number(
+      status?.referral_cookie_ttl_days ?? status?.data?.referral_cookie_ttl_days,
+    ) || undefined;
+
+  useEffect(() => {
+    if (referralError === 'invalid') {
+      removeAffiliateCode();
+      setInputs((prev) => ({ ...prev, aff: '' }));
+      return;
+    }
+    if (affCode) {
+      saveAffiliateCode(affCode, referralCookieTTLDays);
+      setInputs((prev) => ({ ...prev, aff: affCode }));
+      return;
+    }
+    const storedAffCode = getAffiliateCode();
+    if (storedAffCode) {
+      setInputs((prev) => (prev.aff ? prev : { ...prev, aff: storedAffCode }));
+    }
+  }, [affCode, referralCookieTTLDays, referralError]);
+
   const hasCustomOAuthProviders =
     (status.custom_oauth_providers || []).length > 0;
   const hasOAuthRegisterOptions = Boolean(
@@ -200,7 +217,7 @@ const RegisterForm = () => {
     try {
       const finalAffCode =
         String(inputs.aff || '').trim() ||
-        localStorage.getItem('aff') ||
+        getAffiliateCode() ||
         '';
       const res = await API.get(
         `/api/oauth/wechat?code=${encodeURIComponent(
@@ -261,7 +278,7 @@ const RegisterForm = () => {
         const finalAffCode =
           String(inputs.aff || '').trim() ||
           affCode ||
-          localStorage.getItem('aff') ||
+          getAffiliateCode() ||
           '';
         const payload = {
           ...inputs,
@@ -690,9 +707,9 @@ const RegisterForm = () => {
                     handleChange('aff', value);
                     const nextAff = String(value || '').trim();
                     if (nextAff) {
-                      localStorage.setItem('aff', nextAff);
+                      saveAffiliateCode(nextAff, referralCookieTTLDays);
                     } else {
-                      localStorage.removeItem('aff');
+                      removeAffiliateCode();
                     }
                   }}
                   prefix={<IconKey />}
