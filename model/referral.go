@@ -1,25 +1,25 @@
 package model
 
 type ReferralAffiliate struct {
-	Id                 int      `json:"id"`
-	UserId             int      `json:"user_id" gorm:"uniqueIndex"`
-	InviteCode         string   `json:"invite_code" gorm:"type:varchar(32);uniqueIndex"`
-	Status             string   `json:"status" gorm:"type:varchar(32);index"`
-	SourceType         string   `json:"source_type" gorm:"type:varchar(32);default:'user_apply'"`
-	ApplicantNote      string   `json:"applicant_note" gorm:"type:text"`
-	RateOverride       *float64 `json:"rate_override" gorm:"type:decimal(10,4)"`
-	AcquisitionEnabled bool     `json:"acquisition_enabled" gorm:"default:true"`
-	SettlementEnabled  bool     `json:"settlement_enabled" gorm:"default:true"`
-	WithdrawalEnabled  bool     `json:"withdrawal_enabled" gorm:"default:true"`
-	RiskReason         string   `json:"risk_reason" gorm:"type:text"`
-	RiskNote           string   `json:"risk_note" gorm:"type:text"`
-	ApprovedBy         int      `json:"approved_by" gorm:"index"`
-	ApprovedAt         int64    `json:"approved_at" gorm:"default:0"`
-	DisabledBy         int      `json:"disabled_by" gorm:"index"`
-	DisabledAt         int64    `json:"disabled_at" gorm:"default:0"`
+	Id                  int      `json:"id"`
+	UserId              int      `json:"user_id" gorm:"uniqueIndex"`
+	InviteCode          string   `json:"invite_code" gorm:"type:varchar(32);uniqueIndex"`
+	Status              string   `json:"status" gorm:"type:varchar(32);index"`
+	SourceType          string   `json:"source_type" gorm:"type:varchar(32);default:'user_apply'"`
+	ApplicantNote       string   `json:"applicant_note" gorm:"type:text"`
+	RateOverride        *float64 `json:"rate_override" gorm:"type:decimal(10,4)"`
+	AcquisitionEnabled  bool     `json:"acquisition_enabled" gorm:"default:true"`
+	SettlementEnabled   bool     `json:"settlement_enabled" gorm:"default:true"`
+	WithdrawalEnabled   bool     `json:"withdrawal_enabled" gorm:"default:true"`
+	RiskReason          string   `json:"risk_reason" gorm:"type:text"`
+	RiskNote            string   `json:"risk_note" gorm:"type:text"`
+	ApprovedBy          int      `json:"approved_by" gorm:"index"`
+	ApprovedAt          int64    `json:"approved_at" gorm:"default:0"`
+	DisabledBy          int      `json:"disabled_by" gorm:"index"`
+	DisabledAt          int64    `json:"disabled_at" gorm:"default:0"`
 	PendingReviewCursor int64    `json:"pending_review_cursor" gorm:"default:0;index"`
-	CreatedAt          int64    `json:"created_at" gorm:"autoCreateTime"`
-	UpdatedAt          int64    `json:"updated_at" gorm:"autoUpdateTime"`
+	CreatedAt           int64    `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt           int64    `json:"updated_at" gorm:"autoUpdateTime"`
 }
 
 type ReferralBinding struct {
@@ -134,7 +134,7 @@ type ReferralWithdrawal struct {
 	PaymentTxnNo       string  `json:"payment_txn_no" gorm:"type:varchar(128)"`
 	RejectProofURL     string  `json:"reject_proof_url" gorm:"type:text"`
 	Status             string  `json:"status" gorm:"type:varchar(32);index"`
-	IdempotencyKey     string  `json:"idempotency_key" gorm:"type:varchar(128);uniqueIndex:idx_referral_withdrawal_idempotency"`
+	IdempotencyKey     *string `json:"idempotency_key,omitempty" gorm:"type:varchar(128);uniqueIndex:idx_referral_withdrawal_idempotency"`
 	SubmittedAt        int64   `json:"submitted_at" gorm:"default:0;index"`
 	ApprovedAt         int64   `json:"approved_at" gorm:"default:0"`
 	PayoutDeadlineAt   int64   `json:"payout_deadline_at" gorm:"default:0"`

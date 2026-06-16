@@ -151,9 +151,6 @@ func StreamScannerHandler(c *gin.Context, resp *http.Response, info *relaycommon
 			for {
 				select {
 				case <-pingTicker.C:
-					if !info.HasClientStreamWrite() {
-						continue
-					}
 					// 使用超时机制防止写操作阻塞
 					done := make(chan error, 1)
 					gopool.Go(func() {

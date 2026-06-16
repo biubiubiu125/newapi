@@ -1289,6 +1289,7 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 		if fee > input.Amount {
 			return errors.New("withdraw fee exceeds withdrawal amount")
 		}
+		idempotencyKey := strings.TrimSpace(input.IdempotencyKey)
 		withdrawal := &model.ReferralWithdrawal{
 			AffiliateId:        affiliate.Id,
 			UserId:             input.UserId,
@@ -1303,7 +1304,7 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 			QRImageURL:         qrImagePath,
 			ApplicantNote:      strings.TrimSpace(input.ApplicantNote),
 			Status:             model.ReferralWithdrawalStatusPending,
-			IdempotencyKey:     strings.TrimSpace(input.IdempotencyKey),
+			IdempotencyKey:     &idempotencyKey,
 			SubmittedAt:        time.Now().Unix(),
 		}
 		if withdrawal.AccountNo == "" {
@@ -1350,7 +1351,7 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 			Type:               "withdrawal_freeze",
 			RefType:            "withdrawal",
 			RefId:              fmt.Sprintf("%d", withdrawal.Id),
-			ExternalRefId:      "withdrawal_freeze:" + withdrawal.IdempotencyKey,
+			ExternalRefId:      "withdrawal_freeze:" + referralWithdrawalIdempotencyKey(withdrawal),
 			SettlementCurrency: withdrawal.SettlementCurrency,
 			DeltaAvailable:     roundMoney(-withdrawal.Amount),
 			DeltaFrozen:        roundMoney(withdrawal.Amount),
@@ -1363,7 +1364,7 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 		return s.recordAdminAuditTx(tx, "referral_withdrawal_create", input.UserId, affiliate.Id, input.UserId, strings.TrimSpace(input.ApplicantNote), "", "", nil, map[string]any{
 			"withdrawal_id":   withdrawal.Id,
 			"amount":          withdrawal.Amount,
-			"idempotency_key": withdrawal.IdempotencyKey,
+			"idempotency_key": referralWithdrawalIdempotencyKey(withdrawal),
 			"account_type":    withdrawal.AccountType,
 			"account_network": withdrawal.AccountNetwork,
 		})
@@ -3009,12 +3010,20 @@ func sameWithdrawalRequest(existing *model.ReferralWithdrawal, input ReferralWit
 		return false
 	}
 	return roundMoney(existing.Amount) == roundMoney(input.Amount) &&
+		referralWithdrawalIdempotencyKey(existing) == strings.TrimSpace(input.IdempotencyKey) &&
 		strings.EqualFold(strings.TrimSpace(existing.AccountType), strings.TrimSpace(input.AccountType)) &&
 		strings.TrimSpace(existing.AccountName) == strings.TrimSpace(input.AccountName) &&
 		strings.TrimSpace(existing.AccountNo) == strings.TrimSpace(input.AccountNo) &&
 		strings.EqualFold(normalizeWithdrawalNetwork(existing.AccountNetwork), normalizeWithdrawalNetwork(input.AccountNetwork)) &&
 		stripAssetSignature(existing.QRImageURL) == stripAssetSignature(input.QRImageURL) &&
 		strings.TrimSpace(existing.ApplicantNote) == strings.TrimSpace(input.ApplicantNote)
+}
+
+func referralWithdrawalIdempotencyKey(withdrawal *model.ReferralWithdrawal) string {
+	if withdrawal == nil || withdrawal.IdempotencyKey == nil {
+		return ""
+	}
+	return strings.TrimSpace(*withdrawal.IdempotencyKey)
 }
 
 func normalizeWithdrawalNetwork(value string) string {
