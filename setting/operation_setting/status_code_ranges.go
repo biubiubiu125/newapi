@@ -16,13 +16,22 @@ type StatusCodeRange struct {
 
 var AutomaticDisableStatusCodeRanges = []StatusCodeRange{{Start: 401, End: 401}}
 
-// Default behavior retries all upstream 4xx/5xx statuses so another usable
+// Default behavior retries selected upstream statuses so another usable
 // channel can be tried before returning the upstream error to the user.
 var AutomaticRetryStatusCodeRanges = []StatusCodeRange{
-	{Start: 400, End: 599},
+	{Start: 100, End: 199},
+	{Start: 300, End: 399},
+	{Start: 401, End: 407},
+	{Start: 409, End: 499},
+	{Start: 500, End: 503},
+	{Start: 505, End: 523},
+	{Start: 525, End: 599},
 }
 
-var alwaysSkipRetryStatusCodes = map[int]struct{}{}
+var alwaysSkipRetryStatusCodes = map[int]struct{}{
+	504: {},
+	524: {},
+}
 
 var alwaysSkipRetryCodes = map[types.ErrorCode]struct{}{
 	types.ErrorCodeBadResponseBody: {},

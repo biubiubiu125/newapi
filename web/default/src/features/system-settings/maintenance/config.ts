@@ -35,6 +35,18 @@ export type {
   SidebarModulesAdminConfig,
   SidebarSectionConfig,
 } from '@/lib/sidebar-modules'
+import {
+  SIDEBAR_MODULES_DEFAULT,
+  SIDEBAR_MODULES_META,
+  applyForcedSidebarModules,
+  cloneSidebarModulesDefault,
+  mergeWithDefaultSidebarModules,
+  normalizeSidebarModuleAliases,
+  removeRemovedSidebarModules,
+  type SidebarModulesAdminConfig,
+  type SidebarSectionConfig,
+} from '@/lib/sidebar-modules'
+
 export {
   SIDEBAR_MODULES_DEFAULT,
   SIDEBAR_MODULES_META,
@@ -42,18 +54,7 @@ export {
   cloneSidebarModulesDefault,
   mergeWithDefaultSidebarModules,
   normalizeSidebarModuleAliases,
-} from '@/lib/sidebar-modules'
-
-import {
-  applyForcedSidebarModules,
-  cloneSidebarModulesDefault,
-  normalizeSidebarModuleAliases,
-  removeRemovedSidebarModules,
-} from '@/lib/sidebar-modules'
-import type {
-  SidebarModulesAdminConfig,
-  SidebarSectionConfig,
-} from '@/lib/sidebar-modules'
+}
 
 export const HEADER_NAV_DEFAULT: HeaderNavModulesConfig = {
   home: true,

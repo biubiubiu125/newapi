@@ -471,7 +471,7 @@ export function MonitoringSettingsSection({
                     {t(
                       'Accepts comma-separated status codes and inclusive ranges.'
                     )}{' '}
-                    这里只填写状态码或范围；默认 400-599 会进入渠道切换判断。
+                    这里只填写状态码或范围；默认排除 400、408、504 和 524 等高风险状态码。
                     {autoRetryParsed.ok &&
                       autoRetryParsed.normalized &&
                       autoRetryParsed.normalized !== field.value.trim() && (

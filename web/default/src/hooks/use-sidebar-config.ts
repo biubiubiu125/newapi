@@ -25,7 +25,6 @@ import {
   mergeWithDefaultSidebarModules,
   normalizeSidebarModuleAliases,
   type SidebarModulesAdminConfig,
-  type SidebarSectionConfig,
 } from '@/lib/sidebar-modules'
 import type { NavGroup, NavItem } from '@/components/layout/types'
 

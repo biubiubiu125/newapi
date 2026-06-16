@@ -266,7 +266,7 @@ export const normalizeSidebarModuleAliases = (
   )
 
   if (normalized.console?.tickets !== undefined) {
-    normalized.personal = { enabled: true, ...normalized.personal }
+    normalized.personal = { ...normalized.personal, enabled: true }
     if (normalized.personal.tickets === undefined) {
       normalized.personal.tickets = normalized.console.tickets
     }

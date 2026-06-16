@@ -188,6 +188,7 @@ export function useSidebarData(): SidebarData {
       userTicketsEnabled,
       adminTicketsEnabled,
       adminUsersEnabled,
+      isAdmin,
       adminReferralEnabled,
       adminRechargeAuditEnabled,
     ],

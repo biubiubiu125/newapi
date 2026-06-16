@@ -298,14 +298,13 @@ export function ApiKeysTable() {
 
   const apiKeys = data?.items || []
   const apiKeyIds = apiKeys.map((apiKey) => apiKey.id)
-  const apiKeyUsageQueryKey = apiKeyIds.join(',')
 
   const {
     data: usageStats = {},
     isLoading: usageLoading,
     isError: usageError,
   } = useQuery({
-    queryKey: ['api-key-usage-batch', apiKeyUsageQueryKey, refreshTrigger],
+    queryKey: ['api-key-usage-batch', apiKeyIds, refreshTrigger],
     enabled: apiKeyIds.length > 0,
     queryFn: async () => {
       const res = await getApiKeyUsageStatsBatch(apiKeyIds)
