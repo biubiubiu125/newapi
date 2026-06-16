@@ -1,6 +1,7 @@
 package service
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -14,6 +15,55 @@ import (
 
 const BalanceInsufficientDisableReasonPrefix = "[balance_insufficient]"
 
+var strictBalanceInsufficientPhrases = []string{
+	"your credit balance is too low",
+	"credit balance is too low",
+	"you exceeded your current quota",
+	"exceeded your current quota",
+	"insufficient quota",
+	"insufficient_quota",
+	"quota exceeded",
+	"quota_exceeded",
+	"insufficient balance",
+	"balance insufficient",
+	"balance_insufficient",
+	"insufficient credit",
+	"insufficient credits",
+	"not enough credit",
+	"not enough credits",
+	"out of credits",
+	"credit exhausted",
+	"credits exhausted",
+	"billing hard limit",
+	"billing_hard_limit",
+	"billing quota",
+	"余额不足",
+	"额度不足",
+	"余额不够",
+	"额度不够",
+}
+
+var broadBalanceInsufficientKeywords = map[string]struct{}{
+	"balance":      {},
+	"quota":        {},
+	"insufficient": {},
+	"billing":      {},
+	"credit":       {},
+}
+
+var balanceInsufficientErrorFields = map[string]struct{}{
+	"code":           {},
+	"detail":         {},
+	"details":        {},
+	"error":          {},
+	"error_code":     {},
+	"message":        {},
+	"msg":            {},
+	"reason":         {},
+	"status_message": {},
+	"type":           {},
+}
+
 func formatNotifyType(channelId int, status int) string {
 	return fmt.Sprintf("%s_%d_%d", dto.NotifyTypeChannelUpdate, channelId, status)
 }
@@ -21,12 +71,11 @@ func formatNotifyType(channelId int, status int) string {
 // disable & notify
 func DisableChannel(channelError types.ChannelError, reason string) {
 	isBalanceInsufficient := IsBalanceInsufficientMessage(reason)
-	if isBalanceInsufficient && !strings.HasPrefix(reason, BalanceInsufficientDisableReasonPrefix) {
+	if isBalanceInsufficient && !strings.HasPrefix(strings.ToLower(strings.TrimSpace(reason)), BalanceInsufficientDisableReasonPrefix) {
 		reason = BalanceInsufficientDisableReasonPrefix + " " + reason
 	}
 	common.SysLog(fmt.Sprintf("通道「%s」（#%d）发生错误，准备禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, common.LocalLogPreview(reason)))
 
-	// 检查是否启用自动禁用功能
 	if !channelError.AutoBan && !isBalanceInsufficient {
 		common.SysLog(fmt.Sprintf("通道「%s」（#%d）未启用自动禁用功能，跳过禁用操作", channelError.ChannelName, channelError.ChannelId))
 		return
@@ -69,9 +118,7 @@ func ShouldDisableChannel(err *types.NewAPIError) bool {
 		return true
 	}
 
-	lowerMessage := strings.ToLower(err.Error())
-	search, _ := AcSearch(lowerMessage, operation_setting.AutomaticDisableKeywords, true)
-	return search
+	return shouldDisableByMessageKeywords(err.Error())
 }
 
 func ShouldEnableChannel(newAPIError *types.NewAPIError, status int) bool {
@@ -111,15 +158,124 @@ func IsBalanceInsufficientError(err *types.NewAPIError) bool {
 }
 
 func IsBalanceInsufficientMessage(message string) bool {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return false
+	}
+	if strings.HasPrefix(strings.ToLower(message), BalanceInsufficientDisableReasonPrefix) {
+		message = strings.TrimSpace(message[len(BalanceInsufficientDisableReasonPrefix):])
+		if message == "" {
+			return false
+		}
+	}
+	// 请求体里可能包含 prompt 等用户文本，余额不足只从错误文本或结构化错误字段里判断。
+	for _, candidate := range balanceInsufficientMessageCandidates(message) {
+		if containsBalanceInsufficientPhrase(candidate) {
+			return true
+		}
+	}
+	return false
+}
+
+func shouldDisableByMessageKeywords(message string) bool {
+	for _, candidate := range balanceInsufficientMessageCandidates(message) {
+		search, _ := AcSearch(strings.ToLower(candidate), operation_setting.AutomaticDisableKeywords, true)
+		if search {
+			return true
+		}
+	}
+	return false
+}
+
+func balanceInsufficientMessageCandidates(message string) []string {
+	candidates := make([]string, 0, 4)
+	if plainText := strings.TrimSpace(stripJSONPayload(message)); plainText != "" {
+		candidates = append(candidates, plainText)
+	}
+	if jsonCandidates := balanceInsufficientJSONCandidates(message); len(jsonCandidates) > 0 {
+		candidates = append(candidates, jsonCandidates...)
+	}
+	if len(candidates) == 0 {
+		candidates = append(candidates, message)
+	}
+	return candidates
+}
+
+func stripJSONPayload(message string) string {
+	if idx := strings.Index(message, "{"); idx >= 0 {
+		return message[:idx]
+	}
+	return message
+}
+
+func balanceInsufficientJSONCandidates(message string) []string {
+	idx := strings.Index(message, "{")
+	if idx < 0 {
+		return nil
+	}
+	decoder := json.NewDecoder(strings.NewReader(message[idx:]))
+	decoder.UseNumber()
+	var payload any
+	if err := decoder.Decode(&payload); err != nil {
+		return nil
+	}
+	candidates := make([]string, 0, 4)
+	collectBalanceInsufficientJSONCandidates(payload, "", &candidates)
+	return candidates
+}
+
+func collectBalanceInsufficientJSONCandidates(value any, key string, candidates *[]string) {
+	switch typedValue := value.(type) {
+	case map[string]any:
+		for childKey, childValue := range typedValue {
+			normalizedKey := strings.ToLower(strings.TrimSpace(childKey))
+			if !isBalanceInsufficientErrorField(normalizedKey) {
+				continue
+			}
+			collectBalanceInsufficientJSONCandidates(childValue, normalizedKey, candidates)
+		}
+	case []any:
+		if key != "" && !isBalanceInsufficientErrorField(key) {
+			return
+		}
+		for _, childValue := range typedValue {
+			collectBalanceInsufficientJSONCandidates(childValue, key, candidates)
+		}
+	case string:
+		if isBalanceInsufficientErrorField(key) {
+			*candidates = append(*candidates, typedValue)
+		}
+	}
+}
+
+func isBalanceInsufficientErrorField(key string) bool {
+	_, ok := balanceInsufficientErrorFields[key]
+	return ok
+}
+
+func containsBalanceInsufficientPhrase(message string) bool {
 	message = strings.ToLower(strings.TrimSpace(message))
 	if message == "" {
 		return false
 	}
-	if strings.Contains(message, BalanceInsufficientDisableReasonPrefix) {
-		return true
+	for _, phrase := range strictBalanceInsufficientPhrases {
+		if strings.Contains(message, strings.ToLower(phrase)) {
+			return true
+		}
 	}
-	search, _ := AcSearch(message, operation_setting.BalanceInsufficientKeywords, true)
-	return search
+	for _, phrase := range operation_setting.BalanceInsufficientKeywords {
+		phrase = strings.ToLower(strings.TrimSpace(phrase))
+		if phrase == "" {
+			continue
+		}
+		if _, broad := broadBalanceInsufficientKeywords[phrase]; broad {
+			continue
+		}
+		if strings.Contains(message, phrase) {
+			return true
+		}
+	}
+	return false
 }
 
 func ChannelHasBalanceInsufficientDisableReason(channel *model.Channel) bool {
