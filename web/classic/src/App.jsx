@@ -18,7 +18,13 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { lazy, Suspense, useContext, useMemo } from 'react';
-import { Route, Routes, useLocation, useParams } from 'react-router-dom';
+import {
+  Navigate,
+  Route,
+  Routes,
+  useLocation,
+  useParams,
+} from 'react-router-dom';
 import Loading from './components/common/ui/Loading';
 import User from './pages/User';
 import { AuthRedirect, PrivateRoute, AdminRoute, RootRoute } from './helpers';
@@ -65,6 +71,16 @@ const PrivacyPolicy = lazy(() => import('./pages/PrivacyPolicy'));
 function DynamicOAuth2Callback() {
   const { provider } = useParams();
   return <OAuth2Callback type={provider} />;
+}
+
+function RegisterRedirect() {
+  const location = useLocation();
+  return (
+    <Navigate
+      to={{ pathname: '/sign-up', search: location.search }}
+      replace
+    />
+  );
 }
 
 function App() {
@@ -215,9 +231,7 @@ function App() {
           path='/register'
           element={
             <Suspense fallback={<Loading></Loading>} key={location.pathname}>
-              <AuthRedirect>
-                <RegisterForm />
-              </AuthRedirect>
+              <RegisterRedirect />
             </Suspense>
           }
         />

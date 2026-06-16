@@ -40,6 +40,8 @@ import {
 
 const { Text, Title } = Typography;
 
+const FIXED_REFERRAL_REDIRECT_PATH = '/sign-up';
+
 const SECTION_META = {
   overview: {
     title: '推广管理',
@@ -178,9 +180,9 @@ function MetricCard({ title, value }) {
 function getRedirectPathLabel(path) {
   switch (path) {
     case '/register':
-      return '/register（classic 注册页）';
+      return '/register（旧链接兼容跳转）';
     case '/sign-up':
-      return '/sign-up（default 注册页）';
+      return '/sign-up（注册页）';
     default:
       return path || '-';
   }
@@ -504,7 +506,10 @@ export default function AdminReferral() {
 
   async function saveSettings() {
     try {
-      const res = await API.put('/api/user/admin/referral/settings', settings);
+      const res = await API.put('/api/user/admin/referral/settings', {
+        ...settings,
+        redirect_path: FIXED_REFERRAL_REDIRECT_PATH,
+      });
       if (!res.data.success) {
         showError(res.data.message);
         return;
@@ -1179,17 +1184,14 @@ export default function AdminReferral() {
                     addonBefore='提现手续费'
                   />
                   <Input
-                    value={settings.redirect_path || ''}
-                    onChange={(value) =>
-                      setSettings((prev) =>
-                        prev ? { ...prev, redirect_path: value } : prev,
-                      )
-                    }
+                    value={FIXED_REFERRAL_REDIRECT_PATH}
+                    readonly
                     addonBefore='注册跳转'
                   />
                   <Text type='tertiary'>
-                    推荐：classic 使用 {getRedirectPathLabel('/register')}
-                    ，default 使用 {getRedirectPathLabel('/sign-up')}
+                    推荐：classic 和 default 均使用{' '}
+                    {getRedirectPathLabel(FIXED_REFERRAL_REDIRECT_PATH)}
+                    ，/register 仅保留旧链接兼容
                   </Text>
                   <Button type='primary' theme='solid' onClick={saveSettings}>
                     保存设置
