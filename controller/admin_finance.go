@@ -584,9 +584,9 @@ func latestRechargeAuditBadgeTopupCursor(filters rechargeAuditFilters) (recharge
 	whereSQL, whereArgs := orderManagementBranchWhereSQL("t", []string{`NOT EXISTS (
 	SELECT 1 FROM subscription_orders AS so WHERE so.trade_no = t.trade_no
 )`}, filters)
-	whereSQL = appendOrderManagementCondition(whereSQL, "t.status IN (?, ?, ?) AND t.complete_time > 0")
+	whereSQL = appendOrderManagementCondition(whereSQL, "t.status = ? AND t.complete_time > 0")
 	args := append([]interface{}{}, whereArgs...)
-	args = append(args, common.TopUpStatusSuccess, common.TopUpStatusFailed, common.TopUpStatusExpired)
+	args = append(args, common.TopUpStatusSuccess)
 
 	cursor := rechargeAuditOrderCursor{}
 	querySQL := fmt.Sprintf(
@@ -602,9 +602,9 @@ func latestRechargeAuditBadgeTopupCursor(filters rechargeAuditFilters) (recharge
 
 func latestRechargeAuditBadgeSubscriptionCursor(filters rechargeAuditFilters) (rechargeAuditOrderCursor, error) {
 	whereSQL, whereArgs := orderManagementBranchWhereSQL("s", nil, filters)
-	whereSQL = appendOrderManagementCondition(whereSQL, "s.status IN (?, ?, ?) AND s.complete_time > 0")
+	whereSQL = appendOrderManagementCondition(whereSQL, "s.status = ? AND s.complete_time > 0")
 	args := append([]interface{}{}, whereArgs...)
-	args = append(args, common.TopUpStatusSuccess, common.TopUpStatusFailed, common.TopUpStatusExpired)
+	args = append(args, common.TopUpStatusSuccess)
 
 	cursor := rechargeAuditOrderCursor{}
 	querySQL := fmt.Sprintf(
@@ -647,10 +647,10 @@ func countRechargeAuditBadgeTopupsAfterCursor(cursor rechargeAuditOrderCursor, f
 	SELECT 1 FROM subscription_orders AS so WHERE so.trade_no = t.trade_no
 )`}, filters)
 	cursorSQL, cursorArgs := rechargeAuditBranchCursorCondition("t", rechargeAuditTopupOrderRank, cursor)
-	whereSQL = appendOrderManagementCondition(whereSQL, "t.status IN (?, ?, ?) AND t.complete_time > 0")
+	whereSQL = appendOrderManagementCondition(whereSQL, "t.status = ? AND t.complete_time > 0")
 	whereSQL = appendOrderManagementCondition(whereSQL, cursorSQL)
 	args := append([]interface{}{}, whereArgs...)
-	args = append(args, common.TopUpStatusSuccess, common.TopUpStatusFailed, common.TopUpStatusExpired)
+	args = append(args, common.TopUpStatusSuccess)
 	args = append(args, cursorArgs...)
 
 	var count int64
@@ -663,10 +663,10 @@ func countRechargeAuditBadgeTopupsAfterCursor(cursor rechargeAuditOrderCursor, f
 func countRechargeAuditBadgeSubscriptionsAfterCursor(cursor rechargeAuditOrderCursor, filters rechargeAuditFilters) (int64, error) {
 	whereSQL, whereArgs := orderManagementBranchWhereSQL("s", nil, filters)
 	cursorSQL, cursorArgs := rechargeAuditBranchCursorCondition("s", rechargeAuditSubscriptionOrderRank, cursor)
-	whereSQL = appendOrderManagementCondition(whereSQL, "s.status IN (?, ?, ?) AND s.complete_time > 0")
+	whereSQL = appendOrderManagementCondition(whereSQL, "s.status = ? AND s.complete_time > 0")
 	whereSQL = appendOrderManagementCondition(whereSQL, cursorSQL)
 	args := append([]interface{}{}, whereArgs...)
-	args = append(args, common.TopUpStatusSuccess, common.TopUpStatusFailed, common.TopUpStatusExpired)
+	args = append(args, common.TopUpStatusSuccess)
 	args = append(args, cursorArgs...)
 
 	var count int64
@@ -730,7 +730,7 @@ func countRechargeAuditOrdersAfterCursor(rawCursor string, baseSQL string, baseA
 		return 0, nil
 	}
 	rankSQL := rechargeAuditOrderRankSQL()
-	newOrderCondition := fmt.Sprintf(`o.status IN (?, ?, ?) AND o.complete_time > 0 AND (
+	newOrderCondition := fmt.Sprintf(`o.status = ? AND o.complete_time > 0 AND (
 	o.complete_time > ?
 	OR (o.complete_time = ? AND %s > ?)
 	OR (o.complete_time = ? AND %s = ? AND o.id > ?)
@@ -744,8 +744,6 @@ func countRechargeAuditOrdersAfterCursor(rawCursor string, baseSQL string, baseA
 	queryArgs = append(queryArgs, whereArgs...)
 	queryArgs = append(queryArgs,
 		common.TopUpStatusSuccess,
-		common.TopUpStatusFailed,
-		common.TopUpStatusExpired,
 		cursor.CompleteTime,
 		cursor.CompleteTime,
 		cursor.OrderRank,
@@ -766,15 +764,13 @@ func latestRechargeAuditOrderCursor(baseSQL string, baseArgs []interface{}, wher
 		"SELECT o.complete_time, %s AS order_rank, o.id FROM (%s) AS o %s ORDER BY o.complete_time DESC, %s DESC, o.id DESC LIMIT 1",
 		rankSQL,
 		baseSQL,
-		appendOrderManagementCondition(whereSQL, "o.status IN (?, ?, ?) AND o.complete_time > 0"),
+		appendOrderManagementCondition(whereSQL, "o.status = ? AND o.complete_time > 0"),
 		rankSQL,
 	)
 	queryArgs := append([]interface{}{}, baseArgs...)
 	queryArgs = append(queryArgs, whereArgs...)
 	queryArgs = append(queryArgs,
 		common.TopUpStatusSuccess,
-		common.TopUpStatusFailed,
-		common.TopUpStatusExpired,
 	)
 	cursor := rechargeAuditOrderCursor{}
 	if err := model.DB.Raw(querySQL, queryArgs...).Scan(&cursor).Error; err != nil {

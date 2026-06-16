@@ -59,6 +59,130 @@ const routerMap = {
   personal: '/console/personal',
 };
 
+const SIDEBAR_BADGE_ACK_STORAGE_KEY_PREFIX = 'admin-sidebar-alert-badge-ack-v3';
+
+const normalizeBadgeCount = (value) => {
+  const count = Number(value);
+  return Number.isFinite(count) && count > 0
+    ? Math.min(Math.floor(count), 99)
+    : 0;
+};
+
+const normalizeBadgeCursor = (value) => {
+  if (typeof value === 'number') {
+    return Number.isFinite(value) && value >= 0
+      ? String(Math.floor(value))
+      : '';
+  }
+  return String(value ?? '').trim();
+};
+
+const parseBadgeCursorParts = (value) => {
+  const normalized = normalizeBadgeCursor(value);
+  if (!normalized) return null;
+  const parts = normalized.split(':').map((part) => Number(part));
+  return parts.some((part) => !Number.isFinite(part)) ? null : parts;
+};
+
+const compareBadgeCursor = (left, right) => {
+  const leftParts = parseBadgeCursorParts(left);
+  const rightParts = parseBadgeCursorParts(right);
+  if (!leftParts || !rightParts) {
+    return normalizeBadgeCursor(left).localeCompare(
+      normalizeBadgeCursor(right),
+    );
+  }
+  const length = Math.max(leftParts.length, rightParts.length);
+  for (let index = 0; index < length; index += 1) {
+    const diff = (leftParts[index] || 0) - (rightParts[index] || 0);
+    if (diff !== 0) return diff;
+  }
+  return 0;
+};
+
+const getSidebarBadgeUserId = () => {
+  try {
+    const user = JSON.parse(localStorage.getItem('user') || 'null');
+    return user?.id ?? user?.username ?? 'anonymous';
+  } catch {
+    return 'anonymous';
+  }
+};
+
+const sidebarBadgeStorageKey = () =>
+  `${SIDEBAR_BADGE_ACK_STORAGE_KEY_PREFIX}:${getSidebarBadgeUserId()}`;
+
+const readSidebarBadgeAckState = () => {
+  try {
+    return JSON.parse(localStorage.getItem(sidebarBadgeStorageKey()) || '{}');
+  } catch {
+    return {};
+  }
+};
+
+const writeSidebarBadgeAckState = (state) => {
+  localStorage.setItem(sidebarBadgeStorageKey(), JSON.stringify(state));
+};
+
+const sidebarBadgeAckEntryKey = (key) => `${key}:cursor`;
+
+const hasSidebarBadgeAck = (key) =>
+  Object.prototype.hasOwnProperty.call(
+    readSidebarBadgeAckState(),
+    sidebarBadgeAckEntryKey(key),
+  );
+
+const readSidebarBadgeAck = (key) =>
+  readSidebarBadgeAckState()[sidebarBadgeAckEntryKey(key)];
+
+const acknowledgeSidebarBadge = (key, cursor) => {
+  const normalized = normalizeBadgeCursor(cursor);
+  if (!key || !normalized) return false;
+  const state = readSidebarBadgeAckState();
+  state[sidebarBadgeAckEntryKey(key)] = normalized;
+  writeSidebarBadgeAckState(state);
+  return true;
+};
+
+const initializeSidebarBadgeCursors = (cursors) => {
+  const state = readSidebarBadgeAckState();
+  let changed = false;
+  Object.entries(cursors).forEach(([key, cursor]) => {
+    const normalized = normalizeBadgeCursor(cursor);
+    const entryKey = sidebarBadgeAckEntryKey(key);
+    if (!normalized || normalizeBadgeCursor(state[entryKey])) return;
+    state[entryKey] = normalized;
+    changed = true;
+  });
+  if (changed) writeSidebarBadgeAckState(state);
+  return changed;
+};
+
+const unreadSidebarBadgeCount = (key, count, cursor) => {
+  if (!hasSidebarBadgeAck(key)) return 0;
+  const normalizedCount = normalizeBadgeCount(count);
+  const normalizedCursor = normalizeBadgeCursor(cursor);
+  if (!normalizedCursor) return normalizedCount;
+  const acknowledgedCursor = readSidebarBadgeAck(key);
+  return compareBadgeCursor(acknowledgedCursor, normalizedCursor) >= 0
+    ? 0
+    : normalizedCount;
+};
+
+const withQuery = (url, params) => {
+  const query = params.toString();
+  return query ? `${url}?${query}` : url;
+};
+
+const createEmptySidebarBadges = () => ({
+  userTicket: { count: 0, cursor: '' },
+  adminTicket: { count: 0, cursor: '' },
+  users: { count: 0, cursor: '' },
+  orders: { count: 0, cursor: '' },
+  referralAffiliates: { count: 0, cursor: '' },
+  referralWithdrawals: { count: 0, cursor: '' },
+});
+
 const SiderBar = ({ onNavigate = () => {} }) => {
   const { t } = useTranslation();
   const [collapsed, toggleCollapsed] = useSidebarCollapsed();
@@ -73,10 +197,43 @@ const SiderBar = ({ onNavigate = () => {} }) => {
   const [selectedKeys, setSelectedKeys] = useState(['home']);
   const [chatItems, setChatItems] = useState([]);
   const [openedKeys, setOpenedKeys] = useState([]);
-  const [ticketBadge, setTicketBadge] = useState(0);
-  const [adminTicketBadge, setAdminTicketBadge] = useState(0);
+  const [sidebarBadges, setSidebarBadges] = useState(createEmptySidebarBadges);
+  const [badgeAckVersion, setBadgeAckVersion] = useState(0);
   const location = useLocation();
   const [routerMapState, setRouterMapState] = useState(routerMap);
+
+  const ticketBadge = unreadSidebarBadgeCount(
+    'tickets:self',
+    sidebarBadges.userTicket.count,
+    sidebarBadges.userTicket.cursor,
+  );
+  const adminTicketBadge = unreadSidebarBadgeCount(
+    'tickets:admin',
+    sidebarBadges.adminTicket.count,
+    sidebarBadges.adminTicket.cursor,
+  );
+  const usersBadge = unreadSidebarBadgeCount(
+    'users',
+    sidebarBadges.users.count,
+    sidebarBadges.users.cursor,
+  );
+  const orderManagementBadge = unreadSidebarBadgeCount(
+    'recharge-audit',
+    sidebarBadges.orders.count,
+    sidebarBadges.orders.cursor,
+  );
+  const adminReferralBadge =
+    unreadSidebarBadgeCount(
+      'admin-referral:pending-affiliates',
+      sidebarBadges.referralAffiliates.count,
+      sidebarBadges.referralAffiliates.cursor,
+    ) +
+    unreadSidebarBadgeCount(
+      'admin-referral:pending-withdrawals',
+      sidebarBadges.referralWithdrawals.count,
+      sidebarBadges.referralWithdrawals.cursor,
+    );
+  void badgeAckVersion;
 
   const workspaceItems = useMemo(() => {
     const items = [
@@ -140,7 +297,6 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     localStorage.getItem('enable_data_export'),
     localStorage.getItem('enable_drawing'),
     localStorage.getItem('enable_task'),
-    ticketBadge,
     t,
     isModuleVisible,
   ]);
@@ -177,7 +333,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     });
 
     return filteredItems;
-  }, [t, isModuleVisible]);
+  }, [ticketBadge, t, isModuleVisible]);
 
   const adminItems = useMemo(() => {
     const items = [
@@ -198,6 +354,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         itemKey: 'adminReferral',
         to: '/console/admin-referral',
         className: isAdmin() ? '' : 'tableHiddle',
+        badge: adminReferralBadge,
       },
       {
         text: '工单管理',
@@ -211,6 +368,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         itemKey: 'recharge_audit',
         to: '/console/recharge-audit',
         className: isAdmin() ? '' : 'tableHiddle',
+        badge: orderManagementBadge,
       },
       {
         text: '公开价格导出',
@@ -241,6 +399,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         itemKey: 'user',
         to: '/user',
         className: isAdmin() ? '' : 'tableHiddle',
+        badge: usersBadge,
       },
       {
         text: t('系统设置'),
@@ -258,7 +417,16 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     });
 
     return filteredItems;
-  }, [adminTicketBadge, isAdmin(), isRoot(), t, isModuleVisible]);
+  }, [
+    adminReferralBadge,
+    adminTicketBadge,
+    orderManagementBadge,
+    usersBadge,
+    isAdmin(),
+    isRoot(),
+    t,
+    isModuleVisible,
+  ]);
 
   const chatMenuItems = useMemo(() => {
     const items = [
@@ -283,38 +451,171 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     return filteredItems;
   }, [chatItems, t, isModuleVisible]);
 
-  const normalizeBadgeCount = (value) => {
-    const count = Number(value);
-    return Number.isFinite(count) && count > 0 ? Math.min(count, 99) : 0;
-  };
-
-  const loadTicketBadges = async () => {
+  const loadSidebarBadges = async () => {
+    const nextBadges = createEmptySidebarBadges();
     try {
-      const res = await API.get('/api/user/tickets/badge', {
+      const params = new URLSearchParams();
+      if (hasSidebarBadgeAck('tickets:self')) {
+        const cursor = normalizeBadgeCursor(
+          readSidebarBadgeAck('tickets:self'),
+        );
+        if (cursor) params.set('after_cursor', cursor);
+      }
+      const res = await API.get(withQuery('/api/user/tickets/badge', params), {
         disableDuplicate: true,
       });
       if (res?.data?.success) {
-        setTicketBadge(normalizeBadgeCount(res.data.data?.count));
+        nextBadges.userTicket = {
+          count: normalizeBadgeCount(res.data.data?.new_count),
+          cursor: normalizeBadgeCursor(res.data.data?.latest_cursor),
+        };
       }
     } catch {
-      setTicketBadge(0);
+      nextBadges.userTicket = { count: 0, cursor: '' };
     }
 
     if (!isAdmin()) {
-      setAdminTicketBadge(0);
+      if (
+        initializeSidebarBadgeCursors({
+          'tickets:self': nextBadges.userTicket.cursor,
+        })
+      ) {
+        setBadgeAckVersion((value) => value + 1);
+      }
+      setSidebarBadges(nextBadges);
       return;
     }
 
     try {
-      const res = await API.get('/api/user/admin/tickets/badge', {
-        disableDuplicate: true,
-      });
+      const params = new URLSearchParams();
+      if (hasSidebarBadgeAck('tickets:admin')) {
+        const cursor = normalizeBadgeCursor(
+          readSidebarBadgeAck('tickets:admin'),
+        );
+        if (cursor) params.set('after_cursor', cursor);
+      }
+      const res = await API.get(
+        withQuery('/api/user/admin/tickets/badge', params),
+        {
+          disableDuplicate: true,
+        },
+      );
       if (res?.data?.success) {
-        setAdminTicketBadge(normalizeBadgeCount(res.data.data?.count));
+        nextBadges.adminTicket = {
+          count: normalizeBadgeCount(res.data.data?.new_count),
+          cursor: normalizeBadgeCursor(res.data.data?.latest_cursor),
+        };
       }
     } catch {
-      setAdminTicketBadge(0);
+      nextBadges.adminTicket = { count: 0, cursor: '' };
     }
+
+    try {
+      const params = new URLSearchParams();
+      if (hasSidebarBadgeAck('users')) {
+        const cursor = normalizeBadgeCursor(readSidebarBadgeAck('users'));
+        if (cursor) params.set('after_id', cursor);
+      }
+      const res = await API.get(
+        withQuery('/api/user/admin/users/summary', params),
+        {
+          disableDuplicate: true,
+        },
+      );
+      if (res?.data?.success) {
+        nextBadges.users = {
+          count: hasSidebarBadgeAck('users')
+            ? normalizeBadgeCount(res.data.data?.new_user_count)
+            : 0,
+          cursor: normalizeBadgeCursor(res.data.data?.latest_user_id),
+        };
+      }
+    } catch {
+      nextBadges.users = { count: 0, cursor: '' };
+    }
+
+    try {
+      const params = new URLSearchParams();
+      params.set('badge_only', '1');
+      if (hasSidebarBadgeAck('recharge-audit')) {
+        const cursor = normalizeBadgeCursor(
+          readSidebarBadgeAck('recharge-audit'),
+        );
+        if (cursor) params.set('after_order_cursor', cursor);
+      }
+      const res = await API.get(
+        withQuery('/api/user/admin/finance/recharge-audit/summary', params),
+        { disableDuplicate: true },
+      );
+      if (res?.data?.success) {
+        nextBadges.orders = {
+          count: hasSidebarBadgeAck('recharge-audit')
+            ? normalizeBadgeCount(res.data.data?.new_order_count)
+            : 0,
+          cursor: normalizeBadgeCursor(res.data.data?.latest_order_cursor),
+        };
+      }
+    } catch {
+      nextBadges.orders = { count: 0, cursor: '' };
+    }
+
+    try {
+      const params = new URLSearchParams();
+      if (hasSidebarBadgeAck('admin-referral:pending-affiliates')) {
+        const cursor = normalizeBadgeCursor(
+          readSidebarBadgeAck('admin-referral:pending-affiliates'),
+        );
+        if (cursor) params.set('after_pending_affiliate_cursor', cursor);
+      }
+      if (hasSidebarBadgeAck('admin-referral:pending-withdrawals')) {
+        const cursor = normalizeBadgeCursor(
+          readSidebarBadgeAck('admin-referral:pending-withdrawals'),
+        );
+        if (cursor) params.set('after_pending_withdrawal_cursor', cursor);
+      }
+      const res = await API.get(
+        withQuery('/api/user/admin/referral/badges', params),
+        {
+          disableDuplicate: true,
+        },
+      );
+      if (res?.data?.success) {
+        nextBadges.referralAffiliates = {
+          count: normalizeBadgeCount(res.data.data?.new_pending_affiliates),
+          cursor: normalizeBadgeCursor(
+            res.data.data?.latest_pending_affiliate_cursor ||
+              res.data.data?.latest_pending_affiliate_id,
+          ),
+        };
+        nextBadges.referralWithdrawals = {
+          count: normalizeBadgeCount(res.data.data?.new_pending_withdrawals),
+          cursor: normalizeBadgeCursor(
+            res.data.data?.latest_pending_withdrawal_cursor ||
+              res.data.data?.latest_pending_withdrawal_id,
+          ),
+        };
+      }
+    } catch {
+      nextBadges.referralAffiliates = { count: 0, cursor: '' };
+      nextBadges.referralWithdrawals = { count: 0, cursor: '' };
+    }
+
+    if (
+      initializeSidebarBadgeCursors({
+        'tickets:self': nextBadges.userTicket.cursor,
+        'tickets:admin': nextBadges.adminTicket.cursor,
+        users: nextBadges.users.cursor,
+        'recharge-audit': nextBadges.orders.cursor,
+        'admin-referral:pending-affiliates':
+          nextBadges.referralAffiliates.cursor,
+        'admin-referral:pending-withdrawals':
+          nextBadges.referralWithdrawals.cursor,
+      })
+    ) {
+      setBadgeAckVersion((value) => value + 1);
+    }
+
+    setSidebarBadges(nextBadges);
   };
 
   // 更新路由映射，添加聊天路由
@@ -370,10 +671,53 @@ const SiderBar = ({ onNavigate = () => {} }) => {
   }, []);
 
   useEffect(() => {
-    loadTicketBadges();
-    const timer = setInterval(loadTicketBadges, 60 * 1000);
+    loadSidebarBadges();
+    const timer = setInterval(loadSidebarBadges, 60 * 1000);
     return () => clearInterval(timer);
   }, []);
+
+  const acknowledgeMenuBadge = (itemKey) => {
+    let changed = false;
+    switch (itemKey) {
+      case 'tickets':
+        changed = acknowledgeSidebarBadge(
+          'tickets:self',
+          sidebarBadges.userTicket.cursor,
+        );
+        break;
+      case 'ticket_management':
+        changed = acknowledgeSidebarBadge(
+          'tickets:admin',
+          sidebarBadges.adminTicket.cursor,
+        );
+        break;
+      case 'user':
+        changed = acknowledgeSidebarBadge('users', sidebarBadges.users.cursor);
+        break;
+      case 'recharge_audit':
+        changed = acknowledgeSidebarBadge(
+          'recharge-audit',
+          sidebarBadges.orders.cursor,
+        );
+        break;
+      case 'adminReferral':
+        {
+          const affiliatesChanged = acknowledgeSidebarBadge(
+            'admin-referral:pending-affiliates',
+            sidebarBadges.referralAffiliates.cursor,
+          );
+          const withdrawalsChanged = acknowledgeSidebarBadge(
+            'admin-referral:pending-withdrawals',
+            sidebarBadges.referralWithdrawals.cursor,
+          );
+          changed = affiliatesChanged || withdrawalsChanged;
+        }
+        break;
+      default:
+        break;
+    }
+    if (changed) setBadgeAckVersion((value) => value + 1);
+  };
 
   // 根据当前路径设置选中的菜单项
   useEffect(() => {
@@ -541,6 +885,10 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           renderWrapper={({ itemElement, props }) => {
             const to =
               routerMapState[props.itemKey] || routerMap[props.itemKey];
+            const handleNavigate = () => {
+              acknowledgeMenuBadge(props.itemKey);
+              onNavigate();
+            };
 
             // 如果没有路由，直接返回元素
             if (!to) return itemElement;
@@ -552,7 +900,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
                   href={to}
                   target='_blank'
                   rel='noopener noreferrer'
-                  onClick={onNavigate}
+                  onClick={handleNavigate}
                 >
                   {itemElement}
                 </a>
@@ -563,7 +911,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
               <Link
                 style={{ textDecoration: 'none' }}
                 to={to}
-                onClick={onNavigate}
+                onClick={handleNavigate}
               >
                 {itemElement}
               </Link>
@@ -576,6 +924,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
             }
 
             setSelectedKeys([key.itemKey]);
+            acknowledgeMenuBadge(key.itemKey);
           }}
           openKeys={openedKeys}
           onOpenChange={(data) => {

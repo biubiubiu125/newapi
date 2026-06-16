@@ -162,7 +162,12 @@ export async function fetchTicketAttachmentBlob(
   return res.data as Blob
 }
 
-export async function getTicketBadge(admin?: boolean) {
-  const res = await api.get(`${ticketBase(admin)}/badge`)
-  return unwrapTicketResponse<{ count: number }>(res.data)
+export async function getTicketBadge(admin?: boolean, params?: URLSearchParams) {
+  const query = params?.toString()
+  const res = await api.get(`${ticketBase(admin)}/badge${query ? `?${query}` : ''}`)
+  return unwrapTicketResponse<{
+    count: number
+    new_count?: number
+    latest_cursor?: string
+  }>(res.data)
 }

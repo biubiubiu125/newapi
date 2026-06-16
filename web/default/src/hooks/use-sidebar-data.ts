@@ -63,16 +63,35 @@ import { useAuthStore } from '@/stores/auth-store'
 
 type AdminAlertBadges = {
   newUsers: number
-  latestUserId: number
+  latestUserId?: number | string
   orderIssues: number
   latestOrderCursor?: string
+  userTicketReplies: number
+  latestUserTicketCursor?: string
+  adminTicketEvents: number
+  latestAdminTicketCursor?: string
 }
 
 const EMPTY_ADMIN_ALERT_BADGES: AdminAlertBadges = {
   newUsers: 0,
-  latestUserId: 0,
+  latestUserId: undefined,
   orderIssues: 0,
   latestOrderCursor: undefined,
+  userTicketReplies: 0,
+  latestUserTicketCursor: undefined,
+  adminTicketEvents: 0,
+  latestAdminTicketCursor: undefined,
+}
+
+function normalizeSidebarCursorValue(
+  value: number | string | undefined | null
+): number | string | undefined {
+  if (typeof value === 'number') {
+    if (!Number.isFinite(value) || value < 0) return undefined
+    return Math.floor(value)
+  }
+  const normalized = String(value ?? '').trim()
+  return normalized ? normalized : undefined
 }
 
 /**
@@ -117,42 +136,78 @@ export function useSidebarData(): SidebarData {
     'admin',
     'recharge_audit'
   )
-  const { counts } = useAdminReferralBadges(
-    Boolean(isAdmin && hasSidebarStatus && adminReferralEnabled)
+  const referralBadgeParams = new URLSearchParams()
+  const referralPendingAffiliateAck = readAdminSidebarBadgeAck(
+    'admin-referral:pending-affiliates',
+    userId,
+    { mode: 'cursor' }
   )
-  const userTicketBadgeQuery = useQuery({
-    queryKey: ['sidebar-ticket-badge', userId, 'self'],
-    enabled: Boolean(userId && hasSidebarStatus && userTicketsEnabled),
-    queryFn: async () => {
-      const data = await getTicketBadge(false)
-      return normalizeSidebarBadgeCount(data?.count)
-    },
-    refetchOnWindowFocus: false,
-    staleTime: 60 * 1000,
-  })
-  const adminTicketBadgeQuery = useQuery({
-    queryKey: ['sidebar-ticket-badge', userId, 'admin'],
-    enabled: Boolean(userId && isAdmin && hasSidebarStatus && adminTicketsEnabled),
-    queryFn: async () => {
-      const data = await getTicketBadge(true)
-      return normalizeSidebarBadgeCount(data?.count)
-    },
-    refetchOnWindowFocus: false,
-    staleTime: 60 * 1000,
-  })
+  const referralPendingWithdrawalAck = readAdminSidebarBadgeAck(
+    'admin-referral:pending-withdrawals',
+    userId,
+    { mode: 'cursor' }
+  )
+  const hasReferralPendingAffiliatesAck = hasAdminSidebarBadgeAck(
+    'admin-referral:pending-affiliates',
+    userId,
+    { mode: 'cursor' }
+  )
+  const hasReferralPendingWithdrawalsAck = hasAdminSidebarBadgeAck(
+    'admin-referral:pending-withdrawals',
+    userId,
+    { mode: 'cursor' }
+  )
+  if (
+    hasReferralPendingAffiliatesAck &&
+    typeof referralPendingAffiliateAck === 'string' &&
+    referralPendingAffiliateAck.trim()
+  ) {
+    referralBadgeParams.set(
+      'after_pending_affiliate_cursor',
+      referralPendingAffiliateAck.trim()
+    )
+  }
+  if (
+    hasReferralPendingWithdrawalsAck &&
+    typeof referralPendingWithdrawalAck === 'string' &&
+    referralPendingWithdrawalAck.trim()
+  ) {
+    referralBadgeParams.set(
+      'after_pending_withdrawal_cursor',
+      referralPendingWithdrawalAck.trim()
+    )
+  }
+  const { counts } = useAdminReferralBadges(
+    Boolean(isAdmin && hasSidebarStatus && adminReferralEnabled),
+    referralBadgeParams
+  )
   const adminAlertQuery = useQuery({
     queryKey: [
       'admin-sidebar-alert-badges',
       userId,
+      userTicketsEnabled,
+      adminTicketsEnabled,
       adminUsersEnabled,
+      adminReferralEnabled,
       adminRechargeAuditEnabled,
     ],
     enabled: Boolean(
-      isAdmin &&
+      userId &&
         hasSidebarStatus &&
-        (adminUsersEnabled || adminRechargeAuditEnabled)
+        (userTicketsEnabled ||
+          (isAdmin &&
+            (adminTicketsEnabled ||
+              adminUsersEnabled ||
+              adminReferralEnabled ||
+              adminRechargeAuditEnabled)))
     ),
     queryFn: async (): Promise<AdminAlertBadges> => {
+      const userTicketAck = readAdminSidebarBadgeAck('tickets:self', userId, {
+        mode: 'cursor',
+      })
+      const adminTicketAck = readAdminSidebarBadgeAck('tickets:admin', userId, {
+        mode: 'cursor',
+      })
       const userAck = readAdminSidebarBadgeAck('users', userId, {
         mode: 'cursor',
       })
@@ -165,9 +220,31 @@ export function useSidebarData(): SidebarData {
       const hasOrderAck = hasAdminSidebarBadgeAck('recharge-audit', userId, {
         mode: 'cursor',
       })
+      const hasUserTicketAck = hasAdminSidebarBadgeAck('tickets:self', userId, {
+        mode: 'cursor',
+      })
+      const hasAdminTicketAck = hasAdminSidebarBadgeAck('tickets:admin', userId, {
+        mode: 'cursor',
+      })
+      const userTicketParams = new URLSearchParams()
+      const adminTicketParams = new URLSearchParams()
       const userParams = new URLSearchParams()
       const orderParams = new URLSearchParams()
       orderParams.set('badge_only', '1')
+      if (
+        hasUserTicketAck &&
+        typeof userTicketAck === 'string' &&
+        userTicketAck.trim()
+      ) {
+        userTicketParams.set('after_cursor', userTicketAck.trim())
+      }
+      if (
+        hasAdminTicketAck &&
+        typeof adminTicketAck === 'string' &&
+        adminTicketAck.trim()
+      ) {
+        adminTicketParams.set('after_cursor', adminTicketAck.trim())
+      }
       if (hasUserAck && typeof userAck === 'number' && userAck >= 0) {
         userParams.set('after_id', String(userAck))
       } else if (hasUserAck && typeof userAck === 'string' && userAck.trim()) {
@@ -176,48 +253,72 @@ export function useSidebarData(): SidebarData {
       if (hasOrderAck && typeof orderAck === 'string' && orderAck.trim()) {
         orderParams.set('after_order_cursor', orderAck.trim())
       }
-      const [userRes, orderRes] = await Promise.all([
-        adminUsersEnabled
-          ? getAdminUsersSummary(userParams)
-          : Promise.resolve(undefined),
-        adminRechargeAuditEnabled
-          ? getRechargeAuditSummary(orderParams)
-          : Promise.resolve(undefined),
-      ])
+      const [userTicketRes, adminTicketRes, userRes, orderRes] =
+        await Promise.all([
+          userTicketsEnabled
+            ? getTicketBadge(false, userTicketParams)
+            : Promise.resolve(undefined),
+          isAdmin && adminTicketsEnabled
+            ? getTicketBadge(true, adminTicketParams)
+            : Promise.resolve(undefined),
+          isAdmin && adminUsersEnabled
+            ? getAdminUsersSummary(userParams)
+            : Promise.resolve(undefined),
+          isAdmin && adminRechargeAuditEnabled
+            ? getRechargeAuditSummary(orderParams)
+            : Promise.resolve(undefined),
+        ])
 
       return {
-        newUsers: adminUsersEnabled && hasUserAck
+        newUsers: isAdmin && adminUsersEnabled && hasUserAck
           ? normalizeSidebarBadgeCount(userRes?.data?.new_user_count)
           : 0,
-        latestUserId: adminUsersEnabled
-          ? normalizeSidebarBadgeCount(userRes?.data?.latest_user_id)
-          : 0,
-        orderIssues: adminRechargeAuditEnabled && hasOrderAck
+        latestUserId: isAdmin && adminUsersEnabled
+          ? normalizeSidebarCursorValue(userRes?.data?.latest_user_id)
+          : undefined,
+        orderIssues: isAdmin && adminRechargeAuditEnabled && hasOrderAck
           ? normalizeSidebarBadgeCount(orderRes?.data?.new_order_count)
           : 0,
-        latestOrderCursor: adminRechargeAuditEnabled
+        latestOrderCursor: isAdmin && adminRechargeAuditEnabled
           ? orderRes?.data?.latest_order_cursor || undefined
+          : undefined,
+        userTicketReplies: userTicketsEnabled && hasUserTicketAck
+          ? normalizeSidebarBadgeCount(userTicketRes?.new_count)
+          : 0,
+        latestUserTicketCursor: userTicketsEnabled
+          ? userTicketRes?.latest_cursor || undefined
+          : undefined,
+        adminTicketEvents: isAdmin && adminTicketsEnabled && hasAdminTicketAck
+          ? normalizeSidebarBadgeCount(adminTicketRes?.new_count)
+          : 0,
+        latestAdminTicketCursor: isAdmin && adminTicketsEnabled
+          ? adminTicketRes?.latest_cursor || undefined
           : undefined,
       }
     },
     refetchOnWindowFocus: false,
+    refetchInterval: 60 * 1000,
     staleTime: 60 * 1000,
   })
   const adminAlerts = adminAlertQuery.data ?? EMPTY_ADMIN_ALERT_BADGES
   const adminAlertsLoaded = adminAlertQuery.isSuccess
   void badgeAckVersion
-  const referralPendingAffiliatesUnread = unreadAdminSidebarBadgeCount(
-    'admin-referral:pending-affiliates',
-    counts.pendingAffiliates,
-    userId,
-    { mode: 'cursor', cursor: counts.latestPendingAffiliateCursor }
-  )
-  const referralPendingWithdrawalsUnread = unreadAdminSidebarBadgeCount(
-    'admin-referral:pending-withdrawals',
-    counts.pendingWithdrawals,
-    userId,
-    { mode: 'cursor', cursor: counts.latestPendingWithdrawalCursor }
-  )
+  const referralPendingAffiliatesUnread = hasReferralPendingAffiliatesAck
+    ? unreadAdminSidebarBadgeCount(
+        'admin-referral:pending-affiliates',
+        counts.newPendingAffiliates,
+        userId,
+        { mode: 'cursor', cursor: counts.latestPendingAffiliateCursor }
+      )
+    : 0
+  const referralPendingWithdrawalsUnread = hasReferralPendingWithdrawalsAck
+    ? unreadAdminSidebarBadgeCount(
+        'admin-referral:pending-withdrawals',
+        counts.newPendingWithdrawals,
+        userId,
+        { mode: 'cursor', cursor: counts.latestPendingWithdrawalCursor }
+      )
+    : 0
   const referralManagementUnread =
     referralPendingAffiliatesUnread + referralPendingWithdrawalsUnread
   const usersUnread = unreadAdminSidebarBadgeCount(
@@ -232,24 +333,38 @@ export function useSidebarData(): SidebarData {
     userId,
     { mode: 'cursor', cursor: adminAlerts.latestOrderCursor }
   )
+  const userTicketUnread = unreadAdminSidebarBadgeCount(
+    'tickets:self',
+    adminAlerts.userTicketReplies,
+    userId,
+    { mode: 'cursor', cursor: adminAlerts.latestUserTicketCursor }
+  )
+  const adminTicketUnread = unreadAdminSidebarBadgeCount(
+    'tickets:admin',
+    adminAlerts.adminTicketEvents,
+    userId,
+    { mode: 'cursor', cursor: adminAlerts.latestAdminTicketCursor }
+  )
   const usersBadge = formatAdminReferralBadgeCount(usersUnread)
   const orderManagementBadge = formatAdminReferralBadgeCount(
     orderManagementUnread
   )
-  const userTicketBadge = formatAdminReferralBadgeCount(
-    userTicketBadgeQuery.data ?? 0
-  )
-  const adminTicketBadge = formatAdminReferralBadgeCount(
-    adminTicketBadgeQuery.data ?? 0
-  )
+  const userTicketBadge = formatAdminReferralBadgeCount(userTicketUnread)
+  const adminTicketBadge = formatAdminReferralBadgeCount(adminTicketUnread)
 
   useEffect(() => {
     if (!adminAlertsLoaded) return
 
     const cursorInitialized = initializeAdminSidebarBadgeCursors(
       {
+        'tickets:self': adminAlerts.latestUserTicketCursor,
+        'tickets:admin': adminAlerts.latestAdminTicketCursor,
         users: adminAlerts.latestUserId,
         'recharge-audit': adminAlerts.latestOrderCursor,
+        'admin-referral:pending-affiliates':
+          counts.latestPendingAffiliateCursor,
+        'admin-referral:pending-withdrawals':
+          counts.latestPendingWithdrawalCursor,
       },
       userId,
       true
@@ -257,8 +372,12 @@ export function useSidebarData(): SidebarData {
     if (cursorInitialized) setBadgeAckVersion((value) => value + 1)
   }, [
     userId,
+    adminAlerts.latestUserTicketCursor,
+    adminAlerts.latestAdminTicketCursor,
     adminAlerts.latestUserId,
     adminAlerts.latestOrderCursor,
+    counts.latestPendingAffiliateCursor,
+    counts.latestPendingWithdrawalCursor,
     adminAlertsLoaded,
   ])
 
@@ -362,6 +481,10 @@ export function useSidebarData(): SidebarData {
             icon: Ticket,
             configUrls: ['/tickets'],
             badge: userTicketBadge,
+            badgeKey: 'tickets:self',
+            badgeValue: adminAlerts.userTicketReplies,
+            badgeCursor: adminAlerts.latestUserTicketCursor,
+            badgeMode: 'cursor',
           },
           {
             title: t('Profile'),
@@ -400,17 +523,17 @@ export function useSidebarData(): SidebarData {
             icon: Share2,
             badge: formatAdminReferralBadgeCount(referralManagementUnread),
             badgeKey: 'admin-referral',
-            badgeValue: counts.total,
+            badgeValue: referralManagementUnread,
             badgeAcks: [
               {
                 key: 'admin-referral:pending-affiliates',
-                value: counts.pendingAffiliates,
+                value: counts.newPendingAffiliates,
                 cursor: counts.latestPendingAffiliateCursor,
                 mode: 'cursor',
               },
               {
                 key: 'admin-referral:pending-withdrawals',
-                value: counts.pendingWithdrawals,
+                value: counts.newPendingWithdrawals,
                 cursor: counts.latestPendingWithdrawalCursor,
                 mode: 'cursor',
               },
@@ -422,6 +545,10 @@ export function useSidebarData(): SidebarData {
             icon: Ticket,
             configUrls: ['/admin-tickets'],
             badge: adminTicketBadge,
+            badgeKey: 'tickets:admin',
+            badgeValue: adminAlerts.adminTicketEvents,
+            badgeCursor: adminAlerts.latestAdminTicketCursor,
+            badgeMode: 'cursor',
           },
           {
             title: t('Redemption Codes'),

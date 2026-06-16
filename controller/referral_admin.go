@@ -64,7 +64,10 @@ func GetReferralOverview(c *gin.Context) {
 }
 
 func GetReferralAdminBadges(c *gin.Context) {
-	item, err := referralService.GetAdminBadgeCounts()
+	item, err := referralService.GetAdminBadgeCounts(service.ReferralAdminBadgeQuery{
+		AfterPendingAffiliateCursor:  c.Query("after_pending_affiliate_cursor"),
+		AfterPendingWithdrawalCursor: c.Query("after_pending_withdrawal_cursor"),
+	})
 	if err != nil {
 		common.ApiError(c, err)
 		return

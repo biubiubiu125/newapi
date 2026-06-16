@@ -74,6 +74,8 @@ export interface ReferralSummary {
 export interface ReferralAdminBadgeCounts {
   pending_affiliates: number
   pending_withdrawals: number
+  new_pending_affiliates?: number
+  new_pending_withdrawals?: number
   latest_pending_affiliate_id: number
   latest_pending_withdrawal_id: number
   latest_pending_affiliate_cursor?: string

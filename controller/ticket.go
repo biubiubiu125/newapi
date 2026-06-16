@@ -45,6 +45,11 @@ type updateTicketRequest struct {
 
 const ticketMultipartFormOverheadBytes = 2 * 1024 * 1024
 
+type ticketBadgeCursor struct {
+	LastReplyAt int64 `gorm:"column:last_reply_at"`
+	ID          int   `gorm:"column:id"`
+}
+
 func ListTickets(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	isAdmin := isTicketAdminRequest(c)
@@ -360,8 +365,11 @@ func UpdateTicket(c *gin.Context) {
 func GetTicketBadge(c *gin.Context) {
 	isAdmin := isTicketAdminRequest(c)
 	todoStatuses := []string{model.TicketStatusPending}
+	sender := model.TicketSenderAdmin
 	if !isAdmin {
 		todoStatuses = []string{model.TicketStatusWaitingUser, model.TicketStatusAdminReplied}
+	} else {
+		sender = model.TicketSenderUser
 	}
 	tx := model.DB.Model(&model.Ticket{}).Where("status IN ?", todoStatuses)
 	if !isAdmin {
@@ -372,7 +380,81 @@ func GetTicketBadge(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, gin.H{"count": count})
+
+	latestCursor, err := latestTicketBadgeCursor(isAdmin, c.GetInt("id"), todoStatuses, sender)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	newCount, err := countTicketBadgeAfterCursor(c.Query("after_cursor"), isAdmin, c.GetInt("id"), todoStatuses, sender)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"count":         count,
+		"new_count":     newCount,
+		"latest_cursor": formatTicketBadgeCursor(latestCursor),
+	})
+}
+
+func latestTicketBadgeCursor(isAdmin bool, userID int, statuses []string, sender string) (ticketBadgeCursor, error) {
+	tx := model.DB.Model(&model.Ticket{}).
+		Select("last_reply_at, id").
+		Where("status IN ? AND last_reply_by = ? AND last_reply_at > 0", statuses, sender)
+	if !isAdmin {
+		tx = tx.Where("user_id = ?", userID)
+	}
+	var cursor ticketBadgeCursor
+	if err := tx.Order("last_reply_at desc, id desc").Limit(1).Scan(&cursor).Error; err != nil {
+		return ticketBadgeCursor{}, err
+	}
+	return cursor, nil
+}
+
+func countTicketBadgeAfterCursor(rawCursor string, isAdmin bool, userID int, statuses []string, sender string) (int64, error) {
+	cursor, ok := parseTicketBadgeCursor(rawCursor)
+	if !ok {
+		return 0, nil
+	}
+	tx := model.DB.Model(&model.Ticket{}).
+		Where("status IN ? AND last_reply_by = ? AND last_reply_at > 0", statuses, sender).
+		Where("last_reply_at > ? OR (last_reply_at = ? AND id > ?)", cursor.LastReplyAt, cursor.LastReplyAt, cursor.ID)
+	if !isAdmin {
+		tx = tx.Where("user_id = ?", userID)
+	}
+	var count int64
+	if err := tx.Count(&count).Error; err != nil {
+		return 0, err
+	}
+	return count, nil
+}
+
+func parseTicketBadgeCursor(raw string) (ticketBadgeCursor, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ticketBadgeCursor{}, false
+	}
+	parts := strings.Split(raw, ":")
+	if len(parts) != 2 {
+		return ticketBadgeCursor{}, false
+	}
+	lastReplyAt, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || lastReplyAt < 0 {
+		return ticketBadgeCursor{}, false
+	}
+	id, err := strconv.Atoi(parts[1])
+	if err != nil || id < 0 {
+		return ticketBadgeCursor{}, false
+	}
+	return ticketBadgeCursor{LastReplyAt: lastReplyAt, ID: id}, true
+}
+
+func formatTicketBadgeCursor(cursor ticketBadgeCursor) string {
+	if cursor.LastReplyAt < 0 || cursor.ID < 0 {
+		return ""
+	}
+	return fmt.Sprintf("%d:%d", cursor.LastReplyAt, cursor.ID)
 }
 
 func GetTicketAttachment(c *gin.Context) {

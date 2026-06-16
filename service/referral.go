@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync/atomic"
 	"time"
@@ -59,13 +60,37 @@ func nextReferralPendingReviewCursor() int64 {
 }
 
 func formatReferralBadgeCursor(cursorValue int64, id int) string {
-	if cursorValue <= 0 || id <= 0 {
+	if cursorValue < 0 || id < 0 {
 		return ""
 	}
 	if cursorValue == int64(id) {
 		return fmt.Sprintf("%d", id)
 	}
 	return fmt.Sprintf("%d:%d", cursorValue, id)
+}
+
+func parseReferralBadgeCursor(raw string) (referralBadgeCursorRow, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return referralBadgeCursorRow{}, false
+	}
+	parts := strings.Split(raw, ":")
+	if len(parts) > 2 {
+		return referralBadgeCursorRow{}, false
+	}
+	cursorValue, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || cursorValue < 0 {
+		return referralBadgeCursorRow{}, false
+	}
+	id := int(cursorValue)
+	if len(parts) == 2 {
+		parsedID, err := strconv.Atoi(parts[1])
+		if err != nil || parsedID < 0 {
+			return referralBadgeCursorRow{}, false
+		}
+		id = parsedID
+	}
+	return referralBadgeCursorRow{CursorValue: cursorValue, ID: id}, true
 }
 
 func pendingAffiliateBadgeSummaryRow() (referralBadgeSummaryRow, error) {
@@ -92,6 +117,17 @@ func pendingAffiliateBadgeCursorRow(cursorValue int64) (referralBadgeCursorRow, 
 	return row, err
 }
 
+func countPendingAffiliatesAfterCursor(cursor referralBadgeCursorRow) (int64, error) {
+	subQuery := model.DB.Model(&model.ReferralAffiliate{}).
+		Where("status = ?", model.ReferralAffiliateStatusPending).
+		Select("COALESCE(NULLIF(pending_review_cursor, 0), id) AS cursor_value, id")
+	var count int64
+	err := model.DB.Table("(?) AS pending_affiliates", subQuery).
+		Where("cursor_value > ?", cursor.CursorValue).
+		Count(&count).Error
+	return count, err
+}
+
 func pendingWithdrawalBadgeSummaryRow() (referralBadgeSummaryRow, error) {
 	var summary referralBadgeSummaryRow
 	err := model.DB.Model(&model.ReferralWithdrawal{}).
@@ -110,6 +146,14 @@ func pendingWithdrawalBadgeCursorRow(cursorValue int64) (referralBadgeCursorRow,
 		Limit(1).
 		Scan(&row).Error
 	return row, err
+}
+
+func countPendingWithdrawalsAfterCursor(cursor referralBadgeCursorRow) (int64, error) {
+	var count int64
+	err := model.DB.Model(&model.ReferralWithdrawal{}).
+		Where("status = ? AND id > ?", model.ReferralWithdrawalStatusPending, cursor.ID).
+		Count(&count).Error
+	return count, err
 }
 
 type ReferralLanding struct {
@@ -342,10 +386,17 @@ type ReferralOverview struct {
 type ReferralAdminBadgeCounts struct {
 	PendingAffiliates             int64  `json:"pending_affiliates"`
 	PendingWithdrawals            int64  `json:"pending_withdrawals"`
+	NewPendingAffiliates          int64  `json:"new_pending_affiliates"`
+	NewPendingWithdrawals         int64  `json:"new_pending_withdrawals"`
 	LatestPendingAffiliateID      int    `json:"latest_pending_affiliate_id"`
 	LatestPendingWithdrawalID     int    `json:"latest_pending_withdrawal_id"`
 	LatestPendingAffiliateCursor  string `json:"latest_pending_affiliate_cursor"`
 	LatestPendingWithdrawalCursor string `json:"latest_pending_withdrawal_cursor"`
+}
+
+type ReferralAdminBadgeQuery struct {
+	AfterPendingAffiliateCursor  string
+	AfterPendingWithdrawalCursor string
 }
 
 type ReferralSettings struct {
@@ -1708,8 +1759,15 @@ func (s *ReferralService) GetOverview() (*ReferralOverview, error) {
 	return out, nil
 }
 
-func (s *ReferralService) GetAdminBadgeCounts() (*ReferralAdminBadgeCounts, error) {
-	out := &ReferralAdminBadgeCounts{}
+func (s *ReferralService) GetAdminBadgeCounts(query ...ReferralAdminBadgeQuery) (*ReferralAdminBadgeCounts, error) {
+	out := &ReferralAdminBadgeCounts{
+		LatestPendingAffiliateCursor:  formatReferralBadgeCursor(0, 0),
+		LatestPendingWithdrawalCursor: formatReferralBadgeCursor(0, 0),
+	}
+	var params ReferralAdminBadgeQuery
+	if len(query) > 0 {
+		params = query[0]
+	}
 	affiliateSummary, err := pendingAffiliateBadgeSummaryRow()
 	if err != nil {
 		return nil, err
@@ -1725,6 +1783,12 @@ func (s *ReferralService) GetAdminBadgeCounts() (*ReferralAdminBadgeCounts, erro
 		}
 		out.LatestPendingAffiliateID = row.ID
 		out.LatestPendingAffiliateCursor = formatReferralBadgeCursor(row.CursorValue, row.ID)
+	}
+	if cursor, ok := parseReferralBadgeCursor(params.AfterPendingAffiliateCursor); ok {
+		out.NewPendingAffiliates, err = countPendingAffiliatesAfterCursor(cursor)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	withdrawalSummary, err := pendingWithdrawalBadgeSummaryRow()
@@ -1742,6 +1806,12 @@ func (s *ReferralService) GetAdminBadgeCounts() (*ReferralAdminBadgeCounts, erro
 		}
 		out.LatestPendingWithdrawalID = row.ID
 		out.LatestPendingWithdrawalCursor = formatReferralBadgeCursor(row.CursorValue, row.ID)
+	}
+	if cursor, ok := parseReferralBadgeCursor(params.AfterPendingWithdrawalCursor); ok {
+		out.NewPendingWithdrawals, err = countPendingWithdrawalsAfterCursor(cursor)
+		if err != nil {
+			return nil, err
+		}
 	}
 	return out, nil
 }

@@ -22,21 +22,27 @@ import { getAdminReferralBadges } from '@/features/referral/api'
 export type AdminReferralBadgeCounts = {
   pendingAffiliates: number
   pendingWithdrawals: number
+  newPendingAffiliates: number
+  newPendingWithdrawals: number
   latestPendingAffiliateId: number
   latestPendingWithdrawalId: number
   latestPendingAffiliateCursor?: string
   latestPendingWithdrawalCursor?: string
   total: number
+  loaded: boolean
 }
 
 const EMPTY_COUNTS: AdminReferralBadgeCounts = {
   pendingAffiliates: 0,
   pendingWithdrawals: 0,
+  newPendingAffiliates: 0,
+  newPendingWithdrawals: 0,
   latestPendingAffiliateId: 0,
   latestPendingWithdrawalId: 0,
   latestPendingAffiliateCursor: undefined,
   latestPendingWithdrawalCursor: undefined,
   total: 0,
+  loaded: false,
 }
 
 function normalizeCount(value: number | undefined): number {
@@ -58,17 +64,26 @@ export function formatAdminReferralBadgeCount(count: number): string | undefined
   return count > 99 ? '99+' : String(count)
 }
 
-export function useAdminReferralBadges(enabled = true) {
+export function useAdminReferralBadges(
+  enabled = true,
+  params?: URLSearchParams
+) {
   const query = useQuery({
-    queryKey: ['admin-referral-badges'],
+    queryKey: ['admin-referral-badges', params?.toString() ?? ''],
     enabled,
     queryFn: async (): Promise<AdminReferralBadgeCounts> => {
-      const badgeRes = await getAdminReferralBadges()
+      const badgeRes = await getAdminReferralBadges(params)
       const pendingAffiliates = normalizeCount(
         badgeRes.data?.pending_affiliates
       )
       const pendingWithdrawals = normalizeCount(
         badgeRes.data?.pending_withdrawals
+      )
+      const newPendingAffiliates = normalizeCount(
+        badgeRes.data?.new_pending_affiliates
+      )
+      const newPendingWithdrawals = normalizeCount(
+        badgeRes.data?.new_pending_withdrawals
       )
       const latestPendingAffiliateId = normalizeCount(
         badgeRes.data?.latest_pending_affiliate_id
@@ -90,14 +105,18 @@ export function useAdminReferralBadges(enabled = true) {
       return {
         pendingAffiliates,
         pendingWithdrawals,
+        newPendingAffiliates,
+        newPendingWithdrawals,
         latestPendingAffiliateId,
         latestPendingWithdrawalId,
         latestPendingAffiliateCursor,
         latestPendingWithdrawalCursor,
         total: pendingAffiliates + pendingWithdrawals,
+        loaded: true,
       }
     },
     refetchOnWindowFocus: false,
+    refetchInterval: 60 * 1000,
     staleTime: 60 * 1000,
   })
 

@@ -115,10 +115,13 @@ export async function getAdminReferralOverview(): Promise<
   return res.data
 }
 
-export async function getAdminReferralBadges(): Promise<
+export async function getAdminReferralBadges(params?: URLSearchParams): Promise<
   ApiResponse<ReferralAdminBadgeCounts>
 > {
-  const res = await api.get('/api/user/admin/referral/badges')
+  const query = params?.toString()
+  const res = await api.get(
+    `/api/user/admin/referral/badges${query ? `?${query}` : ''}`
+  )
   return res.data
 }
 

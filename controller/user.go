@@ -298,13 +298,13 @@ func GetAllUsers(c *gin.Context) {
 }
 
 func GetAdminUsersSummary(c *gin.Context) {
-	afterID := parseAdminUsersSummaryAfterID(c.Query("after_id"))
+	afterID, hasAfterID := parseAdminUsersSummaryAfterID(c.Query("after_id"))
 	var (
 		newUserCount int64
 		latestUserID int
 		err          error
 	)
-	if afterID > 0 {
+	if hasAfterID {
 		newUserCount, latestUserID, err = model.CountUsersAfterID(afterID)
 	} else {
 		latestUserID, err = model.GetLatestUserID()
@@ -320,12 +320,16 @@ func GetAdminUsersSummary(c *gin.Context) {
 	})
 }
 
-func parseAdminUsersSummaryAfterID(raw string) int {
-	afterID, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || afterID < 0 {
-		return 0
+func parseAdminUsersSummaryAfterID(raw string) (int, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return 0, false
 	}
-	return afterID
+	afterID, err := strconv.Atoi(raw)
+	if err != nil || afterID < 0 {
+		return 0, false
+	}
+	return afterID, true
 }
 
 func SearchUsers(c *gin.Context) {
