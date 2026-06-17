@@ -67,6 +67,37 @@ func tokenUsageDate(timestamp int64) string {
 	return time.Unix(timestamp, 0).In(tokenUsageLocation).Format("2006-01-02")
 }
 
+func tokenUsageCurrentColumn(name string) clause.Column {
+	return clause.Column{Table: clause.CurrentTable, Name: name}
+}
+
+func tokenUsageIncrementExpr(column string, delta int) clause.Expr {
+	return gorm.Expr("? + ?", tokenUsageCurrentColumn(column), delta)
+}
+
+func tokenUsageLastUsedAtUpdateExpr(usedAt int64) clause.Expr {
+	return gorm.Expr(
+		"CASE WHEN ? < ? THEN ? ELSE ? END",
+		tokenUsageCurrentColumn("last_used_at"),
+		usedAt,
+		usedAt,
+		tokenUsageCurrentColumn("last_used_at"),
+	)
+}
+
+func tokenUsageUpdateAssignments(userId int, quota int, requestCount int, usedAt int64, updateLastUsedAt bool) map[string]interface{} {
+	updates := map[string]interface{}{
+		"user_id":       userId,
+		"quota":         tokenUsageIncrementExpr("quota", quota),
+		"request_count": tokenUsageIncrementExpr("request_count", requestCount),
+		"updated_at":    usedAt,
+	}
+	if updateLastUsedAt {
+		updates["last_used_at"] = tokenUsageLastUsedAtUpdateExpr(usedAt)
+	}
+	return updates
+}
+
 func RecordTokenUsage(tokenId int, userId int, quota int, usedAt int64) {
 	if tokenId <= 0 {
 		return
@@ -95,15 +126,7 @@ func RecordTokenUsage(tokenId int, userId int, quota int, usedAt int64) {
 		CreatedAt:    usedAt,
 		UpdatedAt:    usedAt,
 	}
-	updates := map[string]interface{}{
-		"user_id":       userId,
-		"quota":         gorm.Expr("quota + ?", quota),
-		"request_count": gorm.Expr("request_count + ?", requestCount),
-		"updated_at":    usedAt,
-	}
-	if quota >= 0 {
-		updates["last_used_at"] = gorm.Expr("CASE WHEN last_used_at < ? THEN ? ELSE last_used_at END", usedAt, usedAt)
-	}
+	updates := tokenUsageUpdateAssignments(userId, quota, requestCount, usedAt, quota >= 0)
 	err := DB.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "token_id"}, {Name: "date"}},
 		DoUpdates: clause.Assignments(updates),
