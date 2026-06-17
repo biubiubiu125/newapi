@@ -4,6 +4,9 @@ services:
     image: biubiubiu125/newapi:local
     container_name: ${CONTAINER_PREFIX:-newapi}-app
     restart: always
+    dns:
+      - 1.1.1.1
+      - 8.8.8.8
     command: --log-dir /app/logs
     ports:
       - "${APP_PORT:-3000}:3000"
