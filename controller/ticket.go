@@ -166,7 +166,8 @@ func CreateTicket(c *gin.Context) {
 	number, seq, err := model.NextTicketNumber(year)
 	if err != nil {
 		cleanupTicketAttachmentFiles(attachments)
-		common.ApiError(c, err)
+		common.SysError(fmt.Sprintf("failed to generate ticket number: user_id=%d, year=%d, err=%v", c.GetInt("id"), year, err))
+		common.ApiErrorMsg(c, "工单编号生成失败，请稍后重试")
 		return
 	}
 	username := c.GetString("username")

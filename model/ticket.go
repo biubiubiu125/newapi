@@ -2,7 +2,6 @@ package model
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -25,6 +24,7 @@ const (
 	TicketPriorityUrgent      = "紧急"
 	TicketSenderUser          = "user"
 	TicketSenderAdmin         = "admin"
+	TicketInitialSequence     = 1000097
 	TicketMaxAttachmentSize   = 5 * 1024 * 1024
 	TicketMaxReplyAttachments = 5
 	TicketMaxAttachments      = 30
@@ -108,32 +108,39 @@ func ValidTicketPriority(priority string) bool {
 }
 
 func NextTicketNumber(year int) (string, int, error) {
-	const maxAttempts = 3
-	var lastErr error
-	for attempt := 0; attempt < maxAttempts; attempt++ {
-		number, seq, err := nextTicketNumberOnce(year)
-		if err == nil {
-			return number, seq, nil
-		}
-		lastErr = err
-		if !isTicketSequenceCreateConflict(err) {
-			break
-		}
-	}
-	return "", 0, lastErr
-}
-
-func nextTicketNumberOnce(year int) (string, int, error) {
 	var seq int
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var ticketSeq TicketSequence
 		now := time.Now().Unix()
-		if err := tx.Where("year = ?", year).FirstOrCreate(
-			&ticketSeq,
-			TicketSequence{Year: year, NextSeq: 1000097, UpdatedAt: now},
-		).Error; err != nil {
+
+		initialNextSeq, err := initialTicketNextSeqTx(tx, year)
+		if err != nil {
 			return err
 		}
+
+		if err := tx.Clauses(clause.OnConflict{
+			Columns:   []clause.Column{{Name: "year"}},
+			DoNothing: true,
+		}).Create(&TicketSequence{
+			Year:      year,
+			NextSeq:   initialNextSeq,
+			UpdatedAt: now,
+		}).Error; err != nil {
+			return err
+		}
+
+		if initialNextSeq > TicketInitialSequence {
+			result := tx.Model(&TicketSequence{}).
+				Where("year = ? AND next_seq < ?", year, initialNextSeq).
+				Updates(map[string]interface{}{
+					"next_seq":   initialNextSeq,
+					"updated_at": now,
+				})
+			if result.Error != nil {
+				return result.Error
+			}
+		}
+
 		result := tx.Model(&TicketSequence{}).
 			Where("year = ?", year).
 			Updates(map[string]interface{}{
@@ -158,14 +165,19 @@ func nextTicketNumberOnce(year int) (string, int, error) {
 	return fmt.Sprintf("RKAPI%d-%d", year, seq), seq, nil
 }
 
-func isTicketSequenceCreateConflict(err error) bool {
-	if err == nil {
-		return false
+func initialTicketNextSeqTx(tx *gorm.DB, year int) (int, error) {
+	var maxSequenceNumber int64
+	err := tx.Model(&Ticket{}).
+		Where("sequence_year = ?", year).
+		Select("COALESCE(MAX(sequence_number), 0)").
+		Scan(&maxSequenceNumber).Error
+	if err != nil {
+		return 0, err
 	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "duplicate") ||
-		strings.Contains(message, "unique constraint") ||
-		strings.Contains(message, "constraint failed")
+	if maxSequenceNumber >= TicketInitialSequence {
+		return int(maxSequenceNumber) + 1, nil
+	}
+	return TicketInitialSequence, nil
 }
 
 func CreateTicketWithMessage(ticket *Ticket, message *TicketMessage, attachments []*TicketAttachment) error {
