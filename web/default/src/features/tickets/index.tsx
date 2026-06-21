@@ -1214,6 +1214,7 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
   )
   const [detailOpen, setDetailOpen] = useState(Boolean(requestedTicketId))
   const [createOpen, setCreateOpen] = useState(false)
+  const pendingCreatedTicketIdRef = useRef<number | undefined>(undefined)
   const [statusFilter, setStatusFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
   const [priorityFilter, setPriorityFilter] = useState('')
@@ -1349,6 +1350,29 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
     queryClient.invalidateQueries({ queryKey: ['tickets'] })
   }
 
+  const openCreatedTicketDetail = (ticket: Ticket) => {
+    refreshList()
+    urlSelectedIdRef.current = ticket.id
+    pendingCreatedTicketIdRef.current = ticket.id
+    setSelectedId(ticket.id)
+    setDetailOpen(false)
+    setCreateOpen(false)
+  }
+
+  const handleCreateOpenChange = (open: boolean) => {
+    if (open) {
+      pendingCreatedTicketIdRef.current = undefined
+    }
+    setCreateOpen(open)
+  }
+
+  const handleCreateOpenChangeComplete = (open: boolean) => {
+    if (!open && pendingCreatedTicketIdRef.current !== undefined) {
+      pendingCreatedTicketIdRef.current = undefined
+      setDetailOpen(true)
+    }
+  }
+
   const goPrevTicketPage = () => setTicketPage((page) => Math.max(1, page - 1))
   const goNextTicketPage = () =>
     setTicketPage((page) => Math.min(ticketTotalPages, page + 1))
@@ -1420,7 +1444,11 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
           </SheetContent>
         </Sheet>
         {!adminMode && (
-          <Sheet open={createOpen} onOpenChange={setCreateOpen}>
+          <Sheet
+            open={createOpen}
+            onOpenChange={handleCreateOpenChange}
+            onOpenChangeComplete={handleCreateOpenChangeComplete}
+          >
             <SheetContent className='w-full sm:max-w-xl'>
               <SheetHeader>
                 <SheetTitle>创建工单</SheetTitle>
@@ -1431,10 +1459,7 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
               <div className='min-h-0 flex-1 px-4 pb-4'>
                 <CreateTicketPanel
                   onCreated={(ticket) => {
-                    refreshList()
-                    setCreateOpen(false)
-                    setSelectedId(ticket.id)
-                    setDetailOpen(true)
+                    openCreatedTicketDetail(ticket)
                   }}
                 />
               </div>
