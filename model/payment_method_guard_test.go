@@ -773,6 +773,76 @@ func TestCompleteSubscriptionOrder_UsesFrozenPlanSnapshot(t *testing.T) {
 	assert.InDelta(t, float64(7*24*60*60), float64(sub.EndTime-sub.StartTime), 5)
 }
 
+func TestSubscriptionOrderSnapshotVersion1KeepsCurrentPlanControlFields(t *testing.T) {
+	falseValue := false
+	plan := &SubscriptionPlan{
+		Id:                  501,
+		Title:               "Current Plan",
+		PriceAmount:         9.99,
+		Currency:            "CNY",
+		DurationUnit:        SubscriptionDurationMonth,
+		DurationValue:       1,
+		TotalAmount:         1000,
+		UpgradeGroup:        "current-upgrade",
+		DowngradeGroup:      "current-downgrade",
+		AllowBalancePay:     &falseValue,
+		AllowWalletOverflow: &falseValue,
+	}
+	order := &SubscriptionOrder{
+		OrderSnapshotVersion:      subscriptionOrderSnapshotVersionCore,
+		PlanTitleSnapshot:         "Frozen Plan",
+		PlanPriceSnapshot:         8.88,
+		PlanDurationUnitSnapshot:  SubscriptionDurationDay,
+		PlanDurationValueSnapshot: 7,
+		PlanTotalAmountSnapshot:   2000,
+		PlanUpgradeGroupSnapshot:  "frozen-upgrade",
+	}
+
+	snapshot := order.ApplyPlanSnapshot(plan)
+
+	require.NotNil(t, snapshot)
+	assert.Equal(t, "Frozen Plan", snapshot.Title)
+	assert.Equal(t, "frozen-upgrade", snapshot.UpgradeGroup)
+	assert.Equal(t, "current-downgrade", snapshot.DowngradeGroup)
+	require.NotNil(t, snapshot.AllowBalancePay)
+	assert.False(t, *snapshot.AllowBalancePay)
+	require.NotNil(t, snapshot.AllowWalletOverflow)
+	assert.False(t, *snapshot.AllowWalletOverflow)
+}
+
+func TestSubscriptionOrderSnapshotVersion2FreezesPlanControlFields(t *testing.T) {
+	falseValue := false
+	trueValue := true
+	plan := &SubscriptionPlan{
+		Id:                  502,
+		Title:               "Current Plan",
+		PriceAmount:         9.99,
+		Currency:            "CNY",
+		DurationUnit:        SubscriptionDurationMonth,
+		DurationValue:       1,
+		TotalAmount:         1000,
+		UpgradeGroup:        "current-upgrade",
+		DowngradeGroup:      "current-downgrade",
+		AllowBalancePay:     &trueValue,
+		AllowWalletOverflow: &trueValue,
+	}
+	order := &SubscriptionOrder{
+		OrderSnapshotVersion:            subscriptionOrderSnapshotVersionPlanControls,
+		PlanDowngradeGroupSnapshot:      "frozen-downgrade",
+		PlanAllowBalancePaySnapshot:     &falseValue,
+		PlanAllowWalletOverflowSnapshot: &falseValue,
+	}
+
+	snapshot := order.ApplyPlanSnapshot(plan)
+
+	require.NotNil(t, snapshot)
+	assert.Equal(t, "frozen-downgrade", snapshot.DowngradeGroup)
+	require.NotNil(t, snapshot.AllowBalancePay)
+	assert.False(t, *snapshot.AllowBalancePay)
+	require.NotNil(t, snapshot.AllowWalletOverflow)
+	assert.False(t, *snapshot.AllowWalletOverflow)
+}
+
 func TestRechargeEpayWithValidation_RejectsMissingCallbackFacts(t *testing.T) {
 	truncateTables(t)
 	insertUserForPaymentGuardTest(t, 434, 0)

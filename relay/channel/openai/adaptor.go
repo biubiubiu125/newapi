@@ -439,10 +439,12 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		// 使用已解析的 multipart 表单，避免重复解析
 		mf := c.Request.MultipartForm
 		if mf == nil {
-			if _, err := c.MultipartForm(); err != nil {
+			formData, err := common.ParseMultipartFormReusable(c)
+			if err != nil {
 				return nil, errors.New("failed to parse multipart form")
 			}
-			mf = c.Request.MultipartForm
+			c.Request.MultipartForm = formData
+			mf = formData
 		}
 
 		// 写入所有非文件字段

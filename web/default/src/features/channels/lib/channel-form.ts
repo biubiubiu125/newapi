@@ -165,6 +165,7 @@ export const channelFormSchema = z
       .string()
       .optional()
       .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
+    advanced_custom: z.unknown().optional(),
     settings: z
       .string()
       .optional()

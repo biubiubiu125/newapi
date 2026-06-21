@@ -216,6 +216,7 @@ export async function handleTestChannel(
     endpointType?: string
     stream?: boolean
     silent?: boolean
+    channelName?: string
   },
   onTestComplete?: (
     success: boolean,

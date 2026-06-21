@@ -45,7 +45,7 @@ const OPERATIONS_SECTIONS = [
     ),
   },
   {
-    id: 'monitoring',
+    id: 'alerts',
     titleKey: 'Monitoring & Alerts',
     build: (settings: OperationsSettings) => (
       <MonitoringSettingsSection
@@ -54,7 +54,8 @@ const OPERATIONS_SECTIONS = [
           QuotaRemindThreshold: settings.QuotaRemindThreshold,
           AutomaticDisableChannelEnabled:
             settings.AutomaticDisableChannelEnabled,
-          AutomaticEnableChannelEnabled: settings.AutomaticEnableChannelEnabled,
+          AutomaticEnableChannelEnabled:
+            settings.AutomaticEnableChannelEnabled,
           AutomaticDisableKeywords: settings.AutomaticDisableKeywords,
           AutomaticDisableStatusCodes: settings.AutomaticDisableStatusCodes,
           AutomaticRetryStatusCodes: settings.AutomaticRetryStatusCodes,

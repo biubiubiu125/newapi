@@ -112,11 +112,11 @@ export interface PaymentMethod {
   name: string
   /** Payment method type identifier */
   type: string
-  /** Optional color for UI display */
+  /** Legacy optional color for UI display */
   color?: string
   /** Minimum topup amount for this payment method */
   min_topup?: number
-  /** Optional icon URL provided by backend (preferred over built-in icons) */
+  /** Optional react-icons component name or safe icon URL */
   icon?: string
   /** Optional payment provider marker returned by backend */
   provider?: string

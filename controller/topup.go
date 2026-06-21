@@ -253,20 +253,7 @@ func applySubscriptionOrderSnapshot(order *model.SubscriptionOrder, plan *model.
 	if order == nil || plan == nil {
 		return
 	}
-	order.OrderSnapshotVersion = 1
-	order.PlanTitleSnapshot = plan.Title
-	order.PlanPriceSnapshot = plan.PriceAmount
-	order.PlanCurrencySnapshot = strings.ToUpper(strings.TrimSpace(plan.Currency))
-	if strings.TrimSpace(order.PlanCurrencySnapshot) == "" {
-		order.PlanCurrencySnapshot = strings.ToUpper(strings.TrimSpace(paidCurrency))
-	}
-	order.PlanDurationUnitSnapshot = plan.DurationUnit
-	order.PlanDurationValueSnapshot = plan.DurationValue
-	order.PlanCustomSecondsSnapshot = plan.CustomSeconds
-	order.PlanTotalAmountSnapshot = plan.TotalAmount
-	order.PlanQuotaResetPeriodSnapshot = plan.QuotaResetPeriod
-	order.PlanQuotaResetCustomSecondsSnapshot = plan.QuotaResetCustomSeconds
-	order.PlanUpgradeGroupSnapshot = strings.TrimSpace(plan.UpgradeGroup)
+	order.ApplyPlanSnapshotFields(plan, paidCurrency)
 	order.USDExchangeRateSnapshot = operation_setting.USDExchangeRate
 	order.CustomExchangeRateSnapshot = operation_setting.GetGeneralSetting().CustomCurrencyExchangeRate
 	order.QuotaDisplayTypeSnapshot = operation_setting.GetQuotaDisplayType()

@@ -37,6 +37,7 @@ import {
   paySubscriptionCreem,
   paySubscriptionEpay,
   paySubscriptionBEpusdt,
+  paySubscriptionBalance,
   paySubscriptionStripe,
   paySubscriptionWaffoPancake,
 } from '../../api'
@@ -62,6 +63,7 @@ interface Props {
   bepusdtMethods?: PaymentMethod[]
   purchaseLimit?: number
   purchaseCount?: number
+  onBalancePurchaseSuccess?: () => void | Promise<void>
   onPaymentStarted?: (payment?: PaymentInitiationResult | string) => void
 }
 
@@ -80,8 +82,14 @@ export function SubscriptionPurchaseDialog(props: Props) {
     props.enableOnlineTopUp && (props.epayMethods || []).length > 0
   const hasBEpusdt =
     props.enableBEpusdt && (props.bepusdtMethods || []).length > 0
+  const allowBalancePay = plan.allow_balance_pay !== false
   const hasAnyPayment =
-    hasStripe || hasCreem || hasWaffoPancake || hasEpay || hasBEpusdt
+    allowBalancePay ||
+    hasStripe ||
+    hasCreem ||
+    hasWaffoPancake ||
+    hasEpay ||
+    hasBEpusdt
   const totalAmount = Number(plan.total_amount || 0)
   const price = formatCnyPrice(plan.price_amount || 0)
   const limitReached =
@@ -102,6 +110,32 @@ export function SubscriptionPurchaseDialog(props: Props) {
     paymentKind: 'subscription',
     title: plan.title,
   })
+
+  const handlePayBalance = async () => {
+    if (!allowBalancePay) {
+      toast.error(t('This plan does not allow balance redemption'))
+      return
+    }
+    setPaying(true)
+    try {
+      const res = await paySubscriptionBalance({ plan_id: plan.id })
+      if (res.success || res.message === 'success') {
+        toast.success(t('Subscription purchased successfully'))
+        props.onOpenChange(false)
+        await props.onBalancePurchaseSuccess?.()
+      } else {
+        toast.error(
+          res.message && res.message !== 'success'
+            ? res.message
+            : t('Payment request failed')
+        )
+      }
+    } catch {
+      toast.error(t('Payment request failed'))
+    } finally {
+      setPaying(false)
+    }
+  }
 
   const handlePayStripe = async () => {
     setPaying(true)
@@ -328,6 +362,16 @@ export function SubscriptionPurchaseDialog(props: Props) {
               <p className='text-muted-foreground text-xs'>
                 {t('Select payment method')}
               </p>
+              {allowBalancePay && (
+                <Button
+                  variant='outline'
+                  className='w-full'
+                  onClick={handlePayBalance}
+                  disabled={paying || limitReached}
+                >
+                  {t('Pay with Balance')}
+                </Button>
+              )}
               {(hasStripe || hasCreem || hasWaffoPancake) && (
                 <div className='grid grid-cols-2 gap-2 sm:flex'>
                   {hasStripe && (

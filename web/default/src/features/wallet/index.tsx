@@ -668,6 +668,7 @@ export function Wallet(props: WalletProps) {
                 topupInfo={topupInfo}
                 onAvailabilityChange={handleSubscriptionAvailabilityChange}
                 refreshKey={paymentRefreshKey}
+                onBalancePurchaseSuccess={refreshPaymentData}
                 onPaymentStarted={startPendingPayment}
               />
             </div>

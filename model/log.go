@@ -134,6 +134,68 @@ func RecordLogWithAdminInfo(userId int, logType int, content string, adminInfo m
 	}
 }
 
+func RecordOperationAuditLog(userId int, content string, ip string, action string, params map[string]interface{}, adminInfo map[string]interface{}, auditInfo map[string]interface{}) {
+	username, _ := GetUsernameById(userId, false)
+	other := map[string]interface{}{}
+	if len(adminInfo) > 0 {
+		other["admin_info"] = adminInfo
+	}
+	if action = strings.TrimSpace(action); action != "" {
+		other["action"] = action
+	}
+	if len(params) > 0 {
+		other["params"] = params
+	}
+	if len(auditInfo) > 0 {
+		other["audit_info"] = auditInfo
+	}
+
+	log := &Log{
+		UserId:    userId,
+		Username:  username,
+		CreatedAt: common.GetTimestamp(),
+		Type:      LogTypeManage,
+		Content:   content,
+		Ip:        strings.TrimSpace(ip),
+	}
+	if len(other) > 0 {
+		log.Other = common.MapToJsonStr(other)
+	}
+	if err := LOG_DB.Create(log).Error; err != nil {
+		common.SysLog("failed to record operation audit log: " + err.Error())
+	}
+}
+
+func RecordLoginLog(userId int, username string, content string, ip string, action string, params map[string]interface{}, extra map[string]interface{}) {
+	other := map[string]interface{}{}
+	if action = strings.TrimSpace(action); action != "" {
+		other["action"] = action
+	}
+	if len(params) > 0 {
+		other["params"] = params
+	}
+	if len(extra) > 0 {
+		other["login_info"] = extra
+	}
+	log := &Log{
+		UserId:    userId,
+		Username:  strings.TrimSpace(username),
+		CreatedAt: common.GetTimestamp(),
+		Type:      LogTypeSystem,
+		Content:   content,
+		Ip:        strings.TrimSpace(ip),
+	}
+	if log.Username == "" {
+		log.Username, _ = GetUsernameById(userId, false)
+	}
+	if len(other) > 0 {
+		log.Other = common.MapToJsonStr(other)
+	}
+	if err := LOG_DB.Create(log).Error; err != nil {
+		common.SysLog("failed to record login log: " + err.Error())
+	}
+}
+
 type PaymentAuditLogInfo struct {
 	CallerIP              string
 	PaymentMethod         string
@@ -332,7 +394,17 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	}
 	if common.DataExportEnabled {
 		gopool.Go(func() {
-			LogQuotaData(userId, username, params.ModelName, params.Quota, common.GetTimestamp(), params.PromptTokens+params.CompletionTokens)
+			LogQuotaData(QuotaDataLogParams{
+				UserID:    userId,
+				Username:  username,
+				ModelName: params.ModelName,
+				Quota:     params.Quota,
+				CreatedAt: common.GetTimestamp(),
+				TokenUsed: params.PromptTokens + params.CompletionTokens,
+				UseGroup:  params.Group,
+				TokenID:   params.TokenId,
+				ChannelID: params.ChannelId,
+			})
 		})
 	}
 }

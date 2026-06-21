@@ -64,6 +64,7 @@ interface SubscriptionPlansCardProps {
   topupInfo: TopupInfo | null
   onAvailabilityChange?: (available: boolean) => void
   refreshKey?: number
+  onBalancePurchaseSuccess?: () => void | Promise<void>
   onPaymentStarted?: (payment?: PaymentInitiationResult | string) => void
 }
 
@@ -103,6 +104,7 @@ export function SubscriptionPlansCard({
   topupInfo,
   onAvailabilityChange,
   refreshKey,
+  onBalancePurchaseSuccess,
   onPaymentStarted,
 }: SubscriptionPlansCardProps) {
   const { t } = useTranslation()
@@ -668,6 +670,10 @@ export function SubscriptionPlansCard({
             ? planPurchaseCountMap.get(selectedPlan.plan.id)
             : undefined
         }
+        onBalancePurchaseSuccess={async () => {
+          await fetchSelfSubscription()
+          await onBalancePurchaseSuccess?.()
+        }}
         onPaymentStarted={onPaymentStarted}
       />
     </>
