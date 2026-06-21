@@ -22,6 +22,8 @@ import (
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"golang.org/x/image/webp"
+	"gorm.io/gorm"
+	"gorm.io/gorm/clause"
 )
 
 type createTicketRequest struct {
@@ -260,13 +262,22 @@ func CloseTicket(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if ticket.Status == model.TicketStatusClosed {
+		common.ApiErrorMsg(c, "工单已关闭，无需重复关闭")
+		return
+	}
 	now := common.GetTimestamp()
-	if err := model.DB.Model(ticket).Updates(map[string]interface{}{
+	result := model.DB.Model(&model.Ticket{}).Where("id = ? AND status <> ?", ticket.Id, model.TicketStatusClosed).Updates(map[string]interface{}{
 		"status":     model.TicketStatusClosed,
 		"closed_at":  now,
 		"updated_at": now,
-	}).Error; err != nil {
-		common.ApiError(c, err)
+	})
+	if result.Error != nil {
+		common.ApiError(c, result.Error)
+		return
+	}
+	if result.RowsAffected == 0 {
+		common.ApiErrorMsg(c, "工单已关闭，无需重复关闭")
 		return
 	}
 	common.ApiSuccess(c, gin.H{"closed": true})
@@ -277,13 +288,27 @@ func ReopenTicket(c *gin.Context) {
 	if !ok {
 		return
 	}
+	if ticket.Status != model.TicketStatusClosed {
+		common.ApiErrorMsg(c, "工单未关闭，无需重新打开")
+		return
+	}
 	now := common.GetTimestamp()
-	if err := model.DB.Model(ticket).Updates(map[string]interface{}{
+	updates := map[string]interface{}{
 		"status":     model.TicketStatusPending,
 		"closed_at":  int64(0),
 		"updated_at": now,
-	}).Error; err != nil {
-		common.ApiError(c, err)
+	}
+	if !isTicketAdminRequest(c) {
+		updates["last_reply_at"] = now
+		updates["last_reply_by"] = model.TicketSenderUser
+	}
+	result := model.DB.Model(&model.Ticket{}).Where("id = ? AND status = ?", ticket.Id, model.TicketStatusClosed).Updates(updates)
+	if result.Error != nil {
+		common.ApiError(c, result.Error)
+		return
+	}
+	if result.RowsAffected == 0 {
+		common.ApiErrorMsg(c, "工单未关闭，无需重新打开")
 		return
 	}
 	common.ApiSuccess(c, gin.H{"reopened": true})
@@ -301,6 +326,8 @@ func UpdateTicket(c *gin.Context) {
 	}
 	now := common.GetTimestamp()
 	updates := map[string]interface{}{"updated_at": now}
+	statusChanged := false
+	status := ""
 	if req.Category != nil {
 		category := strings.TrimSpace(*req.Category)
 		if !model.ValidTicketCategory(category) {
@@ -318,17 +345,12 @@ func UpdateTicket(c *gin.Context) {
 		updates["priority"] = priority
 	}
 	if req.Status != nil {
-		status := strings.TrimSpace(*req.Status)
+		status = strings.TrimSpace(*req.Status)
 		if !model.ValidTicketStatus(status) {
 			common.ApiErrorMsg(c, "工单状态不正确")
 			return
 		}
-		updates["status"] = status
-		if status == model.TicketStatusClosed {
-			updates["closed_at"] = now
-		} else {
-			updates["closed_at"] = int64(0)
-		}
+		statusChanged = true
 	}
 	if req.AssigneeId != nil {
 		assigneeId := *req.AssigneeId
@@ -356,11 +378,41 @@ func UpdateTicket(c *gin.Context) {
 		common.ApiErrorMsg(c, "请通过处理人 ID 指派工单")
 		return
 	}
-	if err := model.DB.Model(ticket).Updates(updates).Error; err != nil {
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		if statusChanged {
+			var locked model.Ticket
+			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", ticket.Id).Error; err != nil {
+				return err
+			}
+			updates["status"] = status
+			if status != locked.Status {
+				if status == model.TicketStatusClosed {
+					updates["closed_at"] = now
+				} else {
+					updates["closed_at"] = int64(0)
+				}
+				if sender := ticketBadgeSenderForStatus(status); sender != "" {
+					updates["last_reply_at"] = now
+					updates["last_reply_by"] = sender
+				}
+			}
+		}
+		return tx.Model(&model.Ticket{}).Where("id = ?", ticket.Id).Updates(updates).Error
+	})
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	common.ApiSuccess(c, gin.H{"updated": true})
+}
+
+func ticketBadgeSenderForStatus(status string) string {
+	switch status {
+	case model.TicketStatusWaitingUser, model.TicketStatusAdminReplied:
+		return model.TicketSenderAdmin
+	default:
+		return ""
+	}
 }
 
 func GetTicketBadge(c *gin.Context) {
@@ -372,7 +424,8 @@ func GetTicketBadge(c *gin.Context) {
 	} else {
 		sender = model.TicketSenderUser
 	}
-	tx := model.DB.Model(&model.Ticket{}).Where("status IN ?", todoStatuses)
+	tx := model.DB.Model(&model.Ticket{}).
+		Where("status IN ? AND last_reply_by = ? AND last_reply_at > 0", todoStatuses, sender)
 	if !isAdmin {
 		tx = tx.Where("user_id = ?", c.GetInt("id"))
 	}

@@ -108,6 +108,7 @@ const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp']
 
 type BadgeVariant = 'default' | 'secondary' | 'outline'
 type TicketsPageMode = 'user' | 'admin'
+type TicketSheet = 'detail' | 'create' | null
 
 const statusVariants: Record<TicketStatus, BadgeVariant> = {
   待处理: 'default',
@@ -461,10 +462,12 @@ function TicketAttachments({
   attachments: TicketAttachment[]
   adminMode: boolean
 }) {
-  const items = attachments.filter((item) => item.message_id === messageId)
+  const items = useMemo(
+    () => attachments.filter((item) => item.message_id === messageId),
+    [attachments, messageId]
+  )
   const queryClient = useQueryClient()
   const [blobUrls, setBlobUrls] = useState<Record<number, string>>({})
-  const itemIds = useMemo(() => items.map((item) => item.id).join(','), [items])
 
   useEffect(() => {
     let alive = true
@@ -495,7 +498,7 @@ function TicketAttachments({
       alive = false
       Object.values(urls).forEach((url) => URL.revokeObjectURL(url))
     }
-  }, [adminMode, itemIds, queryClient, ticketId])
+  }, [adminMode, items, queryClient, ticketId])
 
   if (items.length === 0) return null
   return (
@@ -1212,8 +1215,9 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
   const [selectedId, setSelectedId] = useState<number | undefined>(
     requestedTicketId
   )
-  const [detailOpen, setDetailOpen] = useState(Boolean(requestedTicketId))
-  const [createOpen, setCreateOpen] = useState(false)
+  const [activeSheet, setActiveSheet] = useState<TicketSheet>(
+    requestedTicketId ? 'detail' : null
+  )
   const pendingCreatedTicketIdRef = useRef<number | undefined>(undefined)
   const [statusFilter, setStatusFilter] = useState('')
   const [categoryFilter, setCategoryFilter] = useState('')
@@ -1281,19 +1285,20 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
     const selectedInList = tickets.some((ticket) => ticket.id === selectedId)
     if (!selectedInList && !keepUrlSelected) {
       setSelectedId(undefined)
-      setDetailOpen(false)
+      setActiveSheet((current) => (current === 'detail' ? null : current))
     }
   }, [selectedId, tickets])
 
   const selectTicket = (id: number) => {
     urlSelectedIdRef.current = undefined
     setSelectedId(id)
-    setDetailOpen(true)
+    setActiveSheet('detail')
   }
 
   const updateStatusFilter = (value: string) => {
     urlSelectedIdRef.current = undefined
     setSelectedId(undefined)
+    setActiveSheet((current) => (current === 'detail' ? null : current))
     setTicketPage(1)
     setStatusFilter(value)
   }
@@ -1301,7 +1306,7 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
   const updateCategoryFilter = (value: string) => {
     urlSelectedIdRef.current = undefined
     setSelectedId(undefined)
-    setDetailOpen(false)
+    setActiveSheet((current) => (current === 'detail' ? null : current))
     setTicketPage(1)
     setCategoryFilter(value)
   }
@@ -1309,7 +1314,7 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
   const updatePriorityFilter = (value: string) => {
     urlSelectedIdRef.current = undefined
     setSelectedId(undefined)
-    setDetailOpen(false)
+    setActiveSheet((current) => (current === 'detail' ? null : current))
     setTicketPage(1)
     setPriorityFilter(value)
   }
@@ -1317,7 +1322,7 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
   const updateAssigneeFilter = (value: string) => {
     urlSelectedIdRef.current = undefined
     setSelectedId(undefined)
-    setDetailOpen(false)
+    setActiveSheet((current) => (current === 'detail' ? null : current))
     setTicketPage(1)
     setAssigneeFilter(value.replace(/[^\d]/g, ''))
   }
@@ -1325,7 +1330,7 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
   const updateStartDate = (value: string) => {
     urlSelectedIdRef.current = undefined
     setSelectedId(undefined)
-    setDetailOpen(false)
+    setActiveSheet((current) => (current === 'detail' ? null : current))
     setTicketPage(1)
     setStartDate(value)
   }
@@ -1333,7 +1338,7 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
   const updateEndDate = (value: string) => {
     urlSelectedIdRef.current = undefined
     setSelectedId(undefined)
-    setDetailOpen(false)
+    setActiveSheet((current) => (current === 'detail' ? null : current))
     setTicketPage(1)
     setEndDate(value)
   }
@@ -1341,7 +1346,7 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
   const updateKeyword = (value: string) => {
     urlSelectedIdRef.current = undefined
     setSelectedId(undefined)
-    setDetailOpen(false)
+    setActiveSheet((current) => (current === 'detail' ? null : current))
     setTicketPage(1)
     setKeyword(value)
   }
@@ -1350,27 +1355,43 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
     queryClient.invalidateQueries({ queryKey: ['tickets'] })
   }
 
+  const openPendingCreatedTicketDetail = () => {
+    if (pendingCreatedTicketIdRef.current === undefined) return
+    pendingCreatedTicketIdRef.current = undefined
+    setActiveSheet('detail')
+  }
+
   const openCreatedTicketDetail = (ticket: Ticket) => {
     refreshList()
     urlSelectedIdRef.current = ticket.id
     pendingCreatedTicketIdRef.current = ticket.id
     setSelectedId(ticket.id)
-    setDetailOpen(false)
-    setCreateOpen(false)
+    setActiveSheet((current) => {
+      if (current === 'create') return null
+      pendingCreatedTicketIdRef.current = undefined
+      return 'detail'
+    })
   }
 
   const handleCreateOpenChange = (open: boolean) => {
     if (open) {
       pendingCreatedTicketIdRef.current = undefined
+      setActiveSheet('create')
+      return
     }
-    setCreateOpen(open)
+    setActiveSheet((current) => (current === 'create' ? null : current))
   }
 
   const handleCreateOpenChangeComplete = (open: boolean) => {
-    if (!open && pendingCreatedTicketIdRef.current !== undefined) {
-      pendingCreatedTicketIdRef.current = undefined
-      setDetailOpen(true)
+    if (!open) openPendingCreatedTicketDetail()
+  }
+
+  const handleDetailOpenChange = (open: boolean) => {
+    if (open) {
+      setActiveSheet('detail')
+      return
     }
+    setActiveSheet((current) => (current === 'detail' ? null : current))
   }
 
   const goPrevTicketPage = () => setTicketPage((page) => Math.max(1, page - 1))
@@ -1409,7 +1430,7 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
             showUser={adminMode}
             showFilters={adminMode}
             showPriorityFilter={adminMode}
-            onCreate={adminMode ? undefined : () => setCreateOpen(true)}
+            onCreate={adminMode ? undefined : () => setActiveSheet('create')}
             onRefresh={refreshList}
             onSelect={selectTicket}
             onStatusFilterChange={updateStatusFilter}
@@ -1424,7 +1445,10 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
           />
           <TicketSecurityNote />
         </div>
-        <Sheet open={detailOpen} onOpenChange={setDetailOpen}>
+        <Sheet
+          open={activeSheet === 'detail'}
+          onOpenChange={handleDetailOpenChange}
+        >
           <SheetContent className='w-full sm:max-w-5xl'>
             <SheetHeader>
               <SheetTitle>{adminMode ? '处理工单' : '工单详情'}</SheetTitle>
@@ -1445,7 +1469,7 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
         </Sheet>
         {!adminMode && (
           <Sheet
-            open={createOpen}
+            open={activeSheet === 'create'}
             onOpenChange={handleCreateOpenChange}
             onOpenChangeComplete={handleCreateOpenChangeComplete}
           >
