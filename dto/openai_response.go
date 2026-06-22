@@ -345,6 +345,11 @@ type ResponsesOutput struct {
 	Content   []ResponsesOutputContent `json:"content"`
 	Quality   string                   `json:"quality"`
 	Size      string                   `json:"size"`
+	Result    string                   `json:"result,omitempty"`
+	Results   []string                 `json:"results,omitempty"`
+	Url       string                   `json:"url,omitempty"`
+	ImageUrl  json.RawMessage          `json:"image_url,omitempty"`
+	B64Json   string                   `json:"b64_json,omitempty"`
 	CallId    string                   `json:"call_id,omitempty"`
 	Name      string                   `json:"name,omitempty"`
 	Arguments json.RawMessage          `json:"arguments,omitempty"`
@@ -364,9 +369,13 @@ func ResponsesArgumentsString(arguments json.RawMessage) string {
 }
 
 type ResponsesOutputContent struct {
-	Type        string        `json:"type"`
-	Text        string        `json:"text"`
-	Annotations []interface{} `json:"annotations"`
+	Type        string          `json:"type"`
+	Text        string          `json:"text"`
+	Result      string          `json:"result,omitempty"`
+	Url         string          `json:"url,omitempty"`
+	ImageUrl    json.RawMessage `json:"image_url,omitempty"`
+	B64Json     string          `json:"b64_json,omitempty"`
+	Annotations []interface{}   `json:"annotations"`
 }
 
 type ResponsesReasoningSummaryPart struct {

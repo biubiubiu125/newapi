@@ -1,0 +1,88 @@
+package openaicompat
+
+import (
+	"testing"
+
+	"github.com/QuantumNous/new-api/dto"
+	"github.com/stretchr/testify/require"
+)
+
+func TestExtractOutputTextFromResponsesIncludesImageGenerationResult(t *testing.T) {
+	resp := &dto.OpenAIResponsesResponse{
+		Output: []dto.ResponsesOutput{
+			{
+				Type:   dto.ResponsesOutputTypeImageGenerationCall,
+				Result: "https://example.com/image.png",
+			},
+		},
+	}
+
+	text := ExtractOutputTextFromResponses(resp)
+
+	require.Equal(t, "![image](https://example.com/image.png)", text)
+}
+
+func TestExtractOutputTextFromResponsesKeepsTextAndImages(t *testing.T) {
+	resp := &dto.OpenAIResponsesResponse{
+		Output: []dto.ResponsesOutput{
+			{
+				Type: "message",
+				Role: "assistant",
+				Content: []dto.ResponsesOutputContent{
+					{Type: "output_text", Text: "done"},
+				},
+			},
+			{
+				Type:    dto.ResponsesOutputTypeImageGenerationCall,
+				Results: []string{"abc123"},
+			},
+		},
+	}
+
+	text := ExtractOutputTextFromResponses(resp)
+
+	require.Equal(t, "done\n![image](data:image/png;base64,abc123)", text)
+}
+
+func TestExtractOutputTextFromResponsesReadsCommonImageFields(t *testing.T) {
+	resp := &dto.OpenAIResponsesResponse{
+		Output: []dto.ResponsesOutput{
+			{
+				Type:     dto.ResponsesOutputTypeImageGenerationCall,
+				ImageUrl: []byte(`{"url":"https://example.com/from-image-url.png"}`),
+				Content: []dto.ResponsesOutputContent{
+					{
+						Type:    "image",
+						B64Json: "abc123",
+					},
+				},
+			},
+		},
+	}
+
+	text := ExtractOutputTextFromResponses(resp)
+
+	require.Equal(t, "![image](https://example.com/from-image-url.png)\n![image](data:image/png;base64,abc123)", text)
+}
+
+func TestExtractImageGenerationTextFromResponsesSkipsAssistantText(t *testing.T) {
+	resp := &dto.OpenAIResponsesResponse{
+		Output: []dto.ResponsesOutput{
+			{
+				Type: "message",
+				Role: "assistant",
+				Content: []dto.ResponsesOutputContent{
+					{Type: "output_text", Text: "done"},
+				},
+			},
+			{
+				Type:   dto.ResponsesOutputTypeImageGenerationCall,
+				Result: "https://example.com/image.png",
+			},
+		},
+	}
+
+	text := ExtractImageGenerationTextFromResponses(resp)
+
+	require.Equal(t, "![image](https://example.com/image.png)", text)
+}

@@ -38,6 +38,15 @@ func stringDeltaFromPrefix(prev string, next string) string {
 	return next
 }
 
+func setResponsesImageGenerationCallContext(c *gin.Context, resp *dto.OpenAIResponsesResponse) {
+	if resp == nil || !resp.HasImageGenerationCall() {
+		return
+	}
+	c.Set("image_generation_call", true)
+	c.Set("image_generation_call_quality", resp.GetQuality())
+	c.Set("image_generation_call_size", resp.GetSize())
+}
+
 func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	if resp == nil || resp.Body == nil {
 		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
@@ -58,6 +67,7 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 	if oaiError := responsesResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
+	setResponsesImageGenerationCallContext(c, &responsesResp)
 
 	chatId := helper.GetResponseID(c)
 	chatResp, usage, err := service.ResponsesResponseToChatCompletionsResponse(&responsesResp, chatId)
@@ -471,6 +481,44 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 					}
 					if streamResp.Response.Usage.CompletionTokenDetails.ReasoningTokens != 0 {
 						usage.CompletionTokenDetails.ReasoningTokens = streamResp.Response.Usage.CompletionTokenDetails.ReasoningTokens
+					}
+				}
+				setResponsesImageGenerationCallContext(c, streamResp.Response)
+				completedDelta := service.ExtractImageGenerationTextFromResponses(streamResp.Response)
+				currentOutputText := outputText.String()
+				if completedDelta == "" {
+					completedText := service.ExtractOutputTextFromResponses(streamResp.Response)
+					if currentOutputText == "" {
+						completedDelta = completedText
+					} else if strings.HasPrefix(completedText, currentOutputText) {
+						completedDelta = completedText[len(currentOutputText):]
+					}
+				}
+				if completedDelta != "" {
+					if !sendStartIfNeeded() {
+						sr.Stop(streamErr)
+						return
+					}
+					outputText.WriteString(completedDelta)
+					usageText.WriteString(completedDelta)
+					delta := completedDelta
+					chunk := &dto.ChatCompletionsStreamResponse{
+						Id:      responseId,
+						Object:  "chat.completion.chunk",
+						Created: createAt,
+						Model:   model,
+						Choices: []dto.ChatCompletionsStreamResponseChoice{
+							{
+								Index: 0,
+								Delta: dto.ChatCompletionsStreamResponseChoiceDelta{
+									Content: &delta,
+								},
+							},
+						},
+					}
+					if !sendChatChunk(chunk) {
+						sr.Stop(streamErr)
+						return
 					}
 				}
 			}

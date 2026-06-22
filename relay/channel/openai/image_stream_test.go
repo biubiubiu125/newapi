@@ -33,9 +33,8 @@ func newImageTestContext(t *testing.T, body, contentType string, isStream bool) 
 }
 
 // TestOpenaiImageStreamHandlerForwardsSSEAndUsage covers the core SSE path:
-// chunks are forwarded with rebuilt event lines, usage is extracted and
-// normalized (input_tokens -> prompt_tokens with details), and [DONE] is
-// re-emitted to the client.
+// chunks are forwarded as plain data frames for downstream NewAPI compatibility,
+// usage is extracted and normalized, and [DONE] is re-emitted to the client.
 func TestOpenaiImageStreamHandlerForwardsSSEAndUsage(t *testing.T) {
 	oldMode := gin.Mode()
 	gin.SetMode(gin.TestMode)
@@ -64,15 +63,42 @@ func TestOpenaiImageStreamHandlerForwardsSSEAndUsage(t *testing.T) {
 	require.Equal(t, 7, usage.TotalTokens)
 	require.Equal(t, 2, usage.PromptTokensDetails.ImageTokens)
 	require.Equal(t, 1, usage.PromptTokensDetails.TextTokens)
-	require.Contains(t, recorder.Body.String(), `event: image_generation.partial_image`)
+	require.NotContains(t, recorder.Body.String(), `event: image_generation.partial_image`)
 	require.Contains(t, recorder.Body.String(), `data: {"type":"image_generation.partial_image","b64_json":"partial"}`)
 	require.Contains(t, recorder.Body.String(), `data: {"usage":{"input_tokens":3,"output_tokens":4,"total_tokens":7,"input_tokens_details":{"image_tokens":2,"text_tokens":1}}}`)
 	require.Contains(t, recorder.Body.String(), `data: [DONE]`)
 	require.Equal(t, "text/event-stream", recorder.Header().Get("Content-Type"))
 }
 
+func TestOpenaiImageResponseHandlerDetectsEventStreamContentTypeCaseInsensitive(t *testing.T) {
+	oldMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(oldMode) })
+
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	body := strings.Join([]string{
+		`data: {"type":"image_generation.partial_image","b64_json":"partial"}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+
+	c, recorder, resp, info := newImageTestContext(t, body, "Text/Event-Stream; charset=utf-8", true)
+
+	usage, err := OpenaiImageResponseHandler(c, info, resp)
+
+	require.Nil(t, err)
+	require.NotNil(t, usage)
+	require.Contains(t, recorder.Body.String(), `data: {"type":"image_generation.partial_image","b64_json":"partial"}`)
+	require.Contains(t, recorder.Body.String(), `data: [DONE]`)
+	require.Equal(t, "text/event-stream", recorder.Header().Get("Content-Type"))
+}
+
 // TestOpenaiImageStreamHandlerWrapsJSONResponse covers the non-SSE fallback:
-// a JSON upstream response is wrapped into pseudo-SSE completed events.
+// a JSON upstream response is wrapped as the original JSON data frame.
 func TestOpenaiImageStreamHandlerWrapsJSONResponse(t *testing.T) {
 	oldMode := gin.Mode()
 	gin.SetMode(gin.TestMode)
@@ -91,8 +117,9 @@ func TestOpenaiImageStreamHandlerWrapsJSONResponse(t *testing.T) {
 	require.Equal(t, 1, usage.PromptTokensDetails.TextTokens)
 	require.Equal(t, "text/event-stream", recorder.Header().Get("Content-Type"))
 	require.Empty(t, recorder.Header().Get("Content-Length"))
-	require.Contains(t, recorder.Body.String(), `event: image_generation.completed`)
-	require.Contains(t, recorder.Body.String(), `"type":"image_generation.completed"`)
+	require.NotContains(t, recorder.Body.String(), `event: image_generation.completed`)
+	require.NotContains(t, recorder.Body.String(), `"type":"image_generation.completed"`)
+	require.Contains(t, recorder.Body.String(), `data: {"created":1710000000`)
 	require.Contains(t, recorder.Body.String(), `"b64_json":"final"`)
 	require.Contains(t, recorder.Body.String(), `"revised_prompt":"draw a cat"`)
 	require.Contains(t, recorder.Body.String(), `data: [DONE]`)
@@ -165,9 +192,8 @@ func TestOpenaiImageStreamHandlerRecordsUpstreamErrorEvent(t *testing.T) {
 	require.True(t, info.StreamStatus.HasErrors())
 	require.Equal(t, 1, info.StreamStatus.TotalErrorCount())
 	require.Contains(t, info.StreamStatus.Errors[0].Message, "INTERNAL_ERROR")
-	// The scanner strips the upstream "event: error" line; the event name is
-	// rebuilt from the JSON "type" field (upstream_error). The error message
-	// is still forwarded in the data: payload (stream ID 77).
-	require.Contains(t, recorder.Body.String(), `event: upstream_error`)
+	// The scanner strips upstream event lines; downstream receives only
+	// OpenAI-compatible data frames.
+	require.NotContains(t, recorder.Body.String(), `event: upstream_error`)
 	require.Contains(t, recorder.Body.String(), `stream ID 77`)
 }

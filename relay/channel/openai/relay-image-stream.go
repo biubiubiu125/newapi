@@ -17,10 +17,14 @@ func OpenaiImageResponseHandler(c *gin.Context, info *relaycommon.RelayInfo, res
 	if !isImageStreamAllowed(c, info) {
 		return OpenaiImageHandler(c, info, resp)
 	}
-	if strings.HasPrefix(resp.Header.Get("Content-Type"), "text/event-stream") {
+	if isEventStreamContentType(resp.Header.Get("Content-Type")) {
 		return OpenaiImageStreamHandler(c, info, resp)
 	}
 	return OpenaiImageJSONAsStreamHandler(c, info, resp)
+}
+
+func isEventStreamContentType(contentType string) bool {
+	return strings.Contains(strings.ToLower(contentType), "text/event-stream")
 }
 
 func isImageStreamAllowed(c *gin.Context, info *relaycommon.RelayInfo) bool {

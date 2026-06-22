@@ -16,3 +16,7 @@ func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesRespons
 func ExtractOutputTextFromResponses(resp *dto.OpenAIResponsesResponse) string {
 	return openaicompat.ExtractOutputTextFromResponses(resp)
 }
+
+func ExtractImageGenerationTextFromResponses(resp *dto.OpenAIResponsesResponse) string {
+	return openaicompat.ExtractImageGenerationTextFromResponses(resp)
+}
