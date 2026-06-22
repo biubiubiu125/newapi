@@ -212,12 +212,15 @@ func CreateTicketWithMessage(ticket *Ticket, message *TicketMessage, attachments
 
 func AddTicketMessage(ticket *Ticket, message *TicketMessage, attachments []*TicketAttachment, nextStatus string) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
+		var locked Ticket
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", ticket.Id).Error; err != nil {
+			return err
+		}
+		if locked.Status == TicketStatusClosed {
+			return fmt.Errorf("工单已关闭，重新打开后才能回复")
+		}
 		if len(attachments) > 0 {
-			var locked Ticket
-			if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).First(&locked, "id = ?", ticket.Id).Error; err != nil {
-				return err
-			}
-			existingCount, existingBytes, err := CountTicketAttachmentsTx(tx, ticket.Id)
+			existingCount, existingBytes, err := CountTicketAttachmentsTx(tx, locked.Id)
 			if err != nil {
 				return err
 			}
@@ -232,11 +235,12 @@ func AddTicketMessage(ticket *Ticket, message *TicketMessage, attachments []*Tic
 				return fmt.Errorf("单个工单图片总大小不能超过 100MB")
 			}
 		}
+		message.TicketId = locked.Id
 		if err := tx.Create(message).Error; err != nil {
 			return err
 		}
 		for _, attachment := range attachments {
-			attachment.TicketId = ticket.Id
+			attachment.TicketId = locked.Id
 			attachment.MessageId = message.Id
 			if err := tx.Create(attachment).Error; err != nil {
 				return err
@@ -253,7 +257,7 @@ func AddTicketMessage(ticket *Ticket, message *TicketMessage, attachments []*Tic
 				updates["closed_at"] = int64(0)
 			}
 		}
-		return tx.Model(&Ticket{}).Where("id = ?", ticket.Id).Updates(updates).Error
+		return tx.Model(&Ticket{}).Where("id = ?", locked.Id).Updates(updates).Error
 	})
 }
 
