@@ -23,6 +23,9 @@ import pkg from '@douyinfe/vite-plugin-semi';
 import path from 'path';
 import { codeInspectorPlugin } from 'code-inspector-plugin';
 const { vitePluginSemi } = pkg;
+const semiThemePath = path
+  .resolve(__dirname, 'node_modules/@douyinfe/semi-theme-default')
+  .replace(/\\/g, '/');
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -53,6 +56,7 @@ export default defineConfig({
     react(),
     vitePluginSemi({
       cssLayer: true,
+      theme: semiThemePath,
     }),
   ],
   optimizeDeps: {

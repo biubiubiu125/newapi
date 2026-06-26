@@ -98,8 +98,6 @@ func main() {
 		go controller.AutomaticallyUpdateChannels(frequency)
 	}
 
-	go controller.AutomaticallyTestChannels()
-
 	// Codex credential auto-refresh check every 10 minutes, refresh when expires within 1 day
 	service.StartCodexCredentialAutoRefreshTask()
 
@@ -115,6 +113,9 @@ func main() {
 	// Telegram push retry task
 	service.StartTelegramPushRetryTask()
 
+	// Report this process so the system info page can show live instances.
+	service.StartSystemInstanceReporter()
+
 	// Wire task polling adaptor factory (breaks service -> relay import cycle)
 	service.GetTaskAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPollingAdaptor {
 		a := relay.GetTaskAdaptor(platform)
@@ -124,17 +125,9 @@ func main() {
 		return a
 	}
 
-	// Channel upstream model update check task
-	controller.StartChannelUpstreamModelUpdateTask()
+	controller.RegisterScheduledSystemTasks()
+	service.StartSystemTaskRunner()
 
-	if common.IsMasterNode && constant.UpdateTask {
-		gopool.Go(func() {
-			controller.UpdateMidjourneyTaskBulk()
-		})
-		gopool.Go(func() {
-			controller.UpdateTaskBulk()
-		})
-	}
 	if os.Getenv("BATCH_UPDATE_ENABLED") == "true" {
 		common.BatchUpdateEnabled = true
 		common.SysLog("batch update enabled with interval " + strconv.Itoa(common.BatchUpdateInterval) + "s")

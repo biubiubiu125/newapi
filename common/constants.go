@@ -141,6 +141,8 @@ var InsecureTLSConfig = &tls.Config{InsecureSkipVerify: true}
 var SMTPServer = ""
 var SMTPPort = 587
 var SMTPSSLEnabled = false
+var SMTPStartTLSEnabled = false
+var SMTPInsecureSkipVerify = false
 var SMTPForceAuthLogin = false
 var SMTPAccount = ""
 var SMTPFrom = ""
@@ -175,9 +177,16 @@ var RetryTimes = 1
 
 var IsMasterNode bool
 
-// NodeName 节点名称，从 NODE_NAME 环境变量读取；
-// 用于审计日志中标识节点身份，在容器/K8s 部署时比自动探测到的容器内网 IP 更具可读性。
+const (
+	NodeNameSourceManual   = "manual"
+	NodeNameSourceHostname = "hostname"
+)
+
+// NodeName identifies this process in logs, system tasks, and instance reports.
+// It uses NODE_NAME first and falls back to the host name when not configured.
 var NodeName = ""
+var NodeNameSource = NodeNameSourceHostname
+var NodeNameManuallyConfigured bool
 
 var requestInterval int
 var RequestInterval time.Duration

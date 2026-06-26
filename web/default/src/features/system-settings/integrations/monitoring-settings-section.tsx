@@ -33,6 +33,14 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import {
@@ -52,6 +60,9 @@ const numericString = z.string().refine((value) => {
   return !Number.isNaN(Number(trimmed)) && Number(trimmed) >= 0
 }, '请输入非负数字，或留空')
 
+const channelTestModes = ['scheduled_all', 'passive_recovery'] as const
+type ChannelTestMode = (typeof channelTestModes)[number]
+
 const monitoringSchema = z
   .object({
     ChannelDisableThreshold: numericString,
@@ -67,6 +78,7 @@ const monitoringSchema = z
         .number()
         .int()
         .min(1, '测试间隔至少为 1 分钟'),
+      channel_test_mode: z.enum(channelTestModes),
     }),
   })
   .superRefine((values, ctx) => {
@@ -111,6 +123,7 @@ type MonitoringSettingsSectionProps = {
     AutomaticRetryStatusCodes: string
     'monitor_setting.auto_test_channel_enabled': boolean
     'monitor_setting.auto_test_channel_minutes': number
+    'monitor_setting.channel_test_mode': ChannelTestMode
   }
 }
 
@@ -128,6 +141,11 @@ type NormalizedMonitoringValues = {
   AutomaticRetryStatusCodes: string
   'monitor_setting.auto_test_channel_enabled': boolean
   'monitor_setting.auto_test_channel_minutes': number
+  'monitor_setting.channel_test_mode': ChannelTestMode
+}
+
+function normalizeChannelTestMode(value?: string): ChannelTestMode {
+  return value === 'passive_recovery' ? 'passive_recovery' : 'scheduled_all'
 }
 
 const buildFormDefaults = (
@@ -147,6 +165,9 @@ const buildFormDefaults = (
       defaults['monitor_setting.auto_test_channel_enabled'],
     auto_test_channel_minutes:
       defaults['monitor_setting.auto_test_channel_minutes'],
+    channel_test_mode: normalizeChannelTestMode(
+      defaults['monitor_setting.channel_test_mode']
+    ),
   },
 })
 
@@ -170,6 +191,9 @@ const normalizeDefaults = (
     defaults['monitor_setting.auto_test_channel_enabled'],
   'monitor_setting.auto_test_channel_minutes':
     defaults['monitor_setting.auto_test_channel_minutes'],
+  'monitor_setting.channel_test_mode': normalizeChannelTestMode(
+    defaults['monitor_setting.channel_test_mode']
+  ),
 })
 
 const normalizeFormValues = (
@@ -192,6 +216,7 @@ const normalizeFormValues = (
     values.monitor_setting.auto_test_channel_enabled,
   'monitor_setting.auto_test_channel_minutes':
     values.monitor_setting.auto_test_channel_minutes,
+  'monitor_setting.channel_test_mode': values.monitor_setting.channel_test_mode,
 })
 
 export function MonitoringSettingsSection({
@@ -217,6 +242,7 @@ export function MonitoringSettingsSection({
 
   const autoDisableStatusCodes = form.watch('AutomaticDisableStatusCodes')
   const autoRetryStatusCodes = form.watch('AutomaticRetryStatusCodes')
+  const channelTestMode = form.watch('monitor_setting.channel_test_mode')
   const autoDisableParsed = useMemo(
     () => parseHttpStatusCodeRules(autoDisableStatusCodes),
     [autoDisableStatusCodes]
@@ -281,6 +307,39 @@ export function MonitoringSettingsSection({
 
             <FormField
               control={form.control}
+              name='monitor_setting.channel_test_mode'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Channel test mode')}</FormLabel>
+                  <Select value={field.value} onValueChange={field.onChange}>
+                    <FormControl>
+                      <SelectTrigger>
+                        <SelectValue />
+                      </SelectTrigger>
+                    </FormControl>
+                    <SelectContent alignItemWithTrigger={false}>
+                      <SelectGroup>
+                        <SelectItem value='scheduled_all'>
+                          {t('Scheduled full test')}
+                        </SelectItem>
+                        <SelectItem value='passive_recovery'>
+                          {t('Passive recovery only')}
+                        </SelectItem>
+                      </SelectGroup>
+                    </SelectContent>
+                  </Select>
+                  <FormDescription>
+                    {t(
+                      'Scheduled full test probes non-manually-disabled channels; passive recovery only checks auto-disabled channels after real request failures.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
+
+            <FormField
+              control={form.control}
               name='monitor_setting.auto_test_channel_minutes'
               render={({ field }) => (
                 <FormItem>
@@ -291,12 +350,16 @@ export function MonitoringSettingsSection({
                       min={1}
                       step={1}
                       {...safeNumberFieldProps(field)}
-                    />
-                  </FormControl>
-                  <FormDescription>
-                    {t('How frequently the system tests all channels')}
-                  </FormDescription>
-                  <FormMessage />
+                  />
+                </FormControl>
+                <FormDescription>
+                  {channelTestMode === 'passive_recovery'
+                    ? t(
+                        'How frequently the system checks auto-disabled channels for recovery'
+                      )
+                    : t('How frequently the system tests all channels')}
+                </FormDescription>
+                <FormMessage />
                 </FormItem>
               )}
             />

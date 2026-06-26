@@ -101,6 +101,15 @@ func GetAllUnFinishTasks() []*Midjourney {
 	return tasks
 }
 
+func HasUnfinishedMidjourneyTasks() bool {
+	var id int
+	err := DB.Model(&Midjourney{}).
+		Where("progress != ?", "100%").
+		Limit(1).
+		Pluck("id", &id).Error
+	return err == nil && id != 0
+}
+
 func GetByOnlyMJId(mjId string) *Midjourney {
 	var mj *Midjourney
 	var err error

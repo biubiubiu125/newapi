@@ -19,13 +19,133 @@ For commercial licensing, please contact support@quantumnous.com
 import { useRef, useState, useCallback, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+import type {
+  SystemTask,
+  SystemTaskResponse,
+  SystemTaskStatus
+} from '@/features/system-settings/types'
 import { api, type ApiRequestConfig } from '@/lib/api'
 import { normalizeModelList } from '../lib/upstream-update-utils'
 
 const upstreamUpdateRequestConfig = {
   skipBusinessError: true,
-  skipErrorHandler: true,
+  skipErrorHandler: true
 } satisfies ApiRequestConfig
+
+const modelUpdateTaskPollIntervalMs = 2000
+const modelUpdateTaskMaxPolls = 900
+
+type ModelUpdateTaskPayload = {
+  manual?: boolean
+}
+
+type ModelUpdateTaskState = {
+  progress?: number
+}
+
+type ModelUpdateTaskResult = {
+  checked_channels?: number
+  changed_channels?: number
+  detected_add_models?: number
+  detected_remove_models?: number
+  failed_channels?: number
+  auto_added_models?: number
+}
+
+type ModelUpdateTask = SystemTask<
+  ModelUpdateTaskPayload,
+  ModelUpdateTaskState,
+  ModelUpdateTaskResult
+>
+
+type ModelUpdateTaskStartInfo = {
+  task_id: string
+  status?: SystemTaskStatus
+  type?: string
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === 'object'
+}
+
+function asSystemTaskStatus(value: unknown): SystemTaskStatus | undefined {
+  if (
+    value === 'pending' ||
+    value === 'running' ||
+    value === 'succeeded' ||
+    value === 'failed'
+  ) {
+    return value
+  }
+  return undefined
+}
+
+function getResponseMessage(payload: unknown): string | undefined {
+  if (!isRecord(payload) || typeof payload.message !== 'string') return
+  return payload.message
+}
+
+function getErrorPayload(error: unknown): unknown {
+  if (!isRecord(error)) return undefined
+  const response = error.response
+  if (!isRecord(response)) return undefined
+  return response.data
+}
+
+function getErrorMessage(error: unknown): string | undefined {
+  const payloadMessage = getResponseMessage(getErrorPayload(error))
+  if (payloadMessage) return payloadMessage
+  if (isRecord(error) && typeof error.message === 'string') return error.message
+  return undefined
+}
+
+function getModelUpdateTaskStartInfo(
+  payload: unknown
+): ModelUpdateTaskStartInfo | null {
+  if (!isRecord(payload) || !isRecord(payload.data)) return null
+  const taskId = payload.data.task_id
+  if (typeof taskId !== 'string' || taskId.length === 0) return null
+  return {
+    task_id: taskId,
+    status: asSystemTaskStatus(payload.data.status),
+    type: typeof payload.data.type === 'string' ? payload.data.type : undefined
+  }
+}
+
+function isSuccessPayload(payload: unknown): boolean {
+  return isRecord(payload) && payload.success === true
+}
+
+function isTerminalTaskStatus(status: SystemTaskStatus): boolean {
+  return status === 'succeeded' || status === 'failed'
+}
+
+function sleep(ms: number) {
+  return new Promise<void>((resolve) => setTimeout(resolve, ms))
+}
+
+async function getChannelModelUpdateTask(taskId: string) {
+  const res = await api.get<SystemTaskResponse<ModelUpdateTask>>(
+    `/api/channel/upstream_updates/task/${encodeURIComponent(taskId)}`,
+    {
+      ...upstreamUpdateRequestConfig,
+      disableDuplicate: true
+    }
+  )
+  return res.data
+}
+
+async function waitForModelUpdateTask(taskId: string) {
+  for (let i = 0; i < modelUpdateTaskMaxPolls; i++) {
+    const res = await getChannelModelUpdateTask(taskId)
+    if (!res.success || !res.data) {
+      throw new Error(res.message || '')
+    }
+    if (isTerminalTaskStatus(res.data.status)) return res.data
+    await sleep(modelUpdateTaskPollIntervalMs)
+  }
+  return null
+}
 
 function getManualIgnoredModelCount(settings: unknown): number {
   let parsed: Record<string, unknown> | null = null
@@ -97,7 +217,7 @@ export function useChannelUpstreamUpdates(refresh: () => Promise<void>) {
   const applyUpdates = useCallback(
     async ({
       addModels: selectedAdd = [],
-      removeModels: selectedRemove = [],
+      removeModels: selectedRemove = []
     }: {
       addModels?: string[]
       removeModels?: string[]
@@ -120,7 +240,7 @@ export function useChannelUpstreamUpdates(refresh: () => Promise<void>) {
             id: channel.id,
             add_models: normSelectedAdd,
             ignore_models: ignoreModels,
-            remove_models: normalizeModelList(selectedRemove),
+            remove_models: normalizeModelList(selectedRemove)
           },
           upstreamUpdateRequestConfig
         )
@@ -137,7 +257,7 @@ export function useChannelUpstreamUpdates(refresh: () => Promise<void>) {
               added: data?.added_models?.length || 0,
               removed: data?.removed_models?.length || 0,
               ignored: normalizeModelList(ignoreModels).length,
-              totalIgnored: getManualIgnoredModelCount(data?.settings),
+              totalIgnored: getManualIgnoredModelCount(data?.settings)
             }
           )
         )
@@ -182,7 +302,7 @@ export function useChannelUpstreamUpdates(refresh: () => Promise<void>) {
             channels: data?.processed_channels || 0,
             added: data?.added_models || 0,
             removed: data?.removed_models || 0,
-            fails: (data?.failed_channel_ids || []).length,
+            fails: (data?.failed_channel_ids || []).length
           }
         )
       )
@@ -222,7 +342,7 @@ export function useChannelUpstreamUpdates(refresh: () => Promise<void>) {
         toast.success(
           t('Detection complete: {{add}} to add, {{remove}} to remove', {
             add: data?.add_models?.length || 0,
-            remove: data?.remove_models?.length || 0,
+            remove: data?.remove_models?.length || 0
           })
         )
         await refresh()
@@ -245,40 +365,67 @@ export function useChannelUpstreamUpdates(refresh: () => Promise<void>) {
     if (detectAllRef.current) return
     detectAllRef.current = true
     setDetectAllLoading(true)
+    const waitAndReportTask = async (
+      taskInfo: ModelUpdateTaskStartInfo,
+      existingTask: boolean
+    ) => {
+      if (existingTask) {
+        toast.info(
+          t('Batch detection task is already running. Waiting for completion')
+        )
+      } else {
+        toast.success(t('Batch detection task started'))
+      }
+
+      const task = await waitForModelUpdateTask(taskInfo.task_id)
+      if (!task) {
+        toast.info(t('Batch detection is still running. Please refresh later'))
+        return
+      }
+
+      if (task.status === 'failed') {
+        toast.error(task.error || t('Batch detection failed'))
+        return
+      }
+
+      const result = task.result || {}
+      toast.success(
+        t(
+          'Batch detection complete: {{channels}} channels, {{add}} to add, {{remove}} to remove, {{fails}} failed',
+          {
+            channels: result.checked_channels || 0,
+            add: result.detected_add_models || 0,
+            remove: result.detected_remove_models || 0,
+            fails: result.failed_channels || 0
+          }
+        )
+      )
+      await refresh()
+    }
     try {
       const res = await api.post(
         '/api/channel/upstream_updates/detect_all',
         {},
         upstreamUpdateRequestConfig
       )
-      const { success, message, data } = res.data || {}
-      if (!success) {
-        toast.error(message || t('Batch detection failed'))
+      const taskInfo = getModelUpdateTaskStartInfo(res.data)
+      if (!isSuccessPayload(res.data) || !taskInfo) {
+        toast.error(getResponseMessage(res.data) || t('Batch detection failed'))
         return
       }
 
-      toast.success(
-        t(
-          'Batch detection complete: {{channels}} channels, {{add}} to add, {{remove}} to remove, {{fails}} failed',
-          {
-            channels: data?.processed_channels || 0,
-            add: data?.detected_add_models || 0,
-            remove: data?.detected_remove_models || 0,
-            fails: (data?.failed_channel_ids || []).length,
-          }
-        )
-      )
-      await refresh()
+      await waitAndReportTask(taskInfo, false)
     } catch (e: unknown) {
-      const err = e as {
-        response?: { data?: { message?: string } }
-        message?: string
+      const taskInfo = getModelUpdateTaskStartInfo(getErrorPayload(e))
+      if (taskInfo) {
+        try {
+          await waitAndReportTask(taskInfo, true)
+        } catch (pollError: unknown) {
+          toast.error(getErrorMessage(pollError) || t('Batch detection failed'))
+        }
+        return
       }
-      toast.error(
-        err?.response?.data?.message ||
-          err?.message ||
-          t('Batch detection failed')
-      )
+      toast.error(getErrorMessage(e) || t('Batch detection failed'))
     } finally {
       detectAllRef.current = false
       setDetectAllLoading(false)
@@ -303,7 +450,7 @@ export function useChannelUpstreamUpdates(refresh: () => Promise<void>) {
       applyUpdates,
       applyAllUpdates,
       detectChannelUpdates,
-      detectAllUpdates,
+      detectAllUpdates
     }),
     [
       showModal,
@@ -319,7 +466,7 @@ export function useChannelUpstreamUpdates(refresh: () => Promise<void>) {
       applyUpdates,
       applyAllUpdates,
       detectChannelUpdates,
-      detectAllUpdates,
+      detectAllUpdates
     ]
   )
 }

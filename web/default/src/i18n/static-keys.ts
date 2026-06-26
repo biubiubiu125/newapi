@@ -30,6 +30,11 @@ export const STATIC_I18N_KEYS = [
   // Sidebar views (drill-in workspaces)
   'System Settings',
   'Back to Dashboard',
+  'Channel test mode',
+  'How frequently the system checks auto-disabled channels for recovery',
+  'Passive recovery only',
+  'Scheduled full test',
+  'Scheduled full test probes non-manually-disabled channels; passive recovery only checks auto-disabled channels after real request failures.',
 
   // System settings sidebar
   'System Administration',
@@ -491,6 +496,44 @@ export const STATIC_I18N_KEYS = [
   'Detection complete: {{add}} to add, {{remove}} to remove',
   'Batch detection failed',
   'Batch detection complete: {{channels}} channels, {{add}} to add, {{remove}} to remove, {{fails}} failed',
+  'Batch detection task started',
+  'Batch detection task is already running. Waiting for completion',
+  'Batch detection is still running. Please refresh later',
+
+  // System info
+  'System Info',
+  'System Tasks',
+  'Instances',
+  'CPU',
+  'Memory',
+  'Storage',
+  'Runtime',
+  'Started',
+  'Last Seen',
+  'Configure NODE_NAME',
+  'Node role',
+  'Executor',
+  'Detail',
+  'Live refresh pauses when no task is running',
+  'Active Tasks',
+  'Tasks currently pending or running.',
+  'Task History',
+  'Recently completed or failed system task runs.',
+  'No active system tasks.',
+  'No historical system tasks.',
+  'No system tasks yet.',
+  'No instances have reported yet.',
+  'We could not load instances.',
+  'Auto-refreshing every {{seconds}}s',
+  'Log cleanup',
+  'Batch channel test',
+  'Batch upstream model update',
+  'Manual upstream model detection',
+  'Drawing task polling',
+  'Async task polling',
+  'Log cleanup progress',
+  'Log cleanup task started.',
+  '{{processed}} of {{total}} log entries processed.',
 
   // Misc
   'Cancel',
@@ -501,5 +544,5 @@ export const STATIC_I18N_KEYS = [
   'Open in new tab',
   'Failed to load',
   'Expired at',
-  'Cancelled at',
+  'Cancelled at'
 ] as const

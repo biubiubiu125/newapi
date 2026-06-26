@@ -15,6 +15,8 @@ services:
       - ./logs:/app/logs
     environment:
       - SQL_DSN=postgresql://${POSTGRES_USER:-root}:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@newapi-postgres:5432/${POSTGRES_DB:-new-api}
+#      - LOG_SQL_DSN=clickhouse://default:${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD in .env}@newapi-clickhouse:9000/${CLICKHOUSE_DB:-new_api_logs}
+#      - LOG_SQL_CLICKHOUSE_TTL_DAYS=${LOG_SQL_CLICKHOUSE_TTL_DAYS:-0}
       - REDIS_CONN_STRING=redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@newapi-redis:6379
       - SESSION_SECRET=${SESSION_SECRET:?set SESSION_SECRET in .env}
       - TZ=${TZ:-Asia/Shanghai}
@@ -40,6 +42,8 @@ services:
         condition: service_healthy
       newapi-postgres:
         condition: service_healthy
+#      newapi-clickhouse:
+#        condition: service_started
     networks:
       - new-api-network
     healthcheck:
@@ -81,8 +85,26 @@ services:
     networks:
       - new-api-network
 
+#  newapi-clickhouse:
+#    image: clickhouse/clickhouse-server:24.8
+#    container_name: ${CONTAINER_PREFIX:-newapi}-clickhouse
+#    restart: always
+#    environment:
+#      CLICKHOUSE_DB: ${CLICKHOUSE_DB:-new_api_logs}
+#      CLICKHOUSE_USER: default
+#      CLICKHOUSE_PASSWORD: ${CLICKHOUSE_PASSWORD:?set CLICKHOUSE_PASSWORD in .env}
+#      CLICKHOUSE_DEFAULT_ACCESS_MANAGEMENT: 1
+#    volumes:
+#      - clickhouse_data:/var/lib/clickhouse
+#    networks:
+#      - new-api-network
+#    ports:
+#      - "8123:8123"
+#      - "9000:9000"
+
 volumes:
   pg_data:
+#  clickhouse_data:
 
 networks:
   new-api-network:

@@ -50,10 +50,60 @@ export type ConfirmPaymentComplianceResponse = {
   }
 }
 
-export type DeleteLogsResponse = {
+export type SystemTaskStatus = 'pending' | 'running' | 'succeeded' | 'failed'
+
+export type SystemTask<
+  TPayload = Record<string, unknown>,
+  TState = Record<string, unknown>,
+  TResult = Record<string, unknown>,
+> = {
+  id: number
+  task_id: string
+  type: string
+  status: SystemTaskStatus
+  active_key?: string
+  payload?: TPayload
+  state?: TState
+  result?: TResult
+  error?: string
+  locked_by?: string
+  locked_until?: number
+  created_at: number
+  updated_at: number
+}
+
+export type LogCleanupTaskPayload = {
+  target_timestamp: number
+  batch_size: number
+}
+
+export type LogCleanupTaskState = {
+  total: number
+  processed: number
+  progress: number
+  remaining: number
+}
+
+export type LogCleanupTaskResult = {
+  deleted_count: number
+}
+
+export type LogCleanupTask = SystemTask<
+  LogCleanupTaskPayload,
+  LogCleanupTaskState,
+  LogCleanupTaskResult
+>
+
+export type SystemTaskResponse<TTask = SystemTask | null> = {
   success: boolean
   message: string
-  data?: number
+  data?: TTask
+}
+
+export type SystemTaskListResponse = {
+  success: boolean
+  message: string
+  data?: SystemTask[]
 }
 
 export type SiteSettings = {
@@ -151,6 +201,7 @@ export type ModelSettings = {
   AutomaticRetryStatusCodes: string
   'monitor_setting.auto_test_channel_enabled': boolean
   'monitor_setting.auto_test_channel_minutes': number
+  'monitor_setting.channel_test_mode': 'scheduled_all' | 'passive_recovery'
   'gemini.safety_settings': string
   'gemini.version_settings': string
   'gemini.supported_imagine_models': string
@@ -303,12 +354,15 @@ export type OperationsSettings = {
   TicketEmailNotificationEnabled: boolean
   'monitor_setting.auto_test_channel_enabled': boolean
   'monitor_setting.auto_test_channel_minutes': number
+  'monitor_setting.channel_test_mode': 'scheduled_all' | 'passive_recovery'
   SMTPServer: string
   SMTPPort: string
   SMTPAccount: string
   SMTPFrom: string
   SMTPToken: string
   SMTPSSLEnabled: boolean
+  SMTPStartTLSEnabled: boolean
+  SMTPInsecureSkipVerify: boolean
   SMTPForceAuthLogin: boolean
   WorkerUrl: string
   WorkerValidKey: string
@@ -345,6 +399,7 @@ export type SecuritySettings = {
   'fetch_setting.ip_list': string[]
   'fetch_setting.allowed_ports': number[]
   'fetch_setting.apply_ip_filter_for_domain': boolean
+  'token_setting.max_user_tokens': number
 }
 
 export type UpstreamChannel = {

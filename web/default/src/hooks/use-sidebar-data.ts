@@ -29,6 +29,7 @@ import {
   ListTodo,
   MessageSquare,
   Radio,
+  ServerCog,
   Settings,
   Ticket,
   User,
@@ -578,6 +579,11 @@ export function useSidebarData(): SidebarData {
           },
           ...(isRoot
             ? [
+                {
+                  title: t('System Info'),
+                  url: '/system-info',
+                  icon: ServerCog,
+                },
                 {
                   title: t('System Settings'),
                   url: '/system-settings/site',

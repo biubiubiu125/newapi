@@ -1,6 +1,7 @@
 package ollama
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -279,10 +280,17 @@ func ollamaEmbeddingHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 }
 
 func FetchOllamaModels(baseURL, apiKey string) ([]OllamaModel, error) {
+	return FetchOllamaModelsWithContext(context.Background(), baseURL, apiKey)
+}
+
+func FetchOllamaModelsWithContext(ctx context.Context, baseURL, apiKey string) ([]OllamaModel, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
 	url := fmt.Sprintf("%s/api/tags", baseURL)
 
-	client := &http.Client{}
-	request, err := http.NewRequest("GET", url, nil)
+	client := &http.Client{Timeout: 30 * time.Second}
+	request, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %v", err)
 	}
