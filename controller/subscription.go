@@ -135,7 +135,8 @@ func AdminListSubscriptionPlans(c *gin.Context) {
 }
 
 type AdminUpsertSubscriptionPlanRequest struct {
-	Plan model.SubscriptionPlan `json:"plan"`
+	Plan                        model.SubscriptionPlan `json:"plan"`
+	SyncActiveUserSubscriptions bool                   `json:"sync_active_user_subscriptions"`
 }
 
 func normalizeAndValidateGrantGroups(groups string) (string, bool) {
@@ -312,6 +313,17 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		}
 		if err := tx.Model(&model.SubscriptionPlan{}).Where("id = ?", id).Updates(updateMap).Error; err != nil {
 			return err
+		}
+		if req.SyncActiveUserSubscriptions && req.Plan.AllowWalletOverflow != nil {
+			now := common.GetTimestamp()
+			if err := tx.Model(&model.UserSubscription{}).
+				Where("plan_id = ? AND status = ? AND end_time > ?", id, "active", now).
+				Updates(map[string]interface{}{
+					"allow_wallet_overflow": *req.Plan.AllowWalletOverflow,
+					"updated_at":            now,
+				}).Error; err != nil {
+				return err
+			}
 		}
 		return nil
 	})

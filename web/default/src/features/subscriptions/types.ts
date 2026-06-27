@@ -89,6 +89,7 @@ export interface ApiResponse<T = unknown> {
 
 export interface PlanPayload {
   plan: Partial<SubscriptionPlan>
+  sync_active_user_subscriptions?: boolean
 }
 
 export interface SubscriptionPayRequest {

@@ -96,6 +96,8 @@ export function SubscriptionsMutateDrawer({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [groupOptions, setGroupOptions] = useState<string[]>([])
   const [creatingPancakeProduct, setCreatingPancakeProduct] = useState(false)
+  const [syncActiveUserSubscriptions, setSyncActiveUserSubscriptions] =
+    useState(false)
   const [pancakeProducts, setPancakeProducts] = useState<
     { id: string; name: string; status: string }[]
   >([])
@@ -113,6 +115,7 @@ export function SubscriptionsMutateDrawer({
       } else {
         form.reset(PLAN_FORM_DEFAULTS)
       }
+      setSyncActiveUserSubscriptions(false)
       getGroups()
         .then((res) => {
           if (res.success) setGroupOptions(res.data || [])
@@ -152,6 +155,9 @@ export function SubscriptionsMutateDrawer({
     setIsSubmitting(true)
     try {
       const payload = formValuesToPlanPayload(values)
+      if (isEdit) {
+        payload.sync_active_user_subscriptions = syncActiveUserSubscriptions
+      }
       if (isEdit && currentRow?.plan?.id) {
         const res = await updatePlan(currentRow.plan.id, payload)
         if (res.success) {
@@ -455,6 +461,52 @@ export function SubscriptionsMutateDrawer({
                     </FormItem>
                   )}
                 />
+              </div>
+
+              <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
+                <FormField
+                  control={form.control}
+                  name='allow_wallet_overflow'
+                  render={({ field }) => (
+                    <FormItem className={sideDrawerSwitchItemClassName()}>
+                      <div className='space-y-1'>
+                        <FormLabel className='!mt-0'>
+                          {t('Allow wallet fallback')}
+                        </FormLabel>
+                        <FormDescription>
+                          {t(
+                            'Use wallet balance after subscription quota is exhausted.'
+                          )}
+                        </FormDescription>
+                      </div>
+                      <FormControl>
+                        <Switch
+                          checked={field.value}
+                          onCheckedChange={field.onChange}
+                        />
+                      </FormControl>
+                    </FormItem>
+                  )}
+                />
+
+                {isEdit && (
+                  <FormItem className={sideDrawerSwitchItemClassName()}>
+                    <div className='space-y-1'>
+                      <div className='text-sm leading-none font-medium'>
+                        {t('Sync to active subscriptions')}
+                      </div>
+                      <p className='text-muted-foreground text-sm'>
+                        {t(
+                          'Apply this wallet fallback setting to current active subscriptions of this plan.'
+                        )}
+                      </p>
+                    </div>
+                    <Switch
+                      checked={syncActiveUserSubscriptions}
+                      onCheckedChange={setSyncActiveUserSubscriptions}
+                    />
+                  </FormItem>
+                )}
               </div>
 
               <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
