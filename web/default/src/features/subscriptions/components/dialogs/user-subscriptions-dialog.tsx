@@ -50,6 +50,7 @@ import {
   sideDrawerFormClassName,
   sideDrawerHeaderClassName,
 } from '@/components/drawer-layout'
+import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { TableId } from '@/components/table-id'
 import {
@@ -59,7 +60,7 @@ import {
   getUserSubscriptions,
   invalidateUserSubscription,
 } from '../../api'
-import { formatTimestamp } from '../../lib'
+import { formatTimestamp, splitGroupList } from '../../lib'
 import type { PlanRecord, UserSubscriptionRecord } from '../../types'
 
 interface Props {
@@ -253,6 +254,7 @@ export function UserSubscriptionsDialog(props: Props) {
                     <TableHead>ID</TableHead>
                     <TableHead>{t('Plan')}</TableHead>
                     <TableHead>{t('Status')}</TableHead>
+                    <TableHead>{t('Granted Groups')}</TableHead>
                     <TableHead>{t('Validity')}</TableHead>
                     <TableHead>{t('Total Quota')}</TableHead>
                     <TableHead className='text-right'>{t('Actions')}</TableHead>
@@ -261,14 +263,14 @@ export function UserSubscriptionsDialog(props: Props) {
                 <TableBody>
                   {loading ? (
                     <TableRow>
-                      <TableCell colSpan={6} className='py-8 text-center'>
+                      <TableCell colSpan={7} className='py-8 text-center'>
                         {t('Loading...')}
                       </TableCell>
                     </TableRow>
                   ) : subs.length === 0 ? (
                     <TableRow>
                       <TableCell
-                        colSpan={6}
+                        colSpan={7}
                         className='text-muted-foreground py-8 text-center'
                       >
                         {t('No subscription records')}
@@ -283,6 +285,7 @@ export function UserSubscriptionsDialog(props: Props) {
                       const isActive = sub.status === 'active' && !isExpired
                       const total = Number(sub.amount_total || 0)
                       const used = Number(sub.amount_used || 0)
+                      const grantGroups = splitGroupList(sub.grant_groups)
 
                       return (
                         <TableRow key={sub.id}>
@@ -302,6 +305,19 @@ export function UserSubscriptionsDialog(props: Props) {
                           </TableCell>
                           <TableCell>
                             <SubscriptionStatusBadge sub={sub} t={t} />
+                          </TableCell>
+                          <TableCell>
+                            {grantGroups.length > 0 ? (
+                              <div className='flex max-w-[180px] flex-wrap gap-1'>
+                                {grantGroups.map((group) => (
+                                  <GroupBadge key={group} group={group} />
+                                ))}
+                              </div>
+                            ) : (
+                              <span className='text-muted-foreground'>
+                                {t('None')}
+                              </span>
+                            )}
                           </TableCell>
                           <TableCell>
                             <div className='text-sm'>

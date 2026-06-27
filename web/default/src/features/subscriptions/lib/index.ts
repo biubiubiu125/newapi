@@ -21,6 +21,7 @@ export {
   formatDuration,
   formatResetPeriod,
   formatTimestamp,
+  splitGroupList,
 } from './format'
 export {
   getPlanFormSchema,

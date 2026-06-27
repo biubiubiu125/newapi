@@ -41,7 +41,12 @@ import {
   paySubscriptionStripe,
   paySubscriptionWaffoPancake,
 } from '../../api'
-import { formatCnyPrice, formatDuration, formatResetPeriod } from '../../lib'
+import {
+  formatCnyPrice,
+  formatDuration,
+  formatResetPeriod,
+  splitGroupList,
+} from '../../lib'
 import type { PlanRecord, SubscriptionPayResponse } from '../../types'
 
 interface PaymentMethod {
@@ -92,6 +97,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
     hasBEpusdt
   const totalAmount = Number(plan.total_amount || 0)
   const price = formatCnyPrice(plan.price_amount || 0)
+  const grantGroups = splitGroupList(plan.grant_groups)
   const limitReached =
     (props.purchaseLimit || 0) > 0 &&
     (props.purchaseCount || 0) >= (props.purchaseLimit || 0)
@@ -339,6 +345,18 @@ export function SubscriptionPurchaseDialog(props: Props) {
                   {t('Upgrade Group')}
                 </span>
                 <GroupBadge group={plan.upgrade_group} />
+              </div>
+            )}
+            {grantGroups.length > 0 && (
+              <div className='flex items-start justify-between gap-3'>
+                <span className='text-muted-foreground text-sm'>
+                  {t('Granted Groups')}
+                </span>
+                <div className='flex max-w-[220px] flex-wrap justify-end gap-1'>
+                  {grantGroups.map((group) => (
+                    <GroupBadge key={group} group={group} />
+                  ))}
+                </div>
               </div>
             )}
             <Separator />

@@ -48,7 +48,7 @@ func normalizeAndValidateTokenGroup(c *gin.Context, group string) (string, bool)
 	if userGroup == "" {
 		userGroup, _ = model.GetUserGroup(c.GetInt("id"), false)
 	}
-	if !service.GroupInUserUsableGroups(userGroup, group) {
+	if !service.GroupInUserUsableGroupsByUser(c.GetInt("id"), userGroup, group) {
 		common.ApiErrorMsg(c, fmt.Sprintf("无权访问 %s 分组", group))
 		return "", false
 	}

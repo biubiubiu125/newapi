@@ -3,6 +3,7 @@ package service
 import (
 	"strings"
 
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
@@ -49,13 +50,50 @@ func GetUserUsableGroups(userGroup string) map[string]string {
 	return groupsCopy
 }
 
+func GetUserUsableGroupsByUser(userId int, userGroup string) map[string]string {
+	groups := GetUserUsableGroups(userGroup)
+	grantGroups, err := model.GetActiveSubscriptionGrantGroups(userId)
+	if err != nil {
+		return groups
+	}
+	for _, group := range grantGroups {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if _, ok := ratio_setting.GetGroupRatioCopy()[group]; !ok {
+			continue
+		}
+		if _, ok := groups[group]; !ok {
+			groups[group] = setting.GetUsableGroupDescription(group)
+		}
+	}
+	return groups
+}
+
 func GroupInUserUsableGroups(userGroup, groupName string) bool {
 	_, ok := GetUserUsableGroups(strings.TrimSpace(userGroup))[strings.TrimSpace(groupName)]
 	return ok
 }
 
+func GroupInUserUsableGroupsByUser(userId int, userGroup, groupName string) bool {
+	_, ok := GetUserUsableGroupsByUser(userId, strings.TrimSpace(userGroup))[strings.TrimSpace(groupName)]
+	return ok
+}
+
 func GetUserAutoGroup(userGroup string) []string {
 	groups := GetUserUsableGroups(userGroup)
+	autoGroups := make([]string, 0)
+	for _, group := range setting.GetAutoGroups() {
+		if _, ok := groups[group]; ok {
+			autoGroups = append(autoGroups, group)
+		}
+	}
+	return autoGroups
+}
+
+func GetUserAutoGroupByUser(userId int, userGroup string) []string {
+	groups := GetUserUsableGroupsByUser(userId, userGroup)
 	autoGroups := make([]string, 0)
 	for _, group := range setting.GetAutoGroups() {
 		if _, ok := groups[group]; ok {

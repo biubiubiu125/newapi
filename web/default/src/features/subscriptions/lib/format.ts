@@ -75,3 +75,11 @@ export function formatCnyPrice(amount: number | string): string {
   }).format(numeric)
   return `\u00a5${formatted}`
 }
+
+export function splitGroupList(groups?: string | null): string[] {
+  if (!groups) return []
+  return groups
+    .split(',')
+    .map((group) => group.trim())
+    .filter(Boolean)
+}

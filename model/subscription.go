@@ -10,6 +10,8 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/cachex"
+	"github.com/QuantumNous/new-api/setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/samber/hot"
 	"github.com/shopspring/decimal"
 	"gorm.io/gorm"
@@ -175,6 +177,9 @@ type SubscriptionPlan struct {
 	// Upgrade user group after purchase (empty = no change)
 	UpgradeGroup string `json:"upgrade_group" gorm:"type:varchar(64);default:''"`
 
+	// GrantGroups unlocks one or more usage groups while this subscription is active.
+	GrantGroups string `json:"grant_groups" gorm:"type:text"`
+
 	// Downgrade user group on expiry (empty = revert to the group held before purchase)
 	DowngradeGroup string `json:"downgrade_group" gorm:"type:varchar(64);default:''"`
 
@@ -193,11 +198,17 @@ func (p *SubscriptionPlan) BeforeCreate(tx *gorm.DB) error {
 	now := common.GetTimestamp()
 	p.CreatedAt = now
 	p.UpdatedAt = now
+	p.UpgradeGroup = strings.TrimSpace(p.UpgradeGroup)
+	p.GrantGroups = normalizeSubscriptionGrantGroups(p.GrantGroups)
+	p.DowngradeGroup = strings.TrimSpace(p.DowngradeGroup)
 	return nil
 }
 
 func (p *SubscriptionPlan) BeforeUpdate(tx *gorm.DB) error {
 	p.UpdatedAt = common.GetTimestamp()
+	p.UpgradeGroup = strings.TrimSpace(p.UpgradeGroup)
+	p.GrantGroups = normalizeSubscriptionGrantGroups(p.GrantGroups)
+	p.DowngradeGroup = strings.TrimSpace(p.DowngradeGroup)
 	return nil
 }
 
@@ -234,6 +245,7 @@ type SubscriptionOrder struct {
 	PlanQuotaResetPeriodSnapshot        string  `json:"plan_quota_reset_period_snapshot" gorm:"type:varchar(16);default:''"`
 	PlanQuotaResetCustomSecondsSnapshot int64   `json:"plan_quota_reset_custom_seconds_snapshot" gorm:"type:bigint;default:0"`
 	PlanUpgradeGroupSnapshot            string  `json:"plan_upgrade_group_snapshot" gorm:"type:varchar(64);default:''"`
+	PlanGrantGroupsSnapshot             string  `json:"plan_grant_groups_snapshot" gorm:"type:text"`
 	PlanDowngradeGroupSnapshot          string  `json:"plan_downgrade_group_snapshot" gorm:"type:varchar(64);default:''"`
 	PlanAllowBalancePaySnapshot         *bool   `json:"plan_allow_balance_pay_snapshot"`
 	PlanAllowWalletOverflowSnapshot     *bool   `json:"plan_allow_wallet_overflow_snapshot"`
@@ -302,6 +314,7 @@ func (o *SubscriptionOrder) ApplyPlanSnapshotFields(plan *SubscriptionPlan, paid
 	o.PlanQuotaResetPeriodSnapshot = plan.QuotaResetPeriod
 	o.PlanQuotaResetCustomSecondsSnapshot = plan.QuotaResetCustomSeconds
 	o.PlanUpgradeGroupSnapshot = strings.TrimSpace(plan.UpgradeGroup)
+	o.PlanGrantGroupsSnapshot = common.NormalizeCommaSeparated(plan.GrantGroups)
 	o.PlanDowngradeGroupSnapshot = strings.TrimSpace(plan.DowngradeGroup)
 	if plan.AllowBalancePay != nil {
 		v := *plan.AllowBalancePay
@@ -318,7 +331,13 @@ func (o *SubscriptionOrder) ApplyPlanSnapshot(plan *SubscriptionPlan) *Subscript
 		return nil
 	}
 	snapshot := *plan
-	if o == nil || o.OrderSnapshotVersion <= 0 {
+	if o == nil {
+		return &snapshot
+	}
+	if o.OrderSnapshotVersion < subscriptionOrderSnapshotVersionPlanControls {
+		snapshot.GrantGroups = ""
+	}
+	if o.OrderSnapshotVersion <= 0 {
 		return &snapshot
 	}
 	if strings.TrimSpace(o.PlanTitleSnapshot) != "" {
@@ -348,6 +367,7 @@ func (o *SubscriptionOrder) ApplyPlanSnapshot(plan *SubscriptionPlan) *Subscript
 	}
 	snapshot.UpgradeGroup = strings.TrimSpace(o.PlanUpgradeGroupSnapshot)
 	if o.OrderSnapshotVersion >= subscriptionOrderSnapshotVersionPlanControls {
+		snapshot.GrantGroups = common.NormalizeCommaSeparated(o.PlanGrantGroupsSnapshot)
 		snapshot.DowngradeGroup = strings.TrimSpace(o.PlanDowngradeGroupSnapshot)
 		if o.PlanAllowBalancePaySnapshot != nil {
 			snapshot.AllowBalancePay = o.PlanAllowBalancePaySnapshot
@@ -378,6 +398,7 @@ type UserSubscription struct {
 	NextResetTime int64 `json:"next_reset_time" gorm:"type:bigint;default:0;index"`
 
 	UpgradeGroup  string `json:"upgrade_group" gorm:"type:varchar(64);default:''"`
+	GrantGroups   string `json:"grant_groups" gorm:"type:text"`
 	PrevUserGroup string `json:"prev_user_group" gorm:"type:varchar(64);default:''"`
 
 	// Downgrade target group on expiry (snapshot from plan; empty = revert to PrevUserGroup)
@@ -394,11 +415,17 @@ func (s *UserSubscription) BeforeCreate(tx *gorm.DB) error {
 	now := common.GetTimestamp()
 	s.CreatedAt = now
 	s.UpdatedAt = now
+	s.UpgradeGroup = strings.TrimSpace(s.UpgradeGroup)
+	s.GrantGroups = normalizeSubscriptionGrantGroups(s.GrantGroups)
+	s.DowngradeGroup = strings.TrimSpace(s.DowngradeGroup)
 	return nil
 }
 
 func (s *UserSubscription) BeforeUpdate(tx *gorm.DB) error {
 	s.UpdatedAt = common.GetTimestamp()
+	s.UpgradeGroup = strings.TrimSpace(s.UpgradeGroup)
+	s.GrantGroups = normalizeSubscriptionGrantGroups(s.GrantGroups)
+	s.DowngradeGroup = strings.TrimSpace(s.DowngradeGroup)
 	return nil
 }
 
@@ -439,6 +466,70 @@ func NormalizeResetPeriod(period string) string {
 	default:
 		return SubscriptionResetNever
 	}
+}
+
+func normalizeSubscriptionGrantGroups(groups string) string {
+	return common.NormalizeCommaSeparated(groups)
+}
+
+func userBaseUsableGroupSet(userGroup string) map[string]struct{} {
+	userGroup = strings.TrimSpace(userGroup)
+	groups := make(map[string]struct{})
+	for group := range setting.GetUserUsableGroupsCopy() {
+		group = strings.TrimSpace(group)
+		if group != "" {
+			groups[group] = struct{}{}
+		}
+	}
+	if userGroup == "" {
+		return groups
+	}
+	if specialSettings, ok := ratio_setting.GetGroupRatioSetting().GroupSpecialUsableGroup.Get(userGroup); ok {
+		for specialGroup := range specialSettings {
+			specialGroup = strings.TrimSpace(specialGroup)
+			if strings.HasPrefix(specialGroup, "-:") {
+				groupToRemove := strings.TrimSpace(strings.TrimPrefix(specialGroup, "-:"))
+				if groupToRemove != "" {
+					delete(groups, groupToRemove)
+				}
+			} else if strings.HasPrefix(specialGroup, "+:") {
+				groupToAdd := strings.TrimSpace(strings.TrimPrefix(specialGroup, "+:"))
+				if groupToAdd != "" {
+					groups[groupToAdd] = struct{}{}
+				}
+			} else if specialGroup != "" {
+				groups[specialGroup] = struct{}{}
+			}
+		}
+	}
+	groups[userGroup] = struct{}{}
+	return groups
+}
+
+func userBaseUsableGroupSetByIdTx(tx *gorm.DB, userId int) (map[string]struct{}, error) {
+	userGroup, err := getUserGroupByIdTx(tx, userId)
+	if err != nil {
+		return nil, err
+	}
+	return userBaseUsableGroupSet(userGroup), nil
+}
+
+func subscriptionGrantsGroup(grantGroups string, usingGroup string, baseGroups map[string]struct{}) bool {
+	usingGroup = strings.TrimSpace(usingGroup)
+	if usingGroup == "" || usingGroup == "auto" {
+		return false
+	}
+	groups := common.SplitCommaSeparated(grantGroups)
+	if len(groups) == 0 {
+		_, ok := baseGroups[usingGroup]
+		return ok
+	}
+	for _, group := range groups {
+		if group == usingGroup {
+			return true
+		}
+	}
+	return false
 }
 
 func calcNextResetTime(base time.Time, plan *SubscriptionPlan, endUnix int64) int64 {
@@ -615,6 +706,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 		lastReset = now.Unix()
 	}
 	upgradeGroup := strings.TrimSpace(plan.UpgradeGroup)
+	grantGroups := normalizeSubscriptionGrantGroups(plan.GrantGroups)
 	prevGroup := ""
 	if upgradeGroup != "" {
 		currentGroup, err := getUserGroupByIdTx(tx, userId)
@@ -645,6 +737,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 		LastResetTime:       lastReset,
 		NextResetTime:       nextReset,
 		UpgradeGroup:        upgradeGroup,
+		GrantGroups:         grantGroups,
 		PrevUserGroup:       prevGroup,
 		DowngradeGroup:      strings.TrimSpace(plan.DowngradeGroup),
 		AllowWalletOverflow: allowWalletOverflow,
@@ -1036,6 +1129,35 @@ func UserActiveSubscriptionsAllowWalletOverflow(userId int) (bool, error) {
 	return strictCount == 0, nil
 }
 
+// UserActiveSubscriptionsAllowWalletOverflowForGroup returns whether wallet balance may be used
+// after the quota of subscriptions granting the current group is exhausted. Subscriptions that
+// do not grant the current group must not affect this fallback decision.
+func UserActiveSubscriptionsAllowWalletOverflowForGroup(userId int, usingGroup string) (bool, error) {
+	if userId <= 0 {
+		return false, errors.New("invalid userId")
+	}
+	usingGroup = strings.TrimSpace(usingGroup)
+	now := common.GetTimestamp()
+	var subs []UserSubscription
+	if err := DB.Where("user_id = ? AND status = ? AND end_time > ?", userId, "active", now).
+		Find(&subs).Error; err != nil {
+		return false, err
+	}
+	baseGroups, err := userBaseUsableGroupSetByIdTx(DB, userId)
+	if err != nil {
+		return false, err
+	}
+	for _, sub := range subs {
+		if !subscriptionGrantsGroup(sub.GrantGroups, usingGroup, baseGroups) {
+			continue
+		}
+		if !sub.AllowWalletOverflow {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // GetAllUserSubscriptions returns all subscriptions (active and expired) for a user.
 func GetAllUserSubscriptions(userId int) ([]SubscriptionSummary, error) {
 	if userId <= 0 {
@@ -1063,6 +1185,24 @@ func buildSubscriptionSummaries(subs []UserSubscription) []SubscriptionSummary {
 		})
 	}
 	return result
+}
+
+func GetActiveSubscriptionGrantGroups(userId int) ([]string, error) {
+	if userId <= 0 {
+		return []string{}, nil
+	}
+	now := GetDBTimestamp()
+	var grantGroups []string
+	if err := DB.Model(&UserSubscription{}).
+		Where("user_id = ? AND status = ? AND end_time > ? AND grant_groups <> ''", userId, "active", now).
+		Pluck("grant_groups", &grantGroups).Error; err != nil {
+		return nil, err
+	}
+	groups := make([]string, 0, len(grantGroups))
+	for _, grantGroup := range grantGroups {
+		groups = append(groups, common.SplitCommaSeparated(grantGroup)...)
+	}
+	return common.NormalizeNameList(groups), nil
 }
 
 // AdminInvalidateUserSubscription marks a user subscription as cancelled and ends it immediately.
@@ -1317,8 +1457,8 @@ func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, pl
 	return tx.Save(sub).Error
 }
 
-// PreConsumeUserSubscription pre-consumes from any active subscription total quota.
-func PreConsumeUserSubscription(requestId string, userId int, modelName string, quotaType int, amount int64) (*SubscriptionPreConsumeResult, error) {
+// PreConsumeUserSubscription pre-consumes from an active subscription that grants the using group.
+func PreConsumeUserSubscription(requestId string, userId int, modelName string, quotaType int, amount int64, usingGroup string) (*SubscriptionPreConsumeResult, error) {
 	if userId <= 0 {
 		return nil, errors.New("invalid userId")
 	}
@@ -1328,6 +1468,7 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 	if amount <= 0 {
 		return nil, errors.New("amount must be > 0")
 	}
+	usingGroup = strings.TrimSpace(usingGroup)
 	now := GetDBTimestamp()
 
 	returnValue := &SubscriptionPreConsumeResult{}
@@ -1364,8 +1505,21 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 		if len(subs) == 0 {
 			return errors.New("no active subscription")
 		}
+		baseGroups, err := userBaseUsableGroupSetByIdTx(tx, userId)
+		if err != nil {
+			return err
+		}
+		sawGroupScopedSubscription := false
+		sawMatchingGroupSubscription := false
 		for _, candidate := range subs {
 			sub := candidate
+			if strings.TrimSpace(sub.GrantGroups) != "" {
+				sawGroupScopedSubscription = true
+			}
+			if !subscriptionGrantsGroup(sub.GrantGroups, usingGroup, baseGroups) {
+				continue
+			}
+			sawMatchingGroupSubscription = true
 			plan, err := getSubscriptionPlanByIdTx(tx, sub.PlanId)
 			if err != nil {
 				return err
@@ -1412,6 +1566,12 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 			returnValue.AmountUsedBefore = usedBefore
 			returnValue.AmountUsedAfter = sub.AmountUsed
 			return nil
+		}
+		if sawMatchingGroupSubscription {
+			return fmt.Errorf("subscription quota insufficient, need=%d", amount)
+		}
+		if sawGroupScopedSubscription {
+			return fmt.Errorf("no active subscription grants group: %s", usingGroup)
 		}
 		return fmt.Errorf("subscription quota insufficient, need=%d", amount)
 	})

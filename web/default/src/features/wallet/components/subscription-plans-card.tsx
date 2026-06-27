@@ -52,13 +52,21 @@ import {
   updateBillingPreference,
 } from '@/features/subscriptions/api'
 import { SubscriptionPurchaseDialog } from '@/features/subscriptions/components/dialogs/subscription-purchase-dialog'
-import { formatDuration, formatResetPeriod } from '@/features/subscriptions/lib'
+import {
+  formatDuration,
+  formatResetPeriod,
+  splitGroupList,
+} from '@/features/subscriptions/lib'
 import type {
   PlanRecord,
   UserSubscriptionRecord,
 } from '@/features/subscriptions/types'
 import { formatCnyPrice } from '../lib'
-import type { PaymentInitiationResult, PaymentMethod, TopupInfo } from '../types'
+import type {
+  PaymentInitiationResult,
+  PaymentMethod,
+  TopupInfo,
+} from '../types'
 
 interface SubscriptionPlansCardProps {
   topupInfo: TopupInfo | null
@@ -71,10 +79,7 @@ interface SubscriptionPlansCardProps {
 function getEpayMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
   return payMethods.filter(
     (m) =>
-      m?.type &&
-      m.type !== 'usdt' &&
-      m.type !== 'stripe' &&
-      m.type !== 'creem'
+      m?.type && m.type !== 'usdt' && m.type !== 'stripe' && m.type !== 'creem'
   )
 }
 
@@ -542,6 +547,7 @@ export function SubscriptionPlansCard({
               const limit = Number(plan.max_purchase_per_user || 0)
               const count = planPurchaseCountMap.get(plan.id) || 0
               const reached = limit > 0 && count >= limit
+              const grantGroups = splitGroupList(plan.grant_groups)
 
               const benefits = [
                 `${t('Validity Period')}: ${formatDuration(plan, t)}`,
@@ -554,6 +560,9 @@ export function SubscriptionPlansCard({
                 limit > 0 ? `${t('Purchase Limit')}: ${limit}` : null,
                 plan.upgrade_group
                   ? `${t('Upgrade Group')}: ${plan.upgrade_group}`
+                  : null,
+                grantGroups.length > 0
+                  ? `${t('Granted Groups')}: ${grantGroups.join(', ')}`
                   : null,
               ].filter(Boolean) as string[]
 

@@ -539,6 +539,7 @@ export const STATIC_I18N_KEYS = [
   'Cancel',
   'Status',
   'Upgrade Group',
+  'Granted Groups',
   'Regenerate',
   'Untitled',
   'Open in new tab',

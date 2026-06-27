@@ -59,6 +59,7 @@ import {
   sideDrawerHeaderClassName,
   sideDrawerSwitchItemClassName,
 } from '@/components/drawer-layout'
+import { MultiSelect } from '@/components/multi-select'
 import {
   createPlan,
   updatePlan,
@@ -72,6 +73,7 @@ import {
   PLAN_FORM_DEFAULTS,
   planToFormValues,
   formValuesToPlanPayload,
+  splitGroupList,
   type PlanFormValues,
 } from '../lib'
 import type { PlanRecord } from '../types'
@@ -403,6 +405,33 @@ export function SubscriptionsMutateDrawer({
                   )}
                 />
 
+                <FormField
+                  control={form.control}
+                  name='grant_groups'
+                  render={({ field }) => (
+                    <FormItem>
+                      <FormLabel>{t('Granted Groups')}</FormLabel>
+                      <FormControl>
+                        <MultiSelect
+                          options={groupOptions.map((g) => ({
+                            value: g,
+                            label: g,
+                          }))}
+                          selected={splitGroupList(field.value)}
+                          onChange={(values) =>
+                            field.onChange(values.join(','))
+                          }
+                          placeholder={t('Select groups')}
+                          maxVisibleChips={2}
+                        />
+                      </FormControl>
+                      <FormMessage />
+                    </FormItem>
+                  )}
+                />
+              </div>
+
+              <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
                 <FormField
                   control={form.control}
                   name='max_purchase_per_user'

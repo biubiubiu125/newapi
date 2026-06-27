@@ -33,7 +33,7 @@ func GetUserGroups(c *gin.Context) {
 	userGroup := ""
 	userId := c.GetInt("id")
 	userGroup, _ = model.GetUserGroup(userId, false)
-	userUsableGroups := service.GetUserUsableGroups(userGroup)
+	userUsableGroups := service.GetUserUsableGroupsByUser(userId, userGroup)
 	for groupName, _ := range ratio_setting.GetGroupRatioCopy() {
 		groupName = strings.TrimSpace(groupName)
 		if groupName == "" {

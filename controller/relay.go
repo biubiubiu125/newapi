@@ -171,13 +171,15 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 	// common.SetContextKey(c, constant.ContextKeyTokenCountMeta, meta)
 
+	preConsumed := false
 	if priceData.FreeModel {
 		logger.LogInfo(c, fmt.Sprintf("模型 %s 免费，跳过预扣费", relayInfo.OriginModelName))
-	} else {
+	} else if relayInfo.TokenGroup != "auto" {
 		newAPIError = service.PreConsumeBilling(c, priceData.QuotaToPreConsume, relayInfo)
 		if newAPIError != nil {
 			return
 		}
+		preConsumed = true
 	}
 
 	defer func() {
@@ -211,6 +213,22 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 				newAPIError = channelErr
 			}
 			break
+		}
+
+		if !priceData.FreeModel && !preConsumed {
+			priceData, err = helper.ModelPriceHelper(c, relayInfo, tokens, meta)
+			if err != nil {
+				newAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
+				break
+			}
+			newAPIError = service.PreConsumeBilling(c, priceData.QuotaToPreConsume, relayInfo)
+			if newAPIError != nil {
+				break
+			}
+			preConsumed = true
+			if relayInfo.TokenGroup == "auto" && relayInfo.UsingGroup != "" && relayInfo.UsingGroup != "auto" {
+				retryParam.TokenGroup = relayInfo.UsingGroup
+			}
 		}
 
 		addUsedChannel(c, channel.Id)

@@ -24,7 +24,7 @@ import { DataTableColumnHeader } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { TableId } from '@/components/table-id'
-import { formatDuration, formatResetPeriod } from '../lib'
+import { formatDuration, formatResetPeriod, splitGroupList } from '../lib'
 import type { PlanRecord } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
 
@@ -206,6 +206,27 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
           return <GroupBadge group={group} />
         },
         size: 100,
+      },
+      {
+        id: 'grant_groups',
+        meta: { label: t('Granted Groups'), mobileHidden: true },
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title={t('Granted Groups')} />
+        ),
+        cell: ({ row }) => {
+          const groups = splitGroupList(row.original.plan.grant_groups)
+          if (groups.length === 0) {
+            return <span className='text-muted-foreground'>{t('None')}</span>
+          }
+          return (
+            <div className='flex max-w-[220px] flex-wrap gap-1'>
+              {groups.map((group) => (
+                <GroupBadge key={group} group={group} />
+              ))}
+            </div>
+          )
+        },
+        size: 180,
       },
       {
         id: 'actions',
