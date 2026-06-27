@@ -498,7 +498,7 @@ export function RechargeFormCard({
                 href={topupLink}
                 target='_blank'
                 rel='noopener noreferrer'
-                className='inline-flex items-center gap-1 underline-offset-4 hover:underline'
+                className='text-foreground inline-flex items-center gap-1 font-bold underline-offset-4 hover:underline'
               >
                 {t('Get one here')}
                 <ExternalLink className='h-3 w-3' />
