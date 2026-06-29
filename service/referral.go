@@ -383,6 +383,21 @@ type ReferralOverview struct {
 	FailedCommissionJobCount int64   `json:"failed_commission_job_count"`
 }
 
+type ReferralRedemptionBackfillResult struct {
+	Scanned               int  `json:"scanned"`
+	Processed             int  `json:"processed"`
+	Failed                int  `json:"failed"`
+	SucceededScanned      int  `json:"succeeded_scanned"`
+	NextSucceededCursorID int  `json:"next_succeeded_cursor_id"`
+	HasMoreSucceeded      bool `json:"has_more_succeeded"`
+}
+
+type ReferralRedemptionBackfillOptions struct {
+	Limit              int
+	SucceededCursorID  int
+	SucceededScanLimit int
+}
+
 type ReferralAdminBadgeCounts struct {
 	PendingAffiliates             int64  `json:"pending_affiliates"`
 	PendingWithdrawals            int64  `json:"pending_withdrawals"`
@@ -400,16 +415,17 @@ type ReferralAdminBadgeQuery struct {
 }
 
 type ReferralSettings struct {
-	Enabled            bool    `json:"enabled"`
-	CookieTTLDays      int     `json:"cookie_ttl_days"`
-	DefaultRate        float64 `json:"default_rate"`
-	SettleFreezeDays   int     `json:"settle_freeze_days"`
-	MinWithdrawAmount  float64 `json:"min_withdraw_amount"`
-	WithdrawFee        float64 `json:"withdraw_fee"`
-	RedirectPath       string  `json:"redirect_path"`
-	RequireApproval    bool    `json:"require_approval"`
-	SettlementCurrency string  `json:"settlement_currency"`
-	SettlementFxRates  string  `json:"settlement_fx_rates"`
+	Enabled                bool    `json:"enabled"`
+	CookieTTLDays          int     `json:"cookie_ttl_days"`
+	DefaultRate            float64 `json:"default_rate"`
+	SettleFreezeDays       int     `json:"settle_freeze_days"`
+	MinWithdrawAmount      float64 `json:"min_withdraw_amount"`
+	WithdrawFee            float64 `json:"withdraw_fee"`
+	RedirectPath           string  `json:"redirect_path"`
+	RequireApproval        bool    `json:"require_approval"`
+	SettlementCurrency     string  `json:"settlement_currency"`
+	SettlementFxRates      string  `json:"settlement_fx_rates"`
+	RedemptionUSDToCNYRate float64 `json:"redemption_usd_to_cny_rate"`
 }
 
 type ReferralSnapshot struct {
@@ -490,16 +506,17 @@ func (s *ReferralService) IsEnabled() bool {
 
 func (s *ReferralService) GetSettings() ReferralSettings {
 	return ReferralSettings{
-		Enabled:            common.ReferralEnabled,
-		CookieTTLDays:      common.ReferralCookieTTLDays,
-		DefaultRate:        common.ReferralDefaultRate,
-		SettleFreezeDays:   common.ReferralSettleFreezeDays,
-		MinWithdrawAmount:  common.ReferralMinWithdrawAmount,
-		WithdrawFee:        common.ReferralWithdrawFee,
-		RedirectPath:       referralDefaultRedirect,
-		RequireApproval:    common.ReferralRequireApproval,
-		SettlementCurrency: common.NormalizeReferralSettlementCurrency(common.ReferralSettlementCurrency),
-		SettlementFxRates:  common.ReferralSettlementFxRatesToJSONString(),
+		Enabled:                common.ReferralEnabled,
+		CookieTTLDays:          common.ReferralCookieTTLDays,
+		DefaultRate:            common.ReferralDefaultRate,
+		SettleFreezeDays:       common.ReferralSettleFreezeDays,
+		MinWithdrawAmount:      common.ReferralMinWithdrawAmount,
+		WithdrawFee:            common.ReferralWithdrawFee,
+		RedirectPath:           referralDefaultRedirect,
+		RequireApproval:        common.ReferralRequireApproval,
+		SettlementCurrency:     common.NormalizeReferralSettlementCurrency(common.ReferralSettlementCurrency),
+		SettlementFxRates:      common.ReferralSettlementFxRatesToJSONString(),
+		RedemptionUSDToCNYRate: common.ReferralRedemptionUSDToCNYRate,
 	}
 }
 
@@ -518,6 +535,9 @@ func (s *ReferralService) UpdateSettings(input ReferralSettings, adminUserId int
 	}
 	if input.WithdrawFee < 0 || math.IsNaN(input.WithdrawFee) || math.IsInf(input.WithdrawFee, 0) {
 		return s.GetSettings(), errors.New("withdraw_fee must be a finite non-negative number")
+	}
+	if input.RedemptionUSDToCNYRate <= 0 || math.IsNaN(input.RedemptionUSDToCNYRate) || math.IsInf(input.RedemptionUSDToCNYRate, 0) {
+		return s.GetSettings(), errors.New("redemption_usd_to_cny_rate must be a positive finite number")
 	}
 	rawSettlementCurrency := strings.ToUpper(strings.TrimSpace(input.SettlementCurrency))
 	if rawSettlementCurrency != "" && rawSettlementCurrency != "CNY" {
@@ -554,6 +574,7 @@ func (s *ReferralService) UpdateSettings(input ReferralSettings, adminUserId int
 		{"ReferralRequireApproval", fmt.Sprintf("%t", input.RequireApproval)},
 		{"ReferralSettlementCurrency", input.SettlementCurrency},
 		{"ReferralSettlementFxRates", input.SettlementFxRates},
+		{"ReferralRedemptionUSDToCNYRate", fmt.Sprintf("%g", input.RedemptionUSDToCNYRate)},
 	}
 	for _, update := range updates {
 		if err := model.UpdateOption(update.key, update.value); err != nil {
@@ -695,6 +716,13 @@ func (s *ReferralService) ResolveAffiliateCode(codes ...string) string {
 }
 
 func (s *ReferralService) BuildOrderSnapshot(userId int, paidAmount float64, paidCurrency string) (*ReferralSnapshot, error) {
+	return s.buildOrderSnapshotTx(model.DB, userId, paidAmount, paidCurrency)
+}
+
+func (s *ReferralService) buildOrderSnapshotTx(tx *gorm.DB, userId int, paidAmount float64, paidCurrency string) (*ReferralSnapshot, error) {
+	if tx == nil {
+		tx = model.DB
+	}
 	if !s.IsEnabled() || userId <= 0 || paidAmount <= 0 {
 		return nil, nil
 	}
@@ -713,14 +741,14 @@ func (s *ReferralService) BuildOrderSnapshot(userId int, paidAmount float64, pai
 		Error:      snapshotError,
 	}
 	binding := &model.ReferralBinding{}
-	if err := model.DB.Where("invitee_user_id = ?", userId).First(binding).Error; err != nil {
+	if err := tx.Where("invitee_user_id = ?", userId).First(binding).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			return snapshot, nil
 		}
 		return nil, err
 	}
 	affiliate := &model.ReferralAffiliate{}
-	if err := model.DB.Where("id = ?", binding.AffiliateId).First(affiliate).Error; err != nil {
+	if err := tx.Where("id = ?", binding.AffiliateId).First(affiliate).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			snapshot.Error = "affiliate_not_found"
 			return snapshot, nil
@@ -1056,6 +1084,18 @@ func (s *ReferralService) resolveCommissionJobOrderView(sourceType string, trade
 	if tradeNo == "" {
 		return view
 	}
+	if sourceType == "redemption" {
+		if redemptionId, ok := redemptionCommissionIDFromTradeNo(tradeNo); ok {
+			var redemption model.Redemption
+			if err := model.DB.Unscoped().Where("id = ?", redemptionId).First(&redemption).Error; err == nil {
+				view.OrderType = "redemption"
+				view.OrderTradeNo = tradeNo
+				view.OrderExists = true
+				view.OrderLabel = strings.TrimSpace(redemption.Name)
+			}
+		}
+		return view
+	}
 
 	var order model.SubscriptionOrder
 	if err := model.DB.Where("trade_no = ?", tradeNo).First(&order).Error; err == nil {
@@ -1075,6 +1115,23 @@ func (s *ReferralService) resolveCommissionJobOrderView(sourceType string, trade
 	}
 
 	return view
+}
+
+func redemptionCommissionTradeNo(redemptionId int) string {
+	return fmt.Sprintf("redemption:%d", redemptionId)
+}
+
+func redemptionCommissionIDFromTradeNo(tradeNo string) (int, bool) {
+	raw := strings.TrimSpace(tradeNo)
+	if !strings.HasPrefix(raw, "redemption:") {
+		return 0, false
+	}
+	raw = strings.TrimPrefix(raw, "redemption:")
+	id, err := strconv.Atoi(raw)
+	if err != nil || id <= 0 {
+		return 0, false
+	}
+	return id, true
 }
 
 func sanitizeAffiliateState(item *model.ReferralAffiliate) {
@@ -2221,6 +2278,517 @@ func (s *ReferralService) ProcessSubscriptionCommission(tradeNo string) error {
 	})
 }
 
+func (s *ReferralService) ProcessRedemptionCommission(redemptionId int) error {
+	if redemptionId <= 0 {
+		return errors.New("invalid redemption id")
+	}
+	return model.DB.Transaction(func(tx *gorm.DB) error {
+		redemption := &model.Redemption{}
+		if err := tx.Unscoped().Clauses(clause.Locking{Strength: "UPDATE"}).Where("id = ?", redemptionId).First(redemption).Error; err != nil {
+			return err
+		}
+		if !redemptionRedeemedForReferral(redemption) {
+			return nil
+		}
+		if commission, complete, err := model.RedemptionReferralSucceededCommissionRecordCompleteTx(tx, redemption); err != nil {
+			return err
+		} else if complete {
+			refreshCompletedAt := !redemptionCompletedCommissionSnapshotMatches(redemption, commission)
+			applyCompletedRedemptionCommission(redemption, commission, refreshCompletedAt)
+			if err := s.saveRedemptionReferralStateTx(tx, redemption); err != nil {
+				return err
+			}
+			return s.syncRedemptionTerminalJobTx(tx, redemption, model.ReferralCommissionJobStatusSucceeded)
+		}
+		existingStatus := strings.TrimSpace(redemption.ReferralCommissionStatus)
+		isTerminalStatus := existingStatus == model.ReferralCommissionJobStatusSucceeded || existingStatus == model.ReferralCommissionJobStatusSkipped
+		if isTerminalStatus {
+			if existingStatus == model.ReferralCommissionJobStatusSucceeded {
+				commission, complete, err := model.RedemptionReferralSucceededCommissionRecordCompleteTx(tx, redemption)
+				if err != nil {
+					return err
+				}
+				if complete {
+					refreshCompletedAt := !redemptionCompletedCommissionSnapshotMatches(redemption, commission)
+					applyCompletedRedemptionCommission(redemption, commission, refreshCompletedAt)
+					if err := s.saveRedemptionReferralStateTx(tx, redemption); err != nil {
+						return err
+					}
+				} else {
+					existingStatus = model.ReferralCommissionJobStatusFailed
+					now := time.Now().Unix()
+					redemption.ReferralCommissionStatus = model.ReferralCommissionJobStatusFailed
+					redemption.ReferralCommissionError = "redemption_commission_chain_incomplete"
+					redemption.ReferralCommissionAt = now
+					if err := s.saveRedemptionReferralStateTx(tx, redemption); err != nil {
+						return err
+					}
+					if err := s.resetRedemptionCommissionJobTx(tx, redemption, redemption.ReferralCommissionError, now); err != nil {
+						return err
+					}
+					isTerminalStatus = false
+				}
+			}
+			if isTerminalStatus {
+				if redemption.ReferralCommissionAt <= 0 {
+					redemption.ReferralCommissionAt = time.Now().Unix()
+					if err := s.saveRedemptionReferralStateTx(tx, redemption); err != nil {
+						return err
+					}
+				}
+				return s.syncRedemptionTerminalJobTx(tx, redemption, existingStatus)
+			}
+		}
+		if redemption.QuotaPerUnitSnapshot <= 0 {
+			redemption.QuotaPerUnitSnapshot = common.QuotaPerUnit
+		}
+		storedBaseAmount, hasStoredBaseAmount := redemptionStoredBaseAmountCNY(redemption)
+		paidAmount, err := redemptionCommissionPaidAmountCNY(redemption)
+		if err != nil {
+			if !hasStoredBaseAmount {
+				return err
+			}
+			paidAmount = storedBaseAmount
+		} else if hasStoredBaseAmount && existingStatus != "" {
+			paidAmount = storedBaseAmount
+		}
+		var snapshot *ReferralSnapshot
+		hasReferralSnapshot := redemption.ReferralAffiliateId > 0 && redemption.ReferralRate > 0
+		needsSnapshot := !hasReferralSnapshot && (existingStatus == "" ||
+			!hasStoredBaseAmount ||
+			existingStatus == model.ReferralCommissionJobStatusFailed)
+		if needsSnapshot {
+			snapshot, err = s.buildOrderSnapshotTx(tx, redemption.UsedUserId, paidAmount, "CNY")
+			if err != nil {
+				return err
+			}
+		}
+
+		if snapshot != nil {
+			redemption.ReferralAffiliateId = snapshot.AffiliateId
+			redemption.ReferralRate = snapshot.Rate
+			redemption.ReferralBaseAmount = snapshot.BaseAmount
+			redemption.ReferralBaseCurrency = snapshot.Currency
+			redemption.ReferralCommissionStatus = snapshot.Status
+			redemption.ReferralCommissionError = snapshot.Error
+		} else if !hasStoredBaseAmount {
+			redemption.ReferralBaseAmount = paidAmount
+			redemption.ReferralBaseCurrency = "CNY"
+		}
+		referralStatus := redemption.ReferralCommissionStatus
+		if referralStatus == "" {
+			referralStatus = model.ReferralCommissionJobStatusPending
+		}
+		if referralStatus == model.ReferralCommissionJobStatusSkipped {
+			referralStatus = model.ReferralCommissionJobStatusPending
+		}
+		tradeNo := redemptionCommissionTradeNo(redemption.Id)
+		return s.processCommissionTx(tx, "redemption", tradeNo, redemption.UsedUserId, redemption.Id, "redemption", redemption.ReferralAffiliateId, redemption.ReferralRate, redemption.ReferralBaseAmount, paidAmount, "CNY", &referralStatus, &redemption.ReferralCommissionError, &redemption.ReferralCommissionAt, func() error {
+			redemption.ReferralCommissionStatus = referralStatus
+			return s.saveRedemptionReferralStateTx(tx, redemption)
+		})
+	})
+}
+
+func (s *ReferralService) BackfillRedemptionCommissionJobs(limit int) (*ReferralRedemptionBackfillResult, error) {
+	return s.BackfillRedemptionCommissionJobsWithOptions(ReferralRedemptionBackfillOptions{Limit: limit})
+}
+
+func (s *ReferralService) BackfillRedemptionCommissionJobsWithOptions(options ReferralRedemptionBackfillOptions) (*ReferralRedemptionBackfillResult, error) {
+	limit := options.Limit
+	if limit <= 0 {
+		limit = 200
+	}
+	if limit > 1000 {
+		limit = 1000
+	}
+	succeededScanLimit := options.SucceededScanLimit
+	if succeededScanLimit <= 0 {
+		succeededScanLimit = limit * 10
+	}
+	if succeededScanLimit > 5000 {
+		succeededScanLimit = 5000
+	}
+	if succeededScanLimit < 1 {
+		succeededScanLimit = 1
+	}
+	result := &ReferralRedemptionBackfillResult{}
+	var redemptions []model.Redemption
+	err := model.DB.Unscoped().
+		Where(
+			"used_user_id > 0 AND (redeemed_time > 0 OR status = ?) AND (COALESCE(referral_commission_status, '') = '' OR referral_commission_status IN ?)",
+			common.RedemptionCodeStatusUsed,
+			[]string{
+				model.ReferralCommissionJobStatusPending,
+				model.ReferralCommissionJobStatusProcessing,
+				model.ReferralCommissionJobStatusFailed,
+			},
+		).
+		Order("id asc").
+		Limit(limit).
+		Find(&redemptions).Error
+	if err != nil {
+		return result, err
+	}
+	if len(redemptions) < limit {
+		remaining := limit - len(redemptions)
+		lastID := options.SucceededCursorID
+		succeededScanRemaining := succeededScanLimit
+		for remaining > 0 && succeededScanRemaining > 0 {
+			batchLimit := limit
+			if batchLimit > succeededScanRemaining {
+				batchLimit = succeededScanRemaining
+			}
+			var succeededRedemptions []model.Redemption
+			if err := model.DB.Unscoped().
+				Where(
+					"id > ? AND used_user_id > 0 AND (redeemed_time > 0 OR status = ?) AND referral_commission_status IN ?",
+					lastID,
+					common.RedemptionCodeStatusUsed,
+					[]string{model.ReferralCommissionJobStatusSucceeded, model.ReferralCommissionJobStatusSkipped},
+				).
+				Order("id asc").
+				Limit(batchLimit).
+				Find(&succeededRedemptions).Error; err != nil {
+				return result, err
+			}
+			if len(succeededRedemptions) == 0 {
+				break
+			}
+			for i := range succeededRedemptions {
+				redemption := succeededRedemptions[i]
+				lastID = redemption.Id
+				result.SucceededScanned++
+				result.NextSucceededCursorID = lastID
+				succeededScanRemaining--
+				complete := false
+				switch strings.TrimSpace(redemption.ReferralCommissionStatus) {
+				case model.ReferralCommissionJobStatusSucceeded:
+					complete, err = model.RedemptionReferralSucceededCommissionCompleteTx(model.DB, &redemption)
+				case model.ReferralCommissionJobStatusSkipped:
+					complete, err = model.RedemptionReferralSkippedCommissionCompleteTx(model.DB, &redemption)
+				default:
+					complete = false
+				}
+				if err != nil {
+					return result, err
+				}
+				if complete {
+					continue
+				}
+				redemptions = append(redemptions, redemption)
+				remaining--
+				if remaining == 0 {
+					break
+				}
+			}
+			if remaining == 0 || len(succeededRedemptions) < batchLimit {
+				break
+			}
+		}
+		if result.NextSucceededCursorID > 0 {
+			hasMore, err := s.hasMoreSucceededRedemptionsAfter(result.NextSucceededCursorID)
+			if err != nil {
+				return result, err
+			}
+			result.HasMoreSucceeded = hasMore
+		}
+	}
+	for _, redemption := range redemptions {
+		result.Scanned++
+		if err := s.ProcessRedemptionCommission(redemption.Id); err != nil {
+			result.Failed++
+			_ = s.markRedemptionCommissionFailed(redemption.Id, redemption.ReferralAffiliateId, err)
+			continue
+		}
+		result.Processed++
+	}
+	return result, nil
+}
+
+func (s *ReferralService) hasMoreSucceededRedemptionsAfter(lastID int) (bool, error) {
+	if lastID <= 0 {
+		return false, nil
+	}
+	var next model.Redemption
+	err := model.DB.Unscoped().
+		Select("id").
+		Where(
+			"id > ? AND used_user_id > 0 AND (redeemed_time > 0 OR status = ?) AND referral_commission_status IN ?",
+			lastID,
+			common.RedemptionCodeStatusUsed,
+			[]string{model.ReferralCommissionJobStatusSucceeded, model.ReferralCommissionJobStatusSkipped},
+		).
+		Order("id asc").
+		Limit(1).
+		First(&next).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, nil
+	}
+	return err == nil, err
+}
+
+func redemptionRedeemedForReferral(redemption *model.Redemption) bool {
+	if redemption == nil {
+		return false
+	}
+	return redemption.UsedUserId > 0 && (redemption.RedeemedTime > 0 || redemption.Status == common.RedemptionCodeStatusUsed)
+}
+
+func (s *ReferralService) syncRedemptionTerminalJobTx(tx *gorm.DB, redemption *model.Redemption, terminalStatus string) error {
+	if tx == nil || redemption == nil || redemption.Id <= 0 {
+		return nil
+	}
+	terminalStatus = strings.TrimSpace(terminalStatus)
+	if terminalStatus != model.ReferralCommissionJobStatusSucceeded && terminalStatus != model.ReferralCommissionJobStatusSkipped {
+		return nil
+	}
+	if terminalStatus == model.ReferralCommissionJobStatusSkipped {
+		commission, complete, err := model.RedemptionReferralSucceededCommissionRecordCompleteTx(tx, redemption)
+		if err != nil {
+			return err
+		}
+		if complete {
+			terminalStatus = model.ReferralCommissionJobStatusSucceeded
+			applyCompletedRedemptionCommission(redemption, commission, true)
+			if err := s.saveRedemptionReferralStateTx(tx, redemption); err != nil {
+				return err
+			}
+		} else if commission != nil {
+			now := time.Now().Unix()
+			redemption.ReferralCommissionStatus = model.ReferralCommissionJobStatusFailed
+			redemption.ReferralCommissionError = "redemption_commission_chain_incomplete"
+			redemption.ReferralCommissionAt = now
+			if err := s.saveRedemptionReferralStateTx(tx, redemption); err != nil {
+				return err
+			}
+			return s.resetRedemptionCommissionJobTx(tx, redemption, redemption.ReferralCommissionError, now)
+		}
+	}
+	succeededAt := redemption.ReferralCommissionAt
+	if succeededAt <= 0 {
+		succeededAt = time.Now().Unix()
+	}
+	lastError := ""
+	if terminalStatus == model.ReferralCommissionJobStatusSkipped {
+		lastError = strings.TrimSpace(redemption.ReferralCommissionError)
+	}
+	updates := map[string]interface{}{
+		"affiliate_id": redemption.ReferralAffiliateId,
+		"status":       terminalStatus,
+		"last_error":   lastError,
+		"locked_at":    0,
+		"succeeded_at": succeededAt,
+		"failed_at":    0,
+	}
+	result := tx.Model(&model.ReferralCommissionJob{}).
+		Where("source_type = ? AND source_trade_no = ? AND status IN ?",
+			"redemption",
+			redemptionCommissionTradeNo(redemption.Id),
+			[]string{
+				"",
+				model.ReferralCommissionJobStatusPending,
+				model.ReferralCommissionJobStatusProcessing,
+				model.ReferralCommissionJobStatusFailed,
+			},
+		).
+		Updates(updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return nil
+	}
+	job := &model.ReferralCommissionJob{}
+	err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
+		Where("source_type = ? AND source_trade_no = ?", "redemption", redemptionCommissionTradeNo(redemption.Id)).
+		First(job).Error
+	if err == nil {
+		changed := false
+		jobStatus := strings.TrimSpace(job.Status)
+		statusChanged := jobStatus != terminalStatus
+		staleTerminalMetadata := terminalStatus == model.ReferralCommissionJobStatusSucceeded &&
+			(strings.TrimSpace(job.LastError) != "" ||
+				job.FailedAt != 0 ||
+				job.LockedAt != 0 ||
+				job.AffiliateId != redemption.ReferralAffiliateId)
+		if statusChanged || job.Status != terminalStatus {
+			job.Status = terminalStatus
+			changed = true
+		}
+		if job.AffiliateId != redemption.ReferralAffiliateId {
+			job.AffiliateId = redemption.ReferralAffiliateId
+			changed = true
+		}
+		if strings.TrimSpace(job.LastError) != lastError {
+			job.LastError = lastError
+			changed = true
+		}
+		if statusChanged || job.SucceededAt <= 0 || staleTerminalMetadata {
+			if job.SucceededAt != succeededAt {
+				job.SucceededAt = succeededAt
+				changed = true
+			}
+		}
+		if job.LockedAt != 0 {
+			job.LockedAt = 0
+			changed = true
+		}
+		if job.FailedAt != 0 {
+			job.FailedAt = 0
+			changed = true
+		}
+		if changed {
+			return tx.Save(job).Error
+		}
+		return nil
+	}
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return err
+	}
+	return tx.Clauses(clause.OnConflict{DoNothing: true}).Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: redemptionCommissionTradeNo(redemption.Id),
+		AffiliateId:   redemption.ReferralAffiliateId,
+		Status:        terminalStatus,
+		LastError:     lastError,
+		SucceededAt:   succeededAt,
+	}).Error
+}
+
+func applyCompletedRedemptionCommission(redemption *model.Redemption, commission *model.ReferralCommission, refreshCompletedAt bool) {
+	if redemption == nil || commission == nil {
+		return
+	}
+	redemption.ReferralCommissionStatus = model.ReferralCommissionJobStatusSucceeded
+	redemption.ReferralCommissionError = ""
+	redemption.ReferralAffiliateId = commission.AffiliateId
+	redemption.ReferralRate = commission.Rate
+	redemption.ReferralBaseAmount = commission.SettlementBaseAmount
+	if redemption.ReferralBaseAmount <= 0 {
+		redemption.ReferralBaseAmount = commission.BaseAmount
+	}
+	redemption.ReferralBaseCurrency = strings.TrimSpace(commission.SettlementCurrency)
+	if redemption.ReferralBaseCurrency == "" {
+		redemption.ReferralBaseCurrency = "CNY"
+	}
+	if refreshCompletedAt && commission.CreatedAt > 0 {
+		redemption.ReferralCommissionAt = commission.CreatedAt
+	} else if redemption.ReferralCommissionAt <= 0 {
+		if commission.CreatedAt > 0 {
+			redemption.ReferralCommissionAt = commission.CreatedAt
+		} else {
+			redemption.ReferralCommissionAt = time.Now().Unix()
+		}
+	}
+}
+
+func redemptionCompletedCommissionSnapshotMatches(redemption *model.Redemption, commission *model.ReferralCommission) bool {
+	if redemption == nil || commission == nil {
+		return false
+	}
+	baseAmount := commission.SettlementBaseAmount
+	if baseAmount <= 0 {
+		baseAmount = commission.BaseAmount
+	}
+	currency := strings.TrimSpace(commission.SettlementCurrency)
+	if currency == "" {
+		currency = "CNY"
+	}
+	return redemption.ReferralAffiliateId == commission.AffiliateId &&
+		roundMoney(redemption.ReferralRate) == roundMoney(commission.Rate) &&
+		roundMoney(redemption.ReferralBaseAmount) == roundMoney(baseAmount) &&
+		strings.EqualFold(strings.TrimSpace(redemption.ReferralBaseCurrency), currency) &&
+		strings.TrimSpace(redemption.ReferralCommissionError) == ""
+}
+
+func (s *ReferralService) resetRedemptionCommissionJobTx(tx *gorm.DB, redemption *model.Redemption, reason string, failedAt int64) error {
+	if tx == nil || redemption == nil || redemption.Id <= 0 {
+		return nil
+	}
+	if failedAt <= 0 {
+		failedAt = time.Now().Unix()
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "redemption_commission_chain_incomplete"
+	}
+	updates := map[string]interface{}{
+		"affiliate_id": redemption.ReferralAffiliateId,
+		"status":       model.ReferralCommissionJobStatusFailed,
+		"last_error":   reason,
+		"locked_at":    0,
+		"succeeded_at": 0,
+		"failed_at":    failedAt,
+	}
+	result := tx.Model(&model.ReferralCommissionJob{}).
+		Where("source_type = ? AND source_trade_no = ?", "redemption", redemptionCommissionTradeNo(redemption.Id)).
+		Updates(updates)
+	if result.Error != nil || result.RowsAffected > 0 {
+		return result.Error
+	}
+	return tx.Clauses(clause.OnConflict{
+		Columns: []clause.Column{{Name: "source_type"}, {Name: "source_trade_no"}},
+		DoUpdates: clause.Assignments(map[string]interface{}{
+			"affiliate_id": redemption.ReferralAffiliateId,
+			"status":       model.ReferralCommissionJobStatusFailed,
+			"last_error":   reason,
+			"locked_at":    0,
+			"succeeded_at": 0,
+			"failed_at":    failedAt,
+		}),
+	}).Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: redemptionCommissionTradeNo(redemption.Id),
+		AffiliateId:   redemption.ReferralAffiliateId,
+		Status:        model.ReferralCommissionJobStatusFailed,
+		LastError:     reason,
+		LockedAt:      0,
+		SucceededAt:   0,
+		FailedAt:      failedAt,
+	}).Error
+}
+
+func (s *ReferralService) markRedemptionCommissionFailed(redemptionId int, affiliateId int, reason error) error {
+	if redemptionId <= 0 {
+		return nil
+	}
+	message := strings.TrimSpace(fmt.Sprint(reason))
+	if message == "" {
+		message = "referral commission processing failed"
+	}
+	tradeNo := redemptionCommissionTradeNo(redemptionId)
+	if err := s.MarkCommissionJobFailed("redemption", tradeNo, affiliateId, reason); err != nil {
+		return err
+	}
+	return model.DB.Unscoped().Model(&model.Redemption{}).
+		Where("id = ? AND COALESCE(referral_commission_status, '') NOT IN ?", redemptionId, []string{
+			model.ReferralCommissionJobStatusSucceeded,
+			model.ReferralCommissionJobStatusSkipped,
+		}).
+		Updates(map[string]interface{}{
+			"referral_commission_status": model.ReferralCommissionJobStatusFailed,
+			"referral_commission_error":  message,
+			"referral_commission_at":     time.Now().Unix(),
+		}).Error
+}
+
+func (s *ReferralService) saveRedemptionReferralStateTx(tx *gorm.DB, redemption *model.Redemption) error {
+	if tx == nil || redemption == nil || redemption.Id <= 0 {
+		return nil
+	}
+	return tx.Unscoped().Model(&model.Redemption{}).Where("id = ?", redemption.Id).Updates(map[string]interface{}{
+		"quota_per_unit_snapshot":    redemption.QuotaPerUnitSnapshot,
+		"referral_affiliate_id":      redemption.ReferralAffiliateId,
+		"referral_rate":              redemption.ReferralRate,
+		"referral_base_amount":       redemption.ReferralBaseAmount,
+		"referral_base_currency":     redemption.ReferralBaseCurrency,
+		"referral_commission_status": redemption.ReferralCommissionStatus,
+		"referral_commission_error":  redemption.ReferralCommissionError,
+		"referral_commission_at":     redemption.ReferralCommissionAt,
+	}).Error
+}
+
 func (s *ReferralService) syncSubscriptionTopUpReferralStateTx(tx *gorm.DB, order *model.SubscriptionOrder) error {
 	if tx == nil || order == nil || strings.TrimSpace(order.TradeNo) == "" {
 		return nil
@@ -2257,6 +2825,12 @@ func (s *ReferralService) RetryCommissionJob(sourceType string, tradeNo string) 
 		return s.ProcessTopUpCommission(tradeNo)
 	case "subscription":
 		return s.ProcessSubscriptionCommission(tradeNo)
+	case "redemption":
+		redemptionId, ok := redemptionCommissionIDFromTradeNo(tradeNo)
+		if !ok {
+			return errors.New("invalid redemption trade_no")
+		}
+		return s.ProcessRedemptionCommission(redemptionId)
 	default:
 		return errors.New("unsupported source_type")
 	}
@@ -2278,9 +2852,12 @@ func (s *ReferralService) canonicalCommissionSourceType(sourceType string, trade
 	sourceType = strings.ToLower(strings.TrimSpace(sourceType))
 	tradeNo = strings.TrimSpace(tradeNo)
 	switch sourceType {
-	case "topup", "subscription":
+	case "topup", "subscription", "redemption":
 	default:
 		return "", errors.New("unsupported source_type")
+	}
+	if sourceType == "redemption" {
+		return "redemption", nil
 	}
 	if s.subscriptionOrderExists(tradeNo) {
 		return "subscription", nil
@@ -2414,7 +2991,7 @@ func (s *ReferralService) processCommissionTx(
 	save func() error,
 ) error {
 	now := time.Now().Unix()
-	if *statusPtr == model.ReferralCommissionJobStatusSucceeded || *statusPtr == model.ReferralCommissionJobStatusSkipped {
+	if *statusPtr == model.ReferralCommissionJobStatusSkipped {
 		return nil
 	}
 
@@ -2447,8 +3024,74 @@ func (s *ReferralService) processCommissionTx(
 			return err
 		}
 	}
-	if job.Status == model.ReferralCommissionJobStatusSucceeded || job.Status == model.ReferralCommissionJobStatusSkipped {
-		return nil
+	if job.Status == model.ReferralCommissionJobStatusSucceeded {
+		complete, err := s.commissionAccrualCompleteTx(tx, sourceType, tradeNo, userId, sourceOrderId, affiliateId)
+		if err != nil {
+			return err
+		}
+		if complete {
+			*statusPtr = model.ReferralCommissionJobStatusSucceeded
+			*errorPtr = ""
+			if *atPtr <= 0 {
+				*atPtr = now
+			}
+			return save()
+		}
+		message := "referral_commission_chain_incomplete"
+		job.Status = model.ReferralCommissionJobStatusFailed
+		job.LastError = message
+		job.LockedAt = 0
+		job.SucceededAt = 0
+		job.FailedAt = now
+		*statusPtr = model.ReferralCommissionJobStatusFailed
+		*errorPtr = message
+		*atPtr = now
+		if err := tx.Save(job).Error; err != nil {
+			return err
+		}
+		return save()
+	}
+	if job.Status == model.ReferralCommissionJobStatusSkipped {
+		*statusPtr = model.ReferralCommissionJobStatusSkipped
+		jobChanged := false
+		sourceError := strings.TrimSpace(*errorPtr)
+		jobError := strings.TrimSpace(job.LastError)
+		if jobError != "" {
+			*errorPtr = jobError
+		} else if sourceError != "" {
+			job.LastError = skippedCommissionJobError(sourceType, sourceError)
+			jobChanged = strings.TrimSpace(job.LastError) != ""
+		} else {
+			*errorPtr = ""
+		}
+		if *atPtr <= 0 {
+			if job.SucceededAt > 0 {
+				*atPtr = job.SucceededAt
+			} else {
+				*atPtr = now
+			}
+		}
+		if job.SucceededAt <= 0 {
+			job.SucceededAt = *atPtr
+			jobChanged = true
+		}
+		if job.LockedAt != 0 {
+			job.LockedAt = 0
+			jobChanged = true
+		}
+		if job.FailedAt != 0 {
+			job.FailedAt = 0
+			jobChanged = true
+		}
+		if jobChanged {
+			if err := tx.Save(job).Error; err != nil {
+				return err
+			}
+		}
+		return save()
+	}
+	if affiliateId > 0 && job.AffiliateId != affiliateId {
+		job.AffiliateId = affiliateId
 	}
 	if *statusPtr == model.ReferralCommissionJobStatusFailed {
 		*statusPtr = model.ReferralCommissionJobStatusPending
@@ -2456,10 +3099,14 @@ func (s *ReferralService) processCommissionTx(
 	}
 	if affiliateId <= 0 || rate <= 0 {
 		job.Status = model.ReferralCommissionJobStatusSkipped
-		job.LastError = ""
+		job.LockedAt = 0
 		job.SucceededAt = now
+		job.FailedAt = 0
 		*statusPtr = "skipped"
-		*errorPtr = "missing_referral_snapshot"
+		if strings.TrimSpace(*errorPtr) == "" {
+			*errorPtr = "missing_referral_snapshot"
+		}
+		job.LastError = skippedCommissionJobError(sourceType, *errorPtr)
 		*atPtr = now
 		if err := tx.Save(job).Error; err != nil {
 			return err
@@ -2480,6 +3127,7 @@ func (s *ReferralService) processCommissionTx(
 	if err != nil {
 		job.Status = model.ReferralCommissionJobStatusFailed
 		job.LastError = err.Error()
+		job.LockedAt = 0
 		job.FailedAt = now
 		*statusPtr = "failed"
 		*errorPtr = err.Error()
@@ -2492,10 +3140,12 @@ func (s *ReferralService) processCommissionTx(
 	commissionAmount := calculateCommissionAmount(settlementBaseAmount, rate)
 	if commissionAmount <= 0 {
 		job.Status = model.ReferralCommissionJobStatusSkipped
-		job.LastError = ""
+		job.LockedAt = 0
 		job.SucceededAt = now
+		job.FailedAt = 0
 		*statusPtr = "skipped"
 		*errorPtr = "zero_commission_amount"
+		job.LastError = skippedCommissionJobError(sourceType, *errorPtr)
 		*atPtr = now
 		if err := tx.Save(job).Error; err != nil {
 			return err
@@ -2525,6 +3175,7 @@ func (s *ReferralService) processCommissionTx(
 	if err := tx.Where("id = ?", affiliateId).First(affiliate).Error; err != nil {
 		job.Status = model.ReferralCommissionJobStatusFailed
 		job.LastError = err.Error()
+		job.LockedAt = 0
 		job.FailedAt = now
 		*statusPtr = "failed"
 		*errorPtr = err.Error()
@@ -2534,10 +3185,12 @@ func (s *ReferralService) processCommissionTx(
 	}
 	if affiliate.Status != model.ReferralAffiliateStatusApproved || !affiliate.SettlementEnabled {
 		job.Status = model.ReferralCommissionJobStatusSkipped
-		job.LastError = ""
+		job.LockedAt = 0
 		job.SucceededAt = now
+		job.FailedAt = 0
 		*statusPtr = "skipped"
 		*errorPtr = "affiliate_not_eligible"
+		job.LastError = skippedCommissionJobError(sourceType, *errorPtr)
 		*atPtr = now
 		if err := tx.Save(job).Error; err != nil {
 			return err
@@ -2549,6 +3202,7 @@ func (s *ReferralService) processCommissionTx(
 	if res.Error != nil {
 		job.Status = model.ReferralCommissionJobStatusFailed
 		job.LastError = res.Error.Error()
+		job.LockedAt = 0
 		job.FailedAt = now
 		*statusPtr = "failed"
 		*errorPtr = res.Error.Error()
@@ -2557,9 +3211,30 @@ func (s *ReferralService) processCommissionTx(
 		return save()
 	}
 	if res.RowsAffected == 0 {
+		complete, err := s.commissionAccrualCompleteTx(tx, sourceType, tradeNo, userId, sourceOrderId, affiliateId)
+		if err != nil {
+			return err
+		}
+		if !complete {
+			message := "referral_commission_chain_incomplete"
+			job.Status = model.ReferralCommissionJobStatusFailed
+			job.LastError = message
+			job.LockedAt = 0
+			job.SucceededAt = 0
+			job.FailedAt = now
+			*statusPtr = model.ReferralCommissionJobStatusFailed
+			*errorPtr = message
+			*atPtr = now
+			if err := tx.Save(job).Error; err != nil {
+				return err
+			}
+			return save()
+		}
 		job.Status = model.ReferralCommissionJobStatusSucceeded
 		job.LastError = ""
+		job.LockedAt = 0
 		job.SucceededAt = now
+		job.FailedAt = 0
 		*statusPtr = "succeeded"
 		*errorPtr = ""
 		*atPtr = now
@@ -2598,7 +3273,9 @@ func (s *ReferralService) processCommissionTx(
 	}
 	job.Status = model.ReferralCommissionJobStatusSucceeded
 	job.LastError = ""
+	job.LockedAt = 0
 	job.SucceededAt = now
+	job.FailedAt = 0
 	*statusPtr = "succeeded"
 	*errorPtr = ""
 	*atPtr = now
@@ -2606,6 +3283,55 @@ func (s *ReferralService) processCommissionTx(
 		return err
 	}
 	return save()
+}
+
+func (s *ReferralService) commissionAccrualCompleteTx(tx *gorm.DB, sourceType string, tradeNo string, userId int, sourceOrderId int, affiliateId int) (bool, error) {
+	if tx == nil {
+		return false, errors.New("invalid db transaction")
+	}
+	sourceType = strings.ToLower(strings.TrimSpace(sourceType))
+	tradeNo = strings.TrimSpace(tradeNo)
+	if sourceType == "" || tradeNo == "" {
+		return false, nil
+	}
+	commission := &model.ReferralCommission{}
+	if err := tx.Where("source_type = ? AND source_trade_no = ?", sourceType, tradeNo).First(commission).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return false, nil
+		}
+		return false, err
+	}
+	if commission.Id <= 0 || commission.AffiliateId <= 0 || commission.AffiliateUserId <= 0 || commission.CommissionAmount <= 0 {
+		return false, nil
+	}
+	if affiliateId > 0 && commission.AffiliateId != affiliateId {
+		return false, nil
+	}
+	if userId > 0 && commission.InviteeUserId != userId {
+		return false, nil
+	}
+	if sourceOrderId > 0 && commission.SourceOrderId != sourceOrderId {
+		return false, nil
+	}
+	ledgerComplete, err := model.ReferralCommissionAccrueLedgerCompleteTx(tx, commission, sourceType, tradeNo)
+	if err != nil {
+		return false, err
+	}
+	if !ledgerComplete {
+		return false, nil
+	}
+	accountComplete, err := model.ReferralAccountLedgerBalanceCompleteTx(tx, commission.AffiliateId, commission.AffiliateUserId)
+	if err != nil {
+		return false, err
+	}
+	return accountComplete, nil
+}
+
+func skippedCommissionJobError(sourceType string, message string) string {
+	if strings.EqualFold(strings.TrimSpace(sourceType), "redemption") {
+		return strings.TrimSpace(message)
+	}
+	return ""
 }
 
 func (s *ReferralService) SignAssetURL(publicPath string) string {
@@ -2919,6 +3645,41 @@ func resolveReferralSettlementAmount(paidAmount float64, paidCurrency string) (f
 		return 0, settlementCurrency, 0, errReferralFxRateMissing
 	}
 	return roundMoney(paidAmount * rate), settlementCurrency, roundMoney(rate), nil
+}
+
+func redemptionCommissionPaidAmountCNY(redemption *model.Redemption) (float64, error) {
+	if redemption == nil || redemption.Quota <= 0 {
+		return 0, errors.New("redemption quota must be positive")
+	}
+	quotaPerUnit := redemption.QuotaPerUnitSnapshot
+	if quotaPerUnit <= 0 {
+		quotaPerUnit = common.QuotaPerUnit
+	}
+	if quotaPerUnit <= 0 || math.IsNaN(quotaPerUnit) || math.IsInf(quotaPerUnit, 0) {
+		return 0, errors.New("quota per unit must be a positive finite number")
+	}
+	rate := common.ReferralRedemptionUSDToCNYRate
+	if rate <= 0 || math.IsNaN(rate) || math.IsInf(rate, 0) {
+		return 0, errors.New("redemption_usd_to_cny_rate must be a positive finite number")
+	}
+	amount := decimal.NewFromInt(int64(redemption.Quota)).
+		Div(decimal.NewFromFloat(quotaPerUnit)).
+		Mul(decimal.NewFromFloat(rate)).
+		Round(8)
+	return amount.InexactFloat64(), nil
+}
+
+func redemptionStoredBaseAmountCNY(redemption *model.Redemption) (float64, bool) {
+	if redemption == nil {
+		return 0, false
+	}
+	if redemption.ReferralBaseAmount <= 0 || math.IsNaN(redemption.ReferralBaseAmount) || math.IsInf(redemption.ReferralBaseAmount, 0) {
+		return 0, false
+	}
+	if !strings.EqualFold(strings.TrimSpace(redemption.ReferralBaseCurrency), "CNY") {
+		return 0, false
+	}
+	return roundMoney(redemption.ReferralBaseAmount), true
 }
 
 func referralSettlementFxRate(currency string) (float64, bool) {

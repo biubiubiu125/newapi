@@ -125,6 +125,8 @@ function orderTypeLabel(value: string, t: (key: string) => string): string {
       return t('Top-up')
     case 'subscription':
       return t('Subscription')
+    case 'redemption':
+      return t('Redemption Code')
     default:
       return value || '-'
   }

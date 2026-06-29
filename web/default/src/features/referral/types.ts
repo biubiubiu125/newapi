@@ -206,6 +206,15 @@ export interface RetryReferralCommissionJobResponse {
   trade_no: string
 }
 
+export interface ReferralRedemptionBackfillResult {
+  scanned: number
+  processed: number
+  failed: number
+  succeeded_scanned: number
+  next_succeeded_cursor_id: number
+  has_more_succeeded: boolean
+}
+
 export interface ReferralLedger {
   id: number
   affiliate_id: number
@@ -270,4 +279,5 @@ export interface ReferralSettings {
   require_approval: boolean
   settlement_currency: string
   settlement_fx_rates: string
+  redemption_usd_to_cny_rate: number
 }

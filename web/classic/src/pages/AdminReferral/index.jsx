@@ -229,6 +229,8 @@ function getSourceTypeLabel(type) {
       return '充值订单';
     case 'subscription':
       return '订阅订单';
+    case 'redemption':
+      return '兑换码';
     default:
       return type || '-';
   }
@@ -257,6 +259,8 @@ export default function AdminReferral() {
   const [auditKeyword, setAuditKeyword] = useState('');
   const [commissionStatus, setCommissionStatus] = useState('');
   const [withdrawalStatus, setWithdrawalStatus] = useState('');
+  const [redemptionBackfillCursorId, setRedemptionBackfillCursorId] =
+    useState(0);
 
   const [commissionPage, setCommissionPage] = useState(1);
   const [commissionPageSize, setCommissionPageSize] = useState(20);
@@ -498,6 +502,44 @@ export default function AdminReferral() {
       }
       if (section === 'ledgers') {
         await loadLedgers();
+      }
+    } catch (error) {
+      showError(error);
+    }
+  }
+
+  async function backfillRedemptionCommissions() {
+    try {
+      const res = await API.post(
+        '/api/user/admin/referral/commission-jobs/backfill-redemptions',
+        {
+          limit: 200,
+          succeeded_cursor_id: redemptionBackfillCursorId || undefined,
+          succeeded_scan_limit: 1000,
+        },
+      );
+      if (!res.data.success) {
+        showError(res.data.message);
+        return;
+      }
+      const result = res.data.data || {};
+      const nextCursor = result.has_more_succeeded
+        ? result.next_succeeded_cursor_id || 0
+        : 0;
+      setRedemptionBackfillCursorId(nextCursor);
+      showSuccess(
+        `兑换码返佣补偿完成：扫描 ${result.scanned || 0}，处理 ${
+          result.processed || 0
+        }，失败 ${result.failed || 0}，已成功记录扫描 ${
+          result.succeeded_scanned || 0
+        }${result.has_more_succeeded ? '，可再次点击继续' : ''}`,
+      );
+      await loadOverview();
+      if (section === 'commissions') {
+        await loadCommissions();
+      }
+      if (section === 'audit') {
+        await loadAuditLogs();
       }
     } catch (error) {
       showError(error);
@@ -1115,6 +1157,24 @@ export default function AdminReferral() {
                     addonAfter='%'
                   />
                   <Input
+                    value={String(settings.redemption_usd_to_cny_rate ?? '')}
+                    onChange={(value) =>
+                      setSettings((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              redemption_usd_to_cny_rate: parseRequiredNumber(
+                                value,
+                                prev.redemption_usd_to_cny_rate,
+                              ),
+                            }
+                          : prev,
+                      )
+                    }
+                    addonBefore='兑换码额度汇率'
+                    addonAfter='CNY/USD'
+                  />
+                  <Input
                     value={String(settings.cookie_ttl_days ?? '')}
                     onChange={(value) =>
                       setSettings((prev) =>
@@ -1380,6 +1440,9 @@ export default function AdminReferral() {
                 placeholder='搜索审计动作 / 原因'
               />
               <Button onClick={() => void loadAuditLogs()}>刷新列表</Button>
+              <Button onClick={() => void backfillRedemptionCommissions()}>
+                补偿兑换码返佣
+              </Button>
               <Table
                 rowKey='id'
                 columns={auditColumns}

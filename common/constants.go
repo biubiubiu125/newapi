@@ -31,6 +31,7 @@ var ReferralAssetSigningSecret = ""
 var ReferralTestMode = false
 var ReferralSettlementCurrency = "CNY"
 var ReferralSettlementFxRates = map[string]float64{"CNY": 1}
+var ReferralRedemptionUSDToCNYRate = 1.0
 
 var themeValue atomic.Value // stores string; safe for concurrent read/write
 

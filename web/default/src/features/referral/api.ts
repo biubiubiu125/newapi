@@ -24,6 +24,7 @@ import type {
   ReferralBinding,
   ReferralCommission,
   ReferralCommissionJob,
+  ReferralRedemptionBackfillResult,
   ReferralLedger,
   ReferralOverview,
   ReferralProfile,
@@ -198,6 +199,18 @@ export async function retryAdminReferralCommissionJob(payload: {
 }): Promise<ApiResponse<{ source_type: string; trade_no: string }>> {
   const res = await api.post(
     '/api/user/admin/referral/commission-jobs/retry',
+    payload
+  )
+  return res.data
+}
+
+export async function backfillAdminReferralRedemptionJobs(payload: {
+  limit?: number
+  succeeded_cursor_id?: number
+  succeeded_scan_limit?: number
+}): Promise<ApiResponse<ReferralRedemptionBackfillResult>> {
+  const res = await api.post(
+    '/api/user/admin/referral/commission-jobs/backfill-redemptions',
     payload
   )
   return res.data

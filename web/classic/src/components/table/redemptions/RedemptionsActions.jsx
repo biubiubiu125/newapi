@@ -25,6 +25,7 @@ const RedemptionsActions = ({
   setEditingRedemption,
   setShowEdit,
   batchCopyRedemptions,
+  batchDeleteSelectedRedemptions,
   batchDeleteRedemptions,
   t,
 }) => {
@@ -54,6 +55,17 @@ const RedemptionsActions = ({
         size='small'
       >
         {t('复制所选兑换码到剪贴板')}
+      </Button>
+
+      <Button
+        type='danger'
+        className='flex-1 md:flex-initial'
+        onClick={batchDeleteSelectedRedemptions}
+        disabled={selectedKeys.length === 0}
+        size='small'
+      >
+        {t('删除所选兑换码')}
+        {selectedKeys.length > 0 ? ` (${selectedKeys.length})` : ''}
       </Button>
 
       <Button

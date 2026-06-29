@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 	"unicode/utf8"
@@ -74,6 +75,10 @@ func AddRedemption(c *gin.Context) {
 	}
 	if utf8.RuneCountInString(redemption.Name) == 0 || utf8.RuneCountInString(redemption.Name) > 20 {
 		common.ApiErrorI18n(c, i18n.MsgRedemptionNameLength)
+		return
+	}
+	if redemption.Quota <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgRedemptionQuotaPositive)
 		return
 	}
 	if redemption.Count <= 0 {
@@ -151,7 +156,15 @@ func UpdateRedemption(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if cleanRedemption.Status == common.RedemptionCodeStatusUsed || cleanRedemption.UsedUserId > 0 || cleanRedemption.RedeemedTime > 0 {
+		common.ApiError(c, errors.New("已使用的兑换码不能修改"))
+		return
+	}
 	if statusOnly == "" {
+		if redemption.Quota <= 0 {
+			common.ApiErrorI18n(c, i18n.MsgRedemptionQuotaPositive)
+			return
+		}
 		if valid, msg := validateExpiredTime(c, redemption.ExpiredTime); !valid {
 			c.JSON(http.StatusOK, gin.H{"success": false, "message": msg})
 			return
@@ -159,6 +172,7 @@ func UpdateRedemption(c *gin.Context) {
 		// If you add more fields, please also update redemption.Update()
 		cleanRedemption.Name = redemption.Name
 		cleanRedemption.Quota = redemption.Quota
+		cleanRedemption.QuotaPerUnitSnapshot = common.QuotaPerUnit
 		cleanRedemption.ExpiredTime = redemption.ExpiredTime
 	}
 	if statusOnly != "" {

@@ -253,6 +253,59 @@ export const useRedemptionsData = () => {
     await copyText(keys);
   };
 
+  // Batch delete selected redemption codes
+  const batchDeleteSelectedRedemptions = async () => {
+    if (selectedKeys.length === 0) {
+      showError(t('请选择至少一个兑换码！'));
+      return;
+    }
+
+    Modal.confirm({
+      title: t('确定删除所选兑换码？'),
+      content: t(
+        '将删除已选中的 {{count}} 个兑换码，未完成返佣闭环的兑换码会被保留。',
+        { count: selectedKeys.length },
+      ),
+      onOk: async () => {
+        setLoading(true);
+        let deletedCount = 0;
+        const failedMessages = [];
+
+        for (const redemption of selectedKeys) {
+          try {
+            const res = await API.delete(`/api/redemption/${redemption.id}/`);
+            const { success, message } = res.data;
+            if (success) {
+              deletedCount += 1;
+            } else {
+              failedMessages.push(message || `#${redemption.id}`);
+            }
+          } catch (error) {
+            failedMessages.push(error.message || `#${redemption.id}`);
+          }
+        }
+
+        if (deletedCount > 0) {
+          showSuccess(t('已删除 {{count}} 个兑换码', { count: deletedCount }));
+          setSelectedKeys([]);
+          const nextPage =
+            deletedCount >= redemptions.length && activePage > 1
+              ? activePage - 1
+              : activePage;
+          await refresh(nextPage);
+        }
+        if (failedMessages.length > 0) {
+          showError(
+            `${t('有 {{count}} 个兑换码删除失败', {
+              count: failedMessages.length,
+            })}: ${failedMessages[0]}`,
+          );
+        }
+        setLoading(false);
+      },
+    });
+  };
+
   // Batch delete redemption codes (clear invalid)
   const batchDeleteRedemptions = async () => {
     Modal.confirm({
@@ -353,6 +406,7 @@ export const useRedemptionsData = () => {
 
     // Batch operations
     batchCopyRedemptions,
+    batchDeleteSelectedRedemptions,
     batchDeleteRedemptions,
 
     // Translation function

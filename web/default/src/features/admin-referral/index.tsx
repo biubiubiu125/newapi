@@ -42,6 +42,7 @@ import {
   adjustReferralAffiliate,
   approveReferralAffiliate,
   approveReferralWithdrawal,
+  backfillAdminReferralRedemptionJobs,
   disableReferralAffiliate,
   freezeReferralSettlement,
   freezeReferralWithdrawal,
@@ -384,6 +385,8 @@ function commissionJobSourceLabel(
       return t('Top-up')
     case 'subscription':
       return t('Subscription')
+    case 'redemption':
+      return t('Redemption Code')
     default:
       return value || '-'
   }
@@ -449,6 +452,8 @@ function orderTypeLabel(value: string, t: (key: string) => string): string {
       return t('Top-up')
     case 'subscription':
       return t('Subscription')
+    case 'redemption':
+      return t('Redemption Code')
     default:
       return value || '-'
   }
@@ -636,6 +641,8 @@ export function AdminReferral() {
   const [withdrawalStatus, setWithdrawalStatus] = useState('')
   const [ledgerKeyword, setLedgerKeyword] = useState('')
   const [auditKeyword, setAuditKeyword] = useState('')
+  const [redemptionBackfillCursorId, setRedemptionBackfillCursorId] =
+    useState(0)
   const [pendingDecision, setPendingDecision] = useState<PendingDecision>(null)
   const [affiliateAction, setAffiliateAction] = useState<AffiliateAction>(null)
   const [withdrawalAction, setWithdrawalAction] =
@@ -769,6 +776,47 @@ export function AdminReferral() {
     },
     [t]
   )
+
+  const handleBackfillRedemptionJobs = useCallback(async () => {
+    const res = await backfillAdminReferralRedemptionJobs({
+      limit: 200,
+      succeeded_cursor_id: redemptionBackfillCursorId || undefined,
+      succeeded_scan_limit: 1000,
+    })
+    if (!res.success) {
+      toast.error(res.message || t('Backfill failed'))
+      return
+    }
+    const result = res.data
+    const nextCursor = result?.has_more_succeeded
+      ? result.next_succeeded_cursor_id || 0
+      : 0
+    setRedemptionBackfillCursorId(nextCursor)
+    toast.success(
+      `${t('Redemption commission backfill finished')}: ${t('Scanned')} ${
+        result?.scanned || 0
+      }, ${t('Processed')} ${result?.processed || 0}, ${t('Failed')} ${
+        result?.failed || 0
+      }, ${t('Succeeded scanned')} ${result?.succeeded_scanned || 0}${
+        result?.has_more_succeeded ? `, ${t('Click again to continue')}` : ''
+      }`
+    )
+    const [jobsRes, overviewRes, auditRes] = await Promise.all([
+      listAdminReferralCommissionJobs({
+        p: 1,
+        page_size: 50,
+      }),
+      getAdminReferralOverview(),
+      listAdminReferralAuditLogs({
+        p: 1,
+        page_size: 50,
+        keyword: auditKeyword.trim() || undefined,
+      }),
+    ])
+    setCommissionJobs(jobsRes.data?.items || [])
+    setOverview((overviewRes.data as ReferralOverview | null) || null)
+    setAuditLogItems(auditRes.data?.items || [])
+  }, [auditKeyword, redemptionBackfillCursorId, t])
 
   const auditTimelineRows = useMemo<AuditTimelineItem[]>(() => {
     const rows: AuditTimelineItem[] = []
@@ -1455,6 +1503,26 @@ export function AdminReferral() {
                       )
                     }
                   />
+                  <LabeledInput
+                    label={t('Redemption Code Exchange Rate')}
+                    description={t(
+                      'How many CNY one USD quota from a redemption code counts as for referral commission.'
+                    )}
+                    value={String(settings.redemption_usd_to_cny_rate)}
+                    onChange={(value) =>
+                      setSettings((prev) =>
+                        prev
+                          ? {
+                              ...prev,
+                              redemption_usd_to_cny_rate: parseRequiredNumber(
+                                value,
+                                prev.redemption_usd_to_cny_rate
+                              ),
+                            }
+                          : prev
+                      )
+                    }
+                  />
                 </CardContent>
               </Card>
             ) : activeSection === 'pending' ? (
@@ -1763,6 +1831,14 @@ export function AdminReferral() {
                   keywordPlaceholder={t('Search action or reason')}
                   onKeywordChange={setAuditKeyword}
                   onSearch={() => void loadAuditLogs()}
+                  action={
+                    <Button
+                      variant='outline'
+                      onClick={() => void handleBackfillRedemptionJobs()}
+                    >
+                      {t('Backfill Redemption Commissions')}
+                    </Button>
+                  }
                 />
                 <SimpleAdminTable
                   headers={[
@@ -2225,6 +2301,7 @@ function Toolbar(props: {
   keywordPlaceholder: string
   onKeywordChange: (value: string) => void
   onSearch: () => void
+  action?: ReactNode
 }) {
   const { t } = useTranslation()
   return (
@@ -2236,6 +2313,7 @@ function Toolbar(props: {
           placeholder={props.keywordPlaceholder}
         />
         <Button onClick={props.onSearch}>{t('Search')}</Button>
+        {props.action}
       </CardContent>
     </Card>
   )

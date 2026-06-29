@@ -60,6 +60,7 @@ const (
 // Redemption related messages
 const (
 	MsgRedemptionNameLength        = "redemption.name_length"
+	MsgRedemptionQuotaPositive     = "redemption.quota_positive"
 	MsgRedemptionCountPositive     = "redemption.count_positive"
 	MsgRedemptionCountMax          = "redemption.count_max"
 	MsgRedemptionCreateFailed      = "redemption.create_failed"

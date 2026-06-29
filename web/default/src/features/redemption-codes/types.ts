@@ -29,11 +29,19 @@ export const redemptionSchema = z.object({
   key: z.string(),
   status: z.number(), // 1: enabled, 2: disabled, 3: used
   quota: z.number(),
+  quota_per_unit_snapshot: z.number().optional(),
   created_time: z.number(),
   redeemed_time: z.number(),
   expired_time: z.number(), // 0 for never expires
   used_user_id: z.number(),
   used_username: z.string().optional(),
+  referral_affiliate_id: z.number().optional(),
+  referral_rate: z.number().optional(),
+  referral_base_amount: z.number().optional(),
+  referral_base_currency: z.string().optional(),
+  referral_commission_status: z.string().optional(),
+  referral_commission_error: z.string().optional(),
+  referral_commission_at: z.number().optional(),
 })
 
 export type Redemption = z.infer<typeof redemptionSchema>
