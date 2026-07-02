@@ -34,10 +34,12 @@ export function WalletNoticeAlert(props: WalletNoticeAlertProps) {
 
   return (
     <Alert className='border-amber-200 bg-amber-50/80 text-amber-950 dark:border-amber-900/60 dark:bg-amber-950/30 dark:text-amber-100'>
-      <Info className='h-4 w-4 text-amber-600 dark:text-amber-300' />
       <AlertDescription className='flex flex-col gap-3 text-sm sm:flex-row sm:items-center sm:justify-between'>
-        <span className='min-w-0 flex-1 whitespace-pre-line break-words leading-relaxed [overflow-wrap:anywhere]'>
-          {notice}
+        <span className='flex min-w-0 flex-1 items-center gap-2'>
+          <Info className='h-4 w-4 shrink-0 text-amber-600 dark:text-amber-300' />
+          <span className='min-w-0 whitespace-pre-line break-words leading-relaxed [overflow-wrap:anywhere]'>
+            {notice}
+          </span>
         </span>
         {props.topupLink ? (
           <Button
