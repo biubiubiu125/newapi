@@ -13,6 +13,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 )
 
@@ -145,6 +146,29 @@ func ClearDiskCache(c *gin.Context) {
 	// 10 分钟是一个安全的阈值，确保正在进行的请求不会被误删
 	err := common.CleanupOldDiskCacheFiles(10 * time.Minute)
 	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	bodyCandidates, err := common.GetExpiredImageTaskBodyCachePaths(common.GetImageTaskBodyCacheRetention())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	resultCandidates, err := common.GetExpiredImageTaskResultCachePaths(common.GetImageTaskResultCacheRetention())
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	bodyKeepPaths, resultKeepPaths, err := model.GetOpenImageTaskCachePathsForCandidates(bodyCandidates, resultCandidates, 1000)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := common.CleanupExpiredImageTaskBodyCacheFiles(bodyKeepPaths); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := common.CleanupExpiredImageTaskResultCacheFilesWithKeep(resultKeepPaths); err != nil {
 		common.ApiError(c, err)
 		return
 	}

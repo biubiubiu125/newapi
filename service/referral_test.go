@@ -38,6 +38,8 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 	previousRequireApproval := common.ReferralRequireApproval
 	previousSettlementCurrency := common.ReferralSettlementCurrency
 	previousSettlementFxRates := common.ReferralSettlementFxRates
+	previousRedemptionUSDToCNYRate := common.ReferralRedemptionUSDToCNYRate
+	previousQuotaPerUnit := common.QuotaPerUnit
 	previousUSDExchangeRate := operation_setting.USDExchangeRate
 
 	common.UsingSQLite = true
@@ -52,6 +54,8 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 	common.ReferralWithdrawFee = 0
 	common.ReferralSettlementCurrency = "CNY"
 	common.ReferralSettlementFxRates = map[string]float64{"CNY": 1}
+	common.ReferralRedemptionUSDToCNYRate = 1
+	common.QuotaPerUnit = 500000
 	operation_setting.USDExchangeRate = 7.3
 	common.CryptoSecret = "test-secret"
 	common.SessionSecret = "test-session-secret"
@@ -66,7 +70,9 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 		&model.User{},
 		&model.UserLoginIdentifier{},
 		&model.Option{},
+		&model.Log{},
 		&model.TopUp{},
+		&model.Redemption{},
 		&model.SubscriptionPlan{},
 		&model.SubscriptionOrder{},
 		&model.UserSubscription{},
@@ -105,6 +111,8 @@ func setupReferralServiceTestDB(t *testing.T) *gorm.DB {
 		common.ReferralRequireApproval = previousRequireApproval
 		common.ReferralSettlementCurrency = previousSettlementCurrency
 		common.ReferralSettlementFxRates = previousSettlementFxRates
+		common.ReferralRedemptionUSDToCNYRate = previousRedemptionUSDToCNYRate
+		common.QuotaPerUnit = previousQuotaPerUnit
 		operation_setting.USDExchangeRate = previousUSDExchangeRate
 		sqlDB, err := db.DB()
 		if err == nil {
@@ -219,6 +227,1866 @@ func TestProcessTopUpCommissionIsIdempotent(t *testing.T) {
 	require.Equal(t, 2.0, commission.SettlementFxRate)
 	require.Equal(t, 20.0, commission.SettlementBaseAmount)
 	require.Equal(t, 4.0, commission.CommissionAmount)
+}
+
+func TestProcessRedemptionCommissionUsesConfiguredExchangeRate(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	common.ReferralDefaultRate = 10
+	common.ReferralRedemptionUSDToCNYRate = 2
+
+	invitee := &model.User{Username: "redemption-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "redemption-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "REDEEM01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralBinding{
+		InviteeUserId: invitee.Id,
+		InviterUserId: affiliateUser.Id,
+		AffiliateId:   affiliate.Id,
+		BindSource:    "code",
+		BindCode:      affiliate.InviteCode,
+		BoundAt:       time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      affiliateUser.Id,
+	}).Error)
+
+	redemption := &model.Redemption{
+		Key:          "redemption-test-key-0000000001",
+		Name:         "paid redemption code",
+		Quota:        int(common.QuotaPerUnit * 100),
+		Status:       common.RedemptionCodeStatusUsed,
+		UsedUserId:   invitee.Id,
+		RedeemedTime: time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(redemption).Error)
+	tradeNo := redemptionCommissionTradeNo(redemption.Id)
+
+	for i := 0; i < 3; i++ {
+		require.NoError(t, service.ProcessRedemptionCommission(redemption.Id))
+	}
+	require.NoError(t, service.RetryCommissionJob("redemption", tradeNo))
+
+	var commissions int64
+	require.NoError(t, db.Model(&model.ReferralCommission{}).Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).Count(&commissions).Error)
+	require.EqualValues(t, 1, commissions)
+
+	commission := &model.ReferralCommission{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(commission).Error)
+	require.Equal(t, redemption.Id, commission.SourceOrderId)
+	require.Equal(t, "redemption", commission.OrderType)
+	require.Equal(t, 200.0, commission.PaidAmount)
+	require.Equal(t, "CNY", commission.PaidCurrency)
+	require.Equal(t, 200.0, commission.SettlementBaseAmount)
+	require.Equal(t, 1.0, commission.SettlementFxRate)
+	require.Equal(t, 10.0, commission.Rate)
+	require.Equal(t, 20.0, commission.CommissionAmount)
+
+	account := &model.ReferralCommissionAccount{}
+	require.NoError(t, db.Where("affiliate_id = ?", affiliate.Id).First(account).Error)
+	require.Equal(t, 20.0, account.PendingAmount)
+
+	var ledgers int64
+	require.NoError(t, db.Model(&model.ReferralCommissionLedger{}).Where("ref_type = ? AND ref_id = ?", "redemption", tradeNo).Count(&ledgers).Error)
+	require.EqualValues(t, 1, ledgers)
+
+	reloadedRedemption := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", redemption.Id).First(reloadedRedemption).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, reloadedRedemption.ReferralCommissionStatus)
+	require.Equal(t, affiliate.Id, reloadedRedemption.ReferralAffiliateId)
+	require.Equal(t, 10.0, reloadedRedemption.ReferralRate)
+}
+
+func TestBackfillRedemptionCommissionJobsProcessesUsedCodesWithoutJobs(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	common.ReferralDefaultRate = 10
+	common.ReferralRedemptionUSDToCNYRate = 2
+
+	invitee := &model.User{Username: "backfill-redemption-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "backfill-redemption-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "BACKFILL01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralBinding{
+		InviteeUserId: invitee.Id,
+		InviterUserId: affiliateUser.Id,
+		AffiliateId:   affiliate.Id,
+		BindSource:    "code",
+		BindCode:      affiliate.InviteCode,
+		BoundAt:       time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      affiliateUser.Id,
+	}).Error)
+
+	redemption := &model.Redemption{
+		Key:          "backfill-redemption-key-0001",
+		Name:         "historical used code",
+		Quota:        int(common.QuotaPerUnit * 100),
+		Status:       common.RedemptionCodeStatusUsed,
+		UsedUserId:   invitee.Id,
+		RedeemedTime: time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(redemption).Error)
+	disabledRedemption := &model.Redemption{
+		Key:                      "backfill-disabled-redeemed-key-0001",
+		Name:                     "historical disabled redeemed code",
+		Quota:                    int(common.QuotaPerUnit * 100),
+		Status:                   common.RedemptionCodeStatusDisabled,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             time.Now().Unix(),
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusFailed,
+		ReferralCommissionError:  "temporary error",
+	}
+	require.NoError(t, db.Create(disabledRedemption).Error)
+	succeededIncompleteRedemption := &model.Redemption{
+		Key:                      "backfill-redemption-succeeded-0001",
+		Name:                     "already processed code",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             time.Now().Unix(),
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusSucceeded,
+	}
+	require.NoError(t, db.Create(succeededIncompleteRedemption).Error)
+
+	result, err := service.BackfillRedemptionCommissionJobs(10)
+	require.NoError(t, err)
+	require.Equal(t, 3, result.Scanned)
+	require.Equal(t, 3, result.Processed)
+	require.Equal(t, 0, result.Failed)
+
+	tradeNo := redemptionCommissionTradeNo(redemption.Id)
+	var jobs int64
+	require.NoError(t, db.Model(&model.ReferralCommissionJob{}).Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).Count(&jobs).Error)
+	require.EqualValues(t, 1, jobs)
+
+	commission := &model.ReferralCommission{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(commission).Error)
+	require.Equal(t, 200.0, commission.PaidAmount)
+	require.Equal(t, 20.0, commission.CommissionAmount)
+	disabledTradeNo := redemptionCommissionTradeNo(disabledRedemption.Id)
+	disabledCommission := &model.ReferralCommission{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", disabledTradeNo).First(disabledCommission).Error)
+	require.Equal(t, 200.0, disabledCommission.PaidAmount)
+	require.Equal(t, 20.0, disabledCommission.CommissionAmount)
+
+	account := &model.ReferralCommissionAccount{}
+	require.NoError(t, db.Where("affiliate_id = ?", affiliate.Id).First(account).Error)
+	require.InDelta(t, 40.2, account.PendingAmount, 0.000001)
+
+	reloadedRedemption := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", redemption.Id).First(reloadedRedemption).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, reloadedRedemption.ReferralCommissionStatus)
+	reloadedDisabledRedemption := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", disabledRedemption.Id).First(reloadedDisabledRedemption).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, reloadedDisabledRedemption.ReferralCommissionStatus)
+	succeededIncompleteTradeNo := redemptionCommissionTradeNo(succeededIncompleteRedemption.Id)
+	succeededIncompleteCommission := &model.ReferralCommission{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", succeededIncompleteTradeNo).First(succeededIncompleteCommission).Error)
+	require.Equal(t, 2.0, succeededIncompleteCommission.PaidAmount)
+	require.Equal(t, 0.2, succeededIncompleteCommission.CommissionAmount)
+	reloadedSucceededIncomplete := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", succeededIncompleteRedemption.Id).First(reloadedSucceededIncomplete).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, reloadedSucceededIncomplete.ReferralCommissionStatus)
+}
+
+func TestBackfillRedemptionCommissionJobsUsesSucceededCursor(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	common.QuotaPerUnit = 100
+	common.ReferralDefaultRate = 10
+	common.ReferralRedemptionUSDToCNYRate = 2
+
+	invitee := &model.User{Username: "backfill-cursor-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "backfill-cursor-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "BFCURSOR01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralBinding{
+		InviteeUserId: invitee.Id,
+		InviterUserId: affiliateUser.Id,
+		AffiliateId:   affiliate.Id,
+		BindSource:    "code",
+		BindCode:      affiliate.InviteCode,
+		BoundAt:       time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:   affiliate.Id,
+		UserId:        affiliateUser.Id,
+		PendingAmount: 0.4,
+	}).Error)
+
+	createCompleteSucceededRedemption := func(key string) *model.Redemption {
+		redemption := &model.Redemption{
+			Key:                      key,
+			Name:                     key,
+			Quota:                    int(common.QuotaPerUnit),
+			Status:                   common.RedemptionCodeStatusUsed,
+			UsedUserId:               invitee.Id,
+			RedeemedTime:             time.Now().Unix(),
+			ReferralAffiliateId:      affiliate.Id,
+			ReferralRate:             10,
+			ReferralBaseAmount:       2,
+			ReferralBaseCurrency:     "CNY",
+			ReferralCommissionStatus: model.ReferralCommissionJobStatusSucceeded,
+		}
+		require.NoError(t, db.Create(redemption).Error)
+		tradeNo := redemptionCommissionTradeNo(redemption.Id)
+		commission := &model.ReferralCommission{
+			AffiliateId:          affiliate.Id,
+			AffiliateUserId:      affiliateUser.Id,
+			InviteeUserId:        invitee.Id,
+			SourceType:           "redemption",
+			SourceOrderId:        redemption.Id,
+			SourceTradeNo:        tradeNo,
+			OrderType:            "redemption",
+			BaseAmount:           2,
+			PaidAmount:           2,
+			PaidCurrency:         "CNY",
+			SettlementCurrency:   "CNY",
+			SettlementFxRate:     1,
+			SettlementBaseAmount: 2,
+			Rate:                 10,
+			CommissionAmount:     0.2,
+			Status:               model.ReferralCommissionStatusPending,
+		}
+		require.NoError(t, db.Create(commission).Error)
+		require.NoError(t, db.Create(&model.ReferralCommissionLedger{
+			AffiliateId:        affiliate.Id,
+			UserId:             affiliateUser.Id,
+			CommissionId:       commission.Id,
+			Type:               "commission_accrue",
+			RefType:            "redemption",
+			RefId:              tradeNo,
+			ExternalRefId:      fmt.Sprintf("accrue:redemption:%s", tradeNo),
+			SettlementCurrency: "CNY",
+			DeltaPending:       0.2,
+			Operator:           "system",
+			CreatedAt:          time.Now().Unix(),
+		}).Error)
+		return redemption
+	}
+
+	createCompleteSucceededRedemption("backfill-cursor-complete-0001")
+	secondComplete := createCompleteSucceededRedemption("backfill-cursor-complete-0002")
+	incompleteRedemption := &model.Redemption{
+		Key:                      "backfill-cursor-incomplete-0001",
+		Name:                     "backfill cursor incomplete",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             time.Now().Unix(),
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusSucceeded,
+	}
+	require.NoError(t, db.Create(incompleteRedemption).Error)
+
+	result, err := service.BackfillRedemptionCommissionJobsWithOptions(ReferralRedemptionBackfillOptions{
+		Limit:              10,
+		SucceededScanLimit: 2,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 0, result.Scanned)
+	require.Equal(t, 0, result.Processed)
+	require.Equal(t, 2, result.SucceededScanned)
+	require.Equal(t, secondComplete.Id, result.NextSucceededCursorID)
+	require.True(t, result.HasMoreSucceeded)
+
+	var incompleteCommissionCount int64
+	require.NoError(t, db.Model(&model.ReferralCommission{}).
+		Where("source_type = ? AND source_trade_no = ?", "redemption", redemptionCommissionTradeNo(incompleteRedemption.Id)).
+		Count(&incompleteCommissionCount).Error)
+	require.Zero(t, incompleteCommissionCount)
+
+	result, err = service.BackfillRedemptionCommissionJobsWithOptions(ReferralRedemptionBackfillOptions{
+		Limit:              10,
+		SucceededCursorID:  result.NextSucceededCursorID,
+		SucceededScanLimit: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Scanned)
+	require.Equal(t, 1, result.Processed)
+	require.Equal(t, 1, result.SucceededScanned)
+	require.False(t, result.HasMoreSucceeded)
+
+	require.NoError(t, db.Model(&model.ReferralCommission{}).
+		Where("source_type = ? AND source_trade_no = ?", "redemption", redemptionCommissionTradeNo(incompleteRedemption.Id)).
+		Count(&incompleteCommissionCount).Error)
+	require.EqualValues(t, 1, incompleteCommissionCount)
+}
+
+func TestProcessRedemptionCommissionUsesQuotaPerUnitSnapshot(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	common.ReferralDefaultRate = 10
+	common.ReferralRedemptionUSDToCNYRate = 2
+	common.QuotaPerUnit = 500
+
+	invitee := &model.User{Username: "redemption-snapshot-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "redemption-snapshot-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "SNAP0001",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralBinding{
+		InviteeUserId: invitee.Id,
+		InviterUserId: affiliateUser.Id,
+		AffiliateId:   affiliate.Id,
+		BindSource:    "code",
+		BindCode:      affiliate.InviteCode,
+		BoundAt:       time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      affiliateUser.Id,
+	}).Error)
+
+	redemption := &model.Redemption{
+		Key:                  "redemption-snapshot-key-000001",
+		Name:                 "snapshot redemption code",
+		Quota:                1000,
+		QuotaPerUnitSnapshot: 100,
+		Status:               common.RedemptionCodeStatusUsed,
+		UsedUserId:           invitee.Id,
+		RedeemedTime:         time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(redemption).Error)
+	require.NoError(t, service.ProcessRedemptionCommission(redemption.Id))
+
+	commission := &model.ReferralCommission{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", redemptionCommissionTradeNo(redemption.Id)).First(commission).Error)
+	require.Equal(t, 20.0, commission.PaidAmount)
+	require.Equal(t, 20.0, commission.SettlementBaseAmount)
+	require.Equal(t, 2.0, commission.CommissionAmount)
+}
+
+func TestProcessRedemptionCommissionUsesRedeemTimeSnapshot(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	common.QuotaPerUnit = 100
+	common.ReferralDefaultRate = 10
+	common.ReferralRedemptionUSDToCNYRate = 2
+
+	invitee := &model.User{Username: "redemption-redeem-snapshot-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "redemption-redeem-snapshot-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "SNAPRD01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralBinding{
+		InviteeUserId: invitee.Id,
+		InviterUserId: affiliateUser.Id,
+		AffiliateId:   affiliate.Id,
+		BindSource:    "code",
+		BindCode:      affiliate.InviteCode,
+		BoundAt:       time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      affiliateUser.Id,
+	}).Error)
+	redemption := &model.Redemption{
+		Key:         "redemption-redeem-snapshot-key",
+		Name:        "redeem snapshot code",
+		Quota:       1000,
+		Status:      common.RedemptionCodeStatusEnabled,
+		CreatedTime: time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(redemption).Error)
+
+	redeemResult, err := model.Redeem(redemption.Key, invitee.Id)
+	require.NoError(t, err)
+	common.ReferralDefaultRate = 80
+	common.ReferralRedemptionUSDToCNYRate = 99
+
+	require.NoError(t, service.ProcessRedemptionCommission(redeemResult.RedemptionId))
+
+	commission := &model.ReferralCommission{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", redemptionCommissionTradeNo(redeemResult.RedemptionId)).First(commission).Error)
+	require.Equal(t, 20.0, commission.PaidAmount)
+	require.Equal(t, 20.0, commission.SettlementBaseAmount)
+	require.Equal(t, 10.0, commission.Rate)
+	require.Equal(t, 2.0, commission.CommissionAmount)
+}
+
+func TestProcessRedemptionCommissionRetryUsesRedeemTimeReferralSnapshot(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	common.QuotaPerUnit = 100
+	common.ReferralDefaultRate = 10
+	common.ReferralRedemptionUSDToCNYRate = 0
+
+	invitee := &model.User{Username: "redemption-failed-snapshot-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "redemption-failed-snapshot-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "FAILSNAP",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralBinding{
+		InviteeUserId: invitee.Id,
+		InviterUserId: affiliateUser.Id,
+		AffiliateId:   affiliate.Id,
+		BindSource:    "code",
+		BindCode:      affiliate.InviteCode,
+		BoundAt:       time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      affiliateUser.Id,
+	}).Error)
+	redemption := &model.Redemption{
+		Key:         "redemption-failed-snapshot-key",
+		Name:        "failed snapshot code",
+		Quota:       1000,
+		Status:      common.RedemptionCodeStatusEnabled,
+		CreatedTime: time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(redemption).Error)
+
+	redeemResult, err := model.Redeem(redemption.Key, invitee.Id)
+	require.NoError(t, err)
+	tradeNo := redemptionCommissionTradeNo(redeemResult.RedemptionId)
+
+	reloadedRedemption := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", redeemResult.RedemptionId).First(reloadedRedemption).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusFailed, reloadedRedemption.ReferralCommissionStatus)
+	require.Equal(t, affiliate.Id, reloadedRedemption.ReferralAffiliateId)
+	require.Equal(t, 10.0, reloadedRedemption.ReferralRate)
+	require.Zero(t, reloadedRedemption.ReferralBaseAmount)
+	require.Contains(t, reloadedRedemption.ReferralCommissionError, "redemption_usd_to_cny_rate")
+
+	job := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusFailed, job.Status)
+	require.Equal(t, affiliate.Id, job.AffiliateId)
+
+	common.ReferralDefaultRate = 80
+	common.ReferralRedemptionUSDToCNYRate = 2
+
+	require.NoError(t, service.RetryCommissionJob("redemption", tradeNo))
+
+	commission := &model.ReferralCommission{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(commission).Error)
+	require.Equal(t, 20.0, commission.PaidAmount)
+	require.Equal(t, 20.0, commission.SettlementBaseAmount)
+	require.Equal(t, 10.0, commission.Rate)
+	require.Equal(t, 2.0, commission.CommissionAmount)
+
+	require.NoError(t, db.Where("id = ?", redeemResult.RedemptionId).First(reloadedRedemption).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, reloadedRedemption.ReferralCommissionStatus)
+	require.Equal(t, affiliate.Id, reloadedRedemption.ReferralAffiliateId)
+	require.Equal(t, 10.0, reloadedRedemption.ReferralRate)
+	require.Equal(t, 20.0, reloadedRedemption.ReferralBaseAmount)
+	require.Empty(t, reloadedRedemption.ReferralCommissionError)
+}
+
+func TestProcessRedemptionCommissionCreatesSkippedJobWithoutBinding(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "redemption-no-binding", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	redemption := &model.Redemption{
+		Key:                      "redemption-no-binding-key-001",
+		Name:                     "no binding redemption code",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             time.Now().Unix(),
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusPending,
+	}
+	require.NoError(t, db.Create(redemption).Error)
+	tradeNo := redemptionCommissionTradeNo(redemption.Id)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: tradeNo,
+		Status:        model.ReferralCommissionJobStatusPending,
+	}).Error)
+
+	require.NoError(t, service.ProcessRedemptionCommission(redemption.Id))
+
+	job := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSkipped, job.Status)
+	require.Equal(t, "no_binding", job.LastError)
+
+	reloadedRedemption := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", redemption.Id).First(reloadedRedemption).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSkipped, reloadedRedemption.ReferralCommissionStatus)
+	require.Equal(t, "no_binding", reloadedRedemption.ReferralCommissionError)
+
+	var commissions int64
+	require.NoError(t, db.Model(&model.ReferralCommission{}).Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).Count(&commissions).Error)
+	require.Zero(t, commissions)
+}
+
+func TestProcessRedemptionCommissionRebuildsFailedMissingSnapshot(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	common.ReferralDefaultRate = 10
+	common.ReferralRedemptionUSDToCNYRate = 2
+	common.QuotaPerUnit = 100
+
+	invitee := &model.User{Username: "redemption-retry-snapshot-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "redemption-retry-snapshot-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "RTRYFAIL",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralBinding{
+		InviteeUserId: invitee.Id,
+		InviterUserId: affiliateUser.Id,
+		AffiliateId:   affiliate.Id,
+		BindSource:    "code",
+		BindCode:      affiliate.InviteCode,
+		BoundAt:       time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      affiliateUser.Id,
+	}).Error)
+
+	redemption := &model.Redemption{
+		Key:                      "redemption-retry-missing-snapshot",
+		Name:                     "retry missing snapshot",
+		Quota:                    1000,
+		QuotaPerUnitSnapshot:     100,
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             time.Now().Unix(),
+		ReferralBaseAmount:       20,
+		ReferralBaseCurrency:     "CNY",
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusFailed,
+		ReferralCommissionError:  "temporary binding lookup error",
+		ReferralCommissionAt:     time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(redemption).Error)
+	tradeNo := redemptionCommissionTradeNo(redemption.Id)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: tradeNo,
+		Status:        model.ReferralCommissionJobStatusFailed,
+		LastError:     "temporary binding lookup error",
+		FailedAt:      time.Now().Unix(),
+	}).Error)
+
+	require.NoError(t, service.RetryCommissionJob("redemption", tradeNo))
+
+	commission := &model.ReferralCommission{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(commission).Error)
+	require.Equal(t, affiliate.Id, commission.AffiliateId)
+	require.Equal(t, 20.0, commission.PaidAmount)
+	require.Equal(t, 2.0, commission.CommissionAmount)
+
+	reloadedRedemption := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", redemption.Id).First(reloadedRedemption).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, reloadedRedemption.ReferralCommissionStatus)
+	require.Equal(t, affiliate.Id, reloadedRedemption.ReferralAffiliateId)
+	require.Equal(t, 10.0, reloadedRedemption.ReferralRate)
+	require.Empty(t, reloadedRedemption.ReferralCommissionError)
+}
+
+func TestProcessRedemptionCommissionBackfillsTerminalAt(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	common.ReferralDefaultRate = 10
+	common.QuotaPerUnit = 100
+	common.ReferralRedemptionUSDToCNYRate = 1
+
+	invitee := &model.User{Username: "redemption-terminal-backfill-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "redemption-terminal-backfill-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "TERMAT01",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralBinding{
+		InviteeUserId: invitee.Id,
+		InviterUserId: affiliateUser.Id,
+		AffiliateId:   affiliate.Id,
+		BindSource:    "code",
+		BindCode:      affiliate.InviteCode,
+		BoundAt:       time.Now().Unix(),
+	}).Error)
+
+	redemption := &model.Redemption{
+		Key:                      "redemption-terminal-at-backfill",
+		Name:                     "terminal at backfill",
+		Quota:                    100,
+		QuotaPerUnitSnapshot:     100,
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             time.Now().Unix(),
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusSkipped,
+		ReferralCommissionError:  "no_binding",
+	}
+	require.NoError(t, db.Create(redemption).Error)
+
+	require.NoError(t, service.ProcessRedemptionCommission(redemption.Id))
+
+	reloadedRedemption := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", redemption.Id).First(reloadedRedemption).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSkipped, reloadedRedemption.ReferralCommissionStatus)
+	require.NotZero(t, reloadedRedemption.ReferralCommissionAt)
+	require.Zero(t, reloadedRedemption.ReferralAffiliateId)
+	require.Zero(t, reloadedRedemption.ReferralRate)
+	require.Zero(t, reloadedRedemption.ReferralBaseAmount)
+	require.Empty(t, reloadedRedemption.ReferralBaseCurrency)
+}
+
+func TestProcessRedemptionCommissionCreatesMissingSkippedTerminalJob(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "redemption-skipped-missing-job-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+
+	now := time.Now().Unix()
+	redemption := &model.Redemption{
+		Key:                      "redemption-skipped-missing-job",
+		Name:                     "skipped missing job",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             now,
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusSkipped,
+		ReferralCommissionError:  "no_binding",
+		ReferralCommissionAt:     now,
+	}
+	require.NoError(t, db.Create(redemption).Error)
+	tradeNo := redemptionCommissionTradeNo(redemption.Id)
+
+	require.NoError(t, service.ProcessRedemptionCommission(redemption.Id))
+
+	job := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSkipped, job.Status)
+	require.Equal(t, "no_binding", job.LastError)
+	require.Equal(t, now, job.SucceededAt)
+	require.NoError(t, model.DeleteRedemptionById(redemption.Id))
+}
+
+func TestBackfillRedemptionCommissionJobsProcessesSkippedTerminalWithoutJob(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "redemption-backfill-skipped-missing-job", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+
+	now := time.Now().Unix()
+	redemption := &model.Redemption{
+		Key:                      "redemption-backfill-skipped-missing-job",
+		Name:                     "backfill skipped missing job",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             now,
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusSkipped,
+		ReferralCommissionError:  "no_binding",
+		ReferralCommissionAt:     now,
+	}
+	require.NoError(t, db.Create(redemption).Error)
+	tradeNo := redemptionCommissionTradeNo(redemption.Id)
+
+	result, err := service.BackfillRedemptionCommissionJobsWithOptions(ReferralRedemptionBackfillOptions{
+		Limit:              10,
+		SucceededScanLimit: 10,
+	})
+	require.NoError(t, err)
+	require.Equal(t, 1, result.Scanned)
+	require.Equal(t, 1, result.Processed)
+	require.Equal(t, 1, result.SucceededScanned)
+
+	job := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSkipped, job.Status)
+	require.Equal(t, "no_binding", job.LastError)
+	require.Equal(t, now, job.SucceededAt)
+	require.NoError(t, model.DeleteRedemptionById(redemption.Id))
+}
+
+func TestRetryCommissionJobSyncsTerminalRedemptionJob(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "redemption-terminal-job-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "redemption-terminal-job-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "TERMJOB1",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+
+	now := time.Now().Unix()
+	succeededAt := now - 60
+	succeededRedemption := &model.Redemption{
+		Key:                      "redemption-terminal-succeeded-job",
+		Name:                     "terminal succeeded stale job",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             now,
+		ReferralAffiliateId:      affiliate.Id,
+		ReferralRate:             10,
+		ReferralBaseAmount:       1,
+		ReferralBaseCurrency:     "CNY",
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusSucceeded,
+		ReferralCommissionAt:     succeededAt,
+	}
+	require.NoError(t, db.Create(succeededRedemption).Error)
+	succeededTradeNo := redemptionCommissionTradeNo(succeededRedemption.Id)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:   affiliate.Id,
+		UserId:        affiliateUser.Id,
+		PendingAmount: 0.1,
+	}).Error)
+	succeededCommission := &model.ReferralCommission{
+		AffiliateId:          affiliate.Id,
+		AffiliateUserId:      affiliateUser.Id,
+		InviteeUserId:        invitee.Id,
+		SourceType:           "redemption",
+		SourceOrderId:        succeededRedemption.Id,
+		SourceTradeNo:        succeededTradeNo,
+		OrderType:            "redemption",
+		BaseAmount:           1,
+		PaidAmount:           1,
+		PaidCurrency:         "CNY",
+		SettlementCurrency:   "CNY",
+		SettlementFxRate:     1,
+		SettlementBaseAmount: 1,
+		Rate:                 10,
+		CommissionAmount:     0.1,
+		Status:               model.ReferralCommissionStatusPending,
+		CreatedAt:            now - 60,
+	}
+	require.NoError(t, db.Create(succeededCommission).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionLedger{
+		AffiliateId:        affiliate.Id,
+		UserId:             affiliateUser.Id,
+		CommissionId:       succeededCommission.Id,
+		Type:               "commission_accrue",
+		RefType:            "redemption",
+		RefId:              succeededTradeNo,
+		ExternalRefId:      fmt.Sprintf("accrue:redemption:%s", succeededTradeNo),
+		SettlementCurrency: "CNY",
+		DeltaPending:       0.1,
+		Operator:           "system",
+		CreatedAt:          succeededAt,
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: succeededTradeNo,
+		Status:        model.ReferralCommissionJobStatusFailed,
+		LastError:     "stale failure",
+		FailedAt:      now,
+		LockedAt:      now,
+	}).Error)
+
+	require.NoError(t, service.RetryCommissionJob("redemption", succeededTradeNo))
+
+	succeededJob := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", succeededTradeNo).First(succeededJob).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, succeededJob.Status)
+	require.Equal(t, affiliate.Id, succeededJob.AffiliateId)
+	require.Empty(t, succeededJob.LastError)
+	require.Equal(t, succeededAt, succeededJob.SucceededAt)
+	require.Zero(t, succeededJob.FailedAt)
+	require.Zero(t, succeededJob.LockedAt)
+	require.NoError(t, model.DeleteRedemptionById(succeededRedemption.Id))
+
+	skippedRedemption := &model.Redemption{
+		Key:                      "redemption-terminal-skipped-job",
+		Name:                     "terminal skipped stale job",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               902,
+		RedeemedTime:             now,
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusSkipped,
+		ReferralCommissionError:  "no_binding",
+	}
+	require.NoError(t, db.Create(skippedRedemption).Error)
+	skippedTradeNo := redemptionCommissionTradeNo(skippedRedemption.Id)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: skippedTradeNo,
+		Status:        model.ReferralCommissionJobStatusProcessing,
+		LastError:     "stale processing",
+		FailedAt:      now,
+		LockedAt:      now,
+	}).Error)
+
+	require.NoError(t, service.RetryCommissionJob("redemption", skippedTradeNo))
+
+	skippedJob := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", skippedTradeNo).First(skippedJob).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSkipped, skippedJob.Status)
+	require.Equal(t, "no_binding", skippedJob.LastError)
+	require.NotZero(t, skippedJob.SucceededAt)
+	require.Zero(t, skippedJob.FailedAt)
+	require.Zero(t, skippedJob.LockedAt)
+	reloadedSkipped := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", skippedRedemption.Id).First(reloadedSkipped).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSkipped, reloadedSkipped.ReferralCommissionStatus)
+	require.NotZero(t, reloadedSkipped.ReferralCommissionAt)
+	require.NoError(t, model.DeleteRedemptionById(skippedRedemption.Id))
+}
+
+func TestRetryCommissionJobReconcilesMismatchedTerminalRedemptionJob(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "redemption-mismatch-terminal-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "redemption-mismatch-terminal-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "TERMMIS1",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+
+	now := time.Now().Unix()
+	succeededAt := now - 90
+	succeededRedemption := &model.Redemption{
+		Key:                      "redemption-terminal-mismatch-success",
+		Name:                     "terminal mismatch success",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             now,
+		ReferralAffiliateId:      affiliate.Id,
+		ReferralRate:             10,
+		ReferralBaseAmount:       1,
+		ReferralBaseCurrency:     "CNY",
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusSucceeded,
+		ReferralCommissionAt:     succeededAt,
+	}
+	require.NoError(t, db.Create(succeededRedemption).Error)
+	succeededTradeNo := redemptionCommissionTradeNo(succeededRedemption.Id)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:   affiliate.Id,
+		UserId:        affiliateUser.Id,
+		PendingAmount: 0.1,
+	}).Error)
+	commission := &model.ReferralCommission{
+		AffiliateId:          affiliate.Id,
+		AffiliateUserId:      affiliateUser.Id,
+		InviteeUserId:        invitee.Id,
+		SourceType:           "redemption",
+		SourceOrderId:        succeededRedemption.Id,
+		SourceTradeNo:        succeededTradeNo,
+		OrderType:            "redemption",
+		BaseAmount:           1,
+		PaidAmount:           1,
+		PaidCurrency:         "CNY",
+		SettlementCurrency:   "CNY",
+		SettlementFxRate:     1,
+		SettlementBaseAmount: 1,
+		Rate:                 10,
+		CommissionAmount:     0.1,
+		Status:               model.ReferralCommissionStatusPending,
+		CreatedAt:            now - 60,
+	}
+	require.NoError(t, db.Create(commission).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionLedger{
+		AffiliateId:        affiliate.Id,
+		UserId:             affiliateUser.Id,
+		CommissionId:       commission.Id,
+		Type:               "commission_accrue",
+		RefType:            "redemption",
+		RefId:              succeededTradeNo,
+		ExternalRefId:      fmt.Sprintf("accrue:redemption:%s", succeededTradeNo),
+		SettlementCurrency: "CNY",
+		DeltaPending:       0.1,
+		Operator:           "system",
+		CreatedAt:          succeededAt,
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: succeededTradeNo,
+		AffiliateId:   affiliate.Id,
+		Status:        model.ReferralCommissionJobStatusSkipped,
+		LastError:     "no_binding",
+		SucceededAt:   now - 60,
+		FailedAt:      now,
+		LockedAt:      now,
+	}).Error)
+
+	require.NoError(t, service.RetryCommissionJob("redemption", succeededTradeNo))
+
+	succeededJob := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", succeededTradeNo).First(succeededJob).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, succeededJob.Status)
+	require.Empty(t, succeededJob.LastError)
+	require.Equal(t, succeededAt, succeededJob.SucceededAt)
+	require.Zero(t, succeededJob.FailedAt)
+	require.Zero(t, succeededJob.LockedAt)
+	require.NoError(t, model.DeleteRedemptionById(succeededRedemption.Id))
+
+	accountedSkippedAt := now - 45
+	accountedSkippedRedemption := &model.Redemption{
+		Key:                      "redemption-terminal-skipped-with-commission",
+		Name:                     "terminal skipped with completed commission",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             now,
+		ReferralAffiliateId:      affiliate.Id + 999,
+		ReferralRate:             99,
+		ReferralBaseAmount:       99,
+		ReferralBaseCurrency:     "USD",
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusSkipped,
+		ReferralCommissionError:  "no_binding",
+		ReferralCommissionAt:     accountedSkippedAt,
+	}
+	require.NoError(t, db.Create(accountedSkippedRedemption).Error)
+	accountedSkippedTradeNo := redemptionCommissionTradeNo(accountedSkippedRedemption.Id)
+	require.NoError(t, db.Model(&model.ReferralCommissionAccount{}).
+		Where("affiliate_id = ?", affiliate.Id).
+		Update("pending_amount", 0.2).Error)
+	accountedSkippedCommission := &model.ReferralCommission{
+		AffiliateId:          affiliate.Id,
+		AffiliateUserId:      affiliateUser.Id,
+		InviteeUserId:        invitee.Id,
+		SourceType:           "redemption",
+		SourceOrderId:        accountedSkippedRedemption.Id,
+		SourceTradeNo:        accountedSkippedTradeNo,
+		OrderType:            "redemption",
+		BaseAmount:           1,
+		PaidAmount:           1,
+		PaidCurrency:         "CNY",
+		SettlementCurrency:   "CNY",
+		SettlementFxRate:     1,
+		SettlementBaseAmount: 1,
+		Rate:                 10,
+		CommissionAmount:     0.1,
+		Status:               model.ReferralCommissionStatusPending,
+	}
+	require.NoError(t, db.Create(accountedSkippedCommission).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionLedger{
+		AffiliateId:        affiliate.Id,
+		UserId:             affiliateUser.Id,
+		CommissionId:       accountedSkippedCommission.Id,
+		Type:               "commission_accrue",
+		RefType:            "redemption",
+		RefId:              accountedSkippedTradeNo,
+		ExternalRefId:      fmt.Sprintf("accrue:redemption:%s", accountedSkippedTradeNo),
+		SettlementCurrency: "CNY",
+		DeltaPending:       0.1,
+		Operator:           "system",
+		CreatedAt:          accountedSkippedAt,
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: accountedSkippedTradeNo,
+		AffiliateId:   affiliate.Id,
+		Status:        model.ReferralCommissionJobStatusSucceeded,
+		LastError:     "stale terminal status",
+		SucceededAt:   now - 60,
+		FailedAt:      now,
+		LockedAt:      now,
+	}).Error)
+
+	require.NoError(t, service.RetryCommissionJob("redemption", accountedSkippedTradeNo))
+
+	accountedSkippedJob := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", accountedSkippedTradeNo).First(accountedSkippedJob).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, accountedSkippedJob.Status)
+	require.Equal(t, affiliate.Id, accountedSkippedJob.AffiliateId)
+	require.Empty(t, accountedSkippedJob.LastError)
+	require.Zero(t, accountedSkippedJob.FailedAt)
+	require.Zero(t, accountedSkippedJob.LockedAt)
+	reloadedAccountedSkipped := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", accountedSkippedRedemption.Id).First(reloadedAccountedSkipped).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, reloadedAccountedSkipped.ReferralCommissionStatus)
+	require.Empty(t, reloadedAccountedSkipped.ReferralCommissionError)
+	require.Equal(t, affiliate.Id, reloadedAccountedSkipped.ReferralAffiliateId)
+	require.Equal(t, 10.0, reloadedAccountedSkipped.ReferralRate)
+	require.Equal(t, 1.0, reloadedAccountedSkipped.ReferralBaseAmount)
+	require.Equal(t, "CNY", reloadedAccountedSkipped.ReferralBaseCurrency)
+	require.NoError(t, model.DeleteRedemptionById(accountedSkippedRedemption.Id))
+
+	staleSuccessAt := now - 40
+	staleSuccessRedemption := &model.Redemption{
+		Key:                      "redemption-terminal-success-stale-snapshot",
+		Name:                     "terminal success stale snapshot",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             now,
+		ReferralAffiliateId:      affiliate.Id + 999,
+		ReferralRate:             99,
+		ReferralBaseAmount:       99,
+		ReferralBaseCurrency:     "USD",
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusSucceeded,
+		ReferralCommissionError:  "stale snapshot",
+		ReferralCommissionAt:     now - 5,
+	}
+	require.NoError(t, db.Create(staleSuccessRedemption).Error)
+	staleSuccessTradeNo := redemptionCommissionTradeNo(staleSuccessRedemption.Id)
+	require.NoError(t, db.Model(&model.ReferralCommissionAccount{}).
+		Where("affiliate_id = ?", affiliate.Id).
+		Update("pending_amount", 0.3).Error)
+	staleSuccessCommission := &model.ReferralCommission{
+		AffiliateId:          affiliate.Id,
+		AffiliateUserId:      affiliateUser.Id,
+		InviteeUserId:        invitee.Id,
+		SourceType:           "redemption",
+		SourceOrderId:        staleSuccessRedemption.Id,
+		SourceTradeNo:        staleSuccessTradeNo,
+		OrderType:            "redemption",
+		BaseAmount:           1,
+		PaidAmount:           1,
+		PaidCurrency:         "CNY",
+		SettlementCurrency:   "CNY",
+		SettlementFxRate:     1,
+		SettlementBaseAmount: 1,
+		Rate:                 10,
+		CommissionAmount:     0.1,
+		Status:               model.ReferralCommissionStatusPending,
+		CreatedAt:            staleSuccessAt,
+	}
+	require.NoError(t, db.Create(staleSuccessCommission).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionLedger{
+		AffiliateId:        affiliate.Id,
+		UserId:             affiliateUser.Id,
+		CommissionId:       staleSuccessCommission.Id,
+		Type:               "commission_accrue",
+		RefType:            "redemption",
+		RefId:              staleSuccessTradeNo,
+		ExternalRefId:      fmt.Sprintf("accrue:redemption:%s", staleSuccessTradeNo),
+		SettlementCurrency: "CNY",
+		DeltaPending:       0.1,
+		Operator:           "system",
+		CreatedAt:          staleSuccessAt,
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: staleSuccessTradeNo,
+		AffiliateId:   affiliate.Id + 999,
+		Status:        model.ReferralCommissionJobStatusSucceeded,
+		LastError:     "stale snapshot",
+		SucceededAt:   now - 5,
+		FailedAt:      now,
+		LockedAt:      now,
+	}).Error)
+
+	require.NoError(t, service.RetryCommissionJob("redemption", staleSuccessTradeNo))
+
+	staleSuccessJob := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", staleSuccessTradeNo).First(staleSuccessJob).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, staleSuccessJob.Status)
+	require.Equal(t, affiliate.Id, staleSuccessJob.AffiliateId)
+	require.Empty(t, staleSuccessJob.LastError)
+	require.Equal(t, staleSuccessAt, staleSuccessJob.SucceededAt)
+	require.Zero(t, staleSuccessJob.FailedAt)
+	require.Zero(t, staleSuccessJob.LockedAt)
+	reloadedStaleSuccess := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", staleSuccessRedemption.Id).First(reloadedStaleSuccess).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, reloadedStaleSuccess.ReferralCommissionStatus)
+	require.Empty(t, reloadedStaleSuccess.ReferralCommissionError)
+	require.Equal(t, affiliate.Id, reloadedStaleSuccess.ReferralAffiliateId)
+	require.Equal(t, 10.0, reloadedStaleSuccess.ReferralRate)
+	require.Equal(t, 1.0, reloadedStaleSuccess.ReferralBaseAmount)
+	require.Equal(t, "CNY", reloadedStaleSuccess.ReferralBaseCurrency)
+	require.Equal(t, staleSuccessAt, reloadedStaleSuccess.ReferralCommissionAt)
+	require.NoError(t, model.DeleteRedemptionById(staleSuccessRedemption.Id))
+
+	skippedAt := now - 30
+	skippedRedemption := &model.Redemption{
+		Key:                      "redemption-terminal-mismatch-skipped",
+		Name:                     "terminal mismatch skipped",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             now,
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusSkipped,
+		ReferralCommissionError:  "no_binding",
+		ReferralCommissionAt:     skippedAt,
+	}
+	require.NoError(t, db.Create(skippedRedemption).Error)
+	skippedTradeNo := redemptionCommissionTradeNo(skippedRedemption.Id)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: skippedTradeNo,
+		AffiliateId:   affiliate.Id,
+		Status:        model.ReferralCommissionJobStatusSucceeded,
+		LastError:     "stale terminal status",
+		SucceededAt:   now - 60,
+		FailedAt:      now,
+		LockedAt:      now,
+	}).Error)
+
+	require.NoError(t, service.RetryCommissionJob("redemption", skippedTradeNo))
+
+	skippedJob := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", skippedTradeNo).First(skippedJob).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSkipped, skippedJob.Status)
+	require.Equal(t, "no_binding", skippedJob.LastError)
+	require.Equal(t, skippedAt, skippedJob.SucceededAt)
+	require.Zero(t, skippedJob.AffiliateId)
+	require.Zero(t, skippedJob.FailedAt)
+	require.Zero(t, skippedJob.LockedAt)
+	require.NoError(t, model.DeleteRedemptionById(skippedRedemption.Id))
+}
+
+func TestRetryCommissionJobRebuildsIncompleteTerminalRedemptionSuccess(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "redemption-incomplete-terminal-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "redemption-incomplete-terminal-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "TERMJOB2",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+
+	now := time.Now().Unix()
+	redemption := &model.Redemption{
+		Key:                      "redemption-incomplete-terminal-success",
+		Name:                     "incomplete terminal success",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             now,
+		ReferralAffiliateId:      affiliate.Id,
+		ReferralRate:             10,
+		ReferralBaseAmount:       1,
+		ReferralBaseCurrency:     "CNY",
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusSucceeded,
+		ReferralCommissionAt:     now - 60,
+	}
+	require.NoError(t, db.Create(redemption).Error)
+	tradeNo := redemptionCommissionTradeNo(redemption.Id)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: tradeNo,
+		AffiliateId:   affiliate.Id,
+		Status:        model.ReferralCommissionJobStatusFailed,
+		LastError:     "stale failure",
+		FailedAt:      now,
+		LockedAt:      now,
+	}).Error)
+
+	require.NoError(t, service.RetryCommissionJob("redemption", tradeNo))
+
+	job := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, job.Status)
+	require.Equal(t, affiliate.Id, job.AffiliateId)
+	require.Empty(t, job.LastError)
+	require.NotZero(t, job.SucceededAt)
+	require.Zero(t, job.FailedAt)
+	require.Zero(t, job.LockedAt)
+
+	commission := &model.ReferralCommission{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(commission).Error)
+	require.Equal(t, affiliate.Id, commission.AffiliateId)
+	require.Equal(t, invitee.Id, commission.InviteeUserId)
+	require.Equal(t, 1.0, commission.SettlementBaseAmount)
+	require.Equal(t, 0.1, commission.CommissionAmount)
+
+	account := &model.ReferralCommissionAccount{}
+	require.NoError(t, db.Where("affiliate_id = ?", affiliate.Id).First(account).Error)
+	require.Equal(t, 0.1, account.PendingAmount)
+
+	var ledgers int64
+	require.NoError(t, db.Model(&model.ReferralCommissionLedger{}).Where("commission_id = ? AND ref_type = ? AND ref_id = ?", commission.Id, "redemption", tradeNo).Count(&ledgers).Error)
+	require.EqualValues(t, 1, ledgers)
+
+	reloadedRedemption := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", redemption.Id).First(reloadedRedemption).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, reloadedRedemption.ReferralCommissionStatus)
+	require.Empty(t, reloadedRedemption.ReferralCommissionError)
+	require.NoError(t, model.DeleteRedemptionById(redemption.Id))
+}
+
+func TestRetryCommissionJobSyncsSourceWhenSucceededJobChainIsComplete(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "redemption-succeeded-job-source-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "redemption-succeeded-job-source-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "TERMJOB4",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+
+	now := time.Now().Unix()
+	redemption := &model.Redemption{
+		Key:                      "redemption-succeeded-job-source-stale",
+		Name:                     "stale failed source with succeeded job",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             now,
+		ReferralAffiliateId:      affiliate.Id,
+		ReferralRate:             10,
+		ReferralBaseAmount:       1,
+		ReferralBaseCurrency:     "CNY",
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusFailed,
+		ReferralCommissionError:  "stale source failure",
+		ReferralCommissionAt:     now - 120,
+	}
+	require.NoError(t, db.Create(redemption).Error)
+	tradeNo := redemptionCommissionTradeNo(redemption.Id)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:   affiliate.Id,
+		UserId:        affiliateUser.Id,
+		PendingAmount: 0.1,
+	}).Error)
+	commission := &model.ReferralCommission{
+		AffiliateId:          affiliate.Id,
+		AffiliateUserId:      affiliateUser.Id,
+		InviteeUserId:        invitee.Id,
+		SourceType:           "redemption",
+		SourceOrderId:        redemption.Id,
+		SourceTradeNo:        tradeNo,
+		OrderType:            "redemption",
+		BaseAmount:           1,
+		PaidAmount:           1,
+		PaidCurrency:         "CNY",
+		SettlementCurrency:   "CNY",
+		SettlementFxRate:     1,
+		SettlementBaseAmount: 1,
+		Rate:                 10,
+		CommissionAmount:     0.1,
+		Status:               model.ReferralCommissionStatusPending,
+		CreatedAt:            now - 60,
+	}
+	require.NoError(t, db.Create(commission).Error)
+	completedAt := commission.CreatedAt
+	require.NotZero(t, completedAt)
+	require.NoError(t, db.Create(&model.ReferralCommissionLedger{
+		AffiliateId:        affiliate.Id,
+		UserId:             affiliateUser.Id,
+		CommissionId:       commission.Id,
+		Type:               "commission_accrue",
+		RefType:            "redemption",
+		RefId:              tradeNo,
+		ExternalRefId:      fmt.Sprintf("accrue:redemption:%s", tradeNo),
+		SettlementCurrency: "CNY",
+		DeltaPending:       0.1,
+		Operator:           "system",
+		CreatedAt:          completedAt,
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: tradeNo,
+		AffiliateId:   affiliate.Id,
+		Status:        model.ReferralCommissionJobStatusSucceeded,
+		SucceededAt:   completedAt,
+	}).Error)
+
+	require.NoError(t, service.RetryCommissionJob("redemption", tradeNo))
+
+	reloadedRedemption := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", redemption.Id).First(reloadedRedemption).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, reloadedRedemption.ReferralCommissionStatus)
+	require.Empty(t, reloadedRedemption.ReferralCommissionError)
+	require.Equal(t, completedAt, reloadedRedemption.ReferralCommissionAt)
+
+	job := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, job.Status)
+	require.NoError(t, model.DeleteRedemptionById(redemption.Id))
+}
+
+func TestRetryCommissionJobReconcilesNonTerminalRedemptionSourceWithCompletedCommissionChain(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "redemption-non-terminal-chain-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "redemption-non-terminal-chain-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "NONTERM1",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+
+	now := time.Now().Unix()
+	completedAt := now - 90
+	redemption := &model.Redemption{
+		Key:                      "redemption-non-terminal-complete-chain",
+		Name:                     "non terminal source with completed chain",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             now,
+		ReferralAffiliateId:      affiliate.Id + 999,
+		ReferralRate:             99,
+		ReferralBaseAmount:       99,
+		ReferralBaseCurrency:     "USD",
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusFailed,
+		ReferralCommissionError:  "stale failure",
+		ReferralCommissionAt:     now - 5,
+	}
+	require.NoError(t, db.Create(redemption).Error)
+	tradeNo := redemptionCommissionTradeNo(redemption.Id)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:   affiliate.Id,
+		UserId:        affiliateUser.Id,
+		PendingAmount: 0.1,
+	}).Error)
+	commission := &model.ReferralCommission{
+		AffiliateId:          affiliate.Id,
+		AffiliateUserId:      affiliateUser.Id,
+		InviteeUserId:        invitee.Id,
+		SourceType:           "redemption",
+		SourceOrderId:        redemption.Id,
+		SourceTradeNo:        tradeNo,
+		OrderType:            "redemption",
+		BaseAmount:           1,
+		PaidAmount:           1,
+		PaidCurrency:         "CNY",
+		SettlementCurrency:   "CNY",
+		SettlementFxRate:     1,
+		SettlementBaseAmount: 1,
+		Rate:                 10,
+		CommissionAmount:     0.1,
+		Status:               model.ReferralCommissionStatusPending,
+		CreatedAt:            completedAt,
+	}
+	require.NoError(t, db.Create(commission).Error)
+	completedAt = commission.CreatedAt
+	require.NotZero(t, completedAt)
+	require.NoError(t, db.Create(&model.ReferralCommissionLedger{
+		AffiliateId:        affiliate.Id,
+		UserId:             affiliateUser.Id,
+		CommissionId:       commission.Id,
+		Type:               "commission_accrue",
+		RefType:            "redemption",
+		RefId:              tradeNo,
+		ExternalRefId:      fmt.Sprintf("accrue:redemption:%s", tradeNo),
+		SettlementCurrency: "CNY",
+		DeltaPending:       0.1,
+		Operator:           "system",
+		CreatedAt:          completedAt,
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: tradeNo,
+		AffiliateId:   affiliate.Id + 999,
+		Status:        model.ReferralCommissionJobStatusSkipped,
+		LastError:     "no_binding",
+		SucceededAt:   now - 5,
+		FailedAt:      now,
+		LockedAt:      now,
+	}).Error)
+
+	require.NoError(t, service.RetryCommissionJob("redemption", tradeNo))
+
+	job := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, job.Status)
+	require.Equal(t, affiliate.Id, job.AffiliateId)
+	require.Empty(t, job.LastError)
+	require.Equal(t, completedAt, job.SucceededAt)
+	require.Zero(t, job.FailedAt)
+	require.Zero(t, job.LockedAt)
+
+	reloadedRedemption := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", redemption.Id).First(reloadedRedemption).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, reloadedRedemption.ReferralCommissionStatus)
+	require.Empty(t, reloadedRedemption.ReferralCommissionError)
+	require.Equal(t, affiliate.Id, reloadedRedemption.ReferralAffiliateId)
+	require.Equal(t, 10.0, reloadedRedemption.ReferralRate)
+	require.Equal(t, 1.0, reloadedRedemption.ReferralBaseAmount)
+	require.Equal(t, "CNY", reloadedRedemption.ReferralBaseCurrency)
+	require.Equal(t, completedAt, reloadedRedemption.ReferralCommissionAt)
+	require.NoError(t, model.DeleteRedemptionById(redemption.Id))
+}
+
+func TestRetryCommissionJobSyncsSourceWhenSkippedJobIsTerminal(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "redemption-skipped-job-source-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+
+	now := time.Now().Unix()
+	redemption := &model.Redemption{
+		Key:                      "redemption-skipped-job-source-stale",
+		Name:                     "stale failed source with skipped job",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             now,
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusFailed,
+		ReferralCommissionError:  "stale source failure",
+		ReferralCommissionAt:     now - 120,
+	}
+	require.NoError(t, db.Create(redemption).Error)
+	tradeNo := redemptionCommissionTradeNo(redemption.Id)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: tradeNo,
+		Status:        model.ReferralCommissionJobStatusSkipped,
+		SucceededAt:   now - 60,
+	}).Error)
+
+	require.NoError(t, service.RetryCommissionJob("redemption", tradeNo))
+
+	reloadedRedemption := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", redemption.Id).First(reloadedRedemption).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSkipped, reloadedRedemption.ReferralCommissionStatus)
+	require.Equal(t, "no_binding", reloadedRedemption.ReferralCommissionError)
+	require.Equal(t, now-120, reloadedRedemption.ReferralCommissionAt)
+
+	job := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSkipped, job.Status)
+	require.Equal(t, "no_binding", job.LastError)
+	require.NotZero(t, job.SucceededAt)
+	require.NoError(t, model.DeleteRedemptionById(redemption.Id))
+}
+
+func TestRetryCommissionJobRejectsSkippedRedemptionSourceWithResidualCommission(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "redemption-skipped-residual-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "redemption-skipped-residual-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "SKIPRES1",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+
+	now := time.Now().Unix()
+	redemption := &model.Redemption{
+		Key:                      "redemption-skipped-residual-commission",
+		Name:                     "skipped source with residual commission",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             now,
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusSkipped,
+		ReferralCommissionError:  "no_binding",
+		ReferralCommissionAt:     now - 120,
+	}
+	require.NoError(t, db.Create(redemption).Error)
+	tradeNo := redemptionCommissionTradeNo(redemption.Id)
+	require.NoError(t, db.Create(&model.ReferralCommission{
+		AffiliateId:          affiliate.Id,
+		AffiliateUserId:      affiliateUser.Id,
+		InviteeUserId:        invitee.Id,
+		SourceType:           "redemption",
+		SourceOrderId:        redemption.Id,
+		SourceTradeNo:        tradeNo,
+		OrderType:            "redemption",
+		BaseAmount:           1,
+		PaidAmount:           1,
+		PaidCurrency:         "CNY",
+		SettlementCurrency:   "CNY",
+		SettlementFxRate:     1,
+		SettlementBaseAmount: 1,
+		Rate:                 10,
+		CommissionAmount:     0.1,
+		Status:               model.ReferralCommissionStatusPending,
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: tradeNo,
+		Status:        model.ReferralCommissionJobStatusSkipped,
+		LastError:     "no_binding",
+		SucceededAt:   now - 60,
+	}).Error)
+
+	require.NoError(t, service.RetryCommissionJob("redemption", tradeNo))
+
+	job := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusFailed, job.Status)
+	require.Equal(t, "redemption_commission_chain_incomplete", job.LastError)
+	require.Zero(t, job.SucceededAt)
+	require.NotZero(t, job.FailedAt)
+
+	reloadedRedemption := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", redemption.Id).First(reloadedRedemption).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusFailed, reloadedRedemption.ReferralCommissionStatus)
+	require.Equal(t, "redemption_commission_chain_incomplete", reloadedRedemption.ReferralCommissionError)
+	require.ErrorContains(t, model.DeleteRedemptionById(redemption.Id), "unresolved")
+}
+
+func TestRetryCommissionJobRejectsExistingRedemptionCommissionWithoutLedger(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	invitee := &model.User{Username: "redemption-existing-commission-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "redemption-existing-commission-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "TERMJOB3",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+
+	now := time.Now().Unix()
+	redemption := &model.Redemption{
+		Key:                      "redemption-existing-commission-no-ledger",
+		Name:                     "existing commission without ledger",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             now,
+		ReferralAffiliateId:      affiliate.Id,
+		ReferralRate:             10,
+		ReferralBaseAmount:       1,
+		ReferralBaseCurrency:     "CNY",
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusFailed,
+		ReferralCommissionError:  "stale failure",
+		ReferralCommissionAt:     now - 60,
+	}
+	require.NoError(t, db.Create(redemption).Error)
+	tradeNo := redemptionCommissionTradeNo(redemption.Id)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      affiliateUser.Id,
+	}).Error)
+	commission := &model.ReferralCommission{
+		AffiliateId:          affiliate.Id,
+		AffiliateUserId:      affiliateUser.Id,
+		InviteeUserId:        invitee.Id,
+		SourceType:           "redemption",
+		SourceOrderId:        redemption.Id,
+		SourceTradeNo:        tradeNo,
+		OrderType:            "redemption",
+		BaseAmount:           1,
+		PaidAmount:           1,
+		PaidCurrency:         "CNY",
+		SettlementCurrency:   "CNY",
+		SettlementFxRate:     1,
+		SettlementBaseAmount: 1,
+		Rate:                 10,
+		CommissionAmount:     0.1,
+		Status:               model.ReferralCommissionStatusPending,
+	}
+	require.NoError(t, db.Create(commission).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionLedger{
+		AffiliateId:        affiliate.Id,
+		UserId:             affiliateUser.Id,
+		CommissionId:       commission.Id,
+		Type:               "commission_accrue",
+		RefType:            "redemption",
+		RefId:              tradeNo,
+		ExternalRefId:      fmt.Sprintf("accrue:redemption:%s", tradeNo),
+		SettlementCurrency: "CNY",
+		DeltaPending:       0.1,
+		Operator:           "system",
+		CreatedAt:          now,
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: tradeNo,
+		AffiliateId:   affiliate.Id,
+		Status:        model.ReferralCommissionJobStatusFailed,
+		LastError:     "stale failure",
+		FailedAt:      now,
+	}).Error)
+
+	require.NoError(t, service.RetryCommissionJob("redemption", tradeNo))
+
+	job := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusFailed, job.Status)
+	require.Equal(t, "referral_commission_chain_incomplete", job.LastError)
+	require.Zero(t, job.LockedAt)
+	require.Zero(t, job.SucceededAt)
+	require.NotZero(t, job.FailedAt)
+
+	reloadedRedemption := &model.Redemption{}
+	require.NoError(t, db.Where("id = ?", redemption.Id).First(reloadedRedemption).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusFailed, reloadedRedemption.ReferralCommissionStatus)
+	require.Equal(t, "referral_commission_chain_incomplete", reloadedRedemption.ReferralCommissionError)
+	require.ErrorContains(t, model.DeleteRedemptionById(redemption.Id), "unresolved")
+}
+
+func TestDeleteInvalidRedemptionsKeepsUnresolvedRedemptionCommissions(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+
+	failedRedemption := &model.Redemption{
+		Key:                      "redemption-delete-protect-001",
+		Name:                     "failed redemption code",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               1,
+		RedeemedTime:             time.Now().Unix(),
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusFailed,
+		ReferralCommissionError:  "temporary error",
+	}
+	require.NoError(t, db.Create(failedRedemption).Error)
+	unprocessedRedemption := &model.Redemption{
+		Key:          "redemption-delete-protect-empty-001",
+		Name:         "unprocessed redemption code",
+		Quota:        int(common.QuotaPerUnit),
+		Status:       common.RedemptionCodeStatusUsed,
+		UsedUserId:   3,
+		RedeemedTime: time.Now().Unix(),
+	}
+	require.NoError(t, db.Create(unprocessedRedemption).Error)
+	succeededInvitee := &model.User{Username: "redemption-delete-succeeded-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, succeededInvitee.Insert(0))
+	succeededAffiliateUser := &model.User{Username: "redemption-delete-succeeded-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, succeededAffiliateUser.Insert(0))
+	succeededAffiliate := &model.ReferralAffiliate{
+		UserId:             succeededAffiliateUser.Id,
+		InviteCode:         "DELREDM1",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(succeededAffiliate).Error)
+	succeededRedemption := &model.Redemption{
+		Key:                      "redemption-delete-allowed-001",
+		Name:                     "succeeded redemption code",
+		Quota:                    int(common.QuotaPerUnit),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               succeededInvitee.Id,
+		RedeemedTime:             time.Now().Unix(),
+		ReferralAffiliateId:      succeededAffiliate.Id,
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusSucceeded,
+	}
+	require.NoError(t, db.Create(succeededRedemption).Error)
+	succeededTradeNo := redemptionCommissionTradeNo(succeededRedemption.Id)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:   succeededAffiliate.Id,
+		UserId:        succeededAffiliateUser.Id,
+		PendingAmount: 0.1,
+	}).Error)
+	succeededCommission := &model.ReferralCommission{
+		AffiliateId:          succeededAffiliate.Id,
+		AffiliateUserId:      succeededAffiliateUser.Id,
+		InviteeUserId:        succeededInvitee.Id,
+		SourceType:           "redemption",
+		SourceOrderId:        succeededRedemption.Id,
+		SourceTradeNo:        succeededTradeNo,
+		OrderType:            "redemption",
+		BaseAmount:           1,
+		PaidAmount:           1,
+		PaidCurrency:         "CNY",
+		SettlementCurrency:   "CNY",
+		SettlementFxRate:     1,
+		SettlementBaseAmount: 1,
+		Rate:                 10,
+		CommissionAmount:     0.1,
+		Status:               model.ReferralCommissionStatusPending,
+	}
+	require.NoError(t, db.Create(succeededCommission).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionLedger{
+		AffiliateId:        succeededAffiliate.Id,
+		UserId:             succeededAffiliateUser.Id,
+		CommissionId:       succeededCommission.Id,
+		Type:               "commission_accrue",
+		RefType:            "redemption",
+		RefId:              succeededTradeNo,
+		ExternalRefId:      fmt.Sprintf("accrue:redemption:%s", succeededTradeNo),
+		SettlementCurrency: "CNY",
+		DeltaPending:       0.1,
+		Operator:           "system",
+		CreatedAt:          time.Now().Unix(),
+	}).Error)
+
+	rows, err := model.DeleteInvalidRedemptions()
+	require.NoError(t, err)
+	require.EqualValues(t, 1, rows)
+
+	var kept model.Redemption
+	require.NoError(t, db.Where("id = ?", failedRedemption.Id).First(&kept).Error)
+	var keptUnprocessed model.Redemption
+	require.NoError(t, db.Where("id = ?", unprocessedRedemption.Id).First(&keptUnprocessed).Error)
+	var deleted model.Redemption
+	require.Error(t, db.Where("id = ?", succeededRedemption.Id).First(&deleted).Error)
+}
+
+func TestRetryCommissionJobLoadsSoftDeletedRedemption(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	common.ReferralDefaultRate = 10
+	common.ReferralRedemptionUSDToCNYRate = 2
+
+	invitee := &model.User{Username: "redemption-soft-deleted-invitee", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, invitee.Insert(0))
+	affiliateUser := &model.User{Username: "redemption-soft-deleted-affiliate", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, affiliateUser.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             affiliateUser.Id,
+		InviteCode:         "SOFTDEL1",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Create(&model.ReferralBinding{
+		InviteeUserId: invitee.Id,
+		InviterUserId: affiliateUser.Id,
+		AffiliateId:   affiliate.Id,
+		BindSource:    "code",
+		BindCode:      affiliate.InviteCode,
+		BoundAt:       time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId: affiliate.Id,
+		UserId:      affiliateUser.Id,
+	}).Error)
+
+	redemption := &model.Redemption{
+		Key:                      "redemption-soft-deleted-key-01",
+		Name:                     "soft deleted redemption code",
+		Quota:                    int(common.QuotaPerUnit * 10),
+		Status:                   common.RedemptionCodeStatusUsed,
+		UsedUserId:               invitee.Id,
+		RedeemedTime:             time.Now().Unix(),
+		ReferralCommissionStatus: model.ReferralCommissionJobStatusFailed,
+		ReferralCommissionError:  "temporary error",
+	}
+	require.NoError(t, db.Create(redemption).Error)
+	tradeNo := redemptionCommissionTradeNo(redemption.Id)
+	require.NoError(t, db.Create(&model.ReferralCommissionJob{
+		SourceType:    "redemption",
+		SourceTradeNo: tradeNo,
+		AffiliateId:   affiliate.Id,
+		Status:        model.ReferralCommissionJobStatusFailed,
+		LastError:     "temporary error",
+		FailedAt:      time.Now().Unix(),
+	}).Error)
+	require.NoError(t, db.Delete(redemption).Error)
+
+	require.NoError(t, service.RetryCommissionJob("redemption", tradeNo))
+
+	job := &model.ReferralCommissionJob{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusSucceeded, job.Status)
+
+	commission := &model.ReferralCommission{}
+	require.NoError(t, db.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(commission).Error)
+	require.Equal(t, 20.0, commission.SettlementBaseAmount)
+	require.Equal(t, 2.0, commission.CommissionAmount)
+}
+
+func TestRetryCommissionJobRejectsBareRedemptionId(t *testing.T) {
+	setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	require.ErrorContains(t, service.RetryCommissionJob("redemption", "123"), "invalid redemption trade_no")
 }
 
 func TestProcessTopUpCommissionConcurrentCallbacksAreIdempotent(t *testing.T) {
@@ -1802,19 +3670,21 @@ func TestUpdateSettingsForcesFixedRedirectPath(t *testing.T) {
 	service := NewReferralService()
 
 	settings, err := service.UpdateSettings(ReferralSettings{
-		Enabled:            true,
-		CookieTTLDays:      30,
-		DefaultRate:        10,
-		SettleFreezeDays:   7,
-		MinWithdrawAmount:  1,
-		WithdrawFee:        0,
-		RedirectPath:       "//evil.com",
-		RequireApproval:    true,
-		SettlementCurrency: "CNY",
-		SettlementFxRates:  `{"CNY":1}`,
+		Enabled:                true,
+		CookieTTLDays:          30,
+		DefaultRate:            10,
+		SettleFreezeDays:       7,
+		MinWithdrawAmount:      1,
+		WithdrawFee:            0,
+		RedirectPath:           "//evil.com",
+		RequireApproval:        true,
+		SettlementCurrency:     "CNY",
+		SettlementFxRates:      `{"CNY":1}`,
+		RedemptionUSDToCNYRate: 6.8,
 	}, 1, "127.0.0.1", "unit-test")
 	require.NoError(t, err)
 	require.Equal(t, "/sign-up", settings.RedirectPath)
+	require.Equal(t, 6.8, settings.RedemptionUSDToCNYRate)
 }
 
 func TestUpdateSettingsNormalizesReferralFxRates(t *testing.T) {
@@ -1822,16 +3692,17 @@ func TestUpdateSettingsNormalizesReferralFxRates(t *testing.T) {
 	service := NewReferralService()
 
 	settings, err := service.UpdateSettings(ReferralSettings{
-		Enabled:            true,
-		CookieTTLDays:      30,
-		DefaultRate:        10,
-		SettleFreezeDays:   7,
-		MinWithdrawAmount:  1,
-		WithdrawFee:        0,
-		RedirectPath:       "/sign-up",
-		RequireApproval:    true,
-		SettlementCurrency: "CNY",
-		SettlementFxRates:  `{"usd":7.1,"EUR":8}`,
+		Enabled:                true,
+		CookieTTLDays:          30,
+		DefaultRate:            10,
+		SettleFreezeDays:       7,
+		MinWithdrawAmount:      1,
+		WithdrawFee:            0,
+		RedirectPath:           "/sign-up",
+		RequireApproval:        true,
+		SettlementCurrency:     "CNY",
+		SettlementFxRates:      `{"usd":7.1,"EUR":8}`,
+		RedemptionUSDToCNYRate: 1,
 	}, 1, "127.0.0.1", "unit-test")
 	require.NoError(t, err)
 	require.Equal(t, "CNY", settings.SettlementCurrency)
@@ -1843,16 +3714,17 @@ func TestUpdateSettingsRejectsUnsupportedSettlementCurrency(t *testing.T) {
 	service := NewReferralService()
 
 	_, err := service.UpdateSettings(ReferralSettings{
-		Enabled:            true,
-		CookieTTLDays:      30,
-		DefaultRate:        10,
-		SettleFreezeDays:   7,
-		MinWithdrawAmount:  1,
-		WithdrawFee:        0,
-		RedirectPath:       "/sign-up",
-		RequireApproval:    true,
-		SettlementCurrency: "USD",
-		SettlementFxRates:  `{"USD":7.1}`,
+		Enabled:                true,
+		CookieTTLDays:          30,
+		DefaultRate:            10,
+		SettleFreezeDays:       7,
+		MinWithdrawAmount:      1,
+		WithdrawFee:            0,
+		RedirectPath:           "/sign-up",
+		RequireApproval:        true,
+		SettlementCurrency:     "USD",
+		SettlementFxRates:      `{"USD":7.1}`,
+		RedemptionUSDToCNYRate: 1,
 	}, 1, "127.0.0.1", "unit-test")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "settlement_currency")
@@ -1865,15 +3737,16 @@ func TestUpdateSettingsPreservesFxRatesWhenOmitted(t *testing.T) {
 	common.ReferralSettlementFxRates = map[string]float64{"CNY": 1, "USD": 7.3}
 
 	settings, err := service.UpdateSettings(ReferralSettings{
-		Enabled:            true,
-		CookieTTLDays:      30,
-		DefaultRate:        10,
-		SettleFreezeDays:   7,
-		MinWithdrawAmount:  1,
-		WithdrawFee:        0,
-		RedirectPath:       "/sign-up",
-		RequireApproval:    true,
-		SettlementCurrency: "CNY",
+		Enabled:                true,
+		CookieTTLDays:          30,
+		DefaultRate:            10,
+		SettleFreezeDays:       7,
+		MinWithdrawAmount:      1,
+		WithdrawFee:            0,
+		RedirectPath:           "/sign-up",
+		RequireApproval:        true,
+		SettlementCurrency:     "CNY",
+		RedemptionUSDToCNYRate: 1,
 	}, 1, "127.0.0.1", "unit-test")
 	require.NoError(t, err)
 	require.JSONEq(t, `{"CNY":1,"USD":7.3}`, settings.SettlementFxRates)

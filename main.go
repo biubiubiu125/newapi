@@ -124,9 +124,11 @@ func main() {
 		}
 		return a
 	}
+	service.RunImageTasksFunc = relay.RunImageTasks
 
 	controller.RegisterScheduledSystemTasks()
 	service.StartSystemTaskRunner()
+	service.StartImageTaskWorkerRunner()
 
 	if os.Getenv("BATCH_UPDATE_ENABLED") == "true" {
 		common.BatchUpdateEnabled = true

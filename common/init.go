@@ -183,6 +183,20 @@ func initConstantEnv() {
 	constant.TaskQueryLimit = GetEnvOrDefault("TASK_QUERY_LIMIT", 1000)
 	// 异步任务超时时间（分钟），超过此时间未完成的任务将被标记为失败并退款。0 表示禁用。
 	constant.TaskTimeoutMinutes = GetEnvOrDefault("TASK_TIMEOUT_MINUTES", 1440)
+	constant.ImageTaskWorkerEnabled = GetEnvOrDefaultBool("IMAGE_TASK_WORKER_ENABLED", true)
+	constant.ImageTaskWorkerIdleSeconds = GetEnvOrDefault("IMAGE_TASK_WORKER_IDLE_SECONDS", 5)
+	constant.ImageTaskWorkerConcurrency = GetEnvOrDefault("IMAGE_TASK_WORKER_CONCURRENCY", 20)
+	constant.ImageTaskChannelConcurrency = GetEnvOrDefault("IMAGE_TASK_CHANNEL_CONCURRENCY", 10)
+	constant.ImageTaskBatchPollSize = GetEnvOrDefault("IMAGE_TASK_BATCH_POLL_SIZE", 20)
+	constant.ImageTaskLeaseSeconds = GetEnvOrDefault("IMAGE_TASK_LEASE_SECONDS", 120)
+	constant.ImageTaskResultRetentionMinutes = GetEnvOrDefault("IMAGE_TASK_RESULT_RETENTION_MINUTES", 1440)
+	constant.ImageTaskRequestBodyBase64MaxMB = GetEnvOrDefault("IMAGE_TASK_REQUEST_BODY_BASE64_MAX_MB", 16)
+	constant.ImageTaskHTTPResponseMaxMB = GetEnvOrDefault("IMAGE_TASK_HTTP_RESPONSE_MAX_MB", 0)
+	constant.ImageTaskFileCacheShared = GetEnvOrDefaultBool("IMAGE_TASK_FILE_CACHE_SHARED", false)
+	constant.ImageTaskFileCacheSharedTrusted = GetEnvOrDefaultBool("IMAGE_TASK_FILE_CACHE_SHARED_TRUSTED", false)
+	constant.ImageTaskLocalFileCacheAffinity = GetEnvOrDefaultBool("IMAGE_TASK_LOCAL_FILE_CACHE_AFFINITY", true)
+	constant.SystemTaskHistoryRetentionHours = GetEnvOrDefault("SYSTEM_TASK_HISTORY_RETENTION_HOURS", 24*7)
+	constant.TaskSettlementRecordRetentionHours = GetEnvOrDefault("TASK_SETTLEMENT_RECORD_RETENTION_HOURS", 24*30)
 
 	soraPatchStr := GetEnvOrDefaultString("TASK_PRICE_PATCH", "")
 	if soraPatchStr != "" {

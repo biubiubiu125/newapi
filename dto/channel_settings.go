@@ -30,6 +30,7 @@ const (
 )
 
 type ChannelOtherSettings struct {
+	ImageTaskMode                         string                `json:"image_task_mode,omitempty"`
 	AzureResponsesVersion                 string                `json:"azure_responses_version,omitempty"`
 	VertexKeyType                         VertexKeyType         `json:"vertex_key_type,omitempty"` // "json" or "api_key"
 	OpenRouterEnterprise                  *bool                 `json:"openrouter_enterprise,omitempty"`
@@ -56,6 +57,23 @@ func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {
 		return false
 	}
 	return *s.OpenRouterEnterprise
+}
+
+const (
+	ImageTaskModeSyncWrapper       = "sync_wrapper"
+	ImageTaskModeGPTImage2APIAsync = "gpt_image2api_async"
+)
+
+func (s *ChannelOtherSettings) GetImageTaskMode() string {
+	if s == nil {
+		return ImageTaskModeSyncWrapper
+	}
+	switch s.ImageTaskMode {
+	case ImageTaskModeGPTImage2APIAsync:
+		return ImageTaskModeGPTImage2APIAsync
+	default:
+		return ImageTaskModeSyncWrapper
+	}
 }
 
 const (

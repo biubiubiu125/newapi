@@ -202,6 +202,112 @@ func ApplyParamOverrideWithRelayInfo(jsonData []byte, info *RelayInfo) ([]byte, 
 	return result, nil
 }
 
+func ApplyHeaderOverrideOperationsWithRelayInfo(info *RelayInfo) error {
+	paramOverride := getParamOverrideMap(info)
+	operations, ok := tryParseOperations(paramOverride)
+	if !ok || len(operations) == 0 {
+		return nil
+	}
+
+	overrideCtx := BuildParamOverrideContext(info)
+	contextJSON, err := marshalContextJSON(overrideCtx)
+	if err != nil {
+		return fmt.Errorf("failed to marshal condition context: %v", err)
+	}
+
+	emptyBody := []byte("{}")
+	for _, op := range operations {
+		ok, err := checkConditions(emptyBody, contextJSON, op.Conditions, op.Logic)
+		if err != nil {
+			return err
+		}
+		if !ok {
+			continue
+		}
+
+		mode := strings.ToLower(strings.TrimSpace(op.Mode))
+		mutated := false
+		switch mode {
+		case "set_header":
+			err = setHeaderOverrideInContext(overrideCtx, op.Path, op.Value, op.KeepOrigin)
+			mutated = err == nil
+		case "delete_header":
+			err = deleteHeaderOverrideInContext(overrideCtx, op.Path)
+			mutated = err == nil
+		case "copy_header":
+			sourceHeader := strings.TrimSpace(op.From)
+			targetHeader := strings.TrimSpace(op.To)
+			if sourceHeader == "" {
+				sourceHeader = strings.TrimSpace(op.Path)
+			}
+			if targetHeader == "" {
+				targetHeader = strings.TrimSpace(op.Path)
+			}
+			err = copyHeaderInContext(overrideCtx, sourceHeader, targetHeader, op.KeepOrigin)
+			if errors.Is(err, errSourceHeaderNotFound) {
+				err = nil
+			}
+			mutated = err == nil
+		case "move_header":
+			sourceHeader := strings.TrimSpace(op.From)
+			targetHeader := strings.TrimSpace(op.To)
+			if sourceHeader == "" {
+				sourceHeader = strings.TrimSpace(op.Path)
+			}
+			if targetHeader == "" {
+				targetHeader = strings.TrimSpace(op.Path)
+			}
+			err = moveHeaderInContext(overrideCtx, sourceHeader, targetHeader, op.KeepOrigin)
+			if errors.Is(err, errSourceHeaderNotFound) {
+				err = nil
+			}
+			mutated = err == nil
+		case "pass_headers":
+			var headerNames []string
+			headerNames, err = parseHeaderPassThroughNames(op.Value)
+			if err == nil {
+				for _, headerName := range headerNames {
+					if err = copyHeaderInContext(overrideCtx, headerName, headerName, op.KeepOrigin); err != nil {
+						if errors.Is(err, errSourceHeaderNotFound) {
+							err = nil
+							continue
+						}
+						break
+					}
+				}
+			}
+			mutated = err == nil
+		case "sync_fields":
+			fromTarget, parseErr := parseSyncTarget(op.From)
+			if parseErr != nil {
+				return parseErr
+			}
+			toTarget, parseErr := parseSyncTarget(op.To)
+			if parseErr != nil {
+				return parseErr
+			}
+			if fromTarget.kind != "header" || toTarget.kind != "header" {
+				continue
+			}
+			_, err = syncFieldsBetweenTargets(emptyBody, overrideCtx, op.From, op.To)
+			mutated = err == nil
+		default:
+			continue
+		}
+		if err != nil {
+			return fmt.Errorf("operation %s failed: %w", op.Mode, err)
+		}
+		if mutated {
+			contextJSON, err = marshalContextJSON(overrideCtx)
+			if err != nil {
+				return fmt.Errorf("failed to marshal condition context: %v", err)
+			}
+		}
+	}
+	syncRuntimeHeaderOverrideFromContext(info, overrideCtx)
+	return nil
+}
+
 func shouldEnableParamOverrideAudit(paramOverride map[string]interface{}) bool {
 	if common.DebugEnabled {
 		return true

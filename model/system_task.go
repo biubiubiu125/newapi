@@ -410,6 +410,28 @@ func FinishSystemTask(taskID string, lockedBy string, status SystemTaskStatus, r
 	return ReleaseSystemTaskLock(taskID, lockedBy)
 }
 
+func CleanupFinishedSystemTasks(cutoff int64, limit int) (int64, error) {
+	if cutoff <= 0 {
+		return 0, nil
+	}
+	if limit <= 0 {
+		limit = 1000
+	}
+	var ids []int64
+	err := DB.Model(&SystemTask{}).
+		Select("id").
+		Where("status IN ?", []SystemTaskStatus{SystemTaskStatusSucceeded, SystemTaskStatusFailed}).
+		Where("updated_at < ?", cutoff).
+		Order("id ASC").
+		Limit(limit).
+		Pluck("id", &ids).Error
+	if err != nil || len(ids) == 0 {
+		return 0, err
+	}
+	result := DB.Where("id IN ?", ids).Delete(&SystemTask{})
+	return result.RowsAffected, result.Error
+}
+
 func (task *SystemTask) DecodePayload(v any) error {
 	return decodeSystemTaskJSONString(task.Payload, v)
 }

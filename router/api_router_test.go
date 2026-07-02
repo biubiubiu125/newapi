@@ -40,6 +40,7 @@ func TestReferralAdminAndUserRoutesAreDistinct(t *testing.T) {
 	require.True(t, paths["GET /api/user/admin/referral/commissions"])
 	require.True(t, paths["GET /api/user/admin/referral/badges"])
 	require.True(t, paths["POST /api/user/admin/referral/upload"])
+	require.True(t, paths["POST /api/user/admin/referral/commission-jobs/backfill-redemptions"])
 	require.True(t, paths["POST /api/user/referral/upload"])
 }
 

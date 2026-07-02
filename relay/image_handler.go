@@ -23,7 +23,16 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-const contextKeyImageStreamAllowed = "image_stream_allowed"
+const (
+	contextKeyImageStreamAllowed       = "image_stream_allowed"
+	contextKeyImageTaskDeferBilling    = "image_task_defer_billing"
+	contextKeyImageTaskDeferredBilling = "image_task_deferred_billing"
+)
+
+type imageTaskDeferredBilling struct {
+	Usage        dto.Usage
+	ExtraContent []string
+}
 
 func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
@@ -167,8 +176,29 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 		logContent = append(logContent, fmt.Sprintf("生成数量 %d", imageN))
 	}
 
+	if c.GetBool(contextKeyImageTaskDeferBilling) {
+		usageCopy := *usage.(*dto.Usage)
+		c.Set(contextKeyImageTaskDeferredBilling, &imageTaskDeferredBilling{
+			Usage:        usageCopy,
+			ExtraContent: append([]string(nil), logContent...),
+		})
+		return nil
+	}
+
 	service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), logContent)
 	return nil
+}
+
+func getImageTaskDeferredBilling(c *gin.Context) (*imageTaskDeferredBilling, bool) {
+	if c == nil {
+		return nil, false
+	}
+	value, exists := c.Get(contextKeyImageTaskDeferredBilling)
+	if !exists {
+		return nil, false
+	}
+	deferred, ok := value.(*imageTaskDeferredBilling)
+	return deferred, ok
 }
 
 func resetImageRelayAttemptState(info *relaycommon.RelayInfo) {

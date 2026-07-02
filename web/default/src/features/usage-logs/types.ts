@@ -274,6 +274,7 @@ export interface TaskLog {
   data?: string // JSON string
   fail_reason?: string
   status: string // NOT_START, SUBMITTED, IN_PROGRESS, SUCCESS, FAILURE, QUEUED, UNKNOWN
+  settlement_status?: string // PENDING, APPLIED, SETTLED, REVIEW
   other?: string
   created_at?: number
   updated_at?: number

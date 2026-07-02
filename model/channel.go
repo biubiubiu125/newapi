@@ -1009,6 +1009,15 @@ func (channel *Channel) ValidateSettings() error {
 			return fmt.Errorf("advanced_custom is required")
 		}
 	}
+	switch channelOtherSettings.ImageTaskMode {
+	case "", dto.ImageTaskModeSyncWrapper:
+	case dto.ImageTaskModeGPTImage2APIAsync:
+		if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
+			return fmt.Errorf("gpt_image2api 异步模式必须配置支持 /api/image-tasks 的 gpt-image2api base_url")
+		}
+	default:
+		return fmt.Errorf("image_task_mode is invalid")
+	}
 	if channelOtherSettings.AdvancedCustom != nil {
 		if err := channelOtherSettings.AdvancedCustom.Validate(); err != nil {
 			return err

@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/dto"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -67,4 +68,22 @@ func TestGetAndValidOpenAIImageRequestMultipartStream(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "invalid stream value")
 	})
+}
+
+func TestGetAndValidOpenAIImageRequestDefaultsImageTaskGenerationModel(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/image-tasks/generations", nil)
+	c.Request.Header.Set("Content-Type", "application/json")
+	storage, err := common.CreateBodyStorage([]byte(`{"prompt":"draw a cat"}`))
+	require.NoError(t, err)
+	defer storage.Close()
+	c.Set(common.KeyBodyStorage, storage)
+
+	req, err := GetAndValidOpenAIImageRequest(c, relayconstant.RelayModeImagesGenerations)
+
+	require.NoError(t, err)
+	require.Equal(t, dto.ImageTaskDefaultGenerationModel, req.Model)
+	require.Equal(t, "draw a cat", req.Prompt)
 }

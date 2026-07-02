@@ -8,6 +8,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/QuantumNous/new-api/constant"
 )
 
 // BodyStorage 请求体存储接口
@@ -98,6 +100,16 @@ type diskStorage struct {
 }
 
 func newDiskStorage(data []byte, cachePath string) (*diskStorage, error) {
+	reservation, err := ReserveDiskCacheBytes(int64(len(data)))
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			reservation.Release()
+		}
+	}()
 	// 使用统一的缓存目录管理
 	filePath, file, err := CreateDiskCacheFile(DiskCacheTypeBody)
 	if err != nil {
@@ -111,6 +123,11 @@ func newDiskStorage(data []byte, cachePath string) (*diskStorage, error) {
 		os.Remove(filePath)
 		return nil, fmt.Errorf("failed to write to temp file: %w", err)
 	}
+	if n != len(data) {
+		file.Close()
+		os.Remove(filePath)
+		return nil, io.ErrShortWrite
+	}
 
 	// 重置文件指针
 	if _, err := file.Seek(0, io.SeekStart); err != nil {
@@ -120,7 +137,12 @@ func newDiskStorage(data []byte, cachePath string) (*diskStorage, error) {
 	}
 
 	size := int64(n)
-	IncrementDiskFiles(size)
+	if err := reservation.Commit(size); err != nil {
+		file.Close()
+		os.Remove(filePath)
+		return nil, err
+	}
+	committed = true
 
 	return &diskStorage{
 		file:     file,
@@ -129,25 +151,35 @@ func newDiskStorage(data []byte, cachePath string) (*diskStorage, error) {
 	}, nil
 }
 
-func newDiskStorageFromReader(reader io.Reader, maxBytes int64, cachePath string) (*diskStorage, error) {
+func newDiskStorageFromReader(reader io.Reader, maxBytes int64, cachePath string, diskMaxBytes int64) (*diskStorage, error) {
+	if maxBytes <= 0 {
+		return nil, ErrRequestBodyTooLarge
+	}
+	reserveBytes := diskMaxBytes
+	if reserveBytes <= 0 || reserveBytes > maxBytes {
+		reserveBytes = maxBytes
+	}
+	reservation, err := ReserveDiskCacheBytes(reserveBytes)
+	if err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			reservation.Release()
+		}
+	}()
 	// 使用统一的缓存目录管理
 	filePath, file, err := CreateDiskCacheFile(DiskCacheTypeBody)
 	if err != nil {
 		return nil, err
 	}
 
-	// 从 reader 读取并写入文件
-	written, err := io.Copy(file, io.LimitReader(reader, maxBytes+1))
+	written, err := copyReaderToReservedDiskCache(file, reader, maxBytes, reservation, reserveBytes)
 	if err != nil {
 		file.Close()
 		os.Remove(filePath)
-		return nil, fmt.Errorf("failed to write to temp file: %w", err)
-	}
-
-	if written > maxBytes {
-		file.Close()
-		os.Remove(filePath)
-		return nil, ErrRequestBodyTooLarge
+		return nil, err
 	}
 
 	// 重置文件指针
@@ -157,13 +189,87 @@ func newDiskStorageFromReader(reader io.Reader, maxBytes int64, cachePath string
 		return nil, fmt.Errorf("failed to seek temp file: %w", err)
 	}
 
-	IncrementDiskFiles(written)
+	if err := reservation.Commit(written); err != nil {
+		file.Close()
+		os.Remove(filePath)
+		return nil, err
+	}
+	committed = true
 
 	return &diskStorage{
 		file:     file,
 		filePath: filePath,
 		size:     written,
 	}, nil
+}
+
+func copyReaderToReservedDiskCache(file *os.File, reader io.Reader, maxBytes int64, reservation *DiskCacheReservation, reservedBytes int64) (int64, error) {
+	if maxBytes <= 0 {
+		return 0, ErrRequestBodyTooLarge
+	}
+	if reservedBytes <= 0 {
+		return 0, ErrDiskCacheCapacityUnavailable
+	}
+	buf := make([]byte, 32*1024)
+	written := int64(0)
+	for {
+		if written >= maxBytes {
+			n, err := reader.Read(buf[:1])
+			if n > 0 {
+				return written, ErrRequestBodyTooLarge
+			}
+			if err == nil {
+				return written, io.ErrNoProgress
+			}
+			if err == io.EOF {
+				return written, nil
+			}
+			if err != nil {
+				return written, fmt.Errorf("failed to read from source: %w", err)
+			}
+			continue
+		}
+		if written >= reservedBytes {
+			extendBytes := int64(1 << 20)
+			if remaining := maxBytes - reservedBytes; remaining < extendBytes {
+				extendBytes = remaining
+			}
+			if extendBytes <= 0 {
+				continue
+			}
+			if err := reservation.Extend(extendBytes); err != nil {
+				return written, err
+			}
+			reservedBytes += extendBytes
+		}
+		readBytes := reservedBytes - written
+		if remaining := maxBytes - written; remaining < readBytes {
+			readBytes = remaining
+		}
+		if readBytes > int64(len(buf)) {
+			readBytes = int64(len(buf))
+		}
+		n, readErr := reader.Read(buf[:int(readBytes)])
+		if n > 0 {
+			wn, writeErr := file.Write(buf[:n])
+			written += int64(wn)
+			if writeErr != nil {
+				return written, fmt.Errorf("failed to write to temp file: %w", writeErr)
+			}
+			if wn != n {
+				return written, io.ErrShortWrite
+			}
+		}
+		if readErr == io.EOF {
+			return written, nil
+		}
+		if readErr != nil {
+			return written, fmt.Errorf("failed to read from source: %w", readErr)
+		}
+		if n == 0 {
+			return written, io.ErrNoProgress
+		}
+	}
 }
 
 func (d *diskStorage) Read(p []byte) (n int, err error) {
@@ -261,13 +367,26 @@ func CreateBodyStorage(data []byte) (BodyStorage, error) {
 // CreateBodyStorageFromReader 从 Reader 创建存储（用于大请求的流式处理）
 func CreateBodyStorageFromReader(reader io.Reader, contentLength int64, maxBytes int64) (BodyStorage, error) {
 	threshold := GetDiskCacheThresholdBytes()
+	expectedSize := contentLength
+	if expectedSize <= 0 {
+		expectedSize = maxBytes
+	}
 
-	// 如果启用了磁盘缓存且内容长度超过阈值，直接使用磁盘存储
+	// 如果启用了磁盘缓存且内容可能超过阈值，直接使用磁盘存储。
+	// Content-Length 缺失时按 maxBytes 评估，避免 chunked 大请求先堆到内存。
 	if IsDiskCacheEnabled() &&
-		contentLength > 0 &&
-		contentLength >= threshold &&
-		IsDiskCacheAvailable(contentLength) {
-		storage, err := newDiskStorageFromReader(reader, maxBytes, GetDiskCachePath())
+		expectedSize >= threshold {
+		reserveBytes := expectedSize
+		if contentLength <= 0 {
+			reserveBytes = threshold
+			if reserveBytes <= 0 {
+				reserveBytes = 1 << 20
+			}
+		}
+		if reserveBytes <= 0 || reserveBytes > maxBytes {
+			reserveBytes = maxBytes
+		}
+		storage, err := newDiskStorageFromReader(reader, maxBytes, GetDiskCachePath(), reserveBytes)
 		if err != nil {
 			if IsRequestBodyTooLargeError(err) {
 				return nil, err
@@ -302,10 +421,63 @@ func CreateBodyStorageFromReader(reader io.Reader, contentLength int64, maxBytes
 	return storage, nil
 }
 
+func CreateDiskBodyStorageFromReader(reader io.Reader, maxBytes int64) (BodyStorage, error) {
+	return CreateDiskBodyStorageFromReaderWithReservation(reader, maxBytes, maxBytes)
+}
+
+func CreateDiskBodyStorageFromReaderWithReservation(reader io.Reader, maxBytes int64, reserveBytes int64) (BodyStorage, error) {
+	if maxBytes <= 0 {
+		return nil, fmt.Errorf("%w: disk body storage requires a positive limit", ErrRequestBodyTooLarge)
+	}
+	if reserveBytes <= 0 || reserveBytes > maxBytes {
+		reserveBytes = maxBytes
+	}
+	return newDiskStorageFromReader(reader, maxBytes, GetDiskCachePath(), reserveBytes)
+}
+
+func diskCacheAvailableBytes() int64 {
+	maxBytes := GetDiskCacheMaxSizeBytes()
+	currentUsage := atomic.LoadInt64(&diskCacheStats.CurrentDiskUsageBytes)
+	if maxBytes <= currentUsage {
+		return 0
+	}
+	return maxBytes - currentUsage
+}
+
 // ReaderOnly wraps an io.Reader to hide io.Closer, preventing http.NewRequest
 // from type-asserting io.ReadCloser and closing the underlying BodyStorage.
 func ReaderOnly(r io.Reader) io.Reader {
 	return struct{ io.Reader }{r}
+}
+
+func GetImageTaskResultCacheRetention() time.Duration {
+	if constant.ImageTaskResultRetentionMinutes > 0 {
+		return time.Duration(constant.ImageTaskResultRetentionMinutes) * time.Minute
+	}
+	return 24 * time.Hour
+}
+
+func GetImageTaskBodyCacheRetention() time.Duration {
+	retention := GetImageTaskResultCacheRetention()
+	if constant.TaskTimeoutMinutes > 0 {
+		taskTimeout := time.Duration(constant.TaskTimeoutMinutes) * time.Minute
+		if taskTimeout > retention {
+			retention = taskTimeout
+		}
+	}
+	return retention + time.Hour
+}
+
+func CleanupExpiredImageTaskBodyCacheFiles(keepPaths map[string]struct{}) error {
+	return CleanupOldImageTaskBodyCacheFiles(GetImageTaskBodyCacheRetention(), keepPaths)
+}
+
+func CleanupExpiredImageTaskResultCacheFiles() error {
+	return CleanupOldImageTaskResultCacheFiles(GetImageTaskResultCacheRetention())
+}
+
+func CleanupExpiredImageTaskResultCacheFilesWithKeep(keepPaths map[string]struct{}) error {
+	return CleanupOldImageTaskResultCacheFiles(GetImageTaskResultCacheRetention(), keepPaths)
 }
 
 // CleanupOldCacheFiles 清理旧的缓存文件（用于启动时清理残留）

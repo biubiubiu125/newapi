@@ -57,7 +57,7 @@ func Distribute() func(c *gin.Context) {
 			// Select a channel for the user
 			// check token model mapping
 			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-			if modelLimitEnable {
+			if modelLimitEnable && !shouldSkipMiddlewareModelLimit(c, shouldSelectChannel) {
 				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
 				if !ok {
 					// token model limit is empty, all models are not allowed
@@ -201,6 +201,13 @@ func getModelFromRequest(c *gin.Context) (*ModelRequest, error) {
 	return &modelRequest, nil
 }
 
+func shouldSkipMiddlewareModelLimit(c *gin.Context, shouldSelectChannel bool) bool {
+	if shouldSelectChannel || c == nil || c.Request == nil {
+		return false
+	}
+	return c.Request.Method == http.MethodGet && strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks")
+}
+
 func getModelFromJSONBody(c *gin.Context) (*ModelRequest, error) {
 	storage, err := common.GetBodyStorage(c)
 	if err != nil {
@@ -287,6 +294,26 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			modelRequest.Model = modelName
 		}
 		c.Set("platform", string(constant.TaskPlatformSuno))
+		c.Set("relay_mode", relayMode)
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks") {
+		relayMode := relayconstant.RelayModeImagesGenerations
+		if strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks/edits") {
+			relayMode = relayconstant.RelayModeImagesEdits
+		}
+		if c.Request.Method == http.MethodPost {
+			req, err := getModelFromRequest(c)
+			if err != nil {
+				return nil, false, err
+			}
+			if req != nil {
+				modelRequest.Model = req.Model
+			}
+			if modelRequest.Model == "" && relayMode == relayconstant.RelayModeImagesGenerations {
+				modelRequest.Model = dto.ImageTaskDefaultGenerationModel
+			}
+		} else {
+			shouldSelectChannel = false
+		}
 		c.Set("relay_mode", relayMode)
 	} else if strings.Contains(c.Request.URL.Path, "/v1/videos/") && strings.HasSuffix(c.Request.URL.Path, "/remix") {
 		relayMode := relayconstant.RelayModeVideoSubmit

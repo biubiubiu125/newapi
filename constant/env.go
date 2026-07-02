@@ -18,6 +18,20 @@ var GenerateDefaultToken bool
 var ErrorLogEnabled bool
 var TaskQueryLimit int
 var TaskTimeoutMinutes int
+var ImageTaskWorkerEnabled bool
+var ImageTaskWorkerIdleSeconds int
+var ImageTaskWorkerConcurrency int
+var ImageTaskChannelConcurrency int
+var ImageTaskBatchPollSize int
+var ImageTaskLeaseSeconds int
+var ImageTaskResultRetentionMinutes int
+var ImageTaskRequestBodyBase64MaxMB int
+var ImageTaskHTTPResponseMaxMB int
+var ImageTaskFileCacheShared bool
+var ImageTaskFileCacheSharedTrusted bool
+var ImageTaskLocalFileCacheAffinity bool
+var SystemTaskHistoryRetentionHours int
+var TaskSettlementRecordRetentionHours int
 
 // temporary variable for sora patch, will be removed in future
 var TaskPricePatches []string

@@ -539,26 +539,33 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 }
 
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
+	status := string(task.Status)
+	if task.Platform == constant.TaskPlatformImage &&
+		task.Status == model.TaskStatusSuccess &&
+		task.SettlementStatus == model.TaskSettlementStatusReview {
+		status = string(model.TaskStatusFailure)
+	}
 	return &dto.TaskDto{
-		ID:         task.ID,
-		CreatedAt:  task.CreatedAt,
-		UpdatedAt:  task.UpdatedAt,
-		TaskID:     task.TaskID,
-		Platform:   string(task.Platform),
-		UserId:     task.UserId,
-		Group:      task.Group,
-		ChannelId:  task.ChannelId,
-		Quota:      task.Quota,
-		Action:     task.Action,
-		Status:     string(task.Status),
-		FailReason: task.FailReason,
-		ResultURL:  task.GetResultURL(),
-		SubmitTime: task.SubmitTime,
-		StartTime:  task.StartTime,
-		FinishTime: task.FinishTime,
-		Progress:   task.Progress,
-		Properties: task.Properties,
-		Username:   task.Username,
-		Data:       task.Data,
+		ID:               task.ID,
+		CreatedAt:        task.CreatedAt,
+		UpdatedAt:        task.UpdatedAt,
+		TaskID:           task.TaskID,
+		Platform:         string(task.Platform),
+		UserId:           task.UserId,
+		Group:            task.Group,
+		ChannelId:        task.ChannelId,
+		Quota:            task.Quota,
+		Action:           task.Action,
+		Status:           status,
+		SettlementStatus: task.SettlementStatus,
+		FailReason:       task.FailReason,
+		ResultURL:        task.GetResultURL(),
+		SubmitTime:       task.SubmitTime,
+		StartTime:        task.StartTime,
+		FinishTime:       task.FinishTime,
+		Progress:         task.Progress,
+		Properties:       task.Properties,
+		Username:         task.Username,
+		Data:             task.Data,
 	}
 }

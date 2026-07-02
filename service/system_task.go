@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 
@@ -25,6 +26,8 @@ const (
 	// pass runs, independent of how often the runner wakes to claim tasks.
 	systemTaskSchedulerInterval = 15 * time.Second
 	systemTaskStaleLockInterval = 30 * time.Second
+	systemTaskHistoryCleanupInterval = 10 * time.Minute
+	systemTaskHistoryCleanupBatch    = 1000
 )
 
 // SystemTaskHandler executes a claimed task of a specific type. Run owns the
@@ -146,6 +149,7 @@ func StartSystemTaskRunner() {
 
 			var lastScheduler time.Time
 			var lastStaleLockCleanup time.Time
+			var lastHistoryCleanup time.Time
 			runPass := func() {
 				// The scheduler/stale-lock pass is throttled independently of the
 				// claim pass: wakeups (e.g. a manual log cleanup) should claim
@@ -160,6 +164,10 @@ func StartSystemTaskRunner() {
 				if now.Sub(lastScheduler) >= systemTaskSchedulerInterval {
 					lastScheduler = now
 					runSystemTaskScheduler()
+				}
+				if now.Sub(lastHistoryCleanup) >= systemTaskHistoryCleanupInterval {
+					lastHistoryCleanup = now
+					cleanupSystemTaskHistory()
 				}
 				runSystemTaskClaimPass(runnerID)
 			}
@@ -309,6 +317,27 @@ func runSystemTaskScheduler() {
 			}
 			logger.LogWarn(context.Background(), fmt.Sprintf("system task scheduler create failed: type=%s err=%v", scheduled.Type(), err))
 			continue
+		}
+	}
+}
+
+func cleanupSystemTaskHistory() {
+	if constant.SystemTaskHistoryRetentionHours > 0 {
+		cutoff := common.GetTimestamp() - int64(constant.SystemTaskHistoryRetentionHours)*3600
+		deleted, err := model.CleanupFinishedSystemTasks(cutoff, systemTaskHistoryCleanupBatch)
+		if err != nil {
+			logger.LogWarn(context.Background(), fmt.Sprintf("system task history cleanup failed: %v", err))
+		} else if deleted > 0 {
+			logger.LogInfo(context.Background(), fmt.Sprintf("system task history cleanup deleted %d rows", deleted))
+		}
+	}
+	if constant.TaskSettlementRecordRetentionHours > 0 {
+		cutoff := common.GetTimestamp() - int64(constant.TaskSettlementRecordRetentionHours)*3600
+		deleted, err := model.CleanupTerminalTaskSettlementRecords(cutoff, systemTaskHistoryCleanupBatch)
+		if err != nil {
+			logger.LogWarn(context.Background(), fmt.Sprintf("task settlement record cleanup failed: %v", err))
+		} else if deleted > 0 {
+			logger.LogInfo(context.Background(), fmt.Sprintf("task settlement record cleanup deleted %d rows", deleted))
 		}
 	}
 }

@@ -11,6 +11,7 @@ import (
 
 	"github.com/Calcium-Ion/go-epay/epay"
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -39,6 +40,8 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 	previousBEpusdtPID := setting.BEpusdtPID
 	previousBEpusdtSecretKey := setting.BEpusdtSecretKey
 	previousBEpusdtCurrency := setting.BEpusdtCurrency
+	previousReferralRedemptionUSDToCNYRate := common.ReferralRedemptionUSDToCNYRate
+	previousQuotaPerUnit := common.QuotaPerUnit
 	paymentSetting := operation_setting.GetPaymentSetting()
 	previousComplianceConfirmed := paymentSetting.ComplianceConfirmed
 	previousComplianceTermsVersion := paymentSetting.ComplianceTermsVersion
@@ -57,6 +60,8 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 	setting.BEpusdtPID = "bepusdt-pid-test"
 	setting.BEpusdtSecretKey = "bepusdt-key-test"
 	setting.BEpusdtCurrency = "cny"
+	common.ReferralRedemptionUSDToCNYRate = 1
+	common.QuotaPerUnit = 500000
 
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
@@ -68,6 +73,7 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 		&model.Token{},
 		&model.Log{},
 		&model.TopUp{},
+		&model.Redemption{},
 		&model.SubscriptionPlan{},
 		&model.SubscriptionOrder{},
 		&model.UserSubscription{},
@@ -98,6 +104,8 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 		setting.BEpusdtPID = previousBEpusdtPID
 		setting.BEpusdtSecretKey = previousBEpusdtSecretKey
 		setting.BEpusdtCurrency = previousBEpusdtCurrency
+		common.ReferralRedemptionUSDToCNYRate = previousReferralRedemptionUSDToCNYRate
+		common.QuotaPerUnit = previousQuotaPerUnit
 		sqlDB, err := db.DB()
 		if err == nil {
 			_ = sqlDB.Close()
@@ -125,6 +133,165 @@ func signedBEpusdtCallback(values map[string]interface{}) string {
 	}
 	params["signature"] = service.BEpusdtSign(params, setting.BEpusdtSecretKey)
 	return common.GetJsonString(params)
+}
+
+func TestUpdateRedemptionRejectsUsedStatusChange(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	redemption := &model.Redemption{
+		Key:          "controller-used-status-change",
+		Name:         "used status change",
+		Quota:        int(common.QuotaPerUnit),
+		Status:       common.RedemptionCodeStatusUsed,
+		UsedUserId:   123,
+		RedeemedTime: time.Now().Unix(),
+	}
+	require.NoError(t, model.DB.Create(redemption).Error)
+
+	body := common.GetJsonString(map[string]interface{}{
+		"id":     redemption.Id,
+		"status": common.RedemptionCodeStatusEnabled,
+	})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/redemption/?status_only=true", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	UpdateRedemption(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), "不能修改")
+	reloaded := &model.Redemption{}
+	require.NoError(t, model.DB.Where("id = ?", redemption.Id).First(reloaded).Error)
+	require.Equal(t, common.RedemptionCodeStatusUsed, reloaded.Status)
+}
+
+func TestUpdateRedemptionRejectsUsedFullUpdate(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	redemption := &model.Redemption{
+		Key:          "controller-used-full-update",
+		Name:         "used full update",
+		Quota:        int(common.QuotaPerUnit),
+		Status:       common.RedemptionCodeStatusUsed,
+		UsedUserId:   123,
+		RedeemedTime: time.Now().Unix(),
+	}
+	require.NoError(t, model.DB.Create(redemption).Error)
+
+	body := common.GetJsonString(map[string]interface{}{
+		"id":           redemption.Id,
+		"name":         "changed name",
+		"quota":        int(common.QuotaPerUnit) * 2,
+		"expired_time": time.Now().Add(24 * time.Hour).Unix(),
+	})
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/redemption/", strings.NewReader(body))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	UpdateRedemption(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Contains(t, w.Body.String(), "不能修改")
+	reloaded := &model.Redemption{}
+	require.NoError(t, model.DB.Where("id = ?", redemption.Id).First(reloaded).Error)
+	require.Equal(t, redemption.Name, reloaded.Name)
+	require.Equal(t, redemption.Quota, reloaded.Quota)
+	require.Equal(t, int64(0), reloaded.ExpiredTime)
+}
+
+func TestAddRedemptionRejectsNonPositiveQuota(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	for _, quota := range []int{0, -100} {
+		body := common.GetJsonString(map[string]interface{}{
+			"name":  "invalid quota",
+			"quota": quota,
+			"count": 1,
+		})
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Set("id", 1)
+		c.Request = httptest.NewRequest(http.MethodPost, "/api/redemption/", strings.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		AddRedemption(c)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		require.Contains(t, w.Body.String(), i18n.MsgRedemptionQuotaPositive)
+	}
+
+	var count int64
+	require.NoError(t, model.DB.Model(&model.Redemption{}).Count(&count).Error)
+	require.Zero(t, count)
+}
+
+func TestUpdateRedemptionRejectsNonPositiveQuota(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	redemption := &model.Redemption{
+		Key:         "reject-non-positive-quota-update",
+		Name:        "valid quota",
+		Quota:       100,
+		Status:      common.RedemptionCodeStatusEnabled,
+		CreatedTime: time.Now().Unix(),
+	}
+	require.NoError(t, model.DB.Create(redemption).Error)
+
+	for _, quota := range []int{0, -100} {
+		body := common.GetJsonString(map[string]interface{}{
+			"id":           redemption.Id,
+			"name":         "invalid quota",
+			"quota":        quota,
+			"expired_time": int64(0),
+		})
+		w := httptest.NewRecorder()
+		c, _ := gin.CreateTestContext(w)
+		c.Request = httptest.NewRequest(http.MethodPut, "/api/redemption/", strings.NewReader(body))
+		c.Request.Header.Set("Content-Type", "application/json")
+
+		UpdateRedemption(c)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		require.Contains(t, w.Body.String(), i18n.MsgRedemptionQuotaPositive)
+		reloaded := &model.Redemption{}
+		require.NoError(t, model.DB.Where("id = ?", redemption.Id).First(reloaded).Error)
+		require.Equal(t, "valid quota", reloaded.Name)
+		require.Equal(t, 100, reloaded.Quota)
+	}
+}
+
+func TestProcessRedeemedCodeCommissionMarksFailedJob(t *testing.T) {
+	setupPaymentCallbackGuardDB(t)
+
+	common.ReferralRedemptionUSDToCNYRate = 0
+	redemption := &model.Redemption{
+		Key:          "controller-redemption-failed-001",
+		Name:         "failed referral redemption",
+		Quota:        int(common.QuotaPerUnit),
+		Status:       common.RedemptionCodeStatusUsed,
+		UsedUserId:   123,
+		RedeemedTime: time.Now().Unix(),
+	}
+	require.NoError(t, model.DB.Create(redemption).Error)
+
+	require.NoError(t, processRedeemedCodeCommission(context.Background(), redemption.Id))
+
+	tradeNo := redemptionCommissionTradeNo(redemption.Id)
+	job := &model.ReferralCommissionJob{}
+	require.NoError(t, model.DB.Where("source_type = ? AND source_trade_no = ?", "redemption", tradeNo).First(job).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusFailed, job.Status)
+	require.Contains(t, job.LastError, "redemption_usd_to_cny_rate")
+
+	reloaded := &model.Redemption{}
+	require.NoError(t, model.DB.Where("id = ?", redemption.Id).First(reloaded).Error)
+	require.Equal(t, model.ReferralCommissionJobStatusFailed, reloaded.ReferralCommissionStatus)
+	require.Contains(t, reloaded.ReferralCommissionError, "redemption_usd_to_cny_rate")
 }
 
 func TestEpayTopupNotifyRejectsMismatchedMerchant(t *testing.T) {

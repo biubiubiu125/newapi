@@ -3,12 +3,18 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"io"
 	"net/http"
 	"os"
+	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/glebarez/sqlite"
@@ -38,6 +44,9 @@ func TestMain(m *testing.M) {
 
 	if err := db.AutoMigrate(
 		&model.Task{},
+		&model.TaskDispatchState{},
+		&model.ImageTaskChannelLease{},
+		&model.TaskSettlementRecord{},
 		&model.User{},
 		&model.UserLoginIdentifier{},
 		&model.Token{},
@@ -60,6 +69,9 @@ func truncate(t *testing.T) {
 	t.Helper()
 	t.Cleanup(func() {
 		model.DB.Exec("DELETE FROM tasks")
+		model.DB.Exec("DELETE FROM task_dispatch_states")
+		model.DB.Exec("DELETE FROM image_task_channel_leases")
+		model.DB.Exec("DELETE FROM task_settlement_records")
 		model.DB.Exec("DELETE FROM users")
 		model.DB.Exec("DELETE FROM tokens")
 		model.DB.Exec("DELETE FROM logs")
@@ -67,6 +79,194 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM top_ups")
 		model.DB.Exec("DELETE FROM user_subscriptions")
 	})
+}
+
+func TestImageTaskBatchPollSizeClampsToProtocolLimit(t *testing.T) {
+	oldBatchSize := constant.ImageTaskBatchPollSize
+	constant.ImageTaskBatchPollSize = 250
+	t.Cleanup(func() {
+		constant.ImageTaskBatchPollSize = oldBatchSize
+	})
+
+	require.Equal(t, 100, imageTaskBatchPollSize())
+}
+
+func TestTaskPollingPlatformOrderPrioritizesImage(t *testing.T) {
+	order := taskPollingPlatformOrder(map[constant.TaskPlatform][]*model.Task{
+		constant.TaskPlatformSuno:      {},
+		constant.TaskPlatformImage:     {},
+		constant.TaskPlatform("video"): {},
+	})
+
+	require.Len(t, order, 3)
+	require.Equal(t, string(constant.TaskPlatformImage), string(order[0]))
+	require.Equal(t, string(constant.TaskPlatformSuno), string(order[1]))
+	require.Equal(t, "video", string(order[2]))
+}
+
+func TestRunTaskPollingOnceRunsImageTasksWithoutGenericAdaptor(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldAdaptor := GetTaskAdaptorFunc
+	oldRunImageTasks := RunImageTasksFunc
+	oldTaskQueryLimit := constant.TaskQueryLimit
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	GetTaskAdaptorFunc = nil
+	constant.TaskQueryLimit = 10
+	constant.ImageTaskWorkerConcurrency = 1
+	constant.ImageTaskChannelConcurrency = 1
+	constant.ImageTaskLeaseSeconds = 60
+	var called int32
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		atomic.AddInt32(&called, int32(len(tasks)))
+		require.Len(t, tasks, 1)
+		require.Equal(t, "task_image_without_generic_adaptor", tasks[0].TaskID)
+		return nil
+	}
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc = oldAdaptor
+		RunImageTasksFunc = oldRunImageTasks
+		constant.TaskQueryLimit = oldTaskQueryLimit
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:     "task_image_without_generic_adaptor",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	summary := RunTaskPollingOnce(context.Background(), nil)
+
+	require.Equal(t, 1, summary.UnfinishedTasks)
+	require.Equal(t, 1, int(atomic.LoadInt32(&called)))
+}
+
+func TestRunTaskPollingOnceStartsOtherPlatformsWhileImageRunning(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldAdaptor := GetTaskAdaptorFunc
+	oldRunImageTasks := RunImageTasksFunc
+	oldTaskQueryLimit := constant.TaskQueryLimit
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	constant.TaskQueryLimit = 10
+	constant.ImageTaskWorkerConcurrency = 1
+	constant.ImageTaskChannelConcurrency = 1
+	constant.ImageTaskLeaseSeconds = 60
+	imageStarted := make(chan struct{})
+	releaseImage := make(chan struct{})
+	sunoStarted := make(chan struct{})
+	done := make(chan struct{})
+	var imageStartedClosed int32
+	var releaseClosed int32
+	closeRelease := func() {
+		if atomic.CompareAndSwapInt32(&releaseClosed, 0, 1) {
+			close(releaseImage)
+		}
+	}
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		require.Len(t, tasks, 1)
+		if atomic.CompareAndSwapInt32(&imageStartedClosed, 0, 1) {
+			close(imageStarted)
+			select {
+			case <-releaseImage:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	}
+	GetTaskAdaptorFunc = func(platform constant.TaskPlatform) TaskPollingAdaptor {
+		if platform == constant.TaskPlatformSuno {
+			return &signalTaskPollingAdaptor{started: sunoStarted}
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		closeRelease()
+		GetTaskAdaptorFunc = oldAdaptor
+		RunImageTasksFunc = oldRunImageTasks
+		constant.TaskQueryLimit = oldTaskQueryLimit
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	now := time.Now().Unix()
+	imageTask := &model.Task{
+		TaskID:     "task_image_parallel_platform",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	baseURL := "http://suno.local"
+	sunoChannel := &model.Channel{
+		Id:      2,
+		Name:    "suno",
+		Key:     "suno-key",
+		Status:  common.ChannelStatusEnabled,
+		BaseURL: &baseURL,
+	}
+	sunoTask := &model.Task{
+		TaskID:     "suno_task_parallel_platform",
+		Platform:   constant.TaskPlatformSuno,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  2,
+		Status:     model.TaskStatusSubmitted,
+		Progress:   "0%",
+		SubmitTime: now,
+	}
+	require.NoError(t, model.DB.Create(imageTask).Error)
+	require.NoError(t, model.DB.Create(sunoChannel).Error)
+	require.NoError(t, model.DB.Create(sunoTask).Error)
+
+	go func() {
+		RunTaskPollingOnce(context.Background(), nil)
+		close(done)
+	}()
+
+	select {
+	case <-imageStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("image task did not start")
+	}
+	select {
+	case <-sunoStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("suno task waited for image dispatch to finish")
+	}
+	closeRelease()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("polling pass did not finish")
+	}
 }
 
 func seedUser(t *testing.T, id int, quota int) {
@@ -183,6 +383,1262 @@ func countLogs(t *testing.T) int64 {
 	var count int64
 	model.LOG_DB.Model(&model.Log{}).Count(&count)
 	return count
+}
+
+func TestRunTaskPollingOnceCleansExpiredImageTaskResultCacheWithoutAdaptor(t *testing.T) {
+	oldConfig := common.GetDiskCacheConfig()
+	oldCleanupUnix := atomic.LoadInt64(&imageTaskResultCacheCleanupUnix)
+	oldAdaptor := GetTaskAdaptorFunc
+	oldTaskTimeoutMinutes := constant.TaskTimeoutMinutes
+	oldResultRetentionMinutes := constant.ImageTaskResultRetentionMinutes
+	cacheRoot := t.TempDir()
+	common.SetDiskCacheConfig(common.DiskCacheConfig{Path: cacheRoot})
+	atomic.StoreInt64(&imageTaskResultCacheCleanupUnix, 0)
+	GetTaskAdaptorFunc = nil
+	constant.TaskTimeoutMinutes = 60
+	constant.ImageTaskResultRetentionMinutes = 60
+	t.Cleanup(func() {
+		common.SetDiskCacheConfig(oldConfig)
+		atomic.StoreInt64(&imageTaskResultCacheCleanupUnix, oldCleanupUnix)
+		GetTaskAdaptorFunc = oldAdaptor
+		constant.TaskTimeoutMinutes = oldTaskTimeoutMinutes
+		constant.ImageTaskResultRetentionMinutes = oldResultRetentionMinutes
+	})
+
+	path, err := common.WriteImageTaskResultCacheFile([]byte(`{"data":[{"b64_json":"expired"}]}`))
+	require.NoError(t, err)
+	oldTime := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, os.Chtimes(path, oldTime, oldTime))
+
+	RunTaskPollingOnce(context.Background(), nil)
+
+	require.NoFileExists(t, path)
+}
+
+func TestSweepTimedOutTasksSkipsImageTaskForRunner(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	require.NoError(t, model.DB.Exec("DELETE FROM logs").Error)
+	oldConfig := common.GetDiskCacheConfig()
+	oldTaskTimeoutMinutes := constant.TaskTimeoutMinutes
+	cacheRoot := t.TempDir()
+	common.SetDiskCacheConfig(common.DiskCacheConfig{Path: cacheRoot})
+	constant.TaskTimeoutMinutes = 1
+	t.Cleanup(func() {
+		common.SetDiskCacheConfig(oldConfig)
+		constant.TaskTimeoutMinutes = oldTaskTimeoutMinutes
+	})
+
+	bodyPath, err := common.WriteImageTaskBodyCacheFile([]byte(`{"model":"gpt-image-1","prompt":"hello","stream":false}`))
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		_ = os.Remove(bodyPath)
+	})
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:     "task_image_async_timeout_guard",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Action:     constant.TaskActionImageGeneration,
+		Status:     model.TaskStatusSubmitted,
+		Progress:   "0%",
+		SubmitTime: now - 120,
+		StartTime:  now,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode:   dto.ImageTaskModeGPTImage2APIAsync,
+			RequestBodyPath: bodyPath,
+			UpstreamTaskID:  "upstream_123",
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	sweepTimedOutTasks(context.Background())
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&reloaded).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSubmitted), reloaded.Status)
+	require.Equal(t, "0%", reloaded.Progress)
+	require.Equal(t, bodyPath, reloaded.PrivateData.RequestBodyPath)
+	require.FileExists(t, bodyPath)
+}
+
+func TestSweepTimedOutTasksStillFailsNonImageTask(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	require.NoError(t, model.DB.Exec("DELETE FROM logs").Error)
+	oldTaskTimeoutMinutes := constant.TaskTimeoutMinutes
+	constant.TaskTimeoutMinutes = 1
+	t.Cleanup(func() {
+		constant.TaskTimeoutMinutes = oldTaskTimeoutMinutes
+	})
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:     "task_video_timeout_guard",
+		Platform:   constant.TaskPlatform("video"),
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusInProgress,
+		Progress:   "50%",
+		SubmitTime: now - 120,
+		StartTime:  now - 120,
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	sweepTimedOutTasks(context.Background())
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&reloaded).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
+	require.Equal(t, "100%", reloaded.Progress)
+	require.NotEmpty(t, reloaded.FailReason)
+}
+
+func TestRunTaskPollingOnceSkipsFutureImageTask(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldAdaptor := GetTaskAdaptorFunc
+	oldRunImageTasks := RunImageTasksFunc
+	GetTaskAdaptorFunc = func(platform constant.TaskPlatform) TaskPollingAdaptor {
+		return nil
+	}
+	var called int32
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		atomic.AddInt32(&called, 1)
+		return nil
+	}
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc = oldAdaptor
+		RunImageTasksFunc = oldRunImageTasks
+	})
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:     "task_image_future_poll",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now + 3600,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	RunTaskPollingOnce(context.Background(), nil)
+
+	require.Equal(t, int32(0), atomic.LoadInt32(&called))
+}
+
+func TestRunTaskPollingOnceFairlyIncludesLaterChannelsBeforeLimit(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldAdaptor := GetTaskAdaptorFunc
+	oldRunImageTasks := RunImageTasksFunc
+	oldTaskQueryLimit := constant.TaskQueryLimit
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	GetTaskAdaptorFunc = func(platform constant.TaskPlatform) TaskPollingAdaptor {
+		return nil
+	}
+	constant.TaskQueryLimit = 3
+	constant.ImageTaskWorkerConcurrency = 3
+	constant.ImageTaskChannelConcurrency = 1
+	constant.ImageTaskLeaseSeconds = 60
+	calls := make(chan int, 3)
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		require.Len(t, tasks, 1)
+		select {
+		case calls <- tasks[0].ChannelId:
+		default:
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc = oldAdaptor
+		RunImageTasksFunc = oldRunImageTasks
+		constant.TaskQueryLimit = oldTaskQueryLimit
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	now := time.Now().Unix()
+	for i := 0; i < 5; i++ {
+		task := &model.Task{
+			TaskID:     fmt.Sprintf("task_image_fair_hot_%d", i),
+			Platform:   constant.TaskPlatformImage,
+			UserId:     1,
+			Group:      "default",
+			ChannelId:  1,
+			Status:     model.TaskStatusQueued,
+			Progress:   "0%",
+			SubmitTime: now,
+			NextPollAt: now - 1,
+			PrivateData: model.TaskPrivateData{
+				ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			},
+		}
+		require.NoError(t, model.DB.Create(task).Error)
+	}
+	for _, channelID := range []int{2, 3} {
+		task := &model.Task{
+			TaskID:     fmt.Sprintf("task_image_fair_channel_%d", channelID),
+			Platform:   constant.TaskPlatformImage,
+			UserId:     1,
+			Group:      "default",
+			ChannelId:  channelID,
+			Status:     model.TaskStatusQueued,
+			Progress:   "0%",
+			SubmitTime: now,
+			NextPollAt: now - 1,
+			PrivateData: model.TaskPrivateData{
+				ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			},
+		}
+		require.NoError(t, model.DB.Create(task).Error)
+	}
+
+	RunTaskPollingOnce(context.Background(), nil)
+
+	close(calls)
+	executedChannels := make(map[int]bool)
+	for channelID := range calls {
+		executedChannels[channelID] = true
+	}
+	require.True(t, executedChannels[1])
+	require.True(t, executedChannels[2])
+	require.True(t, executedChannels[3])
+	require.Len(t, executedChannels, 3)
+}
+
+func TestRunTaskPollingOnceRotatesImageChannelsAcrossPasses(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldAdaptor := GetTaskAdaptorFunc
+	oldRunImageTasks := RunImageTasksFunc
+	oldTaskQueryLimit := constant.TaskQueryLimit
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	GetTaskAdaptorFunc = func(platform constant.TaskPlatform) TaskPollingAdaptor {
+		return nil
+	}
+	constant.TaskQueryLimit = 3
+	constant.ImageTaskWorkerConcurrency = 3
+	constant.ImageTaskChannelConcurrency = 1
+	constant.ImageTaskLeaseSeconds = 60
+	calls := make(chan int, 20)
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		require.Len(t, tasks, 1)
+		calls <- tasks[0].ChannelId
+		return nil
+	}
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc = oldAdaptor
+		RunImageTasksFunc = oldRunImageTasks
+		constant.TaskQueryLimit = oldTaskQueryLimit
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	now := time.Now().Unix()
+	for channelID := 1; channelID <= 6; channelID++ {
+		for i := 0; i < 2; i++ {
+			task := &model.Task{
+				TaskID:     fmt.Sprintf("task_image_rotate_%d_%d", channelID, i),
+				Platform:   constant.TaskPlatformImage,
+				UserId:     1,
+				Group:      "default",
+				ChannelId:  channelID,
+				Status:     model.TaskStatusQueued,
+				Progress:   "0%",
+				SubmitTime: now,
+				NextPollAt: now - 1,
+				PrivateData: model.TaskPrivateData{
+					ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+				},
+			}
+			require.NoError(t, model.DB.Create(task).Error)
+		}
+	}
+
+	RunTaskPollingOnce(context.Background(), nil)
+	firstPass := drainImageTaskChannelCalls(calls)
+	RunTaskPollingOnce(context.Background(), nil)
+	secondPass := drainImageTaskChannelCalls(calls)
+
+	require.Len(t, firstPass, 3)
+	require.Len(t, secondPass, 3)
+	coveredChannels := make(map[int]bool)
+	for _, channelID := range append(firstPass, secondPass...) {
+		coveredChannels[channelID] = true
+	}
+	for channelID := 1; channelID <= 6; channelID++ {
+		require.True(t, coveredChannels[channelID], "channel %d should be dispatched across two passes", channelID)
+	}
+}
+
+func drainImageTaskChannelCalls(calls <-chan int) []int {
+	channels := make([]int, 0)
+	for {
+		select {
+		case channelID := <-calls:
+			channels = append(channels, channelID)
+		default:
+			return channels
+		}
+	}
+}
+
+func TestRunTaskPollingOnceReservesImageSlotWhenNonImageBacklogFillsLimit(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldAdaptor := GetTaskAdaptorFunc
+	oldRunImageTasks := RunImageTasksFunc
+	oldTaskQueryLimit := constant.TaskQueryLimit
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	GetTaskAdaptorFunc = func(platform constant.TaskPlatform) TaskPollingAdaptor {
+		return nil
+	}
+	constant.TaskQueryLimit = 3
+	constant.ImageTaskWorkerConcurrency = 2
+	constant.ImageTaskChannelConcurrency = 1
+	constant.ImageTaskLeaseSeconds = 60
+	calls := make(chan string, 1)
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		require.Len(t, tasks, 1)
+		select {
+		case calls <- tasks[0].TaskID:
+		default:
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc = oldAdaptor
+		RunImageTasksFunc = oldRunImageTasks
+		constant.TaskQueryLimit = oldTaskQueryLimit
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	now := time.Now().Unix()
+	for i := 0; i < 6; i++ {
+		task := &model.Task{
+			TaskID:     fmt.Sprintf("task_suno_backlog_%d", i),
+			Platform:   constant.TaskPlatformSuno,
+			UserId:     1,
+			Group:      "default",
+			ChannelId:  999,
+			Status:     model.TaskStatusSubmitted,
+			Progress:   "0%",
+			SubmitTime: now,
+		}
+		require.NoError(t, model.DB.Create(task).Error)
+	}
+	imageTask := &model.Task{
+		TaskID:     "task_image_reserved_slot",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	require.NoError(t, model.DB.Create(imageTask).Error)
+
+	RunTaskPollingOnce(context.Background(), nil)
+
+	select {
+	case taskID := <-calls:
+		require.Equal(t, imageTask.TaskID, taskID)
+	default:
+		t.Fatal("image task was starved by non-image backlog")
+	}
+}
+
+func TestRunTaskPollingOnceSkipsImageWhenDedicatedWorkerEnabled(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldRunImageTasks := RunImageTasksFunc
+	oldWorkerEnabled := constant.ImageTaskWorkerEnabled
+	constant.ImageTaskWorkerEnabled = true
+	var calls int32
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		atomic.AddInt32(&calls, 1)
+		return nil
+	}
+	t.Cleanup(func() {
+		RunImageTasksFunc = oldRunImageTasks
+		constant.ImageTaskWorkerEnabled = oldWorkerEnabled
+	})
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:     "task_image_dedicated_worker_skip",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	RunTaskPollingOnce(context.Background(), nil)
+
+	require.Equal(t, int32(0), atomic.LoadInt32(&calls))
+}
+
+func TestGetRunnableUnfinishedSyncTasksCapsImageBatchByWorkerLimit(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldTaskQueryLimit := constant.TaskQueryLimit
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	constant.TaskQueryLimit = 1000
+	constant.ImageTaskWorkerConcurrency = 2
+	t.Cleanup(func() {
+		constant.TaskQueryLimit = oldTaskQueryLimit
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+	})
+
+	now := time.Now().Unix()
+	for i := 0; i < 20; i++ {
+		task := &model.Task{
+			TaskID:     fmt.Sprintf("task_image_capped_%d", i),
+			Platform:   constant.TaskPlatformImage,
+			UserId:     1,
+			Group:      "default",
+			ChannelId:  i + 1,
+			Status:     model.TaskStatusQueued,
+			Progress:   "0%",
+			SubmitTime: now,
+			NextPollAt: now - 1,
+			PrivateData: model.TaskPrivateData{
+				ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			},
+		}
+		require.NoError(t, model.DB.Create(task).Error)
+	}
+
+	tasks := model.GetRunnableUnfinishedSyncTasks(constant.TaskQueryLimit, now)
+
+	require.Len(t, tasks, 8)
+}
+
+func TestDispatchImageTasksReleasesLeaseAndSchedulesNextPoll(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldRunImageTasks := RunImageTasksFunc
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	constant.ImageTaskWorkerConcurrency = 2
+	constant.ImageTaskChannelConcurrency = 1
+	constant.ImageTaskLeaseSeconds = 60
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		require.Len(t, tasks, 1)
+		task := tasks[0]
+		owner := ImageTaskLeaseOwnerFromContext(ctx)
+		require.NotEmpty(t, owner)
+		require.Equal(t, task.LockOwner, owner)
+		oldStatus := task.Status
+		task.Status = model.TaskStatusSubmitted
+		task.Progress = "0%"
+		task.RetryCount = 0
+		_, err := task.UpdateWithStatusAndLease(oldStatus, owner, time.Now().Unix())
+		return err
+	}
+	t.Cleanup(func() {
+		RunImageTasksFunc = oldRunImageTasks
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:     "task_image_dispatch_schedule",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	DispatchImageTasks(context.Background(), []*model.Task{task})
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&reloaded).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSubmitted), reloaded.Status)
+	require.Empty(t, reloaded.LockOwner)
+	require.Zero(t, reloaded.LockUntil)
+	require.Zero(t, reloaded.RetryCount)
+	require.GreaterOrEqual(t, reloaded.NextPollAt, now+2)
+}
+
+func TestDispatchImageTasksDoesNotLeaseQueuedWorkBeforeWorkerStarts(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldRunImageTasks := RunImageTasksFunc
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	constant.ImageTaskWorkerConcurrency = 1
+	constant.ImageTaskChannelConcurrency = 1
+	constant.ImageTaskLeaseSeconds = 60
+	started := make(chan struct{})
+	release := make(chan struct{})
+	done := make(chan struct{})
+	var calls int32
+	var releaseClosed int32
+	closeRelease := func() {
+		if atomic.CompareAndSwapInt32(&releaseClosed, 0, 1) {
+			close(release)
+		}
+	}
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		require.Len(t, tasks, 1)
+		if atomic.AddInt32(&calls, 1) == 1 {
+			close(started)
+			select {
+			case <-release:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		closeRelease()
+		RunImageTasksFunc = oldRunImageTasks
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	now := time.Now().Unix()
+	first := &model.Task{
+		TaskID:     "task_image_dispatch_first",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	second := &model.Task{
+		TaskID:     "task_image_dispatch_second",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	require.NoError(t, model.DB.Create(first).Error)
+	require.NoError(t, model.DB.Create(second).Error)
+
+	go func() {
+		DispatchImageTasks(context.Background(), []*model.Task{first, second})
+		close(done)
+	}()
+
+	select {
+	case <-started:
+	case <-time.After(2 * time.Second):
+		t.Fatal("first task did not start")
+	}
+
+	var queued model.Task
+	require.NoError(t, model.DB.Where("task_id = ?", second.TaskID).First(&queued).Error)
+	require.Empty(t, queued.LockOwner)
+	require.Zero(t, queued.LockUntil)
+
+	closeRelease()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("dispatch did not finish")
+	}
+	require.Equal(t, int32(2), atomic.LoadInt32(&calls))
+}
+
+func TestDispatchImageTasksSaturatedChannelDoesNotBlockOtherChannels(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldRunImageTasks := RunImageTasksFunc
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	constant.ImageTaskWorkerConcurrency = 2
+	constant.ImageTaskChannelConcurrency = 1
+	constant.ImageTaskLeaseSeconds = 60
+	channelOneStarted := make(chan struct{})
+	releaseChannelOne := make(chan struct{})
+	channelTwoStarted := make(chan struct{})
+	done := make(chan struct{})
+	var channelOneStartedClosed int32
+	var channelTwoStartedClosed int32
+	var releaseClosed int32
+	var calls int32
+	closeRelease := func() {
+		if atomic.CompareAndSwapInt32(&releaseClosed, 0, 1) {
+			close(releaseChannelOne)
+		}
+	}
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		require.Len(t, tasks, 1)
+		task := tasks[0]
+		atomic.AddInt32(&calls, 1)
+		switch task.ChannelId {
+		case 1:
+			if atomic.CompareAndSwapInt32(&channelOneStartedClosed, 0, 1) {
+				close(channelOneStarted)
+				select {
+				case <-releaseChannelOne:
+				case <-ctx.Done():
+					return ctx.Err()
+				}
+			}
+		case 2:
+			if atomic.CompareAndSwapInt32(&channelTwoStartedClosed, 0, 1) {
+				close(channelTwoStarted)
+			}
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		closeRelease()
+		RunImageTasksFunc = oldRunImageTasks
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	now := time.Now().Unix()
+	firstSameChannel := &model.Task{
+		TaskID:     "task_image_channel_block_first",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	secondSameChannel := &model.Task{
+		TaskID:     "task_image_channel_block_second",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	otherChannel := &model.Task{
+		TaskID:     "task_image_channel_block_other",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  2,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	require.NoError(t, model.DB.Create(firstSameChannel).Error)
+	require.NoError(t, model.DB.Create(secondSameChannel).Error)
+	require.NoError(t, model.DB.Create(otherChannel).Error)
+
+	go func() {
+		DispatchImageTasks(context.Background(), []*model.Task{firstSameChannel, secondSameChannel, otherChannel})
+		close(done)
+	}()
+
+	select {
+	case <-channelOneStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("channel one task did not start")
+	}
+
+	select {
+	case <-channelTwoStarted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("other channel task was blocked by saturated channel")
+	}
+
+	var channelOneTasks []model.Task
+	require.NoError(t, model.DB.Where("channel_id = ?", 1).Order("id").Find(&channelOneTasks).Error)
+	require.Len(t, channelOneTasks, 2)
+	leasedCount := 0
+	for _, task := range channelOneTasks {
+		if task.LockOwner != "" || task.LockUntil != 0 {
+			leasedCount++
+		}
+	}
+	require.Equal(t, 1, leasedCount)
+
+	closeRelease()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("dispatch did not finish")
+	}
+	require.Equal(t, int32(3), atomic.LoadInt32(&calls))
+}
+
+func TestDispatchImageTasksHonorsGlobalChannelLease(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	require.NoError(t, model.DB.Exec("DELETE FROM image_task_channel_leases").Error)
+	oldRunImageTasks := RunImageTasksFunc
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	constant.ImageTaskWorkerConcurrency = 2
+	constant.ImageTaskChannelConcurrency = 1
+	constant.ImageTaskLeaseSeconds = 60
+	var calls int32
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		atomic.AddInt32(&calls, 1)
+		return nil
+	}
+	t.Cleanup(func() {
+		RunImageTasksFunc = oldRunImageTasks
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:     "task_image_global_channel_blocked",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	sameChannelSkipped := &model.Task{
+		TaskID:     "task_image_global_channel_skipped",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(sameChannelSkipped).Error)
+	acquired, err := model.TryAcquireImageTaskChannelLease(1, task.ID+1000, "remote-owner", now, 60, 1)
+	require.NoError(t, err)
+	require.True(t, acquired)
+
+	DispatchImageTasks(context.Background(), []*model.Task{task, sameChannelSkipped})
+
+	require.Zero(t, atomic.LoadInt32(&calls))
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Empty(t, reloaded.LockOwner)
+	require.Zero(t, reloaded.LockUntil)
+	require.GreaterOrEqual(t, reloaded.NextPollAt, now+imageTaskChannelSaturationBackoffSeconds())
+	var skipped model.Task
+	require.NoError(t, model.DB.First(&skipped, sameChannelSkipped.ID).Error)
+	require.Empty(t, skipped.LockOwner)
+	require.Zero(t, skipped.LockUntil)
+	require.GreaterOrEqual(t, skipped.NextPollAt, now+imageTaskChannelSaturationBackoffSeconds())
+	count, err := model.CountActiveImageTaskChannelLeases(1, now)
+	require.NoError(t, err)
+	require.Equal(t, int64(1), count)
+}
+
+func TestDispatchImageTasksBacksOffTransientRetry(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldRunImageTasks := RunImageTasksFunc
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	constant.ImageTaskWorkerConcurrency = 1
+	constant.ImageTaskChannelConcurrency = 1
+	constant.ImageTaskLeaseSeconds = 60
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		require.Len(t, tasks, 1)
+		tasks[0].RetryCount++
+		return nil
+	}
+	t.Cleanup(func() {
+		RunImageTasksFunc = oldRunImageTasks
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:     "task_image_dispatch_backoff",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusSubmitted,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode:   dto.ImageTaskModeGPTImage2APIAsync,
+			UpstreamTaskID:  "upstream_123",
+			RequestBodyPath: "kept-for-settlement.json",
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	DispatchImageTasks(context.Background(), []*model.Task{task})
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&reloaded).Error)
+	require.Equal(t, 1, reloaded.RetryCount)
+	require.Empty(t, reloaded.LockOwner)
+	require.Zero(t, reloaded.LockUntil)
+	require.GreaterOrEqual(t, reloaded.NextPollAt, now+4)
+}
+
+func TestDispatchImageTasksRecoversWorkerPanic(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldRunImageTasks := RunImageTasksFunc
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	constant.ImageTaskWorkerConcurrency = 1
+	constant.ImageTaskChannelConcurrency = 1
+	constant.ImageTaskLeaseSeconds = 60
+	var calls int32
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		require.Len(t, tasks, 1)
+		if atomic.AddInt32(&calls, 1) == 1 {
+			panic("simulated image worker panic")
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		RunImageTasksFunc = oldRunImageTasks
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	now := time.Now().Unix()
+	for i := 0; i < 2; i++ {
+		task := &model.Task{
+			TaskID:     fmt.Sprintf("task_image_panic_recover_%d", i),
+			Platform:   constant.TaskPlatformImage,
+			UserId:     1,
+			Group:      "default",
+			ChannelId:  1,
+			Status:     model.TaskStatusQueued,
+			Progress:   "0%",
+			SubmitTime: now,
+			NextPollAt: now - 1,
+			PrivateData: model.TaskPrivateData{
+				ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			},
+		}
+		require.NoError(t, model.DB.Create(task).Error)
+	}
+
+	require.NotPanics(t, func() {
+		DispatchImageTasks(context.Background(), model.GetRunnableImageTasks(2, now))
+	})
+	require.Equal(t, int32(2), atomic.LoadInt32(&calls))
+}
+
+func TestRunImageTaskWorkerPassClaimsRunnableTasks(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldRunImageTasks := RunImageTasksFunc
+	oldUpdateTask := constant.UpdateTask
+	oldTaskQueryLimit := constant.TaskQueryLimit
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	constant.UpdateTask = true
+	constant.TaskQueryLimit = 10
+	constant.ImageTaskWorkerConcurrency = 2
+	constant.ImageTaskChannelConcurrency = 1
+	constant.ImageTaskLeaseSeconds = 60
+	var calls int32
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		require.Len(t, tasks, 1)
+		atomic.AddInt32(&calls, 1)
+		return nil
+	}
+	t.Cleanup(func() {
+		RunImageTasksFunc = oldRunImageTasks
+		constant.UpdateTask = oldUpdateTask
+		constant.TaskQueryLimit = oldTaskQueryLimit
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:     "task_image_worker_pass",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	runImageTaskWorkerPass(context.Background())
+
+	require.Equal(t, int32(1), atomic.LoadInt32(&calls))
+}
+
+func TestDispatchImageTasksPreservesRetryWhenProgressingIntoPendingSettlement(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldRunImageTasks := RunImageTasksFunc
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	constant.ImageTaskWorkerConcurrency = 1
+	constant.ImageTaskChannelConcurrency = 1
+	constant.ImageTaskLeaseSeconds = 60
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		require.Len(t, tasks, 1)
+		task := tasks[0]
+		task.Status = model.TaskStatusSuccess
+		task.Progress = "100%"
+		task.FinishTime = time.Now().Unix()
+		task.NextPollAt = 0
+		task.SettlementStatus = model.TaskSettlementStatusPending
+		task.RetryCount++
+		owner := ImageTaskLeaseOwnerFromContext(ctx)
+		won, err := task.UpdateWithStatusAndLease(model.TaskStatusSubmitted, owner, time.Now().Unix())
+		require.NoError(t, err)
+		require.True(t, won)
+		return nil
+	}
+	t.Cleanup(func() {
+		RunImageTasksFunc = oldRunImageTasks
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:     "task_image_pending_settlement_backoff",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusSubmitted,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode:   dto.ImageTaskModeGPTImage2APIAsync,
+			UpstreamTaskID:  "upstream_pending_settlement",
+			RequestBodyPath: "kept-for-settlement.json",
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	DispatchImageTasks(context.Background(), []*model.Task{task})
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&reloaded).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, model.TaskSettlementStatusPending, reloaded.SettlementStatus)
+	require.Equal(t, 1, reloaded.RetryCount)
+	require.Empty(t, reloaded.LockOwner)
+	require.Zero(t, reloaded.LockUntil)
+	require.GreaterOrEqual(t, reloaded.NextPollAt, now+4)
+}
+
+func TestDispatchImageTasksPreservesRetryWhenProgressingIntoAppliedSettlement(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldRunImageTasks := RunImageTasksFunc
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	constant.ImageTaskWorkerConcurrency = 1
+	constant.ImageTaskChannelConcurrency = 1
+	constant.ImageTaskLeaseSeconds = 60
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		require.Len(t, tasks, 1)
+		task := tasks[0]
+		task.Status = model.TaskStatusSuccess
+		task.Progress = "100%"
+		task.FinishTime = time.Now().Unix()
+		task.NextPollAt = 0
+		task.SettlementStatus = model.TaskSettlementStatusApplied
+		task.RetryCount++
+		owner := ImageTaskLeaseOwnerFromContext(ctx)
+		won, err := task.UpdateWithStatusAndLease(model.TaskStatusSubmitted, owner, time.Now().Unix())
+		require.NoError(t, err)
+		require.True(t, won)
+		return nil
+	}
+	t.Cleanup(func() {
+		RunImageTasksFunc = oldRunImageTasks
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:     "task_image_applied_settlement_backoff",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusSubmitted,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode:   dto.ImageTaskModeGPTImage2APIAsync,
+			UpstreamTaskID:  "upstream_applied_settlement",
+			RequestBodyPath: "kept-for-finalize.json",
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	DispatchImageTasks(context.Background(), []*model.Task{task})
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&reloaded).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, model.TaskSettlementStatusApplied, reloaded.SettlementStatus)
+	require.Equal(t, 1, reloaded.RetryCount)
+	require.Empty(t, reloaded.LockOwner)
+	require.Zero(t, reloaded.LockUntil)
+	require.GreaterOrEqual(t, reloaded.NextPollAt, now+4)
+}
+
+func TestImageTaskRunnableQueriesTreatNullSchedulingFieldsAsReady(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:     "task_image_null_schedule",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Exec("UPDATE tasks SET next_poll_at = NULL, lock_until = NULL WHERE id = ?", task.ID).Error)
+
+	require.True(t, model.HasRunnableImageTasks(now))
+	tasks := model.GetRunnableUnfinishedSyncTasks(10, now)
+	require.Len(t, tasks, 1)
+	require.Equal(t, task.TaskID, tasks[0].TaskID)
+
+	claimed, ok, err := model.ClaimTaskLease(task.ID, "test-owner", now, 60)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, claimed)
+	require.Equal(t, "test-owner", claimed.LockOwner)
+}
+
+func TestImageTaskRunnableQueriesIncludePendingSettlementSuccess(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_image_pending_settlement",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           model.TaskStatusSuccess,
+		Progress:         "100%",
+		SubmitTime:       now - 60,
+		FinishTime:       now - 10,
+		NextPollAt:       now - 1,
+		SettlementStatus: model.TaskSettlementStatusPending,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode:  dto.ImageTaskModeGPTImage2APIAsync,
+			UpstreamTaskID: "upstream_pending_settlement",
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	require.True(t, model.HasRunnableImageTasks(now))
+	tasks := model.GetRunnableUnfinishedSyncTasks(10, now)
+	require.Len(t, tasks, 1)
+	require.Equal(t, task.TaskID, tasks[0].TaskID)
+
+	claimed, ok, err := model.ClaimTaskLease(task.ID, "settlement-owner", now, 60)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, claimed)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), claimed.Status)
+	require.Equal(t, model.TaskSettlementStatusPending, claimed.SettlementStatus)
+
+	renewed, err := model.RenewTaskLease(task.ID, "settlement-owner", now+1, 60)
+	require.NoError(t, err)
+	require.True(t, renewed)
+}
+
+func TestImageTaskRunnableQueriesIncludeAppliedSettlementSuccess(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_image_applied_settlement",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           model.TaskStatusSuccess,
+		Progress:         "100%",
+		SubmitTime:       now - 60,
+		FinishTime:       now - 10,
+		NextPollAt:       now - 1,
+		SettlementStatus: model.TaskSettlementStatusApplied,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode:  dto.ImageTaskModeGPTImage2APIAsync,
+			UpstreamTaskID: "upstream_applied_settlement",
+		},
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	require.True(t, model.HasRunnableImageTasks(now))
+	tasks := model.GetRunnableUnfinishedSyncTasks(10, now)
+	require.Len(t, tasks, 1)
+	require.Equal(t, task.TaskID, tasks[0].TaskID)
+
+	claimed, ok, err := model.ClaimTaskLease(task.ID, "settlement-owner", now, 60)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, claimed)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), claimed.Status)
+	require.Equal(t, model.TaskSettlementStatusApplied, claimed.SettlementStatus)
+}
+
+func TestGetNextRunnableImageTaskAtUsesPollAndLeaseDueTime(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+
+	now := time.Now().Unix()
+	earlier := &model.Task{
+		TaskID:     "task_image_next_earlier",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusSubmitted,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now + 10,
+		LockUntil:  0,
+	}
+	laterByLease := &model.Task{
+		TaskID:     "task_image_next_later_by_lease",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusSubmitted,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now + 1,
+		LockUntil:  now + 20,
+	}
+	require.NoError(t, model.DB.Create(earlier).Error)
+	require.NoError(t, model.DB.Create(laterByLease).Error)
+
+	nextAt, ok := model.GetNextRunnableImageTaskAt(now)
+	require.True(t, ok)
+	require.Equal(t, now+10, nextAt)
 }
 
 // ===========================================================================
@@ -625,6 +2081,33 @@ func (m *mockAdaptor) FetchTask(string, string, map[string]any, string) (*http.R
 func (m *mockAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) { return nil, nil }
 func (m *mockAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
 	return m.adjustReturn
+}
+
+type signalTaskPollingAdaptor struct {
+	started chan struct{}
+	closed  int32
+}
+
+func (m *signalTaskPollingAdaptor) Init(_ *relaycommon.RelayInfo) {}
+
+func (m *signalTaskPollingAdaptor) FetchTask(string, string, map[string]any, string) (*http.Response, error) {
+	if atomic.CompareAndSwapInt32(&m.closed, 0, 1) {
+		close(m.started)
+	}
+	body := `{"code":"success","data":[{"task_id":"suno_task_parallel_platform","status":"IN_PROGRESS","data":{}}]}`
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Header:     make(http.Header),
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}, nil
+}
+
+func (m *signalTaskPollingAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
+	return nil, nil
+}
+
+func (m *signalTaskPollingAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
+	return 0
 }
 
 // ===========================================================================

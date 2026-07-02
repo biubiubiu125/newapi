@@ -1902,6 +1902,42 @@ func TestApplyParamOverrideWithRelayInfoMixedLegacyAndOperations(t *testing.T) {
 	}
 }
 
+func TestApplyHeaderOverrideOperationsWithRelayInfo(t *testing.T) {
+	info := &RelayInfo{
+		RequestHeaders: map[string]string{
+			"Originator": "Codex CLI",
+			"Session_id": "sess-123",
+		},
+		ChannelMeta: &ChannelMeta{
+			ParamOverride: map[string]interface{}{
+				"operations": []interface{}{
+					map[string]interface{}{
+						"mode":  "pass_headers",
+						"value": []interface{}{"Originator", "Session_id"},
+					},
+					map[string]interface{}{
+						"mode":  "set_header",
+						"path":  "X-Async",
+						"value": "enabled",
+					},
+				},
+			},
+			HeadersOverride: map[string]interface{}{
+				"X-Static": "legacy-static",
+			},
+		},
+	}
+
+	err := ApplyHeaderOverrideOperationsWithRelayInfo(info)
+
+	require.NoError(t, err)
+	require.True(t, info.UseRuntimeHeadersOverride)
+	require.Equal(t, "legacy-static", info.RuntimeHeadersOverride["x-static"])
+	require.Equal(t, "Codex CLI", info.RuntimeHeadersOverride["originator"])
+	require.Equal(t, "sess-123", info.RuntimeHeadersOverride["session_id"])
+	require.Equal(t, "enabled", info.RuntimeHeadersOverride["x-async"])
+}
+
 func TestApplyParamOverrideWithRelayInfoMoveAndCopyHeaders(t *testing.T) {
 	info := &RelayInfo{
 		ChannelMeta: &ChannelMeta{

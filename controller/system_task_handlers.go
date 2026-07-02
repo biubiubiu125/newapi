@@ -166,7 +166,10 @@ type asyncTaskPollHandler struct{}
 func (asyncTaskPollHandler) Type() string { return model.SystemTaskTypeAsyncTaskPoll }
 
 func (asyncTaskPollHandler) Enabled() bool {
-	return constant.UpdateTask && model.HasUnfinishedSyncTasks()
+	if service.ImageTaskWorkerEnabled() {
+		return constant.UpdateTask && model.HasRunnableNonImageSyncTasks()
+	}
+	return constant.UpdateTask && model.HasRunnableSyncTasks(common.GetTimestamp())
 }
 
 func (asyncTaskPollHandler) Interval() time.Duration { return 15 * time.Second }
@@ -177,9 +180,11 @@ func (asyncTaskPollHandler) Run(ctx context.Context, task *model.SystemTask, run
 	summary := service.RunTaskPollingOnce(ctx, service.NewSystemTaskProgressReporter(task, runnerID))
 	if ctx != nil && ctx.Err() != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, ctx.Err())
+		service.ScheduleNextImageTaskPollWakeup(context.Background())
 		return
 	}
 	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+	service.ScheduleNextImageTaskPollWakeup(context.Background())
 }
 
 func finishSystemTaskHandler(task *model.SystemTask, runnerID string, status model.SystemTaskStatus, result any, runErr error) {

@@ -944,3 +944,69 @@ func TestGetReferralAdminBadgesReturnsOnlyPendingCounts(t *testing.T) {
 	require.NotEmpty(t, response.Data.LatestPendingAffiliateCursor)
 	require.NotEmpty(t, response.Data.LatestPendingWithdrawalCursor)
 }
+
+func TestUpdateReferralSettingsPreservesRedemptionRateWhenOmitted(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.ReferralAdminAuditLog{}))
+
+	previousOptionMap := common.OptionMap
+	previousReferralEnabled := common.ReferralEnabled
+	previousCookieTTLDays := common.ReferralCookieTTLDays
+	previousDefaultRate := common.ReferralDefaultRate
+	previousSettleFreezeDays := common.ReferralSettleFreezeDays
+	previousMinWithdrawAmount := common.ReferralMinWithdrawAmount
+	previousWithdrawFee := common.ReferralWithdrawFee
+	previousRequireApproval := common.ReferralRequireApproval
+	previousSettlementCurrency := common.ReferralSettlementCurrency
+	previousSettlementFxRates := common.ReferralSettlementFxRates
+	previousRedemptionRate := common.ReferralRedemptionUSDToCNYRate
+	common.OptionMap = map[string]string{}
+	common.ReferralRedemptionUSDToCNYRate = 7.2
+	t.Cleanup(func() {
+		common.OptionMap = previousOptionMap
+		common.ReferralEnabled = previousReferralEnabled
+		common.ReferralCookieTTLDays = previousCookieTTLDays
+		common.ReferralDefaultRate = previousDefaultRate
+		common.ReferralSettleFreezeDays = previousSettleFreezeDays
+		common.ReferralMinWithdrawAmount = previousMinWithdrawAmount
+		common.ReferralWithdrawFee = previousWithdrawFee
+		common.ReferralRequireApproval = previousRequireApproval
+		common.ReferralSettlementCurrency = previousSettlementCurrency
+		common.ReferralSettlementFxRates = previousSettlementFxRates
+		common.ReferralRedemptionUSDToCNYRate = previousRedemptionRate
+	})
+
+	payload, err := json.Marshal(map[string]any{
+		"enabled":             true,
+		"cookie_ttl_days":     30,
+		"default_rate":        10,
+		"settle_freeze_days":  7,
+		"min_withdraw_amount": 0,
+		"withdraw_fee":        0,
+		"redirect_path":       "/sign-up",
+		"require_approval":    false,
+		"settlement_currency": "CNY",
+		"settlement_fx_rates": `{"CNY":1}`,
+	})
+	require.NoError(t, err)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Set("id", 1)
+	c.Request = httptest.NewRequest(http.MethodPut, "/api/user/admin/referral/settings", bytes.NewReader(payload))
+	c.Request.Header.Set("Content-Type", "application/json")
+
+	UpdateReferralSettings(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response struct {
+		Success bool `json:"success"`
+		Data    struct {
+			RedemptionUSDToCNYRate float64 `json:"redemption_usd_to_cny_rate"`
+		} `json:"data"`
+	}
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.True(t, response.Success)
+	require.Equal(t, 7.2, response.Data.RedemptionUSDToCNYRate)
+}

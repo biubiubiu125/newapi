@@ -276,15 +276,119 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 			return
 		}
 
-		c.Set("id", token.UserId)
-		c.Set("token_id", token.Id)
-		c.Set("token_key", token.Key)
+		userCache.WriteContext(c)
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, strings.TrimSpace(userCache.Group))
+		if err := SetupContextForToken(c, token); err != nil {
+			return
+		}
+		c.Next()
+	}
+}
+
+func isImageTaskReadOnlyRequest(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	return c.Request.Method == http.MethodGet && strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks")
+}
+
+func isImageTaskReadOnlyTokenUsable(token *model.Token, now int64) bool {
+	if token == nil {
+		return false
+	}
+	if token.Status != common.TokenStatusEnabled && token.Status != common.TokenStatusExhausted {
+		return false
+	}
+	return token.ExpiredTime == -1 || token.ExpiredTime >= now
+}
+
+func ImageTaskTokenAuthReadOnly() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		key := c.Request.Header.Get("Authorization")
+		parts := make([]string, 0)
+		if strings.HasPrefix(key, "Bearer ") || strings.HasPrefix(key, "bearer ") {
+			key = strings.TrimSpace(key[7:])
+		}
+		key = strings.TrimPrefix(key, "sk-")
+		parts = strings.Split(key, "-")
+		key = parts[0]
+		if key == "" {
+			abortWithOpenAiMessage(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenNotProvided))
+			return
+		}
+
+		token, err := model.GetTokenByKey(key, false)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				abortWithOpenAiMessage(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenInvalid))
+			} else {
+				common.SysLog("ImageTaskTokenAuthReadOnly GetTokenByKey database error: " + err.Error())
+				abortWithOpenAiMessage(c, http.StatusInternalServerError, common.TranslateMessage(c, i18n.MsgDatabaseError))
+			}
+			return
+		}
+		if !isImageTaskReadOnlyTokenUsable(token, common.GetTimestamp()) {
+			abortWithOpenAiMessage(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenInvalid))
+			return
+		}
+
+		allowIps := token.GetIpLimits()
+		if len(allowIps) > 0 {
+			clientIp := common.GetClientIP(c)
+			logger.LogDebug(c, "Token has IP restrictions, checking client IP %s", clientIp)
+			ip := net.ParseIP(clientIp)
+			if ip == nil {
+				abortWithOpenAiMessage(c, http.StatusForbidden, "无法解析客户端 IP 地址")
+				return
+			}
+			if !common.IsIpInCIDRList(ip, allowIps) {
+				abortWithOpenAiMessage(c, http.StatusForbidden, "您的 IP 不在令牌允许访问的列表中", types.ErrorCodeAccessDenied)
+				return
+			}
+			logger.LogDebug(c, "Client IP %s passed the token IP restrictions check", clientIp)
+		}
+
+		userCache, err := model.GetUserCache(token.UserId)
+		if err != nil {
+			common.SysLog(fmt.Sprintf("ImageTaskTokenAuthReadOnly GetUserCache error for user %d: %v", token.UserId, err))
+			abortWithOpenAiMessage(c, http.StatusInternalServerError, common.TranslateMessage(c, i18n.MsgDatabaseError))
+			return
+		}
+		if userCache.Status != common.UserStatusEnabled {
+			abortWithOpenAiMessage(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthUserBanned))
+			return
+		}
+
+		userCache.WriteContext(c)
+		userGroup := strings.TrimSpace(userCache.Group)
+		tokenGroup := strings.TrimSpace(token.Group)
+		if tokenGroup != "" {
+			if _, ok := service.GetUserUsableGroupsByUser(token.UserId, userGroup)[tokenGroup]; !ok {
+				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", tokenGroup))
+				return
+			}
+			if !ratio_setting.ContainsGroupRatio(tokenGroup) && tokenGroup != "auto" {
+				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("分组 %s 已被弃用", tokenGroup))
+				return
+			}
+			userGroup = tokenGroup
+		}
+		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
+
+		if err := SetupContextForToken(c, token, parts...); err != nil {
+			return
+		}
 		c.Next()
 	}
 }
 
 func TokenAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		if isImageTaskReadOnlyRequest(c) {
+			ImageTaskTokenAuthReadOnly()(c)
+			return
+		}
+
 		// 先检测是否为ws
 		if c.Request.Header.Get("Sec-WebSocket-Protocol") != "" {
 			// Sec-WebSocket-Protocol: realtime, openai-insecure-api-key.sk-xxx, openai-beta.realtime-v1

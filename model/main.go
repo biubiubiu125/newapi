@@ -345,6 +345,10 @@ func migrateDB() error {
 		&TopUp{},
 		&QuotaData{},
 		&Task{},
+		&TaskDispatchState{},
+		&ImageTaskChannelLease{},
+		&ImageTaskClientTaskIDLock{},
+		&TaskSettlementRecord{},
 		&Model{},
 		&Vendor{},
 		&PrefillGroup{},
@@ -389,6 +393,9 @@ func migrateDB() error {
 		return err
 	}
 	if err := ensureRechargeOrderIndexes(); err != nil {
+		return err
+	}
+	if err := migrateImageTaskPortableStorageNodes(); err != nil {
 		return err
 	}
 	cleanupConversationArtifactOptions()
@@ -475,6 +482,10 @@ func migrateDBFast() error {
 		{&TopUp{}, "TopUp"},
 		{&QuotaData{}, "QuotaData"},
 		{&Task{}, "Task"},
+		{&TaskDispatchState{}, "TaskDispatchState"},
+		{&ImageTaskChannelLease{}, "ImageTaskChannelLease"},
+		{&ImageTaskClientTaskIDLock{}, "ImageTaskClientTaskIDLock"},
+		{&TaskSettlementRecord{}, "TaskSettlementRecord"},
 		{&Model{}, "Model"},
 		{&Vendor{}, "Vendor"},
 		{&PrefillGroup{}, "PrefillGroup"},
@@ -541,9 +552,66 @@ func migrateDBFast() error {
 	if err := ensureRechargeOrderIndexes(); err != nil {
 		return err
 	}
+	if err := migrateImageTaskPortableStorageNodes(); err != nil {
+		return err
+	}
 	cleanupConversationArtifactOptions()
 	common.SysLog("database migrated")
 	return nil
+}
+
+func migrateImageTaskPortableStorageNodes() error {
+	const batchSize = 1000
+	var total int64
+	for {
+		var ids []int64
+		privateDataWhere, privateDataArgs := imageTaskPortablePrivateDataWhere()
+		err := DB.Model(&Task{}).
+			Where("platform = ?", constant.TaskPlatformImage).
+			Where("(storage_node = '' OR storage_node IS NULL)").
+			Where(privateDataWhere, privateDataArgs...).
+			Order("id ASC").
+			Limit(batchSize).
+			Pluck("id", &ids).Error
+		if err != nil || len(ids) == 0 {
+			if total > 0 {
+				common.SysLog(fmt.Sprintf("migrated %d portable image task storage nodes", total))
+			}
+			return err
+		}
+		result := DB.Model(&Task{}).
+			Where("id IN ?", ids).
+			Updates(map[string]any{
+				"storage_node": ImageTaskPortableStorageNode,
+				"updated_at":   time.Now().Unix(),
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		total += result.RowsAffected
+		if len(ids) < batchSize {
+			if total > 0 {
+				common.SysLog(fmt.Sprintf("migrated %d portable image task storage nodes", total))
+			}
+			return nil
+		}
+	}
+}
+
+func imageTaskPortablePrivateDataWhere() (string, []any) {
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		return "(private_data ->> 'request_body_portable') = ? AND COALESCE(private_data ->> 'request_body_base64', '') <> ''", []any{"true"}
+	}
+	if common.UsingMainDatabase(common.DatabaseTypeMySQL) {
+		return "JSON_UNQUOTE(JSON_EXTRACT(private_data, '$.request_body_portable')) = ? AND COALESCE(JSON_UNQUOTE(JSON_EXTRACT(private_data, '$.request_body_base64')), '') <> ''", []any{"true"}
+	}
+	column := "CAST(private_data AS TEXT)"
+	return "(" + column + " LIKE ? OR " + column + " LIKE ?) AND (" + column + " LIKE ? OR " + column + " LIKE ?)", []any{
+		`%"request_body_portable":true%`,
+		`%"request_body_portable": true%`,
+		`%"request_body_base64":"%`,
+		`%"request_body_base64": "%`,
+	}
 }
 
 func migrateLOGDB() error {

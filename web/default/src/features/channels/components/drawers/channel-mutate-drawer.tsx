@@ -219,6 +219,7 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.pass_through_body_enabled ||
     values.system_prompt_override ||
     values.claude_beta_query ||
+    values.image_task_mode === 'gpt_image2api_async' ||
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
     values.upstream_model_update_ignored_models?.trim()
@@ -3247,6 +3248,42 @@ export function ChannelMutateDrawer({
                                 onCheckedChange={field.onChange}
                               />
                             </FormControl>
+                          </FormItem>
+                        )}
+                      />
+
+                      <FormField
+                        control={form.control}
+                        name='image_task_mode'
+                        render={({ field }) => (
+                          <FormItem>
+                            <FormLabel>{t('图片任务模式')}</FormLabel>
+                            <Select
+                              value={field.value || 'sync_wrapper'}
+                              onValueChange={field.onChange}
+                            >
+                              <FormControl>
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                              </FormControl>
+                              <SelectContent alignItemWithTrigger={false}>
+                                <SelectGroup>
+                                  <SelectItem value='sync_wrapper'>
+                                    {t('同步包装')}
+                                  </SelectItem>
+                                  <SelectItem value='gpt_image2api_async'>
+                                    {t('gpt_image2api 异步')}
+                                  </SelectItem>
+                                </SelectGroup>
+                              </SelectContent>
+                            </Select>
+                            <FormDescription>
+                              {t(
+                                'gpt_image2api 异步仅用于已改造任务接口的 gpt-image2api 渠道'
+                              )}
+                            </FormDescription>
+                            <FormMessage />
                           </FormItem>
                         )}
                       />

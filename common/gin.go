@@ -129,6 +129,20 @@ func UnmarshalBodyReusable(c *gin.Context, v any) error {
 		return nil
 	}
 
+	if strings.Contains(contentType, gin.MIMEMultipartPOSTForm) {
+		if _, seekErr := storage.Seek(0, io.SeekStart); seekErr != nil {
+			return seekErr
+		}
+		if err := parseMultipartFormDataFromReader(c, storage, v); err != nil {
+			return err
+		}
+		if _, seekErr := storage.Seek(0, io.SeekStart); seekErr != nil {
+			return seekErr
+		}
+		c.Request.Body = io.NopCloser(storage)
+		return nil
+	}
+
 	requestBody, err := storage.Bytes()
 	if err != nil {
 		return err
@@ -257,10 +271,6 @@ func ParseMultipartFormReusable(c *gin.Context) (*multipart.Form, error) {
 	if err != nil {
 		return nil, err
 	}
-	requestBody, err := storage.Bytes()
-	if err != nil {
-		return nil, err
-	}
 
 	// Use the original Content-Type saved on first call to avoid boundary
 	// mismatch when callers overwrite c.Request.Header after multipart rebuild.
@@ -276,7 +286,10 @@ func ParseMultipartFormReusable(c *gin.Context) (*multipart.Form, error) {
 		return nil, err
 	}
 
-	reader := multipart.NewReader(bytes.NewReader(requestBody), boundary)
+	if _, seekErr := storage.Seek(0, io.SeekStart); seekErr != nil {
+		return nil, seekErr
+	}
+	reader := multipart.NewReader(storage, boundary)
 	form, err := reader.ReadForm(multipartMemoryLimit())
 	if err != nil {
 		return nil, err
@@ -352,6 +365,44 @@ func parseMultipartFormData(c *gin.Context, data []byte, v any) error {
 		}
 	}
 
+	return processFormMap(formMap, v)
+}
+
+func parseMultipartFormDataFromReader(c *gin.Context, reader io.Reader, v any) error {
+	var contentType string
+	if saved, ok := c.Get("_original_multipart_ct"); ok {
+		contentType = saved.(string)
+	} else {
+		contentType = c.Request.Header.Get("Content-Type")
+		c.Set("_original_multipart_ct", contentType)
+	}
+	boundary, err := parseBoundary(contentType)
+	if err != nil {
+		if errors.Is(err, errBoundaryNotFound) {
+			data, readErr := io.ReadAll(reader)
+			if readErr != nil {
+				return readErr
+			}
+			return Unmarshal(data, v)
+		}
+		return err
+	}
+
+	formReader := multipart.NewReader(reader, boundary)
+	form, err := formReader.ReadForm(multipartMemoryLimit())
+	if err != nil {
+		return err
+	}
+	defer form.RemoveAll()
+
+	formMap := make(map[string]any)
+	for key, vals := range form.Value {
+		if len(vals) == 1 {
+			formMap[key] = vals[0]
+		} else {
+			formMap[key] = vals
+		}
+	}
 	return processFormMap(formMap, v)
 }
 

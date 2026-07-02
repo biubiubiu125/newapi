@@ -197,6 +197,9 @@ export const channelFormSchema = z
     allow_speed: z.boolean().optional(), // Anthropic: speed mode control
     claude_beta_query: z.boolean().optional(), // Anthropic: beta query passthrough
     disable_task_polling_sleep: z.boolean().optional(),
+    image_task_mode: z
+      .enum(['sync_wrapper', 'gpt_image2api_async'])
+      .optional(),
     // Upstream model update settings (stored in settings JSON)
     upstream_model_update_check_enabled: z.boolean().optional(),
     upstream_model_update_auto_sync_enabled: z.boolean().optional(),
@@ -208,6 +211,17 @@ export const channelFormSchema = z
         ctx,
         'base_url',
         'Base URL is required for this channel type'
+      )
+    }
+
+    if (
+      data.image_task_mode === 'gpt_image2api_async' &&
+      !data.base_url?.trim()
+    ) {
+      addRequiredIssue(
+        ctx,
+        'base_url',
+        'gpt_image2api 异步模式必须填写基础地址'
       )
     }
 
@@ -316,6 +330,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   allow_speed: false,
   claude_beta_query: false,
   disable_task_polling_sleep: false,
+  image_task_mode: 'sync_wrapper',
   upstream_model_update_check_enabled: false,
   upstream_model_update_auto_sync_enabled: false,
   upstream_model_update_ignored_models: '',
@@ -371,6 +386,7 @@ export function transformChannelToFormDefaults(
   let allowSpeed = false
   let claudeBetaQuery = false
   let disableTaskPollingSleep = false
+  let imageTaskMode: 'sync_wrapper' | 'gpt_image2api_async' = 'sync_wrapper'
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
@@ -390,6 +406,10 @@ export function transformChannelToFormDefaults(
       allowSpeed = parsed.allow_speed === true
       claudeBetaQuery = parsed.claude_beta_query === true
       disableTaskPollingSleep = parsed.disable_task_polling_sleep === true
+      imageTaskMode =
+        parsed.image_task_mode === 'gpt_image2api_async'
+          ? 'gpt_image2api_async'
+          : 'sync_wrapper'
       upstreamModelUpdateCheckEnabled =
         parsed.upstream_model_update_check_enabled === true
       upstreamModelUpdateAutoSyncEnabled =
@@ -445,6 +465,7 @@ export function transformChannelToFormDefaults(
     allow_speed: allowSpeed,
     claude_beta_query: claudeBetaQuery,
     disable_task_polling_sleep: disableTaskPollingSleep,
+    image_task_mode: imageTaskMode,
     allow_safety_identifier: allowSafetyIdentifier,
     upstream_model_update_check_enabled: upstreamModelUpdateCheckEnabled,
     upstream_model_update_auto_sync_enabled: upstreamModelUpdateAutoSyncEnabled,
@@ -549,6 +570,7 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
 
   settingsObj.disable_task_polling_sleep =
     formData.disable_task_polling_sleep === true
+  settingsObj.image_task_mode = formData.image_task_mode || 'sync_wrapper'
 
   // Upstream model update settings (for model-fetchable channel types)
   if (MODEL_FETCHABLE_TYPES.has(formData.type)) {
