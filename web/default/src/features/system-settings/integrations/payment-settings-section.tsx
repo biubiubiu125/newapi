@@ -128,6 +128,9 @@ const paymentSchema = z.object({
       })
     }
   }),
+  WalletNotice: z
+    .string()
+    .max(1000, 'Wallet notice must be 1000 characters or fewer'),
   StripeApiSecret: z.string(),
   StripeWebhookSecret: z.string(),
   StripePriceId: z.string(),
@@ -415,6 +418,7 @@ export function PaymentSettingsSection({
       PayMethods: values.PayMethods.trim(),
       AmountOptions: values.AmountOptions.trim(),
       AmountDiscount: values.AmountDiscount.trim(),
+      WalletNotice: values.WalletNotice.trim(),
       StripeApiSecret: values.StripeApiSecret.trim(),
       StripeWebhookSecret: values.StripeWebhookSecret.trim(),
       StripePriceId: values.StripePriceId.trim(),
@@ -459,6 +463,7 @@ export function PaymentSettingsSection({
       PayMethods: initialRef.current.PayMethods.trim(),
       AmountOptions: initialRef.current.AmountOptions.trim(),
       AmountDiscount: initialRef.current.AmountDiscount.trim(),
+      WalletNotice: initialRef.current.WalletNotice.trim(),
       StripeApiSecret: initialRef.current.StripeApiSecret.trim(),
       StripeWebhookSecret: initialRef.current.StripeWebhookSecret.trim(),
       StripePriceId: initialRef.current.StripePriceId.trim(),
@@ -547,6 +552,13 @@ export function PaymentSettingsSection({
       updates.push({
         key: 'payment_setting.amount_discount',
         value: sanitized.AmountDiscount,
+      })
+    }
+
+    if (sanitized.WalletNotice !== initial.WalletNotice) {
+      updates.push({
+        key: 'payment_setting.wallet_notice',
+        value: sanitized.WalletNotice,
       })
     }
 
@@ -1088,6 +1100,33 @@ export function PaymentSettingsSection({
                 )}
               />
             </div>
+
+            <FormField
+              control={form.control}
+              name='WalletNotice'
+              render={({ field }) => (
+                <FormItem>
+                  <FormLabel>{t('Wallet page notice')}</FormLabel>
+                  <FormControl>
+                    <Textarea
+                      rows={3}
+                      maxLength={1000}
+                      placeholder={t(
+                        'Online payment channels may charge fees. We recommend buying redemption codes for better value.'
+                      )}
+                      {...field}
+                      onChange={(event) => field.onChange(event.target.value)}
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {t(
+                      'Optional notice shown above Add Funds and Subscription Plans on the wallet page. Leave empty to hide it.'
+                    )}
+                  </FormDescription>
+                  <FormMessage />
+                </FormItem>
+              )}
+            />
           </div>
 
           <Separator />

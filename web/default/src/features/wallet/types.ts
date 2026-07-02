@@ -154,6 +154,8 @@ export interface TopupInfo {
   amount_options: number[]
   /** Discount rates by amount */
   discount: Record<number, number>
+  /** Optional wallet page notice shown above recharge/subscription cards */
+  wallet_notice?: string
   /** Optional topup link for purchasing codes */
   topup_link?: string
   /** Whether Creem topup is enabled */

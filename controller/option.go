@@ -24,6 +24,7 @@ import (
 )
 
 const systemLogoPublicPrefix = "/system-assets/"
+const walletNoticeMaxLength = 1000
 
 func normalizeSystemLogoURL(value string) string {
 	logo := strings.TrimSpace(value)
@@ -257,6 +258,14 @@ func UpdateOption(c *gin.Context) {
 		option.Value = common.Interface2String(option.Value.(int))
 	default:
 		option.Value = fmt.Sprintf("%v", option.Value)
+	}
+	if option.Key == "payment_setting.wallet_notice" {
+		walletNotice := strings.TrimSpace(option.Value.(string))
+		if len([]rune(walletNotice)) > walletNoticeMaxLength {
+			common.ApiErrorMsg(c, "钱包页提示公告不能超过 1000 个字符")
+			return
+		}
+		option.Value = walletNotice
 	}
 	previousAnnouncements := ""
 	if option.Key == "console_setting.announcements" {

@@ -43,6 +43,7 @@ import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
 import { PaymentConfirmDialog } from './components/dialogs/payment-confirm-dialog'
 import { RechargeFormCard } from './components/recharge-form-card'
 import { SubscriptionPlansCard } from './components/subscription-plans-card'
+import { WalletNoticeAlert } from './components/wallet-notice-alert'
 import { WalletStatsCard } from './components/wallet-stats-card'
 import { DEFAULT_DISCOUNT_RATE } from './constants'
 import {
@@ -606,6 +607,8 @@ export function Wallet(props: WalletProps) {
             'general_setting.quota_display_type',
             'general_setting.custom_currency_symbol',
             'general_setting.custom_currency_exchange_rate',
+            'payment_setting.wallet_notice',
+            'TopUpLink',
           ].includes(key)
         )
 
@@ -622,6 +625,11 @@ export function Wallet(props: WalletProps) {
         <SectionPageLayout.Content>
           <div className='mx-auto flex w-full max-w-7xl flex-col gap-4 sm:gap-5'>
             <WalletStatsCard user={user} loading={userLoading} />
+
+            <WalletNoticeAlert
+              notice={topupInfo?.wallet_notice}
+              topupLink={topupInfo?.topup_link}
+            />
 
             <div
               className={

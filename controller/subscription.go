@@ -153,6 +153,15 @@ func normalizeAndValidateGrantGroups(groups string) (string, bool) {
 	return normalized, true
 }
 
+func normalizeAndValidateSubscriptionGroup(group string) (string, bool) {
+	normalized := strings.TrimSpace(group)
+	if normalized == "" {
+		return "", true
+	}
+	_, ok := ratio_setting.GetGroupRatioCopy()[normalized]
+	return normalized, ok
+}
+
 func AdminCreateSubscriptionPlan(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
@@ -191,12 +200,16 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorMsg(c, "总额度不能为负数")
 		return
 	}
-	req.Plan.UpgradeGroup = strings.TrimSpace(req.Plan.UpgradeGroup)
-	if req.Plan.UpgradeGroup != "" {
-		if _, ok := ratio_setting.GetGroupRatioCopy()[req.Plan.UpgradeGroup]; !ok {
-			common.ApiErrorMsg(c, "升级分组不存在")
-			return
-		}
+	var groupOk bool
+	req.Plan.UpgradeGroup, groupOk = normalizeAndValidateSubscriptionGroup(req.Plan.UpgradeGroup)
+	if !groupOk {
+		common.ApiErrorMsg(c, "升级分组不存在")
+		return
+	}
+	req.Plan.DowngradeGroup, groupOk = normalizeAndValidateSubscriptionGroup(req.Plan.DowngradeGroup)
+	if !groupOk {
+		common.ApiErrorMsg(c, "降级分组不存在")
+		return
 	}
 	var grantGroupsOk bool
 	req.Plan.GrantGroups, grantGroupsOk = normalizeAndValidateGrantGroups(req.Plan.GrantGroups)
@@ -262,12 +275,16 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorMsg(c, "总额度不能为负数")
 		return
 	}
-	req.Plan.UpgradeGroup = strings.TrimSpace(req.Plan.UpgradeGroup)
-	if req.Plan.UpgradeGroup != "" {
-		if _, ok := ratio_setting.GetGroupRatioCopy()[req.Plan.UpgradeGroup]; !ok {
-			common.ApiErrorMsg(c, "升级分组不存在")
-			return
-		}
+	var groupOk bool
+	req.Plan.UpgradeGroup, groupOk = normalizeAndValidateSubscriptionGroup(req.Plan.UpgradeGroup)
+	if !groupOk {
+		common.ApiErrorMsg(c, "升级分组不存在")
+		return
+	}
+	req.Plan.DowngradeGroup, groupOk = normalizeAndValidateSubscriptionGroup(req.Plan.DowngradeGroup)
+	if !groupOk {
+		common.ApiErrorMsg(c, "降级分组不存在")
+		return
 	}
 	var grantGroupsOk bool
 	req.Plan.GrantGroups, grantGroupsOk = normalizeAndValidateGrantGroups(req.Plan.GrantGroups)
@@ -314,14 +331,19 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		if err := tx.Model(&model.SubscriptionPlan{}).Where("id = ?", id).Updates(updateMap).Error; err != nil {
 			return err
 		}
-		if req.SyncActiveUserSubscriptions && req.Plan.AllowWalletOverflow != nil {
+		if req.SyncActiveUserSubscriptions {
 			now := common.GetTimestamp()
+			activeSubscriptionUpdates := map[string]interface{}{
+				"grant_groups":    req.Plan.GrantGroups,
+				"downgrade_group": req.Plan.DowngradeGroup,
+				"updated_at":      now,
+			}
+			if req.Plan.AllowWalletOverflow != nil {
+				activeSubscriptionUpdates["allow_wallet_overflow"] = *req.Plan.AllowWalletOverflow
+			}
 			if err := tx.Model(&model.UserSubscription{}).
 				Where("plan_id = ? AND status = ? AND end_time > ?", id, "active", now).
-				Updates(map[string]interface{}{
-					"allow_wallet_overflow": *req.Plan.AllowWalletOverflow,
-					"updated_at":            now,
-				}).Error; err != nil {
+				Updates(activeSubscriptionUpdates).Error; err != nil {
 				return err
 			}
 		}

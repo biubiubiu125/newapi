@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"bytes"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -35,7 +36,7 @@ func setupSubscriptionControllerTestDB(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open("file:"+t.Name()+"?mode=memory&cache=shared"), &gorm.Config{})
 	require.NoError(t, err)
 	model.DB = db
-	require.NoError(t, db.AutoMigrate(&model.SubscriptionPlan{}))
+	require.NoError(t, db.AutoMigrate(&model.SubscriptionPlan{}, &model.UserSubscription{}))
 
 	t.Cleanup(func() {
 		model.DB = previousDB
@@ -123,4 +124,172 @@ func TestAdminListSubscriptionPlansNormalizesPlanDefaults(t *testing.T) {
 	require.True(t, *response.Data[0].Plan.AllowBalancePay)
 	require.NotNil(t, response.Data[0].Plan.AllowWalletOverflow)
 	require.True(t, *response.Data[0].Plan.AllowWalletOverflow)
+}
+
+func TestAdminUpdateSubscriptionPlanSyncsActiveSubscriptionBenefitsWithoutQuota(t *testing.T) {
+	setupSubscriptionControllerTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	trueValue := true
+	falseValue := false
+	now := common.GetTimestamp()
+
+	require.NoError(t, model.DB.Create(&model.SubscriptionPlan{
+		Id:                  603,
+		Title:               "Original Plan",
+		PriceAmount:         9.99,
+		Currency:            "CNY",
+		DurationUnit:        model.SubscriptionDurationMonth,
+		DurationValue:       1,
+		Enabled:             true,
+		TotalAmount:         1000,
+		GrantGroups:         "default",
+		DowngradeGroup:      "default",
+		AllowBalancePay:     &trueValue,
+		AllowWalletOverflow: &trueValue,
+	}).Error)
+
+	require.NoError(t, model.DB.Create(&model.UserSubscription{
+		Id:                  701,
+		UserId:              1001,
+		PlanId:              603,
+		AmountTotal:         12345,
+		AmountUsed:          2345,
+		StartTime:           now - 60,
+		EndTime:             now + 3600,
+		Status:              "active",
+		Source:              "order",
+		UpgradeGroup:        "default",
+		GrantGroups:         "default",
+		DowngradeGroup:      "default",
+		AllowWalletOverflow: true,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.UserSubscription{
+		Id:                  702,
+		UserId:              1002,
+		PlanId:              603,
+		AmountTotal:         8888,
+		AmountUsed:          888,
+		StartTime:           now - 7200,
+		EndTime:             now - 3600,
+		Status:              "active",
+		Source:              "order",
+		GrantGroups:         "default",
+		DowngradeGroup:      "default",
+		AllowWalletOverflow: true,
+	}).Error)
+
+	body, err := json.Marshal(AdminUpsertSubscriptionPlanRequest{
+		Plan: model.SubscriptionPlan{
+			Title:               "Updated Plan",
+			Subtitle:            "Updated Subtitle",
+			PriceAmount:         18.88,
+			Currency:            "CNY",
+			DurationUnit:        model.SubscriptionDurationMonth,
+			DurationValue:       1,
+			Enabled:             true,
+			SortOrder:           2,
+			MaxPurchasePerUser:  3,
+			TotalAmount:         999999,
+			UpgradeGroup:        "vip",
+			GrantGroups:         "vip,svip",
+			DowngradeGroup:      "svip",
+			QuotaResetPeriod:    model.SubscriptionResetNever,
+			AllowBalancePay:     &trueValue,
+			AllowWalletOverflow: &falseValue,
+		},
+		SyncActiveUserSubscriptions: true,
+	})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: "603"}}
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/subscription/admin/plans/603", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	AdminUpdateSubscriptionPlan(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success)
+
+	var activeSub model.UserSubscription
+	require.NoError(t, model.DB.Where("id = ?", 701).First(&activeSub).Error)
+	require.Equal(t, "vip,svip", activeSub.GrantGroups)
+	require.Equal(t, "svip", activeSub.DowngradeGroup)
+	require.False(t, activeSub.AllowWalletOverflow)
+	require.Equal(t, "default", activeSub.UpgradeGroup)
+	require.Equal(t, int64(12345), activeSub.AmountTotal)
+	require.Equal(t, int64(2345), activeSub.AmountUsed)
+
+	var expiredSub model.UserSubscription
+	require.NoError(t, model.DB.Where("id = ?", 702).First(&expiredSub).Error)
+	require.Equal(t, "default", expiredSub.GrantGroups)
+	require.Equal(t, "default", expiredSub.DowngradeGroup)
+	require.True(t, expiredSub.AllowWalletOverflow)
+	require.Equal(t, int64(8888), expiredSub.AmountTotal)
+	require.Equal(t, int64(888), expiredSub.AmountUsed)
+}
+
+func TestAdminUpdateSubscriptionPlanRejectsInvalidDowngradeGroup(t *testing.T) {
+	setupSubscriptionControllerTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	trueValue := true
+	require.NoError(t, model.DB.Create(&model.SubscriptionPlan{
+		Id:                  604,
+		Title:               "Original Plan",
+		PriceAmount:         9.99,
+		Currency:            "CNY",
+		DurationUnit:        model.SubscriptionDurationMonth,
+		DurationValue:       1,
+		Enabled:             true,
+		TotalAmount:         1000,
+		AllowBalancePay:     &trueValue,
+		AllowWalletOverflow: &trueValue,
+	}).Error)
+
+	body, err := json.Marshal(AdminUpsertSubscriptionPlanRequest{
+		Plan: model.SubscriptionPlan{
+			Title:               "Updated Plan",
+			PriceAmount:         18.88,
+			Currency:            "CNY",
+			DurationUnit:        model.SubscriptionDurationMonth,
+			DurationValue:       1,
+			Enabled:             true,
+			TotalAmount:         1000,
+			DowngradeGroup:      "missing-group",
+			QuotaResetPeriod:    model.SubscriptionResetNever,
+			AllowBalancePay:     &trueValue,
+			AllowWalletOverflow: &trueValue,
+		},
+		SyncActiveUserSubscriptions: true,
+	})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: "604"}}
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/subscription/admin/plans/604", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	AdminUpdateSubscriptionPlan(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.False(t, response.Success)
+	require.Equal(t, "降级分组不存在", response.Message)
+
+	var plan model.SubscriptionPlan
+	require.NoError(t, model.DB.Where("id = ?", 604).First(&plan).Error)
+	require.Equal(t, "Original Plan", plan.Title)
+	require.Empty(t, plan.DowngradeGroup)
 }

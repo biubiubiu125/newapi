@@ -322,7 +322,7 @@ export function SubscriptionsMutateDrawer({
                   name='price_amount'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t('人民币售价')}</FormLabel>
+                      <FormLabel>{t('售价')}</FormLabel>
                       <FormControl>
                         <Input
                           {...field}
@@ -336,7 +336,7 @@ export function SubscriptionsMutateDrawer({
                       </FormControl>
                       <FormDescription>
                         {t(
-                          '面向用户展示的套餐售价，按人民币录入。不会改变订单里记录的真实支付币种。'
+                          '用于套餐展示，并作为钱包购买和在线支付的下单金额；订单会记录实际支付方式。'
                         )}
                       </FormDescription>
                       <FormMessage />
@@ -428,7 +428,6 @@ export function SubscriptionsMutateDrawer({
                             field.onChange(values.join(','))
                           }
                           placeholder={t('Select groups')}
-                          maxVisibleChips={2}
                         />
                       </FormControl>
                       <FormMessage />
@@ -497,7 +496,7 @@ export function SubscriptionsMutateDrawer({
                       </div>
                       <p className='text-muted-foreground text-sm'>
                         {t(
-                          'Apply this wallet fallback setting to current active subscriptions of this plan.'
+                          'Sync authorized groups, wallet fallback, and downgrade group to active subscriptions without changing quota or used amount.'
                         )}
                       </p>
                     </div>

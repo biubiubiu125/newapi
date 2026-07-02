@@ -128,6 +128,7 @@ func GetTopUpInfo(c *gin.Context) {
 		"bepusdt_min_topup":       setting.BEpusdtMinTopUp,
 		"amount_options":          operation_setting.GetPaymentSetting().AmountOptions,
 		"discount":                operation_setting.GetPaymentSetting().AmountDiscount,
+		"wallet_notice":           operation_setting.GetPaymentSetting().WalletNotice,
 		"topup_link":              common.TopUpLink,
 	}
 	common.ApiSuccess(c, data)

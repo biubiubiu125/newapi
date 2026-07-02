@@ -53,6 +53,7 @@ const STATUS_RELATED_KEYS = [
 ]
 
 const NOTICE_RELATED_KEYS = ['Notice']
+const WALLET_RELATED_KEYS = ['TopUpLink', 'payment_setting.wallet_notice']
 
 function syncDisplayOptionToSystemConfig(request: UpdateOptionMutationRequest) {
   const value = String(request.value ?? '')
@@ -93,6 +94,10 @@ export function useUpdateOption() {
         // Notice is loaded from /api/notice, not /api/status.
         if (NOTICE_RELATED_KEYS.includes(variables.key)) {
           queryClient.invalidateQueries({ queryKey: ['notice'] })
+          emitSettingsRefresh([variables.key])
+        }
+
+        if (WALLET_RELATED_KEYS.includes(variables.key)) {
           emitSettingsRefresh([variables.key])
         }
 
