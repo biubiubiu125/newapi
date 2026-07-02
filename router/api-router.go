@@ -34,8 +34,6 @@ func SetApiRouter(router *gin.Engine) {
 		//apiRouter.GET("/midjourney", controller.GetMidjourney)
 		apiRouter.GET("/home_page_content", controller.GetHomePageContent)
 		apiRouter.GET("/pricing", middleware.HeaderNavModuleAuth("pricing"), controller.GetPricing)
-		apiRouter.GET("/provider/pricing", controller.GetPublicProviderPricing)
-		apiRouter.OPTIONS("/provider/pricing", controller.GetPublicProviderPricing)
 		perfMetricsRoute := apiRouter.Group("/perf-metrics")
 		perfMetricsRoute.Use(middleware.HeaderNavModulePublicOrUserAuth("pricing"))
 		{
@@ -167,8 +165,6 @@ func SetApiRouter(router *gin.Engine) {
 				adminRoute.POST("/admin/tickets/:id/close", controller.CloseTicket)
 				adminRoute.POST("/admin/tickets/:id/reopen", controller.ReopenTicket)
 				adminRoute.GET("/admin/referral/badges", controller.GetReferralAdminBadges)
-				adminRoute.GET("/admin/provider-pricing", controller.GetProviderPriceOverrides)
-				adminRoute.PUT("/admin/provider-pricing", controller.UpdateProviderPriceOverrides)
 				adminRoute.GET("/admin/referral/settings", controller.GetReferralSettings)
 				adminRoute.PUT("/admin/referral/settings", controller.UpdateReferralSettings)
 				adminRoute.GET("/admin/referral/pending", controller.GetPendingReferralAffiliates)

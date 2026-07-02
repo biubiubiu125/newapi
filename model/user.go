@@ -252,7 +252,6 @@ func GenerateDefaultSidebarConfigForRole(userRole int) string {
 			"referral":              true,
 			"ticket_management":     true,
 			"recharge_audit":        true,
-			"provider_price_export": true,
 			"setting":               false,
 		}
 	} else if userRole == common.RoleRootUser {
@@ -266,7 +265,6 @@ func GenerateDefaultSidebarConfigForRole(userRole int) string {
 			"referral":              true,
 			"ticket_management":     true,
 			"recharge_audit":        true,
-			"provider_price_export": true,
 			"setting":               true,
 		}
 	}

@@ -194,6 +194,9 @@ func GetOptions(c *gin.Context) {
 	optionValues := make(map[string]string)
 	common.OptionMapRWMutex.Lock()
 	for k, v := range common.OptionMap {
+		if model.IsDeprecatedOptionKey(k) {
+			continue
+		}
 		value := common.Interface2String(v)
 		isSensitiveKey := strings.HasSuffix(k, "Token") ||
 			strings.HasSuffix(k, "Secret") ||
@@ -239,6 +242,10 @@ func UpdateOption(c *gin.Context) {
 			"success": false,
 			"message": "无效的参数",
 		})
+		return
+	}
+	if model.IsDeprecatedOptionKey(option.Key) {
+		common.ApiErrorMsg(c, "该配置项已废弃")
 		return
 	}
 	switch option.Value.(type) {

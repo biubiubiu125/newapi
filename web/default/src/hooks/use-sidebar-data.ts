@@ -572,11 +572,6 @@ export function useSidebarData(): SidebarData {
             badgeCursor: adminAlerts.latestOrderCursor,
             badgeMode: 'cursor',
           },
-          {
-            title: t('Public Price Export'),
-            url: '/provider-price-export',
-            icon: BadgeDollarSign,
-          },
           ...(isRoot
             ? [
                 {

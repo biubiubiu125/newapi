@@ -47,7 +47,6 @@ import { Route as AuthenticatedSubscriptionsIndexRouteImport } from './routes/_a
 import { Route as AuthenticatedReferralIndexRouteImport } from './routes/_authenticated/referral/index'
 import { Route as AuthenticatedRedemptionCodesIndexRouteImport } from './routes/_authenticated/redemption-codes/index'
 import { Route as AuthenticatedRechargeAuditIndexRouteImport } from './routes/_authenticated/recharge-audit/index'
-import { Route as AuthenticatedProviderPriceExportIndexRouteImport } from './routes/_authenticated/provider-price-export/index'
 import { Route as AuthenticatedProfileIndexRouteImport } from './routes/_authenticated/profile/index'
 import { Route as AuthenticatedPlaygroundIndexRouteImport } from './routes/_authenticated/playground/index'
 import { Route as AuthenticatedModelsIndexRouteImport } from './routes/_authenticated/models/index'
@@ -277,12 +276,6 @@ const AuthenticatedRechargeAuditIndexRoute =
     path: '/recharge-audit/',
     getParentRoute: () => AuthenticatedRouteRoute,
   } as any)
-const AuthenticatedProviderPriceExportIndexRoute =
-  AuthenticatedProviderPriceExportIndexRouteImport.update({
-    id: '/provider-price-export/',
-    path: '/provider-price-export/',
-    getParentRoute: () => AuthenticatedRouteRoute,
-  } as any)
 const AuthenticatedProfileIndexRoute =
   AuthenticatedProfileIndexRouteImport.update({
     id: '/profile/',
@@ -503,7 +496,6 @@ export interface FileRoutesByFullPath {
   '/models/': typeof AuthenticatedModelsIndexRoute
   '/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/profile/': typeof AuthenticatedProfileIndexRoute
-  '/provider-price-export/': typeof AuthenticatedProviderPriceExportIndexRoute
   '/recharge-audit/': typeof AuthenticatedRechargeAuditIndexRoute
   '/redemption-codes/': typeof AuthenticatedRedemptionCodesIndexRoute
   '/referral/': typeof AuthenticatedReferralIndexRoute
@@ -571,7 +563,6 @@ export interface FileRoutesByTo {
   '/models': typeof AuthenticatedModelsIndexRoute
   '/playground': typeof AuthenticatedPlaygroundIndexRoute
   '/profile': typeof AuthenticatedProfileIndexRoute
-  '/provider-price-export': typeof AuthenticatedProviderPriceExportIndexRoute
   '/recharge-audit': typeof AuthenticatedRechargeAuditIndexRoute
   '/redemption-codes': typeof AuthenticatedRedemptionCodesIndexRoute
   '/referral': typeof AuthenticatedReferralIndexRoute
@@ -643,7 +634,6 @@ export interface FileRoutesById {
   '/_authenticated/models/': typeof AuthenticatedModelsIndexRoute
   '/_authenticated/playground/': typeof AuthenticatedPlaygroundIndexRoute
   '/_authenticated/profile/': typeof AuthenticatedProfileIndexRoute
-  '/_authenticated/provider-price-export/': typeof AuthenticatedProviderPriceExportIndexRoute
   '/_authenticated/recharge-audit/': typeof AuthenticatedRechargeAuditIndexRoute
   '/_authenticated/redemption-codes/': typeof AuthenticatedRedemptionCodesIndexRoute
   '/_authenticated/referral/': typeof AuthenticatedReferralIndexRoute
@@ -714,7 +704,6 @@ export interface FileRouteTypes {
     | '/models/'
     | '/playground/'
     | '/profile/'
-    | '/provider-price-export/'
     | '/recharge-audit/'
     | '/redemption-codes/'
     | '/referral/'
@@ -782,7 +771,6 @@ export interface FileRouteTypes {
     | '/models'
     | '/playground'
     | '/profile'
-    | '/provider-price-export'
     | '/recharge-audit'
     | '/redemption-codes'
     | '/referral'
@@ -853,7 +841,6 @@ export interface FileRouteTypes {
     | '/_authenticated/models/'
     | '/_authenticated/playground/'
     | '/_authenticated/profile/'
-    | '/_authenticated/provider-price-export/'
     | '/_authenticated/recharge-audit/'
     | '/_authenticated/redemption-codes/'
     | '/_authenticated/referral/'
@@ -1168,13 +1155,6 @@ declare module '@tanstack/react-router' {
       path: '/recharge-audit'
       fullPath: '/recharge-audit/'
       preLoaderRoute: typeof AuthenticatedRechargeAuditIndexRouteImport
-      parentRoute: typeof AuthenticatedRouteRoute
-    }
-    '/_authenticated/provider-price-export/': {
-      id: '/_authenticated/provider-price-export/'
-      path: '/provider-price-export'
-      fullPath: '/provider-price-export/'
-      preLoaderRoute: typeof AuthenticatedProviderPriceExportIndexRouteImport
       parentRoute: typeof AuthenticatedRouteRoute
     }
     '/_authenticated/profile/': {
@@ -1493,7 +1473,6 @@ interface AuthenticatedRouteRouteChildren {
   AuthenticatedModelsIndexRoute: typeof AuthenticatedModelsIndexRoute
   AuthenticatedPlaygroundIndexRoute: typeof AuthenticatedPlaygroundIndexRoute
   AuthenticatedProfileIndexRoute: typeof AuthenticatedProfileIndexRoute
-  AuthenticatedProviderPriceExportIndexRoute: typeof AuthenticatedProviderPriceExportIndexRoute
   AuthenticatedRechargeAuditIndexRoute: typeof AuthenticatedRechargeAuditIndexRoute
   AuthenticatedRedemptionCodesIndexRoute: typeof AuthenticatedRedemptionCodesIndexRoute
   AuthenticatedReferralIndexRoute: typeof AuthenticatedReferralIndexRoute
@@ -1525,8 +1504,6 @@ const AuthenticatedRouteRouteChildren: AuthenticatedRouteRouteChildren = {
   AuthenticatedModelsIndexRoute: AuthenticatedModelsIndexRoute,
   AuthenticatedPlaygroundIndexRoute: AuthenticatedPlaygroundIndexRoute,
   AuthenticatedProfileIndexRoute: AuthenticatedProfileIndexRoute,
-  AuthenticatedProviderPriceExportIndexRoute:
-    AuthenticatedProviderPriceExportIndexRoute,
   AuthenticatedRechargeAuditIndexRoute: AuthenticatedRechargeAuditIndexRoute,
   AuthenticatedRedemptionCodesIndexRoute:
     AuthenticatedRedemptionCodesIndexRoute,

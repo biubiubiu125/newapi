@@ -55,7 +55,6 @@ import OAuth2Callback from './components/auth/OAuth2Callback';
 import PersonalSetting from './components/settings/PersonalSetting';
 import Referral from './pages/Referral';
 import AdminReferral from './pages/AdminReferral';
-import ProviderPricing from './pages/ProviderPricing';
 import RechargeAudit from './pages/RechargeAudit';
 import Tickets from './pages/Tickets';
 import Setup from './pages/Setup';
@@ -406,18 +405,6 @@ function App() {
               <SidebarModuleRoute section='admin' module='recharge_audit'>
                 <Suspense fallback={<Loading></Loading>} key={location.pathname}>
                   <RechargeAudit />
-                </Suspense>
-              </SidebarModuleRoute>
-            </AdminRoute>
-          }
-        />
-        <Route
-          path='/console/provider-pricing'
-          element={
-            <AdminRoute>
-              <SidebarModuleRoute section='admin' module='providerPricing'>
-                <Suspense fallback={<Loading></Loading>} key={location.pathname}>
-                  <ProviderPricing />
                 </Suspense>
               </SidebarModuleRoute>
             </AdminRoute>

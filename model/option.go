@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"strconv"
 	"strings"
 	"time"
@@ -18,6 +19,15 @@ import (
 type Option struct {
 	Key   string `json:"key" gorm:"primaryKey"`
 	Value string `json:"value"`
+}
+
+var deprecatedOptionKeys = map[string]struct{}{
+	"ProviderPriceOverrides": {},
+}
+
+func IsDeprecatedOptionKey(key string) bool {
+	_, ok := deprecatedOptionKeys[key]
+	return ok
 }
 
 func AllOption() ([]*Option, error) {
@@ -174,7 +184,6 @@ func InitOptionMap() {
 	common.OptionMap["ReferralSettlementCurrency"] = common.NormalizeReferralSettlementCurrency(common.ReferralSettlementCurrency)
 	common.OptionMap["ReferralSettlementFxRates"] = common.ReferralSettlementFxRatesToJSONString()
 	common.OptionMap["ReferralRedemptionUSDToCNYRate"] = strconv.FormatFloat(common.ReferralRedemptionUSDToCNYRate, 'f', -1, 64)
-	common.OptionMap["ProviderPriceOverrides"] = "[]"
 	//common.OptionMap["ChatLink"] = common.ChatLink
 	//common.OptionMap["ChatLink2"] = common.ChatLink2
 	common.OptionMap["QuotaPerUnit"] = strconv.FormatFloat(common.QuotaPerUnit, 'f', -1, 64)
@@ -216,6 +225,9 @@ func loadOptionsFromDatabase() {
 		if option == nil {
 			continue
 		}
+		if IsDeprecatedOptionKey(option.Key) {
+			continue
+		}
 		value := option.Value
 		normalizedValue, err := normalizeOptionValueForStorage(option.Key, option.Value)
 		if err != nil {
@@ -245,6 +257,9 @@ func SyncOptions(frequency int) {
 }
 
 func UpdateOption(key string, value string) error {
+	if IsDeprecatedOptionKey(key) {
+		return errors.New("deprecated option key")
+	}
 	normalizedValue, err := normalizeOptionValueForStorage(key, value)
 	if err != nil {
 		return err
@@ -280,6 +295,9 @@ func UpdateOptionsBulk(values map[string]string) error {
 	}
 	normalizedValues := make(map[string]string, len(values))
 	for k, v := range values {
+		if IsDeprecatedOptionKey(k) {
+			return errors.New("deprecated option key")
+		}
 		normalizedValue, err := normalizeOptionValueForStorage(k, v)
 		if err != nil {
 			return err

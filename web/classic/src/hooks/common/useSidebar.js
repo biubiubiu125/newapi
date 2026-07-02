@@ -54,7 +54,6 @@ export const DEFAULT_ADMIN_CONFIG = {
     models: true,
     deployment: true,
     recharge_audit: true,
-    providerPricing: true,
     redemption: true,
     user: true,
     subscription: true,
@@ -65,7 +64,12 @@ export const DEFAULT_ADMIN_CONFIG = {
 };
 
 const deepClone = (value) => JSON.parse(JSON.stringify(value));
-const removedAdminModuleKeys = ['riskCenter', 'risk_center'];
+const removedAdminModuleKeys = [
+  'riskCenter',
+  'risk_center',
+  'providerPricing',
+  'provider_price_export',
+];
 
 export const sanitizeSidebarConfig = (config) => {
   if (!config || typeof config !== 'object') return config;
@@ -114,12 +118,6 @@ export const mergeAdminConfig = (savedConfig) => {
       merged.admin.referral !== undefined
     ) {
       merged.admin.adminReferral = merged.admin.referral ?? true;
-    }
-    if (
-      savedConfig.admin?.providerPricing === undefined &&
-      merged.admin.provider_price_export !== undefined
-    ) {
-      merged.admin.providerPricing = merged.admin.provider_price_export ?? true;
     }
     if (
       savedConfig.admin?.recharge_audit === undefined &&

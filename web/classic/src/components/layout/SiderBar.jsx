@@ -41,7 +41,6 @@ const routerMap = {
   adminReferral: '/console/admin-referral',
   ticket_management: '/console/admin-tickets',
   recharge_audit: '/console/recharge-audit',
-  providerPricing: '/console/provider-pricing',
   user: '/console/user',
   subscription: '/console/subscription',
   log: '/console/log',
@@ -369,12 +368,6 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         to: '/console/recharge-audit',
         className: isAdmin() ? '' : 'tableHiddle',
         badge: orderManagementBadge,
-      },
-      {
-        text: '公开价格导出',
-        itemKey: 'providerPricing',
-        to: '/console/provider-pricing',
-        className: isAdmin() ? '' : 'tableHiddle',
       },
       {
         text: t('模型管理'),
@@ -738,10 +731,6 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
     if (!matchingKey && currentPath.startsWith('/console/admin-referral')) {
       matchingKey = 'adminReferral';
-    }
-
-    if (!matchingKey && currentPath.startsWith('/console/provider-pricing')) {
-      matchingKey = 'providerPricing';
     }
 
     if (!matchingKey && currentPath.startsWith('/console/recharge-audit')) {

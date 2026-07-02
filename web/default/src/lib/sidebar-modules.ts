@@ -66,7 +66,6 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     setting: true,
     subscription: true,
     recharge_audit: true,
-    provider_price_export: true,
   },
 }
 
@@ -78,12 +77,16 @@ export const SIDEBAR_MODULE_ALIASES: Record<string, Record<string, string[]>> =
   {
     admin: {
       referral: ['adminReferral'],
-      provider_price_export: ['providerPricing'],
     },
   }
 
 export const REMOVED_SIDEBAR_MODULES: Record<string, string[]> = {
-  admin: ['risk_center', 'riskCenter'],
+  admin: [
+    'risk_center',
+    'riskCenter',
+    'provider_price_export',
+    'providerPricing',
+  ],
 }
 
 export const SIDEBAR_MODULES_META: Record<string, SidebarSectionMeta> = {
@@ -196,10 +199,6 @@ export const SIDEBAR_MODULES_META: Record<string, SidebarSectionMeta> = {
       recharge_audit: {
         title: '订单管理',
         description: '查看充值和订阅订单。',
-      },
-      provider_price_export: {
-        title: '公开价格导出',
-        description: '发布公开供应商价格数据。',
       },
     },
   },

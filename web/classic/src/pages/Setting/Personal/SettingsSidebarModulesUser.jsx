@@ -114,7 +114,6 @@ export default function SettingsSidebarModulesUser() {
         models: isSidebarModuleAllowed('admin', 'models'),
         deployment: isSidebarModuleAllowed('admin', 'deployment'),
         recharge_audit: isSidebarModuleAllowed('admin', 'recharge_audit'),
-        providerPricing: isSidebarModuleAllowed('admin', 'providerPricing'),
         redemption: isSidebarModuleAllowed('admin', 'redemption'),
         subscription: isSidebarModuleAllowed('admin', 'subscription'),
         adminReferral: isSidebarModuleAllowed('admin', 'adminReferral'),
@@ -253,10 +252,6 @@ export default function SettingsSidebarModulesUser() {
               ...userConf.admin,
               adminReferral:
                 userConf.admin.adminReferral ?? userConf.admin.referral ?? true,
-              providerPricing:
-                userConf.admin.providerPricing ??
-                userConf.admin.provider_price_export ??
-                true,
               recharge_audit:
                 userConf.admin.recharge_audit ??
                 userConf.admin.order_management ??
@@ -424,11 +419,6 @@ export default function SettingsSidebarModulesUser() {
           key: 'ticket_management',
           title: '工单管理',
           description: '查看和处理用户工单',
-        },
-        {
-          key: 'providerPricing',
-          title: t('Public Price Export'),
-          description: t('Public provider pricing export'),
         },
         {
           key: 'setting',

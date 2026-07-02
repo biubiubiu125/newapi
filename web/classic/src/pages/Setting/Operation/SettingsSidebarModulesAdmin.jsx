@@ -33,7 +33,12 @@ import { StatusContext } from '../../../context/Status';
 
 const { Text } = Typography;
 
-const removedAdminModuleKeys = ['riskCenter', 'risk_center'];
+const removedAdminModuleKeys = [
+  'riskCenter',
+  'risk_center',
+  'providerPricing',
+  'provider_price_export',
+];
 const defaultSidebarModules = {
   chat: {
     enabled: true,
@@ -63,7 +68,6 @@ const defaultSidebarModules = {
     models: true,
     deployment: true,
     recharge_audit: true,
-    providerPricing: true,
     redemption: true,
     user: true,
     subscription: true,
@@ -202,10 +206,6 @@ export default function SettingsSidebarModulesAdmin(props) {
               ...(modules.admin || {}),
               adminReferral:
                 modules.admin?.adminReferral ?? modules.admin?.referral ?? true,
-              providerPricing:
-                modules.admin?.providerPricing ??
-                modules.admin?.provider_price_export ??
-                true,
               recharge_audit:
                 modules.admin?.recharge_audit ??
                 modules.admin?.order_management ??
@@ -314,11 +314,6 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'ticket_management',
           title: '工单管理',
           description: '管理员查看和处理用户工单',
-        },
-        {
-          key: 'providerPricing',
-          title: t('Public Price Export'),
-          description: t('Public provider pricing export'),
         },
         {
           key: 'redemption',
