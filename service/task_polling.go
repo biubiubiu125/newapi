@@ -181,6 +181,10 @@ func ImageTaskWorkerEnabled() bool {
 	return constant.ImageTaskWorkerEnabled && RunImageTasksFunc != nil
 }
 
+func ImageTaskExecutionAvailable() bool {
+	return constant.UpdateTask && RunImageTasksFunc != nil
+}
+
 func NotifyImageTaskWorker() {
 	select {
 	case imageTaskWorkerWakeup <- struct{}{}:
@@ -304,6 +308,12 @@ func imageTaskWorkerIdleInterval() time.Duration {
 func imageTaskWorkerQueryLimit() int {
 	workerLimit := imageTaskWorkerConcurrency()
 	limit := constant.TaskQueryLimit
+	if workerLimit <= 0 {
+		if limit > 0 {
+			return limit
+		}
+		return 1000
+	}
 	if limit <= 0 {
 		limit = workerLimit
 	}
@@ -613,7 +623,7 @@ func DispatchImageTasks(ctx context.Context, tasks []*model.Task) {
 	}
 
 	workerCount := imageTaskWorkerConcurrency()
-	if workerCount > len(tasks) {
+	if workerCount <= 0 || workerCount > len(tasks) {
 		workerCount = len(tasks)
 	}
 	channelLimit := imageTaskChannelConcurrency()
@@ -1201,14 +1211,14 @@ func imageTaskWorkerConcurrency() int {
 	if constant.ImageTaskWorkerConcurrency > 0 {
 		return constant.ImageTaskWorkerConcurrency
 	}
-	return 20
+	return 0
 }
 
 func imageTaskChannelConcurrency() int {
 	if constant.ImageTaskChannelConcurrency > 0 {
 		return constant.ImageTaskChannelConcurrency
 	}
-	return 10
+	return 0
 }
 
 func imageTaskBatchPollSize() int {

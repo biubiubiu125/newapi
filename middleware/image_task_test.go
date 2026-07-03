@@ -13,53 +13,11 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestShouldSkipMiddlewareModelLimitOnlyForImageTaskGETWithoutChannelSelection(t *testing.T) {
+func TestGetModelRequestDefaultsModelForImageGenerationChannelSelection(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/image-tasks?ids=task_1", nil)
-	require.True(t, shouldSkipMiddlewareModelLimit(ctx, false))
-
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/image-tasks", nil)
-	require.False(t, shouldSkipMiddlewareModelLimit(ctx, false))
-
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/image-tasks/task_1", nil)
-	require.False(t, shouldSkipMiddlewareModelLimit(ctx, true))
-}
-
-func TestShouldSkipModelRequestRateLimitForImageTaskGET(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/image-tasks/task_1", nil)
-	require.True(t, shouldSkipModelRequestRateLimit(ctx))
-
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/images/generations", nil)
-	require.False(t, shouldSkipModelRequestRateLimit(ctx))
-
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/image-tasks", nil)
-	require.False(t, shouldSkipModelRequestRateLimit(ctx))
-}
-
-func TestIsImageTaskReadOnlyRequest(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/image-tasks?ids=task_1", nil)
-	require.True(t, isImageTaskReadOnlyRequest(ctx))
-
-	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/image-tasks/task_1", nil)
-	require.True(t, isImageTaskReadOnlyRequest(ctx))
-
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/image-tasks", nil)
-	require.False(t, isImageTaskReadOnlyRequest(ctx))
-}
-
-func TestGetModelRequestUsesDefaultModelForImageTaskGeneration(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/image-tasks/generations", nil)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
 	ctx.Request.Header.Set("Content-Type", "application/json")
 	storage, err := common.CreateBodyStorage([]byte(`{}`))
 	require.NoError(t, err)
@@ -71,31 +29,6 @@ func TestGetModelRequestUsesDefaultModelForImageTaskGeneration(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, shouldSelectChannel)
 	require.Equal(t, "dall-e", modelRequest.Model)
-}
-
-func TestImageTaskReadOnlyTokenAllowsExhaustedOnly(t *testing.T) {
-	now := int64(1000)
-
-	require.True(t, isImageTaskReadOnlyTokenUsable(&model.Token{
-		Status:      common.TokenStatusEnabled,
-		ExpiredTime: -1,
-	}, now))
-	require.True(t, isImageTaskReadOnlyTokenUsable(&model.Token{
-		Status:      common.TokenStatusExhausted,
-		ExpiredTime: -1,
-	}, now))
-	require.False(t, isImageTaskReadOnlyTokenUsable(&model.Token{
-		Status:      common.TokenStatusDisabled,
-		ExpiredTime: -1,
-	}, now))
-	require.False(t, isImageTaskReadOnlyTokenUsable(&model.Token{
-		Status:      common.TokenStatusExpired,
-		ExpiredTime: -1,
-	}, now))
-	require.False(t, isImageTaskReadOnlyTokenUsable(&model.Token{
-		Status:      common.TokenStatusExhausted,
-		ExpiredTime: now - 1,
-	}, now))
 }
 
 func TestSetupContextForTokenKeepsModelLimitsForImageTaskPolling(t *testing.T) {

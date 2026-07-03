@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
@@ -28,7 +29,6 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -37,33 +37,47 @@ import (
 const (
 	imageTaskResultExpiredMessage  = "image task result expired"
 	imageTaskStoredResultMarker    = "_newapi_result_file"
-	maxImageTaskBatchQueryIDs      = 100
-	maxImageTaskBatchQueryLength   = 8192
 	maxImageTaskClientTaskIDLength = 191
+	imageTaskSyncBridgeTimeout     = 10 * time.Minute
+	imageTaskSyncBridgePollEvery   = 500 * time.Millisecond
 )
 
-func CreateImageTask(c *gin.Context) {
+type imageTaskCreateInternalResult struct {
+	Task     *model.Task
+	Existing bool
+}
+
+func createImageTaskInternal(c *gin.Context, imageRequest *dto.ImageRequest, relayInfo *relaycommon.RelayInfo) (*imageTaskCreateInternalResult, *types.NewAPIError) {
 	relayMode := imageTaskRelayMode(c)
+	if relayInfo != nil {
+		switch relayInfo.RelayMode {
+		case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:
+			relayMode = relayInfo.RelayMode
+		}
+	}
 	c.Set("relay_mode", relayMode)
 
-	imageRequest, err := helper.GetAndValidOpenAIImageRequest(c, relayMode)
-	if err != nil {
-		respondImageTaskError(c, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()))
-		return
+	if imageRequest == nil {
+		var err error
+		imageRequest, err = helper.GetAndValidOpenAIImageRequest(c, relayMode)
+		if err != nil {
+			return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
+		}
 	}
 	imageRequest.Stream = false
 
-	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatOpenAIImage, imageRequest, nil)
-	if err != nil {
-		respondImageTaskError(c, types.NewError(err, types.ErrorCodeGenRelayInfoFailed))
-		return
+	if relayInfo == nil {
+		var err error
+		relayInfo, err = relaycommon.GenRelayInfo(c, types.RelayFormatOpenAIImage, imageRequest, nil)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeGenRelayInfoFailed)
+		}
 	}
 	relayInfo.ForcePreConsume = true
 	relayInfo.InitChannelMeta(c)
 	imageTaskMode := relayInfo.ChannelOtherSettings.GetImageTaskMode()
 	if err := validateImageTaskModeRequest(imageRequest, imageTaskMode); err != nil {
-		respondImageTaskError(c, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()))
-		return
+		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
 	service.EnsureImageTaskSharedCacheReady(c)
 	persistedRequest, err := persistImageTaskRequest(c, relayMode, imageRequest.Model)
@@ -72,8 +86,7 @@ func CreateImageTask(c *gin.Context) {
 		if common.IsRequestBodyTooLargeError(err) || errors.Is(err, common.ErrRequestBodyTooLarge) {
 			statusCode = http.StatusRequestEntityTooLarge
 		}
-		respondImageTaskError(c, types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, statusCode, types.ErrOptionWithSkipRetry()))
-		return
+		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, statusCode, types.ErrOptionWithSkipRetry())
 	}
 	clientTaskIDProvided := persistedRequest.ClientTaskID != ""
 	clientTaskIDReservationHeld := false
@@ -82,50 +95,34 @@ func CreateImageTask(c *gin.Context) {
 		existing, exist, err := model.GetImageTaskByClientTaskID(c.GetInt("id"), persistedRequest.ClientTaskID)
 		if err != nil {
 			_ = common.RemoveDiskCacheFile(persistedRequest.Path)
-			respondImageTaskError(c, types.NewError(err, types.ErrorCodeQueryDataError))
-			return
+			return nil, types.NewError(err, types.ErrorCodeQueryDataError)
 		}
 		if exist && existing != nil {
 			_ = common.RemoveDiskCacheFile(persistedRequest.Path)
-			c.JSON(http.StatusOK, dto.ImageTaskCreateResponse{
-				TaskID:       existing.TaskID,
-				ClientTaskID: strings.TrimSpace(existing.ClientTaskID),
-				Status:       imageTaskPublicStatusFromTask(existing),
-				CreatedAt:    existing.CreatedAt,
-			})
-			return
+			return &imageTaskCreateInternalResult{Task: existing, Existing: true}, nil
 		}
 		_, reserved, err := model.ReserveImageTaskClientTaskID(c.GetInt("id"), persistedRequest.ClientTaskID)
 		if err != nil {
 			_ = common.RemoveDiskCacheFile(persistedRequest.Path)
-			respondImageTaskError(c, types.NewError(err, types.ErrorCodeUpdateDataError))
-			return
+			return nil, types.NewError(err, types.ErrorCodeUpdateDataError)
 		}
 		if !reserved {
 			existing, exist, err = model.GetImageTaskByClientTaskID(c.GetInt("id"), persistedRequest.ClientTaskID)
 			if err != nil {
 				_ = common.RemoveDiskCacheFile(persistedRequest.Path)
-				respondImageTaskError(c, types.NewError(err, types.ErrorCodeQueryDataError))
-				return
+				return nil, types.NewError(err, types.ErrorCodeQueryDataError)
 			}
 			if exist && existing != nil {
 				_ = common.RemoveDiskCacheFile(persistedRequest.Path)
-				c.JSON(http.StatusOK, dto.ImageTaskCreateResponse{
-					TaskID:       existing.TaskID,
-					ClientTaskID: strings.TrimSpace(existing.ClientTaskID),
-					Status:       imageTaskPublicStatusFromTask(existing),
-					CreatedAt:    existing.CreatedAt,
-				})
-				return
+				return &imageTaskCreateInternalResult{Task: existing, Existing: true}, nil
 			}
 			_ = common.RemoveDiskCacheFile(persistedRequest.Path)
-			respondImageTaskError(c, types.NewErrorWithStatusCode(
+			return nil, types.NewErrorWithStatusCode(
 				errors.New("client_task_id is already being created, please retry later"),
 				types.ErrorCodeInvalidRequest,
 				http.StatusConflict,
 				types.ErrOptionWithSkipRetry(),
-			))
-			return
+			)
 		}
 		clientTaskIDReservationHeld = true
 		defer func() {
@@ -138,8 +135,7 @@ func CreateImageTask(c *gin.Context) {
 	mappedImageRequest := *imageRequest
 	if err := helper.ModelMappedHelper(c, relayInfo, &mappedImageRequest); err != nil {
 		_ = common.RemoveDiskCacheFile(persistedRequest.Path)
-		respondImageTaskError(c, types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry()))
-		return
+		return nil, types.NewError(err, types.ErrorCodeChannelModelMappedError, types.ErrOptionWithSkipRetry())
 	}
 
 	meta := imageRequest.GetTokenCountMeta()
@@ -148,24 +144,21 @@ func CreateImageTask(c *gin.Context) {
 		if contains {
 			_ = common.RemoveDiskCacheFile(persistedRequest.Path)
 			logger.LogWarn(c, fmt.Sprintf("user sensitive words detected: %s", strings.Join(words, ", ")))
-			respondImageTaskError(c, types.NewError(errors.New("sensitive words detected"), types.ErrorCodeSensitiveWordsDetected, types.ErrOptionWithStatusCode(http.StatusBadRequest)))
-			return
+			return nil, types.NewError(errors.New("sensitive words detected"), types.ErrorCodeSensitiveWordsDetected, types.ErrOptionWithStatusCode(http.StatusBadRequest))
 		}
 	}
 
 	tokens, err := service.EstimateRequestToken(c, meta, relayInfo)
 	if err != nil {
 		_ = common.RemoveDiskCacheFile(persistedRequest.Path)
-		respondImageTaskError(c, types.NewError(err, types.ErrorCodeCountTokenFailed))
-		return
+		return nil, types.NewError(err, types.ErrorCodeCountTokenFailed)
 	}
 	relayInfo.SetEstimatePromptTokens(tokens)
 
 	priceData, err := helper.ModelPriceHelper(c, relayInfo, tokens, meta)
 	if err != nil {
 		_ = common.RemoveDiskCacheFile(persistedRequest.Path)
-		respondImageTaskError(c, types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest)))
-		return
+		return nil, types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
 	}
 	if priceData.UsePrice {
 		imageN := uint(1)
@@ -184,8 +177,7 @@ func CreateImageTask(c *gin.Context) {
 		if common.IsRequestBodyTooLargeError(err) || errors.Is(err, common.ErrRequestBodyTooLarge) {
 			statusCode = http.StatusRequestEntityTooLarge
 		}
-		respondImageTaskError(c, types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, statusCode, types.ErrOptionWithSkipRetry()))
-		return
+		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeReadRequestBodyFailed, statusCode, types.ErrOptionWithSkipRetry())
 	}
 	requestBodyPortable := requestBodyBase64 != ""
 	persistedRequest.Body = nil
@@ -196,8 +188,7 @@ func CreateImageTask(c *gin.Context) {
 	if !priceData.FreeModel {
 		if newAPIError := service.PreConsumeBilling(c, priceData.QuotaToPreConsume, relayInfo); newAPIError != nil {
 			_ = common.RemoveDiskCacheFile(persistedRequest.Path)
-			respondImageTaskError(c, newAPIError)
-			return
+			return nil, newAPIError
 		}
 	}
 
@@ -233,8 +224,7 @@ func CreateImageTask(c *gin.Context) {
 			relayInfo.Billing.Refund(c)
 		}
 		_ = common.RemoveDiskCacheFile(persistedRequest.Path)
-		respondImageTaskError(c, types.NewError(err, types.ErrorCodeUpdateDataError))
-		return
+		return nil, types.NewError(err, types.ErrorCodeUpdateDataError)
 	}
 	if clientTaskIDProvided {
 		existing, exist, err := model.GetImageTaskByClientTaskID(c.GetInt("id"), persistedRequest.ClientTaskID)
@@ -246,13 +236,7 @@ func CreateImageTask(c *gin.Context) {
 					relayInfo.Billing.Refund(c)
 				}
 				_ = common.RemoveDiskCacheFile(persistedRequest.Path)
-				c.JSON(http.StatusOK, dto.ImageTaskCreateResponse{
-					TaskID:       existing.TaskID,
-					ClientTaskID: strings.TrimSpace(existing.ClientTaskID),
-					Status:       imageTaskPublicStatusFromTask(existing),
-					CreatedAt:    existing.CreatedAt,
-				})
-				return
+				return &imageTaskCreateInternalResult{Task: existing, Existing: true}, nil
 			}
 		}
 	}
@@ -265,12 +249,277 @@ func CreateImageTask(c *gin.Context) {
 
 	service.NotifyImageTaskQueued(c)
 
-	c.JSON(http.StatusOK, dto.ImageTaskCreateResponse{
-		TaskID:       task.TaskID,
-		ClientTaskID: task.ClientTaskID,
-		Status:       dto.ImageTaskStatusQueued,
-		CreatedAt:    task.CreatedAt,
-	})
+	return &imageTaskCreateInternalResult{Task: task}, nil
+}
+
+func tryRelayImageTaskSyncBridge(c *gin.Context, request dto.Request, relayInfo *relaycommon.RelayInfo) (bool, *types.NewAPIError) {
+	imageRequest, ok := request.(*dto.ImageRequest)
+	if !ok || relayInfo == nil {
+		return false, nil
+	}
+	switch relayInfo.RelayMode {
+	case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:
+	default:
+		return false, nil
+	}
+	channelOtherSettings, ok := common.GetContextKeyType[dto.ChannelOtherSettings](c, constant.ContextKeyChannelOtherSetting)
+	if !ok || channelOtherSettings.GetImageTaskMode() != dto.ImageTaskModeGPTImage2APIAsync {
+		return false, nil
+	}
+	relayInfo.InitChannelMeta(c)
+	return true, relayImageTaskSyncBridge(c, imageRequest, relayInfo)
+}
+
+func relayImageTaskSyncBridge(c *gin.Context, imageRequest *dto.ImageRequest, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
+	if !service.ImageTaskExecutionAvailable() {
+		return types.NewErrorWithStatusCode(errors.New("image task execution is disabled"), types.ErrorCodeDoRequestFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+	}
+	result, newAPIError := createImageTaskInternal(c, imageRequest, relayInfo)
+	if newAPIError != nil {
+		return newAPIError
+	}
+	if result == nil || result.Task == nil {
+		return types.NewError(errors.New("image task create result is empty"), types.ErrorCodeUpdateDataError)
+	}
+	setImageTaskSyncBridgeTaskHeaders(c, result.Task)
+	if result.Existing {
+		service.NotifyImageTaskQueued(c)
+	}
+	responseBody, newAPIError := waitImageTaskSyncBridgeResult(c, result.Task)
+	if newAPIError != nil {
+		return newAPIError
+	}
+	c.Data(http.StatusOK, "application/json; charset=utf-8", responseBody)
+	return nil
+}
+
+func waitImageTaskSyncBridgeResult(c *gin.Context, task *model.Task) (json.RawMessage, *types.NewAPIError) {
+	if task == nil {
+		return nil, types.NewError(errors.New("image task is nil"), types.ErrorCodeQueryDataError)
+	}
+	timer := time.NewTimer(imageTaskSyncBridgeTimeout)
+	defer timer.Stop()
+	ticker := time.NewTicker(imageTaskSyncBridgePollEvery)
+	defer ticker.Stop()
+
+	for {
+		current, exist, err := model.GetByTaskId(task.UserId, task.TaskID)
+		if err != nil {
+			return nil, types.NewError(err, types.ErrorCodeQueryDataError)
+		}
+		if !exist || current == nil || current.Platform != constant.TaskPlatformImage {
+			return nil, types.NewErrorWithStatusCode(errors.New("image task not found"), types.ErrorCodeQueryDataError, http.StatusInternalServerError)
+		}
+		if current.Status == model.TaskStatusFailure {
+			return nil, imageTaskSyncBridgeFailureError(current)
+		}
+		if current.Status == model.TaskStatusSuccess && current.SettlementStatus == model.TaskSettlementStatusReview {
+			reason := strings.TrimSpace(current.FailReason)
+			if reason == "" {
+				reason = "image task failed"
+			}
+			return nil, types.NewErrorWithStatusCode(errors.New(reason), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+		}
+		if imageTaskResponseResultVisible(current) {
+			responseBody, resultErr := imageTaskResponseResult(current)
+			if resultErr != "" {
+				return nil, types.NewErrorWithStatusCode(errors.New(resultErr), types.ErrorCodeBadResponseBody, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
+			}
+			if len(responseBody) == 0 {
+				return nil, types.NewErrorWithStatusCode(errors.New("empty image task result"), types.ErrorCodeEmptyResponse, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
+			}
+			return responseBody, nil
+		}
+
+		select {
+		case <-ticker.C:
+		case <-timer.C:
+			if responseBody, cancelErr := cancelImageTaskSyncBridgeWait(c, task, "image generation timed out"); len(responseBody) > 0 || cancelErr != nil {
+				return responseBody, cancelErr
+			}
+			return nil, imageTaskSyncBridgeWaitStoppedError(c, task, "image generation timed out", http.StatusGatewayTimeout)
+		case <-c.Request.Context().Done():
+			if responseBody, cancelErr := cancelImageTaskSyncBridgeWait(c, task, "client closed request"); len(responseBody) > 0 || cancelErr != nil {
+				return responseBody, cancelErr
+			}
+			return nil, imageTaskSyncBridgeWaitStoppedError(c, task, "client closed request", 499)
+		}
+	}
+}
+
+func cancelImageTaskSyncBridgeWait(c *gin.Context, task *model.Task, reason string) (json.RawMessage, *types.NewAPIError) {
+	if task == nil {
+		return nil, nil
+	}
+	current, exist, err := model.GetByTaskId(task.UserId, task.TaskID)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeQueryDataError)
+	}
+	if !exist || current == nil || current.Platform != constant.TaskPlatformImage {
+		return nil, types.NewErrorWithStatusCode(errors.New("image task not found"), types.ErrorCodeQueryDataError, http.StatusInternalServerError)
+	}
+	if current.Status == model.TaskStatusFailure ||
+		(current.Status == model.TaskStatusSuccess && current.SettlementStatus == model.TaskSettlementStatusReview) {
+		return nil, imageTaskSyncBridgeFailureError(current)
+	}
+	if imageTaskResponseResultVisible(current) {
+		responseBody, resultErr := imageTaskResponseResult(current)
+		if resultErr != "" {
+			return nil, types.NewErrorWithStatusCode(errors.New(resultErr), types.ErrorCodeBadResponseBody, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
+		}
+		if len(responseBody) > 0 {
+			return responseBody, nil
+		}
+	}
+	if current.Status == model.TaskStatusSuccess {
+		return nil, nil
+	}
+	if reason == "" {
+		reason = "image task sync bridge cancelled"
+	}
+	if !imageTaskSyncBridgeCanFailBeforeExecution(current) {
+		setImageTaskSyncBridgeRetryHeaders(c, current)
+		logger.LogWarn(c, fmt.Sprintf("image task %s sync bridge wait stopped after execution started: %s", current.TaskID, reason))
+		return nil, nil
+	}
+	clearImageTaskSyncBridgeHeaders(c)
+	fromStatus := current.Status
+	bodyPath := strings.TrimSpace(current.PrivateData.RequestBodyPath)
+	resultPath := strings.TrimSpace(current.PrivateData.ResultBodyPath)
+	current.Status = model.TaskStatusFailure
+	current.Progress = "100%"
+	current.FailReason = reason
+	current.FinishTime = time.Now().Unix()
+	current.NextPollAt = 0
+	current.LockOwner = ""
+	current.LockUntil = 0
+	current.RetryCount = 0
+	current.SettlementStatus = ""
+	current.PrivateData.RequestBodyPath = ""
+	current.PrivateData.RequestBodyBase64 = ""
+	current.PrivateData.RequestBodyPortable = false
+	current.PrivateData.ResultBodyPath = ""
+	current.PrivateData.ResultBodySize = 0
+	current.PrivateData.ResultBodySHA256 = ""
+	current.PrivateData.ResultContentType = ""
+	current.PrivateData.ResultStoredAt = 0
+	current.PrivateData.ResultExpiresAt = 0
+	current.PrivateData.UpstreamSubmitUncertainAt = 0
+	current.PrivateData.UpstreamSubmitUncertainCount = 0
+	current.PrivateData.SettlementUsage = nil
+	current.PrivateData.SettlementExtraContent = nil
+	won, err := updateImageTaskSyncBridgeCancelledBeforeExecution(current, fromStatus)
+	if err != nil {
+		return nil, types.NewError(err, types.ErrorCodeUpdateDataError)
+	}
+	if !won {
+		return nil, nil
+	}
+	if current.Quota != 0 {
+		service.RefundTaskQuota(c, current, reason)
+	}
+	_ = common.RemoveDiskCacheFile(bodyPath)
+	_ = common.RemoveDiskCacheFile(resultPath)
+	return nil, imageTaskSyncBridgeFailureError(current)
+}
+
+func imageTaskSyncBridgeWaitStoppedError(c *gin.Context, task *model.Task, reason string, statusCode int) *types.NewAPIError {
+	setImageTaskSyncBridgeRetryHeaders(c, task)
+	retryID := imageTaskSyncBridgeRetryID(task)
+	if retryID != "" {
+		reason = fmt.Sprintf("%s; image task is still running, retry with Idempotency-Key: %s", reason, retryID)
+	}
+	return types.NewErrorWithStatusCode(errors.New(reason), types.ErrorCodeDoRequestFailed, statusCode, types.ErrOptionWithSkipRetry())
+}
+
+func setImageTaskSyncBridgeRetryHeaders(c *gin.Context, task *model.Task) {
+	setImageTaskSyncBridgeTaskHeaders(c, task)
+	if c == nil || task == nil {
+		return
+	}
+	if retryID := imageTaskSyncBridgeRetryID(task); retryID != "" {
+		c.Header("X-NewAPI-Retry-Idempotency-Key", retryID)
+	}
+}
+
+func setImageTaskSyncBridgeTaskHeaders(c *gin.Context, task *model.Task) {
+	if c == nil || task == nil {
+		return
+	}
+	if task.TaskID != "" {
+		c.Header("X-NewAPI-Image-Task-ID", task.TaskID)
+	}
+	if retryID := imageTaskSyncBridgeRetryID(task); retryID != "" {
+		c.Header("X-NewAPI-Image-Client-Task-ID", retryID)
+	}
+}
+
+func clearImageTaskSyncBridgeHeaders(c *gin.Context) {
+	if c == nil || c.Writer == nil {
+		return
+	}
+	headers := c.Writer.Header()
+	headers.Del("X-NewAPI-Image-Task-ID")
+	headers.Del("X-NewAPI-Image-Client-Task-ID")
+	headers.Del("X-NewAPI-Retry-Idempotency-Key")
+}
+
+func imageTaskSyncBridgeRetryID(task *model.Task) string {
+	if task == nil {
+		return ""
+	}
+	retryID := strings.TrimSpace(task.ClientTaskID)
+	if retryID == "" {
+		retryID = strings.TrimSpace(task.TaskID)
+	}
+	return retryID
+}
+
+func imageTaskSyncBridgeCanFailBeforeExecution(task *model.Task) bool {
+	if task == nil {
+		return false
+	}
+	if strings.TrimSpace(task.LockOwner) != "" ||
+		strings.TrimSpace(task.PrivateData.UpstreamTaskID) != "" ||
+		task.PrivateData.UpstreamSubmitUncertainAt > 0 ||
+		task.PrivateData.UpstreamSubmitUncertainCount > 0 {
+		return false
+	}
+	switch task.Status {
+	case model.TaskStatusNotStart, model.TaskStatusQueued:
+		return true
+	default:
+		return false
+	}
+}
+
+func updateImageTaskSyncBridgeCancelledBeforeExecution(task *model.Task, fromStatus model.TaskStatus) (bool, error) {
+	if task == nil {
+		return false, nil
+	}
+	result := model.DB.Model(task).
+		Where("status = ?", fromStatus).
+		Where("(lock_owner = '' OR lock_owner IS NULL)").
+		Select("*").
+		Updates(task)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected > 0, nil
+}
+
+func imageTaskSyncBridgeFailureError(task *model.Task) *types.NewAPIError {
+	reason := "image task failed"
+	if task != nil && strings.TrimSpace(task.FailReason) != "" {
+		reason = strings.TrimSpace(task.FailReason)
+	}
+	statusCode := http.StatusBadGateway
+	if reason == "image generation timed out" {
+		statusCode = http.StatusGatewayTimeout
+	} else if reason == "client closed request" {
+		statusCode = 499
+	}
+	return types.NewErrorWithStatusCode(errors.New(reason), types.ErrorCodeDoRequestFailed, statusCode, types.ErrOptionWithSkipRetry())
 }
 
 func validateImageTaskModeRequest(imageRequest *dto.ImageRequest, mode string) error {
@@ -281,215 +530,6 @@ func validateImageTaskModeRequest(imageRequest *dto.ImageRequest, mode string) e
 		return errors.New("gpt_image2api 异步模式暂不支持 n 大于 1，请拆分为多个图片任务")
 	}
 	return nil
-}
-
-func GetImageTask(c *gin.Context) {
-	taskID := strings.TrimSpace(c.Param("task_id"))
-	userID := c.GetInt("id")
-	task, exist, err := model.GetByTaskId(userID, taskID)
-	if err != nil {
-		respondImageTaskError(c, types.NewError(err, types.ErrorCodeQueryDataError))
-		return
-	}
-	if !exist || task == nil || task.Platform != constant.TaskPlatformImage {
-		respondImageTaskError(c, types.NewErrorWithStatusCode(fmt.Errorf("task not found"), types.ErrorCodeInvalidRequest, http.StatusNotFound, types.ErrOptionWithSkipRetry()))
-		return
-	}
-	if !imageTaskAllowedByTokenModelLimit(c, task) {
-		respondImageTaskModelForbidden(c, task)
-		return
-	}
-	c.JSON(http.StatusOK, imageTaskToResponseWithResult(task, imageTaskIncludeImageData(c)))
-}
-
-func GetImageTasks(c *gin.Context) {
-	rawIDs := strings.TrimSpace(c.Query("ids"))
-	clientTaskID, err := normalizeImageTaskClientTaskID(c.Query("client_task_id"))
-	if err != nil {
-		respondImageTaskError(c, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()))
-		return
-	}
-	if rawIDs == "" && clientTaskID == "" {
-		respondImageTaskError(c, types.NewErrorWithStatusCode(fmt.Errorf("ids is required"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()))
-		return
-	}
-	if len(rawIDs) > maxImageTaskBatchQueryLength {
-		respondImageTaskError(c, types.NewErrorWithStatusCode(fmt.Errorf("ids is too long"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()))
-		return
-	}
-	taskIDs := make([]any, 0)
-	requestedTaskIDs := make([]string, 0)
-	seen := make(map[string]struct{})
-	for _, id := range strings.Split(rawIDs, ",") {
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		taskIDs = append(taskIDs, id)
-		requestedTaskIDs = append(requestedTaskIDs, id)
-		if len(taskIDs) > maxImageTaskBatchQueryIDs {
-			respondImageTaskError(c, types.NewErrorWithStatusCode(fmt.Errorf("ids exceeds limit %d", maxImageTaskBatchQueryIDs), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()))
-			return
-		}
-	}
-	if len(taskIDs) == 0 && clientTaskID == "" {
-		respondImageTaskError(c, types.NewErrorWithStatusCode(fmt.Errorf("ids is required"), types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry()))
-		return
-	}
-	tasks, err := model.GetImageTasksByTaskIDsOrClientTaskID(c.GetInt("id"), taskIDs, clientTaskID)
-	if err != nil {
-		respondImageTaskError(c, types.NewError(err, types.ErrorCodeQueryDataError))
-		return
-	}
-	includeResult := imageTaskIncludeImageData(c)
-	responses := make([]dto.ImageTaskResponse, 0, len(tasks))
-	items := make([]dto.ImageTaskGPTImage2APIItem, 0, len(tasks))
-	foundTaskIDs := make(map[string]struct{}, len(tasks))
-	for _, task := range tasks {
-		if task == nil || task.Platform != constant.TaskPlatformImage {
-			continue
-		}
-		if !imageTaskAllowedByTokenModelLimit(c, task) {
-			respondImageTaskModelForbidden(c, task)
-			return
-		}
-		foundTaskIDs[task.TaskID] = struct{}{}
-		response := imageTaskToResponseWithResult(task, includeResult)
-		responses = append(responses, response)
-		items = append(items, imageTaskToGPTImage2APIItem(response))
-	}
-	missingIDs := make([]string, 0)
-	for _, id := range requestedTaskIDs {
-		if _, ok := foundTaskIDs[id]; !ok {
-			missingIDs = append(missingIDs, id)
-		}
-	}
-	c.JSON(http.StatusOK, gin.H{
-		"data":        responses,
-		"items":       items,
-		"missing_ids": missingIDs,
-	})
-}
-
-func imageTaskAllowedByTokenModelLimit(c *gin.Context, task *model.Task) bool {
-	if !common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
-		return true
-	}
-	if task == nil {
-		return false
-	}
-	modelName := strings.TrimSpace(task.Properties.OriginModelName)
-	if modelName == "" {
-		return false
-	}
-	value, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
-	if !ok {
-		return false
-	}
-	tokenModelLimit, ok := value.(map[string]bool)
-	if !ok {
-		return false
-	}
-	_, ok = tokenModelLimit[ratio_setting.FormatMatchingModelName(modelName)]
-	return ok
-}
-
-func respondImageTaskModelForbidden(c *gin.Context, task *model.Task) {
-	modelName := "unknown"
-	if task != nil && strings.TrimSpace(task.Properties.OriginModelName) != "" {
-		modelName = strings.TrimSpace(task.Properties.OriginModelName)
-	}
-	respondImageTaskError(c, types.NewErrorWithStatusCode(
-		fmt.Errorf("model %s is not allowed for this token", modelName),
-		types.ErrorCodeAccessDenied,
-		http.StatusForbidden,
-		types.ErrOptionWithSkipRetry(),
-	))
-}
-
-func imageTaskToResponse(task *model.Task) dto.ImageTaskResponse {
-	return imageTaskToResponseWithResult(task, true)
-}
-
-func imageTaskToResponseWithResult(task *model.Task, includeResult bool) dto.ImageTaskResponse {
-	resp := dto.ImageTaskResponse{
-		TaskID:       task.TaskID,
-		ClientTaskID: strings.TrimSpace(task.ClientTaskID),
-		Status:       imageTaskPublicStatusFromTask(task),
-		Progress:     task.Progress,
-		CreatedAt:    task.CreatedAt,
-		UpdatedAt:    task.UpdatedAt,
-		Error:        task.FailReason,
-	}
-	if includeResult && imageTaskResponseResultVisible(task) {
-		result, resultErr := imageTaskResponseResult(task)
-		if len(result) > 0 {
-			resp.Result = result
-		}
-		if resultErr != "" && resp.Error == "" {
-			resp.Error = resultErr
-		}
-	}
-	return resp
-}
-
-func imageTaskToGPTImage2APIItem(resp dto.ImageTaskResponse) dto.ImageTaskGPTImage2APIItem {
-	item := dto.ImageTaskGPTImage2APIItem{
-		ID:           resp.TaskID,
-		TaskID:       resp.TaskID,
-		ClientTaskID: resp.ClientTaskID,
-		Status:       resp.Status,
-		Progress:     resp.Progress,
-		CreatedAt:    resp.CreatedAt,
-		UpdatedAt:    resp.UpdatedAt,
-		Error:        resp.Error,
-	}
-	if len(resp.Result) == 0 {
-		return item
-	}
-	if data, usage, ok := imageTaskGPTImage2APIDataFromResult(resp.Result); ok {
-		item.Data = data
-		item.Usage = usage
-		return item
-	}
-	item.Result = append(json.RawMessage(nil), resp.Result...)
-	return item
-}
-
-func imageTaskGPTImage2APIDataFromResult(result json.RawMessage) (json.RawMessage, json.RawMessage, bool) {
-	result = bytes.TrimSpace(result)
-	if len(result) == 0 || bytes.Equal(result, []byte("null")) {
-		return nil, nil, false
-	}
-	var envelope map[string]json.RawMessage
-	if err := common.Unmarshal(result, &envelope); err != nil {
-		return nil, nil, false
-	}
-	data := bytes.TrimSpace(envelope["data"])
-	if len(data) == 0 || bytes.Equal(data, []byte("null")) {
-		return nil, nil, false
-	}
-	itemData := append(json.RawMessage(nil), data...)
-	var itemUsage json.RawMessage
-	if usage := bytes.TrimSpace(envelope["usage"]); len(usage) > 0 && !bytes.Equal(usage, []byte("null")) {
-		itemUsage = append(json.RawMessage(nil), usage...)
-	}
-	return itemData, itemUsage, true
-}
-
-func imageTaskIncludeImageData(c *gin.Context) bool {
-	if c == nil {
-		return true
-	}
-	value := strings.TrimSpace(c.Query("include_image_data"))
-	if value == "" {
-		return true
-	}
-	return !strings.EqualFold(value, "false")
 }
 
 func imageTaskResponseResult(task *model.Task) (json.RawMessage, string) {
@@ -540,32 +580,6 @@ func imageTaskDataIsStoredResultPlaceholder(data json.RawMessage) bool {
 	return placeholder.Stored
 }
 
-func imageTaskPublicStatus(status model.TaskStatus) string {
-	switch status {
-	case model.TaskStatusSuccess:
-		return dto.ImageTaskStatusSuccess
-	case model.TaskStatusFailure:
-		return dto.ImageTaskStatusFailed
-	case model.TaskStatusInProgress:
-		return dto.ImageTaskStatusRunning
-	default:
-		return dto.ImageTaskStatusQueued
-	}
-}
-
-func imageTaskPublicStatusFromTask(task *model.Task) string {
-	if task == nil {
-		return dto.ImageTaskStatusQueued
-	}
-	if task.Status == model.TaskStatusSuccess && task.SettlementStatus == model.TaskSettlementStatusReview {
-		return dto.ImageTaskStatusFailed
-	}
-	if task.Status == model.TaskStatusSuccess && imageTaskSettlementOpen(task.SettlementStatus) {
-		return dto.ImageTaskStatusRunning
-	}
-	return imageTaskPublicStatus(task.Status)
-}
-
 func imageTaskResponseResultVisible(task *model.Task) bool {
 	if task == nil {
 		return false
@@ -588,7 +602,7 @@ func imageTaskRelayMode(c *gin.Context) int {
 	if mode := c.GetInt("relay_mode"); mode != relayconstant.RelayModeUnknown {
 		return mode
 	}
-	if strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks/edits") {
+	if strings.HasPrefix(c.Request.URL.Path, "/v1/images/edits") {
 		return relayconstant.RelayModeImagesEdits
 	}
 	return relayconstant.RelayModeImagesGenerations
@@ -623,7 +637,7 @@ func persistImageTaskRequest(c *gin.Context, relayMode int, modelName string) (*
 		}
 	}
 	contentType := c.Request.Header.Get("Content-Type")
-	if strings.Contains(contentType, "multipart/form-data") {
+	if imageTaskMultipartContentTypeHasBoundary(contentType) {
 		return persistImageTaskMultipartRequest(c, modelName)
 	}
 
@@ -683,6 +697,12 @@ func persistImageTaskRequest(c *gin.Context, relayMode int, modelName string) (*
 		contentType = "application/json"
 	} else {
 		body, err = readImageTaskStorageBytes(storage)
+		if err != nil {
+			return nil, err
+		}
+	}
+	if clientTaskID == "" {
+		clientTaskID, err = imageTaskClientTaskIDFromIdempotencyKey(c)
 		if err != nil {
 			return nil, err
 		}
@@ -750,6 +770,13 @@ func imageTaskClientTaskIDFromJSONBody(body []byte) (string, error) {
 	return normalizeImageTaskClientTaskID(value)
 }
 
+func imageTaskClientTaskIDFromIdempotencyKey(c *gin.Context) (string, error) {
+	if c == nil || c.Request == nil {
+		return "", nil
+	}
+	return normalizeImageTaskClientTaskID(c.GetHeader("Idempotency-Key"))
+}
+
 func normalizeImageTaskClientTaskID(value string) (string, error) {
 	value = strings.TrimSpace(value)
 	if value == "" {
@@ -813,6 +840,13 @@ func persistImageTaskMultipartRequest(c *gin.Context, modelName string) (*imageT
 	if form != nil {
 		var err error
 		clientTaskID, err = normalizeImageTaskClientTaskID(firstImageTaskFormValue(form.Value, "client_task_id"))
+		if err != nil {
+			return nil, err
+		}
+	}
+	if clientTaskID == "" {
+		var err error
+		clientTaskID, err = imageTaskClientTaskIDFromIdempotencyKey(c)
 		if err != nil {
 			return nil, err
 		}
@@ -1046,6 +1080,17 @@ func imageTaskSensitiveHeader(name string) bool {
 	default:
 		return false
 	}
+}
+
+func imageTaskMultipartContentTypeHasBoundary(contentType string) bool {
+	mediaType, params, err := mime.ParseMediaType(contentType)
+	if err != nil {
+		return false
+	}
+	if !strings.EqualFold(mediaType, "multipart/form-data") {
+		return false
+	}
+	return strings.TrimSpace(params["boundary"]) != ""
 }
 
 func cloneImageTaskTieredSnapshot(src *billingexpr.BillingSnapshot) *billingexpr.BillingSnapshot {

@@ -136,6 +136,13 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		newAPIError = nil
 	}()
 
+	if relayFormat == types.RelayFormatOpenAIImage {
+		if handled, bridgeErr := tryRelayImageTaskSyncBridge(c, request, relayInfo); handled {
+			newAPIError = bridgeErr
+			return
+		}
+	}
+
 	needSensitiveCheck := setting.ShouldCheckPromptSensitive()
 	needCountToken := constant.CountToken
 	// Avoid building huge CombineText (strings.Join) when token counting and sensitive check are both disabled.

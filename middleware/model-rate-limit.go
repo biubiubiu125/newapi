@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -192,11 +191,6 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 		}
 
 		// 计算限流参数
-		if shouldSkipModelRequestRateLimit(c) {
-			c.Next()
-			return
-		}
-
 		duration := int64(setting.ModelRequestRateLimitDurationMinutes * 60)
 		totalMaxCount := setting.ModelRequestRateLimitCount
 		successMaxCount := setting.ModelRequestRateLimitSuccessCount
@@ -221,11 +215,4 @@ func ModelRequestRateLimit() func(c *gin.Context) {
 			memoryRateLimitHandler(duration, totalMaxCount, successMaxCount)(c)
 		}
 	}
-}
-
-func shouldSkipModelRequestRateLimit(c *gin.Context) bool {
-	if c == nil || c.Request == nil {
-		return false
-	}
-	return c.Request.Method == http.MethodGet && strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks")
 }

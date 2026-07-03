@@ -3461,7 +3461,7 @@ func settleImageTaskConsumption(ctx context.Context, task *model.Task, result js
 		billingInput = cloneImageTaskBillingRequestInput(task.PrivateData.BillingRequestInput)
 	}
 	startTime := imageTaskRelayStartTime(task)
-	fakeCtx, cleanup := newImageTaskRelayFakeContext(ctx, task, http.MethodPost, "/v1/image-tasks", nil, "")
+	fakeCtx, cleanup := newImageTaskRelayFakeContext(ctx, task, http.MethodPost, imageTaskRequestPathFromTask(task), nil, "")
 	defer cleanup()
 	if err := setupImageTaskBaseGinContext(fakeCtx, task); err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("setup image task %s billing context failed: %s", task.TaskID, err.Error()))

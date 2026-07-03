@@ -192,12 +192,8 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 		}
 
 		if imageRequest.Model == "" {
-			if defaultModel := defaultOpenAIImageRequestModel(c, relayMode); defaultModel != "" {
-				imageRequest.Model = defaultModel
-			} else {
-				//imageRequest.Model = "dall-e-3"
-				return nil, errors.New("model is required")
-			}
+			//imageRequest.Model = "dall-e-3"
+			return nil, errors.New("model is required")
 		}
 
 		if strings.Contains(imageRequest.Size, "×") {
@@ -238,16 +234,6 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 	}
 
 	return imageRequest, nil
-}
-
-func defaultOpenAIImageRequestModel(c *gin.Context, relayMode int) string {
-	if c == nil || c.Request == nil || relayMode != relayconstant.RelayModeImagesGenerations {
-		return ""
-	}
-	if strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks") {
-		return dto.ImageTaskDefaultGenerationModel
-	}
-	return ""
 }
 
 func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest, err error) {

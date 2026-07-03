@@ -25,7 +25,7 @@ func TestParseMultipartFormReusableReadsFromBodyStorage(t *testing.T) {
 	require.NoError(t, writer.Close())
 
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/image-tasks/edits", nil)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", nil)
 	ctx.Request.Header.Set("Content-Type", writer.FormDataContentType())
 
 	storage, err := CreateBodyStorage(body.Bytes())
@@ -51,7 +51,7 @@ func TestUnmarshalBodyReusableMultipartWithoutBoundaryFallsBackToJSON(t *testing
 	gin.SetMode(gin.TestMode)
 
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/image-tasks", nil)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
 	ctx.Request.Header.Set("Content-Type", "multipart/form-data")
 
 	storage, err := CreateBodyStorage([]byte(`{"model":"gpt-image-1"}`))

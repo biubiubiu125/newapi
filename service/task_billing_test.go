@@ -906,6 +906,73 @@ func TestDispatchImageTasksReleasesLeaseAndSchedulesNextPoll(t *testing.T) {
 	require.GreaterOrEqual(t, reloaded.NextPollAt, now+2)
 }
 
+func TestDispatchImageTasksTreatsZeroConcurrencyAsUnlimited(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	oldRunImageTasks := RunImageTasksFunc
+	oldWorkerConcurrency := constant.ImageTaskWorkerConcurrency
+	oldChannelConcurrency := constant.ImageTaskChannelConcurrency
+	oldTaskQueryLimit := constant.TaskQueryLimit
+	oldLeaseSeconds := constant.ImageTaskLeaseSeconds
+	constant.ImageTaskWorkerConcurrency = 0
+	constant.ImageTaskChannelConcurrency = 0
+	constant.TaskQueryLimit = 10
+	constant.ImageTaskLeaseSeconds = 60
+	var calls int32
+	RunImageTasksFunc = func(ctx context.Context, tasks []*model.Task) error {
+		require.Len(t, tasks, 1)
+		atomic.AddInt32(&calls, 1)
+		return nil
+	}
+	t.Cleanup(func() {
+		RunImageTasksFunc = oldRunImageTasks
+		constant.ImageTaskWorkerConcurrency = oldWorkerConcurrency
+		constant.ImageTaskChannelConcurrency = oldChannelConcurrency
+		constant.TaskQueryLimit = oldTaskQueryLimit
+		constant.ImageTaskLeaseSeconds = oldLeaseSeconds
+	})
+
+	require.Equal(t, 10, imageTaskWorkerQueryLimit())
+	now := time.Now().Unix()
+	first := &model.Task{
+		TaskID:     "task_image_unlimited_first",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	second := &model.Task{
+		TaskID:     "task_image_unlimited_second",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		NextPollAt: now - 1,
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		},
+	}
+	require.NoError(t, model.DB.Create(first).Error)
+	require.NoError(t, model.DB.Create(second).Error)
+
+	DispatchImageTasks(context.Background(), []*model.Task{first, second})
+
+	require.Equal(t, int32(2), atomic.LoadInt32(&calls))
+	var leasedCount int64
+	require.NoError(t, model.DB.Model(&model.ImageTaskChannelLease{}).Where("channel_id = ?", 1).Count(&leasedCount).Error)
+	require.Zero(t, leasedCount)
+}
+
 func TestDispatchImageTasksDoesNotLeaseQueuedWorkBeforeWorkerStarts(t *testing.T) {
 	truncate(t)
 	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
