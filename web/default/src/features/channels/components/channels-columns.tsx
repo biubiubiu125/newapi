@@ -438,9 +438,12 @@ function BalanceCell({ channel }: { channel: Channel }) {
 /**
  * Generate channels columns configuration
  */
-export function useChannelsColumns(): ColumnDef<Channel>[] {
+export function useChannelsColumns(
+  options: { enableSelection?: boolean } = {}
+): ColumnDef<Channel>[] {
   const { t } = useTranslation()
-  return [
+  const { enableSelection = true } = options
+  const columns: ColumnDef<Channel>[] = [
     // Checkbox column
     {
       id: 'select',
@@ -1064,4 +1067,8 @@ export function useChannelsColumns(): ColumnDef<Channel>[] {
       enableHiding: false,
     },
   ]
+
+  return enableSelection
+    ? columns
+    : columns.filter((column) => column.id !== 'select')
 }

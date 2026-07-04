@@ -24,6 +24,7 @@ import { useMemo } from 'react'
 import { cn } from '@/lib/utils'
 
 interface MarkdownProps {
+  breaks?: boolean
   children: string
   className?: string
 }
@@ -694,15 +695,24 @@ function addExternalLinkAttributes(html: string): string {
   return template.innerHTML
 }
 
-function renderMarkdown(markdown: string): string {
-  const parsedHtml = markdownParser.parse(markdown, markdownOptions)
+function renderMarkdown(
+  markdown: string,
+  breaks: boolean = markdownOptions.breaks
+): string {
+  const parsedHtml = markdownParser.parse(markdown, {
+    ...markdownOptions,
+    breaks,
+  })
   const html = DOMPurify.sanitize(parsedHtml, sanitizeOptions)
 
   return addExternalLinkAttributes(html)
 }
 
 export function Markdown(props: MarkdownProps) {
-  const html = useMemo(() => renderMarkdown(props.children), [props.children])
+  const html = useMemo(
+    () => renderMarkdown(props.children, props.breaks),
+    [props.children, props.breaks]
+  )
 
   return (
     <div

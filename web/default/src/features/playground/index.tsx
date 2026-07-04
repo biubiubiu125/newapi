@@ -54,10 +54,10 @@ export function Playground() {
 
   // Load models
   const { data: modelsData, isLoading: isLoadingModels } = useQuery({
-    queryKey: ['playground-models', t],
+    queryKey: ['playground-models', config.group, t],
     queryFn: async () => {
       try {
-        return await getUserModels()
+        return await getUserModels(config.group)
       } catch (error) {
         toast.error(
           error instanceof Error

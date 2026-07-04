@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { KeyboardEvent } from 'react'
 import { Check, RotateCcw, Send, X } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
@@ -64,7 +65,7 @@ export function PlaygroundMessageEditor({
     onCancelEdit?.(false)
   }
 
-  const handleKeyDown = (event: KeyboardEvent) => {
+  const handleKeyDown = (event: KeyboardEvent<HTMLTextAreaElement>) => {
     if (event.key === 'Escape') {
       event.preventDefault()
       handleCancel()

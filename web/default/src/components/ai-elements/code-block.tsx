@@ -28,7 +28,7 @@ import {
   useEffect,
   useState,
 } from 'react'
-import { CheckIcon, CopyIcon } from 'lucide-react'
+import { CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon } from 'lucide-react'
 import {
   type BundledLanguage,
   codeToHtml,
@@ -37,10 +37,15 @@ import {
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
 
-type CodeBlockProps = HTMLAttributes<HTMLDivElement> & {
+type CodeBlockProps = Omit<HTMLAttributes<HTMLDivElement>, 'title'> & {
+  collapsedLines?: number
   code: string
-  language: BundledLanguage
+  defaultCollapsed?: boolean
+  language: BundledLanguage | string
+  maxExpandedLines?: number
   showLineNumbers?: boolean
+  showToolbar?: boolean
+  title?: ReactNode
 }
 
 type CodeBlockContextType = {
@@ -74,32 +79,61 @@ const lineNumberTransformer: ShikiTransformer = {
 
 export async function highlightCode(
   code: string,
-  language: BundledLanguage,
+  language: BundledLanguage | string,
   showLineNumbers = false
 ) {
   const transformers: ShikiTransformer[] = showLineNumbers
     ? [lineNumberTransformer]
     : []
 
-  return codeToHtml(code, {
-    lang: language,
-    themes: {
-      light: 'one-light',
-      dark: 'one-dark-pro',
-    },
-    transformers,
-  })
+  try {
+    return await codeToHtml(code, {
+      lang: language as BundledLanguage,
+      themes: {
+        light: 'one-light',
+        dark: 'one-dark-pro',
+      },
+      transformers,
+    })
+  } catch {
+    return codeToHtml(code, {
+      lang: 'plaintext',
+      themes: {
+        light: 'one-light',
+        dark: 'one-dark-pro',
+      },
+      transformers,
+    })
+  }
 }
 
 export const CodeBlock = ({
+  collapsedLines,
   code,
+  defaultCollapsed = false,
   language,
+  maxExpandedLines,
   showLineNumbers = false,
+  showToolbar = false,
+  title,
   className,
   children,
+  style,
   ...props
 }: CodeBlockProps) => {
   const [html, setHtml] = useState<string>('')
+  const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed)
+  const lineCount = code.split('\n').length
+  const canToggleCollapse =
+    typeof collapsedLines === 'number' &&
+    collapsedLines > 0 &&
+    lineCount > collapsedLines
+  const activeLineLimit =
+    canToggleCollapse && isCollapsed ? collapsedLines : maxExpandedLines
+  const codeStyle =
+    typeof activeLineLimit === 'number' && activeLineLimit > 0
+      ? { maxHeight: `${activeLineLimit * 1.5 + 2}rem` }
+      : undefined
 
   useEffect(() => {
     let cancelled = false
@@ -113,6 +147,10 @@ export const CodeBlock = ({
     }
   }, [code, language, showLineNumbers])
 
+  useEffect(() => {
+    setIsCollapsed(defaultCollapsed)
+  }, [code, defaultCollapsed])
+
   return (
     <CodeBlockContext.Provider value={{ code }}>
       <div
@@ -120,16 +158,38 @@ export const CodeBlock = ({
           'group bg-background text-foreground relative w-full overflow-hidden rounded-md border',
           className
         )}
+        style={style}
         {...props}
       >
+        {title && (
+          <div className='bg-muted/30 border-border text-muted-foreground border-b px-3 py-2 text-xs font-medium'>
+            {title}
+          </div>
+        )}
         <div className='relative'>
           <div
-            className='[&>pre]:bg-background! [&>pre]:text-foreground! overflow-hidden [&_code]:font-mono [&_code]:text-sm [&>pre]:m-0 [&>pre]:p-4 [&>pre]:text-sm'
+            className='[&>pre]:bg-background! [&>pre]:text-foreground! overflow-auto [&_code]:font-mono [&_code]:text-sm [&>pre]:m-0 [&>pre]:p-4 [&>pre]:text-sm'
             // biome-ignore lint/security/noDangerouslySetInnerHtml: "this is needed."
             dangerouslySetInnerHTML={{ __html: html }}
+            style={codeStyle}
           />
-          {children && (
+          {(children || (showToolbar && canToggleCollapse)) && (
             <div className='absolute top-2 right-2 flex items-center gap-2'>
+              {showToolbar && canToggleCollapse && (
+                <Button
+                  aria-label={isCollapsed ? 'Expand code block' : 'Collapse code block'}
+                  onClick={() => setIsCollapsed((value) => !value)}
+                  size='icon'
+                  type='button'
+                  variant='ghost'
+                >
+                  {isCollapsed ? (
+                    <ChevronDownIcon size={14} />
+                  ) : (
+                    <ChevronUpIcon size={14} />
+                  )}
+                </Button>
+              )}
               {children}
             </div>
           )}
@@ -141,7 +201,7 @@ export const CodeBlock = ({
 
 export type CodeBlockEditorProps = Omit<
   ComponentProps<'textarea'>,
-  'className' | 'onChange' | 'value'
+  'className' | 'onChange' | 'title' | 'value'
 > & {
   actions?: ReactNode
   ariaLabel?: string
