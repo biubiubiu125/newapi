@@ -19,13 +19,63 @@ For commercial licensing, please contact support@quantumnous.com
 
 import react from '@vitejs/plugin-react';
 import { defineConfig, transformWithEsbuild } from 'vite';
-import pkg from '@douyinfe/vite-plugin-semi';
+import fs from 'fs';
+import { createRequire } from 'module';
 import path from 'path';
+import { fileURLToPath, pathToFileURL } from 'url';
 import { codeInspectorPlugin } from 'code-inspector-plugin';
-const { vitePluginSemi } = pkg;
-const semiThemePath = path
-  .resolve(__dirname, 'node_modules/@douyinfe/semi-theme-default')
-  .replace(/\\/g, '/');
+const require = createRequire(import.meta.url);
+const semiPluginRequire = createRequire(
+  require.resolve('@douyinfe/vite-plugin-semi/package.json')
+);
+const { semiThemeLoader } = semiPluginRequire('./lib/semi-theme-loader');
+const sass = semiPluginRequire('sass');
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+function transformPath(filePath) {
+  return process.platform === 'win32' ? filePath.replace(/[\\]+/g, '/') : filePath;
+}
+
+function vitePluginSemiProjectTheme(options = {}) {
+  return {
+    name: 'vite-plugin-semi-project-theme',
+    load(id) {
+      const filePath = transformPath(id);
+      if (!/@douyinfe\/semi-(ui|icons|foundation)\/lib\/.+\.css$/.test(filePath)) {
+        return null;
+      }
+
+      const scssFilePath = filePath.replace(/\.css$/, '.scss');
+      const originalScssRaw = fs.readFileSync(scssFilePath, 'utf-8');
+      const nextScssRaw = semiThemeLoader(originalScssRaw, {
+        name: options.theme,
+        cssLayer: options.cssLayer,
+      });
+
+      return sass.compileString(nextScssRaw, {
+        importers: [
+          {
+            findFileUrl(url) {
+              if (url.startsWith('~')) {
+                return pathToFileURL(
+                  require.resolve(url.slice(1), { paths: [__dirname] })
+                );
+              }
+
+              const resolvedPath = path.resolve(path.dirname(scssFilePath), url);
+              if (fs.existsSync(resolvedPath)) {
+                return pathToFileURL(resolvedPath);
+              }
+
+              return null;
+            },
+          },
+        ],
+        logger: sass.Logger.silent,
+      }).css;
+    },
+  };
+}
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -54,9 +104,9 @@ export default defineConfig({
       },
     },
     react(),
-    vitePluginSemi({
+    vitePluginSemiProjectTheme({
       cssLayer: true,
-      theme: semiThemePath,
+      theme: '@douyinfe/semi-theme-default',
     }),
   ],
   optimizeDeps: {

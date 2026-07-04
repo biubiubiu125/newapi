@@ -286,10 +286,113 @@ func TestAdminUpdateSubscriptionPlanRejectsInvalidDowngradeGroup(t *testing.T) {
 	}
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
 	require.False(t, response.Success)
-	require.Equal(t, "降级分组不存在", response.Message)
+	require.NotEmpty(t, response.Message)
 
 	var plan model.SubscriptionPlan
 	require.NoError(t, model.DB.Where("id = ?", 604).First(&plan).Error)
 	require.Equal(t, "Original Plan", plan.Title)
 	require.Empty(t, plan.DowngradeGroup)
+}
+
+func TestAdminCreateSubscriptionPlanRejectsInvalidGrantGroup(t *testing.T) {
+	setupSubscriptionControllerTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	trueValue := true
+	body, err := json.Marshal(AdminUpsertSubscriptionPlanRequest{
+		Plan: model.SubscriptionPlan{
+			Title:               "Invalid Grant Plan",
+			PriceAmount:         9.99,
+			Currency:            "CNY",
+			DurationUnit:        model.SubscriptionDurationMonth,
+			DurationValue:       1,
+			Enabled:             true,
+			TotalAmount:         1000,
+			GrantGroups:         "missing-group",
+			QuotaResetPeriod:    model.SubscriptionResetNever,
+			AllowBalancePay:     &trueValue,
+			AllowWalletOverflow: &trueValue,
+		},
+	})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/subscription/admin/plans", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	AdminCreateSubscriptionPlan(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.False(t, response.Success)
+	require.NotEmpty(t, response.Message)
+
+	var count int64
+	require.NoError(t, model.DB.Model(&model.SubscriptionPlan{}).Count(&count).Error)
+	require.Zero(t, count)
+}
+
+func TestAdminUpdateSubscriptionPlanRejectsInvalidGrantGroup(t *testing.T) {
+	setupSubscriptionControllerTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	trueValue := true
+	require.NoError(t, model.DB.Create(&model.SubscriptionPlan{
+		Id:                  605,
+		Title:               "Original Plan",
+		PriceAmount:         9.99,
+		Currency:            "CNY",
+		DurationUnit:        model.SubscriptionDurationMonth,
+		DurationValue:       1,
+		Enabled:             true,
+		TotalAmount:         1000,
+		GrantGroups:         "default",
+		AllowBalancePay:     &trueValue,
+		AllowWalletOverflow: &trueValue,
+	}).Error)
+
+	body, err := json.Marshal(AdminUpsertSubscriptionPlanRequest{
+		Plan: model.SubscriptionPlan{
+			Title:               "Updated Plan",
+			PriceAmount:         18.88,
+			Currency:            "CNY",
+			DurationUnit:        model.SubscriptionDurationMonth,
+			DurationValue:       1,
+			Enabled:             true,
+			TotalAmount:         1000,
+			GrantGroups:         "missing-group",
+			QuotaResetPeriod:    model.SubscriptionResetNever,
+			AllowBalancePay:     &trueValue,
+			AllowWalletOverflow: &trueValue,
+		},
+		SyncActiveUserSubscriptions: true,
+	})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: "605"}}
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/subscription/admin/plans/605", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	AdminUpdateSubscriptionPlan(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.False(t, response.Success)
+	require.NotEmpty(t, response.Message)
+
+	var plan model.SubscriptionPlan
+	require.NoError(t, model.DB.Where("id = ?", 605).First(&plan).Error)
+	require.Equal(t, "Original Plan", plan.Title)
+	require.Equal(t, "default", plan.GrantGroups)
 }

@@ -78,20 +78,6 @@ func pricingUsableGroupNames(usableGroup map[string]string) []string {
 	return groups
 }
 
-func pricingConfiguredUsableGroups(usableGroup map[string]string, groupRatio map[string]float64) map[string]string {
-	filtered := make(map[string]string, len(usableGroup))
-	for group, desc := range usableGroup {
-		group = strings.TrimSpace(group)
-		if group == "" {
-			continue
-		}
-		if _, ok := groupRatio[group]; ok {
-			filtered[group] = desc
-		}
-	}
-	return filtered
-}
-
 func pricingConfiguredAutoGroups(autoGroups []string, usableGroup map[string]string) []string {
 	filtered := make([]string, 0, len(autoGroups))
 	seen := make(map[string]bool, len(autoGroups))
@@ -106,6 +92,20 @@ func pricingConfiguredAutoGroups(autoGroups []string, usableGroup map[string]str
 		if !seen[group] {
 			filtered = append(filtered, group)
 			seen[group] = true
+		}
+	}
+	return filtered
+}
+
+func pricingResponseGroupRatio(groupRatio map[string]float64, usableGroup map[string]string) map[string]float64 {
+	filtered := make(map[string]float64, len(groupRatio))
+	for group, ratio := range groupRatio {
+		group = strings.TrimSpace(group)
+		if group == "" {
+			continue
+		}
+		if _, ok := usableGroup[group]; ok {
+			filtered[group] = ratio
 		}
 	}
 	return filtered
@@ -136,14 +136,8 @@ func GetPricing(c *gin.Context) {
 	}
 
 	usableGroup = service.GetUserUsableGroupsByUser(userIdValue, group)
-	usableGroup = pricingConfiguredUsableGroups(usableGroup, groupRatio)
 	pricing = filterPricingByUsableGroups(pricing, usableGroup)
-	// check groupRatio contains usableGroup
-	for group := range ratio_setting.GetGroupRatioCopy() {
-		if _, ok := usableGroup[group]; !ok {
-			delete(groupRatio, group)
-		}
-	}
+	groupRatio = pricingResponseGroupRatio(groupRatio, usableGroup)
 
 	c.JSON(200, gin.H{
 		"success":            true,
