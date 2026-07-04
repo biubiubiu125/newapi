@@ -23,6 +23,7 @@ import {
   type ComponentProps,
   createContext,
   type HTMLAttributes,
+  type ReactNode,
   useContext,
   useEffect,
   useState,
@@ -137,6 +138,52 @@ export const CodeBlock = ({
     </CodeBlockContext.Provider>
   )
 }
+
+export type CodeBlockEditorProps = Omit<
+  ComponentProps<'textarea'>,
+  'className' | 'onChange' | 'value'
+> & {
+  actions?: ReactNode
+  ariaLabel?: string
+  className?: string
+  language?: string
+  onChange?: (value: string) => void
+  title?: ReactNode
+  value: string
+}
+
+export const CodeBlockEditor = ({
+  actions,
+  ariaLabel,
+  className,
+  language = 'text',
+  onChange,
+  title,
+  value,
+  ...props
+}: CodeBlockEditorProps) => (
+  <div
+    className={cn(
+      'bg-background text-foreground w-full overflow-hidden rounded-md border',
+      className
+    )}
+  >
+    <div className='bg-muted/30 border-border flex min-h-10 items-center justify-between gap-3 border-b px-3 py-2'>
+      <div className='text-muted-foreground min-w-0 text-xs font-medium tracking-normal'>
+        {title ?? language}
+      </div>
+      {actions && <div className='flex shrink-0 items-center gap-1'>{actions}</div>}
+    </div>
+    <textarea
+      {...props}
+      aria-label={ariaLabel}
+      className='bg-background text-foreground min-h-32 w-full resize-y border-0 p-4 font-mono text-sm leading-6 outline-none focus-visible:ring-0'
+      onChange={(event) => onChange?.(event.target.value)}
+      spellCheck={props.spellCheck ?? false}
+      value={value}
+    />
+  </div>
+)
 
 export type CodeBlockCopyButtonProps = ComponentProps<typeof Button> & {
   onCopy?: () => void
