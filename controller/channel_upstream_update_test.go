@@ -198,3 +198,21 @@ func TestDetectAllChannelUpstreamModelUpdatesRejectsExistingActiveTask(t *testin
 	require.Contains(t, recorder.Body.String(), existing.TaskID)
 	require.Contains(t, recorder.Body.String(), "已有模型更新任务正在运行或等待中")
 }
+
+func TestGetChannelUpstreamModelUpdateTaskAllowsScheduledConflictTask(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.SystemTask{}, &model.SystemTaskLock{}))
+	existing, err := model.CreateSystemTask(model.SystemTaskTypeModelUpdate, nil, nil)
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "task_id", Value: existing.TaskID}}
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/channel/upstream_updates/task/"+existing.TaskID, nil)
+
+	GetChannelUpstreamModelUpdateTask(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), existing.TaskID)
+	require.Contains(t, recorder.Body.String(), model.SystemTaskTypeModelUpdate)
+}

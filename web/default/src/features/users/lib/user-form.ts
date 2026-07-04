@@ -17,6 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
+import type { PermissionCatalog } from '@/lib/admin-permissions'
+import { normalizeAdminPermissions } from '@/lib/admin-permissions'
 import { quotaUnitsToDollars } from '@/lib/format'
 import { DEFAULT_GROUP } from '../constants'
 import { type UserFormData, type User } from '../types'
@@ -43,6 +45,9 @@ export const userFormSchema = z.object({
   quota_dollars: z.number().min(0).optional(),
   group: z.string().optional(),
   remark: z.string().optional(),
+  admin_permissions: z
+    .record(z.string(), z.record(z.string(), z.boolean()))
+    .optional(),
 })
 
 export const newUserFormSchema = userFormSchema.extend({
@@ -64,6 +69,7 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
   quota_dollars: 0,
   group: DEFAULT_GROUP,
   remark: '',
+  admin_permissions: {},
 }
 
 // ============================================================================
@@ -75,7 +81,9 @@ export const USER_FORM_DEFAULT_VALUES: UserFormValues = {
  */
 export function transformFormDataToPayload(
   data: UserFormValues,
-  userId?: number
+  userId?: number,
+  permissionCatalog?: PermissionCatalog,
+  includeAdminPermissions = false
 ): UserFormData & { id?: number } {
   const payload: UserFormData & { id?: number } = {
     username: data.username,
@@ -94,6 +102,17 @@ export function transformFormDataToPayload(
     payload.remark = data.remark || undefined
     payload.id = userId
   }
+  if (
+    includeAdminPermissions &&
+    data.admin_permissions &&
+    permissionCatalog &&
+    permissionCatalog.resources.length > 0
+  ) {
+    payload.admin_permissions = normalizeAdminPermissions(
+      data.admin_permissions,
+      permissionCatalog
+    )
+  }
 
   return payload
 }
@@ -111,5 +130,6 @@ export function transformUserToFormDefaults(user: User): UserFormValues {
     quota_dollars: quotaUnitsToDollars(user.quota),
     group: user.group || DEFAULT_GROUP,
     remark: user.remark || '',
+    admin_permissions: user.admin_permissions || {},
   }
 }

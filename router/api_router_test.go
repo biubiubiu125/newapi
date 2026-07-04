@@ -57,6 +57,25 @@ func TestAdminUsersSummaryRouteIsRegistered(t *testing.T) {
 	require.True(t, paths["GET /api/user/admin/users/summary"])
 }
 
+func TestAuthzAndChannelPermissionRoutesAreRegistered(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	SetApiRouter(engine)
+
+	paths := map[string]bool{}
+	for _, route := range engine.Routes() {
+		paths[route.Method+" "+route.Path] = true
+	}
+
+	require.True(t, paths["GET /api/authz/catalog"])
+	require.True(t, paths["POST /api/channel/:id/status"])
+	require.True(t, paths["POST /api/channel/status/batch"])
+	require.True(t, paths["POST /api/channel/fetch_models"])
+	require.True(t, paths["POST /api/channel/codex/oauth/start"])
+	require.True(t, paths["POST /api/channel/:id/codex/oauth/complete"])
+	require.True(t, paths["GET /api/channel/upstream_updates/task/:task_id"])
+}
+
 func TestReferralAssetRoutesSupportApiAndPublicPaths(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()

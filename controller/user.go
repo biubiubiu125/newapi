@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/QuantumNous/new-api/constant"
@@ -402,6 +403,22 @@ func canManageTargetRole(myRole int, targetRole int) bool {
 	return myRole == common.RoleRootUser || myRole > targetRole
 }
 
+type userWithAdminPermissions struct {
+	model.User
+	AdminPermissions authz.PermissionsMap `json:"admin_permissions,omitempty"`
+}
+
+func userResponseWithAdminPermissions(user *model.User) any {
+	if user == nil {
+		return user
+	}
+	response := userWithAdminPermissions{User: *user}
+	if user.Role == common.RoleAdminUser {
+		response.AdminPermissions = authz.Capabilities(user.Id, user.Role)
+	}
+	return response
+}
+
 func GetUser(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
@@ -421,7 +438,7 @@ func GetUser(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    user,
+		"data":    userResponseWithAdminPermissions(user),
 	})
 	return
 }
@@ -481,7 +498,7 @@ func GetSelf(c *gin.Context) {
 	user.Remark = ""
 
 	// 计算用户权限信息
-	permissions := calculateUserPermissions(userRole)
+	permissions := calculateUserPermissions(id, userRole)
 
 	// 获取用户设置并提取sidebar_modules
 	userSetting := user.GetSetting()
@@ -519,7 +536,7 @@ func GetSelf(c *gin.Context) {
 }
 
 // 计算用户权限的辅助函数
-func calculateUserPermissions(userRole int) map[string]interface{} {
+func calculateUserPermissions(userID int, userRole int) map[string]interface{} {
 	permissions := map[string]interface{}{}
 
 	// 根据用户角色计算权限
@@ -541,6 +558,9 @@ func calculateUserPermissions(userRole int) map[string]interface{} {
 		permissions["sidebar_modules"] = map[string]interface{}{
 			"admin": false, // 普通用户不能访问管理员区域
 		}
+	}
+	if userRole >= common.RoleAdminUser {
+		permissions["admin_permissions"] = authz.Capabilities(userID, userRole)
 	}
 
 	return permissions
@@ -643,7 +663,8 @@ func GetUserModels(c *gin.Context) {
 func UpdateUser(c *gin.Context) {
 	var req struct {
 		model.User
-		Email *string `json:"email"`
+		Email            *string               `json:"email"`
+		AdminPermissions *authz.PermissionsMap `json:"admin_permissions"`
 	}
 	err := common.DecodeJson(c.Request.Body, &req)
 	updatedUser := req.User
@@ -674,6 +695,7 @@ func UpdateUser(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	updatedUser.Role = originUser.Role
 	if updatedUser.Username != originUser.Username {
 		if err := model.ValidateNewUserUsername(updatedUser.Username); err != nil {
 			common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
@@ -689,17 +711,47 @@ func UpdateUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserCannotCreateHigherLevel)
 		return
 	}
+	var permissionHook func(tx *gorm.DB) error
+	permissionsChanged := false
+	if req.AdminPermissions != nil {
+		if myRole != common.RoleRootUser {
+			common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+			return
+		}
+		permissionsChanged = true
+		if updatedUser.Role == common.RoleAdminUser {
+			permissions := *req.AdminPermissions
+			permissionHook = func(tx *gorm.DB) error {
+				return authz.SetUserPermissionsInTx(tx, updatedUser.Id, permissions)
+			}
+		} else {
+			permissionHook = func(tx *gorm.DB) error {
+				return authz.ClearUserAuthorizationInTx(tx, updatedUser.Id)
+			}
+		}
+	} else if originUser.Role == common.RoleAdminUser && updatedUser.Role != common.RoleAdminUser {
+		permissionsChanged = true
+		permissionHook = func(tx *gorm.DB) error {
+			return authz.ClearUserAuthorizationInTx(tx, updatedUser.Id)
+		}
+	}
 	if updatedUser.Password == "$I_LOVE_U" {
 		updatedUser.Password = "" // rollback to what it should be
 	}
 	updatePassword := updatedUser.Password != ""
-	if err := updatedUser.Edit(updatePassword, emailProvided); err != nil {
+	if err := updatedUser.EditWithTransactionHook(updatePassword, permissionHook, emailProvided); err != nil {
 		if model.IsUserEmailUniqueError(err) {
 			common.ApiErrorI18n(c, i18n.MsgUserExists)
 			return
 		}
 		common.ApiError(c, err)
 		return
+	}
+	if permissionsChanged {
+		if err := authz.ReloadPolicy(); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 	recordManageAuditFor(c, updatedUser.Id, "user.update", map[string]interface{}{
 		"username": originUser.Username,
@@ -957,8 +1009,12 @@ func DeleteSelf(c *gin.Context) {
 }
 
 func CreateUser(c *gin.Context) {
-	var user model.User
-	err := common.DecodeJson(c.Request.Body, &user)
+	var req struct {
+		model.User
+		AdminPermissions *authz.PermissionsMap `json:"admin_permissions"`
+	}
+	err := common.DecodeJson(c.Request.Body, &req)
+	user := req.User
 	user.Username = strings.TrimSpace(user.Username)
 	user.Email = model.NormalizeUserEmail(user.Email)
 	if err != nil || user.Username == "" || user.Password == "" {
@@ -987,6 +1043,10 @@ func CreateUser(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserCannotCreateHigherLevel)
 		return
 	}
+	if req.AdminPermissions != nil && myRole != common.RoleRootUser {
+		common.ApiErrorI18n(c, i18n.MsgUserNoPermissionHigherLevel)
+		return
+	}
 	// Even for admin users, we cannot fully trust them!
 	cleanUser := model.User{
 		Username:    user.Username,
@@ -995,13 +1055,30 @@ func CreateUser(c *gin.Context) {
 		Email:       user.Email,
 		Role:        user.Role, // 保持管理员设置的角色
 	}
-	if err := cleanUser.Insert(0); err != nil {
+	permissionsChanged := req.AdminPermissions != nil && cleanUser.Role == common.RoleAdminUser
+	err = model.DB.Transaction(func(tx *gorm.DB) error {
+		if err := cleanUser.InsertWithTx(tx, 0); err != nil {
+			return err
+		}
+		if permissionsChanged {
+			return authz.SetUserPermissionsInTx(tx, cleanUser.Id, *req.AdminPermissions)
+		}
+		return nil
+	})
+	if err != nil {
 		if model.IsUserEmailUniqueError(err) {
 			common.ApiErrorI18n(c, i18n.MsgUserExists)
 			return
 		}
 		common.ApiError(c, err)
 		return
+	}
+	cleanUser.FinalizeOAuthUserCreation(0)
+	if permissionsChanged {
+		if err := authz.ReloadPolicy(); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 
 	recordManageAuditFor(c, cleanUser.Id, "user.create", map[string]interface{}{
@@ -1141,6 +1218,12 @@ func ManageUser(c *gin.Context) {
 	if err := user.Update(false); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if req.Action == "demote" {
+		if err := authz.ClearUserAuthorization(user.Id); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 	}
 	// 禁用 / 角色调整后，强制失效用户缓存与其全部令牌缓存，
 	// 避免在 Redis TTL 过期前仍使用旧状态（尤其是禁用后仍可发起请求的问题）。

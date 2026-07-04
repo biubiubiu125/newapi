@@ -1019,7 +1019,7 @@ func GetChannelUpstreamModelUpdateTask(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if task == nil || task.Type != model.SystemTaskTypeModelUpdateManual {
+	if task == nil || (task.Type != model.SystemTaskTypeModelUpdateManual && task.Type != model.SystemTaskTypeModelUpdate) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
 			"message": "task not found",

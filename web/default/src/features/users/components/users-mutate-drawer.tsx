@@ -156,7 +156,8 @@ export function UsersMutateDrawer({
   const currentQuotaRaw = form.watch('quota_dollars') || 0
   const selectedRole = form.watch('role')
   const canEditAdminPermissions = currentUser?.role === ROLE.SUPER_ADMIN
-  const targetIsAdmin = (selectedRole ?? currentRow?.role ?? 0) >= ROLE.ADMIN
+  const targetIsManagedAdmin =
+    (selectedRole ?? currentRow?.role ?? 0) === ROLE.ADMIN
 
   const onSubmit = async (data: UserFormValues) => {
     if (!isUpdate) {
@@ -175,7 +176,8 @@ export function UsersMutateDrawer({
       const payload = transformFormDataToPayload(
         data,
         currentRow?.id,
-        permissionCatalog
+        permissionCatalog,
+        canEditAdminPermissions && targetIsManagedAdmin
       )
       const result = isUpdate
         ? await updateUser(payload as typeof payload & { id: number })
@@ -481,7 +483,7 @@ export function UsersMutateDrawer({
               )}
 
               {canEditAdminPermissions &&
-                targetIsAdmin &&
+                targetIsManagedAdmin &&
                 permissionCatalog.resources.length > 0 && (
                   <SideDrawerSection>
                     <h3 className='text-sm font-medium'>

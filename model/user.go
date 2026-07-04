@@ -863,6 +863,10 @@ func (user *User) Update(updatePassword bool) error {
 }
 
 func (user *User) Edit(updatePassword bool, updateEmail ...bool) error {
+	return user.EditWithTransactionHook(updatePassword, nil, updateEmail...)
+}
+
+func (user *User) EditWithTransactionHook(updatePassword bool, hook func(tx *gorm.DB) error, updateEmail ...bool) error {
 	var err error
 	shouldUpdateEmail := len(updateEmail) > 0 && updateEmail[0]
 	user.normalizeEmailForPersistence()
@@ -906,7 +910,13 @@ func (user *User) Edit(updatePassword bool, updateEmail ...bool) error {
 		if err = tx.Model(user).Updates(updates).Error; err != nil {
 			return err
 		}
-		return syncUserLoginIdentifiersWithTx(tx, user.Id, newUser.Username, newUser.Email)
+		if err = syncUserLoginIdentifiersWithTx(tx, user.Id, newUser.Username, newUser.Email); err != nil {
+			return err
+		}
+		if hook != nil {
+			return hook(tx)
+		}
+		return nil
 	})
 	if err != nil {
 		return err

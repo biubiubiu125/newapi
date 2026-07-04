@@ -22,11 +22,12 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 
 	channelRoute.POST("/:id/key",
 		middleware.RootAuth(),
-		middleware.CriticalRateLimit(),
+		middleware.UserCriticalRateLimit("CT:channel-key"),
 		middleware.DisableCache(),
 		middleware.SecureVerificationRequired(),
 		controller.GetChannelKey,
 	)
+	channelRoute.POST("/fetch_models", middleware.RootAuth(), controller.FetchModels)
 
 	for _, route := range channelPermissionRoutes {
 		channelRoute.Handle(route.method, route.path,
@@ -42,6 +43,7 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/models", permission: authz.ChannelRead, handler: controller.ChannelListModels},
 	{method: http.MethodGet, path: "/models_enabled", permission: authz.ChannelRead, handler: controller.EnabledListModels},
 	{method: http.MethodGet, path: "/ops", permission: authz.ChannelRead, handler: controller.GetChannelOps},
+	{method: http.MethodGet, path: "/upstream_updates/task/:task_id", permission: authz.ChannelOperate, handler: controller.GetChannelUpstreamModelUpdateTask},
 	{method: http.MethodGet, path: "/:id", permission: authz.ChannelRead, handler: controller.GetChannel},
 	{method: http.MethodGet, path: "/test", permission: authz.ChannelOperate, handler: controller.TestAllChannels},
 	{method: http.MethodGet, path: "/test/:id", permission: authz.ChannelOperate, handler: controller.TestChannel},
@@ -59,7 +61,10 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodPost, path: "/batch", permission: authz.ChannelSensitiveWrite, handler: controller.DeleteChannelBatch},
 	{method: http.MethodPost, path: "/fix", permission: authz.ChannelOperate, handler: controller.FixChannelsAbilities},
 	{method: http.MethodGet, path: "/fetch_models/:id", permission: authz.ChannelOperate, handler: controller.FetchUpstreamModels},
-	{method: http.MethodPost, path: "/fetch_models", permission: authz.ChannelSensitiveWrite, handler: controller.FetchModels},
+	{method: http.MethodPost, path: "/codex/oauth/start", permission: authz.ChannelSensitiveWrite, handler: controller.StartCodexOAuth},
+	{method: http.MethodPost, path: "/codex/oauth/complete", permission: authz.ChannelSensitiveWrite, handler: controller.CompleteCodexOAuth},
+	{method: http.MethodPost, path: "/:id/codex/oauth/start", permission: authz.ChannelSensitiveWrite, handler: controller.StartCodexOAuthForChannel},
+	{method: http.MethodPost, path: "/:id/codex/oauth/complete", permission: authz.ChannelSensitiveWrite, handler: controller.CompleteCodexOAuthForChannel},
 	{method: http.MethodPost, path: "/:id/codex/refresh", permission: authz.ChannelSensitiveWrite, handler: controller.RefreshCodexChannelCredential},
 	{method: http.MethodGet, path: "/:id/codex/usage", permission: authz.ChannelRead, handler: controller.GetCodexChannelUsage},
 	{method: http.MethodGet, path: "/:id/codex/usage/reset-credits", permission: authz.ChannelRead, handler: controller.GetCodexChannelRateLimitResetCredits},

@@ -16,6 +16,7 @@ func TestChannelStatusRoutesUseOperatePermission(t *testing.T) {
 	assertChannelRoutePermission(t, http.MethodPost, "/:id/status", authz.ChannelOperate, controller.UpdateChannelStatus)
 	assertChannelRoutePermission(t, http.MethodPost, "/status/batch", authz.ChannelOperate, controller.BatchUpdateChannelStatus)
 	assertChannelRoutePermission(t, http.MethodPut, "/", authz.ChannelWrite, controller.UpdateChannel)
+	assertChannelRoutePermission(t, http.MethodGet, "/upstream_updates/task/:task_id", authz.ChannelOperate, controller.GetChannelUpstreamModelUpdateTask)
 }
 
 func TestChannelDeleteRoutesUseSensitiveWritePermission(t *testing.T) {
@@ -25,6 +26,10 @@ func TestChannelDeleteRoutesUseSensitiveWritePermission(t *testing.T) {
 	assertChannelRoutePermission(t, http.MethodPut, "/", authz.ChannelWrite, controller.UpdateChannel)
 	assertChannelRoutePermission(t, http.MethodPut, "/tag", authz.ChannelWrite, controller.EditTagChannels)
 	assertChannelRoutePermission(t, http.MethodPost, "/batch/tag", authz.ChannelWrite, controller.BatchSetChannelTag)
+	assertChannelRoutePermission(t, http.MethodPost, "/codex/oauth/start", authz.ChannelSensitiveWrite, controller.StartCodexOAuth)
+	assertChannelRoutePermission(t, http.MethodPost, "/codex/oauth/complete", authz.ChannelSensitiveWrite, controller.CompleteCodexOAuth)
+	assertChannelRoutePermission(t, http.MethodPost, "/:id/codex/oauth/start", authz.ChannelSensitiveWrite, controller.StartCodexOAuthForChannel)
+	assertChannelRoutePermission(t, http.MethodPost, "/:id/codex/oauth/complete", authz.ChannelSensitiveWrite, controller.CompleteCodexOAuthForChannel)
 }
 
 func TestChannelStatusRoutesRegisterWithoutConflict(t *testing.T) {
