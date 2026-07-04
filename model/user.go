@@ -204,6 +204,18 @@ func (user *User) SetSetting(setting dto.UserSetting) {
 	user.Setting = string(settingBytes)
 }
 
+func UpdateUserSetting(userId int, setting dto.UserSetting) error {
+	settingBytes, err := json.Marshal(setting)
+	if err != nil {
+		return err
+	}
+	settingText := string(settingBytes)
+	if err := DB.Model(&User{}).Where("id = ?", userId).Update("setting", settingText).Error; err != nil {
+		return err
+	}
+	return updateUserSettingCache(userId, settingText)
+}
+
 func (user *User) initializeDefaultSettingForRole() {
 	setting := user.GetSetting()
 	role := user.Role
@@ -243,29 +255,29 @@ func GenerateDefaultSidebarConfigForRole(userRole int) string {
 
 	if userRole == common.RoleAdminUser {
 		defaultConfig["admin"] = map[string]interface{}{
-			"enabled":               true,
-			"channel":               true,
-			"models":                true,
-			"redemption":            true,
-			"user":                  true,
-			"subscription":          true,
-			"referral":              true,
-			"ticket_management":     true,
-			"recharge_audit":        true,
-			"setting":               false,
+			"enabled":           true,
+			"channel":           true,
+			"models":            true,
+			"redemption":        true,
+			"user":              true,
+			"subscription":      true,
+			"referral":          true,
+			"ticket_management": true,
+			"recharge_audit":    true,
+			"setting":           false,
 		}
 	} else if userRole == common.RoleRootUser {
 		defaultConfig["admin"] = map[string]interface{}{
-			"enabled":               true,
-			"channel":               true,
-			"models":                true,
-			"redemption":            true,
-			"user":                  true,
-			"subscription":          true,
-			"referral":              true,
-			"ticket_management":     true,
-			"recharge_audit":        true,
-			"setting":               true,
+			"enabled":           true,
+			"channel":           true,
+			"models":            true,
+			"redemption":        true,
+			"user":              true,
+			"subscription":      true,
+			"referral":          true,
+			"ticket_management": true,
+			"recharge_audit":    true,
+			"setting":           true,
 		}
 	}
 
@@ -448,7 +460,7 @@ func GetAllUsers(pageInfo *common.PageInfo) (users []*User, total int64, err err
 		return nil, 0, err
 	}
 
-	err = tx.Unscoped().Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password").Find(&users).Error
+	err = tx.Unscoped().Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Omit("password", "access_token").Find(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -538,7 +550,7 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 		return nil, 0, err
 	}
 
-	err = query.Omit("password").Order("users.id desc").Limit(num).Offset(startIdx).Find(&users).Error
+	err = query.Omit("password", "access_token").Order("users.id desc").Limit(num).Offset(startIdx).Find(&users).Error
 	if err != nil {
 		tx.Rollback()
 		return nil, 0, err
@@ -836,7 +848,7 @@ func (user *User) Update(updatePassword bool) error {
 	}
 	newUser := *user
 	err = DB.Transaction(func(tx *gorm.DB) error {
-		if err = tx.Model(user).Updates(newUser).Error; err != nil {
+		if err = tx.Model(&currentUser).Omit("quota", "used_quota", "request_count").Updates(newUser).Error; err != nil {
 			return err
 		}
 		return syncUserLoginIdentifiersWithTx(tx, user.Id, user.Username, user.Email)

@@ -24,8 +24,8 @@ const (
 
 	// systemTaskSchedulerInterval throttles how often the scheduler/stale-lock
 	// pass runs, independent of how often the runner wakes to claim tasks.
-	systemTaskSchedulerInterval = 15 * time.Second
-	systemTaskStaleLockInterval = 30 * time.Second
+	systemTaskSchedulerInterval      = 15 * time.Second
+	systemTaskStaleLockInterval      = 30 * time.Second
 	systemTaskHistoryCleanupInterval = 10 * time.Minute
 	systemTaskHistoryCleanupBatch    = 1000
 )

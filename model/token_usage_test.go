@@ -14,8 +14,8 @@ func TestTokenUsageUpdateAssignmentsUseQualifiedColumnsForPostgres(t *testing.T)
 		DSN:                  "host=localhost user=test dbname=test password=test sslmode=disable",
 		PreferSimpleProtocol: true,
 	}), &gorm.Config{
-		DryRun:                true,
-		DisableAutomaticPing:  true,
+		DryRun:                 true,
+		DisableAutomaticPing:   true,
 		SkipDefaultTransaction: true,
 	})
 	require.NoError(t, err)

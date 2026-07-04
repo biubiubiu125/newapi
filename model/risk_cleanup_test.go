@@ -31,7 +31,7 @@ func createLegacyRiskTables(t *testing.T) {
 	t.Helper()
 
 	for _, tableName := range []string{"risk_whitelists", "risk_actions", "risk_events"} {
-		require.NoError(t, DB.Exec("CREATE TABLE " + tableName + " (id integer primary key)").Error)
+		require.NoError(t, DB.Exec("CREATE TABLE "+tableName+" (id integer primary key)").Error)
 	}
 }
 

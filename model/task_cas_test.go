@@ -24,7 +24,7 @@ func TestMain(m *testing.M) {
 	DB = db
 	LOG_DB = db
 
-	common.UsingSQLite = true
+	common.SetDatabaseTypes(common.DatabaseTypeSQLite, common.DatabaseTypeSQLite)
 	common.RedisEnabled = false
 	common.BatchUpdateEnabled = false
 	common.LogConsumeEnabled = true
@@ -43,6 +43,7 @@ func TestMain(m *testing.M) {
 		&ImageTaskClientTaskIDLock{},
 		&TaskSettlementRecord{},
 		&User{},
+		&UserLoginIdentifier{},
 		&Token{},
 		&Log{},
 		&Channel{},
@@ -61,6 +62,9 @@ func TestMain(m *testing.M) {
 		&ReferralCommissionLedger{},
 		&ReferralCommissionJob{},
 		&PerfMetric{},
+		&SystemInstance{},
+		&SystemTask{},
+		&SystemTaskLock{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -77,6 +81,7 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM image_task_client_task_id_locks")
 		DB.Exec("DELETE FROM task_settlement_records")
 		DB.Exec("DELETE FROM users")
+		DB.Exec("DELETE FROM user_login_identifiers")
 		DB.Exec("DELETE FROM tokens")
 		DB.Exec("DELETE FROM logs")
 		DB.Exec("DELETE FROM channels")
@@ -95,6 +100,9 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM referral_commission_accounts")
 		DB.Exec("DELETE FROM referral_commission_jobs")
 		DB.Exec("DELETE FROM perf_metrics")
+		DB.Exec("DELETE FROM system_instances")
+		DB.Exec("DELETE FROM system_task_locks")
+		DB.Exec("DELETE FROM system_tasks")
 	})
 }
 

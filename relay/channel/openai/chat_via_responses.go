@@ -13,6 +13,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/service/relayconvert"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -47,6 +48,23 @@ func setResponsesImageGenerationCallContext(c *gin.Context, resp *dto.OpenAIResp
 	c.Set("image_generation_call_size", resp.GetSize())
 }
 
+func appendResponsesImageGenerationTextOutput(resp *dto.OpenAIResponsesResponse) {
+	imageText := service.ExtractImageGenerationTextFromResponses(resp)
+	if imageText == "" {
+		return
+	}
+	if strings.Contains(service.ExtractOutputTextFromResponses(resp), imageText) {
+		return
+	}
+	resp.Output = append(resp.Output, dto.ResponsesOutput{
+		Type: "message",
+		Role: "assistant",
+		Content: []dto.ResponsesOutputContent{
+			{Type: "output_text", Text: imageText},
+		},
+	})
+}
+
 func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
 	if resp == nil || resp.Body == nil {
 		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
@@ -68,6 +86,7 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
 	}
 	setResponsesImageGenerationCallContext(c, &responsesResp)
+	appendResponsesImageGenerationTextOutput(&responsesResp)
 
 	chatId := helper.GetResponseID(c)
 	chatResp, usage, err := service.ResponsesResponseToChatCompletionsResponse(&responsesResp, chatId)
@@ -77,6 +96,120 @@ func OaiResponsesToChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 
 	if usage == nil || usage.TotalTokens == 0 {
 		text := service.ExtractOutputTextFromResponses(&responsesResp)
+		usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
+		chatResp.Usage = *usage
+	}
+
+	var responseBody []byte
+	switch info.RelayFormat {
+	case types.RelayFormatClaude:
+		claudeResp := service.ResponseOpenAI2Claude(chatResp, info)
+		responseBody, err = common.Marshal(claudeResp)
+	case types.RelayFormatGemini:
+		geminiResp := service.ResponseOpenAI2Gemini(chatResp, info)
+		responseBody, err = common.Marshal(geminiResp)
+	default:
+		responseBody, err = common.Marshal(chatResp)
+	}
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeJsonMarshalFailed, http.StatusInternalServerError)
+	}
+
+	service.IOCopyBytesGracefully(c, resp, responseBody)
+	return usage, nil
+}
+
+func OaiResponsesToChatBufferedStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
+	if resp == nil || resp.Body == nil {
+		return nil, types.NewOpenAIError(fmt.Errorf("invalid response"), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+	}
+	defer service.CloseResponseBodyGracefully(resp)
+
+	chatId := helper.GetResponseID(c)
+	model := info.UpstreamModelName
+	createdAt := int(time.Now().Unix())
+	accumulator := relayconvert.NewResponsesBufferedAccumulator()
+	var metadataResp *dto.OpenAIResponsesResponse
+	var finalResp *dto.OpenAIResponsesResponse
+	var streamErr *types.NewAPIError
+
+	applyMetadata := func(response *dto.OpenAIResponsesResponse) {
+		if response == nil {
+			return
+		}
+		metadataResp = response
+		if response.Model != "" {
+			model = response.Model
+		}
+		if response.CreatedAt != 0 {
+			createdAt = response.CreatedAt
+		}
+	}
+
+	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
+		if streamErr != nil {
+			sr.Stop(streamErr)
+			return
+		}
+
+		var streamResp dto.ResponsesStreamResponse
+		if err := common.UnmarshalJsonStr(data, &streamResp); err != nil {
+			logger.LogError(c, "failed to unmarshal responses stream event: "+err.Error())
+			sr.Error(err)
+			return
+		}
+
+		accumulator.ProcessEvent(&streamResp)
+		applyMetadata(streamResp.Response)
+
+		switch streamResp.Type {
+		case "response.completed", "response.done", "response.incomplete":
+			if streamResp.Response != nil {
+				finalResp = streamResp.Response
+			}
+		case "response.error", "response.failed":
+			if streamResp.Response != nil {
+				if oaiErr := streamResp.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
+					streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
+					sr.Stop(streamErr)
+					return
+				}
+			}
+			streamErr = types.NewOpenAIError(fmt.Errorf("responses stream error: %s", streamResp.Type), types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			sr.Stop(streamErr)
+		default:
+		}
+	})
+
+	if streamErr != nil {
+		return nil, streamErr
+	}
+	if finalResp == nil {
+		finalResp = metadataResp
+	}
+	if finalResp == nil {
+		finalResp = &dto.OpenAIResponsesResponse{}
+	}
+	if finalResp.ID == "" {
+		finalResp.ID = chatId
+	}
+	if finalResp.Model == "" {
+		finalResp.Model = model
+	}
+	if finalResp.CreatedAt == 0 {
+		finalResp.CreatedAt = createdAt
+	}
+	accumulator.SupplementResponseOutput(finalResp)
+	setResponsesImageGenerationCallContext(c, finalResp)
+	appendResponsesImageGenerationTextOutput(finalResp)
+
+	chatResp, usage, err := service.ResponsesResponseToChatCompletionsResponse(finalResp, chatId)
+	if err != nil {
+		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+
+	if usage == nil || usage.TotalTokens == 0 {
+		text := service.ExtractOutputTextFromResponses(finalResp)
 		usage = service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
 		chatResp.Usage = *usage
 	}

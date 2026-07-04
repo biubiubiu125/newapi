@@ -958,22 +958,36 @@ func ApplyAllChannelUpstreamModelUpdates(c *gin.Context) {
 	})
 }
 
+func renderModelUpdateTaskConflict(c *gin.Context, task *model.SystemTask) {
+	c.JSON(http.StatusConflict, gin.H{
+		"success": false,
+		"message": "已有模型更新任务正在运行或等待中，不能启动本次手动任务",
+		"data": gin.H{
+			"task_id": task.TaskID,
+			"status":  task.Status,
+			"type":    task.Type,
+		},
+	})
+}
+
 func DetectAllChannelUpstreamModelUpdates(c *gin.Context) {
+	activeTask, err := model.GetActiveSystemTask(model.SystemTaskTypeModelUpdate)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if activeTask != nil {
+		renderModelUpdateTaskConflict(c, activeTask)
+		return
+	}
+
 	task, created, err := service.EnqueueSystemTask(model.SystemTaskTypeModelUpdateManual, nil)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	if !created {
-		c.JSON(http.StatusConflict, gin.H{
-			"success": false,
-			"message": "已有模型更新任务正在运行或等待中，不能启动本次手动任务",
-			"data": gin.H{
-				"task_id": task.TaskID,
-				"status":  task.Status,
-				"type":    task.Type,
-			},
-		})
+		renderModelUpdateTaskConflict(c, task)
 		return
 	}
 
