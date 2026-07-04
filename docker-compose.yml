@@ -1,7 +1,6 @@
 services:
   new-api:
-    build: .
-    image: biubiubiu125/newapi:local
+    image: ghcr.io/biubiubiu125/newapi:main
     container_name: ${CONTAINER_PREFIX:-newapi}-app
     restart: always
     dns:

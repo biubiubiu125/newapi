@@ -1,6 +1,6 @@
 # newapi
 
-`newapi` 是基于上游 `QuantumNous/new-api` 二次维护的多模型网关与 AI 资产管理系统。项目保留上游的统一 OpenAI 兼容中继、渠道管理、模型计费、用户额度、令牌管理、日志统计等核心能力，并在当前 fork 中补充了中文默认文档、源码构建部署、订阅套餐、支付网关、BEpusdt USDT 支付、Waffo Pancake 订阅支付、推广返佣、提现审核、充值审计和新模板适配等功能。
+`newapi` 是基于上游 `QuantumNous/new-api` 二次维护的多模型网关与 AI 资产管理系统。项目保留上游的统一 OpenAI 兼容中继、渠道管理、模型计费、用户额度、令牌管理、日志统计等核心能力，并在当前 fork 中补充了中文默认文档、GHCR 镜像部署、源码构建部署、订阅套餐、支付网关、BEpusdt USDT 支付、Waffo Pancake 订阅支付、推广返佣、提现审核、充值审计和新模板适配等功能。
 
 当前仓库以中文说明为准。功能细节如果与上游文档不一致，请以本仓库当前代码、`docker-compose.yml`、前端页面和实际运行结果为准。
 
@@ -17,7 +17,7 @@ https://github.com/QuantumNous/new-api
 https://docs.newapi.pro/zh/docs
 ```
 
-从本 fork 部署时，请使用本仓库源码构建镜像，不要直接套用上游预构建镜像。
+从本 fork 部署时，请使用本仓库发布的镜像 `ghcr.io/biubiubiu125/newapi:main`，或使用本仓库源码自行构建镜像，不要直接套用上游预构建镜像。
 
 ## 功能概览
 
@@ -222,7 +222,8 @@ openssl rand -hex 32
 
 ```bash
 docker compose config
-docker compose up -d --build
+docker compose pull
+docker compose up -d
 docker compose ps
 ```
 
@@ -257,13 +258,12 @@ mkdir -p backups
 docker compose exec -T postgres pg_dump -U "${POSTGRES_USER:-root}" "${POSTGRES_DB:-new-api}" > "backups/newapi-$(date +%F-%H%M%S).sql"
 ```
 
-拉取最新代码并重新构建：
+拉取最新镜像并重启应用：
 
 ```bash
-git fetch --all --prune
-git pull --ff-only
 docker compose config
-docker compose up -d --build
+docker compose pull new-api
+docker compose up -d --force-recreate new-api
 docker compose ps
 docker compose logs --tail=100 new-api
 curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
@@ -271,12 +271,12 @@ curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
 
 如果你本地有二次开发，请先提交或备份本地修改，不要直接覆盖。更新后至少验证管理员登录、普通用户登录、渠道测试、充值订单、支付回调、额度到账、推广返佣和提现审核。
 
-如需回滚到旧版本，先确认要回滚的提交号，再在维护窗口执行：
+如需回滚到旧版本，先确认要回滚的镜像 tag，例如 `sha-<commit>`，再在维护窗口把 `docker-compose.yml` 中的 `image` 改为对应 tag 后执行：
 
 ```bash
-git log --oneline -5
-git checkout <old-commit>
-docker compose up -d --build
+docker compose config
+docker compose pull new-api
+docker compose up -d --force-recreate new-api
 docker compose ps
 curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
 ```
@@ -287,7 +287,7 @@ curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
 
 根目录 `docker-compose.yml` 默认包含：
 
-- `new-api`：从当前源码构建镜像，镜像名 `biubiubiu125/newapi:local`。
+- `new-api`：默认使用当前仓库自动发布的镜像 `ghcr.io/biubiubiu125/newapi:main`。
 - `postgres`：PostgreSQL 15，数据保存在 Docker volume `pg_data`。
 - `redis`：Redis 7，仅在 compose 内部网络暴露。
 
@@ -330,10 +330,10 @@ curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
 
 上游官方参考：<https://docs.newapi.pro/zh/docs/installation/deployment-methods/cluster-deployment>
 
-下面内容按上游教程的结构整理，主要把源码仓库改为当前 fork：
+下面内容按上游教程的结构整理，主要把镜像和源码仓库改为当前 fork：
 
 - 源码仓库使用 `https://github.com/biubiubiu125/newapi.git`。
-- 示例镜像从当前仓库源码构建为 `biubiubiu125/newapi:local`；如果你已经发布自己的镜像，可以改成自己的镜像 tag。
+- 默认镜像使用 `ghcr.io/biubiubiu125/newapi:main`；如果要固定版本，可以改成对应的 `sha-<commit>` 或版本 tag。
 - 集群环境不要使用 SQLite。SQLite 只适合单容器试用或本地开发，多节点必须使用所有节点可访问的共享数据库。
 
 ### 前置要求
@@ -391,8 +391,7 @@ git rev-parse HEAD
 ```yaml
 services:
   new-api:
-    build: .
-    image: biubiubiu125/newapi:local
+    image: ghcr.io/biubiubiu125/newapi:main
     container_name: ${CONTAINER_PREFIX:-newapi}-${NODE_NAME:-node}
     restart: always
     ports:
@@ -414,12 +413,12 @@ services:
       - TZ=${TZ:-Asia/Shanghai}
 ```
 
-如果使用已经构建好的镜像，改成：
+如果需要固定到某次构建，改成对应的不可变 tag：
 
 ```yaml
 services:
   new-api:
-    image: your-registry/newapi:<tag>
+    image: ghcr.io/biubiubiu125/newapi:sha-<commit>
 ```
 
 ### 4. 配置主节点
@@ -441,7 +440,8 @@ CRYPTO_SECRET=<所有节点一致的强随机密钥>
 ```bash
 cd /opt/newapi
 docker compose -f docker-compose.cluster.yml config
-docker compose -f docker-compose.cluster.yml up -d --build
+docker compose -f docker-compose.cluster.yml pull
+docker compose -f docker-compose.cluster.yml up -d
 docker compose -f docker-compose.cluster.yml ps
 curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
 docker compose -f docker-compose.cluster.yml logs --tail=100 new-api
@@ -468,7 +468,8 @@ CRYPTO_SECRET=<必须与主节点完全一致>
 ```bash
 cd /opt/newapi
 docker compose -f docker-compose.cluster.yml config
-docker compose -f docker-compose.cluster.yml up -d --build
+docker compose -f docker-compose.cluster.yml pull
+docker compose -f docker-compose.cluster.yml up -d
 docker compose -f docker-compose.cluster.yml ps
 curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
 docker compose -f docker-compose.cluster.yml logs --tail=100 new-api
@@ -555,15 +556,13 @@ docker compose -f docker-compose.cluster.yml logs --tail=200 new-api
    - 普通更新：先从负载均衡摘除一个从节点，逐台滚动更新。
    - 结构更新：短暂进入维护窗口，先更新主节点并确认迁移完成，再逐台更新从节点。
 
-3. 在待更新节点更新源码并重建。
+3. 在待更新节点拉取最新镜像并重启。
 
    ```bash
    cd /path/to/newapi
-   git status --short
-   git fetch --all --prune
-   git pull --ff-only
    docker compose -f docker-compose.cluster.yml config
-   docker compose -f docker-compose.cluster.yml up -d --build
+   docker compose -f docker-compose.cluster.yml pull new-api
+   docker compose -f docker-compose.cluster.yml up -d --force-recreate new-api
    docker compose -f docker-compose.cluster.yml ps
    curl -fsS http://127.0.0.1:${APP_PORT:-3000}/api/status
    docker compose -f docker-compose.cluster.yml logs --tail=100 new-api
@@ -604,12 +603,10 @@ docker compose -f docker-compose.cluster.yml logs --tail=200 new-api
 
 ## 手动 Docker 运行
 
-如果不使用 Compose，也可以手动构建镜像：
+如果不使用 Compose，也可以直接运行已发布镜像：
 
 ```bash
-git clone https://github.com/biubiubiu125/newapi.git
-cd newapi
-docker build -t biubiubiu125/newapi:local .
+docker pull ghcr.io/biubiubiu125/newapi:main
 ```
 
 SQLite 单容器示例：
@@ -623,7 +620,7 @@ docker run --name newapi -d --restart always \
   -e SESSION_SECRET="$(openssl rand -hex 32)" \
   -v "$(pwd)/data:/data" \
   -v "$(pwd)/logs:/app/logs" \
-  biubiubiu125/newapi:local --log-dir /app/logs
+  ghcr.io/biubiubiu125/newapi:main --log-dir /app/logs
 ```
 
 外部 PostgreSQL 和 Redis 示例：
@@ -638,7 +635,7 @@ docker run --name newapi -d --restart always \
   -e TRUSTED_REDIRECT_DOMAINS="example.com" \
   -v "$(pwd)/data:/data" \
   -v "$(pwd)/logs:/app/logs" \
-  biubiubiu125/newapi:local --log-dir /app/logs
+  ghcr.io/biubiubiu125/newapi:main --log-dir /app/logs
 ```
 
 ## 反向代理建议
@@ -927,7 +924,7 @@ Docker：
 
 ```bash
 docker compose config
-docker compose build
+docker compose pull
 docker compose up -d
 docker compose ps
 ```

@@ -8,7 +8,7 @@
 
 `newapi` 是基于上游 `new-api` 二次维护的多模型网关与 AI 资产管理系统。后端以 Go 实现统一 API 网关、用户体系、令牌、渠道、模型、额度、账单、订阅、支付、推广返佣、提现审核和后台管理；前端同时包含默认模板与 classic 模板。
 
-当前 fork 的部署入口按本仓库源码本地构建，不默认依赖上游预构建镜像。根目录 `docker-compose.yml` 默认启动 `new-api`、PostgreSQL 和 Redis，并要求通过 `.env` 或环境变量显式提供 `POSTGRES_PASSWORD`、`REDIS_PASSWORD`、`SESSION_SECRET` 等敏感配置。
+当前 fork 的生产部署入口默认使用本仓库自动发布的 GHCR 镜像 `ghcr.io/biubiubiu125/newapi:main`，也允许使用本仓库源码自行构建镜像；不得默认依赖上游预构建镜像。根目录 `docker-compose.yml` 默认启动 `new-api`、PostgreSQL 和 Redis，并要求通过 `.env` 或环境变量显式提供 `POSTGRES_PASSWORD`、`REDIS_PASSWORD`、`SESSION_SECRET` 等敏感配置。
 
 ## 技术栈
 
@@ -173,7 +173,7 @@ docs/                        项目文档
 - 根目录 `docker-compose.yml` 里的强制环境变量校验不能移除，除非提供等价或更严格的安全机制。
 - PostgreSQL 和 Redis 默认不应暴露到公网。新增端口映射、反代、CORS、可信跳转域名或回调域名时，必须说明边界和风险。
 - 容器数据目录、数据库卷、日志目录和备份策略改动必须避免误删用户数据。
-- Docker 镜像必须从当前源码构建，不能在未说明情况下切回上游预构建镜像。
+- Docker 镜像必须来自当前 fork 源码构建，可以使用本仓库 GitHub Actions 发布的 GHCR 镜像；不能在未说明情况下切回上游预构建镜像。
 
 ## 前端开发约定
 
@@ -273,7 +273,7 @@ docs/                        项目文档
 - 关键并发或幂等改动：优先补充单元测试、集成测试，必要时用 `go test -race` 验证。
 - 前端默认模板：在 `web/default/` 执行 `bun install`、`bun run typecheck`、`bun run build`，按实际改动补充 `bun run lint`。
 - 前端 classic 模板：在 `web/classic/` 按 `package.json` 执行 build、lint 或 i18n 检查。
-- 容器验证：`docker compose config`、`docker compose up -d --build`、`docker compose ps`、服务健康检查、重启和日志检查。
+- 容器验证：生产镜像部署使用 `docker compose config`、`docker compose pull`、`docker compose up -d`、`docker compose ps`；源码构建场景再使用 `docker compose up -d --build`；随后检查服务健康、重启和日志。
 - 支付验证：使用真实小额支付、沙箱或签名合法测试回调，不得把 mock 测试描述为真实扣款成功。
 - 压测验证：压测脚本和数据库一致性校验 SQL 应作为本地审查或私有运维产物保存，不提交到公开源码仓库；压测结论不能只看 HTTP 成功率。
 
