@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
@@ -21,6 +23,53 @@ func TestNormalizeModelNames(t *testing.T) {
 	})
 
 	require.Equal(t, []string{"gpt-4o", "gpt-4.1"}, result)
+}
+
+func TestApplyFetchModelsRequestResetsDraftMultiKeyStatus(t *testing.T) {
+	channel := &model.Channel{
+		Type: constant.ChannelTypeOpenAI,
+		Key:  "old-key-1\nold-key-2",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey: true,
+			MultiKeyStatusList: map[int]int{
+				0: common.ChannelStatusManuallyDisabled,
+				1: common.ChannelStatusManuallyDisabled,
+			},
+			MultiKeyDisabledReason: map[int]string{0: "old failure"},
+			MultiKeyDisabledTime:   map[int]int64{0: 123},
+			MultiKeyPollingIndex:   1,
+			MultiKeyMode:           constant.MultiKeyModePolling,
+		},
+	}
+
+	applyFetchModelsRequest(channel, fetchModelsRequest{Key: "new-key-1\nnew-key-2"})
+
+	require.Nil(t, channel.ChannelInfo.MultiKeyStatusList)
+	require.Nil(t, channel.ChannelInfo.MultiKeyDisabledReason)
+	require.Nil(t, channel.ChannelInfo.MultiKeyDisabledTime)
+	require.False(t, channel.ChannelInfo.IsMultiKey)
+	require.Equal(t, 0, channel.ChannelInfo.MultiKeySize)
+	require.Equal(t, 0, channel.ChannelInfo.MultiKeyPollingIndex)
+	require.Equal(t, constant.MultiKeyModeRandom, channel.ChannelInfo.MultiKeyMode)
+	require.Equal(t, "new-key-1", channel.Key)
+
+	key, _, apiErr := channel.GetNextEnabledKey()
+	require.Nil(t, apiErr)
+	require.Equal(t, "new-key-1", key)
+}
+
+func TestApplyFetchModelsRequestUsesFirstDraftKeyFromMultilineKey(t *testing.T) {
+	channel := &model.Channel{Type: constant.ChannelTypeOpenAI}
+
+	applyFetchModelsRequest(channel, fetchModelsRequest{Key: "\n first-key \nsecond-key"})
+
+	require.False(t, channel.ChannelInfo.IsMultiKey)
+	require.Equal(t, 0, channel.ChannelInfo.MultiKeySize)
+	require.Equal(t, "first-key", channel.Key)
+
+	key, _, apiErr := channel.GetNextEnabledKey()
+	require.Nil(t, apiErr)
+	require.Equal(t, "first-key", key)
 }
 
 func TestMergeModelNames(t *testing.T) {

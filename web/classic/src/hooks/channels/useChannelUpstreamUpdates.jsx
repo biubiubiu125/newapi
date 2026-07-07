@@ -38,7 +38,11 @@ const getManualIgnoredModelCountFromSettings = (settings) => {
   return normalizeModelList(parsed.upstream_model_update_ignored_models).length;
 };
 
-export const useChannelUpstreamUpdates = ({ t, refresh }) => {
+export const useChannelUpstreamUpdates = ({
+  t,
+  refresh,
+  channelPermissions = {},
+}) => {
   const [showUpstreamUpdateModal, setShowUpstreamUpdateModal] = useState(false);
   const [upstreamUpdateChannel, setUpstreamUpdateChannel] = useState(null);
   const [upstreamUpdateAddModels, setUpstreamUpdateAddModels] = useState([]);
@@ -57,6 +61,9 @@ export const useChannelUpstreamUpdates = ({ t, refresh }) => {
   const detectChannelUpstreamUpdatesInFlightRef = useRef(false);
   const detectAllUpstreamUpdatesInFlightRef = useRef(false);
   const applyAllUpstreamUpdatesInFlightRef = useRef(false);
+  const canDetectUpstreamUpdates =
+    channelPermissions.canOperateChannel === true;
+  const canApplyUpstreamUpdates = channelPermissions.canWriteChannel === true;
 
   const openUpstreamUpdateModal = (
     record,
@@ -64,6 +71,11 @@ export const useChannelUpstreamUpdates = ({ t, refresh }) => {
     pendingRemoveModels = [],
     preferredTab = 'add',
   ) => {
+    if (!canApplyUpstreamUpdates) {
+      showError(t('无权限处理上游模型更新'));
+      return;
+    }
+
     const normalizedAddModels = normalizeModelList(pendingAddModels);
     const normalizedRemoveModels = normalizeModelList(pendingRemoveModels);
     if (
@@ -93,6 +105,11 @@ export const useChannelUpstreamUpdates = ({ t, refresh }) => {
     addModels: selectedAddModels = [],
     removeModels: selectedRemoveModels = [],
   } = {}) => {
+    if (!canApplyUpstreamUpdates) {
+      showError(t('无权限处理上游模型更新'));
+      return;
+    }
+
     if (applyUpstreamUpdatesInFlightRef.current) {
       showInfo(t('正在处理，请稍候'));
       return;
@@ -159,6 +176,11 @@ export const useChannelUpstreamUpdates = ({ t, refresh }) => {
   };
 
   const applyAllUpstreamUpdates = async () => {
+    if (!canApplyUpstreamUpdates) {
+      showError(t('无权限处理上游模型更新'));
+      return;
+    }
+
     if (applyAllUpstreamUpdatesInFlightRef.current) {
       showInfo(t('正在批量处理，请稍候'));
       return;
@@ -204,6 +226,11 @@ export const useChannelUpstreamUpdates = ({ t, refresh }) => {
   };
 
   const detectChannelUpstreamUpdates = async (channel) => {
+    if (!canDetectUpstreamUpdates) {
+      showError(t('无权限检测上游模型更新'));
+      return;
+    }
+
     if (detectChannelUpstreamUpdatesInFlightRef.current) {
       showInfo(t('正在检测，请稍候'));
       return;
@@ -245,6 +272,11 @@ export const useChannelUpstreamUpdates = ({ t, refresh }) => {
   };
 
   const detectAllUpstreamUpdates = async () => {
+    if (!canDetectUpstreamUpdates) {
+      showError(t('无权限检测上游模型更新'));
+      return;
+    }
+
     if (detectAllUpstreamUpdatesInFlightRef.current) {
       showInfo(t('正在批量检测，请稍候'));
       return;
@@ -299,6 +331,8 @@ export const useChannelUpstreamUpdates = ({ t, refresh }) => {
     upstreamApplyLoading,
     detectAllUpstreamUpdatesLoading,
     applyAllUpstreamUpdatesLoading,
+    canDetectUpstreamUpdates,
+    canApplyUpstreamUpdates,
     openUpstreamUpdateModal,
     closeUpstreamUpdateModal,
     applyUpstreamUpdates,

@@ -16,6 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+  hasPermission,
+} from '@/lib/admin-permissions'
+import { useAuthStore } from '@/stores/auth-store'
+
 import { useChannels } from './channels-provider'
 import { BalanceQueryDialog } from './dialogs/balance-query-dialog'
 import { ChannelTestDialog } from './dialogs/channel-test-dialog'
@@ -30,6 +37,12 @@ import { ChannelMutateDrawer } from './drawers/channel-mutate-drawer'
 
 export function ChannelsDialogs() {
   const { open, setOpen, currentRow, upstream } = useChannels()
+  const currentUser = useAuthStore((s) => s.auth.user)
+  const canWriteChannel = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.WRITE
+  )
 
   return (
     <>
@@ -56,6 +69,7 @@ export function ChannelsDialogs() {
       <FetchModelsDialog
         open={open === 'fetch-models'}
         onOpenChange={(v) => !v && setOpen(null)}
+        canSaveModels={canWriteChannel}
       />
 
       {/* Ollama Models Dialog */}
@@ -95,6 +109,7 @@ export function ChannelsDialogs() {
         removeModels={upstream.removeModels}
         preferredTab={upstream.preferredTab}
         confirmLoading={upstream.applyLoading}
+        canApply={canWriteChannel}
         onConfirm={upstream.applyUpdates}
         onCancel={upstream.closeModal}
       />

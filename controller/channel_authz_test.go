@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -41,6 +42,13 @@ func TestChannelHasSensitiveChanges(t *testing.T) {
 	t.Run("key change", func(t *testing.T) {
 		updated := PatchChannel{Channel: *origin}
 		updated.Key = "new-key"
+
+		assert.True(t, channelHasSensitiveChanges(&updated, origin, map[string]any{"key": updated.Key}))
+	})
+
+	t.Run("explicit empty key change", func(t *testing.T) {
+		updated := PatchChannel{Channel: *origin}
+		updated.Key = ""
 
 		assert.True(t, channelHasSensitiveChanges(&updated, origin, map[string]any{"key": updated.Key}))
 	})
@@ -149,6 +157,70 @@ func TestUpdateChannelRejectsStatusField(t *testing.T) {
 	}
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 	assert.False(t, response.Success)
+}
+
+func TestUpdateChannelRejectsInvalidExplicitType(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodPut,
+		"/api/channel/",
+		bytes.NewBufferString(`{"id":1,"type":0}`),
+	)
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	UpdateChannel(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.False(t, response.Success)
+}
+
+func TestUpdateChannelPersistsExplicitEmptyOther(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     9001,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-old",
+		Status: common.ChannelStatusEnabled,
+		Name:   "empty-other",
+		Models: "gpt-4o",
+		Group:  "default",
+		Other:  "old-other",
+	}).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("id", 1)
+	ctx.Set("role", common.RoleRootUser)
+	ctx.Request = httptest.NewRequest(
+		http.MethodPut,
+		"/api/channel/",
+		bytes.NewBufferString(`{"id":9001,"other":""}`),
+	)
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	UpdateChannel(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success, response.Message)
+
+	var updated model.Channel
+	require.NoError(t, db.First(&updated, "id = ?", 9001).Error)
+	assert.Empty(t, updated.Other)
+	assert.Equal(t, "sk-old", updated.Key)
+	assert.Equal(t, "gpt-4o", updated.Models)
+	assert.Equal(t, "default", updated.Group)
 }
 
 func TestChannelStatusValidation(t *testing.T) {

@@ -55,6 +55,7 @@ const ChannelsPage = () => {
         visible={channelsData.showEdit}
         handleClose={channelsData.closeEdit}
         editingChannel={channelsData.editingChannel}
+        channelPermissions={channelsData.channelPermissions}
       />
       <BatchTagModal {...channelsData} />
       <ModelTestModal {...channelsData} />
@@ -70,6 +71,7 @@ const ChannelsPage = () => {
         removeModels={channelsData.upstreamUpdateRemoveModels}
         preferredTab={channelsData.upstreamUpdatePreferredTab}
         confirmLoading={channelsData.upstreamApplyLoading}
+        canApply={channelsData.canApplyUpstreamUpdates}
         onConfirm={channelsData.applyUpstreamUpdates}
         onCancel={channelsData.closeUpstreamUpdateModal}
       />

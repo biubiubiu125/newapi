@@ -34,8 +34,11 @@ const ChannelsFilters = ({
   groupOptions,
   loading,
   searching,
+  channelPermissions,
   t,
 }) => {
+  const canCreateChannel = channelPermissions?.canSensitiveWriteChannel === true;
+
   return (
     <div className='flex flex-col md:flex-row justify-between items-center gap-2 w-full'>
       <div className='flex gap-2 w-full md:w-auto order-2 md:order-1'>
@@ -44,7 +47,9 @@ const ChannelsFilters = ({
           theme='light'
           type='primary'
           className='w-full md:w-auto'
+          disabled={!canCreateChannel}
           onClick={() => {
+            if (!canCreateChannel) return;
             setEditingChannel({
               id: undefined,
             });

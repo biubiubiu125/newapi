@@ -557,9 +557,16 @@ export async function getTagModels(
  * Fetch models from a custom endpoint (for testing before creating channel)
  */
 export async function fetchModels(data: {
-  base_url: string
+  id?: number
+  base_url?: string | null
+  base_url_override?: boolean
+  draft_override?: boolean
   type: number
-  key: string
+  key?: string
+  setting?: string | null
+  settings?: string | null
+  header_override?: string | null
+  other?: string | null
 }): Promise<FetchModelsResponse> {
   const res = await api.post(
     '/api/channel/fetch_models',

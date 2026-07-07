@@ -89,6 +89,16 @@ export function ChannelsPrimaryButtons() {
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
     ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
   )
+  const canOperateChannel = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.OPERATE
+  )
+  const canWriteChannel = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.WRITE
+  )
 
   const handleTagModeToggle = (checked: boolean) => {
     localStorage.setItem('enable-tag-mode', String(checked))
@@ -232,8 +242,11 @@ export function ChannelsPrimaryButtons() {
             <DropdownMenuSeparator />
 
             <DropdownMenuItem
-              onClick={() => upstream.detectAllUpdates()}
-              disabled={upstream.detectAllLoading}
+              onClick={() => {
+                if (!canOperateChannel) return
+                upstream.detectAllUpdates()
+              }}
+              disabled={upstream.detectAllLoading || !canOperateChannel}
             >
               {t('Detect All Upstream Updates')}
               <DropdownMenuShortcut>
@@ -242,8 +255,11 @@ export function ChannelsPrimaryButtons() {
             </DropdownMenuItem>
 
             <DropdownMenuItem
-              onClick={() => upstream.applyAllUpdates()}
-              disabled={upstream.applyAllLoading}
+              onClick={() => {
+                if (!canWriteChannel) return
+                upstream.applyAllUpdates()
+              }}
+              disabled={upstream.applyAllLoading || !canWriteChannel}
             >
               {t('Apply All Upstream Updates')}
               <DropdownMenuShortcut>

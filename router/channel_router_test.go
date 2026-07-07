@@ -24,6 +24,7 @@ func TestChannelDeleteRoutesUseSensitiveWritePermission(t *testing.T) {
 	assertChannelRoutePermission(t, http.MethodPost, "/batch", authz.ChannelSensitiveWrite, controller.DeleteChannelBatch)
 	assertChannelRoutePermission(t, http.MethodDelete, "/disabled", authz.ChannelSensitiveWrite, controller.DeleteDisabledChannel)
 	assertChannelRoutePermission(t, http.MethodPut, "/", authz.ChannelWrite, controller.UpdateChannel)
+	assertChannelRoutePermission(t, http.MethodPost, "/fetch_models", authz.ChannelSensitiveWrite, controller.FetchModels)
 	assertChannelRoutePermission(t, http.MethodPut, "/tag", authz.ChannelWrite, controller.EditTagChannels)
 	assertChannelRoutePermission(t, http.MethodPost, "/batch/tag", authz.ChannelWrite, controller.BatchSetChannelTag)
 	assertChannelRoutePermission(t, http.MethodPost, "/codex/oauth/start", authz.ChannelSensitiveWrite, controller.StartCodexOAuth)

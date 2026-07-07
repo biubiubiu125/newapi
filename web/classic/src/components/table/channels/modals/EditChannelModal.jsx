@@ -108,6 +108,19 @@ const REGION_EXAMPLE = {
 const UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT = 8;
 const ADVANCED_SETTINGS_EXPANDED_KEY = 'channel-advanced-settings-expanded';
 
+const SENSITIVE_UPDATE_FIELDS = [
+  'type',
+  'key',
+  'base_url',
+  'openai_organization',
+  'param_override',
+  'header_override',
+  'setting',
+  'settings',
+  'other',
+  'key_mode',
+];
+
 const PARAM_OVERRIDE_LEGACY_TEMPLATE = {
   temperature: 0,
 };
@@ -167,6 +180,16 @@ const EditChannelModal = (props) => {
   const { t } = useTranslation();
   const channelId = props.editingChannel.id;
   const isEdit = channelId !== undefined;
+  const channelPermissions = props.channelPermissions || {};
+  const canFetchDraftModels =
+    channelPermissions.canSensitiveWriteChannel === true;
+  const canFetchSavedModels = channelPermissions.canOperateChannel === true;
+  const canFetchUpstreamModels = isEdit
+    ? canFetchDraftModels || canFetchSavedModels
+    : canFetchDraftModels;
+  const canApplyOllamaModels = isEdit
+    ? channelPermissions.canWriteChannel === true
+    : canFetchDraftModels;
   const [loading, setLoading] = useState(isEdit);
   const isMobile = useIsMobile();
   const handleCancel = () => {
@@ -433,6 +456,7 @@ const EditChannelModal = (props) => {
   const formContainerRef = useRef(null);
   const doubaoApiClickCountRef = useRef(0);
   const initialBaseUrlRef = useRef('');
+  const initialFetchModelsDraftRef = useRef(null);
   const initialModelsRef = useRef([]);
   const initialModelMappingRef = useRef('');
   const initialStatusCodeMappingRef = useRef('');
@@ -977,6 +1001,9 @@ const EditChannelModal = (props) => {
       }
 
       initialBaseUrlRef.current = data.base_url || '';
+      initialFetchModelsDraftRef.current = normalizeFetchModelsDraftSnapshot(
+        buildFetchModelsDraftPayloadFromValues(data),
+      );
       setInputs(data);
       if (formApiRef.current) {
         formApiRef.current.setValues(data);
@@ -1049,6 +1076,63 @@ const EditChannelModal = (props) => {
     setLoading(false);
   };
 
+  const buildFetchModelsDraftPayloadFromValues = (values) => {
+    const channelExtraSettings = {
+      force_format: values.force_format || false,
+      thinking_to_content: values.thinking_to_content || false,
+      proxy: values.proxy || '',
+      pass_through_body_enabled: values.pass_through_body_enabled || false,
+      system_prompt: values.system_prompt || '',
+      system_prompt_override: values.system_prompt_override || false,
+    };
+
+    return {
+      id: isEdit ? parseInt(channelId) : undefined,
+      base_url: values.base_url || '',
+      base_url_override: true,
+      draft_override: true,
+      type: values.type,
+      key: values.key || '',
+      setting: JSON.stringify(channelExtraSettings),
+      settings: values.settings || '',
+      header_override: values.header_override || '',
+      other: values.other || '',
+    };
+  };
+
+  const buildFetchModelsDraftPayload = () => {
+    const formValues = formApiRef.current ? formApiRef.current.getValues() : {};
+    return buildFetchModelsDraftPayloadFromValues({
+      ...inputs,
+      ...formValues,
+    });
+  };
+
+  const normalizeFetchModelsDraftSnapshot = (payload = {}) => ({
+    base_url: String(payload.base_url || ''),
+    type: String(payload.type ?? ''),
+    key: String(payload.key || '').trim(),
+    setting: String(payload.setting || ''),
+    settings: String(payload.settings || ''),
+    header_override: String(payload.header_override || ''),
+    other: String(payload.other || ''),
+  });
+
+  const hasFetchModelsDraftChanges = (payload) => {
+    if (!isEdit) return true;
+    const current = normalizeFetchModelsDraftSnapshot(payload);
+    const initial =
+      initialFetchModelsDraftRef.current ||
+      normalizeFetchModelsDraftSnapshot({});
+
+    return Object.keys(current).some((key) => current[key] !== initial[key]);
+  };
+
+  const shouldUseDraftFetchModels = () => {
+    if (!isEdit) return true;
+    return canFetchDraftModels;
+  };
+
   const fetchUpstreamModelList = async (name, options = {}) => {
     const silent = !!options.silent;
     // if (inputs['type'] !== 1) {
@@ -1058,8 +1142,29 @@ const EditChannelModal = (props) => {
     setLoading(true);
     const models = [];
     let err = false;
+    const draftPayload = buildFetchModelsDraftPayload();
+    const draftHasChanges = hasFetchModelsDraftChanges(draftPayload);
+    const useDraftFetch = shouldUseDraftFetchModels();
 
-    if (isEdit) {
+    if (!isEdit && !canFetchDraftModels) {
+      showError(t('无权限使用未保存的渠道配置获取模型'));
+      setLoading(false);
+      return null;
+    }
+
+    if (isEdit && draftHasChanges && !canFetchDraftModels) {
+      showError(t('无权限使用未保存的渠道配置获取模型'));
+      setLoading(false);
+      return null;
+    }
+
+    if (isEdit && !useDraftFetch && !canFetchSavedModels) {
+      showError(t('无权限获取上游模型列表'));
+      setLoading(false);
+      return null;
+    }
+
+    if (isEdit && !useDraftFetch) {
       // 如果是编辑模式，使用已有的 channelId 获取模型列表
       const res = await API.get('/api/channel/fetch_models/' + channelId, {
         skipErrorHandler: true,
@@ -1071,18 +1176,14 @@ const EditChannelModal = (props) => {
       }
     } else {
       // 如果是新建模式，通过后端代理获取模型列表
-      if (!inputs?.['key']) {
+      if (!isEdit && !draftPayload.key) {
         showError(t('请填写密钥'));
         err = true;
       } else {
         try {
           const res = await API.post(
             '/api/channel/fetch_models',
-            {
-              base_url: inputs['base_url'],
-              type: inputs['type'],
-              key: inputs['key'],
-            },
+            draftPayload,
             { skipErrorHandler: true },
           );
 
@@ -1312,6 +1413,9 @@ const EditChannelModal = (props) => {
     fetchGroups().then();
     if (!isEdit) {
       initialBaseUrlRef.current = '';
+      initialFetchModelsDraftRef.current = normalizeFetchModelsDraftSnapshot(
+        buildFetchModelsDraftPayloadFromValues(originInputs),
+      );
       setInputs(originInputs);
       if (formApiRef.current) {
         formApiRef.current.setValues(originInputs);
@@ -1864,6 +1968,9 @@ const EditChannelModal = (props) => {
     localInputs.auto_ban = localInputs.auto_ban ? 1 : 0;
     localInputs.models = localInputs.models.join(',');
     localInputs.group = (localInputs.groups || []).join(',');
+    delete localInputs.groups;
+    delete localInputs.custom_model;
+    delete localInputs.max_input_tokens;
 
     let mode = 'single';
     if (batch) {
@@ -1871,11 +1978,19 @@ const EditChannelModal = (props) => {
     }
 
     if (isEdit) {
-      res = await API.put(`/api/channel/`, {
+      delete localInputs.status;
+      const updatePayload = {
         ...localInputs,
         id: parseInt(channelId),
-        key_mode: isMultiKeyChannel ? keyMode : undefined, // 只在多key模式下传递
-      });
+        key_mode:
+          canFetchDraftModels && isMultiKeyChannel ? keyMode : undefined, // 只在多key模式下传递
+      };
+      if (!canFetchDraftModels) {
+        SENSITIVE_UPDATE_FIELDS.forEach((field) => {
+          delete updatePayload[field];
+        });
+      }
+      res = await API.put(`/api/channel/`, updatePayload);
     } else {
       res = await API.post(`/api/channel/`, {
         mode: mode,
@@ -3780,6 +3895,7 @@ const EditChannelModal = (props) => {
                               <Button
                                 size='small'
                                 type='tertiary'
+                                disabled={!canFetchUpstreamModels}
                                 onClick={() => fetchUpstreamModelList('models')}
                               >
                                 {t('获取模型列表')}
@@ -3795,7 +3911,9 @@ const EditChannelModal = (props) => {
                                   onClick: () =>
                                     handleInputChange('models', fullModels),
                                 },
-                                ...(inputs.type === 4 && isEdit
+                                ...(inputs.type === 4 &&
+                                isEdit &&
+                                canFetchUpstreamModels
                                   ? [
                                       {
                                         node: 'item',
@@ -4266,6 +4384,11 @@ const EditChannelModal = (props) => {
         onCancel={() => setOllamaModalVisible(false)}
         channelId={channelId}
         channelInfo={inputs}
+        canFetchDraftModels={canFetchDraftModels}
+        canFetchSavedModels={canFetchSavedModels}
+        canManageModels={canFetchDraftModels}
+        canApplyModels={canApplyOllamaModels}
+        buildFetchModelsDraftPayload={buildFetchModelsDraftPayload}
         onModelsUpdate={(options = {}) => {
           // 当模型更新后，重新获取模型列表以更新表单
           fetchUpstreamModelList('models', { silent: !!options.silent });

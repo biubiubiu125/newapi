@@ -57,6 +57,7 @@ import {
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
 } from '@/lib/admin-permissions'
+import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { MODEL_FETCHABLE_TYPES } from '../constants'
@@ -95,6 +96,31 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
     ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
   )
+  const canOperateChannel = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.OPERATE
+  )
+  const canWriteChannel = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.WRITE
+  )
+  const upstreamUpdateMeta = MODEL_FETCHABLE_TYPES.has(channel.type)
+    ? parseUpstreamUpdateMeta(channel.settings)
+    : null
+  const hasPendingUpstreamUpdates = Boolean(
+    upstreamUpdateMeta &&
+      (upstreamUpdateMeta.pendingAddModels.length > 0 ||
+        upstreamUpdateMeta.pendingRemoveModels.length > 0)
+  )
+  const canFetchModels =
+    MODEL_FETCHABLE_TYPES.has(channel.type) && canOperateChannel
+  const canUseUpstreamUpdates =
+    MODEL_FETCHABLE_TYPES.has(channel.type) &&
+    (canOperateChannel || (hasPendingUpstreamUpdates && canWriteChannel))
+  const canManageOllamaModels =
+    channel.type === 4 && (canOperateChannel || canEditSensitive)
 
   const handleEdit = () => {
     setCurrentRow(channel)
@@ -124,11 +150,13 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   }
 
   const handleFetchModels = () => {
+    if (!canFetchModels) return
     setCurrentRow(channel)
     setOpen('fetch-models')
   }
 
   const handleManageOllamaModels = () => {
+    if (!canManageOllamaModels) return
     setCurrentRow(channel)
     setOpen('ollama-models')
   }
@@ -147,6 +175,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     e?: React.MouseEvent<HTMLButtonElement>
   ) => {
     e?.stopPropagation()
+    if (!canOperateChannel) return
     setIsTogglingStatus(true)
     try {
       await handleToggleChannelStatus(channel.id, channel.status, queryClient)
@@ -235,19 +264,32 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               size='icon-sm'
               onClick={handleToggleStatus}
               disabled={isTogglingStatus}
+              aria-disabled={!canOperateChannel}
               aria-label={isEnabled ? t('Disable') : t('Enable')}
-              className={
+              title={
+                canOperateChannel
+                  ? isEnabled
+                    ? t('Disable')
+                    : t('Enable')
+                  : t('No permission to perform this action')
+              }
+              className={cn(
                 isEnabled
                   ? 'text-destructive hover:text-destructive'
-                  : 'text-success hover:text-success'
-              }
+                  : 'text-success hover:text-success',
+                !canOperateChannel && 'cursor-not-allowed opacity-50'
+              )}
             />
           }
         >
           {statusIcon}
         </TooltipTrigger>
         <TooltipContent>
-          {isEnabled ? t('Disable') : t('Enable')}
+          {canOperateChannel
+            ? isEnabled
+              ? t('Disable')
+              : t('Enable')
+            : t('No permission to perform this action')}
         </TooltipContent>
       </Tooltip>
 
@@ -290,29 +332,29 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           </DropdownMenuItem>
 
           {/* Fetch Models */}
-          <DropdownMenuItem onClick={handleFetchModels}>
-            {t('Fetch Models')}
-            <DropdownMenuShortcut>
-              <Download size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
+          {canFetchModels && (
+            <DropdownMenuItem onClick={handleFetchModels}>
+              {t('Fetch Models')}
+              <DropdownMenuShortcut>
+                <Download size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
 
           {/* Detect Upstream Updates (only for fetchable channel types) */}
-          {MODEL_FETCHABLE_TYPES.has(channel.type) && (
+          {canUseUpstreamUpdates && (
             <DropdownMenuItem
               onClick={() => {
-                const meta = parseUpstreamUpdateMeta(channel.settings)
-                if (
-                  meta.pendingAddModels.length > 0 ||
-                  meta.pendingRemoveModels.length > 0
-                ) {
+                if (hasPendingUpstreamUpdates && canWriteChannel) {
                   upstream.openModal(
                     channel,
-                    meta.pendingAddModels,
-                    meta.pendingRemoveModels,
-                    meta.pendingAddModels.length > 0 ? 'add' : 'remove'
+                    upstreamUpdateMeta?.pendingAddModels || [],
+                    upstreamUpdateMeta?.pendingRemoveModels || [],
+                    upstreamUpdateMeta?.pendingAddModels.length
+                      ? 'add'
+                      : 'remove'
                   )
-                } else {
+                } else if (canOperateChannel) {
                   upstream.detectChannelUpdates(channel)
                 }
               }}
@@ -325,7 +367,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
           )}
 
           {/* Ollama Models (only for Ollama channels) */}
-          {channel.type === 4 && (
+          {canManageOllamaModels && (
             <DropdownMenuItem onClick={handleManageOllamaModels}>
               {t('Manage Ollama Models')}
               <DropdownMenuShortcut>

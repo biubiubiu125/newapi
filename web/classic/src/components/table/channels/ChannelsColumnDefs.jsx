@@ -327,7 +327,13 @@ export const getChannelsColumns = ({
   setCurrentMultiKeyChannel,
   openUpstreamUpdateModal,
   detectChannelUpstreamUpdates,
+  canDetectUpstreamUpdates = false,
+  canApplyUpstreamUpdates = false,
+  channelPermissions = {},
 }) => {
+  const canManageOllamaModels =
+    channelPermissions.canSensitiveWriteChannel === true;
+
   return [
     {
       key: COLUMN_KEYS.ID,
@@ -408,44 +414,74 @@ export const getChannelsColumns = ({
             {showUpstreamUpdateTag && (
               <Space spacing={4} align='center'>
                 {pendingAddCount > 0 ? (
-                  <Tooltip content={t('点击处理新增模型')} position='top'>
+                  <Tooltip
+                    content={
+                      canApplyUpstreamUpdates
+                        ? t('点击处理新增模型')
+                        : t('无权限处理上游模型更新')
+                    }
+                    position='top'
+                  >
                     <Tag
                       color='green'
                       type='light'
                       size='small'
                       shape='circle'
-                      className='cursor-pointer transition-all duration-150 hover:opacity-85 hover:-translate-y-px active:scale-95'
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openUpstreamUpdateModal(
-                          record,
-                          upstreamUpdateMeta.pendingAddModels,
-                          upstreamUpdateMeta.pendingRemoveModels,
-                          'add',
-                        );
-                      }}
+                      className={
+                        canApplyUpstreamUpdates
+                          ? 'cursor-pointer transition-all duration-150 hover:opacity-85 hover:-translate-y-px active:scale-95'
+                          : ''
+                      }
+                      onClick={
+                        canApplyUpstreamUpdates
+                          ? (e) => {
+                              e.stopPropagation();
+                              openUpstreamUpdateModal(
+                                record,
+                                upstreamUpdateMeta.pendingAddModels,
+                                upstreamUpdateMeta.pendingRemoveModels,
+                                'add',
+                              );
+                            }
+                          : undefined
+                      }
                     >
                       +{pendingAddCount}
                     </Tag>
                   </Tooltip>
                 ) : null}
                 {pendingRemoveCount > 0 ? (
-                  <Tooltip content={t('点击处理删除模型')} position='top'>
+                  <Tooltip
+                    content={
+                      canApplyUpstreamUpdates
+                        ? t('点击处理删除模型')
+                        : t('无权限处理上游模型更新')
+                    }
+                    position='top'
+                  >
                     <Tag
                       color='red'
                       type='light'
                       size='small'
                       shape='circle'
-                      className='cursor-pointer transition-all duration-150 hover:opacity-85 hover:-translate-y-px active:scale-95'
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        openUpstreamUpdateModal(
-                          record,
-                          upstreamUpdateMeta.pendingAddModels,
-                          upstreamUpdateMeta.pendingRemoveModels,
-                          'remove',
-                        );
-                      }}
+                      className={
+                        canApplyUpstreamUpdates
+                          ? 'cursor-pointer transition-all duration-150 hover:opacity-85 hover:-translate-y-px active:scale-95'
+                          : ''
+                      }
+                      onClick={
+                        canApplyUpstreamUpdates
+                          ? (e) => {
+                              e.stopPropagation();
+                              openUpstreamUpdateModal(
+                                record,
+                                upstreamUpdateMeta.pendingAddModels,
+                                upstreamUpdateMeta.pendingRemoveModels,
+                                'remove',
+                              );
+                            }
+                          : undefined
+                      }
                     >
                       -{pendingRemoveCount}
                     </Tag>
@@ -727,7 +763,7 @@ export const getChannelsColumns = ({
             },
           ];
 
-          if (upstreamUpdateMeta.supported) {
+          if (upstreamUpdateMeta.supported && canDetectUpstreamUpdates) {
             moreMenuItems.push({
               node: 'item',
               name: t('仅检测上游模型更新'),
@@ -736,6 +772,9 @@ export const getChannelsColumns = ({
                 detectChannelUpstreamUpdates(record);
               },
             });
+          }
+
+          if (upstreamUpdateMeta.supported && canApplyUpstreamUpdates) {
             moreMenuItems.push({
               node: 'item',
               name: t('处理上游模型更新'),
@@ -764,7 +803,7 @@ export const getChannelsColumns = ({
             });
           }
 
-          if (record.type === 4) {
+          if (record.type === 4 && canManageOllamaModels) {
             moreMenuItems.unshift({
               node: 'item',
               name: t('测活'),

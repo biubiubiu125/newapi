@@ -27,6 +27,7 @@ import {
   loadChannelModels,
   copy,
   toBoolean,
+  getChannelPermissionFlags,
 } from '../../helpers';
 import {
   CHANNEL_OPTIONS,
@@ -37,12 +38,14 @@ import { useIsMobile } from '../common/useIsMobile';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import { useChannelUpstreamUpdates } from './useChannelUpstreamUpdates';
 import { parseUpstreamUpdateMeta } from './upstreamUpdateUtils';
+import { useUserPermissions } from '../common/useUserPermissions';
 import { Modal, Button } from '@douyinfe/semi-ui';
 import { openCodexUsageModal } from '../../components/table/channels/modals/CodexUsageModal';
 
 export const useChannelsData = () => {
   const { t } = useTranslation();
   const isMobile = useIsMobile();
+  const { permissions } = useUserPermissions();
 
   // Basic states
   const [channels, setChannels] = useState([]);
@@ -437,7 +440,16 @@ export const useChannelsData = () => {
     }
   };
 
-  const upstreamUpdates = useChannelUpstreamUpdates({ t, refresh });
+  const channelPermissions = useMemo(
+    () => getChannelPermissionFlags(permissions),
+    [permissions],
+  );
+
+  const upstreamUpdates = useChannelUpstreamUpdates({
+    t,
+    refresh,
+    channelPermissions,
+  });
 
   // Channel management
   const manageChannel = async (id, action, record, value) => {
@@ -449,11 +461,15 @@ export const useChannelsData = () => {
         break;
       case 'enable':
         data.status = 1;
-        res = await API.put('/api/channel/', data);
+        res = await API.post(`/api/channel/${id}/status`, {
+          status: data.status,
+        });
         break;
       case 'disable':
         data.status = 2;
-        res = await API.put('/api/channel/', data);
+        res = await API.post(`/api/channel/${id}/status`, {
+          status: data.status,
+        });
         break;
       case 'priority':
         if (value === '') return;
@@ -467,18 +483,22 @@ export const useChannelsData = () => {
         res = await API.put('/api/channel/', data);
         break;
       case 'enable_all':
-        data.channel_info = record.channel_info;
-        data.channel_info.multi_key_status_list = {};
-        res = await API.put('/api/channel/', data);
+        res = await API.post('/api/channel/multi_key/manage', {
+          channel_id: id,
+          action: 'enable_all_keys',
+        });
         break;
     }
     const { success, message } = res.data;
     if (success) {
       showSuccess(t('操作成功完成！'));
-      let channel = res.data.data;
       let newChannels = [...channels];
       if (action !== 'delete') {
-        record.status = channel.status;
+        if (action === 'enable' || action === 'disable') {
+          record.status = data.status;
+        } else if (res.data.data && typeof res.data.data === 'object') {
+          record.status = res.data.data.status;
+        }
       }
       setChannels(newChannels);
     } else {
@@ -798,6 +818,11 @@ export const useChannelsData = () => {
   };
 
   const checkOllamaVersion = async (record) => {
+    if (!channelPermissions.canSensitiveWriteChannel) {
+      showError(t('无权限执行 Ollama 敏感操作'));
+      return;
+    }
+
     try {
       const res = await API.get(`/api/channel/ollama/version/${record.id}`);
       const { success, message, data } = res.data;
@@ -1148,6 +1173,7 @@ export const useChannelsData = () => {
     statusFilter,
     compactMode,
     globalPassThroughEnabled,
+    channelPermissions,
 
     // UI states
     showEdit,

@@ -15,7 +15,6 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
-	"github.com/QuantumNous/new-api/relay/channel/gemini"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
@@ -903,6 +902,71 @@ type PatchChannel struct {
 	KeyMode      *string `json:"key_mode"` // 多key模式下密钥覆盖或者追加
 }
 
+func pointerUpdateValue[T any](value *T) any {
+	if value == nil {
+		return nil
+	}
+	return *value
+}
+
+func channelUpdateColumns(channel *PatchChannel, requestData map[string]any) map[string]any {
+	updates := make(map[string]any)
+	for field := range requestData {
+		if _, ok := channelReadOnlyFields[field]; ok {
+			continue
+		}
+		if _, ok := channelOperationalFields[field]; ok {
+			continue
+		}
+		switch field {
+		case "type":
+			updates["type"] = channel.Type
+		case "key":
+			updates["key"] = channel.Key
+		case "openai_organization":
+			updates["openai_organization"] = pointerUpdateValue(channel.OpenAIOrganization)
+		case "test_model":
+			updates["test_model"] = pointerUpdateValue(channel.TestModel)
+		case "name":
+			updates["name"] = channel.Name
+		case "weight":
+			updates["weight"] = pointerUpdateValue(channel.Weight)
+		case "base_url":
+			updates["base_url"] = pointerUpdateValue(channel.BaseURL)
+		case "other":
+			updates["other"] = channel.Other
+		case "models":
+			updates["models"] = channel.Models
+		case "group":
+			updates["group"] = channel.Group
+		case "model_mapping":
+			updates["model_mapping"] = pointerUpdateValue(channel.ModelMapping)
+		case "status_code_mapping":
+			updates["status_code_mapping"] = pointerUpdateValue(channel.StatusCodeMapping)
+		case "priority":
+			updates["priority"] = pointerUpdateValue(channel.Priority)
+		case "auto_ban":
+			updates["auto_ban"] = pointerUpdateValue(channel.AutoBan)
+		case "other_info":
+			updates["other_info"] = channel.OtherInfo
+		case "tag":
+			updates["tag"] = pointerUpdateValue(channel.Tag)
+		case "setting":
+			updates["setting"] = pointerUpdateValue(channel.Setting)
+		case "param_override":
+			updates["param_override"] = pointerUpdateValue(channel.ParamOverride)
+		case "header_override":
+			updates["header_override"] = pointerUpdateValue(channel.HeaderOverride)
+		case "remark":
+			updates["remark"] = pointerUpdateValue(channel.Remark)
+		case "settings":
+			updates["settings"] = channel.OtherSettings
+		}
+	}
+	updates["channel_info"] = channel.ChannelInfo
+	return updates
+}
+
 type ChannelStatusRequest struct {
 	Status int `json:"status"`
 }
@@ -929,6 +993,10 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 	if _, ok := requestData["status"]; ok {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	if _, ok := requestData["type"]; ok && (channel.Type <= constant.ChannelTypeUnknown || channel.Type >= len(constant.ChannelBaseURLs)) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
@@ -1046,7 +1114,7 @@ func UpdateChannel(c *gin.Context) {
 			// 覆盖模式：直接使用新密钥（默认行为，不需要特殊处理）
 		}
 	}
-	err = channel.Update()
+	err = channel.Channel.UpdateColumns(channelUpdateColumns(&channel, requestData))
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -1156,12 +1224,68 @@ func equalStringPtr(a, b *string) bool {
 	return *a == *b
 }
 
-func FetchModels(c *gin.Context) {
-	var req struct {
-		BaseURL string `json:"base_url"`
-		Type    int    `json:"type"`
-		Key     string `json:"key"`
+type fetchModelsRequest struct {
+	Id              int    `json:"id"`
+	BaseURL         string `json:"base_url"`
+	BaseURLOverride bool   `json:"base_url_override"`
+	DraftOverride   bool   `json:"draft_override"`
+	Type            int    `json:"type"`
+	Key             string `json:"key"`
+	Setting         string `json:"setting"`
+	Settings        string `json:"settings"`
+	HeaderOverride  string `json:"header_override"`
+	Other           string `json:"other"`
+}
+
+func prepareDraftFetchModelKey(channel *model.Channel) {
+	channel.Keys = nil
+	keys := channel.GetKeys()
+
+	for _, key := range keys {
+		if trimmed := strings.TrimSpace(key); trimmed != "" {
+			channel.Key = trimmed
+			break
+		}
 	}
+
+	channel.Keys = nil
+	channel.ChannelInfo.IsMultiKey = false
+	channel.ChannelInfo.MultiKeySize = 0
+	channel.ChannelInfo.MultiKeyStatusList = nil
+	channel.ChannelInfo.MultiKeyDisabledReason = nil
+	channel.ChannelInfo.MultiKeyDisabledTime = nil
+	channel.ChannelInfo.MultiKeyPollingIndex = 0
+	channel.ChannelInfo.MultiKeyMode = constant.MultiKeyModeRandom
+}
+
+func applyFetchModelsRequest(channel *model.Channel, req fetchModelsRequest) {
+	if req.Type != 0 {
+		channel.Type = req.Type
+	}
+	if strings.TrimSpace(req.Key) != "" {
+		channel.Key = req.Key
+		prepareDraftFetchModelKey(channel)
+	}
+	if req.Id == 0 || req.BaseURLOverride || strings.TrimSpace(req.BaseURL) != "" {
+		baseURL := strings.TrimRight(strings.TrimSpace(req.BaseURL), "/")
+		channel.BaseURL = common.GetPointer(baseURL)
+	}
+	if req.DraftOverride || req.Setting != "" {
+		channel.Setting = common.GetPointer(req.Setting)
+	}
+	if req.DraftOverride || req.Settings != "" {
+		channel.OtherSettings = req.Settings
+	}
+	if req.DraftOverride || req.HeaderOverride != "" {
+		channel.HeaderOverride = common.GetPointer(req.HeaderOverride)
+	}
+	if req.DraftOverride || req.Other != "" {
+		channel.Other = req.Other
+	}
+}
+
+func FetchModels(c *gin.Context) {
+	var req fetchModelsRequest
 
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
@@ -1171,111 +1295,41 @@ func FetchModels(c *gin.Context) {
 		return
 	}
 
-	baseURL := req.BaseURL
-	if baseURL == "" {
-		baseURL = constant.ChannelBaseURLs[req.Type]
-	}
-
-	// remove line breaks and extra spaces.
-	key := strings.TrimSpace(req.Key)
-	key = strings.Split(key, "\n")[0]
-
-	if req.Type == constant.ChannelTypeOllama {
-		models, err := ollama.FetchOllamaModels(baseURL, key)
+	channel := &model.Channel{}
+	if req.Id > 0 {
+		existing, err := model.GetChannelById(req.Id, true)
 		if err != nil {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
-				"message": fmt.Sprintf("获取Ollama模型失败: %s", err.Error()),
+				"message": fmt.Sprintf("获取渠道失败: %s", err.Error()),
 			})
 			return
 		}
-
-		names := make([]string, 0, len(models))
-		for _, modelInfo := range models {
-			names = append(names, modelInfo.Name)
-		}
-
+		channel = existing
+	}
+	applyFetchModelsRequest(channel, req)
+	if channel.Type <= constant.ChannelTypeUnknown || channel.Type >= len(constant.ChannelBaseURLs) {
 		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"data":    names,
+			"success": false,
+			"message": "无效的渠道类型",
 		})
 		return
 	}
 
-	if req.Type == constant.ChannelTypeGemini {
-		models, err := gemini.FetchGeminiModels(baseURL, key, "")
-		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": fmt.Sprintf("获取Gemini模型失败: %s", err.Error()),
-			})
-			return
-		}
-
+	ids, err := fetchChannelUpstreamModelIDs(c.Request.Context(), channel)
+	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
-			"success": true,
-			"data":    models,
-		})
-		return
-	}
-
-	client := &http.Client{}
-	url := fmt.Sprintf("%s/v1/models", baseURL)
-
-	request, err := http.NewRequest("GET", url, nil)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
-			"message": err.Error(),
+			"message": fmt.Sprintf("获取模型列表失败: %s", err.Error()),
 		})
 		return
-	}
-
-	request.Header.Set("Authorization", "Bearer "+key)
-
-	response, err := client.Do(request)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
-		return
-	}
-	//check status code
-	if response.StatusCode != http.StatusOK {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": "Failed to fetch models",
-		})
-		return
-	}
-	defer response.Body.Close()
-
-	var result struct {
-		Data []struct {
-			ID string `json:"id"`
-		} `json:"data"`
-	}
-
-	if err := json.NewDecoder(response.Body).Decode(&result); err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
-		return
-	}
-
-	var models []string
-	for _, model := range result.Data {
-		models = append(models, model.ID)
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"data":    models,
+		"data":    ids,
 	})
 }
-
 func BatchSetChannelTag(c *gin.Context) {
 	channelBatch := ChannelBatch{}
 	err := c.ShouldBindJSON(&channelBatch)

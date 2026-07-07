@@ -27,8 +27,6 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 		middleware.SecureVerificationRequired(),
 		controller.GetChannelKey,
 	)
-	channelRoute.POST("/fetch_models", middleware.RootAuth(), controller.FetchModels)
-
 	for _, route := range channelPermissionRoutes {
 		channelRoute.Handle(route.method, route.path,
 			middleware.RequirePermission(route.permission),
@@ -50,6 +48,7 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/update_balance", permission: authz.ChannelOperate, handler: controller.UpdateAllChannelsBalance},
 	{method: http.MethodGet, path: "/update_balance/:id", permission: authz.ChannelOperate, handler: controller.UpdateChannelBalance},
 	{method: http.MethodPost, path: "/", permission: authz.ChannelSensitiveWrite, handler: controller.AddChannel},
+	{method: http.MethodPost, path: "/fetch_models", permission: authz.ChannelSensitiveWrite, handler: controller.FetchModels},
 	{method: http.MethodPut, path: "/", permission: authz.ChannelWrite, handler: controller.UpdateChannel},
 	{method: http.MethodPost, path: "/status/batch", permission: authz.ChannelOperate, handler: controller.BatchUpdateChannelStatus},
 	{method: http.MethodPost, path: "/:id/status", permission: authz.ChannelOperate, handler: controller.UpdateChannelStatus},

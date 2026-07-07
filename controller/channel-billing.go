@@ -7,7 +7,9 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -141,6 +143,165 @@ func GetResponseBody(method, url string, channel *model.Channel, headers http.He
 	return GetResponseBodyWithContext(context.Background(), method, url, channel, headers)
 }
 
+const upstreamErrorBodyLimit = 1024
+
+type upstreamErrorSecretPattern struct {
+	re          *regexp.Regexp
+	replacement string
+}
+
+var upstreamErrorSecretPatterns = []upstreamErrorSecretPattern{
+	{
+		re:          regexp.MustCompile(`(?i)(authorization\s*[:=]\s*bearer\s+)[^\s"',}]+`),
+		replacement: `${1}[redacted]`,
+	},
+	{
+		re:          regexp.MustCompile(`(?i)(bearer\s+)[A-Za-z0-9._~+/\-=]{8,}`),
+		replacement: `${1}[redacted]`,
+	},
+	{
+		re:          regexp.MustCompile(`(?i)((?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|token|secret|password)\s*[:=]\s*)[^\s"',}]+`),
+		replacement: `${1}[redacted]`,
+	},
+	{
+		re:          regexp.MustCompile(`(?i)\bsk-[A-Za-z0-9][A-Za-z0-9_-]{8,}\b`),
+		replacement: `[redacted]`,
+	},
+}
+
+func isSensitiveErrorBodyKey(key string) bool {
+	normalized := strings.ToLower(strings.ReplaceAll(key, "-", "_"))
+	for _, part := range []string{
+		"authorization",
+		"api_key",
+		"apikey",
+		"access_token",
+		"refresh_token",
+		"id_token",
+		"token",
+		"secret",
+		"password",
+		"credential",
+	} {
+		if strings.Contains(normalized, part) {
+			return true
+		}
+	}
+	return false
+}
+
+func addErrorBodySecret(secrets []string, value string) []string {
+	value = strings.TrimSpace(value)
+	if len(value) < 8 {
+		return secrets
+	}
+	return append(secrets, value)
+}
+
+func collectSensitiveJSONSecrets(key string, value any, secrets *[]string) {
+	switch typed := value.(type) {
+	case map[string]any:
+		for childKey, childValue := range typed {
+			collectSensitiveJSONSecrets(childKey, childValue, secrets)
+		}
+	case []any:
+		for _, item := range typed {
+			collectSensitiveJSONSecrets(key, item, secrets)
+		}
+	case string:
+		if isSensitiveErrorBodyKey(key) {
+			*secrets = addErrorBodySecret(*secrets, typed)
+		}
+	}
+}
+
+func channelErrorBodySecrets(channel *model.Channel) []string {
+	if channel == nil {
+		return nil
+	}
+
+	secrets := make([]string, 0, 4)
+	secrets = addErrorBodySecret(secrets, channel.Key)
+	for _, key := range channel.GetKeys() {
+		secrets = addErrorBodySecret(secrets, key)
+	}
+	for _, key := range strings.Split(channel.Key, "\n") {
+		secrets = addErrorBodySecret(secrets, key)
+	}
+
+	var parsed any
+	if err := json.Unmarshal([]byte(strings.TrimSpace(channel.Key)), &parsed); err == nil {
+		collectSensitiveJSONSecrets("", parsed, &secrets)
+	}
+
+	return secrets
+}
+
+func redactUpstreamErrorText(text string, secrets []string) string {
+	for _, secret := range secrets {
+		secret = strings.TrimSpace(secret)
+		if len(secret) < 8 {
+			continue
+		}
+		text = strings.ReplaceAll(text, secret, "[redacted]")
+	}
+	for _, pattern := range upstreamErrorSecretPatterns {
+		text = pattern.re.ReplaceAllString(text, pattern.replacement)
+	}
+	return text
+}
+
+func redactSensitiveErrorBody(value any, secrets []string) any {
+	switch typed := value.(type) {
+	case map[string]any:
+		redacted := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if isSensitiveErrorBodyKey(key) {
+				redacted[key] = "[redacted]"
+				continue
+			}
+			redacted[key] = redactSensitiveErrorBody(item, secrets)
+		}
+		return redacted
+	case []any:
+		redacted := make([]any, len(typed))
+		for i, item := range typed {
+			redacted[i] = redactSensitiveErrorBody(item, secrets)
+		}
+		return redacted
+	case string:
+		return redactUpstreamErrorText(typed, secrets)
+	default:
+		return typed
+	}
+}
+
+func truncateErrorBody(text string) string {
+	runes := []rune(text)
+	if len(runes) <= upstreamErrorBodyLimit {
+		return text
+	}
+	return string(runes[:upstreamErrorBodyLimit]) + "..."
+}
+
+func sanitizeUpstreamErrorBody(body []byte, secrets ...string) string {
+	bodyText := strings.TrimSpace(string(body))
+	if bodyText == "" {
+		return ""
+	}
+
+	var parsed any
+	if err := json.Unmarshal([]byte(bodyText), &parsed); err == nil {
+		if redacted, err := json.Marshal(redactSensitiveErrorBody(parsed, secrets)); err == nil {
+			bodyText = string(redacted)
+		}
+	} else {
+		bodyText = redactUpstreamErrorText(bodyText, secrets)
+	}
+
+	return truncateErrorBody(bodyText)
+}
+
 func GetResponseBodyWithContext(ctx context.Context, method, url string, channel *model.Channel, headers http.Header) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -162,6 +323,11 @@ func GetResponseBodyWithContext(ctx context.Context, method, url string, channel
 	}
 	defer res.Body.Close()
 	if res.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(res.Body, upstreamErrorBodyLimit*4))
+		bodyText := sanitizeUpstreamErrorBody(body, channelErrorBodySecrets(channel)...)
+		if bodyText != "" {
+			return nil, fmt.Errorf("status code: %d, body: %s", res.StatusCode, bodyText)
+		}
 		return nil, fmt.Errorf("status code: %d", res.StatusCode)
 	}
 	body, err := io.ReadAll(res.Body)

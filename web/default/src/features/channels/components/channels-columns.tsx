@@ -36,7 +36,13 @@ import {
   formatQuota as formatQuotaValue,
 } from '@/lib/format'
 import { getLobeIcon } from '@/lib/lobe-icon'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+  hasPermission,
+} from '@/lib/admin-permissions'
 import { truncateText } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -119,6 +125,12 @@ function renderLimitedItems(
  */
 function UpstreamUpdateTags({ channel }: { channel: Channel }) {
   const { upstream, setCurrentRow } = useChannels()
+  const currentUser = useAuthStore((s) => s.auth.user)
+  const canApplyUpdates = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.WRITE
+  )
   if (!MODEL_FETCHABLE_TYPES.has(channel.type)) return null
 
   const meta = parseUpstreamUpdateMeta(channel.settings)
@@ -136,17 +148,21 @@ function UpstreamUpdateTags({ channel }: { channel: Channel }) {
           variant='success'
           size='sm'
           copyable={false}
-          className='cursor-pointer'
-          onClick={(e: React.MouseEvent) => {
-            e.stopPropagation()
-            setCurrentRow(channel)
-            upstream.openModal(
-              channel,
-              meta.pendingAddModels,
-              meta.pendingRemoveModels,
-              'add'
-            )
-          }}
+          className={canApplyUpdates ? 'cursor-pointer' : undefined}
+          onClick={
+            canApplyUpdates
+              ? (e: React.MouseEvent) => {
+                  e.stopPropagation()
+                  setCurrentRow(channel)
+                  upstream.openModal(
+                    channel,
+                    meta.pendingAddModels,
+                    meta.pendingRemoveModels,
+                    'add'
+                  )
+                }
+              : undefined
+          }
         />
       )}
       {removeCount > 0 && (
@@ -155,17 +171,21 @@ function UpstreamUpdateTags({ channel }: { channel: Channel }) {
           variant='danger'
           size='sm'
           copyable={false}
-          className='cursor-pointer'
-          onClick={(e: React.MouseEvent) => {
-            e.stopPropagation()
-            setCurrentRow(channel)
-            upstream.openModal(
-              channel,
-              meta.pendingAddModels,
-              meta.pendingRemoveModels,
-              'remove'
-            )
-          }}
+          className={canApplyUpdates ? 'cursor-pointer' : undefined}
+          onClick={
+            canApplyUpdates
+              ? (e: React.MouseEvent) => {
+                  e.stopPropagation()
+                  setCurrentRow(channel)
+                  upstream.openModal(
+                    channel,
+                    meta.pendingAddModels,
+                    meta.pendingRemoveModels,
+                    'remove'
+                  )
+                }
+              : undefined
+          }
         />
       )}
     </div>

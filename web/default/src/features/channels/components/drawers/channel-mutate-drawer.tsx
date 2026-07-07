@@ -106,7 +106,14 @@ import {
   useSecureVerification,
 } from '@/features/auth/secure-verification'
 import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+  hasPermission,
+} from '@/lib/admin-permissions'
+import { useAuthStore } from '@/stores/auth-store'
+import {
   fetchModels,
+  fetchUpstreamModels,
   getAllModels,
   getChannel,
   getChannelKey,
@@ -129,6 +136,8 @@ import {
   channelFormSchema,
   channelsQueryKeys,
   transformChannelToFormDefaults,
+  transformFormDataToCreatePayload,
+  transformFormDataToUpdatePayload,
   type ChannelFormValues,
   deduplicateKeys,
   getChannelTypeIcon,
@@ -169,6 +178,31 @@ type ChannelMutateDrawerProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   currentRow?: Channel | null
+}
+
+type FetchModelsDraftSnapshot = Record<
+  | 'base_url'
+  | 'type'
+  | 'key'
+  | 'setting'
+  | 'settings'
+  | 'header_override'
+  | 'other',
+  string
+>
+
+function normalizeFetchModelsDraftSnapshot(
+  payload: Parameters<typeof fetchModels>[0]
+): FetchModelsDraftSnapshot {
+  return {
+    base_url: String(payload.base_url || ''),
+    type: String(payload.type ?? ''),
+    key: String(payload.key || '').trim(),
+    setting: String(payload.setting || ''),
+    settings: String(payload.settings || ''),
+    header_override: String(payload.header_override || ''),
+    other: String(payload.other || ''),
+  }
 }
 
 type ModelMappingGuardrail = {
@@ -279,6 +313,7 @@ export function ChannelMutateDrawer({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { setOpen } = useChannels()
+  const currentUser = useAuthStore((s) => s.auth.user)
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
   const [channelKey, setChannelKey] = useState<string | null>(null)
   const [isChannelKeyLoading, setIsChannelKeyLoading] = useState(false)
@@ -288,6 +323,8 @@ export function ChannelMutateDrawer({
   const initialModelsRef = useRef<string[]>([])
   const initialModelMappingRef = useRef<string>('')
   const initialStatusCodeMappingRef = useRef<string>('')
+  const initialFetchModelsDraftRef =
+    useRef<FetchModelsDraftSnapshot | null>(null)
   const [statusCodeRiskOpen, setStatusCodeRiskOpen] = useState(false)
   const [statusCodeRiskDetailItems, setStatusCodeRiskDetailItems] = useState<
     string[]
@@ -297,6 +334,9 @@ export function ChannelMutateDrawer({
   >(null)
   const [missingModelsDialogOpen, setMissingModelsDialogOpen] = useState(false)
   const [missingModelsList, setMissingModelsList] = useState<string[]>([])
+  const [initialChannelStatus, setInitialChannelStatus] = useState<
+    number | null
+  >(null)
   const missingModelsResolveRef = useRef<
     ((action: MissingModelsAction) => void) | null
   >(null)
@@ -305,6 +345,19 @@ export function ChannelMutateDrawer({
 
   const isEditing = Boolean(currentRow)
   const channelId = currentRow?.id ?? null
+  const canFetchDraftModels = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
+  )
+  const canOperateChannel = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.OPERATE
+  )
+  const canFetchUpstreamModels = isEditing
+    ? canFetchDraftModels || canOperateChannel
+    : canFetchDraftModels
 
   // Fetch channel details if editing
   const { data: channelData, isLoading: isChannelLoading } = useQuery({
@@ -348,8 +401,10 @@ export function ChannelMutateDrawer({
     if (!open) {
       setChannelKey(null)
       setIsChannelKeyLoading(false)
+      setInitialChannelStatus(null)
     } else if (channelId) {
       setChannelKey(null)
+      setInitialChannelStatus(null)
     }
   }, [open, channelId])
 
@@ -578,11 +633,69 @@ export function ChannelMutateDrawer({
     upstreamUpdateMeta.detectedModels.length -
     upstreamDetectedModelsPreview.length
 
+  const buildFetchModelsDraftPayload = useCallback(
+    (values: ChannelFormValues): Parameters<typeof fetchModels>[0] => {
+      const draftChannel =
+        isEditing && channelId
+          ? transformFormDataToUpdatePayload(values, channelId)
+          : transformFormDataToCreatePayload(values).channel
+
+      return {
+        id: isEditing && channelId ? channelId : undefined,
+        type: values.type,
+        key: values.key,
+        base_url:
+          typeof draftChannel.base_url === 'string'
+            ? draftChannel.base_url
+            : '',
+        base_url_override: true,
+        draft_override: true,
+        setting:
+          typeof draftChannel.setting === 'string'
+            ? draftChannel.setting
+            : undefined,
+        settings:
+          typeof draftChannel.settings === 'string'
+            ? draftChannel.settings
+            : undefined,
+        header_override:
+          typeof draftChannel.header_override === 'string'
+            ? draftChannel.header_override
+            : undefined,
+        other:
+          typeof draftChannel.other === 'string'
+            ? draftChannel.other
+            : undefined,
+      }
+    },
+    [channelId, isEditing]
+  )
+
+  const hasFetchModelsDraftChanges = useCallback(
+    (payload: Parameters<typeof fetchModels>[0]) => {
+      if (!isEditing) return true
+      const initial = initialFetchModelsDraftRef.current
+      if (!initial) return false
+
+      const current = normalizeFetchModelsDraftSnapshot(payload)
+      return Object.keys(current).some(
+        (key) =>
+          current[key as keyof FetchModelsDraftSnapshot] !==
+          initial[key as keyof FetchModelsDraftSnapshot]
+      )
+    },
+    [isEditing]
+  )
+
   // Load channel data into form when editing
   useEffect(() => {
     if (isEditing && channelData?.data) {
       const defaults = transformChannelToFormDefaults(channelData.data)
       form.reset(defaults)
+      setInitialChannelStatus(defaults.status)
+      initialFetchModelsDraftRef.current = normalizeFetchModelsDraftSnapshot(
+        buildFetchModelsDraftPayload(defaults)
+      )
       setAdvancedSettingsOpen(
         readAdvancedSettingsPreference() || hasAdvancedSettingsValues(defaults)
       )
@@ -595,12 +708,16 @@ export function ChannelMutateDrawer({
         channelData.data.status_code_mapping || ''
     } else if (!isEditing) {
       form.reset(CHANNEL_FORM_DEFAULT_VALUES)
+      setInitialChannelStatus(null)
+      initialFetchModelsDraftRef.current = normalizeFetchModelsDraftSnapshot(
+        buildFetchModelsDraftPayload(CHANNEL_FORM_DEFAULT_VALUES)
+      )
       setAdvancedSettingsOpen(false)
       initialModelsRef.current = []
       initialModelMappingRef.current = ''
       initialStatusCodeMappingRef.current = ''
     }
-  }, [isEditing, channelData, form])
+  }, [isEditing, channelData, form, buildFetchModelsDraftPayload])
 
   // Handle type change - set default values for specific types
   useEffect(() => {
@@ -747,6 +864,23 @@ export function ChannelMutateDrawer({
       return
     }
 
+    if (!canFetchUpstreamModels) {
+      toast.error(t('No permission to perform this action'))
+      return
+    }
+
+    const draftPayload = buildFetchModelsDraftPayload(form.getValues())
+    if (
+      isEditing &&
+      !canFetchDraftModels &&
+      hasFetchModelsDraftChanges(draftPayload)
+    ) {
+      toast.error(
+        t('No permission to fetch models with unsaved channel configuration')
+      )
+      return
+    }
+
     // For creation mode, validate key before opening dialog
     if (!isEditing) {
       const key = form.getValues('key')
@@ -757,19 +891,37 @@ export function ChannelMutateDrawer({
     }
 
     setFetchModelsDialogOpen(true)
-  }, [isEditing, form, t])
+  }, [
+    buildFetchModelsDraftPayload,
+    canFetchDraftModels,
+    canFetchUpstreamModels,
+    hasFetchModelsDraftChanges,
+    isEditing,
+    form,
+    t,
+  ])
 
-  const createModeFetcher = useCallback(async (): Promise<string[]> => {
-    const response = await fetchModels({
-      type: form.getValues('type'),
-      key: form.getValues('key'),
-      base_url: form.getValues('base_url') || '',
-    })
+  const draftModelsFetcher = useCallback(async (): Promise<string[]> => {
+    const response = await fetchModels(
+      buildFetchModelsDraftPayload(form.getValues())
+    )
     if (response.success && response.data) {
       return response.data
     }
     throw new Error(response.message || 'No models fetched from upstream')
-  }, [form])
+  }, [buildFetchModelsDraftPayload, form])
+
+  const savedModelsFetcher = useCallback(async (): Promise<string[]> => {
+    if (!channelId) return []
+    const response = await fetchUpstreamModels(channelId)
+    if (response.success && response.data) {
+      return response.data
+    }
+    throw new Error(response.message || 'No models fetched from upstream')
+  }, [channelId])
+
+  const fetchModelsDialogFetcher =
+    !isEditing || canFetchDraftModels ? draftModelsFetcher : savedModelsFetcher
 
   // Handle model operations
   const handleFillRelatedModels = useCallback(() => {
@@ -910,6 +1062,8 @@ export function ChannelMutateDrawer({
     currentRow,
     isEditing,
     isMultiKeyChannel,
+    canOperateChannel,
+    initialStatus: initialChannelStatus,
     onSuccess: handleSuccess,
   })
 
@@ -1134,6 +1288,7 @@ export function ChannelMutateDrawer({
                           <FormControl>
                             <Switch
                               checked={field.value === 1}
+                              disabled={isEditing && !canOperateChannel}
                               onCheckedChange={(checked) =>
                                 field.onChange(checked ? 1 : 2)
                               }
@@ -2260,6 +2415,7 @@ export function ChannelMutateDrawer({
                                 variant='outline'
                                 size='sm'
                                 onClick={handleFetchModels}
+                                disabled={!canFetchUpstreamModels}
                               >
                                 <Sparkles
                                   className='mr-2 h-4 w-4'
@@ -3481,13 +3637,11 @@ export function ChannelMutateDrawer({
         }}
         redirectModels={redirectModelList}
         redirectSourceModels={redirectModelKeyList}
-        customFetcher={!isEditing ? createModeFetcher : undefined}
-        channelName={!isEditing ? currentName?.trim() : undefined}
-        existingModelsOverride={
-          !isEditing
-            ? parseModelsString(form.getValues('models') || '')
-            : undefined
-        }
+        customFetcher={fetchModelsDialogFetcher}
+        channelName={currentName?.trim()}
+        existingModelsOverride={parseModelsString(
+          form.getValues('models') || ''
+        )}
       />
 
       <SecureVerificationDialog

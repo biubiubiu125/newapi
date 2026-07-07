@@ -68,6 +68,7 @@ type FetchModelsDialogProps = {
   customFetcher?: () => Promise<string[]>
   existingModelsOverride?: string[]
   channelName?: string | null
+  canSaveModels?: boolean
 }
 
 export function FetchModelsDialog({
@@ -79,6 +80,7 @@ export function FetchModelsDialog({
   customFetcher,
   existingModelsOverride,
   channelName,
+  canSaveModels = true,
 }: FetchModelsDialogProps) {
   const { t } = useTranslation()
   const { currentRow } = useChannels()
@@ -179,6 +181,10 @@ export function FetchModelsDialog({
 
     // Otherwise, directly save to API (standalone mode)
     if (!activeChannel) return
+    if (!canSaveModels) {
+      toast.error(t('No permission to perform this action'))
+      return
+    }
     setIsSaving(true)
     try {
       const modelsString = selectedModels.join(',')
@@ -504,7 +510,10 @@ export function FetchModelsDialog({
               >
                 {t('Cancel')}
               </Button>
-              <Button onClick={handleSave} disabled={isSaving}>
+              <Button
+                onClick={handleSave}
+                disabled={isSaving || (!onModelsSelected && !canSaveModels)}
+              >
                 {isSaving && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
                 {isSaving ? t('Saving...') : t('Save Models')}
               </Button>

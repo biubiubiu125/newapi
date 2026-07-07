@@ -27,8 +27,8 @@ import {
 } from '@/lib/admin-permissions'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { createChannel, updateChannel } from '../api'
-import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
+import { createChannel, updateChannel, updateChannelStatus } from '../api'
+import { CHANNEL_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
   transformFormDataToCreatePayload,
   transformFormDataToUpdatePayload,
@@ -40,7 +40,14 @@ type UseChannelMutateFormParams = {
   currentRow?: Channel | null
   isEditing: boolean
   isMultiKeyChannel: boolean
+  canOperateChannel: boolean
+  initialStatus?: number | null
   onSuccess: () => void
+}
+
+type ChannelMutationResult = {
+  messageKey: string
+  warning?: string
 }
 
 const SENSITIVE_UPDATE_FIELDS = [
@@ -80,6 +87,13 @@ function getErrorMessage(error: unknown): string | undefined {
   return undefined
 }
 
+function isManageableStatus(status: number): boolean {
+  return (
+    status === CHANNEL_STATUS.ENABLED ||
+    status === CHANNEL_STATUS.MANUAL_DISABLED
+  )
+}
+
 export function useChannelMutateForm(props: UseChannelMutateFormParams) {
   const { t } = useTranslation()
   const currentUser = useAuthStore((s) => s.auth.user)
@@ -90,7 +104,9 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
   )
 
   return useMutation({
-    mutationFn: async (data: ChannelFormValues): Promise<string> => {
+    mutationFn: async (
+      data: ChannelFormValues
+    ): Promise<ChannelMutationResult> => {
       if (props.isEditing && props.currentRow) {
         const payload = transformFormDataToUpdatePayload(
           data,
@@ -122,7 +138,52 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
         if (!response.success) {
           throw new Error(response.message || t(ERROR_MESSAGES.UPDATE_FAILED))
         }
-        return SUCCESS_MESSAGES.UPDATED
+        let warning: string | undefined
+        if (
+          typeof data.status === 'number' &&
+          typeof props.initialStatus === 'number' &&
+          data.status !== props.initialStatus
+        ) {
+          if (!isManageableStatus(data.status)) {
+            warning = t('Channel saved, but status update failed: {{reason}}', {
+              reason: t('Invalid status'),
+            })
+          } else if (!props.canOperateChannel) {
+            warning = t('Channel saved, but status update failed: {{reason}}', {
+              reason: t('No permission to perform this action'),
+            })
+          } else {
+            try {
+              const statusResponse = await updateChannelStatus(
+                props.currentRow.id,
+                data.status
+              )
+              if (!statusResponse.success) {
+                warning = t(
+                  'Channel saved, but status update failed: {{reason}}',
+                  {
+                    reason:
+                      statusResponse.message ||
+                      t('No permission to perform this action'),
+                  }
+                )
+              }
+            } catch (error: unknown) {
+              warning = t(
+                'Channel saved, but status update failed: {{reason}}',
+                {
+                  reason:
+                    getErrorMessage(error) ||
+                    t('No permission to perform this action'),
+                }
+              )
+            }
+          }
+        }
+        return {
+          messageKey: SUCCESS_MESSAGES.UPDATED,
+          warning,
+        }
       }
 
       const payload = transformFormDataToCreatePayload(data)
@@ -130,10 +191,15 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
       if (!response.success) {
         throw new Error(response.message || t(ERROR_MESSAGES.CREATE_FAILED))
       }
-      return SUCCESS_MESSAGES.CREATED
+      return {
+        messageKey: SUCCESS_MESSAGES.CREATED,
+      }
     },
-    onSuccess: (messageKey) => {
-      toast.success(t(messageKey))
+    onSuccess: (result) => {
+      toast.success(t(result.messageKey))
+      if (result.warning) {
+        toast.warning(result.warning)
+      }
       props.onSuccess()
     },
     onError: (error: unknown) => {

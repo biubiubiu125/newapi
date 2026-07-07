@@ -164,6 +164,11 @@ const OllamaModelModal = ({
   onCancel,
   channelId,
   channelInfo,
+  canFetchDraftModels = false,
+  canFetchSavedModels = false,
+  canManageModels = false,
+  canApplyModels = false,
+  buildFetchModelsDraftPayload,
   onModelsUpdate,
   onApplyModels,
 }) => {
@@ -177,8 +182,14 @@ const OllamaModelModal = ({
   const [pullProgress, setPullProgress] = useState(null);
   const [eventSource, setEventSource] = useState(null);
   const [selectedModelIds, setSelectedModelIds] = useState([]);
+  const canFetchModels = canFetchDraftModels || canFetchSavedModels;
 
   const handleApplyAllModels = () => {
+    if (!canApplyModels) {
+      showError(t('无权限修改渠道模型列表'));
+      return;
+    }
+
     if (!onApplyModels || selectedModelIds.length === 0) {
       return;
     }
@@ -210,8 +221,14 @@ const OllamaModelModal = ({
 
   // 获取模型列表
   const fetchModels = async () => {
+    if (!canFetchModels) {
+      showError(t('无权限获取上游模型列表'));
+      return;
+    }
+
     const channelType = Number(channelInfo?.type ?? CHANNEL_TYPE_OLLAMA);
-    const shouldTryLiveFetch = channelType === CHANNEL_TYPE_OLLAMA;
+    const shouldTryLiveFetch =
+      canFetchDraftModels && channelType === CHANNEL_TYPE_OLLAMA;
     const resolvedBaseUrl = resolveOllamaBaseUrl(channelInfo);
 
     setLoading(true);
@@ -219,15 +236,37 @@ const OllamaModelModal = ({
     let fallbackSucceeded = false;
     let lastError = '';
     let nextModels = [];
+    let allowSavedFallback = canFetchSavedModels;
 
     try {
-      if (shouldTryLiveFetch && resolvedBaseUrl) {
+      if (shouldTryLiveFetch) {
         try {
+          const draftPayload =
+            typeof buildFetchModelsDraftPayload === 'function'
+              ? buildFetchModelsDraftPayload()
+              : {};
           const payload = {
+            id: channelId ? Number(channelId) : undefined,
             base_url: resolvedBaseUrl,
+            base_url_override: Boolean(resolvedBaseUrl),
+            draft_override: false,
             type: CHANNEL_TYPE_OLLAMA,
             key: channelInfo?.key || '',
+            setting: channelInfo?.setting || '',
+            settings: channelInfo?.settings || '',
+            header_override: channelInfo?.header_override || '',
+            other: channelInfo?.other || '',
+            ...draftPayload,
           };
+
+          if (!payload.id && channelId) {
+            payload.id = Number(channelId);
+          }
+          if (payload.base_url === undefined || payload.base_url === null) {
+            payload.base_url = resolvedBaseUrl;
+          }
+          payload.type = Number(payload.type || CHANNEL_TYPE_OLLAMA);
+          allowSavedFallback = canFetchSavedModels && !payload.draft_override;
 
           const res = await API.post('/api/channel/fetch_models', payload, {
             skipErrorHandler: true,
@@ -249,7 +288,11 @@ const OllamaModelModal = ({
         lastError = t('请先填写 Ollama API 地址');
       }
 
-      if ((!liveFetchSucceeded || nextModels.length === 0) && channelId) {
+      if (
+        (!liveFetchSucceeded || nextModels.length === 0) &&
+        channelId &&
+        allowSavedFallback
+      ) {
         try {
           const res = await API.get(`/api/channel/fetch_models/${channelId}`, {
             skipErrorHandler: true,
@@ -298,6 +341,11 @@ const OllamaModelModal = ({
 
   // 拉取模型 (流式，支持进度)
   const pullModel = async () => {
+    if (!canManageModels) {
+      showError(t('无权限执行 Ollama 敏感操作'));
+      return;
+    }
+
     if (!pullModelName.trim()) {
       showError(t('请输入模型名称'));
       return;
@@ -449,6 +497,11 @@ const OllamaModelModal = ({
 
   // 删除模型
   const deleteModel = async (modelName) => {
+    if (!canManageModels) {
+      showError(t('无权限执行 Ollama 敏感操作'));
+      return;
+    }
+
     try {
       const res = await API.delete('/api/channel/ollama/delete', {
         data: {
@@ -498,12 +551,18 @@ const OllamaModelModal = ({
       return;
     }
 
-    if (channelId || Number(channelInfo?.type) === CHANNEL_TYPE_OLLAMA) {
+    if (
+      canFetchModels &&
+      (channelId || Number(channelInfo?.type) === CHANNEL_TYPE_OLLAMA)
+    ) {
       fetchModels();
     }
   }, [
     visible,
     channelId,
+    canFetchModels,
+    canFetchDraftModels,
+    canFetchSavedModels,
     channelInfo?.type,
     channelInfo?.base_url,
     channelInfo?.other_info,
@@ -561,7 +620,7 @@ const OllamaModelModal = ({
                 value={pullModelName}
                 onChange={(value) => setPullModelName(value)}
                 onEnterPress={pullModel}
-                disabled={pullLoading}
+                disabled={pullLoading || !canManageModels}
                 showClear
               />
             </Col>
@@ -571,7 +630,7 @@ const OllamaModelModal = ({
                 type='primary'
                 onClick={pullModel}
                 loading={pullLoading}
-                disabled={!pullModelName.trim()}
+                disabled={!pullModelName.trim() || !canManageModels}
                 icon={<IconDownload />}
                 block
               >
@@ -685,7 +744,7 @@ const OllamaModelModal = ({
                 type='primary'
                 icon={<IconPlus />}
                 onClick={handleApplyAllModels}
-                disabled={selectedModelIds.length === 0}
+                disabled={selectedModelIds.length === 0 || !canApplyModels}
                 size='small'
               >
                 {t('加入渠道')}
@@ -695,6 +754,7 @@ const OllamaModelModal = ({
                 type='primary'
                 onClick={fetchModels}
                 loading={loading}
+                disabled={!canFetchModels}
                 icon={<IconRefresh />}
                 size='small'
               >
@@ -724,6 +784,7 @@ const OllamaModelModal = ({
                       <div className='flex items-center flex-1 min-w-0 gap-3'>
                         <Checkbox
                           checked={selectedModelIds.includes(model.id)}
+                          disabled={!canApplyModels}
                           onChange={(checked) =>
                             handleToggleModel(model.id, checked)
                           }
@@ -759,6 +820,7 @@ const OllamaModelModal = ({
                             theme='borderless'
                             type='danger'
                             size='small'
+                            disabled={!canManageModels}
                             icon={<IconDelete />}
                           />
                         </Popconfirm>

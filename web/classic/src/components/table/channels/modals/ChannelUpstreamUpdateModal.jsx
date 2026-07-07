@@ -59,6 +59,7 @@ const ChannelUpstreamUpdateModal = ({
   removeModels = [],
   preferredTab = 'add',
   confirmLoading = false,
+  canApply = true,
   onConfirm,
   onCancel,
 }) => {
@@ -156,6 +157,9 @@ const ChannelUpstreamUpdateModal = ({
   ];
 
   const submitSelectedChanges = () => {
+    if (!canApply) {
+      return;
+    }
     onConfirm?.({
       addModels: selectedAddModels,
       removeModels: selectedRemoveModels,
@@ -217,6 +221,7 @@ const ChannelUpstreamUpdateModal = ({
       closeOnEsc
       maskClosable
       confirmLoading={confirmLoading}
+      okButtonProps={{ disabled: !canApply }}
       onCancel={onCancel}
       onOk={handleSubmit}
     >

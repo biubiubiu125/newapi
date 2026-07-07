@@ -525,7 +525,7 @@ func (channel *Channel) Insert() error {
 	return err
 }
 
-func (channel *Channel) Update() error {
+func (channel *Channel) prepareForUpdate() {
 	channel.Models = common.NormalizeCommaSeparated(channel.Models)
 	channel.Group = common.NormalizeCommaSeparated(channel.Group)
 	// If this is a multi-key channel, recalculate MultiKeySize based on the current key list to avoid inconsistency after editing keys
@@ -580,14 +580,45 @@ func (channel *Channel) Update() error {
 			}
 		}
 	}
+}
+
+func (channel *Channel) reloadAndUpdateAbilities() error {
+	if err := DB.Model(channel).First(channel, "id = ?", channel.Id).Error; err != nil {
+		return err
+	}
+	return channel.UpdateAbilities(nil)
+}
+
+func (channel *Channel) Update() error {
+	channel.prepareForUpdate()
 	var err error
 	err = DB.Model(channel).Updates(channel).Error
 	if err != nil {
 		return err
 	}
-	DB.Model(channel).First(channel, "id = ?", channel.Id)
-	err = channel.UpdateAbilities(nil)
-	return err
+	return channel.reloadAndUpdateAbilities()
+}
+
+func (channel *Channel) UpdateColumns(updates map[string]any) error {
+	channel.prepareForUpdate()
+	if len(updates) > 0 {
+		if _, ok := updates["models"]; ok {
+			updates["models"] = channel.Models
+		}
+		if _, ok := updates["group"]; ok {
+			updates["group"] = channel.Group
+		}
+		if _, ok := updates["channel_info"]; ok {
+			updates["channel_info"] = channel.ChannelInfo
+		}
+		if _, ok := updates["key"]; ok {
+			updates["key"] = channel.Key
+		}
+		if err := DB.Model(channel).Updates(updates).Error; err != nil {
+			return err
+		}
+	}
+	return channel.reloadAndUpdateAbilities()
 }
 
 func (channel *Channel) UpdateResponseTime(responseTime int64) {

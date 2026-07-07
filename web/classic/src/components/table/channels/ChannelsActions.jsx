@@ -40,6 +40,8 @@ const ChannelsActions = ({
   detectAllUpstreamUpdates,
   detectAllUpstreamUpdatesLoading,
   applyAllUpstreamUpdatesLoading,
+  canDetectUpstreamUpdates,
+  canApplyUpstreamUpdates,
   compactMode,
   setCompactMode,
   idSort,
@@ -100,8 +102,6 @@ const ChannelsActions = ({
                     size='small'
                     type='tertiary'
                     className='w-full'
-                    loading={detectAllUpstreamUpdatesLoading}
-                    disabled={detectAllUpstreamUpdatesLoading}
                     onClick={() => {
                       Modal.confirm({
                         title: t('确定？'),
@@ -157,6 +157,11 @@ const ChannelsActions = ({
                     size='small'
                     type='tertiary'
                     className='w-full'
+                    loading={detectAllUpstreamUpdatesLoading}
+                    disabled={
+                      detectAllUpstreamUpdatesLoading ||
+                      !canDetectUpstreamUpdates
+                    }
                     onClick={() => {
                       Modal.confirm({
                         title: t('确定？'),
@@ -178,7 +183,9 @@ const ChannelsActions = ({
                     type='primary'
                     className='w-full'
                     loading={applyAllUpstreamUpdatesLoading}
-                    disabled={applyAllUpstreamUpdatesLoading}
+                    disabled={
+                      applyAllUpstreamUpdatesLoading || !canApplyUpstreamUpdates
+                    }
                     onClick={() => {
                       Modal.confirm({
                         title: t('确定？'),

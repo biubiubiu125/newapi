@@ -39,7 +39,13 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Progress } from '@/components/ui/progress'
 import { Separator } from '@/components/ui/separator'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+  hasPermission,
+} from '@/lib/admin-permissions'
 import { getCommonHeaders } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
 import {
   deleteOllamaModel,
@@ -69,9 +75,26 @@ export function OllamaModelsDialog({
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const { currentRow } = useChannels()
+  const currentUser = useAuthStore((s) => s.auth.user)
 
   const isOllamaChannel = currentRow?.type === CHANNEL_TYPE_OLLAMA
   const channelId = currentRow?.id
+  const canFetchSavedModels = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.OPERATE,
+  )
+  const canWriteChannel = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.WRITE,
+  )
+  const canEditSensitive = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE,
+  )
+  const canFetchOllamaModels = canFetchSavedModels || canEditSensitive
 
   const [isFetching, setIsFetching] = useState(false)
   const [models, setModels] = useState<OllamaModel[]>([])
@@ -98,40 +121,43 @@ export function OllamaModelsDialog({
     [currentRow?.models]
   )
 
-  useEffect(() => {
-    if (!open) {
-      setModels([])
-      setSelected([])
-      setSearch('')
-      setPullName('')
-      setIsPulling(false)
-      setPullProgress(null)
-      pullAbortRef.current?.abort()
-      pullAbortRef.current = null
-      return
-    }
-
-    if (open && isOllamaChannel && channelId) {
-      void fetchOllamaModels()
-    }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, isOllamaChannel, channelId])
-
   const fetchOllamaModels = useCallback(async () => {
     if (!channelId) return
+    if (!canFetchOllamaModels) {
+      toast.error(t('No permission to perform this action'))
+      return
+    }
     setIsFetching(true)
     try {
       let normalized: OllamaModel[] = []
       let lastErr = ''
 
-      // 1) Prefer live fetch for Ollama if base_url is set (more accurate / supports unsaved changes)
+      // 1) Prefer POST fetch so sensitive-write users can reuse the saved key by id.
       const baseUrl = resolveOllamaBaseUrl(currentRow ?? null)
-      if (isOllamaChannel && baseUrl) {
+      if (canEditSensitive && isOllamaChannel) {
         try {
           const payloadLive = await fetchModelsFromEndpoint({
+            id: Number(channelId),
             base_url: baseUrl,
+            base_url_override: Boolean(baseUrl),
             type: CHANNEL_TYPE_OLLAMA,
             key: typeof currentRow?.key === 'string' ? currentRow.key : '',
+            setting:
+              typeof currentRow?.setting === 'string'
+                ? currentRow.setting
+                : undefined,
+            settings:
+              typeof currentRow?.settings === 'string'
+                ? currentRow.settings
+                : undefined,
+            header_override:
+              typeof currentRow?.header_override === 'string'
+                ? currentRow.header_override
+                : undefined,
+            other:
+              typeof currentRow?.other === 'string'
+                ? currentRow.other
+                : undefined,
           })
           if (payloadLive?.success) {
             normalized = normalizeOllamaModels(payloadLive.data)
@@ -144,7 +170,7 @@ export function OllamaModelsDialog({
       }
 
       // 2) Fallback to server-side fetch by channelId
-      if (!normalized.length) {
+      if (!normalized.length && canFetchSavedModels) {
         const payload = await fetchUpstreamModels(Number(channelId))
         if (payload?.success) {
           normalized = normalizeOllamaModels(payload.data)
@@ -175,7 +201,39 @@ export function OllamaModelsDialog({
     } finally {
       setIsFetching(false)
     }
-  }, [channelId, currentRow, isOllamaChannel, t])
+  }, [
+    canEditSensitive,
+    canFetchOllamaModels,
+    canFetchSavedModels,
+    channelId,
+    currentRow,
+    isOllamaChannel,
+    t,
+  ])
+
+  useEffect(() => {
+    if (!open) {
+      setModels([])
+      setSelected([])
+      setSearch('')
+      setPullName('')
+      setIsPulling(false)
+      setPullProgress(null)
+      pullAbortRef.current?.abort()
+      pullAbortRef.current = null
+      return
+    }
+
+    if (isOllamaChannel && channelId && canFetchOllamaModels) {
+      void fetchOllamaModels()
+    }
+  }, [
+    canFetchOllamaModels,
+    channelId,
+    fetchOllamaModels,
+    isOllamaChannel,
+    open,
+  ])
 
   const toggleSelected = (modelId: string, checked: boolean) => {
     setSelected((prev) => {
@@ -198,6 +256,10 @@ export function OllamaModelsDialog({
     if (!currentRow) return
     if (!selected.length) {
       toast.info(t('No models selected'))
+      return
+    }
+    if (!canWriteChannel) {
+      toast.error(t('No permission to perform this action'))
       return
     }
 
@@ -227,6 +289,10 @@ export function OllamaModelsDialog({
 
   const pullModel = async () => {
     if (!channelId) return
+    if (!canEditSensitive) {
+      toast.error(t('No permission to perform this action'))
+      return
+    }
     if (!pullName.trim()) {
       toast.error(t('Please enter model name'))
       return
@@ -338,6 +404,10 @@ export function OllamaModelsDialog({
 
   const deleteModel = async (modelName: string) => {
     if (!channelId) return
+    if (!canEditSensitive) {
+      toast.error(t('No permission to perform this action'))
+      return
+    }
     try {
       setIsDeleting(true)
       const payload = await deleteOllamaModel({
@@ -403,11 +473,11 @@ export function OllamaModelsDialog({
                   placeholder={t('e.g. llama3.1:8b')}
                   value={pullName}
                   onChange={(e) => setPullName(e.target.value)}
-                  disabled={!channelId || isPulling}
+                  disabled={!channelId || isPulling || !canEditSensitive}
                 />
                 <Button
                   onClick={() => void pullModel()}
-                  disabled={!channelId || isPulling}
+                  disabled={!channelId || isPulling || !canEditSensitive}
                 >
                   {isPulling ? (
                     <>
@@ -450,7 +520,7 @@ export function OllamaModelsDialog({
               <Button
                 variant='outline'
                 onClick={() => void fetchOllamaModels()}
-                disabled={!channelId || isFetching}
+                disabled={!channelId || isFetching || !canFetchOllamaModels}
               >
                 {isFetching ? (
                   <Loader2 className='mr-2 h-4 w-4 animate-spin' />
@@ -493,7 +563,7 @@ export function OllamaModelsDialog({
               <Button
                 size='sm'
                 onClick={() => void applySelection('append')}
-                disabled={!selected.length}
+                disabled={!selected.length || !canWriteChannel}
               >
                 {t('Append to channel')}
               </Button>
@@ -501,7 +571,7 @@ export function OllamaModelsDialog({
                 variant='secondary'
                 size='sm'
                 onClick={() => void applySelection('replace')}
-                disabled={!selected.length}
+                disabled={!selected.length || !canWriteChannel}
               >
                 {t('Replace channel models')}
               </Button>
@@ -553,7 +623,7 @@ export function OllamaModelsDialog({
                               setDeleteTarget(m.id)
                               setDeleteOpen(true)
                             }}
-                            disabled={!channelId}
+                            disabled={!channelId || !canEditSensitive}
                           >
                             <Trash2 className='h-4 w-4' />
                           </Button>
@@ -590,7 +660,7 @@ export function OllamaModelsDialog({
             </AlertDialogCancel>
             <AlertDialogAction
               variant='destructive'
-              disabled={isDeleting || !deleteTarget}
+              disabled={isDeleting || !deleteTarget || !canEditSensitive}
               onClick={() => {
                 if (!deleteTarget) return
                 void deleteModel(deleteTarget)

@@ -66,6 +66,11 @@ export function DataTableBulkActions<TData>({
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
     ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
   )
+  const canOperateChannel = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.OPERATE
+  )
 
   const selectedRows = table.getFilteredSelectedRowModel().rows
   const selectedIds = selectedRows.reduce<number[]>((ids, row) => {
@@ -83,10 +88,12 @@ export function DataTableBulkActions<TData>({
   }
 
   const handleEnableAll = () => {
+    if (!canOperateChannel) return
     handleBatchEnable(selectedIds, queryClient, handleClearSelection)
   }
 
   const handleDisableAll = () => {
+    if (!canOperateChannel) return
     handleBatchDisable(selectedIds, queryClient, handleClearSelection)
   }
 
@@ -116,9 +123,17 @@ export function DataTableBulkActions<TData>({
                 variant='outline'
                 size='icon'
                 onClick={handleEnableAll}
-                className='size-8'
+                aria-disabled={!canOperateChannel}
+                className={cn(
+                  'size-8',
+                  !canOperateChannel && 'cursor-not-allowed opacity-50'
+                )}
                 aria-label={t('Enable selected channels')}
-                title={t('Enable selected channels')}
+                title={
+                  canOperateChannel
+                    ? t('Enable selected channels')
+                    : t('No permission to perform this action')
+                }
               />
             }
           >
@@ -126,7 +141,11 @@ export function DataTableBulkActions<TData>({
             <span className='sr-only'>{t('Enable selected channels')}</span>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{t('Enable selected channels')}</p>
+            <p>
+              {canOperateChannel
+                ? t('Enable selected channels')
+                : t('No permission to perform this action')}
+            </p>
           </TooltipContent>
         </Tooltip>
 
@@ -137,9 +156,17 @@ export function DataTableBulkActions<TData>({
                 variant='outline'
                 size='icon'
                 onClick={handleDisableAll}
-                className='size-8'
+                aria-disabled={!canOperateChannel}
+                className={cn(
+                  'size-8',
+                  !canOperateChannel && 'cursor-not-allowed opacity-50'
+                )}
                 aria-label={t('Disable selected channels')}
-                title={t('Disable selected channels')}
+                title={
+                  canOperateChannel
+                    ? t('Disable selected channels')
+                    : t('No permission to perform this action')
+                }
               />
             }
           >
@@ -147,7 +174,11 @@ export function DataTableBulkActions<TData>({
             <span className='sr-only'>{t('Disable selected channels')}</span>
           </TooltipTrigger>
           <TooltipContent>
-            <p>{t('Disable selected channels')}</p>
+            <p>
+              {canOperateChannel
+                ? t('Disable selected channels')
+                : t('No permission to perform this action')}
+            </p>
           </TooltipContent>
         </Tooltip>
 
