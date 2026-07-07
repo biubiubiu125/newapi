@@ -1218,6 +1218,10 @@ func (Task *Task) Update() error {
 	return err
 }
 
+func (t *Task) UpdateQuota() error {
+	return DB.Model(t).Update("quota", t.Quota).Error
+}
+
 func ClaimTaskLease(id int64, owner string, now int64, leaseSeconds int64) (*Task, bool, error) {
 	if id <= 0 || owner == "" || leaseSeconds <= 0 {
 		return nil, false, nil

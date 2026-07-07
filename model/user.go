@@ -72,6 +72,10 @@ func NormalizeUserEmail(email string) string {
 	return strings.ToLower(strings.TrimSpace(email))
 }
 
+func NormalizeEmail(email string) string {
+	return NormalizeUserEmail(email)
+}
+
 func isValidUsernameChars(username string) bool {
 	if username == "" {
 		return false
@@ -1081,6 +1085,44 @@ func IsEmailAlreadyTakenByOther(email string, userId int) bool {
 	return DB.Unscoped().Where("email_canonical = ? AND id <> ?", email, userId).First(&User{}).RowsAffected > 0
 }
 
+func EnsureEmailAvailable(email string, excludeUserID int) error {
+	email = NormalizeUserEmail(email)
+	if email == "" {
+		return nil
+	}
+	query := DB.Unscoped().Where("email_canonical = ?", email)
+	if excludeUserID > 0 {
+		query = query.Where("id <> ?", excludeUserID)
+	}
+	var count int64
+	if err := query.Model(&User{}).Count(&count).Error; err != nil {
+		return err
+	}
+	if count > 0 {
+		return ErrEmailAlreadyTaken
+	}
+	return nil
+}
+
+func GetUniqueUserByEmail(email string) (*User, error) {
+	email = NormalizeUserEmail(email)
+	if email == "" {
+		return nil, ErrEmailNotFound
+	}
+	var users []User
+	if err := DB.Unscoped().Where("email_canonical = ?", email).Limit(2).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	switch len(users) {
+	case 0:
+		return nil, ErrEmailNotFound
+	case 1:
+		return &users[0], nil
+	default:
+		return nil, ErrEmailAmbiguous
+	}
+}
+
 func IsWeChatIdAlreadyTaken(wechatId string) bool {
 	return DB.Unscoped().Where("wechat_id = ?", wechatId).First(&User{}).RowsAffected > 0
 }
@@ -1106,11 +1148,15 @@ func ResetUserPasswordByEmail(email string, password string) error {
 	if email == "" || password == "" {
 		return errors.New("email or password is empty")
 	}
+	user, err := GetUniqueUserByEmail(email)
+	if err != nil {
+		return err
+	}
 	hashedPassword, err := common.Password2Hash(password)
 	if err != nil {
 		return err
 	}
-	result := DB.Model(&User{}).Where("email_canonical = ?", email).Update("password", hashedPassword)
+	result := DB.Model(&User{}).Where("id = ?", user.Id).Update("password", hashedPassword)
 	if result.Error != nil {
 		return result.Error
 	}

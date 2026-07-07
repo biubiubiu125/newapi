@@ -1120,7 +1120,7 @@ func taskBillingContextFromRelayInfo(relayInfo *relaycommon.RelayInfo) *model.Ta
 		ImageRatio:           priceData.ImageRatio,
 		AudioRatio:           priceData.AudioRatio,
 		AudioCompletionRatio: priceData.AudioCompletionRatio,
-		OtherRatios:          cloneImageTaskFloatMap(priceData.OtherRatios),
+		OtherRatios:          cloneImageTaskFloatMap(priceData.OtherRatios()),
 		OriginModelName:      relayInfo.OriginModelName,
 		PerCallBilling:       common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || priceData.UsePrice,
 	}

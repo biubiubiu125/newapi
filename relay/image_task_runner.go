@@ -689,7 +689,7 @@ func priceDataFromTask(task *model.Task) types.PriceData {
 			GroupSpecialRatio: bc.GroupSpecialRatio,
 			HasSpecialRatio:   bc.GroupHasSpecialRatio,
 		}
-		priceData.OtherRatios = cloneImageTaskFloatMap(bc.OtherRatios)
+		priceData.ReplaceOtherRatios(cloneImageTaskFloatMap(bc.OtherRatios))
 		priceData.UsePrice = bc.PerCallBilling
 	}
 	return priceData

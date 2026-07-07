@@ -78,6 +78,9 @@ func InitEnv() {
 		ReferralAssetSigningSecret = ReferralSigningSecret
 	}
 	ReferralTestMode = GetEnvOrDefaultBool("REFERRAL_TEST_MODE", false)
+	if err := InitSessionCookieSettings(); err != nil {
+		log.Fatal(err)
+	}
 	if os.Getenv("SQLITE_PATH") != "" {
 		SQLitePath = os.Getenv("SQLITE_PATH")
 	}

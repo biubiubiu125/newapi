@@ -2,12 +2,16 @@ package main
 
 import (
 	"bytes"
+	"context"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -174,7 +178,7 @@ func main() {
 		Path:     "/",
 		MaxAge:   2592000, // 30 days
 		HttpOnly: true,
-		Secure:   strings.EqualFold(strings.TrimSpace(os.Getenv("SESSION_COOKIE_SECURE")), "true"),
+		Secure:   common.SessionCookieSecure,
 		SameSite: http.SameSiteStrictMode,
 	})
 	server.Use(sessions.Sessions("session", store))
@@ -194,13 +198,35 @@ func main() {
 		port = strconv.Itoa(*common.Port)
 	}
 
-	// Log startup success message
+	srv := &http.Server{
+		Addr:    ":" + port,
+		Handler: server,
+	}
+
+	go func() {
+		if err := srv.ListenAndServe(); err != nil && !errors.Is(err, http.ErrServerClosed) {
+			common.FatalLog("failed to start HTTP server: " + err.Error())
+		}
+	}()
+
+	time.Sleep(100 * time.Millisecond)
 	common.LogStartupSuccess(startTime, port)
 
-	err = server.Run(":" + port)
-	if err != nil {
-		common.FatalLog("failed to start HTTP server: " + err.Error())
+	quit := make(chan os.Signal, 1)
+	signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+	sig := <-quit
+	common.SysLog(fmt.Sprintf("received signal: %v, shutting down...", sig))
+
+	shutdownTimeout := time.Duration(common.GetEnvOrDefault("SHUTDOWN_TIMEOUT_SECONDS", 120)) * time.Second
+	ctx, cancel := context.WithTimeout(context.Background(), shutdownTimeout)
+	defer cancel()
+	if err := srv.Shutdown(ctx); err != nil {
+		common.SysError(fmt.Sprintf("server forced to shutdown: %v", err))
 	}
+	if common.DataExportEnabled {
+		model.SaveQuotaDataCache()
+	}
+	common.SysLog("server exited")
 }
 
 func InjectUmamiAnalytics() {

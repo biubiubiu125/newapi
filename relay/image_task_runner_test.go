@@ -915,7 +915,7 @@ func TestPriceDataFromTaskRestoresFullBillingSnapshot(t *testing.T) {
 	require.Equal(t, 4.0, priceData.ImageRatio)
 	require.Equal(t, 5.0, priceData.AudioRatio)
 	require.Equal(t, 6.0, priceData.AudioCompletionRatio)
-	require.Equal(t, 2.0, priceData.OtherRatios["n"])
+	require.Equal(t, 2.0, priceData.OtherRatios()["n"])
 	require.True(t, priceData.UsePrice)
 }
 
