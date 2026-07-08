@@ -319,6 +319,9 @@ func migrateDB() error {
 	if err := migrateRiskCleanup(); err != nil {
 		return err
 	}
+	if err := ensureChannelOpenAIOrganizationColumn(); err != nil {
+		return err
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
@@ -449,8 +452,50 @@ func migrateRiskCleanup() error {
 	return nil
 }
 
+func ensureChannelOpenAIOrganizationColumn() error {
+	const (
+		tableName    = "channels"
+		columnName   = "openai_organization"
+		legacyColumn = "open_ai_organization"
+	)
+
+	if !DB.Migrator().HasTable(&Channel{}) {
+		return nil
+	}
+	if !DB.Migrator().HasColumn(&Channel{}, columnName) {
+		if err := DB.Migrator().AddColumn(&Channel{}, "OpenAIOrganization"); err != nil {
+			return fmt.Errorf("failed to add %s.%s column: %w", tableName, columnName, err)
+		}
+		common.SysLog(fmt.Sprintf("added %s.%s column", tableName, columnName))
+	}
+	if !DB.Migrator().HasColumn(&Channel{}, legacyColumn) {
+		return nil
+	}
+
+	result := DB.Exec(fmt.Sprintf(
+		"UPDATE %s SET %s = %s WHERE (%s IS NULL OR %s = '') AND %s IS NOT NULL AND %s <> ''",
+		tableName,
+		columnName,
+		legacyColumn,
+		columnName,
+		columnName,
+		legacyColumn,
+		legacyColumn,
+	))
+	if result.Error != nil {
+		return fmt.Errorf("failed to migrate %s.%s from %s: %w", tableName, columnName, legacyColumn, result.Error)
+	}
+	if result.RowsAffected > 0 {
+		common.SysLog(fmt.Sprintf("migrated %d channel openai organization values from %s to %s", result.RowsAffected, legacyColumn, columnName))
+	}
+	return nil
+}
+
 func migrateDBFast() error {
 	if err := migrateRiskCleanup(); err != nil {
+		return err
+	}
+	if err := ensureChannelOpenAIOrganizationColumn(); err != nil {
 		return err
 	}
 
