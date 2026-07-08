@@ -4,7 +4,9 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@douyinfe/semi-foundation": "2.99.2",
     "@douyinfe/semi-icons": "2.99.2",
+    "@douyinfe/semi-illustrations": "2.99.2",
     "@douyinfe/semi-theme-default": "2.99.2",
     "@douyinfe/semi-ui": "2.99.2",
     "@lobehub/icons": "1.95.0",
