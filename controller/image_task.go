@@ -166,7 +166,11 @@ func createImageTaskInternal(c *gin.Context, imageRequest *dto.ImageRequest, rel
 			imageN = *imageRequest.N
 		}
 		priceData.AddOtherRatio("n", float64(imageN))
-		priceData.QuotaToPreConsume = int(float64(priceData.QuotaToPreConsume) * float64(imageN))
+		quotaToPreConsume, clamp := common.QuotaFromFloatChecked(float64(priceData.QuotaToPreConsume) * float64(imageN))
+		priceData.QuotaToPreConsume = quotaToPreConsume
+		if clamp != nil {
+			relayInfo.QuotaClamp = clamp
+		}
 		relayInfo.PriceData = priceData
 	}
 

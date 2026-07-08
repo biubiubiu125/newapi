@@ -44,10 +44,16 @@ export async function getRedemptions(
 export async function searchRedemptions(
   params: SearchRedemptionsParams
 ): Promise<GetRedemptionsResponse> {
-  const { keyword = '', p = 1, page_size = 10 } = params
-  const res = await api.get(
-    `/api/redemption/search?keyword=${encodeURIComponent(keyword)}&p=${p}&page_size=${page_size}`
-  )
+  const { keyword = '', status = '', p = 1, page_size = 10 } = params
+  const searchParams = new URLSearchParams({
+    keyword,
+    p: String(p),
+    page_size: String(page_size),
+  })
+  if (status) {
+    searchParams.set('status', status)
+  }
+  const res = await api.get(`/api/redemption/search?${searchParams}`)
   return res.data
 }
 

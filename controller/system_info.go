@@ -43,7 +43,10 @@ func DeleteStaleSystemInstances(c *gin.Context) {
 }
 
 func DeleteStaleSystemInstance(c *gin.Context) {
-	nodeName := c.Param("node_name")
+	nodeName := c.Query("node_name")
+	if strings.TrimSpace(nodeName) == "" {
+		nodeName = c.Param("node_name")
+	}
 	if strings.TrimSpace(nodeName) == "" {
 		common.ApiErrorMsg(c, "node name is required")
 		return

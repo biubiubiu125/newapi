@@ -16,11 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useMemo, useState } from 'react'
-import { Plus } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { Plus, RotateCcw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { Button } from '@/components/ui/button'
+import { Switch } from '@/components/ui/switch'
 import {
   Select,
   SelectContent,
@@ -59,6 +60,7 @@ import {
   getAdminPlans,
   getUserSubscriptions,
   invalidateUserSubscription,
+  resetUserSubscriptionsByPlan,
 } from '../../api'
 import { formatTimestamp, splitGroupList } from '../../lib'
 import type { PlanRecord, UserSubscriptionRecord } from '../../types'
@@ -111,10 +113,21 @@ export function UserSubscriptionsDialog(props: Props) {
   const [plans, setPlans] = useState<PlanRecord[]>([])
   const [subs, setSubs] = useState<UserSubscriptionRecord[]>([])
   const [selectedPlanId, setSelectedPlanId] = useState<string>('')
-  const [confirmAction, setConfirmAction] = useState<{
-    type: 'invalidate' | 'delete'
-    subId: number
-  } | null>(null)
+  const [advanceResetTime, setAdvanceResetTime] = useState(true)
+  const [confirming, setConfirming] = useState(false)
+  const confirmingRef = useRef(false)
+  const [confirmAction, setConfirmAction] = useState<
+    | {
+        type: 'invalidate' | 'delete'
+        subId: number
+      }
+    | {
+        type: 'reset'
+        subId: number
+        planId: number
+      }
+    | null
+  >(null)
 
   const planTitleMap = useMemo(() => {
     const map = new Map<number, string>()
@@ -123,6 +136,10 @@ export function UserSubscriptionsDialog(props: Props) {
     })
     return map
   }, [plans])
+  const confirmPlanLabel =
+    confirmAction?.type === 'reset'
+      ? planTitleMap.get(confirmAction.planId) || `#${confirmAction.planId}`
+      : ''
 
   const loadData = useCallback(async () => {
     if (!props.user?.id) return
@@ -172,12 +189,29 @@ export function UserSubscriptionsDialog(props: Props) {
   }
 
   const handleConfirmAction = async () => {
-    if (!confirmAction) return
+    if (!confirmAction || confirmingRef.current) return
+    confirmingRef.current = true
+    setConfirming(true)
     try {
       if (confirmAction.type === 'invalidate') {
         const res = await invalidateUserSubscription(confirmAction.subId)
         if (res.success) {
           toast.success(res.data?.message || t('Has been invalidated'))
+          await loadData()
+          props.onSuccess?.()
+        }
+      } else if (confirmAction.type === 'reset') {
+        if (!props.user?.id) return
+        const res = await resetUserSubscriptionsByPlan(props.user.id, {
+          plan_id: confirmAction.planId,
+          advance_reset_time: advanceResetTime,
+        })
+        if (res.success) {
+          toast.success(
+            t('Reset {{count}} active subscriptions', {
+              count: res.data?.reset_count || 0,
+            })
+          )
           await loadData()
           props.onSuccess?.()
         }
@@ -192,6 +226,8 @@ export function UserSubscriptionsDialog(props: Props) {
     } catch {
       toast.error(t('Operation failed'))
     } finally {
+      confirmingRef.current = false
+      setConfirming(false)
       setConfirmAction(null)
     }
   }
@@ -338,6 +374,22 @@ export function UserSubscriptionsDialog(props: Props) {
                                 size='sm'
                                 variant='outline'
                                 disabled={!isActive}
+                                onClick={() => {
+                                  setAdvanceResetTime(true)
+                                  setConfirmAction({
+                                    type: 'reset',
+                                    subId: sub.id,
+                                    planId: sub.plan_id,
+                                  })
+                                }}
+                              >
+                                <RotateCcw className='mr-1 h-3.5 w-3.5' />
+                                {t('Reset')}
+                              </Button>
+                              <Button
+                                size='sm'
+                                variant='outline'
+                                disabled={!isActive}
                                 onClick={() =>
                                   setConfirmAction({
                                     type: 'invalidate',
@@ -375,10 +427,14 @@ export function UserSubscriptionsDialog(props: Props) {
       {confirmAction && (
         <ConfirmDialog
           open
-          onOpenChange={(v) => !v && setConfirmAction(null)}
+          onOpenChange={(v) =>
+            !v && !confirmingRef.current && setConfirmAction(null)
+          }
           title={
             confirmAction.type === 'invalidate'
               ? t('Confirm invalidate')
+              : confirmAction.type === 'reset'
+                ? t('Reset subscription quota')
               : t('Confirm delete')
           }
           desc={
@@ -386,13 +442,32 @@ export function UserSubscriptionsDialog(props: Props) {
               ? t(
                   'After invalidating, this subscription will be immediately deactivated. Historical records are not affected. Continue?'
                 )
+              : confirmAction.type === 'reset'
+                ? t('Reset active {{plan}} subscriptions for this user?', {
+                    plan: confirmPlanLabel,
+                  })
               : t(
                   'Deleting will permanently remove this subscription record (including benefit details). Continue?'
                 )
           }
+          confirmText={
+            confirmAction.type === 'reset' ? t('Reset quota') : undefined
+          }
           handleConfirm={handleConfirmAction}
           destructive={confirmAction.type === 'delete'}
-        />
+          isLoading={confirming}
+        >
+          {confirmAction.type === 'reset' && (
+            <label className='flex items-center justify-between gap-3 rounded-md border px-3 py-2 text-sm'>
+              <span>{t('Advance next reset time')}</span>
+              <Switch
+                checked={advanceResetTime}
+                onCheckedChange={(checked) => setAdvanceResetTime(!!checked)}
+                aria-label={t('Advance next reset time')}
+              />
+            </label>
+          )}
+        </ConfirmDialog>
       )}
     </>
   )

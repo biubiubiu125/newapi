@@ -16,10 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useQuery } from '@tanstack/react-query'
-import { AlertTriangle, RefreshCw, ServerCog } from 'lucide-react'
+import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { AlertTriangle, RefreshCw, ServerCog, Trash2 } from 'lucide-react'
 import type { ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 import { formatTimestampRelative, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 import { ErrorState } from '@/components/error-state'
@@ -48,7 +49,11 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { listSystemInstances } from '../api'
+import {
+  deleteStaleSystemInstance,
+  deleteStaleSystemInstances,
+  listSystemInstances,
+} from '../api'
 import type { SystemInstance, SystemInstanceStatus } from '../types'
 
 const INSTANCE_POLL_INTERVAL_MS = 30_000
@@ -207,6 +212,9 @@ function ResourceCell(props: ResourceCellProps) {
 
 type SystemInstancesTableProps = {
   instances: SystemInstance[]
+  deleteDisabled?: boolean
+  deletingNodeName?: string
+  onDeleteStaleInstance: (nodeName: string) => void
 }
 
 function SystemInstancesList(props: SystemInstancesTableProps) {
@@ -214,7 +222,7 @@ function SystemInstancesList(props: SystemInstancesTableProps) {
 
   return (
     <div className='overflow-x-auto rounded-md border'>
-      <Table className='min-w-[1140px]'>
+      <Table className='min-w-[1220px]'>
         <TableHeader>
           <TableRow className='bg-muted/40 hover:bg-muted/40'>
             <TableHead className='h-9 min-w-[240px] px-4 text-xs'>
@@ -240,6 +248,9 @@ function SystemInstancesList(props: SystemInstancesTableProps) {
             </TableHead>
             <TableHead className='h-9 w-[170px] pr-4 text-xs'>
               {t('Last Seen')}
+            </TableHead>
+            <TableHead className='h-9 w-[80px] pr-4 text-right text-xs'>
+              {t('Actions')}
             </TableHead>
           </TableRow>
         </TableHeader>
@@ -397,8 +408,7 @@ function SystemInstancesList(props: SystemInstancesTableProps) {
                 <TableCell className='text-muted-foreground py-2.5 text-xs whitespace-nowrap align-middle'>
                   {formatTimestampToDate(instance.started_at)}
                 </TableCell>
-                <TableCell
-                  className='text-muted-foreground py-2.5 pr-4 text-xs whitespace-nowrap align-middle'
+                <TableCell className='text-muted-foreground py-2.5 text-xs whitespace-nowrap align-middle'
                   title={formatTimestampToDate(instance.last_seen_at)}
                 >
                   {formatTimestampRelative(
@@ -406,6 +416,38 @@ function SystemInstancesList(props: SystemInstancesTableProps) {
                     'seconds',
                     i18n.language
                   )}
+                </TableCell>
+                <TableCell className='py-2.5 pr-4 text-right align-middle'>
+                  <TooltipProvider delay={100}>
+                    <Tooltip>
+                      <TooltipTrigger
+                        render={
+                          <Button
+                            type='button'
+                            variant='ghost'
+                            size='icon-sm'
+                            disabled={
+                              instance.status !== 'stale' ||
+                              props.deleteDisabled ||
+                              props.deletingNodeName === instance.node_name
+                            }
+                            onClick={() =>
+                              props.onDeleteStaleInstance(instance.node_name)
+                            }
+                            aria-label={t('Delete stale instance')}
+                            className='text-destructive hover:text-destructive'
+                          />
+                        }
+                      >
+                        <Trash2 className='size-3.5' aria-hidden='true' />
+                      </TooltipTrigger>
+                      <TooltipContent>
+                        {instance.status === 'stale'
+                          ? t('Delete stale instance')
+                          : t('Only stale instances can be deleted')}
+                      </TooltipContent>
+                    </Tooltip>
+                  </TooltipProvider>
                 </TableCell>
               </TableRow>
             )
@@ -418,6 +460,7 @@ function SystemInstancesList(props: SystemInstancesTableProps) {
 
 export function SystemInstancesPanel() {
   const { t } = useTranslation()
+  const queryClient = useQueryClient()
   const instancesQuery = useQuery({
     queryKey: ['system-info', 'instances'],
     queryFn: async () => {
@@ -435,6 +478,45 @@ export function SystemInstancesPanel() {
   const instances = instancesQuery.data ?? []
   const loading = instancesQuery.isLoading
   const refreshing = instancesQuery.isFetching && !instancesQuery.isLoading
+  const staleInstancesCount = instances.filter(
+    (instance) => instance.status === 'stale'
+  ).length
+  const invalidateInstances = () =>
+    queryClient.invalidateQueries({ queryKey: ['system-info', 'instances'] })
+  const deleteAllMutation = useMutation({
+    mutationFn: deleteStaleSystemInstances,
+    onSuccess: (res) => {
+      if (!res.success) {
+        toast.error(res.message || t('Delete failed'))
+        void invalidateInstances()
+        return
+      }
+      toast.success(
+        t('Deleted {{count}} stale instance(s)', {
+          count: res.data?.deleted_count ?? 0,
+        })
+      )
+      void invalidateInstances()
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : t('Delete failed'))
+    },
+  })
+  const deleteOneMutation = useMutation({
+    mutationFn: deleteStaleSystemInstance,
+    onSuccess: (res) => {
+      if (!res.success) {
+        toast.error(res.message || t('Delete failed'))
+        void invalidateInstances()
+        return
+      }
+      toast.success(t('Deleted stale instance'))
+      void invalidateInstances()
+    },
+    onError: (error) => {
+      toast.error(error instanceof Error ? error.message : t('Delete failed'))
+    },
+  })
 
   return (
     <section className='bg-card overflow-hidden rounded-lg border shadow-xs'>
@@ -460,6 +542,27 @@ export function SystemInstancesPanel() {
               seconds: INSTANCE_POLL_INTERVAL_MS / 1000,
             })}
           </span>
+          <Button
+            type='button'
+            variant='outline'
+            size='sm'
+            onClick={() => deleteAllMutation.mutate()}
+            disabled={
+              staleInstancesCount === 0 ||
+              deleteAllMutation.isPending ||
+              deleteOneMutation.isPending
+            }
+            aria-label={t('Delete stale instances')}
+          >
+            <Trash2
+              data-icon='inline-start'
+              className='size-3.5'
+              aria-hidden='true'
+            />
+            {deleteAllMutation.isPending
+              ? t('Deleting...')
+              : t('Delete stale')}
+          </Button>
           <Button
             type='button'
             variant='outline'
@@ -512,7 +615,20 @@ export function SystemInstancesPanel() {
           </div>
         ) : (
           <div className='p-4 sm:p-5'>
-            <SystemInstancesList instances={instances} />
+            <SystemInstancesList
+              instances={instances}
+              deleteDisabled={
+                deleteAllMutation.isPending || deleteOneMutation.isPending
+              }
+              deletingNodeName={
+                deleteOneMutation.isPending
+                  ? deleteOneMutation.variables
+                  : undefined
+              }
+              onDeleteStaleInstance={(nodeName) =>
+                deleteOneMutation.mutate(nodeName)
+              }
+            />
           </div>
         )}
       </div>

@@ -112,6 +112,8 @@ func SearchRedemptions(keyword string, status string, startIdx int, num int) (re
 		query = query.Where("redemptions.status = ?", common.RedemptionCodeStatusEnabled)
 	case "disabled", strconv.Itoa(common.RedemptionCodeStatusDisabled):
 		query = query.Where("redemptions.status = ?", common.RedemptionCodeStatusDisabled)
+	case "expired":
+		query = query.Where("redemptions.status = ? AND redemptions.expired_time > 0 AND redemptions.expired_time < ?", common.RedemptionCodeStatusEnabled, common.GetTimestamp())
 	}
 
 	// Get total count
