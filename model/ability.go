@@ -7,6 +7,8 @@ import (
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 
 	"github.com/samber/lo"
 	"gorm.io/gorm"
@@ -125,10 +127,10 @@ func getChannelQueryWithExclude(group string, model string, retry int, excludeCh
 }
 
 func GetChannel(group string, model string, retry int) (*Channel, error) {
-	return GetChannelWithExclude(group, model, retry, nil)
+	return GetChannelWithExclude(group, model, retry, nil, "")
 }
 
-func GetChannelWithExclude(group string, model string, retry int, excludeChannelIds []int) (*Channel, error) {
+func GetChannelWithExclude(group string, model string, retry int, excludeChannelIds []int, requestPath string) (*Channel, error) {
 	var abilities []Ability
 
 	var err error = nil
@@ -148,6 +150,10 @@ func GetChannelWithExclude(group string, model string, retry int, excludeChannel
 		return nil, err
 	}
 	if len(abilities) == 0 && len(excludeChannelIds) > 0 {
+		return nil, nil
+	}
+	abilities = filterAbilitiesByRequestPathAndModel(abilities, requestPath, model)
+	if len(abilities) == 0 {
 		return nil, nil
 	}
 	channel := Channel{}
@@ -172,6 +178,53 @@ func GetChannelWithExclude(group string, model string, retry int, excludeChannel
 	}
 	err = DB.First(&channel, "id = ?", channel.Id).Error
 	return &channel, err
+}
+
+// filterAbilitiesByRequestPathAndModel restricts candidates by request path and
+// model for the DB (non-memory-cache) selection path. Only Advanced Custom
+// (type 58) channels are path-checked: kept only when one of their routes matches
+// requestPath and model; all other channel types always pass. When requestPath is
+// empty, filtering is skipped.
+func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath string, model string) []Ability {
+	if requestPath == "" || len(abilities) == 0 {
+		return abilities
+	}
+
+	channelIds := make([]int, 0, len(abilities))
+	seen := make(map[int]struct{}, len(abilities))
+	for _, ability := range abilities {
+		if _, ok := seen[ability.ChannelId]; ok {
+			continue
+		}
+		seen[ability.ChannelId] = struct{}{}
+		channelIds = append(channelIds, ability.ChannelId)
+	}
+
+	var channels []*Channel
+	if err := DB.Where("id IN ?", channelIds).Find(&channels).Error; err != nil {
+		// On error, fall back to unfiltered candidates to avoid blocking selection
+		return abilities
+	}
+
+	advancedConfigs := make(map[int]*dto.AdvancedCustomConfig)
+	for _, channel := range channels {
+		if channel.Type == constant.ChannelTypeAdvancedCustom {
+			advancedConfigs[channel.Id] = channel.GetOtherSettings().AdvancedCustom
+		}
+	}
+
+	filtered := make([]Ability, 0, len(abilities))
+	for _, ability := range abilities {
+		config, isAdvancedCustom := advancedConfigs[ability.ChannelId]
+		if !isAdvancedCustom {
+			filtered = append(filtered, ability)
+			continue
+		}
+		if config != nil && config.SupportsPathForModel(requestPath, model) {
+			filtered = append(filtered, ability)
+		}
+	}
+	return filtered
 }
 
 func (channel *Channel) AddAbilities(tx *gorm.DB) error {

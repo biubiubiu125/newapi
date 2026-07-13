@@ -102,6 +102,9 @@ docs/                        项目文档
 - 保留并使用 `model/main.go` 中已有的 `commonGroupCol`、`commonKeyCol`、`commonTrueVal`、`commonFalseVal` 等跨数据库辅助变量。
 - SQLite 不支持的 `ALTER COLUMN` 不能直接使用；迁移优先采用项目里已有的加列和兼容迁移模式。
 - 新增索引、唯一约束、迁移、事务和锁时，必须确认三种数据库均可执行。
+- `model/` 中用 GORM 查询方法构造的标准 `SELECT ... FOR UPDATE` 行锁必须使用 `lockForUpdate(tx)`；不要再用 GORM v1 的 `tx.Set("gorm:query_option", "FOR UPDATE")`，也不要在调用点重复写 `clause.Locking{Strength: "UPDATE"}`。该辅助方法会在 MySQL/PostgreSQL 输出 `FOR UPDATE`，在 SQLite 下跳过不支持的语法。
+- 如果确实需要 MySQL next-key/gap lock 等方言专属锁语义，只能在明确数据库类型分支中使用原生 SQL，并为所有支持数据库提供有效兜底。
+- 避免使用 `gorm:"default:true"` 这类布尔默认值标签表达业务默认值；MySQL 和 PostgreSQL 对布尔默认值归一化不同，可能导致 `AutoMigrate` 每次重启重复执行 `ALTER TABLE`。优先在请求归一化、模型 hook、构造函数或服务逻辑中设置默认值。
 
 ### 规则 3：前端优先使用 Bun
 

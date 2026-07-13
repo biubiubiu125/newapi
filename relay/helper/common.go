@@ -127,12 +127,14 @@ func ClaudeChunkData(c *gin.Context, resp dto.ClaudeResponse, data string) {
 	}
 }
 
-func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) {
+func ResponseChunkData(c *gin.Context, resp dto.ResponsesStreamResponse, data string) error {
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("event: %s\n", resp.Type)})
 	c.Render(-1, common.CustomEvent{Data: fmt.Sprintf("data: %s", data)})
-	if err := FlushWriter(c); err == nil {
-		markClientStreamWrite(c)
+	if err := FlushWriter(c); err != nil {
+		return err
 	}
+	markClientStreamWrite(c)
+	return nil
 }
 
 func StringData(c *gin.Context, str string) error {

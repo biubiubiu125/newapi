@@ -51,6 +51,7 @@ import {
 
 type DynamicPricingBreakdownProps = {
   billingExpr: string | null | undefined
+  compact?: boolean
   /**
    * Label of the tier that fired for the current request. When provided,
    * the corresponding row is highlighted and tagged as "Matched". Used by

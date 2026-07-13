@@ -16,12 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { memo, useState } from 'react'
 import { Megaphone } from 'lucide-react'
+import { memo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { getAnnouncementColorClass } from '@/lib/colors'
-import { formatDateTimeObject } from '@/lib/time'
-import { cn } from '@/lib/utils'
+
+import { IconBadge } from '@/components/ui/icon-badge'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { useAnnouncements } from '@/features/dashboard/hooks/use-status-data'
 import { getPreviewText } from '@/features/dashboard/lib'
@@ -29,6 +28,10 @@ import type {
   AnnouncementItem,
   AnnouncementObject,
 } from '@/features/dashboard/types'
+import { getAnnouncementColorClass } from '@/lib/colors'
+import { formatDateTimeObject } from '@/lib/time'
+import { cn } from '@/lib/utils'
+
 import { PanelWrapper } from '../ui/panel-wrapper'
 import { AnnouncementDetailModal } from './announcement-detail-dialog'
 
@@ -45,7 +48,7 @@ const AnnouncementStatusDot = memo(function AnnouncementStatusDot(props: {
   )
 })
 
-function normalizeAnnouncement(item: AnnouncementItem): AnnouncementObject {
+function normalizeAnnouncementItem(item: AnnouncementItem): AnnouncementObject {
   return typeof item === 'string' ? { content: item } : item
 }
 
@@ -61,18 +64,13 @@ export function AnnouncementsPanel() {
     setIsDialogOpen(true)
   }
 
-  const announcementTitle = (item: AnnouncementItem) => {
-    const normalized = normalizeAnnouncement(item)
-    const title = normalized.title?.trim()
-    if (title) return title
-    return getPreviewText(normalized.content)
-  }
-
   return (
     <PanelWrapper
       title={
         <span className='flex items-center gap-2'>
-          <Megaphone className='text-muted-foreground/60 size-4' />
+          <IconBadge tone='warning' size='sm'>
+            <Megaphone />
+          </IconBadge>
           {t('Announcements')}
         </span>
       }
@@ -85,34 +83,29 @@ export function AnnouncementsPanel() {
     >
       <ScrollArea className='h-72'>
         <div>
-          {list.map((item: AnnouncementItem, idx: number) => {
-            const normalized = normalizeAnnouncement(item)
-            const key = normalized.id ?? `announcement-${idx}`
+          {list.map((rawItem: AnnouncementItem, idx: number) => {
+            const item = normalizeAnnouncementItem(rawItem)
+            const key = item.id ?? `announcement-${idx}`
             return (
               <button
                 key={key}
                 type='button'
-                onClick={() => handleAnnouncementClick(normalized)}
+                onClick={() => handleAnnouncementClick(item)}
                 className={cn(
                   'group hover:bg-muted/40 w-full px-3 py-3 text-left transition-colors sm:px-5 sm:py-3.5',
                   idx < list.length - 1 && 'border-border/60 border-b'
                 )}
               >
                 <div className='flex items-start gap-2.5'>
-                  <AnnouncementStatusDot type={normalized.type} />
+                  <AnnouncementStatusDot type={item.type} />
                   <div className='flex min-w-0 flex-1 flex-col gap-1'>
                     <p className='line-clamp-1 text-sm font-medium'>
-                      {announcementTitle(item)}
+                      {getPreviewText(item.content)}
                     </p>
-                    {normalized.title ? (
-                      <p className='text-muted-foreground line-clamp-1 text-xs'>
-                        {getPreviewText(normalized.content)}
-                      </p>
-                    ) : null}
                     <div className='flex items-center justify-between'>
-                      {normalized.publishDate && (
+                      {item.publishDate && (
                         <time className='text-muted-foreground/60 text-xs'>
-                          {formatDateTimeObject(new Date(normalized.publishDate))}
+                          {formatDateTimeObject(new Date(item.publishDate))}
                         </time>
                       )}
                       <span className='text-muted-foreground/40 text-xs opacity-0 transition-opacity group-hover:opacity-100'>

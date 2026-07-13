@@ -279,6 +279,12 @@ export interface UserWalletData {
   request_count: number
   /** User group */
   group: string
+  /** Pending affiliate reward quota */
+  aff_quota?: number
+  /** Historical affiliate reward quota */
+  aff_history_quota?: number
+  /** Number of referred users */
+  aff_count?: number
 }
 
 /**

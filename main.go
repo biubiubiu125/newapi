@@ -89,6 +89,10 @@ func main() {
 		go model.SyncChannelCache(common.SyncFrequency)
 	}
 
+	// Warm pricing after channel cache initialization so Advanced Custom
+	// endpoint inference can read cached route settings on first request.
+	model.GetPricing()
+
 	// 热更新配置
 	go model.SyncOptions(common.SyncFrequency)
 	go authz.StartPolicySync(common.SyncFrequency)
@@ -315,9 +319,6 @@ func InitResources() error {
 
 	// 清理旧的磁盘缓存文件
 	common.CleanupOldCacheFiles()
-
-	// 初始化模型
-	model.GetPricing()
 
 	// Initialize SQL Database
 	err = model.InitLogDB()
