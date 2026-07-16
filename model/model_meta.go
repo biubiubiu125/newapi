@@ -54,15 +54,36 @@ func (mi *Model) Insert() error {
 	originalSyncOfficial := mi.SyncOfficial
 
 	// 先创建记录（GORM 会对零值字段应用默认值）
-	if err := DB.Create(mi).Error; err != nil {
-		return err
-	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(mi).Error; err != nil {
+			return err
+		}
 
-	// 使用保存的原始值进行更新，确保零值能正确保存
-	return DB.Model(&Model{}).Where("id = ?", mi.Id).Updates(map[string]interface{}{
-		"status":        originalStatus,
-		"sync_official": originalSyncOfficial,
-	}).Error
+		// 使用保存的原始值进行更新，确保零值能正确保存
+		return tx.Model(&Model{}).Where("id = ?", mi.Id).Updates(map[string]interface{}{
+			"status":        originalStatus,
+			"sync_official": originalSyncOfficial,
+		}).Error
+	})
+}
+
+func (mi *Model) InsertWithDB(db *gorm.DB) error {
+	now := common.GetTimestamp()
+	mi.CreatedTime = now
+	mi.UpdatedTime = now
+
+	originalStatus := mi.Status
+	originalSyncOfficial := mi.SyncOfficial
+
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(mi).Error; err != nil {
+			return err
+		}
+		return tx.Model(&Model{}).Where("id = ?", mi.Id).Updates(map[string]interface{}{
+			"status":        originalStatus,
+			"sync_official": originalSyncOfficial,
+		}).Error
+	})
 }
 
 func IsModelNameDuplicated(id int, name string) (bool, error) {

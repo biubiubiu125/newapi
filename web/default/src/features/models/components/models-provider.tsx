@@ -59,6 +59,8 @@ type ModelsContextType = {
   ) => void
   upstreamConflicts: SyncDiffData['conflicts']
   setUpstreamConflicts: (conflicts: SyncDiffData['conflicts']) => void
+  upstreamMissing: string[]
+  setUpstreamMissing: (missing: string[]) => void
   syncWizardOptions: { locale: SyncLocale; source: SyncSource }
   setSyncWizardOptions: React.Dispatch<
     React.SetStateAction<{ locale: SyncLocale; source: SyncSource }>
@@ -73,11 +75,26 @@ type ModelsContextType = {
 
 const ModelsContext = createContext<ModelsContextType | undefined>(undefined)
 
+type ModelsProviderProps = {
+  children: React.ReactNode
+  initialUpstreamConflicts?: SyncDiffData['conflicts']
+  initialUpstreamMissing?: string[]
+  initialSyncWizardOptions?: { locale: SyncLocale; source: SyncSource }
+}
+
 // ============================================================================
 // Provider
 // ============================================================================
 
-export function ModelsProvider({ children }: { children: React.ReactNode }) {
+export function ModelsProvider({
+  children,
+  initialUpstreamConflicts = [],
+  initialUpstreamMissing = [],
+  initialSyncWizardOptions = {
+    locale: 'zh',
+    source: 'official',
+  },
+}: ModelsProviderProps) {
   const [open, setOpen] = useState<DialogType>(null)
   const [currentRow, setCurrentRow] = useState<Model | null>(null)
   const [currentVendor, setCurrentVendor] = useState<Vendor | null>(null)
@@ -88,14 +105,14 @@ export function ModelsProvider({ children }: { children: React.ReactNode }) {
   } | null>(null)
   const [upstreamConflicts, setUpstreamConflicts] = useState<
     SyncDiffData['conflicts']
-  >([])
+  >(initialUpstreamConflicts)
+  const [upstreamMissing, setUpstreamMissing] = useState<string[]>(
+    initialUpstreamMissing
+  )
   const [syncWizardOptions, setSyncWizardOptions] = useState<{
     locale: SyncLocale
     source: SyncSource
-  }>({
-    locale: 'zh',
-    source: 'official',
-  })
+  }>(initialSyncWizardOptions)
   const [tabCategory, setTabCategory] = useState<ModelTabCategory>('metadata')
 
   return (
@@ -113,6 +130,8 @@ export function ModelsProvider({ children }: { children: React.ReactNode }) {
         setDescriptionData,
         upstreamConflicts,
         setUpstreamConflicts,
+        upstreamMissing,
+        setUpstreamMissing,
         syncWizardOptions,
         setSyncWizardOptions,
         tabCategory,

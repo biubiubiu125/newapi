@@ -32,6 +32,7 @@ import { MousePointerClick } from 'lucide-react';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import { MODEL_TABLE_PAGE_SIZE } from '../../../../constants';
 import { IconSearch } from '@douyinfe/semi-icons';
+import { buildUpstreamConflictSubmitPayload } from '../../../../helpers/modelSyncPreview';
 
 const { Text } = Typography;
 
@@ -39,6 +40,7 @@ const FIELD_LABELS = {
   description: '描述',
   icon: '图标',
   tags: '标签',
+  endpoints: '端点',
   vendor: '供应商',
   name_rule: '命名规则',
   status: '状态',
@@ -52,11 +54,14 @@ const UpstreamConflictModal = ({
   onSubmit,
   t,
   loading = false,
+  missing = [],
 }) => {
   const [selections, setSelections] = useState({});
+  const [syncMissing, setSyncMissing] = useState(false);
   const isMobile = useIsMobile();
   const [currentPage, setCurrentPage] = useState(1);
   const [searchKeyword, setSearchKeyword] = useState('');
+  const missingCount = Array.isArray(missing) ? missing.length : 0;
 
   const formatValue = (v) => {
     if (v === null || v === undefined) return '-';
@@ -75,12 +80,14 @@ const UpstreamConflictModal = ({
         init[item.model_name] = new Set();
       });
       setSelections(init);
+      setSyncMissing(missingCount > 0);
       setCurrentPage(1);
       setSearchKeyword('');
     } else {
       setSelections({});
+      setSyncMissing(false);
     }
-  }, [visible, conflicts]);
+  }, [visible, conflicts, missingCount]);
 
   const toggleField = useCallback((modelName, field, checked) => {
     setSelections((prev) => {
@@ -250,15 +257,17 @@ const UpstreamConflictModal = ({
     return filteredDataSource.slice(start, end);
   }, [filteredDataSource, currentPage]);
 
-  const handleOk = async () => {
-    const payload = Object.entries(selections)
-      .map(([modelName, set]) => ({
-        model_name: modelName,
-        fields: Array.from(set || []),
-      }))
-      .filter((x) => x.fields.length > 0);
+  const submitPayload = useMemo(
+    () => buildUpstreamConflictSubmitPayload(selections, syncMissing, missing),
+    [selections, syncMissing, missing],
+  );
 
-    const ok = await onSubmit?.(payload);
+  const handleOk = async () => {
+    if (!submitPayload) {
+      return;
+    }
+
+    const ok = await onSubmit?.(submitPayload);
     if (ok) onClose?.();
   };
 
@@ -271,6 +280,7 @@ const UpstreamConflictModal = ({
       confirmLoading={loading}
       okText={t('应用覆盖')}
       cancelText={t('取消')}
+      okButtonProps={{ disabled: !submitPayload }}
       width={isMobile ? '100%' : 1000}
     >
       {dataSource.length === 0 ? (
@@ -280,6 +290,16 @@ const UpstreamConflictModal = ({
           <div className='mb-3 text-[var(--semi-color-text-2)]'>
             {t('仅会覆盖你勾选的字段，未勾选的字段保持本地不变。')}
           </div>
+          {missingCount > 0 && (
+            <div className='mb-3'>
+              <Checkbox
+                checked={syncMissing}
+                onChange={(e) => setSyncMissing(e?.target?.checked)}
+              >
+                {t('同时新增 {{count}} 个缺失模型', { count: missingCount })}
+              </Checkbox>
+            </div>
+          )}
           {/* 搜索框 */}
           <div className='flex items-center justify-end gap-2 w-full mb-4'>
             <Input

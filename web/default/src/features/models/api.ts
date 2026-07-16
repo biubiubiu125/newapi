@@ -34,6 +34,7 @@ import type {
   SyncLocale,
   SyncSource,
   SyncOverwritePayload,
+  SyncUpstreamParams,
   DeploymentSettingsResponse,
   ListDeploymentsResponse,
 } from './types'
@@ -185,11 +186,9 @@ export async function deleteVendor(
 /**
  * Sync upstream models (missing only or with overwrite)
  */
-export async function syncUpstream(params?: {
-  locale?: SyncLocale
-  source?: SyncSource
-  overwrite?: SyncOverwritePayload[]
-}): Promise<SyncUpstreamResponse> {
+export async function syncUpstream(
+  params?: SyncUpstreamParams
+): Promise<SyncUpstreamResponse> {
   const res = await api.post('/api/models/sync_upstream', params)
   return res.data
 }
@@ -219,11 +218,9 @@ export async function previewUpstreamDiff(params?: {
 /**
  * Apply upstream overwrite
  */
-export async function applyUpstreamOverwrite(params: {
-  overwrite: SyncOverwritePayload[]
-  locale?: SyncLocale
-  source?: SyncSource
-}): Promise<SyncUpstreamResponse> {
+export async function applyUpstreamOverwrite(
+  params: SyncUpstreamParams & { overwrite: SyncOverwritePayload[] }
+): Promise<SyncUpstreamResponse> {
   return syncUpstream(params)
 }
 

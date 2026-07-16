@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -56,10 +57,23 @@ func GetVendorMeta(c *gin.Context) {
 
 // CreateVendorMeta 新建供应商
 func CreateVendorMeta(c *gin.Context) {
+	var raw map[string]json.RawMessage
 	var v model.Vendor
-	if err := c.ShouldBindJSON(&v); err != nil {
+	if err := c.ShouldBindJSON(&raw); err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	buf, err := json.Marshal(raw)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := json.Unmarshal(buf, &v); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if _, ok := raw["status"]; !ok {
+		v.Status = 1
 	}
 	if v.Name == "" {
 		common.ApiErrorMsg(c, "供应商名称不能为空")

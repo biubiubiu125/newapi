@@ -64,47 +64,117 @@ var (
 )
 
 func GetPricing() []Pricing {
-	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		updatePricingLock.Lock()
-		defer updatePricingLock.Unlock()
-		// Double check after acquiring the lock
-		if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-			modelSupportEndpointsLock.Lock()
-			defer modelSupportEndpointsLock.Unlock()
-			updatePricing()
-		}
+	modelSupportEndpointsLock.RLock()
+	if !pricingCacheExpiredLocked() {
+		snapshot := clonePricingList(pricingMap)
+		modelSupportEndpointsLock.RUnlock()
+		return snapshot
 	}
-	return pricingMap
+	modelSupportEndpointsLock.RUnlock()
+
+	updatePricingLock.Lock()
+	modelSupportEndpointsLock.Lock()
+	// Double check after acquiring the lock.
+	if pricingCacheExpiredLocked() {
+		updatePricing()
+	}
+	snapshot := clonePricingList(pricingMap)
+	modelSupportEndpointsLock.Unlock()
+	updatePricingLock.Unlock()
+	return snapshot
 }
 
 func InvalidatePricingCache() {
 	updatePricingLock.Lock()
 	defer updatePricingLock.Unlock()
+	modelSupportEndpointsLock.Lock()
+	defer modelSupportEndpointsLock.Unlock()
 
 	pricingMap = nil
 	vendorsList = nil
+	modelSupportEndpointTypes = make(map[string][]constant.EndpointType)
+	supportedEndpointMap = nil
 	lastGetPricingTime = time.Time{}
 }
 
 // GetVendors 返回当前定价接口使用到的供应商信息
 func GetVendors() []PricingVendor {
-	if time.Since(lastGetPricingTime) > time.Minute*1 || len(pricingMap) == 0 {
-		// 保证先刷新一次
+	modelSupportEndpointsLock.RLock()
+	expired := pricingCacheExpiredLocked()
+	if !expired {
+		snapshot := clonePricingVendors(vendorsList)
+		modelSupportEndpointsLock.RUnlock()
+		return snapshot
+	}
+	modelSupportEndpointsLock.RUnlock()
+
+	// 保证先刷新一次；刷新后即使结果为空也返回当前快照，避免空能力或刷新失败时循环阻塞接口。
+	GetPricing()
+
+	modelSupportEndpointsLock.RLock()
+	defer modelSupportEndpointsLock.RUnlock()
+	return clonePricingVendors(vendorsList)
+}
+
+func ensurePricingCacheFresh() {
+	modelSupportEndpointsLock.RLock()
+	expired := pricingCacheExpiredLocked()
+	modelSupportEndpointsLock.RUnlock()
+	if expired {
 		GetPricing()
 	}
-	return vendorsList
 }
 
 func GetModelSupportEndpointTypes(model string) []constant.EndpointType {
 	if model == "" {
 		return make([]constant.EndpointType, 0)
 	}
+	ensurePricingCacheFresh()
 	modelSupportEndpointsLock.RLock()
 	defer modelSupportEndpointsLock.RUnlock()
 	if endpoints, ok := modelSupportEndpointTypes[model]; ok {
-		return endpoints
+		return append([]constant.EndpointType(nil), endpoints...)
 	}
 	return make([]constant.EndpointType, 0)
+}
+
+func pricingCacheExpiredLocked() bool {
+	return lastGetPricingTime.IsZero() || pricingMap == nil || time.Since(lastGetPricingTime) > time.Minute*1
+}
+
+func clonePricingList(src []Pricing) []Pricing {
+	if src == nil {
+		return nil
+	}
+	dst := make([]Pricing, len(src))
+	for i := range src {
+		dst[i] = src[i]
+		dst[i].EnableGroup = append([]string(nil), src[i].EnableGroup...)
+		dst[i].SupportedEndpointTypes = append([]constant.EndpointType(nil), src[i].SupportedEndpointTypes...)
+		dst[i].CacheRatio = cloneFloat64Pointer(src[i].CacheRatio)
+		dst[i].CreateCacheRatio = cloneFloat64Pointer(src[i].CreateCacheRatio)
+		dst[i].ImageRatio = cloneFloat64Pointer(src[i].ImageRatio)
+		dst[i].AudioRatio = cloneFloat64Pointer(src[i].AudioRatio)
+		dst[i].AudioCompletionRatio = cloneFloat64Pointer(src[i].AudioCompletionRatio)
+	}
+	return dst
+}
+
+func cloneFloat64Pointer(src *float64) *float64 {
+	if src == nil {
+		return nil
+	}
+	value := *src
+	return &value
+}
+
+func clonePricingVendors(src []PricingVendor) []PricingVendor {
+	if src == nil {
+		return nil
+	}
+	dst := make([]PricingVendor, len(src))
+	copy(dst, src)
+	return dst
 }
 
 func getPricingEndpointTypesForAbility(ability AbilityWithChannel, advancedCustomConfigs map[int]*dto.AdvancedCustomConfig) []constant.EndpointType {
@@ -118,10 +188,11 @@ func getPricingEndpointTypesForAbility(ability AbilityWithChannel, advancedCusto
 }
 
 // loadPricingAdvancedCustomConfigs runs inside updatePricing while
-// updatePricingLock is held, and nests channelSyncLock.RLock. This defines the
-// global lock order updatePricingLock -> channelSyncLock: any code path holding
-// channelSyncLock must release it before touching the pricing cache (see
-// InitChannelCache / CacheUpdateChannel), otherwise it deadlocks.
+// updatePricingLock and modelSupportEndpointsLock are held, and nests
+// channelSyncLock.RLock. This defines the global lock order
+// updatePricingLock -> modelSupportEndpointsLock -> channelSyncLock: any code
+// path holding channelSyncLock must release it before touching the pricing cache
+// (see InitChannelCache / CacheUpdateChannel), otherwise it deadlocks.
 // The returned configs are pointers shared with the channel cache; they are
 // replaced wholesale on update and never mutated in place, so reading them after
 // RUnlock is safe.
@@ -193,6 +264,10 @@ func updatePricing() {
 	containsList := make([]*Model, 0)
 	for i := range allMeta {
 		m := &allMeta[i]
+		m.ModelName = strings.TrimSpace(m.ModelName)
+		if m.ModelName == "" {
+			continue
+		}
 		if m.NameRule == NameRuleExact {
 			metaMap[m.ModelName] = m
 		} else {
@@ -429,5 +504,16 @@ func updatePricing() {
 
 // GetSupportedEndpointMap 返回全局端点到路径的映射
 func GetSupportedEndpointMap() map[string]common.EndpointInfo {
-	return supportedEndpointMap
+	ensurePricingCacheFresh()
+	modelSupportEndpointsLock.RLock()
+	defer modelSupportEndpointsLock.RUnlock()
+
+	if supportedEndpointMap == nil {
+		return nil
+	}
+	snapshot := make(map[string]common.EndpointInfo, len(supportedEndpointMap))
+	for endpoint, info := range supportedEndpointMap {
+		snapshot[endpoint] = info
+	}
+	return snapshot
 }

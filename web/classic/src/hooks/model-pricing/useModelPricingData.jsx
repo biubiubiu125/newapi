@@ -23,6 +23,7 @@ import { API, copy, showError, showInfo, showSuccess } from '../../helpers';
 import { Modal } from '@douyinfe/semi-ui';
 import { UserContext } from '../../context/User';
 import { StatusContext } from '../../context/Status';
+import { MODEL_PRICING_REFRESH_EVENT } from '../../helpers/modelSyncPreview';
 
 export const useModelPricingData = () => {
   const { t } = useTranslation();
@@ -317,6 +318,25 @@ export const useModelPricingData = () => {
 
   useEffect(() => {
     refresh().then();
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return undefined;
+    }
+    const handleModelPricingRefresh = () => {
+      refresh().then();
+    };
+    window.addEventListener(
+      MODEL_PRICING_REFRESH_EVENT,
+      handleModelPricingRefresh,
+    );
+    return () => {
+      window.removeEventListener(
+        MODEL_PRICING_REFRESH_EVENT,
+        handleModelPricingRefresh,
+      );
+    };
   }, []);
 
   // 当筛选条件变化时重置到第一页

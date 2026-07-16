@@ -421,10 +421,12 @@ func applyUpstreamPathTemplate(upstreamPath string, info *relaycommon.RelayInfo)
 }
 
 func shouldUseGeminiStreamURL(converter string, info *relaycommon.RelayInfo) bool {
-	return info != nil &&
-		info.IsStream &&
-		(converter == relayconvert.ConverterOpenAIChatToGeminiContent ||
-			converter == relayconvert.ConverterOpenAIResponsesToGemini)
+	if info == nil || !info.IsStream {
+		return false
+	}
+	return converter == relayconvert.ConverterOpenAIChatToGeminiContent ||
+		converter == relayconvert.ConverterOpenAIResponsesToGemini ||
+		(converter == relayconvert.ConverterNone && info.RelayFormat == types.RelayFormatGemini)
 }
 
 func useGeminiStreamGenerateContentURL(parsedURL *url.URL) {

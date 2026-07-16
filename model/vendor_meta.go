@@ -25,10 +25,21 @@ type Vendor struct {
 
 // Insert 创建新的供应商记录
 func (v *Vendor) Insert() error {
+	return v.InsertWithDB(DB)
+}
+
+func (v *Vendor) InsertWithDB(db *gorm.DB) error {
 	now := common.GetTimestamp()
 	v.CreatedTime = now
 	v.UpdatedTime = now
-	return DB.Create(v).Error
+
+	originalStatus := v.Status
+	return db.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Create(v).Error; err != nil {
+			return err
+		}
+		return tx.Model(&Vendor{}).Where("id = ?", v.Id).Update("status", originalStatus).Error
+	})
 }
 
 // IsVendorNameDuplicated 检查供应商名称是否重复（排除自身 ID）

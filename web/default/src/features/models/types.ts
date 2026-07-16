@@ -156,11 +156,7 @@ export interface GetVendorResponse {
  * Sync diff data
  */
 export interface SyncDiffData {
-  missing?: Array<{
-    model_name: string
-    vendor?: string
-    [key: string]: unknown
-  }>
+  missing?: string[]
   conflicts?: Array<{
     model_name: string
     local?: Partial<Model>
@@ -177,6 +173,14 @@ export interface SyncDiffData {
 export interface SyncOverwritePayload {
   model_name: string
   fields: string[]
+}
+
+export interface SyncUpstreamParams {
+  locale?: SyncLocale
+  source?: SyncSource
+  missing?: string[]
+  overwrite?: SyncOverwritePayload[]
+  skip_missing?: boolean
 }
 
 /**

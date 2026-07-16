@@ -23,6 +23,7 @@ import PrefillGroupManagement from './modals/PrefillGroupManagement';
 import EditPrefillGroupModal from './modals/EditPrefillGroupModal';
 import { Button, Modal, Popover, RadioGroup, Radio } from '@douyinfe/semi-ui';
 import { showSuccess, showError, copy } from '../../../helpers';
+import { runClassicSyncWizardFlow } from '../../../helpers/modelSyncPreview';
 import CompactModeToggle from '../../common/ui/CompactModeToggle';
 import SelectionNotification from './components/SelectionNotification';
 import UpstreamConflictModal from './modals/UpstreamConflictModal';
@@ -51,20 +52,24 @@ const ModelsActions = ({
   const [prefillInit, setPrefillInit] = useState({ id: undefined });
   const [showConflict, setShowConflict] = useState(false);
   const [conflicts, setConflicts] = useState([]);
+  const [missingModels, setMissingModels] = useState([]);
   const [showSyncModal, setShowSyncModal] = useState(false);
   const [syncLocale, setSyncLocale] = useState('zh');
 
-  const handleSyncUpstream = async (locale) => {
-    // 先预览
-    const data = await previewUpstreamDiff?.({ locale });
-    const conflictItems = data?.conflicts || [];
-    if (conflictItems.length > 0) {
-      setConflicts(conflictItems);
+  const handleSyncUpstream = async (locale, source = 'official') => {
+    const result = await runClassicSyncWizardFlow({
+      locale,
+      source,
+      previewUpstreamDiff,
+      syncUpstream,
+    });
+    if (result.status === 'conflict') {
+      setConflicts(result.conflicts);
+      setMissingModels(result.missing);
       setShowConflict(true);
-      return;
+      return true;
     }
-    // 无冲突，直接同步缺失
-    await syncUpstream?.({ locale });
+    return result.status === 'synced';
   };
 
   // Handle delete selected models with confirmation
@@ -209,10 +214,14 @@ const ModelsActions = ({
         t={t}
         onConfirm={async ({ option, locale }) => {
           setSyncLocale(locale);
-          if (option === 'official') {
-            await handleSyncUpstream(locale);
+          const source = option === 'official' ? 'official' : option;
+          const syncCompleted =
+            option === 'official'
+              ? await handleSyncUpstream(locale, source)
+              : false;
+          if (syncCompleted) {
+            setShowSyncModal(false);
           }
-          setShowSyncModal(false);
         }}
       />
 
@@ -243,10 +252,14 @@ const ModelsActions = ({
         visible={showConflict}
         onClose={() => setShowConflict(false)}
         conflicts={conflicts}
+        missing={missingModels}
         onSubmit={async (payload) => {
           return await applyUpstreamOverwrite?.({
-            overwrite: payload,
+            overwrite: payload?.overwrite || [],
+            skip_missing: Boolean(payload?.skip_missing),
+            missing: payload?.missing || [],
             locale: syncLocale,
+            source: 'official',
           });
         }}
         t={t}

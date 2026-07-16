@@ -88,11 +88,28 @@ func GetModelMeta(c *gin.Context) {
 
 // CreateModelMeta 新建模型
 func CreateModelMeta(c *gin.Context) {
+	var raw map[string]json.RawMessage
 	var m model.Model
-	if err := c.ShouldBindJSON(&m); err != nil {
+	if err := c.ShouldBindJSON(&raw); err != nil {
 		common.ApiError(c, err)
 		return
 	}
+	buf, err := json.Marshal(raw)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if err := json.Unmarshal(buf, &m); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if _, ok := raw["status"]; !ok {
+		m.Status = 1
+	}
+	if _, ok := raw["sync_official"]; !ok {
+		m.SyncOfficial = 1
+	}
+	m.ModelName = strings.TrimSpace(m.ModelName)
 	if m.ModelName == "" {
 		common.ApiErrorMsg(c, "模型名称不能为空")
 		return
@@ -135,6 +152,11 @@ func UpdateModelMeta(c *gin.Context) {
 			return
 		}
 	} else {
+		m.ModelName = strings.TrimSpace(m.ModelName)
+		if m.ModelName == "" {
+			common.ApiErrorMsg(c, "模型名称不能为空")
+			return
+		}
 		// 名称冲突检查
 		if dup, err := model.IsModelNameDuplicated(m.Id, m.ModelName); err != nil {
 			common.ApiError(c, err)

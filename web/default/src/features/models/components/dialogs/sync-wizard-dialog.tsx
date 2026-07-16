@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
 import { Loader2, RefreshCw } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -32,7 +32,7 @@ import { cn } from '@/lib/utils'
 
 import { syncUpstream, previewUpstreamDiff } from '../../api'
 import { getSyncLocaleOptions, getSyncSourceOptions } from '../../constants'
-import { modelsQueryKeys, vendorsQueryKeys } from '../../lib'
+import { refreshModelSyncQueries, runSyncWizardFlow } from '../../lib'
 import type { SyncLocale, SyncSource } from '../../types'
 import { useModels } from '../models-provider'
 
@@ -50,6 +50,7 @@ export function SyncWizardDialog({
   const {
     setOpen,
     setUpstreamConflicts,
+    setUpstreamMissing,
     setSyncWizardOptions,
     syncWizardOptions,
   } = useModels()
@@ -59,59 +60,76 @@ export function SyncWizardDialog({
   const [isSyncing, setIsSyncing] = useState(false)
 
   // Get translated options
-  const SYNC_SOURCE_OPTIONS = getSyncSourceOptions(t)
-  const SYNC_LOCALE_OPTIONS = getSyncLocaleOptions(t)
+  const SYNC_SOURCE_OPTIONS = useMemo(() => getSyncSourceOptions(t), [t])
+  const SYNC_LOCALE_OPTIONS = useMemo(() => getSyncLocaleOptions(t), [t])
 
   useEffect(() => {
     if (open) {
       setLocale(syncWizardOptions.locale || 'zh')
       const preferredSource = SYNC_SOURCE_OPTIONS.find(
-        (option) => option.value === syncWizardOptions.source
+        (option) => option.value === syncWizardOptions.source,
       )
       setSource(
         preferredSource && !preferredSource.disabled
           ? (preferredSource.value as SyncSource)
-          : 'official'
+          : 'official',
       )
     }
-  }, [open, syncWizardOptions, SYNC_SOURCE_OPTIONS])
+  }, [
+    open,
+    syncWizardOptions.locale,
+    syncWizardOptions.source,
+    SYNC_SOURCE_OPTIONS,
+  ])
 
   const handleSync = async () => {
     setIsSyncing(true)
     try {
       setSyncWizardOptions({ locale, source })
-      const previewRes = await previewUpstreamDiff({ locale, source })
+      const result = await runSyncWizardFlow({
+        locale,
+        source,
+        previewUpstreamDiff,
+        syncUpstream,
+        refreshModelSyncQueries: () => refreshModelSyncQueries(queryClient),
+      })
 
-      if (!previewRes.success) {
-        throw new Error(previewRes.message || 'Failed to preview upstream diff')
-      }
-
-      const conflicts = previewRes.data?.conflicts || []
-
-      if (conflicts.length > 0) {
+      if (result.status === 'conflict') {
+        const conflicts = result.conflicts || []
         toast.warning(
-          `Found ${conflicts.length} conflict${conflicts.length > 1 ? 's' : ''}. Please resolve them first.`
+          `Found ${conflicts.length} conflict${conflicts.length > 1 ? 's' : ''}. Please resolve them first.`,
         )
         setUpstreamConflicts(conflicts)
+        setUpstreamMissing(result.missing)
         setOpen('upstream-conflict')
         return
       }
 
-      // No conflicts, proceed with sync
-      const response = await syncUpstream({ locale, source })
-
-      if (response.success) {
+      if (result.status === 'synced') {
         const { created_models, created_vendors, updated_models } =
-          response.data || {}
+          result.data || {}
         toast.success(
-          `Sync completed! Created ${created_models || 0} models, updated ${updated_models || 0}, and added ${created_vendors || 0} vendors.`
+          `Sync completed! Created ${created_models || 0} models, updated ${updated_models || 0}, and added ${created_vendors || 0} vendors.`,
         )
-        queryClient.invalidateQueries({ queryKey: modelsQueryKeys.lists() })
-        queryClient.invalidateQueries({ queryKey: vendorsQueryKeys.lists() })
+        setUpstreamConflicts([])
+        setUpstreamMissing([])
         onOpenChange(false)
-      } else {
-        toast.error(response.message || 'Sync failed')
+        return
       }
+
+      if (result.status === 'refresh_failed') {
+        toast.error(
+          t(
+            'Sync completed, but refreshing page data failed. Please refresh manually to view the latest results.',
+          ),
+        )
+        setUpstreamConflicts([])
+        setUpstreamMissing([])
+        onOpenChange(false)
+        return
+      }
+
+      toast.error(result.message || 'Sync failed')
     } catch (error: unknown) {
       toast.error((error as Error)?.message || 'Sync failed')
     } finally {
@@ -156,7 +174,7 @@ export function SyncWizardDialog({
           value={source}
           onValueChange={(value) => {
             const selected = SYNC_SOURCE_OPTIONS.find(
-              (option) => option.value === value
+              (option) => option.value === value,
             )
             if (!selected || selected.disabled) return
             setSource(selected.value)
@@ -175,7 +193,7 @@ export function SyncWizardDialog({
                   isActive && 'border-primary ring-primary ring-1',
                   isDisabled
                     ? 'cursor-not-allowed opacity-60'
-                    : 'hover:border-primary/60 cursor-pointer'
+                    : 'hover:border-primary/60 cursor-pointer',
                 )}
               >
                 <div className='flex items-start gap-3'>
@@ -236,7 +254,7 @@ export function SyncWizardDialog({
       <div className='bg-muted/50 rounded-lg border p-4'>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'The sync will fetch missing models and vendors from the selected source. Existing records are updated only when you approve conflicts.'
+            'The sync will fetch missing models and vendors from the selected source. Existing records are updated only when you approve conflicts.',
           )}
         </p>
       </div>

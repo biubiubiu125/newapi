@@ -51,8 +51,13 @@ import {
 import { useIsMobile } from '@/hooks/use-mobile'
 
 import { applyUpstreamOverwrite } from '../../api'
-import { modelsQueryKeys, vendorsQueryKeys } from '../../lib'
-import type { SyncOverwritePayload } from '../../types'
+import {
+  buildRowSelectionForRowIds,
+  getRowSelectionStateForRowIds,
+  refreshModelSyncQueries,
+  runUpstreamConflictSubmitFlow,
+  type UpstreamConflictSelection,
+} from '../../lib'
 import { useModels } from '../models-provider'
 
 const FIELD_LABELS: Record<string, string> = {
@@ -113,12 +118,15 @@ export function UpstreamConflictDialog({
   const {
     upstreamConflicts = [],
     setUpstreamConflicts,
+    upstreamMissing,
+    setUpstreamMissing,
     syncWizardOptions,
   } = useModels()
   const isMobile = useIsMobile()
   const [search, setSearch] = useState('')
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [rowSelection, setRowSelection] = useState<RowSelectionState>({})
+  const [syncMissing, setSyncMissing] = useState(false)
   const [pageSize, setPageSize] = useState(10)
   const [pageIndex, setPageIndex] = useState(0)
 
@@ -127,8 +135,11 @@ export function UpstreamConflictDialog({
       setRowSelection({})
       setSearch('')
       setPageIndex(0)
+      setSyncMissing(upstreamMissing.length > 0)
+    } else {
+      setSyncMissing(false)
     }
-  }, [open, upstreamConflicts])
+  }, [open, upstreamConflicts, upstreamMissing.length])
 
   const conflictRows = useMemo<ConflictFieldRow[]>(() => {
     return upstreamConflicts.flatMap((conflict) => {
@@ -193,6 +204,33 @@ export function UpstreamConflictDialog({
 
     return { matchingModelNames: modelMatches, visibleRowIds: rowIdSet }
   }, [normalizedSearch, upstreamConflicts, conflictRows])
+
+  const filteredConflictRows = useMemo(() => {
+    return visibleRowIds
+      ? conflictRows.filter((row) => visibleRowIds.has(row.id))
+      : conflictRows
+  }, [conflictRows, visibleRowIds])
+
+  const totalFilteredFields = filteredConflictRows.length
+  const totalPages =
+    totalFilteredFields === 0 ? 1 : Math.ceil(totalFilteredFields / pageSize)
+
+  useEffect(() => {
+    setPageIndex((prev) => Math.min(prev, Math.max(0, totalPages - 1)))
+  }, [totalPages])
+
+  const pageStart = pageIndex * pageSize
+  const paginatedConflictRows = useMemo(() => {
+    return filteredConflictRows.slice(pageStart, pageStart + pageSize)
+  }, [filteredConflictRows, pageSize, pageStart])
+  const paginatedRowIds = useMemo(
+    () => paginatedConflictRows.map((row) => row.id),
+    [paginatedConflictRows],
+  )
+  const pageSelectionState = useMemo(
+    () => getRowSelectionStateForRowIds(rowSelection, paginatedRowIds),
+    [rowSelection, paginatedRowIds],
+  )
 
   const columns = useMemo<ColumnDef<ConflictFieldRow>[]>(() => {
     const modelColumn: ColumnDef<ConflictFieldRow> = {
@@ -282,11 +320,19 @@ export function UpstreamConflictDialog({
 
     const selectionColumn: ColumnDef<ConflictFieldRow> = {
       id: 'select',
-      header: ({ table }) => (
+      header: () => (
         <Checkbox
-          checked={table.getIsAllPageRowsSelected()}
-          indeterminate={table.getIsSomePageRowsSelected()}
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+          checked={pageSelectionState.checked}
+          indeterminate={pageSelectionState.indeterminate}
+          onCheckedChange={(value) =>
+            setRowSelection((currentSelection) =>
+              buildRowSelectionForRowIds(
+                currentSelection,
+                paginatedRowIds,
+                value === true,
+              ),
+            )
+          }
           aria-label='Select all'
         />
       ),
@@ -330,7 +376,12 @@ export function UpstreamConflictDialog({
         cell: ({ row }) => <ValuePreview value={row.original.upstreamValue} />,
       },
     ]
-  }, [isMobile])
+  }, [
+    isMobile,
+    pageSelectionState.checked,
+    pageSelectionState.indeterminate,
+    paginatedRowIds,
+  ])
 
   const { table } = useDataTable({
     data: conflictRows,
@@ -347,21 +398,15 @@ export function UpstreamConflictDialog({
 
   const totalSelectedFields = table.getSelectedRowModel().rows.length
   const hasSelection = totalSelectedFields > 0
-  const allRows = table.getRowModel().rows
-  const filteredRows = visibleRowIds
-    ? allRows.filter((row) => visibleRowIds.has(row.id))
-    : allRows
-
-  const totalFilteredFields = filteredRows.length
-  const totalPages =
-    totalFilteredFields === 0 ? 1 : Math.ceil(totalFilteredFields / pageSize)
-
-  useEffect(() => {
-    setPageIndex((prev) => Math.min(prev, Math.max(0, totalPages - 1)))
-  }, [totalPages])
-
-  const pageStart = pageIndex * pageSize
-  const paginatedRows = filteredRows.slice(pageStart, pageStart + pageSize)
+  const missingCount = upstreamMissing.length
+  const canApply = hasSelection || syncMissing
+  const paginatedRowIdSet = useMemo(
+    () => new Set(paginatedRowIds),
+    [paginatedRowIds],
+  )
+  const paginatedRows = table
+    .getRowModel()
+    .rows.filter((row) => paginatedRowIdSet.has(row.id))
   const displayStart = totalFilteredFields === 0 ? 0 : pageStart + 1
   const displayEnd =
     totalFilteredFields === 0
@@ -381,7 +426,7 @@ export function UpstreamConflictDialog({
 
   const handleApplyOverwrite = async () => {
     const selectedRows = table.getSelectedRowModel().rows
-    const groupedSelections = selectedRows.reduce<Record<string, Set<string>>>(
+    const groupedSelections = selectedRows.reduce<UpstreamConflictSelection>(
       (acc, row) => {
         const key = row.original.modelName
         if (!acc[key]) {
@@ -390,38 +435,73 @@ export function UpstreamConflictDialog({
         acc[key].add(row.original.fieldKey)
         return acc
       },
-      {}
+      {},
     )
-
-    const payload: SyncOverwritePayload[] = Object.entries(groupedSelections)
-      .map(([modelName, fields]) => ({
-        model_name: modelName,
-        fields: Array.from(fields),
-      }))
-      .filter((item) => item.fields.length > 0)
-
-    if (payload.length === 0) {
-      toast.warning(t('Select at least one field to overwrite.'))
-      return
-    }
 
     setIsSubmitting(true)
     try {
-      const response = await applyUpstreamOverwrite({
-        overwrite: payload,
+      const result = await runUpstreamConflictSubmitFlow({
+        selections: groupedSelections,
+        syncMissing,
+        missing: upstreamMissing,
         locale: syncWizardOptions.locale,
         source: syncWizardOptions.source,
+        applyUpstreamOverwrite,
+        refreshModelSyncQueries: () => refreshModelSyncQueries(queryClient),
       })
 
-      if (response.success) {
-        toast.success(t('Selected conflicts were overwritten successfully.'))
-        queryClient.invalidateQueries({ queryKey: modelsQueryKeys.lists() })
-        queryClient.invalidateQueries({ queryKey: vendorsQueryKeys.lists() })
-        setUpstreamConflicts([])
-        onOpenChange(false)
-      } else {
-        toast.error(response.message || t('Failed to apply overwrite.'))
+      if (result.status === 'empty') {
+        toast.warning(
+          t(
+            'Select at least one field to overwrite or enable missing model sync.',
+          ),
+        )
+        return
       }
+
+      if (result.status === 'synced') {
+        const {
+          created_models = 0,
+          created_vendors = 0,
+          updated_models = 0,
+        } = result.data || {}
+        toast.success(
+          result.hasOverwrite
+            ? t(
+                'Sync completed! Created {{created}} models, updated {{updated}}, and added {{vendors}} vendors.',
+                {
+                  created: created_models,
+                  updated: updated_models,
+                  vendors: created_vendors,
+                },
+              )
+            : t(
+                'Missing upstream models were synced successfully. Created {{created}} models and added {{vendors}} vendors.',
+                {
+                  created: created_models,
+                  vendors: created_vendors,
+                },
+              ),
+        )
+        setUpstreamConflicts([])
+        setUpstreamMissing([])
+        onOpenChange(false)
+        return
+      }
+
+      if (result.status === 'refresh_failed') {
+        toast.error(
+          t(
+            'Sync completed, but refreshing page data failed. Please refresh manually to view the latest results.',
+          ),
+        )
+        setUpstreamConflicts([])
+        setUpstreamMissing([])
+        onOpenChange(false)
+        return
+      }
+
+      toast.error(result.message || t('Failed to apply overwrite.'))
     } catch (error: unknown) {
       toast.error((error as Error)?.message || t('Failed to apply overwrite.'))
     } finally {
@@ -435,12 +515,13 @@ export function UpstreamConflictDialog({
       onOpenChange={(nextOpen) => {
         if (!nextOpen) {
           setUpstreamConflicts([])
+          setUpstreamMissing([])
         }
         onOpenChange(nextOpen)
       }}
       title={t('Resolve Conflicts')}
       description={t(
-        'Select the fields you want to overwrite with upstream data. Unselected fields keep their local values.'
+        'Select upstream fields to overwrite. Missing models can be synced in the same request.',
       )}
       contentClassName='w-full sm:max-w-5xl'
       contentHeight='min(72vh, 720px)'
@@ -449,19 +530,43 @@ export function UpstreamConflictDialog({
       footerClassName='sm:justify-between'
       footer={
         <div className='flex w-full flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
-          <div className='text-muted-foreground flex flex-1 items-start gap-2 text-xs'>
-            <Info className='h-4 w-4 flex-shrink-0' />
-            <span>
-              {t(
-                'Only selected fields will be overwritten. You can re-run the sync wizard if new conflicts appear.'
-              )}
-            </span>
+          <div className='flex flex-1 flex-col gap-2'>
+            {missingCount > 0 ? (
+              <div className='flex items-start gap-2 text-xs'>
+                <Checkbox
+                  checked={syncMissing}
+                  onCheckedChange={(value) => setSyncMissing(value === true)}
+                  aria-label={t('Sync missing upstream models')}
+                  className='mt-0.5'
+                />
+                <div className='space-y-0.5'>
+                  <div className='font-medium'>
+                    {t('Sync {{count}} missing upstream model{{suffix}}', {
+                      count: missingCount,
+                      suffix: missingCount === 1 ? '' : 's',
+                    })}
+                  </div>
+                  <div className='text-muted-foreground'>
+                    {t('Disable this to apply conflict overwrites only.')}
+                  </div>
+                </div>
+              </div>
+            ) : null}
+            <div className='text-muted-foreground flex items-start gap-2 text-xs'>
+              <Info className='h-4 w-4 flex-shrink-0' />
+              <span>
+                {t(
+                  'Only selected fields will be overwritten. Unselected fields keep their local values.',
+                )}
+              </span>
+            </div>
           </div>
           <div className='flex flex-col gap-2 sm:flex-row sm:justify-end'>
             <Button
               variant='outline'
               onClick={() => {
                 setUpstreamConflicts([])
+                setUpstreamMissing([])
                 onOpenChange(false)
               }}
             >
@@ -469,7 +574,7 @@ export function UpstreamConflictDialog({
             </Button>
             <Button
               onClick={handleApplyOverwrite}
-              disabled={isSubmitting || !hasSelection}
+              disabled={isSubmitting || !canApply}
             >
               {isSubmitting ? t('Applying...') : t('Apply Overwrite')}
             </Button>
@@ -599,7 +704,7 @@ export function UpstreamConflictDialog({
                         className='h-7 w-7 sm:h-8 sm:w-8'
                         onClick={() =>
                           setPageIndex((prev) =>
-                            Math.min(totalPages - 1, prev + 1)
+                            Math.min(totalPages - 1, prev + 1),
                           )
                         }
                         disabled={

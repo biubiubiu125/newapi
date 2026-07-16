@@ -22,6 +22,10 @@ import { useTranslation } from 'react-i18next';
 import { API, showError, showSuccess } from '../../helpers';
 import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
+import {
+  notifyModelPricingChanged,
+  runClassicPostSyncRefresh,
+} from '../../helpers/modelSyncPreview';
 
 export const useModelsData = () => {
   const { t } = useTranslation();
@@ -110,13 +114,18 @@ export const useModelsData = () => {
   const loadVendors = async () => {
     try {
       const res = await API.get('/api/vendors/?page_size=1000');
-      if (res.data.success) {
-        const items = res.data.data.items || res.data.data || [];
+      const { success, message, data } = res.data || {};
+      if (success) {
+        const items = data?.items || data || [];
         setVendors(Array.isArray(items) ? items : []);
+        return true;
       }
-    } catch (_) {
-      // ignore
+      showError(message || t('获取供应商列表失败'));
+    } catch (error) {
+      console.error(error);
+      showError(t('获取供应商列表失败'));
     }
+    return false;
   };
 
   // Load models data
@@ -126,6 +135,7 @@ export const useModelsData = () => {
     vendorKey = activeVendorKey,
   ) => {
     setLoading(true);
+    let loaded = false;
     try {
       let url = `/api/models/?p=${page}&page_size=${size}`;
       if (vendorKey && vendorKey !== 'all') {
@@ -136,18 +146,20 @@ export const useModelsData = () => {
       const res = await API.get(url);
       const { success, message, data } = res.data;
       if (success) {
-        const newPageData = extractItems(data);
-        setActivePage(data.page || page);
-        setModelCount(data.total || newPageData.length);
+        const payload = data || {};
+        const newPageData = extractItems(payload);
+        setActivePage(payload.page || page);
+        setModelCount(payload.total || newPageData.length);
         setModelFormat(newPageData);
 
-        if (data.vendor_counts) {
-          const sumAll = Object.values(data.vendor_counts).reduce(
+        if (payload.vendor_counts) {
+          const sumAll = Object.values(payload.vendor_counts).reduce(
             (acc, v) => acc + v,
             0,
           );
-          setVendorCounts({ ...data.vendor_counts, all: sumAll });
+          setVendorCounts({ ...payload.vendor_counts, all: sumAll });
         }
+        loaded = true;
       } else {
         showError(message);
         setModels([]);
@@ -158,58 +170,101 @@ export const useModelsData = () => {
       setModels([]);
     }
     setLoading(false);
+    return loaded;
   };
 
   // Refresh data
   const refresh = async (page = activePage) => {
-    await loadModels(page, pageSize);
+    return await loadModels(page, pageSize);
+  };
+
+  const refreshMissingModels = async () => {
+    const res = await API.get('/api/models/missing');
+    return Boolean(res.data?.success);
+  };
+
+  const refreshPricing = async () => {
+    const res = await API.get('/api/pricing');
+    return Boolean(res.data?.success);
+  };
+
+  const refreshAfterSync = async () => {
+    const refreshed = await runClassicPostSyncRefresh({
+      refreshVendors: loadVendors,
+      refreshModels: refresh,
+      refreshMissing: refreshMissingModels,
+      refreshPricing,
+    });
+    if (!refreshed) {
+      showError(t('同步成功，但刷新页面数据失败，请手动刷新后查看最新结果'));
+      return false;
+    }
+    return true;
   };
 
   // Sync upstream models/vendors for missing models only
   const syncUpstream = async (opts = {}) => {
     const locale = opts?.locale;
+    const source = opts?.source;
+    const missing = Array.isArray(opts?.missing) ? opts.missing : undefined;
     setSyncing(true);
     try {
       const body = {};
       if (locale) body.locale = locale;
+      if (source) body.source = source;
+      if (missing) body.missing = missing;
       const res = await API.post('/api/models/sync_upstream', body);
       const { success, message, data } = res.data || {};
       if (success) {
         const createdModels = data?.created_models || 0;
         const createdVendors = data?.created_vendors || 0;
         const skipped = (data?.skipped_models || []).length || 0;
+        const refreshed = await refreshAfterSync();
+        notifyModelPricingChanged();
+        if (!refreshed) {
+          return true;
+        }
         showSuccess(
           t(
             `已同步：新增 ${createdModels} 模型，新增 ${createdVendors} 供应商，跳过 ${skipped} 项`,
           ),
         );
-        await loadVendors();
-        await refresh();
+        return true;
       } else {
         showError(message || t('同步失败'));
+        return false;
       }
     } catch (e) {
       showError(t('同步失败'));
+      return false;
+    } finally {
+      setSyncing(false);
     }
-    setSyncing(false);
   };
 
   // Preview upstream differences
   const previewUpstreamDiff = async (opts = {}) => {
     const locale = opts?.locale;
+    const source = opts?.source;
     setPreviewing(true);
     try {
-      const url = `/api/models/sync_upstream/preview${locale ? `?locale=${locale}` : ''}`;
+      const searchParams = new URLSearchParams();
+      if (locale) searchParams.set('locale', locale);
+      if (source) searchParams.set('source', source);
+      const queryString = searchParams.toString();
+      const url = queryString
+        ? `/api/models/sync_upstream/preview?${queryString}`
+        : '/api/models/sync_upstream/preview';
       const res = await API.get(url);
       const { success, message, data } = res.data || {};
       if (success) {
         return data || { missing: [], conflicts: [] };
       }
       showError(message || t('预览失败'));
-      return { missing: [], conflicts: [] };
+      return null;
     } catch (e) {
       showError(t('预览失败'));
-      return { missing: [], conflicts: [] };
+      return null;
     } finally {
       setPreviewing(false);
     }
@@ -220,10 +275,16 @@ export const useModelsData = () => {
     const isArray = Array.isArray(payloadOrArray);
     const overwrite = isArray ? payloadOrArray : payloadOrArray.overwrite || [];
     const locale = isArray ? undefined : payloadOrArray.locale;
+    const source = isArray ? undefined : payloadOrArray.source;
+    const missing = isArray ? undefined : payloadOrArray.missing;
+    const skipMissing = isArray ? false : Boolean(payloadOrArray.skip_missing);
     setSyncing(true);
     try {
       const body = { overwrite };
       if (locale) body.locale = locale;
+      if (source) body.source = source;
+      if (missing) body.missing = missing;
+      if (skipMissing) body.skip_missing = true;
       const res = await API.post('/api/models/sync_upstream', body);
       const { success, message, data } = res.data || {};
       if (success) {
@@ -231,13 +292,16 @@ export const useModelsData = () => {
         const updatedModels = data?.updated_models || 0;
         const createdVendors = data?.created_vendors || 0;
         const skipped = (data?.skipped_models || []).length || 0;
+        const refreshed = await refreshAfterSync();
+        notifyModelPricingChanged();
+        if (!refreshed) {
+          return true;
+        }
         showSuccess(
           t(
             `完成：新增 ${createdModels} 模型，更新 ${updatedModels} 模型，新增 ${createdVendors} 供应商，跳过 ${skipped} 项`,
           ),
         );
-        await loadVendors();
-        await refresh();
         return true;
       }
       showError(message || t('同步失败'));

@@ -149,7 +149,14 @@ func (c *AdvancedCustomConfig) MatchPath(requestPath string) (AdvancedCustomRout
 		return AdvancedCustomRoute{}, false
 	}
 	for _, route := range c.Routes {
-		if matchAdvancedCustomIncomingPath(strings.TrimSpace(route.IncomingPath), requestPath) {
+		if matchAdvancedCustomIncomingPathTemplate(strings.TrimSpace(route.IncomingPath), requestPath) {
+			return route, true
+		}
+	}
+	for _, route := range c.Routes {
+		incomingPath := strings.TrimSpace(route.IncomingPath)
+		if !matchAdvancedCustomIncomingPathTemplate(incomingPath, requestPath) &&
+			matchAdvancedCustomIncomingPath(incomingPath, requestPath) {
 			return route, true
 		}
 	}
@@ -164,7 +171,15 @@ func (c *AdvancedCustomConfig) MatchPathForModel(requestPath string, model strin
 	}
 	model = strings.TrimSpace(model)
 	for _, route := range c.Routes {
-		if matchAdvancedCustomIncomingPath(strings.TrimSpace(route.IncomingPath), requestPath) &&
+		if matchAdvancedCustomIncomingPathTemplate(strings.TrimSpace(route.IncomingPath), requestPath) &&
+			matchAdvancedCustomRouteModel(route.Models, model) {
+			return route, true
+		}
+	}
+	for _, route := range c.Routes {
+		incomingPath := strings.TrimSpace(route.IncomingPath)
+		if !matchAdvancedCustomIncomingPathTemplate(incomingPath, requestPath) &&
+			matchAdvancedCustomIncomingPath(incomingPath, requestPath) &&
 			matchAdvancedCustomRouteModel(route.Models, model) {
 			return route, true
 		}
@@ -233,7 +248,8 @@ func advancedCustomEndpointTypeFromIncomingPath(incomingPath string) (constant.E
 }
 
 func isAdvancedCustomGeminiIncomingPath(incomingPath string) bool {
-	if !strings.HasPrefix(incomingPath, "/v1beta/models/") {
+	if !strings.HasPrefix(incomingPath, "/v1beta/models/") &&
+		!strings.HasPrefix(incomingPath, "/v1/models/") {
 		return false
 	}
 	return strings.Contains(incomingPath, ":generateContent") || strings.Contains(incomingPath, ":streamGenerateContent")

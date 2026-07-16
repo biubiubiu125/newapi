@@ -20,12 +20,19 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func SupportsResponsesCompactAPIType(apiType int) bool {
+	switch apiType {
+	case appconstant.APITypeOpenAI, appconstant.APITypeCodex, appconstant.APITypeAdvancedCustom:
+		return true
+	default:
+		return false
+	}
+}
+
 func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
 	if info.RelayMode == relayconstant.RelayModeResponsesCompact {
-		switch info.ApiType {
-		case appconstant.APITypeOpenAI, appconstant.APITypeCodex:
-		default:
+		if !SupportsResponsesCompactAPIType(info.ApiType) {
 			return types.NewErrorWithStatusCode(
 				fmt.Errorf("unsupported endpoint %q for api type %d", "/v1/responses/compact", info.ApiType),
 				types.ErrorCodeInvalidRequest,

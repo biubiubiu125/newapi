@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { QueryClient } from '@tanstack/react-query'
+
 import type { GetModelsParams, SearchModelsParams } from '../types'
 
 /**
@@ -39,6 +41,16 @@ export const vendorsQueryKeys = {
   list: (filters?: Record<string, unknown>) =>
     [...vendorsQueryKeys.lists(), filters] as const,
   detail: (id: number) => [...vendorsQueryKeys.all, 'detail', id] as const,
+}
+
+export async function refreshModelSyncQueries(
+  queryClient: Pick<QueryClient, 'invalidateQueries'>
+) {
+  await Promise.all([
+    queryClient.invalidateQueries({ queryKey: modelsQueryKeys.all }),
+    queryClient.invalidateQueries({ queryKey: vendorsQueryKeys.lists() }),
+    queryClient.invalidateQueries({ queryKey: ['pricing'] }),
+  ])
 }
 
 /**

@@ -96,8 +96,8 @@ func InitChannelCache() {
 	channelsIDM = newChannelId2channel
 	channel2advancedCustomConfig = newChannel2advancedCustomConfig
 	channelSyncLock.Unlock()
-	// Lock ordering: InvalidatePricingCache acquires updatePricingLock, and
-	// GetPricing (holding updatePricingLock) nests channelSyncLock.RLock via
+	// Lock ordering: InvalidatePricingCache acquires updatePricingLock and
+	// modelSupportEndpointsLock; GetPricing then nests channelSyncLock.RLock via
 	// loadPricingAdvancedCustomConfigs. channelSyncLock MUST be released before
 	// invalidating the pricing cache, otherwise the reversed order deadlocks.
 	InvalidatePricingCache()
@@ -125,36 +125,26 @@ func GetRandomSatisfiedChannelWithExclude(group string, model string, retry int,
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
 
+	if len(excludeChannelIds) > 0 {
+		retry = 0
+	}
+	excludeSet := buildExcludeChannelIDSet(excludeChannelIds)
+
 	// First, try to find channels with the exact model name.
 	channels := filterChannelsByRequestPathAndModel(group2model2channels[group][model], requestPath, model)
+	channels = filterExcludedChannels(channels, excludeSet)
 
 	// If no channels found, try to find channels with the normalized model name.
 	if len(channels) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(model)
-		channels = filterChannelsByRequestPathAndModel(group2model2channels[group][normalizedModel], requestPath, model)
+		if normalizedModel != "" && normalizedModel != model {
+			channels = filterChannelsByRequestPathAndModel(group2model2channels[group][normalizedModel], requestPath, model)
+			channels = filterExcludedChannels(channels, excludeSet)
+		}
 	}
 
 	if len(channels) == 0 {
 		return nil, nil
-	}
-
-	if len(excludeChannelIds) > 0 {
-		retry = 0
-		excludeSet := make(map[int]struct{}, len(excludeChannelIds))
-		for _, channelId := range excludeChannelIds {
-			excludeSet[channelId] = struct{}{}
-		}
-		filteredChannels := make([]int, 0, len(channels))
-		for _, channelId := range channels {
-			if _, excluded := excludeSet[channelId]; excluded {
-				continue
-			}
-			filteredChannels = append(filteredChannels, channelId)
-		}
-		channels = filteredChannels
-		if len(channels) == 0 {
-			return nil, nil
-		}
 	}
 
 	if len(channels) == 1 {
@@ -230,6 +220,31 @@ func GetRandomSatisfiedChannelWithExclude(group string, model string, retry int,
 	}
 	// return null if no channel is not found
 	return nil, errors.New("channel not found")
+}
+
+func buildExcludeChannelIDSet(excludeChannelIds []int) map[int]struct{} {
+	if len(excludeChannelIds) == 0 {
+		return nil
+	}
+	excludeSet := make(map[int]struct{}, len(excludeChannelIds))
+	for _, channelId := range excludeChannelIds {
+		excludeSet[channelId] = struct{}{}
+	}
+	return excludeSet
+}
+
+func filterExcludedChannels(channels []int, excludeSet map[int]struct{}) []int {
+	if len(channels) == 0 || len(excludeSet) == 0 {
+		return channels
+	}
+	filteredChannels := make([]int, 0, len(channels))
+	for _, channelId := range channels {
+		if _, excluded := excludeSet[channelId]; excluded {
+			continue
+		}
+		filteredChannels = append(filteredChannels, channelId)
+	}
+	return filteredChannels
 }
 
 // filterChannelsByRequestPathAndModel restricts candidates by request path and
@@ -345,9 +360,10 @@ func CacheUpdateChannel(channel *Channel) {
 	}
 	logger.LogDebug(nil, "CacheUpdateChannel after: id=%d, name=%s, status=%d, polling_index=%d", channel.Id, channel.Name, channel.Status, channel.ChannelInfo.MultiKeyPollingIndex)
 	// Lock ordering: do NOT hold channelSyncLock while calling
-	// InvalidatePricingCache. GetPricing acquires updatePricingLock first and then
-	// channelSyncLock.RLock (via loadPricingAdvancedCustomConfigs); acquiring
-	// updatePricingLock while holding channelSyncLock would be an AB-BA deadlock.
+	// InvalidatePricingCache. GetPricing acquires updatePricingLock and
+	// modelSupportEndpointsLock before channelSyncLock.RLock (via
+	// loadPricingAdvancedCustomConfigs); acquiring updatePricingLock while holding
+	// channelSyncLock would be an AB-BA deadlock.
 	channelSyncLock.Unlock()
 	InvalidatePricingCache()
 }

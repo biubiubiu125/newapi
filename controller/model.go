@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
@@ -289,6 +290,13 @@ func ListModels(c *gin.Context, modelType int) {
 				Type:        "model",
 			}
 		}
+		if len(useranthropicModels) == 0 {
+			c.JSON(200, gin.H{
+				"data":     useranthropicModels,
+				"has_more": false,
+			})
+			return
+		}
 		c.JSON(200, gin.H{
 			"data":     useranthropicModels,
 			"first_id": useranthropicModels[0].ID,
@@ -337,29 +345,119 @@ func EnabledListModels(c *gin.Context) {
 	})
 }
 
+func respondWithModelByType(c *gin.Context, aiModel dto.OpenAIModels, modelType int) {
+	switch modelType {
+	case constant.ChannelTypeAnthropic:
+		c.JSON(200, dto.AnthropicModel{
+			ID:          aiModel.Id,
+			CreatedAt:   time.Unix(int64(aiModel.Created), 0).UTC().Format(time.RFC3339),
+			DisplayName: aiModel.Id,
+			Type:        "model",
+		})
+	case constant.ChannelTypeGemini:
+		c.JSON(200, dto.GeminiModel{
+			Name:        aiModel.Id,
+			DisplayName: aiModel.Id,
+		})
+	default:
+		c.JSON(200, aiModel)
+	}
+}
+
+func hasBillingConfigForRequestedModel(modelName string) bool {
+	if helper.HasModelBillingConfig(modelName) {
+		return true
+	}
+	normalized := ratio_setting.FormatMatchingModelName(modelName)
+	return normalized != "" && normalized != modelName && helper.HasModelBillingConfig(normalized)
+}
+
+func modelNameMatchesRequest(configuredModel string, requestModel string) bool {
+	if configuredModel == requestModel {
+		return true
+	}
+	normalized := ratio_setting.FormatMatchingModelName(requestModel)
+	return normalized != "" && configuredModel == normalized
+}
+
+func userCanRetrieveModel(c *gin.Context, modelName string, groups modelListGroups, acceptUnsetRatioModel bool) bool {
+	if !acceptUnsetRatioModel && !hasBillingConfigForRequestedModel(modelName) {
+		return false
+	}
+
+	if common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
+		s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
+		if !ok {
+			return false
+		}
+		tokenModelLimit, ok := s.(map[string]bool)
+		if !ok {
+			return false
+		}
+		if tokenModelLimit[modelName] {
+			return true
+		}
+		normalized := ratio_setting.FormatMatchingModelName(modelName)
+		return normalized != "" && normalized != modelName && tokenModelLimit[normalized]
+	}
+
+	for _, group := range groups.ownerGroups {
+		for _, enabledModel := range model.GetGroupEnabledModels(group) {
+			if modelNameMatchesRequest(enabledModel, modelName) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func getUserVisibleModelForRetrieve(c *gin.Context, modelName string) (dto.OpenAIModels, bool) {
+	acceptUnsetRatioModel := operation_setting.SelfUseModeEnabled
+	if !acceptUnsetRatioModel {
+		userId := c.GetInt("id")
+		if userId > 0 {
+			userSettings, _ := model.GetUserSetting(userId, false)
+			if userSettings.AcceptUnsetRatioModel {
+				acceptUnsetRatioModel = true
+			}
+		}
+	}
+
+	groups, err := getModelListGroups(c)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("getModelListGroups error: %v", err))
+		return dto.OpenAIModels{}, false
+	}
+	if !userCanRetrieveModel(c, modelName, groups, acceptUnsetRatioModel) {
+		return dto.OpenAIModels{}, false
+	}
+
+	ownerByModel := map[string]string{}
+	if len(groups.ownerGroups) > 0 {
+		ownerByModel = getPreferredModelOwners([]string{modelName}, groups.ownerGroups)
+	}
+	return buildOpenAIModel(modelName, ownerByModel), true
+}
+
 func RetrieveModel(c *gin.Context, modelType int) {
 	modelId := c.Param("model")
 	if aiModel, ok := openAIModelsMap[modelId]; ok {
-		switch modelType {
-		case constant.ChannelTypeAnthropic:
-			c.JSON(200, dto.AnthropicModel{
-				ID:          aiModel.Id,
-				CreatedAt:   time.Unix(int64(aiModel.Created), 0).UTC().Format(time.RFC3339),
-				DisplayName: aiModel.Id,
-				Type:        "model",
-			})
-		default:
-			c.JSON(200, aiModel)
-		}
-	} else {
-		openAIError := types.OpenAIError{
-			Message: fmt.Sprintf("The model '%s' does not exist", modelId),
-			Type:    "invalid_request_error",
-			Param:   "model",
-			Code:    "model_not_found",
-		}
-		c.JSON(200, gin.H{
-			"error": openAIError,
-		})
+		respondWithModelByType(c, aiModel, modelType)
+		return
 	}
+
+	if aiModel, ok := getUserVisibleModelForRetrieve(c, modelId); ok {
+		respondWithModelByType(c, aiModel, modelType)
+		return
+	}
+
+	openAIError := types.OpenAIError{
+		Message: fmt.Sprintf("The model '%s' does not exist", modelId),
+		Type:    "invalid_request_error",
+		Param:   "model",
+		Code:    "model_not_found",
+	}
+	c.JSON(200, gin.H{
+		"error": openAIError,
+	})
 }
