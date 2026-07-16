@@ -179,9 +179,9 @@ func seedImageTaskSyncBridgeE2EData(t *testing.T) {
 	t.Helper()
 	priority := int64(0)
 	weight := uint(100)
-	baseURL := "https://gpt-image2api.example"
+	baseURL := "https://async-task-bridge.example"
 	otherSettings, err := common.Marshal(dto.ChannelOtherSettings{
-		ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 	})
 	require.NoError(t, err)
 
@@ -250,16 +250,16 @@ func newImageTaskSyncBridgeE2ERouter() *gin.Engine {
 	return router
 }
 
-func TestValidateImageTaskModeRequestRejectsGPTImage2APIAsyncMultipleImages(t *testing.T) {
+func TestValidateImageTaskModeRequestRejectsAsyncTaskBridgeMultipleImages(t *testing.T) {
 	n := uint(2)
-	err := validateImageTaskModeRequest(&dto.ImageRequest{N: &n}, dto.ImageTaskModeGPTImage2APIAsync)
+	err := validateImageTaskModeRequest(&dto.ImageRequest{N: &n}, dto.ImageTaskModeAsyncTaskBridge)
 	require.ErrorContains(t, err, "n 大于 1")
 
 	require.NoError(t, validateImageTaskModeRequest(&dto.ImageRequest{N: &n}, dto.ImageTaskModeSyncWrapper))
 
 	one := uint(1)
-	require.NoError(t, validateImageTaskModeRequest(&dto.ImageRequest{N: &one}, dto.ImageTaskModeGPTImage2APIAsync))
-	require.NoError(t, validateImageTaskModeRequest(&dto.ImageRequest{}, dto.ImageTaskModeGPTImage2APIAsync))
+	require.NoError(t, validateImageTaskModeRequest(&dto.ImageRequest{N: &one}, dto.ImageTaskModeAsyncTaskBridge))
+	require.NoError(t, validateImageTaskModeRequest(&dto.ImageRequest{}, dto.ImageTaskModeAsyncTaskBridge))
 }
 
 func TestTryRelayImageTaskSyncBridgeSkipsNonAsyncWithoutInitializingChannelMeta(t *testing.T) {
@@ -283,7 +283,7 @@ func TestTryRelayImageTaskSyncBridgeSkipsUnsupportedRelayMode(t *testing.T) {
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	common.SetContextKey(ctx, constant.ContextKeyChannelOtherSetting, dto.ChannelOtherSettings{
-		ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+		ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 	})
 	relayInfo := &relaycommon.RelayInfo{RelayMode: relayconstant.RelayModeEdits}
 
@@ -322,7 +322,7 @@ func TestRelayImageTaskSyncBridgeRejectsWhenTaskExecutionDisabled(t *testing.T) 
 	require.Equal(t, http.StatusServiceUnavailable, err.StatusCode)
 }
 
-func TestImageGenerationRouteUsesSyncBridgeForGPTImage2APIAsyncChannel(t *testing.T) {
+func TestImageGenerationRouteUsesSyncBridgeForAsyncTaskBridgeChannel(t *testing.T) {
 	router := setupImageTaskSyncBridgeE2E(t)
 	updateErr := completeFirstImageTaskWhenCreated(constant.TaskActionImageGeneration, json.RawMessage(`{"data":[{"url":"https://example.com/sync-bridge.png"}],"usage":{"total_tokens":7}}`))
 
@@ -348,7 +348,7 @@ func TestImageGenerationRouteUsesSyncBridgeForGPTImage2APIAsyncChannel(t *testin
 	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
 	require.Equal(t, model.TaskSettlementStatusSettled, task.SettlementStatus)
 	require.Equal(t, constant.TaskActionImageGeneration, task.Action)
-	require.Equal(t, dto.ImageTaskModeGPTImage2APIAsync, task.PrivateData.ImageTaskMode)
+	require.Equal(t, dto.ImageTaskModeAsyncTaskBridge, task.PrivateData.ImageTaskMode)
 	require.Equal(t, "/v1/images/generations", task.PrivateData.RequestPath)
 	require.Equal(t, "application/json", task.PrivateData.RequestContentType)
 	require.Equal(t, "gpt-image-1", task.Properties.OriginModelName)
@@ -360,7 +360,7 @@ func TestImageGenerationRouteUsesSyncBridgeForGPTImage2APIAsyncChannel(t *testin
 	require.Empty(t, recorder.Header().Get("X-NewAPI-Retry-Idempotency-Key"))
 }
 
-func TestImageEditRouteUsesSyncBridgeForGPTImage2APIAsyncChannel(t *testing.T) {
+func TestImageEditRouteUsesSyncBridgeForAsyncTaskBridgeChannel(t *testing.T) {
 	router := setupImageTaskSyncBridgeE2E(t)
 	updateErr := completeFirstImageTaskWhenCreated(constant.TaskActionImageEdit, json.RawMessage(`{"data":[{"url":"https://example.com/edit-sync-bridge.png"}],"usage":{"total_tokens":9}}`))
 
@@ -392,7 +392,7 @@ func TestImageEditRouteUsesSyncBridgeForGPTImage2APIAsyncChannel(t *testing.T) {
 	require.NoError(t, model.DB.First(&task, "platform = ? AND action = ?", constant.TaskPlatformImage, constant.TaskActionImageEdit).Error)
 	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
 	require.Equal(t, model.TaskSettlementStatusSettled, task.SettlementStatus)
-	require.Equal(t, dto.ImageTaskModeGPTImage2APIAsync, task.PrivateData.ImageTaskMode)
+	require.Equal(t, dto.ImageTaskModeAsyncTaskBridge, task.PrivateData.ImageTaskMode)
 	require.Equal(t, "/v1/images/edits", task.PrivateData.RequestPath)
 	require.Contains(t, task.PrivateData.RequestContentType, "multipart/form-data")
 	require.Equal(t, "gpt-image-1", task.Properties.OriginModelName)
@@ -404,7 +404,7 @@ func TestImageEditRouteUsesSyncBridgeForGPTImage2APIAsyncChannel(t *testing.T) {
 	require.Empty(t, recorder.Header().Get("X-NewAPI-Retry-Idempotency-Key"))
 }
 
-func TestImageGenerationRouteRunsGPTImage2APIAsyncEndToEnd(t *testing.T) {
+func TestImageGenerationRouteRunsAsyncTaskBridgeEndToEnd(t *testing.T) {
 	var submitCount int
 	var statusOnlyCount int
 	var fullResultCount int
@@ -495,10 +495,10 @@ func TestImageGenerationRouteRunsGPTImage2APIAsyncEndToEnd(t *testing.T) {
 	require.Equal(t, model.TaskSettlementStatusSettled, task.SettlementStatus)
 	require.Equal(t, "upstream_sync_bridge_e2e", task.PrivateData.UpstreamTaskID)
 	require.Equal(t, constant.TaskActionImageGeneration, task.Action)
-	require.Equal(t, dto.ImageTaskModeGPTImage2APIAsync, task.PrivateData.ImageTaskMode)
+	require.Equal(t, dto.ImageTaskModeAsyncTaskBridge, task.PrivateData.ImageTaskMode)
 }
 
-func TestImageEditRouteRunsGPTImage2APIAsyncEndToEnd(t *testing.T) {
+func TestImageEditRouteRunsAsyncTaskBridgeEndToEnd(t *testing.T) {
 	var submitCount int
 	var statusOnlyCount int
 	var fullResultCount int
@@ -619,7 +619,7 @@ func TestImageEditRouteRunsGPTImage2APIAsyncEndToEnd(t *testing.T) {
 	require.Equal(t, model.TaskSettlementStatusSettled, task.SettlementStatus)
 	require.Equal(t, "upstream_sync_bridge_edit_e2e", task.PrivateData.UpstreamTaskID)
 	require.Equal(t, constant.TaskActionImageEdit, task.Action)
-	require.Equal(t, dto.ImageTaskModeGPTImage2APIAsync, task.PrivateData.ImageTaskMode)
+	require.Equal(t, dto.ImageTaskModeAsyncTaskBridge, task.PrivateData.ImageTaskMode)
 }
 
 func driveImageTaskSyncBridgeWorkerUntilSettled(ctx context.Context) <-chan error {

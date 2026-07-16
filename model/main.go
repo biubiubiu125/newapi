@@ -1,6 +1,7 @@
 package model
 
 import (
+	"encoding/json"
 	"fmt"
 	"log"
 	"net/url"
@@ -11,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 
 	"github.com/glebarez/sqlite"
 	"gorm.io/driver/clickhouse"
@@ -36,6 +38,8 @@ const (
 	defaultDBStartupConnectRetryIntervalMs = 1000
 
 	dropLegacyRiskTablesEnv = "DROP_LEGACY_RISK_TABLES"
+
+	legacyImageTaskModeValue = "gpt_image2api_async"
 )
 
 var legacyConversationArtifactTables = []string{
@@ -403,6 +407,9 @@ func migrateDB() error {
 	if err := migrateImageTaskPortableStorageNodes(); err != nil {
 		return err
 	}
+	if err := migrateImageTaskModeAsyncTaskBridge(); err != nil {
+		return err
+	}
 	cleanupConversationArtifactOptions()
 	return nil
 }
@@ -604,9 +611,153 @@ func migrateDBFast() error {
 	if err := migrateImageTaskPortableStorageNodes(); err != nil {
 		return err
 	}
+	if err := migrateImageTaskModeAsyncTaskBridge(); err != nil {
+		return err
+	}
 	cleanupConversationArtifactOptions()
 	common.SysLog("database migrated")
 	return nil
+}
+
+func migrateImageTaskModeAsyncTaskBridge() error {
+	if err := migrateChannelImageTaskModeAsyncTaskBridge(); err != nil {
+		return err
+	}
+	return migrateTaskPrivateDataImageTaskModeAsyncTaskBridge()
+}
+
+func migrateChannelImageTaskModeAsyncTaskBridge() error {
+	const batchSize = 500
+
+	if !DB.Migrator().HasTable(&Channel{}) {
+		return nil
+	}
+	var total int64
+	var lastID int
+	for {
+		var channels []Channel
+		err := DB.Model(&Channel{}).
+			Select("id", "settings").
+			Where("id > ?", lastID).
+			Where("settings LIKE ?", "%"+legacyImageTaskModeValue+"%").
+			Order("id ASC").
+			Limit(batchSize).
+			Find(&channels).Error
+		if err != nil {
+			return err
+		}
+		if len(channels) == 0 {
+			if total > 0 {
+				common.SysLog(fmt.Sprintf("migrated %d channel image task modes to %s", total, dto.ImageTaskModeAsyncTaskBridge))
+			}
+			return nil
+		}
+
+		for _, channel := range channels {
+			lastID = channel.Id
+			settings, changed, err := replaceLegacyImageTaskModeRaw(channel.OtherSettings)
+			if err != nil {
+				common.SysLog(fmt.Sprintf("skip channel #%d image_task_mode migration: %s", channel.Id, err.Error()))
+				continue
+			}
+			if !changed {
+				continue
+			}
+			result := DB.Model(&Channel{}).
+				Where("id = ?", channel.Id).
+				Update("settings", settings)
+			if result.Error != nil {
+				return result.Error
+			}
+			total += result.RowsAffected
+		}
+	}
+}
+
+func migrateTaskPrivateDataImageTaskModeAsyncTaskBridge() error {
+	const batchSize = 500
+
+	if !DB.Migrator().HasTable(&Task{}) {
+		return nil
+	}
+	type taskPrivateDataRow struct {
+		ID          int64  `gorm:"column:id"`
+		PrivateData string `gorm:"column:private_data"`
+	}
+
+	var total int64
+	var lastID int64
+	for {
+		var tasks []taskPrivateDataRow
+		query := DB.Table("tasks").
+			Select("id", "private_data").
+			Where("id > ?", lastID)
+		query = applyImageTaskPrivateDataCandidateFilter(query, []string{legacyImageTaskModeValue})
+		err := query.
+			Order("id ASC").
+			Limit(batchSize).
+			Find(&tasks).Error
+		if err != nil {
+			return err
+		}
+		if len(tasks) == 0 {
+			if total > 0 {
+				common.SysLog(fmt.Sprintf("migrated %d task image task modes to %s", total, dto.ImageTaskModeAsyncTaskBridge))
+			}
+			return nil
+		}
+
+		for _, task := range tasks {
+			lastID = task.ID
+			privateData, changed, err := replaceLegacyImageTaskModeRaw(task.PrivateData)
+			if err != nil {
+				common.SysLog(fmt.Sprintf("skip task #%d image_task_mode migration: %s", task.ID, err.Error()))
+				continue
+			}
+			if !changed {
+				continue
+			}
+			result := DB.Table("tasks").
+				Where("id = ?", task.ID).
+				Update("private_data", imageTaskPrivateDataMigrationValue(privateData))
+			if result.Error != nil {
+				return result.Error
+			}
+			total += result.RowsAffected
+		}
+	}
+}
+
+func imageTaskPrivateDataMigrationValue(privateData string) any {
+	return privateData
+}
+
+func replaceLegacyImageTaskModeRaw(jsonText string) (string, bool, error) {
+	fields := map[string]json.RawMessage{}
+	if err := common.UnmarshalJsonStr(jsonText, &fields); err != nil {
+		return "", false, err
+	}
+	rawMode, ok := fields["image_task_mode"]
+	if !ok {
+		return "", false, nil
+	}
+	var mode string
+	if err := common.Unmarshal(rawMode, &mode); err != nil {
+		return "", false, err
+	}
+	if mode != legacyImageTaskModeValue {
+		return "", false, nil
+	}
+	replacement, err := common.Marshal(dto.ImageTaskModeAsyncTaskBridge)
+	if err != nil {
+		return "", false, err
+	}
+	fields["image_task_mode"] = json.RawMessage(replacement)
+	data, err := common.Marshal(fields)
+	if err != nil {
+		return "", false, err
+	}
+	return string(data), true, nil
 }
 
 func migrateImageTaskPortableStorageNodes() error {

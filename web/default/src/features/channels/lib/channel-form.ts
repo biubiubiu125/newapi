@@ -198,7 +198,7 @@ export const channelFormSchema = z
     claude_beta_query: z.boolean().optional(), // Anthropic: beta query passthrough
     disable_task_polling_sleep: z.boolean().optional(),
     image_task_mode: z
-      .enum(['sync_wrapper', 'gpt_image2api_async'])
+      .enum(['sync_wrapper', 'async_task_bridge'])
       .optional(),
     // Upstream model update settings (stored in settings JSON)
     upstream_model_update_check_enabled: z.boolean().optional(),
@@ -215,13 +215,13 @@ export const channelFormSchema = z
     }
 
     if (
-      data.image_task_mode === 'gpt_image2api_async' &&
+      data.image_task_mode === 'async_task_bridge' &&
       !data.base_url?.trim()
     ) {
       addRequiredIssue(
         ctx,
         'base_url',
-        'gpt_image2api 异步模式必须填写基础地址'
+        '异步任务桥接模式必须填写基础地址'
       )
     }
 
@@ -386,7 +386,7 @@ export function transformChannelToFormDefaults(
   let allowSpeed = false
   let claudeBetaQuery = false
   let disableTaskPollingSleep = false
-  let imageTaskMode: 'sync_wrapper' | 'gpt_image2api_async' = 'sync_wrapper'
+  let imageTaskMode: 'sync_wrapper' | 'async_task_bridge' = 'sync_wrapper'
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
@@ -407,8 +407,8 @@ export function transformChannelToFormDefaults(
       claudeBetaQuery = parsed.claude_beta_query === true
       disableTaskPollingSleep = parsed.disable_task_polling_sleep === true
       imageTaskMode =
-        parsed.image_task_mode === 'gpt_image2api_async'
-          ? 'gpt_image2api_async'
+        parsed.image_task_mode === 'async_task_bridge'
+          ? 'async_task_bridge'
           : 'sync_wrapper'
       upstreamModelUpdateCheckEnabled =
         parsed.upstream_model_update_check_enabled === true

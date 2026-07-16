@@ -54,7 +54,7 @@ func TestTaskModel2DtoMarksImageSettlementReviewAsFailure(t *testing.T) {
 	require.Equal(t, model.TaskSettlementStatusReview, resp.SettlementStatus)
 }
 
-func TestParseGPTImage2APITaskResultSupportsKeyedDataMap(t *testing.T) {
+func TestParseAsyncTaskBridgeTaskResultSupportsKeyedDataMap(t *testing.T) {
 	body := []byte(`{
 		"data": {
 			"upstream_123": {
@@ -66,7 +66,7 @@ func TestParseGPTImage2APITaskResultSupportsKeyedDataMap(t *testing.T) {
 		}
 	}`)
 
-	result, err := parseGPTImage2APITaskResult(body, "upstream_123")
+	result, err := parseAsyncTaskBridgeTaskResult(body, "upstream_123")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -76,7 +76,7 @@ func TestParseGPTImage2APITaskResultSupportsKeyedDataMap(t *testing.T) {
 	require.JSONEq(t, `{"data":[{"url":"https://example.com/a.png"}]}`, string(result.Result))
 }
 
-func TestParseGPTImage2APITaskResultMatchesClientTaskID(t *testing.T) {
+func TestParseAsyncTaskBridgeTaskResultMatchesClientTaskID(t *testing.T) {
 	body := []byte(`{
 		"data": [
 			{
@@ -88,7 +88,7 @@ func TestParseGPTImage2APITaskResultMatchesClientTaskID(t *testing.T) {
 		]
 	}`)
 
-	result, err := parseGPTImage2APITaskResult(body, "task_local_456")
+	result, err := parseAsyncTaskBridgeTaskResult(body, "task_local_456")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -97,7 +97,7 @@ func TestParseGPTImage2APITaskResultMatchesClientTaskID(t *testing.T) {
 	require.Equal(t, "42%", result.Progress)
 }
 
-func TestParseGPTImage2APITaskResultTreatsDataObjectWithStatusAsTaskItem(t *testing.T) {
+func TestParseAsyncTaskBridgeTaskResultTreatsDataObjectWithStatusAsTaskItem(t *testing.T) {
 	body := []byte(`{
 		"data": {
 			"task_id": "upstream_data",
@@ -107,7 +107,7 @@ func TestParseGPTImage2APITaskResultTreatsDataObjectWithStatusAsTaskItem(t *test
 		}
 	}`)
 
-	result, err := parseGPTImage2APITaskResult(body, "upstream_data")
+	result, err := parseAsyncTaskBridgeTaskResult(body, "upstream_data")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -116,7 +116,7 @@ func TestParseGPTImage2APITaskResultTreatsDataObjectWithStatusAsTaskItem(t *test
 	require.JSONEq(t, `{"data":[{"url":"https://example.com/data.png"}]}`, string(result.Result))
 }
 
-func TestRunGPTImage2APIAsyncImageTaskBatchPollsStatusWithoutImageData(t *testing.T) {
+func TestRunAsyncTaskBridgeImageTaskBatchPollsStatusWithoutImageData(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -164,7 +164,7 @@ func TestRunGPTImage2APIAsyncImageTaskBatchPollsStatusWithoutImageData(t *testin
 		Type:    constant.ChannelTypeOpenAI,
 		Key:     "upstream-key",
 		Status:  common.ChannelStatusEnabled,
-		Name:    "gpt-image2api",
+		Name:    "async-task-bridge",
 		Group:   "default",
 		Models:  "gpt-image-1",
 		BaseURL: &baseURL,
@@ -184,7 +184,7 @@ func TestRunGPTImage2APIAsyncImageTaskBatchPollsStatusWithoutImageData(t *testin
 			StartTime:  now,
 			Properties: model.Properties{OriginModelName: "gpt-image-1"},
 			PrivateData: model.TaskPrivateData{
-				ImageTaskMode:  dto.ImageTaskModeGPTImage2APIAsync,
+				ImageTaskMode:  dto.ImageTaskModeAsyncTaskBridge,
 				UpstreamTaskID: "upstream_a",
 				Key:            "upstream-key",
 			},
@@ -202,7 +202,7 @@ func TestRunGPTImage2APIAsyncImageTaskBatchPollsStatusWithoutImageData(t *testin
 			StartTime:  now,
 			Properties: model.Properties{OriginModelName: "gpt-image-1"},
 			PrivateData: model.TaskPrivateData{
-				ImageTaskMode:  dto.ImageTaskModeGPTImage2APIAsync,
+				ImageTaskMode:  dto.ImageTaskModeAsyncTaskBridge,
 				UpstreamTaskID: "upstream_b",
 				Key:            "upstream-key",
 			},
@@ -227,7 +227,7 @@ func TestRunGPTImage2APIAsyncImageTaskBatchPollsStatusWithoutImageData(t *testin
 	require.Equal(t, "0%", reloadedB.Progress)
 }
 
-func TestRunGPTImage2APIAsyncImageTaskBatchSuccessFetchesFullResultAndSettles(t *testing.T) {
+func TestRunAsyncTaskBridgeImageTaskBatchSuccessFetchesFullResultAndSettles(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -372,7 +372,7 @@ func TestRunGPTImage2APIAsyncImageTaskBatchSuccessFetchesFullResultAndSettles(t 
 		Type:    constant.ChannelTypeOpenAI,
 		Key:     "upstream-key",
 		Status:  common.ChannelStatusEnabled,
-		Name:    "gpt-image2api",
+		Name:    "async-task-bridge",
 		Group:   "default",
 		Models:  "gpt-image-1",
 		BaseURL: &baseURL,
@@ -402,7 +402,7 @@ func TestRunGPTImage2APIAsyncImageTaskBatchSuccessFetchesFullResultAndSettles(t 
 			OriginModelName: "gpt-image-1",
 		},
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
 			RequestPath:        "/v1/images/generations",
 			RequestMethod:      http.MethodPost,
 			RequestContentType: "application/json",
@@ -447,7 +447,7 @@ func TestRunGPTImage2APIAsyncImageTaskBatchSuccessFetchesFullResultAndSettles(t 
 			OriginModelName: "gpt-image-1",
 		},
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:  dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode:  dto.ImageTaskModeAsyncTaskBridge,
 			UpstreamTaskID: "upstream_running",
 			Key:            "upstream-key",
 		},
@@ -494,7 +494,7 @@ func TestRunGPTImage2APIAsyncImageTaskBatchSuccessFetchesFullResultAndSettles(t 
 	require.Equal(t, 200, log.Quota)
 }
 
-func TestParseGPTImage2APITaskResultSupportsRealItemsShape(t *testing.T) {
+func TestParseAsyncTaskBridgeTaskResultSupportsRealItemsShape(t *testing.T) {
 	body := []byte(`{
 		"items": [{
 			"id": "task_local_123",
@@ -510,7 +510,7 @@ func TestParseGPTImage2APITaskResultSupportsRealItemsShape(t *testing.T) {
 		"missing_ids": []
 	}`)
 
-	result, err := parseGPTImage2APITaskResult(body, "task_local_123")
+	result, err := parseAsyncTaskBridgeTaskResult(body, "task_local_123")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -525,7 +525,7 @@ func TestParseGPTImage2APITaskResultSupportsRealItemsShape(t *testing.T) {
 	}`, string(result.Result))
 }
 
-func TestParseGPTImage2APITaskResultMergesSiblingUsageIntoResult(t *testing.T) {
+func TestParseAsyncTaskBridgeTaskResultMergesSiblingUsageIntoResult(t *testing.T) {
 	body := []byte(`{
 		"items": [{
 			"id": "task_result_usage",
@@ -539,7 +539,7 @@ func TestParseGPTImage2APITaskResultMergesSiblingUsageIntoResult(t *testing.T) {
 		}]
 	}`)
 
-	result, err := parseGPTImage2APITaskResult(body, "task_result_usage")
+	result, err := parseAsyncTaskBridgeTaskResult(body, "task_result_usage")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -559,7 +559,7 @@ func TestParseGPTImage2APITaskResultMergesSiblingUsageIntoResult(t *testing.T) {
 	require.Equal(t, 11, usage.TotalTokens)
 }
 
-func TestParseGPTImage2APITaskResultPrefersItemsOverTopLevelData(t *testing.T) {
+func TestParseAsyncTaskBridgeTaskResultPrefersItemsOverTopLevelData(t *testing.T) {
 	body := []byte(`{
 		"items": [{
 			"id": "task_local_123",
@@ -569,7 +569,7 @@ func TestParseGPTImage2APITaskResultPrefersItemsOverTopLevelData(t *testing.T) {
 		"data": [{"url":"https://example.com/not-a-task.png"}]
 	}`)
 
-	result, err := parseGPTImage2APITaskResult(body, "task_local_123")
+	result, err := parseAsyncTaskBridgeTaskResult(body, "task_local_123")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -577,7 +577,7 @@ func TestParseGPTImage2APITaskResultPrefersItemsOverTopLevelData(t *testing.T) {
 	require.JSONEq(t, `{"data":[{"b64_json":"abc"}]}`, string(result.Result))
 }
 
-func TestParseGPTImage2APITaskResultDoesNotUseTopLevelStatusEnvelope(t *testing.T) {
+func TestParseAsyncTaskBridgeTaskResultDoesNotUseTopLevelStatusEnvelope(t *testing.T) {
 	body := []byte(`{
 		"status": "success",
 		"items": [{
@@ -587,7 +587,7 @@ func TestParseGPTImage2APITaskResultDoesNotUseTopLevelStatusEnvelope(t *testing.
 		}]
 	}`)
 
-	result, err := parseGPTImage2APITaskResult(body, "task_local_123")
+	result, err := parseAsyncTaskBridgeTaskResult(body, "task_local_123")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
@@ -596,7 +596,7 @@ func TestParseGPTImage2APITaskResultDoesNotUseTopLevelStatusEnvelope(t *testing.
 	require.JSONEq(t, `{"data":[{"b64_json":"abc"}]}`, string(result.Result))
 }
 
-func TestParseGPTImage2APITaskResultIgnoresUnmatchedTopLevelStatusEnvelope(t *testing.T) {
+func TestParseAsyncTaskBridgeTaskResultIgnoresUnmatchedTopLevelStatusEnvelope(t *testing.T) {
 	body := []byte(`{
 		"status": "success",
 		"items": [{
@@ -606,22 +606,22 @@ func TestParseGPTImage2APITaskResultIgnoresUnmatchedTopLevelStatusEnvelope(t *te
 		}]
 	}`)
 
-	result, err := parseGPTImage2APITaskResult(body, "task_missing")
+	result, err := parseAsyncTaskBridgeTaskResult(body, "task_missing")
 
 	require.NoError(t, err)
 	require.Nil(t, result)
 }
 
-func TestParseGPTImage2APITaskResultIgnoresMissingIDs(t *testing.T) {
+func TestParseAsyncTaskBridgeTaskResultIgnoresMissingIDs(t *testing.T) {
 	body := []byte(`{"items":[],"missing_ids":["task_missing"]}`)
 
-	result, err := parseGPTImage2APITaskResult(body, "task_missing")
+	result, err := parseAsyncTaskBridgeTaskResult(body, "task_missing")
 
 	require.NoError(t, err)
 	require.Nil(t, result)
 }
 
-func TestGPTImage2APIRecoveredUpstreamIDAllowsLocalTaskID(t *testing.T) {
+func TestAsyncTaskBridgeRecoveredUpstreamIDAllowsLocalTaskID(t *testing.T) {
 	body := []byte(`{
 		"data": [
 			{
@@ -633,15 +633,15 @@ func TestGPTImage2APIRecoveredUpstreamIDAllowsLocalTaskID(t *testing.T) {
 		]
 	}`)
 
-	result, err := parseGPTImage2APITaskResult(body, "task_local_same")
+	result, err := parseAsyncTaskBridgeTaskResult(body, "task_local_same")
 
 	require.NoError(t, err)
 	require.NotNil(t, result)
-	require.Equal(t, "task_local_same", gptImage2APIRecoveredUpstreamID(result, body))
+	require.Equal(t, "task_local_same", asyncTaskBridgeRecoveredUpstreamID(result, body))
 }
 
-func TestBuildGPTImage2APIRecoverQueryIncludesLocalTaskID(t *testing.T) {
-	values, err := url.ParseQuery(buildGPTImage2APIRecoverQuery(&model.Task{TaskID: " task_local_123 "}))
+func TestBuildAsyncTaskBridgeRecoverQueryIncludesLocalTaskID(t *testing.T) {
+	values, err := url.ParseQuery(buildAsyncTaskBridgeRecoverQuery(&model.Task{TaskID: " task_local_123 "}))
 
 	require.NoError(t, err)
 	require.Equal(t, "task_local_123", values.Get("ids"))
@@ -677,7 +677,7 @@ func TestImageTaskShouldNotFailSubmittedUpstreamAsyncPoll(t *testing.T) {
 	}
 	task.PrivateData.UpstreamTaskID = "upstream_123"
 
-	require.False(t, imageTaskShouldFailStaleExecution(task, dto.ImageTaskModeGPTImage2APIAsync))
+	require.False(t, imageTaskShouldFailStaleExecution(task, dto.ImageTaskModeAsyncTaskBridge))
 }
 
 func TestImageTaskShouldNotGenericFailStaleUpstreamAsyncSubmission(t *testing.T) {
@@ -686,7 +686,7 @@ func TestImageTaskShouldNotGenericFailStaleUpstreamAsyncSubmission(t *testing.T)
 		StartTime: time.Now().Add(-imageTaskSyncTimeout - time.Second).Unix(),
 	}
 
-	require.False(t, imageTaskShouldFailStaleExecution(task, dto.ImageTaskModeGPTImage2APIAsync))
+	require.False(t, imageTaskShouldFailStaleExecution(task, dto.ImageTaskModeAsyncTaskBridge))
 	require.True(t, imageTaskExecutionTimedOut(task))
 }
 
@@ -728,15 +728,15 @@ func TestImageTaskShouldRecoverPendingAsyncSubmission(t *testing.T) {
 	require.False(t, imageTaskShouldRecoverPendingAsyncSubmission(withUpstreamID))
 }
 
-func TestGPTImage2APIAsyncCanSubmitPendingRetry(t *testing.T) {
+func TestAsyncTaskBridgeCanSubmitPendingRetry(t *testing.T) {
 	task := &model.Task{
 		Status:    model.TaskStatusInProgress,
 		StartTime: time.Now().Unix(),
 	}
-	require.True(t, gptImage2APIAsyncCanSubmit(task))
+	require.True(t, asyncTaskBridgeCanSubmit(task))
 
 	task.PrivateData.UpstreamTaskID = "upstream_123"
-	require.False(t, gptImage2APIAsyncCanSubmit(task))
+	require.False(t, asyncTaskBridgeCanSubmit(task))
 }
 
 func TestImageTaskShouldFailMissingUpstreamPollResultAfterTimeout(t *testing.T) {
@@ -839,28 +839,28 @@ func TestImageTaskAsyncStatusDoesNotUseSyncWrapperTimeout(t *testing.T) {
 	require.False(t, imageTaskShouldFailLongRunningUpstreamStatus(task))
 }
 
-func TestGPTImage2APISubmissionShouldRecover(t *testing.T) {
-	require.True(t, gptImage2APISubmissionShouldRecover(408))
-	require.True(t, gptImage2APISubmissionShouldRecover(429))
-	require.True(t, gptImage2APISubmissionShouldRecover(500))
-	require.True(t, gptImage2APISubmissionShouldRecover(524))
+func TestAsyncTaskBridgeSubmissionShouldRecover(t *testing.T) {
+	require.True(t, asyncTaskBridgeSubmissionShouldRecover(408))
+	require.True(t, asyncTaskBridgeSubmissionShouldRecover(429))
+	require.True(t, asyncTaskBridgeSubmissionShouldRecover(500))
+	require.True(t, asyncTaskBridgeSubmissionShouldRecover(524))
 
-	require.False(t, gptImage2APISubmissionShouldRecover(400))
-	require.False(t, gptImage2APISubmissionShouldRecover(401))
-	require.False(t, gptImage2APISubmissionShouldRecover(404))
+	require.False(t, asyncTaskBridgeSubmissionShouldRecover(400))
+	require.False(t, asyncTaskBridgeSubmissionShouldRecover(401))
+	require.False(t, asyncTaskBridgeSubmissionShouldRecover(404))
 }
 
-func TestGPTImage2APIPollShouldRetryOnlyTransientStatus(t *testing.T) {
-	require.True(t, gptImage2APIPollShouldRetry(408))
-	require.True(t, gptImage2APIPollShouldRetry(429))
-	require.True(t, gptImage2APIPollShouldRetry(500))
-	require.True(t, gptImage2APIPollShouldRetry(524))
+func TestAsyncTaskBridgePollShouldRetryOnlyTransientStatus(t *testing.T) {
+	require.True(t, asyncTaskBridgePollShouldRetry(408))
+	require.True(t, asyncTaskBridgePollShouldRetry(429))
+	require.True(t, asyncTaskBridgePollShouldRetry(500))
+	require.True(t, asyncTaskBridgePollShouldRetry(524))
 
-	require.False(t, gptImage2APIPollShouldRetry(400))
-	require.False(t, gptImage2APIPollShouldRetry(401))
-	require.False(t, gptImage2APIPollShouldRetry(403))
-	require.False(t, gptImage2APIPollShouldRetry(404))
-	require.False(t, gptImage2APIPollShouldRetry(422))
+	require.False(t, asyncTaskBridgePollShouldRetry(400))
+	require.False(t, asyncTaskBridgePollShouldRetry(401))
+	require.False(t, asyncTaskBridgePollShouldRetry(403))
+	require.False(t, asyncTaskBridgePollShouldRetry(404))
+	require.False(t, asyncTaskBridgePollShouldRetry(422))
 }
 
 func TestImageTaskFixedUpstreamKeyPrefersStoredKey(t *testing.T) {
@@ -967,7 +967,7 @@ func TestImageTaskUsageFromResultFindsNestedUsage(t *testing.T) {
 	require.Equal(t, 5, usage.PromptTokensDetails.ImageTokens)
 }
 
-func TestParseGPTImage2APITaskResultKeepsStageUsageShape(t *testing.T) {
+func TestParseAsyncTaskBridgeTaskResultKeepsStageUsageShape(t *testing.T) {
 	body := []byte(`{
 		"items": [{
 			"id": "task_stage_usage",
@@ -987,7 +987,7 @@ func TestParseGPTImage2APITaskResultKeepsStageUsageShape(t *testing.T) {
 		"missing_ids": []
 	}`)
 
-	result, err := parseGPTImage2APITaskResult(body, "task_stage_usage")
+	result, err := parseAsyncTaskBridgeTaskResult(body, "task_stage_usage")
 	require.NoError(t, err)
 	require.NotNil(t, result)
 	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), result.Status)
@@ -1390,7 +1390,7 @@ func TestReadImageTaskHTTPResponseBodyRejectsOversize(t *testing.T) {
 	require.ErrorIs(t, err, errImageTaskHTTPResponseTooLarge)
 }
 
-func TestPollGPTImage2APIAsyncOversizeResponseMarksReview(t *testing.T) {
+func TestPollAsyncTaskBridgeOversizeResponseMarksReview(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -1431,7 +1431,7 @@ func TestPollGPTImage2APIAsyncOversizeResponseMarksReview(t *testing.T) {
 		Type:    constant.ChannelTypeOpenAI,
 		Key:     "upstream-key",
 		Status:  common.ChannelStatusEnabled,
-		Name:    "gpt-image2api",
+		Name:    "async-task-bridge",
 		Group:   "default",
 		Models:  "gpt-image-1",
 		BaseURL: &baseURL,
@@ -1449,7 +1449,7 @@ func TestPollGPTImage2APIAsyncOversizeResponseMarksReview(t *testing.T) {
 		SubmitTime: time.Now().Add(-time.Minute).Unix(),
 		StartTime:  time.Now().Add(-time.Minute).Unix(),
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
 			RequestContentType: "application/json",
 			RequestBodyPath:    bodyPath,
 			RequestBodySize:    int64(len(`{"model":"gpt-image-1","stream":false}`)),
@@ -1458,7 +1458,7 @@ func TestPollGPTImage2APIAsyncOversizeResponseMarksReview(t *testing.T) {
 	}
 	require.NoError(t, db.Create(task).Error)
 
-	require.NoError(t, pollGPTImage2APIAsyncImageTask(context.Background(), task))
+	require.NoError(t, pollAsyncTaskBridgeImageTask(context.Background(), task))
 
 	var updated model.Task
 	require.NoError(t, db.First(&updated, task.ID).Error)
@@ -1471,7 +1471,7 @@ func TestPollGPTImage2APIAsyncOversizeResponseMarksReview(t *testing.T) {
 	_ = os.Remove(bodyPath)
 }
 
-func TestPollGPTImage2APIAsyncOversizeErrorResponseFailsTask(t *testing.T) {
+func TestPollAsyncTaskBridgeOversizeErrorResponseFailsTask(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -1518,7 +1518,7 @@ func TestPollGPTImage2APIAsyncOversizeErrorResponseFailsTask(t *testing.T) {
 		Type:    constant.ChannelTypeOpenAI,
 		Key:     "upstream-key",
 		Status:  common.ChannelStatusEnabled,
-		Name:    "gpt-image2api",
+		Name:    "async-task-bridge",
 		Group:   "default",
 		Models:  "gpt-image-1",
 		BaseURL: &baseURL,
@@ -1536,7 +1536,7 @@ func TestPollGPTImage2APIAsyncOversizeErrorResponseFailsTask(t *testing.T) {
 		SubmitTime: time.Now().Add(-time.Minute).Unix(),
 		StartTime:  time.Now().Add(-time.Minute).Unix(),
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
 			RequestContentType: "application/json",
 			RequestBodyPath:    bodyPath,
 			RequestBodySize:    int64(len(`{"model":"gpt-image-1","stream":false}`)),
@@ -1545,7 +1545,7 @@ func TestPollGPTImage2APIAsyncOversizeErrorResponseFailsTask(t *testing.T) {
 	}
 	require.NoError(t, db.Create(task).Error)
 
-	require.NoError(t, pollGPTImage2APIAsyncImageTask(context.Background(), task))
+	require.NoError(t, pollAsyncTaskBridgeImageTask(context.Background(), task))
 
 	var updated model.Task
 	require.NoError(t, db.First(&updated, task.ID).Error)
@@ -1555,7 +1555,7 @@ func TestPollGPTImage2APIAsyncOversizeErrorResponseFailsTask(t *testing.T) {
 	require.NoFileExists(t, bodyPath)
 }
 
-func TestPollGPTImage2APIAsyncDiskCapacityUnavailableRetries(t *testing.T) {
+func TestPollAsyncTaskBridgeDiskCapacityUnavailableRetries(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -1604,7 +1604,7 @@ func TestPollGPTImage2APIAsyncDiskCapacityUnavailableRetries(t *testing.T) {
 		Type:    constant.ChannelTypeOpenAI,
 		Key:     "upstream-key",
 		Status:  common.ChannelStatusEnabled,
-		Name:    "gpt-image2api",
+		Name:    "async-task-bridge",
 		Group:   "default",
 		Models:  "gpt-image-1",
 		BaseURL: &baseURL,
@@ -1626,7 +1626,7 @@ func TestPollGPTImage2APIAsyncDiskCapacityUnavailableRetries(t *testing.T) {
 		SubmitTime: time.Now().Add(-time.Minute).Unix(),
 		StartTime:  time.Now().Add(-time.Minute).Unix(),
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
 			RequestContentType: "application/json",
 			RequestBodyPath:    bodyPath,
 			RequestBodySize:    int64(len(body)),
@@ -1635,7 +1635,7 @@ func TestPollGPTImage2APIAsyncDiskCapacityUnavailableRetries(t *testing.T) {
 	}
 	require.NoError(t, db.Create(task).Error)
 
-	err = pollGPTImage2APIAsyncImageTask(context.Background(), task)
+	err = pollAsyncTaskBridgeImageTask(context.Background(), task)
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "disk cache capacity unavailable")
@@ -1649,7 +1649,7 @@ func TestPollGPTImage2APIAsyncDiskCapacityUnavailableRetries(t *testing.T) {
 	require.FileExists(t, bodyPath)
 }
 
-func TestSubmitGPTImage2APIAsyncOversizeResponseKeepsSubmissionUncertain(t *testing.T) {
+func TestSubmitAsyncTaskBridgeOversizeResponseKeepsSubmissionUncertain(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -1702,7 +1702,7 @@ func TestSubmitGPTImage2APIAsyncOversizeResponseKeepsSubmissionUncertain(t *test
 		Type:    constant.ChannelTypeOpenAI,
 		Key:     "upstream-key",
 		Status:  common.ChannelStatusEnabled,
-		Name:    "gpt-image2api",
+		Name:    "async-task-bridge",
 		Group:   "default",
 		Models:  "gpt-image-1",
 		BaseURL: &baseURL,
@@ -1727,7 +1727,7 @@ func TestSubmitGPTImage2APIAsyncOversizeResponseKeepsSubmissionUncertain(t *test
 			OriginModelName: "gpt-image-1",
 		},
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
 			RequestPath:        "/v1/images/generations",
 			RequestMethod:      http.MethodPost,
 			RequestContentType: "application/json",
@@ -1737,7 +1737,7 @@ func TestSubmitGPTImage2APIAsyncOversizeResponseKeepsSubmissionUncertain(t *test
 	}
 	require.NoError(t, db.Create(task).Error)
 
-	require.NoError(t, submitGPTImage2APIAsyncImageTask(context.Background(), task))
+	require.NoError(t, submitAsyncTaskBridgeImageTask(context.Background(), task))
 
 	var updated model.Task
 	require.NoError(t, db.First(&updated, task.ID).Error)
@@ -2231,7 +2231,7 @@ func TestSettleImageTaskSuccessMarksReviewWhenTieredBillingBodyMissing(t *testin
 	require.Contains(t, record.Error, "billing request body unavailable")
 }
 
-func TestPollGPTImage2APIAsyncSuccessSettlesTieredBillingWithStoredBody(t *testing.T) {
+func TestPollAsyncTaskBridgeSuccessSettlesTieredBillingWithStoredBody(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -2343,7 +2343,7 @@ func TestPollGPTImage2APIAsyncSuccessSettlesTieredBillingWithStoredBody(t *testi
 		Type:    constant.ChannelTypeOpenAI,
 		Key:     "upstream-key",
 		Status:  common.ChannelStatusEnabled,
-		Name:    "gpt-image2api",
+		Name:    "async-task-bridge",
 		Group:   "default",
 		Models:  "gpt-image-1",
 		BaseURL: &baseURL,
@@ -2373,7 +2373,7 @@ func TestPollGPTImage2APIAsyncSuccessSettlesTieredBillingWithStoredBody(t *testi
 			OriginModelName: "gpt-image-1",
 		},
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
 			RequestPath:        "/v1/images/generations",
 			RequestMethod:      http.MethodPost,
 			RequestContentType: "application/json",
@@ -2404,7 +2404,7 @@ func TestPollGPTImage2APIAsyncSuccessSettlesTieredBillingWithStoredBody(t *testi
 	}
 	require.NoError(t, db.Create(task).Error)
 
-	require.NoError(t, pollGPTImage2APIAsyncImageTask(context.Background(), task))
+	require.NoError(t, pollAsyncTaskBridgeImageTask(context.Background(), task))
 
 	var updated model.Task
 	require.NoError(t, db.First(&updated, task.ID).Error)
@@ -2441,7 +2441,7 @@ func TestPollGPTImage2APIAsyncSuccessSettlesTieredBillingWithStoredBody(t *testi
 	}, time.Second, 10*time.Millisecond)
 }
 
-func TestRecoverGPTImage2APIAsyncSubmissionRetriesCreateWhenRecoverMissing(t *testing.T) {
+func TestRecoverAsyncTaskBridgeSubmissionRetriesCreateWhenRecoverMissing(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -2513,7 +2513,7 @@ func TestRecoverGPTImage2APIAsyncSubmissionRetriesCreateWhenRecoverMissing(t *te
 		Type:    constant.ChannelTypeOpenAI,
 		Key:     "upstream-key",
 		Status:  common.ChannelStatusEnabled,
-		Name:    "gpt-image2api",
+		Name:    "async-task-bridge",
 		Group:   "default",
 		Models:  "gpt-image-1",
 		BaseURL: &baseURL,
@@ -2542,7 +2542,7 @@ func TestRecoverGPTImage2APIAsyncSubmissionRetriesCreateWhenRecoverMissing(t *te
 			OriginModelName: "gpt-image-1",
 		},
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
 			RequestPath:        "/v1/images/generations",
 			RequestMethod:      http.MethodPost,
 			RequestContentType: "application/json",
@@ -2553,7 +2553,7 @@ func TestRecoverGPTImage2APIAsyncSubmissionRetriesCreateWhenRecoverMissing(t *te
 	}
 	require.NoError(t, db.Create(task).Error)
 
-	require.NoError(t, recoverGPTImage2APIAsyncSubmission(context.Background(), task))
+	require.NoError(t, recoverAsyncTaskBridgeSubmission(context.Background(), task))
 
 	var updated model.Task
 	require.NoError(t, db.First(&updated, task.ID).Error)
@@ -2591,7 +2591,7 @@ func TestImageTaskCanResubmitUncertainSubmissionHonorsCooldownAndLimit(t *testin
 	require.True(t, imageTaskCanResubmitUncertainSubmission(task, now))
 }
 
-func TestBuildGPTImage2APICreateBodyAppliesModelMappingAndParamOverride(t *testing.T) {
+func TestBuildAsyncTaskBridgeCreateBodyAppliesModelMappingAndParamOverride(t *testing.T) {
 	storage, err := common.CreateBodyStorage([]byte(`{
 		"model": "public-model",
 		"prompt": "hello",
@@ -2607,7 +2607,7 @@ func TestBuildGPTImage2APICreateBodyAppliesModelMappingAndParamOverride(t *testi
 			},
 		},
 	}
-	outbound, err := buildGPTImage2APICreateBody(storage, "application/json", "task_local", &dto.ImageRequest{
+	outbound, err := buildAsyncTaskBridgeCreateBody(storage, "application/json", "task_local", &dto.ImageRequest{
 		Model: "mapped-model",
 	}, relayInfo)
 	require.NoError(t, err)
@@ -2625,7 +2625,7 @@ func TestBuildGPTImage2APICreateBodyAppliesModelMappingAndParamOverride(t *testi
 	}`, string(body))
 }
 
-func TestBuildGPTImage2APIMultipartBodyStreamsToDiskAndInjectsClientTaskID(t *testing.T) {
+func TestBuildAsyncTaskBridgeMultipartBodyStreamsToDiskAndInjectsClientTaskID(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	require.NoError(t, writer.WriteField("prompt", "hello"))
@@ -2641,7 +2641,7 @@ func TestBuildGPTImage2APIMultipartBodyStreamsToDiskAndInjectsClientTaskID(t *te
 	require.NoError(t, err)
 	defer storage.Close()
 
-	outbound, err := buildGPTImage2APICreateBody(storage, writer.FormDataContentType(), "task_local", nil, nil)
+	outbound, err := buildAsyncTaskBridgeCreateBody(storage, writer.FormDataContentType(), "task_local", nil, nil)
 	require.NoError(t, err)
 	defer outbound.Close()
 	require.Greater(t, outbound.ContentLength, int64(0))
@@ -2665,7 +2665,7 @@ func TestBuildGPTImage2APIMultipartBodyStreamsToDiskAndInjectsClientTaskID(t *te
 	require.Equal(t, []byte("image-bytes"), content)
 }
 
-func TestBuildGPTImage2APIMultipartBodyAppliesModelMappingAndParamOverride(t *testing.T) {
+func TestBuildAsyncTaskBridgeMultipartBodyAppliesModelMappingAndParamOverride(t *testing.T) {
 	var body bytes.Buffer
 	writer := multipart.NewWriter(&body)
 	require.NoError(t, writer.WriteField("model", "public-model"))
@@ -2688,7 +2688,7 @@ func TestBuildGPTImage2APIMultipartBodyAppliesModelMappingAndParamOverride(t *te
 			},
 		},
 	}
-	outbound, err := buildGPTImage2APICreateBody(storage, writer.FormDataContentType(), "task_local", &dto.ImageRequest{
+	outbound, err := buildAsyncTaskBridgeCreateBody(storage, writer.FormDataContentType(), "task_local", &dto.ImageRequest{
 		Model: "mapped-model",
 	}, relayInfo)
 	require.NoError(t, err)

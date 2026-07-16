@@ -16,14 +16,22 @@ func TestValidateSettingsRejectsInvalidImageTaskMode(t *testing.T) {
 	require.ErrorContains(t, channel.ValidateSettings(), "image_task_mode is invalid")
 }
 
-func TestValidateSettingsRequiresBaseURLForGPTImage2APIAsyncMode(t *testing.T) {
+func TestValidateSettingsRejectsLegacyImageTaskMode(t *testing.T) {
 	channel := &Channel{
-		OtherSettings: `{"image_task_mode":"` + dto.ImageTaskModeGPTImage2APIAsync + `"}`,
+		OtherSettings: `{"image_task_mode":"gpt_image2api_async"}`,
 	}
 
-	require.ErrorContains(t, channel.ValidateSettings(), "gpt_image2api 异步模式必须配置")
+	require.ErrorContains(t, channel.ValidateSettings(), "image_task_mode is invalid")
+}
 
-	baseURL := "https://gpt-image2api.example.com"
+func TestValidateSettingsRequiresBaseURLForAsyncTaskBridgeMode(t *testing.T) {
+	channel := &Channel{
+		OtherSettings: `{"image_task_mode":"` + dto.ImageTaskModeAsyncTaskBridge + `"}`,
+	}
+
+	require.ErrorContains(t, channel.ValidateSettings(), "异步任务桥接模式必须配置")
+
+	baseURL := "https://async-task-bridge.example.com"
 	channel.BaseURL = &baseURL
 	require.NoError(t, channel.ValidateSettings())
 }

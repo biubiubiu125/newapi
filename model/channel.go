@@ -1042,9 +1042,9 @@ func (channel *Channel) ValidateSettings() error {
 	}
 	switch channelOtherSettings.ImageTaskMode {
 	case "", dto.ImageTaskModeSyncWrapper:
-	case dto.ImageTaskModeGPTImage2APIAsync:
+	case dto.ImageTaskModeAsyncTaskBridge:
 		if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
-			return fmt.Errorf("gpt_image2api 异步模式必须配置支持 /api/image-tasks 的 gpt-image2api base_url")
+			return fmt.Errorf("异步任务桥接模式必须配置支持 /api/image-tasks 协议的 base_url")
 		}
 	default:
 		return fmt.Errorf("image_task_mode is invalid")

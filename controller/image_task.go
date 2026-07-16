@@ -267,7 +267,7 @@ func tryRelayImageTaskSyncBridge(c *gin.Context, request dto.Request, relayInfo 
 		return false, nil
 	}
 	channelOtherSettings, ok := common.GetContextKeyType[dto.ChannelOtherSettings](c, constant.ContextKeyChannelOtherSetting)
-	if !ok || channelOtherSettings.GetImageTaskMode() != dto.ImageTaskModeGPTImage2APIAsync {
+	if !ok || channelOtherSettings.GetImageTaskMode() != dto.ImageTaskModeAsyncTaskBridge {
 		return false, nil
 	}
 	relayInfo.InitChannelMeta(c)
@@ -527,11 +527,11 @@ func imageTaskSyncBridgeFailureError(task *model.Task) *types.NewAPIError {
 }
 
 func validateImageTaskModeRequest(imageRequest *dto.ImageRequest, mode string) error {
-	if mode != dto.ImageTaskModeGPTImage2APIAsync || imageRequest == nil || imageRequest.N == nil {
+	if mode != dto.ImageTaskModeAsyncTaskBridge || imageRequest == nil || imageRequest.N == nil {
 		return nil
 	}
 	if *imageRequest.N > 1 {
-		return errors.New("gpt_image2api 异步模式暂不支持 n 大于 1，请拆分为多个图片任务")
+		return errors.New("异步任务桥接模式暂不支持 n 大于 1，请拆分为多个图片任务")
 	}
 	return nil
 }

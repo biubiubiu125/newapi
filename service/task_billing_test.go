@@ -150,7 +150,7 @@ func TestRunTaskPollingOnceRunsImageTasksWithoutGenericAdaptor(t *testing.T) {
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	require.NoError(t, model.DB.Create(task).Error)
@@ -225,7 +225,7 @@ func TestRunTaskPollingOnceStartsOtherPlatformsWhileImageRunning(t *testing.T) {
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	baseURL := "http://suno.local"
@@ -451,7 +451,7 @@ func TestSweepTimedOutTasksSkipsImageTaskForRunner(t *testing.T) {
 		SubmitTime: now - 120,
 		StartTime:  now,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:   dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode:   dto.ImageTaskModeAsyncTaskBridge,
 			RequestBodyPath: bodyPath,
 			UpstreamTaskID:  "upstream_123",
 		},
@@ -531,7 +531,7 @@ func TestRunTaskPollingOnceSkipsFutureImageTask(t *testing.T) {
 		SubmitTime: now,
 		NextPollAt: now + 3600,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	require.NoError(t, model.DB.Create(task).Error)
@@ -588,7 +588,7 @@ func TestRunTaskPollingOnceFairlyIncludesLaterChannelsBeforeLimit(t *testing.T) 
 			SubmitTime: now,
 			NextPollAt: now - 1,
 			PrivateData: model.TaskPrivateData{
-				ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+				ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 			},
 		}
 		require.NoError(t, model.DB.Create(task).Error)
@@ -605,7 +605,7 @@ func TestRunTaskPollingOnceFairlyIncludesLaterChannelsBeforeLimit(t *testing.T) 
 			SubmitTime: now,
 			NextPollAt: now - 1,
 			PrivateData: model.TaskPrivateData{
-				ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+				ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 			},
 		}
 		require.NoError(t, model.DB.Create(task).Error)
@@ -669,7 +669,7 @@ func TestRunTaskPollingOnceRotatesImageChannelsAcrossPasses(t *testing.T) {
 				SubmitTime: now,
 				NextPollAt: now - 1,
 				PrivateData: model.TaskPrivateData{
-					ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+					ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 				},
 			}
 			require.NoError(t, model.DB.Create(task).Error)
@@ -763,7 +763,7 @@ func TestRunTaskPollingOnceReservesImageSlotWhenNonImageBacklogFillsLimit(t *tes
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	require.NoError(t, model.DB.Create(imageTask).Error)
@@ -806,7 +806,7 @@ func TestRunTaskPollingOnceSkipsImageWhenDedicatedWorkerEnabled(t *testing.T) {
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	require.NoError(t, model.DB.Create(task).Error)
@@ -841,7 +841,7 @@ func TestGetRunnableUnfinishedSyncTasksCapsImageBatchByWorkerLimit(t *testing.T)
 			SubmitTime: now,
 			NextPollAt: now - 1,
 			PrivateData: model.TaskPrivateData{
-				ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+				ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 			},
 		}
 		require.NoError(t, model.DB.Create(task).Error)
@@ -894,7 +894,7 @@ func TestDispatchImageTasksReleasesLeaseAndSchedulesNextPoll(t *testing.T) {
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	require.NoError(t, model.DB.Create(task).Error)
@@ -949,7 +949,7 @@ func TestDispatchImageTasksTreatsZeroConcurrencyAsUnlimited(t *testing.T) {
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	second := &model.Task{
@@ -963,7 +963,7 @@ func TestDispatchImageTasksTreatsZeroConcurrencyAsUnlimited(t *testing.T) {
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	require.NoError(t, model.DB.Create(first).Error)
@@ -1029,7 +1029,7 @@ func TestDispatchImageTasksDoesNotLeaseQueuedWorkBeforeWorkerStarts(t *testing.T
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	second := &model.Task{
@@ -1043,7 +1043,7 @@ func TestDispatchImageTasksDoesNotLeaseQueuedWorkBeforeWorkerStarts(t *testing.T
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	require.NoError(t, model.DB.Create(first).Error)
@@ -1138,7 +1138,7 @@ func TestDispatchImageTasksSaturatedChannelDoesNotBlockOtherChannels(t *testing.
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	secondSameChannel := &model.Task{
@@ -1152,7 +1152,7 @@ func TestDispatchImageTasksSaturatedChannelDoesNotBlockOtherChannels(t *testing.
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	otherChannel := &model.Task{
@@ -1166,7 +1166,7 @@ func TestDispatchImageTasksSaturatedChannelDoesNotBlockOtherChannels(t *testing.
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	require.NoError(t, model.DB.Create(firstSameChannel).Error)
@@ -1245,7 +1245,7 @@ func TestDispatchImageTasksHonorsGlobalChannelLease(t *testing.T) {
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	sameChannelSkipped := &model.Task{
@@ -1259,7 +1259,7 @@ func TestDispatchImageTasksHonorsGlobalChannelLease(t *testing.T) {
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	require.NoError(t, model.DB.Create(task).Error)
@@ -1320,7 +1320,7 @@ func TestDispatchImageTasksBacksOffTransientRetry(t *testing.T) {
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:   dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode:   dto.ImageTaskModeAsyncTaskBridge,
 			UpstreamTaskID:  "upstream_123",
 			RequestBodyPath: "kept-for-settlement.json",
 		},
@@ -1375,7 +1375,7 @@ func TestDispatchImageTasksRecoversWorkerPanic(t *testing.T) {
 			SubmitTime: now,
 			NextPollAt: now - 1,
 			PrivateData: model.TaskPrivateData{
-				ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+				ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 			},
 		}
 		require.NoError(t, model.DB.Create(task).Error)
@@ -1428,7 +1428,7 @@ func TestRunImageTaskWorkerPassClaimsRunnableTasks(t *testing.T) {
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	require.NoError(t, model.DB.Create(task).Error)
@@ -1482,7 +1482,7 @@ func TestDispatchImageTasksPreservesRetryWhenProgressingIntoPendingSettlement(t 
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:   dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode:   dto.ImageTaskModeAsyncTaskBridge,
 			UpstreamTaskID:  "upstream_pending_settlement",
 			RequestBodyPath: "kept-for-settlement.json",
 		},
@@ -1545,7 +1545,7 @@ func TestDispatchImageTasksPreservesRetryWhenProgressingIntoAppliedSettlement(t 
 		SubmitTime: now,
 		NextPollAt: now - 1,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:   dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode:   dto.ImageTaskModeAsyncTaskBridge,
 			UpstreamTaskID:  "upstream_applied_settlement",
 			RequestBodyPath: "kept-for-finalize.json",
 		},
@@ -1579,7 +1579,7 @@ func TestImageTaskRunnableQueriesTreatNullSchedulingFieldsAsReady(t *testing.T) 
 		Progress:   "0%",
 		SubmitTime: now,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode: dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
 		},
 	}
 	require.NoError(t, model.DB.Create(task).Error)
@@ -1615,7 +1615,7 @@ func TestImageTaskRunnableQueriesIncludePendingSettlementSuccess(t *testing.T) {
 		NextPollAt:       now - 1,
 		SettlementStatus: model.TaskSettlementStatusPending,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:  dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode:  dto.ImageTaskModeAsyncTaskBridge,
 			UpstreamTaskID: "upstream_pending_settlement",
 		},
 	}
@@ -1656,7 +1656,7 @@ func TestImageTaskRunnableQueriesIncludeAppliedSettlementSuccess(t *testing.T) {
 		NextPollAt:       now - 1,
 		SettlementStatus: model.TaskSettlementStatusApplied,
 		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:  dto.ImageTaskModeGPTImage2APIAsync,
+			ImageTaskMode:  dto.ImageTaskModeAsyncTaskBridge,
 			UpstreamTaskID: "upstream_applied_settlement",
 		},
 	}

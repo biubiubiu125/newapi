@@ -253,7 +253,7 @@ function hasAdvancedSettingsValues(values: ChannelFormValues): boolean {
     values.pass_through_body_enabled ||
     values.system_prompt_override ||
     values.claude_beta_query ||
-    values.image_task_mode === 'gpt_image2api_async' ||
+    values.image_task_mode === 'async_task_bridge' ||
     values.upstream_model_update_check_enabled ||
     values.upstream_model_update_auto_sync_enabled ||
     values.upstream_model_update_ignored_models?.trim()
@@ -3426,17 +3426,17 @@ export function ChannelMutateDrawer({
                               <SelectContent alignItemWithTrigger={false}>
                                 <SelectGroup>
                                   <SelectItem value='sync_wrapper'>
-                                    {t('同步包装')}
+                                    {t('同步接口')}
                                   </SelectItem>
-                                  <SelectItem value='gpt_image2api_async'>
-                                    {t('gpt_image2api 异步')}
+                                  <SelectItem value='async_task_bridge'>
+                                    {t('异步任务桥接')}
                                   </SelectItem>
                                 </SelectGroup>
                               </SelectContent>
                             </Select>
                             <FormDescription>
                               {t(
-                                'gpt_image2api 异步仅用于已改造任务接口的 gpt-image2api 渠道'
+                                '适用于兼容 /api/image-tasks 协议的图片后端，newapi 提交任务、轮询状态并返回最终图片结果。'
                               )}
                             </FormDescription>
                             <FormMessage />

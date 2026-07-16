@@ -64,8 +64,8 @@ func (s *ChannelOtherSettings) IsOpenRouterEnterprise() bool {
 }
 
 const (
-	ImageTaskModeSyncWrapper       = "sync_wrapper"
-	ImageTaskModeGPTImage2APIAsync = "gpt_image2api_async"
+	ImageTaskModeSyncWrapper     = "sync_wrapper"
+	ImageTaskModeAsyncTaskBridge = "async_task_bridge"
 )
 
 func (s *ChannelOtherSettings) GetImageTaskMode() string {
@@ -73,8 +73,8 @@ func (s *ChannelOtherSettings) GetImageTaskMode() string {
 		return ImageTaskModeSyncWrapper
 	}
 	switch s.ImageTaskMode {
-	case ImageTaskModeGPTImage2APIAsync:
-		return ImageTaskModeGPTImage2APIAsync
+	case ImageTaskModeAsyncTaskBridge:
+		return ImageTaskModeAsyncTaskBridge
 	default:
 		return ImageTaskModeSyncWrapper
 	}

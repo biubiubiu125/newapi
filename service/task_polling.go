@@ -750,7 +750,7 @@ func imageTaskDispatchBatchable(task *model.Task) bool {
 	if task == nil || task.Platform != constant.TaskPlatformImage {
 		return false
 	}
-	if task.PrivateData.ImageTaskMode != dto.ImageTaskModeGPTImage2APIAsync {
+	if task.PrivateData.ImageTaskMode != dto.ImageTaskModeAsyncTaskBridge {
 		return false
 	}
 	if strings.TrimSpace(task.PrivateData.UpstreamTaskID) == "" {

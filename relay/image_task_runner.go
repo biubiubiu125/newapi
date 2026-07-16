@@ -147,7 +147,7 @@ func RunImageTasks(ctx context.Context, tasks []*model.Task) error {
 		if len(batch) == 0 {
 			return
 		}
-		if err := runGPTImage2APIAsyncImageTaskBatch(ctx, batch); err != nil {
+		if err := runAsyncTaskBridgeImageTaskBatch(ctx, batch); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("image task batch run failed: %s", err.Error()))
 		}
 		batch = batch[:0]
@@ -183,7 +183,7 @@ func RunImageTasks(ctx context.Context, tasks []*model.Task) error {
 			}
 			continue
 		}
-		if imageTaskCanBatchPollGPTImage2API(task, mode) {
+		if imageTaskCanBatchPollAsyncTaskBridge(task, mode) {
 			batch = append(batch, task)
 			if len(batch) >= imageTaskBatchPollSize() {
 				flushBatch()
@@ -193,8 +193,8 @@ func RunImageTasks(ctx context.Context, tasks []*model.Task) error {
 		flushBatch()
 		var err error
 		switch mode {
-		case dto.ImageTaskModeGPTImage2APIAsync:
-			err = runGPTImage2APIAsyncImageTask(ctx, task)
+		case dto.ImageTaskModeAsyncTaskBridge:
+			err = runAsyncTaskBridgeImageTask(ctx, task)
 		default:
 			err = runSyncWrapperImageTask(ctx, task)
 		}
@@ -221,7 +221,7 @@ func imageTaskShouldFailStaleExecution(task *model.Task, mode string) bool {
 	if task == nil || task.Status != model.TaskStatusInProgress || task.StartTime == 0 {
 		return false
 	}
-	if mode == dto.ImageTaskModeGPTImage2APIAsync {
+	if mode == dto.ImageTaskModeAsyncTaskBridge {
 		return false
 	}
 	return imageTaskShouldFailLongRunningUpstreamStatus(task)
@@ -713,38 +713,38 @@ func cloneImageTaskFloatMap(src map[string]float64) map[string]float64 {
 	return dst
 }
 
-func runGPTImage2APIAsyncImageTask(ctx context.Context, task *model.Task) error {
+func runAsyncTaskBridgeImageTask(ctx context.Context, task *model.Task) error {
 	if imageTaskNeedsSettlement(task) {
-		return settleGPTImage2APIAsyncImageTask(ctx, task, nil, nil)
+		return settleAsyncTaskBridgeImageTask(ctx, task, nil, nil)
 	}
 	if task.PrivateData.UpstreamTaskID == "" {
 		if imageTaskShouldRecoverPendingAsyncSubmission(task) {
-			return recoverGPTImage2APIAsyncSubmission(ctx, task)
+			return recoverAsyncTaskBridgeSubmission(ctx, task)
 		}
-		return submitGPTImage2APIAsyncImageTask(ctx, task)
+		return submitAsyncTaskBridgeImageTask(ctx, task)
 	}
-	return pollGPTImage2APIAsyncImageTask(ctx, task)
+	return pollAsyncTaskBridgeImageTask(ctx, task)
 }
 
-type gptImage2APIBatchPollItem struct {
+type asyncTaskBridgeBatchPollItem struct {
 	task           *model.Task
 	channel        *model.Channel
 	key            string
 	headerOverride map[string]string
 }
 
-type gptImage2APIBatchPollGroup struct {
+type asyncTaskBridgeBatchPollGroup struct {
 	channel        *model.Channel
 	key            string
 	headerOverride map[string]string
-	items          []gptImage2APIBatchPollItem
+	items          []asyncTaskBridgeBatchPollItem
 }
 
-func imageTaskCanBatchPollGPTImage2API(task *model.Task, mode string) bool {
+func imageTaskCanBatchPollAsyncTaskBridge(task *model.Task, mode string) bool {
 	if imageTaskBatchPollSize() <= 1 {
 		return false
 	}
-	if task == nil || mode != dto.ImageTaskModeGPTImage2APIAsync {
+	if task == nil || mode != dto.ImageTaskModeAsyncTaskBridge {
 		return false
 	}
 	if strings.TrimSpace(task.PrivateData.UpstreamTaskID) == "" || imageTaskNeedsSettlement(task) {
@@ -769,11 +769,11 @@ func imageTaskBatchPollSize() int {
 	return size
 }
 
-func runGPTImage2APIAsyncImageTaskBatch(ctx context.Context, tasks []*model.Task) error {
+func runAsyncTaskBridgeImageTaskBatch(ctx context.Context, tasks []*model.Task) error {
 	if len(tasks) == 0 {
 		return nil
 	}
-	groups := make(map[string]*gptImage2APIBatchPollGroup)
+	groups := make(map[string]*asyncTaskBridgeBatchPollGroup)
 	for _, task := range tasks {
 		if ctx.Err() != nil {
 			return ctx.Err()
@@ -781,14 +781,14 @@ func runGPTImage2APIAsyncImageTaskBatch(ctx context.Context, tasks []*model.Task
 		if task == nil {
 			continue
 		}
-		item, key, err := prepareGPTImage2APIBatchPollItem(ctx, task)
+		item, key, err := prepareAsyncTaskBridgeBatchPollItem(ctx, task)
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("image task %s batch poll setup failed: %s", task.TaskID, err.Error()))
 			continue
 		}
 		group := groups[key]
 		if group == nil {
-			group = &gptImage2APIBatchPollGroup{
+			group = &asyncTaskBridgeBatchPollGroup{
 				channel:        item.channel,
 				key:            item.key,
 				headerOverride: item.headerOverride,
@@ -798,13 +798,13 @@ func runGPTImage2APIAsyncImageTaskBatch(ctx context.Context, tasks []*model.Task
 		group.items = append(group.items, item)
 	}
 	for _, group := range groups {
-		for _, items := range chunkGPTImage2APIBatchPollItems(group.items, imageTaskBatchPollSize()) {
+		for _, items := range chunkAsyncTaskBridgeBatchPollItems(group.items, imageTaskBatchPollSize()) {
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
 			groupCopy := *group
 			groupCopy.items = items
-			if err := pollGPTImage2APIAsyncImageTaskStatusBatch(ctx, &groupCopy); err != nil {
+			if err := pollAsyncTaskBridgeImageTaskStatusBatch(ctx, &groupCopy); err != nil {
 				logger.LogError(ctx, fmt.Sprintf("image task batch status poll failed: %s", err.Error()))
 			}
 		}
@@ -812,27 +812,27 @@ func runGPTImage2APIAsyncImageTaskBatch(ctx context.Context, tasks []*model.Task
 	return nil
 }
 
-func prepareGPTImage2APIBatchPollItem(ctx context.Context, task *model.Task) (gptImage2APIBatchPollItem, string, error) {
-	var empty gptImage2APIBatchPollItem
+func prepareAsyncTaskBridgeBatchPollItem(ctx context.Context, task *model.Task) (asyncTaskBridgeBatchPollItem, string, error) {
+	var empty asyncTaskBridgeBatchPollItem
 	channel, key, err := imageTaskChannelAndKey(task)
 	if err != nil {
-		return empty, "", handleGPTImage2APITransientError(ctx, task, "upstream poll task setup failed", err.Error())
+		return empty, "", handleAsyncTaskBridgeTransientError(ctx, task, "upstream poll task setup failed", err.Error())
 	}
 	task.PrivateData.Key = key
-	headerOverride, err := buildGPTImage2APIAsyncStatusHeaderOverride(ctx, task, channel, key)
+	headerOverride, err := buildAsyncTaskBridgeStatusHeaderOverride(ctx, task, channel, key)
 	if err != nil {
-		return empty, "", handleGPTImage2APITransientError(ctx, task, "upstream poll task header override failed", err.Error())
+		return empty, "", handleAsyncTaskBridgeTransientError(ctx, task, "upstream poll task header override failed", err.Error())
 	}
-	item := gptImage2APIBatchPollItem{
+	item := asyncTaskBridgeBatchPollItem{
 		task:           task,
 		channel:        channel,
 		key:            key,
 		headerOverride: headerOverride,
 	}
-	return item, gptImage2APIBatchPollKey(channel, key, headerOverride), nil
+	return item, asyncTaskBridgeBatchPollKey(channel, key, headerOverride), nil
 }
 
-func gptImage2APIBatchPollKey(channel *model.Channel, key string, headerOverride map[string]string) string {
+func asyncTaskBridgeBatchPollKey(channel *model.Channel, key string, headerOverride map[string]string) string {
 	if channel == nil {
 		return ""
 	}
@@ -846,11 +846,11 @@ func gptImage2APIBatchPollKey(channel *model.Channel, key string, headerOverride
 	}, "\x00")
 }
 
-func chunkGPTImage2APIBatchPollItems(items []gptImage2APIBatchPollItem, size int) [][]gptImage2APIBatchPollItem {
+func chunkAsyncTaskBridgeBatchPollItems(items []asyncTaskBridgeBatchPollItem, size int) [][]asyncTaskBridgeBatchPollItem {
 	if size <= 0 || len(items) <= size {
-		return [][]gptImage2APIBatchPollItem{items}
+		return [][]asyncTaskBridgeBatchPollItem{items}
 	}
-	chunks := make([][]gptImage2APIBatchPollItem, 0, (len(items)+size-1)/size)
+	chunks := make([][]asyncTaskBridgeBatchPollItem, 0, (len(items)+size-1)/size)
 	for len(items) > 0 {
 		end := size
 		if end > len(items) {
@@ -862,7 +862,7 @@ func chunkGPTImage2APIBatchPollItems(items []gptImage2APIBatchPollItem, size int
 	return chunks
 }
 
-func pollGPTImage2APIAsyncImageTaskStatusBatch(ctx context.Context, group *gptImage2APIBatchPollGroup) error {
+func pollAsyncTaskBridgeImageTaskStatusBatch(ctx context.Context, group *asyncTaskBridgeBatchPollGroup) error {
 	if group == nil || len(group.items) == 0 || group.channel == nil {
 		return nil
 	}
@@ -882,14 +882,14 @@ func pollGPTImage2APIAsyncImageTaskStatusBatch(ctx context.Context, group *gptIm
 	query := url.Values{}
 	query.Set("ids", strings.Join(ids, ","))
 	query.Set("include_image_data", "false")
-	endpoint := buildGPTImage2APIURL(group.channel.GetBaseURL(), "/api/image-tasks") + "?" + query.Encode()
+	endpoint := buildAsyncTaskBridgeURL(group.channel.GetBaseURL(), "/api/image-tasks") + "?" + query.Encode()
 	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
 		for _, item := range group.items {
 			if item.task != nil {
-				_ = handleGPTImage2APITransientError(ctx, item.task, "upstream poll task request build failed", err.Error())
+				_ = handleAsyncTaskBridgeTransientError(ctx, item.task, "upstream poll task request build failed", err.Error())
 			}
 		}
 		return err
@@ -902,7 +902,7 @@ func pollGPTImage2APIAsyncImageTaskStatusBatch(ctx context.Context, group *gptIm
 	if err != nil {
 		for _, item := range group.items {
 			if item.task != nil {
-				_ = handleGPTImage2APITransientError(ctx, item.task, "upstream poll task request failed", err.Error())
+				_ = handleAsyncTaskBridgeTransientError(ctx, item.task, "upstream poll task request failed", err.Error())
 			}
 		}
 		return err
@@ -913,8 +913,8 @@ func pollGPTImage2APIAsyncImageTaskStatusBatch(ctx context.Context, group *gptIm
 			if item.task == nil {
 				continue
 			}
-			if gptImage2APIPollShouldRetry(statusCode) {
-				_ = handleGPTImage2APITransientError(ctx, item.task, "upstream poll task transient status", reason)
+			if asyncTaskBridgePollShouldRetry(statusCode) {
+				_ = handleAsyncTaskBridgeTransientError(ctx, item.task, "upstream poll task transient status", reason)
 				continue
 			}
 			_ = failImageTask(ctx, item.task, item.task.Status, reason, true, true)
@@ -929,32 +929,32 @@ func pollGPTImage2APIAsyncImageTaskStatusBatch(ctx context.Context, group *gptIm
 		if item.task == nil {
 			continue
 		}
-		result, err := parseGPTImage2APITaskResult(respBody, item.task.PrivateData.UpstreamTaskID)
+		result, err := parseAsyncTaskBridgeTaskResult(respBody, item.task.PrivateData.UpstreamTaskID)
 		if err != nil {
-			_ = handleGPTImage2APIInvalidPollResult(ctx, item.task, respBody, err)
+			_ = handleAsyncTaskBridgeInvalidPollResult(ctx, item.task, respBody, err)
 			continue
 		}
 		if result == nil {
-			_ = handleGPTImage2APIMissingPollResult(ctx, item.task, respBody, "upstream poll task returned no matching task")
+			_ = handleAsyncTaskBridgeMissingPollResult(ctx, item.task, respBody, "upstream poll task returned no matching task")
 			continue
 		}
 		if result.Status == "" {
-			_ = handleGPTImage2APIMissingPollResult(ctx, item.task, respBody, "upstream poll task returned unknown task status")
+			_ = handleAsyncTaskBridgeMissingPollResult(ctx, item.task, respBody, "upstream poll task returned unknown task status")
 			continue
 		}
-		if err := applyGPTImage2APIAsyncStatusOnly(ctx, item.task, result, item.key); err != nil {
+		if err := applyAsyncTaskBridgeStatusOnly(ctx, item.task, result, item.key); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("image task %s batch status apply failed: %s", item.task.TaskID, err.Error()))
 		}
 	}
 	return nil
 }
 
-func applyGPTImage2APIAsyncStatusOnly(ctx context.Context, task *model.Task, result *gptImage2APITaskResult, key string) error {
+func applyAsyncTaskBridgeStatusOnly(ctx context.Context, task *model.Task, result *asyncTaskBridgeTaskResult, key string) error {
 	if task == nil || result == nil {
 		return nil
 	}
 	if result.Status == model.TaskStatusSuccess {
-		return pollGPTImage2APIAsyncImageTask(ctx, task)
+		return pollAsyncTaskBridgeImageTask(ctx, task)
 	}
 	snap := task.Snapshot()
 	now := time.Now().Unix()
@@ -1022,10 +1022,10 @@ func imageTaskShouldRecoverPendingAsyncSubmission(task *model.Task) bool {
 	}
 }
 
-func recoverGPTImage2APIAsyncSubmission(ctx context.Context, task *model.Task) error {
-	recovered, err := recoverGPTImage2APIAsyncTaskByClientTaskID(ctx, task)
+func recoverAsyncTaskBridgeSubmission(ctx context.Context, task *model.Task) error {
+	recovered, err := recoverAsyncTaskBridgeTaskByClientTaskID(ctx, task)
 	if err != nil {
-		return handleGPTImage2APITransientError(ctx, task, "upstream recover task failed", err.Error())
+		return handleAsyncTaskBridgeTransientError(ctx, task, "upstream recover task failed", err.Error())
 	}
 	if !recovered {
 		if !imageTaskShouldFailLongRunningUpstreamStatus(task) {
@@ -1033,16 +1033,16 @@ func recoverGPTImage2APIAsyncSubmission(ctx context.Context, task *model.Task) e
 				markImageTaskTransientRetry(task)
 				return nil
 			}
-			return submitGPTImage2APIAsyncImageTask(ctx, task)
+			return submitAsyncTaskBridgeImageTask(ctx, task)
 		}
 		reason := fmt.Sprintf("image task execution timeout (%s)", imageTaskAsyncTimeoutText())
 		return failImageTask(ctx, task, task.Status, reason, true, true)
 	}
-	return pollGPTImage2APIAsyncImageTask(ctx, task)
+	return pollAsyncTaskBridgeImageTask(ctx, task)
 }
 
-func submitGPTImage2APIAsyncImageTask(ctx context.Context, task *model.Task) error {
-	if !gptImage2APIAsyncCanSubmit(task) {
+func submitAsyncTaskBridgeImageTask(ctx context.Context, task *model.Task) error {
+	if !asyncTaskBridgeCanSubmit(task) {
 		return nil
 	}
 	oldStatus := task.Status
@@ -1067,14 +1067,14 @@ func submitGPTImage2APIAsyncImageTask(ctx context.Context, task *model.Task) err
 		return failImageTask(ctx, task, model.TaskStatusInProgress, err.Error(), true, true)
 	}
 	defer bodyStorage.Close()
-	outboundBody, headerOverride, err := buildGPTImage2APIAsyncCreateBody(ctx, task, channel, key, bodyStorage, contentType)
+	outboundBody, headerOverride, err := buildAsyncTaskBridgeOutboundBody(ctx, task, channel, key, bodyStorage, contentType)
 	if err != nil {
 		_ = bodyStorage.Close()
 		return failImageTask(ctx, task, model.TaskStatusInProgress, err.Error(), true, true)
 	}
 	defer outboundBody.Close()
 
-	endpoint := buildGPTImage2APIURL(channel.GetBaseURL(), gptImage2APICreatePath(task))
+	endpoint := buildAsyncTaskBridgeURL(channel.GetBaseURL(), asyncTaskBridgeCreatePath(task))
 	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodPost, endpoint, outboundBody.Reader)
@@ -1093,25 +1093,25 @@ func submitGPTImage2APIAsyncImageTask(ctx context.Context, task *model.Task) err
 
 	respBody, statusCode, err := doImageTaskHTTPRequest(req, channel)
 	if err != nil {
-		return keepGPTImage2APIAsyncSubmissionInProgress(ctx, task, err.Error())
+		return keepAsyncTaskBridgeSubmissionInProgress(ctx, task, err.Error())
 	}
-	if gptImage2APISubmissionShouldRecover(statusCode) {
-		return keepGPTImage2APIAsyncSubmissionInProgress(ctx, task, fmt.Sprintf("upstream create task status=%d body=%s", statusCode, common.LocalLogPreview(string(respBody))))
+	if asyncTaskBridgeSubmissionShouldRecover(statusCode) {
+		return keepAsyncTaskBridgeSubmissionInProgress(ctx, task, fmt.Sprintf("upstream create task status=%d body=%s", statusCode, common.LocalLogPreview(string(respBody))))
 	}
 	if statusCode < 200 || statusCode >= 300 {
 		outboundBody.Close()
 		_ = bodyStorage.Close()
 		return failImageTask(ctx, task, model.TaskStatusInProgress, fmt.Sprintf("upstream create task failed: status=%d body=%s", statusCode, common.LocalLogPreview(string(respBody))), true, true)
 	}
-	upstreamID := extractGPTImage2APITaskID(respBody)
+	upstreamID := extractAsyncTaskBridgeTaskID(respBody)
 	if upstreamID == "" {
-		return keepGPTImage2APIAsyncSubmissionInProgress(ctx, task, "upstream create task response missing task_id")
+		return keepAsyncTaskBridgeSubmissionInProgress(ctx, task, "upstream create task response missing task_id")
 	}
 
-	return saveGPTImage2APIAsyncSubmission(ctx, task, upstreamID)
+	return saveAsyncTaskBridgeSubmission(ctx, task, upstreamID)
 }
 
-func gptImage2APIAsyncCanSubmit(task *model.Task) bool {
+func asyncTaskBridgeCanSubmit(task *model.Task) bool {
 	if task == nil || strings.TrimSpace(task.PrivateData.UpstreamTaskID) != "" {
 		return false
 	}
@@ -1125,7 +1125,7 @@ func gptImage2APIAsyncCanSubmit(task *model.Task) bool {
 	}
 }
 
-func saveGPTImage2APIAsyncSubmission(ctx context.Context, task *model.Task, upstreamID string) error {
+func saveAsyncTaskBridgeSubmission(ctx context.Context, task *model.Task, upstreamID string) error {
 	task.PrivateData.UpstreamTaskID = upstreamID
 	clearImageTaskUpstreamSubmissionUncertainty(task)
 	task.Status = model.TaskStatusSubmitted
@@ -1170,7 +1170,7 @@ func saveGPTImage2APIAsyncSubmission(ctx context.Context, task *model.Task, upst
 	return nil
 }
 
-func keepGPTImage2APIAsyncSubmissionInProgress(ctx context.Context, task *model.Task, reason string) error {
+func keepAsyncTaskBridgeSubmissionInProgress(ctx context.Context, task *model.Task, reason string) error {
 	if task == nil {
 		return nil
 	}
@@ -1214,25 +1214,25 @@ func imageTaskCanResubmitUncertainSubmission(task *model.Task, now int64) bool {
 	return now-uncertainAt >= int64(imageTaskUncertainSubmissionRetryCooldown.Seconds())
 }
 
-func gptImage2APISubmissionShouldRecover(statusCode int) bool {
+func asyncTaskBridgeSubmissionShouldRecover(statusCode int) bool {
 	return statusCode == http.StatusRequestTimeout || statusCode == http.StatusTooManyRequests || statusCode >= 500
 }
 
-func gptImage2APIPollShouldRetry(statusCode int) bool {
-	return gptImage2APISubmissionShouldRecover(statusCode)
+func asyncTaskBridgePollShouldRetry(statusCode int) bool {
+	return asyncTaskBridgeSubmissionShouldRecover(statusCode)
 }
 
-func recoverGPTImage2APIAsyncTaskByClientTaskID(ctx context.Context, task *model.Task) (bool, error) {
+func recoverAsyncTaskBridgeTaskByClientTaskID(ctx context.Context, task *model.Task) (bool, error) {
 	channel, key, err := imageTaskChannelAndKey(task)
 	if err != nil {
 		return false, err
 	}
 	task.PrivateData.Key = key
-	headerOverride, err := buildGPTImage2APIAsyncStatusHeaderOverride(ctx, task, channel, key)
+	headerOverride, err := buildAsyncTaskBridgeStatusHeaderOverride(ctx, task, channel, key)
 	if err != nil {
 		return false, err
 	}
-	endpoint := buildGPTImage2APIURL(channel.GetBaseURL(), "/api/image-tasks") + "?" + buildGPTImage2APIRecoverQuery(task)
+	endpoint := buildAsyncTaskBridgeURL(channel.GetBaseURL(), "/api/image-tasks") + "?" + buildAsyncTaskBridgeRecoverQuery(task)
 	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
@@ -1253,14 +1253,14 @@ func recoverGPTImage2APIAsyncTaskByClientTaskID(ctx context.Context, task *model
 	if statusCode < 200 || statusCode >= 300 {
 		return false, fmt.Errorf("upstream recover task failed: status=%d body=%s", statusCode, common.LocalLogPreview(string(respBody)))
 	}
-	result, err := parseGPTImage2APITaskResult(respBody, task.TaskID)
+	result, err := parseAsyncTaskBridgeTaskResult(respBody, task.TaskID)
 	if err != nil {
 		return false, err
 	}
 	if result == nil {
 		return false, nil
 	}
-	upstreamID := gptImage2APIRecoveredUpstreamID(result, respBody)
+	upstreamID := asyncTaskBridgeRecoveredUpstreamID(result, respBody)
 	if upstreamID == "" {
 		return false, nil
 	}
@@ -1279,7 +1279,7 @@ func recoverGPTImage2APIAsyncTaskByClientTaskID(ctx context.Context, task *model
 	return true, nil
 }
 
-func buildGPTImage2APIRecoverQuery(task *model.Task) string {
+func buildAsyncTaskBridgeRecoverQuery(task *model.Task) string {
 	query := url.Values{}
 	if task != nil {
 		taskID := strings.TrimSpace(task.TaskID)
@@ -1292,36 +1292,36 @@ func buildGPTImage2APIRecoverQuery(task *model.Task) string {
 	return query.Encode()
 }
 
-func gptImage2APIRecoveredUpstreamID(result *gptImage2APITaskResult, respBody []byte) string {
+func asyncTaskBridgeRecoveredUpstreamID(result *asyncTaskBridgeTaskResult, respBody []byte) string {
 	if result == nil {
 		return ""
 	}
 	upstreamID := strings.TrimSpace(result.TaskID)
 	if upstreamID == "" {
-		upstreamID = extractGPTImage2APITaskID(respBody)
+		upstreamID = extractAsyncTaskBridgeTaskID(respBody)
 	}
 	return strings.TrimSpace(upstreamID)
 }
 
-func pollGPTImage2APIAsyncImageTask(ctx context.Context, task *model.Task) error {
+func pollAsyncTaskBridgeImageTask(ctx context.Context, task *model.Task) error {
 	channel, key, err := imageTaskChannelAndKey(task)
 	if err != nil {
-		return handleGPTImage2APITransientError(ctx, task, "upstream poll task setup failed", err.Error())
+		return handleAsyncTaskBridgeTransientError(ctx, task, "upstream poll task setup failed", err.Error())
 	}
 	task.PrivateData.Key = key
-	headerOverride, err := buildGPTImage2APIAsyncStatusHeaderOverride(ctx, task, channel, key)
+	headerOverride, err := buildAsyncTaskBridgeStatusHeaderOverride(ctx, task, channel, key)
 	if err != nil {
-		return handleGPTImage2APITransientError(ctx, task, "upstream poll task header override failed", err.Error())
+		return handleAsyncTaskBridgeTransientError(ctx, task, "upstream poll task header override failed", err.Error())
 	}
 	query := url.Values{}
 	query.Set("ids", task.PrivateData.UpstreamTaskID)
 	query.Set("include_image_data", "true")
-	endpoint := buildGPTImage2APIURL(channel.GetBaseURL(), "/api/image-tasks") + "?" + query.Encode()
+	endpoint := buildAsyncTaskBridgeURL(channel.GetBaseURL(), "/api/image-tasks") + "?" + query.Encode()
 	reqCtx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
 	if err != nil {
-		return handleGPTImage2APITransientError(ctx, task, "upstream poll task request build failed", err.Error())
+		return handleAsyncTaskBridgeTransientError(ctx, task, "upstream poll task request build failed", err.Error())
 	}
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
@@ -1335,32 +1335,32 @@ func pollGPTImage2APIAsyncImageTask(ctx context.Context, task *model.Task) error
 		if errors.Is(err, errImageTaskHTTPResponseTooLarge) {
 			if statusCode < 200 || statusCode >= 300 {
 				reason := fmt.Sprintf("upstream poll task failed: status=%d body=%s", statusCode, err.Error())
-				if gptImage2APIPollShouldRetry(statusCode) {
-					return handleGPTImage2APITransientError(ctx, task, "upstream poll task transient status", reason)
+				if asyncTaskBridgePollShouldRetry(statusCode) {
+					return handleAsyncTaskBridgeTransientError(ctx, task, "upstream poll task transient status", reason)
 				}
 				return failImageTask(ctx, task, task.Status, reason, true, true)
 			}
 			return markImageTaskUpstreamResultReview(ctx, task, task.Status, err.Error())
 		}
-		return handleGPTImage2APITransientError(ctx, task, "upstream poll task request failed", err.Error())
+		return handleAsyncTaskBridgeTransientError(ctx, task, "upstream poll task request failed", err.Error())
 	}
 	respPreview := imageTaskHTTPResponseStoragePreview(respStorage)
 	if statusCode < 200 || statusCode >= 300 {
 		reason := fmt.Sprintf("upstream poll task failed: status=%d body=%s", statusCode, respPreview)
-		if gptImage2APIPollShouldRetry(statusCode) {
-			return handleGPTImage2APITransientError(ctx, task, "upstream poll task transient status", reason)
+		if asyncTaskBridgePollShouldRetry(statusCode) {
+			return handleAsyncTaskBridgeTransientError(ctx, task, "upstream poll task transient status", reason)
 		}
 		return failImageTask(ctx, task, task.Status, reason, true, true)
 	}
-	result, err := parseGPTImage2APITaskResultFromStorage(respStorage, task.PrivateData.UpstreamTaskID)
+	result, err := parseAsyncTaskBridgeTaskResultFromStorage(respStorage, task.PrivateData.UpstreamTaskID)
 	if err != nil {
-		return handleGPTImage2APIInvalidPollResult(ctx, task, []byte(respPreview), err)
+		return handleAsyncTaskBridgeInvalidPollResult(ctx, task, []byte(respPreview), err)
 	}
 	if result == nil {
-		return handleGPTImage2APIMissingPollResult(ctx, task, []byte(respPreview), "upstream poll task returned no matching task")
+		return handleAsyncTaskBridgeMissingPollResult(ctx, task, []byte(respPreview), "upstream poll task returned no matching task")
 	}
 	if result.Status == "" {
-		return handleGPTImage2APIMissingPollResult(ctx, task, []byte(respPreview), "upstream poll task returned unknown task status")
+		return handleAsyncTaskBridgeMissingPollResult(ctx, task, []byte(respPreview), "upstream poll task returned unknown task status")
 	}
 
 	snap := task.Snapshot()
@@ -1404,7 +1404,7 @@ func pollGPTImage2APIAsyncImageTask(ctx context.Context, task *model.Task) error
 				task.Data = append(json.RawMessage(nil), snap.Data...)
 				task.SettlementStatus = snapSettlementStatus
 				task.NextPollAt = snapNextPollAt
-				return handleGPTImage2APITransientError(ctx, task, "store image task result failed", err.Error())
+				return handleAsyncTaskBridgeTransientError(ctx, task, "store image task result failed", err.Error())
 			}
 			return markImageTaskUpstreamResultReview(ctx, task, snap.Status, fmt.Sprintf("store image task result failed: %s", err.Error()))
 		}
@@ -1452,7 +1452,7 @@ func pollGPTImage2APIAsyncImageTask(ctx context.Context, task *model.Task) error
 		return err
 	}
 	if task.Status == model.TaskStatusSuccess {
-		return settleGPTImage2APIAsyncImageTask(ctx, task, result.Result, settlementBillingInput)
+		return settleAsyncTaskBridgeImageTask(ctx, task, result.Result, settlementBillingInput)
 	}
 	if task.Status == model.TaskStatusFailure {
 		if task.Quota != 0 {
@@ -1463,7 +1463,7 @@ func pollGPTImage2APIAsyncImageTask(ctx context.Context, task *model.Task) error
 	return nil
 }
 
-func settleGPTImage2APIAsyncImageTask(ctx context.Context, task *model.Task, result json.RawMessage, billingInput *billingexpr.RequestInput) error {
+func settleAsyncTaskBridgeImageTask(ctx context.Context, task *model.Task, result json.RawMessage, billingInput *billingexpr.RequestInput) error {
 	return settleImageTaskSuccess(ctx, task, imageTaskSettlementPayload{
 		Result:       result,
 		BillingInput: billingInput,
@@ -1893,7 +1893,7 @@ func imageTaskDataIsStoredResultPlaceholder(data json.RawMessage) bool {
 	return placeholder.Stored
 }
 
-func handleGPTImage2APITransientError(ctx context.Context, task *model.Task, reasonPrefix string, detail string) error {
+func handleAsyncTaskBridgeTransientError(ctx context.Context, task *model.Task, reasonPrefix string, detail string) error {
 	reason := fmt.Sprintf("%s: %s", reasonPrefix, detail)
 	if !imageTaskShouldFailTransientUpstreamError(task) {
 		markImageTaskTransientRetry(task)
@@ -1948,7 +1948,7 @@ func imageTaskAsyncTimeoutText() string {
 	return fmt.Sprintf("%d seconds", int(timeout/time.Second))
 }
 
-func handleGPTImage2APIMissingPollResult(ctx context.Context, task *model.Task, respBody []byte, reasonPrefix string) error {
+func handleAsyncTaskBridgeMissingPollResult(ctx context.Context, task *model.Task, respBody []byte, reasonPrefix string) error {
 	if !imageTaskShouldFailMissingUpstreamPollResult(task) {
 		markImageTaskTransientRetry(task)
 		return nil
@@ -1961,7 +1961,7 @@ func imageTaskShouldFailMissingUpstreamPollResult(task *model.Task) bool {
 	return imageTaskShouldFailLongRunningUpstreamStatus(task)
 }
 
-func handleGPTImage2APIInvalidPollResult(ctx context.Context, task *model.Task, respBody []byte, parseErr error) error {
+func handleAsyncTaskBridgeInvalidPollResult(ctx context.Context, task *model.Task, respBody []byte, parseErr error) error {
 	reasonPrefix := "upstream poll task returned invalid response"
 	if parseErr != nil {
 		reasonPrefix = fmt.Sprintf("%s: %s", reasonPrefix, parseErr.Error())
@@ -1978,7 +1978,7 @@ func imageTaskShouldFailInvalidUpstreamPollResult(task *model.Task) bool {
 	return imageTaskShouldFailLongRunningUpstreamStatus(task)
 }
 
-type gptImage2APITaskResult struct {
+type asyncTaskBridgeTaskResult struct {
 	TaskID   string
 	Status   model.TaskStatus
 	Progress string
@@ -1986,23 +1986,23 @@ type gptImage2APITaskResult struct {
 	Result   json.RawMessage
 }
 
-func parseGPTImage2APITaskResult(body []byte, upstreamID string) (*gptImage2APITaskResult, error) {
-	result, fallback, err := parseGPTImage2APITaskResultRawBytes(body, upstreamID)
+func parseAsyncTaskBridgeTaskResult(body []byte, upstreamID string) (*asyncTaskBridgeTaskResult, error) {
+	result, fallback, err := parseAsyncTaskBridgeTaskResultRawBytes(body, upstreamID)
 	if err != nil || !fallback {
 		return result, err
 	}
-	return parseGPTImage2APITaskResultAny(body, upstreamID)
+	return parseAsyncTaskBridgeTaskResultAny(body, upstreamID)
 }
 
-func parseGPTImage2APITaskResultAny(body []byte, upstreamID string) (*gptImage2APITaskResult, error) {
+func parseAsyncTaskBridgeTaskResultAny(body []byte, upstreamID string) (*asyncTaskBridgeTaskResult, error) {
 	var raw any
 	if err := common.Unmarshal(body, &raw); err != nil {
 		return nil, err
 	}
-	return parseGPTImage2APITaskResultRaw(raw, upstreamID)
+	return parseAsyncTaskBridgeTaskResultRaw(raw, upstreamID)
 }
 
-func parseGPTImage2APITaskResultFromStorage(storage common.BodyStorage, upstreamID string) (*gptImage2APITaskResult, error) {
+func parseAsyncTaskBridgeTaskResultFromStorage(storage common.BodyStorage, upstreamID string) (*asyncTaskBridgeTaskResult, error) {
 	if storage == nil {
 		return nil, errors.New("upstream task response body is missing")
 	}
@@ -2010,23 +2010,23 @@ func parseGPTImage2APITaskResultFromStorage(storage common.BodyStorage, upstream
 	if err != nil {
 		return nil, err
 	}
-	return parseGPTImage2APITaskResult(body, upstreamID)
+	return parseAsyncTaskBridgeTaskResult(body, upstreamID)
 }
 
-func parseGPTImage2APITaskResultRawBytes(body []byte, upstreamID string) (*gptImage2APITaskResult, bool, error) {
+func parseAsyncTaskBridgeTaskResultRawBytes(body []byte, upstreamID string) (*asyncTaskBridgeTaskResult, bool, error) {
 	if !gjson.ValidBytes(body) {
 		var raw any
 		return nil, false, common.Unmarshal(body, &raw)
 	}
-	item := findGPTImage2APITaskItemJSON(gjson.ParseBytes(body), upstreamID)
+	item := findAsyncTaskBridgeTaskItemJSON(gjson.ParseBytes(body), upstreamID)
 	if !item.Exists() {
 		return nil, true, nil
 	}
 	if !item.IsObject() {
 		return nil, false, fmt.Errorf("upstream task item has invalid shape")
 	}
-	status := normalizeGPTImage2APIStatus(stringValueFromJSON(item, "status", "state"))
-	result := &gptImage2APITaskResult{
+	status := normalizeAsyncTaskBridgeStatus(stringValueFromJSON(item, "status", "state"))
+	result := &asyncTaskBridgeTaskResult{
 		TaskID:   stringValueFromJSON(item, "task_id", "id", "upstream_task_id"),
 		Status:   status,
 		Progress: progressValueFromJSON(item),
@@ -2036,7 +2036,7 @@ func parseGPTImage2APITaskResultRawBytes(body []byte, upstreamID string) (*gptIm
 		result.Reason = errorValueToStringJSON(errValue)
 	}
 	if status == model.TaskStatusSuccess {
-		result.Result = marshalGPTImage2APISuccessResultJSON(item)
+		result.Result = marshalAsyncTaskBridgeSuccessResultJSON(item)
 		if len(result.Result) == 0 {
 			result.Result = rawMessageFromJSONResult(item)
 		}
@@ -2044,7 +2044,7 @@ func parseGPTImage2APITaskResultRawBytes(body []byte, upstreamID string) (*gptIm
 	return result, false, nil
 }
 
-func findGPTImage2APITaskItemJSON(raw gjson.Result, upstreamID string) gjson.Result {
+func findAsyncTaskBridgeTaskItemJSON(raw gjson.Result, upstreamID string) gjson.Result {
 	if !raw.Exists() {
 		return gjson.Result{}
 	}
@@ -2080,7 +2080,7 @@ func findGPTImage2APITaskItemJSON(raw gjson.Result, upstreamID string) gjson.Res
 	}
 	for _, key := range []string{"items", "tasks", "results"} {
 		if nested := raw.Get(key); nested.Exists() {
-			if found := findGPTImage2APITaskItemJSON(nested, upstreamID); found.Exists() {
+			if found := findAsyncTaskBridgeTaskItemJSON(nested, upstreamID); found.Exists() {
 				return found
 			}
 		}
@@ -2095,14 +2095,14 @@ func findGPTImage2APITaskItemJSON(raw gjson.Result, upstreamID string) gjson.Res
 			return true
 		})
 		if direct.Exists() {
-			if found := findGPTImage2APITaskItemJSON(direct, upstreamID); found.Exists() {
+			if found := findAsyncTaskBridgeTaskItemJSON(direct, upstreamID); found.Exists() {
 				return found
 			}
 			return direct
 		}
 	}
 	if nested := raw.Get("data"); nested.Exists() {
-		if found := findGPTImage2APITaskItemJSON(nested, upstreamID); found.Exists() {
+		if found := findAsyncTaskBridgeTaskItemJSON(nested, upstreamID); found.Exists() {
 			return found
 		}
 	}
@@ -2117,7 +2117,7 @@ func findGPTImage2APITaskItemJSON(raw gjson.Result, upstreamID string) gjson.Res
 	}
 	var found gjson.Result
 	raw.ForEach(func(_, value gjson.Result) bool {
-		found = findGPTImage2APITaskItemJSON(value, upstreamID)
+		found = findAsyncTaskBridgeTaskItemJSON(value, upstreamID)
 		return !found.Exists()
 	})
 	return found
@@ -2200,10 +2200,10 @@ func errorValueToStringJSON(value gjson.Result) string {
 	return strings.TrimSpace(value.Raw)
 }
 
-func marshalGPTImage2APISuccessResultJSON(item gjson.Result) json.RawMessage {
+func marshalAsyncTaskBridgeSuccessResultJSON(item gjson.Result) json.RawMessage {
 	for _, key := range []string{"result", "response", "openai_response", "output"} {
 		if value := item.Get(key); value.Exists() {
-			return marshalGPTImage2APIJSONValueWithUsage(value, item.Get("usage"))
+			return marshalAsyncTaskBridgeJSONValueWithUsage(value, item.Get("usage"))
 		}
 	}
 	data := item.Get("data")
@@ -2219,7 +2219,7 @@ func marshalGPTImage2APISuccessResultJSON(item gjson.Result) json.RawMessage {
 	return joinJSONObjectRaw("data", data, "", gjson.Result{})
 }
 
-func marshalGPTImage2APIJSONValueWithUsage(value gjson.Result, usage gjson.Result) json.RawMessage {
+func marshalAsyncTaskBridgeJSONValueWithUsage(value gjson.Result, usage gjson.Result) json.RawMessage {
 	if !usage.Exists() || strings.TrimSpace(usage.Raw) == "null" {
 		return rawMessageFromJSONResult(value)
 	}
@@ -2271,8 +2271,8 @@ func rawMessageFromJSONResult(value gjson.Result) json.RawMessage {
 	return json.RawMessage(append([]byte(nil), raw...))
 }
 
-func parseGPTImage2APITaskResultRaw(raw any, upstreamID string) (*gptImage2APITaskResult, error) {
-	item := findGPTImage2APITaskItem(raw, upstreamID)
+func parseAsyncTaskBridgeTaskResultRaw(raw any, upstreamID string) (*asyncTaskBridgeTaskResult, error) {
+	item := findAsyncTaskBridgeTaskItem(raw, upstreamID)
 	if item == nil {
 		return nil, nil
 	}
@@ -2280,8 +2280,8 @@ func parseGPTImage2APITaskResultRaw(raw any, upstreamID string) (*gptImage2APITa
 	if !ok {
 		return nil, fmt.Errorf("upstream task item has invalid shape")
 	}
-	status := normalizeGPTImage2APIStatus(stringValueFromMap(itemMap, "status", "state"))
-	result := &gptImage2APITaskResult{
+	status := normalizeAsyncTaskBridgeStatus(stringValueFromMap(itemMap, "status", "state"))
+	result := &asyncTaskBridgeTaskResult{
 		TaskID:   stringValueFromMap(itemMap, "task_id", "id", "upstream_task_id"),
 		Status:   status,
 		Progress: progressValueFromMap(itemMap),
@@ -2291,7 +2291,7 @@ func parseGPTImage2APITaskResultRaw(raw any, upstreamID string) (*gptImage2APITa
 		result.Reason = errorValueToString(errValue)
 	}
 	if status == model.TaskStatusSuccess {
-		result.Result = marshalGPTImage2APISuccessResult(itemMap)
+		result.Result = marshalAsyncTaskBridgeSuccessResult(itemMap)
 		if len(result.Result) == 0 {
 			result.Result, _ = common.Marshal(itemMap)
 		}
@@ -2299,9 +2299,9 @@ func parseGPTImage2APITaskResultRaw(raw any, upstreamID string) (*gptImage2APITa
 	return result, nil
 }
 
-func marshalGPTImage2APISuccessResult(itemMap map[string]any) json.RawMessage {
+func marshalAsyncTaskBridgeSuccessResult(itemMap map[string]any) json.RawMessage {
 	if result, ok := firstExistingValue(itemMap, "result", "response", "openai_response", "output"); ok {
-		return marshalGPTImage2APIValueWithUsage(result, itemMap["usage"])
+		return marshalAsyncTaskBridgeValueWithUsage(result, itemMap["usage"])
 	}
 	data, ok := itemMap["data"]
 	if !ok || data == nil {
@@ -2323,7 +2323,7 @@ func marshalGPTImage2APISuccessResult(itemMap map[string]any) json.RawMessage {
 	return json.RawMessage(b)
 }
 
-func marshalGPTImage2APIValueWithUsage(value any, usage any) json.RawMessage {
+func marshalAsyncTaskBridgeValueWithUsage(value any, usage any) json.RawMessage {
 	if usage == nil {
 		b, err := common.Marshal(value)
 		if err != nil || len(b) == 0 || string(b) == "null" {
@@ -2357,7 +2357,7 @@ func marshalGPTImage2APIValueWithUsage(value any, usage any) json.RawMessage {
 	return json.RawMessage(b)
 }
 
-func findGPTImage2APITaskItem(raw any, upstreamID string) any {
+func findAsyncTaskBridgeTaskItem(raw any, upstreamID string) any {
 	switch v := raw.(type) {
 	case []any:
 		for _, item := range v {
@@ -2377,21 +2377,21 @@ func findGPTImage2APITaskItem(raw any, upstreamID string) any {
 		}
 		for _, key := range []string{"items", "tasks", "results"} {
 			if nested, ok := v[key]; ok {
-				if found := findGPTImage2APITaskItem(nested, upstreamID); found != nil {
+				if found := findAsyncTaskBridgeTaskItem(nested, upstreamID); found != nil {
 					return found
 				}
 			}
 		}
 		if upstreamID != "" {
 			if direct, ok := v[upstreamID]; ok {
-				if found := findGPTImage2APITaskItem(direct, upstreamID); found != nil {
+				if found := findAsyncTaskBridgeTaskItem(direct, upstreamID); found != nil {
 					return found
 				}
 				return direct
 			}
 		}
 		if nested, ok := v["data"]; ok {
-			if found := findGPTImage2APITaskItem(nested, upstreamID); found != nil {
+			if found := findAsyncTaskBridgeTaskItem(nested, upstreamID); found != nil {
 				return found
 			}
 		}
@@ -2411,7 +2411,7 @@ func findGPTImage2APITaskItem(raw any, upstreamID string) any {
 			return v
 		}
 		for _, nested := range v {
-			if found := findGPTImage2APITaskItem(nested, upstreamID); found != nil {
+			if found := findAsyncTaskBridgeTaskItem(nested, upstreamID); found != nil {
 				return found
 			}
 		}
@@ -2444,7 +2444,7 @@ func taskItemHasIdentity(m map[string]any) bool {
 	return false
 }
 
-func normalizeGPTImage2APIStatus(status string) model.TaskStatus {
+func normalizeAsyncTaskBridgeStatus(status string) model.TaskStatus {
 	switch strings.ToLower(strings.TrimSpace(status)) {
 	case "not_start", "pending", "queued", "queue":
 		return model.TaskStatusQueued
@@ -2461,7 +2461,7 @@ func normalizeGPTImage2APIStatus(status string) model.TaskStatus {
 	}
 }
 
-func extractGPTImage2APITaskID(body []byte) string {
+func extractAsyncTaskBridgeTaskID(body []byte) string {
 	var raw any
 	if err := common.Unmarshal(body, &raw); err != nil {
 		return ""
@@ -2978,7 +2978,7 @@ func imageTaskHTTPResponseMaxBytes() int64 {
 	return int64(maxMB) << 20
 }
 
-func buildGPTImage2APIURL(baseURL string, path string) string {
+func buildAsyncTaskBridgeURL(baseURL string, path string) string {
 	baseURL = strings.TrimRight(strings.TrimSpace(baseURL), "/")
 	if strings.HasSuffix(baseURL, "/v1") {
 		baseURL = strings.TrimSuffix(baseURL, "/v1")
@@ -2986,21 +2986,21 @@ func buildGPTImage2APIURL(baseURL string, path string) string {
 	return baseURL + path
 }
 
-func gptImage2APICreatePath(task *model.Task) string {
+func asyncTaskBridgeCreatePath(task *model.Task) string {
 	if task.Action == constant.TaskActionImageEdit {
 		return "/api/image-tasks/edits"
 	}
 	return "/api/image-tasks/generations"
 }
 
-func buildGPTImage2APIAsyncCreateBody(ctx context.Context, task *model.Task, channel *model.Channel, key string, bodyStorage common.BodyStorage, contentType string) (*imageTaskOutboundBody, map[string]string, error) {
-	imageRequest, relayInfo, fakeCtx, cleanup, err := prepareGPTImage2APIAsyncRelayInfo(ctx, task, channel, key, bodyStorage, contentType)
+func buildAsyncTaskBridgeOutboundBody(ctx context.Context, task *model.Task, channel *model.Channel, key string, bodyStorage common.BodyStorage, contentType string) (*imageTaskOutboundBody, map[string]string, error) {
+	imageRequest, relayInfo, fakeCtx, cleanup, err := prepareAsyncTaskBridgeRelayInfo(ctx, task, channel, key, bodyStorage, contentType)
 	if err != nil {
 		return nil, nil, err
 	}
 	defer cleanup()
 
-	outboundBody, err := buildGPTImage2APICreateBody(bodyStorage, contentType, task.TaskID, imageRequest, relayInfo)
+	outboundBody, err := buildAsyncTaskBridgeCreateBody(bodyStorage, contentType, task.TaskID, imageRequest, relayInfo)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -3012,7 +3012,7 @@ func buildGPTImage2APIAsyncCreateBody(ctx context.Context, task *model.Task, cha
 	return outboundBody, headerOverride, nil
 }
 
-func prepareGPTImage2APIAsyncRelayInfo(ctx context.Context, task *model.Task, channel *model.Channel, key string, bodyStorage common.BodyStorage, contentType string) (*dto.ImageRequest, *relaycommon.RelayInfo, *gin.Context, func(), error) {
+func prepareAsyncTaskBridgeRelayInfo(ctx context.Context, task *model.Task, channel *model.Channel, key string, bodyStorage common.BodyStorage, contentType string) (*dto.ImageRequest, *relaycommon.RelayInfo, *gin.Context, func(), error) {
 	relayMode := imageTaskRelayModeFromTask(task)
 	path := imageTaskRequestPathFromTask(task)
 	if _, err := bodyStorage.Seek(0, io.SeekStart); err != nil {
@@ -3078,8 +3078,8 @@ func newImageTaskRelayFakeContext(ctx context.Context, task *model.Task, method 
 	return fakeCtx, cleanup
 }
 
-func buildGPTImage2APIAsyncStatusHeaderOverride(ctx context.Context, task *model.Task, channel *model.Channel, key string) (map[string]string, error) {
-	relayInfo, fakeCtx, cleanup, err := prepareGPTImage2APIAsyncStatusRelayInfo(ctx, task, channel, key)
+func buildAsyncTaskBridgeStatusHeaderOverride(ctx context.Context, task *model.Task, channel *model.Channel, key string) (map[string]string, error) {
+	relayInfo, fakeCtx, cleanup, err := prepareAsyncTaskBridgeStatusRelayInfo(ctx, task, channel, key)
 	if err != nil {
 		return nil, err
 	}
@@ -3090,7 +3090,7 @@ func buildGPTImage2APIAsyncStatusHeaderOverride(ctx context.Context, task *model
 	return relaychannel.ResolveHeaderOverride(relayInfo, fakeCtx)
 }
 
-func prepareGPTImage2APIAsyncStatusRelayInfo(ctx context.Context, task *model.Task, channel *model.Channel, key string) (*relaycommon.RelayInfo, *gin.Context, func(), error) {
+func prepareAsyncTaskBridgeStatusRelayInfo(ctx context.Context, task *model.Task, channel *model.Channel, key string) (*relaycommon.RelayInfo, *gin.Context, func(), error) {
 	fakeCtx, cleanup := newImageTaskRelayFakeContext(ctx, task, http.MethodGet, "/api/image-tasks", nil, "")
 	if err := setupImageTaskBaseGinContext(fakeCtx, task); err != nil {
 		cleanup()
@@ -3134,13 +3134,13 @@ func prepareGPTImage2APIAsyncStatusRelayInfo(ctx context.Context, task *model.Ta
 	return relayInfo, fakeCtx, cleanup, nil
 }
 
-func buildGPTImage2APICreateBody(bodyStorage common.BodyStorage, contentType string, clientTaskID string, imageRequest *dto.ImageRequest, relayInfo *relaycommon.RelayInfo) (*imageTaskOutboundBody, error) {
+func buildAsyncTaskBridgeCreateBody(bodyStorage common.BodyStorage, contentType string, clientTaskID string, imageRequest *dto.ImageRequest, relayInfo *relaycommon.RelayInfo) (*imageTaskOutboundBody, error) {
 	if _, err := bodyStorage.Seek(0, io.SeekStart); err != nil {
 		return nil, err
 	}
 	switch {
 	case strings.Contains(contentType, "multipart/form-data"):
-		return buildGPTImage2APIMultipartBody(bodyStorage, contentType, clientTaskID, imageRequest, relayInfo)
+		return buildAsyncTaskBridgeMultipartBody(bodyStorage, contentType, clientTaskID, imageRequest, relayInfo)
 	case strings.Contains(contentType, "application/x-www-form-urlencoded"):
 		body, err := readImageTaskBodyStorageBytes(bodyStorage)
 		if err != nil {
@@ -3150,11 +3150,11 @@ func buildGPTImage2APICreateBody(bodyStorage common.BodyStorage, contentType str
 		if err != nil {
 			return nil, err
 		}
-		applyGPTImage2APIImageRequestFieldsToValues(values, imageRequest)
-		if gptImage2APIHasParamOverride(relayInfo) {
-			bodyMap := gptImage2APIFormValuesToMap(values)
+		applyAsyncTaskBridgeImageRequestFieldsToValues(values, imageRequest)
+		if asyncTaskBridgeHasParamOverride(relayInfo) {
+			bodyMap := asyncTaskBridgeFormValuesToMap(values)
 			bodyMap["stream"] = false
-			bodyMap, err = applyGPTImage2APIParamOverrideToMap(bodyMap, relayInfo)
+			bodyMap, err = applyAsyncTaskBridgeParamOverrideToMap(bodyMap, relayInfo)
 			if err != nil {
 				return nil, err
 			}
@@ -3174,9 +3174,9 @@ func buildGPTImage2APICreateBody(bodyStorage common.BodyStorage, contentType str
 		if err := common.DecodeJson(bodyStorage, &bodyMap); err != nil {
 			return nil, err
 		}
-		applyGPTImage2APIImageRequestFieldsToMap(bodyMap, imageRequest)
+		applyAsyncTaskBridgeImageRequestFieldsToMap(bodyMap, imageRequest)
 		bodyMap["stream"] = false
-		bodyMap, err := applyGPTImage2APIParamOverrideToMap(bodyMap, relayInfo)
+		bodyMap, err := applyAsyncTaskBridgeParamOverrideToMap(bodyMap, relayInfo)
 		if err != nil {
 			return nil, err
 		}
@@ -3206,7 +3206,7 @@ func imageTaskOutboundCacheReservationBytes(inputSize int64) int64 {
 	return reserveBytes
 }
 
-func buildGPTImage2APIMultipartBody(bodyStorage common.BodyStorage, contentType string, clientTaskID string, imageRequest *dto.ImageRequest, relayInfo *relaycommon.RelayInfo) (*imageTaskOutboundBody, error) {
+func buildAsyncTaskBridgeMultipartBody(bodyStorage common.BodyStorage, contentType string, clientTaskID string, imageRequest *dto.ImageRequest, relayInfo *relaycommon.RelayInfo) (*imageTaskOutboundBody, error) {
 	_, params, err := mime.ParseMediaType(contentType)
 	if err != nil {
 		return nil, err
@@ -3270,15 +3270,15 @@ func buildGPTImage2APIMultipartBody(bodyStorage common.BodyStorage, contentType 
 			return nil, err
 		}
 	}
-	applyGPTImage2APIImageRequestFieldsToFields(fields, imageRequest)
+	applyAsyncTaskBridgeImageRequestFieldsToFields(fields, imageRequest)
 	fields["stream"] = []string{"false"}
-	fields, err = applyGPTImage2APIParamOverrideToFields(fields, relayInfo)
+	fields, err = applyAsyncTaskBridgeParamOverrideToFields(fields, relayInfo)
 	if err != nil {
 		return nil, err
 	}
 	fields["client_task_id"] = []string{clientTaskID}
 	fields["stream"] = []string{"false"}
-	if err := writeGPTImage2APIFields(writer, fields); err != nil {
+	if err := writeAsyncTaskBridgeFields(writer, fields); err != nil {
 		return nil, err
 	}
 	if err := writer.Close(); err != nil {
@@ -3307,7 +3307,7 @@ func buildGPTImage2APIMultipartBody(bodyStorage common.BodyStorage, contentType 
 	}, nil
 }
 
-func applyGPTImage2APIImageRequestFieldsToMap(bodyMap map[string]any, imageRequest *dto.ImageRequest) {
+func applyAsyncTaskBridgeImageRequestFieldsToMap(bodyMap map[string]any, imageRequest *dto.ImageRequest) {
 	if bodyMap == nil || imageRequest == nil {
 		return
 	}
@@ -3316,7 +3316,7 @@ func applyGPTImage2APIImageRequestFieldsToMap(bodyMap map[string]any, imageReque
 	}
 }
 
-func applyGPTImage2APIImageRequestFieldsToValues(values url.Values, imageRequest *dto.ImageRequest) {
+func applyAsyncTaskBridgeImageRequestFieldsToValues(values url.Values, imageRequest *dto.ImageRequest) {
 	if values == nil || imageRequest == nil {
 		return
 	}
@@ -3325,7 +3325,7 @@ func applyGPTImage2APIImageRequestFieldsToValues(values url.Values, imageRequest
 	}
 }
 
-func applyGPTImage2APIImageRequestFieldsToFields(fields map[string][]string, imageRequest *dto.ImageRequest) {
+func applyAsyncTaskBridgeImageRequestFieldsToFields(fields map[string][]string, imageRequest *dto.ImageRequest) {
 	if fields == nil || imageRequest == nil {
 		return
 	}
@@ -3334,12 +3334,12 @@ func applyGPTImage2APIImageRequestFieldsToFields(fields map[string][]string, ima
 	}
 }
 
-func gptImage2APIHasParamOverride(relayInfo *relaycommon.RelayInfo) bool {
+func asyncTaskBridgeHasParamOverride(relayInfo *relaycommon.RelayInfo) bool {
 	return relayInfo != nil && relayInfo.ChannelMeta != nil && len(relayInfo.ParamOverride) > 0
 }
 
-func applyGPTImage2APIParamOverrideToMap(bodyMap map[string]any, relayInfo *relaycommon.RelayInfo) (map[string]any, error) {
-	if !gptImage2APIHasParamOverride(relayInfo) {
+func applyAsyncTaskBridgeParamOverrideToMap(bodyMap map[string]any, relayInfo *relaycommon.RelayInfo) (map[string]any, error) {
+	if !asyncTaskBridgeHasParamOverride(relayInfo) {
 		return bodyMap, nil
 	}
 	jsonData, err := common.Marshal(bodyMap)
@@ -3357,35 +3357,35 @@ func applyGPTImage2APIParamOverrideToMap(bodyMap map[string]any, relayInfo *rela
 	return overridden, nil
 }
 
-func applyGPTImage2APIParamOverrideToFields(fields map[string][]string, relayInfo *relaycommon.RelayInfo) (map[string][]string, error) {
-	if !gptImage2APIHasParamOverride(relayInfo) {
+func applyAsyncTaskBridgeParamOverrideToFields(fields map[string][]string, relayInfo *relaycommon.RelayInfo) (map[string][]string, error) {
+	if !asyncTaskBridgeHasParamOverride(relayInfo) {
 		return fields, nil
 	}
-	bodyMap := gptImage2APIFieldsToMap(fields)
-	bodyMap, err := applyGPTImage2APIParamOverrideToMap(bodyMap, relayInfo)
+	bodyMap := asyncTaskBridgeFieldsToMap(fields)
+	bodyMap, err := applyAsyncTaskBridgeParamOverrideToMap(bodyMap, relayInfo)
 	if err != nil {
 		return nil, err
 	}
-	return gptImage2APIMapToFields(bodyMap), nil
+	return asyncTaskBridgeMapToFields(bodyMap), nil
 }
 
-func gptImage2APIFormValuesToMap(values url.Values) map[string]any {
+func asyncTaskBridgeFormValuesToMap(values url.Values) map[string]any {
 	bodyMap := make(map[string]any, len(values))
 	for key, vals := range values {
-		bodyMap[key] = gptImage2APIValuesToAny(vals)
+		bodyMap[key] = asyncTaskBridgeValuesToAny(vals)
 	}
 	return bodyMap
 }
 
-func gptImage2APIFieldsToMap(fields map[string][]string) map[string]any {
+func asyncTaskBridgeFieldsToMap(fields map[string][]string) map[string]any {
 	bodyMap := make(map[string]any, len(fields))
 	for key, vals := range fields {
-		bodyMap[key] = gptImage2APIValuesToAny(vals)
+		bodyMap[key] = asyncTaskBridgeValuesToAny(vals)
 	}
 	return bodyMap
 }
 
-func gptImage2APIValuesToAny(values []string) any {
+func asyncTaskBridgeValuesToAny(values []string) any {
 	switch len(values) {
 	case 0:
 		return ""
@@ -3396,15 +3396,15 @@ func gptImage2APIValuesToAny(values []string) any {
 	}
 }
 
-func gptImage2APIMapToFields(bodyMap map[string]any) map[string][]string {
+func asyncTaskBridgeMapToFields(bodyMap map[string]any) map[string][]string {
 	fields := make(map[string][]string, len(bodyMap))
 	for key, value := range bodyMap {
-		fields[key] = gptImage2APIFieldValues(value)
+		fields[key] = asyncTaskBridgeFieldValues(value)
 	}
 	return fields
 }
 
-func gptImage2APIFieldValues(value any) []string {
+func asyncTaskBridgeFieldValues(value any) []string {
 	switch v := value.(type) {
 	case nil:
 		return nil
@@ -3413,15 +3413,15 @@ func gptImage2APIFieldValues(value any) []string {
 	case []any:
 		values := make([]string, 0, len(v))
 		for _, item := range v {
-			values = append(values, gptImage2APIFieldValueString(item))
+			values = append(values, asyncTaskBridgeFieldValueString(item))
 		}
 		return values
 	default:
-		return []string{gptImage2APIFieldValueString(v)}
+		return []string{asyncTaskBridgeFieldValueString(v)}
 	}
 }
 
-func gptImage2APIFieldValueString(value any) string {
+func asyncTaskBridgeFieldValueString(value any) string {
 	switch v := value.(type) {
 	case string:
 		return v
@@ -3437,7 +3437,7 @@ func gptImage2APIFieldValueString(value any) string {
 	return fmt.Sprint(value)
 }
 
-func writeGPTImage2APIFields(writer *multipart.Writer, fields map[string][]string) error {
+func writeAsyncTaskBridgeFields(writer *multipart.Writer, fields map[string][]string) error {
 	for key, values := range fields {
 		for _, value := range values {
 			if err := writer.WriteField(key, value); err != nil {

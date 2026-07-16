@@ -208,7 +208,13 @@ func GenerateTaskID() string {
 }
 
 func (p *TaskPrivateData) Scan(val interface{}) error {
-	bytesValue, _ := val.([]byte)
+	var bytesValue []byte
+	switch value := val.(type) {
+	case []byte:
+		bytesValue = value
+	case string:
+		bytesValue = []byte(value)
+	}
 	if len(bytesValue) == 0 {
 		return nil
 	}
