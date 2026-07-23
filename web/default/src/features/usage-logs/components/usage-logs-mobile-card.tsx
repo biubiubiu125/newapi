@@ -244,8 +244,10 @@ function MobileTokensField({ log }: { log: UsageLog }) {
 function MobileUserField({ log }: { log: UsageLog }) {
   const { sensitiveVisible, setSelectedUserId, setUserInfoDialogOpen } =
     useUsageLogsContext()
+  const userId = log.user_id || null
+  const displayName = log.username || `#${userId || '?'}`
 
-  if (!log.username) return null
+  if (!log.username && !userId) return null
 
   return (
     <button
@@ -253,7 +255,8 @@ function MobileUserField({ log }: { log: UsageLog }) {
       className='bg-muted/20 flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-left'
       onClick={(e) => {
         e.stopPropagation()
-        setSelectedUserId(log.user_id)
+        if (userId == null) return
+        setSelectedUserId(userId)
         setUserInfoDialogOpen(true)
       }}
     >
@@ -264,14 +267,14 @@ function MobileUserField({ log }: { log: UsageLog }) {
             !sensitiveVisible && 'bg-muted text-muted-foreground'
           )}
           style={
-            sensitiveVisible ? getUserAvatarStyle(log.username) : undefined
+            sensitiveVisible ? getUserAvatarStyle(displayName) : undefined
           }
         >
-          {sensitiveVisible ? getUserAvatarFallback(log.username) : '•'}
+          {sensitiveVisible ? getUserAvatarFallback(displayName) : '•'}
         </AvatarFallback>
       </Avatar>
       <span className='text-foreground min-w-0 truncate text-sm'>
-        {sensitiveVisible ? log.username : '••••'}
+        {sensitiveVisible ? displayName : '••••'}
       </span>
     </button>
   )
@@ -425,6 +428,7 @@ function DrawingLogsCard<TData>({
           cell={cells.get('channel')}
           primaryOnly
         />
+        <SummaryField label={t('User')} cell={cells.get('user')} primaryOnly />
         <SummaryField label={t('Task ID')} cell={cells.get('mj_id')} />
         <SummaryField
           label={t('Duration')}

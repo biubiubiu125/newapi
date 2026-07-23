@@ -422,6 +422,7 @@ func setupImageTaskBaseGinContext(c *gin.Context, task *model.Task) error {
 		common.SetContextKey(c, constant.ContextKeyUserGroup, user.Group)
 		common.SetContextKey(c, constant.ContextKeyUserQuota, user.Quota)
 		common.SetContextKey(c, constant.ContextKeyUserEmail, user.Email)
+		common.SetContextKey(c, constant.ContextKeyUserName, user.Username)
 		common.SetContextKey(c, constant.ContextKeyUserSetting, user.GetSetting())
 	} else {
 		common.SetContextKey(c, constant.ContextKeyUserGroup, task.Group)
@@ -1003,7 +1004,9 @@ func applyAsyncTaskBridgeStatusOnly(ctx context.Context, task *model.Task, resul
 	}
 	if task.Status == model.TaskStatusFailure {
 		if task.Quota != 0 {
-			service.RefundTaskQuota(ctx, task, task.FailReason)
+			if err := service.RefundTaskQuota(ctx, task, task.FailReason); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("image task %s refund failed: %s", task.TaskID, err.Error()))
+			}
 		}
 		removeImageTaskBodyPath(bodyPath)
 	}
@@ -1456,7 +1459,9 @@ func pollAsyncTaskBridgeImageTask(ctx context.Context, task *model.Task) error {
 	}
 	if task.Status == model.TaskStatusFailure {
 		if task.Quota != 0 {
-			service.RefundTaskQuota(ctx, task, task.FailReason)
+			if err := service.RefundTaskQuota(ctx, task, task.FailReason); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("image task %s refund failed: %s", task.TaskID, err.Error()))
+			}
 		}
 		removeImageTaskBodyPath(bodyPath)
 	}
@@ -2823,7 +2828,9 @@ func failImageTask(ctx context.Context, task *model.Task, fromStatus model.TaskS
 		return errors.New("image task failure status update lost CAS")
 	}
 	if refund && task.Quota != 0 {
-		service.RefundTaskQuota(ctx, task, reason)
+		if err := service.RefundTaskQuota(ctx, task, reason); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("image task %s refund failed: %s", task.TaskID, err.Error()))
+		}
 	}
 	if cleanup {
 		removeImageTaskBodyPath(bodyPath)
@@ -3506,7 +3513,8 @@ func settleImageTaskConsumption(ctx context.Context, task *model.Task, result js
 		TieredBillingSnapshot: cloneImageTaskTieredSnapshot(task.PrivateData.TieredBillingSnapshot),
 		BillingRequestInput:   billingInput,
 		TaskRelayInfo: &relaycommon.TaskRelayInfo{
-			Action: task.Action,
+			Action:       task.Action,
+			PublicTaskID: task.TaskID,
 		},
 		ChannelMeta: imageTaskChannelMetaFromTask(ctx, task),
 	}
@@ -3519,7 +3527,10 @@ func settleImageTaskConsumption(ctx context.Context, task *model.Task, result js
 	if usage != nil {
 		return service.PostTextConsumeQuotaChecked(fakeCtx, info, usage, extraContent)
 	}
-	service.LogTaskConsumption(fakeCtx, info)
+	if err := service.LogTaskConsumption(fakeCtx, info); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("image task %s consumption log failed: %s", task.TaskID, err.Error()))
+		return fmt.Errorf("image task consumption log failed: %w", err)
+	}
 	return nil
 }
 

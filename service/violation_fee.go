@@ -128,9 +128,13 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		return false
 	}
 
-	model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, feeQuota)
-	model.UpdateChannelUsedQuota(relayInfo.ChannelId, feeQuota)
-	model.RecordTokenUsage(relayInfo.TokenId, relayInfo.UserId, feeQuota, common.GetTimestamp())
+	if err := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, feeQuota); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("violation fee usage counter update failed: %v", err))
+		if rollbackErr := RollbackDirectPostConsumeQuota(ctx, relayInfo, feeQuota); rollbackErr != nil {
+			logger.LogError(ctx, fmt.Sprintf("violation fee rollback billing failed: %v", rollbackErr))
+		}
+		return false
+	}
 
 	useTimeSeconds := time.Now().Unix() - relayInfo.StartTime.Unix()
 	tokenName := ctx.GetString("token_name")
@@ -147,8 +151,11 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		"upstream_error_code":  fmt.Sprintf("%v", oai.Code),
 		"violation_fee_marker": CSAMViolationMarker,
 	}
+	if relayInfo.TaskRelayInfo != nil && relayInfo.TaskRelayInfo.PublicTaskID != "" {
+		other["task_id"] = relayInfo.TaskRelayInfo.PublicTaskID
+	}
 
-	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+	if err := model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:      relayInfo.ChannelId,
 		ModelName:      relayInfo.OriginModelName,
 		TokenName:      tokenName,
@@ -159,7 +166,16 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 		IsStream:       relayInfo.IsStream,
 		Group:          relayInfo.UsingGroup,
 		Other:          other,
-	})
+	}); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("violation fee consume log failed: %v", err))
+		if rollbackErr := RollbackTaskConsumptionUsage(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, feeQuota); rollbackErr != nil {
+			logger.LogError(ctx, fmt.Sprintf("violation fee rollback usage failed: %v", rollbackErr))
+		}
+		if rollbackErr := RollbackDirectPostConsumeQuota(ctx, relayInfo, feeQuota); rollbackErr != nil {
+			logger.LogError(ctx, fmt.Sprintf("violation fee rollback billing failed: %v", rollbackErr))
+		}
+		return false
+	}
 
 	return true
 }

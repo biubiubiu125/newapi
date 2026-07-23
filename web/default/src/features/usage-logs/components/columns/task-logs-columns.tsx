@@ -131,7 +131,10 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
         const { sensitiveVisible, setSelectedUserId, setUserInfoDialogOpen } =
           useUsageLogsContext()
         const log = row.original
-        const displayName = log.username || String(log.user_id || '?')
+        const userId = log.user_id || null
+        const displayName = log.username || `#${userId || '?'}`
+
+        if (!log.username && !userId) return null
 
         return (
           <button
@@ -139,7 +142,8 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
             className='flex items-center gap-1.5 text-left'
             onClick={(e) => {
               e.stopPropagation()
-              setSelectedUserId(log.user_id)
+              if (userId == null) return
+              setSelectedUserId(userId)
               setUserInfoDialogOpen(true)
             }}
           >
@@ -207,11 +211,17 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
         <DataTableColumnHeader column={column} title={t('Status')} />
       ),
       cell: ({ row }) => {
+        const log = row.original
         const status = row.getValue('status') as string
+        const settlementFailed = log.settlement_status === 'REVIEW'
         return (
           <StatusBadge
-            label={t(taskStatusMapper.getLabel(status, status || 'Submitting'))}
-            variant={taskStatusMapper.getVariant(status)}
+            label={
+              settlementFailed
+                ? t('Settlement review')
+                : t(taskStatusMapper.getLabel(status, status || 'Submitting'))
+            }
+            variant={settlementFailed ? 'red' : taskStatusMapper.getVariant(status)}
             size='sm'
             copyable={false}
           />
@@ -230,6 +240,52 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
         const failReason = row.getValue('fail_reason') as string
         const status = log.status
         const [dialogOpen, setDialogOpen] = useState(false)
+        const settlementFailed = log.settlement_status === 'REVIEW'
+        const settlementError = log.settlement_error
+        const settlementAttemptQuota = log.settlement_attempt_quota || 0
+        const detailText = settlementError || failReason
+        const hasFailReason = !!detailText
+
+        if (settlementFailed) {
+          return (
+            <>
+              <div className='flex max-w-[200px] flex-col items-start gap-1'>
+                <div className='flex flex-col items-start gap-0.5'>
+                  <StatusBadge
+                    label={t('Settlement failed')}
+                    variant='danger'
+                    size='sm'
+                    copyable={false}
+                  />
+                  {settlementAttemptQuota > 0 && (
+                    <span className='text-muted-foreground text-[11px]'>
+                      {t('Attempted quota')}: {settlementAttemptQuota}
+                    </span>
+                  )}
+                </div>
+                {hasFailReason && (
+                  <button
+                    type='button'
+                    className='group flex max-w-full items-center gap-1 text-left text-xs'
+                    onClick={() => setDialogOpen(true)}
+                    title={t('Click to view full error message')}
+                  >
+                    <span className='truncate leading-snug text-red-600 group-hover:underline dark:text-red-400'>
+                      {detailText}
+                    </span>
+                  </button>
+                )}
+              </div>
+              {hasFailReason && (
+                <FailReasonDialog
+                  failReason={detailText}
+                  open={dialogOpen}
+                  onOpenChange={setDialogOpen}
+                />
+              )}
+            </>
+          )
+        }
 
         const isSunoSuccess =
           log.platform === 'suno' && status === TASK_STATUS.SUCCESS
@@ -270,27 +326,33 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
           )
         }
 
-        if (!failReason) {
+        if (!hasFailReason) {
           return <span className='text-muted-foreground/60 text-xs'>-</span>
         }
 
         return (
           <>
-            <button
-              type='button'
-              className='group flex max-w-[200px] items-center gap-1 text-left text-xs'
-              onClick={() => setDialogOpen(true)}
-              title={t('Click to view full error message')}
-            >
-              <span className='truncate leading-snug text-red-600 group-hover:underline dark:text-red-400'>
-                {failReason}
-              </span>
-            </button>
-            <FailReasonDialog
-              failReason={failReason}
-              open={dialogOpen}
-              onOpenChange={setDialogOpen}
-            />
+            <div className='flex max-w-[200px] flex-col items-start gap-1'>
+              {hasFailReason && (
+                <button
+                  type='button'
+                  className='group flex max-w-full items-center gap-1 text-left text-xs'
+                  onClick={() => setDialogOpen(true)}
+                  title={t('Click to view full error message')}
+                >
+                  <span className='truncate leading-snug text-red-600 group-hover:underline dark:text-red-400'>
+                    {detailText}
+                  </span>
+                </button>
+              )}
+            </div>
+            {hasFailReason && (
+              <FailReasonDialog
+                failReason={detailText}
+                open={dialogOpen}
+                onOpenChange={setDialogOpen}
+              />
+            )}
           </>
         )
       },

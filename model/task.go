@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"database/sql/driver"
 	"encoding/json"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"time"
@@ -146,6 +147,8 @@ type TaskPrivateData struct {
 	BillingRequestInput    *billingexpr.RequestInput    `json:"billing_request_input,omitempty"`
 	SettlementUsage        *dto.Usage                   `json:"settlement_usage,omitempty"`
 	SettlementExtraContent []string                     `json:"settlement_extra_content,omitempty"`
+	SettlementAttemptQuota int                          `json:"settlement_attempt_quota,omitempty"`
+	SettlementError        string                       `json:"settlement_error,omitempty"`
 }
 
 const imageTaskFairChannelCursorKey = "image_task_fair_channel_cursor"
@@ -167,6 +170,7 @@ func (state *TaskDispatchState) BeforeCreate(_ *gorm.DB) error {
 type TaskBillingContext struct {
 	ModelPrice           float64            `json:"model_price,omitempty"`             // 模型单价
 	GroupRatio           float64            `json:"group_ratio,omitempty"`             // 分组倍率
+	GroupRatioCaptured   bool               `json:"group_ratio_captured,omitempty"`    // 是否已捕获分组倍率
 	GroupSpecialRatio    float64            `json:"group_special_ratio,omitempty"`     // 用户分组特殊倍率
 	GroupHasSpecialRatio bool               `json:"group_has_special_ratio,omitempty"` // 是否命中特殊倍率
 	ModelRatio           float64            `json:"model_ratio,omitempty"`             // 模型倍率
@@ -369,16 +373,14 @@ func applyTaskStatusQuery(query *gorm.DB, status string) *gorm.DB {
 	switch TaskStatus(status) {
 	case TaskStatusSuccess:
 		return query.Where(
-			"status = ? AND NOT (platform = ? AND COALESCE(settlement_status, '') = ?)",
+			"status = ? AND COALESCE(settlement_status, '') <> ?",
 			TaskStatusSuccess,
-			constant.TaskPlatformImage,
 			TaskSettlementStatusReview,
 		)
 	case TaskStatusFailure:
 		return query.Where(
-			"(status = ? OR (platform = ? AND status = ? AND settlement_status = ?))",
+			"(status = ? OR (status = ? AND settlement_status = ?))",
 			TaskStatusFailure,
-			constant.TaskPlatformImage,
 			TaskStatusSuccess,
 			TaskSettlementStatusReview,
 		)
@@ -1224,8 +1226,76 @@ func (Task *Task) Update() error {
 	return err
 }
 
+func (t *Task) UpdateSubmitSettlementError() error {
+	if t == nil {
+		return fmt.Errorf("update task settlement error failed, task is nil")
+	}
+	if t.ID <= 0 {
+		return fmt.Errorf("update task settlement error failed, taskId=%s, id=%d", t.TaskID, t.ID)
+	}
+	result := DB.Model(&Task{}).
+		Where("id = ?", t.ID).
+		Updates(map[string]any{
+			"quota":             t.Quota,
+			"fail_reason":       t.FailReason,
+			"private_data":      t.PrivateData,
+			"settlement_status": t.SettlementStatus,
+			"updated_at":        common.GetTimestamp(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		exists, err := taskRowExists(t.ID)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
+		return fmt.Errorf("update task settlement error failed, taskId=%s, id=%d", t.TaskID, t.ID)
+	}
+	return nil
+}
+
 func (t *Task) UpdateQuota() error {
-	return DB.Model(t).Update("quota", t.Quota).Error
+	if t == nil {
+		return fmt.Errorf("task quota update failed, task is nil")
+	}
+	if t.ID <= 0 {
+		return fmt.Errorf("task quota update failed, taskId=%s, id=%d", t.TaskID, t.ID)
+	}
+	result := DB.Model(&Task{}).
+		Where("id = ?", t.ID).
+		Updates(map[string]any{
+			"quota":             t.Quota,
+			"fail_reason":       t.FailReason,
+			"private_data":      t.PrivateData,
+			"settlement_status": t.SettlementStatus,
+			"updated_at":        common.GetTimestamp(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		exists, err := taskRowExists(t.ID)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return nil
+		}
+		return fmt.Errorf("task quota update failed, taskId=%s, id=%d", t.TaskID, t.ID)
+	}
+	return nil
+}
+
+func taskRowExists(id int64) (bool, error) {
+	var count int64
+	if err := DB.Model(&Task{}).Where("id = ?", id).Count(&count).Error; err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 func ClaimTaskLease(id int64, owner string, now int64, leaseSeconds int64) (*Task, bool, error) {

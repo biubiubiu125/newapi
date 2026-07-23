@@ -158,6 +158,8 @@ func CacheGetUserById(userId int) (*UserBase, error) {
 }
 
 var cacheUpdateUserQuota = CacheUpdateUserQuota
+var cacheUpdateUserQuotaField = updateUserQuotaCache
+var cacheUpdateUserFields = updateUserCache
 
 func CacheUpdateUserQuota(userId int) error {
 	if !common.RedisEnabled {
@@ -167,7 +169,10 @@ func CacheUpdateUserQuota(userId int) error {
 	if err != nil {
 		return err
 	}
-	return updateUserCache(*user)
+	if err := cacheUpdateUserQuotaField(user.Id, user.Quota); err != nil {
+		return err
+	}
+	return cacheUpdateUserFields(*user)
 }
 
 // Add atomic quota operations using hash fields

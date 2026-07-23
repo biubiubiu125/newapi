@@ -35,6 +35,58 @@ func applyExplicitLogTextFilter(tx *gorm.DB, column string, value string) (*gorm
 	return tx.Where(column+" = ?", value), nil
 }
 
+func userIDColumnForLogUsername(column string) string {
+	if strings.HasPrefix(column, "logs.") {
+		return "logs.user_id"
+	}
+	return "user_id"
+}
+
+func logUserIDsByUsername(username string) ([]int, error) {
+	username = strings.TrimSpace(username)
+	if username == "" || DB == nil {
+		return nil, nil
+	}
+	query := DB.Model(&User{}).Select("id")
+	if strings.Contains(username, "%") {
+		pattern, err := sanitizeLikePattern(username)
+		if err != nil {
+			return nil, err
+		}
+		query = query.Where("username LIKE ? ESCAPE '!'", pattern)
+	} else {
+		query = query.Where("username = ?", username)
+	}
+	userIDs := make([]int, 0)
+	if err := query.Pluck("id", &userIDs).Error; err != nil {
+		return nil, err
+	}
+	return userIDs, nil
+}
+
+func applyLogUsernameFilter(tx *gorm.DB, column string, username string) (*gorm.DB, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return tx, nil
+	}
+	userIDs, err := logUserIDsByUsername(username)
+	if err != nil {
+		return nil, err
+	}
+	if len(userIDs) == 0 {
+		return applyExplicitLogTextFilter(tx, column, username)
+	}
+	userIDColumn := userIDColumnForLogUsername(column)
+	if !strings.Contains(username, "%") {
+		return tx.Where(userIDColumn+" IN ?", userIDs), nil
+	}
+	condition, pattern, err := buildLogLikeCondition(column, username)
+	if err != nil {
+		return nil, err
+	}
+	return tx.Where("("+userIDColumn+" IN ? OR "+condition+")", userIDs, pattern), nil
+}
+
 func buildLogLikeCondition(column string, value string) (string, string, error) {
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		pattern, err := sanitizeClickHouseLikePattern(value)
@@ -102,9 +154,262 @@ func ensureLogRequestId(log *Log) {
 	}
 }
 
+func resolveLogUsername(c *gin.Context, userId int) string {
+	username := ""
+	if c != nil {
+		username = strings.TrimSpace(c.GetString("username"))
+	}
+	if username != "" || userId <= 0 {
+		return username
+	}
+	username, _ = GetUsernameById(userId, false)
+	return strings.TrimSpace(username)
+}
+
 func createLog(log *Log) error {
 	ensureLogRequestId(log)
 	return LOG_DB.Create(log).Error
+}
+
+const logUsernameBackfillBatchSize = 500
+
+type logUsernameBackfillRow struct {
+	ID     int `gorm:"column:id"`
+	UserID int `gorm:"column:user_id"`
+}
+
+func migrateLogUsernames() error {
+	if DB == nil {
+		return nil
+	}
+	if err := migrateQuotaDataUsernames(); err != nil {
+		return err
+	}
+	if LOG_DB == nil || !LOG_DB.Migrator().HasTable(&Log{}) {
+		return nil
+	}
+	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
+		return migrateClickHouseLogUsernames()
+	}
+	return migrateRelationalLogUsernames()
+}
+
+func migrateQuotaDataUsernames() error {
+	if DB == nil || !DB.Migrator().HasTable(&QuotaData{}) || !DB.Migrator().HasTable(&User{}) {
+		return nil
+	}
+	total, err := backfillUsernameRows(DB, "quota_data")
+	if err != nil {
+		return fmt.Errorf("migrate quota_data usernames: %w", err)
+	}
+	if total > 0 {
+		common.SysLog(fmt.Sprintf("backfilled %d quota_data usernames", total))
+	}
+	return nil
+}
+
+func migrateRelationalLogUsernames() error {
+	if !DB.Migrator().HasTable(&User{}) {
+		return nil
+	}
+	total, err := backfillUsernameRows(LOG_DB, "logs")
+	if err != nil {
+		return fmt.Errorf("migrate log usernames: %w", err)
+	}
+	if total > 0 {
+		common.SysLog(fmt.Sprintf("backfilled %d log usernames", total))
+	}
+	return nil
+}
+
+func backfillUsernameRows(targetDB *gorm.DB, tableName string) (int64, error) {
+	var total int64
+	lastID := 0
+	for {
+		var rows []logUsernameBackfillRow
+		err := targetDB.Table(tableName).
+			Select("id", "user_id").
+			Where("id > ? AND user_id > 0 AND (username = '' OR username IS NULL)", lastID).
+			Order("id ASC").
+			Limit(logUsernameBackfillBatchSize).
+			Find(&rows).Error
+		if err != nil {
+			return total, err
+		}
+		if len(rows) == 0 {
+			return total, nil
+		}
+		lastID = rows[len(rows)-1].ID
+		usernames, err := usernamesByIDs(userIDsFromBackfillRows(rows))
+		if err != nil {
+			return total, err
+		}
+		for _, row := range rows {
+			username := strings.TrimSpace(usernames[row.UserID])
+			if username == "" {
+				continue
+			}
+			result := targetDB.Table(tableName).
+				Where("id = ? AND (username = '' OR username IS NULL)", row.ID).
+				Update("username", username)
+			if result.Error != nil {
+				return total, result.Error
+			}
+			total += result.RowsAffected
+		}
+	}
+}
+
+func migrateClickHouseLogUsernames() error {
+	if LOG_DB == nil || !DB.Migrator().HasTable(&User{}) {
+		return nil
+	}
+	total, err := migrateClickHouseLogUsernamesInBatches(
+		func(lastUserID int, limit int) ([]int, error) {
+			var rows []struct {
+				UserID int `gorm:"column:user_id"`
+			}
+			if err := LOG_DB.Raw(clickHouseLogUsernameUserIDsSQL(limit), lastUserID).Scan(&rows).Error; err != nil {
+				return nil, fmt.Errorf("query clickhouse log usernames: %w", err)
+			}
+			userIDs := make([]int, 0, len(rows))
+			for _, row := range rows {
+				userIDs = append(userIDs, row.UserID)
+			}
+			return userIDs, nil
+		},
+		usernamesByIDs,
+		func(userID int, username string) (int64, error) {
+			result := LOG_DB.Exec(clickHouseLogUsernameUpdateSQL(), username, userID)
+			if result.Error != nil {
+				return 0, fmt.Errorf("update clickhouse log username for user %d: %w", userID, result.Error)
+			}
+			return result.RowsAffected, nil
+		},
+	)
+	if err != nil {
+		return err
+	}
+	if total > 0 {
+		common.SysLog(fmt.Sprintf("backfilled %d clickhouse log username groups", total))
+	}
+	return nil
+}
+
+func clickHouseLogUsernameUserIDsSQL(limit int) string {
+	return fmt.Sprintf("SELECT DISTINCT user_id FROM logs WHERE user_id > ? AND username = '' ORDER BY user_id ASC LIMIT %d", limit)
+}
+
+func clickHouseLogUsernameUpdateSQL() string {
+	return "ALTER TABLE logs UPDATE username = ? WHERE user_id = ? AND username = '' SETTINGS mutations_sync = 1"
+}
+
+func migrateClickHouseLogUsernamesInBatches(
+	fetchUserIDs func(lastUserID int, limit int) ([]int, error),
+	resolveUsernames func(userIDs []int) (map[int]string, error),
+	updateUsername func(userID int, username string) (int64, error),
+) (int64, error) {
+	var total int64
+	lastUserID := 0
+	for {
+		userIDs, err := fetchUserIDs(lastUserID, logUsernameBackfillBatchSize)
+		if err != nil {
+			return total, err
+		}
+		if len(userIDs) == 0 {
+			return total, nil
+		}
+
+		maxUserID := lastUserID
+		for _, userID := range userIDs {
+			if userID > maxUserID {
+				maxUserID = userID
+			}
+		}
+		if maxUserID <= lastUserID {
+			return total, fmt.Errorf("clickhouse log username backfill did not advance past user_id %d", lastUserID)
+		}
+
+		usernames, err := resolveUsernames(userIDs)
+		if err != nil {
+			return total, err
+		}
+		for _, userID := range userIDs {
+			username := strings.TrimSpace(usernames[userID])
+			if username == "" {
+				continue
+			}
+			rowsAffected, err := updateUsername(userID, username)
+			if err != nil {
+				return total, err
+			}
+			total += rowsAffected
+		}
+		lastUserID = maxUserID
+	}
+}
+
+func userIDsFromBackfillRows(rows []logUsernameBackfillRow) []int {
+	seen := make(map[int]struct{}, len(rows))
+	userIDs := make([]int, 0, len(rows))
+	for _, row := range rows {
+		if row.UserID <= 0 {
+			continue
+		}
+		if _, ok := seen[row.UserID]; ok {
+			continue
+		}
+		seen[row.UserID] = struct{}{}
+		userIDs = append(userIDs, row.UserID)
+	}
+	return userIDs
+}
+
+func usernamesByIDs(userIDs []int) (map[int]string, error) {
+	usernames := make(map[int]string, len(userIDs))
+	if len(userIDs) == 0 || DB == nil {
+		return usernames, nil
+	}
+	var users []User
+	if err := DB.Model(&User{}).Select("id", "username").Where("id IN ?", userIDs).Find(&users).Error; err != nil {
+		return nil, err
+	}
+	for _, user := range users {
+		usernames[user.Id] = user.Username
+	}
+	return usernames, nil
+}
+
+func logUserIDs(logs []*Log) []int {
+	seen := make(map[int]struct{}, len(logs))
+	userIDs := make([]int, 0, len(logs))
+	for _, log := range logs {
+		if log == nil || log.UserId <= 0 {
+			continue
+		}
+		if _, ok := seen[log.UserId]; ok {
+			continue
+		}
+		seen[log.UserId] = struct{}{}
+		userIDs = append(userIDs, log.UserId)
+	}
+	return userIDs
+}
+
+func fillLogCurrentUsernames(logs []*Log) error {
+	usernames, err := usernamesByIDs(logUserIDs(logs))
+	if err != nil {
+		return err
+	}
+	for _, log := range logs {
+		if log == nil {
+			continue
+		}
+		if username := usernames[log.UserId]; username != "" {
+			log.Username = username
+		}
+	}
+	return nil
 }
 
 func clickHouseLogOrder(prefix string) string {
@@ -140,8 +445,14 @@ func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 		order = clickHouseLogOrder("")
 	}
 	err = LOG_DB.Model(&Log{}).Where("token_id = ?", tokenId).Order(order).Limit(common.MaxRecentItems).Find(&logs).Error
+	if err != nil {
+		return logs, err
+	}
+	if err = fillLogCurrentUsernames(logs); err != nil {
+		return logs, err
+	}
 	formatUserLogs(logs, 0)
-	return logs, err
+	return logs, nil
 }
 
 func RecordLog(userId int, logType int, content string) {
@@ -340,7 +651,7 @@ func RecordTopupLog(userId int, content string, callerIp string, paymentMethod s
 func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string, tokenName string, content string, tokenId int, useTimeSeconds int,
 	isStream bool, group string, other map[string]interface{}) {
 	logger.LogInfo(c, fmt.Sprintf("record error log: userId=%d, channelId=%d, modelName=%s, tokenName=%s, content=%s", userId, channelId, modelName, tokenName, content))
-	username := c.GetString("username")
+	username := resolveLogUsername(c, userId)
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	otherStr := common.MapToJsonStr(other)
@@ -398,12 +709,12 @@ type RecordConsumeLogParams struct {
 	Other            map[string]interface{} `json:"other"`
 }
 
-func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) {
+func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) error {
 	if !common.LogConsumeEnabled {
-		return
+		return nil
 	}
 	logger.LogInfo(c, fmt.Sprintf("record consume log: userId=%d, params=%s", userId, common.GetJsonString(params)))
-	username := c.GetString("username")
+	username := resolveLogUsername(c, userId)
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
 	otherStr := common.MapToJsonStr(params.Other)
@@ -443,6 +754,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	err := createLog(log)
 	if err != nil {
 		logger.LogError(c, "failed to record log: "+err.Error())
+		return err
 	}
 	if common.DataExportEnabled {
 		gopool.Go(func() {
@@ -460,24 +772,26 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 			})
 		})
 	}
+	return nil
 }
 
 type RecordTaskBillingLogParams struct {
-	UserId    int
-	LogType   int
-	Content   string
-	ChannelId int
-	ModelName string
-	Quota     int
-	TokenId   int
-	Group     string
-	Other     map[string]interface{}
-	NodeName  string // task creation node; empty falls back to current node
+	UserId        int
+	LogType       int
+	Content       string
+	ChannelId     int
+	ModelName     string
+	Quota         int
+	TokenId       int
+	Group         string
+	Other         map[string]interface{}
+	NodeName      string // task creation node; empty falls back to current node
+	SkipQuotaData bool
 }
 
-func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
+func RecordTaskBillingLog(params RecordTaskBillingLogParams) error {
 	if params.LogType == LogTypeConsume && !common.LogConsumeEnabled {
-		return
+		return nil
 	}
 	username, _ := GetUsernameById(params.UserId, false)
 	tokenName := ""
@@ -504,24 +818,32 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) {
 	err := createLog(log)
 	if err != nil {
 		common.SysLog("failed to record task billing log: " + err.Error())
+		return err
 	}
-	if params.LogType == LogTypeConsume && common.DataExportEnabled {
+	if (params.LogType == LogTypeConsume || params.LogType == LogTypeRefund) && common.DataExportEnabled && !params.SkipQuotaData {
 		nodeName := params.NodeName
 		if nodeName == "" {
 			nodeName = common.NodeName
 		}
+		quota := params.Quota
+		if params.LogType == LogTypeRefund {
+			quota = -quota
+		}
 		LogQuotaData(QuotaDataLogParams{
-			UserID:    params.UserId,
-			Username:  username,
-			ModelName: params.ModelName,
-			Quota:     params.Quota,
-			CreatedAt: createdAt,
-			UseGroup:  params.Group,
-			TokenID:   params.TokenId,
-			ChannelID: params.ChannelId,
-			NodeName:  nodeName,
+			UserID:        params.UserId,
+			Username:      username,
+			ModelName:     params.ModelName,
+			Quota:         quota,
+			CreatedAt:     createdAt,
+			UseGroup:      params.Group,
+			TokenID:       params.TokenId,
+			ChannelID:     params.ChannelId,
+			NodeName:      nodeName,
+			Count:         0,
+			ExplicitCount: true,
 		})
 	}
+	return nil
 }
 
 func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, startIdx int, num int, channel int, group string, requestId string, upstreamRequestId string) (logs []*Log, total int64, err error) {
@@ -535,7 +857,7 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	if tx, err = applyExplicitLogTextFilter(tx, "logs.model_name", modelName); err != nil {
 		return nil, 0, err
 	}
-	if tx, err = applyExplicitLogTextFilter(tx, "logs.username", username); err != nil {
+	if tx, err = applyLogUsernameFilter(tx, "logs.username", username); err != nil {
 		return nil, 0, err
 	}
 	if tokenName != "" {
@@ -573,6 +895,9 @@ func GetAllLogs(logType int, startTimestamp int64, endTimestamp int64, modelName
 	}
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
 		assignDisplayLogIds(logs, startIdx)
+	}
+	if err = fillLogCurrentUsernames(logs); err != nil {
+		return nil, 0, err
 	}
 
 	channelIds := types.NewSet[int]()
@@ -664,6 +989,9 @@ func GetUserLogs(userId int, logType int, startTimestamp int64, endTimestamp int
 		return nil, 0, errors.New("查询日志失败")
 	}
 
+	if err = fillLogCurrentUsernames(logs); err != nil {
+		return nil, 0, err
+	}
 	formatUserLogs(logs, startIdx)
 	return logs, total, err
 }
@@ -674,16 +1002,42 @@ type Stat struct {
 	Tpm   int `json:"tpm"`
 }
 
+func applyRealRequestLogFilter(tx *gorm.DB) *gorm.DB {
+	return tx.Where("(other IS NULL OR other = '' OR other NOT LIKE ?)", `%"pre_consumed_quota"%`)
+}
+
+func logStatQuotaSelect(logType int) (string, []interface{}) {
+	if logType == LogTypeUnknown {
+		return "COALESCE(sum(CASE WHEN type = ? THEN -quota ELSE quota END), 0) quota", []interface{}{LogTypeRefund}
+	}
+	return "COALESCE(sum(quota), 0) quota", nil
+}
+
+func applyLogStatQuotaTypeFilter(tx *gorm.DB, logType int) *gorm.DB {
+	if logType == LogTypeUnknown {
+		return tx.Where("type IN ?", []int{LogTypeConsume, LogTypeRefund})
+	}
+	return tx.Where("type = ?", logType)
+}
+
+func applyLogStatRpmTpmTypeFilter(tx *gorm.DB, logType int) *gorm.DB {
+	if logType != LogTypeUnknown && logType != LogTypeConsume {
+		return tx.Where("1 = 0")
+	}
+	return applyRealRequestLogFilter(tx.Where("type = ?", LogTypeConsume))
+}
+
 func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string, channel int, group string) (stat Stat, err error) {
-	tx := LOG_DB.Table("logs").Select("COALESCE(sum(quota), 0) quota")
+	quotaSelect, quotaSelectArgs := logStatQuotaSelect(logType)
+	tx := LOG_DB.Table("logs").Select(quotaSelect, quotaSelectArgs...)
 
 	// 为rpm和tpm创建单独的查询
 	rpmTpmQuery := LOG_DB.Table("logs").Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm")
 
-	if tx, err = applyExplicitLogTextFilter(tx, "username", username); err != nil {
+	if tx, err = applyLogUsernameFilter(tx, "username", username); err != nil {
 		return stat, err
 	}
-	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "username", username); err != nil {
+	if rpmTpmQuery, err = applyLogUsernameFilter(rpmTpmQuery, "username", username); err != nil {
 		return stat, err
 	}
 	if tokenName != "" {
@@ -711,8 +1065,8 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 		rpmTpmQuery = rpmTpmQuery.Where(logGroupCol+" = ?", group)
 	}
 
-	tx = tx.Where("type = ?", LogTypeConsume)
-	rpmTpmQuery = rpmTpmQuery.Where("type = ?", LogTypeConsume)
+	tx = applyLogStatQuotaTypeFilter(tx, logType)
+	rpmTpmQuery = applyLogStatRpmTpmTypeFilter(rpmTpmQuery, logType)
 
 	// 只统计最近60秒的rpm和tpm
 	rpmTpmQuery = rpmTpmQuery.Where("created_at >= ?", time.Now().Add(-60*time.Second).Unix())
@@ -730,10 +1084,61 @@ func SumUsedQuota(logType int, startTimestamp int64, endTimestamp int64, modelNa
 	return stat, nil
 }
 
+func SumUsedQuotaByUserId(logType int, startTimestamp int64, endTimestamp int64, modelName string, userId int, tokenName string, channel int, group string) (stat Stat, err error) {
+	quotaSelect, quotaSelectArgs := logStatQuotaSelect(logType)
+	tx := LOG_DB.Table("logs").Select(quotaSelect, quotaSelectArgs...).Where("user_id = ?", userId)
+
+	rpmTpmQuery := LOG_DB.Table("logs").
+		Select("count(*) rpm, COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0) tpm").
+		Where("user_id = ?", userId)
+
+	if tokenName != "" {
+		tx = tx.Where("token_name = ?", tokenName)
+		rpmTpmQuery = rpmTpmQuery.Where("token_name = ?", tokenName)
+	}
+	if startTimestamp != 0 {
+		tx = tx.Where("created_at >= ?", startTimestamp)
+	}
+	if endTimestamp != 0 {
+		tx = tx.Where("created_at <= ?", endTimestamp)
+	}
+	if tx, err = applyExplicitLogTextFilter(tx, "model_name", modelName); err != nil {
+		return stat, err
+	}
+	if rpmTpmQuery, err = applyExplicitLogTextFilter(rpmTpmQuery, "model_name", modelName); err != nil {
+		return stat, err
+	}
+	if channel != 0 {
+		tx = tx.Where("channel_id = ?", channel)
+		rpmTpmQuery = rpmTpmQuery.Where("channel_id = ?", channel)
+	}
+	if group != "" {
+		tx = tx.Where(logGroupCol+" = ?", group)
+		rpmTpmQuery = rpmTpmQuery.Where(logGroupCol+" = ?", group)
+	}
+
+	tx = applyLogStatQuotaTypeFilter(tx, logType)
+	rpmTpmQuery = applyLogStatRpmTpmTypeFilter(rpmTpmQuery, logType)
+	rpmTpmQuery = rpmTpmQuery.Where("created_at >= ?", time.Now().Add(-60*time.Second).Unix())
+
+	if err := tx.Scan(&stat).Error; err != nil {
+		common.SysError("failed to query log stat by user id: " + err.Error())
+		return stat, errors.New("查询统计数据失败")
+	}
+	if err := rpmTpmQuery.Scan(&stat).Error; err != nil {
+		common.SysError("failed to query rpm/tpm stat by user id: " + err.Error())
+		return stat, errors.New("查询统计数据失败")
+	}
+
+	return stat, nil
+}
+
 func SumUsedToken(logType int, startTimestamp int64, endTimestamp int64, modelName string, username string, tokenName string) (token int) {
 	tx := LOG_DB.Table("logs").Select("COALESCE(sum(prompt_tokens), 0) + COALESCE(sum(completion_tokens), 0)")
-	if username != "" {
-		tx = tx.Where("username = ?", username)
+	var err error
+	if tx, err = applyLogUsernameFilter(tx, "username", username); err != nil {
+		common.SysError("failed to apply username filter for used token stat: " + err.Error())
+		return 0
 	}
 	if tokenName != "" {
 		tx = tx.Where("token_name = ?", tokenName)

@@ -40,25 +40,21 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 	logger.LogInfo(ctx, fmt.Sprintf("检测到未完成的任务数有: %v", len(tasks)))
 	taskChannelM := make(map[int][]string)
 	taskM := make(map[string]*model.Midjourney)
-	nullTaskIds := make([]int, 0)
+	nullTasks := make([]*model.Midjourney, 0)
 	for _, task := range tasks {
 		if task.MjId == "" {
-			nullTaskIds = append(nullTaskIds, task.Id)
+			nullTasks = append(nullTasks, task)
 			continue
 		}
 		taskM[task.MjId] = task
 		taskChannelM[task.ChannelId] = append(taskChannelM[task.ChannelId], task.MjId)
 	}
-	if len(nullTaskIds) > 0 {
-		summary.NullTasksFailed = len(nullTaskIds)
-		err := model.MjBulkUpdateByTaskIds(nullTaskIds, map[string]any{
-			"status":   "FAILURE",
-			"progress": "100%",
-		})
-		if err != nil {
-			logger.LogError(ctx, fmt.Sprintf("Fix null mj_id task error: %v", err))
-		} else {
-			logger.LogInfo(ctx, fmt.Sprintf("Fix null mj_id task success: %v", nullTaskIds))
+	if len(nullTasks) > 0 {
+		summary.NullTasksFailed = len(nullTasks)
+		for _, task := range nullTasks {
+			if failMidjourneyTaskAndRefund(ctx, task, "上游任务ID为空") {
+				logger.LogInfo(ctx, fmt.Sprintf("Fix null mj_id task success: %d", task.Id))
+			}
 		}
 	}
 	if len(taskChannelM) == 0 {
@@ -83,13 +79,13 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 		midjourneyChannel, err := model.CacheGetChannel(channelId)
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("CacheGetChannel: %v", err))
-			err := model.MjBulkUpdate(taskIds, map[string]any{
-				"fail_reason": fmt.Sprintf("获取渠道信息失败，请联系管理员，渠道ID：%d", channelId),
-				"status":      "FAILURE",
-				"progress":    "100%",
-			})
-			if err != nil {
-				logger.LogInfo(ctx, fmt.Sprintf("UpdateMidjourneyTask error: %v", err))
+			failReason := fmt.Sprintf("获取渠道信息失败，请联系管理员，渠道ID：%d", channelId)
+			for _, taskId := range taskIds {
+				task := taskM[taskId]
+				if task == nil {
+					continue
+				}
+				failMidjourneyTaskAndRefund(ctx, task, failReason)
 			}
 			continue
 		}
@@ -160,9 +156,15 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 			task.Progress = responseItem.Progress
 			task.PromptEn = responseItem.PromptEn
 			task.State = responseItem.State
-			task.SubmitTime = responseItem.SubmitTime
-			task.StartTime = responseItem.StartTime
-			task.FinishTime = responseItem.FinishTime
+			if responseItem.SubmitTime > 0 {
+				task.SubmitTime = responseItem.SubmitTime
+			}
+			if responseItem.StartTime > 0 {
+				task.StartTime = responseItem.StartTime
+			}
+			if responseItem.FinishTime > 0 {
+				task.FinishTime = responseItem.FinishTime
+			}
 			task.ImageUrl = responseItem.ImageUrl
 			task.Status = responseItem.Status
 			task.FailReason = responseItem.FailReason
@@ -200,22 +202,9 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 			if err != nil {
 				logger.LogError(ctx, "UpdateMidjourneyTask task error: "+err.Error())
 			} else if won && shouldReturnQuota {
-				err = model.IncreaseUserQuota(task.UserId, task.Quota, false)
-				if err != nil {
-					logger.LogError(ctx, "fail to increase user quota: "+err.Error())
+				if err := service.RefundMidjourneyTaskQuota(ctx, task, "构图失败"); err != nil {
+					logger.LogError(ctx, fmt.Sprintf("midjourney task %s refund failed: %s", task.MjId, err.Error()))
 				}
-				model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-					UserId:    task.UserId,
-					LogType:   model.LogTypeRefund,
-					Content:   "",
-					ChannelId: task.ChannelId,
-					ModelName: service.CovertMjpActionToModelName(task.Action),
-					Quota:     task.Quota,
-					Other: map[string]interface{}{
-						"task_id": task.MjId,
-						"reason":  "构图失败",
-					},
-				})
 			}
 		}
 	}
@@ -223,6 +212,33 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 		report(totalChannels, totalChannels)
 	}
 	return summary
+}
+
+func failMidjourneyTaskAndRefund(ctx context.Context, task *model.Midjourney, failReason string) bool {
+	if task == nil {
+		return false
+	}
+	preStatus := task.Status
+	task.FailReason = failReason
+	task.Status = "FAILURE"
+	task.Progress = "100%"
+	if task.FinishTime == 0 {
+		task.FinishTime = time.Now().UnixMilli()
+	}
+	won, err := task.UpdateWithStatus(preStatus)
+	if err != nil {
+		logger.LogError(ctx, "UpdateMidjourneyTask task error: "+err.Error())
+		return false
+	}
+	if !won {
+		return false
+	}
+	if task.Quota != 0 {
+		if err := service.RefundMidjourneyTaskQuota(ctx, task, failReason); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("midjourney task %s refund failed: %s", task.MjId, err.Error()))
+		}
+	}
+	return true
 }
 
 func checkMjTaskNeedUpdate(oldTask *model.Midjourney, newTask dto.MidjourneyDto) bool {
@@ -293,6 +309,7 @@ func GetAllMidjourney(c *gin.Context) {
 
 	items := model.GetAllTasks(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
 	total := model.CountAllTasks(queryParams)
+	fillMidjourneyUsernames(items)
 
 	if setting.MjForwardUrlEnabled {
 		for i, midjourney := range items {
@@ -318,6 +335,7 @@ func GetUserMidjourney(c *gin.Context) {
 
 	items := model.GetAllUserTask(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
 	total := model.CountAllUserTask(userId, queryParams)
+	fillMidjourneyUsernames(items)
 
 	if setting.MjForwardUrlEnabled {
 		for i, midjourney := range items {
@@ -328,4 +346,28 @@ func GetUserMidjourney(c *gin.Context) {
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(items)
 	common.ApiSuccess(c, pageInfo)
+}
+
+func fillMidjourneyUsernames(items []*model.Midjourney) {
+	if len(items) == 0 {
+		return
+	}
+	usernames := make(map[int]string)
+	for _, item := range items {
+		if item == nil || item.UserId <= 0 {
+			continue
+		}
+		if _, ok := usernames[item.UserId]; ok {
+			continue
+		}
+		if user, err := model.GetUserCache(item.UserId); err == nil && user != nil {
+			usernames[item.UserId] = user.Username
+		}
+	}
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		item.Username = usernames[item.UserId]
+	}
 }

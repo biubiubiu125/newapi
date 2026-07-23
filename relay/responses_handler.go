@@ -175,7 +175,10 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 	}
 
 	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
-		service.PostAudioConsumeQuota(c, info, usageDto, "")
+		if err := service.PostAudioConsumeQuota(c, info, usageDto, ""); err != nil {
+			logger.LogError(c, fmt.Sprintf("post audio consume quota failed: %v", err))
+			service.RecordConsumeAccountingError(c, info, "post audio consume quota", err)
+		}
 	} else {
 		service.PostTextConsumeQuota(c, info, usageDto, nil)
 	}

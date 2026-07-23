@@ -3,6 +3,7 @@ package service
 import (
 	"fmt"
 	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -11,9 +12,92 @@ import (
 )
 
 const (
-	BillingSourceWallet       = "wallet"
-	BillingSourceSubscription = "subscription"
+	BillingSourceWallet         = "wallet"
+	BillingSourceSubscription   = "subscription"
+	contextKeySettlementApplied = "settlement_applied"
+	contextKeySettlementError   = "settlement_error"
 )
+
+func ContextKeySettlementError() string {
+	return contextKeySettlementError
+}
+
+func ContextKeySettlementApplied() string {
+	return contextKeySettlementApplied
+}
+
+func attachSettlementError(other map[string]interface{}, settleErr error) {
+	if settleErr == nil {
+		return
+	}
+	attachSettlementErrorMessage(other, settleErr.Error())
+}
+
+func attachSettlementErrorMessage(other map[string]interface{}, errMsg string) {
+	if other == nil || errMsg == "" {
+		return
+	}
+	other["settlement_status"] = "error"
+	other["settlement_error"] = strings.ReplaceAll(errMsg, "\n", " ")
+}
+
+func AttachSettlementError(other map[string]interface{}, settleErr error) {
+	attachSettlementError(other, settleErr)
+}
+
+func AttachSettlementLogFields(other map[string]interface{}, relayInfo *relaycommon.RelayInfo, attemptedQuota int, settleErr error) int {
+	return attachSettlementLogFields(other, relayInfo, attemptedQuota, settleErr)
+}
+
+func settlementFallbackQuota(relayInfo *relaycommon.RelayInfo) int {
+	if relayInfo == nil {
+		return 0
+	}
+	if relayInfo.FinalPreConsumedQuota != 0 {
+		return relayInfo.FinalPreConsumedQuota
+	}
+	if relayInfo.Billing != nil {
+		return relayInfo.Billing.GetPreConsumedQuota()
+	}
+	return 0
+}
+
+func logQuotaAfterSettlement(relayInfo *relaycommon.RelayInfo, attemptedQuota int, settlementFailed bool) int {
+	if !settlementFailed {
+		return attemptedQuota
+	}
+	return settlementFallbackQuota(relayInfo)
+}
+
+func LogQuotaAfterSettlement(relayInfo *relaycommon.RelayInfo, attemptedQuota int, settleErr error) int {
+	return logQuotaAfterSettlement(relayInfo, attemptedQuota, settleErr != nil)
+}
+
+func attachSettlementAccountingFields(other map[string]interface{}, attemptedQuota int, settledQuota int) {
+	if other == nil {
+		return
+	}
+	other["attempted_quota"] = attemptedQuota
+	other["settled_quota"] = settledQuota
+}
+
+func attachSettlementLogFields(other map[string]interface{}, relayInfo *relaycommon.RelayInfo, attemptedQuota int, settleErr error) int {
+	logQuota := LogQuotaAfterSettlement(relayInfo, attemptedQuota, settleErr)
+	if settleErr != nil {
+		attachSettlementError(other, settleErr)
+		attachSettlementAccountingFields(other, attemptedQuota, logQuota)
+	}
+	return logQuota
+}
+
+func attachSettlementLogFieldsMessage(other map[string]interface{}, relayInfo *relaycommon.RelayInfo, attemptedQuota int, errMsg string) int {
+	logQuota := logQuotaAfterSettlement(relayInfo, attemptedQuota, errMsg != "")
+	if errMsg != "" {
+		attachSettlementErrorMessage(other, errMsg)
+		attachSettlementAccountingFields(other, attemptedQuota, logQuota)
+	}
+	return logQuota
+}
 
 // PreConsumeBilling 根据用户计费偏好创建 BillingSession 并执行预扣费。
 // 会话存储在 relayInfo.Billing 上，供后续 Settle / Refund 使用。

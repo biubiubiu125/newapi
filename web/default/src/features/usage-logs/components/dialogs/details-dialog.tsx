@@ -195,6 +195,10 @@ function quotaSaturationKindLabel(
   return t('Invalid (NaN)')
 }
 
+function hasSettlementError(other: LogOtherData): boolean {
+  return other.settlement_status === 'error' || !!other.settlement_error
+}
+
 function BillingBreakdown(props: {
   log: UsageLog
   other: LogOtherData
@@ -365,6 +369,31 @@ function BillingBreakdown(props: {
       label: t('Billing Path'),
       value: getUsageBillingPathLabel(t, other.admin_info),
     })
+  }
+
+  if (hasSettlementError(other)) {
+    rows.push({
+      label: t('Settlement Status'),
+      value: t('Settlement failed'),
+    })
+    if (other.attempted_quota != null) {
+      rows.push({
+        label: t('Attempted Cost'),
+        value: formatLogQuota(other.attempted_quota),
+      })
+    }
+    if (other.settled_quota != null) {
+      rows.push({
+        label: t('Settled Cost'),
+        value: formatLogQuota(other.settled_quota),
+      })
+    }
+    if (other.settlement_error) {
+      rows.push({
+        label: t('Settlement Error'),
+        value: other.settlement_error,
+      })
+    }
   }
 
   rows.push({

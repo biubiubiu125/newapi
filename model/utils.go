@@ -87,7 +87,9 @@ func batchUpdate() {
 					common.SysLog("failed to batch update token quota: " + err.Error())
 				}
 			case BatchUpdateTypeChannelUsedQuota:
-				updateChannelUsedQuota(key, value)
+				if err := updateChannelUsedQuota(key, value); err != nil {
+					common.SysLog("failed to batch update channel used quota: " + err.Error())
+				}
 			}
 		}
 	}

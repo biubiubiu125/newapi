@@ -1,5 +1,10 @@
 package common
 
+var TrustQuota = 0
+
 func GetTrustQuota() int {
-	return int(10 * QuotaPerUnit)
+	if TrustQuota <= 0 {
+		return 0
+	}
+	return TrustQuota
 }

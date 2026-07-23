@@ -156,7 +156,7 @@ func PreWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usag
 }
 
 func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, modelName string,
-	usage *dto.RealtimeUsage, extraContent string) {
+	usage *dto.RealtimeUsage, extraContent string) error {
 
 	var tieredResult *billingexpr.TieredResult
 	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, billingexpr.TokenParams{
@@ -223,14 +223,11 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		logContent += "（可能是上游超时）"
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
 			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, modelName, relayInfo.FinalPreConsumedQuota))
-	} else {
-		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
-		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
-		model.RecordTokenUsage(relayInfo.TokenId, relayInfo.UserId, quota, common.GetTimestamp())
 	}
 
-	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
-		logger.LogError(ctx, "error settling billing: "+err.Error())
+	settlementErr := SettleBilling(ctx, relayInfo, quota)
+	if settlementErr != nil {
+		logger.LogError(ctx, "error settling billing: "+settlementErr.Error())
 	}
 
 	logModel := modelName
@@ -242,21 +239,53 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
+	logQuota := attachSettlementLogFields(other, relayInfo, quota, settlementErr)
+	settlementSucceeded := settlementErr == nil
+	if logQuota > 0 {
+		if err := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); err != nil {
+			if settlementSucceeded {
+				if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
+					return fmt.Errorf("post wss consume quota usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
+				}
+			}
+			return fmt.Errorf("post wss consume quota usage counter update failed: %w", err)
+		}
+	}
 	attachQuotaSaturation(ctx, relayInfo, other)
-	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+	if err := model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.InputTokens,
 		CompletionTokens: usage.OutputTokens,
 		ModelName:        logModel,
 		TokenName:        tokenName,
-		Quota:            quota,
+		Quota:            logQuota,
 		Content:          logContent,
 		TokenId:          relayInfo.TokenId,
 		UseTimeSeconds:   int(useTimeSeconds),
 		IsStream:         relayInfo.IsStream,
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
-	})
+	}); err != nil {
+		rollbackErrs := []string{}
+		if logQuota > 0 {
+			if rollbackErr := RollbackTaskConsumptionUsage(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); rollbackErr != nil {
+				rollbackErrs = append(rollbackErrs, rollbackErr.Error())
+			}
+		}
+		if settlementSucceeded {
+			if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
+				rollbackErrs = append(rollbackErrs, rollbackErr.Error())
+			}
+		}
+		if len(rollbackErrs) > 0 {
+			return fmt.Errorf("record consume log failed: %w; rollback errors: %s", err, strings.Join(rollbackErrs, "; "))
+		}
+		return fmt.Errorf("record consume log failed: %w", err)
+	}
+	if settlementErr != nil {
+		return settlementErr
+	}
+	return nil
 }
 
 func CalcOpenRouterCacheCreateTokens(usage dto.Usage, priceData types.PriceData) int {
@@ -280,7 +309,7 @@ func CalcOpenRouterCacheCreateTokens(usage dto.Usage, priceData types.PriceData)
 		(promptCacheCreatePrice - quotaPrice)))
 }
 
-func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent string) {
+func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent string) error {
 
 	var tieredUsedVars map[string]bool
 	if snap := relayInfo.TieredBillingSnapshot; snap != nil {
@@ -347,14 +376,11 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		logContent += "（可能是上游超时）"
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, "+
 			"tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, relayInfo.OriginModelName, relayInfo.FinalPreConsumedQuota))
-	} else {
-		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, quota)
-		model.UpdateChannelUsedQuota(relayInfo.ChannelId, quota)
-		model.RecordTokenUsage(relayInfo.TokenId, relayInfo.UserId, quota, common.GetTimestamp())
 	}
 
-	if err := SettleBilling(ctx, relayInfo, quota); err != nil {
-		logger.LogError(ctx, "error settling billing: "+err.Error())
+	settlementErr := SettleBilling(ctx, relayInfo, quota)
+	if settlementErr != nil {
+		logger.LogError(ctx, "error settling billing: "+settlementErr.Error())
 	}
 
 	logModel := relayInfo.OriginModelName
@@ -366,24 +392,56 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	if tieredResult != nil {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
 	}
+	logQuota := attachSettlementLogFields(other, relayInfo, quota, settlementErr)
+	settlementSucceeded := settlementErr == nil
+	if logQuota > 0 {
+		if err := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); err != nil {
+			if settlementSucceeded {
+				if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
+					return fmt.Errorf("post audio consume quota usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
+				}
+			}
+			return fmt.Errorf("post audio consume quota usage counter update failed: %w", err)
+		}
+	}
 	attachQuotaSaturation(ctx, relayInfo, other)
-	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+	if err := model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     usage.PromptTokens,
 		CompletionTokens: usage.CompletionTokens,
 		ModelName:        logModel,
 		TokenName:        tokenName,
-		Quota:            quota,
+		Quota:            logQuota,
 		Content:          logContent,
 		TokenId:          relayInfo.TokenId,
 		UseTimeSeconds:   int(useTimeSeconds),
 		IsStream:         relayInfo.IsStream,
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
-	})
+	}); err != nil {
+		rollbackErrs := []string{}
+		if logQuota > 0 {
+			if rollbackErr := RollbackTaskConsumptionUsage(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); rollbackErr != nil {
+				rollbackErrs = append(rollbackErrs, rollbackErr.Error())
+			}
+		}
+		if settlementSucceeded {
+			if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
+				rollbackErrs = append(rollbackErrs, rollbackErr.Error())
+			}
+		}
+		if len(rollbackErrs) > 0 {
+			return fmt.Errorf("record consume log failed: %w; rollback errors: %s", err, strings.Join(rollbackErrs, "; "))
+		}
+		return fmt.Errorf("record consume log failed: %w", err)
+	}
 	gopool.Go(func() {
 		perfmetrics.RecordRelaySample(relayInfo, true, int64(usage.CompletionTokens))
 	})
+	if settlementErr != nil {
+		return settlementErr
+	}
+	return nil
 }
 
 func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
@@ -411,38 +469,46 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 }
 
 func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (err error) {
+	if relayInfo == nil {
+		return errors.New("relayInfo is nil")
+	}
+	isSubscription := relayInfo.BillingSource == BillingSourceSubscription
+	if isSubscription && relayInfo.SubscriptionId == 0 {
+		return errors.New("subscription id is missing")
+	}
 
-	// 1) Consume from wallet quota OR subscription item
-	if relayInfo != nil && relayInfo.BillingSource == BillingSourceSubscription {
-		if relayInfo.SubscriptionId == 0 {
-			return errors.New("subscription id is missing")
+	tokenAdjusted, tokenDelta, err := adjustTokenQuotaForSettlementTracked(relayInfo, quota)
+	if err != nil {
+		return err
+	}
+
+	rollbackToken := func() {
+		if !tokenAdjusted {
+			return
 		}
+		if rollbackErr := rollbackTrackedTokenQuotaAdjustment(relayInfo, quota, tokenDelta); rollbackErr != nil {
+			common.SysLog(fmt.Sprintf("error rolling back token quota after funding consume failed (userId=%d, tokenId=%d, delta=%d): %s",
+				relayInfo.UserId, relayInfo.TokenId, quota, rollbackErr.Error()))
+		}
+	}
+
+	if isSubscription {
 		delta := int64(quota)
 		if delta != 0 {
 			if err := model.PostConsumeUserSubscriptionDelta(relayInfo.SubscriptionId, delta); err != nil {
+				rollbackToken()
 				return err
 			}
 			relayInfo.SubscriptionPostDelta += delta
 		}
 	} else {
-		// Wallet
 		if quota > 0 {
 			err = model.DecreaseUserQuota(relayInfo.UserId, quota, false)
 		} else {
 			err = model.IncreaseUserQuota(relayInfo.UserId, -quota, false)
 		}
 		if err != nil {
-			return err
-		}
-	}
-
-	if !relayInfo.IsPlayground {
-		if quota > 0 {
-			err = model.DecreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, quota)
-		} else {
-			err = model.IncreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, -quota)
-		}
-		if err != nil {
+			rollbackToken()
 			return err
 		}
 	}
@@ -484,14 +550,14 @@ func checkAndSendQuotaNotify(relayInfo *relaycommon.RelayInfo, quota int, preCon
 			}
 
 			if notifyType == dto.NotifyTypeBark {
-				// Bark推送使用简短文本，不支持HTML
+				// Bark 推送使用简短文本，不支持 HTML
 				content = "{{value}}，剩余额度：{{value}}，请及时充值"
 				values = []interface{}{prompt, logger.FormatQuota(relayInfo.UserQuota)}
 			} else if notifyType == dto.NotifyTypeGotify {
 				content = "{{value}}，当前剩余额度为 {{value}}，请及时充值。"
 				values = []interface{}{prompt, logger.FormatQuota(relayInfo.UserQuota)}
 			} else {
-				// 默认内容格式，适用于Email和Webhook（支持HTML）
+				// 默认内容格式，适用于 Email 和 Webhook（支持 HTML）
 				content = "{{value}}，当前剩余额度为 {{value}}，为了不影响您的使用，请及时充值。<br/>充值链接：<a href='{{value}}'>{{value}}</a>"
 				values = []interface{}{prompt, logger.FormatQuota(relayInfo.UserQuota), topUpLink, topUpLink}
 			}

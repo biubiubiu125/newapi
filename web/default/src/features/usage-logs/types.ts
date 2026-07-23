@@ -212,6 +212,10 @@ export interface LogOtherData {
   is_system_prompt_overwritten?: boolean
   po?: string[]
   billing_source?: string
+  settlement_status?: string
+  settlement_error?: string
+  attempted_quota?: number
+  settled_quota?: number
   group?: string
   stream_status?: {
     status?: string
@@ -258,6 +262,7 @@ export interface LogStatistics {
 export interface MidjourneyLog {
   id: number
   user_id: number
+  username?: string
   channel_id: number
   code: number
   mj_id: string
@@ -274,6 +279,7 @@ export interface MidjourneyLog {
   properties?: string
   image_url?: string
   status: string // NOT_START, SUBMITTED, IN_PROGRESS, SUCCESS, FAILURE, MODAL
+  settlement_status?: string // REVIEW means billing/accounting needs manual review
   other?: string
   created_at?: number
   updated_at?: number
@@ -297,6 +303,8 @@ export interface TaskLog {
   progress_message_en?: string
   data?: string // JSON string
   fail_reason?: string
+  settlement_error?: string
+  settlement_attempt_quota?: number
   status: string // NOT_START, SUBMITTED, IN_PROGRESS, SUCCESS, FAILURE, QUEUED, UNKNOWN
   settlement_status?: string // PENDING, APPLIED, SETTLED, REVIEW
   other?: string

@@ -345,7 +345,10 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 }
 
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
-	_ = postTextConsumeQuota(ctx, relayInfo, usage, extraContent, false)
+	if err := postTextConsumeQuota(ctx, relayInfo, usage, extraContent, false); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("post text consume quota failed: %v", err))
+		RecordConsumeAccountingError(ctx, relayInfo, "post text consume quota", err)
+	}
 }
 
 func PostTextConsumeQuotaChecked(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) error {
@@ -387,11 +390,7 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		}
 		return nil
 	}
-	if requireSettlement {
-		if err := settleBilling(); err != nil {
-			return err
-		}
-	}
+	settlementErr := settleBilling()
 
 	if summary.WebSearchCallCount > 0 {
 		extraContent = append(extraContent, fmt.Sprintf("Web Search 调用 %d 次，调用花费 %s", summary.WebSearchCallCount, decimal.NewFromFloat(summary.WebSearchPrice).Mul(decimal.NewFromInt(int64(summary.WebSearchCallCount))).Div(decimal.NewFromInt(1000)).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
@@ -412,14 +411,6 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if summary.TotalTokens == 0 {
 		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
 		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
-	} else {
-		model.UpdateUserUsedQuotaAndRequestCount(relayInfo.UserId, summary.Quota)
-		model.UpdateChannelUsedQuota(relayInfo.ChannelId, summary.Quota)
-		model.RecordTokenUsage(relayInfo.TokenId, relayInfo.UserId, summary.Quota, common.GetTimestamp())
-	}
-
-	if !requireSettlement {
-		_ = settleBilling()
 	}
 
 	logModel := summary.ModelName
@@ -449,6 +440,18 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	appendUsageBillingPathForLog(other, common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens), originUsage)
 	if adminRejectReason != "" {
 		other["reject_reason"] = adminRejectReason
+	}
+	logQuota := attachSettlementLogFields(other, relayInfo, summary.Quota, settlementErr)
+	settlementSucceeded := settlementErr == nil
+	if logQuota > 0 {
+		if err := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); err != nil {
+			if settlementSucceeded {
+				if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
+					return fmt.Errorf("post text consume quota usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
+				}
+			}
+			return fmt.Errorf("post text consume quota usage counter update failed: %w", err)
+		}
 	}
 	if summary.ImageTokens != 0 {
 		other["image"] = true
@@ -510,22 +513,44 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	attachQuotaSaturation(ctx, relayInfo, other)
 
-	model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+	if err := model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     summary.PromptTokens,
 		CompletionTokens: summary.CompletionTokens,
 		ModelName:        logModel,
 		TokenName:        summary.TokenName,
-		Quota:            summary.Quota,
+		Quota:            logQuota,
 		Content:          logContent,
 		TokenId:          relayInfo.TokenId,
 		UseTimeSeconds:   int(summary.UseTimeSeconds),
 		IsStream:         relayInfo.IsStream,
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
-	})
+	}); err != nil {
+		rollbackErrs := []string{}
+		if logQuota > 0 {
+			if rollbackErr := RollbackTaskConsumptionUsage(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); rollbackErr != nil {
+				rollbackErrs = append(rollbackErrs, rollbackErr.Error())
+			}
+		}
+		if settlementSucceeded {
+			if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
+				rollbackErrs = append(rollbackErrs, rollbackErr.Error())
+			}
+		}
+		if len(rollbackErrs) > 0 {
+			return fmt.Errorf("record consume log failed: %w; rollback errors: %s", err, strings.Join(rollbackErrs, "; "))
+		}
+		return fmt.Errorf("record consume log failed: %w", err)
+	}
 	gopool.Go(func() {
 		perfmetrics.RecordRelaySample(relayInfo, true, int64(summary.CompletionTokens))
 	})
+	if settlementErr != nil {
+		RecordConsumeAccountingError(ctx, relayInfo, "post text consume quota settlement", settlementErr)
+	}
+	if requireSettlement && settlementErr != nil {
+		return settlementErr
+	}
 	return nil
 }

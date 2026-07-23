@@ -222,9 +222,9 @@ func TokenOrUserAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		// Try session auth first (dashboard users)
 		session := sessions.Default(c)
-		if id := session.Get("id"); id != nil {
-			if status, ok := session.Get("status").(int); ok && status == common.UserStatusEnabled {
-				c.Set("id", id)
+		if id, ok := sessionInt(session.Get("id")); ok {
+			if status, ok := sessionInt(session.Get("status")); ok && status == common.UserStatusEnabled {
+				writeSessionUserContext(c, session, id, status)
 				c.Next()
 				return
 			}
@@ -232,6 +232,55 @@ func TokenOrUserAuth() func(c *gin.Context) {
 		// Fall back to token auth (API clients)
 		TokenAuth()(c)
 	}
+}
+
+func sessionInt(value any) (int, bool) {
+	switch v := value.(type) {
+	case int:
+		return v, true
+	case int32:
+		return int(v), true
+	case int64:
+		return int(v), true
+	case float64:
+		return int(v), true
+	default:
+		return 0, false
+	}
+}
+
+func writeSessionUserContext(c *gin.Context, session sessions.Session, userID int, status int) {
+	c.Set("id", userID)
+	common.SetContextKey(c, constant.ContextKeyUserId, userID)
+	common.SetContextKey(c, constant.ContextKeyUserStatus, status)
+	if role, ok := sessionInt(session.Get("role")); ok {
+		c.Set("role", role)
+	}
+
+	username, _ := session.Get("username").(string)
+	group, _ := session.Get("group").(string)
+	if userID > 0 && model.DB != nil {
+		if userCache, err := model.GetUserCache(userID); err == nil && userCache != nil {
+			userCache.WriteContext(c)
+			if strings.TrimSpace(userCache.Username) != "" {
+				username = userCache.Username
+			}
+			if strings.TrimSpace(userCache.Group) != "" {
+				group = userCache.Group
+			}
+		}
+	}
+
+	username = strings.TrimSpace(username)
+	group = strings.TrimSpace(group)
+	c.Set("username", username)
+	c.Set("group", group)
+	c.Set("user_group", group)
+	if username != "" {
+		common.SetContextKey(c, constant.ContextKeyUserName, username)
+	}
+	common.SetContextKey(c, constant.ContextKeyUserGroup, group)
+	common.SetContextKey(c, constant.ContextKeyUsingGroup, group)
 }
 
 // TokenAuthReadOnly 宽松版本的令牌认证中间件，用于只读查询接口。

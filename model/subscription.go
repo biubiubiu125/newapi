@@ -190,8 +190,8 @@ type SubscriptionPlan struct {
 	QuotaResetPeriod        string `json:"quota_reset_period" gorm:"type:varchar(16);default:'never'"`
 	QuotaResetCustomSeconds int64  `json:"quota_reset_custom_seconds" gorm:"type:bigint;default:0"`
 
-	CreatedAt int64 `json:"created_at" gorm:"bigint"`
-	UpdatedAt int64 `json:"updated_at" gorm:"bigint"`
+	CreatedAt int64 `json:"created_at" gorm:"type:bigint"`
+	UpdatedAt int64 `json:"updated_at" gorm:"type:bigint"`
 }
 
 func (p *SubscriptionPlan) BeforeCreate(tx *gorm.DB) error {
@@ -388,8 +388,8 @@ type UserSubscription struct {
 	AmountTotal int64 `json:"amount_total" gorm:"type:bigint;not null;default:0"`
 	AmountUsed  int64 `json:"amount_used" gorm:"type:bigint;not null;default:0"`
 
-	StartTime int64  `json:"start_time" gorm:"bigint"`
-	EndTime   int64  `json:"end_time" gorm:"bigint;index;index:idx_user_sub_active,priority:3"`
+	StartTime int64  `json:"start_time" gorm:"type:bigint"`
+	EndTime   int64  `json:"end_time" gorm:"type:bigint;index;index:idx_user_sub_active,priority:3"`
 	Status    string `json:"status" gorm:"type:varchar(32);index;index:idx_user_sub_active,priority:2"` // active/expired/cancelled
 
 	Source string `json:"source" gorm:"type:varchar(32);default:'order'"` // order/admin
@@ -407,8 +407,8 @@ type UserSubscription struct {
 	// Whether wallet fallback is allowed after this subscription's quota is exhausted (snapshot from plan)
 	AllowWalletOverflow bool `json:"allow_wallet_overflow"`
 
-	CreatedAt int64 `json:"created_at" gorm:"bigint"`
-	UpdatedAt int64 `json:"updated_at" gorm:"bigint"`
+	CreatedAt int64 `json:"created_at" gorm:"type:bigint"`
+	UpdatedAt int64 `json:"updated_at" gorm:"type:bigint"`
 }
 
 func (s *UserSubscription) BeforeCreate(tx *gorm.DB) error {
@@ -1534,8 +1534,8 @@ type SubscriptionPreConsumeRecord struct {
 	UserSubscriptionId int    `json:"user_subscription_id" gorm:"index"`
 	PreConsumed        int64  `json:"pre_consumed" gorm:"type:bigint;not null;default:0"`
 	Status             string `json:"status" gorm:"type:varchar(32);index"` // consumed/refunded
-	CreatedAt          int64  `json:"created_at" gorm:"bigint"`
-	UpdatedAt          int64  `json:"updated_at" gorm:"bigint;index"`
+	CreatedAt          int64  `json:"created_at" gorm:"type:bigint"`
+	UpdatedAt          int64  `json:"updated_at" gorm:"type:bigint;index"`
 }
 
 func (r *SubscriptionPreConsumeRecord) BeforeCreate(tx *gorm.DB) error {
@@ -1730,6 +1730,47 @@ func RefundSubscriptionPreConsume(requestId string) error {
 		}
 		if err := PostConsumeUserSubscriptionDelta(record.UserSubscriptionId, -record.PreConsumed); err != nil {
 			return err
+		}
+		record.Status = "refunded"
+		return tx.Save(&record).Error
+	})
+}
+
+// RollbackSubscriptionPreConsumeSettlement refunds the final settled usage for
+// a request and marks its idempotency record as refunded. The refund amount is
+// the actual settled request usage, not necessarily the original pre-consume
+// reservation.
+func RollbackSubscriptionPreConsumeSettlement(requestId string, actualQuota int64) error {
+	if strings.TrimSpace(requestId) == "" {
+		return errors.New("requestId is empty")
+	}
+	if actualQuota < 0 {
+		return fmt.Errorf("actual quota cannot be negative: %d", actualQuota)
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var record SubscriptionPreConsumeRecord
+		if err := lockForUpdate(tx).
+			Where("request_id = ?", requestId).First(&record).Error; err != nil {
+			return err
+		}
+		if record.Status == "refunded" {
+			return nil
+		}
+		if actualQuota > 0 {
+			var sub UserSubscription
+			if err := lockForUpdate(tx).
+				Where("id = ?", record.UserSubscriptionId).
+				First(&sub).Error; err != nil {
+				return err
+			}
+			newUsed := sub.AmountUsed - actualQuota
+			if newUsed < 0 {
+				newUsed = 0
+			}
+			sub.AmountUsed = newUsed
+			if err := tx.Save(&sub).Error; err != nil {
+				return err
+			}
 		}
 		record.Status = "refunded"
 		return tx.Save(&record).Error

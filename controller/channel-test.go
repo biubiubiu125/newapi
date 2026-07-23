@@ -496,7 +496,7 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 	milliseconds := tok.Sub(tik).Milliseconds()
 	consumedTime := float64(milliseconds) / 1000.0
 	other := buildTestLogOther(c, info, priceData, usage, tieredResult)
-	model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
+	if err := model.RecordConsumeLog(c, testUserID, model.RecordConsumeLogParams{
 		ChannelId:        channel.Id,
 		PromptTokens:     usage.PromptTokens,
 		CompletionTokens: usage.CompletionTokens,
@@ -508,7 +508,14 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 		IsStream:         info.IsStream,
 		Group:            info.UsingGroup,
 		Other:            other,
-	})
+	}); err != nil {
+		common.SysError("record channel test consume log failed: " + err.Error())
+		return testResult{
+			context:     c,
+			localErr:    err,
+			newAPIError: types.NewOpenAIError(err, types.ErrorCodeUpdateDataError, http.StatusInternalServerError),
+		}
+	}
 	common.SysLog(fmt.Sprintf("testing channel #%d, response: \n%s", channel.Id, string(respBody)))
 	return testResult{
 		context:     c,

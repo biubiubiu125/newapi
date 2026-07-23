@@ -85,7 +85,10 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 		var containsAudioRatios = ratio_setting.ContainsAudioRatio(info.OriginModelName) || ratio_setting.ContainsAudioCompletionRatio(info.OriginModelName)
 
 		if containAudioTokens && containsAudioRatios {
-			service.PostAudioConsumeQuota(c, info, usage, "")
+			if err := service.PostAudioConsumeQuota(c, info, usage, ""); err != nil {
+				logger.LogError(c, fmt.Sprintf("post audio consume quota failed: %v", err))
+				service.RecordConsumeAccountingError(c, info, "post audio consume quota", err)
+			}
 		} else {
 			service.PostTextConsumeQuota(c, info, usage, nil)
 		}
@@ -215,7 +218,10 @@ func TextHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types
 	var containsAudioRatios = ratio_setting.ContainsAudioRatio(info.OriginModelName) || ratio_setting.ContainsAudioCompletionRatio(info.OriginModelName)
 
 	if containAudioTokens && containsAudioRatios {
-		service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), "")
+		if err := service.PostAudioConsumeQuota(c, info, usage.(*dto.Usage), ""); err != nil {
+			logger.LogError(c, fmt.Sprintf("post audio consume quota failed: %v", err))
+			service.RecordConsumeAccountingError(c, info, "post audio consume quota", err)
+		}
 	} else {
 		service.PostTextConsumeQuota(c, info, usage.(*dto.Usage), nil)
 	}

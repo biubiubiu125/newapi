@@ -816,9 +816,15 @@ func imageTaskPortablePrivateDataWhere() (string, []any) {
 
 func migrateLOGDB() error {
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
-		return migrateClickHouseLogDB()
+		if err := migrateClickHouseLogDB(); err != nil {
+			return err
+		}
+		return migrateLogUsernames()
 	}
 	if err := LOG_DB.AutoMigrate(&Log{}); err != nil {
+		return err
+	}
+	if err := migrateLogUsernames(); err != nil {
 		return err
 	}
 	cleanupConversationArtifacts()
@@ -830,7 +836,18 @@ func migrateClickHouseLogDB() error {
 	if err := LOG_DB.Exec(clickHouseLogCreateTableSQL(ttlDays)).Error; err != nil {
 		return err
 	}
+	if err := ensureClickHouseLogUsernameColumn(); err != nil {
+		return err
+	}
 	return syncClickHouseLogTTL(ttlDays)
+}
+
+func ensureClickHouseLogUsernameColumn() error {
+	return LOG_DB.Exec(clickHouseLogUsernameColumnSQL()).Error
+}
+
+func clickHouseLogUsernameColumnSQL() string {
+	return "ALTER TABLE logs ADD COLUMN IF NOT EXISTS username String DEFAULT '' AFTER content"
 }
 
 func clickHouseLogTTLDays() int {

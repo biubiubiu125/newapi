@@ -940,14 +940,49 @@ func UpdateChannelUsedQuota(id int, quota int) {
 		addNewRecord(BatchUpdateTypeChannelUsedQuota, id, quota)
 		return
 	}
-	updateChannelUsedQuota(id, quota)
+	_ = updateChannelUsedQuota(id, quota)
 }
 
-func updateChannelUsedQuota(id int, quota int) {
-	err := DB.Model(&Channel{}).Where("id = ?", id).Update("used_quota", gorm.Expr("used_quota + ?", quota)).Error
-	if err != nil {
+func UpdateChannelUsedQuotaSync(id int, quota int) error {
+	return updateChannelUsedQuota(id, quota)
+}
+
+func updateChannelUsedQuota(id int, quota int) error {
+	if err := updateChannelUsedQuotaWithDB(DB, id, quota); err != nil {
 		common.SysLog(fmt.Sprintf("failed to update channel used quota: channel_id=%d, delta_quota=%d, error=%v", id, quota, err))
+		return err
 	}
+	return nil
+}
+
+var ErrChannelUsedQuotaNoRows = errors.New("channel used quota update failed")
+
+func IsChannelUsedQuotaNoRowsError(err error) bool {
+	return errors.Is(err, ErrChannelUsedQuotaNoRows)
+}
+
+func updateChannelUsedQuotaWithDB(db *gorm.DB, id int, quota int) error {
+	if quota == 0 || id <= 0 {
+		return nil
+	}
+	updateExpr := gorm.Expr("used_quota + ?", quota)
+	if quota < 0 {
+		updateExpr = gorm.Expr("CASE WHEN used_quota + ? < 0 THEN 0 ELSE used_quota + ? END", quota, quota)
+	}
+	result := db.Model(&Channel{}).Where("id = ?", id).Update("used_quota", updateExpr)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		var count int64
+		if err := db.Model(&Channel{}).Where("id = ?", id).Count(&count).Error; err != nil {
+			return err
+		}
+		if count == 0 {
+			return fmt.Errorf("%w, channel_id=%d, delta_quota=%d", ErrChannelUsedQuotaNoRows, id, quota)
+		}
+	}
+	return nil
 }
 
 func DeleteChannelByStatus(status int64) (int64, error) {

@@ -15,7 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/QuantumNous/new-api/service"
 )
 
 func UpdateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) error {
@@ -34,13 +34,34 @@ func updateVideoTaskAll(ctx context.Context, platform constant.TaskPlatform, cha
 	}
 	cacheGetChannel, err := model.CacheGetChannel(channelId)
 	if err != nil {
-		errUpdate := model.TaskBulkUpdate(taskIds, map[string]any{
-			"fail_reason": fmt.Sprintf("Failed to get channel info, channel ID: %d", channelId),
-			"status":      "FAILURE",
-			"progress":    "100%",
-		})
-		if errUpdate != nil {
-			common.SysLog(fmt.Sprintf("UpdateVideoTask error: %v", errUpdate))
+		reason := fmt.Sprintf("Failed to get channel info, channel ID: %d", channelId)
+		now := common.GetTimestamp()
+		for _, taskID := range taskIds {
+			task, ok := taskM[taskID]
+			if !ok || task == nil {
+				continue
+			}
+			oldStatus := task.Status
+			task.Status = model.TaskStatusFailure
+			task.Progress = "100%"
+			task.FailReason = reason
+			if task.FinishTime == 0 {
+				task.FinishTime = now
+			}
+			won, updateErr := task.UpdateWithStatus(oldStatus)
+			if updateErr != nil {
+				common.SysLog(fmt.Sprintf("UpdateVideoTask error: %v", updateErr))
+				continue
+			}
+			if !won {
+				logger.LogWarn(ctx, fmt.Sprintf("Task %s status changed from %s before channel failure update, skip refund", task.TaskID, oldStatus))
+				continue
+			}
+			if task.Quota != 0 {
+				if refundErr := service.RefundTaskQuota(ctx, task, reason); refundErr != nil {
+					logger.LogError(ctx, fmt.Sprintf("video task %s refund failed after channel lookup failure: %s", task.TaskID, refundErr.Error()))
+				}
+			}
 		}
 		return fmt.Errorf("CacheGetChannel failed: %w", err)
 	}
@@ -126,6 +147,12 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 
 	// 记录原本的状态，防止重复退款
 	shouldRefund := false
+	shouldSettle := false
+	settleActualQuota := 0
+	settleReason := ""
+	settleLogMessage := ""
+	settleErrorAction := ""
+	var settleClamp *common.QuotaClamp
 	quota := task.Quota
 	preStatus := task.Status
 
@@ -156,30 +183,13 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 			if err := json.Unmarshal(task.Data, &taskData); err == nil {
 				if modelName, ok := taskData["model"].(string); ok && modelName != "" {
 					// 获取模型价格和倍率
-					modelRatio, hasRatioSetting, _ := ratio_setting.GetModelRatio(modelName)
+					modelRatio, hasRatioSetting := service.TaskBillingModelRatio(task, modelName)
 					// 只有配置了倍率(非固定价格)时才按 token 重新计费
 					if hasRatioSetting && modelRatio > 0 {
 						// 获取用户和组的倍率信息
-						group := task.Group
-						if group == "" {
-							user, err := model.GetUserById(task.UserId, false)
-							if err == nil {
-								group = user.Group
-							}
-						}
-						if group != "" {
-							groupRatio := ratio_setting.GetGroupRatio(group)
-							userGroupRatio, hasUserGroupRatio := ratio_setting.GetGroupGroupRatio(group, group)
-
-							var finalGroupRatio float64
-							if hasUserGroupRatio {
-								finalGroupRatio = userGroupRatio
-							} else {
-								finalGroupRatio = groupRatio
-							}
-
+						if finalGroupRatio, ok := service.TaskBillingGroupRatio(task); ok {
 							// 计算实际应扣费额度: totalTokens * modelRatio * groupRatio（饱和转换，防止溢出成负数）
-							actualQuota, clamp := common.QuotaFromFloatChecked(float64(taskResult.TotalTokens) * modelRatio * finalGroupRatio)
+							actualQuota, clamp := common.QuotaFromPositiveFloatChecked(float64(taskResult.TotalTokens) * modelRatio * finalGroupRatio)
 							if clamp != nil {
 								logger.LogWarn(ctx, fmt.Sprintf("quota saturation on video task %s: op=%s kind=%s original=%g clamped=%d user=%d",
 									task.TaskID, clamp.Op, clamp.Kind, clamp.Original, clamp.Clamped, task.UserId))
@@ -189,65 +199,43 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 							preConsumedQuota := task.Quota
 							quotaDelta := actualQuota - preConsumedQuota
 
-							if quotaDelta > 0 {
-								// 需要补扣费
-								logger.LogInfo(ctx, fmt.Sprintf("视频任务 %s 预扣费后补扣费：%s（实际消耗：%s，预扣费：%s，tokens：%d）",
-									task.TaskID,
-									logger.LogQuota(quotaDelta),
-									logger.LogQuota(actualQuota),
-									logger.LogQuota(preConsumedQuota),
-									taskResult.TotalTokens,
-								))
-								if err := model.DecreaseUserQuota(task.UserId, quotaDelta, false); err != nil {
-									logger.LogError(ctx, fmt.Sprintf("补扣费失败: %s", err.Error()))
-								} else {
-									model.UpdateUserUsedQuotaAndRequestCount(task.UserId, quotaDelta)
-									model.UpdateChannelUsedQuota(task.ChannelId, quotaDelta)
-									model.RecordTokenUsage(task.PrivateData.TokenId, task.UserId, quotaDelta, common.GetTimestamp())
-									task.Quota = actualQuota // 更新任务记录的实际扣费额度
-
-									// 记录消费日志
-									logContent := fmt.Sprintf("视频任务成功补扣费，模型倍率 %.2f，分组倍率 %.2f，tokens %d，预扣费 %s，实际扣费 %s，补扣费 %s",
+							if preStatus == model.TaskStatusSuccess {
+								logger.LogWarn(ctx, fmt.Sprintf("Task %s already in success status, skip settlement", task.TaskID))
+							} else {
+								shouldSettle = true
+								settleActualQuota = actualQuota
+								settleClamp = clamp
+								if quotaDelta > 0 {
+									settleLogMessage = fmt.Sprintf("video task %s post-consume charge: %s (actual: %s, pre-consumed: %s, tokens: %d)",
+										task.TaskID,
+										logger.LogQuota(quotaDelta),
+										logger.LogQuota(actualQuota),
+										logger.LogQuota(preConsumedQuota),
+										taskResult.TotalTokens,
+									)
+									settleReason = fmt.Sprintf("video task post-consume charge, model ratio %.2f, group ratio %.2f, tokens %d, pre-consumed %s, actual %s, delta %s",
 										modelRatio, finalGroupRatio, taskResult.TotalTokens,
 										logger.LogQuota(preConsumedQuota), logger.LogQuota(actualQuota), logger.LogQuota(quotaDelta))
-									if clamp != nil {
-										model.RecordLogWithAdminInfo(task.UserId, model.LogTypeSystem, logContent,
-											map[string]interface{}{"quota_saturation": clamp.AuditMap()})
-									} else {
-										model.RecordLog(task.UserId, model.LogTypeSystem, logContent)
-									}
-								}
-							} else if quotaDelta < 0 {
-								// 需要退还多扣的费用
-								refundQuota := -quotaDelta
-								logger.LogInfo(ctx, fmt.Sprintf("视频任务 %s 预扣费后返还：%s（实际消耗：%s，预扣费：%s，tokens：%d）",
-									task.TaskID,
-									logger.LogQuota(refundQuota),
-									logger.LogQuota(actualQuota),
-									logger.LogQuota(preConsumedQuota),
-									taskResult.TotalTokens,
-								))
-								if err := model.IncreaseUserQuota(task.UserId, refundQuota, false); err != nil {
-									logger.LogError(ctx, fmt.Sprintf("退还预扣费失败: %s", err.Error()))
-								} else {
-									model.RecordTokenUsage(task.PrivateData.TokenId, task.UserId, -refundQuota, common.GetTimestamp())
-									task.Quota = actualQuota // 更新任务记录的实际扣费额度
-
-									// 记录退款日志
-									logContent := fmt.Sprintf("视频任务成功退还多扣费用，模型倍率 %.2f，分组倍率 %.2f，tokens %d，预扣费 %s，实际扣费 %s，退还 %s",
+									settleErrorAction = "post-consume charge"
+								} else if quotaDelta < 0 {
+									refundQuota := -quotaDelta
+									settleLogMessage = fmt.Sprintf("video task %s post-consume refund: %s (actual: %s, pre-consumed: %s, tokens: %d)",
+										task.TaskID,
+										logger.LogQuota(refundQuota),
+										logger.LogQuota(actualQuota),
+										logger.LogQuota(preConsumedQuota),
+										taskResult.TotalTokens,
+									)
+									settleReason = fmt.Sprintf("video task post-consume refund, model ratio %.2f, group ratio %.2f, tokens %d, pre-consumed %s, actual %s, refund %s",
 										modelRatio, finalGroupRatio, taskResult.TotalTokens,
 										logger.LogQuota(preConsumedQuota), logger.LogQuota(actualQuota), logger.LogQuota(refundQuota))
-									if clamp != nil {
-										model.RecordLogWithAdminInfo(task.UserId, model.LogTypeSystem, logContent,
-											map[string]interface{}{"quota_saturation": clamp.AuditMap()})
-									} else {
-										model.RecordLog(task.UserId, model.LogTypeSystem, logContent)
-									}
+									settleErrorAction = "post-consume refund"
+								} else {
+									settleLogMessage = fmt.Sprintf("video task %s pre-consumed quota matched actual quota (%s, tokens: %d)",
+										task.TaskID, logger.LogQuota(actualQuota), taskResult.TotalTokens)
+									settleReason = fmt.Sprintf("video task quota matched actual usage, tokens %d", taskResult.TotalTokens)
+									settleErrorAction = "quota match settlement"
 								}
-							} else {
-								// quotaDelta == 0, 预扣费刚好准确
-								logger.LogInfo(ctx, fmt.Sprintf("视频任务 %s 预扣费准确（%s，tokens：%d）",
-									task.TaskID, logger.LogQuota(actualQuota), taskResult.TotalTokens))
 							}
 						}
 					}
@@ -277,18 +265,44 @@ func updateVideoSingleTask(ctx context.Context, adaptor channel.TaskAdaptor, cha
 	if taskResult.Progress != "" {
 		task.Progress = taskResult.Progress
 	}
-	if err := task.Update(); err != nil {
+	updateSucceeded := true
+	if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
+		if preStatus != task.Status {
+			won, err := task.UpdateWithStatus(preStatus)
+			if err != nil {
+				common.SysLog("UpdateVideoTask task error: " + err.Error())
+				updateSucceeded = false
+			} else if !won {
+				logger.LogWarn(ctx, fmt.Sprintf("Task %s status changed from %s before terminal update, skip settlement/refund", task.TaskID, preStatus))
+				updateSucceeded = false
+			}
+		} else if err := task.Update(); err != nil {
+			common.SysLog("UpdateVideoTask task error: " + err.Error())
+			updateSucceeded = false
+		}
+	} else if err := task.Update(); err != nil {
 		common.SysLog("UpdateVideoTask task error: " + err.Error())
+		updateSucceeded = false
+	}
+	if !updateSucceeded {
 		shouldRefund = false
+		shouldSettle = false
+	}
+
+	if shouldSettle {
+		if settleLogMessage != "" {
+			logger.LogInfo(ctx, settleLogMessage)
+		}
+		if err := service.RecalculateTaskQuota(ctx, task, settleActualQuota, settleReason, settleClamp); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("video task %s %s failed: %s", task.TaskID, settleErrorAction, err.Error()))
+			service.MarkTaskSettlementReview(ctx, task, settleActualQuota, err)
+		}
 	}
 
 	if shouldRefund {
-		// 任务失败且之前状态不是失败才退还额度，防止重复退还
-		if err := model.IncreaseUserQuota(task.UserId, quota, false); err != nil {
-			logger.LogWarn(ctx, "Failed to increase user quota: "+err.Error())
+		if err := service.RefundTaskQuota(ctx, task, fmt.Sprintf("Video async task failed %s, refund %s", task.TaskID, logger.LogQuota(quota))); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("video task %s refund failed: %s", task.TaskID, err.Error()))
 		}
-		logContent := fmt.Sprintf("Video async task failed %s, refund %s", task.TaskID, logger.LogQuota(quota))
-		model.RecordLog(task.UserId, model.LogTypeSystem, logContent)
 	}
 
 	return nil

@@ -32,6 +32,12 @@ import (
 	"github.com/gorilla/websocket"
 )
 
+var (
+	relayTaskSubmitFunc    = relay.RelayTaskSubmit
+	settleBillingFunc      = service.SettleBilling
+	logTaskConsumptionFunc = service.LogTaskConsumption
+)
+
 func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	var err *types.NewAPIError
 	switch info.RelayMode {
@@ -194,7 +200,10 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		if newAPIError != nil {
 			newAPIError = service.NormalizeViolationFeeError(newAPIError)
 			if relayInfo.Billing != nil {
-				relayInfo.Billing.Refund(c)
+				if refundErr := relayInfo.Billing.Refund(c); refundErr != nil {
+					common.SysError("refund billing after relay error failed: " + refundErr.Error())
+					service.RecordConsumeAccountingError(c, relayInfo, "refund billing after relay error", refundErr)
+				}
 			}
 			service.ChargeViolationFeeIfNeeded(c, relayInfo, newAPIError)
 		}
@@ -599,9 +608,13 @@ func RelayTask(c *gin.Context) {
 	var result *relay.TaskSubmitResult
 	var taskErr *dto.TaskError
 	var lastUpstreamTaskErr *dto.TaskError
+	billingLogged := false
 	defer func() {
-		if taskErr != nil && relayInfo.Billing != nil {
-			relayInfo.Billing.Refund(c)
+		if taskErr != nil && relayInfo.Billing != nil && !billingLogged {
+			if refundErr := relayInfo.Billing.Refund(c); refundErr != nil {
+				common.SysError("refund billing after task error failed: " + refundErr.Error())
+				service.RecordConsumeAccountingError(c, relayInfo, "refund billing after task error", refundErr)
+			}
 		}
 	}()
 
@@ -649,7 +662,7 @@ func RelayTask(c *gin.Context) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
-		result, taskErr = relay.RelayTaskSubmit(c, relayInfo)
+		result, taskErr = relayTaskSubmitFunc(c, relayInfo)
 		if taskErr == nil {
 			break
 		}
@@ -675,13 +688,8 @@ func RelayTask(c *gin.Context) {
 		logger.LogInfo(c, retryLogStr)
 	}
 
-	// ── 成功：结算 + 日志 + 插入任务 ──
+	// ── 成功：先插入任务，再结算 + 日志 ──
 	if taskErr == nil {
-		if settleErr := service.SettleBilling(c, relayInfo, result.Quota); settleErr != nil {
-			common.SysError("settle task billing error: " + settleErr.Error())
-		}
-		service.LogTaskConsumption(c, relayInfo)
-
 		task := model.InitTask(result.Platform, relayInfo)
 		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 		task.PrivateData.BillingSource = relayInfo.BillingSource
@@ -694,6 +702,50 @@ func RelayTask(c *gin.Context) {
 		task.Action = relayInfo.Action
 		if insertErr := task.Insert(); insertErr != nil {
 			common.SysError("insert task error: " + insertErr.Error())
+			taskErr = service.TaskErrorWrapperLocal(insertErr, "insert_task_failed", http.StatusInternalServerError)
+		} else {
+			var settleErr error
+			if settleErr = settleBillingFunc(c, relayInfo, result.Quota); settleErr != nil {
+				common.SysError("settle task billing error: " + settleErr.Error())
+				service.RecordConsumeAccountingError(c, relayInfo, "settle task billing", settleErr)
+				c.Set(service.ContextKeySettlementError(), settleErr.Error())
+				if updateErr := persistTaskSubmitSettlementError(task, relayInfo, result.Quota, settleErr); updateErr != nil {
+					common.SysError("update task settlement error: " + updateErr.Error())
+					service.RecordConsumeAccountingError(c, relayInfo, "persist task settlement review", updateErr)
+					if failErr := failPersistedTaskAfterSubmitSettlementError(task, relayInfo, result.Quota, settleErr, updateErr); failErr != nil {
+						common.SysError("fail persisted task after settlement error: " + failErr.Error())
+						service.RecordConsumeAccountingError(c, relayInfo, "fail persisted task after settlement error", failErr)
+						if deleteErr := model.DeleteTaskByID(task.ID); deleteErr != nil {
+							common.SysError("delete task after settlement failure error: " + deleteErr.Error())
+							service.RecordConsumeAccountingError(c, relayInfo, "delete task after settlement failure", deleteErr)
+						}
+					}
+					taskErr = service.TaskErrorWrapperLocal(updateErr, "update_task_settlement_failed", http.StatusInternalServerError)
+				}
+			} else {
+				c.Set(service.ContextKeySettlementApplied(), true)
+			}
+			if taskErr == nil {
+				if err := logTaskConsumptionFunc(c, relayInfo); err != nil {
+					common.SysError("log task consumption error: " + err.Error())
+					service.RecordConsumeAccountingError(c, relayInfo, "log task consumption", err)
+					if updateErr := persistTaskSubmitSettlementError(task, relayInfo, result.Quota, err); updateErr != nil {
+						common.SysError("update task accounting error: " + updateErr.Error())
+						service.RecordConsumeAccountingError(c, relayInfo, "persist task accounting review", updateErr)
+					}
+					if failErr := failPersistedTaskAfterSubmitAccountingError(task, relayInfo, result.Quota, err); failErr != nil {
+						common.SysError("fail persisted task after accounting error: " + failErr.Error())
+						service.RecordConsumeAccountingError(c, relayInfo, "fail persisted task after accounting error", failErr)
+						if deleteErr := model.DeleteTaskByID(task.ID); deleteErr != nil {
+							common.SysError("delete task after accounting failure error: " + deleteErr.Error())
+							service.RecordConsumeAccountingError(c, relayInfo, "delete task after accounting failure", deleteErr)
+						}
+					}
+					taskErr = service.TaskErrorWrapperLocal(err, "log_task_consumption_failed", http.StatusInternalServerError)
+				} else {
+					billingLogged = true
+				}
+			}
 		}
 	}
 
@@ -708,6 +760,142 @@ func respondTaskError(c *gin.Context, taskErr *dto.TaskError) {
 		taskErr.Message = "当前分组上游负载已饱和，请稍后再试"
 	}
 	c.JSON(taskErr.StatusCode, taskErr)
+}
+
+func taskQuotaAfterSubmitSettlement(relayInfo *relaycommon.RelayInfo, attemptedQuota int, settleErr error) int {
+	return service.LogQuotaAfterSettlement(relayInfo, attemptedQuota, settleErr)
+}
+
+func attachTaskSubmitSettlementError(task *model.Task, attemptedQuota int, settleErr error) {
+	if task == nil || settleErr == nil {
+		return
+	}
+	task.PrivateData.SettlementAttemptQuota = attemptedQuota
+	task.PrivateData.SettlementError = appendTaskSettlementError(
+		task.PrivateData.SettlementError,
+		sanitizeTaskAccountingError(settleErr),
+	)
+	task.FailReason = service.TaskSettlementReviewFailReason
+}
+
+func sanitizeTaskAccountingError(err error) string {
+	if err == nil {
+		return ""
+	}
+	return strings.ReplaceAll(err.Error(), "\n", " ")
+}
+
+func appendTaskSettlementError(existing string, next string) string {
+	existing = strings.TrimSpace(existing)
+	next = strings.TrimSpace(next)
+	if existing == "" {
+		return next
+	}
+	if next == "" || existing == next {
+		return existing
+	}
+	return existing + "; " + next
+}
+
+func persistTaskSubmitSettlementError(task *model.Task, relayInfo *relaycommon.RelayInfo, attemptedQuota int, settleErr error) error {
+	if task == nil || settleErr == nil {
+		return nil
+	}
+	task.Quota = taskQuotaAfterSubmitSettlement(relayInfo, attemptedQuota, settleErr)
+	attachTaskSubmitSettlementError(task, attemptedQuota, settleErr)
+	task.SettlementStatus = model.TaskSettlementStatusReview
+	return task.UpdateSubmitSettlementError()
+}
+
+func failPersistedTaskAfterSubmitSettlementError(task *model.Task, relayInfo *relaycommon.RelayInfo, attemptedQuota int, settleErr error, persistErr error) error {
+	return failPersistedTaskAfterSubmitAccountingFailure(
+		task,
+		attemptedQuota,
+		settleErr,
+		persistErr,
+		"billing settlement failed before consumption log",
+		"settlement review update failed",
+	)
+}
+
+func failPersistedTaskAfterSubmitAccountingError(task *model.Task, relayInfo *relaycommon.RelayInfo, attemptedQuota int, accountingErr error) error {
+	if task == nil {
+		return nil
+	}
+	if task.ID <= 0 {
+		return fmt.Errorf("mark task submit accounting review failed, taskId=%s, id=%d", task.TaskID, task.ID)
+	}
+	failReason := "billing accounting failed after task submission"
+	if accountingErr != nil {
+		failReason += ": " + sanitizeTaskAccountingError(accountingErr)
+	}
+	currentFailReason := strings.TrimSpace(task.FailReason)
+	if currentFailReason == "" {
+		task.FailReason = failReason
+	} else if !strings.Contains(currentFailReason, failReason) {
+		task.FailReason = currentFailReason + "; " + failReason
+	}
+	task.Quota = 0
+	task.PrivateData.SettlementAttemptQuota = attemptedQuota
+	if accountingErr != nil {
+		task.PrivateData.SettlementError = appendTaskSettlementError(
+			task.PrivateData.SettlementError,
+			sanitizeTaskAccountingError(accountingErr),
+		)
+	}
+	task.SettlementStatus = model.TaskSettlementStatusReview
+	return task.UpdateSubmitSettlementError()
+}
+
+func failPersistedTaskAfterSubmitAccountingFailure(task *model.Task, attemptedQuota int, primaryErr error, secondaryErr error, primaryReason string, secondaryReason string) error {
+	if task == nil {
+		return nil
+	}
+	if task.ID <= 0 {
+		return fmt.Errorf("fail task after submit settlement error failed, taskId=%s, id=%d", task.TaskID, task.ID)
+	}
+	failReason := primaryReason
+	if primaryErr != nil {
+		failReason += ": " + strings.ReplaceAll(primaryErr.Error(), "\n", " ")
+	}
+	if secondaryErr != nil {
+		if secondaryReason == "" {
+			secondaryReason = "secondary update failed"
+		}
+		failReason += "; " + secondaryReason + ": " + strings.ReplaceAll(secondaryErr.Error(), "\n", " ")
+	}
+	task.Quota = 0
+	task.FailReason = failReason
+	task.PrivateData.SettlementAttemptQuota = attemptedQuota
+	if primaryErr != nil {
+		task.PrivateData.SettlementError = appendTaskSettlementError(
+			task.PrivateData.SettlementError,
+			sanitizeTaskAccountingError(primaryErr),
+		)
+	}
+	task.SettlementStatus = model.TaskSettlementStatusReview
+	task.Status = model.TaskStatusFailure
+	task.Progress = "100%"
+	task.FinishTime = common.GetTimestamp()
+	result := model.DB.Model(&model.Task{}).
+		Where("id = ?", task.ID).
+		Updates(map[string]any{
+			"quota":             task.Quota,
+			"status":            task.Status,
+			"progress":          task.Progress,
+			"finish_time":       task.FinishTime,
+			"fail_reason":       task.FailReason,
+			"private_data":      task.PrivateData,
+			"settlement_status": task.SettlementStatus,
+			"updated_at":        common.GetTimestamp(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("fail task after submit settlement error failed, taskId=%s, id=%d", task.TaskID, task.ID)
+	}
+	return nil
 }
 
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError, retryTimes int) bool {

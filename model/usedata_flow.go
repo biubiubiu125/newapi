@@ -56,39 +56,72 @@ func getSelfFlowQuotaData(startTime int64, endTime int64, userID int) ([]*FlowQu
 
 func getAdminFlowQuotaData(startTime int64, endTime int64, username string) ([]*FlowQuotaData, error) {
 	rows := make([]*FlowQuotaData, 0)
+	var err error
 	query := flowQuotaBaseQuery(startTime, endTime).
-		Select("user_id, username, use_group, model_name, channel_id, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used")
-	if username != "" {
-		query = query.Where("username = ?", username)
+		Select("user_id, MAX(username) as username, use_group, model_name, channel_id, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used")
+	if query, err = applyQuotaDataUsernameFilter(query, username); err != nil {
+		return nil, err
 	}
-	err := query.
-		Group("user_id, username, use_group, model_name, channel_id").
+	err = query.
+		Group("user_id, use_group, model_name, channel_id").
 		Order("quota DESC").
 		Find(&rows).Error
 	if err != nil {
 		return nil, err
+	}
+	if err := fillFlowQuotaUsernames(rows); err != nil {
+		return rows, err
 	}
 	return rows, fillFlowChannelNames(rows)
 }
 
 func getRootFlowQuotaData(startTime int64, endTime int64, username string) ([]*FlowQuotaData, error) {
 	rows := make([]*FlowQuotaData, 0)
+	var err error
 	query := flowQuotaBaseQuery(startTime, endTime).
-		Select("user_id, username, node_name, token_id, use_group, model_name, channel_id, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used")
-	if username != "" {
-		query = query.Where("username = ?", username)
+		Select("user_id, MAX(username) as username, node_name, token_id, use_group, model_name, channel_id, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used")
+	if query, err = applyQuotaDataUsernameFilter(query, username); err != nil {
+		return nil, err
 	}
-	err := query.
-		Group("user_id, username, node_name, token_id, use_group, model_name, channel_id").
+	err = query.
+		Group("user_id, node_name, token_id, use_group, model_name, channel_id").
 		Order("quota DESC").
 		Find(&rows).Error
 	if err != nil {
 		return nil, err
 	}
+	if err := fillFlowQuotaUsernames(rows); err != nil {
+		return rows, err
+	}
 	if err := fillFlowTokenNames(rows); err != nil {
 		return rows, err
 	}
 	return rows, fillFlowChannelNames(rows)
+}
+
+func fillFlowQuotaUsernames(rows []*FlowQuotaData) error {
+	userIDSet := make(map[int]struct{})
+	userIDs := make([]int, 0)
+	for _, row := range rows {
+		if row.UserID <= 0 {
+			continue
+		}
+		if _, ok := userIDSet[row.UserID]; ok {
+			continue
+		}
+		userIDSet[row.UserID] = struct{}{}
+		userIDs = append(userIDs, row.UserID)
+	}
+	usernames, err := usernamesByIDs(userIDs)
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if username := usernames[row.UserID]; username != "" {
+			row.Username = username
+		}
+	}
+	return nil
 }
 
 func fillFlowTokenNames(rows []*FlowQuotaData) error {

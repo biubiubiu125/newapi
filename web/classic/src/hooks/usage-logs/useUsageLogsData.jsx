@@ -43,6 +43,51 @@ import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 import ParamOverrideEntry from '../../components/table/usage-logs/components/ParamOverrideEntry';
 
+const hasSettlementError = (other) =>
+  other?.settlement_status === 'error' || Boolean(other?.settlement_error);
+
+const renderSettlementError = (error) => (
+  <div
+    style={{
+      maxWidth: 600,
+      whiteSpace: 'normal',
+      wordBreak: 'break-word',
+      lineHeight: 1.6,
+    }}
+  >
+    {error}
+  </div>
+);
+
+const pushSettlementDetails = (expandData, other, t) => {
+  if (!hasSettlementError(other)) {
+    return;
+  }
+
+  expandData.push({
+    key: t('结算状态'),
+    value: t('结算失败'),
+  });
+  if (other?.attempted_quota != null) {
+    expandData.push({
+      key: t('尝试计费'),
+      value: renderQuota(other.attempted_quota, 6),
+    });
+  }
+  if (other?.settled_quota != null) {
+    expandData.push({
+      key: t('实际计费'),
+      value: renderQuota(other.settled_quota, 6),
+    });
+  }
+  if (other?.settlement_error) {
+    expandData.push({
+      key: t('结算错误'),
+      value: renderSettlementError(other.settlement_error),
+    });
+  }
+};
+
 export const useLogsData = () => {
   const { t } = useTranslation();
 
@@ -399,6 +444,9 @@ export const useLogsData = () => {
           key: t('Request ID'),
           value: logs[i].request_id,
         });
+      }
+      if (logs[i].type === 2) {
+        pushSettlementDetails(expandDataLocal, other, t);
       }
       if (other?.ws || other?.audio) {
         expandDataLocal.push({

@@ -389,11 +389,18 @@ export const generateChartTimePoints = (
 };
 
 // ========== 用户维度数据处理 ==========
+const displayQuotaUser = (item) => {
+  const username = typeof item.username === 'string' ? item.username.trim() : item.username;
+  if (username) return username;
+  return item.user_id ? `#${item.user_id}` : 'unknown';
+};
+
 export const processUserData = (data, dataExportDefaultTime, limit = 10) => {
   const userQuotaTotal = new Map();
   data.forEach((item) => {
-    const prev = userQuotaTotal.get(item.username) || 0;
-    userQuotaTotal.set(item.username, prev + item.quota);
+    const user = displayQuotaUser(item);
+    const prev = userQuotaTotal.get(user) || 0;
+    userQuotaTotal.set(user, prev + item.quota);
   });
 
   const sorted = Array.from(userQuotaTotal.entries()).sort(
@@ -419,7 +426,8 @@ export const processUserData = (data, dataExportDefaultTime, limit = 10) => {
       showYear,
     );
     allTimePoints.add(timeKey);
-    const user = topUserSet.has(item.username) ? item.username : null;
+    const itemUser = displayQuotaUser(item);
+    const user = topUserSet.has(itemUser) ? itemUser : null;
     if (!user) return;
     const key = `${timeKey}-${user}`;
     const prev = timeUserMap.get(key) || { quota: 0 };

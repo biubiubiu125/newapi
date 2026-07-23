@@ -170,7 +170,14 @@ const renderPlatform = (platform, t) => {
   }
 };
 
-const renderStatus = (type, t) => {
+const renderStatus = (type, t, settlementStatus) => {
+  if (settlementStatus === 'REVIEW') {
+    return (
+      <Tag color='red' shape='circle' prefixIcon={<XCircle size={14} />}>
+        {t('账务待复核')}
+      </Tag>
+    );
+  }
   switch (type) {
     case 'SUCCESS':
       return (
@@ -294,11 +301,15 @@ export const getTaskLogsColumns = ({
       key: COLUMN_KEYS.USERNAME,
       title: t('用户'),
       dataIndex: 'username',
-      render: (userId, record, index) => {
+      render: (text, record, index) => {
         if (!isAdminUser) {
           return <></>;
         }
-        const displayText = String(record.username || userId || '?');
+        const displayText =
+          record.username || (record.user_id ? `#${record.user_id}` : '');
+        if (!displayText) {
+          return <></>;
+        }
         return (
           <Space>
             <Avatar size='extra-small' color={stringToColor(displayText)}>
@@ -347,7 +358,7 @@ export const getTaskLogsColumns = ({
       title: t('任务状态'),
       dataIndex: 'status',
       render: (text, record, index) => {
-        return <div>{renderStatus(text, t)}</div>;
+        return <div>{renderStatus(text, t, record.settlement_status)}</div>;
       },
     },
     {
@@ -382,6 +393,27 @@ export const getTaskLogsColumns = ({
       dataIndex: 'fail_reason',
       fixed: 'right',
       render: (text, record, index) => {
+        let detailText = record.settlement_error || text;
+        const settlementAttemptQuota = record.settlement_attempt_quota || 0;
+        if (!detailText && record.settlement_status === 'REVIEW') {
+          detailText = t('账务待复核');
+        }
+        if (record.settlement_status === 'REVIEW') {
+          if (detailText && settlementAttemptQuota > 0) {
+            detailText = `${detailText} (${settlementAttemptQuota})`;
+          }
+          return (
+            <Typography.Text
+              ellipsis={{ showTooltip: true }}
+              style={{ width: 100 }}
+              onClick={() => {
+                openContentModal(detailText);
+              }}
+            >
+              {detailText}
+            </Typography.Text>
+          );
+        }
         // Suno audio preview
         const isSunoSuccess =
           record.platform === 'suno' &&
@@ -426,7 +458,7 @@ export const getTaskLogsColumns = ({
             </a>
           );
         }
-        if (!text) {
+        if (!detailText) {
           return t('无');
         }
         return (
@@ -434,10 +466,10 @@ export const getTaskLogsColumns = ({
             ellipsis={{ showTooltip: true }}
             style={{ width: 100 }}
             onClick={() => {
-              openContentModal(text);
+              openContentModal(detailText);
             }}
           >
-            {text}
+            {detailText}
           </Typography.Text>
         );
       },

@@ -262,6 +262,61 @@ function renderBillingTag(record, t) {
   return null;
 }
 
+function hasSettlementError(other) {
+  return (
+    other?.settlement_status === 'error' || Boolean(other?.settlement_error)
+  );
+}
+
+function renderSettlementFailedMarker(other, t) {
+  if (!hasSettlementError(other)) {
+    return null;
+  }
+
+  const lines = [
+    t('结算失败'),
+    other?.attempted_quota != null
+      ? `${t('尝试计费')}：${renderQuota(other.attempted_quota, 6)}`
+      : null,
+    other?.settled_quota != null
+      ? `${t('实际计费')}：${renderQuota(other.settled_quota, 6)}`
+      : null,
+    other?.settlement_error
+      ? `${t('结算错误')}：${other.settlement_error}`
+      : null,
+  ].filter(Boolean);
+
+  return (
+    <Tooltip
+      content={
+        <div
+          style={{
+            maxWidth: 320,
+            lineHeight: 1.6,
+            whiteSpace: 'normal',
+            wordBreak: 'break-word',
+          }}
+        >
+          {lines.map((line, index) => (
+            <div key={`${line}-${index}`}>{line}</div>
+          ))}
+        </div>
+      }
+    >
+      <span
+        style={{
+          color: '#ef4444',
+          cursor: 'help',
+          display: 'inline-flex',
+          alignItems: 'center',
+        }}
+      >
+        <CircleAlert size={15} strokeWidth={2.5} color='currentColor' />
+      </span>
+    </Tooltip>
+  );
+}
+
 function renderModelName(record, copyText, t) {
   let other = getLogOther(record.other);
   let modelMapped =
@@ -398,7 +453,13 @@ function renderCompactDetailSummary(summarySegments) {
       {segments.map((segment, index) => (
         <Typography.Text
           key={`${segment.text}-${index}`}
-          type={segment.tone === 'secondary' ? 'tertiary' : undefined}
+          type={
+            segment.tone === 'danger'
+              ? 'danger'
+              : segment.tone === 'secondary'
+                ? 'tertiary'
+                : undefined
+          }
           size={segment.tone === 'secondary' ? 'small' : undefined}
           style={{
             display: 'block',
@@ -430,6 +491,13 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
     return null;
   }
 
+  const withSettlementSegment = (segments) => {
+    const normalizedSegments = Array.isArray(segments) ? segments : [];
+    return hasSettlementError(other)
+      ? [{ text: t('结算失败'), tone: 'danger' }, ...normalizedSegments]
+      : normalizedSegments;
+  };
+
   if (
     other?.violation_fee === true ||
     Boolean(other?.violation_fee_code) ||
@@ -442,15 +510,17 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
       t,
     );
     return {
-      segments: [
-        groupText ? { text: groupText, tone: 'primary' } : null,
-        { text: t('违规扣费'), tone: 'primary' },
-        {
-          text: `${t('扣费')}：${renderQuota(feeQuota, 6)}`,
-          tone: 'secondary',
-        },
-        text ? { text: `${t('详情')}：${text}`, tone: 'secondary' } : null,
-      ].filter(Boolean),
+      segments: withSettlementSegment(
+        [
+          groupText ? { text: groupText, tone: 'primary' } : null,
+          { text: t('违规扣费'), tone: 'primary' },
+          {
+            text: `${t('扣费')}：${renderQuota(feeQuota, 6)}`,
+            tone: 'secondary',
+          },
+          text ? { text: `${t('详情')}：${text}`, tone: 'secondary' } : null,
+        ].filter(Boolean),
+      ),
     };
   }
 
@@ -461,13 +531,19 @@ function getUsageLogDetailSummary(record, text, billingDisplayMode, t) {
   };
 
   if (other?.billing_mode === 'tiered_expr') {
-    return { segments: renderTieredModelPriceSimple(summaryOpts) };
+    return {
+      segments: withSettlementSegment(
+        renderTieredModelPriceSimple(summaryOpts),
+      ),
+    };
   }
 
   return {
-    segments: other?.claude
-      ? renderModelPriceSimple({ ...summaryOpts, provider: 'claude' })
-      : renderModelPriceSimple({ ...summaryOpts, provider: 'openai' }),
+    segments: withSettlementSegment(
+      other?.claude
+        ? renderModelPriceSimple({ ...summaryOpts, provider: 'claude' })
+        : renderModelPriceSimple({ ...summaryOpts, provider: 'openai' }),
+    ),
   };
 }
 
@@ -585,20 +661,24 @@ export const getLogsColumns = ({
       title: t('用户'),
       dataIndex: 'username',
       render: (text, record, index) => {
-        return isAdminUser ? (
+        const displayName =
+          record.username || (record.user_id ? `#${record.user_id}` : '');
+        return isAdminUser && displayName ? (
           <div>
             <Avatar
               size='extra-small'
-              color={stringToColor(text)}
+              color={stringToColor(displayName)}
               style={{ marginRight: 4 }}
               onClick={(event) => {
                 event.stopPropagation();
-                showUserInfoFunc(record.user_id);
+                if (record.user_id) {
+                  showUserInfoFunc(record.user_id);
+                }
               }}
             >
-              {typeof text === 'string' && text.slice(0, 1)}
+              {displayName.slice(0, 1)}
             </Avatar>
-            {text}
+            {displayName}
           </div>
         ) : (
           <></>
@@ -803,19 +883,18 @@ export const getLogsColumns = ({
       title: t('花费'),
       dataIndex: 'quota',
       render: (text, record, index) => {
-        if (
-          !(
-            record.type === 0 ||
-            record.type === 2 ||
-            record.type === 5 ||
-            record.type === 6
-          )
-        ) {
+        if (!(
+          record.type === 0 ||
+          record.type === 2 ||
+          record.type === 5 ||
+          record.type === 6
+        )) {
           return <></>;
         }
         const other = getLogOther(record.other);
         const isSubscription = other?.billing_source === 'subscription';
-        if (isSubscription) {
+        const settlementFailed = hasSettlementError(other);
+        if (isSubscription && !settlementFailed) {
           // Subscription billed: show only tag (no $0), but keep tooltip for equivalent cost.
           return (
             <Tooltip content={`${t('由订阅抵扣')}：${renderQuota(text, 6)}`}>
@@ -823,7 +902,12 @@ export const getLogsColumns = ({
             </Tooltip>
           );
         }
-        return <>{renderQuota(text, 6)}</>;
+        return (
+          <Space spacing={4}>
+            <span>{renderQuota(text, 6)}</span>
+            {renderSettlementFailedMarker(other, t)}
+          </Space>
+        );
       },
     },
     {

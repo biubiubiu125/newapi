@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -99,21 +100,40 @@ func tokenUsageUpdateAssignments(userId int, quota int, requestCount int, usedAt
 }
 
 func RecordTokenUsage(tokenId int, userId int, quota int, usedAt int64) {
+	requestCount := 0
+	updateLastUsedAt := false
+	if quota >= 0 {
+		requestCount = 1
+		updateLastUsedAt = true
+	}
+	recordTokenUsage(tokenId, userId, quota, usedAt, requestCount, updateLastUsedAt)
+}
+
+func RecordTokenUsageAdjustment(tokenId int, userId int, quota int, usedAt int64) {
+	recordTokenUsage(tokenId, userId, quota, usedAt, 0, false)
+}
+
+func recordTokenUsage(tokenId int, userId int, quota int, usedAt int64, requestCount int, updateLastUsedAt bool) {
+	if err := recordTokenUsageWithDB(DB, tokenId, userId, quota, usedAt, requestCount, updateLastUsedAt); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "no such table") {
+			return
+		}
+		common.SysLog("failed to record token usage: " + err.Error())
+	}
+}
+
+func recordTokenUsageWithDB(db *gorm.DB, tokenId int, userId int, quota int, usedAt int64, requestCount int, updateLastUsedAt bool) error {
 	if tokenId <= 0 {
-		return
+		return nil
 	}
 	if usedAt <= 0 {
 		usedAt = common.GetTimestamp()
 	}
 	if quota == 0 {
-		if err := TouchTokenAccessedTime(tokenId, usedAt); err != nil {
-			common.SysLog("failed to touch token accessed time: " + err.Error())
-		}
+		return touchTokenAccessedTimeWithDB(db, tokenId, usedAt)
 	}
-	requestCount := 0
 	lastUsedAt := int64(0)
-	if quota >= 0 {
-		requestCount = 1
+	if updateLastUsedAt {
 		lastUsedAt = usedAt
 	}
 	usage := &TokenUsageDaily{
@@ -126,17 +146,38 @@ func RecordTokenUsage(tokenId int, userId int, quota int, usedAt int64) {
 		CreatedAt:    usedAt,
 		UpdatedAt:    usedAt,
 	}
-	updates := tokenUsageUpdateAssignments(userId, quota, requestCount, usedAt, quota >= 0)
-	err := DB.Clauses(clause.OnConflict{
+	updates := tokenUsageUpdateAssignments(userId, quota, requestCount, usedAt, updateLastUsedAt)
+	err := db.Clauses(clause.OnConflict{
 		Columns:   []clause.Column{{Name: "token_id"}, {Name: "date"}},
 		DoUpdates: clause.Assignments(updates),
 	}).Create(usage).Error
 	if err != nil {
 		if strings.Contains(strings.ToLower(err.Error()), "no such table") {
-			return
+			return nil
 		}
-		common.SysLog("failed to record token usage: " + err.Error())
+		return err
 	}
+	return nil
+}
+
+func touchTokenAccessedTimeWithDB(db *gorm.DB, id int, accessedAt int64) error {
+	if id <= 0 {
+		return nil
+	}
+	if accessedAt <= 0 {
+		accessedAt = common.GetTimestamp()
+	}
+	var token Token
+	if err := db.Model(&Token{}).
+		Where("id = ?", id).
+		Select("key").
+		First(&token).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return err
+	}
+	return db.Model(&Token{}).Where("id = ?", id).Update("accessed_time", accessedAt).Error
 }
 
 func SumTokenConsumeLogQuota(tokenId int, startTimestamp int64, endTimestamp int64) (int, error) {

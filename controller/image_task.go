@@ -225,7 +225,10 @@ func createImageTaskInternal(c *gin.Context, imageRequest *dto.ImageRequest, rel
 
 	if err := task.Insert(); err != nil {
 		if relayInfo.Billing != nil {
-			relayInfo.Billing.Refund(c)
+			if refundErr := relayInfo.Billing.Refund(c); refundErr != nil {
+				common.SysError("refund image task billing after insert failure failed: " + refundErr.Error())
+				service.RecordConsumeAccountingError(c, relayInfo, "refund image task billing after insert failure", refundErr)
+			}
 		}
 		_ = common.RemoveDiskCacheFile(persistedRequest.Path)
 		return nil, types.NewError(err, types.ErrorCodeUpdateDataError)
@@ -237,7 +240,10 @@ func createImageTaskInternal(c *gin.Context, imageRequest *dto.ImageRequest, rel
 				logger.LogWarn(c, fmt.Sprintf("delete duplicate image task %s failed: %s", task.TaskID, deleteErr.Error()))
 			} else {
 				if relayInfo.Billing != nil {
-					relayInfo.Billing.Refund(c)
+					if refundErr := relayInfo.Billing.Refund(c); refundErr != nil {
+						common.SysError("refund duplicate image task billing failed: " + refundErr.Error())
+						service.RecordConsumeAccountingError(c, relayInfo, "refund duplicate image task billing", refundErr)
+					}
 				}
 				_ = common.RemoveDiskCacheFile(persistedRequest.Path)
 				return &imageTaskCreateInternalResult{Task: existing, Existing: true}, nil
@@ -420,7 +426,9 @@ func cancelImageTaskSyncBridgeWait(c *gin.Context, task *model.Task, reason stri
 		return nil, nil
 	}
 	if current.Quota != 0 {
-		service.RefundTaskQuota(c, current, reason)
+		if err := service.RefundTaskQuota(c.Request.Context(), current, reason); err != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("refund task quota failed task %s: %s", current.TaskID, err.Error()))
+		}
 	}
 	_ = common.RemoveDiskCacheFile(bodyPath)
 	_ = common.RemoveDiskCacheFile(resultPath)
@@ -1113,6 +1121,7 @@ func taskBillingContextFromRelayInfo(relayInfo *relaycommon.RelayInfo) *model.Ta
 	return &model.TaskBillingContext{
 		ModelPrice:           priceData.ModelPrice,
 		GroupRatio:           priceData.GroupRatioInfo.GroupRatio,
+		GroupRatioCaptured:   true,
 		GroupSpecialRatio:    priceData.GroupRatioInfo.GroupSpecialRatio,
 		GroupHasSpecialRatio: priceData.GroupRatioInfo.HasSpecialRatio,
 		ModelRatio:           priceData.ModelRatio,

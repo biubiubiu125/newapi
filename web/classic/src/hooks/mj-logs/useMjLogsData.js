@@ -39,6 +39,7 @@ export const useMjLogsData = () => {
     SUBMIT_TIME: 'submit_time',
     DURATION: 'duration',
     CHANNEL: 'channel',
+    USERNAME: 'username',
     TYPE: 'type',
     TASK_ID: 'task_id',
     SUBMIT_RESULT: 'submit_result',
@@ -102,6 +103,7 @@ export const useMjLogsData = () => {
         // For non-admin users, force-hide admin-only columns (does not touch admin settings)
         if (!isAdminUser) {
           merged[COLUMN_KEYS.CHANNEL] = false;
+          merged[COLUMN_KEYS.USERNAME] = false;
           merged[COLUMN_KEYS.SUBMIT_RESULT] = false;
         }
         setVisibleColumns(merged);
@@ -128,6 +130,7 @@ export const useMjLogsData = () => {
       [COLUMN_KEYS.SUBMIT_TIME]: true,
       [COLUMN_KEYS.DURATION]: true,
       [COLUMN_KEYS.CHANNEL]: isAdminUser,
+      [COLUMN_KEYS.USERNAME]: isAdminUser,
       [COLUMN_KEYS.TYPE]: true,
       [COLUMN_KEYS.TASK_ID]: true,
       [COLUMN_KEYS.SUBMIT_RESULT]: isAdminUser,
@@ -160,7 +163,9 @@ export const useMjLogsData = () => {
 
     allKeys.forEach((key) => {
       if (
-        (key === COLUMN_KEYS.CHANNEL || key === COLUMN_KEYS.SUBMIT_RESULT) &&
+        (key === COLUMN_KEYS.CHANNEL ||
+          key === COLUMN_KEYS.USERNAME ||
+          key === COLUMN_KEYS.SUBMIT_RESULT) &&
         !isAdminUser
       ) {
         updatedColumns[key] = false;

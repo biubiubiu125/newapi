@@ -39,6 +39,13 @@ type TooltipLineItem = {
   shapeSize?: number
 }
 
+function displayQuotaUser(item: Pick<QuotaDataItem, 'username' | 'user_id'>) {
+  const username = item.username?.trim()
+  if (username) return username
+  const userId = Number(item.user_id) || 0
+  return userId > 0 ? `#${userId}` : 'unknown'
+}
+
 export function getDashboardChartColors(domainLength: number): string[] {
   const scheme =
     vchartDefaultDataScheme.find(
@@ -753,7 +760,7 @@ export function processUserChartData(
 
   const userQuotaTotal = new Map<string, number>()
   data.forEach((item) => {
-    const username = item.username || 'unknown'
+    const username = displayQuotaUser(item)
     const prev = userQuotaTotal.get(username) || 0
     userQuotaTotal.set(username, prev + (Number(item.quota) || 0))
   })
@@ -786,7 +793,7 @@ export function processUserChartData(
     const ts = Number(item.created_at)
     const timeKey = formatChartTime(ts, timeGranularity)
     allTimePoints.add(timeKey)
-    const user = item.username || 'unknown'
+    const user = displayQuotaUser(item)
     if (!topUserSet.has(user)) return
     if (!timeUserMap.has(timeKey)) timeUserMap.set(timeKey, new Map())
     const map = timeUserMap.get(timeKey)!

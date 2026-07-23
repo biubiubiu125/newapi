@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
-import { GitBranch, Sparkles, KeyRound } from 'lucide-react'
+import { AlertTriangle, GitBranch, Sparkles, KeyRound } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -99,6 +99,10 @@ function splitQuotaDisplay(value: string): { prefix: string; amount: string } {
   return { prefix: match[1], amount: match[2] }
 }
 
+function hasSettlementError(other: LogOtherData | null): boolean {
+  return other?.settlement_status === 'error' || !!other?.settlement_error
+}
+
 function buildDetailSegments(
   log: UsageLog,
   other: LogOtherData | null,
@@ -112,6 +116,9 @@ function buildDetailSegments(
   // defense in depth so the marker never leaks if that changes.
   if (isAdmin && other?.admin_info?.quota_saturation) {
     return [{ text: t('Quota clamped'), danger: true }, ...segments]
+  }
+  if (hasSettlementError(other)) {
+    return [{ text: t('Settlement failed'), danger: true }, ...segments]
   }
   return segments
 }
@@ -486,13 +493,15 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
       {
         id: 'user',
         header: t('User'),
-        accessorFn: (row) => row.username,
+        accessorFn: (row) => row.username || row.user_id,
         cell: function UserCell({ row }) {
           const { sensitiveVisible, setSelectedUserId, setUserInfoDialogOpen } =
             useUsageLogsContext()
           const log = row.original
+          const userId = log.user_id || null
+          const displayName = log.username || `#${userId || '?'}`
 
-          if (!log.username) return null
+          if (!log.username && !userId) return null
 
           return (
             <button
@@ -500,7 +509,8 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
               className='flex items-center gap-1.5 text-left'
               onClick={(e) => {
                 e.stopPropagation()
-                setSelectedUserId(log.user_id)
+                if (userId == null) return
+                setSelectedUserId(userId)
                 setUserInfoDialogOpen(true)
               }}
             >
@@ -512,11 +522,11 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                   )}
                   style={
                     sensitiveVisible
-                      ? getUserAvatarStyle(log.username)
+                      ? getUserAvatarStyle(displayName)
                       : undefined
                   }
                 >
-                  {sensitiveVisible ? getUserAvatarFallback(log.username) : '•'}
+                  {sensitiveVisible ? getUserAvatarFallback(displayName) : '•'}
                 </AvatarFallback>
               </Avatar>
               <TooltipProvider delay={300}>
@@ -526,10 +536,10 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
                       <span className='text-muted-foreground max-w-[100px] truncate text-sm hover:underline' />
                     }
                   >
-                    {sensitiveVisible ? log.username : '••••'}
+                    {sensitiveVisible ? displayName : '••••'}
                   </TooltipTrigger>
-                  {sensitiveVisible && log.username.length > 12 && (
-                    <TooltipContent side='top'>{log.username}</TooltipContent>
+                  {sensitiveVisible && displayName.length > 12 && (
+                    <TooltipContent side='top'>{displayName}</TooltipContent>
                   )}
                 </Tooltip>
               </TooltipProvider>
@@ -704,8 +714,9 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
         const quota = row.getValue('quota') as number
         const other = parseLogOther(log.other)
         const isSubscription = other?.billing_source === 'subscription'
+        const settlementFailed = hasSettlementError(other)
 
-        if (isSubscription) {
+        if (isSubscription && !settlementFailed) {
           return (
             <TooltipProvider>
               <Tooltip>
@@ -735,12 +746,44 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
 
         return (
           <div className='flex flex-col gap-0.5'>
-            <span className='border-border/80 bg-muted/60 inline-flex h-6 w-fit items-center rounded-md border px-2 [font-family:var(--font-body)] text-sm leading-none font-semibold tabular-nums'>
-              {quotaDisplay.prefix && (
-                <span className='mr-1'>{quotaDisplay.prefix}</span>
+            <div className='flex items-center gap-1'>
+              <span className='border-border/80 bg-muted/60 inline-flex h-6 w-fit items-center rounded-md border px-2 [font-family:var(--font-body)] text-sm leading-none font-semibold tabular-nums'>
+                {quotaDisplay.prefix && (
+                  <span className='mr-1'>{quotaDisplay.prefix}</span>
+                )}
+                <span>{quotaDisplay.amount}</span>
+              </span>
+              {settlementFailed && (
+                <TooltipProvider>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <span className='border-destructive/30 bg-destructive/10 text-destructive inline-flex size-6 cursor-help items-center justify-center rounded-md border'>
+                          <AlertTriangle className='size-3.5' />
+                        </span>
+                      }
+                    />
+                    <TooltipContent>
+                      <div className='space-y-1'>
+                        <div>{t('Settlement failed')}</div>
+                        {other?.attempted_quota != null && (
+                          <div>
+                            {t('Attempted Cost')}:{' '}
+                            {formatLogQuota(other.attempted_quota)}
+                          </div>
+                        )}
+                        {other?.settled_quota != null && (
+                          <div>
+                            {t('Settled Cost')}:{' '}
+                            {formatLogQuota(other.settled_quota)}
+                          </div>
+                        )}
+                      </div>
+                    </TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
               )}
-              <span>{quotaDisplay.amount}</span>
-            </span>
+            </div>
           </div>
         )
       },

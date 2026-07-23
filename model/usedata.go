@@ -2,6 +2,7 @@ package model
 
 import (
 	"fmt"
+	"strings"
 	"sync"
 	"time"
 
@@ -26,16 +27,18 @@ type QuotaData struct {
 }
 
 type QuotaDataLogParams struct {
-	UserID    int
-	Username  string
-	ModelName string
-	Quota     int
-	CreatedAt int64
-	TokenUsed int
-	UseGroup  string
-	TokenID   int
-	ChannelID int
-	NodeName  string
+	UserID        int
+	Username      string
+	ModelName     string
+	Quota         int
+	CreatedAt     int64
+	TokenUsed     int
+	UseGroup      string
+	TokenID       int
+	ChannelID     int
+	NodeName      string
+	Count         int
+	ExplicitCount bool
 }
 
 func UpdateQuotaData() {
@@ -78,6 +81,10 @@ func logQuotaDataCache(quotaData *QuotaData) {
 func LogQuotaData(params QuotaDataLogParams) {
 	// 只精确到小时
 	createdAt := params.CreatedAt - (params.CreatedAt % 3600)
+	count := params.Count
+	if !params.ExplicitCount {
+		count = 1
+	}
 	quotaData := &QuotaData{
 		UserID:    params.UserID,
 		Username:  params.Username,
@@ -87,7 +94,7 @@ func LogQuotaData(params QuotaDataLogParams) {
 		TokenID:   params.TokenID,
 		ChannelID: params.ChannelID,
 		NodeName:  params.NodeName,
-		Count:     1,
+		Count:     count,
 		Quota:     params.Quota,
 		TokenUsed: params.TokenUsed,
 	}
@@ -138,36 +145,106 @@ func increaseQuotaData(quotaData *QuotaData) {
 	}
 }
 
+func quotaDataUserIDs(rows []*QuotaData) []int {
+	seen := make(map[int]struct{}, len(rows))
+	userIDs := make([]int, 0, len(rows))
+	for _, row := range rows {
+		if row.UserID <= 0 {
+			continue
+		}
+		if _, ok := seen[row.UserID]; ok {
+			continue
+		}
+		seen[row.UserID] = struct{}{}
+		userIDs = append(userIDs, row.UserID)
+	}
+	return userIDs
+}
+
+func quotaUserIDsByUsername(username string) ([]int, error) {
+	username = strings.TrimSpace(username)
+	if username == "" || DB == nil {
+		return nil, nil
+	}
+	userIDs := make([]int, 0)
+	if err := DB.Model(&User{}).Where("username = ?", username).Pluck("id", &userIDs).Error; err != nil {
+		return nil, err
+	}
+	return userIDs, nil
+}
+
+func applyQuotaDataUsernameFilter(query *gorm.DB, username string) (*gorm.DB, error) {
+	username = strings.TrimSpace(username)
+	if username == "" {
+		return query, nil
+	}
+	userIDs, err := quotaUserIDsByUsername(username)
+	if err != nil {
+		return nil, err
+	}
+	if len(userIDs) > 0 {
+		return query.Where("user_id IN ?", userIDs), nil
+	}
+	return query.Where("username = ?", username), nil
+}
+
+func fillQuotaDataCurrentUsernames(rows []*QuotaData) error {
+	usernames, err := usernamesByIDs(quotaDataUserIDs(rows))
+	if err != nil {
+		return err
+	}
+	for _, row := range rows {
+		if username := usernames[row.UserID]; username != "" {
+			row.Username = username
+		}
+	}
+	return nil
+}
+
 func GetQuotaDataByUsername(username string, startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
 	var quotaDatas []*QuotaData
 	// 从quota_data表中查询数据
-	err = DB.Table("quota_data").
-		Select("user_id, username, model_name, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
-		Where("username = ? and created_at >= ? and created_at <= ?", username, startTime, endTime).
-		Group("user_id, username, model_name, created_at").
+	query := DB.Table("quota_data").
+		Select("user_id, MAX(username) as username, model_name, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
+		Where("created_at >= ? and created_at <= ?", startTime, endTime)
+	query, err = applyQuotaDataUsernameFilter(query, username)
+	if err != nil {
+		return nil, err
+	}
+	err = query.
+		Group("user_id, model_name, created_at").
 		Find(&quotaDatas).Error
-	return quotaDatas, err
+	if err != nil {
+		return nil, err
+	}
+	return quotaDatas, fillQuotaDataCurrentUsernames(quotaDatas)
 }
 
 func GetQuotaDataByUserId(userId int, startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
 	var quotaDatas []*QuotaData
 	// 从quota_data表中查询数据
 	err = DB.Table("quota_data").
-		Select("user_id, username, model_name, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
+		Select("user_id, model_name, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
 		Where("user_id = ? and created_at >= ? and created_at <= ?", userId, startTime, endTime).
-		Group("user_id, username, model_name, created_at").
+		Group("user_id, model_name, created_at").
 		Find(&quotaDatas).Error
-	return quotaDatas, err
+	if err != nil {
+		return nil, err
+	}
+	return quotaDatas, fillQuotaDataCurrentUsernames(quotaDatas)
 }
 
 func GetQuotaDataGroupByUser(startTime int64, endTime int64) (quotaData []*QuotaData, err error) {
 	var quotaDatas []*QuotaData
 	err = DB.Table("quota_data").
-		Select("username, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
+		Select("user_id, MAX(username) as username, created_at, sum(count) as count, sum(quota) as quota, sum(token_used) as token_used").
 		Where("created_at >= ? and created_at <= ?", startTime, endTime).
-		Group("username, created_at").
+		Group("user_id, created_at").
 		Find(&quotaDatas).Error
-	return quotaDatas, err
+	if err != nil {
+		return nil, err
+	}
+	return quotaDatas, fillQuotaDataCurrentUsernames(quotaDatas)
 }
 
 func GetAllQuotaDates(startTime int64, endTime int64, username string) (quotaData []*QuotaData, err error) {

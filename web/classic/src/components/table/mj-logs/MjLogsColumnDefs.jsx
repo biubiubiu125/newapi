@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { Button, Progress, Tag, Typography } from '@douyinfe/semi-ui';
+import { Avatar, Button, Progress, Space, Tag, Typography } from '@douyinfe/semi-ui';
 import {
   Palette,
   ZoomIn,
@@ -46,6 +46,7 @@ import {
   Hash,
   Video,
 } from 'lucide-react';
+import { stringToColor } from '../../../helpers/render';
 
 const colors = [
   'amber',
@@ -232,7 +233,15 @@ function renderCode(code, t) {
   }
 }
 
-function renderStatus(type, t) {
+function renderStatus(type, t, settlementStatus) {
+  if (settlementStatus === 'REVIEW') {
+    return (
+      <Tag color='red' shape='circle' prefixIcon={<AlertCircle size={14} />}>
+        {t('账务待复核')}
+      </Tag>
+    );
+  }
+
   switch (type) {
     case 'SUCCESS':
       return (
@@ -365,6 +374,29 @@ export const getMjLogsColumns = ({
       },
     },
     {
+      key: COLUMN_KEYS.USERNAME,
+      title: t('用户'),
+      dataIndex: 'username',
+      render: (text, record, index) => {
+        if (!isAdminUser) {
+          return <></>;
+        }
+        const displayText =
+          record.username || (record.user_id ? `#${record.user_id}` : '');
+        if (!displayText) {
+          return <></>;
+        }
+        return (
+          <Space>
+            <Avatar size='extra-small' color={stringToColor(displayText)}>
+              {displayText.slice(0, 1)}
+            </Avatar>
+            <Typography.Text>{displayText}</Typography.Text>
+          </Space>
+        );
+      },
+    },
+    {
       key: COLUMN_KEYS.TYPE,
       title: t('类型'),
       dataIndex: 'action',
@@ -393,7 +425,7 @@ export const getMjLogsColumns = ({
       title: t('任务状态'),
       dataIndex: 'status',
       render: (text, record, index) => {
-        return <div>{renderStatus(text, t)}</div>;
+        return <div>{renderStatus(text, t, record.settlement_status)}</div>;
       },
     },
     {

@@ -17,14 +17,27 @@ const (
 const taskSettlementApplyingReviewSeconds int64 = 10 * 60
 
 type TaskSettlementRecord struct {
-	ID            int64  `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
-	TaskPrimaryID int64  `json:"task_primary_id" gorm:"uniqueIndex;not null"`
-	PublicTaskID  string `json:"public_task_id" gorm:"type:varchar(191);index"`
-	Status        string `json:"status" gorm:"type:varchar(20);index"`
-	Error         string `json:"error" gorm:"type:text"`
-	CreatedAt     int64  `json:"created_at" gorm:"bigint;index"`
-	UpdatedAt     int64  `json:"updated_at" gorm:"bigint;index"`
-	AppliedAt     int64  `json:"applied_at" gorm:"bigint;index"`
+	ID               int64  `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
+	TaskPrimaryID    int64  `json:"task_primary_id" gorm:"uniqueIndex;not null"`
+	PublicTaskID     string `json:"public_task_id" gorm:"type:varchar(191);index"`
+	Status           string `json:"status" gorm:"type:varchar(20);index"`
+	Operation        string `json:"operation" gorm:"type:varchar(32);index"`
+	AppliedQuota     *int   `json:"applied_quota,omitempty"`
+	PreConsumedQuota *int   `json:"pre_consumed_quota,omitempty"`
+	QuotaDelta       *int   `json:"quota_delta,omitempty"`
+	LogType          *int   `json:"log_type,omitempty"`
+	Error            string `json:"error" gorm:"type:text"`
+	CreatedAt        int64  `json:"created_at" gorm:"bigint;index"`
+	UpdatedAt        int64  `json:"updated_at" gorm:"bigint;index"`
+	AppliedAt        int64  `json:"applied_at" gorm:"bigint;index"`
+}
+
+type TaskSettlementApplicationAppliedDetails struct {
+	Operation        string
+	AppliedQuota     *int
+	PreConsumedQuota *int
+	QuotaDelta       *int
+	LogType          *int
 }
 
 func (r *TaskSettlementRecord) BeforeCreate(_ *gorm.DB) error {
@@ -126,19 +139,43 @@ func GetTaskSettlementRecord(taskPrimaryID int64) (*TaskSettlementRecord, bool, 
 	return &record, exists, nil
 }
 
-func MarkTaskSettlementApplicationApplied(taskPrimaryID int64) error {
+func taskSettlementApplicationAppliedUpdates(details ...TaskSettlementApplicationAppliedDetails) map[string]any {
+	updates := map[string]any{}
+	if len(details) == 0 {
+		return updates
+	}
+	detail := details[0]
+	if detail.Operation != "" {
+		updates["operation"] = detail.Operation
+	}
+	if detail.AppliedQuota != nil {
+		updates["applied_quota"] = *detail.AppliedQuota
+	}
+	if detail.PreConsumedQuota != nil {
+		updates["pre_consumed_quota"] = *detail.PreConsumedQuota
+	}
+	if detail.QuotaDelta != nil {
+		updates["quota_delta"] = *detail.QuotaDelta
+	}
+	if detail.LogType != nil {
+		updates["log_type"] = *detail.LogType
+	}
+	return updates
+}
+
+func MarkTaskSettlementApplicationApplied(taskPrimaryID int64, details ...TaskSettlementApplicationAppliedDetails) error {
 	if taskPrimaryID <= 0 {
 		return errors.New("task primary id is required")
 	}
 	now := time.Now().Unix()
+	updates := taskSettlementApplicationAppliedUpdates(details...)
+	updates["status"] = TaskSettlementRecordStatusApplied
+	updates["error"] = ""
+	updates["applied_at"] = now
+	updates["updated_at"] = now
 	result := DB.Model(&TaskSettlementRecord{}).
 		Where("task_primary_id = ? AND status = ?", taskPrimaryID, TaskSettlementRecordStatusApplying).
-		Updates(map[string]any{
-			"status":     TaskSettlementRecordStatusApplied,
-			"error":      "",
-			"applied_at": now,
-			"updated_at": now,
-		})
+		Updates(updates)
 	if result.Error != nil {
 		return result.Error
 	}
@@ -153,6 +190,20 @@ func MarkTaskSettlementApplicationApplied(taskPrimaryID int64) error {
 		return nil
 	}
 	return errors.New("task settlement application mark applied lost CAS")
+}
+
+func BackfillTaskSettlementApplicationAppliedDetails(taskPrimaryID int64, details TaskSettlementApplicationAppliedDetails) error {
+	if taskPrimaryID <= 0 {
+		return errors.New("task primary id is required")
+	}
+	updates := taskSettlementApplicationAppliedUpdates(details)
+	if len(updates) == 0 {
+		return nil
+	}
+	updates["updated_at"] = time.Now().Unix()
+	return DB.Model(&TaskSettlementRecord{}).
+		Where("task_primary_id = ? AND status = ?", taskPrimaryID, TaskSettlementRecordStatusApplied).
+		Updates(updates).Error
 }
 
 func MarkTaskSettlementApplicationReview(taskPrimaryID int64, message string) error {
@@ -203,13 +254,13 @@ func CleanupTerminalTaskSettlementRecords(cutoff int64, limit int) (int64, error
 		Where("task_settlement_records.updated_at < ?", cutoff).
 		Where(`
 (
-  task_settlement_records.status = ? AND tasks.status = ? AND tasks.settlement_status = ?
+  task_settlement_records.status = ? AND tasks.status IN (?, ?) AND COALESCE(tasks.settlement_status, '') NOT IN (?, ?, ?)
 ) OR (
   task_settlement_records.status = ? AND tasks.status = ? AND tasks.settlement_status = ?
 ) OR (
   tasks.id IS NULL AND task_settlement_records.status IN (?, ?)
 )`,
-			TaskSettlementRecordStatusApplied, TaskStatusSuccess, TaskSettlementStatusSettled,
+			TaskSettlementRecordStatusApplied, TaskStatusSuccess, TaskStatusFailure, TaskSettlementStatusPending, TaskSettlementStatusApplied, TaskSettlementStatusReview,
 			TaskSettlementRecordStatusReview, TaskStatusSuccess, TaskSettlementStatusReview,
 			TaskSettlementRecordStatusApplied, TaskSettlementRecordStatusReview,
 		).

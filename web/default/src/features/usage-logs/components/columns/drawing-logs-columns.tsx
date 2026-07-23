@@ -19,6 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import { useState } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
 import {
+  Avatar,
+  AvatarFallback,
+} from '@/components/ui/avatar'
+import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
+import { useUsageLogsContext } from '../usage-logs-provider'
+import {
   Blend,
   FileText,
   HelpCircle,
@@ -93,6 +99,7 @@ export function useDrawingLogsColumns(
       cell: ({ row }) => {
         const log = row.original
         const submitTime = row.getValue('submit_time') as number
+        const settlementFailed = log.settlement_status === 'REVIEW'
 
         return (
           <div className='flex flex-col gap-0.5'>
@@ -100,8 +107,12 @@ export function useDrawingLogsColumns(
               {formatTimestampToDate(submitTime)}
             </span>
             <StatusBadge
-              label={t(mjStatusMapper.getLabel(log.status))}
-              variant={mjStatusMapper.getVariant(log.status)}
+              label={
+                settlementFailed
+                  ? t('Settlement review')
+                  : t(mjStatusMapper.getLabel(log.status))
+              }
+              variant={settlementFailed ? 'red' : mjStatusMapper.getVariant(log.status)}
               size='sm'
               copyable={false}
             />
@@ -114,7 +125,51 @@ export function useDrawingLogsColumns(
 
   if (isAdmin) {
     columns.push(
-      createChannelColumn<MidjourneyLog>({ headerLabel: t('Channel') })
+      createChannelColumn<MidjourneyLog>({ headerLabel: t('Channel') }),
+      {
+        id: 'user',
+        accessorFn: (row) => row.username || row.user_id,
+        header: ({ column }) => (
+          <DataTableColumnHeader column={column} title={t('User')} />
+        ),
+        cell: function UserCell({ row }) {
+          const { sensitiveVisible, setSelectedUserId, setUserInfoDialogOpen } =
+            useUsageLogsContext()
+          const log = row.original
+          const userId = log.user_id || null
+          const displayName = log.username || `#${userId || '?'}`
+
+          if (!log.username && !userId) return null
+
+          return (
+            <button
+              type='button'
+              className='flex items-center gap-1.5 text-left'
+              onClick={(e) => {
+                e.stopPropagation()
+                if (userId == null) return
+                setSelectedUserId(userId)
+                setUserInfoDialogOpen(true)
+              }}
+            >
+              <Avatar className='ring-border/60 size-6 ring-1 max-sm:hidden'>
+                <AvatarFallback
+                  className='text-[11px] font-semibold'
+                  style={
+                    sensitiveVisible ? getUserAvatarStyle(displayName) : undefined
+                  }
+                >
+                  {sensitiveVisible ? getUserAvatarFallback(displayName) : '•'}
+                </AvatarFallback>
+              </Avatar>
+              <span className='text-foreground max-w-[110px] truncate text-xs'>
+                {sensitiveVisible ? displayName : '••••'}
+              </span>
+            </button>
+          )
+        },
+        meta: { label: t('User') },
+      }
     )
   }
 

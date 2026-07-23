@@ -106,10 +106,26 @@ func QuotaFromFloatChecked(value float64) (int, *QuotaClamp) {
 	return saturateQuota(value, "QuotaFromFloat")
 }
 
+// QuotaFromPositiveFloatChecked preserves QuotaFromFloatChecked's truncation
+// and saturation policy, but charges one quota for in-range positive fractions.
+func QuotaFromPositiveFloatChecked(value float64) (int, *QuotaClamp) {
+	quota, clamp := QuotaFromFloatChecked(value)
+	if clamp == nil && value > 0 && quota == 0 {
+		return 1, nil
+	}
+	return quota, clamp
+}
+
 // QuotaFromFloatStrict converts an in-range value and returns a typed
 // *QuotaClamp error instead of allowing a saturated result to reach billing.
 func QuotaFromFloatStrict(value float64) (int, error) {
 	return strictQuota(QuotaFromFloatChecked(value))
+}
+
+// QuotaFromPositiveFloatStrict is QuotaFromPositiveFloatChecked but returns a
+// typed *QuotaClamp error instead of allowing a saturated result to reach billing.
+func QuotaFromPositiveFloatStrict(value float64) (int, error) {
+	return strictQuota(QuotaFromPositiveFloatChecked(value))
 }
 
 // QuotaRound converts a float64 quota value to int using half-away-from-zero
@@ -121,16 +137,39 @@ func QuotaRound(value float64) int {
 	return quota
 }
 
+// QuotaRoundPositive is QuotaRound with a one-quota floor for in-range
+// positive fractions.
+func QuotaRoundPositive(value float64) int {
+	quota, _ := QuotaRoundPositiveChecked(value)
+	return quota
+}
+
 // QuotaRoundChecked is QuotaRound but also returns a non-nil *QuotaClamp when
 // the value was clamped, so billing callers can audit it.
 func QuotaRoundChecked(value float64) (int, *QuotaClamp) {
 	return saturateQuota(math.Round(value), "QuotaRound")
 }
 
+// QuotaRoundPositiveChecked preserves QuotaRoundChecked's rounding and
+// saturation policy, but charges one quota for in-range positive fractions.
+func QuotaRoundPositiveChecked(value float64) (int, *QuotaClamp) {
+	quota, clamp := QuotaRoundChecked(value)
+	if clamp == nil && value > 0 && quota == 0 {
+		return 1, nil
+	}
+	return quota, clamp
+}
+
 // QuotaRoundStrict rounds an in-range value and returns a typed *QuotaClamp
 // error instead of allowing a saturated result to reach billing.
 func QuotaRoundStrict(value float64) (int, error) {
 	return strictQuota(QuotaRoundChecked(value))
+}
+
+// QuotaRoundPositiveStrict is QuotaRoundPositiveChecked but returns a typed
+// *QuotaClamp error instead of allowing a saturated result to reach billing.
+func QuotaRoundPositiveStrict(value float64) (int, error) {
+	return strictQuota(QuotaRoundPositiveChecked(value))
 }
 
 // QuotaFromDecimal converts a computed quota decimal to int with saturation.
