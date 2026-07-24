@@ -49,9 +49,15 @@ func setupImageTaskControllerTestDB(t *testing.T) (*gorm.DB, func()) {
 	require.NoError(t, db.AutoMigrate(&model.Task{}))
 
 	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldRedisEnabled := common.RedisEnabled
 	model.DB = db
+	model.LOG_DB = db
+	common.RedisEnabled = false
 	return db, func() {
 		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.RedisEnabled = oldRedisEnabled
 		_ = sqlDB.Close()
 	}
 }
@@ -800,6 +806,64 @@ func TestCancelImageTaskSyncBridgeWaitFailsOpenTaskAndRemovesBody(t *testing.T) 
 	require.Empty(t, reloaded.PrivateData.RequestBodyPath)
 	_, statErr := os.Stat(bodyPath)
 	require.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func TestCancelImageTaskSyncBridgeWaitDoesNotExportRefundWithoutConsume(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, cleanup := setupImageTaskControllerTestDB(t)
+	t.Cleanup(cleanup)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Log{}, &model.QuotaData{}, &model.TokenUsageDaily{}, &model.Channel{}))
+	oldDataExportEnabled := common.DataExportEnabled
+	oldNodeName := common.NodeName
+	common.DataExportEnabled = true
+	common.NodeName = "sync-cancel-node"
+	model.CacheQuotaDataLock.Lock()
+	model.CacheQuotaData = make(map[string]*model.QuotaData)
+	model.CacheQuotaDataLock.Unlock()
+	t.Cleanup(func() {
+		common.DataExportEnabled = oldDataExportEnabled
+		common.NodeName = oldNodeName
+		model.CacheQuotaDataLock.Lock()
+		model.CacheQuotaData = make(map[string]*model.QuotaData)
+		model.CacheQuotaDataLock.Unlock()
+	})
+	require.NoError(t, db.Create(&model.User{Id: 2, Username: "image-owner", Password: "password123", Quota: 10000, Status: common.UserStatusEnabled}).Error)
+	require.NoError(t, db.Create(&model.Token{Id: 2, UserId: 2, Name: "image-token", Key: "sk-image", RemainQuota: 5000, Status: common.TokenStatusEnabled}).Error)
+	require.NoError(t, db.Create(&model.Channel{Id: 2, Name: "image-channel", Status: common.ChannelStatusEnabled}).Error)
+	bodyPath, err := common.WriteImageTaskBodyCacheFile([]byte(`{"prompt":"draw"}`))
+	require.NoError(t, err)
+	task := &model.Task{
+		TaskID:    "task_sync_bridge_export_cancel",
+		Platform:  constant.TaskPlatformImage,
+		UserId:    2,
+		ChannelId: 2,
+		Status:    model.TaskStatusQueued,
+		Progress:  "0%",
+		Quota:     3000,
+		Group:     "default",
+		Properties: model.Properties{
+			OriginModelName: "gpt-image-1",
+		},
+		PrivateData: model.TaskPrivateData{
+			RequestBodyPath: bodyPath,
+			TokenId:         2,
+			NodeName:        "sync-cancel-node",
+			BillingSource:   service.BillingSourceWallet,
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	body, apiErr := cancelImageTaskSyncBridgeWait(ctx, task, "image generation timed out")
+	model.SaveQuotaDataCache()
+
+	require.Empty(t, body)
+	require.NotNil(t, apiErr)
+	var rows []model.QuotaData
+	require.NoError(t, db.Find(&rows).Error)
+	require.Empty(t, rows)
 }
 
 func TestCancelImageTaskSyncBridgeWaitKeepsSubmittedTaskRunning(t *testing.T) {

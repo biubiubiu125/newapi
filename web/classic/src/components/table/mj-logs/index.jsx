@@ -25,6 +25,7 @@ import MjLogsActions from './MjLogsActions';
 import MjLogsFilters from './MjLogsFilters';
 import ColumnSelectorModal from './modals/ColumnSelectorModal';
 import ContentModal from './modals/ContentModal';
+import UserInfoModal from '../usage-logs/modals/UserInfoModal';
 import { useMjLogsData } from '../../../hooks/mj-logs/useMjLogsData';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 import { createCardProPagination } from '../../../helpers/utils';
@@ -37,6 +38,7 @@ const MjLogsPage = () => {
     <>
       {/* Modals */}
       <ColumnSelectorModal {...mjLogsData} />
+      <UserInfoModal {...mjLogsData} />
       <ContentModal {...mjLogsData} />
 
       <Layout>

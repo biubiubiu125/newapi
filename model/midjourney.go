@@ -107,6 +107,21 @@ func GetAllUnFinishTasks() []*Midjourney {
 	return tasks
 }
 
+func GetFailedMidjourneyTasksNeedingRefundSettlement() []*Midjourney {
+	var tasks []*Midjourney
+	err := DB.Where(
+		"progress = ? AND status = ? AND quota != ? AND COALESCE(settlement_status, '') != ?",
+		"100%",
+		"FAILURE",
+		0,
+		TaskSettlementStatusReview,
+	).Find(&tasks).Error
+	if err != nil {
+		return nil
+	}
+	return tasks
+}
+
 func HasUnfinishedMidjourneyTasks() bool {
 	var id int
 	err := DB.Model(&Midjourney{}).

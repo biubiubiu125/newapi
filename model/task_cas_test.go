@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -45,6 +46,7 @@ func TestMain(m *testing.M) {
 		&User{},
 		&UserLoginIdentifier{},
 		&Token{},
+		&TokenUsageDaily{},
 		&Log{},
 		&Channel{},
 		&QuotaData{},
@@ -83,6 +85,7 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM users")
 		DB.Exec("DELETE FROM user_login_identifiers")
 		DB.Exec("DELETE FROM tokens")
+		DB.Exec("DELETE FROM token_usage_dailies")
 		DB.Exec("DELETE FROM logs")
 		DB.Exec("DELETE FROM channels")
 		DB.Exec("DELETE FROM quota_data")
@@ -124,6 +127,29 @@ func TestTaskDispatchStateKeyPredicateQuotesColumn(t *testing.T) {
 		Find(&TaskDispatchState{}).Statement
 
 	require.Contains(t, stmt.SQL.String(), "`key`")
+}
+
+func TestTaskSettlementUpdatesTreatNoopRowsAffectedAsExistingRow(t *testing.T) {
+	body, err := os.ReadFile("task.go")
+	require.NoError(t, err)
+	source := string(body)
+
+	for _, fn := range []string{
+		"func (t *Task) UpdateSubmitSettlementError() error",
+		"func (t *Task) UpdateQuota() error",
+	} {
+		start := strings.Index(source, fn)
+		require.NotEqual(t, -1, start, fn)
+		end := strings.Index(source[start+len(fn):], "\nfunc ")
+		if end == -1 {
+			end = len(source)
+		} else {
+			end += start + len(fn)
+		}
+		block := source[start:end]
+		require.Contains(t, block, "taskRowExists(t.ID)")
+		require.Contains(t, block, "return nil")
+	}
 }
 
 func TestGetRunnableImageTasksFairByChannelBoundsChannelSampling(t *testing.T) {
@@ -988,6 +1014,16 @@ func TestTaskStatusQueryTreatsImageSettlementReviewAsFailure(t *testing.T) {
 		SubmitTime:       now,
 		SettlementStatus: TaskSettlementStatusReview,
 	}
+	videoReviewTask := &Task{
+		TaskID:           "task_video_review_status_query",
+		Platform:         constant.TaskPlatform("video"),
+		UserId:           1,
+		Group:            "default",
+		Status:           TaskStatusSuccess,
+		Progress:         "100%",
+		SubmitTime:       now,
+		SettlementStatus: TaskSettlementStatusReview,
+	}
 	successTask := &Task{
 		TaskID:           "task_image_success_status_query",
 		Platform:         constant.TaskPlatformImage,
@@ -1008,18 +1044,21 @@ func TestTaskStatusQueryTreatsImageSettlementReviewAsFailure(t *testing.T) {
 		SubmitTime: now,
 	}
 	insertTask(t, reviewTask)
+	insertTask(t, videoReviewTask)
 	insertTask(t, successTask)
 	insertTask(t, failedTask)
 
 	successIDs := taskIDSet(TaskGetAllTasks(0, 10, SyncTaskQueryParams{Status: string(TaskStatusSuccess)}))
 	require.Contains(t, successIDs, successTask.TaskID)
 	require.NotContains(t, successIDs, reviewTask.TaskID)
+	require.NotContains(t, successIDs, videoReviewTask.TaskID)
 	require.Equal(t, int64(1), TaskCountAllTasks(SyncTaskQueryParams{Status: string(TaskStatusSuccess)}))
 
 	failureIDs := taskIDSet(TaskGetAllTasks(0, 10, SyncTaskQueryParams{Status: string(TaskStatusFailure)}))
 	require.Contains(t, failureIDs, failedTask.TaskID)
 	require.Contains(t, failureIDs, reviewTask.TaskID)
-	require.Equal(t, int64(2), TaskCountAllTasks(SyncTaskQueryParams{Status: string(TaskStatusFailure)}))
+	require.Contains(t, failureIDs, videoReviewTask.TaskID)
+	require.Equal(t, int64(3), TaskCountAllTasks(SyncTaskQueryParams{Status: string(TaskStatusFailure)}))
 }
 
 func taskIDSet(tasks []*Task) map[string]bool {

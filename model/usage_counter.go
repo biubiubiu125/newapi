@@ -102,7 +102,7 @@ func updateTaskUsageWithTokenSyncOptions(db *gorm.DB, userId int, channelId int,
 }
 
 func updateTaskUsageWithTokenAtSyncOptions(db *gorm.DB, userId int, channelId int, tokenId int, quota int, requestCount int, allowMissingChannelRefund bool, usedAt int64) error {
-	if quota == 0 {
+	if quota == 0 && requestCount == 0 {
 		return nil
 	}
 	if usedAt <= 0 {

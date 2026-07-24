@@ -41,6 +41,7 @@ import { cn } from '@/lib/utils'
 import { LOG_TYPE_ENUM } from '../constants'
 import type { UsageLog } from '../data/schema'
 import { parseLogOther } from '../lib/format'
+import { getLogUserDisplayName, openLogUserInfo } from '../lib/log-user'
 import {
   getLogTypeConfig,
   isDisplayableLogType,
@@ -244,20 +245,16 @@ function MobileTokensField({ log }: { log: UsageLog }) {
 function MobileUserField({ log }: { log: UsageLog }) {
   const { sensitiveVisible, setSelectedUserId, setUserInfoDialogOpen } =
     useUsageLogsContext()
-  const userId = log.user_id || null
-  const displayName = log.username || `#${userId || '?'}`
+  const displayName = getLogUserDisplayName(log)
 
-  if (!log.username && !userId) return null
+  if (!displayName) return null
 
   return (
     <button
       type='button'
       className='bg-muted/20 flex min-w-0 items-center gap-1.5 rounded-md px-2 py-1.5 text-left'
       onClick={(e) => {
-        e.stopPropagation()
-        if (userId == null) return
-        setSelectedUserId(userId)
-        setUserInfoDialogOpen(true)
+        openLogUserInfo(log, setSelectedUserId, setUserInfoDialogOpen, e)
       }}
     >
       <Avatar className='ring-border/60 size-6 shrink-0 ring-1'>

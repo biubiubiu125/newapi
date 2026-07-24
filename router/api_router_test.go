@@ -76,6 +76,20 @@ func TestAuthzAndChannelPermissionRoutesAreRegistered(t *testing.T) {
 	require.True(t, paths["GET /api/channel/upstream_updates/task/:task_id"])
 }
 
+func TestFlowQuotaDataRoutesAreRegistered(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	SetApiRouter(engine)
+
+	paths := map[string]bool{}
+	for _, route := range engine.Routes() {
+		paths[route.Method+" "+route.Path] = true
+	}
+
+	require.True(t, paths["GET /api/data/flow"])
+	require.True(t, paths["GET /api/data/flow/self"])
+}
+
 func TestReferralAssetRoutesSupportApiAndPublicPaths(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()

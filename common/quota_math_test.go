@@ -79,6 +79,26 @@ func TestQuotaFromFloatChecked(t *testing.T) {
 	}
 }
 
+func TestQuotaFromPositiveFloatCheckedFloorsPositiveFractionToOne(t *testing.T) {
+	quota, clamp := QuotaFromPositiveFloatChecked(0.4)
+	assert.Equal(t, 1, quota)
+	assert.Nil(t, clamp)
+
+	quota, clamp = QuotaFromPositiveFloatChecked(0)
+	assert.Equal(t, 0, quota)
+	assert.Nil(t, clamp)
+
+	quota, clamp = QuotaFromPositiveFloatChecked(-0.4)
+	assert.Equal(t, 0, quota)
+	assert.Nil(t, clamp)
+
+	quota, clamp = QuotaFromPositiveFloatChecked(overflowingProduct)
+	assert.Equal(t, MaxQuota, quota)
+	if assert.NotNil(t, clamp) {
+		assert.Equal(t, QuotaClampOverflow, clamp.Kind)
+	}
+}
+
 func TestQuotaFromFloatStrictReturnsTypedClampError(t *testing.T) {
 	quota, err := QuotaFromFloatStrict(42.9)
 	require.NoError(t, err)
@@ -96,6 +116,22 @@ func TestQuotaFromFloatStrictReturnsTypedClampError(t *testing.T) {
 	assert.ErrorContains(t, err, "clamped=2147483647")
 }
 
+func TestQuotaFromPositiveFloatStrictFloorsPositiveFractionToOne(t *testing.T) {
+	quota, err := QuotaFromPositiveFloatStrict(0.4)
+	require.NoError(t, err)
+	assert.Equal(t, 1, quota)
+
+	quota, err = QuotaFromPositiveFloatStrict(0)
+	require.NoError(t, err)
+	assert.Equal(t, 0, quota)
+
+	quota, err = QuotaFromPositiveFloatStrict(overflowingProduct)
+	assert.Zero(t, quota)
+	var clamp *QuotaClamp
+	require.ErrorAs(t, err, &clamp)
+	assert.Equal(t, QuotaClampOverflow, clamp.Kind)
+}
+
 // TestQuotaRoundChecked verifies the rounding entry point reports clamps the
 // same way.
 func TestQuotaRoundChecked(t *testing.T) {
@@ -109,6 +145,43 @@ func TestQuotaRoundChecked(t *testing.T) {
 		assert.Equal(t, "QuotaRound", clamp.Op)
 		assert.Equal(t, QuotaClampOverflow, clamp.Kind)
 	}
+}
+
+func TestQuotaRoundPositiveCheckedFloorsPositiveFractionToOne(t *testing.T) {
+	quota, clamp := QuotaRoundPositiveChecked(0.4)
+	assert.Equal(t, 1, quota)
+	assert.Nil(t, clamp)
+
+	quota, clamp = QuotaRoundPositiveChecked(0)
+	assert.Equal(t, 0, quota)
+	assert.Nil(t, clamp)
+
+	quota, clamp = QuotaRoundPositiveChecked(-0.4)
+	assert.Equal(t, 0, quota)
+	assert.Nil(t, clamp)
+
+	quota, clamp = QuotaRoundPositiveChecked(overflowingProduct)
+	assert.Equal(t, MaxQuota, quota)
+	if assert.NotNil(t, clamp) {
+		assert.Equal(t, "QuotaRound", clamp.Op)
+		assert.Equal(t, QuotaClampOverflow, clamp.Kind)
+	}
+}
+
+func TestQuotaRoundPositiveStrictFloorsPositiveFractionToOne(t *testing.T) {
+	quota, err := QuotaRoundPositiveStrict(0.4)
+	require.NoError(t, err)
+	assert.Equal(t, 1, quota)
+
+	quota, err = QuotaRoundPositiveStrict(0)
+	require.NoError(t, err)
+	assert.Equal(t, 0, quota)
+
+	quota, err = QuotaRoundPositiveStrict(overflowingProduct)
+	assert.Zero(t, quota)
+	var clamp *QuotaClamp
+	require.ErrorAs(t, err, &clamp)
+	assert.Equal(t, QuotaClampOverflow, clamp.Kind)
 }
 
 // TestQuotaFromDecimalChecked verifies the decimal entry point reports clamps.

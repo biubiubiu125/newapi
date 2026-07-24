@@ -53,7 +53,7 @@
     "dev": "vite",
     "build": "vite build",
     "lint": "prettier . --check",
-    "test": "node --test src/helpers/boolean.test.js",
+    "test": "node --test src/helpers/boolean.test.js src/helpers/log-user-cell.test.js src/components/table/usage-logs/UsageLogsColumnDefs.test.js src/components/table/mj-logs/MjLogsColumnDefs.test.js src/components/table/task-logs/TaskLogsColumnDefs.test.js src/helpers/dashboard-user-fallback.test.js",
     "lint:fix": "prettier . --write",
     "eslint": "bunx eslint \"**/*.{js,jsx}\" --cache",
     "eslint:fix": "bunx eslint \"**/*.{js,jsx}\" --fix --cache",

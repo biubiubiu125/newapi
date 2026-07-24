@@ -111,6 +111,21 @@ func TestCleanupTerminalTaskSettlementRecordsOnlyDeletesClosedRecords(t *testing
 		SettlementStatus: TaskSettlementStatusPending,
 	}
 	insertTask(t, pendingTask)
+	recalculatedTask := &Task{
+		TaskID:   "task_cleanup_recalculated",
+		Platform: constant.TaskPlatformSuno,
+		Status:   TaskStatusSuccess,
+		Progress: "100%",
+	}
+	insertTask(t, recalculatedTask)
+	refundedTask := &Task{
+		TaskID:   "task_cleanup_refunded",
+		Platform: constant.TaskPlatformSuno,
+		Status:   TaskStatusFailure,
+		Progress: "100%",
+		Quota:    0,
+	}
+	insertTask(t, refundedTask)
 	recentTask := &Task{
 		TaskID:           "task_cleanup_recent",
 		Platform:         constant.TaskPlatformImage,
@@ -125,6 +140,8 @@ func TestCleanupTerminalTaskSettlementRecordsOnlyDeletesClosedRecords(t *testing
 		{TaskPrimaryID: settledTask.ID, PublicTaskID: settledTask.TaskID, Status: TaskSettlementRecordStatusApplied, CreatedAt: oldAt, UpdatedAt: oldAt, AppliedAt: oldAt},
 		{TaskPrimaryID: reviewTask.ID, PublicTaskID: reviewTask.TaskID, Status: TaskSettlementRecordStatusReview, CreatedAt: oldAt, UpdatedAt: oldAt},
 		{TaskPrimaryID: pendingTask.ID, PublicTaskID: pendingTask.TaskID, Status: TaskSettlementRecordStatusApplied, CreatedAt: oldAt, UpdatedAt: oldAt, AppliedAt: oldAt},
+		{TaskPrimaryID: recalculatedTask.ID, PublicTaskID: recalculatedTask.TaskID, Status: TaskSettlementRecordStatusApplied, CreatedAt: oldAt, UpdatedAt: oldAt, AppliedAt: oldAt},
+		{TaskPrimaryID: refundedTask.ID, PublicTaskID: refundedTask.TaskID, Status: TaskSettlementRecordStatusApplied, CreatedAt: oldAt, UpdatedAt: oldAt, AppliedAt: oldAt},
 		{TaskPrimaryID: recentTask.ID, PublicTaskID: recentTask.TaskID, Status: TaskSettlementRecordStatusApplied, CreatedAt: now, UpdatedAt: now, AppliedAt: now},
 		{TaskPrimaryID: 999999, PublicTaskID: "missing_task", Status: TaskSettlementRecordStatusApplied, CreatedAt: oldAt, UpdatedAt: oldAt, AppliedAt: oldAt},
 		{TaskPrimaryID: pendingTask.ID + 1000, PublicTaskID: "prepared_missing", Status: TaskSettlementRecordStatusPrepared, CreatedAt: oldAt, UpdatedAt: oldAt},
@@ -132,7 +149,7 @@ func TestCleanupTerminalTaskSettlementRecordsOnlyDeletesClosedRecords(t *testing
 
 	deleted, err := CleanupTerminalTaskSettlementRecords(now-3600, 100)
 	require.NoError(t, err)
-	require.EqualValues(t, 3, deleted)
+	require.EqualValues(t, 5, deleted)
 
 	var remaining []TaskSettlementRecord
 	require.NoError(t, DB.Order("public_task_id").Find(&remaining).Error)

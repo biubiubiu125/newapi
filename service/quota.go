@@ -241,15 +241,13 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 	}
 	logQuota := attachSettlementLogFields(other, relayInfo, quota, settlementErr)
 	settlementSucceeded := settlementErr == nil
-	if logQuota > 0 {
-		if err := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); err != nil {
-			if settlementSucceeded {
-				if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
-					return fmt.Errorf("post wss consume quota usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
-				}
+	if err := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); err != nil {
+		if settlementSucceeded {
+			if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
+				return fmt.Errorf("post wss consume quota usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
 			}
-			return fmt.Errorf("post wss consume quota usage counter update failed: %w", err)
 		}
+		return fmt.Errorf("post wss consume quota usage counter update failed: %w", err)
 	}
 	attachQuotaSaturation(ctx, relayInfo, other)
 	if err := model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
@@ -267,10 +265,8 @@ func PostWssConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, mod
 		Other:            other,
 	}); err != nil {
 		rollbackErrs := []string{}
-		if logQuota > 0 {
-			if rollbackErr := RollbackTaskConsumptionUsage(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); rollbackErr != nil {
-				rollbackErrs = append(rollbackErrs, rollbackErr.Error())
-			}
+		if rollbackErr := RollbackTaskConsumptionUsage(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); rollbackErr != nil {
+			rollbackErrs = append(rollbackErrs, rollbackErr.Error())
 		}
 		if settlementSucceeded {
 			if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
@@ -394,15 +390,13 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	}
 	logQuota := attachSettlementLogFields(other, relayInfo, quota, settlementErr)
 	settlementSucceeded := settlementErr == nil
-	if logQuota > 0 {
-		if err := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); err != nil {
-			if settlementSucceeded {
-				if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
-					return fmt.Errorf("post audio consume quota usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
-				}
+	if err := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); err != nil {
+		if settlementSucceeded {
+			if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
+				return fmt.Errorf("post audio consume quota usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
 			}
-			return fmt.Errorf("post audio consume quota usage counter update failed: %w", err)
 		}
+		return fmt.Errorf("post audio consume quota usage counter update failed: %w", err)
 	}
 	attachQuotaSaturation(ctx, relayInfo, other)
 	if err := model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
@@ -420,10 +414,8 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		Other:            other,
 	}); err != nil {
 		rollbackErrs := []string{}
-		if logQuota > 0 {
-			if rollbackErr := RollbackTaskConsumptionUsage(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); rollbackErr != nil {
-				rollbackErrs = append(rollbackErrs, rollbackErr.Error())
-			}
+		if rollbackErr := RollbackTaskConsumptionUsage(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); rollbackErr != nil {
+			rollbackErrs = append(rollbackErrs, rollbackErr.Error())
 		}
 		if settlementSucceeded {
 			if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {

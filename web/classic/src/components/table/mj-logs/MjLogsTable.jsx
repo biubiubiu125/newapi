@@ -40,6 +40,7 @@ const MjLogsTable = (mjLogsData) => {
     copyText,
     openContentModal,
     openImageModal,
+    showUserInfoFunc,
     isAdminUser,
     t,
     COLUMN_KEYS,
@@ -53,9 +54,18 @@ const MjLogsTable = (mjLogsData) => {
       copyText,
       openContentModal,
       openImageModal,
+      showUserInfoFunc,
       isAdminUser,
     });
-  }, [t, COLUMN_KEYS, copyText, openContentModal, openImageModal, isAdminUser]);
+  }, [
+    t,
+    COLUMN_KEYS,
+    copyText,
+    openContentModal,
+    openImageModal,
+    showUserInfoFunc,
+    isAdminUser,
+  ]);
 
   // Filter columns based on visibility settings
   const getVisibleColumns = () => {

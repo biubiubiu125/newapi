@@ -9,9 +9,6 @@ import (
 )
 
 func RollbackTaskConsumptionUsage(userId int, channelId int, tokenId int, quota int) error {
-	if quota == 0 {
-		return nil
-	}
 	if err := model.UpdateTaskConsumptionUsageRollbackWithTokenSync(userId, channelId, tokenId, quota); err != nil {
 		return fmt.Errorf("rollback task consumption usage failed: %w", err)
 	}

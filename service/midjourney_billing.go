@@ -209,43 +209,133 @@ func updateMidjourneyBillingState(task *model.Midjourney) error {
 	return nil
 }
 
+const midjourneySettlementOperationRefund = "refund"
+
+func midjourneySettlementAppliedDetails(operation string, appliedQuota int, preConsumedQuota int, quotaDelta int, logType int) model.TaskSettlementApplicationAppliedDetails {
+	return model.TaskSettlementApplicationAppliedDetails{
+		Operation:        operation,
+		AppliedQuota:     common.GetPointer(appliedQuota),
+		PreConsumedQuota: common.GetPointer(preConsumedQuota),
+		QuotaDelta:       common.GetPointer(quotaDelta),
+		LogType:          common.GetPointer(logType),
+	}
+}
+
+func validateAppliedMidjourneyRefundRecord(record *model.MidjourneySettlementRecord) error {
+	if record != nil && record.Operation != "" && record.Operation != midjourneySettlementOperationRefund {
+		return fmt.Errorf("applied midjourney settlement operation is %s, cannot finalize refund", record.Operation)
+	}
+	return nil
+}
+
+func finalizeAppliedMidjourneyRefund(task *model.Midjourney) error {
+	if task == nil {
+		return nil
+	}
+	task.Quota = 0
+	if !clearMidjourneySettlementReview(task) {
+		task.SettlementStatus = ""
+	}
+	return updateMidjourneyBillingState(task)
+}
+
+func markMidjourneyAccountingRecordReview(ctx context.Context, task *model.Midjourney, operation string, accountingErr error) {
+	if task == nil || task.Id <= 0 || accountingErr == nil {
+		return
+	}
+	message := fmt.Sprintf("%s accounting requires manual review: %s", operation, strings.ReplaceAll(accountingErr.Error(), "\n", " "))
+	if err := model.MarkMidjourneySettlementApplicationReview(task.Id, message); err != nil {
+		logger.LogError(ctx, fmt.Sprintf("mark midjourney accounting record review failed task %s: %s", task.MjId, err.Error()))
+	}
+}
+
+func midjourneyAccountingReviewError(operation string, record *model.MidjourneySettlementRecord) error {
+	msg := ""
+	if record != nil {
+		msg = strings.TrimSpace(record.Error)
+	}
+	if msg == "" {
+		msg = "manual review is required"
+	}
+	return fmt.Errorf("%s accounting requires manual review: %s", operation, msg)
+}
+
+func beginMidjourneyAccountingApplication(task *model.Midjourney, operation string) (*model.MidjourneySettlementRecord, bool, error) {
+	record, shouldApply, err := model.BeginMidjourneySettlementApplication(task, operation)
+	if err != nil {
+		return nil, false, err
+	}
+	if !shouldApply {
+		return record, false, nil
+	}
+	if err := model.MarkMidjourneySettlementApplicationApplying(task.Id); err != nil {
+		latestRecord, exists, loadErr := model.GetMidjourneySettlementRecord(task.Id)
+		if loadErr == nil && exists && latestRecord.Status != model.TaskSettlementRecordStatusPrepared {
+			return latestRecord, false, nil
+		}
+		if loadErr != nil {
+			return record, false, fmt.Errorf("load %s accounting after applying CAS failure: %w", operation, loadErr)
+		}
+		return record, false, fmt.Errorf("mark %s accounting applying: %w", operation, err)
+	}
+	return record, true, nil
+}
+
 func RefundMidjourneyTaskQuota(ctx context.Context, task *model.Midjourney, reason string) error {
-	if task == nil || task.Quota == 0 {
+	if task == nil {
 		return nil
 	}
 	quota := task.Quota
-	originalQuota := task.Quota
-	originalFailReason := task.FailReason
-	originalSettlementStatus := task.SettlementStatus
-
-	restoreTaskState := func(persist bool) {
-		task.Quota = originalQuota
-		task.FailReason = originalFailReason
-		task.SettlementStatus = originalSettlementStatus
-		if persist {
-			if restoreErr := updateMidjourneyBillingState(task); restoreErr != nil {
-				logger.LogError(ctx, fmt.Sprintf("restore midjourney billing state after refund failure failed task %s: %s", task.MjId, restoreErr.Error()))
-			}
+	if quota == 0 {
+		record, exists, err := model.GetMidjourneySettlementRecord(task.Id)
+		if err != nil {
+			return err
 		}
+		if exists && record.Status == model.TaskSettlementRecordStatusApplied {
+			if err := validateAppliedMidjourneyRefundRecord(record); err != nil {
+				reviewErr := fmt.Errorf("finalize applied midjourney refund failed: %w", err)
+				markMidjourneyBillingReview(ctx, task, reviewErr)
+				return reviewErr
+			}
+			return finalizeAppliedMidjourneyRefund(task)
+		}
+		return nil
 	}
-
-	task.Quota = 0
-	clearMidjourneySettlementReview(task)
-	taskStatePersisted := false
-	if task.Id > 0 {
-		if err := updateMidjourneyBillingState(task); err != nil {
-			restoreTaskState(false)
-			reviewErr := fmt.Errorf("update midjourney quota before refund failed: %w", err)
+	record, shouldApply, err := beginMidjourneyAccountingApplication(task, midjourneySettlementOperationRefund)
+	if err != nil {
+		reviewErr := fmt.Errorf("begin midjourney refund accounting failed: %w", err)
+		markMidjourneyBillingReview(ctx, task, reviewErr)
+		return reviewErr
+	}
+	if !shouldApply {
+		switch record.Status {
+		case model.TaskSettlementRecordStatusApplied:
+			if err := validateAppliedMidjourneyRefundRecord(record); err != nil {
+				reviewErr := fmt.Errorf("finalize applied midjourney refund failed: %w", err)
+				markMidjourneyBillingReview(ctx, task, reviewErr)
+				return reviewErr
+			}
+			if err := finalizeAppliedMidjourneyRefund(task); err != nil {
+				reviewErr := fmt.Errorf("finalize applied midjourney refund failed: %w", err)
+				markMidjourneyBillingReview(ctx, task, reviewErr)
+				return reviewErr
+			}
+			return nil
+		case model.TaskSettlementRecordStatusReview:
+			reviewErr := midjourneyAccountingReviewError("midjourney refund", record)
 			markMidjourneyBillingReview(ctx, task, reviewErr)
 			return reviewErr
+		case model.TaskSettlementRecordStatusApplying:
+			return nil
+		default:
+			return fmt.Errorf("midjourney refund accounting has unexpected record status %s for task %s", record.Status, task.MjId)
 		}
-		taskStatePersisted = true
 	}
 
 	tokenAdjusted, tokenSnapshot, err := refundMidjourneyTokenQuota(ctx, task, quota)
 	if err != nil {
-		restoreTaskState(taskStatePersisted)
 		reviewErr := fmt.Errorf("refund midjourney token quota failed: %w", err)
+		markMidjourneyAccountingRecordReview(ctx, task, "midjourney refund", reviewErr)
 		markMidjourneyBillingReview(ctx, task, reviewErr)
 		return reviewErr
 	}
@@ -256,8 +346,8 @@ func RefundMidjourneyTaskQuota(ctx context.Context, task *model.Midjourney, reas
 				rollbackErrs = append(rollbackErrs, rollbackErr.Error())
 			}
 		}
-		restoreTaskState(taskStatePersisted)
 		reviewErr := taskAccountingRollbackError(fmt.Errorf("refund midjourney funding failed: %w", err), rollbackErrs)
+		markMidjourneyAccountingRecordReview(ctx, task, "midjourney refund", reviewErr)
 		markMidjourneyBillingReview(ctx, task, reviewErr)
 		return reviewErr
 	}
@@ -271,14 +361,16 @@ func RefundMidjourneyTaskQuota(ctx context.Context, task *model.Midjourney, reas
 				rollbackErrs = append(rollbackErrs, tokenErr.Error())
 			}
 		}
-		restoreTaskState(taskStatePersisted)
 		reviewErr := taskAccountingRollbackError(err, rollbackErrs)
+		markMidjourneyAccountingRecordReview(ctx, task, "midjourney refund", reviewErr)
 		markMidjourneyBillingReview(ctx, task, reviewErr)
 		return reviewErr
 	}
 	other := map[string]interface{}{
-		"task_id": task.MjId,
-		"reason":  reason,
+		"task_id":            task.MjId,
+		"reason":             reason,
+		"pre_consumed_quota": quota,
+		"actual_quota":       0,
 	}
 	if task.BillingSource != "" {
 		other["billing_source"] = task.BillingSource
@@ -309,8 +401,22 @@ func RefundMidjourneyTaskQuota(ctx context.Context, task *model.Midjourney, reas
 				rollbackErrs = append(rollbackErrs, tokenErr.Error())
 			}
 		}
-		restoreTaskState(taskStatePersisted)
 		reviewErr := taskAccountingRollbackError(fmt.Errorf("record midjourney refund log failed: %w", err), rollbackErrs)
+		markMidjourneyAccountingRecordReview(ctx, task, "midjourney refund", reviewErr)
+		markMidjourneyBillingReview(ctx, task, reviewErr)
+		return reviewErr
+	}
+	if err := model.MarkMidjourneySettlementApplicationApplied(
+		task.Id,
+		midjourneySettlementAppliedDetails(midjourneySettlementOperationRefund, 0, quota, -quota, model.LogTypeRefund),
+	); err != nil {
+		reviewErr := fmt.Errorf("mark midjourney refund accounting applied failed: %w", err)
+		markMidjourneyAccountingRecordReview(ctx, task, "midjourney refund", reviewErr)
+		markMidjourneyBillingReview(ctx, task, reviewErr)
+		return reviewErr
+	}
+	if err := finalizeAppliedMidjourneyRefund(task); err != nil {
+		reviewErr := fmt.Errorf("finalize applied midjourney refund failed: %w", err)
 		markMidjourneyBillingReview(ctx, task, reviewErr)
 		return reviewErr
 	}

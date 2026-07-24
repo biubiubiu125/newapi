@@ -443,15 +443,13 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 	logQuota := attachSettlementLogFields(other, relayInfo, summary.Quota, settlementErr)
 	settlementSucceeded := settlementErr == nil
-	if logQuota > 0 {
-		if err := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); err != nil {
-			if settlementSucceeded {
-				if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
-					return fmt.Errorf("post text consume quota usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
-				}
+	if err := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); err != nil {
+		if settlementSucceeded {
+			if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
+				return fmt.Errorf("post text consume quota usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
 			}
-			return fmt.Errorf("post text consume quota usage counter update failed: %w", err)
 		}
+		return fmt.Errorf("post text consume quota usage counter update failed: %w", err)
 	}
 	if summary.ImageTokens != 0 {
 		other["image"] = true
@@ -528,10 +526,8 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		Other:            other,
 	}); err != nil {
 		rollbackErrs := []string{}
-		if logQuota > 0 {
-			if rollbackErr := RollbackTaskConsumptionUsage(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); rollbackErr != nil {
-				rollbackErrs = append(rollbackErrs, rollbackErr.Error())
-			}
+		if rollbackErr := RollbackTaskConsumptionUsage(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); rollbackErr != nil {
+			rollbackErrs = append(rollbackErrs, rollbackErr.Error())
 		}
 		if settlementSucceeded {
 			if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {

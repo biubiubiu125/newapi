@@ -152,6 +152,12 @@ export const useTaskLogsData = () => {
 
   // Handle column visibility change
   const handleColumnVisibilityChange = (columnKey, checked) => {
+    if (
+      !isAdminUser &&
+      (columnKey === COLUMN_KEYS.CHANNEL || columnKey === COLUMN_KEYS.USERNAME)
+    ) {
+      return;
+    }
     const updatedColumns = { ...visibleColumns, [columnKey]: checked };
     setVisibleColumns(updatedColumns);
   };

@@ -129,7 +129,7 @@ func recordTokenUsageWithDB(db *gorm.DB, tokenId int, userId int, quota int, use
 	if usedAt <= 0 {
 		usedAt = common.GetTimestamp()
 	}
-	if quota == 0 {
+	if quota == 0 && requestCount == 0 {
 		return touchTokenAccessedTimeWithDB(db, tokenId, usedAt)
 	}
 	lastUsedAt := int64(0)

@@ -50,6 +50,7 @@ import {
   isViolationFeeLog,
   renderAuditContent,
 } from '../../lib/format'
+import { getLogUserDisplayName, openLogUserInfo } from '../../lib/log-user'
 import {
   isDisplayableLogType,
   isTimingLogType,
@@ -498,20 +499,21 @@ export function useCommonLogsColumns(isAdmin: boolean): ColumnDef<UsageLog>[] {
           const { sensitiveVisible, setSelectedUserId, setUserInfoDialogOpen } =
             useUsageLogsContext()
           const log = row.original
-          const userId = log.user_id || null
-          const displayName = log.username || `#${userId || '?'}`
+          const displayName = getLogUserDisplayName(log)
 
-          if (!log.username && !userId) return null
+          if (!displayName) return null
 
           return (
             <button
               type='button'
               className='flex items-center gap-1.5 text-left'
               onClick={(e) => {
-                e.stopPropagation()
-                if (userId == null) return
-                setSelectedUserId(userId)
-                setUserInfoDialogOpen(true)
+                openLogUserInfo(
+                  log,
+                  setSelectedUserId,
+                  setUserInfoDialogOpen,
+                  e
+                )
               }}
             >
               <Avatar className='ring-border/60 size-6 ring-1 max-sm:hidden'>

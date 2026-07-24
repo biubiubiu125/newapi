@@ -92,6 +92,46 @@ func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {
 	assert.Equal(t, "zh", got.GetSetting().Language)
 }
 
+func TestCacheUpdateUserQuotaRefreshesQuotaField(t *testing.T) {
+	setupUserUpdateTestState(t)
+	common.RedisEnabled = true
+
+	oldQuotaField := cacheUpdateUserQuotaField
+	oldUserFields := cacheUpdateUserFields
+	t.Cleanup(func() {
+		cacheUpdateUserQuotaField = oldQuotaField
+		cacheUpdateUserFields = oldUserFields
+	})
+
+	var quotaUserID int
+	var quotaValue int
+	var fieldsUser User
+	cacheUpdateUserQuotaField = func(userId int, quota int) error {
+		quotaUserID = userId
+		quotaValue = quota
+		return nil
+	}
+	cacheUpdateUserFields = func(user User) error {
+		fieldsUser = user
+		return nil
+	}
+
+	require.NoError(t, DB.Create(&User{
+		Id:       3,
+		Username: "cached-quota-user",
+		Password: "password",
+		Status:   common.UserStatusEnabled,
+		Quota:    1234,
+	}).Error)
+
+	require.NoError(t, CacheUpdateUserQuota(3))
+
+	assert.Equal(t, 3, quotaUserID)
+	assert.Equal(t, 1234, quotaValue)
+	assert.Equal(t, 3, fieldsUser.Id)
+	assert.Equal(t, "cached-quota-user", fieldsUser.Username)
+}
+
 func TestEnsureEmailAvailableRejectsExistingEmailCaseInsensitive(t *testing.T) {
 	setupUserUpdateTestState(t)
 

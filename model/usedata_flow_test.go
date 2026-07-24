@@ -132,6 +132,59 @@ func TestGetFlowQuotaDataUsesQuotaDataRoleSpecificDimensions(t *testing.T) {
 	require.Equal(t, 175, selfRows[0].Quota)
 }
 
+func TestGetFlowQuotaDataMergesRenamedUsernameRows(t *testing.T) {
+	truncateTables(t)
+	seedFlowLookupData(t)
+	require.NoError(t, DB.Create(&User{
+		Id:       3,
+		Username: "new-owner",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	seedFlowQuotaData(t, QuotaData{
+		UserID:    3,
+		Username:  "old-owner",
+		NodeName:  "node-a",
+		TokenID:   11,
+		UseGroup:  "vip",
+		ModelName: "gpt-a",
+		ChannelID: 1,
+		CreatedAt: 1000,
+		Count:     1,
+		Quota:     100,
+		TokenUsed: 40,
+	})
+	seedFlowQuotaData(t, QuotaData{
+		UserID:    3,
+		Username:  "new-owner",
+		NodeName:  "node-a",
+		TokenID:   11,
+		UseGroup:  "vip",
+		ModelName: "gpt-a",
+		ChannelID: 1,
+		CreatedAt: 1100,
+		Count:     2,
+		Quota:     200,
+		TokenUsed: 80,
+	})
+
+	adminRows, err := GetFlowQuotaData(900, 2000, "new-owner", 0, common.RoleAdminUser)
+	require.NoError(t, err)
+	require.Len(t, adminRows, 1)
+	require.Equal(t, 3, adminRows[0].UserID)
+	require.Equal(t, "new-owner", adminRows[0].Username)
+	require.Equal(t, 3, adminRows[0].Count)
+	require.Equal(t, 300, adminRows[0].Quota)
+	require.Equal(t, 120, adminRows[0].TokenUsed)
+
+	rootRows, err := GetFlowQuotaData(900, 2000, "", 0, common.RoleRootUser)
+	require.NoError(t, err)
+	require.Len(t, rootRows, 1)
+	require.Equal(t, 3, rootRows[0].UserID)
+	require.Equal(t, "new-owner", rootRows[0].Username)
+	require.Equal(t, 300, rootRows[0].Quota)
+}
+
 func TestLogQuotaDataSplitsRowsByUseGroupTokenChannelAndNode(t *testing.T) {
 	truncateTables(t)
 	CacheQuotaDataLock.Lock()

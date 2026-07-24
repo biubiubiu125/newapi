@@ -66,15 +66,13 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) error {
 	logQuota := attachSettlementLogFieldsMessage(other, info, info.PriceData.Quota, settlementErr)
 	attachQuotaSaturation(c, info, other)
 	settlementSucceeded := c.GetBool(contextKeySettlementApplied)
-	if logQuota > 0 {
-		if err := model.UpdateTaskConsumptionUsageWithTokenSync(info.UserId, info.ChannelId, info.TokenId, logQuota); err != nil {
-			if settlementSucceeded {
-				if rollbackErr := RollbackBillingSettlement(c, info, logQuota); rollbackErr != nil {
-					return fmt.Errorf("log task consumption usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
-				}
+	if err := model.UpdateTaskConsumptionUsageWithTokenSync(info.UserId, info.ChannelId, info.TokenId, logQuota); err != nil {
+		if settlementSucceeded {
+			if rollbackErr := RollbackBillingSettlement(c, info, logQuota); rollbackErr != nil {
+				return fmt.Errorf("log task consumption usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
 			}
-			return fmt.Errorf("log task consumption usage counter update failed: %w", err)
 		}
+		return fmt.Errorf("log task consumption usage counter update failed: %w", err)
 	}
 	if err := model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
@@ -87,10 +85,8 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) error {
 		Other:     other,
 	}); err != nil {
 		rollbackErrs := []string{}
-		if logQuota > 0 {
-			if rollbackErr := RollbackTaskConsumptionUsage(info.UserId, info.ChannelId, info.TokenId, logQuota); rollbackErr != nil {
-				rollbackErrs = append(rollbackErrs, rollbackErr.Error())
-			}
+		if rollbackErr := RollbackTaskConsumptionUsage(info.UserId, info.ChannelId, info.TokenId, logQuota); rollbackErr != nil {
+			rollbackErrs = append(rollbackErrs, rollbackErr.Error())
 		}
 		if settlementSucceeded {
 			if rollbackErr := RollbackBillingSettlement(c, info, logQuota); rollbackErr != nil {
@@ -480,6 +476,13 @@ func beginTaskAccountingApplication(task *model.Task, operation string) (*model.
 		return record, false, nil
 	}
 	if err := model.MarkTaskSettlementApplicationApplying(task.ID); err != nil {
+		latestRecord, exists, loadErr := model.GetTaskSettlementRecord(task.ID)
+		if loadErr == nil && exists && latestRecord.Status != model.TaskSettlementRecordStatusPrepared {
+			return latestRecord, false, nil
+		}
+		if loadErr != nil {
+			return record, false, fmt.Errorf("load %s accounting after applying CAS failure: %w", operation, loadErr)
+		}
 		return record, false, fmt.Errorf("mark %s accounting applying: %w", operation, err)
 	}
 	return record, true, nil
@@ -512,6 +515,13 @@ func finalizeAppliedTaskRefund(task *model.Task) error {
 	task.Quota = 0
 	clearTaskSettlementReview(task)
 	return task.UpdateQuota()
+}
+
+func validateAppliedTaskRefundRecord(record *model.TaskSettlementRecord) error {
+	if record != nil && record.Operation != "" && record.Operation != taskSettlementOperationRefund {
+		return fmt.Errorf("applied task settlement operation is %s, cannot finalize refund", record.Operation)
+	}
+	return nil
 }
 
 func finalizeAppliedTaskRecalculation(task *model.Task, actualQuota int) error {
@@ -749,6 +759,26 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) error
 	}
 	quota := task.Quota
 	if quota == 0 {
+		record, exists, err := model.GetTaskSettlementRecord(task.ID)
+		if err != nil {
+			return err
+		}
+		if exists && record.Status == model.TaskSettlementRecordStatusApplied {
+			if err := validateAppliedTaskRefundRecord(record); err != nil {
+				err = taskAccountingRecordError("finalize applied task refund", task, err)
+				attemptedQuota := 0
+				if record.PreConsumedQuota != nil {
+					attemptedQuota = *record.PreConsumedQuota
+				}
+				markTaskRefundReview(ctx, task, attemptedQuota, err)
+				return err
+			}
+			if err := finalizeAppliedTaskRefund(task); err != nil {
+				err = taskAccountingRecordError("finalize applied task refund", task, err)
+				markTaskRefundReview(ctx, task, 0, err)
+				return err
+			}
+		}
 		return nil
 	}
 
@@ -778,6 +808,11 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) error
 	if !shouldApply {
 		switch record.Status {
 		case model.TaskSettlementRecordStatusApplied:
+			if err := validateAppliedTaskRefundRecord(record); err != nil {
+				err = taskAccountingRecordError("finalize applied task refund", task, err)
+				markTaskRefundReview(ctx, task, originalQuota, err)
+				return err
+			}
 			if err := finalizeAppliedTaskRefund(task); err != nil {
 				err = taskAccountingRecordError("finalize applied task refund", task, err)
 				markTaskRefundReview(ctx, task, originalQuota, err)
@@ -789,7 +824,7 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) error
 			markTaskRefundReview(ctx, task, originalQuota, err)
 			return err
 		case model.TaskSettlementRecordStatusApplying:
-			return fmt.Errorf("task refund accounting is already applying for task %s", task.TaskID)
+			return nil
 		default:
 			return fmt.Errorf("task refund accounting has unexpected record status %s for task %s", record.Status, task.TaskID)
 		}
@@ -923,7 +958,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		case model.TaskSettlementRecordStatusReview:
 			return taskAccountingReviewError("task recalculation", record)
 		case model.TaskSettlementRecordStatusApplying:
-			return fmt.Errorf("task recalculation accounting is already applying for task %s", task.TaskID)
+			return nil
 		default:
 			return fmt.Errorf("task recalculation accounting has unexpected record status %s for task %s", record.Status, task.TaskID)
 		}

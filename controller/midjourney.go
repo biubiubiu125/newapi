@@ -25,11 +25,28 @@ type midjourneyPollSummary struct {
 	NullTasksFailed int `json:"null_tasks_failed"`
 }
 
+func recoverTerminalFailedMidjourneyRefunds(ctx context.Context) {
+	tasks := model.GetFailedMidjourneyTasksNeedingRefundSettlement()
+	for _, task := range tasks {
+		if ctx.Err() != nil {
+			return
+		}
+		if task == nil || task.Quota == 0 {
+			continue
+		}
+		if err := service.RefundMidjourneyTaskQuota(ctx, task, "终态失败任务退款恢复"); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("midjourney terminal failed task %s refund recovery failed: %s", task.MjId, err.Error()))
+		}
+	}
+}
+
 func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, total int)) midjourneyPollSummary {
 	summary := midjourneyPollSummary{}
 	if ctx == nil {
 		ctx = context.Background()
 	}
+
+	recoverTerminalFailedMidjourneyRefunds(ctx)
 
 	tasks := model.GetAllUnFinishTasks()
 	if len(tasks) == 0 {

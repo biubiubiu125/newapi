@@ -1,6 +1,7 @@
 package service
 
 import (
+	"errors"
 	"math"
 	"net/http/httptest"
 	"testing"
@@ -9,11 +10,13 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -662,6 +665,369 @@ func TestComposeTieredTextQuotaErrorFallbackUsesPreConsumedQuota(t *testing.T) {
 
 	require.Equal(t, int64(12500), summary.ToolCallSurchargeQuota.Round(0).IntPart())
 	require.Equal(t, 14500, quota)
+}
+
+type failingTextQuotaSettlementFunding struct {
+	err error
+}
+
+func (f *failingTextQuotaSettlementFunding) Source() string { return BillingSourceWallet }
+func (f *failingTextQuotaSettlementFunding) PreConsume(amount int) error {
+	return nil
+}
+func (f *failingTextQuotaSettlementFunding) Settle(delta int) error {
+	return f.err
+}
+func (f *failingTextQuotaSettlementFunding) Refund() error {
+	return nil
+}
+
+func TestPostTextConsumeQuotaCheckedRecordsUsageLogWhenSettlementFails(t *testing.T) {
+	truncate(t)
+	oldDataExportEnabled := common.DataExportEnabled
+	common.DataExportEnabled = true
+	t.Cleanup(func() {
+		common.DataExportEnabled = oldDataExportEnabled
+		model.CacheQuotaDataLock.Lock()
+		model.CacheQuotaData = make(map[string]*model.QuotaData)
+		model.CacheQuotaDataLock.Unlock()
+	})
+	model.CacheQuotaDataLock.Lock()
+	model.CacheQuotaData = make(map[string]*model.QuotaData)
+	model.CacheQuotaDataLock.Unlock()
+	require.NoError(t, model.DB.Create(&model.User{
+		Id:       9501,
+		Username: "settle-log-owner",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+		Quota:    10000,
+	}).Error)
+	seedChannel(t, 1)
+	seedToken(t, 2, 9501, "settle-token-key", 1000)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("username", "settle-log-owner")
+	ctx.Set("token_name", "settle-token")
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          9501,
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 1},
+		TokenId:         2,
+		TokenKey:        "settle-token-key",
+		OriginModelName: "gpt-4o",
+		UsingGroup:      "default",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{PublicTaskID: "task_settle_1"},
+	}
+	relayInfo.Billing = &BillingSession{
+		relayInfo:        relayInfo,
+		funding:          &failingTextQuotaSettlementFunding{err: errors.New("settlement failed")},
+		preConsumedQuota: 10,
+	}
+	usage := &dto.Usage{
+		PromptTokens:     20,
+		CompletionTokens: 10,
+		TotalTokens:      30,
+	}
+
+	err := PostTextConsumeQuotaChecked(ctx, relayInfo, usage, nil)
+
+	require.Error(t, err)
+	var log model.Log
+	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", 9501, model.LogTypeConsume).First(&log).Error)
+	require.Equal(t, "settle-log-owner", log.Username)
+	require.Equal(t, "gpt-4o", log.ModelName)
+	require.Equal(t, 10, log.Quota)
+	require.Contains(t, log.Other, "settlement_error")
+	other, err := common.StrToMap(log.Other)
+	require.NoError(t, err)
+	require.Equal(t, "task_settle_1", other["task_id"])
+	require.EqualValues(t, 30, other["attempted_quota"])
+	require.EqualValues(t, 10, other["settled_quota"])
+
+	stat, err := model.SumUsedQuota(model.LogTypeConsume, 0, 0, "gpt-4o", "settle-log-owner", "settle-token", 0, "")
+	require.NoError(t, err)
+	require.Equal(t, 10, stat.Quota)
+
+	require.Eventually(t, func() bool {
+		model.CacheQuotaDataLock.Lock()
+		defer model.CacheQuotaDataLock.Unlock()
+		return len(model.CacheQuotaData) > 0
+	}, time.Second, 10*time.Millisecond)
+	model.SaveQuotaDataCache()
+
+	var quotaData model.QuotaData
+	require.NoError(t, model.DB.Where("user_id = ? AND model_name = ?", 9501, "gpt-4o").First(&quotaData).Error)
+	require.Equal(t, "settle-log-owner", quotaData.Username)
+	require.Equal(t, 10, quotaData.Quota)
+}
+
+func TestPostTextConsumeQuotaRecordsAccountingErrorWhenSettlementFails(t *testing.T) {
+	truncate(t)
+	seedUser(t, 9545, 10000)
+	seedChannel(t, 9546)
+	seedToken(t, 9547, 9545, "text-settlement-audit-token", 1000)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("username", "text-settlement-audit-owner")
+	ctx.Set("token_name", "text-settlement-audit-token")
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          9545,
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 9546},
+		TokenId:         9547,
+		TokenKey:        "text-settlement-audit-token",
+		OriginModelName: "gpt-4o",
+		UsingGroup:      "default",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	relayInfo.Billing = &BillingSession{
+		relayInfo:        relayInfo,
+		funding:          &failingTextQuotaSettlementFunding{err: errors.New("text settlement failed")},
+		preConsumedQuota: 10,
+	}
+	usage := &dto.Usage{
+		PromptTokens:     20,
+		CompletionTokens: 10,
+		TotalTokens:      30,
+	}
+
+	PostTextConsumeQuota(ctx, relayInfo, usage, nil)
+
+	var consumeLog model.Log
+	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", 9545, model.LogTypeConsume).First(&consumeLog).Error)
+	require.Contains(t, consumeLog.Other, "settlement_error")
+	var errorLog model.Log
+	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", 9545, model.LogTypeError).First(&errorLog).Error)
+	require.Contains(t, errorLog.Content, "post text consume quota settlement failed")
+	require.Contains(t, errorLog.Other, "accounting_error")
+}
+
+func TestPostWssConsumeQuotaReturnsSettlementError(t *testing.T) {
+	truncate(t)
+	seedUser(t, 9540, 10000)
+	seedChannel(t, 9541)
+	seedToken(t, 9542, 9540, "wss-settle-token", 1000)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("username", "wss-settle-owner")
+	ctx.Set("token_name", "wss-settle-token")
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          9540,
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 9541},
+		TokenId:         9542,
+		TokenKey:        "wss-settle-token",
+		OriginModelName: "gpt-4o-realtime-preview",
+		UsingGroup:      "default",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	relayInfo.Billing = &BillingSession{
+		relayInfo:        relayInfo,
+		funding:          &failingTextQuotaSettlementFunding{err: errors.New("wss settlement failed")},
+		preConsumedQuota: 10,
+	}
+	usage := &dto.RealtimeUsage{
+		InputTokens:  20,
+		OutputTokens: 10,
+		TotalTokens:  30,
+		InputTokenDetails: dto.InputTokenDetails{
+			TextTokens: 20,
+		},
+		OutputTokenDetails: dto.OutputTokenDetails{
+			TextTokens: 10,
+		},
+	}
+
+	err := PostWssConsumeQuota(ctx, relayInfo, "gpt-4o-realtime-preview", usage, "")
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "wss settlement failed")
+}
+
+func TestPostTextConsumeQuotaCheckedReturnsErrorAndSkipsLogWhenUsageCounterUpdateFails(t *testing.T) {
+	truncate(t)
+	oldDataExportEnabled := common.DataExportEnabled
+	common.DataExportEnabled = true
+	t.Cleanup(func() {
+		common.DataExportEnabled = oldDataExportEnabled
+		model.CacheQuotaDataLock.Lock()
+		model.CacheQuotaData = make(map[string]*model.QuotaData)
+		model.CacheQuotaDataLock.Unlock()
+	})
+	model.CacheQuotaDataLock.Lock()
+	model.CacheQuotaData = make(map[string]*model.QuotaData)
+	model.CacheQuotaDataLock.Unlock()
+	seedUser(t, 9502, 10000)
+	seedToken(t, 9503, 9502, "usage-counter-token", 1000)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("username", "usage-counter-owner")
+	ctx.Set("token_name", "usage-counter-token")
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          9502,
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 9504},
+		TokenId:         9503,
+		TokenKey:        "usage-counter-token",
+		OriginModelName: "gpt-4o",
+		UsingGroup:      "default",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	relayInfo.Billing = &BillingSession{
+		relayInfo:        relayInfo,
+		funding:          &failingTextQuotaSettlementFunding{},
+		preConsumedQuota: 10,
+	}
+	usage := &dto.Usage{
+		PromptTokens:     20,
+		CompletionTokens: 10,
+		TotalTokens:      30,
+	}
+
+	err := PostTextConsumeQuotaChecked(ctx, relayInfo, usage, nil)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "usage counter update failed")
+	assert.Equal(t, int64(0), countLogs(t))
+}
+
+func TestPostTextConsumeQuotaRecordsAccountingErrorWhenCallerIgnoresFailure(t *testing.T) {
+	truncate(t)
+	const userID = 9512
+	const tokenID = 9513
+	const missingChannelID = 9514
+	const initialUserQuota = 10000
+	const initialTokenRemain = 1000
+	const preConsumed = 10
+	seedUser(t, userID, initialUserQuota-preConsumed)
+	seedToken(t, tokenID, userID, "unchecked-accounting-token", initialTokenRemain-preConsumed)
+	require.NoError(t, model.DB.Model(&model.Token{}).Where("id = ?", tokenID).Update("used_quota", preConsumed).Error)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("username", "unchecked-accounting-owner")
+	ctx.Set("token_name", "unchecked-accounting-token")
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          userID,
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: missingChannelID},
+		TokenId:         tokenID,
+		TokenKey:        "unchecked-accounting-token",
+		OriginModelName: "gpt-4o",
+		UsingGroup:      "default",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	relayInfo.Billing = &BillingSession{
+		relayInfo:        relayInfo,
+		funding:          &WalletFunding{userId: userID, consumed: preConsumed},
+		preConsumedQuota: preConsumed,
+		tokenConsumed:    preConsumed,
+	}
+	usage := &dto.Usage{
+		PromptTokens:     20,
+		CompletionTokens: 10,
+		TotalTokens:      30,
+	}
+
+	PostTextConsumeQuota(ctx, relayInfo, usage, nil)
+
+	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
+	assert.Equal(t, initialTokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
+	var consumeCount int64
+	require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ? AND type = ?", userID, model.LogTypeConsume).Count(&consumeCount).Error)
+	require.Zero(t, consumeCount)
+	var errorLog model.Log
+	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", userID, model.LogTypeError).First(&errorLog).Error)
+	require.Equal(t, "unchecked-accounting-owner", errorLog.Username)
+	require.Equal(t, "gpt-4o", errorLog.ModelName)
+	require.Equal(t, tokenID, errorLog.TokenId)
+	require.Contains(t, errorLog.Content, "post text consume quota failed")
+	require.Contains(t, errorLog.Other, "accounting_error")
+}
+
+func TestPostTextConsumeQuotaCheckedRollsBackSettlementWhenConsumeLogFails(t *testing.T) {
+	truncate(t)
+	useBrokenLogDB(t)
+
+	const userID = 9520
+	const tokenID = 9521
+	const channelID = 9522
+	const initialUserQuota = 10000
+	const initialTokenRemain = 1000
+	const preConsumed = 10
+
+	seedUser(t, userID, initialUserQuota-preConsumed)
+	seedToken(t, tokenID, userID, "text-log-fail-token", initialTokenRemain-preConsumed)
+	seedChannel(t, channelID)
+	require.NoError(t, model.DB.Model(&model.Token{}).Where("id = ?", tokenID).Update("used_quota", preConsumed).Error)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("username", "text-log-fail-owner")
+	ctx.Set("token_name", "text-log-fail-token")
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          userID,
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID},
+		TokenId:         tokenID,
+		TokenKey:        "text-log-fail-token",
+		OriginModelName: "gpt-4o",
+		UsingGroup:      "default",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	relayInfo.Billing = &BillingSession{
+		relayInfo:        relayInfo,
+		funding:          &WalletFunding{userId: userID, consumed: preConsumed},
+		preConsumedQuota: preConsumed,
+		tokenConsumed:    preConsumed,
+	}
+	usage := &dto.Usage{
+		PromptTokens:     20,
+		CompletionTokens: 10,
+		TotalTokens:      30,
+	}
+
+	err := PostTextConsumeQuotaChecked(ctx, relayInfo, usage, nil)
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "record consume log failed")
+	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
+	assert.Equal(t, initialTokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
+	usedQuota, requestCount := getUserUsageCounters(t, userID)
+	assert.Equal(t, 0, usedQuota)
+	assert.Equal(t, 0, requestCount)
+	assert.Equal(t, int64(0), getChannelUsedQuota(t, channelID))
 }
 
 // TestTryTieredSettleRecordsClampOnOverflow guards that an oversized tiered

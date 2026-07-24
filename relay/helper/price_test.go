@@ -181,6 +181,46 @@ func TestModelPriceHelperTieredRejectsPreConsumeOverflow(t *testing.T) {
 	require.Equal(t, common.QuotaClampOverflow, clamp.Kind)
 }
 
+func TestModelPriceHelperTieredFloorsPositiveFractionToOne(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	saved := map[string]string{}
+	require.NoError(t, config.GlobalConfig.SaveToDB(func(key, value string) error {
+		saved[key] = value
+		return nil
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, config.GlobalConfig.LoadFromDB(saved))
+	})
+
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode":    `{"tiered-tiny-model":"tiered_expr"}`,
+		"billing_setting.billing_expr":    `{"tiered-tiny-model":"tier(\"tiny\", p * 0.1)"}`,
+		"group_ratio_setting.group_ratio": `{"default":1}`,
+	}))
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	ctx.Set("group", "default")
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "tiered-tiny-model",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		BillingRequestInput: &billingexpr.RequestInput{
+			Body: []byte(`{}`),
+		},
+	}
+
+	priceData, err := ModelPriceHelper(ctx, info, 1, &types.TokenCountMeta{MaxTokens: 1})
+
+	require.NoError(t, err)
+	require.Equal(t, 1, priceData.QuotaToPreConsume)
+	require.NotNil(t, info.TieredBillingSnapshot)
+	require.InDelta(t, 0.05, info.TieredBillingSnapshot.EstimatedQuotaBeforeGroup, 0.000001)
+	require.Equal(t, 1, info.TieredBillingSnapshot.EstimatedQuotaAfterGroup)
+}
+
 func TestModelPriceHelperRequestBillingRatiosOnlyApplyToFixedPrice(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	savedModelPrices := ratio_setting.ModelPrice2JSONString()
@@ -271,4 +311,47 @@ func TestModelPriceHelperRequestBillingRatiosOnlyApplyToFixedPrice(t *testing.T)
 	require.Equal(t, "QuotaFromFloat", clamp.Op)
 	require.Equal(t, common.QuotaClampOverflow, clamp.Kind)
 	require.Nil(t, info.Billing)
+}
+
+func TestModelPriceHelperPerCallFloorsPositiveBaseQuotaToOne(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	savedModelPrices := ratio_setting.ModelPrice2JSONString()
+	savedModelRatios := ratio_setting.ModelRatio2JSONString()
+	savedGroupRatios := ratio_setting.GroupRatio2JSONString()
+	t.Cleanup(func() {
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedModelPrices))
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedModelRatios))
+		require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(savedGroupRatios))
+	})
+
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"tiny-task-price":0.000001}`))
+	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{"tiny-task-ratio":0.000003}`))
+	require.NoError(t, ratio_setting.UpdateGroupRatioByJSONString(`{"default":1}`))
+
+	tests := []struct {
+		name         string
+		model        string
+		wantUsePrice bool
+	}{
+		{name: "fixed price", model: "tiny-task-price", wantUsePrice: true},
+		{name: "ratio price", model: "tiny-task-ratio", wantUsePrice: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+			ctx.Set("group", "default")
+			info := &relaycommon.RelayInfo{
+				OriginModelName: tt.model,
+				UserGroup:       "default",
+				UsingGroup:      "default",
+			}
+
+			priceData, err := ModelPriceHelperPerCall(ctx, info)
+
+			require.NoError(t, err)
+			require.Equal(t, 1, priceData.Quota)
+			require.Equal(t, tt.wantUsePrice, priceData.UsePrice)
+		})
+	}
 }

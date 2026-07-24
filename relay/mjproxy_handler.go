@@ -62,6 +62,22 @@ func ensureMidjourneyRequestID(c *gin.Context, relayInfo *relaycommon.RelayInfo)
 	}
 }
 
+func attachMidjourneyTaskIDToRelayInfo(relayInfo *relaycommon.RelayInfo, task *model.Midjourney) {
+	if relayInfo == nil || task == nil {
+		return
+	}
+	taskID := strings.TrimSpace(task.MjId)
+	if taskID == "" {
+		return
+	}
+	if relayInfo.TaskRelayInfo == nil {
+		relayInfo.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+	}
+	if strings.TrimSpace(relayInfo.TaskRelayInfo.PublicTaskID) == "" {
+		relayInfo.TaskRelayInfo.PublicTaskID = taskID
+	}
+}
+
 func prepareMidjourneyBilling(c *gin.Context, relayInfo *relaycommon.RelayInfo, quota int) *dto.MidjourneyResponse {
 	if quota <= 0 {
 		return nil
@@ -313,22 +329,21 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 
 			tokenName := c.GetString("token_name")
 			logContent := fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s", priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, constant.MjActionSwapFace)
+			attachMidjourneyTaskIDToRelayInfo(info, midjourneyTask)
 			other := service.GenerateMjOtherInfo(info, priceData)
 			logQuota := service.AttachSettlementLogFields(other, info, priceData.Quota, settlementErr)
-			if logQuota > 0 {
-				if usageErr := model.UpdateTaskConsumptionUsageWithTokenSync(info.UserId, info.ChannelId, info.TokenId, logQuota); usageErr != nil {
-					logger.LogError(c, fmt.Sprintf("midjourney usage counter update failed: %v", usageErr))
-					recordMidjourneyAccountingError(c, info, midjourneyTask, "update midjourney usage counter", usageErr)
-					if settlementErr == nil {
-						if rollbackErr := service.RollbackBillingSettlement(c, info, logQuota); rollbackErr != nil {
-							logger.LogError(c, fmt.Sprintf("midjourney billing rollback after usage failure failed: %v", rollbackErr))
-							recordMidjourneyAccountingError(c, info, midjourneyTask, "rollback midjourney billing after usage failure", rollbackErr)
-						} else {
-							service.ClearMidjourneyQuotaAfterBillingRollback(c, midjourneyTask, usageErr)
-						}
+			if usageErr := model.UpdateTaskConsumptionUsageWithTokenSync(info.UserId, info.ChannelId, info.TokenId, logQuota); usageErr != nil {
+				logger.LogError(c, fmt.Sprintf("midjourney usage counter update failed: %v", usageErr))
+				recordMidjourneyAccountingError(c, info, midjourneyTask, "update midjourney usage counter", usageErr)
+				if settlementErr == nil {
+					if rollbackErr := service.RollbackBillingSettlement(c, info, logQuota); rollbackErr != nil {
+						logger.LogError(c, fmt.Sprintf("midjourney billing rollback after usage failure failed: %v", rollbackErr))
+						recordMidjourneyAccountingError(c, info, midjourneyTask, "rollback midjourney billing after usage failure", rollbackErr)
+					} else {
+						service.ClearMidjourneyQuotaAfterBillingRollback(c, midjourneyTask, usageErr)
 					}
-					return
 				}
+				return
 			}
 			if err := model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 				ChannelId: info.ChannelId,
@@ -342,11 +357,9 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 			}); err != nil {
 				common.SysLog("error recording midjourney consume log: " + err.Error())
 				recordMidjourneyAccountingError(c, info, midjourneyTask, "record midjourney consume log", err)
-				if logQuota > 0 {
-					if rollbackErr := service.RollbackTaskConsumptionUsage(info.UserId, info.ChannelId, info.TokenId, logQuota); rollbackErr != nil {
-						common.SysLog("error rolling back midjourney usage after log failure: " + rollbackErr.Error())
-						recordMidjourneyAccountingError(c, info, midjourneyTask, "rollback midjourney usage after log failure", rollbackErr)
-					}
+				if rollbackErr := service.RollbackTaskConsumptionUsage(info.UserId, info.ChannelId, info.TokenId, logQuota); rollbackErr != nil {
+					common.SysLog("error rolling back midjourney usage after log failure: " + rollbackErr.Error())
+					recordMidjourneyAccountingError(c, info, midjourneyTask, "rollback midjourney usage after log failure", rollbackErr)
 				}
 				if settlementErr == nil {
 					if rollbackErr := service.RollbackBillingSettlement(c, info, logQuota); rollbackErr != nil {
@@ -662,22 +675,21 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			}
 			tokenName := c.GetString("token_name")
 			logContent := fmt.Sprintf("模型固定价格 %.2f，分组倍率 %.2f，操作 %s，ID %s", priceData.ModelPrice, priceData.GroupRatioInfo.GroupRatio, midjRequest.Action, midjResponse.Result)
+			attachMidjourneyTaskIDToRelayInfo(relayInfo, midjourneyTask)
 			other := service.GenerateMjOtherInfo(relayInfo, priceData)
 			logQuota := service.AttachSettlementLogFields(other, relayInfo, priceData.Quota, settlementErr)
-			if logQuota > 0 {
-				if usageErr := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); usageErr != nil {
-					logger.LogError(c, fmt.Sprintf("midjourney usage counter update failed: %v", usageErr))
-					recordMidjourneyAccountingError(c, relayInfo, midjourneyTask, "update midjourney usage counter", usageErr)
-					if settlementErr == nil {
-						if rollbackErr := service.RollbackBillingSettlement(c, relayInfo, logQuota); rollbackErr != nil {
-							logger.LogError(c, fmt.Sprintf("midjourney billing rollback after usage failure failed: %v", rollbackErr))
-							recordMidjourneyAccountingError(c, relayInfo, midjourneyTask, "rollback midjourney billing after usage failure", rollbackErr)
-						} else {
-							service.ClearMidjourneyQuotaAfterBillingRollback(c, midjourneyTask, usageErr)
-						}
+			if usageErr := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); usageErr != nil {
+				logger.LogError(c, fmt.Sprintf("midjourney usage counter update failed: %v", usageErr))
+				recordMidjourneyAccountingError(c, relayInfo, midjourneyTask, "update midjourney usage counter", usageErr)
+				if settlementErr == nil {
+					if rollbackErr := service.RollbackBillingSettlement(c, relayInfo, logQuota); rollbackErr != nil {
+						logger.LogError(c, fmt.Sprintf("midjourney billing rollback after usage failure failed: %v", rollbackErr))
+						recordMidjourneyAccountingError(c, relayInfo, midjourneyTask, "rollback midjourney billing after usage failure", rollbackErr)
+					} else {
+						service.ClearMidjourneyQuotaAfterBillingRollback(c, midjourneyTask, usageErr)
 					}
-					return
 				}
+				return
 			}
 			if err := model.RecordConsumeLog(c, relayInfo.UserId, model.RecordConsumeLogParams{
 				ChannelId: relayInfo.ChannelId,
@@ -691,11 +703,9 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			}); err != nil {
 				common.SysLog("error recording midjourney consume log: " + err.Error())
 				recordMidjourneyAccountingError(c, relayInfo, midjourneyTask, "record midjourney consume log", err)
-				if logQuota > 0 {
-					if rollbackErr := service.RollbackTaskConsumptionUsage(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); rollbackErr != nil {
-						common.SysLog("error rolling back midjourney usage after log failure: " + rollbackErr.Error())
-						recordMidjourneyAccountingError(c, relayInfo, midjourneyTask, "rollback midjourney usage after log failure", rollbackErr)
-					}
+				if rollbackErr := service.RollbackTaskConsumptionUsage(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); rollbackErr != nil {
+					common.SysLog("error rolling back midjourney usage after log failure: " + rollbackErr.Error())
+					recordMidjourneyAccountingError(c, relayInfo, midjourneyTask, "rollback midjourney usage after log failure", rollbackErr)
 				}
 				if settlementErr == nil {
 					if rollbackErr := service.RollbackBillingSettlement(c, relayInfo, logQuota); rollbackErr != nil {

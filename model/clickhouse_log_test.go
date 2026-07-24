@@ -101,6 +101,24 @@ func TestClickHouseLogOrder(t *testing.T) {
 	assert.Equal(t, "logs.created_at desc, logs.request_id desc", clickHouseLogOrder("logs."))
 }
 
+func TestClickHouseLogUsernameBackfillSQLUsesParameterizedMutations(t *testing.T) {
+	assert.Equal(t,
+		"SELECT DISTINCT user_id FROM logs WHERE user_id > ? AND username = '' ORDER BY user_id ASC LIMIT 500",
+		clickHouseLogUsernameUserIDsSQL(500),
+	)
+	assert.Equal(t,
+		"ALTER TABLE logs UPDATE username = ? WHERE user_id = ? AND username = '' SETTINGS mutations_sync = 1",
+		clickHouseLogUsernameUpdateSQL(),
+	)
+}
+
+func TestClickHouseLogUsernameColumnMigrationSQLIsIdempotent(t *testing.T) {
+	assert.Equal(t,
+		"ALTER TABLE logs ADD COLUMN IF NOT EXISTS username String DEFAULT '' AFTER content",
+		clickHouseLogUsernameColumnSQL(),
+	)
+}
+
 func TestBuildLogLikeConditionUsesStandardEscape(t *testing.T) {
 	originalLogDatabaseType := common.LogDatabaseType()
 	t.Cleanup(func() {

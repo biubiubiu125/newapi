@@ -8,6 +8,7 @@
     "build": "rsbuild build",
     "build:check": "tsc -b && rsbuild build",
     "typecheck": "tsc -b",
+    "test": "node --test src/features/usage-logs/lib/log-user.test.js src/features/usage-logs/components/columns/task-logs-columns.test.js src/features/usage-logs/components/usage-logs-user-fallback.test.js src/features/dashboard/lib/charts-user-fallback.test.js",
     "lint": "eslint .",
     "preview": "rsbuild preview",
     "format:check": "prettier --check .",

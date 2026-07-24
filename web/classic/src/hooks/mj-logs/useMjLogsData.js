@@ -72,6 +72,10 @@ export const useMjLogsData = () => {
   const [isModalOpenurl, setIsModalOpenurl] = useState(false);
   const [modalImageUrl, setModalImageUrl] = useState('');
 
+  // User info modal state
+  const [showUserInfo, setShowUserInfoModal] = useState(false);
+  const [userInfoData, setUserInfoData] = useState(null);
+
   // Form state
   const [formApi, setFormApi] = useState(null);
   let now = new Date();
@@ -152,6 +156,14 @@ export const useMjLogsData = () => {
 
   // Handle column visibility change
   const handleColumnVisibilityChange = (columnKey, checked) => {
+    if (
+      !isAdminUser &&
+      (columnKey === COLUMN_KEYS.CHANNEL ||
+        columnKey === COLUMN_KEYS.USERNAME ||
+        columnKey === COLUMN_KEYS.SUBMIT_RESULT)
+    ) {
+      return;
+    }
     const updatedColumns = { ...visibleColumns, [columnKey]: checked };
     setVisibleColumns(updatedColumns);
   };
@@ -281,6 +293,20 @@ export const useMjLogsData = () => {
     setIsModalOpenurl(true);
   };
 
+  const showUserInfoFunc = async (userId) => {
+    if (!isAdminUser) {
+      return;
+    }
+    const res = await API.get(`/api/user/${userId}`);
+    const { success, message, data } = res.data;
+    if (success) {
+      setUserInfoData(data);
+      setShowUserInfoModal(true);
+    } else {
+      showError(message);
+    }
+  };
+
   // Initialize data
   useEffect(() => {
     const localPageSize =
@@ -306,6 +332,9 @@ export const useMjLogsData = () => {
     isModalOpenurl,
     setIsModalOpenurl,
     modalImageUrl,
+    showUserInfo,
+    setShowUserInfoModal,
+    userInfoData,
 
     // Form state
     formApi,
@@ -334,6 +363,7 @@ export const useMjLogsData = () => {
     copyText,
     openContentModal,
     openImageModal,
+    showUserInfoFunc,
     enrichLogs,
     syncPageData,
 

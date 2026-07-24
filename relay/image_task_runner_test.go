@@ -54,6 +54,23 @@ func TestTaskModel2DtoMarksImageSettlementReviewAsFailure(t *testing.T) {
 	require.Equal(t, model.TaskSettlementStatusReview, resp.SettlementStatus)
 }
 
+func TestTaskModel2DtoIncludesSettlementReviewDetails(t *testing.T) {
+	task := &model.Task{
+		TaskID:           "task_review_details_dto",
+		Platform:         constant.TaskPlatformSuno,
+		Status:           model.TaskStatusNotStart,
+		SettlementStatus: model.TaskSettlementStatusReview,
+	}
+	task.PrivateData.SettlementAttemptQuota = 321
+	task.PrivateData.SettlementError = "record consume log failed"
+
+	resp := TaskModel2Dto(task)
+
+	require.Equal(t, model.TaskSettlementStatusReview, resp.SettlementStatus)
+	require.Equal(t, 321, resp.SettlementAttemptQuota)
+	require.Equal(t, "record consume log failed", resp.SettlementError)
+}
+
 func TestParseAsyncTaskBridgeTaskResultSupportsKeyedDataMap(t *testing.T) {
 	body := []byte(`{
 		"data": {
@@ -2231,6 +2248,136 @@ func TestSettleImageTaskSuccessMarksReviewWhenTieredBillingBodyMissing(t *testin
 	require.Contains(t, record.Error, "billing request body unavailable")
 }
 
+func TestSettleImageTaskSuccessMarksReviewWhenFixedPriceConsumptionLogFails(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&model.Task{},
+		&model.TaskSettlementRecord{},
+		&model.User{},
+		&model.Channel{},
+		&model.TokenUsageDaily{},
+	))
+
+	brokenLogDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	brokenSQLDB, err := brokenLogDB.DB()
+	require.NoError(t, err)
+
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldUsingSQLite := common.UsingSQLite
+	oldRedisEnabled := common.RedisEnabled
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	oldBatchUpdateEnabled := common.BatchUpdateEnabled
+	oldLogConsumeEnabled := common.LogConsumeEnabled
+	oldDataExportEnabled := common.DataExportEnabled
+	model.DB = db
+	model.LOG_DB = brokenLogDB
+	common.UsingSQLite = true
+	common.RedisEnabled = false
+	common.MemoryCacheEnabled = false
+	common.BatchUpdateEnabled = false
+	common.LogConsumeEnabled = true
+	common.DataExportEnabled = false
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.UsingSQLite = oldUsingSQLite
+		common.RedisEnabled = oldRedisEnabled
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+		common.BatchUpdateEnabled = oldBatchUpdateEnabled
+		common.LogConsumeEnabled = oldLogConsumeEnabled
+		common.DataExportEnabled = oldDataExportEnabled
+		_ = brokenSQLDB.Close()
+		_ = sqlDB.Close()
+	})
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       1,
+		Username: "image-fixed-price-user",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		Quota:    100000,
+		Email:    "fixed-price@example.com",
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     1,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "upstream-key",
+		Status: common.ChannelStatusEnabled,
+		Name:   "image-fixed-price-channel",
+		Group:  "default",
+		Models: "gpt-image-1",
+	}).Error)
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_fixed_price_log_fails",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Quota:            200,
+		Action:           constant.TaskActionImageGeneration,
+		Status:           model.TaskStatusSuccess,
+		Progress:         "100%",
+		SubmitTime:       now,
+		FinishTime:       now,
+		SettlementStatus: model.TaskSettlementStatusPending,
+		Properties: model.Properties{
+			OriginModelName: "gpt-image-1",
+		},
+		PrivateData: model.TaskPrivateData{
+			BillingSource: service.BillingSourceWallet,
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice:      0.02,
+				ModelRatio:      1,
+				CompletionRatio: 1,
+				GroupRatio:      1,
+				OriginModelName: "gpt-image-1",
+				PerCallBilling:  true,
+			},
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+	require.NoError(t, db.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusPrepared,
+	}).Error)
+
+	err = settleImageTaskSuccess(context.Background(), task, imageTaskSettlementPayload{
+		Result: json.RawMessage(`{"data":[{"url":"https://example.com/image.png"}]}`),
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "consumption log failed")
+
+	var reloaded model.Task
+	require.NoError(t, db.First(&reloaded, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+	require.Contains(t, reloaded.FailReason, "consumption log failed")
+
+	var record model.TaskSettlementRecord
+	require.NoError(t, db.Where("task_primary_id = ?", task.ID).First(&record).Error)
+	require.Equal(t, model.TaskSettlementRecordStatusReview, record.Status)
+	require.Contains(t, record.Error, "consumption log failed")
+
+	var user model.User
+	require.NoError(t, db.First(&user, 1).Error)
+	require.Equal(t, 0, user.UsedQuota)
+	require.Equal(t, 0, user.RequestCount)
+
+	var channel model.Channel
+	require.NoError(t, db.First(&channel, 1).Error)
+	require.Equal(t, int64(0), channel.UsedQuota)
+}
+
 func TestPollAsyncTaskBridgeSuccessSettlesTieredBillingWithStoredBody(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -2431,6 +2578,9 @@ func TestPollAsyncTaskBridgeSuccessSettlesTieredBillingWithStoredBody(t *testing
 	require.NoError(t, db.Where("type = ?", model.LogTypeConsume).First(&log).Error)
 	require.Equal(t, 200, log.Quota)
 	require.Equal(t, "gpt-image-1", log.ModelName)
+	other, err := common.StrToMap(log.Other)
+	require.NoError(t, err)
+	require.Equal(t, task.TaskID, other["task_id"])
 
 	require.Eventually(t, func() bool {
 		var user model.User

@@ -351,6 +351,7 @@ func migrateDB() error {
 		&Ability{},
 		&Log{},
 		&Midjourney{},
+		&MidjourneySettlementRecord{},
 		&TopUp{},
 		&QuotaData{},
 		&Task{},

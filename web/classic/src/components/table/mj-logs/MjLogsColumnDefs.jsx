@@ -46,6 +46,10 @@ import {
   Hash,
   Video,
 } from 'lucide-react';
+import {
+  getLogUserDisplayName,
+  openLogUserInfo,
+} from '../../../helpers/log-user-cell';
 import { stringToColor } from '../../../helpers/render';
 
 const colors = [
@@ -331,6 +335,7 @@ export const getMjLogsColumns = ({
   openContentModal,
   openImageModal,
   isAdminUser,
+  showUserInfoFunc,
 }) => {
   return [
     {
@@ -381,13 +386,19 @@ export const getMjLogsColumns = ({
         if (!isAdminUser) {
           return <></>;
         }
-        const displayText =
-          record.username || (record.user_id ? `#${record.user_id}` : '');
+        const displayText = getLogUserDisplayName(record);
         if (!displayText) {
           return <></>;
         }
+        const canOpenUserInfo =
+          record.user_id && typeof showUserInfoFunc === 'function';
         return (
-          <Space>
+          <Space
+            onClick={(event) =>
+              openLogUserInfo(record, showUserInfoFunc, event)
+            }
+            style={canOpenUserInfo ? { cursor: 'pointer' } : undefined}
+          >
             <Avatar size='extra-small' color={stringToColor(displayText)}>
               {displayText.slice(0, 1)}
             </Avatar>
