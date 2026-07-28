@@ -2,8 +2,14 @@ package common
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"sync/atomic"
+	"time"
+
+	"github.com/QuantumNous/new-api/constant"
 )
 
 // DiskCacheConfig 磁盘缓存配置（由 performance_setting 包更新）
@@ -95,9 +101,23 @@ var diskCacheStats DiskCacheStats
 var ErrDiskCacheCapacityUnavailable = fmt.Errorf("%w: disk cache capacity unavailable", ErrRequestBodyTooLarge)
 
 type DiskCacheReservation struct {
-	size int64
-	done int32
+	size         int64
+	done         int32
+	sharedMarker string
 }
+
+type diskCacheReservationFileLock struct {
+	path     string
+	token    string
+	released int32
+}
+
+const (
+	diskCacheReservationLockWait     = 30 * time.Second
+	diskCacheReservationLockStale    = 10 * time.Minute
+	diskCacheReservationMarkerStale  = 15 * time.Minute
+	diskCacheReservationMarkerPrefix = ".newapi-disk-cache-reservation-"
+)
 
 // GetDiskCacheStats 获取缓存统计信息
 func GetDiskCacheStats() DiskCacheStats {
@@ -205,6 +225,27 @@ func ReserveDiskCacheBytes(size int64) (*DiskCacheReservation, error) {
 		atomic.AddInt64(&diskCacheStats.CurrentDiskUsageBytes, size)
 		return &DiskCacheReservation{size: size}, nil
 	}
+	sharedLock, err := acquireSharedDiskCacheReservationLock()
+	if err != nil {
+		return nil, err
+	}
+	if sharedLock != nil {
+		defer sharedLock.release()
+		fileCount, totalSize, err := sharedDiskCacheReservationUsage()
+		if err != nil {
+			return nil, fmt.Errorf("%w: inspect shared disk cache: %v", ErrDiskCacheCapacityUnavailable, err)
+		}
+		if totalSize > maxBytes || size > maxBytes-totalSize {
+			return nil, ErrDiskCacheCapacityUnavailable
+		}
+		markerPath, err := createSharedDiskCacheReservationMarker(size)
+		if err != nil {
+			return nil, err
+		}
+		atomic.StoreInt64(&diskCacheStats.ActiveDiskFiles, int64(fileCount))
+		atomic.StoreInt64(&diskCacheStats.CurrentDiskUsageBytes, totalSize+size)
+		return &DiskCacheReservation{size: size, sharedMarker: markerPath}, nil
+	}
 	for {
 		current := atomic.LoadInt64(&diskCacheStats.CurrentDiskUsageBytes)
 		if current > maxBytes || size > maxBytes-current {
@@ -214,6 +255,115 @@ func ReserveDiskCacheBytes(size int64) (*DiskCacheReservation, error) {
 			return &DiskCacheReservation{size: size}, nil
 		}
 	}
+}
+
+func sharedDiskCacheBasePath() string {
+	basePath := strings.TrimSpace(GetDiskCachePath())
+	if basePath == "" {
+		basePath = os.TempDir()
+	}
+	return basePath
+}
+
+func sharedDiskCacheReservationUsage() (fileCount int, totalSize int64, err error) {
+	fileCount, totalSize, err = GetDiskCacheInfo()
+	if err != nil {
+		return 0, 0, err
+	}
+	entries, err := os.ReadDir(sharedDiskCacheBasePath())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return fileCount, totalSize, nil
+		}
+		return 0, 0, err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasPrefix(entry.Name(), diskCacheReservationMarkerPrefix) {
+			continue
+		}
+		info, infoErr := entry.Info()
+		if infoErr != nil {
+			continue
+		}
+		markerPath := filepath.Join(sharedDiskCacheBasePath(), entry.Name())
+		if time.Since(info.ModTime()) > diskCacheReservationMarkerStale {
+			_ = os.Remove(markerPath)
+			continue
+		}
+		totalSize += info.Size()
+	}
+	return fileCount, totalSize, nil
+}
+
+func createSharedDiskCacheReservationMarker(size int64) (string, error) {
+	markerPath := filepath.Join(sharedDiskCacheBasePath(), diskCacheReservationMarkerPrefix+GetUUID())
+	file, err := os.OpenFile(markerPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+	if err != nil {
+		return "", fmt.Errorf("%w: create shared disk cache reservation: %v", ErrDiskCacheCapacityUnavailable, err)
+	}
+	if err := file.Truncate(size); err != nil {
+		_ = file.Close()
+		_ = os.Remove(markerPath)
+		return "", fmt.Errorf("%w: size shared disk cache reservation: %v", ErrDiskCacheCapacityUnavailable, err)
+	}
+	if err := file.Close(); err != nil {
+		_ = os.Remove(markerPath)
+		return "", fmt.Errorf("%w: close shared disk cache reservation: %v", ErrDiskCacheCapacityUnavailable, err)
+	}
+	return markerPath, nil
+}
+
+func acquireSharedDiskCacheReservationLock() (*diskCacheReservationFileLock, error) {
+	if !constant.ImageTaskFileCacheShared {
+		return nil, nil
+	}
+	basePath := sharedDiskCacheBasePath()
+	if err := os.MkdirAll(basePath, 0o755); err != nil {
+		return nil, fmt.Errorf("%w: create shared disk cache lock directory: %v", ErrDiskCacheCapacityUnavailable, err)
+	}
+	lockPath := filepath.Join(basePath, ".newapi-disk-cache-reservation.lock")
+	token := fmt.Sprintf("%d:%s", os.Getpid(), GetUUID())
+	deadline := time.Now().Add(diskCacheReservationLockWait)
+	for {
+		file, err := os.OpenFile(lockPath, os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o600)
+		if err == nil {
+			if _, writeErr := file.WriteString(token); writeErr != nil {
+				_ = file.Close()
+				_ = os.Remove(lockPath)
+				return nil, fmt.Errorf("%w: write shared disk cache lock: %v", ErrDiskCacheCapacityUnavailable, writeErr)
+			}
+			if closeErr := file.Close(); closeErr != nil {
+				_ = os.Remove(lockPath)
+				return nil, fmt.Errorf("%w: close shared disk cache lock: %v", ErrDiskCacheCapacityUnavailable, closeErr)
+			}
+			return &diskCacheReservationFileLock{path: lockPath, token: token}, nil
+		}
+		if !os.IsExist(err) {
+			return nil, fmt.Errorf("%w: acquire shared disk cache lock: %v", ErrDiskCacheCapacityUnavailable, err)
+		}
+		if info, statErr := os.Stat(lockPath); statErr == nil && time.Since(info.ModTime()) > diskCacheReservationLockStale {
+			stalePath := lockPath + ".stale." + GetUUID()
+			if renameErr := os.Rename(lockPath, stalePath); renameErr == nil {
+				_ = os.Remove(stalePath)
+				continue
+			}
+		}
+		if time.Now().After(deadline) {
+			return nil, fmt.Errorf("%w: timed out acquiring shared disk cache lock", ErrDiskCacheCapacityUnavailable)
+		}
+		time.Sleep(25 * time.Millisecond)
+	}
+}
+
+func (l *diskCacheReservationFileLock) release() {
+	if l == nil || !atomic.CompareAndSwapInt32(&l.released, 0, 1) {
+		return
+	}
+	content, err := os.ReadFile(l.path)
+	if err != nil || strings.TrimSpace(string(content)) != l.token {
+		return
+	}
+	_ = os.Remove(l.path)
 }
 
 func (r *DiskCacheReservation) Extend(additionalSize int64) error {
@@ -229,6 +379,28 @@ func (r *DiskCacheReservation) Extend(additionalSize int64) error {
 		atomic.AddInt64(&r.size, additionalSize)
 		return nil
 	}
+	if r.sharedMarker != "" {
+		sharedLock, err := acquireSharedDiskCacheReservationLock()
+		if err != nil {
+			return err
+		}
+		defer sharedLock.release()
+		fileCount, totalSize, err := sharedDiskCacheReservationUsage()
+		if err != nil {
+			return fmt.Errorf("%w: inspect shared disk cache: %v", ErrDiskCacheCapacityUnavailable, err)
+		}
+		if totalSize > maxBytes || additionalSize > maxBytes-totalSize {
+			return ErrDiskCacheCapacityUnavailable
+		}
+		newSize := atomic.LoadInt64(&r.size) + additionalSize
+		if err := os.Truncate(r.sharedMarker, newSize); err != nil {
+			return fmt.Errorf("%w: extend shared disk cache reservation: %v", ErrDiskCacheCapacityUnavailable, err)
+		}
+		atomic.StoreInt64(&r.size, newSize)
+		atomic.StoreInt64(&diskCacheStats.ActiveDiskFiles, int64(fileCount))
+		atomic.StoreInt64(&diskCacheStats.CurrentDiskUsageBytes, totalSize+additionalSize)
+		return nil
+	}
 	for {
 		current := atomic.LoadInt64(&diskCacheStats.CurrentDiskUsageBytes)
 		if current > maxBytes || additionalSize > maxBytes-current {
@@ -239,6 +411,27 @@ func (r *DiskCacheReservation) Extend(additionalSize int64) error {
 			return nil
 		}
 	}
+}
+
+func finishSharedDiskCacheReservation(markerPath string) error {
+	if markerPath == "" {
+		return nil
+	}
+	sharedLock, err := acquireSharedDiskCacheReservationLock()
+	if err != nil {
+		return err
+	}
+	defer sharedLock.release()
+	if err := os.Remove(markerPath); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("%w: release shared disk cache reservation: %v", ErrDiskCacheCapacityUnavailable, err)
+	}
+	fileCount, totalSize, err := sharedDiskCacheReservationUsage()
+	if err != nil {
+		return fmt.Errorf("%w: refresh shared disk cache usage: %v", ErrDiskCacheCapacityUnavailable, err)
+	}
+	atomic.StoreInt64(&diskCacheStats.ActiveDiskFiles, int64(fileCount))
+	atomic.StoreInt64(&diskCacheStats.CurrentDiskUsageBytes, totalSize)
+	return nil
 }
 
 func (r *DiskCacheReservation) Commit(actualSize int64) error {
@@ -253,6 +446,16 @@ func (r *DiskCacheReservation) Commit(actualSize int64) error {
 		return nil
 	}
 	reservedSize := atomic.LoadInt64(&r.size)
+	if r.sharedMarker != "" {
+		if err := finishSharedDiskCacheReservation(r.sharedMarker); err != nil {
+			atomic.StoreInt32(&r.done, 0)
+			return err
+		}
+		if actualSize > reservedSize {
+			return fmt.Errorf("%w: disk cache capacity exceeded", ErrRequestBodyTooLarge)
+		}
+		return nil
+	}
 	if actualSize > reservedSize {
 		releaseDiskCacheBytes(reservedSize)
 		return fmt.Errorf("%w: disk cache capacity exceeded", ErrRequestBodyTooLarge)
@@ -269,6 +472,10 @@ func (r *DiskCacheReservation) Release() {
 		return
 	}
 	if atomic.CompareAndSwapInt32(&r.done, 0, 1) {
+		if r.sharedMarker != "" {
+			_ = finishSharedDiskCacheReservation(r.sharedMarker)
+			return
+		}
 		releaseDiskCacheBytes(atomic.LoadInt64(&r.size))
 	}
 }

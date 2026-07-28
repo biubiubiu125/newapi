@@ -7,6 +7,9 @@
   },
   "tags": [
     {
+      "name": "Image Tasks"
+    },
+    {
       "name": "获取模型列表"
     },
     {
@@ -541,6 +544,235 @@
             "BearerAuth": []
           }
         ]
+      }
+    },
+    "/v1/image-tasks/generations": {
+      "post": {
+        "summary": "Create an asynchronous image generation task",
+        "description": "Accepts application/json and returns HTTP 202 immediately. The model defaults to dall-e. Idempotency-Key and client_task_id may be used for idempotency; when both are supplied they must match. In-flight tasks are reused; successful terminal tasks are reused only while their result remains retrievable; failed terminal tasks are not reused. Idempotent replays that hit an existing task bypass new-task creation capacity and model request rate limits. Temporary request-storage capacity failures return HTTP 503 image_task_unavailable with Retry-After.",
+        "operationId": "createAsyncImageGenerationTask",
+        "tags": ["Image Tasks"],
+        "parameters": [
+          {"$ref": "#/components/parameters/PublicImageTaskIdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {"$ref": "#/components/schemas/PublicImageTaskCreateRequest"}
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Task accepted",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/PublicImageTask"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "401": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "403": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "409": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "413": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "415": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "429": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "500": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "503": {"$ref": "#/components/responses/PublicImageTaskError"}
+        },
+        "security": [{"BearerAuth": []}]
+      }
+    },
+    "/v1/image-tasks/edits": {
+      "post": {
+        "summary": "Create an asynchronous image edit task",
+        "description": "Accepts multipart/form-data with an image file and returns HTTP 202 immediately. The model defaults to gpt-image-1. Idempotency-Key and client_task_id may be used for idempotency; when both are supplied they must match. In-flight tasks are reused; successful terminal tasks are reused only while their result remains retrievable; failed terminal tasks are not reused. Idempotent replays that hit an existing task bypass new-task creation capacity and model request rate limits. Temporary request-storage capacity failures return HTTP 503 image_task_unavailable with Retry-After.",
+        "operationId": "createAsyncImageEditTask",
+        "tags": ["Image Tasks"],
+        "parameters": [
+          {"$ref": "#/components/parameters/PublicImageTaskIdempotencyKey"}
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "multipart/form-data": {
+              "schema": {"$ref": "#/components/schemas/PublicImageTaskEditRequest"}
+            }
+          }
+        },
+        "responses": {
+          "202": {
+            "description": "Task accepted",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/PublicImageTask"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "401": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "403": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "409": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "413": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "415": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "429": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "500": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "503": {"$ref": "#/components/responses/PublicImageTaskError"}
+        },
+        "security": [{"BearerAuth": []}]
+      }
+    },
+    "/v1/image-tasks": {
+      "get": {
+        "summary": "Get multiple asynchronous image tasks",
+        "description": "Returns up to 100 tasks owned by the current user and current token. Image result data is not included.",
+        "operationId": "listAsyncImageTasks",
+        "tags": ["Image Tasks"],
+        "parameters": [
+          {
+            "name": "ids",
+            "in": "query",
+            "required": true,
+            "description": "Comma-separated task IDs",
+            "schema": {"type": "string"}
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Task statuses",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/PublicImageTaskList"}
+              }
+            }
+          },
+          "400": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "401": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "403": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "429": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "500": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "503": {"$ref": "#/components/responses/PublicImageTaskError"}
+        },
+        "security": [{"BearerAuth": []}]
+      }
+    },
+    "/v1/image-tasks/{task_id}": {
+      "get": {
+        "summary": "Get an asynchronous image task",
+        "description": "Returns status without image result data. The task must belong to the current user and current token.",
+        "operationId": "getAsyncImageTask",
+        "tags": ["Image Tasks"],
+        "parameters": [
+          {"$ref": "#/components/parameters/PublicImageTaskId"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Task status",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/PublicImageTask"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "403": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "404": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "429": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "500": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "503": {"$ref": "#/components/responses/PublicImageTaskError"}
+        },
+        "security": [{"BearerAuth": []}]
+      }
+    },
+    "/v1/image-tasks/{task_id}/result": {
+      "get": {
+        "summary": "Get an asynchronous image task result",
+        "description": "Returns the original OpenAI-compatible url or b64_json response. Unclaimed results expire no later than 12 hours after completion. Acknowledged results are unavailable after the two-minute grace period. HTTP 410 means the result is permanently gone; HTTP 503 means it is temporarily unreadable (for example while the shared result cache is unavailable) and the request should be retried.",
+        "operationId": "getAsyncImageTaskResult",
+        "tags": ["Image Tasks"],
+        "parameters": [
+          {"$ref": "#/components/parameters/PublicImageTaskId"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Original image result",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/ImageResponse"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "403": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "404": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "409": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "410": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "429": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "500": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "503": {"$ref": "#/components/responses/PublicImageTaskError"}
+        },
+        "security": [{"BearerAuth": []}]
+      }
+    },
+    "/v1/image-tasks/{task_id}/ack": {
+      "post": {
+        "summary": "Acknowledge an asynchronous image task result",
+        "description": "Idempotently acknowledges retrieval. Result content is cleared after a two-minute grace period; task and billing records are retained. After acknowledgement result_expires_at reports the end of that grace period rather than the original 12 hour deadline.",
+        "operationId": "acknowledgeAsyncImageTaskResult",
+        "tags": ["Image Tasks"],
+        "parameters": [
+          {"$ref": "#/components/parameters/PublicImageTaskId"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Acknowledgement recorded",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/PublicImageTask"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "403": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "404": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "409": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "410": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "429": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "500": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "503": {"$ref": "#/components/responses/PublicImageTaskError"}
+        },
+        "security": [{"BearerAuth": []}]
+      }
+    },
+    "/v1/image-tasks/{task_id}/cancel": {
+      "post": {
+        "summary": "Cancel a queued asynchronous image task",
+        "description": "Cancels and refunds only before worker or upstream execution starts. Repeated cancellation is idempotent after the refund is complete. Cancellation after execution starts or while a concurrent refund is still applying returns HTTP 409; refund-in-progress responses include Retry-After.",
+        "operationId": "cancelAsyncImageTask",
+        "tags": ["Image Tasks"],
+        "parameters": [
+          {"$ref": "#/components/parameters/PublicImageTaskId"}
+        ],
+        "responses": {
+          "200": {
+            "description": "Task cancelled",
+            "content": {
+              "application/json": {
+                "schema": {"$ref": "#/components/schemas/PublicImageTask"}
+              }
+            }
+          },
+          "401": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "403": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "404": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "409": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "429": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "500": {"$ref": "#/components/responses/PublicImageTaskError"},
+          "503": {"$ref": "#/components/responses/PublicImageTaskError"}
+        },
+        "security": [{"BearerAuth": []}]
       }
     },
     "/v1/videos": {
@@ -2309,6 +2541,138 @@
   },
   "components": {
     "schemas": {
+      "PublicImageTaskCreateRequest": {
+        "type": "object",
+        "required": ["prompt"],
+        "properties": {
+          "model": {"type": "string", "default": "dall-e"},
+          "prompt": {"type": "string", "minLength": 1, "pattern": "\\S"},
+          "n": {"type": "integer", "minimum": 1, "maximum": 128, "default": 1},
+          "size": {"type": "string"},
+          "quality": {"type": "string"},
+          "response_format": {"type": "string"},
+          "style": {"type": "string"},
+          "user": {"type": "string"},
+          "background": {"type": "string"},
+          "moderation": {"type": "string"},
+          "output_format": {"type": "string"},
+          "output_compression": {"type": "integer", "minimum": 0, "maximum": 100},
+          "partial_images": {"type": "integer", "minimum": 0},
+          "input_fidelity": {"type": "string"},
+          "watermark": {"type": "boolean"},
+          "client_task_id": {"type": "string", "maxLength": 191}
+        },
+        "additionalProperties": true
+      },
+      "PublicImageTaskEditRequest": {
+        "type": "object",
+        "required": ["image", "prompt"],
+        "properties": {
+          "image": {"type": "string", "format": "binary"},
+          "mask": {"type": "string", "format": "binary"},
+          "model": {"type": "string", "default": "gpt-image-1"},
+          "prompt": {"type": "string", "minLength": 1, "pattern": "\\S"},
+          "n": {"type": "integer", "minimum": 1, "maximum": 128, "default": 1},
+          "size": {"type": "string"},
+          "quality": {"type": "string"},
+          "response_format": {"type": "string"},
+          "style": {"type": "string"},
+          "user": {"type": "string"},
+          "background": {"type": "string"},
+          "moderation": {"type": "string"},
+          "output_format": {"type": "string"},
+          "output_compression": {"type": "integer", "minimum": 0, "maximum": 100},
+          "partial_images": {"type": "integer", "minimum": 0},
+          "input_fidelity": {"type": "string"},
+          "watermark": {"type": "boolean"},
+          "client_task_id": {"type": "string", "maxLength": 191}
+        },
+        "additionalProperties": true
+      },
+      "PublicImageTask": {
+        "type": "object",
+        "required": ["task_id", "status", "created_at", "updated_at", "result_available"],
+        "properties": {
+          "task_id": {"type": "string"},
+          "client_task_id": {"type": "string"},
+          "status": {
+            "type": "string",
+            "enum": ["queued", "running", "finalizing", "completed", "failed", "cancelling", "cancelled"]
+          },
+          "progress": {"type": "string"},
+          "created_at": {"type": "integer", "format": "int64"},
+          "updated_at": {"type": "integer", "format": "int64"},
+          "started_at": {"type": "integer", "format": "int64"},
+          "completed_at": {"type": "integer", "format": "int64"},
+          "result_available": {"type": "boolean"},
+          "result_expires_at": {"type": "integer", "format": "int64"},
+          "result_acknowledged_at": {"type": "integer", "format": "int64"},
+          "error": {"$ref": "#/components/schemas/PublicImageTaskError"}
+        }
+      },
+      "PublicImageTaskList": {
+        "type": "object",
+        "required": ["data"],
+        "properties": {
+          "data": {
+            "type": "array",
+            "items": {"$ref": "#/components/schemas/PublicImageTask"}
+          }
+        }
+      },
+      "PublicImageTaskError": {
+        "type": "object",
+        "required": ["code", "message"],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Machine readable error code. Clients should branch on this value rather than on message text.",
+            "enum": [
+              "invalid_request",
+              "unsupported_media_type",
+              "idempotency_conflict",
+              "idempotency_in_progress",
+              "insufficient_quota",
+              "insufficient_token_quota",
+              "model_price_error",
+              "image_task_create_failed",
+              "image_task_unavailable",
+              "image_task_failed",
+              "settlement_review",
+              "refund_pending",
+              "refund_review",
+              "task_not_found",
+              "task_ids_required",
+              "too_many_task_ids",
+              "task_query_failed",
+              "task_reservation_failed",
+              "result_not_ready",
+              "result_expired",
+              "result_temporarily_unavailable",
+              "ack_failed",
+              "ack_conflict",
+              "not_cancellable",
+              "cancel_failed",
+              "cancel_refund_failed",
+              "cancel_refund_in_progress",
+              "rate_limit_exceeded",
+              "unauthorized",
+              "access_denied",
+              "request_conflict",
+              "internal_error"
+            ]
+          },
+          "message": {"type": "string", "description": "Human readable message. For image_task_failed, upstream failure details are intentionally sanitized and not exposed through the public API."},
+          "type": {"type": "string", "example": "image_task_error"}
+        }
+      },
+      "PublicImageTaskErrorResponse": {
+        "type": "object",
+        "required": ["error"],
+        "properties": {
+          "error": {"$ref": "#/components/schemas/PublicImageTaskError"}
+        }
+      },
       "ErrorResponse": {
         "type": "object",
         "properties": {
@@ -4596,7 +4960,36 @@
         }
       }
     },
-    "responses": {},
+    "responses": {
+      "PublicImageTaskError": {
+        "description": "Image task request failed",
+        "headers": {
+          "Retry-After": {
+            "description": "Seconds to wait before retrying a temporary capacity, rate-limit, result-read, or refund-in-progress failure.",
+            "schema": {"type": "integer", "minimum": 1}
+          }
+        },
+        "content": {
+          "application/json": {
+            "schema": {"$ref": "#/components/schemas/PublicImageTaskErrorResponse"}
+          }
+        }
+      }
+    },
+    "parameters": {
+      "PublicImageTaskId": {
+        "name": "task_id",
+        "in": "path",
+        "required": true,
+        "schema": {"type": "string"}
+      },
+      "PublicImageTaskIdempotencyKey": {
+        "name": "Idempotency-Key",
+        "in": "header",
+        "required": false,
+        "schema": {"type": "string", "maxLength": 191}
+      }
+    },
     "securitySchemes": {
       "BearerAuth": {
         "type": "http",

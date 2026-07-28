@@ -193,12 +193,26 @@ func initConstantEnv() {
 	constant.ImageTaskChannelConcurrency = GetEnvOrDefault("IMAGE_TASK_CHANNEL_CONCURRENCY", 0)
 	constant.ImageTaskBatchPollSize = GetEnvOrDefault("IMAGE_TASK_BATCH_POLL_SIZE", 20)
 	constant.ImageTaskLeaseSeconds = GetEnvOrDefault("IMAGE_TASK_LEASE_SECONDS", 120)
-	constant.ImageTaskResultRetentionMinutes = GetEnvOrDefault("IMAGE_TASK_RESULT_RETENTION_MINUTES", 1440)
+	constant.ImageTaskResultRetentionMinutes = GetEnvOrDefault("IMAGE_TASK_RESULT_RETENTION_MINUTES", 720)
 	constant.ImageTaskRequestBodyBase64MaxMB = GetEnvOrDefault("IMAGE_TASK_REQUEST_BODY_BASE64_MAX_MB", 16)
 	constant.ImageTaskHTTPResponseMaxMB = GetEnvOrDefault("IMAGE_TASK_HTTP_RESPONSE_MAX_MB", 0)
 	constant.ImageTaskFileCacheShared = GetEnvOrDefaultBool("IMAGE_TASK_FILE_CACHE_SHARED", false)
 	constant.ImageTaskFileCacheSharedTrusted = GetEnvOrDefaultBool("IMAGE_TASK_FILE_CACHE_SHARED_TRUSTED", false)
 	constant.ImageTaskLocalFileCacheAffinity = GetEnvOrDefaultBool("IMAGE_TASK_LOCAL_FILE_CACHE_AFFINITY", true)
+	// 图片任务孤儿兜底：未提交上游且长期无节点认领的任务在该秒数后失败退款，0 表示禁用。
+	constant.ImageTaskOrphanFailSeconds = GetEnvOrDefault("IMAGE_TASK_ORPHAN_FAIL_SECONDS", 1800)
+	// 无法外置到受信共享缓存时，允许内联进数据库的结果上限（MB），0 表示不限制。
+	constant.ImageTaskResultInlineMaxMB = GetEnvOrDefault("IMAGE_TASK_RESULT_INLINE_MAX_MB", 32)
+	// 图片任务状态/结果/ACK/取消接口的单令牌限流；异步 API 以轮询为前提，这里不能沿用
+	// CRITICAL_RATE_LIMIT（默认 20 分钟 50 次）那种为敏感写操作准备的额度。0 表示不限流。
+	constant.ImageTaskAccessRateLimitCount = GetEnvOrDefault("IMAGE_TASK_ACCESS_RATE_LIMIT", 600)
+	constant.ImageTaskAccessRateLimitDurationSeconds = GetEnvOrDefault("IMAGE_TASK_ACCESS_RATE_LIMIT_DURATION", 60)
+	constant.ImageTaskCreateRateLimitCount = GetEnvOrDefault("IMAGE_TASK_CREATE_RATE_LIMIT", 60)
+	constant.ImageTaskCreateRateLimitDurationSeconds = GetEnvOrDefault("IMAGE_TASK_CREATE_RATE_LIMIT_DURATION", 60)
+	constant.ImageTaskCreateMaxInFlight = GetEnvOrDefault("IMAGE_TASK_CREATE_MAX_IN_FLIGHT", 16)
+	constant.ImageTaskCreateMaxReservedMB = GetEnvOrDefault("IMAGE_TASK_CREATE_MAX_RESERVED_MB", 1024)
+	// 幂等预约行在绑定任务后不会自动消失，需要保留期回收，否则会随图片任务量无上限增长。
+	constant.ImageTaskIdempotencyLockRetentionHours = GetEnvOrDefault("IMAGE_TASK_IDEMPOTENCY_LOCK_RETENTION_HOURS", 24*30)
 	constant.SystemTaskHistoryRetentionHours = GetEnvOrDefault("SYSTEM_TASK_HISTORY_RETENTION_HOURS", 24*7)
 	constant.TaskSettlementRecordRetentionHours = GetEnvOrDefault("TASK_SETTLEMENT_RECORD_RETENTION_HOURS", 24*30)
 

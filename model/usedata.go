@@ -104,6 +104,34 @@ func LogQuotaData(params QuotaDataLogParams) {
 	logQuotaDataCache(quotaData)
 }
 
+func RecordTaskSettlementQuotaDataTx(tx *gorm.DB, params QuotaDataLogParams) error {
+	if tx == nil {
+		return fmt.Errorf("database transaction is required")
+	}
+	createdAt := params.CreatedAt
+	if createdAt <= 0 {
+		createdAt = common.GetTimestamp()
+	}
+	createdAt -= createdAt % 3600
+	count := params.Count
+	if !params.ExplicitCount {
+		count = 1
+	}
+	return tx.Create(&QuotaData{
+		UserID:    params.UserID,
+		Username:  params.Username,
+		ModelName: params.ModelName,
+		CreatedAt: createdAt,
+		UseGroup:  params.UseGroup,
+		TokenID:   params.TokenID,
+		ChannelID: params.ChannelID,
+		NodeName:  params.NodeName,
+		TokenUsed: params.TokenUsed,
+		Count:     count,
+		Quota:     params.Quota,
+	}).Error
+}
+
 func SaveQuotaDataCache() {
 	CacheQuotaDataLock.Lock()
 	defer CacheQuotaDataLock.Unlock()

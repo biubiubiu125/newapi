@@ -87,5 +87,7 @@ plans/
 
 # Local-only live probes and scratch test workspaces.
 .local-tests/
+# 内部设计稿 / 计划稿属于本地审查产物，不进公开仓库
+docs/superpowers/
 service/relayconvert/chat_responses_live_local_test.go
 service/openaicompat/chat_responses_live_local_test.go

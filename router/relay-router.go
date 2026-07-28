@@ -5,6 +5,7 @@ import (
 	"github.com/QuantumNous/new-api/controller"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/relay"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -59,6 +60,40 @@ func SetRelayRouter(router *gin.Engine) {
 	relayV1Router.Use(middleware.SystemPerformanceCheck())
 	relayV1Router.Use(middleware.TokenAuth())
 	relayV1Router.Use(middleware.ModelRequestRateLimit())
+	imageTaskRouter := router.Group("/v1/image-tasks")
+	imageTaskRouter.Use(middleware.RouteTag("relay"))
+	imageTaskRouter.Use(middleware.SystemPerformanceCheck())
+	{
+		imageTaskCreateRouter := imageTaskRouter.Group("")
+		imageTaskCreateRouter.Use(middleware.TokenAuthForImageTaskCreation())
+		imageTaskCreateRouter.POST("/generations",
+			controller.RequirePublicImageTaskContentType(relayconstant.RelayModeImagesGenerations),
+			controller.ReusePublicImageTaskGenerationIfExists,
+			middleware.RejectExhaustedTokenForImageTaskCreation(),
+			middleware.ImageTaskCreateAdmission(),
+			middleware.ModelRequestRateLimit(),
+			middleware.Distribute(),
+			func(c *gin.Context) { controller.CreatePublicImageTask(c, relayconstant.RelayModeImagesGenerations) },
+		)
+		imageTaskCreateRouter.POST("/edits",
+			controller.RequirePublicImageTaskContentType(relayconstant.RelayModeImagesEdits),
+			controller.ReusePublicImageTaskEditIfExists,
+			middleware.RejectExhaustedTokenForImageTaskCreation(),
+			middleware.ImageTaskCreateAdmission(),
+			middleware.ModelRequestRateLimit(),
+			middleware.Distribute(),
+			func(c *gin.Context) { controller.CreatePublicImageTask(c, relayconstant.RelayModeImagesEdits) },
+		)
+
+		imageTaskAccessRouter := imageTaskRouter.Group("")
+		imageTaskAccessRouter.Use(middleware.TokenAuthForTaskAccess())
+		imageTaskAccessRouter.Use(middleware.ImageTaskAccessRateLimit())
+		imageTaskAccessRouter.GET("", controller.ListPublicImageTasks)
+		imageTaskAccessRouter.GET("/:task_id", controller.GetPublicImageTask)
+		imageTaskAccessRouter.GET("/:task_id/result", controller.GetPublicImageTaskResult)
+		imageTaskAccessRouter.POST("/:task_id/ack", controller.AcknowledgePublicImageTaskResult)
+		imageTaskAccessRouter.POST("/:task_id/cancel", controller.CancelPublicImageTask)
+	}
 	{
 		// WebSocket 路由（统一到 Relay）
 		wsRouter := relayV1Router.Group("")

@@ -16,7 +16,6 @@ import (
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/types"
 
-	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/shopspring/decimal"
 )
@@ -345,17 +344,22 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 }
 
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
-	if err := postTextConsumeQuota(ctx, relayInfo, usage, extraContent, false); err != nil {
+	if _, err := postTextConsumeQuota(ctx, relayInfo, usage, extraContent, false); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("post text consume quota failed: %v", err))
 		RecordConsumeAccountingError(ctx, relayInfo, "post text consume quota", err)
 	}
 }
 
 func PostTextConsumeQuotaChecked(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) error {
+	_, err := postTextConsumeQuota(ctx, relayInfo, usage, extraContent, true)
+	return err
+}
+
+func PostTextConsumeQuotaCheckedWithQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) (int, error) {
 	return postTextConsumeQuota(ctx, relayInfo, usage, extraContent, true)
 }
 
-func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string, requireSettlement bool) error {
+func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string, requireSettlement bool) (int, error) {
 	originUsage := usage
 	billingUsage := effectiveBillingUsage(usage)
 	if usage == nil {
@@ -446,10 +450,10 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if err := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); err != nil {
 		if settlementSucceeded {
 			if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
-				return fmt.Errorf("post text consume quota usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
+				return summary.Quota, fmt.Errorf("post text consume quota usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
 			}
 		}
-		return fmt.Errorf("post text consume quota usage counter update failed: %w", err)
+		return summary.Quota, fmt.Errorf("post text consume quota usage counter update failed: %w", err)
 	}
 	if summary.ImageTokens != 0 {
 		other["image"] = true
@@ -535,18 +539,16 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			}
 		}
 		if len(rollbackErrs) > 0 {
-			return fmt.Errorf("record consume log failed: %w; rollback errors: %s", err, strings.Join(rollbackErrs, "; "))
+			return summary.Quota, fmt.Errorf("record consume log failed: %w; rollback errors: %s", err, strings.Join(rollbackErrs, "; "))
 		}
-		return fmt.Errorf("record consume log failed: %w", err)
+		return summary.Quota, fmt.Errorf("record consume log failed: %w", err)
 	}
-	gopool.Go(func() {
-		perfmetrics.RecordRelaySample(relayInfo, true, int64(summary.CompletionTokens))
-	})
+	perfmetrics.RecordRelaySampleAsync(relayInfo, true, int64(summary.CompletionTokens))
 	if settlementErr != nil {
 		RecordConsumeAccountingError(ctx, relayInfo, "post text consume quota settlement", settlementErr)
 	}
 	if requireSettlement && settlementErr != nil {
-		return settlementErr
+		return summary.Quota, settlementErr
 	}
-	return nil
+	return summary.Quota, nil
 }

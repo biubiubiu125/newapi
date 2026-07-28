@@ -10,6 +10,7 @@ import (
 type RequestInput struct {
 	Headers map[string]string
 	Body    []byte
+	Params  map[string]any
 }
 
 // TokenParams holds all token dimensions passed into an Expr evaluation.

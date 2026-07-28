@@ -1,6 +1,7 @@
 package helper
 
 import (
+	"encoding/json"
 	"errors"
 	"fmt"
 	"math"
@@ -159,51 +160,49 @@ func GetAndValidateResponsesCompactionRequest(c *gin.Context) (*dto.OpenAIRespon
 
 func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageRequest, error) {
 	imageRequest := &dto.ImageRequest{}
+	publicImageTask := c != nil && c.Request != nil && c.Request.URL != nil &&
+		strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks/")
 
 	switch relayMode {
 	case relayconstant.RelayModeImagesEdits:
 		if strings.Contains(c.Request.Header.Get("Content-Type"), "multipart/form-data") {
-			form, err := common.ParseMultipartFormReusable(c)
-			if err != nil {
-				return nil, fmt.Errorf("failed to parse image edit form request: %w", err)
-			}
-			c.Request.MultipartForm = form
-			formData := url.Values(form.Value)
-			imageRequest.Prompt = formData.Get("prompt")
-			imageRequest.Model = formData.Get("model")
-			if nValue := strings.TrimSpace(formData.Get("n")); nValue != "" {
-				n, err := strconv.Atoi(nValue)
-				if err != nil || n < 0 || n > dto.MaxImageN {
-					return nil, fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN)
-				}
-				imageRequest.N = common.GetPointer(uint(n))
-			}
-			imageRequest.Quality = formData.Get("quality")
-			imageRequest.Size = formData.Get("size")
-			if formData.Has("stream") {
-				stream, err := strconv.ParseBool(formData.Get("stream"))
+			form := c.Request.MultipartForm
+			if form == nil {
+				var err error
+				form, err = common.ParseMultipartFormReusable(c)
 				if err != nil {
-					return nil, fmt.Errorf("invalid stream value: %w", err)
+					return nil, fmt.Errorf("failed to parse image edit form request: %w", err)
 				}
-				imageRequest.Stream = stream
+				c.Request.MultipartForm = form
 			}
-			if imageValue := formData.Get("image"); imageValue != "" {
-				imageRequest.Image, _ = common.Marshal(imageValue)
+			formData := url.Values(form.Value)
+			if err := populateImageRequestFromMultipart(imageRequest, formData, publicImageTask); err != nil {
+				return nil, err
+			}
+			if publicImageTask && imageRequest.Model == "" {
+				imageRequest.Model = "gpt-image-1"
 			}
 
 			if imageRequest.Model == "gpt-image-1" {
 				if imageRequest.Quality == "" {
-					imageRequest.Quality = "standard"
+					if publicImageTask {
+						imageRequest.Quality = "auto"
+					} else {
+						imageRequest.Quality = "standard"
+					}
 				}
 			}
 			if imageRequest.N == nil || *imageRequest.N == 0 {
 				imageRequest.N = common.GetPointer(uint(1))
 			}
 
-			hasWatermark := formData.Has("watermark")
-			if hasWatermark {
-				watermark := formData.Get("watermark") == "true"
-				imageRequest.Watermark = &watermark
+			if publicImageTask {
+				if strings.TrimSpace(imageRequest.Prompt) == "" {
+					return nil, errors.New("prompt is required")
+				}
+				if len(form.File["image"]) == 0 {
+					return nil, errors.New("image is required")
+				}
 			}
 			break
 		}
@@ -212,6 +211,15 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 		err := common.UnmarshalBodyReusable(c, imageRequest)
 		if err != nil {
 			return nil, err
+		}
+
+		if publicImageTask && imageRequest.Model == "" {
+			switch relayMode {
+			case relayconstant.RelayModeImagesGenerations:
+				imageRequest.Model = "dall-e"
+			case relayconstant.RelayModeImagesEdits:
+				imageRequest.Model = "gpt-image-1"
+			}
 		}
 
 		if imageRequest.Model == "" {
@@ -223,7 +231,7 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			return nil, errors.New("size an unexpected error occurred in the parameter, please use 'x' instead of the multiplication sign '×'")
 		}
 
-		if imageRequest.N != nil && *imageRequest.N > dto.MaxImageN {
+		if imageRequest.N != nil && (*imageRequest.N > dto.MaxImageN || (publicImageTask && *imageRequest.N == 0)) {
 			return nil, fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN)
 		}
 
@@ -251,9 +259,12 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 			}
 		}
 
-		//if imageRequest.Prompt == "" {
-		//	return nil, errors.New("prompt is required")
-		//}
+		if publicImageTask && strings.TrimSpace(imageRequest.Prompt) == "" {
+			return nil, errors.New("prompt is required")
+		}
+		if publicImageTask && relayMode == relayconstant.RelayModeImagesEdits && len(imageRequest.Image) == 0 {
+			return nil, errors.New("image is required")
+		}
 
 		if imageRequest.N == nil || *imageRequest.N == 0 {
 			imageRequest.N = common.GetPointer(uint(1))
@@ -261,6 +272,103 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 	}
 
 	return imageRequest, nil
+}
+
+func populateImageRequestFromMultipart(imageRequest *dto.ImageRequest, formData url.Values, publicImageTask bool) error {
+	imageRequest.Model = formData.Get("model")
+	imageRequest.Prompt = formData.Get("prompt")
+	imageRequest.Size = formData.Get("size")
+	imageRequest.Quality = formData.Get("quality")
+
+	if nValue := strings.TrimSpace(formData.Get("n")); nValue != "" {
+		n, err := strconv.Atoi(nValue)
+		if err != nil || n < 0 || n > dto.MaxImageN || (publicImageTask && n == 0) {
+			return fmt.Errorf("n must be an integer between 1 and %d", dto.MaxImageN)
+		}
+		imageRequest.N = common.GetPointer(uint(n))
+	}
+
+	setRawString := func(target *json.RawMessage, key string) error {
+		if !formData.Has(key) {
+			return nil
+		}
+		raw, err := common.Marshal(formData.Get(key))
+		if err != nil {
+			return err
+		}
+		*target = raw
+		return nil
+	}
+	if err := setRawString(&imageRequest.Image, "image"); err != nil {
+		return fmt.Errorf("invalid image value: %w", err)
+	}
+
+	setRawInteger := func(target *json.RawMessage, key string, min int, max int) error {
+		if !formData.Has(key) {
+			return nil
+		}
+		value, err := strconv.Atoi(strings.TrimSpace(formData.Get(key)))
+		if err != nil || value < min || (max >= 0 && value > max) {
+			if max >= 0 {
+				return fmt.Errorf("%s must be an integer between %d and %d", key, min, max)
+			}
+			return fmt.Errorf("%s must be an integer greater than or equal to %d", key, min)
+		}
+		raw, err := common.Marshal(value)
+		if err != nil {
+			return err
+		}
+		*target = raw
+		return nil
+	}
+	if publicImageTask {
+		imageRequest.ResponseFormat = formData.Get("response_format")
+		for _, field := range []struct {
+			key    string
+			target *json.RawMessage
+		}{
+			{key: "style", target: &imageRequest.Style},
+			{key: "user", target: &imageRequest.User},
+			{key: "background", target: &imageRequest.Background},
+			{key: "moderation", target: &imageRequest.Moderation},
+			{key: "output_format", target: &imageRequest.OutputFormat},
+			{key: "input_fidelity", target: &imageRequest.InputFidelity},
+			{key: "watermark_enabled", target: &imageRequest.WatermarkEnabled},
+			{key: "user_id", target: &imageRequest.UserId},
+			{key: "image_url", target: &imageRequest.ImageUrl},
+			{key: "mask", target: &imageRequest.Mask},
+		} {
+			if err := setRawString(field.target, field.key); err != nil {
+				return fmt.Errorf("invalid %s value: %w", field.key, err)
+			}
+		}
+		if err := setRawInteger(&imageRequest.OutputCompression, "output_compression", 0, 100); err != nil {
+			return err
+		}
+		if err := setRawInteger(&imageRequest.PartialImages, "partial_images", 0, -1); err != nil {
+			return err
+		}
+	}
+
+	if formData.Has("stream") {
+		stream, err := strconv.ParseBool(formData.Get("stream"))
+		if err != nil {
+			return fmt.Errorf("invalid stream value: %w", err)
+		}
+		imageRequest.Stream = stream
+	}
+	if formData.Has("watermark") {
+		watermark := formData.Get("watermark") == "true"
+		if publicImageTask {
+			parsed, err := strconv.ParseBool(formData.Get("watermark"))
+			if err != nil {
+				return fmt.Errorf("invalid watermark value: %w", err)
+			}
+			watermark = parsed
+		}
+		imageRequest.Watermark = &watermark
+	}
+	return nil
 }
 
 func GetAndValidateClaudeRequest(c *gin.Context) (textRequest *dto.ClaudeRequest, err error) {

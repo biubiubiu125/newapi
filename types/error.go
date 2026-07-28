@@ -85,6 +85,12 @@ const (
 	// quota error
 	ErrorCodeInsufficientUserQuota      ErrorCode = "insufficient_user_quota"
 	ErrorCodePreConsumeTokenQuotaFailed ErrorCode = "pre_consume_token_quota_failed"
+
+	// idempotency error
+	// 幂等冲突必须和「正在处理中」分开：前者永远不该重试，后者应稍后重试。
+	// 两者共用一个错误码会让客户端无法区分这两种完全相反的处置方式。
+	ErrorCodeIdempotencyConflict   ErrorCode = "idempotency_conflict"
+	ErrorCodeIdempotencyInProgress ErrorCode = "idempotency_in_progress"
 )
 
 type NewAPIError struct {

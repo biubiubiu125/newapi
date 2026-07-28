@@ -1108,12 +1108,19 @@ func GetAllActiveUserSubscriptions(userId int) ([]SubscriptionSummary, error) {
 // HasActiveUserSubscription returns whether the user has any active subscription.
 // This is a lightweight existence check to avoid heavy pre-consume transactions.
 func HasActiveUserSubscription(userId int) (bool, error) {
+	return HasActiveUserSubscriptionTx(DB, userId)
+}
+
+func HasActiveUserSubscriptionTx(tx *gorm.DB, userId int) (bool, error) {
+	if tx == nil {
+		return false, errors.New("database transaction is required")
+	}
 	if userId <= 0 {
 		return false, errors.New("invalid userId")
 	}
-	now := common.GetTimestamp()
+	now := getDBTimestampTx(tx)
 	var count int64
-	if err := DB.Model(&UserSubscription{}).
+	if err := tx.Model(&UserSubscription{}).
 		Where("user_id = ? AND status = ? AND end_time > ?", userId, "active", now).
 		Count(&count).Error; err != nil {
 		return false, err
@@ -1143,17 +1150,24 @@ func UserActiveSubscriptionsAllowWalletOverflow(userId int) (bool, error) {
 // after the quota of subscriptions granting the current group is exhausted. Subscriptions that
 // do not grant the current group must not affect this fallback decision.
 func UserActiveSubscriptionsAllowWalletOverflowForGroup(userId int, usingGroup string) (bool, error) {
+	return UserActiveSubscriptionsAllowWalletOverflowForGroupTx(DB, userId, usingGroup)
+}
+
+func UserActiveSubscriptionsAllowWalletOverflowForGroupTx(tx *gorm.DB, userId int, usingGroup string) (bool, error) {
+	if tx == nil {
+		return false, errors.New("database transaction is required")
+	}
 	if userId <= 0 {
 		return false, errors.New("invalid userId")
 	}
 	usingGroup = strings.TrimSpace(usingGroup)
-	now := common.GetTimestamp()
+	now := getDBTimestampTx(tx)
 	var subs []UserSubscription
-	if err := DB.Where("user_id = ? AND status = ? AND end_time > ?", userId, "active", now).
+	if err := tx.Where("user_id = ? AND status = ? AND end_time > ?", userId, "active", now).
 		Find(&subs).Error; err != nil {
 		return false, err
 	}
-	baseGroups, err := userBaseUsableGroupSetByIdTx(DB, userId)
+	baseGroups, err := userBaseUsableGroupSetByIdTx(tx, userId)
 	if err != nil {
 		return false, err
 	}
@@ -1588,6 +1602,19 @@ func maybeResetUserSubscriptionWithPlanTx(tx *gorm.DB, sub *UserSubscription, pl
 
 // PreConsumeUserSubscription pre-consumes from an active subscription that grants the using group.
 func PreConsumeUserSubscription(requestId string, userId int, modelName string, quotaType int, amount int64, usingGroup string) (*SubscriptionPreConsumeResult, error) {
+	var result *SubscriptionPreConsumeResult
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		result, err = PreConsumeUserSubscriptionTx(tx, requestId, userId, modelName, quotaType, amount, usingGroup)
+		return err
+	})
+	return result, err
+}
+
+func PreConsumeUserSubscriptionTx(tx *gorm.DB, requestId string, userId int, modelName string, quotaType int, amount int64, usingGroup string) (*SubscriptionPreConsumeResult, error) {
+	if tx == nil {
+		return nil, errors.New("database transaction is required")
+	}
 	if userId <= 0 {
 		return nil, errors.New("invalid userId")
 	}
@@ -1598,11 +1625,11 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 		return nil, errors.New("amount must be > 0")
 	}
 	usingGroup = strings.TrimSpace(usingGroup)
-	now := GetDBTimestamp()
+	now := getDBTimestampTx(tx)
 
 	returnValue := &SubscriptionPreConsumeResult{}
 
-	err := DB.Transaction(func(tx *gorm.DB) error {
+	err := func() error {
 		var existing SubscriptionPreConsumeRecord
 		query := tx.Where("request_id = ?", requestId).Limit(1).Find(&existing)
 		if query.Error != nil {
@@ -1703,7 +1730,7 @@ func PreConsumeUserSubscription(requestId string, userId int, modelName string, 
 			return fmt.Errorf("no active subscription grants group: %s", usingGroup)
 		}
 		return fmt.Errorf("subscription quota insufficient, need=%d", amount)
-	})
+	}()
 	if err != nil {
 		return nil, err
 	}
@@ -1884,4 +1911,28 @@ func PostConsumeUserSubscriptionDelta(userSubscriptionId int, delta int64) error
 		sub.AmountUsed = newUsed
 		return tx.Save(&sub).Error
 	})
+}
+
+func PostConsumeUserSubscriptionDeltaTx(tx *gorm.DB, userSubscriptionId int, delta int64) error {
+	if tx == nil {
+		return errors.New("database transaction is required")
+	}
+	if userSubscriptionId <= 0 {
+		return errors.New("invalid userSubscriptionId")
+	}
+	if delta == 0 {
+		return nil
+	}
+	var sub UserSubscription
+	if err := lockForUpdate(tx).Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
+		return err
+	}
+	newUsed := sub.AmountUsed + delta
+	if newUsed < 0 {
+		newUsed = 0
+	}
+	if sub.AmountTotal > 0 && newUsed > sub.AmountTotal {
+		return fmt.Errorf("subscription used exceeds total, used=%d total=%d", newUsed, sub.AmountTotal)
+	}
+	return tx.Model(&UserSubscription{}).Where("id = ?", userSubscriptionId).Update("amount_used", newUsed).Error
 }

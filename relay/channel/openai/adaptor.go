@@ -380,9 +380,16 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 
 		writer.WriteField("model", request.Model)
 
-		formData, err2 := common.ParseMultipartFormReusable(c)
-		if err2 != nil {
-			return nil, fmt.Errorf("error parsing multipart form: %w", err2)
+		// 复用请求上已解析的表单；重试时重复解析会留下无人释放的临时文件。
+		formData := c.Request.MultipartForm
+		if formData == nil {
+			parsed, err2 := common.ParseMultipartFormReusable(c)
+			if err2 != nil {
+				return nil, fmt.Errorf("error parsing multipart form: %w", err2)
+			}
+			// 挂到请求上，交由 net/http 请求收尾统一清理 multipart 临时文件。
+			c.Request.MultipartForm = parsed
+			formData = parsed
 		}
 
 		// 打印类似 curl 命令格式的信息

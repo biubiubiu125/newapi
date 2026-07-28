@@ -42,6 +42,9 @@ func TestMain(m *testing.M) {
 		&TaskDispatchState{},
 		&ImageTaskChannelLease{},
 		&ImageTaskClientTaskIDLock{},
+		&ImageTaskCreateGuard{},
+		&ImageTaskCreateRateBucket{},
+		&ImageTaskCreateReservation{},
 		&TaskSettlementRecord{},
 		&User{},
 		&UserLoginIdentifier{},
@@ -81,6 +84,9 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM task_dispatch_states")
 		DB.Exec("DELETE FROM image_task_channel_leases")
 		DB.Exec("DELETE FROM image_task_client_task_id_locks")
+		DB.Exec("DELETE FROM image_task_create_reservations")
+		DB.Exec("DELETE FROM image_task_create_rate_buckets")
+		DB.Exec("DELETE FROM image_task_create_guards")
 		DB.Exec("DELETE FROM task_settlement_records")
 		DB.Exec("DELETE FROM users")
 		DB.Exec("DELETE FROM user_login_identifiers")
@@ -426,6 +432,61 @@ func TestGetRunnableImageTasksRestrictsToNodeWhenSharedCacheDisabled(t *testing.
 	require.Equal(t, ImageTaskPortableStorageNode, migrated.StorageNode)
 }
 
+func TestGetRunnableImageTasksIncludesForeignNodeSettlementTasks(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Exec("DELETE FROM tasks").Error)
+	resetImageTaskFairChannelCursorForTest(t)
+	oldShared := constant.ImageTaskFileCacheShared
+	oldAffinity := constant.ImageTaskLocalFileCacheAffinity
+	oldNode := common.NodeName
+	constant.ImageTaskFileCacheShared = false
+	constant.ImageTaskLocalFileCacheAffinity = true
+	common.NodeName = "node-a"
+	t.Cleanup(func() {
+		constant.ImageTaskFileCacheShared = oldShared
+		constant.ImageTaskLocalFileCacheAffinity = oldAffinity
+		common.NodeName = oldNode
+	})
+
+	now := time.Now().Unix()
+	// 已消失节点上的待结算任务必须能被其他节点接管结算。
+	insertTask(t, &Task{
+		TaskID:           "task_image_dead_node_settlement",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           TaskStatusSuccess,
+		SettlementStatus: TaskSettlementStatusPending,
+		Progress:         "100%",
+		SubmitTime:       now,
+		FinishTime:       now,
+		NextPollAt:       now - 1,
+		StorageNode:      "node-dead",
+	})
+	// 已消失节点上的执行中任务仍受 storage_node 过滤（其他节点没有请求体文件）。
+	insertTask(t, &Task{
+		TaskID:      "task_image_dead_node_queued",
+		Platform:    constant.TaskPlatformImage,
+		UserId:      1,
+		Group:       "default",
+		ChannelId:   2,
+		Status:      TaskStatusQueued,
+		Progress:    "0%",
+		SubmitTime:  now,
+		NextPollAt:  now - 1,
+		StorageNode: "node-dead",
+	})
+
+	tasks := GetRunnableImageTasks(10, now)
+	require.Equal(t, []string{"task_image_dead_node_settlement"}, taskIDs(tasks))
+
+	require.True(t, HasRunnableImageTasks(now))
+	nextAt, ok := GetNextRunnableImageTaskAt(now)
+	require.False(t, ok)
+	require.Zero(t, nextAt)
+}
+
 func TestGetOpenImageTaskCachePathsOnlyKeepsActiveReferences(t *testing.T) {
 	truncateTables(t)
 	require.NoError(t, DB.Exec("DELETE FROM tasks").Error)
@@ -459,6 +520,21 @@ func TestGetOpenImageTaskCachePathsOnlyKeepsActiveReferences(t *testing.T) {
 		},
 	})
 	insertTask(t, &Task{
+		TaskID:           "task_image_pending_expired_result",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           TaskStatusSuccess,
+		Progress:         "100%",
+		SubmitTime:       now - int64((13 * time.Hour).Seconds()),
+		SettlementStatus: TaskSettlementStatusPending,
+		ResultExpiresAt:  now - 1,
+		PrivateData: TaskPrivateData{
+			ResultBodyPath: "/tmp/result-pending-expired",
+		},
+	})
+	insertTask(t, &Task{
 		TaskID:           "task_image_settled",
 		Platform:         constant.TaskPlatformImage,
 		UserId:           1,
@@ -488,6 +564,39 @@ func TestGetOpenImageTaskCachePathsOnlyKeepsActiveReferences(t *testing.T) {
 			ResultBodyPath:  "/tmp/result-review",
 		},
 	})
+	insertTask(t, &Task{
+		TaskID:           "task_image_settled_retained",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           TaskStatusSuccess,
+		Progress:         "100%",
+		SubmitTime:       now - int64((13 * time.Hour).Seconds()),
+		SettlementStatus: TaskSettlementStatusSettled,
+		ResultExpiresAt:  now + 3600,
+		PrivateData: TaskPrivateData{
+			RequestBodyPath: "/tmp/body-settled-retained",
+			ResultBodyPath:  "/tmp/result-settled-retained",
+		},
+	})
+	insertTask(t, &Task{
+		TaskID:                "task_image_execution_review_retained",
+		Platform:              constant.TaskPlatformImage,
+		UserId:                1,
+		Group:                 "default",
+		ChannelId:             1,
+		Status:                TaskStatusFailure,
+		Progress:              "100%",
+		SubmitTime:            now - int64((24 * time.Hour).Seconds()),
+		SettlementStatus:      TaskSettlementStatusReview,
+		RequestCleanupPending: true,
+		RequestDeleteAfter:    now + 3600,
+		PrivateData: TaskPrivateData{
+			RequestBodyPath: "/tmp/body-execution-review-retained",
+			ResultBodyPath:  "/tmp/result-execution-review-retained",
+		},
+	})
 
 	bodyPaths, resultPaths, err := GetOpenImageTaskCachePaths(2)
 
@@ -495,9 +604,14 @@ func TestGetOpenImageTaskCachePathsOnlyKeepsActiveReferences(t *testing.T) {
 	require.Contains(t, bodyPaths, filepath.Clean("/tmp/body-open"))
 	require.Contains(t, bodyPaths, filepath.Clean("/tmp/body-pending"))
 	require.Contains(t, bodyPaths, filepath.Clean("/tmp/body-review"))
+	require.Contains(t, bodyPaths, filepath.Clean("/tmp/body-execution-review-retained"))
+	require.NotContains(t, bodyPaths, filepath.Clean("/tmp/body-settled-retained"))
 	require.NotContains(t, bodyPaths, filepath.Clean("/tmp/body-settled"))
 	require.Contains(t, resultPaths, filepath.Clean("/tmp/result-pending"))
+	require.NotContains(t, resultPaths, filepath.Clean("/tmp/result-pending-expired"))
 	require.Contains(t, resultPaths, filepath.Clean("/tmp/result-review"))
+	require.Contains(t, resultPaths, filepath.Clean("/tmp/result-settled-retained"))
+	require.NotContains(t, resultPaths, filepath.Clean("/tmp/result-execution-review-retained"))
 	require.NotContains(t, resultPaths, filepath.Clean("/tmp/result-settled"))
 }
 
@@ -559,6 +673,7 @@ func TestGetOpenImageTaskCachePathsForCandidatesFiltersBeforeScanning(t *testing
 		Progress:         "100%",
 		SubmitTime:       now,
 		SettlementStatus: TaskSettlementStatusSettled,
+		ResultExpiresAt:  now + 3600,
 		PrivateData: TaskPrivateData{
 			ResultBodyPath: resultSettled,
 		},
@@ -577,7 +692,7 @@ func TestGetOpenImageTaskCachePathsForCandidatesFiltersBeforeScanning(t *testing
 
 	require.NoError(t, err)
 	require.Equal(t, map[string]struct{}{bodyOpen: {}}, bodyPaths)
-	require.Equal(t, map[string]struct{}{resultPending: {}}, resultPaths)
+	require.Equal(t, map[string]struct{}{resultPending: {}, resultSettled: {}}, resultPaths)
 }
 
 func TestGetRunnableImageTasksTreatsNullProgressAsUnfinished(t *testing.T) {

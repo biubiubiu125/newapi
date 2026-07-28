@@ -44,8 +44,8 @@ const imageTaskUncertainSubmissionRetryCooldown = 30 * time.Second
 const imageTaskUncertainSubmissionMaxAttempts = 3
 const imageTaskLargeStorageReadThreshold = 8 << 20
 const imageTaskLargeStorageReadConcurrency = 4
-const imageTaskInlineB64ResultMaxBytes = 1 << 20
 const imageTaskBatchPollMaxIDs = 100
+const imageTaskReviewRequestRetention = 12 * time.Hour
 
 var errImageTaskHTTPResponseTooLarge = errors.New("image task upstream response too large")
 var imageTaskLargeStorageReadSlots = make(chan struct{}, imageTaskLargeStorageReadConcurrency)
@@ -178,7 +178,13 @@ func RunImageTasks(ctx context.Context, tasks []*model.Task) error {
 		if imageTaskShouldFailStaleExecution(task, mode) {
 			flushBatch()
 			reason := fmt.Sprintf("image task execution timeout (%s)", imageTaskAsyncTimeoutText())
-			if err := failImageTask(ctx, task, model.TaskStatusInProgress, reason, true, true); err != nil {
+			var err error
+			if task.SyncSubmissionStartedAt > 0 {
+				err = markImageTaskExecutionReview(ctx, task, model.TaskStatusInProgress, reason)
+			} else {
+				err = failImageTask(ctx, task, model.TaskStatusInProgress, reason, true, true)
+			}
+			if err != nil {
 				logger.LogError(ctx, fmt.Sprintf("image task %s timeout cleanup failed: %s", task.TaskID, err.Error()))
 			}
 			continue
@@ -271,6 +277,10 @@ func runSyncWrapperImageTask(ctx context.Context, task *model.Task) error {
 		return nil
 	}
 	oldStatus := task.Status
+	if oldStatus == model.TaskStatusInProgress && task.SyncSubmissionStartedAt > 0 {
+		reason := "image task sync submission outcome is unknown after worker lease recovery; refusing to replay upstream request"
+		return markImageTaskExecutionReview(ctx, task, model.TaskStatusInProgress, reason)
+	}
 	now := time.Now().Unix()
 	task.Status = model.TaskStatusInProgress
 	task.Progress = "1%"
@@ -290,10 +300,12 @@ func runSyncWrapperImageTask(ctx context.Context, task *model.Task) error {
 		return failImageTask(ctx, task, model.TaskStatusInProgress, err.Error(), true, true)
 	}
 	defer bodyStorage.Close()
-
 	result, err := executeSyncImageTask(execCtx, task, bodyStorage, contentType)
 	if err != nil {
 		_ = bodyStorage.Close()
+		if task.SyncSubmissionStartedAt > 0 {
+			return markImageTaskExecutionReview(ctx, task, model.TaskStatusInProgress, err.Error())
+		}
 		return failImageTask(ctx, task, model.TaskStatusInProgress, err.Error(), true, true)
 	}
 
@@ -309,6 +321,18 @@ func runSyncWrapperImageTask(ctx context.Context, task *model.Task) error {
 	if err != nil {
 		return markImageTaskUpstreamResultReview(ctx, task, model.TaskStatusInProgress, fmt.Sprintf("store image task result failed: %s", err.Error()))
 	}
+	settlementBillingInput, billingInputErr := imageTaskBillingRequestInputFromStoredBody(task)
+	if billingInputErr != nil {
+		return markImageTaskUpstreamResultReview(ctx, task, model.TaskStatusInProgress, fmt.Sprintf("load settlement billing evidence failed: %s", billingInputErr.Error()))
+	}
+	settlementBillingInput, billingInputErr = captureImageTaskSettlementBillingEvidence(task, settlementBillingInput)
+	if billingInputErr != nil {
+		return markImageTaskUpstreamResultReview(ctx, task, model.TaskStatusInProgress, fmt.Sprintf("capture settlement billing evidence failed: %s", billingInputErr.Error()))
+	}
+	task.PrivateData.BillingRequestInput = settlementBillingInput
+	task.PrivateData.BillingRequestInputCaptured = true
+	task.PrivateData.SettlementEvidenceCapturedAt = task.FinishTime
+	task.ClearImageTaskExecutionSecrets()
 	won, err = updateImageTaskWithStatus(ctx, task, model.TaskStatusInProgress)
 	if err != nil {
 		removeImageTaskResultPath(resultPath)
@@ -322,6 +346,7 @@ func runSyncWrapperImageTask(ctx context.Context, task *model.Task) error {
 		Result:       json.RawMessage(result.Response),
 		Usage:        result.Usage,
 		ExtraContent: result.ExtraContent,
+		BillingInput: settlementBillingInput,
 	})
 }
 
@@ -363,6 +388,12 @@ func executeSyncImageTask(ctx context.Context, task *model.Task, bodyStorage com
 	fakeCtx.Set(contextKeyImageTaskDeferBilling, true)
 	fakeCtx.Set(common.KeyBodyStorage, bodyStorage)
 	defer common.CleanupBodyStorage(fakeCtx)
+	// 这里没有 net/http 的请求收尾流程，multipart 解析出的临时文件必须自行释放。
+	defer func() {
+		if fakeCtx.Request != nil && fakeCtx.Request.MultipartForm != nil {
+			_ = fakeCtx.Request.MultipartForm.RemoveAll()
+		}
+	}()
 
 	if err := setupImageTaskGinContext(fakeCtx, task); err != nil {
 		return nil, err
@@ -378,6 +409,16 @@ func executeSyncImageTask(ctx context.Context, task *model.Task, bodyStorage com
 	if err != nil {
 		return nil, err
 	}
+	startedAt := time.Now().Unix()
+	owner := service.ImageTaskLeaseOwnerForTaskFromContext(ctx, task.ID)
+	marked, err := model.MarkImageTaskSyncSubmissionStarted(task.ID, owner, startedAt, startedAt)
+	if err != nil {
+		return nil, err
+	}
+	if !marked {
+		return nil, errors.New("image task sync submission marker lost CAS")
+	}
+	task.SyncSubmissionStartedAt = startedAt
 	if newAPIError := ImageHelper(fakeCtx, relayInfo); newAPIError != nil {
 		return nil, newAPIError
 	}
@@ -607,6 +648,9 @@ func imageTaskBillingRequestInputFromStoredBody(task *model.Task) (*billingexpr.
 	if task.PrivateData.TieredBillingSnapshot == nil && task.PrivateData.BillingRequestInput == nil {
 		return nil, nil
 	}
+	if task.PrivateData.BillingRequestInputCaptured || task.PrivateData.SettlementEvidenceCapturedAt > 0 {
+		return cloneImageTaskBillingRequestInput(task.PrivateData.BillingRequestInput), nil
+	}
 	bodyStorage, contentType, err := openImageTaskBodyStorage(task)
 	if err != nil {
 		return cloneImageTaskBillingRequestInput(task.PrivateData.BillingRequestInput), err
@@ -619,13 +663,53 @@ func cloneImageTaskBillingRequestInput(src *billingexpr.RequestInput) *billingex
 	if src == nil {
 		return nil
 	}
-	dst := &billingexpr.RequestInput{
-		Headers: cloneImageTaskStringMap(src.Headers),
+	dst := billingexpr.CloneRequestInput(*src)
+	return &dst
+}
+
+func captureImageTaskSettlementBillingEvidence(task *model.Task, input *billingexpr.RequestInput) (*billingexpr.RequestInput, error) {
+	if input == nil {
+		return nil, nil
 	}
-	if len(src.Body) > 0 {
-		dst.Body = append([]byte(nil), src.Body...)
+	evidence := cloneImageTaskBillingRequestInput(input)
+	evidence.Body = nil
+	if task != nil && task.PrivateData.TieredBillingSnapshot != nil && task.PrivateData.TieredBillingSnapshot.BillingMode == "tiered_expr" {
+		expression := task.PrivateData.TieredBillingSnapshot.ExprString
+		if len(evidence.Params) == 0 {
+			params, err := billingexpr.CaptureRequestParams(expression, input.Body)
+			if err != nil {
+				return nil, err
+			}
+			evidence.Params = params
+		}
+		headers, err := billingexpr.CaptureRequestHeaders(expression, input.Headers)
+		if err != nil {
+			return nil, err
+		}
+		evidence.Headers = headers
+	} else {
+		evidence.Headers = nil
 	}
-	return dst
+	if len(evidence.Headers) == 0 && len(evidence.Params) == 0 {
+		return nil, nil
+	}
+	return evidence, nil
+}
+
+func minimizeImageTaskSettlementBillingEvidence(task *model.Task) {
+	if task == nil || task.PrivateData.BillingRequestInput == nil {
+		return
+	}
+	evidence, err := captureImageTaskSettlementBillingEvidence(task, task.PrivateData.BillingRequestInput)
+	if err != nil {
+		evidence = cloneImageTaskBillingRequestInput(task.PrivateData.BillingRequestInput)
+		if evidence != nil {
+			evidence.Body = nil
+			evidence.Headers = nil
+		}
+	}
+	task.PrivateData.BillingRequestInput = evidence
+	task.PrivateData.BillingRequestInputCaptured = true
 }
 
 func cloneImageTaskTieredSnapshot(src *billingexpr.BillingSnapshot) *billingexpr.BillingSnapshot {
@@ -656,12 +740,7 @@ func cloneImageTaskStringMap(src map[string]string) map[string]string {
 }
 
 func imageTaskSensitiveHeader(name string) bool {
-	switch strings.ToLower(strings.TrimSpace(name)) {
-	case "authorization", "proxy-authorization", "x-api-key", "api-key", "cookie", "set-cookie":
-		return true
-	default:
-		return false
-	}
+	return common.IsSensitiveRequestHeader(name)
 }
 
 func imageTaskIsJSONContentType(contentType string) bool {
@@ -837,7 +916,7 @@ func asyncTaskBridgeBatchPollKey(channel *model.Channel, key string, headerOverr
 	if channel == nil {
 		return ""
 	}
-	headerSignature, _ := json.Marshal(headerOverride)
+	headerSignature, _ := common.Marshal(headerOverride)
 	return strings.Join([]string{
 		fmt.Sprintf("%d", channel.Id),
 		channel.GetBaseURL(),
@@ -914,11 +993,7 @@ func pollAsyncTaskBridgeImageTaskStatusBatch(ctx context.Context, group *asyncTa
 			if item.task == nil {
 				continue
 			}
-			if asyncTaskBridgePollShouldRetry(statusCode) {
-				_ = handleAsyncTaskBridgeTransientError(ctx, item.task, "upstream poll task transient status", reason)
-				continue
-			}
-			_ = failImageTask(ctx, item.task, item.task.Status, reason, true, true)
+			_ = handleAsyncTaskBridgePollHTTPFailure(ctx, item.task, statusCode, reason)
 		}
 		return errors.New(reason)
 	}
@@ -930,7 +1005,7 @@ func pollAsyncTaskBridgeImageTaskStatusBatch(ctx context.Context, group *asyncTa
 		if item.task == nil {
 			continue
 		}
-		result, err := parseAsyncTaskBridgeTaskResult(respBody, item.task.PrivateData.UpstreamTaskID)
+		result, err := parseAsyncTaskBridgeBatchTaskResult(respBody, item.task.PrivateData.UpstreamTaskID, len(ids))
 		if err != nil {
 			_ = handleAsyncTaskBridgeInvalidPollResult(ctx, item.task, respBody, err)
 			continue
@@ -965,7 +1040,6 @@ func applyAsyncTaskBridgeStatusOnly(ctx context.Context, task *model.Task, resul
 	if result.Progress != "" {
 		task.Progress = result.Progress
 	}
-	var bodyPath string
 	switch result.Status {
 	case model.TaskStatusQueued, model.TaskStatusSubmitted:
 		if task.Progress == "" {
@@ -990,13 +1064,18 @@ func applyAsyncTaskBridgeStatusOnly(ctx context.Context, task *model.Task, resul
 		if task.FailReason == "" {
 			task.FailReason = "upstream task failed"
 		}
-		bodyPath = takeImageTaskBodyPath(task)
+		service.ScheduleImageTaskRequestFileCleanup(task, now)
+		task.RefundPending = task.Quota != 0
+		task.PrivateData.BillingRequestInput = nil
+		task.PrivateData.BillingRequestInputCaptured = false
+		task.PrivateData.SettlementEvidenceCapturedAt = 0
+		task.ClearImageTaskExecutionSecrets()
 	default:
 		return nil
 	}
 	if imageTaskShouldFailLongRunningUpstreamStatus(task) {
 		reason := fmt.Sprintf("upstream image task execution timeout (%s)", imageTaskAsyncTimeoutText())
-		return failImageTask(ctx, task, snap.Status, reason, true, true)
+		return markImageTaskExecutionReview(ctx, task, snap.Status, reason)
 	}
 	won, err := updateImageTaskWithStatus(ctx, task, snap.Status)
 	if err != nil || !won {
@@ -1008,7 +1087,9 @@ func applyAsyncTaskBridgeStatusOnly(ctx context.Context, task *model.Task, resul
 				logger.LogError(ctx, fmt.Sprintf("image task %s refund failed: %s", task.TaskID, err.Error()))
 			}
 		}
-		removeImageTaskBodyPath(bodyPath)
+		if cleanupErr := service.CleanupDueImageTaskRequestFile(ctx, task); cleanupErr != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("image task %s request file cleanup failed: %s", task.TaskID, cleanupErr.Error()))
+		}
 	}
 	return nil
 }
@@ -1039,7 +1120,7 @@ func recoverAsyncTaskBridgeSubmission(ctx context.Context, task *model.Task) err
 			return submitAsyncTaskBridgeImageTask(ctx, task)
 		}
 		reason := fmt.Sprintf("image task execution timeout (%s)", imageTaskAsyncTimeoutText())
-		return failImageTask(ctx, task, task.Status, reason, true, true)
+		return markImageTaskExecutionReview(ctx, task, task.Status, reason)
 	}
 	return pollAsyncTaskBridgeImageTask(ctx, task)
 }
@@ -1093,9 +1174,22 @@ func submitAsyncTaskBridgeImageTask(ctx context.Context, task *model.Task) error
 	if outboundBody.ContentLength > 0 {
 		req.ContentLength = outboundBody.ContentLength
 	}
+	if err := markAsyncTaskBridgeSubmissionStarted(ctx, task); err != nil {
+		return err
+	}
 
 	respBody, statusCode, err := doImageTaskHTTPRequest(req, channel)
 	if err != nil {
+		if statusCode != 0 && (statusCode < 200 || statusCode >= 300) && !asyncTaskBridgeSubmissionShouldRecover(statusCode) {
+			outboundBody.Close()
+			_ = bodyStorage.Close()
+			return handleAsyncTaskBridgeSubmissionHTTPFailure(
+				ctx,
+				task,
+				statusCode,
+				fmt.Sprintf("upstream create task failed: status=%d response_error=%s", statusCode, err.Error()),
+			)
+		}
 		return keepAsyncTaskBridgeSubmissionInProgress(ctx, task, err.Error())
 	}
 	if asyncTaskBridgeSubmissionShouldRecover(statusCode) {
@@ -1104,7 +1198,12 @@ func submitAsyncTaskBridgeImageTask(ctx context.Context, task *model.Task) error
 	if statusCode < 200 || statusCode >= 300 {
 		outboundBody.Close()
 		_ = bodyStorage.Close()
-		return failImageTask(ctx, task, model.TaskStatusInProgress, fmt.Sprintf("upstream create task failed: status=%d body=%s", statusCode, common.LocalLogPreview(string(respBody))), true, true)
+		return handleAsyncTaskBridgeSubmissionHTTPFailure(
+			ctx,
+			task,
+			statusCode,
+			fmt.Sprintf("upstream create task failed: status=%d body=%s", statusCode, common.LocalLogPreview(string(respBody))),
+		)
 	}
 	upstreamID := extractAsyncTaskBridgeTaskID(respBody)
 	if upstreamID == "" {
@@ -1134,6 +1233,7 @@ func saveAsyncTaskBridgeSubmission(ctx context.Context, task *model.Task, upstre
 	task.Status = model.TaskStatusSubmitted
 	task.Progress = "0%"
 	task.RetryCount = 0
+	markImageTaskStorageNodePortableAfterSubmission(task)
 	won, err := updateImageTaskWithStatus(ctx, task, model.TaskStatusInProgress)
 	if err != nil || won {
 		return err
@@ -1163,6 +1263,7 @@ func saveAsyncTaskBridgeSubmission(ctx context.Context, task *model.Task, upstre
 	current.Status = model.TaskStatusSubmitted
 	current.Progress = "0%"
 	current.RetryCount = 0
+	markImageTaskStorageNodePortableAfterSubmission(current)
 	won, err = updateImageTaskWithStatus(ctx, current, fromStatus)
 	if err != nil {
 		return err
@@ -1173,17 +1274,63 @@ func saveAsyncTaskBridgeSubmission(ctx context.Context, task *model.Task, upstre
 	return nil
 }
 
+// markImageTaskStorageNodePortableAfterSubmission 在上游已接单后解除任务与创建节点的绑定。
+// 提交成功后轮询与结算都不再需要本地请求体文件，放开 storage_node 可以让任意节点接管，
+// 避免创建节点下线或改名后任务永远无人调度。
+// 例外：tiered_expr 计费且尚未捕获请求参数证据的任务仍需读取原始请求体，保持节点绑定。
+func markImageTaskStorageNodePortableAfterSubmission(task *model.Task) {
+	if task == nil || task.StorageNode == model.ImageTaskPortableStorageNode {
+		return
+	}
+	snapshot := task.PrivateData.TieredBillingSnapshot
+	needsOriginalBody := snapshot != nil &&
+		snapshot.BillingMode == "tiered_expr" &&
+		!task.PrivateData.BillingRequestInputCaptured
+	if needsOriginalBody {
+		return
+	}
+	task.StorageNode = model.ImageTaskPortableStorageNode
+}
+
 func keepAsyncTaskBridgeSubmissionInProgress(ctx context.Context, task *model.Task, reason string) error {
 	if task == nil {
 		return nil
 	}
 	markImageTaskTransientRetry(task)
-	markImageTaskUpstreamSubmissionUncertain(task)
+	if task.PrivateData.UpstreamSubmitUncertainAt == 0 || task.PrivateData.UpstreamSubmitUncertainCount == 0 {
+		markImageTaskUpstreamSubmissionUncertain(task)
+	}
 	if _, err := updateImageTaskWithStatus(ctx, task, task.Status); err != nil {
 		return err
 	}
 	logger.LogWarn(ctx, fmt.Sprintf("image task %s upstream submission uncertain, will recover by local task_id: %s", task.TaskID, reason))
 	return nil
+}
+
+func markAsyncTaskBridgeSubmissionStarted(ctx context.Context, task *model.Task) error {
+	if task == nil {
+		return errors.New("image task is required")
+	}
+	markImageTaskUpstreamSubmissionUncertain(task)
+	won, err := updateImageTaskWithStatus(ctx, task, task.Status)
+	if err != nil {
+		return err
+	}
+	if !won {
+		return errors.New("image task upstream submission marker lost CAS")
+	}
+	return nil
+}
+
+func handleAsyncTaskBridgeSubmissionHTTPFailure(ctx context.Context, task *model.Task, statusCode int, reason string) error {
+	if task == nil {
+		return nil
+	}
+	if task.PrivateData.UpstreamSubmitUncertainCount > 1 {
+		logger.LogWarn(ctx, fmt.Sprintf("image task %s repeated upstream submission returned status %d; prior submission outcome remains uncertain", task.TaskID, statusCode))
+		return markImageTaskExecutionReview(ctx, task, task.Status, reason)
+	}
+	return failImageTask(ctx, task, model.TaskStatusInProgress, reason, true, true)
 }
 
 func markImageTaskUpstreamSubmissionUncertain(task *model.Task) {
@@ -1223,6 +1370,16 @@ func asyncTaskBridgeSubmissionShouldRecover(statusCode int) bool {
 
 func asyncTaskBridgePollShouldRetry(statusCode int) bool {
 	return asyncTaskBridgeSubmissionShouldRecover(statusCode)
+}
+
+func handleAsyncTaskBridgePollHTTPFailure(ctx context.Context, task *model.Task, statusCode int, reason string) error {
+	if task == nil {
+		return nil
+	}
+	if asyncTaskBridgePollShouldRetry(statusCode) {
+		return handleAsyncTaskBridgeTransientError(ctx, task, "upstream poll task transient status", reason)
+	}
+	return markImageTaskExecutionReview(ctx, task, task.Status, reason)
 }
 
 func recoverAsyncTaskBridgeTaskByClientTaskID(ctx context.Context, task *model.Task) (bool, error) {
@@ -1275,6 +1432,7 @@ func recoverAsyncTaskBridgeTaskByClientTaskID(ctx context.Context, task *model.T
 	task.Status = model.TaskStatusSubmitted
 	task.Progress = "0%"
 	task.RetryCount = 0
+	markImageTaskStorageNodePortableAfterSubmission(task)
 	won, err := updateImageTaskWithStatus(ctx, task, snap.Status)
 	if err != nil || !won {
 		return false, err
@@ -1338,10 +1496,7 @@ func pollAsyncTaskBridgeImageTask(ctx context.Context, task *model.Task) error {
 		if errors.Is(err, errImageTaskHTTPResponseTooLarge) {
 			if statusCode < 200 || statusCode >= 300 {
 				reason := fmt.Sprintf("upstream poll task failed: status=%d body=%s", statusCode, err.Error())
-				if asyncTaskBridgePollShouldRetry(statusCode) {
-					return handleAsyncTaskBridgeTransientError(ctx, task, "upstream poll task transient status", reason)
-				}
-				return failImageTask(ctx, task, task.Status, reason, true, true)
+				return handleAsyncTaskBridgePollHTTPFailure(ctx, task, statusCode, reason)
 			}
 			return markImageTaskUpstreamResultReview(ctx, task, task.Status, err.Error())
 		}
@@ -1350,10 +1505,7 @@ func pollAsyncTaskBridgeImageTask(ctx context.Context, task *model.Task) error {
 	respPreview := imageTaskHTTPResponseStoragePreview(respStorage)
 	if statusCode < 200 || statusCode >= 300 {
 		reason := fmt.Sprintf("upstream poll task failed: status=%d body=%s", statusCode, respPreview)
-		if asyncTaskBridgePollShouldRetry(statusCode) {
-			return handleAsyncTaskBridgeTransientError(ctx, task, "upstream poll task transient status", reason)
-		}
-		return failImageTask(ctx, task, task.Status, reason, true, true)
+		return handleAsyncTaskBridgePollHTTPFailure(ctx, task, statusCode, reason)
 	}
 	result, err := parseAsyncTaskBridgeTaskResultFromStorage(respStorage, task.PrivateData.UpstreamTaskID)
 	if err != nil {
@@ -1429,7 +1581,7 @@ func pollAsyncTaskBridgeImageTask(ctx context.Context, task *model.Task) error {
 
 	if imageTaskShouldFailLongRunningUpstreamStatus(task) {
 		reason := fmt.Sprintf("upstream image task execution timeout (%s)", imageTaskAsyncTimeoutText())
-		return failImageTask(ctx, task, snap.Status, reason, true, true)
+		return markImageTaskExecutionReview(ctx, task, snap.Status, reason)
 	}
 
 	var settlementBillingInput *billingexpr.RequestInput
@@ -1443,11 +1595,27 @@ func pollAsyncTaskBridgeImageTask(ctx context.Context, task *model.Task) error {
 				return markImageTaskUpstreamResultReview(ctx, task, snap.Status, reason)
 			}
 		}
+		settlementBillingInput, billingInputErr = captureImageTaskSettlementBillingEvidence(task, settlementBillingInput)
+		if billingInputErr != nil {
+			return markImageTaskUpstreamResultReview(ctx, task, snap.Status, fmt.Sprintf("capture settlement billing evidence failed: %s", billingInputErr.Error()))
+		}
+		task.PrivateData.BillingRequestInput = settlementBillingInput
+		task.PrivateData.BillingRequestInputCaptured = true
+		if usage, ok := imageTaskUsageFromResult(result.Result); ok {
+			task.PrivateData.SettlementUsage = cloneImageTaskUsage(usage)
+		}
+		task.PrivateData.SettlementEvidenceCapturedAt = now
 	}
 
-	var bodyPath string
 	if task.Status == model.TaskStatusFailure {
-		bodyPath = takeImageTaskBodyPath(task)
+		service.ScheduleImageTaskRequestFileCleanup(task, now)
+		task.RefundPending = task.Quota != 0
+		task.PrivateData.BillingRequestInput = nil
+		task.PrivateData.BillingRequestInputCaptured = false
+		task.PrivateData.SettlementEvidenceCapturedAt = 0
+	}
+	if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
+		task.ClearImageTaskExecutionSecrets()
 	}
 	won, err := updateImageTaskWithStatus(ctx, task, snap.Status)
 	if err != nil || !won {
@@ -1463,7 +1631,9 @@ func pollAsyncTaskBridgeImageTask(ctx context.Context, task *model.Task) error {
 				logger.LogError(ctx, fmt.Sprintf("image task %s refund failed: %s", task.TaskID, err.Error()))
 			}
 		}
-		removeImageTaskBodyPath(bodyPath)
+		if cleanupErr := service.CleanupDueImageTaskRequestFile(ctx, task); cleanupErr != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("image task %s request file cleanup failed: %s", task.TaskID, cleanupErr.Error()))
+		}
 	}
 	return nil
 }
@@ -1514,7 +1684,8 @@ func settleImageTaskSuccess(ctx context.Context, task *model.Task, payload image
 		extraContent = append(extraContent, task.PrivateData.SettlementExtraContent...)
 	}
 	result := payload.Result
-	if len(result) == 0 {
+	evidenceCaptured := task.PrivateData.SettlementEvidenceCapturedAt > 0
+	if len(result) == 0 && !evidenceCaptured {
 		var err error
 		result, err = loadImageTaskStoredResultData(task)
 		if err != nil {
@@ -1525,7 +1696,7 @@ func settleImageTaskSuccess(ctx context.Context, task *model.Task, payload image
 			return errors.New(reason)
 		}
 	}
-	if len(result) == 0 {
+	if len(result) == 0 && !evidenceCaptured {
 		reason := "image task success result is empty, cannot settle billing"
 		if reviewErr := markImageTaskSettlementReview(ctx, task, reason); reviewErr != nil {
 			return reviewErr
@@ -1535,7 +1706,11 @@ func settleImageTaskSuccess(ctx context.Context, task *model.Task, payload image
 	billingInput := payload.BillingInput
 	if billingInput == nil {
 		var billingInputErr error
-		billingInput, billingInputErr = imageTaskBillingRequestInputFromStoredBody(task)
+		if evidenceCaptured {
+			billingInput = cloneImageTaskBillingRequestInput(task.PrivateData.BillingRequestInput)
+		} else {
+			billingInput, billingInputErr = imageTaskBillingRequestInputFromStoredBody(task)
+		}
 		if billingInputErr != nil {
 			logger.LogWarn(ctx, fmt.Sprintf("load image task %s billing request body failed: %s", task.TaskID, billingInputErr.Error()))
 			if task.PrivateData.TieredBillingSnapshot != nil {
@@ -1572,7 +1747,9 @@ func settleImageTaskSuccess(ctx context.Context, task *model.Task, payload image
 		markImageTaskTransientRetry(task)
 		return err
 	}
-	if err := settleImageTaskConsumption(ctx, task, result, usage, extraContent, billingInput); err != nil {
+	preConsumedQuota := task.Quota
+	actualQuota, err := settleImageTaskConsumption(ctx, task, result, usage, extraContent, billingInput)
+	if err != nil {
 		reason := fmt.Sprintf("image task settlement requires manual review: %s", err.Error())
 		if reviewErr := model.MarkTaskSettlementApplicationReview(task.ID, reason); reviewErr != nil {
 			markImageTaskTransientRetry(task)
@@ -1584,19 +1761,14 @@ func settleImageTaskSuccess(ctx context.Context, task *model.Task, payload image
 		return errors.New(reason)
 	}
 
-	if err := markImageTaskSettlementApplicationApplied(ctx, task); err != nil {
-		reason := fmt.Sprintf("image task settlement was applied but final marker failed, manual review is required: %s", err.Error())
-		if reviewErr := model.MarkTaskSettlementApplicationReview(task.ID, reason); reviewErr != nil {
-			markImageTaskTransientRetry(task)
-			return fmt.Errorf("%s; mark review failed: %w", reason, reviewErr)
-		}
-		if reviewErr := markImageTaskSettlementReview(ctx, task, reason); reviewErr != nil {
-			return reviewErr
-		}
-		return errors.New(reason)
+	settlementDetails := model.TaskSettlementApplicationAppliedDetails{
+		Operation:        "image_consumption",
+		AppliedQuota:     common.GetPointer(actualQuota),
+		PreConsumedQuota: common.GetPointer(preConsumedQuota),
+		QuotaDelta:       common.GetPointer(actualQuota - preConsumedQuota),
+		LogType:          common.GetPointer(model.LogTypeConsume),
 	}
-
-	return finalizeAppliedImageTaskSettlement(ctx, task)
+	return finalizeAppliedImageTaskSettlement(ctx, task, settlementDetails)
 }
 
 func handleExistingImageTaskSettlementRecord(ctx context.Context, task *model.Task, settlementRecord *model.TaskSettlementRecord) (bool, error) {
@@ -1605,12 +1777,31 @@ func handleExistingImageTaskSettlementRecord(ctx context.Context, task *model.Ta
 	}
 	switch settlementRecord.Status {
 	case model.TaskSettlementRecordStatusApplied:
-		return true, finalizeAppliedImageTaskSettlement(ctx, task)
+		if settlementRecord.Operation != "" && settlementRecord.Operation != "image_consumption" {
+			reason := fmt.Sprintf("applied image task settlement operation is %s, expected image_consumption", settlementRecord.Operation)
+			if err := markImageTaskSettlementReview(ctx, task, reason); err != nil {
+				return true, err
+			}
+			return true, errors.New(reason)
+		}
+		if settlementRecord.AppliedQuota == nil {
+			reason := "applied image task settlement has no applied quota evidence"
+			if err := markImageTaskSettlementReview(ctx, task, reason); err != nil {
+				return true, err
+			}
+			return true, errors.New(reason)
+		}
+		return true, finalizeAppliedImageTaskSettlement(ctx, task, model.TaskSettlementApplicationAppliedDetails{
+			AppliedQuota: settlementRecord.AppliedQuota,
+		})
 	case model.TaskSettlementRecordStatusReview:
 		return true, markImageTaskSettlementReview(ctx, task, settlementRecord.Error)
 	case model.TaskSettlementRecordStatusPrepared:
 		return false, nil
 	case model.TaskSettlementRecordStatusApplying:
+		if settlementRecord.Operation == model.TaskSettlementOperationImageAtomic {
+			return false, nil
+		}
 		refreshedRecord, _, err := model.BeginTaskSettlementApplication(task)
 		if err != nil {
 			markImageTaskTransientRetry(task)
@@ -1627,9 +1818,15 @@ func handleExistingImageTaskSettlementRecord(ctx context.Context, task *model.Ta
 	}
 }
 
-func finalizeAppliedImageTaskSettlement(ctx context.Context, task *model.Task) error {
+func finalizeAppliedImageTaskSettlement(ctx context.Context, task *model.Task, details ...model.TaskSettlementApplicationAppliedDetails) error {
 	if task == nil {
 		return nil
+	}
+	if len(details) > 0 && details[0].AppliedQuota != nil && task.Quota != *details[0].AppliedQuota {
+		task.Quota = *details[0].AppliedQuota
+		if err := task.UpdateQuota(); err != nil {
+			return fmt.Errorf("finalize image task applied quota: %w", err)
+		}
 	}
 	if task.SettlementStatus == model.TaskSettlementStatusSettled {
 		return nil
@@ -1659,7 +1856,7 @@ func markImageTaskSettlementApplicationApplying(ctx context.Context, task *model
 	}
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
-		err = model.MarkTaskSettlementApplicationApplying(task.ID)
+		err = model.MarkTaskSettlementApplicationApplyingAtomic(task.ID)
 		if err == nil {
 			return nil
 		}
@@ -1670,13 +1867,13 @@ func markImageTaskSettlementApplicationApplying(ctx context.Context, task *model
 	return fmt.Errorf("mark image task settlement application applying: %w", err)
 }
 
-func markImageTaskSettlementApplicationApplied(ctx context.Context, task *model.Task) error {
+func markImageTaskSettlementApplicationApplied(ctx context.Context, task *model.Task, details model.TaskSettlementApplicationAppliedDetails) error {
 	if task == nil {
 		return nil
 	}
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
-		err = model.MarkTaskSettlementApplicationApplied(task.ID)
+		err = model.MarkTaskSettlementApplicationApplied(task.ID, details)
 		if err == nil {
 			return nil
 		}
@@ -1730,7 +1927,19 @@ func markImageTaskSettlementReview(ctx context.Context, task *model.Task, reason
 	if reason == "" {
 		reason = "image task settlement requires manual review"
 	}
+	minimizeImageTaskSettlementBillingEvidence(task)
+	task.ClearImageTaskExecutionSecrets()
 	if task.SettlementStatus == model.TaskSettlementStatusReview {
+		if !task.RequestCleanupPending || task.RequestDeleteAfter <= 0 {
+			service.ScheduleImageTaskRequestFileCleanup(task, imageTaskReviewRequestDeleteAfter(task))
+		}
+		won, err := task.UpdateSettlementStatus(model.TaskStatusSuccess, model.TaskSettlementStatusReview)
+		if err != nil {
+			return err
+		}
+		if !won {
+			return errors.New("image task settlement review maintenance lost CAS")
+		}
 		return nil
 	}
 	fromSettlementStatus := task.SettlementStatus
@@ -1744,8 +1953,7 @@ func markImageTaskSettlementReview(ctx context.Context, task *model.Task, reason
 	task.LockUntil = 0
 	task.RetryCount = 0
 	clearImageTaskUpstreamSubmissionUncertainty(task)
-	task.PrivateData.SettlementUsage = nil
-	task.PrivateData.SettlementExtraContent = nil
+	service.ScheduleImageTaskRequestFileCleanup(task, imageTaskReviewRequestDeleteAfter(task))
 	won, err := task.UpdateSettlementStatus(model.TaskStatusSuccess, fromSettlementStatus)
 	if err != nil {
 		return err
@@ -1761,6 +1969,15 @@ func markImageTaskSettlementReview(ctx context.Context, task *model.Task, reason
 	}
 	touchImageTaskReviewCachePaths(task)
 	return nil
+}
+
+func imageTaskReviewRequestDeleteAfter(task *model.Task) int64 {
+	now := time.Now().Unix()
+	base := now
+	if task != nil && task.FinishTime > 0 && task.FinishTime <= now {
+		base = task.FinishTime
+	}
+	return base + int64(imageTaskReviewRequestRetention.Seconds())
 }
 
 func markImageTaskUpstreamResultReview(ctx context.Context, task *model.Task, fromStatus model.TaskStatus, reason string) error {
@@ -1784,8 +2001,9 @@ func markImageTaskUpstreamResultReview(ctx context.Context, task *model.Task, fr
 	task.SettlementStatus = model.TaskSettlementStatusReview
 	task.FailReason = reason
 	clearImageTaskUpstreamSubmissionUncertainty(task)
-	task.PrivateData.SettlementUsage = nil
-	task.PrivateData.SettlementExtraContent = nil
+	minimizeImageTaskSettlementBillingEvidence(task)
+	task.ClearImageTaskExecutionSecrets()
+	service.ScheduleImageTaskRequestFileCleanup(task, imageTaskReviewRequestDeleteAfter(task))
 	won, err := updateImageTaskWithStatus(ctx, task, fromStatus)
 	if err != nil {
 		return err
@@ -1834,6 +2052,7 @@ func markImageTaskSettlementSettled(ctx context.Context, task *model.Task, fromS
 	if task == nil {
 		return nil
 	}
+	settledAt := time.Now().Unix()
 	task.SettlementStatus = model.TaskSettlementStatusSettled
 	task.NextPollAt = 0
 	task.LockOwner = ""
@@ -1842,7 +2061,16 @@ func markImageTaskSettlementSettled(ctx context.Context, task *model.Task, fromS
 	clearImageTaskUpstreamSubmissionUncertainty(task)
 	task.PrivateData.SettlementUsage = nil
 	task.PrivateData.SettlementExtraContent = nil
-	bodyPath := takeImageTaskBodyPath(task)
+	task.PrivateData.BillingRequestInput = nil
+	task.PrivateData.BillingRequestInputCaptured = false
+	task.PrivateData.SettlementEvidenceCapturedAt = 0
+	task.ClearImageTaskExecutionSecrets()
+	resultStoredAt := task.PrivateData.ResultStoredAt
+	if resultStoredAt <= 0 {
+		resultStoredAt = task.FinishTime
+	}
+	setImageTaskResultLifecycle(task, resultStoredAt)
+	service.ScheduleImageTaskRequestFileCleanup(task, settledAt)
 	won, err := task.UpdateSettlementStatus(model.TaskStatusSuccess, fromSettlementStatus)
 	if err != nil {
 		return err
@@ -1856,7 +2084,9 @@ func markImageTaskSettlementSettled(ctx context.Context, task *model.Task, fromS
 			return errors.New("image task settlement status update lost CAS")
 		}
 	}
-	removeImageTaskBodyPath(bodyPath)
+	if cleanupErr := service.CleanupDueImageTaskRequestFile(ctx, task); cleanupErr != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("image task %s request file cleanup failed: %s", task.TaskID, cleanupErr.Error()))
+	}
 	return nil
 }
 
@@ -1905,7 +2135,7 @@ func handleAsyncTaskBridgeTransientError(ctx context.Context, task *model.Task, 
 		return errors.New(reason)
 	}
 	reason = fmt.Sprintf("%s after %s: %s", reasonPrefix, imageTaskAsyncTimeoutText(), detail)
-	return failImageTask(ctx, task, task.Status, reason, true, true)
+	return markImageTaskExecutionReview(ctx, task, task.Status, reason)
 }
 
 func markImageTaskTransientRetry(task *model.Task) {
@@ -1959,7 +2189,7 @@ func handleAsyncTaskBridgeMissingPollResult(ctx context.Context, task *model.Tas
 		return nil
 	}
 	reason := fmt.Sprintf("%s after %s: body=%s", reasonPrefix, imageTaskAsyncTimeoutText(), common.LocalLogPreview(string(respBody)))
-	return failImageTask(ctx, task, task.Status, reason, true, true)
+	return markImageTaskExecutionReview(ctx, task, task.Status, reason)
 }
 
 func imageTaskShouldFailMissingUpstreamPollResult(task *model.Task) bool {
@@ -1976,7 +2206,7 @@ func handleAsyncTaskBridgeInvalidPollResult(ctx context.Context, task *model.Tas
 		return errors.New(reasonPrefix)
 	}
 	reason := fmt.Sprintf("%s after %s: body=%s", reasonPrefix, imageTaskAsyncTimeoutText(), common.LocalLogPreview(string(respBody)))
-	return failImageTask(ctx, task, task.Status, reason, true, true)
+	return markImageTaskExecutionReview(ctx, task, task.Status, reason)
 }
 
 func imageTaskShouldFailInvalidUpstreamPollResult(task *model.Task) bool {
@@ -1992,19 +2222,27 @@ type asyncTaskBridgeTaskResult struct {
 }
 
 func parseAsyncTaskBridgeTaskResult(body []byte, upstreamID string) (*asyncTaskBridgeTaskResult, error) {
-	result, fallback, err := parseAsyncTaskBridgeTaskResultRawBytes(body, upstreamID)
+	return parseAsyncTaskBridgeTaskResultWithAnonymousFallback(body, upstreamID, true)
+}
+
+func parseAsyncTaskBridgeBatchTaskResult(body []byte, upstreamID string, batchSize int) (*asyncTaskBridgeTaskResult, error) {
+	return parseAsyncTaskBridgeTaskResultWithAnonymousFallback(body, upstreamID, batchSize <= 1)
+}
+
+func parseAsyncTaskBridgeTaskResultWithAnonymousFallback(body []byte, upstreamID string, allowAnonymous bool) (*asyncTaskBridgeTaskResult, error) {
+	result, fallback, err := parseAsyncTaskBridgeTaskResultRawBytes(body, upstreamID, allowAnonymous)
 	if err != nil || !fallback {
 		return result, err
 	}
-	return parseAsyncTaskBridgeTaskResultAny(body, upstreamID)
+	return parseAsyncTaskBridgeTaskResultAny(body, upstreamID, allowAnonymous)
 }
 
-func parseAsyncTaskBridgeTaskResultAny(body []byte, upstreamID string) (*asyncTaskBridgeTaskResult, error) {
+func parseAsyncTaskBridgeTaskResultAny(body []byte, upstreamID string, allowAnonymous bool) (*asyncTaskBridgeTaskResult, error) {
 	var raw any
 	if err := common.Unmarshal(body, &raw); err != nil {
 		return nil, err
 	}
-	return parseAsyncTaskBridgeTaskResultRaw(raw, upstreamID)
+	return parseAsyncTaskBridgeTaskResultRaw(raw, upstreamID, allowAnonymous)
 }
 
 func parseAsyncTaskBridgeTaskResultFromStorage(storage common.BodyStorage, upstreamID string) (*asyncTaskBridgeTaskResult, error) {
@@ -2015,15 +2253,22 @@ func parseAsyncTaskBridgeTaskResultFromStorage(storage common.BodyStorage, upstr
 	if err != nil {
 		return nil, err
 	}
-	return parseAsyncTaskBridgeTaskResult(body, upstreamID)
+	result, err := parseAsyncTaskBridgeTaskResult(body, upstreamID)
+	if err != nil {
+		return nil, err
+	}
+	if result != nil && result.Status == model.TaskStatusSuccess && len(bytes.TrimSpace(result.Result)) == 0 {
+		return nil, errors.New("upstream task success result is missing")
+	}
+	return result, nil
 }
 
-func parseAsyncTaskBridgeTaskResultRawBytes(body []byte, upstreamID string) (*asyncTaskBridgeTaskResult, bool, error) {
+func parseAsyncTaskBridgeTaskResultRawBytes(body []byte, upstreamID string, allowAnonymous bool) (*asyncTaskBridgeTaskResult, bool, error) {
 	if !gjson.ValidBytes(body) {
 		var raw any
 		return nil, false, common.Unmarshal(body, &raw)
 	}
-	item := findAsyncTaskBridgeTaskItemJSON(gjson.ParseBytes(body), upstreamID)
+	item := findAsyncTaskBridgeTaskItemJSON(gjson.ParseBytes(body), upstreamID, allowAnonymous)
 	if !item.Exists() {
 		return nil, true, nil
 	}
@@ -2042,14 +2287,11 @@ func parseAsyncTaskBridgeTaskResultRawBytes(body []byte, upstreamID string) (*as
 	}
 	if status == model.TaskStatusSuccess {
 		result.Result = marshalAsyncTaskBridgeSuccessResultJSON(item)
-		if len(result.Result) == 0 {
-			result.Result = rawMessageFromJSONResult(item)
-		}
 	}
 	return result, false, nil
 }
 
-func findAsyncTaskBridgeTaskItemJSON(raw gjson.Result, upstreamID string) gjson.Result {
+func findAsyncTaskBridgeTaskItemJSON(raw gjson.Result, upstreamID string, allowAnonymous bool) gjson.Result {
 	if !raw.Exists() {
 		return gjson.Result{}
 	}
@@ -2071,7 +2313,7 @@ func findAsyncTaskBridgeTaskItemJSON(raw gjson.Result, upstreamID string) gjson.
 		if found.Exists() {
 			return found
 		}
-		if count == 1 && first.IsObject() &&
+		if allowAnonymous && count == 1 && first.IsObject() &&
 			(strings.TrimSpace(upstreamID) == "" || (stringValueFromJSON(first, "status", "state") != "" && !taskItemHasIdentityJSON(first))) {
 			return first
 		}
@@ -2085,7 +2327,7 @@ func findAsyncTaskBridgeTaskItemJSON(raw gjson.Result, upstreamID string) gjson.
 	}
 	for _, key := range []string{"items", "tasks", "results"} {
 		if nested := raw.Get(key); nested.Exists() {
-			if found := findAsyncTaskBridgeTaskItemJSON(nested, upstreamID); found.Exists() {
+			if found := findAsyncTaskBridgeTaskItemJSON(nested, upstreamID, allowAnonymous); found.Exists() {
 				return found
 			}
 		}
@@ -2100,18 +2342,18 @@ func findAsyncTaskBridgeTaskItemJSON(raw gjson.Result, upstreamID string) gjson.
 			return true
 		})
 		if direct.Exists() {
-			if found := findAsyncTaskBridgeTaskItemJSON(direct, upstreamID); found.Exists() {
+			if found := findAsyncTaskBridgeTaskItemJSON(direct, upstreamID, allowAnonymous); found.Exists() {
 				return found
 			}
 			return direct
 		}
 	}
 	if nested := raw.Get("data"); nested.Exists() {
-		if found := findAsyncTaskBridgeTaskItemJSON(nested, upstreamID); found.Exists() {
+		if found := findAsyncTaskBridgeTaskItemJSON(nested, upstreamID, allowAnonymous); found.Exists() {
 			return found
 		}
 	}
-	if stringValueFromJSON(raw, "status", "state") != "" {
+	if allowAnonymous && stringValueFromJSON(raw, "status", "state") != "" {
 		if strings.TrimSpace(upstreamID) != "" && taskItemHasIdentityJSON(raw) {
 			return gjson.Result{}
 		}
@@ -2122,7 +2364,7 @@ func findAsyncTaskBridgeTaskItemJSON(raw gjson.Result, upstreamID string) gjson.
 	}
 	var found gjson.Result
 	raw.ForEach(func(_, value gjson.Result) bool {
-		found = findAsyncTaskBridgeTaskItemJSON(value, upstreamID)
+		found = findAsyncTaskBridgeTaskItemJSON(value, upstreamID, allowAnonymous)
 		return !found.Exists()
 	})
 	return found
@@ -2276,8 +2518,8 @@ func rawMessageFromJSONResult(value gjson.Result) json.RawMessage {
 	return json.RawMessage(append([]byte(nil), raw...))
 }
 
-func parseAsyncTaskBridgeTaskResultRaw(raw any, upstreamID string) (*asyncTaskBridgeTaskResult, error) {
-	item := findAsyncTaskBridgeTaskItem(raw, upstreamID)
+func parseAsyncTaskBridgeTaskResultRaw(raw any, upstreamID string, allowAnonymous bool) (*asyncTaskBridgeTaskResult, error) {
+	item := findAsyncTaskBridgeTaskItem(raw, upstreamID, allowAnonymous)
 	if item == nil {
 		return nil, nil
 	}
@@ -2297,9 +2539,6 @@ func parseAsyncTaskBridgeTaskResultRaw(raw any, upstreamID string) (*asyncTaskBr
 	}
 	if status == model.TaskStatusSuccess {
 		result.Result = marshalAsyncTaskBridgeSuccessResult(itemMap)
-		if len(result.Result) == 0 {
-			result.Result, _ = common.Marshal(itemMap)
-		}
 	}
 	return result, nil
 }
@@ -2362,7 +2601,7 @@ func marshalAsyncTaskBridgeValueWithUsage(value any, usage any) json.RawMessage 
 	return json.RawMessage(b)
 }
 
-func findAsyncTaskBridgeTaskItem(raw any, upstreamID string) any {
+func findAsyncTaskBridgeTaskItem(raw any, upstreamID string, allowAnonymous bool) any {
 	switch v := raw.(type) {
 	case []any:
 		for _, item := range v {
@@ -2370,7 +2609,7 @@ func findAsyncTaskBridgeTaskItem(raw any, upstreamID string) any {
 				return item
 			}
 		}
-		if len(v) == 1 {
+		if allowAnonymous && len(v) == 1 {
 			if item, ok := v[0].(map[string]any); ok &&
 				(strings.TrimSpace(upstreamID) == "" || (stringValueFromMap(item, "status", "state") != "" && !taskItemHasIdentity(item))) {
 				return v[0]
@@ -2382,25 +2621,25 @@ func findAsyncTaskBridgeTaskItem(raw any, upstreamID string) any {
 		}
 		for _, key := range []string{"items", "tasks", "results"} {
 			if nested, ok := v[key]; ok {
-				if found := findAsyncTaskBridgeTaskItem(nested, upstreamID); found != nil {
+				if found := findAsyncTaskBridgeTaskItem(nested, upstreamID, allowAnonymous); found != nil {
 					return found
 				}
 			}
 		}
 		if upstreamID != "" {
 			if direct, ok := v[upstreamID]; ok {
-				if found := findAsyncTaskBridgeTaskItem(direct, upstreamID); found != nil {
+				if found := findAsyncTaskBridgeTaskItem(direct, upstreamID, allowAnonymous); found != nil {
 					return found
 				}
 				return direct
 			}
 		}
 		if nested, ok := v["data"]; ok {
-			if found := findAsyncTaskBridgeTaskItem(nested, upstreamID); found != nil {
+			if found := findAsyncTaskBridgeTaskItem(nested, upstreamID, allowAnonymous); found != nil {
 				return found
 			}
 		}
-		if stringValueFromMap(v, "status", "state") != "" {
+		if allowAnonymous && stringValueFromMap(v, "status", "state") != "" {
 			if strings.TrimSpace(upstreamID) != "" && taskItemHasIdentity(v) {
 				return nil
 			}
@@ -2416,7 +2655,7 @@ func findAsyncTaskBridgeTaskItem(raw any, upstreamID string) any {
 			return v
 		}
 		for _, nested := range v {
-			if found := findAsyncTaskBridgeTaskItem(nested, upstreamID); found != nil {
+			if found := findAsyncTaskBridgeTaskItem(nested, upstreamID, allowAnonymous); found != nil {
 				return found
 			}
 		}
@@ -2623,24 +2862,6 @@ func decodeImageTaskRequestBodyBase64(value string) ([]byte, error) {
 	return body, nil
 }
 
-func takeImageTaskBodyPath(task *model.Task) string {
-	if task == nil {
-		return ""
-	}
-	path := task.PrivateData.RequestBodyPath
-	task.PrivateData.RequestBodyPath = ""
-	task.PrivateData.RequestBodyBase64 = ""
-	task.PrivateData.RequestBodyPortable = false
-	return path
-}
-
-func removeImageTaskBodyPath(path string) {
-	if path == "" {
-		return
-	}
-	_ = common.RemoveDiskCacheFile(path)
-}
-
 func storeImageTaskResultData(task *model.Task, result json.RawMessage, storedAt int64) (string, error) {
 	if task == nil {
 		return "", nil
@@ -2651,6 +2872,12 @@ func storeImageTaskResultData(task *model.Task, result json.RawMessage, storedAt
 	task.PrivateData.ResultContentType = ""
 	task.PrivateData.ResultStoredAt = 0
 	task.PrivateData.ResultExpiresAt = 0
+	task.ImageTaskResultStored = false
+	task.ResultExpiresAt = 0
+	task.ResultAcknowledgedAt = 0
+	task.ResultDeleteAfter = 0
+	task.ResultCleanedAt = 0
+	task.ResultCleanupPending = false
 
 	data := []byte(result)
 	offload, err := imageTaskResultStorageAction(data)
@@ -2658,6 +2885,8 @@ func storeImageTaskResultData(task *model.Task, result json.RawMessage, storedAt
 		return "", err
 	}
 	if !offload {
+		task.PrivateData.ResultStoredAt = storedAt
+		setImageTaskResultLifecycle(task, storedAt)
 		task.Data = append(json.RawMessage(nil), result...)
 		return "", nil
 	}
@@ -2668,13 +2897,13 @@ func storeImageTaskResultData(task *model.Task, result json.RawMessage, storedAt
 	}
 	sum := sha256.Sum256(data)
 	sha := hex.EncodeToString(sum[:])
-	expiresAt := storedAt + int64(imageTaskResultRetention().Seconds())
 	task.PrivateData.ResultBodyPath = path
 	task.PrivateData.ResultBodySize = int64(len(data))
 	task.PrivateData.ResultBodySHA256 = sha
 	task.PrivateData.ResultContentType = "application/json"
 	task.PrivateData.ResultStoredAt = storedAt
-	task.PrivateData.ResultExpiresAt = expiresAt
+	task.ImageTaskResultStored = true
+	setImageTaskResultLifecycle(task, storedAt)
 
 	placeholder, err := common.Marshal(imageTaskStoredResultData{
 		Stored:      true,
@@ -2682,7 +2911,7 @@ func storeImageTaskResultData(task *model.Task, result json.RawMessage, storedAt
 		SHA256:      sha,
 		ContentType: "application/json",
 		StoredAt:    storedAt,
-		ExpiresAt:   expiresAt,
+		ExpiresAt:   task.ResultExpiresAt,
 	})
 	if err != nil {
 		_ = common.RemoveDiskCacheFile(path)
@@ -2692,15 +2921,27 @@ func storeImageTaskResultData(task *model.Task, result json.RawMessage, storedAt
 		task.PrivateData.ResultContentType = ""
 		task.PrivateData.ResultStoredAt = 0
 		task.PrivateData.ResultExpiresAt = 0
+		task.ImageTaskResultStored = false
+		task.ResultExpiresAt = 0
 		return "", err
 	}
 	task.Data = json.RawMessage(placeholder)
 	return path, nil
 }
 
-func imageTaskResultShouldOffload(data []byte) bool {
-	offload, _ := imageTaskResultStorageAction(data)
-	return offload
+func setImageTaskResultLifecycle(task *model.Task, availableAt int64) {
+	if task == nil || availableAt <= 0 {
+		return
+	}
+	expiresAt := availableAt + int64(imageTaskResultRetention().Seconds())
+	if task.ResultExpiresAt > 0 && task.ResultExpiresAt < expiresAt {
+		expiresAt = task.ResultExpiresAt
+	}
+	if task.PrivateData.ResultExpiresAt > 0 && task.PrivateData.ResultExpiresAt < expiresAt {
+		expiresAt = task.PrivateData.ResultExpiresAt
+	}
+	task.ResultExpiresAt = expiresAt
+	task.PrivateData.ResultExpiresAt = expiresAt
 }
 
 func imageTaskResultStorageAction(data []byte) (bool, error) {
@@ -2713,10 +2954,23 @@ func imageTaskResultStorageAction(data []byte) (bool, error) {
 	if service.ImageTaskFileCacheSharedTrusted() {
 		return true, nil
 	}
-	if len(data) <= imageTaskInlineB64ResultMaxBytes {
-		return false, nil
+	// 无法外置时结果只能内联进数据库。超过上限时不再尝试写库：
+	// 反复写失败会让任务停在执行中直到全量超时退款，而上游其实已经生成了图片。
+	// 这里直接返回错误，由调用方转为结算人工审查，避免误退款。
+	if maxBytes := imageTaskResultInlineMaxBytes(); maxBytes > 0 && int64(len(data)) > maxBytes {
+		return false, fmt.Errorf(
+			"image task result is too large to store inline (%d bytes > %d MB); enable IMAGE_TASK_FILE_CACHE_SHARED_TRUSTED or raise IMAGE_TASK_RESULT_INLINE_MAX_MB",
+			len(data), maxBytes>>20,
+		)
 	}
-	return false, fmt.Errorf("image task b64_json result exceeds inline limit %d MB; enable trusted shared image task file cache", imageTaskInlineB64ResultMaxBytes>>20)
+	return false, nil
+}
+
+func imageTaskResultInlineMaxBytes() int64 {
+	if constant.ImageTaskResultInlineMaxMB <= 0 {
+		return 0
+	}
+	return int64(constant.ImageTaskResultInlineMaxMB) << 20
 }
 
 func imageTaskResultHasB64JSON(data []byte) bool {
@@ -2786,6 +3040,7 @@ func takeImageTaskResultPath(task *model.Task) string {
 	}
 	path := task.PrivateData.ResultBodyPath
 	task.PrivateData.ResultBodyPath = ""
+	task.ImageTaskResultStored = false
 	task.PrivateData.ResultBodySize = 0
 	task.PrivateData.ResultBodySHA256 = ""
 	task.PrivateData.ResultContentType = ""
@@ -2814,10 +3069,14 @@ func failImageTask(ctx context.Context, task *model.Task, fromStatus model.TaskS
 	clearImageTaskUpstreamSubmissionUncertainty(task)
 	task.PrivateData.SettlementUsage = nil
 	task.PrivateData.SettlementExtraContent = nil
-	var bodyPath string
+	task.PrivateData.BillingRequestInput = nil
+	task.PrivateData.BillingRequestInputCaptured = false
+	task.PrivateData.SettlementEvidenceCapturedAt = 0
+	task.RefundPending = refund && task.Quota != 0
+	task.ClearImageTaskExecutionSecrets()
 	var resultPath string
 	if cleanup {
-		bodyPath = takeImageTaskBodyPath(task)
+		service.ScheduleImageTaskRequestFileCleanup(task, task.FinishTime)
 		resultPath = takeImageTaskResultPath(task)
 	}
 	won, err := updateImageTaskWithStatus(ctx, task, fromStatus)
@@ -2833,8 +3092,22 @@ func failImageTask(ctx context.Context, task *model.Task, fromStatus model.TaskS
 		}
 	}
 	if cleanup {
-		removeImageTaskBodyPath(bodyPath)
+		if cleanupErr := service.CleanupDueImageTaskRequestFile(ctx, task); cleanupErr != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("image task %s request file cleanup failed: %s", task.TaskID, cleanupErr.Error()))
+		}
 		removeImageTaskResultPath(resultPath)
+	}
+	return nil
+}
+
+func markImageTaskExecutionReview(ctx context.Context, task *model.Task, fromStatus model.TaskStatus, reason string) error {
+	service.PrepareImageTaskExecutionReview(task, time.Now().Unix(), reason)
+	won, err := updateImageTaskWithStatus(ctx, task, fromStatus)
+	if err != nil {
+		return err
+	}
+	if !won {
+		return errors.New("image task execution review status update lost CAS")
 	}
 	return nil
 }
@@ -3463,7 +3736,7 @@ func cloneMIMEHeader(header textproto.MIMEHeader) textproto.MIMEHeader {
 	return cloned
 }
 
-func settleImageTaskConsumption(ctx context.Context, task *model.Task, result json.RawMessage, usage *dto.Usage, extraContent []string, billingInput *billingexpr.RequestInput) error {
+func settleImageTaskConsumption(ctx context.Context, task *model.Task, result json.RawMessage, usage *dto.Usage, extraContent []string, billingInput *billingexpr.RequestInput) (int, error) {
 	if billingInput == nil {
 		billingInput = cloneImageTaskBillingRequestInput(task.PrivateData.BillingRequestInput)
 	}
@@ -3524,14 +3797,51 @@ func settleImageTaskConsumption(ctx context.Context, task *model.Task, result js
 			usage = parsedUsage
 		}
 	}
+	settlement := service.ImageTaskAtomicSettlement{
+		ActualQuota:    info.PriceData.Quota,
+		UseTimeSeconds: max(0, int(time.Since(info.StartTime).Seconds())),
+		ModelName:      info.OriginModelName,
+		TokenName:      fakeCtx.GetString("token_name"),
+		Other:          map[string]interface{}{},
+	}
 	if usage != nil {
-		return service.PostTextConsumeQuotaChecked(fakeCtx, info, usage, extraContent)
+		prepared, err := service.PrepareImageTaskAtomicSettlement(fakeCtx, info, usage, extraContent)
+		if err != nil {
+			return 0, err
+		}
+		settlement = prepared
+	} else {
+		settlement.Content = fmt.Sprintf("操作 %s", task.Action)
+		if common.StringsContains(constant.TaskPricePatches, info.OriginModelName) {
+			settlement.Content += "，按次计费"
+		}
 	}
-	if err := service.LogTaskConsumption(fakeCtx, info); err != nil {
-		logger.LogError(ctx, fmt.Sprintf("image task %s consumption log failed: %s", task.TaskID, err.Error()))
-		return fmt.Errorf("image task consumption log failed: %w", err)
+	settlement.Other["is_task"] = true
+	settlement.Other["request_path"] = info.RequestURLPath
+	if _, exists := settlement.Other["model_price"]; !exists {
+		settlement.Other["model_price"] = info.PriceData.ModelPrice
 	}
-	return nil
+	if _, exists := settlement.Other["model_ratio"]; !exists && info.PriceData.ModelRatio > 0 {
+		settlement.Other["model_ratio"] = info.PriceData.ModelRatio
+	}
+	if _, exists := settlement.Other["group_ratio"]; !exists {
+		settlement.Other["group_ratio"] = info.PriceData.GroupRatioInfo.GroupRatio
+	}
+	if _, exists := settlement.Other["user_group_ratio"]; !exists && info.PriceData.GroupRatioInfo.HasSpecialRatio {
+		settlement.Other["user_group_ratio"] = info.PriceData.GroupRatioInfo.GroupSpecialRatio
+	}
+	settlement.Other["task_id"] = task.TaskID
+	applied, err := service.ApplyImageTaskSettlementAtomic(ctx, task, settlement)
+	if err != nil {
+		return settlement.ActualQuota, err
+	}
+	if !applied {
+		return settlement.ActualQuota, fmt.Errorf("image task settlement was not applied")
+	}
+	if err := service.DispatchPendingImageTaskSettlementLogs(ctx, 10); err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("image task %s billing log dispatch deferred: %s", task.TaskID, err.Error()))
+	}
+	return settlement.ActualQuota, nil
 }
 
 func imageTaskRelayStartTime(task *model.Task) time.Time {

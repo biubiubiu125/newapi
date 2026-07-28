@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"strconv"
@@ -371,6 +372,7 @@ func markTaskRefundReview(ctx context.Context, task *model.Task, attemptedQuota 
 		task.FailReason += "; " + TaskSettlementReviewFailReason
 	}
 	task.SettlementStatus = model.TaskSettlementStatusReview
+	task.RefundPending = true
 	if task.ID > 0 {
 		if err := task.UpdateSubmitSettlementError(); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("mark task refund review failed task %s: %s", task.TaskID, err.Error()))
@@ -513,15 +515,121 @@ func finalizeAppliedTaskRefund(task *model.Task) error {
 		return nil
 	}
 	task.Quota = 0
+	task.RefundPending = false
 	clearTaskSettlementReview(task)
 	return task.UpdateQuota()
 }
 
-func validateAppliedTaskRefundRecord(record *model.TaskSettlementRecord) error {
+func validateAppliedTaskRefundDetails(task *model.Task, record *model.TaskSettlementRecord) error {
+	if record == nil {
+		return errors.New("applied task refund record is missing")
+	}
+	if record.Operation != taskSettlementOperationRefund {
+		if record.Operation != "" {
+			return fmt.Errorf("applied task settlement operation is %s, cannot finalize refund", record.Operation)
+		}
+		return errors.New("applied task refund operation is missing")
+	}
+	if record.AppliedQuota == nil || *record.AppliedQuota != 0 {
+		return errors.New("applied task refund quota evidence must be zero")
+	}
+	if record.PreConsumedQuota == nil || *record.PreConsumedQuota < 0 {
+		return errors.New("applied task refund pre-consumed quota evidence is missing or invalid")
+	}
+	if record.QuotaDelta == nil || *record.QuotaDelta != -*record.PreConsumedQuota {
+		return errors.New("applied task refund quota delta evidence is missing or inconsistent")
+	}
+	if record.LogType == nil || *record.LogType != model.LogTypeRefund {
+		return errors.New("applied task refund log type evidence is missing or invalid")
+	}
+	if task != nil && task.Quota > 0 && *record.PreConsumedQuota != task.Quota {
+		return fmt.Errorf("applied task refund pre-consumed quota evidence %d does not match task quota %d", *record.PreConsumedQuota, task.Quota)
+	}
+	return nil
+}
+
+func appliedTaskRefundEvidence(ctx context.Context, task *model.Task, record *model.TaskSettlementRecord) error {
 	if record != nil && record.Operation != "" && record.Operation != taskSettlementOperationRefund {
 		return fmt.Errorf("applied task settlement operation is %s, cannot finalize refund", record.Operation)
 	}
+	if err := validateAppliedTaskRefundDetails(task, record); err == nil {
+		return nil
+	}
+
+	details, found, err := legacyAppliedTaskRefundDetailsFromBillingLog(task)
+	if err != nil {
+		return err
+	}
+	if !found {
+		taskID := ""
+		if task != nil {
+			taskID = task.TaskID
+		}
+		return fmt.Errorf("applied task refund record for task %s has no valid applied refund evidence", taskID)
+	}
+	recovered := &model.TaskSettlementRecord{
+		Operation:        details.Operation,
+		AppliedQuota:     details.AppliedQuota,
+		PreConsumedQuota: details.PreConsumedQuota,
+		QuotaDelta:       details.QuotaDelta,
+		LogType:          details.LogType,
+	}
+	if err := validateAppliedTaskRefundDetails(task, recovered); err != nil {
+		return fmt.Errorf("recovered applied task refund evidence is invalid: %w", err)
+	}
+	if task != nil && task.ID > 0 {
+		if err := model.BackfillTaskSettlementApplicationAppliedDetails(task.ID, details); err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("backfill applied task refund details failed task %s: %s", task.TaskID, err.Error()))
+		}
+	}
 	return nil
+}
+
+func legacyAppliedTaskRefundDetailsFromBillingLog(task *model.Task) (model.TaskSettlementApplicationAppliedDetails, bool, error) {
+	if task == nil || strings.TrimSpace(task.TaskID) == "" || model.LOG_DB == nil {
+		return model.TaskSettlementApplicationAppliedDetails{}, false, nil
+	}
+	quotedTaskID, err := common.Marshal(task.TaskID)
+	if err != nil {
+		return model.TaskSettlementApplicationAppliedDetails{}, false, err
+	}
+	pattern := fmt.Sprintf("%%\"task_id\":%s%%", string(quotedTaskID))
+	var logs []model.Log
+	if err := model.LOG_DB.Model(&model.Log{}).
+		Where("type = ?", model.LogTypeRefund).
+		Where("other LIKE ?", pattern).
+		Order("created_at desc, id desc").
+		Limit(20).
+		Find(&logs).Error; err != nil {
+		return model.TaskSettlementApplicationAppliedDetails{}, false, err
+	}
+	for _, log := range logs {
+		other, err := common.StrToMap(log.Other)
+		if err != nil {
+			continue
+		}
+		if taskID, _ := other["task_id"].(string); taskID != task.TaskID || log.Quota < 0 {
+			continue
+		}
+		if _, isRecalculation := other["actual_quota"]; isRecalculation {
+			continue
+		}
+		if _, isRecalculation := other["pre_consumed_quota"]; isRecalculation {
+			continue
+		}
+		return taskSettlementAppliedDetails(taskSettlementOperationRefund, 0, log.Quota, -log.Quota, model.LogTypeRefund), true, nil
+	}
+	return model.TaskSettlementApplicationAppliedDetails{}, false, nil
+}
+
+func taskRefundHasPreConsumedUsage(task *model.Task) bool {
+	if task == nil {
+		return false
+	}
+	if !task.PrivateData.PreConsumedUsageCaptured {
+		return true
+	}
+	return task.PrivateData.PreConsumedUsageRecorded
 }
 
 func finalizeAppliedTaskRecalculation(task *model.Task, actualQuota int) error {
@@ -566,7 +674,7 @@ func legacyAppliedTaskRecalculationDetailsFromBillingLog(task *model.Task) (mode
 	if task == nil || strings.TrimSpace(task.TaskID) == "" || model.LOG_DB == nil {
 		return model.TaskSettlementApplicationAppliedDetails{}, false, nil
 	}
-	quotedTaskID, err := json.Marshal(task.TaskID)
+	quotedTaskID, err := common.Marshal(task.TaskID)
 	if err != nil {
 		return model.TaskSettlementApplicationAppliedDetails{}, false, err
 	}
@@ -724,12 +832,15 @@ func rollbackTaskRefundAfterBillingLogFailure(
 	originalPrivateData model.TaskPrivateData,
 	tokenAdjusted bool,
 	tokenSnapshot taskTokenQuotaSnapshot,
+	usageCountersAdjusted bool,
 	logErr error,
 ) error {
 	rollbackErrs := []string{}
-	if err := updateTaskUsageCounters(task, originalQuota, tokenAdjusted); err != nil {
-		logger.LogError(ctx, fmt.Sprintf("rollback refund usage counters after billing log failure failed task %s: %s", task.TaskID, err.Error()))
-		rollbackErrs = append(rollbackErrs, err.Error())
+	if usageCountersAdjusted {
+		if err := updateTaskUsageCounters(task, originalQuota, tokenAdjusted); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("rollback refund usage counters after billing log failure failed task %s: %s", task.TaskID, err.Error()))
+			rollbackErrs = append(rollbackErrs, err.Error())
+		}
 	}
 	if err := taskAdjustFunding(task, originalQuota); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("rollback refund funding after billing log failure failed task %s: %s", task.TaskID, err.Error()))
@@ -757,6 +868,19 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) error
 	if task == nil {
 		return nil
 	}
+	if isPublicImageTaskAccounting(task) {
+		attemptedQuota := task.Quota
+		if err := ApplyPublicImageTaskRefundAtomic(ctx, task, reason); err != nil {
+			if errors.Is(err, errPublicImageTaskRefundInProgress) {
+				return err
+			}
+			reviewErr := taskAccountingRecordError("public image task refund", task, err)
+			markTaskAccountingRecordReview(ctx, task, "public image task refund", reviewErr)
+			markTaskRefundReview(ctx, task, attemptedQuota, reviewErr)
+			return reviewErr
+		}
+		return nil
+	}
 	quota := task.Quota
 	if quota == 0 {
 		record, exists, err := model.GetTaskSettlementRecord(task.ID)
@@ -764,7 +888,7 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) error
 			return err
 		}
 		if exists && record.Status == model.TaskSettlementRecordStatusApplied {
-			if err := validateAppliedTaskRefundRecord(record); err != nil {
+			if err := appliedTaskRefundEvidence(ctx, task, record); err != nil {
 				err = taskAccountingRecordError("finalize applied task refund", task, err)
 				attemptedQuota := 0
 				if record.PreConsumedQuota != nil {
@@ -778,6 +902,10 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) error
 				markTaskRefundReview(ctx, task, 0, err)
 				return err
 			}
+		}
+		if task.RefundPending {
+			task.RefundPending = false
+			return task.UpdateQuota()
 		}
 		return nil
 	}
@@ -808,7 +936,7 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) error
 	if !shouldApply {
 		switch record.Status {
 		case model.TaskSettlementRecordStatusApplied:
-			if err := validateAppliedTaskRefundRecord(record); err != nil {
+			if err := appliedTaskRefundEvidence(ctx, task, record); err != nil {
 				err = taskAccountingRecordError("finalize applied task refund", task, err)
 				markTaskRefundReview(ctx, task, originalQuota, err)
 				return err
@@ -853,27 +981,31 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) error
 		markTaskRefundReview(ctx, task, originalQuota, reviewErr)
 		return reviewErr
 	}
-	if err := updateTaskUsageCounters(task, -quota, tokenAdjusted, taskRefundAllowsMissingChannel(reason)); err != nil {
-		logger.LogError(ctx, fmt.Sprintf("refund usage counter update failed task %s: %s", task.TaskID, err.Error()))
-		rollbackErr := err
-		if fundingRollbackErr := taskAdjustFunding(task, quota); fundingRollbackErr != nil {
-			logger.LogError(ctx, fmt.Sprintf("rollback funding after refund usage counter failure failed task %s: %s", task.TaskID, fundingRollbackErr.Error()))
-			rollbackErr = fmt.Errorf("%w; rollback funding failed: %v", rollbackErr, fundingRollbackErr)
-		}
-		if tokenAdjusted {
-			if tokenRollbackErr := rollbackRefundedTaskTokenQuota(ctx, task, tokenSnapshot, quota); tokenRollbackErr != nil {
-				logger.LogError(ctx, fmt.Sprintf("rollback token quota after refund usage counter failure failed task %s: %s", task.TaskID, tokenRollbackErr.Error()))
-				rollbackErr = fmt.Errorf("%w; rollback token quota failed: %v", rollbackErr, tokenRollbackErr)
+	usageCountersAdjusted := taskRefundHasPreConsumedUsage(task)
+	if usageCountersAdjusted {
+		if err := updateTaskUsageCounters(task, -quota, tokenAdjusted, taskRefundAllowsMissingChannel(reason)); err != nil {
+			logger.LogError(ctx, fmt.Sprintf("refund usage counter update failed task %s: %s", task.TaskID, err.Error()))
+			rollbackErr := err
+			if fundingRollbackErr := taskAdjustFunding(task, quota); fundingRollbackErr != nil {
+				logger.LogError(ctx, fmt.Sprintf("rollback funding after refund usage counter failure failed task %s: %s", task.TaskID, fundingRollbackErr.Error()))
+				rollbackErr = fmt.Errorf("%w; rollback funding failed: %v", rollbackErr, fundingRollbackErr)
 			}
+			if tokenAdjusted {
+				if tokenRollbackErr := rollbackRefundedTaskTokenQuota(ctx, task, tokenSnapshot, quota); tokenRollbackErr != nil {
+					logger.LogError(ctx, fmt.Sprintf("rollback token quota after refund usage counter failure failed task %s: %s", task.TaskID, tokenRollbackErr.Error()))
+					rollbackErr = fmt.Errorf("%w; rollback token quota failed: %v", rollbackErr, tokenRollbackErr)
+				}
+			}
+			restoreTaskState(taskStatePersisted)
+			markTaskAccountingRecordReview(ctx, task, "task refund", rollbackErr)
+			markTaskRefundReview(ctx, task, originalQuota, rollbackErr)
+			return rollbackErr
 		}
-		restoreTaskState(taskStatePersisted)
-		markTaskAccountingRecordReview(ctx, task, "task refund", rollbackErr)
-		markTaskRefundReview(ctx, task, originalQuota, rollbackErr)
-		return rollbackErr
 	}
 	other := taskBillingOther(task)
 	other["task_id"] = task.TaskID
 	other["reason"] = reason
+	other["pre_consumed_usage_recorded"] = usageCountersAdjusted
 	if err := model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
 		UserId:        task.UserId,
 		LogType:       model.LogTypeRefund,
@@ -884,10 +1016,10 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) error
 		TokenId:       task.PrivateData.TokenId,
 		Group:         task.Group,
 		Other:         other,
-		SkipQuotaData: task.Platform == constant.TaskPlatformImage && strings.TrimSpace(task.PrivateData.UpstreamTaskID) == "",
+		SkipQuotaData: !usageCountersAdjusted || (task.Platform == constant.TaskPlatformImage && strings.TrimSpace(task.PrivateData.UpstreamTaskID) == ""),
 	}); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("record task billing log failed task %s: %s", task.TaskID, err.Error()))
-		reviewErr := rollbackTaskRefundAfterBillingLogFailure(ctx, task, originalQuota, originalFailReason, originalSettlementStatus, originalPrivateData, tokenAdjusted, tokenSnapshot, err)
+		reviewErr := rollbackTaskRefundAfterBillingLogFailure(ctx, task, originalQuota, originalFailReason, originalSettlementStatus, originalPrivateData, tokenAdjusted, tokenSnapshot, usageCountersAdjusted, err)
 		markTaskAccountingRecordReview(ctx, task, "task refund", reviewErr)
 		return reviewErr
 	}

@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/url"
@@ -326,6 +327,9 @@ func migrateDB() error {
 	if err := ensureChannelOpenAIOrganizationColumn(); err != nil {
 		return err
 	}
+	if err := migrateImageTaskResultLifecycle(); err != nil {
+		return err
+	}
 
 	err := DB.AutoMigrate(
 		&Channel{},
@@ -358,6 +362,9 @@ func migrateDB() error {
 		&TaskDispatchState{},
 		&ImageTaskChannelLease{},
 		&ImageTaskClientTaskIDLock{},
+		&ImageTaskCreateGuard{},
+		&ImageTaskCreateRateBucket{},
+		&ImageTaskCreateReservation{},
 		&TaskSettlementRecord{},
 		&Model{},
 		&Vendor{},
@@ -409,6 +416,9 @@ func migrateDB() error {
 		return err
 	}
 	if err := migrateImageTaskModeAsyncTaskBridge(); err != nil {
+		return err
+	}
+	if err := migrateImageTaskResultLifecycle(); err != nil {
 		return err
 	}
 	cleanupConversationArtifactOptions()
@@ -506,6 +516,9 @@ func migrateDBFast() error {
 	if err := ensureChannelOpenAIOrganizationColumn(); err != nil {
 		return err
 	}
+	if err := migrateImageTaskResultLifecycle(); err != nil {
+		return err
+	}
 
 	var wg sync.WaitGroup
 
@@ -542,6 +555,9 @@ func migrateDBFast() error {
 		{&TaskDispatchState{}, "TaskDispatchState"},
 		{&ImageTaskChannelLease{}, "ImageTaskChannelLease"},
 		{&ImageTaskClientTaskIDLock{}, "ImageTaskClientTaskIDLock"},
+		{&ImageTaskCreateGuard{}, "ImageTaskCreateGuard"},
+		{&ImageTaskCreateRateBucket{}, "ImageTaskCreateRateBucket"},
+		{&ImageTaskCreateReservation{}, "ImageTaskCreateReservation"},
 		{&TaskSettlementRecord{}, "TaskSettlementRecord"},
 		{&Model{}, "Model"},
 		{&Vendor{}, "Vendor"},
@@ -615,9 +631,153 @@ func migrateDBFast() error {
 	if err := migrateImageTaskModeAsyncTaskBridge(); err != nil {
 		return err
 	}
+	if err := migrateImageTaskResultLifecycle(); err != nil {
+		return err
+	}
 	cleanupConversationArtifactOptions()
 	common.SysLog("database migrated")
 	return nil
+}
+
+func migrateImageTaskResultLifecycle() error {
+	if !DB.Migrator().HasTable(&Task{}) {
+		return nil
+	}
+	columns := []string{
+		"result_expires_at",
+		"result_acknowledged_at",
+		"result_delete_after",
+		"result_cleaned_at",
+		"result_cleanup_pending",
+		"request_cleanup_pending",
+		"request_delete_after",
+		"refund_pending",
+		"execution_secrets_cleaned_at",
+		"sync_submission_started_at",
+		"public_image_task",
+		"public_image_task_token_id",
+		"image_task_cancelled_at",
+		"image_task_result_stored",
+	}
+	for _, column := range columns {
+		if !DB.Migrator().HasColumn(&Task{}, column) {
+			continue
+		}
+		zeroValue := "0"
+		if column == "result_cleanup_pending" || column == "request_cleanup_pending" || column == "refund_pending" || column == "public_image_task" || column == "image_task_result_stored" {
+			zeroValue = "false"
+		}
+		result := DB.Exec(fmt.Sprintf("UPDATE tasks SET %s = %s WHERE %s IS NULL", column, zeroValue, column))
+		if result.Error != nil {
+			return fmt.Errorf("backfill tasks.%s failed: %w", column, result.Error)
+		}
+	}
+	if err := migrateImageTaskPublicMetadata(); err != nil {
+		return err
+	}
+	return migrateImageTaskTerminalExecutionSecrets()
+}
+
+func migrateImageTaskPublicMetadata() error {
+	if !DB.Migrator().HasTable(&Task{}) {
+		return nil
+	}
+	for _, column := range []string{"public_image_task", "public_image_task_token_id", "image_task_cancelled_at", "image_task_result_stored"} {
+		if !DB.Migrator().HasColumn(&Task{}, column) {
+			return nil
+		}
+	}
+
+	const batchSize = 100
+	var lastID int64
+	privateDataColumn := imageTaskPrivateDataTextColumn()
+	for {
+		var tasks []Task
+		err := DB.Model(&Task{}).
+			Select("id", "private_data", "public_image_task", "public_image_task_token_id", "image_task_cancelled_at", "image_task_result_stored").
+			Where("id > ? AND platform = ?", lastID, constant.TaskPlatformImage).
+			Where(fmt.Sprintf(`(
+				(public_image_task = ? AND %s LIKE ?) OR
+				(image_task_cancelled_at = 0 AND %s LIKE ?) OR
+				(image_task_result_stored = ? AND %s LIKE ?)
+			)`, privateDataColumn, privateDataColumn, privateDataColumn),
+				false, `%"public_image_task"%`,
+				`%"cancelled_at"%`,
+				false, `%"result_body_path"%`,
+			).
+			Order("id ASC").
+			Limit(batchSize).
+			Find(&tasks).Error
+		if err != nil {
+			return fmt.Errorf("load image task public metadata migration candidates: %w", err)
+		}
+		if len(tasks) == 0 {
+			return nil
+		}
+		for i := range tasks {
+			task := &tasks[i]
+			updates := map[string]any{
+				"public_image_task":          task.PrivateData.PublicImageTask,
+				"public_image_task_token_id": task.PrivateData.TokenId,
+				"image_task_cancelled_at":    task.PrivateData.CancelledAt,
+				"image_task_result_stored":   strings.TrimSpace(task.PrivateData.ResultBodyPath) != "",
+			}
+			if err := DB.Model(&Task{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
+				return fmt.Errorf("backfill image task public metadata task %d: %w", task.ID, err)
+			}
+			lastID = task.ID
+		}
+	}
+}
+
+func migrateImageTaskTerminalExecutionSecrets() error {
+	if !DB.Migrator().HasTable(&Task{}) || !DB.Migrator().HasColumn(&Task{}, "execution_secrets_cleaned_at") {
+		return nil
+	}
+	const batchSize = 100
+	var lastID int64
+	for {
+		var taskIDs []int64
+		if err := DB.Model(&Task{}).
+			Select("id").
+			Where("id > ? AND platform = ? AND COALESCE(execution_secrets_cleaned_at, 0) = 0", lastID, constant.TaskPlatformImage).
+			Where("status IN ?", []TaskStatus{TaskStatusSuccess, TaskStatusFailure}).
+			Order("id ASC").
+			Limit(batchSize).
+			Pluck("id", &taskIDs).Error; err != nil {
+			return fmt.Errorf("load terminal image task execution secret migration candidates: %w", err)
+		}
+		if len(taskIDs) == 0 {
+			return nil
+		}
+		for _, taskID := range taskIDs {
+			if err := DB.Transaction(func(tx *gorm.DB) error {
+				var task Task
+				if err := lockForUpdate(tx).
+					Select("id", "status", "settlement_status", "private_data", "execution_secrets_cleaned_at").
+					Where("id = ? AND platform = ? AND COALESCE(execution_secrets_cleaned_at, 0) = 0", taskID, constant.TaskPlatformImage).
+					Where("status IN ?", []TaskStatus{TaskStatusSuccess, TaskStatusFailure}).
+					First(&task).Error; err != nil {
+					if errors.Is(err, gorm.ErrRecordNotFound) {
+						return nil
+					}
+					return err
+				}
+				minimizeImageTaskTerminalExecutionSecrets(&task)
+				return tx.Model(&Task{}).
+					Where("id = ? AND COALESCE(execution_secrets_cleaned_at, 0) = 0", task.ID).
+					Updates(map[string]any{
+						"private_data":                 task.PrivateData,
+						"execution_secrets_cleaned_at": task.ExecutionSecretsCleanedAt,
+						"settlement_status":            task.SettlementStatus,
+						"fail_reason":                  task.FailReason,
+					}).Error
+			}); err != nil {
+				return fmt.Errorf("scrub terminal image task execution secrets task %d: %w", taskID, err)
+			}
+		}
+		lastID = taskIDs[len(taskIDs)-1]
+	}
 }
 
 func migrateImageTaskModeAsyncTaskBridge() error {
@@ -840,6 +1000,9 @@ func migrateClickHouseLogDB() error {
 	if err := ensureClickHouseLogUsernameColumn(); err != nil {
 		return err
 	}
+	if err := ensureClickHouseLogSettlementKeyColumn(); err != nil {
+		return err
+	}
 	return syncClickHouseLogTTL(ttlDays)
 }
 
@@ -849,6 +1012,14 @@ func ensureClickHouseLogUsernameColumn() error {
 
 func clickHouseLogUsernameColumnSQL() string {
 	return "ALTER TABLE logs ADD COLUMN IF NOT EXISTS username String DEFAULT '' AFTER content"
+}
+
+func ensureClickHouseLogSettlementKeyColumn() error {
+	return LOG_DB.Exec(clickHouseLogSettlementKeyColumnSQL()).Error
+}
+
+func clickHouseLogSettlementKeyColumnSQL() string {
+	return "ALTER TABLE logs ADD COLUMN IF NOT EXISTS settlement_key String DEFAULT '' AFTER upstream_request_id"
 }
 
 func clickHouseLogTTLDays() int {
@@ -896,6 +1067,7 @@ CREATE TABLE IF NOT EXISTS logs (
 	ip String DEFAULT '',
 	request_id String DEFAULT '',
 	upstream_request_id String DEFAULT '',
+	settlement_key String DEFAULT '',
 	other String DEFAULT ''
 )
 ENGINE = MergeTree()

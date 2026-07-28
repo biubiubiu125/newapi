@@ -1,6 +1,8 @@
 package model
 
 import (
+	"errors"
+
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
 )
@@ -70,6 +72,27 @@ func UpdateTaskConsumptionUsageWithTokenSync(userId int, channelId int, tokenId 
 	return updateTaskUsageWithTokenSync(DB, userId, channelId, tokenId, quota, 1)
 }
 
+func UpdateTaskConsumptionUsageWithTokenTx(tx *gorm.DB, userId int, channelId int, tokenId int, quota int) error {
+	if tx == nil {
+		return errors.New("database transaction is required")
+	}
+	return updateTaskUsageWithTokenAtTx(tx, userId, channelId, tokenId, quota, 1, false, common.GetTimestamp())
+}
+
+func UpdateTaskConsumptionUsageWithTokenAllowMissingChannelTx(tx *gorm.DB, userId int, channelId int, tokenId int, quota int) error {
+	if tx == nil {
+		return errors.New("database transaction is required")
+	}
+	return updateTaskUsageWithTokenAtTx(tx, userId, channelId, tokenId, quota, 1, true, common.GetTimestamp())
+}
+
+func UpdateTaskUsageAdjustmentWithTokenTx(tx *gorm.DB, userId int, channelId int, tokenId int, quota int, allowMissingChannelRefund bool) error {
+	if tx == nil {
+		return errors.New("database transaction is required")
+	}
+	return updateTaskUsageWithTokenAtTx(tx, userId, channelId, tokenId, quota, 0, allowMissingChannelRefund && quota < 0, common.GetTimestamp())
+}
+
 func UpdateTaskUsageAdjustmentWithTokenSync(userId int, channelId int, tokenId int, quota int) error {
 	return updateTaskUsageWithTokenSync(DB, userId, channelId, tokenId, quota, 0)
 }
@@ -109,32 +132,36 @@ func updateTaskUsageWithTokenAtSyncOptions(db *gorm.DB, userId int, channelId in
 		usedAt = common.GetTimestamp()
 	}
 	if err := db.Transaction(func(tx *gorm.DB) error {
-		var err error
-		if requestCount != 0 {
-			err = updateUserUsedQuotaAndRequestCountWithDB(tx, userId, quota, requestCount)
-		} else {
-			err = updateUserUsedQuotaWithDB(tx, userId, quota)
-		}
-		if err != nil {
-			return err
-		}
-		if err := updateChannelUsedQuotaWithDB(tx, channelId, quota); err != nil {
-			if allowMissingChannelRefund && quota < 0 && IsChannelUsedQuotaNoRowsError(err) {
-				common.SysLog(err.Error())
-			} else {
-				return err
-			}
-		}
-		if tokenId > 0 {
-			updateLastUsedAt := requestCount > 0
-			if err := recordTokenUsageWithDB(tx, tokenId, userId, quota, usedAt, requestCount, updateLastUsedAt); err != nil {
-				return err
-			}
-		}
-		return nil
+		return updateTaskUsageWithTokenAtTx(tx, userId, channelId, tokenId, quota, requestCount, allowMissingChannelRefund && quota < 0, usedAt)
 	}); err != nil {
 		return err
 	}
 	refreshUserQuotaCacheBestEffort(userId)
+	return nil
+}
+
+func updateTaskUsageWithTokenAtTx(tx *gorm.DB, userId int, channelId int, tokenId int, quota int, requestCount int, allowMissingChannel bool, usedAt int64) error {
+	var err error
+	if requestCount != 0 {
+		err = updateUserUsedQuotaAndRequestCountWithDB(tx, userId, quota, requestCount)
+	} else {
+		err = updateUserUsedQuotaWithDB(tx, userId, quota)
+	}
+	if err != nil {
+		return err
+	}
+	if err := updateChannelUsedQuotaWithDB(tx, channelId, quota); err != nil {
+		if allowMissingChannel && IsChannelUsedQuotaNoRowsError(err) {
+			common.SysLog(err.Error())
+		} else {
+			return err
+		}
+	}
+	if tokenId > 0 {
+		updateLastUsedAt := requestCount > 0
+		if err := recordTokenUsageWithDB(tx, tokenId, userId, quota, usedAt, requestCount, updateLastUsedAt); err != nil {
+			return err
+		}
+	}
 	return nil
 }

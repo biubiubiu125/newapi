@@ -3,11 +3,13 @@ package service
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -53,6 +55,7 @@ func TestMain(m *testing.M) {
 		&model.Midjourney{},
 		&model.MidjourneySettlementRecord{},
 		&model.TaskSettlementRecord{},
+		&model.ImageTaskClientTaskIDLock{},
 		&model.User{},
 		&model.UserLoginIdentifier{},
 		&model.Token{},
@@ -66,6 +69,7 @@ func TestMain(m *testing.M) {
 		&model.SubscriptionPreConsumeRecord{},
 		&model.SystemTask{},
 		&model.SystemTaskLock{},
+		&model.SystemInstance{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -86,6 +90,7 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM midjourneys")
 		model.DB.Exec("DELETE FROM midjourney_settlement_records")
 		model.DB.Exec("DELETE FROM task_settlement_records")
+		model.DB.Exec("DELETE FROM image_task_client_task_id_locks")
 		model.DB.Exec("DELETE FROM users")
 		model.DB.Exec("DELETE FROM tokens")
 		model.DB.Exec("DELETE FROM logs")
@@ -98,7 +103,909 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM subscription_pre_consume_records")
 		model.DB.Exec("DELETE FROM system_task_locks")
 		model.DB.Exec("DELETE FROM system_tasks")
+		model.DB.Exec("DELETE FROM system_instances")
 	})
+}
+
+func TestApplyImageTaskSettlementAtomicRollsBackEveryPrimarySideEffect(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 10801, 10802, 10803
+	const currentQuota, preConsumedQuota, actualQuota = 8000, 2000, 3000
+	const tokenRemainQuota = 8000
+	seedUser(t, userID, currentQuota)
+	seedToken(t, tokenID, userID, "sk-image-atomic-rollback", tokenRemainQuota)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumedQuota, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+
+	callbackName := "test:fail_image_atomic_settlement_record_update"
+	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement != nil && tx.Statement.Table == "task_settlement_records" {
+			tx.AddError(errors.New("forced settlement record failure"))
+		}
+	}))
+	t.Cleanup(func() {
+		model.DB.Callback().Update().Remove(callbackName)
+	})
+
+	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{
+		ActualQuota:      actualQuota,
+		PromptTokens:     12,
+		CompletionTokens: 4,
+		ModelName:        "gpt-image-1",
+		TokenName:        "image-token",
+	})
+	require.ErrorContains(t, err, "forced settlement record failure")
+	require.False(t, applied)
+
+	require.Equal(t, currentQuota, getUserQuota(t, userID))
+	require.Equal(t, tokenRemainQuota, getTokenRemainQuota(t, tokenID))
+	usedQuota, requestCount := getUserUsageCounters(t, userID)
+	require.Zero(t, usedQuota)
+	require.Zero(t, requestCount)
+	require.Zero(t, getChannelUsedQuota(t, channelID))
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, preConsumedQuota, reloaded.Quota)
+	require.Equal(t, model.TaskSettlementStatusPending, reloaded.SettlementStatus)
+	var record model.TaskSettlementRecord
+	require.NoError(t, model.DB.Where("task_primary_id = ?", task.ID).First(&record).Error)
+	require.Equal(t, model.TaskSettlementRecordStatusApplying, record.Status)
+	require.Empty(t, record.LogPayload)
+}
+
+func TestApplyImageTaskSettlementAtomicCommitsFinancialStateAndOutboxTogether(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 10811, 10812, 10813
+	const currentQuota, preConsumedQuota, actualQuota = 8000, 2000, 3000
+	const tokenRemainQuota = 8000
+	seedUser(t, userID, currentQuota)
+	seedToken(t, tokenID, userID, "sk-image-atomic-success", tokenRemainQuota)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumedQuota, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	task.PrivateData.NodeName = "image-create-node"
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+
+	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{
+		ActualQuota:      actualQuota,
+		PromptTokens:     12,
+		CompletionTokens: 4,
+		UseTimeSeconds:   17,
+		ModelName:        "gpt-image-1",
+		TokenName:        "image-token",
+		Other:            map[string]interface{}{"task_id": task.TaskID},
+	})
+	require.NoError(t, err)
+	require.True(t, applied)
+
+	require.Equal(t, currentQuota-(actualQuota-preConsumedQuota), getUserQuota(t, userID))
+	require.Equal(t, tokenRemainQuota-(actualQuota-preConsumedQuota), getTokenRemainQuota(t, tokenID))
+	usedQuota, requestCount := getUserUsageCounters(t, userID)
+	require.Equal(t, actualQuota, usedQuota)
+	require.Equal(t, 1, requestCount)
+	require.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, actualQuota, reloaded.Quota)
+	require.Equal(t, model.TaskSettlementStatusApplied, reloaded.SettlementStatus)
+	var record model.TaskSettlementRecord
+	require.NoError(t, model.DB.Where("task_primary_id = ?", task.ID).First(&record).Error)
+	require.Equal(t, model.TaskSettlementRecordStatusApplied, record.Status)
+	require.NotEmpty(t, record.LogPayload)
+	require.Zero(t, record.LogDeliveredAt)
+	var payload imageTaskSettlementLogPayload
+	require.NoError(t, json.Unmarshal([]byte(record.LogPayload), &payload))
+	require.Equal(t, 17, payload.UseTimeSeconds)
+	require.Equal(t, "image-create-node", payload.NodeName)
+	require.Equal(t, 1, payload.QuotaDataCount)
+	require.Equal(t, 16, payload.QuotaDataTokenUsed)
+}
+
+func TestApplyImageTaskSettlementAtomicCompletesWhenChannelWasDeleted(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, deletedChannelID = 10821, 10822, 10823
+	const currentQuota, preConsumedQuota, actualQuota = 8000, 2000, 3000
+	const tokenRemainQuota = 8000
+	seedUser(t, userID, currentQuota)
+	seedToken(t, tokenID, userID, "sk-image-deleted-channel", tokenRemainQuota)
+
+	task := makeTask(userID, deletedChannelID, preConsumedQuota, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+
+	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{
+		ActualQuota: actualQuota,
+		ModelName:   "gpt-image-1",
+		TokenName:   "image-token",
+	})
+
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Equal(t, currentQuota-(actualQuota-preConsumedQuota), getUserQuota(t, userID))
+	require.Equal(t, tokenRemainQuota-(actualQuota-preConsumedQuota), getTokenRemainQuota(t, tokenID))
+	usedQuota, requestCount := getUserUsageCounters(t, userID)
+	require.Equal(t, actualQuota, usedQuota)
+	require.Equal(t, 1, requestCount)
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, actualQuota, reloaded.Quota)
+	require.Equal(t, model.TaskSettlementStatusApplied, reloaded.SettlementStatus)
+}
+
+func TestApplyImageTaskSettlementAtomicCompletesWhenTokenWasDeleted(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, deletedTokenID, channelID = 10831, 10832, 10833
+	const currentQuota, preConsumedQuota, actualQuota = 8000, 2000, 3000
+	seedUser(t, userID, currentQuota)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumedQuota, deletedTokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+
+	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{
+		ActualQuota: actualQuota,
+		ModelName:   "gpt-image-1",
+		TokenName:   "deleted-image-token",
+	})
+
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Equal(t, currentQuota-(actualQuota-preConsumedQuota), getUserQuota(t, userID))
+	usedQuota, requestCount := getUserUsageCounters(t, userID)
+	require.Equal(t, actualQuota, usedQuota)
+	require.Equal(t, 1, requestCount)
+	require.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
+	var tokenUsageCount int64
+	require.NoError(t, model.DB.Model(&model.TokenUsageDaily{}).Where("token_id = ?", deletedTokenID).Count(&tokenUsageCount).Error)
+	require.Zero(t, tokenUsageCount)
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, actualQuota, reloaded.Quota)
+	require.Equal(t, model.TaskSettlementStatusApplied, reloaded.SettlementStatus)
+}
+
+func TestRefundPublicImageTaskQuotaRollsBackEveryPrimarySideEffect(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 10871, 10872, 10873
+	const currentQuota, preConsumedQuota, tokenRemainQuota = 8000, 2000, 8000
+	seedUser(t, userID, currentQuota)
+	seedToken(t, tokenID, userID, "sk-public-image-refund-rollback", tokenRemainQuota)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumedQuota, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusFailure
+	task.FailReason = "image task cancelled by client"
+	task.RefundPending = true
+	task.PrivateData.PublicImageTask = true
+	task.PrivateData.CancelledAt = time.Now().Unix()
+	task.PrivateData.PreConsumedUsageCaptured = true
+	task.PrivateData.PreConsumedUsageRecorded = false
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Exec(`
+		CREATE TRIGGER fail_public_image_refund_applied
+		BEFORE UPDATE ON task_settlement_records
+		WHEN NEW.status = 'APPLIED'
+		BEGIN
+			SELECT RAISE(FAIL, 'forced public image refund record failure');
+		END
+	`).Error)
+	t.Cleanup(func() {
+		_ = model.DB.Exec("DROP TRIGGER IF EXISTS fail_public_image_refund_applied").Error
+	})
+
+	err := RefundTaskQuota(ctx, task, task.FailReason)
+	require.ErrorContains(t, err, "forced public image refund record failure")
+	require.Equal(t, currentQuota, getUserQuota(t, userID))
+	require.Equal(t, tokenRemainQuota, getTokenRemainQuota(t, tokenID))
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, preConsumedQuota, reloaded.Quota)
+	require.True(t, reloaded.RefundPending)
+	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+	var logCount int64
+	require.NoError(t, model.LOG_DB.Model(&model.Log{}).
+		Where("request_id = ? AND type = ?", task.TaskID, model.LogTypeRefund).
+		Count(&logCount).Error)
+	require.Zero(t, logCount)
+}
+
+func TestRefundPublicImageTaskQuotaCommitsWalletAndOutboxTogether(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 10881, 10882, 10883
+	const currentQuota, preConsumedQuota, tokenRemainQuota = 8000, 2000, 8000
+	seedUser(t, userID, currentQuota)
+	seedToken(t, tokenID, userID, "sk-public-image-refund-wallet", tokenRemainQuota)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, preConsumedQuota, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusFailure
+	task.FailReason = "image task cancelled by client"
+	task.RefundPending = true
+	task.PrivateData.PublicImageTask = true
+	task.PrivateData.CancelledAt = time.Now().Unix()
+	task.PrivateData.PreConsumedUsageCaptured = true
+	task.PrivateData.PreConsumedUsageRecorded = false
+	require.NoError(t, model.DB.Create(task).Error)
+
+	require.NoError(t, RefundTaskQuota(ctx, task, task.FailReason))
+	require.Equal(t, currentQuota+preConsumedQuota, getUserQuota(t, userID))
+	require.Equal(t, tokenRemainQuota+preConsumedQuota, getTokenRemainQuota(t, tokenID))
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Zero(t, reloaded.Quota)
+	require.False(t, reloaded.RefundPending)
+	require.Empty(t, reloaded.SettlementStatus)
+	var record model.TaskSettlementRecord
+	require.NoError(t, model.DB.Where("task_primary_id = ?", task.ID).First(&record).Error)
+	require.Equal(t, model.TaskSettlementRecordStatusApplied, record.Status)
+	require.Equal(t, taskSettlementOperationRefund, record.Operation)
+	require.NotZero(t, record.LogDeliveredAt)
+	var refundLog model.Log
+	require.NoError(t, model.LOG_DB.Where("request_id = ? AND type = ?", task.TaskID, model.LogTypeRefund).First(&refundLog).Error)
+	require.Equal(t, preConsumedQuota, refundLog.Quota)
+	require.Equal(t, imageTaskSettlementDeliveryKey(record.ID), refundLog.SettlementKey)
+}
+
+func TestRefundPublicImageTaskQuotaCommitsSubscriptionAndTokenTogether(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID, subscriptionID = 10891, 10892, 10893, 10894
+	const preConsumedQuota, tokenRemainQuota int = 2000, 8000
+	const subscriptionUsed int64 = 50000
+	seedUser(t, userID, 0)
+	seedToken(t, tokenID, userID, "sk-public-image-refund-subscription", tokenRemainQuota)
+	seedChannel(t, channelID)
+	seedSubscription(t, subscriptionID, userID, 100000, subscriptionUsed)
+
+	task := makeTask(userID, channelID, preConsumedQuota, tokenID, BillingSourceSubscription, subscriptionID)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusFailure
+	task.FailReason = "upstream image task failed"
+	task.RefundPending = true
+	task.PrivateData.PublicImageTask = true
+	task.PrivateData.PreConsumedUsageCaptured = true
+	task.PrivateData.PreConsumedUsageRecorded = false
+	require.NoError(t, model.DB.Create(task).Error)
+
+	require.NoError(t, RefundTaskQuota(ctx, task, task.FailReason))
+	require.Equal(t, subscriptionUsed-int64(preConsumedQuota), getSubscriptionUsed(t, subscriptionID))
+	require.Equal(t, tokenRemainQuota+preConsumedQuota, getTokenRemainQuota(t, tokenID))
+	require.Zero(t, getUserQuota(t, userID))
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Zero(t, reloaded.Quota)
+	require.False(t, reloaded.RefundPending)
+}
+
+func TestRefundPublicImageTaskQuotaMarksStaleApplyingRecordForReview(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 10901, 10902, 10903
+	seedUser(t, userID, 8000)
+	seedToken(t, tokenID, userID, "sk-public-image-refund-stale", 8000)
+	seedChannel(t, channelID)
+	task := makeTask(userID, channelID, 2000, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusFailure
+	task.FailReason = "image task cancelled by client"
+	task.RefundPending = true
+	task.PrivateData.PublicImageTask = true
+	task.PrivateData.CancelledAt = time.Now().Unix()
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     taskSettlementOperationRefund,
+		UpdatedAt:     time.Now().Unix() - publicImageTaskRefundApplyingReviewAfterSeconds - 1,
+	}).Error)
+
+	err := RefundTaskQuota(ctx, task, task.FailReason)
+	require.Error(t, err)
+	require.Equal(t, 8000, getUserQuota(t, userID))
+	require.Equal(t, 8000, getTokenRemainQuota(t, tokenID))
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+	require.True(t, reloaded.RefundPending)
+	var record model.TaskSettlementRecord
+	require.NoError(t, model.DB.Where("task_primary_id = ?", task.ID).First(&record).Error)
+	require.Equal(t, model.TaskSettlementRecordStatusReview, record.Status)
+}
+
+func TestRefundPublicImageTaskQuotaKeepsZeroQuotaApplyingRefundPending(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	task := makeTask(10911, 10912, 0, 10913, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusFailure
+	task.FailReason = "image task cancelled by client"
+	task.RefundPending = true
+	task.PrivateData.PublicImageTask = true
+	task.PrivateData.CancelledAt = time.Now().Unix()
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     taskSettlementOperationRefund,
+		UpdatedAt:     time.Now().Unix(),
+	}).Error)
+
+	err := RefundTaskQuota(ctx, task, task.FailReason)
+	require.ErrorIs(t, err, errPublicImageTaskRefundInProgress)
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Zero(t, reloaded.Quota)
+	require.True(t, reloaded.RefundPending)
+	var record model.TaskSettlementRecord
+	require.NoError(t, model.DB.Where("task_primary_id = ?", task.ID).First(&record).Error)
+	require.Equal(t, model.TaskSettlementRecordStatusApplying, record.Status)
+}
+
+func TestRefundPublicImageTaskQuotaReturnsFreshApplyingRefund(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	task := makeTask(10921, 10922, 2000, 10923, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusFailure
+	task.FailReason = "image task cancelled by client"
+	task.RefundPending = true
+	task.PrivateData.PublicImageTask = true
+	task.PrivateData.CancelledAt = time.Now().Unix()
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     taskSettlementOperationRefund,
+		UpdatedAt:     time.Now().Unix(),
+	}).Error)
+
+	err := RefundTaskQuota(ctx, task, task.FailReason)
+	require.ErrorIs(t, err, errPublicImageTaskRefundInProgress)
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, 2000, reloaded.Quota)
+	require.True(t, reloaded.RefundPending)
+	require.NotEqual(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+}
+
+func TestRefundPublicImageTaskQuotaFinalizesAppliedRefundEvidence(t *testing.T) {
+	truncate(t)
+
+	task := makeTask(10931, 10932, 0, 10933, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusFailure
+	task.FailReason = "image task cancelled by client"
+	task.RefundPending = true
+	task.PrivateData.PublicImageTask = true
+	task.PrivateData.CancelledAt = time.Now().Unix()
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID:    task.ID,
+		PublicTaskID:     task.TaskID,
+		Status:           model.TaskSettlementRecordStatusApplied,
+		Operation:        taskSettlementOperationRefund,
+		AppliedQuota:     common.GetPointer(0),
+		PreConsumedQuota: common.GetPointer(2000),
+		QuotaDelta:       common.GetPointer(-2000),
+		LogType:          common.GetPointer(model.LogTypeRefund),
+		AppliedAt:        time.Now().Unix(),
+	}).Error)
+
+	require.NoError(t, RefundTaskQuota(t.Context(), task, task.FailReason))
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Zero(t, reloaded.Quota)
+	require.False(t, reloaded.RefundPending)
+	require.Empty(t, reloaded.SettlementStatus)
+}
+
+func TestApplyImageTaskSettlementAtomicLocksFundingBeforeToken(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 10861, 10862, 10863
+	seedUser(t, userID, 8000)
+	seedToken(t, tokenID, userID, "sk-image-atomic-lock-order", 8000)
+	seedChannel(t, channelID)
+	task := makeTask(userID, channelID, 2000, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+
+	var updateOrder []string
+	callbackName := "test:image_atomic_lock_order"
+	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement == nil {
+			return
+		}
+		switch tx.Statement.Table {
+		case "users", "tokens":
+			updateOrder = append(updateOrder, tx.Statement.Table)
+		}
+	}))
+	t.Cleanup(func() { model.DB.Callback().Update().Remove(callbackName) })
+
+	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{ActualQuota: 3000})
+
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.GreaterOrEqual(t, len(updateOrder), 2)
+	require.Equal(t, []string{"users", "tokens"}, updateOrder[:2])
+}
+
+func TestPrepareImageTaskAtomicSettlementPreservesUsageLogDetails(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	startTime := time.Now().Add(-5 * time.Second)
+	info := &relaycommon.RelayInfo{
+		RelayFormat:       types.RelayFormatOpenAIImage,
+		OriginModelName:   "gpt-image-1",
+		UsingGroup:        "default",
+		StartTime:         startTime,
+		FirstResponseTime: startTime.Add(time.Second),
+		ChannelMeta:       &relaycommon.ChannelMeta{},
+		PriceData: types.PriceData{
+			ModelRatio:         1,
+			CompletionRatio:    1,
+			CacheCreationRatio: 1.25,
+			ImageRatio:         2,
+			GroupRatioInfo:     types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	usage := &dto.Usage{
+		PromptTokens:     100,
+		CompletionTokens: 20,
+		TotalTokens:      120,
+		PromptTokensDetails: dto.InputTokenDetails{
+			CachedCreationTokens: 5,
+			ImageTokens:          10,
+		},
+	}
+
+	prepared, err := PrepareImageTaskAtomicSettlement(ctx, info, usage, nil)
+
+	require.NoError(t, err)
+	require.GreaterOrEqual(t, prepared.UseTimeSeconds, 5)
+	require.Equal(t, true, prepared.Other["image"])
+	require.EqualValues(t, 2, prepared.Other["image_ratio"])
+	require.EqualValues(t, 10, prepared.Other["image_output"])
+	require.EqualValues(t, 5, prepared.Other["cache_creation_tokens"])
+	require.EqualValues(t, 1.25, prepared.Other["cache_creation_ratio"])
+	require.EqualValues(t, 5, prepared.Other["cache_write_tokens"])
+}
+
+func TestPrepareImageTaskAtomicSettlementDoesNotLogNegativeFirstResponseTime(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	startTime := time.Now().Add(-5 * time.Second)
+	info := &relaycommon.RelayInfo{
+		RelayFormat:       types.RelayFormatOpenAIImage,
+		OriginModelName:   "gpt-image-1",
+		UsingGroup:        "default",
+		StartTime:         startTime,
+		FirstResponseTime: startTime.Add(-time.Second),
+		ChannelMeta:       &relaycommon.ChannelMeta{},
+		PriceData: types.PriceData{
+			ModelRatio:     1,
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+
+	prepared, err := PrepareImageTaskAtomicSettlement(ctx, info, &dto.Usage{PromptTokens: 1, TotalTokens: 1}, nil)
+
+	require.NoError(t, err)
+	require.EqualValues(t, 0, prepared.Other["frt"])
+}
+
+func TestApplyImageTaskSettlementAtomicRejectsTaskOutsidePendingSettlement(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 10831, 10832, 10833
+	seedUser(t, userID, 8000)
+	seedToken(t, tokenID, userID, "sk-image-atomic-review", 8000)
+	seedChannel(t, channelID)
+	task := makeTask(userID, channelID, 2000, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusReview
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+
+	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{ActualQuota: 3000})
+	require.ErrorContains(t, err, "PENDING settlement status")
+	require.False(t, applied)
+	require.Equal(t, 8000, getUserQuota(t, userID))
+	require.Equal(t, 8000, getTokenRemainQuota(t, tokenID))
+	usedQuota, requestCount := getUserUsageCounters(t, userID)
+	require.Zero(t, usedQuota)
+	require.Zero(t, requestCount)
+}
+
+func TestDispatchImageTaskSettlementLogsRetriesWithoutDuplicatingConsumeLog(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 10821, 10822, 10823
+	seedUser(t, userID, 8000)
+	seedToken(t, tokenID, userID, "sk-image-outbox", 8000)
+	seedChannel(t, channelID)
+	task := makeTask(userID, channelID, 2000, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+	_, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{
+		ActualQuota:      3000,
+		PromptTokens:     12,
+		CompletionTokens: 4,
+		UseTimeSeconds:   17,
+		ModelName:        "gpt-image-1",
+		TokenName:        "image-token",
+		Other:            map[string]interface{}{"task_id": task.TaskID},
+	})
+	require.NoError(t, err)
+
+	workingLogDB := model.LOG_DB
+	t.Cleanup(func() { model.LOG_DB = workingLogDB })
+	brokenLogDB, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	model.LOG_DB = brokenLogDB
+	require.Error(t, DispatchPendingImageTaskSettlementLogs(ctx, 10))
+
+	var record model.TaskSettlementRecord
+	require.NoError(t, model.DB.Where("task_primary_id = ?", task.ID).First(&record).Error)
+	require.Zero(t, record.LogDeliveredAt)
+	require.Equal(t, 1, record.LogAttemptCount)
+	require.NotEmpty(t, record.LogError)
+
+	model.LOG_DB = workingLogDB
+	require.NoError(t, DispatchPendingImageTaskSettlementLogs(ctx, 10))
+	require.NoError(t, DispatchPendingImageTaskSettlementLogs(ctx, 10))
+
+	var count int64
+	require.NoError(t, model.LOG_DB.Model(&model.Log{}).
+		Where("request_id = ? AND type = ?", task.TaskID, model.LogTypeConsume).
+		Count(&count).Error)
+	require.EqualValues(t, 1, count)
+	var consumeLog model.Log
+	require.NoError(t, model.LOG_DB.Where("request_id = ? AND type = ?", task.TaskID, model.LogTypeConsume).First(&consumeLog).Error)
+	require.Equal(t, 17, consumeLog.UseTime)
+	require.Equal(t, imageTaskSettlementDeliveryKey(record.ID), consumeLog.SettlementKey)
+	require.NoError(t, model.DB.Where("task_primary_id = ?", task.ID).First(&record).Error)
+	require.NotZero(t, record.LogDeliveredAt)
+	require.Empty(t, record.LogError)
+}
+
+func TestDispatchImageTaskSettlementLogsReplaysAfterLogWriteWithoutDuplicate(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 10824, 10825, 10826
+	seedUser(t, userID, 8000)
+	seedToken(t, tokenID, userID, "sk-image-outbox-replay", 8000)
+	seedChannel(t, channelID)
+	task := makeTask(userID, channelID, 2000, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+	_, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{
+		ActualQuota: 3000,
+		ModelName:   "gpt-image-1",
+		Other:       map[string]interface{}{"task_id": task.TaskID},
+	})
+	require.NoError(t, err)
+
+	var record model.TaskSettlementRecord
+	require.NoError(t, model.DB.Where("task_primary_id = ?", task.ID).First(&record).Error)
+	claimed, err := model.ClaimTaskSettlementLog(record.ID, "crashed-dispatcher", time.Now().Unix(), 30)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	require.NoError(t, dispatchImageTaskSettlementLog(ctx, &record))
+	require.NoError(t, model.DB.Model(&model.TaskSettlementRecord{}).
+		Where("id = ?", record.ID).
+		Updates(map[string]interface{}{"log_lock_owner": "", "log_lock_until": 0}).Error)
+
+	require.NoError(t, DispatchPendingImageTaskSettlementLogs(ctx, 10))
+
+	var count int64
+	require.NoError(t, model.LOG_DB.Model(&model.Log{}).
+		Where("request_id = ? AND type = ?", task.TaskID, model.LogTypeConsume).
+		Count(&count).Error)
+	require.EqualValues(t, 1, count)
+	require.NoError(t, model.DB.Where("id = ?", record.ID).First(&record).Error)
+	require.NotZero(t, record.LogDeliveredAt)
+}
+
+func TestDispatchImageTaskSettlementLogRecoversQuotaDataAfterLogWrite(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	oldDataExportEnabled := common.DataExportEnabled
+	common.DataExportEnabled = true
+	model.CacheQuotaDataLock.Lock()
+	model.CacheQuotaData = make(map[string]*model.QuotaData)
+	model.CacheQuotaDataLock.Unlock()
+	t.Cleanup(func() {
+		common.DataExportEnabled = oldDataExportEnabled
+		model.CacheQuotaDataLock.Lock()
+		model.CacheQuotaData = make(map[string]*model.QuotaData)
+		model.CacheQuotaDataLock.Unlock()
+	})
+
+	const userID, tokenID, channelID = 10831, 10832, 10833
+	seedUser(t, userID, 8000)
+	seedToken(t, tokenID, userID, "sk-image-outbox-crash-recovery", 8000)
+	seedChannel(t, channelID)
+	task := makeTask(userID, channelID, 2000, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	task.PrivateData.NodeName = "image-create-node"
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+	_, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{
+		ActualQuota:      3000,
+		PromptTokens:     12,
+		CompletionTokens: 4,
+		ModelName:        "gpt-image-1",
+		Other:            map[string]interface{}{"task_id": task.TaskID},
+	})
+	require.NoError(t, err)
+
+	// Simulate a process crash after the external log write but before quota-data export
+	// and the primary-database outbox completion marker.
+	require.NoError(t, model.LOG_DB.Create(&model.Log{
+		UserId:           userID,
+		Username:         "test_user",
+		CreatedAt:        common.GetTimestamp(),
+		Type:             model.LogTypeConsume,
+		ModelName:        "gpt-image-1",
+		Quota:            3000,
+		PromptTokens:     12,
+		CompletionTokens: 4,
+		ChannelId:        channelID,
+		TokenId:          tokenID,
+		Group:            "default",
+		RequestId:        task.TaskID,
+	}).Error)
+
+	require.NoError(t, DispatchPendingImageTaskSettlementLogs(ctx, 10))
+
+	var logCount int64
+	require.NoError(t, model.LOG_DB.Model(&model.Log{}).
+		Where("request_id = ? AND type = ?", task.TaskID, model.LogTypeConsume).
+		Count(&logCount).Error)
+	require.EqualValues(t, 1, logCount)
+	var quotaRows []model.QuotaData
+	require.NoError(t, model.DB.Where("user_id = ? AND model_name = ?", userID, "gpt-image-1").Find(&quotaRows).Error)
+	require.Len(t, quotaRows, 1)
+	require.Equal(t, 1, quotaRows[0].Count)
+	require.Equal(t, 16, quotaRows[0].TokenUsed)
+	require.Equal(t, 3000, quotaRows[0].Quota)
+	var record model.TaskSettlementRecord
+	require.NoError(t, model.DB.Where("task_primary_id = ?", task.ID).First(&record).Error)
+	require.NotZero(t, record.LogDeliveredAt)
+}
+
+func TestDispatchImageTaskSettlementLogExportsRequestAndTokenUsage(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	oldDataExportEnabled := common.DataExportEnabled
+	common.DataExportEnabled = true
+	model.CacheQuotaDataLock.Lock()
+	model.CacheQuotaData = make(map[string]*model.QuotaData)
+	model.CacheQuotaDataLock.Unlock()
+	t.Cleanup(func() {
+		common.DataExportEnabled = oldDataExportEnabled
+		model.CacheQuotaDataLock.Lock()
+		model.CacheQuotaData = make(map[string]*model.QuotaData)
+		model.CacheQuotaDataLock.Unlock()
+	})
+
+	const userID, tokenID, channelID = 10827, 10828, 10829
+	seedUser(t, userID, 8000)
+	seedToken(t, tokenID, userID, "sk-image-outbox-export", 8000)
+	seedChannel(t, channelID)
+	task := makeTask(userID, channelID, 2000, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	task.PrivateData.NodeName = "image-create-node"
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+	_, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{
+		ActualQuota:      3000,
+		PromptTokens:     12,
+		CompletionTokens: 4,
+		ModelName:        "gpt-image-1",
+		Other:            map[string]interface{}{"task_id": task.TaskID},
+	})
+	require.NoError(t, err)
+	var legacyRecord model.TaskSettlementRecord
+	require.NoError(t, model.DB.Where("task_primary_id = ?", task.ID).First(&legacyRecord).Error)
+	var legacyPayload map[string]interface{}
+	require.NoError(t, json.Unmarshal([]byte(legacyRecord.LogPayload), &legacyPayload))
+	delete(legacyPayload, "quota_data_count")
+	delete(legacyPayload, "quota_data_token_used")
+	delete(legacyPayload, "quota_data_captured")
+	legacyPayloadBytes, err := json.Marshal(legacyPayload)
+	require.NoError(t, err)
+	require.NoError(t, model.DB.Model(&model.TaskSettlementRecord{}).
+		Where("id = ?", legacyRecord.ID).
+		Update("log_payload", string(legacyPayloadBytes)).Error)
+	require.NoError(t, DispatchPendingImageTaskSettlementLogs(ctx, 10))
+
+	var exportedRows []model.QuotaData
+	require.NoError(t, model.DB.Where("user_id = ? AND model_name = ?", userID, "gpt-image-1").Find(&exportedRows).Error)
+	require.Len(t, exportedRows, 1)
+	require.Equal(t, 1, exportedRows[0].Count)
+	require.Equal(t, 16, exportedRows[0].TokenUsed)
+	require.Equal(t, 3000, exportedRows[0].Quota)
+	require.Equal(t, "image-create-node", exportedRows[0].NodeName)
+}
+
+func TestApplyImageTaskSettlementAtomicCommitsSubscriptionDelta(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID, subscriptionID = 10841, 10842, 10843, 10844
+	const preConsumedQuota, actualQuota = 2000, 3000
+	seedUser(t, userID, 0)
+	seedToken(t, tokenID, userID, "sk-image-atomic-subscription", 8000)
+	seedChannel(t, channelID)
+	seedSubscription(t, subscriptionID, userID, 100000, 50000)
+	task := makeTask(userID, channelID, preConsumedQuota, tokenID, BillingSourceSubscription, subscriptionID)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+
+	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{ActualQuota: actualQuota})
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.Equal(t, int64(51000), getSubscriptionUsed(t, subscriptionID))
+	require.Equal(t, 7000, getTokenRemainQuota(t, tokenID))
+	require.Zero(t, getUserQuota(t, userID))
+	usedQuota, requestCount := getUserUsageCounters(t, userID)
+	require.Equal(t, actualQuota, usedQuota)
+	require.Equal(t, 1, requestCount)
+}
+
+func TestApplyImageTaskSettlementAtomicRollsBackWhenSubscriptionDeltaFails(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID, subscriptionID = 10851, 10852, 10853, 10854
+	const preConsumedQuota, actualQuota = 2000, 4000
+	seedUser(t, userID, 0)
+	seedToken(t, tokenID, userID, "sk-image-atomic-subscription-rollback", 8000)
+	seedChannel(t, channelID)
+	seedSubscription(t, subscriptionID, userID, 100000, 99000)
+	task := makeTask(userID, channelID, preConsumedQuota, tokenID, BillingSourceSubscription, subscriptionID)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+
+	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{ActualQuota: actualQuota})
+	require.ErrorContains(t, err, "subscription used exceeds total")
+	require.False(t, applied)
+	require.Equal(t, int64(99000), getSubscriptionUsed(t, subscriptionID))
+	require.Equal(t, 8000, getTokenRemainQuota(t, tokenID))
+	usedQuota, requestCount := getUserUsageCounters(t, userID)
+	require.Zero(t, usedQuota)
+	require.Zero(t, requestCount)
 }
 
 func TestImageTaskBatchPollSizeClampsToProtocolLimit(t *testing.T) {
@@ -950,6 +1857,179 @@ func TestRunTaskPollingOnceCleansExpiredImageTaskResultCacheWithoutAdaptor(t *te
 	RunTaskPollingOnce(context.Background(), nil)
 
 	require.NoFileExists(t, path)
+}
+
+func TestCleanupExpiredImageTaskResultsRemovesReferencedFileAfterDatabaseCleanup(t *testing.T) {
+	truncate(t)
+	oldConfig := common.GetDiskCacheConfig()
+	oldCleanupUnix := atomic.LoadInt64(&imageTaskResultRecordCleanupUnix)
+	cacheRoot := t.TempDir()
+	common.SetDiskCacheConfig(common.DiskCacheConfig{Path: cacheRoot})
+	atomic.StoreInt64(&imageTaskResultRecordCleanupUnix, 0)
+	t.Cleanup(func() {
+		common.SetDiskCacheConfig(oldConfig)
+		atomic.StoreInt64(&imageTaskResultRecordCleanupUnix, oldCleanupUnix)
+	})
+
+	path, err := common.WriteImageTaskResultCacheFile([]byte(`{"data":[{"b64_json":"claimed"}]}`))
+	require.NoError(t, err)
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:               "task_cleanup_referenced_file",
+		Platform:             constant.TaskPlatformImage,
+		Status:               model.TaskStatusSuccess,
+		SettlementStatus:     model.TaskSettlementStatusSettled,
+		FinishTime:           now - 60,
+		ResultExpiresAt:      now + 3600,
+		ResultAcknowledgedAt: now - 180,
+		ResultDeleteAfter:    now - 1,
+		PrivateData: model.TaskPrivateData{
+			ResultBodyPath:  path,
+			ResultExpiresAt: now + 3600,
+		},
+	}
+	task.SetData(map[string]any{"_newapi_result_file": true})
+	require.NoError(t, task.Insert())
+
+	cleanupExpiredImageTaskResults(context.Background())
+
+	require.NoFileExists(t, path)
+	reloaded, exists, err := model.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, now, reloaded.ResultCleanedAt)
+	require.Empty(t, reloaded.PrivateData.ResultBodyPath)
+	require.False(t, reloaded.ResultCleanupPending)
+}
+
+func TestCleanupExpiredImageTaskResultsDrainsMoreThanOneBatch(t *testing.T) {
+	truncate(t)
+	oldCleanupUnix := atomic.LoadInt64(&imageTaskResultRecordCleanupUnix)
+	atomic.StoreInt64(&imageTaskResultRecordCleanupUnix, 0)
+	t.Cleanup(func() {
+		atomic.StoreInt64(&imageTaskResultRecordCleanupUnix, oldCleanupUnix)
+	})
+
+	now := time.Now().Unix()
+	for i := 0; i < 205; i++ {
+		task := &model.Task{
+			TaskID:           fmt.Sprintf("task_cleanup_backlog_%d", i),
+			Platform:         constant.TaskPlatformImage,
+			Status:           model.TaskStatusSuccess,
+			SettlementStatus: model.TaskSettlementStatusSettled,
+			FinishTime:       now - 60,
+			ResultExpiresAt:  now - 1,
+		}
+		task.SetData(map[string]any{"data": []any{map[string]any{"b64_json": "expired"}}})
+		require.NoError(t, task.Insert())
+	}
+
+	cleanupExpiredImageTaskResults(context.Background())
+
+	var cleaned int64
+	require.NoError(t, model.DB.Model(&model.Task{}).Where("result_cleaned_at > 0").Count(&cleaned).Error)
+	require.EqualValues(t, 205, cleaned)
+}
+
+func TestCleanupExpiredImageTaskResultsRetainsPathWhenFileDeleteFails(t *testing.T) {
+	truncate(t)
+	oldCleanupUnix := atomic.LoadInt64(&imageTaskResultRecordCleanupUnix)
+	atomic.StoreInt64(&imageTaskResultRecordCleanupUnix, 0)
+	t.Cleanup(func() {
+		atomic.StoreInt64(&imageTaskResultRecordCleanupUnix, oldCleanupUnix)
+	})
+
+	resultDirectory := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(resultDirectory, "keep"), []byte("x"), 0o600))
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_cleanup_delete_failure",
+		Platform:         constant.TaskPlatformImage,
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusSettled,
+		FinishTime:       now - 60,
+		ResultExpiresAt:  now - 1,
+		PrivateData: model.TaskPrivateData{
+			ResultBodyPath: resultDirectory,
+		},
+	}
+	task.SetData(map[string]any{"_newapi_result_file": true})
+	require.NoError(t, task.Insert())
+
+	cleanupExpiredImageTaskResults(context.Background())
+
+	reloaded, exists, err := model.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.True(t, reloaded.ResultCleanupPending)
+	require.Equal(t, resultDirectory, reloaded.PrivateData.ResultBodyPath)
+}
+
+func TestCleanupExpiredImageTaskResultsDoesNotStarveLaterFiles(t *testing.T) {
+	truncate(t)
+	oldCleanupUnix := atomic.LoadInt64(&imageTaskResultRecordCleanupUnix)
+	oldCleanupCursor := atomic.LoadInt64(&imageTaskResultFileCleanupCursor)
+	atomic.StoreInt64(&imageTaskResultRecordCleanupUnix, 0)
+	atomic.StoreInt64(&imageTaskResultFileCleanupCursor, 0)
+	t.Cleanup(func() {
+		atomic.StoreInt64(&imageTaskResultRecordCleanupUnix, oldCleanupUnix)
+		atomic.StoreInt64(&imageTaskResultFileCleanupCursor, oldCleanupCursor)
+	})
+
+	failedDirectory := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(failedDirectory, "keep"), []byte("x"), 0o600))
+	now := time.Now().Unix()
+	blocked := make([]*model.Task, 0, 1000)
+	for i := 0; i < 1000; i++ {
+		blocked = append(blocked, &model.Task{
+			TaskID:               fmt.Sprintf("task_cleanup_blocked_%d", i),
+			Platform:             constant.TaskPlatformImage,
+			Status:               model.TaskStatusSuccess,
+			SettlementStatus:     model.TaskSettlementStatusSettled,
+			FinishTime:           now - 60,
+			ResultCleanedAt:      now,
+			ResultCleanupPending: true,
+			PrivateData: model.TaskPrivateData{
+				ResultBodyPath: failedDirectory,
+			},
+		})
+	}
+	require.NoError(t, model.DB.CreateInBatches(blocked, 100).Error)
+
+	laterPath := filepath.Join(t.TempDir(), "later-result.json")
+	require.NoError(t, os.WriteFile(laterPath, []byte(`{"data":[]}`), 0o600))
+	later := &model.Task{
+		TaskID:               "task_cleanup_later_file",
+		Platform:             constant.TaskPlatformImage,
+		Status:               model.TaskStatusSuccess,
+		SettlementStatus:     model.TaskSettlementStatusSettled,
+		FinishTime:           now - 60,
+		ResultCleanedAt:      now,
+		ResultCleanupPending: true,
+		PrivateData: model.TaskPrivateData{
+			ResultBodyPath: laterPath,
+		},
+	}
+	require.NoError(t, later.Insert())
+
+	cleanupExpiredImageTaskResults(context.Background())
+	atomic.StoreInt64(&imageTaskResultRecordCleanupUnix, 0)
+	cleanupExpiredImageTaskResults(context.Background())
+
+	require.NoFileExists(t, laterPath)
+	reloaded, exists, err := model.GetTaskByID(later.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.False(t, reloaded.ResultCleanupPending)
+
+	require.NoError(t, os.Remove(filepath.Join(failedDirectory, "keep")))
+	atomic.StoreInt64(&imageTaskResultRecordCleanupUnix, 0)
+	cleanupExpiredImageTaskResults(context.Background())
+
+	retried, exists, err := model.GetTaskByID(blocked[0].ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.False(t, retried.ResultCleanupPending)
 }
 
 func TestSweepTimedOutTasksSkipsImageTaskForRunner(t *testing.T) {
@@ -2264,6 +3344,8 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	setChannelUsedQuota(t, channelID, int64(preConsumed))
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.RefundPending = true
 	require.NoError(t, model.DB.Create(task).Error)
 
 	require.NoError(t, RefundTaskQuota(ctx, task, "task failed: upstream error"))
@@ -2291,6 +3373,7 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
 	assert.Equal(t, 0, reloaded.Quota)
+	assert.False(t, reloaded.RefundPending)
 }
 
 func TestRefundTaskQuotaRollsBackAccountingWhenRefundLogFails(t *testing.T) {
@@ -2532,6 +3615,9 @@ func TestRefundTaskQuotaFinalizesAppliedSettlementRecordWithoutDoubleRefund(t *t
 		ChannelId: channelID,
 		TokenId:   tokenID,
 		Group:     "default",
+		Other: common.MapToJsonStr(map[string]interface{}{
+			"task_id": task.TaskID,
+		}),
 	}).Error)
 	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
 		TaskPrimaryID: task.ID,
@@ -2555,6 +3641,103 @@ func TestRefundTaskQuotaFinalizesAppliedSettlementRecordWithoutDoubleRefund(t *t
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
 	assert.Equal(t, 0, reloaded.Quota)
 	assert.Empty(t, reloaded.SettlementStatus)
+	record, exists, err := model.GetTaskSettlementRecord(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, taskSettlementOperationRefund, record.Operation)
+	require.NotNil(t, record.AppliedQuota)
+	require.Zero(t, *record.AppliedQuota)
+	require.NotNil(t, record.LogType)
+	require.Equal(t, model.LogTypeRefund, *record.LogType)
+}
+
+func TestRefundTaskQuotaRejectsAppliedRefundRecordWithoutValidEvidence(t *testing.T) {
+	testCases := []struct {
+		name         string
+		appliedQuota *int
+		logType      *int
+	}{
+		{name: "missing applied quota", appliedQuota: nil, logType: common.GetPointer(model.LogTypeRefund)},
+		{name: "nonzero applied quota", appliedQuota: common.GetPointer(1), logType: common.GetPointer(model.LogTypeRefund)},
+		{name: "wrong log type", appliedQuota: common.GetPointer(0), logType: common.GetPointer(model.LogTypeConsume)},
+	}
+	for index, testCase := range testCases {
+		t.Run(testCase.name, func(t *testing.T) {
+			truncate(t)
+			userID := 12000 + index*10
+			tokenID := userID + 1
+			channelID := userID + 2
+			seedUser(t, userID, 10000)
+			seedToken(t, tokenID, userID, "sk-refund-invalid-applied", 5000)
+			seedChannel(t, channelID)
+			task := makeTask(userID, channelID, 0, tokenID, BillingSourceWallet, 0)
+			task.Status = model.TaskStatusFailure
+			task.SettlementStatus = model.TaskSettlementStatusPending
+			require.NoError(t, model.DB.Create(task).Error)
+			require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+				TaskPrimaryID:    task.ID,
+				PublicTaskID:     task.TaskID,
+				Status:           model.TaskSettlementRecordStatusApplied,
+				Operation:        taskSettlementOperationRefund,
+				AppliedQuota:     testCase.appliedQuota,
+				PreConsumedQuota: common.GetPointer(3000),
+				QuotaDelta:       common.GetPointer(-3000),
+				LogType:          testCase.logType,
+				AppliedAt:        common.GetTimestamp(),
+			}).Error)
+
+			err := RefundTaskQuota(t.Context(), task, "retry invalid applied refund")
+
+			require.Error(t, err)
+			require.Contains(t, err.Error(), "valid applied refund evidence")
+			var reloaded model.Task
+			require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+			require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+		})
+	}
+}
+
+func TestRefundTaskQuotaDoesNotRecoverAppliedRefundFromRecalculationLog(t *testing.T) {
+	truncate(t)
+	const userID, tokenID, channelID, preConsumed, actualQuota = 12100, 12101, 12102, 3000, 2000
+	seedUser(t, userID, 10000)
+	seedToken(t, tokenID, userID, "sk-refund-recalculation-evidence", 5000)
+	seedChannel(t, channelID)
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.Status = model.TaskStatusFailure
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.Log{
+		UserId:    userID,
+		Username:  "test_user",
+		CreatedAt: common.GetTimestamp(),
+		Type:      model.LogTypeRefund,
+		ModelName: "test-model",
+		Quota:     preConsumed - actualQuota,
+		ChannelId: channelID,
+		TokenId:   tokenID,
+		Group:     "default",
+		Other: common.MapToJsonStr(map[string]interface{}{
+			"task_id":            task.TaskID,
+			"pre_consumed_quota": preConsumed,
+			"actual_quota":       actualQuota,
+		}),
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplied,
+		AppliedAt:     common.GetTimestamp(),
+	}).Error)
+
+	err := RefundTaskQuota(t.Context(), task, "must not use recalculation evidence")
+
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "no valid applied refund evidence")
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, preConsumed, reloaded.Quota)
+	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
 }
 
 func TestRefundTaskQuotaZeroQuotaFinalizesAppliedRefundRecord(t *testing.T) {

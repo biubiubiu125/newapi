@@ -70,6 +70,9 @@ func GetRequestBody(c *gin.Context) (io.Seeker, error) {
 	_ = c.Request.Body.Close()
 
 	if err != nil {
+		if errors.Is(err, ErrDiskCacheCapacityUnavailable) {
+			return nil, err
+		}
 		if IsRequestBodyTooLargeError(err) {
 			return nil, errors.Wrap(ErrRequestBodyTooLarge, fmt.Sprintf("request body exceeds %d MB", maxMB))
 		}

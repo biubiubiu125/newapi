@@ -12,6 +12,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/perf_metrics_setting"
+	"github.com/bytedance/gopkg/util/gopool"
+	"github.com/go-redis/redis/v8"
 )
 
 var hotBuckets sync.Map
@@ -25,8 +27,29 @@ func Init() {
 }
 
 func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens int64) {
-	if info == nil {
+	sample, ok := relaySample(info, success, outputTokens)
+	if !ok {
 		return
+	}
+	Record(sample)
+}
+
+func RecordRelaySampleAsync(info *relaycommon.RelayInfo, success bool, outputTokens int64) {
+	sample, ok := relaySample(info, success, outputTokens)
+	if !ok {
+		return
+	}
+	enabled := perf_metrics_setting.GetSetting().Enabled
+	redisEnabled := common.RedisEnabled
+	redisClient := common.RDB
+	gopool.Go(func() {
+		record(sample, enabled, redisEnabled, redisClient)
+	})
+}
+
+func relaySample(info *relaycommon.RelayInfo, success bool, outputTokens int64) (Sample, bool) {
+	if info == nil {
+		return Sample{}, false
 	}
 	now := time.Now()
 	hasTtft := info.IsStream && info.HasSendResponse()
@@ -42,7 +65,7 @@ func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens i
 	if generationMs <= 0 {
 		generationMs = latencyMs
 	}
-	Record(Sample{
+	return Sample{
 		Model:        info.OriginModelName,
 		Group:        info.UsingGroup,
 		LatencyMs:    latencyMs,
@@ -51,12 +74,15 @@ func RecordRelaySample(info *relaycommon.RelayInfo, success bool, outputTokens i
 		Success:      success,
 		OutputTokens: outputTokens,
 		GenerationMs: generationMs,
-	})
+	}, true
 }
 
 func Record(sample Sample) {
-	setting := perf_metrics_setting.GetSetting()
-	if !setting.Enabled || sample.Model == "" {
+	record(sample, perf_metrics_setting.GetSetting().Enabled, common.RedisEnabled, common.RDB)
+}
+
+func record(sample Sample, enabled bool, redisEnabled bool, redisClient *redis.Client) {
+	if !enabled || sample.Model == "" {
 		return
 	}
 	if sample.Group == "" {
@@ -73,7 +99,7 @@ func Record(sample Sample) {
 	}
 	actual, _ := hotBuckets.LoadOrStore(key, &atomicBucket{})
 	actual.(*atomicBucket).add(sample)
-	recordRedis(key, sample)
+	recordRedis(key, sample, redisEnabled, redisClient)
 }
 
 func Query(params QueryParams) (QueryResult, error) {
@@ -377,15 +403,15 @@ func avgTps(value counters) float64 {
 	return float64(value.outputTokens) / (float64(value.generationMs) / 1000)
 }
 
-func recordRedis(key bucketKey, sample Sample) {
-	if !common.RedisEnabled || common.RDB == nil {
+func recordRedis(key bucketKey, sample Sample, redisEnabled bool, redisClient *redis.Client) {
+	if !redisEnabled || redisClient == nil {
 		return
 	}
 	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
 	defer cancel()
 
 	redisKey := redisBucketKey(key)
-	pipe := common.RDB.TxPipeline()
+	pipe := redisClient.TxPipeline()
 	pipe.HIncrBy(ctx, redisKey, "req", 1)
 	if sample.Success {
 		pipe.HIncrBy(ctx, redisKey, "ok", 1)

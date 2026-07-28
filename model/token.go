@@ -206,14 +206,28 @@ func SearchUserTokens(userId int, keyword string, token string, offset int, limi
 }
 
 func ValidateUserToken(key string) (token *Token, err error) {
+	return validateUserToken(key, false)
+}
+
+// ValidateUserTokenForTaskAccess keeps an exhausted token usable only for
+// managing work that was already created with that token.
+func ValidateUserTokenForTaskAccess(key string) (token *Token, err error) {
+	return validateUserToken(key, true)
+}
+
+func validateUserToken(key string, allowExhausted bool) (token *Token, err error) {
 	if key == "" {
 		return nil, ErrTokenNotProvided
 	}
 	token, err = GetTokenByKey(key, false)
 	if err == nil {
-		if token.Status == common.TokenStatusExhausted ||
-			token.Status == common.TokenStatusExpired ||
-			token.Status != common.TokenStatusEnabled {
+		switch token.Status {
+		case common.TokenStatusEnabled:
+		case common.TokenStatusExhausted:
+			if !allowExhausted {
+				return token, ErrTokenInvalid
+			}
+		default:
 			return token, ErrTokenInvalid
 		}
 		if token.ExpiredTime != -1 && token.ExpiredTime < common.GetTimestamp() {
@@ -226,7 +240,7 @@ func ValidateUserToken(key string) (token *Token, err error) {
 			}
 			return token, ErrTokenInvalid
 		}
-		if !token.UnlimitedQuota && token.RemainQuota <= 0 {
+		if !allowExhausted && !token.UnlimitedQuota && token.RemainQuota <= 0 {
 			if !common.RedisEnabled {
 				token.Status = common.TokenStatusExhausted
 				err := token.SelectUpdate()
@@ -402,7 +416,7 @@ func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 	if err = increaseTokenQuota(tokenId, quota); err != nil {
 		return err
 	}
-	refreshTokenCache(tokenId, key)
+	RefreshTokenQuotaCache(tokenId, key)
 	return nil
 }
 
@@ -458,8 +472,32 @@ func IncreaseTokenQuotaTracked(tokenId int, key string, quota int) (delta TokenQ
 	if err != nil {
 		return delta, err
 	}
-	refreshTokenCache(tokenId, key)
+	RefreshTokenQuotaCache(tokenId, key)
 	return delta, nil
+}
+
+func IncreaseTokenQuotaTx(tx *gorm.DB, tokenId int, quota int) error {
+	if tx == nil {
+		return errors.New("database transaction is required")
+	}
+	if quota < 0 {
+		return errors.New("quota cannot be negative")
+	}
+	if quota == 0 {
+		return nil
+	}
+	result := tx.Model(&Token{}).Where("id = ?", tokenId).Updates(map[string]interface{}{
+		"remain_quota":  gorm.Expr("CASE WHEN unlimited_quota THEN remain_quota ELSE remain_quota + ? END", quota),
+		"used_quota":    gorm.Expr("CASE WHEN used_quota - ? < 0 THEN 0 ELSE used_quota - ? END", quota, quota),
+		"accessed_time": common.GetTimestamp(),
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%w: tokenId=%d, quota=%d", ErrTokenQuotaNoRows, tokenId, quota)
+	}
+	return nil
 }
 
 func ApplyTokenQuotaDelta(delta TokenQuotaDelta) error {
@@ -479,7 +517,7 @@ func ApplyTokenQuotaDelta(delta TokenQuotaDelta) error {
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("%w: tokenId=%d", ErrTokenQuotaNoRows, delta.TokenId)
 	}
-	refreshTokenCache(delta.TokenId, delta.Key)
+	RefreshTokenQuotaCache(delta.TokenId, delta.Key)
 	return nil
 }
 
@@ -507,15 +545,24 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 	if quota == 0 {
 		return nil
 	}
-	if err = decreaseTokenQuota(id, quota); err != nil {
+	if err = DecreaseTokenQuotaTx(DB, id, quota); err != nil {
 		return err
 	}
-	refreshTokenCache(id, key)
+	RefreshTokenQuotaCache(id, key)
 	return nil
 }
 
-func decreaseTokenQuota(id int, quota int) (err error) {
-	result := DB.Model(&Token{}).Where("id = ? AND (unlimited_quota = ? OR remain_quota >= ?)", id, true, quota).Updates(
+func DecreaseTokenQuotaTx(tx *gorm.DB, id int, quota int) (err error) {
+	if tx == nil {
+		return errors.New("database transaction is required")
+	}
+	if quota < 0 {
+		return errors.New("quota 不能为负数！")
+	}
+	if quota == 0 {
+		return nil
+	}
+	result := tx.Model(&Token{}).Where("id = ? AND (unlimited_quota = ? OR remain_quota >= ?)", id, true, quota).Updates(
 		map[string]interface{}{
 			"remain_quota":  gorm.Expr("CASE WHEN unlimited_quota THEN remain_quota ELSE remain_quota - ? END", quota),
 			"used_quota":    gorm.Expr("used_quota + ?", quota),
@@ -531,8 +578,8 @@ func decreaseTokenQuota(id int, quota int) (err error) {
 	return nil
 }
 
-func refreshTokenCache(tokenId int, key string) {
-	if !common.RedisEnabled || key == "" {
+func RefreshTokenQuotaCache(tokenId int, _ string) {
+	if !common.RedisEnabled || tokenId <= 0 {
 		return
 	}
 	gopool.Go(func() {

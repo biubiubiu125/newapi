@@ -363,6 +363,20 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 }
 
 func TokenAuth() func(c *gin.Context) {
+	return tokenAuth(false, false)
+}
+
+func TokenAuthForTaskAccess() func(c *gin.Context) {
+	return tokenAuth(true, true)
+}
+
+// TokenAuthForImageTaskCreation lets an exhausted token authenticate long
+// enough to replay an existing idempotent task while retaining normal group validation.
+func TokenAuthForImageTaskCreation() func(c *gin.Context) {
+	return tokenAuth(true, false)
+}
+
+func tokenAuth(allowExhausted bool, taskAccess bool) func(c *gin.Context) {
 	return func(c *gin.Context) {
 		// 先检测是否为ws
 		if c.Request.Header.Get("Sec-WebSocket-Protocol") != "" {
@@ -419,7 +433,13 @@ func TokenAuth() func(c *gin.Context) {
 			parts = strings.Split(key, "-")
 			key = parts[0]
 		}
-		token, err := model.ValidateUserToken(key)
+		var token *model.Token
+		var err error
+		if allowExhausted {
+			token, err = model.ValidateUserTokenForTaskAccess(key)
+		} else {
+			token, err = model.ValidateUserToken(key)
+		}
 		if token != nil {
 			id := c.GetInt("id")
 			if id == 0 {
@@ -471,7 +491,7 @@ func TokenAuth() func(c *gin.Context) {
 
 		userGroup := strings.TrimSpace(userCache.Group)
 		tokenGroup := strings.TrimSpace(token.Group)
-		if tokenGroup != "" {
+		if tokenGroup != "" && !taskAccess {
 			// check common.UserUsableGroups[userGroup]
 			if _, ok := service.GetUserUsableGroupsByUser(token.UserId, userGroup)[tokenGroup]; !ok {
 				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", tokenGroup))
@@ -485,6 +505,8 @@ func TokenAuth() func(c *gin.Context) {
 				}
 			}
 			userGroup = tokenGroup
+		} else if tokenGroup != "" {
+			userGroup = tokenGroup
 		}
 		common.SetContextKey(c, constant.ContextKeyUsingGroup, userGroup)
 
@@ -493,6 +515,17 @@ func TokenAuth() func(c *gin.Context) {
 			return
 		}
 		c.Next()
+	}
+}
+
+// RejectExhaustedTokenForImageTaskCreation runs after idempotency reuse.
+func RejectExhaustedTokenForImageTaskCreation() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		if c.GetBool("token_unlimited_quota") || c.GetInt("token_quota") > 0 {
+			c.Next()
+			return
+		}
+		abortWithOpenAiMessage(c, http.StatusForbidden, "token quota is insufficient", types.ErrorCodePreConsumeTokenQuotaFailed)
 	}
 }
 

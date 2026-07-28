@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/gin-gonic/gin"
 	"github.com/samber/lo"
@@ -60,4 +61,22 @@ func TestBuildBillingExprRequestInputFromRequest(t *testing.T) {
 	require.True(t, gjson.GetBytes(input.Body, "stream").Bool())
 	require.Equal(t, "user", gjson.GetBytes(input.Body, "messages.0.role").String())
 	require.Equal(t, float64(3000), gjson.GetBytes(input.Body, "max_tokens").Float())
+}
+
+func TestResolveIncomingBillingExprRequestInputPreservesCapturedParams(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+	info := &relaycommon.RelayInfo{
+		BillingRequestInput: &billingexpr.RequestInput{
+			Params: map[string]any{"quality": "high"},
+		},
+	}
+
+	input, err := ResolveIncomingBillingExprRequestInput(ctx, info)
+
+	require.NoError(t, err)
+	require.Equal(t, "high", input.Params["quality"])
+	input.Params["quality"] = "low"
+	require.Equal(t, "high", info.BillingRequestInput.Params["quality"])
 }

@@ -30,6 +30,15 @@ var ImageTaskHTTPResponseMaxMB int
 var ImageTaskFileCacheShared bool
 var ImageTaskFileCacheSharedTrusted bool
 var ImageTaskLocalFileCacheAffinity bool
+var ImageTaskOrphanFailSeconds int
+var ImageTaskResultInlineMaxMB int
+var ImageTaskAccessRateLimitCount int
+var ImageTaskAccessRateLimitDurationSeconds int
+var ImageTaskCreateRateLimitCount int
+var ImageTaskCreateRateLimitDurationSeconds int
+var ImageTaskCreateMaxInFlight int
+var ImageTaskCreateMaxReservedMB int
+var ImageTaskIdempotencyLockRetentionHours int
 var SystemTaskHistoryRetentionHours int
 var TaskSettlementRecordRetentionHours int
 

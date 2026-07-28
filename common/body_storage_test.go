@@ -2,8 +2,13 @@ package common
 
 import (
 	"bytes"
+	"net/http"
+	"net/http/httptest"
 	"testing"
+	"time"
 
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
@@ -86,4 +91,44 @@ func TestCreateBodyStorageFromReaderUnknownLengthDoesNotFallbackToMemoryWhenDisk
 	require.Nil(t, storage)
 	require.True(t, IsRequestBodyTooLargeError(err))
 	require.Equal(t, beforeMemoryBuffers, GetDiskCacheStats().ActiveMemoryBuffers)
+}
+
+func TestGetRequestBodyPreservesDiskCacheCapacityError(t *testing.T) {
+	oldConfig := GetDiskCacheConfig()
+	oldMaxRequestBodyMB := constant.MaxRequestBodyMB
+	ResetDiskCacheUsage()
+	ResetDiskCacheStats()
+	SetDiskCacheConfig(DiskCacheConfig{
+		Enabled:     true,
+		ThresholdMB: 1,
+		MaxSizeMB:   1,
+		Path:        t.TempDir(),
+	})
+	constant.MaxRequestBodyMB = 4
+	t.Cleanup(func() {
+		constant.MaxRequestBodyMB = oldMaxRequestBodyMB
+		ResetDiskCacheUsage()
+		ResetDiskCacheStats()
+		SetDiskCacheConfig(oldConfig)
+	})
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/image-tasks/generations", bytes.NewReader(make([]byte, 2<<20)))
+
+	storage, err := GetRequestBody(ctx)
+
+	require.Nil(t, storage)
+	require.ErrorIs(t, err, ErrDiskCacheCapacityUnavailable)
+}
+
+func TestGetImageTaskResultCacheRetentionFallsBackToTwelveHours(t *testing.T) {
+	oldRetention := constant.ImageTaskResultRetentionMinutes
+	constant.ImageTaskResultRetentionMinutes = 0
+	t.Cleanup(func() {
+		constant.ImageTaskResultRetentionMinutes = oldRetention
+	})
+
+	require.Equal(t, 12*time.Hour, GetImageTaskResultCacheRetention())
+	constant.ImageTaskResultRetentionMinutes = 1440
+	require.Equal(t, 12*time.Hour, GetImageTaskResultCacheRetention())
 }

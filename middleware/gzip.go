@@ -44,7 +44,11 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 			gzipReader, err := gzip.NewReader(origBody)
 			if err != nil {
 				_ = origBody.Close()
-				c.AbortWithStatus(http.StatusBadRequest)
+				if isPublicImageTaskRequest(c) {
+					abortWithImageTaskMessage(c, http.StatusBadRequest, "invalid_request", "invalid gzip request body")
+				} else {
+					c.AbortWithStatus(http.StatusBadRequest)
+				}
 				return
 			}
 			// Replace the request body with the decompressed data, and enforce a max size (post-decompression).
@@ -56,6 +60,7 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 				},
 			})
 			c.Request.Header.Del("Content-Encoding")
+			c.Request.ContentLength = -1
 		case "br":
 			reader := brotli.NewReader(origBody)
 			c.Request.Body = wrapMaxBytes(&readCloser{
@@ -65,6 +70,7 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 				},
 			})
 			c.Request.Header.Del("Content-Encoding")
+			c.Request.ContentLength = -1
 		default:
 			// Even for uncompressed bodies, enforce a max size to avoid huge request allocations.
 			c.Request.Body = wrapMaxBytes(origBody)

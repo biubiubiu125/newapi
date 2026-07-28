@@ -104,12 +104,13 @@ func Distribute() func(c *gin.Context) {
 					}
 				}
 
+				requestPath := canonicalRelayRequestPath(c.Request.URL.Path)
 				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
 					affinityUsable := false
 					affinityChannelDisabled := false
 					preferred, err := model.CacheGetChannel(preferredChannelID)
 					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
-						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
+						channelSupportsRequestPath(preferred, requestPath, modelRequest.Model) {
 						if usingGroup == "auto" {
 							userId := common.GetContextKeyInt(c, constant.ContextKeyUserId)
 							autoGroups := service.GetUserAutoGroupByUser(userId, userGroup)
@@ -148,7 +149,7 @@ func Distribute() func(c *gin.Context) {
 						Ctx:         c,
 						ModelName:   modelRequest.Model,
 						TokenGroup:  usingGroup,
-						RequestPath: c.Request.URL.Path,
+						RequestPath: requestPath,
 						Retry:       common.GetPointer(0),
 					})
 					if err != nil {
@@ -193,6 +194,17 @@ func channelSupportsRequestPath(channel *model.Channel, requestPath string, requ
 	}
 	config := channel.GetOtherSettings().AdvancedCustom
 	return config != nil && config.SupportsPathForModel(requestPath, requestModel)
+}
+
+func canonicalRelayRequestPath(requestPath string) string {
+	switch {
+	case strings.HasPrefix(requestPath, "/v1/image-tasks/generations"):
+		return "/v1/images/generations"
+	case strings.HasPrefix(requestPath, "/v1/image-tasks/edits"):
+		return "/v1/images/edits"
+	default:
+		return requestPath
+	}
 }
 
 // getModelFromRequest 从请求中读取模型信息
@@ -376,9 +388,9 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			modelRequest.Model = c.Param("model")
 		}
 	}
-	if strings.HasPrefix(c.Request.URL.Path, "/v1/images/generations") {
+	if strings.HasPrefix(c.Request.URL.Path, "/v1/images/generations") || strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks/generations") {
 		modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "dall-e")
-	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/images/edits") {
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/images/edits") || strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks/edits") {
 		//modelRequest.Model = common.GetStringIfEmpty(c.PostForm("model"), "gpt-image-1")
 		contentType := c.ContentType()
 		if slices.Contains([]string{gin.MIMEPOSTForm, gin.MIMEMultipartPOSTForm}, contentType) {
@@ -386,6 +398,9 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			if err == nil && req.Model != "" {
 				modelRequest.Model = req.Model
 			}
+		}
+		if strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks/edits") {
+			modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "gpt-image-1")
 		}
 	}
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/audio") {

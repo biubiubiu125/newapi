@@ -451,10 +451,24 @@ func ReaderOnly(r io.Reader) io.Reader {
 }
 
 func GetImageTaskResultCacheRetention() time.Duration {
+	const maxRetention = 12 * time.Hour
 	if constant.ImageTaskResultRetentionMinutes > 0 {
-		return time.Duration(constant.ImageTaskResultRetentionMinutes) * time.Minute
+		retention := time.Duration(constant.ImageTaskResultRetentionMinutes) * time.Minute
+		if retention > 0 && retention < maxRetention {
+			return retention
+		}
 	}
-	return 24 * time.Hour
+	return maxRetention
+}
+
+// GetImageTaskIdempotencyReuseWindow 返回终态图片任务被 client_task_id / Idempotency-Key
+// 复用的时间窗口，与结果保留期对齐。
+//
+// 窗口外的旧任务结果早已被清理，如果继续把它当作幂等命中返回，这个键就永远无法再生成
+// 新图（GET /result 恒返回 410）。注意窗口只对终态任务生效：执行中的任务无论多久都必须
+// 命中复用，否则同键重试会在长任务上重复创建并重复扣费。
+func GetImageTaskIdempotencyReuseWindow() time.Duration {
+	return GetImageTaskResultCacheRetention()
 }
 
 func GetImageTaskBodyCacheRetention() time.Duration {

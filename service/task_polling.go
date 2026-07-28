@@ -7,6 +7,7 @@ import (
 	"io"
 	"math/rand"
 	"net/http"
+	"os"
 	"runtime/debug"
 	"sort"
 	"strings"
@@ -41,6 +42,8 @@ type TaskPollingAdaptor interface {
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
 var RunImageTasksFunc func(ctx context.Context, tasks []*model.Task) error
 var imageTaskResultCacheCleanupUnix int64
+var imageTaskResultRecordCleanupUnix int64
+var imageTaskResultFileCleanupCursor int64
 var imageTaskPollWakeupMu sync.Mutex
 var imageTaskPollWakeupTimer *time.Timer
 var imageTaskPollWakeupAt int64
@@ -48,11 +51,13 @@ var imageTaskWorkerRunnerOnce sync.Once
 var imageTaskWorkerWakeup = make(chan struct{}, 1)
 var imageTaskSharedCacheValidationUnix int64
 var imageTaskSharedCacheValidationMu sync.Mutex
+var imageTaskOrphanSweepUnix int64
 
 const (
-	defaultImageTaskWorkerIdleInterval = 5 * time.Second
-	imageTaskWorkerRestartDelay        = 5 * time.Second
-	imageTaskBatchPollMaxSize          = 100
+	defaultImageTaskWorkerIdleInterval  = 5 * time.Second
+	imageTaskWorkerRestartDelay         = 5 * time.Second
+	imageTaskBatchPollMaxSize           = 100
+	imageTaskOrphanSweepIntervalSeconds = 60
 )
 
 type imageTaskLeaseOwnerContextKey struct{}
@@ -113,6 +118,7 @@ func ImageTaskLeaseOwnerForTaskFromContext(ctx context.Context, taskPrimaryID in
 }
 
 func cleanupExpiredImageTaskResultCache(ctx context.Context) {
+	cleanupExpiredImageTaskResults(ctx)
 	now := time.Now().Unix()
 	last := atomic.LoadInt64(&imageTaskResultCacheCleanupUnix)
 	if now-last < int64((10 * time.Minute).Seconds()) {
@@ -144,8 +150,394 @@ func cleanupExpiredImageTaskResultCache(ctx context.Context) {
 	}
 }
 
+func cleanupExpiredImageTaskResults(ctx context.Context) {
+	now := time.Now().Unix()
+	last := atomic.LoadInt64(&imageTaskResultRecordCleanupUnix)
+	if now-last < 10 {
+		return
+	}
+	if !atomic.CompareAndSwapInt64(&imageTaskResultRecordCleanupUnix, last, now) {
+		return
+	}
+	const batchSize = 100
+	// 每次 pass 限制批次数，不把待清理队列一次性抽干。
+	// 首次升级时历史上所有 12 小时前完成的图片任务都会命中清理，一次抽干会在
+	// tasks 上连续持有成百上千行的 FOR UPDATE 锁。分摊到 10s 一轮的定时器即可，
+	// now 在本次 pass 内固定，剩余部分下一轮继续。
+	const maxBatchesPerPass = 10
+	for i := 0; i < maxBatchesPerPass && ctx.Err() == nil; i++ {
+		cleanups, err := model.CleanupExpiredImageTaskResults(now, common.GetImageTaskResultCacheRetention(), batchSize)
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("image task result record cleanup failed: %v", err))
+			return
+		}
+		processImageTaskResultFileCleanups(ctx, cleanups)
+		if len(cleanups) < batchSize {
+			break
+		}
+	}
+
+	afterTaskPrimaryID := atomic.LoadInt64(&imageTaskResultFileCleanupCursor)
+	for i := 0; i < maxBatchesPerPass && ctx.Err() == nil; i++ {
+		pending, err := model.GetPendingImageTaskResultFileCleanupsAfter(afterTaskPrimaryID, batchSize)
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("load pending image task result file cleanups failed: %v", err))
+			return
+		}
+		if len(pending) == 0 {
+			if afterTaskPrimaryID > 0 {
+				afterTaskPrimaryID = 0
+				atomic.StoreInt64(&imageTaskResultFileCleanupCursor, 0)
+				continue
+			}
+			break
+		}
+		processImageTaskResultFileCleanups(ctx, pending)
+		afterTaskPrimaryID = pending[len(pending)-1].TaskPrimaryID
+		atomic.StoreInt64(&imageTaskResultFileCleanupCursor, afterTaskPrimaryID)
+		if len(pending) < batchSize {
+			break
+		}
+	}
+}
+
+func cleanupPendingImageTaskRequestFiles(ctx context.Context, batchSize int) {
+	now := time.Now().Unix()
+	var afterTaskPrimaryID int64
+	for ctx.Err() == nil {
+		pending, err := model.GetPendingImageTaskRequestFileCleanupsAfter(now, afterTaskPrimaryID, batchSize)
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("load pending image task request file cleanups failed: %v", err))
+			return
+		}
+		for _, task := range pending {
+			if err := CleanupDueImageTaskRequestFile(ctx, task); err != nil {
+				logger.LogWarn(ctx, fmt.Sprintf("finalize image task request file cleanup failed: %v", err))
+			}
+		}
+		if len(pending) < batchSize {
+			return
+		}
+		afterTaskPrimaryID = pending[len(pending)-1].ID
+	}
+}
+
+func recoverPendingImageTaskRefunds(ctx context.Context, batchSize int) {
+	var afterTaskPrimaryID int64
+	for ctx.Err() == nil {
+		tasks, err := model.GetPendingImageTaskRefundsAfter(afterTaskPrimaryID, batchSize)
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("load pending image task refunds failed: %v", err))
+			return
+		}
+		for _, task := range tasks {
+			if err := RefundTaskQuota(ctx, task, task.FailReason); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("recover image task refund failed task %s: %v", task.TaskID, err))
+			}
+		}
+		if len(tasks) < batchSize {
+			return
+		}
+		afterTaskPrimaryID = tasks[len(tasks)-1].ID
+	}
+}
+
+// sweepOrphanedImageTasks 兜底处理没有任何节点认领的图片任务。
+// 图片任务的执行分支按 storage_node 亲和调度，节点下线或改名后这些任务不会再被
+// 任何 worker 取到，也就永远不会走到 runner 内部的超时失败逻辑，预扣费会被永久占用。
+// 这里在两种可证明安全的情况下补上失败退款：
+//   - 归属节点已经不再心跳（确认消失），且从未提交上游、逾期超过孤儿宽限期；
+//   - 其他未完成状态，按既有 TASK_TIMEOUT_MINUTES 全量超时语义处理。
+//
+// 只靠"很久没被调度"判定孤儿是不安全的：高峰期排队积压的任务同样很久没被调度，
+// 误判会把上游可能已在生成的任务失败退款。因此第一档必须拿到可信的节点心跳证据。
+// 多节点重复执行无害：每条任务都走 status + 租约 CAS，退款本身由结算记录保证幂等。
+func sweepOrphanedImageTasks(ctx context.Context, batchSize int) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	orphanGrace := imageTaskOrphanFailSeconds()
+	executionTimeout := imageTaskExecutionTimeoutSeconds()
+	if orphanGrace <= 0 && executionTimeout <= 0 {
+		return
+	}
+	now := time.Now().Unix()
+	last := atomic.LoadInt64(&imageTaskOrphanSweepUnix)
+	if now-last < imageTaskOrphanSweepIntervalSeconds {
+		return
+	}
+	if !atomic.CompareAndSwapInt64(&imageTaskOrphanSweepUnix, last, now) {
+		return
+	}
+	if batchSize <= 0 {
+		batchSize = 100
+	}
+	staleBefore := now
+	if orphanGrace > 0 {
+		staleBefore = now - orphanGrace
+	}
+	nodeView := loadImageTaskOrphanNodeView(ctx, now, orphanGrace)
+	tasks, err := model.GetOrphanedImageTaskCandidates(now, staleBefore, batchSize)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("load orphaned image tasks failed: %v", err))
+		return
+	}
+	sweptCount := 0
+	for _, task := range tasks {
+		if ctx.Err() != nil {
+			return
+		}
+		reason, refund, ok := orphanedImageTaskFailure(task, now, orphanGrace, executionTimeout, nodeView)
+		if !ok {
+			continue
+		}
+		fromStatus := task.Status
+		resultPath := ""
+		if refund {
+			resultPath = prepareOrphanedImageTaskFailure(task, now, reason)
+		} else {
+			PrepareImageTaskExecutionReview(task, now, reason)
+		}
+		won, err := task.UpdateWithStatusIfUnlocked(fromStatus, now)
+		if err != nil {
+			logger.LogError(ctx, fmt.Sprintf("sweep orphaned image task %s CAS failed: %v", task.TaskID, err))
+			continue
+		}
+		if !won {
+			continue
+		}
+		sweptCount++
+		if refund && task.Quota != 0 {
+			if err := RefundTaskQuota(ctx, task, reason); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("sweep orphaned image task %s refund failed: %v", task.TaskID, err))
+			}
+		}
+		// 仍可访问的请求体立即删除；归属节点确认消失时只收口数据库元数据，
+		// 文件本体由该节点若恢复后的缓存过期清理负责。
+		if cleanupErr := CleanupDueImageTaskRequestFile(ctx, task); cleanupErr != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("sweep orphaned image task %s request file cleanup failed: %v", task.TaskID, cleanupErr))
+		}
+		if task.RequestCleanupPending && nodeView.storageNodeVanished(task) {
+			path := strings.TrimSpace(task.PrivateData.RequestBodyPath)
+			if cleanupErr := model.FinalizeImageTaskRequestFileCleanup(task.ID, path); cleanupErr != nil {
+				logger.LogWarn(ctx, fmt.Sprintf("sweep orphaned image task %s request metadata cleanup failed: %v", task.TaskID, cleanupErr))
+			} else {
+				task.PrivateData.RequestBodyPath = ""
+				task.PrivateData.RequestBodyShared = false
+				task.PrivateData.RequestBodySize = 0
+				task.RequestCleanupPending = false
+				task.RequestDeleteAfter = 0
+			}
+		}
+		removeImageTaskCachedFile(resultPath)
+	}
+	if sweptCount > 0 {
+		logger.LogInfo(ctx, fmt.Sprintf("sweepOrphanedImageTasks: failed %d unclaimed image tasks", sweptCount))
+	}
+}
+
+// imageTaskOrphanNodeView 是孤儿判定使用的节点存活视图。
+type imageTaskOrphanNodeView struct {
+	activeNodes map[string]struct{}
+	usable      bool
+}
+
+// loadImageTaskOrphanNodeView 读取节点心跳。只有当前节点自己出现在活跃列表里时，
+// 才认为心跳链路正常、证据可信；否则返回不可用，孤儿宽限期判定整体停用。
+func loadImageTaskOrphanNodeView(ctx context.Context, now int64, staleAfter int64) imageTaskOrphanNodeView {
+	if staleAfter <= 0 {
+		staleAfter = model.SystemInstanceStaleAfterSeconds
+	}
+	instances, err := model.ListSystemInstances()
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("load system instances for image task orphan sweep failed: %v", err))
+		return imageTaskOrphanNodeView{}
+	}
+	if len(instances) == 0 {
+		return imageTaskOrphanNodeView{}
+	}
+	active := make(map[string]struct{}, len(instances))
+	for _, instance := range instances {
+		if instance == nil {
+			continue
+		}
+		name := strings.TrimSpace(instance.NodeName)
+		if name == "" {
+			continue
+		}
+		if now-instance.LastSeenAt <= staleAfter {
+			active[name] = struct{}{}
+		}
+	}
+	if _, ok := active[strings.TrimSpace(common.NodeName)]; !ok {
+		return imageTaskOrphanNodeView{}
+	}
+	return imageTaskOrphanNodeView{activeNodes: active, usable: true}
+}
+
+// storageNodeVanished 判断任务绑定的节点是否确认已经消失。
+// 未绑定节点和便携任务任何节点都能调度，不算孤儿。
+func (view imageTaskOrphanNodeView) storageNodeVanished(task *model.Task) bool {
+	if !view.usable || task == nil {
+		return false
+	}
+	node := strings.TrimSpace(task.StorageNode)
+	if node == "" || node == model.ImageTaskPortableStorageNode {
+		return false
+	}
+	_, alive := view.activeNodes[node]
+	return !alive
+}
+
+// prepareOrphanedImageTaskFailure 把孤儿任务改写为失败态，并返回本节点应清理的结果文件路径。
+// 与 prepareTimedOutTaskFailure 的区别：请求体不直接抹掉路径，而是留下 pending 清理意图，
+// 否则文件所在节点会永远失去这条记录，只能等缓存目录按修改时间兜底回收。
+func prepareOrphanedImageTaskFailure(task *model.Task, now int64, reason string) string {
+	if task == nil {
+		return ""
+	}
+	resultPath := strings.TrimSpace(task.PrivateData.ResultBodyPath)
+	task.Status = model.TaskStatusFailure
+	task.Progress = "100%"
+	task.FinishTime = now
+	task.FailReason = reason
+	task.NextPollAt = 0
+	task.LockOwner = ""
+	task.LockUntil = 0
+	task.RetryCount = 0
+	task.SettlementStatus = ""
+	task.PrivateData.ResultBodyPath = ""
+	task.ImageTaskResultStored = false
+	task.PrivateData.ResultBodySize = 0
+	task.PrivateData.ResultBodySHA256 = ""
+	task.PrivateData.ResultContentType = ""
+	task.PrivateData.ResultStoredAt = 0
+	task.PrivateData.ResultExpiresAt = 0
+	task.PrivateData.UpstreamSubmitUncertainAt = 0
+	task.PrivateData.UpstreamSubmitUncertainCount = 0
+	task.PrivateData.SettlementUsage = nil
+	task.PrivateData.SettlementExtraContent = nil
+	task.PrivateData.BillingRequestInput = nil
+	task.PrivateData.BillingRequestInputCaptured = false
+	task.PrivateData.SettlementEvidenceCapturedAt = 0
+	task.RefundPending = task.Quota != 0
+	task.ClearImageTaskExecutionSecrets()
+	ScheduleImageTaskRequestFileCleanup(task, now)
+	return resultPath
+}
+
+// orphanedImageTaskFailure 判定孤儿任务是否可以安全失败，并返回对外可读的失败原因。
+func orphanedImageTaskFailure(task *model.Task, now int64, orphanGrace int64, executionTimeout int64, nodeView imageTaskOrphanNodeView) (string, bool, bool) {
+	if task == nil || task.Platform != constant.TaskPlatformImage {
+		return "", false, false
+	}
+	if strings.TrimSpace(task.LockOwner) != "" && task.LockUntil > now {
+		return "", false, false
+	}
+	notSubmitted := strings.TrimSpace(task.PrivateData.UpstreamTaskID) == "" &&
+		task.PrivateData.UpstreamSubmitUncertainAt == 0 &&
+		task.PrivateData.UpstreamSubmitUncertainCount == 0 &&
+		task.SyncSubmissionStartedAt == 0
+	if notSubmitted && orphanGrace > 0 && nodeView.storageNodeVanished(task) {
+		switch task.Status {
+		case model.TaskStatusNotStart, model.TaskStatusQueued:
+			if task.NextPollAt > 0 && now-task.NextPollAt >= orphanGrace {
+				return "image task was not picked up by any worker before timeout", true, true
+			}
+		}
+	}
+	if executionTimeout > 0 && task.SubmitTime > 0 && now-task.SubmitTime > executionTimeout {
+		return fmt.Sprintf("image task execution timeout (%d minutes)", executionTimeout/60), notSubmitted, true
+	}
+	return "", false, false
+}
+
+func imageTaskOrphanFailSeconds() int64 {
+	if constant.ImageTaskOrphanFailSeconds <= 0 {
+		return 0
+	}
+	return int64(constant.ImageTaskOrphanFailSeconds)
+}
+
+func imageTaskExecutionTimeoutSeconds() int64 {
+	if constant.TaskTimeoutMinutes <= 0 {
+		return 0
+	}
+	return int64(constant.TaskTimeoutMinutes) * 60
+}
+
+func ScheduleImageTaskRequestFileCleanup(task *model.Task, deleteAfter int64) {
+	if task == nil {
+		return
+	}
+	path := strings.TrimSpace(task.PrivateData.RequestBodyPath)
+	task.PrivateData.RequestBodyBase64 = ""
+	task.PrivateData.RequestBodyPortable = false
+	if path == "" {
+		task.RequestCleanupPending = false
+		task.RequestDeleteAfter = 0
+		return
+	}
+	if deleteAfter <= 0 {
+		deleteAfter = time.Now().Unix()
+	}
+	task.RequestCleanupPending = true
+	task.RequestDeleteAfter = deleteAfter
+}
+
+func CleanupDueImageTaskRequestFile(ctx context.Context, task *model.Task) error {
+	if task == nil || !task.RequestCleanupPending {
+		return nil
+	}
+	now := time.Now().Unix()
+	if task.RequestDeleteAfter > now {
+		return nil
+	}
+	if !ImageTaskRequestFileAccessibleFromCurrentNode(task) {
+		return nil
+	}
+	path := strings.TrimSpace(task.PrivateData.RequestBodyPath)
+	if path != "" {
+		if err := common.RemoveDiskCacheFile(path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			return err
+		}
+	}
+	if err := model.FinalizeImageTaskRequestFileCleanup(task.ID, path); err != nil {
+		return err
+	}
+	task.PrivateData.RequestBodyPath = ""
+	task.PrivateData.RequestBodyShared = false
+	task.PrivateData.RequestBodySize = 0
+	task.RequestCleanupPending = false
+	task.RequestDeleteAfter = 0
+	return nil
+}
+
+func processImageTaskResultFileCleanups(ctx context.Context, cleanups []model.ImageTaskResultCleanup) {
+	for _, cleanup := range cleanups {
+		if strings.TrimSpace(cleanup.Path) == "" {
+			if err := model.FinalizeImageTaskResultFileCleanup(cleanup.TaskPrimaryID, ""); err != nil {
+				logger.LogWarn(ctx, fmt.Sprintf("finalize image task result file cleanup failed: %v", err))
+			}
+			continue
+		}
+		if err := common.RemoveDiskCacheFile(cleanup.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
+			logger.LogWarn(ctx, fmt.Sprintf("image task result file cleanup failed: %v", err))
+			continue
+		}
+		if err := model.FinalizeImageTaskResultFileCleanup(cleanup.TaskPrimaryID, cleanup.Path); err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("finalize image task result file cleanup failed: %v", err))
+		}
+	}
+}
+
 func StartImageTaskWorkerRunner() {
 	imageTaskWorkerRunnerOnce.Do(func() {
+		logImageTaskDeploymentWarnings()
+		go runImageTaskRequestCleanupLoop()
+		if common.IsMasterNode {
+			go runImageTaskResultCleanupLoop()
+		}
 		if !constant.ImageTaskWorkerEnabled {
 			return
 		}
@@ -157,6 +549,61 @@ func StartImageTaskWorkerRunner() {
 			}
 		}()
 	})
+}
+
+// logImageTaskDeploymentWarnings 在启动时提示会影响图片任务闭环的部署配置问题。
+func logImageTaskDeploymentWarnings() {
+	if ImageTaskLocalFileCacheAffinityEnabled() && !common.NodeNameManuallyConfigured {
+		common.SysLog(fmt.Sprintf(
+			"image task warning: NODE_NAME is not configured and falls back to hostname %q; "+
+				"image tasks are bound to this node name and will need the orphan sweep to recover if it changes. "+
+				"See docs/image-tasks.md", common.NodeName))
+	}
+	if constant.ImageTaskResultRetentionMinutes > 720 {
+		common.SysError(fmt.Sprintf(
+			"image task warning: IMAGE_TASK_RESULT_RETENTION_MINUTES=%d exceeds the 12 hour cap and is clamped to 720 minutes",
+			constant.ImageTaskResultRetentionMinutes))
+	}
+}
+
+func runImageTaskRequestCleanupLoop() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		runImageTaskRequestCleanupPass(context.Background())
+		<-ticker.C
+	}
+}
+
+func runImageTaskRequestCleanupPass(ctx context.Context) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			logger.LogError(ctx, fmt.Sprintf("image task request cleanup panic: %v\n%s", recovered, string(debug.Stack())))
+		}
+	}()
+	recoverPendingImageTaskRefunds(ctx, 100)
+	if err := DispatchPendingImageTaskSettlementLogs(ctx, 100); err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("image task billing log outbox dispatch failed: %s", err.Error()))
+	}
+	cleanupPendingImageTaskRequestFiles(ctx, 100)
+}
+
+func runImageTaskResultCleanupLoop() {
+	ticker := time.NewTicker(10 * time.Second)
+	defer ticker.Stop()
+	for {
+		runImageTaskResultCleanupPass(context.Background())
+		<-ticker.C
+	}
+}
+
+func runImageTaskResultCleanupPass(ctx context.Context) {
+	defer func() {
+		if recovered := recover(); recovered != nil {
+			logger.LogError(ctx, fmt.Sprintf("image task result cleanup panic: %v\n%s", recovered, string(debug.Stack())))
+		}
+	}()
+	cleanupExpiredImageTaskResultCache(ctx)
 }
 
 func runImageTaskWorkerLoop(runnerID string, idleInterval time.Duration) {
@@ -183,7 +630,7 @@ func ImageTaskWorkerEnabled() bool {
 }
 
 func ImageTaskExecutionAvailable() bool {
-	return constant.UpdateTask && RunImageTasksFunc != nil
+	return constant.UpdateTask && RunImageTasksFunc != nil && (common.IsMasterNode || ImageTaskWorkerEnabled())
 }
 
 func NotifyImageTaskWorker() {
@@ -271,6 +718,20 @@ func ImageTaskResultFileCacheSharedEnabled() bool {
 	return ImageTaskFileCacheSharedTrusted()
 }
 
+func ImageTaskRequestFileAccessibleFromCurrentNode(task *model.Task) bool {
+	if task == nil {
+		return false
+	}
+	if task.PrivateData.RequestBodyShared && ImageTaskFileCacheSharedTrusted() {
+		return true
+	}
+	owner := strings.TrimSpace(task.PrivateData.NodeName)
+	if owner == "" && task.StorageNode != model.ImageTaskPortableStorageNode {
+		owner = strings.TrimSpace(task.StorageNode)
+	}
+	return owner == "" || owner == strings.TrimSpace(common.NodeName)
+}
+
 func runImageTaskWorkerPass(ctx context.Context) {
 	defer func() {
 		if r := recover(); r != nil {
@@ -285,6 +746,7 @@ func runImageTaskWorkerPass(ctx context.Context) {
 	}
 	EnsureImageTaskSharedCacheReady(ctx)
 	cleanupExpiredImageTaskResultCache(ctx)
+	sweepOrphanedImageTasks(ctx, 100)
 	for ctx.Err() == nil {
 		limit := imageTaskWorkerQueryLimit()
 		tasks := model.GetRunnableImageTasks(limit, time.Now().Unix())
@@ -414,7 +876,9 @@ func prepareTimedOutTaskFailure(task *model.Task, now int64, reason string) (str
 		task.PrivateData.RequestBodyPath = ""
 		task.PrivateData.RequestBodyBase64 = ""
 		task.PrivateData.RequestBodyPortable = false
+		task.PrivateData.RequestBodyShared = false
 		task.PrivateData.ResultBodyPath = ""
+		task.ImageTaskResultStored = false
 		task.PrivateData.ResultBodySize = 0
 		task.PrivateData.ResultBodySHA256 = ""
 		task.PrivateData.ResultContentType = ""
@@ -461,6 +925,7 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 
 	common.SysLog("任务进度轮询开始")
 	sweepTimedOutTasks(ctx)
+	sweepOrphanedImageTasks(ctx, 100)
 	allTasks := getRunnableTasksForSystemPolling(time.Now().Unix())
 	summary.UnfinishedTasks = len(allTasks)
 	platformTask := make(map[constant.TaskPlatform][]*model.Task)

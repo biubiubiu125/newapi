@@ -73,7 +73,15 @@ func runProgram(prog *vm.Program, params TokenParams, request RequestInput) (flo
 		},
 		"param": func(path string) interface{} {
 			path = strings.TrimSpace(path)
-			if path == "" || len(request.Body) == 0 {
+			if path == "" {
+				return nil
+			}
+			if request.Params != nil {
+				if value, exists := request.Params[path]; exists {
+					return value
+				}
+			}
+			if len(request.Body) == 0 {
 				return nil
 			}
 			result := gjson.GetBytes(request.Body, path)

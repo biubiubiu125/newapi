@@ -134,6 +134,7 @@ type Log struct {
 	Ip                string `json:"ip" gorm:"index;default:''"`
 	RequestId         string `json:"request_id,omitempty" gorm:"type:varchar(64);index:idx_logs_request_id;default:''"`
 	UpstreamRequestId string `json:"upstream_request_id,omitempty" gorm:"type:varchar(128);index:idx_logs_upstream_request_id;default:''"`
+	SettlementKey     string `json:"-" gorm:"type:varchar(128);index:idx_logs_settlement_key;default:''"`
 	Other             string `json:"other"`
 }
 
@@ -776,46 +777,75 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 }
 
 type RecordTaskBillingLogParams struct {
-	UserId        int
-	LogType       int
-	Content       string
-	ChannelId     int
-	ModelName     string
-	Quota         int
-	TokenId       int
-	Group         string
-	Other         map[string]interface{}
-	NodeName      string // task creation node; empty falls back to current node
-	SkipQuotaData bool
+	UserId           int
+	Username         string
+	LogType          int
+	Content          string
+	ChannelId        int
+	ModelName        string
+	Quota            int
+	TokenId          int
+	Group            string
+	Other            map[string]interface{}
+	NodeName         string // task creation node; empty falls back to current node
+	SkipQuotaData    bool
+	PromptTokens     int
+	CompletionTokens int
+	UseTimeSeconds   int
+	TokenName        string
+	RequestId        string
+	SettlementKey    string
+	CreatedAt        int64
+	QuotaDataCount   int
+	QuotaDataTokens  int
 }
 
 func RecordTaskBillingLog(params RecordTaskBillingLogParams) error {
+	if strings.TrimSpace(params.Username) == "" {
+		params.Username, _ = GetUsernameById(params.UserId, false)
+	}
+	if params.TokenName == "" && params.TokenId > 0 {
+		if token, err := GetTokenById(params.TokenId); err == nil {
+			params.TokenName = token.Name
+		}
+	}
+	return RecordTaskBillingLogWithDB(LOG_DB, params)
+}
+
+func RecordTaskBillingLogWithDB(db *gorm.DB, params RecordTaskBillingLogParams) error {
+	if db == nil {
+		return errors.New("log database is required")
+	}
 	if params.LogType == LogTypeConsume && !common.LogConsumeEnabled {
 		return nil
 	}
-	username, _ := GetUsernameById(params.UserId, false)
-	tokenName := ""
-	if params.TokenId > 0 {
-		if token, err := GetTokenById(params.TokenId); err == nil {
-			tokenName = token.Name
-		}
+	username := strings.TrimSpace(params.Username)
+	tokenName := params.TokenName
+	createdAt := params.CreatedAt
+	if createdAt <= 0 {
+		createdAt = common.GetTimestamp()
 	}
-	createdAt := common.GetTimestamp()
 	log := &Log{
-		UserId:    params.UserId,
-		Username:  username,
-		CreatedAt: createdAt,
-		Type:      params.LogType,
-		Content:   params.Content,
-		TokenName: tokenName,
-		ModelName: params.ModelName,
-		Quota:     params.Quota,
-		ChannelId: params.ChannelId,
-		TokenId:   params.TokenId,
-		Group:     params.Group,
-		Other:     common.MapToJsonStr(params.Other),
+		UserId:           params.UserId,
+		Username:         username,
+		CreatedAt:        createdAt,
+		Type:             params.LogType,
+		Content:          params.Content,
+		TokenName:        tokenName,
+		ModelName:        params.ModelName,
+		Quota:            params.Quota,
+		PromptTokens:     params.PromptTokens,
+		CompletionTokens: params.CompletionTokens,
+		UseTime:          params.UseTimeSeconds,
+		ChannelId:        params.ChannelId,
+		TokenId:          params.TokenId,
+		Group:            params.Group,
+		Other:            common.MapToJsonStr(params.Other),
+		RequestId:        params.RequestId,
+		SettlementKey:    params.SettlementKey,
 	}
-	err := createLog(log)
+	ensureLogRequestId(log)
+	err := db.Create(log).Error
 	if err != nil {
 		common.SysLog("failed to record task billing log: " + err.Error())
 		return err
@@ -839,7 +869,8 @@ func RecordTaskBillingLog(params RecordTaskBillingLogParams) error {
 			TokenID:       params.TokenId,
 			ChannelID:     params.ChannelId,
 			NodeName:      nodeName,
-			Count:         0,
+			TokenUsed:     params.QuotaDataTokens,
+			Count:         params.QuotaDataCount,
 			ExplicitCount: true,
 		})
 	}

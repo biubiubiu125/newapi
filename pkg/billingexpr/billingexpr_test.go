@@ -1,11 +1,56 @@
 package billingexpr_test
 
 import (
+	"encoding/json"
 	"math"
+	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 )
+
+func TestCaptureRequestParamsStoresOnlyExpressionReferences(t *testing.T) {
+	exprString := `param("quality") == "high" && param("messages.#") == 2 ? tier("high", p * 4) : tier("normal", p)`
+	body := []byte(`{"quality":"high","prompt":"private prompt","messages":[{"content":"secret one"},{"content":"secret two"}]}`)
+
+	params, err := billingexpr.CaptureRequestParams(exprString, body)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if params["quality"] != "high" {
+		t.Fatalf("quality = %#v, want high", params["quality"])
+	}
+	if params["messages.#"] != float64(2) {
+		t.Fatalf("messages.# = %#v, want 2", params["messages.#"])
+	}
+	encoded, err := json.Marshal(params)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(encoded) == "" || json.Valid(encoded) == false {
+		t.Fatalf("captured params are invalid JSON: %s", encoded)
+	}
+	if string(encoded) == string(body) {
+		t.Fatal("captured params unexpectedly retained the full request body")
+	}
+	for _, secret := range []string{"private prompt", "secret one", "secret two"} {
+		if strings.Contains(string(encoded), secret) {
+			t.Fatalf("captured params contain unreferenced secret %q: %s", secret, encoded)
+		}
+	}
+
+	fromBody, _, err := billingexpr.RunExprWithRequest(exprString, billingexpr.TokenParams{P: 10}, billingexpr.RequestInput{Body: body})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fromEvidence, _, err := billingexpr.RunExprWithRequest(exprString, billingexpr.TokenParams{P: 10}, billingexpr.RequestInput{Params: params})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fromEvidence != fromBody {
+		t.Fatalf("evidence result = %v, body result = %v", fromEvidence, fromBody)
+	}
+}
 
 // ---------------------------------------------------------------------------
 // Claude-style: fixed tiers, input > 200K changes both input & output price

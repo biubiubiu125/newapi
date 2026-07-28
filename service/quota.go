@@ -427,9 +427,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 		}
 		return fmt.Errorf("record consume log failed: %w", err)
 	}
-	gopool.Go(func() {
-		perfmetrics.RecordRelaySample(relayInfo, true, int64(usage.CompletionTokens))
-	})
+	perfmetrics.RecordRelaySampleAsync(relayInfo, true, int64(usage.CompletionTokens))
 	if settlementErr != nil {
 		return settlementErr
 	}

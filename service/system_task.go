@@ -340,6 +340,15 @@ func cleanupSystemTaskHistory() {
 			logger.LogInfo(context.Background(), fmt.Sprintf("task settlement record cleanup deleted %d rows", deleted))
 		}
 	}
+	if constant.ImageTaskIdempotencyLockRetentionHours > 0 {
+		cutoff := common.GetTimestamp() - int64(constant.ImageTaskIdempotencyLockRetentionHours)*3600
+		deleted, err := model.CleanupExpiredImageTaskClientTaskIDLocks(cutoff, systemTaskHistoryCleanupBatch)
+		if err != nil {
+			logger.LogWarn(context.Background(), fmt.Sprintf("image task idempotency lock cleanup failed: %v", err))
+		} else if deleted > 0 {
+			logger.LogInfo(context.Background(), fmt.Sprintf("image task idempotency lock cleanup deleted %d rows", deleted))
+		}
+	}
 }
 
 // runWithLeaseHeartbeat renews the per-type lock on a background ticker while

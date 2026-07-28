@@ -13,27 +13,28 @@ import (
 // SystemPerformanceCheck 检查系统性能中间件
 func SystemPerformanceCheck() gin.HandlerFunc {
 	return func(c *gin.Context) {
+		err := checkSystemPerformance()
+		if err == nil {
+			c.Next()
+			return
+		}
+		if isPublicImageTaskRequest(c) {
+			abortWithOpenAiMessage(c, err.StatusCode, err.ToOpenAIError().Message, err.GetErrorCode())
+			return
+		}
 		// 仅检查 Relay 接口 (/v1, /v1beta 等)
 		// 这里简单判断路径前缀，可以根据实际路由调整
 		path := c.Request.URL.Path
 		if strings.HasPrefix(path, "/v1/messages") {
-			if err := checkSystemPerformance(); err != nil {
-				c.JSON(err.StatusCode, gin.H{
-					"error": err.ToClaudeError(),
-				})
-				c.Abort()
-				return
-			}
+			c.JSON(err.StatusCode, gin.H{
+				"error": err.ToClaudeError(),
+			})
 		} else {
-			if err := checkSystemPerformance(); err != nil {
-				c.JSON(err.StatusCode, gin.H{
-					"error": err.ToOpenAIError(),
-				})
-				c.Abort()
-				return
-			}
+			c.JSON(err.StatusCode, gin.H{
+				"error": err.ToOpenAIError(),
+			})
 		}
-		c.Next()
+		c.Abort()
 	}
 }
 

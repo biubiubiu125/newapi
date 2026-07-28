@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"sync"
@@ -16,15 +17,14 @@ func TestMemoryRateLimiterConcurrentRequestsDoNotExceedLimit(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	redisEnabled := common.RedisEnabled
 	common.RedisEnabled = false
-	inMemoryRateLimiter = common.InMemoryRateLimiter{}
 	t.Cleanup(func() {
 		common.RedisEnabled = redisEnabled
-		inMemoryRateLimiter = common.InMemoryRateLimiter{}
 	})
 
 	const limit = 5
 	router := gin.New()
-	router.Use(rateLimitFactory(limit, int64(time.Minute/time.Second), "T"))
+	mark := fmt.Sprintf("%s:%d", t.Name(), time.Now().UnixNano())
+	router.Use(rateLimitFactory(limit, int64(time.Minute/time.Second), mark))
 	router.GET("/limited", func(c *gin.Context) {
 		c.Status(http.StatusOK)
 	})

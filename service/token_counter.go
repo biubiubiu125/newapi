@@ -190,9 +190,16 @@ func EstimateRequestToken(c *gin.Context, meta *types.TokenCountMeta, info *rela
 		return 0, nil
 	}
 	if info.RelayMode == constant2.RelayModeAudioTranscription || info.RelayMode == constant2.RelayModeAudioTranslation {
-		multiForm, err := common.ParseMultipartFormReusable(c)
-		if err != nil {
-			return 0, fmt.Errorf("error parsing multipart form: %v", err)
+		// 复用请求上已解析的表单；重复解析会留下无人释放的临时文件。
+		multiForm := c.Request.MultipartForm
+		if multiForm == nil {
+			parsed, err := common.ParseMultipartFormReusable(c)
+			if err != nil {
+				return 0, fmt.Errorf("error parsing multipart form: %v", err)
+			}
+			// 挂到请求上，交由 net/http 请求收尾统一清理 multipart 临时文件。
+			c.Request.MultipartForm = parsed
+			multiForm = parsed
 		}
 		fileHeaders := multiForm.File["file"]
 		totalAudioToken := 0

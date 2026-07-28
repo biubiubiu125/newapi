@@ -166,9 +166,16 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	}
 
 	if strings.Contains(contentType, "multipart/form-data") {
-		formData, err := common.ParseMultipartFormReusable(c)
-		if err != nil {
-			return bytes.NewReader(cachedBody), nil
+		// 复用请求上已解析的表单；重试时重复解析会留下无人释放的临时文件。
+		formData := c.Request.MultipartForm
+		if formData == nil {
+			parsed, err := common.ParseMultipartFormReusable(c)
+			if err != nil {
+				return bytes.NewReader(cachedBody), nil
+			}
+			// 挂到请求上，交由 net/http 请求收尾统一清理 multipart 临时文件。
+			c.Request.MultipartForm = parsed
+			formData = parsed
 		}
 		var buf bytes.Buffer
 		writer := multipart.NewWriter(&buf)

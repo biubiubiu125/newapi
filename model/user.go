@@ -1292,11 +1292,31 @@ func increaseUserQuota(id int, quota int) (err error) {
 	return nil
 }
 
+func IncreaseUserQuotaTx(tx *gorm.DB, id int, quota int) error {
+	if tx == nil {
+		return errors.New("database transaction is required")
+	}
+	if quota < 0 {
+		return errors.New("quota cannot be negative")
+	}
+	if quota == 0 {
+		return nil
+	}
+	result := tx.Model(&User{}).Where("id = ?", id).Update("quota", gorm.Expr("quota + ?", quota))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("user quota update failed, userId=%d, quota=%d", id, quota)
+	}
+	return nil
+}
+
 func DecreaseUserQuota(id int, quota int, db bool) (err error) {
 	if quota == 0 {
 		return nil
 	}
-	if err = decreaseUserQuota(id, quota); err != nil {
+	if err = DecreaseUserQuotaTx(DB, id, quota); err != nil {
 		return err
 	}
 	refreshUserQuotaCacheBestEffort(id)
@@ -1309,8 +1329,17 @@ func refreshUserQuotaCacheBestEffort(id int) {
 	}
 }
 
-func decreaseUserQuota(id int, quota int) (err error) {
-	result := DB.Model(&User{}).Where("id = ? AND quota >= ?", id, quota).Update("quota", gorm.Expr("quota - ?", quota))
+func DecreaseUserQuotaTx(tx *gorm.DB, id int, quota int) (err error) {
+	if tx == nil {
+		return errors.New("database transaction is required")
+	}
+	if quota < 0 {
+		return errors.New("quota cannot be negative")
+	}
+	if quota == 0 {
+		return nil
+	}
+	result := tx.Model(&User{}).Where("id = ? AND quota >= ?", id, quota).Update("quota", gorm.Expr("quota - ?", quota))
 	if result.Error != nil {
 		return result.Error
 	}

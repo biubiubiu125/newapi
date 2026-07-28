@@ -4,8 +4,10 @@ import (
 	"crypto/tls"
 	"encoding/base64"
 	"fmt"
+	"net"
 	"net/smtp"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -32,6 +34,10 @@ func getSMTPAuth() smtp.Auth {
 
 func shouldAuthenticateSMTP() bool {
 	return SMTPAccount != "" && SMTPToken != ""
+}
+
+func smtpAddress() string {
+	return net.JoinHostPort(SMTPServer, strconv.Itoa(SMTPPort))
 }
 
 func smtpTLSConfig() *tls.Config {
@@ -95,7 +101,7 @@ func SendEmail(subject string, receiver string, content string) error {
 		"Content-Type: text/html; charset=UTF-8\r\n\r\n%s\r\n",
 		receiver, SystemName, SMTPFrom, encodedSubject, time.Now().Format(time.RFC1123Z), id, content))
 	auth := getSMTPAuth()
-	addr := fmt.Sprintf("%s:%d", SMTPServer, SMTPPort)
+	addr := smtpAddress()
 	to := strings.Split(receiver, ";")
 	var err error
 	client, err := newSMTPClient(addr)

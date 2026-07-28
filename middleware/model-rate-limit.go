@@ -147,8 +147,7 @@ func memoryRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) 
 
 		// 1. 检查总请求数限制（当totalMaxCount为0时跳过）
 		if totalMaxCount > 0 && !inMemoryRateLimiter.Request(totalKey, totalMaxCount, duration) {
-			c.Status(http.StatusTooManyRequests)
-			c.Abort()
+			abortModelRequestRateLimit(c)
 			return
 		}
 
@@ -156,8 +155,7 @@ func memoryRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) 
 		// 使用一个临时key来检查限制，这样可以避免实际记录
 		checkKey := successKey + "_check"
 		if !inMemoryRateLimiter.Request(checkKey, successMaxCount, duration) {
-			c.Status(http.StatusTooManyRequests)
-			c.Abort()
+			abortModelRequestRateLimit(c)
 			return
 		}
 
@@ -169,6 +167,15 @@ func memoryRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) 
 			inMemoryRateLimiter.Request(successKey, successMaxCount, duration)
 		}
 	}
+}
+
+func abortModelRequestRateLimit(c *gin.Context) {
+	if isPublicImageTaskRequest(c) {
+		abortWithOpenAiMessage(c, http.StatusTooManyRequests, "too many image task requests")
+		return
+	}
+	c.Status(http.StatusTooManyRequests)
+	c.Abort()
 }
 
 func modelRequestRateLimitIdentity(c *gin.Context) string {

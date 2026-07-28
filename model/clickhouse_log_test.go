@@ -83,6 +83,7 @@ func TestClickHouseLogCreateTableSQL(t *testing.T) {
 	assert.Contains(t, withoutTTL, "ENGINE = MergeTree()")
 	assert.Contains(t, withoutTTL, "PARTITION BY toYYYYMM(toDateTime(created_at))")
 	assert.Contains(t, withoutTTL, "ORDER BY (created_at, request_id)")
+	assert.Contains(t, withoutTTL, "settlement_key String DEFAULT ''")
 	assert.NotContains(t, withoutTTL, "TTL ")
 
 	withTTL := clickHouseLogCreateTableSQL(30)
@@ -116,6 +117,13 @@ func TestClickHouseLogUsernameColumnMigrationSQLIsIdempotent(t *testing.T) {
 	assert.Equal(t,
 		"ALTER TABLE logs ADD COLUMN IF NOT EXISTS username String DEFAULT '' AFTER content",
 		clickHouseLogUsernameColumnSQL(),
+	)
+}
+
+func TestClickHouseLogSettlementKeyColumnMigrationSQLIsIdempotent(t *testing.T) {
+	assert.Equal(t,
+		"ALTER TABLE logs ADD COLUMN IF NOT EXISTS settlement_key String DEFAULT '' AFTER upstream_request_id",
+		clickHouseLogSettlementKeyColumnSQL(),
 	)
 }
 

@@ -402,16 +402,17 @@ func TestTaskRelayAccountingFailuresPersistAuditRecords(t *testing.T) {
 	}
 }
 
-func TestImageTaskRefundFailuresPersistAuditRecords(t *testing.T) {
+func TestImageTaskCreationUsesAtomicBillingCommit(t *testing.T) {
 	body, err := os.ReadFile("image_task.go")
 	require.NoError(t, err)
 	source := string(body)
 
-	for _, want := range []string{
-		`RecordConsumeAccountingError(c, relayInfo, "refund image task billing after insert failure"`,
-		`RecordConsumeAccountingError(c, relayInfo, "refund duplicate image task billing"`,
+	require.Contains(t, source, "service.CommitImageTaskCreation(")
+	for _, removedCompensation := range []string{
+		"refund image task billing after insert failure",
+		"refund duplicate image task billing",
 	} {
-		require.Contains(t, source, want)
+		require.NotContains(t, source, removedCompensation)
 	}
 }
 
