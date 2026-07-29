@@ -94,6 +94,155 @@ func TestCleanupExpiredImageTaskResultsClearsContentButKeepsTaskState(t *testing
 	require.Contains(t, string(reloadedFuture.Data), "future.png")
 }
 
+func TestCleanupExpiredImageTaskResultsMarksOpenSettlementAsReview(t *testing.T) {
+	truncateTables(t)
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:                "task_result_cleanup_open_settlement",
+		Platform:              constant.TaskPlatformImage,
+		Status:                TaskStatusSuccess,
+		SettlementStatus:      TaskSettlementStatusPending,
+		FinishTime:            now - 60,
+		ResultExpiresAt:       now - 1,
+		ImageTaskResultStored: true,
+		PrivateData: TaskPrivateData{
+			ResultBodyPath:   "/tmp/newapi-result-open-settlement.json",
+			ResultBodySize:   12,
+			ResultBodySHA256: "sha",
+			ResultStoredAt:   now - 60,
+			ResultExpiresAt:  now - 1,
+			// 无结算证据：结果到期后必须 REVIEW，避免永久 finalizing。
+		},
+	}
+	task.SetData(map[string]any{"data": []any{map[string]any{"b64_json": "pending-result"}}})
+	require.NoError(t, task.Insert())
+
+	cleanups, err := CleanupExpiredImageTaskResults(now, 12*time.Hour, 100)
+	require.NoError(t, err)
+	require.Equal(t, []ImageTaskResultCleanup{{TaskPrimaryID: task.ID, Path: "/tmp/newapi-result-open-settlement.json"}}, cleanups)
+
+	reloaded, exists, err := GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, TaskStatus(TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, TaskSettlementStatusReview, reloaded.SettlementStatus)
+	require.Equal(t, imageTaskResultExpiredBeforeSettlementReason, reloaded.FailReason)
+	require.Equal(t, now, reloaded.ResultCleanedAt)
+	require.Zero(t, reloaded.NextPollAt)
+	require.NotContains(t, string(reloaded.Data), "pending-result")
+}
+
+func TestCleanupExpiredImageTaskResultsKeepsPendingWhenSettlementEvidenceExists(t *testing.T) {
+	truncateTables(t)
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:                "task_result_cleanup_pending_with_evidence",
+		Platform:              constant.TaskPlatformImage,
+		Status:                TaskStatusSuccess,
+		SettlementStatus:      TaskSettlementStatusPending,
+		FinishTime:            now - 60,
+		ResultExpiresAt:       now - 1,
+		ImageTaskResultStored: true,
+		PrivateData: TaskPrivateData{
+			ResultBodyPath:               "/tmp/newapi-result-pending-evidence.json",
+			ResultBodySize:               12,
+			ResultBodySHA256:             "sha",
+			ResultStoredAt:               now - 60,
+			ResultExpiresAt:              now - 1,
+			SettlementEvidenceCapturedAt: now - 60,
+			BillingRequestInputCaptured:  true,
+		},
+	}
+	task.SetData(map[string]any{"data": []any{map[string]any{"b64_json": "pending-with-evidence"}}})
+	require.NoError(t, task.Insert())
+
+	cleanups, err := CleanupExpiredImageTaskResults(now, 12*time.Hour, 100)
+	require.NoError(t, err)
+	require.Equal(t, []ImageTaskResultCleanup{{TaskPrimaryID: task.ID, Path: "/tmp/newapi-result-pending-evidence.json"}}, cleanups)
+
+	reloaded, exists, err := GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, TaskSettlementStatusPending, reloaded.SettlementStatus)
+	require.Equal(t, now, reloaded.ResultCleanedAt)
+	require.Empty(t, reloaded.FailReason)
+	require.NotContains(t, string(reloaded.Data), "pending-with-evidence")
+}
+
+func TestMarkExpiredOpenImageTaskSettlementReviewIsIdempotent(t *testing.T) {
+	truncateTables(t)
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:           "task_open_settlement_review_mark",
+		Platform:         constant.TaskPlatformImage,
+		Status:           TaskStatusSuccess,
+		SettlementStatus: TaskSettlementStatusPending,
+		ResultExpiresAt:  now - 5,
+		FailReason:       "",
+	}
+	require.NoError(t, task.Insert())
+
+	first, err := MarkExpiredOpenImageTaskSettlementReview(task.ID, now)
+	require.NoError(t, err)
+	require.True(t, first)
+	second, err := MarkExpiredOpenImageTaskSettlementReview(task.ID, now)
+	require.NoError(t, err)
+	require.False(t, second)
+
+	reloaded, exists, err := GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, TaskSettlementStatusReview, reloaded.SettlementStatus)
+	require.Equal(t, imageTaskResultExpiredBeforeSettlementReason, reloaded.FailReason)
+}
+
+func TestMarkExpiredOpenImageTaskSettlementReviewSkipsApplied(t *testing.T) {
+	truncateTables(t)
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:           "task_open_settlement_review_skip_applied",
+		Platform:         constant.TaskPlatformImage,
+		Status:           TaskStatusSuccess,
+		SettlementStatus: TaskSettlementStatusApplied,
+		ResultExpiresAt:  now - 5,
+	}
+	require.NoError(t, task.Insert())
+
+	updated, err := MarkExpiredOpenImageTaskSettlementReview(task.ID, now)
+	require.NoError(t, err)
+	require.False(t, updated)
+
+	reloaded, exists, err := GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, TaskSettlementStatusApplied, reloaded.SettlementStatus)
+}
+
+func TestMarkExpiredOpenImageTaskSettlementReviewSkipsPendingWithEvidence(t *testing.T) {
+	truncateTables(t)
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:           "task_open_settlement_review_skip_evidence",
+		Platform:         constant.TaskPlatformImage,
+		Status:           TaskStatusSuccess,
+		SettlementStatus: TaskSettlementStatusPending,
+		ResultExpiresAt:  now - 5,
+		PrivateData: TaskPrivateData{
+			SettlementEvidenceCapturedAt: now - 10,
+		},
+	}
+	require.NoError(t, task.Insert())
+
+	updated, err := MarkExpiredOpenImageTaskSettlementReview(task.ID, now)
+	require.NoError(t, err)
+	require.False(t, updated)
+
+	reloaded, exists, err := GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, TaskSettlementStatusPending, reloaded.SettlementStatus)
+}
+
 func TestFinalizeImageTaskResultFileCleanupClearsPendingPath(t *testing.T) {
 	truncateTables(t)
 	task := &Task{
@@ -247,6 +396,80 @@ func TestUpdateSettlementStatusPreservesCompletedResultCleanup(t *testing.T) {
 	require.Contains(t, string(reloaded.Data), "_newapi_result_file")
 }
 
+func TestGetPublicImageTaskByTaskIDRequiresOwnerTokenInQuery(t *testing.T) {
+	truncateTables(t)
+	task := &Task{
+		TaskID:                 "task_public_token_scoped_single",
+		Platform:               constant.TaskPlatformImage,
+		UserId:                 77,
+		Status:                 TaskStatusSuccess,
+		SettlementStatus:       TaskSettlementStatusSettled,
+		PublicImageTask:        true,
+		PublicImageTaskTokenID: 700,
+		PrivateData: TaskPrivateData{
+			PublicImageTask: true,
+			TokenId:         700,
+		},
+	}
+	task.SetData(map[string]any{"data": []any{map[string]any{"url": "https://example.com/token-single.png"}}})
+	require.NoError(t, task.Insert())
+
+	loaded, exists, err := GetPublicImageTaskByTaskID(77, 701, task.TaskID)
+
+	require.NoError(t, err)
+	require.False(t, exists)
+	require.Nil(t, loaded)
+}
+
+func TestGetPublicImageTasksByTaskIDsRequiresOwnerTokenInQuery(t *testing.T) {
+	truncateTables(t)
+	task := &Task{
+		TaskID:                 "task_public_token_scoped_list",
+		Platform:               constant.TaskPlatformImage,
+		UserId:                 77,
+		Status:                 TaskStatusSuccess,
+		SettlementStatus:       TaskSettlementStatusSettled,
+		PublicImageTask:        true,
+		PublicImageTaskTokenID: 700,
+		PrivateData: TaskPrivateData{
+			PublicImageTask: true,
+			TokenId:         700,
+		},
+	}
+	task.SetData(map[string]any{"data": []any{map[string]any{"url": "https://example.com/token-list.png"}}})
+	require.NoError(t, task.Insert())
+
+	tasks, err := GetPublicImageTasksByTaskIDs(77, 701, []any{task.TaskID})
+
+	require.NoError(t, err)
+	require.Empty(t, tasks)
+}
+
+func TestGetPublicImageTaskFullByTaskIDRequiresOwnerTokenInQuery(t *testing.T) {
+	truncateTables(t)
+	task := &Task{
+		TaskID:                 "task_public_token_scoped_full",
+		Platform:               constant.TaskPlatformImage,
+		UserId:                 77,
+		Status:                 TaskStatusSuccess,
+		SettlementStatus:       TaskSettlementStatusSettled,
+		PublicImageTask:        true,
+		PublicImageTaskTokenID: 700,
+		PrivateData: TaskPrivateData{
+			PublicImageTask: true,
+			TokenId:         700,
+		},
+	}
+	task.SetData(map[string]any{"data": []any{map[string]any{"url": "https://example.com/token-full.png"}}})
+	require.NoError(t, task.Insert())
+
+	loaded, exists, err := GetPublicImageTaskFullByTaskID(77, 701, task.TaskID)
+
+	require.NoError(t, err)
+	require.False(t, exists)
+	require.Nil(t, loaded)
+}
+
 func TestGetPublicImageTasksByTaskIDsDoesNotLoadInlineResultPayload(t *testing.T) {
 	truncateTables(t)
 	now := time.Now().Unix()
@@ -285,7 +508,7 @@ func TestGetPublicImageTasksByTaskIDsDoesNotLoadInlineResultPayload(t *testing.T
 	}))
 	t.Cleanup(func() { DB.Callback().Query().Remove(callbackName) })
 
-	tasks, err := GetPublicImageTasksByTaskIDs(77, []any{task.TaskID})
+	tasks, err := GetPublicImageTasksByTaskIDs(77, 700, []any{task.TaskID})
 
 	require.NoError(t, err)
 	require.Len(t, tasks, 1)

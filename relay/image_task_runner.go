@@ -2873,6 +2873,7 @@ func storeImageTaskResultData(task *model.Task, result json.RawMessage, storedAt
 	task.PrivateData.ResultStoredAt = 0
 	task.PrivateData.ResultExpiresAt = 0
 	task.ImageTaskResultStored = false
+	task.ImageTaskResultStoredAt = 0
 	task.ResultExpiresAt = 0
 	task.ResultAcknowledgedAt = 0
 	task.ResultDeleteAfter = 0
@@ -2886,6 +2887,7 @@ func storeImageTaskResultData(task *model.Task, result json.RawMessage, storedAt
 	}
 	if !offload {
 		task.PrivateData.ResultStoredAt = storedAt
+		task.ImageTaskResultStoredAt = storedAt
 		setImageTaskResultLifecycle(task, storedAt)
 		task.Data = append(json.RawMessage(nil), result...)
 		return "", nil
@@ -2903,6 +2905,7 @@ func storeImageTaskResultData(task *model.Task, result json.RawMessage, storedAt
 	task.PrivateData.ResultContentType = "application/json"
 	task.PrivateData.ResultStoredAt = storedAt
 	task.ImageTaskResultStored = true
+	task.ImageTaskResultStoredAt = storedAt
 	setImageTaskResultLifecycle(task, storedAt)
 
 	placeholder, err := common.Marshal(imageTaskStoredResultData{
@@ -2922,6 +2925,7 @@ func storeImageTaskResultData(task *model.Task, result json.RawMessage, storedAt
 		task.PrivateData.ResultStoredAt = 0
 		task.PrivateData.ResultExpiresAt = 0
 		task.ImageTaskResultStored = false
+		task.ImageTaskResultStoredAt = 0
 		task.ResultExpiresAt = 0
 		return "", err
 	}
@@ -2948,10 +2952,10 @@ func imageTaskResultStorageAction(data []byte) (bool, error) {
 	if len(data) == 0 {
 		return false, nil
 	}
-	if !imageTaskResultHasB64JSON(data) {
-		return false, nil
-	}
-	if service.ImageTaskFileCacheSharedTrusted() {
+	// Large b64_json payloads prefer trusted shared file cache when available.
+	// URL-only and other inline JSON still go through the same size guard so a
+	// huge non-b64 response cannot blow past IMAGE_TASK_RESULT_INLINE_MAX_MB.
+	if imageTaskResultHasB64JSON(data) && service.ImageTaskFileCacheSharedTrusted() {
 		return true, nil
 	}
 	// 无法外置时结果只能内联进数据库。超过上限时不再尝试写库：
@@ -3041,6 +3045,7 @@ func takeImageTaskResultPath(task *model.Task) string {
 	path := task.PrivateData.ResultBodyPath
 	task.PrivateData.ResultBodyPath = ""
 	task.ImageTaskResultStored = false
+	task.ImageTaskResultStoredAt = 0
 	task.PrivateData.ResultBodySize = 0
 	task.PrivateData.ResultBodySHA256 = ""
 	task.PrivateData.ResultContentType = ""

@@ -225,6 +225,79 @@ func TestImageTaskIdempotencyStopsReusingFailedTaskImmediately(t *testing.T) {
 	}
 }
 
+func TestImageTaskIdempotencyStopsReusingFinalizingAfterResultExpired(t *testing.T) {
+	truncateTables(t)
+
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:           "task_client_lock_finalizing_expired",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		ClientTaskID:     "client_lock_finalizing_expired",
+		Status:           TaskStatusSuccess,
+		SettlementStatus: TaskSettlementStatusPending,
+		FinishTime:       now - 60,
+		ResultExpiresAt:  now - 1,
+		ResultCleanedAt:  0,
+	}
+	task.SetData(map[string]any{"data": []any{map[string]any{"url": "https://example.com/stale-finalizing.png"}}})
+	insertTask(t, task)
+	require.NoError(t, DB.Create(&ImageTaskClientTaskIDLock{
+		UserID:        1,
+		ClientTaskID:  task.ClientTaskID,
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+	}).Error)
+
+	_, exists, err := GetImageTaskByClientTaskID(1, task.ClientTaskID)
+	require.NoError(t, err)
+	require.False(t, exists, "expired finalizing result must not keep occupying the idempotency key")
+
+	lock, reserved, err := ReserveImageTaskClientTaskID(1, task.ClientTaskID, "new-fingerprint")
+	require.NoError(t, err)
+	require.True(t, reserved)
+	require.NotNil(t, lock)
+	require.Zero(t, lock.TaskPrimaryID)
+
+	reloaded, exists, err := GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, TaskSettlementStatusReview, reloaded.SettlementStatus)
+	require.Equal(t, imageTaskResultExpiredBeforeSettlementReason, reloaded.FailReason)
+}
+
+func TestImageTaskIdempotencyKeepsReusingFinalizingWhileResultAvailable(t *testing.T) {
+	truncateTables(t)
+
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:           "task_client_lock_finalizing_active",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		ClientTaskID:     "client_lock_finalizing_active",
+		Status:           TaskStatusSuccess,
+		SettlementStatus: TaskSettlementStatusPending,
+		FinishTime:       now,
+		ResultExpiresAt:  now + 3600,
+	}
+	task.SetData(map[string]any{"data": []any{map[string]any{"url": "https://example.com/finalizing.png"}}})
+	insertTask(t, task)
+	require.NoError(t, DB.Create(&ImageTaskClientTaskIDLock{
+		UserID:        1,
+		ClientTaskID:  task.ClientTaskID,
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+	}).Error)
+
+	reused, exists, err := GetImageTaskByClientTaskID(1, task.ClientTaskID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, task.ID, reused.ID)
+	_, reserved, err := ReserveImageTaskClientTaskID(1, task.ClientTaskID, "new-fingerprint")
+	require.NoError(t, err)
+	require.False(t, reserved)
+}
+
 // 对外不可领取结果的成功态不能继续占用幂等键。
 func TestImageTaskIdempotencyStopsReusingSuccessWhenPublicResultIsNotRetrievable(t *testing.T) {
 	truncateTables(t)

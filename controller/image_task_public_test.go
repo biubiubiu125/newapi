@@ -2,11 +2,14 @@ package controller
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strconv"
 	"testing"
 	"time"
 
@@ -15,6 +18,7 @@ import (
 	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -219,6 +223,176 @@ func TestPublicImageTaskResultRejectsExpiredAndAcknowledgedResults(t *testing.T)
 	}
 }
 
+func TestGetPublicImageTaskResultServesSmallStoredFileAtomically(t *testing.T) {
+	_, cleanup := setupImageTaskControllerTestDB(t)
+	t.Cleanup(cleanup)
+	gin.SetMode(gin.TestMode)
+
+	result := []byte(`{"data":[{"b64_json":"streamed-public-result"}],"usage":{"total_tokens":3}}`)
+	path, err := common.WriteImageTaskResultCacheFile(result)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(path) })
+	sum := sha256.Sum256(result)
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:                  "task_stream_public_result",
+		Platform:                constant.TaskPlatformImage,
+		UserId:                  8,
+		Status:                  model.TaskStatusSuccess,
+		SettlementStatus:        model.TaskSettlementStatusSettled,
+		FinishTime:              now - 10,
+		ResultExpiresAt:         now + 3600,
+		ImageTaskResultStored:   true,
+		ImageTaskResultStoredAt: now - 10,
+		PrivateData: model.TaskPrivateData{
+			TokenId:           80,
+			PublicImageTask:   true,
+			ResultBodyPath:    path,
+			ResultBodySize:    int64(len(result)),
+			ResultBodySHA256:  hex.EncodeToString(sum[:]),
+			ResultContentType: "application/json",
+			ResultStoredAt:    now - 10,
+			ResultExpiresAt:   now + 3600,
+		},
+		Data: []byte(`{"_newapi_result_file":true}`),
+	}
+	require.NoError(t, task.Insert())
+
+	engine := gin.New()
+	engine.GET("/v1/image-tasks/:task_id/result", func(c *gin.Context) {
+		c.Set("id", 8)
+		c.Set("token_id", 80)
+		GetPublicImageTaskResult(c)
+	})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/image-tasks/"+task.TaskID+"/result", nil)
+	engine.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.JSONEq(t, string(result), recorder.Body.String())
+	// Small payloads use c.Data (atomic body); Content-Length is still present.
+	require.Equal(t, strconv.Itoa(len(result)), recorder.Header().Get("Content-Length"))
+	require.Equal(t, hex.EncodeToString(sum[:]), recorder.Header().Get("X-NewAPI-Result-SHA256"))
+}
+
+func TestWritePublicImageTaskStoredResultStreamsLargePayload(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldInline := constant.ImageTaskResultInlineMaxMB
+	constant.ImageTaskResultInlineMaxMB = 1 // 1 MiB atomic threshold
+	t.Cleanup(func() { constant.ImageTaskResultInlineMaxMB = oldInline })
+
+	// Just over the atomic threshold so the stream path is used.
+	payload := append([]byte(`{"data":[{"b64_json":"`), bytes.Repeat([]byte("A"), (1<<20)+64)...)
+	payload = append(payload, []byte(`"}]}`)...)
+	path, err := common.WriteImageTaskResultCacheFile(payload)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(path) })
+	sum := sha256.Sum256(payload)
+
+	file, err := os.Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = file.Close() })
+
+	task := &model.Task{
+		TaskID: "task_large_stream_result",
+		PrivateData: model.TaskPrivateData{
+			ResultBodySize:   int64(len(payload)),
+			ResultBodySHA256: hex.EncodeToString(sum[:]),
+		},
+	}
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/image-tasks/task_large_stream_result/result", nil)
+
+	writePublicImageTaskStoredResult(ctx, task, file)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, strconv.Itoa(len(payload)), recorder.Header().Get("Content-Length"))
+	require.Equal(t, hex.EncodeToString(sum[:]), recorder.Header().Get("X-NewAPI-Result-SHA256"))
+	require.Equal(t, payload, recorder.Body.Bytes())
+}
+
+func TestGetPublicImageTaskResultEnforcesDownloadConcurrency(t *testing.T) {
+	_, cleanup := setupImageTaskControllerTestDB(t)
+	t.Cleanup(cleanup)
+	gin.SetMode(gin.TestMode)
+
+	oldGlobal := constant.ImageTaskResultDownloadConcurrency
+	oldToken := constant.ImageTaskResultDownloadTokenConcurrency
+	constant.ImageTaskResultDownloadConcurrency = 1
+	constant.ImageTaskResultDownloadTokenConcurrency = 1
+	t.Cleanup(func() {
+		constant.ImageTaskResultDownloadConcurrency = oldGlobal
+		constant.ImageTaskResultDownloadTokenConcurrency = oldToken
+		service.ResetImageTaskResultDownloadLimiterForTest()
+	})
+	service.ResetImageTaskResultDownloadLimiterForTest()
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_download_limit",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           8,
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusSettled,
+		ResultExpiresAt:  now + 3600,
+		PrivateData: model.TaskPrivateData{
+			TokenId:         80,
+			PublicImageTask: true,
+		},
+	}
+	task.SetData(map[string]any{"data": []any{map[string]any{"url": "https://example.com/limit.png"}}})
+	require.NoError(t, task.Insert())
+
+	release, err := service.AcquireImageTaskResultDownloadSlot(80)
+	require.NoError(t, err)
+	t.Cleanup(release)
+
+	engine := gin.New()
+	engine.GET("/v1/image-tasks/:task_id/result", func(c *gin.Context) {
+		c.Set("id", 8)
+		c.Set("token_id", 80)
+		GetPublicImageTaskResult(c)
+	})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v1/image-tasks/"+task.TaskID+"/result", nil)
+	engine.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusTooManyRequests, recorder.Code, recorder.Body.String())
+	require.Equal(t, "1", recorder.Header().Get("Retry-After"))
+	require.Contains(t, recorder.Body.String(), "rate_limit_exceeded")
+}
+
+func TestPublicImageTaskMetadataHydratesResultStoredAt(t *testing.T) {
+	_, cleanup := setupImageTaskControllerTestDB(t)
+	t.Cleanup(cleanup)
+
+	now := time.Now().Unix()
+	storedAt := now - 30*60
+	task := &model.Task{
+		TaskID:                  "task_status_result_stored_at",
+		Platform:                constant.TaskPlatformImage,
+		UserId:                  8,
+		Status:                  model.TaskStatusSuccess,
+		SettlementStatus:        model.TaskSettlementStatusSettled,
+		FinishTime:              storedAt + 5,
+		ResultExpiresAt:         storedAt + 12*60*60 + 1000, // intentionally longer; expiry must clamp to storedAt+12h
+		ImageTaskResultStoredAt: storedAt,
+		PublicImageTask:         true,
+		PublicImageTaskTokenID:  80,
+		ImageTaskResultStored:   false,
+	}
+	task.SetData(map[string]any{"data": []any{map[string]any{"url": "https://example.com/status.png"}}})
+	require.NoError(t, task.Insert())
+
+	loaded, exists, err := model.GetPublicImageTaskByTaskID(8, 80, task.TaskID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, storedAt, loaded.PrivateData.ResultStoredAt)
+	require.Equal(t, storedAt+12*60*60, publicImageTaskResultExpiry(loaded))
+}
+
 func TestGetPublicImageTaskResultRequiresOwnerToken(t *testing.T) {
 	_, cleanup := setupImageTaskControllerTestDB(t)
 	t.Cleanup(cleanup)
@@ -395,6 +569,141 @@ func TestCancelPublicImageTaskRejectsStartedTask(t *testing.T) {
 
 	require.Equal(t, http.StatusConflict, recorder.Code)
 	require.Contains(t, recorder.Body.String(), "not_cancellable")
+}
+
+func TestCancelPublicImageTaskRejectsQueuedTaskWithUpstreamID(t *testing.T) {
+	_, cleanup := setupImageTaskControllerTestDB(t)
+	t.Cleanup(cleanup)
+	gin.SetMode(gin.TestMode)
+
+	task := &model.Task{
+		TaskID:   "task_queued_with_upstream",
+		Platform: constant.TaskPlatformImage,
+		UserId:   8,
+		Status:   model.TaskStatusQueued,
+		Progress: "0%",
+		PrivateData: model.TaskPrivateData{
+			TokenId:         80,
+			PublicImageTask: true,
+			UpstreamTaskID:  "upstream-x",
+		},
+	}
+	require.NoError(t, task.Insert())
+
+	engine := gin.New()
+	engine.POST("/v1/image-tasks/:task_id/cancel", func(c *gin.Context) {
+		c.Set("id", 8)
+		c.Set("token_id", 80)
+		CancelPublicImageTask(c)
+	})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/image-tasks/"+task.TaskID+"/cancel", nil)
+	engine.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusConflict, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "not_cancellable")
+	reloaded, exists, err := model.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusQueued), reloaded.Status)
+	require.Equal(t, "upstream-x", reloaded.PrivateData.UpstreamTaskID)
+}
+
+func TestCancelPublicImageTaskRejectsQueuedTaskWithSyncSubmissionStarted(t *testing.T) {
+	_, cleanup := setupImageTaskControllerTestDB(t)
+	t.Cleanup(cleanup)
+	gin.SetMode(gin.TestMode)
+
+	task := &model.Task{
+		TaskID:                  "task_queued_sync_submission_started",
+		Platform:                constant.TaskPlatformImage,
+		UserId:                  8,
+		Status:                  model.TaskStatusQueued,
+		Progress:                "0%",
+		SyncSubmissionStartedAt: time.Now().Unix(),
+		PrivateData: model.TaskPrivateData{
+			TokenId:         80,
+			PublicImageTask: true,
+		},
+	}
+	require.NoError(t, task.Insert())
+
+	engine := gin.New()
+	engine.POST("/v1/image-tasks/:task_id/cancel", func(c *gin.Context) {
+		c.Set("id", 8)
+		c.Set("token_id", 80)
+		CancelPublicImageTask(c)
+	})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/v1/image-tasks/"+task.TaskID+"/cancel", nil)
+	engine.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusConflict, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "not_cancellable")
+	reloaded, exists, err := model.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusQueued), reloaded.Status)
+	require.Positive(t, reloaded.SyncSubmissionStartedAt)
+}
+
+func TestListPublicImageTasksReportsNotFoundIDs(t *testing.T) {
+	_, cleanup := setupImageTaskControllerTestDB(t)
+	t.Cleanup(cleanup)
+	gin.SetMode(gin.TestMode)
+
+	now := time.Now().Unix()
+	owned := &model.Task{
+		TaskID:                 "task_list_owned",
+		Platform:               constant.TaskPlatformImage,
+		UserId:                 8,
+		Status:                 model.TaskStatusQueued,
+		CreatedAt:              now,
+		UpdatedAt:              now,
+		PublicImageTask:        true,
+		PublicImageTaskTokenID: 80,
+		PrivateData: model.TaskPrivateData{
+			TokenId:         80,
+			PublicImageTask: true,
+		},
+	}
+	otherToken := &model.Task{
+		TaskID:                 "task_list_other_token",
+		Platform:               constant.TaskPlatformImage,
+		UserId:                 8,
+		Status:                 model.TaskStatusQueued,
+		CreatedAt:              now,
+		UpdatedAt:              now,
+		PublicImageTask:        true,
+		PublicImageTaskTokenID: 81,
+		PrivateData: model.TaskPrivateData{
+			TokenId:         81,
+			PublicImageTask: true,
+		},
+	}
+	require.NoError(t, owned.Insert())
+	require.NoError(t, otherToken.Insert())
+
+	engine := gin.New()
+	engine.GET("/v1/image-tasks", func(c *gin.Context) {
+		c.Set("id", 8)
+		c.Set("token_id", 80)
+		ListPublicImageTasks(c)
+	})
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/image-tasks?ids=task_list_owned,task_list_other_token,task_list_missing",
+		nil,
+	)
+	engine.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var payload dto.PublicImageTaskList
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.Len(t, payload.Data, 1)
+	require.Equal(t, "task_list_owned", payload.Data[0].TaskID)
+	require.Equal(t, []string{"task_list_other_token", "task_list_missing"}, payload.NotFoundIDs)
 }
 
 func TestCancelPublicImageTaskAllowsExpiredQueuedLeaseBeforeSubmission(t *testing.T) {

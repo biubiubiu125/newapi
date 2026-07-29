@@ -627,7 +627,7 @@
     "/v1/image-tasks": {
       "get": {
         "summary": "Get multiple asynchronous image tasks",
-        "description": "Returns up to 100 tasks owned by the current user and current token. Image result data is not included.",
+        "description": "Returns up to 100 tasks owned by the current user and current token. Image result data is not included. Requested IDs that are missing or not visible to this token are listed in not_found_ids without revealing why.",
         "operationId": "listAsyncImageTasks",
         "tags": ["Image Tasks"],
         "parameters": [
@@ -689,7 +689,7 @@
     "/v1/image-tasks/{task_id}/result": {
       "get": {
         "summary": "Get an asynchronous image task result",
-        "description": "Returns the original OpenAI-compatible url or b64_json response. Unclaimed results expire no later than 12 hours after completion. Acknowledged results are unavailable after the two-minute grace period. HTTP 410 means the result is permanently gone; HTTP 503 means it is temporarily unreadable (for example while the shared result cache is unavailable) and the request should be retried.",
+        "description": "Returns the original OpenAI-compatible url or b64_json response. File-backed results are size/SHA-256 validated then streamed without loading the whole payload into memory. When known, responses include Content-Length and X-NewAPI-Result-SHA256 so clients can detect truncated transfers. Concurrent downloads are limited per process and per token (HTTP 429 rate_limit_exceeded when full). Unclaimed results expire no later than 12 hours after completion. Acknowledged results are unavailable after the two-minute grace period. HTTP 410 means the result is permanently gone; HTTP 503 means it is temporarily unreadable (for example while the shared result cache is unavailable) and the request should be retried.",
         "operationId": "getAsyncImageTaskResult",
         "tags": ["Image Tasks"],
         "parameters": [
@@ -2617,6 +2617,11 @@
           "data": {
             "type": "array",
             "items": {"$ref": "#/components/schemas/PublicImageTask"}
+          },
+          "not_found_ids": {
+            "type": "array",
+            "description": "Requested task IDs that are not visible to the current user and token. Missing tasks and other-token tasks are both listed here.",
+            "items": {"type": "string"}
           }
         }
       },

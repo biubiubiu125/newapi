@@ -93,10 +93,13 @@ type Task struct {
 	PublicImageTaskTokenID    int                   `json:"-" gorm:"index;not null;default:0"`
 	ImageTaskCancelledAt      int64                 `json:"-" gorm:"index;not null;default:0"`
 	ImageTaskResultStored     bool                  `json:"-" gorm:"index;not null;default:false"`
-	Properties                Properties            `json:"properties" gorm:"type:json"`
-	Username                  string                `json:"username,omitempty" gorm:"-"`
-	InlineResultAvailable     bool                  `json:"-" gorm:"-"`
-	StoredResultAvailable     bool                  `json:"-" gorm:"-"`
+	// ImageTaskResultStoredAt is the denormalized result-ready timestamp used by
+	// public status metadata queries that omit private_data.
+	ImageTaskResultStoredAt int64      `json:"-" gorm:"not null;default:0"`
+	Properties              Properties `json:"properties" gorm:"type:json"`
+	Username                string     `json:"username,omitempty" gorm:"-"`
+	InlineResultAvailable   bool       `json:"-" gorm:"-"`
+	StoredResultAvailable   bool       `json:"-" gorm:"-"`
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
 	Data        json.RawMessage `json:"data" gorm:"type:json"`
@@ -1102,6 +1105,71 @@ func (t *Task) UpdateWithStatusIfUnlocked(fromStatus TaskStatus, now int64) (boo
 	return result.RowsAffected > 0, nil
 }
 
+// ImageTaskCanCancelBeforeExecution reports whether a task is still safe to
+// cancel and refund: not started/queued only, no live lease, and no evidence of
+// upstream submission. Matches the public cancel pre-check.
+func ImageTaskCanCancelBeforeExecution(task *Task, now int64) bool {
+	if task == nil {
+		return false
+	}
+	if (strings.TrimSpace(task.LockOwner) != "" && task.LockUntil > now) ||
+		strings.TrimSpace(task.PrivateData.UpstreamTaskID) != "" ||
+		task.PrivateData.UpstreamSubmitUncertainAt > 0 ||
+		task.PrivateData.UpstreamSubmitUncertainCount > 0 ||
+		// Sync-wrapper submissions mark this before the status flip is durable;
+		// refuse cancel so we never refund after an upstream request may exist.
+		task.SyncSubmissionStartedAt > 0 {
+		return false
+	}
+	switch task.Status {
+	case TaskStatusNotStart, TaskStatusQueued:
+		return true
+	default:
+		return false
+	}
+}
+
+// ApplyImageTaskCancelBeforeExecution applies a prepared cancel update only when
+// the row still passes ImageTaskCanCancelBeforeExecution under a row lock.
+// This closes the TOCTOU gap between the HTTP pre-check and a plain status+lock CAS.
+func ApplyImageTaskCancelBeforeExecution(task *Task, fromStatus TaskStatus, now int64) (bool, error) {
+	if task == nil || task.ID <= 0 {
+		return false, nil
+	}
+	switch fromStatus {
+	case TaskStatusNotStart, TaskStatusQueued:
+	default:
+		return false, nil
+	}
+	won := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var current Task
+		if err := lockForUpdate(tx).Where("id = ?", task.ID).First(&current).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		if current.Status != fromStatus {
+			return nil
+		}
+		if !ImageTaskCanCancelBeforeExecution(&current, now) {
+			return nil
+		}
+		result := tx.Model(&Task{}).
+			Where("id = ? AND status = ?", task.ID, fromStatus).
+			Where("(lock_owner = '' OR lock_owner IS NULL OR COALESCE(lock_until, 0) <= ?)", now).
+			Select("*").
+			Updates(task)
+		if result.Error != nil {
+			return result.Error
+		}
+		won = result.RowsAffected > 0
+		return nil
+	})
+	return won, err
+}
+
 func GetOpenImageTaskCachePaths(batchSize int) (map[string]struct{}, map[string]struct{}, error) {
 	return GetOpenImageTaskCachePathsForCandidates(nil, nil, batchSize)
 }
@@ -1364,23 +1432,36 @@ func hydratePublicImageTaskScalarMetadata(tasks []*Task) {
 		if task == nil {
 			continue
 		}
+		resultStoredAt := task.ImageTaskResultStoredAt
+		if resultStoredAt <= 0 {
+			resultStoredAt = task.FinishTime
+		}
 		task.PrivateData = TaskPrivateData{
 			PublicImageTask: task.PublicImageTask,
 			TokenId:         task.PublicImageTaskTokenID,
 			CancelledAt:     task.ImageTaskCancelledAt,
 			ResultExpiresAt: task.ResultExpiresAt,
+			ResultStoredAt:  resultStoredAt,
 		}
 		task.StoredResultAvailable = task.ImageTaskResultStored
 	}
 }
 
-func GetPublicImageTaskByTaskID(userID int, taskID string) (*Task, bool, error) {
-	if userID <= 0 || strings.TrimSpace(taskID) == "" {
+func publicImageTaskTokenWhere(userID int, tokenID int, taskID string) (string, []any, bool) {
+	if userID <= 0 || tokenID <= 0 || strings.TrimSpace(taskID) == "" {
+		return "", nil, false
+	}
+	return "user_id = ? AND platform = ? AND task_id = ? AND public_image_task = ? AND public_image_task_token_id = ?",
+		[]any{userID, constant.TaskPlatformImage, taskID, true, tokenID},
+		true
+}
+
+func GetPublicImageTaskByTaskID(userID int, tokenID int, taskID string) (*Task, bool, error) {
+	where, args, ok := publicImageTaskTokenWhere(userID, tokenID, taskID)
+	if !ok {
 		return nil, false, nil
 	}
 	var task Task
-	where := "user_id = ? AND platform = ? AND task_id = ?"
-	args := []any{userID, constant.TaskPlatformImage, taskID}
 	err := DB.Omit("data", "private_data").Where(where, args...).First(&task).Error
 	exists, err := RecordExist(err)
 	if err != nil || !exists {
@@ -1393,13 +1474,29 @@ func GetPublicImageTaskByTaskID(userID int, taskID string) (*Task, bool, error) 
 	return &task, true, nil
 }
 
-func GetPublicImageTasksByTaskIDs(userID int, taskIDs []any) ([]*Task, error) {
-	if userID <= 0 || len(taskIDs) == 0 {
+func GetPublicImageTaskFullByTaskID(userID int, tokenID int, taskID string) (*Task, bool, error) {
+	where, args, ok := publicImageTaskTokenWhere(userID, tokenID, taskID)
+	if !ok {
+		return nil, false, nil
+	}
+	var task Task
+	err := DB.Where(where, args...).First(&task).Error
+	exists, err := RecordExist(err)
+	if err != nil || !exists {
+		return nil, exists, err
+	}
+	task.PrivateData.PublicImageTask = true
+	task.PrivateData.TokenId = tokenID
+	return &task, true, nil
+}
+
+func GetPublicImageTasksByTaskIDs(userID int, tokenID int, taskIDs []any) ([]*Task, error) {
+	if userID <= 0 || tokenID <= 0 || len(taskIDs) == 0 {
 		return nil, nil
 	}
 	var tasks []*Task
-	where := "user_id = ? AND platform = ? AND task_id IN ?"
-	args := []any{userID, constant.TaskPlatformImage, taskIDs}
+	where := "user_id = ? AND platform = ? AND task_id IN ? AND public_image_task = ? AND public_image_task_token_id = ?"
+	args := []any{userID, constant.TaskPlatformImage, taskIDs, true, tokenID}
 	if err := DB.Omit("data", "private_data").Where(where, args...).Find(&tasks).Error; err != nil {
 		return nil, err
 	}
@@ -1428,35 +1525,44 @@ func GetPendingImageTaskRefundsAfter(afterTaskPrimaryID int64, limit int) ([]*Ta
 
 // imageTaskIdempotencyReusableWhere 限定哪些历史任务还能被同一个 client_task_id 命中。
 //
-// 两条规则缺一不可：
+// 规则：
 //   - 非终态任务永远可复用。任务最长可以跑到 TASK_TIMEOUT_MINUTES（默认 24 小时），
 //     如果按创建时间掐窗口，长任务在窗口外被同键重试会重复创建并重复扣费。
-//   - 终态任务只在结果保留期内可复用。超出保留期后结果已被清理，再返回这条旧任务
-//     只会让该幂等键永久无法生成新图。
+//   - SUCCESS + 结算中（PENDING/APPLIED）只在结果仍可领取时复用。结果过期或清理后
+//     必须让出幂等键；清理路径会把未完成结算收口为 REVIEW，避免重复扣费窗口。
+//   - SUCCESS + SETTLED 只在结果保留期内且结果仍在时复用。
+//   - FAILURE / SUCCESS+REVIEW 立即不可复用。
 func imageTaskIdempotencyReusableWhere(query *gorm.DB, now int64) *gorm.DB {
 	reuseWindow := int64(common.GetImageTaskIdempotencyReuseWindow().Seconds())
 	if reuseWindow <= 0 {
 		return query
 	}
 	terminalCutoff := now - reuseWindow
+	resultStillAvailable := `
+		COALESCE(result_cleaned_at, 0) = 0 AND
+		(COALESCE(result_delete_after, 0) = 0 OR result_delete_after > ?) AND
+		(COALESCE(result_expires_at, 0) = 0 OR result_expires_at > ?) AND
+		(image_task_result_stored = ? OR data IS NOT NULL)
+	`
 	return query.Where(
 		`(
 			status NOT IN ? OR
 			(
-				status = ? AND settlement_status IN ?
+				status = ? AND settlement_status IN ? AND
+				`+resultStillAvailable+`
 			) OR
 			(
 				status = ? AND settlement_status = ? AND
 				(COALESCE(finish_time, 0) = 0 OR finish_time >= ?) AND
-				COALESCE(result_cleaned_at, 0) = 0 AND
-				(COALESCE(result_delete_after, 0) = 0 OR result_delete_after > ?) AND
-				(COALESCE(result_expires_at, 0) = 0 OR result_expires_at > ?) AND
-				(image_task_result_stored = ? OR data IS NOT NULL)
+				`+resultStillAvailable+`
 			)
 		)`,
 		[]TaskStatus{TaskStatusSuccess, TaskStatusFailure},
 		TaskStatusSuccess,
 		[]string{TaskSettlementStatusPending, TaskSettlementStatusApplied},
+		now,
+		now,
+		true,
 		TaskStatusSuccess,
 		TaskSettlementStatusSettled,
 		terminalCutoff,
@@ -1527,6 +1633,20 @@ type ImageTaskResultCleanup struct {
 	Path          string
 }
 
+const imageTaskResultExpiredBeforeSettlementReason = "image task result expired before settlement completed"
+
+// imageTaskPendingNeedsReviewWhenResultUnavailable reports whether a SUCCESS+PENDING
+// task must be forced into REVIEW once its public result is gone.
+//
+// If settlement evidence was already captured, the worker can still finish billing
+// without the response body; forcing REVIEW would block that automatic close-out.
+func imageTaskPendingNeedsReviewWhenResultUnavailable(task *Task) bool {
+	if task == nil || task.Status != TaskStatusSuccess || task.SettlementStatus != TaskSettlementStatusPending {
+		return false
+	}
+	return task.PrivateData.SettlementEvidenceCapturedAt <= 0
+}
+
 func CleanupExpiredImageTaskResults(now int64, legacyRetention time.Duration, limit int) ([]ImageTaskResultCleanup, error) {
 	if now <= 0 {
 		return nil, fmt.Errorf("invalid image task result cleanup time")
@@ -1561,7 +1681,7 @@ func CleanupExpiredImageTaskResults(now int64, legacyRetention time.Duration, li
 		for _, taskID := range taskIDs {
 			var task Task
 			if err := lockForUpdate(tx).
-				Select("id", "finish_time", "result_expires_at", "private_data").
+				Select("id", "status", "finish_time", "result_expires_at", "settlement_status", "fail_reason", "private_data").
 				Where("id = ? AND platform = ? AND COALESCE(result_cleaned_at, 0) = 0", taskID, constant.TaskPlatformImage).
 				Where(dueWhere, now, now, TaskStatusSuccess, legacyCutoff).
 				First(&task).Error; err != nil {
@@ -1584,19 +1704,34 @@ func CleanupExpiredImageTaskResults(now int64, legacyRetention time.Duration, li
 					task.PrivateData.ResultExpiresAt = completionExpiry
 				}
 			}
+			updates := map[string]any{
+				"private_data":                task.PrivateData,
+				"data":                        json.RawMessage(marker),
+				"image_task_result_stored":    false,
+				"image_task_result_stored_at": 0,
+				"result_expires_at":           resultExpiresAt,
+				"result_delete_after":         0,
+				"result_cleaned_at":           now,
+				"result_cleanup_pending":      path != "",
+				"updated_at":                  now,
+			}
+			// PENDING 且结果已到期、又没有结算证据：收口为 REVIEW，避免永久 finalizing。
+			// 已有结算证据时保留 PENDING，让 worker 继续自动结算。
+			// APPLIED 只差标 SETTLED，不得改成 REVIEW。
+			if imageTaskPendingNeedsReviewWhenResultUnavailable(&task) {
+				updates["settlement_status"] = TaskSettlementStatusReview
+				updates["next_poll_at"] = 0
+				updates["lock_owner"] = ""
+				updates["lock_until"] = 0
+				updates["retry_count"] = 0
+				if strings.TrimSpace(task.FailReason) == "" {
+					updates["fail_reason"] = imageTaskResultExpiredBeforeSettlementReason
+				}
+			}
 			result := tx.Model(&Task{}).
 				Where("id = ? AND COALESCE(result_cleaned_at, 0) = 0", task.ID).
 				Where(dueWhere, now, now, TaskStatusSuccess, legacyCutoff).
-				Updates(map[string]any{
-					"private_data":             task.PrivateData,
-					"data":                     json.RawMessage(marker),
-					"image_task_result_stored": false,
-					"result_expires_at":        resultExpiresAt,
-					"result_delete_after":      0,
-					"result_cleaned_at":        now,
-					"result_cleanup_pending":   path != "",
-					"updated_at":               now,
-				})
+				Updates(updates)
 			if result.Error != nil {
 				return result.Error
 			}
@@ -1607,6 +1742,61 @@ func CleanupExpiredImageTaskResults(now int64, legacyRetention time.Duration, li
 		return nil
 	})
 	return cleanups, err
+}
+
+// MarkExpiredOpenImageTaskSettlementReview closes SUCCESS+PENDING tasks whose result is
+// already gone/expired and that lack settlement evidence. Tasks that already captured
+// billing evidence stay PENDING so settlement can still finish. APPLIED is left alone
+// so the final SETTLED CAS can complete after result cleanup.
+func MarkExpiredOpenImageTaskSettlementReview(taskPrimaryID int64, now int64) (bool, error) {
+	if taskPrimaryID <= 0 {
+		return false, nil
+	}
+	if now <= 0 {
+		now = GetDBTimestamp()
+	}
+	var updated bool
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var task Task
+		if err := lockForUpdate(tx).
+			Select("id", "status", "settlement_status", "fail_reason", "result_cleaned_at", "result_expires_at", "result_delete_after", "private_data").
+			Where("id = ? AND platform = ?", taskPrimaryID, constant.TaskPlatformImage).
+			First(&task).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		if !imageTaskPendingNeedsReviewWhenResultUnavailable(&task) {
+			return nil
+		}
+		resultUnavailable := task.ResultCleanedAt > 0 ||
+			(task.ResultDeleteAfter > 0 && now >= task.ResultDeleteAfter) ||
+			(task.ResultExpiresAt > 0 && now >= task.ResultExpiresAt)
+		if !resultUnavailable {
+			return nil
+		}
+		updates := map[string]any{
+			"settlement_status": TaskSettlementStatusReview,
+			"next_poll_at":      0,
+			"lock_owner":        "",
+			"lock_until":        0,
+			"retry_count":       0,
+			"updated_at":        now,
+		}
+		if strings.TrimSpace(task.FailReason) == "" {
+			updates["fail_reason"] = imageTaskResultExpiredBeforeSettlementReason
+		}
+		result := tx.Model(&Task{}).
+			Where("id = ? AND status = ? AND settlement_status = ?", task.ID, TaskStatusSuccess, TaskSettlementStatusPending).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		updated = result.RowsAffected > 0
+		return nil
+	})
+	return updated, err
 }
 
 func GetPendingImageTaskResultFileCleanups(limit int) ([]ImageTaskResultCleanup, error) {
@@ -1663,10 +1853,11 @@ func FinalizeImageTaskResultFileCleanup(taskPrimaryID int64, path string) error 
 		return tx.Model(&Task{}).
 			Where("id = ? AND result_cleanup_pending = ?", taskPrimaryID, true).
 			Updates(map[string]any{
-				"private_data":             task.PrivateData,
-				"image_task_result_stored": false,
-				"result_cleanup_pending":   false,
-				"updated_at":               getDBTimestampTx(tx),
+				"private_data":                task.PrivateData,
+				"image_task_result_stored":    false,
+				"image_task_result_stored_at": 0,
+				"result_cleanup_pending":      false,
+				"updated_at":                  getDBTimestampTx(tx),
 			}).Error
 	})
 }
@@ -1787,16 +1978,30 @@ func ClearImageTaskResultFileMetadata(taskPrimaryID int64, path string) error {
 		return tx.Model(&Task{}).
 			Where("id = ?", taskPrimaryID).
 			Updates(map[string]any{
-				"private_data":             task.PrivateData,
-				"image_task_result_stored": false,
-				"updated_at":               getDBTimestampTx(tx),
+				"private_data":                task.PrivateData,
+				"image_task_result_stored":    false,
+				"image_task_result_stored_at": 0,
+				"updated_at":                  getDBTimestampTx(tx),
 			}).Error
 	})
 }
 
-func (Task *Task) Insert() error {
+func (t *Task) fillMissingPublicImageTaskScalars() {
+	if t == nil || t.Platform != constant.TaskPlatformImage || !t.PrivateData.PublicImageTask {
+		return
+	}
+	if !t.PublicImageTask {
+		t.PublicImageTask = true
+	}
+	if t.PublicImageTaskTokenID == 0 && t.PrivateData.TokenId > 0 {
+		t.PublicImageTaskTokenID = t.PrivateData.TokenId
+	}
+}
+
+func (t *Task) Insert() error {
+	t.fillMissingPublicImageTaskScalars()
 	var err error
-	err = DB.Create(Task).Error
+	err = DB.Create(t).Error
 	return err
 }
 

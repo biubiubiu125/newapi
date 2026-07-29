@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -247,7 +248,7 @@ func cleanupPublicImageTaskMultipartForm(c *gin.Context) {
 
 func CreatePublicImageTask(c *gin.Context, relayMode int) {
 	if !service.ImageTaskExecutionAvailable() {
-		publicImageTaskError(c, http.StatusServiceUnavailable, "image_task_unavailable", "image task execution is disabled")
+		publicImageTaskError(c, http.StatusServiceUnavailable, "image_task_unavailable", "image task system is disabled")
 		return
 	}
 	c.Set("relay_mode", relayMode)
@@ -311,7 +312,7 @@ func ListPublicImageTasks(c *gin.Context) {
 		publicImageTaskError(c, http.StatusBadRequest, "task_ids_required", "ids is required")
 		return
 	}
-	tasks, err := model.GetPublicImageTasksByTaskIDs(c.GetInt("id"), ids)
+	tasks, err := model.GetPublicImageTasksByTaskIDs(c.GetInt("id"), c.GetInt("token_id"), ids)
 	if err != nil {
 		publicImageTaskError(c, http.StatusInternalServerError, "task_query_failed", "failed to query image tasks")
 		return
@@ -323,13 +324,18 @@ func ListPublicImageTasks(c *gin.Context) {
 		}
 	}
 	now := time.Now().Unix()
-	items := make([]*dto.PublicImageTask, 0, len(byID))
+	items := make([]*dto.PublicImageTask, 0, len(order))
+	notFound := make([]string, 0)
 	for _, id := range order {
 		if task := byID[id]; task != nil {
 			items = append(items, publicImageTaskResponse(task, now))
+			continue
 		}
+		// Do not distinguish missing vs other-token ownership: both look absent
+		// to this credential. Surface the ID so clients can tell which lookups failed.
+		notFound = append(notFound, id)
 	}
-	c.JSON(http.StatusOK, dto.PublicImageTaskList{Data: items})
+	c.JSON(http.StatusOK, dto.PublicImageTaskList{Data: items, NotFoundIDs: notFound})
 }
 
 func GetPublicImageTaskResult(c *gin.Context) {
@@ -346,6 +352,40 @@ func GetPublicImageTaskResult(c *gin.Context) {
 		publicImageTaskError(c, http.StatusGone, "result_expired", "image task result is no longer available")
 		return
 	}
+
+	// 内联与文件结果都走同一并发入口，避免单 Token 同时持有大量大结果。
+	release, err := service.AcquireImageTaskResultDownloadSlot(c.GetInt("token_id"))
+	if err != nil {
+		c.Header("Retry-After", "1")
+		publicImageTaskError(c, http.StatusTooManyRequests, "rate_limit_exceeded", "too many concurrent image task result downloads")
+		return
+	}
+	defer release()
+
+	if strings.TrimSpace(task.PrivateData.ResultBodyPath) != "" {
+		file, availability, resultErr := openValidatedImageTaskResultFile(task)
+		if availability == imageTaskResultUnreadable {
+			logger.LogWarn(c, fmt.Sprintf(
+				"image task %s result unreadable on node %q (shared result cache enabled=%t, stored path set=%t): %s",
+				task.TaskID,
+				common.NodeName,
+				service.ImageTaskResultFileCacheSharedEnabled(),
+				true,
+				resultErr,
+			))
+			c.Header("Retry-After", "5")
+			publicImageTaskError(c, http.StatusServiceUnavailable, "result_temporarily_unavailable", "image task result is temporarily unavailable, please retry")
+			return
+		}
+		if file == nil || resultErr != "" {
+			publicImageTaskError(c, http.StatusGone, "result_expired", "image task result is no longer available")
+			return
+		}
+		defer file.Close()
+		writePublicImageTaskStoredResult(c, task, file)
+		return
+	}
+
 	result, availability, resultErr := imageTaskResponseResult(task)
 	if availability == imageTaskResultUnreadable {
 		// 结果记录仍在保留期内却读不出来，几乎总是共享缓存或本地磁盘的暂时性故障。
@@ -366,6 +406,7 @@ func GetPublicImageTaskResult(c *gin.Context) {
 		publicImageTaskError(c, http.StatusGone, "result_expired", "image task result is no longer available")
 		return
 	}
+	c.Header("Content-Length", strconv.FormatInt(int64(len(result)), 10))
 	c.Data(http.StatusOK, "application/json; charset=utf-8", result)
 }
 
@@ -530,6 +571,7 @@ func cleanupCancelledPublicImageTaskFiles(c *gin.Context, task *model.Task) {
 	}
 	task.PrivateData.ResultBodyPath = ""
 	task.ImageTaskResultStored = false
+	task.ImageTaskResultStoredAt = 0
 	task.PrivateData.ResultBodySize = 0
 	task.PrivateData.ResultBodySHA256 = ""
 	task.PrivateData.ResultContentType = ""
@@ -565,7 +607,7 @@ func refundCancelledPublicImageTask(c *gin.Context, task *model.Task) bool {
 }
 
 func loadAuthorizedPublicImageTask(c *gin.Context) (*model.Task, bool) {
-	task, exists, err := model.GetByTaskId(c.GetInt("id"), c.Param("task_id"))
+	task, exists, err := model.GetPublicImageTaskFullByTaskID(c.GetInt("id"), c.GetInt("token_id"), c.Param("task_id"))
 	if err != nil {
 		publicImageTaskError(c, http.StatusInternalServerError, "task_query_failed", "failed to query image task")
 		return nil, false
@@ -578,7 +620,7 @@ func loadAuthorizedPublicImageTask(c *gin.Context) (*model.Task, bool) {
 }
 
 func loadAuthorizedPublicImageTaskMetadata(c *gin.Context) (*model.Task, bool) {
-	task, exists, err := model.GetPublicImageTaskByTaskID(c.GetInt("id"), c.Param("task_id"))
+	task, exists, err := model.GetPublicImageTaskByTaskID(c.GetInt("id"), c.GetInt("token_id"), c.Param("task_id"))
 	if err != nil {
 		publicImageTaskError(c, http.StatusInternalServerError, "task_query_failed", "failed to query image task")
 		return nil, false
@@ -695,6 +737,69 @@ func publicImageTaskError(c *gin.Context, status int, code string, message strin
 	c.JSON(status, gin.H{"error": gin.H{"code": code, "message": message, "type": "image_task_error"}})
 }
 
+// imageTaskResultAtomicResponseMaxBytes is the largest stored result we fully buffer
+// before writing HTTP status. Below this threshold clients never see a truncated 200.
+// Larger payloads stay streamed with Content-Length / SHA headers.
+func imageTaskResultAtomicResponseMaxBytes() int64 {
+	if constant.ImageTaskResultInlineMaxMB > 0 {
+		return int64(constant.ImageTaskResultInlineMaxMB) << 20
+	}
+	return 4 << 20
+}
+
+// writePublicImageTaskStoredResult writes a validated on-disk result.
+// Small/known-size payloads are fully buffered so a mid-write network failure
+// cannot produce a partial 200 body. Large payloads stream after validation.
+func writePublicImageTaskStoredResult(c *gin.Context, task *model.Task, file *os.File) {
+	if c == nil || task == nil || file == nil {
+		return
+	}
+	size := task.PrivateData.ResultBodySize
+	sha := strings.TrimSpace(task.PrivateData.ResultBodySHA256)
+	maxAtomic := imageTaskResultAtomicResponseMaxBytes()
+
+	if size > 0 && size <= maxAtomic {
+		data, err := io.ReadAll(io.LimitReader(file, size+1))
+		if err != nil || int64(len(data)) != size {
+			logger.LogWarn(c, fmt.Sprintf(
+				"image task %s result re-read failed after validation (size=%d err=%v)",
+				task.TaskID, size, err,
+			))
+			c.Header("Retry-After", "5")
+			publicImageTaskError(c, http.StatusServiceUnavailable, "result_temporarily_unavailable", "image task result is temporarily unavailable, please retry")
+			return
+		}
+		// Explicit Content-Length: gin c.Data does not always set it (e.g. ResponseRecorder
+		// / some reverse proxies), and clients rely on it to detect truncated bodies.
+		c.Header("Content-Length", strconv.FormatInt(int64(len(data)), 10))
+		if sha != "" {
+			c.Header("X-NewAPI-Result-SHA256", sha)
+		}
+		c.Data(http.StatusOK, "application/json; charset=utf-8", data)
+		return
+	}
+
+	// Large (or unknown-size) results: stream after validation.
+	// Content-Length / SHA let clients detect truncated transfers.
+	c.Header("Content-Type", "application/json; charset=utf-8")
+	if size > 0 {
+		c.Header("Content-Length", strconv.FormatInt(size, 10))
+	}
+	if sha != "" {
+		c.Header("X-NewAPI-Result-SHA256", sha)
+	}
+	c.Status(http.StatusOK)
+	written, copyErr := io.Copy(c.Writer, file)
+	if copyErr != nil {
+		logger.LogWarn(c, fmt.Sprintf("image task %s result stream failed after %d bytes: %s", task.TaskID, written, copyErr.Error()))
+	} else if size > 0 && written != size {
+		logger.LogError(c, fmt.Sprintf(
+			"image task %s result stream length mismatch: wrote=%d expected=%d",
+			task.TaskID, written, size,
+		))
+	}
+}
+
 // respondPublicImageTaskAPIError 把内部 *types.NewAPIError 翻译成 /v1/image-tasks/* 的
 // 统一错误信封。createImageTaskInternal 与同步桥共用，直接透出 NewAPIError 会让同一个
 // 幂等冲突在预检 handler 和创建流程里给出两套 error.code（预检给 idempotency_conflict，
@@ -720,6 +825,11 @@ func respondPublicImageTaskAPIError(c *gin.Context, apiErr *types.NewAPIError) {
 		code = "insufficient_token_quota"
 	case types.ErrorCodeModelPriceError:
 		code = "model_price_error"
+	case types.ErrorCodeDoRequestFailed:
+		if status == http.StatusServiceUnavailable {
+			code = "image_task_unavailable"
+			c.Header("Retry-After", "1")
+		}
 	case types.ErrorCodeReadRequestBodyFailed:
 		switch {
 		case errors.Is(apiErr, common.ErrDiskCacheCapacityUnavailable):

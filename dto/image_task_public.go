@@ -22,4 +22,7 @@ type PublicImageTaskError struct {
 
 type PublicImageTaskList struct {
 	Data []*PublicImageTask `json:"data"`
+	// NotFoundIDs lists requested task IDs that are not visible to the current
+	// user+token (missing, other token, or non-public). It does not reveal why.
+	NotFoundIDs []string `json:"not_found_ids,omitempty"`
 }

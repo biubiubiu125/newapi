@@ -658,6 +658,7 @@ func migrateImageTaskResultLifecycle() error {
 		"public_image_task_token_id",
 		"image_task_cancelled_at",
 		"image_task_result_stored",
+		"image_task_result_stored_at",
 	}
 	for _, column := range columns {
 		if !DB.Migrator().HasColumn(&Task{}, column) {
@@ -682,7 +683,7 @@ func migrateImageTaskPublicMetadata() error {
 	if !DB.Migrator().HasTable(&Task{}) {
 		return nil
 	}
-	for _, column := range []string{"public_image_task", "public_image_task_token_id", "image_task_cancelled_at", "image_task_result_stored"} {
+	for _, column := range []string{"public_image_task", "public_image_task_token_id", "image_task_cancelled_at", "image_task_result_stored", "image_task_result_stored_at"} {
 		if !DB.Migrator().HasColumn(&Task{}, column) {
 			return nil
 		}
@@ -694,16 +695,18 @@ func migrateImageTaskPublicMetadata() error {
 	for {
 		var tasks []Task
 		err := DB.Model(&Task{}).
-			Select("id", "private_data", "public_image_task", "public_image_task_token_id", "image_task_cancelled_at", "image_task_result_stored").
+			Select("id", "private_data", "public_image_task", "public_image_task_token_id", "image_task_cancelled_at", "image_task_result_stored", "image_task_result_stored_at", "finish_time").
 			Where("id > ? AND platform = ?", lastID, constant.TaskPlatformImage).
 			Where(fmt.Sprintf(`(
 				(public_image_task = ? AND %s LIKE ?) OR
 				(image_task_cancelled_at = 0 AND %s LIKE ?) OR
-				(image_task_result_stored = ? AND %s LIKE ?)
-			)`, privateDataColumn, privateDataColumn, privateDataColumn),
+				(image_task_result_stored = ? AND %s LIKE ?) OR
+				(image_task_result_stored_at = 0 AND %s LIKE ?)
+			)`, privateDataColumn, privateDataColumn, privateDataColumn, privateDataColumn),
 				false, `%"public_image_task"%`,
 				`%"cancelled_at"%`,
 				false, `%"result_body_path"%`,
+				`%"result_stored_at"%`,
 			).
 			Order("id ASC").
 			Limit(batchSize).
@@ -716,11 +719,16 @@ func migrateImageTaskPublicMetadata() error {
 		}
 		for i := range tasks {
 			task := &tasks[i]
+			resultStoredAt := task.PrivateData.ResultStoredAt
+			if resultStoredAt <= 0 {
+				resultStoredAt = task.FinishTime
+			}
 			updates := map[string]any{
-				"public_image_task":          task.PrivateData.PublicImageTask,
-				"public_image_task_token_id": task.PrivateData.TokenId,
-				"image_task_cancelled_at":    task.PrivateData.CancelledAt,
-				"image_task_result_stored":   strings.TrimSpace(task.PrivateData.ResultBodyPath) != "",
+				"public_image_task":            task.PrivateData.PublicImageTask,
+				"public_image_task_token_id":   task.PrivateData.TokenId,
+				"image_task_cancelled_at":      task.PrivateData.CancelledAt,
+				"image_task_result_stored":     strings.TrimSpace(task.PrivateData.ResultBodyPath) != "",
+				"image_task_result_stored_at":  resultStoredAt,
 			}
 			if err := DB.Model(&Task{}).Where("id = ?", task.ID).Updates(updates).Error; err != nil {
 				return fmt.Errorf("backfill image task public metadata task %d: %w", task.ID, err)

@@ -203,6 +203,10 @@ func initConstantEnv() {
 	constant.ImageTaskOrphanFailSeconds = GetEnvOrDefault("IMAGE_TASK_ORPHAN_FAIL_SECONDS", 1800)
 	// 无法外置到受信共享缓存时，允许内联进数据库的结果上限（MB），0 表示不限制。
 	constant.ImageTaskResultInlineMaxMB = GetEnvOrDefault("IMAGE_TASK_RESULT_INLINE_MAX_MB", 32)
+	// 公开结果下载并发：全局与单 Token。0 表示对应维度不限制。
+	// 大体积 b64_json 外置文件时用于避免单进程/单令牌同时把多份大结果整包读入内存。
+	constant.ImageTaskResultDownloadConcurrency = GetEnvOrDefault("IMAGE_TASK_RESULT_DOWNLOAD_CONCURRENCY", 32)
+	constant.ImageTaskResultDownloadTokenConcurrency = GetEnvOrDefault("IMAGE_TASK_RESULT_DOWNLOAD_TOKEN_CONCURRENCY", 4)
 	// 图片任务状态/结果/ACK/取消接口的单令牌限流；异步 API 以轮询为前提，这里不能沿用
 	// CRITICAL_RATE_LIMIT（默认 20 分钟 50 次）那种为敏感写操作准备的额度。0 表示不限流。
 	constant.ImageTaskAccessRateLimitCount = GetEnvOrDefault("IMAGE_TASK_ACCESS_RATE_LIMIT", 600)

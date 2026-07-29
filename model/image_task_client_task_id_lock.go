@@ -125,6 +125,10 @@ func reclaimImageTaskClientTaskIDLockIfStale(lock *ImageTaskClientTaskIDLock, no
 	if err != nil || reusable {
 		return false, err
 	}
+	// 结算仍打开但结果已不可用时，先收口为 REVIEW 再删锁，避免新任务与旧预扣并存。
+	if _, reviewErr := MarkExpiredOpenImageTaskSettlementReview(lock.TaskPrimaryID, now); reviewErr != nil {
+		return false, reviewErr
+	}
 	return DeleteOrphanedImageTaskClientTaskIDLock(lock.ID, lock.TaskPrimaryID, lock.UpdatedAt)
 }
 

@@ -968,6 +968,75 @@ func TestUpdateWithStatus_Lose(t *testing.T) {
 	assert.EqualValues(t, TaskStatusFailure, reloaded.Status) // unchanged
 }
 
+func TestApplyImageTaskCancelBeforeExecutionRejectsUpstreamSubmissionEvidence(t *testing.T) {
+	truncateTables(t)
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:     "task_cancel_upstream_guard",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		PrivateData: TaskPrivateData{
+			UpstreamTaskID: "upstream-already-submitted",
+		},
+	}
+	insertTask(t, task)
+
+	cancel := *task
+	cancel.Status = TaskStatusFailure
+	cancel.Progress = "100%"
+	cancel.FailReason = "image task cancelled by client"
+	cancel.FinishTime = now
+	cancel.PrivateData.CancelledAt = now
+	cancel.PrivateData.UpstreamTaskID = ""
+
+	won, err := ApplyImageTaskCancelBeforeExecution(&cancel, TaskStatusQueued, now)
+	require.NoError(t, err)
+	require.False(t, won)
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, TaskStatus(TaskStatusQueued), reloaded.Status)
+	require.Equal(t, "upstream-already-submitted", reloaded.PrivateData.UpstreamTaskID)
+	require.Zero(t, reloaded.PrivateData.CancelledAt)
+}
+
+func TestApplyImageTaskCancelBeforeExecutionAllowsUnlockedQueuedTask(t *testing.T) {
+	truncateTables(t)
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:     "task_cancel_ok",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Status:     TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+	}
+	insertTask(t, task)
+
+	cancel := *task
+	cancel.Status = TaskStatusFailure
+	cancel.Progress = "100%"
+	cancel.FailReason = "image task cancelled by client"
+	cancel.FinishTime = now
+	cancel.PrivateData.CancelledAt = now
+
+	won, err := ApplyImageTaskCancelBeforeExecution(&cancel, TaskStatusQueued, now)
+	require.NoError(t, err)
+	require.True(t, won)
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, TaskStatus(TaskStatusFailure), reloaded.Status)
+	require.Equal(t, now, reloaded.PrivateData.CancelledAt)
+}
+
 func TestUpdateWithStatusAndLeaseRejectsLostOwner(t *testing.T) {
 	truncateTables(t)
 	now := time.Now().Unix()

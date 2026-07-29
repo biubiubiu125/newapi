@@ -2637,18 +2637,31 @@ func TestImageTaskRequestBodyBase64ForStorageFollowsFallbackPolicy(t *testing.T)
 	oldTrusted := constant.ImageTaskFileCacheSharedTrusted
 	oldAffinity := constant.ImageTaskLocalFileCacheAffinity
 	oldNode := common.NodeName
+	oldNodeManual := common.NodeNameManuallyConfigured
 	oldSharedDisabled := common.ImageTaskSharedCacheDisabled()
 	oldBase64MaxMB := constant.ImageTaskRequestBodyBase64MaxMB
+	oldWorkerEnabled := constant.ImageTaskWorkerEnabled
+	oldMaster := common.IsMasterNode
+	oldRunner := service.RunImageTasksFunc
 	t.Cleanup(func() {
 		constant.ImageTaskFileCacheShared = oldShared
 		constant.ImageTaskFileCacheSharedTrusted = oldTrusted
 		constant.ImageTaskLocalFileCacheAffinity = oldAffinity
 		constant.ImageTaskRequestBodyBase64MaxMB = oldBase64MaxMB
+		constant.ImageTaskWorkerEnabled = oldWorkerEnabled
 		common.NodeName = oldNode
+		common.NodeNameManuallyConfigured = oldNodeManual
+		common.IsMasterNode = oldMaster
 		common.SetImageTaskSharedCacheDisabled(oldSharedDisabled)
+		service.RunImageTasksFunc = oldRunner
 	})
 	common.SetImageTaskSharedCacheDisabled(false)
 	constant.ImageTaskRequestBodyBase64MaxMB = 16
+	// Pin a local-capable node so affinity can keep bodies on disk without
+	// the API-only portable fallback interfering.
+	service.RunImageTasksFunc = func(context.Context, []*model.Task) error { return nil }
+	constant.ImageTaskWorkerEnabled = true
+	common.IsMasterNode = false
 
 	persisted := &imageTaskPersistedRequest{Body: []byte(`{"model":"gpt-image-1"}`)}
 	constant.ImageTaskFileCacheShared = false
@@ -2658,11 +2671,28 @@ func TestImageTaskRequestBodyBase64ForStorageFollowsFallbackPolicy(t *testing.T)
 	require.Equal(t, base64.StdEncoding.EncodeToString(persisted.Body), value)
 
 	common.NodeName = "node-a"
+	common.NodeNameManuallyConfigured = true
 	constant.ImageTaskLocalFileCacheAffinity = true
 	value, err = imageTaskRequestBodyBase64ForStorage(persisted)
 	require.NoError(t, err)
-	require.Empty(t, value)
+	require.Empty(t, value, "stable NODE_NAME affinity node may keep request body on local disk")
 
+	// Unstable hostname NODE_NAME forces portable bodies under affinity.
+	common.NodeNameManuallyConfigured = false
+	value, err = imageTaskRequestBodyBase64ForStorage(persisted)
+	require.NoError(t, err)
+	require.Equal(t, base64.StdEncoding.EncodeToString(persisted.Body), value)
+
+	// API-only nodes cannot claim local files; force portable even with affinity.
+	common.NodeNameManuallyConfigured = true
+	constant.ImageTaskWorkerEnabled = false
+	common.IsMasterNode = false
+	value, err = imageTaskRequestBodyBase64ForStorage(persisted)
+	require.NoError(t, err)
+	require.Equal(t, base64.StdEncoding.EncodeToString(persisted.Body), value)
+
+	// Restore local capability for the remaining shared-cache branches.
+	constant.ImageTaskWorkerEnabled = true
 	constant.ImageTaskFileCacheShared = true
 	constant.ImageTaskFileCacheSharedTrusted = false
 	value, err = imageTaskRequestBodyBase64ForStorage(persisted)
@@ -2705,6 +2735,41 @@ func TestImageTaskStorageNodeForRequestUsesPortableSentinel(t *testing.T) {
 
 	require.Equal(t, model.ImageTaskPortableStorageNode, imageTaskStorageNodeForRequest(true))
 	require.Equal(t, "node-a", imageTaskStorageNodeForRequest(false))
+}
+
+func TestImageTaskCreateBodyNotExecutableOnAPIOnlyNodeWithoutPortableOrShared(t *testing.T) {
+	oldShared := constant.ImageTaskFileCacheShared
+	oldTrusted := constant.ImageTaskFileCacheSharedTrusted
+	oldWorker := constant.ImageTaskWorkerEnabled
+	oldMaster := common.IsMasterNode
+	oldRunner := service.RunImageTasksFunc
+	oldDisabled := common.ImageTaskSharedCacheDisabled()
+	t.Cleanup(func() {
+		constant.ImageTaskFileCacheShared = oldShared
+		constant.ImageTaskFileCacheSharedTrusted = oldTrusted
+		constant.ImageTaskWorkerEnabled = oldWorker
+		common.IsMasterNode = oldMaster
+		service.RunImageTasksFunc = oldRunner
+		common.SetImageTaskSharedCacheDisabled(oldDisabled)
+	})
+	service.RunImageTasksFunc = func(context.Context, []*model.Task) error { return nil }
+	common.SetImageTaskSharedCacheDisabled(false)
+	common.IsMasterNode = false
+	constant.ImageTaskWorkerEnabled = false
+	constant.ImageTaskFileCacheShared = false
+	constant.ImageTaskFileCacheSharedTrusted = false
+
+	require.True(t, imageTaskCreateBodyNotExecutable(false))
+	require.False(t, imageTaskCreateBodyNotExecutable(true), "portable body is executable by any worker")
+
+	constant.ImageTaskFileCacheShared = true
+	constant.ImageTaskFileCacheSharedTrusted = true
+	require.False(t, imageTaskCreateBodyNotExecutable(false), "trusted shared cache can serve non-portable bodies")
+
+	constant.ImageTaskWorkerEnabled = true
+	constant.ImageTaskFileCacheShared = false
+	constant.ImageTaskFileCacheSharedTrusted = false
+	require.False(t, imageTaskCreateBodyNotExecutable(false), "local execution can use node-local body files")
 }
 
 func TestImageTaskResponseResultLoadsStoredResultFile(t *testing.T) {

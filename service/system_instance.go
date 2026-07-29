@@ -31,7 +31,8 @@ type SystemInstanceInfo struct {
 }
 
 type SystemInstanceRoleInfo struct {
-	IsMaster bool `json:"is_master"`
+	IsMaster          bool `json:"is_master"`
+	ImageTaskExecutor bool `json:"image_task_executor"`
 }
 
 type SystemInstanceRuntimeInfo struct {
@@ -94,7 +95,8 @@ func ReportCurrentSystemInstance() error {
 		SchemaVersion: 1,
 		Node:          identity,
 		Role: SystemInstanceRoleInfo{
-			IsMaster: common.IsMasterNode,
+			IsMaster:          common.IsMasterNode,
+			ImageTaskExecutor: ImageTaskLocalCanExecute(),
 		},
 		Runtime: SystemInstanceRuntimeInfo{
 			Version:   common.Version,

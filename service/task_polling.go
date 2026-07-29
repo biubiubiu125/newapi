@@ -408,6 +408,7 @@ func prepareOrphanedImageTaskFailure(task *model.Task, now int64, reason string)
 	task.SettlementStatus = ""
 	task.PrivateData.ResultBodyPath = ""
 	task.ImageTaskResultStored = false
+	task.ImageTaskResultStoredAt = 0
 	task.PrivateData.ResultBodySize = 0
 	task.PrivateData.ResultBodySHA256 = ""
 	task.PrivateData.ResultContentType = ""
@@ -521,9 +522,19 @@ func processImageTaskResultFileCleanups(ctx context.Context, cleanups []model.Im
 			}
 			continue
 		}
-		if err := common.RemoveDiskCacheFile(cleanup.Path); err != nil && !errors.Is(err, os.ErrNotExist) {
-			logger.LogWarn(ctx, fmt.Sprintf("image task result file cleanup failed: %v", err))
+		task, accessible := imageTaskResultFileCleanupTargetFromCurrentNode(ctx, cleanup)
+		if !accessible {
 			continue
+		}
+		if err := common.RemoveDiskCacheFile(cleanup.Path); err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				if !imageTaskResultFileMissingAuthoritativeFromCurrentNode(task) {
+					continue
+				}
+			} else {
+				logger.LogWarn(ctx, fmt.Sprintf("image task result file cleanup failed: %v", err))
+				continue
+			}
 		}
 		if err := model.FinalizeImageTaskResultFileCleanup(cleanup.TaskPrimaryID, cleanup.Path); err != nil {
 			logger.LogWarn(ctx, fmt.Sprintf("finalize image task result file cleanup failed: %v", err))
@@ -531,13 +542,41 @@ func processImageTaskResultFileCleanups(ctx context.Context, cleanups []model.Im
 	}
 }
 
+func imageTaskResultFileCleanupTargetFromCurrentNode(ctx context.Context, cleanup model.ImageTaskResultCleanup) (*model.Task, bool) {
+	if strings.TrimSpace(cleanup.Path) == "" {
+		return nil, true
+	}
+	if ImageTaskFileCacheSharedTrusted() {
+		return nil, true
+	}
+	task, exists, err := model.GetTaskByID(cleanup.TaskPrimaryID)
+	if err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("load image task result cleanup owner failed: %v", err))
+		return nil, false
+	}
+	if !exists || strings.TrimSpace(task.PrivateData.ResultBodyPath) != strings.TrimSpace(cleanup.Path) {
+		return nil, false
+	}
+	return task, ImageTaskResultFileAccessibleFromCurrentNode(task)
+}
+
+func imageTaskResultFileMissingAuthoritativeFromCurrentNode(task *model.Task) bool {
+	if ImageTaskFileCacheSharedTrusted() {
+		return true
+	}
+	owner := imageTaskFileOwnerNode(task)
+	return owner != "" && owner == strings.TrimSpace(common.NodeName)
+}
+
 func StartImageTaskWorkerRunner() {
 	imageTaskWorkerRunnerOnce.Do(func() {
 		logImageTaskDeploymentWarnings()
+		// Request cleanup, refund recovery, settlement log outbox, and result
+		// lifecycle cleanup all use DB CAS / row locks, so every node can run
+		// them. Keeping result cleanup master-only would stall physical cleanup
+		// when the master is down even if API/worker nodes are healthy.
 		go runImageTaskRequestCleanupLoop()
-		if common.IsMasterNode {
-			go runImageTaskResultCleanupLoop()
-		}
+		go runImageTaskResultCleanupLoop()
 		if !constant.ImageTaskWorkerEnabled {
 			return
 		}
@@ -556,13 +595,32 @@ func logImageTaskDeploymentWarnings() {
 	if ImageTaskLocalFileCacheAffinityEnabled() && !common.NodeNameManuallyConfigured {
 		common.SysLog(fmt.Sprintf(
 			"image task warning: NODE_NAME is not configured and falls back to hostname %q; "+
-				"image tasks are bound to this node name and will need the orphan sweep to recover if it changes. "+
-				"See docs/image-tasks.md", common.NodeName))
+				"request bodies are forced portable so a hostname change cannot orphan local files. "+
+				"Set a stable unique NODE_NAME for multi-node affinity. See docs/image-tasks.md", common.NodeName))
 	}
 	if constant.ImageTaskResultRetentionMinutes > 720 {
 		common.SysError(fmt.Sprintf(
 			"image task warning: IMAGE_TASK_RESULT_RETENTION_MINUTES=%d exceeds the 12 hour cap and is clamped to 720 minutes",
 			constant.ImageTaskResultRetentionMinutes))
+	}
+	if constant.ImageTaskFileCacheShared && !constant.ImageTaskFileCacheSharedTrusted {
+		common.SysLog(
+			"image task warning: IMAGE_TASK_FILE_CACHE_SHARED=true but IMAGE_TASK_FILE_CACHE_SHARED_TRUSTED=false; " +
+				"large b64_json results stay inline in the database and multi-node file result serving is disabled. " +
+				"See docs/image-tasks.md")
+	}
+	if !constant.UpdateTask || RunImageTasksFunc == nil {
+		common.SysLog(
+			"image task warning: image task system is disabled on this node " +
+				"(UPDATE_TASK=false or runner not wired); POST /v1/image-tasks/* returns 503 image_task_unavailable")
+		return
+	}
+	if !ImageTaskLocalExecutionAvailable() {
+		common.SysLog(
+			"image task warning: this node accepts image task creates but does not execute them locally " +
+				"(not master and IMAGE_TASK_WORKER_ENABLED=false). " +
+				"Ensure other nodes run workers or master polling, and that request bodies are portable or on trusted shared cache. " +
+				"See docs/image-tasks.md")
 	}
 }
 
@@ -629,8 +687,141 @@ func ImageTaskWorkerEnabled() bool {
 	return constant.ImageTaskWorkerEnabled && RunImageTasksFunc != nil
 }
 
+// ImageTaskLocalExecutionAvailable reports whether this process can claim and
+// run image tasks itself (master system poll and/or a dedicated worker).
+func ImageTaskLocalExecutionAvailable() bool {
+	return common.IsMasterNode || ImageTaskWorkerEnabled()
+}
+
+// ImageTaskExecutionAvailable reports whether the cluster task system can accept
+// new image tasks. Creation is allowed on pure API nodes as long as UPDATE_TASK
+// is enabled and a runner is wired; execution is picked up by master poll and/or
+// workers that can read the request body (shared cache, portable body, or local
+// affinity on a worker node).
 func ImageTaskExecutionAvailable() bool {
-	return constant.UpdateTask && RunImageTasksFunc != nil && (common.IsMasterNode || ImageTaskWorkerEnabled())
+	return constant.UpdateTask && RunImageTasksFunc != nil
+}
+
+// ImageTaskLocalCanExecute reports whether this process can both accept and run
+// image tasks right now.
+func ImageTaskLocalCanExecute() bool {
+	return ImageTaskExecutionAvailable() && ImageTaskLocalExecutionAvailable()
+}
+
+// ImageTaskClusterExecutorAvailability describes whether the cluster is known to
+// have at least one live image-task executor. When Known is false the heartbeat
+// evidence is unusable (empty instance table or this node missing from it), so
+// callers must not hard-fail creates.
+type ImageTaskClusterExecutorAvailability struct {
+	Known bool
+	Has   bool
+}
+
+// GetImageTaskClusterExecutorAvailability uses system instance heartbeats to
+// discover whether any online node currently advertises image task execution.
+//
+// Known=true && Has=false only when every active node explicitly advertises
+// image_task_executor=false. If any active node is missing that field (legacy
+// heartbeat during rolling upgrade), Known stays false so creates are not
+// hard-failed against a still-capable worker.
+func GetImageTaskClusterExecutorAvailability() ImageTaskClusterExecutorAvailability {
+	if ImageTaskLocalCanExecute() {
+		return ImageTaskClusterExecutorAvailability{Known: true, Has: true}
+	}
+	if !ImageTaskExecutionAvailable() {
+		return ImageTaskClusterExecutorAvailability{Known: true, Has: false}
+	}
+	now := time.Now().Unix()
+	staleAfter := model.SystemInstanceStaleAfterSeconds
+	instances, err := model.ListSystemInstances()
+	if err != nil || len(instances) == 0 {
+		return ImageTaskClusterExecutorAvailability{}
+	}
+	active := make([]*model.SystemInstance, 0, len(instances))
+	selfSeen := false
+	selfName := strings.TrimSpace(common.NodeName)
+	for _, instance := range instances {
+		if instance == nil {
+			continue
+		}
+		name := strings.TrimSpace(instance.NodeName)
+		if name == "" {
+			continue
+		}
+		if now-instance.LastSeenAt > staleAfter {
+			continue
+		}
+		active = append(active, instance)
+		if name == selfName {
+			selfSeen = true
+		}
+	}
+	if !selfSeen || len(active) == 0 {
+		// Heartbeat evidence is incomplete; do not reject creates on a guess.
+		return ImageTaskClusterExecutorAvailability{}
+	}
+
+	anyExplicitTrue := false
+	anyMissingCapability := false
+	for _, instance := range active {
+		present, isExecutor := systemInstanceImageTaskExecutorCapability(instance)
+		if !present {
+			anyMissingCapability = true
+			continue
+		}
+		if isExecutor {
+			anyExplicitTrue = true
+		}
+	}
+	if anyExplicitTrue {
+		return ImageTaskClusterExecutorAvailability{Known: true, Has: true}
+	}
+	if anyMissingCapability {
+		// Legacy nodes (or incomplete role payloads) may still execute tasks.
+		return ImageTaskClusterExecutorAvailability{}
+	}
+	// Every active node explicitly said it cannot execute image tasks.
+	return ImageTaskClusterExecutorAvailability{Known: true, Has: false}
+}
+
+// systemInstanceImageTaskExecutorCapability returns (fieldPresent, isExecutor).
+func systemInstanceImageTaskExecutorCapability(instance *model.SystemInstance) (bool, bool) {
+	if instance == nil {
+		return false, false
+	}
+	info := decodeSystemInstanceInfoMap(instance.Info)
+	if info == nil {
+		return false, false
+	}
+	role, _ := info["role"].(map[string]any)
+	if role == nil {
+		return false, false
+	}
+	raw, ok := role["image_task_executor"]
+	if !ok {
+		return false, false
+	}
+	switch v := raw.(type) {
+	case bool:
+		return true, v
+	case float64:
+		return true, v != 0
+	default:
+		// Unknown encoding: treat as missing so we do not hard-fail creates.
+		return false, false
+	}
+}
+
+func decodeSystemInstanceInfoMap(raw string) map[string]any {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	var info map[string]any
+	if err := common.UnmarshalJsonStr(raw, &info); err != nil {
+		return nil
+	}
+	return info
 }
 
 func NotifyImageTaskWorker() {
@@ -691,6 +882,17 @@ func ImageTaskRequestBodyBase64FallbackEnabled() bool {
 	if constant.ImageTaskFileCacheShared {
 		return true
 	}
+	// API-only nodes cannot keep a node-local body file: no local worker would
+	// ever claim the task. Force a portable base64 body so other nodes can run it.
+	if !ImageTaskLocalExecutionAvailable() {
+		return true
+	}
+	// Affinity binds request bodies to storage_node=NODE_NAME. When NODE_NAME is
+	// only the hostname, container rebuilds rename the node and orphan local files.
+	// Prefer portable bodies unless operators explicitly set NODE_NAME.
+	if ImageTaskLocalFileCacheAffinityEnabled() && !common.NodeNameManuallyConfigured {
+		return true
+	}
 	return !ImageTaskLocalFileCacheAffinityEnabled()
 }
 
@@ -730,6 +932,31 @@ func ImageTaskRequestFileAccessibleFromCurrentNode(task *model.Task) bool {
 		owner = strings.TrimSpace(task.StorageNode)
 	}
 	return owner == "" || owner == strings.TrimSpace(common.NodeName)
+}
+
+func ImageTaskResultFileAccessibleFromCurrentNode(task *model.Task) bool {
+	if task == nil {
+		return false
+	}
+	if strings.TrimSpace(task.PrivateData.ResultBodyPath) == "" {
+		return true
+	}
+	if ImageTaskFileCacheSharedTrusted() {
+		return true
+	}
+	owner := imageTaskFileOwnerNode(task)
+	return owner == "" || owner == strings.TrimSpace(common.NodeName)
+}
+
+func imageTaskFileOwnerNode(task *model.Task) string {
+	if task == nil {
+		return ""
+	}
+	owner := strings.TrimSpace(task.PrivateData.NodeName)
+	if owner == "" && task.StorageNode != model.ImageTaskPortableStorageNode {
+		owner = strings.TrimSpace(task.StorageNode)
+	}
+	return owner
 }
 
 func runImageTaskWorkerPass(ctx context.Context) {
@@ -879,6 +1106,7 @@ func prepareTimedOutTaskFailure(task *model.Task, now int64, reason string) (str
 		task.PrivateData.RequestBodyShared = false
 		task.PrivateData.ResultBodyPath = ""
 		task.ImageTaskResultStored = false
+		task.ImageTaskResultStoredAt = 0
 		task.PrivateData.ResultBodySize = 0
 		task.PrivateData.ResultBodySHA256 = ""
 		task.PrivateData.ResultContentType = ""

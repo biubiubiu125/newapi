@@ -11,7 +11,7 @@
 | `POST /v1/image-tasks/generations` | 创建生图任务，鉴权、选渠道、预扣费完成后立即返回 `202` |
 | `POST /v1/image-tasks/edits` | 创建图片编辑任务，同上 |
 | `GET /v1/image-tasks/{task_id}` | 查询单个任务状态，不返回图片数据 |
-| `GET /v1/image-tasks?ids=a,b` | 批量查询状态，一次最多 100 个 ID |
+| `GET /v1/image-tasks?ids=a,b` | 批量查询状态，一次最多 100 个 ID；对当前用户+令牌不可见的 ID 放入 `not_found_ids`，不区分「不存在」和「别的令牌」 |
 | `GET /v1/image-tasks/{task_id}/result` | 领取结果，返回原始 OpenAI 图片响应 |
 | `POST /v1/image-tasks/{task_id}/ack` | 确认已保存结果，触发延迟清理 |
 | `POST /v1/image-tasks/{task_id}/cancel` | 取消尚未开始执行的任务并退款 |
@@ -31,21 +31,33 @@
 | `code` | 典型状态码 | 含义与处置 |
 | --- | --- | --- |
 | `invalid_request` | 400 / 413 | 请求参数或体积不合法，不要重试 |
+| `unsupported_media_type` | 415 | 创建接口的 `Content-Type` 不符合要求；generations 需要 JSON，edits 需要 multipart/form-data |
 | `idempotency_conflict` | 409 | 幂等键已被不同请求内容或不同令牌占用，**不要重试**，换一个键 |
 | `idempotency_in_progress` | 409 | 同一幂等键正在创建中，稍后重试 |
 | `insufficient_quota` / `insufficient_token_quota` | 403 | 额度不足 |
-| `image_task_unavailable` | 503 | 当前节点未启用图片任务执行，或请求存储容量暂时不可用；带 `Retry-After` 时应按其退避重试 |
+| `model_price_error` | 400 | 模型价格或预扣费参数无法计算，检查模型配置和请求参数 |
+| `image_task_create_failed` | 500 | 任务创建结果异常，可携带请求 ID 联系服务端排查 |
+| `image_task_unavailable` | 503 | 集群任务系统未启用（`UPDATE_TASK=false`）、请求存储容量暂时不可用、API-only 节点强制便携请求体时体积超限、请求体不可跨节点执行，或心跳证明集群内没有可执行节点；带 `Retry-After` 时应按其退避重试 |
 | `image_task_failed` | 200（任务状态） | 上游执行失败；对外 `error.message` 固定脱敏为 `image task failed`，内部失败详情不通过公开 API 暴露 |
 | `settlement_review` | 200（任务状态） | 上游执行结果未知，或生成已结束但结算需要人工复核；结果不可领取 |
 | `refund_pending` | 200（任务状态） | 任务已失败，退款仍在后台处理中；不要按已退款处理 |
 | `refund_review` | 200（任务状态） | 任务已失败或取消，但退款需要人工复核；不要按已退款处理 |
 | `task_not_found` | 404 | 任务不存在或不属于当前用户与令牌 |
+| `task_ids_required` | 400 | 批量查询缺少 `ids` 参数 |
+| `too_many_task_ids` | 400 | 批量查询一次最多允许 100 个任务 ID |
+| `task_query_failed` | 500 | 查询任务失败，可携带请求 ID 联系服务端排查 |
+| `task_reservation_failed` | 500 | 幂等预约写入或绑定失败，可携带请求 ID 联系服务端排查 |
 | `result_not_ready` | 409 | 任务尚未 `completed`，轮询后重试 |
 | `result_expired` | 410 | 结果**已永久清理或过期**，不要重试 |
 | `result_temporarily_unavailable` | 503 | 结果仍在保留期内但本次读取失败（例如共享缓存暂时不可用），**应按 `Retry-After` 重试** |
+| `ack_failed` | 500 | ACK 写入失败，可携带请求 ID 联系服务端排查 |
+| `ack_conflict` | 409 | ACK 与并发清理或状态更新冲突，重新查询任务状态 |
 | `not_cancellable` | 409 | 任务已开始执行或已结束，无法取消 |
+| `cancel_failed` | 500 | 取消状态写入失败，可携带请求 ID 联系服务端排查 |
+| `cancel_refund_failed` | 500 | 取消已进入退款复核，需服务端人工处理 |
 | `cancel_refund_in_progress` | 409 | 取消已生效，退款仍在处理，按 `Retry-After` 重试确认 |
 | `rate_limit_exceeded` | 429 | 触发限流，按 `Retry-After` 退避 |
+| `unauthorized` | 401 | 未提供有效 NewAPI Token，或 Token 已失效 |
 | `access_denied` | 403 | 当前令牌、用户、分组或来源 IP 无权执行该请求 |
 | `request_conflict` | 409 | 请求与当前资源状态冲突 |
 | `internal_error` | 500 | 服务内部错误，可携带请求 ID 联系服务端排查 |
@@ -69,8 +81,11 @@
 ## 结果生命周期
 
 - 结果自结果成功落库时间起保留 12 小时，由 `IMAGE_TASK_RESULT_RETENTION_MINUTES` 控制（默认 `720`）。结算重试或最终结算成功不会延长该时间；即使任务仍处于 `PENDING` 或 `APPLIED`，到期结果也会清理。该值存在 12 小时硬上限，配置更大的值会被压回 720 分钟并在启动日志中告警。
+- 若结果到期时结算仍为 `PENDING` 且**没有**结算证据，清理会同步把结算收口为 `REVIEW`（对外 `failed` + `settlement_review`），预扣额度保留待人工处理，**不会自动退款**。若 `PENDING` 但已捕获结算证据，结果仍清理，结算状态保持 `PENDING`，worker 可继续自动结算。若已是 `APPLIED`（账务差额已落地），结果清理不改变结算状态，仍允许最终标为 `SETTLED`。
 - 过期后 `GET /result` 返回 `410 result_expired`，任务记录、使用日志和结算记录仍然保留。结果记录未过期但本次读不到时返回 `503 result_temporarily_unavailable`，客户端应重试而不是放弃。
 - 客户端保存结果后应调用 `ack`。ACK 是幂等的，重复调用不会报错；ACK 后保留 2 分钟缓冲，再由后台清理结果文件或内联的 `b64_json`。清理只影响结果内容。ACK 之后 `result_expires_at` 会收敛到这 2 分钟缓冲的截止时间，而不是继续报 12 小时。
+- 结果记录清理、退款恢复和请求体清理由**每个节点**定时循环执行（数据库行锁 / CAS），不依赖单一 master；worker 运行时也会顺带清理。查询侧的 410 语义不依赖物理清理是否已完成。
+- 外置结果文件在校验大小与 SHA-256 后写出：不超过 `IMAGE_TASK_RESULT_INLINE_MAX_MB`（默认 32MB，为 0 时按 4MB）的已知大小结果**先完整读入再响应**，避免半截 `200`；更大结果才流式写出。流式响应带 `Content-Length`（已知大小时）和 `X-NewAPI-Result-SHA256`（有摘要时），客户端可用它们识别中途截断。单进程与单 Token 下载并发分别由 `IMAGE_TASK_RESULT_DOWNLOAD_CONCURRENCY`（默认 32）和 `IMAGE_TASK_RESULT_DOWNLOAD_TOKEN_CONCURRENCY`（默认 4）限制；超限返回 `429 rate_limit_exceeded` 并带 `Retry-After`。
 - NewAPI 不会主动下载、转换或重新托管上游返回的图片 URL；`url` 与 `b64_json` 两种响应形式都按上游原样返回。
 
 ## 幂等键生命周期
@@ -78,10 +93,11 @@
 `client_task_id` 与 `Idempotency-Key` 的复用取决于任务是否仍在执行，或成功结果是否仍可领取：
 
 - **执行中的任务永远命中复用**，不受窗口限制。任务最长可以跑到 `TASK_TIMEOUT_MINUTES`（默认 24 小时），如果按时间掐窗口，长任务在窗口外被同键重试会重复创建并重复扣费。
-- **终态任务只在成功结果仍可领取时命中复用**。失败任务没有可领取结果，同键重新提交会立即创建一条新任务；成功结果自然过期、清理完成，或 ACK 后两分钟缓冲到期时，同键重新提交也会创建新任务。旧任务记录、日志和结算记录仍然保留，只是不再被幂等复用。
+- **终态任务只在成功结果仍可领取时命中复用**（含 `finalizing`：`SUCCESS + PENDING/APPLIED` 也必须结果仍可用）。失败任务、结算 `REVIEW`、结果已过期/清理、或 ACK 后两分钟缓冲到期时，同键重新提交会创建新任务。旧任务记录、日志和结算记录仍然保留，只是不再被幂等复用。
 - 创建任务耗尽令牌剩余额度后，客户端仍可用原令牌和相同请求重放同一幂等键，以恢复丢失的 `202` 响应；该令牌提交新键或无幂等键时返回 `403 insufficient_token_quota`。
 - 命中已有幂等任务的重放不占用新建任务的创建容量和模型请求限流；未命中、需要新建任务时仍按正常创建链路限流。
 - 同一幂等键在窗口内对应不同请求内容或不同令牌时返回 `409 idempotency_conflict`，不要重试。
+- `client_task_id` / `Idempotency-Key` 在同一用户下是**图片任务全局命名空间**：同步桥 `/v1/images/*` 与公开异步 `/v1/image-tasks/*` 共用。若同步桥已占用某键，公开接口用同一键会得到 `409 idempotency_conflict`（公开接口额外要求 `PublicImageTask` 与创建令牌匹配）。
 - 幂等预约行按 `IMAGE_TASK_IDEMPOTENCY_LOCK_RETENTION_HOURS`（默认 720 小时）回收，只清理绑定任务已终态且超期的行，在途任务和未绑定预约不受影响。
 
 ## 取消范围
@@ -94,16 +110,42 @@
 
 图片任务的请求体需要在执行时读取。执行阶段的调度按 `storage_node` 做节点亲和；任务一旦提交上游成功（或使用 base64 便携请求体），就会解除节点绑定，任意节点都可以接管轮询与结算。待结算任务不做节点过滤。
 
-**每个节点都必须配置稳定且唯一的 `NODE_NAME`。** 未显式配置时回退到主机名，容器重建会导致节点名变化。仓库根目录 `docker-compose.yml` 已提供默认值。
+### 上线前双节点冒烟（推荐）
+
+单进程 `go test` 验证代码闭环；**双节点 + 共享缓存**验证部署面。仓库提供脚本：
+
+`scripts/image-task-dual-node-smoke.sh`
+
+本机/WSL 最小步骤：
+
+1. 编译二进制，配置同一 `SQL_DSN`（及 Redis，如有）
+2. 两进程开启 `IMAGE_TASK_FILE_CACHE_SHARED=true` 与 `IMAGE_TASK_FILE_CACHE_SHARED_TRUSTED=true`，并在性能设置中把 `disk_cache_path` 指向同一共享挂载目录
+3. `NODE_NAME` 分别为 `smoke-api-1` / `smoke-worker-1`，仅 worker 开 `IMAGE_TASK_WORKER_ENABLED=true`
+4. 在 API 节点创建任务，两端都能 `GET /result` 且内容一致
+
+```bash
+export NEWAPI_BIN=./new-api
+export TOKEN=sk-xxx
+export SQL_DSN='...'
+bash scripts/image-task-dual-node-smoke.sh
+```
+
+通过标准：API 创建 `202` → worker 执行至 `completed` → API/worker 两端结果字节一致 → ACK 成功。
+
+**创建是集群级能力**：只要 `UPDATE_TASK=true` 且 runner 已注入，纯 API 节点（本机未开 worker、也不是 master）也可以 `POST /v1/image-tasks/*` 创建任务。本机不能执行时会自动改用 base64 便携请求体（或受信共享缓存），以便其他节点的 worker / master 轮询拾取。纯 API 节点启动时会打告警日志，提醒集群内必须有可执行节点。
+
+**创建可用不等于一定有执行者。** 各节点心跳会声明 `image_task_executor`。纯 API 节点仅在**所有活跃节点都显式声明** `image_task_executor=false` 时返回 `503 image_task_unavailable`，避免 `202` 后永远排队。心跳表为空、本节点未出现在活跃列表、或存在未声明该字段的旧版节点时，不凭猜测拦截创建（滚动升级兼容）。部署时至少保证一类节点在跑：`IMAGE_TASK_WORKER_ENABLED=true`，或 master 上的系统任务轮询。纯 API 节点在请求体既不能便携、又没有受信共享缓存时，创建也会直接 `503`。
+
+**每个节点都必须配置稳定且唯一的 `NODE_NAME`。** 未显式配置时回退到主机名；此时即使开启本地亲和，也会强制便携 base64 请求体，避免容器重建改名后本地文件孤儿化。多节点亲和调度请显式配置 `NODE_NAME`。仓库根目录 `docker-compose.yml` 已提供默认值。
 
 三种可选部署模式：
 
 | 模式 | 配置 | 说明 |
 | --- | --- | --- |
-| 单节点 | 保持默认 | 仍需固定 `NODE_NAME`。默认不做结果文件外置，`b64_json` 一律内联数据库 |
+| 单节点 | 保持默认 | 建议固定 `NODE_NAME`。未配置时回退主机名并强制便携请求体。默认不做结果文件外置，结果一律内联数据库（受 `IMAGE_TASK_RESULT_INLINE_MAX_MB` 限制） |
 | 单节点 + 结果文件外置 | `IMAGE_TASK_FILE_CACHE_SHARED=true` 且 `IMAGE_TASK_FILE_CACHE_SHARED_TRUSTED=true` | 单机本地缓存目录即视为受信共享。需要绕开 `IMAGE_TASK_RESULT_INLINE_MAX_MB` 内联上限时使用 |
 | 多节点 + 受信共享存储 | `IMAGE_TASK_FILE_CACHE_SHARED=true` 且 `IMAGE_TASK_FILE_CACHE_SHARED_TRUSTED=true` | 所有节点挂载同一缓存目录。只有该模式下大体积 `b64_json` 结果才会外置为文件；其它模式一律内联数据库 |
-| 多节点无共享存储 | 保持 `IMAGE_TASK_LOCAL_FILE_CACHE_AFFINITY=true` | 按创建节点亲和调度；或将其设为 `false` 改用 base64 便携请求体，此时请求体不得超过 `IMAGE_TASK_REQUEST_BODY_BASE64_MAX_MB`（默认 16 MB） |
+| 多节点无共享存储 | 保持 `IMAGE_TASK_LOCAL_FILE_CACHE_AFFINITY=true` | 有本地执行能力的节点按创建节点亲和调度；**纯 API 节点会强制便携 base64 请求体**（上限 `IMAGE_TASK_REQUEST_BODY_BASE64_MAX_MB`，默认 16 MB）。也可将亲和设为 `false` 让所有节点都走便携体 |
 
 风险提示：
 
@@ -111,7 +153,7 @@
 - 开启共享文件缓存后，磁盘容量预留会通过共享目录中的短锁和预留标记跨节点协调，并在每次预留前按真实文件重新统计；节点异常遗留的预留标记会在 15 分钟后回收，避免单节点进程计数导致共享目录超卖。
 - 节点永久下线或改名后，其名下未提交上游的任务由孤儿兜底处理。判定同时要求两个条件：任务绑定的 `storage_node` 已经不在节点心跳列表中（确认该节点消失），且逾期超过 `IMAGE_TASK_ORPHAN_FAIL_SECONDS`（默认 1800 秒）。满足后任务失败并退款。只是排队积压、归属节点仍在心跳的任务不会被清理；未绑定节点和便携任务任何节点都能调度，也不走这一档。心跳数据不可用时（例如实例表被清空）该档整体停用，避免凭时间误判。已提交上游但超过 `TASK_TIMEOUT_MINUTES` 仍无确定结果的任务转为 `settlement_review`，保留上游任务 ID 和预扣额度，不会自动退款。将 `IMAGE_TASK_ORPHAN_FAIL_SECONDS` 设为 `0` 可关闭未提交任务的孤儿退款兜底。
 - 待结算任务不做节点过滤，任意节点都能接管结算。改造前创建的历史任务如果没有留存计费证据，且请求体文件在已消失的节点上，跨节点结算会转为结算人工审查（额度保留，不会错误扣费或丢账）。
-- 未开启受信共享缓存时，`b64_json` 结果内联进数据库。单条结果超过 `IMAGE_TASK_RESULT_INLINE_MAX_MB`（默认 32 MB）时任务会转为结算人工审查状态，而不是反复重试后误退款。使用 MySQL 时请确认 `max_allowed_packet` 大于该上限。
+- 未开启受信共享缓存时，结果内联进数据库（含 `url` 与 `b64_json`）。单条结果超过 `IMAGE_TASK_RESULT_INLINE_MAX_MB`（默认 32 MB）时任务会转为结算人工审查状态，而不是反复重试后误退款。使用 MySQL 时请确认 `max_allowed_packet` 大于该上限。
 
 ## 相关环境变量
 
@@ -126,7 +168,9 @@
 | `IMAGE_TASK_LEASE_SECONDS` | `120` | 执行租约时长 |
 | `IMAGE_TASK_RESULT_RETENTION_MINUTES` | `720` | 结果保留时长，硬上限 720 |
 | `IMAGE_TASK_ORPHAN_FAIL_SECONDS` | `1800` | 孤儿任务失败退款兜底（需节点心跳确认归属节点消失），`0` 关闭 |
-| `IMAGE_TASK_RESULT_INLINE_MAX_MB` | `32` | 内联结果上限，`0` 不限制 |
+| `IMAGE_TASK_RESULT_INLINE_MAX_MB` | `32` | 内联结果上限（含 url / b64_json），`0` 不限制 |
+| `IMAGE_TASK_RESULT_DOWNLOAD_CONCURRENCY` | `32` | 单进程并发领取结果上限，`0` 不限制 |
+| `IMAGE_TASK_RESULT_DOWNLOAD_TOKEN_CONCURRENCY` | `4` | 单 Token 并发领取结果上限，`0` 不限制 |
 | `IMAGE_TASK_ACCESS_RATE_LIMIT` | `600` | 状态/结果/ACK/取消接口的单令牌限流次数，`0` 关闭 |
 | `IMAGE_TASK_ACCESS_RATE_LIMIT_DURATION` | `60` | 上述限流的窗口秒数 |
 | `IMAGE_TASK_CREATE_RATE_LIMIT` | `60` | 创建接口按用户的跨节点共享限流次数，`0` 关闭 |

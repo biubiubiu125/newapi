@@ -1721,6 +1721,13 @@ func TestImageTaskResultStorageActionRejectsOversizeInlineResult(t *testing.T) {
 	require.False(t, offload)
 	require.ErrorContains(t, err, "too large to store inline")
 
+	// Non-b64 payloads must use the same inline size guard.
+	oversizeURL := append([]byte(`{"data":[{"url":"https://example.com/`), bytes.Repeat([]byte("a"), (1<<20)+1)...)
+	oversizeURL = append(oversizeURL, []byte(`"}]}`)...)
+	offload, err = imageTaskResultStorageAction(oversizeURL)
+	require.False(t, offload)
+	require.ErrorContains(t, err, "too large to store inline")
+
 	// 关闭上限后恢复内联行为。
 	constant.ImageTaskResultInlineMaxMB = 0
 	offload, err = imageTaskResultStorageAction(oversize)

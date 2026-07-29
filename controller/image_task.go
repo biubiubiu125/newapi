@@ -221,6 +221,28 @@ func createImageTaskInternal(c *gin.Context, imageRequest *dto.ImageRequest, rel
 		return nil, newImageTaskRequestStorageError(err)
 	}
 	requestBodyPortable := requestBodyBase64 != ""
+	// 纯 API 节点（本机不执行）且没有受信共享缓存时，请求体必须可被其他节点读取。
+	// 便携 base64 失败又没有共享路径时，创建会变成永远没人执行的僵尸任务。
+	if imageTaskCreateBodyNotExecutable(requestBodyPortable) {
+		_ = common.RemoveDiskCacheFile(persistedRequest.Path)
+		return nil, types.NewErrorWithStatusCode(
+			errors.New("image task request body is not portable and this node cannot execute image tasks"),
+			types.ErrorCodeDoRequestFailed,
+			http.StatusServiceUnavailable,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
+	// 心跳证据可用且集群内没有声明可执行图片任务的节点时，拒绝创建，
+	// 避免 202 后任务永远排队。心跳不可用时不猜，保持创建开放。
+	if executor := service.GetImageTaskClusterExecutorAvailability(); executor.Known && !executor.Has {
+		_ = common.RemoveDiskCacheFile(persistedRequest.Path)
+		return nil, types.NewErrorWithStatusCode(
+			errors.New("no live image task executor is available in the cluster"),
+			types.ErrorCodeDoRequestFailed,
+			http.StatusServiceUnavailable,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
 	settlementBillingRequestInput, billingRequestInputCaptured := cloneImageTaskBillingRequestInputForStorage(
 		relayInfo.BillingRequestInput,
 		relayInfo.TieredBillingSnapshot,
@@ -301,7 +323,7 @@ func tryRelayImageTaskSyncBridge(c *gin.Context, request dto.Request, relayInfo 
 
 func relayImageTaskSyncBridge(c *gin.Context, imageRequest *dto.ImageRequest, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
 	if !service.ImageTaskExecutionAvailable() {
-		return types.NewErrorWithStatusCode(errors.New("image task execution is disabled"), types.ErrorCodeDoRequestFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
+		return types.NewErrorWithStatusCode(errors.New("image task system is disabled"), types.ErrorCodeDoRequestFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
 	}
 	result, newAPIError := createImageTaskInternal(c, imageRequest, relayInfo)
 	if newAPIError != nil {
@@ -427,6 +449,7 @@ func cancelImageTaskSyncBridgeWait(c *gin.Context, task *model.Task, reason stri
 	service.ScheduleImageTaskRequestFileCleanup(current, current.FinishTime)
 	current.PrivateData.ResultBodyPath = ""
 	current.ImageTaskResultStored = false
+	current.ImageTaskResultStoredAt = 0
 	current.PrivateData.ResultBodySize = 0
 	current.PrivateData.ResultBodySHA256 = ""
 	current.PrivateData.ResultContentType = ""
@@ -517,36 +540,14 @@ func imageTaskSyncBridgeCanFailBeforeExecution(task *model.Task) bool {
 }
 
 func imageTaskSyncBridgeCanFailBeforeExecutionAt(task *model.Task, now int64) bool {
-	if task == nil {
-		return false
-	}
-	if (strings.TrimSpace(task.LockOwner) != "" && task.LockUntil > now) ||
-		strings.TrimSpace(task.PrivateData.UpstreamTaskID) != "" ||
-		task.PrivateData.UpstreamSubmitUncertainAt > 0 ||
-		task.PrivateData.UpstreamSubmitUncertainCount > 0 {
-		return false
-	}
-	switch task.Status {
-	case model.TaskStatusNotStart, model.TaskStatusQueued:
-		return true
-	default:
-		return false
-	}
+	return model.ImageTaskCanCancelBeforeExecution(task, now)
 }
 
 func updateImageTaskSyncBridgeCancelledBeforeExecution(task *model.Task, fromStatus model.TaskStatus, now int64) (bool, error) {
-	if task == nil {
-		return false, nil
-	}
-	result := model.DB.Model(task).
-		Where("status = ?", fromStatus).
-		Where("(lock_owner = '' OR lock_owner IS NULL OR COALESCE(lock_until, 0) <= ?)", now).
-		Select("*").
-		Updates(task)
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected > 0, nil
+	// Authoritative cancel CAS lives in the model layer: it re-reads under a row
+	// lock and re-checks lease + upstream submission markers so the WHERE clause
+	// cannot race past imageTaskSyncBridgeCanFailBeforeExecutionAt.
+	return model.ApplyImageTaskCancelBeforeExecution(task, fromStatus, now)
 }
 
 func imageTaskSyncBridgeFailureError(task *model.Task) *types.NewAPIError {
@@ -577,7 +578,7 @@ func imageTaskResponseResult(task *model.Task) (json.RawMessage, imageTaskResult
 	if task == nil {
 		return nil, imageTaskResultReady, ""
 	}
-	if task.PrivateData.ResultBodyPath == "" {
+	if strings.TrimSpace(task.PrivateData.ResultBodyPath) == "" {
 		if len(task.Data) == 0 {
 			return nil, imageTaskResultReady, ""
 		}
@@ -586,10 +587,33 @@ func imageTaskResponseResult(task *model.Task) (json.RawMessage, imageTaskResult
 		}
 		return append(json.RawMessage(nil), task.Data...), imageTaskResultReady, ""
 	}
+	file, availability, resultErr := openValidatedImageTaskResultFile(task)
+	if file == nil {
+		return nil, availability, resultErr
+	}
+	defer file.Close()
+	data, err := io.ReadAll(file)
+	if err != nil {
+		return nil, imageTaskResultUnreadable, imageTaskResultUnreadableMessage
+	}
+	return json.RawMessage(data), imageTaskResultReady, ""
+}
+
+// openValidatedImageTaskResultFile opens a stored result file, validates size and
+// SHA-256 by streaming (no full-file allocation beyond the hash buffer), then seeks
+// back to the start so callers can stream or read the body.
+func openValidatedImageTaskResultFile(task *model.Task) (*os.File, imageTaskResultAvailability, string) {
+	if task == nil {
+		return nil, imageTaskResultReady, ""
+	}
+	path := strings.TrimSpace(task.PrivateData.ResultBodyPath)
+	if path == "" {
+		return nil, imageTaskResultReady, ""
+	}
 	if task.PrivateData.ResultExpiresAt > 0 && time.Now().Unix() > task.PrivateData.ResultExpiresAt {
 		return nil, imageTaskResultGone, imageTaskResultExpiredMessage
 	}
-	data, err := os.ReadFile(task.PrivateData.ResultBodyPath)
+	file, err := os.Open(path)
 	if err != nil {
 		// 只有已经登记过清理的任务才能断定结果永久消失。其余读失败（共享缓存被运行时
 		// 禁用、挂载抖动、IO 错误）都必须当作暂时性的，否则会把可恢复故障报成过期。
@@ -598,19 +622,38 @@ func imageTaskResponseResult(task *model.Task) (json.RawMessage, imageTaskResult
 		}
 		return nil, imageTaskResultUnreadable, imageTaskResultUnreadableMessage
 	}
-	if task.PrivateData.ResultBodySize > 0 && int64(len(data)) != task.PrivateData.ResultBodySize {
+	hasher := sha256.New()
+	written, err := io.Copy(hasher, file)
+	if err != nil {
+		_ = file.Close()
+		return nil, imageTaskResultUnreadable, imageTaskResultUnreadableMessage
+	}
+	if task.PrivateData.ResultBodySize > 0 && written != task.PrivateData.ResultBodySize {
+		_ = file.Close()
 		return nil, imageTaskResultUnreadable, imageTaskResultUnreadableMessage
 	}
 	if task.PrivateData.ResultBodySHA256 != "" {
-		sum := sha256.Sum256(data)
-		if !strings.EqualFold(hex.EncodeToString(sum[:]), task.PrivateData.ResultBodySHA256) {
+		if !strings.EqualFold(hex.EncodeToString(hasher.Sum(nil)), task.PrivateData.ResultBodySHA256) {
+			_ = file.Close()
+			return nil, imageTaskResultUnreadable, imageTaskResultUnreadableMessage
+		}
+	} else {
+		// 历史数据没有摘要时，退回完整 JSON 校验（仍只发生一次，并 seek 回文件头）。
+		if _, err := file.Seek(0, io.SeekStart); err != nil {
+			_ = file.Close()
+			return nil, imageTaskResultUnreadable, imageTaskResultUnreadableMessage
+		}
+		data, readErr := io.ReadAll(file)
+		if readErr != nil || !common.JsonValid(data) {
+			_ = file.Close()
 			return nil, imageTaskResultUnreadable, imageTaskResultUnreadableMessage
 		}
 	}
-	if !common.JsonValid(data) {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		_ = file.Close()
 		return nil, imageTaskResultUnreadable, imageTaskResultUnreadableMessage
 	}
-	return json.RawMessage(data), imageTaskResultReady, ""
+	return file, imageTaskResultReady, ""
 }
 
 func imageTaskDataIsStoredResultPlaceholder(data json.RawMessage) bool {
@@ -1374,6 +1417,14 @@ func imageTaskStorageNodeForRequest(requestBodyPortable bool) string {
 		return model.ImageTaskPortableStorageNode
 	}
 	return common.NodeName
+}
+
+// imageTaskCreateBodyNotExecutable is true when this node cannot run the task and
+// other nodes would also be unable to read the request body.
+func imageTaskCreateBodyNotExecutable(requestBodyPortable bool) bool {
+	return !service.ImageTaskLocalExecutionAvailable() &&
+		!requestBodyPortable &&
+		!service.ImageTaskFileCacheSharedTrusted()
 }
 
 func imageTaskBillingRequestInputFromPersistedRequest(persisted *imageTaskPersistedRequest, headers map[string]string, requests ...dto.Request) *billingexpr.RequestInput {

@@ -194,7 +194,7 @@ func TestCleanupExpiredImageTaskResultsDeletesCancelledRequestFileOnOwnerNode(t 
 	require.False(t, reloaded.RequestCleanupPending)
 }
 
-func TestImageTaskExecutionAvailableRequiresCapableNode(t *testing.T) {
+func TestImageTaskExecutionAvailableIsClusterScoped(t *testing.T) {
 	oldUpdateTask := constant.UpdateTask
 	oldWorkerEnabled := constant.ImageTaskWorkerEnabled
 	oldMaster := common.IsMasterNode
@@ -209,17 +209,22 @@ func TestImageTaskExecutionAvailableRequiresCapableNode(t *testing.T) {
 	RunImageTasksFunc = func(context.Context, []*model.Task) error { return nil }
 	constant.UpdateTask = true
 
+	// Pure API node (no local worker, not master) can still accept creates; other
+	// nodes with workers/master poll pick the task up from the shared DB.
 	common.IsMasterNode = false
 	constant.ImageTaskWorkerEnabled = false
-	require.False(t, ImageTaskExecutionAvailable())
+	require.True(t, ImageTaskExecutionAvailable())
+	require.False(t, ImageTaskLocalExecutionAvailable())
 
 	common.IsMasterNode = true
 	constant.ImageTaskWorkerEnabled = false
 	require.True(t, ImageTaskExecutionAvailable())
+	require.True(t, ImageTaskLocalExecutionAvailable())
 
 	common.IsMasterNode = false
 	constant.ImageTaskWorkerEnabled = true
 	require.True(t, ImageTaskExecutionAvailable())
+	require.True(t, ImageTaskLocalExecutionAvailable())
 
 	constant.UpdateTask = false
 	require.False(t, ImageTaskExecutionAvailable())
@@ -227,6 +232,292 @@ func TestImageTaskExecutionAvailableRequiresCapableNode(t *testing.T) {
 	constant.UpdateTask = true
 	RunImageTasksFunc = nil
 	require.False(t, ImageTaskExecutionAvailable())
+}
+
+func TestGetImageTaskClusterExecutorAvailabilityUsesHeartbeatAdvertisement(t *testing.T) {
+	truncate(t)
+	oldUpdateTask := constant.UpdateTask
+	oldWorkerEnabled := constant.ImageTaskWorkerEnabled
+	oldMaster := common.IsMasterNode
+	oldNode := common.NodeName
+	oldRunner := RunImageTasksFunc
+	t.Cleanup(func() {
+		constant.UpdateTask = oldUpdateTask
+		constant.ImageTaskWorkerEnabled = oldWorkerEnabled
+		common.IsMasterNode = oldMaster
+		common.NodeName = oldNode
+		RunImageTasksFunc = oldRunner
+	})
+
+	RunImageTasksFunc = func(context.Context, []*model.Task) error { return nil }
+	constant.UpdateTask = true
+	common.IsMasterNode = false
+	constant.ImageTaskWorkerEnabled = false
+	common.NodeName = "api-node"
+
+	// No heartbeat rows: evidence unusable, do not claim "no executor".
+	avail := GetImageTaskClusterExecutorAvailability()
+	require.False(t, avail.Known)
+	require.False(t, avail.Has)
+
+	now := time.Now().Unix()
+	require.NoError(t, model.UpsertSystemInstance("api-node", map[string]any{
+		"role": map[string]any{"is_master": false, "image_task_executor": false},
+	}, now, now))
+	require.NoError(t, model.UpsertSystemInstance("worker-node", map[string]any{
+		"role": map[string]any{"is_master": false, "image_task_executor": true},
+	}, now, now))
+
+	avail = GetImageTaskClusterExecutorAvailability()
+	require.True(t, avail.Known)
+	require.True(t, avail.Has)
+
+	require.NoError(t, model.DB.Where("node_name = ?", "worker-node").Delete(&model.SystemInstance{}).Error)
+	avail = GetImageTaskClusterExecutorAvailability()
+	require.True(t, avail.Known)
+	require.False(t, avail.Has, "pure API cluster with only non-executors must report no executor")
+
+	// Legacy worker heartbeat without image_task_executor must not hard-fail creates.
+	require.NoError(t, model.UpsertSystemInstance("legacy-worker", map[string]any{
+		"role": map[string]any{"is_master": true},
+	}, now, now))
+	avail = GetImageTaskClusterExecutorAvailability()
+	require.False(t, avail.Known, "legacy heartbeat without capability field is incomplete evidence")
+	require.False(t, avail.Has)
+
+	// Local execution short-circuits heartbeat inspection.
+	constant.ImageTaskWorkerEnabled = true
+	avail = GetImageTaskClusterExecutorAvailability()
+	require.True(t, avail.Known)
+	require.True(t, avail.Has)
+}
+
+func TestGetImageTaskClusterExecutorAvailabilityRequiresExplicitFalseFromAllNodes(t *testing.T) {
+	truncate(t)
+	oldUpdateTask := constant.UpdateTask
+	oldWorkerEnabled := constant.ImageTaskWorkerEnabled
+	oldMaster := common.IsMasterNode
+	oldNode := common.NodeName
+	oldRunner := RunImageTasksFunc
+	t.Cleanup(func() {
+		constant.UpdateTask = oldUpdateTask
+		constant.ImageTaskWorkerEnabled = oldWorkerEnabled
+		common.IsMasterNode = oldMaster
+		common.NodeName = oldNode
+		RunImageTasksFunc = oldRunner
+	})
+
+	RunImageTasksFunc = func(context.Context, []*model.Task) error { return nil }
+	constant.UpdateTask = true
+	common.IsMasterNode = false
+	constant.ImageTaskWorkerEnabled = false
+	common.NodeName = "api-node"
+	now := time.Now().Unix()
+
+	require.NoError(t, model.UpsertSystemInstance("api-node", map[string]any{
+		"role": map[string]any{"image_task_executor": false},
+	}, now, now))
+	require.NoError(t, model.UpsertSystemInstance("api-node-2", map[string]any{
+		"role": map[string]any{"image_task_executor": false},
+	}, now, now))
+
+	avail := GetImageTaskClusterExecutorAvailability()
+	require.True(t, avail.Known)
+	require.False(t, avail.Has)
+}
+
+func TestImageTaskRequestBodyBase64FallbackForcedOnAPIOnlyNode(t *testing.T) {
+	oldShared := constant.ImageTaskFileCacheShared
+	oldTrusted := constant.ImageTaskFileCacheSharedTrusted
+	oldAffinity := constant.ImageTaskLocalFileCacheAffinity
+	oldWorkerEnabled := constant.ImageTaskWorkerEnabled
+	oldMaster := common.IsMasterNode
+	oldNode := common.NodeName
+	oldRunner := RunImageTasksFunc
+	t.Cleanup(func() {
+		constant.ImageTaskFileCacheShared = oldShared
+		constant.ImageTaskFileCacheSharedTrusted = oldTrusted
+		constant.ImageTaskLocalFileCacheAffinity = oldAffinity
+		constant.ImageTaskWorkerEnabled = oldWorkerEnabled
+		common.IsMasterNode = oldMaster
+		common.NodeName = oldNode
+		RunImageTasksFunc = oldRunner
+	})
+
+	RunImageTasksFunc = func(context.Context, []*model.Task) error { return nil }
+	constant.ImageTaskFileCacheShared = false
+	constant.ImageTaskFileCacheSharedTrusted = false
+	constant.ImageTaskLocalFileCacheAffinity = true
+	common.NodeName = "api-only"
+	common.IsMasterNode = false
+	constant.ImageTaskWorkerEnabled = false
+
+	require.True(t, ImageTaskRequestBodyBase64FallbackEnabled())
+
+	// Trusted shared cache still wins: bodies stay on the shared volume.
+	constant.ImageTaskFileCacheShared = true
+	constant.ImageTaskFileCacheSharedTrusted = true
+	require.False(t, ImageTaskRequestBodyBase64FallbackEnabled())
+}
+
+func TestLogImageTaskDeploymentWarningsCoversAPIOnlyAndDisabledSystem(t *testing.T) {
+	// Smoke-call the warning helper under the two residual deployment shapes
+	// from the closed-loop review: disabled system, and create-capable API-only.
+	// The helper must not panic and must remain safe to call at process start.
+	oldUpdateTask := constant.UpdateTask
+	oldWorkerEnabled := constant.ImageTaskWorkerEnabled
+	oldMaster := common.IsMasterNode
+	oldRunner := RunImageTasksFunc
+	oldRetention := constant.ImageTaskResultRetentionMinutes
+	t.Cleanup(func() {
+		constant.UpdateTask = oldUpdateTask
+		constant.ImageTaskWorkerEnabled = oldWorkerEnabled
+		common.IsMasterNode = oldMaster
+		RunImageTasksFunc = oldRunner
+		constant.ImageTaskResultRetentionMinutes = oldRetention
+	})
+
+	constant.ImageTaskResultRetentionMinutes = 720
+	constant.UpdateTask = false
+	RunImageTasksFunc = nil
+	require.NotPanics(t, logImageTaskDeploymentWarnings)
+
+	RunImageTasksFunc = func(context.Context, []*model.Task) error { return nil }
+	constant.UpdateTask = true
+	common.IsMasterNode = false
+	constant.ImageTaskWorkerEnabled = false
+	require.True(t, ImageTaskExecutionAvailable())
+	require.False(t, ImageTaskLocalExecutionAvailable())
+	require.NotPanics(t, logImageTaskDeploymentWarnings)
+
+	common.IsMasterNode = true
+	require.True(t, ImageTaskLocalExecutionAvailable())
+	require.NotPanics(t, logImageTaskDeploymentWarnings)
+}
+
+func TestRunImageTaskResultCleanupPassIsSafeOnNonMasterNode(t *testing.T) {
+	// Result lifecycle cleanup is no longer master-only; any node may run the
+	// pass. An empty DB must be a no-op rather than panic or require master.
+	truncate(t)
+	oldMaster := common.IsMasterNode
+	oldCleanupUnix := atomic.LoadInt64(&imageTaskResultRecordCleanupUnix)
+	common.IsMasterNode = false
+	atomic.StoreInt64(&imageTaskResultRecordCleanupUnix, 0)
+	t.Cleanup(func() {
+		common.IsMasterNode = oldMaster
+		atomic.StoreInt64(&imageTaskResultRecordCleanupUnix, oldCleanupUnix)
+	})
+
+	require.NotPanics(t, func() {
+		runImageTaskResultCleanupPass(context.Background())
+	})
+}
+
+func TestProcessImageTaskResultFileCleanupsSkipsForeignLocalResultPath(t *testing.T) {
+	truncate(t)
+	oldNodeName := common.NodeName
+	oldFileCacheShared := constant.ImageTaskFileCacheShared
+	oldFileCacheSharedTrusted := constant.ImageTaskFileCacheSharedTrusted
+	common.NodeName = "api-node-b"
+	constant.ImageTaskFileCacheShared = false
+	constant.ImageTaskFileCacheSharedTrusted = false
+	t.Cleanup(func() {
+		common.NodeName = oldNodeName
+		constant.ImageTaskFileCacheShared = oldFileCacheShared
+		constant.ImageTaskFileCacheSharedTrusted = oldFileCacheSharedTrusted
+	})
+
+	missingForeignPath := filepath.Join(t.TempDir(), "foreign-result.json")
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:                  "task_foreign_result_cleanup",
+		Platform:                constant.TaskPlatformImage,
+		Status:                  model.TaskStatusSuccess,
+		SettlementStatus:        model.TaskSettlementStatusSettled,
+		StorageNode:             "worker-node-a",
+		FinishTime:              now - 60,
+		ResultCleanedAt:         now,
+		ResultCleanupPending:    true,
+		ImageTaskResultStored:   true,
+		ImageTaskResultStoredAt: now - 60,
+		PrivateData: model.TaskPrivateData{
+			NodeName:          "worker-node-a",
+			ResultBodyPath:    missingForeignPath,
+			ResultBodySize:    123,
+			ResultBodySHA256:  "sha",
+			ResultContentType: "application/json",
+			ResultStoredAt:    now - 60,
+			ResultExpiresAt:   now + 3600,
+		},
+	}
+	task.SetData(map[string]any{"_newapi_result_file": true})
+	require.NoError(t, task.Insert())
+
+	processImageTaskResultFileCleanups(context.Background(), []model.ImageTaskResultCleanup{{
+		TaskPrimaryID: task.ID,
+		Path:          missingForeignPath,
+	}})
+
+	reloaded, exists, err := model.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.True(t, reloaded.ResultCleanupPending)
+	require.Equal(t, missingForeignPath, reloaded.PrivateData.ResultBodyPath)
+	require.True(t, reloaded.ImageTaskResultStored)
+	require.EqualValues(t, 123, reloaded.PrivateData.ResultBodySize)
+}
+
+func TestProcessImageTaskResultFileCleanupsKeepsUnknownOwnerMissingResultPath(t *testing.T) {
+	truncate(t)
+	oldNodeName := common.NodeName
+	oldFileCacheShared := constant.ImageTaskFileCacheShared
+	oldFileCacheSharedTrusted := constant.ImageTaskFileCacheSharedTrusted
+	common.NodeName = "api-node-b"
+	constant.ImageTaskFileCacheShared = false
+	constant.ImageTaskFileCacheSharedTrusted = false
+	t.Cleanup(func() {
+		common.NodeName = oldNodeName
+		constant.ImageTaskFileCacheShared = oldFileCacheShared
+		constant.ImageTaskFileCacheSharedTrusted = oldFileCacheSharedTrusted
+	})
+
+	missingPath := filepath.Join(t.TempDir(), "unknown-owner-result.json")
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:                  "task_unknown_owner_result_cleanup",
+		Platform:                constant.TaskPlatformImage,
+		Status:                  model.TaskStatusSuccess,
+		SettlementStatus:        model.TaskSettlementStatusSettled,
+		StorageNode:             model.ImageTaskPortableStorageNode,
+		FinishTime:              now - 60,
+		ResultCleanedAt:         now,
+		ResultCleanupPending:    true,
+		ImageTaskResultStored:   true,
+		ImageTaskResultStoredAt: now - 60,
+		PrivateData: model.TaskPrivateData{
+			ResultBodyPath:    missingPath,
+			ResultBodySize:    456,
+			ResultBodySHA256:  "sha",
+			ResultContentType: "application/json",
+			ResultStoredAt:    now - 60,
+			ResultExpiresAt:   now + 3600,
+		},
+	}
+	task.SetData(map[string]any{"_newapi_result_file": true})
+	require.NoError(t, task.Insert())
+
+	processImageTaskResultFileCleanups(context.Background(), []model.ImageTaskResultCleanup{{
+		TaskPrimaryID: task.ID,
+		Path:          missingPath,
+	}})
+
+	reloaded, exists, err := model.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.True(t, reloaded.ResultCleanupPending)
+	require.Equal(t, missingPath, reloaded.PrivateData.ResultBodyPath)
+	require.True(t, reloaded.ImageTaskResultStored)
+	require.EqualValues(t, 456, reloaded.PrivateData.ResultBodySize)
 }
 
 func TestScheduleImageTaskRequestFileCleanupRetainsOwnerPathUntilDeletion(t *testing.T) {

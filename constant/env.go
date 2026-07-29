@@ -32,6 +32,12 @@ var ImageTaskFileCacheSharedTrusted bool
 var ImageTaskLocalFileCacheAffinity bool
 var ImageTaskOrphanFailSeconds int
 var ImageTaskResultInlineMaxMB int
+// ImageTaskResultDownloadConcurrency is the per-process cap on concurrent public
+// result downloads. 0 disables the global limit.
+var ImageTaskResultDownloadConcurrency int
+// ImageTaskResultDownloadTokenConcurrency is the per-token cap on concurrent
+// public result downloads. 0 disables the per-token limit.
+var ImageTaskResultDownloadTokenConcurrency int
 var ImageTaskAccessRateLimitCount int
 var ImageTaskAccessRateLimitDurationSeconds int
 var ImageTaskCreateRateLimitCount int
