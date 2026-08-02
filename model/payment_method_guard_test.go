@@ -873,3 +873,34 @@ func TestExpireSubscriptionOrder_RejectsMismatchedPaymentProvider(t *testing.T) 
 	require.NotNil(t, order)
 	assert.Equal(t, common.TopUpStatusPending, order.Status)
 }
+
+func TestFailSubscriptionOrderMarksPendingOrderFailed(t *testing.T) {
+	truncateTables(t)
+
+	insertUserForPaymentGuardTest(t, 304, 0)
+	plan := insertSubscriptionPlanForPaymentGuardTest(t, 402)
+	insertSubscriptionOrderForPaymentGuardTest(t, "sub-fail-stripe", 304, plan.Id, PaymentProviderStripe)
+
+	err := FailSubscriptionOrder("sub-fail-stripe", PaymentProviderStripe)
+	require.NoError(t, err)
+
+	order := GetSubscriptionOrderByTradeNo("sub-fail-stripe")
+	require.NotNil(t, order)
+	assert.Equal(t, common.TopUpStatusFailed, order.Status)
+	assert.Greater(t, order.CompleteTime, int64(0))
+}
+
+func TestFailSubscriptionOrderRejectsMismatchedPaymentProvider(t *testing.T) {
+	truncateTables(t)
+
+	insertUserForPaymentGuardTest(t, 305, 0)
+	plan := insertSubscriptionPlanForPaymentGuardTest(t, 403)
+	insertSubscriptionOrderForPaymentGuardTest(t, "sub-fail-guard", 305, plan.Id, PaymentProviderStripe)
+
+	err := FailSubscriptionOrder("sub-fail-guard", PaymentProviderCreem)
+	require.ErrorIs(t, err, ErrPaymentMethodMismatch)
+
+	order := GetSubscriptionOrderByTradeNo("sub-fail-guard")
+	require.NotNil(t, order)
+	assert.Equal(t, common.TopUpStatusPending, order.Status)
+}

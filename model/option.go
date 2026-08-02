@@ -144,6 +144,7 @@ func InitOptionMap() {
 	common.OptionMap["Chats"] = setting.Chats2JsonString()
 	common.OptionMap["AutoGroups"] = setting.AutoGroups2JsonString()
 	common.OptionMap["DefaultUseAutoGroup"] = strconv.FormatBool(setting.DefaultUseAutoGroup)
+	common.OptionMap["MaxTokenAutoGroups"] = strconv.Itoa(setting.GetMaxTokenAutoGroups())
 	common.OptionMap["PayMethods"] = operation_setting.PayMethods2JsonString()
 	common.OptionMap["GitHubClientId"] = ""
 	common.OptionMap["GitHubClientSecret"] = ""
@@ -155,6 +156,8 @@ func InitOptionMap() {
 	common.OptionMap["TurnstileSiteKey"] = ""
 	common.OptionMap["TurnstileSecretKey"] = ""
 	common.OptionMap["QuotaForNewUser"] = strconv.Itoa(common.QuotaForNewUser)
+	common.OptionMap["QuotaForInviter"] = strconv.Itoa(common.QuotaForInviter)
+	common.OptionMap["QuotaForInvitee"] = strconv.Itoa(common.QuotaForInvitee)
 	common.OptionMap["QuotaRemindThreshold"] = strconv.Itoa(common.QuotaRemindThreshold)
 	common.OptionMap["PreConsumedQuota"] = strconv.Itoa(common.PreConsumedQuota)
 	common.OptionMap["ModelRequestRateLimitCount"] = strconv.Itoa(setting.ModelRequestRateLimitCount)
@@ -256,9 +259,22 @@ func SyncOptions(frequency int) {
 	}
 }
 
+func validateOptionValue(key string, value string) error {
+	if key == operation_setting.ToolPriceOptionKey {
+		return operation_setting.ValidateToolPricesJSON(value)
+	}
+	if key == "MaxTokenAutoGroups" {
+		return setting.ValidateMaxTokenAutoGroups(value)
+	}
+	return nil
+}
+
 func UpdateOption(key string, value string) error {
 	if IsDeprecatedOptionKey(key) {
 		return errors.New("deprecated option key")
+	}
+	if err := validateOptionValue(key, value); err != nil {
+		return err
 	}
 	normalizedValue, err := normalizeOptionValueForStorage(key, value)
 	if err != nil {
@@ -298,6 +314,9 @@ func UpdateOptionsBulk(values map[string]string) error {
 		if IsDeprecatedOptionKey(k) {
 			return errors.New("deprecated option key")
 		}
+		if err := validateOptionValue(k, v); err != nil {
+			return err
+		}
 		normalizedValue, err := normalizeOptionValueForStorage(k, v)
 		if err != nil {
 			return err
@@ -332,6 +351,10 @@ func UpdateOptionsBulk(values map[string]string) error {
 func updateOptionMap(key string, value string) (err error) {
 	common.OptionMapRWMutex.Lock()
 	defer common.OptionMapRWMutex.Unlock()
+	if key == retiredThemeOptionKey {
+		delete(common.OptionMap, key)
+		return nil
+	}
 	common.OptionMap[key] = value
 
 	// 检查是否是模型配置 - 使用更规范的方式处理
@@ -474,6 +497,8 @@ func updateOptionMap(key string, value string) (err error) {
 		err = setting.UpdateChatsByJsonString(value)
 	case "AutoGroups":
 		err = setting.UpdateAutoGroupsByJsonString(value)
+	case "MaxTokenAutoGroups":
+		err = setting.UpdateMaxTokenAutoGroups(value)
 	case "CustomCallbackAddress":
 		operation_setting.CustomCallbackAddress = value
 	case "EpayId":
@@ -612,6 +637,10 @@ func updateOptionMap(key string, value string) (err error) {
 		common.TurnstileSecretKey = value
 	case "QuotaForNewUser":
 		common.QuotaForNewUser, _ = strconv.Atoi(value)
+	case "QuotaForInviter":
+		common.QuotaForInviter, _ = strconv.Atoi(value)
+	case "QuotaForInvitee":
+		common.QuotaForInvitee, _ = strconv.Atoi(value)
 	case "QuotaRemindThreshold":
 		common.QuotaRemindThreshold, _ = strconv.Atoi(value)
 	case "PreConsumedQuota":

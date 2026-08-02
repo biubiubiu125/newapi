@@ -18,11 +18,11 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -37,6 +37,31 @@ type taskPollingFetchAdaptor struct {
 	blockStarted chan struct{}
 	releaseBlock chan struct{}
 	blockOnce    sync.Once
+}
+
+type sunoResponsePollingAdaptor struct {
+	response dto.TaskResponse[[]dto.SunoDataResponse]
+}
+
+func (a *sunoResponsePollingAdaptor) Init(_ *relaycommon.RelayInfo) {}
+
+func (a *sunoResponsePollingAdaptor) FetchTask(_ string, _ string, _ map[string]any, _ string) (*http.Response, error) {
+	body, err := common.Marshal(a.response)
+	if err != nil {
+		return nil, err
+	}
+	return &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(body)),
+	}, nil
+}
+
+func (a *sunoResponsePollingAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
+	return nil, nil
+}
+
+func (a *sunoResponsePollingAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
+	return 0
 }
 
 func TestRecoverPendingImageTaskRefundsClearsCompletedIntent(t *testing.T) {
@@ -150,6 +175,66 @@ func seedPollingTask(t *testing.T, channelID int, publicID string, upstreamID st
 	}
 	require.NoError(t, model.DB.Create(task).Error)
 	return task
+}
+
+func TestUpdateSunoTasksDoesNotRefundWhenStatusCASIsLost(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID, channelID = 9701, 9702, 9703
+	const preConsumed = 1200
+	const upstreamTaskID = "suno-cas-lost-upstream"
+	baseURL := "https://suno.example"
+	seedUser(t, userID, 8800)
+	seedToken(t, tokenID, userID, "suno-cas-lost-token", 3800)
+	require.NoError(t, model.DB.Model(&model.Token{}).Where("id = ?", tokenID).Update("used_quota", preConsumed).Error)
+	setUserUsageCounters(t, userID, preConsumed, 1)
+	model.RecordTokenUsage(tokenID, userID, preConsumed, common.GetTimestamp())
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id:      channelID,
+		Name:    "suno-cas-lost-channel",
+		Key:     "suno-key",
+		Status:  common.ChannelStatusEnabled,
+		BaseURL: &baseURL,
+	}).Error)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "suno-cas-lost-public"
+	task.Platform = constant.TaskPlatformSuno
+	task.Status = model.TaskStatusSuccess
+	task.Progress = "100%"
+	task.PrivateData.UpstreamTaskID = upstreamTaskID
+	require.NoError(t, model.DB.Create(task).Error)
+
+	staleTask := *task
+	staleTask.Status = model.TaskStatusSubmitted
+	staleTask.Progress = "50%"
+	adaptor := &sunoResponsePollingAdaptor{
+		response: dto.TaskResponse[[]dto.SunoDataResponse]{
+			Code: dto.TaskSuccessCode,
+			Data: []dto.SunoDataResponse{{
+				TaskID:     upstreamTaskID,
+				Status:     string(model.TaskStatusFailure),
+				FailReason: "upstream failed",
+			}},
+		},
+	}
+	previousFactory := GetTaskAdaptorFunc
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return adaptor }
+	t.Cleanup(func() { GetTaskAdaptorFunc = previousFactory })
+
+	require.NoError(t, updateSunoTasks(context.Background(), channelID, []string{upstreamTaskID}, map[string]*model.Task{
+		upstreamTaskID: &staleTask,
+	}))
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, 8800, getUserQuota(t, userID))
+	require.Equal(t, 3800, getTokenRemainQuota(t, tokenID))
+	require.Equal(t, preConsumed, getTokenUsedQuota(t, tokenID))
+	usedQuota, requestCount := getUserUsageCounters(t, userID)
+	require.Equal(t, preConsumed, usedQuota)
+	require.Equal(t, 1, requestCount)
 }
 
 func TestCleanupExpiredImageTaskResultsDeletesCancelledRequestFileOnOwnerNode(t *testing.T) {

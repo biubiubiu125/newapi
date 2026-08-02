@@ -99,6 +99,9 @@ const AccountManagement = ({
   const isBound = (accountId) => Boolean(accountId);
   const [showTelegramBindModal, setShowTelegramBindModal] =
     React.useState(false);
+  const [telegramBindCallbackUrl, setTelegramBindCallbackUrl] =
+    React.useState('');
+  const [telegramBindLoading, setTelegramBindLoading] = React.useState(false);
   const [customOAuthBindings, setCustomOAuthBindings] = React.useState([]);
   const [customOAuthLoading, setCustomOAuthLoading] = React.useState({});
 
@@ -152,6 +155,40 @@ const AccountManagement = ({
   const handleBindCustomOAuth = (provider) => {
     onCustomOAuthClicked(provider);
   };
+
+  const startTelegramBindFlow = React.useCallback(async () => {
+    setTelegramBindLoading(true);
+    setTelegramBindCallbackUrl('');
+    try {
+      const res = await API.post('/api/oauth/telegram/bind/start');
+      if (!res.data.success || !res.data.data?.callback_url) {
+        throw new Error(
+          res.data.message || t('Telegram bind initialization failed'),
+        );
+      }
+      const callbackUrl = new URL(
+        res.data.data.callback_url,
+        window.location.origin,
+      ).toString();
+      setTelegramBindCallbackUrl(callbackUrl);
+    } catch (error) {
+      showError(
+        error.response?.data?.message ||
+          error.message ||
+          t('Telegram bind initialization failed'),
+      );
+    } finally {
+      setTelegramBindLoading(false);
+    }
+  }, [t]);
+
+  React.useEffect(() => {
+    if (showTelegramBindModal) {
+      startTelegramBindFlow();
+      return;
+    }
+    setTelegramBindCallbackUrl('');
+  }, [showTelegramBindModal, startTelegramBindFlow]);
 
   // Check if custom OAuth provider is bound
   const isCustomOAuthBound = (providerId) => {
@@ -478,10 +515,26 @@ const AccountManagement = ({
                 </div>
                 <div className='flex justify-center'>
                   <div className='scale-90'>
-                    <TelegramLoginButton
-                      dataAuthUrl='/api/oauth/telegram/bind'
-                      botName={status.telegram_bot_name}
-                    />
+                    {telegramBindLoading ? (
+                      <div className='text-sm text-gray-500'>
+                        {t('Loading...')}
+                      </div>
+                    ) : telegramBindCallbackUrl ? (
+                      <TelegramLoginButton
+                        key={telegramBindCallbackUrl}
+                        dataAuthUrl={telegramBindCallbackUrl}
+                        botName={status.telegram_bot_name}
+                      />
+                    ) : (
+                      <Button
+                        type='primary'
+                        theme='outline'
+                        size='small'
+                        onClick={startTelegramBindFlow}
+                      >
+                        {t('閲嶈瘯')}
+                      </Button>
+                    )}
                   </div>
                 </div>
               </Modal>

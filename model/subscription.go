@@ -789,7 +789,10 @@ func CompleteSubscriptionOrderWithValidation(tradeNo string, providerPayload str
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		var order SubscriptionOrder
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
-			return ErrSubscriptionOrderNotFound
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrSubscriptionOrderNotFound
+			}
+			return err
 		}
 		if validation.ExpectedPaymentProvider != "" && order.PaymentProvider != validation.ExpectedPaymentProvider {
 			return ErrPaymentMethodMismatch
@@ -948,7 +951,10 @@ func ExpireSubscriptionOrder(tradeNo string, expectedPaymentProvider string) err
 	return DB.Transaction(func(tx *gorm.DB) error {
 		var order SubscriptionOrder
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
-			return ErrSubscriptionOrderNotFound
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrSubscriptionOrderNotFound
+			}
+			return err
 		}
 		if expectedPaymentProvider != "" && order.PaymentProvider != expectedPaymentProvider {
 			return ErrPaymentMethodMismatch
@@ -957,6 +963,34 @@ func ExpireSubscriptionOrder(tradeNo string, expectedPaymentProvider string) err
 			return nil
 		}
 		order.Status = common.TopUpStatusExpired
+		order.CompleteTime = common.GetTimestamp()
+		return tx.Save(&order).Error
+	})
+}
+
+func FailSubscriptionOrder(tradeNo string, expectedPaymentProvider string) error {
+	if tradeNo == "" {
+		return errors.New("tradeNo is empty")
+	}
+	refCol := "`trade_no`"
+	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
+		refCol = `"trade_no"`
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var order SubscriptionOrder
+		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(&order).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrSubscriptionOrderNotFound
+			}
+			return err
+		}
+		if expectedPaymentProvider != "" && order.PaymentProvider != expectedPaymentProvider {
+			return ErrPaymentMethodMismatch
+		}
+		if order.Status != common.TopUpStatusPending {
+			return nil
+		}
+		order.Status = common.TopUpStatusFailed
 		order.CompleteTime = common.GetTimestamp()
 		return tx.Save(&order).Error
 	})

@@ -87,3 +87,6 @@ export const getChannelPermissionFlags = (permissions, user) => ({
     user,
   ),
 });
+
+export const canRepairChannelConsistency = (channelPermissions) =>
+  channelPermissions?.canOperateChannel === true;

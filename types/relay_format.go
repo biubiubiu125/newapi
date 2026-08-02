@@ -1,19 +1,21 @@
 package types
 
-type RelayFormat string
+import kittypes "github.com/QuantumNous/new-api/relaykit/types"
+
+type RelayFormat = kittypes.RelayFormat
 
 const (
-	RelayFormatOpenAI                    RelayFormat = "openai"
-	RelayFormatClaude                                = "claude"
-	RelayFormatGemini                                = "gemini"
-	RelayFormatOpenAIResponses                       = "openai_responses"
-	RelayFormatOpenAIResponsesCompaction             = "openai_responses_compaction"
-	RelayFormatOpenAIAudio                           = "openai_audio"
-	RelayFormatOpenAIImage                           = "openai_image"
-	RelayFormatOpenAIRealtime                        = "openai_realtime"
-	RelayFormatRerank                                = "rerank"
-	RelayFormatEmbedding                             = "embedding"
-
-	RelayFormatTask    = "task"
-	RelayFormatMjProxy = "mj_proxy"
+	RelayFormatOpenAI                    = kittypes.RelayFormatOpenAI
+	RelayFormatClaude                    = kittypes.RelayFormatClaude
+	RelayFormatGemini                    = kittypes.RelayFormatGemini
+	RelayFormatOpenAIResponses           = kittypes.RelayFormatOpenAIResponses
+	RelayFormatOpenAIResponsesCompaction = kittypes.RelayFormatOpenAIResponsesCompaction
+	RelayFormatOpenAIAlphaSearch         = kittypes.RelayFormatOpenAIAlphaSearch
+	RelayFormatOpenAIAudio               = kittypes.RelayFormatOpenAIAudio
+	RelayFormatOpenAIImage               = kittypes.RelayFormatOpenAIImage
+	RelayFormatOpenAIRealtime            = kittypes.RelayFormatOpenAIRealtime
+	RelayFormatRerank                    = kittypes.RelayFormatRerank
+	RelayFormatEmbedding                 = kittypes.RelayFormatEmbedding
+	RelayFormatTask                      = kittypes.RelayFormatTask
+	RelayFormatMjProxy                   = kittypes.RelayFormatMjProxy
 )

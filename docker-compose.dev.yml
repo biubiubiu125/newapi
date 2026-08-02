@@ -32,7 +32,8 @@ services:
       - TZ=Asia/Shanghai
       - BATCH_UPDATE_ENABLED=false
       - TRUST_QUOTA=0
-      # Enable only when accessing the dev backend through HTTPS. SESSION_COOKIE_TRUSTED_URL is required when true.
+      - SESSION_COOKIE_SECURE=false
+      # Enable Secure cookies only for HTTPS and list exact browser origins.
       # - SESSION_COOKIE_SECURE=true
       # - SESSION_COOKIE_TRUSTED_URL=https://example.com,https://admin.example.com
     depends_on:

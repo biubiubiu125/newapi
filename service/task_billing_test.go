@@ -17,9 +17,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
@@ -2112,6 +2112,39 @@ func TestSweepTimedOutTasksStillFailsNonImageTask(t *testing.T) {
 	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
 	require.Equal(t, "100%", reloaded.Progress)
 	require.NotEmpty(t, reloaded.FailReason)
+}
+
+func TestSweepTimedOutTasksClearsLegacyTaskQuota(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Exec("DELETE FROM tasks").Error)
+	require.NoError(t, model.DB.Exec("DELETE FROM logs").Error)
+	oldTaskTimeoutMinutes := constant.TaskTimeoutMinutes
+	constant.TaskTimeoutMinutes = 1
+	t.Cleanup(func() {
+		constant.TaskTimeoutMinutes = oldTaskTimeoutMinutes
+	})
+
+	task := &model.Task{
+		TaskID:     "task_legacy_timeout_no_refund",
+		Platform:   constant.TaskPlatform("video"),
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Quota:      321,
+		Status:     model.TaskStatusSubmitted,
+		Progress:   "50%",
+		SubmitTime: model.TaskRefundLegacyCutoff - 1,
+		StartTime:  model.TaskRefundLegacyCutoff - 1,
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	sweepTimedOutTasks(context.Background())
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&reloaded).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
+	require.Zero(t, reloaded.Quota)
+	require.Contains(t, reloaded.FailReason, "旧系统遗留任务")
 }
 
 func TestRunTaskPollingOnceSkipsFutureImageTask(t *testing.T) {

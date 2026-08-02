@@ -8,12 +8,13 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -89,15 +90,36 @@ func Login(c *gin.Context) {
 	}
 
 	// 检查是否启用2FA
-	if model.IsTwoFAEnabled(user.Id) {
+	twoFAEnabled, err := model.IsTwoFAEnabled(user.Id)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("Login failed to load 2FA status for user %d: %v", user.Id, err))
+		common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+		return
+	}
+	if twoFAEnabled {
+		expiresAt := time.Now().Add(5 * time.Minute)
+		payload, err := common.Marshal(twoFALoginFlowPayload{AuthVersion: user.AuthVersion})
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		flowToken, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
+			Purpose:   model.AuthFlowPurposeTwoFALogin,
+			UserId:    user.Id,
+			Payload:   string(payload),
+			ExpiresAt: expiresAt,
+		})
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+
 		// 设置pending session，等待2FA验证
 		session := sessions.Default(c)
 		session.Set("pending_username", user.Username)
 		session.Set("pending_user_id", user.Id)
-		err := session.Save()
-		if err != nil {
-			common.ApiErrorI18n(c, i18n.MsgUserSessionSaveFailed)
-			return
+		if err := session.Save(); err != nil {
+			common.SysLog(fmt.Sprintf("Login failed to persist legacy 2FA session for user %d: %v", user.Id, err))
 		}
 
 		c.JSON(http.StatusOK, gin.H{
@@ -105,6 +127,8 @@ func Login(c *gin.Context) {
 			"success": true,
 			"data": map[string]interface{}{
 				"require_2fa": true,
+				"flow_token":  flowToken,
+				"expires_at":  expiresAt.Unix(),
 			},
 		})
 		return
@@ -150,8 +174,52 @@ func recordLoginAudit(user *model.User, c *gin.Context) {
 	}, extra)
 }
 
-// setup session & cookies and then return user info
+// setupLogin creates a server-controlled login session and returns its bundle.
 func setupLogin(user *model.User, c *gin.Context) {
+	setupLoginWithExtra(user, c, nil)
+}
+
+func setupLoginWithExtra(user *model.User, c *gin.Context, extraData gin.H) {
+	setupLoginAtAuthVersionWithExtra(user, 0, c, extraData)
+}
+
+func setupLoginAtAuthVersion(user *model.User, expectedAuthVersion int64, c *gin.Context) {
+	setupLoginAtAuthVersionWithExtra(user, expectedAuthVersion, c, nil)
+}
+
+func setupLoginAtAuthVersionWithExtra(user *model.User, expectedAuthVersion int64, c *gin.Context, extraData gin.H) {
+	if user == nil || user.Id <= 0 || user.Status != common.UserStatusEnabled {
+		common.ApiErrorI18n(c, i18n.MsgAuthUserBanned)
+		return
+	}
+	currentUser, err := model.GetUserById(user.Id, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+
+	var bundle *service.AuthBundle
+	if expectedAuthVersion > 0 {
+		bundle, err = service.CreateLoginSessionAtAuthVersion(
+			user.Id,
+			expectedAuthVersion,
+			loginMethodFromContext(c),
+			c.ClientIP(),
+			c.Request.UserAgent(),
+		)
+	} else {
+		bundle, err = service.CreateLoginSession(
+			user.Id,
+			loginMethodFromContext(c),
+			c.ClientIP(),
+			c.Request.UserAgent(),
+		)
+	}
+	if err != nil {
+		writeAuthSessionError(c, err)
+		return
+	}
+
 	model.UpdateUserLastLoginAt(user.Id)
 	session := sessions.Default(c)
 	session.Set("id", user.Id)
@@ -159,24 +227,38 @@ func setupLogin(user *model.User, c *gin.Context) {
 	session.Set("role", user.Role)
 	session.Set("status", user.Status)
 	session.Set("group", user.Group)
-	err := session.Save()
-	if err != nil {
-		common.ApiErrorI18n(c, i18n.MsgUserSessionSaveFailed)
-		return
+	if err := session.Save(); err != nil {
+		common.SysLog(fmt.Sprintf("failed to persist legacy login session for user %d: %v", user.Id, err))
 	}
+	service.WriteRefreshCookie(c, bundle.RefreshToken)
+	setAuthNoStore(c)
 	recordLoginAudit(user, c)
+	data := buildAuthBundleData(bundle, currentUser)
+	for key, value := range extraData {
+		if key != "" && value != nil {
+			data[key] = value
+		}
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"message": "",
 		"success": true,
-		"data": map[string]any{
-			"id":           user.Id,
-			"username":     user.Username,
-			"display_name": user.DisplayName,
-			"role":         user.Role,
-			"status":       user.Status,
-			"group":        user.Group,
-		},
+		"data":    data,
 	})
+}
+
+func buildAuthBundleData(bundle *service.AuthBundle, user *model.User) gin.H {
+	userData := buildSelfUserData(user)
+	data := gin.H{
+		"access_token":      bundle.AccessToken,
+		"token_type":        bundle.TokenType,
+		"access_expires_at": bundle.AccessExpiresAt,
+		"session":           bundle.Session,
+		"user":              userData,
+	}
+	for key, value := range userData {
+		data[key] = value
+	}
+	return data
 }
 
 func Logout(c *gin.Context) {
@@ -541,6 +623,40 @@ func GetSelf(c *gin.Context) {
 }
 
 // 计算用户权限的辅助函数
+func buildSelfUserData(user *model.User) map[string]interface{} {
+	if user == nil {
+		return nil
+	}
+	userSetting := user.GetSetting()
+	return map[string]interface{}{
+		"id":                user.Id,
+		"username":          user.Username,
+		"display_name":      user.DisplayName,
+		"role":              user.Role,
+		"status":            user.Status,
+		"email":             user.Email,
+		"github_id":         user.GitHubId,
+		"discord_id":        user.DiscordId,
+		"oidc_id":           user.OidcId,
+		"wechat_id":         user.WeChatId,
+		"telegram_id":       user.TelegramId,
+		"group":             user.Group,
+		"quota":             user.Quota,
+		"used_quota":        user.UsedQuota,
+		"request_count":     user.RequestCount,
+		"aff_code":          user.AffCode,
+		"aff_count":         user.AffCount,
+		"aff_quota":         user.AffQuota,
+		"aff_history_quota": user.AffHistoryQuota,
+		"inviter_id":        user.InviterId,
+		"linux_do_id":       user.LinuxDOId,
+		"setting":           user.Setting,
+		"stripe_customer":   user.StripeCustomer,
+		"sidebar_modules":   userSetting.SidebarModules,
+		"permissions":       calculateUserPermissions(user.Id, user.Role),
+	}
+}
+
 func calculateUserPermissions(userID int, userRole int) map[string]interface{} {
 	permissions := map[string]interface{}{}
 
@@ -1145,6 +1261,16 @@ func ManageUser(c *gin.Context) {
 		if err := model.InvalidateUserTokensCache(user.Id); err != nil {
 			common.SysLog(fmt.Sprintf("failed to invalidate tokens cache for user %d: %s", user.Id, err.Error()))
 		}
+		recordManageAuditFor(c, user.Id, "user.manage", map[string]interface{}{
+			"action":   req.Action,
+			"username": user.Username,
+			"id":       user.Id,
+		})
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+		})
+		return
 	case "promote":
 		if myRole != common.RoleRootUser {
 			common.ApiErrorI18n(c, i18n.MsgUserAdminCannotPromote)
@@ -1210,9 +1336,16 @@ func ManageUser(c *gin.Context) {
 			"message": "",
 		})
 		return
+	default:
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
 	}
 
-	if err := user.Update(false); err != nil {
+	revocationReason := "user_security_changed"
+	if req.Action == "demote" {
+		revocationReason = "admin_demote"
+	}
+	if err := user.UpdateWithSessionRevocationReason(false, revocationReason); err != nil {
 		common.ApiError(c, err)
 		return
 	}

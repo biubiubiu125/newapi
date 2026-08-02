@@ -12,9 +12,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -54,6 +54,8 @@ const (
 
 	ImageTaskPortableStorageNode = "__portable__"
 )
+
+const TaskRefundLegacyCutoff int64 = 1771718400 // 2026-02-22 00:00:00 UTC
 
 type Task struct {
 	ID                        int64                 `json:"id" gorm:"primary_key;AUTO_INCREMENT;index:idx_task_image_dispatch,priority:6;index:idx_task_image_settlement_dispatch,priority:7;index:idx_task_image_node_dispatch,priority:7;index:idx_task_image_node_settlement,priority:8"`

@@ -2,13 +2,16 @@ package middleware
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -21,6 +24,26 @@ var inMemoryRateLimiter common.InMemoryRateLimiter
 var defNext = func(c *gin.Context) {
 	c.Next()
 }
+
+const redisRateLimitNamespace = "rateLimit:v2"
+
+// Redis fixed-window limiting is kept for compatibility with endpoint-level
+// limiters that need the current window count and remaining TTL.
+const redisFixedWindowScript = `
+local count = redis.call('INCR', KEYS[1])
+if count == 1 then
+  redis.call('EXPIRE', KEYS[1], ARGV[2])
+end
+local ttl = redis.call('TTL', KEYS[1])
+if ttl < 0 then
+  redis.call('EXPIRE', KEYS[1], ARGV[2])
+  ttl = redis.call('TTL', KEYS[1])
+end
+if count > tonumber(ARGV[1]) then
+  return {0, count, ttl}
+end
+return {1, count, ttl}
+`
 
 const redisSlidingWindowRateLimitScript = `
 local key = KEYS[1]
@@ -62,6 +85,67 @@ redis.call("EXPIRE", key, expiration)
 return 1
 `
 
+func redisIPRateLimitKey(mark string, clientIP string) string {
+	return fmt.Sprintf("%s:ip:%s:%s", redisRateLimitNamespace, mark, clientIP)
+}
+
+func redisReplyInteger(value interface{}) (int64, error) {
+	switch typed := value.(type) {
+	case int64:
+		return typed, nil
+	case string:
+		return strconv.ParseInt(typed, 10, 64)
+	case []byte:
+		return strconv.ParseInt(string(typed), 10, 64)
+	default:
+		return 0, fmt.Errorf("unexpected Redis integer reply type %T", value)
+	}
+}
+
+func redisFixedWindowTake(ctx context.Context, key string, maxRequestNum int, duration int64) (bool, int64, int64, error) {
+	if common.RDB == nil {
+		return false, 0, 0, errors.New("Redis client is not initialized")
+	}
+	if key == "" {
+		return false, 0, 0, errors.New("rate limit key is empty")
+	}
+	if maxRequestNum <= 0 {
+		return false, 0, 0, errors.New("rate limit maximum must be positive")
+	}
+	if duration <= 0 {
+		return false, 0, 0, errors.New("rate limit duration must be positive")
+	}
+
+	values, err := common.RDB.Eval(
+		ctx,
+		redisFixedWindowScript,
+		[]string{key},
+		maxRequestNum,
+		duration,
+	).Slice()
+	if err != nil {
+		return false, 0, 0, err
+	}
+	if len(values) != 3 {
+		return false, 0, 0, fmt.Errorf("unexpected Redis rate limit reply length %d", len(values))
+	}
+
+	allowedValue, err := redisReplyInteger(values[0])
+	if err != nil {
+		return false, 0, 0, err
+	}
+	count, err := redisReplyInteger(values[1])
+	if err != nil {
+		return false, 0, 0, err
+	}
+	ttlSeconds, err := redisReplyInteger(values[2])
+	if err != nil {
+		return false, 0, 0, err
+	}
+
+	return allowedValue == 1, count, ttlSeconds, nil
+}
+
 func redisSlidingWindowAllowed(ctx context.Context, key string, maxRequestNum int, duration int64) (bool, error) {
 	now := time.Now().UnixMilli()
 	result, err := common.RDB.Eval(
@@ -79,9 +163,9 @@ func redisSlidingWindowAllowed(ctx context.Context, key string, maxRequestNum in
 	return result == 1, nil
 }
 
-func abortOnRateLimitResult(c *gin.Context, allowed bool, err error) {
+func abortOnRateLimitResult(c *gin.Context, allowed bool, err error, retryAfterSeconds int64) {
 	if err != nil {
-		fmt.Println(err.Error())
+		logger.LogError(c.Request.Context(), fmt.Sprintf("rate limit check failed: %v", err))
 		c.JSON(http.StatusInternalServerError, gin.H{
 			"success": false,
 			"message": "rate limiter error",
@@ -90,11 +174,14 @@ func abortOnRateLimitResult(c *gin.Context, allowed bool, err error) {
 		return
 	}
 	if !allowed {
-		abortTooManyRequests(c)
+		abortTooManyRequests(c, retryAfterSeconds)
 	}
 }
 
-func abortTooManyRequests(c *gin.Context) {
+func abortTooManyRequests(c *gin.Context, retryAfterSeconds int64) {
+	if retryAfterSeconds > 0 {
+		c.Header("Retry-After", strconv.FormatInt(retryAfterSeconds, 10))
+	}
 	c.JSON(http.StatusTooManyRequests, gin.H{
 		"success": false,
 		"message": "Too many requests",
@@ -113,12 +200,12 @@ func abortUnauthorized(c *gin.Context) {
 func redisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string) {
 	ctx := context.Background()
 	allowed, err := redisSlidingWindowAllowed(ctx, "rateLimit:"+key, maxRequestNum, duration)
-	abortOnRateLimitResult(c, allowed, err)
+	abortOnRateLimitResult(c, allowed, err, duration)
 }
 
 func memoryRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string) {
 	if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
-		abortTooManyRequests(c)
+		abortTooManyRequests(c, duration)
 		return
 	}
 }
@@ -349,7 +436,7 @@ func sessionNonceRateLimitKey(field string) func(*gin.Context, string) string {
 			nonce = common.GetRandomString(32)
 			session.Set(field, nonce)
 			if err := session.Save(); err != nil {
-				abortOnRateLimitResult(c, false, err)
+				abortOnRateLimitResult(c, false, err, 0)
 				return ""
 			}
 		}
@@ -492,6 +579,13 @@ func EmailBodyCriticalRateLimit(mark string) func(c *gin.Context) {
 	return defNext
 }
 
+func EmailQueryRateLimit(mark string) func(c *gin.Context) {
+	if common.CriticalRateLimitEnable {
+		return rateLimitFactoryWithKeyFunc(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, mark, queryRateLimitKey("email", model.NormalizeUserEmail))
+	}
+	return defNext
+}
+
 func RegisterCriticalRateLimit(mark string) func(c *gin.Context) {
 	if common.CriticalRateLimitEnable {
 		return rateLimitFactoryWithKeyFunc(common.CriticalRateLimitNum, common.CriticalRateLimitDuration, mark, registerRateLimitKey)
@@ -581,7 +675,7 @@ func userRateLimitFactory(maxRequestNum int, duration int64, mark string) func(c
 		}
 		key := fmt.Sprintf("%s:user:%d", mark, userId)
 		if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
-			abortTooManyRequests(c)
+			abortTooManyRequests(c, duration)
 			return
 		}
 	}
@@ -609,7 +703,7 @@ func sessionUserRateLimitFactory(maxRequestNum int, duration int64, mark string)
 		}
 		key := fmt.Sprintf("%s:%s", mark, identity)
 		if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
-			abortTooManyRequests(c)
+			abortTooManyRequests(c, duration)
 			return
 		}
 	}
@@ -637,7 +731,7 @@ func authenticatedRateLimitFactory(maxRequestNum int, duration int64, mark strin
 		}
 		key := fmt.Sprintf("%s:%s", mark, identity)
 		if !inMemoryRateLimiter.Request(key, maxRequestNum, duration) {
-			abortTooManyRequests(c)
+			abortTooManyRequests(c, duration)
 			return
 		}
 	}
@@ -648,7 +742,7 @@ func authenticatedRateLimitFactory(maxRequestNum int, duration int64, mark strin
 func userRedisRateLimiter(c *gin.Context, maxRequestNum int, duration int64, key string) {
 	ctx := context.Background()
 	allowed, err := redisSlidingWindowAllowed(ctx, key, maxRequestNum, duration)
-	abortOnRateLimitResult(c, allowed, err)
+	abortOnRateLimitResult(c, allowed, err, duration)
 }
 
 // SearchRateLimit returns a per-user rate limiter for search endpoints.

@@ -9,9 +9,9 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/dto"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -49,7 +49,7 @@ func TestConvertImageEditRequestMultipart(t *testing.T) {
 		request := dto.ImageRequest{
 			Model:  "gpt-image-1",
 			Prompt: prompt,
-			Stream: true,
+			Stream: common.GetPointer(true),
 		}
 
 		converted, err := (&Adaptor{}).ConvertImageRequest(c, info, request)

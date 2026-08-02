@@ -27,6 +27,9 @@ import {
   Select,
 } from '@douyinfe/semi-ui';
 import CompactModeToggle from '../../common/ui/CompactModeToggle';
+import {
+  canRepairChannelConsistency as canRepairChannelConsistencyForPermissions,
+} from '../../../helpers/adminPermissions';
 
 const ChannelsActions = ({
   enableBatchDelete,
@@ -42,6 +45,7 @@ const ChannelsActions = ({
   applyAllUpstreamUpdatesLoading,
   canDetectUpstreamUpdates,
   canApplyUpstreamUpdates,
+  channelPermissions = {},
   compactMode,
   setCompactMode,
   idSort,
@@ -60,6 +64,9 @@ const ChannelsActions = ({
   setActivePage,
   t,
 }) => {
+  const canRepairChannelConsistency =
+    canRepairChannelConsistencyForPermissions(channelPermissions);
+
   return (
     <div className='flex flex-col gap-2'>
       {/* 第一行：批量操作按钮 + 设置开关 */}
@@ -119,13 +126,18 @@ const ChannelsActions = ({
                   <Button
                     size='small'
                     className='w-full'
+                    disabled={!canRepairChannelConsistency}
                     onClick={() => {
+                      if (!canRepairChannelConsistency) return;
                       Modal.confirm({
                         title: t('确定是否要修复数据库一致性？'),
                         content: t(
                           '进行该操作时，可能导致渠道访问错误，请仅在数据库出现问题时使用',
                         ),
-                        onOk: () => fixChannelsAbilities(),
+                        onOk: () => {
+                          if (!canRepairChannelConsistency) return;
+                          fixChannelsAbilities();
+                        },
                         size: 'sm',
                         centered: true,
                       });

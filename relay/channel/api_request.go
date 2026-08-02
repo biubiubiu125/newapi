@@ -16,9 +16,9 @@ import (
 	"github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
@@ -40,6 +40,14 @@ func applyUpstreamContentLength(req *http.Request, info *common.RelayInfo) {
 	if info.UpstreamRequestBodySize > 0 && req.ContentLength <= 0 {
 		req.ContentLength = info.UpstreamRequestBodySize
 	}
+}
+
+func newRelayHTTPRequest(c *gin.Context, method, url string, body io.Reader) (*http.Request, error) {
+	ctx := context.Background()
+	if c != nil && c.Request != nil {
+		ctx = c.Request.Context()
+	}
+	return http.NewRequestWithContext(ctx, method, url, body)
 }
 
 func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Header) {
@@ -291,10 +299,6 @@ func ResolveHeaderOverride(info *common.RelayInfo, c *gin.Context) (map[string]s
 	return processHeaderOverride(info, c)
 }
 
-func ApplyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]string) {
-	applyHeaderOverrideToRequest(req, headerOverride)
-}
-
 func applyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]string) {
 	if req == nil {
 		return
@@ -308,12 +312,8 @@ func applyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]s
 	}
 }
 
-func newRelayHTTPRequest(c *gin.Context, method string, url string, body io.Reader) (*http.Request, error) {
-	ctx := context.Background()
-	if c != nil && c.Request != nil {
-		ctx = c.Request.Context()
-	}
-	return http.NewRequestWithContext(ctx, method, url, body)
+func ApplyHeaderOverrideToRequest(req *http.Request, headerOverride map[string]string) {
+	applyHeaderOverrideToRequest(req, headerOverride)
 }
 
 func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
@@ -487,18 +487,19 @@ func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	return doRequest(c, req, info)
 }
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
-	var client *http.Client
-	var err error
-	if info.ChannelSetting.Proxy != "" {
-		client, err = service.NewProxyHttpClient(info.ChannelSetting.Proxy)
-		if err != nil {
-			return nil, fmt.Errorf("new proxy http client failed: %w", err)
-		}
-	} else {
-		client = service.GetHttpClient()
-		if client == nil {
-			client = http.DefaultClient
-		}
+	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
+	if err != nil {
+		return nil, fmt.Errorf("new proxy http client failed: %w", err)
+	}
+	if common2.DebugEnabled && req != nil && req.URL != nil {
+		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
+		logger.LogDebug(c, fmt.Sprintf(
+			"http transport select: host=%s protocol=%s shards=%d policy=%s",
+			req.URL.Host,
+			policy.Protocol,
+			policy.Shards,
+			policy.String(),
+		))
 	}
 
 	var stopPinger context.CancelFunc
@@ -506,9 +507,8 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	if info.IsStream {
 		helper.SetEventStreamHeaders(c)
 		// 处理流式请求的 ping 保活
-		startPreUpstreamPing := false
 		generalSettings := operation_setting.GetGeneralSetting()
-		if startPreUpstreamPing && generalSettings.PingIntervalEnabled && !info.DisablePing {
+		if generalSettings.PingIntervalEnabled && !info.DisablePing {
 			pingInterval := time.Duration(generalSettings.PingIntervalSeconds) * time.Second
 			stopPinger, pingerDone = startPingKeepAlive(c, pingInterval)
 			// 使用defer确保在任何情况下都能停止ping goroutine
@@ -529,6 +529,17 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	}
 	if resp == nil {
 		return nil, errors.New("resp is nil")
+	}
+	if common2.DebugEnabled {
+		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
+		logger.LogDebug(c, fmt.Sprintf(
+			"http transport negotiated: host=%s protocol=%s shards=%d policy=%s negotiated=%s",
+			req.URL.Host,
+			policy.Protocol,
+			policy.Shards,
+			policy.String(),
+			resp.Proto,
+		))
 	}
 
 	if upID := resp.Header.Get(common2.RequestIdKey); upID != "" {

@@ -6,11 +6,11 @@ import (
 	"net/http"
 	"strings"
 
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/openai"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/types"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 
 	"github.com/QuantumNous/new-api/relay/constant"
 
@@ -38,11 +38,12 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 }
 
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	stream := request.Stream != nil && *request.Stream
 	xaiRequest := ImageRequest{
 		Model:          request.Model,
 		Prompt:         request.Prompt,
 		N:              int(lo.FromPtrOr(request.N, uint(1))),
-		Stream:         request.Stream,
+		Stream:         stream,
 		ResponseFormat: request.ResponseFormat,
 	}
 	return xaiRequest, nil

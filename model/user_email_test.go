@@ -22,7 +22,7 @@ func setupUserEmailTestDB(t *testing.T) *gorm.DB {
 	LOG_DB = db
 	common.UsingSQLite = true
 	common.QuotaForNewUser = 0
-	require.NoError(t, db.AutoMigrate(&User{}, &UserLoginIdentifier{}))
+	require.NoError(t, db.AutoMigrate(&User{}, &UserLoginIdentifier{}, &UserSession{}))
 	t.Cleanup(func() {
 		DB = previousDB
 		LOG_DB = previousLogDB

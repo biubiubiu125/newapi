@@ -46,12 +46,14 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.POST("/user/reset", middleware.SetupRequired(), anonymousRequestBodyLimit, middleware.EmailBodyCriticalRateLimit("CT:password-reset-submit"), controller.ResetPassword)
 		// OAuth routes - specific routes must come before :provider wildcard
 		apiRouter.GET("/oauth/state", middleware.SetupRequired(), middleware.SessionNonceCriticalRateLimit("CT:oauth-state", "rate_limit_oauth_state"), controller.GenerateOAuthCode)
+		apiRouter.POST("/oauth/state", middleware.SetupRequired(), middleware.TryUserAuth(), anonymousRequestBodyLimit, middleware.SessionNonceCriticalRateLimit("CT:oauth-state", "rate_limit_oauth_state"), controller.GenerateOAuthCode)
 		apiRouter.POST("/oauth/email/bind", middleware.SetupRequired(), middleware.UserAuth(), anonymousRequestBodyLimit, middleware.UserCriticalRateLimit("CT:oauth-email-bind"), controller.EmailBind)
 		// Non-standard OAuth (WeChat, Telegram) - keep original routes
 		apiRouter.GET("/oauth/wechat", middleware.SetupRequired(), middleware.SessionNonceCriticalRateLimit("CT:oauth-wechat-login", "rate_limit_oauth_wechat"), controller.WeChatAuth)
 		apiRouter.POST("/oauth/wechat/bind", middleware.SetupRequired(), middleware.UserAuth(), anonymousRequestBodyLimit, middleware.UserCriticalRateLimit("CT:oauth-wechat-bind"), controller.WeChatBind)
 		apiRouter.GET("/oauth/telegram/login", middleware.SetupRequired(), middleware.TelegramCriticalRateLimit("CT:oauth-telegram-login"), controller.TelegramLogin)
-		apiRouter.GET("/oauth/telegram/bind", middleware.SetupRequired(), middleware.SessionUserCriticalRateLimit("CT:oauth-telegram-bind"), controller.TelegramBind)
+		apiRouter.POST("/oauth/telegram/bind/start", middleware.SetupRequired(), middleware.UserAuth(), middleware.UserCriticalRateLimit("CT:oauth-telegram-bind-start"), middleware.DisableCache(), controller.TelegramBindStart)
+		apiRouter.GET("/oauth/telegram/bind/:flow_token", middleware.SetupRequired(), middleware.TelegramCriticalRateLimit("CT:oauth-telegram-bind"), middleware.DisableCache(), controller.TelegramBind)
 		// Standard OAuth providers (GitHub, Discord, OIDC, LinuxDO) - unified route
 		apiRouter.GET("/oauth/:provider", middleware.SetupRequired(), middleware.SessionFieldCriticalRateLimit("CT:oauth-callback", "oauth_state"), controller.HandleOAuth)
 		apiRouter.GET("/ratio_config", middleware.SessionNonceCriticalRateLimit("CT:ratio-config", "rate_limit_ratio_config"), controller.GetRatioConfig)
@@ -68,6 +70,8 @@ func SetApiRouter(router *gin.Engine) {
 
 		userRoute := apiRouter.Group("/user")
 		{
+			userRoute.POST("/auth/refresh", middleware.SessionCookieOriginGuard(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.RefreshAuth)
+			userRoute.POST("/auth/logout", middleware.SessionCookieOriginGuard(), middleware.CriticalRateLimit(), middleware.DisableCache(), controller.AuthLogout)
 			userRoute.POST("/register", middleware.SetupRequired(), anonymousRequestBodyLimit, middleware.RegisterCriticalRateLimit("CT:user-register"), middleware.TurnstileCheck(), controller.Register)
 			userRoute.POST("/login", middleware.SetupRequired(), anonymousRequestBodyLimit, middleware.UsernameCriticalRateLimit("CT:user-login"), middleware.TurnstileCheck(), controller.Login)
 			userRoute.POST("/login/2fa", middleware.SetupRequired(), anonymousRequestBodyLimit, middleware.SessionFieldCriticalRateLimit("CT:user-login-2fa", "pending_user_id"), controller.Verify2FALogin)
@@ -86,6 +90,9 @@ func SetApiRouter(router *gin.Engine) {
 			selfRoute := userRoute.Group("/")
 			selfRoute.Use(middleware.UserAuth())
 			{
+				selfRoute.GET("/sessions", middleware.DisableCache(), controller.GetLoginSessions)
+				selfRoute.DELETE("/sessions/:sid", middleware.DisableCache(), controller.DeleteLoginSession)
+				selfRoute.POST("/sessions/revoke-others", middleware.DisableCache(), controller.RevokeOtherLoginSessions)
 				selfRoute.GET("/self/groups", controller.GetUserGroups)
 				selfRoute.GET("/self", controller.GetSelf)
 				selfRoute.GET("/models", controller.GetUserModels)
@@ -258,7 +265,6 @@ func SetApiRouter(router *gin.Engine) {
 			optionRoute.GET("/channel_affinity_cache", controller.GetChannelAffinityCacheStats)
 			optionRoute.DELETE("/channel_affinity_cache", controller.ClearChannelAffinityCache)
 			optionRoute.POST("/rest_model_ratio", controller.ResetModelRatio)
-			optionRoute.POST("/migrate_console_setting", controller.MigrateConsoleSetting) // 用于迁移检测的旧键，下个版本会删除
 			optionRoute.POST("/waffo-pancake/catalog", controller.ListWaffoPancakeCatalog)
 			optionRoute.POST("/waffo-pancake/pair", controller.CreateWaffoPancakePair)
 			optionRoute.POST("/waffo-pancake/save", controller.SaveWaffoPancake)
@@ -310,6 +316,7 @@ func SetApiRouter(router *gin.Engine) {
 		{
 			tokenRoute.GET("/", controller.GetAllTokens)
 			tokenRoute.GET("/search", middleware.SearchRateLimit(), controller.SearchTokens)
+			tokenRoute.GET("/auto-groups", controller.GetTokenAutoGroups)
 			tokenRoute.POST("/usage/batch", controller.GetTokenUsageStatsBatch)
 			tokenRoute.GET("/:id", controller.GetToken)
 			tokenRoute.GET("/:id/usage", controller.GetTokenUsageStats)
@@ -345,7 +352,6 @@ func SetApiRouter(router *gin.Engine) {
 		}
 		logRoute := apiRouter.Group("/log")
 		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)
-		logRoute.DELETE("/", middleware.AdminAuth(), controller.DeleteHistoryLogs)
 		logRoute.GET("/stat", middleware.AdminAuth(), controller.GetLogsStat)
 		logRoute.GET("/self/stat", middleware.UserAuth(), controller.GetLogsSelfStat)
 		logRoute.GET("/channel_affinity_usage_cache", middleware.AdminAuth(), controller.GetChannelAffinityUsageCacheStats)

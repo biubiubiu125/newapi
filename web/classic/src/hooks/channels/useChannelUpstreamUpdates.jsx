@@ -19,6 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useRef, useState } from 'react';
 import { API, showError, showInfo, showSuccess } from '../../helpers';
+import {
+  getModelUpdateTaskErrorPayload,
+  getModelUpdateTaskStartInfo,
+  waitForModelUpdateTask,
+} from './upstreamUpdateTask';
 import { normalizeModelList } from './upstreamUpdateUtils';
 
 const getManualIgnoredModelCountFromSettings = (settings) => {
@@ -289,29 +294,77 @@ export const useChannelUpstreamUpdates = ({
         {},
         { skipErrorHandler: true },
       );
-      const { success, message, data } = res.data || {};
-      if (!success) {
+      const { success, message } = res.data || {};
+      const taskInfo = getModelUpdateTaskStartInfo(res.data);
+      if (!success || !taskInfo) {
         showError(message || t('批量检测失败'));
         return;
       }
 
-      const channelCount = data?.processed_channels || 0;
-      const addCount = data?.detected_add_models || 0;
-      const removeCount = data?.detected_remove_models || 0;
-      const failedCount = (data?.failed_channel_ids || []).length;
+      showSuccess(t('批量检测任务已启动'));
+      const task = await waitForModelUpdateTask(taskInfo.task_id, { api: API });
+      if (!task) {
+        showInfo(t('批量检测仍在运行，请稍后刷新查看'));
+        return;
+      }
+      if (task.status === 'failed') {
+        showError(task.error || t('批量检测失败'));
+        return;
+      }
+
+      const result = task.result || {};
       showSuccess(
         t(
           '批量检测完成：渠道 {{channels}} 个，新增 {{add}} 个，删除 {{remove}} 个，失败 {{fails}} 个',
           {
-            channels: channelCount,
-            add: addCount,
-            remove: removeCount,
-            fails: failedCount,
+            channels: result.checked_channels || 0,
+            add: result.detected_add_models || 0,
+            remove: result.detected_remove_models || 0,
+            fails: result.failed_channels || 0,
           },
         ),
       );
       await refresh();
     } catch (error) {
+      const existingTask = getModelUpdateTaskStartInfo(
+        getModelUpdateTaskErrorPayload(error),
+      );
+      if (existingTask) {
+        try {
+          showInfo(t('批量检测任务已在运行，等待完成'));
+          const task = await waitForModelUpdateTask(existingTask.task_id, {
+            api: API,
+          });
+          if (!task) {
+            showInfo(t('批量检测仍在运行，请稍后刷新查看'));
+            return;
+          }
+          if (task.status === 'failed') {
+            showError(task.error || t('批量检测失败'));
+            return;
+          }
+          const result = task.result || {};
+          showSuccess(
+            t(
+              '批量检测完成：渠道 {{channels}} 个，新增 {{add}} 个，删除 {{remove}} 个，失败 {{fails}} 个',
+              {
+                channels: result.checked_channels || 0,
+                add: result.detected_add_models || 0,
+                remove: result.detected_remove_models || 0,
+                fails: result.failed_channels || 0,
+              },
+            ),
+          );
+          await refresh();
+        } catch (pollError) {
+          showError(
+            pollError?.response?.data?.message ||
+              pollError?.message ||
+              t('批量检测失败'),
+          );
+        }
+        return;
+      }
       showError(
         error?.response?.data?.message || error?.message || t('批量检测失败'),
       );

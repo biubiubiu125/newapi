@@ -8,7 +8,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	"github.com/QuantumNous/new-api/relay/channel/ai360"
@@ -17,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/moonshot"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -189,10 +189,14 @@ func getModelListGroups(c *gin.Context) (modelListGroups, error) {
 	}
 
 	if tokenGroup == "auto" {
+		ownerGroups := service.GetUserAutoGroupByUser(c.GetInt("id"), userGroup)
+		if _, hasSnapshot := common.GetContextKey(c, constant.ContextKeyTokenAutoGroups); hasSnapshot {
+			ownerGroups = service.GetRequestAutoGroups(c, userGroup)
+		}
 		return modelListGroups{
 			userGroup:   userGroup,
 			tokenGroup:  tokenGroup,
-			ownerGroups: service.GetUserAutoGroupByUser(c.GetInt("id"), userGroup),
+			ownerGroups: ownerGroups,
 		}, nil
 	}
 

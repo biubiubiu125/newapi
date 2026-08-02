@@ -510,6 +510,12 @@ func RecordOperationAuditLog(userId int, content string, ip string, action strin
 	if len(params) > 0 {
 		other["params"] = params
 	}
+	if action != "" || len(params) > 0 {
+		other["op"] = map[string]interface{}{
+			"action": action,
+			"params": params,
+		}
+	}
 	if len(auditInfo) > 0 {
 		other["audit_info"] = auditInfo
 	}

@@ -48,7 +48,14 @@ func TestMain(m *testing.M) {
 		&TaskSettlementRecord{},
 		&User{},
 		&UserLoginIdentifier{},
+		&UserSession{},
+		&AuthFlow{},
+		&ExternalIdentityClaim{},
+		&PasskeyCredential{},
+		&TwoFA{},
+		&TwoFABackupCode{},
 		&Token{},
+		&TokenUsageReset{},
 		&TokenUsageDaily{},
 		&Log{},
 		&Channel{},
@@ -59,14 +66,27 @@ func TestMain(m *testing.M) {
 		&SubscriptionPlan{},
 		&SubscriptionOrder{},
 		&UserSubscription{},
+		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
 		&ReferralAffiliate{},
 		&ReferralBinding{},
+		&ReferralClick{},
 		&ReferralCommissionAccount{},
 		&ReferralCommission{},
 		&ReferralCommissionLedger{},
+		&ReferralAsset{},
+		&ReferralWithdrawal{},
+		&ReferralWithdrawalItem{},
+		&ReferralSettlementBatch{},
 		&ReferralCommissionJob{},
+		&ReferralAdminAuditLog{},
 		&PerfMetric{},
+		&MidjourneySettlementRecord{},
+		&Ticket{},
+		&TicketMessage{},
+		&TicketAttachment{},
+		&TicketSequence{},
+		&TelegramPushRecord{},
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
@@ -90,7 +110,14 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM task_settlement_records")
 		DB.Exec("DELETE FROM users")
 		DB.Exec("DELETE FROM user_login_identifiers")
+		DB.Exec("DELETE FROM user_sessions")
+		DB.Exec("DELETE FROM auth_flows")
+		DB.Exec("DELETE FROM external_identity_claims")
+		DB.Exec("DELETE FROM passkey_credentials")
+		DB.Exec("DELETE FROM two_fa_backup_codes")
+		DB.Exec("DELETE FROM two_fas")
 		DB.Exec("DELETE FROM tokens")
+		DB.Exec("DELETE FROM token_usage_resets")
 		DB.Exec("DELETE FROM token_usage_dailies")
 		DB.Exec("DELETE FROM logs")
 		DB.Exec("DELETE FROM channels")
@@ -101,14 +128,27 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM subscription_orders")
 		DB.Exec("DELETE FROM subscription_plans")
 		DB.Exec("DELETE FROM user_subscriptions")
+		DB.Exec("DELETE FROM custom_oauth_providers")
 		DB.Exec("DELETE FROM user_oauth_bindings")
+		DB.Exec("DELETE FROM referral_admin_audit_logs")
+		DB.Exec("DELETE FROM referral_settlement_batches")
+		DB.Exec("DELETE FROM referral_withdrawal_items")
+		DB.Exec("DELETE FROM referral_withdrawals")
+		DB.Exec("DELETE FROM referral_assets")
+		DB.Exec("DELETE FROM referral_clicks")
 		DB.Exec("DELETE FROM referral_bindings")
 		DB.Exec("DELETE FROM referral_affiliates")
 		DB.Exec("DELETE FROM referral_commission_ledgers")
 		DB.Exec("DELETE FROM referral_commissions")
 		DB.Exec("DELETE FROM referral_commission_accounts")
 		DB.Exec("DELETE FROM referral_commission_jobs")
+		DB.Exec("DELETE FROM midjourney_settlement_records")
 		DB.Exec("DELETE FROM perf_metrics")
+		DB.Exec("DELETE FROM ticket_attachments")
+		DB.Exec("DELETE FROM ticket_messages")
+		DB.Exec("DELETE FROM ticket_sequences")
+		DB.Exec("DELETE FROM tickets")
+		DB.Exec("DELETE FROM telegram_push_records")
 		DB.Exec("DELETE FROM system_instances")
 		DB.Exec("DELETE FROM system_task_locks")
 		DB.Exec("DELETE FROM system_tasks")

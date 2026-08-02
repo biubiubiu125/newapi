@@ -176,10 +176,12 @@ func WeChatBind(c *gin.Context) {
 		})
 		return
 	}
-	session := sessions.Default(c)
-	id := session.Get("id")
 	user := model.User{
-		Id: id.(int),
+		Id: c.GetInt("id"),
+	}
+	if user.Id == 0 {
+		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "未登录"})
+		return
 	}
 	err = user.FillUserById()
 	if err != nil {

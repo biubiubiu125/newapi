@@ -17,11 +17,11 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/samber/lo"
@@ -1033,7 +1033,6 @@ func sweepTimedOutTasks(ctx context.Context) {
 		return
 	}
 
-	const legacyTaskCutoff int64 = 1740182400 // 2026-02-22 00:00:00 UTC
 	reason := fmt.Sprintf("任务超时（%d分钟）", constant.TaskTimeoutMinutes)
 	legacyReason := "任务超时（旧系统遗留任务，不进行退款，请联系管理员）"
 	now := time.Now().Unix()
@@ -1043,11 +1042,14 @@ func sweepTimedOutTasks(ctx context.Context) {
 		if !shouldSweepTimedOutTask(task) {
 			continue
 		}
-		isLegacy := task.SubmitTime > 0 && task.SubmitTime < legacyTaskCutoff
+		isLegacy := task.SubmitTime > 0 && task.SubmitTime < model.TaskRefundLegacyCutoff
 
 		oldStatus := task.Status
 		oldLockOwner := task.LockOwner
 		bodyPath, resultPath := prepareTimedOutTaskFailure(task, now, timeoutReason(isLegacy, reason, legacyReason))
+		if isLegacy {
+			task.Quota = 0
+		}
 
 		won, err := task.UpdateWithStatus(oldStatus)
 		if err != nil {
@@ -2033,26 +2035,35 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 			continue
 		}
 
+		previousStatus := task.Status
 		task.Status = lo.If(model.TaskStatus(responseItem.Status) != "", model.TaskStatus(responseItem.Status)).Else(task.Status)
 		task.FailReason = lo.If(responseItem.FailReason != "", responseItem.FailReason).Else(task.FailReason)
 		task.SubmitTime = lo.If(responseItem.SubmitTime != 0, responseItem.SubmitTime).Else(task.SubmitTime)
 		task.StartTime = lo.If(responseItem.StartTime != 0, responseItem.StartTime).Else(task.StartTime)
 		task.FinishTime = lo.If(responseItem.FinishTime != 0, responseItem.FinishTime).Else(task.FinishTime)
-		if responseItem.FailReason != "" || task.Status == model.TaskStatusFailure {
+		isFailure := responseItem.FailReason != "" || task.Status == model.TaskStatusFailure
+		if isFailure {
 			logger.LogInfo(ctx, task.TaskID+" 构建失败，"+task.FailReason)
 			task.Progress = "100%"
-			if err := RefundTaskQuota(ctx, task, task.FailReason); err != nil {
-				logger.LogError(ctx, fmt.Sprintf("Suno task %s refund failed: %s", task.TaskID, err.Error()))
-			}
 		}
-		if responseItem.Status == model.TaskStatusSuccess {
+		if task.Status == model.TaskStatusSuccess {
 			task.Progress = "100%"
 		}
 		task.Data = responseItem.Data
 
-		err = task.Update()
-		if err != nil {
-			common.SysLog("UpdateSunoTask task error: " + err.Error())
+		won, updateErr := task.UpdateWithStatus(previousStatus)
+		if updateErr != nil {
+			common.SysLog("UpdateSunoTask task error: " + updateErr.Error())
+			continue
+		}
+		if !won {
+			logger.LogWarn(ctx, fmt.Sprintf("Suno task %s status changed from %s before response update, skip", task.TaskID, previousStatus))
+			continue
+		}
+		if isFailure && previousStatus != model.TaskStatusFailure && task.Quota != 0 {
+			if refundErr := RefundTaskQuota(ctx, task, task.FailReason); refundErr != nil {
+				logger.LogError(ctx, fmt.Sprintf("Suno task %s refund failed: %s", task.TaskID, refundErr.Error()))
+			}
 		}
 	}
 	return nil

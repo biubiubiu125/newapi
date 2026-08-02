@@ -12,13 +12,14 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	taskdto "github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 	"github.com/tidwall/gjson"
@@ -83,7 +84,6 @@ func Distribute() func(c *gin.Context) {
 				}
 				var selectGroup string
 				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
-				userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 				// check path is /pg/chat/completions
 				if strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
 					playgroundRequest := &dto.PlayGroundRequest{}
@@ -92,28 +92,24 @@ func Distribute() func(c *gin.Context) {
 						abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": err.Error()}))
 						return
 					}
-					playgroundGroup := strings.TrimSpace(playgroundRequest.Group)
-					if playgroundGroup != "" {
-						userId := common.GetContextKeyInt(c, constant.ContextKeyUserId)
-						if !service.GroupInUserUsableGroupsByUser(userId, userGroup, playgroundGroup) && playgroundGroup != usingGroup {
+					if playgroundRequest.Group != "" {
+						if !service.GroupInUserUsableGroups(usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
 							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
 							return
 						}
-						usingGroup = playgroundGroup
+						usingGroup = playgroundRequest.Group
 						common.SetContextKey(c, constant.ContextKeyUsingGroup, usingGroup)
 					}
 				}
 
-				requestPath := canonicalRelayRequestPath(c.Request.URL.Path)
 				if preferredChannelID, found := service.GetPreferredChannelByAffinity(c, modelRequest.Model, usingGroup); found {
 					affinityUsable := false
-					affinityChannelDisabled := false
 					preferred, err := model.CacheGetChannel(preferredChannelID)
 					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
-						channelSupportsRequestPath(preferred, requestPath, modelRequest.Model) {
+						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
 						if usingGroup == "auto" {
-							userId := common.GetContextKeyInt(c, constant.ContextKeyUserId)
-							autoGroups := service.GetUserAutoGroupByUser(userId, userGroup)
+							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
+							autoGroups := service.GetRequestAutoGroups(c, userGroup)
 							for _, g := range autoGroups {
 								if model.IsChannelEnabledForGroupModel(g, modelRequest.Model, preferred.Id) {
 									selectGroup = g
@@ -130,17 +126,9 @@ func Distribute() func(c *gin.Context) {
 							affinityUsable = true
 							service.MarkChannelAffinityUsed(c, usingGroup, preferred.Id)
 						}
-					} else if err == nil && preferred != nil && preferred.Status != common.ChannelStatusEnabled {
-						affinityChannelDisabled = true
 					}
-					if !affinityUsable {
-						if !service.ShouldKeepChannelAffinityOnChannelDisabled() {
-							service.ClearCurrentChannelAffinityCache(c)
-						}
-						if affinityChannelDisabled && service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
-							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorAffinityChannelDisabled))
-							return
-						}
+					if !affinityUsable && !service.ShouldKeepChannelAffinityOnChannelDisabled() {
+						service.ClearCurrentChannelAffinityCache(c)
 					}
 				}
 
@@ -149,7 +137,7 @@ func Distribute() func(c *gin.Context) {
 						Ctx:         c,
 						ModelName:   modelRequest.Model,
 						TokenGroup:  usingGroup,
-						RequestPath: requestPath,
+						RequestPath: c.Request.URL.Path,
 						Retry:       common.GetPointer(0),
 					})
 					if err != nil {
@@ -194,17 +182,6 @@ func channelSupportsRequestPath(channel *model.Channel, requestPath string, requ
 	}
 	config := channel.GetOtherSettings().AdvancedCustom
 	return config != nil && config.SupportsPathForModel(requestPath, requestModel)
-}
-
-func canonicalRelayRequestPath(requestPath string) string {
-	switch {
-	case strings.HasPrefix(requestPath, "/v1/image-tasks/generations"):
-		return "/v1/images/generations"
-	case strings.HasPrefix(requestPath, "/v1/image-tasks/edits"):
-		return "/v1/images/edits"
-	default:
-		return requestPath
-	}
 }
 
 // getModelFromRequest 从请求中读取模型信息
@@ -285,7 +262,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			relayMode == relayconstant.RelayModeMidjourneyTaskImageSeed {
 			shouldSelectChannel = false
 		} else {
-			midjourneyRequest := dto.MidjourneyRequest{}
+			midjourneyRequest := taskdto.MidjourneyRequest{}
 			err = common.UnmarshalBodyReusable(c, &midjourneyRequest)
 			if err != nil {
 				return nil, false, errors.New(i18n.T(c, i18n.MsgDistributorInvalidMidjourney, map[string]any{"Error": err.Error()}))
@@ -388,9 +365,9 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			modelRequest.Model = c.Param("model")
 		}
 	}
-	if strings.HasPrefix(c.Request.URL.Path, "/v1/images/generations") || strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks/generations") {
+	if strings.HasPrefix(c.Request.URL.Path, "/v1/images/generations") {
 		modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "dall-e")
-	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/images/edits") || strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks/edits") {
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/images/edits") {
 		//modelRequest.Model = common.GetStringIfEmpty(c.PostForm("model"), "gpt-image-1")
 		contentType := c.ContentType()
 		if slices.Contains([]string{gin.MIMEPOSTForm, gin.MIMEMultipartPOSTForm}, contentType) {
@@ -399,9 +376,19 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 				modelRequest.Model = req.Model
 			}
 		}
-		if strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks/edits") {
-			modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "gpt-image-1")
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks/generations") {
+		modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "dall-e")
+		c.Set("relay_mode", relayconstant.RelayModeImagesGenerations)
+	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks/edits") {
+		contentType := c.ContentType()
+		if slices.Contains([]string{gin.MIMEPOSTForm, gin.MIMEMultipartPOSTForm}, contentType) {
+			req, err := getModelFromRequest(c)
+			if err == nil && req.Model != "" {
+				modelRequest.Model = req.Model
+			}
 		}
+		modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "gpt-image-1")
+		c.Set("relay_mode", relayconstant.RelayModeImagesEdits)
 	}
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/audio") {
 		relayMode := relayconstant.RelayModeAudioSpeech
@@ -432,7 +419,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			return nil, false, err
 		}
 		modelRequest.Model = req.Model
-		modelRequest.Group = strings.TrimSpace(req.Group)
+		modelRequest.Group = req.Group
 		common.SetContextKey(c, constant.ContextKeyTokenGroup, modelRequest.Group)
 	}
 
@@ -442,6 +429,10 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	return &modelRequest, shouldSelectChannel, nil
 }
 
+// 修复 #4834: GET /v1/video/generations/:task_id && /v1/video/:task_id 此前不解析 model，
+// 当 token 启用「可用模型限制」时，下游 modelLimitEnable 校验会因
+// modelRequest.Model 为空而误报 "This token has no access to model"。
+// 从已存储的任务记录中回填 OriginModelName 即可让校验走在正确的模型上。
 func getTaskOriginModelName(c *gin.Context) string {
 	if !common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
 		return ""
@@ -449,6 +440,7 @@ func getTaskOriginModelName(c *gin.Context) string {
 
 	taskId := c.Param("task_id")
 	if taskId == "" {
+		// jimeng adapter
 		taskId = c.GetString("task_id")
 	}
 	if taskId == "" {

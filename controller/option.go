@@ -16,6 +16,7 @@ import (
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/console_setting"
+	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -345,10 +346,26 @@ func UpdateOption(c *gin.Context) {
 			return
 		}
 	case "theme.frontend":
-		if option.Value != "default" && option.Value != "classic" {
+		if option.Value != "default" {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
-				"message": "无效的主题值，可选值：default（新版前端）、classic（经典前端）",
+				"message": "Classic \u524d\u7aef\u5df2\u79fb\u9664\uff0c\u4e3b\u9898\u53ea\u80fd\u8bbe\u7f6e\u4e3a default",
+			})
+			return
+		}
+	case "claude.default_max_tokens":
+		if err := model_setting.ValidateClaudeDefaultMaxTokens(option.Value.(string)); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+	case "gemini.safety_settings":
+		if err := model_setting.ValidateGeminiSafetySettings(option.Value.(string)); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
 			})
 			return
 		}

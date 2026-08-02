@@ -1,17 +1,150 @@
 package controller
 
 import (
+	"context"
+	"errors"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func newAdvancedCustomModelListChannel(baseURL string, key string, upstreamPath string, auth *dto.AdvancedCustomRouteAuth) *model.Channel {
+	config := &dto.AdvancedCustomConfig{
+		Routes: []dto.AdvancedCustomRoute{
+			{
+				IncomingPath: dto.AdvancedCustomModelListPath,
+				UpstreamPath: upstreamPath,
+				Converter:    "none",
+				Auth:         auth,
+			},
+		},
+	}
+	channel := &model.Channel{
+		Type:    constant.ChannelTypeAdvancedCustom,
+		Key:     key,
+		BaseURL: &baseURL,
+	}
+	channel.SetOtherSettings(dto.ChannelOtherSettings{AdvancedCustom: config})
+	return channel
+}
+
+func TestParseOpenAIModelIDsStrictResponseContract(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		want      []string
+		wantError string
+	}{
+		{name: "malformed JSON", body: `{"data":`, wantError: "invalid OpenAI Models response"},
+		{name: "missing data", body: `{"object":"list"}`, wantError: "data is required"},
+		{name: "null data", body: `{"data":null}`, wantError: "data is required"},
+		{name: "empty data", body: `{"data":[]}`, wantError: "no valid model IDs"},
+		{name: "all IDs empty", body: `{"data":[{"id":""},{"id":"   "}]}`, wantError: "no valid model IDs"},
+		{
+			name: "filters empty IDs and normalizes valid IDs",
+			body: `{"data":[{"id":" gpt-4.1 "},{"id":""},{"id":"gpt-4.1"},{"id":"o3"}]}`,
+			want: []string{"gpt-4.1", "o3"},
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			models, err := parseOpenAIModelIDs([]byte(test.body))
+			if test.wantError != "" {
+				require.ErrorContains(t, err, test.wantError)
+				require.Nil(t, models)
+				return
+			}
+			require.NoError(t, err)
+			require.Equal(t, test.want, models)
+		})
+	}
+}
+
+func TestFetchAdvancedCustomModelsAppliesHeaderOverrideAfterRouteAuth(t *testing.T) {
+	type receivedRequest struct {
+		headers http.Header
+		host    string
+	}
+	received := make(chan receivedRequest, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		received <- receivedRequest{headers: r.Header.Clone(), host: r.Host}
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"data":[{"id":"gpt-4.1"}]}`))
+	}))
+	defer server.Close()
+
+	channel := newAdvancedCustomModelListChannel(server.URL, "secret-key", "/provider/models", &dto.AdvancedCustomRouteAuth{
+		Type:  dto.AdvancedCustomAuthTypeHeader,
+		Name:  "X-Route-Key",
+		Value: "route-{api_key}",
+	})
+	headerOverride := `{
+		"X-Route-Key":"global-{api_key}",
+		"X-Static":"static-value",
+		"X-Client":"{client_header:X-Client}",
+		"Host":"models.example.test",
+		"*":""
+	}`
+	channel.HeaderOverride = &headerOverride
+
+	models, err := fetchChannelUpstreamModelIDs(context.Background(), channel)
+	require.NoError(t, err)
+	require.Equal(t, []string{"gpt-4.1"}, models)
+
+	request := <-received
+	require.Equal(t, "global-secret-key", request.headers.Get("X-Route-Key"))
+	require.Equal(t, "static-value", request.headers.Get("X-Static"))
+	require.Empty(t, request.headers.Get("X-Client"))
+	require.Equal(t, "models.example.test", request.host)
+}
+
+func TestFetchAdvancedCustomModelsRejectsNonOKResponse(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusBadGateway)
+		_, _ = w.Write([]byte(`{"data":[{"id":"must-not-be-used"}]}`))
+	}))
+	defer server.Close()
+
+	channel := newAdvancedCustomModelListChannel(server.URL, "secret-key", "/v1/models", nil)
+	models, err := fetchChannelUpstreamModelIDs(context.Background(), channel)
+	require.ErrorContains(t, err, "status code: 502")
+	require.Nil(t, models)
+}
+
+func TestFetchAdvancedCustomModelsRedactsQueryKeyFromTransportErrors(t *testing.T) {
+	const secret = "secret key/+"
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	baseURL := server.URL
+	server.Close()
+
+	channel := newAdvancedCustomModelListChannel(baseURL, secret, "/v1/models", &dto.AdvancedCustomRouteAuth{
+		Type:  dto.AdvancedCustomAuthTypeQuery,
+		Name:  "custom-token",
+		Value: "prefix-{api_key}",
+	})
+
+	_, err := fetchChannelUpstreamModelIDs(context.Background(), channel)
+	require.Error(t, err)
+	require.NotContains(t, err.Error(), secret)
+	require.NotContains(t, err.Error(), "custom-token")
+	require.NotContains(t, err.Error(), "prefix-")
+
+	direct := sanitizeFetchModelsError(&url.Error{
+		Op:  http.MethodGet,
+		URL: baseURL + "/v1/models?custom-token=prefix-" + url.QueryEscape(secret),
+		Err: errors.New("connection refused"),
+	}, secret)
+	require.EqualError(t, direct, "connection refused")
+}
 
 func TestNormalizeModelNames(t *testing.T) {
 	result := normalizeModelNames([]string{

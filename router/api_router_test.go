@@ -57,6 +57,25 @@ func TestAdminUsersSummaryRouteIsRegistered(t *testing.T) {
 	require.True(t, paths["GET /api/user/admin/users/summary"])
 }
 
+func TestAuthSessionAndTelegramBindRoutesAreRegistered(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	SetApiRouter(engine)
+
+	paths := map[string]bool{}
+	for _, route := range engine.Routes() {
+		paths[route.Method+" "+route.Path] = true
+	}
+
+	require.True(t, paths["POST /api/oauth/telegram/bind/start"])
+	require.True(t, paths["GET /api/oauth/telegram/bind/:flow_token"])
+	require.True(t, paths["POST /api/user/auth/refresh"])
+	require.True(t, paths["POST /api/user/auth/logout"])
+	require.True(t, paths["GET /api/user/sessions"])
+	require.True(t, paths["DELETE /api/user/sessions/:sid"])
+	require.True(t, paths["POST /api/user/sessions/revoke-others"])
+}
+
 func TestAuthzAndChannelPermissionRoutesAreRegistered(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()
@@ -123,6 +142,7 @@ func setupRouterAuthTestDB(t *testing.T) *gorm.DB {
 	require.NoError(t, db.AutoMigrate(
 		&model.User{},
 		&model.UserLoginIdentifier{},
+		&model.UserSession{},
 		&model.ReferralAffiliate{},
 		&model.ReferralBinding{},
 		&model.ReferralClick{},
@@ -204,7 +224,7 @@ func TestReferralAdminApiRejectsCommonUser(t *testing.T) {
 	rec := httptest.NewRecorder()
 	engine.ServeHTTP(rec, req)
 
-	require.Equal(t, http.StatusOK, rec.Code)
+	require.Equal(t, http.StatusForbidden, rec.Code)
 	require.Contains(t, rec.Body.String(), `"success":false`)
 }
 

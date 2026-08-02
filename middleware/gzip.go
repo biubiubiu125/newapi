@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/andybalholm/brotli"
 	"github.com/gin-gonic/gin"
+	"github.com/klauspost/compress/zstd"
 )
 
 type readCloser struct {
@@ -38,17 +39,14 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 		wrapMaxBytes := func(body io.ReadCloser) io.ReadCloser {
 			return http.MaxBytesReader(c.Writer, body, maxBytes)
 		}
+		decompressed := false
 
 		switch c.GetHeader("Content-Encoding") {
 		case "gzip":
 			gzipReader, err := gzip.NewReader(origBody)
 			if err != nil {
 				_ = origBody.Close()
-				if isPublicImageTaskRequest(c) {
-					abortWithImageTaskMessage(c, http.StatusBadRequest, "invalid_request", "invalid gzip request body")
-				} else {
-					c.AbortWithStatus(http.StatusBadRequest)
-				}
+				abortWithOpenAiMessage(c, http.StatusBadRequest, "invalid gzip request body")
 				return
 			}
 			// Replace the request body with the decompressed data, and enforce a max size (post-decompression).
@@ -59,8 +57,7 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 					return origBody.Close()
 				},
 			})
-			c.Request.Header.Del("Content-Encoding")
-			c.Request.ContentLength = -1
+			decompressed = true
 		case "br":
 			reader := brotli.NewReader(origBody)
 			c.Request.Body = wrapMaxBytes(&readCloser{
@@ -69,11 +66,30 @@ func DecompressRequestMiddleware() gin.HandlerFunc {
 					return origBody.Close()
 				},
 			})
-			c.Request.Header.Del("Content-Encoding")
-			c.Request.ContentLength = -1
+			decompressed = true
+		case "zstd":
+			reader, err := zstd.NewReader(origBody)
+			if err != nil {
+				_ = origBody.Close()
+				abortWithOpenAiMessage(c, http.StatusBadRequest, "invalid zstd request body")
+				return
+			}
+			c.Request.Body = wrapMaxBytes(&readCloser{
+				Reader: reader,
+				closeFn: func() error {
+					reader.Close()
+					return origBody.Close()
+				},
+			})
+			decompressed = true
 		default:
 			// Even for uncompressed bodies, enforce a max size to avoid huge request allocations.
 			c.Request.Body = wrapMaxBytes(origBody)
+		}
+
+		if decompressed {
+			c.Request.Header.Del("Content-Encoding")
+			c.Request.ContentLength = -1
 		}
 
 		// Continue processing the request

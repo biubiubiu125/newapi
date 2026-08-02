@@ -9,16 +9,17 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/textproto"
+	"net/url"
 	"path/filepath"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/ai360"
 	"github.com/QuantumNous/new-api/relay/channel/lingyiwanwu"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	//"github.com/QuantumNous/new-api/relay/channel/minimax"
 	"github.com/QuantumNous/new-api/relay/channel/openrouter"
@@ -26,10 +27,10 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/common_handler"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	"github.com/QuantumNous/new-api/setting/reasoning"
-	"github.com/QuantumNous/new-api/types"
 	"github.com/samber/lo"
 
 	"github.com/gin-gonic/gin"
@@ -200,6 +201,8 @@ func (a *Adaptor) SetupRequestHeader(c *gin.Context, header *http.Header, info *
 		}
 	}
 	if info.RelayMode == relayconstant.RelayModeRealtime {
+		// OpenAI 已下线 Realtime Beta API,GA 模型收到 beta 标识会以 beta_api_shape_disabled 拒绝;
+		// 仅对遗留 preview 模型保留 beta 标识
 		legacyRealtimeBeta := strings.Contains(info.UpstreamModelName, "-realtime-preview")
 		swp := c.Request.Header.Get("Sec-WebSocket-Protocol")
 		if swp != "" {
@@ -385,16 +388,9 @@ func (a *Adaptor) ConvertAudioRequest(c *gin.Context, info *relaycommon.RelayInf
 
 		writer.WriteField("model", request.Model)
 
-		// 复用请求上已解析的表单；重试时重复解析会留下无人释放的临时文件。
-		formData := c.Request.MultipartForm
-		if formData == nil {
-			parsed, err2 := common.ParseMultipartFormReusable(c)
-			if err2 != nil {
-				return nil, fmt.Errorf("error parsing multipart form: %w", err2)
-			}
-			// 挂到请求上，交由 net/http 请求收尾统一清理 multipart 临时文件。
-			c.Request.MultipartForm = parsed
-			formData = parsed
+		formData, err2 := common.ParseMultipartFormReusable(c)
+		if err2 != nil {
+			return nil, fmt.Errorf("error parsing multipart form: %w", err2)
 		}
 
 		// 打印类似 curl 命令格式的信息
@@ -458,12 +454,13 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		// 使用已解析的 multipart 表单，避免重复解析
 		mf := c.Request.MultipartForm
 		if mf == nil {
-			formData, err := common.ParseMultipartFormReusable(c)
+			form, err := common.ParseMultipartFormReusable(c)
 			if err != nil {
-				return nil, errors.New("failed to parse multipart form")
+				return nil, fmt.Errorf("failed to parse multipart form: %w", err)
 			}
-			c.Request.MultipartForm = formData
-			mf = formData
+			c.Request.MultipartForm = form
+			c.Request.PostForm = url.Values(form.Value)
+			mf = form
 		}
 
 		// 写入所有非文件字段
@@ -646,7 +643,11 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 	case relayconstant.RelayModeAudioTranscription:
 		err, usage = OpenaiSTTHandler(c, resp, info, a.ResponseFormat)
 	case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:
-		usage, err = OpenaiImageResponseHandler(c, info, resp)
+		if info.IsStream {
+			usage, err = OpenaiImageStreamHandler(c, info, resp)
+		} else {
+			usage, err = OpenaiImageHandler(c, info, resp)
+		}
 	case relayconstant.RelayModeRerank:
 		usage, err = common_handler.RerankHandler(c, info, resp)
 	case relayconstant.RelayModeResponses:

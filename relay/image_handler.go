@@ -12,13 +12,13 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
-	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -202,18 +202,19 @@ func applyImageStreamSupportForChannel(c *gin.Context, info *relaycommon.RelayIn
 	if info == nil || imageReq == nil {
 		return false
 	}
-	info.IsStream = imageReq.Stream
+	stream := imageReq.Stream != nil && *imageReq.Stream
+	info.IsStream = stream
 	if c != nil {
-		c.Set(string(constant.ContextKeyIsStream), imageReq.Stream)
-		c.Set(contextKeyImageStreamAllowed, imageReq.Stream)
+		c.Set(string(constant.ContextKeyIsStream), stream)
+		c.Set(contextKeyImageStreamAllowed, stream)
 	}
-	if !imageReq.Stream {
+	if !stream {
 		return false
 	}
 	if info.ApiType == constant.APITypeOpenAI || info.ApiType == constant.APITypeXai {
 		return false
 	}
-	imageReq.Stream = false
+	imageReq.Stream = common.GetPointer(false)
 	info.IsStream = false
 	if c != nil {
 		c.Set(string(constant.ContextKeyIsStream), false)

@@ -1,12 +1,14 @@
 package claude
 
 import (
+	"context"
 	"encoding/base64"
 	"strings"
 	"testing"
 
-	"github.com/QuantumNous/new-api/dto"
-	"github.com/QuantumNous/new-api/service/relayconvert"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -346,7 +348,7 @@ func TestOpenAIChatRequestToClaudeMessages_IgnoresUnsupportedFileContent(t *test
 		},
 	}
 
-	claudeRequest, err := relayconvert.OpenAIChatRequestToClaudeMessages(nil, request)
+	claudeRequest, err := relayconvert.OpenAIChatRequestToClaudeMessages(context.Background(), &relaycommon.RelayInfo{}, request)
 	require.NoError(t, err)
 	require.Len(t, claudeRequest.Messages, 1)
 
@@ -372,7 +374,7 @@ func TestOpenAIChatRequestToClaudeMessages_ClaudeOpus48HighUsesAdaptiveThinking(
 		},
 	}
 
-	claudeRequest, err := relayconvert.OpenAIChatRequestToClaudeMessages(nil, request)
+	claudeRequest, err := relayconvert.OpenAIChatRequestToClaudeMessages(context.Background(), &relaycommon.RelayInfo{}, request)
 	require.NoError(t, err)
 	require.Equal(t, "claude-opus-4-8", claudeRequest.Model)
 	require.NotNil(t, claudeRequest.Thinking)
@@ -398,7 +400,7 @@ func TestOpenAIChatRequestToClaudeMessages_ClaudeOpus48ThinkingUsesAdaptiveHighE
 		},
 	}
 
-	claudeRequest, err := relayconvert.OpenAIChatRequestToClaudeMessages(nil, request)
+	claudeRequest, err := relayconvert.OpenAIChatRequestToClaudeMessages(context.Background(), &relaycommon.RelayInfo{}, request)
 	require.NoError(t, err)
 	require.Equal(t, "claude-opus-4-8", claudeRequest.Model)
 	require.NotNil(t, claudeRequest.Thinking)
@@ -433,7 +435,7 @@ func TestOpenAIChatRequestToClaudeMessages_SupportsPDFFileContent(t *testing.T) 
 		},
 	}
 
-	claudeRequest, err := relayconvert.OpenAIChatRequestToClaudeMessages(nil, request)
+	claudeRequest, err := relayconvert.OpenAIChatRequestToClaudeMessages(context.Background(), &relaycommon.RelayInfo{}, request)
 	require.NoError(t, err)
 	require.Len(t, claudeRequest.Messages, 1)
 
@@ -469,7 +471,7 @@ func TestOpenAIChatRequestToClaudeMessages_ConvertsTextFileContentToText(t *test
 		},
 	}
 
-	claudeRequest, err := relayconvert.OpenAIChatRequestToClaudeMessages(nil, request)
+	claudeRequest, err := relayconvert.OpenAIChatRequestToClaudeMessages(context.Background(), &relaycommon.RelayInfo{}, request)
 	require.NoError(t, err)
 	require.Len(t, claudeRequest.Messages, 1)
 

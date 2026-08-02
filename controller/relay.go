@@ -11,7 +11,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
@@ -20,6 +19,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -231,23 +231,31 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 			break
 		}
 
-		if !priceData.FreeModel && !preConsumed {
+		addUsedChannel(c, channel.Id)
+		if billingErr := service.PrepareTieredBillingForSelectedGroup(c, relayInfo); billingErr != nil {
+			newAPIError = billingErr
+			break
+		}
+		preConsumed = preConsumed || relayInfo.Billing != nil
+
+		if !preConsumed {
 			priceData, err = helper.ModelPriceHelper(c, relayInfo, tokens, meta)
 			if err != nil {
 				newAPIError = types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
 				break
 			}
-			newAPIError = service.PreConsumeBilling(c, priceData.QuotaToPreConsume, relayInfo)
-			if newAPIError != nil {
-				break
-			}
-			preConsumed = true
-			if relayInfo.TokenGroup == "auto" && relayInfo.UsingGroup != "" && relayInfo.UsingGroup != "auto" {
-				retryParam.TokenGroup = relayInfo.UsingGroup
+			if !priceData.FreeModel {
+				newAPIError = service.PreConsumeBilling(c, priceData.QuotaToPreConsume, relayInfo)
+				if newAPIError != nil {
+					break
+				}
+				preConsumed = true
+				if relayInfo.TokenGroup == "auto" && relayInfo.UsingGroup != "" && relayInfo.UsingGroup != "auto" {
+					retryParam.TokenGroup = relayInfo.UsingGroup
+				}
 			}
 		}
 
-		addUsedChannel(c, channel.Id)
 		retryParam.ExcludeChannelIds = getFailedChannelIds(c)
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
@@ -394,15 +402,14 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 		}, nil
 	}
 	channel, selectGroup, err := service.CacheGetRandomSatisfiedChannel(retryParam)
-
-	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
-
 	if err != nil {
 		return nil, types.NewError(fmt.Errorf("获取分组 %s 下模型 %s 的可用渠道失败（retry）: %s", selectGroup, info.OriginModelName, err.Error()), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
 	if channel == nil {
 		return nil, types.NewError(fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在（retry）", selectGroup, info.OriginModelName), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
 	}
+
+	info.PriceData.GroupRatioInfo = helper.HandleGroupRatio(c, info)
 
 	newAPIError := middleware.SetupContextForSelectedChannel(c, channel, info.OriginModelName)
 	if newAPIError != nil {

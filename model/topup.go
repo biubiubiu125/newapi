@@ -154,7 +154,10 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 	return DB.Transaction(func(tx *gorm.DB) error {
 		topUp := &TopUp{}
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
-			return ErrTopUpNotFound
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrTopUpNotFound
+			}
+			return err
 		}
 		if expectedPaymentProvider != "" && topUp.PaymentProvider != expectedPaymentProvider {
 			return ErrPaymentMethodMismatch
@@ -187,7 +190,10 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		err := lockForUpdate(tx).Where(refCol+" = ?", referenceId).First(topUp).Error
 		if err != nil {
-			return errors.New("充值订单不存在")
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrTopUpNotFound
+			}
+			return err
 		}
 
 		if topUp.PaymentProvider != PaymentProviderStripe {
@@ -195,7 +201,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		}
 
 		if topUp.Status != common.TopUpStatusPending {
-			return errors.New("充值订单状态错误")
+			return ErrTopUpStatusInvalid
 		}
 
 		topUp.CompleteTime = common.GetTimestamp()
@@ -219,7 +225,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 
 	if err != nil {
 		common.SysError("topup failed: " + err.Error())
-		return errors.New("充值失败，请稍后重试")
+		return err
 	}
 
 	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%d", logger.FormatQuota(int(quota)), topUp.Amount), callerIp, topUp.PaymentMethod, PaymentMethodStripe)

@@ -3,9 +3,12 @@ package service
 import (
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+	"github.com/gin-gonic/gin"
 )
 
 func normalizeGroupDescriptionMap(groups map[string]string) map[string]string {
@@ -81,13 +84,26 @@ func GroupInUserUsableGroupsByUser(userId int, userGroup, groupName string) bool
 	return ok
 }
 
+func IsUserSelectableGroup(userGroup, groupName string) bool {
+	groupName = strings.TrimSpace(groupName)
+	if groupName == "" || groupName == "auto" {
+		return false
+	}
+	return GroupInUserUsableGroups(userGroup, groupName) && ratio_setting.ContainsGroupRatio(groupName)
+}
+
 func GetUserAutoGroup(userGroup string) []string {
-	groups := GetUserUsableGroups(userGroup)
 	autoGroups := make([]string, 0)
+	seen := make(map[string]struct{})
 	for _, group := range setting.GetAutoGroups() {
-		if _, ok := groups[group]; ok {
-			autoGroups = append(autoGroups, group)
+		if !IsUserSelectableGroup(userGroup, group) {
+			continue
 		}
+		if _, ok := seen[group]; ok {
+			continue
+		}
+		seen[group] = struct{}{}
+		autoGroups = append(autoGroups, group)
 	}
 	return autoGroups
 }
@@ -101,6 +117,38 @@ func GetUserAutoGroupByUser(userId int, userGroup string) []string {
 		}
 	}
 	return autoGroups
+}
+
+func FilterUserTokenAutoGroups(userGroup string, groups []string) []string {
+	maxCount := setting.GetMaxTokenAutoGroups()
+	filtered := make([]string, 0, min(len(groups), maxCount))
+	seen := make(map[string]struct{})
+	for _, group := range groups {
+		if !IsUserSelectableGroup(userGroup, group) {
+			continue
+		}
+		if _, ok := seen[group]; ok {
+			continue
+		}
+		seen[group] = struct{}{}
+		filtered = append(filtered, group)
+		if len(filtered) == maxCount {
+			break
+		}
+	}
+	return filtered
+}
+
+func GetRequestAutoGroups(c *gin.Context, userGroup string) []string {
+	value, ok := common.GetContextKey(c, constant.ContextKeyTokenAutoGroups)
+	if !ok {
+		return GetUserAutoGroup(userGroup)
+	}
+	groups, ok := value.([]string)
+	if !ok {
+		return []string{}
+	}
+	return FilterUserTokenAutoGroups(userGroup, groups)
 }
 
 func GetGroupsEnabledModels(groups []string) []string {

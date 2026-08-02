@@ -9,10 +9,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
@@ -282,9 +282,10 @@ func TestCalculateTextQuotaSummaryUsesOpenAIBillingUsageBeforeTopLevelUsage(t *t
 }
 
 func TestUsageBillingPathForLog(t *testing.T) {
-	require.Equal(t, usageBillingPathLocal, usageBillingPathForLog(true, &dto.Usage{
+	require.Equal(t, usageBillingPathAnthropic, usageBillingPathForLog(true, &dto.Usage{
 		BillingUsage: dto.NewClaudeMessagesBillingUsage(&dto.ClaudeUsage{InputTokens: 1}),
 	}))
+	require.Equal(t, usageBillingPathLocal, usageBillingPathForLog(true, &dto.Usage{}))
 	require.Equal(t, usageBillingPathUpstream, usageBillingPathForLog(false, &dto.Usage{}))
 	require.Equal(t, usageBillingPathOpenAI, usageBillingPathForLog(false, &dto.Usage{
 		BillingUsage: dto.NewOpenAIChatBillingUsage(&dto.Usage{PromptTokens: 1}),

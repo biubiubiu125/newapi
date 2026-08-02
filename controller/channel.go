@@ -11,11 +11,12 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 
@@ -201,22 +202,30 @@ func buildFetchModelsHeaders(channel *model.Channel, key string) (http.Header, e
 		headers = GetAuthHeader(key)
 	}
 
-	headerOverride := channel.GetHeaderOverride()
-	for k, v := range headerOverride {
-		if relaychannel.IsHeaderPassthroughRuleKey(k) {
-			continue
-		}
-		str, ok := v.(string)
-		if !ok {
-			return nil, fmt.Errorf("invalid header override for key %s", k)
-		}
-		if strings.Contains(str, "{api_key}") {
-			str = strings.ReplaceAll(str, "{api_key}", key)
-		}
-		headers.Set(k, str)
+	if err := applyFetchModelsHeaderOverrides(channel, key, headers); err != nil {
+		return nil, err
 	}
 
 	return headers, nil
+}
+
+func applyFetchModelsHeaderOverrides(channel *model.Channel, key string, headers http.Header) error {
+	info := &relaycommon.RelayInfo{
+		IsChannelTest: true,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ApiKey:          key,
+			HeadersOverride: channel.GetHeaderOverride(),
+		},
+	}
+	overrides, err := relaychannel.ResolveHeaderOverride(info, nil)
+	if err != nil {
+		return err
+	}
+	for name, value := range overrides {
+		headers.Set(name, value)
+	}
+
+	return nil
 }
 
 func FetchUpstreamModels(c *gin.Context) {
@@ -465,13 +474,16 @@ func validateTwoFactorAuth(twoFA *model.TwoFA, code string) bool {
 // validateChannel 通用的渠道校验函数
 func validateChannel(channel *model.Channel, isAdd bool) error {
 	// 校验 channel settings
+	if channel == nil {
+		return fmt.Errorf("channel cannot be empty")
+	}
 	if err := channel.ValidateSettings(); err != nil {
 		return fmt.Errorf("渠道额外设置[channel setting] 格式错误：%s", err.Error())
 	}
 
 	// 如果是添加操作，检查 channel 和 key 是否为空
 	if isAdd {
-		if channel == nil || channel.Key == "" {
+		if channel.Key == "" {
 			return fmt.Errorf("channel cannot be empty")
 		}
 
@@ -484,6 +496,12 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 	}
 
 	// VertexAI 特殊校验
+	if channel.Type == constant.ChannelTypeNewAPI {
+		if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
+			return fmt.Errorf("New API channel base URL cannot be empty")
+		}
+	}
+
 	if channel.Type == constant.ChannelTypeVertexAi {
 		if channel.Other == "" {
 			return fmt.Errorf("部署地区不能为空")
@@ -711,6 +729,7 @@ func DeleteChannel(c *gin.Context) {
 		return
 	}
 	model.InitChannelCache()
+	service.ResetProxyClientCache()
 	recordManageAudit(c, "channel.delete", map[string]interface{}{
 		"id":   id,
 		"name": channelName,
@@ -879,19 +898,20 @@ func DeleteChannelBatch(c *gin.Context) {
 		})
 		return
 	}
-	err = model.BatchDeleteChannels(channelBatch.Ids)
+	deletedCount, err := model.BatchDeleteChannels(channelBatch.Ids)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	model.InitChannelCache()
+	service.ResetProxyClientCache()
 	recordManageAudit(c, "channel.delete_batch", map[string]interface{}{
-		"count": len(channelBatch.Ids),
+		"count": deletedCount,
 	})
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    len(channelBatch.Ids),
+		"data":    deletedCount,
 	})
 	return
 }
@@ -1437,6 +1457,11 @@ func CopyChannel(c *gin.Context) {
 	if resetBalance {
 		clone.Balance = 0
 		clone.UsedQuota = 0
+	}
+
+	if err := validateChannel(&clone, false); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "invalid channel settings: " + err.Error()})
+		return
 	}
 
 	// insert

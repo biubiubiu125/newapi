@@ -22,7 +22,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
@@ -31,6 +30,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
@@ -403,7 +403,7 @@ func executeSyncImageTask(ctx context.Context, task *model.Task, bodyStorage com
 	if err != nil {
 		return nil, err
 	}
-	imageRequest.Stream = false
+	imageRequest.Stream = common.GetPointer(false)
 
 	relayInfo, err := buildImageTaskRelayInfo(fakeCtx, task, imageRequest, relayMode, bodyStorage, contentType)
 	if err != nil {
@@ -3321,7 +3321,7 @@ func prepareAsyncTaskBridgeRelayInfo(ctx context.Context, task *model.Task, chan
 		cleanup()
 		return nil, nil, nil, nil, err
 	}
-	imageRequest.Stream = false
+	imageRequest.Stream = common.GetPointer(false)
 
 	relayInfo, err := buildImageTaskRelayInfo(fakeCtx, task, imageRequest, relayMode, bodyStorage, contentType)
 	if err != nil {

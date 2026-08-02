@@ -1,6 +1,6 @@
 package claude
 
-import "github.com/QuantumNous/new-api/dto"
+import "github.com/QuantumNous/new-api/relaykit/dto"
 
 const (
 	WebSearchMaxUsesLow    = 1

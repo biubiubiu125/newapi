@@ -1,8 +1,5 @@
 package types
 
-type LocalFileData struct {
-	MimeType   string
-	Base64Data string
-	Url        string
-	Size       int64
-}
+import kittypes "github.com/QuantumNous/new-api/relaykit/types"
+
+type LocalFileData = kittypes.LocalFileData
