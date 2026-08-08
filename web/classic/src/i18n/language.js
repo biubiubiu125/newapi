@@ -32,7 +32,7 @@ export const normalizeLanguage = (language) => {
     return language;
   }
 
-  const normalized = language.trim().replace(/_/g, '-');
+  const normalized = language.trim().replaceAll(/_/g, '-');
   const lower = normalized.toLowerCase();
 
   if (

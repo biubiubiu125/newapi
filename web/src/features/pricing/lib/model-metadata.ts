@@ -241,7 +241,7 @@ function inferCapabilities(
     if (cap) set.add(cap)
   }
 
-  return Array.from(set)
+  return [...set]
 }
 
 function ordered(modalities: Set<Modality>): Modality[] {
@@ -444,8 +444,9 @@ const VENDOR_LABELS: Record<ModelVendor, string> = {
 
 function detectVendor(name: string): ModelVendor {
   const n = name.toLowerCase()
-  if (/^gpt|^o[1-4]|davinci|babbage|whisper|tts|dall.?e|sora|^omni/.test(n))
+  if (/^gpt|^o[1-4]|davinci|babbage|whisper|tts|dall.?e|sora|^omni/.test(n)) {
     return 'openai'
+  }
   if (/claude/.test(n)) return 'anthropic'
   if (/gemini|gemma|imagen|veo|palm/.test(n)) return 'google'
   if (/llama|^codellama/.test(n)) return 'meta'

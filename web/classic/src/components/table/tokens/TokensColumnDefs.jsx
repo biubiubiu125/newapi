@@ -17,7 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import {
+  IconTreeTriangleDown,
+  IconCopy,
+  IconEyeOpened,
+  IconEyeClosed,
+} from '@douyinfe/semi-icons';
 import {
   Button,
   Dropdown,
@@ -33,6 +38,8 @@ import {
   Input,
   Modal,
 } from '@douyinfe/semi-ui';
+import React from 'react';
+
 import {
   timestamp2string,
   renderGroup,
@@ -40,12 +47,6 @@ import {
   getModelCategories,
   showError,
 } from '../../../helpers';
-import {
-  IconTreeTriangleDown,
-  IconCopy,
-  IconEyeOpened,
-  IconEyeClosed,
-} from '@douyinfe/semi-icons';
 
 // progress color helper
 const getProgressColor = (pct) => {
@@ -286,7 +287,7 @@ const renderAllowIps = (text, t) => {
         position='top'
         showArrow
       >
-        <Tag shape='circle'>{'+' + extraCount}</Tag>
+        <Tag shape='circle'>{`+${extraCount}`}</Tag>
       </Tooltip>,
     );
   }
@@ -297,8 +298,8 @@ const renderAllowIps = (text, t) => {
 // Render separate quota usage column
 const renderQuotaUsage = (text, record, t) => {
   const { Paragraph } = Typography;
-  const used = parseInt(record.used_quota) || 0;
-  const remain = parseInt(record.remain_quota) || 0;
+  const used = Number.parseInt(record.used_quota) || 0;
+  const remain = Number.parseInt(record.remain_quota) || 0;
   const total = used + remain;
   if (record.unlimited_quota) {
     const popoverContent = (
@@ -359,7 +360,7 @@ const renderOperations = (
   refresh,
   t,
 ) => {
-  let chatsArray = [];
+  const chatsArray = [];
   try {
     const raw = localStorage.getItem('chats');
     const parsed = JSON.parse(raw);
@@ -377,7 +378,7 @@ const renderOperations = (
         });
       }
     }
-  } catch (_) {
+  } catch {
     showError(t('聊天链接配置错误，请联系管理员'));
   }
 
@@ -406,7 +407,7 @@ const renderOperations = (
             type='tertiary'
             icon={<IconTreeTriangleDown />}
             size='small'
-          ></Button>
+          />
         </Dropdown>
       </SplitButtonGroup>
 

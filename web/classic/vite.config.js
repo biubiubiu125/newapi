@@ -17,23 +17,27 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import fs from 'node:fs';
+import { createRequire } from 'node:module';
+import path from 'node:path';
+import { fileURLToPath, pathToFileURL } from 'node:url';
+
 import react from '@vitejs/plugin-react';
-import { defineConfig, transformWithEsbuild } from 'vite';
-import fs from 'fs';
-import { createRequire } from 'module';
-import path from 'path';
-import { fileURLToPath, pathToFileURL } from 'url';
 import { codeInspectorPlugin } from 'code-inspector-plugin';
+import { defineConfig, transformWithEsbuild } from 'vite';
+
 const require = createRequire(import.meta.url);
 const semiPluginRequire = createRequire(
-  require.resolve('@douyinfe/vite-plugin-semi/package.json')
+  require.resolve('@douyinfe/vite-plugin-semi/package.json'),
 );
 const { semiThemeLoader } = semiPluginRequire('./lib/semi-theme-loader');
 const sass = semiPluginRequire('sass');
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 function transformPath(filePath) {
-  return process.platform === 'win32' ? filePath.replace(/[\\]+/g, '/') : filePath;
+  return process.platform === 'win32'
+    ? filePath.replaceAll(/[\\]+/g, '/')
+    : filePath;
 }
 
 function vitePluginSemiProjectTheme(options = {}) {
@@ -41,7 +45,9 @@ function vitePluginSemiProjectTheme(options = {}) {
     name: 'vite-plugin-semi-project-theme',
     load(id) {
       const filePath = transformPath(id);
-      if (!/@douyinfe\/semi-(ui|icons|foundation)\/lib\/.+\.css$/.test(filePath)) {
+      if (
+        !/@douyinfe\/semi-(ui|icons|foundation)\/lib\/.+\.css$/.test(filePath)
+      ) {
         return null;
       }
 
@@ -58,11 +64,14 @@ function vitePluginSemiProjectTheme(options = {}) {
             findFileUrl(url) {
               if (url.startsWith('~')) {
                 return pathToFileURL(
-                  require.resolve(url.slice(1), { paths: [__dirname] })
+                  require.resolve(url.slice(1), { paths: [__dirname] }),
                 );
               }
 
-              const resolvedPath = path.resolve(path.dirname(scssFilePath), url);
+              const resolvedPath = path.resolve(
+                path.dirname(scssFilePath),
+                url,
+              );
               if (fs.existsSync(resolvedPath)) {
                 return pathToFileURL(resolvedPath);
               }

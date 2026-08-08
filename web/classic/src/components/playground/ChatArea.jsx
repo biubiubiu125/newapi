@@ -17,10 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Card, Chat, Typography, Button } from '@douyinfe/semi-ui';
 import { MessageSquare, Eye, EyeOff } from 'lucide-react';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
+
 import CustomInputRender from './CustomInputRender';
 
 const ChatArea = ({
@@ -60,7 +61,7 @@ const ChatArea = ({
     >
       {/* 聊天头部 */}
       {styleState.isMobile ? (
-        <div className='pt-4'></div>
+        <div className='pt-4' />
       ) : (
         <div className='px-6 py-4 bg-gradient-to-r from-purple-500 to-blue-500 rounded-t-2xl'>
           <div className='flex items-center justify-between'>
@@ -99,7 +100,7 @@ const ChatArea = ({
           ref={chatRef}
           chatBoxRenderConfig={{
             renderChatBoxContent: renderCustomChatContent,
-            renderChatBoxAction: renderChatBoxAction,
+            renderChatBoxAction,
             renderChatBoxTitle: () => null,
           }}
           renderInputArea={renderInputArea}

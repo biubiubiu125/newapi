@@ -17,16 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
-  API,
-  showError,
-  showInfo,
-  showSuccess,
-  showWarning,
-  verifyJSON,
-  selectFilter,
-} from '../../../../helpers';
+  IconSave,
+  IconClose,
+  IconBookmark,
+  IconUser,
+  IconCode,
+  IconSetting,
+} from '@douyinfe/semi-icons';
 import {
   SideSheet,
   Space,
@@ -39,16 +37,19 @@ import {
   Avatar,
   Form,
 } from '@douyinfe/semi-ui';
-import {
-  IconSave,
-  IconClose,
-  IconBookmark,
-  IconUser,
-  IconCode,
-  IconSetting,
-} from '@douyinfe/semi-icons';
-import { getChannelModels } from '../../../../helpers';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import {
+  API,
+  showError,
+  showInfo,
+  showSuccess,
+  showWarning,
+  verifyJSON,
+  selectFilter,
+  getChannelModels,
+} from '../../../../helpers';
 
 const { Text, Title } = Typography;
 
@@ -167,8 +168,8 @@ const EditTagModal = (props) => {
 
   const fetchModels = async () => {
     try {
-      let res = await API.get(`/api/channel/models`);
-      let localModelOptions = res.data.data.map((model) => ({
+      const res = await API.get(`/api/channel/models`);
+      const localModelOptions = res.data.data.map((model) => ({
         label: model.id,
         value: model.id,
       }));
@@ -180,7 +181,7 @@ const EditTagModal = (props) => {
 
   const fetchGroups = async () => {
     try {
-      let res = await API.get(`/api/group/`);
+      const res = await API.get(`/api/group/`);
       if (res === undefined) {
         return;
       }
@@ -198,7 +199,7 @@ const EditTagModal = (props) => {
   const handleSave = async (values) => {
     setLoading(true);
     const formVals = values || formApiRef.current?.getValues() || {};
-    let data = { tag };
+    const data = { tag };
     if (formVals.model_mapping) {
       if (!verifyJSON(formVals.model_mapping)) {
         showInfo('模型映射必须是合法的 JSON 格式！');
@@ -278,7 +279,7 @@ const EditTagModal = (props) => {
   };
 
   useEffect(() => {
-    let localModelOptions = [...originModelOptions];
+    const localModelOptions = [...originModelOptions];
     inputs.models.forEach((model) => {
       if (!localModelOptions.find((option) => option.label === model)) {
         localModelOptions.push({
@@ -316,14 +317,14 @@ const EditTagModal = (props) => {
     if (formApiRef.current) {
       formApiRef.current.setValues({
         ...getInitValues(),
-        tag: tag,
+        tag,
         new_tag: tag,
       });
     }
 
     setInputs({
       ...originInputs,
-      tag: tag,
+      tag,
       new_tag: tag,
     });
   }, [visible, tag]);
@@ -338,8 +339,8 @@ const EditTagModal = (props) => {
     if (customModel.trim() === '') return;
     const modelArray = customModel.split(',').map((model) => model.trim());
 
-    let localModels = [...inputs.models];
-    let localModelOptions = [...modelOptions];
+    const localModels = [...inputs.models];
+    const localModelOptions = [...modelOptions];
     const addedModels = [];
 
     modelArray.forEach((model) => {
@@ -583,13 +584,14 @@ const EditTagModal = (props) => {
                     field='param_override'
                     label={t('参数覆盖')}
                     placeholder={
-                      t('此项可选，用于覆盖请求参数。不支持覆盖 stream 参数') +
-                      '\n' +
-                      t('旧格式（直接覆盖）：') +
-                      '\n{\n  "temperature": 0,\n  "max_tokens": 1000\n}' +
-                      '\n\n' +
-                      t('新格式（支持条件判断与json自定义）：') +
-                      '\n{\n  "operations": [\n    {\n      "path": "temperature",\n      "mode": "set",\n      "value": 0.7,\n      "conditions": [\n        {\n          "path": "model",\n          "mode": "prefix",\n          "value": "gpt"\n        }\n      ]\n    }\n  ]\n}'
+                      `${t(
+                        '此项可选，用于覆盖请求参数。不支持覆盖 stream 参数',
+                      )}\n${t(
+                        '旧格式（直接覆盖）：',
+                      )}\n{\n  "temperature": 0,\n  "max_tokens": 1000\n}` +
+                      `\n\n${t(
+                        '新格式（支持条件判断与json自定义）：',
+                      )}\n{\n  "operations": [\n    {\n      "path": "temperature",\n      "mode": "set",\n      "value": 0.7,\n      "conditions": [\n        {\n          "path": "model",\n          "mode": "prefix",\n          "value": "gpt"\n        }\n      ]\n    }\n  ]\n}`
                     }
                     autosize
                     showClear
@@ -655,12 +657,9 @@ const EditTagModal = (props) => {
                   <Form.TextArea
                     field='header_override'
                     label={t('请求头覆盖')}
-                    placeholder={
-                      t('此项可选，用于覆盖请求头参数') +
-                      '\n' +
-                      t('格式示例：') +
-                      '\n{\n  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36 Edg/139.0.0.0",\n  "Authorization": "Bearer {api_key}"\n}'
-                    }
+                    placeholder={`${t('此项可选，用于覆盖请求头参数')}\n${t(
+                      '格式示例：',
+                    )}\n{\n  "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/139.0.0.0 Safari/537.36 Edg/139.0.0.0",\n  "Authorization": "Bearer {api_key}"\n}`}
                     autosize
                     showClear
                     onChange={(value) =>

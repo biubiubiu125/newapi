@@ -17,11 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useRef } from 'react';
 import { Typography } from '@douyinfe/semi-ui';
-import MarkdownRenderer from '../common/markdown/MarkdownRenderer';
 import { ChevronRight, ChevronUp, Brain, Loader2 } from 'lucide-react';
+import React, { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import MarkdownRenderer from '../common/markdown/MarkdownRenderer';
 
 const ThinkingContent = ({
   message,
@@ -82,8 +83,8 @@ const ThinkingContent = ({
         onClick={() => onToggleReasoningExpansion(message.id)}
       >
         <div className='absolute inset-0 overflow-hidden'>
-          <div className='absolute -top-10 -right-10 w-40 h-40 bg-white opacity-5 rounded-full'></div>
-          <div className='absolute -bottom-8 -left-8 w-24 h-24 bg-white opacity-10 rounded-full'></div>
+          <div className='absolute -top-10 -right-10 w-40 h-40 bg-white opacity-5 rounded-full' />
+          <div className='absolute -bottom-8 -left-8 w-24 h-24 bg-white opacity-10 rounded-full' />
         </div>
         <div className='flex items-center gap-2 sm:gap-4 relative'>
           <div className='w-6 h-6 sm:w-8 sm:h-8 rounded-full bg-white/20 flex items-center justify-center shadow-lg'>

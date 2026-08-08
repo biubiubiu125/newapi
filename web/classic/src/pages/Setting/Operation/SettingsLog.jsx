@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import {
   Button,
   Col,
@@ -29,7 +28,9 @@ import {
   Modal,
 } from '@douyinfe/semi-ui';
 import dayjs from 'dayjs';
+import React, { useEffect, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import {
   compareObjects,
   API,
@@ -75,8 +76,9 @@ export default function SettingsLog(props) {
         if (requestQueue.length === 1) {
           if (res.includes(undefined)) return;
         } else if (requestQueue.length > 1) {
-          if (res.includes(undefined))
+          if (res.includes(undefined)) {
             return showError(t('部分保存失败，请重试'));
+          }
         }
         showSuccess(t('保存成功'));
         props.refresh();
@@ -181,7 +183,7 @@ export default function SettingsLog(props) {
 
   useEffect(() => {
     const currentInputs = {};
-    for (let key in props.options) {
+    for (const key in props.options) {
       if (Object.keys(inputs).includes(key)) {
         currentInputs[key] = props.options[key];
       }
@@ -203,7 +205,7 @@ export default function SettingsLog(props) {
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'LogConsumeEnabled'}
+                  field='LogConsumeEnabled'
                   label={t('启用额度消费日志记录')}
                   size='default'
                   checkedText='｜'
@@ -220,9 +222,9 @@ export default function SettingsLog(props) {
                 <Spin spinning={loadingCleanHistoryLog}>
                   <Form.DatePicker
                     label={t('清除历史日志')}
-                    field={'historyTimestamp'}
+                    field='historyTimestamp'
                     type='dateTime'
-                    inputReadOnly={true}
+                    inputReadOnly
                     onChange={(value) => {
                       setInputs({
                         ...inputs,

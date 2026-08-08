@@ -82,6 +82,7 @@ export function ChannelsPrimaryButtons() {
   const queryClient = useQueryClient();
   const [showDeleteDialog, setShowDeleteDialog] = useState(false);
   const [showConsistencyDialog, setShowConsistencyDialog] = useState(false);
+  const [showApplyAllDialog, setShowApplyAllDialog] = useState(false);
   const [isRepairingConsistency, setIsRepairingConsistency] = useState(false);
   const currentUser = useAuthStore((s) => s.auth.user);
   const canEditSensitive = hasPermission(
@@ -257,11 +258,11 @@ export function ChannelsPrimaryButtons() {
             <DropdownMenuItem
               onClick={() => {
                 if (!canWriteChannel) return;
-                upstream.applyAllUpdates();
+                setShowApplyAllDialog(true);
               }}
               disabled={upstream.applyAllLoading || !canWriteChannel}
             >
-              {t("Apply All Upstream Updates")}
+              {t("Add All New Upstream Models")}
               <DropdownMenuShortcut>
                 <ArrowUpFromLine className="h-4 w-4" />
               </DropdownMenuShortcut>
@@ -315,6 +316,23 @@ export function ChannelsPrimaryButtons() {
           if (!canEditSensitive) return;
           handleDeleteAllDisabled(queryClient, () => undefined);
           setShowDeleteDialog(false);
+        }}
+      />
+
+      <ConfirmDialog
+        open={showApplyAllDialog}
+        onOpenChange={setShowApplyAllDialog}
+        title={t("Add all new upstream models?")}
+        desc={t(
+          "This will batch add newly detected upstream models to eligible channels. Models that disappeared upstream will stay pending for manual review and will not be removed automatically.",
+        )}
+        confirmText={t("Add Models")}
+        isLoading={upstream.applyAllLoading}
+        disabled={!canWriteChannel}
+        handleConfirm={() => {
+          if (!canWriteChannel) return;
+          setShowApplyAllDialog(false);
+          upstream.applyAllUpdates();
         }}
       />
 

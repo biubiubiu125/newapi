@@ -17,16 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
 import { Card, Spin } from '@douyinfe/semi-ui';
+import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import { API, showError, toBoolean } from '../../helpers';
-import { useTranslation } from 'react-i18next';
 import RequestRateLimit from '../../pages/Setting/RateLimit/SettingsRequestRateLimit';
 
 const RateLimitSetting = () => {
   const { t } = useTranslation();
-  let [inputs, setInputs] = useState({
+  const [inputs, setInputs] = useState({
     ModelRequestRateLimitEnabled: false,
     ModelRequestRateLimitCount: 0,
     ModelRequestRateLimitSuccessCount: 1000,
@@ -34,13 +34,13 @@ const RateLimitSetting = () => {
     ModelRequestRateLimitGroup: '',
   });
 
-  let [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const getOptions = async () => {
     const res = await API.get('/api/option/');
     const { success, message, data } = res.data;
     if (success) {
-      let newInputs = {};
+      const newInputs = {};
       data.forEach((item) => {
         if (item.key === 'ModelRequestRateLimitGroup') {
           item.value = JSON.stringify(JSON.parse(item.value), null, 2);
@@ -63,7 +63,7 @@ const RateLimitSetting = () => {
       setLoading(true);
       await getOptions();
       // showSuccess('刷新成功');
-    } catch (error) {
+    } catch {
       showError('刷新失败');
     } finally {
       setLoading(false);

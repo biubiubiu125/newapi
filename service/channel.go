@@ -1,7 +1,6 @@
 package service
 
 import (
-	"encoding/json"
 	"fmt"
 	"net/http"
 	"strings"
@@ -213,10 +212,8 @@ func balanceInsufficientJSONCandidates(message string) []string {
 	if idx < 0 {
 		return nil
 	}
-	decoder := json.NewDecoder(strings.NewReader(message[idx:]))
-	decoder.UseNumber()
 	var payload any
-	if err := decoder.Decode(&payload); err != nil {
+	if err := common.DecodeJsonUseNumber(strings.NewReader(message[idx:]), &payload); err != nil {
 		return nil
 	}
 	candidates := make([]string, 0, 4)

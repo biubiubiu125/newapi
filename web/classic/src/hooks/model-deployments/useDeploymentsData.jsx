@@ -19,8 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useState, useEffect, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { API, showError, showSuccess } from '../../helpers';
+
 import { ITEMS_PER_PAGE } from '../../constants';
+import { API, showError, showSuccess } from '../../helpers';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 
 export const useDeploymentsData = () => {
@@ -367,9 +368,9 @@ export const useDeploymentsData = () => {
       try {
         randomKey =
           typeof crypto !== 'undefined' && crypto.randomUUID
-            ? `ionet-${crypto.randomUUID().replace(/-/g, '')}`
+            ? `ionet-${crypto.randomUUID().replaceAll(/-/g, '')}`
             : null;
-      } catch (err) {
+      } catch {
         randomKey = null;
       }
       if (!randomKey) {

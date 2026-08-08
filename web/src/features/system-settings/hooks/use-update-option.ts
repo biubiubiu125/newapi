@@ -19,9 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
-import { useSystemConfigStore } from '@/stores/system-config-store'
+
 import { DEFAULT_LOGO } from '@/lib/constants'
 import { emitSettingsRefresh } from '@/lib/settings-refresh'
+import { useSystemConfigStore } from '@/stores/system-config-store'
+
 import { updateSystemOption } from '../api'
 import type { UpdateOptionRequest } from '../types'
 
@@ -31,7 +33,7 @@ type UpdateOptionMutationRequest = UpdateOptionRequest & {
 }
 
 // Configuration keys that require status refresh
-const STATUS_RELATED_KEYS = [
+const STATUS_RELATED_KEYS = new Set([
   'theme.frontend',
   'SystemName',
   'ServerAddress',
@@ -50,9 +52,9 @@ const STATUS_RELATED_KEYS = [
   'general_setting.quota_display_type',
   'general_setting.custom_currency_symbol',
   'general_setting.custom_currency_exchange_rate',
-]
+])
 
-const NOTICE_RELATED_KEYS = ['Notice']
+const NOTICE_RELATED_KEYS = new Set(['Notice'])
 const WALLET_RELATED_KEYS = ['TopUpLink', 'payment_setting.wallet_notice']
 
 function syncDisplayOptionToSystemConfig(request: UpdateOptionMutationRequest) {
@@ -92,7 +94,7 @@ export function useUpdateOption() {
         }
 
         // Notice is loaded from /api/notice, not /api/status.
-        if (NOTICE_RELATED_KEYS.includes(variables.key)) {
+        if (NOTICE_RELATED_KEYS.has(variables.key)) {
           queryClient.invalidateQueries({ queryKey: ['notice'] })
           emitSettingsRefresh([variables.key])
         }
@@ -102,7 +104,7 @@ export function useUpdateOption() {
         }
 
         // If updating frontend-display-related config, also refresh status
-        if (STATUS_RELATED_KEYS.includes(variables.key)) {
+        if (STATUS_RELATED_KEYS.has(variables.key)) {
           syncDisplayOptionToSystemConfig(variables)
           queryClient.invalidateQueries({ queryKey: ['status'] })
           try {

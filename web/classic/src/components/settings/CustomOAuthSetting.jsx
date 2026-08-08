@@ -17,7 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
+import {
+  IconPlus,
+  IconEdit,
+  IconDelete,
+  IconRefresh,
+} from '@douyinfe/semi-icons';
 import {
   Button,
   Form,
@@ -34,19 +39,15 @@ import {
   Popconfirm,
   Space,
 } from '@douyinfe/semi-ui';
-import {
-  IconPlus,
-  IconEdit,
-  IconDelete,
-  IconRefresh,
-} from '@douyinfe/semi-icons';
+import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   API,
   showError,
   showSuccess,
   getOAuthProviderIcon,
 } from '../../helpers';
-import { useTranslation } from 'react-i18next';
 
 const { Text } = Typography;
 
@@ -232,7 +233,7 @@ const CustomOAuthSetting = ({ serverAddress }) => {
     try {
       const url = new URL(endpoint);
       return `${url.protocol}//${url.host}`;
-    } catch (error) {
+    } catch {
       return '';
     }
   };
@@ -256,7 +257,7 @@ const CustomOAuthSetting = ({ serverAddress }) => {
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError(t('获取自定义 OAuth 提供商列表失败'));
     }
     setLoading(false);
@@ -306,7 +307,7 @@ const CustomOAuthSetting = ({ serverAddress }) => {
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError(t('删除失败'));
     }
   };
@@ -581,7 +582,7 @@ const CustomOAuthSetting = ({ serverAddress }) => {
       key: 'client_id',
       render: (id) => {
         if (!id) return '-';
-        return id.length > 20 ? `${id.substring(0, 20)}...` : id;
+        return id.length > 20 ? `${id.slice(0, 20)}...` : id;
       },
     },
     {

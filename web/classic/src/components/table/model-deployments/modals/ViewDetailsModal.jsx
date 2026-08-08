@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect } from 'react';
+import { IconRefresh } from '@douyinfe/semi-icons';
 import {
   Modal,
   Typography,
@@ -31,6 +31,7 @@ import {
   Badge,
   Tooltip,
 } from '@douyinfe/semi-ui';
+import React, { useState, useEffect } from 'react';
 import {
   FaInfoCircle,
   FaServer,
@@ -42,7 +43,7 @@ import {
   FaCopy,
   FaLink,
 } from 'react-icons/fa';
-import { IconRefresh } from '@douyinfe/semi-icons';
+
 import {
   API,
   showError,
@@ -69,9 +70,9 @@ const ViewDetailsModal = ({ visible, onCancel, deployment, t }) => {
       }
     } catch (error) {
       showError(
-        t('获取详情失败') +
-          ': ' +
-          (error.response?.data?.message || error.message),
+        `${t('获取详情失败')}: ${
+          error.response?.data?.message || error.message
+        }`,
       );
     } finally {
       setLoading(false);
@@ -91,9 +92,9 @@ const ViewDetailsModal = ({ visible, onCancel, deployment, t }) => {
       }
     } catch (error) {
       showError(
-        t('获取容器信息失败') +
-          ': ' +
-          (error.response?.data?.message || error.message),
+        `${t('获取容器信息失败')}: ${
+          error.response?.data?.message || error.message
+        }`,
       );
     } finally {
       setContainersLoading(false);

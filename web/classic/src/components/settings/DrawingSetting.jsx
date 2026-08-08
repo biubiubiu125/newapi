@@ -17,13 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
 import { Card, Spin } from '@douyinfe/semi-ui';
-import SettingsDrawing from '../../pages/Setting/Drawing/SettingsDrawing';
+import React, { useEffect, useState } from 'react';
+
 import { API, showError, toBoolean } from '../../helpers';
+import SettingsDrawing from '../../pages/Setting/Drawing/SettingsDrawing';
 
 const DrawingSetting = () => {
-  let [inputs, setInputs] = useState({
+  const [inputs, setInputs] = useState({
     /* 绘图设置 */
     DrawingEnabled: false,
     MjNotifyEnabled: false,
@@ -33,13 +34,13 @@ const DrawingSetting = () => {
     MjActionCheckSuccessEnabled: false,
   });
 
-  let [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const getOptions = async () => {
     const res = await API.get('/api/option/');
     const { success, message, data } = res.data;
     if (success) {
-      let newInputs = {};
+      const newInputs = {};
       data.forEach((item) => {
         if (item.key.endsWith('Enabled')) {
           newInputs[item.key] = toBoolean(item.value);
@@ -58,7 +59,7 @@ const DrawingSetting = () => {
     try {
       setLoading(true);
       await getOptions();
-    } catch (error) {
+    } catch {
       showError('刷新失败');
     } finally {
       setLoading(false);

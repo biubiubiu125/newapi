@@ -16,10 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useState } from 'react'
 import { Search, Copy, Check, ChevronLeft, ChevronRight } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+
+import { StatusBadge } from '@/components/status-badge'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -50,14 +51,15 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Skeleton } from '@/components/ui/skeleton'
-import { StatusBadge } from '@/components/status-badge'
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+
 import { useBillingHistory } from '../../hooks/use-billing-history'
+import { formatPaymentCnyAmount, formatSiteCreditAmount } from '../../lib'
 import {
   getStatusConfig,
   getPaymentMethodName,
   formatTimestamp,
 } from '../../lib/billing'
-import { formatPaymentCnyAmount, formatSiteCreditAmount } from '../../lib'
 
 interface BillingHistoryDialogProps {
   open: boolean
@@ -134,7 +136,7 @@ export function BillingHistoryDialog(props: BillingHistoryDialogProps) {
                 ]}
                 value={pageSize.toString()}
                 onValueChange={(value) =>
-                  value !== null && handlePageSizeChange(parseInt(value))
+                  value !== null && handlePageSizeChange(Number.parseInt(value))
                 }
               >
                 <SelectTrigger className='h-9 w-[92px] sm:w-32'>

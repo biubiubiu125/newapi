@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { Modal, Descriptions, Spin, Typography } from '@douyinfe/semi-ui';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+
 import { API, showError, timestamp2string } from '../../../../helpers';
 
 const { Text } = Typography;
@@ -104,7 +105,7 @@ const ChannelAffinityUsageCacheModal = ({
           return;
         }
         setStats(data || {});
-      } catch (e) {
+      } catch {
         if (reqSeq !== requestSeqRef.current) return;
         setStats(null);
         showError(t('请求失败'));

@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { memo } from 'react';
 import { Card, Skeleton } from '@douyinfe/semi-ui';
+import React, { memo } from 'react';
 
 const THEME_COLORS = {
   allVendors: {
@@ -201,9 +201,7 @@ const PricingVendorIntroSkeleton = memo(
       </Card>
     );
 
-    return (
-      <Skeleton loading={true} active placeholder={placeholder}></Skeleton>
-    );
+    return <Skeleton loading active placeholder={placeholder} />;
   },
 );
 

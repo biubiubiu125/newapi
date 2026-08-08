@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 export const hasValidSyncPreview = (previewData) =>
-  previewData !== null && previewData !== undefined;
+  previewData !== null && previewData !== undefined
 
 export const getSyncPreviewDecision = (previewData) => {
   if (!hasValidSyncPreview(previewData)) {
@@ -26,47 +26,47 @@ export const getSyncPreviewDecision = (previewData) => {
       shouldShowConflict: false,
       shouldSync: false,
       conflicts: [],
-    };
+    }
   }
 
   const conflicts = Array.isArray(previewData.conflicts)
     ? previewData.conflicts
-    : [];
+    : []
 
   return {
     shouldShowConflict: conflicts.length > 0,
     shouldSync: conflicts.length === 0,
     conflicts,
-  };
-};
+  }
+}
 
 export const buildUpstreamConflictSubmitPayload = (
   selections = {},
   syncMissing = true,
-  missing,
+  missing
 ) => {
   const overwrite = Object.entries(selections)
     .map(([modelName, set]) => ({
       model_name: modelName,
       fields: Array.from(set || []),
     }))
-    .filter((x) => x.fields.length > 0);
+    .filter((x) => x.fields.length > 0)
 
   if (overwrite.length === 0 && !syncMissing) {
-    return null;
+    return null
   }
 
   const payload = {
     overwrite,
     skip_missing: !syncMissing,
-  };
-
-  if (Array.isArray(missing)) {
-    payload.missing = [...missing];
   }
 
-  return payload;
-};
+  if (Array.isArray(missing)) {
+    payload.missing = [...missing]
+  }
+
+  return payload
+}
 
 export const runClassicSyncWizardFlow = async ({
   locale,
@@ -74,25 +74,25 @@ export const runClassicSyncWizardFlow = async ({
   previewUpstreamDiff,
   syncUpstream,
 }) => {
-  const data = await previewUpstreamDiff?.({ locale, source });
-  const decision = getSyncPreviewDecision(data);
-  const missing = Array.isArray(data?.missing) ? data.missing : [];
+  const data = await previewUpstreamDiff?.({ locale, source })
+  const decision = getSyncPreviewDecision(data)
+  const missing = Array.isArray(data?.missing) ? data.missing : []
 
   if (decision.shouldShowConflict) {
     return {
       status: 'conflict',
       conflicts: decision.conflicts,
       missing,
-    };
+    }
   }
 
   if (!decision.shouldSync) {
-    return { status: 'preview_failed' };
+    return { status: 'preview_failed' }
   }
 
-  const ok = await syncUpstream?.({ locale, source, missing });
-  return ok ? { status: 'synced' } : { status: 'sync_failed' };
-};
+  const ok = await syncUpstream?.({ locale, source, missing })
+  return ok ? { status: 'synced' } : { status: 'sync_failed' }
+}
 
 export const runClassicPostSyncRefresh = async ({
   refreshVendors,
@@ -105,31 +105,31 @@ export const runClassicPostSyncRefresh = async ({
     refreshModels,
     refreshMissing,
     refreshPricing,
-  ];
-  let allLoaded = true;
+  ]
+  let allLoaded = true
 
   for (const refresh of refreshers) {
     try {
-      const loaded = await refresh?.();
+      const loaded = await refresh?.()
       if (!loaded) {
-        allLoaded = false;
+        allLoaded = false
       }
     } catch (_) {
-      allLoaded = false;
+      allLoaded = false
     }
   }
 
-  return allLoaded;
-};
+  return allLoaded
+}
 
-export const MODEL_PRICING_REFRESH_EVENT = 'newapi:model-pricing-refresh';
+export const MODEL_PRICING_REFRESH_EVENT = 'newapi:model-pricing-refresh'
 
 export const notifyModelPricingChanged = (
   target = globalThis.window,
-  EventCtor = globalThis.Event,
+  EventCtor = globalThis.Event
 ) => {
   if (!target?.dispatchEvent || typeof EventCtor !== 'function') {
-    return false;
+    return false
   }
-  return target.dispatchEvent(new EventCtor(MODEL_PRICING_REFRESH_EVENT));
-};
+  return target.dispatchEvent(new EventCtor(MODEL_PRICING_REFRESH_EVENT))
+}

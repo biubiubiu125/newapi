@@ -17,26 +17,27 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
 import { Card, Spin } from '@douyinfe/semi-ui';
-import SettingsPerformance from '../../pages/Setting/Performance/SettingsPerformance';
+import React, { useEffect, useState } from 'react';
+
 import { API, showError, toBoolean } from '../../helpers';
+import SettingsPerformance from '../../pages/Setting/Performance/SettingsPerformance';
 
 const PerformanceSetting = () => {
-  let [inputs, setInputs] = useState({
+  const [inputs, setInputs] = useState({
     'performance_setting.disk_cache_enabled': false,
     'performance_setting.disk_cache_threshold_mb': 10,
     'performance_setting.disk_cache_max_size_mb': 1024,
     'performance_setting.disk_cache_path': '',
   });
 
-  let [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const getOptions = async () => {
     const res = await API.get('/api/option/');
     const { success, message, data } = res.data;
     if (success) {
-      let newInputs = {};
+      const newInputs = {};
       data.forEach((item) => {
         if (typeof inputs[item.key] === 'boolean') {
           newInputs[item.key] = toBoolean(item.value);
@@ -54,7 +55,7 @@ const PerformanceSetting = () => {
     try {
       setLoading(true);
       await getOptions();
-    } catch (error) {
+    } catch {
       showError('刷新失败');
     } finally {
       setLoading(false);

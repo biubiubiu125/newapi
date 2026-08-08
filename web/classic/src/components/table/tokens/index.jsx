@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useRef, useState } from 'react';
 import {
   Notification,
   Button,
@@ -26,22 +25,24 @@ import {
   Typography,
   Select,
 } from '@douyinfe/semi-ui';
+import React, { useEffect, useRef, useState } from 'react';
+
 import {
   API,
   showError,
   getModelCategories,
   selectFilter,
 } from '../../../helpers';
-import CardPro from '../../common/ui/CardPro';
-import TokensTable from './TokensTable';
-import TokensActions from './TokensActions';
-import TokensFilters from './TokensFilters';
-import TokensDescription from './TokensDescription';
-import EditTokenModal from './modals/EditTokenModal';
-import CCSwitchModal from './modals/CCSwitchModal';
-import { useTokensData } from '../../../hooks/tokens/useTokensData';
-import { useIsMobile } from '../../../hooks/common/useIsMobile';
 import { createCardProPagination } from '../../../helpers/utils';
+import { useIsMobile } from '../../../hooks/common/useIsMobile';
+import { useTokensData } from '../../../hooks/tokens/useTokensData';
+import CardPro from '../../common/ui/CardPro';
+import CCSwitchModal from './modals/CCSwitchModal';
+import EditTokenModal from './modals/EditTokenModal';
+import TokensActions from './TokensActions';
+import TokensDescription from './TokensDescription';
+import TokensFilters from './TokensFilters';
+import TokensTable from './TokensTable';
 
 function TokensPage() {
   // Define the function first, then pass it into the hook to avoid TDZ errors
@@ -127,7 +128,7 @@ function TokensPage() {
       loadModels();
     }
     if (!key && localStorage.getItem(SUPPRESS_KEY) === '1') return;
-    const container = document.getElementById('fluent-new-api-container');
+    const container = document.querySelector('#fluent-new-api-container');
     if (!container) {
       Toast.warning(t('未检测到 FluentRead（流畅阅读），请确认扩展已启用'));
       return;
@@ -210,7 +211,7 @@ function TokensPage() {
       prefillKey: overrideKey,
       fetchTokenKey,
     } = latestRef.current;
-    const container = document.getElementById('fluent-new-api-container');
+    const container = document.querySelector('#fluent-new-api-container');
     if (!container) {
       Toast.error(t('未检测到 Fluent 容器'));
       return;
@@ -227,13 +228,13 @@ function TokensPage() {
       try {
         status = JSON.parse(status);
         serverAddress = status.server_address || '';
-      } catch (_) {}
+      } catch {}
     }
     if (!serverAddress) serverAddress = window.location.origin;
 
     let apiKeyToUse = '';
     if (overrideKey) {
-      apiKeyToUse = 'sk-' + overrideKey;
+      apiKeyToUse = `sk-${overrideKey}`;
     } else {
       const token =
         selectedKeys && selectedKeys.length === 1
@@ -246,8 +247,8 @@ function TokensPage() {
         return;
       }
       try {
-        apiKeyToUse = 'sk-' + (await fetchTokenKey(token));
-      } catch (_) {
+        apiKeyToUse = `sk-${await fetchTokenKey(token)}`;
+      } catch {
         return;
       }
     }
@@ -426,7 +427,7 @@ function TokensPage() {
           total: tokensData.tokenCount,
           onPageChange: tokensData.handlePageChange,
           onPageSizeChange: tokensData.handlePageSizeChange,
-          isMobile: isMobile,
+          isMobile,
           t: tokensData.t,
         })}
         t={tokensData.t}

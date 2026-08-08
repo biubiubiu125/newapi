@@ -23,6 +23,32 @@ var ErrUserAuthCachePending = errors.New("user authentication state update is pe
 
 var ErrUserAuthVersionConflict = errors.New("user authentication version update conflicted")
 
+// CommittedUserAuthStateError indicates that the security mutation committed,
+// but publishing its cache snapshot did not complete. Callers that can finish
+// session rotation or explicit revocation must not treat this as a rollback.
+type CommittedUserAuthStateError struct {
+	err error
+}
+
+func (e *CommittedUserAuthStateError) Error() string {
+	if e == nil || e.err == nil {
+		return "user authentication state committed with cache publication failure"
+	}
+	return "user authentication state committed with cache publication failure: " + e.err.Error()
+}
+
+func (e *CommittedUserAuthStateError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.err
+}
+
+func IsCommittedUserAuthStateError(err error) bool {
+	var committedErr *CommittedUserAuthStateError
+	return errors.As(err, &committedErr)
+}
+
 func getUserAuthFenceKey(userId int) string {
 	return fmt.Sprintf("auth:user:fence:%d", userId)
 }
@@ -218,10 +244,26 @@ func BumpUserAuthVersion(userId int) (int64, error) {
 	}); err != nil {
 		return 0, err
 	}
-	if err := PublishUserAuthCache(userId); err != nil {
+	if err := publishUserAuthCacheAfterCommit(userId); err != nil {
 		return next, err
 	}
 	return next, nil
+}
+
+var publishUserAuthCache = PublishUserAuthCache
+
+func publishUserAuthCacheAfterCommit(userId int) error {
+	if err := publishUserAuthCache(userId); err != nil {
+		return &CommittedUserAuthStateError{err: err}
+	}
+	return nil
+}
+
+// PublishUserAuthCacheAfterCommit refreshes the current user snapshot after a
+// committed auth-sensitive mutation and preserves the committed-error signal so
+// callers can continue session rotation or explicit revocation.
+func PublishUserAuthCacheAfterCommit(userId int) error {
+	return publishUserAuthCacheAfterCommit(userId)
 }
 
 // PublishUserAuthCache refreshes the current database state after a successful

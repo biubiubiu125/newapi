@@ -17,16 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Button } from '@douyinfe/semi-ui';
-import PricingGroups from '../filter/PricingGroups';
-import PricingQuotaTypes from '../filter/PricingQuotaTypes';
-import PricingEndpointTypes from '../filter/PricingEndpointTypes';
-import PricingVendors from '../filter/PricingVendors';
-import PricingTags from '../filter/PricingTags';
+import React from 'react';
 
 import { resetPricingFilters } from '../../../../helpers/utils';
 import { usePricingFilterCounts } from '../../../../hooks/model-pricing/usePricingFilterCounts';
+import PricingEndpointTypes from '../filter/PricingEndpointTypes';
+import PricingGroups from '../filter/PricingGroups';
+import PricingQuotaTypes from '../filter/PricingQuotaTypes';
+import PricingTags from '../filter/PricingTags';
+import PricingVendors from '../filter/PricingVendors';
 
 const PricingSidebar = ({
   showWithRecharge,

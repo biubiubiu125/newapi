@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import { useRef, useState } from 'react';
+
 import { API, showError, showInfo, showSuccess } from '../../helpers';
 import {
   getModelUpdateTaskErrorPayload,
@@ -33,7 +34,7 @@ const getManualIgnoredModelCountFromSettings = (settings) => {
   } else if (typeof settings === 'string') {
     try {
       parsed = JSON.parse(settings);
-    } catch (error) {
+    } catch {
       parsed = null;
     }
   }
@@ -41,6 +42,14 @@ const getManualIgnoredModelCountFromSettings = (settings) => {
     return 0;
   }
   return normalizeModelList(parsed.upstream_model_update_ignored_models).length;
+};
+
+const countRemainingRemoveModels = (results) => {
+  if (!Array.isArray(results)) return 0;
+  return results.reduce((total, item) => {
+    if (!item || typeof item !== 'object') return total;
+    return total + normalizeModelList(item.remaining_remove_models).length;
+  }, 0);
 };
 
 export const useChannelUpstreamUpdates = ({
@@ -206,15 +215,18 @@ export const useChannelUpstreamUpdates = ({
 
       const channelCount = data?.processed_channels || 0;
       const addedCount = data?.added_models || 0;
-      const removedCount = data?.removed_models || 0;
+      const keptRemoveCount =
+        typeof data?.remaining_remove_models_count === 'number'
+          ? data.remaining_remove_models_count
+          : countRemainingRemoveModels(data?.results);
       const failedCount = (data?.failed_channel_ids || []).length;
       showSuccess(
         t(
-          '已批量处理上游模型更新：渠道 {{channels}} 个，加入 {{added}} 个，删除 {{removed}} 个，失败 {{fails}} 个',
+          '已批量加入上游新增模型：渠道 {{channels}} 个，加入 {{added}} 个，保留 {{kept}} 个待人工处理的删除项，失败 {{fails}} 个',
           {
             channels: channelCount,
             added: addedCount,
-            removed: removedCount,
+            kept: keptRemoveCount,
             fails: failedCount,
           },
         ),

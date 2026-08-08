@@ -17,16 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { SideSheet, Typography, Button, Divider } from '@douyinfe/semi-ui';
 import { IconClose } from '@douyinfe/semi-icons';
+import { SideSheet, Typography, Button, Divider } from '@douyinfe/semi-ui';
+import React from 'react';
 
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
-import ModelHeader from './components/ModelHeader';
+import DynamicPricingBreakdown from './components/DynamicPricingBreakdown';
 import ModelBasicInfo from './components/ModelBasicInfo';
 import ModelEndpoints from './components/ModelEndpoints';
+import ModelHeader from './components/ModelHeader';
 import ModelPricingTable from './components/ModelPricingTable';
-import DynamicPricingBreakdown from './components/DynamicPricingBreakdown';
 
 const { Text } = Typography;
 

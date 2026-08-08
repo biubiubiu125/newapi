@@ -17,7 +17,31 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import {
+  IconCreditCard,
+  IconLink,
+  IconSave,
+  IconClose,
+  IconKey,
+} from '@douyinfe/semi-icons';
+import {
+  Button,
+  SideSheet,
+  Space,
+  Spin,
+  Typography,
+  Card,
+  Tag,
+  Avatar,
+  Form,
+  Col,
+  Row,
+  InputNumber,
+} from '@douyinfe/semi-ui';
 import React, { useEffect, useState, useContext, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import { StatusContext } from '../../../../context/Status';
 import {
   API,
   showError,
@@ -33,29 +57,6 @@ import {
   displayAmountToQuota,
 } from '../../../../helpers/quota';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
-import {
-  Button,
-  SideSheet,
-  Space,
-  Spin,
-  Typography,
-  Card,
-  Tag,
-  Avatar,
-  Form,
-  Col,
-  Row,
-  InputNumber,
-} from '@douyinfe/semi-ui';
-import {
-  IconCreditCard,
-  IconLink,
-  IconSave,
-  IconClose,
-  IconKey,
-} from '@douyinfe/semi-icons';
-import { useTranslation } from 'react-i18next';
-import { StatusContext } from '../../../../context/Status';
 
 const { Text, Title } = Typography;
 
@@ -89,7 +90,7 @@ const EditTokenModal = (props) => {
   };
 
   const setExpiredTime = (month, day, hour, minute) => {
-    let now = new Date();
+    const now = new Date();
     let timestamp = now.getTime() / 1000;
     let seconds = month * 30 * 24 * 60 * 60;
     seconds += day * 24 * 60 * 60;
@@ -105,11 +106,11 @@ const EditTokenModal = (props) => {
   };
 
   const loadModels = async () => {
-    let res = await API.get(`/api/user/models`);
+    const res = await API.get(`/api/user/models`);
     const { success, message, data } = res.data;
     if (success) {
       const categories = getModelCategories(t);
-      let localModelOptions = data.map((model) => {
+      const localModelOptions = data.map((model) => {
         let icon = null;
         for (const [key, category] of Object.entries(categories)) {
           if (key !== 'all' && category.filter({ model_name: model })) {
@@ -134,10 +135,10 @@ const EditTokenModal = (props) => {
   };
 
   const loadGroups = async () => {
-    let res = await API.get(`/api/user/self/groups`);
+    const res = await API.get(`/api/user/self/groups`);
     const { success, message, data } = res.data;
     if (success) {
-      let localGroupOptions = Object.entries(data).map(([group, info]) => ({
+      const localGroupOptions = Object.entries(data).map(([group, info]) => ({
         label: info.desc,
         value: group,
         ratio: info.ratio,
@@ -158,7 +159,7 @@ const EditTokenModal = (props) => {
 
   const loadToken = async () => {
     setLoading(true);
-    let res = await API.get(`/api/token/${props.editingToken.id}`);
+    const res = await API.get(`/api/token/${props.editingToken.id}`);
     const { success, message, data } = res.data;
     if (success) {
       if (data.expired_time !== -1) {
@@ -218,7 +219,7 @@ const EditTokenModal = (props) => {
   const submit = async (values) => {
     setLoading(true);
     if (isEdit) {
-      let { tokenCount: _tc, ...localInputs } = values;
+      const { tokenCount: _tc, ...localInputs } = values;
       localInputs.remain_quota = localInputs.unlimited_quota
         ? 0
         : displayAmountToQuota(localInputs.remain_amount);
@@ -228,7 +229,7 @@ const EditTokenModal = (props) => {
         return;
       }
       if (localInputs.expired_time !== -1) {
-        let time = Date.parse(localInputs.expired_time);
+        const time = Date.parse(localInputs.expired_time);
         if (isNaN(time)) {
           showError(t('过期时间格式错误！'));
           setLoading(false);
@@ -238,7 +239,7 @@ const EditTokenModal = (props) => {
       }
       localInputs.model_limits = localInputs.model_limits.join(',');
       localInputs.model_limits_enabled = localInputs.model_limits.length > 0;
-      let res = await API.put(`/api/token/`, {
+      const res = await API.put(`/api/token/`, {
         ...localInputs,
         id: parseInt(props.editingToken.id),
       });
@@ -251,10 +252,10 @@ const EditTokenModal = (props) => {
         showError(t(message));
       }
     } else {
-      const count = parseInt(values.tokenCount, 10) || 1;
+      const count = Number.parseInt(values.tokenCount, 10) || 1;
       let successCount = 0;
       for (let i = 0; i < count; i++) {
-        let { tokenCount: _tc, ...localInputs } = values;
+        const { tokenCount: _tc, ...localInputs } = values;
         const baseName =
           values.name.trim() === '' ? 'default' : values.name.trim();
         if (i !== 0 || values.name.trim() === '') {
@@ -272,7 +273,7 @@ const EditTokenModal = (props) => {
         }
 
         if (localInputs.expired_time !== -1) {
-          let time = Date.parse(localInputs.expired_time);
+          const time = Date.parse(localInputs.expired_time);
           if (isNaN(time)) {
             showError(t('过期时间格式错误！'));
             setLoading(false);
@@ -282,7 +283,7 @@ const EditTokenModal = (props) => {
         }
         localInputs.model_limits = localInputs.model_limits.join(',');
         localInputs.model_limits_enabled = localInputs.model_limits.length > 0;
-        let res = await API.post(`/api/token/`, localInputs);
+        const res = await API.post(`/api/token/`, localInputs);
         const { success, message } = res.data;
         if (success) {
           successCount++;
@@ -436,8 +437,9 @@ const EditTokenModal = (props) => {
                         {
                           validator: (rule, value) => {
                             // 允许 -1 表示永不过期，也允许空值在必填校验时被拦截
-                            if (value === -1 || !value)
+                            if (value === -1 || !value) {
                               return Promise.resolve();
+                            }
                             const time = Date.parse(value);
                             if (isNaN(time)) {
                               return Promise.reject(t('过期时间格式错误！'));

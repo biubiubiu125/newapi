@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import {
   Button,
   Dropdown,
@@ -26,10 +25,10 @@ import {
   Typography,
   Select,
 } from '@douyinfe/semi-ui';
+import React from 'react';
+
+import { canRepairChannelConsistency as canRepairChannelConsistencyForPermissions } from '../../../helpers/adminPermissions';
 import CompactModeToggle from '../../common/ui/CompactModeToggle';
-import {
-  canRepairChannelConsistency as canRepairChannelConsistencyForPermissions,
-} from '../../../helpers/adminPermissions';
 
 const ChannelsActions = ({
   enableBatchDelete,
@@ -201,14 +200,16 @@ const ChannelsActions = ({
                     onClick={() => {
                       Modal.confirm({
                         title: t('确定？'),
-                        content: t('确定要对全部渠道执行上游模型更新吗？'),
+                        content: t(
+                          '确定要批量加入全部渠道新检测到的上游模型吗？已标记为上游移除的模型会保留给人工处理，不会自动删除。',
+                        ),
                         onOk: () => applyAllUpstreamUpdates(),
                         size: 'sm',
                         centered: true,
                       });
                     }}
                   >
-                    {t('处理全部渠道上游更新')}
+                    {t('批量加入上游新增模型')}
                   </Button>
                 </Dropdown.Item>
                 <Dropdown.Item>
@@ -259,7 +260,7 @@ const ChannelsActions = ({
               size='small'
               checked={idSort}
               onChange={(v) => {
-                localStorage.setItem('id-sort', v + '');
+                localStorage.setItem('id-sort', `${v}`);
                 setIdSort(v);
                 const { searchKeyword, searchGroup, searchModel } =
                   getFormValues();
@@ -291,7 +292,7 @@ const ChannelsActions = ({
               size='small'
               checked={enableBatchDelete}
               onChange={(v) => {
-                localStorage.setItem('enable-batch-delete', v + '');
+                localStorage.setItem('enable-batch-delete', `${v}`);
                 setEnableBatchDelete(v);
               }}
             />
@@ -305,7 +306,7 @@ const ChannelsActions = ({
               size='small'
               checked={enableTagMode}
               onChange={(v) => {
-                localStorage.setItem('enable-tag-mode', v + '');
+                localStorage.setItem('enable-tag-mode', `${v}`);
                 setEnableTagMode(v);
                 setActivePage(1);
                 loadChannels(1, pageSize, idSort, v);

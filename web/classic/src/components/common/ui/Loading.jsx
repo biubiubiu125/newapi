@@ -17,13 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Spin } from '@douyinfe/semi-ui';
+import React from 'react';
 
 const Loading = ({ size = 'small' }) => {
   return (
     <div className='fixed inset-0 w-screen h-screen flex items-center justify-center'>
-      <Spin size={size} spinning={true} />
+      <Spin size={size} spinning />
     </div>
   );
 };

@@ -483,14 +483,14 @@ func (m *Message) ParseToolCalls() []ToolCallRequest {
 		return nil
 	}
 	var toolCalls []ToolCallRequest
-	if err := json.Unmarshal(m.ToolCalls, &toolCalls); err == nil {
+	if err := kitutil.Unmarshal(m.ToolCalls, &toolCalls); err == nil {
 		return toolCalls
 	}
 	return toolCalls
 }
 
 func (m *Message) SetToolCalls(toolCalls any) {
-	toolCallsJson, _ := json.Marshal(toolCalls)
+	toolCallsJson, _ := kitutil.Marshal(toolCalls)
 	m.ToolCalls = toolCallsJson
 }
 
@@ -682,7 +682,7 @@ func (m *Message) ParseContent() []MediaContent {
 	}
 
 	var stringContent string
-	if err := json.Unmarshal(m.Content, &stringContent); err == nil {
+	if err := kitutil.Unmarshal(m.Content, &stringContent); err == nil {
 		m.parsedStringContent = &stringContent
 		return stringContent
 	}
@@ -707,14 +707,14 @@ func (m *Message) SetNullContent() {
 }
 
 func (m *Message) SetStringContent(content string) {
-	jsonContent, _ := json.Marshal(content)
+	jsonContent, _ := kitutil.Marshal(content)
 	m.Content = jsonContent
 	m.parsedStringContent = &content
 	m.parsedContent = nil
 }
 
 func (m *Message) SetMediaContent(content []MediaContent) {
-	jsonContent, _ := json.Marshal(content)
+	jsonContent, _ := kitutil.Marshal(content)
 	m.Content = jsonContent
 	m.parsedContent = nil
 	m.parsedStringContent = nil
@@ -725,7 +725,7 @@ func (m *Message) IsStringContent() bool {
 		return true
 	}
 	var stringContent string
-	if err := json.Unmarshal(m.Content, &stringContent); err == nil {
+	if err := kitutil.Unmarshal(m.Content, &stringContent); err == nil {
 		m.parsedStringContent = &stringContent
 		return true
 	}
@@ -741,7 +741,7 @@ func (m *Message) ParseContent() []MediaContent {
 
 	// 先尝试解析为字符串
 	var stringContent string
-	if err := json.Unmarshal(m.Content, &stringContent); err == nil {
+	if err := kitutil.Unmarshal(m.Content, &stringContent); err == nil {
 		contentList = []MediaContent{{
 			Type: ContentTypeText,
 			Text: stringContent,
@@ -752,7 +752,7 @@ func (m *Message) ParseContent() []MediaContent {
 
 	// 尝试解析为数组
 	var arrayContent []map[string]interface{}
-	if err := json.Unmarshal(m.Content, &arrayContent); err == nil {
+	if err := kitutil.Unmarshal(m.Content, &arrayContent); err == nil {
 		for _, contentItem := range arrayContent {
 			contentType, ok := contentItem["type"].(string)
 			if !ok {

@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import { createFileRoute } from '@tanstack/react-router'
+
 import { TicketsPage } from '@/features/tickets'
 import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 

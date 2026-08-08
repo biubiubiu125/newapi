@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect } from 'react';
-import { Modal, Button, Typography, Spin } from '@douyinfe/semi-ui';
 import { IconExternalOpen, IconCopy } from '@douyinfe/semi-icons';
+import { Modal, Button, Typography, Spin } from '@douyinfe/semi-ui';
+import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 
 const { Text } = Typography;

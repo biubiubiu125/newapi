@@ -17,7 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect } from 'react';
+import { IconChevronDown, IconChevronUp } from '@douyinfe/semi-icons';
+import {
+  IllustrationNoContent,
+  IllustrationNoContentDark,
+} from '@douyinfe/semi-illustrations';
 import {
   Empty,
   Skeleton,
@@ -29,12 +33,9 @@ import {
   Typography,
   Avatar,
 } from '@douyinfe/semi-ui';
-import {
-  IllustrationNoContent,
-  IllustrationNoContentDark,
-} from '@douyinfe/semi-illustrations';
-import { IconChevronDown, IconChevronUp } from '@douyinfe/semi-icons';
 import { Settings } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
+
 import { renderModelTag, getModelCategories } from '../../../../helpers';
 
 const ModelsList = ({ t, models, modelsLoading, copyText }) => {

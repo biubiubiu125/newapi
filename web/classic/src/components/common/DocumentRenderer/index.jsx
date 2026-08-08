@@ -17,15 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { API, showError } from '../../../helpers';
 import { Empty, Card, Spin, Typography } from '@douyinfe/semi-ui';
+import React, { useEffect, useMemo, useState } from 'react';
+
+import { API, showError } from '../../../helpers';
+
 const { Title } = Typography;
 import {
   IllustrationConstruction,
   IllustrationConstructionDark,
 } from '@douyinfe/semi-illustrations';
 import { useTranslation } from 'react-i18next';
+
 import MarkdownRenderer from '../markdown/MarkdownRenderer';
 
 // Check whether content is a URL.
@@ -51,7 +54,7 @@ const sanitizeHtml = (html) => {
   const tempDiv = document.createElement('div');
   tempDiv.innerHTML = html;
 
-  const styles = Array.from(tempDiv.querySelectorAll('style'))
+  const styles = [...tempDiv.querySelectorAll('style')]
     .map((style) => style.innerHTML)
     .join('\n');
 
@@ -92,7 +95,7 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
           setContent('');
         }
       }
-    } catch (error) {
+    } catch {
       if (!cachedContent) {
         showError(emptyMessage);
         setContent('');
@@ -119,7 +122,7 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
     const { styles } = htmlPayload;
 
     if (styles) {
-      let styleEl = document.getElementById(styleId);
+      let styleEl = document.querySelector(`#${styleId}`);
       if (!styleEl) {
         styleEl = document.createElement('style');
         styleEl.id = styleId;
@@ -128,12 +131,12 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
       }
       styleEl.innerHTML = styles;
     } else {
-      const el = document.getElementById(styleId);
+      const el = document.querySelector(`#${styleId}`);
       if (el) el.remove();
     }
 
     return () => {
-      const el = document.getElementById(styleId);
+      const el = document.querySelector(`#${styleId}`);
       if (el) el.remove();
     };
   }, [cacheKey, htmlPayload]);
@@ -152,7 +155,7 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
     return (
       <div className='classic-page-fill flex justify-center items-center bg-gray-50'>
         <Empty
-          title={t('管理员未设置' + title + '内容')}
+          title={t(`管理员未设置${title}内容`)}
           image={
             <IllustrationConstruction style={{ width: 150, height: 150 }} />
           }
@@ -182,10 +185,10 @@ const DocumentRenderer = ({ apiEndpoint, title, cacheKey, emptyMessage }) => {
               target='_blank'
               rel='noopener noreferrer'
               title={content.trim()}
-              aria-label={`${t('访问' + title)}: ${content.trim()}`}
+              aria-label={`${t(`访问${title}`)}: ${content.trim()}`}
               className='inline-block px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors'
             >
-              {t('访问' + title)}
+              {t(`访问${title}`)}
             </a>
           </div>
         </Card>

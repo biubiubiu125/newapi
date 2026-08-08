@@ -1,6 +1,8 @@
 import { redirect } from '@tanstack/react-router'
+
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
+
 import { isFreshSidebarModuleEnabled } from './nav-modules'
 
 type SidebarRouteGuardOptions = {
@@ -11,9 +13,7 @@ type SidebarRouteGuardOptions = {
   redirectTo?: string
 }
 
-export async function requireSidebarModule(
-  options: SidebarRouteGuardOptions
-) {
+export async function requireSidebarModule(options: SidebarRouteGuardOptions) {
   const { auth } = useAuthStore.getState()
   const minRole = options.minRole ?? ROLE.USER
 

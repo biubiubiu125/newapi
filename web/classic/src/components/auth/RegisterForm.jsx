@@ -17,8 +17,33 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import {
+  IconGithubLogo,
+  IconMail,
+  IconUser,
+  IconLock,
+  IconKey,
+} from '@douyinfe/semi-icons';
+import {
+  Button,
+  Card,
+  Checkbox,
+  Divider,
+  Form,
+  Icon,
+  Modal,
+} from '@douyinfe/semi-ui';
+import Text from '@douyinfe/semi-ui/lib/es/typography/text';
+import Title from '@douyinfe/semi-ui/lib/es/typography/title';
 import React, { useContext, useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { SiDiscord } from 'react-icons/si';
 import { Link, useNavigate } from 'react-router-dom';
+import TelegramLoginButton from 'react-telegram-login/src';
+import Turnstile from 'react-turnstile';
+
+import { StatusContext } from '../../context/Status';
+import { UserContext } from '../../context/User';
 import {
   API,
   showError,
@@ -32,46 +57,20 @@ import {
   getAffiliateCode,
   saveAffiliateCode,
   removeAffiliateCode,
-} from '../../helpers';
-import Turnstile from 'react-turnstile';
-import {
-  Button,
-  Card,
-  Checkbox,
-  Divider,
-  Form,
-  Icon,
-  Modal,
-} from '@douyinfe/semi-ui';
-import Title from '@douyinfe/semi-ui/lib/es/typography/title';
-import Text from '@douyinfe/semi-ui/lib/es/typography/text';
-import {
-  IconGithubLogo,
-  IconMail,
-  IconUser,
-  IconLock,
-  IconKey,
-} from '@douyinfe/semi-icons';
-import {
   onGitHubOAuthClicked,
   onLinuxDOOAuthClicked,
   onOIDCClicked,
 } from '../../helpers';
-import OIDCIcon from '../common/logo/OIDCIcon';
-import LinuxDoIcon from '../common/logo/LinuxDoIcon';
-import WeChatIcon from '../common/logo/WeChatIcon';
-import TelegramLoginButton from 'react-telegram-login/src';
-import { UserContext } from '../../context/User';
-import { StatusContext } from '../../context/Status';
-import { useTranslation } from 'react-i18next';
-import { SiDiscord } from 'react-icons/si';
 import { useAuthBrand } from '../../hooks/common/useAuthBrand';
+import LinuxDoIcon from '../common/logo/LinuxDoIcon';
+import OIDCIcon from '../common/logo/OIDCIcon';
+import WeChatIcon from '../common/logo/WeChatIcon';
 
 const USERNAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 const REGISTER_USERNAME_MAX_LENGTH = 20;
 
 const RegisterForm = () => {
-  let navigate = useNavigate();
+  const navigate = useNavigate();
   const { t } = useTranslation();
   const githubButtonTextKeyByState = {
     idle: '使用 GitHub 继续',
@@ -129,13 +128,14 @@ const RegisterForm = () => {
     if (!savedStatus) return {};
     try {
       return JSON.parse(savedStatus) || {};
-    } catch (err) {
+    } catch {
       return {};
     }
   }, [statusState?.status]);
   const referralCookieTTLDays =
     Number(
-      status?.referral_cookie_ttl_days ?? status?.data?.referral_cookie_ttl_days,
+      status?.referral_cookie_ttl_days ??
+        status?.data?.referral_cookie_ttl_days,
     ) || undefined;
 
   useEffect(() => {
@@ -159,12 +159,12 @@ const RegisterForm = () => {
     (status.custom_oauth_providers || []).length > 0;
   const hasOAuthRegisterOptions = Boolean(
     status.github_oauth ||
-    status.discord_oauth ||
-    status.oidc_enabled ||
-    status.wechat_login ||
-    status.linuxdo_oauth ||
-    status.telegram_oauth ||
-    hasCustomOAuthProviders,
+      status.discord_oauth ||
+      status.oidc_enabled ||
+      status.wechat_login ||
+      status.linuxdo_oauth ||
+      status.telegram_oauth ||
+      hasCustomOAuthProviders,
   );
 
   const [showEmailVerification, setShowEmailVerification] = useState(false);
@@ -216,9 +216,7 @@ const RegisterForm = () => {
     setWechatCodeSubmitLoading(true);
     try {
       const finalAffCode =
-        String(inputs.aff || '').trim() ||
-        getAffiliateCode() ||
-        '';
+        String(inputs.aff || '').trim() || getAffiliateCode() || '';
       const res = await API.get(
         `/api/oauth/wechat?code=${encodeURIComponent(
           inputs.wechat_verification_code,
@@ -236,7 +234,7 @@ const RegisterForm = () => {
       } else {
         showError(message);
       }
-    } catch (error) {
+    } catch {
       showError('登录失败，请重试');
     } finally {
       setWechatCodeSubmitLoading(false);
@@ -296,7 +294,7 @@ const RegisterForm = () => {
         } else {
           showError(message);
         }
-      } catch (error) {
+      } catch {
         showError('注册失败，请重试');
       } finally {
         setRegisterLoading(false);
@@ -317,12 +315,14 @@ const RegisterForm = () => {
       );
       const { success, message } = res.data;
       if (success) {
-        showSuccess(t('验证码已发送。如暂未收到，请检查垃圾邮件或广告邮件，或稍后再试。'));
+        showSuccess(
+          t('验证码已发送。如暂未收到，请检查垃圾邮件或广告邮件，或稍后再试。'),
+        );
         setDisableButton(true);
       } else {
         showError(message);
       }
-    } catch (error) {
+    } catch {
       showError('发送验证码失败，请重试');
     } finally {
       setVerificationCodeLoading(false);
@@ -436,7 +436,7 @@ const RegisterForm = () => {
       } else {
         showError(message);
       }
-    } catch (error) {
+    } catch {
       showError('登录失败，请重试');
     }
   };
@@ -813,11 +813,11 @@ const RegisterForm = () => {
       <Modal
         title={t('微信扫码登录')}
         visible={showWeChatLoginModal}
-        maskClosable={true}
+        maskClosable
         onOk={onSubmitWeChatVerificationCode}
         onCancel={() => setShowWeChatLoginModal(false)}
         okText={t('登录')}
-        centered={true}
+        centered
         okButtonProps={{
           loading: wechatCodeSubmitLoading,
         }}

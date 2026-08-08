@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useState, useCallback } from 'react';
+import { IconSearch } from '@douyinfe/semi-icons';
 import {
   Modal,
   Table,
@@ -29,10 +29,11 @@ import {
   Input,
 } from '@douyinfe/semi-ui';
 import { MousePointerClick } from 'lucide-react';
-import { useIsMobile } from '../../../../hooks/common/useIsMobile';
+import React, { useEffect, useMemo, useState, useCallback } from 'react';
+
 import { MODEL_TABLE_PAGE_SIZE } from '../../../../constants';
-import { IconSearch } from '@douyinfe/semi-icons';
 import { buildUpstreamConflictSubmitPayload } from '../../../../helpers/modelSyncPreview';
+import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 
 const { Text } = Typography;
 
@@ -68,7 +69,7 @@ const UpstreamConflictModal = ({
     if (typeof v === 'string') return v || '-';
     try {
       return JSON.stringify(v, null, 2);
-    } catch (_) {
+    } catch {
       return String(v);
     }
   };
@@ -319,7 +320,7 @@ const UpstreamConflictModal = ({
               columns={columns}
               dataSource={pagedDataSource}
               pagination={{
-                currentPage: currentPage,
+                currentPage,
                 pageSize: MODEL_TABLE_PAGE_SIZE,
                 total: filteredDataSource.length,
                 showSizeChanger: false,

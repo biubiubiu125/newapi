@@ -17,15 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo, useState } from 'react';
-import { Empty } from '@douyinfe/semi-ui';
-import CardTable from '../../common/ui/CardTable';
 import {
   IllustrationNoResult,
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
-import { getRedemptionsColumns, isExpired } from './RedemptionsColumnDefs';
+import { Empty } from '@douyinfe/semi-ui';
+import React, { useMemo, useState } from 'react';
+
+import CardTable from '../../common/ui/CardTable';
 import DeleteRedemptionModal from './modals/DeleteRedemptionModal';
+import { getRedemptionsColumns, isExpired } from './RedemptionsColumnDefs';
 
 const RedemptionsTable = (redemptionsData) => {
   const {
@@ -102,14 +103,14 @@ const RedemptionsTable = (redemptionsData) => {
         scroll={compactMode ? undefined : { x: 'max-content' }}
         pagination={{
           currentPage: activePage,
-          pageSize: pageSize,
+          pageSize,
           total: tokenCount,
           showSizeChanger: true,
           pageSizeOptions: [10, 20, 50, 100],
           onPageSizeChange: redemptionsData.handlePageSizeChange,
           onPageChange: handlePageChange,
         }}
-        hidePagination={true}
+        hidePagination
         loading={loading}
         rowSelection={rowSelection}
         onRow={handleRow}

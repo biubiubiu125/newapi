@@ -17,14 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Card, Tag, Timeline, Empty } from '@douyinfe/semi-ui';
-import { Bell } from 'lucide-react';
-import { marked } from 'marked';
 import {
   IllustrationConstruction,
   IllustrationConstructionDark,
 } from '@douyinfe/semi-illustrations';
+import { Card, Tag, Timeline, Empty } from '@douyinfe/semi-ui';
+import { Bell } from 'lucide-react';
+import { marked } from 'marked';
+import React from 'react';
+
 import ScrollableContainer from '../common/ui/ScrollableContainer';
 
 const AnnouncementsPanel = ({
@@ -85,7 +86,7 @@ const AnnouncementsPanel = ({
                 <Timeline.Item
                   key={idx}
                   type={item.type || 'default'}
-                  time={`${item.relative ? item.relative + ' ' : ''}${item.time}`}
+                  time={`${item.relative ? `${item.relative} ` : ''}${item.time}`}
                   extra={
                     item.extra ? (
                       <div

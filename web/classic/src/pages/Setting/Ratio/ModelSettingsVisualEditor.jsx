@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
+
 import ModelPricingEditor from './components/ModelPricingEditor';
 
 export default function ModelSettingsVisualEditor(props) {

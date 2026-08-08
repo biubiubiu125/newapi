@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import { useState, useEffect, useMemo, useContext, useRef } from 'react';
+
 import { StatusContext } from '../../context/Status';
 import { API } from '../../helpers';
 
@@ -75,7 +76,7 @@ export const sanitizeSidebarConfig = (config) => {
   if (!config || typeof config !== 'object') return config;
   const sanitized = { ...config };
   if (sanitized.console?.tickets !== undefined) {
-    sanitized.personal = { enabled: true, ...(sanitized.personal || {}) };
+    sanitized.personal = { enabled: true, ...sanitized.personal };
     if (sanitized.personal.tickets === undefined) {
       sanitized.personal.tickets = sanitized.console.tickets;
     }
@@ -96,7 +97,7 @@ export const mergeAdminConfig = (savedConfig) => {
   const merged = deepClone(DEFAULT_ADMIN_CONFIG);
   if (!savedConfig || typeof savedConfig !== 'object') return merged;
   const hasLegacyTickets = savedConfig.console?.tickets !== undefined;
-  const hasPersonalTickets = Object.prototype.hasOwnProperty.call(
+  const hasPersonalTickets = Object.hasOwn(
     savedConfig.personal || {},
     'tickets',
   );
@@ -132,7 +133,7 @@ export const mergeAdminConfig = (savedConfig) => {
   }
 
   if (merged.console?.tickets !== undefined) {
-    merged.personal = { enabled: true, ...(merged.personal || {}) };
+    merged.personal = { enabled: true, ...merged.personal };
     if (hasLegacyTickets && !hasPersonalTickets) {
       merged.personal.tickets = savedConfig.console.tickets;
     } else if (merged.personal.tickets === undefined) {
@@ -163,7 +164,7 @@ export const useSidebar = () => {
       try {
         const config = JSON.parse(statusState.status.SidebarModulesAdmin);
         return mergeAdminConfig(config);
-      } catch (error) {
+      } catch {
         return mergeAdminConfig(null);
       }
     }
@@ -212,7 +213,7 @@ export const useSidebar = () => {
         });
         setUserConfig(defaultUserConfig);
       }
-    } catch (error) {
+    } catch {
       // 出错时也生成默认配置，而不是设置为空对象
       const defaultUserConfig = {};
       Object.keys(adminConfig).forEach((sectionKey) => {

@@ -17,26 +17,27 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
 import { Card, Spin } from '@douyinfe/semi-ui';
-import { API, showError, toBoolean } from '../../helpers';
+import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { API, showError, toBoolean } from '../../helpers';
 import SettingModelDeployment from '../../pages/Setting/Model/SettingModelDeployment';
 
 const ModelDeploymentSetting = () => {
   const { t } = useTranslation();
-  let [inputs, setInputs] = useState({
+  const [inputs, setInputs] = useState({
     'model_deployment.ionet.api_key': '',
     'model_deployment.ionet.enabled': false,
   });
 
-  let [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const getOptions = async () => {
     const res = await API.get('/api/option/');
     const { success, message, data } = res.data;
     if (success) {
-      let newInputs = {
+      const newInputs = {
         'model_deployment.ionet.api_key': '',
         'model_deployment.ionet.enabled': false,
       };

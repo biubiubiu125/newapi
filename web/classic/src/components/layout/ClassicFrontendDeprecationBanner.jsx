@@ -17,10 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useContext, useState } from 'react';
-import { Banner, Button, Modal } from '@douyinfe/semi-ui';
 import { IconAlertTriangle, IconClose } from '@douyinfe/semi-icons';
+import { Banner, Button, Modal } from '@douyinfe/semi-ui';
+import React, { useContext, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { UserContext } from '../../context/User';
 import { confirmSwitchToDefaultFrontend } from '../../helpers';
 
@@ -33,7 +34,7 @@ const ClassicFrontendDeprecationBanner = () => {
   const [visible, setVisible] = useState(() => {
     try {
       return localStorage.getItem(DISMISS_STORAGE_KEY) !== '1';
-    } catch (_) {
+    } catch {
       return true;
     }
   });
@@ -58,7 +59,7 @@ const ClassicFrontendDeprecationBanner = () => {
       onOk: () => {
         try {
           localStorage.setItem(DISMISS_STORAGE_KEY, '1');
-        } catch (_) {}
+        } catch {}
         setVisible(false);
       },
     });
@@ -112,7 +113,7 @@ const ClassicFrontendDeprecationBanner = () => {
           theme='borderless'
           size='small'
           type='tertiary'
-          icon={<IconClose aria-hidden={true} />}
+          icon={<IconClose aria-hidden />}
           onClick={confirmClose}
           className='classic-frontend-deprecation-close'
           aria-label={t('关闭')}

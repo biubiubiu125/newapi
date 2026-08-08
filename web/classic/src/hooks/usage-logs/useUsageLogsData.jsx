@@ -17,9 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { Modal } from '@douyinfe/semi-ui';
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Modal } from '@douyinfe/semi-ui';
+
+import ParamOverrideEntry from '../../components/table/usage-logs/components/ParamOverrideEntry';
+import { ITEMS_PER_PAGE } from '../../constants';
 import {
   API,
   getTodayStartTimestamp,
@@ -39,9 +42,7 @@ import {
   renderTieredModelPrice,
   renderTaskBillingProcess,
 } from '../../helpers';
-import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
-import ParamOverrideEntry from '../../components/table/usage-logs/components/ParamOverrideEntry';
 
 const hasSettlementError = (other) =>
   other?.settlement_status === 'error' || Boolean(other?.settlement_error);
@@ -138,7 +139,7 @@ export const useLogsData = () => {
 
   // Form state
   const [formApi, setFormApi] = useState(null);
-  let now = new Date();
+  const now = new Date();
   const formInitValues = {
     username: '',
     token_name: '',
@@ -304,7 +305,7 @@ export const useLogsData = () => {
       channel: formValues.channel || '',
       group: formValues.group || '',
       request_id: formValues.request_id || '',
-      logType: formValues.logType ? parseInt(formValues.logType) : 0,
+      logType: formValues.logType ? Number.parseInt(formValues.logType) : 0,
     };
   };
 
@@ -319,11 +320,11 @@ export const useLogsData = () => {
       logType: formLogType,
     } = getFormValues();
     const currentLogType = formLogType !== undefined ? formLogType : logType;
-    let localStartTimestamp = Date.parse(start_timestamp) / 1000;
-    let localEndTimestamp = Date.parse(end_timestamp) / 1000;
+    const localStartTimestamp = Date.parse(start_timestamp) / 1000;
+    const localEndTimestamp = Date.parse(end_timestamp) / 1000;
     let url = `/api/log/self/stat?type=${currentLogType}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&group=${group}`;
     url = encodeURI(url);
-    let res = await API.get(url);
+    const res = await API.get(url);
     const { success, message, data } = res.data;
     if (success) {
       setStat(data);
@@ -344,11 +345,11 @@ export const useLogsData = () => {
       logType: formLogType,
     } = getFormValues();
     const currentLogType = formLogType !== undefined ? formLogType : logType;
-    let localStartTimestamp = Date.parse(start_timestamp) / 1000;
-    let localEndTimestamp = Date.parse(end_timestamp) / 1000;
+    const localStartTimestamp = Date.parse(start_timestamp) / 1000;
+    const localEndTimestamp = Date.parse(end_timestamp) / 1000;
     let url = `/api/log/stat?type=${currentLogType}&username=${username}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&group=${group}`;
     url = encodeURI(url);
-    let res = await API.get(url);
+    const res = await API.get(url);
     const { success, message, data } = res.data;
     if (success) {
       setStat(data);
@@ -423,12 +424,12 @@ export const useLogsData = () => {
       return `${chain.join(' -> ')}`;
     };
 
-    let expandDatesLocal = {};
+    const expandDatesLocal = {};
     for (let i = 0; i < logs.length; i++) {
       logs[i].timestamp2string = timestamp2string(logs[i].created_at);
       logs[i].key = logs[i].id;
-      let other = getLogOther(logs[i].other);
-      let expandDataLocal = [];
+      const other = getLogOther(logs[i].other);
+      const expandDataLocal = [];
 
       if (
         isAdminUser &&
@@ -504,7 +505,7 @@ export const useLogsData = () => {
         }
       }
       if (logs[i].type === 2) {
-        let modelMapped =
+        const modelMapped =
           other?.is_model_mapped &&
           other?.upstream_model_name &&
           other?.upstream_model_name !== '';
@@ -599,9 +600,8 @@ export const useLogsData = () => {
       if (isAdminUser && other?.stream_status) {
         const ss = other.stream_status;
         const isOk = ss.status === 'ok';
-        const statusLabel = isOk ? '✓ ' + t('正常') : '✗ ' + t('异常');
-        let streamValue =
-          statusLabel + ' (' + (ss.end_reason || 'unknown') + ')';
+        const statusLabel = isOk ? `✓ ${t('正常')}` : `✗ ${t('异常')}`;
+        let streamValue = `${statusLabel} (${ss.end_reason || 'unknown'})`;
         if (ss.error_count > 0) {
           streamValue += ` [${t('软错误')}: ${ss.error_count}]`;
         }
@@ -818,8 +818,8 @@ export const useLogsData = () => {
           ? formLogType
           : logType;
 
-    let localStartTimestamp = Date.parse(start_timestamp) / 1000;
-    let localEndTimestamp = Date.parse(end_timestamp) / 1000;
+    const localStartTimestamp = Date.parse(start_timestamp) / 1000;
+    const localEndTimestamp = Date.parse(end_timestamp) / 1000;
     if (isAdminUser) {
       url = `/api/log/?p=${startIdx}&page_size=${pageSize}&type=${currentLogType}&username=${username}&token_name=${token_name}&model_name=${model_name}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}&channel=${channel}&group=${group}&request_id=${request_id}`;
     } else {
@@ -848,7 +848,7 @@ export const useLogsData = () => {
   };
 
   const handlePageSizeChange = async (size) => {
-    localStorage.setItem('page-size', size + '');
+    localStorage.setItem('page-size', `${size}`);
     setPageSize(size);
     setActivePage(1);
     loadLogs(activePage, size)
@@ -869,7 +869,7 @@ export const useLogsData = () => {
   const copyText = async (e, text) => {
     e.stopPropagation();
     if (await copy(text)) {
-      showSuccess('已复制：' + text);
+      showSuccess(`已复制：${text}`);
     } else {
       Modal.error({ title: t('无法复制到剪贴板，请手动复制'), content: text });
     }
@@ -878,7 +878,7 @@ export const useLogsData = () => {
   // Initialize data
   useEffect(() => {
     const localPageSize =
-      parseInt(localStorage.getItem('page-size')) || ITEMS_PER_PAGE;
+      Number.parseInt(localStorage.getItem('page-size')) || ITEMS_PER_PAGE;
     setPageSize(localPageSize);
     loadLogs(activePage, localPageSize)
       .then()

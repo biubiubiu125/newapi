@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import { formatQuota, formatTimestampToDate } from '@/lib/format'
+
 import type { ApiKey, ApiKeyUsageStats } from '../types'
 
 type ApiKeyUsageCellProps = {
@@ -47,17 +48,25 @@ export function ApiKeyUsageCell({
     <div className='min-w-[180px] space-y-0.5 text-xs leading-5'>
       <div className='flex justify-between gap-3'>
         <span className='text-muted-foreground'>今日</span>
-        <span className='font-mono tabular-nums'>{formatQuota(usage.today_quota)}</span>
+        <span className='font-mono tabular-nums'>
+          {formatQuota(usage.today_quota)}
+        </span>
       </div>
       <div className='flex justify-between gap-3'>
         <span className='text-muted-foreground'>本月</span>
-        <span className='font-mono tabular-nums'>{formatQuota(usage.month_quota)}</span>
+        <span className='font-mono tabular-nums'>
+          {formatQuota(usage.month_quota)}
+        </span>
       </div>
       <div className='flex justify-between gap-3'>
         <span className='text-muted-foreground'>
-          {usage.reset_at ? `自 ${formatTimestampToDate(usage.reset_at).slice(0, 10)} 起累计` : '累计'}
+          {usage.reset_at
+            ? `自 ${formatTimestampToDate(usage.reset_at).slice(0, 10)} 起累计`
+            : '累计'}
         </span>
-        <span className='font-mono tabular-nums'>{formatQuota(usage.cumulative_quota)}</span>
+        <span className='font-mono tabular-nums'>
+          {formatQuota(usage.cumulative_quota)}
+        </span>
       </div>
       <div className='flex justify-between gap-3'>
         <span className='text-muted-foreground'>最后使用</span>
@@ -68,7 +77,9 @@ export function ApiKeyUsageCell({
       {!apiKey.unlimited_quota ? (
         <div className='flex justify-between gap-3'>
           <span className='text-muted-foreground'>剩余额度</span>
-          <span className='font-mono tabular-nums'>{formatQuota(apiKey.remain_quota)}</span>
+          <span className='font-mono tabular-nums'>
+            {formatQuota(apiKey.remain_quota)}
+          </span>
         </div>
       ) : null}
     </div>

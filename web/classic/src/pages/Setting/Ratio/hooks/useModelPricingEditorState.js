@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useMemo, useState } from 'react';
+
 import { API, showError, showSuccess } from '../../../../helpers';
 import {
   combineBillingExpr,
@@ -80,7 +81,7 @@ const formatNumber = (value) => {
   if (num === null) {
     return '';
   }
-  return parseFloat(num.toFixed(12)).toString();
+  return Number.parseFloat(num.toFixed(12)).toString();
 };
 
 const toNormalizedNumber = (value) => {
@@ -477,11 +478,11 @@ export const buildPreviewRows = (model, t) => {
           tierCount > 0
             ? `${tierCount} ${t('档')} — ${
                 finalBillingExpr.length > 60
-                  ? finalBillingExpr.slice(0, 60) + '...'
+                  ? `${finalBillingExpr.slice(0, 60)}...`
                   : finalBillingExpr
               }`
             : finalBillingExpr.length > 60
-              ? finalBillingExpr.slice(0, 60) + '...'
+              ? `${finalBillingExpr.slice(0, 60)}...`
               : finalBillingExpr,
       });
     }
@@ -670,7 +671,7 @@ export function useModelPricingEditorState({
       ...Object.keys(sourceMaps.ModelBillingExpr),
     ]);
 
-    const nextModels = Array.from(names)
+    const nextModels = [...names]
       .map((name) => buildModelState(name, sourceMaps))
       .sort((a, b) => a.name.localeCompare(b.name));
 
@@ -782,7 +783,7 @@ export function useModelPricingEditorState({
     setOptionalFieldToggles((prev) => ({
       ...prev,
       [modelName]: {
-        ...(prev[modelName] || {}),
+        ...prev[modelName],
         [field]: checked,
       },
     }));
@@ -805,7 +806,7 @@ export function useModelPricingEditorState({
         setOptionalFieldToggles((prev) => ({
           ...prev,
           [selectedModel.name]: {
-            ...(prev[selectedModel.name] || {}),
+            ...prev[selectedModel.name],
             audioInputPrice: false,
             audioOutputPrice: false,
           },

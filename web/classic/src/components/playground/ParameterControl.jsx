@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import {
   Input,
   InputNumber,
@@ -26,7 +25,6 @@ import {
   Button,
   Tag,
 } from '@douyinfe/semi-ui';
-import { useTranslation } from 'react-i18next';
 import {
   Hash,
   Thermometer,
@@ -37,6 +35,8 @@ import {
   Check,
   X,
 } from 'lucide-react';
+import React from 'react';
+import { useTranslation } from 'react-i18next';
 
 const ParameterControl = ({
   inputs,

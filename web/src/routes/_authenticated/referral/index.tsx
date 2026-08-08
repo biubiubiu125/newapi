@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
+
 import { REFERRAL_DEFAULT_SECTION } from '@/features/referral/section-registry'
 import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 

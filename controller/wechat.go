@@ -108,6 +108,9 @@ func WeChatAuth(c *gin.Context) {
 				if err := user.InsertWithTx(tx, 0); err != nil {
 					return err
 				}
+				if err := user.ClaimExternalIdentityWithTx(tx, model.ExternalIdentityProviderWeChat, wechatId); err != nil {
+					return err
+				}
 				return referralService.BindInviteeByCodeWithTx(tx, user.Id, referralCode, referralBindSource(strings.TrimSpace(c.Query("aff"))))
 			}); err != nil {
 				if model.IsUserEmailUniqueError(err) {
@@ -188,8 +191,7 @@ func WeChatBind(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	user.WeChatId = wechatId
-	err = user.Update(false)
+	err = user.ClaimExternalIdentity(model.ExternalIdentityProviderWeChat, wechatId)
 	if err != nil {
 		common.ApiError(c, err)
 		return

@@ -17,7 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
+import {
+  IconPlus,
+  IconEdit,
+  IconDelete,
+  IconSearch,
+  IconSaveStroked,
+  IconBolt,
+} from '@douyinfe/semi-icons';
 import {
   Banner,
   Button,
@@ -32,14 +39,9 @@ import {
   Input,
   Divider,
 } from '@douyinfe/semi-ui';
-import {
-  IconPlus,
-  IconEdit,
-  IconDelete,
-  IconSearch,
-  IconSaveStroked,
-  IconBolt,
-} from '@douyinfe/semi-icons';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   compareObjects,
   API,
@@ -48,7 +50,6 @@ import {
   showWarning,
   verifyJSON,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
 
 export default function SettingsChats(props) {
   const { t } = useTranslation();
@@ -202,7 +203,7 @@ export default function SettingsChats(props) {
 
   useEffect(() => {
     const currentInputs = {};
-    for (let key in props.options) {
+    for (const key in props.options) {
       if (Object.keys(inputs).includes(key)) {
         if (key === 'Chats') {
           const obj = JSON.parse(props.options[key]);
@@ -499,9 +500,9 @@ export default function SettingsChats(props) {
             >
               <Form.TextArea
                 label={t('聊天配置')}
-                extraText={''}
+                extraText=''
                 placeholder={t('为一个 JSON 文本')}
-                field={'Chats'}
+                field='Chats'
                 autosize={{ minRows: 6, maxRows: 12 }}
                 trigger='blur'
                 stopValidateWithError

@@ -37,7 +37,7 @@ export type UpstreamConflictSubmitPayload = {
 
 export function getRowSelectionStateForRowIds(
   rowSelection: UpstreamRowSelectionState,
-  rowIds: readonly string[],
+  rowIds: readonly string[]
 ): { checked: boolean; indeterminate: boolean } {
   if (rowIds.length === 0) {
     return { checked: false, indeterminate: false }
@@ -54,7 +54,7 @@ export function getRowSelectionStateForRowIds(
 export function buildRowSelectionForRowIds(
   rowSelection: UpstreamRowSelectionState,
   rowIds: readonly string[],
-  checked: boolean,
+  checked: boolean
 ): UpstreamRowSelectionState {
   const targetIds = new Set(rowIds)
   const nextSelection: UpstreamRowSelectionState = {}
@@ -77,12 +77,12 @@ export function buildRowSelectionForRowIds(
 export function buildUpstreamConflictSubmitPayload(
   selections: UpstreamConflictSelection,
   syncMissing: boolean,
-  missing?: readonly string[],
+  missing?: readonly string[]
 ): UpstreamConflictSubmitPayload | null {
   const overwrite = Object.entries(selections)
     .map(([modelName, fields]) => ({
       model_name: modelName,
-      fields: Array.from(fields),
+      fields: [...fields],
     }))
     .filter((item) => item.fields.length > 0)
 
@@ -175,7 +175,7 @@ type UpstreamConflictSubmitFlowOptions = {
   locale: SyncLocale
   source: SyncSource
   applyUpstreamOverwrite: (
-    params: SyncUpstreamParams & { overwrite: SyncOverwritePayload[] },
+    params: SyncUpstreamParams & { overwrite: SyncOverwritePayload[] }
   ) => Promise<SyncUpstreamResponse>
   refreshModelSyncQueries: RefreshModelSyncQueries
 }
@@ -202,7 +202,7 @@ export async function runUpstreamConflictSubmitFlow({
   const submitPayload = buildUpstreamConflictSubmitPayload(
     selections,
     syncMissing,
-    missing,
+    missing
   )
 
   if (!submitPayload) {

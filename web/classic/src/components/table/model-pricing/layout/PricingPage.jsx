@@ -17,13 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Layout, ImagePreview } from '@douyinfe/semi-ui';
-import PricingSidebar from './PricingSidebar';
-import PricingContent from './content/PricingContent';
-import ModelDetailSideSheet from '../modal/ModelDetailSideSheet';
-import { useModelPricingData } from '../../../../hooks/model-pricing/useModelPricingData';
+import React from 'react';
+
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
+import { useModelPricingData } from '../../../../hooks/model-pricing/useModelPricingData';
+import ModelDetailSideSheet from '../modal/ModelDetailSideSheet';
+import PricingContent from './content/PricingContent';
+import PricingSidebar from './PricingSidebar';
 
 const PricingPage = () => {
   const pricingData = useModelPricingData();

@@ -17,9 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { Modal } from '@douyinfe/semi-ui';
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Modal } from '@douyinfe/semi-ui';
+
+import { ITEMS_PER_PAGE } from '../../constants';
 import {
   API,
   copy,
@@ -28,7 +30,6 @@ import {
   showSuccess,
   timestamp2string,
 } from '../../helpers';
-import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 
 export const useMjLogsData = () => {
@@ -78,7 +79,7 @@ export const useMjLogsData = () => {
 
   // Form state
   const [formApi, setFormApi] = useState(null);
-  let now = new Date();
+  const now = new Date();
   const formInitValues = {
     channel_id: '',
     mj_id: '',
@@ -225,7 +226,7 @@ export const useMjLogsData = () => {
     return items.map((log) => ({
       ...log,
       timestamp2string: timestamp2string(log.created_at),
-      key: '' + log.id,
+      key: `${log.id}`,
     }));
   };
 
@@ -243,8 +244,8 @@ export const useMjLogsData = () => {
     setLoading(true);
     const { channel_id, mj_id, start_timestamp, end_timestamp } =
       getFormValues();
-    let localStartTimestamp = Date.parse(start_timestamp);
-    let localEndTimestamp = Date.parse(end_timestamp);
+    const localStartTimestamp = Date.parse(start_timestamp);
+    const localEndTimestamp = Date.parse(end_timestamp);
     const url = isAdminUser
       ? `/api/mj/?p=${page}&page_size=${size}&channel_id=${channel_id}&mj_id=${mj_id}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`
       : `/api/mj/self/?p=${page}&page_size=${size}&mj_id=${mj_id}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
@@ -264,7 +265,7 @@ export const useMjLogsData = () => {
   };
 
   const handlePageSizeChange = async (size) => {
-    localStorage.setItem('mj-page-size', size + '');
+    localStorage.setItem('mj-page-size', `${size}`);
     await loadLogs(1, size);
   };
 
@@ -310,7 +311,7 @@ export const useMjLogsData = () => {
   // Initialize data
   useEffect(() => {
     const localPageSize =
-      parseInt(localStorage.getItem('mj-page-size')) || ITEMS_PER_PAGE;
+      Number.parseInt(localStorage.getItem('mj-page-size')) || ITEMS_PER_PAGE;
     setPageSize(localPageSize);
     loadLogs(1, localPageSize).then();
   }, []);

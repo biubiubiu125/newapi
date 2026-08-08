@@ -48,7 +48,7 @@ export const buildUpstreamConflictSubmitPayload = (
   const overwrite = Object.entries(selections)
     .map(([modelName, set]) => ({
       model_name: modelName,
-      fields: Array.from(set || []),
+      fields: [...(set || [])],
     }))
     .filter((x) => x.fields.length > 0);
 
@@ -114,7 +114,7 @@ export const runClassicPostSyncRefresh = async ({
       if (!loaded) {
         allLoaded = false;
       }
-    } catch (_) {
+    } catch {
       allLoaded = false;
     }
   }

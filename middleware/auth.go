@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -144,6 +145,20 @@ func GetSessionAuthIdentity(c *gin.Context) (service.AuthIdentity, bool) {
 		return service.AuthIdentity{}, false
 	}
 	return identity, true
+}
+
+// GetLegacySessionAuthIdentity validates the compatibility Gin session against
+// the authoritative user_sessions row and populates the normal auth context.
+func GetLegacySessionAuthIdentity(c *gin.Context) (service.AuthIdentity, bool, error) {
+	user, identity, ok, err := sessionDashboardCredential(c)
+	if err != nil {
+		return service.AuthIdentity{}, false, err
+	}
+	if !ok {
+		return service.AuthIdentity{}, false, nil
+	}
+	setDashboardAuthContext(c, user, identity, false)
+	return identity, true, nil
 }
 
 func authenticateDashboardRequest(c *gin.Context) (*model.UserBase, service.AuthIdentity, bool, error) {
@@ -312,31 +327,23 @@ func sessionDashboardCredential(c *gin.Context) (user *model.UserBase, identity 
 	if userID <= 0 {
 		return nil, service.AuthIdentity{}, false, nil
 	}
-
-	if current, cacheErr := safeSessionUserCache(userID); cacheErr == nil && current != nil {
-		return current, service.AuthIdentity{UserID: current.Id, UserAuthVersion: current.AuthVersion}, true, nil
-	}
-
-	username := sessionString(session.Get("username"))
-	group := sessionString(session.Get("group"))
-	if username == "" || group == "" {
+	sessionID := sessionString(session.Get("session_id"))
+	authVersion := sessionInt64(session.Get("auth_version"))
+	sessionVersion := sessionInt64(session.Get("session_version"))
+	if sessionID == "" || authVersion <= 0 || sessionVersion <= 0 {
 		return nil, service.AuthIdentity{}, false, nil
 	}
-	status := rateLimitInt(session.Get("status"))
-	if status == 0 {
-		status = common.UserStatusEnabled
+	identity = service.AuthIdentity{
+		UserID:          userID,
+		SessionID:       sessionID,
+		UserAuthVersion: authVersion,
+		SessionVersion:  sessionVersion,
 	}
-	role := rateLimitInt(session.Get("role"))
-	if role == 0 {
-		role = common.RoleCommonUser
+	_, current, err := service.ValidateLoginSession(identity)
+	if err != nil {
+		return nil, identity, true, err
 	}
-	return &model.UserBase{
-		Id:       userID,
-		Username: username,
-		Group:    group,
-		Status:   status,
-		Role:     role,
-	}, service.AuthIdentity{UserID: userID}, true, nil
+	return current, identity, true, nil
 }
 
 func dashboardSession(c *gin.Context) (session sessions.Session, ok bool) {
@@ -349,19 +356,6 @@ func dashboardSession(c *gin.Context) (session sessions.Session, ok bool) {
 	return sessions.Default(c), true
 }
 
-func safeSessionUserCache(userID int) (user *model.UserBase, err error) {
-	defer func() {
-		if recover() != nil {
-			user = nil
-			err = fmt.Errorf("user cache unavailable")
-		}
-	}()
-	if model.DB == nil {
-		return nil, fmt.Errorf("database is not initialized")
-	}
-	return model.GetUserCache(userID)
-}
-
 func sessionString(value any) string {
 	if value == nil {
 		return ""
@@ -372,6 +366,41 @@ func sessionString(value any) string {
 	default:
 		return strings.TrimSpace(fmt.Sprintf("%v", typed))
 	}
+}
+
+func sessionInt64(value any) int64 {
+	switch typed := value.(type) {
+	case int:
+		return int64(typed)
+	case int8:
+		return int64(typed)
+	case int16:
+		return int64(typed)
+	case int32:
+		return int64(typed)
+	case int64:
+		return typed
+	case uint:
+		return int64(typed)
+	case uint8:
+		return int64(typed)
+	case uint16:
+		return int64(typed)
+	case uint32:
+		return int64(typed)
+	case uint64:
+		if typed <= uint64(^uint64(0)>>1) {
+			return int64(typed)
+		}
+	case float64:
+		return int64(typed)
+	case string:
+		parsed, err := strconv.ParseInt(strings.TrimSpace(typed), 10, 64)
+		if err == nil {
+			return parsed
+		}
+	}
+	return 0
 }
 
 // TokenAuthReadOnly 宽松版本的令牌认证中间件，用于只读查询接口。

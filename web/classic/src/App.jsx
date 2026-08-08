@@ -25,41 +25,41 @@ import {
   useLocation,
   useParams,
 } from 'react-router-dom';
-import Loading from './components/common/ui/Loading';
-import User from './pages/User';
-import { AuthRedirect, PrivateRoute, AdminRoute, RootRoute } from './helpers';
-import RegisterForm from './components/auth/RegisterForm';
-import LoginForm from './components/auth/LoginForm';
-import NotFound from './pages/NotFound';
-import Forbidden from './pages/Forbidden';
-import Setting from './pages/Setting';
-import { StatusContext } from './context/Status';
 
-import PasswordResetForm from './components/auth/PasswordResetForm';
-import PasswordResetConfirm from './components/auth/PasswordResetConfirm';
-import Channel from './pages/Channel';
-import Token from './pages/Token';
-import Redemption from './pages/Redemption';
-import TopUp from './pages/TopUp';
-import Log from './pages/Log';
-import Chat from './pages/Chat';
-import Chat2Link from './pages/Chat2Link';
-import Midjourney from './pages/Midjourney';
-import Pricing from './pages/Pricing';
-import Task from './pages/Task';
-import ModelPage from './pages/Model';
-import ModelDeploymentPage from './pages/ModelDeployment';
-import Playground from './pages/Playground';
-import Subscription from './pages/Subscription';
+import LoginForm from './components/auth/LoginForm';
 import OAuth2Callback from './components/auth/OAuth2Callback';
-import PersonalSetting from './components/settings/PersonalSetting';
-import Referral from './pages/Referral';
-import AdminReferral from './pages/AdminReferral';
-import RechargeAudit from './pages/RechargeAudit';
-import Tickets from './pages/Tickets';
-import Setup from './pages/Setup';
+import PasswordResetConfirm from './components/auth/PasswordResetConfirm';
+import PasswordResetForm from './components/auth/PasswordResetForm';
+import RegisterForm from './components/auth/RegisterForm';
+import Loading from './components/common/ui/Loading';
 import SetupCheck from './components/layout/SetupCheck';
 import SidebarModuleRoute from './components/layout/SidebarModuleRoute';
+import PersonalSetting from './components/settings/PersonalSetting';
+import { StatusContext } from './context/Status';
+import { AuthRedirect, PrivateRoute, AdminRoute, RootRoute } from './helpers';
+import AdminReferral from './pages/AdminReferral';
+import Channel from './pages/Channel';
+import Chat from './pages/Chat';
+import Chat2Link from './pages/Chat2Link';
+import Forbidden from './pages/Forbidden';
+import Log from './pages/Log';
+import Midjourney from './pages/Midjourney';
+import ModelPage from './pages/Model';
+import ModelDeploymentPage from './pages/ModelDeployment';
+import NotFound from './pages/NotFound';
+import Playground from './pages/Playground';
+import Pricing from './pages/Pricing';
+import RechargeAudit from './pages/RechargeAudit';
+import Redemption from './pages/Redemption';
+import Referral from './pages/Referral';
+import Setting from './pages/Setting';
+import Setup from './pages/Setup';
+import Subscription from './pages/Subscription';
+import Task from './pages/Task';
+import Tickets from './pages/Tickets';
+import Token from './pages/Token';
+import TopUp from './pages/TopUp';
+import User from './pages/User';
 
 const Home = lazy(() => import('./pages/Home'));
 const Dashboard = lazy(() => import('./pages/Dashboard'));
@@ -75,10 +75,7 @@ function DynamicOAuth2Callback() {
 function RegisterRedirect() {
   const location = useLocation();
   return (
-    <Navigate
-      to={{ pathname: '/sign-up', search: location.search }}
-      replace
-    />
+    <Navigate to={{ pathname: '/sign-up', search: location.search }} replace />
   );
 }
 
@@ -114,7 +111,7 @@ function App() {
         <Route
           path='/'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+            <Suspense fallback={<Loading />} key={location.pathname}>
               <Home />
             </Suspense>
           }
@@ -122,7 +119,7 @@ function App() {
         <Route
           path='/setup'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+            <Suspense fallback={<Loading />} key={location.pathname}>
               <Setup />
             </Suspense>
           }
@@ -211,7 +208,7 @@ function App() {
         <Route
           path='/user/reset'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+            <Suspense fallback={<Loading />} key={location.pathname}>
               <PasswordResetConfirm />
             </Suspense>
           }
@@ -219,7 +216,7 @@ function App() {
         <Route
           path='/login'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+            <Suspense fallback={<Loading />} key={location.pathname}>
               <AuthRedirect>
                 <LoginForm />
               </AuthRedirect>
@@ -229,7 +226,7 @@ function App() {
         <Route
           path='/register'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+            <Suspense fallback={<Loading />} key={location.pathname}>
               <RegisterRedirect />
             </Suspense>
           }
@@ -237,7 +234,7 @@ function App() {
         <Route
           path='/sign-up'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+            <Suspense fallback={<Loading />} key={location.pathname}>
               <AuthRedirect>
                 <RegisterForm />
               </AuthRedirect>
@@ -247,7 +244,7 @@ function App() {
         <Route
           path='/reset'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+            <Suspense fallback={<Loading />} key={location.pathname}>
               <PasswordResetForm />
             </Suspense>
           }
@@ -255,39 +252,39 @@ function App() {
         <Route
           path='/oauth/github'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
-              <OAuth2Callback type='github'></OAuth2Callback>
+            <Suspense fallback={<Loading />} key={location.pathname}>
+              <OAuth2Callback type='github' />
             </Suspense>
           }
         />
         <Route
           path='/oauth/discord'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
-              <OAuth2Callback type='discord'></OAuth2Callback>
+            <Suspense fallback={<Loading />} key={location.pathname}>
+              <OAuth2Callback type='discord' />
             </Suspense>
           }
         />
         <Route
           path='/oauth/oidc'
           element={
-            <Suspense fallback={<Loading></Loading>}>
-              <OAuth2Callback type='oidc'></OAuth2Callback>
+            <Suspense fallback={<Loading />}>
+              <OAuth2Callback type='oidc' />
             </Suspense>
           }
         />
         <Route
           path='/oauth/linuxdo'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
-              <OAuth2Callback type='linuxdo'></OAuth2Callback>
+            <Suspense fallback={<Loading />} key={location.pathname}>
+              <OAuth2Callback type='linuxdo' />
             </Suspense>
           }
         />
         <Route
           path='/oauth/:provider'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+            <Suspense fallback={<Loading />} key={location.pathname}>
               <DynamicOAuth2Callback />
             </Suspense>
           }
@@ -296,7 +293,7 @@ function App() {
           path='/console/setting'
           element={
             <RootRoute>
-              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+              <Suspense fallback={<Loading />} key={location.pathname}>
                 <Setting />
               </Suspense>
             </RootRoute>
@@ -307,7 +304,7 @@ function App() {
           element={
             <PrivateRoute>
               <SidebarModuleRoute section='personal' module='personal'>
-                <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Suspense fallback={<Loading />} key={location.pathname}>
                   <PersonalSetting />
                 </Suspense>
               </SidebarModuleRoute>
@@ -319,7 +316,7 @@ function App() {
           element={
             <PrivateRoute>
               <SidebarModuleRoute section='personal' module='topup'>
-                <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Suspense fallback={<Loading />} key={location.pathname}>
                   <TopUp />
                 </Suspense>
               </SidebarModuleRoute>
@@ -331,7 +328,7 @@ function App() {
           element={
             <PrivateRoute>
               <SidebarModuleRoute section='personal' module='referral'>
-                <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Suspense fallback={<Loading />} key={location.pathname}>
                   <Referral />
                 </Suspense>
               </SidebarModuleRoute>
@@ -343,7 +340,7 @@ function App() {
           element={
             <PrivateRoute>
               <SidebarModuleRoute section='personal' module='referral'>
-                <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Suspense fallback={<Loading />} key={location.pathname}>
                   <Referral />
                 </Suspense>
               </SidebarModuleRoute>
@@ -355,7 +352,7 @@ function App() {
           element={
             <PrivateRoute>
               <SidebarModuleRoute section='personal' module='tickets'>
-                <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Suspense fallback={<Loading />} key={location.pathname}>
                   <Tickets />
                 </Suspense>
               </SidebarModuleRoute>
@@ -367,7 +364,7 @@ function App() {
           element={
             <AdminRoute>
               <SidebarModuleRoute section='admin' module='adminReferral'>
-                <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Suspense fallback={<Loading />} key={location.pathname}>
                   <AdminReferral />
                 </Suspense>
               </SidebarModuleRoute>
@@ -379,7 +376,7 @@ function App() {
           element={
             <AdminRoute>
               <SidebarModuleRoute section='admin' module='ticket_management'>
-                <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Suspense fallback={<Loading />} key={location.pathname}>
                   <Tickets adminMode />
                 </Suspense>
               </SidebarModuleRoute>
@@ -391,7 +388,7 @@ function App() {
           element={
             <AdminRoute>
               <SidebarModuleRoute section='admin' module='adminReferral'>
-                <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Suspense fallback={<Loading />} key={location.pathname}>
                   <AdminReferral />
                 </Suspense>
               </SidebarModuleRoute>
@@ -403,7 +400,7 @@ function App() {
           element={
             <AdminRoute>
               <SidebarModuleRoute section='admin' module='recharge_audit'>
-                <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Suspense fallback={<Loading />} key={location.pathname}>
                   <RechargeAudit />
                 </Suspense>
               </SidebarModuleRoute>
@@ -425,7 +422,7 @@ function App() {
           element={
             <PrivateRoute>
               <SidebarModuleRoute section='console' module='detail'>
-                <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Suspense fallback={<Loading />} key={location.pathname}>
                   <Dashboard />
                 </Suspense>
               </SidebarModuleRoute>
@@ -437,7 +434,7 @@ function App() {
           element={
             <PrivateRoute>
               <SidebarModuleRoute section='console' module='midjourney'>
-                <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Suspense fallback={<Loading />} key={location.pathname}>
                   <Midjourney />
                 </Suspense>
               </SidebarModuleRoute>
@@ -449,7 +446,7 @@ function App() {
           element={
             <PrivateRoute>
               <SidebarModuleRoute section='console' module='task'>
-                <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Suspense fallback={<Loading />} key={location.pathname}>
                   <Task />
                 </Suspense>
               </SidebarModuleRoute>
@@ -461,15 +458,12 @@ function App() {
           element={
             pricingRequireAuth ? (
               <PrivateRoute>
-                <Suspense
-                  fallback={<Loading></Loading>}
-                  key={location.pathname}
-                >
+                <Suspense fallback={<Loading />} key={location.pathname}>
                   <Pricing />
                 </Suspense>
               </PrivateRoute>
             ) : (
-              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+              <Suspense fallback={<Loading />} key={location.pathname}>
                 <Pricing />
               </Suspense>
             )
@@ -478,7 +472,7 @@ function App() {
         <Route
           path='/about'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+            <Suspense fallback={<Loading />} key={location.pathname}>
               <About />
             </Suspense>
           }
@@ -486,7 +480,7 @@ function App() {
         <Route
           path='/user-agreement'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+            <Suspense fallback={<Loading />} key={location.pathname}>
               <UserAgreement />
             </Suspense>
           }
@@ -494,7 +488,7 @@ function App() {
         <Route
           path='/privacy-policy'
           element={
-            <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+            <Suspense fallback={<Loading />} key={location.pathname}>
               <PrivacyPolicy />
             </Suspense>
           }
@@ -504,7 +498,7 @@ function App() {
           element={
             <PrivateRoute>
               <SidebarModuleRoute section='chat' module='chat'>
-                <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+                <Suspense fallback={<Loading />} key={location.pathname}>
                   <Chat />
                 </Suspense>
               </SidebarModuleRoute>
@@ -516,7 +510,7 @@ function App() {
           path='/chat2link'
           element={
             <PrivateRoute>
-              <Suspense fallback={<Loading></Loading>} key={location.pathname}>
+              <Suspense fallback={<Loading />} key={location.pathname}>
                 <Chat2Link />
               </Suspense>
             </PrivateRoute>

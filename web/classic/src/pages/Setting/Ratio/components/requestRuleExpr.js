@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2025 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 export const SOURCE_PARAM = 'param';
 export const SOURCE_HEADER = 'header';
 export const SOURCE_TIME = 'time';
@@ -239,8 +257,9 @@ function buildTimeConditionExpr(cond) {
   if (mode === MATCH_RANGE) {
     const s = normalized.rangeStart.trim();
     const e = normalized.rangeEnd.trim();
-    if (!NUMERIC_LITERAL_REGEX.test(s) || !NUMERIC_LITERAL_REGEX.test(e))
+    if (!NUMERIC_LITERAL_REGEX.test(s) || !NUMERIC_LITERAL_REGEX.test(e)) {
       return '';
+    }
     return `${fn} >= ${s} || ${fn} < ${e}`;
   }
   const v = normalized.value.trim();
@@ -279,8 +298,9 @@ function buildRequestConditionExpr(cond) {
         [MATCH_LT]: '<',
         [MATCH_LTE]: '<=',
       };
-      if (!NUMERIC_LITERAL_REGEX.test(String(normalized.value).trim()))
+      if (!NUMERIC_LITERAL_REGEX.test(String(normalized.value).trim())) {
         return '';
+      }
       return `${sourceExpr} != nil && ${sourceExpr} ${opMap[normalized.mode]} ${String(normalized.value).trim()}`;
     }
     case MATCH_EQ:
@@ -371,32 +391,36 @@ function tryParseRequestCondition(expr) {
   if (tc) return tc;
 
   let m = expr.match(/^header\("([^"]+)"\) != ""$/);
-  if (m)
+  if (m) {
     return { source: SOURCE_HEADER, path: m[1], mode: MATCH_EXISTS, value: '' };
+  }
 
   m = expr.match(/^param\("([^"]+)"\) != nil$/);
-  if (m)
+  if (m) {
     return { source: SOURCE_PARAM, path: m[1], mode: MATCH_EXISTS, value: '' };
+  }
 
   m = expr.match(/^has\(header\("([^"]+)"\), ((?:"(?:[^"\\]|\\.)*"))\)$/);
-  if (m)
+  if (m) {
     return {
       source: SOURCE_HEADER,
       path: m[1],
       mode: MATCH_CONTAINS,
       value: JSON.parse(m[2]),
     };
+  }
 
   m = expr.match(
     /^param\("([^"]+)"\) != nil && has\(param\("([^"]+)"\), ((?:"(?:[^"\\]|\\.)*"))\)$/,
   );
-  if (m && m[1] === m[2])
+  if (m && m[1] === m[2]) {
     return {
       source: SOURCE_PARAM,
       path: m[1],
       mode: MATCH_CONTAINS,
       value: JSON.parse(m[3]),
     };
+  }
 
   m = expr.match(
     /^param\("([^"]+)"\) != nil && param\("([^"]+)"\) (>|>=|<|<=) ([\d.eE+-]+)$/,

@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Modal, Input, Typography } from '@douyinfe/semi-ui';
+import React from 'react';
 
 const BatchTagModal = ({
   showBatchSetTag,
@@ -36,7 +36,7 @@ const BatchTagModal = ({
       onOk={batchSetChannelTag}
       onCancel={() => setShowBatchSetTag(false)}
       maskClosable={false}
-      centered={true}
+      centered
       size='small'
       className='!rounded-lg'
     >

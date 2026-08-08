@@ -18,13 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
+
+import { usePricingFilterCounts } from '../../../../../hooks/model-pricing/usePricingFilterCounts';
 import PricingDisplaySettings from '../../filter/PricingDisplaySettings';
+import PricingEndpointTypes from '../../filter/PricingEndpointTypes';
 import PricingGroups from '../../filter/PricingGroups';
 import PricingQuotaTypes from '../../filter/PricingQuotaTypes';
-import PricingEndpointTypes from '../../filter/PricingEndpointTypes';
-import PricingVendors from '../../filter/PricingVendors';
 import PricingTags from '../../filter/PricingTags';
-import { usePricingFilterCounts } from '../../../../../hooks/model-pricing/usePricingFilterCounts';
+import PricingVendors from '../../filter/PricingVendors';
 
 const FilterModalContent = ({ sidebarProps, t }) => {
   const {

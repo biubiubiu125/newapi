@@ -1,7 +1,6 @@
 package ratio_setting
 
 import (
-	"encoding/json"
 	"errors"
 	"strings"
 
@@ -108,7 +107,7 @@ func GroupRatio2JSONString() string {
 
 func UpdateGroupRatioByJSONString(jsonStr string) error {
 	next := make(map[string]float64)
-	if err := json.Unmarshal([]byte(jsonStr), &next); err != nil {
+	if err := common.Unmarshal([]byte(jsonStr), &next); err != nil {
 		return err
 	}
 	cleaned := make(map[string]float64, len(next))
@@ -153,7 +152,7 @@ func GroupGroupRatio2JSONString() string {
 
 func UpdateGroupGroupRatioByJSONString(jsonStr string) error {
 	next := make(map[string]map[string]float64)
-	if err := json.Unmarshal([]byte(jsonStr), &next); err != nil {
+	if err := common.Unmarshal([]byte(jsonStr), &next); err != nil {
 		return err
 	}
 	cleaned := make(map[string]map[string]float64, len(next))
@@ -180,7 +179,7 @@ func UpdateGroupGroupRatioByJSONString(jsonStr string) error {
 
 func CheckGroupRatio(jsonStr string) error {
 	checkGroupRatio := make(map[string]float64)
-	err := json.Unmarshal([]byte(jsonStr), &checkGroupRatio)
+	err := common.Unmarshal([]byte(jsonStr), &checkGroupRatio)
 	if err != nil {
 		return err
 	}

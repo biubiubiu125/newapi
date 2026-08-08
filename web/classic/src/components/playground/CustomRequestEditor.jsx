@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect } from 'react';
 import {
   TextArea,
   Typography,
@@ -26,6 +25,7 @@ import {
   Banner,
 } from '@douyinfe/semi-ui';
 import { Code, Edit, Check, X, AlertTriangle } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 
 const CustomRequestEditor = ({
@@ -111,7 +111,7 @@ const CustomRequestEditor = ({
       onCustomRequestBodyChange(formatted);
       setIsValid(true);
       setErrorMessage('');
-    } catch (error) {
+    } catch {
       // 如果格式化失败，保持原样
     }
   };

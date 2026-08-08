@@ -16,7 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import React, { useState, useEffect, useMemo } from 'react';
+import { IconSearch } from '@douyinfe/semi-icons';
+import {
+  IllustrationNoResult,
+  IllustrationNoResultDark,
+} from '@douyinfe/semi-illustrations';
 import {
   Modal,
   Table,
@@ -28,15 +32,13 @@ import {
   Input,
   Tag,
 } from '@douyinfe/semi-ui';
-import {
-  IllustrationNoResult,
-  IllustrationNoResultDark,
-} from '@douyinfe/semi-illustrations';
 import { Coins } from 'lucide-react';
-import { IconSearch } from '@douyinfe/semi-icons';
+import React, { useState, useEffect, useMemo } from 'react';
+
 import { API, timestamp2string } from '../../../helpers';
 import { isAdmin } from '../../../helpers/utils';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
+
 const { Text } = Typography;
 
 // 状态映射配置
@@ -69,9 +71,7 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
     setLoading(true);
     try {
       const base = isAdmin() ? '/api/user/topup' : '/api/user/topup/self';
-      const qs =
-        `p=${currentPage}&page_size=${currentPageSize}` +
-        (keyword ? `&keyword=${encodeURIComponent(keyword)}` : '');
+      const qs = `p=${currentPage}&page_size=${currentPageSize}${keyword ? `&keyword=${encodeURIComponent(keyword)}` : ''}`;
       const endpoint = `${base}?${qs}`;
       const res = await API.get(endpoint);
       const { success, message, data } = res.data;
@@ -81,7 +81,7 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
       } else {
         Toast.error({ content: message || t('加载失败') });
       }
-    } catch (error) {
+    } catch {
       Toast.error({ content: t('加载账单失败') });
     } finally {
       setLoading(false);
@@ -121,7 +121,7 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
       } else {
         Toast.error({ content: message || t('补单失败') });
       }
-    } catch (e) {
+    } catch {
       Toast.error({ content: t('补单失败') });
     }
   };
@@ -276,8 +276,8 @@ const TopupHistoryModal = ({ visible, onCancel, t }) => {
         rowKey='id'
         pagination={{
           currentPage: page,
-          pageSize: pageSize,
-          total: total,
+          pageSize,
+          total,
           showSizeChanger: true,
           pageSizeOpts: [10, 20, 50, 100],
           onPageChange: handlePageChange,

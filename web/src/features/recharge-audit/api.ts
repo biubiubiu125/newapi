@@ -101,6 +101,25 @@ export interface PageResponse<T> {
   total: number
 }
 
+export interface PaymentOrphanEvent {
+  id: number
+  provider: string
+  event_id: string
+  event_type: string
+  reference_id: string
+  session_id: string
+  status: string
+  reason: string
+  error: string
+  create_time: number
+  update_time: number
+  resolved_by: number
+  resolved_at: number
+  resolution: string
+  resolution_note: string
+  can_credit: boolean
+}
+
 export async function getRechargeAuditSummary(params: URLSearchParams) {
   const res = await api.get(
     `/api/user/admin/finance/recharge-audit/summary?${params.toString()}`
@@ -121,4 +140,55 @@ export async function getRechargeAudit(params: URLSearchParams) {
     message?: string
     data: PageResponse<RechargeAuditOrder>
   }
+}
+
+export type PaymentOrphanStatusFilter =
+  | 'pending_review'
+  | 'credited'
+  | 'refunded'
+  | 'dismissed'
+  | 'all'
+
+export type PaymentOrphanListOptions = {
+  status?: PaymentOrphanStatusFilter
+  page?: number
+  pageSize?: number
+}
+
+export async function getPaymentOrphans(
+  options: PaymentOrphanListOptions = {}
+) {
+  const { status = 'pending_review', page = 1, pageSize = 20 } = options
+  const params = new URLSearchParams({
+    p: String(page),
+    page_size: String(pageSize),
+    status,
+  })
+  const res = await api.get(
+    `/api/user/admin/finance/payment-orphans?${params.toString()}`
+  )
+  return res.data as {
+    success: boolean
+    message?: string
+    data: PageResponse<PaymentOrphanEvent>
+  }
+}
+
+export async function creditPaymentOrphan(id: number) {
+  const res = await api.post(
+    `/api/user/admin/finance/payment-orphans/${id}/credit`
+  )
+  return res.data as { success: boolean; message?: string }
+}
+
+export async function resolvePaymentOrphan(
+  id: number,
+  status: 'refunded' | 'dismissed',
+  note: string
+) {
+  const res = await api.post(
+    `/api/user/admin/finance/payment-orphans/${id}/resolve`,
+    { status, note }
+  )
+  return res.data as { success: boolean; message?: string }
 }

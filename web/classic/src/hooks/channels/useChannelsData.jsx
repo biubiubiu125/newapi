@@ -17,8 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { Modal, Button } from '@douyinfe/semi-ui';
 import { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { openCodexUsageModal } from '../../components/table/channels/modals/CodexUsageModal';
+import {
+  CHANNEL_OPTIONS,
+  ITEMS_PER_PAGE,
+  MODEL_TABLE_PAGE_SIZE,
+} from '../../constants';
 import {
   API,
   showError,
@@ -29,18 +37,11 @@ import {
   toBoolean,
   getChannelPermissionFlags,
 } from '../../helpers';
-import {
-  CHANNEL_OPTIONS,
-  ITEMS_PER_PAGE,
-  MODEL_TABLE_PAGE_SIZE,
-} from '../../constants';
 import { useIsMobile } from '../common/useIsMobile';
 import { useTableCompactMode } from '../common/useTableCompactMode';
-import { useChannelUpstreamUpdates } from './useChannelUpstreamUpdates';
-import { parseUpstreamUpdateMeta } from './upstreamUpdateUtils';
 import { useUserPermissions } from '../common/useUserPermissions';
-import { Modal, Button } from '@douyinfe/semi-ui';
-import { openCodexUsageModal } from '../../components/table/channels/modals/CodexUsageModal';
+import { parseUpstreamUpdateMeta } from './upstreamUpdateUtils';
+import { useChannelUpstreamUpdates } from './useChannelUpstreamUpdates';
 
 export const useChannelsData = () => {
   const { t } = useTranslation();
@@ -109,7 +110,7 @@ export const useChannelsData = () => {
       if (option) {
         setGlobalPassThroughEnabled(toBoolean(option.value));
       }
-    } catch (error) {
+    } catch {
       setGlobalPassThroughEnabled(false);
     }
   };
@@ -150,7 +151,7 @@ export const useChannelsData = () => {
   useEffect(() => {
     const localIdSort = localStorage.getItem('id-sort') === 'true';
     const localPageSize =
-      parseInt(localStorage.getItem('page-size')) || ITEMS_PER_PAGE;
+      Number.parseInt(localStorage.getItem('page-size')) || ITEMS_PER_PAGE;
     const localEnableTagMode =
       localStorage.getItem('enable-tag-mode') === 'true';
     const localEnableBatchDelete =
@@ -236,19 +237,19 @@ export const useChannelsData = () => {
 
   // Data formatting
   const setChannelFormat = (channels, enableTagMode) => {
-    let channelDates = [];
-    let channelTags = {};
+    const channelDates = [];
+    const channelTags = {};
 
     for (let i = 0; i < channels.length; i++) {
       channels[i].upstreamUpdateMeta = parseUpstreamUpdateMeta(
         channels[i].settings,
       );
-      channels[i].key = '' + channels[i].id;
+      channels[i].key = `${channels[i].id}`;
       if (!enableTagMode) {
         channelDates.push(channels[i]);
       } else {
-        let tag = channels[i].tag ? channels[i].tag : '';
-        let tagIndex = channelTags[tag];
+        const tag = channels[i].tag ? channels[i].tag : '';
+        const tagIndex = channelTags[tag];
         let tagChannelDates = undefined;
 
         if (tagIndex === undefined) {
@@ -256,8 +257,8 @@ export const useChannelsData = () => {
           tagChannelDates = {
             key: tag,
             id: tag,
-            tag: tag,
-            name: '标签：' + tag,
+            tag,
+            name: `标签：${tag}`,
             group: '',
             used_quota: 0,
             response_time: 0,
@@ -289,10 +290,10 @@ export const useChannelsData = () => {
         if (tagChannelDates.group === '') {
           tagChannelDates.group = channels[i].group;
         } else {
-          let channelGroupsStr = channels[i].group;
+          const channelGroupsStr = channels[i].group;
           channelGroupsStr.split(',').forEach((item, index) => {
             if (tagChannelDates.group.indexOf(item) === -1) {
-              tagChannelDates.group += ',' + item;
+              tagChannelDates.group += `,${item}`;
             }
           });
         }
@@ -453,7 +454,7 @@ export const useChannelsData = () => {
 
   // Channel management
   const manageChannel = async (id, action, record, value) => {
-    let data = { id };
+    const data = { id };
     let res;
     switch (action) {
       case 'delete':
@@ -473,12 +474,12 @@ export const useChannelsData = () => {
         break;
       case 'priority':
         if (value === '') return;
-        data.priority = parseInt(value);
+        data.priority = Number.parseInt(value);
         res = await API.put('/api/channel/', data);
         break;
       case 'weight':
         if (value === '') return;
-        data.weight = parseInt(value);
+        data.weight = Number.parseInt(value);
         if (data.weight < 0) data.weight = 0;
         res = await API.put('/api/channel/', data);
         break;
@@ -492,7 +493,7 @@ export const useChannelsData = () => {
     const { success, message } = res.data;
     if (success) {
       showSuccess(t('操作成功完成！'));
-      let newChannels = [...channels];
+      const newChannels = [...channels];
       if (action !== 'delete') {
         if (action === 'enable' || action === 'disable') {
           record.status = data.status;
@@ -511,19 +512,19 @@ export const useChannelsData = () => {
     let res;
     switch (action) {
       case 'enable':
-        res = await API.post('/api/channel/tag/enabled', { tag: tag });
+        res = await API.post('/api/channel/tag/enabled', { tag });
         break;
       case 'disable':
-        res = await API.post('/api/channel/tag/disabled', { tag: tag });
+        res = await API.post('/api/channel/tag/disabled', { tag });
         break;
     }
     const { success, message } = res.data;
     if (success) {
       showSuccess(t('操作成功完成！'));
-      let newChannels = [...channels];
+      const newChannels = [...channels];
       for (let i = 0; i < newChannels.length; i++) {
         if (newChannels[i].tag === tag) {
-          let status = action === 'enable' ? 1 : 2;
+          const status = action === 'enable' ? 1 : 2;
           newChannels[i]?.children?.forEach((channel) => {
             channel.status = status;
           });
@@ -555,7 +556,7 @@ export const useChannelsData = () => {
   };
 
   const handlePageSizeChange = async (size) => {
-    localStorage.setItem('page-size', size + '');
+    localStorage.setItem('page-size', `${size}`);
     setPageSize(size);
     setActivePage(1);
     const { searchKeyword, searchGroup, searchModel } = getFormValues();
@@ -580,7 +581,7 @@ export const useChannelsData = () => {
   // Fetch groups
   const fetchGroups = async () => {
     try {
-      let res = await API.get(`/api/group/`);
+      const res = await API.get(`/api/group/`);
       if (res === undefined) return;
       setGroupOptions(
         res.data.data.map((group) => ({
@@ -643,7 +644,7 @@ export const useChannelsData = () => {
           showInfo('优先级必须是整数！');
           return;
         }
-        data.priority = parseInt(data.priority);
+        data.priority = Number.parseInt(data.priority);
         break;
       case 'weight':
         if (
@@ -654,7 +655,7 @@ export const useChannelsData = () => {
           showInfo('权重必须是非负整数！');
           return;
         }
-        data.weight = parseInt(data.weight);
+        data.weight = Number.parseInt(data.weight);
         break;
     }
 
@@ -697,9 +698,9 @@ export const useChannelsData = () => {
       showError(t('标签不能为空！'));
       return;
     }
-    let ids = selectedChannels.map((channel) => channel.id);
+    const ids = selectedChannels.map((channel) => channel.id);
     const res = await API.post('/api/channel/batch/tag', {
-      ids: ids,
+      ids,
       tag: batchSetTagValue === '' ? null : batchSetTagValue,
     });
     if (res.data.success) {
@@ -719,11 +720,11 @@ export const useChannelsData = () => {
       return;
     }
     setLoading(true);
-    let ids = [];
+    const ids = [];
     selectedChannels.forEach((channel) => {
       ids.push(channel.id);
     });
-    const res = await API.post(`/api/channel/batch`, { ids: ids });
+    const res = await API.post(`/api/channel/batch`, { ids });
     const { success, message, data } = res.data;
     if (success) {
       showSuccess(t('已删除 ${data} 个通道！').replace('${data}', data));
@@ -894,7 +895,7 @@ export const useChannelsData = () => {
 
     // 检查是否应该停止批量测试
     if (shouldStopBatchTestingRef.current && isBatchTesting) {
-      return Promise.resolve();
+      return;
     }
 
     // 添加到正在测试的模型集合
@@ -912,7 +913,7 @@ export const useChannelsData = () => {
 
       // 检查是否在请求期间被停止
       if (shouldStopBatchTestingRef.current && isBatchTesting) {
-        return Promise.resolve();
+        return;
       }
 
       const { success, message, time, error_code } = res.data;

@@ -17,8 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import { Button, Col, Form, Row, Spin, Tag } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   compareObjects,
   API,
@@ -26,7 +28,6 @@ import {
   showSuccess,
   showWarning,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
 
 export default function SettingsDrawing(props) {
   const { t } = useTranslation();
@@ -63,8 +64,9 @@ export default function SettingsDrawing(props) {
         if (requestQueue.length === 1) {
           if (res.includes(undefined)) return;
         } else if (requestQueue.length > 1) {
-          if (res.includes(undefined))
+          if (res.includes(undefined)) {
             return showError(t('部分保存失败，请重试'));
+          }
         }
         showSuccess(t('保存成功'));
         props.refresh();
@@ -79,7 +81,7 @@ export default function SettingsDrawing(props) {
 
   useEffect(() => {
     const currentInputs = {};
-    for (let key in props.options) {
+    for (const key in props.options) {
       if (Object.keys(inputs).includes(key)) {
         currentInputs[key] = props.options[key];
       }
@@ -102,7 +104,7 @@ export default function SettingsDrawing(props) {
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'DrawingEnabled'}
+                  field='DrawingEnabled'
                   label={t('启用绘图功能')}
                   size='default'
                   checkedText='｜'
@@ -117,7 +119,7 @@ export default function SettingsDrawing(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'MjNotifyEnabled'}
+                  field='MjNotifyEnabled'
                   label={t('允许回调（会泄露服务器 IP 地址）')}
                   size='default'
                   checkedText='｜'
@@ -132,7 +134,7 @@ export default function SettingsDrawing(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'MjAccountFilterEnabled'}
+                  field='MjAccountFilterEnabled'
                   label={t('允许 AccountFilter 参数')}
                   size='default'
                   checkedText='｜'
@@ -147,7 +149,7 @@ export default function SettingsDrawing(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'MjForwardUrlEnabled'}
+                  field='MjForwardUrlEnabled'
                   label={t('开启之后将上游地址替换为服务器地址')}
                   size='default'
                   checkedText='｜'
@@ -162,7 +164,7 @@ export default function SettingsDrawing(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'MjModeClearEnabled'}
+                  field='MjModeClearEnabled'
                   label={
                     <>
                       {t('开启之后会清除用户提示词中的')} <Tag>--fast</Tag> 、
@@ -183,7 +185,7 @@ export default function SettingsDrawing(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'MjActionCheckSuccessEnabled'}
+                  field='MjActionCheckSuccessEnabled'
                   label={t('检测必须等待绘图成功才能进行放大等操作')}
                   size='default'
                   checkedText='｜'

@@ -19,13 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { API, showError, showSuccess } from '../../helpers';
+
 import { ITEMS_PER_PAGE } from '../../constants';
-import { useTableCompactMode } from '../common/useTableCompactMode';
+import { API, showError, showSuccess } from '../../helpers';
 import {
   notifyModelPricingChanged,
   runClassicPostSyncRefresh,
 } from '../../helpers/modelSyncPreview';
+import { useTableCompactMode } from '../common/useTableCompactMode';
 
 export const useModelsData = () => {
   const { t } = useTranslation();
@@ -234,7 +235,7 @@ export const useModelsData = () => {
         showError(message || t('同步失败'));
         return false;
       }
-    } catch (e) {
+    } catch {
       showError(t('同步失败'));
       return false;
     } finally {
@@ -262,7 +263,7 @@ export const useModelsData = () => {
       }
       showError(message || t('预览失败'));
       return null;
-    } catch (e) {
+    } catch {
       showError(t('预览失败'));
       return null;
     } finally {
@@ -306,7 +307,7 @@ export const useModelsData = () => {
       }
       showError(message || t('同步失败'));
       return false;
-    } catch (e) {
+    } catch {
       showError(t('同步失败'));
       return false;
     } finally {
@@ -467,7 +468,7 @@ export const useModelsData = () => {
         setSelectedKeys([]);
         await refresh();
       }
-    } catch (error) {
+    } catch {
       showError(t('批量删除失败'));
     }
   };

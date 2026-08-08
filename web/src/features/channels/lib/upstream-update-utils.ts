@@ -16,12 +16,25 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-export function normalizeModelList(models: unknown[] = []): string[] {
-  return Array.from(
-    new Set(
-      (models || []).map((model) => String(model || '').trim()).filter(Boolean)
-    )
+import { MODEL_FETCHABLE_TYPES } from "../constants"
+import type { Channel } from "../types"
+
+export function supportsChannelUpstreamModelUpdate(
+  channel: Pick<Channel, "type" | "channel_info"> | null | undefined
+): boolean {
+  return Boolean(
+    channel &&
+      MODEL_FETCHABLE_TYPES.has(channel.type) &&
+      !(channel.type === 57 && channel.channel_info?.is_multi_key === true)
   )
+}
+
+export function normalizeModelList(models: unknown[] = []): string[] {
+  return [
+    ...new Set(
+      (models || []).map((model) => String(model || '').trim()).filter(Boolean)
+    ),
+  ]
 }
 
 export function parseUpstreamUpdateMeta(settings: unknown): {

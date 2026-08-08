@@ -3826,8 +3826,9 @@
     "，": "，",
     "、": "、",
     "Keep affinity when channel is disabled": "渠道禁用后保留亲和",
-    "When enabled, keep the affinity entry even if the affinity channel is disabled or no longer usable for the current group/model. Leave it off to delete the entry and select another channel.": "开启后，亲和到的渠道被禁用，或不再适用于当前分组/模型时，仍保留这条亲和；关闭时会删除并重新选择渠道。",
-    "渠道禁用后保留亲和": "渠道禁用后保留亲和",
-    "开启后，亲和到的渠道被禁用，或不再适用于当前分组/模型时，仍保留这条亲和；关闭时会删除并重新选择渠道。": "开启后，亲和到的渠道被禁用，或不再适用于当前分组/模型时，仍保留这条亲和；关闭时会删除并重新选择渠道。"
-  }
+    "When enabled, keep the affinity entry even if the affinity channel is disabled or no longer usable for the current group/model. Leave it off to delete the entry and select another channel.": "开启后，亲和到的渠道被禁用，或不再适用于当前分组/模型时，仍保留这条亲和；关闭时会删除并重新选择渠道。"
+  },
+  "批量加入上游新增模型": "批量加入上游新增模型",
+  "确定要批量加入全部渠道新检测到的上游模型吗？已标记为上游移除的模型会保留给人工处理，不会自动删除。": "确定要批量加入全部渠道新检测到的上游模型吗？已标记为上游移除的模型会保留给人工处理，不会自动删除。",
+  "已批量加入上游新增模型：渠道 {{channels}} 个，加入 {{added}} 个，保留 {{kept}} 个待人工处理的删除项，失败 {{fails}} 个": "已批量加入上游新增模型：渠道 {{channels}} 个，加入 {{added}} 个，保留 {{kept}} 个待人工处理的删除项，失败 {{fails}} 个"
 }

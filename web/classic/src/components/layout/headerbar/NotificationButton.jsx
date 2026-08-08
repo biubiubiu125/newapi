@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Button, Badge } from '@douyinfe/semi-ui';
 import { Bell } from 'lucide-react';
+import React from 'react';
 
 const NotificationButton = ({ unreadCount, onNoticeOpen, t }) => {
   const buttonProps = {

@@ -18,16 +18,18 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
-import { cn } from '@/lib/utils'
-import { DEFAULT_LOGO, DEFAULT_SYSTEM_NAME } from '@/lib/constants'
-import { resolveAssetUrl } from '@/lib/asset-url'
-import { useStatus } from '@/hooks/use-status'
-import { useSystemConfig } from '@/hooks/use-system-config'
+
 import {
   SidebarMenu,
   SidebarMenuButton,
   SidebarMenuItem,
 } from '@/components/ui/sidebar'
+import { useStatus } from '@/hooks/use-status'
+import { useSystemConfig } from '@/hooks/use-system-config'
+import { resolveAssetUrl } from '@/lib/asset-url'
+import { DEFAULT_LOGO, DEFAULT_SYSTEM_NAME } from '@/lib/constants'
+import { cn } from '@/lib/utils'
+
 import { BrandImage } from './brand-image'
 
 type SystemBrandProps = {
@@ -54,7 +56,10 @@ export function SystemBrand(props: SystemBrandProps) {
 
   const variant = props.variant ?? 'sidebar'
   const name =
-    systemName || status?.system_name || props.defaultName || DEFAULT_SYSTEM_NAME
+    systemName ||
+    status?.system_name ||
+    props.defaultName ||
+    DEFAULT_SYSTEM_NAME
   const logoSrc = resolveAssetUrl(
     logo,
     DEFAULT_LOGO,

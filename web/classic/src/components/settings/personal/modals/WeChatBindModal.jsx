@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Button, Input, Modal, Image } from '@douyinfe/semi-ui';
 import { IconKey } from '@douyinfe/semi-icons';
+import { Button, Input, Modal, Image } from '@douyinfe/semi-ui';
+import React from 'react';
 import { SiWechat } from 'react-icons/si';
 
 const WeChatBindModal = ({
@@ -42,8 +42,8 @@ const WeChatBindModal = ({
       visible={showWeChatBindModal}
       onCancel={() => setShowWeChatBindModal(false)}
       footer={null}
-      size={'small'}
-      centered={true}
+      size='small'
+      centered
       className='modern-modal'
     >
       <div className='space-y-4 py-4 text-center'>

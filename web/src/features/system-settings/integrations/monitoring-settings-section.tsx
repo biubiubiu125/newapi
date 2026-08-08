@@ -16,13 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useMemo, useRef } from 'react'
-import * as z from 'zod'
-import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
+import { useMemo, useRef } from 'react'
+import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { parseHttpStatusCodeRules } from '@/lib/http-status-code-rules'
+import * as z from 'zod'
+
 import {
   Form,
   FormControl,
@@ -43,6 +43,8 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { parseHttpStatusCodeRules } from '@/lib/http-status-code-rules'
+
 import {
   SettingsForm,
   SettingsSwitchContent,
@@ -89,9 +91,7 @@ const monitoringSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['AutomaticDisableStatusCodes'],
-        message: `状态码规则不正确：${disableParsed.invalidTokens.join(
-          ', '
-        )}`,
+        message: `状态码规则不正确：${disableParsed.invalidTokens.join(', ')}`,
       })
     }
 
@@ -102,9 +102,7 @@ const monitoringSchema = z
       ctx.addIssue({
         code: 'custom',
         path: ['AutomaticRetryStatusCodes'],
-        message: `状态码规则不正确：${retryParsed.invalidTokens.join(
-          ', '
-        )}`,
+        message: `状态码规则不正确：${retryParsed.invalidTokens.join(', ')}`,
       })
     }
   })
@@ -128,7 +126,7 @@ type MonitoringSettingsSectionProps = {
 }
 
 function normalizeLineEndings(value: string) {
-  return value.replace(/\r\n/g, '\n')
+  return value.replaceAll('\r\n', '\n')
 }
 
 type NormalizedMonitoringValues = {
@@ -350,16 +348,16 @@ export function MonitoringSettingsSection({
                       min={1}
                       step={1}
                       {...safeNumberFieldProps(field)}
-                  />
-                </FormControl>
-                <FormDescription>
-                  {channelTestMode === 'passive_recovery'
-                    ? t(
-                        'How frequently the system checks auto-disabled channels for recovery'
-                      )
-                    : t('How frequently the system tests all channels')}
-                </FormDescription>
-                <FormMessage />
+                    />
+                  </FormControl>
+                  <FormDescription>
+                    {channelTestMode === 'passive_recovery'
+                      ? t(
+                          'How frequently the system checks auto-disabled channels for recovery'
+                        )
+                      : t('How frequently the system tests all channels')}
+                  </FormDescription>
+                  <FormMessage />
                 </FormItem>
               )}
             />
@@ -534,7 +532,8 @@ export function MonitoringSettingsSection({
                     {t(
                       'Accepts comma-separated status codes and inclusive ranges.'
                     )}{' '}
-                    这里只填写状态码或范围；默认排除 400、408、504 和 524 等高风险状态码。
+                    这里只填写状态码或范围；默认排除 400、408、504 和 524
+                    等高风险状态码。
                     {autoRetryParsed.ok &&
                       autoRetryParsed.normalized &&
                       autoRetryParsed.normalized !== field.value.trim() && (

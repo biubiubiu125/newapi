@@ -17,24 +17,25 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Banner } from '@douyinfe/semi-ui';
 import { IconAlertTriangle } from '@douyinfe/semi-icons';
-import CardPro from '../../common/ui/CardPro';
-import ChannelsTable from './ChannelsTable';
-import ChannelsActions from './ChannelsActions';
-import ChannelsFilters from './ChannelsFilters';
-import ChannelsTabs from './ChannelsTabs';
+import { Banner } from '@douyinfe/semi-ui';
+import React from 'react';
+
+import { createCardProPagination } from '../../../helpers/utils';
 import { useChannelsData } from '../../../hooks/channels/useChannelsData';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
+import CardPro from '../../common/ui/CardPro';
+import ChannelsActions from './ChannelsActions';
+import ChannelsFilters from './ChannelsFilters';
+import ChannelsTable from './ChannelsTable';
+import ChannelsTabs from './ChannelsTabs';
 import BatchTagModal from './modals/BatchTagModal';
-import ModelTestModal from './modals/ModelTestModal';
+import ChannelUpstreamUpdateModal from './modals/ChannelUpstreamUpdateModal';
 import ColumnSelectorModal from './modals/ColumnSelectorModal';
 import EditChannelModal from './modals/EditChannelModal';
 import EditTagModal from './modals/EditTagModal';
+import ModelTestModal from './modals/ModelTestModal';
 import MultiKeyManageModal from './modals/MultiKeyManageModal';
-import ChannelUpstreamUpdateModal from './modals/ChannelUpstreamUpdateModal';
-import { createCardProPagination } from '../../../helpers/utils';
 
 const ChannelsPage = () => {
   const channelsData = useChannelsData();
@@ -104,7 +105,7 @@ const ChannelsPage = () => {
           total: channelsData.channelCount,
           onPageChange: channelsData.handlePageChange,
           onPageSizeChange: channelsData.handlePageSizeChange,
-          isMobile: isMobile,
+          isMobile,
           t: channelsData.t,
         })}
         t={channelsData.t}

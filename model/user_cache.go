@@ -128,6 +128,31 @@ func CacheGetUserById(userId int) (*UserBase, error) {
 var cacheUpdateUserQuota = CacheUpdateUserQuota
 var cacheUpdateUserQuotaField = updateUserQuotaCache
 var cacheUpdateUserFields = updateUserCache
+var userAuthStateCacheUpdater = updateUserCache
+var userAuthStateSessionRevoker = RevokeAllUserSessions
+
+// FinalizeUserAuthChange performs post-commit cache publication and session
+// revocation for authentication-sensitive user changes.
+func FinalizeUserAuthChange(user User, previousAuthVersion int64, reason string) error {
+	cacheErr := userAuthStateCacheUpdater(user)
+	if user.AuthVersion <= previousAuthVersion {
+		return cacheErr
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "user_security_changed"
+	}
+	_, revokeErr := userAuthStateSessionRevoker(user.Id, reason)
+	return errors.Join(cacheErr, revokeErr)
+}
+
+func FinalizeUserAuthChangeByID(userID int, previousAuthVersion int64, reason string) error {
+	user, err := GetUserById(userID, false)
+	if err != nil {
+		return err
+	}
+	return FinalizeUserAuthChange(*user, previousAuthVersion, reason)
+}
 
 func CacheUpdateUserQuota(userId int) error {
 	if !common.RedisEnabled {

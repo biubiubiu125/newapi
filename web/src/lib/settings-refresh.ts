@@ -35,7 +35,9 @@ export function emitSettingsRefresh(keys: string[] = []) {
   if (typeof window === 'undefined') return
 
   const payload = createPayload(keys)
-  window.dispatchEvent(new CustomEvent(SETTINGS_REFRESH_EVENT, { detail: payload }))
+  window.dispatchEvent(
+    new CustomEvent(SETTINGS_REFRESH_EVENT, { detail: payload })
+  )
 
   try {
     window.localStorage.setItem(

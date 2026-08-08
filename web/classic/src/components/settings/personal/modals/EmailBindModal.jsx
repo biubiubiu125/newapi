@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Button, Input, Modal } from '@douyinfe/semi-ui';
 import { IconMail, IconKey } from '@douyinfe/semi-icons';
+import { Button, Input, Modal } from '@douyinfe/semi-ui';
+import React from 'react';
 import Turnstile from 'react-turnstile';
 
 const EmailBindModal = ({
@@ -48,8 +48,8 @@ const EmailBindModal = ({
       visible={showEmailBindModal}
       onCancel={() => setShowEmailBindModal(false)}
       onOk={bindEmail}
-      size={'small'}
-      centered={true}
+      size='small'
+      centered
       maskClosable={false}
       className='modern-modal'
     >

@@ -67,12 +67,12 @@ export function SyncWizardDialog({
     if (open) {
       setLocale(syncWizardOptions.locale || 'zh')
       const preferredSource = SYNC_SOURCE_OPTIONS.find(
-        (option) => option.value === syncWizardOptions.source,
+        (option) => option.value === syncWizardOptions.source
       )
       setSource(
         preferredSource && !preferredSource.disabled
           ? (preferredSource.value as SyncSource)
-          : 'official',
+          : 'official'
       )
     }
   }, [
@@ -97,7 +97,7 @@ export function SyncWizardDialog({
       if (result.status === 'conflict') {
         const conflicts = result.conflicts || []
         toast.warning(
-          `Found ${conflicts.length} conflict${conflicts.length > 1 ? 's' : ''}. Please resolve them first.`,
+          `Found ${conflicts.length} conflict${conflicts.length > 1 ? 's' : ''}. Please resolve them first.`
         )
         setUpstreamConflicts(conflicts)
         setUpstreamMissing(result.missing)
@@ -109,7 +109,7 @@ export function SyncWizardDialog({
         const { created_models, created_vendors, updated_models } =
           result.data || {}
         toast.success(
-          `Sync completed! Created ${created_models || 0} models, updated ${updated_models || 0}, and added ${created_vendors || 0} vendors.`,
+          `Sync completed! Created ${created_models || 0} models, updated ${updated_models || 0}, and added ${created_vendors || 0} vendors.`
         )
         setUpstreamConflicts([])
         setUpstreamMissing([])
@@ -120,8 +120,8 @@ export function SyncWizardDialog({
       if (result.status === 'refresh_failed') {
         toast.error(
           t(
-            'Sync completed, but refreshing page data failed. Please refresh manually to view the latest results.',
-          ),
+            'Sync completed, but refreshing page data failed. Please refresh manually to view the latest results.'
+          )
         )
         setUpstreamConflicts([])
         setUpstreamMissing([])
@@ -174,7 +174,7 @@ export function SyncWizardDialog({
           value={source}
           onValueChange={(value) => {
             const selected = SYNC_SOURCE_OPTIONS.find(
-              (option) => option.value === value,
+              (option) => option.value === value
             )
             if (!selected || selected.disabled) return
             setSource(selected.value)
@@ -193,7 +193,7 @@ export function SyncWizardDialog({
                   isActive && 'border-primary ring-primary ring-1',
                   isDisabled
                     ? 'cursor-not-allowed opacity-60'
-                    : 'hover:border-primary/60 cursor-pointer',
+                    : 'hover:border-primary/60 cursor-pointer'
                 )}
               >
                 <div className='flex items-start gap-3'>
@@ -254,7 +254,7 @@ export function SyncWizardDialog({
       <div className='bg-muted/50 rounded-lg border p-4'>
         <p className='text-muted-foreground text-sm'>
           {t(
-            'The sync will fetch missing models and vendors from the selected source. Existing records are updated only when you approve conflicts.',
+            'The sync will fetch missing models and vendors from the selected source. Existing records are updated only when you approve conflicts.'
           )}
         </p>
       </div>

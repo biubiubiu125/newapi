@@ -29,8 +29,8 @@ const toBinaryString = (text) => {
     return binary;
   }
 
-  return encodeURIComponent(text).replace(/%([0-9A-F]{2})/g, (_, hex) =>
-    String.fromCharCode(parseInt(hex, 16)),
+  return encodeURIComponent(text).replaceAll(/%([0-9A-F]{2})/g, (_, hex) =>
+    String.fromCharCode(Number.parseInt(hex, 16)),
   );
 };
 

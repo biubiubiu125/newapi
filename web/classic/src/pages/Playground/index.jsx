@@ -17,28 +17,28 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useContext, useEffect, useCallback, useRef } from 'react';
-import { useSearchParams } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
 import { Layout, Toast, Modal } from '@douyinfe/semi-ui';
+import React, { useContext, useEffect, useCallback, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useSearchParams } from 'react-router-dom';
 
-// Context
-import { UserContext } from '../../context/User';
-import { useIsMobile } from '../../hooks/common/useIsMobile';
-
-// hooks
-import { usePlaygroundState } from '../../hooks/playground/usePlaygroundState';
-import { useMessageActions } from '../../hooks/playground/useMessageActions';
-import { useApiRequest } from '../../hooks/playground/useApiRequest';
-import { useSyncMessageAndCustomBody } from '../../hooks/playground/useSyncMessageAndCustomBody';
-import { useMessageEdit } from '../../hooks/playground/useMessageEdit';
-import { useDataLoader } from '../../hooks/playground/useDataLoader';
-
+import ChatArea from '../../components/playground/ChatArea';
+import FloatingButtons from '../../components/playground/FloatingButtons';
+// Components
+import {
+  OptimizedSettingsPanel,
+  OptimizedDebugPanel,
+  OptimizedMessageContent,
+  OptimizedMessageActions,
+} from '../../components/playground/OptimizedComponents';
 // Constants and utils
 import {
   MESSAGE_ROLES,
   ERROR_MESSAGES,
 } from '../../constants/playground.constants';
+// Context
+import { UserContext } from '../../context/User';
+import { PlaygroundProvider } from '../../contexts/PlaygroundContext';
 import {
   getLogo,
   stringToColor,
@@ -49,17 +49,14 @@ import {
   buildApiPayload,
   encodeToBase64,
 } from '../../helpers';
-
-// Components
-import {
-  OptimizedSettingsPanel,
-  OptimizedDebugPanel,
-  OptimizedMessageContent,
-  OptimizedMessageActions,
-} from '../../components/playground/OptimizedComponents';
-import ChatArea from '../../components/playground/ChatArea';
-import FloatingButtons from '../../components/playground/FloatingButtons';
-import { PlaygroundProvider } from '../../contexts/PlaygroundContext';
+import { useIsMobile } from '../../hooks/common/useIsMobile';
+import { useApiRequest } from '../../hooks/playground/useApiRequest';
+import { useDataLoader } from '../../hooks/playground/useDataLoader';
+import { useMessageActions } from '../../hooks/playground/useMessageActions';
+import { useMessageEdit } from '../../hooks/playground/useMessageEdit';
+// hooks
+import { usePlaygroundState } from '../../hooks/playground/usePlaygroundState';
+import { useSyncMessageAndCustomBody } from '../../hooks/playground/useSyncMessageAndCustomBody';
 
 // 生成头像
 const generateAvatarDataUrl = (username) => {
@@ -197,7 +194,7 @@ const Playground = () => {
       }
 
       // 默认预览逻辑
-      let messages = [...message];
+      const messages = [...message];
 
       // 如果存在用户消息
       if (
@@ -461,14 +458,11 @@ const Playground = () => {
         <Layout className='h-full bg-transparent flex flex-col md:flex-row'>
           {(showSettings || !isMobile) && (
             <Layout.Sider
-              className={`
-              bg-transparent border-r-0 flex-shrink-0 overflow-auto mt-[60px]
-              ${
+              className={`bg-transparent border-r-0 flex-shrink-0 overflow-auto mt-[60px] ${
                 isMobile
                   ? 'fixed top-0 left-0 right-0 bottom-0 z-[1000] w-full h-auto bg-white shadow-lg'
                   : 'relative z-[1] w-80 h-[calc(100vh-66px)]'
-              }
-            `}
+              } `}
               width={isMobile ? '100%' : 320}
             >
               <OptimizedSettingsPanel

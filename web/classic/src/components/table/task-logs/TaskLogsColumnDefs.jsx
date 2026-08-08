@@ -17,8 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Progress, Tag, Tooltip, Typography } from '@douyinfe/semi-ui';
+import {
+  Progress,
+  Tag,
+  Tooltip,
+  Typography,
+  Avatar,
+  Space,
+} from '@douyinfe/semi-ui';
 import {
   Music,
   FileText,
@@ -34,6 +40,9 @@ import {
   Video,
   Sparkles,
 } from 'lucide-react';
+import React from 'react';
+
+import { CHANNEL_OPTIONS } from '../../../constants/channel.constants';
 import {
   TASK_ACTION_FIRST_TAIL_GENERATE,
   TASK_ACTION_GENERATE,
@@ -41,13 +50,11 @@ import {
   TASK_ACTION_TEXT_GENERATE,
   TASK_ACTION_REMIX_GENERATE,
 } from '../../../constants/common.constant';
-import { CHANNEL_OPTIONS } from '../../../constants/channel.constants';
 import {
   getLogUserDisplayName,
   openLogUserInfo,
 } from '../../../helpers/log-user-cell';
 import { stringToColor } from '../../../helpers/render';
-import { Avatar, Space } from '@douyinfe/semi-ui';
 
 const colors = [
   'amber',
@@ -72,11 +79,11 @@ const renderTimestamp = (timestampInSeconds) => {
   const date = new Date(timestampInSeconds * 1000); // 从秒转换为毫秒
 
   const year = date.getFullYear(); // 获取年份
-  const month = ('0' + (date.getMonth() + 1)).slice(-2); // 获取月份，从0开始需要+1，并保证两位数
-  const day = ('0' + date.getDate()).slice(-2); // 获取日期，并保证两位数
-  const hours = ('0' + date.getHours()).slice(-2); // 获取小时，并保证两位数
-  const minutes = ('0' + date.getMinutes()).slice(-2); // 获取分钟，并保证两位数
-  const seconds = ('0' + date.getSeconds()).slice(-2); // 获取秒钟，并保证两位数
+  const month = `0${date.getMonth() + 1}`.slice(-2); // 获取月份，从0开始需要+1，并保证两位数
+  const day = `0${date.getDate()}`.slice(-2); // 获取日期，并保证两位数
+  const hours = `0${date.getHours()}`.slice(-2); // 获取小时，并保证两位数
+  const minutes = `0${date.getMinutes()}`.slice(-2); // 获取分钟，并保证两位数
+  const seconds = `0${date.getSeconds()}`.slice(-2); // 获取秒钟，并保证两位数
 
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`; // 格式化输出
 };
@@ -148,7 +155,7 @@ const renderType = (type, t) => {
 };
 
 const renderPlatform = (platform, t) => {
-  let option = CHANNEL_OPTIONS.find(
+  const option = CHANNEL_OPTIONS.find(
     (opt) => String(opt.value) === String(platform),
   );
   if (option) {
@@ -287,7 +294,7 @@ export const getTaskLogsColumns = ({
         return isAdminUser ? (
           <div>
             <Tag
-              color={colors[parseInt(text) % colors.length]}
+              color={colors[Number.parseInt(text) % colors.length]}
               size='large'
               shape='circle'
               onClick={() => {
@@ -388,8 +395,8 @@ export const getTaskLogsColumns = ({
                     ? 'var(--semi-color-warning)'
                     : null
                 }
-                percent={text ? parseInt(text.replace('%', '')) : 0}
-                showInfo={true}
+                percent={text ? Number.parseInt(text.replace('%', '')) : 0}
+                showInfo
                 aria-label='task progress'
                 style={{ minWidth: '160px' }}
               />

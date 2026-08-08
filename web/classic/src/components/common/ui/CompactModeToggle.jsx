@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Button } from '@douyinfe/semi-ui';
 import PropTypes from 'prop-types';
+import React from 'react';
+
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 
 /**

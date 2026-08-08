@@ -18,6 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
+
+import { SectionPageLayout } from '@/components/layout'
+import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -37,16 +40,19 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
-import { SectionPageLayout } from '@/components/layout'
-import { StatusBadge } from '@/components/status-badge'
-import { formatQuota } from '@/lib/format'
 import { formatSiteCreditAmount } from '@/features/wallet/lib'
+import { formatQuota } from '@/lib/format'
+
 import {
   getRechargeAudit,
   getRechargeAuditSummary,
+  getPaymentOrphans,
+  type PaymentOrphanEvent,
+  type PaymentOrphanStatusFilter,
   type RechargeAuditOrder,
   type RechargeAuditSummary,
 } from './api'
+import { PaymentOrphanPanel } from './payment-orphan-panel'
 
 function formatMoney(value: number, currency = 'CNY') {
   const normalizedCurrency = (currency || 'CNY').toUpperCase()
@@ -236,6 +242,12 @@ export function RechargeAudit() {
       : new URLSearchParams(window.location.search).get('user_id') || ''
   const [summary, setSummary] = useState<RechargeAuditSummary | null>(null)
   const [orders, setOrders] = useState<RechargeAuditOrder[]>([])
+  const [paymentOrphans, setPaymentOrphans] = useState<PaymentOrphanEvent[]>([])
+  const [paymentOrphanTotal, setPaymentOrphanTotal] = useState(0)
+  const [paymentOrphanStatus, setPaymentOrphanStatus] =
+    useState<PaymentOrphanStatusFilter>('pending_review')
+  const [paymentOrphanPage, setPaymentOrphanPage] = useState(1)
+  const [paymentOrphanPageSize, setPaymentOrphanPageSize] = useState(20)
   const [total, setTotal] = useState(0)
   const [keywordDraft, setKeywordDraft] = useState(initialKeyword)
   const [userIdDraft, setUserIdDraft] = useState(initialUserId)
@@ -271,9 +283,14 @@ export function RechargeAudit() {
     requestSequence.current = requestId
     setLoading(true)
     try {
-      const [summaryRes, orderRes] = await Promise.all([
+      const [summaryRes, orderRes, orphanRes] = await Promise.all([
         getRechargeAuditSummary(params),
         getRechargeAudit(params),
+        getPaymentOrphans({
+          status: paymentOrphanStatus,
+          page: paymentOrphanPage,
+          pageSize: paymentOrphanPageSize,
+        }),
       ])
       if (requestId !== requestSequence.current) return
       if (summaryRes.success) setSummary(summaryRes.data)
@@ -281,10 +298,14 @@ export function RechargeAudit() {
         setOrders(orderRes.data?.items || [])
         setTotal(orderRes.data?.total || 0)
       }
+      if (orphanRes.success) {
+        setPaymentOrphans(orphanRes.data?.items || [])
+        setPaymentOrphanTotal(orphanRes.data?.total || 0)
+      }
     } finally {
       if (requestId === requestSequence.current) setLoading(false)
     }
-  }, [params])
+  }, [params, paymentOrphanPage, paymentOrphanPageSize, paymentOrphanStatus])
 
   const applyFilters = useCallback(() => {
     setKeyword(keywordDraft.trim())
@@ -307,6 +328,10 @@ export function RechargeAudit() {
     totals?.credit_amount || 0
   )
   const totalPages = Math.max(1, Math.ceil(total / pageSize))
+  const paymentOrphanTotalPages = Math.max(
+    1,
+    Math.ceil(paymentOrphanTotal / paymentOrphanPageSize)
+  )
 
   useEffect(() => {
     if (page > totalPages) {
@@ -314,14 +339,40 @@ export function RechargeAudit() {
     }
   }, [page, totalPages])
 
+  useEffect(() => {
+    if (paymentOrphanPage > paymentOrphanTotalPages) {
+      setPaymentOrphanPage(paymentOrphanTotalPages)
+    }
+  }, [paymentOrphanPage, paymentOrphanTotalPages])
+
   return (
     <SectionPageLayout>
       <SectionPageLayout.Title>{t('Order Management')}</SectionPageLayout.Title>
       <SectionPageLayout.Description>
-        {t('Review recharge and subscription orders, payment channels, and financial anomalies')}
+        {t(
+          'Review recharge and subscription orders, payment channels, and financial anomalies'
+        )}
       </SectionPageLayout.Description>
       <SectionPageLayout.Content>
         <div className='space-y-4'>
+          <PaymentOrphanPanel
+            events={paymentOrphans}
+            loading={loading}
+            status={paymentOrphanStatus}
+            page={paymentOrphanPage}
+            pageSize={paymentOrphanPageSize}
+            total={paymentOrphanTotal}
+            onStatusChange={(value) => {
+              setPaymentOrphanStatus(value)
+              setPaymentOrphanPage(1)
+            }}
+            onPageChange={setPaymentOrphanPage}
+            onPageSizeChange={(value) => {
+              setPaymentOrphanPageSize(value)
+              setPaymentOrphanPage(1)
+            }}
+            onRefresh={() => setRefreshTick((value) => value + 1)}
+          />
           <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-5'>
             <SummaryCard
               label={t('Actual Paid Revenue')}
@@ -610,11 +661,11 @@ function SummaryCard(props: {
     <Card>
       <CardContent className='p-4'>
         <div className='text-muted-foreground text-sm'>{props.label}</div>
-        <div className='mt-2 break-words text-2xl font-semibold'>
+        <div className='mt-2 text-2xl font-semibold break-words'>
           {props.value}
         </div>
         {props.description ? (
-          <div className='text-muted-foreground mt-1 break-words text-xs'>
+          <div className='text-muted-foreground mt-1 text-xs break-words'>
             {props.description}
           </div>
         ) : null}

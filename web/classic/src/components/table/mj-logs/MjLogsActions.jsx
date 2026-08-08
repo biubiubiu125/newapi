@@ -17,10 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Skeleton, Typography } from '@douyinfe/semi-ui';
-import { useMinimumLoadingTime } from '../../../hooks/common/useMinimumLoadingTime';
 import { IconEyeOpened } from '@douyinfe/semi-icons';
+import { Skeleton, Typography } from '@douyinfe/semi-ui';
+import React from 'react';
+
+import { useMinimumLoadingTime } from '../../../hooks/common/useMinimumLoadingTime';
 import CompactModeToggle from '../../common/ui/CompactModeToggle';
 
 const { Text } = Typography;

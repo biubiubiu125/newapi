@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import {
   Button,
   Space,
@@ -26,6 +25,8 @@ import {
   Modal,
   Tooltip,
 } from '@douyinfe/semi-ui';
+import React from 'react';
+
 import {
   timestamp2string,
   getLobeHubIcon,
@@ -126,7 +127,7 @@ const renderEndpoints = (value) => {
       });
     }
     return value || '-';
-  } catch (_) {
+  } catch {
     return value || '-';
   }
 };

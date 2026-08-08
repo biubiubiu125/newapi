@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 
@@ -91,6 +92,10 @@ func GenerateSystemTaskID() (string, error) {
 }
 
 func CreateSystemTask(taskType string, payload any, state any) (*SystemTask, error) {
+	return CreateSystemTaskWithActiveKey(taskType, payload, state, taskType)
+}
+
+func CreateSystemTaskWithActiveKey(taskType string, payload any, state any, activeKey string) (*SystemTask, error) {
 	taskID, err := GenerateSystemTaskID()
 	if err != nil {
 		return nil, err
@@ -104,11 +109,15 @@ func CreateSystemTask(taskType string, payload any, state any) (*SystemTask, err
 		return nil, err
 	}
 
+	activeKey = strings.TrimSpace(activeKey)
+	if activeKey == "" {
+		activeKey = taskType
+	}
 	task := &SystemTask{
 		TaskID:    taskID,
 		Type:      taskType,
 		Status:    SystemTaskStatusPending,
-		ActiveKey: &taskType,
+		ActiveKey: &activeKey,
 		Payload:   payloadText,
 		State:     stateText,
 	}
@@ -142,6 +151,41 @@ func GetActiveSystemTask(taskType string) (*SystemTask, error) {
 		return nil, err
 	}
 	return &task, nil
+}
+
+func GetActiveSystemTaskByActiveKey(activeKey string) (*SystemTask, error) {
+	tasks, err := GetActiveSystemTasksByActiveKeys([]string{activeKey})
+	if err != nil || len(tasks) == 0 {
+		return nil, err
+	}
+	return tasks[0], nil
+}
+
+func GetActiveSystemTasksByActiveKeys(activeKeys []string) ([]*SystemTask, error) {
+	normalizedKeys := make([]string, 0, len(activeKeys))
+	seen := make(map[string]struct{}, len(activeKeys))
+	for _, activeKey := range activeKeys {
+		activeKey = strings.TrimSpace(activeKey)
+		if activeKey == "" {
+			continue
+		}
+		if _, ok := seen[activeKey]; ok {
+			continue
+		}
+		seen[activeKey] = struct{}{}
+		normalizedKeys = append(normalizedKeys, activeKey)
+	}
+	if len(normalizedKeys) == 0 {
+		return nil, nil
+	}
+	var tasks []*SystemTask
+	err := DB.Where("active_key IN ? AND status IN ?", normalizedKeys, activeSystemTaskStatuses()).
+		Order("id desc").
+		Find(&tasks).Error
+	if err != nil {
+		return nil, err
+	}
+	return tasks, nil
 }
 
 func FindPendingSystemTasks(taskType string, limit int) ([]*SystemTask, error) {
@@ -351,7 +395,14 @@ func RenewSystemTaskLock(taskID string, lockedBy string, lockUntil int64) error 
 }
 
 func MarkSystemTaskLeaseExpired(taskID string) error {
-	result := DB.Model(&SystemTask{}).
+	return markSystemTaskLeaseExpiredWithTx(DB, taskID)
+}
+
+func markSystemTaskLeaseExpiredWithTx(tx *gorm.DB, taskID string) error {
+	if tx == nil {
+		tx = DB
+	}
+	result := tx.Model(&SystemTask{}).
 		Where("task_id = ? AND status = ?", taskID, SystemTaskStatusRunning).
 		Updates(map[string]any{
 			"status":     SystemTaskStatusFailed,
@@ -363,21 +414,29 @@ func MarkSystemTaskLeaseExpired(taskID string) error {
 }
 
 func ExpireStaleSystemTaskLocks(now int64) error {
-	var locks []*SystemTaskLock
-	if err := DB.Where("locked_until < ?", now).Find(&locks).Error; err != nil {
-		return err
-	}
-	for _, lock := range locks {
-		if err := MarkSystemTaskLeaseExpired(lock.TaskID); err != nil {
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var locks []*SystemTaskLock
+		if err := LockForUpdate(tx).Where("locked_until < ?", now).Find(&locks).Error; err != nil {
 			return err
 		}
-		result := DB.Where("type = ? AND task_id = ? AND locked_by = ? AND locked_until < ?", lock.Type, lock.TaskID, lock.LockedBy, now).
-			Delete(&SystemTaskLock{})
-		if result.Error != nil {
-			return result.Error
+		for _, lock := range locks {
+			if lock == nil {
+				continue
+			}
+			result := tx.Where("type = ? AND task_id = ? AND locked_by = ? AND locked_until < ?", lock.Type, lock.TaskID, lock.LockedBy, now).
+				Delete(&SystemTaskLock{})
+			if result.Error != nil {
+				return result.Error
+			}
+			if result.RowsAffected == 0 {
+				continue
+			}
+			if err := markSystemTaskLeaseExpiredWithTx(tx, lock.TaskID); err != nil {
+				return err
+			}
 		}
-	}
-	return nil
+		return nil
+	})
 }
 
 func ReleaseSystemTaskLock(taskID string, lockedBy string) error {

@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { Typography, Tag } from '@douyinfe/semi-ui';
 import React from 'react';
 import { Link } from 'react-router-dom';
-import { Typography, Tag } from '@douyinfe/semi-ui';
+
 import SkeletonWrapper from '../components/SkeletonWrapper';
 
 const HeaderLogo = ({

@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute } from '@tanstack/react-router'
-import { ROLE } from '@/lib/roles'
+
 import { Subscriptions } from '@/features/subscriptions'
+import { ROLE } from '@/lib/roles'
 import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute('/_authenticated/subscriptions/')({

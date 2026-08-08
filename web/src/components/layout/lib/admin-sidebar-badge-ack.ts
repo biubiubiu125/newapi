@@ -30,7 +30,9 @@ type BadgeAckOptions = {
 
 function badgeAckStorageKey(userId?: number | string | null): string {
   const scope =
-    userId === null || typeof userId === 'undefined' ? 'anonymous' : String(userId)
+    userId === null || typeof userId === 'undefined'
+      ? 'anonymous'
+      : String(userId)
   return `${ADMIN_BADGE_ACK_STORAGE_KEY_PREFIX}:${scope}`
 }
 
@@ -76,7 +78,9 @@ function normalizeBadgeAckCursor(
   return normalized ? normalized : undefined
 }
 
-function parseCursorParts(value: BadgeAckValue | undefined): number[] | undefined {
+function parseCursorParts(
+  value: BadgeAckValue | undefined
+): number[] | undefined {
   const normalized = normalizeBadgeAckCursor(value)
   if (!normalized) return undefined
   const parts = normalized.split(':')
@@ -110,9 +114,7 @@ export function readAdminSidebarBadgeAck(
   userId?: number | string | null,
   options: Pick<BadgeAckOptions, 'mode'> = {}
 ): BadgeAckValue {
-  const value = readBadgeAckState(userId)[
-    badgeAckEntryKey(key, options.mode)
-  ]
+  const value = readBadgeAckState(userId)[badgeAckEntryKey(key, options.mode)]
   if (typeof value === 'number' && Number.isFinite(value)) return value
   if (typeof value === 'string') return value
   return 0
@@ -124,10 +126,7 @@ export function hasAdminSidebarBadgeAck(
   options: Pick<BadgeAckOptions, 'mode'> = {}
 ): boolean {
   const state = readBadgeAckState(userId)
-  return Object.prototype.hasOwnProperty.call(
-    state,
-    badgeAckEntryKey(key, options.mode)
-  )
+  return Object.hasOwn(state, badgeAckEntryKey(key, options.mode))
 }
 
 export function unreadAdminSidebarBadgeCount(

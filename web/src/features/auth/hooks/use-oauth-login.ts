@@ -16,271 +16,271 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, useRef, useEffect } from "react";
-import { useTranslation } from "react-i18next";
-import { toast } from "sonner";
+import { useState, useRef, useEffect } from 'react'
+import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
-import { clearAuthentication, isAuthBundle } from "@/lib/api";
+import { clearAuthentication, isAuthBundle } from '@/lib/api'
 
-import { createOAuthFlow, logout, telegramLogin } from "../api";
+import { createOAuthFlow, logout, telegramLogin } from '../api'
 import {
   buildGitHubOAuthUrl,
   buildDiscordOAuthUrl,
   buildOIDCOAuthUrl,
   buildLinuxDOOAuthUrl,
-} from "../lib/oauth";
+} from '../lib/oauth'
 import {
   getOAuthSessionStorage,
   rememberOAuthLoginRedirect,
-} from "../lib/oauth-callback-mode";
-import { pickTelegramAuthorization } from "../lib/telegram-login";
-import type { SystemStatus, CustomOAuthProviderInfo } from "../types";
-import { useAuthRedirect } from "./use-auth-redirect";
+} from '../lib/oauth-callback-mode'
+import { pickTelegramAuthorization } from '../lib/telegram-login'
+import type { SystemStatus, CustomOAuthProviderInfo } from '../types'
+import { useAuthRedirect } from './use-auth-redirect'
 
 type OAuthLoginOptions = {
-  redirectTo?: string;
-  affiliateCode?: string;
-};
+  redirectTo?: string
+  affiliateCode?: string
+}
 
 /**
  * Hook for managing OAuth login
  */
 export function useOAuthLogin(
   status: SystemStatus | null,
-  options: OAuthLoginOptions = {},
+  options: OAuthLoginOptions = {}
 ) {
-  const { t } = useTranslation();
-  const { redirectTo, affiliateCode } = options;
-  const { handleLoginSuccess } = useAuthRedirect();
-  const [isLoading, setIsLoading] = useState(false);
-  const [isTelegramDialogOpen, setIsTelegramDialogOpen] = useState(false);
-  const [isTelegramPending, setIsTelegramPending] = useState(false);
-  const [githubButtonText, setGithubButtonText] = useState("");
-  const [githubButtonDisabled, setGithubButtonDisabled] = useState(false);
-  const githubTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  const { t } = useTranslation()
+  const { redirectTo, affiliateCode } = options
+  const { handleLoginSuccess } = useAuthRedirect()
+  const [isLoading, setIsLoading] = useState(false)
+  const [isTelegramDialogOpen, setIsTelegramDialogOpen] = useState(false)
+  const [isTelegramPending, setIsTelegramPending] = useState(false)
+  const [githubButtonText, setGithubButtonText] = useState('')
+  const [githubButtonDisabled, setGithubButtonDisabled] = useState(false)
+  const githubTimeoutRef = useRef<NodeJS.Timeout | null>(null)
 
   useEffect(() => {
-    setGithubButtonText(t("Continue with GitHub"));
+    setGithubButtonText(t('Continue with GitHub'))
 
     return () => {
       if (githubTimeoutRef.current) {
-        clearTimeout(githubTimeoutRef.current);
+        clearTimeout(githubTimeoutRef.current)
       }
-    };
-  }, [t]);
+    }
+  }, [t])
 
   const resetSession = async () => {
-    const response = await logout();
+    const response = await logout()
     if (!response.success) {
-      throw new Error(response.message || t("Failed to sign out session"));
+      throw new Error(response.message || t('Failed to sign out session'))
     }
-    clearAuthentication();
-  };
+    clearAuthentication()
+  }
 
   const rememberLoginRedirect = (provider: string, state: string) => {
-    if (typeof window === "undefined") return;
+    if (typeof window === 'undefined') return
     rememberOAuthLoginRedirect(
       getOAuthSessionStorage(window),
       provider,
       state,
       redirectTo,
-      window.location.origin,
-    );
-  };
+      window.location.origin
+    )
+  }
 
   const handleGitHubLogin = async () => {
-    if (!status?.github_client_id) return;
-    if (githubButtonDisabled) return;
+    if (!status?.github_client_id) return
+    if (githubButtonDisabled) return
 
-    setIsLoading(true);
-    setGithubButtonDisabled(true);
-    setGithubButtonText(t("Redirecting to GitHub..."));
+    setIsLoading(true)
+    setGithubButtonDisabled(true)
+    setGithubButtonText(t('Redirecting to GitHub...'))
 
     if (githubTimeoutRef.current) {
-      clearTimeout(githubTimeoutRef.current);
+      clearTimeout(githubTimeoutRef.current)
     }
 
     githubTimeoutRef.current = setTimeout(() => {
-      setIsLoading(false);
+      setIsLoading(false)
       setGithubButtonText(
-        t("Request timed out, please refresh and restart GitHub login"),
-      );
-      setGithubButtonDisabled(true);
-    }, 20000);
+        t('Request timed out, please refresh and restart GitHub login')
+      )
+      setGithubButtonDisabled(true)
+    }, 20000)
 
     try {
-      await resetSession();
+      await resetSession()
       const state = await createOAuthFlow(
-        "github",
-        "login",
+        'github',
+        'login',
         affiliateCode,
-        redirectTo,
-      );
-      rememberLoginRedirect("github", state);
+        redirectTo
+      )
+      rememberLoginRedirect('github', state)
 
-      const url = buildGitHubOAuthUrl(status.github_client_id, state);
-      window.open(url, "_self");
+      const url = buildGitHubOAuthUrl(status.github_client_id, state)
+      window.open(url, '_self')
     } catch {
-      toast.error(t("Failed to start GitHub login"));
+      toast.error(t('Failed to start GitHub login'))
       if (githubTimeoutRef.current) {
-        clearTimeout(githubTimeoutRef.current);
+        clearTimeout(githubTimeoutRef.current)
       }
-      setIsLoading(false);
-      setGithubButtonText(t("Continue with GitHub"));
-      setGithubButtonDisabled(false);
+      setIsLoading(false)
+      setGithubButtonText(t('Continue with GitHub'))
+      setGithubButtonDisabled(false)
     }
-  };
+  }
 
   const handleDiscordLogin = async () => {
-    if (!status?.discord_client_id) return;
+    if (!status?.discord_client_id) return
 
-    setIsLoading(true);
+    setIsLoading(true)
     try {
-      await resetSession();
+      await resetSession()
       const state = await createOAuthFlow(
-        "discord",
-        "login",
+        'discord',
+        'login',
         affiliateCode,
-        redirectTo,
-      );
-      rememberLoginRedirect("discord", state);
+        redirectTo
+      )
+      rememberLoginRedirect('discord', state)
 
-      const url = buildDiscordOAuthUrl(status.discord_client_id, state);
-      window.open(url, "_self");
+      const url = buildDiscordOAuthUrl(status.discord_client_id, state)
+      window.open(url, '_self')
     } catch {
-      toast.error(t("Failed to start Discord login"));
+      toast.error(t('Failed to start Discord login'))
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
+  }
 
   const handleOIDCLogin = async () => {
-    if (!status?.oidc_authorization_endpoint || !status?.oidc_client_id) return;
+    if (!status?.oidc_authorization_endpoint || !status?.oidc_client_id) return
 
-    setIsLoading(true);
+    setIsLoading(true)
     try {
-      await resetSession();
+      await resetSession()
       const state = await createOAuthFlow(
-        "oidc",
-        "login",
+        'oidc',
+        'login',
         affiliateCode,
-        redirectTo,
-      );
-      rememberLoginRedirect("oidc", state);
+        redirectTo
+      )
+      rememberLoginRedirect('oidc', state)
 
       const url = buildOIDCOAuthUrl(
         status.oidc_authorization_endpoint,
         status.oidc_client_id,
-        state,
-      );
-      window.open(url, "_self");
+        state
+      )
+      window.open(url, '_self')
     } catch {
-      toast.error(t("Failed to start OIDC login"));
+      toast.error(t('Failed to start OIDC login'))
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
+  }
 
   const handleLinuxDOLogin = async () => {
-    if (!status?.linuxdo_client_id) return;
+    if (!status?.linuxdo_client_id) return
 
-    setIsLoading(true);
+    setIsLoading(true)
     try {
-      await resetSession();
+      await resetSession()
       const state = await createOAuthFlow(
-        "linuxdo",
-        "login",
+        'linuxdo',
+        'login',
         affiliateCode,
-        redirectTo,
-      );
-      rememberLoginRedirect("linuxdo", state);
+        redirectTo
+      )
+      rememberLoginRedirect('linuxdo', state)
 
-      const url = buildLinuxDOOAuthUrl(status.linuxdo_client_id, state);
-      window.open(url, "_self");
+      const url = buildLinuxDOOAuthUrl(status.linuxdo_client_id, state)
+      window.open(url, '_self')
     } catch {
-      toast.error(t("Failed to start LinuxDO login"));
+      toast.error(t('Failed to start LinuxDO login'))
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
+  }
 
   const handleTelegramLogin = async () => {
     if (!status?.telegram_bot_name?.trim()) {
-      toast.error(t("Login failed"));
-      return;
+      toast.error(t('Login failed'))
+      return
     }
 
-    setIsLoading(true);
+    setIsLoading(true)
     try {
-      await resetSession();
-      setIsTelegramDialogOpen(true);
+      await resetSession()
+      setIsTelegramDialogOpen(true)
     } catch {
       toast.error(
-        t("Failed to start {{provider}} login", { provider: "Telegram" }),
-      );
+        t('Failed to start {{provider}} login', { provider: 'Telegram' })
+      )
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
+  }
 
   const handleTelegramAuthorization = async (value: unknown) => {
-    const authorization = pickTelegramAuthorization(value);
+    const authorization = pickTelegramAuthorization(value)
     if (!authorization) {
-      toast.error(t("Login failed"));
-      return;
+      toast.error(t('Login failed'))
+      return
     }
 
-    setIsTelegramPending(true);
+    setIsTelegramPending(true)
     try {
-      const response = await telegramLogin(authorization);
+      const response = await telegramLogin(authorization)
       if (!response.success || !isAuthBundle(response.data)) {
-        toast.error(t("Login failed"));
-        return;
+        toast.error(t('Login failed'))
+        return
       }
 
-      setIsTelegramDialogOpen(false);
-      await handleLoginSuccess(response.data, redirectTo);
-      toast.success(t("Welcome back!"));
+      setIsTelegramDialogOpen(false)
+      await handleLoginSuccess(response.data, redirectTo)
+      toast.success(t('Welcome back!'))
     } catch {
-      toast.error(t("Login failed"));
+      toast.error(t('Login failed'))
     } finally {
-      setIsTelegramPending(false);
+      setIsTelegramPending(false)
     }
-  };
+  }
 
   const handleCustomOAuthLogin = async (provider: CustomOAuthProviderInfo) => {
-    if (!provider.authorization_endpoint || !provider.client_id) return;
+    if (!provider.authorization_endpoint || !provider.client_id) return
 
-    setIsLoading(true);
+    setIsLoading(true)
     try {
-      await resetSession();
+      await resetSession()
       const state = await createOAuthFlow(
         provider.slug,
-        "login",
+        'login',
         affiliateCode,
-        redirectTo,
-      );
-      rememberLoginRedirect(provider.slug, state);
+        redirectTo
+      )
+      rememberLoginRedirect(provider.slug, state)
 
-      const redirectUri = `${window.location.origin}/oauth/${provider.slug}`;
-      const url = new URL(provider.authorization_endpoint);
-      url.searchParams.set("client_id", provider.client_id);
-      url.searchParams.set("redirect_uri", redirectUri);
-      url.searchParams.set("response_type", "code");
-      url.searchParams.set("state", state);
+      const redirectUri = `${window.location.origin}/oauth/${provider.slug}`
+      const url = new URL(provider.authorization_endpoint)
+      url.searchParams.set('client_id', provider.client_id)
+      url.searchParams.set('redirect_uri', redirectUri)
+      url.searchParams.set('response_type', 'code')
+      url.searchParams.set('state', state)
       if (provider.scopes) {
-        url.searchParams.set("scope", provider.scopes);
+        url.searchParams.set('scope', provider.scopes)
       }
 
-      window.open(url.toString(), "_self");
+      window.open(url.toString(), '_self')
     } catch {
       toast.error(
-        t("Failed to start {{provider}} login", { provider: provider.name }),
-      );
+        t('Failed to start {{provider}} login', { provider: provider.name })
+      )
     } finally {
-      setIsLoading(false);
+      setIsLoading(false)
     }
-  };
+  }
 
   return {
     isLoading,
@@ -296,5 +296,5 @@ export function useOAuthLogin(
     handleTelegramAuthorization,
     setIsTelegramDialogOpen,
     handleCustomOAuthLogin,
-  };
+  }
 }

@@ -17,11 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
-import type { PermissionCatalog } from '@/lib/admin-permissions'
-import { normalizeAdminPermissions } from '@/lib/admin-permissions'
+
+import {
+  type PermissionCatalog,
+  normalizeAdminPermissions,
+} from '@/lib/admin-permissions'
 import { quotaUnitsToDollars } from '@/lib/format'
+
 import { DEFAULT_GROUP } from '../constants'
-import { type UserFormData, type User } from '../types'
+import type { UserFormData, User } from '../types'
 
 // ============================================================================
 // Form Schema
@@ -34,7 +38,10 @@ const newUsernameSchema = z
   .string()
   .min(1, 'Username is required')
   .regex(/^[A-Za-z0-9_-]+$/, USERNAME_FORMAT_MESSAGE)
-  .max(REGISTER_USERNAME_MAX_LENGTH, 'Username must be at most 20 characters long')
+  .max(
+    REGISTER_USERNAME_MAX_LENGTH,
+    'Username must be at most 20 characters long'
+  )
 
 export const userFormSchema = z.object({
   username: z.string().min(1, 'Username is required'),

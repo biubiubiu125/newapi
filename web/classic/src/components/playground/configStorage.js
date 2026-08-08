@@ -65,7 +65,10 @@ export const loadConfig = () => {
     const savedConfig = localStorage.getItem(STORAGE_KEYS.CONFIG);
     if (savedConfig) {
       const parsedConfig = JSON.parse(savedConfig);
-      const parsedMaxTokens = parseInt(parsedConfig?.inputs?.max_tokens, 10);
+      const parsedMaxTokens = Number.parseInt(
+        parsedConfig?.inputs?.max_tokens,
+        10,
+      );
 
       const mergedConfig = {
         inputs: {
@@ -222,13 +225,13 @@ export const importConfig = (file) => {
             reject(new Error('配置文件格式无效'));
           }
         } catch (parseError) {
-          reject(new Error('解析配置文件失败: ' + parseError.message));
+          reject(new Error(`解析配置文件失败: ${parseError.message}`));
         }
       };
       reader.onerror = () => reject(new Error('读取文件失败'));
       reader.readAsText(file);
     } catch (error) {
-      reject(new Error('导入配置失败: ' + error.message));
+      reject(new Error(`导入配置失败: ${error.message}`));
     }
   });
 };

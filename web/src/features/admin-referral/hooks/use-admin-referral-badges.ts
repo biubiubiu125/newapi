@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
+
 import { getAdminReferralBadges } from '@/features/referral/api'
 
 export type AdminReferralBadgeCounts = {
@@ -57,7 +58,9 @@ function normalizeCursor(value: string | undefined): string | undefined {
   return normalized || undefined
 }
 
-export function formatAdminReferralBadgeCount(count: number): string | undefined {
+export function formatAdminReferralBadgeCount(
+  count: number
+): string | undefined {
   if (!Number.isFinite(count) || count <= 0) {
     return undefined
   }

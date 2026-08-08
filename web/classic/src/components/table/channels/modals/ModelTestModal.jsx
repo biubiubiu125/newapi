@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import { IconSearch, IconInfoCircle } from '@douyinfe/semi-icons';
 import {
   Modal,
   Button,
@@ -29,10 +29,11 @@ import {
   Switch,
   Banner,
 } from '@douyinfe/semi-ui';
-import { IconSearch, IconInfoCircle } from '@douyinfe/semi-icons';
 import { Settings } from 'lucide-react';
-import { copy, showError, showInfo, showSuccess } from '../../../../helpers';
+import React from 'react';
+
 import { MODEL_TABLE_PAGE_SIZE } from '../../../../constants';
+import { copy, showError, showInfo, showSuccess } from '../../../../helpers';
 
 const ModelTestModal = ({
   showModelTestModal,
@@ -95,7 +96,7 @@ const ModelTestModal = ({
     { value: 'jina-rerank', label: 'Jina Rerank (/v1/rerank)' },
     {
       value: 'image-generation',
-      label: t('图像生成') + ' (/v1/images/generations)',
+      label: `${t('图像生成')} (/v1/images/generations)`,
     },
     { value: 'embeddings', label: 'Embeddings (/v1/embeddings)' },
   ];

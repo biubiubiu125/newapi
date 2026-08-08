@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo, useState } from 'react';
 import {
   Badge,
   Button,
@@ -30,13 +29,15 @@ import {
   Tooltip,
   Typography,
 } from '@douyinfe/semi-ui';
-import { API, showError, showSuccess, renderQuota } from '../../helpers';
 import { RefreshCw, Sparkles } from 'lucide-react';
-import SubscriptionPurchaseModal from './modals/SubscriptionPurchaseModal';
+import React, { useMemo, useState } from 'react';
+
+import { API, showError, showSuccess, renderQuota } from '../../helpers';
 import {
   formatSubscriptionDuration,
   formatSubscriptionResetPeriod,
 } from '../../helpers/subscriptionFormat';
+import SubscriptionPurchaseModal from './modals/SubscriptionPurchaseModal';
 
 const { Text } = Typography;
 
@@ -133,7 +134,7 @@ const SubscriptionPlansCard = ({
             : res.data?.message || t('支付失败');
         showError(errorMsg);
       }
-    } catch (e) {
+    } catch {
       showError(t('支付请求失败'));
     } finally {
       setPaying(false);
@@ -161,7 +162,7 @@ const SubscriptionPlansCard = ({
             : res.data?.message || t('支付失败');
         showError(errorMsg);
       }
-    } catch (e) {
+    } catch {
       showError(t('支付请求失败'));
     } finally {
       setPaying(false);
@@ -190,7 +191,7 @@ const SubscriptionPlansCard = ({
             : res.data?.message || t('支付失败');
         showError(errorMsg);
       }
-    } catch (e) {
+    } catch {
       showError(t('支付请求失败'));
     } finally {
       setPaying(false);
@@ -613,7 +614,7 @@ const SubscriptionPlansCard = ({
                           const count = getPlanPurchaseCount(p?.plan?.id);
                           const reached = limit > 0 && count >= limit;
                           const tip = reached
-                            ? t('已达到购买上限') + ` (${count}/${limit})`
+                            ? `${t('已达到购买上限')} (${count}/${limit})`
                             : '';
                           const buttonEl = (
                             <Button

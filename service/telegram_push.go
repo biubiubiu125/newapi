@@ -137,7 +137,7 @@ func (announcement announcementForTelegramPush) idString(index int) string {
 		return fmt.Sprintf("index:%d", index)
 	}
 	var text string
-	if err := json.Unmarshal(announcement.Id, &text); err == nil {
+	if err := common.Unmarshal(announcement.Id, &text); err == nil {
 		text = strings.TrimSpace(text)
 		if text != "" {
 			return text
@@ -152,13 +152,13 @@ func parseAnnouncementsForTelegramPush(raw string) ([]announcementForTelegramPus
 		return nil, nil
 	}
 	var entries []json.RawMessage
-	if err := json.Unmarshal([]byte(raw), &entries); err != nil {
+	if err := common.Unmarshal([]byte(raw), &entries); err != nil {
 		return nil, err
 	}
 	announcements := make([]announcementForTelegramPush, 0, len(entries))
 	for index, entry := range entries {
 		var legacyContent string
-		if err := json.Unmarshal(entry, &legacyContent); err == nil {
+		if err := common.Unmarshal(entry, &legacyContent); err == nil {
 			announcements = append(announcements, announcementForTelegramPush{
 				Id:      json.RawMessage(fmt.Sprintf("%d", index+1)),
 				Content: legacyContent,
@@ -166,7 +166,7 @@ func parseAnnouncementsForTelegramPush(raw string) ([]announcementForTelegramPus
 			continue
 		}
 		var announcement announcementForTelegramPush
-		if err := json.Unmarshal(entry, &announcement); err != nil {
+		if err := common.Unmarshal(entry, &announcement); err != nil {
 			return nil, err
 		}
 		announcements = append(announcements, announcement)

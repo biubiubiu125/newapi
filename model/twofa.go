@@ -230,7 +230,7 @@ func ReplaceBackupCodesWithAuthVersion(userId int, codes []string) error {
 	}); err != nil {
 		return err
 	}
-	return PublishUserAuthCache(userId)
+	return publishUserAuthCacheAfterCommit(userId)
 }
 
 // ValidateBackupCode 验证并使用备用码
@@ -295,7 +295,7 @@ func DisableTwoFAWithAuthVersion(userId int) error {
 	}); err != nil {
 		return err
 	}
-	return PublishUserAuthCache(userId)
+	return publishUserAuthCacheAfterCommit(userId)
 }
 
 // EnableWithAuthVersion atomically enables this factor and advances the user
@@ -330,7 +330,7 @@ func (t *TwoFA) EnableWithAuthVersion() error {
 	t.IsEnabled = true
 	t.FailedAttempts = 0
 	t.LockedUntil = nil
-	return PublishUserAuthCache(t.UserId)
+	return publishUserAuthCacheAfterCommit(t.UserId)
 }
 
 // ValidateTOTPAndUpdateUsage 验证TOTP并更新使用记录

@@ -68,10 +68,12 @@ function uid() {
 
 function parsePrefix(rawKey: string): { op: OpType; groupName: string } {
   rawKey = rawKey.trim()
-  if (rawKey.startsWith('+:'))
+  if (rawKey.startsWith('+:')) {
     return { op: OP_ADD, groupName: rawKey.slice(2).trim() }
-  if (rawKey.startsWith('-:'))
+  }
+  if (rawKey.startsWith('-:')) {
     return { op: OP_REMOVE, groupName: rawKey.slice(2).trim() }
+  }
   return { op: OP_APPEND, groupName: rawKey }
 }
 
@@ -116,8 +118,7 @@ function nestRules(rules: Rule[]): Record<string, Record<string, string>> {
     const cleanTargetGroup = targetGroup.trim()
     if (!cleanUserGroup || !cleanTargetGroup) continue
     if (!result[cleanUserGroup]) result[cleanUserGroup] = {}
-    result[cleanUserGroup][toRawKey(op, cleanTargetGroup)] =
-      description.trim()
+    result[cleanUserGroup][toRawKey(op, cleanTargetGroup)] = description.trim()
   }
   return result
 }
@@ -336,9 +337,13 @@ export function GroupSpecialUsableRulesEditor(
         rules.map((r) => {
           if (r._id !== id) return r
           const updated = { ...r, [field]: val }
-          if (field === 'op' && val === OP_REMOVE)
+          if (field === 'op' && val === OP_REMOVE) {
             updated.description = 'remove'
-          else if (field === 'op' && r.op === OP_REMOVE && val !== OP_REMOVE) {
+          } else if (
+            field === 'op' &&
+            r.op === OP_REMOVE &&
+            val !== OP_REMOVE
+          ) {
             if (updated.description === 'remove') updated.description = ''
           }
           return updated

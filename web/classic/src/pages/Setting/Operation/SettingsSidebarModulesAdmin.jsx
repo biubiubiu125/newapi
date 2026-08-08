@@ -17,8 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect, useContext } from 'react';
-import { useTranslation } from 'react-i18next';
 import {
   Card,
   Form,
@@ -28,8 +26,11 @@ import {
   Col,
   Typography,
 } from '@douyinfe/semi-ui';
-import { API, showSuccess, showError } from '../../../helpers';
+import React, { useState, useEffect, useContext } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import { StatusContext } from '../../../context/Status';
+import { API, showSuccess, showError } from '../../../helpers';
 
 const { Text } = Typography;
 
@@ -81,7 +82,7 @@ const sanitizeSidebarModulesConfig = (config) => {
   if (!config || typeof config !== 'object') return config;
   const sanitized = { ...config };
   if (sanitized.console?.tickets !== undefined) {
-    sanitized.personal = { enabled: true, ...(sanitized.personal || {}) };
+    sanitized.personal = { enabled: true, ...sanitized.personal };
     if (sanitized.personal.tickets === undefined) {
       sanitized.personal.tickets = sanitized.console.tickets;
     }
@@ -173,7 +174,7 @@ export default function SettingsSidebarModulesAdmin(props) {
       } else {
         showError(message);
       }
-    } catch (error) {
+    } catch {
       showError(t('保存失败，请重试'));
     } finally {
       setLoading(false);
@@ -191,19 +192,19 @@ export default function SettingsSidebarModulesAdmin(props) {
             ...modules,
             chat: {
               ...defaultSidebarModules.chat,
-              ...(modules.chat || {}),
+              ...modules.chat,
             },
             console: {
               ...defaultSidebarModules.console,
-              ...(modules.console || {}),
+              ...modules.console,
             },
             personal: {
               ...defaultSidebarModules.personal,
-              ...(modules.personal || {}),
+              ...modules.personal,
             },
             admin: {
               ...defaultSidebarModules.admin,
-              ...(modules.admin || {}),
+              ...modules.admin,
               adminReferral:
                 modules.admin?.adminReferral ?? modules.admin?.referral ?? true,
               recharge_audit:
@@ -213,7 +214,7 @@ export default function SettingsSidebarModulesAdmin(props) {
             },
           }),
         );
-      } catch (error) {
+      } catch {
         setSidebarModulesAdmin(defaultSidebarModules);
       }
     }

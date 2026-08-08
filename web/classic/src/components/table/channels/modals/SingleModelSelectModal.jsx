@@ -17,9 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { useTranslation } from 'react-i18next';
-import { useIsMobile } from '../../../../hooks/common/useIsMobile';
+import { IconSearch } from '@douyinfe/semi-icons';
+import {
+  IllustrationNoResult,
+  IllustrationNoResultDark,
+} from '@douyinfe/semi-illustrations';
 import {
   Collapse,
   Empty,
@@ -28,12 +30,11 @@ import {
   Radio,
   Typography,
 } from '@douyinfe/semi-ui';
-import {
-  IllustrationNoResult,
-  IllustrationNoResultDark,
-} from '@douyinfe/semi-illustrations';
-import { IconSearch } from '@douyinfe/semi-icons';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import { getModelCategories } from '../../../../helpers/render';
+import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 
 const SingleModelSelectModal = ({
   visible,
@@ -48,7 +49,7 @@ const SingleModelSelectModal = ({
   const normalizeModelName = (model) => String(model ?? '').trim();
   const normalizedModels = useMemo(() => {
     const list = Array.isArray(models) ? models : [];
-    return Array.from(new Set(list.map(normalizeModelName).filter(Boolean)));
+    return [...new Set(list.map(normalizeModelName).filter(Boolean))];
   }, [models]);
 
   const [keyword, setKeyword] = useState('');

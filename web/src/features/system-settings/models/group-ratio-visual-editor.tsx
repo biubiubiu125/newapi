@@ -16,9 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, useMemo, useEffect, useCallback, memo } from 'react'
 import { Pencil, Plus, Trash2, GripVertical, ChevronDown } from 'lucide-react'
+import { useState, useMemo, useEffect, useCallback, memo } from 'react'
 import { useTranslation } from 'react-i18next'
+
+import { StaticDataTable } from '@/components/data-table'
+import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import {
   Card,
@@ -35,8 +38,7 @@ import {
 } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { StaticDataTable } from '@/components/data-table'
-import { Dialog } from '@/components/dialog'
+
 import { safeJsonParse } from '../utils/json-parser'
 
 type GroupRatioVisualEditorProps = {
@@ -99,11 +101,11 @@ function buildGroupPricingRows(
       .filter(Boolean)
   )
 
-  return Array.from(names).map((name) => ({
+  return [...names].map((name) => ({
     _id: createGroupPricingId(),
     name,
     ratio: normalizeRatio(ratioMap[name]),
-    selectable: Object.prototype.hasOwnProperty.call(usableMap, name),
+    selectable: Object.hasOwn(usableMap, name),
     description: String(usableMap[name] ?? ''),
   }))
 }
@@ -200,7 +202,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
       fallback: [],
       context: 'auto groups',
     })
-    return Array.from(new Set(list.map((group) => group.trim()).filter(Boolean)))
+    return [...new Set(list.map((group) => group.trim()).filter(Boolean))]
   }, [autoGroups])
 
   // Parse group-group ratios
@@ -253,7 +255,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
       delete map[simpleEditData.name]
     }
 
-    map[cleanName] = parseFloat(value)
+    map[cleanName] = Number.parseFloat(value)
 
     const field =
       simpleDialogType === 'groupRatio' ? 'GroupRatio' : 'TopupGroupRatio'
@@ -285,7 +287,7 @@ export const GroupRatioVisualEditor = memo(function GroupRatioVisualEditor({
   const handleAutoGroupSave = () => {
     if (!autoGroupInput.trim()) return
 
-    const list = Array.from(new Set([...autoGroupsList, autoGroupInput.trim()]))
+    const list = [...new Set([...autoGroupsList, autoGroupInput.trim()])]
     onChange('AutoGroups', JSON.stringify(list, null, 2))
     setAutoGroupDialogOpen(false)
   }
@@ -836,7 +838,7 @@ function GroupPricingTable({
       if (!name) continue
       counts.set(name, (counts.get(name) ?? 0) + 1)
     }
-    return Array.from(counts.entries())
+    return [...counts.entries()]
       .filter(([, count]) => count > 1)
       .map(([name]) => name)
   }, [rows])
@@ -1047,7 +1049,7 @@ function SimpleGroupDialog({
             value={value}
             onChange={(e) => {
               const val = e.target.value
-              if (val === '' || !isNaN(parseFloat(val))) {
+              if (val === '' || !isNaN(Number.parseFloat(val))) {
                 setValue(val)
               }
             }}
@@ -1092,7 +1094,7 @@ function GroupOverrideDialog({
 
   const handleSave = () => {
     if (!targetGroup.trim() || !ratio.trim()) return
-    const parsedRatio = parseFloat(ratio)
+    const parsedRatio = Number.parseFloat(ratio)
     if (isNaN(parsedRatio)) return
 
     onSave(targetGroup.trim(), parsedRatio, editData?.targetGroup)
@@ -1147,7 +1149,7 @@ function GroupOverrideDialog({
             value={ratio}
             onChange={(e) => {
               const val = e.target.value
-              if (val === '' || !isNaN(parseFloat(val))) {
+              if (val === '' || !isNaN(Number.parseFloat(val))) {
                 setRatio(val)
               }
             }}

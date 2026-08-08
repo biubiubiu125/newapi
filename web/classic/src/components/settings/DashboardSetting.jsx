@@ -17,17 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useMemo } from 'react';
 import { Card, Spin, Button, Modal } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useMemo } from 'react';
+
 import { API, showError, showSuccess, toBoolean } from '../../helpers';
-import SettingsAPIInfo from '../../pages/Setting/Dashboard/SettingsAPIInfo';
 import SettingsAnnouncements from '../../pages/Setting/Dashboard/SettingsAnnouncements';
+import SettingsAPIInfo from '../../pages/Setting/Dashboard/SettingsAPIInfo';
+import SettingsDataDashboard from '../../pages/Setting/Dashboard/SettingsDataDashboard';
 import SettingsFAQ from '../../pages/Setting/Dashboard/SettingsFAQ';
 import SettingsUptimeKuma from '../../pages/Setting/Dashboard/SettingsUptimeKuma';
-import SettingsDataDashboard from '../../pages/Setting/Dashboard/SettingsDataDashboard';
 
 const DashboardSetting = () => {
-  let [inputs, setInputs] = useState({
+  const [inputs, setInputs] = useState({
     'console_setting.api_info': '',
     'console_setting.announcements': '',
     'console_setting.faq': '',
@@ -50,14 +51,14 @@ const DashboardSetting = () => {
     DataExportInterval: 5,
   });
 
-  let [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [showMigrateModal, setShowMigrateModal] = useState(false); // 下个版本会删除
 
   const getOptions = async () => {
     const res = await API.get('/api/option/');
     const { success, message, data } = res.data;
     if (success) {
-      let newInputs = {};
+      const newInputs = {};
       data.forEach((item) => {
         if (item.key in inputs) {
           newInputs[item.key] = item.value;
@@ -115,7 +116,7 @@ const DashboardSetting = () => {
       setShowMigrateModal(false);
     } catch (err) {
       console.error(err);
-      showError('迁移失败: ' + (err.message || '未知错误'));
+      showError(`迁移失败: ${err.message || '未知错误'}`);
     } finally {
       setLoading(false);
     }

@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Button } from '@douyinfe/semi-ui';
+import React from 'react';
 
 const UsersActions = ({ setShowAddUser, t }) => {
   // Add new user

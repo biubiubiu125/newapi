@@ -17,7 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
+import {
+  IllustrationNoResult,
+  IllustrationNoResultDark,
+} from '@douyinfe/semi-illustrations';
 import {
   Button,
   Space,
@@ -29,13 +32,11 @@ import {
   Modal,
   Switch,
 } from '@douyinfe/semi-ui';
-import {
-  IllustrationNoResult,
-  IllustrationNoResultDark,
-} from '@douyinfe/semi-illustrations';
 import { Plus, Edit, Trash2, Save, Activity } from 'lucide-react';
-import { API, showError, showSuccess } from '../../../helpers';
+import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { API, showError, showSuccess } from '../../../helpers';
 
 const { Text } = Typography;
 
@@ -212,7 +213,7 @@ const SettingsUptimeKuma = ({ options, refresh }) => {
 
     try {
       new URL(uptimeForm.url);
-    } catch (error) {
+    } catch {
       showError('请输入有效的URL地址');
       return;
     }
@@ -249,7 +250,7 @@ const SettingsUptimeKuma = ({ options, refresh }) => {
           : '分类已添加，请及时点击“保存设置”进行保存',
       );
     } catch (error) {
-      showError('操作失败: ' + error.message);
+      showError(`操作失败: ${error.message}`);
     } finally {
       setModalLoading(false);
     }
@@ -414,8 +415,8 @@ const SettingsUptimeKuma = ({ options, refresh }) => {
           rowKey='id'
           scroll={{ x: 'max-content' }}
           pagination={{
-            currentPage: currentPage,
-            pageSize: pageSize,
+            currentPage,
+            pageSize,
             total: uptimeGroupsList.length,
             showSizeChanger: true,
             showQuickJumper: true,

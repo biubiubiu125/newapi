@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import {
   useCallback,
   useEffect,
@@ -24,10 +25,11 @@ import {
   useState,
   type ReactNode,
 } from 'react'
-import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { formatTimestamp } from '@/lib/format'
+
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import { SectionPageLayout } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
@@ -35,9 +37,6 @@ import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
-import { ConfirmDialog } from '@/components/confirm-dialog'
-import { SectionPageLayout } from '@/components/layout'
-import { AssetImagePreview } from '@/features/referral/components/asset-image-preview'
 import {
   adjustReferralAffiliate,
   approveReferralAffiliate,
@@ -68,6 +67,7 @@ import {
   updateAdminReferralSettings,
   updateReferralAffiliateRate,
 } from '@/features/referral/api'
+import { AssetImagePreview } from '@/features/referral/components/asset-image-preview'
 import type {
   ReferralAffiliate,
   ReferralBinding,
@@ -79,6 +79,8 @@ import type {
   ReferralWithdrawal,
   ReferralAdminAuditLog,
 } from '@/features/referral/types'
+import { formatTimestamp } from '@/lib/format'
+
 import {
   formatAdminReferralBadgeCount,
   useAdminReferralBadges,
@@ -548,14 +550,10 @@ function auditReasonPatternLabel(value: string): string {
     return '拒绝后释放冻结金额'
   }
   if (lower.includes('approved') || lower.includes('approve')) {
-    return lower.includes('test')
-      ? '测试链路审核通过'
-      : '审核通过'
+    return lower.includes('test') ? '测试链路审核通过' : '审核通过'
   }
   if (lower.includes('paid') || lower.includes('payment')) {
-    return lower.includes('test')
-      ? '测试链路已打款'
-      : '已打款'
+    return lower.includes('test') ? '测试链路已打款' : '已打款'
   }
   if (lower.includes('withdrawal')) {
     return lower.includes('test') ? '测试提现流程' : '提现流程'
@@ -564,7 +562,7 @@ function auditReasonPatternLabel(value: string): string {
     return lower.includes('30 minutes') ? '用户在 30 分钟内取消' : '用户取消'
   }
   if (lower.includes('test-machine') || lower.includes('test machine')) {
-    return `测试机记录：${value.replace(/test-machine|test machine/gi, '').trim() || value}`
+    return `测试机记录：${value.replaceAll(/test-machine|test machine/gi, '').trim() || value}`
   }
   return value || '-'
 }
@@ -2219,9 +2217,7 @@ function WithdrawalInfo(props: { item: ReferralWithdrawal }) {
   const item = props.item
   return (
     <div className='min-w-[260px] space-y-1 text-sm'>
-      <div>
-        {accountTypeLabel(item.account_type, t)}
-      </div>
+      <div>{accountTypeLabel(item.account_type, t)}</div>
       <div className='break-words'>
         {item.account_type === 'usdt' ? t('Blockchain') : t('Account Name')}:{' '}
         {item.account_type === 'usdt'

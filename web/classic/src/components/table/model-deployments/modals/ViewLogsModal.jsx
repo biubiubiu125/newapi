@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect, useRef } from 'react';
+import { IconRefresh, IconDownload } from '@douyinfe/semi-icons';
 import {
   Modal,
   Button,
@@ -34,6 +34,7 @@ import {
   Tooltip,
   Radio,
 } from '@douyinfe/semi-ui';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FaCopy,
   FaSearch,
@@ -43,7 +44,7 @@ import {
   FaInfoCircle,
   FaLink,
 } from 'react-icons/fa';
-import { IconRefresh, IconDownload } from '@douyinfe/semi-icons';
+
 import {
   API,
   showError,
@@ -132,7 +133,7 @@ const ViewLogsModal = ({ visible, onCancel, deployment, t }) => {
       if (response.data.success) {
         const rawContent =
           typeof response.data.data === 'string' ? response.data.data : '';
-        const normalized = rawContent.replace(/\r\n?/g, '\n');
+        const normalized = rawContent.replaceAll(/\r\n?/g, '\n');
         const lines = normalized ? normalized.split('\n') : [];
 
         setLogLines(lines);
@@ -142,9 +143,9 @@ const ViewLogsModal = ({ visible, onCancel, deployment, t }) => {
       }
     } catch (error) {
       showError(
-        t('获取日志失败') +
-          ': ' +
-          (error.response?.data?.message || error.message),
+        `${t('获取日志失败')}: ${
+          error.response?.data?.message || error.message
+        }`,
       );
     } finally {
       setLoading(false);
@@ -181,9 +182,9 @@ const ViewLogsModal = ({ visible, onCancel, deployment, t }) => {
       }
     } catch (error) {
       showError(
-        t('获取容器列表失败') +
-          ': ' +
-          (error.response?.data?.message || error.message),
+        `${t('获取容器列表失败')}: ${
+          error.response?.data?.message || error.message
+        }`,
       );
     } finally {
       setContainersLoading(false);
@@ -207,9 +208,9 @@ const ViewLogsModal = ({ visible, onCancel, deployment, t }) => {
       }
     } catch (error) {
       showError(
-        t('获取容器详情失败') +
-          ': ' +
-          (error.response?.data?.message || error.message),
+        `${t('获取容器详情失败')}: ${
+          error.response?.data?.message || error.message
+        }`,
       );
     } finally {
       setContainerDetailsLoading(false);
@@ -285,7 +286,7 @@ const ViewLogsModal = ({ visible, onCancel, deployment, t }) => {
     a.href = url;
     const safeContainerId =
       selectedContainerId && selectedContainerId !== ALL_CONTAINERS
-        ? selectedContainerId.replace(/[^a-zA-Z0-9_-]/g, '-')
+        ? selectedContainerId.replaceAll(/[^a-zA-Z0-9_-]/g, '-')
         : '';
     const fileName = safeContainerId
       ? `deployment-${deployment.id}-container-${safeContainerId}-logs.txt`

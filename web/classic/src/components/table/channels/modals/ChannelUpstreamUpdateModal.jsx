@@ -17,8 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { IconSearch } from '@douyinfe/semi-icons';
+import {
+  IllustrationNoResult,
+  IllustrationNoResultDark,
+} from '@douyinfe/semi-illustrations';
 import {
   Modal,
   Checkbox,
@@ -27,19 +30,17 @@ import {
   Tabs,
   Typography,
 } from '@douyinfe/semi-ui';
-import {
-  IllustrationNoResult,
-  IllustrationNoResultDark,
-} from '@douyinfe/semi-illustrations';
-import { IconSearch } from '@douyinfe/semi-icons';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import { getDefaultUpstreamUpdateSelection } from '../../../../hooks/channels/upstreamUpdateUtils';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 
-const normalizeModels = (models = []) =>
-  Array.from(
-    new Set(
-      (models || []).map((model) => String(model || '').trim()).filter(Boolean),
-    ),
-  );
+const normalizeModels = (models = []) => [
+  ...new Set(
+    (models || []).map((model) => String(model || '').trim()).filter(Boolean),
+  ),
+];
 
 const filterByKeyword = (models = [], keyword = '') => {
   const normalizedKeyword = String(keyword || '')
@@ -96,8 +97,12 @@ const ChannelUpstreamUpdateModal = ({
     if (!visible) {
       return;
     }
-    setSelectedAddModels([]);
-    setSelectedRemoveModels([]);
+    const defaultSelection = getDefaultUpstreamUpdateSelection({
+      addModels: normalizedAddModels,
+      removeModels: normalizedRemoveModels,
+    });
+    setSelectedAddModels(defaultSelection.addModels);
+    setSelectedRemoveModels(defaultSelection.removeModels);
     setKeyword('');
     setPartialSubmitConfirmed(false);
     const normalizedPreferredTab = preferredTab === 'remove' ? 'remove' : 'add';
@@ -110,7 +115,14 @@ const ChannelUpstreamUpdateModal = ({
       return;
     }
     setActiveTab(addTabEnabled ? 'add' : 'remove');
-  }, [visible, addTabEnabled, removeTabEnabled, preferredTab]);
+  }, [
+    visible,
+    addTabEnabled,
+    removeTabEnabled,
+    normalizedAddModels,
+    normalizedRemoveModels,
+    preferredTab,
+  ]);
 
   const currentModels =
     activeTab === 'add' ? filteredAddModels : filteredRemoveModels;

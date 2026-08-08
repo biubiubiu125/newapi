@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import React, { useState, useCallback, useMemo } from 'react';
+import {
+  IconPlus,
+  IconDelete,
+  IconChevronDown,
+  IconChevronUp,
+} from '@douyinfe/semi-icons';
 import {
   Button,
   Collapsible,
@@ -26,12 +31,7 @@ import {
   Typography,
   Popconfirm,
 } from '@douyinfe/semi-ui';
-import {
-  IconPlus,
-  IconDelete,
-  IconChevronDown,
-  IconChevronUp,
-} from '@douyinfe/semi-icons';
+import React, { useState, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 const { Text } = Typography;
@@ -44,10 +44,12 @@ const OP_REMOVE = 'remove';
 const OP_APPEND = 'append';
 
 function parsePrefix(rawKey) {
-  if (rawKey.startsWith('+:'))
+  if (rawKey.startsWith('+:')) {
     return { op: OP_ADD, groupName: rawKey.slice(2) };
-  if (rawKey.startsWith('-:'))
+  }
+  if (rawKey.startsWith('-:')) {
     return { op: OP_REMOVE, groupName: rawKey.slice(2) };
+  }
   return { op: OP_APPEND, groupName: rawKey };
 }
 
@@ -258,9 +260,13 @@ export default function GroupSpecialUsableRules({
         rules.map((r) => {
           if (r._id !== id) return r;
           const updated = { ...r, [field]: val };
-          if (field === 'op' && val === OP_REMOVE)
+          if (field === 'op' && val === OP_REMOVE) {
             updated.description = 'remove';
-          else if (field === 'op' && r.op === OP_REMOVE && val !== OP_REMOVE) {
+          } else if (
+            field === 'op' &&
+            r.op === OP_REMOVE &&
+            val !== OP_REMOVE
+          ) {
             if (updated.description === 'remove') updated.description = '';
           }
           return updated;

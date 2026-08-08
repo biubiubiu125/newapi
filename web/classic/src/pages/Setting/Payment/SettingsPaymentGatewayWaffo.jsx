@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import {
   Banner,
   Button,
@@ -31,14 +30,16 @@ import {
   Input,
   Space,
 } from '@douyinfe/semi-ui';
+import { BookOpen, TriangleAlert } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   API,
   removeTrailingSlash,
   showError,
   showSuccess,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
-import { BookOpen, TriangleAlert } from 'lucide-react';
 
 const { Text } = Typography;
 const toBoolean = (value) => value === true || value === 'true';
@@ -110,8 +111,8 @@ export default function SettingsPaymentGatewayWaffo(props) {
         WaffoSandbox: toBoolean(props.options.WaffoSandbox),
         WaffoMerchantId: props.options.WaffoMerchantId || '',
         WaffoCurrency: props.options.WaffoCurrency || 'USD',
-        WaffoUnitPrice: parseFloat(props.options.WaffoUnitPrice) || 1.0,
-        WaffoMinTopUp: parseInt(props.options.WaffoMinTopUp) || 1,
+        WaffoUnitPrice: Number.parseFloat(props.options.WaffoUnitPrice) || 1.0,
+        WaffoMinTopUp: Number.parseInt(props.options.WaffoMinTopUp) || 1,
         WaffoNotifyUrl: props.options.WaffoNotifyUrl || '',
         WaffoReturnUrl: props.options.WaffoReturnUrl || '',
       };
@@ -237,7 +238,7 @@ export default function SettingsPaymentGatewayWaffo(props) {
         showSuccess(t('更新成功'));
         props.refresh?.();
       }
-    } catch (error) {
+    } catch {
       showError(t('更新失败'));
     }
     setLoading(false);

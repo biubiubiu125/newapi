@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { Button, Modal } from '@douyinfe/semi-ui';
 import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Button, Modal } from '@douyinfe/semi-ui';
+
 import { useSecureVerification } from '../../../hooks/common/useSecureVerification';
 import { createApiCalls } from '../../../services/secureVerification';
 import SecureVerificationModal from '../modals/SecureVerificationModal';
@@ -101,9 +102,9 @@ const ChannelKeyViewExample = ({ channelId }) => {
       >
         <ChannelKeyDisplay
           keyData={keyData}
-          showSuccessIcon={true}
+          showSuccessIcon
           successText={t('密钥获取成功')}
-          showWarning={true}
+          showWarning
         />
       </Modal>
     </>

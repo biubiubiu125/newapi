@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import { useContext, useEffect, useMemo, useState } from 'react';
+
+import { StatusContext } from '../../context/Status';
 import {
   API,
   applySystemBrandToDom,
@@ -25,7 +27,6 @@ import {
   getSystemName,
   setStatusData,
 } from '../../helpers';
-import { StatusContext } from '../../context/Status';
 
 export function useAuthBrand() {
   const [statusState, statusDispatch] = useContext(StatusContext);

@@ -17,7 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect, useMemo, useRef } from 'react';
+import {
+  IconPlus,
+  IconMinus,
+  IconHelpCircle,
+  IconCopy,
+} from '@douyinfe/semi-icons';
 import {
   Modal,
   Form,
@@ -38,14 +43,9 @@ import {
   Tooltip,
   Radio,
 } from '@douyinfe/semi-ui';
-import {
-  IconPlus,
-  IconMinus,
-  IconHelpCircle,
-  IconCopy,
-} from '@douyinfe/semi-icons';
-import { API } from '../../../../helpers';
-import { showError, showSuccess, copy } from '../../../../helpers';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+
+import { API, showError, showSuccess, copy } from '../../../../helpers';
 
 const { Text, Title } = Typography;
 const { Option } = Select;
@@ -57,9 +57,9 @@ const DEFAULT_TRAFFIC_PORT = 11434;
 const generateRandomKey = () => {
   try {
     if (typeof crypto !== 'undefined' && crypto.randomUUID) {
-      return `ionet-${crypto.randomUUID().replace(/-/g, '')}`;
+      return `ionet-${crypto.randomUUID().replaceAll(/-/g, '')}`;
     }
-  } catch (error) {
+  } catch {
     // ignore
   }
   return `ionet-${Math.random().toString(36).slice(2)}${Math.random()
@@ -480,9 +480,9 @@ const CreateDeploymentModal = ({ visible, onCancel, onSuccess, t }) => {
           });
         });
 
-        setLocations(Array.from(nextLocationsMap.values()));
+        setLocations([...nextLocationsMap.values()]);
         setLocationTotalAvailable(
-          Array.from(nextLocationsMap.values()).reduce(
+          [...nextLocationsMap.values()].reduce(
             (total, location) => total + (location.available || 0),
             0,
           ),

@@ -107,7 +107,8 @@ func TelegramBind(c *gin.Context) {
 		telegramBindFailure(c, telegramBindErrorFlowInvalid)
 		return
 	}
-	if _, err := service.ValidateSessionReference(pendingFlow.UserId, pendingFlow.SessionId); err != nil {
+	sessionIdentity, err := service.ValidateSessionReference(pendingFlow.UserId, pendingFlow.SessionId)
+	if err != nil {
 		if !errors.Is(err, service.ErrLoginSessionInvalid) &&
 			!errors.Is(err, service.ErrLoginSessionRevoked) &&
 			!errors.Is(err, model.ErrUserSessionInactive) &&
@@ -138,6 +139,9 @@ func TelegramBind(c *gin.Context) {
 		telegramBindFailure(c, telegramBindErrorInvalidRequest)
 		return
 	}
+	var boundUserID int
+	var previousAuthVersion int64
+	var boundAuthVersion int64
 	_, err = model.ConsumeAuthFlowWithAction(c.Param("flow_token"), model.AuthFlowMatch{
 		Purpose:   model.AuthFlowPurposeTelegramBind,
 		UserId:    pendingFlow.UserId,
@@ -188,8 +192,13 @@ func TelegramBind(c *gin.Context) {
 			}
 			return err
 		}
+		previousAuthVersion = user.AuthVersion
+		nextAuthVersion, err := model.IncrementUserAuthVersionWithTx(tx, user.Id)
+		if err != nil {
+			return err
+		}
 		result := tx.Model(&model.User{}).
-			Where("id = ? AND status = ? AND auth_version = ? AND telegram_id = ?", user.Id, common.UserStatusEnabled, user.AuthVersion, "").
+			Where("id = ? AND status = ? AND telegram_id = ?", user.Id, common.UserStatusEnabled, "").
 			Update("telegram_id", telegramId)
 		if result.Error != nil {
 			return result.Error
@@ -197,6 +206,8 @@ func TelegramBind(c *gin.Context) {
 		if result.RowsAffected != 1 {
 			return errTelegramAccountAlreadyBound
 		}
+		boundUserID = user.Id
+		boundAuthVersion = nextAuthVersion
 		return nil
 	})
 	if err != nil {
@@ -218,6 +229,27 @@ func TelegramBind(c *gin.Context) {
 			telegramBindFailure(c, telegramBindErrorInternal)
 		}
 		return
+	}
+	if boundUserID != 0 && boundAuthVersion > previousAuthVersion {
+		cacheErr := model.PublishUserAuthCacheAfterCommit(boundUserID)
+		if !continueAfterCommittedUserAuthStateError("Telegram bind", cacheErr) {
+			common.SysError("TelegramBind auth state finalization failed: " + cacheErr.Error())
+			telegramBindFailure(c, telegramBindErrorInternal)
+			return
+		}
+		bundle, err := service.AdvanceCurrentSessionToVersion(sessionIdentity, boundAuthVersion, "user_security_changed")
+		if err != nil {
+			common.SysError("TelegramBind auth state finalization failed: " + err.Error())
+			telegramBindFailure(c, telegramBindErrorInternal)
+			return
+		}
+		boundUser, err := model.GetUserById(boundUserID, false)
+		if err != nil {
+			common.SysError("TelegramBind auth state finalization failed: " + err.Error())
+			telegramBindFailure(c, telegramBindErrorInternal)
+			return
+		}
+		persistLegacyLoginSession(c, boundUser, bundle.Session)
 	}
 
 	callback := "/oauth/telegram?telegram_bind=success&flow_token=" + url.QueryEscape(c.Param("flow_token"))

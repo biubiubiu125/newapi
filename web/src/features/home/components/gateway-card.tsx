@@ -17,8 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
+
 import { BrandImage } from '@/components/layout/components/brand-image'
 import { Separator } from '@/components/ui/separator'
+
 import { getGatewayFeatures } from '../constants'
 
 interface GatewayCardProps {

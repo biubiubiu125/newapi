@@ -17,16 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import i18next from 'i18next';
 import { Modal, Tag, Typography, Avatar } from '@douyinfe/semi-ui';
-import { copy, showSuccess } from './utils';
-import { MOBILE_BREAKPOINT } from '../hooks/common/useIsMobile';
-import {
-  BILLING_PRICING_VARS,
-  BILLING_VAR_KEY_TO_FIELD,
-  BILLING_VAR_REGEX,
-} from '../constants';
-import { visit } from 'unist-util-visit';
 import * as LobeIcons from '@lobehub/icons';
 import {
   OpenAI,
@@ -60,7 +51,7 @@ import {
   Perplexity,
   Replicate,
 } from '@lobehub/icons';
-
+import i18next from 'i18next';
 import {
   LayoutDashboard,
   TerminalSquare,
@@ -81,6 +72,8 @@ import {
   ReceiptText,
   Ticket,
 } from 'lucide-react';
+import { BiLogoLinkedin } from 'react-icons/bi';
+import { FaSlack } from 'react-icons/fa';
 import {
   SiAtlassian,
   SiAuth0,
@@ -104,8 +97,15 @@ import {
   SiWechat,
   SiX,
 } from 'react-icons/si';
-import { BiLogoLinkedin } from 'react-icons/bi';
-import { FaSlack } from 'react-icons/fa';
+import { visit } from 'unist-util-visit';
+
+import {
+  BILLING_PRICING_VARS,
+  BILLING_VAR_KEY_TO_FIELD,
+  BILLING_VAR_REGEX,
+} from '../constants';
+import { MOBILE_BREAKPOINT } from '../hooks/common/useIsMobile';
+import { copy, showSuccess } from './utils';
 
 // 获取侧边栏Lucide图标组件
 export function getLucideIcon(key, selected = false) {
@@ -739,7 +739,7 @@ export function stringToColor(str) {
   for (let i = 0; i < str.length; i++) {
     sum += str.charCodeAt(i);
   }
-  let i = sum % colors.length;
+  const i = sum % colors.length;
   return colors[i];
 }
 
@@ -779,7 +779,7 @@ export function renderModelTag(modelName, options = {}) {
 
 export function renderText(text, limit) {
   if (text.length > limit) {
-    return text.slice(0, limit - 3) + '...';
+    return `${text.slice(0, limit - 3)}...`;
   }
   return text;
 }
@@ -889,7 +889,7 @@ export function truncateText(text, maxWidth = 200) {
     // Handle percentage-based maxWidth
     let actualMaxWidth = maxWidth;
     if (typeof maxWidth === 'string' && maxWidth.endsWith('%')) {
-      const percentage = parseFloat(maxWidth) / 100;
+      const percentage = Number.parseFloat(maxWidth) / 100;
       // Use window width as fallback container width
       actualMaxWidth = window.innerWidth * percentage;
     }
@@ -903,7 +903,7 @@ export function truncateText(text, maxWidth = 200) {
 
     while (left <= right) {
       const mid = Math.floor((left + right) / 2);
-      const truncated = text.slice(0, mid) + '...';
+      const truncated = `${text.slice(0, mid)}...`;
       const currentWidth = measureTextWidth(truncated);
 
       if (currentWidth <= actualMaxWidth) {
@@ -921,7 +921,7 @@ export function truncateText(text, maxWidth = 200) {
       error,
     );
     if (text.length > 20) {
-      return text.slice(0, 17) + '...';
+      return `${text.slice(0, 17)}...`;
     }
     return text;
   }
@@ -992,11 +992,11 @@ export const renderGroupOption = (item) => {
 
 export function renderNumber(num) {
   if (num >= 1000000000) {
-    return (num / 1000000000).toFixed(1) + 'B';
+    return `${(num / 1000000000).toFixed(1)}B`;
   } else if (num >= 1000000) {
-    return (num / 1000000).toFixed(1) + 'M';
+    return `${(num / 1000000).toFixed(1)}M`;
   } else if (num >= 10000) {
-    return (num / 1000).toFixed(1) + 'k';
+    return `${(num / 1000).toFixed(1)}k`;
   } else {
     return num;
   }
@@ -1009,9 +1009,9 @@ export function renderQuotaNumberWithDigit(num, digits = 2) {
   const quotaDisplayType = localStorage.getItem('quota_display_type') || 'USD';
   num = num.toFixed(digits);
   if (quotaDisplayType === 'CNY') {
-    return '¥' + num;
+    return `¥${num}`;
   } else if (quotaDisplayType === 'USD') {
-    return '$' + num;
+    return `$${num}`;
   } else if (quotaDisplayType === 'CUSTOM') {
     const statusStr = localStorage.getItem('status');
     let symbol = '¤';
@@ -1020,7 +1020,7 @@ export function renderQuotaNumberWithDigit(num, digits = 2) {
         const s = JSON.parse(statusStr);
         symbol = s?.custom_currency_symbol || symbol;
       }
-    } catch (e) {}
+    } catch {}
     return symbol + num;
   } else {
     return num;
@@ -1032,9 +1032,9 @@ export function renderNumberWithPoint(num) {
   num = num.toFixed(2);
   if (num >= 100000) {
     // Convert number to string to manipulate it
-    let numStr = num.toString();
+    const numStr = num.toString();
     // Find the position of the decimal point
-    let decimalPointIndex = numStr.indexOf('.');
+    const decimalPointIndex = numStr.indexOf('.');
 
     let wholePart = numStr;
     let decimalPart = '';
@@ -1046,7 +1046,8 @@ export function renderNumberWithPoint(num) {
     }
 
     // Take the first two and last two digits of the whole number part
-    let shortenedWholePart = wholePart.slice(0, 2) + '..' + wholePart.slice(-2);
+    const shortenedWholePart =
+      wholePart.slice(0, 2) + '..' + wholePart.slice(-2);
 
     // Return the formatted number
     return shortenedWholePart + decimalPart;
@@ -1058,20 +1059,20 @@ export function renderNumberWithPoint(num) {
 
 export function getQuotaPerUnit() {
   let quotaPerUnit = localStorage.getItem('quota_per_unit');
-  quotaPerUnit = parseFloat(quotaPerUnit);
+  quotaPerUnit = Number.parseFloat(quotaPerUnit);
   return quotaPerUnit;
 }
 
 export function renderUnitWithQuota(quota) {
   let quotaPerUnit = localStorage.getItem('quota_per_unit');
-  quotaPerUnit = parseFloat(quotaPerUnit);
-  quota = parseFloat(quota);
+  quotaPerUnit = Number.parseFloat(quotaPerUnit);
+  quota = Number.parseFloat(quota);
   return quotaPerUnit * quota;
 }
 
 export function getQuotaWithUnit(quota, digits = 6) {
   let quotaPerUnit = localStorage.getItem('quota_per_unit');
-  quotaPerUnit = parseFloat(quotaPerUnit);
+  quotaPerUnit = Number.parseFloat(quotaPerUnit);
   return (quota / quotaPerUnit).toFixed(digits);
 }
 
@@ -1105,7 +1106,7 @@ export function getCurrencyConfig() {
         const s = JSON.parse(statusStr);
         rate = s?.usd_exchange_rate || 7;
       }
-    } catch (e) {}
+    } catch {}
   } else if (quotaDisplayType === 'CUSTOM') {
     try {
       if (statusStr) {
@@ -1113,7 +1114,7 @@ export function getCurrencyConfig() {
         symbol = s?.custom_currency_symbol || '¤';
         rate = s?.custom_currency_exchange_rate || 1;
       }
-    } catch (e) {}
+    } catch {}
   }
 
   return { symbol, rate, type: quotaDisplayType };
@@ -1134,7 +1135,7 @@ export function convertUSDToCurrency(usdAmount, digits = 2) {
 export function renderQuota(quota, digits = 2) {
   let quotaPerUnit = localStorage.getItem('quota_per_unit');
   const quotaDisplayType = localStorage.getItem('quota_display_type') || 'USD';
-  quotaPerUnit = parseFloat(quotaPerUnit);
+  quotaPerUnit = Number.parseFloat(quotaPerUnit);
   if (quotaDisplayType === 'TOKENS') {
     return renderNumber(quota);
   }
@@ -1149,7 +1150,7 @@ export function renderQuota(quota, digits = 2) {
         const s = JSON.parse(statusStr);
         usdRate = s?.usd_exchange_rate || 1;
       }
-    } catch (e) {}
+    } catch {}
     value = resultUSD * usdRate;
     symbol = '¥';
   } else if (quotaDisplayType === 'CUSTOM') {
@@ -1162,12 +1163,12 @@ export function renderQuota(quota, digits = 2) {
         symbolCustom = s?.custom_currency_symbol || symbolCustom;
         rate = s?.custom_currency_exchange_rate || rate;
       }
-    } catch (e) {}
+    } catch {}
     value = resultUSD * rate;
     symbol = symbolCustom;
   }
   const fixedResult = value.toFixed(digits);
-  if (parseFloat(fixedResult) === 0 && quota > 0 && value > 0) {
+  if (Number.parseFloat(fixedResult) === 0 && quota > 0 && value > 0) {
     const minValue = Math.pow(10, -digits);
     return symbol + minValue.toFixed(digits);
   }
@@ -1194,7 +1195,7 @@ function getEffectiveRatio(groupRatio, user_group_ratio) {
   return {
     ratio: effectiveRatio,
     label: ratioLabel,
-    useUserGroupRatio: useUserGroupRatio,
+    useUserGroupRatio,
   };
 }
 
@@ -1416,7 +1417,7 @@ function renderPriceSimpleCore({
         segments.push({
           tone: 'secondary',
           text: i18next.t('缓存: {{cacheRatio}}', {
-            cacheRatio: cacheRatio,
+            cacheRatio,
           }),
         });
       }
@@ -1428,8 +1429,8 @@ function renderPriceSimpleCore({
             text: i18next.t(
               '缓存创建: 5m {{cacheCreationRatio5m}} / 1h {{cacheCreationRatio1h}}',
               {
-                cacheCreationRatio5m: cacheCreationRatio5m,
-                cacheCreationRatio1h: cacheCreationRatio1h,
+                cacheCreationRatio5m,
+                cacheCreationRatio1h,
               },
             ),
           });
@@ -1437,14 +1438,14 @@ function renderPriceSimpleCore({
           segments.push({
             tone: 'secondary',
             text: i18next.t('缓存创建: 5m {{cacheCreationRatio5m}}', {
-              cacheCreationRatio5m: cacheCreationRatio5m,
+              cacheCreationRatio5m,
             }),
           });
         } else if (shouldShowCacheCreation1h) {
           segments.push({
             tone: 'secondary',
             text: i18next.t('缓存创建: 1h {{cacheCreationRatio1h}}', {
-              cacheCreationRatio1h: cacheCreationRatio1h,
+              cacheCreationRatio1h,
             }),
           });
         }
@@ -1452,7 +1453,7 @@ function renderPriceSimpleCore({
         segments.push({
           tone: 'secondary',
           text: i18next.t('缓存创建: {{cacheCreationRatio}}', {
-            cacheCreationRatio: cacheCreationRatio,
+            cacheCreationRatio,
           }),
         });
       }
@@ -1461,7 +1462,7 @@ function renderPriceSimpleCore({
         segments.push({
           tone: 'secondary',
           text: i18next.t('图片输入: {{imageRatio}}', {
-            imageRatio: imageRatio,
+            imageRatio,
           }),
         });
       }
@@ -1481,7 +1482,7 @@ function renderPriceSimpleCore({
     if (isPriceDisplayMode(displayMode, modelPrice)) {
       return joinBillingSummary([
         i18next.t('模型价格：{{symbol}}{{price}}', {
-          symbol: symbol,
+          symbol,
           price: (modelPrice * rate).toFixed(6),
         }),
         getGroupRatioText(groupRatio, user_group_ratio),
@@ -1489,7 +1490,7 @@ function renderPriceSimpleCore({
     }
     const displayPrice = (modelPrice * rate).toFixed(6);
     return i18next.t('价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}}', {
-      symbol: symbol,
+      symbol,
       price: displayPrice,
       ratioType: ratioLabel,
       ratio: finalGroupRatio,
@@ -1562,7 +1563,7 @@ function renderPriceSimpleCore({
 
     let result = joinBillingSummary(parts);
     if (isSystemPromptOverride) {
-      result += '\n\r' + i18next.t('系统提示覆盖');
+      result += `\n\r${i18next.t('系统提示覆盖')}`;
     }
     return result;
   }
@@ -1603,15 +1604,15 @@ function renderPriceSimpleCore({
     ratio: modelRatio,
     ratioType: ratioLabel,
     groupRatio: finalGroupRatio,
-    cacheRatio: cacheRatio,
-    cacheCreationRatio: cacheCreationRatio,
-    cacheCreationRatio5m: cacheCreationRatio5m,
-    cacheCreationRatio1h: cacheCreationRatio1h,
-    imageRatio: imageRatio,
+    cacheRatio,
+    cacheCreationRatio,
+    cacheCreationRatio5m,
+    cacheCreationRatio1h,
+    imageRatio,
   });
 
   if (isSystemPromptOverride) {
-    result += '\n\r' + i18next.t('系统提示覆盖');
+    result += `\n\r${i18next.t('系统提示覆盖')}`;
   }
 
   return result;
@@ -1659,7 +1660,7 @@ export function renderModelPrice(opts) {
     _groupRatio,
     user_group_ratio,
   );
-  let groupRatio = effectiveGroupRatio;
+  const groupRatio = effectiveGroupRatio;
   const completionRatio = _completionRatio ?? 0;
 
   const { symbol, rate } = getCurrencyConfig();
@@ -1888,7 +1889,7 @@ export function renderModelPrice(opts) {
     return i18next.t(
       '按次：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} = {{symbol}}{{total}}',
       {
-        symbol: symbol,
+        symbol,
         price: displayPrice,
         ratio: groupRatio,
         total: displayTotal,
@@ -2100,7 +2101,7 @@ export function renderLogContent(opts) {
   const {
     ratio,
     label: ratioLabel,
-    useUserGroupRatio: useUserGroupRatio,
+    useUserGroupRatio,
   } = getEffectiveRatio(groupRatio, user_group_ratio);
 
   // 获取货币配置
@@ -2167,7 +2168,7 @@ export function renderLogContent(opts) {
 
   if (modelPrice !== -1) {
     return i18next.t('模型价格 {{symbol}}{{price}}，{{ratioType}} {{ratio}}', {
-      symbol: symbol,
+      symbol,
       price: (modelPrice * rate).toFixed(6),
       ratioType: ratioLabel,
       ratio,
@@ -2177,10 +2178,10 @@ export function renderLogContent(opts) {
       return i18next.t(
         '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，图片输入倍率 {{imageRatio}}，{{ratioType}} {{ratio}}',
         {
-          modelRatio: modelRatio,
-          cacheRatio: cacheRatio,
-          completionRatio: completionRatio,
-          imageRatio: imageRatio,
+          modelRatio,
+          cacheRatio,
+          completionRatio,
+          imageRatio,
           ratioType: ratioLabel,
           ratio,
         },
@@ -2189,9 +2190,9 @@ export function renderLogContent(opts) {
       return i18next.t(
         '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，{{ratioType}} {{ratio}}，Web 搜索调用 {{webSearchCallCount}} 次',
         {
-          modelRatio: modelRatio,
-          cacheRatio: cacheRatio,
-          completionRatio: completionRatio,
+          modelRatio,
+          cacheRatio,
+          completionRatio,
           ratioType: ratioLabel,
           ratio,
           webSearchCallCount,
@@ -2201,9 +2202,9 @@ export function renderLogContent(opts) {
       return i18next.t(
         '模型倍率 {{modelRatio}}，缓存倍率 {{cacheRatio}}，输出倍率 {{completionRatio}}，{{ratioType}} {{ratio}}',
         {
-          modelRatio: modelRatio,
-          cacheRatio: cacheRatio,
-          completionRatio: completionRatio,
+          modelRatio,
+          cacheRatio,
+          completionRatio,
           ratioType: ratioLabel,
           ratio,
         },
@@ -2250,8 +2251,9 @@ export function parseTiersFromExpr(exprStr) {
       if (condStr) {
         for (const cp of condStr.split(/\s*&&\s*/)) {
           const cm = cp.trim().match(/^(p|c|len)\s*(<|<=|>|>=)\s*([\d.eE+]+)$/);
-          if (cm)
+          if (cm) {
             conditions.push({ var: cm[1], op: cm[2], value: Number(cm[3]) });
+          }
         }
       }
       const tier = parseTierBody(m[3]);
@@ -2284,7 +2286,7 @@ export const decodeFromBase64 = (base64) => {
 
   return decodeURIComponent(
     Array.prototype.map
-      .call(bytes, (byte) => '%' + byte.toString(16).padStart(2, '0'))
+      .call(bytes, (byte) => `%${byte.toString(16).padStart(2, '0')}`)
       .join(''),
   );
 };
@@ -2292,9 +2294,9 @@ export const decodeFromBase64 = (base64) => {
 export const normalizeLabel = (label) => {
   if (!label) return '';
   return label
-    .replace(/<[=＝]?|≤|＜[=＝]?/g, '<')
-    .replace(/>[=＝]?|≥|＞[=＝]?/g, '>')
-    .replace(/\s+/g, '')
+    .replaceAll(/<[=＝]?|≤|＜[=＝]?/g, '<')
+    .replaceAll(/>[=＝]?|≥|＞[=＝]?/g, '>')
+    .replaceAll(/\s+/g, '')
     .toLowerCase();
 };
 
@@ -2492,9 +2494,9 @@ export function renderAudioModelPrice(opts) {
     _groupRatio,
     user_group_ratio,
   );
-  let groupRatio = effectiveGroupRatio;
+  const groupRatio = effectiveGroupRatio;
   const completionRatio = _completionRatio ?? 0;
-  const audioRatio = parseFloat(_audioRatio ?? 0).toFixed(6);
+  const audioRatio = Number.parseFloat(_audioRatio ?? 0).toFixed(6);
   const audioCompletionRatio = _audioCompletionRatio ?? 0;
 
   // 获取货币配置
@@ -2600,7 +2602,7 @@ export function renderAudioModelPrice(opts) {
     return i18next.t(
       '模型价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} = {{symbol}}{{total}}',
       {
-        symbol: symbol,
+        symbol,
         price: (modelPrice * rate).toFixed(6),
         ratio: groupRatio,
         total: (modelPrice * groupRatio * rate).toFixed(6),
@@ -2776,7 +2778,7 @@ export function renderClaudeModelPrice(opts) {
     _groupRatio,
     user_group_ratio,
   );
-  let groupRatio = effectiveGroupRatio;
+  const groupRatio = effectiveGroupRatio;
   const completionRatio = _completionRatio ?? 0;
 
   // 获取货币配置
@@ -2978,7 +2980,7 @@ export function renderClaudeModelPrice(opts) {
     return i18next.t(
       '模型价格：{{symbol}}{{price}} * {{ratioType}}：{{ratio}} = {{symbol}}{{total}}',
       {
-        symbol: symbol,
+        symbol,
         price: (modelPrice * rate).toFixed(6),
         ratioType: ratioLabel,
         ratio: groupRatio,
@@ -3175,7 +3177,7 @@ export function renderClaudeLogContent(opts) {
     _groupRatio,
     user_group_ratio,
   );
-  let groupRatio = effectiveGroupRatio;
+  const groupRatio = effectiveGroupRatio;
 
   // 获取货币配置
   const { symbol, rate } = getCurrencyConfig();
@@ -3240,7 +3242,7 @@ export function renderClaudeLogContent(opts) {
 
   if (modelPrice !== -1) {
     return i18next.t('模型价格 {{symbol}}{{price}}，{{ratioType}} {{ratio}}', {
-      symbol: symbol,
+      symbol,
       price: (modelPrice * rate).toFixed(6),
       ratioType: ratioLabel,
       ratio: groupRatio,
@@ -3330,7 +3332,7 @@ export function rehypeSplitWordsIntoSpans(options = {}) {
               });
               const segments = segmenter.segment(child.value);
 
-              Array.from(segments)
+              [...segments]
                 .map((seg) => seg.segment)
                 .filter(Boolean)
                 .forEach((word) => {
@@ -3351,7 +3353,7 @@ export function rehypeSplitWordsIntoSpans(options = {}) {
 
                   currentCharCount = wordEndPos;
                 });
-            } catch (_) {
+            } catch {
               // Fallback：如果浏览器不支持 Segmenter
               const textStartPos = currentCharCount;
               const isNewContent = textStartPos >= previousContentLength;

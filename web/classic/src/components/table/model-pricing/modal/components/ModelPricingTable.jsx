@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Avatar, Typography, Table, Tag } from '@douyinfe/semi-ui';
 import { IconCoinMoneyStroked } from '@douyinfe/semi-icons';
+import { Avatar, Typography, Table, Tag } from '@douyinfe/semi-ui';
+import React from 'react';
+
 import {
   calculateModelPrice,
   getModelPriceItems,
@@ -71,7 +72,7 @@ const ModelPricingTable = ({
 
       return {
         key: group,
-        group: group,
+        group,
         ratio: groupRatioValue,
         billingType:
           modelData?.billing_mode === 'tiered_expr'

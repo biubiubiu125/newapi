@@ -17,13 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, {
-  useEffect,
-  useState,
-  useRef,
-  useCallback,
-  useMemo,
-} from 'react';
+import {
+  IconChevronDown,
+  IconChevronUp,
+  IconHelpCircle,
+} from '@douyinfe/semi-icons';
 import {
   Button,
   Col,
@@ -38,8 +36,15 @@ import {
   Tabs,
   Typography,
 } from '@douyinfe/semi-ui';
-import { IconChevronDown, IconChevronUp } from '@douyinfe/semi-icons';
-import { IconHelpCircle } from '@douyinfe/semi-icons';
+import React, {
+  useEffect,
+  useState,
+  useRef,
+  useCallback,
+  useMemo,
+} from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   compareObjects,
   API,
@@ -48,22 +53,21 @@ import {
   showWarning,
   verifyJSON,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
-import GroupTable from './components/GroupTable';
 import AutoGroupList from './components/AutoGroupList';
 import GroupGroupRatioRules from './components/GroupGroupRatioRules';
 import GroupSpecialUsableRules from './components/GroupSpecialUsableRules';
+import GroupTable from './components/GroupTable';
 
 const { Text, Title, Paragraph } = Typography;
 
-const OPTION_KEYS = [
+const OPTION_KEYS = new Set([
   'GroupRatio',
   'UserUsableGroups',
   'GroupGroupRatio',
   'group_ratio_setting.group_special_usable_group',
   'AutoGroups',
   'DefaultUseAutoGroup',
-];
+]);
 
 function parseJSONSafe(str, fallback) {
   if (!str || !str.trim()) return fallback;
@@ -146,7 +150,7 @@ export default function GroupRatioSettings(props) {
   useEffect(() => {
     const currentInputs = {};
     for (let key in props.options) {
-      if (OPTION_KEYS.includes(key)) {
+      if (OPTION_KEYS.has(key)) {
         currentInputs[key] = props.options[key];
       }
     }
@@ -303,7 +307,7 @@ export default function GroupRatioSettings(props) {
               extraText={t(
                 '分组倍率设置，可以在此处新增分组或修改现有分组的倍率，格式为 JSON 字符串，例如：{"vip": 0.5, "test": 1}，表示 vip 分组的倍率为 0.5，test 分组的倍率为 1',
               )}
-              field={'GroupRatio'}
+              field='GroupRatio'
               autosize={{ minRows: 6, maxRows: 12 }}
               trigger='blur'
               stopValidateWithError
@@ -327,7 +331,7 @@ export default function GroupRatioSettings(props) {
               extraText={t(
                 '用户新建令牌时可选的分组，格式为 JSON 字符串，例如：{"vip": "VIP 用户", "test": "测试"}，表示用户可以选择 vip 分组和 test 分组',
               )}
-              field={'UserUsableGroups'}
+              field='UserUsableGroups'
               autosize={{ minRows: 6, maxRows: 12 }}
               trigger='blur'
               stopValidateWithError
@@ -351,7 +355,7 @@ export default function GroupRatioSettings(props) {
               extraText={t(
                 '键为分组名称，值为另一个 JSON 对象，键为分组名称，值为该分组的用户的特殊分组倍率，例如：{"vip": {"default": 0.5, "test": 1}}，表示 vip 分组的用户在使用default分组的令牌时倍率为0.5，使用test分组时倍率为1',
               )}
-              field={'GroupGroupRatio'}
+              field='GroupGroupRatio'
               autosize={{ minRows: 6, maxRows: 12 }}
               trigger='blur'
               stopValidateWithError
@@ -375,7 +379,7 @@ export default function GroupRatioSettings(props) {
               extraText={t(
                 '键为用户分组名称，值为操作映射对象。内层键以"+:"开头表示添加指定分组（键值为分组名称，值为描述），以"-:"开头表示移除指定分组（键值为分组名称），不带前缀的键直接添加该分组。例如：{"vip": {"+:premium": "高级分组", "special": "特殊分组", "-:default": "默认分组"}}，表示 vip 分组的用户可以使用 premium 和 special 分组，同时移除 default 分组的访问权限',
               )}
-              field={'group_ratio_setting.group_special_usable_group'}
+              field='group_ratio_setting.group_special_usable_group'
               autosize={{ minRows: 6, maxRows: 12 }}
               trigger='blur'
               stopValidateWithError
@@ -399,7 +403,7 @@ export default function GroupRatioSettings(props) {
             <Form.TextArea
               label={t('自动分组auto，从第一个开始选择')}
               placeholder={t('为一个 JSON 文本')}
-              field={'AutoGroups'}
+              field='AutoGroups'
               autosize={{ minRows: 6, maxRows: 12 }}
               trigger='blur'
               stopValidateWithError
@@ -430,7 +434,7 @@ export default function GroupRatioSettings(props) {
               label={t(
                 '创建令牌默认选择auto分组，初始令牌也将设为auto（否则留空，为用户默认分组）',
               )}
-              field={'DefaultUseAutoGroup'}
+              field='DefaultUseAutoGroup'
               onChange={(value) =>
                 setInputs((prev) => ({
                   ...prev,

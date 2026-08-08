@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect, useRef } from 'react';
 import {
   SideSheet,
   Form,
@@ -35,8 +34,10 @@ import {
   Tag,
 } from '@douyinfe/semi-ui';
 import { Save, X, Server } from 'lucide-react';
-import { API, showError, showSuccess } from '../../../../helpers';
+import React, { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { API, showError, showSuccess } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 
 const { Text, Title } = Typography;
@@ -163,7 +164,7 @@ const EditDeploymentModal = ({
       width={isMobile ? '100%' : 600}
       bodyStyle={{ padding: 0 }}
       maskClosable={false}
-      closeOnEsc={true}
+      closeOnEsc
     >
       <div className='p-6 h-full overflow-auto'>
         <Spin spinning={loading} style={{ width: '100%' }}>

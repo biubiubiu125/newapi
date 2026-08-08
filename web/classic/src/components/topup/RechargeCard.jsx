@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useRef, useState } from 'react';
+import { IconGift } from '@douyinfe/semi-icons';
 import {
   Avatar,
   Typography,
@@ -35,7 +35,6 @@ import {
   Tabs,
   TabPane,
 } from '@douyinfe/semi-ui';
-import { SiAlipay, SiWechat, SiStripe } from 'react-icons/si';
 import {
   CreditCard,
   Coins,
@@ -45,10 +44,12 @@ import {
   Receipt,
   Sparkles,
 } from 'lucide-react';
-import { IconGift } from '@douyinfe/semi-icons';
-import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
+import React, { useEffect, useRef, useState } from 'react';
+import { SiAlipay, SiWechat, SiStripe } from 'react-icons/si';
+
 import { useActualTheme } from '../../context/Theme';
 import { getCurrencyConfig } from '../../helpers/render';
+import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
 import SubscriptionPlansCard from './SubscriptionPlansCard';
 
 const { Text } = Typography;
@@ -237,7 +238,7 @@ const RechargeCard = ({
           enableWaffoPancakeTopUp ? (
           <Form
             getFormApi={(api) => (onlineFormApiRef.current = api)}
-            initValues={{ topUpCount: topUpCount }}
+            initValues={{ topUpCount }}
           >
             <div className='space-y-6'>
               {(enableOnlineTopUp ||
@@ -271,7 +272,7 @@ const RechargeCard = ({
                         }
                       }}
                       onBlur={(e) => {
-                        const value = parseInt(e.target.value);
+                        const value = Number.parseInt(e.target.value);
                         if (!value || value < 1) {
                           setTopUpCount(1);
                           getAmount(1);
@@ -279,7 +280,7 @@ const RechargeCard = ({
                       }}
                       formatter={(value) => (value ? `${value}` : '')}
                       parser={(value) =>
-                        value ? parseInt(value.replace(/[^\d]/g, '')) : 0
+                        value ? Number.parseInt(value.replace(/[^\d]/g, '')) : 0
                       }
                       extraText={
                         <Skeleton
@@ -389,11 +390,9 @@ const RechargeCard = ({
                             return disabled &&
                               minTopupVal > Number(topUpCount || 0) ? (
                               <Tooltip
-                                content={
-                                  t('此支付方式最低充值金额为') +
-                                  ' ' +
+                                content={`${t('此支付方式最低充值金额为')} ${
                                   minTopupVal
-                                }
+                                }`}
                                 key={payMethod.type}
                               >
                                 {buttonEl}
@@ -455,7 +454,7 @@ const RechargeCard = ({
                           const s = JSON.parse(statusStr);
                           usdRate = s?.usd_exchange_rate || 7;
                         }
-                      } catch (e) {}
+                      } catch {}
 
                       let displayValue = preset.value; // 显示的数量
 
@@ -501,7 +500,7 @@ const RechargeCard = ({
                                 <Tag style={{ marginLeft: 4 }} color='green'>
                                   {t('折').includes('off')
                                     ? (
-                                        (1 - parseFloat(discount)) *
+                                        (1 - Number.parseFloat(discount)) *
                                         100
                                       ).toFixed(1)
                                     : (discount * 10).toFixed(1)}
@@ -578,11 +577,11 @@ const RechargeCard = ({
         >
           <Form
             getFormApi={(api) => (redeemFormApiRef.current = api)}
-            initValues={{ redemptionCode: redemptionCode }}
+            initValues={{ redemptionCode }}
           >
             <Form.Input
               field='redemptionCode'
-              noLabel={true}
+              noLabel
               placeholder={t('请输入兑换码')}
               value={redemptionCode}
               onChange={(value) => setRedemptionCode(value)}

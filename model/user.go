@@ -247,6 +247,22 @@ func (user *User) SetAccessToken(token string) {
 	user.AccessToken = &token
 }
 
+// UpdateUserAccessToken rotates a dashboard personal access token without
+// writing a stale user snapshot back over concurrently updated fields.
+func UpdateUserAccessToken(id int, token string) error {
+	if id == 0 {
+		return errors.New("id 为空！")
+	}
+	result := DB.Model(&User{}).Where("id = ?", id).Update("access_token", token)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
+}
+
 func (user *User) GetSetting() dto.UserSetting {
 	setting := dto.UserSetting{}
 	if user.Setting != "" {
@@ -735,15 +751,19 @@ func HardDeleteUserById(id int) error {
 	return user.HardDelete()
 }
 
-func inviteUser(inviterId int) (err error) {
-	user, err := GetUserById(inviterId, true)
-	if err != nil {
-		return err
+func inviteUser(inviterId int) error {
+	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]interface{}{
+		"aff_count":   gorm.Expr("aff_count + ?", 1),
+		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
+		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
+	})
+	if result.Error != nil {
+		return result.Error
 	}
-	user.AffCount++
-	user.AffQuota += common.QuotaForInviter
-	user.AffHistoryQuota += common.QuotaForInviter
-	return DB.Save(user).Error
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	return nil
 }
 
 func (user *User) TransferAffQuotaToQuota(quota int) error {
@@ -760,7 +780,7 @@ func (user *User) TransferAffQuotaToQuota(quota int) error {
 	defer tx.Rollback() // 确保在函数退出时事务能回滚
 
 	// 加锁查询用户以确保数据一致性
-	err := lockForUpdate(tx).First(&user, user.Id).Error
+	err := lockForUpdate(tx).First(user, user.Id).Error
 	if err != nil {
 		return err
 	}
@@ -974,18 +994,56 @@ func (user *User) UpdateWithSessionRevocationReason(updatePassword bool, revocat
 	}); err != nil {
 		return err
 	}
-	if err := updateUserCache(*user); err != nil {
-		return err
+	return FinalizeUserAuthChange(*user, previousAuthVersion, revocationReason)
+}
+
+func externalLoginBindingChanged(current User, newUser User) bool {
+	return nonEmptyStringChanged(current.GitHubId, newUser.GitHubId) ||
+		nonEmptyStringChanged(current.DiscordId, newUser.DiscordId) ||
+		nonEmptyStringChanged(current.OidcId, newUser.OidcId) ||
+		nonEmptyStringChanged(current.WeChatId, newUser.WeChatId) ||
+		nonEmptyStringChanged(current.TelegramId, newUser.TelegramId) ||
+		nonEmptyStringChanged(current.LinuxDOId, newUser.LinuxDOId)
+}
+
+func nonEmptyStringChanged(current string, next string) bool {
+	return next != "" && current != next
+}
+
+func authSensitiveBindingType(bindingType string) bool {
+	switch strings.TrimSpace(strings.ToLower(bindingType)) {
+	case ExternalIdentityProviderGitHub,
+		ExternalIdentityProviderDiscord,
+		ExternalIdentityProviderOIDC,
+		ExternalIdentityProviderWeChat,
+		ExternalIdentityProviderTelegram,
+		ExternalIdentityProviderLinuxDO:
+		return true
+	default:
+		return false
 	}
-	if user.AuthVersion > previousAuthVersion {
-		revocationReason = strings.TrimSpace(revocationReason)
-		if revocationReason == "" {
-			revocationReason = "user_security_changed"
-		}
-		_, err := RevokeAllUserSessions(user.Id, revocationReason)
-		return err
+}
+
+func getUserLoginBindingField(user *User, bindingType string) string {
+	if user == nil {
+		return ""
 	}
-	return nil
+	switch strings.TrimSpace(strings.ToLower(bindingType)) {
+	case ExternalIdentityProviderGitHub:
+		return user.GitHubId
+	case ExternalIdentityProviderDiscord:
+		return user.DiscordId
+	case ExternalIdentityProviderOIDC:
+		return user.OidcId
+	case ExternalIdentityProviderWeChat:
+		return user.WeChatId
+	case ExternalIdentityProviderTelegram:
+		return user.TelegramId
+	case ExternalIdentityProviderLinuxDO:
+		return user.LinuxDOId
+	default:
+		return ""
+	}
 }
 
 func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
@@ -1022,14 +1080,24 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 		(newUser.Role != 0 && current.Role != newUser.Role) ||
 		(newUser.Status != 0 && current.Status != newUser.Status) ||
 		(newUser.Group != "" && current.Group != newUser.Group) ||
-		current.Email != newUser.Email
+		current.Email != newUser.Email ||
+		externalLoginBindingChanged(current, newUser)
 	if authChanged {
 		newUser.AuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
 		if err != nil {
 			return err
 		}
 	}
-	if err = tx.Model(&current).Omit("quota", "used_quota", "request_count", "auth_version").Updates(newUser).Error; err != nil {
+	if err = tx.Model(&current).Omit(
+		"access_token",
+		"quota",
+		"used_quota",
+		"request_count",
+		"aff_count",
+		"aff_quota",
+		"aff_history",
+		"auth_version",
+	).Updates(newUser).Error; err != nil {
 		return err
 	}
 	if err = syncUserLoginIdentifiersWithTx(tx, user.Id, newUser.Username, newUser.Email); err != nil {
@@ -1048,14 +1116,7 @@ func (user *User) Edit(updatePassword bool) error {
 	}); err != nil {
 		return err
 	}
-	if err := updateUserCache(*user); err != nil {
-		return err
-	}
-	if user.AuthVersion > previousAuthVersion {
-		_, err := RevokeAllUserSessions(user.Id, "user_security_changed")
-		return err
-	}
-	return nil
+	return FinalizeUserAuthChange(*user, previousAuthVersion, "user_security_changed")
 }
 
 func (user *User) EditWithTx(tx *gorm.DB, updatePassword bool) error {
@@ -1135,12 +1196,12 @@ func (user *User) ClearBinding(bindingType string) error {
 	}
 
 	bindingColumnMap := map[string]string{
-		"github":   "github_id",
-		"discord":  "discord_id",
-		"oidc":     "oidc_id",
-		"wechat":   "wechat_id",
-		"telegram": "telegram_id",
-		"linuxdo":  "linux_do_id",
+		ExternalIdentityProviderGitHub:   "github_id",
+		ExternalIdentityProviderDiscord:  "discord_id",
+		ExternalIdentityProviderOIDC:     "oidc_id",
+		ExternalIdentityProviderWeChat:   "wechat_id",
+		ExternalIdentityProviderTelegram: "telegram_id",
+		ExternalIdentityProviderLinuxDO:  "linux_do_id",
 	}
 
 	column, ok := bindingColumnMap[bindingType]
@@ -1148,12 +1209,28 @@ func (user *User) ClearBinding(bindingType string) error {
 		return errors.New("invalid binding type")
 	}
 
+	var previousAuthVersion int64
+	if err := DB.Model(&User{}).Where("id = ?", user.Id).Select("auth_version").Find(&previousAuthVersion).Error; err != nil {
+		return err
+	}
+
 	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if authSensitiveBindingType(bindingType) {
+			var current User
+			if err := tx.Select([]string{"id", "auth_version", column}).Where("id = ?", user.Id).First(&current).Error; err != nil {
+				return err
+			}
+			if getUserLoginBindingField(&current, bindingType) != "" {
+				if _, err := IncrementUserAuthVersionWithTx(tx, user.Id); err != nil {
+					return err
+				}
+			}
+		}
 		if err := tx.Model(&User{}).Where("id = ?", user.Id).Update(column, "").Error; err != nil {
 			return err
 		}
-		if bindingType == ExternalIdentityProviderTelegram {
-			return ReleaseExternalIdentityWithTx(tx, ExternalIdentityProviderTelegram, user.Id)
+		if _, ok := externalIdentityUserColumn(bindingType); ok {
+			return ReleaseExternalIdentityWithTx(tx, bindingType, user.Id)
 		}
 		return nil
 	}); err != nil {
@@ -1164,7 +1241,7 @@ func (user *User) ClearBinding(bindingType string) error {
 		return err
 	}
 
-	return updateUserCache(*user)
+	return FinalizeUserAuthChange(*user, previousAuthVersion, "user_security_changed")
 }
 
 func (user *User) Delete() error {
@@ -1182,13 +1259,10 @@ func (user *User) Delete() error {
 	}); err != nil {
 		return err
 	}
-	if err := publishCommittedUserAuthVersion(user.Id, nextAuthVersion); err != nil {
-		return err
-	}
-	if _, err := RevokeAllUserSessions(user.Id, "user_deleted"); err != nil {
-		return err
-	}
-	return invalidateUserCache(user.Id)
+	publishErr := publishCommittedUserAuthVersion(user.Id, nextAuthVersion)
+	_, revokeErr := RevokeAllUserSessions(user.Id, "user_deleted")
+	cacheErr := invalidateUserCache(user.Id)
+	return errors.Join(publishErr, revokeErr, cacheErr)
 }
 
 func (user *User) HardDelete() error {
@@ -1293,8 +1367,7 @@ func (user *User) FillUserByGitHubId() error {
 	if user.GitHubId == "" {
 		return errors.New("GitHub id 为空！")
 	}
-	DB.Where(User{GitHubId: user.GitHubId}).First(user)
-	return nil
+	return user.fillByExternalIdentity(ExternalIdentityProviderGitHub, user.GitHubId)
 }
 
 // UpdateGitHubId updates the user's GitHub ID (used for migration from login to numeric ID)
@@ -1302,42 +1375,39 @@ func (user *User) UpdateGitHubId(newGitHubId string) error {
 	if user.Id == 0 {
 		return errors.New("user id is empty")
 	}
-	return DB.Model(user).Update("github_id", newGitHubId).Error
+	return user.ClaimExternalIdentity(ExternalIdentityProviderGitHub, newGitHubId)
 }
 
 func (user *User) FillUserByDiscordId() error {
 	if user.DiscordId == "" {
 		return errors.New("discord id 为空！")
 	}
-	DB.Where(User{DiscordId: user.DiscordId}).First(user)
-	return nil
+	return user.fillByExternalIdentity(ExternalIdentityProviderDiscord, user.DiscordId)
 }
 
 func (user *User) FillUserByOidcId() error {
 	if user.OidcId == "" {
 		return errors.New("oidc id 为空！")
 	}
-	DB.Where(User{OidcId: user.OidcId}).First(user)
-	return nil
+	return user.fillByExternalIdentity(ExternalIdentityProviderOIDC, user.OidcId)
 }
 
 func (user *User) FillUserByWeChatId() error {
 	if user.WeChatId == "" {
 		return errors.New("WeChat id 为空！")
 	}
-	DB.Where(User{WeChatId: user.WeChatId}).First(user)
-	return nil
+	return user.fillByExternalIdentity(ExternalIdentityProviderWeChat, user.WeChatId)
 }
 
 func (user *User) FillUserByTelegramId() error {
 	if user.TelegramId == "" {
 		return errors.New("Telegram id 为空！")
 	}
-	err := DB.Where(User{TelegramId: user.TelegramId}).First(user).Error
+	err := user.fillByExternalIdentity(ExternalIdentityProviderTelegram, user.TelegramId)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
 		return errors.New("该 Telegram 账户未绑定")
 	}
-	return nil
+	return err
 }
 
 func IsEmailAlreadyTaken(email string) bool {
@@ -1377,23 +1447,23 @@ func GetUniqueUserByEmail(email string) (*User, error) {
 }
 
 func IsWeChatIdAlreadyTaken(wechatId string) bool {
-	return DB.Unscoped().Where("wechat_id = ?", wechatId).Find(&User{}).RowsAffected == 1
+	return DB.Unscoped().Where("wechat_id = ?", wechatId).Find(&User{}).RowsAffected > 0
 }
 
 func IsGitHubIdAlreadyTaken(githubId string) bool {
-	return DB.Unscoped().Where("github_id = ?", githubId).Find(&User{}).RowsAffected == 1
+	return DB.Unscoped().Where("github_id = ?", githubId).Find(&User{}).RowsAffected > 0
 }
 
 func IsDiscordIdAlreadyTaken(discordId string) bool {
-	return DB.Unscoped().Where("discord_id = ?", discordId).Find(&User{}).RowsAffected == 1
+	return DB.Unscoped().Where("discord_id = ?", discordId).Find(&User{}).RowsAffected > 0
 }
 
 func IsOidcIdAlreadyTaken(oidcId string) bool {
-	return DB.Unscoped().Where("oidc_id = ?", oidcId).Find(&User{}).RowsAffected == 1
+	return DB.Unscoped().Where("oidc_id = ?", oidcId).Find(&User{}).RowsAffected > 0
 }
 
 func IsTelegramIdAlreadyTaken(telegramId string) bool {
-	return DB.Unscoped().Where("telegram_id = ?", telegramId).Find(&User{}).RowsAffected == 1
+	return DB.Unscoped().Where("telegram_id = ?", telegramId).Find(&User{}).RowsAffected > 0
 }
 
 func ResetUserPasswordByEmail(email string, password string) error {
@@ -1405,6 +1475,7 @@ func ResetUserPasswordByEmail(email string, password string) error {
 	if err != nil {
 		return err
 	}
+	previousAuthVersion := user.AuthVersion
 	hashedPassword, err := common.Password2Hash(password)
 	if err != nil {
 		return err
@@ -1417,11 +1488,7 @@ func ResetUserPasswordByEmail(email string, password string) error {
 	}); err != nil {
 		return err
 	}
-	if err := PublishUserAuthCache(user.Id); err != nil {
-		return err
-	}
-	_, err = RevokeAllUserSessions(user.Id, "password_reset")
-	return err
+	return FinalizeUserAuthChangeByID(user.Id, previousAuthVersion, "password_reset")
 }
 
 func IsAdmin(userId int) bool {
@@ -1802,8 +1869,16 @@ func (user *User) FillUserByLinuxDOId() error {
 	if user.LinuxDOId == "" {
 		return errors.New("linux do id is empty")
 	}
-	err := DB.Where("linux_do_id = ?", user.LinuxDOId).First(user).Error
-	return err
+	return user.fillByExternalIdentity(ExternalIdentityProviderLinuxDO, user.LinuxDOId)
+}
+
+func (user *User) fillByExternalIdentity(provider string, subject string) error {
+	found, err := GetUniqueUserByExternalIdentity(provider, subject)
+	if err != nil {
+		return err
+	}
+	*user = *found
+	return nil
 }
 
 func RootUserExists() bool {

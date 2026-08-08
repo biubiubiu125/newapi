@@ -17,7 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import {
+  IconTreeTriangleDown,
+  IconMore,
+  IconAlertTriangle,
+} from '@douyinfe/semi-icons';
 import {
   Button,
   Dropdown,
@@ -29,6 +33,14 @@ import {
   Tooltip,
   Typography,
 } from '@douyinfe/semi-ui';
+import React from 'react';
+import { FaRandom } from 'react-icons/fa';
+
+import {
+  CHANNEL_OPTIONS,
+  MODEL_FETCHABLE_CHANNEL_TYPES,
+  supportsChannelUpstreamModelUpdate,
+} from '../../../constants';
 import {
   timestamp2string,
   renderGroup,
@@ -39,22 +51,12 @@ import {
   showError,
   showInfo,
 } from '../../../helpers';
-import {
-  CHANNEL_OPTIONS,
-  MODEL_FETCHABLE_CHANNEL_TYPES,
-} from '../../../constants';
 import { parseUpstreamUpdateMeta } from '../../../hooks/channels/upstreamUpdateUtils';
-import {
-  IconTreeTriangleDown,
-  IconMore,
-  IconAlertTriangle,
-} from '@douyinfe/semi-icons';
-import { FaRandom } from 'react-icons/fa';
 
 // Render functions
 const renderType = (type, record = {}, t) => {
   const channelInfo = record?.channel_info;
-  let type2label = new Map();
+  const type2label = new Map();
   for (let i = 0; i < CHANNEL_OPTIONS.length; i++) {
     type2label[CHANNEL_OPTIONS[i].value] = CHANNEL_OPTIONS[i];
   }
@@ -90,7 +92,7 @@ const renderType = (type, record = {}, t) => {
       if (parsed && typeof parsed === 'object' && parsed.source === 'ionet') {
         ionetMeta = parsed;
       }
-    } catch (error) {
+    } catch {
       // ignore invalid metadata
     }
   }
@@ -151,7 +153,7 @@ const renderTagType = (t) => {
 const renderStatus = (status, channelInfo = undefined, t) => {
   if (channelInfo) {
     if (channelInfo.is_multi_key) {
-      let keySize = channelInfo.multi_key_size;
+      const keySize = channelInfo.multi_key_size;
       let enabledKeySize = keySize;
       if (channelInfo.multi_key_status_list) {
         enabledKeySize =
@@ -270,7 +272,7 @@ const isRequestPassThroughEnabled = (record) => {
   try {
     const parsed = JSON.parse(settingValue);
     return parsed?.pass_through_body_enabled === true;
-  } catch (error) {
+  } catch {
     return false;
   }
 };
@@ -279,7 +281,7 @@ const getUpstreamUpdateMeta = (record) => {
   const supported =
     !!record &&
     record.children === undefined &&
-    MODEL_FETCHABLE_CHANNEL_TYPES.has(record.type);
+    supportsChannelUpstreamModelUpdate(record);
   if (!record || record.children !== undefined) {
     return {
       supported: false,
@@ -533,9 +535,9 @@ export const getChannelsColumns = ({
           if (record.other_info === '') {
             record.other_info = '{}';
           }
-          let otherInfo = JSON.parse(record.other_info);
-          let reason = otherInfo['status_reason'];
-          let time = otherInfo['status_time'];
+          const otherInfo = JSON.parse(record.other_info);
+          const reason = otherInfo['status_reason'];
+          const time = otherInfo['status_time'];
           return (
             <div>
               <Tooltip
@@ -576,10 +578,9 @@ export const getChannelsColumns = ({
                   content={
                     record.type === 57
                       ? t('查看 Codex 帐号信息与用量')
-                      : t('剩余额度') +
-                        ': ' +
-                        renderQuotaWithAmount(record.balance) +
-                        t('，点击更新')
+                      : `${t('剩余额度')}: ${renderQuotaWithAmount(
+                          record.balance,
+                        )}${t('，点击更新')}`
                   }
                 >
                   <Tag
@@ -622,7 +623,7 @@ export const getChannelsColumns = ({
                 onBlur={(e) => {
                   manageChannel(record.id, 'priority', record, e.target.value);
                 }}
-                keepFocus={true}
+                keepFocus
                 innerButtons
                 defaultValue={record.priority}
                 min={-999}
@@ -635,7 +636,7 @@ export const getChannelsColumns = ({
             <InputNumber
               style={{ width: 70 }}
               name='priority'
-              keepFocus={true}
+              keepFocus
               onBlur={(e) => {
                 Modal.warning({
                   title: t('修改子渠道优先级'),
@@ -677,7 +678,7 @@ export const getChannelsColumns = ({
                 onBlur={(e) => {
                   manageChannel(record.id, 'weight', record, e.target.value);
                 }}
-                keepFocus={true}
+                keepFocus
                 innerButtons
                 defaultValue={record.weight}
                 min={0}
@@ -690,7 +691,7 @@ export const getChannelsColumns = ({
             <InputNumber
               style={{ width: 70 }}
               name='weight'
-              keepFocus={true}
+              keepFocus
               onBlur={(e) => {
                 Modal.warning({
                   title: t('修改子渠道权重'),
@@ -763,7 +764,11 @@ export const getChannelsColumns = ({
             },
           ];
 
-          if (upstreamUpdateMeta.supported && canDetectUpstreamUpdates) {
+          if (
+            upstreamUpdateMeta.supported &&
+            upstreamUpdateMeta.enabled &&
+            canDetectUpstreamUpdates
+          ) {
             moreMenuItems.push({
               node: 'item',
               name: t('仅检测上游模型更新'),
@@ -774,7 +779,11 @@ export const getChannelsColumns = ({
             });
           }
 
-          if (upstreamUpdateMeta.supported && canApplyUpstreamUpdates) {
+          if (
+            upstreamUpdateMeta.supported &&
+            upstreamUpdateMeta.enabled &&
+            canApplyUpstreamUpdates
+          ) {
             moreMenuItems.push({
               node: 'item',
               name: t('处理上游模型更新'),

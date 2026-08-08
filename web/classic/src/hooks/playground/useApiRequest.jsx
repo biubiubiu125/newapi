@@ -20,6 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { SSE } from 'sse.js';
+
 import {
   API_ENDPOINTS,
   MESSAGE_STATUS,
@@ -61,7 +62,7 @@ export const useApiRequest = (
   const streamMessageUpdate = useCallback(
     (textChunk, type) => {
       setMessage((prevMessage) => {
-        const lastMessage = prevMessage[prevMessage.length - 1];
+        const lastMessage = prevMessage.at(-1);
         if (!lastMessage) return prevMessage;
         if (lastMessage.role !== 'assistant') return prevMessage;
         if (lastMessage.status === MESSAGE_STATUS.ERROR) {
@@ -138,7 +139,7 @@ export const useApiRequest = (
   const completeMessage = useCallback(
     (status = MESSAGE_STATUS.COMPLETE) => {
       setMessage((prevMessage) => {
-        const lastMessage = prevMessage[prevMessage.length - 1];
+        const lastMessage = prevMessage.at(-1);
         if (
           lastMessage.status === MESSAGE_STATUS.COMPLETE ||
           lastMessage.status === MESSAGE_STATUS.ERROR
@@ -152,7 +153,7 @@ export const useApiRequest = (
           ...prevMessage.slice(0, -1),
           {
             ...lastMessage,
-            status: status,
+            status,
             ...autoCollapseState,
           },
         ];
@@ -203,7 +204,7 @@ export const useApiRequest = (
             if (errorJson?.error) {
               parsedError = errorJson.error;
             }
-          } catch (e) {
+          } catch {
             if (!errorBody) {
               errorBody = '无法读取错误响应体';
             }
@@ -241,8 +242,8 @@ export const useApiRequest = (
 
         if (data.choices?.[0]) {
           const choice = data.choices[0];
-          let content = choice.message?.content || '';
-          let reasoningContent =
+          const content = choice.message?.content || '';
+          const reasoningContent =
             choice.message?.reasoning_content ||
             choice.message?.reasoning ||
             '';
@@ -251,7 +252,7 @@ export const useApiRequest = (
 
           setMessage((prevMessage) => {
             const newMessages = [...prevMessage];
-            const lastMessage = newMessages[newMessages.length - 1];
+            const lastMessage = newMessages.at(-1);
             if (lastMessage?.status === MESSAGE_STATUS.LOADING) {
               const autoCollapseState = applyAutoCollapseLogic(
                 lastMessage,
@@ -281,7 +282,7 @@ export const useApiRequest = (
 
         setMessage((prevMessage) => {
           const newMessages = [...prevMessage];
-          const lastMessage = newMessages[newMessages.length - 1];
+          const lastMessage = newMessages.at(-1);
           if (lastMessage?.status === MESSAGE_STATUS.LOADING) {
             const autoCollapseState = applyAutoCollapseLogic(lastMessage, true);
 
@@ -345,7 +346,7 @@ export const useApiRequest = (
 
         try {
           const payload = JSON.parse(e.data);
-          responseData += e.data + '\n';
+          responseData += `${e.data}\n`;
 
           if (!hasReceivedFirstResponse) {
             setActiveDebugTab(DEBUG_TABS.RESPONSE);
@@ -376,7 +377,7 @@ export const useApiRequest = (
 
           setDebugData((prev) => ({
             ...prev,
-            response: responseData + `\n\nError: ${errorInfo}`,
+            response: `${responseData}\n\nError: ${errorInfo}`,
             sseMessages: [...(prev.sseMessages || []), e.data], // 即使解析失败也保存原始数据
             isStreaming: false,
           }));
@@ -401,7 +402,7 @@ export const useApiRequest = (
                 errorMessage = errorJson.error.message || errorMessage;
                 errorCode = errorJson.error.code || null;
               }
-            } catch (_) {
+            } catch {
               // not JSON, use raw data as error message
             }
           }
@@ -411,16 +412,17 @@ export const useApiRequest = (
 
           setDebugData((prev) => ({
             ...prev,
-            response:
-              responseData +
-              '\n\nSSE Error:\n' +
-              JSON.stringify(errorInfo, null, 2),
+            response: `${responseData}\n\nSSE Error:\n${JSON.stringify(
+              errorInfo,
+              null,
+              2,
+            )}`,
           }));
           setActiveDebugTab(DEBUG_TABS.RESPONSE);
 
           setMessage((prevMessage) => {
             const newMessages = [...prevMessage];
-            const lastMessage = newMessages[newMessages.length - 1];
+            const lastMessage = newMessages.at(-1);
             if (
               lastMessage &&
               lastMessage.status !== MESSAGE_STATUS.COMPLETE &&
@@ -429,7 +431,7 @@ export const useApiRequest = (
               newMessages[newMessages.length - 1] = {
                 ...lastMessage,
                 content: (lastMessage.content || '') + errorMessage,
-                errorCode: errorCode,
+                errorCode,
                 status: MESSAGE_STATUS.ERROR,
               };
             }
@@ -454,10 +456,11 @@ export const useApiRequest = (
 
           setDebugData((prev) => ({
             ...prev,
-            response:
-              responseData +
-              '\n\nHTTP Error:\n' +
-              JSON.stringify(errorInfo, null, 2),
+            response: `${responseData}\n\nHTTP Error:\n${JSON.stringify(
+              errorInfo,
+              null,
+              2,
+            )}`,
           }));
           setActiveDebugTab(DEBUG_TABS.RESPONSE);
 
@@ -475,7 +478,7 @@ export const useApiRequest = (
 
         setDebugData((prev) => ({
           ...prev,
-          response: 'Stream启动失败:\n' + JSON.stringify(errorInfo, null, 2),
+          response: `Stream启动失败:\n${JSON.stringify(errorInfo, null, 2)}`,
         }));
         setActiveDebugTab(DEBUG_TABS.RESPONSE);
 
@@ -505,7 +508,7 @@ export const useApiRequest = (
     // 无论是否存在 SSE 连接，都尝试处理最后一条正在生成的消息
     setMessage((prevMessage) => {
       if (prevMessage.length === 0) return prevMessage;
-      const lastMessage = prevMessage[prevMessage.length - 1];
+      const lastMessage = prevMessage.at(-1);
 
       if (
         lastMessage.status === MESSAGE_STATUS.LOADING ||

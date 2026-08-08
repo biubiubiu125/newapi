@@ -17,28 +17,30 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import HeaderBar from './headerbar';
 import { Layout } from '@douyinfe/semi-ui';
-import SiderBar from './SiderBar';
-import App from '../../App';
-import FooterBar from './Footer';
-import ClassicFrontendDeprecationBanner from './ClassicFrontendDeprecationBanner';
-import { ToastContainer } from 'react-toastify';
-import ErrorBoundary from '../common/ErrorBoundary';
 import React, { useContext, useEffect, useState } from 'react';
-import { useIsMobile } from '../../hooks/common/useIsMobile';
-import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
 import { useTranslation } from 'react-i18next';
+import { useLocation } from 'react-router-dom';
+import { ToastContainer } from 'react-toastify';
+
+import App from '../../App';
+import { StatusContext } from '../../context/Status';
+import { UserContext } from '../../context/User';
 import {
   API,
   applySystemBrandToDom,
   showError,
   setStatusData,
 } from '../../helpers';
-import { UserContext } from '../../context/User';
-import { StatusContext } from '../../context/Status';
-import { useLocation } from 'react-router-dom';
+import { useIsMobile } from '../../hooks/common/useIsMobile';
+import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
 import { normalizeLanguage } from '../../i18n/language';
+import ErrorBoundary from '../common/ErrorBoundary';
+import ClassicFrontendDeprecationBanner from './ClassicFrontendDeprecationBanner';
+import FooterBar from './Footer';
+import HeaderBar from './headerbar';
+import SiderBar from './SiderBar';
+
 const { Sider, Content, Header } = Layout;
 
 const PageLayout = () => {
@@ -80,9 +82,9 @@ const PageLayout = () => {
   }, [isMobile, drawerOpen, collapsed, setCollapsed]);
 
   const loadUser = () => {
-    let user = localStorage.getItem('user');
+    const user = localStorage.getItem('user');
     if (user) {
-      let data = JSON.parse(user);
+      const data = JSON.parse(user);
       userDispatch({ type: 'login', payload: data });
     }
   };
@@ -101,7 +103,7 @@ const PageLayout = () => {
       } else {
         showError('Unable to connect to server');
       }
-    } catch (error) {
+    } catch {
       showError('Failed to load status');
     }
   };
@@ -119,7 +121,7 @@ const PageLayout = () => {
       try {
         const settings = JSON.parse(userState.user.setting);
         preferredLang = normalizeLanguage(settings.language);
-      } catch (e) {
+      } catch {
         // Ignore parse errors
       }
     }

@@ -112,6 +112,13 @@ func (s *imageTaskBodyStorage) Close() error {
 	return err
 }
 
+func (s *imageTaskBodyStorage) NewReader() (io.ReadCloser, error) {
+	if s == nil || strings.TrimSpace(s.path) == "" {
+		return nil, errors.New("task request body storage is missing")
+	}
+	return os.Open(s.path)
+}
+
 func (s *imageTaskBodyStorage) Bytes() ([]byte, error) {
 	if s == nil || s.file == nil {
 		return nil, errors.New("task request body storage is closed")
@@ -1167,13 +1174,7 @@ func submitAsyncTaskBridgeImageTask(ctx context.Context, task *model.Task) error
 		_ = bodyStorage.Close()
 		return failImageTask(ctx, task, model.TaskStatusInProgress, err.Error(), true, true)
 	}
-	req.Header.Set("Content-Type", outboundBody.ContentType)
-	req.Header.Set("Accept", "application/json")
-	req.Header.Set("Authorization", "Bearer "+key)
-	relaychannel.ApplyHeaderOverrideToRequest(req, headerOverride)
-	if outboundBody.ContentLength > 0 {
-		req.ContentLength = outboundBody.ContentLength
-	}
+	applyImageTaskBridgeRequestHeaders(req, outboundBody, key, task.TaskID, headerOverride)
 	if err := markAsyncTaskBridgeSubmissionStarted(ctx, task); err != nil {
 		return err
 	}
@@ -1462,6 +1463,33 @@ func asyncTaskBridgeRecoveredUpstreamID(result *asyncTaskBridgeTaskResult, respB
 		upstreamID = extractAsyncTaskBridgeTaskID(respBody)
 	}
 	return strings.TrimSpace(upstreamID)
+}
+
+func applyImageTaskOutboundBodyMetadata(req *http.Request, outboundBody *imageTaskOutboundBody) {
+	if req == nil || outboundBody == nil {
+		return
+	}
+	req.ContentLength = outboundBody.ContentLength
+	if req.GetBody == nil && outboundBody.GetBody != nil {
+		req.GetBody = outboundBody.GetBody
+	}
+}
+
+func applyImageTaskBridgeRequestHeaders(req *http.Request, outboundBody *imageTaskOutboundBody, key, taskID string, headerOverride map[string]string) {
+	applyImageTaskOutboundBodyMetadata(req, outboundBody)
+	if req == nil {
+		return
+	}
+	if outboundBody != nil && outboundBody.ContentType != "" {
+		req.Header.Set("Content-Type", outboundBody.ContentType)
+	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("Authorization", "Bearer "+key)
+	if taskID = strings.TrimSpace(taskID); taskID != "" {
+		req.Header.Set("Idempotency-Key", taskID)
+		req.Header.Set("X-NewAPI-Task-ID", taskID)
+	}
+	relaychannel.ApplyHeaderOverrideToRequest(req, headerOverride)
 }
 
 func pollAsyncTaskBridgeImageTask(ctx context.Context, task *model.Task) error {
@@ -2742,6 +2770,7 @@ type imageTaskOutboundBody struct {
 	Reader        io.Reader
 	ContentType   string
 	ContentLength int64
+	GetBody       func() (io.ReadCloser, error)
 	cleanup       func()
 }
 
@@ -2758,6 +2787,9 @@ func newImageTaskBytesOutboundBody(body []byte, contentType string) *imageTaskOu
 		Reader:        bytes.NewReader(body),
 		ContentType:   contentType,
 		ContentLength: int64(len(body)),
+		GetBody: func() (io.ReadCloser, error) {
+			return io.NopCloser(bytes.NewReader(body)), nil
+		},
 	}
 }
 
@@ -3170,18 +3202,18 @@ func doImageTaskHTTPRequestStorage(req *http.Request, channel *model.Channel) (c
 }
 
 func imageTaskHTTPClient(channel *model.Channel) (*http.Client, error) {
-	proxy := ""
+	settings := dto.ChannelSettings{}
 	if channel != nil {
-		proxy = channel.GetSetting().Proxy
+		settings = channel.GetSetting()
 	}
-	client, err := service.GetHttpClientWithProxy(proxy)
+	client, err := service.GetHttpClientWithProxySettings(settings.Proxy, settings)
 	if err != nil {
 		return nil, err
 	}
 	if client == nil {
-		return http.DefaultClient, nil
+		client = http.DefaultClient
 	}
-	return client, nil
+	return service.CloneHTTPClientWithoutRedirects(client), nil
 }
 
 func readImageTaskHTTPResponseBody(reader io.Reader) ([]byte, error) {
@@ -3585,6 +3617,9 @@ func buildAsyncTaskBridgeMultipartBody(bodyStorage common.BodyStorage, contentTy
 		Reader:        file,
 		ContentType:   writer.FormDataContentType(),
 		ContentLength: stat.Size(),
+		GetBody: func() (io.ReadCloser, error) {
+			return os.Open(path)
+		},
 		cleanup: func() {
 			_ = file.Close()
 			_ = common.RemoveDiskCacheFile(path)

@@ -17,21 +17,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo, useState } from 'react';
-import { Empty } from '@douyinfe/semi-ui';
-import CardTable from '../../common/ui/CardTable';
 import {
   IllustrationNoResult,
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
-import { getDeploymentsColumns } from './DeploymentsColumnDefs';
+import { Empty } from '@douyinfe/semi-ui';
+import React, { useMemo, useState } from 'react';
 
+import CardTable from '../../common/ui/CardTable';
+import { getDeploymentsColumns } from './DeploymentsColumnDefs';
+import ConfirmationDialog from './modals/ConfirmationDialog';
+import ExtendDurationModal from './modals/ExtendDurationModal';
+import UpdateConfigModal from './modals/UpdateConfigModal';
+import ViewDetailsModal from './modals/ViewDetailsModal';
 // Import all the new modals
 import ViewLogsModal from './modals/ViewLogsModal';
-import ExtendDurationModal from './modals/ExtendDurationModal';
-import ViewDetailsModal from './modals/ViewDetailsModal';
-import UpdateConfigModal from './modals/UpdateConfigModal';
-import ConfirmationDialog from './modals/ConfirmationDialog';
 
 const DeploymentsTable = (deploymentsData) => {
   const {
@@ -173,14 +173,14 @@ const DeploymentsTable = (deploymentsData) => {
         scroll={compactMode ? { x: 800 } : { x: 1200 }}
         pagination={{
           currentPage: activePage,
-          pageSize: pageSize,
+          pageSize,
           total: deploymentCount,
           pageSizeOpts: [10, 20, 50, 100],
           showSizeChanger: true,
           onPageSizeChange: handlePageSizeChange,
           onPageChange: handlePageChange,
         }}
-        hidePagination={true}
+        hidePagination
         expandAllRows={false}
         onRow={handleRow}
         rowSelection={batchOperationsEnabled ? rowSelection : undefined}

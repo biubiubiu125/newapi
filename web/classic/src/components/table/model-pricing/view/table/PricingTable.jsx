@@ -17,12 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo } from 'react';
-import { Card, Table, Empty } from '@douyinfe/semi-ui';
 import {
   IllustrationNoResult,
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
+import { Card, Table, Empty } from '@douyinfe/semi-ui';
+import React, { useMemo } from 'react';
+
 import { getPricingTableColumns } from './PricingTableColumns';
 
 const PricingTable = ({
@@ -120,7 +121,7 @@ const PricingTable = ({
           }
           pagination={{
             defaultPageSize: 20,
-            pageSize: pageSize,
+            pageSize,
             showSizeChanger: true,
             pageSizeOptions: [10, 20, 50, 100],
             onPageSizeChange: (size) => setPageSize(size),

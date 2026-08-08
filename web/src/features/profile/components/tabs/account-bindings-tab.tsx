@@ -246,6 +246,7 @@ export function AccountBindingsTab({
         }
         const response = await api.get(`/api/oauth/${message.provider}`, {
           params,
+          acceptAuthRotation: true,
           skipBusinessError: true,
         })
         success = Boolean(response.data?.success)

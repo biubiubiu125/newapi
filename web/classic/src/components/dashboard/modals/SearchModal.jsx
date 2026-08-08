@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useRef } from 'react';
 import { Modal, Form } from '@douyinfe/semi-ui';
+import React, { useRef } from 'react';
 
 const SearchModal = ({
   searchModalVisible,
@@ -50,7 +50,7 @@ const SearchModal = ({
       visible={searchModalVisible}
       onOk={handleSearchConfirm}
       onCancel={handleCloseModal}
-      closeOnEsc={true}
+      closeOnEsc
       size={isMobile ? 'full-width' : 'small'}
       centered
     >

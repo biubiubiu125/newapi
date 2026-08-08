@@ -17,8 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
-import { useTranslation } from 'react-i18next';
 import {
   Modal,
   Button,
@@ -26,86 +24,89 @@ import {
   Typography,
   Input,
   Banner,
-} from '@douyinfe/semi-ui';
-import { API, copy, showError, showSuccess } from '../../../../helpers';
+} from '@douyinfe/semi-ui'
+import React, { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 
-const { Text } = Typography;
+import { API, copy, showError, showSuccess } from '../../../../helpers'
+
+const { Text } = Typography
 
 const CodexOAuthModal = ({ visible, onCancel, onSuccess }) => {
-  const { t } = useTranslation();
-  const [loading, setLoading] = useState(false);
-  const [authorizeUrl, setAuthorizeUrl] = useState('');
-  const [input, setInput] = useState('');
+  const { t } = useTranslation()
+  const [loading, setLoading] = useState(false)
+  const [authorizeUrl, setAuthorizeUrl] = useState('')
+  const [input, setInput] = useState('')
 
   const startOAuth = async () => {
-    setLoading(true);
+    setLoading(true)
     try {
       const res = await API.post(
         '/api/channel/codex/oauth/start',
         {},
-        { skipErrorHandler: true },
-      );
+        { skipErrorHandler: true }
+      )
       if (!res?.data?.success) {
-        console.error('Codex OAuth start failed:', res?.data?.message);
-        throw new Error(t('启动授权失败'));
+        console.error('Codex OAuth start failed:', res?.data?.message)
+        throw new Error(t('启动授权失败'))
       }
-      const url = res?.data?.data?.authorize_url || '';
+      const url = res?.data?.data?.authorize_url || ''
       if (!url) {
         console.error(
           'Codex OAuth start response missing authorize_url:',
-          res?.data,
-        );
-        throw new Error(t('响应缺少授权链接'));
+          res?.data
+        )
+        throw new Error(t('响应缺少授权链接'))
       }
-      setAuthorizeUrl(url);
-      window.open(url, '_blank', 'noopener,noreferrer');
-      showSuccess(t('已打开授权页面'));
+      setAuthorizeUrl(url)
+      window.open(url, '_blank', 'noopener,noreferrer')
+      showSuccess(t('已打开授权页面'))
     } catch (error) {
-      showError(error?.message || t('启动授权失败'));
+      showError(error?.message || t('启动授权失败'))
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   const completeOAuth = async () => {
     if (!input || !input.trim()) {
-      showError(t('请先粘贴回调 URL'));
-      return;
+      showError(t('请先粘贴回调 URL'))
+      return
     }
 
-    setLoading(true);
+    setLoading(true)
     try {
       const res = await API.post(
         '/api/channel/codex/oauth/complete',
         { input },
-        { skipErrorHandler: true },
-      );
+        { skipErrorHandler: true }
+      )
       if (!res?.data?.success) {
-        console.error('Codex OAuth complete failed:', res?.data?.message);
-        throw new Error(t('授权失败'));
+        console.error('Codex OAuth complete failed:', res?.data?.message)
+        throw new Error(t('授权失败'))
       }
 
-      const key = res?.data?.data?.key || '';
+      const key = res?.data?.data?.key || ''
       if (!key) {
-        console.error('Codex OAuth complete response missing key:', res?.data);
-        throw new Error(t('响应缺少凭据'));
+        console.error('Codex OAuth complete response missing key:', res?.data)
+        throw new Error(t('响应缺少凭据'))
       }
 
-      onSuccess && onSuccess(key);
-      showSuccess(t('已生成授权凭据'));
-      onCancel && onCancel();
+      onSuccess && onSuccess(key)
+      showSuccess(t('已生成授权凭据'))
+      onCancel && onCancel()
     } catch (error) {
-      showError(error?.message || t('授权失败'));
+      showError(error?.message || t('授权失败'))
     } finally {
-      setLoading(false);
+      setLoading(false)
     }
-  };
+  }
 
   useEffect(() => {
-    if (!visible) return;
-    setAuthorizeUrl('');
-    setInput('');
-  }, [visible]);
+    if (!visible) return
+    setAuthorizeUrl('')
+    setInput('')
+  }, [visible])
 
   return (
     <Modal
@@ -135,7 +136,7 @@ const CodexOAuthModal = ({ visible, onCancel, onSuccess }) => {
         <Banner
           type='info'
           description={t(
-            '1) 点击「打开授权页面」完成登录；2) 浏览器会跳转到 localhost（页面打不开也没关系）；3) 复制地址栏完整 URL 粘贴到下方；4) 点击「生成并填入」。',
+            '1) 点击「打开授权页面」完成登录；2) 浏览器会跳转到 localhost（页面打不开也没关系）；3) 复制地址栏完整 URL 粘贴到下方；4) 点击「生成并填入」。'
           )}
         />
 
@@ -161,12 +162,12 @@ const CodexOAuthModal = ({ visible, onCancel, onSuccess }) => {
 
         <Text type='tertiary' size='small'>
           {t(
-            '说明：生成结果是可直接粘贴到渠道密钥里的 JSON（包含 access_token / refresh_token / account_id）。',
+            '说明：生成结果是可直接粘贴到渠道密钥里的 JSON（包含 access_token / refresh_token / account_id）。'
           )}
         </Text>
       </Space>
     </Modal>
-  );
-};
+  )
+}
 
-export default CodexOAuthModal;
+export default CodexOAuthModal

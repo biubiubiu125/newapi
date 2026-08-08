@@ -17,7 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import { IconPlusCircle } from '@douyinfe/semi-icons';
+import {
+  IllustrationNoResult,
+  IllustrationNoResultDark,
+} from '@douyinfe/semi-illustrations';
 import {
   Button,
   Empty,
@@ -28,11 +32,8 @@ import {
   Tag,
   Typography,
 } from '@douyinfe/semi-ui';
-import { IconPlusCircle } from '@douyinfe/semi-icons';
-import {
-  IllustrationNoResult,
-  IllustrationNoResultDark,
-} from '@douyinfe/semi-illustrations';
+import React, { useEffect, useMemo, useState } from 'react';
+
 import { API, showError, showSuccess } from '../../../../helpers';
 import { convertUSDToCurrency } from '../../../../helpers/render';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
@@ -121,7 +122,7 @@ const UserSubscriptionsModal = ({ visible, onCancel, user, t, onSuccess }) => {
       } else {
         showError(res.data?.message || t('加载失败'));
       }
-    } catch (e) {
+    } catch {
       showError(t('请求失败'));
     } finally {
       setPlansLoading(false);
@@ -142,7 +143,7 @@ const UserSubscriptionsModal = ({ visible, onCancel, user, t, onSuccess }) => {
       } else {
         showError(res.data?.message || t('加载失败'));
       }
-    } catch (e) {
+    } catch {
       showError(t('请求失败'));
     } finally {
       setLoading(false);
@@ -187,7 +188,7 @@ const UserSubscriptionsModal = ({ visible, onCancel, user, t, onSuccess }) => {
       } else {
         showError(res.data?.message || t('新增失败'));
       }
-    } catch (e) {
+    } catch {
       showError(t('请求失败'));
     } finally {
       setCreating(false);
@@ -212,7 +213,7 @@ const UserSubscriptionsModal = ({ visible, onCancel, user, t, onSuccess }) => {
           } else {
             showError(res.data?.message || t('操作失败'));
           }
-        } catch (e) {
+        } catch {
           showError(t('请求失败'));
         }
       },
@@ -238,7 +239,7 @@ const UserSubscriptionsModal = ({ visible, onCancel, user, t, onSuccess }) => {
           } else {
             showError(res.data?.message || t('删除失败'));
           }
-        } catch (e) {
+        } catch {
           showError(t('请求失败'));
         }
       },

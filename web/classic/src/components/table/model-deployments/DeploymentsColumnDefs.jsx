@@ -17,10 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Button, Dropdown, Tag, Typography } from '@douyinfe/semi-ui';
-import { timestamp2string, showSuccess, showError } from '../../../helpers';
 import { IconMore } from '@douyinfe/semi-icons';
+import { Button, Dropdown, Tag, Typography } from '@douyinfe/semi-ui';
+import React from 'react';
 import {
   FaPlay,
   FaTrash,
@@ -41,6 +40,8 @@ import {
   FaHourglassHalf,
   FaGlobe,
 } from 'react-icons/fa';
+
+import { timestamp2string, showSuccess, showError } from '../../../helpers';
 
 const normalizeStatus = (status) =>
   typeof status === 'string' ? status.trim().toLowerCase() : '';
@@ -107,7 +108,7 @@ const DEFAULT_STATUS_CONFIG = {
 const parsePercentValue = (value) => {
   if (value === null || value === undefined) return null;
   if (typeof value === 'string') {
-    const parsed = parseFloat(value.replace(/[^0-9.+-]/g, ''));
+    const parsed = Number.parseFloat(value.replace(/[^0-9.+-]/g, ''));
     return Number.isFinite(parsed) ? parsed : null;
   }
   if (typeof value === 'number') {
@@ -202,7 +203,7 @@ const ContainerNameCell = ({ text, record, t }) => {
     try {
       await navigator.clipboard.writeText(record.id);
       showSuccess(t('已复制 ID 到剪贴板'));
-    } catch (err) {
+    } catch {
       showError(t('复制失败'));
     }
   };

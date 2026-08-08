@@ -17,10 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Navigate } from 'react-router-dom';
-import { Spin } from '@douyinfe/semi-ui';
-import { useSidebar } from '../../hooks/common/useSidebar';
+import { Spin } from '@douyinfe/semi-ui'
+import React from 'react'
+import { Navigate } from 'react-router-dom'
+
+import { useSidebar } from '../../hooks/common/useSidebar'
 
 export default function SidebarModuleRoute({
   section,
@@ -28,19 +29,19 @@ export default function SidebarModuleRoute({
   children,
   redirectTo = '/forbidden',
 }) {
-  const { loading, isModuleVisible } = useSidebar();
+  const { loading, isModuleVisible } = useSidebar()
 
   if (loading) {
     return (
       <div className='mt-[120px] flex justify-center'>
         <Spin size='large' />
       </div>
-    );
+    )
   }
 
   if (!isModuleVisible(section, module)) {
-    return <Navigate to={redirectTo} replace />;
+    return <Navigate to={redirectTo} replace />
   }
 
-  return children;
+  return children
 }

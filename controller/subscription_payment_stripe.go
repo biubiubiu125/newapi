@@ -1,8 +1,11 @@
 package controller
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -12,7 +15,6 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stripe/stripe-go/v81"
-	"github.com/stripe/stripe-go/v81/checkout/session"
 	"github.com/thanhpk/randstr"
 )
 
@@ -84,13 +86,6 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 	}
 	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, paidCurrency)
 
-	payLink, err := genStripeSubscriptionLink(referenceId, user.StripeCustomer, user.Email, plan.StripePriceId)
-	if err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Stripe 订阅支付链接创建失败 trade_no=%s plan_id=%d error=%q", referenceId, plan.Id, err.Error()))
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
-		return
-	}
-
 	order := &model.SubscriptionOrder{
 		UserId:          userId,
 		PlanId:          plan.Id,
@@ -112,7 +107,15 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 		order.ReferralCommissionStatus = snapshot.Status
 		order.ReferralCommissionError = snapshot.Error
 	}
-	if err := order.Insert(); err != nil {
+
+	checkoutSession, err := genStripeSubscriptionLink(referenceId, user.StripeCustomer, user.Email, plan.StripePriceId, stripeSubscriptionCheckoutMetadata(order))
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Stripe 订阅支付链接创建失败 trade_no=%s plan_id=%d error=%q", referenceId, plan.Id, err.Error()))
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
+		return
+	}
+	if err := persistSubscriptionOrderAfterStripeCheckout(c.Request.Context(), order, checkoutSession); err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Stripe 创建订阅订单失败 trade_no=%s plan_id=%d error=%q", referenceId, plan.Id, err.Error()))
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
 		return
 	}
@@ -120,14 +123,14 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"message": "success",
 		"data": gin.H{
-			"pay_link": payLink,
+			"pay_link": checkoutSession.URL,
 			"order_id": referenceId,
 			"trade_no": referenceId,
 		},
 	})
 }
 
-func genStripeSubscriptionLink(referenceId string, customerId string, email string, priceId string) (string, error) {
+func genStripeSubscriptionLink(referenceId string, customerId string, email string, priceId string, metadata map[string]string) (*stripe.CheckoutSession, error) {
 	stripe.Key = setting.StripeApiSecret
 
 	params := &stripe.CheckoutSessionParams{
@@ -142,6 +145,12 @@ func genStripeSubscriptionLink(referenceId string, customerId string, email stri
 		},
 		Mode: stripe.String(string(stripe.CheckoutSessionModeSubscription)),
 	}
+	for key, value := range metadata {
+		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {
+			continue
+		}
+		params.AddMetadata(key, value)
+	}
 
 	if "" == customerId {
 		if "" != email {
@@ -152,9 +161,56 @@ func genStripeSubscriptionLink(referenceId string, customerId string, email stri
 		params.Customer = stripe.String(customerId)
 	}
 
-	result, err := session.New(params)
+	result, err := stripeSessionNew(params)
 	if err != nil {
-		return "", err
+		return nil, err
 	}
-	return result.URL, nil
+	return result, nil
+}
+
+func persistSubscriptionOrderAfterStripeCheckout(ctx context.Context, order *model.SubscriptionOrder, checkoutSession *stripe.CheckoutSession) error {
+	if order == nil {
+		return errors.New("subscription order is required")
+	}
+	return expireStripeCheckoutSessionOnLocalOrderError(ctx, checkoutSession, order.TradeNo, order.Insert())
+}
+
+func stripeSubscriptionCheckoutMetadata(order *model.SubscriptionOrder) map[string]string {
+	metadata := make(map[string]string)
+	if order == nil {
+		return metadata
+	}
+	addStripeCheckoutMetadata(metadata, "user_id", strconv.Itoa(order.UserId))
+	addStripeCheckoutMetadata(metadata, "plan_id", strconv.Itoa(order.PlanId))
+	addStripeCheckoutMetadata(metadata, "paid_amount", strconv.FormatFloat(order.PaidAmount, 'f', -1, 64))
+	addStripeCheckoutMetadata(metadata, "paid_currency", order.PaidCurrency)
+	addStripeCheckoutMetadata(metadata, "plan_title_snapshot", order.PlanTitleSnapshot)
+	addStripeCheckoutMetadata(metadata, "plan_price_snapshot", strconv.FormatFloat(order.PlanPriceSnapshot, 'f', -1, 64))
+	addStripeCheckoutMetadata(metadata, "plan_currency_snapshot", order.PlanCurrencySnapshot)
+	addStripeCheckoutMetadata(metadata, "plan_duration_unit_snapshot", order.PlanDurationUnitSnapshot)
+	addStripeCheckoutMetadata(metadata, "plan_duration_value_snapshot", strconv.Itoa(order.PlanDurationValueSnapshot))
+	addStripeCheckoutMetadata(metadata, "plan_custom_seconds_snapshot", strconv.FormatInt(order.PlanCustomSecondsSnapshot, 10))
+	addStripeCheckoutMetadata(metadata, "plan_total_amount_snapshot", strconv.FormatInt(order.PlanTotalAmountSnapshot, 10))
+	addStripeCheckoutMetadata(metadata, "plan_quota_reset_period_snapshot", order.PlanQuotaResetPeriodSnapshot)
+	addStripeCheckoutMetadata(metadata, "plan_quota_reset_custom_seconds_snapshot", strconv.FormatInt(order.PlanQuotaResetCustomSecondsSnapshot, 10))
+	addStripeCheckoutMetadata(metadata, "plan_upgrade_group_snapshot", order.PlanUpgradeGroupSnapshot)
+	addStripeCheckoutMetadata(metadata, "plan_grant_groups_snapshot", order.PlanGrantGroupsSnapshot)
+	addStripeCheckoutMetadata(metadata, "plan_downgrade_group_snapshot", order.PlanDowngradeGroupSnapshot)
+	if order.PlanAllowBalancePaySnapshot != nil {
+		addStripeCheckoutMetadata(metadata, "plan_allow_balance_pay_snapshot", strconv.FormatBool(*order.PlanAllowBalancePaySnapshot))
+	}
+	if order.PlanAllowWalletOverflowSnapshot != nil {
+		addStripeCheckoutMetadata(metadata, "plan_allow_wallet_overflow_snapshot", strconv.FormatBool(*order.PlanAllowWalletOverflowSnapshot))
+	}
+	addStripeCheckoutMetadata(metadata, "usd_exchange_rate_snapshot", strconv.FormatFloat(order.USDExchangeRateSnapshot, 'f', -1, 64))
+	addStripeCheckoutMetadata(metadata, "custom_exchange_rate_snapshot", strconv.FormatFloat(order.CustomExchangeRateSnapshot, 'f', -1, 64))
+	addStripeCheckoutMetadata(metadata, "quota_display_type_snapshot", order.QuotaDisplayTypeSnapshot)
+	addStripeCheckoutMetadata(metadata, "display_currency_snapshot", order.DisplayCurrencySnapshot)
+	addStripeCheckoutMetadata(metadata, "referral_affiliate_id", strconv.Itoa(order.ReferralAffiliateId))
+	addStripeCheckoutMetadata(metadata, "referral_rate", strconv.FormatFloat(order.ReferralRate, 'f', -1, 64))
+	addStripeCheckoutMetadata(metadata, "referral_base_amount", strconv.FormatFloat(order.ReferralBaseAmount, 'f', -1, 64))
+	addStripeCheckoutMetadata(metadata, "referral_base_currency", order.ReferralBaseCurrency)
+	addStripeCheckoutMetadata(metadata, "referral_commission_status", order.ReferralCommissionStatus)
+	addStripeCheckoutMetadata(metadata, "referral_commission_error", order.ReferralCommissionError)
+	return metadata
 }

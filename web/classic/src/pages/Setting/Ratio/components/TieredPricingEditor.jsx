@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { IconCopy, IconDelete, IconPlus } from '@douyinfe/semi-icons';
 import {
   Banner,
   Button,
@@ -31,14 +31,15 @@ import {
   TextArea,
   Typography,
 } from '@douyinfe/semi-ui';
-import { IconCopy, IconDelete, IconPlus } from '@douyinfe/semi-icons';
-import { renderQuota } from '../../../../helpers/render';
-import { copy, showSuccess } from '../../../../helpers';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+
 import {
   BILLING_EXTRA_VARS,
   BILLING_CACHE_VAR_MAP,
   BILLING_CONDITION_VARS,
 } from '../../../../constants';
+import { copy, showSuccess } from '../../../../helpers';
+import { renderQuota } from '../../../../helpers/render';
 import {
   createEmptyCondition,
   createEmptyTimeCondition,
@@ -164,8 +165,9 @@ function buildTierBodyExpr(tier) {
 }
 
 function generateExprFromVisualConfig(config) {
-  if (!config || !config.tiers || config.tiers.length === 0)
+  if (!config || !config.tiers || config.tiers.length === 0) {
     return 'p * 0 + c * 0';
+  }
   const tiers = config.tiers;
 
   if (tiers.length === 1) {
@@ -265,8 +267,9 @@ function tryParseVisualConfig(exprStr) {
 
     const cfg = normalizeVisualConfig({ tiers });
     const regenerated = generateExprFromVisualConfig(cfg);
-    if (regenerated.replace(/\s+/g, '') !== exprStr.replace(/\s+/g, ''))
+    if (regenerated.replaceAll(/\s+/g, '') !== exprStr.replaceAll(/\s+/g, '')) {
       return null;
+    }
     return cfg;
   } catch {
     return null;
@@ -714,11 +717,10 @@ function VisualEditor({ visualConfig, onChange, t }) {
     const newTiers = [...tiers];
     if (
       newTiers.length > 0 &&
-      (!newTiers[newTiers.length - 1].conditions ||
-        newTiers[newTiers.length - 1].conditions.length === 0)
+      (!newTiers.at(-1).conditions || newTiers.at(-1).conditions.length === 0)
     ) {
       newTiers[newTiers.length - 1] = {
-        ...newTiers[newTiers.length - 1],
+        ...newTiers.at(-1),
         conditions: [{ var: 'len', op: '<', value: 200000 }],
       };
     }
@@ -737,7 +739,7 @@ function VisualEditor({ visualConfig, onChange, t }) {
     const next = tiers.filter((_, i) => i !== index);
     if (next.length > 0) {
       next[next.length - 1] = {
-        ...next[next.length - 1],
+        ...next.at(-1),
         conditions: [],
       };
     }
@@ -1620,7 +1622,7 @@ function LlmPromptHelper({ t, model }) {
   const modelName = model?.name || '';
   const prompt = useMemo(() => {
     if (modelName) {
-      return LLM_PROMPT_TEMPLATE + `\n\n当前模型：${modelName}`;
+      return `${LLM_PROMPT_TEMPLATE}\n\n当前模型：${modelName}`;
     }
     return LLM_PROMPT_TEMPLATE;
   }, [modelName]);
@@ -1849,7 +1851,7 @@ export default function TieredPricingEditor({
     if (!result.error) {
       result.cost =
         (result.cost / 1000000) *
-        (parseFloat(localStorage.getItem('quota_per_unit')) || 500000);
+        (Number.parseFloat(localStorage.getItem('quota_per_unit')) || 500000);
     }
     return result;
   }, [

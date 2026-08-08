@@ -17,8 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
-import JSONEditor from '../../../common/ui/JSONEditor';
+import { IconAlertTriangle, IconLink } from '@douyinfe/semi-icons';
 import {
   Banner,
   SideSheet,
@@ -34,10 +33,12 @@ import {
   Row,
 } from '@douyinfe/semi-ui';
 import { Save, X, FileText } from 'lucide-react';
-import { IconAlertTriangle, IconLink } from '@douyinfe/semi-icons';
-import { API, showError, showSuccess } from '../../../../helpers';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { API, showError, showSuccess } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
+import JSONEditor from '../../../common/ui/JSONEditor';
 
 const { Text, Title } = Typography;
 
@@ -82,7 +83,7 @@ const EditModelModal = (props) => {
         const items = res.data.data.items || res.data.data || [];
         setVendors(Array.isArray(items) ? items : []);
       }
-    } catch (error) {
+    } catch {
       // ignore
     }
   };
@@ -100,7 +101,7 @@ const EditModelModal = (props) => {
       if (endpointRes?.data?.success) {
         setEndpointGroups(endpointRes.data.data || []);
       }
-    } catch (error) {
+    } catch {
       // ignore
     }
   };
@@ -157,7 +158,7 @@ const EditModelModal = (props) => {
       } else {
         showError(message);
       }
-    } catch (error) {
+    } catch {
       showError(t('加载模型信息失败'));
     }
     setLoading(false);
@@ -491,8 +492,9 @@ const EditModelModal = (props) => {
                                         'endpoints',
                                       ) || '';
                                     let base = {};
-                                    if (current && current.trim())
+                                    if (current && current.trim()) {
                                       base = JSON.parse(current);
+                                    }
                                     const groupObj =
                                       typeof group.items === 'string'
                                         ? JSON.parse(group.items || '{}')
@@ -502,7 +504,7 @@ const EditModelModal = (props) => {
                                       'endpoints',
                                       JSON.stringify(merged, null, 2),
                                     );
-                                  } catch (e) {
+                                  } catch {
                                     try {
                                       const groupObj =
                                         typeof group.items === 'string'

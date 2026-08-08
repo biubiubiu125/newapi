@@ -18,16 +18,17 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useState } from 'react';
+
+import { createCardProPagination } from '../../../helpers/utils';
+import { useIsMobile } from '../../../hooks/common/useIsMobile';
+import { useDeploymentsData } from '../../../hooks/model-deployments/useDeploymentsData';
 import CardPro from '../../common/ui/CardPro';
-import DeploymentsTable from './DeploymentsTable';
 import DeploymentsActions from './DeploymentsActions';
 import DeploymentsFilters from './DeploymentsFilters';
-import EditDeploymentModal from './modals/EditDeploymentModal';
-import CreateDeploymentModal from './modals/CreateDeploymentModal';
+import DeploymentsTable from './DeploymentsTable';
 import ColumnSelectorModal from './modals/ColumnSelectorModal';
-import { useDeploymentsData } from '../../../hooks/model-deployments/useDeploymentsData';
-import { useIsMobile } from '../../../hooks/common/useIsMobile';
-import { createCardProPagination } from '../../../helpers/utils';
+import CreateDeploymentModal from './modals/CreateDeploymentModal';
+import EditDeploymentModal from './modals/EditDeploymentModal';
 
 const DeploymentsPage = () => {
   const deploymentsData = useDeploymentsData();
@@ -135,7 +136,7 @@ const DeploymentsPage = () => {
           total: deploymentsData.deploymentCount,
           onPageChange: deploymentsData.handlePageChange,
           onPageSizeChange: deploymentsData.handlePageSizeChange,
-          isMobile: isMobile,
+          isMobile,
           t: deploymentsData.t,
         })}
         t={deploymentsData.t}

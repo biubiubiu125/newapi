@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 )
 
 func ExtractImageGenerationTextFromResponses(resp *dto.OpenAIResponsesResponse) string {
@@ -75,7 +76,7 @@ func appendResponsesImageRawValue(items []string, raw json.RawMessage) []string 
 	}
 
 	var value any
-	if err := json.Unmarshal(raw, &value); err != nil {
+	if err := kitutil.Unmarshal(raw, &value); err != nil {
 		return appendResponsesImageValue(items, rawValue)
 	}
 	for _, imageValue := range collectResponsesImageValues(value) {
@@ -94,7 +95,7 @@ func responsesImageValues(value string) []string {
 	}
 
 	var parsed any
-	if err := json.Unmarshal([]byte(value), &parsed); err != nil {
+	if err := kitutil.Unmarshal([]byte(value), &parsed); err != nil {
 		return []string{value}
 	}
 	return collectResponsesImageValues(parsed)

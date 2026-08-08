@@ -38,6 +38,7 @@ const (
 var (
 	ErrSubscriptionOrderNotFound      = errors.New("subscription order not found")
 	ErrSubscriptionOrderStatusInvalid = errors.New("subscription order status invalid")
+	ErrSubscriptionPurchaseLimit      = errors.New("subscription purchase limit reached")
 )
 
 const (
@@ -682,7 +683,15 @@ func downgradeUserGroupForSubscriptionTx(tx *gorm.DB, sub *UserSubscription, now
 	return target, nil
 }
 
+type createUserSubscriptionOptions struct {
+	SkipPurchaseLimit bool
+}
+
 func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *SubscriptionPlan, source string) (*UserSubscription, error) {
+	return createUserSubscriptionFromPlanTx(tx, userId, plan, source, createUserSubscriptionOptions{})
+}
+
+func createUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *SubscriptionPlan, source string, options createUserSubscriptionOptions) (*UserSubscription, error) {
 	if tx == nil {
 		return nil, errors.New("tx is nil")
 	}
@@ -692,7 +701,11 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 	if userId <= 0 {
 		return nil, errors.New("invalid user id")
 	}
-	if plan.MaxPurchasePerUser > 0 {
+	if !options.SkipPurchaseLimit && plan.MaxPurchasePerUser > 0 {
+		var lockedUser User
+		if err := lockForUpdate(tx).Select("id").Where("id = ?", userId).First(&lockedUser).Error; err != nil {
+			return nil, err
+		}
 		var count int64
 		if err := tx.Model(&UserSubscription{}).
 			Where("user_id = ? AND plan_id = ?", userId, plan.Id).
@@ -700,7 +713,7 @@ func CreateUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 			return nil, err
 		}
 		if count >= int64(plan.MaxPurchasePerUser) {
-			return nil, errors.New("已达到该套餐购买上限")
+			return nil, fmt.Errorf("%w: 已达到该套餐购买上限", ErrSubscriptionPurchaseLimit)
 		}
 	}
 	nowUnix := getDBTimestampTx(tx)
@@ -803,11 +816,8 @@ func CompleteSubscriptionOrderWithValidation(tradeNo string, providerPayload str
 		if validation.ActualPaymentToken != "" && !paymentMethodMatchesBEpusdtToken(order.PaymentMethod, validation.ActualPaymentToken) {
 			return ErrPaymentMethodMismatch
 		}
-		if validation.RequirePaymentFacts && !samePaymentCurrency(order.PaidCurrency, validation.PaidCurrency) {
-			return ErrPaymentCurrencyMismatch
-		}
-		if validation.RequirePaymentFacts && !samePaymentAmount(order.PaidAmount, validation.PaidAmount) {
-			return ErrPaymentAmountMismatch
+		if err := applyValidatedPaymentFactsToSubscriptionOrder(&order, validation); err != nil {
+			return err
 		}
 		if order.Status == common.TopUpStatusSuccess {
 			return nil
@@ -827,6 +837,14 @@ func CompleteSubscriptionOrderWithValidation(tradeNo string, providerPayload str
 		_, err = CreateUserSubscriptionFromPlanTx(tx, order.UserId, plan, "order")
 		if err != nil {
 			return err
+		}
+		if order.PaymentProvider == PaymentProviderStripe && strings.TrimSpace(validation.StripeCustomer) != "" {
+			customerID := strings.TrimSpace(validation.StripeCustomer)
+			if err := tx.Model(&User{}).
+				Where("id = ? AND (stripe_customer IS NULL OR stripe_customer = '')", order.UserId).
+				Update("stripe_customer", customerID).Error; err != nil {
+				return err
+			}
 		}
 		if providerPayload != "" {
 			order.ProviderPayload = providerPayload
@@ -867,6 +885,30 @@ func CompleteSubscriptionOrderWithValidation(tradeNo string, providerPayload str
 			PaidCurrency:          logPaidCurrency,
 		})
 	}
+	return nil
+}
+
+func applyValidatedPaymentFactsToSubscriptionOrder(order *SubscriptionOrder, validation PaymentCallbackValidation) error {
+	if order == nil || !validation.RequirePaymentFacts {
+		return nil
+	}
+	expectedAmount := order.PaidAmount
+	if expectedAmount <= 0 {
+		expectedAmount = order.Money
+	}
+	expectedCurrency := order.PaidCurrency
+	if strings.TrimSpace(expectedCurrency) == "" {
+		expectedCurrency = order.PlanCurrencySnapshot
+	}
+	if strings.TrimSpace(expectedCurrency) == "" {
+		expectedCurrency = defaultPaymentFactsCurrency(order.PaymentProvider)
+	}
+	paidAmount, paidCurrency, err := validatedPaymentFacts(expectedAmount, expectedCurrency, validation)
+	if err != nil {
+		return err
+	}
+	order.PaidAmount = paidAmount
+	order.PaidCurrency = paidCurrency
 	return nil
 }
 

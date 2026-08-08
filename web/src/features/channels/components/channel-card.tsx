@@ -16,11 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { memo } from 'react'
 import { flexRender, type Row } from '@tanstack/react-table'
+import { memo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { cn } from '@/lib/utils'
+
 import { GroupBadge } from '@/components/group-badge'
+import { cn } from '@/lib/utils'
+
 import { CHANNEL_STATUS } from '../constants'
 import { isTagAggregateRow, parseGroupsList } from '../lib'
 import type { Channel } from '../types'
@@ -139,7 +141,9 @@ function ChannelCardComponent({
           <span className={cn('mt-2', labelClass)}>
             {fieldLabels.response_time}
           </span>
-          <span className={cn('mt-2', labelClass)}>{fieldLabels.test_time}</span>
+          <span className={cn('mt-2', labelClass)}>
+            {fieldLabels.test_time}
+          </span>
           <div className='overflow-hidden text-sm'>
             {responseCell ?? <span className='text-muted-foreground'>-</span>}
           </div>

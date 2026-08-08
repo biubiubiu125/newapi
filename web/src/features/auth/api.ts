@@ -16,14 +16,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import axios from "axios";
+import axios from 'axios'
 
-import { api, refreshAuthentication, type RefreshOutcome } from "@/lib/api";
-import { useAuthStore } from "@/stores/auth-store";
+import { api, refreshAuthentication, type RefreshOutcome } from '@/lib/api'
+import { useAuthStore } from '@/stores/auth-store'
 
-import { getAffiliateCode } from "./lib/storage";
-import { sanitizeAuthRedirect } from "./lib/auth-redirect";
-import type { TelegramAuthorization } from "./lib/telegram-login";
+import { sanitizeAuthRedirect } from './lib/auth-redirect'
+import { getAffiliateCode } from './lib/storage'
+import type { TelegramAuthorization } from './lib/telegram-login'
 import type {
   LoginPayload,
   LoginResponse,
@@ -31,7 +31,7 @@ import type {
   TwoFAPayload,
   RegisterPayload,
   ApiResponse,
-} from "./types";
+} from './types'
 
 // ============================================================================
 // Authentication APIs
@@ -43,57 +43,57 @@ import type {
 
 // User login with username and password
 export async function login(payload: LoginPayload) {
-  const turnstile = payload.turnstile ?? "";
+  const turnstile = payload.turnstile ?? ''
   const res = await api.post<LoginResponse>(
     `/api/user/login?turnstile=${turnstile}`,
     {
       username: payload.username,
       password: payload.password,
     },
-    { skipAuthRefresh: true },
-  );
-  return res.data;
+    { skipAuthRefresh: true }
+  )
+  return res.data
 }
 
 // Two-factor authentication login
 export async function login2fa(payload: TwoFAPayload) {
-  const res = await api.post<Login2FAResponse>("/api/user/login/2fa", payload, {
+  const res = await api.post<Login2FAResponse>('/api/user/login/2fa', payload, {
     skipAuthRefresh: true,
-  });
-  return res.data;
+  })
+  return res.data
 }
 
 interface LogoutRuntime {
-  getExpectedSID: () => string | undefined;
-  request: (expectedSID?: string) => Promise<ApiResponse>;
-  refresh: () => Promise<RefreshOutcome>;
+  getExpectedSID: () => string | undefined
+  request: (expectedSID?: string) => Promise<ApiResponse>
+  refresh: () => Promise<RefreshOutcome>
 }
 
 export async function executeLogout(
   runtime: LogoutRuntime,
-  allowMismatchRecovery = true,
+  allowMismatchRecovery = true
 ): Promise<ApiResponse> {
   try {
-    return await runtime.request(runtime.getExpectedSID());
+    return await runtime.request(runtime.getExpectedSID())
   } catch (error: unknown) {
     const code = axios.isAxiosError(error)
       ? error.response?.data?.code
-      : undefined;
+      : undefined
     if (
       allowMismatchRecovery &&
       axios.isAxiosError(error) &&
       error.response?.status === 409 &&
-      code === "AUTH_SESSION_MISMATCH"
+      code === 'AUTH_SESSION_MISMATCH'
     ) {
-      const outcome = await runtime.refresh();
-      if (outcome.kind === "authenticated") {
-        return executeLogout(runtime, false);
+      const outcome = await runtime.refresh()
+      if (outcome.kind === 'authenticated') {
+        return executeLogout(runtime, false)
       }
-      if (outcome.kind === "anonymous") {
-        return { success: true, message: "" };
+      if (outcome.kind === 'anonymous') {
+        return { success: true, message: '' }
       }
     }
-    throw error;
+    throw error
   }
 }
 
@@ -102,15 +102,15 @@ export async function logout(): Promise<ApiResponse> {
   return executeLogout({
     getExpectedSID: () => useAuthStore.getState().auth.session?.sid,
     request: async (sid) => {
-      const res = await api.post("/api/user/auth/logout", undefined, {
-        headers: sid ? { "X-Auth-Session": sid } : undefined,
+      const res = await api.post('/api/user/auth/logout', undefined, {
+        headers: sid ? { 'X-Auth-Session': sid } : undefined,
         skipAuthRefresh: true,
         skipErrorHandler: true,
-      });
-      return res.data;
+      })
+      return res.data
     },
     refresh: refreshAuthentication,
-  });
+  })
 }
 
 // ----------------------------------------------------------------------------
@@ -120,12 +120,12 @@ export async function logout(): Promise<ApiResponse> {
 // Send password reset email
 export async function sendPasswordResetEmail(
   email: string,
-  turnstile?: string,
+  turnstile?: string
 ): Promise<ApiResponse> {
-  const res = await api.get("/api/reset_password", {
+  const res = await api.get('/api/reset_password', {
     params: { email, turnstile },
-  });
-  return res.data;
+  })
+  return res.data
 }
 
 // ----------------------------------------------------------------------------
@@ -134,66 +134,66 @@ export async function sendPasswordResetEmail(
 
 // Start GitHub OAuth flow
 export async function githubOAuthStart(clientId: string, state: string) {
-  const url = `https://github.com/login/oauth/authorize?client_id=${clientId}&state=${state}&scope=user:email`;
-  window.open(url);
+  const url = `https://github.com/login/oauth/authorize?client_id=${clientId}&state=${state}&scope=user:email`
+  window.open(url)
 }
 
 // Get OAuth state for CSRF protection
 export async function getOAuthState(affiliateCode?: string): Promise<string> {
-  const aff = affiliateCode?.trim() || getAffiliateCode();
-  const res = await api.get("/api/oauth/state", { params: { aff } });
-  if (res.data?.success) return res.data.data;
-  return "";
+  const aff = affiliateCode?.trim() || getAffiliateCode()
+  const res = await api.get('/api/oauth/state', { params: { aff } })
+  if (res.data?.success) return res.data.data
+  return ''
 }
 
 export async function createOAuthFlow(
   provider: string,
-  intent: "login" | "bind",
+  intent: 'login' | 'bind',
   affiliateCode?: string,
-  redirectTo?: string,
+  redirectTo?: string
 ): Promise<string> {
   const aff =
-    intent === "login" ? affiliateCode?.trim() || getAffiliateCode() : "";
+    intent === 'login' ? affiliateCode?.trim() || getAffiliateCode() : ''
   const redirect =
-    intent === "login" && typeof window !== "undefined"
-      ? sanitizeAuthRedirect(redirectTo, window.location.origin) ?? undefined
-      : undefined;
+    intent === 'login' && typeof window !== 'undefined'
+      ? (sanitizeAuthRedirect(redirectTo, window.location.origin) ?? undefined)
+      : undefined
   const res = await api.post(
-    "/api/oauth/state",
+    '/api/oauth/state',
     { provider, intent, aff: aff || undefined, redirect },
-    { skipAuthRefresh: intent === "login" },
-  );
+    { skipAuthRefresh: intent === 'login' }
+  )
   if (res.data?.success) {
-    if (typeof res.data.data === "string") return res.data.data;
-    if (typeof res.data.data?.flow_token === "string") {
-      return res.data.data.flow_token;
+    if (typeof res.data.data === 'string') return res.data.data
+    if (typeof res.data.data?.flow_token === 'string') {
+      return res.data.data.flow_token
     }
   }
-  throw new Error(res.data?.message || "Failed to initialize OAuth");
+  throw new Error(res.data?.message || 'Failed to initialize OAuth')
 }
 
 // WeChat login by authorization code
 export async function wechatLoginByCode(
   code: string,
-  aff?: string,
+  aff?: string
 ): Promise<ApiResponse> {
-  const res = await api.get("/api/oauth/wechat", {
+  const res = await api.get('/api/oauth/wechat', {
     params: { code, aff: aff || undefined },
-  });
-  return res.data;
+  })
+  return res.data
 }
 
 export async function telegramLogin(
-  authorization: TelegramAuthorization,
+  authorization: TelegramAuthorization
 ): Promise<ApiResponse> {
-  const res = await api.get("/api/oauth/telegram/login", {
+  const res = await api.get('/api/oauth/telegram/login', {
     params: authorization,
     disableDuplicate: true,
     skipAuthRefresh: true,
     skipBusinessError: true,
     skipErrorHandler: true,
-  });
-  return res.data;
+  })
+  return res.data
 }
 
 // ----------------------------------------------------------------------------
@@ -203,30 +203,30 @@ export async function telegramLogin(
 // User registration
 export async function register(payload: RegisterPayload): Promise<ApiResponse> {
   const res = await api.post(`/api/user/register`, payload, {
-    params: { turnstile: payload.turnstile ?? "" },
-  });
-  return res.data;
+    params: { turnstile: payload.turnstile ?? '' },
+  })
+  return res.data
 }
 
 // Send email verification code
 export async function sendEmailVerification(
   email: string,
-  turnstile?: string,
+  turnstile?: string
 ): Promise<ApiResponse> {
-  const res = await api.get("/api/verification", {
+  const res = await api.get('/api/verification', {
     params: { email, turnstile },
-  });
-  return res.data;
+  })
+  return res.data
 }
 
 // Bind email to OAuth account
 export async function bindEmail(
   email: string,
-  code: string,
+  code: string
 ): Promise<ApiResponse> {
-  const res = await api.post("/api/oauth/email/bind", {
+  const res = await api.post('/api/oauth/email/bind', {
     email,
     code,
-  });
-  return res.data;
+  })
+  return res.data
 }

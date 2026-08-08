@@ -28,7 +28,7 @@ export function parseHttpStatusCodeRules(input) {
     };
   }
 
-  const sanitized = raw.replace(/[，]/g, ',');
+  const sanitized = raw.replaceAll(/[，]/g, ',');
   const segments = sanitized.split(/[,]/g);
 
   const ranges = [];
@@ -105,7 +105,7 @@ function mergeRanges(ranges) {
 
   for (let i = 1; i < sorted.length; i += 1) {
     const current = sorted[i];
-    const last = merged[merged.length - 1];
+    const last = merged.at(-1);
 
     if (current.start <= last.end + 1) {
       last.end = Math.max(last.end, current.end);

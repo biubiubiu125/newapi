@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import {
   useEffect,
   useEffectEvent,
@@ -24,11 +25,11 @@ import {
   useRef,
   useState,
 } from 'react'
-import { getRouteApi, useNavigate } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { copyToClipboard } from '@/lib/copy-to-clipboard'
-import { formatTimestamp } from '@/lib/format'
+
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import { SectionPageLayout } from '@/components/layout'
 import { Button, buttonVariants } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -40,8 +41,9 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import { ConfirmDialog } from '@/components/confirm-dialog'
-import { SectionPageLayout } from '@/components/layout'
+import { copyToClipboard } from '@/lib/copy-to-clipboard'
+import { formatTimestamp } from '@/lib/format'
+
 import {
   applyReferralAffiliate,
   cancelReferralWithdrawal,
@@ -298,8 +300,9 @@ export function Referral() {
       !summary.acquisition_enabled ||
       profile?.status !== 'approved' ||
       typeof window === 'undefined'
-    )
+    ) {
       return ''
+    }
     return `${window.location.origin}/r/${encodeURIComponent(summary.invite_code)}`
   }, [profile?.status, summary?.acquisition_enabled, summary?.invite_code])
 
@@ -835,16 +838,16 @@ export function Referral() {
                                 t('Your affiliate application was rejected.')
                               : profile?.status === 'disabled'
                                 ? disabledReasonText
-                                : t('Affiliate access requires admin approval.')}
+                                : t(
+                                    'Affiliate access requires admin approval.'
+                                  )}
                         </p>
                         {(profile?.status === 'rejected' || !profile) && (
                           <div className='space-y-3'>
                             <textarea
                               className='border-input min-h-[140px] w-full rounded-md border bg-transparent px-3 py-2 text-sm'
                               value={applicantNote}
-                              onChange={(e) =>
-                                setApplicantNote(e.target.value)
-                              }
+                              onChange={(e) => setApplicantNote(e.target.value)}
                               placeholder={t(
                                 'Describe your promotion plan or channels'
                               )}

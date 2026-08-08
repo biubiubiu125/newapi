@@ -27,8 +27,7 @@ export const ADMIN_REFERRAL_SECTION_IDS = [
   'audit-logs',
 ] as const
 
-export type AdminReferralSectionId =
-  (typeof ADMIN_REFERRAL_SECTION_IDS)[number]
+export type AdminReferralSectionId = (typeof ADMIN_REFERRAL_SECTION_IDS)[number]
 
 export const ADMIN_REFERRAL_DEFAULT_SECTION: AdminReferralSectionId = 'overview'
 

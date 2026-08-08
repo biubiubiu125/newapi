@@ -16,8 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { DEFAULT_DISCOUNT_RATE } from '../constants'
 import { formatCurrencyFromUSD } from '@/lib/currency'
+
+import { DEFAULT_DISCOUNT_RATE } from '../constants'
 
 // ============================================================================
 // Wallet-specific Formatting Functions

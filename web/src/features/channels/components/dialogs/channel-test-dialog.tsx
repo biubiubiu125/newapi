@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useMemo, useState } from 'react'
 import {
   type ColumnDef,
   type RowSelectionState,
@@ -27,10 +26,19 @@ import {
   useReactTable,
 } from '@tanstack/react-table'
 import { Check, Copy, Info, Loader2, Settings } from 'lucide-react'
+import { useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
-import { useIsMobile } from '@/hooks/use-mobile'
+
+import { DataTableBulkActions as BulkActionsToolbar } from '@/components/data-table'
+import { DataTablePagination } from '@/components/data-table/pagination'
+import {
+  sideDrawerContentClassName,
+  sideDrawerFooterClassName,
+  sideDrawerFormClassName,
+  sideDrawerHeaderClassName,
+} from '@/components/drawer-layout'
+import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -73,15 +81,9 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { DataTableBulkActions as BulkActionsToolbar } from '@/components/data-table'
-import { DataTablePagination } from '@/components/data-table/pagination'
-import {
-  sideDrawerContentClassName,
-  sideDrawerFooterClassName,
-  sideDrawerFormClassName,
-  sideDrawerHeaderClassName,
-} from '@/components/drawer-layout'
-import { StatusBadge } from '@/components/status-badge'
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { useIsMobile } from '@/hooks/use-mobile'
+
 import { formatResponseTime, handleTestChannel } from '../../lib'
 import { useChannels } from '../channels-provider'
 
@@ -146,7 +148,7 @@ type FailureDetailsState = {
 }
 
 function normalizeInlineError(errorText: string) {
-  return errorText.replace(/\s+/g, ' ').trim()
+  return errorText.replaceAll(/\s+/g, ' ').trim()
 }
 
 function getFirstErrorLine(errorText: string) {
@@ -543,12 +545,10 @@ export function ChannelTestDialog({
               <div className='grid gap-2'>
                 <Label htmlFor='endpoint-type'>{t('Endpoint Type')}</Label>
                 <Select
-                  items={[
-                    ...endpointTypeOptions.map((option) => {
-                      const itemValue = option.value
-                      return { value: itemValue, label: t(option.label) }
-                    }),
-                  ]}
+                  items={endpointTypeOptions.map((option) => {
+                    const itemValue = option.value
+                    return { value: itemValue, label: t(option.label) }
+                  })}
                   value={endpointType}
                   onValueChange={(v) => v !== null && setEndpointType(v)}
                 >

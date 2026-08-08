@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
+import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
@@ -26,7 +27,6 @@ import {
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
-import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 
 type ConfirmDialogProps = {
@@ -60,12 +60,13 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
   } = props
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className={cn(className && className)} showCloseButton={false}>
+      <DialogContent
+        className={cn(className)}
+        showCloseButton={false}
+      >
         <DialogHeader className='text-start'>
           <DialogTitle>{title}</DialogTitle>
-          <DialogDescription render={<div />}>
-            {desc}
-          </DialogDescription>
+          <DialogDescription render={<div />}>{desc}</DialogDescription>
         </DialogHeader>
         {children}
         <DialogFooter>

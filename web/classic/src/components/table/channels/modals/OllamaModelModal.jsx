@@ -17,8 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
+import {
+  IconDownload,
+  IconDelete,
+  IconRefresh,
+  IconSearch,
+  IconPlus,
+} from '@douyinfe/semi-icons';
 import {
   Modal,
   Button,
@@ -36,13 +41,9 @@ import {
   Progress,
   Checkbox,
 } from '@douyinfe/semi-ui';
-import {
-  IconDownload,
-  IconDelete,
-  IconRefresh,
-  IconSearch,
-  IconPlus,
-} from '@douyinfe/semi-icons';
+import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   API,
   authHeader,
@@ -61,7 +62,7 @@ const parseMaybeJSON = (value) => {
   if (typeof value === 'string') {
     try {
       return JSON.parse(value);
-    } catch (error) {
+    } catch {
       return null;
     }
   }
@@ -423,7 +424,7 @@ const OllamaModelModal = ({
               }
 
               try {
-                const eventData = line.substring(6);
+                const eventData = line.slice(6);
                 if (eventData === '[DONE]') {
                   setPullLoading(false);
                   setPullProgress(null);

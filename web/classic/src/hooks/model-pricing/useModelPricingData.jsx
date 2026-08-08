@@ -17,12 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { Modal } from '@douyinfe/semi-ui';
 import { useState, useEffect, useContext, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { API, copy, showError, showInfo, showSuccess } from '../../helpers';
-import { Modal } from '@douyinfe/semi-ui';
-import { UserContext } from '../../context/User';
+
 import { StatusContext } from '../../context/Status';
+import { UserContext } from '../../context/User';
+import { API, copy, showError, showInfo, showSuccess } from '../../helpers';
 import { MODEL_PRICING_REFRESH_EVENT } from '../../helpers/modelSyncPreview';
 
 export const useModelPricingData = () => {
@@ -228,7 +229,7 @@ export const useModelPricingData = () => {
 
   const loadPricing = async () => {
     setLoading(true);
-    let url = '/api/pricing';
+    const url = '/api/pricing';
     const res = await API.get(url);
     const {
       success,
@@ -297,7 +298,7 @@ export const useModelPricingData = () => {
     } else {
       showInfo(
         t('当前查看的分组为：{{group}}，倍率为：{{ratio}}', {
-          group: group,
+          group,
           ratio: groupRatio[group] ?? 1,
         }),
       );

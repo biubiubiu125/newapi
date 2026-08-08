@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useRef, useState } from 'react';
 import { Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
+import React, { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import {
   API,
   compareObjects,
@@ -79,7 +80,7 @@ export default function SettingsCreditLimit(props) {
 
   useEffect(() => {
     const currentInputs = {};
-    for (let key in props.options) {
+    for (const key in props.options) {
       if (Object.keys(inputs).includes(key)) {
         currentInputs[key] = props.options[key];
       }
@@ -101,10 +102,10 @@ export default function SettingsCreditLimit(props) {
             <Col xs={24} sm={12} md={8} lg={8} xl={8}>
               <Form.InputNumber
                 label={t('新用户初始额度')}
-                field={'QuotaForNewUser'}
+                field='QuotaForNewUser'
                 step={1}
                 min={0}
-                suffix={'Token'}
+                suffix='Token'
                 onChange={(value) =>
                   setInputs({
                     ...inputs,
@@ -116,10 +117,10 @@ export default function SettingsCreditLimit(props) {
             <Col xs={24} sm={12} md={8} lg={8} xl={8}>
               <Form.InputNumber
                 label={t('请求预扣费额度')}
-                field={'PreConsumedQuota'}
+                field='PreConsumedQuota'
                 step={1}
                 min={0}
-                suffix={'Token'}
+                suffix='Token'
                 extraText={t('请求结束后多退少补')}
                 onChange={(value) =>
                   setInputs({
@@ -134,7 +135,7 @@ export default function SettingsCreditLimit(props) {
             <Col>
               <Form.Switch
                 label={t('对免费模型启用预消费')}
-                field={'quota_setting.enable_free_model_pre_consume'}
+                field='quota_setting.enable_free_model_pre_consume'
                 extraText={t(
                   '开启后，对免费模型（倍率为0，或者价格为0）的模型也会预消耗额度',
                 )}

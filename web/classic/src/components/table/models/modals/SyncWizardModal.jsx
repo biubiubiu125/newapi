@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
 import { Modal, RadioGroup, Radio, Steps, Button } from '@douyinfe/semi-ui';
+import React, { useEffect, useState } from 'react';
+
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 
 const SyncWizardModal = ({ visible, onClose, onConfirm, loading, t }) => {

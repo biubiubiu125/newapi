@@ -17,15 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Tag, Button, Space, Popover, Dropdown } from '@douyinfe/semi-ui';
 import { IconMore } from '@douyinfe/semi-icons';
-import { renderQuota, timestamp2string } from '../../../helpers';
+import { Tag, Button, Space, Popover, Dropdown } from '@douyinfe/semi-ui';
+import React from 'react';
+
 import {
   REDEMPTION_STATUS,
   REDEMPTION_STATUS_MAP,
   REDEMPTION_ACTIONS,
 } from '../../../constants/redemption.constants';
+import { renderQuota, timestamp2string } from '../../../helpers';
 
 /**
  * Check if redemption code is expired
@@ -111,7 +112,7 @@ export const getRedemptionsColumns = ({
         return (
           <div>
             <Tag color='grey' shape='circle'>
-              {renderQuota(parseInt(text))}
+              {renderQuota(Number.parseInt(text))}
             </Tag>
           </div>
         );

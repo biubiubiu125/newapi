@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect, useMemo } from 'react';
 import {
   Card,
   Calendar,
@@ -36,7 +35,9 @@ import {
   ChevronDown,
   ChevronUp,
 } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
 import Turnstile from 'react-turnstile';
+
 import { API, showError, showSuccess, renderQuota } from '../../../../helpers';
 
 const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
@@ -102,7 +103,7 @@ const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
           setInitialLoaded(true);
         }
       }
-    } catch (error) {
+    } catch {
       showError(t('获取签到状态失败'));
       if (isFirstLoad) {
         setIsCollapsed(false);
@@ -133,7 +134,7 @@ const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
       const { success, data, message } = res.data;
       if (success) {
         showSuccess(
-          t('签到成功！获得') + ' ' + renderQuota(data.quota_awarded),
+          `${t('签到成功！获得')} ${renderQuota(data.quota_awarded)}`,
         );
         // 刷新签到状态
         fetchCheckinStatus(currentMonth);
@@ -152,7 +153,7 @@ const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
         }
         showError(message || t('签到失败'));
       }
-    } catch (error) {
+    } catch {
       showError(t('签到失败'));
     } finally {
       setCheckinLoading(false);
@@ -262,9 +263,9 @@ const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
               {!initialLoaded
                 ? t('正在加载签到状态...')
                 : checkinData.stats?.checked_in_today
-                  ? t('今日已签到，累计签到') +
-                    ` ${checkinData.stats?.total_checkins || 0} ` +
-                    t('天')
+                  ? `${t(
+                      '今日已签到，累计签到',
+                    )} ${checkinData.stats?.total_checkins || 0} ${t('天')}`
                   : t('每日签到可获得随机额度奖励')}
             </div>
           </div>

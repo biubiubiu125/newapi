@@ -17,8 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import { Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   compareObjects,
   API,
@@ -27,7 +29,6 @@ import {
   showWarning,
   verifyJSON,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
 
 export default function RequestRateLimit(props) {
   const { t } = useTranslation();
@@ -64,8 +65,9 @@ export default function RequestRateLimit(props) {
         if (requestQueue.length === 1) {
           if (res.includes(undefined)) return;
         } else if (requestQueue.length > 1) {
-          if (res.includes(undefined))
+          if (res.includes(undefined)) {
             return showError(t('部分保存失败，请重试'));
+          }
         }
 
         for (let i = 0; i < res.length; i++) {
@@ -87,7 +89,7 @@ export default function RequestRateLimit(props) {
 
   useEffect(() => {
     const currentInputs = {};
-    for (let key in props.options) {
+    for (const key in props.options) {
       if (Object.keys(inputs).includes(key)) {
         currentInputs[key] = props.options[key];
       }
@@ -109,7 +111,7 @@ export default function RequestRateLimit(props) {
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'ModelRequestRateLimitEnabled'}
+                  field='ModelRequestRateLimitEnabled'
                   label={t('启用用户模型请求速率限制（可能会影响高并发性能）')}
                   size='default'
                   checkedText='｜'
@@ -131,7 +133,7 @@ export default function RequestRateLimit(props) {
                   min={0}
                   suffix={t('分钟')}
                   extraText={t('频率限制的周期（分钟）')}
-                  field={'ModelRequestRateLimitDurationMinutes'}
+                  field='ModelRequestRateLimitDurationMinutes'
                   onChange={(value) =>
                     setInputs({
                       ...inputs,
@@ -150,7 +152,7 @@ export default function RequestRateLimit(props) {
                   max={100000000}
                   suffix={t('次')}
                   extraText={t('包括失败请求的次数，0代表不限制')}
-                  field={'ModelRequestRateLimitCount'}
+                  field='ModelRequestRateLimitCount'
                   onChange={(value) =>
                     setInputs({
                       ...inputs,
@@ -167,7 +169,7 @@ export default function RequestRateLimit(props) {
                   max={100000000}
                   suffix={t('次')}
                   extraText={t('只包括请求成功的次数')}
-                  field={'ModelRequestRateLimitSuccessCount'}
+                  field='ModelRequestRateLimitSuccessCount'
                   onChange={(value) =>
                     setInputs({
                       ...inputs,
@@ -184,7 +186,7 @@ export default function RequestRateLimit(props) {
                   placeholder={t(
                     '{\n  "default": [200, 100],\n  "vip": [0, 1000]\n}',
                   )}
-                  field={'ModelRequestRateLimitGroup'}
+                  field='ModelRequestRateLimitGroup'
                   autosize={{ minRows: 5, maxRows: 15 }}
                   trigger='blur'
                   stopValidateWithError

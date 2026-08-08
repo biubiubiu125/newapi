@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState } from 'react';
 import { Radio, RadioGroup } from '@douyinfe/semi-ui';
+import React, { useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import ModelPricingEditor from './components/ModelPricingEditor';
 import ModelRatioSettings from './ModelRatioSettings';
 

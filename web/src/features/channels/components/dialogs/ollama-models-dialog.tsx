@@ -82,17 +82,17 @@ export function OllamaModelsDialog({
   const canFetchSavedModels = hasPermission(
     currentUser,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
-    ADMIN_PERMISSION_ACTIONS.OPERATE,
+    ADMIN_PERMISSION_ACTIONS.OPERATE
   )
   const canWriteChannel = hasPermission(
     currentUser,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
-    ADMIN_PERMISSION_ACTIONS.WRITE,
+    ADMIN_PERMISSION_ACTIONS.WRITE
   )
   const canEditSensitive = hasPermission(
     currentUser,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
-    ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE,
+    ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
   )
   const canFetchOllamaModels = canFetchSavedModels || canEditSensitive
 

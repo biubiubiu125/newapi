@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { Card, Button, Typography, Tag } from '@douyinfe/semi-ui';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { Card, Button, Typography, Tag } from '@douyinfe/semi-ui';
+
 import { copy, showSuccess } from '../../../helpers';
 
 /**

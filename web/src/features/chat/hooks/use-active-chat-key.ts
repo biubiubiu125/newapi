@@ -18,9 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import i18next from 'i18next'
-import { useAuthStore } from '@/stores/auth-store'
+
 import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 import { API_KEY_STATUS } from '@/features/keys/constants'
+import { useAuthStore } from '@/stores/auth-store'
 
 export async function fetchActiveChatKey() {
   const result = await getApiKeys({ p: 1, size: 50 })
@@ -38,9 +39,7 @@ export async function fetchActiveChatKey() {
 
   const keyResult = await fetchTokenKey(active.id)
   if (!keyResult.success || !keyResult.data?.key) {
-    throw new Error(
-      keyResult.message || i18next.t('Failed to load API key')
-    )
+    throw new Error(keyResult.message || i18next.t('Failed to load API key'))
   }
 
   return `sk-${keyResult.data.key}`

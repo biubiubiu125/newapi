@@ -17,9 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useRef } from 'react';
-import { API, showError, showSuccess } from '../../../../helpers';
-import { useIsMobile } from '../../../../hooks/common/useIsMobile';
+import { IconSave, IconClose, IconUserAdd } from '@douyinfe/semi-icons';
 import {
   Button,
   SideSheet,
@@ -33,8 +31,11 @@ import {
   Row,
   Col,
 } from '@douyinfe/semi-ui';
-import { IconSave, IconClose, IconUserAdd } from '@douyinfe/semi-icons';
+import React, { useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { API, showError, showSuccess } from '../../../../helpers';
+import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 
 const { Text, Title } = Typography;
 const USERNAME_PATTERN = /^[A-Za-z0-9_-]+$/;
@@ -76,7 +77,7 @@ const AddUserModal = (props) => {
   return (
     <>
       <SideSheet
-        placement={'left'}
+        placement='left'
         title={
           <Space>
             <Tag color='green' shape='circle'>
@@ -158,7 +159,11 @@ const AddUserModal = (props) => {
                               return true;
                             }
                             if (!USERNAME_PATTERN.test(value)) {
-                              return new Error(t('用户名只能包含英文字母、数字、下划线和连字符'));
+                              return new Error(
+                                t(
+                                  '用户名只能包含英文字母、数字、下划线和连字符',
+                                ),
+                              );
                             }
                             if (value.length > REGISTER_USERNAME_MAX_LENGTH) {
                               return new Error(t('用户名最多 20 个字符'));

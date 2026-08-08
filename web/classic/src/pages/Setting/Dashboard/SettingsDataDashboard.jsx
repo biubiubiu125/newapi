@@ -17,8 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import { Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   compareObjects,
   API,
@@ -26,7 +28,6 @@ import {
   showSuccess,
   showWarning,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
 
 export default function DataDashboard(props) {
   const { t } = useTranslation();
@@ -66,8 +67,9 @@ export default function DataDashboard(props) {
         if (requestQueue.length === 1) {
           if (res.includes(undefined)) return;
         } else if (requestQueue.length > 1) {
-          if (res.includes(undefined))
+          if (res.includes(undefined)) {
             return showError(t('部分保存失败，请重试'));
+          }
         }
         showSuccess(t('保存成功'));
         props.refresh();
@@ -82,7 +84,7 @@ export default function DataDashboard(props) {
 
   useEffect(() => {
     const currentInputs = {};
-    for (let key in props.options) {
+    for (const key in props.options) {
       if (Object.keys(inputs).includes(key)) {
         currentInputs[key] = props.options[key];
       }
@@ -108,7 +110,7 @@ export default function DataDashboard(props) {
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'DataExportEnabled'}
+                  field='DataExportEnabled'
                   label={t('启用数据看板（实验性）')}
                   size='default'
                   checkedText='｜'
@@ -131,7 +133,7 @@ export default function DataDashboard(props) {
                   suffix={t('分钟')}
                   extraText={t('设置过短会影响数据库性能')}
                   placeholder={t('数据看板更新间隔')}
-                  field={'DataExportInterval'}
+                  field='DataExportInterval'
                   onChange={(value) =>
                     setInputs({
                       ...inputs,
@@ -144,7 +146,7 @@ export default function DataDashboard(props) {
                 <Form.Select
                   label={t('数据看板默认时间粒度')}
                   optionList={optionsDataExportDefaultTime}
-                  field={'DataExportDefaultTime'}
+                  field='DataExportDefaultTime'
                   extraText={t('仅修改展示粒度，统计精确到小时')}
                   placeholder={t('数据看板默认时间粒度')}
                   style={{ width: 180 }}

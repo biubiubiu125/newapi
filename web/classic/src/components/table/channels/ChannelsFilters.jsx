@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Button, Form } from '@douyinfe/semi-ui';
 import { IconSearch } from '@douyinfe/semi-icons';
+import { Button, Form } from '@douyinfe/semi-ui';
+import React from 'react';
 
 const ChannelsFilters = ({
   setEditingChannel,
@@ -37,7 +37,8 @@ const ChannelsFilters = ({
   channelPermissions,
   t,
 }) => {
-  const canCreateChannel = channelPermissions?.canSensitiveWriteChannel === true;
+  const canCreateChannel =
+    channelPermissions?.canSensitiveWriteChannel === true;
 
   return (
     <div className='flex flex-col md:flex-row justify-between items-center gap-2 w-full'>
@@ -83,7 +84,7 @@ const ChannelsFilters = ({
           initValues={formInitValues}
           getFormApi={(api) => setFormApi(api)}
           onSubmit={() => searchChannels(enableTagMode)}
-          allowEmpty={true}
+          allowEmpty
           autoComplete='off'
           layout='horizontal'
           trigger='change'

@@ -17,8 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import { Button, Col, Form, Row, Spin, Tag } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   compareObjects,
   API,
@@ -26,7 +28,6 @@ import {
   showSuccess,
   showWarning,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
 
 export default function SettingsSensitiveWords(props) {
   const { t } = useTranslation();
@@ -60,8 +61,9 @@ export default function SettingsSensitiveWords(props) {
         if (requestQueue.length === 1) {
           if (res.includes(undefined)) return;
         } else if (requestQueue.length > 1) {
-          if (res.includes(undefined))
+          if (res.includes(undefined)) {
             return showError(t('部分保存失败，请重试'));
+          }
         }
         showSuccess(t('保存成功'));
         props.refresh();
@@ -76,7 +78,7 @@ export default function SettingsSensitiveWords(props) {
 
   useEffect(() => {
     const currentInputs = {};
-    for (let key in props.options) {
+    for (const key in props.options) {
       if (Object.keys(inputs).includes(key)) {
         currentInputs[key] = props.options[key];
       }
@@ -97,7 +99,7 @@ export default function SettingsSensitiveWords(props) {
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'CheckSensitiveEnabled'}
+                  field='CheckSensitiveEnabled'
                   label={t('启用屏蔽词过滤功能')}
                   size='default'
                   checkedText='｜'
@@ -112,7 +114,7 @@ export default function SettingsSensitiveWords(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'CheckSensitiveOnPromptEnabled'}
+                  field='CheckSensitiveOnPromptEnabled'
                   label={t('启用 Prompt 检查')}
                   size='default'
                   checkedText='｜'
@@ -132,7 +134,7 @@ export default function SettingsSensitiveWords(props) {
                   label={t('屏蔽词列表')}
                   extraText={t('一行一个屏蔽词，不需要符号分割')}
                   placeholder={t('一行一个屏蔽词，不需要符号分割')}
-                  field={'SensitiveWords'}
+                  field='SensitiveWords'
                   onChange={(value) =>
                     setInputs({
                       ...inputs,

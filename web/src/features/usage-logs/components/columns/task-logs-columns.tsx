@@ -16,17 +16,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-/* eslint-disable react-refresh/only-export-components */
-import { useState, useMemo } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
 import { Music } from 'lucide-react'
+/* eslint-disable react-refresh/only-export-components */
+import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
+
+import { DataTableColumnHeader } from '@/components/data-table'
+import { StatusBadge } from '@/components/status-badge'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
-import { DataTableColumnHeader } from '@/components/data-table'
-import { StatusBadge } from '@/components/status-badge'
+
 import { TASK_ACTIONS, TASK_STATUS } from '../../constants'
 import { getLogUserDisplayName, openLogUserInfo } from '../../lib/log-user'
 import { taskActionMapper, taskStatusMapper } from '../../lib/mappers'
@@ -218,7 +220,9 @@ export function useTaskLogsColumns(isAdmin: boolean): ColumnDef<TaskLog>[] {
                 ? t('Settlement review')
                 : t(taskStatusMapper.getLabel(status, status || 'Submitting'))
             }
-            variant={settlementFailed ? 'red' : taskStatusMapper.getVariant(status)}
+            variant={
+              settlementFailed ? 'red' : taskStatusMapper.getVariant(status)
+            }
             size='sm'
             copyable={false}
           />

@@ -17,24 +17,25 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import ReactMarkdown from 'react-markdown';
+import { IconCopy } from '@douyinfe/semi-icons';
+
 import 'katex/dist/katex.min.css';
 import 'highlight.js/styles/github.css';
 import './markdown.css';
-import RemarkMath from 'remark-math';
-import RemarkBreaks from 'remark-breaks';
-import RehypeKatex from 'rehype-katex';
-import RemarkGfm from 'remark-gfm';
-import RehypeHighlight from 'rehype-highlight';
-import { useRef, useState, useEffect, useMemo } from 'react';
-import mermaid from 'mermaid';
-import React from 'react';
-import { useDebouncedCallback } from 'use-debounce';
-import clsx from 'clsx';
 import { Button, Tooltip, Toast } from '@douyinfe/semi-ui';
-import { copy, rehypeSplitWordsIntoSpans } from '../../../helpers';
-import { IconCopy } from '@douyinfe/semi-icons';
+import clsx from 'clsx';
+import mermaid from 'mermaid';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import ReactMarkdown from 'react-markdown';
+import RehypeHighlight from 'rehype-highlight';
+import RehypeKatex from 'rehype-katex';
+import RemarkBreaks from 'remark-breaks';
+import RemarkGfm from 'remark-gfm';
+import RemarkMath from 'remark-math';
+import { useDebouncedCallback } from 'use-debounce';
+
+import { copy, rehypeSplitWordsIntoSpans } from '../../../helpers';
 
 mermaid.initialize({
   startOnLoad: false,
@@ -165,7 +166,7 @@ export function PreCode(props) {
   useEffect(() => {
     if (ref.current) {
       const codeElements = ref.current.querySelectorAll('code');
-      const wrapLanguages = [
+      const wrapLanguages = new Set([
         '',
         'md',
         'markdown',
@@ -174,11 +175,11 @@ export function PreCode(props) {
         'plaintext',
         'tex',
         'latex',
-      ];
+      ]);
       codeElements.forEach((codeElement) => {
         let languageClass = codeElement.className.match(/language-(\w+)/);
         let name = languageClass ? languageClass[1] : '';
-        if (wrapLanguages.includes(name)) {
+        if (wrapLanguages.has(name)) {
           codeElement.style.whiteSpace = 'pre-wrap';
         }
       });
@@ -364,16 +365,16 @@ function tryWrapHtmlCode(text) {
     return text;
   }
   return text
-    .replace(
+    .replaceAll(
       /([`]*?)(\w*?)([\n\r]*?)(<!DOCTYPE html>)/g,
       (match, quoteStart, lang, newLine, doctype) => {
-        return !quoteStart ? '\n```html\n' + doctype : match;
+        return !quoteStart ? `\n\`\`\`html\n${doctype}` : match;
       },
     )
-    .replace(
+    .replaceAll(
       /(<\/body>)([\r\n\s]*?)(<\/html>)([\n\r]*)([`]*)([\n\r]*?)/g,
       (match, bodyEnd, space, htmlEnd, newLine, quoteEnd) => {
-        return !quoteEnd ? bodyEnd + space + htmlEnd + '\n```\n' : match;
+        return !quoteEnd ? `${bodyEnd + space + htmlEnd}\n\`\`\`\n` : match;
       },
     );
 }
@@ -432,7 +433,7 @@ function _MarkdownContent(props) {
           if (/\.(aac|mp3|opus|wav)$/.test(href)) {
             return (
               <figure style={{ margin: '12px 0' }}>
-                <audio controls src={href} style={{ width: '100%' }}></audio>
+                <audio controls src={href} style={{ width: '100%' }} />
               </figure>
             );
           }
@@ -446,7 +447,7 @@ function _MarkdownContent(props) {
               </video>
             );
           }
-          const isInternal = /^\/#/i.test(href);
+          const isInternal = href.startsWith('/#');
           const target = isInternal ? '_self' : (aProps.target ?? '_blank');
           return (
             <a
@@ -652,7 +653,7 @@ export function MarkdownRenderer(props) {
       className={clsx('markdown-body', className)}
       style={{
         fontSize: `${fontSize}px`,
-        fontFamily: fontFamily,
+        fontFamily,
         lineHeight: '1.6',
         color: 'var(--semi-color-text-0)',
         ...style,

@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
 import {
   Card,
   Tag,
@@ -26,6 +25,8 @@ import {
   Tooltip,
   Modal,
 } from '@douyinfe/semi-ui';
+import React, { useState, useEffect, useMemo, useCallback, memo } from 'react';
+
 import { getLobeHubIcon } from '../../../../../helpers';
 import SearchActions from './SearchActions';
 
@@ -214,7 +215,7 @@ const PricingVendorIntro = memo(
         }
       });
 
-      const vendorList = Array.from(vendors.values()).sort((a, b) =>
+      const vendorList = [...vendors.values()].sort((a, b) =>
         a.name.localeCompare(b.name),
       );
 

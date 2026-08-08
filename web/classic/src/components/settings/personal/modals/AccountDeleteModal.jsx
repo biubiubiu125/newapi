@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Banner, Input, Modal, Typography } from '@douyinfe/semi-ui';
 import { IconDelete, IconUser } from '@douyinfe/semi-icons';
+import { Banner, Input, Modal, Typography } from '@douyinfe/semi-ui';
+import React from 'react';
 import Turnstile from 'react-turnstile';
 
 const AccountDeleteModal = ({
@@ -45,8 +45,8 @@ const AccountDeleteModal = ({
       visible={showAccountDeleteModal}
       onCancel={() => setShowAccountDeleteModal(false)}
       onOk={deleteAccount}
-      size={'small'}
-      centered={true}
+      size='small'
+      centered
       className='modern-modal'
     >
       <div className='space-y-4 py-4'>

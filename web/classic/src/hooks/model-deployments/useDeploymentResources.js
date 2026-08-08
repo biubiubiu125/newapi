@@ -18,8 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import { useState, useCallback } from 'react';
-import { API } from '../../helpers';
-import { showError } from '../../helpers';
+
+import { API, showError } from '../../helpers';
 
 export const useDeploymentResources = () => {
   const [hardwareTypes, setHardwareTypes] = useState([]);
@@ -77,12 +77,12 @@ export const useDeploymentResources = () => {
         );
         return normalizedHardware;
       } else {
-        showError('获取硬件类型失败: ' + response.data.message);
+        showError(`获取硬件类型失败: ${response.data.message}`);
         setHardwareTotalAvailable(0);
         return [];
       }
     } catch (error) {
-      showError('获取硬件类型失败: ' + error.message);
+      showError(`获取硬件类型失败: ${error.message}`);
       setHardwareTotalAvailable(0);
       return [];
     } finally {
@@ -141,7 +141,7 @@ export const useDeploymentResources = () => {
           });
         });
 
-        const normalizedLocations = Array.from(nextLocationsMap.values());
+        const normalizedLocations = [...nextLocationsMap.values()];
         setLocations(normalizedLocations);
         setLocationsTotalAvailable(
           normalizedLocations.reduce(
@@ -151,12 +151,12 @@ export const useDeploymentResources = () => {
         );
         return normalizedLocations;
       } else {
-        showError('获取部署位置失败: ' + response.data.message);
+        showError(`获取部署位置失败: ${response.data.message}`);
         setLocationsTotalAvailable(0);
         return [];
       }
     } catch (error) {
-      showError('获取部署位置失败: ' + error.message);
+      showError(`获取部署位置失败: ${error.message}`);
       setLocationsTotalAvailable(0);
       return [];
     } finally {
@@ -181,7 +181,7 @@ export const useDeploymentResources = () => {
           setAvailableReplicas(replicas);
           return replicas;
         } else {
-          showError('获取可用资源失败: ' + response.data.message);
+          showError(`获取可用资源失败: ${response.data.message}`);
           setAvailableReplicas([]);
           return [];
         }
@@ -235,7 +235,7 @@ export const useDeploymentResources = () => {
         setPriceEstimation(estimation);
         return estimation;
       } else {
-        showError('价格计算失败: ' + response.data.message);
+        showError(`价格计算失败: ${response.data.message}`);
         setPriceEstimation(null);
         return null;
       }
@@ -258,7 +258,7 @@ export const useDeploymentResources = () => {
       if (response.data.success) {
         return response.data.data.available;
       } else {
-        showError('检查名称可用性失败: ' + response.data.message);
+        showError(`检查名称可用性失败: ${response.data.message}`);
         return false;
       }
     } catch (error) {

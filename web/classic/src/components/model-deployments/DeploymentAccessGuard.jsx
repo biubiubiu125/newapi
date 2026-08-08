@@ -17,11 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Card, Button, Typography } from '@douyinfe/semi-ui';
+import { Settings, Server, AlertCircle, WifiOff } from 'lucide-react';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
-import { Settings, Server, AlertCircle, WifiOff } from 'lucide-react';
 
 const { Title, Text } = Typography;
 
@@ -44,7 +44,7 @@ const DeploymentAccessGuard = ({
   if (loading) {
     return (
       <div className='mt-[60px] px-2'>
-        <Card loading={true} style={{ minHeight: '400px' }}>
+        <Card loading style={{ minHeight: '400px' }}>
           <div style={{ textAlign: 'center', padding: '50px 0' }}>
             <Text type='secondary'>{t('加载设置中...')}</Text>
           </div>
@@ -193,7 +193,7 @@ const DeploymentAccessGuard = ({
                       backgroundColor: 'var(--semi-color-primary)',
                       flexShrink: 0,
                     }}
-                  ></div>
+                  />
                   <Text
                     style={{
                       fontSize: '15px',
@@ -214,7 +214,7 @@ const DeploymentAccessGuard = ({
                       backgroundColor: 'var(--semi-color-primary)',
                       flexShrink: 0,
                     }}
-                  ></div>
+                  />
                   <Text
                     style={{
                       fontSize: '15px',
@@ -283,7 +283,7 @@ const DeploymentAccessGuard = ({
   if (connectionLoading || (connectionOk === null && !connectionError)) {
     return (
       <div className='mt-[60px] px-2'>
-        <Card loading={true} style={{ minHeight: '400px' }}>
+        <Card loading style={{ minHeight: '400px' }}>
           <div style={{ textAlign: 'center', padding: '50px 0' }}>
             <Text type='secondary'>{t('正在检查 io.net 连接...')}</Text>
           </div>

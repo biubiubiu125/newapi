@@ -18,22 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { useContext, useEffect } from 'react';
-import { getRelativeTime } from '../../helpers';
-import { UserContext } from '../../context/User';
-import { StatusContext } from '../../context/Status';
-
-import DashboardHeader from './DashboardHeader';
-import StatsCards from './StatsCards';
-import ChartsPanel from './ChartsPanel';
-import ApiInfoPanel from './ApiInfoPanel';
-import AnnouncementsPanel from './AnnouncementsPanel';
-import FaqPanel from './FaqPanel';
-import UptimePanel from './UptimePanel';
-import SearchModal from './modals/SearchModal';
-
-import { useDashboardData } from '../../hooks/dashboard/useDashboardData';
-import { useDashboardStats } from '../../hooks/dashboard/useDashboardStats';
-import { useDashboardCharts } from '../../hooks/dashboard/useDashboardCharts';
 
 import {
   CHART_CONFIG,
@@ -43,6 +27,9 @@ import {
   ANNOUNCEMENT_LEGEND_DATA,
   UPTIME_STATUS_MAP,
 } from '../../constants/dashboard.constants';
+import { StatusContext } from '../../context/Status';
+import { UserContext } from '../../context/User';
+import { getRelativeTime } from '../../helpers';
 import {
   getTrendSpec,
   handleCopyUrl,
@@ -51,6 +38,17 @@ import {
   getUptimeStatusText,
   renderMonitorList,
 } from '../../helpers/dashboard';
+import { useDashboardCharts } from '../../hooks/dashboard/useDashboardCharts';
+import { useDashboardData } from '../../hooks/dashboard/useDashboardData';
+import { useDashboardStats } from '../../hooks/dashboard/useDashboardStats';
+import AnnouncementsPanel from './AnnouncementsPanel';
+import ApiInfoPanel from './ApiInfoPanel';
+import ChartsPanel from './ChartsPanel';
+import DashboardHeader from './DashboardHeader';
+import FaqPanel from './FaqPanel';
+import SearchModal from './modals/SearchModal';
+import StatsCards from './StatsCards';
+import UptimePanel from './UptimePanel';
 
 const Dashboard = () => {
   // ========== Context ==========

@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Skeleton } from '@douyinfe/semi-ui';
+import React from 'react';
 
 const SkeletonWrapper = ({
   loading = false,
@@ -48,7 +48,7 @@ const SkeletonWrapper = ({
       .map((_, index) => (
         <div key={index} className={skeletonLinkClasses}>
           <Skeleton
-            loading={true}
+            loading
             active
             placeholder={
               <Skeleton.Title
@@ -67,7 +67,7 @@ const SkeletonWrapper = ({
         className={`flex items-center p-1 rounded-full bg-semi-color-fill-0 dark:bg-semi-color-fill-1 ${className}`}
       >
         <Skeleton
-          loading={true}
+          loading
           active
           placeholder={
             <Skeleton.Avatar size='extra-small' className='shadow-sm' />
@@ -75,7 +75,7 @@ const SkeletonWrapper = ({
         />
         <div className='ml-1.5 mr-1'>
           <Skeleton
-            loading={true}
+            loading
             active
             placeholder={
               <Skeleton.Title
@@ -92,7 +92,7 @@ const SkeletonWrapper = ({
   const renderImageSkeleton = () => {
     return (
       <Skeleton
-        loading={true}
+        loading
         active
         placeholder={
           <Skeleton.Image
@@ -108,7 +108,7 @@ const SkeletonWrapper = ({
   const renderTitleSkeleton = () => {
     return (
       <Skeleton
-        loading={true}
+        loading
         active
         placeholder={<Skeleton.Title style={{ width, height: 24 }} />}
       />
@@ -120,7 +120,7 @@ const SkeletonWrapper = ({
     return (
       <div className={className}>
         <Skeleton
-          loading={true}
+          loading
           active
           placeholder={<Skeleton.Title style={{ width, height }} />}
         />
@@ -133,7 +133,7 @@ const SkeletonWrapper = ({
     return (
       <div className={className}>
         <Skeleton
-          loading={true}
+          loading
           active
           placeholder={
             <Skeleton.Title style={{ width, height, borderRadius: 9999 }} />
@@ -155,7 +155,7 @@ const SkeletonWrapper = ({
           {/* 图标骨架屏 */}
           <div className='sidebar-icon-container flex-shrink-0'>
             <Skeleton
-              loading={true}
+              loading
               active
               placeholder={
                 <Skeleton.Avatar size='extra-small' shape='square' />
@@ -164,7 +164,7 @@ const SkeletonWrapper = ({
           </div>
           {/* 文本骨架屏 */}
           <Skeleton
-            loading={true}
+            loading
             active
             placeholder={
               <Skeleton.Title
@@ -181,7 +181,7 @@ const SkeletonWrapper = ({
     return (
       <div className={`mb-2 ${className}`}>
         <Skeleton
-          loading={true}
+          loading
           active
           placeholder={
             <Skeleton.Title
@@ -205,7 +205,7 @@ const SkeletonWrapper = ({
 
     const renderIcon = () => (
       <Skeleton
-        loading={true}
+        loading
         active
         placeholder={
           <Skeleton.Avatar
@@ -218,7 +218,7 @@ const SkeletonWrapper = ({
 
     const renderLabel = (labelWidth) => (
       <Skeleton
-        loading={true}
+        loading
         active
         placeholder={
           <Skeleton.Title style={{ width: labelWidth, height: TEXT_HEIGHT }} />
@@ -253,7 +253,7 @@ const SkeletonWrapper = ({
         }}
       >
         <Skeleton
-          loading={true}
+          loading
           active
           placeholder={
             <Skeleton.Avatar
@@ -312,7 +312,7 @@ const SkeletonWrapper = ({
                   style={{ padding: '4px 15px 8px' }}
                 >
                   <Skeleton
-                    loading={true}
+                    loading
                     active
                     placeholder={
                       <Skeleton.Title
@@ -332,7 +332,7 @@ const SkeletonWrapper = ({
                   style={{ padding: '4px 15px 8px' }}
                 >
                   <Skeleton
-                    loading={true}
+                    loading
                     active
                     placeholder={
                       <Skeleton.Title

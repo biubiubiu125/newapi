@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Tag, Space, Tooltip } from '@douyinfe/semi-ui';
 import { IconHelpCircle } from '@douyinfe/semi-icons';
+import { Tag, Space, Tooltip } from '@douyinfe/semi-ui';
+import React from 'react';
+
 import {
   renderModelTag,
   stringToColor,
@@ -27,11 +28,11 @@ import {
   getModelPriceItems,
   getLobeHubIcon,
 } from '../../../../../helpers';
+import { useIsMobile } from '../../../../../hooks/common/useIsMobile';
 import {
   renderLimitedItems,
   renderDescription,
 } from '../../../../common/ui/RenderUtils';
-import { useIsMobile } from '../../../../../hooks/common/useIsMobile';
 
 function renderQuotaType(type, t) {
   switch (type) {
@@ -160,7 +161,7 @@ export const getPricingTableColumns = ({
     title: t('计费类型'),
     dataIndex: 'quota_type',
     render: (text, record, index) => {
-      return renderQuotaType(parseInt(text), t);
+      return renderQuotaType(Number.parseInt(text), t);
     },
     sorter: (a, b) => a.quota_type - b.quota_type,
   };
@@ -208,7 +209,9 @@ export const getPricingTableColumns = ({
     ),
     dataIndex: 'model_ratio',
     render: (text, record, index) => {
-      const completionRatio = parseFloat(record.completion_ratio.toFixed(3));
+      const completionRatio = Number.parseFloat(
+        record.completion_ratio.toFixed(3),
+      );
       const priceData = getPriceData(record);
 
       return (

@@ -17,7 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useCallback, useMemo, useState } from 'react';
+import {
+  IconDelete,
+  IconPlus,
+  IconSave,
+  IconSearch,
+} from '@douyinfe/semi-icons';
 import {
   Banner,
   Button,
@@ -34,13 +39,10 @@ import {
   Tag,
   Typography,
 } from '@douyinfe/semi-ui';
-import {
-  IconDelete,
-  IconPlus,
-  IconSave,
-  IconSearch,
-} from '@douyinfe/semi-icons';
+import React, { useCallback, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import {
   PAGE_SIZE,
   PRICE_SUFFIX,
@@ -48,7 +50,6 @@ import {
   hasValue,
   useModelPricingEditorState,
 } from '../hooks/useModelPricingEditorState';
-import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import TieredPricingEditor from './TieredPricingEditor';
 
 const { Text } = Typography;

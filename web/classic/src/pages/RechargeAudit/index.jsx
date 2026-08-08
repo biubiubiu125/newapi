@@ -17,13 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useState } from 'react';
+import { IconRefresh, IconSearch } from '@douyinfe/semi-icons';
 import {
   Button,
   Card,
   Empty,
   Form,
   Input,
+  Modal,
   Pagination,
   Select,
   Space,
@@ -32,8 +33,14 @@ import {
   Tag,
   Typography,
 } from '@douyinfe/semi-ui';
-import { IconRefresh, IconSearch } from '@douyinfe/semi-icons';
-import { API, renderQuotaWithAmount, showError } from '../../helpers';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+
+import {
+  API,
+  renderQuotaWithAmount,
+  showError,
+  showSuccess,
+} from '../../helpers';
 
 const { Text, Title } = Typography;
 const PAGE_SIZE = 20;
@@ -50,6 +57,14 @@ const ORDER_TYPE_OPTIONS = [
   { value: 'all', label: '全部订单' },
   { value: 'topup', label: '充值订单' },
   { value: 'subscription', label: '订阅订单' },
+];
+
+const ORPHAN_STATUS_OPTIONS = [
+  { value: 'pending_review', label: '待人工确认' },
+  { value: 'credited', label: '已入账' },
+  { value: 'refunded', label: '已退款' },
+  { value: 'dismissed', label: '已忽略' },
+  { value: 'all', label: '全部状态' },
 ];
 
 function formatMoney(value, currency = 'CNY') {
@@ -111,6 +126,40 @@ function paymentProviderLabel(provider) {
   return provider;
 }
 
+function orphanStatusLabel(status) {
+  switch (status) {
+    case 'pending_review':
+      return '待人工确认';
+    case 'credited':
+      return '已入账';
+    case 'refunded':
+      return '已退款';
+    case 'dismissed':
+      return '已忽略';
+    default:
+      return status || '-';
+  }
+}
+
+function orphanStatusColor(status) {
+  switch (status) {
+    case 'pending_review':
+      return 'amber';
+    case 'credited':
+      return 'green';
+    case 'refunded':
+      return 'blue';
+    case 'dismissed':
+      return 'grey';
+    default:
+      return 'grey';
+  }
+}
+
+function isPaymentOrphanCreditEligible(event) {
+  return Boolean(event?.can_credit);
+}
+
 function paidCurrency(order) {
   const provider = String(order.payment_provider || '').toLowerCase();
   if (provider === 'epay' || provider === 'bepusdt') return 'CNY';
@@ -154,6 +203,11 @@ export default function RechargeAudit() {
   const [summary, setSummary] = useState(null);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
+  const [orphanLoading, setOrphanLoading] = useState(false);
+  const [paymentOrphans, setPaymentOrphans] = useState([]);
+  const [orphanTotal, setOrphanTotal] = useState(0);
+  const [orphanPage, setOrphanPage] = useState(1);
+  const [orphanStatus, setOrphanStatus] = useState('pending_review');
   const [keyword, setKeyword] = useState('');
   const [userId, setUserId] = useState('');
   const [provider, setProvider] = useState('');
@@ -176,15 +230,29 @@ export default function RechargeAudit() {
     if (filters.userId) values.set('user_id', filters.userId);
     if (filters.provider) values.set('provider', filters.provider);
     if (filters.status !== 'all') values.set('status', filters.status);
-    if (filters.orderType !== 'all') values.set('order_type', filters.orderType);
+    if (filters.orderType !== 'all') {
+      values.set('order_type', filters.orderType);
+    }
     return values;
   }, [filters, page]);
 
-  async function load() {
+  const orphanParams = useMemo(
+    () =>
+      new URLSearchParams({
+        p: String(orphanPage),
+        page_size: String(PAGE_SIZE),
+        status: orphanStatus,
+      }),
+    [orphanPage, orphanStatus],
+  );
+
+  const load = useCallback(async () => {
     setLoading(true);
     try {
       const [summaryRes, orderRes] = await Promise.all([
-        API.get(`/api/user/admin/finance/recharge-audit/summary?${params.toString()}`),
+        API.get(
+          `/api/user/admin/finance/recharge-audit/summary?${params.toString()}`,
+        ),
         API.get(`/api/user/admin/finance/recharge-audit?${params.toString()}`),
       ]);
       if (!summaryRes.data.success) {
@@ -203,11 +271,34 @@ export default function RechargeAudit() {
     } finally {
       setLoading(false);
     }
-  }
+  }, [params]);
+
+  const loadPaymentOrphans = useCallback(async () => {
+    setOrphanLoading(true);
+    try {
+      const res = await API.get(
+        `/api/user/admin/finance/payment-orphans?${orphanParams.toString()}`,
+      );
+      if (!res.data.success) {
+        showError(res.data.message || '加载人工确认支付失败');
+        return;
+      }
+      setPaymentOrphans(res.data.data?.items || []);
+      setOrphanTotal(res.data.data?.total || 0);
+    } catch (error) {
+      showError(error.message || '加载人工确认支付失败');
+    } finally {
+      setOrphanLoading(false);
+    }
+  }, [orphanParams]);
 
   useEffect(() => {
     void load();
-  }, [params]);
+  }, [load]);
+
+  useEffect(() => {
+    void loadPaymentOrphans();
+  }, [loadPaymentOrphans]);
 
   function applyFilters() {
     setFilters({
@@ -220,8 +311,69 @@ export default function RechargeAudit() {
     setPage(1);
   }
 
+  function refreshAll() {
+    void load();
+    void loadPaymentOrphans();
+  }
+
+  function handleOrphanCredit(event) {
+    if (!isPaymentOrphanCreditEligible(event)) return;
+    Modal.confirm({
+      title: '确认将该 Stripe 支付入账？',
+      content:
+        '系统会根据 Stripe 回调事实补建缺失的充值或订阅订单，并只入账一次。',
+      okText: '确认入账',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const res = await API.post(
+            `/api/user/admin/finance/payment-orphans/${event.id}/credit`,
+          );
+          if (!res.data.success) {
+            showError(res.data.message || '入账失败');
+            return;
+          }
+          showSuccess('已处理人工确认支付');
+          await loadPaymentOrphans();
+          await load();
+        } catch (error) {
+          showError(error.message || '入账失败');
+        }
+      },
+    });
+  }
+
+  function handleOrphanResolve(event, status) {
+    Modal.confirm({
+      title: status === 'refunded' ? '确认标记为已退款？' : '确认忽略该记录？',
+      content:
+        status === 'refunded'
+          ? '仅记录外部退款结果，不会改变用户余额或订阅。'
+          : '仅关闭该人工确认记录，不会改变用户余额或订阅。',
+      okText: '确认',
+      cancelText: '取消',
+      onOk: async () => {
+        try {
+          const res = await API.post(
+            `/api/user/admin/finance/payment-orphans/${event.id}/resolve`,
+            { status },
+          );
+          if (!res.data.success) {
+            showError(res.data.message || '处理失败');
+            return;
+          }
+          showSuccess('已处理人工确认支付');
+          await loadPaymentOrphans();
+        } catch (error) {
+          showError(error.message || '处理失败');
+        }
+      },
+    });
+  }
+
   const totals = summary?.totals || {};
   const totalPages = Math.max(1, Math.ceil(total / PAGE_SIZE));
+  const orphanTotalPages = Math.max(1, Math.ceil(orphanTotal / PAGE_SIZE));
 
   const columns = [
     {
@@ -246,7 +398,9 @@ export default function RechargeAudit() {
       render: (value, record) => (
         <div>
           <Text>{value || '-'}</Text>
-          <div className='text-xs text-gray-500'>ID {record.user_id || '-'}</div>
+          <div className='text-xs text-gray-500'>
+            ID {record.user_id || '-'}
+          </div>
         </div>
       ),
     },
@@ -256,7 +410,12 @@ export default function RechargeAudit() {
       width: 180,
       render: (_, record) => (
         <div>
-          <Text strong>{formatMoney(record.paid_amount || record.money, paidCurrency(record))}</Text>
+          <Text strong>
+            {formatMoney(
+              record.paid_amount || record.money,
+              paidCurrency(record),
+            )}
+          </Text>
           <div className='text-xs text-gray-500'>
             {paymentProviderLabel(record.payment_provider)}
           </div>
@@ -278,7 +437,9 @@ export default function RechargeAudit() {
       title: '状态',
       dataIndex: 'status',
       width: 120,
-      render: (value) => <Tag color={statusColor(value)}>{statusLabel(value)}</Tag>,
+      render: (value) => (
+        <Tag color={statusColor(value)}>{statusLabel(value)}</Tag>
+      ),
     },
     {
       title: '佣金',
@@ -288,7 +449,9 @@ export default function RechargeAudit() {
         <div>
           {commissionStatusLabel(value)}
           {record.referral_commission_error ? (
-            <div className='text-xs text-red-500'>{record.referral_commission_error}</div>
+            <div className='text-xs text-red-500'>
+              {record.referral_commission_error}
+            </div>
           ) : null}
         </div>
       ),
@@ -300,9 +463,108 @@ export default function RechargeAudit() {
       render: (_, record) => (
         <div>
           <div>创建：{formatTime(record.create_time)}</div>
-          <div className='text-xs text-gray-500'>完成：{formatTime(record.complete_time)}</div>
+          <div className='text-xs text-gray-500'>
+            完成：{formatTime(record.complete_time)}
+          </div>
         </div>
       ),
+    },
+  ];
+
+  const orphanColumns = [
+    {
+      title: '支付记录',
+      dataIndex: 'reference_id',
+      width: 230,
+      render: (value, record) => (
+        <div>
+          <Text strong copyable={value ? { content: value } : false}>
+            {value || `#${record.id}`}
+          </Text>
+          <div className='mt-1 text-xs text-gray-500'>
+            Session：{record.session_id || '-'}
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: '渠道 / 事件',
+      dataIndex: 'provider',
+      width: 160,
+      render: (value, record) => (
+        <div>
+          <Tag>{paymentProviderLabel(value)}</Tag>
+          <div className='mt-1 text-xs text-gray-500'>
+            {record.event_type || '-'}
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: '原因',
+      dataIndex: 'reason',
+      render: (value, record) => (
+        <div>
+          <Text>{value || '-'}</Text>
+          {record.error ? (
+            <div className='mt-1 text-xs text-red-500'>{record.error}</div>
+          ) : null}
+        </div>
+      ),
+    },
+    {
+      title: '状态',
+      dataIndex: 'status',
+      width: 120,
+      render: (value) => (
+        <Tag color={orphanStatusColor(value)}>{orphanStatusLabel(value)}</Tag>
+      ),
+    },
+    {
+      title: '时间',
+      dataIndex: 'create_time',
+      width: 190,
+      render: (_, record) => (
+        <div>
+          <div>创建：{formatTime(record.create_time)}</div>
+          <div className='text-xs text-gray-500'>
+            处理：{formatTime(record.resolved_at)}
+          </div>
+        </div>
+      ),
+    },
+    {
+      title: '操作',
+      dataIndex: 'id',
+      width: 210,
+      render: (_, record) =>
+        record.status === 'pending_review' ? (
+          <Space wrap>
+            <Button
+              size='small'
+              type='primary'
+              disabled={!isPaymentOrphanCreditEligible(record)}
+              onClick={() => handleOrphanCredit(record)}
+            >
+              入账
+            </Button>
+            <Button
+              size='small'
+              onClick={() => handleOrphanResolve(record, 'refunded')}
+            >
+              已退款
+            </Button>
+            <Button
+              size='small'
+              type='danger'
+              onClick={() => handleOrphanResolve(record, 'dismissed')}
+            >
+              忽略
+            </Button>
+          </Space>
+        ) : (
+          <Text type='secondary'>已处理</Text>
+        ),
     },
   ];
 
@@ -314,19 +576,36 @@ export default function RechargeAudit() {
             <Title heading={3} style={{ marginBottom: 4 }}>
               订单管理
             </Title>
-            <Text type='secondary'>查看充值和订阅订单、支付状态以及返佣处理状态。</Text>
+            <Text type='secondary'>
+              查看充值和订阅订单、支付状态以及返佣处理状态。
+            </Text>
           </div>
-          <Button icon={<IconRefresh />} onClick={load}>
+          <Button icon={<IconRefresh />} onClick={refreshAll}>
             刷新
           </Button>
         </div>
 
         <div className='grid gap-3 md:grid-cols-2 xl:grid-cols-5'>
-          <SummaryCard label='实付金额' value={formatMoney(totals.paid_amount_cny || 0, 'CNY')} />
-          <SummaryCard label='成功订单' value={String(totals.success_count || 0)} />
-          <SummaryCard label='待支付订单' value={String(totals.pending_count || 0)} />
-          <SummaryCard label='失败订单' value={String(totals.failed_count || 0)} />
-          <SummaryCard label='汇率缺失' value={String(totals.fx_missing_count || 0)} />
+          <SummaryCard
+            label='实付金额'
+            value={formatMoney(totals.paid_amount_cny || 0, 'CNY')}
+          />
+          <SummaryCard
+            label='成功订单'
+            value={String(totals.success_count || 0)}
+          />
+          <SummaryCard
+            label='待支付订单'
+            value={String(totals.pending_count || 0)}
+          />
+          <SummaryCard
+            label='失败订单'
+            value={String(totals.failed_count || 0)}
+          />
+          <SummaryCard
+            label='汇率缺失'
+            value={String(totals.fx_missing_count || 0)}
+          />
         </div>
 
         <Card>
@@ -347,14 +626,22 @@ export default function RechargeAudit() {
                 onEnterPress={applyFilters}
                 style={{ width: 120 }}
               />
-              <Select value={status} onChange={setStatus} style={{ width: 140 }}>
+              <Select
+                value={status}
+                onChange={setStatus}
+                style={{ width: 140 }}
+              >
                 {STATUS_OPTIONS.map((item) => (
                   <Select.Option key={item.value} value={item.value}>
                     {item.label}
                   </Select.Option>
                 ))}
               </Select>
-              <Select value={orderType} onChange={setOrderType} style={{ width: 140 }}>
+              <Select
+                value={orderType}
+                onChange={setOrderType}
+                style={{ width: 140 }}
+              >
                 {ORDER_TYPE_OPTIONS.map((item) => (
                   <Select.Option key={item.value} value={item.value}>
                     {item.label}
@@ -373,6 +660,68 @@ export default function RechargeAudit() {
               </Button>
             </Space>
           </Form>
+        </Card>
+
+        <Card bodyStyle={{ padding: 0 }}>
+          <div className='flex flex-wrap items-center justify-between gap-3 px-4 py-3'>
+            <div>
+              <Text strong>人工确认支付</Text>
+              <div className='text-xs text-gray-500'>
+                Stripe
+                回调已成功但本地订单缺失或支付事实不一致时，会进入这里人工闭环处理。
+              </div>
+            </div>
+            <Space>
+              <Select
+                value={orphanStatus}
+                onChange={(value) => {
+                  setOrphanStatus(value || 'pending_review');
+                  setOrphanPage(1);
+                }}
+                style={{ width: 140 }}
+              >
+                {ORPHAN_STATUS_OPTIONS.map((item) => (
+                  <Select.Option key={item.value} value={item.value}>
+                    {item.label}
+                  </Select.Option>
+                ))}
+              </Select>
+              <Button
+                icon={<IconRefresh />}
+                loading={orphanLoading}
+                onClick={loadPaymentOrphans}
+              >
+                刷新确认记录
+              </Button>
+            </Space>
+          </div>
+          <Spin spinning={orphanLoading}>
+            {paymentOrphans.length === 0 ? (
+              <div className='py-10'>
+                <Empty description='暂无人工确认支付' />
+              </div>
+            ) : (
+              <Table
+                columns={orphanColumns}
+                dataSource={paymentOrphans}
+                rowKey={(record) => `payment-orphan-${record.id}`}
+                pagination={false}
+              />
+            )}
+          </Spin>
+          <div className='flex items-center justify-between px-4 py-3'>
+            <Text type='secondary'>
+              第 {orphanPage} / {orphanTotalPages} 页，共 {orphanTotal}{' '}
+              条确认记录
+            </Text>
+            <Pagination
+              currentPage={orphanPage}
+              total={orphanTotal}
+              pageSize={PAGE_SIZE}
+              showSizeChanger={false}
+              onPageChange={setOrphanPage}
+            />
+          </div>
         </Card>
 
         <Card bodyStyle={{ padding: 0 }}>

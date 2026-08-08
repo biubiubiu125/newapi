@@ -18,17 +18,18 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
+
+import { createCardProPagination } from '../../../helpers/utils';
+import { useIsMobile } from '../../../hooks/common/useIsMobile';
+import { useLogsData } from '../../../hooks/usage-logs/useUsageLogsData';
 import CardPro from '../../common/ui/CardPro';
-import LogsTable from './UsageLogsTable';
+import ChannelAffinityUsageCacheModal from './modals/ChannelAffinityUsageCacheModal';
+import ColumnSelectorModal from './modals/ColumnSelectorModal';
+import ParamOverrideModal from './modals/ParamOverrideModal';
+import UserInfoModal from './modals/UserInfoModal';
 import LogsActions from './UsageLogsActions';
 import LogsFilters from './UsageLogsFilters';
-import ColumnSelectorModal from './modals/ColumnSelectorModal';
-import UserInfoModal from './modals/UserInfoModal';
-import ChannelAffinityUsageCacheModal from './modals/ChannelAffinityUsageCacheModal';
-import ParamOverrideModal from './modals/ParamOverrideModal';
-import { useLogsData } from '../../../hooks/usage-logs/useUsageLogsData';
-import { useIsMobile } from '../../../hooks/common/useIsMobile';
-import { createCardProPagination } from '../../../helpers/utils';
+import LogsTable from './UsageLogsTable';
 
 const LogsPage = () => {
   const logsData = useLogsData();
@@ -53,7 +54,7 @@ const LogsPage = () => {
           total: logsData.logCount,
           onPageChange: logsData.handlePageChange,
           onPageSizeChange: logsData.handlePageSizeChange,
-          isMobile: isMobile,
+          isMobile,
           t: logsData.t,
         })}
         t={logsData.t}

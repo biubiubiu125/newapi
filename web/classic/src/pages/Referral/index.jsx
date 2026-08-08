@@ -17,16 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import {
-  API,
-  copy,
-  showError,
-  showSuccess,
-  timestamp2string,
-} from '../../helpers';
-import { convertUSDToCurrency } from '../../helpers/render';
 import {
   Banner,
   Button,
@@ -43,7 +33,18 @@ import {
   TextArea,
   Typography,
 } from '@douyinfe/semi-ui';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useNavigate, useParams } from 'react-router-dom';
+
+import {
+  API,
+  copy,
+  showError,
+  showSuccess,
+  timestamp2string,
+} from '../../helpers';
+import { convertUSDToCurrency } from '../../helpers/render';
 
 const { Text, Title } = Typography;
 
@@ -66,10 +67,15 @@ const SECTION_META = {
   },
 };
 
-const SECTION_ORDER = ['center', 'commissions', 'withdraw', 'withdrawals'];
+const SECTION_ORDER = new Set([
+  'center',
+  'commissions',
+  'withdraw',
+  'withdrawals',
+]);
 
 function normalizeSection(section) {
-  return SECTION_ORDER.includes(section) ? section : 'center';
+  return SECTION_ORDER.has(section) ? section : 'center';
 }
 
 function formatMoney(value) {

@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 export const ADMIN_PERMISSION_RESOURCES = {
   CHANNEL: 'channel',
-};
+}
 
 export const ADMIN_PERMISSION_ACTIONS = {
   READ: 'read',
@@ -27,63 +27,61 @@ export const ADMIN_PERMISSION_ACTIONS = {
   WRITE: 'write',
   SENSITIVE_WRITE: 'sensitive_write',
   SECRET_VIEW: 'secret_view',
-};
+}
 
-const ROLE_SUPER_ADMIN = 100;
+const ROLE_SUPER_ADMIN = 100
 
 const getLocalUser = () => {
   if (typeof localStorage === 'undefined') {
-    return null;
+    return null
   }
   try {
-    const raw = localStorage.getItem('user');
-    return raw ? JSON.parse(raw) : null;
+    const raw = localStorage.getItem('user')
+    return raw ? JSON.parse(raw) : null
   } catch {
-    return null;
+    return null
   }
-};
+}
 
 export const hasAdminPermission = (permissions, resource, action, user) => {
-  const currentUser = user || getLocalUser();
+  const currentUser = user || getLocalUser()
   if ((Number(currentUser?.role) || 0) >= ROLE_SUPER_ADMIN) {
-    return true;
+    return true
   }
 
-  const effectivePermissions = permissions || currentUser?.permissions;
-  return (
-    effectivePermissions?.admin_permissions?.[resource]?.[action] === true
-  );
-};
+  const effectivePermissions = permissions || currentUser?.permissions
+  return effectivePermissions?.admin_permissions?.[resource]?.[action] === true
+}
 
 export const getChannelPermissionFlags = (permissions, user) => ({
   canReadChannel: hasAdminPermission(
     permissions,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
     ADMIN_PERMISSION_ACTIONS.READ,
-    user,
+    user
   ),
   canOperateChannel: hasAdminPermission(
     permissions,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
     ADMIN_PERMISSION_ACTIONS.OPERATE,
-    user,
+    user
   ),
   canWriteChannel: hasAdminPermission(
     permissions,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
     ADMIN_PERMISSION_ACTIONS.WRITE,
-    user,
+    user
   ),
   canSensitiveWriteChannel: hasAdminPermission(
     permissions,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
     ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE,
-    user,
+    user
   ),
   canViewChannelSecret: hasAdminPermission(
     permissions,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
     ADMIN_PERMISSION_ACTIONS.SECRET_VIEW,
-    user,
+    user
   ),
-});
+})

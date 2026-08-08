@@ -17,7 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
+import { IconSearch } from '@douyinfe/semi-icons';
+import {
+  IllustrationNoResult,
+  IllustrationNoResultDark,
+} from '@douyinfe/semi-illustrations';
 import {
   Modal,
   Table,
@@ -27,13 +31,10 @@ import {
   Empty,
   Input,
 } from '@douyinfe/semi-ui';
-import {
-  IllustrationNoResult,
-  IllustrationNoResultDark,
-} from '@douyinfe/semi-illustrations';
-import { IconSearch } from '@douyinfe/semi-icons';
-import { API, showError } from '../../../../helpers';
+import React, { useEffect, useState } from 'react';
+
 import { MODEL_TABLE_PAGE_SIZE } from '../../../../constants';
+import { API, showError } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 
 const MissingModelsModal = ({ visible, onClose, onConfigureModel, t }) => {
@@ -52,7 +53,7 @@ const MissingModelsModal = ({ visible, onClose, onConfigureModel, t }) => {
       } else {
         showError(res.data.message);
       }
-    } catch (_) {
+    } catch {
       showError(t('获取未配置模型失败'));
     }
     setLoading(false);
@@ -165,7 +166,7 @@ const MissingModelsModal = ({ visible, onClose, onConfigureModel, t }) => {
                 columns={columns}
                 dataSource={dataSource}
                 pagination={{
-                  currentPage: currentPage,
+                  currentPage,
                   pageSize: MODEL_TABLE_PAGE_SIZE,
                   total: filteredModels.length,
                   showSizeChanger: false,

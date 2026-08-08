@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Card, Skeleton } from '@douyinfe/semi-ui';
+import React from 'react';
 
 const PricingCardSkeleton = ({
   skeletonCount = 100,
@@ -138,7 +138,7 @@ const PricingCardSkeleton = ({
     </div>
   );
 
-  return <Skeleton loading={true} active placeholder={placeholder}></Skeleton>;
+  return <Skeleton loading active placeholder={placeholder} />;
 };
 
 export default PricingCardSkeleton;

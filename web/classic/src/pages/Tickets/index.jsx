@@ -17,13 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, {
-  useCallback,
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-} from 'react';
+import {
+  IconPlus,
+  IconRefresh,
+  IconSearch,
+  IconSend,
+} from '@douyinfe/semi-icons';
 import {
   Banner,
   Button,
@@ -42,12 +41,14 @@ import {
   TextArea,
   Typography,
 } from '@douyinfe/semi-ui';
-import {
-  IconPlus,
-  IconRefresh,
-  IconSearch,
-  IconSend,
-} from '@douyinfe/semi-icons';
+import React, {
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from 'react';
+
 import { API, showError, showSuccess, timestamp2string } from '../../helpers';
 
 const { Text, Title } = Typography;
@@ -65,7 +66,7 @@ const STATUS_OPTIONS = [
 const PAGE_SIZE = 10;
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024;
 const MAX_REPLY_IMAGES = 5;
-const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp'];
+const ACCEPTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp']);
 
 function ticketBase(adminMode) {
   return adminMode ? '/api/user/admin/tickets' : '/api/user/tickets';
@@ -94,7 +95,7 @@ function statusColor(status) {
 function validateImageFiles(files, currentCount = 0) {
   const valid = [];
   for (const file of Array.from(files || [])) {
-    if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+    if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
       showError('仅支持 png、jpg、jpeg、webp 图片');
       continue;
     }
@@ -369,7 +370,7 @@ export default function Tickets({ adminMode = false }) {
   };
 
   const handlePaste = (target) => (event) => {
-    const files = Array.from(event.clipboardData?.files || []);
+    const files = [...(event.clipboardData?.files || [])];
     if (files.length > 0) {
       event.preventDefault();
       addFiles(target, files);

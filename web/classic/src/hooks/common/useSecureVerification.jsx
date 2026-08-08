@@ -19,9 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useState, useEffect, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { SecureVerificationService } from '../../services/secureVerification';
+
 import { showError, showSuccess } from '../../helpers';
 import { isVerificationRequiredError } from '../../helpers/secureApiCall';
+import { SecureVerificationService } from '../../services/secureVerification';
 
 /**
  * 通用安全验证 Hook

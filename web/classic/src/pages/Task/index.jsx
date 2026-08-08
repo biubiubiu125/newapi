@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
+
 import TaskLogsTable from '../../components/table/task-logs';
 
 const Task = () => (

@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import { IconCreditCard } from '@douyinfe/semi-icons';
 import {
   Banner,
   Modal,
@@ -29,8 +29,9 @@ import {
   Tooltip,
 } from '@douyinfe/semi-ui';
 import { Crown, CalendarClock, Package } from 'lucide-react';
+import React from 'react';
 import { SiStripe } from 'react-icons/si';
-import { IconCreditCard } from '@douyinfe/semi-icons';
+
 import { renderQuota } from '../../../helpers';
 import {
   formatSubscriptionDuration,

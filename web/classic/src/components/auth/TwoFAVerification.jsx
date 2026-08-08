@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { API, showError, showSuccess } from '../../helpers';
 import {
   Button,
   Card,
@@ -26,6 +25,8 @@ import {
   Typography,
 } from '@douyinfe/semi-ui';
 import React, { useState } from 'react';
+
+import { API, showError, showSuccess } from '../../helpers';
 
 const { Title, Text, Paragraph } = Typography;
 
@@ -64,7 +65,7 @@ const TwoFAVerification = ({ onSuccess, onBack, isModal = false }) => {
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError('验证失败，请重试');
     } finally {
       setLoading(false);
@@ -139,10 +140,8 @@ const TwoFAVerification = ({ onSuccess, onBack, isModal = false }) => {
         <div className='bg-gray-50 dark:bg-gray-800 rounded-lg p-3'>
           <Text size='small' type='secondary'>
             <strong>提示：</strong>
-            <br />
-            • 验证码每30秒更新一次
-            <br />
-            • 如果无法获取验证码，请使用备用码
+            <br />• 验证码每30秒更新一次
+            <br />• 如果无法获取验证码，请使用备用码
             <br />• 每个备用码只能使用一次
           </Text>
         </div>
@@ -229,10 +228,8 @@ const TwoFAVerification = ({ onSuccess, onBack, isModal = false }) => {
         >
           <Text size='small' type='secondary'>
             <strong>提示：</strong>
-            <br />
-            • 验证码每30秒更新一次
-            <br />
-            • 如果无法获取验证码，请使用备用码
+            <br />• 验证码每30秒更新一次
+            <br />• 如果无法获取验证码，请使用备用码
             <br />• 每个备用码只能使用一次
           </Text>
         </div>

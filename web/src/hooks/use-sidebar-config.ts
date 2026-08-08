@@ -17,7 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMemo } from 'react'
-import { useAuthStore } from '@/stores/auth-store'
+
+import type { NavGroup, NavItem } from '@/components/layout/types'
 import { useStatus } from '@/hooks/use-status'
 import {
   SIDEBAR_MODULES_DEFAULT,
@@ -26,7 +27,7 @@ import {
   normalizeSidebarModuleAliases,
   type SidebarModulesAdminConfig,
 } from '@/lib/sidebar-modules'
-import type { NavGroup, NavItem } from '@/components/layout/types'
+import { useAuthStore } from '@/stores/auth-store'
 
 // User-layer config is shape-identical to admin, but may be null
 // to signal "no narrowing" (empty/invalid/legacy users).
@@ -36,7 +37,6 @@ type ConfigurableNavUrl = {
   url: unknown
   configUrls?: unknown[]
 }
-
 
 /**
  * Mapping from URL to configuration keys

@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useCallback, useEffect, useRef, useState } from 'react';
 import {
   Modal,
   Button,
@@ -27,6 +26,8 @@ import {
   Tag,
   Collapse,
 } from '@douyinfe/semi-ui';
+import React, { useCallback, useEffect, useRef, useState } from 'react';
+
 import { API, showError, showSuccess } from '../../../../helpers';
 import { MOBILE_BREAKPOINT } from '../../../../hooks/common/useIsMobile';
 
@@ -142,7 +143,7 @@ const formatUnixSeconds = (unixSeconds) => {
   if (!Number.isFinite(v) || v <= 0) return '-';
   try {
     return new Date(v * 1000).toLocaleString();
-  } catch (error) {
+  } catch {
     return String(unixSeconds);
   }
 };
@@ -535,7 +536,7 @@ const CodexUsageView = ({
             label='User ID'
             value={userId}
             onCopy={onCopy}
-            monospace={true}
+            monospace
             className='md:col-span-2'
           />
         </div>
@@ -679,7 +680,7 @@ const CodexUsageLoader = ({ t, record, initialPayload, onCopy }) => {
         res?.data?.data?.rate_limit_reset_credits?.available_count ??
         null;
       setResetCredits(available);
-    } catch (error) {
+    } catch {
       if (!mountedRef.current) return;
       setResetCredits(null);
     } finally {
@@ -709,7 +710,7 @@ const CodexUsageLoader = ({ t, record, initialPayload, onCopy }) => {
           showSuccess(tt('重置成功'));
           await fetchUsage();
           await fetchResetCredits();
-        } catch (error) {
+        } catch {
           showError(tt('重置失败'));
         } finally {
           if (mountedRef.current) setResetting(false);
@@ -739,7 +740,7 @@ const CodexUsageLoader = ({ t, record, initialPayload, onCopy }) => {
       <>
         <CodexUsageModalStyles />
         <div className='flex items-center justify-center py-10'>
-          <Spin spinning={true} size='large' tip={tt('加载中...')} />
+          <Spin spinning size='large' tip={tt('加载中...')} />
         </div>
       </>
     );

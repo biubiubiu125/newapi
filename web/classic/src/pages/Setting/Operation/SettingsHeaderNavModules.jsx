@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useContext } from 'react';
 import {
   Button,
   Card,
@@ -27,9 +26,11 @@ import {
   Switch,
   Typography,
 } from '@douyinfe/semi-ui';
-import { API, showError, showSuccess } from '../../../helpers';
+import React, { useEffect, useState, useContext } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { StatusContext } from '../../../context/Status';
+import { API, showError, showSuccess } from '../../../helpers';
 
 const { Text } = Typography;
 
@@ -121,7 +122,7 @@ export default function SettingsHeaderNavModules(props) {
       } else {
         showError(message);
       }
-    } catch (error) {
+    } catch {
       showError(t('保存失败，请重试'));
     } finally {
       setLoading(false);
@@ -143,7 +144,7 @@ export default function SettingsHeaderNavModules(props) {
         }
 
         setHeaderNavModules(modules);
-      } catch (error) {
+      } catch {
         // 使用默认配置
         const defaultModules = {
           home: true,

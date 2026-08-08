@@ -18,14 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
+
 import { useHeaderBar } from '../../../hooks/common/useHeaderBar';
-import { useNotifications } from '../../../hooks/common/useNotifications';
 import { useNavigation } from '../../../hooks/common/useNavigation';
+import { useNotifications } from '../../../hooks/common/useNotifications';
 import NoticeModal from '../NoticeModal';
-import MobileMenuButton from './MobileMenuButton';
-import HeaderLogo from './HeaderLogo';
-import Navigation from './Navigation';
 import ActionButtons from './ActionButtons';
+import HeaderLogo from './HeaderLogo';
+import MobileMenuButton from './MobileMenuButton';
+import Navigation from './Navigation';
 
 const HeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
   const {

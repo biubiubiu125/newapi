@@ -17,18 +17,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useContext, useEffect, useState } from 'react';
 import { Banner } from '@douyinfe/semi-ui';
-import CardPro from '../../common/ui/CardPro';
-import SubscriptionsTable from './SubscriptionsTable';
-import SubscriptionsActions from './SubscriptionsActions';
-import SubscriptionsDescription from './SubscriptionsDescription';
-import AddEditSubscriptionModal from './modals/AddEditSubscriptionModal';
-import { useSubscriptionsData } from '../../../hooks/subscriptions/useSubscriptionsData';
-import { useIsMobile } from '../../../hooks/common/useIsMobile';
-import { createCardProPagination } from '../../../helpers/utils';
+import React, { useContext, useEffect, useState } from 'react';
+
 import { StatusContext } from '../../../context/Status';
 import { API } from '../../../helpers';
+import { createCardProPagination } from '../../../helpers/utils';
+import { useIsMobile } from '../../../hooks/common/useIsMobile';
+import { useSubscriptionsData } from '../../../hooks/subscriptions/useSubscriptionsData';
+import CardPro from '../../common/ui/CardPro';
+import AddEditSubscriptionModal from './modals/AddEditSubscriptionModal';
+import SubscriptionsActions from './SubscriptionsActions';
+import SubscriptionsDescription from './SubscriptionsDescription';
+import SubscriptionsTable from './SubscriptionsTable';
 
 const SubscriptionsPage = () => {
   const subscriptionsData = useSubscriptionsData();
@@ -58,7 +59,7 @@ const SubscriptionsPage = () => {
             res.data.data?.payment_compliance_confirmed !== false,
           );
         }
-      } catch (error) {
+      } catch {
         // Keep the page usable if status loading fails; backend still enforces.
       }
     };

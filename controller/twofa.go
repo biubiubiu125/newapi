@@ -188,13 +188,16 @@ func Enable2FA(c *gin.Context) {
 		return
 	}
 	// 启用2FA并原子推进用户鉴权版本
-	if err := twoFA.EnableWithAuthVersion(); err != nil {
+	if err := twoFA.EnableWithAuthVersion(); !continueAfterCommittedUserAuthStateError("twofa enable", err) {
 		common.ApiError(c, err)
 		return
 	}
 	bundle, err := service.AdvanceCurrentSessionToUserVersion(identity, "twofa_enabled")
 	if err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	if !persistAuthRotationLegacyLoginSession(c, userId, bundle) {
 		return
 	}
 
@@ -271,13 +274,16 @@ func Disable2FA(c *gin.Context) {
 		return
 	}
 	// 禁用2FA并原子推进用户鉴权版本
-	if err := model.DisableTwoFAWithAuthVersion(userId); err != nil {
+	if err := model.DisableTwoFAWithAuthVersion(userId); !continueAfterCommittedUserAuthStateError("twofa disable", err) {
 		common.ApiError(c, err)
 		return
 	}
 	bundle, err := service.AdvanceCurrentSessionToUserVersion(identity, "twofa_disabled")
 	if err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	if !persistAuthRotationLegacyLoginSession(c, userId, bundle) {
 		return
 	}
 
@@ -397,7 +403,7 @@ func RegenerateBackupCodes(c *gin.Context) {
 		return
 	}
 	// 保存新的备用码并原子推进用户鉴权版本
-	if err := model.ReplaceBackupCodesWithAuthVersion(userId, backupCodes); err != nil {
+	if err := model.ReplaceBackupCodesWithAuthVersion(userId, backupCodes); !continueAfterCommittedUserAuthStateError("twofa backup code regeneration", err) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "保存备用码失败",
@@ -408,6 +414,9 @@ func RegenerateBackupCodes(c *gin.Context) {
 	bundle, err := service.AdvanceCurrentSessionToUserVersion(identity, "twofa_backup_codes_regenerated")
 	if err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	if !persistAuthRotationLegacyLoginSession(c, userId, bundle) {
 		return
 	}
 
@@ -577,8 +586,10 @@ func AdminDisable2FA(c *gin.Context) {
 			})
 			return
 		}
-		common.ApiError(c, err)
-		return
+		if !continueAfterCommittedUserAuthStateError("admin twofa disable", err) {
+			common.ApiError(c, err)
+			return
+		}
 	}
 	if _, err := model.RevokeAllUserSessions(userId, "admin_twofa_disabled"); err != nil {
 		common.ApiError(c, err)

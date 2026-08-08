@@ -18,18 +18,19 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import { Toast, Pagination } from '@douyinfe/semi-ui';
+import React from 'react';
+import { toast } from 'react-toastify';
+
 import {
   toastConstants,
   BILLING_PRICING_VARS,
   BILLING_VAR_REGEX,
+  TABLE_COMPACT_MODES_KEY,
 } from '../constants';
-import React from 'react';
-import { toast } from 'react-toastify';
 import {
   THINK_TAG_REGEX,
   MESSAGE_ROLES,
 } from '../constants/playground.constants';
-import { TABLE_COMPACT_MODES_KEY } from '../constants';
 import { MOBILE_BREAKPOINT } from '../hooks/common/useIsMobile';
 
 const HTMLToastContent = ({ htmlContent }) => {
@@ -51,13 +52,13 @@ export function isRoot() {
 }
 
 export function getSystemName() {
-  let system_name = localStorage.getItem('system_name');
+  const system_name = localStorage.getItem('system_name');
   if (!system_name) return 'RKAPI';
   return system_name;
 }
 
 export function getLogo() {
-  let logo = localStorage.getItem('logo');
+  const logo = localStorage.getItem('logo');
   if (!logo) return '/logo.png';
   return resolveSystemAssetUrl(logo);
 }
@@ -165,11 +166,11 @@ export async function copy(text) {
 
 // isMobile 函数已移除，请改用 useIsMobile Hook
 
-let showErrorOptions = { autoClose: toastConstants.ERROR_TIMEOUT };
-let showWarningOptions = { autoClose: toastConstants.WARNING_TIMEOUT };
-let showSuccessOptions = { autoClose: toastConstants.SUCCESS_TIMEOUT };
-let showInfoOptions = { autoClose: toastConstants.INFO_TIMEOUT };
-let showNoticeOptions = { autoClose: false };
+const showErrorOptions = { autoClose: toastConstants.ERROR_TIMEOUT };
+const showWarningOptions = { autoClose: toastConstants.WARNING_TIMEOUT };
+const showSuccessOptions = { autoClose: toastConstants.SUCCESS_TIMEOUT };
+const showInfoOptions = { autoClose: toastConstants.INFO_TIMEOUT };
+const showNoticeOptions = { autoClose: false };
 
 const isMobileScreen = window.matchMedia(
   `(max-width: ${MOBILE_BREAKPOINT - 1}px)`,
@@ -209,13 +210,13 @@ export function showError(error) {
           Toast.info('本站仅作演示之用，无服务端！');
           break;
         default:
-          Toast.error('错误：' + error.message);
+          Toast.error(`错误：${error.message}`);
       }
       return;
     }
-    Toast.error('错误：' + error.message);
+    Toast.error(`错误：${error.message}`);
   } else {
-    Toast.error('错误：' + error);
+    Toast.error(`错误：${error}`);
   }
 }
 
@@ -253,37 +254,35 @@ export function removeTrailingSlash(url) {
 }
 
 export function getTodayStartTimestamp() {
-  var now = new Date();
+  const now = new Date();
   now.setHours(0, 0, 0, 0);
   return Math.floor(now.getTime() / 1000);
 }
 
 export function timestamp2string(timestamp) {
-  let date = new Date(timestamp * 1000);
-  let year = date.getFullYear().toString();
+  const date = new Date(timestamp * 1000);
+  const year = date.getFullYear().toString();
   let month = (date.getMonth() + 1).toString();
   let day = date.getDate().toString();
   let hour = date.getHours().toString();
   let minute = date.getMinutes().toString();
   let second = date.getSeconds().toString();
   if (month.length === 1) {
-    month = '0' + month;
+    month = `0${month}`;
   }
   if (day.length === 1) {
-    day = '0' + day;
+    day = `0${day}`;
   }
   if (hour.length === 1) {
-    hour = '0' + hour;
+    hour = `0${hour}`;
   }
   if (minute.length === 1) {
-    minute = '0' + minute;
+    minute = `0${minute}`;
   }
   if (second.length === 1) {
-    second = '0' + second;
+    second = `0${second}`;
   }
-  return (
-    year + '-' + month + '-' + day + ' ' + hour + ':' + minute + ':' + second
-  );
+  return `${year}-${month}-${day} ${hour}:${minute}:${second}`;
 }
 
 export function timestamp2string1(
@@ -291,40 +290,40 @@ export function timestamp2string1(
   dataExportDefaultTime = 'hour',
   showYear = false,
 ) {
-  let date = new Date(timestamp * 1000);
-  let year = date.getFullYear();
+  const date = new Date(timestamp * 1000);
+  const year = date.getFullYear();
   let month = (date.getMonth() + 1).toString();
   let day = date.getDate().toString();
   let hour = date.getHours().toString();
   if (month.length === 1) {
-    month = '0' + month;
+    month = `0${month}`;
   }
   if (day.length === 1) {
-    day = '0' + day;
+    day = `0${day}`;
   }
   if (hour.length === 1) {
-    hour = '0' + hour;
+    hour = `0${hour}`;
   }
   // 仅在跨年时显示年份
-  let str = showYear ? year + '-' + month + '-' + day : month + '-' + day;
+  let str = showYear ? `${year}-${month}-${day}` : `${month}-${day}`;
   if (dataExportDefaultTime === 'hour') {
-    str += ' ' + hour + ':00';
+    str += ` ${hour}:00`;
   } else if (dataExportDefaultTime === 'week') {
-    let nextWeek = new Date(timestamp * 1000 + 6 * 24 * 60 * 60 * 1000);
-    let nextWeekYear = nextWeek.getFullYear();
+    const nextWeek = new Date(timestamp * 1000 + 6 * 24 * 60 * 60 * 1000);
+    const nextWeekYear = nextWeek.getFullYear();
     let nextMonth = (nextWeek.getMonth() + 1).toString();
     let nextDay = nextWeek.getDate().toString();
     if (nextMonth.length === 1) {
-      nextMonth = '0' + nextMonth;
+      nextMonth = `0${nextMonth}`;
     }
     if (nextDay.length === 1) {
-      nextDay = '0' + nextDay;
+      nextDay = `0${nextDay}`;
     }
     // 周视图结束日期也仅在跨年时显示年份
-    let nextStr = showYear
+    const nextStr = showYear
       ? nextWeekYear + '-' + nextMonth + '-' + nextDay
       : nextMonth + '-' + nextDay;
-    str += ' - ' + nextStr;
+    str += ` - ${nextStr}`;
   }
   return str;
 }
@@ -339,9 +338,9 @@ export function isDataCrossYear(timestamps) {
 }
 
 export function downloadTextAsFile(text, filename) {
-  let blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
-  let url = URL.createObjectURL(blob);
-  let a = document.createElement('a');
+  const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
   a.href = url;
   a.download = filename;
   a.click();
@@ -350,7 +349,7 @@ export function downloadTextAsFile(text, filename) {
 export const verifyJSON = (str) => {
   try {
     JSON.parse(str);
-  } catch (e) {
+  } catch {
     return false;
   }
   return true;
@@ -360,13 +359,13 @@ export function verifyJSONPromise(value) {
   try {
     JSON.parse(value);
     return Promise.resolve();
-  } catch (e) {
+  } catch {
     return Promise.reject('不是合法的 JSON 字符串');
   }
 }
 
 export function shouldShowPrompt(id) {
-  let prompt = localStorage.getItem(`prompt-${id}`);
+  const prompt = localStorage.getItem(`prompt-${id}`);
   return !prompt;
 }
 
@@ -388,7 +387,7 @@ export function compareObjects(oldObject, newObject) {
     if (oldObject.hasOwnProperty(key) && newObject.hasOwnProperty(key)) {
       if (oldObject[key] !== newObject[key]) {
         changedProperties.push({
-          key: key,
+          key,
           oldValue: oldObject[key],
           newValue: newObject[key],
         });
@@ -437,7 +436,7 @@ export const processThinkTags = (content, reasoningContent = '') => {
 
   const processedContent = replyParts
     .join('')
-    .replace(/<\/?think>/g, '')
+    .replaceAll(/<\/?think>/g, '')
     .trim();
   const thoughtsStr = thoughts.join('\n\n---\n\n');
   const processedReasoningContent =
@@ -768,7 +767,7 @@ export const calculateModelPrice = ({
         } else {
           symbol = '¤';
         }
-      } catch (e) {
+      } catch {
         symbol = '¤';
       }
     }
@@ -776,7 +775,8 @@ export const calculateModelPrice = ({
     const formatTokenPrice = (priceUSD) => {
       const rawDisplayPrice = displayPrice(priceUSD);
       const numericPrice =
-        parseFloat(rawDisplayPrice.replace(/[^0-9.]/g, '')) / unitDivisor;
+        Number.parseFloat(rawDisplayPrice.replace(/[^0-9.]/g, '')) /
+        unitDivisor;
       return `${symbol}${numericPrice.toFixed(precision)}`;
     };
 
@@ -820,7 +820,7 @@ export const calculateModelPrice = ({
 
   if (record.quota_type === 1) {
     // 按次计费
-    const priceUSD = parseFloat(record.model_price) * usedGroupRatio;
+    const priceUSD = Number.parseFloat(record.model_price) * usedGroupRatio;
     const displayVal = displayPrice(priceUSD);
 
     return {
@@ -971,10 +971,11 @@ export const getModelPriceItems = (priceData, t, quotaDisplayType = 'USD') => {
 
 // 格式化动态计费摘要（用于卡片视图，与 formatPriceInfo 风格统一）
 export const formatDynamicPriceSummary = (billingExpr, t, groupRatio = 1) => {
-  if (!billingExpr)
+  if (!billingExpr) {
     return (
       <span style={{ color: 'var(--semi-color-text-1)' }}>{t('动态计费')}</span>
     );
+  }
 
   const quotaDisplayType = localStorage.getItem('quota_display_type') || 'USD';
   let symbol = '$';
@@ -988,7 +989,7 @@ export const formatDynamicPriceSummary = (billingExpr, t, groupRatio = 1) => {
       symbol = s?.custom_currency_symbol || '¤';
       rate = s?.custom_currency_exchange_rate || 1;
     }
-  } catch (e) {}
+  } catch {}
 
   const gr = groupRatio || 1;
   const exprBody = billingExpr.replace(/^v\d+:/, '');

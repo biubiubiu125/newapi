@@ -17,13 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useState, useEffect } from 'react'
+
 import { getTopupInfo } from '../api'
+import { PAYMENT_TYPES } from '../constants'
 import {
   generatePresetAmounts,
   mergePresetAmounts,
   getMinTopupAmount,
 } from '../lib'
-import { PAYMENT_TYPES } from '../constants'
 import type {
   TopupInfo,
   PresetAmount,

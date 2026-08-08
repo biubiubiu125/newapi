@@ -17,7 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useContext, useMemo } from 'react';
+import {
+  IllustrationNoContent,
+  IllustrationNoContentDark,
+} from '@douyinfe/semi-illustrations';
 import {
   Button,
   Modal,
@@ -26,15 +29,13 @@ import {
   TabPane,
   Timeline,
 } from '@douyinfe/semi-ui';
-import { useTranslation } from 'react-i18next';
-import { API, showError, getRelativeTime } from '../../helpers';
-import { marked } from 'marked';
-import {
-  IllustrationNoContent,
-  IllustrationNoContentDark,
-} from '@douyinfe/semi-illustrations';
-import { StatusContext } from '../../context/Status';
 import { Bell, Megaphone } from 'lucide-react';
+import { marked } from 'marked';
+import React, { useEffect, useState, useContext, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import { StatusContext } from '../../context/Status';
+import { API, showError, getRelativeTime } from '../../helpers';
 
 const NoticeModal = ({
   visible,
@@ -176,7 +177,7 @@ const NoticeModal = ({
               <Timeline.Item
                 key={idx}
                 type={item.type}
-                time={`${item.relative ? item.relative + ' ' : ''}${item.time}`}
+                time={`${item.relative ? `${item.relative} ` : ''}${item.time}`}
                 extra={
                   item.extra ? (
                     <div

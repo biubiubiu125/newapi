@@ -20,6 +20,12 @@ For commercial licensing, please contact support@quantumnous.com
 'use client'
 
 import {
+  CheckIcon,
+  ChevronDownIcon,
+  ChevronUpIcon,
+  CopyIcon,
+} from 'lucide-react'
+import {
   type ComponentProps,
   createContext,
   type HTMLAttributes,
@@ -28,14 +34,14 @@ import {
   useEffect,
   useState,
 } from 'react'
-import { CheckIcon, ChevronDownIcon, ChevronUpIcon, CopyIcon } from 'lucide-react'
 import {
   type BundledLanguage,
   codeToHtml,
   type ShikiTransformer,
 } from 'shiki/bundle/web'
-import { cn } from '@/lib/utils'
+
 import { Button } from '@/components/ui/button'
+import { cn } from '@/lib/utils'
 
 type CodeBlockProps = Omit<HTMLAttributes<HTMLDivElement>, 'title'> & {
   collapsedLines?: number
@@ -177,7 +183,9 @@ export const CodeBlock = ({
             <div className='absolute top-2 right-2 flex items-center gap-2'>
               {showToolbar && canToggleCollapse && (
                 <Button
-                  aria-label={isCollapsed ? 'Expand code block' : 'Collapse code block'}
+                  aria-label={
+                    isCollapsed ? 'Expand code block' : 'Collapse code block'
+                  }
                   onClick={() => setIsCollapsed((value) => !value)}
                   size='icon'
                   type='button'
@@ -232,7 +240,9 @@ export const CodeBlockEditor = ({
       <div className='text-muted-foreground min-w-0 text-xs font-medium tracking-normal'>
         {title ?? language}
       </div>
-      {actions && <div className='flex shrink-0 items-center gap-1'>{actions}</div>}
+      {actions && (
+        <div className='flex shrink-0 items-center gap-1'>{actions}</div>
+      )}
     </div>
     <textarea
       {...props}

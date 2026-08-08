@@ -17,7 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  IconClose,
+  IconCode,
+  IconDelete,
+  IconEdit,
+  IconPlus,
+  IconRefresh,
+  IconSearch,
+} from '@douyinfe/semi-icons';
 import {
   Banner,
   Button,
@@ -35,15 +43,14 @@ import {
   Tag,
   Typography,
 } from '@douyinfe/semi-ui';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import ParamOverrideEditorModal from '../../../components/table/channels/modals/ParamOverrideEditorModal';
 import {
-  IconClose,
-  IconCode,
-  IconDelete,
-  IconEdit,
-  IconPlus,
-  IconRefresh,
-  IconSearch,
-} from '@douyinfe/semi-icons';
+  CHANNEL_AFFINITY_RULE_TEMPLATES,
+  cloneChannelAffinityTemplate,
+} from '../../../constants/channel-affinity-template.constants';
 import {
   API,
   compareObjects,
@@ -53,12 +60,6 @@ import {
   toBoolean,
   verifyJSON,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
-import {
-  CHANNEL_AFFINITY_RULE_TEMPLATES,
-  cloneChannelAffinityTemplate,
-} from '../../../constants/channel-affinity-template.constants';
-import ParamOverrideEditorModal from '../../../components/table/channels/modals/ParamOverrideEditorModal';
 
 const KEY_ENABLED = 'channel_affinity_setting.enabled';
 const KEY_SWITCH_ON_SUCCESS = 'channel_affinity_setting.switch_on_success';
@@ -128,9 +129,9 @@ const parseRulesJson = (jsonString) => {
     if (!Array.isArray(parsed)) return [];
     return parsed.map((rule, index) => ({
       id: index,
-      ...(rule || {}),
+      ...rule,
     }));
-  } catch (e) {
+  } catch {
     return [];
   }
 };
@@ -170,10 +171,11 @@ const tryParseRulesJsonArray = (jsonString) => {
   if (!verifyJSON(raw)) return { ok: false, message: 'Rules JSON is invalid' };
   try {
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed))
+    if (!Array.isArray(parsed)) {
       return { ok: false, message: 'Rules JSON must be an array' };
+    }
     return { ok: true, value: parsed };
-  } catch (e) {
+  } catch {
     return { ok: false, message: 'Rules JSON is invalid' };
   }
 };
@@ -190,7 +192,7 @@ const parseOptionalObjectJson = (jsonString, label) => {
       return { ok: false, message: `${label} 必须是 JSON 对象` };
     }
     return { ok: true, value: parsed };
-  } catch (error) {
+  } catch {
     return { ok: false, message: `${label} JSON 格式不正确` };
   }
 };
@@ -311,7 +313,7 @@ export default function SettingsChannelAffinity(props) {
         tagColor: 'orange',
         preview: JSON.stringify(JSON.parse(raw), null, 2),
       };
-    } catch (error) {
+    } catch {
       return {
         tagLabel: t('JSON 无效'),
         tagColor: 'red',
@@ -337,7 +339,7 @@ export default function SettingsChannelAffinity(props) {
     }
     try {
       updateParamTemplateDraft(JSON.stringify(JSON.parse(raw), null, 2));
-    } catch (error) {
+    } catch {
       showError(t('参数覆盖模板 JSON 格式不正确'));
     }
   };
@@ -385,7 +387,7 @@ export default function SettingsChannelAffinity(props) {
       const { success, message, data } = res.data;
       if (!success) return showError(t(message));
       setCacheStats(data || {});
-    } catch (e) {
+    } catch {
       showError(t('刷新缓存统计失败'));
     } finally {
       setCacheLoading(false);
@@ -457,7 +459,7 @@ export default function SettingsChannelAffinity(props) {
     // Ensure a stable source of truth when entering JSON mode.
     // Semi Form may ignore setValues() for an unmounted field, so we seed state first.
     const jsonString = rulesToJson(rules);
-    setInputs((prev) => ({ ...(prev || {}), [KEY_RULES]: jsonString }));
+    setInputs((prev) => ({ ...prev, [KEY_RULES]: jsonString }));
     setEditMode('json');
   };
 
@@ -498,7 +500,7 @@ export default function SettingsChannelAffinity(props) {
       });
 
       const next = [...(rules || []), ...templates].map((r, idx) => ({
-        ...(r || {}),
+        ...r,
         id: idx,
       }));
       updateRulesState(next);
@@ -738,8 +740,9 @@ export default function SettingsChannelAffinity(props) {
       if (modelRegex.length === 0) return showError(t('模型正则不能为空'));
 
       const keySourcesValidation = validateKeySources(editingRule?.key_sources);
-      if (!keySourcesValidation.ok)
+      if (!keySourcesValidation.ok) {
         return showError(t(keySourcesValidation.message));
+      }
 
       const userAgentInclude = normalizeStringList(
         values.user_agent_include_text,
@@ -786,7 +789,7 @@ export default function SettingsChannelAffinity(props) {
       setParamTemplateDraft('');
       setParamTemplateEditorVisible(false);
       showSuccess(t('保存成功'));
-    } catch (e) {
+    } catch {
       showError(t('请检查输入'));
     }
   };
@@ -794,35 +797,36 @@ export default function SettingsChannelAffinity(props) {
   const updateKeySource = (index, patch) => {
     const next = [...(editingRule?.key_sources || [])];
     next[index] = normalizeKeySource({
-      ...(next[index] || {}),
-      ...(patch || {}),
+      ...next[index],
+      ...patch,
     });
-    setEditingRule((prev) => ({ ...(prev || {}), key_sources: next }));
+    setEditingRule((prev) => ({ ...prev, key_sources: next }));
   };
 
   const addKeySource = () => {
     const next = [...(editingRule?.key_sources || [])];
     next.push({ type: 'gjson', path: '' });
-    setEditingRule((prev) => ({ ...(prev || {}), key_sources: next }));
+    setEditingRule((prev) => ({ ...prev, key_sources: next }));
   };
 
   const removeKeySource = (index) => {
     const next = [...(editingRule?.key_sources || [])].filter(
       (_, i) => i !== index,
     );
-    setEditingRule((prev) => ({ ...(prev || {}), key_sources: next }));
+    setEditingRule((prev) => ({ ...prev, key_sources: next }));
   };
 
   async function onSubmit() {
     const updateArray = compareObjects(inputs, inputsRow);
     if (!updateArray.length) return showWarning(t('你似乎并没有修改什么'));
 
-    if (!verifyJSON(inputs[KEY_RULES] || '[]'))
+    if (!verifyJSON(inputs[KEY_RULES] || '[]')) {
       return showError(t('规则 JSON 格式不正确'));
+    }
     let compactRules;
     try {
       compactRules = stringifyCompact(JSON.parse(inputs[KEY_RULES] || '[]'));
-    } catch (e) {
+    } catch {
       return showError(t('规则 JSON 格式不正确'));
     }
 
@@ -844,8 +848,9 @@ export default function SettingsChannelAffinity(props) {
         if (requestQueue.length === 1) {
           if (res.includes(undefined)) return;
         } else if (requestQueue.length > 1) {
-          if (res.includes(undefined))
+          if (res.includes(undefined)) {
             return showError(t('部分保存失败，请重试'));
+          }
         }
         showSuccess(t('保存成功'));
         props.refresh();
@@ -856,7 +861,7 @@ export default function SettingsChannelAffinity(props) {
 
   useEffect(() => {
     const currentInputs = { ...inputs };
-    for (let key in props.options) {
+    for (const key in props.options) {
       if (
         ![
           KEY_ENABLED,
@@ -866,23 +871,24 @@ export default function SettingsChannelAffinity(props) {
           KEY_DEFAULT_TTL,
           KEY_RULES,
         ].includes(key)
-      )
+      ) {
         continue;
-      if (key === KEY_ENABLED)
+      }
+      if (key === KEY_ENABLED) {
         currentInputs[key] = toBoolean(props.options[key]);
-      else if (key === KEY_SWITCH_ON_SUCCESS)
+      } else if (key === KEY_SWITCH_ON_SUCCESS) {
         currentInputs[key] = toBoolean(props.options[key]);
-      else if (key === KEY_KEEP_ON_CHANNEL_DISABLED)
+      } else if (key === KEY_KEEP_ON_CHANNEL_DISABLED) {
         currentInputs[key] = toBoolean(props.options[key]);
-      else if (key === KEY_MAX_ENTRIES)
+      } else if (key === KEY_MAX_ENTRIES) {
         currentInputs[key] = Number(props.options[key] || 0) || 0;
-      else if (key === KEY_DEFAULT_TTL)
+      } else if (key === KEY_DEFAULT_TTL) {
         currentInputs[key] = Number(props.options[key] || 0) || 0;
-      else if (key === KEY_RULES) {
+      } else if (key === KEY_RULES) {
         try {
           const obj = JSON.parse(props.options[key] || '[]');
           currentInputs[key] = stringifyPretty(obj);
-        } catch (e) {
+        } catch {
           currentInputs[key] = props.options[key] || '[]';
         }
       }
@@ -1128,7 +1134,7 @@ export default function SettingsChannelAffinity(props) {
             placeholder='例如 prefer-by-conversation-id…'
             rules={[{ required: true }]}
             onChange={(value) =>
-              setEditingRule((prev) => ({ ...(prev || {}), name: value }))
+              setEditingRule((prev) => ({ ...prev, name: value }))
             }
           />
 

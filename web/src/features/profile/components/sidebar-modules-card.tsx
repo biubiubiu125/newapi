@@ -16,10 +16,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useState } from 'react'
 import { LayoutDashboard } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { useAuthStore } from '@/stores/auth-store'
+
+import { Button } from '@/components/ui/button'
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from '@/components/ui/card'
+import { IconBadge } from '@/components/ui/icon-badge'
+import { Switch } from '@/components/ui/switch'
 import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
 import {
@@ -32,16 +42,7 @@ import {
   removeRemovedSidebarModules,
   type SidebarModulesAdminConfig,
 } from '@/lib/sidebar-modules'
-import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
-import { IconBadge } from '@/components/ui/icon-badge'
-import { Switch } from '@/components/ui/switch'
+import { useAuthStore } from '@/stores/auth-store'
 
 type SectionDef = {
   key: string

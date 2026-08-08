@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Button, Form } from '@douyinfe/semi-ui';
 import { IconSearch } from '@douyinfe/semi-icons';
+import { Button, Form } from '@douyinfe/semi-ui';
+import React from 'react';
 
 import { DATE_RANGE_PRESETS } from '../../../constants/console.constants';
 
@@ -39,7 +39,7 @@ const LogsFilters = ({
       initValues={formInitValues}
       getFormApi={(api) => setFormApi(api)}
       onSubmit={refresh}
-      allowEmpty={true}
+      allowEmpty
       autoComplete='off'
       layout='vertical'
       trigger='change'

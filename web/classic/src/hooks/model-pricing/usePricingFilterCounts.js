@@ -51,8 +51,9 @@ export const usePricingFilterCounts = ({
   const matchesFilters = (model, ignore = []) => {
     // 分组
     if (!ignore.includes('group') && filterGroup !== 'all') {
-      if (!model.enable_groups || !model.enable_groups.includes(filterGroup))
+      if (!model.enable_groups || !model.enable_groups.includes(filterGroup)) {
         return false;
+      }
     }
 
     // 计费类型
@@ -65,8 +66,9 @@ export const usePricingFilterCounts = ({
       if (
         !model.supported_endpoint_types ||
         !model.supported_endpoint_types.includes(filterEndpointType)
-      )
+      ) {
         return false;
+      }
     }
 
     // 供应商
@@ -96,8 +98,9 @@ export const usePricingFilterCounts = ({
           tags.includes(term) ||
           (model.vendor_name && model.vendor_name.toLowerCase().includes(term))
         )
-      )
+      ) {
         return false;
+      }
     }
 
     return true;

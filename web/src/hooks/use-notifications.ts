@@ -16,12 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
-import { useNotificationStore } from '@/stores/notification-store'
+import { useState, useMemo } from 'react'
+
+import { useStatus } from '@/hooks/use-status'
 import { getNotice } from '@/lib/api'
 import { getAnnouncementKey } from '@/lib/notifications'
-import { useStatus } from '@/hooks/use-status'
+import { useNotificationStore } from '@/stores/notification-store'
 
 /**
  * Hook to manage notifications (Notice + Announcements)
@@ -49,11 +50,10 @@ export function useNotifications() {
   const announcementsEnabled = status?.announcements_enabled ?? false
   const announcements: (Record<string, unknown> | string)[] =
     announcementsEnabled
-      ? ((status?.announcements || []) as (Record<string, unknown> | string)[]).slice(
-          0,
-          20
-        )
-    : []
+      ? (
+          (status?.announcements || []) as (Record<string, unknown> | string)[]
+        ).slice(0, 20)
+      : []
 
   // Notification store
   const {

@@ -18,16 +18,17 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import { useState, useEffect, useContext, useCallback, useMemo } from 'react';
-import { useNavigate, useLocation } from 'react-router-dom';
 import { useTranslation } from 'react-i18next';
-import { UserContext } from '../../context/User';
+import { useNavigate, useLocation } from 'react-router-dom';
+
 import { StatusContext } from '../../context/Status';
 import { useSetTheme, useTheme, useActualTheme } from '../../context/Theme';
+import { UserContext } from '../../context/User';
 import { getLogo, getSystemName, API, showSuccess } from '../../helpers';
 import { normalizeLanguage } from '../../i18n/language';
 import { useIsMobile } from './useIsMobile';
-import { useSidebarCollapsed } from './useSidebarCollapsed';
 import { useMinimumLoadingTime } from './useMinimumLoadingTime';
+import { useSidebarCollapsed } from './useSidebarCollapsed';
 
 export const useHeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
   const { t, i18n } = useTranslation();
@@ -114,7 +115,7 @@ export const useHeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
       if (cw) {
         cw.postMessage({ themeMode: actualTheme }, '*');
       }
-    } catch (e) {
+    } catch {
       // Silently ignore cross-origin or access errors
     }
   }, [actualTheme]);
@@ -130,7 +131,7 @@ export const useHeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
         if (cw) {
           cw.postMessage({ lang: normalizedLang }, '*');
         }
-      } catch (e) {
+      } catch {
         // Silently ignore cross-origin or access errors
       }
     };
@@ -170,7 +171,7 @@ export const useHeaderBar = ({ onMobileMenuToggle, drawerOpen }) => {
             if (userState?.user?.setting) {
               try {
                 settings = JSON.parse(userState.user.setting) || {};
-              } catch (e) {
+              } catch {
                 settings = {};
               }
             }

@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import {
   Banner,
   Button,
@@ -34,6 +33,9 @@ import {
   Radio,
   Typography,
 } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   compareObjects,
   API,
@@ -41,7 +43,6 @@ import {
   showSuccess,
   showWarning,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
 
 const { Text } = Typography;
 
@@ -49,13 +50,15 @@ const { Text } = Typography;
 function formatBytes(bytes, decimals = 2) {
   if (bytes === null || bytes === undefined || isNaN(bytes)) return '0 Bytes';
   if (bytes === 0) return '0 Bytes';
-  if (bytes < 0) return '-' + formatBytes(-bytes, decimals);
+  if (bytes < 0) return `-${formatBytes(-bytes, decimals)}`;
   const k = 1024;
   const dm = decimals < 0 ? 0 : decimals;
   const sizes = ['Bytes', 'KB', 'MB', 'GB', 'TB'];
   const i = Math.floor(Math.log(bytes) / Math.log(k));
-  if (i < 0 || i >= sizes.length) return bytes + ' Bytes';
-  return parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i];
+  if (i < 0 || i >= sizes.length) return `${bytes} Bytes`;
+  return (
+    Number.parseFloat((bytes / Math.pow(k, i)).toFixed(dm)) + ' ' + sizes[i]
+  );
 }
 
 export default function SettingsPerformance(props) {
@@ -107,8 +110,9 @@ export default function SettingsPerformance(props) {
         if (requestQueue.length === 1) {
           if (res.includes(undefined)) return;
         } else if (requestQueue.length > 1) {
-          if (res.includes(undefined))
+          if (res.includes(undefined)) {
             return showError(t('部分保存失败，请重试'));
+          }
         }
         showSuccess(t('保存成功'));
         props.refresh();
@@ -145,7 +149,7 @@ export default function SettingsPerformance(props) {
       } else {
         showError(res.data.message || t('清理失败'));
       }
-    } catch (error) {
+    } catch {
       showError(t('清理失败'));
     }
   }
@@ -157,7 +161,7 @@ export default function SettingsPerformance(props) {
         showSuccess(t('统计已重置'));
         fetchStats();
       }
-    } catch (error) {
+    } catch {
       showError(t('重置失败'));
     }
   }
@@ -169,7 +173,7 @@ export default function SettingsPerformance(props) {
         showSuccess(t('GC 已执行'));
         fetchStats();
       }
-    } catch (error) {
+    } catch {
       showError(t('GC 执行失败'));
     }
   }
@@ -211,7 +215,7 @@ export default function SettingsPerformance(props) {
         showError(res.data.message || t('清理失败'));
       }
       fetchLogInfo();
-    } catch (error) {
+    } catch {
       showError(t('清理失败'));
     } finally {
       setLogCleanupLoading(false);
@@ -220,13 +224,14 @@ export default function SettingsPerformance(props) {
 
   useEffect(() => {
     const currentInputs = {};
-    for (let key in props.options) {
+    for (const key in props.options) {
       if (Object.keys(inputs).includes(key)) {
         if (typeof inputs[key] === 'boolean') {
           currentInputs[key] =
             props.options[key] === 'true' || props.options[key] === true;
         } else if (typeof inputs[key] === 'number') {
-          currentInputs[key] = parseInt(props.options[key]) || inputs[key];
+          currentInputs[key] =
+            Number.parseInt(props.options[key]) || inputs[key];
         } else {
           currentInputs[key] = props.options[key];
         }
@@ -269,7 +274,7 @@ export default function SettingsPerformance(props) {
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'performance_setting.disk_cache_enabled'}
+                  field='performance_setting.disk_cache_enabled'
                   label={t('启用磁盘缓存')}
                   extraText={t('将大请求体临时存储到磁盘')}
                   size='default'
@@ -282,7 +287,7 @@ export default function SettingsPerformance(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.InputNumber
-                  field={'performance_setting.disk_cache_threshold_mb'}
+                  field='performance_setting.disk_cache_threshold_mb'
                   label={t('磁盘缓存阈值 (MB)')}
                   extraText={t('请求体超过此大小时使用磁盘缓存')}
                   min={1}
@@ -295,7 +300,7 @@ export default function SettingsPerformance(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.InputNumber
-                  field={'performance_setting.disk_cache_max_size_mb'}
+                  field='performance_setting.disk_cache_max_size_mb'
                   label={t('磁盘缓存最大总量 (MB)')}
                   extraText={
                     stats?.disk_space_info?.total > 0
@@ -317,7 +322,7 @@ export default function SettingsPerformance(props) {
               {!stats?.config?.is_running_in_container && (
                 <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                   <Form.Input
-                    field={'performance_setting.disk_cache_path'}
+                    field='performance_setting.disk_cache_path'
                     label={t('缓存目录')}
                     extraText={t('留空使用系统临时目录')}
                     placeholder={t('例如 /var/cache/new-api')}
@@ -343,7 +348,7 @@ export default function SettingsPerformance(props) {
             <Row gutter={16}>
               <Col xs={24} sm={12} md={6} lg={6} xl={6}>
                 <Form.Switch
-                  field={'performance_setting.monitor_enabled'}
+                  field='performance_setting.monitor_enabled'
                   label={t('启用性能监控')}
                   extraText={t('超过阈值时拒绝新请求')}
                   size='default'
@@ -356,7 +361,7 @@ export default function SettingsPerformance(props) {
               </Col>
               <Col xs={24} sm={12} md={6} lg={6} xl={6}>
                 <Form.InputNumber
-                  field={'performance_setting.monitor_cpu_threshold'}
+                  field='performance_setting.monitor_cpu_threshold'
                   label={t('CPU 阈值 (%)')}
                   extraText={t('CPU 使用率超过此值时拒绝请求')}
                   min={0}
@@ -368,7 +373,7 @@ export default function SettingsPerformance(props) {
               </Col>
               <Col xs={24} sm={12} md={6} lg={6} xl={6}>
                 <Form.InputNumber
-                  field={'performance_setting.monitor_memory_threshold'}
+                  field='performance_setting.monitor_memory_threshold'
                   label={t('内存 阈值 (%)')}
                   extraText={t('内存使用率超过此值时拒绝请求')}
                   min={0}
@@ -381,7 +386,7 @@ export default function SettingsPerformance(props) {
               </Col>
               <Col xs={24} sm={12} md={6} lg={6} xl={6}>
                 <Form.InputNumber
-                  field={'performance_setting.monitor_disk_threshold'}
+                  field='performance_setting.monitor_disk_threshold'
                   label={t('磁盘 阈值 (%)')}
                   extraText={t('磁盘使用率超过此值时拒绝请求')}
                   min={0}
@@ -554,11 +559,11 @@ export default function SettingsPerformance(props) {
                       {t('请求体磁盘缓存')}
                     </Text>
                     <Progress
-                      percent={parseFloat(diskCacheUsagePercent)}
+                      percent={Number.parseFloat(diskCacheUsagePercent)}
                       showInfo
                       style={{ marginBottom: 8 }}
                       stroke={
-                        parseFloat(diskCacheUsagePercent) > 80
+                        Number.parseFloat(diskCacheUsagePercent) > 80
                           ? 'var(--semi-color-danger)'
                           : 'var(--semi-color-primary)'
                       }
@@ -646,7 +651,7 @@ export default function SettingsPerformance(props) {
                         {t('缓存目录磁盘空间')}
                       </Text>
                       <Progress
-                        percent={parseFloat(
+                        percent={Number.parseFloat(
                           stats.disk_space_info.used_percent.toFixed(1),
                         )}
                         showInfo

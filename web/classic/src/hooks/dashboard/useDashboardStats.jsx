@@ -17,8 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useMemo } from 'react';
-import { Wallet, Activity, Zap, Gauge } from 'lucide-react';
 import {
   IconMoneyExchangeStroked,
   IconHistogram,
@@ -29,6 +27,9 @@ import {
   IconTypograph,
   IconSend,
 } from '@douyinfe/semi-icons';
+import { Wallet, Activity, Zap, Gauge } from 'lucide-react';
+import { useMemo } from 'react';
+
 import { renderQuota } from '../../helpers';
 import { createSectionTitle } from '../../helpers/dashboard';
 

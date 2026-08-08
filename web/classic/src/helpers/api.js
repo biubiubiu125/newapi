@@ -17,14 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import axios from 'axios';
+
+import { MESSAGE_ROLES } from '../constants/playground.constants';
 import {
   getUserIdFromLocalStorage,
   showError,
   formatMessageForAPI,
   isValidMessage,
 } from './utils';
-import axios from 'axios';
-import { MESSAGE_ROLES } from '../constants/playground.constants';
 
 export let API = axios.create({
   baseURL: import.meta.env.VITE_REACT_APP_SERVER_URL
@@ -211,7 +212,7 @@ export const processModelsData = (data, currentModel) => {
 export const processGroupsData = (data, userGroup) => {
   let groupOptions = Object.entries(data).map(([group, info]) => ({
     label:
-      info.desc.length > 20 ? info.desc.substring(0, 20) + '...' : info.desc,
+      info.desc.length > 20 ? `${info.desc.substring(0, 20)}...` : info.desc,
     value: group,
     ratio: info.ratio,
     fullLabel: info.desc,
@@ -303,7 +304,7 @@ export function saveAffiliateCode(code, ttlDays = DEFAULT_AFFILIATE_TTL_DAYS) {
 
 export async function getOAuthState() {
   let path = '/api/oauth/state';
-  let affCode = getAffiliateCode();
+  const affCode = getAffiliateCode();
   if (affCode && affCode.length > 0) {
     path += `?aff=${encodeURIComponent(affCode)}`;
   }
@@ -322,7 +323,7 @@ async function prepareOAuthState(options = {}) {
   if (shouldLogout) {
     try {
       await API.get('/api/user/logout', { skipErrorHandler: true });
-    } catch (err) {}
+    } catch {}
     localStorage.removeItem('user');
     updateAPI();
   }
@@ -424,7 +425,7 @@ export async function onCustomOAuthClicked(provider, options = {}) {
     redirectToOAuthUrl(authUrl);
   } catch (error) {
     console.error('Failed to initiate custom OAuth:', error);
-    showError('OAuth 登录失败：' + (error.message || '未知错误'));
+    showError(`OAuth 登录失败：${error.message || '未知错误'}`);
   }
 }
 
@@ -446,7 +447,7 @@ export function getChannelModels(type) {
     }
     return channelModels[type];
   }
-  let models = localStorage.getItem('channel_models');
+  const models = localStorage.getItem('channel_models');
   if (!models) {
     return [];
   }

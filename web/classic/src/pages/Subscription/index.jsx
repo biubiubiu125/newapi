@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
+
 import SubscriptionsPage from '../../components/table/subscriptions';
 
 const Subscription = () => {

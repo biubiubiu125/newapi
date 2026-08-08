@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import { IconHelpCircle } from '@douyinfe/semi-icons';
 import {
   Avatar,
   Space,
@@ -26,6 +26,9 @@ import {
   Popover,
   Typography,
 } from '@douyinfe/semi-ui';
+import { CircleAlert, Route, Sparkles } from 'lucide-react';
+import React from 'react';
+
 import {
   renderGroup,
   renderQuota,
@@ -35,8 +38,6 @@ import {
   renderModelPriceSimple,
   renderTieredModelPriceSimple,
 } from '../../../helpers';
-import { IconHelpCircle } from '@douyinfe/semi-icons';
-import { CircleAlert, Route, Sparkles } from 'lucide-react';
 
 const colors = [
   'amber',
@@ -144,7 +145,7 @@ function renderType(type, t) {
 
 function buildStreamStatusTooltip(ss, t) {
   if (!ss) return null;
-  const lines = [t('流状态') + '：' + t('异常'), ss.end_reason || 'unknown'];
+  const lines = [`${t('流状态')}：${t('异常')}`, ss.end_reason || 'unknown'];
   if (ss.error_count > 0) {
     lines.push(`${t('软错误')}: ${ss.error_count}`);
   }
@@ -198,7 +199,7 @@ function renderIsStream(bool, t, streamStatus) {
 }
 
 function renderUseTime(type, t) {
-  const time = parseInt(type);
+  const time = Number.parseInt(type);
   if (time < 101) {
     return (
       <Tag color='green' shape='circle'>
@@ -224,7 +225,7 @@ function renderUseTime(type, t) {
 }
 
 function renderFirstUseTime(type, t) {
-  let time = parseFloat(type) / 1000.0;
+  let time = Number.parseFloat(type) / 1000.0;
   time = time.toFixed(1);
   if (time < 3) {
     return (
@@ -318,8 +319,8 @@ function renderSettlementFailedMarker(other, t) {
 }
 
 function renderModelName(record, copyText, t) {
-  let other = getLogOther(record.other);
-  let modelMapped =
+  const other = getLogOther(record.other);
+  const modelMapped =
     other?.is_model_mapped &&
     other?.upstream_model_name &&
     other?.upstream_model_name !== '';
@@ -332,11 +333,11 @@ function renderModelName(record, copyText, t) {
   } else {
     return (
       <>
-        <Space vertical align={'start'}>
+        <Space vertical align='start'>
           <Popover
             content={
               <div style={{ padding: 10 }}>
-                <Space vertical align={'start'}>
+                <Space vertical align='start'>
                   <div className='flex items-center'>
                     <Typography.Text strong style={{ marginRight: 8 }}>
                       {t('请求并计费模型')}:
@@ -420,8 +421,8 @@ function getPromptCacheSummary(other) {
 
 function normalizeDetailText(detail) {
   return String(detail || '')
-    .replace(/\n\r/g, '\n')
-    .replace(/\r\n/g, '\n');
+    .replaceAll(/\n\r/g, '\n')
+    .replaceAll(/\r\n/g, '\n');
 }
 
 function getUsageLogGroupSummary(groupRatio, userGroupRatio, t) {
@@ -569,12 +570,12 @@ export const getLogsColumns = ({
       render: (text, record, index) => {
         let isMultiKey = false;
         let multiKeyIndex = -1;
-        let content = t('渠道') + `：${record.channel}`;
+        let content = `${t('渠道')}：${record.channel}`;
         let affinity = null;
         let showMarker = false;
-        let other = getLogOther(record.other);
+        const other = getLogOther(record.other);
         if (other?.admin_info) {
-          let adminInfo = other.admin_info;
+          const adminInfo = other.admin_info;
           if (adminInfo?.is_multi_key) {
             isMultiKey = true;
             multiKeyIndex = adminInfo.multi_key_index;
@@ -583,7 +584,7 @@ export const getLogsColumns = ({
             Array.isArray(adminInfo.use_channel) &&
             adminInfo.use_channel.length > 0
           ) {
-            content = t('渠道') + `：${adminInfo.use_channel.join('->')}`;
+            content = `${t('渠道')}：${adminInfo.use_channel.join('->')}`;
           }
           if (adminInfo.channel_affinity) {
             affinity = adminInfo.channel_affinity;
@@ -601,7 +602,7 @@ export const getLogsColumns = ({
               <Tooltip content={record.channel_name || t('未知渠道')}>
                 <span>
                   <Tag
-                    color={colors[parseInt(text) % colors.length]}
+                    color={colors[Number.parseInt(text) % colors.length]}
                     shape='circle'
                   >
                     {text}
@@ -780,7 +781,7 @@ export const getLogsColumns = ({
           return <></>;
         }
         if (record.is_stream) {
-          let other = getLogOther(record.other);
+          const other = getLogOther(record.other);
           return (
             <>
               <Space>
@@ -867,12 +868,14 @@ export const getLogsColumns = ({
       title: t('输出'),
       dataIndex: 'completion_tokens',
       render: (text, record, index) => {
-        return parseInt(text) > 0 &&
+        return Number.parseInt(text) > 0 &&
           (record.type === 0 ||
             record.type === 2 ||
             record.type === 5 ||
             record.type === 6) ? (
-          <>{<span> {text} </span>}</>
+          <>
+            <span> {text} </span>
+          </>
         ) : (
           <></>
         );
@@ -883,12 +886,14 @@ export const getLogsColumns = ({
       title: t('花费'),
       dataIndex: 'quota',
       render: (text, record, index) => {
-        if (!(
-          record.type === 0 ||
-          record.type === 2 ||
-          record.type === 5 ||
-          record.type === 6
-        )) {
+        if (
+          !(
+            record.type === 0 ||
+            record.type === 2 ||
+            record.type === 5 ||
+            record.type === 6
+          )
+        ) {
           return <></>;
         }
         const other = getLogOther(record.other);
@@ -958,9 +963,9 @@ export const getLogsColumns = ({
         if (!(record.type === 2 || record.type === 5)) {
           return <></>;
         }
-        let content = t('渠道') + `：${record.channel}`;
+        let content = `${t('渠道')}：${record.channel}`;
         if (record.other !== '') {
-          let other = JSON.parse(record.other);
+          const other = JSON.parse(record.other);
           if (other === null) {
             return <></>;
           }
@@ -970,9 +975,9 @@ export const getLogsColumns = ({
               other.admin_info.use_channel !== undefined &&
               other.admin_info.use_channel !== ''
             ) {
-              let useChannel = other.admin_info.use_channel;
-              let useChannelStr = useChannel.join('->');
-              content = t('渠道') + `：${useChannelStr}`;
+              const useChannel = other.admin_info.use_channel;
+              const useChannelStr = useChannel.join('->');
+              content = `${t('渠道')}：${useChannelStr}`;
             }
           }
         }

@@ -6,6 +6,7 @@ module.exports = {
     sourceType: 'module',
     ecmaFeatures: { jsx: true },
   },
+  ignorePatterns: ['dist'],
   plugins: ['header', 'react-hooks'],
   overrides: [
     {

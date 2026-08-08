@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Modal } from '@douyinfe/semi-ui';
+import React from 'react';
+
 import { API } from './api';
 import { showError, showSuccess } from './utils';
 

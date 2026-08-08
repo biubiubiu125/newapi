@@ -118,7 +118,7 @@ export function usePayment() {
         )
         setAmount(calculatedAmount)
         return calculatedAmount
-      } catch (_error) {
+      } catch {
         setAmount(0)
         return 0
       } finally {
@@ -238,7 +238,7 @@ export function usePayment() {
         }
 
         return { ok: false }
-      } catch (_error) {
+      } catch {
         toast.error(i18next.t('Payment request failed'))
         return { ok: false }
       } finally {

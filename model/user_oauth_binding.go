@@ -106,32 +106,89 @@ func CreateUserOAuthBindingWithTx(tx *gorm.DB, binding *UserOAuthBinding) error 
 
 // UpdateUserOAuthBinding updates an existing OAuth binding (e.g., rebind to different OAuth account)
 func UpdateUserOAuthBinding(userId, providerId int, newProviderUserId string) error {
-	// Check if the new provider user ID is already taken by another user
-	var existingBinding UserOAuthBinding
-	err := DB.Where("provider_id = ? AND provider_user_id = ?", providerId, newProviderUserId).First(&existingBinding).Error
-	if err == nil && existingBinding.UserId != userId {
-		return errors.New("this OAuth account is already bound to another user")
+	if userId <= 0 || providerId <= 0 || newProviderUserId == "" {
+		return errors.New("invalid OAuth binding")
 	}
+	var previousAuthVersion int64
+	changed := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var user User
+		if err := lockForUpdate(tx).Select("id", "auth_version").Where("id = ?", userId).First(&user).Error; err != nil {
+			return err
+		}
+		previousAuthVersion = user.AuthVersion
 
-	// Check if user already has a binding for this provider
-	var binding UserOAuthBinding
-	err = DB.Where("user_id = ? AND provider_id = ?", userId, providerId).First(&binding).Error
+		var existingBinding UserOAuthBinding
+		err := tx.Where("provider_id = ? AND provider_user_id = ?", providerId, newProviderUserId).First(&existingBinding).Error
+		if err == nil && existingBinding.UserId != userId {
+			return errors.New("this OAuth account is already bound to another user")
+		}
+
+		var binding UserOAuthBinding
+		err = tx.Where("user_id = ? AND provider_id = ?", userId, providerId).First(&binding).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			if err := CreateUserOAuthBindingWithTx(tx, &UserOAuthBinding{
+				UserId:         userId,
+				ProviderId:     providerId,
+				ProviderUserId: newProviderUserId,
+			}); err != nil {
+				return err
+			}
+			changed = true
+		} else if err != nil {
+			return err
+		} else if binding.ProviderUserId != newProviderUserId {
+			if err := tx.Model(&binding).Update("provider_user_id", newProviderUserId).Error; err != nil {
+				return err
+			}
+			changed = true
+		}
+		if changed {
+			_, err := IncrementUserAuthVersionWithTx(tx, userId)
+			return err
+		}
+		return nil
+	})
 	if err != nil {
-		// No existing binding, create new one
-		return CreateUserOAuthBinding(&UserOAuthBinding{
-			UserId:         userId,
-			ProviderId:     providerId,
-			ProviderUserId: newProviderUserId,
-		})
+		return err
 	}
-
-	// Update existing binding
-	return DB.Model(&binding).Update("provider_user_id", newProviderUserId).Error
+	if !changed {
+		return nil
+	}
+	return FinalizeUserAuthChangeByID(userId, previousAuthVersion, "user_security_changed")
 }
 
 // DeleteUserOAuthBinding deletes an OAuth binding
 func DeleteUserOAuthBinding(userId, providerId int) error {
-	return DB.Where("user_id = ? AND provider_id = ?", userId, providerId).Delete(&UserOAuthBinding{}).Error
+	if userId <= 0 || providerId <= 0 {
+		return errors.New("invalid OAuth binding")
+	}
+	var previousAuthVersion int64
+	changed := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var user User
+		if err := lockForUpdate(tx).Select("id", "auth_version").Where("id = ?", userId).First(&user).Error; err != nil {
+			return err
+		}
+		previousAuthVersion = user.AuthVersion
+		result := tx.Where("user_id = ? AND provider_id = ?", userId, providerId).Delete(&UserOAuthBinding{})
+		if result.Error != nil {
+			return result.Error
+		}
+		changed = result.RowsAffected > 0
+		if changed {
+			_, err := IncrementUserAuthVersionWithTx(tx, userId)
+			return err
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	if !changed {
+		return nil
+	}
+	return FinalizeUserAuthChangeByID(userId, previousAuthVersion, "user_security_changed")
 }
 
 func deleteUserOAuthBindingsByUserId(tx *gorm.DB, userId int) error {

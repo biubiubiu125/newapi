@@ -18,8 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 export function base64UrlToBuffer(base64url) {
   if (!base64url) return new ArrayBuffer(0);
-  let padding = '='.repeat((4 - (base64url.length % 4)) % 4);
-  const base64 = (base64url + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const padding = '='.repeat((4 - (base64url.length % 4)) % 4);
+  const base64 = (base64url + padding)
+    .replaceAll(/-/g, '+')
+    .replaceAll(/_/g, '/');
   const rawData = window.atob(base64);
   const buffer = new ArrayBuffer(rawData.length);
   const uintArray = new Uint8Array(buffer);
@@ -38,9 +40,9 @@ export function bufferToBase64Url(buffer) {
   }
   return window
     .btoa(binary)
-    .replace(/\+/g, '-')
-    .replace(/\//g, '_')
-    .replace(/=+$/g, '');
+    .replaceAll(/\+/g, '-')
+    .replaceAll(/\//g, '_')
+    .replaceAll(/=+$/g, '');
 }
 
 export function prepareCredentialCreationOptions(payload) {
@@ -159,7 +161,7 @@ export async function isPasskeySupported() {
       const available =
         await window.PublicKeyCredential.isConditionalMediationAvailable();
       if (available) return true;
-    } catch (error) {
+    } catch {
       // ignore
     }
   }
@@ -169,7 +171,7 @@ export async function isPasskeySupported() {
   ) {
     try {
       return await window.PublicKeyCredential.isUserVerifyingPlatformAuthenticatorAvailable();
-    } catch (error) {
+    } catch {
       return false;
     }
   }

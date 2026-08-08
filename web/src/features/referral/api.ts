@@ -17,6 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { api } from '@/lib/api'
+
 import type {
   ApiResponse,
   PaginatedData,
@@ -116,9 +117,9 @@ export async function getAdminReferralOverview(): Promise<
   return res.data
 }
 
-export async function getAdminReferralBadges(params?: URLSearchParams): Promise<
-  ApiResponse<ReferralAdminBadgeCounts>
-> {
+export async function getAdminReferralBadges(
+  params?: URLSearchParams
+): Promise<ApiResponse<ReferralAdminBadgeCounts>> {
   const query = params?.toString()
   const res = await api.get(
     `/api/user/admin/referral/badges${query ? `?${query}` : ''}`

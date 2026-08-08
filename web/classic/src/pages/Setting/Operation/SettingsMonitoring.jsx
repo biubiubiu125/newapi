@@ -17,8 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import { Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import HttpStatusCodeRulesInput from '../../../components/settings/HttpStatusCodeRulesInput';
 import {
   compareObjects,
   API,
@@ -27,8 +30,6 @@ import {
   showWarning,
   parseHttpStatusCodeRules,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
-import HttpStatusCodeRulesInput from '../../../components/settings/HttpStatusCodeRulesInput';
 
 export default function SettingsMonitoring(props) {
   const { t } = useTranslation();
@@ -95,8 +96,9 @@ export default function SettingsMonitoring(props) {
         if (requestQueue.length === 1) {
           if (res.includes(undefined)) return;
         } else if (requestQueue.length > 1) {
-          if (res.includes(undefined))
+          if (res.includes(undefined)) {
             return showError(t('部分保存失败，请重试'));
+          }
         }
         showSuccess(t('保存成功'));
         props.refresh();
@@ -111,7 +113,7 @@ export default function SettingsMonitoring(props) {
 
   useEffect(() => {
     const currentInputs = {};
-    for (let key in props.options) {
+    for (const key in props.options) {
       if (Object.keys(inputs).includes(key)) {
         currentInputs[key] = props.options[key];
       }
@@ -133,7 +135,7 @@ export default function SettingsMonitoring(props) {
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'monitor_setting.auto_test_channel_enabled'}
+                  field='monitor_setting.auto_test_channel_enabled'
                   label={t('定时测试所有通道')}
                   size='default'
                   checkedText='｜'
@@ -153,13 +155,13 @@ export default function SettingsMonitoring(props) {
                   min={1}
                   suffix={t('分钟')}
                   extraText={t('每隔多少分钟测试一次所有通道')}
-                  placeholder={''}
-                  field={'monitor_setting.auto_test_channel_minutes'}
+                  placeholder=''
+                  field='monitor_setting.auto_test_channel_minutes'
                   onChange={(value) =>
                     setInputs({
                       ...inputs,
                       'monitor_setting.auto_test_channel_minutes':
-                        parseInt(value),
+                        Number.parseInt(value),
                     })
                   }
                 />
@@ -175,8 +177,8 @@ export default function SettingsMonitoring(props) {
                   extraText={t(
                     '当运行通道全部测试时，超过此时间将自动禁用通道',
                   )}
-                  placeholder={''}
-                  field={'ChannelDisableThreshold'}
+                  placeholder=''
+                  field='ChannelDisableThreshold'
                   onChange={(value) =>
                     setInputs({
                       ...inputs,
@@ -190,10 +192,10 @@ export default function SettingsMonitoring(props) {
                   label={t('额度提醒阈值')}
                   step={1}
                   min={0}
-                  suffix={'Token'}
+                  suffix='Token'
                   extraText={t('低于此额度时将发送邮件提醒用户')}
-                  placeholder={''}
-                  field={'QuotaRemindThreshold'}
+                  placeholder=''
+                  field='QuotaRemindThreshold'
                   onChange={(value) =>
                     setInputs({
                       ...inputs,
@@ -206,7 +208,7 @@ export default function SettingsMonitoring(props) {
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'AutomaticDisableChannelEnabled'}
+                  field='AutomaticDisableChannelEnabled'
                   label={t('失败时自动禁用通道')}
                   size='default'
                   checkedText='｜'
@@ -221,7 +223,7 @@ export default function SettingsMonitoring(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'AutomaticEnableChannelEnabled'}
+                  field='AutomaticEnableChannelEnabled'
                   label={t('成功时自动启用通道')}
                   size='default'
                   checkedText='｜'
@@ -243,7 +245,7 @@ export default function SettingsMonitoring(props) {
                   extraText={t(
                     '支持填写单个状态码或范围（含首尾），使用逗号分隔',
                   )}
-                  field={'AutomaticDisableStatusCodes'}
+                  field='AutomaticDisableStatusCodes'
                   onChange={(value) =>
                     setInputs({ ...inputs, AutomaticDisableStatusCodes: value })
                   }
@@ -256,7 +258,7 @@ export default function SettingsMonitoring(props) {
                   extraText={t(
                     '支持填写单个状态码或范围（含首尾），使用逗号分隔；504 和 524 始终不重试，不受此处配置影响',
                   )}
-                  field={'AutomaticRetryStatusCodes'}
+                  field='AutomaticRetryStatusCodes'
                   onChange={(value) =>
                     setInputs({ ...inputs, AutomaticRetryStatusCodes: value })
                   }
@@ -269,7 +271,7 @@ export default function SettingsMonitoring(props) {
                   extraText={t(
                     '当上游通道返回错误中包含这些关键词时（不区分大小写），自动禁用通道',
                   )}
-                  field={'AutomaticDisableKeywords'}
+                  field='AutomaticDisableKeywords'
                   autosize={{ minRows: 6, maxRows: 12 }}
                   onChange={(value) =>
                     setInputs({ ...inputs, AutomaticDisableKeywords: value })

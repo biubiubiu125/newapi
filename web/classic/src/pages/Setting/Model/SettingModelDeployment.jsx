@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import {
   Button,
   Col,
@@ -27,6 +26,10 @@ import {
   Card,
   Typography,
 } from '@douyinfe/semi-ui';
+import { Server, Cloud, Zap, ArrowUpRight } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   compareObjects,
   API,
@@ -34,8 +37,6 @@ import {
   showSuccess,
   showWarning,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
-import { Server, Cloud, Zap, ArrowUpRight } from 'lucide-react';
 
 const { Text } = Typography;
 
@@ -112,7 +113,7 @@ export default function SettingModelDeployment(props) {
     if (!updateArray.length) return showWarning(t('你似乎并没有修改什么'));
 
     const requestQueue = updateArray.map((item) => {
-      let value = String(inputs[item.key]);
+      const value = String(inputs[item.key]);
       return API.put('/api/option/', {
         key: item.key,
         value,
@@ -125,8 +126,9 @@ export default function SettingModelDeployment(props) {
         if (requestQueue.length === 1) {
           if (res.includes(undefined)) return;
         } else if (requestQueue.length > 1) {
-          if (res.includes(undefined))
+          if (res.includes(undefined)) {
             return showError(t('部分保存失败，请重试'));
+          }
         }
         showSuccess(t('保存成功'));
         // 更新 inputsRow 以反映已保存的状态
@@ -149,7 +151,7 @@ export default function SettingModelDeployment(props) {
       };
 
       const currentInputs = {};
-      for (let key in defaultInputs) {
+      for (const key in defaultInputs) {
         if (props.options.hasOwnProperty(key)) {
           currentInputs[key] = props.options[key];
         } else {
@@ -215,7 +217,7 @@ export default function SettingModelDeployment(props) {
                   >
                     <Form.Switch
                       label={t('启用 io.net 部署')}
-                      field={'model_deployment.ionet.enabled'}
+                      field='model_deployment.ionet.enabled'
                       onChange={(value) =>
                         setInputs({
                           ...inputs,
@@ -226,7 +228,7 @@ export default function SettingModelDeployment(props) {
                     />
                     <Form.Input
                       label={t('API Key')}
-                      field={'model_deployment.ionet.api_key'}
+                      field='model_deployment.ionet.api_key'
                       placeholder={t('请输入 io.net API Key（敏感信息不显示）')}
                       onChange={(value) =>
                         setInputs({

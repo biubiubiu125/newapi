@@ -16,11 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
 import { CalendarClock, Crown, Package } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { formatQuota } from '@/lib/format'
+
+import { GroupBadge } from '@/components/group-badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -30,9 +31,10 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
-import { GroupBadge } from '@/components/group-badge'
 import { getPaymentIcon } from '@/features/wallet/lib'
 import type { PaymentInitiationResult } from '@/features/wallet/types'
+import { formatQuota } from '@/lib/format'
+
 import {
   paySubscriptionCreem,
   paySubscriptionEpay,

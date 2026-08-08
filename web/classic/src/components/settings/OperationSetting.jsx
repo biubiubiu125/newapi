@@ -17,21 +17,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
 import { Card, Spin } from '@douyinfe/semi-ui';
+import React, { useEffect, useState } from 'react';
+
+import { API, showError, toBoolean } from '../../helpers';
+import SettingsCheckin from '../../pages/Setting/Operation/SettingsCheckin';
+import SettingsCreditLimit from '../../pages/Setting/Operation/SettingsCreditLimit';
 import SettingsGeneral from '../../pages/Setting/Operation/SettingsGeneral';
 import SettingsHeaderNavModules from '../../pages/Setting/Operation/SettingsHeaderNavModules';
-import SettingsSidebarModulesAdmin from '../../pages/Setting/Operation/SettingsSidebarModulesAdmin';
-import SettingsSensitiveWords from '../../pages/Setting/Operation/SettingsSensitiveWords';
 import SettingsLog from '../../pages/Setting/Operation/SettingsLog';
 import SettingsMonitoring from '../../pages/Setting/Operation/SettingsMonitoring';
-import SettingsCreditLimit from '../../pages/Setting/Operation/SettingsCreditLimit';
-import SettingsCheckin from '../../pages/Setting/Operation/SettingsCheckin';
+import SettingsSensitiveWords from '../../pages/Setting/Operation/SettingsSensitiveWords';
+import SettingsSidebarModulesAdmin from '../../pages/Setting/Operation/SettingsSidebarModulesAdmin';
 import SettingsTicketNotification from '../../pages/Setting/Operation/SettingsTicketNotification';
-import { API, showError, toBoolean } from '../../helpers';
 
 const OperationSetting = () => {
-  let [inputs, setInputs] = useState({
+  const [inputs, setInputs] = useState({
     /* 额度相关 */
     QuotaForNewUser: 0,
     PreConsumedQuota: 0,
@@ -83,13 +84,13 @@ const OperationSetting = () => {
     'token_setting.max_user_tokens': 1000,
   });
 
-  let [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const getOptions = async () => {
     const res = await API.get('/api/option/');
     const { success, message, data } = res.data;
     if (success) {
-      let newInputs = {};
+      const newInputs = {};
       data.forEach((item) => {
         if (typeof inputs[item.key] === 'boolean') {
           newInputs[item.key] = toBoolean(item.value);
@@ -108,7 +109,7 @@ const OperationSetting = () => {
       setLoading(true);
       await getOptions();
       // showSuccess('刷新成功');
-    } catch (error) {
+    } catch {
       showError('刷新失败');
     } finally {
       setLoading(false);

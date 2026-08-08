@@ -16,10 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useCallback, useEffect, useState } from 'react'
 import { Edit, FileText, Plus, RefreshCw, Trash2, X } from 'lucide-react'
+import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import { StatusBadge, StatusBadgeList } from '@/components/status-badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import {
@@ -40,8 +43,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { ConfirmDialog } from '@/components/confirm-dialog'
-import { StatusBadge, StatusBadgeList } from '@/components/status-badge'
+
 import { SettingsSwitchField } from '../../components/settings-form-layout'
 import { SettingsPageActionsPortal } from '../../components/settings-page-context'
 import { SettingsSection } from '../../components/settings-section'
@@ -224,43 +226,48 @@ export function ChannelAffinitySection(props: Props) {
     try {
       const updates: { key: string; value: string }[] = []
 
-      if (enabled !== props.defaultValues['channel_affinity_setting.enabled'])
+      if (enabled !== props.defaultValues['channel_affinity_setting.enabled']) {
         updates.push({
           key: 'channel_affinity_setting.enabled',
           value: String(enabled),
         })
+      }
       if (
         switchOnSuccess !==
         props.defaultValues['channel_affinity_setting.switch_on_success']
-      )
+      ) {
         updates.push({
           key: 'channel_affinity_setting.switch_on_success',
           value: String(switchOnSuccess),
         })
+      }
       if (
         keepOnChannelDisabled !==
         props.defaultValues['channel_affinity_setting.keep_on_channel_disabled']
-      )
+      ) {
         updates.push({
           key: 'channel_affinity_setting.keep_on_channel_disabled',
           value: String(keepOnChannelDisabled),
         })
+      }
       if (
         maxEntries !==
         props.defaultValues['channel_affinity_setting.max_entries']
-      )
+      ) {
         updates.push({
           key: 'channel_affinity_setting.max_entries',
           value: String(maxEntries),
         })
+      }
       if (
         defaultTtl !==
         props.defaultValues['channel_affinity_setting.default_ttl_seconds']
-      )
+      ) {
         updates.push({
           key: 'channel_affinity_setting.default_ttl_seconds',
           value: String(defaultTtl),
         })
+      }
 
       const origRules = props.defaultValues['channel_affinity_setting.rules']
       const origSerialized = (() => {

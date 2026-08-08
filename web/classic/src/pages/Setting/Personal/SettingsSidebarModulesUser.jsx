@@ -17,8 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useState, useEffect, useContext } from 'react';
-import { useTranslation } from 'react-i18next';
 import {
   Card,
   Button,
@@ -28,16 +26,19 @@ import {
   Col,
   Avatar,
 } from '@douyinfe/semi-ui';
-import { API, showSuccess, showError } from '../../../helpers';
+import { Settings } from 'lucide-react';
+import { useState, useEffect, useContext } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import { StatusContext } from '../../../context/Status';
 import { UserContext } from '../../../context/User';
-import { useUserPermissions } from '../../../hooks/common/useUserPermissions';
+import { API, showSuccess, showError } from '../../../helpers';
 import {
   mergeAdminConfig,
   sanitizeSidebarConfig,
   useSidebar,
 } from '../../../hooks/common/useSidebar';
-import { Settings } from 'lucide-react';
+import { useUserPermissions } from '../../../hooks/common/useUserPermissions';
 
 const { Text } = Typography;
 
@@ -206,7 +207,7 @@ export default function SettingsSidebarModulesUser() {
             );
             const mergedAdminConf = mergeAdminConfig(adminConf);
             setAdminConfig(mergedAdminConf);
-          } catch (error) {
+          } catch {
             const mergedAdminConf = mergeAdminConfig(null);
             setAdminConfig(mergedAdminConf);
           }

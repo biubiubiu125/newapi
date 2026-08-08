@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { ExternalLink, Info } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
+
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 
@@ -37,7 +38,7 @@ export function WalletNoticeAlert(props: WalletNoticeAlertProps) {
       <AlertDescription className='flex flex-col gap-3 text-sm sm:flex-row sm:items-center sm:justify-between'>
         <span className='flex min-w-0 flex-1 items-center gap-2'>
           <Info className='h-4 w-4 shrink-0 text-amber-600 dark:text-amber-300' />
-          <span className='min-w-0 whitespace-pre-line break-words leading-relaxed [overflow-wrap:anywhere]'>
+          <span className='min-w-0 leading-relaxed [overflow-wrap:anywhere] break-words whitespace-pre-line'>
             {notice}
           </span>
         </span>
@@ -52,7 +53,7 @@ export function WalletNoticeAlert(props: WalletNoticeAlertProps) {
             }
             variant='outline'
             size='sm'
-            className='shrink-0 border-amber-300 bg-background/80 text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-100 dark:hover:bg-amber-900/40'
+            className='bg-background/80 shrink-0 border-amber-300 text-amber-950 hover:bg-amber-100 dark:border-amber-800 dark:text-amber-100 dark:hover:bg-amber-900/40'
           >
             <ExternalLink className='mr-2 h-4 w-4' />
             {t('Buy redemption code')}

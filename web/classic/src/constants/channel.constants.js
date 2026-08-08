@@ -189,11 +189,32 @@ export const CHANNEL_OPTIONS = [
     color: 'blue',
     label: 'ChatGPT Subscription (Codex)',
   },
+  {
+    value: 58,
+    color: 'blue',
+    label: 'Advanced Custom',
+  },
+  {
+    value: 59,
+    color: 'blue',
+    label: 'Sub2API',
+  },
+  {
+    value: 60,
+    color: 'blue',
+    label: 'New API',
+  },
 ];
 
 // Channel types that support upstream model list fetching in UI.
 export const MODEL_FETCHABLE_CHANNEL_TYPES = new Set([
-  1, 4, 14, 34, 17, 26, 27, 24, 47, 25, 20, 23, 31, 40, 42, 48, 43,
+  1, 4, 14, 17, 20, 23, 24, 25, 26, 27, 31, 34, 35, 40, 42, 43, 47, 48, 57, 58,
+  59, 60,
 ]);
+
+export const supportsChannelUpstreamModelUpdate = (channel) =>
+  !!channel &&
+  MODEL_FETCHABLE_CHANNEL_TYPES.has(channel.type) &&
+  !(channel.type === 57 && channel.channel_info?.is_multi_key === true);
 
 export const MODEL_TABLE_PAGE_SIZE = 10;

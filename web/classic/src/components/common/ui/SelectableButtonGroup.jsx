@@ -17,9 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useRef, useEffect } from 'react';
-import { useMinimumLoadingTime } from '../../../hooks/common/useMinimumLoadingTime';
-import { useContainerWidth } from '../../../hooks/common/useContainerWidth';
+import { IconChevronDown, IconChevronUp } from '@douyinfe/semi-icons';
 import {
   Divider,
   Button,
@@ -30,7 +28,10 @@ import {
   Skeleton,
   Tooltip,
 } from '@douyinfe/semi-ui';
-import { IconChevronDown, IconChevronUp } from '@douyinfe/semi-icons';
+import React, { useState, useRef, useEffect } from 'react';
+
+import { useContainerWidth } from '../../../hooks/common/useContainerWidth';
+import { useMinimumLoadingTime } from '../../../hooks/common/useMinimumLoadingTime';
 
 /**
  * 通用可选择按钮组组件
@@ -72,7 +73,7 @@ const SelectableButtonGroup = ({
       const el = textRef.current;
       if (!el) return;
       setIsOverflowing(el.scrollWidth > el.clientWidth);
-    }, [text, containerWidth]);
+    }, [text]);
 
     const textElement = (
       <span ref={textRef} className='sbg-ellipsis'>
@@ -169,9 +170,7 @@ const SelectableButtonGroup = ({
       </Row>
     );
 
-    return (
-      <Skeleton loading={true} active placeholder={placeholder}></Skeleton>
-    );
+    return <Skeleton loading active placeholder={placeholder} />;
   };
 
   const contentElement = showSkeleton ? (

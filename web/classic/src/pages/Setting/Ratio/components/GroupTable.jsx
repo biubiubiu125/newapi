@@ -1,4 +1,22 @@
-import React, { useState, useCallback, useMemo, useRef } from 'react';
+/*
+Copyright (C) 2025 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
+import { IconPlus, IconDelete } from '@douyinfe/semi-icons';
 import {
   Button,
   Input,
@@ -7,8 +25,9 @@ import {
   Typography,
   Popconfirm,
 } from '@douyinfe/semi-ui';
-import { IconPlus, IconDelete } from '@douyinfe/semi-icons';
+import React, { useState, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import CardTable from '../../../../components/common/ui/CardTable';
 
 const { Text } = Typography;
@@ -34,7 +53,7 @@ function buildRows(groupRatioStr, userUsableGroupsStr) {
     ...Object.keys(usableMap),
   ]);
 
-  return Array.from(allNames).map((name) => ({
+  return [...allNames].map((name) => ({
     _id: uid(),
     name,
     ratio: ratioMap[name] ?? 1,
@@ -243,7 +262,7 @@ export default function GroupTable({ groupRatio, userUsableGroups, onChange }) {
       {duplicateNames.size > 0 && (
         <Text type='warning' size='small' className='mt-2 block'>
           {t('存在重复的分组名称：')}
-          {Array.from(duplicateNames).join(', ')}
+          {[...duplicateNames].join(', ')}
         </Text>
       )}
     </div>

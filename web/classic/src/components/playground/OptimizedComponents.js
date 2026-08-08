@@ -18,10 +18,11 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import MessageContent from './MessageContent';
-import MessageActions from './MessageActions';
-import SettingsPanel from './SettingsPanel';
+
 import DebugPanel from './DebugPanel';
+import MessageActions from './MessageActions';
+import MessageContent from './MessageContent';
+import SettingsPanel from './SettingsPanel';
 
 // 优化的消息内容组件
 export const OptimizedMessageContent = React.memo(

@@ -17,8 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { Modal } from '@douyinfe/semi-ui';
 import React, { useContext, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate } from 'react-router-dom';
+
+import { UserContext } from '../../context/User';
 import {
   API,
   copy,
@@ -31,26 +35,22 @@ import {
   isPasskeySupported,
   setUserData,
 } from '../../helpers';
-import { UserContext } from '../../context/User';
-import { Modal } from '@douyinfe/semi-ui';
-import { useTranslation } from 'react-i18next';
-
-// 导入子组件
-import UserInfoHeader from './personal/components/UserInfoHeader';
+import { useSecureVerification } from '../../hooks/common/useSecureVerification';
+import SecureVerificationModal from '../common/modals/SecureVerificationModal';
 import AccountManagement from './personal/cards/AccountManagement';
+import CheckinCalendar from './personal/cards/CheckinCalendar';
 import NotificationSettings from './personal/cards/NotificationSettings';
 import PreferencesSettings from './personal/cards/PreferencesSettings';
-import CheckinCalendar from './personal/cards/CheckinCalendar';
-import EmailBindModal from './personal/modals/EmailBindModal';
-import WeChatBindModal from './personal/modals/WeChatBindModal';
+// 导入子组件
+import UserInfoHeader from './personal/components/UserInfoHeader';
 import AccountDeleteModal from './personal/modals/AccountDeleteModal';
 import ChangePasswordModal from './personal/modals/ChangePasswordModal';
-import SecureVerificationModal from '../common/modals/SecureVerificationModal';
-import { useSecureVerification } from '../../hooks/common/useSecureVerification';
+import EmailBindModal from './personal/modals/EmailBindModal';
+import WeChatBindModal from './personal/modals/WeChatBindModal';
 
 const PersonalSetting = () => {
   const [userState, userDispatch] = useContext(UserContext);
-  let navigate = useNavigate();
+  const navigate = useNavigate();
   const { t } = useTranslation();
 
   const [inputs, setInputs] = useState({
@@ -126,7 +126,7 @@ const PersonalSetting = () => {
     : passkeyVerificationMethods;
 
   useEffect(() => {
-    let saved = localStorage.getItem('status');
+    const saved = localStorage.getItem('status');
     if (saved) {
       const parsed = JSON.parse(saved);
       setStatus(parsed);
@@ -154,7 +154,7 @@ const PersonalSetting = () => {
             setTurnstileSiteKey('');
           }
         }
-      } catch (e) {
+      } catch {
         // ignore and keep local status
       }
     })();
@@ -232,7 +232,7 @@ const PersonalSetting = () => {
       } else {
         showError(message);
       }
-    } catch (error) {
+    } catch {
       // 忽略错误，保留默认状态
     }
   };
@@ -360,7 +360,7 @@ const PersonalSetting = () => {
   };
 
   const getUserData = async () => {
-    let res = await API.get(`/api/user/self`);
+    const res = await API.get(`/api/user/self`);
     const { success, message, data } = res.data;
     if (success) {
       userDispatch({ type: 'login', payload: data });
@@ -510,7 +510,7 @@ const PersonalSetting = () => {
     try {
       const res = await API.put('/api/user/setting', {
         notify_type: notificationSettings.warningType,
-        quota_warning_threshold: parseFloat(
+        quota_warning_threshold: Number.parseFloat(
           notificationSettings.warningThreshold,
         ),
         webhook_url: notificationSettings.webhookUrl,
@@ -520,7 +520,7 @@ const PersonalSetting = () => {
         gotify_url: notificationSettings.gotifyUrl,
         gotify_token: notificationSettings.gotifyToken,
         gotify_priority: (() => {
-          const parsed = parseInt(notificationSettings.gotifyPriority);
+          const parsed = Number.parseInt(notificationSettings.gotifyPriority);
           return isNaN(parsed) ? 5 : parsed;
         })(),
         upstream_model_update_notify_enabled:
@@ -536,7 +536,7 @@ const PersonalSetting = () => {
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError(t('设置保存失败'));
     }
   };

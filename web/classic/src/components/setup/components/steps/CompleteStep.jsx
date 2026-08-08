@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Avatar, Typography, Descriptions } from '@douyinfe/semi-ui';
 import { CheckCircle } from 'lucide-react';
+import React from 'react';
 
 const { Text, Title } = Typography;
 

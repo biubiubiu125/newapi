@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import { useState } from 'react';
+
 import { API, showError, showSuccess } from '../../helpers';
 
 export const useEnhancedDeploymentActions = (t) => {
@@ -54,9 +55,9 @@ export const useEnhancedDeploymentActions = (t) => {
       }
     } catch (error) {
       showError(
-        t('延长时长失败') +
-          ': ' +
-          (error.response?.data?.message || error.message),
+        `${t('延长时长失败')}: ${
+          error.response?.data?.message || error.message
+        }`,
       );
       throw error;
     } finally {
@@ -76,9 +77,9 @@ export const useEnhancedDeploymentActions = (t) => {
       }
     } catch (error) {
       showError(
-        t('获取详情失败') +
-          ': ' +
-          (error.response?.data?.message || error.message),
+        `${t('获取详情失败')}: ${
+          error.response?.data?.message || error.message
+        }`,
       );
       throw error;
     } finally {
@@ -93,8 +94,9 @@ export const useEnhancedDeploymentActions = (t) => {
 
       const params = new URLSearchParams();
 
-      if (options.containerId)
+      if (options.containerId) {
         params.append('container_id', options.containerId);
+      }
       if (options.level) params.append('level', options.level);
       if (options.limit) params.append('limit', options.limit.toString());
       if (options.cursor) params.append('cursor', options.cursor);
@@ -111,9 +113,9 @@ export const useEnhancedDeploymentActions = (t) => {
       }
     } catch (error) {
       showError(
-        t('获取日志失败') +
-          ': ' +
-          (error.response?.data?.message || error.message),
+        `${t('获取日志失败')}: ${
+          error.response?.data?.message || error.message
+        }`,
       );
       throw error;
     } finally {
@@ -137,9 +139,9 @@ export const useEnhancedDeploymentActions = (t) => {
       }
     } catch (error) {
       showError(
-        t('更新配置失败') +
-          ': ' +
-          (error.response?.data?.message || error.message),
+        `${t('更新配置失败')}: ${
+          error.response?.data?.message || error.message
+        }`,
       );
       throw error;
     } finally {
@@ -160,9 +162,9 @@ export const useEnhancedDeploymentActions = (t) => {
       }
     } catch (error) {
       showError(
-        t('销毁容器失败') +
-          ': ' +
-          (error.response?.data?.message || error.message),
+        `${t('销毁容器失败')}: ${
+          error.response?.data?.message || error.message
+        }`,
       );
       throw error;
     } finally {
@@ -185,9 +187,9 @@ export const useEnhancedDeploymentActions = (t) => {
       }
     } catch (error) {
       showError(
-        t('更新名称失败') +
-          ': ' +
-          (error.response?.data?.message || error.message),
+        `${t('更新名称失败')}: ${
+          error.response?.data?.message || error.message
+        }`,
       );
       throw error;
     } finally {
@@ -211,14 +213,14 @@ export const useEnhancedDeploymentActions = (t) => {
         showSuccess(
           t('批量操作完成: {{success}}个成功, {{failed}}个失败', {
             success: successful,
-            failed: failed,
+            failed,
           }),
         );
       }
 
       return { successful, failed };
     } catch (error) {
-      showError(t('批量操作失败') + ': ' + error.message);
+      showError(`${t('批量操作失败')}: ${error.message}`);
       throw error;
     } finally {
       setOperationLoading('batch_delete', 'all', false);
@@ -256,7 +258,7 @@ export const useEnhancedDeploymentActions = (t) => {
         showSuccess(t('日志导出成功'));
       }
     } catch (error) {
-      showError(t('导出日志失败') + ': ' + error.message);
+      showError(`${t('导出日志失败')}: ${error.message}`);
       throw error;
     } finally {
       setOperationLoading('export_logs', deploymentId, false);

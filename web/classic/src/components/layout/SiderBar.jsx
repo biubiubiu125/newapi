@@ -17,18 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { Link, useLocation } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
-import { getLucideIcon } from '../../helpers/render';
-import { ChevronLeft } from 'lucide-react';
-import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
-import { useSidebar } from '../../hooks/common/useSidebar';
-import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
-import { API, isAdmin, isRoot, showError } from '../../helpers';
-import SkeletonWrapper from './components/SkeletonWrapper';
-
 import { Nav, Divider, Button, Badge } from '@douyinfe/semi-ui';
+import { ChevronLeft } from 'lucide-react';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Link, useLocation } from 'react-router-dom';
+
+import { API, isAdmin, isRoot, showError } from '../../helpers';
+import { getLucideIcon } from '../../helpers/render';
+import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime';
+import { useSidebar } from '../../hooks/common/useSidebar';
+import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
+import SkeletonWrapper from './components/SkeletonWrapper';
 
 const routerMap = {
   home: '/',
@@ -126,10 +126,7 @@ const writeSidebarBadgeAckState = (state) => {
 const sidebarBadgeAckEntryKey = (key) => `${key}:cursor`;
 
 const hasSidebarBadgeAck = (key) =>
-  Object.prototype.hasOwnProperty.call(
-    readSidebarBadgeAckState(),
-    sidebarBadgeAckEntryKey(key),
-  );
+  Object.hasOwn(readSidebarBadgeAckState(), sidebarBadgeAckEntryKey(key));
 
 const readSidebarBadgeAck = (key) =>
   readSidebarBadgeAckState()[sidebarBadgeAckEntryKey(key)];
@@ -617,7 +614,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
     if (Array.isArray(chats) && chats.length > 0) {
       for (let i = 0; i < chats.length; i++) {
-        newRouterMap['chat' + i] = '/console/chat/' + i;
+        newRouterMap[`chat${i}`] = `/console/chat/${i}`;
       }
     }
 
@@ -632,12 +629,12 @@ const SiderBar = ({ onNavigate = () => {} }) => {
       try {
         chats = JSON.parse(chats);
         if (Array.isArray(chats)) {
-          let chatItems = [];
+          const chatItems = [];
           for (let i = 0; i < chats.length; i++) {
             let shouldSkip = false;
-            let chat = {};
-            for (let key in chats[i]) {
-              let link = chats[i][key];
+            const chat = {};
+            for (const key in chats[i]) {
+              const link = chats[i][key];
               if (typeof link !== 'string') continue; // 确保链接是字符串
               if (
                 link.startsWith('fluent') ||
@@ -648,8 +645,8 @@ const SiderBar = ({ onNavigate = () => {} }) => {
                 break;
               }
               chat.text = key;
-              chat.itemKey = 'chat' + i;
-              chat.to = '/console/chat/' + i;
+              chat.itemKey = `chat${i}`;
+              chat.to = `/console/chat/${i}`;
             }
             if (shouldSkip || !chat.text) continue; // 避免推入空项
             chatItems.push(chat);
@@ -657,7 +654,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           setChatItems(chatItems);
           updateRouterMapWithChats(chats);
         }
-      } catch (e) {
+      } catch {
         showError('聊天数据解析失败');
       }
     }
@@ -723,7 +720,7 @@ const SiderBar = ({ onNavigate = () => {} }) => {
     if (!matchingKey && currentPath.startsWith('/console/chat/')) {
       const chatIndex = currentPath.split('/').pop();
       if (!isNaN(chatIndex)) {
-        matchingKey = 'chat' + chatIndex;
+        matchingKey = `chat${chatIndex}`;
       } else {
         matchingKey = 'chat';
       }

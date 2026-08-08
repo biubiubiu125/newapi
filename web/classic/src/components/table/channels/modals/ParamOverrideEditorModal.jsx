@@ -17,8 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { useTranslation } from 'react-i18next';
+import { IconDelete, IconMenu, IconPlus } from '@douyinfe/semi-icons';
 import {
   Button,
   Card,
@@ -34,12 +33,14 @@ import {
   TextArea,
   Typography,
 } from '@douyinfe/semi-ui';
-import { IconDelete, IconMenu, IconPlus } from '@douyinfe/semi-icons';
-import { copy, showError, showSuccess, verifyJSON } from '../../../../helpers';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   CLAUDE_CLI_HEADER_PASSTHROUGH_TEMPLATE,
   CODEX_CLI_HEADER_PASSTHROUGH_TEMPLATE,
 } from '../../../../constants/channel-affinity-template.constants';
+import { copy, showError, showSuccess, verifyJSON } from '../../../../helpers';
 
 const { Text } = Typography;
 
@@ -210,8 +211,9 @@ const getModeToLabel = (mode) => {
 const getModeToPlaceholder = (mode) => {
   if (mode === 'replace') return '（可留空）';
   if (mode === 'regex_replace') return 'openai/gpt-';
-  if (mode === 'copy_header' || mode === 'move_header')
+  if (mode === 'copy_header' || mode === 'move_header') {
     return 'X-Upstream-Auth';
+  }
   return 'original_model';
 };
 
@@ -507,7 +509,7 @@ const toValueText = (value) => {
   if (typeof value === 'string') return value;
   try {
     return JSON.stringify(value);
-  } catch (error) {
+  } catch {
     return String(value);
   }
 };
@@ -517,7 +519,7 @@ const parseLooseValue = (valueText) => {
   if (raw.trim() === '') return '';
   try {
     return JSON.parse(raw);
-  } catch (error) {
+  } catch {
     return raw;
   }
 };
@@ -583,7 +585,7 @@ const parseReturnErrorDraft = (valueText) => {
         simpleMode: false,
       };
     }
-  } catch (error) {
+  } catch {
     // treat as plain text message
   }
 
@@ -714,7 +716,7 @@ const parsePruneObjectsDraft = (valueText) => {
       simpleMode: true,
       typeText: String(parsed ?? '').trim(),
     };
-  } catch (error) {
+  } catch {
     return {
       ...defaults,
       simpleMode: true,
@@ -1024,7 +1026,7 @@ const validateOperations = (operations, t) => {
             return t('第 {{line}} 条 return_error 需要 message 字段', { line });
           }
         }
-      } catch (error) {
+      } catch {
         // plain string value is allowed
       }
     }
@@ -1062,7 +1064,7 @@ const validateOperations = (operations, t) => {
             });
           }
         }
-      } catch (error) {
+      } catch {
         // non-JSON string is treated as type string
       }
     }
@@ -1437,7 +1439,7 @@ const ParamOverrideEditorModal = ({ visible, value, onSave, onCancel }) => {
     }
 
     const merged = {
-      ...(legacyPayload || {}),
+      ...legacyPayload,
       ...parsedCurrent,
     };
     const text = JSON.stringify(merged, null, 2);
@@ -1614,7 +1616,7 @@ const ParamOverrideEditorModal = ({ visible, value, onSave, onCancel }) => {
         value_text: JSON.stringify(JSON.parse(raw), null, 2),
       });
       showSuccess(t('JSON 已格式化'));
-    } catch (error) {
+    } catch {
       showError(t('当前值不是合法 JSON，无法格式化'));
     }
   }, [selectedOperation, t, updateOperation]);
@@ -1634,9 +1636,7 @@ const ParamOverrideEditorModal = ({ visible, value, onSave, onCancel }) => {
     if (!current) return;
     const draft = parsePruneObjectsDraft(current.value_text);
     const nextDraft =
-      typeof updater === 'function'
-        ? updater(draft)
-        : { ...draft, ...(updater || {}) };
+      typeof updater === 'function' ? updater(draft) : { ...draft, ...updater };
     updateOperation(operationId, {
       value_text: buildPruneObjectsValueText(nextDraft),
     });
@@ -1772,7 +1772,7 @@ const ParamOverrideEditorModal = ({ visible, value, onSave, onCancel }) => {
       return prev.filter((item) => item.id !== operationId);
     });
     setExpandedConditionMap((prev) => {
-      if (!Object.prototype.hasOwnProperty.call(prev, operationId)) {
+      if (!Object.hasOwn(prev, operationId)) {
         return prev;
       }
       const next = { ...prev };
@@ -2451,8 +2451,10 @@ const ParamOverrideEditorModal = ({ visible, value, onSave, onCancel }) => {
                                                   selectedOperation.id,
                                                   {
                                                     statusCode:
-                                                      parseInt(nextValue, 10) ||
-                                                      400,
+                                                      Number.parseInt(
+                                                        nextValue,
+                                                        10,
+                                                      ) || 400,
                                                   },
                                                 )
                                               }

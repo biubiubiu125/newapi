@@ -17,10 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
 import { Layout, TabPane, Tabs } from '@douyinfe/semi-ui';
-import { useNavigate, useLocation } from 'react-router-dom';
-import { useTranslation } from 'react-i18next';
 import {
   Settings,
   Calculator,
@@ -35,27 +32,30 @@ import {
   Server,
   Activity,
 } from 'lucide-react';
+import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { useNavigate, useLocation } from 'react-router-dom';
 
+import ChatsSetting from '../../components/settings/ChatsSetting';
+import DashboardSetting from '../../components/settings/DashboardSetting';
+import DrawingSetting from '../../components/settings/DrawingSetting';
+import ModelDeploymentSetting from '../../components/settings/ModelDeploymentSetting';
+import ModelSetting from '../../components/settings/ModelSetting';
+import OperationSetting from '../../components/settings/OperationSetting';
+import OtherSetting from '../../components/settings/OtherSetting';
+import PaymentSetting from '../../components/settings/PaymentSetting';
+import PerformanceSetting from '../../components/settings/PerformanceSetting';
+import RateLimitSetting from '../../components/settings/RateLimitSetting';
+import RatioSetting from '../../components/settings/RatioSetting';
 import SystemSetting from '../../components/settings/SystemSetting';
 import { isRoot } from '../../helpers';
-import OtherSetting from '../../components/settings/OtherSetting';
-import OperationSetting from '../../components/settings/OperationSetting';
-import RateLimitSetting from '../../components/settings/RateLimitSetting';
-import ModelSetting from '../../components/settings/ModelSetting';
-import DashboardSetting from '../../components/settings/DashboardSetting';
-import RatioSetting from '../../components/settings/RatioSetting';
-import ChatsSetting from '../../components/settings/ChatsSetting';
-import DrawingSetting from '../../components/settings/DrawingSetting';
-import PaymentSetting from '../../components/settings/PaymentSetting';
-import ModelDeploymentSetting from '../../components/settings/ModelDeploymentSetting';
-import PerformanceSetting from '../../components/settings/PerformanceSetting';
 
 const Setting = () => {
   const { t } = useTranslation();
   const navigate = useNavigate();
   const location = useLocation();
   const [tabActiveKey, setTabActiveKey] = useState('1');
-  let panes = [];
+  const panes = [];
 
   if (isRoot()) {
     panes.push({

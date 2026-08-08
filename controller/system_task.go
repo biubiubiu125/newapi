@@ -44,7 +44,7 @@ func GetCurrentSystemTask(c *gin.Context) {
 		return
 	}
 
-	task, err := model.GetActiveSystemTask(taskType)
+	task, err := service.GetCurrentSystemTask(taskType)
 	if err != nil {
 		common.ApiError(c, err)
 		return

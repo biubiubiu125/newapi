@@ -17,7 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
+import {
+  IllustrationNoResult,
+  IllustrationNoResultDark,
+} from '@douyinfe/semi-illustrations';
 import {
   Button,
   Space,
@@ -30,13 +33,11 @@ import {
   Switch,
   Tooltip,
 } from '@douyinfe/semi-ui';
-import {
-  IllustrationNoResult,
-  IllustrationNoResultDark,
-} from '@douyinfe/semi-illustrations';
 import { Plus, Edit, Trash2, Save, HelpCircle } from 'lucide-react';
-import { API, showError, showSuccess } from '../../../helpers';
+import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { API, showError, showSuccess } from '../../../helpers';
 
 const { Text } = Typography;
 
@@ -227,7 +228,7 @@ const SettingsFAQ = ({ options, refresh }) => {
           : '问答已添加，请及时点击“保存设置”进行保存',
       );
     } catch (error) {
-      showError('操作失败: ' + error.message);
+      showError(`操作失败: ${error.message}`);
     } finally {
       setModalLoading(false);
     }
@@ -393,8 +394,8 @@ const SettingsFAQ = ({ options, refresh }) => {
           rowKey='id'
           scroll={{ x: 'max-content' }}
           pagination={{
-            currentPage: currentPage,
-            pageSize: pageSize,
+            currentPage,
+            pageSize,
             total: faqList.length,
             showSizeChanger: true,
             showQuickJumper: true,

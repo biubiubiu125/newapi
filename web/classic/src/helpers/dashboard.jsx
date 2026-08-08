@@ -17,12 +17,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Progress, Divider, Empty } from '@douyinfe/semi-ui';
 import {
   IllustrationConstruction,
   IllustrationConstructionDark,
 } from '@douyinfe/semi-illustrations';
+import { Progress, Divider, Empty } from '@douyinfe/semi-ui';
+import React from 'react';
+
+import {
+  STORAGE_KEYS,
+  DEFAULT_TIME_INTERVALS,
+  DEFAULTS,
+  ILLUSTRATION_SIZE,
+} from '../constants/dashboard.constants';
 import {
   timestamp2string,
   timestamp2string1,
@@ -30,12 +37,6 @@ import {
   copy,
   showSuccess,
 } from './utils';
-import {
-  STORAGE_KEYS,
-  DEFAULT_TIME_INTERVALS,
-  DEFAULTS,
-  ILLUSTRATION_SIZE,
-} from '../constants/dashboard.constants';
 
 // ========== 时间相关工具函数 ==========
 export const getDefaultTime = () => {
@@ -50,7 +51,7 @@ export const getTimeInterval = (timeType, isSeconds = false) => {
 
 export const getInitialTimestamp = () => {
   const defaultTime = getDefaultTime();
-  const now = new Date().getTime() / 1000;
+  const now = Date.now() / 1000;
 
   switch (defaultTime) {
     case 'hour':
@@ -365,9 +366,9 @@ export const generateChartTimePoints = (
   data,
   dataExportDefaultTime,
 ) => {
-  let chartTimePoints = Array.from(
-    new Set([...aggregatedData.values()].map((d) => d.time)),
-  );
+  let chartTimePoints = [
+    ...new Set([...aggregatedData.values()].map((d) => d.time)),
+  ];
 
   if (chartTimePoints.length < DEFAULTS.MAX_TREND_POINTS) {
     const lastTime = Math.max(...data.map((item) => item.created_at));
@@ -390,7 +391,8 @@ export const generateChartTimePoints = (
 
 // ========== 用户维度数据处理 ==========
 const displayQuotaUser = (item) => {
-  const username = typeof item.username === 'string' ? item.username.trim() : item.username;
+  const username =
+    typeof item.username === 'string' ? item.username.trim() : item.username;
   if (username) return username;
   return item.user_id ? `#${item.user_id}` : 'unknown';
 };
@@ -403,9 +405,7 @@ export const processUserData = (data, dataExportDefaultTime, limit = 10) => {
     userQuotaTotal.set(user, prev + item.quota);
   });
 
-  const sorted = Array.from(userQuotaTotal.entries()).sort(
-    (a, b) => b[1] - a[1],
-  );
+  const sorted = [...userQuotaTotal.entries()].sort((a, b) => b[1] - a[1]);
   const topUsers = sorted.slice(0, limit).map(([u]) => u);
   const topUserSet = new Set(topUsers);
 
@@ -434,7 +434,7 @@ export const processUserData = (data, dataExportDefaultTime, limit = 10) => {
     timeUserMap.set(key, { quota: prev.quota + item.quota });
   });
 
-  const sortedTimePoints = Array.from(allTimePoints).sort();
+  const sortedTimePoints = [...allTimePoints].sort();
   const trendData = [];
   sortedTimePoints.forEach((time) => {
     topUsers.forEach((user) => {

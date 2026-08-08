@@ -50,9 +50,7 @@ export const hasAdminPermission = (permissions, resource, action, user) => {
   }
 
   const effectivePermissions = permissions || currentUser?.permissions;
-  return (
-    effectivePermissions?.admin_permissions?.[resource]?.[action] === true
-  );
+  return effectivePermissions?.admin_permissions?.[resource]?.[action] === true;
 };
 
 export const getChannelPermissionFlags = (permissions, user) => ({

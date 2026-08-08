@@ -22,6 +22,14 @@ type BodyStorage interface {
 	Size() int64
 	// IsDisk 是否是磁盘存储
 	IsDisk() bool
+	// NewReader returns an independent reader positioned at the start of the stored payload.
+	NewReader() (io.ReadCloser, error)
+}
+
+type ReplayableBody interface {
+	io.Reader
+	Size() int64
+	NewReader() (io.ReadCloser, error)
 }
 
 // ErrStorageClosed 存储已关闭错误
@@ -80,6 +88,15 @@ func (m *memoryStorage) Bytes() ([]byte, error) {
 		return nil, ErrStorageClosed
 	}
 	return m.data, nil
+}
+
+func (m *memoryStorage) NewReader() (io.ReadCloser, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if atomic.LoadInt32(&m.closed) == 1 {
+		return nil, ErrStorageClosed
+	}
+	return io.NopCloser(bytes.NewReader(m.data)), nil
 }
 
 func (m *memoryStorage) Size() int64 {
@@ -335,6 +352,19 @@ func (d *diskStorage) Bytes() ([]byte, error) {
 	return data, nil
 }
 
+func (d *diskStorage) NewReader() (io.ReadCloser, error) {
+	d.mu.Lock()
+	defer d.mu.Unlock()
+	if atomic.LoadInt32(&d.closed) == 1 {
+		return nil, ErrStorageClosed
+	}
+	file, err := os.Open(d.filePath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to open body cache file for replay: %w", err)
+	}
+	return file, nil
+}
+
 func (d *diskStorage) Size() int64 {
 	return d.size
 }
@@ -444,9 +474,38 @@ func diskCacheAvailableBytes() int64 {
 	return maxBytes - currentUsage
 }
 
+type replayableBodyReader struct {
+	storage BodyStorage
+}
+
+func (r replayableBodyReader) Read(p []byte) (int, error) {
+	return r.storage.Read(p)
+}
+
+func (r replayableBodyReader) Size() int64 {
+	return r.storage.Size()
+}
+
+func (r replayableBodyReader) NewReader() (io.ReadCloser, error) {
+	return r.storage.NewReader()
+}
+
+func NewReplayableBodyReader(storage BodyStorage) ReplayableBody {
+	return replayableBodyReader{storage: storage}
+}
+
 // ReaderOnly wraps an io.Reader to hide io.Closer, preventing http.NewRequest
 // from type-asserting io.ReadCloser and closing the underlying BodyStorage.
 func ReaderOnly(r io.Reader) io.Reader {
+	if storage, ok := r.(BodyStorage); ok {
+		return NewReplayableBodyReader(storage)
+	}
+	if replayable, ok := r.(ReplayableBody); ok {
+		return replayable
+	}
+	if rs, ok := r.(io.ReadSeeker); ok {
+		return struct{ io.ReadSeeker }{rs}
+	}
 	return struct{ io.Reader }{r}
 }
 

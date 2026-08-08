@@ -17,15 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useCallback, useState, useRef } from 'react';
 import { Toast, Modal } from '@douyinfe/semi-ui';
+import { useCallback, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { MESSAGE_ROLES } from '../../constants/playground.constants';
 import {
   getTextContent,
   buildApiPayload,
   createLoadingAssistantMessage,
 } from '../../helpers';
-import { MESSAGE_ROLES } from '../../constants/playground.constants';
 
 export const useMessageEdit = (
   setMessage,

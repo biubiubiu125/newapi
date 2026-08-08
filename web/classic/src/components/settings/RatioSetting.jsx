@@ -17,22 +17,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
 import { Card, Spin, Tabs } from '@douyinfe/semi-ui';
+import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 
-import ModelPricingCombined from '../../pages/Setting/Ratio/ModelPricingCombined';
-import GroupRatioSettings from '../../pages/Setting/Ratio/GroupRatioSettings';
-import ModelRatioNotSetEditor from '../../pages/Setting/Ratio/ModelRationNotSetEditor';
-import UpstreamRatioSync from '../../pages/Setting/Ratio/UpstreamRatioSync';
-import ToolPriceSettings from '../../pages/Setting/Ratio/ToolPriceSettings';
-
 import { API, showError, toBoolean } from '../../helpers';
+import GroupRatioSettings from '../../pages/Setting/Ratio/GroupRatioSettings';
+import ModelPricingCombined from '../../pages/Setting/Ratio/ModelPricingCombined';
+import ModelRatioNotSetEditor from '../../pages/Setting/Ratio/ModelRationNotSetEditor';
+import ToolPriceSettings from '../../pages/Setting/Ratio/ToolPriceSettings';
+import UpstreamRatioSync from '../../pages/Setting/Ratio/UpstreamRatioSync';
 
 const RatioSetting = () => {
   const { t } = useTranslation();
 
-  let [inputs, setInputs] = useState({
+  const [inputs, setInputs] = useState({
     ModelPrice: '',
     ModelRatio: '',
     CacheRatio: '',
@@ -56,12 +55,12 @@ const RatioSetting = () => {
     const res = await API.get('/api/option/');
     const { success, message, data } = res.data;
     if (success) {
-      let newInputs = {};
+      const newInputs = {};
       data.forEach((item) => {
         if (item.value.startsWith('{') || item.value.startsWith('[')) {
           try {
             item.value = JSON.stringify(JSON.parse(item.value), null, 2);
-          } catch (e) {
+          } catch {
             // 如果后端返回的不是合法 JSON，直接展示
           }
         }
@@ -81,7 +80,7 @@ const RatioSetting = () => {
     try {
       setLoading(true);
       await getOptions();
-    } catch (error) {
+    } catch {
       showError('刷新失败');
     } finally {
       setLoading(false);

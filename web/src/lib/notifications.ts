@@ -17,15 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-export type AnnouncementLike = string | {
-  id?: unknown
-  publishDate?: unknown
-  content?: unknown
-  extra?: unknown
-  type?: unknown
-  title?: unknown
-  link?: unknown
-}
+export type AnnouncementLike =
+  | string
+  | {
+      id?: unknown
+      publishDate?: unknown
+      content?: unknown
+      extra?: unknown
+      type?: unknown
+      title?: unknown
+      link?: unknown
+    }
 
 function hashString(input: string): string {
   let hash = 0

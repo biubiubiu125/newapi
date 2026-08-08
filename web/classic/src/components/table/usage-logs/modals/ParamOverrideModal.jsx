@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo } from 'react';
-import { Modal, Button, Empty, Divider, Typography } from '@douyinfe/semi-ui';
 import { IconCopy } from '@douyinfe/semi-icons';
+import { Modal, Button, Empty, Divider, Typography } from '@douyinfe/semi-ui';
+import React, { useMemo } from 'react';
+
 import { copy, showError, showSuccess } from '../../../../helpers';
 
 const { Text } = Typography;

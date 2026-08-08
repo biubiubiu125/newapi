@@ -17,13 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo } from 'react';
-import { Empty } from '@douyinfe/semi-ui';
-import CardTable from '../../common/ui/CardTable';
 import {
   IllustrationNoResult,
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
+import { Empty } from '@douyinfe/semi-ui';
+import React, { useMemo } from 'react';
+
+import CardTable from '../../common/ui/CardTable';
 import { getTokensColumns } from './TokensColumnDefs';
 
 const TokensTable = (tokensData) => {
@@ -106,14 +107,14 @@ const TokensTable = (tokensData) => {
       scroll={compactMode ? undefined : { x: 'max-content' }}
       pagination={{
         currentPage: activePage,
-        pageSize: pageSize,
+        pageSize,
         total: tokenCount,
         showSizeChanger: true,
         pageSizeOptions: [10, 20, 50, 100],
         onPageSizeChange: handlePageSizeChange,
         onPageChange: handlePageChange,
       }}
-      hidePagination={true}
+      hidePagination
       loading={loading}
       rowSelection={rowSelection}
       onRow={handleRow}

@@ -17,16 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useRef } from 'react';
-import { Link } from 'react-router-dom';
-import { Avatar, Button, Dropdown, Typography } from '@douyinfe/semi-ui';
-import { ChevronDown } from 'lucide-react';
 import {
   IconExit,
   IconUserSetting,
   IconCreditCard,
   IconKey,
 } from '@douyinfe/semi-icons';
+import { Avatar, Button, Dropdown, Typography } from '@douyinfe/semi-ui';
+import { ChevronDown } from 'lucide-react';
+import React, { useRef } from 'react';
+import { Link } from 'react-router-dom';
+
 import { stringToColor } from '../../../helpers';
 import SkeletonWrapper from '../components/SkeletonWrapper';
 
@@ -42,12 +43,7 @@ const UserArea = ({
   const dropdownRef = useRef(null);
   if (isLoading) {
     return (
-      <SkeletonWrapper
-        loading={true}
-        type='userArea'
-        width={50}
-        isMobile={isMobile}
-      />
+      <SkeletonWrapper loading type='userArea' width={50} isMobile={isMobile} />
     );
   }
 

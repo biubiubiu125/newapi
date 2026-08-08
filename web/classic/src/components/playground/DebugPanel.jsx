@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect } from 'react';
 import {
   Card,
   Typography,
@@ -27,7 +26,9 @@ import {
   Dropdown,
 } from '@douyinfe/semi-ui';
 import { Code, Zap, Clock, X, Eye, Send } from 'lucide-react';
+import React, { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import CodeViewer from './CodeViewer';
 import SSEViewer from './SSEViewer';
 

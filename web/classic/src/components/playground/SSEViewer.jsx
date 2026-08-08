@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useMemo, useCallback } from 'react';
 import {
   Button,
   Tooltip,
@@ -34,7 +33,9 @@ import {
   CheckCircle,
   XCircle,
 } from 'lucide-react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { copy } from '../../helpers';
 
 /**
@@ -124,7 +125,7 @@ const SSEViewer = ({ sseData }) => {
           : item.raw;
         await copy(textToCopy);
         Toast.success(t('已复制'));
-      } catch (err) {
+      } catch {
         Toast.error(t('复制失败'));
       }
     },
@@ -180,7 +181,7 @@ const SSEViewer = ({ sseData }) => {
           <div className='flex flex-wrap gap-2 text-xs'>
             {item.parsed.choices[0].delta?.content && (
               <Badge
-                count={`${t('内容')}: "${String(item.parsed.choices[0].delta.content).substring(0, 20)}..."`}
+                count={`${t('内容')}: "${String(item.parsed.choices[0].delta.content).slice(0, 20)}..."`}
                 type='primary'
               />
             )}

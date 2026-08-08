@@ -17,8 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Avatar, Button, Progress, Space, Tag, Typography } from '@douyinfe/semi-ui';
+import {
+  Avatar,
+  Button,
+  Progress,
+  Space,
+  Tag,
+  Typography,
+} from '@douyinfe/semi-ui';
 import {
   Palette,
   ZoomIn,
@@ -46,6 +52,8 @@ import {
   Hash,
   Video,
 } from 'lucide-react';
+import React from 'react';
+
 import {
   getLogUserDisplayName,
   openLogUserInfo,
@@ -303,11 +311,11 @@ function renderStatus(type, t, settlementStatus) {
 const renderTimestamp = (timestampInSeconds) => {
   const date = new Date(timestampInSeconds * 1000);
   const year = date.getFullYear();
-  const month = ('0' + (date.getMonth() + 1)).slice(-2);
-  const day = ('0' + date.getDate()).slice(-2);
-  const hours = ('0' + date.getHours()).slice(-2);
-  const minutes = ('0' + date.getMinutes()).slice(-2);
-  const seconds = ('0' + date.getSeconds()).slice(-2);
+  const month = `0${date.getMonth() + 1}`.slice(-2);
+  const day = `0${date.getDate()}`.slice(-2);
+  const hours = `0${date.getHours()}`.slice(-2);
+  const minutes = `0${date.getMinutes()}`.slice(-2);
+  const seconds = `0${date.getSeconds()}`.slice(-2);
 
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
 };
@@ -362,7 +370,7 @@ export const getMjLogsColumns = ({
         return isAdminUser ? (
           <div>
             <Tag
-              color={colors[parseInt(text) % colors.length]}
+              color={colors[Number.parseInt(text) % colors.length]}
               shape='circle'
               prefixIcon={<Hash size={14} />}
               onClick={() => {
@@ -446,19 +454,15 @@ export const getMjLogsColumns = ({
       render: (text, record, index) => {
         return (
           <div>
-            {
-              <Progress
-                stroke={
-                  record.status === 'FAILURE'
-                    ? 'var(--semi-color-warning)'
-                    : null
-                }
-                percent={text ? parseInt(text.replace('%', '')) : 0}
-                showInfo={true}
-                aria-label='drawing progress'
-                style={{ minWidth: '160px' }}
-              />
-            }
+            <Progress
+              stroke={
+                record.status === 'FAILURE' ? 'var(--semi-color-warning)' : null
+              }
+              percent={text ? parseInt(text.replace('%', '')) : 0}
+              showInfo={true}
+              aria-label='drawing progress'
+              style={{ minWidth: '160px' }}
+            />
           </div>
         );
       },

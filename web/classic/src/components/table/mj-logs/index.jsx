@@ -17,18 +17,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Layout } from '@douyinfe/semi-ui';
+import React from 'react';
+
+import { createCardProPagination } from '../../../helpers/utils';
+import { useIsMobile } from '../../../hooks/common/useIsMobile';
+import { useMjLogsData } from '../../../hooks/mj-logs/useMjLogsData';
 import CardPro from '../../common/ui/CardPro';
-import MjLogsTable from './MjLogsTable';
+import UserInfoModal from '../usage-logs/modals/UserInfoModal';
 import MjLogsActions from './MjLogsActions';
 import MjLogsFilters from './MjLogsFilters';
+import MjLogsTable from './MjLogsTable';
 import ColumnSelectorModal from './modals/ColumnSelectorModal';
 import ContentModal from './modals/ContentModal';
-import UserInfoModal from '../usage-logs/modals/UserInfoModal';
-import { useMjLogsData } from '../../../hooks/mj-logs/useMjLogsData';
-import { useIsMobile } from '../../../hooks/common/useIsMobile';
-import { createCardProPagination } from '../../../helpers/utils';
 
 const MjLogsPage = () => {
   const mjLogsData = useMjLogsData();
@@ -52,7 +53,7 @@ const MjLogsPage = () => {
             total: mjLogsData.logCount,
             onPageChange: mjLogsData.handlePageChange,
             onPageSizeChange: mjLogsData.handlePageSizeChange,
-            isMobile: isMobile,
+            isMobile,
             t: mjLogsData.t,
           })}
           t={mjLogsData.t}

@@ -36,7 +36,6 @@ type imageTaskDeferredBilling struct {
 
 func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
 	info.InitChannelMeta(c)
-	resetImageRelayAttemptState(info)
 
 	imageReq, ok := info.Request.(*dto.ImageRequest)
 	if !ok {
@@ -96,13 +95,12 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 			}
 
 			logger.LogDebug(c, "image request body: %s", jsonData)
-			body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+			body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 			if err != nil {
 				return types.NewError(err, types.ErrorCodeConvertRequestFailed, types.ErrOptionWithSkipRetry())
 			}
 			defer closer.Close()
 			jsonData = nil
-			info.UpstreamRequestBodySize = size
 			requestBody = body
 		}
 	}
@@ -191,13 +189,6 @@ func getImageTaskDeferredBilling(c *gin.Context) (*imageTaskDeferredBilling, boo
 	return deferred, ok
 }
 
-func resetImageRelayAttemptState(info *relaycommon.RelayInfo) {
-	if info == nil {
-		return
-	}
-	info.UpstreamRequestBodySize = 0
-}
-
 func applyImageStreamSupportForChannel(c *gin.Context, info *relaycommon.RelayInfo, imageReq *dto.ImageRequest) bool {
 	if info == nil || imageReq == nil {
 		return false
@@ -262,12 +253,9 @@ func buildImageJSONPassThroughBodyWithoutStream(info *relaycommon.RelayInfo, sto
 	if err != nil {
 		return nil, nil, err
 	}
-	body, size, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
+	body, closer, err := relaycommon.NewOutboundJSONBody(jsonData)
 	if err != nil {
 		return nil, nil, err
-	}
-	if info != nil {
-		info.UpstreamRequestBodySize = size
 	}
 	return body, func() {
 		_ = closer.Close()
@@ -332,9 +320,6 @@ func buildImageMultipartPassThroughBody(c *gin.Context, info *relaycommon.RelayI
 	}
 
 	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
-	if info != nil {
-		info.UpstreamRequestBodySize = int64(requestBody.Len())
-	}
 	return &requestBody, func() {
 		c.Request.Header.Set("Content-Type", originalContentType)
 	}, nil

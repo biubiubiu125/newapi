@@ -24,14 +24,16 @@ var (
 )
 
 type LoginSessionView struct {
-	SID          string `json:"sid"`
-	Current      bool   `json:"current"`
-	LoginMethod  string `json:"login_method"`
-	IP           string `json:"ip"`
-	UserAgent    string `json:"user_agent"`
-	CreatedAt    int64  `json:"created_at"`
-	LastActiveAt int64  `json:"last_active_at"`
-	ExpiresAt    int64  `json:"expires_at"`
+	SID             string `json:"sid"`
+	Current         bool   `json:"current"`
+	LoginMethod     string `json:"login_method"`
+	IP              string `json:"ip"`
+	UserAgent       string `json:"user_agent"`
+	CreatedAt       int64  `json:"created_at"`
+	LastActiveAt    int64  `json:"last_active_at"`
+	ExpiresAt       int64  `json:"expires_at"`
+	Version         int64  `json:"-"`
+	UserAuthVersion int64  `json:"-"`
 }
 
 type AuthBundle struct {
@@ -161,8 +163,11 @@ func ValidateSessionReference(userID int, sid string) (AuthIdentity, error) {
 // security-setting mutation that did not already advance AuthVersion.
 func AdvanceCurrentSessionSecurity(identity AuthIdentity, reason string) (*AuthBundle, error) {
 	nextUserAuthVersion, err := model.BumpUserAuthVersion(identity.UserID)
-	if err != nil {
+	if err != nil && !model.IsCommittedUserAuthStateError(err) {
 		return nil, err
+	}
+	if err != nil {
+		common.SysError("current session security update committed but user auth cache publication failed: " + err.Error())
 	}
 	return advanceCurrentSessionToVersion(identity, nextUserAuthVersion, reason)
 }
@@ -179,6 +184,17 @@ func AdvanceCurrentSessionToUserVersion(identity AuthIdentity, reason string) (*
 		return nil, ErrLoginSessionRevoked
 	}
 	return advanceCurrentSessionToVersion(identity, user.AuthVersion, reason)
+}
+
+// AdvanceCurrentSessionToVersion preserves the current browser session at the
+// caller-provided user auth version. Callers use this when the auth-version
+// change already committed inside the same transaction and they still need to
+// finish the session chain.
+func AdvanceCurrentSessionToVersion(identity AuthIdentity, nextUserAuthVersion int64, reason string) (*AuthBundle, error) {
+	if nextUserAuthVersion <= identity.UserAuthVersion {
+		return nil, ErrLoginSessionRevoked
+	}
+	return advanceCurrentSessionToVersion(identity, nextUserAuthVersion, reason)
 }
 
 func advanceCurrentSessionToVersion(identity AuthIdentity, nextUserAuthVersion int64, reason string) (*AuthBundle, error) {
@@ -347,14 +363,16 @@ func issueAuthBundle(session *model.UserSession, rawRefreshToken string, current
 
 func sessionView(session *model.UserSession, current bool) LoginSessionView {
 	return LoginSessionView{
-		SID:          session.SID,
-		Current:      current,
-		LoginMethod:  session.LoginMethod,
-		IP:           session.IP,
-		UserAgent:    session.UserAgent,
-		CreatedAt:    session.CreatedAt,
-		LastActiveAt: session.LastActiveAt,
-		ExpiresAt:    session.ExpiresAt,
+		SID:             session.SID,
+		Current:         current,
+		LoginMethod:     session.LoginMethod,
+		IP:              session.IP,
+		UserAgent:       session.UserAgent,
+		CreatedAt:       session.CreatedAt,
+		LastActiveAt:    session.LastActiveAt,
+		ExpiresAt:       session.ExpiresAt,
+		Version:         session.Version,
+		UserAuthVersion: session.UserAuthVersion,
 	}
 }
 

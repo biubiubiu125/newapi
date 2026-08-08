@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Button } from '@douyinfe/semi-ui';
 import { IconCheckCircleStroked } from '@douyinfe/semi-icons';
+import { Button } from '@douyinfe/semi-ui';
+import React from 'react';
 
 /**
  * 步骤导航组件
@@ -43,7 +43,7 @@ const StepNavigation = ({
         </Button>
       )}
 
-      <div className='flex-1'></div>
+      <div className='flex-1' />
 
       {/* 下一步按钮 */}
       {currentStep < steps.length - 1 && (

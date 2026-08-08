@@ -17,15 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { Modal } from '@douyinfe/semi-ui';
 import { useState, useEffect } from 'react';
-import { API, showError, showSuccess, copy } from '../../helpers';
+import { useTranslation } from 'react-i18next';
+
 import { ITEMS_PER_PAGE } from '../../constants';
 import {
   REDEMPTION_ACTIONS,
   REDEMPTION_STATUS,
 } from '../../constants/redemption.constants';
-import { Modal } from '@douyinfe/semi-ui';
-import { useTranslation } from 'react-i18next';
+import { API, showError, showSuccess, copy } from '../../helpers';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 
 export const useRedemptionsData = () => {
@@ -124,7 +125,7 @@ export const useRedemptionsData = () => {
   // Manage redemption codes (CRUD operations)
   const manageRedemption = async (id, action, record) => {
     setLoading(true);
-    let data = { id };
+    const data = { id };
     let res;
 
     try {
@@ -147,8 +148,8 @@ export const useRedemptionsData = () => {
       const { success, message } = res.data;
       if (success) {
         showSuccess(t('操作成功完成！'));
-        let redemption = res.data.data;
-        let newRedemptions = [...redemptions];
+        const redemption = res.data.data;
+        const newRedemptions = [...redemptions];
         if (action !== REDEMPTION_ACTIONS.DELETE) {
           record.status = redemption.status;
         }
@@ -248,7 +249,7 @@ export const useRedemptionsData = () => {
 
     let keys = '';
     for (let i = 0; i < selectedKeys.length; i++) {
-      keys += selectedKeys[i].name + '    ' + selectedKeys[i].key + '\n';
+      keys += `${selectedKeys[i].name}    ${selectedKeys[i].key}\n`;
     }
     await copyText(keys);
   };
@@ -338,9 +339,9 @@ export const useRedemptionsData = () => {
 
   // Remove record (for UI update after deletion)
   const removeRecord = (key) => {
-    let newDataSource = [...redemptions];
+    const newDataSource = [...redemptions];
     if (key != null) {
-      let idx = newDataSource.findIndex((data) => data.key === key);
+      const idx = newDataSource.findIndex((data) => data.key === key);
       if (idx > -1) {
         newDataSource.splice(idx, 1);
         setRedemptions(newDataSource);

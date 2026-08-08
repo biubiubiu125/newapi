@@ -17,12 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useRef, useEffect } from 'react';
-import { Modal, Form, Col, Row } from '@douyinfe/semi-ui';
-import { API, showError, showSuccess } from '../../../../helpers';
-import { Typography } from '@douyinfe/semi-ui';
 import { IconLink } from '@douyinfe/semi-icons';
+import { Modal, Form, Col, Row, Typography } from '@douyinfe/semi-ui';
+import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { API, showError, showSuccess } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 
 const EditVendorModal = ({ visible, handleClose, refresh, editingVendor }) => {
@@ -61,7 +61,7 @@ const EditVendorModal = ({ visible, handleClose, refresh, editingVendor }) => {
       } else {
         showError(message);
       }
-    } catch (error) {
+    } catch {
       showError(t('加载供应商信息失败'));
     }
     setLoading(false);
@@ -175,7 +175,7 @@ const EditVendorModal = ({ visible, handleClose, refresh, editingVendor }) => {
             />
           </Col>
           <Col span={24}>
-            <Form.Switch field='status' label={t('状态')} initValue={true} />
+            <Form.Switch field='status' label={t('状态')} initValue />
           </Col>
         </Row>
       </Form>

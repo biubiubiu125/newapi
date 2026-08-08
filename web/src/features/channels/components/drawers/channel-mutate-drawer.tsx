@@ -16,15 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  type ReactNode,
-  useEffect,
-  useState,
-  useMemo,
-  useCallback,
-  useRef,
-} from 'react'
-import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
 import {
@@ -46,11 +37,28 @@ import {
   SlidersHorizontal,
   Wand2,
 } from 'lucide-react'
+import {
+  type ReactNode,
+  useEffect,
+  useState,
+  useMemo,
+  useCallback,
+  useRef,
+} from 'react'
+import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { getLobeIcon } from '@/lib/lobe-icon'
-import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
-import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
+
+import {
+  sideDrawerContentClassName,
+  sideDrawerFooterClassName,
+  sideDrawerFormClassName,
+  sideDrawerHeaderClassName,
+  sideDrawerSectionClassName,
+  sideDrawerSwitchItemClassName,
+} from '@/components/drawer-layout'
+import { JsonEditor } from '@/components/json-editor'
+import { MultiSelect } from '@/components/multi-select'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -92,25 +100,19 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import {
-  sideDrawerContentClassName,
-  sideDrawerFooterClassName,
-  sideDrawerFormClassName,
-  sideDrawerHeaderClassName,
-  sideDrawerSectionClassName,
-  sideDrawerSwitchItemClassName,
-} from '@/components/drawer-layout'
-import { JsonEditor } from '@/components/json-editor'
-import { MultiSelect } from '@/components/multi-select'
-import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
+import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
 import {
   ADMIN_PERMISSION_ACTIONS,
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
 } from '@/lib/admin-permissions'
+import { getLobeIcon } from '@/lib/lobe-icon'
 import { useAuthStore } from '@/stores/auth-store'
+
 import {
   fetchModels,
   fetchUpstreamModels,
@@ -326,8 +328,9 @@ export function ChannelMutateDrawer({
   const initialModelsRef = useRef<string[]>([])
   const initialModelMappingRef = useRef<string>('')
   const initialStatusCodeMappingRef = useRef<string>('')
-  const initialFetchModelsDraftRef =
-    useRef<FetchModelsDraftSnapshot | null>(null)
+  const initialFetchModelsDraftRef = useRef<FetchModelsDraftSnapshot | null>(
+    null
+  )
   const [statusCodeRiskOpen, setStatusCodeRiskOpen] = useState(false)
   const [statusCodeRiskDetailItems, setStatusCodeRiskDetailItems] = useState<
     string[]
@@ -437,6 +440,9 @@ export function ChannelMutateDrawer({
     'upstream_model_update_check_enabled'
   )
   const currentSettings = form.watch('settings')
+  const supportsUpstreamModelUpdate =
+    MODEL_FETCHABLE_TYPES.has(currentType) &&
+    !(currentType === 57 && isMultiKeyChannel)
   const {
     unlocked: doubaoApiEditUnlocked,
     handleClick: handleApiConfigSecretClick,
@@ -488,7 +494,7 @@ export function ChannelMutateDrawer({
   const groupOptions = useMemo(() => {
     if (!groupsData?.data) return []
     const allGroups = new Set([...groupsData.data, ...(currentGroups || [])])
-    return Array.from(allGroups).map((group) => ({
+    return [...allGroups].map((group) => ({
       value: group,
       label: group,
     }))
@@ -538,7 +544,7 @@ export function ChannelMutateDrawer({
   // Transform models to multi-select options
   const modelOptions = useMemo(() => {
     const allModels = new Set([...allModelsList, ...currentModelsArray])
-    return Array.from(allModels).map((model) => ({
+    return [...allModels].map((model) => ({
       value: model,
       label: model,
     }))
@@ -569,8 +575,8 @@ export function ChannelMutateDrawer({
         return acc
       }, [])
 
-      const missingSourceModels = Array.from(
-        new Set(
+      const missingSourceModels = [
+        ...new Set(
           entries
             .filter(
               (entry) =>
@@ -578,11 +584,11 @@ export function ChannelMutateDrawer({
                 !currentModelsArray.includes(entry.source)
             )
             .map((entry) => entry.source)
-        )
-      )
+        ),
+      ]
 
-      const exposedTargetModels = Array.from(
-        new Set(
+      const exposedTargetModels = [
+        ...new Set(
           entries
             .filter(
               (entry) =>
@@ -590,8 +596,8 @@ export function ChannelMutateDrawer({
                 currentModelsArray.includes(entry.target)
             )
             .map((entry) => entry.target)
-        )
-      )
+        ),
+      ]
 
       return {
         invalidJson: false,
@@ -625,7 +631,7 @@ export function ChannelMutateDrawer({
 
     return {
       lastCheckTime: settings.upstream_model_update_last_check_time,
-      detectedModels: Array.from(new Set(detectedModels)),
+      detectedModels: [...new Set(detectedModels)],
     }
   }, [currentSettings])
 
@@ -1148,9 +1154,9 @@ export function ChannelMutateDrawer({
             return
           }
           if (confirmAction === 'add') {
-            const updatedModels = Array.from(
-              new Set([...normalizedModels, ...missingModels])
-            )
+            const updatedModels = [
+              ...new Set([...normalizedModels, ...missingModels]),
+            ]
             data.models = formatModelsArray(updatedModels)
             form.setValue('models', data.models)
           }
@@ -1714,9 +1720,7 @@ export function ChannelMutateDrawer({
                                 multiple={isBatchMode}
                                 onChange={async (e) => {
                                   const fileList = e.target.files
-                                  const files = fileList
-                                    ? Array.from(fileList)
-                                    : []
+                                  const files = fileList ? [...fileList] : []
                                   // allow re-selecting the same file
                                   e.target.value = ''
 
@@ -1957,12 +1961,10 @@ export function ChannelMutateDrawer({
                             <FormItem>
                               <FormLabel>{t('Add Mode')}</FormLabel>
                               <Select
-                                items={[
-                                  ...ADD_MODE_OPTIONS.map((option) => ({
-                                    value: option.value,
-                                    label: t(option.label),
-                                  })),
-                                ]}
+                                items={ADD_MODE_OPTIONS.map((option) => ({
+                                  value: option.value,
+                                  label: t(option.label),
+                                }))}
                                 onValueChange={field.onChange}
                                 value={field.value}
                               >
@@ -2992,7 +2994,7 @@ export function ChannelMutateDrawer({
                                         field.onChange(
                                           JSON.stringify(parsed, null, 2)
                                         )
-                                      } catch (_e) {
+                                      } catch {
                                         /* ignore invalid JSON */
                                       }
                                     }}
@@ -3582,7 +3584,7 @@ export function ChannelMutateDrawer({
                         )}
                       />
 
-                      {MODEL_FETCHABLE_TYPES.has(currentType) && (
+                      {supportsUpstreamModelUpdate && (
                         <div className='border-border/60 flex flex-col gap-3 border-y py-4'>
                           <SubHeading
                             title={t('Upstream Model Detection Settings')}

@@ -2,7 +2,6 @@ package model
 
 import (
 	"database/sql/driver"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -163,13 +162,65 @@ func ApplyChannelGroupFilter(query *gorm.DB, group string) *gorm.DB {
 
 // Value implements driver.Valuer interface
 func (c ChannelInfo) Value() (driver.Value, error) {
-	return common.Marshal(&c)
+	data, err := common.Marshal(&c)
+	if err != nil {
+		return nil, err
+	}
+	// PostgreSQL JSON columns require a text JSON parameter when pgx runs in
+	// simple protocol mode. Returning []byte makes it a binary parameter.
+	return string(data), nil
 }
 
 // Scan implements sql.Scanner interface
 func (c *ChannelInfo) Scan(value interface{}) error {
-	bytesValue, _ := value.([]byte)
+	var bytesValue []byte
+	switch typedValue := value.(type) {
+	case nil:
+		return nil
+	case []byte:
+		bytesValue = typedValue
+	case string:
+		bytesValue = []byte(typedValue)
+	default:
+		return fmt.Errorf("unsupported channel info database value type %T", value)
+	}
+	if len(bytesValue) == 0 {
+		return nil
+	}
 	return common.Unmarshal(bytesValue, c)
+}
+
+func parseChannelKeyList(keys string) []string {
+	if keys == "" {
+		return []string{}
+	}
+	trimmed := strings.TrimSpace(keys)
+	if strings.HasPrefix(trimmed, "[") {
+		var arr []interface{}
+		if err := common.Unmarshal([]byte(trimmed), &arr); err == nil {
+			res := make([]string, 0, len(arr))
+			for _, item := range arr {
+				var key string
+				switch value := item.(type) {
+				case nil:
+					continue
+				case string:
+					key = strings.TrimSpace(value)
+				default:
+					bytes, err := common.Marshal(value)
+					if err != nil {
+						continue
+					}
+					key = string(bytes)
+				}
+				if key != "" {
+					res = append(res, key)
+				}
+			}
+			return res
+		}
+	}
+	return strings.Split(strings.Trim(keys, "\n"), "\n")
 }
 
 func (channel *Channel) GetKeys() []string {
@@ -179,21 +230,7 @@ func (channel *Channel) GetKeys() []string {
 	if len(channel.Keys) > 0 {
 		return channel.Keys
 	}
-	trimmed := strings.TrimSpace(channel.Key)
-	// If the key starts with '[', try to parse it as a JSON array (e.g., for Vertex AI scenarios)
-	if strings.HasPrefix(trimmed, "[") {
-		var arr []json.RawMessage
-		if err := common.Unmarshal([]byte(trimmed), &arr); err == nil {
-			res := make([]string, len(arr))
-			for i, v := range arr {
-				res[i] = string(v)
-			}
-			return res
-		}
-	}
-	// Otherwise, fall back to splitting by newline
-	keys := strings.Split(strings.Trim(channel.Key, "\n"), "\n")
-	return keys
+	return parseChannelKeyList(channel.Key)
 }
 
 func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
@@ -312,7 +349,7 @@ func (channel *Channel) GetOtherInfo() map[string]interface{} {
 }
 
 func (channel *Channel) SetOtherInfo(otherInfo map[string]interface{}) {
-	otherInfoBytes, err := json.Marshal(otherInfo)
+	otherInfoBytes, err := common.Marshal(otherInfo)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("failed to marshal other info: channel_id=%d, tag=%s, name=%s, error=%v", channel.Id, channel.GetTag(), channel.Name, err))
 		return
@@ -546,22 +583,7 @@ func (channel *Channel) prepareForUpdate() {
 			}
 		}
 		// Parse the key list (supports newline separation or JSON array)
-		keys := []string{}
-		if keyStr != "" {
-			trimmed := strings.TrimSpace(keyStr)
-			if strings.HasPrefix(trimmed, "[") {
-				var arr []json.RawMessage
-				if err := common.Unmarshal([]byte(trimmed), &arr); err == nil {
-					keys = make([]string, len(arr))
-					for i, v := range arr {
-						keys[i] = string(v)
-					}
-				}
-			}
-			if len(keys) == 0 { // fallback to newline split
-				keys = strings.Split(strings.Trim(keyStr, "\n"), "\n")
-			}
-		}
+		keys := parseChannelKeyList(keyStr)
 		channel.ChannelInfo.MultiKeySize = len(keys)
 		// Clean up status data that exceeds the new key count to prevent index out of range
 		if channel.ChannelInfo.MultiKeyStatusList != nil {
@@ -595,6 +617,16 @@ func (channel *Channel) reloadAndUpdateAbilities() error {
 	return channel.UpdateAbilities(nil)
 }
 
+func (channel *Channel) reloadAndUpdateAbilitiesWithTx(tx *gorm.DB) error {
+	if tx == nil {
+		return channel.reloadAndUpdateAbilities()
+	}
+	if err := tx.Model(channel).First(channel, "id = ?", channel.Id).Error; err != nil {
+		return err
+	}
+	return channel.UpdateAbilities(tx)
+}
+
 func (channel *Channel) Update() error {
 	channel.prepareForUpdate()
 	var err error
@@ -603,6 +635,31 @@ func (channel *Channel) Update() error {
 		return err
 	}
 	return channel.reloadAndUpdateAbilities()
+}
+
+func (channel *Channel) UpdateColumnsWithTx(tx *gorm.DB, updates map[string]any) error {
+	if tx == nil {
+		return channel.UpdateColumns(updates)
+	}
+	channel.prepareForUpdate()
+	if len(updates) > 0 {
+		if _, ok := updates["models"]; ok {
+			updates["models"] = channel.Models
+		}
+		if _, ok := updates["group"]; ok {
+			updates["group"] = channel.Group
+		}
+		if _, ok := updates["channel_info"]; ok {
+			updates["channel_info"] = channel.ChannelInfo
+		}
+		if _, ok := updates["key"]; ok {
+			updates["key"] = channel.Key
+		}
+		if err := tx.Model(channel).Updates(updates).Error; err != nil {
+			return err
+		}
+	}
+	return channel.reloadAndUpdateAbilitiesWithTx(tx)
 }
 
 func (channel *Channel) UpdateColumns(updates map[string]any) error {
@@ -1115,8 +1172,6 @@ func (channel *Channel) GetSetting() dto.ChannelSettings {
 		err := common.Unmarshal([]byte(*channel.Setting), &setting)
 		if err != nil {
 			common.SysLog(fmt.Sprintf("failed to unmarshal setting: channel_id=%d, error=%v", channel.Id, err))
-			channel.Setting = nil // 清空设置以避免后续错误
-			_ = channel.Save()    // 保存修改
 		}
 	}
 	return setting
@@ -1137,8 +1192,6 @@ func (channel *Channel) GetOtherSettings() dto.ChannelOtherSettings {
 		err := common.UnmarshalJsonStr(channel.OtherSettings, &setting)
 		if err != nil {
 			common.SysLog(fmt.Sprintf("failed to unmarshal setting: channel_id=%d, error=%v", channel.Id, err))
-			channel.OtherSettings = "{}" // 清空设置以避免后续错误
-			_ = channel.Save()           // 保存修改
 		}
 	}
 	return setting

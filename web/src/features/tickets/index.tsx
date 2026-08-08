@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useMemo, useRef, useState } from 'react'
 import {
   useMutation,
   useQuery,
@@ -38,11 +37,10 @@ import {
   Upload,
   X,
 } from 'lucide-react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import dayjs from '@/lib/dayjs'
-import { ROLE } from '@/lib/roles'
-import { cn } from '@/lib/utils'
-import { useDebounce } from '@/hooks'
+
+import { SectionPageLayout } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -67,8 +65,6 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
-import { Textarea } from '@/components/ui/textarea'
-import { SectionPageLayout } from '@/components/layout'
 import {
   Sheet,
   SheetContent,
@@ -76,6 +72,14 @@ import {
   SheetHeader,
   SheetTitle,
 } from '@/components/ui/sheet'
+import { Textarea } from '@/components/ui/textarea'
+import { searchUsers } from '@/features/users/api'
+import type { User } from '@/features/users/types'
+import { useDebounce } from '@/hooks'
+import dayjs from '@/lib/dayjs'
+import { ROLE } from '@/lib/roles'
+import { cn } from '@/lib/utils'
+
 import {
   closeTicket,
   createTicket,
@@ -86,8 +90,6 @@ import {
   replyTicket,
   updateTicket,
 } from './api'
-import { searchUsers } from '@/features/users/api'
-import type { User } from '@/features/users/types'
 import {
   TICKET_CATEGORIES,
   TICKET_PRIORITIES,
@@ -104,7 +106,7 @@ import {
 const MAX_IMAGE_SIZE = 5 * 1024 * 1024
 const MAX_REPLY_IMAGES = 5
 const TICKET_LIST_PAGE_SIZE = 50
-const ACCEPTED_IMAGE_TYPES = ['image/png', 'image/jpeg', 'image/webp']
+const ACCEPTED_IMAGE_TYPES = new Set(['image/png', 'image/jpeg', 'image/webp'])
 
 type BadgeVariant = 'default' | 'secondary' | 'outline'
 type TicketsPageMode = 'user' | 'admin'
@@ -132,7 +134,7 @@ function formatTime(timestamp?: number) {
 }
 
 function validateImageFile(file: File) {
-  if (!ACCEPTED_IMAGE_TYPES.includes(file.type)) {
+  if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
     return '只支持 png、jpg、jpeg、webp 图片'
   }
   if (file.size > MAX_IMAGE_SIZE) {
@@ -222,7 +224,7 @@ function AttachmentPicker({
           accept='image/png,image/jpeg,image/webp'
           multiple
           onChange={(event) => {
-            addFiles(Array.from(event.target.files ?? []))
+            addFiles([...(event.target.files ?? [])])
             event.target.value = ''
           }}
         />
@@ -400,7 +402,7 @@ function CreateTicketPanel({
         <div
           className='grid gap-2'
           onPaste={(event) => {
-            const pasted = Array.from(event.clipboardData.files)
+            const pasted = [...event.clipboardData.files]
             if (pasted.length > 0) {
               event.preventDefault()
               const accepted = pasted.filter((file) =>
@@ -560,7 +562,7 @@ function AssigneeSelect({
       ;[...(admins.data?.items ?? []), ...(roots.data?.items ?? [])].forEach(
         (user) => map.set(user.id, user)
       )
-      return Array.from(map.values()).sort((a, b) => b.role - a.role)
+      return [...map.values()].sort((a, b) => b.role - a.role)
     },
   })
 
@@ -890,7 +892,7 @@ function TicketDetailPanel({
       <div
         className='bg-muted/30 border-t p-4'
         onPaste={(event) => {
-          const pasted = Array.from(event.clipboardData.files)
+          const pasted = [...event.clipboardData.files]
           if (pasted.length === 0) return
           event.preventDefault()
           const next = [...files]
@@ -1087,8 +1089,9 @@ function TicketListPanel({
                 <Select
                   value={priorityFilter || 'all'}
                   onValueChange={(value) => {
-                    if (value)
+                    if (value) {
                       onPriorityFilterChange(value === 'all' ? '' : value)
+                    }
                   }}
                 >
                   <SelectTrigger>
@@ -1154,8 +1157,7 @@ function TicketListPanel({
             ))}
             <div className='border-t p-3'>
               <div className='text-muted-foreground mb-2 text-center text-xs'>
-                第 {ticketPage} / {ticketTotalPages} 页，共 {ticketTotal}{' '}
-                个工单
+                第 {ticketPage} / {ticketTotalPages} 页，共 {ticketTotal} 个工单
               </div>
               <div className='grid grid-cols-2 gap-2'>
                 <Button
@@ -1193,8 +1195,8 @@ function TicketSecurityNote() {
       <ImagePlus className='text-muted-foreground mb-3 h-6 w-6' />
       <div className='font-medium'>附件安全规则</div>
       <div className='text-muted-foreground mt-2 text-sm leading-6'>
-        工单仅接受 png、jpg、jpeg、webp 图片。单张图片不超过 5MB，单次回复最多
-        5 张；不接受压缩包、文档、脚本或可执行文件。
+        工单仅接受 png、jpg、jpeg、webp 图片。单张图片不超过 5MB，单次回复最多 5
+        张；不接受压缩包、文档、脚本或可执行文件。
       </div>
     </div>
   )
@@ -1233,7 +1235,9 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
     const parsed = Number(debouncedAssigneeFilter.trim())
     return Number.isInteger(parsed) && parsed >= 0 ? parsed : undefined
   }, [debouncedAssigneeFilter])
-  const startTime = startDate ? dayjs(startDate).startOf('day').unix() : undefined
+  const startTime = startDate
+    ? dayjs(startDate).startOf('day').unix()
+    : undefined
   const endTime = endDate ? dayjs(endDate).endOf('day').unix() : undefined
 
   const listQuery = useQuery({
@@ -1324,7 +1328,7 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
     setSelectedId(undefined)
     setActiveSheet((current) => (current === 'detail' ? null : current))
     setTicketPage(1)
-    setAssigneeFilter(value.replace(/[^\d]/g, ''))
+    setAssigneeFilter(value.replaceAll(/[^\d]/g, ''))
   }
 
   const updateStartDate = (value: string) => {

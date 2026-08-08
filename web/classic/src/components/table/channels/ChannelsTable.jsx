@@ -17,13 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo } from 'react';
-import { Empty } from '@douyinfe/semi-ui';
-import CardTable from '../../common/ui/CardTable';
 import {
   IllustrationNoResult,
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
+import { Empty } from '@douyinfe/semi-ui';
+import React, { useMemo } from 'react';
+
+import CardTable from '../../common/ui/CardTable';
 import { getChannelsColumns } from './ChannelsColumnDefs';
 
 const ChannelsTable = (channelsData) => {
@@ -147,14 +148,14 @@ const ChannelsTable = (channelsData) => {
       scroll={compactMode ? undefined : { x: 'max-content' }}
       pagination={{
         currentPage: activePage,
-        pageSize: pageSize,
+        pageSize,
         total: channelCount,
         pageSizeOpts: [10, 20, 50, 100],
         showSizeChanger: true,
         onPageSizeChange: handlePageSizeChange,
         onPageChange: handlePageChange,
       }}
-      hidePagination={true}
+      hidePagination
       expandAllRows={false}
       onRow={handleRow}
       rowSelection={

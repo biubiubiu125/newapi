@@ -109,6 +109,20 @@ func newRelayHTTPClient(transport http.RoundTripper) *http.Client {
 	return client
 }
 
+// CloneHTTPClientWithoutRedirects returns a shallow copy of client that keeps
+// the same transport, timeout, jar, and other shared fields while disabling
+// redirect following for this request.
+func CloneHTTPClientWithoutRedirects(client *http.Client) *http.Client {
+	if client == nil {
+		return nil
+	}
+	cloned := *client
+	cloned.CheckRedirect = func(_ *http.Request, _ []*http.Request) error {
+		return http.ErrUseLastResponse
+	}
+	return &cloned
+}
+
 func clientCacheKey(proxyCacheKey string, policy HTTPTransportPolicy) string {
 	return proxyCacheKey + "\x00" + policy.cacheKeyPart()
 }

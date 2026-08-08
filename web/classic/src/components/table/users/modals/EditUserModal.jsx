@@ -17,20 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
-import { useTranslation } from 'react-i18next';
 import {
-  API,
-  showError,
-  showSuccess,
-  renderQuota,
-  getCurrencyConfig,
-} from '../../../../helpers';
-import {
-  quotaToDisplayAmount,
-  displayAmountToQuota,
-} from '../../../../helpers/quota';
-import { useIsMobile } from '../../../../hooks/common/useIsMobile';
+  IconUser,
+  IconSave,
+  IconClose,
+  IconLink,
+  IconUserGroup,
+  IconEdit,
+} from '@douyinfe/semi-icons';
 import {
   Button,
   Modal,
@@ -48,14 +42,21 @@ import {
   RadioGroup,
   Radio,
 } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
-  IconUser,
-  IconSave,
-  IconClose,
-  IconLink,
-  IconUserGroup,
-  IconEdit,
-} from '@douyinfe/semi-icons';
+  API,
+  showError,
+  showSuccess,
+  renderQuota,
+  getCurrencyConfig,
+} from '../../../../helpers';
+import {
+  quotaToDisplayAmount,
+  displayAmountToQuota,
+} from '../../../../helpers/quota';
+import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import UserBindingManagementModal from './UserBindingManagementModal';
 
 const { Text, Title } = Typography;
@@ -100,7 +101,7 @@ const EditUserModal = (props) => {
 
   const fetchGroups = async () => {
     try {
-      let res = await API.get(`/api/group/`);
+      const res = await API.get(`/api/group/`);
       setGroupOptions(res.data.data.map((g) => ({ label: g, value: g })));
     } catch (e) {
       showError(e.message);
@@ -159,11 +160,11 @@ const EditUserModal = (props) => {
       }
     }
     setLoading(true);
-    let payload = { ...values };
+    const payload = { ...values };
     delete payload.quota;
     delete payload.quota_amount;
     if (userId) {
-      payload.id = parseInt(userId);
+      payload.id = Number.parseInt(userId);
     }
     const url = userId ? `/api/user/` : `/api/user/self`;
     const res = await API.put(url, payload);
@@ -180,17 +181,18 @@ const EditUserModal = (props) => {
 
   /* --------------------- atomic quota adjust -------------------- */
   const adjustQuota = async () => {
-    const quotaVal = parseInt(adjustQuotaLocal) || 0;
+    const quotaVal = Number.parseInt(adjustQuotaLocal) || 0;
     if (quotaVal <= 0 && adjustMode !== 'override') return;
     if (
       adjustMode === 'override' &&
       (adjustQuotaLocal === '' || adjustQuotaLocal == null)
-    )
+    ) {
       return;
+    }
     setAdjustLoading(true);
     try {
       const res = await API.post('/api/user/manage', {
-        id: parseInt(userId),
+        id: Number.parseInt(userId),
         action: 'add_quota',
         mode: adjustMode,
         value: adjustMode === 'override' ? quotaVal : Math.abs(quotaVal),
@@ -222,7 +224,7 @@ const EditUserModal = (props) => {
 
   const getPreviewText = () => {
     const current = formApiRef.current?.getValue('quota') || 0;
-    const val = parseInt(adjustQuotaLocal) || 0;
+    const val = Number.parseInt(adjustQuotaLocal) || 0;
     let result;
     switch (adjustMode) {
       case 'add':
@@ -327,7 +329,11 @@ const EditUserModal = (props) => {
                                 return true;
                               }
                               if (!USERNAME_PATTERN.test(value)) {
-                                return new Error(t('用户名只能包含英文字母、数字、下划线和连字符'));
+                                return new Error(
+                                  t(
+                                    '用户名只能包含英文字母、数字、下划线和连字符',
+                                  ),
+                                );
                               }
                               if (value.length > REGISTER_USERNAME_MAX_LENGTH) {
                                 return new Error(t('用户名最多 20 个字符'));

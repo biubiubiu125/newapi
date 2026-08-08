@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import {
   Button,
   Form,
@@ -32,7 +31,12 @@ import {
   Radio,
   Select,
 } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef } from 'react';
+
 const { Text } = Typography;
+import axios from 'axios';
+import { useTranslation } from 'react-i18next';
+
 import {
   API,
   removeTrailingSlash,
@@ -40,13 +44,11 @@ import {
   showSuccess,
   toBoolean,
 } from '../../helpers';
-import axios from 'axios';
-import { useTranslation } from 'react-i18next';
 import CustomOAuthSetting from './CustomOAuthSetting';
 
 const SystemSetting = () => {
   const { t } = useTranslation();
-  let [inputs, setInputs] = useState({
+  const [inputs, setInputs] = useState({
     PasswordLoginEnabled: '',
     PasswordRegisterEnabled: '',
     EmailVerificationEnabled: '',
@@ -133,7 +135,7 @@ const SystemSetting = () => {
     const res = await API.get('/api/option/');
     const { success, message, data } = res.data;
     if (success) {
-      let newInputs = {};
+      const newInputs = {};
       data.forEach((item) => {
         switch (item.key) {
           case 'TopupGroupRatio':
@@ -153,7 +155,7 @@ const SystemSetting = () => {
             try {
               const domains = item.value ? JSON.parse(item.value) : [];
               setDomainList(Array.isArray(domains) ? domains : []);
-            } catch (e) {
+            } catch {
               setDomainList([]);
             }
             break;
@@ -161,7 +163,7 @@ const SystemSetting = () => {
             try {
               const ips = item.value ? JSON.parse(item.value) : [];
               setIpList(Array.isArray(ips) ? ips : []);
-            } catch (e) {
+            } catch {
               setIpList([]);
             }
             break;
@@ -169,7 +171,7 @@ const SystemSetting = () => {
             try {
               const ports = item.value ? JSON.parse(item.value) : [];
               setAllowedPorts(Array.isArray(ports) ? ports : []);
-            } catch (e) {
+            } catch {
               setAllowedPorts(['80', '443', '8080', '8443']);
             }
             break;
@@ -210,7 +212,7 @@ const SystemSetting = () => {
             break;
           case 'Price':
           case 'MinTopUp':
-            item.value = parseFloat(item.value);
+            item.value = Number.parseFloat(item.value);
             break;
           default:
             break;
@@ -291,7 +293,7 @@ const SystemSetting = () => {
         newInputs[opt.key] = opt.value;
       });
       setInputs(newInputs);
-    } catch (error) {
+    } catch {
       showError(t('更新失败'));
     }
     setLoading(false);
@@ -302,7 +304,7 @@ const SystemSetting = () => {
   };
 
   const submitWorker = async () => {
-    let WorkerUrl = removeTrailingSlash(inputs.WorkerUrl);
+    const WorkerUrl = removeTrailingSlash(inputs.WorkerUrl);
     const options = [
       { key: 'WorkerUrl', value: WorkerUrl },
       {
@@ -317,7 +319,7 @@ const SystemSetting = () => {
   };
 
   const submitServerAddress = async () => {
-    let ServerAddress = removeTrailingSlash(inputs.ServerAddress);
+    const ServerAddress = removeTrailingSlash(inputs.ServerAddress);
     await updateOptions([{ key: 'ServerAddress', value: ServerAddress }]);
   };
 
@@ -426,7 +428,7 @@ const SystemSetting = () => {
 
       // 验证域名格式
       const domainRegex =
-        /^([a-zA-Z0-9]([a-zA-Z0-9\-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
+        /^([a-zA-Z0-9]([a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)+[a-zA-Z]{2,}$/;
       if (!domainRegex.test(domain)) {
         showError(t('邮箱域名格式不正确，请输入有效的域名，如 gmail.com'));
         return;

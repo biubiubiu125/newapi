@@ -17,8 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect } from 'react';
-import { useTranslation } from 'react-i18next';
+import {
+  IllustrationNoResult,
+  IllustrationNoResultDark,
+} from '@douyinfe/semi-illustrations';
 import {
   Modal,
   Button,
@@ -37,10 +39,9 @@ import {
   Progress,
   Card,
 } from '@douyinfe/semi-ui';
-import {
-  IllustrationNoResult,
-  IllustrationNoResultDark,
-} from '@douyinfe/semi-illustrations';
+import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   API,
   showError,
@@ -83,7 +84,7 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
       const requestData = {
         channel_id: channel.id,
         action: 'get_key_status',
-        page: page,
+        page,
         page_size: size,
       };
 
@@ -136,7 +137,7 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError(t('禁用密钥失败'));
     } finally {
       setOperationLoading((prev) => ({ ...prev, [operationId]: false }));
@@ -162,7 +163,7 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError(t('启用密钥失败'));
     } finally {
       setOperationLoading((prev) => ({ ...prev, [operationId]: false }));
@@ -188,7 +189,7 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError(t('启用所有密钥失败'));
     } finally {
       setOperationLoading((prev) => ({ ...prev, enable_all: false }));
@@ -214,7 +215,7 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError(t('禁用所有密钥失败'));
     } finally {
       setOperationLoading((prev) => ({ ...prev, disable_all: false }));
@@ -240,7 +241,7 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError(t('删除禁用密钥失败'));
     } finally {
       setOperationLoading((prev) => ({ ...prev, delete_disabled: false }));
@@ -266,7 +267,7 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError(t('删除密钥失败'));
     } finally {
       setOperationLoading((prev) => ({ ...prev, [operationId]: false }));
@@ -436,8 +437,8 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
             title={t('确定要删除此密钥吗？')}
             content={t('此操作不可撤销，将永久删除该密钥')}
             onConfirm={() => handleDeleteKey(record.index)}
-            okType={'danger'}
-            position={'topRight'}
+            okType='danger'
+            position='topRight'
           >
             <Button
               type='danger'
@@ -643,7 +644,7 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
                           <Popconfirm
                             title={t('确定要启用所有密钥吗？')}
                             onConfirm={handleEnableAll}
-                            position={'topRight'}
+                            position='topRight'
                           >
                             <Button
                               size='small'
@@ -658,8 +659,8 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
                           <Popconfirm
                             title={t('确定要禁用所有的密钥吗？')}
                             onConfirm={handleDisableAll}
-                            okType={'danger'}
-                            position={'topRight'}
+                            okType='danger'
+                            position='topRight'
                           >
                             <Button
                               size='small'
@@ -676,8 +677,8 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
                             '此操作不可撤销，将永久删除已自动禁用的密钥',
                           )}
                           onConfirm={handleDeleteDisabledKeys}
-                          okType={'danger'}
-                          position={'topRight'}
+                          okType='danger'
+                          position='topRight'
                         >
                           <Button
                             size='small'
@@ -694,9 +695,9 @@ const MultiKeyManageModal = ({ visible, onCancel, channel, onRefresh }) => {
                 columns={columns}
                 dataSource={keyStatusList}
                 pagination={{
-                  currentPage: currentPage,
-                  pageSize: pageSize,
-                  total: total,
+                  currentPage,
+                  pageSize,
+                  total,
                   showSizeChanger: true,
                   showQuickJumper: true,
                   pageSizeOpts: [10, 20, 50, 100],

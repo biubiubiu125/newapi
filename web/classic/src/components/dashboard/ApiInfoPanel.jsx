@@ -17,13 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Card, Avatar, Tag, Divider, Empty } from '@douyinfe/semi-ui';
-import { Server, Gauge, ExternalLink, Copy } from 'lucide-react';
 import {
   IllustrationConstruction,
   IllustrationConstructionDark,
 } from '@douyinfe/semi-illustrations';
+import { Card, Avatar, Tag, Divider, Empty } from '@douyinfe/semi-ui';
+import { Server, Gauge, ExternalLink, Copy } from 'lucide-react';
+import React from 'react';
+
 import ScrollableContainer from '../common/ui/ScrollableContainer';
 
 const ApiInfoPanel = ({
@@ -54,7 +55,7 @@ const ApiInfoPanel = ({
               <div className='flex p-2 hover:bg-white rounded-lg transition-colors cursor-pointer'>
                 <div className='flex-shrink-0 mr-3'>
                   <Avatar size='extra-small' color={api.color}>
-                    {api.route.substring(0, 2)}
+                    {api.route.slice(0, 2)}
                   </Avatar>
                 </div>
                 <div className='flex-1'>

@@ -21,14 +21,14 @@ func NotifyRootUser(t string, subject string, content string) {
 	}
 }
 
-func NotifyUpstreamModelUpdateWatchers(subject string, content string) {
+func NotifyUpstreamModelUpdateWatchers(subject string, content string) int {
 	var users []model.User
 	if err := model.DB.
 		Select("id", "email", "role", "status", "setting").
 		Where("status = ? AND role >= ?", common.UserStatusEnabled, common.RoleAdminUser).
 		Find(&users).Error; err != nil {
 		common.SysLog(fmt.Sprintf("failed to query upstream update notification users: %s", err.Error()))
-		return
+		return 0
 	}
 
 	notification := dto.NewNotify(dto.NotifyTypeChannelUpdate, subject, content, nil)
@@ -38,6 +38,9 @@ func NotifyUpstreamModelUpdateWatchers(subject string, content string) {
 		if !userSetting.UpstreamModelUpdateNotifyEnabled {
 			continue
 		}
+		if !notifyTargetConfigured(user.Email, userSetting) {
+			continue
+		}
 		if err := NotifyUser(user.Id, user.Email, userSetting, notification); err != nil {
 			common.SysLog(fmt.Sprintf("failed to notify user %d for upstream model update: %s", user.Id, err.Error()))
 			continue
@@ -45,6 +48,26 @@ func NotifyUpstreamModelUpdateWatchers(subject string, content string) {
 		sentCount++
 	}
 	common.SysLog(fmt.Sprintf("upstream model update notifications sent: %d", sentCount))
+	return sentCount
+}
+
+func notifyTargetConfigured(userEmail string, userSetting dto.UserSetting) bool {
+	notifyType := userSetting.NotifyType
+	if notifyType == "" {
+		notifyType = dto.NotifyTypeEmail
+	}
+	switch notifyType {
+	case dto.NotifyTypeEmail:
+		return strings.TrimSpace(userSetting.NotificationEmail) != "" || strings.TrimSpace(userEmail) != ""
+	case dto.NotifyTypeWebhook:
+		return strings.TrimSpace(userSetting.WebhookUrl) != ""
+	case dto.NotifyTypeBark:
+		return strings.TrimSpace(userSetting.BarkUrl) != ""
+	case dto.NotifyTypeGotify:
+		return strings.TrimSpace(userSetting.GotifyUrl) != "" && strings.TrimSpace(userSetting.GotifyToken) != ""
+	default:
+		return true
+	}
 }
 
 func NotifyUser(userId int, userEmail string, userSetting dto.UserSetting, data dto.Notify) error {

@@ -17,20 +17,18 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
 import {
-  API,
-  showError,
-  showInfo,
-  showSuccess,
-  verifyJSON,
-} from '../../../../helpers';
-import { useIsMobile } from '../../../../hooks/common/useIsMobile';
-import {
-  CHANNEL_OPTIONS,
-  MODEL_FETCHABLE_CHANNEL_TYPES,
-} from '../../../../constants';
+  IconSave,
+  IconClose,
+  IconServer,
+  IconSetting,
+  IconCode,
+  IconCopy,
+  IconGlobe,
+  IconBolt,
+  IconSearch,
+  IconChevronDown,
+} from '@douyinfe/semi-icons';
 import {
   SideSheet,
   Space,
@@ -53,41 +51,44 @@ import {
   Collapse,
   Dropdown,
 } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
+  CHANNEL_OPTIONS,
+  MODEL_FETCHABLE_CHANNEL_TYPES,
+  supportsChannelUpstreamModelUpdate,
+} from '../../../../constants';
+import {
+  API,
+  showError,
+  showInfo,
+  showSuccess,
+  verifyJSON,
   getChannelModels,
   copy,
   getChannelIcon,
   getModelCategories,
   selectFilter,
 } from '../../../../helpers';
-import ModelSelectModal from './ModelSelectModal';
-import SingleModelSelectModal from './SingleModelSelectModal';
-import OllamaModelModal from './OllamaModelModal';
-import CodexOAuthModal from './CodexOAuthModal';
-import ParamOverrideEditorModal from './ParamOverrideEditorModal';
-import JSONEditor from '../../../common/ui/JSONEditor';
-import SecureVerificationModal from '../../../common/modals/SecureVerificationModal';
-import StatusCodeRiskGuardModal from './StatusCodeRiskGuardModal';
-import ChannelKeyDisplay from '../../../common/ui/ChannelKeyDisplay';
-import { useSecureVerification } from '../../../../hooks/common/useSecureVerification';
 import { parseChannelConnectionString } from '../../../../helpers/token';
+import { buildClassicChannelUpstreamUpdateSettings } from '../../../../hooks/channels/upstreamUpdateUtils';
+import { useIsMobile } from '../../../../hooks/common/useIsMobile';
+import { useSecureVerification } from '../../../../hooks/common/useSecureVerification';
 import { createApiCalls } from '../../../../services/secureVerification';
+import SecureVerificationModal from '../../../common/modals/SecureVerificationModal';
+import ChannelKeyDisplay from '../../../common/ui/ChannelKeyDisplay';
+import JSONEditor from '../../../common/ui/JSONEditor';
+import CodexOAuthModal from './CodexOAuthModal';
+import ModelSelectModal from './ModelSelectModal';
+import OllamaModelModal from './OllamaModelModal';
+import ParamOverrideEditorModal from './ParamOverrideEditorModal';
+import SingleModelSelectModal from './SingleModelSelectModal';
 import {
   collectInvalidStatusCodeEntries,
   collectNewDisallowedStatusCodeRedirects,
 } from './statusCodeRiskGuard';
-import {
-  IconSave,
-  IconClose,
-  IconServer,
-  IconSetting,
-  IconCode,
-  IconCopy,
-  IconGlobe,
-  IconBolt,
-  IconSearch,
-  IconChevronDown,
-} from '@douyinfe/semi-icons';
+import StatusCodeRiskGuardModal from './StatusCodeRiskGuardModal';
 
 const { Text, Title } = Typography;
 
@@ -146,10 +147,6 @@ const PARAM_OVERRIDE_OPERATIONS_TEMPLATE = {
 const DEPRECATED_DOUBAO_CODING_PLAN_BASE_URL = 'doubao-coding-plan';
 
 // 支持并且已适配通过接口获取模型列表的渠道类型
-const MODEL_FETCHABLE_TYPES = new Set([
-  1, 4, 14, 34, 17, 26, 27, 24, 47, 25, 20, 23, 31, 40, 42, 48, 43,
-]);
-
 function type2secretPrompt(type) {
   // inputs.type === 15 ? '按照如下格式输入：APIKey|SecretKey' : (inputs.type === 18 ? '按照如下格式输入：APPID|APISecret|APIKey' : '请输入渠道对应的鉴权密钥')
   switch (type) {
@@ -290,8 +287,8 @@ const EditChannelModal = (props) => {
       const values = Object.values(parsed)
         .map((value) => (typeof value === 'string' ? value.trim() : undefined))
         .filter((value) => value);
-      return Array.from(new Set(values));
-    } catch (error) {
+      return [...new Set(values)];
+    } catch {
       return [];
     }
   }, [inputs.model_mapping]);
@@ -308,20 +305,19 @@ const EditChannelModal = (props) => {
       const keys = Object.keys(parsed)
         .map((key) => key.trim())
         .filter((key) => key);
-      return Array.from(new Set(keys));
-    } catch (error) {
+      return [...new Set(keys)];
+    } catch {
       return [];
     }
   }, [inputs.model_mapping]);
   const upstreamDetectedModels = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (inputs.upstream_model_update_last_detected_models || [])
-            .map((model) => String(model || '').trim())
-            .filter(Boolean),
-        ),
+    () => [
+      ...new Set(
+        (inputs.upstream_model_update_last_detected_models || [])
+          .map((model) => String(model || '').trim())
+          .filter(Boolean),
       ),
+    ],
     [inputs.upstream_model_update_last_detected_models],
   );
   const upstreamDetectedModelsPreview = useMemo(
@@ -396,7 +392,7 @@ const EditChannelModal = (props) => {
         tagColor: 'orange',
         preview: pretty,
       };
-    } catch (error) {
+    } catch {
       return {
         tagLabel: t('JSON格式错误'),
         tagColor: 'red',
@@ -638,7 +634,7 @@ const EditChannelModal = (props) => {
       formApiRef.current.setValue(name, value);
     }
     if (name === 'models' && Array.isArray(value)) {
-      value = Array.from(new Set(value.map((m) => (m || '').trim())));
+      value = [...new Set(value.map((m) => (m || '').trim()))];
     }
 
     if (name === 'base_url' && value.endsWith('/v1')) {
@@ -760,7 +756,7 @@ const EditChannelModal = (props) => {
     if (verifyJSON(raw)) {
       try {
         content = JSON.stringify(JSON.parse(raw), null, 2);
-      } catch (error) {
+      } catch {
         content = raw;
       }
     }
@@ -846,7 +842,7 @@ const EditChannelModal = (props) => {
 
   const loadChannel = async () => {
     setLoading(true);
-    let res = await API.get(`/api/channel/${channelId}`);
+    const res = await API.get(`/api/channel/${channelId}`);
     if (res === undefined) {
       return;
     }
@@ -1041,7 +1037,7 @@ const EditChannelModal = (props) => {
           ) {
             parsedIonet = maybeMeta;
           }
-        } catch (error) {
+        } catch {
           // ignore parse error
         }
       }
@@ -1086,7 +1082,7 @@ const EditChannelModal = (props) => {
     };
 
     return {
-      id: isEdit ? parseInt(channelId) : undefined,
+      id: isEdit ? Number.parseInt(channelId) : undefined,
       base_url: values.base_url || '',
       base_url_override: true,
       draft_override: true,
@@ -1165,7 +1161,7 @@ const EditChannelModal = (props) => {
 
     if (isEdit && !useDraftFetch) {
       // 如果是编辑模式，使用已有的 channelId 获取模型列表
-      const res = await API.get('/api/channel/fetch_models/' + channelId, {
+      const res = await API.get(`/api/channel/fetch_models/${channelId}`, {
         skipErrorHandler: true,
       });
       if (res && res.data && res.data.success) {
@@ -1199,7 +1195,7 @@ const EditChannelModal = (props) => {
     }
 
     if (!err) {
-      const uniqueModels = Array.from(new Set(models));
+      const uniqueModels = [...new Set(models)];
       setFetchedModels(uniqueModels);
       if (!silent) {
         setModelModalVisible(true);
@@ -1234,11 +1230,11 @@ const EditChannelModal = (props) => {
       return;
     }
 
-    const normalizedModelsToUse = Array.from(
-      new Set(
+    const normalizedModelsToUse = [
+      ...new Set(
         modelsToUse.map((model) => String(model ?? '').trim()).filter(Boolean),
       ),
-    );
+    ];
     const currentValue = String(value ?? '').trim();
 
     setModelMappingValueModalModels(normalizedModelsToUse);
@@ -1251,7 +1247,7 @@ const EditChannelModal = (props) => {
 
   const fetchModels = async () => {
     try {
-      let res = await API.get(`/api/channel/models`);
+      const res = await API.get(`/api/channel/models`);
       const localModelOptions = res.data.data.map((model) => {
         const id = (model.id || '').trim();
         return {
@@ -1276,7 +1272,7 @@ const EditChannelModal = (props) => {
 
   const fetchGroups = async () => {
     try {
-      let res = await API.get(`/api/group/`);
+      const res = await API.get(`/api/group/`);
       if (res === undefined) {
         return;
       }
@@ -1297,7 +1293,7 @@ const EditChannelModal = (props) => {
       if (res?.data?.success) {
         setModelGroups(res.data.data || []);
       }
-    } catch (error) {
+    } catch {
       // ignore
     }
   };
@@ -1384,7 +1380,7 @@ const EditChannelModal = (props) => {
     });
 
     const categories = getModelCategories(t);
-    const optionsWithIcon = Array.from(modelMap.values()).map((opt) => {
+    const optionsWithIcon = [...modelMap.values()].map((opt) => {
       const modelName = opt.value;
       let icon = null;
       for (const [key, category] of Object.entries(categories)) {
@@ -1419,7 +1415,7 @@ const EditChannelModal = (props) => {
       if (formApiRef.current) {
         formApiRef.current.setValues(originInputs);
       }
-      let localModels = getChannelModels(inputs.type);
+      const localModels = getChannelModels(inputs.type);
       setBasicModels(localModels);
       setInputs((inputs) => ({ ...inputs, models: localModels }));
     }
@@ -1529,7 +1525,7 @@ const EditChannelModal = (props) => {
           const txt = await fileObj.text();
           keys.push(JSON.parse(txt));
           validFiles.push(item);
-        } catch (err) {
+        } catch {
           if (!vertexErroredNames.current.has(item.name)) {
             errorNames.push(item.name);
             vertexErroredNames.current.add(item.name);
@@ -1539,8 +1535,8 @@ const EditChannelModal = (props) => {
 
       // 非批量模式下只保留一个文件（最新选择的），避免重复叠加
       if (!batch && validFiles.length > 1) {
-        validFiles = [validFiles[validFiles.length - 1]];
-        keys = [keys[keys.length - 1]];
+        validFiles = [validFiles.at(-1)];
+        keys = [keys.at(-1)];
       }
 
       setVertexKeys(keys);
@@ -1652,7 +1648,7 @@ const EditChannelModal = (props) => {
 
   const submit = async () => {
     const formValues = formApiRef.current ? formApiRef.current.getValues() : {};
-    let localInputs = { ...formValues };
+    const localInputs = { ...formValues };
     localInputs.param_override = inputs.param_override;
 
     if (localInputs.type === 57) {
@@ -1689,7 +1685,7 @@ const EditChannelModal = (props) => {
             return;
           }
           localInputs.key = JSON.stringify(parsed);
-        } catch (error) {
+        } catch {
           showInfo(t('密钥必须是合法的 JSON 格式！'));
           return;
         }
@@ -1711,7 +1707,7 @@ const EditChannelModal = (props) => {
             try {
               const parsedKey = JSON.parse(localInputs.key);
               localInputs.key = JSON.stringify(parsedKey);
-            } catch (err) {
+            } catch {
               showError(t('密钥格式无效，请输入有效的 JSON 格式密钥'));
               return;
             }
@@ -1786,7 +1782,7 @@ const EditChannelModal = (props) => {
       }
       try {
         parsedModelMapping = JSON.parse(localInputs.model_mapping);
-      } catch (error) {
+      } catch {
         showInfo(t('模型映射必须是合法的 JSON 格式！'));
         return;
       }
@@ -1815,9 +1811,9 @@ const EditChannelModal = (props) => {
           return;
         }
         if (confirmAction === 'add') {
-          const updatedModels = Array.from(
-            new Set([...normalizedModels, ...missingModels]),
-          );
+          const updatedModels = [
+            ...new Set([...normalizedModels, ...missingModels]),
+          ];
           localInputs.models = updatedModels;
           handleInputChange('models', updatedModels);
         }
@@ -1916,28 +1912,10 @@ const EditChannelModal = (props) => {
       }
     }
 
-    settings.upstream_model_update_check_enabled =
-      localInputs.upstream_model_update_check_enabled === true;
-    settings.upstream_model_update_auto_sync_enabled =
-      settings.upstream_model_update_check_enabled &&
-      localInputs.upstream_model_update_auto_sync_enabled === true;
-    settings.upstream_model_update_ignored_models = Array.from(
-      new Set(
-        String(localInputs.upstream_model_update_ignored_models || '')
-          .split(',')
-          .map((model) => model.trim())
-          .filter(Boolean),
-      ),
-    );
-    if (
-      !Array.isArray(settings.upstream_model_update_last_detected_models) ||
-      !settings.upstream_model_update_check_enabled
-    ) {
-      settings.upstream_model_update_last_detected_models = [];
-    }
-    if (typeof settings.upstream_model_update_last_check_time !== 'number') {
-      settings.upstream_model_update_last_check_time = 0;
-    }
+    settings = buildClassicChannelUpstreamUpdateSettings({
+      currentSettings: settings,
+      inputs: localInputs,
+    });
 
     localInputs.settings = JSON.stringify(settings);
 
@@ -1984,7 +1962,7 @@ const EditChannelModal = (props) => {
       delete localInputs.status;
       const updatePayload = {
         ...localInputs,
-        id: parseInt(channelId),
+        id: Number.parseInt(channelId),
         key_mode:
           canFetchDraftModels && isMultiKeyChannel ? keyMode : undefined, // 只在多key模式下传递
       };
@@ -1996,7 +1974,7 @@ const EditChannelModal = (props) => {
       res = await API.put(`/api/channel/`, updatePayload);
     } else {
       res = await API.post(`/api/channel/`, {
-        mode: mode,
+        mode,
         multi_key_mode: mode === 'multi_to_single' ? multiKeyMode : undefined,
         channel: localInputs,
       });
@@ -2070,8 +2048,8 @@ const EditChannelModal = (props) => {
     if (customModel.trim() === '') return;
     const modelArray = customModel.split(',').map((model) => model.trim());
 
-    let localModels = [...inputs.models];
-    let localModelOptions = [...modelOptions];
+    const localModels = [...inputs.models];
+    const localModelOptions = [...modelOptions];
     const addedModels = [];
 
     modelArray.forEach((model) => {
@@ -2336,7 +2314,7 @@ const EditChannelModal = (props) => {
             const advancedSettingsContent = (
               <div className='space-y-4'>
                 {/* Upstream Model Management Section */}
-                {MODEL_FETCHABLE_CHANNEL_TYPES.has(inputs.type) && (
+                {supportsChannelUpstreamModelUpdate(inputs) && (
                   <div className='pb-3 border-b border-gray-100'>
                     <Text className='text-sm font-medium text-gray-500 mb-3 block'>
                       {t('上游模型管理')}
@@ -2514,12 +2492,9 @@ const EditChannelModal = (props) => {
                   <Form.TextArea
                     field='header_override'
                     label={t('请求头覆盖')}
-                    placeholder={
-                      t('此项可选，用于覆盖请求头参数') +
-                      '\n' +
-                      t('格式示例：') +
-                      '\n{\n  "User-Agent": "Mozilla/5.0 ...",\n  "Authorization": "Bearer {api_key}"\n}'
-                    }
+                    placeholder={`${t('此项可选，用于覆盖请求头参数')}\n${t(
+                      '格式示例：',
+                    )}\n{\n  "User-Agent": "Mozilla/5.0 ...",\n  "Authorization": "Bearer {api_key}"\n}`}
                     autosize
                     onChange={(value) =>
                       handleInputChange('header_override', value)
@@ -2585,13 +2560,13 @@ const EditChannelModal = (props) => {
                     key={`status_code_mapping-${isEdit ? channelId : 'new'}`}
                     field='status_code_mapping'
                     label={t('状态码复写')}
-                    placeholder={
-                      t(
-                        '此项可选，用于复写返回的状态码，仅影响本地判断，不修改返回到上游的状态码，比如将claude渠道的400错误复写为500（用于重试），请勿滥用该功能，例如：',
-                      ) +
-                      '\n' +
-                      JSON.stringify(STATUS_CODE_MAPPING_EXAMPLE, null, 2)
-                    }
+                    placeholder={`${t(
+                      '此项可选，用于复写返回的状态码，仅影响本地判断，不修改返回到上游的状态码，比如将claude渠道的400错误复写为500（用于重试），请勿滥用该功能，例如：',
+                    )}\n${JSON.stringify(
+                      STATUS_CODE_MAPPING_EXAMPLE,
+                      null,
+                      2,
+                    )}`}
                     value={inputs.status_code_mapping || ''}
                     onChange={(value) =>
                       handleInputChange('status_code_mapping', value)
@@ -3534,9 +3509,7 @@ const EditChannelModal = (props) => {
                         <Form.Input
                           field='other'
                           label={t('模型版本')}
-                          placeholder={
-                            '请输入星火大模型版本，注意是接口地址中的版本号，例如：v2.1'
-                          }
+                          placeholder='请输入星火大模型版本，注意是接口地址中的版本号，例如：v2.1'
                           onChange={(value) =>
                             handleInputChange('other', value)
                           }
@@ -3571,7 +3544,7 @@ const EditChannelModal = (props) => {
                         <Form.Input
                           field='other'
                           label={t('知识库 ID')}
-                          placeholder={'请输入知识库 ID，例如：123456'}
+                          placeholder='请输入知识库 ID，例如：123456'
                           onChange={(value) =>
                             handleInputChange('other', value)
                           }
@@ -3583,9 +3556,7 @@ const EditChannelModal = (props) => {
                         <Form.Input
                           field='other'
                           label='Account ID'
-                          placeholder={
-                            '请输入Account ID，例如：d6b5da8hk1awo8nap34ube6gh'
-                          }
+                          placeholder='请输入Account ID，例如：d6b5da8hk1awo8nap34ube6gh'
                           onChange={(value) =>
                             handleInputChange('other', value)
                           }
@@ -3597,7 +3568,7 @@ const EditChannelModal = (props) => {
                         <Form.Input
                           field='other'
                           label={t('智能体ID')}
-                          placeholder={'请输入智能体ID，例如：7342866812345'}
+                          placeholder='请输入智能体ID，例如：7342866812345'
                           onChange={(value) =>
                             handleInputChange('other', value)
                           }
@@ -3938,7 +3909,7 @@ const EditChannelModal = (props) => {
                                     try {
                                       copy(inputs.models.join(','));
                                       showSuccess(t('模型列表已复制到剪贴板'));
-                                    } catch (error) {
+                                    } catch {
                                       showError(t('复制失败'));
                                     }
                                   },
@@ -3967,8 +3938,9 @@ const EditChannelModal = (props) => {
                                               const parsed = JSON.parse(
                                                 group.items || '[]',
                                               );
-                                              if (Array.isArray(parsed))
+                                              if (Array.isArray(parsed)) {
                                                 items = parsed;
+                                              }
                                             }
                                           } catch {}
                                           const current =
@@ -3977,13 +3949,13 @@ const EditChannelModal = (props) => {
                                             ) ||
                                             inputs.models ||
                                             [];
-                                          const merged = Array.from(
-                                            new Set(
+                                          const merged = [
+                                            ...new Set(
                                               [...current, ...items]
                                                 .map((m) => (m || '').trim())
                                                 .filter(Boolean),
                                             ),
-                                          );
+                                          ];
                                           handleInputChange('models', merged);
                                         },
                                       })),
@@ -4038,12 +4010,9 @@ const EditChannelModal = (props) => {
                         key={`model_mapping-${isEdit ? channelId : 'new'}`}
                         field='model_mapping'
                         label={t('模型重定向')}
-                        placeholder={
-                          t(
-                            '此项可选，用于修改请求体中的模型名称，为一个 JSON 字符串，键为请求中模型名称，值为要替换的模型名称，例如：',
-                          ) +
-                          `\n${JSON.stringify(MODEL_MAPPING_EXAMPLE, null, 2)}`
-                        }
+                        placeholder={`${t(
+                          '此项可选，用于修改请求体中的模型名称，为一个 JSON 字符串，键为请求中模型名称，值为要替换的模型名称，例如：',
+                        )}\n${JSON.stringify(MODEL_MAPPING_EXAMPLE, null, 2)}`}
                         value={inputs.model_mapping || ''}
                         onChange={(value) =>
                           handleInputChange('model_mapping', value)
@@ -4302,9 +4271,9 @@ const EditChannelModal = (props) => {
       >
         <ChannelKeyDisplay
           keyData={keyDisplayState.keyData}
-          showSuccessIcon={true}
+          showSuccessIcon
           successText={t('密钥获取成功')}
-          showWarning={true}
+          showWarning
           warningText={t(
             '请妥善保管密钥信息，不要泄露给他人。如有安全疑虑，请及时更换密钥。',
           )}
@@ -4357,7 +4326,7 @@ const EditChannelModal = (props) => {
           if (typeof currentMapping === 'string' && currentMapping.trim()) {
             try {
               parsed = JSON.parse(currentMapping);
-            } catch (error) {
+            } catch {
               parsed = {};
             }
           } else if (
@@ -4404,9 +4373,7 @@ const EditChannelModal = (props) => {
             ? inputs.models.map(String)
             : [];
           const incoming = modelIds.map(String);
-          const nextModels = Array.from(
-            new Set([...existingModels, ...incoming]),
-          );
+          const nextModels = [...new Set([...existingModels, ...incoming])];
 
           handleInputChange('models', nextModels);
           if (formApiRef.current) {

@@ -16,11 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { Plus, Trash2 } from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
-import { Plus, Trash2 } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+
 import { Button } from '@/components/ui/button'
 import {
   Collapsible,
@@ -46,6 +47,7 @@ import {
 } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Textarea } from '@/components/ui/textarea'
+
 import { SettingsSwitchField } from '../../components/settings-form-layout'
 import { RULE_TEMPLATES } from './constants'
 import type { AffinityRule, KeySource } from './types'
@@ -298,9 +300,10 @@ export function RuleEditorDialog(props: Props) {
               {keySources.map((src, idx) => (
                 <div key={idx} className='flex items-center gap-2'>
                   <Select
-                    items={[
-                      ...KEY_SOURCE_TYPES.map((t) => ({ value: t, label: t })),
-                    ]}
+                    items={KEY_SOURCE_TYPES.map((t) => ({
+                      value: t,
+                      label: t,
+                    }))}
                     value={src.type}
                     onValueChange={(v) => {
                       if (v === null) return

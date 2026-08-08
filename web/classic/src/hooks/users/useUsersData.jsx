@@ -19,8 +19,9 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { API, showError, showSuccess } from '../../helpers';
+
 import { ITEMS_PER_PAGE } from '../../constants';
+import { API, showError, showSuccess } from '../../helpers';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 
 export const useUsersData = () => {
@@ -166,7 +167,7 @@ export const useUsersData = () => {
       } else {
         showError(message || t('操作失败，请重试'));
       }
-    } catch (error) {
+    } catch {
       showError(t('操作失败，请重试'));
     }
   };
@@ -183,7 +184,7 @@ export const useUsersData = () => {
       } else {
         showError(message || t('操作失败，请重试'));
       }
-    } catch (error) {
+    } catch {
       showError(t('操作失败，请重试'));
     }
   };
@@ -201,7 +202,7 @@ export const useUsersData = () => {
 
   // Handle page size change
   const handlePageSizeChange = async (size) => {
-    localStorage.setItem('page-size', size + '');
+    localStorage.setItem('page-size', `${size}`);
     setPageSize(size);
     setActivePage(1);
     loadUsers(activePage, size)
@@ -237,7 +238,7 @@ export const useUsersData = () => {
   // Fetch groups data
   const fetchGroups = async () => {
     try {
-      let res = await API.get(`/api/group/`);
+      const res = await API.get(`/api/group/`);
       if (res === undefined) {
         return;
       }

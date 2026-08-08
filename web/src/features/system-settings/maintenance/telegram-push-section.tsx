@@ -16,11 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useState } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Eye, RefreshCw, Send } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { toast } from 'sonner'
-import { api } from '@/lib/api'
+
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -31,6 +31,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Textarea } from '@/components/ui/textarea'
+import { api } from '@/lib/api'
+
 import { SettingsSection } from '../components/settings-section'
 
 type TelegramRecord = {
@@ -184,15 +186,16 @@ export function TelegramPushSection() {
             onChange={(e) => setBotToken(e.target.value)}
           />
           <p className='text-muted-foreground text-xs leading-5'>
-            在 Telegram 搜索 @BotFather，发送 /newbot 创建机器人后复制 Bot Token。
-            Token 等同机器人密钥，只填写在这里，不要发到群组或公开页面。
+            在 Telegram 搜索 @BotFather，发送 /newbot 创建机器人后复制 Bot
+            Token。 Token 等同机器人密钥，只填写在这里，不要发到群组或公开页面。
           </p>
         </div>
         <div className='space-y-2'>
           <Label>Chat ID</Label>
           <Input value={chatId} onChange={(e) => setChatId(e.target.value)} />
           <p className='text-muted-foreground text-xs leading-5'>
-            私聊填管理员 Telegram 用户 ID，频道填频道 ID 或 @频道用户名，群组填群组 ID。
+            私聊填管理员 Telegram 用户 ID，频道填频道 ID 或
+            @频道用户名，群组填群组 ID。
             私聊用户需先主动给机器人发过消息；频道/群组需把机器人加入并授予发消息权限。
           </p>
         </div>

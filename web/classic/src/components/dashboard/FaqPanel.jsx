@@ -17,15 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Card, Collapse, Empty } from '@douyinfe/semi-ui';
-import { HelpCircle } from 'lucide-react';
 import { IconPlus, IconMinus } from '@douyinfe/semi-icons';
-import { marked } from 'marked';
 import {
   IllustrationConstruction,
   IllustrationConstructionDark,
 } from '@douyinfe/semi-illustrations';
+import { Card, Collapse, Empty } from '@douyinfe/semi-ui';
+import { HelpCircle } from 'lucide-react';
+import { marked } from 'marked';
+import React from 'react';
+
 import ScrollableContainer from '../common/ui/ScrollableContainer';
 
 const FaqPanel = ({

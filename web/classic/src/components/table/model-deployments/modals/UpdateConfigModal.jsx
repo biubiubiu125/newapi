@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect, useRef } from 'react';
 import {
   Modal,
   Form,
@@ -34,6 +33,7 @@ import {
   TextArea,
   Switch,
 } from '@douyinfe/semi-ui';
+import React, { useState, useEffect, useRef } from 'react';
 import {
   FaCog,
   FaDocker,
@@ -44,6 +44,7 @@ import {
   FaPlus,
   FaMinus,
 } from 'react-icons/fa';
+
 import { API, showError, showSuccess } from '../../../../helpers';
 
 const { Text, Title } = Typography;
@@ -97,12 +98,15 @@ const UpdateConfigModal = ({ visible, onCancel, deployment, onSuccess, t }) => {
       const payload = {};
 
       if (formValues.image_url) payload.image_url = formValues.image_url;
-      if (formValues.traffic_port)
+      if (formValues.traffic_port) {
         payload.traffic_port = formValues.traffic_port;
-      if (formValues.registry_username)
+      }
+      if (formValues.registry_username) {
         payload.registry_username = formValues.registry_username;
-      if (formValues.registry_secret)
+      }
+      if (formValues.registry_secret) {
         payload.registry_secret = formValues.registry_secret;
+      }
       if (formValues.command) payload.command = formValues.command;
 
       // Process entrypoint
@@ -144,9 +148,9 @@ const UpdateConfigModal = ({ visible, onCancel, deployment, onSuccess, t }) => {
       }
     } catch (error) {
       showError(
-        t('更新配置失败') +
-          ': ' +
-          (error.response?.data?.message || error.message),
+        `${t('更新配置失败')}: ${
+          error.response?.data?.message || error.message
+        }`,
       );
     } finally {
       setLoading(false);

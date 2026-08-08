@@ -16,14 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState } from 'react'
 import type { ColumnDef } from '@tanstack/react-table'
-import {
-  Avatar,
-  AvatarFallback,
-} from '@/components/ui/avatar'
-import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
-import { useUsageLogsContext } from '../usage-logs-provider'
 import {
   Blend,
   FileText,
@@ -42,10 +35,15 @@ import {
   ZoomIn,
   type LucideIcon,
 } from 'lucide-react'
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { formatTimestampToDate } from '@/lib/format'
+
 import { DataTableColumnHeader } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
+import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
+import { formatTimestampToDate } from '@/lib/format'
+
 import { MJ_TASK_TYPES } from '../../constants'
 import {
   mjTaskTypeMapper,
@@ -55,6 +53,7 @@ import {
 import type { MidjourneyLog } from '../../types'
 import { ImageDialog } from '../dialogs/image-dialog'
 import { PromptDialog } from '../dialogs/prompt-dialog'
+import { useUsageLogsContext } from '../usage-logs-provider'
 import {
   createDurationColumn,
   createChannelColumn,
@@ -112,7 +111,9 @@ export function useDrawingLogsColumns(
                   ? t('Settlement review')
                   : t(mjStatusMapper.getLabel(log.status))
               }
-              variant={settlementFailed ? 'red' : mjStatusMapper.getVariant(log.status)}
+              variant={
+                settlementFailed ? 'red' : mjStatusMapper.getVariant(log.status)
+              }
               size='sm'
               copyable={false}
             />
@@ -156,7 +157,9 @@ export function useDrawingLogsColumns(
                 <AvatarFallback
                   className='text-[11px] font-semibold'
                   style={
-                    sensitiveVisible ? getUserAvatarStyle(displayName) : undefined
+                    sensitiveVisible
+                      ? getUserAvatarStyle(displayName)
+                      : undefined
                   }
                 >
                   {sensitiveVisible ? getUserAvatarFallback(displayName) : '•'}

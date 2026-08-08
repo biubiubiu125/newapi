@@ -17,8 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect, useMemo } from 'react';
-import { useIsMobile } from '../../../../hooks/common/useIsMobile';
+import { IconSearch, IconInfoCircle } from '@douyinfe/semi-icons';
+import {
+  IllustrationNoResult,
+  IllustrationNoResultDark,
+} from '@douyinfe/semi-illustrations';
 import {
   Modal,
   Checkbox,
@@ -30,13 +33,11 @@ import {
   Collapse,
   Tooltip,
 } from '@douyinfe/semi-ui';
-import {
-  IllustrationNoResult,
-  IllustrationNoResultDark,
-} from '@douyinfe/semi-illustrations';
-import { IconSearch, IconInfoCircle } from '@douyinfe/semi-icons';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { getModelCategories } from '../../../../helpers/render';
+import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 
 const ModelSelectModal = ({
   visible,
@@ -55,14 +56,13 @@ const ModelSelectModal = ({
     if (typeof model === 'object' && model.model_name) return model.model_name;
     return String(model ?? '');
   };
-  const normalizeModelList = (modelList = []) =>
-    Array.from(
-      new Set(
-        (modelList || [])
-          .map((model) => getModelName(model).trim())
-          .filter(Boolean),
-      ),
-    );
+  const normalizeModelList = (modelList = []) => [
+    ...new Set(
+      (modelList || [])
+        .map((model) => getModelName(model).trim())
+        .filter(Boolean),
+    ),
+  ];
 
   const normalizedSelected = useMemo(
     () => (selected || []).map(getModelName),
@@ -77,14 +77,13 @@ const ModelSelectModal = ({
   const normalizeModelName = (model) =>
     typeof model === 'string' ? model.trim() : '';
   const normalizedRedirectModels = useMemo(
-    () =>
-      Array.from(
-        new Set(
-          (redirectModels || [])
-            .map((model) => normalizeModelName(model))
-            .filter(Boolean),
-        ),
+    () => [
+      ...new Set(
+        (redirectModels || [])
+          .map((model) => normalizeModelName(model))
+          .filter(Boolean),
       ),
+    ],
     [redirectModels],
   );
   const normalizedRedirectSourceSet = useMemo(

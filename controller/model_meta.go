@@ -94,12 +94,12 @@ func CreateModelMeta(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	buf, err := json.Marshal(raw)
+	buf, err := common.Marshal(raw)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if err := json.Unmarshal(buf, &m); err != nil {
+	if err := common.Unmarshal(buf, &m); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -223,7 +223,7 @@ func enrichModels(models []*model.Model) {
 			mm := models[idx]
 			if mm.Endpoints == "" {
 				eps := model.GetModelSupportEndpointTypes(mm.ModelName)
-				if b, err := json.Marshal(eps); err == nil {
+				if b, err := common.Marshal(eps); err == nil {
 					mm.Endpoints = string(b)
 				}
 			}
@@ -313,7 +313,7 @@ func enrichModels(models []*model.Model) {
 			for et := range es {
 				eps = append(eps, et)
 			}
-			if b, err := json.Marshal(eps); err == nil {
+			if b, err := common.Marshal(eps); err == nil {
 				mm.Endpoints = string(b)
 			}
 		}

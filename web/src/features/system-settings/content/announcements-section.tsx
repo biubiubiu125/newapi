@@ -16,14 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useMemo, useState } from 'react'
-import * as z from 'zod'
-import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { Plus, Edit, Trash2, Save, Send } from 'lucide-react'
+import { useEffect, useMemo, useState } from 'react'
+import { useForm } from 'react-hook-form'
 import { toast } from 'sonner'
-import { api } from '@/lib/api'
-import dayjs from '@/lib/dayjs'
+import * as z from 'zod'
+
+import { DateTimePicker } from '@/components/datetime-picker'
+import { StatusBadge } from '@/components/status-badge'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -71,8 +72,9 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
-import { DateTimePicker } from '@/components/datetime-picker'
-import { StatusBadge } from '@/components/status-badge'
+import { api } from '@/lib/api'
+import dayjs from '@/lib/dayjs'
+
 import { SettingsSwitchField } from '../components/settings-form-layout'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
@@ -92,20 +94,14 @@ type AnnouncementsSectionProps = {
 }
 
 const announcementSchema = z.object({
-  title: z
-    .string()
-    .max(100, '标题不能超过 100 个字符')
-    .optional(),
+  title: z.string().max(100, '标题不能超过 100 个字符').optional(),
   content: z
     .string()
     .min(1, '公告内容不能为空')
     .max(2000, '公告内容不能超过 2000 个字符'),
   publishDate: z.string().min(1, '发布时间不能为空'),
   type: z.enum(['default', 'ongoing', 'success', 'warning', 'error']),
-  extra: z
-    .string()
-    .max(100, '附加信息不能超过 100 个字符')
-    .optional(),
+  extra: z.string().max(100, '附加信息不能超过 100 个字符').optional(),
 })
 
 type AnnouncementFormValues = z.infer<typeof announcementSchema>
@@ -157,7 +153,9 @@ export function AnnouncementsSection({
   const [editingAnnouncement, setEditingAnnouncement] =
     useState<Announcement | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<'single' | 'batch'>('single')
-  const [telegramPushingId, setTelegramPushingId] = useState<number | null>(null)
+  const [telegramPushingId, setTelegramPushingId] = useState<number | null>(
+    null
+  )
 
   const form = useForm<AnnouncementFormValues>({
     resolver: zodResolver(announcementSchema),
@@ -308,7 +306,9 @@ export function AnnouncementsSection({
         skipToast: true,
       })
       setHasChanges(false)
-      toast.success('公告已保存；如有新增或变更公告，将自动创建 Telegram 推送任务')
+      toast.success(
+        '公告已保存；如有新增或变更公告，将自动创建 Telegram 推送任务'
+      )
     } catch {
       toast.error('公告保存失败')
     }
@@ -454,7 +454,10 @@ export function AnnouncementsSection({
                       </div>
                     </TableCell>
                     <TableCell className='max-w-md'>
-                      <div className='line-clamp-2' title={announcement.content}>
+                      <div
+                        className='line-clamp-2'
+                        title={announcement.content}
+                      >
                         {announcement.content}
                       </div>
                     </TableCell>
@@ -596,7 +599,9 @@ export function AnnouncementsSection({
                           placeholder='选择发布时间'
                         />
                       </FormControl>
-                      <FormDescription>公告开始显示的日期和时间。</FormDescription>
+                      <FormDescription>
+                        公告开始显示的日期和时间。
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -608,27 +613,23 @@ export function AnnouncementsSection({
                     <FormItem>
                       <FormLabel>类型</FormLabel>
                       <Select
-                        items={[
-                          ...typeOptions.map((option) => ({
-                            value: option.value,
-                            label: (
-                              <div className='flex items-center gap-2'>
-                                <div
-                                  className={`h-3 w-3 rounded-full ${option.color}`}
-                                />
-                                {option.label}
-                              </div>
-                            ),
-                          })),
-                        ]}
+                        items={typeOptions.map((option) => ({
+                          value: option.value,
+                          label: (
+                            <div className='flex items-center gap-2'>
+                              <div
+                                className={`h-3 w-3 rounded-full ${option.color}`}
+                              />
+                              {option.label}
+                            </div>
+                          ),
+                        }))}
                         onValueChange={field.onChange}
                         value={field.value}
                       >
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue
-                              placeholder='选择公告类型'
-                            />
+                            <SelectValue placeholder='选择公告类型' />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent alignItemWithTrigger={false}>
@@ -660,12 +661,11 @@ export function AnnouncementsSection({
                     <FormItem>
                       <FormLabel>附加信息（可选）</FormLabel>
                       <FormControl>
-                        <Input
-                          placeholder='附加信息'
-                          {...field}
-                        />
+                        <Input placeholder='附加信息' {...field} />
                       </FormControl>
-                      <FormDescription>可选补充信息，最多 100 个字符。</FormDescription>
+                      <FormDescription>
+                        可选补充信息，最多 100 个字符。
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -700,9 +700,7 @@ export function AnnouncementsSection({
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete}>
-              删除
-            </AlertDialogAction>
+            <AlertDialogAction onClick={confirmDelete}>删除</AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

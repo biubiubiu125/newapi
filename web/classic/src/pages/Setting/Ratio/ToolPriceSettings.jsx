@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import React, { useEffect, useMemo, useState } from 'react';
+import { IconCopy, IconDelete, IconPlus } from '@douyinfe/semi-icons';
 import {
   Banner,
   Button,
@@ -28,8 +28,9 @@ import {
   TextArea,
   Typography,
 } from '@douyinfe/semi-ui';
-import { IconCopy, IconDelete, IconPlus } from '@douyinfe/semi-icons';
+import React, { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { API, copy, showError, showSuccess } from '../../../helpers';
 
 const { Text } = Typography;
@@ -168,7 +169,7 @@ export default function ToolPriceSettings({ options }) {
       ),
     },
     {
-      title: t('价格') + ' ($/1K' + t('次') + ')',
+      title: `${t('价格')} ($/1K${t('次')})`,
       dataIndex: 'price',
       width: 160,
       render: (val, record) => (

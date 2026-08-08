@@ -17,8 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect, useCallback, useMemo } from 'react';
-import { useTranslation } from 'react-i18next';
+import { IconPlus, IconDelete, IconAlertTriangle } from '@douyinfe/semi-icons';
 import {
   Button,
   Form,
@@ -36,7 +35,8 @@ import {
   Divider,
   Tooltip,
 } from '@douyinfe/semi-ui';
-import { IconPlus, IconDelete, IconAlertTriangle } from '@douyinfe/semi-icons';
+import React, { useState, useEffect, useCallback, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
 
 const { Text } = Typography;
 
@@ -99,7 +99,7 @@ const JSONEditor = ({
       try {
         const parsed = JSON.parse(value);
         return objectToKeyValueArray(parsed);
-      } catch (error) {
+      } catch {
         return [];
       }
     }
@@ -112,8 +112,9 @@ const JSONEditor = ({
   // 手动模式下的本地文本缓冲
   const [manualText, setManualText] = useState(() => {
     if (typeof value === 'string') return value;
-    if (value && typeof value === 'object')
+    if (value && typeof value === 'object') {
       return JSON.stringify(value, null, 2);
+    }
     return '';
   });
 
@@ -124,7 +125,7 @@ const JSONEditor = ({
         const parsed = JSON.parse(value);
         const keyCount = Object.keys(parsed).length;
         return keyCount > 10 ? 'manual' : 'visual';
-      } catch (error) {
+      } catch {
         return 'manual';
       }
     }
@@ -175,9 +176,9 @@ const JSONEditor = ({
   useEffect(() => {
     if (editMode !== 'manual') {
       if (typeof value === 'string') setManualText(value);
-      else if (value && typeof value === 'object')
+      else if (value && typeof value === 'object') {
         setManualText(JSON.stringify(value, null, 2));
-      else setManualText('');
+      } else setManualText('');
     }
   }, [value, editMode]);
 
@@ -265,10 +266,10 @@ const JSONEditor = ({
   // 添加键值对
   const addKeyValue = useCallback(() => {
     const newPairs = [...keyValuePairs];
-    const existingKeys = newPairs.map((p) => p.key);
+    const existingKeys = new Set(newPairs.map((p) => p.key));
     let counter = 1;
     let newKey = `field_${counter}`;
-    while (existingKeys.includes(newKey)) {
+    while (existingKeys.has(newKey)) {
       counter += 1;
       newKey = `field_${counter}`;
     }
@@ -417,7 +418,7 @@ const JSONEditor = ({
             description={
               <div>
                 <Text strong>{t('存在重复的键名：')}</Text>
-                <Text>{Array.from(duplicateKeys).join(', ')}</Text>
+                <Text>{[...duplicateKeys].join(', ')}</Text>
                 <br />
                 <Text type='tertiary' size='small'>
                   {t('注意：JSON中重复的键只会保留最后一个同名键的值')}
@@ -516,7 +517,7 @@ const JSONEditor = ({
             description={
               <div>
                 <Text strong>{t('存在重复的键名：')}</Text>
-                <Text>{Array.from(duplicateKeys).join(', ')}</Text>
+                <Text>{[...duplicateKeys].join(', ')}</Text>
                 <br />
                 <Text type='tertiary' size='small'>
                   {t('注意：JSON中重复的键只会保留最后一个同名键的值')}
@@ -541,7 +542,7 @@ const JSONEditor = ({
                   {
                     id: generateUniqueId(),
                     key: 'default',
-                    value: value,
+                    value,
                   },
                 ];
                 handleVisualChange(newPairs);
@@ -675,7 +676,7 @@ const JSONEditor = ({
               value={value}
               rules={rules}
               style={{ display: 'none' }}
-              noLabel={true}
+              noLabel
               {...props}
             />
           </div>
@@ -694,7 +695,7 @@ const JSONEditor = ({
               value={value}
               rules={rules}
               style={{ display: 'none' }}
-              noLabel={true}
+              noLabel
               {...props}
             />
           </div>

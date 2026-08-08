@@ -25,23 +25,6 @@ import (
 	"github.com/gorilla/websocket"
 )
 
-// applyUpstreamContentLength populates req.ContentLength when the upstream
-// body is wrapped in a BodyStorage (see relay/common/outbound_body.go).
-//
-// net/http.NewRequest only auto-detects ContentLength for *bytes.Reader,
-// *bytes.Buffer and *strings.Reader. When the body is a type-erased io.Reader
-// (which is the case for ReaderOnly(BodyStorage)), the Content-Length header
-// would otherwise be omitted, forcing chunked transfer encoding and breaking
-// some upstreams that require an explicit Content-Length.
-func applyUpstreamContentLength(req *http.Request, info *common.RelayInfo) {
-	if info == nil {
-		return
-	}
-	if info.UpstreamRequestBodySize > 0 && req.ContentLength <= 0 {
-		req.ContentLength = info.UpstreamRequestBodySize
-	}
-}
-
 func newRelayHTTPRequest(c *gin.Context, method, url string, body io.Reader) (*http.Request, error) {
 	ctx := context.Background()
 	if c != nil && c.Request != nil {
@@ -50,7 +33,43 @@ func newRelayHTTPRequest(c *gin.Context, method, url string, body io.Reader) (*h
 	return http.NewRequestWithContext(ctx, method, url, body)
 }
 
+func ApplyUpstreamBodyMetadata(req *http.Request, requestBody io.Reader) {
+	if req == nil || requestBody == nil {
+		return
+	}
+	replayable, ok := requestBody.(common2.ReplayableBody)
+	if !ok {
+		return
+	}
+	if _, rawStorage := requestBody.(common2.BodyStorage); rawStorage {
+		req.Body = io.NopCloser(requestBody)
+	}
+	req.ContentLength = replayable.Size()
+	if req.GetBody == nil {
+		req.GetBody = replayable.NewReader
+	}
+}
+
+func applyUpstreamIdempotencyHeaders(req *http.Header, c *gin.Context) {
+	if req == nil || c == nil || c.Request == nil {
+		return
+	}
+	if idempotencyKey := strings.TrimSpace(c.Request.Header.Get("Idempotency-Key")); idempotencyKey != "" {
+		req.Set("Idempotency-Key", idempotencyKey)
+	}
+	if idempotencyKey := strings.TrimSpace(c.Request.Header.Get("X-Idempotency-Key")); idempotencyKey != "" {
+		req.Set("X-Idempotency-Key", idempotencyKey)
+	}
+}
+
+// ApplyUpstreamIdempotencyHeaders copies upstream idempotency headers onto the
+// outbound request.
+func ApplyUpstreamIdempotencyHeaders(req *http.Header, c *gin.Context) {
+	applyUpstreamIdempotencyHeaders(req, c)
+}
+
 func SetupApiRequestHeader(info *common.RelayInfo, c *gin.Context, req *http.Header) {
+	ApplyUpstreamIdempotencyHeaders(req, c)
 	if info.RelayMode == constant.RelayModeAudioTranscription || info.RelayMode == constant.RelayModeAudioTranslation {
 		// multipart/form-data
 	} else if info.RelayMode == constant.RelayModeRealtime {
@@ -326,12 +345,13 @@ func DoApiRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
-	applyUpstreamContentLength(req, info)
+	ApplyUpstreamBodyMetadata(req, requestBody)
 	headers := req.Header
 	err = a.SetupRequestHeader(c, &headers, info)
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
+	ApplyUpstreamIdempotencyHeaders(&headers, c)
 	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
 	// 这样可以覆盖默认的 Authorization header 设置
 	headerOverride, err := processHeaderOverride(info, c)
@@ -356,7 +376,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
-	applyUpstreamContentLength(req, info)
+	ApplyUpstreamBodyMetadata(req, requestBody)
 	// set form data
 	req.Header.Set("Content-Type", c.Request.Header.Get("Content-Type"))
 	headers := req.Header
@@ -364,6 +384,7 @@ func DoFormRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBod
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
+	ApplyUpstreamIdempotencyHeaders(&headers, c)
 	// 在 SetupRequestHeader 之后应用 Header Override，确保用户设置优先级最高
 	// 这样可以覆盖默认的 Authorization header 设置
 	headerOverride, err := processHeaderOverride(info, c)
@@ -486,11 +507,13 @@ func sendPingData(c *gin.Context, mutex *sync.Mutex) error {
 func DoRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	return doRequest(c, req, info)
 }
+
 func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http.Response, error) {
 	client, err := service.GetHttpClientWithProxySettings(info.ChannelSetting.Proxy, info.ChannelSetting)
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
+	relayClient := service.CloneHTTPClientWithoutRedirects(client)
 	if common2.DebugEnabled && req != nil && req.URL != nil {
 		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
 		logger.LogDebug(c, fmt.Sprintf(
@@ -522,7 +545,7 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 		}
 	}
 
-	resp, err := client.Do(req)
+	resp, err := relayClient.Do(req)
 	if err != nil {
 		logger.LogError(c, "do request failed: "+err.Error())
 		return nil, types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithHideErrMsg("upstream error: do request failed"))
@@ -560,15 +583,14 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	if err != nil {
 		return nil, fmt.Errorf("new request failed: %w", err)
 	}
-	applyUpstreamContentLength(req, info)
-	req.GetBody = func() (io.ReadCloser, error) {
-		return io.NopCloser(requestBody), nil
-	}
+	ApplyUpstreamBodyMetadata(req, requestBody)
+	ApplyUpstreamIdempotencyHeaders(&req.Header, c)
 
 	err = a.BuildRequestHeader(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("setup request header failed: %w", err)
 	}
+	ApplyUpstreamIdempotencyHeaders(&req.Header, c)
 	resp, err := doRequest(c, req, info)
 	if err != nil {
 		return nil, fmt.Errorf("do request failed: %w", err)

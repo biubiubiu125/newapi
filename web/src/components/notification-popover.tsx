@@ -19,9 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { TFunction } from 'i18next'
 import { Bell, Megaphone } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
-import { getAnnouncementColorClass } from '@/lib/colors'
-import { formatDateTimeObject } from '@/lib/time'
-import { cn } from '@/lib/utils'
+
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import {
@@ -42,6 +40,9 @@ import {
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { getAnnouncementColorClass } from '@/lib/colors'
+import { formatDateTimeObject } from '@/lib/time'
+import { cn } from '@/lib/utils'
 
 interface AnnouncementObject {
   type?: string
@@ -75,8 +76,9 @@ function getRelativeTime(publishDate: string | Date, t: TFunction): string {
   const pubDate = new Date(publishDate)
 
   // If invalid date, return original string
-  if (isNaN(pubDate.getTime()))
+  if (isNaN(pubDate.getTime())) {
     return typeof publishDate === 'string' ? publishDate : ''
+  }
 
   const diffMs = now.getTime() - pubDate.getTime()
   const diffSeconds = Math.floor(diffMs / 1000)
@@ -92,26 +94,31 @@ function getRelativeTime(publishDate: string | Date, t: TFunction): string {
 
   // Return relative time based on difference
   if (diffSeconds < 60) return t('Just now')
-  if (diffMinutes < 60)
+  if (diffMinutes < 60) {
     return diffMinutes === 1
       ? t('1 minute ago')
       : t('{{count}} minutes ago', { count: diffMinutes })
-  if (diffHours < 24)
+  }
+  if (diffHours < 24) {
     return diffHours === 1
       ? t('1 hour ago')
       : t('{{count}} hours ago', { count: diffHours })
-  if (diffDays < 7)
+  }
+  if (diffDays < 7) {
     return diffDays === 1
       ? t('1 day ago')
       : t('{{count}} days ago', { count: diffDays })
-  if (diffWeeks < 4)
+  }
+  if (diffWeeks < 4) {
     return diffWeeks === 1
       ? t('1 week ago')
       : t('{{count}} weeks ago', { count: diffWeeks })
-  if (diffMonths < 12)
+  }
+  if (diffMonths < 12) {
     return diffMonths === 1
       ? t('1 month ago')
       : t('{{count}} months ago', { count: diffMonths })
+  }
   if (diffYears < 2) return t('1 year ago')
 
   // Over 2 years, show specific date

@@ -16,7 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { API, showError, showSuccess, showWarning } from '../../../../helpers';
+import {
+  IconShield,
+  IconAlertTriangle,
+  IconRefresh,
+  IconCopy,
+} from '@douyinfe/semi-icons';
 import {
   Banner,
   Button,
@@ -31,15 +36,10 @@ import {
   Space,
   Badge,
 } from '@douyinfe/semi-ui';
-import {
-  IconShield,
-  IconAlertTriangle,
-  IconRefresh,
-  IconCopy,
-} from '@douyinfe/semi-icons';
+import { QRCodeSVG } from 'qrcode.react';
 import React, { useEffect, useState } from 'react';
 
-import { QRCodeSVG } from 'qrcode.react';
+import { API, showError, showSuccess, showWarning } from '../../../../helpers';
 
 const { Text, Paragraph } = Typography;
 
@@ -71,7 +71,7 @@ const TwoFASetting = ({ t }) => {
       if (res.data.success) {
         setStatus(res.data.data);
       }
-    } catch (error) {
+    } catch {
       showError(t('获取2FA状态失败'));
     }
   };
@@ -92,7 +92,7 @@ const TwoFASetting = ({ t }) => {
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError(t('设置2FA失败'));
     } finally {
       setLoading(false);
@@ -121,7 +121,7 @@ const TwoFASetting = ({ t }) => {
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError(t('启用2FA失败'));
     } finally {
       setLoading(false);
@@ -154,7 +154,7 @@ const TwoFASetting = ({ t }) => {
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError(t('禁用2FA失败'));
     } finally {
       setLoading(false);
@@ -181,7 +181,7 @@ const TwoFASetting = ({ t }) => {
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError(t('重新生成备用码失败'));
     } finally {
       setLoading(false);

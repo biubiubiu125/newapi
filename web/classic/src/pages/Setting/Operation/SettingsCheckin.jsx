@@ -17,8 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import { Button, Col, Form, Row, Spin, Typography } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   compareObjects,
   API,
@@ -26,7 +28,6 @@ import {
   showSuccess,
   showWarning,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
 
 export default function SettingsCheckin(props) {
   const { t } = useTranslation();
@@ -66,8 +67,9 @@ export default function SettingsCheckin(props) {
         if (requestQueue.length === 1) {
           if (res.includes(undefined)) return;
         } else if (requestQueue.length > 1) {
-          if (res.includes(undefined))
+          if (res.includes(undefined)) {
             return showError(t('部分保存失败，请重试'));
+          }
         }
         showSuccess(t('保存成功'));
         props.refresh();
@@ -82,7 +84,7 @@ export default function SettingsCheckin(props) {
 
   useEffect(() => {
     const currentInputs = {};
-    for (let key in props.options) {
+    for (const key in props.options) {
       if (Object.keys(inputs).includes(key)) {
         currentInputs[key] = props.options[key];
       }
@@ -110,7 +112,7 @@ export default function SettingsCheckin(props) {
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'checkin_setting.enabled'}
+                  field='checkin_setting.enabled'
                   label={t('启用签到功能')}
                   size='default'
                   checkedText='｜'
@@ -120,7 +122,7 @@ export default function SettingsCheckin(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.InputNumber
-                  field={'checkin_setting.min_quota'}
+                  field='checkin_setting.min_quota'
                   label={t('签到最小额度')}
                   placeholder={t('签到奖励的最小额度')}
                   onChange={handleFieldChange('checkin_setting.min_quota')}
@@ -130,7 +132,7 @@ export default function SettingsCheckin(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.InputNumber
-                  field={'checkin_setting.max_quota'}
+                  field='checkin_setting.max_quota'
                   label={t('签到最大额度')}
                   placeholder={t('签到奖励的最大额度')}
                   onChange={handleFieldChange('checkin_setting.max_quota')}

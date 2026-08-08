@@ -87,6 +87,33 @@ func systemTaskLockType(handler SystemTaskHandler) string {
 	return handler.Type()
 }
 
+func systemTaskActiveKeyForType(taskType string) string {
+	systemTaskHandlersMu.RLock()
+	handler := systemTaskHandlers[taskType]
+	systemTaskHandlersMu.RUnlock()
+	if handler == nil {
+		return taskType
+	}
+	return systemTaskLockType(handler)
+}
+
+func systemTaskActiveKeysForType(taskType string) []string {
+	activeKey := systemTaskActiveKeyForType(taskType)
+	keys := []string{activeKey}
+	if taskType == model.SystemTaskTypeModelUpdate || taskType == model.SystemTaskTypeModelUpdateManual {
+		keys = append(keys, model.SystemTaskTypeModelUpdate, model.SystemTaskTypeModelUpdateManual)
+	}
+	return keys
+}
+
+func getActiveSystemTaskForType(taskType string) (*model.SystemTask, error) {
+	tasks, err := model.GetActiveSystemTasksByActiveKeys(systemTaskActiveKeysForType(taskType))
+	if err != nil || len(tasks) == 0 {
+		return nil, err
+	}
+	return tasks[0], nil
+}
+
 // logCleanupHandler wraps the existing on-demand log cleanup task as a
 // registered (non-scheduled) handler. It is created via StartLogCleanupTask.
 type logCleanupHandler struct{}
@@ -216,9 +243,10 @@ func StartLogCleanupTask(targetTimestamp int64) (*model.SystemTask, error) {
 
 // EnqueueSystemTask creates an on-demand task of the given type. The returned
 // bool is true only when a new pending row was created; false means an active
-// task of the same type already exists and was returned.
+// task with the same registered lock type already exists and was returned.
 func EnqueueSystemTask(taskType string, payload any) (*model.SystemTask, bool, error) {
-	activeTask, err := model.GetActiveSystemTask(taskType)
+	activeKey := systemTaskActiveKeyForType(taskType)
+	activeTask, err := getActiveSystemTaskForType(taskType)
 	if err != nil {
 		return nil, false, err
 	}
@@ -226,9 +254,9 @@ func EnqueueSystemTask(taskType string, payload any) (*model.SystemTask, bool, e
 		return activeTask, false, nil
 	}
 
-	task, err := model.CreateSystemTask(taskType, payload, nil)
+	task, err := model.CreateSystemTaskWithActiveKey(taskType, payload, nil, activeKey)
 	if err != nil {
-		activeTask, activeErr := model.GetActiveSystemTask(taskType)
+		activeTask, activeErr := getActiveSystemTaskForType(taskType)
 		if activeErr == nil && activeTask != nil {
 			return activeTask, false, nil
 		}
@@ -236,6 +264,10 @@ func EnqueueSystemTask(taskType string, payload any) (*model.SystemTask, bool, e
 	}
 	notifySystemTaskRunner()
 	return task, true, nil
+}
+
+func GetCurrentSystemTask(taskType string) (*model.SystemTask, error) {
+	return getActiveSystemTaskForType(taskType)
 }
 
 // runSystemTaskClaimPass tries to claim one pending task per registered type
@@ -292,13 +324,27 @@ func runSystemTaskScheduler() {
 		scheduledHandlers = append(scheduledHandlers, scheduled)
 		taskTypes = append(taskTypes, scheduled.Type())
 	}
-	latestTasks, err := model.GetLatestSystemTasks(taskTypes)
+	latestTaskTypes := append([]string(nil), taskTypes...)
+	for _, taskType := range taskTypes {
+		if taskType == model.SystemTaskTypeModelUpdate {
+			latestTaskTypes = append(latestTaskTypes, model.SystemTaskTypeModelUpdateManual)
+			break
+		}
+	}
+	latestTasks, err := model.GetLatestSystemTasks(latestTaskTypes)
 	if err != nil {
 		logger.LogWarn(context.Background(), fmt.Sprintf("system task scheduler query failed: %v", err))
 		return
 	}
 	for _, scheduled := range scheduledHandlers {
 		latest := latestTasks[scheduled.Type()]
+		if scheduled.Type() == model.SystemTaskTypeModelUpdate {
+			if manualLatest := latestTasks[model.SystemTaskTypeModelUpdateManual]; manualLatest != nil &&
+				(latest == nil || manualLatest.UpdatedAt > latest.UpdatedAt ||
+					(manualLatest.UpdatedAt == latest.UpdatedAt && manualLatest.ID > latest.ID)) {
+				latest = manualLatest
+			}
+		}
 		if latest != nil {
 			if latest.Status == model.SystemTaskStatusPending || latest.Status == model.SystemTaskStatusRunning {
 				continue // an active row already exists
@@ -307,8 +353,17 @@ func runSystemTaskScheduler() {
 				continue // not due yet
 			}
 		}
-		if _, err := model.CreateSystemTask(scheduled.Type(), scheduled.NewPayload(), nil); err != nil {
-			activeTask, activeErr := model.GetActiveSystemTask(scheduled.Type())
+		activeKey := systemTaskLockType(scheduled)
+		activeTask, activeErr := getActiveSystemTaskForType(scheduled.Type())
+		if activeErr != nil {
+			logger.LogWarn(context.Background(), fmt.Sprintf("system task scheduler active lookup failed: type=%s active_key=%s err=%v", scheduled.Type(), activeKey, activeErr))
+			continue
+		}
+		if activeTask != nil {
+			continue
+		}
+		if _, err := model.CreateSystemTaskWithActiveKey(scheduled.Type(), scheduled.NewPayload(), nil, activeKey); err != nil {
+			activeTask, activeErr := getActiveSystemTaskForType(scheduled.Type())
 			if activeErr == nil && activeTask != nil {
 				continue
 			}

@@ -17,23 +17,24 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
 import { Banner, Button, Card, Spin, Tabs } from '@douyinfe/semi-ui';
+import React, { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import { API, showError, showSuccess, toBoolean } from '../../helpers';
 import SettingsGeneralPayment from '../../pages/Setting/Payment/SettingsGeneralPayment';
 import SettingsPaymentGateway from '../../pages/Setting/Payment/SettingsPaymentGateway';
-import SettingsPaymentGatewayStripe from '../../pages/Setting/Payment/SettingsPaymentGatewayStripe';
 import SettingsPaymentGatewayCreem from '../../pages/Setting/Payment/SettingsPaymentGatewayCreem';
+import SettingsPaymentGatewayStripe from '../../pages/Setting/Payment/SettingsPaymentGatewayStripe';
 import SettingsPaymentGatewayWaffo from '../../pages/Setting/Payment/SettingsPaymentGatewayWaffo';
 import SettingsPaymentGatewayWaffoPancake from '../../pages/Setting/Payment/SettingsPaymentGatewayWaffoPancake';
-import { API, showError, showSuccess, toBoolean } from '../../helpers';
-import { useTranslation } from 'react-i18next';
 import RiskAcknowledgementModal from '../common/modals/RiskAcknowledgementModal';
 
 const CURRENT_COMPLIANCE_TERMS_VERSION = 'v1';
 
 const PaymentSetting = () => {
   const { t } = useTranslation();
-  let [inputs, setInputs] = useState({
+  const [inputs, setInputs] = useState({
     ServerAddress: '',
     PayAddress: '',
     EpayId: '',
@@ -63,7 +64,7 @@ const PaymentSetting = () => {
     'payment_setting.compliance_confirmed_by': 0,
   });
 
-  let [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [complianceVisible, setComplianceVisible] = useState(false);
 
   const complianceStatements = [
@@ -115,7 +116,7 @@ const PaymentSetting = () => {
     const res = await API.get('/api/option/');
     const { success, message, data } = res.data;
     if (success) {
-      let newInputs = {};
+      const newInputs = {};
       data.forEach((item) => {
         switch (item.key) {
           case 'TopupGroupRatio':
@@ -125,7 +126,7 @@ const PaymentSetting = () => {
                 null,
                 2,
               );
-            } catch (error) {
+            } catch {
               newInputs[item.key] = item.value;
             }
             break;
@@ -136,7 +137,7 @@ const PaymentSetting = () => {
                 null,
                 2,
               );
-            } catch (error) {
+            } catch {
               newInputs['AmountOptions'] = item.value;
             }
             break;
@@ -147,7 +148,7 @@ const PaymentSetting = () => {
                 null,
                 2,
               );
-            } catch (error) {
+            } catch {
               newInputs['AmountDiscount'] = item.value;
             }
             break;
@@ -156,7 +157,7 @@ const PaymentSetting = () => {
             break;
           case 'payment_setting.compliance_confirmed_at':
           case 'payment_setting.compliance_confirmed_by':
-            newInputs[item.key] = parseInt(item.value) || 0;
+            newInputs[item.key] = Number.parseInt(item.value) || 0;
             break;
           case 'payment_setting.compliance_terms_version':
             newInputs[item.key] = item.value;
@@ -165,7 +166,7 @@ const PaymentSetting = () => {
           case 'MinTopUp':
           case 'StripeUnitPrice':
           case 'StripeMinTopUp':
-            newInputs[item.key] = parseFloat(item.value);
+            newInputs[item.key] = Number.parseFloat(item.value);
             break;
           default:
             if (item.key.endsWith('Enabled')) {
@@ -187,7 +188,7 @@ const PaymentSetting = () => {
     try {
       setLoading(true);
       await getOptions();
-    } catch (error) {
+    } catch {
       showError(t('刷新失败'));
     } finally {
       setLoading(false);
@@ -210,7 +211,7 @@ const PaymentSetting = () => {
       } else {
         showError(res.data.message || t('确认失败'));
       }
-    } catch (error) {
+    } catch {
       showError(t('确认失败'));
     }
   };

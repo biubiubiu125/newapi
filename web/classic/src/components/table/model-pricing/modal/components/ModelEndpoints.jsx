@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Avatar, Typography, Badge } from '@douyinfe/semi-ui';
 import { IconLink } from '@douyinfe/semi-icons';
+import { Avatar, Typography, Badge } from '@douyinfe/semi-ui';
+import React from 'react';
 
 const { Text } = Typography;
 

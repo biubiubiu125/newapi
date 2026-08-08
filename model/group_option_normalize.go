@@ -1,13 +1,13 @@
 package model
 
 import (
-	"encoding/json"
+	"github.com/QuantumNous/new-api/common"
 	"strings"
 )
 
 func normalizeJSONMapFloat(value string) (string, error) {
 	next := make(map[string]float64)
-	if err := json.Unmarshal([]byte(value), &next); err != nil {
+	if err := common.Unmarshal([]byte(value), &next); err != nil {
 		return "", err
 	}
 	cleaned := make(map[string]float64, len(next))
@@ -18,7 +18,7 @@ func normalizeJSONMapFloat(value string) (string, error) {
 		}
 		cleaned[name] = ratio
 	}
-	bytes, err := json.Marshal(cleaned)
+	bytes, err := common.Marshal(cleaned)
 	if err != nil {
 		return "", err
 	}
@@ -27,7 +27,7 @@ func normalizeJSONMapFloat(value string) (string, error) {
 
 func normalizeJSONMapString(value string) (string, error) {
 	next := make(map[string]string)
-	if err := json.Unmarshal([]byte(value), &next); err != nil {
+	if err := common.Unmarshal([]byte(value), &next); err != nil {
 		return "", err
 	}
 	cleaned := make(map[string]string, len(next))
@@ -38,7 +38,7 @@ func normalizeJSONMapString(value string) (string, error) {
 		}
 		cleaned[name] = strings.TrimSpace(desc)
 	}
-	bytes, err := json.Marshal(cleaned)
+	bytes, err := common.Marshal(cleaned)
 	if err != nil {
 		return "", err
 	}
@@ -47,7 +47,7 @@ func normalizeJSONMapString(value string) (string, error) {
 
 func normalizeJSONGroupGroupRatio(value string) (string, error) {
 	next := make(map[string]map[string]float64)
-	if err := json.Unmarshal([]byte(value), &next); err != nil {
+	if err := common.Unmarshal([]byte(value), &next); err != nil {
 		return "", err
 	}
 	cleaned := make(map[string]map[string]float64, len(next))
@@ -68,7 +68,7 @@ func normalizeJSONGroupGroupRatio(value string) (string, error) {
 			cleaned[userGroup] = cleanedRatios
 		}
 	}
-	bytes, err := json.Marshal(cleaned)
+	bytes, err := common.Marshal(cleaned)
 	if err != nil {
 		return "", err
 	}
@@ -77,7 +77,7 @@ func normalizeJSONGroupGroupRatio(value string) (string, error) {
 
 func normalizeJSONArrayStrings(value string) (string, error) {
 	next := make([]string, 0)
-	if err := json.Unmarshal([]byte(value), &next); err != nil {
+	if err := common.Unmarshal([]byte(value), &next); err != nil {
 		return "", err
 	}
 	seen := make(map[string]struct{}, len(next))
@@ -93,7 +93,7 @@ func normalizeJSONArrayStrings(value string) (string, error) {
 		seen[name] = struct{}{}
 		cleaned = append(cleaned, name)
 	}
-	bytes, err := json.Marshal(cleaned)
+	bytes, err := common.Marshal(cleaned)
 	if err != nil {
 		return "", err
 	}
@@ -102,7 +102,7 @@ func normalizeJSONArrayStrings(value string) (string, error) {
 
 func normalizeJSONGroupSpecialUsable(value string) (string, error) {
 	next := make(map[string]map[string]string)
-	if err := json.Unmarshal([]byte(value), &next); err != nil {
+	if err := common.Unmarshal([]byte(value), &next); err != nil {
 		return "", err
 	}
 	cleaned := make(map[string]map[string]string, len(next))
@@ -132,7 +132,7 @@ func normalizeJSONGroupSpecialUsable(value string) (string, error) {
 			cleaned[userGroup] = cleanedRules
 		}
 	}
-	bytes, err := json.Marshal(cleaned)
+	bytes, err := common.Marshal(cleaned)
 	if err != nil {
 		return "", err
 	}

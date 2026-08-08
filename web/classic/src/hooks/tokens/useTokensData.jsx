@@ -17,9 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { Modal } from '@douyinfe/semi-ui';
 import { useState, useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Modal } from '@douyinfe/semi-ui';
+
+import { ITEMS_PER_PAGE } from '../../constants';
 import {
   API,
   copy,
@@ -27,14 +29,13 @@ import {
   showSuccess,
   encodeToBase64,
 } from '../../helpers';
-import { ITEMS_PER_PAGE } from '../../constants';
-import { useTableCompactMode } from '../common/useTableCompactMode';
 import {
   fetchTokenKey as fetchTokenKeyById,
   fetchTokenKeysBatch,
   getServerAddress,
   encodeChannelConnectionString,
 } from '../../helpers/token';
+import { useTableCompactMode } from '../common/useTableCompactMode';
 
 export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
   const { t } = useTranslation();
@@ -232,37 +233,37 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
       serverAddress = window.location.origin;
     }
     if (url.includes('{cherryConfig}') === true) {
-      let cherryConfig = {
+      const cherryConfig = {
         id: 'new-api',
         baseUrl: serverAddress,
         apiKey: `sk-${fullKey}`,
       };
-      let encodedConfig = encodeURIComponent(
+      const encodedConfig = encodeURIComponent(
         encodeToBase64(JSON.stringify(cherryConfig)),
       );
       url = url.replaceAll('{cherryConfig}', encodedConfig);
     } else if (url.includes('{aionuiConfig}') === true) {
-      let aionuiConfig = {
+      const aionuiConfig = {
         platform: 'new-api',
         baseUrl: serverAddress,
         apiKey: `sk-${fullKey}`,
       };
-      let encodedConfig = encodeURIComponent(
+      const encodedConfig = encodeURIComponent(
         encodeToBase64(JSON.stringify(aionuiConfig)),
       );
       url = url.replaceAll('{aionuiConfig}', encodedConfig);
     } else if (url.includes('{deepchatConfig}') === true) {
-      let deepchatConfig = {
+      const deepchatConfig = {
         id: 'new-api',
         baseUrl: serverAddress,
         apiKey: `sk-${fullKey}`,
       };
-      let encodedConfig = encodeURIComponent(
+      const encodedConfig = encodeURIComponent(
         encodeToBase64(JSON.stringify(deepchatConfig)),
       );
       url = url.replaceAll('{deepchatConfig}', encodedConfig);
     } else {
-      let encodedServerAddress = encodeURIComponent(serverAddress);
+      const encodedServerAddress = encodeURIComponent(serverAddress);
       url = url.replaceAll('{address}', encodedServerAddress);
       url = url.replaceAll('{key}', `sk-${fullKey}`);
     }
@@ -273,7 +274,7 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
   // Manage token function (delete, enable, disable)
   const manageToken = async (id, action, record) => {
     setLoading(true);
-    let data = { id };
+    const data = { id };
     let res;
     switch (action) {
       case 'delete':
@@ -291,8 +292,8 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
     const { success, message } = res.data;
     if (success) {
       showSuccess(t('操作成功完成！'));
-      let token = res.data.data;
-      let newTokens = [...tokens];
+      const token = res.data.data;
+      const newTokens = [...tokens];
       if (action !== 'delete') {
         record.status = token.status;
       }
@@ -332,9 +333,9 @@ export const useTokensData = (openFluentNotification, openCCSwitchModal) => {
   const sortToken = (key) => {
     if (tokens.length === 0) return;
     setLoading(true);
-    let sortedTokens = [...tokens];
+    const sortedTokens = [...tokens];
     sortedTokens.sort((a, b) => {
-      return ('' + a[key]).localeCompare(b[key]);
+      return `${a[key]}`.localeCompare(b[key]);
     });
     if (sortedTokens[0].id === tokens[0].id) {
       sortedTokens.reverse();

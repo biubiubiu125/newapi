@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import React, { useEffect, useState, useRef } from 'react';
 import {
   Banner,
   Button,
@@ -31,10 +30,13 @@ import {
   InputNumber,
   Select,
 } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef } from 'react';
+
 const { Text } = Typography;
-import { API, showError, showSuccess } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
 import { BookOpen, Plus, Trash2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+
+import { API, showError, showSuccess } from '../../../helpers';
 
 export default function SettingsPaymentGatewayCreem(props) {
   const { t } = useTranslation();
@@ -75,7 +77,7 @@ export default function SettingsPaymentGatewayCreem(props) {
       try {
         const parsedProducts = JSON.parse(currentInputs.CreemProducts);
         setProducts(parsedProducts);
-      } catch (e) {
+      } catch {
         setProducts([]);
       }
     }
@@ -132,7 +134,7 @@ export default function SettingsPaymentGatewayCreem(props) {
         setOriginInputs({ ...inputs });
         props.refresh?.();
       }
-    } catch (error) {
+    } catch {
       showError(t('更新失败'));
     }
     setLoading(false);
@@ -179,7 +181,7 @@ export default function SettingsPaymentGatewayCreem(props) {
       return;
     }
 
-    let newProducts = [...products];
+    const newProducts = [...products];
     if (editingProduct) {
       // 编辑现有产品
       const index = newProducts.findIndex(

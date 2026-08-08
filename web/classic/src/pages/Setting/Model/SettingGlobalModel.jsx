@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import {
   Button,
   Col,
@@ -28,6 +27,9 @@ import {
   Tag,
   Divider,
 } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   compareObjects,
   API,
@@ -36,7 +38,6 @@ import {
   showWarning,
   verifyJSON,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
 
 const thinkingExample = JSON.stringify(
   ['moonshotai/kimi-k2-thinking', 'kimi-k2-thinking'],
@@ -114,7 +115,7 @@ export default function SettingGlobalModel(props) {
         item.key,
         inputs[item.key],
       );
-      let value = String(normalizedValue);
+      const value = String(normalizedValue);
 
       return API.put('/api/option/', {
         key: item.key,
@@ -127,8 +128,9 @@ export default function SettingGlobalModel(props) {
         if (requestQueue.length === 1) {
           if (res.includes(undefined)) return;
         } else if (requestQueue.length > 1) {
-          if (res.includes(undefined))
+          if (res.includes(undefined)) {
             return showError(t('部分保存失败，请重试'));
+          }
         }
         showSuccess(t('保存成功'));
         props.refresh();
@@ -152,7 +154,7 @@ export default function SettingGlobalModel(props) {
               value && String(value).trim() !== ''
                 ? JSON.stringify(JSON.parse(value), null, 2)
                 : defaultGlobalSettingInputs[key];
-          } catch (error) {
+          } catch {
             value = defaultGlobalSettingInputs[key];
           }
         }
@@ -162,7 +164,7 @@ export default function SettingGlobalModel(props) {
               value && String(value).trim() !== ''
                 ? JSON.stringify(JSON.parse(value), null, 2)
                 : defaultGlobalSettingInputs[key];
-          } catch (error) {
+          } catch {
             value = defaultGlobalSettingInputs[key];
           }
         }
@@ -192,7 +194,7 @@ export default function SettingGlobalModel(props) {
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
                   label={t('启用请求透传')}
-                  field={'global.pass_through_request_enabled'}
+                  field='global.pass_through_request_enabled'
                   onChange={(value) =>
                     setInputs({
                       ...inputs,
@@ -209,8 +211,8 @@ export default function SettingGlobalModel(props) {
               <Col span={24}>
                 <Form.TextArea
                   label={t('不自动处理思考后缀的模型列表')}
-                  field={'global.thinking_model_blacklist'}
-                  placeholder={t('例如：') + '\n' + thinkingExample}
+                  field='global.thinking_model_blacklist'
+                  placeholder={`${t('例如：')}\n${thinkingExample}`}
                   rows={4}
                   rules={[
                     {
@@ -269,15 +271,11 @@ export default function SettingGlobalModel(props) {
                   <Form.TextArea
                     label={t('参数配置')}
                     field={chatCompletionsToResponsesPolicyKey}
-                    placeholder={
-                      t('例如（指定渠道）：') +
-                      '\n' +
-                      chatCompletionsToResponsesPolicyExample +
-                      '\n\n' +
-                      t('例如（全渠道）：') +
-                      '\n' +
+                    placeholder={`${t('例如（指定渠道）：')}\n${
+                      chatCompletionsToResponsesPolicyExample
+                    }\n\n${t('例如（全渠道）：')}\n${
                       chatCompletionsToResponsesPolicyAllChannelsExample
-                    }
+                    }`}
                     rows={8}
                     rules={[
                       {
@@ -343,7 +341,7 @@ export default function SettingGlobalModel(props) {
                             2,
                           );
                           setChatCompletionsToResponsesPolicyValue(formatted);
-                        } catch (error) {
+                        } catch {
                           showError(t('不是合法的 JSON 字符串'));
                         }
                       }}
@@ -376,7 +374,7 @@ export default function SettingGlobalModel(props) {
                 <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                   <Form.Switch
                     label={t('启用Ping间隔')}
-                    field={'general_setting.ping_interval_enabled'}
+                    field='general_setting.ping_interval_enabled'
                     onChange={(value) =>
                       setInputs({
                         ...inputs,
@@ -389,7 +387,7 @@ export default function SettingGlobalModel(props) {
                 <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                   <Form.InputNumber
                     label={t('Ping间隔（秒）')}
-                    field={'general_setting.ping_interval_seconds'}
+                    field='general_setting.ping_interval_seconds'
                     onChange={(value) =>
                       setInputs({
                         ...inputs,

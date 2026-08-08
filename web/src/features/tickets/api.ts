@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import { api } from '@/lib/api'
+
 import type {
   TicketCategory,
   TicketDetail,
@@ -137,7 +138,10 @@ export async function reopenTicket(ticketId: number, admin?: boolean) {
   return unwrapTicketResponse(res.data)
 }
 
-export async function updateTicket(ticketId: number, payload: TicketUpdatePayload) {
+export async function updateTicket(
+  ticketId: number,
+  payload: TicketUpdatePayload
+) {
   const res = await api.put(`/api/user/admin/tickets/${ticketId}`, payload)
   return unwrapTicketResponse(res.data)
 }
@@ -155,16 +159,24 @@ export async function fetchTicketAttachmentBlob(
   attachmentId: number,
   admin?: boolean
 ) {
-  const res = await api.get(ticketAttachmentUrl(ticketId, attachmentId, admin), {
-    responseType: 'blob',
-    disableDuplicate: true,
-  })
+  const res = await api.get(
+    ticketAttachmentUrl(ticketId, attachmentId, admin),
+    {
+      responseType: 'blob',
+      disableDuplicate: true,
+    }
+  )
   return res.data as Blob
 }
 
-export async function getTicketBadge(admin?: boolean, params?: URLSearchParams) {
+export async function getTicketBadge(
+  admin?: boolean,
+  params?: URLSearchParams
+) {
   const query = params?.toString()
-  const res = await api.get(`${ticketBase(admin)}/badge${query ? `?${query}` : ''}`)
+  const res = await api.get(
+    `${ticketBase(admin)}/badge${query ? `?${query}` : ''}`
+  )
   return unwrapTicketResponse<{
     count: number
     new_count?: number

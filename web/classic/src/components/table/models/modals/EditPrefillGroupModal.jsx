@@ -17,8 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useRef, useEffect } from 'react';
-import JSONEditor from '../../../common/ui/JSONEditor';
+import { IconLayers, IconSave, IconClose } from '@douyinfe/semi-icons';
 import {
   SideSheet,
   Button,
@@ -32,10 +31,12 @@ import {
   Avatar,
   Spin,
 } from '@douyinfe/semi-ui';
-import { IconLayers, IconSave, IconClose } from '@douyinfe/semi-icons';
-import { API, showError, showSuccess } from '../../../../helpers';
+import React, { useState, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import { API, showError, showSuccess } from '../../../../helpers';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
+import JSONEditor from '../../../common/ui/JSONEditor';
 
 const { Text, Title } = Typography;
 
@@ -106,7 +107,7 @@ const EditPrefillGroupModal = ({
           showError(res.data.message || t('创建失败'));
         }
       }
-    } catch (error) {
+    } catch {
       showError(t('操作失败'));
     }
     setLoading(false);

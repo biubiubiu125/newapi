@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useMemo } from 'react'
 import { useForm } from 'react-hook-form'
+
 import {
   Form,
   FormControl,
@@ -26,6 +27,7 @@ import {
   FormLabel,
 } from '@/components/ui/form'
 import { Switch } from '@/components/ui/switch'
+
 import {
   SettingsControlChildren,
   SettingsForm,
@@ -51,7 +53,9 @@ type SidebarModulesSectionProps = {
 type SidebarFormValues = SidebarModulesAdminConfig
 
 const toTitleCase = (value: string) =>
-  value.replace(/[_-]+/g, ' ').replace(/\b\w/g, (char) => char.toUpperCase())
+  value
+    .replaceAll(/[_-]+/g, ' ')
+    .replaceAll(/\b\w/g, (char) => char.toUpperCase())
 
 export function SidebarModulesSection({
   config,
@@ -137,11 +141,12 @@ export function SidebarModulesSection({
                       title: toTitleCase(moduleKey),
                       description: '自定义模块。',
                     }
-                    const forcedEnabled = sectionKey === 'admin' && moduleKey === 'setting'
+                    const forcedEnabled =
+                      sectionKey === 'admin' && moduleKey === 'setting'
                     const disabled = Boolean(
                       forcedEnabled ||
-                        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                        !form.watch(`${sectionKey}.enabled` as any)
+                      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                      !form.watch(`${sectionKey}.enabled` as any)
                     )
                     return (
                       <FormField

@@ -17,10 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useMemo, useCallback } from 'react';
 import { Button, Tooltip, Toast } from '@douyinfe/semi-ui';
 import { Copy, ChevronDown, ChevronUp } from 'lucide-react';
+import React, { useState, useMemo, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { copy } from '../../helpers';
 
 const PERFORMANCE_CONFIG = {
@@ -93,11 +94,11 @@ const codeThemeStyles = {
 
 const escapeHtml = (str) => {
   return str
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#039;');
+    .replaceAll(/&/g, '&amp;')
+    .replaceAll(/</g, '&lt;')
+    .replaceAll(/>/g, '&gt;')
+    .replaceAll(/"/g, '&quot;')
+    .replaceAll(/'/g, '&#039;');
 };
 
 const highlightJson = (str) => {
@@ -114,8 +115,8 @@ const highlightJson = (str) => {
 
     const token = match[0];
     let color = '#b5cea8';
-    if (/^"/.test(token)) {
-      color = /:$/.test(token) ? '#9cdcfe' : '#ce9178';
+    if (token.startsWith('"')) {
+      color = token.endsWith(':') ? '#9cdcfe' : '#ce9178';
     } else if (/true|false|null/.test(token)) {
       color = '#569cd6';
     }
@@ -159,7 +160,7 @@ const formatContent = (content) => {
   if (typeof content === 'object') {
     try {
       return JSON.stringify(content, null, 2);
-    } catch (e) {
+    } catch {
       return String(content);
     }
   }
@@ -168,7 +169,7 @@ const formatContent = (content) => {
     try {
       const parsed = JSON.parse(content);
       return JSON.stringify(parsed, null, 2);
-    } catch (e) {
+    } catch {
       return content;
     }
   }
@@ -199,10 +200,10 @@ const CodeViewer = ({ content, title, language = 'json' }) => {
     if (!contentMetrics.isLarge || isExpanded) {
       return formattedContent;
     }
-    return (
-      formattedContent.substring(0, PERFORMANCE_CONFIG.PREVIEW_LENGTH) +
-      '\n\n// ... 内容被截断以提升性能 ...'
-    );
+    return `${formattedContent.substring(
+      0,
+      PERFORMANCE_CONFIG.PREVIEW_LENGTH,
+    )}\n\n// ... 内容被截断以提升性能 ...`;
   }, [formattedContent, contentMetrics.isLarge, isExpanded]);
 
   const highlightedContent = useMemo(() => {

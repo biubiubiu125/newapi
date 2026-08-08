@@ -17,21 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
-import { useTranslation } from 'react-i18next';
 import {
-  API,
-  copy,
-  showError,
-  showSuccess,
-  renderQuota,
-  getCurrencyConfig,
-} from '../../../../helpers';
-import {
-  quotaToDisplayAmount,
-  displayAmountToQuota,
-} from '../../../../helpers/quota';
-import { useIsMobile } from '../../../../hooks/common/useIsMobile';
+  IconCreditCard,
+  IconSave,
+  IconClose,
+  IconGift,
+} from '@douyinfe/semi-icons';
 import {
   Button,
   Modal,
@@ -47,12 +38,22 @@ import {
   Col,
   InputNumber,
 } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
-  IconCreditCard,
-  IconSave,
-  IconClose,
-  IconGift,
-} from '@douyinfe/semi-icons';
+  API,
+  copy,
+  showError,
+  showSuccess,
+  renderQuota,
+  getCurrencyConfig,
+} from '../../../../helpers';
+import {
+  quotaToDisplayAmount,
+  displayAmountToQuota,
+} from '../../../../helpers/quota';
+import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 
 const { Text, Title } = Typography;
 
@@ -101,7 +102,7 @@ const EditRedemptionModal = (props) => {
 
   const loadRedemption = async () => {
     setLoading(true);
-    let res = await API.get(`/api/redemption/${props.editingRedemption.id}`);
+    const res = await API.get(`/api/redemption/${props.editingRedemption.id}`);
     const { success, message, data } = res.data;
     if (success) {
       if (data.expired_time === 0) {
@@ -133,8 +134,8 @@ const EditRedemptionModal = (props) => {
       name = renderQuota(values.quota);
     }
     setLoading(true);
-    let localInputs = { ...values };
-    localInputs.count = parseInt(localInputs.count) || 0;
+    const localInputs = { ...values };
+    localInputs.count = Number.parseInt(localInputs.count) || 0;
     localInputs.quota = displayAmountToQuota(localInputs.amount);
     if (localInputs.quota <= 0) {
       showError(t('请输入金额'));
@@ -153,7 +154,7 @@ const EditRedemptionModal = (props) => {
     if (isEdit) {
       res = await API.put(`/api/redemption/`, {
         ...localInputs,
-        id: parseInt(props.editingRedemption.id),
+        id: Number.parseInt(props.editingRedemption.id),
       });
     } else {
       res = await API.post(`/api/redemption/`, {
@@ -368,7 +369,7 @@ const EditRedemptionModal = (props) => {
                             { required: true, message: t('请输入额度') },
                             {
                               validator: (rule, v) => {
-                                const num = parseInt(v, 10);
+                                const num = Number.parseInt(v, 10);
                                 return num > 0
                                   ? Promise.resolve()
                                   : Promise.reject(t('额度必须大于0'));
@@ -398,7 +399,7 @@ const EditRedemptionModal = (props) => {
                             { required: true, message: t('请输入生成数量') },
                             {
                               validator: (rule, v) => {
-                                const num = parseInt(v, 10);
+                                const num = Number.parseInt(v, 10);
                                 return num > 0
                                   ? Promise.resolve()
                                   : Promise.reject(t('生成数量必须大于0'));

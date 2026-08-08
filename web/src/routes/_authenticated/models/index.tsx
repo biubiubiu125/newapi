@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { createFileRoute, redirect } from '@tanstack/react-router'
-import { ROLE } from '@/lib/roles'
+
 import { MODELS_DEFAULT_SECTION } from '@/features/models/section-registry'
+import { ROLE } from '@/lib/roles'
 import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute('/_authenticated/models/')({

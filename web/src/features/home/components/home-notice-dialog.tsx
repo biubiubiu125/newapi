@@ -16,15 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useState } from 'react'
 import { Bell, Megaphone } from 'lucide-react'
+import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { useNotificationStore } from '@/stores/notification-store'
-import { getAnnouncementColorClass } from '@/lib/colors'
-import { getAnnouncementKey } from '@/lib/notifications'
-import { formatDateTimeObject } from '@/lib/time'
-import { cn } from '@/lib/utils'
-import { useNotifications } from '@/hooks/use-notifications'
+
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -38,6 +33,12 @@ import { Markdown } from '@/components/ui/markdown'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { useNotifications } from '@/hooks/use-notifications'
+import { getAnnouncementColorClass } from '@/lib/colors'
+import { getAnnouncementKey } from '@/lib/notifications'
+import { formatDateTimeObject } from '@/lib/time'
+import { cn } from '@/lib/utils'
+import { useNotificationStore } from '@/stores/notification-store'
 
 type AnnouncementItem = {
   id?: string | number

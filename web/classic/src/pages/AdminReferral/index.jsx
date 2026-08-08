@@ -17,10 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useMemo, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
-import { API, showError, showSuccess, timestamp2string } from '../../helpers';
-import { convertUSDToCurrency } from '../../helpers/render';
 import {
   Banner,
   Button,
@@ -37,6 +33,11 @@ import {
   Tag,
   Typography,
 } from '@douyinfe/semi-ui';
+import React, { useEffect, useMemo, useState } from 'react';
+import { useNavigate, useParams } from 'react-router-dom';
+
+import { API, showError, showSuccess, timestamp2string } from '../../helpers';
+import { convertUSDToCurrency } from '../../helpers/render';
 
 const { Text, Title } = Typography;
 
@@ -77,7 +78,7 @@ const SECTION_META = {
   },
 };
 
-const SECTION_ORDER = [
+const SECTION_ORDER = new Set([
   'overview',
   'settings',
   'pending',
@@ -86,7 +87,7 @@ const SECTION_ORDER = [
   'withdrawals',
   'ledgers',
   'audit',
-];
+]);
 
 const COMMISSION_STATUS_OPTIONS = [
   { label: '全部状态', value: '' },
@@ -105,7 +106,7 @@ const WITHDRAWAL_STATUS_OPTIONS = [
 ];
 
 function normalizeSection(section) {
-  return SECTION_ORDER.includes(section) ? section : 'overview';
+  return SECTION_ORDER.has(section) ? section : 'overview';
 }
 
 function formatMoney(value) {
@@ -1002,22 +1003,26 @@ export default function AdminReferral() {
       title: '变动说明',
       render: (_, row) => {
         const parts = [];
-        if (row.delta_pending)
+        if (row.delta_pending) {
           parts.push(
             `待结算 ${row.delta_pending > 0 ? '+' : ''}${row.delta_pending}`,
           );
-        if (row.delta_available)
+        }
+        if (row.delta_available) {
           parts.push(
             `可提现 ${row.delta_available > 0 ? '+' : ''}${row.delta_available}`,
           );
-        if (row.delta_frozen)
+        }
+        if (row.delta_frozen) {
           parts.push(
             `冻结中 ${row.delta_frozen > 0 ? '+' : ''}${row.delta_frozen}`,
           );
-        if (row.delta_withdrawn)
+        }
+        if (row.delta_withdrawn) {
           parts.push(
             `已提现 ${row.delta_withdrawn > 0 ? '+' : ''}${row.delta_withdrawn}`,
           );
+        }
         return parts.length ? parts.join(' / ') : '无金额变化';
       },
     },

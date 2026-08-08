@@ -17,8 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { Modal, Toast } from '@douyinfe/semi-ui';
 import React, { useEffect, useState, useContext } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
+
+import { StatusContext } from '../../context/Status';
+import { UserContext } from '../../context/User';
 import {
   API,
   showError,
@@ -28,14 +33,9 @@ import {
   renderQuotaWithAmount,
   copy,
 } from '../../helpers';
-import { Modal, Toast } from '@douyinfe/semi-ui';
-import { useTranslation } from 'react-i18next';
-import { UserContext } from '../../context/User';
-import { StatusContext } from '../../context/Status';
-
-import RechargeCard from './RechargeCard';
 import PaymentConfirmModal from './modals/PaymentConfirmModal';
 import TopupHistoryModal from './modals/TopupHistoryModal';
+import RechargeCard from './RechargeCard';
 
 // Reject non-navigable schemes (e.g. javascript:, data:) and relative URLs.
 // Only http / https are allowed for backend-provided redirect targets.
@@ -186,7 +186,7 @@ const TopUp = () => {
       } else {
         showError(message);
       }
-    } catch (err) {
+    } catch {
       showError(t('请求失败'));
     } finally {
       setIsSubmitting(false);
@@ -235,7 +235,7 @@ const TopUp = () => {
         return;
       }
       setOpen(true);
-    } catch (error) {
+    } catch {
       showError(t('获取金额失败'));
     } finally {
       setPaymentLoading(false);
@@ -279,7 +279,7 @@ const TopUp = () => {
     }
 
     if (topUpCount < minTopUp) {
-      showError('充值数量不能小于' + minTopUp);
+      showError(`充值数量不能小于${minTopUp}`);
       return;
     }
     setConfirmLoading(true);
@@ -288,13 +288,13 @@ const TopUp = () => {
       if (payWay === 'stripe') {
         // Stripe 支付请求
         res = await API.post('/api/user/stripe/pay', {
-          amount: parseInt(topUpCount),
+          amount: Number.parseInt(topUpCount),
           payment_method: 'stripe',
         });
       } else {
         // 普通支付请求
         res = await API.post('/api/user/pay', {
-          amount: parseInt(topUpCount),
+          amount: Number.parseInt(topUpCount),
           payment_method: payWay,
         });
       }
@@ -307,19 +307,19 @@ const TopUp = () => {
             window.open(data.pay_link, '_blank');
           } else {
             // 普通支付表单提交
-            let params = data;
-            let url = res.data.url;
-            let form = document.createElement('form');
+            const params = data;
+            const url = res.data.url;
+            const form = document.createElement('form');
             form.action = url;
             form.method = 'POST';
-            let isSafari =
+            const isSafari =
               navigator.userAgent.indexOf('Safari') > -1 &&
               navigator.userAgent.indexOf('Chrome') < 1;
             if (!isSafari) {
               form.target = '_blank';
             }
-            for (let key in params) {
-              let input = document.createElement('input');
+            for (const key in params) {
+              const input = document.createElement('input');
               input.type = 'hidden';
               input.name = key;
               input.value = params[key];
@@ -337,7 +337,7 @@ const TopUp = () => {
       } else {
         showError(res);
       }
-    } catch (err) {
+    } catch {
       showError(t('支付请求失败'));
     } finally {
       setOpen(false);
@@ -382,7 +382,7 @@ const TopUp = () => {
       } else {
         showError(res);
       }
-    } catch (err) {
+    } catch {
       showError(t('支付请求失败'));
     } finally {
       setCreemOpen(false);
@@ -398,7 +398,7 @@ const TopUp = () => {
       }
       setPaymentLoading(true);
       const requestBody = {
-        amount: parseInt(topUpCount),
+        amount: Number.parseInt(topUpCount),
       };
       if (payMethodIndex != null) {
         requestBody.pay_method_index = payMethodIndex;
@@ -414,7 +414,7 @@ const TopUp = () => {
       } else {
         showError(res);
       }
-    } catch (e) {
+    } catch {
       showError(t('支付请求失败'));
     } finally {
       setPaymentLoading(false);
@@ -428,20 +428,20 @@ const TopUp = () => {
     setAmountLoading(true);
     try {
       const res = await API.post('/api/user/waffo/amount', {
-        amount: parseInt(value),
+        amount: Number.parseInt(value),
       });
       if (res !== undefined) {
         const { message, data } = res.data;
         if (message === 'success') {
-          setAmount(parseFloat(data));
+          setAmount(Number.parseFloat(data));
         } else {
           setAmount(0);
-          Toast.error({ content: '错误：' + data, id: 'getAmount' });
+          Toast.error({ content: `错误：${data}`, id: 'getAmount' });
         }
       } else {
         showError(res);
       }
-    } catch (err) {
+    } catch {
       // amount fetch failed silently
     } finally {
       setAmountLoading(false);
@@ -458,7 +458,7 @@ const TopUp = () => {
     setPaymentLoading(true);
     try {
       const res = await API.post('/api/user/waffo-pancake/pay', {
-        amount: parseInt(topUpCount),
+        amount: Number.parseInt(topUpCount),
       });
       if (res !== undefined) {
         const { message, data } = res.data;
@@ -481,7 +481,7 @@ const TopUp = () => {
       } else {
         showError(res);
       }
-    } catch (e) {
+    } catch {
       showError(t('支付请求失败'));
     } finally {
       setPaymentLoading(false);
@@ -495,20 +495,20 @@ const TopUp = () => {
     setAmountLoading(true);
     try {
       const res = await API.post('/api/user/waffo-pancake/amount', {
-        amount: parseInt(value),
+        amount: Number.parseInt(value),
       });
       if (res !== undefined) {
         const { message, data } = res.data;
         if (message === 'success') {
-          setAmount(parseFloat(data));
+          setAmount(Number.parseFloat(data));
         } else {
           setAmount(0);
-          Toast.error({ content: '错误：' + data, id: 'getAmount' });
+          Toast.error({ content: `错误：${data}`, id: 'getAmount' });
         }
       } else {
         showError(res);
       }
-    } catch (err) {
+    } catch {
       // amount fetch failed silently
     } finally {
       setAmountLoading(false);
@@ -521,7 +521,7 @@ const TopUp = () => {
   };
 
   const getUserQuota = async () => {
-    let res = await API.get(`/api/user/self`);
+    const res = await API.get(`/api/user/self`);
     const { success, message, data } = res.data;
     if (success) {
       userDispatch({ type: 'login', payload: data });
@@ -537,7 +537,7 @@ const TopUp = () => {
       if (res.data?.success) {
         setSubscriptionPlans(res.data.data || []);
       }
-    } catch (e) {
+    } catch {
       setSubscriptionPlans([]);
     } finally {
       setSubscriptionLoading(false);
@@ -558,7 +558,7 @@ const TopUp = () => {
         const allSubs = res.data.data?.all_subscriptions || [];
         setAllSubscriptions(allSubs);
       }
-    } catch (e) {
+    } catch {
       // ignore
     }
   };
@@ -579,7 +579,7 @@ const TopUp = () => {
         showError(res.data?.message || t('更新失败'));
         setBillingPreference(previousPref);
       }
-    } catch (e) {
+    } catch {
       showError(t('请求失败'));
       setBillingPreference(previousPref);
     }
@@ -686,7 +686,7 @@ const TopUp = () => {
           try {
             const products = JSON.parse(data.creem_products || '[]');
             setCreemProducts(products);
-          } catch (e) {
+          } catch {
             setCreemProducts([]);
           }
 
@@ -697,7 +697,7 @@ const TopUp = () => {
 
           // 初始化显示实付金额
           getAmount(minTopUpValue);
-        } catch (e) {
+        } catch {
           setPayMethods([]);
         }
 
@@ -712,7 +712,7 @@ const TopUp = () => {
       } else {
         showError(data || t('获取充值配置失败'));
       }
-    } catch (error) {
+    } catch {
       showError(t('获取充值配置异常'));
     }
   };
@@ -760,7 +760,7 @@ const TopUp = () => {
   }, [statusState?.status]);
 
   const renderAmount = () => {
-    return amount + ' ' + t('元');
+    return `${amount} ${t('元')}`;
   };
 
   const getAmount = async (value) => {
@@ -770,20 +770,20 @@ const TopUp = () => {
     setAmountLoading(true);
     try {
       const res = await API.post('/api/user/amount', {
-        amount: parseFloat(value),
+        amount: Number.parseFloat(value),
       });
       if (res !== undefined) {
         const { message, data } = res.data;
         if (message === 'success') {
-          setAmount(parseFloat(data));
+          setAmount(Number.parseFloat(data));
         } else {
           setAmount(0);
-          Toast.error({ content: '错误：' + data, id: 'getAmount' });
+          Toast.error({ content: `错误：${data}`, id: 'getAmount' });
         }
       } else {
         showError(res);
       }
-    } catch (err) {
+    } catch {
       // amount fetch failed silently
     }
     setAmountLoading(false);
@@ -796,20 +796,20 @@ const TopUp = () => {
     setAmountLoading(true);
     try {
       const res = await API.post('/api/user/stripe/amount', {
-        amount: parseFloat(value),
+        amount: Number.parseFloat(value),
       });
       if (res !== undefined) {
         const { message, data } = res.data;
         if (message === 'success') {
-          setAmount(parseFloat(data));
+          setAmount(Number.parseFloat(data));
         } else {
           setAmount(0);
-          Toast.error({ content: '错误：' + data, id: 'getAmount' });
+          Toast.error({ content: `错误：${data}`, id: 'getAmount' });
         }
       } else {
         showError(res);
       }
-    } catch (err) {
+    } catch {
       // amount fetch failed silently
     } finally {
       setAmountLoading(false);

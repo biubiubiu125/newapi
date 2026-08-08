@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useContext, useEffect, useRef, useState } from 'react';
 import {
   Banner,
   Button,
@@ -28,6 +27,12 @@ import {
   Space,
   Card,
 } from '@douyinfe/semi-ui';
+import Text from '@douyinfe/semi-ui/lib/es/typography/text';
+import { marked } from 'marked';
+import React, { useContext, useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import { StatusContext } from '../../context/Status';
 import {
   API,
   applySystemBrandToDom,
@@ -36,17 +41,13 @@ import {
   showSuccess,
   timestamp2string,
 } from '../../helpers';
-import { marked } from 'marked';
-import { useTranslation } from 'react-i18next';
-import { StatusContext } from '../../context/Status';
-import Text from '@douyinfe/semi-ui/lib/es/typography/text';
 
 const LEGAL_USER_AGREEMENT_KEY = 'legal.user_agreement';
 const LEGAL_PRIVACY_POLICY_KEY = 'legal.privacy_policy';
 
 const OtherSetting = () => {
   const { t } = useTranslation();
-  let [inputs, setInputs] = useState({
+  const [inputs, setInputs] = useState({
     Notice: '',
     [LEGAL_USER_AGREEMENT_KEY]: '',
     [LEGAL_PRIVACY_POLICY_KEY]: '',
@@ -56,7 +57,7 @@ const OtherSetting = () => {
     About: '',
     HomePageContent: '',
   });
-  let [loading, setLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
   const [showUpdateModal, setShowUpdateModal] = useState(false);
   const [statusState, statusDispatch] = useContext(StatusContext);
   const [updateData, setUpdateData] = useState({
@@ -75,7 +76,7 @@ const OtherSetting = () => {
       setInputs((inputs) => ({ ...inputs, [key]: value }));
       if (key === 'SystemName' || key === 'Logo' || key === 'Footer') {
         const nextStatus = {
-          ...(statusState?.status || {}),
+          ...statusState?.status,
           ...(key === 'SystemName' ? { system_name: value } : {}),
           ...(key === 'Logo' ? { logo: value } : {}),
           ...(key === 'Footer' ? { footer_html: value } : {}),
@@ -289,7 +290,7 @@ const OtherSetting = () => {
         showSuccess(`已是最新版本：${tag_name}`);
       } else {
         setUpdateData({
-          tag_name: tag_name,
+          tag_name,
           content: marked.parse(body),
         });
         setShowUpdateModal(true);
@@ -350,7 +351,7 @@ const OtherSetting = () => {
     const res = await API.get('/api/option/');
     const { success, message, data } = res.data;
     if (success) {
-      let newInputs = {};
+      const newInputs = {};
       data.forEach((item) => {
         if (item.key in inputs) {
           newInputs[item.key] = item.value;
@@ -441,7 +442,7 @@ const OtherSetting = () => {
                 placeholder={t(
                   '在此输入新的公告内容，支持 Markdown & HTML 代码',
                 )}
-                field={'Notice'}
+                field='Notice'
                 onChange={handleInputChange}
                 style={{ fontFamily: 'JetBrains Mono, Consolas' }}
                 autosize={{ minRows: 6, maxRows: 12 }}
@@ -500,7 +501,7 @@ const OtherSetting = () => {
               <Form.Input
                 label={t('系统名称')}
                 placeholder={t('在此输入系统名称')}
-                field={'SystemName'}
+                field='SystemName'
                 onChange={handleInputChange}
               />
               <Button
@@ -512,7 +513,7 @@ const OtherSetting = () => {
               <Form.Input
                 label={t('Logo 图片地址')}
                 placeholder={t('在此输入 Logo 图片地址')}
-                field={'Logo'}
+                field='Logo'
                 onChange={handleInputChange}
               />
               <Button onClick={submitLogo} loading={loadingInput['Logo']}>
@@ -523,7 +524,7 @@ const OtherSetting = () => {
                 placeholder={t(
                   '在此输入首页内容，支持 Markdown & HTML 代码，设置后首页的状态信息将不再显示。如果输入的是一个链接，则会使用该链接作为 iframe 的 src 属性，这允许你设置任意网页作为首页',
                 )}
-                field={'HomePageContent'}
+                field='HomePageContent'
                 onChange={handleInputChange}
                 style={{ fontFamily: 'JetBrains Mono, Consolas' }}
                 autosize={{ minRows: 6, maxRows: 12 }}
@@ -539,7 +540,7 @@ const OtherSetting = () => {
                 placeholder={t(
                   '在此输入新的关于内容，支持 Markdown & HTML 代码。如果输入的是一个链接，则会使用该链接作为 iframe 的 src 属性，这允许你设置任意网页作为关于页面',
                 )}
-                field={'About'}
+                field='About'
                 onChange={handleInputChange}
                 style={{ fontFamily: 'JetBrains Mono, Consolas' }}
                 autosize={{ minRows: 6, maxRows: 12 }}
@@ -562,7 +563,7 @@ const OtherSetting = () => {
                 placeholder={t(
                   '在此输入新的页脚，留空则使用默认页脚，支持 HTML 代码',
                 )}
-                field={'Footer'}
+                field='Footer'
                 onChange={handleInputChange}
               />
               <Button onClick={submitFooter} loading={loadingInput['Footer']}>
@@ -573,7 +574,7 @@ const OtherSetting = () => {
         </Form>
       </Col>
       <Modal
-        title={t('新版本') + '：' + updateData.tag_name}
+        title={`${t('新版本')}：${updateData.tag_name}`}
         visible={showUpdateModal}
         onCancel={() => setShowUpdateModal(false)}
         footer={[
@@ -589,7 +590,7 @@ const OtherSetting = () => {
           </Button>,
         ]}
       >
-        <div dangerouslySetInnerHTML={{ __html: updateData.content }}></div>
+        <div dangerouslySetInnerHTML={{ __html: updateData.content }} />
       </Modal>
     </Row>
   );

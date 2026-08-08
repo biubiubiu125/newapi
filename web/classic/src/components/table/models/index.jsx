@@ -17,19 +17,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState } from 'react';
-import { Banner, Button, Modal } from '@douyinfe/semi-ui';
 import { IconAlertTriangle, IconClose } from '@douyinfe/semi-icons';
+import { Banner, Button, Modal } from '@douyinfe/semi-ui';
+import React, { useState } from 'react';
+
+import { createCardProPagination } from '../../../helpers/utils';
+import { useIsMobile } from '../../../hooks/common/useIsMobile';
+import { useModelsData } from '../../../hooks/models/useModelsData';
 import CardPro from '../../common/ui/CardPro';
-import ModelsTable from './ModelsTable';
-import ModelsActions from './ModelsActions';
-import ModelsFilters from './ModelsFilters';
-import ModelsTabs from './ModelsTabs';
 import EditModelModal from './modals/EditModelModal';
 import EditVendorModal from './modals/EditVendorModal';
-import { useModelsData } from '../../../hooks/models/useModelsData';
-import { useIsMobile } from '../../../hooks/common/useIsMobile';
-import { createCardProPagination } from '../../../helpers/utils';
+import ModelsActions from './ModelsActions';
+import ModelsFilters from './ModelsFilters';
+import ModelsTable from './ModelsTable';
+import ModelsTabs from './ModelsTabs';
 
 const MARKETPLACE_DISPLAY_NOTICE_STORAGE_KEY =
   'models_marketplace_display_notice_dismissed';
@@ -82,7 +83,7 @@ const ModelsPage = () => {
         return (
           localStorage.getItem(MARKETPLACE_DISPLAY_NOTICE_STORAGE_KEY) !== '1'
         );
-      } catch (_) {
+      } catch {
         return true;
       }
     });
@@ -101,7 +102,7 @@ const ModelsPage = () => {
       onOk: () => {
         try {
           localStorage.setItem(MARKETPLACE_DISPLAY_NOTICE_STORAGE_KEY, '1');
-        } catch (_) {}
+        } catch {}
         setShowMarketplaceDisplayNotice(false);
       },
     });
@@ -150,7 +151,7 @@ const ModelsPage = () => {
             theme='borderless'
             size='small'
             type='tertiary'
-            icon={<IconClose aria-hidden={true} />}
+            icon={<IconClose aria-hidden />}
             onClick={confirmCloseMarketplaceDisplayNotice}
             style={{ position: 'absolute', top: 8, right: 8 }}
             aria-label={t('关闭')}
@@ -196,7 +197,7 @@ const ModelsPage = () => {
           total: modelsData.modelCount,
           onPageChange: modelsData.handlePageChange,
           onPageSizeChange: modelsData.handlePageSizeChange,
-          isMobile: isMobile,
+          isMobile,
           t: modelsData.t,
         })}
         t={modelsData.t}

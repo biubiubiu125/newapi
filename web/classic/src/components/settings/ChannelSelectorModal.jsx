@@ -17,13 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, {
-  useState,
-  useEffect,
-  forwardRef,
-  useImperativeHandle,
-} from 'react';
-import { useIsMobile } from '../../hooks/common/useIsMobile';
+import { IconSearch } from '@douyinfe/semi-icons';
 import {
   Modal,
   Table,
@@ -33,7 +27,14 @@ import {
   Select,
   Tag,
 } from '@douyinfe/semi-ui';
-import { IconSearch } from '@douyinfe/semi-icons';
+import React, {
+  useState,
+  useEffect,
+  forwardRef,
+  useImperativeHandle,
+} from 'react';
+
+import { useIsMobile } from '../../hooks/common/useIsMobile';
 
 const OFFICIAL_RATIO_PRESET_ID = -100;
 const MODELS_DEV_PRESET_ID = -101;
@@ -284,9 +285,9 @@ const ChannelSelectorModal = forwardRef(
             rowKey='key'
             rowSelection={rowSelection}
             pagination={{
-              currentPage: currentPage,
-              pageSize: pageSize,
-              total: total,
+              currentPage,
+              pageSize,
+              total,
               showSizeChanger: true,
               showQuickJumper: true,
               pageSizeOptions: ['10', '20', '50', '100'],

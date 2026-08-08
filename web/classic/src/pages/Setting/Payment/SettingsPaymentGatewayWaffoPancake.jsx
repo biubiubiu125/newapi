@@ -17,16 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useRef, useState } from 'react';
 import { Banner, Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
+import { BookOpen } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   API,
   removeTrailingSlash,
   showError,
   showSuccess,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
-import { BookOpen } from 'lucide-react';
 
 const defaultInputs = {
   WaffoPancakeMerchantID: '',
@@ -63,7 +64,7 @@ export default function SettingsPaymentGatewayWaffoPancake(props) {
   const submitWaffoPancakeSetting = async () => {
     const values = {
       ...inputs,
-      ...(formApiRef.current?.getValues?.() || {}),
+      ...formApiRef.current?.getValues?.(),
     };
 
     setLoading(true);
@@ -108,7 +109,7 @@ export default function SettingsPaymentGatewayWaffoPancake(props) {
 
       showSuccess(t('更新成功'));
       props.refresh?.();
-    } catch (error) {
+    } catch {
       showError(t('更新失败'));
     } finally {
       setLoading(false);

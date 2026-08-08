@@ -17,11 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Avatar, Tag, Table, Typography } from '@douyinfe/semi-ui';
 import { IconPriceTag } from '@douyinfe/semi-icons';
-import { parseTiersFromExpr, getCurrencyConfig } from '../../../../../helpers';
+import { Avatar, Tag, Table, Typography } from '@douyinfe/semi-ui';
+import React from 'react';
+
 import { BILLING_PRICING_VARS } from '../../../../../constants';
+import { parseTiersFromExpr, getCurrencyConfig } from '../../../../../helpers';
 import {
   splitBillingExprAndRequestRules,
   tryParseRequestRuleExpr,
@@ -49,8 +50,9 @@ const TIME_FUNC_LABELS = {
 function formatTokenHint(value) {
   const n = Number(value);
   if (!Number.isFinite(n) || n === 0) return '';
-  if (n >= 1000000)
+  if (n >= 1000000) {
     return `${(n / 1000000).toFixed(n % 1000000 === 0 ? 0 : 1)}M`;
+  }
   if (n >= 1000) return `${(n / 1000).toFixed(n % 1000 === 0 ? 0 : 1)}K`;
   return String(n);
 }
@@ -82,8 +84,9 @@ function describeCondition(cond, t) {
   const src = cond.source === 'header' ? t('请求头') : t('请求参数');
   const path = cond.path || '';
   if (cond.mode === MATCH_EXISTS) return `${src} ${path} ${t('存在')}`;
-  if (cond.mode === MATCH_CONTAINS)
+  if (cond.mode === MATCH_CONTAINS) {
     return `${src} ${path} ${t('包含')} "${cond.value}"`;
+  }
   const opMap = { eq: '=', gt: '>', gte: '≥', lt: '<', lte: '≤' };
   return `${src} ${path} ${opMap[cond.mode] || '='} ${cond.value}`;
 }

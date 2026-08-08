@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Input, Modal, Typography } from '@douyinfe/semi-ui';
 import { IconLock } from '@douyinfe/semi-icons';
+import { Input, Modal, Typography } from '@douyinfe/semi-ui';
+import React from 'react';
 import Turnstile from 'react-turnstile';
 
 const ChangePasswordModal = ({
@@ -44,8 +44,8 @@ const ChangePasswordModal = ({
       visible={showChangePasswordModal}
       onCancel={() => setShowChangePasswordModal(false)}
       onOk={changePassword}
-      size={'small'}
-      centered={true}
+      size='small'
+      centered
       className='modern-modal'
     >
       <div className='space-y-4 py-4'>

@@ -176,7 +176,7 @@ func decodeUpstreamJSON[T any](buf []byte, out *upstreamEnvelope[T]) error {
 	}
 	if strings.HasPrefix(trimmed, "[") {
 		var arr []T
-		if err := json.Unmarshal([]byte(trimmed), &arr); err != nil {
+		if err := common.UnmarshalJsonStr(trimmed, &arr); err != nil {
 			return err
 		}
 		*out = upstreamEnvelope[T]{Success: true, Data: arr}
@@ -188,7 +188,7 @@ func decodeUpstreamJSON[T any](buf []byte, out *upstreamEnvelope[T]) error {
 		Message string          `json:"message"`
 		Data    json.RawMessage `json:"data"`
 	}
-	if err := json.Unmarshal([]byte(trimmed), &env); err != nil {
+	if err := common.UnmarshalJsonStr(trimmed, &env); err != nil {
 		return err
 	}
 	if env.Success != nil && !*env.Success {
@@ -206,7 +206,7 @@ func decodeUpstreamJSON[T any](buf []byte, out *upstreamEnvelope[T]) error {
 		return errors.New("invalid upstream response: data must be array")
 	}
 	var data []T
-	if err := json.Unmarshal([]byte(dataText), &data); err != nil {
+	if err := common.UnmarshalJsonStr(dataText, &data); err != nil {
 		return fmt.Errorf("invalid upstream response data: %w", err)
 	}
 	*out = upstreamEnvelope[T]{
@@ -341,7 +341,7 @@ func canonicalEndpointsString(value string) (string, error) {
 		return "", nil
 	}
 	var endpoints map[string]interface{}
-	if err := json.Unmarshal([]byte(value), &endpoints); err != nil {
+	if err := common.UnmarshalJsonStr(value, &endpoints); err != nil {
 		return "", fmt.Errorf("invalid endpoints json: %w", err)
 	}
 	if endpoints == nil {
@@ -360,7 +360,7 @@ func canonicalEndpointsString(value string) (string, error) {
 			return "", fmt.Errorf("invalid endpoints value for %q", endpoint)
 		}
 	}
-	canonical, err := json.Marshal(endpoints)
+	canonical, err := common.Marshal(endpoints)
 	if err != nil {
 		return "", err
 	}

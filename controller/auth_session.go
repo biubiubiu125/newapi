@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
@@ -30,6 +31,7 @@ func RefreshAuth(c *gin.Context) {
 		writeAuthSessionError(c, err)
 		return
 	}
+	persistLegacyLoginSession(c, user, bundle.Session)
 	service.WriteRefreshCookie(c, bundle.RefreshToken)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -67,6 +69,7 @@ func AuthLogout(c *gin.Context) {
 				service.ClearRefreshCookie(c)
 				cookieCleared = true
 			}
+			_ = clearLegacyLoginSession(c)
 			c.JSON(http.StatusOK, gin.H{
 				"success": true,
 				"message": "",
@@ -76,6 +79,7 @@ func AuthLogout(c *gin.Context) {
 		}
 	}
 	if cookieErr != nil || rawRefreshToken == "" {
+		_ = clearLegacyLoginSession(c)
 		service.ClearRefreshCookie(c)
 		c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
 		return
@@ -85,6 +89,7 @@ func AuthLogout(c *gin.Context) {
 		return
 	}
 	service.ClearRefreshCookie(c)
+	_ = clearLegacyLoginSession(c)
 	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
 }
 
@@ -180,6 +185,20 @@ func authRotationData(bundle *service.AuthBundle) gin.H {
 		"access_expires_at": bundle.AccessExpiresAt,
 		"session":           bundle.Session,
 	}
+}
+
+func persistAuthRotationLegacyLoginSession(c *gin.Context, userID int, bundle *service.AuthBundle) bool {
+	if bundle == nil {
+		common.ApiError(c, errors.New("auth rotation bundle is empty"))
+		return false
+	}
+	user, err := model.GetUserById(userID, false)
+	if err != nil {
+		common.ApiError(c, err)
+		return false
+	}
+	persistLegacyLoginSession(c, user, bundle.Session)
+	return true
 }
 
 func dashboardBearer(header string) (string, bool) {

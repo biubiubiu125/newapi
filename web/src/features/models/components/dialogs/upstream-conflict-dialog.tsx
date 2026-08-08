@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
-import { type ColumnDef, type RowSelectionState } from '@tanstack/react-table'
+import type { ColumnDef, RowSelectionState } from '@tanstack/react-table'
 import {
   Search,
   Info,
@@ -225,11 +225,11 @@ export function UpstreamConflictDialog({
   }, [filteredConflictRows, pageSize, pageStart])
   const paginatedRowIds = useMemo(
     () => paginatedConflictRows.map((row) => row.id),
-    [paginatedConflictRows],
+    [paginatedConflictRows]
   )
   const pageSelectionState = useMemo(
     () => getRowSelectionStateForRowIds(rowSelection, paginatedRowIds),
-    [rowSelection, paginatedRowIds],
+    [rowSelection, paginatedRowIds]
   )
 
   const columns = useMemo<ColumnDef<ConflictFieldRow>[]>(() => {
@@ -329,8 +329,8 @@ export function UpstreamConflictDialog({
               buildRowSelectionForRowIds(
                 currentSelection,
                 paginatedRowIds,
-                value === true,
-              ),
+                value === true
+              )
             )
           }
           aria-label='Select all'
@@ -402,7 +402,7 @@ export function UpstreamConflictDialog({
   const canApply = hasSelection || syncMissing
   const paginatedRowIdSet = useMemo(
     () => new Set(paginatedRowIds),
-    [paginatedRowIds],
+    [paginatedRowIds]
   )
   const paginatedRows = table
     .getRowModel()
@@ -435,7 +435,7 @@ export function UpstreamConflictDialog({
         acc[key].add(row.original.fieldKey)
         return acc
       },
-      {},
+      {}
     )
 
     setIsSubmitting(true)
@@ -453,8 +453,8 @@ export function UpstreamConflictDialog({
       if (result.status === 'empty') {
         toast.warning(
           t(
-            'Select at least one field to overwrite or enable missing model sync.',
-          ),
+            'Select at least one field to overwrite or enable missing model sync.'
+          )
         )
         return
       }
@@ -473,15 +473,15 @@ export function UpstreamConflictDialog({
                   created: created_models,
                   updated: updated_models,
                   vendors: created_vendors,
-                },
+                }
               )
             : t(
                 'Missing upstream models were synced successfully. Created {{created}} models and added {{vendors}} vendors.',
                 {
                   created: created_models,
                   vendors: created_vendors,
-                },
-              ),
+                }
+              )
         )
         setUpstreamConflicts([])
         setUpstreamMissing([])
@@ -492,8 +492,8 @@ export function UpstreamConflictDialog({
       if (result.status === 'refresh_failed') {
         toast.error(
           t(
-            'Sync completed, but refreshing page data failed. Please refresh manually to view the latest results.',
-          ),
+            'Sync completed, but refreshing page data failed. Please refresh manually to view the latest results.'
+          )
         )
         setUpstreamConflicts([])
         setUpstreamMissing([])
@@ -521,7 +521,7 @@ export function UpstreamConflictDialog({
       }}
       title={t('Resolve Conflicts')}
       description={t(
-        'Select upstream fields to overwrite. Missing models can be synced in the same request.',
+        'Select upstream fields to overwrite. Missing models can be synced in the same request.'
       )}
       contentClassName='w-full sm:max-w-5xl'
       contentHeight='min(72vh, 720px)'
@@ -556,7 +556,7 @@ export function UpstreamConflictDialog({
               <Info className='h-4 w-4 flex-shrink-0' />
               <span>
                 {t(
-                  'Only selected fields will be overwritten. Unselected fields keep their local values.',
+                  'Only selected fields will be overwritten. Unselected fields keep their local values.'
                 )}
               </span>
             </div>
@@ -704,7 +704,7 @@ export function UpstreamConflictDialog({
                         className='h-7 w-7 sm:h-8 sm:w-8'
                         onClick={() =>
                           setPageIndex((prev) =>
-                            Math.min(totalPages - 1, prev + 1),
+                            Math.min(totalPages - 1, prev + 1)
                           )
                         }
                         disabled={

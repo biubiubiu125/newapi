@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import React from 'react';
 import { useTranslation } from 'react-i18next';
+
 import DocumentRenderer from '../../components/common/DocumentRenderer';
 
 const PrivacyPolicy = () => {

@@ -18,9 +18,10 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React, { memo } from 'react';
+
+import { useMinimumLoadingTime } from '../../../../../hooks/common/useMinimumLoadingTime';
 import PricingVendorIntro from './PricingVendorIntro';
 import PricingVendorIntroSkeleton from './PricingVendorIntroSkeleton';
-import { useMinimumLoadingTime } from '../../../../../hooks/common/useMinimumLoadingTime';
 
 const PricingVendorIntroWithSkeleton = memo(
   ({ loading = false, filterVendor, ...restProps }) => {

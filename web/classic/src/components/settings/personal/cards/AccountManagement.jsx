@@ -17,7 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import {
+  IconMail,
+  IconShield,
+  IconGithubLogo,
+  IconKey,
+  IconLock,
+  IconDelete,
+} from '@douyinfe/semi-icons';
 import {
   Button,
   Card,
@@ -30,17 +37,11 @@ import {
   Popover,
   Modal,
 } from '@douyinfe/semi-ui';
-import {
-  IconMail,
-  IconShield,
-  IconGithubLogo,
-  IconKey,
-  IconLock,
-  IconDelete,
-} from '@douyinfe/semi-icons';
-import { SiTelegram, SiWechat, SiLinux, SiDiscord } from 'react-icons/si';
 import { UserPlus, ShieldCheck } from 'lucide-react';
+import React from 'react';
+import { SiTelegram, SiWechat, SiLinux, SiDiscord } from 'react-icons/si';
 import TelegramLoginButton from 'react-telegram-login';
+
 import {
   API,
   showError,

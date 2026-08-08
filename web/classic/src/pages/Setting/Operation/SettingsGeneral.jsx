@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef, useMemo } from 'react';
 import {
   Banner,
   Button,
@@ -29,6 +28,9 @@ import {
   Input,
   Typography,
 } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   compareObjects,
   API,
@@ -36,7 +38,6 @@ import {
   showSuccess,
   showWarning,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
 
 const { Text } = Typography;
 
@@ -89,8 +90,9 @@ export default function GeneralSettings(props) {
         if (requestQueue.length === 1) {
           if (res.includes(undefined)) return;
         } else if (requestQueue.length > 1) {
-          if (res.includes(undefined))
+          if (res.includes(undefined)) {
             return showError(t('部分保存失败，请重试'));
+          }
         }
         showSuccess(t('保存成功'));
         props.refresh();
@@ -109,10 +111,11 @@ export default function GeneralSettings(props) {
     if (type === 'USD') return '1';
     if (type === 'CNY') return String(inputs['USDExchangeRate'] || '');
     if (type === 'TOKENS') return String(inputs['QuotaPerUnit'] || '');
-    if (type === 'CUSTOM')
+    if (type === 'CUSTOM') {
       return String(
         inputs['general_setting.custom_currency_exchange_rate'] || '',
       );
+    }
     return '';
   }, [inputs]);
 
@@ -129,7 +132,7 @@ export default function GeneralSettings(props) {
 
   const showTokensOption = useMemo(() => {
     const initialType = props.options?.['general_setting.quota_display_type'];
-    const initialQuotaPerUnit = parseFloat(props.options?.QuotaPerUnit);
+    const initialQuotaPerUnit = Number.parseFloat(props.options?.QuotaPerUnit);
     const legacyTokensMode =
       initialType === undefined &&
       props.options?.DisplayInCurrencyEnabled !== undefined &&
@@ -163,34 +166,39 @@ export default function GeneralSettings(props) {
   const rateSuffix = useMemo(() => {
     if (quotaDisplayType === 'CNY') return 'CNY (¥)';
     if (quotaDisplayType === 'TOKENS') return 'Tokens';
-    if (quotaDisplayType === 'CUSTOM')
+    if (quotaDisplayType === 'CUSTOM') {
       return inputs['general_setting.custom_currency_symbol'] || '¤';
+    }
     return '';
   }, [quotaDisplayType, inputs]);
 
   const rateExtraText = useMemo(() => {
-    if (quotaDisplayType === 'CNY')
+    if (quotaDisplayType === 'CNY') {
       return t(
         '系统内部以美元 (USD) 为基准计价。用户余额、充值金额、模型定价、用量日志等所有金额显示均按此汇率换算为人民币，不影响内部计费',
       );
-    if (quotaDisplayType === 'TOKENS')
+    }
+    if (quotaDisplayType === 'TOKENS') {
       return t(
         '系统内部计费精度，默认 500000，修改可能导致计费异常，请谨慎操作',
       );
-    if (quotaDisplayType === 'CUSTOM')
+    }
+    if (quotaDisplayType === 'CUSTOM') {
       return t(
         '系统内部以美元 (USD) 为基准计价。用户余额、充值金额、模型定价、用量日志等所有金额显示均按此汇率换算为自定义货币，不影响内部计费',
       );
+    }
     return '';
   }, [quotaDisplayType, t]);
 
   const previewText = useMemo(() => {
     if (quotaDisplayType === 'USD') return '$1.00';
-    const rate = parseFloat(combinedRate);
+    const rate = Number.parseFloat(combinedRate);
     if (!rate || isNaN(rate)) return t('请输入汇率');
     if (quotaDisplayType === 'CNY') return `$1.00 → ¥${rate.toFixed(2)}`;
-    if (quotaDisplayType === 'TOKENS')
+    if (quotaDisplayType === 'TOKENS') {
       return `$1.00 → ${Number(rate).toLocaleString()} Tokens`;
+    }
     if (quotaDisplayType === 'CUSTOM') {
       const symbol = inputs['general_setting.custom_currency_symbol'] || '¤';
       return `$1.00 → ${symbol}${rate.toFixed(2)}`;
@@ -200,7 +208,7 @@ export default function GeneralSettings(props) {
 
   useEffect(() => {
     const currentInputs = {};
-    for (let key in props.options) {
+    for (const key in props.options) {
       if (Object.keys(inputs).includes(key)) {
         currentInputs[key] = props.options[key];
       }
@@ -244,9 +252,9 @@ export default function GeneralSettings(props) {
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Input
-                  field={'TopUpLink'}
+                  field='TopUpLink'
                   label={t('充值链接')}
-                  initValue={''}
+                  initValue=''
                   placeholder={t('例如发卡网站的购买链接')}
                   onChange={handleFieldChange('TopUpLink')}
                   showClear
@@ -254,9 +262,9 @@ export default function GeneralSettings(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Input
-                  field={'general_setting.docs_link'}
+                  field='general_setting.docs_link'
                   label={t('文档地址')}
-                  initValue={''}
+                  initValue=''
                   placeholder={t('例如 https://docs.newapi.pro')}
                   onChange={handleFieldChange('general_setting.docs_link')}
                   showClear
@@ -265,9 +273,9 @@ export default function GeneralSettings(props) {
               {/* 单位美元额度已合入汇率组合控件（TOKENS 模式下编辑），不再单独展示 */}
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Input
-                  field={'RetryTimes'}
+                  field='RetryTimes'
                   label={t('失败重试次数')}
-                  initValue={''}
+                  initValue=''
                   placeholder={t('失败重试次数')}
                   onChange={handleFieldChange('RetryTimes')}
                   showClear
@@ -347,7 +355,7 @@ export default function GeneralSettings(props) {
             <Row gutter={16}>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'DisplayTokenStatEnabled'}
+                  field='DisplayTokenStatEnabled'
                   label={t('额度查询接口返回令牌额度而非用户额度')}
                   size='default'
                   checkedText='｜'
@@ -357,7 +365,7 @@ export default function GeneralSettings(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'DefaultCollapseSidebar'}
+                  field='DefaultCollapseSidebar'
                   label={t('默认折叠侧边栏')}
                   size='default'
                   checkedText='｜'
@@ -367,7 +375,7 @@ export default function GeneralSettings(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'DemoSiteEnabled'}
+                  field='DemoSiteEnabled'
                   label={t('演示站点模式')}
                   size='default'
                   checkedText='｜'
@@ -377,7 +385,7 @@ export default function GeneralSettings(props) {
               </Col>
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.Switch
-                  field={'SelfUseModeEnabled'}
+                  field='SelfUseModeEnabled'
                   label={t('自用模式')}
                   extraText={t('开启后不限制：必须设置模型倍率')}
                   size='default'
@@ -391,13 +399,13 @@ export default function GeneralSettings(props) {
               <Col xs={24} sm={12} md={8} lg={8} xl={8}>
                 <Form.InputNumber
                   label={t('用户最大令牌数量')}
-                  field={'token_setting.max_user_tokens'}
+                  field='token_setting.max_user_tokens'
                   step={1}
                   min={1}
                   extraText={t(
                     '每个用户最多可创建的令牌数量，默认 1000，设置过大可能会影响性能',
                   )}
-                  placeholder={'1000'}
+                  placeholder='1000'
                   onChange={handleFieldChange('token_setting.max_user_tokens')}
                 />
               </Col>
@@ -416,7 +424,7 @@ export default function GeneralSettings(props) {
         visible={showQuotaWarning}
         onOk={() => setShowQuotaWarning(false)}
         onCancel={() => setShowQuotaWarning(false)}
-        closeOnEsc={true}
+        closeOnEsc
         width={500}
       >
         <Banner

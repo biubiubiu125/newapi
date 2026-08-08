@@ -17,16 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import { Banner, Button, Form, Row, Col, Spin } from '@douyinfe/semi-ui';
+import { BookOpen, TriangleAlert } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   API,
   removeTrailingSlash,
   showError,
   showSuccess,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
-import { BookOpen, TriangleAlert } from 'lucide-react';
 
 export default function SettingsPaymentGateway(props) {
   const { t } = useTranslation();
@@ -51,11 +52,11 @@ export default function SettingsPaymentGateway(props) {
         StripePriceId: props.options.StripePriceId || '',
         StripeUnitPrice:
           props.options.StripeUnitPrice !== undefined
-            ? parseFloat(props.options.StripeUnitPrice)
+            ? Number.parseFloat(props.options.StripeUnitPrice)
             : 8.0,
         StripeMinTopUp:
           props.options.StripeMinTopUp !== undefined
-            ? parseFloat(props.options.StripeMinTopUp)
+            ? Number.parseFloat(props.options.StripeMinTopUp)
             : 1,
         StripePromotionCodesEnabled:
           props.options.StripePromotionCodesEnabled !== undefined
@@ -145,7 +146,7 @@ export default function SettingsPaymentGateway(props) {
         setOriginInputs({ ...inputs });
         props.refresh?.();
       }
-    } catch (error) {
+    } catch {
       showError(t('更新失败'));
     }
     setLoading(false);

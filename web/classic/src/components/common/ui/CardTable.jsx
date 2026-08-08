@@ -17,8 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect, useRef } from 'react';
-import { useTranslation } from 'react-i18next';
+import { IconChevronDown, IconChevronUp } from '@douyinfe/semi-icons';
 import {
   Table,
   Card,
@@ -28,8 +27,10 @@ import {
   Button,
   Collapsible,
 } from '@douyinfe/semi-ui';
-import { IconChevronDown, IconChevronUp } from '@douyinfe/semi-icons';
 import PropTypes from 'prop-types';
+import React, { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 import { useMinimumLoadingTime } from '../../../hooks/common/useMinimumLoadingTime';
 
@@ -116,7 +117,7 @@ const CardTable = ({
 
       return (
         <Card key={key} className='!rounded-2xl shadow-sm'>
-          <Skeleton loading={true} active placeholder={placeholder}></Skeleton>
+          <Skeleton loading active placeholder={placeholder} />
         </Card>
       );
     };

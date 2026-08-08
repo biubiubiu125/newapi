@@ -200,13 +200,16 @@ func PasskeyRegisterFinish(c *gin.Context) {
 		return
 	}
 
-	if err := model.UpsertPasskeyCredentialWithAuthVersion(passkeyCredential); err != nil {
+	if err := model.UpsertPasskeyCredentialWithAuthVersion(passkeyCredential); !continueAfterCommittedUserAuthStateError("passkey register", err) {
 		common.ApiError(c, err)
 		return
 	}
 	bundle, err := service.AdvanceCurrentSessionToUserVersion(identity, "passkey_registered")
 	if err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	if !persistAuthRotationLegacyLoginSession(c, user.Id, bundle) {
 		return
 	}
 
@@ -237,13 +240,16 @@ func PasskeyDelete(c *gin.Context) {
 		common.ApiError(c, errors.New("当前认证方式不支持安全验证"))
 		return
 	}
-	if err := model.DeletePasskeyByUserIDWithAuthVersion(user.Id); err != nil {
+	if err := model.DeletePasskeyByUserIDWithAuthVersion(user.Id); !continueAfterCommittedUserAuthStateError("passkey delete", err) {
 		common.ApiError(c, err)
 		return
 	}
 	bundle, err := service.AdvanceCurrentSessionToUserVersion(identity, "passkey_deleted")
 	if err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	if !persistAuthRotationLegacyLoginSession(c, user.Id, bundle) {
 		return
 	}
 
@@ -465,7 +471,7 @@ func AdminResetPasskey(c *gin.Context) {
 		return
 	}
 
-	if err := model.DeletePasskeyByUserIDWithAuthVersion(user.Id); err != nil {
+	if err := model.DeletePasskeyByUserIDWithAuthVersion(user.Id); !continueAfterCommittedUserAuthStateError("admin passkey reset", err) {
 		common.ApiError(c, err)
 		return
 	}

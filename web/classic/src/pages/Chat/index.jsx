@@ -17,11 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { useTokenKeys } from '../../hooks/chat/useTokenKeys';
 import { Spin } from '@douyinfe/semi-ui';
-import { useParams } from 'react-router-dom';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
+import { useParams } from 'react-router-dom';
+
+import { useTokenKeys } from '../../hooks/chat/useTokenKeys';
 
 const ChatPage = () => {
   const { t } = useTranslation();
@@ -37,13 +38,13 @@ const ChatPage = () => {
       if (chats) {
         chats = JSON.parse(chats);
         if (Array.isArray(chats) && chats.length > 0) {
-          for (let k in chats[id]) {
+          for (const k in chats[id]) {
             link = chats[id][k];
             link = link.replaceAll(
               '{address}',
               encodeURIComponent(serverAddress),
             );
-            link = link.replaceAll('{key}', 'sk-' + key);
+            link = link.replaceAll('{key}', `sk-${key}`);
           }
         }
       }
@@ -68,7 +69,7 @@ const ChatPage = () => {
   ) : (
     <div className='fixed inset-0 w-screen h-screen flex items-center justify-center bg-white/80 z-[1000] mt-[60px]'>
       <div className='flex flex-col items-center'>
-        <Spin size='large' spinning={true} tip={null} />
+        <Spin size='large' spinning tip={null} />
         <span
           className='whitespace-nowrap mt-2 text-center'
           style={{ color: 'var(--semi-color-primary)' }}

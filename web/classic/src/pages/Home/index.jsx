@@ -17,7 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useContext, useEffect, useState } from 'react';
+import {
+  IconGithubLogo,
+  IconPlay,
+  IconFile,
+  IconCopy,
+} from '@douyinfe/semi-icons';
 import {
   Button,
   Typography,
@@ -25,21 +30,6 @@ import {
   ScrollList,
   ScrollItem,
 } from '@douyinfe/semi-ui';
-import { API, showError, copy, showSuccess } from '../../helpers';
-import { useIsMobile } from '../../hooks/common/useIsMobile';
-import { API_ENDPOINTS } from '../../constants/common.constant';
-import { StatusContext } from '../../context/Status';
-import { useActualTheme } from '../../context/Theme';
-import { marked } from 'marked';
-import { useTranslation } from 'react-i18next';
-import {
-  IconGithubLogo,
-  IconPlay,
-  IconFile,
-  IconCopy,
-} from '@douyinfe/semi-icons';
-import { Link } from 'react-router-dom';
-import NoticeModal from '../../components/layout/NoticeModal';
 import {
   Moonshot,
   OpenAI,
@@ -62,6 +52,17 @@ import {
   Hunyuan,
   Xinference,
 } from '@lobehub/icons';
+import { marked } from 'marked';
+import React, { useContext, useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+import { Link } from 'react-router-dom';
+
+import NoticeModal from '../../components/layout/NoticeModal';
+import { API_ENDPOINTS } from '../../constants/common.constant';
+import { StatusContext } from '../../context/Status';
+import { useActualTheme } from '../../context/Theme';
+import { API, showError, copy, showSuccess } from '../../helpers';
+import { useIsMobile } from '../../hooks/common/useIsMobile';
 
 const { Text } = Typography;
 
@@ -193,7 +194,7 @@ const Home = () => {
                           >
                             <ScrollItem
                               mode='wheel'
-                              cycled={true}
+                              cycled
                               list={endpointItems}
                               selectedIndex={endpointIndex}
                               onSelect={({ index }) => setEndpointIndex(index)}

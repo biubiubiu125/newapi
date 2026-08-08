@@ -17,8 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Form, Tag, Typography } from '@douyinfe/semi-ui';
+import React from 'react';
 
 export default function HttpStatusCodeRulesInput(props) {
   const { Text } = Typography;

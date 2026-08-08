@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { API, showError, showSuccess } from '../../helpers';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 
@@ -54,7 +55,7 @@ export const useSubscriptionsData = () => {
       } else {
         showError(res.data?.message || t('加载失败'));
       }
-    } catch (e) {
+    } catch {
       showError(t('请求失败'));
     } finally {
       setLoading(false);
@@ -93,7 +94,7 @@ export const useSubscriptionsData = () => {
       } else {
         showError(res.data?.message || t('操作失败'));
       }
-    } catch (e) {
+    } catch {
       showError(t('请求失败'));
     } finally {
       setLoading(false);

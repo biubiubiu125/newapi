@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { Modal, Button, Input, Typography } from '@douyinfe/semi-ui';
 import React from 'react';
 import { useTranslation } from 'react-i18next';
-import { Modal, Button, Input, Typography } from '@douyinfe/semi-ui';
 
 /**
  * 可复用的两步验证模态框组件

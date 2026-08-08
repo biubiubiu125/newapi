@@ -26,7 +26,10 @@ func isStripeWebhookConfigured() bool {
 }
 
 func isStripeWebhookEnabled() bool {
-	return isStripeTopUpEnabled()
+	if !isPaymentComplianceConfirmed() {
+		return false
+	}
+	return strings.TrimSpace(setting.StripeApiSecret) != "" && isStripeWebhookConfigured()
 }
 
 func isCreemTopUpEnabled() bool {

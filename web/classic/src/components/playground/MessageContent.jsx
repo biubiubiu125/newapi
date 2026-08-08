@@ -17,13 +17,14 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useRef, useEffect } from 'react';
 import { Typography, TextArea, Button } from '@douyinfe/semi-ui';
+import { Loader2, Check, X, Settings, AlertTriangle } from 'lucide-react';
+import React, { useRef, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import { isAdmin } from '../../helpers/utils';
 import MarkdownRenderer from '../common/markdown/MarkdownRenderer';
 import ThinkingContent from './ThinkingContent';
-import { Loader2, Check, X, Settings, AlertTriangle } from 'lucide-react';
-import { useTranslation } from 'react-i18next';
-import { isAdmin } from '../../helpers/utils';
 
 const MessageContent = ({
   message,
@@ -145,8 +146,8 @@ const MessageContent = ({
     if (baseContentForDisplay.includes('<think>')) {
       const thinkTagRegex = /<think>([\s\S]*?)<\/think>/g;
       let match;
-      let thoughtsFromPairedTags = [];
-      let replyParts = [];
+      const thoughtsFromPairedTags = [];
+      const replyParts = [];
       let lastIndex = 0;
 
       while ((match = thinkTagRegex.exec(baseContentForDisplay)) !== null) {
@@ -161,12 +162,12 @@ const MessageContent = ({
       if (thoughtsFromPairedTags.length > 0) {
         const pairedThoughtsStr = thoughtsFromPairedTags.join('\n\n---\n\n');
         if (combinedThinkingContent) {
-          combinedThinkingContent += '\n\n---\n\n' + pairedThoughtsStr;
+          combinedThinkingContent += `\n\n---\n\n${pairedThoughtsStr}`;
         } else {
           combinedThinkingContent = pairedThoughtsStr;
         }
         thinkingSource = thinkingSource
-          ? thinkingSource + ' & <think> tags'
+          ? `${thinkingSource} & <think> tags`
           : '<think> tags';
       }
 
@@ -184,12 +185,12 @@ const MessageContent = ({
             .trim();
           if (unclosedThought) {
             if (combinedThinkingContent) {
-              combinedThinkingContent += '\n\n---\n\n' + unclosedThought;
+              combinedThinkingContent += `\n\n---\n\n${unclosedThought}`;
             } else {
               combinedThinkingContent = unclosedThought;
             }
             thinkingSource = thinkingSource
-              ? thinkingSource + ' + streaming <think>'
+              ? `${thinkingSource} + streaming <think>`
               : 'streaming <think>';
           }
           baseContentForDisplay = baseContentForDisplay.substring(
@@ -202,7 +203,7 @@ const MessageContent = ({
 
     currentExtractedThinkingContent = combinedThinkingContent || null;
     currentDisplayableFinalContent = baseContentForDisplay
-      .replace(/<\/?think>/g, '')
+      .replaceAll(/<\/?think>/g, '')
       .trim();
   }
 

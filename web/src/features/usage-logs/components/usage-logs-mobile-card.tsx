@@ -263,9 +263,7 @@ function MobileUserField({ log }: { log: UsageLog }) {
             'text-[11px] font-semibold',
             !sensitiveVisible && 'bg-muted text-muted-foreground'
           )}
-          style={
-            sensitiveVisible ? getUserAvatarStyle(displayName) : undefined
-          }
+          style={sensitiveVisible ? getUserAvatarStyle(displayName) : undefined}
         >
           {sensitiveVisible ? getUserAvatarFallback(displayName) : '•'}
         </AvatarFallback>

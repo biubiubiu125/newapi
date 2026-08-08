@@ -16,10 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import z from 'zod'
 import { createFileRoute } from '@tanstack/react-router'
-import { ROLE } from '@/lib/roles'
+import z from 'zod'
+
 import { Users } from '@/features/users'
+import { ROLE } from '@/lib/roles'
 import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 const usersSearchSchema = z.object({

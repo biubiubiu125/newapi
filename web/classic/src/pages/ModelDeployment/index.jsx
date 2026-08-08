@@ -18,8 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import DeploymentsTable from '../../components/table/model-deployments';
+
 import DeploymentAccessGuard from '../../components/model-deployments/DeploymentAccessGuard';
+import DeploymentsTable from '../../components/table/model-deployments';
 import { useModelDeploymentSettings } from '../../hooks/model-deployments/useModelDeploymentSettings';
 
 const ModelDeploymentPage = () => {

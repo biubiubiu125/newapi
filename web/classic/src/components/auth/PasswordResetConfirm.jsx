@@ -17,17 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
-import {
-  API,
-  copy,
-  showError,
-  showNotice,
-} from '../../helpers';
-import { useSearchParams, Link } from 'react-router-dom';
-import { Button, Card, Form, Typography, Banner } from '@douyinfe/semi-ui';
 import { IconMail, IconLock, IconCopy } from '@douyinfe/semi-icons';
+import { Button, Card, Form, Typography, Banner } from '@douyinfe/semi-ui';
+import React, { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { useSearchParams, Link } from 'react-router-dom';
+
+import { API, copy, showError, showNotice } from '../../helpers';
 import { useAuthBrand } from '../../hooks/common/useAuthBrand';
 
 const { Text, Title } = Typography;
@@ -51,8 +47,8 @@ const PasswordResetConfirm = () => {
   const { logo, systemName } = useAuthBrand();
 
   useEffect(() => {
-    let token = searchParams.get('token');
-    let email = searchParams.get('email');
+    const token = searchParams.get('token');
+    const email = searchParams.get('email');
     setInputs({
       token: token || '',
       email: email || '',
@@ -91,7 +87,7 @@ const PasswordResetConfirm = () => {
     });
     const { success, message } = res.data;
     if (success) {
-      let password = res.data.data;
+      const password = res.data.data;
       setNewPassword(password);
       await copy(password);
       showNotice(`${t('密码已重置并已复制到剪贴板：')} ${password}`);
@@ -149,7 +145,7 @@ const PasswordResetConfirm = () => {
                     field='email'
                     label={t('邮箱')}
                     name='email'
-                    disabled={true}
+                    disabled
                     prefix={<IconMail />}
                     placeholder={email ? '' : t('等待获取邮箱信息...')}
                   />
@@ -159,7 +155,7 @@ const PasswordResetConfirm = () => {
                       field='newPassword'
                       label={t('新密码')}
                       name='newPassword'
-                      disabled={true}
+                      disabled
                       prefix={<IconLock />}
                       suffix={
                         <Button

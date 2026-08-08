@@ -34,7 +34,7 @@ export const useNotifications = (statusState) => {
     let readKeys = [];
     try {
       readKeys = JSON.parse(localStorage.getItem('notice_read_keys')) || [];
-    } catch (_) {
+    } catch {
       readKeys = [];
     }
     const readSet = new Set(readKeys);
@@ -47,7 +47,7 @@ export const useNotifications = (statusState) => {
     let readKeys = [];
     try {
       readKeys = JSON.parse(localStorage.getItem('notice_read_keys')) || [];
-    } catch (_) {
+    } catch {
       readKeys = [];
     }
     const readSet = new Set(readKeys);
@@ -72,12 +72,12 @@ export const useNotifications = (statusState) => {
       let readKeys = [];
       try {
         readKeys = JSON.parse(localStorage.getItem('notice_read_keys')) || [];
-      } catch (_) {
+      } catch {
         readKeys = [];
       }
-      const mergedKeys = Array.from(
-        new Set([...readKeys, ...announcements.map(getAnnouncementKey)]),
-      );
+      const mergedKeys = [
+        ...new Set([...readKeys, ...announcements.map(getAnnouncementKey)]),
+      ];
       localStorage.setItem('notice_read_keys', JSON.stringify(mergedKeys));
     }
     setUnreadCount(0);

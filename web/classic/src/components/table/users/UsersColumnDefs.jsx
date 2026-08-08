@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import { IconMore } from '@douyinfe/semi-icons';
 import {
   Button,
   Dropdown,
@@ -28,7 +28,8 @@ import {
   Tooltip,
   Typography,
 } from '@douyinfe/semi-ui';
-import { IconMore } from '@douyinfe/semi-icons';
+import React from 'react';
+
 import {
   renderGroup,
   renderNumber,
@@ -43,10 +44,7 @@ const renderEmail = (text) => {
     return '-';
   }
   return (
-    <Typography.Text
-      ellipsis={{ showTooltip: true }}
-      style={{ maxWidth: 220 }}
-    >
+    <Typography.Text ellipsis={{ showTooltip: true }} style={{ maxWidth: 220 }}>
       {text}
     </Typography.Text>
   );
@@ -86,11 +84,13 @@ const renderUsername = (text, record) => {
   const displayName = record.display_name;
   const maxLen = 10;
   const displayRemark =
-    remark && remark.length > maxLen ? remark.slice(0, maxLen) + '…' : remark;
+    remark && remark.length > maxLen ? `${remark.slice(0, maxLen)}…` : remark;
   return (
     <div className='flex flex-col gap-1 min-w-[160px]'>
       <Space spacing={2}>
-        <Typography.Text ellipsis={{ showTooltip: true }}>{text}</Typography.Text>
+        <Typography.Text ellipsis={{ showTooltip: true }}>
+          {text}
+        </Typography.Text>
         {remark && (
           <Tooltip content={remark} position='top' showArrow>
             <Tag color='white' shape='circle' className='!text-xs'>
@@ -157,8 +157,8 @@ const renderStatistics = (text, record, showEnableDisableModal, t) => {
 
 const renderQuotaUsage = (text, record, t) => {
   const { Paragraph } = Typography;
-  const used = parseInt(record.used_quota) || 0;
-  const remain = parseInt(record.quota) || 0;
+  const used = Number.parseInt(record.used_quota) || 0;
+  const remain = Number.parseInt(record.quota) || 0;
   const total = used + remain;
   const percent = total > 0 ? (remain / total) * 100 : 0;
   const popoverContent = (

@@ -16,9 +16,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { UseFormReturn } from 'react-hook-form'
 import { ShieldCheck } from 'lucide-react'
+import type { UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
+
+import { PasswordInput } from '@/components/password-input'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import {
   FormControl,
@@ -29,8 +31,8 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import { PasswordInput } from '@/components/password-input'
 import { REGISTER_USERNAME_MAX_LENGTH } from '@/features/auth/constants'
+
 import type { SetupFormValues } from '../types'
 
 interface AdminStepProps {

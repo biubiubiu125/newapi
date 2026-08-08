@@ -17,7 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useRef, useState } from 'react';
+import {
+  IconCalendarClock,
+  IconClose,
+  IconCreditCard,
+  IconSave,
+} from '@douyinfe/semi-icons';
 import {
   Avatar,
   Button,
@@ -32,13 +37,9 @@ import {
   Tag,
   Typography,
 } from '@douyinfe/semi-ui';
-import {
-  IconCalendarClock,
-  IconClose,
-  IconCreditCard,
-  IconSave,
-} from '@douyinfe/semi-icons';
 import { Clock, RefreshCw } from 'lucide-react';
+import React, { useEffect, useRef, useState } from 'react';
+
 import { API, showError, showSuccess } from '../../../../helpers';
 import {
   displayAmountToQuota,
@@ -188,7 +189,7 @@ const AddEditSubscriptionModal = ({
           showError(res.data?.message || t('创建失败'));
         }
       }
-    } catch (e) {
+    } catch {
       showError(t('请求失败'));
     } finally {
       setLoading(false);

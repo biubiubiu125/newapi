@@ -97,7 +97,7 @@ export function useWaffoPayment() {
 
         toast.error(getErrorMessage(response.message, response.data))
         return { ok: false }
-      } catch (_error) {
+      } catch {
         toast.error(i18next.t('Payment request failed'))
         return { ok: false }
       } finally {

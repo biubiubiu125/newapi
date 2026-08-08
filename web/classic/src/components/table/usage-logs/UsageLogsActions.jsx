@@ -17,11 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Tag, Space, Skeleton } from '@douyinfe/semi-ui';
+import React from 'react';
+
 import { renderQuota } from '../../../helpers';
-import CompactModeToggle from '../../common/ui/CompactModeToggle';
 import { useMinimumLoadingTime } from '../../../hooks/common/useMinimumLoadingTime';
+import CompactModeToggle from '../../common/ui/CompactModeToggle';
 
 const LogsActions = ({
   stat,

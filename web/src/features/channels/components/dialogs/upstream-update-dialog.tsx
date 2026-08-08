@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Search } from 'lucide-react'
-import { useState, useMemo } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -52,6 +52,16 @@ export function UpstreamUpdateDialog(props: UpstreamUpdateDialogProps) {
     () => new Set(props.removeModels)
   )
   const [partialConfirmOpen, setPartialConfirmOpen] = useState(false)
+
+  useEffect(() => {
+    if (!props.open) return
+    setActiveTab(props.preferredTab)
+    setSearchAdd('')
+    setSearchRemove('')
+    setSelectedAdd(new Set(props.addModels))
+    setSelectedRemove(new Set(props.removeModels))
+    setPartialConfirmOpen(false)
+  }, [props.open, props.addModels, props.removeModels, props.preferredTab])
 
   const filteredAdd = useMemo(
     () =>
@@ -100,8 +110,8 @@ export function UpstreamUpdateDialog(props: UpstreamUpdateDialogProps) {
 
     const hasAdd = props.addModels.length > 0
     const hasRemove = props.removeModels.length > 0
-    const selectedAddArr = Array.from(selectedAdd)
-    const selectedRemoveArr = Array.from(selectedRemove)
+    const selectedAddArr = [...selectedAdd]
+    const selectedRemoveArr = [...selectedRemove]
     const anyAdd = selectedAddArr.length > 0
     const anyRemove = selectedRemoveArr.length > 0
 
@@ -287,8 +297,8 @@ export function UpstreamUpdateDialog(props: UpstreamUpdateDialogProps) {
           if (!props.canApply) return
           setPartialConfirmOpen(false)
           props.onConfirm({
-            addModels: Array.from(selectedAdd),
-            removeModels: Array.from(selectedRemove),
+            addModels: [...selectedAdd],
+            removeModels: [...selectedRemove],
           })
         }}
       />

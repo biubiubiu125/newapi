@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import {
   Button,
   Col,
@@ -27,6 +26,9 @@ import {
   Space,
   Spin,
 } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   compareObjects,
   API,
@@ -35,7 +37,6 @@ import {
   showWarning,
   verifyJSON,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
 
 export default function ModelRatioSettings(props) {
   const [loading, setLoading] = useState(false);
@@ -60,8 +61,9 @@ export default function ModelRatioSettings(props) {
         .validate()
         .then(() => {
           const updateArray = compareObjects(inputs, inputsRow);
-          if (!updateArray.length)
+          if (!updateArray.length) {
             return showWarning(t('你似乎并没有修改什么'));
+          }
 
           const requestQueue = updateArray.map((item) => {
             const value =
@@ -110,7 +112,7 @@ export default function ModelRatioSettings(props) {
 
   async function resetModelRatio() {
     try {
-      let res = await API.post(`/api/option/rest_model_ratio`);
+      const res = await API.post(`/api/option/rest_model_ratio`);
       if (res.data.success) {
         showSuccess(res.data.message);
         props.refresh();
@@ -124,7 +126,7 @@ export default function ModelRatioSettings(props) {
 
   useEffect(() => {
     const currentInputs = {};
-    for (let key in props.options) {
+    for (const key in props.options) {
       if (Object.keys(inputs).includes(key)) {
         currentInputs[key] = props.options[key];
       }
@@ -149,7 +151,7 @@ export default function ModelRatioSettings(props) {
               placeholder={t(
                 '为一个 JSON 文本，键为模型名称，值为一次调用消耗多少刀，比如 "gpt-4-gizmo-*": 0.1，一次消耗0.1刀',
               )}
-              field={'ModelPrice'}
+              field='ModelPrice'
               autosize={{ minRows: 6, maxRows: 12 }}
               trigger='blur'
               stopValidateWithError
@@ -168,7 +170,7 @@ export default function ModelRatioSettings(props) {
             <Form.TextArea
               label={t('模型倍率')}
               placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
-              field={'ModelRatio'}
+              field='ModelRatio'
               autosize={{ minRows: 6, maxRows: 12 }}
               trigger='blur'
               stopValidateWithError
@@ -187,7 +189,7 @@ export default function ModelRatioSettings(props) {
             <Form.TextArea
               label={t('提示缓存倍率')}
               placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
-              field={'CacheRatio'}
+              field='CacheRatio'
               autosize={{ minRows: 6, maxRows: 12 }}
               trigger='blur'
               stopValidateWithError
@@ -209,7 +211,7 @@ export default function ModelRatioSettings(props) {
                 '默认为 5m 缓存创建倍率；1h 缓存创建倍率按固定乘法自动计算（当前为 1.6x）',
               )}
               placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
-              field={'CreateCacheRatio'}
+              field='CreateCacheRatio'
               autosize={{ minRows: 6, maxRows: 12 }}
               trigger='blur'
               stopValidateWithError
@@ -231,7 +233,7 @@ export default function ModelRatioSettings(props) {
               label={t('模型补全倍率（仅对自定义模型有效）')}
               extraText={t('仅对自定义模型有效')}
               placeholder={t('为一个 JSON 文本，键为模型名称，值为倍率')}
-              field={'CompletionRatio'}
+              field='CompletionRatio'
               autosize={{ minRows: 6, maxRows: 12 }}
               trigger='blur'
               stopValidateWithError
@@ -257,7 +259,7 @@ export default function ModelRatioSettings(props) {
               placeholder={t(
                 '为一个 JSON 文本，键为模型名称，值为倍率，例如：{"gpt-image-1": 2}',
               )}
-              field={'ImageRatio'}
+              field='ImageRatio'
               autosize={{ minRows: 6, maxRows: 12 }}
               trigger='blur'
               stopValidateWithError
@@ -279,7 +281,7 @@ export default function ModelRatioSettings(props) {
               placeholder={t(
                 '为一个 JSON 文本，键为模型名称，值为倍率，例如：{"gpt-4o-audio-preview": 16}',
               )}
-              field={'AudioRatio'}
+              field='AudioRatio'
               autosize={{ minRows: 6, maxRows: 12 }}
               trigger='blur'
               stopValidateWithError
@@ -303,7 +305,7 @@ export default function ModelRatioSettings(props) {
               placeholder={t(
                 '为一个 JSON 文本，键为模型名称，值为倍率，例如：{"gpt-4o-realtime": 2}',
               )}
-              field={'AudioCompletionRatio'}
+              field='AudioCompletionRatio'
               autosize={{ minRows: 6, maxRows: 12 }}
               trigger='blur'
               stopValidateWithError
@@ -323,7 +325,7 @@ export default function ModelRatioSettings(props) {
           <Col span={16}>
             <Form.Switch
               label={t('暴露倍率接口')}
-              field={'ExposeRatioEnabled'}
+              field='ExposeRatioEnabled'
               onChange={(value) =>
                 setInputs({ ...inputs, ExposeRatioEnabled: value })
               }
@@ -336,11 +338,11 @@ export default function ModelRatioSettings(props) {
         <Popconfirm
           title={t('确定重置模型倍率吗？')}
           content={t('此修改将不可逆')}
-          okType={'danger'}
-          position={'top'}
+          okType='danger'
+          position='top'
           onConfirm={resetModelRatio}
         >
-          <Button type={'danger'}>{t('重置模型倍率')}</Button>
+          <Button type='danger'>{t('重置模型倍率')}</Button>
         </Popconfirm>
       </Space>
     </Spin>

@@ -63,12 +63,12 @@ func CreateVendorMeta(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	buf, err := json.Marshal(raw)
+	buf, err := common.Marshal(raw)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	if err := json.Unmarshal(buf, &v); err != nil {
+	if err := common.Unmarshal(buf, &v); err != nil {
 		common.ApiError(c, err)
 		return
 	}

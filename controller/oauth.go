@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 	"gorm.io/gorm"
@@ -172,7 +173,7 @@ func HandleOAuth(c *gin.Context) {
 		Provider: providerName,
 	})
 	if err != nil {
-		if handleLegacyOAuth(c, provider, state) {
+		if handleLegacyOAuth(c, providerName, provider, state) {
 			return
 		}
 		c.JSON(http.StatusForbidden, gin.H{
@@ -187,9 +188,13 @@ func HandleOAuth(c *gin.Context) {
 		Provider: providerName,
 		Intent:   pendingFlow.Intent,
 	}
+	var bindIdentity service.AuthIdentity
 	// 2. Bind flows are bound to the live dashboard session that created them.
 	if pendingFlow.Intent == model.AuthFlowIntentBind {
-		identity, ok := middleware.GetSessionAuthIdentity(c)
+		identity, ok, identityErr := getOAuthBindSessionIdentity(c)
+		if identityErr != nil {
+			common.SysError("OAuth bind session validation failed: " + identityErr.Error())
+		}
 		if !ok || identity.UserID != pendingFlow.UserId || identity.SessionID != pendingFlow.SessionId {
 			c.JSON(http.StatusForbidden, gin.H{
 				"success": false,
@@ -197,6 +202,7 @@ func HandleOAuth(c *gin.Context) {
 			})
 			return
 		}
+		bindIdentity = identity
 		consumeMatch.UserId = identity.UserID
 		consumeMatch.SessionId = identity.SessionID
 	} else if pendingFlow.Intent != model.AuthFlowIntentLogin {
@@ -228,7 +234,7 @@ func HandleOAuth(c *gin.Context) {
 		return
 	}
 	if pendingFlow.Intent == model.AuthFlowIntentBind {
-		handleOAuthBind(c, provider, pendingFlow, state)
+		handleOAuthBind(c, provider, pendingFlow, state, bindIdentity)
 		return
 	}
 
@@ -258,7 +264,7 @@ func HandleOAuth(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	user, err := findOrCreateOAuthUser(c, provider, oauthUser, payload.AffiliateCode)
+	user, err := findOrCreateOAuthUser(c, pendingFlow.Provider, provider, oauthUser, payload.AffiliateCode)
 	if err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
@@ -295,13 +301,18 @@ func HandleOAuth(c *gin.Context) {
 	setupLoginWithExtra(user, c, extraData)
 }
 
-func handleLegacyOAuth(c *gin.Context, provider oauth.Provider, state string) bool {
+func handleLegacyOAuth(c *gin.Context, providerName string, provider oauth.Provider, state string) bool {
 	session := sessions.Default(c)
 	if state == "" || session.Get("oauth_state") == nil || state != session.Get("oauth_state").(string) {
 		return false
 	}
 	if session.Get("username") != nil {
-		handleLegacyOAuthBind(c, provider)
+		identity, ok, err := middleware.GetLegacySessionAuthIdentity(c)
+		if err != nil || !ok {
+			common.ApiErrorI18n(c, i18n.MsgAuthNotLoggedIn)
+			return true
+		}
+		handleLegacyOAuthBind(c, providerName, provider, identity.UserID)
 		return true
 	}
 	if !provider.IsEnabled() {
@@ -333,7 +344,7 @@ func handleLegacyOAuth(c *gin.Context, provider oauth.Provider, state string) bo
 			affiliateCode = value
 		}
 	}
-	user, err := findOrCreateOAuthUser(c, provider, oauthUser, affiliateCode)
+	user, err := findOrCreateOAuthUser(c, providerName, provider, oauthUser, affiliateCode)
 	if err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
@@ -363,8 +374,28 @@ func handleLegacyOAuth(c *gin.Context, provider oauth.Provider, state string) bo
 	return true
 }
 
+func getOAuthBindSessionIdentity(c *gin.Context) (service.AuthIdentity, bool, error) {
+	if identity, ok := middleware.GetSessionAuthIdentity(c); ok {
+		return identity, true, nil
+	}
+	if rawAccessToken, ok := dashboardBearer(c.GetHeader("Authorization")); ok {
+		identity, internal, err := service.ParseDashboardAccessToken(rawAccessToken)
+		if !internal {
+			return service.AuthIdentity{}, false, nil
+		}
+		if err != nil {
+			return service.AuthIdentity{}, false, err
+		}
+		if _, _, err := service.ValidateLoginSession(identity); err != nil {
+			return service.AuthIdentity{}, false, err
+		}
+		return identity, true, nil
+	}
+	return middleware.GetLegacySessionAuthIdentity(c)
+}
+
 // handleOAuthBind handles binding OAuth account to existing user
-func handleOAuthBind(c *gin.Context, provider oauth.Provider, pendingFlow *model.AuthFlow, flowToken string) {
+func handleOAuthBind(c *gin.Context, provider oauth.Provider, pendingFlow *model.AuthFlow, flowToken string, identity service.AuthIdentity) {
 	// Exchange code for token
 	code := c.Query("code")
 	token, err := provider.ExchangeToken(c.Request.Context(), code, c)
@@ -391,6 +422,54 @@ func handleOAuthBind(c *gin.Context, provider oauth.Provider, pendingFlow *model
 			common.ApiErrorI18n(c, i18n.MsgOAuthAlreadyBound, providerParams(provider.GetName()))
 			return
 		}
+	}
+
+	if _, ok := builtInOAuthExternalIdentityProvider(pendingFlow.Provider); ok {
+		var user model.User
+		if _, err := model.ConsumeAuthFlowWithAction(flowToken, model.AuthFlowMatch{
+			Purpose:   model.AuthFlowPurposeOAuth,
+			Provider:  pendingFlow.Provider,
+			Intent:    model.AuthFlowIntentBind,
+			UserId:    pendingFlow.UserId,
+			SessionId: pendingFlow.SessionId,
+		}, func(tx *gorm.DB, flow *model.AuthFlow) error {
+			if err := tx.First(&user, flow.UserId).Error; err != nil {
+				return err
+			}
+			claimed, err := claimBuiltInOAuthIdentityWithTx(tx, &user, pendingFlow.Provider, oauthUser.ProviderUserID)
+			if err != nil {
+				return err
+			}
+			if !claimed {
+				provider.SetProviderUserID(&user, oauthUser.ProviderUserID)
+				return updateOAuthUserProviderIDsWithTx(tx, &user)
+			}
+			return nil
+		}); err != nil {
+			if errors.Is(err, model.ErrAuthFlowInvalid) ||
+				errors.Is(err, model.ErrAuthFlowExpired) ||
+				errors.Is(err, model.ErrAuthFlowConsumed) {
+				c.JSON(http.StatusForbidden, gin.H{"success": false, "message": i18n.T(c, i18n.MsgOAuthStateInvalid)})
+				return
+			}
+			common.ApiError(c, err)
+			return
+		}
+		cacheErr := model.PublishUserAuthCacheAfterCommit(identity.UserID)
+		if !continueAfterCommittedUserAuthStateError("OAuth bind", cacheErr) {
+			common.ApiError(c, cacheErr)
+			return
+		}
+		bundle, err := service.AdvanceCurrentSessionToUserVersion(identity, "user_security_changed")
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		persistLegacyLoginSession(c, &user, bundle.Session)
+		data := authRotationData(bundle)
+		data["action"] = "bind"
+		common.ApiSuccessI18n(c, i18n.MsgOAuthBindSuccess, data)
+		return
 	}
 
 	if _, err := model.ConsumeAuthFlow(flowToken, model.AuthFlowMatch{
@@ -420,9 +499,16 @@ func handleOAuthBind(c *gin.Context, provider oauth.Provider, pendingFlow *model
 			return
 		}
 	} else {
-		// Built-in provider: update user record directly
-		provider.SetProviderUserID(&user, oauthUser.ProviderUserID)
-		err = user.Update(false)
+		// Built-in provider: claim and update recognized built-in identities atomically.
+		claimed, claimErr := claimBuiltInOAuthIdentity(&user, pendingFlow.Provider, oauthUser.ProviderUserID)
+		if claimErr != nil {
+			common.ApiError(c, claimErr)
+			return
+		}
+		if !claimed {
+			provider.SetProviderUserID(&user, oauthUser.ProviderUserID)
+			err = user.Update(false)
+		}
 		if err != nil {
 			common.ApiError(c, err)
 			return
@@ -434,7 +520,7 @@ func handleOAuthBind(c *gin.Context, provider oauth.Provider, pendingFlow *model
 	})
 }
 
-func handleLegacyOAuthBind(c *gin.Context, provider oauth.Provider) {
+func handleLegacyOAuthBind(c *gin.Context, providerName string, provider oauth.Provider, userID int) {
 	if !provider.IsEnabled() {
 		common.ApiErrorI18n(c, i18n.MsgOAuthNotEnabled, providerParams(provider.GetName()))
 		return
@@ -460,10 +546,7 @@ func handleLegacyOAuthBind(c *gin.Context, provider oauth.Provider) {
 			return
 		}
 	}
-	session := sessions.Default(c)
-	id := session.Get("id")
-	userID, ok := id.(int)
-	if !ok || userID == 0 {
+	if userID <= 0 {
 		common.ApiErrorI18n(c, i18n.MsgAuthNotLoggedIn)
 		return
 	}
@@ -475,8 +558,15 @@ func handleLegacyOAuthBind(c *gin.Context, provider oauth.Provider) {
 	if genericProvider, ok := provider.(*oauth.GenericOAuthProvider); ok {
 		err = model.UpdateUserOAuthBinding(user.Id, genericProvider.GetProviderId(), oauthUser.ProviderUserID)
 	} else {
-		provider.SetProviderUserID(&user, oauthUser.ProviderUserID)
-		err = user.Update(false)
+		claimed, claimErr := claimBuiltInOAuthIdentity(&user, providerName, oauthUser.ProviderUserID)
+		if claimErr != nil {
+			common.ApiError(c, claimErr)
+			return
+		}
+		if !claimed {
+			provider.SetProviderUserID(&user, oauthUser.ProviderUserID)
+			err = user.Update(false)
+		}
 	}
 	if err != nil {
 		common.ApiError(c, err)
@@ -486,7 +576,7 @@ func handleLegacyOAuthBind(c *gin.Context, provider oauth.Provider) {
 }
 
 // findOrCreateOAuthUser finds existing user or creates new user
-func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *oauth.OAuthUser, affiliateCode string) (*model.User, error) {
+func findOrCreateOAuthUser(c *gin.Context, providerName string, provider oauth.Provider, oauthUser *oauth.OAuthUser, affiliateCode string) (*model.User, error) {
 	user := &model.User{}
 
 	// Check if user already exists with new ID
@@ -503,21 +593,23 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	}
 
 	// Try to find user with legacy ID (for GitHub migration from login to numeric ID)
-	if legacyID, ok := oauthUser.Extra["legacy_id"].(string); ok && legacyID != "" {
-		if provider.IsUserIDTaken(legacyID) {
-			err := provider.FillUserByProviderID(user, legacyID)
-			if err != nil {
-				return nil, err
-			}
-			if user.Id != 0 {
-				// Found user with legacy ID, migrate to new ID
-				common.SysLog(fmt.Sprintf("[OAuth] Migrating user %d from legacy_id=%s to new_id=%s",
-					user.Id, legacyID, oauthUser.ProviderUserID))
-				if err := user.UpdateGitHubId(oauthUser.ProviderUserID); err != nil {
-					common.SysError(fmt.Sprintf("[OAuth] Failed to migrate user %d: %s", user.Id, err.Error()))
-					// Continue with login even if migration fails
+	if providerName == model.ExternalIdentityProviderGitHub {
+		if legacyID, ok := oauthUser.Extra["legacy_id"].(string); ok && legacyID != "" {
+			if provider.IsUserIDTaken(legacyID) {
+				err := provider.FillUserByProviderID(user, legacyID)
+				if err != nil {
+					return nil, err
 				}
-				return user, nil
+				if user.Id != 0 {
+					// Found user with legacy ID, migrate to new ID
+					common.SysLog(fmt.Sprintf("[OAuth] Migrating user %d from legacy_id=%s to new_id=%s",
+						user.Id, legacyID, oauthUser.ProviderUserID))
+					if _, err := claimBuiltInOAuthIdentity(user, providerName, oauthUser.ProviderUserID); err != nil {
+						common.SysError(fmt.Sprintf("[OAuth] Failed to migrate user %d: %s", user.Id, err.Error()))
+						return nil, err
+					}
+					return user, nil
+				}
 			}
 		}
 	}
@@ -597,17 +689,15 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 				return err
 			}
 
-			// Set the provider user ID on the user model and update
-			provider.SetProviderUserID(user, oauthUser.ProviderUserID)
-			if err := tx.Model(user).Updates(map[string]interface{}{
-				"github_id":   user.GitHubId,
-				"discord_id":  user.DiscordId,
-				"oidc_id":     user.OidcId,
-				"linux_do_id": user.LinuxDOId,
-				"wechat_id":   user.WeChatId,
-				"telegram_id": user.TelegramId,
-			}).Error; err != nil {
+			claimed, err := claimBuiltInOAuthIdentityWithTx(tx, user, providerName, oauthUser.ProviderUserID)
+			if err != nil {
 				return err
+			}
+			if !claimed {
+				provider.SetProviderUserID(user, oauthUser.ProviderUserID)
+				if err := updateOAuthUserProviderIDsWithTx(tx, user); err != nil {
+					return err
+				}
 			}
 
 			return nil
@@ -621,6 +711,48 @@ func findOrCreateOAuthUser(c *gin.Context, provider oauth.Provider, oauthUser *o
 	}
 
 	return user, nil
+}
+
+func builtInOAuthExternalIdentityProvider(providerName string) (string, bool) {
+	switch strings.TrimSpace(strings.ToLower(providerName)) {
+	case model.ExternalIdentityProviderGitHub:
+		return model.ExternalIdentityProviderGitHub, true
+	case model.ExternalIdentityProviderDiscord:
+		return model.ExternalIdentityProviderDiscord, true
+	case model.ExternalIdentityProviderOIDC:
+		return model.ExternalIdentityProviderOIDC, true
+	case model.ExternalIdentityProviderLinuxDO:
+		return model.ExternalIdentityProviderLinuxDO, true
+	default:
+		return "", false
+	}
+}
+
+func claimBuiltInOAuthIdentity(user *model.User, providerName string, providerUserID string) (bool, error) {
+	identityProvider, ok := builtInOAuthExternalIdentityProvider(providerName)
+	if !ok {
+		return false, nil
+	}
+	return true, user.ClaimExternalIdentity(identityProvider, providerUserID)
+}
+
+func claimBuiltInOAuthIdentityWithTx(tx *gorm.DB, user *model.User, providerName string, providerUserID string) (bool, error) {
+	identityProvider, ok := builtInOAuthExternalIdentityProvider(providerName)
+	if !ok {
+		return false, nil
+	}
+	return true, user.ClaimExternalIdentityWithTx(tx, identityProvider, providerUserID)
+}
+
+func updateOAuthUserProviderIDsWithTx(tx *gorm.DB, user *model.User) error {
+	return tx.Model(user).Updates(map[string]interface{}{
+		"github_id":   user.GitHubId,
+		"discord_id":  user.DiscordId,
+		"oidc_id":     user.OidcId,
+		"linux_do_id": user.LinuxDOId,
+		"wechat_id":   user.WeChatId,
+		"telegram_id": user.TelegramId,
+	}).Error
 }
 
 // Error types for OAuth

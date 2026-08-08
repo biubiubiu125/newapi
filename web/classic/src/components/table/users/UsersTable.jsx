@@ -17,21 +17,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useMemo, useState } from 'react';
-import { Empty } from '@douyinfe/semi-ui';
-import CardTable from '../../common/ui/CardTable';
 import {
   IllustrationNoResult,
   IllustrationNoResultDark,
 } from '@douyinfe/semi-illustrations';
-import { getUsersColumns } from './UsersColumnDefs';
-import PromoteUserModal from './modals/PromoteUserModal';
+import { Empty } from '@douyinfe/semi-ui';
+import React, { useMemo, useState } from 'react';
+
+import CardTable from '../../common/ui/CardTable';
+import DeleteUserModal from './modals/DeleteUserModal';
 import DemoteUserModal from './modals/DemoteUserModal';
 import EnableDisableUserModal from './modals/EnableDisableUserModal';
-import DeleteUserModal from './modals/DeleteUserModal';
+import PromoteUserModal from './modals/PromoteUserModal';
 import ResetPasskeyModal from './modals/ResetPasskeyModal';
 import ResetTwoFAModal from './modals/ResetTwoFAModal';
 import UserSubscriptionsModal from './modals/UserSubscriptionsModal';
+import { getUsersColumns } from './UsersColumnDefs';
 
 const UsersTable = (usersData) => {
   const {
@@ -176,14 +177,14 @@ const UsersTable = (usersData) => {
         scroll={compactMode ? undefined : { x: 'max-content' }}
         pagination={{
           currentPage: activePage,
-          pageSize: pageSize,
+          pageSize,
           total: userCount,
           pageSizeOpts: [10, 20, 50, 100],
           showSizeChanger: true,
           onPageSizeChange: handlePageSizeChange,
           onPageChange: handlePageChange,
         }}
-        hidePagination={true}
+        hidePagination
         loading={loading}
         onRow={handleRow}
         empty={

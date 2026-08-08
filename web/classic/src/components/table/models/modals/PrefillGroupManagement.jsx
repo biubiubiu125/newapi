@@ -17,7 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useEffect } from 'react';
+import { IconPlus, IconLayers } from '@douyinfe/semi-icons';
+import {
+  IllustrationNoResult,
+  IllustrationNoResultDark,
+} from '@douyinfe/semi-illustrations';
 import {
   SideSheet,
   Button,
@@ -30,25 +34,22 @@ import {
   Spin,
   Empty,
 } from '@douyinfe/semi-ui';
-import { IconPlus, IconLayers } from '@douyinfe/semi-icons';
-import {
-  IllustrationNoResult,
-  IllustrationNoResultDark,
-} from '@douyinfe/semi-illustrations';
+import React, { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   API,
   showError,
   showSuccess,
   stringToColor,
 } from '../../../../helpers';
-import { useTranslation } from 'react-i18next';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import CardTable from '../../../common/ui/CardTable';
-import EditPrefillGroupModal from './EditPrefillGroupModal';
 import {
   renderLimitedItems,
   renderDescription,
 } from '../../../common/ui/RenderUtils';
+import EditPrefillGroupModal from './EditPrefillGroupModal';
 
 const { Text, Title } = Typography;
 
@@ -76,7 +77,7 @@ const PrefillGroupManagement = ({ visible, onClose }) => {
       } else {
         showError(res.data.message || t('获取组列表失败'));
       }
-    } catch (error) {
+    } catch {
       showError(t('获取组列表失败'));
     }
     setLoading(false);
@@ -92,7 +93,7 @@ const PrefillGroupManagement = ({ visible, onClose }) => {
       } else {
         showError(res.data.message || t('删除失败'));
       }
-    } catch (error) {
+    } catch {
       showError(t('删除失败'));
     }
   };
@@ -151,8 +152,9 @@ const PrefillGroupManagement = ({ visible, onClose }) => {
                 ? JSON.parse(items || '{}')
                 : items || {};
             const keys = Object.keys(obj);
-            if (keys.length === 0)
+            if (keys.length === 0) {
               return <Text type='tertiary'>{t('暂无项目')}</Text>;
+            }
             return renderLimitedItems({
               items: keys,
               renderItem: (key, idx) => (
@@ -271,7 +273,7 @@ const PrefillGroupManagement = ({ visible, onClose }) => {
                   columns={columns}
                   dataSource={groups}
                   rowKey='id'
-                  hidePagination={true}
+                  hidePagination
                   size='small'
                   scroll={{ x: 'max-content' }}
                 />

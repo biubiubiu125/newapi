@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useRef, useEffect, useState, useContext } from 'react';
+import { IconMail, IconKey, IconBell, IconLink } from '@douyinfe/semi-icons';
 import {
   Button,
   Typography,
@@ -32,23 +32,24 @@ import {
   Row,
   Col,
 } from '@douyinfe/semi-ui';
-import { IconMail, IconKey, IconBell, IconLink } from '@douyinfe/semi-icons';
 import { ShieldCheck, Bell, DollarSign, Settings } from 'lucide-react';
+import React, { useRef, useEffect, useState, useContext } from 'react';
+
+import { StatusContext } from '../../../../context/Status';
+import { UserContext } from '../../../../context/User';
 import {
   renderQuotaWithPrompt,
   API,
   showSuccess,
   showError,
 } from '../../../../helpers';
-import CodeViewer from '../../../playground/CodeViewer';
-import { StatusContext } from '../../../../context/Status';
-import { UserContext } from '../../../../context/User';
-import { useUserPermissions } from '../../../../hooks/common/useUserPermissions';
 import {
   mergeAdminConfig,
   sanitizeSidebarConfig,
   useSidebar,
 } from '../../../../hooks/common/useSidebar';
+import { useUserPermissions } from '../../../../hooks/common/useUserPermissions';
+import CodeViewer from '../../../playground/CodeViewer';
 
 const defaultSidebarModules = {
   chat: {
@@ -162,7 +163,7 @@ const NotificationSettings = ({
       } else {
         showError(res.data.message);
       }
-    } catch (error) {
+    } catch {
       showError(t('保存失败'));
     }
     setSidebarLoading(false);
@@ -183,7 +184,7 @@ const NotificationSettings = ({
               statusState.status.SidebarModulesAdmin,
             );
             setAdminConfig(mergeAdminConfig(adminConf));
-          } catch (error) {
+          } catch {
             setAdminConfig(mergeAdminConfig(null));
           }
         } else {
@@ -205,19 +206,19 @@ const NotificationSettings = ({
               ...userConf,
               chat: {
                 ...defaultSidebarModules.chat,
-                ...(userConf.chat || {}),
+                ...userConf.chat,
               },
               console: {
                 ...defaultSidebarModules.console,
-                ...(userConf.console || {}),
+                ...userConf.console,
               },
               personal: {
                 ...defaultSidebarModules.personal,
-                ...(userConf.personal || {}),
+                ...userConf.personal,
               },
               admin: {
                 ...defaultSidebarModules.admin,
-                ...(userConf.admin || {}),
+                ...userConf.admin,
                 adminReferral:
                   userConf.admin?.adminReferral ??
                   userConf.admin?.referral ??
@@ -653,10 +654,10 @@ const NotificationSettings = ({
                       </div>
                       <div className='text-xs text-gray-500 space-y-2'>
                         <div>
-                          • <strong>{'title'}:</strong> {t('通知标题')}
+                          • <strong>title:</strong> {t('通知标题')}
                         </div>
                         <div>
-                          • <strong>{'content'}:</strong> {t('通知内容')}
+                          • <strong>content:</strong> {t('通知内容')}
                         </div>
                         <div className='mt-3 pt-3 border-t border-gray-200'>
                           <span className='text-gray-400'>

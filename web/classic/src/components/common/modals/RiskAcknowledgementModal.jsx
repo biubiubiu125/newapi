@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { IconAlertTriangle } from '@douyinfe/semi-icons';
 import {
   Modal,
   Button,
@@ -26,7 +26,8 @@ import {
   Input,
   Space,
 } from '@douyinfe/semi-ui';
-import { IconAlertTriangle } from '@douyinfe/semi-icons';
+import React, { useCallback, useEffect, useMemo, useState } from 'react';
+
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
 import MarkdownRenderer from '../markdown/MarkdownRenderer';
 

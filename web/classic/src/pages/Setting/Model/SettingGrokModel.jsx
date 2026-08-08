@@ -17,8 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useRef, useState } from 'react';
 import { Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
+import React, { useEffect, useRef, useState } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   API,
   compareObjects,
@@ -26,7 +28,6 @@ import {
   showSuccess,
   showWarning,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
 
 const XAI_VIOLATION_FEE_DOC_URL =
   'https://docs.x.ai/docs/models#usage-guidelines-violation-fee';
@@ -62,8 +63,9 @@ export default function SettingGrokModel(props) {
             if (requestQueue.length === 1) {
               if (res.includes(undefined)) return;
             } else if (requestQueue.length > 1) {
-              if (res.includes(undefined))
+              if (res.includes(undefined)) {
                 return showError(t('部分保存失败，请重试'));
+              }
             }
             showSuccess(t('保存成功'));
             props.refresh();
@@ -108,7 +110,7 @@ export default function SettingGrokModel(props) {
             <Col xs={24} sm={12} md={8} lg={8} xl={8}>
               <Form.Switch
                 label={t('启用违规扣费')}
-                field={'grok.violation_deduction_enabled'}
+                field='grok.violation_deduction_enabled'
                 onChange={(value) =>
                   setInputs({
                     ...inputs,
@@ -135,7 +137,7 @@ export default function SettingGrokModel(props) {
             <Col xs={24} sm={12} md={8} lg={8} xl={8}>
               <Form.InputNumber
                 label={t('违规扣费金额')}
-                field={'grok.violation_deduction_amount'}
+                field='grok.violation_deduction_amount'
                 min={0}
                 step={0.01}
                 precision={4}

@@ -19,6 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 
 import { useState, useCallback, useRef, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+
+import {
+  loadConfig,
+  saveConfig,
+  loadMessages,
+  saveMessages,
+} from '../../components/playground/configStorage';
 import {
   DEFAULT_MESSAGES,
   getDefaultMessages,
@@ -26,12 +33,6 @@ import {
   DEBUG_TABS,
   MESSAGE_STATUS,
 } from '../../constants/playground.constants';
-import {
-  loadConfig,
-  saveConfig,
-  loadMessages,
-  saveMessages,
-} from '../../components/playground/configStorage';
 import { processIncompleteThinkTags } from '../../helpers';
 
 export const usePlaygroundState = () => {
@@ -167,7 +168,10 @@ export const usePlaygroundState = () => {
   // 配置导入/重置
   const handleConfigImport = useCallback((importedConfig) => {
     if (importedConfig.inputs) {
-      const parsedMaxTokens = parseInt(importedConfig.inputs.max_tokens, 10);
+      const parsedMaxTokens = Number.parseInt(
+        importedConfig.inputs.max_tokens,
+        10,
+      );
       setInputs((prev) => ({
         ...prev,
         ...importedConfig.inputs,
@@ -228,7 +232,7 @@ export const usePlaygroundState = () => {
   useEffect(() => {
     if (!Array.isArray(message) || message.length === 0) return;
 
-    const lastMsg = message[message.length - 1];
+    const lastMsg = message.at(-1);
     if (
       lastMsg.status === MESSAGE_STATUS.LOADING ||
       lastMsg.status === MESSAGE_STATUS.INCOMPLETE

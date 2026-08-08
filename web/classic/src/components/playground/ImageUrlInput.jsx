@@ -17,10 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Input, Typography, Button, Switch } from '@douyinfe/semi-ui';
 import { IconFile } from '@douyinfe/semi-icons';
+import { Input, Typography, Button, Switch } from '@douyinfe/semi-ui';
 import { FileText, Plus, X, Image } from 'lucide-react';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
 
 const ImageUrlInput = ({

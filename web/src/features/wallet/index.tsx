@@ -16,15 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
-import { useTranslation } from 'react-i18next'
 import { useQueryClient } from '@tanstack/react-query'
 import { CheckCircle2, Clock3, RefreshCw } from 'lucide-react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { getSelf } from '@/lib/api'
-import { useStatus } from '@/hooks/use-status'
-import { useSystemConfig } from '@/hooks/use-system-config'
-import { subscribeSettingsRefresh } from '@/lib/settings-refresh'
+
+import { SectionPageLayout } from '@/components/layout'
 import {
   AlertDialog,
   AlertDialogAction,
@@ -36,7 +34,11 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
-import { SectionPageLayout } from '@/components/layout'
+import { useStatus } from '@/hooks/use-status'
+import { useSystemConfig } from '@/hooks/use-system-config'
+import { getSelf } from '@/lib/api'
+import { subscribeSettingsRefresh } from '@/lib/settings-refresh'
+
 import { getUserBillingHistory, isApiSuccess } from './api'
 import { BillingHistoryDialog } from './components/dialogs/billing-history-dialog'
 import { CreemConfirmDialog } from './components/dialogs/creem-confirm-dialog'
@@ -201,9 +203,12 @@ export function Wallet(props: WalletProps) {
         payment?.paymentKind === 'topup' &&
         typeof payment.amount === 'number'
       ) {
-        return t('Payment completed. Top-up balance {{amount}} has been credited.', {
-          amount: formatSiteCreditAmount(payment.amount),
-        })
+        return t(
+          'Payment completed. Top-up balance {{amount}} has been credited.',
+          {
+            amount: formatSiteCreditAmount(payment.amount),
+          }
+        )
       }
 
       if (payment?.paymentKind === 'subscription') {
@@ -361,7 +366,9 @@ export function Wallet(props: WalletProps) {
     } else if (returnedPay === 'pending') {
       toast.info(t('Payment returned. Waiting for payment confirmation...'))
     } else if (returnedPay === 'fail') {
-      toast.error(t('Payment verification failed. Please check your order history.'))
+      toast.error(
+        t('Payment verification failed. Please check your order history.')
+      )
     }
 
     window.history.replaceState({}, '', window.location.pathname)
@@ -738,7 +745,9 @@ export function Wallet(props: WalletProps) {
             <AlertDialogDescription>
               {pendingPayment?.status === 'completed'
                 ? t('Account data has been refreshed.')
-                : t('The payment page has opened. If payment is confirmed, this page will refresh automatically.')}
+                : t(
+                    'The payment page has opened. If payment is confirmed, this page will refresh automatically.'
+                  )}
             </AlertDialogDescription>
           </AlertDialogHeader>
 
@@ -747,7 +756,7 @@ export function Wallet(props: WalletProps) {
               <div className='text-muted-foreground text-xs'>
                 {t('Order Number')}
               </div>
-              <div className='mt-1 break-all text-sm font-medium'>
+              <div className='mt-1 text-sm font-medium break-all'>
                 {pendingPayment?.tradeNo || t('Pending payment order')}
               </div>
             </div>
@@ -772,7 +781,9 @@ export function Wallet(props: WalletProps) {
 
             {pendingPayment?.status === 'waiting' && (
               <div className='text-muted-foreground text-sm'>
-                {t('You can close this dialog. We will keep checking in the background and refresh your account after the payment is confirmed.')}
+                {t(
+                  'You can close this dialog. We will keep checking in the background and refresh your account after the payment is confirmed.'
+                )}
               </div>
             )}
           </div>

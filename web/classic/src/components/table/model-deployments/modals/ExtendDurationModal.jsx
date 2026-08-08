@@ -17,7 +17,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useRef, useState } from 'react';
 import {
   Modal,
   Form,
@@ -31,12 +30,14 @@ import {
   Banner,
   Spin,
 } from '@douyinfe/semi-ui';
+import React, { useEffect, useRef, useState } from 'react';
 import {
   FaClock,
   FaCalculator,
   FaInfoCircle,
   FaExclamationTriangle,
 } from 'react-icons/fa';
+
 import { API, showError, showSuccess } from '../../../../helpers';
 
 const { Text } = Typography;
@@ -242,9 +243,9 @@ const ExtendDurationModal = ({
       }
     } catch (error) {
       showError(
-        t('延长时长失败') +
-          ': ' +
-          (error?.response?.data?.message || error.message),
+        `${t('延长时长失败')}: ${
+          error?.response?.data?.message || error.message
+        }`,
       );
     } finally {
       setLoading(false);

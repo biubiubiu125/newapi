@@ -17,7 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
+import {
+  IllustrationNoResult,
+  IllustrationNoResultDark,
+} from '@douyinfe/semi-illustrations';
 import {
   Button,
   Space,
@@ -32,11 +35,10 @@ import {
   TextArea,
   Tooltip,
 } from '@douyinfe/semi-ui';
-import {
-  IllustrationNoResult,
-  IllustrationNoResultDark,
-} from '@douyinfe/semi-illustrations';
 import { Plus, Edit, Trash2, Save, Bell, Maximize2 } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   API,
   showError,
@@ -44,7 +46,6 @@ import {
   getRelativeTime,
   formatDateTimeString,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
 
 const { Text } = Typography;
 
@@ -306,7 +307,7 @@ const SettingsAnnouncements = ({ options, refresh }) => {
           : '公告已添加，请及时点击“保存设置”进行保存',
       );
     } catch (error) {
-      showError('操作失败: ' + error.message);
+      showError(`操作失败: ${error.message}`);
     } finally {
       setModalLoading(false);
     }
@@ -480,8 +481,8 @@ const SettingsAnnouncements = ({ options, refresh }) => {
           rowKey='id'
           scroll={{ x: 'max-content' }}
           pagination={{
-            currentPage: currentPage,
-            pageSize: pageSize,
+            currentPage,
+            pageSize,
             total: announcementsList.length,
             showSizeChanger: true,
             showQuickJumper: true,

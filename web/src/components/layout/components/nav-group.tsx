@@ -46,18 +46,18 @@ import {
   SidebarMenuSubItem,
   useSidebar,
 } from '@/components/ui/sidebar'
-
-import { checkIsActive } from '../lib/url-utils'
-import {
-  type NavCollapsible,
-  type NavChatPresets,
-  type NavItem,
-  type NavLink,
-  type NavGroup as NavGroupProps,
-} from '../types'
-import { acknowledgeAdminSidebarBadge } from '../lib/admin-sidebar-badge-ack'
-import { ChatPresetsItem } from './chat-presets-item'
 import { useAuthStore } from '@/stores/auth-store'
+
+import { acknowledgeAdminSidebarBadge } from '../lib/admin-sidebar-badge-ack'
+import { checkIsActive } from '../lib/url-utils'
+import type {
+  NavCollapsible,
+  NavChatPresets,
+  NavItem,
+  NavLink,
+  NavGroup as NavGroupProps,
+} from '../types'
+import { ChatPresetsItem } from './chat-presets-item'
 
 function acknowledgeNavItemBadges(
   item: Pick<

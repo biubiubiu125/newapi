@@ -17,7 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { IconSearch } from '@douyinfe/semi-icons';
+import {
+  IllustrationNoResult,
+  IllustrationNoResultDark,
+} from '@douyinfe/semi-illustrations';
 import {
   Button,
   Table,
@@ -31,8 +35,12 @@ import {
   Modal,
   Spin,
 } from '@douyinfe/semi-ui';
-import { IconSearch } from '@douyinfe/semi-icons';
 import { RefreshCcw, CheckSquare, AlertTriangle } from 'lucide-react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+
+import ChannelSelectorModal from '../../../components/settings/ChannelSelectorModal';
+import { DEFAULT_ENDPOINT } from '../../../constants';
 import {
   API,
   showError,
@@ -42,13 +50,6 @@ import {
   stringToColor,
 } from '../../../helpers';
 import { useIsMobile } from '../../../hooks/common/useIsMobile';
-import { DEFAULT_ENDPOINT } from '../../../constants';
-import { useTranslation } from 'react-i18next';
-import {
-  IllustrationNoResult,
-  IllustrationNoResultDark,
-} from '@douyinfe/semi-illustrations';
-import ChannelSelectorModal from '../../../components/settings/ChannelSelectorModal';
 
 const OFFICIAL_RATIO_PRESET_ID = -100;
 const OFFICIAL_RATIO_PRESET_NAME = '官方倍率预设';
@@ -224,7 +225,7 @@ export default function UpstreamRatioSync(props) {
     }));
 
     const payload = {
-      upstreams: upstreams,
+      upstreams,
       timeout: 10,
     };
 
@@ -376,7 +377,7 @@ export default function UpstreamRatioSync(props) {
       const category = getBillingCategory(ratioType);
 
       setResolutions((prev) => {
-        const newModelRes = { ...(prev[model] || {}) };
+        const newModelRes = { ...prev[model] };
 
         Object.keys(newModelRes).forEach((rt) => {
           if (
@@ -454,8 +455,9 @@ export default function UpstreamRatioSync(props) {
         currentRatios.ImageRatio[model] !== undefined ||
         currentRatios.AudioRatio[model] !== undefined ||
         currentRatios.AudioCompletionRatio[model] !== undefined
-      )
+      ) {
         return 'ratio';
+      }
       return null;
     };
 
@@ -557,7 +559,7 @@ export default function UpstreamRatioSync(props) {
         Object.entries(ratios).forEach(([ratioType, value]) => {
           const optionKey = optionKeyBySyncField(ratioType);
           finalRatios[optionKey][model] = numericSyncFields.has(ratioType)
-            ? parseFloat(value)
+            ? Number.parseFloat(value)
             : value;
         });
       });
@@ -602,7 +604,7 @@ export default function UpstreamRatioSync(props) {
         } else {
           showError(t('部分保存失败'));
         }
-      } catch (error) {
+      } catch {
         showError(t('保存失败'));
       } finally {
         setLoading(false);
@@ -712,7 +714,7 @@ export default function UpstreamRatioSync(props) {
           billingConflict: hasPrice && hasOtherRatio,
         };
       });
-    }, [differences]);
+    }, []);
 
     const filteredDataSource = useMemo(() => {
       if (!searchKeyword.trim() && !ratioTypeFilter) {
@@ -729,7 +731,7 @@ export default function UpstreamRatioSync(props) {
 
         return matchesKeyword && matchesRatioType;
       });
-    }, [dataSource, searchKeyword, ratioTypeFilter]);
+    }, [dataSource, searchKeyword]);
 
     const upstreamNames = useMemo(() => {
       const set = new Set();
@@ -740,8 +742,8 @@ export default function UpstreamRatioSync(props) {
           );
         });
       });
-      return Array.from(set);
-    }, [filteredDataSource, ratioTypeFilter]);
+      return [...set];
+    }, [filteredDataSource]);
 
     const renderValueTag = (value, color = 'default') => {
       if (value === null || value === undefined) {
@@ -1023,8 +1025,8 @@ export default function UpstreamRatioSync(props) {
         columns={columns}
         dataSource={getCurrentPageData(filteredDataSource)}
         pagination={{
-          currentPage: currentPage,
-          pageSize: pageSize,
+          currentPage,
+          pageSize,
           total: filteredDataSource.length,
           showSizeChanger: true,
           showQuickJumper: true,

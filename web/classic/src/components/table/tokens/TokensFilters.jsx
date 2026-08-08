@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useRef } from 'react';
-import { Form, Button } from '@douyinfe/semi-ui';
 import { IconSearch } from '@douyinfe/semi-icons';
+import { Form, Button } from '@douyinfe/semi-ui';
+import React, { useRef } from 'react';
 
 const TokensFilters = ({
   formInitValues,
@@ -48,7 +48,7 @@ const TokensFilters = ({
         formApiRef.current = api;
       }}
       onSubmit={() => searchTokens(1)}
-      allowEmpty={true}
+      allowEmpty
       autoComplete='off'
       layout='horizontal'
       trigger='change'

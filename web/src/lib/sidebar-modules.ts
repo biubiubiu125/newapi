@@ -73,12 +73,14 @@ export const FORCE_ENABLED_SIDEBAR_MODULES: Record<string, string[]> = {
   admin: ['setting'],
 }
 
-export const SIDEBAR_MODULE_ALIASES: Record<string, Record<string, string[]>> =
-  {
-    admin: {
-      referral: ['adminReferral'],
-    },
-  }
+export const SIDEBAR_MODULE_ALIASES: Record<
+  string,
+  Record<string, string[]>
+> = {
+  admin: {
+    referral: ['adminReferral'],
+  },
+}
 
 export const REMOVED_SIDEBAR_MODULES: Record<string, string[]> = {
   admin: [
@@ -204,10 +206,8 @@ export const SIDEBAR_MODULES_META: Record<string, SidebarSectionMeta> = {
   },
 }
 
-export const isForcedVisibleSidebarModule = (
-  section: string,
-  module: string
-) => FORCE_ENABLED_SIDEBAR_MODULES[section]?.includes(module) ?? false
+export const isForcedVisibleSidebarModule = (section: string, module: string) =>
+  FORCE_ENABLED_SIDEBAR_MODULES[section]?.includes(module) ?? false
 
 export const cloneSidebarModulesDefault = (): SidebarModulesAdminConfig =>
   Object.entries(SIDEBAR_MODULES_DEFAULT).reduce<SidebarModulesAdminConfig>(

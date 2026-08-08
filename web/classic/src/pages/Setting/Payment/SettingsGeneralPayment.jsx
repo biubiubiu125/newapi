@@ -17,8 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import { Button, Col, Form, Row, Spin } from '@douyinfe/semi-ui';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   API,
   removeTrailingSlash,
@@ -26,7 +28,6 @@ import {
   showSuccess,
   verifyJSON,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
 
 export default function SettingsGeneralPayment(props) {
   const { t } = useTranslation();
@@ -151,7 +152,7 @@ export default function SettingsGeneralPayment(props) {
           showError(res.data.message);
         });
       }
-    } catch (error) {
+    } catch {
       showError(t('更新失败'));
     }
     setLoading(false);
@@ -168,7 +169,7 @@ export default function SettingsGeneralPayment(props) {
           <Form.Input
             field='ServerAddress'
             label={t('服务器地址')}
-            placeholder={'https://yourdomain.com'}
+            placeholder='https://yourdomain.com'
             style={{ width: '100%' }}
             extraText={t(
               '该服务器地址将影响支付回调地址以及默认首页展示的地址，请确保正确配置',

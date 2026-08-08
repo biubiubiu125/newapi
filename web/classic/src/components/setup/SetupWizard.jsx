@@ -17,16 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import { Card, Divider, Steps, Form } from '@douyinfe/semi-ui';
-import { API, showError, showNotice } from '../../helpers';
+import React, { useEffect, useState, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 
+import { API, showError, showNotice } from '../../helpers';
 import StepNavigation from './components/StepNavigation';
-import DatabaseStep from './components/steps/DatabaseStep';
 import AdminStep from './components/steps/AdminStep';
-import UsageModeStep from './components/steps/UsageModeStep';
 import CompleteStep from './components/steps/CompleteStep';
+import DatabaseStep from './components/steps/DatabaseStep';
+import UsageModeStep from './components/steps/UsageModeStep';
 
 const USERNAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 const REGISTER_USERNAME_MAX_LENGTH = 20;

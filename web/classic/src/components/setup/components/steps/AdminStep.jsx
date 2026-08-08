@@ -17,9 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Banner, Form } from '@douyinfe/semi-ui';
 import { IconUser, IconLock } from '@douyinfe/semi-icons';
+import { Banner, Form } from '@douyinfe/semi-ui';
+import React from 'react';
 
 const USERNAME_PATTERN = /^[A-Za-z0-9_-]+$/;
 const REGISTER_USERNAME_MAX_LENGTH = 20;
@@ -71,7 +71,9 @@ const AdminStep = ({
                     return Promise.resolve();
                   }
                   if (!USERNAME_PATTERN.test(value)) {
-                    return Promise.reject(t('用户名只能包含英文字母、数字、下划线和连字符'));
+                    return Promise.reject(
+                      t('用户名只能包含英文字母、数字、下划线和连字符'),
+                    );
                   }
                   if (value.length > REGISTER_USERNAME_MAX_LENGTH) {
                     return Promise.reject(t('用户名最多 20 个字符'));

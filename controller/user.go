@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
@@ -221,15 +222,7 @@ func setupLoginAtAuthVersionWithExtra(user *model.User, expectedAuthVersion int6
 	}
 
 	model.UpdateUserLastLoginAt(user.Id)
-	session := sessions.Default(c)
-	session.Set("id", user.Id)
-	session.Set("username", user.Username)
-	session.Set("role", user.Role)
-	session.Set("status", user.Status)
-	session.Set("group", user.Group)
-	if err := session.Save(); err != nil {
-		common.SysLog(fmt.Sprintf("failed to persist legacy login session for user %d: %v", user.Id, err))
-	}
+	persistLegacyLoginSession(c, currentUser, bundle.Session)
 	service.WriteRefreshCookie(c, bundle.RefreshToken)
 	setAuthNoStore(c)
 	recordLoginAudit(user, c)
@@ -262,20 +255,60 @@ func buildAuthBundleData(bundle *service.AuthBundle, user *model.User) gin.H {
 }
 
 func Logout(c *gin.Context) {
-	session := sessions.Default(c)
-	session.Clear()
-	err := session.Save()
-	if err != nil {
+	if identity, ok, err := middleware.GetLegacySessionAuthIdentity(c); err != nil {
+		common.SysLog("legacy logout session validation skipped: " + err.Error())
+	} else if ok {
+		if _, err := model.RevokeUserSession(identity.UserID, identity.SessionID, "logout"); err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"message": err.Error(),
+				"success": false,
+			})
+			return
+		}
+	}
+	if err := clearLegacyLoginSession(c); err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"message": err.Error(),
 			"success": false,
 		})
 		return
 	}
+	service.ClearRefreshCookie(c)
 	c.JSON(http.StatusOK, gin.H{
 		"message": "",
 		"success": true,
 	})
+}
+
+func persistLegacyLoginSession(c *gin.Context, user *model.User, sessionView service.LoginSessionView) {
+	defer func() {
+		_ = recover()
+	}()
+	if user == nil || sessionView.SID == "" || sessionView.Version <= 0 {
+		return
+	}
+	authVersion := user.AuthVersion
+	if sessionView.UserAuthVersion > 0 {
+		authVersion = sessionView.UserAuthVersion
+	}
+	session := sessions.Default(c)
+	session.Set("id", user.Id)
+	session.Set("username", user.Username)
+	session.Set("role", user.Role)
+	session.Set("status", user.Status)
+	session.Set("group", user.Group)
+	session.Set("session_id", sessionView.SID)
+	session.Set("auth_version", authVersion)
+	session.Set("session_version", sessionView.Version)
+	if err := session.Save(); err != nil {
+		common.SysLog(fmt.Sprintf("failed to persist legacy login session for user %d: %v", user.Id, err))
+	}
+}
+
+func clearLegacyLoginSession(c *gin.Context) error {
+	session := sessions.Default(c)
+	session.Clear()
+	return session.Save()
 }
 
 func Register(c *gin.Context) {
@@ -532,11 +565,6 @@ func GetUser(c *gin.Context) {
 
 func GenerateAccessToken(c *gin.Context) {
 	id := c.GetInt("id")
-	user, err := model.GetUserById(id, true)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
 	// get rand int 28-32
 	randI := common.GetRandomInt(4)
 	key, err := common.GenerateRandomKey(29 + randI)
@@ -545,14 +573,13 @@ func GenerateAccessToken(c *gin.Context) {
 		common.SysLog("failed to generate key: " + err.Error())
 		return
 	}
-	user.SetAccessToken(key)
 
-	if model.DB.Where("access_token = ?", user.AccessToken).First(user).RowsAffected != 0 {
+	if model.DB.Where("access_token = ?", key).First(&model.User{}).RowsAffected != 0 {
 		common.ApiErrorI18n(c, i18n.MsgUuidDuplicate)
 		return
 	}
 
-	if err := user.Update(false); err != nil {
+	if err := model.UpdateUserAccessToken(id, key); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -560,7 +587,7 @@ func GenerateAccessToken(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    user.AccessToken,
+		"data":    key,
 	})
 	return
 }
@@ -1028,6 +1055,40 @@ func UpdateSelf(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if updatePassword {
+		identity, ok := middleware.GetSessionAuthIdentity(c)
+		if !ok {
+			common.ApiError(c, errors.New("当前认证方式不支持修改密码"))
+			return
+		}
+		if err := model.DB.Transaction(func(tx *gorm.DB) error {
+			return cleanUser.UpdateWithTx(tx, true)
+		}); err != nil {
+			if model.IsUserEmailUniqueError(err) {
+				common.ApiErrorI18n(c, i18n.MsgUserExists)
+				return
+			}
+			common.ApiError(c, err)
+			return
+		}
+		cacheErr := model.PublishUserAuthCacheAfterCommit(cleanUser.Id)
+		if !continueAfterCommittedUserAuthStateError("password change", cacheErr) {
+			common.ApiError(c, cacheErr)
+			return
+		}
+		bundle, err := service.AdvanceCurrentSessionToVersion(identity, cleanUser.AuthVersion, "password_changed")
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		persistLegacyLoginSession(c, &cleanUser, bundle.Session)
+		c.JSON(http.StatusOK, gin.H{
+			"success": true,
+			"message": "",
+			"data":    authRotationData(bundle),
+		})
+		return
+	}
 	if err := cleanUser.Update(updatePassword); err != nil {
 		if model.IsUserEmailUniqueError(err) {
 			common.ApiErrorI18n(c, i18n.MsgUserExists)
@@ -1401,9 +1462,8 @@ func EmailBind(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserVerificationCodeError)
 		return
 	}
-	session := sessions.Default(c)
-	id, ok := session.Get("id").(int)
-	if !ok || id == 0 {
+	id := c.GetInt("id")
+	if id <= 0 {
 		common.ApiErrorI18n(c, i18n.MsgAuthNotLoggedIn)
 		return
 	}

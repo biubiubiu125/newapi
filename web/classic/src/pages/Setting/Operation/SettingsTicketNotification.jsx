@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState } from 'react';
 import { Button, Form, Spin, Typography } from '@douyinfe/semi-ui';
+import React, { useEffect, useState } from 'react';
+
 import { API, showError, showSuccess, toBoolean } from '../../../helpers';
 
 export default function SettingsTicketNotification(props) {

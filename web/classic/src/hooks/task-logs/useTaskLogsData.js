@@ -17,9 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { Modal } from '@douyinfe/semi-ui';
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Modal } from '@douyinfe/semi-ui';
+
+import { ITEMS_PER_PAGE } from '../../constants';
 import {
   API,
   copy,
@@ -28,7 +30,6 @@ import {
   showSuccess,
   timestamp2string,
 } from '../../helpers';
-import { ITEMS_PER_PAGE } from '../../constants';
 import { useTableCompactMode } from '../common/useTableCompactMode';
 
 export const useTaskLogsData = () => {
@@ -82,8 +83,8 @@ export const useTaskLogsData = () => {
 
   // Form state
   const [formApi, setFormApi] = useState(null);
-  let now = new Date();
-  let zeroNow = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+  const now = new Date();
+  const zeroNow = new Date(now.getFullYear(), now.getMonth(), now.getDate());
 
   const formInitValues = {
     channel_id: '',
@@ -218,7 +219,7 @@ export const useTaskLogsData = () => {
     return items.map((log) => ({
       ...log,
       timestamp2string: timestamp2string(log.created_at),
-      key: '' + log.id,
+      key: `${log.id}`,
     }));
   };
 
@@ -236,9 +237,9 @@ export const useTaskLogsData = () => {
     setLoading(true);
     const { channel_id, task_id, start_timestamp, end_timestamp } =
       getFormValues();
-    let localStartTimestamp = parseInt(Date.parse(start_timestamp) / 1000);
-    let localEndTimestamp = parseInt(Date.parse(end_timestamp) / 1000);
-    let url = isAdminUser
+    const localStartTimestamp = parseInt(Date.parse(start_timestamp) / 1000);
+    const localEndTimestamp = parseInt(Date.parse(end_timestamp) / 1000);
+    const url = isAdminUser
       ? `/api/task/?p=${page}&page_size=${size}&channel_id=${channel_id}&task_id=${task_id}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`
       : `/api/task/self?p=${page}&page_size=${size}&task_id=${task_id}&start_timestamp=${localStartTimestamp}&end_timestamp=${localEndTimestamp}`;
     const res = await API.get(url);
@@ -257,7 +258,7 @@ export const useTaskLogsData = () => {
   };
 
   const handlePageSizeChange = async (size) => {
-    localStorage.setItem('task-page-size', size + '');
+    localStorage.setItem('task-page-size', `${size}`);
     await loadLogs(1, size);
   };
 
@@ -310,7 +311,7 @@ export const useTaskLogsData = () => {
   // Initialize data
   useEffect(() => {
     const localPageSize =
-      parseInt(localStorage.getItem('task-page-size')) || ITEMS_PER_PAGE;
+      Number.parseInt(localStorage.getItem('task-page-size')) || ITEMS_PER_PAGE;
     setPageSize(localPageSize);
     loadLogs(1, localPageSize).then();
   }, []);

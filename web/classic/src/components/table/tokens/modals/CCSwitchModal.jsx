@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import React, { useState, useEffect, useMemo } from 'react';
 import {
   Modal,
   RadioGroup,
@@ -26,7 +25,9 @@ import {
   Toast,
   Typography,
 } from '@douyinfe/semi-ui';
+import React, { useState, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { selectFilter } from '../../../../helpers';
 
 const APP_CONFIGS = {
@@ -59,13 +60,13 @@ function getServerAddress() {
       const status = JSON.parse(raw);
       if (status.server_address) return status.server_address;
     }
-  } catch (_) {}
+  } catch {}
   return window.location.origin;
 }
 
 function buildCCSwitchURL(app, name, models, apiKey) {
   const serverAddress = getServerAddress();
-  const endpoint = app === 'codex' ? serverAddress + '/v1' : serverAddress;
+  const endpoint = app === 'codex' ? `${serverAddress}/v1` : serverAddress;
   const params = new URLSearchParams();
   params.set('resource', 'provider');
   params.set('app', app);
@@ -116,7 +117,7 @@ export default function CCSwitchModal({
       Toast.warning(t('请选择主模型'));
       return;
     }
-    const url = buildCCSwitchURL(app, name, models, 'sk-' + tokenKey);
+    const url = buildCCSwitchURL(app, name, models, `sk-${tokenKey}`);
     window.open(url, '_blank');
     onClose();
   };

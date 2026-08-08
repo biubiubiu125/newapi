@@ -17,7 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
+import { IconHelpCircle } from '@douyinfe/semi-icons';
+import {
+  IllustrationNoResult,
+  IllustrationNoResultDark,
+} from '@douyinfe/semi-illustrations';
 import {
   Card,
   Tag,
@@ -28,12 +32,9 @@ import {
   Button,
   Avatar,
 } from '@douyinfe/semi-ui';
-import { IconHelpCircle } from '@douyinfe/semi-icons';
 import { Copy } from 'lucide-react';
-import {
-  IllustrationNoResult,
-  IllustrationNoResultDark,
-} from '@douyinfe/semi-illustrations';
+import React from 'react';
+
 import {
   stringToColor,
   calculateModelPrice,
@@ -41,10 +42,10 @@ import {
   formatDynamicPriceSummary,
   getLobeHubIcon,
 } from '../../../../../helpers';
-import PricingCardSkeleton from './PricingCardSkeleton';
+import { useIsMobile } from '../../../../../hooks/common/useIsMobile';
 import { useMinimumLoadingTime } from '../../../../../hooks/common/useMinimumLoadingTime';
 import { renderLimitedItems } from '../../../../common/ui/RenderUtils';
-import { useIsMobile } from '../../../../../hooks/common/useIsMobile';
+import PricingCardSkeleton from './PricingCardSkeleton';
 
 const CARD_STYLES = {
   container:
@@ -90,7 +91,7 @@ const PricingCardView = ({
     if (!setSelectedRowKeys) return;
     const modelKey = getModelKey(model);
     const newKeys = checked
-      ? Array.from(new Set([...selectedRowKeys, modelKey]))
+      ? [...new Set([...selectedRowKeys, modelKey])]
       : selectedRowKeys.filter((key) => key !== modelKey);
     setSelectedRowKeys(newKeys);
     rowSelection?.onChange?.(newKeys, null);
@@ -349,7 +350,9 @@ const PricingCardView = ({
                         <div>
                           {t('补全')}:{' '}
                           {model.quota_type === 0
-                            ? parseFloat(model.completion_ratio.toFixed(3))
+                            ? Number.parseFloat(
+                                model.completion_ratio.toFixed(3),
+                              )
                             : t('无')}
                         </div>
                         <div>
@@ -372,7 +375,7 @@ const PricingCardView = ({
             currentPage={currentPage}
             pageSize={pageSize}
             total={filteredModels.length}
-            showSizeChanger={true}
+            showSizeChanger
             pageSizeOptions={[10, 20, 50, 100]}
             size={isMobile ? 'small' : 'default'}
             showQuickJumper={isMobile}

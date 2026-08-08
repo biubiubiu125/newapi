@@ -18,13 +18,14 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { cn } from '@/lib/utils'
+
 import {
   Dialog,
   DialogContent,
   DialogHeader,
   DialogTitle,
 } from '@/components/ui/dialog'
+import { cn } from '@/lib/utils'
 
 type AssetImagePreviewProps = {
   url?: string
@@ -77,7 +78,7 @@ export function AssetImagePreview({
           <DialogHeader>
             <DialogTitle>{label || t('Image Preview')}</DialogTitle>
           </DialogHeader>
-          <div className='flex max-h-[calc(90vh-6rem)] items-center justify-center overflow-auto rounded-md border bg-background p-3'>
+          <div className='bg-background flex max-h-[calc(90vh-6rem)] items-center justify-center overflow-auto rounded-md border p-3'>
             <img src={url} alt={label} className='max-h-full max-w-full' />
           </div>
         </DialogContent>

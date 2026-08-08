@@ -17,14 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { useTranslation } from 'react-i18next';
 import {
-  API,
-  showError,
-  showSuccess,
-  getOAuthProviderIcon,
-} from '../../../../helpers';
+  IconLink,
+  IconMail,
+  IconDelete,
+  IconGithubLogo,
+} from '@douyinfe/semi-icons';
 import {
   Modal,
   Spin,
@@ -34,13 +32,16 @@ import {
   Tag,
   Button,
 } from '@douyinfe/semi-ui';
-import {
-  IconLink,
-  IconMail,
-  IconDelete,
-  IconGithubLogo,
-} from '@douyinfe/semi-icons';
+import React from 'react';
+import { useTranslation } from 'react-i18next';
 import { SiDiscord, SiTelegram, SiWechat, SiLinux } from 'react-icons/si';
+
+import {
+  API,
+  showError,
+  showSuccess,
+  getOAuthProviderIcon,
+} from '../../../../helpers';
 
 const { Text } = Typography;
 
@@ -295,22 +296,20 @@ const UserBindingManagementModal = ({
     }
   });
 
-  const customBindingItems = Array.from(customProviderMap.values()).map(
-    (provider) => {
-      const binding = customBindingMap.get(Number(provider.id));
-      return {
-        key: `custom-${provider.id}`,
-        providerId: provider.id,
-        name: provider.name,
-        enabled: true,
-        value: binding?.provider_user_id || '',
-        icon: getOAuthProviderIcon(
-          provider.icon || binding?.provider_icon || '',
-          20,
-        ),
-      };
-    },
-  );
+  const customBindingItems = [...customProviderMap.values()].map((provider) => {
+    const binding = customBindingMap.get(Number(provider.id));
+    return {
+      key: `custom-${provider.id}`,
+      providerId: provider.id,
+      name: provider.name,
+      enabled: true,
+      value: binding?.provider_user_id || '',
+      icon: getOAuthProviderIcon(
+        provider.icon || binding?.provider_icon || '',
+        20,
+      ),
+    };
+  });
 
   const allBindingItems = [
     ...builtInBindingItems.map((item) => ({ ...item, type: 'builtin' })),

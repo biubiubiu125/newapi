@@ -17,16 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React, { useEffect, useState, useRef } from 'react';
 import { Banner, Button, Form, Row, Col, Spin } from '@douyinfe/semi-ui';
+import { Info } from 'lucide-react';
+import React, { useEffect, useState, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+
 import {
   API,
   removeTrailingSlash,
   showError,
   showSuccess,
 } from '../../../helpers';
-import { useTranslation } from 'react-i18next';
-import { Info } from 'lucide-react';
 
 export default function SettingsPaymentGateway(props) {
   const { t } = useTranslation();
@@ -49,11 +50,11 @@ export default function SettingsPaymentGateway(props) {
         EpayKey: props.options.EpayKey || '',
         Price:
           props.options.Price !== undefined
-            ? parseFloat(props.options.Price)
+            ? Number.parseFloat(props.options.Price)
             : 7.3,
         MinTopUp:
           props.options.MinTopUp !== undefined
-            ? parseFloat(props.options.MinTopUp)
+            ? Number.parseFloat(props.options.MinTopUp)
             : 1,
       };
 
@@ -109,7 +110,7 @@ export default function SettingsPaymentGateway(props) {
         showSuccess(t('更新成功'));
         props.refresh && props.refresh();
       }
-    } catch (error) {
+    } catch {
       showError(t('更新失败'));
     }
     setLoading(false);

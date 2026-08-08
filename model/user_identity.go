@@ -265,14 +265,7 @@ func (user *User) EditWithTransactionHook(updatePassword bool, hook func(tx *gor
 	}); err != nil {
 		return err
 	}
-	if err := updateUserCache(*user); err != nil {
-		return err
-	}
-	if user.AuthVersion > previousAuthVersion {
-		_, err := RevokeAllUserSessions(user.Id, "user_security_changed")
-		return err
-	}
-	return nil
+	return FinalizeUserAuthChange(*user, previousAuthVersion, "user_security_changed")
 }
 
 func IsUserEmailUniqueError(err error) bool {

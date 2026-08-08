@@ -2,9 +2,10 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
+	"reflect"
 	"strconv"
 	"strings"
 	"time"
@@ -595,7 +596,7 @@ func getVertexArrayKeys(keys string) ([]string, error) {
 		case string:
 			keyStr = strings.TrimSpace(v)
 		default:
-			bytes, err := json.Marshal(v)
+			bytes, err := common.Marshal(v)
 			if err != nil {
 				return nil, fmt.Errorf("Vertex AI key JSON 编码失败: %w", err)
 			}
@@ -609,6 +610,11 @@ func getVertexArrayKeys(keys string) ([]string, error) {
 		return nil, fmt.Errorf("批量添加 Vertex AI 的 keys 不能为空")
 	}
 	return cleanKeys, nil
+}
+
+func isValidJSONText(text string) bool {
+	var payload interface{}
+	return common.Unmarshal([]byte(text), &payload) == nil
 }
 
 func AddChannel(c *gin.Context) {
@@ -626,6 +632,19 @@ func AddChannel(c *gin.Context) {
 			"message": err.Error(),
 		})
 		return
+	}
+	if addChannelRequest.Channel != nil && !channelTypeSupportsUpstreamModelUpdate(addChannelRequest.Channel.Type) {
+		cleanedSettings, changed, err := channelSettingsWithoutUpstreamModelUpdateFields(addChannelRequest.Channel.OtherSettings)
+		if err != nil {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": err.Error(),
+			})
+			return
+		}
+		if changed {
+			addChannelRequest.Channel.OtherSettings = cleanedSettings
+		}
 	}
 
 	addChannelRequest.Channel.CreatedTime = common.GetTimestamp()
@@ -847,7 +866,7 @@ func EditTagChannels(c *gin.Context) {
 	}
 	if channelTag.ParamOverride != nil {
 		trimmed := strings.TrimSpace(*channelTag.ParamOverride)
-		if trimmed != "" && !json.Valid([]byte(trimmed)) {
+		if trimmed != "" && !isValidJSONText(trimmed) {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": "参数覆盖必须是合法的 JSON 格式",
@@ -858,7 +877,7 @@ func EditTagChannels(c *gin.Context) {
 	}
 	if channelTag.HeaderOverride != nil {
 		trimmed := strings.TrimSpace(*channelTag.HeaderOverride)
-		if trimmed != "" && !json.Valid([]byte(trimmed)) {
+		if trimmed != "" && !isValidJSONText(trimmed) {
 			c.JSON(http.StatusOK, gin.H{
 				"success": false,
 				"message": "请求头覆盖必须是合法的 JSON 格式",
@@ -920,6 +939,16 @@ type PatchChannel struct {
 	model.Channel
 	MultiKeyMode *string `json:"multi_key_mode"`
 	KeyMode      *string `json:"key_mode"` // 多key模式下密钥覆盖或者追加
+}
+
+var errChannelSensitivePermissionDenied = errors.New("channel sensitive write permission denied")
+
+type channelUpdateValidationError struct {
+	message string
+}
+
+func (e channelUpdateValidationError) Error() string {
+	return e.message
 }
 
 func pointerUpdateValue[T any](value *T) any {
@@ -987,6 +1016,451 @@ func channelUpdateColumns(channel *PatchChannel, requestData map[string]any) map
 	return updates
 }
 
+func mergeChannelUpstreamModelUpdateRuntimeSettingsForUpdate(requestedSettings string, currentSettings string, sourceChanged bool) string {
+	requested, ok := channelSettingsMapForUpdate(requestedSettings)
+	if !ok {
+		return requestedSettings
+	}
+	current, _ := channelSettingsMapForUpdate(currentSettings)
+
+	if checkEnabled, _ := requested["upstream_model_update_check_enabled"].(bool); checkEnabled {
+		if sourceChanged {
+			clearChannelUpstreamModelUpdateRuntimeFields(requested)
+		} else {
+			preserveChannelSettingRuntimeField(requested, current, "upstream_model_update_last_check_time")
+			preserveChannelSettingRuntimeField(requested, current, "upstream_model_update_last_detected_models")
+			preserveChannelSettingRuntimeField(requested, current, "upstream_model_update_last_removed_models")
+		}
+	} else {
+		clearChannelUpstreamModelUpdateRuntimeFields(requested)
+	}
+
+	settingsBytes, err := common.Marshal(requested)
+	if err != nil {
+		return requestedSettings
+	}
+	return string(settingsBytes)
+}
+
+var channelUpstreamModelUpdateSettingKeys = []string{
+	"upstream_model_update_check_enabled",
+	"upstream_model_update_auto_sync_enabled",
+	"upstream_model_update_ignored_models",
+	"upstream_model_update_last_check_time",
+	"upstream_model_update_last_detected_models",
+	"upstream_model_update_last_removed_models",
+}
+
+func clearChannelUpstreamModelUpdateRuntimeFields(settings map[string]any) {
+	settings["upstream_model_update_last_detected_models"] = []string{}
+	settings["upstream_model_update_last_removed_models"] = []string{}
+	settings["upstream_model_update_last_check_time"] = 0
+}
+
+func removeChannelUpstreamModelUpdateFields(settings map[string]any) bool {
+	changed := false
+	for _, key := range channelUpstreamModelUpdateSettingKeys {
+		if _, ok := settings[key]; ok {
+			delete(settings, key)
+			changed = true
+		}
+	}
+	return changed
+}
+
+func channelSettingsContainUpstreamModelUpdateFields(raw string) bool {
+	settings, ok := channelSettingsMapForUpdate(raw)
+	if !ok {
+		return false
+	}
+	for _, key := range channelUpstreamModelUpdateSettingKeys {
+		if _, ok := settings[key]; ok {
+			return true
+		}
+	}
+	return false
+}
+
+func clearChannelUpstreamModelUpdateRuntimeSettingsForSourceChange(raw string) (string, bool) {
+	settings, ok := channelSettingsMapForUpdate(raw)
+	if !ok {
+		return raw, false
+	}
+	hasUpstreamModelUpdateFields := false
+	for _, key := range channelUpstreamModelUpdateSettingKeys {
+		if _, ok := settings[key]; ok {
+			hasUpstreamModelUpdateFields = true
+			break
+		}
+	}
+	if !hasUpstreamModelUpdateFields {
+		return raw, false
+	}
+	clearChannelUpstreamModelUpdateRuntimeFields(settings)
+	settingsBytes, err := common.Marshal(settings)
+	if err != nil {
+		return raw, false
+	}
+	return string(settingsBytes), true
+}
+
+func channelSettingsWithoutUpstreamModelUpdateFields(raw string) (string, bool, error) {
+	settings, ok := channelSettingsMapForUpdate(raw)
+	if !ok {
+		return "", false, fmt.Errorf("channel settings is not valid JSON")
+	}
+	if !removeChannelUpstreamModelUpdateFields(settings) {
+		return raw, false, nil
+	}
+	settingsBytes, err := common.Marshal(settings)
+	if err != nil {
+		return "", false, err
+	}
+	return string(settingsBytes), true, nil
+}
+
+func clearUnsupportedChannelUpstreamModelUpdateSettingsForUpdate(channel *PatchChannel) {
+	if channel == nil || channelSupportsUpstreamModelUpdate(&channel.Channel) {
+		return
+	}
+	settings, ok := channelSettingsMapForUpdate(channel.OtherSettings)
+	if !ok {
+		return
+	}
+	if !removeChannelUpstreamModelUpdateFields(settings) {
+		return
+	}
+	settingsBytes, err := common.Marshal(settings)
+	if err != nil {
+		return
+	}
+	channel.OtherSettings = string(settingsBytes)
+}
+
+func channelSettingsMapForUpdate(raw string) (map[string]any, bool) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return map[string]any{}, true
+	}
+	parsed := map[string]any{}
+	if err := common.UnmarshalJsonStr(raw, &parsed); err != nil {
+		return nil, false
+	}
+	if parsed == nil {
+		return map[string]any{}, true
+	}
+	return parsed, true
+}
+
+func preserveChannelSettingRuntimeField(requested map[string]any, current map[string]any, key string) {
+	if value, ok := current[key]; ok {
+		requested[key] = value
+		return
+	}
+	delete(requested, key)
+}
+
+func channelUpstreamModelSourceChangedForUpdate(origin *model.Channel, channel *PatchChannel, requestData map[string]any) bool {
+	if origin == nil || channel == nil {
+		return true
+	}
+	if _, ok := requestData["type"]; ok && origin.Type != channel.Type {
+		return true
+	}
+	if _, ok := requestData["key"]; ok && origin.Key != channel.Key {
+		return true
+	}
+	if _, ok := requestData["base_url"]; ok && !equalStringPtr(origin.BaseURL, channel.BaseURL) {
+		return true
+	}
+	if _, ok := requestData["other"]; ok && origin.Other != channel.Other {
+		return true
+	}
+	if _, ok := requestData["models"]; ok && !reflect.DeepEqual(normalizeModelNames(origin.GetModels()), normalizeModelNames(channel.GetModels())) {
+		return true
+	}
+	if _, ok := requestData["model_mapping"]; ok && !equalStringPtr(origin.ModelMapping, channel.ModelMapping) {
+		return true
+	}
+	if _, ok := requestData["setting"]; ok && !equalStringPtr(origin.Setting, channel.Setting) {
+		return true
+	}
+	if _, ok := requestData["header_override"]; ok && !equalStringPtr(origin.HeaderOverride, channel.HeaderOverride) {
+		return true
+	}
+	if _, ok := requestData["multi_key_mode"]; ok &&
+		channel.MultiKeyMode != nil &&
+		strings.TrimSpace(*channel.MultiKeyMode) != "" &&
+		origin.ChannelInfo.MultiKeyMode != constant.MultiKeyMode(strings.TrimSpace(*channel.MultiKeyMode)) {
+		return true
+	}
+	if _, ok := requestData["settings"]; ok && channelUpstreamModelUpdateSourceSettingsChanged(origin.OtherSettings, channel.OtherSettings) {
+		return true
+	}
+	return false
+}
+
+func channelUpstreamModelUpdateSourceSettingsChanged(originSettings string, requestedSettings string) bool {
+	origin, originOK := channelSettingsMapForUpdate(originSettings)
+	requested, requestedOK := channelSettingsMapForUpdate(requestedSettings)
+	if !originOK || !requestedOK {
+		return strings.TrimSpace(originSettings) != strings.TrimSpace(requestedSettings)
+	}
+	for _, key := range []string{
+		"advanced_custom",
+		"proxy",
+		"upstream_model_update_check_enabled",
+		"upstream_model_update_ignored_models",
+	} {
+		if !reflect.DeepEqual(origin[key], requested[key]) {
+			return true
+		}
+	}
+	return false
+}
+
+func copyChannelUpdateRequestData(requestData map[string]any) map[string]any {
+	copied := make(map[string]any, len(requestData))
+	for key, value := range requestData {
+		copied[key] = value
+	}
+	return copied
+}
+
+func clonePatchChannelPointer[T any](value *T) *T {
+	if value == nil {
+		return nil
+	}
+	cloned := *value
+	return &cloned
+}
+
+func useLockedChannelFieldForStaleNoop(
+	requestData map[string]any,
+	field string,
+	requested any,
+	stale any,
+	locked any,
+	useLocked func(),
+) {
+	if _, ok := requestData[field]; !ok {
+		useLocked()
+		return
+	}
+	if reflect.DeepEqual(requested, stale) && !reflect.DeepEqual(locked, stale) {
+		delete(requestData, field)
+		useLocked()
+	}
+}
+
+func mergeLockedChannelStateForUpdate(
+	channel *PatchChannel,
+	staleOrigin *model.Channel,
+	lockedOrigin *model.Channel,
+	requestData map[string]any,
+) map[string]any {
+	effectiveRequestData := copyChannelUpdateRequestData(requestData)
+	if channel == nil || staleOrigin == nil || lockedOrigin == nil {
+		return effectiveRequestData
+	}
+
+	channel.ChannelInfo = lockedOrigin.ChannelInfo
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "type", channel.Type, staleOrigin.Type, lockedOrigin.Type, func() {
+		channel.Type = lockedOrigin.Type
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "key", channel.Key, staleOrigin.Key, lockedOrigin.Key, func() {
+		channel.Key = lockedOrigin.Key
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "openai_organization", pointerUpdateValue(channel.OpenAIOrganization), pointerUpdateValue(staleOrigin.OpenAIOrganization), pointerUpdateValue(lockedOrigin.OpenAIOrganization), func() {
+		channel.OpenAIOrganization = clonePatchChannelPointer(lockedOrigin.OpenAIOrganization)
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "test_model", pointerUpdateValue(channel.TestModel), pointerUpdateValue(staleOrigin.TestModel), pointerUpdateValue(lockedOrigin.TestModel), func() {
+		channel.TestModel = clonePatchChannelPointer(lockedOrigin.TestModel)
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "name", channel.Name, staleOrigin.Name, lockedOrigin.Name, func() {
+		channel.Name = lockedOrigin.Name
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "weight", pointerUpdateValue(channel.Weight), pointerUpdateValue(staleOrigin.Weight), pointerUpdateValue(lockedOrigin.Weight), func() {
+		channel.Weight = clonePatchChannelPointer(lockedOrigin.Weight)
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "base_url", pointerUpdateValue(channel.BaseURL), pointerUpdateValue(staleOrigin.BaseURL), pointerUpdateValue(lockedOrigin.BaseURL), func() {
+		channel.BaseURL = clonePatchChannelPointer(lockedOrigin.BaseURL)
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "other", channel.Other, staleOrigin.Other, lockedOrigin.Other, func() {
+		channel.Other = lockedOrigin.Other
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "models", channel.Models, staleOrigin.Models, lockedOrigin.Models, func() {
+		channel.Models = lockedOrigin.Models
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "group", channel.Group, staleOrigin.Group, lockedOrigin.Group, func() {
+		channel.Group = lockedOrigin.Group
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "model_mapping", pointerUpdateValue(channel.ModelMapping), pointerUpdateValue(staleOrigin.ModelMapping), pointerUpdateValue(lockedOrigin.ModelMapping), func() {
+		channel.ModelMapping = clonePatchChannelPointer(lockedOrigin.ModelMapping)
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "status_code_mapping", pointerUpdateValue(channel.StatusCodeMapping), pointerUpdateValue(staleOrigin.StatusCodeMapping), pointerUpdateValue(lockedOrigin.StatusCodeMapping), func() {
+		channel.StatusCodeMapping = clonePatchChannelPointer(lockedOrigin.StatusCodeMapping)
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "priority", pointerUpdateValue(channel.Priority), pointerUpdateValue(staleOrigin.Priority), pointerUpdateValue(lockedOrigin.Priority), func() {
+		channel.Priority = clonePatchChannelPointer(lockedOrigin.Priority)
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "auto_ban", pointerUpdateValue(channel.AutoBan), pointerUpdateValue(staleOrigin.AutoBan), pointerUpdateValue(lockedOrigin.AutoBan), func() {
+		channel.AutoBan = clonePatchChannelPointer(lockedOrigin.AutoBan)
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "other_info", channel.OtherInfo, staleOrigin.OtherInfo, lockedOrigin.OtherInfo, func() {
+		channel.OtherInfo = lockedOrigin.OtherInfo
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "tag", pointerUpdateValue(channel.Tag), pointerUpdateValue(staleOrigin.Tag), pointerUpdateValue(lockedOrigin.Tag), func() {
+		channel.Tag = clonePatchChannelPointer(lockedOrigin.Tag)
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "setting", pointerUpdateValue(channel.Setting), pointerUpdateValue(staleOrigin.Setting), pointerUpdateValue(lockedOrigin.Setting), func() {
+		channel.Setting = clonePatchChannelPointer(lockedOrigin.Setting)
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "param_override", pointerUpdateValue(channel.ParamOverride), pointerUpdateValue(staleOrigin.ParamOverride), pointerUpdateValue(lockedOrigin.ParamOverride), func() {
+		channel.ParamOverride = clonePatchChannelPointer(lockedOrigin.ParamOverride)
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "header_override", pointerUpdateValue(channel.HeaderOverride), pointerUpdateValue(staleOrigin.HeaderOverride), pointerUpdateValue(lockedOrigin.HeaderOverride), func() {
+		channel.HeaderOverride = clonePatchChannelPointer(lockedOrigin.HeaderOverride)
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "remark", pointerUpdateValue(channel.Remark), pointerUpdateValue(staleOrigin.Remark), pointerUpdateValue(lockedOrigin.Remark), func() {
+		channel.Remark = clonePatchChannelPointer(lockedOrigin.Remark)
+	})
+	useLockedChannelFieldForStaleNoop(effectiveRequestData, "settings", strings.TrimSpace(channel.OtherSettings), strings.TrimSpace(staleOrigin.OtherSettings), strings.TrimSpace(lockedOrigin.OtherSettings), func() {
+		channel.OtherSettings = lockedOrigin.OtherSettings
+	})
+	if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {
+		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyMode(*channel.MultiKeyMode)
+	}
+	return effectiveRequestData
+}
+
+func applyPatchChannelMultiKeyUpdate(channel *PatchChannel, originChannel *model.Channel) error {
+	if channel == nil || originChannel == nil {
+		return nil
+	}
+	if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {
+		mode := constant.MultiKeyMode(strings.TrimSpace(*channel.MultiKeyMode))
+		if mode != constant.MultiKeyModeRandom && mode != constant.MultiKeyModePolling {
+			return channelUpdateValidationError{message: "invalid multi-key mode"}
+		}
+		channel.ChannelInfo.MultiKeyMode = mode
+	}
+	if channel.KeyMode == nil || !channel.ChannelInfo.IsMultiKey {
+		return nil
+	}
+	switch *channel.KeyMode {
+	case "append":
+		if originChannel.Key == "" {
+			return nil
+		}
+		var newKeys []string
+		var existingKeys []string
+
+		existingKeys = originChannel.GetKeys()
+
+		if channel.Type == constant.ChannelTypeVertexAi && channel.GetOtherSettings().VertexKeyType != dto.VertexKeyTypeAPIKey {
+			if strings.HasPrefix(strings.TrimSpace(channel.Key), "[") {
+				array, err := getVertexArrayKeys(channel.Key)
+				if err != nil {
+					return channelUpdateValidationError{message: "追加密钥解析失败: " + err.Error()}
+				}
+				newKeys = array
+			} else {
+				newKeys = []string{channel.Key}
+			}
+		} else {
+			inputKeys := strings.Split(channel.Key, "\n")
+			for _, key := range inputKeys {
+				key = strings.TrimSpace(key)
+				if key != "" {
+					newKeys = append(newKeys, key)
+				}
+			}
+		}
+
+		seen := make(map[string]struct{}, len(existingKeys)+len(newKeys))
+		for _, key := range existingKeys {
+			normalized := strings.TrimSpace(key)
+			if normalized == "" {
+				continue
+			}
+			seen[normalized] = struct{}{}
+		}
+		dedupedNewKeys := make([]string, 0, len(newKeys))
+		for _, key := range newKeys {
+			normalized := strings.TrimSpace(key)
+			if normalized == "" {
+				continue
+			}
+			if _, ok := seen[normalized]; ok {
+				continue
+			}
+			seen[normalized] = struct{}{}
+			dedupedNewKeys = append(dedupedNewKeys, normalized)
+		}
+
+		allKeys := append(existingKeys, dedupedNewKeys...)
+		channel.Key = strings.Join(allKeys, "\n")
+	case "replace":
+	}
+	return nil
+}
+
+func updateChannelColumnsWithLockedState(
+	channel *PatchChannel,
+	staleOrigin *model.Channel,
+	requestData map[string]any,
+	canSensitiveWrite bool,
+) (*model.Channel, error) {
+	var lockedBefore model.Channel
+	err := model.DB.Transaction(func(tx *gorm.DB) error {
+		var locked model.Channel
+		if err := model.LockForUpdate(tx).Where("id = ?", channel.Id).First(&locked).Error; err != nil {
+			return err
+		}
+		lockedBefore = locked
+		effectiveRequestData := mergeLockedChannelStateForUpdate(channel, staleOrigin, &locked, requestData)
+		_, settingsRequested := effectiveRequestData["settings"]
+		supportsUpstreamModelUpdate := channelSupportsUpstreamModelUpdate(&channel.Channel)
+		sourceChanged := false
+		if supportsUpstreamModelUpdate {
+			sourceChanged = channelUpstreamModelSourceChangedForUpdate(&locked, channel, effectiveRequestData)
+		}
+		if settingsRequested {
+			if supportsUpstreamModelUpdate {
+				channel.OtherSettings = mergeChannelUpstreamModelUpdateRuntimeSettingsForUpdate(channel.OtherSettings, locked.OtherSettings, sourceChanged)
+			} else {
+				clearUnsupportedChannelUpstreamModelUpdateSettingsForUpdate(channel)
+			}
+		} else if supportsUpstreamModelUpdate && sourceChanged {
+			if cleanedSettings, changed := clearChannelUpstreamModelUpdateRuntimeSettingsForSourceChange(locked.OtherSettings); changed {
+				channel.OtherSettings = cleanedSettings
+				effectiveRequestData["settings"] = cleanedSettings
+			}
+		} else if _, typeRequested := effectiveRequestData["type"]; typeRequested && !supportsUpstreamModelUpdate {
+			cleanedSettings, changed, err := channelSettingsWithoutUpstreamModelUpdateFields(locked.OtherSettings)
+			if err != nil {
+				return err
+			}
+			if changed {
+				channel.OtherSettings = cleanedSettings
+				effectiveRequestData["settings"] = cleanedSettings
+			}
+		}
+		if channelHasSensitiveChanges(channel, &locked, effectiveRequestData) && !canSensitiveWrite {
+			return errChannelSensitivePermissionDenied
+		}
+		if err := applyPatchChannelMultiKeyUpdate(channel, &locked); err != nil {
+			return err
+		}
+		return channel.Channel.UpdateColumnsWithTx(tx, channelUpdateColumns(channel, effectiveRequestData))
+	})
+	if err != nil {
+		return nil, err
+	}
+	return &lockedBefore, nil
+}
+
 type ChannelStatusRequest struct {
 	Status int `json:"status"`
 }
@@ -1049,93 +1523,25 @@ func UpdateChannel(c *gin.Context) {
 		return
 	}
 
-	// If the request explicitly specifies a new MultiKeyMode, apply it on top of the original info.
-	if channel.MultiKeyMode != nil && *channel.MultiKeyMode != "" {
-		channel.ChannelInfo.MultiKeyMode = constant.MultiKeyMode(*channel.MultiKeyMode)
-	}
-
-	// 处理多key模式下的密钥追加/覆盖逻辑
-	if channel.KeyMode != nil && channel.ChannelInfo.IsMultiKey {
-		switch *channel.KeyMode {
-		case "append":
-			// 追加模式：将新密钥添加到现有密钥列表
-			if originChannel.Key != "" {
-				var newKeys []string
-				var existingKeys []string
-
-				// 解析现有密钥
-				if strings.HasPrefix(strings.TrimSpace(originChannel.Key), "[") {
-					// JSON数组格式
-					var arr []json.RawMessage
-					if err := json.Unmarshal([]byte(strings.TrimSpace(originChannel.Key)), &arr); err == nil {
-						existingKeys = make([]string, len(arr))
-						for i, v := range arr {
-							existingKeys[i] = string(v)
-						}
-					}
-				} else {
-					// 换行分隔格式
-					existingKeys = strings.Split(strings.Trim(originChannel.Key, "\n"), "\n")
-				}
-
-				// 处理 Vertex AI 的特殊情况
-				if channel.Type == constant.ChannelTypeVertexAi && channel.GetOtherSettings().VertexKeyType != dto.VertexKeyTypeAPIKey {
-					// 尝试解析新密钥为JSON数组
-					if strings.HasPrefix(strings.TrimSpace(channel.Key), "[") {
-						array, err := getVertexArrayKeys(channel.Key)
-						if err != nil {
-							c.JSON(http.StatusOK, gin.H{
-								"success": false,
-								"message": "追加密钥解析失败: " + err.Error(),
-							})
-							return
-						}
-						newKeys = array
-					} else {
-						// 单个JSON密钥
-						newKeys = []string{channel.Key}
-					}
-				} else {
-					// 普通渠道的处理
-					inputKeys := strings.Split(channel.Key, "\n")
-					for _, key := range inputKeys {
-						key = strings.TrimSpace(key)
-						if key != "" {
-							newKeys = append(newKeys, key)
-						}
-					}
-				}
-
-				seen := make(map[string]struct{}, len(existingKeys)+len(newKeys))
-				for _, key := range existingKeys {
-					normalized := strings.TrimSpace(key)
-					if normalized == "" {
-						continue
-					}
-					seen[normalized] = struct{}{}
-				}
-				dedupedNewKeys := make([]string, 0, len(newKeys))
-				for _, key := range newKeys {
-					normalized := strings.TrimSpace(key)
-					if normalized == "" {
-						continue
-					}
-					if _, ok := seen[normalized]; ok {
-						continue
-					}
-					seen[normalized] = struct{}{}
-					dedupedNewKeys = append(dedupedNewKeys, normalized)
-				}
-
-				allKeys := append(existingKeys, dedupedNewKeys...)
-				channel.Key = strings.Join(allKeys, "\n")
-			}
-		case "replace":
-			// 覆盖模式：直接使用新密钥（默认行为，不需要特殊处理）
-		}
-	}
-	err = channel.Channel.UpdateColumns(channelUpdateColumns(&channel, requestData))
+	auditOrigin, err := updateChannelColumnsWithLockedState(
+		&channel,
+		originChannel,
+		requestData,
+		authz.Can(c.GetInt("id"), c.GetInt("role"), authz.ChannelSensitiveWrite),
+	)
 	if err != nil {
+		if errors.Is(err, errChannelSensitivePermissionDenied) {
+			common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
+			return
+		}
+		var validationErr channelUpdateValidationError
+		if errors.As(err, &validationErr) {
+			c.JSON(http.StatusOK, gin.H{
+				"success": false,
+				"message": validationErr.Error(),
+			})
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}
@@ -1143,19 +1549,22 @@ func UpdateChannel(c *gin.Context) {
 	service.ResetProxyClientCache()
 	// 记录变更的字段名（语言无关的字段标识），密钥仅记录"已更换"绝不记录内容。
 	changedFields := make([]string, 0)
-	if channel.Models != originChannel.Models {
+	if auditOrigin == nil {
+		auditOrigin = originChannel
+	}
+	if channel.Models != auditOrigin.Models {
 		changedFields = append(changedFields, "models")
 	}
-	if channel.Group != originChannel.Group {
+	if channel.Group != auditOrigin.Group {
 		changedFields = append(changedFields, "group")
 	}
-	if channel.Type != originChannel.Type {
+	if channel.Type != auditOrigin.Type {
 		changedFields = append(changedFields, "type")
 	}
-	if !equalStringPtr(channel.BaseURL, originChannel.BaseURL) {
+	if !equalStringPtr(channel.BaseURL, auditOrigin.BaseURL) {
 		changedFields = append(changedFields, "base_url")
 	}
-	if channel.Key != "" && channel.Key != originChannel.Key {
+	if channel.Key != "" && channel.Key != auditOrigin.Key {
 		changedFields = append(changedFields, "key")
 	}
 	recordManageAudit(c, "channel.update", map[string]interface{}{
@@ -2109,7 +2518,7 @@ func OllamaPullModelStream(c *gin.Context) {
 
 	// 创建进度回调函数
 	progressCallback := func(progress ollama.OllamaPullResponse) {
-		data, _ := json.Marshal(progress)
+		data, _ := common.Marshal(progress)
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(data))
 		c.Writer.Flush()
 	}
@@ -2118,12 +2527,12 @@ func OllamaPullModelStream(c *gin.Context) {
 	err = ollama.PullOllamaModelStream(baseURL, key, req.ModelName, progressCallback)
 
 	if err != nil {
-		errorData, _ := json.Marshal(gin.H{
+		errorData, _ := common.Marshal(gin.H{
 			"error": err.Error(),
 		})
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(errorData))
 	} else {
-		successData, _ := json.Marshal(gin.H{
+		successData, _ := common.Marshal(gin.H{
 			"message": fmt.Sprintf("Model %s pulled successfully", req.ModelName),
 		})
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(successData))

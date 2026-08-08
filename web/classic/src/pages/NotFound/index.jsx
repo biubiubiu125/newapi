@@ -17,12 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
-import { Empty } from '@douyinfe/semi-ui';
 import {
   IllustrationNotFound,
   IllustrationNotFoundDark,
 } from '@douyinfe/semi-illustrations';
+import { Empty } from '@douyinfe/semi-ui';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
 
 const NotFound = () => {

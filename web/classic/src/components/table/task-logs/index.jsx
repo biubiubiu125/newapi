@@ -17,19 +17,20 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Layout } from '@douyinfe/semi-ui';
+import React from 'react';
+
+import { createCardProPagination } from '../../../helpers/utils';
+import { useIsMobile } from '../../../hooks/common/useIsMobile';
+import { useTaskLogsData } from '../../../hooks/task-logs/useTaskLogsData';
 import CardPro from '../../common/ui/CardPro';
-import TaskLogsTable from './TaskLogsTable';
-import TaskLogsActions from './TaskLogsActions';
-import TaskLogsFilters from './TaskLogsFilters';
+import UserInfoModal from '../usage-logs/modals/UserInfoModal';
+import AudioPreviewModal from './modals/AudioPreviewModal';
 import ColumnSelectorModal from './modals/ColumnSelectorModal';
 import ContentModal from './modals/ContentModal';
-import AudioPreviewModal from './modals/AudioPreviewModal';
-import UserInfoModal from '../usage-logs/modals/UserInfoModal';
-import { useTaskLogsData } from '../../../hooks/task-logs/useTaskLogsData';
-import { useIsMobile } from '../../../hooks/common/useIsMobile';
-import { createCardProPagination } from '../../../helpers/utils';
+import TaskLogsActions from './TaskLogsActions';
+import TaskLogsFilters from './TaskLogsFilters';
+import TaskLogsTable from './TaskLogsTable';
 
 const TaskLogsPage = () => {
   const taskLogsData = useTaskLogsData();
@@ -46,7 +47,7 @@ const TaskLogsPage = () => {
         isModalOpen={taskLogsData.isVideoModalOpen}
         setIsModalOpen={taskLogsData.setIsVideoModalOpen}
         modalContent={taskLogsData.videoUrl}
-        isVideo={true}
+        isVideo
       />
       <AudioPreviewModal
         isModalOpen={taskLogsData.isAudioModalOpen}
@@ -65,7 +66,7 @@ const TaskLogsPage = () => {
             total: taskLogsData.logCount,
             onPageChange: taskLogsData.handlePageChange,
             onPageSizeChange: taskLogsData.handlePageSizeChange,
-            isMobile: isMobile,
+            isMobile,
             t: taskLogsData.t,
           })}
           t={taskLogsData.t}

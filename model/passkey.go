@@ -212,7 +212,7 @@ func UpsertPasskeyCredentialWithAuthVersion(credential *PasskeyCredential) error
 	}); err != nil {
 		return err
 	}
-	return PublishUserAuthCache(credential.UserID)
+	return publishUserAuthCacheAfterCommit(credential.UserID)
 }
 
 func DeletePasskeyByUserIDWithAuthVersion(userID int) error {
@@ -241,5 +241,5 @@ func DeletePasskeyByUserIDWithAuthVersion(userID int) error {
 	}); err != nil {
 		return err
 	}
-	return PublishUserAuthCache(userID)
+	return publishUserAuthCacheAfterCommit(userID)
 }

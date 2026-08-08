@@ -17,15 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import React from 'react';
 import { Card, Select, Typography, Button, Switch } from '@douyinfe/semi-ui';
 import { Sparkles, Users, ToggleLeft, X, Settings } from 'lucide-react';
+import React from 'react';
 import { useTranslation } from 'react-i18next';
+
 import { renderGroupOption, selectFilter } from '../../helpers';
-import ParameterControl from './ParameterControl';
-import ImageUrlInput from './ImageUrlInput';
 import ConfigManager from './ConfigManager';
 import CustomRequestEditor from './CustomRequestEditor';
+import ImageUrlInput from './ImageUrlInput';
+import ParameterControl from './ParameterControl';
 
 const SettingsPanel = ({
   inputs,
