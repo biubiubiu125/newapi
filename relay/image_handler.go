@@ -225,7 +225,7 @@ func buildImagePassThroughBody(c *gin.Context, info *relaycommon.RelayInfo, imag
 		return nil, nil, err
 	}
 	if !imageStreamDisabled {
-		return common.ReaderOnly(storage), nil, nil
+		return common.NewReplayableBodyReader(storage), nil, nil
 	}
 
 	if strings.HasPrefix(contentType, "application/json") {
@@ -234,7 +234,7 @@ func buildImagePassThroughBody(c *gin.Context, info *relaycommon.RelayInfo, imag
 	if strings.Contains(contentType, "multipart/form-data") {
 		return buildImageMultipartPassThroughBody(c, info, true)
 	}
-	return common.ReaderOnly(storage), nil, nil
+	return common.NewReplayableBodyReader(storage), nil, nil
 }
 
 func buildImageJSONPassThroughBodyWithoutStream(info *relaycommon.RelayInfo, storage common.BodyStorage) (io.Reader, func(), error) {

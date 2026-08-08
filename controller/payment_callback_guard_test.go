@@ -73,6 +73,7 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 		&model.Token{},
 		&model.Log{},
 		&model.TopUp{},
+		&model.PaymentOrphanEvent{},
 		&model.Redemption{},
 		&model.SubscriptionPlan{},
 		&model.SubscriptionOrder{},

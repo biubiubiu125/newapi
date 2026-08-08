@@ -351,16 +351,23 @@ func TestShouldSendUpstreamModelUpdateNotification(t *testing.T) {
 	channelUpstreamModelUpdateNotifyState.Unlock()
 
 	baseTime := int64(2000000)
+	shouldSendAndRecord := func(now int64, changedChannels int, failedChannels int) bool {
+		shouldSend := shouldSendUpstreamModelUpdateNotification(now, changedChannels, failedChannels, nil, nil, nil, nil)
+		if shouldSend {
+			recordUpstreamModelUpdateNotificationSent(now, changedChannels, failedChannels, nil, nil, nil, nil)
+		}
+		return shouldSend
+	}
 
-	require.True(t, shouldSendUpstreamModelUpdateNotification(baseTime, 6, 0))
-	require.False(t, shouldSendUpstreamModelUpdateNotification(baseTime+3600, 6, 0))
-	require.True(t, shouldSendUpstreamModelUpdateNotification(baseTime+3600, 7, 0))
-	require.False(t, shouldSendUpstreamModelUpdateNotification(baseTime+7200, 7, 0))
-	require.True(t, shouldSendUpstreamModelUpdateNotification(baseTime+8000, 0, 3))
-	require.False(t, shouldSendUpstreamModelUpdateNotification(baseTime+9000, 0, 3))
-	require.True(t, shouldSendUpstreamModelUpdateNotification(baseTime+10000, 0, 4))
-	require.True(t, shouldSendUpstreamModelUpdateNotification(baseTime+90000, 7, 0))
-	require.True(t, shouldSendUpstreamModelUpdateNotification(baseTime+90001, 0, 0))
+	require.True(t, shouldSendAndRecord(baseTime, 6, 0))
+	require.False(t, shouldSendAndRecord(baseTime+3600, 6, 0))
+	require.True(t, shouldSendAndRecord(baseTime+3600, 7, 0))
+	require.False(t, shouldSendAndRecord(baseTime+7200, 7, 0))
+	require.True(t, shouldSendAndRecord(baseTime+8000, 0, 3))
+	require.False(t, shouldSendAndRecord(baseTime+9000, 0, 3))
+	require.True(t, shouldSendAndRecord(baseTime+10000, 0, 4))
+	require.True(t, shouldSendAndRecord(baseTime+90000, 7, 0))
+	require.True(t, shouldSendAndRecord(baseTime+90001, 0, 0))
 }
 
 func TestDetectAllChannelUpstreamModelUpdatesRejectsExistingActiveTask(t *testing.T) {

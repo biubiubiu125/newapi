@@ -33,6 +33,9 @@ func newRelayHTTPRequest(c *gin.Context, method, url string, body io.Reader) (*h
 	return http.NewRequestWithContext(ctx, method, url, body)
 }
 
+// ApplyUpstreamBodyMetadata restores metadata that net/http cannot infer from
+// a ReplayableBody. Callers must pass the original body because NewRequest
+// hides its dynamic type behind req.Body's io.ReadCloser wrapper.
 func ApplyUpstreamBodyMetadata(req *http.Request, requestBody io.Reader) {
 	if req == nil || requestBody == nil {
 		return
@@ -41,9 +44,15 @@ func ApplyUpstreamBodyMetadata(req *http.Request, requestBody io.Reader) {
 	if !ok {
 		return
 	}
+
+	// BodyStorage structurally satisfies ReplayableBody, but it also exposes
+	// io.Closer. If a caller passes the storage directly instead of using
+	// NewReplayableBodyReader, hide Close before the transport takes ownership
+	// of req.Body so the shared replay source remains available to GetBody.
 	if _, rawStorage := requestBody.(common2.BodyStorage); rawStorage {
 		req.Body = io.NopCloser(requestBody)
 	}
+
 	req.ContentLength = replayable.Size()
 	if req.GetBody == nil {
 		req.GetBody = replayable.NewReader
@@ -513,6 +522,9 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
+	// Clients are cached and shared across channels, so clone instead of mutating
+	// the cached client. This keeps the transport and HTTP/2 retry behavior while
+	// returning upstream 3xx responses directly to the relay.
 	relayClient := service.CloneHTTPClientWithoutRedirects(client)
 	if common2.DebugEnabled && req != nil && req.URL != nil {
 		policy := service.NormalizeHTTPTransportPolicy(info.ChannelSetting)
@@ -585,6 +597,14 @@ func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, req
 	}
 	ApplyUpstreamBodyMetadata(req, requestBody)
 	ApplyUpstreamIdempotencyHeaders(&req.Header, c)
+	// Do NOT wrap requestBody in a GetBody closure here: returning the same
+	// (already consumed) reader would make any transport-level retry silently
+	// replay an empty body. http.NewRequest already derives a correct,
+	// snapshot-based GetBody for *bytes.Reader/Buffer/strings.Reader bodies
+	// (which most task adaptors pass in); ApplyUpstreamBodyMetadata wires the
+	// same contract for bodies that explicitly implement ReplayableBody.
+	// Otherwise GetBody stays nil so the transport fails the retry instead of
+	// sending a corrupted request.
 
 	err = a.BuildRequestHeader(c, req, info)
 	if err != nil {
