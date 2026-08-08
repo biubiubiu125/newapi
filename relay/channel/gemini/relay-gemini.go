@@ -502,13 +502,21 @@ func FetchGeminiModels(baseURL, apiKey, proxyURL string) ([]string, error) {
 }
 
 func FetchGeminiModelsWithContext(parentCtx context.Context, baseURL, apiKey, proxyURL string) ([]string, error) {
-	if parentCtx == nil {
-		parentCtx = context.Background()
-	}
 	client, err := service.GetHttpClientWithProxy(proxyURL)
 	if err != nil {
 		return nil, fmt.Errorf("创建HTTP客户端失败: %v", err)
 	}
+	return FetchGeminiModelsWithContextAndClient(parentCtx, baseURL, apiKey, client)
+}
+
+func FetchGeminiModelsWithContextAndClient(parentCtx context.Context, baseURL, apiKey string, client *http.Client) ([]string, error) {
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	if client == nil {
+		return nil, errors.New("HTTP client is nil")
+	}
+	client = service.CloneHTTPClientWithoutRedirects(client)
 
 	allModels := make([]string, 0)
 	nextPageToken := ""
@@ -536,7 +544,7 @@ func FetchGeminiModelsWithContext(parentCtx context.Context, baseURL, apiKey, pr
 		}
 
 		if response.StatusCode != http.StatusOK {
-			body, _ := io.ReadAll(response.Body)
+			body := "response body redacted"
 			response.Body.Close()
 			cancel()
 			return nil, fmt.Errorf("服务器返回错误 %d: %s", response.StatusCode, string(body))

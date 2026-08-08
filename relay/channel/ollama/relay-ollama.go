@@ -2,7 +2,6 @@ package ollama
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -33,7 +32,7 @@ func openAIChatToOllamaChat(c *gin.Context, r *dto.GeneralOpenAIRequest) (*Ollam
 		} else if r.ResponseFormat.Type == "json_schema" {
 			if len(r.ResponseFormat.JsonSchema) > 0 {
 				var schema any
-				_ = json.Unmarshal(r.ResponseFormat.JsonSchema, &schema)
+				_ = common.Unmarshal(r.ResponseFormat.JsonSchema, &schema)
 				chatReq.Format = schema
 			}
 		}
@@ -128,7 +127,7 @@ func openAIChatToOllamaChat(c *gin.Context, r *dto.GeneralOpenAIRequest) (*Ollam
 				for _, tc := range parsed {
 					var args interface{}
 					if tc.Function.Arguments != "" {
-						_ = json.Unmarshal([]byte(tc.Function.Arguments), &args)
+						_ = common.Unmarshal([]byte(tc.Function.Arguments), &args)
 					}
 					if args == nil {
 						args = map[string]any{}
@@ -181,7 +180,7 @@ func openAIToGenerate(c *gin.Context, r *dto.GeneralOpenAIRequest) (*OllamaGener
 			gen.Format = "json"
 		} else if r.ResponseFormat.Type == "json_schema" {
 			var schema any
-			_ = json.Unmarshal(r.ResponseFormat.JsonSchema, &schema)
+			_ = common.Unmarshal(r.ResponseFormat.JsonSchema, &schema)
 			gen.Format = schema
 		}
 	}
@@ -284,12 +283,19 @@ func FetchOllamaModels(baseURL, apiKey string) ([]OllamaModel, error) {
 }
 
 func FetchOllamaModelsWithContext(ctx context.Context, baseURL, apiKey string) ([]OllamaModel, error) {
+	return FetchOllamaModelsWithContextAndClient(ctx, baseURL, apiKey, &http.Client{Timeout: 30 * time.Second})
+}
+
+func FetchOllamaModelsWithContextAndClient(ctx context.Context, baseURL, apiKey string, client *http.Client) ([]OllamaModel, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	if client == nil {
+		return nil, fmt.Errorf("HTTP client is nil")
+	}
+	client = service.CloneHTTPClientWithoutRedirects(client)
 	url := fmt.Sprintf("%s/api/tags", baseURL)
 
-	client := &http.Client{Timeout: 30 * time.Second}
 	request, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("创建请求失败: %v", err)
@@ -307,7 +313,7 @@ func FetchOllamaModelsWithContext(ctx context.Context, baseURL, apiKey string) (
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(response.Body)
+		body := "response body redacted"
 		return nil, fmt.Errorf("服务器返回错误 %d: %s", response.StatusCode, string(body))
 	}
 
@@ -518,7 +524,7 @@ func FetchOllamaVersion(baseURL, apiKey string) (string, error) {
 		Version string `json:"version"`
 	}
 
-	if err := json.Unmarshal(body, &versionResp); err != nil {
+	if err := common.Unmarshal(body, &versionResp); err != nil {
 		return "", fmt.Errorf("解析响应失败: %v", err)
 	}
 

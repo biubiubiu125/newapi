@@ -16,10 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-/* eslint-disable react-refresh/only-export-components */
-import { useState } from 'react'
 import { useQueryClient } from '@tanstack/react-query'
-import { type ColumnDef } from '@tanstack/react-table'
+import type { ColumnDef } from '@tanstack/react-table'
 import {
   AlertTriangle,
   ChevronDown,
@@ -28,21 +26,17 @@ import {
   Shuffle,
   SlidersHorizontal,
 } from 'lucide-react'
+/* eslint-disable react-refresh/only-export-components */
+import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { getCurrencyLabel } from '@/lib/currency'
-import {
-  formatTimestampToDate,
-  formatQuota as formatQuotaValue,
-} from '@/lib/format'
-import { getLobeIcon } from '@/lib/lobe-icon'
-import {
-  ADMIN_PERMISSION_ACTIONS,
-  ADMIN_PERMISSION_RESOURCES,
-  hasPermission,
-} from '@/lib/admin-permissions'
-import { truncateText } from '@/lib/utils'
-import { useAuthStore } from '@/stores/auth-store'
+
+import { ConfirmDialog } from '@/components/confirm-dialog'
+import { DataTableColumnHeader } from '@/components/data-table/column-header'
+import { GroupBadge } from '@/components/group-badge'
+import { StatusBadge, StatusBadgeList } from '@/components/status-badge'
+import { TableId } from '@/components/table-id'
+import { TruncatedText } from '@/components/truncated-text'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
 import {
@@ -51,14 +45,22 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { ConfirmDialog } from '@/components/confirm-dialog'
-import { DataTableColumnHeader } from '@/components/data-table/column-header'
-import { GroupBadge } from '@/components/group-badge'
-import { StatusBadge, StatusBadgeList } from '@/components/status-badge'
-import { TableId } from '@/components/table-id'
-import { TruncatedText } from '@/components/truncated-text'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+  hasPermission,
+} from '@/lib/admin-permissions'
+import { getCurrencyLabel } from '@/lib/currency'
+import {
+  formatTimestampToDate,
+  formatQuota as formatQuotaValue,
+} from '@/lib/format'
+import { getLobeIcon } from '@/lib/lobe-icon'
+import { truncateText } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
+
 import { getCodexUsage } from '../api'
-import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
+import { CHANNEL_STATUS_CONFIG } from '../constants'
 import {
   formatBalance,
   formatRelativeTime,
@@ -77,7 +79,10 @@ import {
   isTagAggregateRow,
   type TagRow,
 } from '../lib'
-import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
+import {
+  parseUpstreamUpdateMeta,
+  supportsChannelUpstreamModelUpdate,
+} from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
 import { useChannels } from './channels-provider'
 import { DataTableRowActions } from './data-table-row-actions'
@@ -131,7 +136,7 @@ function UpstreamUpdateTags({ channel }: { channel: Channel }) {
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
     ADMIN_PERMISSION_ACTIONS.WRITE
   )
-  if (!MODEL_FETCHABLE_TYPES.has(channel.type)) return null
+  if (!supportsChannelUpstreamModelUpdate(channel)) return null
 
   const meta = parseUpstreamUpdateMeta(channel.settings)
   if (!meta.enabled) return null
@@ -577,7 +582,7 @@ export function useChannelsColumns(
                         render={
                           <AlertTriangle className='h-3.5 w-3.5 flex-shrink-0 text-amber-500' />
                         }
-                      ></TooltipTrigger>
+                      />
                       <TooltipContent side='top'>
                         {t(
                           'Request body pass-through is enabled. The request body will be sent directly to the upstream without any conversion.'
@@ -593,7 +598,7 @@ export function useChannelsColumns(
                         render={
                           <SlidersHorizontal className='text-info h-3.5 w-3.5 flex-shrink-0' />
                         }
-                      ></TooltipTrigger>
+                      />
                       <TooltipContent side='top'>
                         {t('Override request parameters')}
                       </TooltipContent>
@@ -960,8 +965,9 @@ export function useChannelsColumns(
       header: t('Tag'),
       cell: ({ row }) => {
         const tag = row.getValue('tag') as string | null
-        if (!tag)
+        if (!tag) {
           return <span className='text-muted-foreground text-xs'>-</span>
+        }
 
         return <StatusBadge label={tag} autoColor={tag} size='sm' />
       },
