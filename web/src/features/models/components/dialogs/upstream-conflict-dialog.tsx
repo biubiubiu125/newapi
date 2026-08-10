@@ -440,6 +440,17 @@ export function UpstreamConflictDialog({
       {}
     )
 
+    const payload: SyncOverwritePayload[] = Object.entries(groupedSelections)
+      .map(([modelName, fields]) => ({
+        model_name: modelName,
+        fields: [...fields],
+      }))
+      .filter((item) => item.fields.length > 0)
+
+    if (payload.length === 0) {
+      toast.warning(t('Select at least one field to overwrite.'))
+      return
+    }
     setIsSubmitting(true)
     try {
       const result = await runUpstreamConflictSubmitFlow({
