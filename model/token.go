@@ -342,17 +342,7 @@ func (token *Token) Update() (err error) {
 	}
 	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
 		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups").Updates(token).Error
-	if !shouldUpdateRedis(true, err) {
-		return err
-	}
-	if cacheErr := cacheSetToken(*token); cacheErr != nil {
-		common.SysLog("failed to update token cache: " + cacheErr.Error())
-		if deleteErr := cacheDeleteToken(token.Key); deleteErr != nil {
-			common.SysLog("failed to invalidate token cache after update: " + deleteErr.Error())
-		}
-	}
-	return DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups").Updates(token).Error
+	return err
 }
 
 func (token *Token) SelectUpdate() (err error) {
@@ -418,6 +408,19 @@ func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 		return errors.New("quota 不能为负数！")
 	}
 	if quota == 0 {
+		return nil
+	}
+	if common.RedisEnabled {
+		gopool.Go(func() {
+			// 守卫式增量：哈希不存在时跳过，由下次读取从数据库水合，
+			// 绝不创建只有配额字段的残缺哈希。
+			if _, err := cacheApplyTokenQuotaDelta(tokenId, key, int64(quota)); err != nil {
+				common.SysLog("failed to increase token quota: " + err.Error())
+			}
+		})
+	}
+	if common.BatchUpdateEnabled {
+		addNewRecord(BatchUpdateTypeTokenQuota, tokenId, quota)
 		return nil
 	}
 	if err = increaseTokenQuota(tokenId, quota); err != nil {
@@ -550,6 +553,17 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 		return errors.New("quota 不能为负数！")
 	}
 	if quota == 0 {
+		return nil
+	}
+	if common.RedisEnabled {
+		gopool.Go(func() {
+			if _, err := cacheApplyTokenQuotaDelta(id, key, int64(-quota)); err != nil {
+				common.SysLog("failed to decrease token quota: " + err.Error())
+			}
+		})
+	}
+	if common.BatchUpdateEnabled {
+		addNewRecord(BatchUpdateTypeTokenQuota, id, -quota)
 		return nil
 	}
 	if err = DecreaseTokenQuotaTx(DB, id, quota); err != nil {
