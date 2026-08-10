@@ -15,8 +15,8 @@ type MonitorSetting struct {
 
 const (
 	ChannelTestModeScheduledAll    = "scheduled_all"
-	ChannelTestModePassiveRecovery = "passive_recovery"
 	ChannelTestModeAutoBanOnly     = "auto_ban_only"
+	ChannelTestModePassiveRecovery = "passive_recovery"
 )
 
 // 默认配置
@@ -46,8 +46,9 @@ func GetMonitorSetting() *MonitorSetting {
 			monitorSetting.AutoTestChannelEnabled = parsed
 		}
 	}
-	if monitorSetting.ChannelTestMode != ChannelTestModePassiveRecovery &&
-		monitorSetting.ChannelTestMode != ChannelTestModeAutoBanOnly {
+	switch monitorSetting.ChannelTestMode {
+	case ChannelTestModeAutoBanOnly, ChannelTestModePassiveRecovery:
+	default:
 		monitorSetting.ChannelTestMode = ChannelTestModeScheduledAll
 	}
 	return &monitorSetting
