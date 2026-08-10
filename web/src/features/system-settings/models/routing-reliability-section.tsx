@@ -65,8 +65,8 @@ const numericString = z.string().refine((value) => {
 
 const channelTestModes = [
   'scheduled_all',
-  'passive_recovery',
   'auto_ban_only',
+  'passive_recovery',
 ] as const
 type ChannelTestMode = (typeof channelTestModes)[number]
 const MAX_CHANNEL_TEST_CONCURRENCY = 32
@@ -169,7 +169,7 @@ type NormalizedRoutingReliabilityValues = {
 }
 
 function normalizeChannelTestMode(value?: string): ChannelTestMode {
-  if (value === 'passive_recovery' || value === 'auto_ban_only') {
+  if (value === 'auto_ban_only' || value === 'passive_recovery') {
     return value
   }
   return 'scheduled_all'
