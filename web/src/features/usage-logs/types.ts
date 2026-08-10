@@ -22,7 +22,6 @@ For commercial licensing, please contact support@quantumnous.com
 import type { RequestRuleTrace } from '@/features/pricing/lib/billing-expr'
 
 import type { UsageLog } from './data/schema'
-
 // ============================================================================
 // Log Category Types
 // ============================================================================

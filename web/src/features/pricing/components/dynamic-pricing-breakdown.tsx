@@ -454,7 +454,7 @@ export function DynamicPricingBreakdown({
                         'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300'
                     )}
                   >
-                    {group.multiplier}x{isMatched && ` \u00b7 ${t('Matched')}`}
+                    {group.multiplier}x{isMatched && ` · ${t('Matched')}`}
                   </Badge>
                 </li>
               )
