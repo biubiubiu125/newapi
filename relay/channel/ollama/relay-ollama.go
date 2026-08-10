@@ -122,11 +122,16 @@ func openAIChatToOllamaChat(c *gin.Context, r *dto.GeneralOpenAIRequest) (*Ollam
 	}
 
 	if len(r.Tools) > 0 {
-		tools := make([]OllamaTool, 0, len(r.Tools))
-		for _, t := range r.Tools {
-			tools = append(tools, OllamaTool{Type: "function", Function: OllamaToolFunction{Name: t.Function.Name, Description: t.Function.Description, Parameters: t.Function.Parameters}})
-		}
-		chatReq.Tools = tools
+		chatReq.Tools = lo.Map(r.Tools, func(tool dto.ToolCallRequest, _ int) OllamaTool {
+			return OllamaTool{
+				Type: "function",
+				Function: OllamaToolFunction{
+					Name:        tool.Function.Name,
+					Description: tool.Function.Description,
+					Parameters:  tool.Function.Parameters,
+				},
+			}
+		})
 	}
 
 	chatReq.Messages = make([]OllamaChatMessage, 0, len(r.Messages))
