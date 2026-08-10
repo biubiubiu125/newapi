@@ -236,6 +236,7 @@ func Redeem(key string, userId int) (*RedeemResult, error) {
 		common.SysError("redemption failed: " + err.Error())
 		return nil, ErrRedeemFailed
 	}
+	syncCreditUserQuotaCache(userId, redemption.Quota, "redemption")
 	RecordLog(userId, LogTypeTopup, fmt.Sprintf("通过兑换码充值 %s，兑换码ID %d", logger.LogQuota(redemption.Quota), redemption.Id))
 	return &RedeemResult{
 		RedemptionId: redemption.Id,
