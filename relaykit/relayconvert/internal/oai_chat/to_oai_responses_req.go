@@ -387,7 +387,6 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 			return nil, fmt.Errorf("marshal prompt_cache_key: %w", err)
 		}
 	}
-
 	out := &dto.OpenAIResponsesRequest{
 		Model:             req.Model,
 		Input:             inputRaw,
