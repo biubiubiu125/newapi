@@ -345,11 +345,11 @@ func TestPublicImageTaskCreateRoutesReuseExistingWorkBeforeNewWorkGuards(t *test
 			require.Less(t, authIndex, contentTypeIndex, handlerNames)
 			require.Less(t, contentTypeIndex, reuseIndex, handlerNames)
 			require.Less(t, reuseIndex, exhaustedIndex, handlerNames)
-			require.Less(t, exhaustedIndex, admissionIndex, handlerNames)
-			require.Less(t, admissionIndex, modelRateLimitIndex, handlerNames)
-			require.Less(t, modelRateLimitIndex, distributeIndex, handlerNames)
-			require.Less(t, reuseIndex, distributeIndex, handlerNames)
-		})
+	require.Less(t, exhaustedIndex, admissionIndex, handlerNames)
+	require.Less(t, admissionIndex, modelRateLimitIndex, handlerNames)
+	require.Less(t, modelRateLimitIndex, distributeIndex, handlerNames)
+	require.Less(t, reuseIndex, distributeIndex, handlerNames)
+	})
 	}
 }
 
