@@ -14,11 +14,14 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/codex"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
 )
+
+var exchangeCodexAuthorizationCodeWithProxyAndSettings = service.ExchangeCodexAuthorizationCodeWithProxyAndSettings
 
 type codexOAuthCompleteRequest struct {
 	Input string `json:"input"`
@@ -146,6 +149,7 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 	}
 
 	channelProxy := ""
+	channelSettings := dto.ChannelSettings{}
 	if channelID > 0 {
 		ch, err := model.GetChannelById(channelID, false)
 		if err != nil {
@@ -161,6 +165,7 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 			return
 		}
 		channelProxy = ch.GetSetting().Proxy
+		channelSettings = ch.GetSetting()
 	}
 
 	session := sessions.Default(c)
@@ -178,7 +183,7 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 	ctx, cancel := context.WithTimeout(c.Request.Context(), 15*time.Second)
 	defer cancel()
 
-	tokenRes, err := service.ExchangeCodexAuthorizationCodeWithProxy(ctx, code, verifier, channelProxy)
+	tokenRes, err := exchangeCodexAuthorizationCodeWithProxyAndSettings(ctx, code, verifier, channelProxy, channelSettings)
 	if err != nil {
 		common.SysError("failed to exchange codex authorization code: " + err.Error())
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "授权码交换失败，请重试"})

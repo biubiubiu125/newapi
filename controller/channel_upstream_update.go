@@ -66,6 +66,7 @@ var ErrChannelUpstreamSourceChanged = errors.New("channel upstream source change
 
 var channelUpstreamModelFetchTimeout = channelUpstreamModelFetchDefaultTimeout
 var notifyUpstreamModelUpdateWatchers = service.NotifyUpstreamModelUpdateWatchers
+var fetchCodexChannelModelsWithOptions = service.FetchCodexChannelModelsWithOptions
 
 var channelUpstreamModelUpdateNotifyState = struct {
 	sync.Mutex
@@ -142,7 +143,7 @@ func channelSupportsUpstreamModelUpdate(channel *model.Channel) bool {
 	if channel == nil || !channelTypeSupportsUpstreamModelUpdate(channel.Type) {
 		return false
 	}
-	if channel.Type == constant.ChannelTypeCodex && channel.ChannelInfo.IsMultiKey {
+	if channel.ChannelInfo.IsMultiKey {
 		return false
 	}
 	return true
@@ -235,6 +236,24 @@ func normalizeChannelModelMapping(channel *model.Channel) map[string]string {
 	return normalized
 }
 
+func upstreamModelIsIgnored(modelName string, normalizedIgnoredModels []string) bool {
+	modelName = strings.TrimSpace(modelName)
+	if modelName == "" {
+		return false
+	}
+	return lo.ContainsBy(normalizedIgnoredModels, func(ignoredModel string) bool {
+		if regexBody, ok := strings.CutPrefix(ignoredModel, "regex:"); ok {
+			pattern := strings.TrimSpace(regexBody)
+			if pattern == "" {
+				return false
+			}
+			matched, err := regexp.MatchString(pattern, modelName)
+			return err == nil && matched
+		}
+		return ignoredModel == modelName
+	})
+}
+
 func collectPendingUpstreamModelChangesFromModels(
 	localModels []string,
 	upstreamModels []string,
@@ -273,13 +292,7 @@ func collectPendingUpstreamModelChangesFromModels(
 		if _, ok := coveredUpstreamSet[modelName]; ok {
 			return false
 		}
-		if lo.ContainsBy(normalizedIgnoredModels, func(ignoredModel string) bool {
-			if regexBody, ok := strings.CutPrefix(ignoredModel, "regex:"); ok {
-				matched, err := regexp.MatchString(strings.TrimSpace(regexBody), modelName)
-				return err == nil && matched
-			}
-			return ignoredModel == modelName
-		}) {
+		if upstreamModelIsIgnored(modelName, normalizedIgnoredModels) {
 			return false
 		}
 		return true
@@ -290,13 +303,7 @@ func collectPendingUpstreamModelChangesFromModels(
 		if _, ok := redirectSourceSet[modelName]; ok {
 			return false
 		}
-		if lo.ContainsBy(normalizedIgnoredModels, func(ignoredModel string) bool {
-			if regexBody, ok := strings.CutPrefix(ignoredModel, "regex:"); ok {
-				matched, err := regexp.MatchString(strings.TrimSpace(regexBody), modelName)
-				return err == nil && matched
-			}
-			return ignoredModel == modelName
-		}) {
+		if upstreamModelIsIgnored(modelName, normalizedIgnoredModels) {
 			return false
 		}
 		_, ok := upstreamSet[modelName]
@@ -408,7 +415,25 @@ func newChannelUpstreamModelFetchHTTPClient(channel *model.Channel) (*http.Clien
 	return service.CloneHTTPClientWithoutRedirects(client), nil
 }
 
+type channelUpstreamModelFetchOptions struct {
+	AllowCodexCredentialRefresh bool
+}
+
+type channelUpstreamModelUpdateCheckOptions struct {
+	AllowCodexCredentialRefresh bool
+}
+
+var defaultChannelUpstreamModelUpdateCheckOptions = channelUpstreamModelUpdateCheckOptions{
+	AllowCodexCredentialRefresh: true,
+}
+
 func fetchChannelUpstreamModelIDs(ctx context.Context, channel *model.Channel) ([]string, error) {
+	return fetchChannelUpstreamModelIDsWithOptions(ctx, channel, channelUpstreamModelFetchOptions{
+		AllowCodexCredentialRefresh: true,
+	})
+}
+
+func fetchChannelUpstreamModelIDsWithOptions(ctx context.Context, channel *model.Channel, options channelUpstreamModelFetchOptions) ([]string, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -417,6 +442,12 @@ func fetchChannelUpstreamModelIDs(ctx context.Context, channel *model.Channel) (
 	}
 	if channel.Type <= constant.ChannelTypeUnknown || channel.Type >= len(constant.ChannelBaseURLs) {
 		return nil, fmt.Errorf("unsupported channel type: %d", channel.Type)
+	}
+	if !channelTypeSupportsUpstreamModelUpdate(channel.Type) {
+		return nil, fmt.Errorf("channel type %d does not support upstream model updates", channel.Type)
+	}
+	if channel.ChannelInfo.IsMultiKey {
+		return nil, errors.New("multi-key channels do not support upstream model updates")
 	}
 	baseURL := constant.ChannelBaseURLs[channel.Type]
 	if channel.GetBaseURL() != "" {
@@ -464,7 +495,9 @@ func fetchChannelUpstreamModelIDs(ctx context.Context, channel *model.Channel) (
 	}
 
 	if channel.Type == constant.ChannelTypeCodex {
-		models, err := service.FetchCodexChannelModels(ctx, channel)
+		models, err := fetchCodexChannelModelsWithOptions(ctx, channel, service.CodexChannelModelFetchOptions{
+			AllowCredentialRefresh: options.AllowCodexCredentialRefresh,
+		})
 		if err != nil {
 			return nil, err
 		}
@@ -804,12 +837,87 @@ func syncChannelUpstreamModelAbilitiesWithTx(tx *gorm.DB, channel *model.Channel
 	return channel.AddAbilities(tx)
 }
 
+func recheckChannelUpstreamModelUpdateBeforeFetch(
+	channel *model.Channel,
+	settings *dto.ChannelOtherSettings,
+	force bool,
+	requireEnabled bool,
+	now int64,
+) (skipFetch bool, err error) {
+	err = withLockedChannelUpstreamModelUpdate(channel.Id, func(tx *gorm.DB, lockedChannel *model.Channel) error {
+		if requireEnabled && lockedChannel.Status != common.ChannelStatusEnabled {
+			*settings = lockedChannel.GetOtherSettings()
+			*channel = *lockedChannel
+			skipFetch = true
+			return nil
+		}
+		if !channelSupportsUpstreamModelUpdate(lockedChannel) {
+			hasResidualKeys := channelSettingsContainUpstreamModelUpdateFields(lockedChannel.OtherSettings)
+			lockedSettings := lockedChannel.GetOtherSettings()
+			if clearUnsupportedChannelUpstreamModelUpdateSettings(&lockedSettings) || hasResidualKeys {
+				if err := updateChannelUpstreamModelSettingsWithTx(tx, lockedChannel, lockedSettings, false); err != nil {
+					return err
+				}
+			}
+			*settings = lockedSettings
+			*channel = *lockedChannel
+			skipFetch = true
+			return nil
+		}
+		if !sameChannelUpstreamModelSource(channel, lockedChannel) {
+			return ErrChannelUpstreamSourceChanged
+		}
+		lockedSettings := lockedChannel.GetOtherSettings()
+		if !lockedSettings.UpstreamModelUpdateCheckEnabled {
+			*settings = lockedSettings
+			*channel = *lockedChannel
+			skipFetch = true
+			return errors.New("upstream model update check is not enabled")
+		}
+		if !force {
+			minInterval := getUpstreamModelUpdateMinCheckIntervalSeconds()
+			if lockedSettings.UpstreamModelUpdateLastCheckTime > 0 &&
+				now-lockedSettings.UpstreamModelUpdateLastCheckTime < minInterval {
+				*settings = lockedSettings
+				*channel = *lockedChannel
+				skipFetch = true
+				return nil
+			}
+		}
+		*settings = lockedSettings
+		*channel = *lockedChannel
+		return nil
+	})
+	return skipFetch, err
+}
+
 func checkAndPersistChannelUpstreamModelUpdates(
 	ctx context.Context,
 	channel *model.Channel,
 	settings *dto.ChannelOtherSettings,
 	force bool,
 	allowAutoApply bool,
+	requireEnabled bool,
+) (modelsChanged bool, autoAddedModels []string, err error) {
+	return checkAndPersistChannelUpstreamModelUpdatesWithOptions(
+		ctx,
+		channel,
+		settings,
+		force,
+		allowAutoApply,
+		requireEnabled,
+		defaultChannelUpstreamModelUpdateCheckOptions,
+	)
+}
+
+func checkAndPersistChannelUpstreamModelUpdatesWithOptions(
+	ctx context.Context,
+	channel *model.Channel,
+	settings *dto.ChannelOtherSettings,
+	force bool,
+	allowAutoApply bool,
+	requireEnabled bool,
+	options channelUpstreamModelUpdateCheckOptions,
 ) (modelsChanged bool, autoAddedModels []string, err error) {
 	if channel == nil || channel.Id <= 0 {
 		return false, nil, errors.New("invalid channel")
@@ -850,15 +958,38 @@ func checkAndPersistChannelUpstreamModelUpdates(
 	if ctx == nil {
 		ctx = context.Background()
 	}
+	skipFetch, err := recheckChannelUpstreamModelUpdateBeforeFetch(channel, settings, force, requireEnabled, now)
+	if err != nil || skipFetch {
+		return false, nil, err
+	}
 	fetchCtx, cancelFetch := context.WithTimeout(ctx, channelUpstreamModelFetchTimeout)
 	defer cancelFetch()
-	upstreamModels, fetchErr := fetchChannelUpstreamModelIDs(fetchCtx, channel)
+	upstreamModels, fetchErr := fetchChannelUpstreamModelIDsWithOptions(fetchCtx, channel, channelUpstreamModelFetchOptions{
+		AllowCodexCredentialRefresh: options.AllowCodexCredentialRefresh,
+	})
 	if ctx != nil && ctx.Err() != nil {
 		return false, nil, ctx.Err()
 	}
 
 	var fetchResultErr error
 	err = withLockedChannelUpstreamModelUpdate(channel.Id, func(tx *gorm.DB, lockedChannel *model.Channel) error {
+		if requireEnabled && lockedChannel.Status != common.ChannelStatusEnabled {
+			*settings = lockedChannel.GetOtherSettings()
+			*channel = *lockedChannel
+			return nil
+		}
+		if !channelSupportsUpstreamModelUpdate(lockedChannel) {
+			hasResidualKeys := channelSettingsContainUpstreamModelUpdateFields(lockedChannel.OtherSettings)
+			lockedSettings := lockedChannel.GetOtherSettings()
+			if clearUnsupportedChannelUpstreamModelUpdateSettings(&lockedSettings) || hasResidualKeys {
+				if err := updateChannelUpstreamModelSettingsWithTx(tx, lockedChannel, lockedSettings, false); err != nil {
+					return err
+				}
+			}
+			*settings = lockedSettings
+			*channel = *lockedChannel
+			return nil
+		}
 		if !sameChannelUpstreamModelSource(channel, lockedChannel) {
 			return ErrChannelUpstreamSourceChanged
 		}
@@ -1118,7 +1249,7 @@ type upstreamModelUpdateSummary struct {
 	AutoAddedModels      int `json:"auto_added_models"`
 }
 
-func runChannelUpstreamModelUpdateTaskOnce(ctx context.Context, force bool, allowAutoApply bool, report func(processed, total int)) (upstreamModelUpdateSummary, error) {
+func runChannelUpstreamModelUpdateTaskOnce(ctx context.Context, force bool, allowAutoApply bool, allowCodexCredentialRefresh bool, report func(processed, total int)) (upstreamModelUpdateSummary, error) {
 	checkedChannels := 0
 	failedChannels := 0
 	failedChannelIDs := make([]int, 0)
@@ -1193,7 +1324,15 @@ scanLoop:
 			}
 
 			checkedChannels++
-			modelsChanged, autoAddedModels, err := checkAndPersistChannelUpstreamModelUpdates(ctx, channel, &settings, force, allowAutoApply)
+			modelsChanged, autoAddedModels, err := checkAndPersistChannelUpstreamModelUpdatesWithOptions(
+				ctx,
+				channel,
+				&settings,
+				force,
+				allowAutoApply,
+				true,
+				channelUpstreamModelUpdateCheckOptions{AllowCodexCredentialRefresh: allowCodexCredentialRefresh},
+			)
 			if err != nil {
 				if ctx != nil && ctx.Err() != nil {
 					runErr = ctx.Err()
@@ -1344,15 +1483,37 @@ func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if channel.Status != common.ChannelStatusEnabled {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "channel is disabled",
+		})
+		return
+	}
 
 	addedModels, removedModels, ignoredModels, remainingModels, remainingRemoveModels, modelsChanged, err := applyChannelUpstreamModelUpdates(
 		channel,
 		req.AddModels,
 		req.IgnoreModels,
 		req.RemoveModels,
+		true,
 	)
 	if err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	if channel.Status != common.ChannelStatusEnabled {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "channel is disabled",
+		})
+		return
+	}
+	if !channelSupportsUpstreamModelUpdate(channel) {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "channel does not support upstream model updates",
+		})
 		return
 	}
 
@@ -1398,11 +1559,40 @@ func DetectChannelUpstreamModelUpdates(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if channel.Status != common.ChannelStatusEnabled {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "channel is disabled",
+		})
+		return
+	}
 
 	settings := channel.GetOtherSettings()
-	modelsChanged, autoAddedModels, err := checkAndPersistChannelUpstreamModelUpdates(c.Request.Context(), channel, &settings, true, false)
+	modelsChanged, autoAddedModels, err := checkAndPersistChannelUpstreamModelUpdatesWithOptions(
+		c.Request.Context(),
+		channel,
+		&settings,
+		true,
+		false,
+		true,
+		channelUpstreamModelUpdateCheckOptions{AllowCodexCredentialRefresh: false},
+	)
 	if err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	if channel.Status != common.ChannelStatusEnabled {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "channel is disabled",
+		})
+		return
+	}
+	if !channelSupportsUpstreamModelUpdate(channel) {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "channel does not support upstream model updates",
+		})
 		return
 	}
 	if modelsChanged {
@@ -1436,6 +1626,7 @@ func applyChannelUpstreamModelUpdates(
 	addModelsInput []string,
 	ignoreModelsInput []string,
 	removeModelsInput []string,
+	requireEnabled bool,
 ) (
 	addedModels []string,
 	removedModels []string,
@@ -1449,6 +1640,10 @@ func applyChannelUpstreamModelUpdates(
 		return nil, nil, nil, nil, nil, false, errors.New("invalid channel")
 	}
 	err = withLockedChannelUpstreamModelUpdate(channel.Id, func(tx *gorm.DB, lockedChannel *model.Channel) error {
+		if requireEnabled && lockedChannel.Status != common.ChannelStatusEnabled {
+			*channel = *lockedChannel
+			return nil
+		}
 		if !channelSupportsUpstreamModelUpdate(lockedChannel) {
 			hasResidualKeys := channelSettingsContainUpstreamModelUpdateFields(lockedChannel.OtherSettings)
 			settings := lockedChannel.GetOtherSettings()
@@ -1582,8 +1777,8 @@ func ApplyAllChannelUpstreamModelUpdates(c *gin.Context) {
 			}
 
 			pendingAddModels, pendingRemoveModels := collectPendingApplyUpstreamModelChanges(settings)
-			remainingRemoveModelCount += len(pendingRemoveModels)
 			if len(pendingAddModels) == 0 {
+				remainingRemoveModelCount += len(pendingRemoveModels)
 				continue
 			}
 
@@ -1592,11 +1787,17 @@ func ApplyAllChannelUpstreamModelUpdates(c *gin.Context) {
 				pendingAddModels,
 				nil,
 				nil,
+				true,
 			)
 			if err != nil {
 				failed = append(failed, channel.Id)
 				continue
 			}
+			if channel.Status != common.ChannelStatusEnabled ||
+				!channelSupportsUpstreamModelUpdate(channel) {
+				continue
+			}
+			remainingRemoveModelCount += len(remainingRemoveModels)
 			if modelsChanged {
 				refreshNeeded = true
 			}

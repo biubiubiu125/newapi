@@ -27,11 +27,18 @@ const UPSTREAM_MODEL_UPDATE_SETTING_KEYS = [
   'upstream_model_update_last_removed_models',
 ];
 
-export const normalizeModelList = (models = []) => [
-  ...new Set(
-    (models || []).map((model) => String(model || '').trim()).filter(Boolean),
-  ),
-];
+export const normalizeModelList = (models = []) => {
+  const source = Array.isArray(models)
+    ? models
+    : typeof models === 'string'
+      ? models.split(',')
+      : [];
+  return [
+    ...new Set(
+      source.map((model) => String(model || '').trim()).filter(Boolean),
+    ),
+  ];
+};
 
 export const getDefaultUpstreamUpdateSelection = ({
   addModels = [],
@@ -41,6 +48,82 @@ export const getDefaultUpstreamUpdateSelection = ({
   removeModels: normalizeModelList(removeModels),
 });
 
+export const buildClassicUpstreamUpdateSupportChannel = (
+  inputs = {},
+  { isEdit = false, batch = false, multiToSingle = false } = {},
+) => ({
+  ...inputs,
+  is_draft_multi_key: !isEdit && batch === true && multiToSingle === true,
+});
+
+export const normalizeClassicFetchModelsDraftSnapshot = (payload = {}) => ({
+  base_url: String(payload.base_url || ''),
+  type: String(payload.type ?? ''),
+  key: String(payload.key || '').trim(),
+  setting: String(payload.setting || ''),
+  settings: String(payload.settings || ''),
+  header_override: String(payload.header_override || ''),
+  other: String(payload.other || ''),
+});
+
+export const getClassicFetchModelsCacheKey = (payload = {}) =>
+  JSON.stringify(normalizeClassicFetchModelsDraftSnapshot(payload));
+
+export const shouldUseClassicDraftFetchModels = ({
+  isEdit = false,
+  draftHasChanges = false,
+  canFetchSavedModels = false,
+} = {}) => {
+  if (!isEdit) return true;
+  return draftHasChanges || !canFetchSavedModels;
+};
+
+export const shouldRefreshClassicFetchedModelsCache = ({
+  cachedModels,
+  cachedKey,
+  currentKey,
+} = {}) =>
+  !Array.isArray(cachedModels) ||
+  cachedModels.length === 0 ||
+  cachedKey !== currentKey;
+
+export const getClassicFetchModelsFailureMessage = (
+  source,
+  fallback = '获取模型列表失败',
+) => {
+  const candidates = [
+    source?.data?.message,
+    source?.response?.data?.message,
+    source?.message,
+  ];
+  const message = candidates.find(
+    (candidate) =>
+      typeof candidate === 'string' && candidate.trim().length > 0,
+  );
+  return message ? message.trim() : fallback;
+};
+
+export const canUseClassicChannelUpstreamUpdates = (
+  channel = {},
+  upstreamUpdateMeta = {},
+) =>
+  Boolean(
+    channel &&
+      supportsChannelUpstreamModelUpdate(channel) &&
+      Number(channel.status) === 1 &&
+      upstreamUpdateMeta?.enabled === true,
+  );
+
+export const canFetchClassicChannelUpstreamModels = ({
+  canSensitiveWriteChannel = false,
+} = {}) => canSensitiveWriteChannel === true;
+
+export const canOpenClassicModelMappingValueFetch = ({
+  supportsUpstreamModelUpdate = false,
+  canFetchUpstreamModels = false,
+} = {}) =>
+  supportsUpstreamModelUpdate === true && canFetchUpstreamModels === true;
+
 export const buildClassicChannelUpstreamUpdateSettings = ({
   currentSettings = {},
   inputs = {},
@@ -49,9 +132,18 @@ export const buildClassicChannelUpstreamUpdateSettings = ({
     currentSettings && typeof currentSettings === 'object'
       ? { ...currentSettings }
       : {};
+  const channelType = Number(inputs.type);
+  if (!Number.isFinite(channelType)) {
+    UPSTREAM_MODEL_UPDATE_SETTING_KEYS.forEach((key) => {
+      delete settings[key];
+    });
+    return settings;
+  }
   if (
-    typeof inputs.type === 'number' &&
-    !supportsChannelUpstreamModelUpdate(inputs)
+    !supportsChannelUpstreamModelUpdate({
+      ...inputs,
+      type: channelType,
+    })
   ) {
     UPSTREAM_MODEL_UPDATE_SETTING_KEYS.forEach((key) => {
       delete settings[key];
@@ -78,7 +170,11 @@ export const buildClassicChannelUpstreamUpdateSettings = ({
   ) {
     settings.upstream_model_update_last_removed_models = [];
   }
-  if (typeof settings.upstream_model_update_last_check_time !== 'number') {
+  if (settings.upstream_model_update_check_enabled !== true) {
+    settings.upstream_model_update_last_check_time = 0;
+  } else if (
+    typeof settings.upstream_model_update_last_check_time !== 'number'
+  ) {
     settings.upstream_model_update_last_check_time = 0;
   }
   return settings;

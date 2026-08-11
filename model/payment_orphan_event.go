@@ -64,6 +64,15 @@ type PaymentOrphanEvent struct {
 	CanCredit      bool   `json:"can_credit" gorm:"-"`
 }
 
+// PaymentProviderCustomerLock serializes manual recovery for a provider-owned
+// customer before a local user row may exist for that customer.
+type PaymentProviderCustomerLock struct {
+	Provider   string `json:"provider" gorm:"type:varchar(32);primaryKey"`
+	CustomerID string `json:"customer_id" gorm:"type:varchar(128);primaryKey;column:customer_id"`
+	CreatedAt  int64  `json:"created_at" gorm:"autoCreateTime"`
+	UpdatedAt  int64  `json:"updated_at" gorm:"autoUpdateTime"`
+}
+
 func RecordPaymentOrphanEvent(event *PaymentOrphanEvent) error {
 	if event == nil {
 		return nil
@@ -111,9 +120,249 @@ func ListPaymentOrphanEvents(status string, pageInfo *common.PageInfo) (events [
 		Offset(pageInfo.GetStartIdx()).
 		Find(&events).Error
 	for _, event := range events {
-		event.CanCredit = CanCreditStripePaymentOrphanEvent(event)
+		event.CanCredit = CanCreditPaymentOrphanEvent(event)
 	}
 	return events, total, err
+}
+
+// CanCreditPaymentOrphanEvent exposes only paid callbacks that an operator can
+// complete from immutable local order state. Stripe retains its stricter
+// recovery path because it can safely reconstruct a missing local order from
+// signed Checkout metadata. Other providers may only be credited when their
+// original local order still exists and the provider matches exactly.
+func CanCreditPaymentOrphanEvent(orphan *PaymentOrphanEvent) bool {
+	if CanCreditStripePaymentOrphanEvent(orphan) {
+		return true
+	}
+	if !canCreditExistingPaymentOrphanEventBase(orphan) || DB == nil {
+		return false
+	}
+	return hasCreditEligibleExistingPaymentOrder(orphan)
+}
+
+func canCreditExistingPaymentOrphanEventBase(orphan *PaymentOrphanEvent) bool {
+	if orphan == nil ||
+		orphan.Status != PaymentOrphanStatusPendingReview ||
+		strings.TrimSpace(orphan.ReferenceID) == "" {
+		return false
+	}
+	provider := strings.TrimSpace(orphan.Provider)
+	if provider == "" || strings.EqualFold(provider, PaymentProviderStripe) ||
+		!strings.Contains(strings.ToLower(orphan.Reason), "requires manual review after payment succeeded") {
+		return false
+	}
+	if paymentOrphanHasPaymentFactMismatch(orphan) {
+		return false
+	}
+	return true
+}
+
+func paymentOrphanHasPaymentFactMismatch(orphan *PaymentOrphanEvent) bool {
+	if orphan == nil {
+		return true
+	}
+	errorText := strings.ToLower(strings.TrimSpace(orphan.Error))
+	if errorText == "" {
+		return false
+	}
+	return strings.Contains(errorText, ErrPaymentMethodMismatch.Error()) ||
+		strings.Contains(errorText, ErrPaymentAmountMismatch.Error()) ||
+		strings.Contains(errorText, ErrPaymentCurrencyMismatch.Error())
+}
+
+func hasCreditEligibleExistingPaymentOrder(orphan *PaymentOrphanEvent) bool {
+	if orphan == nil || DB == nil {
+		return false
+	}
+	provider := strings.TrimSpace(orphan.Provider)
+	topUp := &TopUp{}
+	if err := DB.Select("payment_provider", "status").Where("trade_no = ?", orphan.ReferenceID).First(topUp).Error; err == nil {
+		return strings.EqualFold(strings.TrimSpace(topUp.PaymentProvider), provider) &&
+			(topUp.Status == common.TopUpStatusPending ||
+				topUp.Status == common.TopUpStatusFailed ||
+				topUp.Status == common.TopUpStatusExpired)
+	}
+	order := &SubscriptionOrder{}
+	if err := DB.Select("payment_provider", "status").Where("trade_no = ?", orphan.ReferenceID).First(order).Error; err != nil {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(order.PaymentProvider), provider) &&
+		(order.Status == common.TopUpStatusPending ||
+			order.Status == common.TopUpStatusFailed ||
+			order.Status == common.TopUpStatusExpired)
+}
+
+// CreditPaymentOrphan completes a verified paid callback selected by an
+// administrator. Non-Stripe providers never reconstruct missing orders: the
+// action is limited to an existing local top-up or subscription order whose
+// configured provider exactly matches the verified callback.
+func CreditPaymentOrphan(id int64, resolvedBy int, callerIP string) error {
+	orphan := &PaymentOrphanEvent{}
+	if err := DB.Select("provider").Where("id = ?", id).First(orphan).Error; err != nil {
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return ErrPaymentOrphanNotFound
+		}
+		return err
+	}
+	if strings.EqualFold(strings.TrimSpace(orphan.Provider), PaymentProviderStripe) {
+		return CreditStripePaymentOrphan(id, resolvedBy, callerIP)
+	}
+	return creditExistingPaymentOrphan(id, resolvedBy, callerIP)
+}
+
+func creditExistingPaymentOrphan(id int64, resolvedBy int, callerIP string) error {
+	result := paymentOrphanCreditResult{}
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		orphan := &PaymentOrphanEvent{}
+		if err := lockForUpdate(tx).Where("id = ?", id).First(orphan).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrPaymentOrphanNotFound
+			}
+			return err
+		}
+		if orphan.Status == PaymentOrphanStatusCredited {
+			return nil
+		}
+		if !canCreditExistingPaymentOrphanEventBase(orphan) {
+			return ErrPaymentOrphanNotCredit
+		}
+
+		topUp := &TopUp{}
+		if err := lockForUpdate(tx).Where("trade_no = ?", orphan.ReferenceID).First(topUp).Error; err == nil {
+			if !strings.EqualFold(strings.TrimSpace(topUp.PaymentProvider), strings.TrimSpace(orphan.Provider)) {
+				return ErrPaymentOrphanNotCredit
+			}
+			now := common.GetTimestamp()
+			if topUp.Status == common.TopUpStatusSuccess {
+				markPaymentOrphanCredited(orphan, resolvedBy, now, paymentOrphanTopUpResolutionNote(topUp.UserId, topUp.PaidAmount, topUp.PaidCurrency, int64(topUp.CreditQuotaAmount())))
+				return tx.Save(orphan).Error
+			}
+			if topUp.Status != common.TopUpStatusPending &&
+				topUp.Status != common.TopUpStatusFailed &&
+				topUp.Status != common.TopUpStatusExpired {
+				return ErrPaymentOrphanNotCredit
+			}
+			quota := topUp.CreditQuotaAmount()
+			if quota <= 0 {
+				return ErrPaymentOrphanNotCredit
+			}
+			topUp.ProviderPayload = orphan.Payload
+			topUp.Status = common.TopUpStatusSuccess
+			topUp.CompleteTime = now
+			if err := tx.Save(topUp).Error; err != nil {
+				return err
+			}
+			update := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quota))
+			if update.Error != nil {
+				return update.Error
+			}
+			if update.RowsAffected != 1 {
+				return ErrPaymentOrphanNotCredit
+			}
+			markPaymentOrphanCredited(orphan, resolvedBy, now, paymentOrphanTopUpResolutionNote(topUp.UserId, topUp.PaidAmount, topUp.PaidCurrency, int64(quota)))
+			if err := tx.Save(orphan).Error; err != nil {
+				return err
+			}
+			result = paymentOrphanCreditResult{
+				Kind:         "topup",
+				UserID:       topUp.UserId,
+				PaidAmount:   topUp.PaidAmount,
+				PaidCurrency: topUp.PaidCurrency,
+				CreditQuota:  int64(quota),
+			}
+			return nil
+		} else if !errors.Is(err, gorm.ErrRecordNotFound) {
+			return err
+		}
+
+		order := &SubscriptionOrder{}
+		if err := lockForUpdate(tx).Where("trade_no = ?", orphan.ReferenceID).First(order).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return ErrPaymentOrphanNotCredit
+			}
+			return err
+		}
+		if !strings.EqualFold(strings.TrimSpace(order.PaymentProvider), strings.TrimSpace(orphan.Provider)) {
+			return ErrPaymentOrphanNotCredit
+		}
+		now := common.GetTimestamp()
+		if order.Status == common.TopUpStatusSuccess {
+			markPaymentOrphanCredited(orphan, resolvedBy, now, paymentOrphanSubscriptionResolutionNote(order.UserId, order.PaidAmount, order.PaidCurrency, order.PlanTitleSnapshot))
+			return tx.Save(orphan).Error
+		}
+		if order.Status != common.TopUpStatusPending &&
+			order.Status != common.TopUpStatusFailed &&
+			order.Status != common.TopUpStatusExpired {
+			return ErrPaymentOrphanNotCredit
+		}
+		plan, err := getSubscriptionPlanByIdTx(tx, order.PlanId)
+		if err != nil {
+			return err
+		}
+		plan = order.ApplyPlanSnapshot(plan)
+		if plan == nil {
+			return ErrPaymentOrphanNotCredit
+		}
+		if _, err := createUserSubscriptionFromPlanTx(tx, order.UserId, plan, "order", createUserSubscriptionOptions{
+			SkipPurchaseLimit: true,
+		}); err != nil {
+			return err
+		}
+		order.ProviderPayload = orphan.Payload
+		if err := upsertSubscriptionTopUpTx(tx, order); err != nil {
+			return err
+		}
+		order.Status = common.TopUpStatusSuccess
+		order.CompleteTime = now
+		if err := tx.Save(order).Error; err != nil {
+			return err
+		}
+		markPaymentOrphanCredited(orphan, resolvedBy, now, paymentOrphanSubscriptionResolutionNote(order.UserId, order.PaidAmount, order.PaidCurrency, plan.Title))
+		if err := tx.Save(orphan).Error; err != nil {
+			return err
+		}
+		result = paymentOrphanCreditResult{
+			Kind:         "subscription",
+			UserID:       order.UserId,
+			PaidAmount:   order.PaidAmount,
+			PaidCurrency: order.PaidCurrency,
+			ProductName:  plan.Title,
+			UpgradeGroup: strings.TrimSpace(plan.UpgradeGroup),
+			CreditQuota:  plan.TotalAmount,
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	switch result.Kind {
+	case "topup":
+		_ = cacheUpdateUserQuota(result.UserID)
+		RecordTopupLog(result.UserID, fmt.Sprintf("支付孤儿补单成功，充值金额：%.2f %s，额度：%d", result.PaidAmount, result.PaidCurrency, result.CreditQuota), callerIP, "admin", "admin")
+	case "subscription":
+		if result.UpgradeGroup != "" {
+			_ = UpdateUserGroupCache(result.UserID, result.UpgradeGroup)
+		}
+		RecordPaymentAuditLog(result.UserID, fmt.Sprintf("支付孤儿订阅补发成功，套餐：%s，支付金额：%.2f %s", result.ProductName, result.PaidAmount, result.PaidCurrency), PaymentAuditLogInfo{
+			CallerIP:     callerIP,
+			OrderType:    "subscription",
+			ProductName:  result.ProductName,
+			PaidAmount:   result.PaidAmount,
+			PaidCurrency: result.PaidCurrency,
+		})
+	}
+	return nil
+}
+
+func markPaymentOrphanCredited(orphan *PaymentOrphanEvent, resolvedBy int, now int64, note string) {
+	if orphan == nil {
+		return
+	}
+	orphan.Status = PaymentOrphanStatusCredited
+	orphan.ResolvedBy = resolvedBy
+	orphan.ResolvedAt = now
+	orphan.Resolution = PaymentOrphanStatusCredited
+	orphan.ResolutionNote = note
 }
 
 // CreditStripePaymentOrphan recreates a missing Stripe top-up order and credits
@@ -673,22 +922,16 @@ func lockStripeCustomerForOrphanTx(tx *gorm.DB, customerID string) error {
 	if tx == nil || customerID == "" {
 		return ErrPaymentOrphanPayloadInvalid
 	}
-	switch {
-	case common.UsingMainDatabase(common.DatabaseTypePostgreSQL):
-		return tx.Exec("SELECT pg_advisory_xact_lock(hashtext(?))", customerID).Error
-	case common.UsingMainDatabase(common.DatabaseTypeMySQL):
-		var ids []int
-		return lockForUpdate(tx).
-			Model(&User{}).
-			Select("id").
-			Where("stripe_customer = ?", customerID).
-			Find(&ids).Error
-	default:
-		// SQLite has a single-writer transaction model; the conflicting update
-		// is serialized by the database and the second transaction cannot
-		// commit a duplicate binding.
-		return nil
+	lockRow := &PaymentProviderCustomerLock{
+		Provider:   PaymentProviderStripe,
+		CustomerID: customerID,
 	}
+	if err := tx.Clauses(clause.OnConflict{DoNothing: true}).Create(lockRow).Error; err != nil {
+		return err
+	}
+	return lockForUpdate(tx).
+		Where("provider = ? AND customer_id = ?", PaymentProviderStripe, customerID).
+		First(&PaymentProviderCustomerLock{}).Error
 }
 
 func paymentOrphanTopUpResolutionNote(userID int, paidAmount float64, paidCurrency string, quota int64) string {

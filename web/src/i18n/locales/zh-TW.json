@@ -5220,6 +5220,8 @@
     "Credited": "已入帳",
     "Credit payment": "補發入帳",
     "Credit this Stripe payment?": "補發這筆 Stripe 支付？",
+
+    "Credit this verified payment?": "確認將這筆已驗證支付入帳？",
     "Dismissed": "已忽略",
     "Mark refunded": "標記已退款",
     "No payment orphans.": "沒有待處理的孤兒款。",
@@ -5232,7 +5234,11 @@
     "Resolve this payment orphan?": "處理這筆孤兒款？",
     "Showing {{start}}-{{end}} of {{total}}": "顯示第 {{start}}-{{end}} 筆，共 {{total}} 筆",
     "Stripe payments that need reconciliation": "需要人工對帳的 Stripe 支付",
+
+    "Payments that need reconciliation": "需要人工對帳的支付",
     "This creates the missing top-up or subscription and credits the matched Stripe customer exactly once.": "將建立缺失的充值單或訂閱，並且只為匹配的 Stripe 客戶入帳一次。",
+
+    "This credits only the matching local top-up or subscription order exactly once. It does not recreate missing orders.": "系統只會為與回呼相符的本地儲值或訂閱訂單入帳一次，不會補建遺失訂單。",
     "You can still edit non-sensitive operations fields such as models, groups, priority, and weight.": "你仍可編輯模型、分組、優先級和權重等非敏感運維欄位。",
     "You commit not to use this system to implement, assist with, or indirectly implement acts that violate applicable laws and regulations, regulatory requirements, platform rules, public interests, or the lawful rights and interests of third parties.": "你承諾不會使用本系統實施、協助實施或間接實施違反適用法律法規、監管要求、平台規則、公共利益或第三方合法權益的行為。",
     "You commit to using upstream APIs, accounts, keys, quotas, and service capabilities only within the scope of lawful authorization obtained from upstream service providers, model service providers, or relevant rights holders, and will not conduct unauthorized resale, trafficking, distribution, or other non-compliant commercialization.": "你承諾僅在從上游服務供應商、模型服務供應商或相關權利人處獲得合法授權的範圍內使用上游 API、用戶、金鑰、額度和服務能力，並不會進行未經授權的轉售、倒賣、分發或其他不合規商業化行為。",
@@ -5277,6 +5283,23 @@
     "Apply Upstream Updates": "處理上游更新",
     "Batch detection is still running. Please refresh later": "批量檢測仍在執行，請稍後重新整理查看",
     "Batch detection task is already running. Waiting for completion": "批量檢測任務正在執行，等待完成",
-    "Batch detection task started": "批量檢測任務已啟動"
+    "Batch detection task started": "批量檢測任務已啟動",
+    "Actively check all channels": "主動檢查全部渠道",
+    "Actively check auto-disable-enabled channels": "主動檢查已啟用自動停用的渠道",
+    "Auto-disable-enabled channels only": "僅測試已啟用自動停用的渠道",
+    "Auto-disable-enabled mode probes non-manually-disabled channels with auto-disable enabled.": "此模式僅探測已啟用自動停用且未被手動停用的渠道。",
+    "Check channels awaiting recovery only": "僅檢查被自動停用的渠道",
+    "Does not check healthy channels. It only rechecks auto-disabled channels and restores them after they recover.": "不檢查正常渠道，只複查被系統自動停用的渠道，並在恢復後重新啟用。",
+    "Periodically checks all channels except manually disabled ones to detect failures and recover channels automatically.": "定時檢查除手動停用外的全部渠道，用於主動發現故障並自動恢復渠道。",
+    "Periodically checks only channels with auto-disable enabled, excluding manually disabled channels.": "只定時檢查已啟用「自動停用」的渠道；未啟用該選項和手動停用的渠道不會被檢查。",
+    "Recover auto-disabled channels only": "僅恢復自動停用的渠道",
+    "Access tokens are shown only once": "存取令牌僅顯示一次",
+    "For security, existing access tokens cannot be displayed. Regenerate only when you need a new token.": "基於安全考量，現有存取令牌無法再次顯示。僅在需要新令牌時重新生成。",
+    "Regenerate access token?": "重新生成存取令牌？",
+    "Regenerate token": "重新生成令牌",
+    "Regenerating immediately invalidates any existing token.": "重新生成會立即使所有現有令牌失效。",
+    "Save this token now. You won't be able to view it again after closing this dialog.": "請立即儲存此令牌。關閉此對話框後，您將無法再次查看。",
+    "The new token will only be shown once. Copy it and store it securely.": "新令牌僅顯示一次。請複製並妥善保存。",
+    "This will immediately invalidate your existing access token. Any applications or scripts using it will stop working.": "這會立即使現有存取令牌失效。任何正在使用它的應用程式或指令碼都將停止運作。"
   }
 }

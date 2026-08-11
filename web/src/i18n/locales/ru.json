@@ -5233,6 +5233,8 @@
     "Credited": "Credited",
     "Credit payment": "Credit payment",
     "Credit this Stripe payment?": "Credit this Stripe payment?",
+
+    "Credit this verified payment?": "Зачислить этот подтвержденный платеж?",
     "Dismissed": "Dismissed",
     "Mark refunded": "Mark refunded",
     "No payment orphans.": "No payment orphans.",
@@ -5245,7 +5247,11 @@
     "Resolve this payment orphan?": "Resolve this payment orphan?",
     "Showing {{start}}-{{end}} of {{total}}": "Showing {{start}}-{{end}} of {{total}}",
     "Stripe payments that need reconciliation": "Stripe payments that need reconciliation",
+
+    "Payments that need reconciliation": "Платежи, требующие сверки",
     "This creates the missing top-up or subscription and credits the matched Stripe customer exactly once.": "This creates the missing top-up or subscription and credits the matched Stripe customer exactly once.",
+
+    "This credits only the matching local top-up or subscription order exactly once. It does not recreate missing orders.": "Средства будут зачислены только один раз по соответствующему локальному заказу пополнения или подписки. Отсутствующие заказы не создаются заново.",
     "You can still edit non-sensitive operations fields such as models, groups, priority, and weight.": "Вы по-прежнему можете изменять нечувствительные операционные поля, такие как модели, группы, приоритет и вес.",
     "You do not have permission to edit sensitive channel settings.": "У вас нет права изменять чувствительные настройки каналов.",
     "Your account can edit sensitive channel settings.": "Ваша учетная запись может изменять чувствительные настройки каналов.",
@@ -5255,6 +5261,23 @@
     "This will batch add newly detected upstream models to eligible channels. Models that disappeared upstream will stay pending for manual review and will not be removed automatically.": "This will batch add newly detected upstream models to eligible channels. Models that disappeared upstream will stay pending for manual review and will not be removed automatically.",
     "Batch upstream model additions applied: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed": "Batch upstream model additions applied: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed",
     "Detect Upstream Updates": "Detect Upstream Updates",
-    "Apply Upstream Updates": "Apply Upstream Updates"
+    "Apply Upstream Updates": "Apply Upstream Updates",
+    "Actively check all channels": "Активно проверять все каналы",
+    "Actively check auto-disable-enabled channels": "Активно проверять каналы с автоотключением",
+    "Auto-disable-enabled channels only": "Только каналы с автовыключением",
+    "Auto-disable-enabled mode probes non-manually-disabled channels with auto-disable enabled.": "В этом режиме проверяются только каналы с включённым автоматическим отключением, которые не были отключены вручную.",
+    "Check channels awaiting recovery only": "Проверять только каналы, ожидающие восстановления",
+    "Does not check healthy channels. It only rechecks auto-disabled channels and restores them after they recover.": "Рабочие каналы не проверяются. Повторно проверяются только автоматически отключённые каналы, которые включаются после восстановления.",
+    "Periodically checks all channels except manually disabled ones to detect failures and recover channels automatically.": "Периодически проверяет все каналы, кроме отключённых вручную, чтобы выявлять сбои и автоматически восстанавливать каналы.",
+    "Periodically checks only channels with auto-disable enabled, excluding manually disabled channels.": "Периодически проверяет только каналы с включённым автоотключением, исключая отключённые вручную.",
+    "Recover auto-disabled channels only": "Только восстанавливать автоотключённые каналы",
+    "Access tokens are shown only once": "Токены доступа отображаются только один раз",
+    "For security, existing access tokens cannot be displayed. Regenerate only when you need a new token.": "В целях безопасности существующие токены доступа нельзя просмотреть повторно. Создавайте новый токен только при необходимости.",
+    "Regenerate access token?": "Перегенерировать токен доступа?",
+    "Regenerate token": "Перегенерировать токен",
+    "Regenerating immediately invalidates any existing token.": "Перегенерация немедленно делает недействительными все существующие токены.",
+    "Save this token now. You won't be able to view it again after closing this dialog.": "Сохраните этот токен сейчас. После закрытия диалогового окна вы не сможете просмотреть его снова.",
+    "The new token will only be shown once. Copy it and store it securely.": "Новый токен будет показан только один раз. Скопируйте его и сохраните в безопасном месте.",
+    "This will immediately invalidate your existing access token. Any applications or scripts using it will stop working.": "Это немедленно сделает текущий токен доступа недействительным. Использующие его приложения и скрипты перестанут работать."
   }
 }

@@ -98,6 +98,7 @@ const RechargeCard = ({
   activeSubscriptions = [],
   allSubscriptions = [],
   reloadSubscriptionSelf,
+  onPaymentStarted,
   enableRedemption = true,
 }) => {
   const onlineFormApiRef = useRef(null);
@@ -109,6 +110,14 @@ const RechargeCard = ({
   const shouldShowSubscription =
     !subscriptionLoading && subscriptionPlans.length > 0;
   const regularPayMethods = payMethods || [];
+  const enableStripeSubscription =
+    topupInfo?.enable_stripe_subscription ?? enableStripeTopUp;
+  const enableCreemSubscription =
+    topupInfo?.enable_creem_subscription ?? enableCreemTopUp;
+  const enableWaffoPancakeSubscription =
+    topupInfo?.enable_waffo_pancake_subscription ?? enableWaffoPancakeTopUp;
+  const enableBEpusdt = !!topupInfo?.enable_bepusdt_topup;
+  const bepusdtMethods = topupInfo?.bepusdt_pay_methods || [];
 
   useEffect(() => {
     if (initialTabSetRef.current) return;
@@ -672,12 +681,19 @@ const RechargeCard = ({
                 payMethods={payMethods}
                 enableOnlineTopUp={enableOnlineTopUp}
                 enableStripeTopUp={enableStripeTopUp}
+                enableStripeSubscription={enableStripeSubscription}
                 enableCreemTopUp={enableCreemTopUp}
+                enableCreemSubscription={enableCreemSubscription}
+                enableWaffoPancakeTopUp={enableWaffoPancakeTopUp}
+                enableWaffoPancakeSubscription={enableWaffoPancakeSubscription}
+                enableBEpusdt={enableBEpusdt}
+                bepusdtMethods={bepusdtMethods}
                 billingPreference={billingPreference}
                 onChangeBillingPreference={onChangeBillingPreference}
                 activeSubscriptions={activeSubscriptions}
                 allSubscriptions={allSubscriptions}
                 reloadSubscriptionSelf={reloadSubscriptionSelf}
+                onPaymentStarted={onPaymentStarted}
                 withCard={false}
               />
             </div>

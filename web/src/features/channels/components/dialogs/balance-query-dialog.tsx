@@ -25,8 +25,14 @@ import { toast } from 'sonner'
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { IconBadge } from '@/components/ui/icon-badge'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+  hasPermission,
+} from '@/lib/admin-permissions'
 import { formatCurrencyFromUSD } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
+import { useAuthStore } from '@/stores/auth-store'
 
 import { getCodexUsage, updateChannelBalance } from '../../api'
 import { channelsQueryKeys } from '../../lib'
@@ -48,6 +54,7 @@ export function BalanceQueryDialog({
   const { t } = useTranslation()
   const { currentRow, setCurrentRow } = useChannels()
   const queryClient = useQueryClient()
+  const currentUser = useAuthStore((s) => s.auth.user)
   const [isQuerying, setIsQuerying] = useState(false)
   const [balance, setBalance] = useState<number | null>(null)
   const [balanceUpdatedTime, setBalanceUpdatedTime] = useState<number | null>(
@@ -57,10 +64,21 @@ export function BalanceQueryDialog({
     useState<CodexUsageDialogData | null>(null)
 
   const isCodex = currentRow?.type === 57
+  const canQueryBalance = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    isCodex
+      ? ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
+      : ADMIN_PERMISSION_ACTIONS.OPERATE
+  )
 
   const handleQueryCodexUsage = async () => {
     const row = currentRow
     if (!row) return
+    if (!canQueryBalance) {
+      toast.error(t('No permission to perform this action'))
+      return
+    }
     setIsQuerying(true)
     try {
       const res = await getCodexUsage(row.id)
@@ -87,6 +105,10 @@ export function BalanceQueryDialog({
   if (!currentRow) return null
 
   const handleQueryBalance = async () => {
+    if (!canQueryBalance) {
+      toast.error(t('No permission to perform this action'))
+      return
+    }
     setIsQuerying(true)
     try {
       const response = await updateChannelBalance(currentRow.id)

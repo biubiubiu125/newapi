@@ -5233,6 +5233,8 @@
     "Credited": "Credited",
     "Credit payment": "Credit payment",
     "Credit this Stripe payment?": "Credit this Stripe payment?",
+
+    "Credit this verified payment?": "この確認済みの支払いを入金しますか？",
     "Dismissed": "Dismissed",
     "Mark refunded": "Mark refunded",
     "No payment orphans.": "No payment orphans.",
@@ -5245,7 +5247,11 @@
     "Resolve this payment orphan?": "Resolve this payment orphan?",
     "Showing {{start}}-{{end}} of {{total}}": "Showing {{start}}-{{end}} of {{total}}",
     "Stripe payments that need reconciliation": "Stripe payments that need reconciliation",
+
+    "Payments that need reconciliation": "照合が必要な支払い",
     "This creates the missing top-up or subscription and credits the matched Stripe customer exactly once.": "This creates the missing top-up or subscription and credits the matched Stripe customer exactly once.",
+
+    "This credits only the matching local top-up or subscription order exactly once. It does not recreate missing orders.": "コールバックに一致するローカルのチャージまたはサブスクリプション注文に一度だけ入金します。不足している注文は再作成しません。",
     "You can still edit non-sensitive operations fields such as models, groups, priority, and weight.": "モデル、グループ、優先度、重みなどの非機密の運用項目は引き続き編集できます。",
     "You do not have permission to edit sensitive channel settings.": "機密チャネル設定を編集する権限がありません。",
     "Your account can edit sensitive channel settings.": "あなたのアカウントは機密チャネル設定を編集できます。",
@@ -5255,6 +5261,23 @@
     "This will batch add newly detected upstream models to eligible channels. Models that disappeared upstream will stay pending for manual review and will not be removed automatically.": "This will batch add newly detected upstream models to eligible channels. Models that disappeared upstream will stay pending for manual review and will not be removed automatically.",
     "Batch upstream model additions applied: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed": "Batch upstream model additions applied: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed",
     "Detect Upstream Updates": "Detect Upstream Updates",
-    "Apply Upstream Updates": "Apply Upstream Updates"
+    "Apply Upstream Updates": "Apply Upstream Updates",
+    "Actively check all channels": "すべてのチャネルを定期チェック",
+    "Actively check auto-disable-enabled channels": "自動無効化が有効なチャネルを定期チェック",
+    "Auto-disable-enabled channels only": "自動無効化が有効なチャネルのみ",
+    "Auto-disable-enabled mode probes non-manually-disabled channels with auto-disable enabled.": "このモードでは、自動無効化が有効で、手動で無効化されていないチャネルのみを検査します。",
+    "Check channels awaiting recovery only": "復旧待ちのチャネルのみチェック",
+    "Does not check healthy channels. It only rechecks auto-disabled channels and restores them after they recover.": "正常なチャネルはチェックしません。自動無効化されたチャネルのみを再チェックし、復旧後に再び有効化します。",
+    "Periodically checks all channels except manually disabled ones to detect failures and recover channels automatically.": "手動で無効化されたものを除くすべてのチャネルを定期チェックし、障害の検出と自動復旧を行います。",
+    "Periodically checks only channels with auto-disable enabled, excluding manually disabled channels.": "自動無効化が有効なチャネルのみを定期チェックします。手動で無効化されたチャネルは対象外です。",
+    "Recover auto-disabled channels only": "自動無効化されたチャネルの復旧のみ",
+    "Access tokens are shown only once": "アクセストークンは一度だけ表示されます",
+    "For security, existing access tokens cannot be displayed. Regenerate only when you need a new token.": "セキュリティ上、既存のアクセストークンは再表示できません。新しいトークンが必要な場合のみ再生成してください。",
+    "Regenerate access token?": "アクセストークンを再生成しますか？",
+    "Regenerate token": "トークンを再生成",
+    "Regenerating immediately invalidates any existing token.": "再生成すると、既存のトークンは直ちに無効になります。",
+    "Save this token now. You won't be able to view it again after closing this dialog.": "このトークンを今すぐ保存してください。このダイアログを閉じると、再度表示できません。",
+    "The new token will only be shown once. Copy it and store it securely.": "新しいトークンは一度だけ表示されます。コピーして安全に保管してください。",
+    "This will immediately invalidate your existing access token. Any applications or scripts using it will stop working.": "既存のアクセストークンは直ちに無効になります。使用中のアプリケーションやスクリプトは動作しなくなります。"
   }
 }

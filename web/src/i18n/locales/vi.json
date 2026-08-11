@@ -5233,6 +5233,8 @@
     "Credited": "Credited",
     "Credit payment": "Credit payment",
     "Credit this Stripe payment?": "Credit this Stripe payment?",
+
+    "Credit this verified payment?": "Ghi có khoản thanh toán đã xác minh này?",
     "Dismissed": "Dismissed",
     "Mark refunded": "Mark refunded",
     "No payment orphans.": "No payment orphans.",
@@ -5245,7 +5247,11 @@
     "Resolve this payment orphan?": "Resolve this payment orphan?",
     "Showing {{start}}-{{end}} of {{total}}": "Showing {{start}}-{{end}} of {{total}}",
     "Stripe payments that need reconciliation": "Stripe payments that need reconciliation",
+
+    "Payments that need reconciliation": "Các khoản thanh toán cần đối soát",
     "This creates the missing top-up or subscription and credits the matched Stripe customer exactly once.": "This creates the missing top-up or subscription and credits the matched Stripe customer exactly once.",
+
+    "This credits only the matching local top-up or subscription order exactly once. It does not recreate missing orders.": "Chỉ ghi có một lần cho đơn nạp tiền hoặc đăng ký cục bộ khớp với callback. Không tạo lại các đơn bị thiếu.",
     "You can still edit non-sensitive operations fields such as models, groups, priority, and weight.": "Bạn vẫn có thể chỉnh sửa các trường vận hành không nhạy cảm như mô hình, nhóm, độ ưu tiên và trọng số.",
     "You do not have permission to edit sensitive channel settings.": "Bạn không có quyền chỉnh sửa cài đặt kênh nhạy cảm.",
     "Your account can edit sensitive channel settings.": "Tài khoản của bạn có thể chỉnh sửa cài đặt kênh nhạy cảm.",
@@ -5255,6 +5261,23 @@
     "This will batch add newly detected upstream models to eligible channels. Models that disappeared upstream will stay pending for manual review and will not be removed automatically.": "This will batch add newly detected upstream models to eligible channels. Models that disappeared upstream will stay pending for manual review and will not be removed automatically.",
     "Batch upstream model additions applied: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed": "Batch upstream model additions applied: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed",
     "Detect Upstream Updates": "Detect Upstream Updates",
-    "Apply Upstream Updates": "Apply Upstream Updates"
+    "Apply Upstream Updates": "Apply Upstream Updates",
+    "Actively check all channels": "Chủ động kiểm tra tất cả kênh",
+    "Actively check auto-disable-enabled channels": "Chủ động kiểm tra kênh đã bật tự động vô hiệu hóa",
+    "Auto-disable-enabled channels only": "Chỉ kênh đã bật tự động vô hiệu hóa",
+    "Auto-disable-enabled mode probes non-manually-disabled channels with auto-disable enabled.": "Chế độ này chỉ kiểm tra các kênh đã bật tự động vô hiệu hóa và không bị vô hiệu hóa thủ công.",
+    "Check channels awaiting recovery only": "Chỉ kiểm tra các kênh đang chờ khôi phục",
+    "Does not check healthy channels. It only rechecks auto-disabled channels and restores them after they recover.": "Không kiểm tra kênh đang hoạt động bình thường. Chỉ kiểm tra lại kênh bị hệ thống tự động vô hiệu hóa và bật lại sau khi khôi phục.",
+    "Periodically checks all channels except manually disabled ones to detect failures and recover channels automatically.": "Định kỳ kiểm tra tất cả kênh trừ kênh bị vô hiệu hóa thủ công để phát hiện lỗi và tự động khôi phục.",
+    "Periodically checks only channels with auto-disable enabled, excluding manually disabled channels.": "Chỉ định kỳ kiểm tra kênh đã bật tự động vô hiệu hóa, không kiểm tra kênh bị vô hiệu hóa thủ công.",
+    "Recover auto-disabled channels only": "Chỉ khôi phục kênh bị tự động vô hiệu hóa",
+    "Access tokens are shown only once": "Token truy cập chỉ được hiển thị một lần",
+    "For security, existing access tokens cannot be displayed. Regenerate only when you need a new token.": "Vì lý do bảo mật, không thể hiển thị lại token truy cập hiện có. Chỉ tạo lại khi bạn cần token mới.",
+    "Regenerate access token?": "Tạo lại token truy cập?",
+    "Regenerate token": "Tạo lại token",
+    "Regenerating immediately invalidates any existing token.": "Việc tạo lại sẽ vô hiệu hóa ngay mọi token hiện có.",
+    "Save this token now. You won't be able to view it again after closing this dialog.": "Hãy lưu token này ngay. Bạn sẽ không thể xem lại sau khi đóng hộp thoại.",
+    "The new token will only be shown once. Copy it and store it securely.": "Token mới chỉ được hiển thị một lần. Hãy sao chép và lưu trữ an toàn.",
+    "This will immediately invalidate your existing access token. Any applications or scripts using it will stop working.": "Thao tác này sẽ vô hiệu hóa ngay token truy cập hiện có. Mọi ứng dụng hoặc tập lệnh đang sử dụng token đó sẽ ngừng hoạt động."
   }
 }

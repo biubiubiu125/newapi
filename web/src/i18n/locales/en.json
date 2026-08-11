@@ -5633,6 +5633,8 @@
     "Credited": "Credited",
     "Credit payment": "Credit payment",
     "Credit this Stripe payment?": "Credit this Stripe payment?",
+
+    "Credit this verified payment?": "Credit this verified payment?",
     "Dismissed": "Dismissed",
     "Mark refunded": "Mark refunded",
     "No payment orphans.": "No payment orphans.",
@@ -5645,7 +5647,11 @@
     "Resolve this payment orphan?": "Resolve this payment orphan?",
     "Showing {{start}}-{{end}} of {{total}}": "Showing {{start}}-{{end}} of {{total}}",
     "Stripe payments that need reconciliation": "Stripe payments that need reconciliation",
+
+    "Payments that need reconciliation": "Payments that need reconciliation",
     "This creates the missing top-up or subscription and credits the matched Stripe customer exactly once.": "This creates the missing top-up or subscription and credits the matched Stripe customer exactly once.",
+
+    "This credits only the matching local top-up or subscription order exactly once. It does not recreate missing orders.": "This credits only the matching local top-up or subscription order exactly once. It does not recreate missing orders.",
     "You can still edit non-sensitive operations fields such as models, groups, priority, and weight.": "You can still edit non-sensitive operations fields such as models, groups, priority, and weight.",
     "You do not have permission to edit sensitive channel settings.": "You do not have permission to edit sensitive channel settings.",
     "Your account can edit sensitive channel settings.": "Your account can edit sensitive channel settings.",
@@ -5655,6 +5661,23 @@
     "This will batch add newly detected upstream models to eligible channels. Models that disappeared upstream will stay pending for manual review and will not be removed automatically.": "This will batch add newly detected upstream models to eligible channels. Models that disappeared upstream will stay pending for manual review and will not be removed automatically.",
     "Batch upstream model additions applied: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed": "Batch upstream model additions applied: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed",
     "Detect Upstream Updates": "Detect Upstream Updates",
-    "Apply Upstream Updates": "Apply Upstream Updates"
+    "Apply Upstream Updates": "Apply Upstream Updates",
+    "Actively check all channels": "Actively check all channels",
+    "Actively check auto-disable-enabled channels": "Actively check auto-disable-enabled channels",
+    "Auto-disable-enabled channels only": "Auto-disable-enabled channels only",
+    "Auto-disable-enabled mode probes non-manually-disabled channels with auto-disable enabled.": "Auto-disable-enabled mode probes non-manually-disabled channels with auto-disable enabled.",
+    "Check channels awaiting recovery only": "Check channels awaiting recovery only",
+    "Does not check healthy channels. It only rechecks auto-disabled channels and restores them after they recover.": "Does not check healthy channels. It only rechecks auto-disabled channels and restores them after they recover.",
+    "Periodically checks all channels except manually disabled ones to detect failures and recover channels automatically.": "Periodically checks all channels except manually disabled ones to detect failures and recover channels automatically.",
+    "Periodically checks only channels with auto-disable enabled, excluding manually disabled channels.": "Periodically checks only channels with auto-disable enabled, excluding manually disabled channels.",
+    "Recover auto-disabled channels only": "Recover auto-disabled channels only",
+    "Access tokens are shown only once": "Access tokens are shown only once",
+    "For security, existing access tokens cannot be displayed. Regenerate only when you need a new token.": "For security, existing access tokens cannot be displayed. Regenerate only when you need a new token.",
+    "Regenerate access token?": "Regenerate access token?",
+    "Regenerate token": "Regenerate token",
+    "Regenerating immediately invalidates any existing token.": "Regenerating immediately invalidates any existing token.",
+    "Save this token now. You won't be able to view it again after closing this dialog.": "Save this token now. You won't be able to view it again after closing this dialog.",
+    "The new token will only be shown once. Copy it and store it securely.": "The new token will only be shown once. Copy it and store it securely.",
+    "This will immediately invalidate your existing access token. Any applications or scripts using it will stop working.": "This will immediately invalidate your existing access token. Any applications or scripts using it will stop working."
   }
 }

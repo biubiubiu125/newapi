@@ -130,7 +130,6 @@ import {
   ERROR_MESSAGES,
   FIELD_DESCRIPTIONS,
   FIELD_PLACEHOLDERS,
-  MODEL_FETCHABLE_TYPES,
 } from '../../constants'
 import { useChannelMutateForm } from '../../hooks/use-channel-mutate-form'
 import {
@@ -156,6 +155,11 @@ import {
   collectInvalidStatusCodeEntries,
   collectNewDisallowedStatusCodeRedirects,
 } from '../../lib/status-code-risk-guard'
+import {
+  canFetchChannelUpstreamModels,
+  shouldUseDraftFetchModels,
+  supportsChannelUpstreamModelUpdate,
+} from '../../lib/upstream-update-utils'
 import type { Channel } from '../../types'
 import { useChannels } from '../channels-provider'
 import { CodexOAuthDialog } from '../dialogs/codex-oauth-dialog'
@@ -320,6 +324,8 @@ export function ChannelMutateDrawer({
   const { setOpen } = useChannels()
   const currentUser = useAuthStore((s) => s.auth.user)
   const [fetchModelsDialogOpen, setFetchModelsDialogOpen] = useState(false)
+  const [useDraftFetchModelsForDialog, setUseDraftFetchModelsForDialog] =
+    useState(true)
   const [channelKey, setChannelKey] = useState<string | null>(null)
   const [isChannelKeyLoading, setIsChannelKeyLoading] = useState(false)
   const [codexOAuthDialogOpen, setCodexOAuthDialogOpen] = useState(false)
@@ -361,9 +367,13 @@ export function ChannelMutateDrawer({
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
     ADMIN_PERMISSION_ACTIONS.OPERATE
   )
+  const canFetchSavedModels = canFetchChannelUpstreamModels({
+    canSensitiveWriteChannel: canFetchDraftModels,
+  })
   const canFetchUpstreamModels = isEditing
-    ? canFetchDraftModels || canOperateChannel
+    ? canFetchDraftModels || canFetchSavedModels
     : canFetchDraftModels
+  const canEditUpstreamModelUpdateSettings = canFetchDraftModels
 
   // Fetch channel details if editing
   const { data: channelData, isLoading: isChannelLoading } = useQuery({
@@ -440,9 +450,11 @@ export function ChannelMutateDrawer({
     'upstream_model_update_check_enabled'
   )
   const currentSettings = form.watch('settings')
-  const supportsUpstreamModelUpdate =
-    MODEL_FETCHABLE_TYPES.has(currentType) &&
-    !(currentType === 57 && isMultiKeyChannel)
+  const supportsUpstreamModelUpdate = supportsChannelUpstreamModelUpdate({
+    type: currentType,
+    channel_info: { is_multi_key: isMultiKeyChannel },
+    is_draft_multi_key: !isEditing && multiKeyMode === 'multi_to_single',
+  })
   const {
     unlocked: doubaoApiEditUnlocked,
     handleClick: handleApiConfigSecretClick,
@@ -628,10 +640,18 @@ export function ChannelMutateDrawer({
           .map((model) => String(model || '').trim())
           .filter(Boolean)
       : []
+    const removedModels = Array.isArray(
+      settings.upstream_model_update_last_removed_models
+    )
+      ? settings.upstream_model_update_last_removed_models
+          .map((model) => String(model || '').trim())
+          .filter(Boolean)
+      : []
 
     return {
       lastCheckTime: settings.upstream_model_update_last_check_time,
       detectedModels: [...new Set(detectedModels)],
+      removedModels: [...new Set(removedModels)],
     }
   }, [currentSettings])
 
@@ -642,12 +662,21 @@ export function ChannelMutateDrawer({
   const upstreamDetectedModelsOmittedCount =
     upstreamUpdateMeta.detectedModels.length -
     upstreamDetectedModelsPreview.length
+  const upstreamRemovedModelsPreview = upstreamUpdateMeta.removedModels.slice(
+    0,
+    UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT
+  )
+  const upstreamRemovedModelsOmittedCount =
+    upstreamUpdateMeta.removedModels.length -
+    upstreamRemovedModelsPreview.length
 
   const buildFetchModelsDraftPayload = useCallback(
     (values: ChannelFormValues): Parameters<typeof fetchModels>[0] => {
       const draftChannel =
         isEditing && channelId
-          ? transformFormDataToUpdatePayload(values, channelId)
+          ? transformFormDataToUpdatePayload(values, channelId, {
+              isPersistedMultiKey: isMultiKeyChannel,
+            })
           : transformFormDataToCreatePayload(values).channel
 
       return {
@@ -678,7 +707,7 @@ export function ChannelMutateDrawer({
             : undefined,
       }
     },
-    [channelId, isEditing]
+    [channelId, isEditing, isMultiKeyChannel]
   )
 
   const hasFetchModelsDraftChanges = useCallback(
@@ -837,6 +866,10 @@ export function ChannelMutateDrawer({
 
   const handleRefreshCodexCredential = useCallback(async () => {
     if (!channelId) return
+    if (!canFetchDraftModels) {
+      toast.error(t('No permission to perform this action'))
+      return
+    }
     setIsCodexCredentialRefreshing(true)
     try {
       const res = await refreshCodexCredential(channelId)
@@ -852,7 +885,7 @@ export function ChannelMutateDrawer({
     } finally {
       setIsCodexCredentialRefreshing(false)
     }
-  }, [channelId, queryClient, t])
+  }, [canFetchDraftModels, channelId, queryClient, t])
 
   // Unified function to update models
   const updateModels = useCallback(
@@ -868,9 +901,7 @@ export function ChannelMutateDrawer({
 
   // Handle fetching models from upstream
   const handleFetchModels = useCallback(async () => {
-    const type = form.getValues('type')
-
-    if (!MODEL_FETCHABLE_TYPES.has(type)) {
+    if (!supportsUpstreamModelUpdate) {
       toast.error(t('This channel type does not support fetching models'))
       return
     }
@@ -881,11 +912,8 @@ export function ChannelMutateDrawer({
     }
 
     const draftPayload = buildFetchModelsDraftPayload(form.getValues())
-    if (
-      isEditing &&
-      !canFetchDraftModels &&
-      hasFetchModelsDraftChanges(draftPayload)
-    ) {
+    const draftHasChanges = hasFetchModelsDraftChanges(draftPayload)
+    if (isEditing && !canFetchDraftModels && draftHasChanges) {
       toast.error(
         t('No permission to fetch models with unsaved channel configuration')
       )
@@ -901,14 +929,23 @@ export function ChannelMutateDrawer({
       }
     }
 
+    setUseDraftFetchModelsForDialog(
+      shouldUseDraftFetchModels({
+        isEditing,
+        draftHasChanges,
+        canFetchSavedModels,
+      })
+    )
     setFetchModelsDialogOpen(true)
   }, [
     buildFetchModelsDraftPayload,
     canFetchDraftModels,
+    canFetchSavedModels,
     canFetchUpstreamModels,
     hasFetchModelsDraftChanges,
     isEditing,
     form,
+    supportsUpstreamModelUpdate,
     t,
   ])
 
@@ -931,8 +968,9 @@ export function ChannelMutateDrawer({
     throw new Error(response.message || 'No models fetched from upstream')
   }, [channelId])
 
-  const fetchModelsDialogFetcher =
-    !isEditing || canFetchDraftModels ? draftModelsFetcher : savedModelsFetcher
+  const fetchModelsDialogFetcher = useDraftFetchModelsForDialog
+    ? draftModelsFetcher
+    : savedModelsFetcher
 
   // Handle model operations
   const handleFillRelatedModels = useCallback(() => {
@@ -2157,7 +2195,16 @@ export function ChannelMutateDrawer({
                                 type='button'
                                 variant='outline'
                                 size='sm'
-                                onClick={() => setCodexOAuthDialogOpen(true)}
+                                onClick={() => {
+                                  if (!canFetchDraftModels) {
+                                    toast.error(
+                                      t('No permission to perform this action')
+                                    )
+                                    return
+                                  }
+                                  setCodexOAuthDialogOpen(true)
+                                }}
+                                disabled={!canFetchDraftModels}
                               >
                                 <Link2 className='mr-2 h-4 w-4' />
                                 {t('Authorize')}
@@ -2168,7 +2215,10 @@ export function ChannelMutateDrawer({
                                   variant='outline'
                                   size='sm'
                                   onClick={handleRefreshCodexCredential}
-                                  disabled={isCodexCredentialRefreshing}
+                                  disabled={
+                                    isCodexCredentialRefreshing ||
+                                    !canFetchDraftModels
+                                  }
                                 >
                                   {isCodexCredentialRefreshing ? (
                                     <Loader2 className='mr-2 h-4 w-4 animate-spin' />
@@ -2196,6 +2246,7 @@ export function ChannelMutateDrawer({
                         open={codexOAuthDialogOpen}
                         onOpenChange={setCodexOAuthDialogOpen}
                         onKeyGenerated={(key) => {
+                          if (!canFetchDraftModels) return
                           form.setValue('key', key, { shouldDirty: true })
                         }}
                       />
@@ -2416,7 +2467,7 @@ export function ChannelMutateDrawer({
                               />
                               {t('Fill All Models')}
                             </Button>
-                            {MODEL_FETCHABLE_TYPES.has(currentType) && (
+                            {supportsUpstreamModelUpdate && (
                               <Button
                                 type='button'
                                 variant='outline'
@@ -3609,6 +3660,9 @@ export function ChannelMutateDrawer({
                                   <FormControl>
                                     <Switch
                                       checked={field.value}
+                                      disabled={
+                                        !canEditUpstreamModelUpdateSettings
+                                      }
                                       onCheckedChange={field.onChange}
                                     />
                                   </FormControl>
@@ -3634,7 +3688,8 @@ export function ChannelMutateDrawer({
                                     <Switch
                                       checked={field.value}
                                       disabled={
-                                        !upstreamModelUpdateCheckEnabled
+                                        !upstreamModelUpdateCheckEnabled ||
+                                        !canEditUpstreamModelUpdateSettings
                                       }
                                       onCheckedChange={field.onChange}
                                     />
@@ -3656,13 +3711,18 @@ export function ChannelMutateDrawer({
                                     placeholder={t(
                                       'e.g., gpt-4.1-nano,regex:^claude-.*$,regex:^sora-.*$'
                                     )}
+                                    disabled={
+                                      !canEditUpstreamModelUpdateSettings
+                                    }
                                     {...field}
                                   />
                                 </FormControl>
                                 <FormDescription>
-                                  {t(
-                                    'Comma-separated exact model names. Prefix with regex: to ignore by regular expression.'
-                                  )}
+                                  {canEditUpstreamModelUpdateSettings
+                                    ? t(
+                                        'Comma-separated exact model names. Prefix with regex: to ignore by regular expression.'
+                                      )
+                                    : t('No permission to perform this action')}
                                 </FormDescription>
                                 <FormMessage />
                               </FormItem>
@@ -3696,6 +3756,33 @@ export function ChannelMutateDrawer({
                                             upstreamUpdateMeta.detectedModels
                                               .length,
                                           omit: upstreamDetectedModelsOmittedCount,
+                                        }
+                                      )}
+                                    </span>
+                                  )}
+                                </>
+                              )}
+                            </div>
+                            <div>
+                              <span className='text-foreground font-medium'>
+                                {t('Last detected removable models')}:
+                              </span>{' '}
+                              {upstreamUpdateMeta.removedModels.length === 0 ? (
+                                t('None')
+                              ) : (
+                                <>
+                                  <span className='break-all'>
+                                    {upstreamRemovedModelsPreview.join(', ')}
+                                  </span>
+                                  {upstreamRemovedModelsOmittedCount > 0 && (
+                                    <span className='ml-1'>
+                                      {t(
+                                        '({{total}} total, {{omit}} omitted)',
+                                        {
+                                          total:
+                                            upstreamUpdateMeta.removedModels
+                                              .length,
+                                          omit: upstreamRemovedModelsOmittedCount,
                                         }
                                       )}
                                     </span>

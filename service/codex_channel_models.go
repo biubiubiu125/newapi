@@ -9,10 +9,23 @@ import (
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting/ratio_setting"
 )
 
+type CodexChannelModelFetchOptions struct {
+	AllowCredentialRefresh bool
+}
+
 func FetchCodexChannelModels(ctx context.Context, channel *model.Channel) ([]string, error) {
+	return FetchCodexChannelModelsWithOptions(ctx, channel, CodexChannelModelFetchOptions{
+		AllowCredentialRefresh: true,
+	})
+}
+
+func FetchCodexChannelModelsWithOptions(
+	ctx context.Context,
+	channel *model.Channel,
+	options CodexChannelModelFetchOptions,
+) ([]string, error) {
 	if channel == nil || channel.Type != constant.ChannelTypeCodex {
 		return nil, fmt.Errorf("channel type is not Codex")
 	}
@@ -23,7 +36,7 @@ func FetchCodexChannelModels(ctx context.Context, channel *model.Channel) ([]str
 		ctx = context.Background()
 	}
 
-	client, err := NewProxyHttpClient(channel.GetSetting().Proxy)
+	client, err := newCodexChannelHTTPClient(channel)
 	if err != nil {
 		return nil, err
 	}
@@ -39,7 +52,22 @@ func FetchCodexChannelModels(ctx context.Context, channel *model.Channel) ([]str
 	if baseURL == "" {
 		baseURL = constant.ChannelBaseURLs[constant.ChannelTypeCodex]
 	}
-	return fetchCodexChannelModels(ctx, channel, baseURL, client, clientVersion)
+	return fetchCodexChannelModels(ctx, channel, baseURL, client, clientVersion, options.AllowCredentialRefresh)
+}
+
+func newCodexChannelHTTPClient(channel *model.Channel) (*http.Client, error) {
+	if channel == nil {
+		return nil, fmt.Errorf("channel is nil")
+	}
+	settings := channel.GetSetting()
+	client, err := GetHttpClientWithProxySettings(settings.Proxy, settings)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return nil, fmt.Errorf("codex channel http client is nil")
+	}
+	return CloneHTTPClientWithoutRedirects(client), nil
 }
 
 func fetchCodexChannelModels(
@@ -48,6 +76,7 @@ func fetchCodexChannelModels(
 	baseURL string,
 	client *http.Client,
 	clientVersion string,
+	allowCredentialRefresh bool,
 ) ([]string, error) {
 	oauthKey, err := parseCodexOAuthKey(strings.TrimSpace(channel.Key))
 	if err != nil {
@@ -59,6 +88,9 @@ func fetchCodexChannelModels(
 		return nil, err
 	}
 	if statusCode == http.StatusUnauthorized {
+		if !allowCredentialRefresh {
+			return nil, fmt.Errorf("codex channel draft credential cannot be refreshed before save")
+		}
 		if channel.Id <= 0 {
 			return nil, fmt.Errorf("codex channel credential expired; save the channel before retrying model fetch")
 		}
@@ -84,13 +116,5 @@ func fetchCodexChannelModels(
 	if statusCode < http.StatusOK || statusCode >= http.StatusMultipleChoices {
 		return nil, fmt.Errorf("upstream status: %d", statusCode)
 	}
-	modelVariants := make([]string, 0, len(models)*2)
-	modelVariants = append(modelVariants, models...)
-	for _, modelName := range models {
-		if modelName == "codex-auto-review" {
-			continue
-		}
-		modelVariants = append(modelVariants, ratio_setting.WithCompactModelSuffix(modelName))
-	}
-	return modelVariants, nil
+	return models, nil
 }

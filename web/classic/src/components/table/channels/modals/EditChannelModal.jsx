@@ -56,7 +56,6 @@ import { useTranslation } from 'react-i18next';
 
 import {
   CHANNEL_OPTIONS,
-  MODEL_FETCHABLE_CHANNEL_TYPES,
   supportsChannelUpstreamModelUpdate,
 } from '../../../../constants';
 import {
@@ -72,7 +71,17 @@ import {
   selectFilter,
 } from '../../../../helpers';
 import { parseChannelConnectionString } from '../../../../helpers/token';
-import { buildClassicChannelUpstreamUpdateSettings } from '../../../../hooks/channels/upstreamUpdateUtils';
+import {
+  buildClassicChannelUpstreamUpdateSettings,
+  buildClassicUpstreamUpdateSupportChannel,
+  canFetchClassicChannelUpstreamModels,
+  canOpenClassicModelMappingValueFetch,
+  getClassicFetchModelsCacheKey,
+  getClassicFetchModelsFailureMessage,
+  normalizeClassicFetchModelsDraftSnapshot,
+  shouldUseClassicDraftFetchModels,
+  shouldRefreshClassicFetchedModelsCache,
+} from '../../../../hooks/channels/upstreamUpdateUtils';
 import { useIsMobile } from '../../../../hooks/common/useIsMobile';
 import { useSecureVerification } from '../../../../hooks/common/useSecureVerification';
 import { createApiCalls } from '../../../../services/secureVerification';
@@ -180,10 +189,13 @@ const EditChannelModal = (props) => {
   const channelPermissions = props.channelPermissions || {};
   const canFetchDraftModels =
     channelPermissions.canSensitiveWriteChannel === true;
-  const canFetchSavedModels = channelPermissions.canOperateChannel === true;
+  const canFetchSavedModels = canFetchClassicChannelUpstreamModels({
+    canSensitiveWriteChannel: canFetchDraftModels,
+  });
   const canFetchUpstreamModels = isEdit
     ? canFetchDraftModels || canFetchSavedModels
     : canFetchDraftModels;
+  const canEditUpstreamModelUpdateSettings = canFetchDraftModels;
   const canApplyOllamaModels = isEdit
     ? channelPermissions.canWriteChannel === true
     : canFetchDraftModels;
@@ -237,6 +249,7 @@ const EditChannelModal = (props) => {
     upstream_model_update_auto_sync_enabled: false,
     upstream_model_update_last_check_time: 0,
     upstream_model_update_last_detected_models: [],
+    upstream_model_update_last_removed_models: [],
     upstream_model_update_ignored_models: '',
   };
   const [batch, setBatch] = useState(false);
@@ -256,6 +269,8 @@ const EditChannelModal = (props) => {
   const [isModalOpenurl, setIsModalOpenurl] = useState(false);
   const [modelModalVisible, setModelModalVisible] = useState(false);
   const [fetchedModels, setFetchedModels] = useState([]);
+  const fetchedModelsCacheKeyRef = useRef('');
+  const fetchModelsGenerationRef = useRef(0);
   const [modelMappingValueModalVisible, setModelMappingValueModalVisible] =
     useState(false);
   const [modelMappingValueModalModels, setModelMappingValueModalModels] =
@@ -327,6 +342,35 @@ const EditChannelModal = (props) => {
   );
   const upstreamDetectedModelsOmittedCount =
     upstreamDetectedModels.length - upstreamDetectedModelsPreview.length;
+  const upstreamRemovedModels = useMemo(
+    () => [
+      ...new Set(
+        (inputs.upstream_model_update_last_removed_models || [])
+          .map((model) => String(model || '').trim())
+          .filter(Boolean),
+      ),
+    ],
+    [inputs.upstream_model_update_last_removed_models],
+  );
+  const upstreamRemovedModelsPreview = useMemo(
+    () =>
+      upstreamRemovedModels.slice(0, UPSTREAM_DETECTED_MODEL_PREVIEW_LIMIT),
+    [upstreamRemovedModels],
+  );
+  const upstreamRemovedModelsOmittedCount =
+    upstreamRemovedModels.length - upstreamRemovedModelsPreview.length;
+  const upstreamUpdateSupportChannel = useMemo(
+    () =>
+      buildClassicUpstreamUpdateSupportChannel(inputs, {
+        isEdit,
+        batch,
+        multiToSingle,
+      }),
+    [batch, inputs, isEdit, multiToSingle],
+  );
+  const supportsUpstreamModelUpdate = supportsChannelUpstreamModelUpdate(
+    upstreamUpdateSupportChannel,
+  );
   const modelSearchMatchedCount = useMemo(() => {
     const keyword = modelSearchValue.trim();
     if (!keyword) {
@@ -842,6 +886,9 @@ const EditChannelModal = (props) => {
 
   const loadChannel = async () => {
     setLoading(true);
+    invalidateFetchModelsRequest();
+    setFetchedModels([]);
+    fetchedModelsCacheKeyRef.current = '';
     const res = await API.get(`/api/channel/${channelId}`);
     if (res === undefined) {
       return;
@@ -943,6 +990,11 @@ const EditChannelModal = (props) => {
           )
             ? parsedSettings.upstream_model_update_last_detected_models
             : [];
+          data.upstream_model_update_last_removed_models = Array.isArray(
+            parsedSettings.upstream_model_update_last_removed_models,
+          )
+            ? parsedSettings.upstream_model_update_last_removed_models
+            : [];
           data.upstream_model_update_ignored_models = Array.isArray(
             parsedSettings.upstream_model_update_ignored_models,
           )
@@ -966,6 +1018,7 @@ const EditChannelModal = (props) => {
           data.upstream_model_update_auto_sync_enabled = false;
           data.upstream_model_update_last_check_time = 0;
           data.upstream_model_update_last_detected_models = [];
+          data.upstream_model_update_last_removed_models = [];
           data.upstream_model_update_ignored_models = '';
         }
       } else {
@@ -984,6 +1037,7 @@ const EditChannelModal = (props) => {
         data.upstream_model_update_auto_sync_enabled = false;
         data.upstream_model_update_last_check_time = 0;
         data.upstream_model_update_last_detected_models = [];
+        data.upstream_model_update_last_removed_models = [];
         data.upstream_model_update_ignored_models = '';
       }
 
@@ -996,9 +1050,10 @@ const EditChannelModal = (props) => {
       }
 
       initialBaseUrlRef.current = data.base_url || '';
-      initialFetchModelsDraftRef.current = normalizeFetchModelsDraftSnapshot(
-        buildFetchModelsDraftPayloadFromValues(data),
-      );
+      initialFetchModelsDraftRef.current =
+        normalizeClassicFetchModelsDraftSnapshot(
+          buildFetchModelsDraftPayloadFromValues(data),
+        );
       setInputs(data);
       if (formApiRef.current) {
         formApiRef.current.setValues(data);
@@ -1103,70 +1158,97 @@ const EditChannelModal = (props) => {
     });
   };
 
-  const normalizeFetchModelsDraftSnapshot = (payload = {}) => ({
-    base_url: String(payload.base_url || ''),
-    type: String(payload.type ?? ''),
-    key: String(payload.key || '').trim(),
-    setting: String(payload.setting || ''),
-    settings: String(payload.settings || ''),
-    header_override: String(payload.header_override || ''),
-    other: String(payload.other || ''),
-  });
+  const getFetchModelsCacheKey = (payload = buildFetchModelsDraftPayload()) =>
+    getClassicFetchModelsCacheKey(payload);
 
   const hasFetchModelsDraftChanges = (payload) => {
     if (!isEdit) return true;
-    const current = normalizeFetchModelsDraftSnapshot(payload);
+    const current = normalizeClassicFetchModelsDraftSnapshot(payload);
     const initial =
       initialFetchModelsDraftRef.current ||
-      normalizeFetchModelsDraftSnapshot({});
+      normalizeClassicFetchModelsDraftSnapshot({});
 
     return Object.keys(current).some((key) => current[key] !== initial[key]);
   };
 
-  const shouldUseDraftFetchModels = () => {
-    if (!isEdit) return true;
-    return canFetchDraftModels;
+  const shouldUseDraftFetchModels = (draftHasChanges) =>
+    shouldUseClassicDraftFetchModels({
+      isEdit,
+      draftHasChanges,
+      canFetchSavedModels,
+    });
+
+  const invalidateFetchModelsRequest = () => {
+    fetchModelsGenerationRef.current += 1;
   };
 
   const fetchUpstreamModelList = async (name, options = {}) => {
     const silent = !!options.silent;
+    const fetchGeneration = fetchModelsGenerationRef.current + 1;
+    fetchModelsGenerationRef.current = fetchGeneration;
+    const isCurrentFetchModelsRequest = () =>
+      fetchModelsGenerationRef.current === fetchGeneration;
+    const finishCurrentFetchModelsRequest = () => {
+      if (isCurrentFetchModelsRequest()) {
+        setLoading(false);
+      }
+    };
     // if (inputs['type'] !== 1) {
     //   showError(t('仅支持 OpenAI 接口格式'));
     //   return;
     // }
+    if (!supportsUpstreamModelUpdate) {
+      setFetchedModels([]);
+      fetchedModelsCacheKeyRef.current = '';
+      showError(t('该渠道不支持获取上游模型列表'));
+      return null;
+    }
     setLoading(true);
     const models = [];
     let err = false;
+    let fetchModelsErrorMessage = '';
     const draftPayload = buildFetchModelsDraftPayload();
+    const fetchCacheKey = getFetchModelsCacheKey(draftPayload);
+    setFetchedModels([]);
+    fetchedModelsCacheKeyRef.current = '';
     const draftHasChanges = hasFetchModelsDraftChanges(draftPayload);
-    const useDraftFetch = shouldUseDraftFetchModels();
+    const useDraftFetch = shouldUseDraftFetchModels(draftHasChanges);
 
     if (!isEdit && !canFetchDraftModels) {
       showError(t('无权限使用未保存的渠道配置获取模型'));
-      setLoading(false);
+      finishCurrentFetchModelsRequest();
       return null;
     }
 
     if (isEdit && draftHasChanges && !canFetchDraftModels) {
       showError(t('无权限使用未保存的渠道配置获取模型'));
-      setLoading(false);
+      finishCurrentFetchModelsRequest();
       return null;
     }
 
     if (isEdit && !useDraftFetch && !canFetchSavedModels) {
       showError(t('无权限获取上游模型列表'));
-      setLoading(false);
+      finishCurrentFetchModelsRequest();
       return null;
     }
 
     if (isEdit && !useDraftFetch) {
       // 如果是编辑模式，使用已有的 channelId 获取模型列表
-      const res = await API.get(`/api/channel/fetch_models/${channelId}`, {
-        skipErrorHandler: true,
-      });
-      if (res && res.data && res.data.success) {
-        models.push(...res.data.data);
-      } else {
+      try {
+        const res = await API.get(`/api/channel/fetch_models/${channelId}`, {
+          skipErrorHandler: true,
+        });
+        if (!isCurrentFetchModelsRequest()) return null;
+        if (res && res.data && res.data.success) {
+          models.push(...res.data.data);
+        } else {
+          fetchModelsErrorMessage = getClassicFetchModelsFailureMessage(res);
+          err = true;
+        }
+      } catch (error) {
+        if (!isCurrentFetchModelsRequest()) return null;
+        console.error('Error fetching models:', error);
+        fetchModelsErrorMessage = getClassicFetchModelsFailureMessage(error);
         err = true;
       }
     } else {
@@ -1181,31 +1263,39 @@ const EditChannelModal = (props) => {
             draftPayload,
             { skipErrorHandler: true },
           );
+          if (!isCurrentFetchModelsRequest()) return null;
 
           if (res && res.data && res.data.success) {
             models.push(...res.data.data);
           } else {
+            fetchModelsErrorMessage = getClassicFetchModelsFailureMessage(res);
             err = true;
           }
         } catch (error) {
+          if (!isCurrentFetchModelsRequest()) return null;
           console.error('Error fetching models:', error);
+          fetchModelsErrorMessage = getClassicFetchModelsFailureMessage(error);
           err = true;
         }
       }
     }
 
+    if (!isCurrentFetchModelsRequest()) return null;
     if (!err) {
       const uniqueModels = [...new Set(models)];
       setFetchedModels(uniqueModels);
+      fetchedModelsCacheKeyRef.current = fetchCacheKey;
       if (!silent) {
         setModelModalVisible(true);
       }
-      setLoading(false);
+      finishCurrentFetchModelsRequest();
       return uniqueModels;
     } else {
-      showError(t('获取模型列表失败'));
+      setFetchedModels([]);
+      fetchedModelsCacheKeyRef.current = '';
+      showError(t(fetchModelsErrorMessage || '获取模型列表失败'));
     }
-    setLoading(false);
+    finishCurrentFetchModelsRequest();
     return null;
   };
 
@@ -1213,16 +1303,24 @@ const EditChannelModal = (props) => {
     const mappingKey = String(pairKey ?? '').trim();
     if (!mappingKey) return;
 
-    if (!MODEL_FETCHABLE_CHANNEL_TYPES.has(inputs.type)) {
+    if (!supportsUpstreamModelUpdate) {
+      return;
+    }
+    if (!canFetchUpstreamModels) {
+      showError(t('无权限获取上游模型列表'));
       return;
     }
 
     let modelsToUse = fetchedModels;
-    if (!Array.isArray(modelsToUse) || modelsToUse.length === 0) {
+    if (
+      shouldRefreshClassicFetchedModelsCache({
+        cachedModels: modelsToUse,
+        cachedKey: fetchedModelsCacheKeyRef.current,
+        currentKey: getFetchModelsCacheKey(),
+      })
+    ) {
       const fetched = await fetchUpstreamModelList('models', { silent: true });
-      if (Array.isArray(fetched)) {
-        modelsToUse = fetched;
-      }
+      modelsToUse = Array.isArray(fetched) ? fetched : [];
     }
 
     if (!Array.isArray(modelsToUse) || modelsToUse.length === 0) {
@@ -1332,6 +1430,10 @@ const EditChannelModal = (props) => {
 
   const handleRefreshCodexCredential = async () => {
     if (!isEdit) return;
+    if (!canFetchDraftModels) {
+      showError(t('无权限执行此操作'));
+      return;
+    }
 
     setCodexCredentialRefreshing(true);
     try {
@@ -1408,9 +1510,13 @@ const EditChannelModal = (props) => {
     fetchGroups().then();
     if (!isEdit) {
       initialBaseUrlRef.current = '';
-      initialFetchModelsDraftRef.current = normalizeFetchModelsDraftSnapshot(
-        buildFetchModelsDraftPayloadFromValues(originInputs),
-      );
+      initialFetchModelsDraftRef.current =
+        normalizeClassicFetchModelsDraftSnapshot(
+          buildFetchModelsDraftPayloadFromValues(originInputs),
+        );
+      invalidateFetchModelsRequest();
+      setFetchedModels([]);
+      fetchedModelsCacheKeyRef.current = '';
       setInputs(originInputs);
       if (formApiRef.current) {
         formApiRef.current.setValues(originInputs);
@@ -1506,6 +1612,10 @@ const EditChannelModal = (props) => {
     }
     // 重置本地输入，避免下次打开残留上一次的 JSON 字段值
     setInputs(getInitValues());
+    invalidateFetchModelsRequest();
+    setLoading(false);
+    setFetchedModels([]);
+    fetchedModelsCacheKeyRef.current = '';
     // 重置密钥显示状态
     resetKeyDisplayState();
     // 重置剪贴板检测状态
@@ -1914,7 +2024,11 @@ const EditChannelModal = (props) => {
 
     settings = buildClassicChannelUpstreamUpdateSettings({
       currentSettings: settings,
-      inputs: localInputs,
+      inputs: buildClassicUpstreamUpdateSupportChannel(localInputs, {
+        isEdit,
+        batch,
+        multiToSingle,
+      }),
     });
 
     localInputs.settings = JSON.stringify(settings);
@@ -1943,6 +2057,7 @@ const EditChannelModal = (props) => {
     delete localInputs.upstream_model_update_auto_sync_enabled;
     delete localInputs.upstream_model_update_last_check_time;
     delete localInputs.upstream_model_update_last_detected_models;
+    delete localInputs.upstream_model_update_last_removed_models;
     delete localInputs.upstream_model_update_ignored_models;
 
     let res;
@@ -2314,7 +2429,7 @@ const EditChannelModal = (props) => {
             const advancedSettingsContent = (
               <div className='space-y-4'>
                 {/* Upstream Model Management Section */}
-                {supportsChannelUpstreamModelUpdate(inputs) && (
+                {supportsUpstreamModelUpdate && (
                   <div className='pb-3 border-b border-gray-100'>
                     <Text className='text-sm font-medium text-gray-500 mb-3 block'>
                       {t('上游模型管理')}
@@ -2325,6 +2440,7 @@ const EditChannelModal = (props) => {
                       label={t('是否检测上游模型更新')}
                       checkedText={t('开')}
                       uncheckedText={t('关')}
+                      disabled={!canEditUpstreamModelUpdateSettings}
                       onChange={(value) =>
                         handleChannelOtherSettingsChange(
                           'upstream_model_update_check_enabled',
@@ -2340,7 +2456,10 @@ const EditChannelModal = (props) => {
                       label={t('是否自动同步上游模型更新')}
                       checkedText={t('开')}
                       uncheckedText={t('关')}
-                      disabled={!inputs.upstream_model_update_check_enabled}
+                      disabled={
+                        !inputs.upstream_model_update_check_enabled ||
+                        !canEditUpstreamModelUpdateSettings
+                      }
                       onChange={(value) =>
                         handleChannelOtherSettingsChange(
                           'upstream_model_update_auto_sync_enabled',
@@ -2360,6 +2479,7 @@ const EditChannelModal = (props) => {
                       extraText={t(
                         '支持精确匹配；使用 regex: 开头可按正则匹配。',
                       )}
+                      disabled={!canEditUpstreamModelUpdateSettings}
                       onChange={(value) =>
                         handleInputChange(
                           'upstream_model_update_ignored_models',
@@ -2400,6 +2520,37 @@ const EditChannelModal = (props) => {
                                 })
                               : t('（共 {{total}} 个）', {
                                   total: upstreamDetectedModels.length,
+                                })}
+                          </span>
+                        </>
+                      )}
+                    </div>
+                    <div className='text-xs text-gray-500 mb-3'>
+                      {t('上次检测到可删除模型')}:&nbsp;
+                      {upstreamRemovedModels.length === 0 ? (
+                        t('暂无')
+                      ) : (
+                        <>
+                          <Tooltip
+                            position='topLeft'
+                            content={
+                              <div className='max-w-[640px] break-all text-xs leading-5'>
+                                {upstreamRemovedModels.join(', ')}
+                              </div>
+                            }
+                          >
+                            <span className='cursor-help break-all'>
+                              {upstreamRemovedModelsPreview.join(', ')}
+                            </span>
+                          </Tooltip>
+                          <span className='ml-1 text-gray-400'>
+                            {upstreamRemovedModelsOmittedCount > 0
+                              ? t('（共 {{total}} 个，省略 {{omit}} 个）', {
+                                  total: upstreamRemovedModels.length,
+                                  omit: upstreamRemovedModelsOmittedCount,
+                                })
+                              : t('（共 {{total}} 个）', {
+                                  total: upstreamRemovedModels.length,
                                 })}
                           </span>
                         </>
@@ -3186,10 +3337,16 @@ const EditChannelModal = (props) => {
                                         size='small'
                                         type='primary'
                                         theme='outline'
-                                        onClick={() =>
-                                          setCodexOAuthModalVisible(true)
+                                        onClick={() => {
+                                          if (!canFetchDraftModels) {
+                                            showError(t('无权限执行此操作'));
+                                            return;
+                                          }
+                                          setCodexOAuthModalVisible(true);
+                                        }}
+                                        disabled={
+                                          isIonetLocked || !canFetchDraftModels
                                         }
-                                        disabled={isIonetLocked}
                                       >
                                         {t('Codex 授权')}
                                       </Button>
@@ -3200,7 +3357,10 @@ const EditChannelModal = (props) => {
                                           theme='outline'
                                           onClick={handleRefreshCodexCredential}
                                           loading={codexCredentialRefreshing}
-                                          disabled={isIonetLocked}
+                                          disabled={
+                                            isIonetLocked ||
+                                            !canFetchDraftModels
+                                          }
                                         >
                                           {t('刷新凭证')}
                                         </Button>
@@ -3238,7 +3398,10 @@ const EditChannelModal = (props) => {
                                 onCancel={() =>
                                   setCodexOAuthModalVisible(false)
                                 }
-                                onSuccess={handleCodexOAuthGenerated}
+                                onSuccess={(key) => {
+                                  if (!canFetchDraftModels) return;
+                                  handleCodexOAuthGenerated(key);
+                                }}
                               />
                             </>
                           ) : inputs.type === 41 &&
@@ -3865,7 +4028,7 @@ const EditChannelModal = (props) => {
                             >
                               {t('填入相关模型')}
                             </Button>
-                            {MODEL_FETCHABLE_CHANNEL_TYPES.has(inputs.type) && (
+                            {supportsUpstreamModelUpdate && (
                               <Button
                                 size='small'
                                 type='tertiary'
@@ -4022,7 +4185,13 @@ const EditChannelModal = (props) => {
                         editorType='keyValue'
                         formApi={formApiRef.current}
                         renderStringValueSuffix={({ pairKey, value }) => {
-                          if (!MODEL_FETCHABLE_CHANNEL_TYPES.has(inputs.type)) {
+                          if (!supportsUpstreamModelUpdate) {
+                            return null;
+                          }
+                          if (!canOpenClassicModelMappingValueFetch({
+                            supportsUpstreamModelUpdate,
+                            canFetchUpstreamModels,
+                          })) {
                             return null;
                           }
                           const disabled = !String(pairKey ?? '').trim();

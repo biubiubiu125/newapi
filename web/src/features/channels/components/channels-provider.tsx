@@ -26,6 +26,13 @@ import React, {
   useMemo,
 } from 'react'
 
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+  hasPermission,
+} from '@/lib/admin-permissions'
+import { useAuthStore } from '@/stores/auth-store'
+
 import { useChannelUpstreamUpdates } from '../hooks/use-channel-upstream-updates'
 import { channelsQueryKeys } from '../lib'
 import type { Channel } from '../types'
@@ -91,12 +98,26 @@ export function ChannelsProvider({ children }: { children: React.ReactNode }) {
   })
   const [batchMode, setBatchMode] = useState(false)
   const [sensitiveVisible, setSensitiveVisible] = useState(true)
+  const currentUser = useAuthStore((s) => s.auth.user)
+  const canDetectUpstreamUpdates = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.OPERATE
+  )
+  const canApplyUpstreamUpdates = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.WRITE
+  )
 
   const queryClient = useQueryClient()
   const refreshChannels = useCallback(async () => {
     await queryClient.invalidateQueries({ queryKey: channelsQueryKeys.all })
   }, [queryClient])
-  const upstream = useChannelUpstreamUpdates(refreshChannels)
+  const upstream = useChannelUpstreamUpdates(refreshChannels, {
+    canDetectUpstreamUpdates,
+    canApplyUpstreamUpdates,
+  })
 
   // useState setters are stable, so the context value only needs to change when
   // an actual state value changes. Memoizing avoids handing every consumer

@@ -1,3 +1,21 @@
+/*
+Copyright (C) 2023-2026 QuantumNous
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU Affero General Public License as
+published by the Free Software Foundation, either version 3 of the
+License, or (at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
+GNU Affero General Public License for more details.
+
+You should have received a copy of the GNU Affero General Public License
+along with this program. If not, see <https://www.gnu.org/licenses/>.
+
+For commercial licensing, please contact support@quantumnous.com
+*/
 import {
   ChevronLeft,
   ChevronRight,
@@ -28,6 +46,7 @@ import {
   type PaymentOrphanEvent,
   type PaymentOrphanStatusFilter,
 } from './api'
+import { paymentOrphanCreditDialogCopy } from './payment-orphan-copy'
 
 type PendingAction = {
   event: PaymentOrphanEvent
@@ -91,6 +110,10 @@ export function PaymentOrphanPanel(props: {
   const rangeEnd = Math.min(props.total, props.page * props.pageSize)
   const canPrevious = props.page > 1 && !props.loading
   const canNext = props.page < totalPages && !props.loading
+  const creditDialogCopy =
+    pendingAction?.kind === 'credit'
+      ? paymentOrphanCreditDialogCopy(pendingAction.event)
+      : null
 
   async function handleConfirm() {
     if (!pendingAction) return
@@ -129,7 +152,7 @@ export function PaymentOrphanPanel(props: {
             <div>
               <div className='font-medium'>{t('Payment Orphans')}</div>
               <div className='text-muted-foreground text-sm'>
-                {t('Stripe payments that need reconciliation')}
+                {t('Payments that need reconciliation')}
               </div>
             </div>
             <div className='flex flex-wrap items-center gap-2'>
@@ -206,7 +229,12 @@ export function PaymentOrphanPanel(props: {
                           </div>
                         </td>
                         <td className='max-w-72 p-2 align-top'>
-                          {event.reason || '-'}
+                          <div>{event.reason || '-'}</div>
+                          {event.error ? (
+                            <div className='text-destructive mt-1 text-xs'>
+                              {event.error}
+                            </div>
+                          ) : null}
                         </td>
                         <td className='p-2 align-top'>
                           <StatusBadge
@@ -353,14 +381,12 @@ export function PaymentOrphanPanel(props: {
         }}
         title={
           pendingAction?.kind === 'credit'
-            ? t('Credit this Stripe payment?')
+            ? t(creditDialogCopy?.title ?? '')
             : t('Resolve this payment orphan?')
         }
         desc={
           pendingAction?.kind === 'credit'
-            ? t(
-                'This creates the missing top-up or subscription and credits the matched Stripe customer exactly once.'
-              )
+            ? t(creditDialogCopy?.description ?? '')
             : t(
                 'Record the external reconciliation result. This does not change user quota.'
               )

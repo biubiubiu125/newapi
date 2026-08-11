@@ -38,18 +38,21 @@ import {
   formatSubscriptionResetPeriod,
 } from '../../helpers/subscriptionFormat';
 import SubscriptionPurchaseModal from './modals/SubscriptionPurchaseModal';
+import {
+  buildPendingSubscriptionPayment,
+  getEpayMethods,
+  hasConfiguredPaymentId,
+  isSafeHttpCheckoutUrl,
+  openSafeCheckoutWindow,
+} from './subscriptionPaymentMethods';
 
 const { Text } = Typography;
 
-// 过滤易支付方式
-function getEpayMethods(payMethods = []) {
-  return (payMethods || []).filter(
-    (m) => m?.type && m.type !== 'stripe' && m.type !== 'creem',
-  );
-}
-
 // 提交易支付表单
 function submitEpayForm({ url, params }) {
+  if (!isSafeHttpCheckoutUrl(url)) {
+    return false;
+  }
   const form = document.createElement('form');
   form.action = url;
   form.method = 'POST';
@@ -67,6 +70,7 @@ function submitEpayForm({ url, params }) {
   document.body.appendChild(form);
   form.submit();
   document.body.removeChild(form);
+  return true;
 }
 
 const SubscriptionPlansCard = ({
@@ -76,12 +80,19 @@ const SubscriptionPlansCard = ({
   payMethods = [],
   enableOnlineTopUp = false,
   enableStripeTopUp = false,
+  enableStripeSubscription,
   enableCreemTopUp = false,
+  enableCreemSubscription,
+  enableWaffoPancakeTopUp = false,
+  enableWaffoPancakeSubscription,
+  enableBEpusdt = false,
+  bepusdtMethods = [],
   billingPreference,
   onChangeBillingPreference,
   activeSubscriptions = [],
   allSubscriptions = [],
   reloadSubscriptionSelf,
+  onPaymentStarted,
   withCard = true,
 }) => {
   const [open, setOpen] = useState(false);
@@ -91,6 +102,10 @@ const SubscriptionPlansCard = ({
   const [refreshing, setRefreshing] = useState(false);
 
   const epayMethods = useMemo(() => getEpayMethods(payMethods), [payMethods]);
+  const canUseStripe = enableStripeSubscription ?? enableStripeTopUp;
+  const canUseCreem = enableCreemSubscription ?? enableCreemTopUp;
+  const canUseWaffoPancake =
+    enableWaffoPancakeSubscription ?? enableWaffoPancakeTopUp;
 
   const openBuy = (p) => {
     setSelectedPlan(p);
@@ -113,8 +128,22 @@ const SubscriptionPlansCard = ({
     }
   };
 
+  const markExternalPaymentStarted = (response, paymentMethod) => {
+    const pendingPayment = buildPendingSubscriptionPayment(response, {
+      title: selectedPlan?.plan?.title,
+      amount: selectedPlan?.plan?.price_amount,
+      paymentMethod,
+    });
+    if (!pendingPayment) {
+      showError(t('支付失败'));
+      return false;
+    }
+    onPaymentStarted?.(pendingPayment);
+    return true;
+  };
+
   const payStripe = async () => {
-    if (!selectedPlan?.plan?.stripe_price_id) {
+    if (!hasConfiguredPaymentId(selectedPlan?.plan?.stripe_price_id)) {
       showError(t('该套餐未配置 Stripe'));
       return;
     }
@@ -123,10 +152,17 @@ const SubscriptionPlansCard = ({
       const res = await API.post('/api/subscription/stripe/pay', {
         plan_id: selectedPlan.plan.id,
       });
-      if (res.data?.message === 'success') {
-        window.open(res.data.data?.pay_link, '_blank');
+      const checkoutUrl = res.data?.data?.pay_link?.trim();
+      if (
+        res.data?.message === 'success' &&
+        isSafeHttpCheckoutUrl(checkoutUrl)
+      ) {
+        if (!markExternalPaymentStarted(res.data, 'stripe')) return;
+        openSafeCheckoutWindow(checkoutUrl);
         showSuccess(t('已打开支付页面'));
         closeBuy();
+      } else if (res.data?.message === 'success') {
+        showError(t('支付跳转地址不安全'));
       } else {
         const errorMsg =
           typeof res.data?.data === 'string'
@@ -142,7 +178,7 @@ const SubscriptionPlansCard = ({
   };
 
   const payCreem = async () => {
-    if (!selectedPlan?.plan?.creem_product_id) {
+    if (!hasConfiguredPaymentId(selectedPlan?.plan?.creem_product_id)) {
       showError(t('该套餐未配置 Creem'));
       return;
     }
@@ -151,10 +187,88 @@ const SubscriptionPlansCard = ({
       const res = await API.post('/api/subscription/creem/pay', {
         plan_id: selectedPlan.plan.id,
       });
-      if (res.data?.message === 'success') {
-        window.open(res.data.data?.checkout_url, '_blank');
+      const checkoutUrl = res.data?.data?.checkout_url?.trim();
+      if (
+        res.data?.message === 'success' &&
+        isSafeHttpCheckoutUrl(checkoutUrl)
+      ) {
+        if (!markExternalPaymentStarted(res.data, 'creem')) return;
+        openSafeCheckoutWindow(checkoutUrl);
         showSuccess(t('已打开支付页面'));
         closeBuy();
+      } else if (res.data?.message === 'success') {
+        showError(t('支付跳转地址不安全'));
+      } else {
+        const errorMsg =
+          typeof res.data?.data === 'string'
+            ? res.data.data
+            : res.data?.message || t('支付失败');
+        showError(errorMsg);
+      }
+    } catch {
+      showError(t('支付请求失败'));
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const payWaffoPancake = async () => {
+    if (!hasConfiguredPaymentId(selectedPlan?.plan?.waffo_pancake_product_id)) {
+      showError(t('该套餐未配置 Waffo Pancake'));
+      return;
+    }
+    setPaying(true);
+    try {
+      const res = await API.post('/api/subscription/waffo-pancake/pay', {
+        plan_id: selectedPlan.plan.id,
+      });
+      const checkoutUrl = res.data?.data?.checkout_url?.trim();
+      if (
+        res.data?.message === 'success' &&
+        isSafeHttpCheckoutUrl(checkoutUrl)
+      ) {
+        if (!markExternalPaymentStarted(res.data, 'waffo_pancake')) return;
+        showSuccess(t('正在跳转支付页面...'));
+        closeBuy();
+        window.location.href = checkoutUrl;
+      } else if (res.data?.message === 'success') {
+        showError(t('支付跳转地址不安全'));
+      } else {
+        const errorMsg =
+          typeof res.data?.data === 'string'
+            ? res.data.data
+            : res.data?.message || t('支付失败');
+        showError(errorMsg);
+      }
+    } catch {
+      showError(t('支付请求失败'));
+    } finally {
+      setPaying(false);
+    }
+  };
+
+  const payBEpusdt = async (paymentMethod) => {
+    if (!paymentMethod) {
+      showError(t('请选择支付方式'));
+      return;
+    }
+    setPaying(true);
+    try {
+      const res = await API.post('/api/subscription/bepusdt/pay', {
+        plan_id: selectedPlan.plan.id,
+        payment_method: paymentMethod,
+      });
+      const paymentUrl = res.data?.data?.payment_url?.trim();
+      if (
+        (res.data?.success || res.data?.message === 'success') &&
+        isSafeHttpCheckoutUrl(paymentUrl)
+      ) {
+        if (!markExternalPaymentStarted(res.data, paymentMethod)) return;
+        openSafeCheckoutWindow(paymentUrl);
+        showSuccess(t('已打开支付页面'));
+        closeBuy();
+      } else if (res.data?.success || res.data?.message === 'success') {
+        showError(t('支付跳转地址不安全'));
       } else {
         const errorMsg =
           typeof res.data?.data === 'string'
@@ -180,10 +294,20 @@ const SubscriptionPlansCard = ({
         plan_id: selectedPlan.plan.id,
         payment_method: selectedEpayMethod,
       });
-      if (res.data?.message === 'success') {
-        submitEpayForm({ url: res.data.url, params: res.data.data });
+      const paymentUrl = res.data?.url?.trim();
+      if (
+        res.data?.message === 'success' &&
+        isSafeHttpCheckoutUrl(paymentUrl)
+      ) {
+        if (!markExternalPaymentStarted(res.data, selectedEpayMethod)) return;
+        if (!submitEpayForm({ url: paymentUrl, params: res.data.data })) {
+          showError(t('支付跳转地址不安全'));
+          return;
+        }
         showSuccess(t('已发起支付'));
         closeBuy();
+      } else if (res.data?.message === 'success') {
+        showError(t('支付跳转地址不安全'));
       } else {
         const errorMsg =
           typeof res.data?.data === 'string'
@@ -673,7 +797,13 @@ const SubscriptionPlansCard = ({
         epayMethods={epayMethods}
         enableOnlineTopUp={enableOnlineTopUp}
         enableStripeTopUp={enableStripeTopUp}
+        enableStripeSubscription={canUseStripe}
         enableCreemTopUp={enableCreemTopUp}
+        enableCreemSubscription={canUseCreem}
+        enableWaffoPancakeTopUp={enableWaffoPancakeTopUp}
+        enableWaffoPancakeSubscription={canUseWaffoPancake}
+        enableBEpusdt={enableBEpusdt}
+        bepusdtMethods={bepusdtMethods}
         purchaseLimitInfo={
           selectedPlan?.plan?.id
             ? {
@@ -684,6 +814,8 @@ const SubscriptionPlansCard = ({
         }
         onPayStripe={payStripe}
         onPayCreem={payCreem}
+        onPayWaffoPancake={payWaffoPancake}
+        onPayBEpusdt={payBEpusdt}
         onPayEpay={payEpay}
       />
     </>

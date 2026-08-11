@@ -16,23 +16,79 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { MODEL_FETCHABLE_TYPES } from "../constants"
-import type { Channel } from "../types"
+import { MODEL_FETCHABLE_TYPES } from '../constants'
+import type { Channel } from '../types'
+import { isChannelEnabled } from './channel-utils'
 
 export function supportsChannelUpstreamModelUpdate(
-  channel: Pick<Channel, "type" | "channel_info"> | null | undefined
+  channel:
+    | {
+        type: number
+        channel_info?: { is_multi_key?: boolean } | null
+        is_draft_multi_key?: boolean
+      }
+    | null
+    | undefined
 ): boolean {
   return Boolean(
     channel &&
-      MODEL_FETCHABLE_TYPES.has(channel.type) &&
-      !(channel.type === 57 && channel.channel_info?.is_multi_key === true)
+    MODEL_FETCHABLE_TYPES.has(channel.type) &&
+    channel.channel_info?.is_multi_key !== true &&
+    channel.is_draft_multi_key !== true
   )
 }
 
-export function normalizeModelList(models: unknown[] = []): string[] {
+export function canUseChannelUpstreamUpdates(
+  channel:
+    | {
+        type: number
+        status?: number
+        channel_info?: { is_multi_key?: boolean } | null
+        is_draft_multi_key?: boolean
+      }
+    | null
+    | undefined,
+  upstreamUpdateMeta: { enabled?: boolean } | null | undefined
+): boolean {
+  return Boolean(
+    channel &&
+    supportsChannelUpstreamModelUpdate(channel) &&
+    isChannelEnabled(channel as Channel) &&
+    upstreamUpdateMeta?.enabled === true
+  )
+}
+
+export function canFetchChannelUpstreamModels({
+  canSensitiveWriteChannel = false,
+}: {
+  canSensitiveWriteChannel?: boolean
+} = {}): boolean {
+  return canSensitiveWriteChannel === true
+}
+
+export function shouldUseDraftFetchModels({
+  isEditing,
+  draftHasChanges,
+  canFetchSavedModels,
+}: {
+  isEditing: boolean
+  draftHasChanges: boolean
+  canFetchSavedModels: boolean
+}): boolean {
+  if (!isEditing) return true
+  return draftHasChanges || !canFetchSavedModels
+}
+
+export function normalizeModelList(models: unknown = []): string[] {
+  let source: unknown[] = []
+  if (Array.isArray(models)) {
+    source = models
+  } else if (typeof models === 'string') {
+    source = models.split(',')
+  }
   return [
     ...new Set(
-      (models || []).map((model) => String(model || '').trim()).filter(Boolean)
+      source.map((model) => String(model || '').trim()).filter(Boolean)
     ),
   ]
 }
@@ -60,10 +116,10 @@ export function parseUpstreamUpdateMeta(settings: unknown): {
   return {
     enabled: parsed.upstream_model_update_check_enabled === true,
     pendingAddModels: normalizeModelList(
-      (parsed.upstream_model_update_last_detected_models as unknown[]) || []
+      parsed.upstream_model_update_last_detected_models
     ),
     pendingRemoveModels: normalizeModelList(
-      (parsed.upstream_model_update_last_removed_models as unknown[]) || []
+      parsed.upstream_model_update_last_removed_models
     ),
   }
 }

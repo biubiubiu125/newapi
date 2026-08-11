@@ -79,10 +79,18 @@ interface SubscriptionPlansCardProps {
 }
 
 function getEpayMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
-  return payMethods.filter(
-    (m) =>
-      m?.type && m.type !== 'usdt' && m.type !== 'stripe' && m.type !== 'creem'
-  )
+  return payMethods.filter((m) => {
+    const type = m?.type?.trim() || ''
+    return (
+      type !== '' &&
+      type !== 'usdt' &&
+      type !== 'stripe' &&
+      type !== 'creem' &&
+      type !== 'waffo' &&
+      type !== 'waffo_pancake' &&
+      !type.startsWith('waffo:')
+    )
+  })
 }
 
 function getBEpusdtMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
@@ -131,19 +139,29 @@ export function SubscriptionPlansCard({
   const [purchaseOpen, setPurchaseOpen] = useState(false)
   const [selectedPlan, setSelectedPlan] = useState<PlanRecord | null>(null)
 
-  const enableStripe = !!topupInfo?.enable_stripe_topup
-  const enableCreem = !!topupInfo?.enable_creem_topup
-  const enableWaffoPancake = !!topupInfo?.enable_waffo_pancake_topup
+  const enableStripe = !!(
+    topupInfo?.enable_stripe_subscription ?? topupInfo?.enable_stripe_topup
+  )
+  const enableCreem = !!(
+    topupInfo?.enable_creem_subscription ?? topupInfo?.enable_creem_topup
+  )
+  const enableWaffoPancake = !!(
+    topupInfo?.enable_waffo_pancake_subscription ??
+    topupInfo?.enable_waffo_pancake_topup
+  )
   const enableOnlineTopUp = !!topupInfo?.enable_online_topup
   const enableBEpusdtTopUp = !!topupInfo?.enable_bepusdt_topup
   const epayMethods = useMemo(
     () => getEpayMethods(topupInfo?.pay_methods),
     [topupInfo?.pay_methods]
   )
-  const bepusdtMethods = useMemo(
-    () => getBEpusdtMethods(topupInfo?.pay_methods),
-    [topupInfo?.pay_methods]
-  )
+  const bepusdtMethods = useMemo(() => {
+    const methods =
+      topupInfo?.bepusdt_pay_methods && topupInfo.bepusdt_pay_methods.length > 0
+        ? topupInfo.bepusdt_pay_methods
+        : topupInfo?.pay_methods
+    return getBEpusdtMethods(methods)
+  }, [topupInfo?.bepusdt_pay_methods, topupInfo?.pay_methods])
 
   const fetchPlans = useCallback(async () => {
     try {

@@ -74,6 +74,25 @@ func GetSubscriptionSelf(c *gin.Context) {
 	})
 }
 
+func GetSubscriptionPaymentStatus(c *gin.Context) {
+	tradeNo := strings.TrimSpace(c.Param("trade_no"))
+	if tradeNo == "" {
+		common.ApiErrorMsg(c, "参数错误")
+		return
+	}
+
+	order := model.GetUserSubscriptionOrderByTradeNo(c.GetInt("id"), tradeNo)
+	if order == nil {
+		common.ApiErrorMsg(c, "订阅订单不存在")
+		return
+	}
+
+	common.ApiSuccess(c, gin.H{
+		"trade_no": order.TradeNo,
+		"status":   order.Status,
+	})
+}
+
 func UpdateSubscriptionPreference(c *gin.Context) {
 	userId := c.GetInt("id")
 	var req BillingPreferenceRequest
@@ -162,6 +181,13 @@ func normalizeAndValidateSubscriptionGroup(group string) (string, bool) {
 	return normalized, ok
 }
 
+func normalizeSubscriptionPaymentAmount(plan *model.SubscriptionPlan, currency string) (float64, error) {
+	if plan == nil {
+		return 0, fmt.Errorf("subscription plan is required")
+	}
+	return model.NormalizePaymentAmount(plan.PriceAmount, currency)
+}
+
 func AdminCreateSubscriptionPlan(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
@@ -186,6 +212,12 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 		return
 	}
 	req.Plan.Currency = "CNY"
+	normalizedPrice, err := normalizeSubscriptionPaymentAmount(&req.Plan, req.Plan.Currency)
+	if err != nil {
+		common.ApiErrorMsg(c, "价格无效")
+		return
+	}
+	req.Plan.PriceAmount = normalizedPrice
 	if req.Plan.DurationUnit == "" {
 		req.Plan.DurationUnit = model.SubscriptionDurationMonth
 	}
@@ -222,7 +254,7 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorMsg(c, "自定义重置周期需大于0秒")
 		return
 	}
-	err := model.DB.Create(&req.Plan).Error
+	err = model.DB.Create(&req.Plan).Error
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -261,6 +293,12 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 	}
 	req.Plan.Id = id
 	req.Plan.Currency = "CNY"
+	normalizedPrice, err := normalizeSubscriptionPaymentAmount(&req.Plan, req.Plan.Currency)
+	if err != nil {
+		common.ApiErrorMsg(c, "价格无效")
+		return
+	}
+	req.Plan.PriceAmount = normalizedPrice
 	if req.Plan.DurationUnit == "" {
 		req.Plan.DurationUnit = model.SubscriptionDurationMonth
 	}
@@ -298,7 +336,10 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		return
 	}
 
-	err := model.DB.Transaction(func(tx *gorm.DB) error {
+	err = model.DB.Transaction(func(tx *gorm.DB) error {
+		stripePriceID := strings.TrimSpace(req.Plan.StripePriceId)
+		creemProductID := strings.TrimSpace(req.Plan.CreemProductId)
+		waffoPancakeProductID := strings.TrimSpace(req.Plan.WaffoPancakeProductId)
 		// update plan (allow zero values updates with map)
 		updateMap := map[string]interface{}{
 			"title":                      req.Plan.Title,
@@ -310,9 +351,9 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 			"custom_seconds":             req.Plan.CustomSeconds,
 			"enabled":                    req.Plan.Enabled,
 			"sort_order":                 req.Plan.SortOrder,
-			"stripe_price_id":            req.Plan.StripePriceId,
-			"creem_product_id":           req.Plan.CreemProductId,
-			"waffo_pancake_product_id":   req.Plan.WaffoPancakeProductId,
+			"stripe_price_id":            stripePriceID,
+			"creem_product_id":           creemProductID,
+			"waffo_pancake_product_id":   waffoPancakeProductID,
 			"max_purchase_per_user":      req.Plan.MaxPurchasePerUser,
 			"total_amount":               req.Plan.TotalAmount,
 			"upgrade_group":              req.Plan.UpgradeGroup,

@@ -56,7 +56,7 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { addTimeToDate } from '@/lib/time'
 
 import { createRedemption, updateRedemption, getRedemption } from '../api'
-import { SUCCESS_MESSAGES } from '../constants'
+import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import {
   getRedemptionFormSchema,
   type RedemptionFormValues,
@@ -177,6 +177,8 @@ export function RedemptionsMutateDrawer({
           toast.success(t(SUCCESS_MESSAGES.REDEMPTION_UPDATED))
           onOpenChange(false)
           triggerRefresh()
+        } else {
+          toast.error(result.message || t(ERROR_MESSAGES.UPDATE_FAILED))
         }
       } else {
         // Create mode
@@ -196,8 +198,12 @@ export function RedemptionsMutateDrawer({
           setCreatedDialogOpen(codes.length > 0)
           onOpenChange(false)
           triggerRefresh()
+        } else {
+          toast.error(result.message || t(ERROR_MESSAGES.CREATE_FAILED))
         }
       }
+    } catch (error) {
+      handleServerError(error)
     } finally {
       setIsSubmitting(false)
     }
@@ -255,6 +261,7 @@ export function RedemptionsMutateDrawer({
           <Form {...form}>
             <form
               id='redemption-form'
+              noValidate
               onSubmit={form.handleSubmit(onSubmit)}
               className={sideDrawerFormClassName()}
               aria-busy={isLoadingRedemption}

@@ -51,7 +51,12 @@ func SubscriptionRequestEpay(c *gin.Context) {
 	}
 
 	userId := c.GetInt("id")
-	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, "CNY")
+	paidAmount, err := normalizeSubscriptionPaymentAmount(plan, "CNY")
+	if err != nil {
+		common.ApiErrorMsg(c, "套餐金额无效")
+		return
+	}
+	snapshot, _ := referralService.BuildOrderSnapshot(userId, paidAmount, "CNY")
 	if plan.MaxPurchasePerUser > 0 {
 		count, err := model.CountUserSubscriptionsByPlan(userId, plan.Id)
 		if err != nil {
@@ -88,8 +93,8 @@ func SubscriptionRequestEpay(c *gin.Context) {
 	order := &model.SubscriptionOrder{
 		UserId:          userId,
 		PlanId:          plan.Id,
-		Money:           plan.PriceAmount,
-		PaidAmount:      plan.PriceAmount,
+		Money:           paidAmount,
+		PaidAmount:      paidAmount,
 		PaidCurrency:    "CNY",
 		TradeNo:         tradeNo,
 		PaymentMethod:   req.PaymentMethod,
@@ -114,7 +119,7 @@ func SubscriptionRequestEpay(c *gin.Context) {
 		Type:           req.PaymentMethod,
 		ServiceTradeNo: tradeNo,
 		Name:           fmt.Sprintf("SUB:%s", plan.Title),
-		Money:          strconv.FormatFloat(plan.PriceAmount, 'f', 2, 64),
+		Money:          strconv.FormatFloat(paidAmount, 'f', 2, 64),
 		Device:         epay.PC,
 		NotifyUrl:      notifyUrl,
 		ReturnUrl:      returnUrl,
@@ -189,6 +194,14 @@ func SubscriptionEpayNotify(c *gin.Context) {
 		RequirePaymentFacts:     true,
 		CallerIP:                common.GetClientIP(c),
 	}); err != nil {
+		if isPermanentPaymentReviewError(err) {
+			if recordErr := recordPaymentReview(c.Request.Context(), model.PaymentProviderEpay, "", "subscription.notify", verifyInfo.ServiceTradeNo, "", "Epay subscription payment requires manual review after payment succeeded", err, common.GetJsonString(verifyInfo)); recordErr != nil {
+				c.String(http.StatusInternalServerError, "fail")
+				return
+			}
+			_, _ = c.Writer.Write([]byte("success"))
+			return
+		}
 		_, _ = c.Writer.Write([]byte("fail"))
 		return
 	}

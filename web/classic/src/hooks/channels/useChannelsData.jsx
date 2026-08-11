@@ -776,6 +776,10 @@ export const useChannelsData = () => {
 
   const updateChannelBalance = async (record) => {
     if (record?.type === 57) {
+      if (!channelPermissions.canSensitiveWriteChannel) {
+        showError(t('无权限查看 Codex 帐号信息'));
+        return;
+      }
       openCodexUsageModal({
         t,
         record,
@@ -785,6 +789,11 @@ export const useChannelsData = () => {
           else showError(t('复制失败'));
         },
       });
+      return;
+    }
+
+    if (!channelPermissions.canOperateChannel) {
+      showError(t('无权限更新渠道余额'));
       return;
     }
 

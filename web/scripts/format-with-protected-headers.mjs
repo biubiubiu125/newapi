@@ -34,6 +34,8 @@ const excludedDirs = new Set([
   '.git',
   '.tanstack',
   'build',
+  // The legacy frontend has its own package and Prettier configuration.
+  'classic',
   'coverage',
   'dist',
   'node_modules',
@@ -50,6 +52,7 @@ const headerExtensions = new Set([
 ])
 const protectedHeaderPattern =
   /^\/\*\nCopyright \(C\)[\s\S]*?QuantumNous[\s\S]*?\*\/\n+/
+const formatBatchSize = 100
 
 function extensionOf(path) {
   const index = path.lastIndexOf('.')
@@ -131,6 +134,36 @@ function listChangedFiles(before, files) {
   return changed
 }
 
+function formatInBatches(files) {
+  for (let start = 0; start < files.length; start += formatBatchSize) {
+    const batch = files
+      .slice(start, start + formatBatchSize)
+      .map((file) => relative(root, file))
+    const result = spawnSync(
+      'oxfmt',
+      [
+        '-c',
+        '.oxfmtrc.json',
+        '--ignore-path',
+        '.gitignore',
+        '--write',
+        ...batch,
+      ],
+      {
+        cwd: root,
+        stdio: 'inherit',
+      }
+    )
+    if (result.error) {
+      throw result.error
+    }
+    if (result.status !== 0) {
+      return result.status ?? 1
+    }
+  }
+  return 0
+}
+
 const files = walk(root).filter(
   (file) => statSync(file).size < 10 * 1024 * 1024
 )
@@ -140,15 +173,7 @@ let exitCode = 0
 
 try {
   headers = stripProtectedHeaders(files)
-  const result = spawnSync(
-    'oxfmt',
-    ['-c', '.oxfmtrc.json', '--ignore-path', '.gitignore', '--write', '.'],
-    {
-      cwd: root,
-      stdio: 'inherit',
-    }
-  )
-  exitCode = result.status ?? 1
+  exitCode = formatInBatches(files)
   restoreProtectedHeaders(headers)
 
   if (mode === '--check' && exitCode === 0) {

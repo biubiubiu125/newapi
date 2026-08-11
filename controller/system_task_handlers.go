@@ -110,7 +110,7 @@ func (modelUpdateHandler) Run(ctx context.Context, task *model.SystemTask, runne
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
 		return
 	}
-	summary, err := runChannelUpstreamModelUpdateTaskOnce(ctx, payload.Manual, !payload.Manual, service.NewSystemTaskProgressReporter(task, runnerID))
+	summary, err := runChannelUpstreamModelUpdateTaskOnce(ctx, payload.Manual, !payload.Manual, !payload.Manual, service.NewSystemTaskProgressReporter(task, runnerID))
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
 		return
@@ -125,7 +125,7 @@ func (manualModelUpdateHandler) Type() string { return model.SystemTaskTypeModel
 func (manualModelUpdateHandler) LockType() string { return model.SystemTaskTypeModelUpdate }
 
 func (manualModelUpdateHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
-	summary, err := runChannelUpstreamModelUpdateTaskOnce(ctx, true, false, service.NewSystemTaskProgressReporter(task, runnerID))
+	summary, err := runChannelUpstreamModelUpdateTaskOnce(ctx, true, false, false, service.NewSystemTaskProgressReporter(task, runnerID))
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
 		return

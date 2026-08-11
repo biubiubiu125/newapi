@@ -22,6 +22,7 @@ type TopUp struct {
 	TradeNo                    string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod              string  `json:"payment_method" gorm:"type:varchar(50)"`
 	PaymentProvider            string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	WaffoPancakeStoreID        string  `json:"waffo_pancake_store_id" gorm:"type:varchar(128);default:''"`
 	ProviderPayload            string  `json:"provider_payload" gorm:"type:text"`
 	OrderSnapshotVersion       int     `json:"order_snapshot_version" gorm:"type:int;default:0"`
 	RequestAmountSnapshot      int64   `json:"request_amount_snapshot" gorm:"type:bigint;default:0"`
@@ -276,6 +277,9 @@ func RechargeStripeWithValidation(referenceId string, customerId string, provide
 		}
 		if err := applyValidatedPaymentFactsToTopUp(topUp, validation); err != nil {
 			return err
+		}
+		if topUp.Status == common.TopUpStatusSuccess {
+			return nil
 		}
 
 		if topUp.Status != common.TopUpStatusPending {
@@ -533,6 +537,19 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	return nil
 }
 func RechargeCreem(referenceId string, customerEmail string, customerName string, callerIp string) (err error) {
+	return rechargeCreemWithValidation(referenceId, customerEmail, customerName, "", PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderCreem,
+	}, callerIp)
+}
+
+func RechargeCreemWithValidation(referenceId string, customerEmail string, customerName string, providerPayload string, validation PaymentCallbackValidation, callerIp string) (err error) {
+	if validation.ExpectedPaymentProvider == "" {
+		validation.ExpectedPaymentProvider = PaymentProviderCreem
+	}
+	return rechargeCreemWithValidation(referenceId, customerEmail, customerName, providerPayload, validation, callerIp)
+}
+
+func rechargeCreemWithValidation(referenceId string, customerEmail string, customerName string, providerPayload string, validation PaymentCallbackValidation, callerIp string) (err error) {
 	if referenceId == "" {
 		return errors.New("未提供支付单号")
 	}
@@ -548,15 +565,29 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		err := lockForUpdate(tx).Where(refCol+" = ?", referenceId).First(topUp).Error
 		if err != nil {
-			return errors.New("充值订单不存在")
+			return ErrTopUpNotFound
 		}
 
-		if topUp.PaymentProvider != PaymentProviderCreem {
+		if topUp.PaymentProvider != validation.ExpectedPaymentProvider {
 			return ErrPaymentMethodMismatch
+		}
+		if validation.ActualPaymentMethod != "" && !callbackPaymentMethodMatches(topUp.PaymentMethod, validation.ActualPaymentMethod, validation.ExpectedPaymentProvider) {
+			return ErrPaymentMethodMismatch
+		}
+		if err := applyValidatedPaymentFactsToTopUp(topUp, validation); err != nil {
+			return err
+		}
+
+		if topUp.Status == common.TopUpStatusSuccess {
+			return nil
 		}
 
 		if topUp.Status != common.TopUpStatusPending {
-			return errors.New("充值订单状态错误")
+			return ErrTopUpStatusInvalid
+		}
+
+		if providerPayload != "" {
+			topUp.ProviderPayload = providerPayload
 		}
 
 		topUp.CompleteTime = common.GetTimestamp()
@@ -585,6 +616,13 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 
 	if err != nil {
 		common.SysError("creem topup failed: " + err.Error())
+		if errors.Is(err, ErrPaymentMethodMismatch) ||
+			errors.Is(err, ErrTopUpNotFound) ||
+			errors.Is(err, ErrTopUpStatusInvalid) ||
+			errors.Is(err, ErrPaymentAmountMismatch) ||
+			errors.Is(err, ErrPaymentCurrencyMismatch) {
+			return err
+		}
 		return errors.New("充值失败，请稍后重试")
 	}
 
@@ -594,6 +632,16 @@ func RechargeCreem(referenceId string, customerEmail string, customerName string
 }
 
 func RechargeWaffo(tradeNo string, callerIp string) (err error) {
+	return RechargeWaffoWithValidation(tradeNo, "", PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderWaffo,
+		ActualPaymentMethod:     PaymentMethodWaffo,
+	}, callerIp)
+}
+
+func RechargeWaffoWithValidation(tradeNo string, providerPayload string, validation PaymentCallbackValidation, callerIp string) (err error) {
+	if validation.ExpectedPaymentProvider == "" {
+		validation.ExpectedPaymentProvider = PaymentProviderWaffo
+	}
 	if tradeNo == "" {
 		return errors.New("未提供支付单号")
 	}
@@ -608,11 +656,17 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error
 		if err != nil {
-			return errors.New("充值订单不存在")
+			return ErrTopUpNotFound
 		}
 
-		if topUp.PaymentProvider != PaymentProviderWaffo {
+		if topUp.PaymentProvider != validation.ExpectedPaymentProvider {
 			return ErrPaymentMethodMismatch
+		}
+		if validation.ActualPaymentMethod != "" && !callbackPaymentMethodMatches(topUp.PaymentMethod, validation.ActualPaymentMethod, validation.ExpectedPaymentProvider) {
+			return ErrPaymentMethodMismatch
+		}
+		if err := applyValidatedPaymentFactsToTopUp(topUp, validation); err != nil {
+			return err
 		}
 
 		if topUp.Status == common.TopUpStatusSuccess {
@@ -620,7 +674,7 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 		}
 
 		if topUp.Status != common.TopUpStatusPending {
-			return errors.New("充值订单状态错误")
+			return ErrTopUpStatusInvalid
 		}
 
 		quotaToAdd = topUp.CreditQuotaAmount()
@@ -628,6 +682,9 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 			return errors.New("无效的充值额度")
 		}
 
+		if providerPayload != "" {
+			topUp.ProviderPayload = providerPayload
+		}
 		topUp.CompleteTime = common.GetTimestamp()
 		topUp.Status = common.TopUpStatusSuccess
 		if err := tx.Save(topUp).Error; err != nil {
@@ -643,6 +700,13 @@ func RechargeWaffo(tradeNo string, callerIp string) (err error) {
 
 	if err != nil {
 		common.SysError("waffo topup failed: " + err.Error())
+		if errors.Is(err, ErrPaymentMethodMismatch) ||
+			errors.Is(err, ErrTopUpNotFound) ||
+			errors.Is(err, ErrTopUpStatusInvalid) ||
+			errors.Is(err, ErrPaymentAmountMismatch) ||
+			errors.Is(err, ErrPaymentCurrencyMismatch) {
+			return err
+		}
 		return errors.New("充值失败，请稍后重试")
 	}
 
@@ -679,7 +743,7 @@ func RechargeWaffoPancakeWithValidation(tradeNo string, providerPayload string, 
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error
 		if err != nil {
-			return errors.New("充值订单不存在")
+			return ErrTopUpNotFound
 		}
 
 		if topUp.PaymentProvider != validation.ExpectedPaymentProvider {
@@ -697,7 +761,7 @@ func RechargeWaffoPancakeWithValidation(tradeNo string, providerPayload string, 
 		}
 
 		if topUp.Status != common.TopUpStatusPending {
-			return errors.New("充值订单状态错误")
+			return ErrTopUpStatusInvalid
 		}
 
 		quotaToAdd = topUp.CreditQuotaAmount()
@@ -724,6 +788,8 @@ func RechargeWaffoPancakeWithValidation(tradeNo string, providerPayload string, 
 	if err != nil {
 		common.SysError("waffo pancake topup failed: " + err.Error())
 		if errors.Is(err, ErrPaymentMethodMismatch) ||
+			errors.Is(err, ErrTopUpNotFound) ||
+			errors.Is(err, ErrTopUpStatusInvalid) ||
 			errors.Is(err, ErrPaymentAmountMismatch) ||
 			errors.Is(err, ErrPaymentCurrencyMismatch) {
 			return err
@@ -1000,10 +1066,7 @@ func validatedPaymentFacts(expectedAmount float64, expectedCurrency string, vali
 	if expectedCurrency != "" && !samePaymentCurrency(expectedCurrency, actualCurrency) {
 		return 0, "", ErrPaymentCurrencyMismatch
 	}
-	if expectedAmount > 0 && !paymentAmountMatches(expectedAmount, validation.PaidAmount, validation.AllowPaymentDiscount) {
-		return 0, "", ErrPaymentAmountMismatch
-	}
-	if expectedAmount <= 0 && validation.PaidAmount < 0 {
+	if validation.PaidAmount < 0 || !paymentAmountMatches(expectedAmount, validation.PaidAmount, validation.AllowPaymentDiscount) {
 		return 0, "", ErrPaymentAmountMismatch
 	}
 	return validation.PaidAmount, actualCurrency, nil

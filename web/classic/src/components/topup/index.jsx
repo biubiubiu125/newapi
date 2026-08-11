@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import { Modal, Toast } from '@douyinfe/semi-ui';
-import React, { useEffect, useState, useContext } from 'react';
+import React, { useEffect, useState, useContext, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useNavigate, useSearchParams } from 'react-router-dom';
 
@@ -37,6 +37,10 @@ import PaymentConfirmModal from './modals/PaymentConfirmModal';
 import TopupHistoryModal from './modals/TopupHistoryModal';
 import RechargeCard from './RechargeCard';
 
+const pendingSubscriptionPaymentStorageKey =
+  'newapi.pendingSubscriptionPayment';
+const pendingSubscriptionPaymentMaxAgeMs = 24 * 60 * 60 * 1000;
+
 // Reject non-navigable schemes (e.g. javascript:, data:) and relative URLs.
 // Only http / https are allowed for backend-provided redirect targets.
 // Mirrors isSafeHttpCheckoutUrl in the default frontend's
@@ -44,6 +48,9 @@ import RechargeCard from './RechargeCard';
 function isSafeHttpCheckoutUrl(value) {
   const trimmed = (value || '').trim();
   if (!trimmed) {
+    return false;
+  }
+  if (trimmed.includes('\\')) {
     return false;
   }
   try {
@@ -111,6 +118,9 @@ const TopUp = () => {
     useState('subscription_first');
   const [activeSubscriptions, setActiveSubscriptions] = useState([]);
   const [allSubscriptions, setAllSubscriptions] = useState([]);
+  const [pendingSubscriptionPayment, setPendingSubscriptionPayment] =
+    useState(null);
+  const pendingSubscriptionPaymentCompletedRef = useRef(false);
 
   // 预设充值额度选项
   const [presetAmounts, setPresetAmounts] = useState([]);
@@ -142,6 +152,45 @@ const TopUp = () => {
     return Number.isFinite(configuredMinTopUp) && configuredMinTopUp > 0
       ? configuredMinTopUp
       : minTopUp;
+  };
+
+  const openPaymentUrl = (url) => {
+    const checkoutUrl = (url || '').trim();
+    if (!checkoutUrl || !isSafeHttpCheckoutUrl(checkoutUrl)) {
+      showError(t('支付跳转地址不安全'));
+      return false;
+    }
+    window.open(checkoutUrl, '_blank', 'noopener,noreferrer');
+    return true;
+  };
+
+  const submitPaymentForm = (url, params = {}) => {
+    const checkoutUrl = (url || '').trim();
+    if (!checkoutUrl || !isSafeHttpCheckoutUrl(checkoutUrl)) {
+      showError(t('支付跳转地址不安全'));
+      return false;
+    }
+
+    const form = document.createElement('form');
+    form.action = checkoutUrl;
+    form.method = 'POST';
+    const isSafari =
+      navigator.userAgent.indexOf('Safari') > -1 &&
+      navigator.userAgent.indexOf('Chrome') < 1;
+    if (!isSafari) {
+      form.target = '_blank';
+    }
+    for (const key in params) {
+      const input = document.createElement('input');
+      input.type = 'hidden';
+      input.name = key;
+      input.value = params[key];
+      form.appendChild(input);
+    }
+    document.body.appendChild(form);
+    form.submit();
+    document.body.removeChild(form);
+    return true;
   };
 
   const requestAmountByPayment = async (payment, value) => {
@@ -198,7 +247,7 @@ const TopUp = () => {
       showError(t('超级管理员未设置充值链接！'));
       return;
     }
-    window.open(topUpLink, '_blank');
+    openPaymentUrl(topUpLink);
   };
 
   const preTopUp = async (payment) => {
@@ -304,30 +353,12 @@ const TopUp = () => {
         if (message === 'success') {
           if (payWay === 'stripe') {
             // Stripe 支付回调处理
-            window.open(data.pay_link, '_blank');
+            openPaymentUrl(data.pay_link);
           } else {
             // 普通支付表单提交
             const params = data;
             const url = res.data.url;
-            const form = document.createElement('form');
-            form.action = url;
-            form.method = 'POST';
-            const isSafari =
-              navigator.userAgent.indexOf('Safari') > -1 &&
-              navigator.userAgent.indexOf('Chrome') < 1;
-            if (!isSafari) {
-              form.target = '_blank';
-            }
-            for (const key in params) {
-              const input = document.createElement('input');
-              input.type = 'hidden';
-              input.name = key;
-              input.value = params[key];
-              form.appendChild(input);
-            }
-            document.body.appendChild(form);
-            form.submit();
-            document.body.removeChild(form);
+            submitPaymentForm(url, params);
           }
         } else {
           const errorMsg =
@@ -407,7 +438,7 @@ const TopUp = () => {
       if (res !== undefined) {
         const { message, data } = res.data;
         if (message === 'success' && data?.payment_url) {
-          window.open(data.payment_url, '_blank');
+          openPaymentUrl(data.payment_url);
         } else {
           showError(data || t('支付请求失败'));
         }
@@ -517,7 +548,7 @@ const TopUp = () => {
 
   const processCreemCallback = (data) => {
     // 与 Stripe 保持一致的实现方式
-    window.open(data.checkout_url, '_blank');
+    openPaymentUrl(data.checkout_url);
   };
 
   const getUserQuota = async () => {
@@ -561,6 +592,84 @@ const TopUp = () => {
     } catch {
       // ignore
     }
+  };
+
+  const checkSubscriptionPaymentStatus = async (tradeNo) => {
+    if (!tradeNo) return false;
+    const res = await API.get(
+      `/api/subscription/orders/${encodeURIComponent(tradeNo)}/status`,
+    );
+    return res.data?.success && res.data?.data?.status === 'success';
+  };
+
+  const completePendingSubscriptionPayment = async (payment) => {
+    if (!payment?.tradeNo || pendingSubscriptionPaymentCompletedRef.current) {
+      return;
+    }
+    pendingSubscriptionPaymentCompletedRef.current = true;
+    setPendingSubscriptionPayment((current) =>
+      current?.tradeNo === payment.tradeNo
+        ? { ...current, status: 'completed' }
+        : current,
+    );
+    try {
+      window.sessionStorage.removeItem(pendingSubscriptionPaymentStorageKey);
+    } catch {
+      // Storage is only a recovery aid for same-tab external redirects.
+    }
+    await Promise.allSettled([getUserQuota(), getSubscriptionSelf()]);
+    showSuccess(t('更新成功'));
+  };
+
+  const refreshPendingSubscriptionPayment = async () => {
+    const payment = pendingSubscriptionPayment;
+    if (!payment?.tradeNo || payment.status !== 'waiting') return;
+    try {
+      const completed = await checkSubscriptionPaymentStatus(payment.tradeNo);
+      if (completed) {
+        await completePendingSubscriptionPayment(payment);
+      } else {
+        showInfo(t('已发起支付'));
+      }
+    } catch {
+      showError(t('请求失败'));
+    }
+  };
+
+  const handleSubscriptionPaymentStarted = (payment) => {
+    pendingSubscriptionPaymentCompletedRef.current = false;
+    const pendingPayment = {
+      ...payment,
+      status: 'waiting',
+      dialogOpen: true,
+      startedAt: Date.now(),
+    };
+    try {
+      window.sessionStorage.setItem(
+        pendingSubscriptionPaymentStorageKey,
+        JSON.stringify(pendingPayment),
+      );
+    } catch {
+      // Storage is only a recovery aid for same-tab external redirects.
+    }
+    setPendingSubscriptionPayment(pendingPayment);
+  };
+
+  const closePendingSubscriptionPayment = () => {
+    setPendingSubscriptionPayment((current) => {
+      if (!current) return current;
+      if (current.status === 'completed') {
+        try {
+          window.sessionStorage.removeItem(
+            pendingSubscriptionPaymentStorageKey,
+          );
+        } catch {
+          // Storage is only a recovery aid for same-tab external redirects.
+        }
+        return null;
+      }
+      return { ...current, dialogOpen: false };
+    });
   };
 
   const updateBillingPreference = async (pref) => {
@@ -680,6 +789,12 @@ const TopUp = () => {
               data.payment_compliance_confirmed !== false,
             payment_compliance_terms_version:
               data.payment_compliance_terms_version || '',
+            enable_stripe_subscription: data.enable_stripe_subscription,
+            enable_creem_subscription: data.enable_creem_subscription,
+            enable_waffo_pancake_subscription:
+              data.enable_waffo_pancake_subscription,
+            enable_bepusdt_topup: data.enable_bepusdt_topup,
+            bepusdt_pay_methods: data.bepusdt_pay_methods || [],
           }));
 
           // 设置 Creem 产品
@@ -737,6 +852,31 @@ const TopUp = () => {
   }, []);
 
   useEffect(() => {
+    try {
+      const stored = JSON.parse(
+        window.sessionStorage.getItem(pendingSubscriptionPaymentStorageKey) ||
+          'null',
+      );
+      if (
+        !stored?.tradeNo ||
+        Date.now() - Number(stored.startedAt || 0) >
+          pendingSubscriptionPaymentMaxAgeMs
+      ) {
+        window.sessionStorage.removeItem(pendingSubscriptionPaymentStorageKey);
+        return;
+      }
+      pendingSubscriptionPaymentCompletedRef.current = false;
+      setPendingSubscriptionPayment({
+        ...stored,
+        status: 'waiting',
+        dialogOpen: true,
+      });
+    } catch {
+      window.sessionStorage.removeItem(pendingSubscriptionPaymentStorageKey);
+    }
+  }, []);
+
+  useEffect(() => {
     // 始终获取最新用户数据，确保余额等统计信息准确
     getUserQuota().then();
   }, []);
@@ -747,6 +887,48 @@ const TopUp = () => {
     getSubscriptionPlans().then();
     getSubscriptionSelf().then();
   }, []);
+
+  useEffect(() => {
+    const payment = pendingSubscriptionPayment;
+    if (!payment?.tradeNo || payment.status !== 'waiting') return;
+
+    let cancelled = false;
+    const poll = async () => {
+      try {
+        const completed = await checkSubscriptionPaymentStatus(payment.tradeNo);
+        if (!cancelled && completed) {
+          await completePendingSubscriptionPayment(payment);
+        }
+      } catch {
+        // Payment callbacks can be delayed; transient polling failures are retried.
+      }
+    };
+
+    void poll();
+    const timer = window.setInterval(() => {
+      void poll();
+    }, 3000);
+    return () => {
+      cancelled = true;
+      window.clearInterval(timer);
+    };
+  }, [pendingSubscriptionPayment]);
+
+  useEffect(() => {
+    const payment = pendingSubscriptionPayment;
+    if (!payment?.tradeNo || payment.status !== 'waiting') return;
+
+    const refreshOnReturn = () => {
+      if (document.visibilityState === 'hidden') return;
+      void refreshPendingSubscriptionPayment();
+    };
+    window.addEventListener('focus', refreshOnReturn);
+    document.addEventListener('visibilitychange', refreshOnReturn);
+    return () => {
+      window.removeEventListener('focus', refreshOnReturn);
+      document.removeEventListener('visibilitychange', refreshOnReturn);
+    };
+  }, [pendingSubscriptionPayment]);
 
   useEffect(() => {
     if (statusState?.status) {
@@ -883,6 +1065,37 @@ const TopUp = () => {
         t={t}
       />
 
+      <Modal
+        title={
+          pendingSubscriptionPayment?.status === 'completed'
+            ? t('更新成功')
+            : t('已发起支付')
+        }
+        visible={Boolean(pendingSubscriptionPayment?.dialogOpen)}
+        onOk={
+          pendingSubscriptionPayment?.status === 'completed'
+            ? closePendingSubscriptionPayment
+            : refreshPendingSubscriptionPayment
+        }
+        onCancel={closePendingSubscriptionPayment}
+        okText={t('刷新')}
+        cancelText={t('关闭')}
+        centered
+      >
+        <p>
+          {t('订单号')}：{pendingSubscriptionPayment?.tradeNo}
+        </p>
+        <p>
+          {t('订阅套餐')}：{pendingSubscriptionPayment?.title || '-'}
+        </p>
+        <p>
+          {t('应付金额')}：{pendingSubscriptionPayment?.amount || 0}
+        </p>
+        <p>
+          {t('支付方式')}：{pendingSubscriptionPayment?.paymentMethod || '-'}
+        </p>
+      </Modal>
+
       {/* Creem 充值确认模态框 */}
       <Modal
         title={t('确定要充值 $')}
@@ -957,6 +1170,7 @@ const TopUp = () => {
           activeSubscriptions={activeSubscriptions}
           allSubscriptions={allSubscriptions}
           reloadSubscriptionSelf={getSubscriptionSelf}
+          onPaymentStarted={handleSubscriptionPaymentStarted}
           enableRedemption={topupInfo.enable_redemption !== false}
         />
       </div>

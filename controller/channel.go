@@ -617,6 +617,46 @@ func isValidJSONText(text string) bool {
 	return common.Unmarshal([]byte(text), &payload) == nil
 }
 
+func normalizeChannelUpstreamModelUpdateSettingsForCreate(channel *model.Channel) error {
+	if channel == nil {
+		return nil
+	}
+	settingsMap, ok := channelSettingsMapForUpdate(channel.OtherSettings)
+	if !ok {
+		return fmt.Errorf("channel settings is not valid JSON")
+	}
+	changed := false
+	if !channelSupportsUpstreamModelUpdate(channel) {
+		changed = removeChannelUpstreamModelUpdateFields(settingsMap)
+	} else {
+		for _, key := range []string{
+			"upstream_model_update_last_check_time",
+			"upstream_model_update_last_detected_models",
+			"upstream_model_update_last_removed_models",
+		} {
+			if _, ok := settingsMap[key]; ok {
+				delete(settingsMap, key)
+				changed = true
+			}
+		}
+		if checkEnabled, _ := settingsMap["upstream_model_update_check_enabled"].(bool); !checkEnabled {
+			if _, ok := settingsMap["upstream_model_update_auto_sync_enabled"]; ok {
+				delete(settingsMap, "upstream_model_update_auto_sync_enabled")
+				changed = true
+			}
+		}
+	}
+	if !changed {
+		return nil
+	}
+	settingsBytes, err := common.Marshal(settingsMap)
+	if err != nil {
+		return err
+	}
+	channel.OtherSettings = string(settingsBytes)
+	return nil
+}
+
 func AddChannel(c *gin.Context) {
 	addChannelRequest := AddChannelRequest{}
 	err := c.ShouldBindJSON(&addChannelRequest)
@@ -625,28 +665,13 @@ func AddChannel(c *gin.Context) {
 		return
 	}
 
-	// 使用统一的校验函数
-	if err := validateChannel(addChannelRequest.Channel, true); err != nil {
+	if addChannelRequest.Channel == nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": err.Error(),
+			"message": "channel cannot be empty",
 		})
 		return
 	}
-	if addChannelRequest.Channel != nil && !channelTypeSupportsUpstreamModelUpdate(addChannelRequest.Channel.Type) {
-		cleanedSettings, changed, err := channelSettingsWithoutUpstreamModelUpdateFields(addChannelRequest.Channel.OtherSettings)
-		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
-			return
-		}
-		if changed {
-			addChannelRequest.Channel.OtherSettings = cleanedSettings
-		}
-	}
-
 	addChannelRequest.Channel.CreatedTime = common.GetTimestamp()
 	keys := make([]string, 0)
 	switch addChannelRequest.Mode {
@@ -697,6 +722,22 @@ func AddChannel(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "不支持的添加模式",
+		})
+		return
+	}
+	if err := normalizeChannelUpstreamModelUpdateSettingsForCreate(addChannelRequest.Channel); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	// 使用统一的校验函数。multi_to_single 会在上面先标记 ChannelInfo，
+	// 因此不支持上游模型更新的聚合密钥渠道会先清理残留设置再校验。
+	if err := validateChannel(addChannelRequest.Channel, true); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
 		})
 		return
 	}
@@ -1032,6 +1073,7 @@ func mergeChannelUpstreamModelUpdateRuntimeSettingsForUpdate(requestedSettings s
 			preserveChannelSettingRuntimeField(requested, current, "upstream_model_update_last_removed_models")
 		}
 	} else {
+		delete(requested, "upstream_model_update_auto_sync_enabled")
 		clearChannelUpstreamModelUpdateRuntimeFields(requested)
 	}
 
@@ -1119,22 +1161,21 @@ func channelSettingsWithoutUpstreamModelUpdateFields(raw string) (string, bool, 
 	return string(settingsBytes), true, nil
 }
 
-func clearUnsupportedChannelUpstreamModelUpdateSettingsForUpdate(channel *PatchChannel) {
-	if channel == nil || channelSupportsUpstreamModelUpdate(&channel.Channel) {
-		return
+func sameChannelSettingsWithoutUpstreamModelUpdateFields(left string, right string) bool {
+	leftSettings, leftOK := channelSettingsMapForUpdate(left)
+	rightSettings, rightOK := channelSettingsMapForUpdate(right)
+	if !leftOK || !rightOK {
+		return strings.TrimSpace(left) == strings.TrimSpace(right)
 	}
-	settings, ok := channelSettingsMapForUpdate(channel.OtherSettings)
-	if !ok {
-		return
+	removeChannelUpstreamModelUpdateFields(leftSettings)
+	removeChannelUpstreamModelUpdateFields(rightSettings)
+	if len(leftSettings) == 0 {
+		leftSettings = nil
 	}
-	if !removeChannelUpstreamModelUpdateFields(settings) {
-		return
+	if len(rightSettings) == 0 {
+		rightSettings = nil
 	}
-	settingsBytes, err := common.Marshal(settings)
-	if err != nil {
-		return
-	}
-	channel.OtherSettings = string(settingsBytes)
+	return reflect.DeepEqual(leftSettings, rightSettings)
 }
 
 func channelSettingsMapForUpdate(raw string) (map[string]any, bool) {
@@ -1150,6 +1191,46 @@ func channelSettingsMapForUpdate(raw string) (map[string]any, bool) {
 		return map[string]any{}, true
 	}
 	return parsed, true
+}
+
+func preparePatchChannelForValidation(channel *PatchChannel, origin *model.Channel, requestData map[string]any) (model.Channel, error) {
+	if channel == nil {
+		return model.Channel{}, fmt.Errorf("channel cannot be empty")
+	}
+	validationChannel := channel.Channel
+	if origin != nil {
+		validationChannel.ChannelInfo = origin.ChannelInfo
+		if _, settingsRequested := requestData["settings"]; settingsRequested {
+			if _, ok := requestData["type"]; !ok {
+				validationChannel.Type = origin.Type
+			}
+			if _, ok := requestData["base_url"]; !ok {
+				validationChannel.BaseURL = origin.BaseURL
+			}
+			if _, ok := requestData["other"]; !ok {
+				validationChannel.Other = origin.Other
+			}
+			if _, ok := requestData["setting"]; !ok {
+				validationChannel.Setting = origin.Setting
+			}
+		}
+	}
+	if channel.MultiKeyMode != nil && strings.TrimSpace(*channel.MultiKeyMode) != "" {
+		validationChannel.ChannelInfo.MultiKeyMode = constant.MultiKeyMode(strings.TrimSpace(*channel.MultiKeyMode))
+	}
+	if !channelSupportsUpstreamModelUpdate(&validationChannel) {
+		cleanedSettings, changed, err := channelSettingsWithoutUpstreamModelUpdateFields(validationChannel.OtherSettings)
+		if err != nil {
+			return validationChannel, err
+		}
+		if changed {
+			validationChannel.OtherSettings = cleanedSettings
+			if _, ok := requestData["settings"]; ok {
+				channel.OtherSettings = cleanedSettings
+			}
+		}
+	}
+	return validationChannel, nil
 }
 
 func preserveChannelSettingRuntimeField(requested map[string]any, current map[string]any, key string) {
@@ -1413,6 +1494,8 @@ func updateChannelColumnsWithLockedState(
 	canSensitiveWrite bool,
 ) (*model.Channel, error) {
 	var lockedBefore model.Channel
+	_, clientRequestedSettings := requestData["settings"]
+	clientRequestedSettingsRaw := channel.OtherSettings
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		var locked model.Channel
 		if err := model.LockForUpdate(tx).Where("id = ?", channel.Id).First(&locked).Error; err != nil {
@@ -1421,33 +1504,45 @@ func updateChannelColumnsWithLockedState(
 		lockedBefore = locked
 		effectiveRequestData := mergeLockedChannelStateForUpdate(channel, staleOrigin, &locked, requestData)
 		_, settingsRequested := effectiveRequestData["settings"]
+		effectiveClientRequestedSettings := clientRequestedSettings && settingsRequested
+		if settingsRequested {
+			clientRequestedSettingsRaw = channel.OtherSettings
+		}
 		supportsUpstreamModelUpdate := channelSupportsUpstreamModelUpdate(&channel.Channel)
 		sourceChanged := false
 		if supportsUpstreamModelUpdate {
 			sourceChanged = channelUpstreamModelSourceChangedForUpdate(&locked, channel, effectiveRequestData)
 		}
-		if settingsRequested {
-			if supportsUpstreamModelUpdate {
-				channel.OtherSettings = mergeChannelUpstreamModelUpdateRuntimeSettingsForUpdate(channel.OtherSettings, locked.OtherSettings, sourceChanged)
-			} else {
-				clearUnsupportedChannelUpstreamModelUpdateSettingsForUpdate(channel)
+		if !supportsUpstreamModelUpdate {
+			settingsToClean := channel.OtherSettings
+			if !settingsRequested {
+				settingsToClean = locked.OtherSettings
 			}
+			cleanedSettings, changed, err := channelSettingsWithoutUpstreamModelUpdateFields(settingsToClean)
+			if err != nil {
+				if settingsRequested {
+					return err
+				}
+			} else if changed {
+				channel.OtherSettings = cleanedSettings
+				effectiveRequestData["settings"] = cleanedSettings
+			}
+		} else if settingsRequested {
+			channel.OtherSettings = mergeChannelUpstreamModelUpdateRuntimeSettingsForUpdate(channel.OtherSettings, locked.OtherSettings, sourceChanged)
 		} else if supportsUpstreamModelUpdate && sourceChanged {
 			if cleanedSettings, changed := clearChannelUpstreamModelUpdateRuntimeSettingsForSourceChange(locked.OtherSettings); changed {
 				channel.OtherSettings = cleanedSettings
 				effectiveRequestData["settings"] = cleanedSettings
 			}
-		} else if _, typeRequested := effectiveRequestData["type"]; typeRequested && !supportsUpstreamModelUpdate {
-			cleanedSettings, changed, err := channelSettingsWithoutUpstreamModelUpdateFields(locked.OtherSettings)
-			if err != nil {
-				return err
-			}
-			if changed {
-				channel.OtherSettings = cleanedSettings
-				effectiveRequestData["settings"] = cleanedSettings
-			}
 		}
-		if channelHasSensitiveChanges(channel, &locked, effectiveRequestData) && !canSensitiveWrite {
+		permissionRequestData := effectiveRequestData
+		settingsOnlyChangedByServer := !effectiveClientRequestedSettings ||
+			sameChannelUpstreamModelSourceSettings(locked.OtherSettings, clientRequestedSettingsRaw)
+		if settingsOnlyChangedByServer {
+			permissionRequestData = copyChannelUpdateRequestData(effectiveRequestData)
+			delete(permissionRequestData, "settings")
+		}
+		if channelHasSensitiveChanges(channel, &locked, permissionRequestData) && !canSensitiveWrite {
 			return errChannelSensitivePermissionDenied
 		}
 		if err := applyPatchChannelMultiKeyUpdate(channel, &locked); err != nil {
@@ -1496,14 +1591,6 @@ func UpdateChannel(c *gin.Context) {
 	}
 	clearChannelReadOnlyFields(&channel, requestData)
 
-	// 使用统一的校验函数
-	if err := validateChannel(&channel.Channel, false); err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
-		return
-	}
 	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
 	originChannel, err := model.GetChannelById(channel.Id, true)
 	if err != nil {
@@ -1516,6 +1603,24 @@ func UpdateChannel(c *gin.Context) {
 
 	// Always copy the original ChannelInfo so that fields like IsMultiKey and MultiKeySize are retained.
 	channel.ChannelInfo = originChannel.ChannelInfo
+
+	validationChannel, err := preparePatchChannelForValidation(&channel, originChannel, requestData)
+	if err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
+	// 使用统一的校验函数。先用原始 ChannelInfo 补齐聚合密钥状态，
+	// 再清理不支持渠道的上游模型更新残留，避免旧设置阻断正常更新。
+	if err := validateChannel(&validationChannel, false); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
+		return
+	}
 
 	if channelHasSensitiveChanges(&channel, originChannel, requestData) &&
 		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.ChannelSensitiveWrite) {
@@ -1666,8 +1771,33 @@ type fetchModelsRequest struct {
 	Other           string `json:"other"`
 }
 
+func normalizeCodexOAuthDraftFetchKey(raw string) (string, bool) {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "{") {
+		return "", false
+	}
+	var key map[string]any
+	if err := common.Unmarshal([]byte(raw), &key); err != nil || key == nil {
+		return "", false
+	}
+	return raw, true
+}
+
 func prepareDraftFetchModelKey(channel *model.Channel) {
 	channel.Keys = nil
+	if channel.Type == constant.ChannelTypeCodex {
+		if key, ok := normalizeCodexOAuthDraftFetchKey(channel.Key); ok {
+			channel.Key = key
+			channel.ChannelInfo.IsMultiKey = false
+			channel.ChannelInfo.MultiKeySize = 0
+			channel.ChannelInfo.MultiKeyStatusList = nil
+			channel.ChannelInfo.MultiKeyDisabledReason = nil
+			channel.ChannelInfo.MultiKeyDisabledTime = nil
+			channel.ChannelInfo.MultiKeyPollingIndex = 0
+			channel.ChannelInfo.MultiKeyMode = constant.MultiKeyModeRandom
+			return
+		}
+	}
 	keys := channel.GetKeys()
 
 	for _, key := range keys {
@@ -1685,6 +1815,25 @@ func prepareDraftFetchModelKey(channel *model.Channel) {
 	channel.ChannelInfo.MultiKeyDisabledTime = nil
 	channel.ChannelInfo.MultiKeyPollingIndex = 0
 	channel.ChannelInfo.MultiKeyMode = constant.MultiKeyModeRandom
+}
+
+func fetchModelsRequestHasMultipleDraftKeys(req fetchModelsRequest, channelType int) bool {
+	if channelType == constant.ChannelTypeCodex {
+		if _, ok := normalizeCodexOAuthDraftFetchKey(req.Key); ok {
+			return false
+		}
+	}
+	keyCount := 0
+	for _, key := range strings.Split(req.Key, "\n") {
+		if strings.TrimSpace(key) == "" {
+			continue
+		}
+		keyCount++
+		if keyCount > 1 {
+			return true
+		}
+	}
+	return false
 }
 
 func applyFetchModelsRequest(channel *model.Channel, req fetchModelsRequest) {
@@ -1713,6 +1862,22 @@ func applyFetchModelsRequest(channel *model.Channel, req fetchModelsRequest) {
 	}
 }
 
+func fetchModelsRequestUsesDraftOverrides(req fetchModelsRequest) bool {
+	if req.Id == 0 || req.DraftOverride || req.Type != 0 || req.BaseURLOverride {
+		return true
+	}
+	return strings.TrimSpace(req.Key) != "" ||
+		strings.TrimSpace(req.BaseURL) != "" ||
+		req.Setting != "" ||
+		req.Settings != "" ||
+		req.HeaderOverride != "" ||
+		req.Other != ""
+}
+
+func fetchModelsRequestAllowsCodexCredentialRefresh(req fetchModelsRequest) bool {
+	return !fetchModelsRequestUsesDraftOverrides(req)
+}
+
 func FetchModels(c *gin.Context) {
 	var req fetchModelsRequest
 
@@ -1736,6 +1901,17 @@ func FetchModels(c *gin.Context) {
 		}
 		channel = existing
 	}
+	requestedType := req.Type
+	if requestedType == 0 {
+		requestedType = channel.Type
+	}
+	if requestedType == constant.ChannelTypeCodex && fetchModelsRequestHasMultipleDraftKeys(req, requestedType) {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "Codex channel model fetch does not support multi-key draft",
+		})
+		return
+	}
 	applyFetchModelsRequest(channel, req)
 	if channel.Type <= constant.ChannelTypeUnknown || channel.Type >= len(constant.ChannelBaseURLs) {
 		c.JSON(http.StatusOK, gin.H{
@@ -1745,7 +1921,9 @@ func FetchModels(c *gin.Context) {
 		return
 	}
 
-	ids, err := fetchChannelUpstreamModelIDs(c.Request.Context(), channel)
+	ids, err := fetchChannelUpstreamModelIDsWithOptions(c.Request.Context(), channel, channelUpstreamModelFetchOptions{
+		AllowCodexCredentialRefresh: fetchModelsRequestAllowsCodexCredentialRefresh(req),
+	})
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -1868,6 +2046,10 @@ func CopyChannel(c *gin.Context) {
 		clone.UsedQuota = 0
 	}
 
+	if err := normalizeChannelUpstreamModelUpdateSettingsForCreate(&clone); err != nil {
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "invalid channel settings: " + err.Error()})
+		return
+	}
 	if err := validateChannel(&clone, false); err != nil {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "invalid channel settings: " + err.Error()})
 		return

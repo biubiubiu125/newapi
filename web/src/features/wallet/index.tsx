@@ -34,6 +34,7 @@ import {
   AlertDialogMedia,
   AlertDialogTitle,
 } from '@/components/ui/alert-dialog'
+import { getSubscriptionPaymentStatus } from '@/features/subscriptions/api'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { getSelf } from '@/lib/api'
@@ -63,6 +64,9 @@ import {
   formatPaymentCnyAmount,
   formatSiteCreditAmount,
   getPaymentMethodName,
+  clearPendingPayment,
+  loadPendingPayment,
+  savePendingPayment,
 } from './lib'
 import type {
   UserWalletData,
@@ -183,8 +187,16 @@ export function Wallet(props: WalletProps) {
   }, [fetchUser, queryClient, refetchTopupInfo])
 
   const checkPaymentStatus = useCallback(
-    async (tradeNo?: string): Promise<boolean> => {
+    async (
+      tradeNo?: string,
+      paymentKind?: PaymentInitiationResult['paymentKind']
+    ): Promise<boolean> => {
       if (!tradeNo) return false
+
+      if (paymentKind === 'subscription') {
+        const response = await getSubscriptionPaymentStatus(tradeNo)
+        return isApiSuccess(response) && response.data?.status === 'success'
+      }
 
       const response = await getUserBillingHistory(1, 1, tradeNo)
       if (!isApiSuccess(response) || !response.data) return false
@@ -228,7 +240,7 @@ export function Wallet(props: WalletProps) {
         typeof payment === 'string'
           ? ({ ok: true, tradeNo: payment } satisfies PaymentInitiationResult)
           : payment
-      setPendingPayment({
+      const pending: PendingPaymentState = {
         tradeNo: payload?.tradeNo,
         amount: payload?.amount,
         payAmount: payload?.payAmount,
@@ -237,16 +249,59 @@ export function Wallet(props: WalletProps) {
         title: payload?.title,
         status: 'waiting',
         dialogOpen: true,
-      })
+      }
+      if (
+        pending.tradeNo &&
+        (pending.paymentKind === 'topup' ||
+          pending.paymentKind === 'subscription')
+      ) {
+        try {
+          savePendingPayment(window.sessionStorage, {
+            tradeNo: pending.tradeNo,
+            amount: pending.amount,
+            payAmount: pending.payAmount,
+            paymentMethod: pending.paymentMethod,
+            paymentKind: pending.paymentKind,
+            title: pending.title,
+            startedAt: Date.now(),
+          })
+        } catch {
+          // Storage is only used to resume a same-tab payment return.
+        }
+      }
+      setPendingPayment(pending)
     },
     []
   )
+
+  const clearPendingPaymentState = useCallback(() => {
+    try {
+      clearPendingPayment(window.sessionStorage)
+    } catch {
+      // Storage cleanup must not block in-memory completion handling.
+    }
+    setPendingPayment(null)
+  }, [])
 
   const markPendingPaymentCompleted = useCallback((tradeNo: string) => {
     setPendingPayment((current) => {
       if (!current || current.tradeNo !== tradeNo) return current
       return { ...current, status: 'completed' }
     })
+  }, [])
+
+  useEffect(() => {
+    try {
+      const stored = loadPendingPayment(window.sessionStorage)
+      if (!stored) return
+      setPendingPayment({
+        ...stored,
+        status: 'waiting',
+        dialogOpen: true,
+      })
+    } catch {
+      // Session storage can be unavailable in restricted browser contexts.
+    }
   }, [])
 
   useEffect(() => {
@@ -263,14 +318,17 @@ export function Wallet(props: WalletProps) {
     const poll = async () => {
       if (canceled) return
 
-      const completed = await checkPaymentStatus(pendingTradeNo)
+      const completed = await checkPaymentStatus(
+        pendingTradeNo,
+        pendingPayment.paymentKind
+      )
       if (canceled) return
 
       if (completed) {
         markPendingPaymentCompleted(pendingTradeNo)
         await refreshPaymentData()
         toast.success(getPaymentSuccessMessage(pendingPayment))
-        setPendingPayment(null)
+        clearPendingPaymentState()
       }
     }
 
@@ -285,6 +343,7 @@ export function Wallet(props: WalletProps) {
     }
   }, [
     checkPaymentStatus,
+    clearPendingPaymentState,
     getPaymentSuccessMessage,
     markPendingPaymentCompleted,
     pendingPayment,
@@ -301,11 +360,14 @@ export function Wallet(props: WalletProps) {
       void (async () => {
         await refreshPaymentData()
         if (pendingTradeNo) {
-          const completed = await checkPaymentStatus(pendingTradeNo)
+          const completed = await checkPaymentStatus(
+            pendingTradeNo,
+            pendingPayment.paymentKind
+          )
           if (completed) {
             markPendingPaymentCompleted(pendingTradeNo)
             toast.success(getPaymentSuccessMessage(pendingPayment))
-            setPendingPayment(null)
+            clearPendingPaymentState()
           }
         }
       })()
@@ -319,6 +381,7 @@ export function Wallet(props: WalletProps) {
     }
   }, [
     checkPaymentStatus,
+    clearPendingPaymentState,
     getPaymentSuccessMessage,
     markPendingPaymentCompleted,
     pendingPayment,
@@ -364,6 +427,17 @@ export function Wallet(props: WalletProps) {
         })
       )
     } else if (returnedPay === 'pending') {
+      if (
+        returnedTradeNo &&
+        (returnedOrderType === 'topup' || returnedOrderType === 'subscription')
+      ) {
+        startPendingPayment({
+          ok: true,
+          tradeNo: returnedTradeNo,
+          paymentKind: returnedOrderType,
+          paymentMethod: returnedPaymentProvider,
+        })
+      }
       toast.info(t('Payment returned. Waiting for payment confirmation...'))
     } else if (returnedPay === 'fail') {
       toast.error(
@@ -381,6 +455,7 @@ export function Wallet(props: WalletProps) {
     returnedShowHistory,
     returnedTradeNo,
     getPaymentSuccessMessage,
+    startPendingPayment,
     t,
   ])
 
@@ -447,6 +522,10 @@ export function Wallet(props: WalletProps) {
     if (paymentResult.ok) {
       setConfirmDialogOpen(false)
       startPendingPayment(paymentResult)
+      if (paymentResult.redirectUrl) {
+        window.location.assign(paymentResult.redirectUrl)
+        return
+      }
       await refreshPaymentData()
     }
   }
@@ -509,11 +588,14 @@ export function Wallet(props: WalletProps) {
     await refreshPaymentData()
     if (!pendingPayment?.tradeNo) return
 
-    const completed = await checkPaymentStatus(pendingPayment.tradeNo)
+    const completed = await checkPaymentStatus(
+      pendingPayment.tradeNo,
+      pendingPayment.paymentKind
+    )
     if (completed) {
       markPendingPaymentCompleted(pendingPayment.tradeNo)
-      setPendingPayment(null)
       toast.success(getPaymentSuccessMessage(pendingPayment))
+      clearPendingPaymentState()
     } else {
       toast.info(t('Payment is still pending. Please check again later.'))
     }
@@ -522,7 +604,14 @@ export function Wallet(props: WalletProps) {
   const handlePendingPaymentOpenChange = (open: boolean) => {
     setPendingPayment((current) => {
       if (!current) return current
-      if (!open && current.status === 'completed') return null
+      if (!open && current.status === 'completed') {
+        try {
+          clearPendingPayment(window.sessionStorage)
+        } catch {
+          // Storage cleanup must not block dialog state updates.
+        }
+        return null
+      }
       return { ...current, dialogOpen: open }
     })
   }

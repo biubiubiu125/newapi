@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-
 export const TICKET_CATEGORIES = ['客服部门', '财务部门'] as const
 
 export const TICKET_PRIORITIES = ['低', '普通', '高', '紧急'] as const

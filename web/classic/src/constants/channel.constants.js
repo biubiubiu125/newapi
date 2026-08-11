@@ -208,13 +208,15 @@ export const CHANNEL_OPTIONS = [
 
 // Channel types that support upstream model list fetching in UI.
 export const MODEL_FETCHABLE_CHANNEL_TYPES = new Set([
-  1, 4, 14, 17, 20, 23, 24, 25, 26, 27, 31, 34, 35, 40, 42, 43, 47, 48, 57, 58,
-  59, 60,
+  1, 4, 14, 17, 20, 23, 24, 25, 26, 27, 31, 34, 35, 40, 42, 43, 45, 47, 48, 57,
+  58, 59, 60,
 ]);
 
 export const supportsChannelUpstreamModelUpdate = (channel) =>
   !!channel &&
-  MODEL_FETCHABLE_CHANNEL_TYPES.has(channel.type) &&
-  !(channel.type === 57 && channel.channel_info?.is_multi_key === true);
+  MODEL_FETCHABLE_CHANNEL_TYPES.has(Number(channel.type)) &&
+  channel.channel_info?.is_multi_key !== true &&
+  channel.is_draft_multi_key !== true &&
+  channel.multi_key_mode !== 'multi_to_single';
 
 export const MODEL_TABLE_PAGE_SIZE = 10;

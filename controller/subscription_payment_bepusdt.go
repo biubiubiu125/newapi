@@ -81,7 +81,12 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 		return
 	}
 	notifyURL := callbackAddress + "/api/subscription/bepusdt/notify"
-	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, currency)
+	paidAmount, err := normalizeSubscriptionPaymentAmount(plan, currency)
+	if err != nil {
+		common.ApiErrorMsg(c, "套餐金额无效")
+		return
+	}
+	snapshot, _ := referralService.BuildOrderSnapshot(userId, paidAmount, currency)
 	tradeNo := fmt.Sprintf("SEPU%d%s%d", userId, common.GetRandomString(6), time.Now().Unix())
 	method := service.USDTPaymentMethod
 	provider := service.ActiveUSDTGatewayProvider()
@@ -93,8 +98,8 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 	order := &model.SubscriptionOrder{
 		UserId:          userId,
 		PlanId:          plan.Id,
-		Money:           plan.PriceAmount,
-		PaidAmount:      plan.PriceAmount,
+		Money:           paidAmount,
+		PaidAmount:      paidAmount,
 		PaidCurrency:    currency,
 		TradeNo:         tradeNo,
 		PaymentMethod:   method,
@@ -118,7 +123,7 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 
 	paymentOrder, err := service.CreateUSDTGatewayOrder(service.USDTGatewayOrderRequest{
 		OrderID:     tradeNo,
-		Amount:      plan.PriceAmount,
+		Amount:      paidAmount,
 		Currency:    currency,
 		NotifyURL:   notifyURL,
 		RedirectURL: returnURL,
@@ -167,7 +172,7 @@ func SubscriptionBEpusdtNotify(c *gin.Context) {
 	}
 	status := service.BEpusdtCallbackStatus(params)
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt subscription webhook received trade_no=%s status=%s amount=%s fiat=%s client_ip=%s", tradeNo, status, bepusdtCallbackString(params, "amount"), bepusdtCallbackString(params, "fiat"), common.GetClientIP(c)))
-	facts, err := validateUSDTGatewayCallback(c, tradeNo, params, true)
+	facts, err := validateUSDTGatewayCallback(params)
 	if err != nil {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt subscription webhook rejected trade_no=%s path=%q client_ip=%s error=%q", tradeNo, c.Request.RequestURI, common.GetClientIP(c), err.Error()))
 		c.String(http.StatusBadRequest, "fail")
@@ -189,6 +194,16 @@ func SubscriptionBEpusdtNotify(c *gin.Context) {
 		RequirePaymentFacts:     true,
 		CallerIP:                common.GetClientIP(c),
 	}); err != nil {
+		if isPermanentPaymentReviewError(err) {
+			if recordErr := recordPaymentReview(c.Request.Context(), model.PaymentProviderBEpusdt, "", "subscription.notify", tradeNo, "", "BEpusdt subscription payment requires manual review after payment succeeded", err, common.GetJsonString(params)); recordErr != nil {
+				logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt subscription review record failed trade_no=%s client_ip=%s error=%q", tradeNo, common.GetClientIP(c), recordErr.Error()))
+				c.String(http.StatusInternalServerError, "fail")
+				return
+			}
+			logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt subscription payment queued for manual review trade_no=%s client_ip=%s error=%q", tradeNo, common.GetClientIP(c), err.Error()))
+			c.String(http.StatusOK, "ok")
+			return
+		}
 		if isPaymentCallbackRejection(err) {
 			logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt subscription webhook rejected trade_no=%s client_ip=%s error=%q", tradeNo, common.GetClientIP(c), err.Error()))
 			c.String(http.StatusBadRequest, "fail")

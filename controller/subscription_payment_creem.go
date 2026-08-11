@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/thanhpk/randstr"
@@ -50,12 +50,17 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 		common.ApiErrorMsg(c, "套餐未启用")
 		return
 	}
-	if plan.CreemProductId == "" {
+	if plan.PriceAmount < 0.01 {
+		common.ApiErrorMsg(c, "套餐金额过低")
+		return
+	}
+	productID := strings.TrimSpace(plan.CreemProductId)
+	if productID == "" {
 		common.ApiErrorMsg(c, "该套餐未配置 CreemProductId")
 		return
 	}
-	if setting.CreemWebhookSecret == "" && !isReferralTestCreemSandboxEnabled() {
-		common.ApiErrorMsg(c, "Creem Webhook 未配置")
+	if !isCreemSubscriptionEnabled() {
+		common.ApiErrorMsg(c, "Creem 未配置或密钥无效")
 		return
 	}
 
@@ -84,23 +89,37 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 
 	reference := "sub-creem-ref-" + randstr.String(6)
 	referenceId := "sub_ref_" + common.Sha1([]byte(reference+time.Now().String()+user.Username))
-	currency := "USD"
-	switch operation_setting.GetGeneralSetting().QuotaDisplayType {
-	case operation_setting.QuotaDisplayTypeCNY:
-		currency = "CNY"
-	case operation_setting.QuotaDisplayTypeUSD:
+	currency := strings.ToUpper(strings.TrimSpace(plan.Currency))
+	if currency == "" {
 		currency = "USD"
-	default:
-		currency = "USD"
+		switch operation_setting.GetGeneralSetting().QuotaDisplayType {
+		case operation_setting.QuotaDisplayTypeCNY:
+			currency = "CNY"
+		case operation_setting.QuotaDisplayTypeUSD:
+			currency = "USD"
+		}
 	}
-	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, currency)
+	paidAmount, err := normalizeSubscriptionPaymentAmount(plan, currency)
+	if err != nil {
+		common.ApiErrorMsg(c, "套餐金额无效")
+		return
+	}
+	if err := validateCreemSubscriptionProduct(c.Request.Context(), productID, paidAmount, currency); err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf(
+			"Creem 订阅产品校验失败 plan_id=%d product_id=%q amount=%.8f currency=%s error=%q",
+			plan.Id, productID, paidAmount, currency, err.Error(),
+		))
+		common.ApiErrorMsg(c, "套餐 Creem 产品价格配置无效")
+		return
+	}
+	snapshot, _ := referralService.BuildOrderSnapshot(userId, paidAmount, currency)
 
 	// create pending order first
 	order := &model.SubscriptionOrder{
 		UserId:          userId,
 		PlanId:          plan.Id,
-		Money:           plan.PriceAmount,
-		PaidAmount:      plan.PriceAmount,
+		Money:           paidAmount,
+		PaidAmount:      paidAmount,
 		PaidCurrency:    currency,
 		TradeNo:         referenceId,
 		PaymentMethod:   model.PaymentMethodCreem,
@@ -124,15 +143,18 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 
 	// Reuse Creem checkout generator by building a lightweight product reference.
 	product := &CreemProduct{
-		ProductId: plan.CreemProductId,
+		ProductId: productID,
 		Name:      plan.Title,
-		Price:     plan.PriceAmount,
+		Price:     paidAmount,
 		Currency:  currency,
 		Quota:     0,
 	}
 
 	checkoutUrl, err := genCreemLink(c.Request.Context(), referenceId, product, user.Email, user.Username)
 	if err != nil {
+		if expireErr := model.ExpireSubscriptionOrder(referenceId, model.PaymentProviderCreem); expireErr != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Creem 订阅支付链接创建失败后关闭订单失败 trade_no=%s error=%q", referenceId, expireErr.Error()))
+		}
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Creem 订阅支付链接创建失败 trade_no=%s product_id=%s error=%q", referenceId, product.ProductId, err.Error()))
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
 		return

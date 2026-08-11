@@ -79,11 +79,6 @@ export function OllamaModelsDialog({
 
   const isOllamaChannel = currentRow?.type === CHANNEL_TYPE_OLLAMA
   const channelId = currentRow?.id
-  const canFetchSavedModels = hasPermission(
-    currentUser,
-    ADMIN_PERMISSION_RESOURCES.CHANNEL,
-    ADMIN_PERMISSION_ACTIONS.OPERATE
-  )
   const canWriteChannel = hasPermission(
     currentUser,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
@@ -94,6 +89,7 @@ export function OllamaModelsDialog({
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
     ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
   )
+  const canFetchSavedModels = canEditSensitive
   const canFetchOllamaModels = canFetchSavedModels || canEditSensitive
 
   const [isFetching, setIsFetching] = useState(false)

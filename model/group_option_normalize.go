@@ -151,6 +151,39 @@ func normalizeOptionValueForStorage(key string, value string) (string, error) {
 		return normalizeJSONArrayStrings(value)
 	case "group_ratio_setting.group_special_usable_group":
 		return normalizeJSONGroupSpecialUsable(value)
+	case "PayAddress",
+		"CustomCallbackAddress",
+		"EpayId",
+		"EpayKey",
+		"StripeApiSecret",
+		"StripeWebhookSecret",
+		"StripePriceId",
+		"CreemApiKey",
+		"CreemProducts",
+		"CreemWebhookSecret",
+		"BEpusdtBaseURL",
+		"BEpusdtPID",
+		"BEpusdtSecretKey",
+		"BEpusdtDisplayName",
+		"BEpusdtAssetDisplayNames",
+		"WaffoApiKey",
+		"WaffoPrivateKey",
+		"WaffoPublicCert",
+		"WaffoSandboxPublicCert",
+		"WaffoSandboxApiKey",
+		"WaffoSandboxPrivateKey",
+		"WaffoMerchantId",
+		"WaffoNotifyUrl",
+		"WaffoReturnUrl",
+		"WaffoSubscriptionReturnUrl",
+		"WaffoCurrency",
+		"WaffoPancakeMerchantID",
+		"WaffoPancakePrivateKey",
+		"WaffoPancakeReturnURL",
+		"WaffoPancakeCurrency",
+		"WaffoPancakeStoreID",
+		"WaffoPancakeProductID":
+		return strings.TrimSpace(value), nil
 	default:
 		return value, nil
 	}

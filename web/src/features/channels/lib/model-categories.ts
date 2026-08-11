@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-
 type ModelCategoryRule = {
   name: string
   keywords?: readonly string[]
@@ -26,8 +25,17 @@ type ModelCategoryRule = {
 // Rules are ordered so platform-specific IDs such as Perplexity's Sonar and
 // NVIDIA's Nemotron take precedence over the base Llama/Mixtral family name.
 const MODEL_CATEGORY_RULES: readonly ModelCategoryRule[] = [
-  { name: 'Perplexity', keywords: ['perplexity', 'sonar-'] },
+  {
+    name: 'Perplexity',
+    keywords: ['perplexity'],
+    pattern: /(?:^|[/.:])sonar(?:$|[-_.:])/,
+  },
   { name: 'NVIDIA', keywords: ['nvidia/', 'nvidia.', 'nemotron'] },
+  {
+    name: 'Qwen',
+    keywords: ['qwen', 'qwq-', 'qvq-', 'tongyi', 'gte-'],
+    pattern: /(?:^|[/.:])(?:text-embedding-v\d+|gui-plus|z-image)(?:$|[-_.:])/,
+  },
   {
     name: 'OpenAI',
     keywords: [
@@ -68,11 +76,6 @@ const MODEL_CATEGORY_RULES: readonly ModelCategoryRule[] = [
   },
   { name: 'xAI', keywords: ['x-ai/', 'xai/', 'xai-', 'grok'] },
   { name: 'DeepSeek', keywords: ['deepseek'] },
-  {
-    name: 'Qwen',
-    keywords: ['qwen', 'qwq-', 'qvq-', 'tongyi', 'gte-'],
-    pattern: /(?:^|[/.:])(?:text-embedding-v\d+|gui-plus|z-image)(?:$|[-_.:])/,
-  },
   { name: 'Wan', pattern: /(?:^|[/.:])wan(?:x?\d|[-_])/ },
   { name: 'Moonshot', keywords: ['moonshot', 'kimi-'] },
   {

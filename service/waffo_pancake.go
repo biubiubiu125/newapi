@@ -21,6 +21,7 @@ type WaffoPancakePriceSnapshot struct {
 // buyer editing email at checkout — see WaffoPancakeBuyerIdentityFromUserID.
 type WaffoPancakeCreateSessionParams struct {
 	ProductID               string
+	Currency                string
 	BuyerIdentity           string
 	PriceSnapshot           *WaffoPancakePriceSnapshot
 	BuyerEmail              string
@@ -77,13 +78,15 @@ func (e *WaffoPancakeWebhookEvent) NormalizedEventType() string {
 // yet-saved credentials.
 func newWaffoPancakeClient() (*pancake.Client, error) {
 	return pancake.New(pancake.Config{
-		MerchantID: setting.WaffoPancakeMerchantID,
-		PrivateKey: setting.WaffoPancakePrivateKey,
+		MerchantID: strings.TrimSpace(setting.WaffoPancakeMerchantID),
+		PrivateKey: strings.TrimSpace(setting.WaffoPancakePrivateKey),
 	})
 }
 
 func newWaffoPancakeClientFromCreds(merchantID, privateKey string) (*pancake.Client, error) {
-	if strings.TrimSpace(merchantID) == "" || strings.TrimSpace(privateKey) == "" {
+	merchantID = strings.TrimSpace(merchantID)
+	privateKey = strings.TrimSpace(privateKey)
+	if merchantID == "" || privateKey == "" {
 		return nil, fmt.Errorf("merchant id and private key are required")
 	}
 	return pancake.New(pancake.Config{
@@ -99,10 +102,24 @@ func CreateWaffoPancakeCheckoutSession(ctx context.Context, params *WaffoPancake
 	if params == nil {
 		return nil, fmt.Errorf("missing checkout params")
 	}
-	if strings.TrimSpace(params.BuyerIdentity) == "" {
+	params.ProductID = strings.TrimSpace(params.ProductID)
+	params.Currency = strings.ToUpper(strings.TrimSpace(params.Currency))
+	if params.Currency == "" {
+		params.Currency = strings.ToUpper(strings.TrimSpace(setting.WaffoPancakeCurrency))
+	}
+	if params.Currency == "" {
+		params.Currency = "USD"
+	}
+	params.BuyerIdentity = strings.TrimSpace(params.BuyerIdentity)
+	params.BuyerEmail = strings.TrimSpace(params.BuyerEmail)
+	params.OrderMerchantExternalID = strings.TrimSpace(params.OrderMerchantExternalID)
+	if params.ProductID == "" {
+		return nil, fmt.Errorf("missing product id")
+	}
+	if params.BuyerIdentity == "" {
 		return nil, fmt.Errorf("missing buyer identity")
 	}
-	if strings.TrimSpace(params.OrderMerchantExternalID) == "" {
+	if params.OrderMerchantExternalID == "" {
 		return nil, fmt.Errorf("missing order merchant external id")
 	}
 	client, err := newWaffoPancakeClient()
@@ -113,7 +130,7 @@ func CreateWaffoPancakeCheckoutSession(ctx context.Context, params *WaffoPancake
 	sdkParams := pancake.AuthenticatedCheckoutParams{
 		CreateCheckoutSessionParams: pancake.CreateCheckoutSessionParams{
 			ProductID:               params.ProductID,
-			Currency:                "USD",
+			Currency:                params.Currency,
 			BuyerEmail:              optionalString(params.BuyerEmail),
 			ExpiresInSeconds:        params.ExpiresInSeconds,
 			OrderMerchantExternalID: optionalString(params.OrderMerchantExternalID),
@@ -147,7 +164,7 @@ func optionalString(s string) *string {
 	if strings.TrimSpace(s) == "" {
 		return nil
 	}
-	v := s
+	v := strings.TrimSpace(s)
 	return &v
 }
 
@@ -293,13 +310,13 @@ func CreateWaffoPancakePrimaryStore(ctx context.Context, merchantID, privateKey 
 }
 
 // CreateWaffoPancakeProductForPlan mints (and publishes) a Pancake
-// OnetimeProduct priced at `amount` USD, used as a subscription plan's
+// OnetimeProduct priced at `amount` in `currency`, used as a subscription plan's
 // SubscriptionPlan.WaffoPancakeProductId.
 //
 // OnetimeProduct (not SubscriptionProduct) because new-api has no renewal-
 // event handling; Pancake auto-renewing without new-api extending user
 // access would be a UX divergence. Revisit if renewal handling is added.
-func CreateWaffoPancakeProductForPlan(ctx context.Context, merchantID, privateKey, storeID, name, amount, returnURL string) (string, error) {
+func CreateWaffoPancakeProductForPlan(ctx context.Context, merchantID, privateKey, storeID, name, amount, currency, returnURL string) (string, error) {
 	storeID = strings.TrimSpace(storeID)
 	if storeID == "" {
 		return "", fmt.Errorf("store id is required to create a product")
@@ -312,6 +329,13 @@ func CreateWaffoPancakeProductForPlan(ctx context.Context, merchantID, privateKe
 	if amount == "" {
 		return "", fmt.Errorf("plan price is required")
 	}
+	currency = strings.ToUpper(strings.TrimSpace(currency))
+	if currency == "" {
+		currency = strings.ToUpper(strings.TrimSpace(setting.WaffoPancakeCurrency))
+	}
+	if currency == "" {
+		currency = "USD"
+	}
 	client, err := newWaffoPancakeClientFromCreds(merchantID, privateKey)
 	if err != nil {
 		return "", err
@@ -320,7 +344,7 @@ func CreateWaffoPancakeProductForPlan(ctx context.Context, merchantID, privateKe
 		StoreID: storeID,
 		Name:    name,
 		Prices: pancake.Prices{
-			"USD": {
+			currency: {
 				Amount:      amount,
 				TaxCategory: pancake.TaxCategory("saas"),
 			},
@@ -405,16 +429,77 @@ func CreateWaffoPancakePrimaryPair(ctx context.Context, merchantID, privateKey, 
 	}, nil
 }
 
-// SaveWaffoPancakeConfig persists the operator-controlled fields atomically
-// at the end of the configuration flow via model.UpdateOptionsBulk (single
-// DB transaction). A blank privateKey is treated as "keep current"
-// (Stripe-style API-secret UX) and is omitted from the bulk payload.
-func SaveWaffoPancakeConfig(ctx context.Context, merchantID, privateKey, returnURL, storeID, productID string) error {
+// ValidateWaffoPancakeStoreProduct ensures the selected product belongs to
+// the selected store from a single authenticated Pancake catalog snapshot.
+func ValidateWaffoPancakeStoreProduct(catalog *WaffoPancakeCatalog, storeID, productID string) error {
+	storeID = strings.TrimSpace(storeID)
+	productID = strings.TrimSpace(productID)
+	if catalog == nil {
+		return fmt.Errorf("waffo pancake catalog is empty")
+	}
+	if storeID == "" || productID == "" {
+		return fmt.Errorf("store id and product id are required")
+	}
+	for _, store := range catalog.Stores {
+		if !strings.EqualFold(strings.TrimSpace(store.ID), storeID) {
+			continue
+		}
+		for _, product := range store.OnetimeProducts {
+			if strings.EqualFold(strings.TrimSpace(product.ID), productID) {
+				return nil
+			}
+		}
+		return fmt.Errorf("waffo pancake product %q does not belong to store %q", productID, storeID)
+	}
+	return fmt.Errorf("waffo pancake store %q was not found in the current catalog", storeID)
+}
+
+// ValidateConfiguredWaffoPancakeProduct ensures a subscription plan product
+// still belongs to the configured store immediately before checkout. This
+// prevents a manually edited or stale plan from creating a payment that the
+// webhook must later reject for a store mismatch.
+func ValidateConfiguredWaffoPancakeProduct(ctx context.Context, productID string) error {
+	merchantID := strings.TrimSpace(setting.WaffoPancakeMerchantID)
+	privateKey := strings.TrimSpace(setting.WaffoPancakePrivateKey)
+	storeID := strings.TrimSpace(setting.WaffoPancakeStoreID)
+	if merchantID == "" || privateKey == "" || storeID == "" {
+		return fmt.Errorf("waffo pancake merchant credentials and store id are required")
+	}
+	catalog, err := ListWaffoPancakeCatalog(ctx, merchantID, privateKey)
+	if err != nil {
+		return fmt.Errorf("query Waffo Pancake catalog: %w", err)
+	}
+	return ValidateWaffoPancakeStoreProduct(catalog, storeID, productID)
+}
+
+type waffoPancakeCatalogLoader func(context.Context, string, string) (*WaffoPancakeCatalog, error)
+
+// saveWaffoPancakeConfig validates the selected store/product pair before
+// atomically persisting it. The loader parameter keeps the selection check
+// deterministic in tests while the public wrapper always uses Pancake.
+func saveWaffoPancakeConfig(ctx context.Context, merchantID, privateKey, returnURL, storeID, productID string, loadCatalog waffoPancakeCatalogLoader) error {
 	merchantID = strings.TrimSpace(merchantID)
 	storeID = strings.TrimSpace(storeID)
 	productID = strings.TrimSpace(productID)
 	if merchantID == "" || storeID == "" || productID == "" {
 		return fmt.Errorf("merchant id, store id, and product id are required to save")
+	}
+	effectivePrivateKey := strings.TrimSpace(privateKey)
+	if effectivePrivateKey == "" {
+		effectivePrivateKey = strings.TrimSpace(setting.WaffoPancakePrivateKey)
+	}
+	if effectivePrivateKey == "" {
+		return fmt.Errorf("private key is required to validate Waffo Pancake configuration")
+	}
+	if loadCatalog == nil {
+		return fmt.Errorf("waffo pancake catalog loader is required")
+	}
+	catalog, err := loadCatalog(ctx, merchantID, effectivePrivateKey)
+	if err != nil {
+		return fmt.Errorf("validate Waffo Pancake catalog: %w", err)
+	}
+	if err := ValidateWaffoPancakeStoreProduct(catalog, storeID, productID); err != nil {
+		return err
 	}
 	values := map[string]string{
 		"WaffoPancakeMerchantID": merchantID,
@@ -429,6 +514,14 @@ func SaveWaffoPancakeConfig(ctx context.Context, merchantID, privateKey, returnU
 		return fmt.Errorf("persist Waffo Pancake config: %w", err)
 	}
 	return nil
+}
+
+// SaveWaffoPancakeConfig persists the operator-controlled fields atomically
+// at the end of the configuration flow via model.UpdateOptionsBulk (single
+// DB transaction). A blank privateKey is treated as "keep current"
+// (Stripe-style API-secret UX) and is omitted from the bulk payload.
+func SaveWaffoPancakeConfig(ctx context.Context, merchantID, privateKey, returnURL, storeID, productID string) error {
+	return saveWaffoPancakeConfig(ctx, merchantID, privateKey, returnURL, storeID, productID, ListWaffoPancakeCatalog)
 }
 
 type WaffoPancakeCatalogProduct struct {

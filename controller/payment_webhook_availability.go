@@ -16,20 +16,29 @@ func isStripeTopUpEnabled() bool {
 	if !isPaymentComplianceConfirmed() {
 		return false
 	}
-	return strings.TrimSpace(setting.StripeApiSecret) != "" &&
-		strings.TrimSpace(setting.StripeWebhookSecret) != "" &&
-		strings.TrimSpace(setting.StripePriceId) != ""
+	return isStripeAPISecretConfigured() &&
+		stripeWebhookSecret() != "" &&
+		stripePriceId() != ""
 }
 
-func isStripeWebhookConfigured() bool {
-	return strings.TrimSpace(setting.StripeWebhookSecret) != ""
+func isStripeAPISecretConfigured() bool {
+	secret := stripeAPISecret()
+	return strings.HasPrefix(secret, "sk_") || strings.HasPrefix(secret, "rk_")
 }
 
-func isStripeWebhookEnabled() bool {
+func isStripeSubscriptionEnabled() bool {
 	if !isPaymentComplianceConfirmed() {
 		return false
 	}
-	return strings.TrimSpace(setting.StripeApiSecret) != "" && isStripeWebhookConfigured()
+	return isStripeAPISecretConfigured() && stripeWebhookSecret() != ""
+}
+
+func isStripeWebhookConfigured() bool {
+	return stripeWebhookSecret() != ""
+}
+
+func isStripeWebhookEnabled() bool {
+	return isStripeWebhookConfigured()
 }
 
 func isCreemTopUpEnabled() bool {
@@ -39,7 +48,15 @@ func isCreemTopUpEnabled() bool {
 	products := strings.TrimSpace(setting.CreemProducts)
 	return strings.TrimSpace(setting.CreemApiKey) != "" &&
 		products != "" &&
-		products != "[]"
+		products != "[]" &&
+		isCreemWebhookConfigured()
+}
+
+func isCreemSubscriptionEnabled() bool {
+	if !isPaymentComplianceConfirmed() {
+		return false
+	}
+	return strings.TrimSpace(setting.CreemApiKey) != "" && isCreemWebhookConfigured()
 }
 
 func isCreemWebhookConfigured() bool {
@@ -50,7 +67,7 @@ func isCreemWebhookConfigured() bool {
 }
 
 func isCreemWebhookEnabled() bool {
-	return isCreemTopUpEnabled() && isCreemWebhookConfigured()
+	return isCreemWebhookConfigured()
 }
 
 func isReferralTestCreemSandboxEnabled() bool {
@@ -81,7 +98,7 @@ func isWaffoWebhookConfigured() bool {
 }
 
 func isWaffoWebhookEnabled() bool {
-	return isWaffoTopUpEnabled()
+	return isWaffoWebhookConfigured()
 }
 
 func isWaffoPancakeTopUpEnabled() bool {
@@ -92,15 +109,30 @@ func isWaffoPancakeTopUpEnabled() bool {
 	// the SDK; mode (test/prod) is read from each event.
 	return strings.TrimSpace(setting.WaffoPancakeMerchantID) != "" &&
 		strings.TrimSpace(setting.WaffoPancakePrivateKey) != "" &&
+		strings.TrimSpace(setting.WaffoPancakeStoreID) != "" &&
 		strings.TrimSpace(setting.WaffoPancakeProductID) != ""
 }
 
+func isWaffoPancakeSubscriptionEnabled() bool {
+	if !isPaymentComplianceConfirmed() {
+		return false
+	}
+	return strings.TrimSpace(setting.WaffoPancakeMerchantID) != "" &&
+		strings.TrimSpace(setting.WaffoPancakePrivateKey) != "" &&
+		strings.TrimSpace(setting.WaffoPancakeStoreID) != ""
+}
+
 func isWaffoPancakeWebhookConfigured() bool {
-	return isWaffoPancakeTopUpEnabled()
+	return strings.TrimSpace(setting.WaffoPancakeMerchantID) != "" &&
+		strings.TrimSpace(setting.WaffoPancakePrivateKey) != ""
 }
 
 func isWaffoPancakeWebhookEnabled() bool {
-	return isWaffoPancakeTopUpEnabled()
+	// Pancake signs webhook payloads with its platform public keys, selected
+	// by the payload mode. Receipt must remain available even if local
+	// checkout credentials were rotated or removed, so verified paid events
+	// can be placed in manual review instead of being retried forever.
+	return true
 }
 
 func isEpayTopUpEnabled() bool {
@@ -117,5 +149,17 @@ func isEpayWebhookConfigured() bool {
 }
 
 func isEpayWebhookEnabled() bool {
-	return isEpayTopUpEnabled()
+	return isEpayWebhookConfigured()
+}
+
+func stripeAPISecret() string {
+	return strings.TrimSpace(setting.StripeApiSecret)
+}
+
+func stripeWebhookSecret() string {
+	return strings.TrimSpace(setting.StripeWebhookSecret)
+}
+
+func stripePriceId() string {
+	return strings.TrimSpace(setting.StripePriceId)
 }

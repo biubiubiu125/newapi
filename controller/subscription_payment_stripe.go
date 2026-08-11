@@ -12,7 +12,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stripe/stripe-go/v81"
 	"github.com/thanhpk/randstr"
@@ -42,16 +41,17 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 		common.ApiErrorMsg(c, "套餐未启用")
 		return
 	}
-	if plan.StripePriceId == "" {
+	if plan.PriceAmount < 0.01 {
+		common.ApiErrorMsg(c, "套餐金额过低")
+		return
+	}
+	priceID := strings.TrimSpace(plan.StripePriceId)
+	if priceID == "" {
 		common.ApiErrorMsg(c, "该套餐未配置 StripePriceId")
 		return
 	}
-	if !strings.HasPrefix(setting.StripeApiSecret, "sk_") && !strings.HasPrefix(setting.StripeApiSecret, "rk_") {
+	if !isStripeSubscriptionEnabled() {
 		common.ApiErrorMsg(c, "Stripe 未配置或密钥无效")
-		return
-	}
-	if setting.StripeWebhookSecret == "" {
-		common.ApiErrorMsg(c, "Stripe Webhook 未配置")
 		return
 	}
 
@@ -84,13 +84,26 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 	if paidCurrency == "" {
 		paidCurrency = "USD"
 	}
-	snapshot, _ := referralService.BuildOrderSnapshot(userId, plan.PriceAmount, paidCurrency)
+	paidAmount, err := normalizeSubscriptionPaymentAmount(plan, paidCurrency)
+	if err != nil {
+		common.ApiErrorMsg(c, "套餐金额无效")
+		return
+	}
+	if err := validateStripeSubscriptionPrice(priceID, paidAmount, paidCurrency); err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf(
+			"Stripe 订阅价格校验失败 plan_id=%d price_id=%q amount=%.8f currency=%s error=%q",
+			plan.Id, priceID, paidAmount, paidCurrency, err.Error(),
+		))
+		common.ApiErrorMsg(c, "套餐 Stripe 价格配置无效")
+		return
+	}
+	snapshot, _ := referralService.BuildOrderSnapshot(userId, paidAmount, paidCurrency)
 
 	order := &model.SubscriptionOrder{
 		UserId:          userId,
 		PlanId:          plan.Id,
-		Money:           plan.PriceAmount,
-		PaidAmount:      plan.PriceAmount,
+		Money:           paidAmount,
+		PaidAmount:      paidAmount,
 		PaidCurrency:    paidCurrency,
 		TradeNo:         referenceId,
 		PaymentMethod:   model.PaymentMethodStripe,
@@ -108,15 +121,19 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 		order.ReferralCommissionError = snapshot.Error
 	}
 
-	checkoutSession, err := genStripeSubscriptionLink(referenceId, user.StripeCustomer, user.Email, plan.StripePriceId, stripeSubscriptionCheckoutMetadata(order))
-	if err != nil {
-		logger.LogError(c.Request.Context(), fmt.Sprintf("Stripe 订阅支付链接创建失败 trade_no=%s plan_id=%d error=%q", referenceId, plan.Id, err.Error()))
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
-		return
-	}
-	if err := persistSubscriptionOrderAfterStripeCheckout(c.Request.Context(), order, checkoutSession); err != nil {
+	if err := order.Insert(); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Stripe 创建订阅订单失败 trade_no=%s plan_id=%d error=%q", referenceId, plan.Id, err.Error()))
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
+		return
+	}
+
+	checkoutSession, err := genStripeSubscriptionLink(referenceId, user.StripeCustomer, user.Email, priceID, stripeSubscriptionCheckoutMetadata(order))
+	if err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Stripe 订阅支付链接创建失败 trade_no=%s plan_id=%d error=%q", referenceId, plan.Id, err.Error()))
+		if expireErr := model.ExpireSubscriptionOrder(referenceId, model.PaymentProviderStripe); expireErr != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Stripe 创建订阅支付链接失败后关闭订单失败 trade_no=%s plan_id=%d error=%q", referenceId, plan.Id, expireErr.Error()))
+		}
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
 		return
 	}
 
@@ -131,7 +148,11 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 }
 
 func genStripeSubscriptionLink(referenceId string, customerId string, email string, priceId string, metadata map[string]string) (*stripe.CheckoutSession, error) {
-	stripe.Key = setting.StripeApiSecret
+	stripe.Key = stripeAPISecret()
+	priceId = strings.TrimSpace(priceId)
+	if priceId == "" {
+		return nil, fmt.Errorf("无效的Stripe price id")
+	}
 
 	params := &stripe.CheckoutSessionParams{
 		ClientReferenceID: stripe.String(referenceId),
@@ -143,7 +164,10 @@ func genStripeSubscriptionLink(referenceId string, customerId string, email stri
 				Quantity: stripe.Int64(1),
 			},
 		},
-		Mode: stripe.String(string(stripe.CheckoutSessionModeSubscription)),
+		// A new-api subscription grants a fixed local duration. Do not create
+		// a Stripe-recurring subscription unless renewal events are also
+		// persisted and fulfilled by the local subscription lifecycle.
+		Mode: stripe.String(string(stripe.CheckoutSessionModePayment)),
 	}
 	for key, value := range metadata {
 		if strings.TrimSpace(key) == "" || strings.TrimSpace(value) == "" {

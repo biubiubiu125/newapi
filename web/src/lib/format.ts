@@ -132,14 +132,24 @@ export function quotaUnitsToEditableAmount(units: number): number {
     return Math.round(amount)
   }
 
-  return Number(amount.toFixed(getCurrencyFractionDigits(amount)))
+  const rounded = Number(amount.toFixed(getCurrencyFractionDigits(amount)))
+  if (amount !== 0 && rounded === 0) {
+    return amount
+  }
+
+  return rounded
 }
 
 /** Return the input step matching the configured editable quota precision. */
 export function getEditableQuotaStep(): number {
-  const { meta } = getCurrencyDisplay()
+  const { config, meta } = getCurrencyDisplay()
   if (meta.kind === 'tokens') {
     return 1
+  }
+
+  const unitAmount = quotaUnitsToDisplayAmount(1, config.quotaPerUnit, meta)
+  if (unitAmount > 0) {
+    return unitAmount
   }
 
   return 10 ** -getCurrencyFractionDigits(0)

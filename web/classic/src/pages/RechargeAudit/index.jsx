@@ -34,6 +34,7 @@ import {
   Typography,
 } from '@douyinfe/semi-ui';
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 
 import {
   API,
@@ -198,6 +199,7 @@ function SummaryCard({ label, value, description }) {
 }
 
 export default function RechargeAudit() {
+  const { t } = useTranslation();
   const [loading, setLoading] = useState(false);
   const [orders, setOrders] = useState([]);
   const [summary, setSummary] = useState(null);
@@ -280,17 +282,17 @@ export default function RechargeAudit() {
         `/api/user/admin/finance/payment-orphans?${orphanParams.toString()}`,
       );
       if (!res.data.success) {
-        showError(res.data.message || '加载人工确认支付失败');
+        showError(res.data.message || t('加载人工确认支付失败'));
         return;
       }
       setPaymentOrphans(res.data.data?.items || []);
       setOrphanTotal(res.data.data?.total || 0);
     } catch (error) {
-      showError(error.message || '加载人工确认支付失败');
+      showError(error.message || t('加载人工确认支付失败'));
     } finally {
       setOrphanLoading(false);
     }
-  }, [orphanParams]);
+  }, [orphanParams, t]);
 
   useEffect(() => {
     void load();
@@ -318,26 +320,34 @@ export default function RechargeAudit() {
 
   function handleOrphanCredit(event) {
     if (!isPaymentOrphanCreditEligible(event)) return;
+    const isStripe = String(event?.provider || '').toLowerCase() === 'stripe';
     Modal.confirm({
-      title: '确认将该 Stripe 支付入账？',
-      content:
-        '系统会根据 Stripe 回调事实补建缺失的充值或订阅订单，并只入账一次。',
-      okText: '确认入账',
-      cancelText: '取消',
+      title: isStripe
+        ? t('确认将该 Stripe 支付入账？')
+        : t('确认将该已验证支付入账？'),
+      content: isStripe
+        ? t(
+            '系统会根据 Stripe 回调事实补建缺失的充值或订阅订单，并只入账一次。',
+          )
+        : t(
+            '系统只会为与回调匹配的本地充值或订阅订单入账一次，不会补建缺失订单。',
+          ),
+      okText: t('确认入账'),
+      cancelText: t('取消'),
       onOk: async () => {
         try {
           const res = await API.post(
             `/api/user/admin/finance/payment-orphans/${event.id}/credit`,
           );
           if (!res.data.success) {
-            showError(res.data.message || '入账失败');
+            showError(res.data.message || t('入账失败'));
             return;
           }
-          showSuccess('已处理人工确认支付');
+          showSuccess(t('已处理人工确认支付'));
           await loadPaymentOrphans();
           await load();
         } catch (error) {
-          showError(error.message || '入账失败');
+          showError(error.message || t('入账失败'));
         }
       },
     });
@@ -345,13 +355,14 @@ export default function RechargeAudit() {
 
   function handleOrphanResolve(event, status) {
     Modal.confirm({
-      title: status === 'refunded' ? '确认标记为已退款？' : '确认忽略该记录？',
+      title:
+        status === 'refunded' ? t('确认标记为已退款？') : t('确认忽略该记录？'),
       content:
         status === 'refunded'
-          ? '仅记录外部退款结果，不会改变用户余额或订阅。'
-          : '仅关闭该人工确认记录，不会改变用户余额或订阅。',
-      okText: '确认',
-      cancelText: '取消',
+          ? t('仅记录外部退款结果，不会改变用户余额或订阅。')
+          : t('仅关闭该人工确认记录，不会改变用户余额或订阅。'),
+      okText: t('确认'),
+      cancelText: t('取消'),
       onOk: async () => {
         try {
           const res = await API.post(
@@ -359,13 +370,13 @@ export default function RechargeAudit() {
             { status },
           );
           if (!res.data.success) {
-            showError(res.data.message || '处理失败');
+            showError(res.data.message || t('处理失败'));
             return;
           }
-          showSuccess('已处理人工确认支付');
+          showSuccess(t('已处理人工确认支付'));
           await loadPaymentOrphans();
         } catch (error) {
-          showError(error.message || '处理失败');
+          showError(error.message || t('处理失败'));
         }
       },
     });
@@ -473,7 +484,7 @@ export default function RechargeAudit() {
 
   const orphanColumns = [
     {
-      title: '支付记录',
+      title: t('支付记录'),
       dataIndex: 'reference_id',
       width: 230,
       render: (value, record) => (
@@ -482,13 +493,13 @@ export default function RechargeAudit() {
             {value || `#${record.id}`}
           </Text>
           <div className='mt-1 text-xs text-gray-500'>
-            Session：{record.session_id || '-'}
+            {t('支付会话')}：{record.session_id || '-'}
           </div>
         </div>
       ),
     },
     {
-      title: '渠道 / 事件',
+      title: t('渠道 / 事件'),
       dataIndex: 'provider',
       width: 160,
       render: (value, record) => (
@@ -501,7 +512,7 @@ export default function RechargeAudit() {
       ),
     },
     {
-      title: '原因',
+      title: t('原因'),
       dataIndex: 'reason',
       render: (value, record) => (
         <div>
@@ -513,7 +524,7 @@ export default function RechargeAudit() {
       ),
     },
     {
-      title: '状态',
+      title: t('状态'),
       dataIndex: 'status',
       width: 120,
       render: (value) => (
@@ -521,20 +532,22 @@ export default function RechargeAudit() {
       ),
     },
     {
-      title: '时间',
+      title: t('时间'),
       dataIndex: 'create_time',
       width: 190,
       render: (_, record) => (
         <div>
-          <div>创建：{formatTime(record.create_time)}</div>
+          <div>
+            {t('创建')}：{formatTime(record.create_time)}
+          </div>
           <div className='text-xs text-gray-500'>
-            处理：{formatTime(record.resolved_at)}
+            {t('处理')}：{formatTime(record.resolved_at)}
           </div>
         </div>
       ),
     },
     {
-      title: '操作',
+      title: t('操作'),
       dataIndex: 'id',
       width: 210,
       render: (_, record) =>
@@ -546,24 +559,24 @@ export default function RechargeAudit() {
               disabled={!isPaymentOrphanCreditEligible(record)}
               onClick={() => handleOrphanCredit(record)}
             >
-              入账
+              {t('入账')}
             </Button>
             <Button
               size='small'
               onClick={() => handleOrphanResolve(record, 'refunded')}
             >
-              已退款
+              {t('已退款')}
             </Button>
             <Button
               size='small'
               type='danger'
               onClick={() => handleOrphanResolve(record, 'dismissed')}
             >
-              忽略
+              {t('忽略')}
             </Button>
           </Space>
         ) : (
-          <Text type='secondary'>已处理</Text>
+          <Text type='secondary'>{t('已处理')}</Text>
         ),
     },
   ];
@@ -665,10 +678,11 @@ export default function RechargeAudit() {
         <Card bodyStyle={{ padding: 0 }}>
           <div className='flex flex-wrap items-center justify-between gap-3 px-4 py-3'>
             <div>
-              <Text strong>人工确认支付</Text>
+              <Text strong>{t('人工确认支付')}</Text>
               <div className='text-xs text-gray-500'>
-                Stripe
-                回调已成功但本地订单缺失或支付事实不一致时，会进入这里人工闭环处理。
+                {t(
+                  '已验证的支付回调在本地订单缺失、状态异常或支付事实不一致时，会进入这里人工闭环处理。',
+                )}
               </div>
             </div>
             <Space>
@@ -691,14 +705,14 @@ export default function RechargeAudit() {
                 loading={orphanLoading}
                 onClick={loadPaymentOrphans}
               >
-                刷新确认记录
+                {t('刷新确认记录')}
               </Button>
             </Space>
           </div>
           <Spin spinning={orphanLoading}>
             {paymentOrphans.length === 0 ? (
               <div className='py-10'>
-                <Empty description='暂无人工确认支付' />
+                <Empty description={t('暂无人工确认支付')} />
               </div>
             ) : (
               <Table
@@ -711,8 +725,11 @@ export default function RechargeAudit() {
           </Spin>
           <div className='flex items-center justify-between px-4 py-3'>
             <Text type='secondary'>
-              第 {orphanPage} / {orphanTotalPages} 页，共 {orphanTotal}{' '}
-              条确认记录
+              {t('第 {{page}} / {{totalPages}} 页，共 {{total}} 条确认记录', {
+                page: orphanPage,
+                totalPages: orphanTotalPages,
+                total: orphanTotal,
+              })}
             </Text>
             <Pagination
               currentPage={orphanPage}

@@ -51,7 +51,10 @@ import {
   showError,
   showInfo,
 } from '../../../helpers';
-import { parseUpstreamUpdateMeta } from '../../../hooks/channels/upstreamUpdateUtils';
+import {
+  canUseClassicChannelUpstreamUpdates,
+  parseUpstreamUpdateMeta,
+} from '../../../hooks/channels/upstreamUpdateUtils';
 
 // Render functions
 const renderType = (type, record = {}, t) => {
@@ -349,12 +352,14 @@ export const getChannelsColumns = ({
       render: (text, record, index) => {
         const passThroughEnabled = isRequestPassThroughEnabled(record);
         const upstreamUpdateMeta = getUpstreamUpdateMeta(record);
+        const isEnabled = record.status === 1;
         const pendingAddCount = upstreamUpdateMeta.pendingAddModels.length;
         const pendingRemoveCount =
           upstreamUpdateMeta.pendingRemoveModels.length;
         const showUpstreamUpdateTag =
           upstreamUpdateMeta.supported &&
           upstreamUpdateMeta.enabled &&
+          isEnabled &&
           (pendingAddCount > 0 || pendingRemoveCount > 0);
         const nameNode =
           record.remark && record.remark.trim() !== '' ? (
@@ -727,6 +732,11 @@ export const getChannelsColumns = ({
       render: (text, record, index) => {
         if (record.children === undefined) {
           const upstreamUpdateMeta = getUpstreamUpdateMeta(record);
+          const isEnabled = record.status === 1;
+          const canUseUpstreamUpdates = canUseClassicChannelUpstreamUpdates(
+            record,
+            upstreamUpdateMeta,
+          );
           const moreMenuItems = [
             {
               node: 'item',
@@ -764,11 +774,7 @@ export const getChannelsColumns = ({
             },
           ];
 
-          if (
-            upstreamUpdateMeta.supported &&
-            upstreamUpdateMeta.enabled &&
-            canDetectUpstreamUpdates
-          ) {
+          if (canUseUpstreamUpdates && canDetectUpstreamUpdates) {
             moreMenuItems.push({
               node: 'item',
               name: t('仅检测上游模型更新'),
@@ -779,17 +785,13 @@ export const getChannelsColumns = ({
             });
           }
 
-          if (
-            upstreamUpdateMeta.supported &&
-            upstreamUpdateMeta.enabled &&
-            canApplyUpstreamUpdates
-          ) {
+          if (canUseUpstreamUpdates && canApplyUpstreamUpdates) {
             moreMenuItems.push({
               node: 'item',
               name: t('处理上游模型更新'),
               type: 'tertiary',
               onClick: () => {
-                if (!upstreamUpdateMeta.enabled) {
+                if (!isEnabled || !upstreamUpdateMeta.enabled) {
                   showInfo(t('该渠道未开启上游模型更新检测'));
                   return;
                 }

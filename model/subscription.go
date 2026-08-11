@@ -199,27 +199,36 @@ func (p *SubscriptionPlan) BeforeCreate(tx *gorm.DB) error {
 	now := common.GetTimestamp()
 	p.CreatedAt = now
 	p.UpdatedAt = now
-	p.UpgradeGroup = strings.TrimSpace(p.UpgradeGroup)
-	p.GrantGroups = normalizeSubscriptionGrantGroups(p.GrantGroups)
-	p.DowngradeGroup = strings.TrimSpace(p.DowngradeGroup)
+	p.normalizePaymentProviderFields()
 	return nil
 }
 
 func (p *SubscriptionPlan) BeforeUpdate(tx *gorm.DB) error {
 	p.UpdatedAt = common.GetTimestamp()
-	p.UpgradeGroup = strings.TrimSpace(p.UpgradeGroup)
-	p.GrantGroups = normalizeSubscriptionGrantGroups(p.GrantGroups)
-	p.DowngradeGroup = strings.TrimSpace(p.DowngradeGroup)
+	p.normalizePaymentProviderFields()
 	return nil
 }
 
 func (p *SubscriptionPlan) NormalizeDefaults() {
+	p.normalizePaymentProviderFields()
 	if p.AllowBalancePay == nil {
 		p.AllowBalancePay = common.GetPointer(true)
 	}
 	if p.AllowWalletOverflow == nil {
 		p.AllowWalletOverflow = common.GetPointer(true)
 	}
+}
+
+func (p *SubscriptionPlan) normalizePaymentProviderFields() {
+	if p == nil {
+		return
+	}
+	p.StripePriceId = strings.TrimSpace(p.StripePriceId)
+	p.CreemProductId = strings.TrimSpace(p.CreemProductId)
+	p.WaffoPancakeProductId = strings.TrimSpace(p.WaffoPancakeProductId)
+	p.UpgradeGroup = strings.TrimSpace(p.UpgradeGroup)
+	p.GrantGroups = normalizeSubscriptionGrantGroups(p.GrantGroups)
+	p.DowngradeGroup = strings.TrimSpace(p.DowngradeGroup)
 }
 
 // Subscription order (payment -> webhook -> create UserSubscription)
@@ -234,6 +243,7 @@ type SubscriptionOrder struct {
 	TradeNo                             string  `json:"trade_no" gorm:"unique;type:varchar(255);index"`
 	PaymentMethod                       string  `json:"payment_method" gorm:"type:varchar(50)"`
 	PaymentProvider                     string  `json:"payment_provider" gorm:"type:varchar(50);default:''"`
+	WaffoPancakeStoreID                 string  `json:"waffo_pancake_store_id" gorm:"type:varchar(128);default:''"`
 	Status                              string  `json:"status"`
 	OrderSnapshotVersion                int     `json:"order_snapshot_version" gorm:"type:int;default:0"`
 	PlanTitleSnapshot                   string  `json:"plan_title_snapshot" gorm:"type:varchar(128);default:''"`
@@ -292,6 +302,17 @@ func GetSubscriptionOrderByTradeNo(tradeNo string) *SubscriptionOrder {
 	}
 	var order SubscriptionOrder
 	if err := DB.Where("trade_no = ?", tradeNo).First(&order).Error; err != nil {
+		return nil
+	}
+	return &order
+}
+
+func GetUserSubscriptionOrderByTradeNo(userId int, tradeNo string) *SubscriptionOrder {
+	if userId <= 0 || strings.TrimSpace(tradeNo) == "" {
+		return nil
+	}
+	var order SubscriptionOrder
+	if err := DB.Where("user_id = ? AND trade_no = ?", userId, tradeNo).First(&order).Error; err != nil {
 		return nil
 	}
 	return &order

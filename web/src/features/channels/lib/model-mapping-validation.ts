@@ -249,3 +249,37 @@ export function categorizeModelsWithRedirect(
     redirectOnlySet,
   }
 }
+
+export function collectRemovedUpstreamModels({
+  existingModels,
+  fetchedModels,
+  redirectSourceModels = [],
+  searchKeyword = '',
+}: {
+  existingModels: readonly string[]
+  fetchedModels: readonly string[]
+  redirectSourceModels?: readonly string[]
+  searchKeyword?: string
+}): string[] {
+  const fetchedModelSet = new Set(
+    fetchedModels.map((m) => normalizeModelName(m)).filter(Boolean)
+  )
+  const redirectSourceKeysSet = new Set(
+    redirectSourceModels.map((m) => normalizeModelName(m)).filter(Boolean)
+  )
+  const keyword = searchKeyword.toLowerCase().trim()
+  const seen = new Set<string>()
+  const removedModels: string[] = []
+
+  for (const model of existingModels) {
+    const normalized = normalizeModelName(model)
+    if (!normalized || seen.has(normalized)) continue
+    seen.add(normalized)
+    if (fetchedModelSet.has(normalized)) continue
+    if (redirectSourceKeysSet.has(normalized)) continue
+    if (keyword && !normalized.toLowerCase().includes(keyword)) continue
+    removedModels.push(normalized)
+  }
+
+  return removedModels
+}

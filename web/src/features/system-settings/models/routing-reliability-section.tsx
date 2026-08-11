@@ -63,7 +63,11 @@ const numericString = z.string().refine((value) => {
   return !Number.isNaN(Number(trimmed)) && Number(trimmed) >= 0
 }, 'Enter a non-negative number or leave empty')
 
-const channelTestModes = ['scheduled_all', 'passive_recovery'] as const
+const channelTestModes = [
+  'scheduled_all',
+  'passive_recovery',
+  'auto_ban_only',
+] as const
 type ChannelTestMode = (typeof channelTestModes)[number]
 
 const routingReliabilitySchema = z
@@ -148,7 +152,10 @@ type NormalizedRoutingReliabilityValues = {
 }
 
 function normalizeChannelTestMode(value?: string): ChannelTestMode {
-  return value === 'passive_recovery' ? 'passive_recovery' : 'scheduled_all'
+  if (value === 'passive_recovery' || value === 'auto_ban_only') {
+    return value
+  }
+  return 'scheduled_all'
 }
 
 const buildFormDefaults = (
@@ -250,6 +257,23 @@ export function RoutingReliabilitySection({
   const autoDisableStatusCodes = form.watch('AutomaticDisableStatusCodes')
   const autoRetryStatusCodes = form.watch('AutomaticRetryStatusCodes')
   const channelTestMode = form.watch('monitor_setting.channel_test_mode')
+  let channelTestModeDescription: string
+  switch (channelTestMode) {
+    case 'auto_ban_only':
+      channelTestModeDescription = t(
+        'Periodically checks only channels with auto-disable enabled, excluding manually disabled channels.'
+      )
+      break
+    case 'passive_recovery':
+      channelTestModeDescription = t(
+        'Does not check healthy channels. It only rechecks auto-disabled channels and restores them after they recover.'
+      )
+      break
+    default:
+      channelTestModeDescription = t(
+        'Periodically checks all channels except manually disabled ones to detect failures and recover channels automatically.'
+      )
+  }
   const autoDisableParsed = useMemo(
     () => parseHttpStatusCodeRules(autoDisableStatusCodes),
     [autoDisableStatusCodes]
@@ -396,18 +420,19 @@ export function RoutingReliabilitySection({
                       <SelectContent alignItemWithTrigger={false}>
                         <SelectGroup>
                           <SelectItem value='scheduled_all'>
-                            {t('Scheduled full test')}
+                            {t('Actively check all channels')}
+                          </SelectItem>
+                          <SelectItem value='auto_ban_only'>
+                            {t('Actively check auto-disable-enabled channels')}
                           </SelectItem>
                           <SelectItem value='passive_recovery'>
-                            {t('Passive recovery only')}
+                            {t('Check channels awaiting recovery only')}
                           </SelectItem>
                         </SelectGroup>
                       </SelectContent>
                     </Select>
                     <FormDescription>
-                      {t(
-                        'Scheduled full test probes non-manually-disabled channels; passive recovery only checks auto-disabled channels after real request failures.'
-                      )}
+                      {channelTestModeDescription}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>
@@ -429,11 +454,7 @@ export function RoutingReliabilitySection({
                       />
                     </FormControl>
                     <FormDescription>
-                      {channelTestMode === 'passive_recovery'
-                        ? t(
-                            'How frequently the system checks auto-disabled channels for recovery'
-                          )
-                        : t('How frequently the system tests all channels')}
+                      {channelTestModeDescription}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

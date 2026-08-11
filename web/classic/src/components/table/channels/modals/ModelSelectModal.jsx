@@ -90,30 +90,30 @@ const ModelSelectModal = ({
     () => new Set(normalizeModelList(redirectSourceModels)),
     [redirectSourceModels],
   );
-  const normalizedSelectedSet = useMemo(() => {
+  const normalizedCheckedSet = useMemo(() => {
     const set = new Set();
-    (selected || []).forEach((model) => {
+    checkedList.forEach((model) => {
       const normalized = normalizeModelName(model);
       if (normalized) {
         set.add(normalized);
       }
     });
     return set;
-  }, [selected]);
+  }, [checkedList]);
   const classificationSet = useMemo(() => {
-    const set = new Set(normalizedSelectedSet);
+    const set = new Set(normalizedCheckedSet);
     normalizedRedirectModels.forEach((model) => set.add(model));
     return set;
-  }, [normalizedSelectedSet, normalizedRedirectModels]);
+  }, [normalizedCheckedSet, normalizedRedirectModels]);
   const redirectOnlySet = useMemo(() => {
     const set = new Set();
     normalizedRedirectModels.forEach((model) => {
-      if (!normalizedSelectedSet.has(model)) {
+      if (!normalizedCheckedSet.has(model)) {
         set.add(model);
       }
     });
     return set;
-  }, [normalizedRedirectModels, normalizedSelectedSet]);
+  }, [normalizedRedirectModels, normalizedCheckedSet]);
 
   const filteredModels = models.filter((m) =>
     String(m || '')
@@ -124,19 +124,25 @@ const ModelSelectModal = ({
   // 分类模型：新获取的模型和已有模型
   const isExistingModel = (model) =>
     classificationSet.has(normalizeModelName(model));
-  const newModels = filteredModels.filter((model) => !isExistingModel(model));
-  const existingModels = filteredModels.filter((model) =>
+  const allNewModels = fetchedModels.filter((model) => !isExistingModel(model));
+  const allExistingModels = fetchedModels.filter((model) =>
     isExistingModel(model),
   );
   const fetchedModelSet = useMemo(
     () => new Set(normalizeModelList(models)),
     [models],
   );
-  const removedModels = normalizeModelList(selected).filter(
-    (model) =>
-      !fetchedModelSet.has(model) &&
-      !normalizedRedirectSourceSet.has(model) &&
-      model.toLowerCase().includes(keyword.toLowerCase()),
+  const allRemovedModels = normalizeModelList(checkedList).filter(
+    (model) => !fetchedModelSet.has(model) && !normalizedRedirectSourceSet.has(model),
+  );
+  const newModels = allNewModels.filter((model) =>
+    model.toLowerCase().includes(keyword.toLowerCase()),
+  );
+  const existingModels = allExistingModels.filter((model) =>
+    model.toLowerCase().includes(keyword.toLowerCase()),
+  );
+  const removedModels = allRemovedModels.filter((model) =>
+    model.toLowerCase().includes(keyword.toLowerCase()),
   );
 
   // 同步外部选中值
@@ -149,15 +155,15 @@ const ModelSelectModal = ({
   // 当模型列表变化时，设置默认tab
   useEffect(() => {
     if (visible) {
-      if (newModels.length > 0) {
+      if (allNewModels.length > 0) {
         setActiveTab('new');
-      } else if (removedModels.length > 0) {
+      } else if (allRemovedModels.length > 0) {
         setActiveTab('removed');
       } else {
         setActiveTab('existing');
       }
     }
-  }, [visible, newModels.length, removedModels.length, selected]);
+  }, [visible, allNewModels.length, allRemovedModels.length, selected]);
 
   const handleOk = () => {
     onConfirm && onConfirm(checkedList);

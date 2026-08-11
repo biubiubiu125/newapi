@@ -2,13 +2,14 @@ package console_setting
 
 import (
 	"fmt"
-	"github.com/QuantumNous/new-api/common"
 	"net/url"
 	"regexp"
 	"sort"
 	"strings"
 	"time"
-	"unicode/utf8"
+	"unicode/utf16"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 var (
@@ -25,10 +26,14 @@ var (
 
 func parseJSONArray(jsonStr string, typeName string) ([]map[string]interface{}, error) {
 	var list []map[string]interface{}
-	if err := common.Unmarshal([]byte(jsonStr), &list); err != nil {
+	if err := common.UnmarshalJsonStr(jsonStr, &list); err != nil {
 		return nil, fmt.Errorf("%s格式错误：%s", typeName, err.Error())
 	}
 	return list, nil
+}
+
+func exceedsMaxCharacters(s string, max int) bool {
+	return len(utf16.Encode([]rune(s))) > max
 }
 
 func validateURL(urlStr string, index int, itemType string) error {
@@ -56,7 +61,7 @@ func getJSONList(jsonStr string) []map[string]interface{} {
 		return []map[string]interface{}{}
 	}
 	var list []map[string]interface{}
-	common.Unmarshal([]byte(jsonStr), &list)
+	_ = common.UnmarshalJsonStr(jsonStr, &list)
 	return list
 }
 
@@ -111,13 +116,13 @@ func validateApiInfo(apiInfoStr string) error {
 			return err
 		}
 
-		if len(urlStr) > 500 {
+		if exceedsMaxCharacters(urlStr, 500) {
 			return fmt.Errorf("第%d个API信息的URL长度不能超过500字符", i+1)
 		}
-		if len(route) > 100 {
+		if exceedsMaxCharacters(route, 100) {
 			return fmt.Errorf("第%d个API信息的线路描述长度不能超过100字符", i+1)
 		}
-		if len(description) > 200 {
+		if exceedsMaxCharacters(description, 200) {
 			return fmt.Errorf("第%d个API信息的说明长度不能超过200字符", i+1)
 		}
 
@@ -173,17 +178,12 @@ func validateAnnouncements(announcementsStr string) error {
 				}
 			}
 		}
-		if title, exists := ann["title"]; exists {
-			if titleStr, ok := title.(string); ok && utf8.RuneCountInString(titleStr) > 100 {
-				return fmt.Errorf("第%d个公告的标题长度不能超过100字符", i+1)
-			}
-		}
-		if utf8.RuneCountInString(content) > 2000 {
-			return fmt.Errorf("第%d个公告的内容长度不能超过2000字符", i+1)
+		if exceedsMaxCharacters(content, 500) {
+			return fmt.Errorf("第%d个公告的内容长度不能超过500字符", i+1)
 		}
 		if extra, exists := ann["extra"]; exists {
-			if extraStr, ok := extra.(string); ok && utf8.RuneCountInString(extraStr) > 200 {
-				return fmt.Errorf("第%d个公告的说明长度不能超过200字符", i+1)
+			if extraStr, ok := extra.(string); ok && exceedsMaxCharacters(extraStr, 100) {
+				return fmt.Errorf("第%d个公告的说明长度不能超过100字符", i+1)
 			}
 		}
 	}
@@ -207,10 +207,10 @@ func validateFAQ(faqStr string) error {
 		if !ok || answer == "" {
 			return fmt.Errorf("第%d个FAQ缺少答案字段", i+1)
 		}
-		if len(question) > 200 {
+		if exceedsMaxCharacters(question, 200) {
 			return fmt.Errorf("第%d个FAQ的问题长度不能超过200字符", i+1)
 		}
-		if len(answer) > 1000 {
+		if exceedsMaxCharacters(answer, 1000) {
 			return fmt.Errorf("第%d个FAQ的答案长度不能超过1000字符", i+1)
 		}
 	}
@@ -278,16 +278,16 @@ func validateUptimeKumaGroups(groupsStr string) error {
 			return err
 		}
 
-		if len(categoryName) > 50 {
+		if exceedsMaxCharacters(categoryName, 50) {
 			return fmt.Errorf("第%d个分组的分类名称长度不能超过50字符", i+1)
 		}
-		if len(urlStr) > 500 {
+		if exceedsMaxCharacters(urlStr, 500) {
 			return fmt.Errorf("第%d个分组的URL长度不能超过500字符", i+1)
 		}
-		if len(slug) > 100 {
+		if exceedsMaxCharacters(slug, 100) {
 			return fmt.Errorf("第%d个分组的Slug长度不能超过100字符", i+1)
 		}
-		if len(description) > 200 {
+		if exceedsMaxCharacters(description, 200) {
 			return fmt.Errorf("第%d个分组的描述长度不能超过200字符", i+1)
 		}
 

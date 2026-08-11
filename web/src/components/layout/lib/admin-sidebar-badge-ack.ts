@@ -16,7 +16,6 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-
 export const ADMIN_SIDEBAR_BADGE_ACK_EVENT = 'admin-sidebar-badge-ack'
 
 const ADMIN_BADGE_ACK_STORAGE_KEY_PREFIX = 'admin-sidebar-alert-badge-ack-v3'

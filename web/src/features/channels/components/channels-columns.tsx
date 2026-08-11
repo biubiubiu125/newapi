@@ -81,6 +81,7 @@ import {
 } from '../lib'
 import {
   parseUpstreamUpdateMeta,
+  canUseChannelUpstreamUpdates,
   supportsChannelUpstreamModelUpdate,
 } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
@@ -139,7 +140,8 @@ function UpstreamUpdateTags({ channel }: { channel: Channel }) {
   if (!supportsChannelUpstreamModelUpdate(channel)) return null
 
   const meta = parseUpstreamUpdateMeta(channel.settings)
-  if (!meta.enabled) return null
+  const canUseUpstreamUpdates = canUseChannelUpstreamUpdates(channel, meta)
+  if (!canUseUpstreamUpdates) return null
 
   const addCount = meta.pendingAddModels.length
   const removeCount = meta.pendingRemoveModels.length
@@ -313,6 +315,7 @@ function WeightCell({ channel }: { channel: Channel }) {
 function BalanceCell({ channel }: { channel: Channel }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
+  const currentUser = useAuthStore((s) => s.auth.user)
   const isTagRow = isTagAggregateRow(channel)
   const balance = channel.balance || 0
   const usedQuota = channel.used_quota || 0
@@ -329,6 +332,18 @@ function BalanceCell({ channel }: { channel: Channel }) {
   const remainingDisplay = withSuffix(formatBalance(balance))
   const usedLabel = `${t('Used:')} ${usedDisplay}`
   const remainingLabel = `${t('Remaining:')} ${remainingDisplay}`
+  const canOperateChannel = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.OPERATE
+  )
+  const canViewCodexUsage = hasPermission(
+    currentUser,
+    ADMIN_PERMISSION_RESOURCES.CHANNEL,
+    ADMIN_PERMISSION_ACTIONS.SENSITIVE_WRITE
+  )
+  const canClickBalance =
+    channel.type === 57 ? canViewCodexUsage : canOperateChannel
 
   // Tag row: only show cumulative used quota
   if (isTagRow) {
@@ -348,6 +363,10 @@ function BalanceCell({ channel }: { channel: Channel }) {
 
   const handleClickUpdate = async () => {
     if (isUpdating) return
+    if (!canClickBalance) {
+      toast.error(t('No permission to perform this action'))
+      return
+    }
 
     setIsUpdating(true)
     if (channel.type === 57) {
@@ -413,18 +432,26 @@ function BalanceCell({ channel }: { channel: Channel }) {
                 size='sm'
                 copyable={false}
                 showDot={false}
-                className='cursor-pointer'
-                onClick={handleClickUpdate}
+                className={
+                  canClickBalance
+                    ? 'cursor-pointer'
+                    : 'cursor-not-allowed opacity-60'
+                }
+                onClick={canClickBalance ? handleClickUpdate : undefined}
               />
             }
           />
           <TooltipContent>
             <p>
-              {channel.type === 57
-                ? t('Click to view Codex usage')
-                : remainingLabel}
+              {!canClickBalance
+                ? t('No permission to perform this action')
+                : channel.type === 57
+                  ? t('Click to view Codex usage')
+                  : remainingLabel}
             </p>
-            {channel.type !== 57 && <p>{t('Click to update balance')}</p>}
+            {canClickBalance && channel.type !== 57 && (
+              <p>{t('Click to update balance')}</p>
+            )}
           </TooltipContent>
         </Tooltip>
       </div>

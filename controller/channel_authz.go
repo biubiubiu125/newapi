@@ -28,7 +28,13 @@ func channelHasSensitiveChanges(channel *PatchChannel, origin *model.Channel, re
 		return true
 	}
 	if _, ok := requestData["settings"]; ok && channel.OtherSettings != origin.OtherSettings {
-		return true
+		sameSettings := sameChannelUpstreamModelSourceSettings(channel.OtherSettings, origin.OtherSettings)
+		if !channelSupportsUpstreamModelUpdate(&channel.Channel) {
+			sameSettings = sameChannelSettingsWithoutUpstreamModelUpdateFields(channel.OtherSettings, origin.OtherSettings)
+		}
+		if !sameSettings {
+			return true
+		}
 	}
 	if _, ok := requestData["key_mode"]; ok && channel.KeyMode != nil {
 		return true

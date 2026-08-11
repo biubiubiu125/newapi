@@ -146,6 +146,8 @@ export interface TopupInfo {
   enable_online_topup: boolean
   /** Whether Stripe topup is enabled */
   enable_stripe_topup: boolean
+  /** Whether Stripe subscription payments are enabled */
+  enable_stripe_subscription?: boolean
   /** Available payment methods */
   pay_methods: PaymentMethod[]
   /** Minimum topup amount for online topup */
@@ -162,6 +164,8 @@ export interface TopupInfo {
   topup_link?: string
   /** Whether Creem topup is enabled */
   enable_creem_topup?: boolean
+  /** Whether Creem subscription payments are enabled */
+  enable_creem_subscription?: boolean
   /** Available Creem products */
   creem_products?: CreemProduct[]
   /** Whether Waffo topup is enabled */
@@ -172,6 +176,8 @@ export interface TopupInfo {
   waffo_min_topup?: number
   /** Whether Waffo Pancake topup is enabled */
   enable_waffo_pancake_topup?: boolean
+  /** Whether Waffo Pancake subscription payments are enabled */
+  enable_waffo_pancake_subscription?: boolean
   /** Minimum topup amount for Waffo Pancake */
   waffo_pancake_min_topup?: number
   /** Whether BEpusdt USDT topup is enabled */
@@ -224,6 +230,7 @@ export interface PaymentInitiationResult {
   paymentMethod?: string
   paymentKind?: 'topup' | 'subscription'
   title?: string
+  redirectUrl?: string
 }
 
 /**

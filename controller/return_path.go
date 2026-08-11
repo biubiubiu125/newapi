@@ -51,8 +51,14 @@ func paymentPublicBaseURLForRequest(c *gin.Context) string {
 		return ""
 	}
 	scheme := strings.TrimSpace(c.GetHeader("X-Forwarded-Proto"))
+	if idx := strings.Index(scheme, ","); idx >= 0 {
+		scheme = strings.TrimSpace(scheme[:idx])
+	}
 	if scheme == "" {
 		scheme = strings.TrimSpace(c.GetHeader("X-Forwarded-Scheme"))
+		if idx := strings.Index(scheme, ","); idx >= 0 {
+			scheme = strings.TrimSpace(scheme[:idx])
+		}
 	}
 	if scheme == "" {
 		if c.Request.TLS != nil {
@@ -61,21 +67,49 @@ func paymentPublicBaseURLForRequest(c *gin.Context) string {
 			scheme = "http"
 		}
 	}
-	host := strings.TrimSpace(c.GetHeader("X-Forwarded-Host"))
+	host, ok := sanitizePaymentForwardedHost(c.GetHeader("X-Forwarded-Host"))
+	if !ok {
+		return ""
+	}
 	if host == "" {
-		host = strings.TrimSpace(c.Request.Host)
+		host, ok = sanitizePaymentForwardedHost(c.Request.Host)
+		if !ok {
+			return ""
+		}
 	}
 	if host == "" {
 		return ""
 	}
-	if idx := strings.Index(host, ","); idx >= 0 {
-		host = strings.TrimSpace(host[:idx])
+	scheme = strings.ToLower(strings.TrimSpace(scheme))
+	if scheme != "http" && scheme != "https" {
+		return ""
 	}
-	base := strings.ToLower(strings.TrimSpace(scheme)) + "://" + host
+	base := scheme + "://" + host
 	if isLocalPaymentBaseURL(base) {
 		return ""
 	}
 	return strings.TrimRight(base, "/")
+}
+
+func sanitizePaymentForwardedHost(raw string) (string, bool) {
+	host := strings.TrimSpace(raw)
+	if idx := strings.Index(host, ","); idx >= 0 {
+		host = strings.TrimSpace(host[:idx])
+	}
+	if host == "" {
+		return "", true
+	}
+	if strings.ContainsAny(host, "\\/\r\n\t") {
+		return "", false
+	}
+	if strings.Contains(host, "@") {
+		return "", false
+	}
+	parsed, err := url.Parse("//" + host)
+	if err != nil || strings.TrimSpace(parsed.Hostname()) == "" {
+		return "", false
+	}
+	return parsed.Host, true
 }
 
 func paymentPublicBaseURL() string {

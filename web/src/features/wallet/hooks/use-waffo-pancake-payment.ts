@@ -21,6 +21,7 @@ import { useState, useCallback } from 'react'
 import { toast } from 'sonner'
 
 import { requestWaffoPancakePayment, isApiSuccess } from '../api'
+import { isSafeHttpCheckoutUrl } from '../lib/payment-url'
 import type { PaymentInitiationResult } from '../types'
 
 function getCheckoutUrl(data: unknown): string | null {
@@ -51,23 +52,6 @@ function getTradeNo(data: unknown): string | undefined {
   return undefined
 }
 
-/**
- * Reject non-navigable schemes (e.g. javascript:, data:) and relative URLs.
- * Only http/https are allowed for backend-provided redirect targets.
- */
-function isSafeHttpCheckoutUrl(value: string): boolean {
-  const trimmed = value.trim()
-  if (!trimmed) {
-    return false
-  }
-  try {
-    const u = new URL(trimmed)
-    return u.protocol === 'http:' || u.protocol === 'https:'
-  } catch {
-    return false
-  }
-}
-
 function getErrorMessage(message: string | undefined, data: unknown): string {
   if (typeof data === 'string' && data.trim()) {
     return data
@@ -79,8 +63,8 @@ function getErrorMessage(message: string | undefined, data: unknown): string {
 /**
  * Hook for the Waffo Pancake hosted-checkout flow.
  *
- * Same-tab redirect (window.location.href) rather than window.open: the
- * user-gesture context is lost across the await, so popups get blocked.
+ * The caller persists the pending order before performing the same-tab
+ * redirect, so a return from checkout can resume confirmation polling.
  */
 export function useWaffoPancakePayment() {
   const [processing, setProcessing] = useState(false)
@@ -102,8 +86,6 @@ export function useWaffoPancakePayment() {
               toast.error(i18next.t('Invalid payment redirect URL'))
               return { ok: false }
             }
-            toast.success(i18next.t('Redirecting to payment page...'))
-            window.location.href = checkoutUrl
             return {
               ok: true,
               tradeNo: getTradeNo(response.data),
@@ -111,6 +93,7 @@ export function useWaffoPancakePayment() {
               payAmount: Math.floor(topupAmount),
               paymentKind: 'topup',
               paymentMethod: 'waffo_pancake',
+              redirectUrl: checkoutUrl,
             }
           }
         }

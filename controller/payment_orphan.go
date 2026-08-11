@@ -40,7 +40,7 @@ func CreditPaymentOrphan(c *gin.Context) {
 		common.ApiErrorMsg(c, "invalid payment orphan id")
 		return
 	}
-	if err := model.CreditStripePaymentOrphan(id, c.GetInt("id"), common.GetClientIP(c)); err != nil {
+	if err := model.CreditPaymentOrphan(id, c.GetInt("id"), common.GetClientIP(c)); err != nil {
 		common.ApiError(c, err)
 		return
 	}
@@ -79,16 +79,15 @@ func processCreditPaymentOrphanCommission(c *gin.Context, orphanID int64) {
 	if err := model.DB.Select("provider", "reference_id", "status").First(orphan, orphanID).Error; err != nil {
 		return
 	}
-	if orphan.Status != model.PaymentOrphanStatusCredited ||
-		strings.ToLower(strings.TrimSpace(orphan.Provider)) != model.PaymentProviderStripe {
+	if orphan.Status != model.PaymentOrphanStatusCredited {
 		return
 	}
 	referenceID := strings.TrimSpace(orphan.ReferenceID)
-	if strings.HasPrefix(referenceID, "sub_ref_") {
+	if model.GetSubscriptionOrderByTradeNo(referenceID) != nil {
 		_ = processPaidSubscriptionCommission(c.Request.Context(), referenceID)
 		return
 	}
-	if strings.HasPrefix(referenceID, "ref_") {
+	if model.GetTopUpByTradeNo(referenceID) != nil {
 		_ = processPaidTopUpCommission(c.Request.Context(), referenceID)
 	}
 }

@@ -5233,6 +5233,8 @@
     "Credited": "Credited",
     "Credit payment": "Credit payment",
     "Credit this Stripe payment?": "Credit this Stripe payment?",
+
+    "Credit this verified payment?": "Créditer ce paiement vérifié ?",
     "Dismissed": "Dismissed",
     "Mark refunded": "Mark refunded",
     "No payment orphans.": "No payment orphans.",
@@ -5245,7 +5247,11 @@
     "Resolve this payment orphan?": "Resolve this payment orphan?",
     "Showing {{start}}-{{end}} of {{total}}": "Showing {{start}}-{{end}} of {{total}}",
     "Stripe payments that need reconciliation": "Stripe payments that need reconciliation",
+
+    "Payments that need reconciliation": "Paiements nécessitant un rapprochement",
     "This creates the missing top-up or subscription and credits the matched Stripe customer exactly once.": "This creates the missing top-up or subscription and credits the matched Stripe customer exactly once.",
+
+    "This credits only the matching local top-up or subscription order exactly once. It does not recreate missing orders.": "Crédite une seule fois uniquement la commande locale de recharge ou d’abonnement correspondante. Ne recrée pas les commandes manquantes.",
     "You can still edit non-sensitive operations fields such as models, groups, priority, and weight.": "Vous pouvez toujours modifier les champs opérationnels non sensibles, comme les modèles, les groupes, la priorité et le poids.",
     "You do not have permission to edit sensitive channel settings.": "Vous n’avez pas l’autorisation de modifier les paramètres sensibles des canaux.",
     "Your account can edit sensitive channel settings.": "Votre compte peut modifier les paramètres sensibles des canaux.",
@@ -5255,6 +5261,23 @@
     "This will batch add newly detected upstream models to eligible channels. Models that disappeared upstream will stay pending for manual review and will not be removed automatically.": "This will batch add newly detected upstream models to eligible channels. Models that disappeared upstream will stay pending for manual review and will not be removed automatically.",
     "Batch upstream model additions applied: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed": "Batch upstream model additions applied: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed",
     "Detect Upstream Updates": "Detect Upstream Updates",
-    "Apply Upstream Updates": "Apply Upstream Updates"
+    "Apply Upstream Updates": "Apply Upstream Updates",
+    "Actively check all channels": "Vérifier activement tous les canaux",
+    "Actively check auto-disable-enabled channels": "Vérifier activement les canaux avec désactivation automatique",
+    "Auto-disable-enabled channels only": "Canaux avec désactivation automatique uniquement",
+    "Auto-disable-enabled mode probes non-manually-disabled channels with auto-disable enabled.": "Ce mode sonde uniquement les canaux dont la désactivation automatique est activée et qui ne sont pas désactivés manuellement.",
+    "Check channels awaiting recovery only": "Vérifier uniquement les canaux en attente de rétablissement",
+    "Does not check healthy channels. It only rechecks auto-disabled channels and restores them after they recover.": "Ne vérifie pas les canaux opérationnels. Revérifie uniquement les canaux désactivés automatiquement et les réactive après leur rétablissement.",
+    "Periodically checks all channels except manually disabled ones to detect failures and recover channels automatically.": "Vérifie périodiquement tous les canaux sauf ceux désactivés manuellement afin de détecter les pannes et de rétablir automatiquement les canaux.",
+    "Periodically checks only channels with auto-disable enabled, excluding manually disabled channels.": "Vérifie périodiquement uniquement les canaux dont la désactivation automatique est activée, en excluant les canaux désactivés manuellement.",
+    "Recover auto-disabled channels only": "Restaurer uniquement les canaux désactivés automatiquement",
+    "Access tokens are shown only once": "Les jetons d'accès ne sont affichés qu'une seule fois",
+    "For security, existing access tokens cannot be displayed. Regenerate only when you need a new token.": "Pour des raisons de sécurité, les jetons d'accès existants ne peuvent pas être réaffichés. Ne les régénérez que si vous en avez besoin d'un nouveau.",
+    "Regenerate access token?": "Régénérer le jeton d'accès ?",
+    "Regenerate token": "Régénérer le jeton",
+    "Regenerating immediately invalidates any existing token.": "La régénération invalide immédiatement tout jeton existant.",
+    "Save this token now. You won't be able to view it again after closing this dialog.": "Enregistrez ce jeton maintenant. Vous ne pourrez plus le consulter après la fermeture de cette boîte de dialogue.",
+    "The new token will only be shown once. Copy it and store it securely.": "Le nouveau jeton ne sera affiché qu’une seule fois. Copiez-le et conservez-le en lieu sûr.",
+    "This will immediately invalidate your existing access token. Any applications or scripts using it will stop working.": "Cela invalidera immédiatement votre jeton d'accès actuel. Les applications ou scripts qui l'utilisent cesseront de fonctionner."
   }
 }

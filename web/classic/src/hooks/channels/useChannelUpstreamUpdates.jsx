@@ -17,12 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
-import { useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 
 import { API, showError, showInfo, showSuccess } from '../../helpers';
 import {
+  clearPersistedModelUpdateTaskId,
+  getPersistedModelUpdateTaskId,
   getModelUpdateTaskErrorPayload,
   getModelUpdateTaskStartInfo,
+  setPersistedModelUpdateTaskId,
+  shouldClearPersistedModelUpdateTaskIdAfterTaskResult,
+  shouldClearPersistedModelUpdateTaskIdAfterPollingError,
   waitForModelUpdateTask,
 } from './upstreamUpdateTask';
 import { normalizeModelList } from './upstreamUpdateUtils';
@@ -75,9 +80,48 @@ export const useChannelUpstreamUpdates = ({
   const detectChannelUpstreamUpdatesInFlightRef = useRef(false);
   const detectAllUpstreamUpdatesInFlightRef = useRef(false);
   const applyAllUpstreamUpdatesInFlightRef = useRef(false);
+  const mountedRef = useRef(true);
+  const modelUpdateTaskGenerationRef = useRef(0);
+  const modelUpdateTaskAbortControllerRef = useRef(null);
+  const didResumePersistedModelUpdateTaskRef = useRef(false);
   const canDetectUpstreamUpdates =
     channelPermissions.canOperateChannel === true;
   const canApplyUpstreamUpdates = channelPermissions.canWriteChannel === true;
+
+  const isCurrentModelUpdateTaskRun = (generation) =>
+    mountedRef.current && modelUpdateTaskGenerationRef.current === generation;
+
+  const beginModelUpdateTaskRun = (taskId) => {
+    modelUpdateTaskAbortControllerRef.current?.abort();
+    const controller = new AbortController();
+    modelUpdateTaskAbortControllerRef.current = controller;
+    modelUpdateTaskGenerationRef.current += 1;
+    const generation = modelUpdateTaskGenerationRef.current;
+    setPersistedModelUpdateTaskId(taskId);
+    detectAllUpstreamUpdatesInFlightRef.current = true;
+    setDetectAllUpstreamUpdatesLoading(true);
+    return { controller, generation };
+  };
+
+  const finishModelUpdateTaskRun = (generation, clearTaskId = false) => {
+    if (!isCurrentModelUpdateTaskRun(generation)) return;
+    if (clearTaskId) {
+      clearPersistedModelUpdateTaskId();
+    }
+    modelUpdateTaskAbortControllerRef.current = null;
+    detectAllUpstreamUpdatesInFlightRef.current = false;
+    setDetectAllUpstreamUpdatesLoading(false);
+  };
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+      modelUpdateTaskGenerationRef.current += 1;
+      modelUpdateTaskAbortControllerRef.current?.abort();
+      modelUpdateTaskAbortControllerRef.current = null;
+    };
+  }, []);
 
   const openUpstreamUpdateModal = (
     record,
@@ -288,37 +332,28 @@ export const useChannelUpstreamUpdates = ({
     }
   };
 
-  const detectAllUpstreamUpdates = async () => {
-    if (!canDetectUpstreamUpdates) {
-      showError(t('无权限检测上游模型更新'));
-      return;
-    }
-
-    if (detectAllUpstreamUpdatesInFlightRef.current) {
-      showInfo(t('正在批量检测，请稍候'));
-      return;
-    }
-    detectAllUpstreamUpdatesInFlightRef.current = true;
-    setDetectAllUpstreamUpdatesLoading(true);
-    try {
-      const res = await API.post(
-        '/api/channel/upstream_updates/detect_all',
-        {},
-        { skipErrorHandler: true },
-      );
-      const { success, message } = res.data || {};
-      const taskInfo = getModelUpdateTaskStartInfo(res.data);
-      if (!success || !taskInfo) {
-        showError(message || t('批量检测失败'));
-        return;
-      }
-
+  const pollAndReportModelUpdateTask = async (taskInfo, existingTask) => {
+    const { controller, generation } = beginModelUpdateTaskRun(
+      taskInfo.task_id,
+    );
+    if (existingTask) {
+      showInfo(t('批量检测任务已在运行，等待完成'));
+    } else {
       showSuccess(t('批量检测任务已启动'));
-      const task = await waitForModelUpdateTask(taskInfo.task_id, { api: API });
+    }
+
+    let clearTaskId = false;
+    try {
+      const task = await waitForModelUpdateTask(taskInfo.task_id, {
+        api: API,
+        signal: controller.signal,
+      });
+      if (!isCurrentModelUpdateTaskRun(generation)) return;
       if (!task) {
         showInfo(t('批量检测仍在运行，请稍后刷新查看'));
         return;
       }
+      clearTaskId = shouldClearPersistedModelUpdateTaskIdAfterTaskResult(task);
       if (task.status === 'failed') {
         showError(task.error || t('批量检测失败'));
         return;
@@ -338,51 +373,83 @@ export const useChannelUpstreamUpdates = ({
       );
       await refresh();
     } catch (error) {
+      if (!isCurrentModelUpdateTaskRun(generation)) return;
+      clearTaskId =
+        shouldClearPersistedModelUpdateTaskIdAfterPollingError(error);
+      showError(
+        error?.response?.data?.message || error?.message || t('批量检测失败'),
+      );
+    } finally {
+      finishModelUpdateTaskRun(generation, clearTaskId);
+    }
+  };
+
+  useEffect(() => {
+    if (
+      !canDetectUpstreamUpdates ||
+      didResumePersistedModelUpdateTaskRef.current
+    ) {
+      return;
+    }
+    const taskId = getPersistedModelUpdateTaskId();
+    if (!taskId) return;
+    didResumePersistedModelUpdateTaskRef.current = true;
+    pollAndReportModelUpdateTask({ task_id: taskId }, true).then();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [canDetectUpstreamUpdates]);
+
+  const detectAllUpstreamUpdates = async () => {
+    if (!canDetectUpstreamUpdates) {
+      showError(t('无权限检测上游模型更新'));
+      return;
+    }
+
+    if (detectAllUpstreamUpdatesInFlightRef.current) {
+      showInfo(t('正在批量检测，请稍候'));
+      return;
+    }
+
+    const persistedTaskId = getPersistedModelUpdateTaskId();
+    if (persistedTaskId) {
+      await pollAndReportModelUpdateTask({ task_id: persistedTaskId }, true);
+      return;
+    }
+
+    detectAllUpstreamUpdatesInFlightRef.current = true;
+    setDetectAllUpstreamUpdatesLoading(true);
+    let handedOffToTaskPolling = false;
+    try {
+      const res = await API.post(
+        '/api/channel/upstream_updates/detect_all',
+        {},
+        { skipErrorHandler: true },
+      );
+      const { success, message } = res.data || {};
+      const taskInfo = getModelUpdateTaskStartInfo(res.data);
+      if (!success || !taskInfo) {
+        showError(message || t('批量检测失败'));
+        return;
+      }
+
+      handedOffToTaskPolling = true;
+      await pollAndReportModelUpdateTask(taskInfo, false);
+    } catch (error) {
       const existingTask = getModelUpdateTaskStartInfo(
         getModelUpdateTaskErrorPayload(error),
       );
       if (existingTask) {
-        try {
-          showInfo(t('批量检测任务已在运行，等待完成'));
-          const task = await waitForModelUpdateTask(existingTask.task_id, {
-            api: API,
-          });
-          if (!task) {
-            showInfo(t('批量检测仍在运行，请稍后刷新查看'));
-            return;
-          }
-          if (task.status === 'failed') {
-            showError(task.error || t('批量检测失败'));
-            return;
-          }
-          const result = task.result || {};
-          showSuccess(
-            t(
-              '批量检测完成：渠道 {{channels}} 个，新增 {{add}} 个，删除 {{remove}} 个，失败 {{fails}} 个',
-              {
-                channels: result.checked_channels || 0,
-                add: result.detected_add_models || 0,
-                remove: result.detected_remove_models || 0,
-                fails: result.failed_channels || 0,
-              },
-            ),
-          );
-          await refresh();
-        } catch (pollError) {
-          showError(
-            pollError?.response?.data?.message ||
-              pollError?.message ||
-              t('批量检测失败'),
-          );
-        }
+        handedOffToTaskPolling = true;
+        await pollAndReportModelUpdateTask(existingTask, true);
         return;
       }
       showError(
         error?.response?.data?.message || error?.message || t('批量检测失败'),
       );
     } finally {
-      detectAllUpstreamUpdatesInFlightRef.current = false;
-      setDetectAllUpstreamUpdatesLoading(false);
+      if (!handedOffToTaskPolling && mountedRef.current) {
+        detectAllUpstreamUpdatesInFlightRef.current = false;
+        setDetectAllUpstreamUpdatesLoading(false);
+      }
     }
   };
 

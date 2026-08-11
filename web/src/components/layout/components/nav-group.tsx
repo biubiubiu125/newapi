@@ -143,7 +143,7 @@ function NavBadge({ children }: { children: ReactNode }) {
  * Sidebar menu link item
  */
 function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
-  const { setOpenMobile } = useSidebar()
+  const { isMobile, setOpenMobile } = useSidebar()
   const userId = useAuthStore((state) => state.auth.user?.id)
   const handleClick = () => {
     acknowledgeNavItemBadges(item, userId)
@@ -164,7 +164,11 @@ function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
               onClick={handleClick}
             />
           ) : (
-            <Link to={item.url} onClick={handleClick} />
+            <Link
+              to={item.url}
+              preload={isMobile ? false : undefined}
+              onClick={handleClick}
+            />
           )
         }
       >
@@ -186,7 +190,7 @@ function SidebarMenuCollapsible({
   item: NavCollapsible
   href: string
 }) {
-  const { setOpenMobile } = useSidebar()
+  const { isMobile, setOpenMobile } = useSidebar()
   const userId = useAuthStore((state) => state.auth.user?.id)
   // 检查当前路径是否匹配子菜单项
   const isSubItemActive = checkIsActive(href, item)
@@ -236,6 +240,7 @@ function SidebarMenuCollapsible({
                   ) : (
                     <Link
                       to={subItem.url}
+                      preload={isMobile ? false : undefined}
                       onClick={() => {
                         acknowledgeNavItemBadges(subItem, userId)
                         setOpenMobile(false)

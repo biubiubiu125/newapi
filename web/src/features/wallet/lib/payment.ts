@@ -23,6 +23,7 @@ import {
   DEFAULT_MIN_TOPUP,
 } from '../constants'
 import type { PaymentMethod, PresetAmount, TopupInfo } from '../types'
+import { isSafeHttpCheckoutUrl } from './payment-url'
 
 // ============================================================================
 // Payment Processing Functions
@@ -44,9 +45,14 @@ function isSafariBrowser(): boolean {
 export function submitPaymentForm(
   url: string,
   params: Record<string, unknown>
-): void {
+): boolean {
+  const targetUrl = String(url || '').trim()
+  if (!isSafeHttpCheckoutUrl(targetUrl)) {
+    return false
+  }
+
   const form = document.createElement('form')
-  form.action = url
+  form.action = targetUrl
   form.method = 'POST'
 
   // Don't open in new tab for Safari
@@ -66,6 +72,23 @@ export function submitPaymentForm(
   document.body.appendChild(form)
   form.submit()
   document.body.removeChild(form)
+  return true
+}
+
+export function openCheckoutUrl(
+  url: string,
+  opener: (
+    url: string,
+    target: string,
+    features?: string
+  ) => Window | null | void = window.open
+): boolean {
+  const targetUrl = String(url || '').trim()
+  if (!isSafeHttpCheckoutUrl(targetUrl)) {
+    return false
+  }
+  opener(targetUrl, '_blank', 'noopener,noreferrer')
+  return true
 }
 
 /**

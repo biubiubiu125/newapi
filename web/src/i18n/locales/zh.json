@@ -5723,6 +5723,8 @@
     "Credited": "已入账",
     "Credit payment": "补发入账",
     "Credit this Stripe payment?": "补发这笔 Stripe 支付？",
+
+    "Credit this verified payment?": "确认将这笔已验证支付入账？",
     "Dismissed": "已忽略",
     "Mark refunded": "标记已退款",
     "No payment orphans.": "没有待处理的孤儿款。",
@@ -5735,7 +5737,11 @@
     "Resolve this payment orphan?": "处理这笔孤儿款？",
     "Showing {{start}}-{{end}} of {{total}}": "显示第 {{start}}-{{end}} 条，共 {{total}} 条",
     "Stripe payments that need reconciliation": "需要人工对账的 Stripe 支付",
+
+    "Payments that need reconciliation": "需要人工对账的支付",
     "This creates the missing top-up or subscription and credits the matched Stripe customer exactly once.": "将创建缺失的充值单或订阅，并且只为匹配的 Stripe 客户入账一次。",
+
+    "This credits only the matching local top-up or subscription order exactly once. It does not recreate missing orders.": "系统仅会为与回调匹配的本地充值或订阅订单入账一次，不会补建缺失订单。",
     "You can still edit non-sensitive operations fields such as models, groups, priority, and weight.": "你仍可编辑模型、分组、优先级和权重等非敏感运维字段。",
     "You do not have permission to edit sensitive channel settings.": "你没有权限编辑敏感渠道设置。",
     "Your account can edit sensitive channel settings.": "你的账号可以编辑敏感渠道设置。",
@@ -5745,6 +5751,23 @@
     "This will batch add newly detected upstream models to eligible channels. Models that disappeared upstream will stay pending for manual review and will not be removed automatically.": "这会批量把新检测到的上游模型加入符合条件的渠道。已在上游消失的模型会保留为待人工处理，不会自动删除。",
     "Batch upstream model additions applied: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed": "已批量加入上游新增模型：渠道 {{channels}} 个，加入 {{added}} 个，保留 {{kept}} 个待人工处理的删除项，失败 {{fails}} 个",
     "Detect Upstream Updates": "检测上游更新",
-    "Apply Upstream Updates": "处理上游更新"
+    "Apply Upstream Updates": "处理上游更新",
+    "Actively check all channels": "主动检查全部渠道",
+    "Actively check auto-disable-enabled channels": "主动检查已开启自动禁用的渠道",
+    "Auto-disable-enabled channels only": "仅测试已开启自动禁用的渠道",
+    "Auto-disable-enabled mode probes non-manually-disabled channels with auto-disable enabled.": "此模式仅探测已开启自动禁用且未被手动禁用的渠道。",
+    "Check channels awaiting recovery only": "仅检查被自动禁用的渠道",
+    "Does not check healthy channels. It only rechecks auto-disabled channels and restores them after they recover.": "不检查正常渠道，只复查被系统自动禁用的渠道，并在恢复后重新启用。",
+    "Periodically checks all channels except manually disabled ones to detect failures and recover channels automatically.": "定时检查除手动禁用外的全部渠道，用于主动发现故障并自动恢复渠道。",
+    "Periodically checks only channels with auto-disable enabled, excluding manually disabled channels.": "只定时检查已开启“自动禁用”的渠道；未开启该选项和手动禁用的渠道不会被检查。",
+    "Recover auto-disabled channels only": "仅恢复自动禁用的渠道",
+    "Access tokens are shown only once": "访问令牌仅显示一次",
+    "For security, existing access tokens cannot be displayed. Regenerate only when you need a new token.": "出于安全考虑，现有访问令牌无法再次显示。仅在需要新令牌时重新生成。",
+    "Regenerate access token?": "重新生成访问令牌？",
+    "Regenerate token": "重新生成令牌",
+    "Regenerating immediately invalidates any existing token.": "重新生成会立即使所有现有令牌失效。",
+    "Save this token now. You won't be able to view it again after closing this dialog.": "请立即保存此令牌。关闭此对话框后，您将无法再次查看。",
+    "The new token will only be shown once. Copy it and store it securely.": "新令牌仅显示一次。请复制并妥善保存。",
+    "This will immediately invalidate your existing access token. Any applications or scripts using it will stop working.": "这会立即使现有访问令牌失效。任何正在使用它的应用程序或脚本都将停止工作。"
   }
 }

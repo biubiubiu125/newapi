@@ -96,22 +96,25 @@ func GetTopUpInfo(c *gin.Context) {
 		}
 	}
 
-	enableBEpusdt := service.IsUSDTGatewayConfigured()
+	enableBEpusdt := complianceConfirmed && service.IsUSDTGatewayConfigured()
 	bepusdtPayMethods := []map[string]string{}
 	if enableBEpusdt && complianceConfirmed {
 		bepusdtPayMethods = service.BEpusdtAssetsForTopupMethods()
 	}
 
 	data := gin.H{
-		"enable_online_topup":              isEpayTopUpEnabled(),
-		"enable_stripe_topup":              isStripeTopUpEnabled(),
-		"enable_creem_topup":               isCreemTopUpEnabled(),
-		"enable_waffo_topup":               enableWaffo,
-		"enable_waffo_pancake_topup":       enableWaffoPancake,
-		"enable_bepusdt_topup":             enableBEpusdt,
-		"enable_redemption":                complianceConfirmed,
-		"payment_compliance_confirmed":     complianceConfirmed,
-		"payment_compliance_terms_version": operation_setting.CurrentComplianceTermsVersion,
+		"enable_online_topup":               isEpayTopUpEnabled(),
+		"enable_stripe_topup":               isStripeTopUpEnabled(),
+		"enable_stripe_subscription":        isStripeSubscriptionEnabled(),
+		"enable_creem_topup":                isCreemTopUpEnabled(),
+		"enable_creem_subscription":         isCreemSubscriptionEnabled(),
+		"enable_waffo_topup":                enableWaffo,
+		"enable_waffo_pancake_topup":        enableWaffoPancake,
+		"enable_waffo_pancake_subscription": isWaffoPancakeSubscriptionEnabled(),
+		"enable_bepusdt_topup":              enableBEpusdt,
+		"enable_redemption":                 complianceConfirmed,
+		"payment_compliance_confirmed":      complianceConfirmed,
+		"payment_compliance_terms_version":  operation_setting.CurrentComplianceTermsVersion,
 		"waffo_pay_methods": func() interface{} {
 			if enableWaffo {
 				return setting.GetWaffoPayMethods()
@@ -265,13 +268,16 @@ func applySubscriptionOrderSnapshot(order *model.SubscriptionOrder, plan *model.
 }
 
 func GetEpayClient() *epay.Client {
-	if operation_setting.PayAddress == "" || operation_setting.EpayId == "" || operation_setting.EpayKey == "" {
+	payAddress := strings.TrimSpace(operation_setting.PayAddress)
+	epayID := strings.TrimSpace(operation_setting.EpayId)
+	epayKey := strings.TrimSpace(operation_setting.EpayKey)
+	if payAddress == "" || epayID == "" || epayKey == "" {
 		return nil
 	}
 	withUrl, err := epay.NewClient(&epay.Config{
-		PartnerID: operation_setting.EpayId,
-		Key:       operation_setting.EpayKey,
-	}, operation_setting.PayAddress)
+		PartnerID: epayID,
+		Key:       epayKey,
+	}, payAddress)
 	if err != nil {
 		return nil
 	}
@@ -329,6 +335,14 @@ func getMinTopup() int64 {
 }
 
 func RequestEpay(c *gin.Context) {
+	if !requirePaymentCompliance(c) {
+		return
+	}
+	if !isEpayTopUpEnabled() {
+		common.ApiErrorMsg(c, "易支付未启用或配置不完整")
+		return
+	}
+
 	var req EpayRequest
 	err := c.ShouldBindJSON(&req)
 	if err != nil {
@@ -537,6 +551,16 @@ func EpayNotify(c *gin.Context) {
 		PaidCurrency:            "CNY",
 		RequirePaymentFacts:     true,
 	}, common.GetClientIP(c)); err != nil {
+		if isPermanentPaymentReviewError(err) {
+			if recordErr := recordPaymentReview(c.Request.Context(), model.PaymentProviderEpay, "", "topup.notify", verifyInfo.ServiceTradeNo, "", "Epay top-up payment requires manual review after payment succeeded", err, common.GetJsonString(verifyInfo)); recordErr != nil {
+				logger.LogError(c.Request.Context(), fmt.Sprintf("epay topup manual review record failed trade_no=%s client_ip=%s error=%q", verifyInfo.ServiceTradeNo, common.GetClientIP(c), recordErr.Error()))
+				_, _ = c.Writer.Write([]byte("fail"))
+				return
+			}
+			logger.LogWarn(c.Request.Context(), fmt.Sprintf("epay topup payment queued for manual review trade_no=%s callback_type=%s client_ip=%s error=%q", verifyInfo.ServiceTradeNo, verifyInfo.Type, common.GetClientIP(c), err.Error()))
+			_, _ = c.Writer.Write([]byte("success"))
+			return
+		}
 		logger.LogError(c.Request.Context(), fmt.Sprintf("epay topup processing failed trade_no=%s callback_type=%s client_ip=%s error=%q", verifyInfo.ServiceTradeNo, verifyInfo.Type, common.GetClientIP(c), err.Error()))
 		_, _ = c.Writer.Write([]byte("fail"))
 		return

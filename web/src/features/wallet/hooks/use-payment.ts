@@ -35,6 +35,7 @@ import {
   isWaffoPayment,
   isWaffoPancakePayment,
   isBEpusdtPayment,
+  openCheckoutUrl,
   submitPaymentForm,
 } from '../lib'
 import type {
@@ -195,7 +196,10 @@ export function usePayment() {
             : ''
 
         if (isStripe && stripePayLink) {
-          window.open(stripePayLink, '_blank')
+          if (!openCheckoutUrl(stripePayLink)) {
+            toast.error(i18next.t('Invalid payment redirect URL'))
+            return { ok: false }
+          }
           toast.success(i18next.t('Redirecting to payment page...'))
           return {
             ok: true,
@@ -208,7 +212,10 @@ export function usePayment() {
         }
 
         if (isBEpusdt && bepusdtPaymentUrl) {
-          window.open(bepusdtPaymentUrl, '_blank')
+          if (!openCheckoutUrl(bepusdtPaymentUrl)) {
+            toast.error(i18next.t('Invalid payment redirect URL'))
+            return { ok: false }
+          }
           toast.success(i18next.t('Redirecting to payment page...'))
           return {
             ok: true,
@@ -224,7 +231,10 @@ export function usePayment() {
         if (!isStripe && !isBEpusdt && response.data) {
           const url = (response as unknown as { url?: string }).url
           if (url) {
-            submitPaymentForm(url, response.data)
+            if (!submitPaymentForm(url, response.data)) {
+              toast.error(i18next.t('Invalid payment redirect URL'))
+              return { ok: false }
+            }
             toast.success(i18next.t('Redirecting to payment page...'))
             return {
               ok: true,

@@ -28,6 +28,20 @@ type CodexOAuthKey struct {
 	Expired     string `json:"expired,omitempty"`
 }
 
+func UpdateCodexChannelCredentialIfUnchanged(channelID int, originalKey string, refreshedKey string) (bool, error) {
+	if channelID <= 0 {
+		return false, errors.New("invalid channel id")
+	}
+	result := model.DB.
+		Model(&model.Channel{}).
+		Where(map[string]interface{}{"id": channelID, "key": originalKey}).
+		Update("key", refreshedKey)
+	if result.Error != nil {
+		return false, result.Error
+	}
+	return result.RowsAffected == 1, nil
+}
+
 func parseCodexOAuthKey(raw string) (*CodexOAuthKey, error) {
 	if strings.TrimSpace(raw) == "" {
 		return nil, errors.New("codex channel: empty oauth key")
@@ -62,7 +76,7 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 	refreshCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	res, err := RefreshCodexOAuthTokenWithProxy(refreshCtx, oauthKey.RefreshToken, ch.GetSetting().Proxy)
+	res, err := RefreshCodexOAuthTokenWithProxyAndSettings(refreshCtx, oauthKey.RefreshToken, ch.GetSetting().Proxy, ch.GetSetting())
 	if err != nil {
 		return nil, nil, err
 	}
@@ -91,8 +105,12 @@ func RefreshCodexChannelCredential(ctx context.Context, channelID int, opts Code
 		return nil, nil, err
 	}
 
-	if err := model.DB.Model(&model.Channel{}).Where("id = ?", ch.Id).Update("key", string(encoded)).Error; err != nil {
+	updated, err := UpdateCodexChannelCredentialIfUnchanged(ch.Id, ch.Key, string(encoded))
+	if err != nil {
 		return nil, nil, err
+	}
+	if !updated {
+		return nil, nil, errors.New("codex channel credential changed during refresh")
 	}
 	ch.Key = string(encoded)
 

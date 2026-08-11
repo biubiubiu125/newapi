@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 )
 
 const (
@@ -65,7 +66,11 @@ func ExchangeCodexAuthorizationCode(ctx context.Context, code string, verifier s
 }
 
 func ExchangeCodexAuthorizationCodeWithProxy(ctx context.Context, code string, verifier string, proxyURL string) (*CodexOAuthTokenResult, error) {
-	client, err := getCodexOAuthHTTPClient(proxyURL)
+	return ExchangeCodexAuthorizationCodeWithProxyAndSettings(ctx, code, verifier, proxyURL, dto.ChannelSettings{})
+}
+
+func ExchangeCodexAuthorizationCodeWithProxyAndSettings(ctx context.Context, code string, verifier string, proxyURL string, settings dto.ChannelSettings) (*CodexOAuthTokenResult, error) {
+	client, err := getCodexOAuthHTTPClientWithSettings(proxyURL, settings)
 	if err != nil {
 		return nil, err
 	}
@@ -137,7 +142,11 @@ func RefreshCodexOAuthToken(ctx context.Context, refreshToken string) (*CodexOAu
 }
 
 func RefreshCodexOAuthTokenWithProxy(ctx context.Context, refreshToken string, proxyURL string) (*CodexOAuthTokenResult, error) {
-	client, err := getCodexOAuthHTTPClient(proxyURL)
+	return RefreshCodexOAuthTokenWithProxyAndSettings(ctx, refreshToken, proxyURL, dto.ChannelSettings{})
+}
+
+func RefreshCodexOAuthTokenWithProxyAndSettings(ctx context.Context, refreshToken string, proxyURL string, settings dto.ChannelSettings) (*CodexOAuthTokenResult, error) {
+	client, err := getCodexOAuthHTTPClientWithSettings(proxyURL, settings)
 	if err != nil {
 		return nil, err
 	}
@@ -199,7 +208,11 @@ func refreshCodexOAuthToken(
 }
 
 func getCodexOAuthHTTPClient(proxyURL string) (*http.Client, error) {
-	baseClient, err := GetHttpClientWithProxy(strings.TrimSpace(proxyURL))
+	return getCodexOAuthHTTPClientWithSettings(proxyURL, dto.ChannelSettings{})
+}
+
+func getCodexOAuthHTTPClientWithSettings(proxyURL string, settings dto.ChannelSettings) (*http.Client, error) {
+	baseClient, err := GetHttpClientWithProxySettings(strings.TrimSpace(proxyURL), settings)
 	if err != nil {
 		return nil, err
 	}

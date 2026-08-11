@@ -80,6 +80,9 @@ export const PLAN_FORM_DEFAULTS: PlanFormValues = {
 }
 
 export function planToFormValues(plan: SubscriptionPlan): PlanFormValues {
+  const stripePriceId = plan.stripe_price_id?.trim() || ''
+  const creemProductId = plan.creem_product_id?.trim() || ''
+  const waffoPancakeProductId = plan.waffo_pancake_product_id?.trim() || ''
   return {
     title: plan.title || '',
     subtitle: plan.subtitle || '',
@@ -98,16 +101,22 @@ export function planToFormValues(plan: SubscriptionPlan): PlanFormValues {
     upgrade_group: plan.upgrade_group || '',
     grant_groups: plan.grant_groups || '',
     downgrade_group: plan.downgrade_group || '',
-    stripe_price_id: plan.stripe_price_id || '',
-    creem_product_id: plan.creem_product_id || '',
-    waffo_pancake_product_id: plan.waffo_pancake_product_id || '',
+    stripe_price_id: stripePriceId,
+    creem_product_id: creemProductId,
+    waffo_pancake_product_id: waffoPancakeProductId,
   }
 }
 
 export function formValuesToPlanPayload(values: PlanFormValues): PlanPayload {
+  const stripePriceId = values.stripe_price_id?.trim() || ''
+  const creemProductId = values.creem_product_id?.trim() || ''
+  const waffoPancakeProductId = values.waffo_pancake_product_id?.trim() || ''
   return {
     plan: {
       ...values,
+      stripe_price_id: stripePriceId,
+      creem_product_id: creemProductId,
+      waffo_pancake_product_id: waffoPancakeProductId,
       price_amount: Number(values.price_amount || 0),
       currency: 'CNY',
       duration_value: Number(values.duration_value || 0),

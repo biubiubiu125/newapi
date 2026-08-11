@@ -21,6 +21,7 @@ import { useState, useCallback } from 'react'
 import { toast } from 'sonner'
 
 import { requestCreemPayment, isApiSuccess } from '../api'
+import { openCheckoutUrl } from '../lib'
 import type { PaymentInitiationResult } from '../types'
 
 /**
@@ -39,7 +40,10 @@ export function useCreemPayment() {
         })
 
         if (isApiSuccess(response) && response.data?.checkout_url) {
-          window.open(response.data.checkout_url, '_blank')
+          if (!openCheckoutUrl(response.data.checkout_url)) {
+            toast.error(i18next.t('Invalid payment redirect URL'))
+            return { ok: false }
+          }
           toast.success(i18next.t('Redirecting to Creem checkout...'))
           return {
             ok: true,

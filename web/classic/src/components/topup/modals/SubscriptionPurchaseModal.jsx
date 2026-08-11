@@ -37,6 +37,7 @@ import {
   formatSubscriptionDuration,
   formatSubscriptionResetPeriod,
 } from '../../../helpers/subscriptionFormat';
+import { hasConfiguredPaymentId } from '../subscriptionPaymentMethods';
 
 const { Text } = Typography;
 
@@ -51,10 +52,18 @@ const SubscriptionPurchaseModal = ({
   epayMethods = [],
   enableOnlineTopUp = false,
   enableStripeTopUp = false,
+  enableStripeSubscription,
   enableCreemTopUp = false,
+  enableCreemSubscription,
+  enableWaffoPancakeTopUp = false,
+  enableWaffoPancakeSubscription,
+  enableBEpusdt = false,
+  bepusdtMethods = [],
   purchaseLimitInfo = null,
   onPayStripe,
   onPayCreem,
+  onPayWaffoPancake,
+  onPayBEpusdt,
   onPayEpay,
 }) => {
   const plan = selectedPlan?.plan;
@@ -62,10 +71,19 @@ const SubscriptionPurchaseModal = ({
   const price = plan ? Number(plan.price_amount || 0) : 0;
   const displayPrice = price.toFixed(Number.isInteger(price) ? 0 : 2);
   // 只有当管理员开启支付网关 AND 套餐配置了对应的支付ID时才显示
-  const hasStripe = enableStripeTopUp && !!plan?.stripe_price_id;
-  const hasCreem = enableCreemTopUp && !!plan?.creem_product_id;
+  const hasStripe =
+    (enableStripeSubscription ?? enableStripeTopUp) &&
+    hasConfiguredPaymentId(plan?.stripe_price_id);
+  const hasCreem =
+    (enableCreemSubscription ?? enableCreemTopUp) &&
+    hasConfiguredPaymentId(plan?.creem_product_id);
+  const hasWaffoPancake =
+    (enableWaffoPancakeSubscription ?? enableWaffoPancakeTopUp) &&
+    hasConfiguredPaymentId(plan?.waffo_pancake_product_id);
   const hasEpay = enableOnlineTopUp && epayMethods.length > 0;
-  const hasAnyPayment = hasStripe || hasCreem || hasEpay;
+  const hasBEpusdt = enableBEpusdt && bepusdtMethods.length > 0;
+  const hasAnyPayment =
+    hasStripe || hasCreem || hasWaffoPancake || hasEpay || hasBEpusdt;
   const purchaseLimit = Number(purchaseLimitInfo?.limit || 0);
   const purchaseCount = Number(purchaseLimitInfo?.count || 0);
   const purchaseLimitReached =
@@ -185,9 +203,9 @@ const SubscriptionPurchaseModal = ({
                 {t('选择支付方式')}：
               </Text>
 
-              {/* Stripe / Creem */}
-              {(hasStripe || hasCreem) && (
-                <div className='flex gap-2'>
+              {/* Stripe / Creem / Waffo Pancake */}
+              {(hasStripe || hasCreem || hasWaffoPancake) && (
+                <div className='flex flex-wrap gap-2'>
                   {hasStripe && (
                     <Button
                       theme='light'
@@ -210,6 +228,18 @@ const SubscriptionPurchaseModal = ({
                       disabled={purchaseLimitReached}
                     >
                       Creem
+                    </Button>
+                  )}
+                  {hasWaffoPancake && (
+                    <Button
+                      theme='light'
+                      className='flex-1'
+                      icon={<IconCreditCard />}
+                      onClick={onPayWaffoPancake}
+                      loading={paying}
+                      disabled={purchaseLimitReached}
+                    >
+                      Waffo Pancake
                     </Button>
                   )}
                 </div>
@@ -239,6 +269,24 @@ const SubscriptionPurchaseModal = ({
                   >
                     {t('支付')}
                   </Button>
+                </div>
+              )}
+
+              {/* BEpusdt */}
+              {hasBEpusdt && (
+                <div className='flex flex-wrap gap-2'>
+                  {bepusdtMethods.map((method) => (
+                    <Button
+                      key={`bepusdt-${method.type}`}
+                      theme='light'
+                      icon={<IconCreditCard />}
+                      onClick={() => onPayBEpusdt(method.type)}
+                      loading={paying}
+                      disabled={purchaseLimitReached}
+                    >
+                      {method.name || method.type}
+                    </Button>
+                  ))}
                 </div>
               )}
             </div>

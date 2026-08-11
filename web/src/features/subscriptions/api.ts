@@ -162,13 +162,28 @@ export async function paySubscriptionBalance(
   return res.data
 }
 
+export async function getSubscriptionPaymentStatus(
+  tradeNo: string
+): Promise<ApiResponse<{ trade_no: string; status: string }>> {
+  const res = await api.get(
+    `/api/subscription/orders/${encodeURIComponent(tradeNo)}/status`
+  )
+  return res.data
+}
+
 // Mints a Pancake OnetimeProduct (see controller for the OnetimeProduct vs
 // SubscriptionProduct rationale) using persisted creds + StoreID.
 export async function createWaffoPancakeSubscriptionProduct(data: {
   name: string
   amount: string
+  currency: string
 }): Promise<
-  ApiResponse<{ product_id: string; product_name: string; store_id: string }>
+  ApiResponse<{
+    product_id: string
+    product_name: string
+    store_id: string
+    currency: string
+  }>
 > {
   const res = await api.post(
     '/api/option/waffo-pancake/subscription-product',

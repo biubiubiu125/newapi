@@ -203,7 +203,10 @@ export type ModelSettings = {
   AutomaticRetryStatusCodes: string
   'monitor_setting.auto_test_channel_enabled': boolean
   'monitor_setting.auto_test_channel_minutes': number
-  'monitor_setting.channel_test_mode': 'scheduled_all' | 'passive_recovery'
+  'monitor_setting.channel_test_mode':
+    | 'scheduled_all'
+    | 'passive_recovery'
+    | 'auto_ban_only'
   'gemini.safety_settings': string
   'gemini.version_settings': string
   'gemini.supported_imagine_models': string
@@ -358,7 +361,10 @@ export type OperationsSettings = {
   TicketEmailNotificationEnabled: boolean
   'monitor_setting.auto_test_channel_enabled': boolean
   'monitor_setting.auto_test_channel_minutes': number
-  'monitor_setting.channel_test_mode': 'scheduled_all' | 'passive_recovery'
+  'monitor_setting.channel_test_mode':
+    | 'scheduled_all'
+    | 'passive_recovery'
+    | 'auto_ban_only'
   SMTPServer: string
   SMTPPort: string
   SMTPAccount: string

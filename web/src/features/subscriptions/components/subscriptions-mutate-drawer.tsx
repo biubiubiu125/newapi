@@ -201,6 +201,7 @@ export function SubscriptionsMutateDrawer({
       const res = await createWaffoPancakeSubscriptionProduct({
         name: title,
         amount: priceAmount.toFixed(2),
+        currency: 'CNY',
       })
       if (
         res.message === 'success' &&

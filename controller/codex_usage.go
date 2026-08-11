@@ -17,6 +17,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+var refreshCodexOAuthTokenWithProxyAndSettings = service.RefreshCodexOAuthTokenWithProxyAndSettings
+var updateCodexChannelCredentialIfUnchanged = service.UpdateCodexChannelCredentialIfUnchanged
+var initChannelCache = model.InitChannelCache
+
 func GetCodexChannelUsage(c *gin.Context) {
 	fetchCodexChannelWhamData(
 		c,
@@ -99,7 +103,7 @@ func fetchCodexChannelWhamData(
 		return
 	}
 
-	client, err := service.GetHttpClientWithProxy(ch.GetSetting().Proxy)
+	client, err := service.GetHttpClientWithProxySettings(ch.GetSetting().Proxy, ch.GetSetting())
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -119,7 +123,7 @@ func fetchCodexChannelWhamData(
 		refreshCtx, refreshCancel := context.WithTimeout(c.Request.Context(), 10*time.Second)
 		defer refreshCancel()
 
-		res, refreshErr := service.RefreshCodexOAuthTokenWithProxy(refreshCtx, oauthKey.RefreshToken, ch.GetSetting().Proxy)
+		res, refreshErr := refreshCodexOAuthTokenWithProxyAndSettings(refreshCtx, oauthKey.RefreshToken, ch.GetSetting().Proxy, ch.GetSetting())
 		if refreshErr == nil {
 			oauthKey.AccessToken = res.AccessToken
 			oauthKey.RefreshToken = res.RefreshToken
@@ -130,10 +134,24 @@ func fetchCodexChannelWhamData(
 			}
 
 			encoded, encErr := common.Marshal(oauthKey)
-			if encErr == nil {
-				_ = model.DB.Model(&model.Channel{}).Where("id = ?", ch.Id).Update("key", string(encoded)).Error
-				model.InitChannelCache()
+			if encErr != nil {
+				common.SysError("failed to marshal refreshed codex credential: " + encErr.Error())
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": userMessage})
+				return
 			}
+
+			updated, updateErr := updateCodexChannelCredentialIfUnchanged(ch.Id, ch.Key, string(encoded))
+			if updateErr != nil {
+				common.SysError("failed to persist refreshed codex credential: " + updateErr.Error())
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": "codex credential refresh failed, please retry"})
+				return
+			}
+			if !updated {
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": "codex credential changed during refresh, please retry"})
+				return
+			}
+			initChannelCache()
+			ch.Key = string(encoded)
 
 			ctx2, cancel2 := context.WithTimeout(c.Request.Context(), 15*time.Second)
 			defer cancel2()

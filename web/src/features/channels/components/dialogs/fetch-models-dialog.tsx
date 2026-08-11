@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
 import { Loader2, Search, Info, ChevronDown } from 'lucide-react'
-import { useState, useEffect, useMemo } from 'react'
+import { useState, useEffect, useMemo, useRef } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -51,14 +51,11 @@ import {
   categorizeModels,
   categorizeModelsWithRedirect,
   channelsQueryKeys,
+  collectRemovedUpstreamModels,
   normalizeModelName,
   parseModelsString,
 } from '../../lib'
 import { useChannels } from '../channels-provider'
-
-function normalizeModelNameList(models: readonly string[]): string[] {
-  return [...new Set(models.map((m) => normalizeModelName(m)).filter(Boolean))]
-}
 
 type FetchModelsDialogProps = {
   open: boolean
@@ -91,7 +88,9 @@ export function FetchModelsDialog({
   const [isSaving, setIsSaving] = useState(false)
   const [fetchedModels, setFetchedModels] = useState<string[]>([])
   const [selectedModels, setSelectedModels] = useState<string[]>([])
+  const [hasSuccessfulFetch, setHasSuccessfulFetch] = useState(false)
   const [searchKeyword, setSearchKeyword] = useState('')
+  const fetchRequestGenerationRef = useRef(0)
 
   // Parse existing models
   const existingModels = useMemo(
@@ -108,28 +107,21 @@ export function FetchModelsDialog({
 
   const { classificationSet, redirectOnlySet } = modelCategories
 
-  const fetchedModelSet = useMemo(
-    () => new Set(normalizeModelNameList(fetchedModels)),
-    [fetchedModels]
-  )
-
-  // Source keys in model_mapping are aliases, not real upstream IDs, so we
-  // must skip them when computing "removed upstream" entries to avoid false
-  // positives.
-  const redirectSourceKeysSet = useMemo(
-    () => new Set(normalizeModelNameList(redirectSourceModels)),
-    [redirectSourceModels]
-  )
-
   const removedModels = useMemo(() => {
-    const kw = searchKeyword.toLowerCase().trim()
-    return normalizeModelNameList(selectedModels).filter((model) => {
-      if (fetchedModelSet.has(model)) return false
-      if (redirectSourceKeysSet.has(model)) return false
-      if (!kw) return true
-      return model.toLowerCase().includes(kw)
+    if (!hasSuccessfulFetch) return []
+    return collectRemovedUpstreamModels({
+      existingModels,
+      fetchedModels,
+      redirectSourceModels,
+      searchKeyword,
     })
-  }, [fetchedModelSet, redirectSourceKeysSet, searchKeyword, selectedModels])
+  }, [
+    existingModels,
+    fetchedModels,
+    hasSuccessfulFetch,
+    redirectSourceModels,
+    searchKeyword,
+  ])
 
   useEffect(() => {
     if (open && (activeChannel || customFetcher)) {
@@ -138,39 +130,68 @@ export function FetchModelsDialog({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open, activeChannel?.id, customFetcher])
 
+  useEffect(() => {
+    return () => {
+      fetchRequestGenerationRef.current += 1
+    }
+  }, [])
+
   const handleFetchModels = async () => {
     if (!activeChannel && !customFetcher) return
 
+    const fetchGeneration = fetchRequestGenerationRef.current + 1
+    fetchRequestGenerationRef.current = fetchGeneration
+    const existingModelsSnapshot = existingModels
+    const isCurrentFetch = () =>
+      fetchRequestGenerationRef.current === fetchGeneration
+
     setIsFetching(true)
+    setHasSuccessfulFetch(false)
     try {
       if (customFetcher) {
         const list = await customFetcher()
+        if (!isCurrentFetch()) return
         setFetchedModels(list)
-        setSelectedModels(existingModels)
+        setSelectedModels(existingModelsSnapshot)
+        setHasSuccessfulFetch(true)
         toast.success(t('Fetched {{count}} models', { count: list.length }))
       } else if (activeChannel) {
         const response = await fetchUpstreamModels(activeChannel.id)
+        if (!isCurrentFetch()) return
         if (response.success) {
           const list = Array.isArray(response.data) ? response.data : []
           setFetchedModels(list)
-          setSelectedModels(existingModels)
+          setSelectedModels(existingModelsSnapshot)
+          setHasSuccessfulFetch(true)
           toast.success(t('Fetched {{count}} models', { count: list.length }))
         } else {
           toast.error(response.message || t('Failed to fetch models'))
           setFetchedModels([])
+          setSelectedModels([])
+          setHasSuccessfulFetch(false)
         }
       }
     } catch (error: unknown) {
+      if (!isCurrentFetch()) return
       toast.error(
         error instanceof Error ? error.message : t('Failed to fetch models')
       )
       setFetchedModels([])
+      setSelectedModels([])
+      setHasSuccessfulFetch(false)
     } finally {
-      setIsFetching(false)
+      if (isCurrentFetch()) {
+        setIsFetching(false)
+      }
     }
   }
 
   const handleSave = async () => {
+    if (!hasSuccessfulFetch) {
+      toast.error(t('Please fetch models first'))
+      return
+    }
+
     // If onModelsSelected callback is provided, use it (form filling mode)
     if (onModelsSelected) {
       onModelsSelected(selectedModels)
@@ -208,8 +229,11 @@ export function FetchModelsDialog({
   }
 
   const handleClose = () => {
+    fetchRequestGenerationRef.current += 1
+    setIsFetching(false)
     setFetchedModels([])
     setSelectedModels([])
+    setHasSuccessfulFetch(false)
     setSearchKeyword('')
     onOpenChange(false)
   }
@@ -402,7 +426,9 @@ export function FetchModelsDialog({
 
               {/* Tabs for New vs Existing vs Removed */}
               <Tabs
-                key={`${activeChannel?.id ?? 'custom'}-${fetchedModels.length}-${removedModels.length}`}
+                key={`${activeChannel?.id ?? 'custom'}-${
+                  hasSuccessfulFetch ? 'fetched' : 'loading'
+                }`}
                 defaultValue={
                   newModels.length > 0
                     ? 'new'

@@ -189,7 +189,7 @@ func BEpusdtTopUpNotify(c *gin.Context) {
 	}
 	status := service.BEpusdtCallbackStatus(params)
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("BEpusdt topup webhook received trade_no=%s status=%s amount=%s fiat=%s client_ip=%s", tradeNo, status, bepusdtCallbackString(params, "amount"), bepusdtCallbackString(params, "fiat"), common.GetClientIP(c)))
-	facts, err := validateUSDTGatewayCallback(c, tradeNo, params, false)
+	facts, err := validateUSDTGatewayCallback(params)
 	if err != nil {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("USDT gateway webhook rejected trade_no=%s path=%q client_ip=%s error=%q", tradeNo, c.Request.RequestURI, common.GetClientIP(c), err.Error()))
 		c.String(http.StatusBadRequest, "fail")
@@ -210,6 +210,16 @@ func BEpusdtTopUpNotify(c *gin.Context) {
 		PaidCurrency:            facts.PaidCurrency,
 		RequirePaymentFacts:     true,
 	}, common.GetClientIP(c)); err != nil {
+		if isPermanentPaymentReviewError(err) {
+			if recordErr := recordPaymentReview(c.Request.Context(), model.PaymentProviderBEpusdt, "", "topup.notify", tradeNo, "", "BEpusdt top-up payment requires manual review after payment succeeded", err, common.GetJsonString(params)); recordErr != nil {
+				logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt topup review record failed trade_no=%s client_ip=%s error=%q", tradeNo, common.GetClientIP(c), recordErr.Error()))
+				c.String(http.StatusInternalServerError, "fail")
+				return
+			}
+			logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt topup payment queued for manual review trade_no=%s client_ip=%s error=%q", tradeNo, common.GetClientIP(c), err.Error()))
+			c.String(http.StatusOK, "ok")
+			return
+		}
 		if isPaymentCallbackRejection(err) {
 			logger.LogWarn(c.Request.Context(), fmt.Sprintf("BEpusdt topup webhook rejected trade_no=%s client_ip=%s error=%q", tradeNo, common.GetClientIP(c), err.Error()))
 			c.String(http.StatusBadRequest, "fail")
@@ -238,24 +248,7 @@ func isPaymentCallbackRejection(err error) bool {
 		errors.Is(err, model.ErrSubscriptionOrderStatusInvalid)
 }
 
-func validateUSDTGatewayCallback(c *gin.Context, tradeNo string, params map[string]interface{}, subscription bool) (service.USDTGatewayCallbackFacts, error) {
-	provider := ""
-	if subscription {
-		order := model.GetSubscriptionOrderByTradeNo(tradeNo)
-		if order == nil {
-			return service.USDTGatewayCallbackFacts{}, model.ErrSubscriptionOrderNotFound
-		}
-		provider = order.PaymentProvider
-	} else {
-		topUp := model.GetTopUpByTradeNo(tradeNo)
-		if topUp == nil {
-			return service.USDTGatewayCallbackFacts{}, model.ErrTopUpNotFound
-		}
-		provider = topUp.PaymentProvider
-	}
-	if provider != model.PaymentProviderBEpusdt {
-		return service.USDTGatewayCallbackFacts{}, model.ErrPaymentMethodMismatch
-	}
+func validateUSDTGatewayCallback(params map[string]interface{}) (service.USDTGatewayCallbackFacts, error) {
 	if !service.VerifyBEpusdtSignature(params) {
 		return service.USDTGatewayCallbackFacts{}, errors.New("invalid signature")
 	}
@@ -264,7 +257,7 @@ func validateUSDTGatewayCallback(c *gin.Context, tradeNo string, params map[stri
 		method = service.USDTPaymentMethod
 	}
 	return service.USDTGatewayCallbackFacts{
-		Provider:      provider,
+		Provider:      model.PaymentProviderBEpusdt,
 		PaymentMethod: method,
 		Token:         service.BEpusdtCallbackToken(params),
 		PaidAmount:    service.BEpusdtCallbackPaidAmount(params),
