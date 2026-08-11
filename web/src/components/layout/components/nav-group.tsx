@@ -149,7 +149,6 @@ function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
     acknowledgeNavItemBadges(item, userId)
     setOpenMobile(false)
   }
-
   return (
     <SidebarMenuItem>
       <SidebarMenuButton
