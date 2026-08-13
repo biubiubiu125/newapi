@@ -24,6 +24,7 @@ type Midjourney struct {
 	Quota            int    `json:"quota"`
 	SettlementStatus string `json:"settlement_status" gorm:"type:varchar(20);index"`
 	TokenId          int    `json:"token_id" gorm:"default:0"`
+	BillingChannelId int    `json:"-" gorm:"default:0"`
 	BillingSource    string `json:"billing_source" gorm:"type:varchar(32);default:''"`
 	SubscriptionId   int    `json:"subscription_id" gorm:"default:0"`
 	Group            string `json:"group" gorm:"type:varchar(64);default:''"`
@@ -185,6 +186,19 @@ func (midjourney *Midjourney) Update() error {
 	var err error
 	err = DB.Save(midjourney).Error
 	return err
+}
+
+func (midjourney *Midjourney) UpdateBillingState() error {
+	return DB.Model(midjourney).
+		Select("quota", "token_id", "billing_channel_id").
+		Updates(midjourney).Error
+}
+
+func (midjourney *Midjourney) GetBillingChannelId() int {
+	if midjourney.BillingChannelId > 0 {
+		return midjourney.BillingChannelId
+	}
+	return midjourney.ChannelId
 }
 
 // UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).
