@@ -106,6 +106,10 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "产品不存在"})
 		return
 	}
+	if _, err := validateCreditedQuota(decimal.NewFromInt(selectedProduct.Quota)); err != nil {
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
+		return
+	}
 
 	id := c.GetInt("id")
 	if rejectInvalidCreditedQuota(c, id, decimal.NewFromInt(selectedProduct.Quota)) {
