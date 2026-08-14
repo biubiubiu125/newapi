@@ -3841,9 +3841,7 @@ export function ChannelMutateDrawer({
         redirectSourceModels={redirectModelKeyList}
         customFetcher={fetchModelsDialogFetcher}
         channelName={currentName?.trim()}
-        existingModelsOverride={parseModelsString(
-          form.getValues('models') || ''
-        )}
+        existingModelsOverride={currentModelsArray}
       />
 
       <SecureVerificationDialog
