@@ -106,12 +106,12 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "产品不存在"})
 		return
 	}
-	if err := validateCreditedQuota(decimal.NewFromInt(selectedProduct.Quota)); err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
+
+	id := c.GetInt("id")
+	if rejectInvalidCreditedQuota(c, id, decimal.NewFromInt(selectedProduct.Quota)) {
 		return
 	}
 
-	id := c.GetInt("id")
 	user, err := model.GetUserById(id, false)
 	if err != nil || user == nil {
 		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Creem 创建充值订单时用户不可用 user_id=%d error=%v", id, err))
