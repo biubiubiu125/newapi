@@ -125,11 +125,14 @@ import {
 } from '../../api'
 import {
   ADD_MODE_OPTIONS,
+  CLAUDE_FIELD_PASSTHROUGH_TYPES,
   CHANNEL_TYPE_OPTIONS,
   CHANNEL_TYPE_WARNINGS,
   ERROR_MESSAGES,
+  FIELD_PASSTHROUGH_TYPES,
   FIELD_DESCRIPTIONS,
   FIELD_PLACEHOLDERS,
+  OPENAI_FIELD_PASSTHROUGH_TYPES,
 } from '../../constants'
 import { useChannelMutateForm } from '../../hooks/use-channel-mutate-form'
 import {
@@ -3098,7 +3101,7 @@ export function ChannelMutateDrawer({
                         title={t('Channel Extra Settings')}
                         icon={<Settings className='h-4 w-4' />}
                       />
-                      {(currentType === 1 || currentType === 14) && (
+                      {FIELD_PASSTHROUGH_TYPES.has(currentType) && (
                         <div className='border-border/60 flex flex-col gap-3 border-y py-4'>
                           <SubHeading
                             title={t('Field passthrough controls')}
@@ -3129,7 +3132,7 @@ export function ChannelMutateDrawer({
                               )}
                             />
 
-                            {currentType === 1 && (
+                            {OPENAI_FIELD_PASSTHROUGH_TYPES.has(currentType) && (
                               <>
                                 <FormField
                                   control={form.control}
@@ -3239,7 +3242,7 @@ export function ChannelMutateDrawer({
                               </>
                             )}
 
-                            {currentType === 14 && (
+                            {CLAUDE_FIELD_PASSTHROUGH_TYPES.has(currentType) && (
                               <>
                                 <FormField
                                   control={form.control}
