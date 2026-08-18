@@ -12,6 +12,7 @@ import (
 	"net/http/httptest"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -932,81 +933,170 @@ type channelTestSummary struct {
 	Enabled   int `json:"enabled"`
 }
 
-func performChannelTests(ctx context.Context, channels []*model.Channel, testUserID int, allowDisable bool, report func(processed, total int)) channelTestSummary {
+func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, testUserID int, allowDisable bool, disableThreshold int64) channelTestSummary {
 	summary := channelTestSummary{}
-	var disableThreshold = int64(common.ChannelDisableThreshold * 1000)
-	if disableThreshold == 0 {
-		disableThreshold = 10000000 // a impossible value
+	if channel == nil || channel.Status == common.ChannelStatusManuallyDisabled {
+		return summary
+	}
+	isChannelEnabled := channel.Status == common.ChannelStatusEnabled
+	tik := time.Now()
+	result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel))
+	milliseconds := time.Since(tik).Milliseconds()
+	if ctx != nil && ctx.Err() != nil {
+		return summary
+	}
+
+	summary.Tested++
+
+	shouldBanChannel := false
+	newAPIError := result.newAPIError
+	if newAPIError != nil {
+		shouldBanChannel = service.ShouldDisableChannel(result.newAPIError)
+	}
+
+	if common.AutomaticDisableChannelEnabled && !shouldBanChannel {
+		if milliseconds > disableThreshold {
+			err := fmt.Errorf("响应时间 %.2fs 超过阈值 %.2fs", float64(milliseconds)/1000.0, float64(disableThreshold)/1000.0)
+			newAPIError = types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusRequestTimeout)
+			shouldBanChannel = true
+		}
+	}
+
+	if newAPIError == nil {
+		summary.Succeeded++
+	} else {
+		summary.Failed++
+	}
+
+	if allowDisable && isChannelEnabled && shouldBanChannel && (channel.GetAutoBan() || service.IsBalanceInsufficientError(newAPIError)) {
+		processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
+		summary.Disabled++
+	}
+
+	if result.localErr == nil && !isChannelEnabled && service.ShouldEnableChannelForChannel(newAPIError, channel) {
+		service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
+		summary.Enabled++
+	}
+
+	channel.UpdateResponseTime(milliseconds)
+	return summary
+}
+
+// runChannelTestWorkers executes independent channel tests with bounded
+// concurrency. Results and progress are reduced by the caller goroutine, so
+// summary counts and the progress reporter remain serialized.
+func runChannelTestWorkers(
+	ctx context.Context,
+	channels []*model.Channel,
+	concurrency int,
+	run func(context.Context, *model.Channel) channelTestSummary,
+	report func(processed, total int),
+) channelTestSummary {
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	total := len(channels)
-	for index, channel := range channels {
-		if ctx != nil && ctx.Err() != nil {
-			break
-		}
-		if report != nil {
-			report(index, total)
-		}
-		if channel.Status == common.ChannelStatusManuallyDisabled {
-			continue
-		}
-		isChannelEnabled := channel.Status == common.ChannelStatusEnabled
-		tik := time.Now()
-		result := testChannel(ctx, channel, testUserID, "", "", shouldUseStreamForAutomaticChannelTest(channel))
-		tok := time.Now()
-		milliseconds := tok.Sub(tik).Milliseconds()
-		if ctx != nil && ctx.Err() != nil {
-			break
-		}
-		summary.Tested++
+	if report != nil {
+		report(0, total)
+	}
+	if total == 0 {
+		return channelTestSummary{}
+	}
 
-		shouldBanChannel := false
-		newAPIError := result.newAPIError
-		if newAPIError != nil {
-			shouldBanChannel = service.ShouldDisableChannel(result.newAPIError)
-		}
+	workerCount := min(operation_setting.NormalizeChannelTestConcurrency(concurrency), total)
+	jobs := make(chan *model.Channel)
+	results := make(chan channelTestSummary)
 
-		if common.AutomaticDisableChannelEnabled && !shouldBanChannel {
-			if milliseconds > disableThreshold {
-				err := fmt.Errorf("响应时间 %.2fs 超过阈值 %.2fs", float64(milliseconds)/1000.0, float64(disableThreshold)/1000.0)
-				newAPIError = types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusRequestTimeout)
-				shouldBanChannel = true
-			}
-		}
-
-		if newAPIError == nil {
-			summary.Succeeded++
-		} else {
-			summary.Failed++
-		}
-
-		if allowDisable && isChannelEnabled && shouldBanChannel && (channel.GetAutoBan() || service.IsBalanceInsufficientError(newAPIError)) {
-			processChannelError(result.context, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError)
-			summary.Disabled++
-		}
-
-		if result.localErr == nil && !isChannelEnabled && service.ShouldEnableChannelForChannel(newAPIError, channel) {
-			service.EnableChannel(channel.Id, common.GetContextKeyString(result.context, constant.ContextKeyChannelKey), channel.Name)
-			summary.Enabled++
-		}
-
-		channel.UpdateResponseTime(milliseconds)
-		if common.RequestInterval > 0 {
-			if ctx == nil {
-				time.Sleep(common.RequestInterval)
-			} else {
+	var workers sync.WaitGroup
+	workers.Add(workerCount)
+	for range workerCount {
+		go func() {
+			defer workers.Done()
+			for {
 				select {
 				case <-ctx.Done():
-					return summary
-				case <-time.After(common.RequestInterval):
+					return
+				case channel, ok := <-jobs:
+					if !ok {
+						return
+					}
+					if ctx.Err() != nil {
+						return
+					}
+
+					result := channelTestSummary{}
+					if channel != nil && channel.Status != common.ChannelStatusManuallyDisabled {
+						result = run(ctx, channel)
+					}
+
+					results <- result
+
+					if common.RequestInterval > 0 {
+						select {
+						case <-ctx.Done():
+							return
+						case <-time.After(common.RequestInterval):
+						}
+					}
 				}
 			}
-		}
+		}()
 	}
-	if report != nil && (ctx == nil || ctx.Err() == nil) {
-		report(total, total)
+
+	go func() {
+		defer close(jobs)
+		for _, channel := range channels {
+			select {
+			case <-ctx.Done():
+				return
+			case jobs <- channel:
+			}
+		}
+	}()
+
+	go func() {
+		workers.Wait()
+		close(results)
+	}()
+
+	summary := channelTestSummary{}
+	processed := 0
+	for result := range results {
+		summary.Tested += result.Tested
+		summary.Succeeded += result.Succeeded
+		summary.Failed += result.Failed
+		summary.Disabled += result.Disabled
+		summary.Enabled += result.Enabled
+		processed++
+		if report != nil && ctx.Err() == nil {
+			report(processed, total)
+		}
 	}
 	return summary
 }
+
+// performChannelTests runs channel health checks with the configured bounded
+// concurrency and honors cancellation when a system-task runner loses its
+// lease.
+func performChannelTests(ctx context.Context, channels []*model.Channel, testUserID int, allowDisable bool, concurrency int, report func(processed, total int)) channelTestSummary {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	disableThreshold := int64(common.ChannelDisableThreshold * 1000)
+	if disableThreshold == 0 {
+		disableThreshold = 10000000 // an impossible value
+	}
+	return runChannelTestWorkers(
+		ctx,
+		channels,
+		concurrency,
+		func(ctx context.Context, channel *model.Channel) channelTestSummary {
+			return testChannelForHealthCheck(ctx, channel, testUserID, allowDisable, disableThreshold)
+		},
+		report,
+	)
+}
+
 
 func runChannelTestTask(ctx context.Context, mode string, notify bool, report func(processed, total int)) (channelTestSummary, error) {
 	testUserID, err := resolveChannelTestUserID(nil)
@@ -1022,12 +1112,14 @@ func runChannelTestTask(ctx context.Context, mode string, notify bool, report fu
 	}
 	selected := selectChannelsForAutomaticTest(channels, mode)
 	allowDisable := mode != operation_setting.ChannelTestModePassiveRecovery
-	summary := performChannelTests(ctx, selected, testUserID, allowDisable, report)
+	concurrency := operation_setting.GetMonitorSetting().ChannelTestConcurrency
+	summary := performChannelTests(ctx, selected, testUserID, allowDisable, concurrency, report)
 	if notify && (ctx == nil || ctx.Err() == nil) {
 		service.NotifyRootUser(dto.NotifyTypeChannelTest, "通道测试完成", "所有通道测试已完成")
 	}
 	return summary, nil
 }
+
 
 func selectChannelsForAutomaticTest(channels []*model.Channel, mode string) []*model.Channel {
 	selected := make([]*model.Channel, 0, len(channels))
