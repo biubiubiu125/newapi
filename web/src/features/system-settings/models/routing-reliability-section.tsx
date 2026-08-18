@@ -512,6 +512,31 @@ export function RoutingReliabilitySection({
 
               <FormField
                 control={form.control}
+                name='monitor_setting.channel_test_concurrency'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Channel test concurrency')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        type='number'
+                        min={1}
+                        max={MAX_CHANNEL_TEST_CONCURRENCY}
+                        step={1}
+                        {...safeNumberFieldProps(field)}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Maximum number of channels tested at the same time (1-32)'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
                 name='AutomaticEnableChannelEnabled'
                 render={({ field }) => (
                   <SettingsSwitchItem>

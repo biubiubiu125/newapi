@@ -1077,7 +1077,14 @@ func performChannelTests(ctx context.Context, channels []*model.Channel, testUse
 	)
 }
 
-
+// runChannelTestTask runs one synchronous channel test cycle for the system task
+// runner (both the scheduled job and the manual "test all channels" trigger go
+// through here). It honors ctx cancellation so a runner that loses its lease
+// stops promptly. mode selects the channel set: an empty mode falls back to the
+// configured monitor ChannelTestMode (scheduled behavior), while a manual
+// trigger passes ChannelTestModeScheduledAll to test every channel. When notify
+// is set the root user is notified on completion. Cross-instance execution is
+// guarded by the system task per-type lock, so no process-local guard is needed.
 func runChannelTestTask(ctx context.Context, mode string, notify bool, report func(processed, total int)) (channelTestSummary, error) {
 	testUserID, err := resolveChannelTestUserID(nil)
 	if err != nil {
