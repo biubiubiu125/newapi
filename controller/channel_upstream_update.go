@@ -368,6 +368,34 @@ func sanitizeFetchModelsError(err error, key string) error {
 	return errors.New(message)
 }
 
+func sanitizeAdvancedCustomRequestError(err error, key string, requestURL string) error {
+	err = sanitizeFetchModelsError(err, key)
+	if err == nil {
+		return nil
+	}
+	parsedURL, parseErr := url.Parse(requestURL)
+	if parseErr != nil {
+		return err
+	}
+	message := err.Error()
+	for _, value := range parsedURL.Query() {
+		for _, secret := range value {
+			if secret == "" {
+				continue
+			}
+			message = strings.ReplaceAll(message, secret, "[REDACTED]")
+			message = strings.ReplaceAll(message, url.QueryEscape(secret), "[REDACTED]")
+			message = strings.ReplaceAll(message, url.PathEscape(secret), "[REDACTED]")
+		}
+	}
+	if key != "" {
+		message = strings.ReplaceAll(message, key, "[REDACTED]")
+		message = strings.ReplaceAll(message, url.QueryEscape(key), "[REDACTED]")
+		message = strings.ReplaceAll(message, url.PathEscape(key), "[REDACTED]")
+	}
+	return errors.New(message)
+}
+
 func getFetchModelsResponseBodyWithContext(ctx context.Context, method string, requestURL string, channel *model.Channel, headers http.Header) ([]byte, error) {
 	if ctx == nil {
 		ctx = context.Background()
@@ -543,7 +571,7 @@ func fetchChannelUpstreamModelIDsWithOptions(ctx context.Context, channel *model
 
 	body, err := getFetchModelsResponseBodyWithContext(ctx, http.MethodGet, url, channel, headers)
 	if err != nil {
-		return nil, sanitizeFetchModelsError(err, key)
+		return nil, sanitizeAdvancedCustomRequestError(err, key, url)
 	}
 
 	return parseOpenAIModelIDs(body)
@@ -579,7 +607,7 @@ func fetchAdvancedCustomUpstreamModelIDs(ctx context.Context, channel *model.Cha
 
 	body, err := getFetchModelsResponseBodyWithContext(ctx, http.MethodGet, requestURL, channel, headers)
 	if err != nil {
-		return nil, sanitizeFetchModelsError(err, key)
+		return nil, sanitizeAdvancedCustomRequestError(err, key, requestURL)
 	}
 	return parseOpenAIModelIDs(body)
 }

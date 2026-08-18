@@ -50,7 +50,7 @@ import {
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
 } from '@/lib/admin-permissions'
-import { getCurrencyLabel } from '@/lib/currency'
+import { formatCurrencyFromUSD, getCurrencyLabel } from '@/lib/currency'
 import {
   formatTimestampToDate,
   formatQuota as formatQuotaValue,
@@ -59,7 +59,7 @@ import { getLobeIcon } from '@/lib/lobe-icon'
 import { truncateText } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getCodexUsage } from '../api'
+import { getCodexUsage, updateChannelBalance } from '../api'
 import { CHANNEL_STATUS_CONFIG } from '../constants'
 import {
   formatBalance,
@@ -73,9 +73,9 @@ import {
   parseModelsList,
   parseGroupsList,
   parseChannelSettings,
+  channelsQueryKeys,
   handleUpdateChannelField,
   handleUpdateTagField,
-  handleUpdateChannelBalance,
   isTagAggregateRow,
   type TagRow,
 } from '../lib'
@@ -88,6 +88,7 @@ import type { Channel } from '../types'
 import { useChannels } from './channels-provider'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DataTableTagRowActions } from './data-table-tag-row-actions'
+import { BalanceQueryDialog } from './dialogs/balance-query-dialog'
 import {
   CodexUsageDialog,
   type CodexUsageDialogData,
@@ -316,10 +317,14 @@ function BalanceCell({ channel }: { channel: Channel }) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const currentUser = useAuthStore((s) => s.auth.user)
+  const { setCurrentRow } = useChannels()
   const isTagRow = isTagAggregateRow(channel)
   const balance = channel.balance || 0
   const usedQuota = channel.used_quota || 0
   const [isUpdating, setIsUpdating] = useState(false)
+  const [rawBalanceResponse, setRawBalanceResponse] = useState<string | null>(
+    null
+  )
   const [codexUsageOpen, setCodexUsageOpen] = useState(false)
   const [codexUsageResponse, setCodexUsageResponse] =
     useState<CodexUsageDialogData | null>(null)
@@ -387,8 +392,34 @@ function BalanceCell({ channel }: { channel: Channel }) {
       return
     }
 
-    await handleUpdateChannelBalance(channel.id, queryClient)
-    setIsUpdating(false)
+    try {
+      const response = await updateChannelBalance(channel.id)
+      if (response.success && response.balance !== undefined) {
+        toast.success(
+          t('Balance updated: {{balance}}', {
+            balance: formatCurrencyFromUSD(response.balance, {
+              digitsLarge: 2,
+              digitsSmall: 4,
+              abbreviate: false,
+            }),
+          })
+        )
+        void queryClient.invalidateQueries({
+          queryKey: channelsQueryKeys.lists(),
+        })
+      } else if (response.success && response.raw_response !== undefined) {
+        setCurrentRow(channel)
+        setRawBalanceResponse(response.raw_response)
+      } else {
+        toast.error(response.message || t('Failed to update balance'))
+      }
+    } catch (error: unknown) {
+      toast.error(
+        error instanceof Error ? error.message : t('Failed to update balance')
+      )
+    } finally {
+      setIsUpdating(false)
+    }
   }
 
   return (
@@ -483,6 +514,17 @@ function BalanceCell({ channel }: { channel: Channel }) {
         }}
         isRefreshing={isUpdating}
       />
+      {rawBalanceResponse !== null && (
+        <BalanceQueryDialog
+          initialRawResponse={rawBalanceResponse}
+          open
+          onOpenChange={(open) => {
+            if (!open) {
+              setRawBalanceResponse(null)
+            }
+          }}
+        />
+      )}
     </TooltipProvider>
   )
 }

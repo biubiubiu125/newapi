@@ -35,6 +35,14 @@ func Marshal(v any) ([]byte, error) {
 	return json.Marshal(v)
 }
 
+func IndentJson(data []byte) ([]byte, error) {
+	var buffer bytes.Buffer
+	if err := json.Indent(&buffer, data, "", "  "); err != nil {
+		return nil, err
+	}
+	return buffer.Bytes(), nil
+}
+
 // JsonValid 判断字节切片是否为合法 JSON。
 func JsonValid(data []byte) bool {
 	return json.Valid(data)
