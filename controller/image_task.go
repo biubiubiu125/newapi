@@ -16,6 +16,7 @@ import (
 	"net/url"
 	"os"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -101,7 +102,7 @@ func createImageTaskInternal(c *gin.Context, imageRequest *dto.ImageRequest, rel
 		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
 	}
 	service.EnsureImageTaskSharedCacheReady(c)
-	persistedRequest, err := acquireImageTaskPersistedRequest(c, relayMode, imageRequest.Model)
+	persistedRequest, err := acquireImageTaskPersistedRequestWithOverrides(c, relayMode, imageTaskRequestOverridesFromRequest(c, imageRequest))
 	if err != nil {
 		return nil, newImageTaskRequestStorageError(err)
 	}
@@ -721,6 +722,12 @@ type imageTaskPersistedRequest struct {
 	Fingerprint     string
 }
 
+type imageTaskRequestOverrides struct {
+	Model   string
+	Quality string
+	N       *uint
+}
+
 const imageTaskPersistedRequestHandoffKey = "image_task_persisted_request_handoff"
 
 type imageTaskPersistedRequestHandoff struct {
@@ -743,7 +750,26 @@ func stageImageTaskPersistedRequest(c *gin.Context, request *imageTaskPersistedR
 	return handoff
 }
 
+func imageTaskRequestOverridesFromRequest(c *gin.Context, request *dto.ImageRequest) imageTaskRequestOverrides {
+	if request == nil {
+		return imageTaskRequestOverrides{}
+	}
+	overrides := imageTaskRequestOverrides{Model: request.Model}
+	if isPublicImageTaskCreateRequest(c) {
+		overrides.Quality = strings.TrimSpace(request.Quality)
+		if request.N != nil {
+			n := *request.N
+			overrides.N = &n
+		}
+	}
+	return overrides
+}
+
 func acquireImageTaskPersistedRequest(c *gin.Context, relayMode int, modelName string) (*imageTaskPersistedRequest, error) {
+	return acquireImageTaskPersistedRequestWithOverrides(c, relayMode, imageTaskRequestOverrides{Model: modelName})
+}
+
+func acquireImageTaskPersistedRequestWithOverrides(c *gin.Context, relayMode int, overrides imageTaskRequestOverrides) (*imageTaskPersistedRequest, error) {
 	if c != nil {
 		if value, exists := c.Get(imageTaskPersistedRequestHandoffKey); exists {
 			if handoff, ok := value.(*imageTaskPersistedRequestHandoff); ok && handoff != nil && handoff.request != nil && !handoff.claimed {
@@ -752,7 +778,7 @@ func acquireImageTaskPersistedRequest(c *gin.Context, relayMode int, modelName s
 			}
 		}
 	}
-	return persistImageTaskRequest(c, relayMode, modelName)
+	return persistImageTaskRequestWithOverrides(c, relayMode, overrides)
 }
 
 func stageImageTaskClientTaskIDReservation(c *gin.Context, reservation *model.ImageTaskClientTaskIDLock) *imageTaskClientTaskIDReservationHandoff {
@@ -791,6 +817,10 @@ func imageTaskClientTaskIDReservationMatches(reservation *model.ImageTaskClientT
 }
 
 func persistImageTaskRequest(c *gin.Context, relayMode int, modelName string) (*imageTaskPersistedRequest, error) {
+	return persistImageTaskRequestWithOverrides(c, relayMode, imageTaskRequestOverrides{Model: modelName})
+}
+
+func persistImageTaskRequestWithOverrides(c *gin.Context, relayMode int, overrides imageTaskRequestOverrides) (*imageTaskPersistedRequest, error) {
 	if c != nil && c.Request != nil {
 		if err := service.ValidateImageTaskRequestBodyBase64Size(c.Request.ContentLength); err != nil {
 			return nil, err
@@ -798,7 +828,7 @@ func persistImageTaskRequest(c *gin.Context, relayMode int, modelName string) (*
 	}
 	contentType := c.Request.Header.Get("Content-Type")
 	if imageTaskMultipartContentTypeHasBoundary(contentType) {
-		return persistImageTaskMultipartRequest(c, relayMode, modelName)
+		return persistImageTaskMultipartRequestWithOverrides(c, relayMode, overrides)
 	}
 
 	storage, err := common.GetBodyStorage(c)
@@ -814,7 +844,7 @@ func persistImageTaskRequest(c *gin.Context, relayMode int, modelName string) (*
 		if _, err := storage.Seek(0, io.SeekStart); err != nil {
 			return nil, err
 		}
-		body, err = imageTaskJSONBodyWithoutStreamFromReader(storage, modelName)
+		body, err = imageTaskJSONBodyWithOverridesFromReader(storage, overrides)
 		if err != nil {
 			return nil, err
 		}
@@ -832,9 +862,7 @@ func persistImageTaskRequest(c *gin.Context, relayMode int, modelName string) (*
 		if err != nil {
 			return nil, err
 		}
-		if modelName != "" {
-			values.Set("model", modelName)
-		}
+		applyImageTaskFormOverrides(values, overrides)
 		clientTaskID, err = normalizeImageTaskClientTaskID(values.Get("client_task_id"))
 		if err != nil {
 			return nil, err
@@ -846,7 +874,7 @@ func persistImageTaskRequest(c *gin.Context, relayMode int, modelName string) (*
 		if _, err := storage.Seek(0, io.SeekStart); err != nil {
 			return nil, err
 		}
-		body, err = imageTaskJSONBodyWithoutStreamFromReader(storage, modelName)
+		body, err = imageTaskJSONBodyWithOverridesFromReader(storage, overrides)
 		if err != nil {
 			return nil, err
 		}
@@ -1047,19 +1075,62 @@ func imageTaskJSONBodyWithoutStream(body []byte, modelName string) ([]byte, erro
 }
 
 func imageTaskJSONBodyWithoutStreamFromReader(reader io.Reader, modelName string) ([]byte, error) {
+	return imageTaskJSONBodyWithOverridesFromReader(reader, imageTaskRequestOverrides{Model: modelName})
+}
+
+func imageTaskJSONBodyWithOverridesFromReader(reader io.Reader, overrides imageTaskRequestOverrides) ([]byte, error) {
 	bodyMap := make(map[string]json.RawMessage)
 	if err := common.DecodeJson(reader, &bodyMap); err != nil {
 		return nil, err
 	}
-	if modelName != "" {
-		modelJSON, err := common.Marshal(modelName)
-		if err != nil {
-			return nil, err
-		}
-		bodyMap["model"] = json.RawMessage(modelJSON)
+	if err := applyImageTaskJSONOverrides(bodyMap, overrides); err != nil {
+		return nil, err
 	}
 	bodyMap["stream"] = json.RawMessage("false")
 	return common.Marshal(bodyMap)
+}
+
+func applyImageTaskJSONOverrides(bodyMap map[string]json.RawMessage, overrides imageTaskRequestOverrides) error {
+	if bodyMap == nil {
+		return nil
+	}
+	if overrides.Model != "" {
+		modelJSON, err := common.Marshal(overrides.Model)
+		if err != nil {
+			return err
+		}
+		bodyMap["model"] = json.RawMessage(modelJSON)
+	}
+	if overrides.Quality != "" {
+		qualityJSON, err := common.Marshal(overrides.Quality)
+		if err != nil {
+			return err
+		}
+		bodyMap["quality"] = json.RawMessage(qualityJSON)
+	}
+	if overrides.N != nil {
+		nJSON, err := common.Marshal(*overrides.N)
+		if err != nil {
+			return err
+		}
+		bodyMap["n"] = json.RawMessage(nJSON)
+	}
+	return nil
+}
+
+func applyImageTaskFormOverrides(values url.Values, overrides imageTaskRequestOverrides) {
+	if values == nil {
+		return
+	}
+	if overrides.Model != "" {
+		values.Set("model", overrides.Model)
+	}
+	if overrides.Quality != "" {
+		values.Set("quality", overrides.Quality)
+	}
+	if overrides.N != nil {
+		values.Set("n", strconv.FormatUint(uint64(*overrides.N), 10))
+	}
 }
 
 func imageTaskClientTaskIDFromJSONBody(body []byte) (string, error) {
@@ -1172,6 +1243,10 @@ func imageTaskCacheReservationBytes(contentLength int64) int64 {
 }
 
 func persistImageTaskMultipartRequest(c *gin.Context, relayMode int, modelName string) (*imageTaskPersistedRequest, error) {
+	return persistImageTaskMultipartRequestWithOverrides(c, relayMode, imageTaskRequestOverrides{Model: modelName})
+}
+
+func persistImageTaskMultipartRequestWithOverrides(c *gin.Context, relayMode int, overrides imageTaskRequestOverrides) (*imageTaskPersistedRequest, error) {
 	form := c.Request.MultipartForm
 	if form == nil {
 		parsed, err := common.ParseMultipartFormReusable(c)
@@ -1181,7 +1256,12 @@ func persistImageTaskMultipartRequest(c *gin.Context, relayMode int, modelName s
 		form = parsed
 	}
 	if form != nil {
-		defer form.RemoveAll()
+		defer func() {
+			_ = form.RemoveAll()
+			if c != nil && c.Request != nil && c.Request.MultipartForm == form {
+				c.Request.MultipartForm = nil
+			}
+		}()
 	}
 	clientTaskID := ""
 	if form != nil {
@@ -1195,7 +1275,7 @@ func persistImageTaskMultipartRequest(c *gin.Context, relayMode int, modelName s
 	if err != nil {
 		return nil, err
 	}
-	fingerprint, err := imageTaskMultipartRequestFingerprint(form, relayMode, modelName)
+	fingerprint, err := imageTaskMultipartRequestFingerprintWithOverrides(form, relayMode, overrides)
 	if err != nil {
 		return nil, err
 	}
@@ -1204,7 +1284,7 @@ func persistImageTaskMultipartRequest(c *gin.Context, relayMode int, modelName s
 	path, file, reservation, err := common.CreateImageTaskBodyCacheFileWithReservation(imageTaskCacheReservationBytes(c.Request.ContentLength))
 	if err != nil {
 		if service.ImageTaskRequestBodyBase64FallbackEnabled() {
-			return persistImageTaskMultipartRequestInMemory(form, modelName, clientTaskID, fingerprint, stripClientTaskID)
+			return persistImageTaskMultipartRequestInMemoryWithOverrides(form, overrides, clientTaskID, fingerprint, stripClientTaskID)
 		}
 		return nil, err
 	}
@@ -1221,7 +1301,7 @@ func persistImageTaskMultipartRequest(c *gin.Context, relayMode int, modelName s
 	}()
 
 	writer := multipart.NewWriter(file)
-	if err := writeImageTaskMultipartRequest(writer, form, modelName, stripClientTaskID); err != nil {
+	if err := writeImageTaskMultipartRequestWithOverrides(writer, form, overrides, stripClientTaskID); err != nil {
 		return nil, err
 	}
 	if err := writer.Close(); err != nil {
@@ -1254,19 +1334,23 @@ func persistImageTaskMultipartRequest(c *gin.Context, relayMode int, modelName s
 		ContentType:     writer.FormDataContentType(),
 		Size:            stat.Size(),
 		Body:            body,
-		MultipartValues: imageTaskNormalizedMultipartValues(form, modelName, stripClientTaskID),
+		MultipartValues: imageTaskNormalizedMultipartValuesWithOverrides(form, overrides, stripClientTaskID),
 		ClientTaskID:    clientTaskID,
 		Fingerprint:     fingerprint,
 	}, nil
 }
 
 func persistImageTaskMultipartRequestInMemory(form *multipart.Form, modelName string, clientTaskID string, fingerprint string, stripClientTaskID bool) (*imageTaskPersistedRequest, error) {
+	return persistImageTaskMultipartRequestInMemoryWithOverrides(form, imageTaskRequestOverrides{Model: modelName}, clientTaskID, fingerprint, stripClientTaskID)
+}
+
+func persistImageTaskMultipartRequestInMemoryWithOverrides(form *multipart.Form, overrides imageTaskRequestOverrides, clientTaskID string, fingerprint string, stripClientTaskID bool) (*imageTaskPersistedRequest, error) {
 	if form == nil {
 		return nil, errors.New("multipart form is missing")
 	}
 	buffer := &imageTaskLimitedBuffer{limit: service.ImageTaskRequestBodyBase64MaxBytes()}
 	writer := multipart.NewWriter(buffer)
-	if err := writeImageTaskMultipartRequest(writer, form, modelName, stripClientTaskID); err != nil {
+	if err := writeImageTaskMultipartRequestWithOverrides(writer, form, overrides, stripClientTaskID); err != nil {
 		return nil, err
 	}
 	if err := writer.Close(); err != nil {
@@ -1280,17 +1364,21 @@ func persistImageTaskMultipartRequestInMemory(form *multipart.Form, modelName st
 		ContentType:     writer.FormDataContentType(),
 		Size:            int64(len(body)),
 		Body:            body,
-		MultipartValues: imageTaskNormalizedMultipartValues(form, modelName, stripClientTaskID),
+		MultipartValues: imageTaskNormalizedMultipartValuesWithOverrides(form, overrides, stripClientTaskID),
 		ClientTaskID:    clientTaskID,
 		Fingerprint:     fingerprint,
 	}, nil
 }
 
 func imageTaskMultipartRequestFingerprint(form *multipart.Form, relayMode int, modelName string) (string, error) {
+	return imageTaskMultipartRequestFingerprintWithOverrides(form, relayMode, imageTaskRequestOverrides{Model: modelName})
+}
+
+func imageTaskMultipartRequestFingerprintWithOverrides(form *multipart.Form, relayMode int, overrides imageTaskRequestOverrides) (string, error) {
 	if form == nil {
 		return "", errors.New("multipart form is missing")
 	}
-	values := imageTaskNormalizedMultipartValues(form, modelName, true)
+	values := imageTaskNormalizedMultipartValuesWithOverrides(form, overrides, true)
 
 	hash := sha256.New()
 	_, _ = fmt.Fprintf(hash, "newapi-image-task-v1\n%d\nmultipart/form-data\n", relayMode)
@@ -1356,7 +1444,11 @@ func (b *imageTaskLimitedBuffer) Write(p []byte) (int, error) {
 }
 
 func writeImageTaskMultipartRequest(writer *multipart.Writer, form *multipart.Form, modelName string, stripClientTaskID bool) error {
-	for key, values := range imageTaskNormalizedMultipartValues(form, modelName, stripClientTaskID) {
+	return writeImageTaskMultipartRequestWithOverrides(writer, form, imageTaskRequestOverrides{Model: modelName}, stripClientTaskID)
+}
+
+func writeImageTaskMultipartRequestWithOverrides(writer *multipart.Writer, form *multipart.Form, overrides imageTaskRequestOverrides, stripClientTaskID bool) error {
+	for key, values := range imageTaskNormalizedMultipartValuesWithOverrides(form, overrides, stripClientTaskID) {
 		for _, value := range values {
 			if err := writer.WriteField(key, value); err != nil {
 				return err
@@ -1374,19 +1466,25 @@ func writeImageTaskMultipartRequest(writer *multipart.Writer, form *multipart.Fo
 }
 
 func imageTaskNormalizedMultipartValues(form *multipart.Form, modelName string, stripClientTaskID bool) url.Values {
+	return imageTaskNormalizedMultipartValuesWithOverrides(form, imageTaskRequestOverrides{Model: modelName}, stripClientTaskID)
+}
+
+func imageTaskNormalizedMultipartValuesWithOverrides(form *multipart.Form, overrides imageTaskRequestOverrides, stripClientTaskID bool) url.Values {
 	values := make(url.Values)
 	if form != nil {
 		values = make(url.Values, len(form.Value)+2)
 		for key, items := range form.Value {
-			if key == "stream" || (stripClientTaskID && key == "client_task_id") || (key == "model" && modelName != "") {
+			if key == "stream" ||
+				(stripClientTaskID && key == "client_task_id") ||
+				(key == "model" && overrides.Model != "") ||
+				(key == "quality" && overrides.Quality != "") ||
+				(key == "n" && overrides.N != nil) {
 				continue
 			}
 			values[key] = append([]string(nil), items...)
 		}
 	}
-	if modelName != "" {
-		values.Set("model", modelName)
-	}
+	applyImageTaskFormOverrides(values, overrides)
 	values.Set("stream", "false")
 	return values
 }

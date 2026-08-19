@@ -47,19 +47,25 @@ export type ImageGenerationTaskInput = {
   n?: number
   size?: string
   quality?: string
-  response_format?: '' | 'url' | 'b64_json'
   client_task_id: string
 }
 
 export type ImageEditTaskInput = ImageGenerationTaskInput & {
-  image: File
+  images: File[]
   mask?: File
 }
+
+export type ImageTaskMode = 'generation' | 'edit'
 
 export type StoredImageTask = {
   taskId: string
   tokenId: number
   createdAt: number
+  prompt?: string
+  model?: string
+  size?: string
+  quality?: string
+  mode?: ImageTaskMode
 }
 
 export type ImageTaskResult = {
@@ -69,4 +75,9 @@ export type ImageTaskResult = {
     b64_json?: string
     revised_prompt?: string
   }>
+}
+
+export type ImageTaskDownload = {
+  blob: Blob
+  filename: string
 }

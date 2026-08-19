@@ -31,73 +31,12 @@ import { useTranslation } from 'react-i18next';
 
 import { StatusContext } from '../../../context/Status';
 import { API, showSuccess, showError } from '../../../helpers';
+import {
+  DEFAULT_ADMIN_CONFIG,
+  sanitizeSidebarConfig,
+} from '../../../hooks/common/useSidebar';
 
 const { Text } = Typography;
-
-const removedAdminModuleKeys = [
-  'riskCenter',
-  'risk_center',
-  'providerPricing',
-  'provider_price_export',
-];
-const defaultSidebarModules = {
-  chat: {
-    enabled: true,
-    playground: true,
-    chat: true,
-  },
-  console: {
-    enabled: true,
-    detail: true,
-    token: true,
-    image2: true,
-    model_check: true,
-    log: true,
-    midjourney: true,
-    task: true,
-  },
-  personal: {
-    enabled: true,
-    topup: true,
-    referral: true,
-    tickets: true,
-    personal: true,
-  },
-  admin: {
-    enabled: true,
-    channel: true,
-    models: true,
-    deployment: true,
-    recharge_audit: true,
-    redemption: true,
-    user: true,
-    subscription: true,
-    adminReferral: true,
-    ticket_management: true,
-    setting: true,
-  },
-};
-
-const sanitizeSidebarModulesConfig = (config) => {
-  if (!config || typeof config !== 'object') return config;
-  const sanitized = { ...config };
-  if (sanitized.console?.tickets !== undefined) {
-    sanitized.personal = { enabled: true, ...sanitized.personal };
-    if (sanitized.personal.tickets === undefined) {
-      sanitized.personal.tickets = sanitized.console.tickets;
-    }
-    sanitized.console = { ...sanitized.console };
-    delete sanitized.console.tickets;
-  }
-  if (sanitized.admin && typeof sanitized.admin === 'object') {
-    sanitized.admin = { ...sanitized.admin };
-    removedAdminModuleKeys.forEach((key) => {
-      delete sanitized.admin[key];
-    });
-    sanitized.admin.setting = true;
-  }
-  return sanitized;
-};
 
 export default function SettingsSidebarModulesAdmin(props) {
   const { t } = useTranslation();
@@ -106,7 +45,7 @@ export default function SettingsSidebarModulesAdmin(props) {
 
   // 左侧边栏模块管理状态（管理员全局控制）
   const [sidebarModulesAdmin, setSidebarModulesAdmin] = useState(
-    defaultSidebarModules,
+    DEFAULT_ADMIN_CONFIG,
   );
 
   // 处理区域级别开关变更
@@ -139,7 +78,7 @@ export default function SettingsSidebarModulesAdmin(props) {
 
   // 重置为默认配置
   function resetSidebarModules() {
-    setSidebarModulesAdmin(defaultSidebarModules);
+    setSidebarModulesAdmin(DEFAULT_ADMIN_CONFIG);
     showSuccess(t('已重置为默认配置'));
   }
 
@@ -147,8 +86,7 @@ export default function SettingsSidebarModulesAdmin(props) {
   async function onSubmit() {
     setLoading(true);
     try {
-      const sanitizedModules =
-        sanitizeSidebarModulesConfig(sidebarModulesAdmin);
+      const sanitizedModules = sanitizeSidebarConfig(sidebarModulesAdmin);
       const res = await API.put('/api/option/', {
         key: 'SidebarModulesAdmin',
         value: JSON.stringify(sanitizedModules),
@@ -187,23 +125,23 @@ export default function SettingsSidebarModulesAdmin(props) {
       try {
         const modules = JSON.parse(props.options.SidebarModulesAdmin);
         setSidebarModulesAdmin(
-          sanitizeSidebarModulesConfig({
-            ...defaultSidebarModules,
+          sanitizeSidebarConfig({
+            ...DEFAULT_ADMIN_CONFIG,
             ...modules,
             chat: {
-              ...defaultSidebarModules.chat,
+              ...DEFAULT_ADMIN_CONFIG.chat,
               ...modules.chat,
             },
             console: {
-              ...defaultSidebarModules.console,
+              ...DEFAULT_ADMIN_CONFIG.console,
               ...modules.console,
             },
             personal: {
-              ...defaultSidebarModules.personal,
+              ...DEFAULT_ADMIN_CONFIG.personal,
               ...modules.personal,
             },
             admin: {
-              ...defaultSidebarModules.admin,
+              ...DEFAULT_ADMIN_CONFIG.admin,
               ...modules.admin,
               adminReferral:
                 modules.admin?.adminReferral ?? modules.admin?.referral ?? true,
@@ -215,7 +153,7 @@ export default function SettingsSidebarModulesAdmin(props) {
           }),
         );
       } catch {
-        setSidebarModulesAdmin(defaultSidebarModules);
+        setSidebarModulesAdmin(DEFAULT_ADMIN_CONFIG);
       }
     }
   }, [props.options]);
@@ -243,11 +181,6 @@ export default function SettingsSidebarModulesAdmin(props) {
         { key: 'detail', title: t('数据看板'), description: t('系统数据统计') },
         { key: 'token', title: t('令牌管理'), description: t('API令牌管理') },
         {
-          key: 'image2',
-          title: 'Image2生图',
-          description: '外部图片生成入口',
-        },
-        {
           key: 'model_check',
           title: '模型状态监测',
           description: '外部模型状态监测入口',
@@ -257,6 +190,11 @@ export default function SettingsSidebarModulesAdmin(props) {
           key: 'midjourney',
           title: t('绘图日志'),
           description: t('绘图任务记录'),
+        },
+        {
+          key: 'image_tasks',
+          title: '生图工作台',
+          description: '内置文生图、图生图和生成历史',
         },
         { key: 'task', title: t('任务日志'), description: t('系统任务记录') },
       ],

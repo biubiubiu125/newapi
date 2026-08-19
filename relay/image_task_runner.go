@@ -2912,6 +2912,10 @@ func storeImageTaskResultData(task *model.Task, result json.RawMessage, storedAt
 	task.ResultCleanedAt = 0
 	task.ResultCleanupPending = false
 
+	result, err := cacheImageTaskResultURLs(result)
+	if err != nil {
+		return "", err
+	}
 	data := []byte(result)
 	offload, err := imageTaskResultStorageAction(data)
 	if err != nil {
@@ -2963,6 +2967,82 @@ func storeImageTaskResultData(task *model.Task, result json.RawMessage, storedAt
 	}
 	task.Data = json.RawMessage(placeholder)
 	return path, nil
+}
+
+func cacheImageTaskResultURLs(result json.RawMessage) (json.RawMessage, error) {
+	if len(bytes.TrimSpace(result)) == 0 || !bytes.Contains(result, []byte(`"url"`)) {
+		return result, nil
+	}
+
+	var payload map[string]any
+	if err := common.Unmarshal(result, &payload); err != nil {
+		return nil, fmt.Errorf("parse image task result for url caching: %w", err)
+	}
+	items, ok := payload["data"].([]any)
+	if !ok || len(items) == 0 {
+		return result, nil
+	}
+
+	changed := false
+	for index, rawItem := range items {
+		item, ok := rawItem.(map[string]any)
+		if !ok {
+			continue
+		}
+		if existingB64, ok := item["b64_json"].(string); ok && strings.TrimSpace(existingB64) != "" {
+			continue
+		}
+		resultURL, ok := item["url"].(string)
+		if !ok || strings.TrimSpace(resultURL) == "" {
+			continue
+		}
+		b64JSON, err := imageTaskResultURLToB64JSON(resultURL)
+		if err != nil {
+			return nil, fmt.Errorf("cache image task result url at data[%d]: %w", index, err)
+		}
+		item["b64_json"] = b64JSON
+		delete(item, "url")
+		changed = true
+	}
+	if !changed {
+		return result, nil
+	}
+	normalized, err := common.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal cached image task result: %w", err)
+	}
+	return json.RawMessage(normalized), nil
+}
+
+func imageTaskResultURLToB64JSON(resultURL string) (string, error) {
+	resultURL = strings.TrimSpace(resultURL)
+	if resultURL == "" {
+		return "", errors.New("image result url is empty")
+	}
+	if strings.HasPrefix(strings.ToLower(resultURL), "data:") {
+		contentType, data, err := service.DecodeBase64FileData(resultURL)
+		if err != nil {
+			return "", err
+		}
+		return validateImageTaskResultB64JSON(contentType, data)
+	}
+	contentType, data, err := service.GetImageFromUrl(resultURL)
+	if err != nil {
+		return "", err
+	}
+	return validateImageTaskResultB64JSON(contentType, data)
+}
+
+func validateImageTaskResultB64JSON(contentType string, data string) (string, error) {
+	contentType = strings.ToLower(strings.TrimSpace(contentType))
+	if contentType == "" || !strings.HasPrefix(contentType, "image/") {
+		return "", fmt.Errorf("invalid image result content type: %s", contentType)
+	}
+	_, _, cleanBase64, err := service.DecodeBase64ImageData(data)
+	if err != nil {
+		return "", err
+	}
+	return cleanBase64, nil
 }
 
 func setImageTaskResultLifecycle(task *model.Task, availableAt int64) {

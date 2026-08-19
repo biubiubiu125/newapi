@@ -161,7 +161,7 @@ func cleanupExpiredImageTaskResults(ctx context.Context) {
 	}
 	const batchSize = 100
 	// 每次 pass 限制批次数，不把待清理队列一次性抽干。
-	// 首次升级时历史上所有 12 小时前完成的图片任务都会命中清理，一次抽干会在
+	// 首次升级时历史上所有 72 小时前完成的图片任务都会命中清理，一次抽干会在
 	// tasks 上连续持有成百上千行的 FOR UPDATE 锁。分摊到 10s 一轮的定时器即可，
 	// now 在本次 pass 内固定，剩余部分下一轮继续。
 	const maxBatchesPerPass = 10
@@ -598,9 +598,9 @@ func logImageTaskDeploymentWarnings() {
 				"request bodies are forced portable so a hostname change cannot orphan local files. "+
 				"Set a stable unique NODE_NAME for multi-node affinity. See docs/image-tasks.md", common.NodeName))
 	}
-	if constant.ImageTaskResultRetentionMinutes > 720 {
+	if constant.ImageTaskResultRetentionMinutes > 4320 {
 		common.SysError(fmt.Sprintf(
-			"image task warning: IMAGE_TASK_RESULT_RETENTION_MINUTES=%d exceeds the 12 hour cap and is clamped to 720 minutes",
+			"image task warning: IMAGE_TASK_RESULT_RETENTION_MINUTES=%d exceeds the 72 hour cap and is clamped to 4320 minutes",
 			constant.ImageTaskResultRetentionMinutes))
 	}
 	if constant.ImageTaskFileCacheShared && !constant.ImageTaskFileCacheSharedTrusted {

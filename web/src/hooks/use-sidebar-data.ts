@@ -443,16 +443,10 @@ export function useSidebarData(): SidebarData {
             icon: Key,
           },
           {
-            title: t('Image Tasks'),
+            title: t('Image Workbench'),
             url: '/image-tasks',
             icon: Image,
-          },
-          {
-            title: 'Image2生图',
-            url: 'https://image.rkai6.com',
-            icon: Image,
-            external: true,
-            configUrls: ['sidebar:console.image2'],
+            configUrls: ['/image-tasks'],
           },
           {
             title: '模型状态监测',

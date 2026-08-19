@@ -84,6 +84,7 @@ func Distribute() func(c *gin.Context) {
 				}
 				var selectGroup string
 				usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+				requestPathForChannelSelection := channelSelectionRequestPath(c)
 				// check path is /pg/chat/completions
 				if strings.HasPrefix(c.Request.URL.Path, "/pg/chat/completions") {
 					playgroundRequest := &dto.PlayGroundRequest{}
@@ -106,7 +107,7 @@ func Distribute() func(c *gin.Context) {
 					affinityUsable := false
 					preferred, err := model.CacheGetChannel(preferredChannelID)
 					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
-						channelSupportsRequestPath(preferred, c.Request.URL.Path, modelRequest.Model) {
+						channelSupportsRequestPath(preferred, requestPathForChannelSelection, modelRequest.Model) {
 						if usingGroup == "auto" {
 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 							autoGroups := service.GetRequestAutoGroups(c, userGroup)
@@ -137,7 +138,7 @@ func Distribute() func(c *gin.Context) {
 						Ctx:         c,
 						ModelName:   modelRequest.Model,
 						TokenGroup:  usingGroup,
-						RequestPath: c.Request.URL.Path,
+						RequestPath: requestPathForChannelSelection,
 						Retry:       common.GetPointer(0),
 					})
 					if err != nil {
@@ -170,6 +171,24 @@ func Distribute() func(c *gin.Context) {
 	}
 }
 
+func channelSelectionRequestPath(c *gin.Context) string {
+	if c == nil || c.Request == nil || c.Request.URL == nil {
+		return ""
+	}
+	return publicImageTaskChannelSelectionPath(c.Request.URL.Path)
+}
+
+func publicImageTaskChannelSelectionPath(requestPath string) string {
+	switch strings.TrimSpace(requestPath) {
+	case "/v1/image-tasks/generations":
+		return "/v1/images/generations"
+	case "/v1/image-tasks/edits":
+		return "/v1/images/edits"
+	default:
+		return requestPath
+	}
+}
+
 // channelSupportsRequestPath reports whether a channel can serve the request path.
 // Only Advanced Custom (type 58) channels are path-checked; all other channel types
 // always pass. A type-58 channel is usable only when one of its routes matches.
@@ -181,6 +200,7 @@ func channelSupportsRequestPath(channel *model.Channel, requestPath string, requ
 		return true
 	}
 	config := channel.GetOtherSettings().AdvancedCustom
+	requestPath = publicImageTaskChannelSelectionPath(requestPath)
 	return config != nil && config.SupportsPathForModel(requestPath, requestModel)
 }
 
@@ -377,7 +397,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			}
 		}
 	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks/generations") {
-		modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "dall-e")
+		modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "gpt-image-2")
 		c.Set("relay_mode", relayconstant.RelayModeImagesGenerations)
 	} else if strings.HasPrefix(c.Request.URL.Path, "/v1/image-tasks/edits") {
 		contentType := c.ContentType()
@@ -387,7 +407,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 				modelRequest.Model = req.Model
 			}
 		}
-		modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "gpt-image-1")
+		modelRequest.Model = common.GetStringIfEmpty(modelRequest.Model, "gpt-image-2")
 		c.Set("relay_mode", relayconstant.RelayModeImagesEdits)
 	}
 	if strings.HasPrefix(c.Request.URL.Path, "/v1/audio") {

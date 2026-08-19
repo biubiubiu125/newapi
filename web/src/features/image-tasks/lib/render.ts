@@ -16,20 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute } from '@tanstack/react-router'
 
-import { ImageTaskPage } from '@/features/image-tasks'
-import { requireSidebarModule } from '@/lib/sidebar-route-guard'
-
-export const Route = createFileRoute('/_authenticated/image-tasks/')({
-  beforeLoad: () =>
-    requireSidebarModule({
-      section: 'console',
-      module: 'image_tasks',
-    }),
-  component: ImageTasksRoute,
-})
-
-function ImageTasksRoute() {
-  return <ImageTaskPage />
+export function imageTaskResultRenderKey(
+  taskId: string,
+  _resultUrl: string,
+  imageIndex: number,
+  occurrence: number
+): string {
+  return `${taskId}-${imageIndex}-${occurrence}`
 }

@@ -13,14 +13,17 @@
 | `GET /v1/image-tasks/{task_id}` | 查询单个任务状态，不返回图片数据 |
 | `GET /v1/image-tasks?ids=a,b` | 批量查询状态，一次最多 100 个 ID；对当前用户+令牌不可见的 ID 放入 `not_found_ids`，不区分「不存在」和「别的令牌」 |
 | `GET /v1/image-tasks/{task_id}/result` | 领取结果，返回原始 OpenAI 图片响应 |
+| `GET /v1/image-tasks/{task_id}/result/{image_index}/download` | 通过 NewAPI 同源下载单张结果图，`image_index` 从 0 开始 |
 | `POST /v1/image-tasks/{task_id}/ack` | 确认已保存结果，触发延迟清理 |
 | `POST /v1/image-tasks/{task_id}/cancel` | 取消尚未开始执行的任务并退款 |
 
 所有接口使用 NewAPI Token 鉴权。查询、结果、ACK 和取消除校验任务归属用户外，还会校验创建任务时使用的 Token ID；不返回渠道、密钥、内部结算字段和 `PrivateData`。
 
-状态、结果、ACK 和取消四个接口按「用户 + 令牌」限流，由 `IMAGE_TASK_ACCESS_RATE_LIMIT`（默认 600 次）和 `IMAGE_TASK_ACCESS_RATE_LIMIT_DURATION`（默认 60 秒）控制，超限返回 `429 rate_limit_exceeded` 并带 `Retry-After`。
+状态、结果、单图下载、ACK 和取消接口按「用户 + 令牌」限流，由 `IMAGE_TASK_ACCESS_RATE_LIMIT`（默认 600 次）和 `IMAGE_TASK_ACCESS_RATE_LIMIT_DURATION`（默认 60 秒）控制，超限返回 `429 rate_limit_exceeded` 并带 `Retry-After`。
 
 创建接口在解析请求体前执行数据库共享准入：按用户限频，并限制所有节点合计的在途创建数和请求体预留字节。对应配置为 `IMAGE_TASK_CREATE_RATE_LIMIT`、`IMAGE_TASK_CREATE_RATE_LIMIT_DURATION`、`IMAGE_TASK_CREATE_MAX_IN_FLIGHT` 和 `IMAGE_TASK_CREATE_MAX_RESERVED_MB`。活跃请求每 2 分钟续期一次；进程异常遗留的准入租约最多保留 10 分钟。
+
+`generations` 使用 JSON 请求体，`edits` 使用 `multipart/form-data`。公开图片任务接口未传 `model` 时默认使用 `gpt-image-2`，未传 `quality` 且模型为 `gpt-image-2` 时默认使用 `high`。图生图会统计 `image`、`image[]`、`image[n]`（`n` 为数字下标）三类图片字段，图片数量必须为 1-6 张。若传入自定义 `size`，格式必须为 `宽x高`，宽高为正整数且都是 16 的倍数，比例必须在 1:3 到 3:1 之间。异步任务桥接模式不支持单任务 `n > 1`，客户端需要拆成多个 `n=1` 的独立任务。
 
 完整的请求与响应结构见 `docs/openapi/relay.json`。
 
@@ -80,13 +83,13 @@
 
 ## 结果生命周期
 
-- 结果自结果成功落库时间起保留 12 小时，由 `IMAGE_TASK_RESULT_RETENTION_MINUTES` 控制（默认 `720`）。结算重试或最终结算成功不会延长该时间；即使任务仍处于 `PENDING` 或 `APPLIED`，到期结果也会清理。该值存在 12 小时硬上限，配置更大的值会被压回 720 分钟并在启动日志中告警。
+- NewAPI 任务结果响应体自成功落库时间起最多保留 72 小时，由 `IMAGE_TASK_RESULT_RETENTION_MINUTES` 控制（默认 `4320`）。结算重试或最终结算成功不会延长该时间；即使任务仍处于 `PENDING` 或 `APPLIED`，到期结果也会清理。该值存在 72 小时硬上限，配置更大的值会被压回 4320 分钟并在启动日志中告警。
 - 若结果到期时结算仍为 `PENDING` 且**没有**结算证据，清理会同步把结算收口为 `REVIEW`（对外 `failed` + `settlement_review`），预扣额度保留待人工处理，**不会自动退款**。若 `PENDING` 但已捕获结算证据，结果仍清理，结算状态保持 `PENDING`，worker 可继续自动结算。若已是 `APPLIED`（账务差额已落地），结果清理不改变结算状态，仍允许最终标为 `SETTLED`。
 - 过期后 `GET /result` 返回 `410 result_expired`，任务记录、使用日志和结算记录仍然保留。结果记录未过期但本次读不到时返回 `503 result_temporarily_unavailable`，客户端应重试而不是放弃。
-- 客户端保存结果后应调用 `ack`。ACK 是幂等的，重复调用不会报错；ACK 后保留 2 分钟缓冲，再由后台清理结果文件或内联的 `b64_json`。清理只影响结果内容。ACK 之后 `result_expires_at` 会收敛到这 2 分钟缓冲的截止时间，而不是继续报 12 小时。
+- 只有在客户端已持久保存结果、且不再需要服务端继续保留结果时才调用 `ack`；工作台、历史缩略图等需要三天内继续展示/下载的场景不要自动 ACK。ACK 是幂等的，重复调用不会报错；ACK 后保留 2 分钟缓冲，再由后台清理结果文件或内联的 `b64_json`。清理只影响结果内容。ACK 之后 `result_expires_at` 会收敛到这 2 分钟缓冲的截止时间，而不是继续报 72 小时。
 - 结果记录清理、退款恢复和请求体清理由**每个节点**定时循环执行（数据库行锁 / CAS），不依赖单一 master；worker 运行时也会顺带清理。查询侧的 410 语义不依赖物理清理是否已完成。
 - 外置结果文件在校验大小与 SHA-256 后写出：不超过 `IMAGE_TASK_RESULT_INLINE_MAX_MB`（默认 32MB，为 0 时按 4MB）的已知大小结果**先完整读入再响应**，避免半截 `200`；更大结果才流式写出。流式响应带 `Content-Length`（已知大小时）和 `X-NewAPI-Result-SHA256`（有摘要时），客户端可用它们识别中途截断。单进程与单 Token 下载并发分别由 `IMAGE_TASK_RESULT_DOWNLOAD_CONCURRENCY`（默认 32）和 `IMAGE_TASK_RESULT_DOWNLOAD_TOKEN_CONCURRENCY`（默认 4）限制；超限返回 `429 rate_limit_exceeded` 并带 `Retry-After`。
-- NewAPI 不会主动下载、转换或重新托管上游返回的图片 URL；`url` 与 `b64_json` 两种响应形式都按上游原样返回。
+- 新生成的图片任务保存结果时，会把上游返回的图片 `url` 经 SSRF 防护下载、图片解码校验后归档为 `b64_json`，再进入 NewAPI 的 72 小时结果保留生命周期；`GET /result` 返回的是 NewAPI 已持久化的 OpenAI-compatible 图片响应。历史遗留的 URL-only 结果仍保持兼容：工作台下载按钮使用 `GET /result/{image_index}/download`，由 NewAPI 在用户点击时读取对应 `b64_json`，或对旧 `url` 结果经 SSRF 防护按需下载后以同源附件返回。需要长期保存时客户端仍应及时下载。
 
 ## 幂等键生命周期
 
@@ -166,7 +169,7 @@ bash scripts/image-task-dual-node-smoke.sh
 | `IMAGE_TASK_CHANNEL_CONCURRENCY` | `0`（不限） | 单渠道并发 |
 | `IMAGE_TASK_BATCH_POLL_SIZE` | `20` | 状态批量轮询大小，上限 100 |
 | `IMAGE_TASK_LEASE_SECONDS` | `120` | 执行租约时长 |
-| `IMAGE_TASK_RESULT_RETENTION_MINUTES` | `720` | 结果保留时长，硬上限 720 |
+| `IMAGE_TASK_RESULT_RETENTION_MINUTES` | `4320` | 结果保留时长，硬上限 4320 |
 | `IMAGE_TASK_ORPHAN_FAIL_SECONDS` | `1800` | 孤儿任务失败退款兜底（需节点心跳确认归属节点消失），`0` 关闭 |
 | `IMAGE_TASK_RESULT_INLINE_MAX_MB` | `32` | 内联结果上限（含 url / b64_json），`0` 不限制 |
 | `IMAGE_TASK_RESULT_DOWNLOAD_CONCURRENCY` | `32` | 单进程并发领取结果上限，`0` 不限制 |

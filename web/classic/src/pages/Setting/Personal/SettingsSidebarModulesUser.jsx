@@ -88,10 +88,10 @@ export default function SettingsSidebarModulesUser() {
         enabled: true,
         detail: isSidebarModuleAllowed('console', 'detail'),
         token: isSidebarModuleAllowed('console', 'token'),
-        image2: isSidebarModuleAllowed('console', 'image2'),
         model_check: isSidebarModuleAllowed('console', 'model_check'),
         log: isSidebarModuleAllowed('console', 'log'),
         midjourney: isSidebarModuleAllowed('console', 'midjourney'),
+        image_tasks: isSidebarModuleAllowed('console', 'image_tasks'),
         task: isSidebarModuleAllowed('console', 'task'),
       };
     }
@@ -321,11 +321,6 @@ export default function SettingsSidebarModulesUser() {
         { key: 'detail', title: t('数据看板'), description: t('系统数据统计') },
         { key: 'token', title: t('令牌管理'), description: t('API令牌管理') },
         {
-          key: 'image2',
-          title: 'Image2生图',
-          description: '外部图片生成入口',
-        },
-        {
           key: 'model_check',
           title: '模型状态监测',
           description: '外部模型状态监测入口',
@@ -335,6 +330,11 @@ export default function SettingsSidebarModulesUser() {
           key: 'midjourney',
           title: t('绘图日志'),
           description: t('绘图任务记录'),
+        },
+        {
+          key: 'image_tasks',
+          title: '生图工作台',
+          description: '内置文生图、图生图和生成历史',
         },
         { key: 'task', title: t('任务日志'), description: t('系统任务记录') },
       ],

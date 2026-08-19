@@ -10,7 +10,8 @@ import (
 	"net/http"
 	"net/textproto"
 	"net/url"
-	"path/filepath"
+	"sort"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -27,6 +28,7 @@ import (
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relay/common_handler"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/model_setting"
@@ -477,57 +479,37 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 		}
 
 		if mf != nil && mf.File != nil {
-			// Check if "image" field exists in any form, including array notation
-			var imageFiles []*multipart.FileHeader
-			var exists bool
-
-			// First check for standard "image" field
-			if imageFiles, exists = mf.File["image"]; !exists || len(imageFiles) == 0 {
-				// If not found, check for "image[]" field
-				if imageFiles, exists = mf.File["image[]"]; !exists || len(imageFiles) == 0 {
-					// If still not found, iterate through all fields to find any that start with "image["
-					foundArrayImages := false
-					for fieldName, files := range mf.File {
-						if strings.HasPrefix(fieldName, "image[") && len(files) > 0 {
-							foundArrayImages = true
-							imageFiles = append(imageFiles, files...)
-						}
-					}
-
-					// If no image fields found at all
-					if !foundArrayImages && (len(imageFiles) == 0) {
-						return nil, errors.New("image is required")
-					}
-				}
+			imageFiles := collectOpenAIImageEditFiles(mf.File)
+			if len(imageFiles) == 0 {
+				return nil, errors.New("image is required")
 			}
 
 			// Process all image files
 			for i, fileHeader := range imageFiles {
-				file, err := fileHeader.Open()
-				if err != nil {
-					return nil, fmt.Errorf("failed to open image file %d: %w", i, err)
-				}
-
 				// If multiple images, use image[] as the field name
 				fieldName := "image"
 				if len(imageFiles) > 1 {
 					fieldName = "image[]"
 				}
 
-				// Determine MIME type based on file extension
-				mimeType := detectImageMimeType(fileHeader.Filename)
+				file, mimeType, err := helper.OpenValidatedOpenAIImageEditFile(fileHeader, fieldName)
+				if err != nil {
+					return nil, fmt.Errorf("invalid image file %d: %w", i, err)
+				}
 
-				// Create a form file with the appropriate content type
+				// Create a form file with the content type detected from bytes, not filename.
 				h := make(textproto.MIMEHeader)
-				h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="%s"; filename="%s"`, fieldName, fileHeader.Filename))
+				h.Set("Content-Disposition", multipart.FileContentDisposition(fieldName, fileHeader.Filename))
 				h.Set("Content-Type", mimeType)
 
 				part, err := writer.CreatePart(h)
 				if err != nil {
+					_ = file.Close()
 					return nil, fmt.Errorf("create form part failed for image %d: %w", i, err)
 				}
 
 				if _, err := io.Copy(part, file); err != nil {
+					_ = file.Close()
 					return nil, fmt.Errorf("copy file failed for image %d: %w", i, err)
 				}
 
@@ -537,26 +519,25 @@ func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInf
 
 			// Handle mask file if present
 			if maskFiles, exists := mf.File["mask"]; exists && len(maskFiles) > 0 {
-				maskFile, err := maskFiles[0].Open()
+				maskFile, mimeType, err := helper.OpenValidatedOpenAIImageEditFile(maskFiles[0], "mask")
 				if err != nil {
-					return nil, errors.New("failed to open mask file")
+					return nil, fmt.Errorf("invalid mask file: %w", err)
 				}
 				// 复制完立即关闭，避免在循环内使用 defer 占用资源
 
-				// Determine MIME type for mask file
-				mimeType := detectImageMimeType(maskFiles[0].Filename)
-
-				// Create a form file with the appropriate content type
+				// Create a form file with the content type detected from bytes, not filename.
 				h := make(textproto.MIMEHeader)
-				h.Set("Content-Disposition", fmt.Sprintf(`form-data; name="mask"; filename="%s"`, maskFiles[0].Filename))
+				h.Set("Content-Disposition", multipart.FileContentDisposition("mask", maskFiles[0].Filename))
 				h.Set("Content-Type", mimeType)
 
 				maskPart, err := writer.CreatePart(h)
 				if err != nil {
+					_ = maskFile.Close()
 					return nil, errors.New("create form file failed for mask")
 				}
 
 				if _, err := io.Copy(maskPart, maskFile); err != nil {
+					_ = maskFile.Close()
 					return nil, errors.New("copy mask file failed")
 				}
 				_ = maskFile.Close()
@@ -582,24 +563,55 @@ func isJSONRequest(c *gin.Context) bool {
 	return strings.HasPrefix(c.Request.Header.Get("Content-Type"), "application/json")
 }
 
-// detectImageMimeType determines the MIME type based on the file extension
-func detectImageMimeType(filename string) string {
-	ext := strings.ToLower(filepath.Ext(filename))
-	switch ext {
-	case ".jpg", ".jpeg":
-		return "image/jpeg"
-	case ".png":
-		return "image/png"
-	case ".webp":
-		return "image/webp"
-	default:
-		// Try to detect from extension if possible
-		if strings.HasPrefix(ext, ".jp") {
-			return "image/jpeg"
-		}
-		// Default to png as a fallback
-		return "image/png"
+func collectOpenAIImageEditFiles(fileFields map[string][]*multipart.FileHeader) []*multipart.FileHeader {
+	if len(fileFields) == 0 {
+		return nil
 	}
+	var imageFiles []*multipart.FileHeader
+	if files := fileFields["image"]; len(files) > 0 {
+		imageFiles = append(imageFiles, files...)
+	}
+	if files := fileFields["image[]"]; len(files) > 0 {
+		imageFiles = append(imageFiles, files...)
+	}
+	type indexedField struct {
+		index int
+		name  string
+	}
+	indexedFields := make([]indexedField, 0, len(fileFields))
+	for fieldName := range fileFields {
+		if !isOpenAIImageEditIndexedField(fieldName) {
+			continue
+		}
+		index, _ := strconv.Atoi(strings.TrimSuffix(strings.TrimPrefix(fieldName, "image["), "]"))
+		indexedFields = append(indexedFields, indexedField{index: index, name: fieldName})
+	}
+	sort.Slice(indexedFields, func(i, j int) bool {
+		if indexedFields[i].index != indexedFields[j].index {
+			return indexedFields[i].index < indexedFields[j].index
+		}
+		return indexedFields[i].name < indexedFields[j].name
+	})
+	for _, field := range indexedFields {
+		imageFiles = append(imageFiles, fileFields[field.name]...)
+	}
+	return imageFiles
+}
+
+func isOpenAIImageEditIndexedField(fieldName string) bool {
+	if !strings.HasPrefix(fieldName, "image[") || !strings.HasSuffix(fieldName, "]") {
+		return false
+	}
+	index := strings.TrimSuffix(strings.TrimPrefix(fieldName, "image["), "]")
+	if index == "" {
+		return false
+	}
+	for _, ch := range index {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {

@@ -42,10 +42,10 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     enabled: true,
     detail: true,
     token: true,
-    image2: true,
     model_check: true,
     log: true,
     midjourney: true,
+    image_tasks: true,
     task: true,
   },
   personal: {
@@ -83,6 +83,7 @@ export const SIDEBAR_MODULE_ALIASES: Record<
 }
 
 export const REMOVED_SIDEBAR_MODULES: Record<string, string[]> = {
+  console: ['image2'],
   admin: [
     'risk_center',
     'riskCenter',
@@ -118,10 +119,6 @@ export const SIDEBAR_MODULES_META: Record<string, SidebarSectionMeta> = {
         title: '令牌管理',
         description: '创建、撤销和审计 API 令牌。',
       },
-      image2: {
-        title: 'Image2 生图',
-        description: '外部图片生成入口。',
-      },
       model_check: {
         title: '模型状态监测',
         description: '外部模型状态监测入口。',
@@ -133,6 +130,10 @@ export const SIDEBAR_MODULES_META: Record<string, SidebarSectionMeta> = {
       midjourney: {
         title: '绘制日志',
         description: 'Midjourney 风格图像任务历史。',
+      },
+      image_tasks: {
+        title: '生图工作台',
+        description: '内置文生图、图生图和生成历史。',
       },
       task: {
         title: '任务日志',

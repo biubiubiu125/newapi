@@ -91,6 +91,7 @@ func SetRelayRouter(router *gin.Engine) {
 		imageTaskAccessRouter.GET("", controller.ListPublicImageTasks)
 		imageTaskAccessRouter.GET("/:task_id", controller.GetPublicImageTask)
 		imageTaskAccessRouter.GET("/:task_id/result", controller.GetPublicImageTaskResult)
+		imageTaskAccessRouter.GET("/:task_id/result/:image_index/download", controller.DownloadPublicImageTaskResultImage)
 		imageTaskAccessRouter.POST("/:task_id/ack", controller.AcknowledgePublicImageTaskResult)
 		imageTaskAccessRouter.POST("/:task_id/cancel", controller.CancelPublicImageTask)
 	}

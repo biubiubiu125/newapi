@@ -29,34 +29,7 @@ import { useMinimumLoadingTime } from '../../hooks/common/useMinimumLoadingTime'
 import { useSidebar } from '../../hooks/common/useSidebar';
 import { useSidebarCollapsed } from '../../hooks/common/useSidebarCollapsed';
 import SkeletonWrapper from './components/SkeletonWrapper';
-
-const routerMap = {
-  home: '/',
-  channel: '/console/channel',
-  token: '/console/token',
-  tickets: '/console/tickets',
-  redemption: '/console/redemption',
-  topup: '/console/topup',
-  referral: '/console/referral',
-  adminReferral: '/console/admin-referral',
-  ticket_management: '/console/admin-tickets',
-  recharge_audit: '/console/recharge-audit',
-  user: '/console/user',
-  subscription: '/console/subscription',
-  log: '/console/log',
-  midjourney: '/console/midjourney',
-  setting: '/console/setting',
-  about: '/about',
-  detail: '/console',
-  pricing: '/pricing',
-  task: '/console/task',
-  models: '/console/models',
-  deployment: '/console/deployment',
-  image2: 'https://image.rkai6.com',
-  model_check: 'https://cx.rkai6.com/',
-  playground: '/console/playground',
-  personal: '/console/personal',
-};
+import { routerMap } from './sidebarRoutes';
 
 const SIDEBAR_BADGE_ACK_STORAGE_KEY_PREFIX = 'admin-sidebar-alert-badge-ack-v3';
 
@@ -248,12 +221,6 @@ const SiderBar = ({ onNavigate = () => {} }) => {
         to: '/token',
       },
       {
-        text: 'Image2生图',
-        itemKey: 'image2',
-        to: 'https://image.rkai6.com',
-        external: true,
-      },
-      {
         text: '模型状态监测',
         itemKey: 'model_check',
         to: 'https://cx.rkai6.com/',
@@ -272,6 +239,11 @@ const SiderBar = ({ onNavigate = () => {} }) => {
           localStorage.getItem('enable_drawing') === 'true'
             ? ''
             : 'tableHiddle',
+      },
+      {
+        text: '生图工作台',
+        itemKey: 'image_tasks',
+        to: '/image-tasks',
       },
       {
         text: t('任务日志'),
@@ -878,6 +850,18 @@ const SiderBar = ({ onNavigate = () => {} }) => {
 
             // 如果没有路由，直接返回元素
             if (!to) return itemElement;
+
+            if (props.itemKey === 'image_tasks') {
+              return (
+                <a
+                  style={{ textDecoration: 'none' }}
+                  href={to}
+                  onClick={handleNavigate}
+                >
+                  {itemElement}
+                </a>
+              );
+            }
 
             if (/^https?:\/\//i.test(to)) {
               return (

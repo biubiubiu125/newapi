@@ -1654,7 +1654,7 @@ func CleanupExpiredImageTaskResults(now int64, legacyRetention time.Duration, li
 		return nil, fmt.Errorf("invalid image task result cleanup time")
 	}
 	if legacyRetention <= 0 {
-		legacyRetention = 12 * time.Hour
+		legacyRetention = 72 * time.Hour
 	}
 	if limit <= 0 {
 		limit = 100

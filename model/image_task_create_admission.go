@@ -53,6 +53,33 @@ func AcquireImageTaskCreateAdmission(
 	now int64,
 	limits ImageTaskCreateAdmissionLimits,
 ) (string, error) {
+	return evaluateImageTaskCreateAdmission(userID, tokenID, reservedBytes, now, limits, true)
+}
+
+// CheckImageTaskCreateAdmission checks the same rate and capacity state as
+// AcquireImageTaskCreateAdmission without incrementing rate counters or taking
+// an in-flight reservation. It is intended as an early no-side-effect guard
+// before expensive request validation/persistence; the real admission must
+// still run before creating new work.
+func CheckImageTaskCreateAdmission(
+	userID int,
+	tokenID int,
+	reservedBytes int64,
+	now int64,
+	limits ImageTaskCreateAdmissionLimits,
+) error {
+	_, err := evaluateImageTaskCreateAdmission(userID, tokenID, reservedBytes, now, limits, false)
+	return err
+}
+
+func evaluateImageTaskCreateAdmission(
+	userID int,
+	tokenID int,
+	reservedBytes int64,
+	now int64,
+	limits ImageTaskCreateAdmissionLimits,
+	commit bool,
+) (string, error) {
 	if userID <= 0 || tokenID <= 0 {
 		return "", fmt.Errorf("invalid image task admission identity")
 	}
@@ -130,14 +157,14 @@ func AcquireImageTaskCreateAdmission(
 			}
 		}
 
-		if rateEnabled {
+		if rateEnabled && commit {
 			bucket.RequestCount++
 			bucket.UpdatedAt = now
 			if err := tx.Save(&bucket).Error; err != nil {
 				return err
 			}
 		}
-		if capacityEnabled {
+		if capacityEnabled && commit {
 			reservationID = common.GetUUID()
 			reservation := ImageTaskCreateReservation{
 				ID:            reservationID,
@@ -150,6 +177,9 @@ func AcquireImageTaskCreateAdmission(
 			if err := tx.Create(&reservation).Error; err != nil {
 				return err
 			}
+		}
+		if !commit {
+			return nil
 		}
 		return tx.Model(&ImageTaskCreateGuard{}).
 			Where("key = ?", imageTaskCreateGuardKey).

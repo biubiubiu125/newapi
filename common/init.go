@@ -232,7 +232,11 @@ func initConstantEnv() {
 	constant.ImageTaskChannelConcurrency = GetEnvOrDefault("IMAGE_TASK_CHANNEL_CONCURRENCY", 0)
 	constant.ImageTaskBatchPollSize = GetEnvOrDefault("IMAGE_TASK_BATCH_POLL_SIZE", 20)
 	constant.ImageTaskLeaseSeconds = GetEnvOrDefault("IMAGE_TASK_LEASE_SECONDS", 120)
-	constant.ImageTaskResultRetentionMinutes = GetEnvOrDefault("IMAGE_TASK_RESULT_RETENTION_MINUTES", 720)
+	constant.ImageTaskResultRetentionMinutes = GetEnvOrDefault("IMAGE_TASK_RESULT_RETENTION_MINUTES", 4320)
+	if constant.ImageTaskResultRetentionMinutes <= 0 || constant.ImageTaskResultRetentionMinutes > 4320 {
+		SysLog(fmt.Sprintf("IMAGE_TASK_RESULT_RETENTION_MINUTES=%d is outside the 72h range; clamped to 4320", constant.ImageTaskResultRetentionMinutes))
+		constant.ImageTaskResultRetentionMinutes = 4320
+	}
 	constant.ImageTaskRequestBodyBase64MaxMB = GetEnvOrDefault("IMAGE_TASK_REQUEST_BODY_BASE64_MAX_MB", 16)
 	constant.ImageTaskHTTPResponseMaxMB = GetEnvOrDefault("IMAGE_TASK_HTTP_RESPONSE_MAX_MB", 0)
 	constant.ImageTaskFileCacheShared = GetEnvOrDefaultBool("IMAGE_TASK_FILE_CACHE_SHARED", false)

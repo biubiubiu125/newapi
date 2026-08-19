@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type {
   ImageEditTaskInput,
+  ImageTaskDownload,
   ImageGenerationTaskInput,
   ImageTaskResult,
   PublicImageTask,
@@ -42,9 +43,6 @@ function generationPayload(
   if (input.n) payload.n = input.n
   if (input.size?.trim()) payload.size = input.size.trim()
   if (input.quality?.trim()) payload.quality = input.quality.trim()
-  if (input.response_format?.trim()) {
-    payload.response_format = input.response_format.trim()
-  }
   return payload
 }
 
@@ -65,15 +63,7 @@ async function imageTaskRequest<T>(
   path: string,
   init: RequestInit
 ): Promise<T> {
-  const response = await fetch(path, {
-    ...init,
-    credentials: 'include',
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      ...init.headers,
-    },
-  })
+  const response = await imageTaskFetch(apiKey, path, init)
   const payload = (await response.json().catch(() => null)) as
     | T
     | PublicImageTaskErrorResponse
@@ -87,8 +77,51 @@ async function imageTaskRequest<T>(
   throw new ImageTaskRequestError(
     response.status,
     error?.code || 'image_task_request_failed',
-    error?.message || 'Image task request failed'
+    error?.message || 'Image workbench request failed'
   )
+}
+
+async function imageTaskFetch(
+  apiKey: string,
+  path: string,
+  init: RequestInit
+): Promise<Response> {
+  return fetch(path, {
+    ...init,
+    credentials: 'include',
+    headers: {
+      Accept: 'application/json',
+      Authorization: `Bearer ${apiKey}`,
+      ...init.headers,
+    },
+  })
+}
+
+function parseDownloadFilename(
+  contentDisposition: string | null,
+  fallback: string
+): string {
+  if (!contentDisposition) return fallback
+  for (const segment of contentDisposition.split(';')) {
+    const part = segment.trim()
+    const lower = part.toLowerCase()
+    if (lower.startsWith('filename*=')) {
+      const value = part.slice('filename*='.length).trim()
+      const encoded = value.replace(/^UTF-8''/i, '').replace(/^"(.*)"$/, '$1')
+      try {
+        return decodeURIComponent(encoded)
+      } catch {
+        return encoded || fallback
+      }
+    }
+    if (lower.startsWith('filename=')) {
+      return part
+        .slice('filename='.length)
+        .trim()
+        .replace(/^"(.*)"$/, '$1')
+    }
+  }
+  return fallback
 }
 
 export function createImageGenerationTask(
@@ -97,7 +130,10 @@ export function createImageGenerationTask(
 ): Promise<PublicImageTask> {
   return imageTaskRequest(apiKey, '/v1/image-tasks/generations', {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: {
+      'Content-Type': 'application/json',
+      'Idempotency-Key': input.client_task_id,
+    },
     body: JSON.stringify(generationPayload(input)),
   })
 }
@@ -107,7 +143,10 @@ export function createImageEditTask(
   input: ImageEditTaskInput
 ): Promise<PublicImageTask> {
   const form = new FormData()
-  form.set('image', input.image)
+  const imageFieldName = input.images.length > 1 ? 'image[]' : 'image'
+  for (const image of input.images) {
+    form.append(imageFieldName, image)
+  }
   form.set('model', input.model)
   form.set('prompt', input.prompt)
   form.set('client_task_id', input.client_task_id)
@@ -115,10 +154,12 @@ export function createImageEditTask(
   if (input.n) form.set('n', String(input.n))
   if (input.size) form.set('size', input.size)
   if (input.quality) form.set('quality', input.quality)
-  if (input.response_format) form.set('response_format', input.response_format)
 
   return imageTaskRequest(apiKey, '/v1/image-tasks/edits', {
     method: 'POST',
+    headers: {
+      'Idempotency-Key': input.client_task_id,
+    },
     body: form,
   })
 }
@@ -153,6 +194,41 @@ export function getImageTaskResult(
     `/v1/image-tasks/${encodeURIComponent(taskId)}/result`,
     { method: 'GET' }
   )
+}
+
+export async function downloadImageTaskResult(
+  apiKey: string,
+  taskId: string,
+  imageIndex: number
+): Promise<ImageTaskDownload> {
+  const response = await imageTaskFetch(
+    apiKey,
+    `/v1/image-tasks/${encodeURIComponent(taskId)}/result/${imageIndex}/download`,
+    {
+      method: 'GET',
+      headers: { Accept: 'application/octet-stream' },
+    }
+  )
+  if (!response.ok) {
+    const payload = (await response
+      .json()
+      .catch(() => null)) as PublicImageTaskErrorResponse | null
+    const error = payload?.error
+    throw new ImageTaskRequestError(
+      response.status,
+      error?.code || 'image_task_request_failed',
+      error?.message || 'Image workbench request failed'
+    )
+  }
+
+  const filename = parseDownloadFilename(
+    response.headers.get('Content-Disposition'),
+    `${taskId}-${imageIndex + 1}`
+  )
+  return {
+    blob: await response.blob(),
+    filename,
+  }
 }
 
 export function acknowledgeImageTaskResult(

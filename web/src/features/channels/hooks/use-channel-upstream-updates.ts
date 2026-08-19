@@ -177,8 +177,9 @@ function isRequestCancelled(error: unknown): boolean {
 function getErrorStatus(error: unknown): number | undefined {
   if (!isRecord(error)) return undefined
   const response = error.response
-  if (!isRecord(response) || typeof response.status !== 'number')
+  if (!isRecord(response) || typeof response.status !== 'number') {
     return undefined
+  }
   return response.status
 }
 

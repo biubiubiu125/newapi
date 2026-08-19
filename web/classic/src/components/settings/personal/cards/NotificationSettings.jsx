@@ -61,10 +61,10 @@ const defaultSidebarModules = {
     enabled: true,
     detail: true,
     token: true,
-    image2: true,
     model_check: true,
     log: true,
     midjourney: true,
+    image_tasks: true,
     task: true,
   },
   personal: {
@@ -287,7 +287,6 @@ const NotificationSettings = ({
       modules: [
         { key: 'detail', title: '数据看板', description: '系统数据统计' },
         { key: 'token', title: '令牌管理', description: 'API 令牌管理' },
-        { key: 'image2', title: 'Image2生图', description: '外部图片生成入口' },
         {
           key: 'model_check',
           title: '模型状态监测',
@@ -295,6 +294,11 @@ const NotificationSettings = ({
         },
         { key: 'log', title: '使用日志', description: 'API 使用记录' },
         { key: 'midjourney', title: '绘图日志', description: '绘图任务记录' },
+        {
+          key: 'image_tasks',
+          title: '生图工作台',
+          description: '内置文生图、图生图和生成历史',
+        },
         { key: 'task', title: '任务日志', description: '系统任务记录' },
       ],
     },

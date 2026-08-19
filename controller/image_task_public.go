@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"io"
@@ -15,12 +16,12 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
 
@@ -28,6 +29,15 @@ import (
 )
 
 const publicImageTaskAckGrace = 2 * time.Minute
+
+type publicImageTaskResultPayload struct {
+	Data []publicImageTaskResultImage `json:"data"`
+}
+
+type publicImageTaskResultImage struct {
+	URL     string `json:"url"`
+	B64JSON string `json:"b64_json"`
+}
 
 func RequirePublicImageTaskContentType(relayMode int) gin.HandlerFunc {
 	return func(c *gin.Context) {
@@ -71,6 +81,24 @@ func ReusePublicImageTaskEditIfExists(c *gin.Context) {
 
 func ReusePublicImageTaskIfExists(c *gin.Context, relayMode int) {
 	defer cleanupPublicImageTaskMultipartForm(c)
+	headerTaskID, err := imageTaskClientTaskIDFromIdempotencyKey(c)
+	if err != nil {
+		publicImageTaskError(c, http.StatusBadRequest, "invalid_request", err.Error())
+		c.Abort()
+		return
+	}
+	c.Set("relay_mode", relayMode)
+	if headerTaskID != "" {
+		reusable, err := publicImageTaskIdempotencyAlreadyInFlightOrReusable(c, headerTaskID)
+		if err != nil {
+			publicImageTaskError(c, http.StatusInternalServerError, "task_query_failed", "failed to query image task")
+			c.Abort()
+			return
+		}
+		if !reusable && !precheckPublicImageTaskCreateAdmission(c, headerTaskID) {
+			return
+		}
+	}
 	clientTaskID, err := publicImageTaskIdempotencyCandidate(c, relayMode)
 	if err != nil {
 		if isImageTaskRequestStorageError(err) {
@@ -87,14 +115,22 @@ func ReusePublicImageTaskIfExists(c *gin.Context, relayMode int) {
 		return
 	}
 
-	c.Set("relay_mode", relayMode)
+	reusable, err := publicImageTaskIdempotencyAlreadyInFlightOrReusable(c, clientTaskID)
+	if err != nil {
+		publicImageTaskError(c, http.StatusInternalServerError, "task_query_failed", "failed to query image task")
+		c.Abort()
+		return
+	}
+	if !reusable && !precheckPublicImageTaskCreateAdmission(c, clientTaskID) {
+		return
+	}
 	imageRequest, err := helper.GetAndValidOpenAIImageRequest(c, relayMode)
 	if err != nil {
 		publicImageTaskError(c, http.StatusBadRequest, "invalid_request", err.Error())
 		c.Abort()
 		return
 	}
-	persisted, err := persistImageTaskRequest(c, relayMode, imageRequest.Model)
+	persisted, err := persistImageTaskRequestWithOverrides(c, relayMode, imageTaskRequestOverridesFromRequest(c, imageRequest))
 	if err != nil {
 		respondPublicImageTaskRequestStorageError(c, err)
 		c.Abort()
@@ -179,6 +215,82 @@ func ReusePublicImageTaskIfExists(c *gin.Context, relayMode int) {
 	}
 	c.JSON(http.StatusAccepted, publicImageTaskResponse(task, time.Now().Unix()))
 	c.Abort()
+}
+
+func publicImageTaskIdempotencyAlreadyInFlightOrReusable(c *gin.Context, clientTaskID string) (bool, error) {
+	if c == nil {
+		return false, nil
+	}
+	if task, exists, err := model.GetImageTaskByClientTaskID(c.GetInt("id"), clientTaskID); err != nil {
+		return false, err
+	} else if exists && task != nil {
+		return true, nil
+	}
+	if lock, exists, err := model.GetImageTaskClientTaskIDLock(c.GetInt("id"), clientTaskID); err != nil {
+		return false, err
+	} else if exists && lock != nil {
+		return true, nil
+	}
+	return false, nil
+}
+
+func precheckPublicImageTaskCreateAdmission(c *gin.Context, clientTaskID string) bool {
+	err := model.CheckImageTaskCreateAdmission(
+		c.GetInt("id"),
+		c.GetInt("token_id"),
+		publicImageTaskCreateReservedBytes(c),
+		0,
+		publicImageTaskCreateAdmissionLimits(),
+	)
+	if err == nil {
+		return true
+	}
+	// A same-key task/reservation may have appeared between the cheap lookup and
+	// the precheck. Let that request enter the idempotency path so replays still
+	// bypass new-work guards.
+	if reusable, lookupErr := publicImageTaskIdempotencyAlreadyInFlightOrReusable(c, clientTaskID); lookupErr == nil && reusable {
+		return true
+	} else if lookupErr != nil {
+		publicImageTaskError(c, http.StatusInternalServerError, "task_query_failed", "failed to query image task")
+		c.Abort()
+		return false
+	}
+	switch {
+	case errors.Is(err, model.ErrImageTaskCreateRateLimitExceeded):
+		c.Header("Retry-After", strconv.FormatInt(int64(constant.ImageTaskCreateRateLimitDurationSeconds), 10))
+		publicImageTaskError(c, http.StatusTooManyRequests, "rate_limit_exceeded", "image task creation rate limit exceeded")
+	case errors.Is(err, model.ErrImageTaskCreateCapacityExceeded):
+		c.Header("Retry-After", "1")
+		publicImageTaskError(c, http.StatusTooManyRequests, "rate_limit_exceeded", "image task creation capacity is temporarily full")
+	default:
+		common.SysLog("image task create admission precheck failed: " + err.Error())
+		publicImageTaskError(c, http.StatusInternalServerError, "internal_error", "image task admission failed")
+	}
+	c.Abort()
+	return false
+}
+
+func publicImageTaskCreateReservedBytes(c *gin.Context) int64 {
+	maxBodyMB := constant.MaxRequestBodyMB
+	if maxBodyMB <= 0 {
+		maxBodyMB = 128
+	}
+	maxBodyBytes := int64(maxBodyMB) << 20
+	reservedBytes := c.Request.ContentLength
+	if reservedBytes <= 0 || reservedBytes > maxBodyBytes {
+		return maxBodyBytes
+	}
+	return reservedBytes
+}
+
+func publicImageTaskCreateAdmissionLimits() model.ImageTaskCreateAdmissionLimits {
+	return model.ImageTaskCreateAdmissionLimits{
+		RequestLimit:          constant.ImageTaskCreateRateLimitCount,
+		WindowSeconds:         int64(constant.ImageTaskCreateRateLimitDurationSeconds),
+		MaxInFlight:           constant.ImageTaskCreateMaxInFlight,
+		MaxReservedBytes:      int64(constant.ImageTaskCreateMaxReservedMB) << 20,
+		ReservationTTLSeconds: 600,
+	}
 }
 
 func publicImageTaskIdempotencyCandidate(c *gin.Context, relayMode int) (string, error) {
@@ -408,6 +520,68 @@ func GetPublicImageTaskResult(c *gin.Context) {
 	}
 	c.Header("Content-Length", strconv.FormatInt(int64(len(result)), 10))
 	c.Data(http.StatusOK, "application/json; charset=utf-8", result)
+}
+
+func DownloadPublicImageTaskResultImage(c *gin.Context) {
+	task, ok := loadAuthorizedPublicImageTask(c)
+	if !ok {
+		return
+	}
+	if task.Status != model.TaskStatusSuccess || task.SettlementStatus != model.TaskSettlementStatusSettled {
+		publicImageTaskError(c, http.StatusConflict, "result_not_ready", "image task result is not ready")
+		return
+	}
+	now := time.Now().Unix()
+	if !publicImageTaskResultAvailable(task, now) {
+		publicImageTaskError(c, http.StatusGone, "result_expired", "image task result is no longer available")
+		return
+	}
+	imageIndex, err := strconv.Atoi(strings.TrimSpace(c.Param("image_index")))
+	if err != nil || imageIndex < 0 {
+		publicImageTaskError(c, http.StatusBadRequest, "invalid_request", "invalid image result index")
+		return
+	}
+
+	release, err := service.AcquireImageTaskResultDownloadSlot(c.GetInt("token_id"))
+	if err != nil {
+		c.Header("Retry-After", "1")
+		publicImageTaskError(c, http.StatusTooManyRequests, "rate_limit_exceeded", "too many concurrent image task result downloads")
+		return
+	}
+	defer release()
+
+	result, availability, resultErr := imageTaskResponseResult(task)
+	if availability == imageTaskResultUnreadable {
+		logger.LogWarn(c, fmt.Sprintf(
+			"image task %s result unreadable before image download on node %q (shared result cache enabled=%t, stored path set=%t): %s",
+			task.TaskID,
+			common.NodeName,
+			service.ImageTaskResultFileCacheSharedEnabled(),
+			strings.TrimSpace(task.PrivateData.ResultBodyPath) != "",
+			resultErr,
+		))
+		c.Header("Retry-After", "5")
+		publicImageTaskError(c, http.StatusServiceUnavailable, "result_temporarily_unavailable", "image task result is temporarily unavailable, please retry")
+		return
+	}
+	if resultErr != "" || len(result) == 0 {
+		publicImageTaskError(c, http.StatusGone, "result_expired", "image task result is no longer available")
+		return
+	}
+
+	item, err := publicImageTaskResultImageAt(result, imageIndex)
+	if err != nil {
+		publicImageTaskError(c, http.StatusBadRequest, "invalid_request", err.Error())
+		return
+	}
+	contentType, data, err := publicImageTaskResultImageBytes(item)
+	if err != nil {
+		logger.LogWarn(c, fmt.Sprintf("image task %s result image %d download failed: %s", task.TaskID, imageIndex, err.Error()))
+		c.Header("Retry-After", "5")
+		publicImageTaskError(c, http.StatusServiceUnavailable, "result_temporarily_unavailable", "image task result is temporarily unavailable, please retry")
+		return
+	}
+	writePublicImageTaskResultImageDownload(c, task.TaskID, imageIndex, contentType, data)
 }
 
 func AcknowledgePublicImageTaskResult(c *gin.Context) {
@@ -726,11 +900,161 @@ func publicImageTaskResultExpiry(task *model.Task) int64 {
 		}
 	}
 	// ACK 之后真正的删除时间是 ResultDeleteAfter（ACK 时间 + 2 分钟缓冲），必须收敛到它，
-	// 否则客户端会拿到一个最多 12 小时后的过期时间，然后在两分钟后就吃到 410。
+	// 否则客户端会拿到一个最多 72 小时后的过期时间，然后在两分钟后就吃到 410。
 	if task.ResultDeleteAfter > 0 && (expiresAt == 0 || task.ResultDeleteAfter < expiresAt) {
 		expiresAt = task.ResultDeleteAfter
 	}
 	return expiresAt
+}
+
+func publicImageTaskResultImageAt(result []byte, imageIndex int) (publicImageTaskResultImage, error) {
+	if imageIndex < 0 {
+		return publicImageTaskResultImage{}, errors.New("invalid image result index")
+	}
+	var payload publicImageTaskResultPayload
+	if err := common.Unmarshal(result, &payload); err != nil {
+		return publicImageTaskResultImage{}, errors.New("image task result is not a valid image response")
+	}
+	if len(payload.Data) == 0 {
+		return publicImageTaskResultImage{}, errors.New("image task result is empty")
+	}
+	if imageIndex >= len(payload.Data) {
+		return publicImageTaskResultImage{}, errors.New("image result index is out of range")
+	}
+	return payload.Data[imageIndex], nil
+}
+
+func publicImageTaskResultImageBytes(item publicImageTaskResultImage) (string, []byte, error) {
+	if b64JSON := strings.TrimSpace(item.B64JSON); b64JSON != "" {
+		return decodePublicImageTaskResultBase64(b64JSON)
+	}
+	resultURL := strings.TrimSpace(item.URL)
+	if resultURL == "" {
+		return "", nil, errors.New("image result has no downloadable content")
+	}
+	if strings.HasPrefix(strings.ToLower(resultURL), "data:") {
+		return decodePublicImageTaskResultBase64(resultURL)
+	}
+	contentType, data, err := service.GetImageFromUrl(resultURL)
+	if err != nil {
+		return "", nil, err
+	}
+	return decodePublicImageTaskResultBase64WithContentType(contentType, data)
+}
+
+func decodePublicImageTaskResultBase64(value string) (string, []byte, error) {
+	contentType, cleanBase64, err := service.DecodeBase64FileData(value)
+	if err != nil {
+		return "", nil, err
+	}
+	return decodePublicImageTaskResultBase64WithContentType(contentType, cleanBase64)
+}
+
+func decodePublicImageTaskResultBase64WithContentType(contentType string, cleanBase64 string) (string, []byte, error) {
+	data, err := base64.StdEncoding.DecodeString(cleanBase64)
+	if err != nil {
+		return "", nil, err
+	}
+	contentType, err = publicImageTaskDownloadContentType(contentType, data)
+	if err != nil {
+		return "", nil, err
+	}
+	if err := publicImageTaskValidateDownloadImage(contentType, data); err != nil {
+		return "", nil, err
+	}
+	return contentType, data, nil
+}
+
+func publicImageTaskValidateDownloadImage(contentType string, data []byte) error {
+	if !strings.HasPrefix(contentType, "image/") {
+		return fmt.Errorf("invalid content type: %s", contentType)
+	}
+	if _, _, _, err := service.DecodeBase64ImageData(base64.StdEncoding.EncodeToString(data)); err != nil {
+		return fmt.Errorf("invalid image data: %w", err)
+	}
+	return nil
+}
+
+func publicImageTaskDownloadContentType(contentType string, data []byte) (string, error) {
+	contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	if contentType == "" || contentType == "application/octet-stream" {
+		sniffed := strings.ToLower(strings.TrimSpace(strings.Split(http.DetectContentType(data), ";")[0]))
+		if strings.HasPrefix(sniffed, "image/") {
+			return sniffed, nil
+		}
+		return "", fmt.Errorf("invalid image content type: %s", sniffed)
+	}
+	return contentType, nil
+}
+
+func writePublicImageTaskResultImageDownload(c *gin.Context, taskID string, imageIndex int, contentType string, data []byte) {
+	if contentType == "" {
+		contentType = "application/octet-stream"
+	}
+	filename := fmt.Sprintf(
+		"%s-%d%s",
+		safePublicImageTaskDownloadFilenameComponent(taskID),
+		imageIndex+1,
+		publicImageTaskDownloadExtension(contentType, data),
+	)
+	c.Header("Cache-Control", "no-store")
+	c.Header("Content-Disposition", "attachment; filename="+strconv.Quote(filename))
+	c.Header("Content-Length", strconv.Itoa(len(data)))
+	c.Header("X-Content-Type-Options", "nosniff")
+	c.Data(http.StatusOK, contentType, data)
+}
+
+func publicImageTaskDownloadExtension(contentType string, data []byte) string {
+	if detectedContentType, err := publicImageTaskDownloadContentType(contentType, data); err == nil {
+		contentType = detectedContentType
+	} else {
+		contentType = strings.ToLower(strings.TrimSpace(strings.Split(contentType, ";")[0]))
+	}
+	switch contentType {
+	case "image/jpeg", "image/jpg":
+		return ".jpg"
+	case "image/png":
+		return ".png"
+	case "image/webp":
+		return ".webp"
+	case "image/gif":
+		return ".gif"
+	case "image/bmp":
+		return ".bmp"
+	case "image/avif":
+		return ".avif"
+	}
+	if exts, err := mime.ExtensionsByType(contentType); err == nil && len(exts) > 0 {
+		return exts[0]
+	}
+	return ".png"
+}
+
+func safePublicImageTaskDownloadFilenameComponent(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "image-task"
+	}
+	var builder strings.Builder
+	builder.Grow(len(value))
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z',
+			r >= 'A' && r <= 'Z',
+			r >= '0' && r <= '9',
+			r == '-',
+			r == '_',
+			r == '.':
+			builder.WriteRune(r)
+		default:
+			builder.WriteByte('_')
+		}
+	}
+	filename := strings.Trim(builder.String(), "._-")
+	if filename == "" {
+		return "image-task"
+	}
+	return filename
 }
 
 func publicImageTaskError(c *gin.Context, status int, code string, message string) {

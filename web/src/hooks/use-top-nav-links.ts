@@ -96,12 +96,6 @@ export function useTopNavLinks(): TopNavLink[] {
   }
 
   links.push({
-    title: 'Image2生图',
-    href: 'https://image.rkai6.com',
-    external: true,
-  })
-
-  links.push({
     title: '模型状态监测',
     href: 'https://cx.rkai6.com/',
     external: true,

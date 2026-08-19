@@ -48,7 +48,6 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/dashboard/models': { section: 'console', module: 'detail' },
   '/dashboard/users': { section: 'console', module: 'detail' },
   '/keys': { section: 'console', module: 'token' },
-  'sidebar:console.image2': { section: 'console', module: 'image2' },
   'sidebar:console.model_check': {
     section: 'console',
     module: 'model_check',
@@ -56,6 +55,7 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
   '/usage-logs': { section: 'console', module: 'log' },
   '/usage-logs/common': { section: 'console', module: 'log' },
   '/usage-logs/drawing': { section: 'console', module: 'midjourney' },
+  '/image-tasks': { section: 'console', module: 'image_tasks' },
   '/usage-logs/task': { section: 'console', module: 'task' },
   '/tickets': { section: 'personal', module: 'tickets' },
   '/wallet': { section: 'personal', module: 'topup' },

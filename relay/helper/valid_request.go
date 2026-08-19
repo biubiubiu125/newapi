@@ -1,10 +1,17 @@
 package helper
 
 import (
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/gif"
+	_ "image/jpeg"
+	_ "image/png"
+	"io"
 	"math"
+	"mime/multipart"
 	"net/url"
 	"strconv"
 	"strings"
@@ -15,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/samber/lo"
+	"golang.org/x/image/webp"
 
 	"github.com/gin-gonic/gin"
 )
@@ -202,7 +210,7 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 				return nil, err
 			}
 			if publicImageTask && imageRequest.Model == "" {
-				imageRequest.Model = "gpt-image-1"
+				imageRequest.Model = "gpt-image-2"
 			}
 
 			if imageRequest.Model == "gpt-image-1" {
@@ -214,16 +222,32 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 					}
 				}
 			}
+			if publicImageTask && imageRequest.Model == "gpt-image-2" && imageRequest.Quality == "" {
+				imageRequest.Quality = "high"
+			}
 			if imageRequest.N == nil || *imageRequest.N == 0 {
 				imageRequest.N = common.GetPointer(uint(1))
+			}
+			if publicImageTask && *imageRequest.N != 1 {
+				return nil, errors.New("n must be 1 for image task requests; create multiple tasks for counts greater than one")
 			}
 
 			if publicImageTask {
 				if strings.TrimSpace(imageRequest.Prompt) == "" {
 					return nil, errors.New("prompt is required")
 				}
-				if len(form.File["image"]) == 0 {
+				if err := validatePublicImageTaskSize(imageRequest.Size); err != nil {
+					return nil, err
+				}
+				imageCount := countOpenAIImageEditFiles(form)
+				if imageCount == 0 {
 					return nil, errors.New("image is required")
+				}
+				if imageCount > 6 {
+					return nil, errors.New("image count must be between 1 and 6")
+				}
+				if err := ValidateOpenAIImageEditFiles(form); err != nil {
+					return nil, err
 				}
 			}
 			break
@@ -238,9 +262,9 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 		if publicImageTask && imageRequest.Model == "" {
 			switch relayMode {
 			case relayconstant.RelayModeImagesGenerations:
-				imageRequest.Model = "dall-e"
+				imageRequest.Model = "gpt-image-2"
 			case relayconstant.RelayModeImagesEdits:
-				imageRequest.Model = "gpt-image-1"
+				imageRequest.Model = "gpt-image-2"
 			}
 		}
 
@@ -280,9 +304,17 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 				imageRequest.Quality = "auto"
 			}
 		}
+		if publicImageTask && imageRequest.Model == "gpt-image-2" && imageRequest.Quality == "" {
+			imageRequest.Quality = "high"
+		}
 
 		if publicImageTask && strings.TrimSpace(imageRequest.Prompt) == "" {
 			return nil, errors.New("prompt is required")
+		}
+		if publicImageTask {
+			if err := validatePublicImageTaskSize(imageRequest.Size); err != nil {
+				return nil, err
+			}
 		}
 		if publicImageTask && relayMode == relayconstant.RelayModeImagesEdits && len(imageRequest.Image) == 0 {
 			return nil, errors.New("image is required")
@@ -291,9 +323,191 @@ func GetAndValidOpenAIImageRequest(c *gin.Context, relayMode int) (*dto.ImageReq
 		if imageRequest.N == nil || *imageRequest.N == 0 {
 			imageRequest.N = common.GetPointer(uint(1))
 		}
+		if publicImageTask && *imageRequest.N != 1 {
+			return nil, errors.New("n must be 1 for image task requests; create multiple tasks for counts greater than one")
+		}
 	}
 
 	return imageRequest, nil
+}
+
+func countOpenAIImageEditFiles(form *multipart.Form) int {
+	if form == nil || len(form.File) == 0 {
+		return 0
+	}
+	count := 0
+	for fieldName, files := range form.File {
+		if isOpenAIImageEditFileField(fieldName) {
+			count += len(files)
+		}
+	}
+	return count
+}
+
+func isOpenAIImageEditFileField(fieldName string) bool {
+	if fieldName == "image" || fieldName == "image[]" {
+		return true
+	}
+	if !strings.HasPrefix(fieldName, "image[") || !strings.HasSuffix(fieldName, "]") {
+		return false
+	}
+	index := strings.TrimSuffix(strings.TrimPrefix(fieldName, "image["), "]")
+	if index == "" {
+		return false
+	}
+	for _, ch := range index {
+		if ch < '0' || ch > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+const openAIImageEditMaxUploadBytes = 64 << 20
+
+func OpenValidatedOpenAIImageEditFile(fileHeader *multipart.FileHeader, fieldName string) (io.ReadCloser, string, error) {
+	if fileHeader == nil {
+		return nil, "", fmt.Errorf("%s is required", fieldName)
+	}
+	if fileHeader.Size > openAIImageEditMaxUploadBytes {
+		return nil, "", fmt.Errorf("%s exceeds maximum allowed size of %d MB", fieldName, openAIImageEditMaxUploadBytes>>20)
+	}
+
+	file, err := fileHeader.Open()
+	if err != nil {
+		return nil, "", fmt.Errorf("failed to open %s: %w", fieldName, err)
+	}
+
+	data, readErr := io.ReadAll(io.LimitReader(file, int64(openAIImageEditMaxUploadBytes)+1))
+	closeErr := file.Close()
+	if readErr != nil {
+		return nil, "", fmt.Errorf("failed to read %s: %w", fieldName, readErr)
+	}
+	if closeErr != nil {
+		return nil, "", fmt.Errorf("failed to close %s: %w", fieldName, closeErr)
+	}
+	if len(data) > openAIImageEditMaxUploadBytes {
+		return nil, "", fmt.Errorf("%s exceeds maximum allowed size of %d MB", fieldName, openAIImageEditMaxUploadBytes>>20)
+	}
+	if len(data) == 0 {
+		return nil, "", fmt.Errorf("%s is empty", fieldName)
+	}
+
+	contentType, err := validateOpenAIImageData(data)
+	if err != nil {
+		return nil, "", fmt.Errorf("%s is not a valid image: %w", fieldName, err)
+	}
+
+	return io.NopCloser(bytes.NewReader(data)), contentType, nil
+}
+
+func ValidateOpenAIImageEditFiles(form *multipart.Form) error {
+	if form == nil || len(form.File) == 0 {
+		return nil
+	}
+	for fieldName, files := range form.File {
+		if fieldName != "mask" && !isOpenAIImageEditFileField(fieldName) {
+			continue
+		}
+		for index, fileHeader := range files {
+			readCloser, _, err := OpenValidatedOpenAIImageEditFile(fileHeader, openAIImageEditFieldLabel(fieldName, index))
+			if err != nil {
+				return err
+			}
+			_ = readCloser.Close()
+		}
+	}
+	return nil
+}
+
+func openAIImageEditFieldLabel(fieldName string, index int) string {
+	if index <= 0 {
+		return fieldName
+	}
+	return fmt.Sprintf("%s[%d]", fieldName, index)
+}
+
+func detectOpenAIImageContentType(data []byte) (string, error) {
+	if len(data) == 0 {
+		return "", errors.New("image data is empty")
+	}
+
+	if _, format, err := image.DecodeConfig(bytes.NewReader(data)); err == nil {
+		if contentType, ok := openAIImageFormatToContentType(format); ok {
+			return contentType, nil
+		}
+		return "", fmt.Errorf("unsupported image format: %s", format)
+	}
+
+	if _, err := webp.DecodeConfig(bytes.NewReader(data)); err == nil {
+		return "image/webp", nil
+	}
+
+	return "", errors.New("unsupported or corrupted image")
+}
+
+func validateOpenAIImageData(data []byte) (string, error) {
+	contentType, err := detectOpenAIImageContentType(data)
+	if err != nil {
+		return "", err
+	}
+
+	if contentType == "image/webp" {
+		if _, err := webp.Decode(bytes.NewReader(data)); err != nil {
+			return "", fmt.Errorf("unsupported or corrupted image: %w", err)
+		}
+		return contentType, nil
+	}
+
+	if _, _, err := image.Decode(bytes.NewReader(data)); err != nil {
+		return "", fmt.Errorf("unsupported or corrupted image: %w", err)
+	}
+	return contentType, nil
+}
+
+func openAIImageFormatToContentType(format string) (string, bool) {
+	switch strings.ToLower(strings.TrimSpace(format)) {
+	case "jpeg", "jpg":
+		return "image/jpeg", true
+	case "png":
+		return "image/png", true
+	case "gif":
+		return "image/gif", true
+	case "webp":
+		return "image/webp", true
+	default:
+		return "", false
+	}
+}
+
+func validatePublicImageTaskSize(size string) error {
+	size = strings.TrimSpace(size)
+	if size == "" {
+		return nil
+	}
+	if strings.Contains(size, "×") {
+		return errors.New("size an unexpected error occurred in the parameter, please use 'x' instead of the multiplication sign '×'")
+	}
+	parts := strings.Split(size, "x")
+	if len(parts) != 2 || strings.TrimSpace(parts[0]) == "" || strings.TrimSpace(parts[1]) == "" {
+		return errors.New("size must use WIDTHxHEIGHT format")
+	}
+	width, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+	if err != nil || width <= 0 {
+		return errors.New("width must be a positive integer")
+	}
+	height, err := strconv.Atoi(strings.TrimSpace(parts[1]))
+	if err != nil || height <= 0 {
+		return errors.New("height must be a positive integer")
+	}
+	if width%16 != 0 || height%16 != 0 {
+		return errors.New("width and height must be multiples of 16")
+	}
+	ratio := float64(width) / float64(height)
+	if ratio > 3 || ratio < 1.0/3.0 {
+		return errors.New("size ratio must be between 1:3 and 3:1")
+	}
+	return nil
 }
 
 func populateImageRequestFromMultipart(imageRequest *dto.ImageRequest, formData url.Values, publicImageTask bool) error {

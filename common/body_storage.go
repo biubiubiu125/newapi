@@ -510,7 +510,7 @@ func ReaderOnly(r io.Reader) io.Reader {
 }
 
 func GetImageTaskResultCacheRetention() time.Duration {
-	const maxRetention = 12 * time.Hour
+	const maxRetention = 72 * time.Hour
 	if constant.ImageTaskResultRetentionMinutes > 0 {
 		retention := time.Duration(constant.ImageTaskResultRetentionMinutes) * time.Minute
 		if retention > 0 && retention < maxRetention {

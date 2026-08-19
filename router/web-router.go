@@ -37,10 +37,18 @@ func SetWebRouter(router *gin.Engine, assets ThemeAssets) {
 			return
 		}
 		c.Header("Cache-Control", "no-cache")
+		if defaultThemeWorkbenchRoute(c.Request.URL.Path) {
+			c.Data(http.StatusOK, "text/html; charset=utf-8", assets.DefaultIndexPage)
+			return
+		}
 		if common.GetTheme() == "classic" {
 			c.Data(http.StatusOK, "text/html; charset=utf-8", assets.ClassicIndexPage)
 			return
 		}
 		c.Data(http.StatusOK, "text/html; charset=utf-8", assets.DefaultIndexPage)
 	})
+}
+
+func defaultThemeWorkbenchRoute(path string) bool {
+	return path == "/image-tasks" || strings.HasPrefix(path, "/image-tasks/")
 }
