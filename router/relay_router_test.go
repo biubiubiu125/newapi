@@ -1,26 +1,21 @@
 package router
 
 import (
-<<<<<<< HEAD
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
-=======
-	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"os"
->>>>>>> 3d5dc36f1 (fix: 修复 Gemini 风格 /v1/models 列表请求 (#6199))
 	"strings"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
-<<<<<<< HEAD
+	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -358,12 +353,6 @@ func TestPublicImageTaskCreateRoutesReuseExistingWorkBeforeNewWorkGuards(t *test
 		})
 	}
 }
-=======
-	"github.com/QuantumNous/new-api/model"
-	"github.com/gin-gonic/gin"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-)
 
 func TestListModelsSupportsOpenAIAndGeminiAuthentication(t *testing.T) {
 	setupRelayRouterTestDB(t)
@@ -474,4 +463,3 @@ func setupRelayRouterTestDB(t *testing.T) {
 		}
 	})
 }
->>>>>>> 3d5dc36f1 (fix: 修复 Gemini 风格 /v1/models 列表请求 (#6199))
