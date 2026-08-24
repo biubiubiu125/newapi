@@ -90,6 +90,31 @@ return 1`
 	).Int()
 }
 
+// cacheUpdateTokenAccessedTime updates only a complete token hash. Missing or
+// fenced hashes are left untouched so an access-time write cannot create a
+// partial cache entry or race a metadata mutation.
+func cacheUpdateTokenAccessedTime(key string, accessedAt int64) error {
+	if !common.RedisEnabled || key == "" {
+		return nil
+	}
+	const script = `
+if redis.call('EXISTS', KEYS[2]) == 1 then
+  return 0
+end
+if redis.call('HEXISTS', KEYS[1], 'Id') == 0
+  or redis.call('HEXISTS', KEYS[1], 'RemainQuota') == 0
+  or redis.call('HEXISTS', KEYS[1], 'UsedQuota') == 0 then
+  return 0
+end
+redis.call('HSET', KEYS[1], 'AccessedTime', ARGV[1])
+redis.call('EXPIRE', KEYS[1], ARGV[2])
+return 1`
+	_, err := common.RDB.Eval(context.Background(), script, []string{
+		getTokenCacheKey(key), getTokenCacheFenceKey(key),
+	}, accessedAt, tokenCacheTTLSeconds()).Int()
+	return err
+}
+
 // cacheGetTokenByKey 从缓存读取 token；不完整的哈希（如仅有配额字段）会被拒绝。
 func cacheGetTokenByKey(key string) (*Token, error) {
 	if !common.RedisEnabled {

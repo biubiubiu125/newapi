@@ -165,19 +165,25 @@ export function FetchModelsDialog({
       if (customFetcher) {
         const list = await customFetcher()
         if (!isCurrentFetch()) return
-        setFetchedModels(list)
+        const normalizedList = normalizeModelNameList(list)
+        setFetchedModels(normalizedList)
         setSelectedModels(existingModelsSnapshot)
         setHasSuccessfulFetch(true)
-        toast.success(t('Fetched {{count}} models', { count: list.length }))
+        toast.success(
+          t('Fetched {{count}} models', { count: normalizedList.length })
+        )
       } else if (activeChannel) {
         const response = await fetchUpstreamModels(activeChannel.id)
         if (!isCurrentFetch()) return
         if (response.success) {
           const list = Array.isArray(response.data) ? response.data : []
-          setFetchedModels(list)
+          const normalizedList = normalizeModelNameList(list)
+          setFetchedModels(normalizedList)
           setSelectedModels(existingModelsSnapshot)
           setHasSuccessfulFetch(true)
-          toast.success(t('Fetched {{count}} models', { count: list.length }))
+          toast.success(
+            t('Fetched {{count}} models', { count: normalizedList.length })
+          )
         } else {
           toast.error(response.message || t('Failed to fetch models'))
           setFetchedModels([])

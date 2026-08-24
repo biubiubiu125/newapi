@@ -70,17 +70,6 @@ func updateUserUsedQuotaAndRequestCountWithDB(db *gorm.DB, id int, quota int, co
 	return nil
 }
 
-func UpdateUserUsedQuota(id int, quota int) {
-	if quota == 0 {
-		return
-	}
-	go func() {
-		if err := updateUserUsedQuota(id, quota); err != nil {
-			common.SysLog(fmt.Sprintf("failed to update user used quota: user_id=%d, delta_quota=%d, error=%v", id, quota, err))
-		}
-	}()
-}
-
 func UpdateUserUsedQuotaSync(id int, quota int) error {
 	return updateUserUsedQuota(id, quota)
 }

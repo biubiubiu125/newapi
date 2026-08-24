@@ -51,6 +51,30 @@ func TestUpdateChannelStatusPersistsMultiKeyState(t *testing.T) {
 	assert.Equal(t, 1, stored.ChannelInfo.MultiKeyPollingIndex)
 }
 
+func TestUpdateChannelStatusRefreshesReasonWithoutOverwritingOwnedColumns(t *testing.T) {
+	setupChannelStatusTest(t)
+
+	channel := Channel{
+		Name:   "refresh-status-reason",
+		Key:    "original-key",
+		Status: common.ChannelStatusAutoDisabled,
+		Models: "original-model",
+	}
+	require.NoError(t, DB.Create(&channel).Error)
+
+	changed := UpdateChannelStatus(channel.Id, "", common.ChannelStatusAutoDisabled, "still unavailable")
+	require.True(t, changed)
+
+	var stored Channel
+	require.NoError(t, DB.First(&stored, channel.Id).Error)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, stored.Status)
+	assert.Equal(t, "original-key", stored.Key)
+	assert.Equal(t, "original-model", stored.Models)
+	otherInfo := stored.GetOtherInfo()
+	assert.Equal(t, "still unavailable", otherInfo["status_reason"])
+	assert.NotZero(t, otherInfo["status_time"])
+}
+
 func TestSaveStatusStateFromSingleKeySnapshotPreservesUnownedColumns(t *testing.T) {
 	setupChannelStatusTest(t)
 

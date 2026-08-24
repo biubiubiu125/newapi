@@ -495,6 +495,11 @@ func handleOAuthBind(c *gin.Context, provider oauth.Provider, pendingFlow *model
 		}
 	} else {
 		// Built-in provider: claim and update recognized built-in identities atomically.
+		user := model.User{Id: userId}
+		if err := user.FillUserById(); err != nil {
+			common.ApiError(c, err)
+			return
+		}
 		claimed, claimErr := claimBuiltInOAuthIdentity(&user, pendingFlow.Provider, oauthUser.ProviderUserID)
 		if claimErr != nil {
 			common.ApiError(c, claimErr)

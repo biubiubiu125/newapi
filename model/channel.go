@@ -904,7 +904,7 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 			info["status_reason"] = reason
 			info["status_time"] = common.GetTimestamp()
 			channel.SetOtherInfo(info)
-			err = channel.SaveWithoutKey()
+			err = channel.saveStatusState()
 			if err != nil {
 				common.SysLog(fmt.Sprintf("failed to update channel status reason: channel_id=%d, status=%d, error=%v", channel.Id, status, err))
 				return false

@@ -609,7 +609,7 @@ func RefreshTokenQuotaCache(tokenId int, _ string) {
 			common.SysLog("failed to refresh token cache: " + err.Error())
 			return
 		}
-		if err := cacheSetToken(token); err != nil {
+		if _, err := cacheInitToken(token); err != nil {
 			common.SysLog("failed to refresh token cache: " + err.Error())
 		}
 	})
@@ -635,7 +635,7 @@ func TouchTokenAccessedTime(id int, accessedAt int64) error {
 	err := DB.Model(&Token{}).Where("id = ?", id).Update("accessed_time", accessedAt).Error
 	if err == nil && common.RedisEnabled && token.Key != "" {
 		gopool.Go(func() {
-			if cacheErr := cacheSetTokenField(token.Key, "accessed_time", fmt.Sprintf("%d", accessedAt)); cacheErr != nil {
+			if cacheErr := cacheUpdateTokenAccessedTime(token.Key, accessedAt); cacheErr != nil {
 				common.SysLog("failed to update token accessed time cache: " + cacheErr.Error())
 			}
 		})

@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { act, render, screen, waitFor } from '@testing-library/react'
-import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import { API_KEY_STATUS } from '@/features/keys/constants'
@@ -93,7 +92,7 @@ vi.mock('sonner', () => ({
   },
 }))
 
-const storageKey = 'newapi:image-tasks:v1'
+const storageKey = 'newapi:image-tasks:v2'
 const listImageTasksMock = vi.mocked(listImageTasks)
 const getImageTaskResultMock = vi.mocked(getImageTaskResult)
 const acknowledgeImageTaskResultMock = vi.mocked(acknowledgeImageTaskResult)
@@ -178,7 +177,7 @@ describe('image task page', () => {
     expect(listImageTasksMock).toHaveBeenCalledTimes(1)
   })
 
-  it('renders every returned image before acknowledging the result', async () => {
+  it('automatically renders every returned image', async () => {
     saveTasks(['task_completed'])
     listImageTasksMock.mockResolvedValue({
       data: [
@@ -198,12 +197,10 @@ describe('image task page', () => {
 
     renderPage()
 
-    await userEvent.click(await screen.findByRole('button', { name: /View result/i }))
-
     await waitFor(() => {
-      expect(screen.getAllByAltText('Image task result')).toHaveLength(2)
+      expect(screen.getAllByAltText('Image generation result')).toHaveLength(2)
     })
-    expect(acknowledgeImageTaskResultMock).toHaveBeenCalledWith(
+    expect(getImageTaskResultMock).toHaveBeenCalledWith(
       'sk-browser-visible-key',
       'task_completed'
     )

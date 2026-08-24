@@ -68,6 +68,12 @@ func invalidateUserCache(userId int) error {
 	return common.RedisDelKey(getUserCacheKey(userId))
 }
 
+// InvalidateUserCache is the exported cache invalidation entry point for
+// controllers and other packages that change user authorization state.
+func InvalidateUserCache(userId int) error {
+	return invalidateUserCache(userId)
+}
+
 func populateUserCache(user User) error {
 	if !common.RedisEnabled {
 		return nil

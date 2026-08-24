@@ -127,13 +127,10 @@ func TestIncreaseUserQuotaUpdatesDatabaseImmediatelyWhenBatchEnabled(t *testing.
 	require.Equal(t, 15, user.Quota)
 }
 
-func TestIncreaseTokenQuotaUpdatesDatabaseImmediatelyWhenBatchEnabled(t *testing.T) {
+func TestIncreaseTokenQuotaUpdatesDatabaseAfterBatchFlush(t *testing.T) {
 	truncateTables(t)
-	oldBatchUpdateEnabled := common.BatchUpdateEnabled
+	resetBatchUpdateTestState(t)
 	common.BatchUpdateEnabled = true
-	t.Cleanup(func() {
-		common.BatchUpdateEnabled = oldBatchUpdateEnabled
-	})
 	require.NoError(t, DB.Create(&Token{
 		Id:          9402,
 		UserId:      9304,
@@ -148,6 +145,12 @@ func TestIncreaseTokenQuotaUpdatesDatabaseImmediatelyWhenBatchEnabled(t *testing
 
 	require.NoError(t, err)
 	var token Token
+	require.NoError(t, DB.Select("remain_quota", "used_quota").First(&token, 9402).Error)
+	require.Equal(t, 10, token.RemainQuota)
+	require.Equal(t, 20, token.UsedQuota)
+
+	batchUpdate()
+
 	require.NoError(t, DB.Select("remain_quota", "used_quota").First(&token, 9402).Error)
 	require.Equal(t, 15, token.RemainQuota)
 	require.Equal(t, 15, token.UsedQuota)

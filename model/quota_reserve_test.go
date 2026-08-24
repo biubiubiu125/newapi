@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/go-redis/redis/v8"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/gorm"
@@ -225,4 +226,29 @@ func TestTokenCacheInitPreservesLiveQuotaAndFenceBlocksStaleSnapshot(t *testing.
 	cached, err = cacheGetTokenByKey(token.Key)
 	require.NoError(t, err)
 	assert.Equal(t, 100, cached.RemainQuota)
+}
+
+func TestTokenCacheAccessedTimeUpdateUsesCompleteHashField(t *testing.T) {
+	useUserCacheMiniRedis(t)
+
+	token := Token{
+		Id:           9501,
+		Key:          "accessed-time-cache-token",
+		Status:       common.TokenStatusEnabled,
+		ExpiredTime:  -1,
+		RemainQuota:  100,
+		UsedQuota:    0,
+		AccessedTime: 1,
+	}
+	code, err := cacheInitToken(token)
+	require.NoError(t, err)
+	require.Equal(t, 1, code)
+
+	require.NoError(t, cacheUpdateTokenAccessedTime(token.Key, 1234))
+
+	cached, err := cacheGetTokenByKey(token.Key)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1234, cached.AccessedTime)
+	_, err = common.RDB.HGet(t.Context(), getTokenCacheKey(token.Key), "accessed_time").Result()
+	assert.ErrorIs(t, err, redis.Nil)
 }

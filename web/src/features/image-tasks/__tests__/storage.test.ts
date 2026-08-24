@@ -41,7 +41,7 @@ describe('image task storage', () => {
         createdAt: 100,
       },
     ])
-    expect(window.localStorage.getItem('newapi:image-tasks:v1')).toBe(
+    expect(window.localStorage.getItem('newapi:image-tasks:v2')).toBe(
       '[{"taskId":"task_1","tokenId":24,"createdAt":100}]'
     )
   })

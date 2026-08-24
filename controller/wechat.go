@@ -184,6 +184,7 @@ func WeChatBind(c *gin.Context) {
 		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "未登录"})
 		return
 	}
+	user := model.User{Id: userId}
 	err = user.FillUserById()
 	if err != nil {
 		common.ApiError(c, err)

@@ -26,7 +26,9 @@ func TestFormatWaffoPancakeAmount_UsesDisplayPriceString(t *testing.T) {
 
 	for _, tc := range testCases {
 		t.Run(tc.name, func(t *testing.T) {
-			require.Equal(t, tc.expected, formatWaffoPancakeAmount(tc.amount))
+			actual, err := formatWaffoPancakeAmount(tc.amount, "USD")
+			require.NoError(t, err)
+			require.Equal(t, tc.expected, actual)
 		})
 	}
 }

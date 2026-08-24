@@ -64,6 +64,7 @@ describe('image task API client', () => {
           Accept: 'application/json',
           Authorization: 'Bearer sk-selected-key',
           'Content-Type': 'application/json',
+          'Idempotency-Key': 'client_generation_1',
         },
       })
     )

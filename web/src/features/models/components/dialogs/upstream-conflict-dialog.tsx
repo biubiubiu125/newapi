@@ -60,6 +60,7 @@ import {
   type UpstreamConflictSelection,
 } from '../../lib'
 import { useModels } from '../models-provider'
+import type { SyncOverwritePayload } from '../../types'
 
 const FIELD_LABELS: Record<string, string> = {
   description: 'Description',

@@ -108,6 +108,7 @@ export type SystemTaskListResponse = {
 
 export type SiteSettings = {
   Notice: string
+  'theme.frontend': 'classic' | 'default'
   SystemName: string
   Logo: string
   Footer: string
@@ -294,6 +295,7 @@ export type BillingSettings = {
   PayMethods: string
   'payment_setting.amount_options': string
   'payment_setting.amount_discount': string
+  'payment_setting.wallet_notice': string
   'payment_setting.compliance_confirmed': boolean
   'payment_setting.compliance_terms_version': string
   'payment_setting.compliance_confirmed_at': number
@@ -309,6 +311,15 @@ export type BillingSettings = {
   CreemWebhookSecret: string
   CreemTestMode: boolean
   CreemProducts: string
+  BEpusdtEnabled: boolean
+  USDTGatewayType: string
+  BEpusdtBaseURL: string
+  BEpusdtPID: string
+  BEpusdtSecretKey: string
+  BEpusdtCurrency: string
+  BEpusdtDisplayName: string
+  BEpusdtAssetDisplayNames: string
+  BEpusdtMinTopUp: number
   WaffoEnabled: boolean
   WaffoApiKey: string
   WaffoPrivateKey: string
@@ -337,10 +348,24 @@ export type BillingSettings = {
 }
 
 export type OperationsSettings = {
+  RetryTimes: number
   DefaultCollapseSidebar: boolean
   DemoSiteEnabled: boolean
   SelfUseModeEnabled: boolean
+  ChannelDisableThreshold: string
   QuotaRemindThreshold: string
+  AutomaticDisableChannelEnabled: boolean
+  AutomaticEnableChannelEnabled: boolean
+  AutomaticDisableKeywords: string
+  AutomaticDisableStatusCodes: string
+  AutomaticRetryStatusCodes: string
+  TicketEmailNotificationEnabled: boolean
+  'monitor_setting.auto_test_channel_enabled': boolean
+  'monitor_setting.auto_test_channel_minutes': number
+  'monitor_setting.channel_test_mode':
+    | 'scheduled_all'
+    | 'passive_recovery'
+    | 'auto_ban_only'
   SMTPServer: string
   SMTPPort: string
   SMTPAccount: string

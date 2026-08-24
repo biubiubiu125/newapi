@@ -47,6 +47,7 @@ export type ImageGenerationTaskInput = {
   n?: number
   size?: string
   quality?: string
+  response_format?: string
   client_task_id: string
 }
 
