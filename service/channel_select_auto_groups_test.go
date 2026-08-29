@@ -119,6 +119,7 @@ func TestCacheGetRandomSatisfiedChannelUsesTokenAutoGroupsWhenGlobalAutoIsEmpty(
 	assert.Equal(t, "vip", common.GetContextKeyString(ctx, constant.ContextKeyAutoGroup))
 	assert.Empty(t, setting.GetAutoGroups(), "the selection must not depend on the global Auto list")
 
+	param.ExcludeChannelIds = []int{first.Id}
 	param.IncreaseRetry()
 	second, selectedGroup, err := CacheGetRandomSatisfiedChannel(param)
 	require.NoError(t, err)
@@ -126,4 +127,49 @@ func TestCacheGetRandomSatisfiedChannelUsesTokenAutoGroupsWhenGlobalAutoIsEmpty(
 	assert.Equal(t, 2102, second.Id)
 	assert.Equal(t, "default", selectedGroup)
 	assert.Equal(t, "default", common.GetContextKeyString(ctx, constant.ContextKeyAutoGroup))
+}
+
+func TestCacheGetRandomSatisfiedChannelExhaustsCurrentAutoGroupBeforeAdvancing(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-groups-exhaustive-model"
+	createChannelSelectAutoGroupsChannel(t, db, 2201, "vip", modelName)
+	createChannelSelectAutoGroupsChannel(t, db, 2202, "vip", modelName)
+	createChannelSelectAutoGroupsChannel(t, db, 2203, "default", modelName)
+	model.InitChannelCache()
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"vip", "default"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenCrossGroupRetry, true)
+
+	retry := 0
+	param := &RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "auto",
+		ModelName:   modelName,
+		RequestPath: "/v1/chat/completions",
+		Retry:       &retry,
+	}
+
+	first, selectedGroup, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	assert.Equal(t, "vip", selectedGroup)
+
+	param.ExcludeChannelIds = []int{first.Id}
+	param.IncreaseRetry()
+	second, selectedGroup, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, second)
+	assert.Equal(t, "vip", selectedGroup)
+	assert.NotEqual(t, first.Id, second.Id)
+
+	param.ExcludeChannelIds = []int{first.Id, second.Id}
+	param.IncreaseRetry()
+	third, selectedGroup, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, third)
+	assert.Equal(t, "default", selectedGroup)
+	assert.Equal(t, 2203, third.Id)
 }

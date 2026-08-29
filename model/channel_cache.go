@@ -13,6 +13,8 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
+
+	"gorm.io/gorm"
 )
 
 var group2model2channels map[string]map[string][]int // enabled channel
@@ -20,16 +22,40 @@ var channelsIDM map[int]*Channel                     // all channels include dis
 // channel2advancedCustomConfig caches parsed Advanced Custom configs for path-aware selection.
 var channel2advancedCustomConfig map[int]*dto.AdvancedCustomConfig
 var channelSyncLock sync.RWMutex
+var channelCacheRebuildLock sync.Mutex
 
 func InitChannelCache() {
+	if err := InitChannelCacheWithError(); err != nil {
+		common.SysLog("channels sync from database failed: " + err.Error())
+	}
+}
+
+// InitChannelCacheWithError rebuilds the complete runtime channel cache and
+// swaps it in only after every required database query succeeds. A transient
+// database error therefore leaves the last known-good cache available.
+func InitChannelCacheWithError() error {
 	if !common.MemoryCacheEnabled {
 		InvalidatePricingCache()
-		return
+		return nil
 	}
+	// Serialize the complete read/build/swap sequence. Without this lock,
+	// concurrent rebuilds can finish out of order and an older database
+	// snapshot can replace a newer runtime cache.
+	channelCacheRebuildLock.Lock()
+	defer channelCacheRebuildLock.Unlock()
+
 	newChannelId2channel := make(map[int]*Channel)
 	newChannel2advancedCustomConfig := make(map[int]*dto.AdvancedCustomConfig)
 	var channels []*Channel
-	DB.Find(&channels)
+	var abilities []*Ability
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Find(&channels).Error; err != nil {
+			return err
+		}
+		return tx.Find(&abilities).Error
+	}); err != nil {
+		return err
+	}
 	for _, channel := range channels {
 		newChannelId2channel[channel.Id] = channel
 		if channel.Type == constant.ChannelTypeAdvancedCustom {
@@ -38,8 +64,6 @@ func InitChannelCache() {
 			}
 		}
 	}
-	var abilities []*Ability
-	DB.Find(&abilities)
 	groups := make(map[string]bool)
 	for _, ability := range abilities {
 		groups[ability.Group] = true
@@ -102,6 +126,7 @@ func InitChannelCache() {
 	// invalidating the pricing cache, otherwise the reversed order deadlocks.
 	InvalidatePricingCache()
 	common.SysLog("channels synced from database")
+	return nil
 }
 
 func SyncChannelCache(frequency int) {
