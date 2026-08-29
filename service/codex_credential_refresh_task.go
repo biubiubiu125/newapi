@@ -137,7 +137,9 @@ func runCodexCredentialAutoRefreshOnce() {
 					logger.LogWarn(ctx, fmt.Sprintf("codex credential auto-refresh: InitChannelCache panic: %v", r))
 				}
 			}()
-			model.InitChannelCache()
+			if err := refreshCodexRuntimeChannelCache(); err != nil {
+				logger.LogWarn(ctx, fmt.Sprintf("codex credential auto-refresh: InitChannelCache failed: %v", err))
+			}
 		}()
 	}
 

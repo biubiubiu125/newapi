@@ -296,7 +296,7 @@ export const channelFormSchema = z
   })
   .superRefine((data, ctx) => {
     if (
-      [3, 8, 36, 45, CHANNEL_TYPE_NEW_API].includes(data.type) &&
+      [3, 8, 36, 45, 59, CHANNEL_TYPE_NEW_API].includes(data.type) &&
       !data.base_url?.trim()
     ) {
       addRequiredIssue(

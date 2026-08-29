@@ -10,10 +10,11 @@ import (
 )
 
 type permissionRoute struct {
-	method     string
-	path       string
-	permission authz.Permission
-	handler    gin.HandlerFunc
+	method                 string
+	path                   string
+	permission             authz.Permission
+	alternativePermissions []authz.Permission
+	handler                gin.HandlerFunc
 }
 
 func registerChannelRoutes(apiRouter *gin.RouterGroup) {
@@ -28,8 +29,13 @@ func registerChannelRoutes(apiRouter *gin.RouterGroup) {
 		controller.GetChannelKey,
 	)
 	for _, route := range channelPermissionRoutes {
+		permissionMiddleware := middleware.RequirePermission(route.permission)
+		if len(route.alternativePermissions) > 0 {
+			permissions := append([]authz.Permission{route.permission}, route.alternativePermissions...)
+			permissionMiddleware = middleware.RequireAnyPermission(permissions...)
+		}
 		channelRoute.Handle(route.method, route.path,
-			middleware.RequirePermission(route.permission),
+			permissionMiddleware,
 			route.handler,
 		)
 	}
@@ -41,7 +47,8 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodGet, path: "/models", permission: authz.ChannelRead, handler: controller.ChannelListModels},
 	{method: http.MethodGet, path: "/models_enabled", permission: authz.ChannelRead, handler: controller.EnabledListModels},
 	{method: http.MethodGet, path: "/ops", permission: authz.ChannelRead, handler: controller.GetChannelOps},
-	{method: http.MethodGet, path: "/upstream_updates/task/:task_id", permission: authz.ChannelOperate, handler: controller.GetChannelUpstreamModelUpdateTask},
+	{method: http.MethodGet, path: "/upstream_updates/current", permission: authz.ChannelOperate, alternativePermissions: []authz.Permission{authz.ChannelWrite}, handler: controller.GetCurrentChannelUpstreamModelUpdateTask},
+	{method: http.MethodGet, path: "/upstream_updates/task/:task_id", permission: authz.ChannelOperate, alternativePermissions: []authz.Permission{authz.ChannelWrite}, handler: controller.GetChannelUpstreamModelUpdateTask},
 	{method: http.MethodGet, path: "/:id", permission: authz.ChannelRead, handler: controller.GetChannel},
 	{method: http.MethodGet, path: "/test", permission: authz.ChannelOperate, handler: controller.TestAllChannels},
 	{method: http.MethodGet, path: "/test/:id", permission: authz.ChannelOperate, handler: controller.TestChannel},
@@ -80,4 +87,5 @@ var channelPermissionRoutes = []permissionRoute{
 	{method: http.MethodPost, path: "/upstream_updates/apply_all", permission: authz.ChannelWrite, handler: controller.ApplyAllChannelUpstreamModelUpdates},
 	{method: http.MethodPost, path: "/upstream_updates/detect", permission: authz.ChannelOperate, handler: controller.DetectChannelUpstreamModelUpdates},
 	{method: http.MethodPost, path: "/upstream_updates/detect_all", permission: authz.ChannelOperate, handler: controller.DetectAllChannelUpstreamModelUpdates},
+	{method: http.MethodPost, path: "/upstream_updates/cancel", permission: authz.ChannelOperate, alternativePermissions: []authz.Permission{authz.ChannelWrite}, handler: controller.CancelChannelUpstreamModelUpdateTask},
 }

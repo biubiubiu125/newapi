@@ -542,14 +542,16 @@ func (channel *Channel) GetWeight() int {
 }
 
 func (channel *Channel) GetBaseURL() string {
-	if channel.BaseURL == nil {
-		return ""
+	var baseURL string
+	if channel.BaseURL != nil {
+		baseURL = *channel.BaseURL
 	}
-	url := *channel.BaseURL
-	if url == "" {
-		url = constant.ChannelBaseURLs[channel.Type]
+	if strings.TrimSpace(baseURL) == "" &&
+		channel.Type >= 0 &&
+		channel.Type < len(constant.ChannelBaseURLs) {
+		baseURL = constant.ChannelBaseURLs[channel.Type]
 	}
-	return url
+	return strings.TrimRight(strings.TrimSpace(baseURL), "/")
 }
 
 func (channel *Channel) GetModelMapping() string {

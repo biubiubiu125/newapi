@@ -1875,7 +1875,7 @@ const EditChannelModal = (props) => {
       return;
     }
     if (
-      localInputs.type === 45 &&
+      [45, 59, 60].includes(localInputs.type) &&
       (!localInputs.base_url || localInputs.base_url.trim() === '')
     ) {
       showInfo(t('请输入API地址！'));

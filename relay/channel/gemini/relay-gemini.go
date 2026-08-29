@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
@@ -497,6 +498,13 @@ type GeminiModelsResponse struct {
 	NextPageToken string            `json:"nextPageToken"`
 }
 
+const maxGeminiModelsResponseBytes = 10 << 20
+const (
+	maxGeminiModelsTotalResponseBytes = 64 << 20
+	maxGeminiModelsCount              = 10000
+	maxGeminiModelNameBytes           = 512
+)
+
 func FetchGeminiModels(baseURL, apiKey, proxyURL string) ([]string, error) {
 	return FetchGeminiModelsWithContext(context.Background(), baseURL, apiKey, proxyURL)
 }
@@ -510,6 +518,21 @@ func FetchGeminiModelsWithContext(parentCtx context.Context, baseURL, apiKey, pr
 }
 
 func FetchGeminiModelsWithContextAndClient(parentCtx context.Context, baseURL, apiKey string, client *http.Client) ([]string, error) {
+	return FetchGeminiModelsWithContextAndClientAndHeaders(
+		parentCtx,
+		baseURL,
+		apiKey,
+		client,
+		nil,
+	)
+}
+
+func FetchGeminiModelsWithContextAndClientAndHeaders(
+	parentCtx context.Context,
+	baseURL, apiKey string,
+	client *http.Client,
+	headers http.Header,
+) ([]string, error) {
 	if parentCtx == nil {
 		parentCtx = context.Background()
 	}
@@ -519,23 +542,26 @@ func FetchGeminiModelsWithContextAndClient(parentCtx context.Context, baseURL, a
 	client = service.CloneHTTPClientWithoutRedirects(client)
 
 	allModels := make([]string, 0)
+	seenModels := make(map[string]struct{})
+	totalResponseBytes := 0
 	nextPageToken := ""
 	maxPages := 100 // Safety limit to prevent infinite loops
 
 	for page := 0; page < maxPages; page++ {
-		url := fmt.Sprintf("%s/v1beta/models", baseURL)
-		if nextPageToken != "" {
-			url = fmt.Sprintf("%s?pageToken=%s", url, nextPageToken)
+		requestURL, err := buildGeminiModelsURL(baseURL, nextPageToken)
+		if err != nil {
+			return nil, fmt.Errorf("创建请求失败: %v", err)
 		}
 
 		ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
-		request, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+		request, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
 		if err != nil {
 			cancel()
 			return nil, fmt.Errorf("创建请求失败: %v", err)
 		}
 
 		request.Header.Set("x-goog-api-key", apiKey)
+		applyModelFetchHeaders(request, headers)
 
 		response, err := client.Do(request)
 		if err != nil {
@@ -544,18 +570,25 @@ func FetchGeminiModelsWithContextAndClient(parentCtx context.Context, baseURL, a
 		}
 
 		if response.StatusCode != http.StatusOK {
-			body := "response body redacted"
+			redactedBody := "response body redacted"
 			response.Body.Close()
 			cancel()
-			return nil, fmt.Errorf("服务器返回错误 %d: %s", response.StatusCode, string(body))
+			return nil, fmt.Errorf("服务器返回错误 %d: %s", response.StatusCode, redactedBody)
 		}
 
-		body, err := io.ReadAll(response.Body)
+		body, err := io.ReadAll(io.LimitReader(response.Body, maxGeminiModelsResponseBytes+1))
 		response.Body.Close()
 		cancel()
 		if err != nil {
 			return nil, fmt.Errorf("读取响应失败: %v", err)
 		}
+		if len(body) > maxGeminiModelsResponseBytes {
+			return nil, fmt.Errorf("response body exceeds %d bytes", maxGeminiModelsResponseBytes)
+		}
+		if totalResponseBytes > maxGeminiModelsTotalResponseBytes-len(body) {
+			return nil, fmt.Errorf("aggregate response body exceeds %d bytes", maxGeminiModelsTotalResponseBytes)
+		}
+		totalResponseBytes += len(body)
 
 		var modelsResponse GeminiModelsResponse
 		if err = common.Unmarshal(body, &modelsResponse); err != nil {
@@ -568,6 +601,20 @@ func FetchGeminiModelsWithContextAndClient(parentCtx context.Context, baseURL, a
 				continue
 			}
 			modelName := strings.TrimPrefix(modelNameValue, "models/")
+			modelName = strings.TrimSpace(modelName)
+			if modelName == "" {
+				continue
+			}
+			if len(modelName) > maxGeminiModelNameBytes {
+				return nil, fmt.Errorf("Gemini model name exceeds %d bytes", maxGeminiModelNameBytes)
+			}
+			if _, ok := seenModels[modelName]; ok {
+				continue
+			}
+			if len(seenModels) >= maxGeminiModelsCount {
+				return nil, fmt.Errorf("Gemini models count exceeds %d", maxGeminiModelsCount)
+			}
+			seenModels[modelName] = struct{}{}
 			allModels = append(allModels, modelName)
 		}
 
@@ -577,5 +624,45 @@ func FetchGeminiModelsWithContextAndClient(parentCtx context.Context, baseURL, a
 		}
 	}
 
+	if nextPageToken != "" {
+		return nil, fmt.Errorf("Gemini models pagination limit exceeded after %d pages", maxPages)
+	}
+
 	return allModels, nil
+}
+
+func applyModelFetchHeaders(request *http.Request, headers http.Header) {
+	for name, values := range headers {
+		if strings.EqualFold(name, "Host") {
+			if len(values) > 0 {
+				request.Host = values[len(values)-1]
+			}
+			continue
+		}
+		if len(values) == 0 {
+			continue
+		}
+		request.Header.Set(name, values[0])
+		for _, value := range values[1:] {
+			request.Header.Add(name, value)
+		}
+	}
+}
+
+func buildGeminiModelsURL(baseURL, pageToken string) (string, error) {
+	normalizedBaseURL := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	if normalizedBaseURL == "" {
+		return "", errors.New("base URL is empty")
+	}
+
+	parsedURL, err := url.Parse(normalizedBaseURL + "/v1beta/models")
+	if err != nil {
+		return "", err
+	}
+	if pageToken != "" {
+		query := parsedURL.Query()
+		query.Set("pageToken", pageToken)
+		parsedURL.RawQuery = query.Encode()
+	}
+	return parsedURL.String(), nil
 }

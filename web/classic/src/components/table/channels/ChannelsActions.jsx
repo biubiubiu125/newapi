@@ -40,7 +40,10 @@ const ChannelsActions = ({
   deleteAllDisabledChannels,
   applyAllUpstreamUpdates,
   detectAllUpstreamUpdates,
+  cancelModelUpdateTask,
   detectAllUpstreamUpdatesLoading,
+  cancelModelUpdateTaskLoading,
+  currentModelUpdateTask,
   applyAllUpstreamUpdatesLoading,
   canDetectUpstreamUpdates,
   canApplyUpstreamUpdates,
@@ -65,6 +68,16 @@ const ChannelsActions = ({
 }) => {
   const canRepairChannelConsistency =
     canRepairChannelConsistencyForPermissions(channelPermissions);
+  const canAccessModelUpdateTasks =
+    canDetectUpstreamUpdates || canApplyUpstreamUpdates;
+  const showCancelModelUpdateTask = Boolean(
+    currentModelUpdateTask?.task_id?.trim(),
+  );
+  const applyAllUpstreamUpdatesDisabled =
+    applyAllUpstreamUpdatesLoading ||
+    detectAllUpstreamUpdatesLoading ||
+    showCancelModelUpdateTask ||
+    !canApplyUpstreamUpdates;
 
   return (
     <div className='flex flex-col gap-2'>
@@ -188,16 +201,43 @@ const ChannelsActions = ({
                     {t('检测全部渠道上游更新')}
                   </Button>
                 </Dropdown.Item>
+                {showCancelModelUpdateTask ? (
+                  <Dropdown.Item>
+                    <Button
+                      size='small'
+                      type='danger'
+                      className='w-full'
+                      loading={cancelModelUpdateTaskLoading}
+                      disabled={
+                        cancelModelUpdateTaskLoading ||
+                        !canAccessModelUpdateTasks
+                      }
+                      onClick={() => {
+                        if (!canAccessModelUpdateTasks) return;
+                        Modal.confirm({
+                          title: t('确定？'),
+                          content: t(
+                            '确定要取消正在运行的上游模型更新任务吗？',
+                          ),
+                          onOk: () => cancelModelUpdateTask(),
+                          size: 'sm',
+                          centered: true,
+                        });
+                      }}
+                    >
+                      {t('取消上游模型更新任务')}
+                    </Button>
+                  </Dropdown.Item>
+                ) : null}
                 <Dropdown.Item>
                   <Button
                     size='small'
                     type='primary'
                     className='w-full'
                     loading={applyAllUpstreamUpdatesLoading}
-                    disabled={
-                      applyAllUpstreamUpdatesLoading || !canApplyUpstreamUpdates
-                    }
+                    disabled={applyAllUpstreamUpdatesDisabled}
                     onClick={() => {
+                      if (applyAllUpstreamUpdatesDisabled) return;
                       Modal.confirm({
                         title: t('确定？'),
                         content: t(

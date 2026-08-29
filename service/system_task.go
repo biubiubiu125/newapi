@@ -24,8 +24,11 @@ const (
 
 	// systemTaskSchedulerInterval throttles how often the scheduler/stale-lock
 	// pass runs, independent of how often the runner wakes to claim tasks.
-	systemTaskSchedulerInterval      = 15 * time.Second
-	systemTaskStaleLockInterval      = 30 * time.Second
+	systemTaskSchedulerInterval = 15 * time.Second
+	systemTaskStaleLockInterval = 30 * time.Second
+	// Keep the heartbeat short so a cancellation written by another API node is
+	// observed quickly even when the in-process cancel callback is unavailable.
+	systemTaskCancelCheckInterval    = time.Second
 	systemTaskHistoryCleanupInterval = 10 * time.Minute
 	systemTaskHistoryCleanupBatch    = 1000
 )
@@ -33,7 +36,8 @@ const (
 // SystemTaskHandler executes a claimed task of a specific type. Run owns the
 // task lifecycle from claim to terminal state: it MUST call
 // model.FinishSystemTask (succeeded/failed) before returning and MUST honor
-// ctx cancellation, which the runner triggers if the per-type lock is lost.
+// ctx cancellation, which the runner triggers if the per-type lock is lost or
+// the task is cancelled.
 type SystemTaskHandler interface {
 	Type() string
 	Run(ctx context.Context, task *model.SystemTask, runnerID string)
@@ -87,27 +91,59 @@ func systemTaskLockType(handler SystemTaskHandler) string {
 	return handler.Type()
 }
 
-func systemTaskActiveKeyForType(taskType string) string {
+func registeredSystemTaskHandler(taskType string) (SystemTaskHandler, bool) {
 	systemTaskHandlersMu.RLock()
+	defer systemTaskHandlersMu.RUnlock()
 	handler := systemTaskHandlers[taskType]
-	systemTaskHandlersMu.RUnlock()
-	if handler == nil {
+	return handler, handler != nil
+}
+
+func systemTaskActiveKeyForType(taskType string) string {
+	if handler, ok := registeredSystemTaskHandler(taskType); ok {
+		return systemTaskLockType(handler)
+	}
+	if taskType == "" {
 		return taskType
 	}
-	return systemTaskLockType(handler)
+	return taskType
 }
 
 func systemTaskActiveKeysForType(taskType string) []string {
 	activeKey := systemTaskActiveKeyForType(taskType)
 	keys := []string{activeKey}
-	if taskType == model.SystemTaskTypeModelUpdate || taskType == model.SystemTaskTypeModelUpdateManual {
-		keys = append(keys, model.SystemTaskTypeModelUpdate, model.SystemTaskTypeModelUpdateManual)
+	if taskType == model.SystemTaskTypeModelUpdate ||
+		taskType == model.SystemTaskTypeModelUpdateManual ||
+		taskType == model.SystemTaskTypeModelUpdateApplyAll {
+		keys = append(
+			keys,
+			model.SystemTaskTypeModelUpdate,
+			model.SystemTaskTypeModelUpdateManual,
+			model.SystemTaskTypeModelUpdateApplyAll,
+		)
 	}
 	return keys
 }
 
+func systemTaskLegacyTypesForType(taskType string) []string {
+	types := []string{taskType}
+	if taskType == model.SystemTaskTypeModelUpdate ||
+		taskType == model.SystemTaskTypeModelUpdateManual ||
+		taskType == model.SystemTaskTypeModelUpdateApplyAll {
+		types = append(
+			types,
+			model.SystemTaskTypeModelUpdate,
+			model.SystemTaskTypeModelUpdateManual,
+			model.SystemTaskTypeModelUpdateApplyAll,
+		)
+	}
+	return types
+}
+
 func getActiveSystemTaskForType(taskType string) (*model.SystemTask, error) {
-	tasks, err := model.GetActiveSystemTasksByActiveKeys(systemTaskActiveKeysForType(taskType))
+	tasks, err := model.GetActiveSystemTasksByActiveKeysOrLegacyTypes(
+		systemTaskActiveKeysForType(taskType),
+		systemTaskLegacyTypesForType(taskType),
+	)
 	if err != nil || len(tasks) == 0 {
 		return nil, err
 	}
@@ -146,11 +182,17 @@ type LogCleanupResult struct {
 
 var (
 	systemTaskRunnerOnce sync.Once
+	systemTaskCancelers  sync.Map
 	// systemTaskWakeup signals the runner to check for runnable tasks
 	// immediately instead of waiting for the idle poll. Buffered so a signal
 	// raised while the runner is busy is not lost and is handled on the next loop.
 	systemTaskWakeup = make(chan struct{}, 1)
 )
+
+var renewSystemTaskLock = model.RenewSystemTaskLock
+var markSystemTaskLeaseExpiredForRunner = model.MarkSystemTaskLeaseExpiredForRunner
+var markSystemTaskFailedForRunner = model.MarkSystemTaskFailedForRunner
+var releaseSystemTaskLock = model.ReleaseSystemTaskLock
 
 // notifySystemTaskRunner wakes the runner without blocking. If a wakeup is
 // already pending it is a no-op, which is fine since one pass drains all work.
@@ -159,6 +201,31 @@ func notifySystemTaskRunner() {
 	case systemTaskWakeup <- struct{}{}:
 	default:
 	}
+}
+
+func registerSystemTaskCancelFunc(taskID string, cancel context.CancelFunc) func() {
+	if taskID == "" || cancel == nil {
+		return func() {}
+	}
+	systemTaskCancelers.Store(taskID, cancel)
+	return func() {
+		systemTaskCancelers.Delete(taskID)
+	}
+}
+
+func notifySystemTaskCancellation(taskID string) {
+	if taskID == "" {
+		return
+	}
+	value, ok := systemTaskCancelers.Load(taskID)
+	if !ok {
+		return
+	}
+	cancel, ok := value.(context.CancelFunc)
+	if !ok || cancel == nil {
+		return
+	}
+	cancel()
 }
 
 func StartSystemTaskRunner() {
@@ -245,13 +312,20 @@ func StartLogCleanupTask(targetTimestamp int64) (*model.SystemTask, error) {
 // bool is true only when a new pending row was created; false means an active
 // task with the same registered lock type already exists and was returned.
 func EnqueueSystemTask(taskType string, payload any) (*model.SystemTask, bool, error) {
-	activeKey := systemTaskActiveKeyForType(taskType)
+	handler, ok := registeredSystemTaskHandler(taskType)
+	activeKey := taskType
+	if ok {
+		activeKey = systemTaskLockType(handler)
+	}
 	activeTask, err := getActiveSystemTaskForType(taskType)
 	if err != nil {
 		return nil, false, err
 	}
 	if activeTask != nil {
 		return activeTask, false, nil
+	}
+	if !ok {
+		return nil, false, fmt.Errorf("system task handler not registered: %s", taskType)
 	}
 
 	task, err := model.CreateSystemTaskWithActiveKey(taskType, payload, nil, activeKey)
@@ -268,6 +342,14 @@ func EnqueueSystemTask(taskType string, payload any) (*model.SystemTask, bool, e
 
 func GetCurrentSystemTask(taskType string) (*model.SystemTask, error) {
 	return getActiveSystemTaskForType(taskType)
+}
+
+func CancelSystemTask(taskID string, taskTypes []string, errorMessage string) (*model.SystemTask, bool, error) {
+	task, cancelled, err := model.CancelSystemTask(taskID, taskTypes, errorMessage)
+	if err == nil && cancelled && task != nil {
+		notifySystemTaskCancellation(task.TaskID)
+	}
+	return task, cancelled, err
 }
 
 // runSystemTaskClaimPass tries to claim one pending task per registered type
@@ -327,7 +409,11 @@ func runSystemTaskScheduler() {
 	latestTaskTypes := append([]string(nil), taskTypes...)
 	for _, taskType := range taskTypes {
 		if taskType == model.SystemTaskTypeModelUpdate {
-			latestTaskTypes = append(latestTaskTypes, model.SystemTaskTypeModelUpdateManual)
+			latestTaskTypes = append(
+				latestTaskTypes,
+				model.SystemTaskTypeModelUpdateManual,
+				model.SystemTaskTypeModelUpdateApplyAll,
+			)
 			break
 		}
 	}
@@ -339,10 +425,16 @@ func runSystemTaskScheduler() {
 	for _, scheduled := range scheduledHandlers {
 		latest := latestTasks[scheduled.Type()]
 		if scheduled.Type() == model.SystemTaskTypeModelUpdate {
-			if manualLatest := latestTasks[model.SystemTaskTypeModelUpdateManual]; manualLatest != nil &&
-				(latest == nil || manualLatest.UpdatedAt > latest.UpdatedAt ||
-					(manualLatest.UpdatedAt == latest.UpdatedAt && manualLatest.ID > latest.ID)) {
-				latest = manualLatest
+			for _, relatedType := range []string{
+				model.SystemTaskTypeModelUpdateManual,
+				model.SystemTaskTypeModelUpdateApplyAll,
+			} {
+				relatedLatest := latestTasks[relatedType]
+				if relatedLatest != nil &&
+					(latest == nil || relatedLatest.UpdatedAt > latest.UpdatedAt ||
+						(relatedLatest.UpdatedAt == latest.UpdatedAt && relatedLatest.ID > latest.ID)) {
+					latest = relatedLatest
+				}
 			}
 		}
 		if latest != nil {
@@ -412,14 +504,68 @@ func cleanupSystemTaskHistory() {
 func runWithLeaseHeartbeat(task *model.SystemTask, runnerID string, fn func(ctx context.Context)) {
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
+	unregisterCancel := registerSystemTaskCancelFunc(task.TaskID, cancel)
+	defer unregisterCancel()
+	done := make(chan struct{})
+	heartbeatStarted := false
+	var releaseOnce sync.Once
+	var terminalStateOnce sync.Once
+	releaseLock := func() {
+		releaseOnce.Do(func() {
+			if err := releaseSystemTaskLock(task.TaskID, runnerID); err != nil {
+				logger.LogWarn(
+					context.Background(),
+					fmt.Sprintf("system task %s failed to release runner lock: %v", task.TaskID, err),
+				)
+			}
+		})
+	}
+	markTerminalState := func(leaseExpired bool, errorMessage string) {
+		terminalStateOnce.Do(func() {
+			var err error
+			if leaseExpired {
+				err = markSystemTaskLeaseExpiredForRunner(task.TaskID, runnerID)
+			} else {
+				err = markSystemTaskFailedForRunner(task.TaskID, runnerID, errorMessage)
+			}
+			if err != nil {
+				logger.LogWarn(
+					context.Background(),
+					fmt.Sprintf("system task %s failed to persist terminal state: %v", task.TaskID, err),
+				)
+			}
+		})
+	}
+	defer func() {
+		if heartbeatStarted {
+			close(done)
+		}
+		markTerminalState(false, "system task handler returned without a terminal state")
+		releaseLock()
+	}()
+
+	if err := renewSystemTaskLock(task.TaskID, runnerID, systemTaskLockUntil()); err != nil {
+		logSystemTaskLockError(ctx, task, err)
+		if errors.Is(err, model.ErrSystemTaskLockLost) {
+			markTerminalState(true, "")
+		} else {
+			markTerminalState(false, err.Error())
+		}
+		releaseLock()
+		return
+	}
+	if err := ctx.Err(); err != nil {
+		releaseLock()
+		return
+	}
 
 	interval := systemTaskLockTTL / 3
-	if interval <= 0 {
-		interval = systemTaskLockTTL
+	if interval <= 0 || interval > systemTaskCancelCheckInterval {
+		interval = systemTaskCancelCheckInterval
 	}
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
-	done := make(chan struct{})
+	heartbeatStarted = true
 
 	go func() {
 		for {
@@ -427,8 +573,14 @@ func runWithLeaseHeartbeat(task *model.SystemTask, runnerID string, fn func(ctx 
 			case <-done:
 				return
 			case <-ticker.C:
-				if err := model.RenewSystemTaskLock(task.TaskID, runnerID, systemTaskLockUntil()); err != nil {
+				if err := renewSystemTaskLock(task.TaskID, runnerID, systemTaskLockUntil()); err != nil {
 					cancel()
+					if errors.Is(err, model.ErrSystemTaskLockLost) {
+						markTerminalState(true, "")
+					} else {
+						markTerminalState(false, err.Error())
+					}
+					releaseLock()
 					return
 				}
 			}
@@ -436,7 +588,6 @@ func runWithLeaseHeartbeat(task *model.SystemTask, runnerID string, fn func(ctx 
 	}()
 
 	fn(ctx)
-	close(done)
 }
 
 func runLogCleanupTask(ctx context.Context, task *model.SystemTask, runnerID string) {

@@ -43,12 +43,20 @@ import { cn } from '@/lib/utils'
 
 const TASK_LIMIT = 20
 const ACTIVE_POLL_INTERVAL_MS = 8000
+const SYSTEM_TASK_SKELETON_ROWS = [
+  'system-task-skeleton-1',
+  'system-task-skeleton-2',
+  'system-task-skeleton-3',
+  'system-task-skeleton-4',
+]
 
 const STATUS_VARIANT: Record<SystemTaskStatus, 'secondary' | 'destructive'> = {
   pending: 'secondary',
   running: 'secondary',
   succeeded: 'secondary',
   failed: 'destructive',
+  cancelled: 'destructive',
+  canceled: 'destructive',
 }
 
 const STATUS_CLASS_NAME: Record<SystemTaskStatus, string> = {
@@ -59,6 +67,8 @@ const STATUS_CLASS_NAME: Record<SystemTaskStatus, string> = {
   succeeded:
     'bg-emerald-50 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-300',
   failed: '',
+  cancelled: '',
+  canceled: '',
 }
 
 const STATUS_DOT_CLASS_NAME: Record<SystemTaskStatus, string> = {
@@ -66,6 +76,8 @@ const STATUS_DOT_CLASS_NAME: Record<SystemTaskStatus, string> = {
   running: 'bg-sky-500',
   succeeded: 'bg-emerald-500',
   failed: 'bg-destructive',
+  cancelled: 'bg-destructive',
+  canceled: 'bg-destructive',
 }
 
 const PROGRESS_BAR_CLASS_NAME: Record<SystemTaskStatus, string> = {
@@ -73,6 +85,8 @@ const PROGRESS_BAR_CLASS_NAME: Record<SystemTaskStatus, string> = {
   running: '[&_[data-slot=progress-indicator]]:bg-sky-500',
   succeeded: '[&_[data-slot=progress-indicator]]:bg-emerald-500',
   failed: '[&_[data-slot=progress-indicator]]:bg-destructive',
+  cancelled: '[&_[data-slot=progress-indicator]]:bg-destructive',
+  canceled: '[&_[data-slot=progress-indicator]]:bg-destructive',
 }
 
 // Maps backend system task type constants to i18n source keys. Unknown/future
@@ -82,6 +96,7 @@ const TYPE_LABEL: Record<string, string> = {
   channel_test: 'Batch channel test',
   model_update: 'Batch upstream model update',
   model_update_manual: 'Manual upstream model detection',
+  model_update_apply_all: 'Batch upstream model additions',
   midjourney_poll: 'Drawing task polling',
   async_task_poll: 'Async task polling',
 }
@@ -230,6 +245,86 @@ export function SystemTasksPanel() {
   const activeTasks = tasks.filter((task) => isActiveStatus(task.status))
   const historyTasks = tasks.filter((task) => !isActiveStatus(task.status))
 
+  let tasksContent
+  if (loading) {
+    tasksContent = (
+      <div className='space-y-2 p-4 sm:p-5'>
+        {SYSTEM_TASK_SKELETON_ROWS.map((key) => (
+          <Skeleton key={key} className='h-9 w-full rounded-md' />
+        ))}
+      </div>
+    )
+  } else if (tasksQuery.isError) {
+    tasksContent = (
+      <ErrorState
+        title={t('We could not load system tasks.')}
+        description={
+          tasksQuery.error instanceof Error ? tasksQuery.error.message : undefined
+        }
+        onRetry={() => {
+          void tasksQuery.refetch()
+        }}
+        className='min-h-[260px]'
+      />
+    )
+  } else if (tasks.length === 0) {
+    tasksContent = (
+      <div className='px-4 py-10 text-center sm:px-5'>
+        <div className='bg-muted mx-auto mb-3 flex size-10 items-center justify-center rounded-lg'>
+          <ListChecks
+            className='text-muted-foreground size-5'
+            aria-hidden='true'
+          />
+        </div>
+        <p className='text-muted-foreground text-sm'>
+          {t('No system tasks yet.')}
+        </p>
+      </div>
+    )
+  } else {
+    tasksContent = (
+      <div className='space-y-4 p-4 sm:p-5'>
+        <div>
+          <div className='mb-2 flex items-center justify-between gap-3'>
+            <div>
+              <h4 className='text-sm font-medium'>{t('Active Tasks')}</h4>
+              <p className='text-muted-foreground mt-0.5 text-xs'>
+                {t('Tasks currently pending or running.')}
+              </p>
+            </div>
+            <Badge variant='outline'>{activeTasks.length}</Badge>
+          </div>
+          {activeTasks.length > 0 ? (
+            <SystemTasksTable tasks={activeTasks} />
+          ) : (
+            <div className='text-muted-foreground rounded-md border border-dashed px-4 py-6 text-center text-sm'>
+              {t('No active system tasks.')}
+            </div>
+          )}
+        </div>
+
+        <div>
+          <div className='mb-2 flex items-center justify-between gap-3'>
+            <div>
+              <h4 className='text-sm font-medium'>{t('Task History')}</h4>
+              <p className='text-muted-foreground mt-0.5 text-xs'>
+                {t('Recently completed or failed system task runs.')}
+              </p>
+            </div>
+            <Badge variant='outline'>{historyTasks.length}</Badge>
+          </div>
+          {historyTasks.length > 0 ? (
+            <SystemTasksTable tasks={historyTasks} />
+          ) : (
+            <div className='text-muted-foreground rounded-md border border-dashed px-4 py-6 text-center text-sm'>
+              {t('No historical system tasks.')}
+            </div>
+          )}
+        </div>
+      </div>
+    )
+  }
+
   return (
     <section className='bg-card overflow-hidden rounded-lg border shadow-xs'>
       <div className='flex flex-col gap-3 border-b px-4 py-3 sm:flex-row sm:items-center sm:justify-between sm:px-5'>
@@ -284,80 +379,7 @@ export function SystemTasksPanel() {
         </div>
       </div>
 
-      <div aria-busy={tasksQuery.isFetching}>
-        {loading ? (
-          <div className='space-y-2 p-4 sm:p-5'>
-            {Array.from({ length: 4 }).map((_, i) => (
-              <Skeleton key={i} className='h-9 w-full rounded-md' />
-            ))}
-          </div>
-        ) : tasksQuery.isError ? (
-          <ErrorState
-            title={t('We could not load system tasks.')}
-            description={
-              tasksQuery.error instanceof Error
-                ? tasksQuery.error.message
-                : undefined
-            }
-            onRetry={() => {
-              void tasksQuery.refetch()
-            }}
-            className='min-h-[260px]'
-          />
-        ) : tasks.length === 0 ? (
-          <div className='px-4 py-10 text-center sm:px-5'>
-            <div className='bg-muted mx-auto mb-3 flex size-10 items-center justify-center rounded-lg'>
-              <ListChecks
-                className='text-muted-foreground size-5'
-                aria-hidden='true'
-              />
-            </div>
-            <p className='text-muted-foreground text-sm'>
-              {t('No system tasks yet.')}
-            </p>
-          </div>
-        ) : (
-          <div className='space-y-4 p-4 sm:p-5'>
-            <div>
-              <div className='mb-2 flex items-center justify-between gap-3'>
-                <div>
-                  <h4 className='text-sm font-medium'>{t('Active Tasks')}</h4>
-                  <p className='text-muted-foreground mt-0.5 text-xs'>
-                    {t('Tasks currently pending or running.')}
-                  </p>
-                </div>
-                <Badge variant='outline'>{activeTasks.length}</Badge>
-              </div>
-              {activeTasks.length > 0 ? (
-                <SystemTasksTable tasks={activeTasks} />
-              ) : (
-                <div className='text-muted-foreground rounded-md border border-dashed px-4 py-6 text-center text-sm'>
-                  {t('No active system tasks.')}
-                </div>
-              )}
-            </div>
-
-            <div>
-              <div className='mb-2 flex items-center justify-between gap-3'>
-                <div>
-                  <h4 className='text-sm font-medium'>{t('Task History')}</h4>
-                  <p className='text-muted-foreground mt-0.5 text-xs'>
-                    {t('Recently completed or failed system task runs.')}
-                  </p>
-                </div>
-                <Badge variant='outline'>{historyTasks.length}</Badge>
-              </div>
-              {historyTasks.length > 0 ? (
-                <SystemTasksTable tasks={historyTasks} />
-              ) : (
-                <div className='text-muted-foreground rounded-md border border-dashed px-4 py-6 text-center text-sm'>
-                  {t('No historical system tasks.')}
-                </div>
-              )}
-            </div>
-          </div>
-        )}
-      </div>
+      <div aria-busy={tasksQuery.isFetching}>{tasksContent}</div>
     </section>
   )
 }

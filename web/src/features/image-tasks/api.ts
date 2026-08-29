@@ -43,6 +43,9 @@ function generationPayload(
   if (input.n) payload.n = input.n
   if (input.size?.trim()) payload.size = input.size.trim()
   if (input.quality?.trim()) payload.quality = input.quality.trim()
+  if (input.response_format?.trim()) {
+    payload.response_format = input.response_format.trim()
+  }
   return payload
 }
 
@@ -154,6 +157,9 @@ export function createImageEditTask(
   if (input.n) form.set('n', String(input.n))
   if (input.size) form.set('size', input.size)
   if (input.quality) form.set('quality', input.quality)
+  if (input.response_format?.trim()) {
+    form.set('response_format', input.response_format.trim())
+  }
 
   return imageTaskRequest(apiKey, '/v1/image-tasks/edits', {
     method: 'POST',

@@ -65,6 +65,9 @@ func RequestBEpusdtPay(c *gin.Context) {
 	}
 
 	id := c.GetInt("id")
+	if rejectInvalidTopUpQuota(c, id, req.Amount) {
+		return
+	}
 	group, err := model.GetUserGroup(id, true)
 	if err != nil {
 		common.ApiErrorMsg(c, "获取用户分组失败")

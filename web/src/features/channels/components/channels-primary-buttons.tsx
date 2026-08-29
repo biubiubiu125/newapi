@@ -29,6 +29,8 @@ import {
   SortAsc,
   RefreshCw,
   ArrowUpFromLine,
+  CircleStop,
+  Loader2,
 } from 'lucide-react'
 import { useState } from 'react'
 import { useTranslation } from 'react-i18next'
@@ -83,6 +85,7 @@ export function ChannelsPrimaryButtons() {
   const [showDeleteDialog, setShowDeleteDialog] = useState(false)
   const [showConsistencyDialog, setShowConsistencyDialog] = useState(false)
   const [showApplyAllDialog, setShowApplyAllDialog] = useState(false)
+  const [showCancelDialog, setShowCancelDialog] = useState(false)
   const [isRepairingConsistency, setIsRepairingConsistency] = useState(false)
   const currentUser = useAuthStore((s) => s.auth.user)
   const canEditSensitive = hasPermission(
@@ -100,6 +103,15 @@ export function ChannelsPrimaryButtons() {
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
     ADMIN_PERMISSION_ACTIONS.WRITE
   )
+  const canAccessModelUpdateTasks = canOperateChannel || canWriteChannel
+  const showCancelModelUpdateTask = Boolean(
+    upstream.currentModelUpdateTask?.task_id?.trim()
+  )
+  const applyAllDisabled =
+    upstream.applyAllLoading ||
+    upstream.detectAllLoading ||
+    showCancelModelUpdateTask ||
+    !canWriteChannel
 
   const handleTagModeToggle = (checked: boolean) => {
     localStorage.setItem('enable-tag-mode', String(checked))
@@ -255,12 +267,36 @@ export function ChannelsPrimaryButtons() {
               </DropdownMenuShortcut>
             </DropdownMenuItem>
 
+            {showCancelModelUpdateTask ? (
+              <DropdownMenuItem
+                onClick={() => {
+                  if (!canAccessModelUpdateTasks) return
+                  setShowCancelDialog(true)
+                }}
+                disabled={
+                  upstream.cancelTaskLoading || !canAccessModelUpdateTasks
+                }
+              >
+                {t('Cancel Upstream Update Task')}
+                <DropdownMenuShortcut>
+                  {upstream.cancelTaskLoading ? (
+                    <Loader2
+                      aria-label={t('Cancelling upstream update task')}
+                      className='h-4 w-4 animate-spin'
+                    />
+                  ) : (
+                    <CircleStop className='h-4 w-4' />
+                  )}
+                </DropdownMenuShortcut>
+              </DropdownMenuItem>
+            ) : null}
+
             <DropdownMenuItem
               onClick={() => {
-                if (!canWriteChannel) return
+                if (applyAllDisabled) return
                 setShowApplyAllDialog(true)
               }}
-              disabled={upstream.applyAllLoading || !canWriteChannel}
+              disabled={applyAllDisabled}
             >
               {t('Add All New Upstream Models')}
               <DropdownMenuShortcut>
@@ -328,9 +364,9 @@ export function ChannelsPrimaryButtons() {
         )}
         confirmText={t('Add Models')}
         isLoading={upstream.applyAllLoading}
-        disabled={!canWriteChannel}
+        disabled={applyAllDisabled}
         handleConfirm={() => {
-          if (!canWriteChannel) return
+          if (applyAllDisabled) return
           setShowApplyAllDialog(false)
           upstream.applyAllUpdates()
         }}
@@ -355,6 +391,24 @@ export function ChannelsPrimaryButtons() {
           } finally {
             setIsRepairingConsistency(false)
           }
+        }}
+      />
+
+      <ConfirmDialog
+        open={showCancelDialog}
+        onOpenChange={setShowCancelDialog}
+        title={t('Cancel running upstream model update task?')}
+        desc={t(
+          'This will stop the current upstream model update task. Continue?'
+        )}
+        confirmText={t('Cancel Task')}
+        destructive
+        isLoading={upstream.cancelTaskLoading}
+        disabled={!canAccessModelUpdateTasks}
+        handleConfirm={() => {
+          if (!canAccessModelUpdateTasks) return
+          setShowCancelDialog(false)
+          upstream.cancelModelUpdateTask()
         }}
       />
     </>

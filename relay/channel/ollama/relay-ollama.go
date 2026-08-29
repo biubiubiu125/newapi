@@ -19,6 +19,8 @@ import (
 	"github.com/samber/lo"
 )
 
+const maxOllamaModelsResponseBytes = 10 << 20
+
 func toOllamaResponseFormat(responseFormat *dto.ResponseFormat) (any, error) {
 	if responseFormat == nil {
 		return nil, nil
@@ -341,6 +343,21 @@ func FetchOllamaModelsWithContext(ctx context.Context, baseURL, apiKey string) (
 }
 
 func FetchOllamaModelsWithContextAndClient(ctx context.Context, baseURL, apiKey string, client *http.Client) ([]OllamaModel, error) {
+	return FetchOllamaModelsWithContextAndClientAndHeaders(
+		ctx,
+		baseURL,
+		apiKey,
+		client,
+		nil,
+	)
+}
+
+func FetchOllamaModelsWithContextAndClientAndHeaders(
+	ctx context.Context,
+	baseURL, apiKey string,
+	client *http.Client,
+	headers http.Header,
+) ([]OllamaModel, error) {
 	if ctx == nil {
 		ctx = context.Background()
 	}
@@ -348,7 +365,8 @@ func FetchOllamaModelsWithContextAndClient(ctx context.Context, baseURL, apiKey 
 		return nil, fmt.Errorf("HTTP client is nil")
 	}
 	client = service.CloneHTTPClientWithoutRedirects(client)
-	url := fmt.Sprintf("%s/api/tags", baseURL)
+	normalizedBaseURL := strings.TrimRight(strings.TrimSpace(baseURL), "/")
+	url := fmt.Sprintf("%s/api/tags", normalizedBaseURL)
 
 	request, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
@@ -359,6 +377,7 @@ func FetchOllamaModelsWithContextAndClient(ctx context.Context, baseURL, apiKey 
 	if apiKey != "" {
 		request.Header.Set("Authorization", "Bearer "+apiKey)
 	}
+	applyModelFetchHeaders(request, headers)
 
 	response, err := client.Do(request)
 	if err != nil {
@@ -367,14 +386,17 @@ func FetchOllamaModelsWithContextAndClient(ctx context.Context, baseURL, apiKey 
 	defer response.Body.Close()
 
 	if response.StatusCode != http.StatusOK {
-		body := "response body redacted"
-		return nil, fmt.Errorf("服务器返回错误 %d: %s", response.StatusCode, string(body))
+		redactedBody := "response body redacted"
+		return nil, fmt.Errorf("服务器返回错误 %d: %s", response.StatusCode, redactedBody)
 	}
 
 	var tagsResponse OllamaTagsResponse
-	body, err := io.ReadAll(response.Body)
+	body, err := io.ReadAll(io.LimitReader(response.Body, maxOllamaModelsResponseBytes+1))
 	if err != nil {
 		return nil, fmt.Errorf("读取响应失败: %v", err)
+	}
+	if len(body) > maxOllamaModelsResponseBytes {
+		return nil, fmt.Errorf("response body exceeds %d bytes", maxOllamaModelsResponseBytes)
 	}
 
 	err = common.Unmarshal(body, &tagsResponse)
@@ -383,6 +405,24 @@ func FetchOllamaModelsWithContextAndClient(ctx context.Context, baseURL, apiKey 
 	}
 
 	return tagsResponse.Models, nil
+}
+
+func applyModelFetchHeaders(request *http.Request, headers http.Header) {
+	for name, values := range headers {
+		if strings.EqualFold(name, "Host") {
+			if len(values) > 0 {
+				request.Host = values[len(values)-1]
+			}
+			continue
+		}
+		if len(values) == 0 {
+			continue
+		}
+		request.Header.Set(name, values[0])
+		for _, value := range values[1:] {
+			request.Header.Add(name, value)
+		}
+	}
 }
 
 // 拉取 Ollama 模型 (非流式)

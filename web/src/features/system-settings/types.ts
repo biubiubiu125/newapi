@@ -50,7 +50,13 @@ export type ConfirmPaymentComplianceResponse = {
   }
 }
 
-export type SystemTaskStatus = 'pending' | 'running' | 'succeeded' | 'failed'
+export type SystemTaskStatus =
+  | 'pending'
+  | 'running'
+  | 'succeeded'
+  | 'failed'
+  | 'cancelled'
+  | 'canceled'
 
 export type SystemTask<
   TPayload = Record<string, unknown>,

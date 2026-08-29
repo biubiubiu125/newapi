@@ -210,7 +210,21 @@ func buildFetchModelsHeaders(channel *model.Channel, key string) (http.Header, e
 	return headers, nil
 }
 
+func buildFetchModelsHeaderOverrides(channel *model.Channel, key string) (http.Header, error) {
+	headers := make(http.Header)
+	if err := applyFetchModelsHeaderOverrides(channel, key, headers); err != nil {
+		return nil, err
+	}
+	return headers, nil
+}
+
 func applyFetchModelsHeaderOverrides(channel *model.Channel, key string, headers http.Header) error {
+	if channel != nil && channel.Type == constant.ChannelTypeCodex {
+		var oauthKey service.CodexOAuthKey
+		if err := common.Unmarshal([]byte(strings.TrimSpace(key)), &oauthKey); err == nil {
+			key = strings.TrimSpace(oauthKey.AccessToken)
+		}
+	}
 	info := &relaycommon.RelayInfo{
 		IsChannelTest: true,
 		ChannelMeta: &relaycommon.ChannelMeta{
@@ -242,7 +256,12 @@ func FetchUpstreamModels(c *gin.Context) {
 		return
 	}
 
+	originalCodexKey := ""
+	if channel.Type == constant.ChannelTypeCodex {
+		originalCodexKey = channel.Key
+	}
 	ids, err := fetchChannelUpstreamModelIDs(c.Request.Context(), channel)
+	err = refreshRuntimeCacheAfterCodexCredentialChange(channel, originalCodexKey, err)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -496,9 +515,12 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		}
 	}
 
-	// VertexAI 特殊校验
-	if channel.Type == constant.ChannelTypeNewAPI {
+	// 自定义上游网关必须提供基础地址。
+	if channel.Type == constant.ChannelTypeSub2API || channel.Type == constant.ChannelTypeNewAPI {
 		if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
+			if channel.Type == constant.ChannelTypeSub2API {
+				return fmt.Errorf("Sub2API channel base URL cannot be empty")
+			}
 			return fmt.Errorf("New API channel base URL cannot be empty")
 		}
 	}
@@ -552,6 +574,16 @@ func RefreshCodexChannelCredential(c *gin.Context) {
 	defer cancel()
 
 	oauthKey, ch, err := service.RefreshCodexChannelCredential(ctx, channelId, service.CodexCredentialRefreshOptions{ResetCaches: true})
+	if err != nil && errors.Is(err, service.ErrCodexCredentialCacheRefresh) && oauthKey != nil && ch != nil {
+		// The credential write is durable even when the first runtime-cache
+		// refresh failed. Retry the cache refresh before reporting failure so
+		// the manual path does not leave an old token in memory unnecessarily.
+		if cacheErr := refreshChannelRuntimeCache(); cacheErr == nil {
+			err = nil
+		} else {
+			err = fmt.Errorf("%w; compensating runtime cache refresh failed: %v", err, cacheErr)
+		}
+	}
 	if err != nil {
 		common.SysError("failed to refresh codex channel credential: " + err.Error())
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "刷新凭证失败，请稍后重试"})
@@ -1200,19 +1232,17 @@ func preparePatchChannelForValidation(channel *PatchChannel, origin *model.Chann
 	validationChannel := channel.Channel
 	if origin != nil {
 		validationChannel.ChannelInfo = origin.ChannelInfo
-		if _, settingsRequested := requestData["settings"]; settingsRequested {
-			if _, ok := requestData["type"]; !ok {
-				validationChannel.Type = origin.Type
-			}
-			if _, ok := requestData["base_url"]; !ok {
-				validationChannel.BaseURL = origin.BaseURL
-			}
-			if _, ok := requestData["other"]; !ok {
-				validationChannel.Other = origin.Other
-			}
-			if _, ok := requestData["setting"]; !ok {
-				validationChannel.Setting = origin.Setting
-			}
+		if _, ok := requestData["type"]; !ok {
+			validationChannel.Type = origin.Type
+		}
+		if _, ok := requestData["base_url"]; !ok {
+			validationChannel.BaseURL = origin.BaseURL
+		}
+		if _, ok := requestData["other"]; !ok {
+			validationChannel.Other = origin.Other
+		}
+		if _, ok := requestData["setting"]; !ok {
+			validationChannel.Setting = origin.Setting
 		}
 	}
 	if channel.MultiKeyMode != nil && strings.TrimSpace(*channel.MultiKeyMode) != "" {
@@ -1921,9 +1951,14 @@ func FetchModels(c *gin.Context) {
 		return
 	}
 
+	originalCodexKey := ""
+	if channel.Type == constant.ChannelTypeCodex {
+		originalCodexKey = channel.Key
+	}
 	ids, err := fetchChannelUpstreamModelIDsWithOptions(c.Request.Context(), channel, channelUpstreamModelFetchOptions{
 		AllowCodexCredentialRefresh: fetchModelsRequestAllowsCodexCredentialRefresh(req),
 	})
+	err = refreshRuntimeCacheAfterCodexCredentialChange(channel, originalCodexKey, err)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,

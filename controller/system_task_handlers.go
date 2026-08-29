@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -21,6 +22,7 @@ func RegisterScheduledSystemTasks() {
 	service.RegisterSystemTaskHandler(channelTestHandler{})
 	service.RegisterSystemTaskHandler(modelUpdateHandler{})
 	service.RegisterSystemTaskHandler(manualModelUpdateHandler{})
+	service.RegisterSystemTaskHandler(modelUpdateApplyAllHandler{})
 	service.RegisterSystemTaskHandler(midjourneyPollHandler{})
 	service.RegisterSystemTaskHandler(asyncTaskPollHandler{})
 }
@@ -110,7 +112,16 @@ func (modelUpdateHandler) Run(ctx context.Context, task *model.SystemTask, runne
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, nil, err)
 		return
 	}
-	summary, err := runChannelUpstreamModelUpdateTaskOnce(ctx, payload.Manual, !payload.Manual, !payload.Manual, service.NewSystemTaskProgressReporter(task, runnerID))
+	allowCodexCredentialRefresh := !payload.Manual
+	summary, err := runChannelUpstreamModelUpdateTaskOnceWithTask(
+		ctx,
+		task.TaskID,
+		runnerID,
+		payload.Manual,
+		!payload.Manual,
+		allowCodexCredentialRefresh,
+		service.NewSystemTaskProgressReporter(task, runnerID),
+	)
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
 		return
@@ -125,7 +136,39 @@ func (manualModelUpdateHandler) Type() string { return model.SystemTaskTypeModel
 func (manualModelUpdateHandler) LockType() string { return model.SystemTaskTypeModelUpdate }
 
 func (manualModelUpdateHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
-	summary, err := runChannelUpstreamModelUpdateTaskOnce(ctx, true, false, false, service.NewSystemTaskProgressReporter(task, runnerID))
+	summary, err := runChannelUpstreamModelUpdateTaskOnceWithTask(
+		ctx,
+		task.TaskID,
+		runnerID,
+		true,
+		false,
+		false,
+		service.NewSystemTaskProgressReporter(task, runnerID),
+	)
+	if err != nil {
+		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
+		return
+	}
+	finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusSucceeded, summary, nil)
+}
+
+type modelUpdateApplyAllHandler struct{}
+
+func (modelUpdateApplyAllHandler) Type() string {
+	return model.SystemTaskTypeModelUpdateApplyAll
+}
+
+func (modelUpdateApplyAllHandler) LockType() string {
+	return model.SystemTaskTypeModelUpdate
+}
+
+func (modelUpdateApplyAllHandler) Run(ctx context.Context, task *model.SystemTask, runnerID string) {
+	summary, err := runApplyAllChannelUpstreamModelUpdates(
+		ctx,
+		task.TaskID,
+		runnerID,
+		service.NewSystemTaskProgressReporter(task, runnerID),
+	)
 	if err != nil {
 		finishSystemTaskHandler(task, runnerID, model.SystemTaskStatusFailed, summary, err)
 		return
@@ -192,7 +235,34 @@ func finishSystemTaskHandler(task *model.SystemTask, runnerID string, status mod
 	if runErr != nil {
 		errorMessage = runErr.Error()
 	}
-	if err := model.FinishSystemTask(task.TaskID, runnerID, status, result, errorMessage); err != nil {
-		common.SysLog(fmt.Sprintf("system task %s failed to persist result: %v", task.TaskID, err))
+	var persistErr error
+	for attempt := 0; attempt < 3; attempt++ {
+		persistErr = model.FinishSystemTask(task.TaskID, runnerID, status, result, errorMessage)
+		if persistErr == nil {
+			return
+		}
+		if errors.Is(persistErr, model.ErrSystemTaskLockLost) {
+			break
+		}
+		if attempt < 2 {
+			time.Sleep(time.Duration(attempt+1) * 100 * time.Millisecond)
+		}
+	}
+	if persistErr == nil {
+		return
+	}
+	common.SysLog(fmt.Sprintf("system task %s failed to persist result after retries: %v", task.TaskID, persistErr))
+	if errors.Is(persistErr, model.ErrSystemTaskLockLost) {
+		return
+	}
+
+	// Preserve the actual persistence failure instead of allowing the runner's
+	// generic deferred fallback to hide it behind "without a terminal state".
+	failureMessage := fmt.Sprintf("failed to persist task terminal result: %v", persistErr)
+	if errorMessage != "" {
+		failureMessage = fmt.Sprintf("%s; handler error: %s", failureMessage, errorMessage)
+	}
+	if err := model.MarkSystemTaskFailedForRunner(task.TaskID, runnerID, failureMessage); err != nil {
+		common.SysLog(fmt.Sprintf("system task %s failed to persist fallback failure state: %v", task.TaskID, err))
 	}
 }

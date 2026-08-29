@@ -273,6 +273,24 @@ func RequirePermission(permission authz.Permission) func(c *gin.Context) {
 	}
 }
 
+func RequireAnyPermission(permissions ...authz.Permission) func(c *gin.Context) {
+	return func(c *gin.Context) {
+		role := c.GetInt("role")
+		userID := c.GetInt("id")
+		for _, permission := range permissions {
+			if authz.Can(userID, role, permission) {
+				c.Next()
+				return
+			}
+		}
+		c.JSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"message": common.TranslateMessage(c, i18n.MsgAuthInsufficientPrivilege),
+		})
+		c.Abort()
+	}
+}
+
 func WssAuth(c *gin.Context) {
 
 }

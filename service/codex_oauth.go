@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"net/url"
 	"strings"
@@ -17,13 +18,14 @@ import (
 )
 
 const (
-	codexOAuthClientID     = "app_EMoamEEZ73f0CkXaXp7hrann"
-	codexOAuthAuthorizeURL = "https://auth.openai.com/oauth/authorize"
-	codexOAuthTokenURL     = "https://auth.openai.com/oauth/token"
-	codexOAuthRedirectURI  = "http://localhost:1455/auth/callback"
-	codexOAuthScope        = "openid profile email offline_access"
-	codexJWTClaimPath      = "https://api.openai.com/auth"
-	defaultHTTPTimeout     = 20 * time.Second
+	codexOAuthClientID         = "app_EMoamEEZ73f0CkXaXp7hrann"
+	codexOAuthAuthorizeURL     = "https://auth.openai.com/oauth/authorize"
+	codexOAuthTokenURL         = "https://auth.openai.com/oauth/token"
+	codexOAuthRedirectURI      = "http://localhost:1455/auth/callback"
+	codexOAuthScope            = "openid profile email offline_access"
+	codexJWTClaimPath          = "https://api.openai.com/auth"
+	defaultHTTPTimeout         = 20 * time.Second
+	maxCodexOAuthResponseBytes = 1 << 20
 )
 
 type CodexOAuthTokenResult struct {
@@ -115,12 +117,22 @@ func exchangeCodexAuthorizationCode(
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCodexOAuthResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxCodexOAuthResponseBytes {
+		return nil, fmt.Errorf(
+			"codex oauth response body exceeds %d bytes",
+			maxCodexOAuthResponseBytes,
+		)
+	}
 	var payload struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int    `json:"expires_in"`
 	}
-	if err := common.DecodeJson(resp.Body, &payload); err != nil {
+	if err := common.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
@@ -183,13 +195,22 @@ func refreshCodexOAuthToken(
 	}
 	defer resp.Body.Close()
 
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCodexOAuthResponseBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(body) > maxCodexOAuthResponseBytes {
+		return nil, fmt.Errorf(
+			"codex oauth response body exceeds %d bytes",
+			maxCodexOAuthResponseBytes,
+		)
+	}
 	var payload struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 		ExpiresIn    int    `json:"expires_in"`
 	}
-
-	if err := common.DecodeJson(resp.Body, &payload); err != nil {
+	if err := common.Unmarshal(body, &payload); err != nil {
 		return nil, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {

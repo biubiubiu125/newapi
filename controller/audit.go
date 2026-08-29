@@ -45,7 +45,7 @@ var auditContentTemplates = map[string]string{
 	"channel.upstream_detect":     "Detected upstream model changes for channel (ID: ${id}, add ${add_count}, remove ${remove_count}, auto-added ${auto_added_count})",
 	"channel.upstream_detect_all": "Started upstream model change detection for all channels (task ${task_id})",
 	"channel.upstream_apply":      "Applied upstream model changes to channel (ID: ${id})",
-	"channel.upstream_apply_all":  "Applied upstream model changes to ${count} channels",
+	"channel.upstream_apply_all":  "Started upstream model changes apply task (task ${task_id})",
 
 	"redemption.create": "Created ${count} redemption codes named ${name} (${quota} each)",
 

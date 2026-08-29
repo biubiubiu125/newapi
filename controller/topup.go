@@ -387,6 +387,14 @@ func validateTopUpQuota(amount int64) (int, error) {
 	return 0, errors.New("充值数量无效")
 }
 
+func validateTopUpQuotaCapacityForAmount(userId int, amount int64) error {
+	creditedQuota, err := validateTopUpQuota(amount)
+	if err != nil {
+		return err
+	}
+	return model.ValidateTopUpQuotaCapacity(userId, creditedQuota)
+}
+
 func rejectInvalidCreditedQuota(c *gin.Context, userId int, quota decimal.Decimal) bool {
 	creditedQuota, err := validateCreditedQuota(quota)
 	if err == nil {
@@ -400,10 +408,7 @@ func rejectInvalidCreditedQuota(c *gin.Context, userId int, quota decimal.Decima
 }
 
 func rejectInvalidTopUpQuota(c *gin.Context, userId int, amount int64) bool {
-	creditedQuota, err := validateTopUpQuota(amount)
-	if err == nil {
-		err = model.ValidateTopUpQuotaCapacity(userId, creditedQuota)
-	}
+	err := validateTopUpQuotaCapacityForAmount(userId, amount)
 	if err != nil {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
 		return true

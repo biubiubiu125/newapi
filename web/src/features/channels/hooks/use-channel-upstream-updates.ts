@@ -35,8 +35,15 @@ const upstreamUpdateRequestConfig = {
 } satisfies ApiRequestConfig
 
 const modelUpdateTaskPollIntervalMs = 2000
-const modelUpdateTaskMaxPolls = 900
+const modelUpdateTaskSlowPollAfterPolls = 900
+const modelUpdateTaskSlowPollIntervalMs = 10000
+const modelUpdateTaskHiddenPollIntervalMs = 30000
+const modelUpdateTaskDiscoveryIntervalMs = 5000
 const modelUpdateTaskStorageKey = 'newapi.channel.upstream_update.task_id'
+const unknownModelUpdateTaskStatusMessage =
+  'Unknown upstream model update task status'
+const modelUpdateManualTaskType = 'model_update_manual'
+const modelUpdateApplyAllTaskType = 'model_update_apply_all'
 
 type ModelUpdateTaskStorage = Pick<
   Storage,
@@ -97,6 +104,13 @@ type ModelUpdateTaskState = {
 }
 
 type ModelUpdateTaskResult = {
+  processed_channels?: number
+  added_models?: number
+  removed_models?: number
+  remaining_remove_models_count?: number
+  failed_channel_ids?: number[]
+  results?: Array<Record<string, unknown>>
+  runtime_cache_refresh_error?: string
   checked_channels?: number
   changed_channels?: number
   detected_add_models?: number
@@ -117,29 +131,26 @@ type ModelUpdateTaskStartInfo = {
   type?: string
 }
 
-function countRemainingRemoveModels(results: unknown): number {
-  if (!Array.isArray(results)) return 0
-  return results.reduce((total, item) => {
-    if (!isRecord(item)) return total
-    return (
-      total +
-      normalizeModelList(
-        (item.remaining_remove_models as unknown[] | undefined) || []
-      ).length
-    )
-  }, 0)
+type ResolvedModelUpdateTaskStartInfo = ModelUpdateTaskStartInfo & {
+  type: string
 }
+
+type CurrentModelUpdateTask = ModelUpdateTask | ModelUpdateTaskStartInfo | null
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === 'object'
 }
 
 function asSystemTaskStatus(value: unknown): SystemTaskStatus | undefined {
+  // cancelled/canceled are forward-compatible terminal statuses; current Go
+  // model-update runners still finish cancellation/lease loss as failed.
   if (
     value === 'pending' ||
     value === 'running' ||
     value === 'succeeded' ||
-    value === 'failed'
+    value === 'failed' ||
+    value === 'cancelled' ||
+    value === 'canceled'
   ) {
     return value
   }
@@ -207,10 +218,12 @@ function getModelUpdateTaskStartInfo(
 ): ModelUpdateTaskStartInfo | null {
   if (!isRecord(payload) || !isRecord(payload.data)) return null
   const taskId = payload.data.task_id
-  if (typeof taskId !== 'string' || taskId.length === 0) return null
+  if (typeof taskId !== 'string' || taskId.trim().length === 0) return null
+  const status = asSystemTaskStatus(payload.data.status)
+  if (!status) return null
   return {
-    task_id: taskId,
-    status: asSystemTaskStatus(payload.data.status),
+    task_id: taskId.trim(),
+    status,
     type: typeof payload.data.type === 'string' ? payload.data.type : undefined,
   }
 }
@@ -219,11 +232,20 @@ function isSuccessPayload(payload: unknown): boolean {
   return isRecord(payload) && payload.success === true
 }
 
-function isTerminalTaskStatus(status: SystemTaskStatus): boolean {
-  return status === 'succeeded' || status === 'failed'
+function isTerminalTaskStatus(status: SystemTaskStatus | undefined): boolean {
+  return (
+    status === 'succeeded' ||
+    status === 'failed' ||
+    status === 'cancelled' ||
+    status === 'canceled'
+  )
 }
 
-function sleep(ms: number, signal?: AbortSignal) {
+function isCancelledTaskStatus(status: SystemTaskStatus | undefined): boolean {
+  return status === 'cancelled' || status === 'canceled'
+}
+
+function defaultModelUpdateTaskSleep(ms: number, signal?: AbortSignal) {
   return new Promise<void>((resolve) => {
     if (signal?.aborted) {
       resolve()
@@ -242,6 +264,34 @@ function sleep(ms: number, signal?: AbortSignal) {
   })
 }
 
+function isModelUpdateTaskDocumentHidden(): boolean {
+  try {
+    return (
+      typeof document !== 'undefined' && document.visibilityState === 'hidden'
+    )
+  } catch {
+    return false
+  }
+}
+
+export function getModelUpdateTaskPollIntervalMs(
+  pollIndex: number,
+  basePollIntervalMs: number
+): number {
+  const normalizedBasePollIntervalMs =
+    Number.isFinite(basePollIntervalMs) && basePollIntervalMs > 0
+      ? basePollIntervalMs
+      : 0
+  let intervalMs = normalizedBasePollIntervalMs
+  if (pollIndex >= modelUpdateTaskSlowPollAfterPolls) {
+    intervalMs = Math.max(intervalMs, modelUpdateTaskSlowPollIntervalMs)
+  }
+  if (isModelUpdateTaskDocumentHidden()) {
+    intervalMs = Math.max(intervalMs, modelUpdateTaskHiddenPollIntervalMs)
+  }
+  return intervalMs
+}
+
 async function getChannelModelUpdateTask(taskId: string, signal?: AbortSignal) {
   const res = await api.get<SystemTaskResponse<ModelUpdateTask>>(
     `/api/channel/upstream_updates/task/${encodeURIComponent(taskId)}`,
@@ -254,16 +304,73 @@ async function getChannelModelUpdateTask(taskId: string, signal?: AbortSignal) {
   return res.data
 }
 
+async function resolveModelUpdateTaskStartInfo(
+  taskInfo: ModelUpdateTaskStartInfo,
+  signal?: AbortSignal,
+  fallbackType?: string
+): Promise<ResolvedModelUpdateTaskStartInfo> {
+  const currentType = taskInfo.type?.trim()
+  if (currentType) return { ...taskInfo, type: currentType }
+
+  const payload = await getChannelModelUpdateTask(taskInfo.task_id, signal)
+  if (!payload.success || !payload.data) {
+    throw new Error(payload.message || '')
+  }
+  const status = asSystemTaskStatus(payload.data.status)
+  if (!status) {
+    throw new Error(unknownModelUpdateTaskStatusMessage)
+  }
+  const type =
+    (typeof payload.data.type === 'string'
+      ? payload.data.type.trim()
+      : '') || fallbackType?.trim() || ''
+  if (!type) {
+    throw new Error('Upstream model update task type is missing')
+  }
+  return {
+    task_id: taskInfo.task_id,
+    status,
+    type,
+  }
+}
+
+async function getCurrentChannelModelUpdateTask(signal?: AbortSignal) {
+  const res = await api.get<SystemTaskResponse<ModelUpdateTask | null>>(
+    '/api/channel/upstream_updates/current',
+    {
+      ...upstreamUpdateRequestConfig,
+      disableDuplicate: true,
+      signal,
+    }
+  )
+  const payload = res.data
+  if (!payload.success) {
+    throw new Error(payload.message || '')
+  }
+  if (!payload.data) return null
+  const taskStatus = asSystemTaskStatus(payload.data.status)
+  if (!taskStatus) {
+    throw new Error(unknownModelUpdateTaskStatusMessage)
+  }
+  return { ...payload.data, status: taskStatus } as ModelUpdateTask
+}
+
 export async function waitForModelUpdateTask(
   taskId: string,
   {
     signal,
-    maxPolls = modelUpdateTaskMaxPolls,
+    // The server processes enabled channels sequentially. Do not stop the
+    // default foreground poll before a large installation can reach a
+    // terminal task state; callers can still provide a finite cap when
+    // bounded polling is required.
+    maxPolls = Number.POSITIVE_INFINITY,
     pollIntervalMs = modelUpdateTaskPollIntervalMs,
+    sleep = defaultModelUpdateTaskSleep,
   }: {
     signal?: AbortSignal
     maxPolls?: number
     pollIntervalMs?: number
+    sleep?: (ms: number, signal?: AbortSignal) => Promise<void> | void
   } = {}
 ) {
   for (let i = 0; i < maxPolls; i++) {
@@ -280,12 +387,155 @@ export async function waitForModelUpdateTask(
     if (!res.success || !res.data) {
       throw new Error(res.message || '')
     }
-    if (isTerminalTaskStatus(res.data.status)) return res.data
+    const taskStatus = asSystemTaskStatus(res.data.status)
+    if (!taskStatus) {
+      throw new Error(unknownModelUpdateTaskStatusMessage)
+    }
+    const task = { ...res.data, status: taskStatus } as ModelUpdateTask
+    if (isTerminalTaskStatus(task.status)) return task
     if (i + 1 < maxPolls) {
-      await sleep(pollIntervalMs, signal)
+      await sleep(getModelUpdateTaskPollIntervalMs(i, pollIntervalMs), signal)
     }
   }
   return null
+}
+
+async function refreshChannelsBestEffort(refresh: () => Promise<void>) {
+  try {
+    await refresh()
+  } catch {
+    // Keep the original operation result visible; refresh is best-effort.
+  }
+}
+
+function modelUpdateTaskResultNumber(
+  result: ModelUpdateTaskResult | undefined,
+  key: keyof ModelUpdateTaskResult
+): number {
+  const value = result?.[key]
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? value
+    : 0
+}
+
+function hasModelUpdateTaskPartialResult(task: ModelUpdateTask): boolean {
+  const result = task.result
+  if (!result) return false
+  return (
+    modelUpdateTaskResultNumber(result, 'checked_channels') > 0 ||
+    modelUpdateTaskResultNumber(result, 'changed_channels') > 0 ||
+    modelUpdateTaskResultNumber(result, 'detected_add_models') > 0 ||
+    modelUpdateTaskResultNumber(result, 'detected_remove_models') > 0 ||
+    modelUpdateTaskResultNumber(result, 'failed_channels') > 0
+  )
+}
+
+function formatModelUpdateTaskFailureMessage(
+  task: ModelUpdateTask,
+  fallbackMessage: string,
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  const errorMessage = typeof task.error === 'string' ? task.error.trim() : ''
+  const cacheRefreshError =
+    typeof task.result?.runtime_cache_refresh_error === 'string'
+      ? task.result.runtime_cache_refresh_error.trim()
+      : ''
+  if (task.type === modelUpdateApplyAllTaskType && task.result) {
+    const result = task.result
+    const processed = modelUpdateTaskResultNumber(
+      result,
+      'processed_channels'
+    )
+    const added = modelUpdateTaskResultNumber(result, 'added_models')
+    const kept = modelUpdateTaskResultNumber(
+      result,
+      'remaining_remove_models_count'
+    )
+    const failed = Array.isArray(result.failed_channel_ids)
+      ? result.failed_channel_ids.length
+      : 0
+    if (processed > 0 || added > 0 || kept > 0 || failed > 0) {
+      const partialMessage = t(
+        'Batch upstream model additions partially completed: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed.',
+        { channels: processed, added, kept, fails: failed }
+      )
+      const suffix = [errorMessage, cacheRefreshError].filter(Boolean).join(' ')
+      return suffix ? `${partialMessage} ${suffix}` : partialMessage
+    }
+  }
+  if (!hasModelUpdateTaskPartialResult(task)) {
+    const suffix = [errorMessage, cacheRefreshError].filter(Boolean).join(' ')
+    return suffix || fallbackMessage
+  }
+  const result = task.result
+  const partialMessage = t(
+    'Batch detection partially completed: {{channels}} channels checked, {{changed}} changed, {{add}} to add, {{remove}} to remove, {{fails}} failed.',
+    {
+      channels: modelUpdateTaskResultNumber(result, 'checked_channels'),
+      changed: modelUpdateTaskResultNumber(result, 'changed_channels'),
+      add: modelUpdateTaskResultNumber(result, 'detected_add_models'),
+      remove: modelUpdateTaskResultNumber(result, 'detected_remove_models'),
+      fails: modelUpdateTaskResultNumber(result, 'failed_channels'),
+    }
+  )
+  const suffix = [errorMessage, cacheRefreshError].filter(Boolean).join(' ')
+  return suffix ? `${partialMessage} ${suffix}` : partialMessage
+}
+
+function formatModelUpdateTaskSuccessMessage(
+  task: ModelUpdateTask,
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  const result = task.result || {}
+  if (task.type === modelUpdateApplyAllTaskType) {
+    return t(
+      'Batch upstream model additions applied: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed',
+      {
+        channels: modelUpdateTaskResultNumber(result, 'processed_channels'),
+        added: modelUpdateTaskResultNumber(result, 'added_models'),
+        kept: modelUpdateTaskResultNumber(
+          result,
+          'remaining_remove_models_count'
+        ),
+        fails: Array.isArray(result.failed_channel_ids)
+          ? result.failed_channel_ids.length
+          : 0,
+      }
+    )
+  }
+  if (task.type === 'model_update') {
+    return t(
+      'Scheduled upstream model sync complete: {{channels}} channels checked, {{add}} to add, {{remove}} to remove, {{autoAdded}} auto added, {{fails}} failed',
+      {
+        channels: modelUpdateTaskResultNumber(result, 'checked_channels'),
+        add: modelUpdateTaskResultNumber(result, 'detected_add_models'),
+        remove: modelUpdateTaskResultNumber(result, 'detected_remove_models'),
+        autoAdded: modelUpdateTaskResultNumber(result, 'auto_added_models'),
+        fails: modelUpdateTaskResultNumber(result, 'failed_channels'),
+      }
+    )
+  }
+  return t(
+    'Batch detection complete: {{channels}} channels, {{add}} to add, {{remove}} to remove, {{fails}} failed',
+    {
+      channels: modelUpdateTaskResultNumber(result, 'checked_channels'),
+      add: modelUpdateTaskResultNumber(result, 'detected_add_models'),
+      remove: modelUpdateTaskResultNumber(result, 'detected_remove_models'),
+      fails: modelUpdateTaskResultNumber(result, 'failed_channels'),
+    }
+  )
+}
+
+function getModelUpdateTaskPollErrorMessage(
+  error: unknown,
+  fallbackMessage: string,
+  t: ReturnType<typeof useTranslation>['t']
+): string {
+  const message = getErrorMessage(error)
+  if (message === unknownModelUpdateTaskStatusMessage) {
+    return t(unknownModelUpdateTaskStatusMessage)
+  }
+  return message || fallbackMessage
 }
 
 function getManualIgnoredModelCount(settings: unknown): number {
@@ -316,6 +566,8 @@ export function useChannelUpstreamUpdates(
   } = {}
 ) {
   const { t } = useTranslation()
+  const canAccessModelUpdateTasks =
+    canDetectUpstreamUpdates || canApplyUpstreamUpdates
 
   const [showModal, setShowModal] = useState(false)
   const [channel, setChannel] = useState<{
@@ -331,11 +583,19 @@ export function useChannelUpstreamUpdates(
   >(null)
   const [detectAllLoading, setDetectAllLoading] = useState(false)
   const [applyAllLoading, setApplyAllLoading] = useState(false)
+  const [cancelTaskLoading, setCancelTaskLoading] = useState(false)
+  const [currentModelUpdateTask, setCurrentModelUpdateTask] =
+    useState<CurrentModelUpdateTask>(null)
+  const [
+    currentModelUpdateTaskLookupComplete,
+    setCurrentModelUpdateTaskLookupComplete,
+  ] = useState(false)
 
   const applyRef = useRef(false)
   const detectRef = useRef(false)
   const detectAllRef = useRef(false)
   const applyAllRef = useRef(false)
+  const cancelTaskRef = useRef(false)
   const mountedRef = useRef(true)
   const modelUpdateTaskGenerationRef = useRef(0)
   const modelUpdateTaskAbortControllerRef = useRef<AbortController | null>(null)
@@ -346,27 +606,61 @@ export function useChannelUpstreamUpdates(
     )
   }, [])
 
-  const beginModelUpdateTaskRun = useCallback((taskId: string) => {
-    modelUpdateTaskAbortControllerRef.current?.abort()
-    const controller = new AbortController()
-    modelUpdateTaskAbortControllerRef.current = controller
-    const generation = modelUpdateTaskGenerationRef.current + 1
-    modelUpdateTaskGenerationRef.current = generation
-    setPersistedModelUpdateTaskId(taskId)
-    detectAllRef.current = true
-    setDetectAllLoading(true)
-    return { controller, generation }
-  }, [])
+  const beginModelUpdateTaskRun = useCallback(
+    (
+      taskInfo: ModelUpdateTaskStartInfo,
+      existingController?: AbortController
+    ) => {
+      if (
+        existingController &&
+        modelUpdateTaskAbortControllerRef.current !== existingController
+      ) {
+        modelUpdateTaskAbortControllerRef.current?.abort()
+      } else if (!existingController) {
+        modelUpdateTaskAbortControllerRef.current?.abort()
+      }
+      const controller = existingController || new AbortController()
+      modelUpdateTaskAbortControllerRef.current = controller
+      const generation = modelUpdateTaskGenerationRef.current + 1
+      modelUpdateTaskGenerationRef.current = generation
+      setPersistedModelUpdateTaskId(taskInfo.task_id)
+      setCurrentModelUpdateTask(taskInfo)
+      const isApplyAllTask = taskInfo.type === modelUpdateApplyAllTaskType
+      if (isApplyAllTask) {
+        applyAllRef.current = true
+        setApplyAllLoading(true)
+      } else {
+        detectAllRef.current = true
+        setDetectAllLoading(true)
+      }
+      return { controller, generation, isApplyAllTask }
+    },
+    []
+  )
 
   const finishModelUpdateTaskRun = useCallback(
-    (generation: number, clearTaskId: boolean) => {
+    (
+      generation: number,
+      clearTaskId: boolean,
+      isApplyAllTask: boolean
+    ) => {
       if (!isCurrentModelUpdateTaskRun(generation)) return
       if (clearTaskId) {
         clearPersistedModelUpdateTaskId()
+        setCurrentModelUpdateTask(null)
       }
       modelUpdateTaskAbortControllerRef.current = null
-      detectAllRef.current = false
-      setDetectAllLoading(false)
+      if (isApplyAllTask) {
+        applyAllRef.current = false
+        setApplyAllLoading(false)
+        detectAllRef.current = false
+        setDetectAllLoading(false)
+      } else {
+        detectAllRef.current = false
+        setDetectAllLoading(false)
+        applyAllRef.current = false
+        setApplyAllLoading(false)
+      }
     },
     [isCurrentModelUpdateTaskRun]
   )
@@ -380,6 +674,12 @@ export function useChannelUpstreamUpdates(
       modelUpdateTaskAbortControllerRef.current = null
     }
   }, [])
+
+  useEffect(() => {
+    if (!canAccessModelUpdateTasks) {
+      setCurrentModelUpdateTaskLookupComplete(false)
+    }
+  }, [canAccessModelUpdateTasks])
 
   const openModal = useCallback(
     (
@@ -452,6 +752,7 @@ export function useChannelUpstreamUpdates(
         const { success, message, data } = res.data || {}
         if (!success) {
           toast.error(message || t('Operation failed'))
+          await refreshChannelsBestEffort(refresh)
           return
         }
 
@@ -467,7 +768,7 @@ export function useChannelUpstreamUpdates(
           )
         )
         closeModal()
-        await refresh()
+        await refreshChannelsBestEffort(refresh)
       } catch (e: unknown) {
         const err = e as {
           response?: { data?: { message?: string } }
@@ -476,6 +777,7 @@ export function useChannelUpstreamUpdates(
         toast.error(
           err?.response?.data?.message || err?.message || t('Operation failed')
         )
+        await refreshChannelsBestEffort(refresh)
       } finally {
         applyRef.current = false
         setApplyLoading(false)
@@ -498,29 +800,26 @@ export function useChannelUpstreamUpdates(
         {},
         upstreamUpdateRequestConfig
       )
-      const { success, message, data } = res.data || {}
-      if (!success) {
-        toast.error(message || t('Batch processing failed'))
+      const taskInfo = getModelUpdateTaskStartInfo(res.data)
+      if (!isSuccessPayload(res.data) || !taskInfo) {
+        toast.error(
+          getResponseMessage(res.data) || t('Batch processing failed')
+        )
+        await refreshChannelsBestEffort(refresh)
         return
       }
-
-      const keptRemoveModels =
-        typeof data?.remaining_remove_models_count === 'number'
-          ? data.remaining_remove_models_count
-          : countRemainingRemoveModels(data?.results)
-      toast.success(
-        t(
-          'Batch upstream model additions applied: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed',
-          {
-            channels: data?.processed_channels || 0,
-            added: data?.added_models || 0,
-            kept: keptRemoveModels,
-            fails: (data?.failed_channel_ids || []).length,
-          }
-        )
+      await pollAndReportModelUpdateTask(
+        taskInfo,
+        false,
+        true,
+        modelUpdateApplyAllTaskType
       )
-      await refresh()
     } catch (e: unknown) {
+      const taskInfo = getModelUpdateTaskStartInfo(getErrorPayload(e))
+      if (taskInfo) {
+        await pollAndReportModelUpdateTask(taskInfo, true)
+        return
+      }
       const err = e as {
         response?: { data?: { message?: string } }
         message?: string
@@ -530,6 +829,12 @@ export function useChannelUpstreamUpdates(
           err?.message ||
           t('Batch processing failed')
       )
+      try {
+        await refreshChannelsBestEffort(refresh)
+      } catch {
+        // Keep the original batch failure visible; a best-effort refresh must
+        // not mask it.
+      }
     } finally {
       applyAllRef.current = false
       setApplyAllLoading(false)
@@ -558,6 +863,7 @@ export function useChannelUpstreamUpdates(
         const { success, message, data } = res.data || {}
         if (!success) {
           toast.error(message || t('Detection failed'))
+          await refreshChannelsBestEffort(refresh)
           return
         }
 
@@ -567,7 +873,7 @@ export function useChannelUpstreamUpdates(
             remove: data?.remove_models?.length || 0,
           })
         )
-        await refresh()
+        await refreshChannelsBestEffort(refresh)
       } catch (e: unknown) {
         const err = e as {
           response?: { data?: { message?: string } }
@@ -576,6 +882,7 @@ export function useChannelUpstreamUpdates(
         toast.error(
           err?.response?.data?.message || err?.message || t('Detection failed')
         )
+        await refreshChannelsBestEffort(refresh)
       } finally {
         detectRef.current = false
         setDetectChannelLoadingId(null)
@@ -585,23 +892,58 @@ export function useChannelUpstreamUpdates(
   )
 
   const pollAndReportModelUpdateTask = useCallback(
-    async (taskInfo: ModelUpdateTaskStartInfo, existingTask: boolean) => {
-      const { controller, generation } = beginModelUpdateTaskRun(
-        taskInfo.task_id
-      )
-      if (existingTask) {
-        toast.info(
-          t('Batch detection task is already running. Waiting for completion')
-        )
-      } else {
-        toast.success(t('Batch detection task started'))
+    async (
+      taskInfo: ModelUpdateTaskStartInfo,
+      existingTask: boolean,
+      notify = true,
+      fallbackType?: string
+    ) => {
+      if (
+        !taskInfo.type?.trim() &&
+        modelUpdateTaskAbortControllerRef.current
+      ) {
+        return
       }
-
+      const resolvingController = taskInfo.type?.trim()
+        ? undefined
+        : new AbortController()
+      if (resolvingController) {
+        modelUpdateTaskAbortControllerRef.current = resolvingController
+      }
+      let taskRun:
+        | ReturnType<typeof beginModelUpdateTaskRun>
+        | undefined
       let clearTaskId = false
       try {
-        const task = await waitForModelUpdateTask(taskInfo.task_id, {
+        const resolvedTaskInfo = await resolveModelUpdateTaskStartInfo(
+          taskInfo,
+          resolvingController?.signal,
+          fallbackType
+        )
+        if (resolvingController?.signal.aborted) return
+        taskRun = beginModelUpdateTaskRun(
+          resolvedTaskInfo,
+          resolvingController
+        )
+        const { controller, generation } = taskRun
+        if (!notify) {
+          // Mount recovery should keep the UI synchronized without showing a
+          // duplicate "started/already running" toast.
+        } else if (existingTask) {
+          toast.info(
+            t('Batch detection task is already running. Waiting for completion')
+          )
+        } else {
+          toast.success(t('Batch detection task started'))
+        }
+
+        const polledTask = await waitForModelUpdateTask(resolvedTaskInfo.task_id, {
           signal: controller.signal,
         })
+        const task =
+          polledTask && !polledTask.type?.trim()
+            ? { ...polledTask, type: resolvedTaskInfo.type }
+            : polledTask
         if (!isCurrentModelUpdateTaskRun(generation)) return
         if (!task) {
           toast.info(
@@ -611,31 +953,66 @@ export function useChannelUpstreamUpdates(
         }
 
         clearTaskId = true
-        if (task.status === 'failed') {
-          toast.error(task.error || t('Batch detection failed'))
+        if (
+          task.status === 'failed' ||
+          task.status === 'cancelled' ||
+          task.status === 'canceled'
+        ) {
+          toast.error(
+            formatModelUpdateTaskFailureMessage(
+              task,
+              t('Batch detection failed'),
+              t
+            )
+          )
+          await refreshChannelsBestEffort(refresh)
           return
         }
 
-        const result = task.result || {}
-        toast.success(
-          t(
-            'Batch detection complete: {{channels}} channels, {{add}} to add, {{remove}} to remove, {{fails}} failed',
-            {
-              channels: result.checked_channels || 0,
-              add: result.detected_add_models || 0,
-              remove: result.detected_remove_models || 0,
-              fails: result.failed_channels || 0,
-            }
-          )
-        )
-        await refresh()
+        toast.success(formatModelUpdateTaskSuccessMessage(task, t))
+        await refreshChannelsBestEffort(refresh)
       } catch (pollError: unknown) {
-        if (!isCurrentModelUpdateTaskRun(generation)) return
+        if (!mountedRef.current || resolvingController?.signal.aborted) {
+          return
+        }
+        if (
+          taskRun &&
+          !isCurrentModelUpdateTaskRun(taskRun.generation)
+        ) {
+          return
+        }
         clearTaskId =
           shouldClearPersistedModelUpdateTaskIdAfterPollingError(pollError)
-        toast.error(getErrorMessage(pollError) || t('Batch detection failed'))
+        toast.error(
+          getModelUpdateTaskPollErrorMessage(
+            pollError,
+            t('Batch detection failed'),
+            t
+          )
+        )
+        await refreshChannelsBestEffort(refresh)
       } finally {
-        finishModelUpdateTaskRun(generation, clearTaskId)
+        if (taskRun) {
+          finishModelUpdateTaskRun(
+            taskRun.generation,
+            clearTaskId,
+            taskRun.isApplyAllTask
+          )
+        } else if (
+          resolvingController &&
+          modelUpdateTaskAbortControllerRef.current === resolvingController
+        ) {
+          if (
+            clearTaskId &&
+            getPersistedModelUpdateTaskId() === taskInfo.task_id
+          ) {
+            clearPersistedModelUpdateTaskId()
+            setCurrentModelUpdateTask((currentTask) =>
+              currentTask?.task_id === taskInfo.task_id ? null : currentTask
+            )
+          }
+          modelUpdateTaskAbortControllerRef.current = null
+        }
       }
     },
     [
@@ -648,15 +1025,116 @@ export function useChannelUpstreamUpdates(
   )
 
   useEffect(() => {
+    if (!canAccessModelUpdateTasks || !currentModelUpdateTaskLookupComplete) {
+      return
+    }
     const taskId = getPersistedModelUpdateTaskId()
     if (
       detectAllRef.current ||
-      !shouldResumePersistedModelUpdateTask(canDetectUpstreamUpdates, taskId)
+      modelUpdateTaskAbortControllerRef.current ||
+      !shouldResumePersistedModelUpdateTask(canAccessModelUpdateTasks, taskId)
     ) {
       return
     }
     void pollAndReportModelUpdateTask({ task_id: taskId }, true)
-  }, [canDetectUpstreamUpdates, pollAndReportModelUpdateTask])
+  }, [
+    canAccessModelUpdateTasks,
+    currentModelUpdateTaskLookupComplete,
+    pollAndReportModelUpdateTask,
+  ])
+
+  useEffect(() => {
+    if (!canAccessModelUpdateTasks) return
+
+    let cancelled = false
+    let lookupInFlight = false
+    let lookupController: AbortController | null = null
+
+    const lookupCurrentTask = async () => {
+      if (cancelled || lookupInFlight) return
+      lookupInFlight = true
+      lookupController = new AbortController()
+      try {
+        const currentTask = await getCurrentChannelModelUpdateTask(
+          lookupController.signal
+        )
+        if (cancelled || !mountedRef.current) return
+        const persistedTaskId = getPersistedModelUpdateTaskId()
+        if (currentTask) {
+          if (isTerminalTaskStatus(currentTask.status)) {
+            clearPersistedModelUpdateTaskId()
+            setCurrentModelUpdateTask(null)
+          } else {
+            setCurrentModelUpdateTask(currentTask)
+            if (persistedTaskId && persistedTaskId !== currentTask.task_id) {
+              clearPersistedModelUpdateTaskId()
+            }
+            if (
+              !detectAllRef.current &&
+              !modelUpdateTaskAbortControllerRef.current
+            ) {
+              void pollAndReportModelUpdateTask(
+                {
+                  task_id: currentTask.task_id,
+                  status: currentTask.status,
+                  type: currentTask.type,
+                },
+                true,
+                false
+              )
+            }
+          }
+        } else if (persistedTaskId) {
+          // The task may still be running even when the current-task lookup
+          // temporarily returns no row (for example during a transient
+          // database/API failure on another node). Keep the persisted ID as
+          // the recovery anchor and retry the task endpoint on the next
+          // discovery pass after a polling error.
+          if (
+            !detectAllRef.current &&
+            !modelUpdateTaskAbortControllerRef.current
+          ) {
+            void pollAndReportModelUpdateTask(
+              { task_id: persistedTaskId },
+              true,
+              false
+            )
+          }
+        } else {
+          setCurrentModelUpdateTask(null)
+        }
+        if (!cancelled && mountedRef.current) {
+          setCurrentModelUpdateTaskLookupComplete(true)
+        }
+      } catch (error) {
+        if (
+          !cancelled &&
+          mountedRef.current &&
+          !isRequestCancelled(error) &&
+          !getPersistedModelUpdateTaskId()
+        ) {
+          setCurrentModelUpdateTask(null)
+        }
+        if (!cancelled && mountedRef.current) {
+          setCurrentModelUpdateTaskLookupComplete(true)
+        }
+      } finally {
+        lookupInFlight = false
+        lookupController = null
+      }
+    }
+
+    void lookupCurrentTask()
+    const discoveryTimer = setInterval(() => {
+      void lookupCurrentTask()
+    }, modelUpdateTaskDiscoveryIntervalMs)
+
+    return () => {
+      cancelled = true
+      lookupController?.abort()
+      clearInterval(discoveryTimer)
+    }
+  }, [canAccessModelUpdateTasks, pollAndReportModelUpdateTask])
 
   const detectAllUpdates = useCallback(async () => {
     if (!canDetectUpstreamUpdates) {
@@ -667,20 +1145,50 @@ export function useChannelUpstreamUpdates(
     if (detectAllRef.current) return
 
     const persistedTaskId = getPersistedModelUpdateTaskId()
-    if (
-      shouldResumePersistedModelUpdateTask(
-        canDetectUpstreamUpdates,
-        persistedTaskId
-      )
-    ) {
-      await pollAndReportModelUpdateTask({ task_id: persistedTaskId }, true)
-      return
-    }
-
     detectAllRef.current = true
     setDetectAllLoading(true)
     let handedOffToTaskPolling = false
     try {
+      const currentTask = await getCurrentChannelModelUpdateTask()
+      if (currentTask) {
+        setCurrentModelUpdateTask(currentTask)
+        if (persistedTaskId && persistedTaskId !== currentTask.task_id) {
+          clearPersistedModelUpdateTaskId()
+        }
+        if (isTerminalTaskStatus(currentTask.status)) {
+          clearPersistedModelUpdateTaskId()
+          setCurrentModelUpdateTask(null)
+          toast.info(
+            t(
+              'Upstream model update task already finished. Refreshing channel list.'
+            )
+          )
+          await refreshChannelsBestEffort(refresh)
+          return
+        }
+        handedOffToTaskPolling = true
+        await pollAndReportModelUpdateTask(
+          {
+            task_id: currentTask.task_id,
+            status: currentTask.status,
+            type: currentTask.type,
+          },
+          true
+        )
+        return
+      }
+      if (
+        shouldResumePersistedModelUpdateTask(
+          canAccessModelUpdateTasks,
+          persistedTaskId
+        )
+      ) {
+        handedOffToTaskPolling = true
+        await pollAndReportModelUpdateTask({ task_id: persistedTaskId }, true)
+        return
+      }
+      setCurrentModelUpdateTask(null)
+
       const res = await api.post(
         '/api/channel/upstream_updates/detect_all',
         {},
@@ -689,26 +1197,156 @@ export function useChannelUpstreamUpdates(
       const taskInfo = getModelUpdateTaskStartInfo(res.data)
       if (!isSuccessPayload(res.data) || !taskInfo) {
         toast.error(getResponseMessage(res.data) || t('Batch detection failed'))
+        await refreshChannelsBestEffort(refresh)
+        return
+      }
+      if (isTerminalTaskStatus(taskInfo.status)) {
+        clearPersistedModelUpdateTaskId()
+        setCurrentModelUpdateTask(null)
+        toast.info(
+          t(
+            'Upstream model update task already finished. Refreshing channel list.'
+          )
+        )
+        await refreshChannelsBestEffort(refresh)
         return
       }
 
       handedOffToTaskPolling = true
-      await pollAndReportModelUpdateTask(taskInfo, false)
+      await pollAndReportModelUpdateTask(
+        taskInfo,
+        false,
+        true,
+        modelUpdateManualTaskType
+      )
     } catch (e: unknown) {
       const taskInfo = getModelUpdateTaskStartInfo(getErrorPayload(e))
       if (taskInfo) {
+        setCurrentModelUpdateTask(taskInfo)
+        if (persistedTaskId && persistedTaskId !== taskInfo.task_id) {
+          clearPersistedModelUpdateTaskId()
+        }
+        if (isTerminalTaskStatus(taskInfo.status)) {
+          clearPersistedModelUpdateTaskId()
+          setCurrentModelUpdateTask(null)
+          toast.info(
+            t(
+              'Upstream model update task already finished. Refreshing channel list.'
+            )
+          )
+          await refreshChannelsBestEffort(refresh)
+          return
+        }
         handedOffToTaskPolling = true
         await pollAndReportModelUpdateTask(taskInfo, true)
         return
       }
-      toast.error(getErrorMessage(e) || t('Batch detection failed'))
+      toast.error(
+        getModelUpdateTaskPollErrorMessage(e, t('Batch detection failed'), t)
+      )
+      await refreshChannelsBestEffort(refresh)
     } finally {
       if (!handedOffToTaskPolling && mountedRef.current) {
         detectAllRef.current = false
         setDetectAllLoading(false)
       }
     }
-  }, [canDetectUpstreamUpdates, pollAndReportModelUpdateTask, t])
+  }, [
+    canAccessModelUpdateTasks,
+    canDetectUpstreamUpdates,
+    pollAndReportModelUpdateTask,
+    refresh,
+    t,
+  ])
+
+  const cancelModelUpdateTask = useCallback(async () => {
+    if (!canAccessModelUpdateTasks) {
+      toast.error(t('No permission to perform this action'))
+      return
+    }
+    if (cancelTaskRef.current) return
+
+    const taskId =
+      currentModelUpdateTask?.task_id?.trim() || getPersistedModelUpdateTaskId()
+    if (!taskId) {
+      toast.info(t('No running upstream model update task'))
+      return
+    }
+
+    cancelTaskRef.current = true
+    setCancelTaskLoading(true)
+    const clearTrackedTaskIfMissing = (error: unknown) => {
+      if (!shouldClearPersistedModelUpdateTaskIdAfterPollingError(error)) {
+        return
+      }
+      const persistedTaskId = getPersistedModelUpdateTaskId()
+      const currentTaskId = currentModelUpdateTask?.task_id?.trim() || ''
+      const stillTrackingCancelledTask =
+        persistedTaskId === taskId ||
+        (!persistedTaskId && currentTaskId === taskId)
+      if (!stillTrackingCancelledTask) return
+
+      modelUpdateTaskGenerationRef.current += 1
+      modelUpdateTaskAbortControllerRef.current?.abort()
+      modelUpdateTaskAbortControllerRef.current = null
+      clearPersistedModelUpdateTaskId()
+      setCurrentModelUpdateTask(null)
+      detectAllRef.current = false
+      setDetectAllLoading(false)
+      applyAllRef.current = false
+      setApplyAllLoading(false)
+    }
+    try {
+      const res = await api.post(
+        '/api/channel/upstream_updates/cancel',
+        { task_id: taskId },
+        upstreamUpdateRequestConfig
+      )
+      const payload = res.data || {}
+      if (!isSuccessPayload(payload)) {
+        clearTrackedTaskIfMissing({ response: { data: payload } })
+        toast.error(
+          getResponseMessage(payload) ||
+            t('Failed to cancel upstream model update task')
+        )
+        await refreshChannelsBestEffort(refresh)
+        return
+      }
+
+      modelUpdateTaskGenerationRef.current += 1
+      modelUpdateTaskAbortControllerRef.current?.abort()
+      modelUpdateTaskAbortControllerRef.current = null
+      clearPersistedModelUpdateTaskId()
+      setCurrentModelUpdateTask(null)
+      detectAllRef.current = false
+      setDetectAllLoading(false)
+      applyAllRef.current = false
+      setApplyAllLoading(false)
+      const cancelledStatus = isRecord(payload.data)
+        ? asSystemTaskStatus(payload.data.status)
+        : undefined
+      if (isCancelledTaskStatus(cancelledStatus)) {
+        toast.success(t('Upstream model update task cancelled'))
+      } else {
+        toast.info(t('No running upstream model update task'))
+      }
+      await refreshChannelsBestEffort(refresh)
+    } catch (e: unknown) {
+      clearTrackedTaskIfMissing(e)
+      toast.error(
+        getErrorMessage(e) || t('Failed to cancel upstream model update task')
+      )
+      await refreshChannelsBestEffort(refresh)
+    } finally {
+      cancelTaskRef.current = false
+      setCancelTaskLoading(false)
+    }
+  }, [
+    canAccessModelUpdateTasks,
+    currentModelUpdateTask?.task_id,
+    refresh,
+    t,
+  ])
 
   // Memoized so consumers (and the channels context value built from this) get
   // a stable reference unless an actual field changes. Callbacks above are all
@@ -723,6 +1361,8 @@ export function useChannelUpstreamUpdates(
       applyLoading,
       detectChannelLoadingId,
       detectAllLoading,
+      cancelTaskLoading,
+      currentModelUpdateTask,
       applyAllLoading,
       openModal,
       closeModal,
@@ -730,6 +1370,7 @@ export function useChannelUpstreamUpdates(
       applyAllUpdates,
       detectChannelUpdates,
       detectAllUpdates,
+      cancelModelUpdateTask,
     }),
     [
       showModal,
@@ -740,6 +1381,8 @@ export function useChannelUpstreamUpdates(
       applyLoading,
       detectChannelLoadingId,
       detectAllLoading,
+      cancelTaskLoading,
+      currentModelUpdateTask,
       applyAllLoading,
       openModal,
       closeModal,
@@ -747,6 +1390,7 @@ export function useChannelUpstreamUpdates(
       applyAllUpdates,
       detectChannelUpdates,
       detectAllUpdates,
+      cancelModelUpdateTask,
     ]
   )
 }

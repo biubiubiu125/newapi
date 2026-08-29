@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -14,8 +15,12 @@ import (
 )
 
 const (
-	codexLatestReleaseURL      = "https://api.github.com/repos/openai/codex/releases/latest"
-	codexClientVersionCacheTTL = time.Hour
+	codexLatestReleaseURL         = "https://api.github.com/repos/openai/codex/releases/latest"
+	codexClientVersionLookupLimit = 5 * time.Second
+	codexClientVersionCacheTTL    = time.Hour
+	codexClientVersionFallback    = "0.150.1"
+	maxCodexReleaseResponseBytes  = 1 << 20
+	maxCodexModelsResponseBytes   = 10 << 20
 )
 
 type codexClientVersionCache struct {
@@ -27,18 +32,81 @@ type codexClientVersionCache struct {
 var latestCodexClientVersion codexClientVersionCache
 
 func GetLatestCodexClientVersion(ctx context.Context, client *http.Client) (string, error) {
-	return latestCodexClientVersion.get(ctx, client, codexLatestReleaseURL, time.Now())
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	lookupCtx, cancel := context.WithTimeout(ctx, codexClientVersionLookupLimit)
+	defer cancel()
+	return getLatestCodexClientVersionWithLookupContext(
+		ctx,
+		lookupCtx,
+		client,
+		codexLatestReleaseURL,
+		time.Now(),
+	)
+}
+
+func getLatestCodexClientVersionWithFallback(
+	ctx context.Context,
+	client *http.Client,
+	releaseURL string,
+	now time.Time,
+) (string, error) {
+	return getLatestCodexClientVersionWithLookupContext(ctx, ctx, client, releaseURL, now)
+}
+
+func getLatestCodexClientVersionWithLookupContext(
+	parentCtx context.Context,
+	lookupCtx context.Context,
+	client *http.Client,
+	releaseURL string,
+	now time.Time,
+) (string, error) {
+	if parentCtx == nil {
+		parentCtx = context.Background()
+	}
+	if lookupCtx == nil {
+		lookupCtx = parentCtx
+	}
+	version, err := latestCodexClientVersion.get(lookupCtx, client, releaseURL, now)
+	if err == nil {
+		return version, nil
+	}
+	if parentCtx.Err() != nil {
+		return "", err
+	}
+	fallback := strings.TrimSpace(os.Getenv("CODEX_CLIENT_VERSION"))
+	if fallback == "" {
+		fallback = codexClientVersionFallback
+	}
+	latestCodexClientVersion.Lock()
+	if latestCodexClientVersion.version == "" {
+		latestCodexClientVersion.version = fallback
+		latestCodexClientVersion.expiresAt = now.Add(codexClientVersionCacheTTL)
+	}
+	version = latestCodexClientVersion.version
+	latestCodexClientVersion.Unlock()
+	return version, nil
 }
 
 func (cache *codexClientVersionCache) get(ctx context.Context, client *http.Client, releaseURL string, now time.Time) (string, error) {
 	cache.Lock()
+	if cache.version != "" && now.Before(cache.expiresAt) {
+		version := cache.version
+		cache.Unlock()
+		return version, nil
+	}
+	cache.Unlock()
+
+	version, err := fetchLatestCodexClientVersion(ctx, client, releaseURL)
+	cache.Lock()
 	defer cache.Unlock()
 
+	// Another caller may have completed the lookup while this request was in
+	// flight. Prefer that newer value over an older failed/successful result.
 	if cache.version != "" && now.Before(cache.expiresAt) {
 		return cache.version, nil
 	}
-
-	version, err := fetchLatestCodexClientVersion(ctx, client, releaseURL)
 	if err != nil {
 		if cache.version != "" {
 			cache.expiresAt = now.Add(codexClientVersionCacheTTL)
@@ -55,6 +123,9 @@ func (cache *codexClientVersionCache) get(ctx context.Context, client *http.Clie
 func fetchLatestCodexClientVersion(ctx context.Context, client *http.Client, releaseURL string) (string, error) {
 	if client == nil {
 		return "", fmt.Errorf("nil http client")
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, releaseURL, nil)
@@ -79,7 +150,14 @@ func fetchLatestCodexClientVersion(ctx context.Context, client *http.Client, rel
 		Draft      bool   `json:"draft"`
 		Prerelease bool   `json:"prerelease"`
 	}
-	if err := common.DecodeJson(resp.Body, &release); err != nil {
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCodexReleaseResponseBytes+1))
+	if err != nil {
+		return "", err
+	}
+	if len(body) > maxCodexReleaseResponseBytes {
+		return "", fmt.Errorf("response body exceeds %d bytes", maxCodexReleaseResponseBytes)
+	}
+	if err := common.Unmarshal(body, &release); err != nil {
 		return "", err
 	}
 	if release.Draft || release.Prerelease {
@@ -98,6 +176,24 @@ func FetchCodexModels(
 	baseURL string,
 	oauthKey *CodexOAuthKey,
 	clientVersion string,
+) (statusCode int, models []string, err error) {
+	return FetchCodexModelsWithHeaders(
+		ctx,
+		client,
+		baseURL,
+		oauthKey,
+		clientVersion,
+		nil,
+	)
+}
+
+func FetchCodexModelsWithHeaders(
+	ctx context.Context,
+	client *http.Client,
+	baseURL string,
+	oauthKey *CodexOAuthKey,
+	clientVersion string,
+	headers http.Header,
 ) (statusCode int, models []string, err error) {
 	if client == nil {
 		return 0, nil, fmt.Errorf("nil http client")
@@ -139,6 +235,7 @@ func FetchCodexModels(
 	req.Header.Set("ChatGPT-Account-Id", accountID)
 	req.Header.Set("User-Agent", "codex-cli/"+clientVersion)
 	req.Header.Set("Accept", "application/json")
+	applyCodexModelFetchHeaders(req, headers)
 
 	resp, err := client.Do(req)
 	if err != nil {
@@ -146,12 +243,16 @@ func FetchCodexModels(
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		return resp.StatusCode, nil, nil
+	}
+
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxCodexModelsResponseBytes+1))
 	if err != nil {
 		return resp.StatusCode, nil, err
 	}
-	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
-		return resp.StatusCode, nil, nil
+	if len(body) > maxCodexModelsResponseBytes {
+		return resp.StatusCode, nil, fmt.Errorf("response body exceeds %d bytes", maxCodexModelsResponseBytes)
 	}
 
 	var result struct {
@@ -177,4 +278,22 @@ func FetchCodexModels(
 		models = append(models, slug)
 	}
 	return resp.StatusCode, models, nil
+}
+
+func applyCodexModelFetchHeaders(request *http.Request, headers http.Header) {
+	for name, values := range headers {
+		if strings.EqualFold(name, "Host") {
+			if len(values) > 0 {
+				request.Host = values[len(values)-1]
+			}
+			continue
+		}
+		if len(values) == 0 {
+			continue
+		}
+		request.Header.Set(name, values[0])
+		for _, value := range values[1:] {
+			request.Header.Add(name, value)
+		}
+	}
 }
