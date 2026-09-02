@@ -66,6 +66,9 @@ func sanitizeDBError(err error) error {
 	}
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
+		if pgErr.Code == "08P01" || pgErr.Code == "42P05" {
+			return fmt.Errorf("postgres error SQLSTATE %s: prepared statement conflict with a transaction-pooling proxy (PgBouncer/Neon/Supabase); other clients sharing this database must disable prepared statements, or upgrade PgBouncer to >=1.21 with max_prepared_statements enabled", pgErr.Code)
+		}
 		return fmt.Errorf("postgres error SQLSTATE %s", pgErr.Code)
 	}
 	var chErr *proto.Exception

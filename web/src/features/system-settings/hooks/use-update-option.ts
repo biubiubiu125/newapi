@@ -34,7 +34,6 @@ type UpdateOptionMutationRequest = UpdateOptionRequest & {
 
 // Configuration keys that require status refresh
 const STATUS_RELATED_KEYS = new Set([
-  'theme.frontend',
   'SystemName',
   'ServerAddress',
   'Logo',

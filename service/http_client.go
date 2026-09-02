@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/tls"
 	"fmt"
+	"math"
 	"net"
 	"net/http"
 	"net/url"
@@ -71,6 +72,10 @@ func ValidateSSRFProtectedFetchURL(urlStr string) error {
 	return validateURLWithCurrentFetchSetting(urlStr, true)
 }
 
+// maxTimeoutSeconds prevents an overflowing time.Duration conversion when an
+// operator supplies an unusually large timeout value.
+const maxTimeoutSeconds = int(math.MaxInt64 / int64(time.Second))
+
 func newRelayHTTPTransport() *http.Transport {
 	var transport *http.Transport
 	if defaultTransport, ok := http.DefaultTransport.(*http.Transport); ok && defaultTransport != nil {
@@ -91,6 +96,12 @@ func newRelayHTTPTransport() *http.Transport {
 	transport.MaxIdleConns = common.RelayMaxIdleConns
 	transport.MaxIdleConnsPerHost = common.RelayMaxIdleConnsPerHost
 	transport.IdleConnTimeout = time.Duration(common.RelayIdleConnTimeout) * time.Second
+	if seconds := common.RelayResponseHeaderTimeout; seconds > 0 {
+		if seconds > maxTimeoutSeconds {
+			seconds = maxTimeoutSeconds
+		}
+		transport.ResponseHeaderTimeout = time.Duration(seconds) * time.Second
+	}
 	transport.ForceAttemptHTTP2 = true
 	if common.TLSInsecureSkipVerify {
 		transport.TLSClientConfig = common.InsecureTLSConfig

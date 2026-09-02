@@ -350,3 +350,19 @@ func TestSystemTaskUpdatesRequireUnexpiredLock(t *testing.T) {
 	assert.Equal(t, SystemTaskStatusRunning, reloaded.Status)
 	assert.Empty(t, reloaded.State)
 }
+
+func TestUpdateSystemTaskStateIdenticalPayloadDoesNotLoseLock(t *testing.T) {
+	truncateTables(t)
+
+	task, err := CreateSystemTask(SystemTaskTypeLogCleanup, nil, nil)
+	require.NoError(t, err)
+	runnerID := "runner-a"
+	_, claimed, err := ClaimSystemTask(task.ID, SystemTaskTypeLogCleanup, "", runnerID, common.GetTimestamp()+60)
+	require.NoError(t, err)
+	require.True(t, claimed)
+
+	state := testSystemTaskState{Total: 10, Processed: 10, Progress: 100, Remaining: 0}
+	require.NoError(t, UpdateSystemTaskState(task.TaskID, runnerID, state))
+	require.NoError(t, UpdateSystemTaskState(task.TaskID, runnerID, state))
+	require.NoError(t, FinishSystemTask(task.TaskID, runnerID, SystemTaskStatusSucceeded, nil, ""))
+}

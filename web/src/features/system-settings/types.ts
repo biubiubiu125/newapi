@@ -114,13 +114,13 @@ export type SystemTaskListResponse = {
 
 export type SiteSettings = {
   Notice: string
-  'theme.frontend': 'classic' | 'default'
   SystemName: string
   Logo: string
   Footer: string
   About: string
   HomePageContent: string
   ServerAddress: string
+  TaskPublicAddress: string
   'legal.user_agreement': string
   'legal.privacy_policy': string
   HeaderNavModules: string

@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -176,6 +177,48 @@ func ImageTaskAccessRateLimit() func(c *gin.Context) {
 			return
 		}
 		c.Next()
+	}
+}
+
+// ImageTaskResultAccessRateLimit preserves token-based limiting for normal
+// result requests and leaves signed capability requests to the public result
+// handler, which have no token identity to key.
+func ImageTaskResultAccessRateLimit() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		if len(c.QueryArray(service.TaskArtifactAccessQueryParameter)) > 0 {
+			maxRequestNum := constant.ImageTaskAccessRateLimitCount
+			duration := int64(constant.ImageTaskAccessRateLimitDurationSeconds)
+			if maxRequestNum <= 0 || duration <= 0 {
+				c.Next()
+				return
+			}
+
+			clientIP := common.GetClientIP(c)
+			if clientIP == "" {
+				clientIP = "unknown"
+			}
+			key := fmt.Sprintf("IMGT:result:ip:%s", clientIP)
+			allowed := true
+			if common.RedisEnabled {
+				var err error
+				allowed, err = redisSlidingWindowAllowed(context.Background(), "rateLimit:"+key, maxRequestNum, duration)
+				if err != nil {
+					common.SysLog("image task signed result rate limiter error: " + err.Error())
+					c.Next()
+					return
+				}
+			} else {
+				inMemoryRateLimiter.Init(common.RateLimitKeyExpirationDuration)
+				allowed = inMemoryRateLimiter.Request(key, maxRequestNum, duration)
+			}
+			if !allowed {
+				abortImageTaskRateLimitExceeded(c, duration)
+				return
+			}
+			c.Next()
+			return
+		}
+		ImageTaskAccessRateLimit()(c)
 	}
 }
 

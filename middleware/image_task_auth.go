@@ -33,6 +33,19 @@ func TokenAuthForTaskAccess() func(c *gin.Context) {
 	return imageTaskTokenAuth()
 }
 
+// TokenAuthForImageTaskResultAccess keeps the existing Bearer flow for the
+// result endpoint while allowing the controller to handle signed access URLs.
+func TokenAuthForImageTaskResultAccess() func(c *gin.Context) {
+	return func(c *gin.Context) {
+		if len(c.QueryArray(service.TaskArtifactAccessQueryParameter)) > 0 {
+			c.Header("Cache-Control", "private, no-store")
+			c.Next()
+			return
+		}
+		imageTaskTokenAuth()(c)
+	}
+}
+
 func imageTaskTokenAuth() func(c *gin.Context) {
 	return func(c *gin.Context) {
 		key, parts := imageTaskAuthorizationKey(c)

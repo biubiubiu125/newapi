@@ -123,7 +123,7 @@ type Properties struct {
 }
 
 func (m *Properties) Scan(val interface{}) error {
-	bytesValue, _ := val.([]byte)
+	bytesValue := jsonScanBytes(val)
 	if len(bytesValue) == 0 {
 		*m = Properties{}
 		return nil
@@ -135,7 +135,11 @@ func (m Properties) Value() (driver.Value, error) {
 	if m == (Properties{}) {
 		return nil, nil
 	}
-	return common.Marshal(m)
+	b, err := common.Marshal(m)
+	if err != nil {
+		return nil, err
+	}
+	return string(b), nil
 }
 
 type TaskPrivateData struct {
@@ -319,13 +323,7 @@ func GenerateTaskID() string {
 }
 
 func (p *TaskPrivateData) Scan(val interface{}) error {
-	var bytesValue []byte
-	switch value := val.(type) {
-	case []byte:
-		bytesValue = value
-	case string:
-		bytesValue = []byte(value)
-	}
+	bytesValue := jsonScanBytes(val)
 	if len(bytesValue) == 0 {
 		return nil
 	}
@@ -340,7 +338,7 @@ func (p TaskPrivateData) Value() (driver.Value, error) {
 	if string(b) == "{}" {
 		return nil, nil
 	}
-	return b, nil
+	return string(b), nil
 }
 
 // SyncTaskQueryParams 用于包含所有搜索条件的结构体，可以根据需求添加更多字段
@@ -1489,6 +1487,30 @@ func GetPublicImageTaskFullByTaskID(userID int, tokenID int, taskID string) (*Ta
 	}
 	task.PrivateData.PublicImageTask = true
 	task.PrivateData.TokenId = tokenID
+	return &task, true, nil
+}
+
+// GetPublicImageTaskFullByTaskIDForArtifact loads a task for a signed public
+// artifact capability. The capability itself is verified by the controller;
+// this query still enforces the task's public image classification.
+func GetPublicImageTaskFullByTaskIDForArtifact(taskID string) (*Task, bool, error) {
+	taskID = strings.TrimSpace(taskID)
+	if taskID == "" {
+		return nil, false, nil
+	}
+	var task Task
+	err := DB.Where(
+		"task_id = ? AND platform = ? AND public_image_task = ?",
+		taskID,
+		constant.TaskPlatformImage,
+		true,
+	).First(&task).Error
+	exists, err := RecordExist(err)
+	if err != nil || !exists {
+		return nil, exists, err
+	}
+	task.PrivateData.PublicImageTask = true
+	task.PrivateData.TokenId = task.PublicImageTaskTokenID
 	return &task, true, nil
 }
 

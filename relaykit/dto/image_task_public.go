@@ -10,6 +10,7 @@ type PublicImageTask struct {
 	StartedAt            int64                 `json:"started_at,omitempty"`
 	CompletedAt          int64                 `json:"completed_at,omitempty"`
 	ResultAvailable      bool                  `json:"result_available"`
+	ResultURL            string                `json:"result_url,omitempty"`
 	ResultExpiresAt      int64                 `json:"result_expires_at,omitempty"`
 	ResultAcknowledgedAt int64                 `json:"result_acknowledged_at,omitempty"`
 	Error                *PublicImageTaskError `json:"error,omitempty"`

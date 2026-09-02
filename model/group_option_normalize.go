@@ -1,8 +1,11 @@
 package model
 
 import (
-	"github.com/QuantumNous/new-api/common"
+	"errors"
+	"net/url"
 	"strings"
+
+	"github.com/QuantumNous/new-api/common"
 )
 
 func normalizeJSONMapFloat(value string) (string, error) {
@@ -153,6 +156,7 @@ func normalizeOptionValueForStorage(key string, value string) (string, error) {
 		return normalizeJSONGroupSpecialUsable(value)
 	case "PayAddress",
 		"CustomCallbackAddress",
+		"TaskPublicAddress",
 		"EpayId",
 		"EpayKey",
 		"StripeApiSecret",
@@ -187,4 +191,28 @@ func normalizeOptionValueForStorage(key string, value string) (string, error) {
 	default:
 		return value, nil
 	}
+}
+
+func validateTaskPublicAddressValue(raw string) error {
+	trimmed := strings.TrimSpace(raw)
+	if trimmed == "" {
+		return errors.New("task artifact base URL is empty")
+	}
+	if raw != trimmed {
+		return errors.New("task artifact base URL must not contain surrounding whitespace")
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed == nil {
+		return errors.New("task artifact base URL is invalid")
+	}
+	if !strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
+		return errors.New("task artifact base URL must use http or https")
+	}
+	if parsed.Host == "" || parsed.User != nil || parsed.Opaque != "" {
+		return errors.New("task artifact base URL must contain a host and no userinfo")
+	}
+	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(trimmed, "#") {
+		return errors.New("task artifact base URL must not contain a query or fragment")
+	}
+	return nil
 }

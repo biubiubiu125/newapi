@@ -1,41 +1,25 @@
 # Task 2 report
 
-## Changed files
+日期：2026-09-03
 
-- Removed the tracked `web/classic/` frontend (457 files).
-- Removed classic build, embed, CI, release, formatter, and lint references.
-- Changed the web router and embedded assets to expose only `web/dist`.
-- Kept `theme.frontend` database migration/read compatibility and documented that it is normalized to `default` without runtime frontend switching.
-- Updated the OpenAPI descriptions for the compatibility key.
-- Added regression coverage for unconditional legacy-route rewriting and web index serving.
+状态：已完成并已提交到本地分支 `4f968e1d7`。
 
-## Trash method
+完成内容：
+- 移除 `web/classic/` 的 457 个受 Git 跟踪文件，并移除 classic 的构建、Embed、CI、release、路由和格式化配置引用。
+- 保留旧 `theme.frontend` 的数据库迁移/写入兼容，不再提供 classic 运行时切换。
+- 新版 `web/` 保持唯一活动前端。
 
-Validated the exact path `C:\Users\Administrator\codex-1\newapi\web\classic`, then ran:
+回收站证据：
+- 操作前已确认绝对路径为 `C:\Users\Administrator\codex-1\newapi\web\classic`。
+- 使用 Windows Recycle Bin API `Microsoft.VisualBasic.FileIO.FileSystem.DeleteDirectory(..., RecycleOption.SendToRecycleBin)`。
+- 操作后 `Test-Path` 为 `False`，`git ls-files web/classic` 为 0。
 
-```powershell
-Add-Type -AssemblyName Microsoft.VisualBasic
-[Microsoft.VisualBasic.FileIO.FileSystem]::DeleteDirectory(
-  'C:\Users\Administrator\codex-1\newapi\web\classic',
-  [Microsoft.VisualBasic.FileIO.UIOption]::OnlyErrorDialogs,
-  [Microsoft.VisualBasic.FileIO.RecycleOption]::SendToRecycleBin
-)
-```
+验证：
+- `bun run typecheck`：通过。
+- `bun run lint`：通过，只有仓库既有 warning。
+- `bun run build`：通过。
+- classic 活动引用扫描：未发现构建、运行时、CI、release 或路由引用。
 
-Output: `TRASH_RESULT=RecycleOption.SendToRecycleBin`; `SOURCE_EXISTS=False` after completion. The directory contained 110,960 files on disk and 457 tracked files.
-
-## Checks
-
-- Reference scan: no build/embed/CI/release/router classic references remain outside task documentation and project policy text.
-- `CLASSIC_SOURCE_EXISTS=False` after the Recycle Bin move.
-- WSL: `go test ./common -run TestThemeAwarePathAlwaysRewritesLegacyConsoleRoutes` — PASS.
-- WSL: `go test ./router -run TestSetWebRouterServesIndexPageForWebAndWorkbenchRoutes` — PASS.
-- `git diff --check` and `git diff --cached --check` — PASS.
-- `bun run typecheck` — PASS.
-- `bun run lint` — PASS (existing repository warnings only; exit 0).
-- `bun run build` — PASS.
-- Broad WSL `go test ./common ./router` was also run but remains red on unrelated baseline assertions: image-task cache retention expects 12h but gets 72h; referral admin router tests receive 401 rather than expected 403/200; public image-task OpenAPI field-count test expects 128 but gets 1.
-
-## Remaining compatibility references
-
-`theme.frontend` remains in the migration, option validation, compatibility tests, and legacy config load hook so existing installations are readable. It is normalized to `default`, omitted from active settings, and cannot select a frontend. Generic legacy protocol comments and unrelated legacy-route tests remain unchanged.
+剩余兼容引用：
+- `theme.frontend` 仅存在于兼容迁移、兼容校验、测试和 OpenAPI 说明中。
+- `web/classic` 仅存在于历史报告和项目规则文本中。

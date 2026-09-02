@@ -23,13 +23,13 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -334,9 +334,11 @@ func newImageTaskSyncBridgeE2ERouterWithCreateGate(createGate gin.HandlerFunc) *
 	imageTaskAccessRouter.Use(middleware.TokenAuthForTaskAccess())
 	imageTaskAccessRouter.GET("", ListPublicImageTasks)
 	imageTaskAccessRouter.GET("/:task_id", GetPublicImageTask)
-	imageTaskAccessRouter.GET("/:task_id/result", GetPublicImageTaskResult)
 	imageTaskAccessRouter.POST("/:task_id/ack", AcknowledgePublicImageTaskResult)
 	imageTaskAccessRouter.POST("/:task_id/cancel", CancelPublicImageTask)
+	imageTaskResultRouter := imageTaskRouter.Group("")
+	imageTaskResultRouter.Use(middleware.TokenAuthForImageTaskResultAccess())
+	imageTaskResultRouter.GET("/:task_id/result", GetPublicImageTaskResult)
 	return router
 }
 

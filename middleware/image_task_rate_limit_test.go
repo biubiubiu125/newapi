@@ -49,6 +49,34 @@ func imageTaskAccessRequest(engine *gin.Engine, path string) *httptest.ResponseR
 	return recorder
 }
 
+func TestImageTaskResultAccessRateLimitCoversSignedRequests(t *testing.T) {
+	withImageTaskAccessRateLimit(t, 1, 60)
+	engine := gin.New()
+	engine.GET("/v1/image-tasks/:task_id/result", func(c *gin.Context) {
+		ImageTaskResultAccessRateLimit()(c)
+		if !c.IsAborted() {
+			c.Status(http.StatusOK)
+		}
+	})
+
+	request := func() *httptest.ResponseRecorder {
+		recorder := httptest.NewRecorder()
+		req := httptest.NewRequest(
+			http.MethodGet,
+			"/v1/image-tasks/task_signed/result?access=invalid",
+			nil,
+		)
+		req.RemoteAddr = "192.0.2.41:12345"
+		engine.ServeHTTP(recorder, req)
+		return recorder
+	}
+
+	require.Equal(t, http.StatusOK, request().Code)
+	blocked := request()
+	require.Equal(t, http.StatusTooManyRequests, blocked.Code, blocked.Body.String())
+	require.Contains(t, blocked.Body.String(), `"code":"rate_limit_exceeded"`)
+}
+
 func withImageTaskAccessRateLimit(t *testing.T, count int, durationSeconds int) {
 	t.Helper()
 	oldCount := constant.ImageTaskAccessRateLimitCount

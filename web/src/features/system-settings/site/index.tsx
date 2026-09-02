@@ -26,13 +26,13 @@ import {
 
 const defaultSiteSettings: SiteSettings = {
   Notice: '',
-  'theme.frontend': 'default',
   SystemName: 'RKAPI',
   Logo: '',
   Footer: '',
   About: '',
   HomePageContent: '',
   ServerAddress: '',
+  TaskPublicAddress: '',
   'legal.user_agreement': '',
   'legal.privacy_policy': '',
   HeaderNavModules: '',

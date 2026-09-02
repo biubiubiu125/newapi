@@ -143,10 +143,12 @@ func chooseDB(envName string, isLog bool) (*gorm.DB, common.DatabaseType, error)
 		if strings.HasPrefix(dsn, "postgres://") || strings.HasPrefix(dsn, "postgresql://") {
 			// Use PostgreSQL
 			common.SysLog("using PostgreSQL as database")
+			// Disable both pgx implicit and GORM explicit prepared statements:
+			// transaction-pooling proxies cannot safely reuse named statements.
 			db, err := gorm.Open(postgres.New(postgres.Config{
 				DSN:                  dsn,
-				PreferSimpleProtocol: true, // disables implicit prepared statement usage
-			}), newGormConfig(true))
+				PreferSimpleProtocol: true,
+			}), newGormConfig(false))
 			return db, common.DatabaseTypePostgreSQL, err
 		}
 		if strings.HasPrefix(dsn, "local") {
@@ -296,6 +298,12 @@ func withDatabaseStartupRetry(label string, fn func() error) error {
 }
 
 func migrateDB() error {
+	if err := migrateTokenKeyUniqueness(DB); err != nil {
+		return err
+	}
+	if err := migratePrefillGroupUniqueness(DB); err != nil {
+		return err
+	}
 	// Migrate price_amount column from float/double to decimal for existing tables
 	migrateSubscriptionPlanPriceAmount()
 	// Migrate model_limits column from varchar to text for existing tables
@@ -411,143 +419,6 @@ func migrateDB() error {
 		return err
 	}
 	cleanupConversationArtifactOptions()
-	return nil
-}
-
-func migrateDBFast() error {
-	if err := migrateRiskCleanup(); err != nil {
-		return err
-	}
-	if err := ensureChannelOpenAIOrganizationColumn(); err != nil {
-		return err
-	}
-
-	var wg sync.WaitGroup
-
-	migrations := []struct {
-		model interface{}
-		name  string
-	}{
-		{&Channel{}, "Channel"},
-		{&Token{}, "Token"},
-		{&User{}, "User"},
-		{&ReferralAffiliate{}, "ReferralAffiliate"},
-		{&ReferralBinding{}, "ReferralBinding"},
-		{&ReferralClick{}, "ReferralClick"},
-		{&ReferralCommissionAccount{}, "ReferralCommissionAccount"},
-		{&ReferralCommission{}, "ReferralCommission"},
-		{&ReferralCommissionLedger{}, "ReferralCommissionLedger"},
-		{&ReferralAsset{}, "ReferralAsset"},
-		{&ReferralWithdrawal{}, "ReferralWithdrawal"},
-		{&ReferralWithdrawalItem{}, "ReferralWithdrawalItem"},
-		{&ReferralSettlementBatch{}, "ReferralSettlementBatch"},
-		{&ReferralCommissionJob{}, "ReferralCommissionJob"},
-		{&ReferralAdminAuditLog{}, "ReferralAdminAuditLog"},
-		{&UserSession{}, "UserSession"},
-		{&AuthFlow{}, "AuthFlow"},
-		{&ExternalIdentityClaim{}, "ExternalIdentityClaim"},
-		{&PasskeyCredential{}, "PasskeyCredential"},
-		{&Option{}, "Option"},
-		{&Redemption{}, "Redemption"},
-		{&Ability{}, "Ability"},
-		{&Log{}, "Log"},
-		{&Midjourney{}, "Midjourney"},
-		{&MidjourneySettlementRecord{}, "MidjourneySettlementRecord"},
-		{&TopUp{}, "TopUp"},
-		{&PaymentOrphanEvent{}, "PaymentOrphanEvent"},
-		{&PaymentProviderCustomerLock{}, "PaymentProviderCustomerLock"},
-		{&QuotaData{}, "QuotaData"},
-		{&Task{}, "Task"},
-		{&TaskDispatchState{}, "TaskDispatchState"},
-		{&ImageTaskChannelLease{}, "ImageTaskChannelLease"},
-		{&ImageTaskClientTaskIDLock{}, "ImageTaskClientTaskIDLock"},
-		{&ImageTaskCreateGuard{}, "ImageTaskCreateGuard"},
-		{&ImageTaskCreateRateBucket{}, "ImageTaskCreateRateBucket"},
-		{&ImageTaskCreateReservation{}, "ImageTaskCreateReservation"},
-		{&TaskSettlementRecord{}, "TaskSettlementRecord"},
-		{&Model{}, "Model"},
-		{&Vendor{}, "Vendor"},
-		{&PrefillGroup{}, "PrefillGroup"},
-		{&Setup{}, "Setup"},
-		{&TwoFA{}, "TwoFA"},
-		{&TwoFABackupCode{}, "TwoFABackupCode"},
-		{&Checkin{}, "Checkin"},
-		{&UserLoginIdentifier{}, "UserLoginIdentifier"},
-		{&SubscriptionOrder{}, "SubscriptionOrder"},
-		{&UserSubscription{}, "UserSubscription"},
-		{&SubscriptionPreConsumeRecord{}, "SubscriptionPreConsumeRecord"},
-		{&CustomOAuthProvider{}, "CustomOAuthProvider"},
-		{&UserOAuthBinding{}, "UserOAuthBinding"},
-		{&PerfMetric{}, "PerfMetric"},
-		{&TokenUsageReset{}, "TokenUsageReset"},
-		{&TokenUsageDaily{}, "TokenUsageDaily"},
-		{&Ticket{}, "Ticket"},
-		{&TicketMessage{}, "TicketMessage"},
-		{&TicketAttachment{}, "TicketAttachment"},
-		{&TicketSequence{}, "TicketSequence"},
-		{&TelegramPushRecord{}, "TelegramPushRecord"},
-		{&SystemInstance{}, "SystemInstance"},
-		{&SystemTask{}, "SystemTask"},
-		{&SystemTaskLock{}, "SystemTaskLock"},
-	}
-	// 动态计算migration数量，确保errChan缓冲区足够大
-	errChan := make(chan error, len(migrations))
-
-	for _, m := range migrations {
-		wg.Add(1)
-		go func(model interface{}, name string) {
-			defer wg.Done()
-			if err := DB.AutoMigrate(model); err != nil {
-				errChan <- fmt.Errorf("failed to migrate %s: %v", name, err)
-			}
-		}(m.model, m.name)
-	}
-
-	// Wait for all migrations to complete
-	wg.Wait()
-	close(errChan)
-
-	// Check for any errors
-	for err := range errChan {
-		if err != nil {
-			return err
-		}
-	}
-	if err := InitializeUserAuthVersions(); err != nil {
-		return err
-	}
-	if err := InitializeExternalIdentityClaims(); err != nil {
-		return err
-	}
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		if err := ensureSubscriptionPlanTableSQLite(); err != nil {
-			return err
-		}
-	} else {
-		if err := DB.AutoMigrate(&SubscriptionPlan{}); err != nil {
-			return err
-		}
-	}
-	if err := ensureUserEmailCanonicalUniqueIndex(); err != nil {
-		return err
-	}
-	if err := ensureUserLoginIdentifiers(); err != nil {
-		return err
-	}
-	if err := ensureRechargeOrderIndexes(); err != nil {
-		return err
-	}
-	if err := migrateImageTaskPortableStorageNodes(); err != nil {
-		return err
-	}
-	if err := migrateImageTaskModeAsyncTaskBridge(); err != nil {
-		return err
-	}
-	if err := migrateImageTaskResultLifecycle(); err != nil {
-		return err
-	}
-	cleanupConversationArtifactOptions()
-	common.SysLog("database migrated")
 	return nil
 }
 

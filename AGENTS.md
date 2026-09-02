@@ -56,11 +56,17 @@ web/           — Frontend (React 19, Rsbuild, Base UI, Tailwind)
 
 ### Fork Upstream Sync
 
-- Before merging upstream, inspect the current checkout, common ancestor, bidirectional commits, and changed files.
-- Preserve fork behavior for public image-task lifecycle and settlement, payment, subscription, referral, withdrawal, deployment, and both frontends.
-- Resolve conflicts by tracing the route, controller, service, model, frontend, configuration, and tests. Do not resolve an entire side wholesale.
-- The default frontend is `web/`; keep `web/classic/` as the secondary frontend. Production and release builds must build and embed both `web/dist` and `web/classic/dist`.
+- Treat upstream sync as behavior-level integration, not whole-tree version replacement.
+- Before any merge, rebase, cherry-pick, or source edit, inspect the current checkout, common ancestor, bidirectional commits, changed files, current runtime/configuration, and current business requirements.
+- The first pass must be read-only: fetch upstream, establish the divergence, inspect candidate patches, and classify changes before any Git mutation. Do not use `ours` or `theirs` as a whole-tree resolution.
+- Rebuild the local protection inventory from live code and configuration. Protect actively used fork-specific behavior, including public image-task lifecycle and settlement, payment, subscription, referral, withdrawal, channel failover, billing, authorization/state, deployment, and the active `web/` frontend. Do not automatically protect every locally modified file.
+- Adopt upstream security, stability, compatibility, database/migration, relay/protocol, build/dependency, test, and generic UX improvements when they do not conflict with active fork behavior.
+- Treat `web/classic/` as an obsolete, unused frontend rather than a protected frontend. It may be removed or follow upstream deletion after checking references, build/embed/release/deployment/runtime behavior, and rollback. Update any remaining build or release references in the same change.
+- Classify each meaningful overlap as one of: remove obsolete local code, absorb a generic upstream fix, manually fuse upstream and fork behavior, or pause for maintainer approval when business behavior may change.
+- Resolve conflicts by tracing the route, controller, service, model, relay, frontend, configuration, data state, permissions, retries, logs, audit, runtime, migrations, rollback, and tests. Do not resolve an entire side wholesale.
 - Keep production compose credentials explicit through `.env`; never replace them with sample passwords.
+- Do not use destructive reset or deployment operations without explicit authorization, a saved production configuration, and a recovery path.
+- Report comparison, removal, absorption, fusion, testing, commit, push, deployment, and merge as separate states. Do not describe local repair or partial integration as a completed upstream merge.
 
 ### Common Code Quality
 

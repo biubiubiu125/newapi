@@ -33,3 +33,24 @@ func TestFormatUserLogsStripsQuotaSaturation(t *testing.T) {
 	// Non-admin billing fields remain visible.
 	require.Contains(t, parsed, "model_price")
 }
+
+func TestLogFormattersStripRootDiagnostics(t *testing.T) {
+	other := common.MapToJsonStr(map[string]interface{}{
+		"root_info":  map[string]interface{}{"secret": "hidden"},
+		"admin_info": map[string]interface{}{"operation": "visible-to-admin"},
+	})
+
+	userLogs := []*Log{{Other: other}}
+	formatUserLogs(userLogs, 0)
+	userMap, err := common.StrToMap(userLogs[0].Other)
+	require.NoError(t, err)
+	require.NotContains(t, userMap, "root_info")
+	require.NotContains(t, userMap, "admin_info")
+
+	adminLogs := []*Log{{Other: other}}
+	FormatAdminLogs(adminLogs)
+	adminMap, err := common.StrToMap(adminLogs[0].Other)
+	require.NoError(t, err)
+	require.NotContains(t, adminMap, "root_info")
+	require.Contains(t, adminMap, "admin_info")
+}

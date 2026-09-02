@@ -54,7 +54,6 @@ func TestPublicImageTaskAccessRoutesRateLimitAfterTokenAuth(t *testing.T) {
 	}{
 		{method: http.MethodGet, path: "/v1/image-tasks"},
 		{method: http.MethodGet, path: "/v1/image-tasks/task_x"},
-		{method: http.MethodGet, path: "/v1/image-tasks/task_x/result"},
 		{method: http.MethodPost, path: "/v1/image-tasks/task_x/ack"},
 		{method: http.MethodPost, path: "/v1/image-tasks/task_x/cancel"},
 	} {
@@ -86,6 +85,35 @@ func TestPublicImageTaskAccessRoutesRateLimitAfterTokenAuth(t *testing.T) {
 			require.Less(t, authIndex, rateLimitIndex, handlerNames)
 		})
 	}
+}
+
+func TestPublicImageTaskResultRouteAllowsSignedAndBearerAccess(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	var handlerNames []string
+	engine.Use(func(c *gin.Context) {
+		handlerNames = c.HandlerNames()
+		c.AbortWithStatus(http.StatusTeapot)
+	})
+	SetRelayRouter(engine)
+
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, httptest.NewRequest(http.MethodGet, "/v1/image-tasks/task_x/result?access=invalid", nil))
+	require.Equal(t, http.StatusTeapot, recorder.Code)
+
+	findHandler := func(fragment string) int {
+		for index, name := range handlerNames {
+			if strings.Contains(name, fragment) {
+				return index
+			}
+		}
+		return -1
+	}
+	authIndex := findHandler("TokenAuthForImageTaskResultAccess")
+	rateLimitIndex := findHandler("ImageTaskResultAccessRateLimit")
+	require.NotEqual(t, -1, authIndex, handlerNames)
+	require.NotEqual(t, -1, rateLimitIndex, handlerNames)
+	require.Less(t, authIndex, rateLimitIndex, handlerNames)
 }
 
 func TestPublicImageTaskOpenAPIListsActualErrorResponses(t *testing.T) {
@@ -345,11 +373,11 @@ func TestPublicImageTaskCreateRoutesReuseExistingWorkBeforeNewWorkGuards(t *test
 			require.Less(t, authIndex, contentTypeIndex, handlerNames)
 			require.Less(t, contentTypeIndex, reuseIndex, handlerNames)
 			require.Less(t, reuseIndex, exhaustedIndex, handlerNames)
-	require.Less(t, exhaustedIndex, admissionIndex, handlerNames)
-	require.Less(t, admissionIndex, modelRateLimitIndex, handlerNames)
-	require.Less(t, modelRateLimitIndex, distributeIndex, handlerNames)
-	require.Less(t, reuseIndex, distributeIndex, handlerNames)
-	})
+			require.Less(t, exhaustedIndex, admissionIndex, handlerNames)
+			require.Less(t, admissionIndex, modelRateLimitIndex, handlerNames)
+			require.Less(t, modelRateLimitIndex, distributeIndex, handlerNames)
+			require.Less(t, reuseIndex, distributeIndex, handlerNames)
+		})
 	}
 }
 

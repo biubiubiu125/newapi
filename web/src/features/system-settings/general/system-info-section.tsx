@@ -35,14 +35,6 @@ import {
   FormMessage,
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
 
 import { uploadSystemLogo } from '../api'
@@ -57,6 +49,7 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { isValidTaskPublicAddress } from './task-public-address'
 
 function isValidLogoValue(value: string): boolean {
   const trimmed = value.trim()
@@ -72,11 +65,9 @@ function isValidLogoValue(value: string): boolean {
 }
 
 const _systemInfoSchema = z.object({
-  theme: z.object({
-    frontend: z.enum(['default', 'classic']),
-  }),
   SystemName: z.string().min(1),
   ServerAddress: z.string().optional(),
+  TaskPublicAddress: z.string().refine(isValidTaskPublicAddress),
   Logo: z.string().refine(isValidLogoValue).optional(),
   Footer: z.string().optional(),
   About: z.string().optional(),
@@ -104,12 +95,9 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
   const [logoUploading, setLogoUploading] = useState(false)
 
   const normalizedDefaults: SystemInfoFormValues = {
-    theme: {
-      frontend:
-        defaultValues.theme?.frontend === 'classic' ? 'classic' : 'default',
-    },
     SystemName: normalizeValue(defaultValues.SystemName),
     ServerAddress: normalizeValue(defaultValues.ServerAddress),
+    TaskPublicAddress: normalizeValue(defaultValues.TaskPublicAddress),
     Logo: normalizeValue(defaultValues.Logo),
     Footer: normalizeValue(defaultValues.Footer),
     About: normalizeValue(defaultValues.About),
@@ -121,13 +109,16 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
   }
 
   const systemInfoSchemaWithI18n = z.object({
-    theme: z.object({
-      frontend: z.enum(['default', 'classic']),
-    }),
     SystemName: z.string().min(1, {
       error: () => t('System name is required'),
     }),
     ServerAddress: z.string().optional(),
+    TaskPublicAddress: z.string().refine(isValidTaskPublicAddress, {
+      error: () =>
+        t(
+          'Enter an absolute HTTP(S) URL without credentials, query parameters, or fragments'
+        ),
+    }),
     Logo: z.string().refine(isValidLogoValue, {
       error: () =>
         t('Logo must be an http(s) URL or an uploaded system asset path'),
@@ -152,7 +143,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
       onSubmit: async (_data, changedFields) => {
         for (const [key, value] of Object.entries(changedFields)) {
           let v = normalizeValue(value)
-          if (key === 'ServerAddress') {
+          if (key === 'ServerAddress' || key === 'TaskPublicAddress') {
             v = v.replace(/\/+$/, '')
           }
           if (key === 'Logo') {
@@ -183,39 +174,6 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
             <SettingsFormGrid>
               <FormField
                 control={form.control}
-                name='theme.frontend'
-                render={({ field }) => (
-                  <FormItem>
-                    <FormLabel>{t('Frontend Theme')}</FormLabel>
-                    <Select onValueChange={field.onChange} value={field.value}>
-                      <FormControl>
-                        <SelectTrigger className='w-full'>
-                          <SelectValue />
-                        </SelectTrigger>
-                      </FormControl>
-                      <SelectContent alignItemWithTrigger={false}>
-                        <SelectGroup>
-                          <SelectItem value='default'>
-                            {t('Default (New Frontend)')}
-                          </SelectItem>
-                          <SelectItem value='classic'>
-                            {t('Classic (Legacy Frontend)')}
-                          </SelectItem>
-                        </SelectGroup>
-                      </SelectContent>
-                    </Select>
-                    <FormDescription>
-                      {t(
-                        'Switch between the new frontend and the classic frontend. Changes take effect after page reload.'
-                      )}
-                    </FormDescription>
-                    <FormMessage />
-                  </FormItem>
-                )}
-              />
-
-              <FormField
-                control={form.control}
                 name='SystemName'
                 render={({ field }) => (
                   <FormItem>
@@ -243,6 +201,28 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                     <FormDescription>
                       {t(
                         'The public URL of your server, used for OAuth callbacks, webhooks, and other external integrations'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='TaskPublicAddress'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Async Task Public Address')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder='https://media.example.com/tasks'
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Public base URL for async task media. Supports a dedicated media domain, port, or Nginx path prefix; falls back to Server Address when empty.'
                       )}
                     </FormDescription>
                     <FormMessage />

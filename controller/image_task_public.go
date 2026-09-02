@@ -26,9 +26,12 @@ import (
 	"github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
-const publicImageTaskAckGrace = 2 * time.Minute
+const (
+	publicImageTaskAckGrace = 2 * time.Minute
+)
 
 type publicImageTaskResultPayload struct {
 	Data []publicImageTaskResultImage `json:"data"`
@@ -451,7 +454,7 @@ func ListPublicImageTasks(c *gin.Context) {
 }
 
 func GetPublicImageTaskResult(c *gin.Context) {
-	task, ok := loadAuthorizedPublicImageTask(c)
+	task, ok := loadPublicImageTaskResult(c)
 	if !ok {
 		return
 	}
@@ -520,6 +523,45 @@ func GetPublicImageTaskResult(c *gin.Context) {
 	}
 	c.Header("Content-Length", strconv.FormatInt(int64(len(result)), 10))
 	c.Data(http.StatusOK, "application/json; charset=utf-8", result)
+}
+
+func loadPublicImageTaskResult(c *gin.Context) (*model.Task, bool) {
+	accessValues := c.QueryArray(service.TaskArtifactAccessQueryParameter)
+	if len(accessValues) > 0 {
+		access := ""
+		if len(accessValues) == 1 {
+			access = strings.TrimSpace(accessValues[0])
+		}
+		if len(accessValues) != 1 ||
+			!service.VerifyTaskArtifactAccess(access, c.Param("task_id"), service.TaskArtifactResultArtifactKey) {
+			publicImageTaskError(c, http.StatusNotFound, "task_not_found", "image task not found")
+			return nil, false
+		}
+		task, exists, err := model.GetPublicImageTaskFullByTaskIDForArtifact(c.Param("task_id"))
+		if err != nil {
+			publicImageTaskError(c, http.StatusInternalServerError, "task_query_failed", "failed to query image task")
+			return nil, false
+		}
+		if !exists {
+			publicImageTaskError(c, http.StatusNotFound, "task_not_found", "image task not found")
+			return nil, false
+		}
+		owner, err := model.GetUserById(task.UserId, false)
+		if err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				publicImageTaskError(c, http.StatusNotFound, "task_not_found", "image task not found")
+				return nil, false
+			}
+			publicImageTaskError(c, http.StatusInternalServerError, "task_query_failed", "failed to query image task")
+			return nil, false
+		}
+		if owner == nil || owner.Status != common.UserStatusEnabled {
+			publicImageTaskError(c, http.StatusNotFound, "task_not_found", "image task not found")
+			return nil, false
+		}
+		return task, true
+	}
+	return loadAuthorizedPublicImageTask(c)
 }
 
 func DownloadPublicImageTaskResultImage(c *gin.Context) {
@@ -856,6 +898,11 @@ func publicImageTaskResponse(task *model.Task, now int64) *dto.PublicImageTask {
 		response.Status = "completed"
 		response.ResultAvailable = publicImageTaskResultAvailable(task, now)
 		response.ResultExpiresAt = publicImageTaskResultExpiry(task)
+		if response.ResultAvailable {
+			if resultURL, err := service.BuildTaskArtifactResultURL(task.TaskID); err == nil {
+				response.ResultURL = resultURL
+			}
+		}
 	case task.Status == model.TaskStatusInProgress:
 		response.Status = "running"
 	default:

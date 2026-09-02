@@ -67,4 +67,7 @@ func UsingLogDatabase(databaseType DatabaseType) bool {
 	return LogDatabaseType() == databaseType
 }
 
-var SQLitePath = "one-api.db?_busy_timeout=30000"
+// SQLitePath is the DSN for the default SQLite database. WAL keeps readers
+// concurrent with the single writer; immediate transactions avoid stale
+// read-then-write snapshots; the busy timeout lets writers queue briefly.
+var SQLitePath = "one-api.db?_pragma=busy_timeout(30000)&_pragma=journal_mode(WAL)&_txlock=immediate"

@@ -801,6 +801,15 @@
         "parameters": [
           {
             "$ref": "#/components/parameters/PublicImageTaskId"
+          },
+          {
+            "name": "access",
+            "in": "query",
+            "description": "Optional signed image-result capability. When supplied, this query value replaces Bearer authentication for this result request.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
           }
         ],
         "responses": {
@@ -3014,6 +3023,11 @@
           },
           "result_available": {
             "type": "boolean"
+          },
+          "result_url": {
+            "type": "string",
+            "format": "uri",
+            "description": "Signed public result URL when TaskPublicAddress is configured and the retained result is available."
           },
           "result_expires_at": {
             "type": "integer",

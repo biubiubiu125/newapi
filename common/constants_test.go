@@ -15,3 +15,9 @@ func TestThemeAwarePathAlwaysRewritesLegacyConsoleRoutes(t *testing.T) {
 	assert.Equal(t, "/usage-logs", ThemeAwarePath("/console/log"))
 	assert.Equal(t, "/profile", ThemeAwarePath("/console/personal"))
 }
+
+func TestSQLitePathUsesConcurrentWritePragmas(t *testing.T) {
+	assert.Contains(t, SQLitePath, "_pragma=busy_timeout(30000)")
+	assert.Contains(t, SQLitePath, "_pragma=journal_mode(WAL)")
+	assert.Contains(t, SQLitePath, "_txlock=immediate")
+}
