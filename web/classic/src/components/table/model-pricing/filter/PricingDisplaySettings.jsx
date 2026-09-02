@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
-import { useTranslation } from 'react-i18next';
 
 import SelectableButtonGroup from '../../../common/ui/SelectableButtonGroup';
 
@@ -37,7 +36,6 @@ const PricingDisplaySettings = ({
   loading = false,
   t,
 }) => {
-  const { t } = useTranslation();
   const supportsCurrencyDisplay = siteDisplayType !== 'TOKENS';
 
   const items = [
