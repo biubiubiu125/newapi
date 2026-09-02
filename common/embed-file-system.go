@@ -5,7 +5,6 @@ import (
 	"io/fs"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/gin-contrib/static"
 )
@@ -51,39 +50,4 @@ func EmbedFolder(fsEmbed embed.FS, targetPath string) static.ServeFileSystem {
 	return &embedFileSystem{
 		FileSystem: http.FS(efs),
 	}
-}
-
-// themeAwareFileSystem selects the active embedded frontend at request time.
-type themeAwareFileSystem struct {
-	defaultFS static.ServeFileSystem
-	classicFS static.ServeFileSystem
-}
-
-func (t *themeAwareFileSystem) Exists(prefix string, path string) bool {
-	if defaultThemeStaticAssetPath(path) {
-		return t.defaultFS.Exists(prefix, path)
-	}
-	if GetTheme() == "classic" {
-		return t.classicFS.Exists(prefix, path)
-	}
-	return t.defaultFS.Exists(prefix, path)
-}
-
-func (t *themeAwareFileSystem) Open(name string) (http.File, error) {
-	if defaultThemeStaticAssetPath(name) {
-		return t.defaultFS.Open(name)
-	}
-	if GetTheme() == "classic" {
-		return t.classicFS.Open(name)
-	}
-	return t.defaultFS.Open(name)
-}
-
-func NewThemeAwareFS(defaultFS, classicFS static.ServeFileSystem) static.ServeFileSystem {
-	return &themeAwareFileSystem{defaultFS: defaultFS, classicFS: classicFS}
-}
-
-func defaultThemeStaticAssetPath(path string) bool {
-	normalized := "/" + strings.TrimLeft(path, "/")
-	return strings.HasPrefix(normalized, "/static/")
 }

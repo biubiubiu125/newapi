@@ -6,7 +6,6 @@ import (
 	//"strconv"
 	"strings"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -33,33 +32,17 @@ var ReferralSettlementCurrency = "CNY"
 var ReferralSettlementFxRates = map[string]float64{"CNY": 1}
 var ReferralRedemptionUSDToCNYRate = 1.0
 
-var themeValue atomic.Value // stores string; safe for concurrent read/write
-
-func init() {
-	themeValue.Store("default")
-}
-
 func GetTheme() string {
-	return themeValue.Load().(string)
+	return "default"
 }
 
-// SetTheme updates the frontend theme atomically.
-// Only "default" and "classic" are accepted; other values are silently ignored.
-func SetTheme(t string) {
-	if t == "default" || t == "classic" {
-		themeValue.Store(t)
-	}
-}
+// SetTheme remains as a compatibility no-op for legacy callers. The active
+// frontend is always the default web build.
+func SetTheme(string) {}
 
-// ThemeAwarePath rewrites legacy /console/* paths to the default-theme
-// equivalents when the active theme is "default".  For "classic" (or any
-// other theme) the path is returned unchanged.  The function only touches
-// known prefixes so it is safe to call with arbitrary suffixes and query
-// strings.
+// ThemeAwarePath rewrites legacy /console/* paths to the new frontend routes.
+// The classic frontend has been retired, so the rewrite is unconditional.
 func ThemeAwarePath(suffix string) string {
-	if GetTheme() != "default" {
-		return suffix
-	}
 	switch {
 	case strings.HasPrefix(suffix, "/console/tickets"):
 		return strings.Replace(suffix, "/console/tickets", "/tickets", 1)

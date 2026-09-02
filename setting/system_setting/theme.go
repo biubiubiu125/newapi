@@ -19,6 +19,8 @@ func init() {
 }
 
 func syncThemeToCommon() {
+	// Keep loading the legacy setting without allowing it to select a removed
+	// frontend; common.SetTheme is intentionally a compatibility no-op.
 	common.SetTheme(themeSettings.Frontend)
 }
 
@@ -26,7 +28,8 @@ func GetThemeSettings() *ThemeSettings {
 	return &themeSettings
 }
 
-// UpdateAndSyncTheme syncs the theme config to common after DB load.
+// UpdateAndSyncTheme preserves the legacy config load hook without changing
+// the active frontend.
 func UpdateAndSyncTheme() {
 	syncThemeToCommon()
 }

@@ -8,7 +8,7 @@ DEV_POSTGRES_DB = new-api
 DEV_POSTGRES_USER = root
 DEV_SQLITE_PATH ?= one-api.db
 
-.PHONY: all build-web build-web-classic build-all-web start-api dev dev-api dev-api-rebuild dev-web reset-setup test
+.PHONY: all build-web build-all-web start-api dev dev-api dev-api-rebuild dev-web reset-setup test
 
 all: build-all-web start-api
 
@@ -17,12 +17,7 @@ build-web:
 	@cd $(WEB_DIR) && bun install --frozen-lockfile
 	@cd $(WEB_DIR) && DISABLE_ESLINT_PLUGIN='true' VITE_REACT_APP_VERSION=$$(cat ../VERSION) bun run build
 
-build-web-classic:
-	@echo "Building classic web frontend..."
-	@cd ./web/classic && bun install --frozen-lockfile
-	@cd ./web/classic && VITE_REACT_APP_VERSION=$$(cat ../../VERSION) bun run build
-
-build-all-web: build-web build-web-classic
+build-all-web: build-web
 
 start-api:
 	@echo "Starting api dev server..."

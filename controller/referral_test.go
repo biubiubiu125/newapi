@@ -104,7 +104,6 @@ func TestReferralLandingRejectsProtocolRelativeRedirect(t *testing.T) {
 
 func TestReferralLandingAlwaysUsesSignUpPath(t *testing.T) {
 	db := setupReferralControllerTestDB(t)
-	common.SetTheme("classic")
 	common.ReferralRedirectPath = "/register"
 	require.NoError(t, db.Create(&model.ReferralAffiliate{
 		UserId:             1,

@@ -15,8 +15,11 @@ const retiredThemeOptionKey = "theme.frontend"
 type legacyOptionTransform func(string) (string, error)
 
 // MigrateRetiredFrontendOptions normalizes options that belonged to the
-// removed dashboard frontend. Each legacy console setting is migrated in its
-// own transaction so one malformed value cannot block the other settings.
+// removed dashboard frontend. The theme.frontend row is retained as a
+// database compatibility marker, but is always normalized to default and
+// cannot select a runtime frontend. Each legacy console setting is migrated
+// in its own transaction so one malformed value cannot block the other
+// settings.
 func MigrateRetiredFrontendOptions() error {
 	if DB == nil {
 		return errors.New("database is not initialized")

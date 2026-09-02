@@ -34,8 +34,6 @@ const excludedDirs = new Set([
   '.git',
   '.tanstack',
   'build',
-  // The legacy frontend has its own package and Prettier configuration.
-  'classic',
   'coverage',
   'dist',
   'node_modules',
