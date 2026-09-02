@@ -63,7 +63,7 @@ const ChatPage = () => {
         border: 'none',
         marginTop: '64px',
       }}
-      title='Token Frame'
+      title={t('令牌框架')}
       allow='camera;microphone'
     />
   ) : (

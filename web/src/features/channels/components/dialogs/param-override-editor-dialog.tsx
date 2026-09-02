@@ -412,11 +412,6 @@ const TEMPLATE_PRESET_CONFIG: Record<string, TemplatePresetConfig> = {
     kind: 'operations',
     payload: OPERATION_TEMPLATE,
   },
-  legacy_default: {
-    label: 'Legacy Format Template',
-    kind: 'legacy',
-    payload: LEGACY_TEMPLATE,
-  },
   pass_headers_auth: {
     label: 'Header Passthrough (X-Request-Id)',
     kind: 'operations',
@@ -1177,11 +1172,7 @@ export function ParamOverrideEditorDialog(
     setDraggedOperationId('')
     setDragOverOperationId('')
     setDragOverPosition('before')
-    if (state.visualMode === 'legacy') {
-      setTemplatePresetKey('legacy_default')
-    } else {
-      setTemplatePresetKey('operations_default')
-    }
+    setTemplatePresetKey('operations_default')
   }, [props.open, props.value])
 
   // Keep selectedOperationId valid
@@ -1584,7 +1575,7 @@ export function ParamOverrideEditorDialog(
       setSelectedOperationId(fallback.id)
       setJsonError('')
       setEditMode('visual')
-      setTemplatePresetKey('legacy_default')
+      setTemplatePresetKey('operations_default')
       return
     }
     toast.error(t('Parameter override must be a valid JSON object'))

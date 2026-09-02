@@ -122,6 +122,7 @@ const OPS: TierConditionInput['op'][] = ['<', '<=', '>', '>=']
 type Preset = {
   key: string
   label: string
+  labelKey?: string
   expr: string
   requestRules?: RequestRuleGroup[]
 }
@@ -135,7 +136,12 @@ const PRESET_GROUPS: PresetGroup[] = [
   {
     group: 'Fixed price',
     presets: [
-      { key: 'flat', label: 'Flat', expr: 'tier("base", p * 2 + c * 4)' },
+      {
+        key: 'flat',
+        label: 'Flat',
+        labelKey: 'Flat',
+        expr: 'tier("base", p * 2 + c * 4)',
+      },
       {
         key: 'claude-opus',
         label: 'Claude Opus 4.6',
@@ -256,6 +262,7 @@ const PRESET_GROUPS: PresetGroup[] = [
       {
         key: 'night-discount',
         label: 'Night discount (50%)',
+        labelKey: 'Night discount (50%)',
         expr: 'tier("base", p * 3 + c * 15)',
         requestRules: [
           {
@@ -277,6 +284,7 @@ const PRESET_GROUPS: PresetGroup[] = [
       {
         key: 'weekend-discount',
         label: 'Weekend discount (80%)',
+        labelKey: 'Weekend discount (80%)',
         expr: 'tier("base", p * 3 + c * 15)',
         requestRules: [
           {
@@ -487,7 +495,7 @@ function ConditionRow({ condition, onChange, onRemove }: ConditionRowProps) {
         min={0}
         value={condition.value}
         onValueChange={(value) => onChange({ ...condition, value })}
-        placeholder='tokens'
+        placeholder={t('tokens')}
         className='w-32'
       />
       <span className='text-muted-foreground text-xs'>
@@ -497,7 +505,7 @@ function ConditionRow({ condition, onChange, onRemove }: ConditionRowProps) {
         variant='ghost'
         size='icon'
         onClick={onRemove}
-        aria-label='remove'
+        aria-label={t('Remove')}
         className='ml-auto'
       >
         <Trash2 className='text-destructive h-4 w-4' />
@@ -1016,7 +1024,7 @@ function RuleConditionRow({
       <Select
         items={COMMON_TIMEZONES.map((tz) => ({
           value: tz.value,
-          label: tz.label,
+          label: t(tz.label),
         }))}
         value={timeCond.timezone}
         onValueChange={(value) =>
@@ -1025,15 +1033,19 @@ function RuleConditionRow({
       >
         <SelectTrigger className='w-56' size='sm'>
           <SelectValue>
-            {COMMON_TIMEZONES.find((tz) => tz.value === timeCond.timezone)
-              ?.label ?? timeCond.timezone}
+            {(() => {
+              const timezoneLabel = COMMON_TIMEZONES.find(
+                (tz) => tz.value === timeCond.timezone,
+              )?.label
+              return timezoneLabel ? t(timezoneLabel) : timeCond.timezone
+            })()}
           </SelectValue>
         </SelectTrigger>
         <SelectContent alignItemWithTrigger={false}>
           <SelectGroup>
             {COMMON_TIMEZONES.map((tz) => (
               <SelectItem key={tz.value} value={tz.value}>
-                {tz.label}
+                {t(tz.label)}
               </SelectItem>
             ))}
           </SelectGroup>
@@ -1331,7 +1343,7 @@ function PresetSection({ applyPreset }: PresetSectionProps) {
                 className='h-7 text-xs'
                 onClick={() => applyPreset(preset)}
               >
-                {preset.label}
+                {preset.labelKey ? t(preset.labelKey) : preset.label}
               </Button>
             ))}
           </div>

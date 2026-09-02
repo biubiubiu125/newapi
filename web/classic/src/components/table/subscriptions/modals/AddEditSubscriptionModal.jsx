@@ -355,7 +355,7 @@ const AddEditSubscriptionModal = ({
                           border: '1px solid var(--semi-color-border)',
                         }}
                       >
-                        CNY (¥)
+                        {t('CNY (¥)')}
                       </div>
                     </Form.Slot>
                   </Col>
@@ -525,7 +525,7 @@ const AddEditSubscriptionModal = ({
                   <Col span={24}>
                     <Form.Input
                       field='stripe_price_id'
-                      label='Stripe PriceId'
+                      label={t('Stripe 价格 ID')}
                       placeholder='price_...'
                       showClear
                     />
@@ -534,7 +534,7 @@ const AddEditSubscriptionModal = ({
                   <Col span={24}>
                     <Form.Input
                       field='creem_product_id'
-                      label='Creem ProductId'
+                      label={t('Creem 产品 ID')}
                       placeholder='prod_...'
                       showClear
                     />

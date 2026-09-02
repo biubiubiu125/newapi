@@ -79,7 +79,7 @@ func TestValidateChannelRequiresNewAPIBaseURL(t *testing.T) {
 			err := validateChannel(channel, false)
 
 			if test.wantErr {
-				require.ErrorContains(t, err, "New API channel base URL cannot be empty")
+				require.ErrorContains(t, err, "New API 渠道基础地址不能为空")
 				return
 			}
 			require.NoError(t, err)
@@ -158,7 +158,7 @@ func TestCopyChannelRejectsInvalidLegacyProxySettings(t *testing.T) {
 
 	CopyChannel(ctx)
 
-	assert.Contains(t, recorder.Body.String(), "invalid channel settings")
+	assert.Contains(t, recorder.Body.String(), "渠道设置无效")
 	var channelCount int64
 	require.NoError(t, db.Model(&model.Channel{}).Count(&channelCount).Error)
 	assert.Equal(t, int64(1), channelCount)

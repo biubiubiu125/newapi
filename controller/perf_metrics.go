@@ -40,7 +40,7 @@ func GetPerfMetrics(c *gin.Context) {
 	if modelName == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "model is required",
+			"message": "必须提供模型名",
 		})
 		return
 	}

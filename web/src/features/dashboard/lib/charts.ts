@@ -238,7 +238,7 @@ export function processChartData(
   data.forEach((item) => {
     const timestamp = Number(item.created_at)
     const timeKey = formatChartTime(timestamp, timeGranularity)
-    const model = item.model_name || 'Unknown'
+    const model = item.model_name || '未知模型'
     const quota = Number(item.quota) || 0
     const count = Number(item.count) || 0
     const tokens = Number(item.token_used) || 0

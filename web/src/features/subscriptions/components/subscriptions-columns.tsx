@@ -40,7 +40,7 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
         id: 'id',
         meta: { label: 'ID', mobileHidden: true },
         header: ({ column }) => (
-          <DataTableColumnHeader column={column} title='ID' />
+          <DataTableColumnHeader column={column} title={t('ID')} />
         ),
         cell: ({ row }) => <TableId value={row.original.plan.id} />,
         size: 60,

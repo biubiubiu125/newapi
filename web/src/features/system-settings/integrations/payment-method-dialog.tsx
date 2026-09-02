@@ -256,7 +256,10 @@ export function PaymentMethodDialog({
                   <FormControl>
                     <div className='flex items-center gap-2'>
                       <Combobox
-                        options={COLOR_PRESETS}
+                        options={COLOR_PRESETS.map((preset) => ({
+                          ...preset,
+                          label: t(preset.label),
+                        }))}
                         value={field.value}
                         onValueChange={field.onChange}
                         placeholder={t('Select or enter color value')}

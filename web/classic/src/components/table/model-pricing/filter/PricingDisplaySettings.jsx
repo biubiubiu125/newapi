@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 
 import React from 'react';
+import { useTranslation } from 'react-i18next';
 
 import SelectableButtonGroup from '../../../common/ui/SelectableButtonGroup';
 
@@ -36,6 +37,7 @@ const PricingDisplaySettings = ({
   loading = false,
   t,
 }) => {
+  const { t } = useTranslation();
   const supportsCurrencyDisplay = siteDisplayType !== 'TOKENS';
 
   const items = [
@@ -62,8 +64,8 @@ const PricingDisplaySettings = ({
   ];
 
   const currencyItems = [
-    { value: 'USD', label: 'USD ($)' },
-    { value: 'CNY', label: 'CNY (¥)' },
+    { value: 'USD', label: t('USD ($)') },
+    { value: 'CNY', label: t('CNY (¥)') },
     { value: 'CUSTOM', label: t('自定义货币') },
   ];
 

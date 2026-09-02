@@ -171,7 +171,7 @@ function userNode(row: FlowQuotaDataItem): FlowPathNode {
   const userID = numberValue(row.user_id)
   return {
     id: userID > 0 ? `user:${userID}` : `user:${row.username || 'unknown'}`,
-    label: row.username || (userID > 0 ? `user-${userID}` : 'Unknown User'),
+    label: row.username || (userID > 0 ? `user-${userID}` : '未知用户'),
     kind: 'user',
   }
 }
@@ -196,7 +196,7 @@ function tokenNode(row: FlowQuotaDataItem, ctx: FlowPathContext): FlowPathNode {
 }
 
 function deletedTokenLabel(tokenID: number, ctx: FlowPathContext): string {
-  if (tokenID <= 0) return 'Unknown Token'
+  if (tokenID <= 0) return '未知令牌'
   return ctx.deletedTokenLabel?.(tokenID) ?? `token-${tokenID}`
 }
 
@@ -213,7 +213,7 @@ function modelNode(row: FlowQuotaDataItem): FlowPathNode {
   const model = row.model_name || 'unknown'
   return {
     id: `model:${model}`,
-    label: row.model_name || 'Unknown Model',
+    label: row.model_name || '未知模型',
     kind: 'model',
   }
 }
@@ -226,7 +226,7 @@ function channelNode(row: FlowQuotaDataItem): FlowPathNode {
         ? `channel:${channelID}`
         : `channel:${row.channel_name || 'unknown'}`,
     label:
-      row.channel_name || (channelID > 0 ? `channel-${channelID}` : 'Unknown'),
+      row.channel_name || (channelID > 0 ? `channel-${channelID}` : '未知'),
     kind: 'channel',
   }
 }

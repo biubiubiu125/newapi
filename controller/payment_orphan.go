@@ -19,7 +19,7 @@ func ListPaymentOrphans(c *gin.Context) {
 		model.PaymentOrphanStatusRefunded,
 		model.PaymentOrphanStatusDismissed:
 	default:
-		common.ApiErrorMsg(c, "invalid payment orphan status")
+		common.ApiErrorMsg(c, "支付悬单状态无效")
 		return
 	}
 
@@ -37,7 +37,7 @@ func ListPaymentOrphans(c *gin.Context) {
 func CreditPaymentOrphan(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
 	if err != nil || id <= 0 {
-		common.ApiErrorMsg(c, "invalid payment orphan id")
+		common.ApiErrorMsg(c, "支付悬单 ID 无效")
 		return
 	}
 	if err := model.CreditPaymentOrphan(id, c.GetInt("id"), common.GetClientIP(c)); err != nil {
@@ -56,14 +56,14 @@ type resolvePaymentOrphanRequest struct {
 func ResolvePaymentOrphan(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
 	if err != nil || id <= 0 {
-		common.ApiErrorMsg(c, "invalid payment orphan id")
+		common.ApiErrorMsg(c, "支付悬单 ID 无效")
 		return
 	}
 	var req resolvePaymentOrphanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "invalid request",
+			"message": "请求无效",
 		})
 		return
 	}

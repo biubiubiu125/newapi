@@ -130,14 +130,14 @@ export function ChannelSelectorDialog({
             onCheckedChange={(value) =>
               table.toggleAllPageRowsSelected(!!value)
             }
-            aria-label='Select all'
+            aria-label={t('Select all')}
           />
         ),
         cell: ({ row }) => (
           <Checkbox
             checked={row.getIsSelected()}
             onCheckedChange={(value) => row.toggleSelected(!!value)}
-            aria-label='Select row'
+            aria-label={t('Select row')}
           />
         ),
         enableSorting: false,
@@ -240,7 +240,7 @@ export function ChannelSelectorDialog({
               <Select
                 items={ENDPOINT_OPTIONS.map((option) => ({
                   value: option.value,
-                  label: option.label,
+                  label: t(option.label),
                 }))}
                 value={endpointType}
                 onValueChange={(v) => v !== null && handleTypeChange(v)}
@@ -252,7 +252,7 @@ export function ChannelSelectorDialog({
                   <SelectGroup>
                     {ENDPOINT_OPTIONS.map((option) => (
                       <SelectItem key={option.value} value={option.value}>
-                        {option.label}
+                        {t(option.label)}
                       </SelectItem>
                     ))}
                   </SelectGroup>

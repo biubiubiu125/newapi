@@ -142,7 +142,7 @@ const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
       } else {
         if (!token && shouldTriggerTurnstile(message)) {
           if (!turnstileSiteKey) {
-            showError('Turnstile is enabled but site key is empty.');
+            showError(t('Turnstile 已启用，但站点密钥为空。'));
             return;
           }
           setTurnstileModalVisible(true);
@@ -216,7 +216,7 @@ const CheckinCalendar = ({ t, status, turnstileEnabled, turnstileSiteKey }) => {
   return (
     <Card className='!rounded-2xl'>
       <Modal
-        title='Security Check'
+        title={t('安全验证')}
         visible={turnstileModalVisible}
         footer={null}
         centered

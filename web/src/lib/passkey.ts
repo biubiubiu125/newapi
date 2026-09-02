@@ -114,9 +114,7 @@ export function prepareCredentialCreationOptions(
     payload?.Response
 
   if (!options) {
-    throw new Error(
-      'Unable to parse Passkey registration options from response'
-    )
+    throw new Error('无法解析 Passkey 注册响应参数')
   }
 
   const publicKey: PublicKeyCredentialCreationOptions & Record<string, any> = {
@@ -160,7 +158,7 @@ export function prepareCredentialRequestOptions(
     payload?.Response
 
   if (!options) {
-    throw new Error('Unable to parse Passkey login options from response')
+    throw new Error('无法解析 Passkey 登录响应参数')
   }
 
   const publicKey: PublicKeyCredentialRequestOptions & Record<string, any> = {

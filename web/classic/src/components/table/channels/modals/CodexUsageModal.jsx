@@ -533,7 +533,7 @@ const CodexUsageView = ({
           <InfoField t={tt} label={tt('渠道')} value={channelLabel} />
           <InfoField
             t={tt}
-            label='User ID'
+            label={tt('用户 ID')}
             value={userId}
             onCopy={onCopy}
             monospace

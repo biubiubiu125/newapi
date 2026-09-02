@@ -69,7 +69,7 @@ func StartCodexOAuth(c *gin.Context) {
 func StartCodexOAuthForChannel(c *gin.Context) {
 	channelID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		common.ApiError(c, fmt.Errorf("invalid channel id: %w", err))
+		common.ApiError(c, fmt.Errorf("渠道 ID 无效: %w", err))
 		return
 	}
 	startCodexOAuthWithChannelID(c, channelID)
@@ -83,11 +83,11 @@ func startCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 			return
 		}
 		if ch == nil {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel not found"})
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": "未找到渠道"})
 			return
 		}
 		if ch.Type != constant.ChannelTypeCodex {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel type is not Codex"})
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": "渠道类型不是 Codex"})
 			return
 		}
 	}
@@ -120,7 +120,7 @@ func CompleteCodexOAuth(c *gin.Context) {
 func CompleteCodexOAuthForChannel(c *gin.Context) {
 	channelID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		common.ApiError(c, fmt.Errorf("invalid channel id: %w", err))
+		common.ApiError(c, fmt.Errorf("渠道 ID 无效: %w", err))
 		return
 	}
 	completeCodexOAuthWithChannelID(c, channelID)
@@ -140,11 +140,11 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 		return
 	}
 	if strings.TrimSpace(code) == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "missing authorization code"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "缺少授权 code"})
 		return
 	}
 	if strings.TrimSpace(state) == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "missing state in input"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "缺少 state 参数"})
 		return
 	}
 
@@ -157,11 +157,11 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 			return
 		}
 		if ch == nil {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel not found"})
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": "未找到渠道"})
 			return
 		}
 		if ch.Type != constant.ChannelTypeCodex {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel type is not Codex"})
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": "渠道类型不是 Codex"})
 			return
 		}
 		channelProxy = ch.GetSetting().Proxy
@@ -172,11 +172,11 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 	expectedState, _ := session.Get(codexOAuthSessionKey(channelID, "state")).(string)
 	verifier, _ := session.Get(codexOAuthSessionKey(channelID, "verifier")).(string)
 	if strings.TrimSpace(expectedState) == "" || strings.TrimSpace(verifier) == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "oauth flow not started or session expired"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "OAuth 流程未启动或会话已过期"})
 		return
 	}
 	if state != expectedState {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "state mismatch"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "state 不匹配"})
 		return
 	}
 
@@ -192,7 +192,7 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 
 	accountID, ok := service.ExtractCodexAccountIDFromJWT(tokenRes.AccessToken)
 	if !ok {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "failed to extract account_id from access_token"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无法从 access_token 中提取 account_id"})
 		return
 	}
 	email, _ := service.ExtractEmailFromJWT(tokenRes.AccessToken)
@@ -226,7 +226,7 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 		service.ResetProxyClientCache()
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
-			"message": "saved",
+			"message": "已保存",
 			"data": gin.H{
 				"channel_id":   channelID,
 				"account_id":   accountID,
@@ -240,7 +240,7 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"message": "generated",
+		"message": "已生成",
 		"data": gin.H{
 			"key":          string(encoded),
 			"account_id":   accountID,

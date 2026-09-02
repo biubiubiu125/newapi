@@ -1005,7 +1005,9 @@ export function PerformanceSection(props: Props) {
                     {stats.memory_stats.num_gc}
                   </div>
                   <div>
-                    <span className='text-muted-foreground'>Goroutines:</span>{' '}
+                    <span className='text-muted-foreground'>
+                      {t('Goroutines')}:
+                    </span>{' '}
                     {stats.memory_stats.num_goroutine}
                   </div>
                 </div>

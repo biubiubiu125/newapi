@@ -88,15 +88,15 @@ const renderTimestamp = (timestampInSeconds) => {
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`; // 格式化输出
 };
 
-function renderDuration(submit_time, finishTime) {
-  if (!submit_time || !finishTime) return 'N/A';
+function renderDuration(submit_time, finishTime, t) {
+  if (!submit_time || !finishTime) return t('暂无');
   const durationSec = finishTime - submit_time;
   const color = durationSec > 60 ? 'red' : 'green';
 
   // 返回带有样式的颜色标签
   return (
     <Tag color={color} shape='circle'>
-      {durationSec} s
+      {durationSec} {t('秒')}
     </Tag>
   );
 }
@@ -161,7 +161,7 @@ const renderPlatform = (platform, t) => {
   if (option) {
     return (
       <Tag color={option.color} shape='circle'>
-        {option.label}
+        {t(option.label)}
       </Tag>
     );
   }
@@ -283,7 +283,7 @@ export const getTaskLogsColumns = ({
       title: t('花费时间'),
       dataIndex: 'finish_time',
       render: (finish, record) => {
-        return <>{finish ? renderDuration(record.submit_time, finish) : '-'}</>;
+        return <>{finish ? renderDuration(record.submit_time, finish, t) : '-'}</>;
       },
     },
     {
@@ -397,7 +397,7 @@ export const getTaskLogsColumns = ({
                 }
                 percent={text ? Number.parseInt(text.replace('%', '')) : 0}
                 showInfo
-                aria-label='task progress'
+                aria-label={t('任务进度')}
                 style={{ minWidth: '160px' }}
               />
             )}

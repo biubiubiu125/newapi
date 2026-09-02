@@ -1050,7 +1050,7 @@ function PresetSection({ applyPreset, t }) {
                 theme='light'
                 onClick={() => applyPreset(p)}
               >
-                {p.label}
+                {t(p.label)}
               </Button>
             ))}
           </div>

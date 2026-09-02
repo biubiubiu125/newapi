@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
 import { Eye, RefreshCw, Send } from 'lucide-react'
 import { useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -69,6 +70,7 @@ function formatPushSource(source: string) {
 }
 
 export function TelegramPushSection() {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [botToken, setBotToken] = useState('')
   const [chatId, setChatId] = useState('')
@@ -178,7 +180,7 @@ export function TelegramPushSection() {
           </p>
         </div>
         <div className='space-y-2'>
-          <Label>Bot Token</Label>
+          <Label>{t('Bot Token')}</Label>
           <Input
             type='password'
             value={botToken}
@@ -191,7 +193,7 @@ export function TelegramPushSection() {
           </p>
         </div>
         <div className='space-y-2'>
-          <Label>Chat ID</Label>
+          <Label>{t('Chat ID')}</Label>
           <Input value={chatId} onChange={(e) => setChatId(e.target.value)} />
           <p className='text-muted-foreground text-xs leading-5'>
             私聊填管理员 Telegram 用户 ID，频道填频道 ID 或
@@ -357,7 +359,7 @@ export function TelegramPushSection() {
                   </div>
                 </div>
                 <div className='space-y-1'>
-                  <Label>Chat ID</Label>
+                  <Label>{t('Chat ID')}</Label>
                   <div className='rounded-md border px-3 py-2 text-sm break-all'>
                     {detailRecord.chat_id || '-'}
                   </div>

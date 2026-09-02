@@ -462,7 +462,7 @@ export function formatRelativeTime(
     }
     return formatted
   } catch {
-    return 'Unknown'
+    return '未知'
   }
 }
 
@@ -477,7 +477,7 @@ export function formatTimestamp(timestamp: number): string {
   try {
     return formatTimestampToDate(timestamp)
   } catch {
-    return 'Invalid date'
+    return '无效日期'
   }
 }
 

@@ -796,7 +796,7 @@ func withLockedChannelUpstreamModelUpdateContext(
 	handler func(tx *gorm.DB, channel *model.Channel) error,
 ) error {
 	if channelID <= 0 {
-		return errors.New("invalid channel id")
+		return errors.New("渠道 ID 无效")
 	}
 	if handler == nil {
 		return errors.New("channel update handler is required")
@@ -1802,7 +1802,7 @@ func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 	if req.ID <= 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "invalid channel id",
+			"message": "渠道 ID 无效",
 		})
 		return
 	}
@@ -1815,7 +1815,7 @@ func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 	if channel.Status != common.ChannelStatusEnabled {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "channel is disabled",
+			"message": "渠道已禁用",
 		})
 		return
 	}
@@ -1840,7 +1840,7 @@ func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 	if channel.Status != common.ChannelStatusEnabled {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "channel is disabled",
+			"message": "渠道已禁用",
 		})
 		return
 	}
@@ -1854,7 +1854,7 @@ func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 	if !channelSupportsUpstreamModelUpdate(channel) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "channel does not support upstream model updates",
+			"message": "该渠道不支持上游模型更新",
 		})
 		return
 	}
@@ -1887,7 +1887,7 @@ func DetectChannelUpstreamModelUpdates(c *gin.Context) {
 	if req.ID <= 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "invalid channel id",
+			"message": "渠道 ID 无效",
 		})
 		return
 	}
@@ -1900,7 +1900,7 @@ func DetectChannelUpstreamModelUpdates(c *gin.Context) {
 	if channel.Status != common.ChannelStatusEnabled {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "channel is disabled",
+			"message": "渠道已禁用",
 		})
 		return
 	}
@@ -1935,7 +1935,7 @@ func DetectChannelUpstreamModelUpdates(c *gin.Context) {
 	if channel.Status != common.ChannelStatusEnabled {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "channel is disabled",
+			"message": "渠道已禁用",
 		})
 		return
 	}
@@ -1951,7 +1951,7 @@ func DetectChannelUpstreamModelUpdates(c *gin.Context) {
 	if !channelSupportsUpstreamModelUpdate(channel) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "channel does not support upstream model updates",
+			"message": "该渠道不支持上游模型更新",
 		})
 		return
 	}
@@ -2526,7 +2526,7 @@ func CancelChannelUpstreamModelUpdateTask(c *gin.Context) {
 	if taskID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "task id is required",
+			"message": "必须提供任务 ID",
 		})
 		return
 	}
@@ -2547,7 +2547,7 @@ func CancelChannelUpstreamModelUpdateTask(c *gin.Context) {
 	if task == nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
-			"message": "task not found",
+			"message": "未找到任务",
 		})
 		return
 	}
@@ -2572,7 +2572,7 @@ func GetChannelUpstreamModelUpdateTask(c *gin.Context) {
 	if taskID == "" {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "task id is required",
+			"message": "必须提供任务 ID",
 		})
 		return
 	}
@@ -2588,7 +2588,7 @@ func GetChannelUpstreamModelUpdateTask(c *gin.Context) {
 			task.Type != model.SystemTaskTypeModelUpdateApplyAll) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
-			"message": "task not found",
+			"message": "未找到任务",
 		})
 		return
 	}

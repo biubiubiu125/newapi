@@ -138,7 +138,7 @@ export async function runSyncWizardFlow({
   if (!previewRes.success) {
     return {
       status: 'preview_failed',
-      message: previewRes.message || 'Failed to preview upstream diff',
+      message: previewRes.message,
     }
   }
 
@@ -155,7 +155,7 @@ export async function runSyncWizardFlow({
   if (!response.success) {
     return {
       status: 'sync_failed',
-      message: response.message || 'Sync failed',
+      message: response.message,
     }
   }
 
@@ -218,7 +218,7 @@ export async function runUpstreamConflictSubmitFlow({
   if (!response.success) {
     return {
       status: 'sync_failed',
-      message: response.message || 'Failed to apply overwrite.',
+      message: response.message,
     }
   }
 

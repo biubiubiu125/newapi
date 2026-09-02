@@ -113,7 +113,7 @@ func DeleteLoginSession(c *gin.Context) {
 	}
 	sid := strings.TrimSpace(c.Param("sid"))
 	if sid == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "code": "AUTH_SESSION_ID_REQUIRED", "message": "session id is required"})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "code": "AUTH_SESSION_ID_REQUIRED", "message": "会话 ID 不能为空"})
 		return
 	}
 	revoked, err := model.RevokeUserSession(identity.UserID, sid, "user_revoked")
@@ -122,7 +122,7 @@ func DeleteLoginSession(c *gin.Context) {
 		return
 	}
 	if !revoked {
-		c.JSON(http.StatusNotFound, gin.H{"success": false, "code": "AUTH_SESSION_NOT_FOUND", "message": "session not found"})
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "code": "AUTH_SESSION_NOT_FOUND", "message": "会话不存在"})
 		return
 	}
 	if rawRefreshToken, cookieErr := c.Cookie(service.RefreshCookieName); cookieErr == nil {
@@ -153,7 +153,7 @@ func requireBrowserSession(c *gin.Context) (service.AuthIdentity, bool) {
 		c.JSON(http.StatusForbidden, gin.H{
 			"success": false,
 			"code":    "AUTH_SESSION_REQUIRED",
-			"message": "a dashboard login session is required",
+			"message": "需要先登录控制台会话",
 		})
 		return service.AuthIdentity{}, false
 	}

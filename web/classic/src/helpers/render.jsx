@@ -576,7 +576,7 @@ export function getOAuthProviderIcon(iconName, size = 20) {
     return (
       <img
         src={raw}
-        alt='provider icon'
+        alt='提供商图标'
         width={iconSize}
         height={iconSize}
         style={{ borderRadius: 4, objectFit: 'cover' }}

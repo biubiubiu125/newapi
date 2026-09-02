@@ -184,8 +184,8 @@ export function CreemProductDialog({
                     <FormLabel>{t('Currency')}</FormLabel>
                     <Select
                       items={[
-                        { value: 'USD', label: 'USD ($)' },
-                        { value: 'EUR', label: 'EUR (€)' },
+                        { value: 'USD', label: t('USD ($)') },
+                        { value: 'EUR', label: t('EUR (€)') },
                       ]}
                       onValueChange={field.onChange}
                       value={field.value}
@@ -197,8 +197,8 @@ export function CreemProductDialog({
                       </FormControl>
                       <SelectContent alignItemWithTrigger={false}>
                         <SelectGroup>
-                          <SelectItem value='USD'>USD ($)</SelectItem>
-                          <SelectItem value='EUR'>EUR (€)</SelectItem>
+                          <SelectItem value='USD'>{t('USD ($)')}</SelectItem>
+                          <SelectItem value='EUR'>{t('EUR (€)')}</SelectItem>
                         </SelectGroup>
                       </SelectContent>
                     </Select>

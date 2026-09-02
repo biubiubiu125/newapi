@@ -161,7 +161,7 @@ export function ModelDetailsApps(props: { model: PricingModel }) {
             {top.name}
           </div>
           <p className='text-muted-foreground/70 truncate text-[11px]'>
-            {top.category} · {formatTokenVolume(top.monthly_tokens)}{' '}
+            {t(top.category)} · {formatTokenVolume(top.monthly_tokens)}{' '}
             {t('tokens / mo')}
           </p>
         </div>
@@ -202,13 +202,13 @@ export function ModelDetailsApps(props: { model: PricingModel }) {
                         <AppLink app={app} />
                       </div>
                       <p className='text-muted-foreground line-clamp-1 text-sm'>
-                        {app.description}
+                        {t(app.description)}
                       </p>
                     </div>
                   </div>
                 </TableCell>
                 <TableCell className='text-muted-foreground hidden py-2.5 md:table-cell'>
-                  {app.category}
+                  {t(app.category)}
                 </TableCell>
                 <TableCell className='py-2.5 text-right font-mono tabular-nums'>
                   {formatTokenVolume(app.monthly_tokens)}

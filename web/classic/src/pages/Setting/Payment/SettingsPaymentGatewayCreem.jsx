@@ -270,7 +270,7 @@ export default function SettingsPaymentGatewayCreem(props) {
               <>
                 {t('Creem 介绍')}
                 <a href='https://creem.io' target='_blank' rel='noreferrer'>
-                  Creem Official Site
+                  {t('Creem 官方网站')}
                 </a>
                 <br />
                 {t('Creem Setting Tips')}

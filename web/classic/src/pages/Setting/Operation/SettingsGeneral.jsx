@@ -290,11 +290,11 @@ export default function GeneralSettings(props) {
                     'general_setting.quota_display_type',
                   )}
                 >
-                  <Form.Select.Option value='USD'>USD ($)</Form.Select.Option>
-                  <Form.Select.Option value='CNY'>CNY (¥)</Form.Select.Option>
+                  <Form.Select.Option value='USD'>{t('USD ($)')}</Form.Select.Option>
+                  <Form.Select.Option value='CNY'>{t('CNY (¥)')}</Form.Select.Option>
                   {showTokensOption && (
                     <Form.Select.Option value='TOKENS'>
-                      Tokens
+                      {t('Tokens')}
                     </Form.Select.Option>
                   )}
                   <Form.Select.Option value='CUSTOM'>

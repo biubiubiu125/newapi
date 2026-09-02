@@ -321,7 +321,7 @@ const renderTimestamp = (timestampInSeconds) => {
 };
 
 function renderDuration(submit_time, finishTime, t) {
-  if (!submit_time || !finishTime) return 'N/A';
+  if (!submit_time || !finishTime) return t('暂无');
 
   const start = new Date(submit_time);
   const finish = new Date(finishTime);
@@ -460,7 +460,7 @@ export const getMjLogsColumns = ({
               }
               percent={text ? parseInt(text.replace('%', '')) : 0}
               showInfo={true}
-              aria-label='drawing progress'
+              aria-label={t('绘图进度')}
               style={{ minWidth: '160px' }}
             />
           </div>

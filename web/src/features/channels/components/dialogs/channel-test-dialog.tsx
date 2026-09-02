@@ -27,6 +27,7 @@ import {
 } from '@tanstack/react-table'
 import { Check, Copy, Info, Loader2, Settings } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import type { TFunction } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -105,25 +106,30 @@ type TestResult = {
   errorCode?: string
 }
 
-const endpointTypeOptions: Array<{ value: string; label: string }> = [
-  { value: 'auto', label: 'Auto detect (default)' },
-  { value: 'openai', label: 'OpenAI (/v1/chat/completions)' },
-  { value: 'openai-response', label: 'OpenAI Responses (/v1/responses)' },
+const getEndpointTypeOptions = (
+  t: TFunction
+): Array<{ value: string; label: string }> => [
+  { value: 'auto', label: t('Auto detect (default)') },
+  { value: 'openai', label: `${t('OpenAI Chat')} (/v1/chat/completions)` },
+  {
+    value: 'openai-response',
+    label: `${t('OpenAI Responses')} (/v1/responses)`,
+  },
   {
     value: 'openai-response-compact',
-    label: 'OpenAI Response Compaction (/v1/responses/compact)',
+    label: `${t('OpenAI Responses Compact')} (/v1/responses/compact)`,
   },
-  { value: 'anthropic', label: 'Anthropic (/v1/messages)' },
+  { value: 'anthropic', label: `${t('Anthropic')} (/v1/messages)` },
   {
     value: 'gemini',
-    label: 'Gemini (/v1beta/models/{model}:generateContent)',
+    label: `${t('Gemini')} (/v1beta/models/{model}:generateContent)`,
   },
-  { value: 'jina-rerank', label: 'Jina Rerank (/v1/rerank)' },
+  { value: 'jina-rerank', label: `${t('Rerank')} (/v1/rerank)` },
   {
     value: 'image-generation',
-    label: 'Image Generation (/v1/images/generations)',
+    label: `${t('Image Generation')} (/v1/images/generations)`,
   },
-  { value: 'embeddings', label: 'Embeddings (/v1/embeddings)' },
+  { value: 'embeddings', label: `${t('Embeddings')} (/v1/embeddings)` },
 ]
 
 const STREAM_INCOMPATIBLE_ENDPOINTS = new Set([
@@ -220,6 +226,10 @@ export function ChannelTestDialog({
   onOpenChange,
 }: ChannelTestDialogProps) {
   const { t } = useTranslation()
+  const endpointTypeOptions = useMemo(
+    () => getEndpointTypeOptions(t),
+    [t]
+  )
   const { currentRow } = useChannels()
   const [endpointType, setEndpointType] = useState('auto')
   const [isStreamTest, setIsStreamTest] = useState(false)

@@ -15,7 +15,7 @@ import (
 func generateMessageID() (string, error) {
 	split := strings.Split(SMTPFrom, "@")
 	if len(split) < 2 {
-		return "", fmt.Errorf("invalid SMTP account")
+		return "", fmt.Errorf("SMTP 账号格式无效")
 	}
 	domain := strings.Split(SMTPFrom, "@")[1]
 	return fmt.Sprintf("<%d.%s@%s>", time.Now().UnixNano(), GetRandomString(12), domain), nil
@@ -70,7 +70,7 @@ func newSMTPClient(addr string) (*smtp.Client, error) {
 		startTLSSupported, _ := client.Extension("STARTTLS")
 		if !startTLSSupported {
 			_ = client.Close()
-			return nil, fmt.Errorf("SMTP server does not support STARTTLS")
+			return nil, fmt.Errorf("SMTP 服务器不支持 STARTTLS")
 		}
 		if err := client.StartTLS(smtpTLSConfig()); err != nil {
 			_ = client.Close()

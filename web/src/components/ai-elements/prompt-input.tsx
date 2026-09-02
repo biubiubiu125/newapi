@@ -292,7 +292,7 @@ export function PromptInputAttachment({
     data.mediaType?.startsWith('image/') && data.url ? 'image' : 'file'
   const isImage = mediaType === 'image'
 
-  const attachmentLabel = filename || (isImage ? 'Image' : 'Attachment')
+  const attachmentLabel = filename || (isImage ? t('Image') : t('Attachment'))
 
   return (
     <PromptInputHoverCard>
@@ -357,7 +357,7 @@ export function PromptInputAttachment({
           <div className='flex items-center gap-2.5'>
             <div className='min-w-0 flex-1 space-y-1 px-0.5'>
               <h4 className='truncate text-sm leading-none font-semibold'>
-                {filename || (isImage ? 'Image' : 'Attachment')}
+                {filename || (isImage ? t('Image') : t('Attachment'))}
               </h4>
               {data.mediaType && (
                 <p className='text-muted-foreground truncate font-mono text-xs'>

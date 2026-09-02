@@ -16,7 +16,7 @@ func CreateLogCleanupSystemTask(c *gin.Context) {
 	if targetTimestamp == 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "target timestamp is required",
+			"message": "必须提供目标时间戳",
 		})
 		return
 	}
@@ -39,7 +39,7 @@ func GetCurrentSystemTask(c *gin.Context) {
 	if taskType == "" {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "type is required",
+			"message": "必须提供任务类型",
 		})
 		return
 	}
@@ -91,7 +91,7 @@ func GetSystemTask(c *gin.Context) {
 	if taskID == "" {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "task id is required",
+			"message": "必须提供任务 ID",
 		})
 		return
 	}
@@ -104,7 +104,7 @@ func GetSystemTask(c *gin.Context) {
 	if task == nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
-			"message": "task not found",
+			"message": "未找到任务",
 		})
 		return
 	}

@@ -142,7 +142,7 @@ export const useRedemptionsData = () => {
           res = await API.put('/api/redemption/?status_only=true', data);
           break;
         default:
-          throw new Error('Unknown operation type');
+          throw new Error(t('未知操作类型'));
       }
 
       const { success, message } = res.data;

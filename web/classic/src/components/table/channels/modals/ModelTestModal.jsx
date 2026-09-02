@@ -83,22 +83,22 @@ const ModelTestModal = ({
   const endpointTypeOptions = [
     { value: '', label: t('自动检测') },
     { value: 'openai', label: 'OpenAI (/v1/chat/completions)' },
-    { value: 'openai-response', label: 'OpenAI Response (/v1/responses)' },
+    { value: 'openai-response', label: 'OpenAI 响应 (/v1/responses)' },
     {
       value: 'openai-response-compact',
-      label: 'OpenAI Response Compaction (/v1/responses/compact)',
+      label: 'OpenAI 响应压缩 (/v1/responses/compact)',
     },
     { value: 'anthropic', label: 'Anthropic (/v1/messages)' },
     {
       value: 'gemini',
       label: 'Gemini (/v1beta/models/{model}:generateContent)',
     },
-    { value: 'jina-rerank', label: 'Jina Rerank (/v1/rerank)' },
+    { value: 'jina-rerank', label: 'Jina 重排序 (/v1/rerank)' },
     {
       value: 'image-generation',
       label: `${t('图像生成')} (/v1/images/generations)`,
     },
-    { value: 'embeddings', label: 'Embeddings (/v1/embeddings)' },
+    { value: 'embeddings', label: '嵌入 (/v1/embeddings)' },
   ];
 
   const handleCopySelected = () => {

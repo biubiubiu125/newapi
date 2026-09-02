@@ -501,13 +501,13 @@ const EditChannelModal = (props) => {
   const initialModelMappingRef = useRef('');
   const initialStatusCodeMappingRef = useRef('');
   const doubaoCodingPlanDeprecationMessage =
-    'Doubao Coding Plan 不再允许新增。根据火山方舟文档，Coding 套餐额度仅适用于 AI Coding 产品内调用，不适用于单独 API 调用；在非 AI Coding 产品中使用对应的 Base URL 和 API Key 可能被视为违规，并可能导致订阅停用或账号封禁。';
+    '豆包编程套餐不再允许新增。根据火山方舟文档，编程套餐额度仅适用于 AI 编程产品内调用，不适用于单独 API 调用；在非 AI 编程产品中使用对应的 Base URL 和 API Key 可能被视为违规，并可能导致订阅停用或账号封禁。';
   const canKeepDeprecatedDoubaoCodingPlan =
     initialBaseUrlRef.current === DEPRECATED_DOUBAO_CODING_PLAN_BASE_URL;
   const doubaoCodingPlanOptionLabel = (
     <Tooltip content={doubaoCodingPlanDeprecationMessage} position='left'>
       <span className='inline-flex items-center gap-2'>
-        <span>Doubao Coding Plan</span>
+        <span>{t('Doubao Coding Plan')}</span>
       </span>
     </Tooltip>
   );
@@ -1443,7 +1443,7 @@ const EditChannelModal = (props) => {
         { skipErrorHandler: true },
       );
       if (!res?.data?.success) {
-        throw new Error(res?.data?.message || 'Failed to refresh credential');
+        throw new Error(res?.data?.message || t('刷新凭证失败'));
       }
       showSuccess(t('凭证已刷新'));
     } catch (error) {
@@ -2594,12 +2594,6 @@ const EditChannelModal = (props) => {
                             },
                             {
                               node: 'item',
-                              name: t('填充旧模板'),
-                              onClick: () =>
-                                applyParamOverrideTemplate('legacy', 'fill'),
-                            },
-                            {
-                              node: 'item',
                               name: t('清空'),
                               onClick: clearParamOverride,
                             },
@@ -3159,7 +3153,7 @@ const EditChannelModal = (props) => {
                                 label: 'AccessKey / SecretAccessKey',
                                 value: 'ak_sk',
                               },
-                              { label: 'API Key', value: 'api_key' },
+                              { label: t('API 密钥'), value: 'api_key' },
                             ]}
                             style={{ width: '100%' }}
                             value={inputs.aws_key_type || 'ak_sk'}
@@ -3183,7 +3177,7 @@ const EditChannelModal = (props) => {
                           placeholder={t('请选择密钥格式')}
                           optionList={[
                             { label: 'JSON', value: 'json' },
-                            { label: 'API Key', value: 'api_key' },
+                            { label: t('API 密钥'), value: 'api_key' },
                           ]}
                           style={{ width: '100%' }}
                           value={inputs.vertex_key_type || 'json'}
@@ -3718,8 +3712,10 @@ const EditChannelModal = (props) => {
                       {inputs.type === 39 && (
                         <Form.Input
                           field='other'
-                          label='Account ID'
-                          placeholder='请输入Account ID，例如：d6b5da8hk1awo8nap34ube6gh'
+                          label={t('账户 ID')}
+                          placeholder={t(
+                            '请输入账户 ID，例如：d6b5da8hk1awo8nap34ube6gh',
+                          )}
                           onChange={(value) =>
                             handleInputChange('other', value)
                           }

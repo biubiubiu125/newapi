@@ -124,7 +124,7 @@ function SandboxedHtmlPreview({ code }) {
       ref={iframeRef}
       sandbox='allow-same-origin'
       srcDoc={code}
-      title='HTML Preview'
+      title={t('HTML 预览')}
       style={{
         width: '100%',
         height: `${iframeHeight}px`,

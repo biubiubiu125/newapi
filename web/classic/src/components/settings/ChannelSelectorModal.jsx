@@ -156,10 +156,10 @@ const ChannelSelectorModal = forwardRef(
             onChange={handleTypeChange}
             style={{ width: 120 }}
             optionList={[
-              { label: 'pricing', value: 'pricing' },
-              { label: 'ratio_config', value: 'ratio_config' },
-              { label: 'OpenRouter', value: 'openrouter' },
-              { label: 'custom', value: 'custom' },
+              { label: t('价格配置'), value: 'pricing' },
+              { label: t('倍率配置'), value: 'ratio_config' },
+              { label: t('OpenRouter'), value: 'openrouter' },
+              { label: t('自定义'), value: 'custom' },
             ]}
           />
           {currentType === 'custom' && (

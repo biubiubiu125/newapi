@@ -270,11 +270,11 @@ const NotificationSettings = ({
     {
       key: 'chat',
       title: '聊天区域',
-      description: 'Playground 和聊天功能',
+      description: '操练场和聊天功能',
       modules: [
         {
           key: 'playground',
-          title: 'Playground',
+          title: '操练场',
           description: 'AI 模型测试环境',
         },
         { key: 'chat', title: '聊天', description: '聊天会话管理' },

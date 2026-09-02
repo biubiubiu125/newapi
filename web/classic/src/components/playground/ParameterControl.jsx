@@ -101,7 +101,7 @@ const ParameterControl = ({
           <div className='flex items-center gap-2'>
             <Target size={16} className='text-gray-500' />
             <Typography.Text strong className='text-sm'>
-              Top P
+              {t('核采样（Top P）')}
             </Typography.Text>
             <Tag size='small' shape='circle'>
               {inputs.top_p}
@@ -141,7 +141,7 @@ const ParameterControl = ({
           <div className='flex items-center gap-2'>
             <Repeat size={16} className='text-gray-500' />
             <Typography.Text strong className='text-sm'>
-              Frequency Penalty
+              {t('频率惩罚')}
             </Typography.Text>
             <Tag size='small' shape='circle'>
               {inputs.frequency_penalty}
@@ -185,7 +185,7 @@ const ParameterControl = ({
           <div className='flex items-center gap-2'>
             <Ban size={16} className='text-gray-500' />
             <Typography.Text strong className='text-sm'>
-              Presence Penalty
+              {t('存在惩罚')}
             </Typography.Text>
             <Tag size='small' shape='circle'>
               {inputs.presence_penalty}
@@ -229,7 +229,7 @@ const ParameterControl = ({
           <div className='flex items-center gap-2'>
             <Hash size={16} className='text-gray-500' />
             <Typography.Text strong className='text-sm'>
-              Max Tokens
+              {t('最大 Token 数')}
             </Typography.Text>
           </div>
           <Button
@@ -249,7 +249,7 @@ const ParameterControl = ({
           />
         </div>
         <InputNumber
-          placeholder='MaxTokens'
+          placeholder={t('最大 Token 数')}
           name='max_tokens'
           value={inputs.max_tokens}
           onNumberChange={(value) => onInputChange('max_tokens', value)}

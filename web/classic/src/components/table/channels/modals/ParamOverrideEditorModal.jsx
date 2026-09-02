@@ -287,7 +287,7 @@ const LEGACY_TEMPLATE = {
 const OPERATION_TEMPLATE = {
   operations: [
     {
-      description: 'Set default temperature for openai/* models.',
+      description: '为 openai/* 模型设置默认温度。',
       path: 'temperature',
       mode: 'set',
       value: 0.7,
@@ -306,7 +306,7 @@ const OPERATION_TEMPLATE = {
 const HEADER_PASSTHROUGH_TEMPLATE = {
   operations: [
     {
-      description: 'Pass through X-Request-Id header to upstream.',
+      description: '将 X-Request-Id 请求头透传给上游。',
       mode: 'pass_headers',
       value: ['X-Request-Id'],
       keep_origin: true,
@@ -318,7 +318,7 @@ const GEMINI_IMAGE_4K_TEMPLATE = {
   operations: [
     {
       description:
-        'Set imageSize to 4K when model contains gemini/image and ends with 4k.',
+        '当模型名称包含 gemini/image 且以 4k 结尾时，将 imageSize 设为 4K。',
       mode: 'set',
       path: 'generationConfig.imageConfig.imageSize',
       value: '4K',
@@ -348,7 +348,7 @@ const AWS_BEDROCK_ANTHROPIC_COMPAT_TEMPLATE = {
   operations: [
     {
       description:
-        'Normalize anthropic-beta header tokens for Bedrock compatibility.',
+        '为 Bedrock 兼容性规范化 anthropic-beta 请求头标记。',
       mode: 'set_header',
       path: 'anthropic-beta',
       // https://github.com/BerriAI/litellm/blob/main/litellm/anthropic_beta_headers_config.json
@@ -386,7 +386,7 @@ const AWS_BEDROCK_ANTHROPIC_COMPAT_TEMPLATE = {
     },
     {
       description:
-        'Remove all tools[*].custom.input_examples before upstream relay.',
+        '在转发到上游前移除所有 tools[*].custom.input_examples。',
       mode: 'delete',
       path: 'tools.*.custom.input_examples',
     },
@@ -404,12 +404,6 @@ const TEMPLATE_PRESET_CONFIG = {
     label: '新格式模板（规则集）',
     kind: 'operations',
     payload: OPERATION_TEMPLATE,
-  },
-  legacy_default: {
-    group: 'basic',
-    label: '旧格式模板（JSON 对象）',
-    kind: 'legacy',
-    payload: LEGACY_TEMPLATE,
   },
   pass_headers_auth: {
     group: 'scenario',
@@ -1123,13 +1117,8 @@ const ParamOverrideEditorModal = ({ visible, value, onSave, onCancel }) => {
     setDraggedOperationId('');
     setDragOverOperationId('');
     setDragOverPosition('before');
-    if (nextState.visualMode === 'legacy') {
-      setTemplateGroupKey('basic');
-      setTemplatePresetKey('legacy_default');
-    } else {
-      setTemplateGroupKey('basic');
-      setTemplatePresetKey('operations_default');
-    }
+    setTemplateGroupKey('basic');
+    setTemplatePresetKey('operations_default');
     setHeaderValueExampleVisible(false);
     setFieldGuideVisible(false);
     setFieldGuideTarget('path');
@@ -1386,7 +1375,7 @@ const ParamOverrideEditorModal = ({ visible, value, onSave, onCancel }) => {
       setJsonError('');
       setEditMode('visual');
       setTemplateGroupKey('basic');
-      setTemplatePresetKey('legacy_default');
+      setTemplatePresetKey('operations_default');
       return;
     }
     showError(t('参数覆盖必须是合法的 JSON 对象'));

@@ -97,7 +97,9 @@ export function SyncWizardDialog({
       if (result.status === 'conflict') {
         const conflicts = result.conflicts || []
         toast.warning(
-          `Found ${conflicts.length} conflict${conflicts.length > 1 ? 's' : ''}. Please resolve them first.`
+          t('Found {{count}} conflict(s). Please resolve them first.', {
+            count: conflicts.length,
+          })
         )
         setUpstreamConflicts(conflicts)
         setUpstreamMissing(result.missing)
@@ -109,7 +111,14 @@ export function SyncWizardDialog({
         const { created_models, created_vendors, updated_models } =
           result.data || {}
         toast.success(
-          `Sync completed! Created ${created_models || 0} models, updated ${updated_models || 0}, and added ${created_vendors || 0} vendors.`
+          t(
+            'Sync completed! Created {{created}} models, updated {{updated}}, and added {{vendors}} vendors.',
+            {
+              created: created_models || 0,
+              updated: updated_models || 0,
+              vendors: created_vendors || 0,
+            }
+          )
         )
         setUpstreamConflicts([])
         setUpstreamMissing([])
@@ -129,9 +138,14 @@ export function SyncWizardDialog({
         return
       }
 
-      toast.error(result.message || 'Sync failed')
+      toast.error(
+        result.message ||
+          (result.status === 'preview_failed'
+            ? t('Failed to preview upstream diff')
+            : t('Sync failed'))
+      )
     } catch (error: unknown) {
-      toast.error((error as Error)?.message || 'Sync failed')
+      toast.error((error as Error)?.message || t('Sync failed'))
     } finally {
       setIsSyncing(false)
     }
@@ -207,7 +221,7 @@ export function SyncWizardDialog({
                       <span className='font-medium'>{option.label}</span>
                       {option.value === 'official' && (
                         <StatusBadge
-                          label='Default'
+                          label={t('Default')}
                           variant='neutral'
                           copyable={false}
                         />

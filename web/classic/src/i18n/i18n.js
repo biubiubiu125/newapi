@@ -46,6 +46,7 @@ i18n
       vi: viTranslation,
     },
     fallbackLng: 'zh-CN',
+    returnEmptyString: false,
     nsSeparator: false,
     interpolation: {
       escapeValue: false,

@@ -247,7 +247,7 @@ func GetTokenUsage(c *gin.Context) {
 	if authHeader == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"success": false,
-			"message": "No Authorization header",
+			"message": "缺少 Authorization 头",
 		})
 		return
 	}
@@ -256,7 +256,7 @@ func GetTokenUsage(c *gin.Context) {
 	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"success": false,
-			"message": "Invalid Bearer token",
+			"message": "Bearer token 无效",
 		})
 		return
 	}
@@ -276,7 +276,7 @@ func GetTokenUsage(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    true,
-		"message": "ok",
+		"message": "成功",
 		"data": gin.H{
 			"object":               "token_usage",
 			"name":                 token.Name,

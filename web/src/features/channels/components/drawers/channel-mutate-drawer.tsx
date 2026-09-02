@@ -959,8 +959,8 @@ export function ChannelMutateDrawer({
     if (response.success && response.data) {
       return response.data
     }
-    throw new Error(response.message || 'No models fetched from upstream')
-  }, [buildFetchModelsDraftPayload, form])
+    throw new Error(response.message || t('No models fetched from upstream'))
+  }, [buildFetchModelsDraftPayload, form, t])
 
   const savedModelsFetcher = useCallback(async (): Promise<string[]> => {
     if (!channelId) return []
@@ -968,8 +968,8 @@ export function ChannelMutateDrawer({
     if (response.success && response.data) {
       return response.data
     }
-    throw new Error(response.message || 'No models fetched from upstream')
-  }, [channelId])
+    throw new Error(response.message || t('No models fetched from upstream'))
+  }, [channelId, t])
 
   const fetchModelsDialogFetcher = useDraftFetchModelsForDialog
     ? draftModelsFetcher
@@ -1021,7 +1021,7 @@ export function ChannelMutateDrawer({
           : JSON.parse(group.items)
 
         if (!Array.isArray(items)) {
-          throw new Error('Invalid items format')
+          throw new Error('条目格式无效')
         }
 
         const count = updateModels(items, true)
@@ -1165,7 +1165,7 @@ export function ChannelMutateDrawer({
       if (hasModelMapping) {
         const validation = validateModelMappingJson(data.model_mapping!)
         if (!validation.valid) {
-          toast.error(t(validation.error || 'Invalid model mapping'))
+          toast.error(t(validation.error || 'Invalid model mapping format'))
           return
         }
       }

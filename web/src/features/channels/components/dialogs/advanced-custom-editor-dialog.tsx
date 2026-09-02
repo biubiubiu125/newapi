@@ -750,7 +750,7 @@ export function AdvancedCustomEditorDialog({
                         className={longSelectItemClass}
                       >
                         <div className='flex min-w-0 flex-col gap-1 leading-snug whitespace-normal'>
-                          <span>{option.label}</span>
+                          <span>{t(option.label)}</span>
                           <span className='text-muted-foreground font-mono text-xs break-all'>
                             {option.value}
                           </span>
@@ -862,8 +862,10 @@ export function AdvancedCustomEditorDialog({
                   <span className='min-w-0 flex-1'>
                     <span className='flex min-w-0 flex-wrap items-center gap-2'>
                       <span className='truncate font-medium'>
-                        {getAdvancedCustomIncomingPathLabel(
-                          routeGroup.incomingPath
+                        {t(
+                          getAdvancedCustomIncomingPathLabel(
+                            routeGroup.incomingPath
+                          )
                         )}
                       </span>
                       <RouteModeBadges
@@ -909,7 +911,7 @@ export function AdvancedCustomEditorDialog({
           <ManagementRouteEditor
             route={modelListRoute}
             path={ADVANCED_CUSTOM_MODEL_LIST_PATH}
-            title={ADVANCED_CUSTOM_MODEL_LIST_LABEL}
+            title={t(ADVANCED_CUSTOM_MODEL_LIST_LABEL)}
             description={t(
               'This route is used only by channel management to discover upstream models.'
             )}
@@ -929,7 +931,7 @@ export function AdvancedCustomEditorDialog({
           <ManagementRouteEditor
             route={balanceRoute}
             path={ADVANCED_CUSTOM_BALANCE_PATH}
-            title={ADVANCED_CUSTOM_BALANCE_LABEL}
+            title={t(ADVANCED_CUSTOM_BALANCE_LABEL)}
             description={t(
               'This route is used only by channel management to query the upstream balance.'
             )}
@@ -974,7 +976,7 @@ export function AdvancedCustomEditorDialog({
           {
             removed: routeRows.length,
             created: selectedTemplate?.config.advanced_routes?.length || 0,
-            template: selectedTemplate?.label || '',
+            template: t(selectedTemplate?.label || ''),
           }
         )}
         confirmText={t('Replace')}
@@ -1154,7 +1156,9 @@ function RouteGroupEditor({
   const { t } = useTranslation()
   const incomingPath = group.incomingPath || '/v1/chat/completions'
   const isModelListGroup = incomingPath === ADVANCED_CUSTOM_MODEL_LIST_PATH
-  const incomingPathLabel = getAdvancedCustomIncomingPathLabel(incomingPath)
+  const incomingPathLabel = t(
+    getAdvancedCustomIncomingPathLabel(incomingPath)
+  )
   const catchAllRoute = group.routeRows.find((routeRow) =>
     isCatchAllRoute(routeRow.route)
   )
@@ -1189,7 +1193,7 @@ function RouteGroupEditor({
               </Badge>
               {isModelListGroup ? (
                 <Badge variant='outline'>
-                  {ADVANCED_CUSTOM_MODEL_LIST_LABEL}
+                  {t(ADVANCED_CUSTOM_MODEL_LIST_LABEL)}
                 </Badge>
               ) : (
                 <Badge variant={hasCatchAll ? 'outline' : 'secondary'}>
@@ -1203,7 +1207,10 @@ function RouteGroupEditor({
               ) : null}
             </div>
             <Select
-              items={ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS}
+              items={ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS.map((option) => ({
+                ...option,
+                label: t(option.label),
+              }))}
               value={incomingPath}
               onValueChange={onIncomingPathChange}
             >
@@ -1230,7 +1237,7 @@ function RouteGroupEditor({
                       className={longSelectItemClass}
                     >
                       <div className='flex min-w-0 flex-col gap-1 leading-snug whitespace-normal'>
-                        <span>{option.label}</span>
+                        <span>{t(option.label)}</span>
                         <span className='text-muted-foreground font-mono text-xs break-all'>
                           {option.value}
                         </span>
@@ -1438,7 +1445,7 @@ function RouteEditor({
               </div>
               {isModelListRoute ? (
                 <Badge variant='outline'>
-                  {ADVANCED_CUSTOM_MODEL_LIST_LABEL}
+                  {t(ADVANCED_CUSTOM_MODEL_LIST_LABEL)}
                 </Badge>
               ) : null}
               {!isModelListRoute && isFallback ? (
@@ -1488,7 +1495,7 @@ function RouteEditor({
           {isModelListRoute && parsedRouteModels.length === 0 ? (
             <div className='flex h-9 items-center'>
               <Badge variant='outline'>
-                {ADVANCED_CUSTOM_MODEL_LIST_LABEL}
+                {t(ADVANCED_CUSTOM_MODEL_LIST_LABEL)}
               </Badge>
             </div>
           ) : (

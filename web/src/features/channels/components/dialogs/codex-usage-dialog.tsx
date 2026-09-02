@@ -1129,7 +1129,7 @@ export function CodexUsageDialog({
           <CardContent className='p-4 pt-0'>
             <div className='flex flex-wrap items-center gap-2'>
               <StatusBadge
-                label={accountBadge.label}
+                label={t(accountBadge.label)}
                 variant={accountBadge.variant}
                 copyable={false}
               />
@@ -1167,7 +1167,7 @@ export function CodexUsageDialog({
                 copyable={false}
               />
               <InfoField
-                label='User ID'
+                label={t('User ID')}
                 value={payload?.user_id}
                 mono
                 className='md:col-span-2'

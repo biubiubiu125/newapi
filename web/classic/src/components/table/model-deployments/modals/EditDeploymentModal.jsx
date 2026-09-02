@@ -60,11 +60,11 @@ const EditDeploymentModal = ({
 
   // Resource configuration options
   const cpuOptions = [
-    { label: '0.5 Core', value: '0.5' },
-    { label: '1 Core', value: '1' },
-    { label: '2 Cores', value: '2' },
-    { label: '4 Cores', value: '4' },
-    { label: '8 Cores', value: '8' },
+    { label: '0.5 核', value: '0.5' },
+    { label: '1 核', value: '1' },
+    { label: '2 核', value: '2' },
+    { label: '4 核', value: '4' },
+    { label: '8 核', value: '8' },
   ];
 
   const memoryOptions = [
@@ -78,9 +78,9 @@ const EditDeploymentModal = ({
 
   const gpuOptions = [
     { label: t('无GPU'), value: '' },
-    { label: '1 GPU', value: '1' },
-    { label: '2 GPUs', value: '2' },
-    { label: '4 GPUs', value: '4' },
+    { label: '1 个 GPU', value: '1' },
+    { label: '2 个 GPU', value: '2' },
+    { label: '4 个 GPU', value: '4' },
   ];
 
   // Load available models
@@ -91,7 +91,7 @@ const EditDeploymentModal = ({
       if (res.data.success) {
         const items = res.data.data.items || res.data.data || [];
         const modelOptions = items.map((model) => ({
-          label: `${model.model_name} (${model.vendor?.name || 'Unknown'})`,
+          label: `${model.model_name} (${model.vendor?.name || t('未知')})`,
           value: model.model_name,
           model_id: model.id,
         }));

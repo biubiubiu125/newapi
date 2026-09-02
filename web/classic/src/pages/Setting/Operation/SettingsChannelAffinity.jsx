@@ -81,7 +81,7 @@ const CONTEXT_KEY_PRESETS = [
   { key: 'token_id', label: 'token_id' },
   { key: 'token_key', label: 'token_key' },
   { key: 'token_group', label: 'token_group' },
-  { key: 'group', label: 'group（using_group）' },
+  { key: 'group', label: '分组（using_group）' },
   { key: 'username', label: 'username' },
   { key: 'user_group', label: 'user_group' },
   { key: 'user_email', label: 'user_email' },
@@ -168,15 +168,15 @@ const makeUniqueName = (existingNames, baseName) => {
 
 const tryParseRulesJsonArray = (jsonString) => {
   const raw = jsonString || '[]';
-  if (!verifyJSON(raw)) return { ok: false, message: 'Rules JSON is invalid' };
+  if (!verifyJSON(raw)) return { ok: false, message: '规则 JSON 无效' };
   try {
     const parsed = JSON.parse(raw);
     if (!Array.isArray(parsed)) {
-      return { ok: false, message: 'Rules JSON must be an array' };
+      return { ok: false, message: '规则 JSON 必须是数组' };
     }
     return { ok: true, value: parsed };
   } catch {
-    return { ok: false, message: 'Rules JSON is invalid' };
+    return { ok: false, message: '规则 JSON 无效' };
   }
 };
 
@@ -607,7 +607,7 @@ export default function SettingsChannelAffinity(props) {
       render: (_, record) => {
         const name = (record?.name || '').trim();
         if (!name || !record?.include_rule_name) {
-          return <Text type='tertiary'>N/A</Text>;
+          return <Text type='tertiary'>{t('暂无')}</Text>;
         }
         const n = Number(cacheStats?.by_rule_name?.[name] || 0);
         return <Text>{n}</Text>;

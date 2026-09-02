@@ -152,7 +152,7 @@ const renderTokenKey = (
               type='tertiary'
               icon={revealed ? <IconEyeClosed /> : <IconEyeOpened />}
               loading={loading}
-              aria-label='toggle token visibility'
+              aria-label={t('切换令牌可见性')}
               onClick={async (e) => {
                 e.stopPropagation();
                 await toggleTokenVisibility(record);
@@ -181,7 +181,7 @@ const renderTokenKey = (
                 type='tertiary'
                 icon={<IconCopy />}
                 loading={loading}
-                aria-label='copy token key'
+                aria-label={t('复制令牌密钥')}
                 onClick={async (e) => {
                   e.stopPropagation();
                 }}
@@ -339,7 +339,7 @@ const renderQuotaUsage = (text, record, t) => {
           <Progress
             percent={percent}
             stroke={getProgressColor(percent)}
-            aria-label='quota usage'
+            aria-label={t('配额使用')}
             format={() => `${percent.toFixed(0)}%`}
             style={{ width: '100%', marginTop: '1px', marginBottom: 0 }}
           />

@@ -116,7 +116,7 @@ function TokensPage() {
         showError(tokensData.t(message));
       }
     } catch (e) {
-      showError(e.message || 'Failed to load models');
+      showError(e.message || tokensData.t('加载模型失败'));
     }
   };
 

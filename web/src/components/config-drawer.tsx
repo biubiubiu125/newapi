@@ -135,6 +135,7 @@ function SectionTitle(props: {
   onReset?: () => void
   className?: string
 }) {
+  const { t } = useTranslation()
   return (
     <div
       className={cn(
@@ -149,7 +150,7 @@ function SectionTitle(props: {
           variant='secondary'
           className='size-4'
           onClick={props.onReset}
-          aria-label='Reset'
+          aria-label={t('Reset')}
         >
           <RotateCcw className='size-3' aria-hidden='true' />
         </Button>
@@ -166,12 +167,15 @@ function RadioGroupItem(props: {
   }
   isTheme?: boolean
 }) {
+  const { t } = useTranslation()
   const isTheme = props.isTheme ?? false
   return (
     <Item
       value={props.item.value}
       className={cn('group outline-none', 'transition duration-200 ease-in')}
-      aria-label={`Select ${props.item.label.toLowerCase()}`}
+      aria-label={t('Select {{label}}', {
+        label: props.item.label.toLowerCase(),
+      })}
       aria-describedby={`${props.item.value}-description`}
     >
       <div
@@ -327,6 +331,10 @@ const FONT_OPTIONS: {
 function FontConfig() {
   const { t } = useTranslation()
   const { defaults, customization, setFont } = useThemeCustomization()
+  const fontOptions = FONT_OPTIONS.map((option) => ({
+    ...option,
+    label: t(option.label),
+  }))
   return (
     <div>
       <SectionTitle
@@ -340,7 +348,7 @@ function FontConfig() {
         className='grid w-full grid-cols-3 gap-4'
         aria-label={t('Select body font')}
       >
-        {FONT_OPTIONS.map((option) => (
+        {fontOptions.map((option) => (
           <Item
             key={option.value}
             value={option.value}
@@ -416,39 +424,42 @@ function RadiusConfig() {
         className='grid w-full grid-cols-6 gap-2'
         aria-label={t('Select border radius')}
       >
-        {RADIUS_OPTIONS.map((option) => (
-          <Item
-            key={option.value}
-            value={option.value}
-            className='group flex flex-col items-stretch outline-none'
-            aria-label={
-              option.value === 'default' ? t('System default') : option.label
-            }
-          >
-            <div
-              className={cn(
-                'ring-border relative h-12 rounded-md ring-[1px] transition',
-                'group-data-checked:ring-primary group-data-checked:shadow-md',
-                'group-focus-visible:ring-2',
-                'group-hover:ring-primary/60'
-              )}
+        {RADIUS_OPTIONS.map((option) => {
+          const optionLabel = t(option.label)
+          return (
+            <Item
+              key={option.value}
+              value={option.value}
+              className='group flex flex-col items-stretch outline-none'
+              aria-label={
+                option.value === 'default' ? t('System default') : optionLabel
+              }
             >
-              <CircleCheck
+              <div
                 className={cn(
-                  'fill-primary absolute top-0 right-0 z-10 size-5 translate-x-1/2 -translate-y-1/2 stroke-white',
-                  'group-data-unchecked:hidden'
+                  'ring-border relative h-12 rounded-md ring-[1px] transition',
+                  'group-data-checked:ring-primary group-data-checked:shadow-md',
+                  'group-focus-visible:ring-2',
+                  'group-hover:ring-primary/60'
                 )}
-                aria-hidden='true'
-              />
-              <span
-                aria-hidden='true'
-                className='border-foreground/70 absolute top-2.5 left-2.5 size-3.5 border-t-[1.5px] border-l-[1.5px]'
-                style={{ borderTopLeftRadius: option.preview }}
-              />
-            </div>
-            <div className='mt-1.5 text-center text-xs'>{option.label}</div>
-          </Item>
-        ))}
+              >
+                <CircleCheck
+                  className={cn(
+                    'fill-primary absolute top-0 right-0 z-10 size-5 translate-x-1/2 -translate-y-1/2 stroke-white',
+                    'group-data-unchecked:hidden'
+                  )}
+                  aria-hidden='true'
+                />
+                <span
+                  aria-hidden='true'
+                  className='border-foreground/70 absolute top-2.5 left-2.5 size-3.5 border-t-[1.5px] border-l-[1.5px]'
+                  style={{ borderTopLeftRadius: option.preview }}
+                />
+              </div>
+              <div className='mt-1.5 text-center text-xs'>{optionLabel}</div>
+            </Item>
+          )
+        })}
       </Radio>
     </div>
   )

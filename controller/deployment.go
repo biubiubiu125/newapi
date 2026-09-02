@@ -67,7 +67,7 @@ func TestIoNetConnection(c *gin.Context) {
 	}
 	if len(bytes.TrimSpace(rawBody)) > 0 {
 		if err := json.Unmarshal(rawBody, &req); err != nil {
-			common.ApiErrorMsg(c, "invalid request payload")
+			common.ApiErrorMsg(c, "请求载荷无效")
 			return
 		}
 	}

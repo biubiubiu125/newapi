@@ -156,7 +156,7 @@ const DebugPanel = ({
           >
             <CodeViewer
               content={debugData.previewRequest}
-              title='preview'
+              title={t('预览')}
               language='json'
             />
           </TabPane>
@@ -172,7 +172,7 @@ const DebugPanel = ({
           >
             <CodeViewer
               content={debugData.request}
-              title='request'
+              title={t('请求')}
               language='json'
             />
           </TabPane>
@@ -192,11 +192,11 @@ const DebugPanel = ({
             itemKey='response'
           >
             {debugData.sseMessages && debugData.sseMessages.length > 0 ? (
-              <SSEViewer sseData={debugData.sseMessages} title='response' />
+              <SSEViewer sseData={debugData.sseMessages} title={t('响应')} />
             ) : (
               <CodeViewer
                 content={debugData.response}
-                title='response'
+                title={t('响应')}
                 language='json'
               />
             )}

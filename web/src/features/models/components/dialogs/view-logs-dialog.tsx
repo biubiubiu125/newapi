@@ -314,7 +314,7 @@ export function ViewLogsDialog({
             items={[
               { value: 'stdout', label: 'stdout' },
               { value: 'stderr', label: 'stderr' },
-              { value: 'all', label: 'all' },
+              { value: 'all', label: t('All') },
             ]}
             value={stream}
             onValueChange={(v) => {
@@ -332,7 +332,7 @@ export function ViewLogsDialog({
               <SelectGroup>
                 <SelectItem value='stdout'>stdout</SelectItem>
                 <SelectItem value='stderr'>stderr</SelectItem>
-                <SelectItem value='all'>all</SelectItem>
+                <SelectItem value='all'>{t('All')}</SelectItem>
               </SelectGroup>
             </SelectContent>
           </Select>

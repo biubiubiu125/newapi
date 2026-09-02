@@ -561,7 +561,7 @@ const CustomOAuthSetting = ({ serverAddress }) => {
       key: 'name',
     },
     {
-      title: 'Slug',
+      title: t('Slug'),
       dataIndex: 'slug',
       key: 'slug',
       render: (slug) => <Tag>{slug}</Tag>,
@@ -814,7 +814,7 @@ const CustomOAuthSetting = ({ serverAddress }) => {
               <Col span={12}>
                 <Form.Input
                   field='slug'
-                  label='Slug'
+                  label={t('标识名')}
                   placeholder={t('例如：github-enterprise')}
                   extraText={t('URL 标识，只能包含小写字母、数字和连字符')}
                   rules={[{ required: true, message: t('请输入 Slug') }]}
@@ -863,7 +863,7 @@ const CustomOAuthSetting = ({ serverAddress }) => {
               <Col span={12}>
                 <Form.Input
                   field='client_id'
-                  label='Client ID'
+                  label={t('客户端 ID')}
                   placeholder={t('OAuth Client ID')}
                   rules={[{ required: true, message: t('请输入 Client ID') }]}
                 />
@@ -871,7 +871,7 @@ const CustomOAuthSetting = ({ serverAddress }) => {
               <Col span={12}>
                 <Form.Input
                   field='client_secret'
-                  label='Client Secret'
+                  label={t('客户端密钥')}
                   type='password'
                   placeholder={
                     editingProvider

@@ -88,6 +88,13 @@ const PAGE_SIZE_SELECT_ITEMS = PAGE_SIZE_OPTIONS.map((pageSize) => ({
   label: pageSize,
 }))
 
+const PAYMENT_ORPHAN_STATUS_LABELS: Record<string, string> = {
+  pending_review: 'Pending review',
+  credited: 'Credited',
+  refunded: 'Refunded',
+  dismissed: 'Dismissed',
+}
+
 export function PaymentOrphanPanel(props: {
   events: PaymentOrphanEvent[]
   loading: boolean
@@ -238,7 +245,10 @@ export function PaymentOrphanPanel(props: {
                         </td>
                         <td className='p-2 align-top'>
                           <StatusBadge
-                            label={event.status}
+                            label={t(
+                              PAYMENT_ORPHAN_STATUS_LABELS[event.status] ||
+                                event.status
+                            )}
                             variant={paymentOrphanStatusVariant(event.status)}
                             copyable={false}
                           />

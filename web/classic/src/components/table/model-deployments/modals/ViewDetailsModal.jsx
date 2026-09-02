@@ -326,13 +326,13 @@ const ViewDetailsModal = ({ visible, onCancel, deployment, t }) => {
                       key: t('镜像地址'),
                       value: (
                         <Text className='font-mono text-sm break-all'>
-                          {details.container_config.image_url || 'N/A'}
+                          {details.container_config.image_url || t('暂无')}
                         </Text>
                       ),
                     },
                     {
                       key: t('流量端口'),
-                      value: details.container_config.traffic_port || 'N/A',
+                      value: details.container_config.traffic_port || t('暂无'),
                     },
                     {
                       key: t('启动命令'),
@@ -340,7 +340,7 @@ const ViewDetailsModal = ({ visible, onCancel, deployment, t }) => {
                         <Text className='font-mono text-sm'>
                           {details.container_config.entrypoint
                             ? details.container_config.entrypoint.join(' ')
-                            : 'N/A'}
+                            : t('暂无')}
                         </Text>
                       ),
                     },
@@ -534,7 +534,7 @@ const ViewDetailsModal = ({ visible, onCancel, deployment, t }) => {
                   <Text>
                     {details.started_at
                       ? timestamp2string(details.started_at)
-                      : 'N/A'}
+                      : t('暂无')}
                   </Text>
                 </div>
                 <div className='flex justify-between'>
@@ -542,7 +542,7 @@ const ViewDetailsModal = ({ visible, onCancel, deployment, t }) => {
                   <Text>
                     {details.finished_at
                       ? timestamp2string(details.finished_at)
-                      : 'N/A'}
+                      : t('暂无')}
                   </Text>
                 </div>
               </div>

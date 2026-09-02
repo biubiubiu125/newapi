@@ -303,7 +303,7 @@ export default function AdminReferral() {
   async function loadOverview() {
     const res = await API.get('/api/user/admin/referral/overview');
     if (!res.data.success) {
-      throw new Error(res.data.message || 'load overview failed');
+      throw new Error(res.data.message || '加载推广概览失败');
     }
     setOverview(res.data.data || null);
   }
@@ -311,7 +311,7 @@ export default function AdminReferral() {
   async function loadSettings() {
     const res = await API.get('/api/user/admin/referral/settings');
     if (!res.data.success) {
-      throw new Error(res.data.message || 'load settings failed');
+      throw new Error(res.data.message || '加载推广设置失败');
     }
     setSettings(res.data.data || null);
   }
@@ -321,7 +321,7 @@ export default function AdminReferral() {
       params: { p: 1, page_size: 50 },
     });
     if (!res.data.success) {
-      throw new Error(res.data.message || 'load pending failed');
+      throw new Error(res.data.message || '加载待审核列表失败');
     }
     setPendingItems(res.data.data?.items || []);
   }
@@ -331,7 +331,7 @@ export default function AdminReferral() {
       params: { p: 1, page_size: 50, keyword: affiliateKeyword || undefined },
     });
     if (!res.data.success) {
-      throw new Error(res.data.message || 'load affiliates failed');
+      throw new Error(res.data.message || '加载推广员列表失败');
     }
     setAffiliates(res.data.data?.items || []);
   }
@@ -348,7 +348,7 @@ export default function AdminReferral() {
       },
     });
     if (!res.data.success) {
-      throw new Error(res.data.message || 'load commissions failed');
+      throw new Error(res.data.message || '加载佣金流水失败');
     }
     setCommissions(res.data.data?.items || []);
     setCommissionTotal(res.data.data?.total || 0);
@@ -366,7 +366,7 @@ export default function AdminReferral() {
       },
     });
     if (!res.data.success) {
-      throw new Error(res.data.message || 'load withdrawals failed');
+      throw new Error(res.data.message || '加载提现记录失败');
     }
     setWithdrawals(res.data.data?.items || []);
     setWithdrawalTotal(res.data.data?.total || 0);
@@ -381,7 +381,7 @@ export default function AdminReferral() {
       },
     });
     if (!res.data.success) {
-      throw new Error(res.data.message || 'load ledgers failed');
+      throw new Error(res.data.message || '加载账户流水失败');
     }
     setLedgers(res.data.data?.items || []);
     setLedgerTotal(res.data.data?.total || 0);
@@ -396,7 +396,7 @@ export default function AdminReferral() {
       },
     });
     if (!res.data.success) {
-      throw new Error(res.data.message || 'load audit logs failed');
+      throw new Error(res.data.message || '加载审计日志失败');
     }
     setAuditLogs(res.data.data?.items || []);
     setAuditTotal(res.data.data?.total || 0);
@@ -414,7 +414,7 @@ export default function AdminReferral() {
           { params: { p: 1, page_size: 100 } },
         );
         if (!res.data.success) {
-          throw new Error(res.data.message || 'load bindings failed');
+          throw new Error(res.data.message || '加载绑定信息失败');
         }
         setBindingItems(res.data.data?.items || []);
         return;
@@ -424,7 +424,7 @@ export default function AdminReferral() {
       });
       if (!res.data.success) {
         throw new Error(
-          res.data.message || 'load affiliate withdrawals failed',
+          res.data.message || '加载推广员提现记录失败',
         );
       }
       setAffiliateWithdrawals(res.data.data?.items || []);

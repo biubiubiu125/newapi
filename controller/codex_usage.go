@@ -64,7 +64,7 @@ func fetchCodexChannelWhamData(
 ) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		common.ApiError(c, fmt.Errorf("invalid channel id: %w", err))
+		common.ApiError(c, fmt.Errorf("渠道 ID 无效: %w", err))
 		return
 	}
 
@@ -74,15 +74,15 @@ func fetchCodexChannelWhamData(
 		return
 	}
 	if ch == nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel not found"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "未找到渠道"})
 		return
 	}
 	if ch.Type != constant.ChannelTypeCodex {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "channel type is not Codex"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "渠道类型不是 Codex"})
 		return
 	}
 	if ch.ChannelInfo.IsMultiKey {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "multi-key channel is not supported"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "不支持多 Key 渠道"})
 		return
 	}
 
@@ -95,11 +95,11 @@ func fetchCodexChannelWhamData(
 	accessToken := strings.TrimSpace(oauthKey.AccessToken)
 	accountID := strings.TrimSpace(oauthKey.AccountID)
 	if accessToken == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "codex channel: access_token is required"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "Codex 渠道：access_token 不能为空"})
 		return
 	}
 	if accountID == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "codex channel: account_id is required"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": "Codex 渠道：account_id 不能为空"})
 		return
 	}
 
@@ -143,11 +143,11 @@ func fetchCodexChannelWhamData(
 			updated, updateErr := updateCodexChannelCredentialIfUnchanged(ch.Id, ch.Key, string(encoded))
 			if updateErr != nil {
 				common.SysError("failed to persist refreshed codex credential: " + updateErr.Error())
-				c.JSON(http.StatusOK, gin.H{"success": false, "message": "codex credential refresh failed, please retry"})
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": "Codex 凭证刷新失败，请重试"})
 				return
 			}
 			if !updated {
-				c.JSON(http.StatusOK, gin.H{"success": false, "message": "codex credential changed during refresh, please retry"})
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": "Codex 凭证在刷新过程中发生变化，请重试"})
 				return
 			}
 			initChannelCache()
@@ -177,7 +177,7 @@ func fetchCodexChannelWhamData(
 		"data":            payload,
 	}
 	if !ok {
-		resp["message"] = fmt.Sprintf("upstream status: %d", statusCode)
+		resp["message"] = fmt.Sprintf("上游状态码：%d", statusCode)
 	}
 	c.JSON(http.StatusOK, resp)
 }

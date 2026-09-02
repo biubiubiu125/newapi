@@ -60,7 +60,7 @@ export const DEFAULT_MESSAGES = [
     role: MESSAGE_ROLES.ASSISTANT,
     id: '3',
     createAt: 1715676751919,
-    content: 'Hello! How can I help you today?',
+    content: '你好！今天我可以怎样帮助你？',
     reasoningContent: '',
     isReasoningExpanded: false,
   },

@@ -252,7 +252,7 @@ export function UserRechargeRecordsDialog(props: Props) {
             <Table>
               <TableHeader>
                 <TableRow>
-                  <TableHead>ID</TableHead>
+                  <TableHead>{t('ID')}</TableHead>
                   <TableHead>{t('Order')}</TableHead>
                   <TableHead>{t('Order Type')}</TableHead>
                   <TableHead>{t('Payment Gateway')}</TableHead>
