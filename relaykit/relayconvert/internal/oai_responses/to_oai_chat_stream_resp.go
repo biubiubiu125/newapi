@@ -21,6 +21,7 @@ type ResponsesToChatStreamState struct {
 	sentStart                  bool
 	finalized                  bool
 	hasSentText                bool
+	sentAnnotationCount        int
 	sawToolCall                bool
 	hasSentReasoning           bool
 	needsReasoningSummaryBreak bool
@@ -86,6 +87,8 @@ func ResponsesStreamEventToChatChunks(event *dto.ResponsesStreamResponse, state 
 		return nil, nil
 	case responsesEventOutputTextDelta:
 		return state.textDelta(event.Delta), nil
+	case responsesEventOutputTextAnnotationAdded:
+		return state.annotationRawDelta(event.Annotation)
 	case responsesEventOutputItemAdded, responsesEventOutputItemDone:
 		if event.Item == nil || !isResponsesToolOutputType(event.Item.Type) {
 			return nil, nil
@@ -101,7 +104,10 @@ func ResponsesStreamEventToChatChunks(event *dto.ResponsesStreamResponse, state 
 			response = ensureIncompleteResponse(response)
 		}
 		state.applyResponseMetadata(response)
-		chunks := state.terminalOutputChunks(response)
+		chunks, err := state.terminalOutputChunks(response)
+		if err != nil {
+			return nil, err
+		}
 		chunks = append(chunks, state.finalize(response)...)
 		return chunks, nil
 	case responsesEventFailed, responsesEventError:
@@ -160,12 +166,13 @@ func (s *ResponsesToChatStreamState) textDelta(delta string) []dto.ChatCompletio
 	return chunks
 }
 
-func (s *ResponsesToChatStreamState) terminalOutputChunks(response *dto.OpenAIResponsesResponse) []dto.ChatCompletionsStreamResponse {
+func (s *ResponsesToChatStreamState) terminalOutputChunks(response *dto.OpenAIResponsesResponse) ([]dto.ChatCompletionsStreamResponse, error) {
 	if s == nil || response == nil || len(response.Output) == 0 {
-		return nil
+		return nil, nil
 	}
 
 	var chunks []dto.ChatCompletionsStreamResponse
+	annotationOffset := 0
 	for i := range response.Output {
 		out := &response.Output[i]
 		switch {
@@ -177,19 +184,24 @@ func (s *ResponsesToChatStreamState) terminalOutputChunks(response *dto.OpenAIRe
 				}
 			}
 			outputText := text.String()
-			if outputText == "" {
-				continue
+			if outputText != "" {
+				if !s.hasSentText {
+					chunks = append(chunks, s.textDelta(outputText)...)
+				} else {
+					sentText := s.usageText.String()
+					if strings.HasPrefix(outputText, sentText) {
+						chunks = append(chunks, s.textDelta(outputText[len(sentText):])...)
+					} else if !strings.Contains(sentText, outputText) {
+						chunks = append(chunks, s.textDelta(outputText)...)
+					}
+				}
 			}
-			if !s.hasSentText {
-				chunks = append(chunks, s.textDelta(outputText)...)
-				continue
+			annotationChunks, err := s.remainingAnnotationChunks(out, annotationOffset)
+			if err != nil {
+				return nil, err
 			}
-			sentText := s.usageText.String()
-			if strings.HasPrefix(outputText, sentText) {
-				chunks = append(chunks, s.textDelta(outputText[len(sentText):])...)
-			} else if !strings.Contains(sentText, outputText) {
-				chunks = append(chunks, s.textDelta(outputText)...)
-			}
+			chunks = append(chunks, annotationChunks...)
+			annotationOffset += responsesOutputAnnotationCount(out)
 		case out.Type == responsesOutputTypeReasoning && !s.hasSentReasoning:
 			var reasoning strings.Builder
 			for _, c := range out.Content {
@@ -202,7 +214,72 @@ func (s *ResponsesToChatStreamState) terminalOutputChunks(response *dto.OpenAIRe
 			chunks = append(chunks, s.toolItem(&dto.ResponsesStreamResponse{Item: out})...)
 		}
 	}
-	return chunks
+	return chunks, nil
+}
+
+func (s *ResponsesToChatStreamState) annotationRawDelta(raw []byte) ([]dto.ChatCompletionsStreamResponse, error) {
+	if len(raw) == 0 {
+		return nil, nil
+	}
+	var annotation interface{}
+	if err := kitutil.Unmarshal(raw, &annotation); err != nil {
+		return nil, fmt.Errorf("invalid Responses stream annotation: %w", err)
+	}
+	return s.annotationDelta(annotation)
+}
+
+func (s *ResponsesToChatStreamState) annotationDelta(annotation interface{}) ([]dto.ChatCompletionsStreamResponse, error) {
+	converted, err := responseAnnotationToChat(annotation)
+	if err != nil {
+		return nil, err
+	}
+	raw, err := kitutil.Marshal([]interface{}{converted})
+	if err != nil {
+		return nil, fmt.Errorf("marshal Chat annotation: %w", err)
+	}
+	s.sentAnnotationCount++
+	chunks := s.ensureStart()
+	chunks = append(chunks, s.makeChunk(dto.ChatCompletionsStreamResponseChoiceDelta{
+		Annotations: raw,
+	}, nil))
+	return chunks, nil
+}
+
+func (s *ResponsesToChatStreamState) remainingAnnotationChunks(output *dto.ResponsesOutput, offset int) ([]dto.ChatCompletionsStreamResponse, error) {
+	if output == nil {
+		return nil, nil
+	}
+	annotations := make([]interface{}, 0)
+	for _, content := range output.Content {
+		annotations = append(annotations, content.Annotations...)
+	}
+	start := s.sentAnnotationCount - offset
+	if start < 0 {
+		start = 0
+	}
+	if start >= len(annotations) {
+		return nil, nil
+	}
+	var chunks []dto.ChatCompletionsStreamResponse
+	for _, annotation := range annotations[start:] {
+		converted, err := s.annotationDelta(annotation)
+		if err != nil {
+			return nil, err
+		}
+		chunks = append(chunks, converted...)
+	}
+	return chunks, nil
+}
+
+func responsesOutputAnnotationCount(output *dto.ResponsesOutput) int {
+	if output == nil {
+		return 0
+	}
+	count := 0
+	for _, content := range output.Content {
+		count += len(content.Annotations)
+	}
+	return count
 }
 
 func (s *ResponsesToChatStreamState) reasoningDelta(delta string) []dto.ChatCompletionsStreamResponse {

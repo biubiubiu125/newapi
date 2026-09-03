@@ -10,29 +10,30 @@ import (
 )
 
 const (
-	responsesEventCreated                  = "response.created"
-	responsesEventCompleted                = "response.completed"
-	responsesEventDone                     = "response.done"
-	responsesEventIncomplete               = "response.incomplete"
-	responsesEventFailed                   = "response.failed"
-	responsesEventError                    = "response.error"
-	responsesEventOutputTextDelta          = "response.output_text.delta"
-	responsesEventOutputItemAdded          = "response.output_item.added"
-	responsesEventOutputItemDone           = "response.output_item.done"
-	responsesEventFunctionArgsDelta        = "response.function_call_arguments.delta"
-	responsesEventFunctionArgsDone         = "response.function_call_arguments.done"
-	responsesEventCustomToolInputDelta     = "response.custom_tool_call_input.delta"
-	responsesEventCustomToolInputDone      = "response.custom_tool_call_input.done"
-	responsesEventReasoningSummaryDelta    = "response.reasoning_summary_text.delta"
-	responsesEventReasoningSummaryDone     = "response.reasoning_summary_text.done"
-	responsesEventReasoningTextDelta       = "response.reasoning_text.delta"
-	responsesEventReasoningTextDone        = "response.reasoning_text.done"
-	responsesOutputTypeFunctionCall        = "function_call"
-	responsesOutputTypeCustomToolCall      = "custom_tool_call"
-	responsesOutputTypeMessage             = "message"
-	responsesOutputTypeReasoning           = "reasoning"
-	responsesIncompleteReasonContentFilter = "content_filter"
-	responsesIncompleteReasonMaxTokens     = "max_output_tokens"
+	responsesEventCreated                   = "response.created"
+	responsesEventCompleted                 = "response.completed"
+	responsesEventDone                      = "response.done"
+	responsesEventIncomplete                = "response.incomplete"
+	responsesEventFailed                    = "response.failed"
+	responsesEventError                     = "response.error"
+	responsesEventOutputTextDelta           = "response.output_text.delta"
+	responsesEventOutputTextAnnotationAdded = "response.output_text.annotation.added"
+	responsesEventOutputItemAdded           = "response.output_item.added"
+	responsesEventOutputItemDone            = "response.output_item.done"
+	responsesEventFunctionArgsDelta         = "response.function_call_arguments.delta"
+	responsesEventFunctionArgsDone          = "response.function_call_arguments.done"
+	responsesEventCustomToolInputDelta      = "response.custom_tool_call_input.delta"
+	responsesEventCustomToolInputDone       = "response.custom_tool_call_input.done"
+	responsesEventReasoningSummaryDelta     = "response.reasoning_summary_text.delta"
+	responsesEventReasoningSummaryDone      = "response.reasoning_summary_text.done"
+	responsesEventReasoningTextDelta        = "response.reasoning_text.delta"
+	responsesEventReasoningTextDone         = "response.reasoning_text.done"
+	responsesOutputTypeFunctionCall         = "function_call"
+	responsesOutputTypeCustomToolCall       = "custom_tool_call"
+	responsesOutputTypeMessage              = "message"
+	responsesOutputTypeReasoning            = "reasoning"
+	responsesIncompleteReasonContentFilter  = "content_filter"
+	responsesIncompleteReasonMaxTokens      = "max_output_tokens"
 )
 
 func ResponsesFinishReasonFromStatus(resp *dto.OpenAIResponsesResponse) (string, bool) {
@@ -103,6 +104,11 @@ func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesRespons
 		Role:    "assistant",
 		Content: text,
 	}
+	if annotations, err := responsesAnnotationsToChat(resp); err != nil {
+		return nil, nil, err
+	} else if len(annotations) > 0 {
+		msg.Annotations = annotations
+	}
 	if reasoning != "" {
 		msg.ReasoningContent = &reasoning
 	}
@@ -126,6 +132,52 @@ func ResponsesResponseToChatCompletionsResponse(resp *dto.OpenAIResponsesRespons
 	}
 
 	return out, usage, nil
+}
+
+func responsesAnnotationsToChat(resp *dto.OpenAIResponsesResponse) ([]byte, error) {
+	annotations := make([]any, 0)
+	for _, output := range resp.Output {
+		if output.Type != responsesOutputTypeMessage {
+			continue
+		}
+		for _, content := range output.Content {
+			for _, annotation := range content.Annotations {
+				converted, err := responseAnnotationToChat(annotation)
+				if err != nil {
+					return nil, err
+				}
+				annotations = append(annotations, converted)
+			}
+		}
+	}
+	if len(annotations) == 0 {
+		return nil, nil
+	}
+	return kitutil.Marshal(annotations)
+}
+
+func responseAnnotationToChat(annotation any) (map[string]any, error) {
+	value, ok := annotation.(map[string]any)
+	if !ok {
+		converted, err := kitutil.Any2Type[map[string]any](annotation)
+		if err != nil {
+			return nil, fmt.Errorf("invalid Responses annotation: %w", err)
+		}
+		value = converted
+	}
+	if strings.TrimSpace(kitutil.Interface2String(value["type"])) != "url_citation" {
+		return value, nil
+	}
+	citation := make(map[string]any, len(value)-1)
+	for key, item := range value {
+		if key != "type" {
+			citation[key] = item
+		}
+	}
+	return map[string]any{
+		"type":         "url_citation",
+		"url_citation": citation,
+	}, nil
 }
 
 func UsageFromResponsesUsage(src *dto.Usage) *dto.Usage {

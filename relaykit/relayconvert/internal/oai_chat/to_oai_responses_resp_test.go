@@ -1,6 +1,7 @@
 package oaichat
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -8,6 +9,93 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestChatCompletionsResponseToResponsesConvertsURLAnnotations(t *testing.T) {
+	var message dto.Message
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"role":"assistant",
+		"content":"answer",
+		"annotations":[
+			{"type":"url_citation","url_citation":{"url":"https://example.com","title":"Example","start_index":0,"end_index":6}},
+			{"type":"custom_annotation","value":"kept"}
+		]
+	}`), &message))
+
+	resp, _, err := ChatCompletionsResponseToResponsesResponse(&dto.OpenAITextResponse{
+		Id:    "chatcmpl_1",
+		Model: "gpt-test",
+		Choices: []dto.OpenAITextResponseChoice{
+			{Message: message},
+		},
+	}, "resp_1")
+	require.NoError(t, err)
+	require.Len(t, resp.Output, 1)
+
+	encoded, err := json.Marshal(resp.Output[0].Content[0].Annotations)
+	require.NoError(t, err)
+	assert.JSONEq(t, `[
+		{"type":"url_citation","url":"https://example.com","title":"Example","start_index":0,"end_index":6},
+		{"type":"custom_annotation","value":"kept"}
+	]`, string(encoded))
+}
+
+func TestChatCompletionsResponseToResponsesRejectsInvalidAnnotations(t *testing.T) {
+	var message dto.Message
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"role":"assistant",
+		"content":"answer",
+		"annotations":{"type":"url_citation"}
+	}`), &message))
+
+	_, _, err := ChatCompletionsResponseToResponsesResponse(&dto.OpenAITextResponse{
+		Choices: []dto.OpenAITextResponseChoice{{Message: message}},
+	}, "resp_1")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid Chat annotations")
+}
+
+func TestChatCompletionsStreamToResponsesEmitsAnnotationEvents(t *testing.T) {
+	var chunk dto.ChatCompletionsStreamResponse
+	require.NoError(t, json.Unmarshal([]byte(`{
+		"choices":[{
+			"index":0,
+			"delta":{
+				"content":"answer",
+				"annotations":[{
+					"type":"url_citation",
+					"url_citation":{"url":"https://example.com","title":"Example"}
+				}]
+			}
+		}]
+	}`), &chunk))
+
+	state := NewChatToResponsesStreamState("resp_1", "gpt-test")
+	events, err := ChatCompletionsStreamChunkToResponsesEvents(&chunk, state)
+	require.NoError(t, err)
+
+	var annotationEvent *ChatToResponsesStreamEvent
+	for i := range events {
+		if events[i].Type == "response.output_text.annotation.added" {
+			annotationEvent = &events[i]
+			break
+		}
+	}
+	require.NotNil(t, annotationEvent)
+	payloadJSON, err := json.Marshal(annotationEvent.Payload)
+	require.NoError(t, err)
+	var payload map[string]interface{}
+	require.NoError(t, json.Unmarshal(payloadJSON, &payload))
+	annotationJSON, err := json.Marshal(payload["annotation"])
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"type":"url_citation","url":"https://example.com","title":"Example"}`, string(annotationJSON))
+
+	finalEvents := FinalizeChatCompletionsStreamToResponses(state)
+	require.NotEmpty(t, finalEvents)
+	finalResponse := finalEvents[len(finalEvents)-1].Payload.Response
+	require.NotNil(t, finalResponse)
+	require.Len(t, finalResponse.Output, 1)
+	assert.Len(t, finalResponse.Output[0].Content[0].Annotations, 1)
+}
 
 func TestChatCompletionsResponseToResponsesPreservesTextToolCallsAndUsage(t *testing.T) {
 	chat := &dto.OpenAITextResponse{

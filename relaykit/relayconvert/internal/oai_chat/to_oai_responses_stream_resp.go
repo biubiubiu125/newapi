@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 )
 
 type ChatToResponsesStreamEvent struct {
@@ -34,6 +35,7 @@ type ChatToResponsesStreamState struct {
 	toolsByIndex      map[int]*chatToResponsesStreamTool
 	outputOrder       []chatToResponsesOutputRef
 	text              strings.Builder
+	annotations       []interface{}
 	reasoning         strings.Builder
 }
 
@@ -96,6 +98,13 @@ func ChatCompletionsStreamChunkToResponsesEvents(chunk *dto.ChatCompletionsStrea
 		if choice.Delta.GetContentString() != "" {
 			events = append(events, state.appendTextDelta(choice.Delta.GetContentString())...)
 		}
+		if len(choice.Delta.Annotations) > 0 {
+			annotationEvents, err := state.appendAnnotationDelta(choice.Delta.Annotations)
+			if err != nil {
+				return nil, err
+			}
+			events = append(events, annotationEvents...)
+		}
 		for _, toolCall := range choice.Delta.ToolCalls {
 			toolEvents, err := state.appendToolCallDelta(toolCall)
 			if err != nil {
@@ -137,22 +146,7 @@ func (s *ChatToResponsesStreamState) UsageText() string {
 }
 
 func (s *ChatToResponsesStreamState) appendTextDelta(delta string) []ChatToResponsesStreamEvent {
-	events := make([]ChatToResponsesStreamEvent, 0, 2)
-	if !s.textStarted {
-		s.textStarted = true
-		s.textOutputIndex = s.nextIndex("message", -1)
-		events = append(events, responsesStreamEvent(responsesEventOutputItemAdded, dto.ResponsesStreamResponse{
-			Type:        responsesEventOutputItemAdded,
-			OutputIndex: intPtr(s.textOutputIndex),
-			Item: &dto.ResponsesOutput{
-				Type:    responsesOutputTypeMessage,
-				ID:      s.messageID(),
-				Status:  "in_progress",
-				Role:    "assistant",
-				Content: []dto.ResponsesOutputContent{},
-			},
-		}))
-	}
+	events := s.ensureTextOutput()
 	s.text.WriteString(delta)
 	events = append(events, responsesStreamEvent(responsesEventOutputTextDelta, dto.ResponsesStreamResponse{
 		Type:         responsesEventOutputTextDelta,
@@ -162,6 +156,52 @@ func (s *ChatToResponsesStreamState) appendTextDelta(delta string) []ChatToRespo
 		ItemID:       s.messageID(),
 	}))
 	return events
+}
+
+func (s *ChatToResponsesStreamState) ensureTextOutput() []ChatToResponsesStreamEvent {
+	if s.textStarted {
+		return nil
+	}
+	s.textStarted = true
+	s.textOutputIndex = s.nextIndex("message", -1)
+	return []ChatToResponsesStreamEvent{
+		responsesStreamEvent(responsesEventOutputItemAdded, dto.ResponsesStreamResponse{
+			Type:        responsesEventOutputItemAdded,
+			OutputIndex: intPtr(s.textOutputIndex),
+			Item: &dto.ResponsesOutput{
+				Type:    responsesOutputTypeMessage,
+				ID:      s.messageID(),
+				Status:  "in_progress",
+				Role:    "assistant",
+				Content: []dto.ResponsesOutputContent{},
+			},
+		}),
+	}
+}
+
+func (s *ChatToResponsesStreamState) appendAnnotationDelta(raw []byte) ([]ChatToResponsesStreamEvent, error) {
+	annotations, err := chatAnnotationsToResponses(raw)
+	if err != nil {
+		return nil, err
+	}
+	events := s.ensureTextOutput()
+	for _, annotation := range annotations {
+		annotationJSON, err := kitutil.Marshal(annotation)
+		if err != nil {
+			return nil, fmt.Errorf("marshal Responses annotation: %w", err)
+		}
+		annotationIndex := len(s.annotations)
+		s.annotations = append(s.annotations, annotation)
+		events = append(events, responsesStreamEvent(responsesEventOutputTextAnnotationAdded, dto.ResponsesStreamResponse{
+			Type:            responsesEventOutputTextAnnotationAdded,
+			OutputIndex:     intPtr(s.textOutputIndex),
+			ContentIndex:    intPtr(0),
+			AnnotationIndex: intPtr(annotationIndex),
+			Annotation:      annotationJSON,
+			ItemID:          s.messageID(),
+		}))
+	}
+	return events, nil
 }
 
 func (s *ChatToResponsesStreamState) appendReasoningDelta(delta string) []ChatToResponsesStreamEvent {
@@ -376,6 +416,10 @@ func (s *ChatToResponsesStreamState) reasoningID() string {
 }
 
 func (s *ChatToResponsesStreamState) messageOutput(status string) *dto.ResponsesOutput {
+	annotations := s.annotations
+	if annotations == nil {
+		annotations = []interface{}{}
+	}
 	return &dto.ResponsesOutput{
 		Type:   responsesOutputTypeMessage,
 		ID:     s.messageID(),
@@ -385,7 +429,7 @@ func (s *ChatToResponsesStreamState) messageOutput(status string) *dto.Responses
 			{
 				Type:        "output_text",
 				Text:        s.text.String(),
-				Annotations: []interface{}{},
+				Annotations: annotations,
 			},
 		},
 	}
