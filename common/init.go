@@ -227,6 +227,8 @@ func initConstantEnv() {
 	constant.TaskQueryLimit = GetEnvOrDefault("TASK_QUERY_LIMIT", 1000)
 	// 异步任务超时时间（分钟），超过此时间未完成的任务将被标记为失败并退款。0 表示禁用。
 	constant.TaskTimeoutMinutes = GetEnvOrDefault("TASK_TIMEOUT_MINUTES", 1440)
+	// 异步任务连续轮询失败阈值，达到后标记失败并退款；0 表示禁用。
+	constant.TaskPollMaxFailures = GetEnvOrDefault("TASK_POLL_MAX_FAILURES", 20)
 	constant.ImageTaskWorkerEnabled = GetEnvOrDefaultBool("IMAGE_TASK_WORKER_ENABLED", true)
 	constant.ImageTaskWorkerIdleSeconds = GetEnvOrDefault("IMAGE_TASK_WORKER_IDLE_SECONDS", 5)
 	constant.ImageTaskWorkerConcurrency = GetEnvOrDefault("IMAGE_TASK_WORKER_CONCURRENCY", 0)

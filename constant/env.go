@@ -18,6 +18,7 @@ var GenerateDefaultToken bool
 var ErrorLogEnabled bool
 var TaskQueryLimit int
 var TaskTimeoutMinutes int
+var TaskPollMaxFailures = 20
 var ImageTaskWorkerEnabled bool
 var ImageTaskWorkerIdleSeconds int
 var ImageTaskWorkerConcurrency int
@@ -32,9 +33,11 @@ var ImageTaskFileCacheSharedTrusted bool
 var ImageTaskLocalFileCacheAffinity bool
 var ImageTaskOrphanFailSeconds int
 var ImageTaskResultInlineMaxMB int
+
 // ImageTaskResultDownloadConcurrency is the per-process cap on concurrent public
 // result downloads. 0 disables the global limit.
 var ImageTaskResultDownloadConcurrency int
+
 // ImageTaskResultDownloadTokenConcurrency is the per-token cap on concurrent
 // public result downloads. 0 disables the per-token limit.
 var ImageTaskResultDownloadTokenConcurrency int

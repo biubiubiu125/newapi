@@ -40,18 +40,64 @@ type taskPollingFetchAdaptor struct {
 }
 
 type sunoResponsePollingAdaptor struct {
-	response dto.TaskResponse[[]dto.SunoDataResponse]
+	responseBody []byte
+	response     dto.TaskResponse[[]dto.SunoDataResponse]
+	statusCode   int
+	fetchErr     error
+}
+
+type pollOutcomeAdaptor struct {
+	statusCode   int
+	responseBody []byte
+	fetchErr     error
+	parseResult  *relaycommon.TaskInfo
+	parseErr     error
+}
+
+func (a *pollOutcomeAdaptor) Init(_ *relaycommon.RelayInfo) {}
+
+func (a *pollOutcomeAdaptor) FetchTask(_ string, _ string, _ map[string]any, _ string) (*http.Response, error) {
+	if a.fetchErr != nil {
+		return nil, a.fetchErr
+	}
+	return &http.Response{
+		StatusCode: a.statusCode,
+		Body:       io.NopCloser(bytes.NewReader(a.responseBody)),
+	}, nil
+}
+
+func (a *pollOutcomeAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
+	if a.parseErr != nil {
+		return nil, a.parseErr
+	}
+	return a.parseResult, nil
+}
+
+func (a *pollOutcomeAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
+	return 0
 }
 
 func (a *sunoResponsePollingAdaptor) Init(_ *relaycommon.RelayInfo) {}
 
 func (a *sunoResponsePollingAdaptor) FetchTask(_ string, _ string, _ map[string]any, _ string) (*http.Response, error) {
+	if a.fetchErr != nil {
+		return nil, a.fetchErr
+	}
+	if a.statusCode == 0 {
+		a.statusCode = http.StatusOK
+	}
+	if a.responseBody != nil {
+		return &http.Response{
+			StatusCode: a.statusCode,
+			Body:       io.NopCloser(bytes.NewReader(a.responseBody)),
+		}, nil
+	}
 	body, err := common.Marshal(a.response)
 	if err != nil {
 		return nil, err
 	}
 	return &http.Response{
-		StatusCode: http.StatusOK,
+		StatusCode: a.statusCode,
 		Body:       io.NopCloser(bytes.NewReader(body)),
 	}, nil
 }
@@ -235,6 +281,49 @@ func TestUpdateSunoTasksDoesNotRefundWhenStatusCASIsLost(t *testing.T) {
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
 	require.Equal(t, preConsumed, usedQuota)
 	require.Equal(t, 1, requestCount)
+}
+
+func TestUpdateSunoTasksFailsAndRefundsWhenUpstreamTaskGone(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID, channelID = 9801, 9802, 9803
+	const upstreamTaskID = "suno-gone-upstream"
+	baseURL := "https://suno.example"
+	seedUser(t, userID, 1000)
+	seedToken(t, tokenID, userID, "suno-gone-token", 1000)
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id:      channelID,
+		Type:    constant.ChannelTypeSunoAPI,
+		Name:    "suno-gone-channel",
+		Key:     "suno-key",
+		Status:  common.ChannelStatusEnabled,
+		BaseURL: &baseURL,
+	}).Error)
+
+	task := makeTask(userID, channelID, 100, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "suno-gone-public"
+	task.Platform = constant.TaskPlatformSuno
+	task.PrivateData.UpstreamTaskID = upstreamTaskID
+	require.NoError(t, model.DB.Create(task).Error)
+
+	adaptor := &sunoResponsePollingAdaptor{
+		statusCode:   http.StatusNotFound,
+		responseBody: []byte(`{"error":"not found"}`),
+	}
+	previousFactory := GetTaskAdaptorFunc
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return adaptor }
+	t.Cleanup(func() { GetTaskAdaptorFunc = previousFactory })
+
+	require.NoError(t, updateSunoTasks(context.Background(), channelID, []string{upstreamTaskID}, map[string]*model.Task{
+		upstreamTaskID: task,
+	}))
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
+	require.Contains(t, reloaded.FailReason, "not found")
+	require.Zero(t, reloaded.Quota)
+	require.Equal(t, 1100, getUserQuota(t, userID))
 }
 
 func TestCleanupExpiredImageTaskResultsDeletesCancelledRequestFileOnOwnerNode(t *testing.T) {
@@ -1511,4 +1600,134 @@ func TestUpdateVideoTasksMixedChannelSleepSettings(t *testing.T) {
 
 	require.ErrorIs(t, err, context.DeadlineExceeded)
 	assert.ElementsMatch(t, []string{"upstream_sleepy_1", "upstream_fast_1", "upstream_fast_2"}, adaptor.fetchedTaskIDs())
+}
+
+func TestUpdateVideoSingleTaskBoundsConsecutivePollFailuresAndRefunds(t *testing.T) {
+	truncate(t)
+	oldMaxFailures := constant.TaskPollMaxFailures
+	constant.TaskPollMaxFailures = 2
+	t.Cleanup(func() {
+		constant.TaskPollMaxFailures = oldMaxFailures
+	})
+
+	const userID, tokenID, channelID = 3101, 3102, 3103
+	seedUser(t, userID, 1000)
+	seedToken(t, tokenID, userID, "poll-failure-token", 1000)
+	channel := &model.Channel{
+		Id:     channelID,
+		Type:   constant.ChannelTypeKling,
+		Name:   "poll-failure-channel",
+		Key:    "sk-poll-failure",
+		Status: common.ChannelStatusEnabled,
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+
+	task := makeTask(userID, channelID, 100, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_poll_failure_bounded"
+	task.Platform = constant.TaskPlatform("kling")
+	task.PrivateData.UpstreamTaskID = "upstream_poll_failure_bounded"
+	require.NoError(t, model.DB.Create(task).Error)
+
+	adaptor := &pollOutcomeAdaptor{
+		statusCode:   http.StatusBadGateway,
+		responseBody: []byte(`{"error":"upstream unavailable"}`),
+	}
+	taskM := map[string]*model.Task{task.GetUpstreamTaskID(): task}
+
+	require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, channel, task.GetUpstreamTaskID(), taskM))
+	var first model.Task
+	require.NoError(t, model.DB.First(&first, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusInProgress), first.Status)
+	require.Equal(t, 1, first.PrivateData.PollFailures)
+	require.Equal(t, 100, first.Quota)
+
+	require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, channel, task.GetUpstreamTaskID(), map[string]*model.Task{
+		task.GetUpstreamTaskID(): &first,
+	}))
+	var final model.Task
+	require.NoError(t, model.DB.First(&final, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), final.Status)
+	require.Equal(t, 2, final.PrivateData.PollFailures)
+	require.Zero(t, final.Quota)
+	require.Equal(t, 1100, getUserQuota(t, userID))
+}
+
+func TestUpdateVideoSingleTaskResetsPollFailuresAfterValidStatus(t *testing.T) {
+	truncate(t)
+
+	const channelID = 3201
+	seedUser(t, 3200, 1000)
+	channel := &model.Channel{
+		Id:     channelID,
+		Type:   constant.ChannelTypeKling,
+		Name:   "poll-reset-channel",
+		Key:    "sk-poll-reset",
+		Status: common.ChannelStatusEnabled,
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+	task := makeTask(3200, channelID, 0, 0, BillingSourceWallet, 0)
+	task.TaskID = "task_poll_failure_reset"
+	task.Platform = constant.TaskPlatform("kling")
+	task.PrivateData.UpstreamTaskID = "upstream_poll_failure_reset"
+	task.PrivateData.PollFailures = 1
+	require.NoError(t, model.DB.Create(task).Error)
+
+	responseBody, err := common.Marshal(dto.TaskResponse[model.Task]{
+		Code: dto.TaskSuccessCode,
+		Data: model.Task{
+			TaskID:   task.GetUpstreamTaskID(),
+			Status:   model.TaskStatusInProgress,
+			Progress: "50%",
+		},
+	})
+	require.NoError(t, err)
+	adaptor := &pollOutcomeAdaptor{
+		statusCode:   http.StatusOK,
+		responseBody: responseBody,
+	}
+
+	require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, channel, task.GetUpstreamTaskID(), map[string]*model.Task{
+		task.GetUpstreamTaskID(): task,
+	}))
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusInProgress), reloaded.Status)
+	require.Equal(t, "50%", reloaded.Progress)
+	require.Zero(t, reloaded.PrivateData.PollFailures)
+}
+
+func TestUpdateVideoSingleTaskFailsImmediatelyWhenUpstreamTaskIsGone(t *testing.T) {
+	truncate(t)
+
+	const userID, tokenID, channelID = 3301, 3302, 3303
+	seedUser(t, userID, 1000)
+	seedToken(t, tokenID, userID, "poll-not-found-token", 1000)
+	channel := &model.Channel{
+		Id:     channelID,
+		Type:   constant.ChannelTypeKling,
+		Name:   "poll-not-found-channel",
+		Key:    "sk-poll-not-found",
+		Status: common.ChannelStatusEnabled,
+	}
+	require.NoError(t, model.DB.Create(channel).Error)
+	task := makeTask(userID, channelID, 100, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_poll_not_found"
+	task.Platform = constant.TaskPlatform("kling")
+	task.PrivateData.UpstreamTaskID = "upstream_poll_not_found"
+	require.NoError(t, model.DB.Create(task).Error)
+
+	adaptor := &pollOutcomeAdaptor{
+		statusCode:   http.StatusNotFound,
+		responseBody: []byte(`{"error":"not found"}`),
+	}
+	require.NoError(t, updateVideoSingleTask(context.Background(), adaptor, channel, task.GetUpstreamTaskID(), map[string]*model.Task{
+		task.GetUpstreamTaskID(): task,
+	}))
+
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
+	require.Contains(t, reloaded.FailReason, "not found")
+	require.Zero(t, reloaded.Quota)
+	require.Equal(t, 1100, getUserQuota(t, userID))
 }
