@@ -9,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
@@ -18,8 +19,43 @@ import (
 	"gorm.io/gorm"
 )
 
+func setupTokenOrUserAuthSession(t *testing.T, user *model.User) *service.AuthBundle {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserSession{}))
+
+	oldDB := model.DB
+	oldRedisEnabled := common.RedisEnabled
+	model.DB = db
+	common.RedisEnabled = false
+	t.Cleanup(func() {
+		model.DB = oldDB
+		common.RedisEnabled = oldRedisEnabled
+		_ = sqlDB.Close()
+	})
+
+	if user.AuthVersion == 0 {
+		user.AuthVersion = 1
+	}
+	require.NoError(t, db.Create(user).Error)
+	bundle, err := service.CreateLoginSession(user.Id, "test", "127.0.0.1", "test-agent")
+	require.NoError(t, err)
+	return bundle
+}
+
 func TestTokenOrUserAuthSessionBranchWritesUserContext(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	bundle := setupTokenOrUserAuthSession(t, &model.User{
+		Id:       42,
+		Username: "session-owner",
+		Password: "password123",
+		Group:    "vip",
+		Status:   common.UserStatusEnabled,
+	})
 	router := gin.New()
 	router.Use(sessions.Sessions("session", cookie.NewStore([]byte("token-or-user-auth-test"))))
 	router.Use(func(c *gin.Context) {
@@ -28,6 +64,9 @@ func TestTokenOrUserAuthSessionBranchWritesUserContext(t *testing.T) {
 		session.Set("status", common.UserStatusEnabled)
 		session.Set("username", "session-owner")
 		session.Set("group", "vip")
+		session.Set("session_id", bundle.Session.SID)
+		session.Set("auth_version", bundle.Session.UserAuthVersion)
+		session.Set("session_version", bundle.Session.Version)
 		c.Next()
 	})
 	router.GET("/proxy", TokenOrUserAuth(), func(c *gin.Context) {
@@ -57,26 +96,13 @@ func TestTokenOrUserAuthSessionBranchWritesUserContext(t *testing.T) {
 
 func TestTokenOrUserAuthSessionBranchPrefersCurrentUserCache(t *testing.T) {
 	gin.SetMode(gin.TestMode)
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.User{}))
-
-	oldDB := model.DB
-	oldRedisEnabled := common.RedisEnabled
-	model.DB = db
-	common.RedisEnabled = false
-	t.Cleanup(func() {
-		model.DB = oldDB
-		common.RedisEnabled = oldRedisEnabled
-	})
-
-	require.NoError(t, model.DB.Create(&model.User{
+	bundle := setupTokenOrUserAuthSession(t, &model.User{
 		Id:       43,
 		Username: "current-owner",
 		Password: "password123",
 		Group:    "current-group",
 		Status:   common.UserStatusEnabled,
-	}).Error)
+	})
 
 	router := gin.New()
 	router.Use(sessions.Sessions("session", cookie.NewStore([]byte("token-or-user-auth-current-test"))))
@@ -86,6 +112,9 @@ func TestTokenOrUserAuthSessionBranchPrefersCurrentUserCache(t *testing.T) {
 		session.Set("status", common.UserStatusEnabled)
 		session.Set("username", "stale-owner")
 		session.Set("group", "stale-group")
+		session.Set("session_id", bundle.Session.SID)
+		session.Set("auth_version", bundle.Session.UserAuthVersion)
+		session.Set("session_version", bundle.Session.Version)
 		c.Next()
 	})
 	router.GET("/proxy", TokenOrUserAuth(), func(c *gin.Context) {

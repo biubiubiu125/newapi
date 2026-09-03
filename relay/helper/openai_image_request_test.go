@@ -2,6 +2,7 @@ package helper
 
 import (
 	"bytes"
+	"encoding/base64"
 	"fmt"
 	"io"
 	"mime/multipart"
@@ -16,6 +17,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func validOpenAIImageRequestTestPNG(t *testing.T) []byte {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+	require.NoError(t, err)
+	return data
+}
 
 // TestGetAndValidOpenAIImageRequestMultipartStream verifies multipart image
 // edit parsing: the stream field is parsed and validated, and the request body
@@ -32,7 +40,7 @@ func TestGetAndValidOpenAIImageRequestMultipartStream(t *testing.T) {
 		if withImage {
 			part, err := writer.CreateFormFile("image", "input.png")
 			require.NoError(t, err)
-			_, err = part.Write([]byte("fake image"))
+			_, err = part.Write(validOpenAIImageRequestTestPNG(t))
 			require.NoError(t, err)
 		}
 		require.NoError(t, writer.Close())
@@ -82,7 +90,7 @@ func TestGetAndValidOpenAIImageRequestPublicMultipartPreservesImageURL(t *testin
 	require.NoError(t, writer.WriteField("image_url", "https://example.test/input.png"))
 	part, err := writer.CreateFormFile("image", "input.png")
 	require.NoError(t, err)
-	_, err = part.Write([]byte("fake image"))
+	_, err = part.Write(validOpenAIImageRequestTestPNG(t))
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 

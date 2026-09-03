@@ -11,7 +11,6 @@ import (
 
 	"github.com/Calcium-Ion/go-epay/epay"
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -112,6 +111,15 @@ func setupPaymentCallbackGuardDB(t *testing.T) {
 			_ = sqlDB.Close()
 		}
 	})
+}
+
+func requirePaymentReview(t *testing.T, provider string, referenceID string) {
+	t.Helper()
+
+	var review model.PaymentOrphanEvent
+	require.NoError(t, model.DB.
+		Where("provider = ? AND reference_id = ? AND status = ?", provider, referenceID, model.PaymentOrphanStatusPendingReview).
+		First(&review).Error)
 }
 
 func signedEpayCallback(values map[string]string) url.Values {
@@ -223,7 +231,13 @@ func TestAddRedemptionRejectsNonPositiveQuota(t *testing.T) {
 		AddRedemption(c)
 
 		require.Equal(t, http.StatusOK, w.Code)
-		require.Contains(t, w.Body.String(), i18n.MsgRedemptionQuotaPositive)
+		var response struct {
+			Success bool   `json:"success"`
+			Message string `json:"message"`
+		}
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &response))
+		require.False(t, response.Success)
+		require.NotEmpty(t, response.Message)
 	}
 
 	var count int64
@@ -259,7 +273,13 @@ func TestUpdateRedemptionRejectsNonPositiveQuota(t *testing.T) {
 		UpdateRedemption(c)
 
 		require.Equal(t, http.StatusOK, w.Code)
-		require.Contains(t, w.Body.String(), i18n.MsgRedemptionQuotaPositive)
+		var response struct {
+			Success bool   `json:"success"`
+			Message string `json:"message"`
+		}
+		require.NoError(t, common.Unmarshal(w.Body.Bytes(), &response))
+		require.False(t, response.Success)
+		require.NotEmpty(t, response.Message)
 		reloaded := &model.Redemption{}
 		require.NoError(t, model.DB.Where("id = ?", redemption.Id).First(reloaded).Error)
 		require.Equal(t, "valid quota", reloaded.Name)
@@ -391,7 +411,7 @@ func TestEpayTopupNotifyRejectsNonSuccessStatus(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtOrder(t *testing.T) {
+func TestBEpusdtTopupNotifyQueuesLegacyBEpusdtOrderForManualReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -429,8 +449,9 @@ func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtOrder(t *testing.T) {
 
 	BEpusdtTopUpNotify(c)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	requirePaymentReview(t, model.PaymentProviderBEpusdt, "bepusdt-missing-merchant-guard")
 	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
@@ -439,7 +460,7 @@ func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtOrder(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtPayload(t *testing.T) {
+func TestBEpusdtTopupNotifyQueuesLegacyBEpusdtPayloadForManualReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -481,8 +502,9 @@ func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtPayload(t *testing.T) {
 
 	BEpusdtTopUpNotify(c)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	requirePaymentReview(t, model.PaymentProviderBEpusdt, "bepusdt-bepusdt-success")
 	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
@@ -541,7 +563,7 @@ func TestBEpusdtTopupNotifyAcceptsCashierCallback(t *testing.T) {
 	require.Contains(t, topupLog.Content, "BEpusdt USDT")
 }
 
-func TestBEpusdtTopupNotifyRejectsTokenMismatch(t *testing.T) {
+func TestBEpusdtTopupNotifyQueuesTokenMismatchForManualReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -578,8 +600,9 @@ func TestBEpusdtTopupNotifyRejectsTokenMismatch(t *testing.T) {
 
 	BEpusdtTopUpNotify(c)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	requirePaymentReview(t, model.PaymentProviderBEpusdt, "bepusdt-token-mismatch")
 	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
@@ -588,7 +611,7 @@ func TestBEpusdtTopupNotifyRejectsTokenMismatch(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestBEpusdtTopupNotifyRejectsAmountMismatchWithBadRequest(t *testing.T) {
+func TestBEpusdtTopupNotifyQueuesAmountMismatchForManualReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -624,8 +647,9 @@ func TestBEpusdtTopupNotifyRejectsAmountMismatchWithBadRequest(t *testing.T) {
 
 	BEpusdtTopUpNotify(c)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	requirePaymentReview(t, model.PaymentProviderBEpusdt, "bepusdt-amount-mismatch")
 	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
@@ -634,7 +658,7 @@ func TestBEpusdtTopupNotifyRejectsAmountMismatchWithBadRequest(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestBEpusdtTopupNotifyRejectsMissingOrderWithBadRequest(t *testing.T) {
+func TestBEpusdtTopupNotifyQueuesMissingOrderForManualReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -654,11 +678,12 @@ func TestBEpusdtTopupNotifyRejectsMissingOrderWithBadRequest(t *testing.T) {
 
 	BEpusdtTopUpNotify(c)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	requirePaymentReview(t, model.PaymentProviderBEpusdt, "bepusdt-missing-order")
 }
 
-func TestBEpusdtTopupNotifyRejectsInvalidOrderStatusWithBadRequest(t *testing.T) {
+func TestBEpusdtTopupNotifyQueuesInvalidOrderStatusForManualReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -694,8 +719,9 @@ func TestBEpusdtTopupNotifyRejectsInvalidOrderStatusWithBadRequest(t *testing.T)
 
 	BEpusdtTopUpNotify(c)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	requirePaymentReview(t, model.PaymentProviderBEpusdt, "bepusdt-invalid-status")
 	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusFailed, reloaded.Status)
@@ -753,7 +779,7 @@ func TestBEpusdtTopupNotifyAcceptsNativeCallbackEvenWithLegacyExtraFields(t *tes
 	require.Positive(t, updatedUser.Quota)
 }
 
-func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtNetworkOrder(t *testing.T) {
+func TestBEpusdtTopupNotifyQueuesLegacyBEpusdtNetworkOrderForManualReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -792,8 +818,9 @@ func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtNetworkOrder(t *testing.T) {
 
 	BEpusdtTopUpNotify(c)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	requirePaymentReview(t, model.PaymentProviderBEpusdt, "bepusdt-network-guard")
 	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
@@ -802,7 +829,7 @@ func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtNetworkOrder(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtPaymentTypeOrder(t *testing.T) {
+func TestBEpusdtTopupNotifyQueuesLegacyBEpusdtPaymentTypeOrderForManualReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -842,8 +869,9 @@ func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtPaymentTypeOrder(t *testing.T) {
 
 	BEpusdtTopUpNotify(c)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	requirePaymentReview(t, model.PaymentProviderBEpusdt, "bepusdt-payment-type-guard")
 	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
@@ -852,7 +880,7 @@ func TestBEpusdtTopupNotifyRejectsLegacyBEpusdtPaymentTypeOrder(t *testing.T) {
 	require.Zero(t, updatedUser.Quota)
 }
 
-func TestSubscriptionBEpusdtNotifyRejectsLegacyBEpusdtOrder(t *testing.T) {
+func TestSubscriptionBEpusdtNotifyQueuesLegacyBEpusdtOrderForManualReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -901,8 +929,9 @@ func TestSubscriptionBEpusdtNotifyRejectsLegacyBEpusdtOrder(t *testing.T) {
 
 	SubscriptionBEpusdtNotify(c)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	requirePaymentReview(t, model.PaymentProviderBEpusdt, "sub-bepusdt-missing-merchant-guard")
 	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
@@ -911,7 +940,7 @@ func TestSubscriptionBEpusdtNotifyRejectsLegacyBEpusdtOrder(t *testing.T) {
 	require.Zero(t, subscriptionCount)
 }
 
-func TestSubscriptionBEpusdtNotifyRejectsLegacyBEpusdtPayload(t *testing.T) {
+func TestSubscriptionBEpusdtNotifyQueuesLegacyBEpusdtPayloadForManualReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -964,8 +993,9 @@ func TestSubscriptionBEpusdtNotifyRejectsLegacyBEpusdtPayload(t *testing.T) {
 
 	SubscriptionBEpusdtNotify(c)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	requirePaymentReview(t, model.PaymentProviderBEpusdt, "sub-bepusdt-bepusdt-success")
 	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
@@ -1035,7 +1065,7 @@ func TestSubscriptionBEpusdtNotifyAcceptsCashierCallback(t *testing.T) {
 	require.Contains(t, topupLog.Content, "订阅")
 }
 
-func TestSubscriptionBEpusdtNotifyRejectsTokenMismatch(t *testing.T) {
+func TestSubscriptionBEpusdtNotifyQueuesTokenMismatchForManualReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -1083,8 +1113,9 @@ func TestSubscriptionBEpusdtNotifyRejectsTokenMismatch(t *testing.T) {
 
 	SubscriptionBEpusdtNotify(c)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	requirePaymentReview(t, model.PaymentProviderBEpusdt, "sub-bepusdt-token-mismatch")
 	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
@@ -1093,7 +1124,7 @@ func TestSubscriptionBEpusdtNotifyRejectsTokenMismatch(t *testing.T) {
 	require.Zero(t, subscriptionCount)
 }
 
-func TestSubscriptionBEpusdtNotifyRejectsCurrencyMismatchWithBadRequest(t *testing.T) {
+func TestSubscriptionBEpusdtNotifyQueuesCurrencyMismatchForManualReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -1140,8 +1171,9 @@ func TestSubscriptionBEpusdtNotifyRejectsCurrencyMismatchWithBadRequest(t *testi
 
 	SubscriptionBEpusdtNotify(c)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	requirePaymentReview(t, model.PaymentProviderBEpusdt, "sub-bepusdt-currency-mismatch")
 	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
@@ -1150,7 +1182,7 @@ func TestSubscriptionBEpusdtNotifyRejectsCurrencyMismatchWithBadRequest(t *testi
 	require.Zero(t, subscriptionCount)
 }
 
-func TestSubscriptionBEpusdtNotifyRejectsLegacyBEpusdtNetworkOrder(t *testing.T) {
+func TestSubscriptionBEpusdtNotifyQueuesLegacyBEpusdtNetworkOrderForManualReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -1200,8 +1232,9 @@ func TestSubscriptionBEpusdtNotifyRejectsLegacyBEpusdtNetworkOrder(t *testing.T)
 
 	SubscriptionBEpusdtNotify(c)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	requirePaymentReview(t, model.PaymentProviderBEpusdt, "sub-bepusdt-network-guard")
 	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
@@ -1210,7 +1243,7 @@ func TestSubscriptionBEpusdtNotifyRejectsLegacyBEpusdtNetworkOrder(t *testing.T)
 	require.Zero(t, subscriptionCount)
 }
 
-func TestSubscriptionBEpusdtNotifyRejectsLegacyBEpusdtPaymentTypeOrder(t *testing.T) {
+func TestSubscriptionBEpusdtNotifyQueuesLegacyBEpusdtPaymentTypeOrderForManualReview(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -1261,8 +1294,9 @@ func TestSubscriptionBEpusdtNotifyRejectsLegacyBEpusdtPaymentTypeOrder(t *testin
 
 	SubscriptionBEpusdtNotify(c)
 
-	require.Equal(t, http.StatusBadRequest, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, http.StatusOK, w.Code)
+	require.Equal(t, "ok", w.Body.String())
+	requirePaymentReview(t, model.PaymentProviderBEpusdt, "sub-bepusdt-payment-type-guard")
 	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
 	require.NotNil(t, reloaded)
 	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
@@ -1330,7 +1364,7 @@ func TestSubscriptionEpayNotifyRejectsMismatchedMerchant(t *testing.T) {
 	require.Zero(t, subscriptionCount)
 }
 
-func TestSubscriptionEpayNotifyRejectsWhenWebhookDisabled(t *testing.T) {
+func TestSubscriptionEpayNotifyCompletesOrderWhenComplianceIsDisabled(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -1383,13 +1417,13 @@ func TestSubscriptionEpayNotifyRejectsWhenWebhookDisabled(t *testing.T) {
 	SubscriptionEpayNotify(c)
 
 	require.Equal(t, http.StatusOK, w.Code)
-	require.Equal(t, "fail", w.Body.String())
+	require.Equal(t, "success", w.Body.String())
 	reloaded := model.GetSubscriptionOrderByTradeNo(order.TradeNo)
 	require.NotNil(t, reloaded)
-	require.Equal(t, common.TopUpStatusPending, reloaded.Status)
+	require.Equal(t, common.TopUpStatusSuccess, reloaded.Status)
 	var subscriptionCount int64
 	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("user_id = ?", user.Id).Count(&subscriptionCount).Error)
-	require.Zero(t, subscriptionCount)
+	require.Equal(t, int64(1), subscriptionCount)
 }
 
 func TestSubscriptionEpayReturnDoesNotCompleteOrder(t *testing.T) {

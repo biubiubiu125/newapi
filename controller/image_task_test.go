@@ -9,6 +9,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -23,6 +26,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -41,6 +45,17 @@ import (
 	"gorm.io/gorm"
 )
 
+const controllerImageTaskTestB64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+
+func validControllerImageTaskTestPNG(t *testing.T, pixel color.RGBA) []byte {
+	t.Helper()
+	pngImage := image.NewRGBA(image.Rect(0, 0, 1, 1))
+	pngImage.Set(0, 0, pixel)
+	var body bytes.Buffer
+	require.NoError(t, png.Encode(&body, pngImage))
+	return body.Bytes()
+}
+
 func setupImageTaskControllerTestDB(t *testing.T) (*gorm.DB, func()) {
 	t.Helper()
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
@@ -53,13 +68,18 @@ func setupImageTaskControllerTestDB(t *testing.T) (*gorm.DB, func()) {
 	oldDB := model.DB
 	oldLogDB := model.LOG_DB
 	oldRedisEnabled := common.RedisEnabled
+	oldDiskCacheConfig := common.GetDiskCacheConfig()
 	model.DB = db
 	model.LOG_DB = db
 	common.RedisEnabled = false
+	diskCacheConfig := oldDiskCacheConfig
+	diskCacheConfig.Path = t.TempDir()
+	common.SetDiskCacheConfig(diskCacheConfig)
 	return db, func() {
 		model.DB = oldDB
 		model.LOG_DB = oldLogDB
 		common.RedisEnabled = oldRedisEnabled
+		common.SetDiskCacheConfig(oldDiskCacheConfig)
 		_ = sqlDB.Close()
 	}
 }
@@ -168,6 +188,7 @@ func setupImageTaskSyncBridgeE2E(t *testing.T) *gin.Engine {
 	setting.CheckSensitiveOnPromptEnabled = false
 	setting.ModelRequestRateLimitEnabled = false
 	ratio_setting.InitRatioSettings()
+	service.InitHttpClient()
 
 	require.NoError(t, model.InitDB())
 	require.NoError(t, model.InitLogDB())
@@ -274,6 +295,7 @@ func newImageTaskSyncBridgeE2ERouter() *gin.Engine {
 }
 
 func newImageTaskSyncBridgeE2ERouterWithCreateGate(createGate gin.HandlerFunc) *gin.Engine {
+	_ = i18n.Init()
 	router := gin.New()
 	router.Use(middleware.CORS())
 	router.Use(middleware.DecompressRequestMiddleware())
@@ -1033,13 +1055,13 @@ func TestPublicImageTaskGenerationValidatesContractAndDefaultsModel(t *testing.T
 	t.Cleanup(func() {
 		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(oldModelPrices))
 	})
-	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"dall-e":0.01,"gpt-image-1":0.01}`))
+	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{"gpt-image-1":0.01,"gpt-image-2":0.01}`))
 	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 301).
-		Update("models", "gpt-image-1,dall-e").Error)
+		Update("models", "gpt-image-1,gpt-image-2").Error)
 	priority := int64(0)
 	require.NoError(t, model.DB.Create(&model.Ability{
 		Group:     "default",
-		Model:     "dall-e",
+		Model:     "gpt-image-2",
 		ChannelId: 301,
 		Enabled:   true,
 		Priority:  &priority,
@@ -1061,7 +1083,7 @@ func TestPublicImageTaskGenerationValidatesContractAndDefaultsModel(t *testing.T
 	require.NoError(t, json.Unmarshal(withoutModelRecorder.Body.Bytes(), &created))
 	var task model.Task
 	require.NoError(t, model.DB.First(&task, "task_id = ?", created.TaskID).Error)
-	require.Equal(t, "dall-e", task.Properties.OriginModelName)
+	require.Equal(t, "gpt-image-2", task.Properties.OriginModelName)
 
 	withoutPrompt := httptest.NewRequest(
 		http.MethodPost,
@@ -1076,7 +1098,7 @@ func TestPublicImageTaskGenerationValidatesContractAndDefaultsModel(t *testing.T
 	require.Contains(t, withoutPromptRecorder.Body.String(), "prompt is required")
 }
 
-func TestPublicImageTaskFixedPriceNPreConsumesOnce(t *testing.T) {
+func TestPublicImageTaskRejectsMultipleImagesBeforePreConsume(t *testing.T) {
 	router := setupImageTaskSyncBridgeE2E(t)
 	oldModelPrices := ratio_setting.ModelPrice2JSONString()
 	t.Cleanup(func() {
@@ -1097,13 +1119,12 @@ func TestPublicImageTaskFixedPriceNPreConsumesOnce(t *testing.T) {
 	req.Header.Set("Content-Type", "application/json")
 	recorder := httptest.NewRecorder()
 	router.ServeHTTP(recorder, req)
-	require.Equal(t, http.StatusAccepted, recorder.Code, recorder.Body.String())
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	require.Contains(t, recorder.Body.String(), "n must be 1")
 
-	var created dto.PublicImageTask
-	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &created))
-	var task model.Task
-	require.NoError(t, model.DB.First(&task, "task_id = ?", created.TaskID).Error)
-	require.Equal(t, 10_000, task.Quota)
+	var taskCount int64
+	require.NoError(t, model.DB.Model(&model.Task{}).Count(&taskCount).Error)
+	require.Zero(t, taskCount)
 }
 
 func TestPublicImageTaskEditValidatesRequiredMultipartFields(t *testing.T) {
@@ -1151,7 +1172,7 @@ func TestPublicImageTaskFullLifecycleEndToEnd(t *testing.T) {
 			_, _ = w.Write([]byte(`{"task_id":"upstream_public_lifecycle","status":"queued"}`))
 		case r.Method == http.MethodGet && r.URL.Path == "/api/image-tasks":
 			if r.URL.Query().Get("include_image_data") == "true" {
-				_, _ = w.Write([]byte(`{"items":[{"task_id":"upstream_public_lifecycle","status":"completed","progress":"100%","result":{"data":[{"url":"https://example.com/public-lifecycle.png"}],"usage":{"total_tokens":17}}}]}`))
+				_, _ = w.Write([]byte(`{"items":[{"task_id":"upstream_public_lifecycle","status":"completed","progress":"100%","result":{"data":[{"b64_json":"` + controllerImageTaskTestB64 + `"}],"usage":{"total_tokens":17}}}]}`))
 				return
 			}
 			_, _ = w.Write([]byte(`{"items":[{"task_id":"upstream_public_lifecycle","status":"completed","progress":"100%"}]}`))
@@ -1204,7 +1225,7 @@ func TestPublicImageTaskFullLifecycleEndToEnd(t *testing.T) {
 
 	result := call(http.MethodGet, "/v1/image-tasks/"+created.TaskID+"/result")
 	require.Equal(t, http.StatusOK, result.Code, result.Body.String())
-	require.JSONEq(t, `{"data":[{"url":"https://example.com/public-lifecycle.png"}],"usage":{"total_tokens":17}}`, result.Body.String())
+	require.JSONEq(t, `{"data":[{"b64_json":"`+controllerImageTaskTestB64+`"}],"usage":{"total_tokens":17}}`, result.Body.String())
 
 	ack := call(http.MethodPost, "/v1/image-tasks/"+created.TaskID+"/ack")
 	require.Equal(t, http.StatusOK, ack.Code, ack.Body.String())
@@ -1422,18 +1443,18 @@ func TestPublicImageTaskEditIdempotencyIgnoresMultipartBoundary(t *testing.T) {
 		return recorder
 	}
 
-	first := request([]byte("same image"))
+	first := request(validControllerImageTaskTestPNG(t, color.RGBA{R: 0x12, G: 0x34, B: 0x56, A: 0xff}))
 	require.Equal(t, http.StatusAccepted, first.Code, first.Body.String())
 	var firstResponse dto.PublicImageTask
 	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &firstResponse))
 
-	duplicate := request([]byte("same image"))
+	duplicate := request(validControllerImageTaskTestPNG(t, color.RGBA{R: 0x12, G: 0x34, B: 0x56, A: 0xff}))
 	require.Equal(t, http.StatusAccepted, duplicate.Code, duplicate.Body.String())
 	var duplicateResponse dto.PublicImageTask
 	require.NoError(t, json.Unmarshal(duplicate.Body.Bytes(), &duplicateResponse))
 	require.Equal(t, firstResponse.TaskID, duplicateResponse.TaskID)
 
-	conflict := request([]byte("different image"))
+	conflict := request(validControllerImageTaskTestPNG(t, color.RGBA{R: 0x65, G: 0x43, B: 0x21, A: 0xff}))
 	require.Equal(t, http.StatusConflict, conflict.Code, conflict.Body.String())
 
 	var task model.Task
@@ -1723,7 +1744,7 @@ func TestImageGenerationRouteRunsAsyncTaskBridgeEndToEnd(t *testing.T) {
 						"status": "completed",
 						"progress": "100%",
 						"result": {
-							"data": [{"url": "https://example.com/full-chain.png"}],
+							"data": [{"b64_json": "` + controllerImageTaskTestB64 + `"}],
 							"usage": {"total_tokens": 11}
 						}
 					}]
@@ -1765,7 +1786,7 @@ func TestImageGenerationRouteRunsAsyncTaskBridgeEndToEnd(t *testing.T) {
 	router.ServeHTTP(recorder, req)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
-	require.JSONEq(t, `{"data":[{"url":"https://example.com/full-chain.png"}],"usage":{"total_tokens":11}}`, recorder.Body.String())
+	require.JSONEq(t, `{"data":[{"b64_json":"`+controllerImageTaskTestB64+`"}],"usage":{"total_tokens":11}}`, recorder.Body.String())
 	require.NoError(t, <-workerDone)
 	require.Equal(t, 1, submitCount)
 	require.GreaterOrEqual(t, statusOnlyCount, 1)
@@ -1816,10 +1837,10 @@ func TestImageEditRouteRunsAsyncTaskBridgeEndToEnd(t *testing.T) {
 				_, _ = w.Write([]byte(`{
 					"items": [{
 						"task_id": "upstream_sync_bridge_edit_e2e",
-						"status": "completed",
-						"progress": "100%",
-						"result": {
-							"data": [{"url": "https://example.com/full-edit-chain.png"}],
+							"status": "completed",
+							"progress": "100%",
+							"result": {
+							"data": [{"b64_json": "` + controllerImageTaskTestB64 + `"}],
 							"usage": {"total_tokens": 13}
 						}
 					}]
@@ -1854,7 +1875,7 @@ func TestImageEditRouteRunsAsyncTaskBridgeEndToEnd(t *testing.T) {
 	require.NoError(t, writer.WriteField("n", "1"))
 	part, err := writer.CreateFormFile("image", "input.png")
 	require.NoError(t, err)
-	_, err = part.Write([]byte("fake edit image"))
+	_, err = part.Write(validControllerImageTaskTestPNG(t, color.RGBA{R: 0x21, G: 0x43, B: 0x65, A: 0xff}))
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 
@@ -1868,7 +1889,7 @@ func TestImageEditRouteRunsAsyncTaskBridgeEndToEnd(t *testing.T) {
 	router.ServeHTTP(recorder, req)
 
 	require.Equal(t, http.StatusOK, recorder.Code)
-	require.JSONEq(t, `{"data":[{"url":"https://example.com/full-edit-chain.png"}],"usage":{"total_tokens":13}}`, recorder.Body.String())
+	require.JSONEq(t, `{"data":[{"b64_json":"`+controllerImageTaskTestB64+`"}],"usage":{"total_tokens":13}}`, recorder.Body.String())
 	require.NoError(t, <-workerDone)
 	require.Equal(t, 1, submitCount)
 	require.GreaterOrEqual(t, statusOnlyCount, 1)
@@ -1900,7 +1921,7 @@ func TestImageEditRouteRunsAsyncTaskBridgeEndToEnd(t *testing.T) {
 	require.Equal(t, "1", fields["n"])
 	require.Equal(t, "false", fields["stream"])
 	require.NotEmpty(t, fields["client_task_id"])
-	require.Equal(t, []byte("fake edit image"), files["image"])
+	require.Equal(t, validControllerImageTaskTestPNG(t, color.RGBA{R: 0x21, G: 0x43, B: 0x65, A: 0xff}), files["image"])
 
 	var task model.Task
 	require.NoError(t, model.DB.First(&task, "platform = ?", constant.TaskPlatformImage).Error)
@@ -2775,6 +2796,8 @@ func TestImageTaskCreateBodyNotExecutableOnAPIOnlyNodeWithoutPortableOrShared(t 
 }
 
 func TestImageTaskResponseResultLoadsStoredResultFile(t *testing.T) {
+	_, cleanup := setupImageTaskControllerTestDB(t)
+	t.Cleanup(cleanup)
 	result := []byte(`{"data":[{"b64_json":"stored-b64"}],"usage":{"total_tokens":1}}`)
 	path, err := common.WriteImageTaskResultCacheFile(result)
 	require.NoError(t, err)
@@ -2845,6 +2868,8 @@ func TestImageTaskResponseResultHidesSettlementReviewResult(t *testing.T) {
 }
 
 func TestImageTaskResponseResultMarksExpiredStoredResultFileExpired(t *testing.T) {
+	_, cleanup := setupImageTaskControllerTestDB(t)
+	t.Cleanup(cleanup)
 	result := []byte(`{"data":[{"b64_json":"stored-b64"}]}`)
 	path, err := common.WriteImageTaskResultCacheFile(result)
 	require.NoError(t, err)
@@ -2908,6 +2933,8 @@ func TestImageTaskResponseResultMarksCleanedStoredResultFileExpired(t *testing.T
 }
 
 func TestImageTaskResponseResultMarksCorruptedStoredResultUnreadable(t *testing.T) {
+	_, cleanup := setupImageTaskControllerTestDB(t)
+	t.Cleanup(cleanup)
 	result := []byte(`{"data":[{"b64_json":"stored-b64"}]}`)
 	path, err := common.WriteImageTaskResultCacheFile(result)
 	require.NoError(t, err)

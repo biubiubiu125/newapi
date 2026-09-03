@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"mime/multipart"
 	"net/http"
@@ -16,6 +17,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func validMiddlewareTestPNG(t *testing.T) []byte {
+	t.Helper()
+	data, err := base64.StdEncoding.DecodeString("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=")
+	require.NoError(t, err)
+	return data
+}
 
 func TestAbortWithOpenAIMessageUsesPublicImageTaskEnvelope(t *testing.T) {
 	gin.SetMode(gin.TestMode)
@@ -125,7 +133,7 @@ func TestGetModelRequestDefaultsModelForPublicImageTaskGeneration(t *testing.T) 
 
 	require.NoError(t, err)
 	require.True(t, shouldSelectChannel)
-	require.Equal(t, "dall-e", modelRequest.Model)
+	require.Equal(t, "gpt-image-2", modelRequest.Model)
 }
 
 func TestGetModelRequestDefaultsModelForPublicImageTaskEdit(t *testing.T) {
@@ -136,7 +144,7 @@ func TestGetModelRequestDefaultsModelForPublicImageTaskEdit(t *testing.T) {
 	require.NoError(t, writer.WriteField("prompt", "edit this image"))
 	part, err := writer.CreateFormFile("image", "input.png")
 	require.NoError(t, err)
-	_, err = part.Write([]byte("fake image"))
+	_, err = part.Write(validMiddlewareTestPNG(t))
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 
@@ -152,7 +160,7 @@ func TestGetModelRequestDefaultsModelForPublicImageTaskEdit(t *testing.T) {
 
 	require.NoError(t, err)
 	require.True(t, shouldSelectChannel)
-	require.Equal(t, "gpt-image-1", modelRequest.Model)
+	require.Equal(t, "gpt-image-2", modelRequest.Model)
 }
 
 func TestSetupContextForTokenKeepsModelLimitsForImageTaskPolling(t *testing.T) {

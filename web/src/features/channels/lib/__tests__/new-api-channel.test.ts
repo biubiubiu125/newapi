@@ -86,12 +86,22 @@ describe('New API channel', () => {
     )
   })
 
-  test('keeps Sub2API Base URL validation unchanged', () => {
+  test('requires a Base URL for Sub2API', () => {
     const result = channelFormSchema.safeParse({
       ...newAPIForm(''),
       type: 59,
     })
 
-    assert.equal(result.success, true)
+    assert.equal(result.success, false)
+    if (!result.success) {
+      assert.equal(
+        result.error.issues.some(
+          (issue) =>
+            issue.path[0] === 'base_url' &&
+            issue.message === 'Base URL is required for this channel type'
+        ),
+        true
+      )
+    }
   })
 })

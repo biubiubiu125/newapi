@@ -15,9 +15,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/model"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -278,6 +278,11 @@ func TestGetPublicImageTaskResultServesSmallStoredFileAtomically(t *testing.T) {
 
 func TestWritePublicImageTaskStoredResultStreamsLargePayload(t *testing.T) {
 	gin.SetMode(gin.TestMode)
+	oldDiskCacheConfig := common.GetDiskCacheConfig()
+	diskCacheConfig := oldDiskCacheConfig
+	diskCacheConfig.Path = t.TempDir()
+	common.SetDiskCacheConfig(diskCacheConfig)
+	t.Cleanup(func() { common.SetDiskCacheConfig(oldDiskCacheConfig) })
 	oldInline := constant.ImageTaskResultInlineMaxMB
 	constant.ImageTaskResultInlineMaxMB = 1 // 1 MiB atomic threshold
 	t.Cleanup(func() { constant.ImageTaskResultInlineMaxMB = oldInline })
@@ -367,6 +372,9 @@ func TestGetPublicImageTaskResultEnforcesDownloadConcurrency(t *testing.T) {
 func TestPublicImageTaskMetadataHydratesResultStoredAt(t *testing.T) {
 	_, cleanup := setupImageTaskControllerTestDB(t)
 	t.Cleanup(cleanup)
+	oldRetention := constant.ImageTaskResultRetentionMinutes
+	constant.ImageTaskResultRetentionMinutes = 720
+	t.Cleanup(func() { constant.ImageTaskResultRetentionMinutes = oldRetention })
 
 	now := time.Now().Unix()
 	storedAt := now - 30*60

@@ -209,6 +209,8 @@ func TestSystemTaskClaimPassDispatchesEarliestPendingByType(t *testing.T) {
 
 func TestEnqueueSystemTaskReportsCreatedAndExistingActive(t *testing.T) {
 	truncate(t)
+	handler := &stubScheduledHandler{taskType: "test_enqueue", enabled: true, interval: time.Minute}
+	withSystemTaskRegistry(t, handler)
 
 	first, created, err := EnqueueSystemTask("test_enqueue", map[string]bool{"manual": true})
 	require.NoError(t, err)

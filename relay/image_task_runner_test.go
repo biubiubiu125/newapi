@@ -5,6 +5,9 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"mime"
 	"mime/multipart"
@@ -21,10 +24,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/glebarez/sqlite"
@@ -39,6 +42,38 @@ func withImageTaskAsyncTimeoutMinutes(t *testing.T, minutes int) {
 	t.Cleanup(func() {
 		constant.TaskTimeoutMinutes = old
 	})
+}
+
+func withTempImageTaskCache(t *testing.T) {
+	t.Helper()
+	oldConfig := common.GetDiskCacheConfig()
+	config := oldConfig
+	config.Path = t.TempDir()
+	common.SetDiskCacheConfig(config)
+	t.Cleanup(func() {
+		common.SetDiskCacheConfig(oldConfig)
+	})
+}
+
+func largeValidImageTaskTestPNG(t *testing.T) []byte {
+	t.Helper()
+	const width = 1024
+	const height = 1024
+	pngImage := image.NewRGBA(image.Rect(0, 0, width, height))
+	var state uint32 = 0x12345678
+	for i := 0; i < len(pngImage.Pix); i += 4 {
+		state = state*1664525 + 1013904223
+		pngImage.Pix[i] = byte(state >> 24)
+		state = state*1664525 + 1013904223
+		pngImage.Pix[i+1] = byte(state >> 24)
+		state = state*1664525 + 1013904223
+		pngImage.Pix[i+2] = byte(state >> 24)
+		pngImage.Pix[i+3] = color.RGBA{A: 0xff}.A
+	}
+	var body bytes.Buffer
+	require.NoError(t, png.Encode(&body, pngImage))
+	require.Greater(t, body.Len(), 1<<20)
+	return body.Bytes()
 }
 
 func TestCloneImageTaskStringMapDropsCredentialHeaders(t *testing.T) {
@@ -284,6 +319,7 @@ func TestRunAsyncTaskBridgeImageTaskBatchPollsStatusWithoutImageData(t *testing.
 }
 
 func TestRunAsyncTaskBridgeImageTaskBatchHTTPFailureKeepsQuotaForReview(t *testing.T) {
+	withTempImageTaskCache(t)
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -1322,6 +1358,7 @@ func TestImageTaskUsageFromResultWithoutUsageFallsBack(t *testing.T) {
 }
 
 func TestImageTaskBillingRequestInputFromStoredBodyUsesDiskBodyWithSnapshotOnly(t *testing.T) {
+	withTempImageTaskCache(t)
 	path, err := common.WriteImageTaskBodyCacheFile([]byte(`{"model":"gpt-image-1","quality":"high","stream":false}`))
 	require.NoError(t, err)
 	t.Cleanup(func() {
@@ -1456,6 +1493,7 @@ func TestOpenImageTaskBodyStorageFallsBackToStoredBase64(t *testing.T) {
 }
 
 func TestOpenImageTaskBodyStorageFallsBackWhenDiskBodySizeMismatches(t *testing.T) {
+	withTempImageTaskCache(t)
 	body := []byte(`{"model":"gpt-image-1","stream":false}`)
 	path, err := common.WriteImageTaskBodyCacheFile([]byte(`{"bad":true}`))
 	require.NoError(t, err)
@@ -1483,6 +1521,7 @@ func TestOpenImageTaskBodyStorageFallsBackWhenDiskBodySizeMismatches(t *testing.
 }
 
 func TestOpenImageTaskBodyStoragePrefersBase64ForPortableBody(t *testing.T) {
+	withTempImageTaskCache(t)
 	body := []byte(`{"b":2}`)
 	path, err := common.WriteImageTaskBodyCacheFile([]byte(`{"a":1}`))
 	require.NoError(t, err)
@@ -1547,7 +1586,7 @@ func TestStoreImageTaskResultDataStartsExpiryAtResultPersistence(t *testing.T) {
 		ResultDeleteAfter:    storedAt - 5,
 		ResultCleanedAt:      storedAt - 1,
 	}
-	result := json.RawMessage(`{"data":[{"url":"https://example.com/result.png"}]}`)
+	result := json.RawMessage(`{"data":[{"b64_json":"inline-b64"}]}`)
 
 	path, err := storeImageTaskResultData(task, result, storedAt)
 
@@ -1855,7 +1894,7 @@ func TestRunSyncWrapperImageTaskReleasesMultipartTempFiles(t *testing.T) {
 
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"created":1710000000,"data":[{"b64_json":"test-b64-payload"}]}`))
+		_, _ = w.Write([]byte(`{"created":1710000000,"data":[{"b64_json":"iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="}]}`))
 	}))
 	defer upstream.Close()
 
@@ -1876,7 +1915,7 @@ func TestRunSyncWrapperImageTaskReleasesMultipartTempFiles(t *testing.T) {
 	require.NoError(t, writer.WriteField("prompt", "edit this image"))
 	part, err := writer.CreateFormFile("image", "input.png")
 	require.NoError(t, err)
-	_, err = part.Write(bytes.Repeat([]byte("a"), (2<<20)+1))
+	_, err = part.Write(largeValidImageTaskTestPNG(t))
 	require.NoError(t, err)
 	require.NoError(t, writer.Close())
 
@@ -1910,7 +1949,7 @@ func TestRunSyncWrapperImageTaskReleasesMultipartTempFiles(t *testing.T) {
 	before, err := filepath.Glob(filepath.Join(os.TempDir(), "multipart-*"))
 	require.NoError(t, err)
 
-	_ = runSyncWrapperImageTask(context.Background(), task)
+	require.NoError(t, runSyncWrapperImageTask(context.Background(), task))
 
 	after, err := filepath.Glob(filepath.Join(os.TempDir(), "multipart-*"))
 	require.NoError(t, err)
@@ -1922,6 +1961,7 @@ func TestRunSyncWrapperImageTaskReleasesMultipartTempFiles(t *testing.T) {
 }
 
 func TestRunSyncWrapperImageTaskDoesNotReplayMarkedSubmissionAfterLeaseRecovery(t *testing.T) {
+	withTempImageTaskCache(t)
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -2010,6 +2050,7 @@ func TestRunSyncWrapperImageTaskDoesNotReplayMarkedSubmissionAfterLeaseRecovery(
 }
 
 func TestExecuteSyncImageTaskRejectsStaleLeaseBeforeUpstreamSubmission(t *testing.T) {
+	withTempImageTaskCache(t)
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -2875,6 +2916,7 @@ func TestFailImageTaskRejectsLostLeaseOwner(t *testing.T) {
 }
 
 func TestSettleImageTaskSuccessFinalizesAppliedSettlementWithoutResult(t *testing.T) {
+	withTempImageTaskCache(t)
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -3257,6 +3299,7 @@ func TestSettleImageTaskSuccessSkipsConsumptionWhenSettlementAlreadyApplying(t *
 }
 
 func TestSettleImageTaskSuccessResumesAtomicApplyingSettlement(t *testing.T) {
+	withTempImageTaskCache(t)
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -3356,6 +3399,7 @@ func TestSettleImageTaskSuccessResumesAtomicApplyingSettlement(t *testing.T) {
 }
 
 func TestSettleImageTaskSuccessMarksReviewWhenSettlementAlreadyApplyingIsStale(t *testing.T) {
+	withTempImageTaskCache(t)
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()
@@ -3422,6 +3466,7 @@ func TestSettleImageTaskSuccessMarksReviewWhenSettlementAlreadyApplyingIsStale(t
 }
 
 func TestSettleImageTaskSuccessFinalizesExistingAppliedSettlementRecord(t *testing.T) {
+	withTempImageTaskCache(t)
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
 	sqlDB, err := db.DB()

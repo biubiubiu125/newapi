@@ -8,8 +8,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/controller"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-contrib/sessions/cookie"
 	"github.com/gin-gonic/gin"
@@ -156,6 +158,7 @@ func setupRouterAuthTestDB(t *testing.T) *gorm.DB {
 		&model.ReferralAdminAuditLog{},
 		&model.ReferralAsset{},
 	))
+	require.NoError(t, i18n.Init())
 	t.Cleanup(func() {
 		sqlDB, err := db.DB()
 		if err == nil {
@@ -181,6 +184,8 @@ func newSessionRouter() *gin.Engine {
 
 func issueSessionCookie(t *testing.T, engine *gin.Engine, user *model.User) string {
 	t.Helper()
+	bundle, err := service.CreateLoginSession(user.Id, "test", "127.0.0.1", "test-agent")
+	require.NoError(t, err)
 
 	engine.GET("/_test/session", func(c *gin.Context) {
 		session := sessions.Default(c)
@@ -189,6 +194,9 @@ func issueSessionCookie(t *testing.T, engine *gin.Engine, user *model.User) stri
 		session.Set("role", user.Role)
 		session.Set("status", user.Status)
 		session.Set("group", user.Group)
+		session.Set("session_id", bundle.Session.SID)
+		session.Set("auth_version", bundle.Session.UserAuthVersion)
+		session.Set("session_version", bundle.Session.Version)
 		require.NoError(t, session.Save())
 		c.Status(http.StatusNoContent)
 	})

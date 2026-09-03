@@ -22,7 +22,7 @@ func confirmPaymentComplianceForTest(t *testing.T) {
 	paymentSetting.ComplianceTermsVersion = operation_setting.CurrentComplianceTermsVersion
 }
 
-func TestStripeWebhookEnabledRequiresAPIAndWebhookConfig(t *testing.T) {
+func TestStripeWebhookEnabledRequiresWebhookSecret(t *testing.T) {
 	confirmPaymentComplianceForTest(t)
 	originalAPISecret := setting.StripeApiSecret
 	originalWebhookSecret := setting.StripeWebhookSecret
@@ -45,10 +45,10 @@ func TestStripeWebhookEnabledRequiresAPIAndWebhookConfig(t *testing.T) {
 	require.True(t, isStripeWebhookEnabled())
 
 	setting.StripeApiSecret = ""
-	require.False(t, isStripeWebhookEnabled())
+	require.True(t, isStripeWebhookEnabled())
 }
 
-func TestCreemWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
+func TestCreemWebhookEnabledRequiresWebhookConfig(t *testing.T) {
 	confirmPaymentComplianceForTest(t)
 	originalAPIKey := setting.CreemApiKey
 	originalProducts := setting.CreemProducts
@@ -74,7 +74,7 @@ func TestCreemWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	require.True(t, isCreemWebhookEnabled())
 
 	setting.CreemProducts = "[]"
-	require.False(t, isCreemWebhookEnabled())
+	require.True(t, isCreemWebhookEnabled())
 
 	setting.CreemProducts = `[{"productId":"prod_123"}]`
 	setting.CreemWebhookSecret = ""
@@ -85,7 +85,7 @@ func TestCreemWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	require.True(t, isCreemWebhookEnabled())
 }
 
-func TestWaffoWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
+func TestWaffoWebhookEnabledRequiresWebhookConfig(t *testing.T) {
 	confirmPaymentComplianceForTest(t)
 	originalEnabled := setting.WaffoEnabled
 	originalSandbox := setting.WaffoSandbox
@@ -117,7 +117,7 @@ func TestWaffoWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	require.True(t, isWaffoWebhookEnabled())
 
 	setting.WaffoEnabled = false
-	require.False(t, isWaffoWebhookEnabled())
+	require.True(t, isWaffoWebhookEnabled())
 
 	setting.WaffoEnabled = true
 	setting.WaffoSandbox = true
@@ -130,7 +130,7 @@ func TestWaffoWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	require.True(t, isWaffoWebhookEnabled())
 }
 
-func TestWaffoPancakeWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
+func TestWaffoPancakeWebhookRemainsAvailableForManualReview(t *testing.T) {
 	confirmPaymentComplianceForTest(t)
 	originalMerchantID := setting.WaffoPancakeMerchantID
 	originalPrivateKey := setting.WaffoPancakePrivateKey
@@ -147,20 +147,20 @@ func TestWaffoPancakeWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	setting.WaffoPancakeMerchantID = ""
 	setting.WaffoPancakePrivateKey = "private"
 	setting.WaffoPancakeProductID = "product"
-	require.False(t, isWaffoPancakeWebhookEnabled())
+	require.True(t, isWaffoPancakeWebhookEnabled())
 
 	setting.WaffoPancakeMerchantID = "merchant"
 	require.True(t, isWaffoPancakeWebhookEnabled())
 
 	setting.WaffoPancakeProductID = ""
-	require.False(t, isWaffoPancakeWebhookEnabled())
+	require.True(t, isWaffoPancakeWebhookEnabled())
 
 	setting.WaffoPancakeProductID = "product"
 	setting.WaffoPancakePrivateKey = ""
-	require.False(t, isWaffoPancakeWebhookEnabled())
+	require.True(t, isWaffoPancakeWebhookEnabled())
 }
 
-func TestEpayWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
+func TestEpayWebhookEnabledRequiresWebhookConfig(t *testing.T) {
 	confirmPaymentComplianceForTest(t)
 	originalPayAddress := operation_setting.PayAddress
 	originalEpayID := operation_setting.EpayId
@@ -183,5 +183,5 @@ func TestEpayWebhookEnabledRequiresTopUpAndWebhookConfig(t *testing.T) {
 	require.True(t, isEpayWebhookEnabled())
 
 	operation_setting.PayMethods = nil
-	require.False(t, isEpayWebhookEnabled())
+	require.True(t, isEpayWebhookEnabled())
 }

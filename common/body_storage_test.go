@@ -123,16 +123,16 @@ func TestGetRequestBodyPreservesDiskCacheCapacityError(t *testing.T) {
 	require.ErrorIs(t, err, ErrDiskCacheCapacityUnavailable)
 }
 
-func TestGetImageTaskResultCacheRetentionFallsBackToTwelveHours(t *testing.T) {
+func TestGetImageTaskResultCacheRetentionFallsBackToSeventyTwoHours(t *testing.T) {
 	oldRetention := constant.ImageTaskResultRetentionMinutes
 	constant.ImageTaskResultRetentionMinutes = 0
 	t.Cleanup(func() {
 		constant.ImageTaskResultRetentionMinutes = oldRetention
 	})
 
-	require.Equal(t, 12*time.Hour, GetImageTaskResultCacheRetention())
+	require.Equal(t, 72*time.Hour, GetImageTaskResultCacheRetention())
 	constant.ImageTaskResultRetentionMinutes = 1440
-	require.Equal(t, 12*time.Hour, GetImageTaskResultCacheRetention())
+	require.Equal(t, 24*time.Hour, GetImageTaskResultCacheRetention())
 }
 
 func TestNewReplayableBodyReaderKeepsStorageLifecycleWithCaller(t *testing.T) {

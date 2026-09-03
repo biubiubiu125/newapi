@@ -10,10 +10,10 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
@@ -92,6 +92,21 @@ func installRelayTaskTestHooks(t *testing.T, billing *relayTaskTestBilling, publ
 			Quota:          quota,
 		}, nil
 	}
+}
+
+func insertRelayTaskTestChannel(t *testing.T, channelID int) {
+	t.Helper()
+
+	channel := &model.Channel{
+		Id:     channelID,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-relay-task",
+		Status: common.ChannelStatusEnabled,
+		Name:   "relay-task-test",
+		Models: "suno_music",
+		Group:  "default",
+	}
+	require.NoError(t, channel.Insert())
 }
 
 func newRelayTaskTestContext(userID int, tokenID int, channelID int) (*gin.Context, *httptest.ResponseRecorder) {
@@ -320,6 +335,7 @@ func TestFailPersistedTaskAfterSubmitAccountingErrorKeepsSubmittedTaskPollable(t
 func TestRelayTaskSettleFailurePersistsReviewAndDoesNotRefundSubmittedTask(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Log{}))
+	insertRelayTaskTestChannel(t, 301)
 
 	billing := &relayTaskTestBilling{preConsumed: 100}
 	installRelayTaskTestHooks(t, billing, "task-controller-settle-review", 150)
@@ -352,6 +368,7 @@ func TestRelayTaskSettleFailurePersistsReviewAndDoesNotRefundSubmittedTask(t *te
 func TestRelayTaskLogFailureAfterSubmitKeepsReviewTaskAndRefundsOnlyOnce(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Log{}))
+	insertRelayTaskTestChannel(t, 302)
 
 	billing := &relayTaskTestBilling{preConsumed: 100}
 	installRelayTaskTestHooks(t, billing, "task-controller-log-review", 150)

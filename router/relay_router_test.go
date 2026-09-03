@@ -209,7 +209,7 @@ func TestPublicImageTaskOpenAPIDocumentsSupportedRequestFields(t *testing.T) {
 		require.NotNil(t, nField.Minimum, schemaName+".n minimum is missing")
 		require.NotNil(t, nField.Maximum, schemaName+".n maximum is missing")
 		require.Equal(t, float64(1), *nField.Minimum)
-		require.Equal(t, float64(128), *nField.Maximum)
+		require.Equal(t, float64(1), *nField.Maximum)
 	}
 
 	editSchema := spec.Components.Schemas["PublicImageTaskEditRequest"]
@@ -221,8 +221,8 @@ func TestPublicImageTaskOpenAPIDocumentsSupportedRequestFields(t *testing.T) {
 	}
 
 	generationSchema := spec.Components.Schemas["PublicImageTaskCreateRequest"]
-	require.Equal(t, "dall-e", generationSchema.Properties["model"].Default)
-	require.Equal(t, "gpt-image-1", editSchema.Properties["model"].Default)
+	require.Equal(t, "gpt-image-2", generationSchema.Properties["model"].Default)
+	require.Equal(t, "gpt-image-2", editSchema.Properties["model"].Default)
 	for schemaName, requestSchema := range map[string]schema{
 		"PublicImageTaskCreateRequest": generationSchema,
 		"PublicImageTaskEditRequest":   editSchema,
