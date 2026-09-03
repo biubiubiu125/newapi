@@ -6,7 +6,7 @@
 
 - 工作区：`C:\Users\Administrator\codex-1\newapi`
 - 本地分支：`main`
-- 本地当前提交：`2a64f0fde`（已完成 usage、reasoning、provider conversion 和 hosted-tool 能力边界的专题融合）
+- 本地当前提交：`13069333e`（本轮复核起点；后续专题提交另行记录）
 - 上游目标：`upstream/main`
 - 上游当前提交：`9df450fe5`（2026-09-03）
 - 公共祖先：`823e26304`
@@ -93,24 +93,21 @@
 4. 有可回滚的数据库迁移和配置回退步骤；
 5. 前端只在服务端明确声明能力后发送加密字段。
 
-### 4. OAuth state 和绑定写回：保留本地流程，列为候选专题
+### 4. OAuth state 和绑定写回：保留本地流程，已完成安全子集核验
 
 上游 `d7992672a` 的核心修复是 OAuth/微信绑定时只更新绑定列，避免“读取完整用户 → 修改一个字段 → 整体保存”覆盖并发发生的封禁、降权或分组变更。
 
-本地并非完全旧实现：内置 OAuth 新流程已有 `AuthFlow` 事务和外部身份 claim 逻辑；但当前代码仍存在不同绑定路径，部分路径会读取完整用户并调用 `user.Update(false)`，微信绑定也仍走用户对象和外部身份 claim。上游的 `ProviderUserIDColumn` 接口不能直接整文件替换，否则会覆盖本地 AuthFlow、legacy identity 和 custom provider 分支。
+本地已具备等价且更完整的保护：`oauth.Provider` 暴露 `ProviderUserIDColumn()`；GitHub、Discord、OIDC、LinuxDO 实现列映射；`model.ClaimExternalIdentity`/`ClaimExternalIdentityWithTx` 通过事务和身份 claim 处理并发；custom provider 使用 `user_oauth_bindings`；微信绑定也走外部身份 claim。内置 OAuth 的 `AuthFlow`、legacy flow 和 session/auth-version 轮换保持不变。
 
-**决定：暂不在本轮自动导入，列为高价值候选。**
+已确认的 fallback `user.Update(false)` 只会在无法识别为内置 provider 的极端分支执行；当前注册的内置 provider 和 generic provider 都不会走该分支。因此不整文件替换上游 OAuth 实现，继续保留本地更完整的流程。
 
-后续应按路径分别加测试：
+验证覆盖：
 
-- 内置 OAuth 新绑定；
-- legacy OAuth 绑定；
-- custom OAuth binding 表；
-- 微信绑定；
-- 绑定期间并发封禁、角色、分组和状态变更；
-- 重复绑定和 AuthFlow 消费失败。
+- `model/user_update_test.go`：绑定列白名单、绑定列更新不覆盖角色/状态/分组；
+- `model/external_identity_claim_test.go`：重复 claim、释放 claim 和事务边界；
+- `controller/auth_flow_test.go`：AuthFlow 消费和绑定 provider 流程。
 
-只有确认每条路径都能只写绑定字段且不破坏现有身份 claim 事务后，才手工融合。
+**决定：OAuth 安全子集已完成；上游接口命名和整文件替换不再导入。**
 
 ### 5. `int32` 退役和 wallet 额度扩大：暂缓，必须先做 schema 专题
 
@@ -151,18 +148,35 @@
 - 与 Vitest/JSDOM/插件编辑器绑定的整套前端测试依赖；
 - 未经当前构建、镜像和部署验证的 lockfile 大片重排。
 
+### 7. 通用任务轮询失败分类和上限：已完成安全子集
+
+已在不改变当前 `TaskPollingAdaptor` 接口和图片任务状态机的前提下，吸收上游轮询可靠性改进：
+
+- 增加 `TaskPrivateData.PollFailures` 和 `TASK_POLL_MAX_FAILURES`，默认 20，设为 0 可关闭连续失败上限；
+- 将网络错误、空响应、401/403、429、5xx、无法识别的响应和 parser 错误分类并累计；
+- 404/410 立即将任务标记失败并按现有 CAS/退款边界退款；
+- 达到连续失败上限后失败并退款；收到合法的非终态响应后归零；
+- 同时覆盖视频单任务和 Suno 批量轮询；
+- 不引入上游 JS task-plugin、sandbox、插件协议或新的 adaptor 接口。
+
+验证：
+
+- `service` 全量测试通过；
+- 连续失败上限、合法响应归零、404/410 立即失败退款、Suno CAS 和退款测试通过；
+- 根模块编译检查通过。
+
+**决定：轮询可靠性安全子集已完成；插件化批量协议仍暂缓。**
+
 ## 可进入下一轮的顺序
 
-1. OAuth 绑定列最小写回：先覆盖所有本地绑定路径和并发权限状态；
-2. 轮询 HTTP 分类和连续失败上限：保持现有 `TaskPollingAdaptor` 接口，不引入插件运行时；
-3. 视频代理安全修复：只提取 SSRF、重定向、Range、超时和错误码的独立行为；
-4. wallet 64 位 schema 迁移：单独设计数据库迁移和线上回滚；
-5. 密码传输加密：最后做兼容窗口、密钥生命周期和多实例专题；
-6. JS task-plugin/sandbox：在上述边界稳定后再评估。
+1. 视频代理安全修复：只提取 SSRF、重定向、Range、超时和错误码的独立行为；
+2. wallet 64 位 schema 迁移：单独设计数据库迁移和线上回滚；
+3. 密码传输加密：最后做兼容窗口、密钥生命周期和多实例专题；
+4. JS task-plugin/sandbox：在上述边界稳定后再评估。
 
 ## 本轮结论
 
 - 已完成的 usage、reasoning、provider conversion 和 hosted-tool 能力化融合继续保留；
 - 上游 task-plugin/sandbox、通用 artifact、视频代理大改、密码加密、全局 `int32` 退役和插件依赖不自动导入；
-- OAuth 绑定列写回和轮询失败分类具备后续拆分价值，但本轮只记录，不改变本地业务链路；
-- 当前无新的生产代码、数据库迁移、部署配置或远端状态变更。
+- OAuth 绑定列写回安全子集和轮询失败分类已在本地行为边界内完成；
+- 本轮新增的轮询可靠性代码和配置均未触及数据库 schema、生产部署配置或远端状态。
