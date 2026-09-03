@@ -2,6 +2,9 @@ package openai
 
 import (
 	"bytes"
+	"image"
+	"image/color"
+	"image/png"
 	"io"
 	"mime/multipart"
 	"net/http"
@@ -23,7 +26,13 @@ import (
 func TestConvertImageEditRequestMultipart(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
-	newMultipartContext := func(t *testing.T, prompt string) *gin.Context {
+	newMultipartContext := func(t *testing.T, prompt string) (*gin.Context, []byte) {
+		var imageBody bytes.Buffer
+		pngImage := image.NewRGBA(image.Rect(0, 0, 1, 1))
+		pngImage.Set(0, 0, color.RGBA{R: 0x12, G: 0x34, B: 0x56, A: 0xff})
+		require.NoError(t, png.Encode(&imageBody, pngImage))
+		imageBytes := imageBody.Bytes()
+
 		var body bytes.Buffer
 		writer := multipart.NewWriter(&body)
 		require.NoError(t, writer.WriteField("model", "gpt-image-1"))
@@ -32,17 +41,17 @@ func TestConvertImageEditRequestMultipart(t *testing.T) {
 		require.NoError(t, writer.WriteField("partial_images", "3"))
 		part, err := writer.CreateFormFile("image", "input.png")
 		require.NoError(t, err)
-		_, err = part.Write([]byte("fake image"))
+		_, err = part.Write(imageBytes)
 		require.NoError(t, err)
 		require.NoError(t, writer.Close())
 
 		c, _ := gin.CreateTestContext(httptest.NewRecorder())
 		c.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", &body)
 		c.Request.Header.Set("Content-Type", writer.FormDataContentType())
-		return c
+		return c, imageBytes
 	}
 
-	convertAndReplay := func(t *testing.T, c *gin.Context, prompt string) {
+	convertAndReplay := func(t *testing.T, c *gin.Context, prompt string, expectedImage []byte) {
 		info := &relaycommon.RelayInfo{
 			RelayMode: relayconstant.RelayModeImagesEdits,
 		}
@@ -72,20 +81,20 @@ func TestConvertImageEditRequestMultipart(t *testing.T) {
 		defer file.Close()
 		fileBytes, err := io.ReadAll(file)
 		require.NoError(t, err)
-		require.Equal(t, []byte("fake image"), fileBytes)
+		require.Equal(t, expectedImage, fileBytes)
 	}
 
 	t.Run("with pre-parsed form", func(t *testing.T) {
 		prompt := "edit this image"
-		c := newMultipartContext(t, prompt)
+		c, imageBytes := newMultipartContext(t, prompt)
 		require.NoError(t, c.Request.ParseMultipartForm(32<<20))
 
-		convertAndReplay(t, c, prompt)
+		convertAndReplay(t, c, prompt, imageBytes)
 	})
 
 	t.Run("re-parses reusable body when form is missing", func(t *testing.T) {
 		prompt := "edit without pre-parsed form"
-		c := newMultipartContext(t, prompt)
+		c, imageBytes := newMultipartContext(t, prompt)
 
 		storage, err := common.GetBodyStorage(c)
 		require.NoError(t, err)
@@ -93,6 +102,6 @@ func TestConvertImageEditRequestMultipart(t *testing.T) {
 		c.Request.MultipartForm = nil
 		c.Request.PostForm = nil
 
-		convertAndReplay(t, c, prompt)
+		convertAndReplay(t, c, prompt, imageBytes)
 	})
 }
