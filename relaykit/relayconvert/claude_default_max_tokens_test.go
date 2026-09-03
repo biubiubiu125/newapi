@@ -164,7 +164,13 @@ func TestOpenAIChatRequestToClaudeMessagesOmitsEmptyTools(t *testing.T) {
 
 	for _, test := range tests {
 		t.Run(test.name, func(t *testing.T) {
-			got, err := OpenAIChatRequestToClaudeMessages(context.Background(), &convmeta.Values{}, test.request)
+			options := &convmeta.Options{}
+			if test.request.WebSearchOptions != nil {
+				options.HostedTools.WebSearch = true
+			}
+			got, err := OpenAIChatRequestToClaudeMessages(context.Background(), &convmeta.Values{
+				Options: options,
+			}, test.request)
 			require.NoError(t, err)
 
 			body, err := kitutil.Marshal(got)

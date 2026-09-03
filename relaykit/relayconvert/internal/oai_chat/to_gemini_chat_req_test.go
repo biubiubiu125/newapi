@@ -6,6 +6,8 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -82,4 +84,58 @@ func TestOpenAIChatRequestToGeminiPreservesFunctionResponseID(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got.Contents[0].Parts[0].FunctionResponse)
 	assert.JSONEq(t, `"call_1"`, string(got.Contents[0].Parts[0].FunctionResponse.ID))
+}
+
+func TestOpenAIChatRequestToGeminiKeepsHostedNamesAsFunctionsWhenDisabled(t *testing.T) {
+	request := dto.GeneralOpenAIRequest{
+		Model: "gemini-2.5-flash",
+		Tools: []dto.ToolCallRequest{
+			{Type: "function", Function: dto.FunctionRequest{Name: "googleSearch"}},
+			{Type: "function", Function: dto.FunctionRequest{Name: "codeExecution"}},
+			{Type: "function", Function: dto.FunctionRequest{Name: "urlContext"}},
+		},
+	}
+
+	got, err := OpenAIChatRequestToGeminiGenerateContent(context.Background(), request, &convmeta.Values{
+		Options: &convmeta.Options{},
+	})
+	require.NoError(t, err)
+	require.Len(t, got.GetTools(), 1)
+	assert.Nil(t, got.GetTools()[0].GoogleSearch)
+	assert.Nil(t, got.GetTools()[0].CodeExecution)
+	assert.Nil(t, got.GetTools()[0].URLContext)
+	functions, err := kitutil.Any2Type[[]dto.FunctionRequest](got.GetTools()[0].FunctionDeclarations)
+	require.NoError(t, err)
+	require.Len(t, functions, 3)
+	assert.Equal(t, "googleSearch", functions[0].Name)
+	assert.Equal(t, "codeExecution", functions[1].Name)
+	assert.Equal(t, "urlContext", functions[2].Name)
+}
+
+func TestOpenAIChatRequestToGeminiMapsOnlyEnabledHostedTools(t *testing.T) {
+	request := dto.GeneralOpenAIRequest{
+		Model: "gemini-2.5-flash",
+		Tools: []dto.ToolCallRequest{
+			{Type: "function", Function: dto.FunctionRequest{Name: "googleSearch"}},
+			{Type: "function", Function: dto.FunctionRequest{Name: "codeExecution"}},
+			{Type: "function", Function: dto.FunctionRequest{Name: "urlContext"}},
+		},
+	}
+
+	got, err := OpenAIChatRequestToGeminiGenerateContent(context.Background(), request, &convmeta.Values{
+		Options: &convmeta.Options{
+			HostedTools: convmeta.HostedToolCapabilities{
+				GoogleSearch:  true,
+				CodeExecution: true,
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, got.GetTools(), 3)
+	assert.NotNil(t, got.GetTools()[0].CodeExecution)
+	assert.NotNil(t, got.GetTools()[1].GoogleSearch)
+	functions, err := kitutil.Any2Type[[]dto.FunctionRequest](got.GetTools()[2].FunctionDeclarations)
+	require.NoError(t, err)
+	require.Len(t, functions, 1)
+	assert.Equal(t, "urlContext", functions[0].Name)
 }

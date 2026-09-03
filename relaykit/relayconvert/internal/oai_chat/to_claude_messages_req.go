@@ -39,6 +39,10 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 	}
 
 	if textRequest.WebSearchOptions != nil {
+		if !opts.SupportsHostedTool("web_search") {
+			return nil, fmt.Errorf("hosted tool %q is not enabled for the target capability", "web_search")
+		}
+
 		webSearchTool := dto.ClaudeWebSearchTool{
 			Type: "web_search_20250305",
 			Name: "web_search",

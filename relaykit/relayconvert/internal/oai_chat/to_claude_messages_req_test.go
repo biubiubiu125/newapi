@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -95,4 +96,20 @@ func TestOpenAIChatRequestToClaudeMessagesMapsMaxReasoningEffort(t *testing.T) {
 	require.NotNil(t, got.Thinking)
 	assert.Equal(t, "enabled", got.Thinking.Type)
 	assert.Equal(t, 8192, got.Thinking.GetBudgetTokens())
+}
+
+func TestOpenAIChatRequestToClaudeMessagesRequiresHostedToolCapability(t *testing.T) {
+	maxTokens := uint(1024)
+	_, err := OpenAIChatRequestToClaudeMessages(context.Background(), &convmeta.Values{
+		Options: &convmeta.Options{},
+	}, dto.GeneralOpenAIRequest{
+		Model:            "claude-test",
+		MaxTokens:        &maxTokens,
+		Messages:         []dto.Message{{Role: "user", Content: "search"}},
+		WebSearchOptions: &dto.WebSearchOptions{SearchContextSize: "low"},
+	})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "web_search")
+	assert.Contains(t, err.Error(), "capability")
 }

@@ -176,15 +176,15 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 		codeExecution := false
 		urlContext := false
 		for _, tool := range textRequest.Tools {
-			if tool.Function.Name == "googleSearch" {
+			if tool.Function.Name == "googleSearch" && opts.SupportsHostedTool("googleSearch") {
 				googleSearch = true
 				continue
 			}
-			if tool.Function.Name == "codeExecution" {
+			if tool.Function.Name == "codeExecution" && opts.SupportsHostedTool("codeExecution") {
 				codeExecution = true
 				continue
 			}
-			if tool.Function.Name == "urlContext" {
+			if tool.Function.Name == "urlContext" && opts.SupportsHostedTool("urlContext") {
 				urlContext = true
 				continue
 			}

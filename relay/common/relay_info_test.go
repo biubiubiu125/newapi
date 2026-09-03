@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -43,6 +44,27 @@ func TestRelayInfoGetFinalRequestRelayFormatFallsBackToRelayFormat(t *testing.T)
 func TestRelayInfoGetFinalRequestRelayFormatNilReceiver(t *testing.T) {
 	var info *RelayInfo
 	require.Equal(t, types.RelayFormat(""), info.GetFinalRequestRelayFormat())
+}
+
+func TestRelayInfoConvOptionsDeclaresHostedToolCapabilitiesByChannel(t *testing.T) {
+	anthropic := (&RelayInfo{
+		ChannelMeta: &ChannelMeta{ChannelType: constant.ChannelTypeAnthropic},
+	}).ConvOptions()
+	assert.True(t, anthropic.SupportsHostedTool("web_search"))
+	assert.False(t, anthropic.SupportsHostedTool("googleSearch"))
+
+	gemini := (&RelayInfo{
+		ChannelMeta: &ChannelMeta{ChannelType: constant.ChannelTypeGemini},
+	}).ConvOptions()
+	assert.True(t, gemini.SupportsHostedTool("googleSearch"))
+	assert.True(t, gemini.SupportsHostedTool("codeExecution"))
+	assert.True(t, gemini.SupportsHostedTool("urlContext"))
+
+	openai := (&RelayInfo{
+		ChannelMeta: &ChannelMeta{ChannelType: constant.ChannelTypeOpenAI},
+	}).ConvOptions()
+	assert.False(t, openai.SupportsHostedTool("googleSearch"))
+	assert.False(t, openai.SupportsHostedTool("web_search"))
 }
 
 func TestRelayInfoMetaTypedNilReceiver(t *testing.T) {

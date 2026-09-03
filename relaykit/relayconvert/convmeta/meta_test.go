@@ -36,3 +36,17 @@ func TestValuesTypedNilMetaIsSafe(t *testing.T) {
 	assert.Empty(t, UpstreamModelName(meta))
 	assert.Zero(t, ChannelTypeOf(meta))
 }
+
+func TestHostedToolCapabilitiesAreExplicit(t *testing.T) {
+	options := &Options{
+		HostedTools: HostedToolCapabilities{
+			GoogleSearch:  true,
+			CodeExecution: true,
+		},
+	}
+
+	assert.True(t, options.SupportsHostedTool("googleSearch"))
+	assert.True(t, options.SupportsHostedTool("code_execution"))
+	assert.False(t, options.SupportsHostedTool("urlContext"))
+	assert.False(t, (&Options{}).SupportsHostedTool("googleSearch"))
+}

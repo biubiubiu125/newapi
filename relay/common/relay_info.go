@@ -879,6 +879,7 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
 			SupportsImagine:                       model_setting.IsGeminiModelSupportImagine,
 			SafetySetting:                         model_setting.GetGeminiSafetySetting,
 		},
+		HostedTools:            hostedToolCapabilitiesForChannel(info.GetChannelType()),
 		OpenRouterDialect:      info != nil && info.GetChannelType() == constant.ChannelTypeOpenRouter,
 		PreserveThinkingSuffix: model_setting.ShouldPreserveThinkingSuffix,
 		PreserveEffortTail:     model_setting.ShouldPreserveEffortTail,
@@ -887,6 +888,23 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
 		info.convOptions = options
 	}
 	return options
+}
+
+func hostedToolCapabilitiesForChannel(channelType int) convmeta.HostedToolCapabilities {
+	switch channelType {
+	case constant.ChannelTypeAnthropic:
+		return convmeta.HostedToolCapabilities{
+			WebSearch: true,
+		}
+	case constant.ChannelTypeGemini:
+		return convmeta.HostedToolCapabilities{
+			GoogleSearch:  true,
+			CodeExecution: true,
+			URLContext:    true,
+		}
+	default:
+		return convmeta.HostedToolCapabilities{}
+	}
 }
 
 func (info *RelayInfo) SetFirstResponseTime() {

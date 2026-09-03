@@ -1,12 +1,15 @@
 package convmeta
 
+import "strings"
+
 // Options is the per-request snapshot of host configuration that converters
 // consult. The host fills it from its settings system when constructing the
 // Meta (see relaycommon.RelayInfo.ConvOptions); relaykit users fill it
 // directly. Zero value = every adaptation disabled, no defaults applied.
 type Options struct {
-	Claude ClaudeOptions
-	Gemini GeminiOptions
+	Claude      ClaudeOptions
+	Gemini      GeminiOptions
+	HostedTools HostedToolCapabilities
 
 	// OpenRouterDialect marks the upstream as OpenRouter's OpenAI-compatible
 	// surface, which accepts extra fields (reasoning config, cache_control on
@@ -21,6 +24,44 @@ type Options struct {
 	// PreserveEffortTail reports real model IDs whose names already end in an
 	// effort-like token, such as qwen-max.
 	PreserveEffortTail func(modelName string) bool
+}
+
+// HostedToolCapabilities declares which provider-hosted tools the target
+// channel has explicitly opted into. Ordinary function tools remain available
+// when a hosted interpretation is disabled.
+type HostedToolCapabilities struct {
+	WebSearch       bool
+	GoogleSearch    bool
+	FileSearch      bool
+	CodeExecution   bool
+	URLContext      bool
+	ImageGeneration bool
+	MCP             bool
+}
+
+func (c HostedToolCapabilities) Supports(toolName string) bool {
+	switch strings.TrimSpace(toolName) {
+	case "web_search", "web_search_preview", "web_search_options":
+		return c.WebSearch
+	case "googleSearch", "google_search":
+		return c.GoogleSearch
+	case "file_search":
+		return c.FileSearch
+	case "codeExecution", "code_execution":
+		return c.CodeExecution
+	case "urlContext", "url_context":
+		return c.URLContext
+	case "image_generation", "image_generation_call":
+		return c.ImageGeneration
+	case "mcp", "mcp_call":
+		return c.MCP
+	default:
+		return false
+	}
+}
+
+func (o *Options) SupportsHostedTool(toolName string) bool {
+	return o != nil && o.HostedTools.Supports(toolName)
 }
 
 type ClaudeOptions struct {
