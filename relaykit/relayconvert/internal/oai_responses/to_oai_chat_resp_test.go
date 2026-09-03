@@ -144,6 +144,36 @@ func TestResponsesStreamEventToChatChunksUsesOutputIndexForToolArguments(t *test
 	assert.Equal(t, 3, state.Usage.TotalTokens)
 }
 
+func TestResponsesStreamEventToChatChunksKeepsEarlierUsageWhenTerminalUsageIsEmpty(t *testing.T) {
+	state := newTestResponsesStreamState()
+
+	_, err := ResponsesStreamEventToChatChunks(&dto.ResponsesStreamResponse{
+		Type: responsesEventCreated,
+		Response: &dto.OpenAIResponsesResponse{
+			Usage: &dto.Usage{
+				InputTokens:  10,
+				OutputTokens: 4,
+				TotalTokens:  14,
+			},
+		},
+	}, state)
+	require.NoError(t, err)
+
+	_, err = ResponsesStreamEventToChatChunks(&dto.ResponsesStreamResponse{
+		Type: responsesEventCompleted,
+		Response: &dto.OpenAIResponsesResponse{
+			Status: []byte(`"completed"`),
+			Usage:  &dto.Usage{},
+		},
+	}, state)
+	require.NoError(t, err)
+
+	require.NotNil(t, state.Usage)
+	assert.Equal(t, 10, state.Usage.PromptTokens)
+	assert.Equal(t, 4, state.Usage.CompletionTokens)
+	assert.Equal(t, 14, state.Usage.TotalTokens)
+}
+
 func TestResponsesStreamEventToChatChunksDoesNotDuplicatePendingArgsWithOutputIndexAndItemID(t *testing.T) {
 	state := newTestResponsesStreamState()
 	outputIndex := 1

@@ -57,9 +57,13 @@ func patchGeminiZeroCompletionUsage(c *gin.Context, info *relaycommon.RelayInfo,
 	}
 	usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
 	// Overwrite the metadata-derived billing usage: effectiveBillingUsage prefers
-	// BillingUsage during settlement, so keeping the prompt-only metadata there
-	// would still bill zero completion tokens.
-	usage.BillingUsage = dto.NewEstimatedGeminiChatBillingUsage(usage)
+	// BillingUsage during settlement, so preserve the original native metadata
+	// while filling only its missing completion count.
+	if usage.BillingUsage != nil {
+		usage.BillingUsage = dto.CloneBillingUsageWithEstimatedCompletion(usage.BillingUsage, usage.CompletionTokens)
+	} else {
+		usage.BillingUsage = dto.NewEstimatedGeminiChatBillingUsage(usage)
+	}
 }
 
 func geminiResponseUsageText(response *dto.GeminiChatResponse) string {
@@ -149,6 +153,7 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	var usage = &dto.Usage{}
 	var imageCount int
 	var hasBillableUsageMetadata bool
+	var accumulatedUsageMetadata *dto.GeminiUsageMetadata
 	responseText := strings.Builder{}
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
@@ -178,7 +183,8 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 
 		// 更新使用量统计
 		if metadata := geminiResponse.GetUsageMetadata(); dto.HasGeminiUsageMetadataTokens(metadata) {
-			mappedUsage := buildUsageFromGeminiMetadata(metadata, info.GetEstimatePromptTokens())
+			accumulatedUsageMetadata = dto.MergeGeminiUsageMetadataNonZero(accumulatedUsageMetadata, metadata)
+			mappedUsage := buildUsageFromGeminiMetadata(accumulatedUsageMetadata, info.GetEstimatePromptTokens())
 			*usage = mappedUsage
 			hasBillableUsageMetadata = true
 		}

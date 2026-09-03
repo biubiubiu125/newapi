@@ -599,7 +599,7 @@ func finalizeResponseStreamStep(c context.Context, info convmeta.Meta, spec Resp
 
 func (s *ResponseStreamState) rememberUsage(usage *dto.Usage) {
 	if s != nil && usage != nil {
-		s.usage = usage
+		s.usage = dto.MergeUsageNonZero(s.usage, usage)
 	}
 }
 

@@ -78,7 +78,7 @@ func ChatCompletionsStreamChunkToResponsesEvents(chunk *dto.ChatCompletionsStrea
 		state.Created = chunk.Created
 	}
 	if chunk.Usage != nil {
-		state.Usage = UsageFromChatUsage(chunk.Usage)
+		state.Usage = dto.MergeUsageNonZero(state.Usage, UsageFromChatUsage(chunk.Usage))
 	}
 
 	events := make([]ChatToResponsesStreamEvent, 0)

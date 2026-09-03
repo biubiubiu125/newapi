@@ -19,6 +19,8 @@ type ClaudeResponseInfo struct {
 	ResponseText strings.Builder
 	Usage        *dto.Usage
 	Done         bool
+
+	billingUsageSynthesized bool
 }
 
 func StopReasonClaudeToOpenAI(reason string) string {
@@ -295,6 +297,50 @@ func claudeBillingUsageFromSemanticUsage(usage *dto.Usage) *dto.BillingUsage {
 	return dto.NewClaudeMessagesBillingUsage(claudeUsage)
 }
 
+func updateClaudeStreamBillingUsage(claudeUsage *dto.ClaudeUsage, claudeInfo *ClaudeResponseInfo, terminal bool) {
+	if claudeUsage == nil || claudeInfo == nil || claudeInfo.Usage == nil {
+		return
+	}
+	if billingUsage := dto.CloneBillingUsage(claudeUsage.BillingUsage); billingUsage != nil {
+		claudeInfo.Usage.BillingUsage = billingUsage
+		claudeInfo.billingUsageSynthesized = !terminal && claudeUsage.OutputTokens == 0
+		return
+	}
+	if claudeInfo.Usage.BillingUsage != nil && !claudeInfo.billingUsageSynthesized {
+		return
+	}
+	synthesized := claudeBillingUsageFromSemanticUsage(claudeInfo.Usage)
+	if synthesized != nil && claudeInfo.Usage.BillingUsage != nil {
+		claudeInfo.Usage.BillingUsage = dto.MergeBillingUsageNonZero(claudeInfo.Usage.BillingUsage, synthesized)
+	} else {
+		claudeInfo.Usage.BillingUsage = synthesized
+	}
+	claudeInfo.billingUsageSynthesized = claudeInfo.Usage.BillingUsage != nil
+}
+
+// FinalizeClaudeStreamBillingUsage refreshes only a locally synthesized
+// snapshot after the host has applied its missing-usage fallback. A snapshot
+// received on the wire remains authoritative and is never rewritten.
+func FinalizeClaudeStreamBillingUsage(claudeInfo *ClaudeResponseInfo) {
+	if claudeInfo == nil || claudeInfo.Usage == nil {
+		return
+	}
+	if claudeInfo.Usage.BillingUsage != nil && !claudeInfo.billingUsageSynthesized {
+		return
+	}
+
+	billingUsage := claudeBillingUsageFromSemanticUsage(claudeInfo.Usage)
+	if billingUsage != nil && !claudeInfo.Done {
+		billingUsage.Estimated = true
+	}
+	if billingUsage != nil && claudeInfo.Usage.BillingUsage != nil {
+		claudeInfo.Usage.BillingUsage = dto.MergeBillingUsageNonZero(claudeInfo.Usage.BillingUsage, billingUsage)
+	} else {
+		claudeInfo.Usage.BillingUsage = billingUsage
+	}
+	claudeInfo.billingUsageSynthesized = billingUsage != nil
+}
+
 func PatchClaudeMessageDeltaUsageData(data string, usage *dto.ClaudeUsage) string {
 	if data == "" || usage == nil {
 		return data
@@ -343,14 +389,15 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 		}
 
 		if claudeResponse.Message != nil && claudeResponse.Message.Usage != nil {
-			claudeInfo.Usage.PromptTokens = claudeResponse.Message.Usage.InputTokens
+			messageUsage := claudeResponse.Message.Usage
+			claudeInfo.Usage.PromptTokens = messageUsage.InputTokens
 			claudeInfo.Usage.UsageSemantic = "anthropic"
-			claudeInfo.Usage.PromptTokensDetails.CachedTokens = claudeResponse.Message.Usage.CacheReadInputTokens
-			claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = claudeResponse.Message.Usage.CacheCreationInputTokens
-			claudeInfo.Usage.ClaudeCacheCreation5mTokens = claudeResponse.Message.Usage.GetCacheCreation5mTokens()
-			claudeInfo.Usage.ClaudeCacheCreation1hTokens = claudeResponse.Message.Usage.GetCacheCreation1hTokens()
-			claudeInfo.Usage.CompletionTokens = claudeResponse.Message.Usage.OutputTokens
-			claudeInfo.Usage.BillingUsage = claudeBillingUsageFromSemanticUsage(claudeInfo.Usage)
+			claudeInfo.Usage.PromptTokensDetails.CachedTokens = messageUsage.CacheReadInputTokens
+			claudeInfo.Usage.PromptTokensDetails.CachedCreationTokens = messageUsage.CacheCreationInputTokens
+			claudeInfo.Usage.ClaudeCacheCreation5mTokens = messageUsage.GetCacheCreation5mTokens()
+			claudeInfo.Usage.ClaudeCacheCreation1hTokens = messageUsage.GetCacheCreation1hTokens()
+			claudeInfo.Usage.CompletionTokens = messageUsage.OutputTokens
+			updateClaudeStreamBillingUsage(messageUsage, claudeInfo, false)
 		}
 	} else if claudeResponse.Type == "content_block_delta" {
 		if claudeResponse.Delta != nil {
@@ -383,7 +430,7 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 				claudeInfo.Usage.CompletionTokens = claudeResponse.Usage.OutputTokens
 			}
 			claudeInfo.Usage.TotalTokens = claudeInfo.Usage.PromptTokens + claudeInfo.Usage.CompletionTokens
-			claudeInfo.Usage.BillingUsage = claudeBillingUsageFromSemanticUsage(claudeInfo.Usage)
+			updateClaudeStreamBillingUsage(claudeResponse.Usage, claudeInfo, true)
 		}
 
 		claudeInfo.Done = true

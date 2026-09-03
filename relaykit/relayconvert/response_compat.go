@@ -60,6 +60,10 @@ func FormatClaudeResponseInfo(claudeResponse *dto.ClaudeResponse, oaiResponse *d
 	return claudemessages.FormatClaudeResponseInfo(claudeResponse, oaiResponse, claudeInfo)
 }
 
+func FinalizeClaudeStreamBillingUsage(claudeInfo *ClaudeResponseInfo) {
+	claudemessages.FinalizeClaudeStreamBillingUsage(claudeInfo)
+}
+
 func ResponseOpenAI2Gemini(openAIResponse *dto.OpenAITextResponse, info convmeta.Meta) *dto.GeminiChatResponse {
 	return oaichat.ResponseOpenAI2Gemini(openAIResponse, info)
 }

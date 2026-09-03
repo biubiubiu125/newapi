@@ -132,6 +132,29 @@ func TestChatCompletionsStreamToResponsesEventsAggregatesUsageAndToolArgs(t *tes
 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(events[9].Payload.Response.Output[1].Arguments))
 }
 
+func TestChatCompletionsStreamToResponsesKeepsEarlierUsageWhenLaterChunkIsEmpty(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "gpt-test")
+
+	_, err := ChatCompletionsStreamChunkToResponsesEvents(&dto.ChatCompletionsStreamResponse{
+		Usage: &dto.Usage{
+			PromptTokens:     10,
+			CompletionTokens: 4,
+			TotalTokens:      14,
+		},
+	}, state)
+	require.NoError(t, err)
+
+	_, err = ChatCompletionsStreamChunkToResponsesEvents(&dto.ChatCompletionsStreamResponse{
+		Usage: &dto.Usage{},
+	}, state)
+	require.NoError(t, err)
+
+	require.NotNil(t, state.Usage)
+	assert.Equal(t, 10, state.Usage.PromptTokens)
+	assert.Equal(t, 4, state.Usage.CompletionTokens)
+	assert.Equal(t, 14, state.Usage.TotalTokens)
+}
+
 func mustResponsesEventsFromChatChunk(t *testing.T, state *ChatToResponsesStreamState, chunk *dto.ChatCompletionsStreamResponse) []ChatToResponsesStreamEvent {
 	t.Helper()
 	events, err := ChatCompletionsStreamChunkToResponsesEvents(chunk, state)

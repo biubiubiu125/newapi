@@ -13,6 +13,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -513,4 +514,75 @@ func TestGeminiStreamHandlerEmptyUsageMetadataBuildsEstimatedBillingUsage(t *tes
 	require.Equal(t, usage.PromptTokens, usage.BillingUsage.GeminiUsageMetadata.PromptTokenCount)
 	require.Equal(t, usage.CompletionTokens, usage.BillingUsage.GeminiUsageMetadata.CandidatesTokenCount)
 	require.True(t, common.GetContextKeyBool(c, constant.ContextKeyLocalCountTokens))
+}
+
+func TestPatchGeminiZeroCompletionUsagePreservesNativeBillingMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gemini-3-flash-preview",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-3-flash-preview",
+		},
+	}
+	info.SetEstimatePromptTokens(20)
+
+	usage := &dto.Usage{
+		PromptTokens: 20,
+		BillingUsage: dto.NewGeminiChatBillingUsage(&dto.GeminiUsageMetadata{
+			PromptTokenCount:        20,
+			ToolUsePromptTokenCount: 33,
+			TotalTokenCount:         53,
+		}),
+	}
+
+	patchGeminiZeroCompletionUsage(c, info, usage, "partial streamed answer", 0)
+
+	require.Greater(t, usage.CompletionTokens, 0)
+	require.NotNil(t, usage.BillingUsage)
+	require.NotNil(t, usage.BillingUsage.GeminiUsageMetadata)
+	assert.Equal(t, 33, usage.BillingUsage.GeminiUsageMetadata.ToolUsePromptTokenCount)
+	assert.True(t, usage.BillingUsage.Estimated)
+}
+
+func TestGeminiStreamHandlerAccumulatesPartialUsageMetadata(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+
+	oldStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 300
+	t.Cleanup(func() {
+		constant.StreamingTimeout = oldStreamingTimeout
+	})
+
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gemini-3-flash-preview",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-3-flash-preview",
+		},
+	}
+
+	streamBody := []byte(
+		"data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"partial\"}]}}],\"usageMetadata\":{\"promptTokenCount\":20,\"toolUsePromptTokenCount\":33,\"totalTokenCount\":53}}\n" +
+			"data: {\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"answer\"}]}}],\"usageMetadata\":{\"candidatesTokenCount\":7,\"totalTokenCount\":60}}\n" +
+			"data: [DONE]\n",
+	)
+	resp := &http.Response{
+		Body: io.NopCloser(bytes.NewReader(streamBody)),
+	}
+
+	usage, newAPIError := geminiStreamHandler(c, info, resp, func(_ string, _ *dto.GeminiChatResponse) bool {
+		return true
+	})
+	require.Nil(t, newAPIError)
+	require.NotNil(t, usage)
+	assert.Equal(t, 53, usage.PromptTokens)
+	assert.Equal(t, 7, usage.CompletionTokens)
+	assert.Equal(t, 60, usage.TotalTokens)
+	require.NotNil(t, usage.BillingUsage)
+	require.NotNil(t, usage.BillingUsage.GeminiUsageMetadata)
+	assert.Equal(t, 33, usage.BillingUsage.GeminiUsageMetadata.ToolUsePromptTokenCount)
 }
