@@ -177,65 +177,64 @@ func GetNotice(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
 	systemNotice := common.OptionMap["Notice"]
 	common.OptionMapRWMutex.RUnlock()
-	c.JSON(http.StatusOK, gin.H{
+	serveRevalidatedJSON(c, "public-content:notice:v1", systemNotice, gin.H{
 		"success":       true,
 		"message":       "",
 		"data":          systemNotice,
 		"notice":        systemNotice,
 		"announcements": []map[string]interface{}{},
 	})
-	return
 }
 
 func GetAbout(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
-	defer common.OptionMapRWMutex.RUnlock()
-	c.JSON(http.StatusOK, gin.H{
+	about := common.OptionMap["About"]
+	common.OptionMapRWMutex.RUnlock()
+	serveRevalidatedJSON(c, "public-content:about:v1", about, gin.H{
 		"success": true,
 		"message": "",
-		"data":    common.OptionMap["About"],
+		"data":    about,
 	})
-	return
 }
 
 func GetUserAgreement(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
+	content := system_setting.GetLegalSettings().UserAgreement
+	serveRevalidatedJSON(c, "public-content:user-agreement:v1", content, gin.H{
 		"success": true,
 		"message": "",
-		"data":    system_setting.GetLegalSettings().UserAgreement,
+		"data":    content,
 	})
-	return
 }
 
 func GetPrivacyPolicy(c *gin.Context) {
-	c.JSON(http.StatusOK, gin.H{
+	content := system_setting.GetLegalSettings().PrivacyPolicy
+	serveRevalidatedJSON(c, "public-content:privacy-policy:v1", content, gin.H{
 		"success": true,
 		"message": "",
-		"data":    system_setting.GetLegalSettings().PrivacyPolicy,
+		"data":    content,
 	})
-	return
 }
 
 func GetMidjourney(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
-	defer common.OptionMapRWMutex.RUnlock()
-	c.JSON(http.StatusOK, gin.H{
+	content := common.OptionMap["Midjourney"]
+	common.OptionMapRWMutex.RUnlock()
+	serveRevalidatedJSON(c, "public-content:midjourney:v1", content, gin.H{
 		"success": true,
 		"message": "",
-		"data":    common.OptionMap["Midjourney"],
+		"data":    content,
 	})
-	return
 }
 
 func GetHomePageContent(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
-	defer common.OptionMapRWMutex.RUnlock()
-	c.JSON(http.StatusOK, gin.H{
+	content := common.OptionMap["HomePageContent"]
+	common.OptionMapRWMutex.RUnlock()
+	serveRevalidatedJSON(c, "public-content:home-page:v1", content, gin.H{
 		"success": true,
 		"message": "",
-		"data":    common.OptionMap["HomePageContent"],
+		"data":    content,
 	})
-	return
 }
 
 func SendEmailVerification(c *gin.Context) {
