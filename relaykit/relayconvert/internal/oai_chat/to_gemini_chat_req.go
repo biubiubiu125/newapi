@@ -3,6 +3,7 @@ package oaichat
 import (
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 
 	"context"
@@ -22,13 +23,15 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 		},
 	}
 
-	if textRequest.TopP != nil && *textRequest.TopP > 0 {
+	if textRequest.TopP != nil {
 		geminiRequest.GenerationConfig.TopP = kitutil.GetPointer(*textRequest.TopP)
 	}
-	if maxTokens := textRequest.GetMaxTokens(); maxTokens > 0 {
-		geminiRequest.GenerationConfig.MaxOutputTokens = kitutil.GetPointer(maxTokens)
+	if textRequest.MaxCompletionTokens != nil {
+		geminiRequest.GenerationConfig.MaxOutputTokens = kitutil.GetPointer(*textRequest.MaxCompletionTokens)
+	} else if textRequest.MaxTokens != nil {
+		geminiRequest.GenerationConfig.MaxOutputTokens = kitutil.GetPointer(*textRequest.MaxTokens)
 	}
-	if textRequest.Seed != nil && *textRequest.Seed != 0 {
+	if textRequest.Seed != nil {
 		geminiRequest.GenerationConfig.Seed = kitutil.GetPointer(int64(*textRequest.Seed))
 	}
 
@@ -72,15 +75,16 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 					var tempThinkingConfig dto.GeminiThinkingConfig
 
 					if thinkingBudget, exists := thinkingConfig["thinking_budget"]; exists {
-						switch v := thinkingBudget.(type) {
-						case float64:
-							budgetInt := int(v)
-							tempThinkingConfig.ThinkingBudget = kitutil.GetPointer(budgetInt)
-							tempThinkingConfig.IncludeThoughts = budgetInt > 0
-							hasThinkingConfig = true
-						default:
+						v, ok := thinkingBudget.(float64)
+						maxInt := int(^uint(0) >> 1)
+						if !ok || math.IsNaN(v) || math.IsInf(v, 0) || math.Trunc(v) != v ||
+							v > float64(maxInt) || v < float64(-maxInt-1) {
 							return nil, errors.New("extra_body.google.thinking_config.thinking_budget must be an integer")
 						}
+						budgetInt := int(v)
+						tempThinkingConfig.ThinkingBudget = kitutil.GetPointer(budgetInt)
+						tempThinkingConfig.IncludeThoughts = budgetInt > 0
+						hasThinkingConfig = true
 					}
 
 					if includeThoughts, exists := thinkingConfig["include_thoughts"]; exists {
@@ -270,6 +274,13 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 				Name:     name,
 				Response: contentMap,
 			}
+			if message.ToolCallId != "" {
+				id, err := kitutil.Marshal(message.ToolCallId)
+				if err != nil {
+					return nil, fmt.Errorf("failed to marshal function response ID: %w", err)
+				}
+				functionResp.ID = id
+			}
 
 			*parts = append(*parts, dto.GeminiPart{
 				FunctionResponse: functionResp,
@@ -293,6 +304,7 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 				}
 				toolCall := dto.GeminiPart{
 					FunctionCall: &dto.FunctionCall{
+						ID:           call.ID,
 						FunctionName: call.Function.Name,
 						Arguments:    args,
 					},

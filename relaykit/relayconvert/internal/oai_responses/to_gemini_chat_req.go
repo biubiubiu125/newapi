@@ -43,10 +43,10 @@ func OpenAIResponsesRequestToGeminiChat(c context.Context, req *dto.OpenAIRespon
 			Temperature: req.Temperature,
 		},
 	}
-	if req.TopP != nil && *req.TopP > 0 {
+	if req.TopP != nil {
 		geminiRequest.GenerationConfig.TopP = kitutil.GetPointer(*req.TopP)
 	}
-	if req.MaxOutputTokens != nil && *req.MaxOutputTokens > 0 {
+	if req.MaxOutputTokens != nil {
 		geminiRequest.GenerationConfig.MaxOutputTokens = kitutil.GetPointer(*req.MaxOutputTokens)
 	}
 
@@ -144,7 +144,10 @@ func OpenAIResponsesRequestToGeminiChat(c context.Context, req *dto.OpenAIRespon
 			}
 			appendGeminiContentPart(geminiRequest, "model", part)
 		case ResponsesInputTypeFunctionCallOutput:
-			part := responsesFunctionOutputItemToGeminiPart(item, callNames)
+			part, err := responsesFunctionOutputItemToGeminiPart(item, callNames)
+			if err != nil {
+				return nil, err
+			}
 			appendGeminiContentPart(geminiRequest, "user", part)
 		default:
 			role := responsesGeminiRole(item)
@@ -259,24 +262,33 @@ func responsesFunctionCallItemToGeminiPart(item map[string]any) (dto.GeminiPart,
 	callID := CallID(item)
 	return dto.GeminiPart{
 		FunctionCall: &dto.FunctionCall{
+			ID:           callID,
 			FunctionName: name,
 			Arguments:    ObjectValue(item["arguments"], "arguments"),
 		},
 	}, callID, nil
 }
 
-func responsesFunctionOutputItemToGeminiPart(item map[string]any, callNames map[string]string) dto.GeminiPart {
+func responsesFunctionOutputItemToGeminiPart(item map[string]any, callNames map[string]string) (dto.GeminiPart, error) {
 	callID := CallID(item)
 	name := strings.TrimSpace(kitutil.Interface2String(item["name"]))
 	if name == "" {
 		name = callNames[callID]
 	}
-	return dto.GeminiPart{
-		FunctionResponse: &dto.GeminiFunctionResponse{
-			Name:     name,
-			Response: GeminiResponseMap(item["output"]),
-		},
+	response := &dto.GeminiFunctionResponse{
+		Name:     name,
+		Response: GeminiResponseMap(item["output"]),
 	}
+	if callID != "" {
+		id, err := kitutil.Marshal(callID)
+		if err != nil {
+			return dto.GeminiPart{}, fmt.Errorf("failed to marshal function response ID: %w", err)
+		}
+		response.ID = id
+	}
+	return dto.GeminiPart{
+		FunctionResponse: response,
+	}, nil
 }
 
 func appendGeminiContentPart(req *dto.GeminiChatRequest, role string, part dto.GeminiPart) {

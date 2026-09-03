@@ -56,15 +56,16 @@ type Adaptor struct {
 }
 
 func (a *Adaptor) ConvertGeminiRequest(c *gin.Context, info *relaycommon.RelayInfo, request *dto.GeminiChatRequest) (any, error) {
-	// Vertex AI does not support functionResponse.id; keep it stripped here for consistency.
+	// Vertex AI's generateContent schema does not expose function-call identity
+	// fields. Strip both sides at this provider boundary.
 	if model_setting.GetGeminiSettings().RemoveFunctionResponseIdEnabled {
-		removeFunctionResponseID(request)
+		removeFunctionCallIDs(request)
 	}
 	geminiAdaptor := gemini.Adaptor{}
 	return geminiAdaptor.ConvertGeminiRequest(c, info, request)
 }
 
-func removeFunctionResponseID(request *dto.GeminiChatRequest) {
+func removeFunctionCallIDs(request *dto.GeminiChatRequest) {
 	if request == nil {
 		return
 	}
@@ -76,10 +77,10 @@ func removeFunctionResponseID(request *dto.GeminiChatRequest) {
 			}
 			for j := range request.Contents[i].Parts {
 				part := &request.Contents[i].Parts[j]
-				if part.FunctionResponse == nil {
-					continue
+				if part.FunctionCall != nil {
+					part.FunctionCall.ID = ""
 				}
-				if len(part.FunctionResponse.ID) > 0 {
+				if part.FunctionResponse != nil && len(part.FunctionResponse.ID) > 0 {
 					part.FunctionResponse.ID = nil
 				}
 			}
@@ -88,7 +89,7 @@ func removeFunctionResponseID(request *dto.GeminiChatRequest) {
 
 	if len(request.Requests) > 0 {
 		for i := range request.Requests {
-			removeFunctionResponseID(&request.Requests[i])
+			removeFunctionCallIDs(&request.Requests[i])
 		}
 	}
 }
@@ -310,6 +311,9 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		geminiRequest, ok := result.Value.(*dto.GeminiChatRequest)
 		if !ok {
 			return nil, fmt.Errorf("expected Gemini generateContent request, got %T", result.Value)
+		}
+		if model_setting.GetGeminiSettings().RemoveFunctionResponseIdEnabled {
+			removeFunctionCallIDs(geminiRequest)
 		}
 		c.Set("request_model", request.Model)
 		return geminiRequest, nil

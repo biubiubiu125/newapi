@@ -1,35 +1,46 @@
 package oairesponses
 
 import (
-	"context"
+	"encoding/json"
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
-	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
-func TestOpenAIResponsesRequestToGeminiChatMapsReasoningBudget(t *testing.T) {
-	meta := &convmeta.Values{
-		ChannelMetaAttached: true,
-		UpstreamModelName:   "gemini-2.5-flash",
-		Options: &convmeta.Options{
-			Gemini: convmeta.GeminiOptions{
-				ThinkingAdapterEnabled: true,
-			},
-		},
-	}
-	budget := uint(4096)
-
-	got, err := OpenAIResponsesRequestToGeminiChat(context.Background(), &dto.OpenAIResponsesRequest{
+func TestOpenAIResponsesRequestToGeminiPreservesExplicitZeroParameters(t *testing.T) {
+	topP := 0.0
+	maxTokens := uint(0)
+	req := &dto.OpenAIResponsesRequest{
 		Model:           "gemini-2.5-flash",
-		MaxOutputTokens: &budget,
-		Reasoning:       &dto.Reasoning{Effort: "high"},
-		Input:           []byte(`"Think carefully."`),
-	}, meta)
+		TopP:            &topP,
+		MaxOutputTokens: &maxTokens,
+		Input:           json.RawMessage(`"hello"`),
+	}
 
+	got, err := OpenAIResponsesRequestToGeminiChat(nil, req, nil)
 	require.NoError(t, err)
-	require.NotNil(t, got.GenerationConfig.ThinkingConfig)
-	assert.Equal(t, "high", got.GenerationConfig.ThinkingConfig.ThinkingLevel)
+	require.NotNil(t, got.GenerationConfig.TopP)
+	require.NotNil(t, got.GenerationConfig.MaxOutputTokens)
+	assert.Equal(t, float64(0), *got.GenerationConfig.TopP)
+	assert.Equal(t, uint(0), *got.GenerationConfig.MaxOutputTokens)
+}
+
+func TestOpenAIResponsesRequestToGeminiPreservesFunctionCallIDs(t *testing.T) {
+	req := &dto.OpenAIResponsesRequest{
+		Model: "gemini-2.5-flash",
+		Input: json.RawMessage(`[
+			{"type":"function_call","call_id":"call_1","name":"lookup","arguments":"{\"q\":\"x\"}"},
+			{"type":"function_call_output","call_id":"call_1","output":"ok"}
+		]`),
+	}
+
+	got, err := OpenAIResponsesRequestToGeminiChat(nil, req, nil)
+	require.NoError(t, err)
+	require.Len(t, got.Contents, 2)
+	require.NotNil(t, got.Contents[0].Parts[0].FunctionCall)
+	assert.Equal(t, "call_1", got.Contents[0].Parts[0].FunctionCall.ID)
+	require.NotNil(t, got.Contents[1].Parts[0].FunctionResponse)
+	assert.JSONEq(t, `"call_1"`, string(got.Contents[1].Parts[0].FunctionResponse.ID))
 }
