@@ -15,6 +15,7 @@ import (
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	kitreasoning "github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/model_setting"
 	hosttypes "github.com/QuantumNous/new-api/types"
@@ -111,6 +112,7 @@ type RelayInfo struct {
 	IsFirstRequest         bool
 	AudioUsage             bool
 	ReasoningEffort        string
+	ReasoningConversion    *dto.ReasoningConversionState
 	UserSetting            dto.UserSetting
 	UserEmail              string
 	UserQuota              int
@@ -233,14 +235,17 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 
 	info.ChannelMeta = channelMeta
 	info.ReasoningEffort = ""
+	info.ReasoningConversion = nil
 
 	// Channel identity feeds the converter options snapshot (e.g.
 	// OpenRouterDialect); drop the cache so a cross-channel retry rebuilds it.
 	info.convOptions = nil
 	if model_setting.GetGlobalSettings().PassThroughRequestEnabled || channelMeta.ChannelSetting.PassThroughBodyEnabled {
 		info.ReasoningEffort = ""
+		info.ReasoningConversion = nil
 	} else {
 		info.ReasoningEffort = reasoningEffortFromRequest(info.Request)
+		info.ReasoningConversion = reasoningStateFromRequest(info.Request)
 	}
 
 	// reset some fields based on channel meta
@@ -451,27 +456,59 @@ func reasoningEffortFromRequest(request dto.Request) string {
 		if req == nil {
 			return ""
 		}
-		effort = req.ReasoningEffort
-		if strings.TrimSpace(effort) == "" && len(req.Reasoning) > 0 {
-			value := gjson.GetBytes(req.Reasoning, "effort")
-			if value.Type == gjson.String {
-				effort = value.String()
+		if intent, err := kitreasoning.FromOpenAIChat(req); err == nil {
+			effort = string(kitreasoning.EffectiveEffort(intent))
+		} else {
+			effort = req.ReasoningEffort
+			if strings.TrimSpace(effort) == "" && len(req.Reasoning) > 0 {
+				value := gjson.GetBytes(req.Reasoning, "effort")
+				if value.Type == gjson.String {
+					effort = value.String()
+				}
 			}
 		}
 	case *dto.OpenAIResponsesRequest:
-		if req != nil && req.Reasoning != nil {
+		if intent, err := kitreasoning.FromOpenAIResponses(req); err == nil {
+			effort = string(kitreasoning.EffectiveEffort(intent))
+		} else if req != nil && req.Reasoning != nil {
 			effort = req.Reasoning.Effort
 		}
 	case *dto.ClaudeRequest:
-		if req != nil {
+		if intent, err := kitreasoning.FromClaude(req); err == nil {
+			effort = string(kitreasoning.EffectiveEffort(intent))
+		} else if req != nil {
 			effort = req.GetEfforts()
 		}
 	case *dto.GeminiChatRequest:
-		if req != nil && req.GenerationConfig.ThinkingConfig != nil {
+		if intent, err := kitreasoning.FromGemini(req); err == nil {
+			effort = string(kitreasoning.EffectiveEffort(intent))
+		} else if req != nil && req.GenerationConfig.ThinkingConfig != nil {
 			effort = req.GenerationConfig.ThinkingConfig.ThinkingLevel
 		}
 	}
 	return strings.TrimSpace(effort)
+}
+
+func reasoningStateFromRequest(request dto.Request) *dto.ReasoningConversionState {
+	switch req := request.(type) {
+	case *dto.GeneralOpenAIRequest:
+		if intent, err := kitreasoning.FromOpenAIChat(req); err == nil {
+			return kitreasoning.StateFromIntent(intent)
+		}
+	case *dto.OpenAIResponsesRequest:
+		if intent, err := kitreasoning.FromOpenAIResponses(req); err == nil {
+			return kitreasoning.StateFromIntent(intent)
+		}
+	case *dto.ClaudeRequest:
+		if intent, err := kitreasoning.FromClaude(req); err == nil {
+			return kitreasoning.StateFromIntent(intent)
+		}
+	case *dto.GeminiChatRequest:
+		if intent, err := kitreasoning.FromGemini(req); err == nil {
+			return kitreasoning.StateFromIntent(intent)
+		}
+	}
+	return nil
 }
 
 func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
@@ -506,8 +543,9 @@ func genBaseRelayInfo(c *gin.Context, request dto.Request) *RelayInfo {
 	}
 	reasoningEffort := reasoningEffortFromRequest(request)
 	info := &RelayInfo{
-		Request:         request,
-		ReasoningEffort: reasoningEffort,
+		Request:             request,
+		ReasoningEffort:     reasoningEffort,
+		ReasoningConversion: reasoningStateFromRequest(request),
 
 		RequestId:  reqId,
 		UserId:     common.GetContextKeyInt(c, constant.ContextKeyUserId),
@@ -784,6 +822,13 @@ func (info *RelayInfo) SetReasoningEffort(effort string) {
 	info.ReasoningEffort = strings.TrimSpace(effort)
 }
 
+func (info *RelayInfo) ReasoningState() *dto.ReasoningConversionState {
+	if info == nil {
+		return nil
+	}
+	return info.ReasoningConversion
+}
+
 func (info *RelayInfo) EnsureClaudeConvertInfo() *convmeta.ClaudeConvertInfo {
 	if info == nil {
 		return &convmeta.ClaudeConvertInfo{
@@ -836,6 +881,7 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
 		},
 		OpenRouterDialect:      info != nil && info.GetChannelType() == constant.ChannelTypeOpenRouter,
 		PreserveThinkingSuffix: model_setting.ShouldPreserveThinkingSuffix,
+		PreserveEffortTail:     model_setting.ShouldPreserveEffortTail,
 	}
 	if info != nil {
 		info.convOptions = options

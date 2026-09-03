@@ -18,6 +18,9 @@ type Options struct {
 	// suffix must be kept on the outgoing model name (host blacklist lookup).
 	// Nil means "never preserve".
 	PreserveThinkingSuffix func(modelName string) bool
+	// PreserveEffortTail reports real model IDs whose names already end in an
+	// effort-like token, such as qwen-max.
+	PreserveEffortTail func(modelName string) bool
 }
 
 type ClaudeOptions struct {
@@ -76,4 +79,8 @@ func (o *GeminiOptions) SafetySettingFor(category string) string {
 
 func (o *Options) ShouldPreserveThinkingSuffix(modelName string) bool {
 	return o != nil && o.PreserveThinkingSuffix != nil && o.PreserveThinkingSuffix(modelName)
+}
+
+func (o *Options) ShouldPreserveEffortTail(modelName string) bool {
+	return o != nil && o.PreserveEffortTail != nil && o.PreserveEffortTail(modelName)
 }

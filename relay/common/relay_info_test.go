@@ -81,6 +81,7 @@ func TestRelayInfoMetaTypedNilReceiver(t *testing.T) {
 	assert.NotNil(t, firstOptions.Gemini.SupportsImagine)
 	assert.NotNil(t, firstOptions.Gemini.SafetySetting)
 	assert.NotNil(t, firstOptions.PreserveThinkingSuffix)
+	assert.NotNil(t, firstOptions.PreserveEffortTail)
 }
 
 func TestGenRelayInfoCapturesRequestReasoningEffort(t *testing.T) {
@@ -175,4 +176,22 @@ func TestInitChannelMetaRestoresRequestReasoningEffortForRetry(t *testing.T) {
 	info.SetReasoningEffort("low")
 	info.InitChannelMeta(ctx)
 	assert.Equal(t, "max", info.ReasoningEffort)
+}
+
+func TestGenRelayInfoCapturesReasoningConversionState(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest("POST", "/v1/chat/completions", nil)
+	request := &dto.GeneralOpenAIRequest{
+		Model:     "gpt-5.6-sol",
+		Reasoning: json.RawMessage(`{"max_tokens":4096,"exclude":true}`),
+	}
+
+	info, err := GenRelayInfo(ctx, types.RelayFormatOpenAI, request, nil)
+	require.NoError(t, err)
+	require.NotNil(t, info.ReasoningConversion)
+	require.NotNil(t, info.ReasoningConversion.BudgetTokens)
+	assert.Equal(t, 4096, *info.ReasoningConversion.BudgetTokens)
+	require.NotNil(t, info.ReasoningConversion.IncludeThoughts)
+	assert.False(t, *info.ReasoningConversion.IncludeThoughts)
 }

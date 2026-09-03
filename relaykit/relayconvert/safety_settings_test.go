@@ -92,3 +92,27 @@ func TestOpenAIToGeminiSafetySettings(t *testing.T) {
 		})
 	}
 }
+
+func TestOpenAIReasoningEffortMapsToGeminiThinkingConfig(t *testing.T) {
+	meta := &convmeta.Values{
+		ChannelMetaAttached: true,
+		UpstreamModelName:   "gemini-2.5-flash",
+		Options: &convmeta.Options{
+			Gemini: convmeta.GeminiOptions{
+				ThinkingAdapterEnabled: true,
+			},
+		},
+	}
+
+	got, err := OpenAIChatRequestToGeminiGenerateContent(context.Background(), dto.GeneralOpenAIRequest{
+		Model:           "gemini-2.5-flash",
+		ReasoningEffort: "max",
+		Messages: []dto.Message{
+			{Role: "user", Content: "Think carefully."},
+		},
+	}, meta)
+
+	require.NoError(t, err)
+	require.NotNil(t, got.GenerationConfig.ThinkingConfig)
+	assert.Equal(t, "max", got.GenerationConfig.ThinkingConfig.ThinkingLevel)
+}

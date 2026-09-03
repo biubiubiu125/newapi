@@ -10,6 +10,7 @@ import (
 	relaymedia "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/media"
 	sharedgemini "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/shared/gemini"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 )
 
 func convertOpenAIResponsesRequestToGeminiChat(c context.Context, info convmeta.Meta, request any) (any, error) {
@@ -59,11 +60,17 @@ func OpenAIResponsesRequestToGeminiChat(c context.Context, req *dto.OpenAIRespon
 	if err := applyResponsesTextToGemini(req.Text, geminiRequest); err != nil {
 		return nil, err
 	}
-	sharedgemini.ApplyThinkingConfig(geminiRequest, info, dto.GeneralOpenAIRequest{
+	intent, err := reasoning.FromOpenAIResponses(req)
+	if err != nil {
+		return nil, reasoning.AsClientError(err)
+	}
+	reasoningRequest := dto.GeneralOpenAIRequest{
 		Model:               req.Model,
 		MaxCompletionTokens: req.MaxOutputTokens,
-		ReasoningEffort:     ReasoningEffort(req),
-	})
+		ReasoningEffort:     string(reasoning.EffectiveEffort(intent)),
+		ReasoningConversion: reasoning.StateFromIntent(intent),
+	}
+	sharedgemini.ApplyThinkingConfig(geminiRequest, info, reasoningRequest)
 
 	var safetySettings []dto.GeminiChatSafetySettings
 	for _, category := range sharedgemini.SafetySettingCategories {

@@ -347,7 +347,10 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 		}
 
 		// 转换模型推理力度后缀
-		effort, originModel := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(info.UpstreamModelName)
+		effort, originModel := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(
+			info.UpstreamModelName,
+			model_setting.ShouldPreserveEffortTail,
+		)
 		if effort != "" {
 			request.ReasoningEffort = effort
 			info.UpstreamModelName = originModel
@@ -616,7 +619,10 @@ func isOpenAIImageEditIndexedField(fieldName string) bool {
 
 func (a *Adaptor) ConvertOpenAIResponsesRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.OpenAIResponsesRequest) (any, error) {
 	//  转换模型推理力度后缀
-	effort, originModel := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(request.Model)
+	effort, originModel := reasoning.ParseOpenAIReasoningEffortFromModelSuffix(
+		request.Model,
+		model_setting.ShouldPreserveEffortTail,
+	)
 	if effort != "" {
 		if request.Reasoning == nil {
 			request.Reasoning = &dto.Reasoning{

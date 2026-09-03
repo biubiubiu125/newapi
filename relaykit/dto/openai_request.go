@@ -106,6 +106,11 @@ type GeneralOpenAIRequest struct {
 	SearchMode             json.RawMessage `json:"search_mode,omitempty"`
 	// Minimax
 	ReasoningSplit json.RawMessage `json:"reasoning_split,omitempty"`
+	// vLLM and other OpenAI-compatible providers.
+	ThinkingTokenBudget json.RawMessage `json:"thinking_token_budget,omitempty"`
+
+	// Internal conversion state; never serialized to an upstream protocol.
+	ReasoningConversion *ReasoningConversionState `json:"-"`
 }
 
 func (r GeneralOpenAIRequest) MarshalJSON() ([]byte, error) {
@@ -264,6 +269,7 @@ type FunctionRequest struct {
 	Name        string `json:"name"`
 	Parameters  any    `json:"parameters,omitempty"`
 	Arguments   string `json:"arguments,omitempty"`
+	Strict      *bool  `json:"strict,omitempty"`
 }
 
 type StreamOptions struct {
@@ -907,6 +913,9 @@ type OpenAIResponsesRequest struct {
 	ThinkingBudget json.RawMessage `json:"thinking_budget,omitempty"`
 	// perplexity
 	Preset json.RawMessage `json:"preset,omitempty"`
+
+	// Internal conversion state; never serialized to an upstream protocol.
+	ReasoningConversion *ReasoningConversionState `json:"-"`
 }
 
 func (r OpenAIResponsesRequest) MarshalJSON() ([]byte, error) {

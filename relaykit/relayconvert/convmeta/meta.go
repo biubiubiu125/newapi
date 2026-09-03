@@ -28,6 +28,8 @@ type Meta interface {
 	// SetReasoningEffort records the effort level a converter derived from a
 	// model-name suffix so downstream billing/logging can see it.
 	SetReasoningEffort(effort string)
+	// ReasoningState carries host-derived conversion state across format hops.
+	ReasoningState() *dto.ReasoningConversionState
 	GetEstimatePromptTokens() int
 
 	// EnsureClaudeConvertInfo lazily creates and returns the mutable
@@ -79,6 +81,7 @@ type Values struct {
 	ChannelType          int
 	IsStream             bool
 	ReasoningEffort      string
+	ReasoningConversion  *dto.ReasoningConversionState
 	EstimatePromptTokens int
 
 	ClaudeConvertInfo *ClaudeConvertInfo
@@ -137,6 +140,13 @@ func (v *Values) SetReasoningEffort(effort string) {
 	if v != nil {
 		v.ReasoningEffort = effort
 	}
+}
+
+func (v *Values) ReasoningState() *dto.ReasoningConversionState {
+	if v == nil {
+		return nil
+	}
+	return v.ReasoningConversion
 }
 
 func (v *Values) GetEstimatePromptTokens() int {
@@ -212,4 +222,11 @@ func OptionsOf(m Meta) *Options {
 		return &Options{}
 	}
 	return m.ConvOptions()
+}
+
+func ReasoningStateOf(m Meta) *dto.ReasoningConversionState {
+	if m == nil {
+		return nil
+	}
+	return m.ReasoningState()
 }

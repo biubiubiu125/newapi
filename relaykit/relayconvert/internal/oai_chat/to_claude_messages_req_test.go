@@ -79,3 +79,20 @@ func TestOpenAIChatRequestToClaudeMessagesNormalizesToolInputSchema(t *testing.T
 		})
 	}
 }
+
+func TestOpenAIChatRequestToClaudeMessagesMapsMaxReasoningEffort(t *testing.T) {
+	maxTokens := uint(8192)
+	got, err := OpenAIChatRequestToClaudeMessages(context.Background(), nil, dto.GeneralOpenAIRequest{
+		Model:           "claude-test",
+		MaxTokens:       &maxTokens,
+		ReasoningEffort: "max",
+		Messages: []dto.Message{
+			{Role: "user", Content: "Think carefully."},
+		},
+	})
+
+	require.NoError(t, err)
+	require.NotNil(t, got.Thinking)
+	assert.Equal(t, "enabled", got.Thinking.Type)
+	assert.Equal(t, 8192, got.Thinking.GetBudgetTokens())
+}

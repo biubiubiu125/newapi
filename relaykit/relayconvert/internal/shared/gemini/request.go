@@ -88,6 +88,19 @@ func ApplyThinkingConfig(geminiRequest *dto.GeminiChatRequest, info convmeta.Met
 	}
 
 	modelName := convmeta.UpstreamModelName(info)
+	var requestIntent reasoning.Intent
+	if len(oaiRequest) > 0 {
+		if intent, err := reasoning.FromOpenAIChat(&oaiRequest[0]); err == nil {
+			requestIntent = intent
+		}
+	}
+	if state := convmeta.ReasoningStateOf(info); state != nil {
+		pivot := reasoning.IntentFromState(state)
+		if merged, err := reasoning.MergeExplicit(requestIntent, pivot, modelName); err == nil {
+			requestIntent = merged
+		}
+	}
+
 	isNew25Pro := strings.HasPrefix(modelName, "gemini-2.5-pro") &&
 		!strings.HasPrefix(modelName, "gemini-2.5-pro-preview-05-06") &&
 		!strings.HasPrefix(modelName, "gemini-2.5-pro-preview-03-25")
@@ -138,13 +151,60 @@ func ApplyThinkingConfig(geminiRequest *dto.GeminiChatRequest, info convmeta.Met
 				ThinkingBudget: kitutil.GetPointer(0),
 			}
 		}
-	} else if _, level, ok := reasoning.TrimEffortSuffix(modelName); ok && level != "" {
+	} else if _, level, ok := reasoning.TrimEffortSuffix(modelName); ok && level != "" &&
+		!opts.ShouldPreserveEffortTail(modelName) {
 		geminiRequest.GenerationConfig.ThinkingConfig = &dto.GeminiThinkingConfig{
 			IncludeThoughts: true,
 			ThinkingLevel:   level,
 		}
 		info.SetReasoningEffort(level)
 	}
+
+	if requestIntent.IsEmpty() {
+		return
+	}
+	applyReasoningIntent(geminiRequest, info, requestIntent, modelName)
+}
+
+func applyReasoningIntent(geminiRequest *dto.GeminiChatRequest, info convmeta.Meta, intent reasoning.Intent, modelName string) {
+	if geminiRequest == nil {
+		return
+	}
+
+	config := geminiRequest.GenerationConfig.ThinkingConfig
+	if config == nil {
+		config = &dto.GeminiThinkingConfig{}
+	}
+
+	if intent.Mode == reasoning.ModeDisabled || intent.Effort == reasoning.EffortNone {
+		if !isNew25ProModel(modelName) {
+			config.ThinkingBudget = kitutil.GetPointer(0)
+			config.ThinkingLevel = ""
+			config.IncludeThoughts = false
+			geminiRequest.GenerationConfig.ThinkingConfig = config
+		}
+		info.SetReasoningEffort(string(reasoning.EffortNone))
+		return
+	}
+
+	config.IncludeThoughts = true
+	if intent.IncludeThoughts != nil {
+		config.IncludeThoughts = *intent.IncludeThoughts
+	}
+	if intent.BudgetTokens != nil {
+		budget := clampThinkingBudget(modelName, *intent.BudgetTokens)
+		config.ThinkingBudget = kitutil.GetPointer(budget)
+		config.ThinkingLevel = ""
+	} else if intent.Effort != "" {
+		if config.ThinkingBudget == nil {
+			config.ThinkingLevel = string(intent.Effort)
+			config.ThinkingBudget = nil
+		}
+	} else if config.ThinkingBudget == nil && config.ThinkingLevel == "" {
+		config.ThinkingBudget = kitutil.GetPointer(clampThinkingBudgetByEffort(modelName, string(reasoning.EffortHigh)))
+	}
+	geminiRequest.GenerationConfig.ThinkingConfig = config
+	info.SetReasoningEffort(string(reasoning.EffectiveEffort(intent)))
 }
 
 func ParseStopSequences(stop any) []string {

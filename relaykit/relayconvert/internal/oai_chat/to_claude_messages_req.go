@@ -23,13 +23,6 @@ const (
 	webSearchMaxUsesHigh   = 10
 )
 
-type openRouterRequestReasoning struct {
-	Enabled   bool   `json:"enabled"`
-	Effort    string `json:"effort,omitempty"`
-	MaxTokens int    `json:"max_tokens,omitempty"`
-	Exclude   bool   `json:"exclude,omitempty"`
-}
-
 func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, textRequest dto.GeneralOpenAIRequest) (*dto.ClaudeRequest, error) {
 	opts := convmeta.OptionsOf(info)
 	claudeTools := make([]any, 0, len(textRequest.Tools))
@@ -125,6 +118,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 	}
 
 	if baseModel, effortLevel, ok := reasoning.TrimEffortSuffix(textRequest.Model); ok && effortLevel != "" &&
+		!opts.ShouldPreserveEffortTail(textRequest.Model) &&
 		(strings.HasPrefix(textRequest.Model, "claude-opus-4-6") ||
 			strings.HasPrefix(textRequest.Model, "claude-opus-4-7") ||
 			strings.HasPrefix(textRequest.Model, "claude-opus-4-8")) {
@@ -171,39 +165,12 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 		}
 	}
 
-	if textRequest.ReasoningEffort != "" {
-		switch textRequest.ReasoningEffort {
-		case "low":
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: kitutil.GetPointer[int](1280),
-			}
-		case "medium":
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: kitutil.GetPointer[int](2048),
-			}
-		case "high":
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: kitutil.GetPointer[int](4096),
-			}
-		}
+	intent, err := reasoning.FromOpenAIChat(&textRequest)
+	if err != nil {
+		return nil, reasoning.AsClientError(err)
 	}
-
-	if textRequest.Reasoning != nil {
-		var reasoningConfig openRouterRequestReasoning
-		if err := kitutil.Unmarshal(textRequest.Reasoning, &reasoningConfig); err != nil {
-			return nil, err
-		}
-
-		budgetTokens := reasoningConfig.MaxTokens
-		if budgetTokens > 0 {
-			claudeRequest.Thinking = &dto.Thinking{
-				Type:         "enabled",
-				BudgetTokens: &budgetTokens,
-			}
-		}
+	if err := reasoning.ApplyToClaude(&claudeRequest, intent); err != nil {
+		return nil, reasoning.AsClientError(err)
 	}
 
 	if textRequest.Stop != nil {

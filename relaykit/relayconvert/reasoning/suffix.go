@@ -8,7 +8,7 @@ import (
 
 var EffortSuffixes = []string{"-max", "-xhigh", "-high", "-medium", "-low", "-minimal"}
 
-var OpenAIEffortSuffixes = []string{"-high", "-minimal", "-low", "-medium", "-none", "-xhigh"}
+var OpenAIEffortSuffixes = []string{"-max", "-xhigh", "-high", "-medium", "-low", "-minimal", "-none"}
 
 var DeepSeekV4EffortSuffixes = []string{"-none", "-max"}
 
@@ -27,7 +27,10 @@ func TrimEffortSuffixWithSuffixes(modelName string, suffixes []string) (string, 
 	return strings.TrimSuffix(modelName, suffix), strings.TrimPrefix(suffix, "-"), true
 }
 
-func ParseOpenAIReasoningEffortFromModelSuffix(modelName string) (string, string) {
+func ParseOpenAIReasoningEffortFromModelSuffix(modelName string, preserve ...func(string) bool) (string, string) {
+	if len(preserve) > 0 && preserve[0] != nil && preserve[0](modelName) {
+		return "", modelName
+	}
 	baseModel, effort, ok := TrimEffortSuffixWithSuffixes(modelName, OpenAIEffortSuffixes)
 	if !ok {
 		return "", modelName
