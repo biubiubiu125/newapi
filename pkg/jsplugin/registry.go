@@ -123,10 +123,11 @@ type AuthMeta struct {
 // influence billing. Numeric facts use one of the host-owned canonical units;
 // boolean facts are flags; enum facts constrain non-numeric pricing selectors.
 type UsageFieldSchema struct {
-	Type        string        `json:"type,omitempty"`
-	Unit        string        `json:"unit,omitempty"`
-	Enum        []string      `json:"enum,omitempty"`
-	Description LocalizedText `json:"description,omitempty"`
+	Type        string                   `json:"type,omitempty"`
+	Unit        string                   `json:"unit,omitempty"`
+	Enum        []string                 `json:"enum,omitempty"`
+	Description LocalizedText            `json:"description,omitempty"`
+	EnumLabels  map[string]LocalizedText `json:"enumLabels,omitempty"`
 }
 
 type LoadedPlugin struct {
@@ -857,6 +858,13 @@ func cloneMeta(meta Meta) Meta {
 			if field.Description != nil {
 				field.Description = maps.Clone(field.Description)
 			}
+			if field.EnumLabels != nil {
+				labels := make(map[string]LocalizedText, len(field.EnumLabels))
+				for value, label := range field.EnumLabels {
+					labels[value] = maps.Clone(label)
+				}
+				field.EnumLabels = labels
+			}
 			usageSchema[key] = field
 		}
 		meta.UsageSchema = usageSchema
@@ -1273,7 +1281,7 @@ func decodeUsageSchema(value any) (map[string]UsageFieldSchema, error) {
 		}
 		for key := range fieldObject {
 			switch key {
-			case "type", "unit", "enum", "description":
+			case "type", "unit", "enum", "description", "enumLabels":
 			default:
 				return nil, fmt.Errorf("plugin meta usageSchema field %q has unknown property %q", name, key)
 			}
@@ -1294,6 +1302,20 @@ func decodeUsageSchema(value any) (map[string]UsageFieldSchema, error) {
 				return nil, err
 			}
 		}
+		if rawLabels, exists := fieldObject["enumLabels"]; exists {
+			labels, ok := rawLabels.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("plugin meta usageSchema field %q enumLabels must be an object", name)
+			}
+			field.EnumLabels = make(map[string]LocalizedText, len(labels))
+			for value := range labels {
+				label, err := localizedTextMetaField(labels, value, maxUsageFieldDescriptionRunes)
+				if err != nil {
+					return nil, fmt.Errorf("plugin meta usageSchema field %q enumLabels: %w", name, err)
+				}
+				field.EnumLabels[value] = label
+			}
+		}
 		if err = validateUsageFieldSchema(name, field); err != nil {
 			return nil, err
 		}
@@ -1305,6 +1327,9 @@ func decodeUsageSchema(value any) (map[string]UsageFieldSchema, error) {
 func validateUsageFieldSchema(name string, field UsageFieldSchema) error {
 	if err := validateLocalizedText(field.Description, fmt.Sprintf("usageSchema field %q description", name), maxUsageFieldDescriptionRunes); err != nil {
 		return err
+	}
+	if field.EnumLabels != nil && field.Enum == nil {
+		return fmt.Errorf("plugin meta usageSchema field %q enumLabels requires enum", name)
 	}
 	if field.Enum != nil {
 		if field.Type != "" || field.Unit != "" {
@@ -1319,6 +1344,17 @@ func validateUsageFieldSchema(name string, field UsageFieldSchema) error {
 				return fmt.Errorf("plugin meta usageSchema field %q enum values must be unique", name)
 			}
 			values[value] = struct{}{}
+		}
+		for value, label := range field.EnumLabels {
+			if _, exists := values[value]; !exists {
+				return fmt.Errorf("plugin meta usageSchema field %q enumLabels has undeclared enum value %q", name, value)
+			}
+			if label == nil {
+				return fmt.Errorf("plugin meta usageSchema field %q enumLabels value %q must include a non-empty label", name, value)
+			}
+			if err := validateLocalizedText(label, fmt.Sprintf("usageSchema field %q enumLabels value %q", name, value), maxUsageFieldDescriptionRunes); err != nil {
+				return err
+			}
 		}
 		return nil
 	}

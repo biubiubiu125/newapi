@@ -27,6 +27,7 @@ export type BillingUsageFieldSchema = {
   unit?: BillingUsageUnit
   enum?: string[]
   description?: string | Record<string, string>
+  enumLabels?: Record<string, string | Record<string, string>>
 }
 
 export type BillingUsageSchema = Record<string, BillingUsageFieldSchema>

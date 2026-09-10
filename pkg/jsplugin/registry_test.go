@@ -252,6 +252,16 @@ func TestRegistryDecodesAndValidatesUsageSchema(t *testing.T) {
 			expectedError: `unknown property "maximum"`,
 		},
 		{
+			name:          "enumLabels requires enum",
+			declaration:   `{type: "number", unit: "second", enumLabels: { "480P": "480P" }}`,
+			expectedError: "enumLabels requires enum",
+		},
+		{
+			name:          "enumLabels must match enum values",
+			declaration:   `{enum: ["480P"], enumLabels: { "720P": "720P" }}`,
+			expectedError: `enumLabels has undeclared enum value "720P"`,
+		},
+		{
 			name:          "description must be a string or object",
 			declaration:   `{type: "number", unit: "second", description: 5}`,
 			expectedError: "description must be a string or object",
@@ -323,6 +333,24 @@ func TestRegistryDecodesAndValidatesUsageSchema(t *testing.T) {
 		)
 		require.NoError(t, err)
 		assert.Empty(t, plugin.Meta.UsageExamples)
+	})
+
+	t.Run("enumLabels clone with matching enum values", func(t *testing.T) {
+		plugin, err := CompilePlugin(
+			routingTestPluginSource(
+				"usage-enum-labels",
+				0,
+				`["model"]`,
+				`usageSchema: {resolution: {enum: ["480P", "720P"], enumLabels: {"480P": {en: "480P", zh: "480P"}, "720P": "720P"}}},`,
+				"",
+			),
+			Options{},
+		)
+		require.NoError(t, err)
+		field := plugin.Meta.UsageSchema["resolution"]
+		require.Equal(t, []string{"480P", "720P"}, field.Enum)
+		require.Equal(t, LocalizedText{"en": "480P", "zh": "480P"}, field.EnumLabels["480P"])
+		require.Equal(t, LocalizedText{"en": "720P"}, field.EnumLabels["720P"])
 	})
 
 	t.Run("ValidateV1Meta preserves explicit empty enum presence", func(t *testing.T) {
