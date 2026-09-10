@@ -79,6 +79,9 @@ type Meta struct {
 	Key           string                      `json:"key"`
 	Name          string                      `json:"name"`
 	Icon          string                      `json:"icon,omitempty"`
+	Website       string                      `json:"website,omitempty"`
+	BaseURL       string                      `json:"baseUrl,omitempty"`
+	SortPriority  int                         `json:"sortPriority,omitempty"`
 	Description   LocalizedText               `json:"description,omitempty"`
 	Version       string                      `json:"version"`
 	Author        AuthorMeta                  `json:"author"`
@@ -958,7 +961,7 @@ func decodeMeta(value any) (Meta, error) {
 	}
 	for field := range object {
 		switch field {
-		case "apiVersion", "key", "name", "icon", "description", "version", "author", "channelTypes", "channelType", "compatibleChannelTypes", "models", "fetchMode", "allowedHosts", "routes", "protocols", "usageSchema", "usageExamples", "auth", "endpoints", "submitPaths", "actions":
+		case "apiVersion", "key", "name", "icon", "website", "baseUrl", "sortPriority", "description", "version", "author", "channelTypes", "channelType", "compatibleChannelTypes", "models", "fetchMode", "allowedHosts", "routes", "protocols", "usageSchema", "usageExamples", "auth", "endpoints", "submitPaths", "actions":
 		default:
 			return Meta{}, fmt.Errorf("plugin meta has unknown field %q", field)
 		}
@@ -979,6 +982,15 @@ func decodeMeta(value any) (Meta, error) {
 		return Meta{}, err
 	}
 	meta.Icon = strings.TrimSpace(meta.Icon)
+	if meta.Website, err = stringMetaField(object, "website"); err != nil {
+		return Meta{}, err
+	}
+	if meta.BaseURL, err = stringMetaField(object, "baseUrl"); err != nil {
+		return Meta{}, err
+	}
+	if meta.SortPriority, err = integerMetaField(object, "sortPriority"); err != nil {
+		return Meta{}, err
+	}
 	if meta.Description, err = localizedTextMetaField(object, "description", maxMetaDescriptionRunes); err != nil {
 		return Meta{}, err
 	}
@@ -1095,6 +1107,76 @@ func ValidateV1Meta(meta Meta) error {
 	return normalizeV1Meta(&meta)
 }
 
+func normalizePluginWebsite(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	for _, character := range value {
+		if character == '\\' || unicode.IsSpace(character) || unicode.IsControl(character) {
+			return "", fmt.Errorf("plugin meta website must be an absolute HTTPS URL")
+		}
+	}
+	if !strings.HasPrefix(strings.ToLower(value), "https://") {
+		return "", fmt.Errorf("plugin meta website must be an absolute HTTPS URL")
+	}
+	authority := value[len("https://"):]
+	if cut := strings.IndexAny(authority, "/?#"); cut >= 0 {
+		authority = authority[:cut]
+	}
+	if authority == "" || strings.ContainsAny(authority, "@%") {
+		return "", fmt.Errorf("plugin meta website must be an absolute HTTPS URL")
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed.Scheme != "https" || parsed.Host == "" || parsed.User != nil {
+		return "", fmt.Errorf("plugin meta website must be an absolute HTTPS URL")
+	}
+	if err := requireASCIIHostname(parsed.Hostname()); err != nil {
+		return "", fmt.Errorf("plugin meta website must be an absolute HTTPS URL")
+	}
+	return value, nil
+}
+
+func normalizePluginBaseURL(value string) (string, error) {
+	if value == "" {
+		return "", nil
+	}
+	parsed, err := url.Parse(value)
+	if err != nil {
+		return "", fmt.Errorf("plugin meta baseUrl must be an absolute HTTP(S) URL")
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if (scheme != "http" && scheme != "https") || parsed.Host == "" || parsed.Opaque != "" {
+		return "", fmt.Errorf("plugin meta baseUrl must be an absolute HTTP(S) URL")
+	}
+	if parsed.User != nil || parsed.RawQuery != "" || parsed.Fragment != "" {
+		return "", fmt.Errorf("plugin meta baseUrl must be an absolute HTTP(S) URL without credentials, query, or fragment")
+	}
+	if err := requireASCIIHostname(parsed.Hostname()); err != nil {
+		return "", fmt.Errorf("plugin meta baseUrl host must be ASCII")
+	}
+	normalized := (&url.URL{
+		Scheme: scheme,
+		Host:   strings.ToLower(parsed.Host),
+		Path:   strings.TrimRight(parsed.Path, "/"),
+	}).String()
+	if len(normalized) > 191 {
+		return "", fmt.Errorf("plugin meta baseUrl must not exceed 191 characters")
+	}
+	return normalized, nil
+}
+
+func requireASCIIHostname(host string) error {
+	if host == "" {
+		return fmt.Errorf("missing host")
+	}
+	for _, character := range host {
+		if character > 127 {
+			return fmt.Errorf("non-ascii host")
+		}
+	}
+	return nil
+}
+
 func normalizeV1Meta(meta *Meta) error {
 	if meta.APIVersion != APIVersion1 {
 		return fmt.Errorf("unsupported plugin apiVersion %d", meta.APIVersion)
@@ -1103,6 +1185,19 @@ func normalizeV1Meta(meta *Meta) error {
 		return fmt.Errorf("plugin meta name is required")
 	}
 	meta.Icon = strings.TrimSpace(meta.Icon)
+	website, err := normalizePluginWebsite(strings.TrimSpace(meta.Website))
+	if err != nil {
+		return err
+	}
+	meta.Website = website
+	baseURL, err := normalizePluginBaseURL(strings.TrimSpace(meta.BaseURL))
+	if err != nil {
+		return err
+	}
+	meta.BaseURL = baseURL
+	if meta.SortPriority < math.MinInt32 || meta.SortPriority > math.MaxInt32 {
+		return fmt.Errorf("plugin meta sortPriority is outside the supported integer range")
+	}
 	if meta.Icon != "" {
 		if utf8.RuneCountInString(meta.Icon) > 128 {
 			return fmt.Errorf("plugin meta icon must not exceed 128 characters")

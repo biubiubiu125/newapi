@@ -56,7 +56,11 @@ import { formatTimestampToDate } from '@/lib/format'
 import { truncateText } from '@/lib/utils'
 
 import { getCodexUsage, updateChannelBalance } from '../api'
-import { CHANNEL_STATUS_CONFIG, MODEL_FETCHABLE_TYPES } from '../constants'
+import {
+  CHANNEL_STATUS_CONFIG,
+  CHANNEL_TYPE_TASK_PLUGIN,
+  MODEL_FETCHABLE_TYPES,
+} from '../constants'
 import {
   formatRelativeTime,
   formatResponseTime,
@@ -79,6 +83,7 @@ import {
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
+import { TaskPluginChannelBadge } from './channel-type-badge'
 import { useChannels } from './channels-provider'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DataTableTagRowActions } from './data-table-tag-row-actions'
@@ -542,8 +547,9 @@ export function BalanceCell({ channel }: { channel: Channel }) {
           />
           <TooltipContent>
             <p>{remainingTooltipLabel}</p>
-            {canQueryBalanceChannel(channel.type) &&
-              channel.type !== 57 && <p>{t('Click to update balance')}</p>}
+            {canQueryBalanceChannel(channel.type) && channel.type !== 57 && (
+              <p>{t('Click to update balance')}</p>
+            )}
           </TooltipContent>
         </Tooltip>
       </div>
@@ -798,6 +804,16 @@ export function useChannelsColumns(
           const typeName = t(typeNameKey)
           const iconName = getChannelTypeIcon(type)
           const channel = row.original as Channel
+          if (type === CHANNEL_TYPE_TASK_PLUGIN) {
+            const pluginKey = parseChannelSettings(
+              channel.setting
+            ).task_plugin_key
+            return (
+              <div className='flex max-w-full min-w-0 items-center gap-2 overflow-hidden'>
+                <TaskPluginChannelBadge pluginKey={pluginKey} />
+              </div>
+            )
+          }
           const isMultiKey = isMultiKeyChannel(channel)
           const multiKeyMode = channel.channel_info?.multi_key_mode ?? 'random'
           const MultiKeyModeIcon =

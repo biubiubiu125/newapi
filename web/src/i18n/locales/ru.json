@@ -4658,6 +4658,8 @@
     "This action will permanently remove 2FA protection from your account.": "Это действие безвозвратно удалит защиту 2FA из вашей учетной записи.",
     "This announcement will be removed from the list.": "Это объявление будет удалено из списка.",
     "This API shortcut will be removed from the list.": "Этот ярлык API будет удален из списка.",
+    "This base URL is not HTTPS. Confirm you trust this host before sending a channel key.": "Этот базовый URL не использует HTTPS. Перед отправкой ключа канала убедитесь, что вы доверяете этому хосту.",
+    "This base URL points at a private or local host. Confirm you trust this host before sending a channel key.": "Этот базовый URL указывает на частный или локальный хост. Перед отправкой ключа канала убедитесь, что вы доверяете этому хосту.",
     "This callback URL updates from the slug field and is the value to register with your provider.": "Этот URL обратного вызова обновляется на основе поля slug; зарегистрируйте его у провайдера.",
     "This channel has no configured models.": "У этого канала нет настроенных моделей.",
     "This channel is not an Ollama channel.": "Этот канал не является каналом Ollama.",

@@ -59,6 +59,20 @@ export function getServerErrorMessageKey(value: unknown): string | null {
   )
 }
 
+export function requireServerSuccess<T>(response: {
+  success?: boolean
+  message?: string
+  data?: T
+}): T {
+  if (response == null || response.success === false) {
+    throw createServerError(response, response?.message)
+  }
+  if (response.data === undefined) {
+    throw createServerError(response, response.message)
+  }
+  return response.data
+}
+
 export function createServerError(value: unknown, fallback?: string): Error {
   const payload = serverErrorPayload(value)
   const key = getServerErrorMessageKey(value)

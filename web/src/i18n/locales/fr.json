@@ -4658,6 +4658,8 @@
     "This action will permanently remove 2FA protection from your account.": "Cette action supprimera définitivement la protection 2FA de votre compte.",
     "This announcement will be removed from the list.": "Cette annonce sera retirée de la liste.",
     "This API shortcut will be removed from the list.": "Ce raccourci API sera retiré de la liste.",
+    "This base URL is not HTTPS. Confirm you trust this host before sending a channel key.": "Cette URL de base n’est pas en HTTPS. Vérifiez que vous faites confiance à cet hôte avant d’envoyer une clé de canal.",
+    "This base URL points at a private or local host. Confirm you trust this host before sending a channel key.": "Cette URL de base pointe vers un hôte privé ou local. Vérifiez que vous faites confiance à cet hôte avant d’envoyer une clé de canal.",
     "This callback URL updates from the slug field and is the value to register with your provider.": "Cette URL de rappel se met à jour à partir du champ slug et doit être enregistrée auprès de votre fournisseur.",
     "This channel has no configured models.": "Ce canal n'a aucun modèle configuré.",
     "This channel is not an Ollama channel.": "Ce canal n'est pas un canal Ollama.",

@@ -24,17 +24,15 @@ import { ProviderBadge } from '@/components/provider-badge'
 import { StatusBadge } from '@/components/status-badge'
 import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
 import type { PluginIconInput } from '@/features/task-plugins/lib/plugin-icon'
-import {
-  ADMIN_PERMISSION_ACTIONS,
-  ADMIN_PERMISSION_RESOURCES,
-  hasPermission,
-} from '@/lib/admin-permissions'
+import { hasPermission } from '@/lib/admin-permissions'
 import { getLobeIcon } from '@/lib/lobe-icon'
-import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getTaskPluginOptions } from '../api'
+import {
+  fetchTaskPluginChannelOptions,
+  taskPluginOptionsQueryKey,
+} from '../api'
 import { CHANNEL_TYPE_OPTIONS, CHANNEL_TYPE_TASK_PLUGIN } from '../constants'
 import { getChannelTypeIcon } from '../lib/channel-utils'
 
@@ -71,14 +69,10 @@ export function ChannelTypeLogo(props: {
 export function TaskPluginChannelBadge(props: { pluginKey?: string }) {
   const { t } = useTranslation()
   const user = useAuthStore((s) => s.auth.user)
-  const canBind = hasPermission(
-    user,
-    ADMIN_PERMISSION_RESOURCES.TASK_PLUGIN,
-    ADMIN_PERMISSION_ACTIONS.BIND
-  )
+  const canBind = hasPermission(user, 'task_plugin', 'bind')
   const query = useQuery({
-    queryKey: ['task-plugin-options'],
-    queryFn: async () => requireServerSuccess(await getTaskPluginOptions()),
+    queryKey: taskPluginOptionsQueryKey,
+    queryFn: fetchTaskPluginChannelOptions,
     enabled: Boolean(props.pluginKey) && canBind,
     staleTime: 60 * 1000,
   })

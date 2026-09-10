@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { getGroups as getUserGroups } from '@/features/users/api'
 import { api, type ApiRequestConfig } from '@/lib/api'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 import type {
   AddChannelRequest,
@@ -42,9 +43,16 @@ import type {
 export type TaskPluginChannelOption = {
   key: string
   name: string
+  icon?: string
+  hasIcon?: boolean
+  baseUrl?: string
+  website?: string
+  sortPriority?: number
   models?: string[] | null
   usageSchema?: unknown
 }
+
+export const taskPluginOptionsQueryKey = ['task-plugin-options'] as const
 
 const channelActionConfig = (
   config: ApiRequestConfig = {}
@@ -656,6 +664,14 @@ export async function getTaskPluginOptions(): Promise<{
 }> {
   const res = await api.get('/api/task_plugin_options')
   return res.data
+}
+
+export async function fetchTaskPluginChannelOptions(): Promise<
+  TaskPluginChannelOption[]
+> {
+  const response = await getTaskPluginOptions()
+  if (Array.isArray(response)) return response
+  return requireServerSuccess(response)
 }
 
 // ============================================================================

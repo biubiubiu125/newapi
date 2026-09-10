@@ -4658,6 +4658,8 @@
     "This action will permanently remove 2FA protection from your account.": "この操作により、アカウントから2FA保護が完全に削除されます。",
     "This announcement will be removed from the list.": "このお知らせはリストから削除されます。",
     "This API shortcut will be removed from the list.": "この API ショートカットはリストから削除されます。",
+    "This base URL is not HTTPS. Confirm you trust this host before sending a channel key.": "このベース URL は HTTPS ではありません。チャネルキーを送る前に、このホストを信頼できるか確認してください。",
+    "This base URL points at a private or local host. Confirm you trust this host before sending a channel key.": "このベース URL はプライベートまたはローカルホストを指しています。チャネルキーを送る前に、このホストを信頼できるか確認してください。",
     "This callback URL updates from the slug field and is the value to register with your provider.": "このコールバック URL は slug フィールドに合わせて更新されます。プロバイダーに登録する値です。",
     "This channel has no configured models.": "このチャンネルには構成されたモデルがありません。",
     "This channel is not an Ollama channel.": "このチャネルはOllamaチャネルではありません。",

@@ -103,6 +103,7 @@ import {
   SecureVerificationDialog,
   useSecureVerification,
 } from '@/features/auth/secure-verification'
+import { PluginIcon } from '@/features/task-plugins/components/plugin-icon'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { useHiddenClickUnlock } from '@/hooks/use-hidden-click-unlock'
 import {
@@ -110,19 +111,19 @@ import {
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
 } from '@/lib/admin-permissions'
-import { getLobeIcon } from '@/lib/lobe-icon'
 import { useAuthStore } from '@/stores/auth-store'
 
 import {
   fetchModels,
+  fetchTaskPluginChannelOptions,
   fetchUpstreamModels,
   getAllModels,
   getChannel,
   getChannelKey,
   getGroups,
   getPrefillGroups,
-  getTaskPluginOptions,
   refreshCodexCredential,
+  taskPluginOptionsQueryKey,
 } from '../../api'
 import {
   ADD_MODE_OPTIONS,
@@ -146,7 +147,6 @@ import {
   transformFormDataToUpdatePayload,
   type ChannelFormValues,
   deduplicateKeys,
-  getChannelTypeIcon,
   getKeyPromptForType,
   parseModelsString,
   formatModelsArray,
@@ -161,11 +161,16 @@ import {
   collectNewDisallowedStatusCodeRedirects,
 } from '../../lib/status-code-risk-guard'
 import {
+  assessBaseUrlTrust,
+  nextTaskPluginBaseUrl,
+} from '../../lib/task-plugin-base-url'
+import {
   canFetchChannelUpstreamModels,
   shouldUseDraftFetchModels,
   supportsChannelUpstreamModelUpdate,
 } from '../../lib/upstream-update-utils'
 import type { Channel } from '../../types'
+import { ChannelTypeLogo } from '../channel-type-badge'
 import { useChannels } from '../channels-provider'
 import { CodexOAuthDialog } from '../dialogs/codex-oauth-dialog'
 import { FetchModelsDialog } from '../dialogs/fetch-models-dialog'
@@ -458,8 +463,8 @@ export function ChannelMutateDrawer({
   const currentSettings = form.watch('settings')
   const { data: taskPluginOptionsData, isLoading: isLoadingTaskPluginOptions } =
     useQuery({
-      queryKey: ['task_plugin_options'],
-      queryFn: getTaskPluginOptions,
+      queryKey: taskPluginOptionsQueryKey,
+      queryFn: fetchTaskPluginChannelOptions,
       enabled: open && currentType === CHANNEL_TYPE_TASK_PLUGIN,
     })
   const supportsUpstreamModelUpdate = supportsChannelUpstreamModelUpdate({
@@ -541,22 +546,44 @@ export function ChannelMutateDrawer({
     const options = CHANNEL_TYPE_OPTIONS.map((option) => ({
       value: String(option.value),
       label: t(option.label),
-      icon: getLobeIcon(`${getChannelTypeIcon(option.value)}.Color`, 16),
+      icon: <ChannelTypeLogo type={option.value} size={16} />,
     }))
     if (!options.some((option) => Number(option.value) === currentType)) {
       options.push({
         value: String(currentType),
         label: `#${currentType}`,
-        icon: getLobeIcon(`${getChannelTypeIcon(currentType)}.Color`, 16),
+        icon: <ChannelTypeLogo type={currentType} size={16} />,
       })
     }
     return options
   }, [currentType, t])
 
+  const previousTaskPluginDefaultRef = useRef<string | undefined>(undefined)
+  const selectedTaskPlugin = useMemo(
+    () =>
+      (taskPluginOptionsData || []).find(
+        (plugin) => plugin.key === currentTaskPluginKey
+      ),
+    [currentTaskPluginKey, taskPluginOptionsData]
+  )
+  useEffect(() => {
+    if (!open || currentType !== CHANNEL_TYPE_TASK_PLUGIN) return
+    const next = nextTaskPluginBaseUrl(
+      form.getValues('base_url'),
+      previousTaskPluginDefaultRef.current,
+      selectedTaskPlugin?.baseUrl
+    )
+    if (next != null) {
+      form.setValue('base_url', next)
+    }
+    previousTaskPluginDefaultRef.current = selectedTaskPlugin?.baseUrl
+  }, [open, currentType, selectedTaskPlugin?.baseUrl, form])
+
   const taskPluginOptions = useMemo(() => {
-    const options = (taskPluginOptionsData?.data || []).map((plugin) => ({
+    const options = (taskPluginOptionsData || []).map((plugin) => ({
       value: plugin.key,
       label: plugin.name ? `${plugin.name} (${plugin.key})` : plugin.key,
+      icon: <PluginIcon plugin={plugin} size={16} />,
     }))
     const selectedTaskPluginKey = currentTaskPluginKey?.trim()
     if (
@@ -566,6 +593,7 @@ export function ChannelMutateDrawer({
       options.unshift({
         value: selectedTaskPluginKey,
         label: `${selectedTaskPluginKey} (current)`,
+        icon: <PluginIcon plugin={{ key: selectedTaskPluginKey }} size={16} />,
       })
     }
     return options
@@ -1272,7 +1300,18 @@ export function ChannelMutateDrawer({
           <SheetHeader className={sideDrawerHeaderClassName()}>
             <SheetTitle className='flex items-center gap-3'>
               <span className='bg-muted flex size-9 shrink-0 items-center justify-center rounded-md'>
-                {getLobeIcon(`${getChannelTypeIcon(currentType)}.Color`, 22)}
+                <ChannelTypeLogo
+                  type={currentType}
+                  plugin={
+                    currentType === CHANNEL_TYPE_TASK_PLUGIN
+                      ? (selectedTaskPlugin ??
+                        (currentTaskPluginKey
+                          ? { key: currentTaskPluginKey }
+                          : undefined))
+                      : undefined
+                  }
+                  size={22}
+                />
               </span>
               <span>
                 {isEditing ? t('Edit Channel') : t('Create Channel')}
@@ -1345,6 +1384,7 @@ export function ChannelMutateDrawer({
                                 searchPlaceholder={t('Search channel type...')}
                                 emptyText={t('No channel type found.')}
                                 allowCustomValue
+                                showSelectedIcon
                               />
                             </FormControl>
                             <FormMessage />
@@ -2009,6 +2049,31 @@ export function ChannelMutateDrawer({
                                 {...field}
                               />
                             </FormControl>
+                            {currentType === CHANNEL_TYPE_TASK_PLUGIN &&
+                              (() => {
+                                const trust = assessBaseUrlTrust(field.value)
+                                if (!trust) return null
+                                const messages = [
+                                  trust.plainHttp
+                                    ? t(
+                                        'This base URL is not HTTPS. Confirm you trust this host before sending a channel key.'
+                                      )
+                                    : '',
+                                  trust.privateHost
+                                    ? t(
+                                        'This base URL points at a private or local host. Confirm you trust this host before sending a channel key.'
+                                      )
+                                    : '',
+                                ].filter(Boolean)
+                                if (messages.length === 0) return null
+                                return (
+                                  <Alert>
+                                    <AlertDescription>
+                                      {messages.join(' ')}
+                                    </AlertDescription>
+                                  </Alert>
+                                )
+                              })()}
                             <FormDescription>
                               {t(
                                 'Custom API base URL. For official channels, New API has built-in addresses. Only fill this for third-party proxy sites or special endpoints. Do not add /v1 or trailing slash.'
@@ -2082,12 +2147,13 @@ export function ChannelMutateDrawer({
                                       ? t('Loading task plugins...')
                                       : t('Select task plugin')
                                   }
-                                  searchPlaceholder={t(
-                                    'Search task plugin...'
+                                  searchPlaceholder={t('Search task plugin...')}
+                                  emptyText={t(
+                                    'No registered task plugin found.'
                                   )}
-                                  emptyText={t('No registered task plugin found.')}
                                   allowCustomValue={false}
                                   openOnFocus
+                                  showSelectedIcon
                                 />
                               </FormControl>
                               <FormDescription>
@@ -3197,7 +3263,9 @@ export function ChannelMutateDrawer({
                               )}
                             />
 
-                            {OPENAI_FIELD_PASSTHROUGH_TYPES.has(currentType) && (
+                            {OPENAI_FIELD_PASSTHROUGH_TYPES.has(
+                              currentType
+                            ) && (
                               <>
                                 <FormField
                                   control={form.control}
@@ -3307,7 +3375,9 @@ export function ChannelMutateDrawer({
                               </>
                             )}
 
-                            {CLAUDE_FIELD_PASSTHROUGH_TYPES.has(currentType) && (
+                            {CLAUDE_FIELD_PASSTHROUGH_TYPES.has(
+                              currentType
+                            ) && (
                               <>
                                 <FormField
                                   control={form.control}

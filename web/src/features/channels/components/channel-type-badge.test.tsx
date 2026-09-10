@@ -23,11 +23,14 @@ import { afterEach, beforeEach, expect, test, vi } from 'vitest'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { getTaskPluginOptions } from '../api'
+import { fetchTaskPluginChannelOptions } from '../api'
 import { CHANNEL_TYPE_TASK_PLUGIN } from '../constants'
 import { ChannelTypeLogo, TaskPluginChannelBadge } from './channel-type-badge'
 
-vi.mock('../api', () => ({ getTaskPluginOptions: vi.fn() }))
+vi.mock('../api', () => ({
+  fetchTaskPluginChannelOptions: vi.fn(),
+  taskPluginOptionsQueryKey: ['task-plugin-options'],
+}))
 vi.mock('@/lib/lobe-icon', () => ({
   getLobeIcon: (name: string) => <svg data-testid={name} />,
 }))
@@ -45,7 +48,7 @@ beforeEach(() => {
       user: { id: 1, username: 'root', role: ROLE.SUPER_ADMIN },
     },
   })
-  vi.mocked(getTaskPluginOptions).mockReset()
+  vi.mocked(fetchTaskPluginChannelOptions).mockReset()
 })
 afterEach(() => {
   cleanup()
@@ -62,7 +65,7 @@ function ChannelTypeHarness(props: { pluginKey?: string }) {
 }
 
 test('identifies a bound plugin by its metadata and retains the task-plugin type', async () => {
-  vi.mocked(getTaskPluginOptions).mockResolvedValue([
+  vi.mocked(fetchTaskPluginChannelOptions).mockResolvedValue([
     { key: 'incho', name: 'Incho AI', icon: 'text:IA', models: [] },
   ])
   render(<ChannelTypeHarness pluginKey='incho' />)
@@ -73,7 +76,7 @@ test('identifies a bound plugin by its metadata and retains the task-plugin type
 })
 
 test('keeps the binding key when the plugin is unavailable', async () => {
-  vi.mocked(getTaskPluginOptions).mockResolvedValue([])
+  vi.mocked(fetchTaskPluginChannelOptions).mockResolvedValue([])
   render(<ChannelTypeHarness pluginKey='removed-plugin' />)
   expect(await screen.findByText('removed-plugin')).toBeInTheDocument()
   expect(screen.queryByTestId('OpenAI.Color')).not.toBeInTheDocument()
@@ -88,7 +91,7 @@ test('does not request plugin metadata without bind permission', () => {
   })
   render(<ChannelTypeHarness pluginKey='incho' />)
   expect(screen.getByText('incho')).toBeInTheDocument()
-  expect(getTaskPluginOptions).not.toHaveBeenCalled()
+  expect(fetchTaskPluginChannelOptions).not.toHaveBeenCalled()
 })
 
 test('unbound task channels use a neutral icon while regular providers keep their logo', () => {

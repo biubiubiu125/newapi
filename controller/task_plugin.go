@@ -628,7 +628,7 @@ func UpdateTaskPluginMarketplaceSources(c *gin.Context) {
 func GetTaskPluginOptions(c *gin.Context) {
 	snapshot := jsplugin.DefaultRegistry.Snapshot()
 	seen := make(map[string]bool)
-	options := make([]gin.H, 0, len(snapshot.Factory)+len(snapshot.Override))
+	listed := make([]jsplugin.Meta, 0, len(snapshot.Factory)+len(snapshot.Override))
 	for layer, metas := range [][]jsplugin.Meta{snapshot.Override, snapshot.Factory} {
 		for _, meta := range metas {
 			if seen[meta.Key] {
@@ -644,16 +644,33 @@ func GetTaskPluginOptions(c *gin.Context) {
 				continue
 			}
 			seen[meta.Key] = true
-			options = append(options, gin.H{
-				"key":         meta.Key,
-				"name":        meta.Name,
-				"models":      meta.Models,
-				"usageSchema": meta.UsageSchema,
-			})
+			listed = append(listed, meta)
 		}
 	}
-	sort.Slice(options, func(i, j int) bool { return options[i]["key"].(string) < options[j]["key"].(string) })
+	sortTaskPluginBindOptions(listed)
+	options := make([]gin.H, 0, len(listed))
+	for _, meta := range listed {
+		options = append(options, gin.H{
+			"key":          meta.Key,
+			"name":         meta.Name,
+			"icon":         meta.Icon,
+			"baseUrl":      meta.BaseURL,
+			"website":      meta.Website,
+			"sortPriority": meta.SortPriority,
+			"models":       meta.Models,
+			"usageSchema":  meta.UsageSchema,
+		})
+	}
 	common.ApiSuccess(c, options)
+}
+
+func sortTaskPluginBindOptions(metas []jsplugin.Meta) {
+	sort.SliceStable(metas, func(i, j int) bool {
+		if metas[i].SortPriority != metas[j].SortPriority {
+			return metas[i].SortPriority > metas[j].SortPriority
+		}
+		return metas[i].Key < metas[j].Key
+	})
 }
 
 var taskPluginSyncState = struct {

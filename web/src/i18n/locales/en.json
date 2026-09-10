@@ -4658,6 +4658,8 @@
     "This action will permanently remove 2FA protection from your account.": "This action will permanently remove 2FA protection from your account.",
     "This announcement will be removed from the list.": "This announcement will be removed from the list.",
     "This API shortcut will be removed from the list.": "This API shortcut will be removed from the list.",
+    "This base URL is not HTTPS. Confirm you trust this host before sending a channel key.": "This base URL is not HTTPS. Confirm you trust this host before sending a channel key.",
+    "This base URL points at a private or local host. Confirm you trust this host before sending a channel key.": "This base URL points at a private or local host. Confirm you trust this host before sending a channel key.",
     "This callback URL updates from the slug field and is the value to register with your provider.": "This callback URL updates from the slug field and is the value to register with your provider.",
     "This channel has no configured models.": "This channel has no configured models.",
     "This channel is not an Ollama channel.": "This channel is not an Ollama channel.",

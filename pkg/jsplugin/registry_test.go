@@ -108,6 +108,62 @@ export function parseTaskResult() { return {}; }
 	require.ErrorContains(t, err, "must not contain control characters")
 }
 
+func TestRegistryDecodesAndValidatesWebsiteBaseURLAndSortPriority(t *testing.T) {
+	accepted, err := CompilePlugin(
+		routingTestPluginSource(
+			"display-ok",
+			0,
+			`["model"]`,
+			`website: "https://example.com/plugin", baseUrl: "https://API.Example.com/v1/", sortPriority: 10,`,
+			"",
+		),
+		Options{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "https://example.com/plugin", accepted.Meta.Website)
+	assert.Equal(t, "https://api.example.com/v1", accepted.Meta.BaseURL)
+	assert.Equal(t, 10, accepted.Meta.SortPriority)
+
+	absent, err := CompilePlugin(routingTestPluginSource("display-absent", 0, `["model"]`, "", ""), Options{})
+	require.NoError(t, err)
+	assert.Empty(t, absent.Meta.Website)
+	assert.Empty(t, absent.Meta.BaseURL)
+	assert.Equal(t, 0, absent.Meta.SortPriority)
+
+	loopback, err := CompilePlugin(
+		routingTestPluginSource("display-loopback", 0, `["model"]`, `baseUrl: "http://127.0.0.1:8000/",`, ""),
+		Options{},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "http://127.0.0.1:8000", loopback.Meta.BaseURL)
+
+	meta := Meta{
+		APIVersion: 1,
+		Key:        "display-url",
+		Name:       "Display URL",
+		Version:    "1.0.0",
+		Author:     AuthorMeta{Name: "Test"},
+		Models:     []string{"model"},
+		FetchMode:  "per_task",
+	}
+	meta.Website = "http://example.com/plugin"
+	require.ErrorContains(t, ValidateV1Meta(meta), "website")
+	meta.Website = "https://user:pass@example.com/plugin"
+	require.ErrorContains(t, ValidateV1Meta(meta), "website")
+	meta.Website = "https://example.com/plugin"
+	meta.BaseURL = "https://user:pass@api.example.com"
+	require.ErrorContains(t, ValidateV1Meta(meta), "baseUrl")
+	meta.BaseURL = "https://api.example.com/v1?x=1"
+	require.ErrorContains(t, ValidateV1Meta(meta), "baseUrl")
+	meta.BaseURL = "https://api.example.com/v1#frag"
+	require.ErrorContains(t, ValidateV1Meta(meta), "baseUrl")
+	meta.BaseURL = "https://example.com/" + strings.Repeat("a", 180)
+	require.ErrorContains(t, ValidateV1Meta(meta), "191")
+	meta.BaseURL = "https://api.example.com/v1"
+	meta.Website = "https://例子.example"
+	require.ErrorContains(t, ValidateV1Meta(meta), "website")
+}
+
 func TestRegistryRequiresValidPluginAuthor(t *testing.T) {
 	missing := strings.Replace(
 		routingTestPluginSource("missing-author", 0, `["model"]`, "", ""),

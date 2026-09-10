@@ -4658,6 +4658,8 @@
     "This action will permanently remove 2FA protection from your account.": "Hành động này sẽ vĩnh viễn gỡ bỏ tính năng bảo vệ",
     "This announcement will be removed from the list.": "Thông báo này sẽ bị xóa khỏi danh sách.",
     "This API shortcut will be removed from the list.": "Lối tắt API này sẽ bị xóa khỏi danh sách.",
+    "This base URL is not HTTPS. Confirm you trust this host before sending a channel key.": "URL gốc này không dùng HTTPS. Hãy xác nhận bạn tin tưởng máy chủ này trước khi gửi khóa kênh.",
+    "This base URL points at a private or local host. Confirm you trust this host before sending a channel key.": "URL gốc này trỏ tới máy chủ nội bộ hoặc local. Hãy xác nhận bạn tin tưởng máy chủ này trước khi gửi khóa kênh.",
     "This callback URL updates from the slug field and is the value to register with your provider.": "URL callback này cập nhật theo trường slug và là giá trị cần đăng ký với nhà cung cấp.",
     "This channel has no configured models.": "Kênh này không có mô hình nào được cấu hình.",
     "This channel is not an Ollama channel.": "Kênh này không phải là kênh Ollama.",

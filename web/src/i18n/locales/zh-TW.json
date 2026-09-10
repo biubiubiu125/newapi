@@ -4658,6 +4658,8 @@
     "This action will permanently remove 2FA protection from your account.": "此操作將永久移除您用戶的 2FA 保護。",
     "This announcement will be removed from the list.": "此公告將從列表中移除。",
     "This API shortcut will be removed from the list.": "此 API 快捷方式將從列表中移除。",
+    "This base URL is not HTTPS. Confirm you trust this host before sending a channel key.": "此基礎網址不是 HTTPS。把金鑰發給該主機前請確認你信任它。",
+    "This base URL points at a private or local host. Confirm you trust this host before sending a channel key.": "此基礎網址指向私網或本機。把金鑰發給該主機前請確認你信任它。",
     "This callback URL updates from the slug field and is the value to register with your provider.": "此回呼 URL 會依 slug 欄位即時更新，請將它註冊到你的提供商。",
     "This channel has no configured models.": "該渠道沒有設定模型。",
     "This channel is not an Ollama channel.": "該渠道不是 Ollama 渠道。",
