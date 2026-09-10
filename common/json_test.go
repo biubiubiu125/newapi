@@ -48,3 +48,9 @@ func TestDecodeJsonRejectsTrailingValues(t *testing.T) {
 	require.Error(t, DecodeJson(bytes.NewBufferString(`{"ok":true}{"extra":true}`), &value))
 	require.NoError(t, DecodeJson(bytes.NewBufferString("{\"ok\":true} \n\t"), &value))
 }
+
+func TestHostJSONCodecSortsMapKeys(t *testing.T) {
+	encoded, err := Marshal(map[string]any{"z": 1, "a": 2, "m": 3})
+	require.NoError(t, err)
+	require.Equal(t, `{"a":2,"m":3,"z":1}`, string(encoded))
+}
