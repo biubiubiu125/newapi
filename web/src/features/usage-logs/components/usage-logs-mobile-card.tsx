@@ -42,6 +42,7 @@ import { LOG_TYPE_ENUM } from '../constants'
 import type { UsageLog } from '../data/schema'
 import { parseLogOther } from '../lib/format'
 import { getLogUserDisplayName, openLogUserInfo } from '../lib/log-user'
+import { CommonLogMobileCard } from './common-log-mobile-card'
 import {
   getLogTypeConfig,
   isDisplayableLogType,
@@ -461,7 +462,11 @@ export function UsageLogsMobileList<TData>({
     t('No usage logs available. Logs will appear here once API calls are made.')
 
   if (isLoading) {
-    return <UsageLogsMobileSkeleton />
+    return (
+      <div role='status' aria-label={t('Loading')} aria-busy='true'>
+        <UsageLogsMobileSkeleton />
+      </div>
+    )
   }
 
   const rows = table.getRowModel().rows
@@ -502,7 +507,12 @@ export function UsageLogsMobileList<TData>({
               tintClass
             )}
           >
-            {logCategory === 'common' && <CommonLogsCard cells={cells} />}
+            {logCategory === 'common' && (
+              <CommonLogMobileCard
+                log={row.original as UsageLog}
+                cells={cells}
+              />
+            )}
             {logCategory === 'task' && <TaskLogsCard cells={cells} />}
             {logCategory === 'drawing' && <DrawingLogsCard cells={cells} />}
           </div>
