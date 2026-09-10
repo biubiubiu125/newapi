@@ -16,18 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { memo } from 'react'
+import { memo, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
 
 import { getSuccessRateDotClass } from '@/features/performance-metrics/lib/format'
+import type { SuccessRatePoint } from '@/features/performance-metrics/types'
 import { cn } from '@/lib/utils'
 
 export type ModelPerfBadgeData = {
   avg_latency_ms: number
   success_rate: number
   avg_tps: number
-  recent_success_rates?: number[]
+  recent_success_series?: SuccessRatePoint[]
 }
+
+const STATUS_SLOTS = Array.from({ length: 24 }, (_, slot) => slot)
 
 export interface ModelPerfBadgeProps extends React.HTMLAttributes<HTMLDivElement> {
   perf: ModelPerfBadgeData | undefined
@@ -61,15 +64,17 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
 
   const { avg_latency_ms, avg_tps, success_rate } = props.perf
 
-  const recentRates =
-    props.perf.recent_success_rates?.filter((rate) => Number.isFinite(rate)) ??
-    []
-  const statusRates =
-    recentRates.length > 0 ? recentRates.slice(-3) : [success_rate]
-  const statusBars = [
-    ...Array(Math.max(0, 3 - statusRates.length)).fill(null),
-    ...statusRates,
-  ].slice(-3)
+  const statusRates = useMemo(() => {
+    const currentHourStart = Math.floor(Date.now() / 1000 / 3600) * 3600
+    const ratesByHour = new Map<number, number>()
+    for (const point of props.perf.recent_success_series ?? []) {
+      ratesByHour.set(point.ts, point.success_rate)
+    }
+    return STATUS_SLOTS.map((slot) => {
+      const hourStart = currentHourStart - (23 - slot) * 3600
+      return ratesByHour.get(hourStart)
+    })
+  }, [props.perf.recent_success_series])
 
   return (
     <div
@@ -101,23 +106,24 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
         <div className='text-muted-foreground/55 truncate text-[10px] leading-4'>
           {t('Status short')}
         </div>
-        <div className='flex h-4 items-center justify-end gap-0.5'>
-          {statusBars.map((rate, index) => (
-            <span
-              key={`${index}-${rate ?? 'empty'}`}
-              className={cn(
-                'w-1 rounded-full',
-                index === 0 && 'h-2',
-                index === 1 && 'h-2.5',
-                index === 2 && 'h-3',
-                rate == null
-                  ? index === 0
-                    ? 'bg-muted-foreground/10'
+        <div className='flex h-4 items-center justify-end gap-px'>
+          {STATUS_SLOTS.map((slot) => {
+            const rate = statusRates[slot]
+            return (
+              <span
+                key={slot}
+                className={cn(
+                  'h-3 w-[2px] rounded-full',
+                  rate != null &&
+                    Number.isFinite(rate) &&
+                    rate >= 0 &&
+                    rate <= 100
+                    ? getSuccessRateDotClass(rate)
                     : 'bg-muted-foreground/15'
-                  : getSuccessRateDotClass(rate)
-              )}
-            />
-          ))}
+                )}
+              />
+            )
+          })}
         </div>
       </div>
     </div>
