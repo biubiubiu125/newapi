@@ -52,6 +52,9 @@ export interface Model {
   quota_types?: number[]
   matched_models?: string[]
   matched_count?: number
+  has_metadata?: boolean
+  configured_channel_count?: number
+  square_state?: 'visible' | 'unavailable' | 'hidden' | 'partial'
 }
 
 /**
@@ -87,12 +90,16 @@ export interface PrefillGroup {
 /**
  * Get models list parameters
  */
+export type ModelSquareState = 'visible' | 'unavailable' | 'hidden' | 'partial'
+
 export interface GetModelsParams {
   p?: number
   page_size?: number
   vendor?: string // vendor ID to filter by
   status?: string // filter by status
   sync_official?: string // filter by sync_official status
+  square_state?: ModelSquareState
+  include_channel_models?: boolean
 }
 
 /**
@@ -105,6 +112,8 @@ export interface SearchModelsParams {
   sync_official?: string // filter by sync_official status
   p?: number
   page_size?: number
+  square_state?: ModelSquareState
+  include_channel_models?: boolean
 }
 
 /**

@@ -25,14 +25,22 @@ import {
   MODELS_DEFAULT_SECTION,
 } from '@/features/models/section-registry'
 import { ROLE } from '@/lib/roles'
-import { requireSidebarModule } from '@/lib/sidebar-route-guard'
+import { useAuthStore } from '@/stores/auth-store'
 
 const modelsSearchSchema = z.object({
+  vPage: z.number().optional().catch(1),
+  vPageSize: z.number().optional().catch(20),
+  vFilter: z.string().optional().catch(''),
+  vAssociation: z.array(z.string()).optional().catch([]),
   page: z.number().optional().catch(1),
   pageSize: z.number().optional().catch(10),
   filter: z.string().optional().catch(''),
   vendor: z.array(z.string()).optional().catch([]),
   status: z.array(z.string()).optional().catch([]),
+  square_state: z
+    .array(z.enum(['visible', 'unavailable', 'hidden', 'partial']))
+    .optional()
+    .catch([]),
   sync: z.array(z.string()).optional().catch([]),
   dPage: z.number().optional().catch(1),
   dPageSize: z.number().optional().catch(10),
@@ -41,12 +49,14 @@ const modelsSearchSchema = z.object({
 })
 
 export const Route = createFileRoute('/_authenticated/models/$section')({
-  beforeLoad: async ({ params }) => {
-    await requireSidebarModule({
-      section: 'admin',
-      module: 'models',
-      minRole: ROLE.ADMIN,
-    })
+  beforeLoad: ({ params }) => {
+    const { auth } = useAuthStore.getState()
+
+    if (!auth.user || auth.user.role < ROLE.ADMIN) {
+      throw redirect({
+        to: '/403',
+      })
+    }
 
     const validSections = MODELS_SECTION_IDS as unknown as string[]
     if (!validSections.includes(params.section)) {

@@ -71,7 +71,14 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
+import {
+  Tabs,
+  TabsContent,
+  TabsList,
+  TabsTrigger,
+} from '@/components/ui/tabs'
 import { Textarea } from '@/components/ui/textarea'
+import { ModelPricingPanel } from '@/features/model-pricing/model-pricing-panel'
 import {
   useSystemOptions,
   getOptionValue,
@@ -85,6 +92,7 @@ import { createModel, updateModel, getModel, getVendors } from '../../api'
 import { getNameRuleOptions, ENDPOINT_TEMPLATES } from '../../constants'
 import { modelsQueryKeys, vendorsQueryKeys, parseModelTags } from '../../lib'
 import type { Model } from '../../types'
+import { ModelConnections } from '../model-connections'
 
 // Extended schema for ratio configuration (internal form state only)
 const extendedModelFormSchema = z.object({
@@ -116,16 +124,20 @@ type ModelMutateDrawerProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
   currentRow?: Model | null
+  initialSection?: string
 }
 
 export function ModelMutateDrawer({
   open,
   onOpenChange,
   currentRow,
+  initialSection = 'metadata',
 }: ModelMutateDrawerProps) {
   const { t } = useTranslation()
   const queryClient = useQueryClient()
   const isEditing = Boolean(currentRow?.id)
+  const hasModelName = Boolean(currentRow?.model_name)
+  const [section, setSection] = useState(initialSection)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [pricingMode, setPricingMode] = useState<PricingMode>('per-token')
   const [pricingSubMode, setPricingSubMode] = useState<PricingSubMode>('ratio')
@@ -274,6 +286,11 @@ export function ModelMutateDrawer({
       form.setValue('completionRatio', '')
     }
   }
+
+  useEffect(() => {
+    if (!open) return
+    setSection(initialSection)
+  }, [open, initialSection, currentRow?.id, currentRow?.model_name])
 
   // Load model data for editing and ratio configuration
   useEffect(() => {
@@ -659,8 +676,8 @@ export function ModelMutateDrawer({
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent className={sideDrawerContentClassName('sm:max-w-2xl')}>
         <SheetHeader className={sideDrawerHeaderClassName()}>
-          <SheetTitle>
-            {isEditing ? t('Edit Model') : t('Create Model')}
+          <SheetTitle className='pr-6 break-all'>
+            {hasModelName ? currentRow?.model_name : t('Create Model')}
           </SheetTitle>
           <SheetDescription>
             {isEditing
@@ -671,6 +688,24 @@ export function ModelMutateDrawer({
           </SheetDescription>
         </SheetHeader>
 
+        <Tabs
+          value={section}
+          onValueChange={setSection}
+          className='flex min-h-0 flex-1 flex-col'
+        >
+          <TabsList className='mx-4 w-auto self-start'>
+            <TabsTrigger value='metadata'>{t('Metadata')}</TabsTrigger>
+            <TabsTrigger value='pricing' disabled={!hasModelName}>
+              {t('Pricing')}
+            </TabsTrigger>
+            <TabsTrigger value='connections' disabled={!hasModelName}>
+              {t('Channels and groups')}
+            </TabsTrigger>
+          </TabsList>
+          <TabsContent
+            value='metadata'
+            className='flex min-h-0 flex-1 flex-col overflow-hidden'
+          >
         <Form {...form}>
           <form
             id='model-form'
@@ -1306,6 +1341,22 @@ export function ModelMutateDrawer({
             </SideDrawerSection>
           </form>
         </Form>
+          </TabsContent>
+          <TabsContent
+            value='pricing'
+            className='flex min-h-0 flex-1 flex-col overflow-hidden'
+          >
+            {hasModelName && currentRow?.model_name ? (
+              <ModelPricingPanel modelName={currentRow.model_name} />
+            ) : null}
+          </TabsContent>
+          <TabsContent
+            value='connections'
+            className='flex min-h-0 flex-1 flex-col overflow-hidden'
+          >
+            {currentRow ? <ModelConnections model={currentRow} /> : null}
+          </TabsContent>
+        </Tabs>
 
         <SheetFooter className={sideDrawerFooterClassName()}>
           <SheetClose
@@ -1315,7 +1366,7 @@ export function ModelMutateDrawer({
           </SheetClose>
           <Button form='model-form' type='submit' disabled={isSubmitting}>
             {isSubmitting && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
-            {isEditing ? t('Update Model') : t('Save changes')}
+            {isEditing ? t('Update Model') : t('Save metadata')}
           </Button>
         </SheetFooter>
       </SheetContent>

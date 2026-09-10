@@ -19,6 +19,16 @@ For commercial licensing, please contact support@quantumnous.com
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
 export const STATIC_I18N_KEYS = [
+  // Model listing channel-state labels used via t(state.label/description)
+  'No matching channels',
+  'Metadata only',
+  'Available channels: {{count}}',
+  'No configured channel models match this metadata rule.',
+  'No channel is configured. This model will not appear in the model square.',
+  'No channel is currently available. This model will not appear in the model square.',
+  'Listing also depends on metadata visibility and the user’s group access.',
+  'Add metadata to all selected models first.',
+
   // Header navigation
   'Home',
   'Console',

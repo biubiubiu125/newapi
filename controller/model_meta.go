@@ -16,48 +16,61 @@ import (
 
 // GetAllModelsMeta 获取模型列表（分页）
 func GetAllModelsMeta(c *gin.Context) {
-
-	pageInfo := common.GetPageQuery(c)
-	status := c.Query("status")
-	syncOfficial := c.Query("sync_official")
-	modelsMeta, total, err := model.SearchModels("", "", status, syncOfficial, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	// 批量填充附加字段，提升列表接口性能
-	enrichModels(modelsMeta)
-
-	// 统计供应商计数（全部数据，不受分页影响）
-	vendorCounts, _ := model.GetVendorModelCounts()
-
-	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(modelsMeta)
-	common.ApiSuccess(c, gin.H{
-		"items":         modelsMeta,
-		"total":         total,
-		"page":          pageInfo.GetPage(),
-		"page_size":     pageInfo.GetPageSize(),
-		"vendor_counts": vendorCounts,
-	})
+	listModelsMeta(c, "", "")
 }
 
 // SearchModelsMeta 搜索模型列表
 func SearchModelsMeta(c *gin.Context) {
+	listModelsMeta(c, c.Query("keyword"), c.Query("vendor"))
+}
 
-	keyword := c.Query("keyword")
-	vendor := c.Query("vendor")
-	status := c.Query("status")
-	syncOfficial := c.Query("sync_official")
+func listModelsMeta(c *gin.Context, keyword, vendor string) {
+	squareState := model.ModelSquareState(c.Query("square_state"))
+	switch squareState {
+	case "", model.ModelSquareVisible, model.ModelSquareUnavailable, model.ModelSquareHidden, model.ModelSquarePartial:
+	default:
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid model square state"})
+		return
+	}
+
 	pageInfo := common.GetPageQuery(c)
-
-	modelsMeta, total, err := model.SearchModels(keyword, vendor, status, syncOfficial, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	if squareState != "" && (pageInfo.GetPage() < 1 || pageInfo.GetPageSize() < 1) {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid pagination"})
+		return
+	}
+	offset, limit := pageInfo.GetStartIdx(), pageInfo.GetPageSize()
+	if squareState != "" {
+		offset, limit = 0, -1
+	}
+	search := model.SearchModels
+	if c.Query("include_channel_models") == "true" {
+		search = model.SearchModelsWithChannels
+	}
+	modelsMeta, total, err := search(keyword, vendor, c.Query("status"), c.Query("sync_official"), offset, limit)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	// 批量填充附加字段，提升列表接口性能
-	enrichModels(modelsMeta)
+	if err := enrichModels(modelsMeta); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if squareState != "" {
+		filtered := make([]*model.Model, 0, len(modelsMeta))
+		for _, metadata := range modelsMeta {
+			if metadata.SquareState == squareState {
+				filtered = append(filtered, metadata)
+			}
+		}
+		total = int64(len(filtered))
+		start := len(filtered)
+		if pageInfo.GetPage()-1 <= len(filtered)/pageInfo.GetPageSize() {
+			start = (pageInfo.GetPage() - 1) * pageInfo.GetPageSize()
+		}
+		end := min(start+pageInfo.GetPageSize(), len(filtered))
+		modelsMeta = filtered[start:end]
+	}
+
 	vendorCounts, _ := model.GetVendorModelCounts()
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(modelsMeta)
@@ -83,7 +96,10 @@ func GetModelMeta(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	enrichModels([]*model.Model{&m})
+	if err := enrichModels([]*model.Model{&m}); err != nil {
+		common.ApiError(c, err)
+		return
+	}
 	common.ApiSuccess(c, &m)
 }
 
@@ -129,6 +145,7 @@ func CreateModelMeta(c *gin.Context) {
 		return
 	}
 	model.RefreshPricing()
+	m.HasMetadata = m.Id > 0
 	common.ApiSuccess(c, &m)
 }
 
@@ -173,6 +190,7 @@ func UpdateModelMeta(c *gin.Context) {
 		}
 	}
 	model.RefreshPricing()
+	m.HasMetadata = m.Id > 0
 	common.ApiSuccess(c, &m)
 }
 
@@ -241,9 +259,35 @@ func BatchDeleteModelMeta(c *gin.Context) {
 }
 
 // enrichModels 批量填充附加信息：端点、渠道、分组、计费类型，避免 N+1 查询
-func enrichModels(models []*model.Model) {
+func enrichModels(models []*model.Model) error {
 	if len(models) == 0 {
-		return
+		return nil
+	}
+	configured, err := model.GetConfiguredModelChannels()
+	if err != nil {
+		return err
+	}
+	connections, err := model.GetModelConnections()
+	if err != nil {
+		return err
+	}
+	if err := model.FillModelSquareStates(models, configured, connections); err != nil {
+		return err
+	}
+	for _, metadata := range models {
+		if metadata == nil {
+			continue
+		}
+		metadata.HasMetadata = metadata.Id > 0
+		channelIDs := make(map[int]struct{})
+		for name, ids := range configured {
+			if metadata.MatchesName(name) {
+				for _, id := range ids {
+					channelIDs[id] = struct{}{}
+				}
+			}
+		}
+		metadata.ConfiguredChannelCount = len(channelIDs)
 	}
 
 	// 1) 拆分精确与规则匹配
@@ -283,7 +327,7 @@ func enrichModels(models []*model.Model) {
 	}
 
 	if len(ruleIndices) == 0 {
-		return
+		return nil
 	}
 
 	// 4) 一次性读取定价缓存，内存匹配所有规则模型
@@ -298,16 +342,7 @@ func enrichModels(models []*model.Model) {
 	for _, p := range pricings {
 		for _, idx := range ruleIndices {
 			mm := models[idx]
-			var matched bool
-			switch mm.NameRule {
-			case model.NameRulePrefix:
-				matched = strings.HasPrefix(p.ModelName, mm.ModelName)
-			case model.NameRuleSuffix:
-				matched = strings.HasSuffix(p.ModelName, mm.ModelName)
-			case model.NameRuleContains:
-				matched = strings.Contains(p.ModelName, mm.ModelName)
-			}
-			if !matched {
+			if !mm.MatchesName(p.ModelName) {
 				continue
 			}
 			matchedNamesByIdx[idx] = append(matchedNamesByIdx[idx], p.ModelName)
@@ -407,4 +442,5 @@ func enrichModels(models []*model.Model) {
 		mm.MatchedModels = names
 		mm.MatchedCount = len(names)
 	}
+	return nil
 }
