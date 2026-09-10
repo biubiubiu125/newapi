@@ -34,6 +34,7 @@ import { ModelsDialogs } from './components/models-dialogs'
 import { ModelsPrimaryButtons } from './components/models-primary-buttons'
 import { ModelsProvider, useModels } from './components/models-provider'
 import { ModelsTable } from './components/models-table'
+import { VendorsTable } from './components/vendors-table'
 import { useModelDeploymentSettings } from './hooks/use-model-deployment-settings'
 import { deploymentsQueryKeys } from './lib'
 import {
@@ -44,19 +45,25 @@ import {
 
 const route = getRouteApi('/_authenticated/models/$section')
 
-const SECTION_META: Record<ModelsSectionId, { titleKey: string }> = {
+const SECTION_META: Record<
+  ModelsSectionId,
+  { titleKey: string; tabKey: string }
+> = {
   metadata: {
-    titleKey: 'Metadata',
+    titleKey: 'Model management',
+    tabKey: 'Models',
   },
+  vendors: { titleKey: 'Vendor management', tabKey: 'Vendors' },
   deployments: {
     titleKey: 'Deployments',
+    tabKey: 'Deployments',
   },
 }
 
 function ModelsContent() {
   const { t } = useTranslation()
   const navigate = useNavigate()
-  const { tabCategory, setTabCategory } = useModels()
+  const { tabCategory, setTabCategory, setOpen, setCurrentVendor } = useModels()
   const params = route.useParams()
   const activeSection = (params.section ??
     MODELS_DEFAULT_SECTION) as ModelsSectionId
@@ -90,6 +97,17 @@ function ModelsContent() {
         <SectionPageLayout.Actions>
           {activeSection === 'metadata' ? (
             <ModelsPrimaryButtons />
+          ) : activeSection === 'vendors' ? (
+            <Button
+              size='sm'
+              onClick={() => {
+                setCurrentVendor(null)
+                setOpen('create-vendor')
+              }}
+            >
+              <Plus className='size-4' />
+              {t('Add Vendor')}
+            </Button>
           ) : (
             <Button onClick={() => setCreateDeploymentOpen(true)} size='sm'>
               <Plus className='h-4 w-4' />
@@ -103,13 +121,15 @@ function ModelsContent() {
               <TabsList className='max-w-full flex-wrap justify-start group-data-horizontal/tabs:h-auto'>
                 {MODELS_SECTION_IDS.map((section) => (
                   <TabsTrigger key={section} value={section}>
-                    {t(SECTION_META[section].titleKey)}
+                    {t(SECTION_META[section].tabKey)}
                   </TabsTrigger>
                 ))}
               </TabsList>
             </Tabs>
             {activeSection === 'metadata' ? (
               <ModelsTable />
+            ) : activeSection === 'vendors' ? (
+              <VendorsTable />
             ) : (
               <DeploymentsSection />
             )}

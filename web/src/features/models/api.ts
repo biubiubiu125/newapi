@@ -136,6 +136,7 @@ export async function searchVendors(params: {
   keyword?: string
   p?: number
   page_size?: number
+  association?: string
 }): Promise<GetVendorsResponse> {
   const res = await api.get('/api/vendors/search', { params })
   return res.data

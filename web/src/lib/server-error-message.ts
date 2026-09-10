@@ -58,3 +58,15 @@ export function getServerErrorMessageKey(value: unknown): string | null {
     ] ?? null
   )
 }
+
+export function createServerError(value: unknown, fallback?: string): Error {
+  const payload = serverErrorPayload(value)
+  const key = getServerErrorMessageKey(value)
+  const message =
+    (typeof payload?.message === 'string' && payload.message.trim()
+      ? payload.message
+      : undefined) ||
+    fallback ||
+    'Something went wrong!'
+  return new Error(key || message, { cause: value })
+}
