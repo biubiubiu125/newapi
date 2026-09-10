@@ -39,6 +39,8 @@ export type TaskPluginRoute = {
 }
 
 export type TaskPluginMeta = {
+  sortPriority?: number
+  website?: string
   apiVersion: number
   key: string
   name: string
@@ -76,6 +78,7 @@ export type TaskPluginListItem = {
   enabled: boolean
   active: boolean
   source_hash: string
+  has_icon?: boolean
   remark: string
   runtime_status:
     | 'registered'
@@ -99,6 +102,7 @@ export type TaskPluginDetail = {
   meta: TaskPluginMeta
   source: string
   layer: 'factory' | 'override'
+  has_icon?: boolean
 }
 
 export type ApiResponse<T> = {
@@ -130,12 +134,15 @@ export type MarketplaceIndexVersion = {
   minApiVersion?: number
   kind?: string
   allowedHosts?: string[]
+  extraDomains?: string[]
   auth?: string
+  baseUrl?: string
 }
 
 export type MarketplacePlugin = {
   key: string
   name: string
+  website?: string
   icon?: string
   description?: string | Record<string, string>
   channelTypes?: number[]

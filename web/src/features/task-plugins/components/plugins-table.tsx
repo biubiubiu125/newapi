@@ -47,6 +47,7 @@ import { isStaleFactoryOverride } from '../lib/marketplace'
 import type { TaskPluginListItem, TaskPluginUsage } from '../types'
 import { PluginCard } from './plugin-card'
 import { PluginIcon } from './plugin-icon'
+import { PluginWebsiteLink } from './plugin-website-link'
 
 const VIEW_MODE_STORAGE_KEY = 'task-plugins-view-mode'
 
@@ -68,6 +69,7 @@ export function PluginsTable(props: PluginsTableProps) {
   const [statusTarget, setStatusTarget] = useState<TaskPluginListItem | null>(
     null
   )
+  const [statusIntent, setStatusIntent] = useState<boolean | null>(null)
   const pluginsQuery = useQuery({
     queryKey: ['task-plugins'],
     queryFn: listTaskPlugins,
@@ -86,9 +88,12 @@ export function PluginsTable(props: PluginsTableProps) {
       queryClient.invalidateQueries({ queryKey: ['task-plugins'] })
       setBlockedAction(null)
       setBlockedUsage(null)
+      setStatusTarget(null)
+      setStatusIntent(null)
     },
     onError: (error) => {
       if (error instanceof TaskPluginUsageError) {
+        setStatusIntent(null)
         setBlockedUsage(error.usage)
         setBlockedAction('disable')
         return
@@ -139,6 +144,7 @@ export function PluginsTable(props: PluginsTableProps) {
                 <div className='text-muted-foreground truncate font-mono text-xs'>
                   {row.original.meta.key}
                 </div>
+                <PluginWebsiteLink website={row.original.meta.website} />
               </div>
             </div>
           )
@@ -228,10 +234,7 @@ export function PluginsTable(props: PluginsTableProps) {
             disabled={statusMutation.isPending}
             onCheckedChange={(checked) => {
               setStatusTarget(row.original)
-              statusMutation.mutate({
-                key: row.original.meta.key,
-                enabled: checked,
-              })
+              setStatusIntent(checked)
             }}
           />
         ),
@@ -362,6 +365,31 @@ export function PluginsTable(props: PluginsTableProps) {
         renderCard={(row) => <PluginCard row={row} />}
         cardGridClassName='grid grid-cols-1 gap-3 sm:grid-cols-2 sm:gap-4 xl:grid-cols-3'
         toolbarProps={{ searchPlaceholder: t('Filter plugins...') }}
+      />
+      <ConfirmDialog
+        open={statusTarget != null && statusIntent != null}
+        onOpenChange={(open) => {
+          if (!open && !statusMutation.isPending) {
+            setStatusTarget(null)
+            setStatusIntent(null)
+          }
+        }}
+        title={
+          statusIntent
+            ? t('Enable plugin?')
+            : t('Disable plugin?')
+        }
+        desc={statusTarget?.meta.name ?? ''}
+        confirmText={statusIntent ? t('Enable') : t('Disable')}
+        destructive={statusIntent === false}
+        isLoading={statusMutation.isPending}
+        handleConfirm={() => {
+          if (statusTarget == null || statusIntent == null) return
+          statusMutation.mutate({
+            key: statusTarget.meta.key,
+            enabled: statusIntent,
+          })
+        }}
       />
       <ConfirmDialog
         open={Boolean(deleteTarget)}

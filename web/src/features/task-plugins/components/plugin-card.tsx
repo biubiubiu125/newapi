@@ -25,6 +25,7 @@ import { resolveLocalizedText } from '@/lib/localized-text'
 
 import type { TaskPluginListItem } from '../types'
 import { PluginIcon } from './plugin-icon'
+import { PluginWebsiteLink } from './plugin-website-link'
 
 /**
  * A card is one grid cell, so the model list has to stay a fixed number of
@@ -80,6 +81,7 @@ function PluginCardComponent({ row }: { row: Row<TaskPluginListItem> }) {
             <div className='text-muted-foreground truncate font-mono text-xs'>
               {row.original.meta.key}
             </div>
+            <PluginWebsiteLink website={row.original.meta.website} />
           </div>
         </div>
         <div className='flex shrink-0 items-center gap-1.5'>

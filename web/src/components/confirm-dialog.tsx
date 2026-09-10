@@ -60,7 +60,11 @@ export function ConfirmDialog(props: ConfirmDialogProps) {
   } = props
   return (
     <Dialog open={props.open} onOpenChange={props.onOpenChange}>
-      <DialogContent className={cn(className)} showCloseButton={false}>
+      <DialogContent
+        role='alertdialog'
+        className={cn(className)}
+        showCloseButton={false}
+      >
         <DialogHeader className='text-start'>
           <DialogTitle>{title}</DialogTitle>
           <DialogDescription render={<div />}>{desc}</DialogDescription>

@@ -37,6 +37,7 @@ import {
 } from '../lib/marketplace'
 import type { MarketplacePlugin, TaskPluginListItem } from '../types'
 import { PluginIcon } from './plugin-icon'
+import { PluginWebsiteLink } from './plugin-website-link'
 
 type MarketplacePluginCardProps = {
   plugin: MarketplacePlugin
@@ -77,6 +78,7 @@ export function MarketplacePluginCard(props: MarketplacePluginCardProps) {
           {description}
         </p>
       ) : null}
+      <PluginWebsiteLink website={plugin.website} />
 
       <div className='grid grid-cols-3 gap-x-3 gap-y-1'>
         <div className='min-w-0'>
