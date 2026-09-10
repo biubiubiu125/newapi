@@ -348,11 +348,12 @@ function MarketplaceInstallContent(
               !sourceQuery.isError &&
               installedQuery.data &&
               !installedQuery.isError && (
-                <SourceDiff
-                  before={installedQuery.data.source}
-                  after={sourceQuery.data.text}
-                  className='bg-muted/30 max-h-[min(22rem,35vh)]'
-                />
+                <div className='bg-muted/30 max-h-[min(22rem,35vh)] overflow-auto'>
+                  <SourceDiff
+                    before={installedQuery.data.source}
+                    after={sourceQuery.data.text}
+                  />
+                </div>
               )}
           </TabsContent>
         )}

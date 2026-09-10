@@ -97,7 +97,7 @@ export function UpstreamRatioSync() {
     queryFn: async () => requireServerSuccess(await getUpstreamChannels()),
     enabled: channelDialogOpen,
   })
-  const channels = useMemo(() => channelsData?.data ?? [], [channelsData?.data])
+  const channels = useMemo(() => channelsData ?? [], [channelsData])
   useEffect(() => {
     if (!channels.length) return
     setChannelEndpoints((previous) => {

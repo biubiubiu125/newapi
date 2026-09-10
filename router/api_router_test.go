@@ -129,6 +129,7 @@ func TestTaskPluginAndDashboardArtifactRoutesAreRegistered(t *testing.T) {
 		"GET /api/plugin/task/marketplace/sources",
 		"PUT /api/plugin/task/marketplace/sources",
 		"GET /api/plugin/task/:key",
+		"GET /api/plugin/task/:key/icon",
 		"GET /api/plugin/task/:key/versions",
 		"POST /api/plugin/task/:key/activate",
 		"POST /api/plugin/task/:key/status",

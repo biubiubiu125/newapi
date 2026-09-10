@@ -17,11 +17,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import type {
+  MarketplaceIconFile,
   MarketplaceIndex,
   MarketplaceIndexVersion,
   MarketplacePlugin,
   TaskPluginListItem,
 } from '../types'
+import { getPluginWebsite } from './plugin-website'
 
 export const SUPPORTED_INDEX_VERSION = 1
 
@@ -125,6 +127,10 @@ function parseMarketplacePlugin(entry: unknown): MarketplacePlugin | null {
         kind: kind || undefined,
         allowedHosts: stringArray(rawVersion.allowedHosts),
         auth: typeof rawVersion.auth === 'string' ? rawVersion.auth : undefined,
+        baseUrl:
+          typeof rawVersion.baseUrl === 'string'
+            ? rawVersion.baseUrl.trim() || undefined
+            : undefined,
       })
     }
   }
@@ -146,13 +152,65 @@ function parseMarketplacePlugin(entry: unknown): MarketplacePlugin | null {
   return {
     key,
     name: typeof raw.name === 'string' && raw.name ? raw.name : key,
+    website: getPluginWebsite(raw.website),
     icon,
+    iconFile: parseMarketplaceIconFile(raw.iconFile),
     description: parseMarketplaceDescription(raw.description),
     channelTypes: numberArray(raw.channelTypes),
     models: stringArray(raw.models),
+    protocols: parseMarketplaceProtocols(raw.protocols),
     latest,
     versions,
   }
+}
+
+function parseMarketplaceIconFile(
+  value: unknown
+): MarketplaceIconFile | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return undefined
+  }
+  const raw = value as Record<string, unknown>
+  const path = typeof raw.path === 'string' ? raw.path.trim() : ''
+  if (!path) return undefined
+  const sha256 = typeof raw.sha256 === 'string' ? raw.sha256.trim() : ''
+  return sha256 ? { path, sha256 } : { path }
+}
+
+function parseMarketplaceProtocols(
+  value: unknown
+): MarketplacePlugin['protocols'] {
+  if (!Array.isArray(value)) return undefined
+  const protocols: NonNullable<MarketplacePlugin['protocols']> = []
+  for (const entry of value) {
+    if (typeof entry === 'string' && entry.trim()) {
+      protocols.push(entry.trim())
+      continue
+    }
+    if (!entry || typeof entry !== 'object' || Array.isArray(entry)) continue
+    const raw = entry as Record<string, unknown>
+    const name = typeof raw.name === 'string' ? raw.name.trim() : ''
+    if (!name) continue
+    protocols.push({
+      name,
+      models: stringArray(raw.models),
+      supports: parseProtocolSupports(raw.supports),
+    })
+  }
+  return protocols
+}
+
+function parseProtocolSupports(
+  value: unknown
+): ('stream' | 'sync' | 'background')[] | undefined {
+  if (!Array.isArray(value)) return undefined
+  const supports: ('stream' | 'sync' | 'background')[] = []
+  for (const entry of value) {
+    if (entry === 'stream' || entry === 'sync' || entry === 'background') {
+      supports.push(entry)
+    }
+  }
+  return supports.length > 0 ? supports : undefined
 }
 
 function parseMarketplaceDescription(
@@ -173,16 +231,14 @@ function parseMarketplaceDescription(
 
 function stringArray(value: unknown): string[] | undefined {
   if (!Array.isArray(value)) return undefined
-  const items = value.filter((item): item is string => typeof item === 'string')
-  return items.length > 0 ? items : undefined
+  return value.filter((item): item is string => typeof item === 'string')
 }
 
 function numberArray(value: unknown): number[] | undefined {
   if (!Array.isArray(value)) return undefined
-  const items = value.filter(
+  return value.filter(
     (item): item is number => typeof item === 'number' && Number.isFinite(item)
   )
-  return items.length > 0 ? items : undefined
 }
 
 export function findMarketplaceVersion(

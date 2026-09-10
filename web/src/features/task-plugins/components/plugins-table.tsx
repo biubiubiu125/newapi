@@ -135,7 +135,13 @@ export function PluginsTable(props: PluginsTableProps) {
               title={description || undefined}
             >
               <span className='shrink-0'>
-                <PluginIcon plugin={row.original.meta} size={18} />
+                <PluginIcon
+                  plugin={{
+                    ...row.original.meta,
+                    hasIcon: row.original.has_icon,
+                  }}
+                  size={18}
+                />
               </span>
               <div className='min-w-0'>
                 <div className='truncate text-sm font-medium'>
@@ -374,11 +380,7 @@ export function PluginsTable(props: PluginsTableProps) {
             setStatusIntent(null)
           }
         }}
-        title={
-          statusIntent
-            ? t('Enable plugin?')
-            : t('Disable plugin?')
-        }
+        title={statusIntent ? t('Enable plugin?') : t('Disable plugin?')}
         desc={statusTarget?.meta.name ?? ''}
         confirmText={statusIntent ? t('Enable') : t('Disable')}
         destructive={statusIntent === false}

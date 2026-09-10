@@ -38,6 +38,28 @@ export type TaskPluginRoute = {
   models?: string[]
 }
 
+export type PluginPreviewField<T> =
+  | { state: 'unknown' }
+  | { state: 'missing'; origin: 'source' | 'index' }
+  | { state: 'value'; origin: 'source' | 'index'; value: T }
+
+export type PluginPreviewValues = {
+  models: string[]
+  protocols: TaskPluginProtocolClaim[]
+  routes: TaskPluginRoute[]
+  channelTypes: number[]
+  baseUrl: string
+  allowedHosts: string[]
+  auth: string
+}
+
+export type PluginMetaPreview = {
+  status: 'unavailable' | 'parsed' | 'partial'
+  fields: {
+    [K in keyof PluginPreviewValues]: PluginPreviewField<PluginPreviewValues[K]>
+  }
+}
+
 export type TaskPluginMeta = {
   sortPriority?: number
   website?: string
@@ -139,14 +161,21 @@ export type MarketplaceIndexVersion = {
   baseUrl?: string
 }
 
+export type MarketplaceIconFile = {
+  path: string
+  sha256?: string
+}
+
 export type MarketplacePlugin = {
   key: string
   name: string
   website?: string
   icon?: string
+  iconFile?: MarketplaceIconFile
   description?: string | Record<string, string>
   channelTypes?: number[]
   models?: string[]
+  protocols?: TaskPluginProtocolClaim[]
   latest: string
   versions: MarketplaceIndexVersion[]
 }

@@ -38,19 +38,25 @@ afterEach(() => {
 const website = 'https://example.com/plugin'
 
 test('marketplace card shows the plugin website separately from installation', () => {
+  const client = new QueryClient({
+    defaultOptions: { queries: { retry: false, staleTime: Infinity } },
+  })
+  clients.push(client)
   render(
-    <MarketplacePluginCard
-      indexUrl='https://example.com/index.json'
-      plugin={{
-        key: 'example',
-        name: 'Example',
-        website,
-        latest: '1.0.0',
-        versions: [{ version: '1.0.0', path: 'plugin.js' }],
-      }}
-      installState={{ status: 'not_installed' }}
-      onInstall={() => undefined}
-    />
+    <QueryClientProvider client={client}>
+      <MarketplacePluginCard
+        indexUrl='https://example.com/index.json'
+        plugin={{
+          key: 'example',
+          name: 'Example',
+          website,
+          latest: '1.0.0',
+          versions: [{ version: '1.0.0', path: 'plugin.js' }],
+        }}
+        installState={{ status: 'not_installed' }}
+        onInstall={() => undefined}
+      />
+    </QueryClientProvider>
   )
   expect(screen.getByRole('link', { name: 'Plugin website' })).toHaveAttribute(
     'href',

@@ -351,6 +351,46 @@ describe('marketplace index parsing', () => {
     assert.equal(index.plugins[0].description, undefined)
   })
 
+  test('keeps a safe website and sidecar icon file from the index', () => {
+    const index = parseMarketplaceIndex({
+      indexVersion: 1,
+      plugins: [
+        {
+          key: 'incho',
+          latest: '1.0.0',
+          website: 'https://example.com/plugin',
+          iconFile: {
+            path: 'plugins/tasks/incho/icon.svg',
+            sha256: 'abc',
+          },
+          versions: [{ version: '1.0.0', path: 'a/plugin.js' }],
+        },
+      ],
+    })
+    assert.equal(index.plugins[0].website, 'https://example.com/plugin')
+    assert.deepEqual(index.plugins[0].iconFile, {
+      path: 'plugins/tasks/incho/icon.svg',
+      sha256: 'abc',
+    })
+  })
+
+  test('hides an http website and a sidecar file without a path', () => {
+    const index = parseMarketplaceIndex({
+      indexVersion: 1,
+      plugins: [
+        {
+          key: 'incho',
+          latest: '1.0.0',
+          website: 'http://example.com/plugin',
+          iconFile: { sha256: 'abc' },
+          versions: [{ version: '1.0.0', path: 'a/plugin.js' }],
+        },
+      ],
+    })
+    assert.equal(index.plugins[0].website, undefined)
+    assert.equal(index.plugins[0].iconFile, undefined)
+  })
+
   test('drops an icon longer than 128 characters', () => {
     const index = parseMarketplaceIndex({
       indexVersion: 1,

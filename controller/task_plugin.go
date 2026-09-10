@@ -32,6 +32,7 @@ type taskPluginUploadRequest struct {
 	Remark       string `json:"remark"`
 	Force        bool   `json:"force"`
 	SourceSha256 string `json:"sourceSha256"`
+	Icon         string `json:"icon"`
 }
 
 func UploadTaskPlugin(c *gin.Context) {
@@ -76,6 +77,15 @@ func UploadTaskPlugin(c *gin.Context) {
 		Source: request.Source, SourceHash: fmt.Sprintf("%x", sha256.Sum256([]byte(request.Source))),
 		Enabled: enabled, Remark: request.Remark,
 	}
+	if icon := strings.TrimSpace(request.Icon); icon != "" {
+		mediaType, data, iconErr := jsplugin.DecodeIconDataURI(icon)
+		if iconErr != nil {
+			common.ApiErrorMsg(c, iconErr.Error())
+			return
+		}
+		plugin.IconMediaType = mediaType
+		plugin.IconData = data
+	}
 	if err = model.WithTaskPluginKeyLock(plugin.Key, func() error {
 		previousVersions, err := model.ListTaskPluginVersions(plugin.Key)
 		if err != nil {
@@ -89,7 +99,7 @@ func UploadTaskPlugin(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, taskPluginDetail{Plugin: &plugin, Meta: loaded.Meta, Source: plugin.Source, Layer: "override"})
+	common.ApiSuccess(c, taskPluginDetail{Plugin: &plugin, Meta: loaded.Meta, Source: plugin.Source, Layer: "override", HasIcon: plugin.HasIcon()})
 }
 
 func GetTaskPluginVersions(c *gin.Context) {
@@ -107,6 +117,7 @@ type taskPluginListItem struct {
 	Enabled       bool           `json:"enabled"`
 	Active        bool           `json:"active"`
 	SourceHash    string         `json:"source_hash"`
+	HasIcon       bool           `json:"has_icon"`
 	Remark        string         `json:"remark"`
 	RuntimeStatus string         `json:"runtime_status"`
 	RuntimeError  string         `json:"runtime_error,omitempty"`
@@ -186,6 +197,7 @@ func ListTaskPlugins(c *gin.Context) {
 			item.Enabled = row.Enabled
 			item.Active = row.Active
 			item.SourceHash = row.SourceHash
+			item.HasIcon = row.HasIcon() || factoryPluginHasIcon(key)
 			item.Remark = row.Remark
 			if !constant.TaskPluginOverrideEnabled {
 				item.RuntimeStatus = "disabled_fallback"
@@ -202,6 +214,7 @@ func ListTaskPlugins(c *gin.Context) {
 		} else {
 			item.Source = "factory"
 			item.Meta = factoryMeta
+			item.HasIcon = factoryPluginHasIcon(key)
 			item.Enabled = !setting.IsTaskPluginFactoryDisabled(key)
 			source, sourceErr := plugins.Source(key)
 			if sourceErr == nil {
@@ -277,10 +290,11 @@ func GetTaskPluginRuntime(c *gin.Context) {
 }
 
 type taskPluginDetail struct {
-	Plugin *model.TaskPlugin `json:"plugin,omitempty"`
-	Meta   jsplugin.Meta     `json:"meta"`
-	Source string            `json:"source"`
-	Layer  string            `json:"layer"`
+	Plugin  *model.TaskPlugin `json:"plugin,omitempty"`
+	Meta    jsplugin.Meta     `json:"meta"`
+	Source  string            `json:"source"`
+	Layer   string            `json:"layer"`
+	HasIcon bool              `json:"has_icon"`
 }
 
 func GetTaskPlugin(c *gin.Context) {
@@ -293,7 +307,7 @@ func GetTaskPlugin(c *gin.Context) {
 			common.ApiErrorMsg(c, compileErr.Error())
 			return
 		}
-		common.ApiSuccess(c, taskPluginDetail{Plugin: plugin, Meta: loaded.Meta, Source: plugin.Source, Layer: "override"})
+		common.ApiSuccess(c, taskPluginDetail{Plugin: plugin, Meta: loaded.Meta, Source: plugin.Source, Layer: "override", HasIcon: plugin.HasIcon()})
 		return
 	}
 	if !errors.Is(err, gorm.ErrRecordNotFound) || version != "" {
@@ -310,7 +324,41 @@ func GetTaskPlugin(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.ApiSuccess(c, taskPluginDetail{Meta: loaded.Meta, Source: source, Layer: "factory"})
+	common.ApiSuccess(c, taskPluginDetail{Meta: loaded.Meta, Source: source, Layer: "factory", HasIcon: factoryPluginHasIcon(key)})
+}
+
+func GetTaskPluginIcon(c *gin.Context) {
+	mediaType, data, ok := resolveTaskPluginIcon(c.Param("key"), c.Query("version"))
+	if !ok {
+		c.AbortWithStatus(http.StatusNotFound)
+		return
+	}
+	c.Header("Cache-Control", "private, max-age=300")
+	c.Data(http.StatusOK, mediaType, data)
+}
+
+func resolveTaskPluginIcon(key, version string) (string, []byte, bool) {
+	if version != "" {
+		plugin, err := model.GetTaskPluginVersion(key, version)
+		if err != nil || !plugin.HasIcon() {
+			return "", nil, false
+		}
+		return plugin.IconMediaType, plugin.IconData, true
+	}
+	plugin, err := model.GetTaskPluginVersion(key, "")
+	if err == nil && plugin.HasIcon() {
+		return plugin.IconMediaType, plugin.IconData, true
+	}
+	mediaType, data, iconErr := plugins.Icon(key)
+	if iconErr != nil || len(data) == 0 {
+		return "", nil, false
+	}
+	return mediaType, data, true
+}
+
+func factoryPluginHasIcon(key string) bool {
+	_, data, err := plugins.Icon(key)
+	return err == nil && len(data) > 0
 }
 
 type taskPluginDryRunRequest struct {
@@ -650,10 +698,18 @@ func GetTaskPluginOptions(c *gin.Context) {
 	sortTaskPluginBindOptions(listed)
 	options := make([]gin.H, 0, len(listed))
 	for _, meta := range listed {
+		hasIcon := false
+		if plugin, err := model.GetTaskPluginVersion(meta.Key, ""); err == nil {
+			hasIcon = plugin.HasIcon()
+		}
+		if !hasIcon {
+			hasIcon = factoryPluginHasIcon(meta.Key)
+		}
 		options = append(options, gin.H{
 			"key":          meta.Key,
 			"name":         meta.Name,
 			"icon":         meta.Icon,
+			"hasIcon":      hasIcon,
 			"baseUrl":      meta.BaseURL,
 			"website":      meta.Website,
 			"sortPriority": meta.SortPriority,

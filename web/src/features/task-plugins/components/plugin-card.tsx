@@ -72,7 +72,13 @@ function PluginCardComponent({ row }: { row: Row<TaskPluginListItem> }) {
       <div className='flex items-start justify-between gap-2'>
         <div className='flex min-w-0 flex-1 items-center gap-2.5'>
           <span className='mt-0.5 shrink-0'>
-            <PluginIcon plugin={row.original.meta} size={20} />
+            <PluginIcon
+              plugin={{
+                ...row.original.meta,
+                hasIcon: row.original.has_icon,
+              }}
+              size={20}
+            />
           </span>
           <div className='min-w-0'>
             <div className='truncate text-sm font-medium'>

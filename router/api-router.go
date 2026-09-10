@@ -324,6 +324,7 @@ func SetApiRouter(router *gin.Engine) {
 			taskPluginRoute.DELETE("/:key/versions/:version", controller.DeleteTaskPluginVersion)
 		}
 		apiRouter.GET("/task_plugin_options", middleware.AdminAuth(), middleware.RequirePermission(authz.TaskPluginBind), controller.GetTaskPluginOptions)
+		apiRouter.GET("/plugin/task/:key/icon", middleware.AdminAuth(), middleware.RequirePermission(authz.TaskPluginBind), controller.GetTaskPluginIcon)
 		telegramPushRoute := apiRouter.Group("/telegram_push")
 		telegramPushRoute.Use(middleware.RootAuth())
 		{

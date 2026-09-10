@@ -65,17 +65,23 @@ func taskPluginVersionInUse(db *gorm.DB, key, version string) (bool, error) {
 }
 
 type TaskPlugin struct {
-	Id         int64   `json:"id"`
-	Key        string  `json:"key" gorm:"size:128;not null;uniqueIndex:uk_task_plugin_key_version,priority:1"`
-	APIVersion int     `json:"api_version" gorm:"not null"`
-	Version    string  `json:"version" gorm:"size:64;not null;uniqueIndex:uk_task_plugin_key_version,priority:2"`
-	Source     string  `json:"source" gorm:"type:text;not null"`
-	SourceHash string  `json:"source_hash" gorm:"size:64;not null"`
-	Enabled    bool    `json:"enabled" gorm:"not null"`
-	Active     bool    `json:"active" gorm:"not null;index"`
-	ActiveKey  *string `json:"-" gorm:"size:128;uniqueIndex:uk_task_plugin_active_key"`
-	CreatedAt  int64   `json:"created_at" gorm:"not null"`
-	Remark     string  `json:"remark" gorm:"type:text"`
+	Id            int64   `json:"id"`
+	Key           string  `json:"key" gorm:"size:128;not null;uniqueIndex:uk_task_plugin_key_version,priority:1"`
+	APIVersion    int     `json:"api_version" gorm:"not null"`
+	Version       string  `json:"version" gorm:"size:64;not null;uniqueIndex:uk_task_plugin_key_version,priority:2"`
+	Source        string  `json:"source" gorm:"type:text;not null"`
+	SourceHash    string  `json:"source_hash" gorm:"size:64;not null"`
+	Enabled       bool    `json:"enabled" gorm:"not null"`
+	Active        bool    `json:"active" gorm:"not null;index"`
+	ActiveKey     *string `json:"-" gorm:"size:128;uniqueIndex:uk_task_plugin_active_key"`
+	CreatedAt     int64   `json:"created_at" gorm:"not null"`
+	Remark        string  `json:"remark" gorm:"type:text"`
+	IconMediaType string  `json:"-" gorm:"size:32"`
+	IconData      []byte  `json:"-"`
+}
+
+func (plugin *TaskPlugin) HasIcon() bool {
+	return plugin != nil && plugin.IconMediaType != "" && len(plugin.IconData) > 0
 }
 
 var taskPluginKeyLocks sync.Map

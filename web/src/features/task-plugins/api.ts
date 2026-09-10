@@ -105,6 +105,7 @@ export async function installMarketplacePlugin(request: {
   source: string
   sourceSha256?: string
   remark: string
+  icon?: string
 }) {
   const response = await api.post<ApiResponse<TaskPluginDetail>>(
     '/api/plugin/task',
@@ -113,6 +114,7 @@ export async function installMarketplacePlugin(request: {
       sourceSha256: request.sourceSha256,
       enabled: true,
       remark: request.remark,
+      icon: request.icon,
     },
     mutationConfig
   )

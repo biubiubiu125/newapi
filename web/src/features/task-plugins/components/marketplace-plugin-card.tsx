@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import {
   ArrowUpCircle,
   CheckCircle2,
@@ -33,14 +34,17 @@ import {
   findMarketplaceVersion,
   marketplaceBuiltInVersion,
   resolveMarketplaceActionPolicy,
+  resolvePluginSourceUrl,
   type InstallState,
 } from '../lib/marketplace'
+import { fetchPluginIconDataUri } from '../lib/plugin-icon-file'
 import type { MarketplacePlugin, TaskPluginListItem } from '../types'
 import { PluginIcon } from './plugin-icon'
 import { PluginWebsiteLink } from './plugin-website-link'
 
 type MarketplacePluginCardProps = {
   plugin: MarketplacePlugin
+  indexUrl?: string
   installState: InstallState
   installed?: TaskPluginListItem
   onInstall: () => void
@@ -49,6 +53,25 @@ type MarketplacePluginCardProps = {
 export function MarketplacePluginCard(props: MarketplacePluginCardProps) {
   const { t, i18n } = useTranslation()
   const plugin = props.plugin
+  const iconPath = plugin.iconFile?.path
+  const iconQuery = useQuery({
+    queryKey: [
+      'marketplace-plugin-icon',
+      props.indexUrl,
+      iconPath,
+      plugin.iconFile?.sha256,
+    ],
+    enabled: Boolean(props.indexUrl && iconPath),
+    retry: false,
+    staleTime: 5 * 60 * 1000,
+    meta: { errorToast: false },
+    queryFn: async () => {
+      if (!props.indexUrl || !iconPath) return null
+      const url = resolvePluginSourceUrl(props.indexUrl, iconPath)
+      if (!url) return null
+      return fetchPluginIconDataUri(url, { sha256: plugin.iconFile?.sha256 })
+    },
+  })
   const description = resolveLocalizedText(plugin.description, i18n.language)
   const channelTypes = plugin.channelTypes ?? []
   const latestEntry = findMarketplaceVersion(plugin, plugin.latest)
@@ -61,7 +84,13 @@ export function MarketplacePluginCard(props: MarketplacePluginCardProps) {
       <div className='flex items-start justify-between gap-2'>
         <div className='flex min-w-0 flex-1 items-center gap-2.5'>
           <span className='mt-0.5 shrink-0'>
-            <PluginIcon plugin={plugin} size={20} />
+            <PluginIcon
+              plugin={{
+                ...plugin,
+                iconSrc: iconQuery.data ?? undefined,
+              }}
+              size={20}
+            />
           </span>
           <div className='min-w-0'>
             <div className='truncate text-sm font-medium'>{plugin.name}</div>
@@ -90,7 +119,7 @@ export function MarketplacePluginCard(props: MarketplacePluginCardProps) {
           <div className='truncate text-xs'>
             {channelTypes.length > 0
               ? getChannelTypeLabel(channelTypes[0])
-              : '—'}
+              : t('Task Plugin')}
           </div>
         </div>
         <div className='min-w-0'>
