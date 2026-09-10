@@ -4,6 +4,7 @@ import (
 	"fmt"
 
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/samber/lo"
@@ -65,6 +66,15 @@ func GetBillingExpr(model string) (string, bool) {
 	return "", false
 }
 
+func GetBuiltinBillingExpr(model string) (string, bool) {
+	expression, ok := builtinBillingExpr[model]
+	return expression, ok
+}
+
+func GetBuiltinBillingExprCopy() map[string]string {
+	return lo.Assign(builtinBillingExpr)
+}
+
 func GetBillingModeCopy() map[string]string {
 	modes := lo.Assign(billingSetting.BillingMode)
 	for model := range builtinBillingExpr {
@@ -105,6 +115,17 @@ func GetPricingSyncData(base map[string]any) map[string]any {
 
 func SmokeTestExpr(exprStr string) error {
 	return smokeTestExpr(exprStr)
+}
+
+func SmokeTestTaskExpr(exprStr string, schema map[string]jsplugin.UsageFieldSchema) error {
+	if _, err := billingexpr.CompileFromCache(exprStr); err != nil {
+		return err
+	}
+	if billingexpr.UsesFixedPricing(exprStr) {
+		return fmt.Errorf("fixed pricing is not supported for task usage expressions")
+	}
+	_ = schema
+	return nil
 }
 
 func smokeTestExpr(exprStr string) error {

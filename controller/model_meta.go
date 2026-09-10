@@ -2,6 +2,7 @@ package controller
 
 import (
 	"encoding/json"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -183,12 +184,60 @@ func DeleteModelMeta(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if err := model.DB.Delete(&model.Model{}, id).Error; err != nil {
+	removeFromChannels, err := strconv.ParseBool(c.DefaultQuery("remove_from_channels", "false"))
+	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
-	model.RefreshPricing()
-	common.ApiSuccess(c, nil)
+	removePricing, err := strconv.ParseBool(c.DefaultQuery("remove_pricing", "false"))
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if removePricing && c.GetInt("role") != common.RoleRootUser {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "Model pricing is managed by a super administrator."})
+		return
+	}
+	result, err := model.DeleteModelMetadata([]int{id}, removeFromChannels, removePricing)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "model.delete", map[string]interface{}{
+		"model_ids":            []int{id},
+		"remove_from_channels": removeFromChannels,
+		"remove_pricing":       removePricing,
+		"updated_channels":     result.UpdatedChannels,
+	})
+	common.ApiSuccess(c, result)
+}
+
+func BatchDeleteModelMeta(c *gin.Context) {
+	var request struct {
+		ModelIDs           []int `json:"model_ids"`
+		RemoveFromChannels bool  `json:"remove_from_channels"`
+		RemovePricing      bool  `json:"remove_pricing"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if request.RemovePricing && c.GetInt("role") != common.RoleRootUser {
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "Model pricing is managed by a super administrator."})
+		return
+	}
+	result, err := model.DeleteModelMetadata(request.ModelIDs, request.RemoveFromChannels, request.RemovePricing)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	recordManageAudit(c, "model.delete_batch", map[string]interface{}{
+		"model_ids":            request.ModelIDs,
+		"remove_from_channels": request.RemoveFromChannels,
+		"remove_pricing":       request.RemovePricing,
+		"updated_channels":     result.UpdatedChannels,
+	})
+	common.ApiSuccess(c, result)
 }
 
 // enrichModels 批量填充附加信息：端点、渠道、分组、计费类型，避免 N+1 查询

@@ -50,6 +50,15 @@ var auditContentTemplates = map[string]string{
 	"redemption.create":       "Created ${count} redemption codes named ${name} (${quota} each)",
 	"redemption.delete_batch": "Batch deleted ${count} redemption codes",
 
+	"model.delete":          "Deleted model metadata",
+	"model.delete_batch":    "Batch deleted model metadata",
+	"model.pricing.update":  "Updated model pricing",
+	"vendor.metadata.save":  "Saved vendor metadata",
+	"vendor.metadata.delete": "Deleted vendor metadata",
+	"vendor.assign":         "Assigned models to a vendor",
+	"vendor.merge":          "Merged vendors",
+	"vendor.delete":         "Deleted vendors",
+
 	"subscription.plan_reset":      "Reset active subscriptions for plan ${plan_id}",
 	"subscription.user_plan_reset": "Reset active plan ${plan_id} subscriptions for user ${target_user_id}",
 }

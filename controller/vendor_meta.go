@@ -2,6 +2,8 @@ package controller
 
 import (
 	"encoding/json"
+	"errors"
+	"net/http"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -29,9 +31,9 @@ func GetAllVendors(c *gin.Context) {
 func SearchVendors(c *gin.Context) {
 	keyword := c.Query("keyword")
 	pageInfo := common.GetPageQuery(c)
-	vendors, total, err := model.SearchVendors(keyword, pageInfo.GetStartIdx(), pageInfo.GetPageSize())
+	vendors, total, err := model.SearchVendors(keyword, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), c.Query("association"))
 	if err != nil {
-		common.ApiError(c, err)
+		vendorAPIError(c, err)
 		return
 	}
 	pageInfo.SetTotal(int(total))
@@ -89,9 +91,10 @@ func CreateVendorMeta(c *gin.Context) {
 	}
 
 	if err := v.Insert(); err != nil {
-		common.ApiError(c, err)
+		vendorAPIError(c, err)
 		return
 	}
+	recordManageAudit(c, "vendor.metadata.save", map[string]any{"vendor_id": v.Id, "name": v.Name})
 	common.ApiSuccess(c, &v)
 }
 
@@ -116,9 +119,10 @@ func UpdateVendorMeta(c *gin.Context) {
 	}
 
 	if err := v.Update(); err != nil {
-		common.ApiError(c, err)
+		vendorAPIError(c, err)
 		return
 	}
+	recordManageAudit(c, "vendor.metadata.save", map[string]any{"vendor_id": v.Id, "name": v.Name})
 	common.ApiSuccess(c, &v)
 }
 
@@ -127,12 +131,63 @@ func DeleteVendorMeta(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
-		common.ApiError(c, err)
+		vendorAPIError(c, err)
 		return
 	}
-	if err := model.DB.Delete(&model.Vendor{}, id).Error; err != nil {
-		common.ApiError(c, err)
+	if err := model.DeleteVendors([]int{id}); err != nil {
+		vendorAPIError(c, err)
 		return
 	}
+	recordManageAudit(c, "vendor.metadata.delete", map[string]any{"vendor_id": id})
 	common.ApiSuccess(c, nil)
+}
+
+func vendorAPIError(c *gin.Context, err error) {
+	status := http.StatusBadRequest
+	payload := gin.H{"success": false, "message": err.Error()}
+	var references *model.VendorReferenceError
+	if errors.Is(err, model.ErrVendorConflict) {
+		status = http.StatusConflict
+		payload["code"] = "VENDOR_CONFLICT"
+	}
+	if errors.As(err, &references) {
+		status = http.StatusConflict
+		payload["code"] = "VENDOR_REFERENCED"
+		payload["reference_counts"] = references.Counts
+	}
+	c.JSON(status, payload)
+}
+
+func PreviewVendorOperation(c *gin.Context) {
+	var request model.VendorOperation
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		vendorAPIError(c, err)
+		return
+	}
+	preview, err := model.PreviewVendorOperation(request)
+	if err != nil {
+		vendorAPIError(c, err)
+		return
+	}
+	common.ApiSuccess(c, preview)
+}
+
+func ApplyVendorOperation(c *gin.Context) {
+	var request model.VendorOperation
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
+		vendorAPIError(c, err)
+		return
+	}
+	result, err := model.ApplyVendorOperation(request)
+	if err != nil {
+		vendorAPIError(c, err)
+		return
+	}
+	recordManageAudit(c, "vendor."+request.Action, map[string]any{
+		"source_vendor_ids":  request.VendorIDs,
+		"target_vendor_id":   request.TargetVendorID,
+		"updated_model_ids":  result.UpdatedModels,
+		"deleted_vendor_ids": result.DeletedVendors,
+	})
+	common.ApiSuccess(c, result)
 }

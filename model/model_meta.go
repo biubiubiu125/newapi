@@ -1,6 +1,8 @@
 package model
 
 import (
+	"errors"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -27,9 +29,10 @@ type Model struct {
 	Description  string         `json:"description,omitempty" gorm:"type:text"`
 	Icon         string         `json:"icon,omitempty" gorm:"type:varchar(128)"`
 	Tags         string         `json:"tags,omitempty" gorm:"type:varchar(255)"`
-	VendorID     int            `json:"vendor_id,omitempty" gorm:"index"`
-	Endpoints    string         `json:"endpoints,omitempty" gorm:"type:text"`
-	Status       int            `json:"status" gorm:"default:1"`
+	VendorID           int            `json:"vendor_id,omitempty" gorm:"index"`
+	Endpoints          string         `json:"endpoints,omitempty" gorm:"type:text"`
+	SupportedEndpoints []string       `json:"supported_endpoints,omitempty" gorm:"-"`
+	Status             int            `json:"status" gorm:"default:1"`
 	SyncOfficial int            `json:"sync_official" gorm:"default:1"`
 	CreatedTime  int64          `json:"created_time" gorm:"bigint"`
 	UpdatedTime  int64          `json:"updated_time" gorm:"bigint"`
@@ -104,7 +107,128 @@ func (mi *Model) Update() error {
 }
 
 func (mi *Model) Delete() error {
-	return DB.Delete(mi).Error
+	_, err := DeleteModelMetadata([]int{mi.Id}, false, false)
+	return err
+}
+
+type ModelDeleteResult struct {
+	DeletedCount    int `json:"deleted_count"`
+	UpdatedChannels int `json:"updated_channels"`
+}
+
+// DeleteModelMetadata optionally removes exact model names from every channel.
+// Channel removal requires exact-match metadata records. Pricing removal
+// clears the selected names without expanding metadata matching rules.
+func DeleteModelMetadata(ids []int, removeFromChannels, removePricing bool) (ModelDeleteResult, error) {
+	result := ModelDeleteResult{}
+	if len(ids) == 0 || len(ids) > 1000 {
+		return result, errors.New("select between 1 and 1000 models")
+	}
+	selected := make(map[int]struct{}, len(ids))
+	for _, id := range ids {
+		if id <= 0 {
+			return result, errors.New("invalid model ID")
+		}
+		selected[id] = struct{}{}
+	}
+	modelIDs := make([]int, 0, len(selected))
+	for id := range selected {
+		modelIDs = append(modelIDs, id)
+	}
+	sort.Ints(modelIDs)
+	names := make(map[string]struct{}, len(modelIDs))
+	deleteRecords := func(tx *gorm.DB) error {
+		var records []Model
+		if err := lockForUpdate(tx).Where("id IN ?", modelIDs).Order("id").Find(&records).Error; err != nil {
+			return err
+		}
+		if len(records) != len(modelIDs) {
+			return errors.New("selected models changed; reload before deleting")
+		}
+		for _, record := range records {
+			if removeFromChannels && record.NameRule != NameRuleExact {
+				return errors.New("only exact-match models can be removed from channels")
+			}
+			names[record.ModelName] = struct{}{}
+		}
+		if removeFromChannels {
+			var channels []Channel
+			if err := lockForUpdate(tx).Select("id", "models", "status", "group", "priority", "weight", "tag").Order("id").Find(&channels).Error; err != nil {
+				return err
+			}
+			for _, channel := range channels {
+				models := channel.GetModels()
+				remaining := make([]string, 0, len(models))
+				for _, name := range models {
+					if _, remove := names[strings.TrimSpace(name)]; !remove {
+						remaining = append(remaining, name)
+					}
+				}
+				if len(remaining) == len(models) {
+					continue
+				}
+				channel.Models = strings.Join(remaining, ",")
+				if err := tx.Model(&Channel{}).Where("id = ?", channel.Id).Update("models", channel.Models).Error; err != nil {
+					return err
+				}
+				if err := channel.UpdateAbilities(tx); err != nil {
+					return err
+				}
+				result.UpdatedChannels++
+			}
+		}
+		if err := tx.Where("id IN ?", modelIDs).Delete(&Model{}).Error; err != nil {
+			return err
+		}
+		result.DeletedCount = len(records)
+		return nil
+	}
+	var err error
+	if removePricing {
+		metadataMutationMu.Lock()
+		defer metadataMutationMu.Unlock()
+		err = mutateModelPricingOptions(func(tx *gorm.DB, values map[string]map[string]any) error {
+			if err := lockMetadataMutation(tx); err != nil {
+				return err
+			}
+			if err := deleteRecords(tx); err != nil {
+				return err
+			}
+			for _, entries := range values {
+				for name := range names {
+					delete(entries, name)
+				}
+			}
+			return nil
+		})
+	} else {
+		err = metadataTransaction(deleteRecords)
+	}
+	if err != nil {
+		return ModelDeleteResult{}, err
+	}
+	if result.UpdatedChannels > 0 {
+		InitChannelCache()
+	}
+	RefreshPricing()
+	return result, nil
+}
+
+// ModelConnection describes an enabled route independently of catalog visibility or price.
+type ModelConnection struct {
+	AbilityWithChannel
+	ChannelName string `json:"channel_name"`
+}
+
+func GetModelConnections() ([]ModelConnection, error) {
+	var connections []ModelConnection
+	err := DB.Table("abilities").
+		Select("abilities.*, channels.type as channel_type, channels.name as channel_name").
+		Joins("JOIN channels ON abilities.channel_id = channels.id").
+		Where("abilities.enabled = ? AND channels.status = ?", true, common.ChannelStatusEnabled).
+		Order("abilities.model, abilities.channel_id").
+		Scan(&connections).Error
+	return connections, err
 }
 
 func GetVendorModelCounts() (map[int64]int64, error) {

@@ -295,6 +295,9 @@ func UpdateOption(key string, value string) error {
 	if IsDeprecatedOptionKey(key) {
 		return errors.New("deprecated option key")
 	}
+	if IsModelPricingOption(key) {
+		return UpdateModelPricingOptions(map[string]string{key: value})
+	}
 	if err := validateOptionValue(key, value); err != nil {
 		return err
 	}
