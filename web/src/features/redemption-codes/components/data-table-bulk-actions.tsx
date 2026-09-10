@@ -32,7 +32,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 
-import { deleteInvalidRedemptions, deleteRedemption } from '../api'
+import { deleteInvalidRedemptions, deleteRedemptionBatch } from '../api'
 import type { Redemption } from '../types'
 import { useRedemptions } from './redemptions-provider'
 
@@ -69,41 +69,27 @@ export function DataTableBulkActions<TData>({
     }
     setIsDeleting(true)
     try {
-      let deletedCount = 0
-      const failedMessages: string[] = []
-
-      for (const redemption of selectedRedemptions) {
-        try {
-          const result = await deleteRedemption(redemption.id)
-          if (result.success) {
-            deletedCount += 1
-          } else {
-            failedMessages.push(result.message || `#${redemption.id}`)
-          }
-        } catch (error) {
-          failedMessages.push(
-            error instanceof Error ? error.message : `#${redemption.id}`
-          )
-        }
-      }
-
-      if (deletedCount > 0) {
+      const result = await deleteRedemptionBatch(
+        selectedRedemptions.map((redemption) => redemption.id)
+      )
+      if (result.success) {
         toast.success(
           t('Successfully deleted {{count}} redemption codes', {
-            count: deletedCount,
+            count: result.data ?? selectedRedemptions.length,
           })
         )
         table.resetRowSelection()
         triggerRefresh()
-      }
-      if (failedMessages.length > 0) {
-        toast.error(
-          `${t('Failed to delete {{count}} selected redemption codes', {
-            count: failedMessages.length,
-          })}: ${failedMessages[0]}`
-        )
+      } else {
+        toast.error(result.message || t('Failed to delete selected redemption codes'))
       }
       setShowDeleteSelectedConfirm(false)
+    } catch (error) {
+      toast.error(
+        error instanceof Error
+          ? error.message
+          : t('Failed to delete selected redemption codes')
+      )
     } finally {
       setIsDeleting(false)
     }

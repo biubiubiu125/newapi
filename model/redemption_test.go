@@ -207,6 +207,38 @@ func TestRedeemSkippedReferralWritesTerminalTime(t *testing.T) {
 	require.NotZero(t, job.SucceededAt)
 }
 
+func TestBatchDeleteRedemptionsBlocksUnresolvedReferral(t *testing.T) {
+	truncateTables(t)
+
+	protected := &Redemption{
+		Key:                      "batch-delete-unresolved-key",
+		Name:                     "unresolved redemption",
+		Status:                   common.RedemptionCodeStatusUsed,
+		Quota:                    100,
+		UsedUserId:               123,
+		RedeemedTime:             common.GetTimestamp(),
+		ReferralCommissionStatus: ReferralCommissionJobStatusPending,
+	}
+	require.NoError(t, DB.Create(protected).Error)
+	deletable := &Redemption{
+		Key:    "batch-delete-unused-key",
+		Name:   "unused redemption",
+		Status: common.RedemptionCodeStatusEnabled,
+		Quota:  100,
+	}
+	require.NoError(t, DB.Create(deletable).Error)
+
+	_, err := BatchDeleteRedemptions([]int{protected.Id, deletable.Id})
+	require.ErrorContains(t, err, "unresolved")
+	require.NoError(t, DB.First(&Redemption{}, protected.Id).Error)
+	require.NoError(t, DB.First(&Redemption{}, deletable.Id).Error)
+
+	rows, err := BatchDeleteRedemptions([]int{deletable.Id})
+	require.NoError(t, err)
+	require.EqualValues(t, 1, rows)
+	require.Error(t, DB.First(&Redemption{}, deletable.Id).Error)
+}
+
 func TestDeleteInvalidRedemptionsKeepsUnprocessedUsedCode(t *testing.T) {
 	truncateTables(t)
 

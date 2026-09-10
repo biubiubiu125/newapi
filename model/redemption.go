@@ -286,6 +286,31 @@ func DeleteRedemptionById(id int) (err error) {
 	return redemption.Delete()
 }
 
+// BatchDeleteRedemptions soft-deletes the selected codes in one statement.
+// Codes with unresolved referral commission jobs are rejected so batch delete
+// cannot bypass the single-delete protection.
+func BatchDeleteRedemptions(ids []int) (int64, error) {
+	if len(ids) == 0 || len(ids) > 1000 {
+		return 0, errors.New("select between 1 and 1000 redemption codes")
+	}
+	for _, id := range ids {
+		if id <= 0 {
+			return 0, errors.New("redemption IDs must be positive")
+		}
+	}
+	var redemptions []Redemption
+	if err := DB.Where("id IN ?", ids).Find(&redemptions).Error; err != nil {
+		return 0, err
+	}
+	for i := range redemptions {
+		if redemptionReferralCommissionDeletionBlocked(&redemptions[i]) {
+			return 0, errors.New("redemption referral commission is unresolved")
+		}
+	}
+	result := DB.Where("id IN ?", ids).Delete(&Redemption{})
+	return result.RowsAffected, result.Error
+}
+
 func DeleteInvalidRedemptions() (int64, error) {
 	now := common.GetTimestamp()
 	var redemptions []Redemption

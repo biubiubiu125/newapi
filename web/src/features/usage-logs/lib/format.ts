@@ -442,6 +442,7 @@ const AUDIT_TEMPLATES: Record<string, string> = {
     'Created {{count}} redemption codes named {{name}} ({{quota}} each)',
   'redemption.update': 'Updated a redemption code',
   'redemption.delete': 'Deleted a redemption code',
+  'redemption.delete_batch': 'Batch deleted redemption codes',
   'redemption.delete_invalid': 'Deleted invalid redemption codes',
   // Prefill groups
   'prefill_group.create': 'Created a prefill group',
