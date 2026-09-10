@@ -982,30 +982,37 @@ func (a *TaskAdaptor) ConvertToOpenAIVideoContext(ctx context.Context, task *mod
 	if err != nil {
 		return nil, err
 	}
-	rendered := kitdto.NewOpenAIVideo()
-	if err = common.Unmarshal(encoded, rendered); err != nil {
+	var rendered map[string]any
+	if err = common.Unmarshal(encoded, &rendered); err != nil || rendered == nil {
 		return nil, fmt.Errorf("plugin returned an invalid OpenAI video object")
 	}
+	// Keep provider extensions intact while the host owns the public task's
+	// identity and lifecycle, including completion timestamps after settlement.
 	host := task.ToOpenAIVideo()
-	rendered.ID = host.ID
-	rendered.Object = host.Object
-	rendered.TaskID = ""
-	rendered.Status = host.Status
-	rendered.Progress = host.Progress
-	rendered.CreatedAt = host.CreatedAt
-	rendered.Model = host.Model
-	if host.Status == kitdto.VideoStatusCompleted {
-		rendered.CompletedAt = host.CompletedAt
+	rendered["id"] = host.ID
+	rendered["object"] = host.Object
+	delete(rendered, "task_id")
+	rendered["status"] = host.Status
+	rendered["progress"] = host.Progress
+	rendered["created_at"] = host.CreatedAt
+	rendered["model"] = host.Model
+	if host.Status == kitdto.VideoStatusCompleted && host.CompletedAt != 0 {
+		rendered["completed_at"] = host.CompletedAt
 	} else {
-		rendered.CompletedAt = 0
+		delete(rendered, "completed_at")
 	}
-	for key := range rendered.Metadata {
-		if strings.EqualFold(key, "url") {
-			delete(rendered.Metadata, key)
+	delete(rendered, "url")
+	delete(rendered, "upstream_url")
+	delete(rendered, "provider_payload")
+	if metadata, ok := rendered["metadata"].(map[string]any); ok {
+		for key := range metadata {
+			if strings.EqualFold(key, "url") {
+				delete(metadata, key)
+			}
 		}
-	}
-	if len(rendered.Metadata) == 0 {
-		rendered.Metadata = nil
+		if len(metadata) == 0 {
+			delete(rendered, "metadata")
+		}
 	}
 	return common.Marshal(rendered)
 }
