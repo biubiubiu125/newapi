@@ -11,6 +11,69 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestFixedPriceBranches(t *testing.T) {
+	const expression = `(len <= 32000 ? tier("short", fixed(0.01)) : tier("long", p * 2 + c * 8)) * (param("fast") == true ? 2 : 1)`
+	for _, tc := range []struct {
+		name   string
+		params billingexpr.TokenParams
+		cost   float64
+		tier   string
+	}{
+		{"zero usage still charges once", billingexpr.TokenParams{}, 20000, "short"},
+		{"fixed branch ignores token prices", billingexpr.TokenParams{P: 32000, C: 9000, Len: 32000}, 20000, "short"},
+		{"token branch uses actual usage", billingexpr.TokenParams{P: 32001, C: 100, Len: 32001}, 129604, "long"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cost, trace, err := billingexpr.RunExprWithRequest(expression, tc.params, billingexpr.RequestInput{Body: []byte(`{"fast":true}`)})
+			require.NoError(t, err)
+			assert.Equal(t, tc.cost, cost)
+			assert.Equal(t, tc.tier, trace.MatchedTier)
+			if tc.tier == "short" {
+				assert.Equal(t, billingexpr.BillingUnitRequest, trace.BillingUnit)
+			} else {
+				assert.Equal(t, billingexpr.BillingUnitToken, trace.BillingUnit)
+			}
+			require.Len(t, trace.RequestRules, 1)
+			assert.True(t, trace.RequestRules[0].Matched)
+		})
+	}
+	cost, _, err := billingexpr.RunExpr(`tier("free", fixed(0))`, billingexpr.TokenParams{P: 1000})
+	require.NoError(t, err)
+	assert.Zero(t, cost)
+}
+
+func TestFixedPriceRejectsInvalidLeavesIncludingUnselectedBranches(t *testing.T) {
+	for _, expression := range []string{
+		`true ? tier("ok", p) : tier("bad", fixed(-0.01))`,
+		`tier("bad", fixed(p))`,
+		`tier("bad", fixed(0.01 + 0.02))`,
+		`tier("bad", fixed(1e308))`,
+		`tier("bad", fixed(0.01) + p * 2)`,
+		`tier("bad", p * fixed(0.01))`,
+		`tier("a", fixed(0.01)) + tier("b", p * 2)`,
+		`fixed(0.01)`,
+		`tier("bad", fixed(0.01)) * p`,
+		`tier("bad", fixed(0.01)) * (param("fast") == true ? -2 : 1)`,
+	} {
+		t.Run(expression, func(t *testing.T) {
+			_, err := billingexpr.CompileFromCache(expression)
+			require.Error(t, err)
+		})
+	}
+}
+
+func TestFixedPriceRejectsTaskUsageSnapshots(t *testing.T) {
+	snap := &billingexpr.BillingSnapshot{
+		ExprString:       `tier("request", fixed(0.01))`,
+		ExprHash:         billingexpr.ExprHashString(`tier("request", fixed(0.01))`),
+		GroupRatio:       1,
+		QuotaPerUnit:     500000,
+		TaskUsageBilling: true,
+	}
+	_, err := billingexpr.ComputeTieredQuota(snap, billingexpr.TokenParams{})
+	require.ErrorContains(t, err, "task usage")
+}
+
 func TestCaptureRequestParamsStoresOnlyExpressionReferences(t *testing.T) {
 	exprString := `param("quality") == "high" && param("messages.#") == 2 ? tier("high", p * 4) : tier("normal", p)`
 	body := []byte(`{"quality":"high","prompt":"private prompt","messages":[{"content":"secret one"},{"content":"secret two"}]}`)
