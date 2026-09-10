@@ -66,6 +66,7 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     setting: true,
     subscription: true,
     recharge_audit: true,
+    task_plugins: true,
   },
 }
 
@@ -202,6 +203,10 @@ export const SIDEBAR_MODULES_META: Record<string, SidebarSectionMeta> = {
       recharge_audit: {
         title: '订单管理',
         description: '查看充值和订阅订单。',
+      },
+      task_plugins: {
+        title: '任务插件',
+        description: '管理上游任务插件、沙箱和内置任务协议。',
       },
     },
   },

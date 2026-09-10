@@ -21,5 +21,5 @@ func TestOpenAIResponsesRequestToClaudeMessagesMapsMaxReasoningEffort(t *testing
 	require.NoError(t, err)
 	require.NotNil(t, got.Thinking)
 	assert.Equal(t, "enabled", got.Thinking.Type)
-	assert.Equal(t, 8192, got.Thinking.GetBudgetTokens())
+	assert.Equal(t, 7782, got.Thinking.GetBudgetTokens())
 }

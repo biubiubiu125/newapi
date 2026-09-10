@@ -13,7 +13,7 @@ func refreshUserQuotaCacheBestEffort(id int) {
 	}
 }
 
-func updateUserUsedQuotaWithDB(db *gorm.DB, id int, quota int) error {
+func updateUserUsedQuotaWithDB(db *gorm.DB, id int, quota int64) error {
 	if quota == 0 {
 		return nil
 	}
@@ -40,7 +40,7 @@ func updateUserUsedQuotaWithDB(db *gorm.DB, id int, quota int) error {
 	return nil
 }
 
-func updateUserUsedQuotaAndRequestCountWithDB(db *gorm.DB, id int, quota int, count int) error {
+func updateUserUsedQuotaAndRequestCountWithDB(db *gorm.DB, id int, quota int64, count int) error {
 	if quota == 0 && count == 0 {
 		return nil
 	}
@@ -70,11 +70,11 @@ func updateUserUsedQuotaAndRequestCountWithDB(db *gorm.DB, id int, quota int, co
 	return nil
 }
 
-func UpdateUserUsedQuotaSync(id int, quota int) error {
+func UpdateUserUsedQuotaSync(id int, quota int64) error {
 	return updateUserUsedQuota(id, quota)
 }
 
-func UpdateUserUsedQuotaAndRequestCountSync(id int, quota int) error {
+func UpdateUserUsedQuotaAndRequestCountSync(id int, quota int64) error {
 	err := updateUserUsedQuotaAndRequestCountWithDB(DB, id, quota, 1)
 	if err == nil {
 		refreshUserQuotaCacheBestEffort(id)

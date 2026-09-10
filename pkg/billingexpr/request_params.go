@@ -131,6 +131,9 @@ func CloneRequestInput(src RequestInput) RequestInput {
 	if len(src.Params) > 0 {
 		dst.Params = cloneRequestParams(src.Params)
 	}
+	if len(src.Usage) > 0 {
+		dst.Usage = cloneRequestParams(src.Usage)
+	}
 	return dst
 }
 

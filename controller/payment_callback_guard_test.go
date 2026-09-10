@@ -151,7 +151,7 @@ func TestUpdateRedemptionRejectsUsedStatusChange(t *testing.T) {
 	redemption := &model.Redemption{
 		Key:          "controller-used-status-change",
 		Name:         "used status change",
-		Quota:        int(common.QuotaPerUnit),
+		Quota:        int64(common.QuotaPerUnit),
 		Status:       common.RedemptionCodeStatusUsed,
 		UsedUserId:   123,
 		RedeemedTime: time.Now().Unix(),
@@ -173,7 +173,7 @@ func TestUpdateRedemptionRejectsUsedStatusChange(t *testing.T) {
 	require.Contains(t, w.Body.String(), "不能修改")
 	reloaded := &model.Redemption{}
 	require.NoError(t, model.DB.Where("id = ?", redemption.Id).First(reloaded).Error)
-	require.Equal(t, common.RedemptionCodeStatusUsed, reloaded.Status)
+	require.EqualValues(t, common.RedemptionCodeStatusUsed, reloaded.Status)
 }
 
 func TestUpdateRedemptionRejectsUsedFullUpdate(t *testing.T) {
@@ -183,7 +183,7 @@ func TestUpdateRedemptionRejectsUsedFullUpdate(t *testing.T) {
 	redemption := &model.Redemption{
 		Key:          "controller-used-full-update",
 		Name:         "used full update",
-		Quota:        int(common.QuotaPerUnit),
+		Quota:        int64(common.QuotaPerUnit),
 		Status:       common.RedemptionCodeStatusUsed,
 		UsedUserId:   123,
 		RedeemedTime: time.Now().Unix(),
@@ -193,7 +193,7 @@ func TestUpdateRedemptionRejectsUsedFullUpdate(t *testing.T) {
 	body := common.GetJsonString(map[string]interface{}{
 		"id":           redemption.Id,
 		"name":         "changed name",
-		"quota":        int(common.QuotaPerUnit) * 2,
+		"quota":        int64(common.QuotaPerUnit) * 2,
 		"expired_time": time.Now().Add(24 * time.Hour).Unix(),
 	})
 	w := httptest.NewRecorder()
@@ -208,7 +208,7 @@ func TestUpdateRedemptionRejectsUsedFullUpdate(t *testing.T) {
 	reloaded := &model.Redemption{}
 	require.NoError(t, model.DB.Where("id = ?", redemption.Id).First(reloaded).Error)
 	require.Equal(t, redemption.Name, reloaded.Name)
-	require.Equal(t, redemption.Quota, reloaded.Quota)
+	require.EqualValues(t, redemption.Quota, reloaded.Quota)
 	require.Equal(t, int64(0), reloaded.ExpiredTime)
 }
 
@@ -282,8 +282,8 @@ func TestUpdateRedemptionRejectsNonPositiveQuota(t *testing.T) {
 		require.NotEmpty(t, response.Message)
 		reloaded := &model.Redemption{}
 		require.NoError(t, model.DB.Where("id = ?", redemption.Id).First(reloaded).Error)
-		require.Equal(t, "valid quota", reloaded.Name)
-		require.Equal(t, 100, reloaded.Quota)
+		require.EqualValues(t, "valid quota", reloaded.Name)
+		require.EqualValues(t, 100, reloaded.Quota)
 	}
 }
 
@@ -294,7 +294,7 @@ func TestProcessRedeemedCodeCommissionMarksFailedJob(t *testing.T) {
 	redemption := &model.Redemption{
 		Key:          "controller-redemption-failed-001",
 		Name:         "failed referral redemption",
-		Quota:        int(common.QuotaPerUnit),
+		Quota:        int64(common.QuotaPerUnit),
 		Status:       common.RedemptionCodeStatusUsed,
 		UsedUserId:   123,
 		RedeemedTime: time.Now().Unix(),

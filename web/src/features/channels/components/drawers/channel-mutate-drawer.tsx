@@ -121,12 +121,14 @@ import {
   getChannelKey,
   getGroups,
   getPrefillGroups,
+  getTaskPluginOptions,
   refreshCodexCredential,
 } from '../../api'
 import {
   ADD_MODE_OPTIONS,
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
   CHANNEL_TYPE_OPTIONS,
+  CHANNEL_TYPE_TASK_PLUGIN,
   CHANNEL_TYPE_WARNINGS,
   ERROR_MESSAGES,
   FIELD_PASSTHROUGH_TYPES,
@@ -447,12 +449,19 @@ export function ChannelMutateDrawer({
   const currentModels = form.watch('models')
   const currentName = form.watch('name')
   const currentModelMapping = form.watch('model_mapping')
+  const currentTaskPluginKey = form.watch('task_plugin_key')
   const currentHttpProtocol = form.watch('http_protocol')
   const awsKeyType = form.watch('aws_key_type')
   const upstreamModelUpdateCheckEnabled = form.watch(
     'upstream_model_update_check_enabled'
   )
   const currentSettings = form.watch('settings')
+  const { data: taskPluginOptionsData, isLoading: isLoadingTaskPluginOptions } =
+    useQuery({
+      queryKey: ['task_plugin_options'],
+      queryFn: getTaskPluginOptions,
+      enabled: open && currentType === CHANNEL_TYPE_TASK_PLUGIN,
+    })
   const supportsUpstreamModelUpdate = supportsChannelUpstreamModelUpdate({
     type: currentType,
     channel_info: { is_multi_key: isMultiKeyChannel },
@@ -543,6 +552,24 @@ export function ChannelMutateDrawer({
     }
     return options
   }, [currentType, t])
+
+  const taskPluginOptions = useMemo(() => {
+    const options = (taskPluginOptionsData?.data || []).map((plugin) => ({
+      value: plugin.key,
+      label: plugin.name ? `${plugin.name} (${plugin.key})` : plugin.key,
+    }))
+    const selectedTaskPluginKey = currentTaskPluginKey?.trim()
+    if (
+      selectedTaskPluginKey &&
+      !options.some((option) => option.value === selectedTaskPluginKey)
+    ) {
+      options.unshift({
+        value: selectedTaskPluginKey,
+        label: `${selectedTaskPluginKey} (current)`,
+      })
+    }
+    return options
+  }, [currentTaskPluginKey, taskPluginOptionsData])
 
   // Extract redirect models from model_mapping (target values)
   const redirectModelList = useMemo(
@@ -2029,6 +2056,44 @@ export function ChannelMutateDrawer({
                               </Select>
                               <FormDescription>
                                 {t(FIELD_DESCRIPTIONS.BATCH_ADD)}
+                              </FormDescription>
+                              <FormMessage />
+                            </FormItem>
+                          )}
+                        />
+                      )}
+
+                      {currentType === CHANNEL_TYPE_TASK_PLUGIN && (
+                        <FormField
+                          control={form.control}
+                          name='task_plugin_key'
+                          render={({ field }) => (
+                            <FormItem>
+                              <FormLabel>{t('Task Plugin *')}</FormLabel>
+                              <FormControl>
+                                <Combobox
+                                  options={taskPluginOptions}
+                                  value={field.value || ''}
+                                  onValueChange={(value) =>
+                                    field.onChange(value || '')
+                                  }
+                                  placeholder={
+                                    isLoadingTaskPluginOptions
+                                      ? t('Loading task plugins...')
+                                      : t('Select task plugin')
+                                  }
+                                  searchPlaceholder={t(
+                                    'Search task plugin...'
+                                  )}
+                                  emptyText={t('No registered task plugin found.')}
+                                  allowCustomValue={false}
+                                  openOnFocus
+                                />
+                              </FormControl>
+                              <FormDescription>
+                                {t(
+                                  'Select the registered task plugin that owns this channel. The plugin key is stored with the channel.'
+                                )}
                               </FormDescription>
                               <FormMessage />
                             </FormItem>

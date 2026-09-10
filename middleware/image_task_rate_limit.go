@@ -11,7 +11,6 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
-	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-gonic/gin"
 )
@@ -185,7 +184,7 @@ func ImageTaskAccessRateLimit() func(c *gin.Context) {
 // handler, which have no token identity to key.
 func ImageTaskResultAccessRateLimit() func(c *gin.Context) {
 	return func(c *gin.Context) {
-		if len(c.QueryArray(service.TaskArtifactAccessQueryParameter)) > 0 {
+		if _, present, _ := ReadTaskArtifactAccessRequest(c); present {
 			maxRequestNum := constant.ImageTaskAccessRateLimitCount
 			duration := int64(constant.ImageTaskAccessRateLimitDurationSeconds)
 			if maxRequestNum <= 0 || duration <= 0 {

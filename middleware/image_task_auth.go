@@ -37,7 +37,7 @@ func TokenAuthForTaskAccess() func(c *gin.Context) {
 // result endpoint while allowing the controller to handle signed access URLs.
 func TokenAuthForImageTaskResultAccess() func(c *gin.Context) {
 	return func(c *gin.Context) {
-		if len(c.QueryArray(service.TaskArtifactAccessQueryParameter)) > 0 {
+		if _, present, _ := ReadTaskArtifactAccessRequest(c); present {
 			c.Header("Cache-Control", "private, no-store")
 			c.Next()
 			return
@@ -140,7 +140,7 @@ func RejectExhaustedTokenForImageTaskCreation() func(c *gin.Context) {
 			c.Next()
 			return
 		}
-		if c.GetInt(imageTaskTokenStatusContextKey) == common.TokenStatusExhausted || c.GetInt("token_quota") <= 0 {
+		if c.GetInt(imageTaskTokenStatusContextKey) == common.TokenStatusExhausted || common.GetContextInt64(c, "token_quota") <= 0 {
 			abortWithOpenAiMessage(
 				c,
 				http.StatusForbidden,

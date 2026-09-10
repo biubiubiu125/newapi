@@ -1,6 +1,10 @@
 package convmeta
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/QuantumNous/new-api/relaykit/types"
+)
 
 // Options is the per-request snapshot of host configuration that converters
 // consult. The host fills it from its settings system when constructing the
@@ -10,6 +14,13 @@ type Options struct {
 	Claude      ClaudeOptions
 	Gemini      GeminiOptions
 	HostedTools HostedToolCapabilities
+
+	// ToolLossPolicy controls whether a cross-protocol conversion may omit or
+	// approximate built-in-tool semantics. The zero value uses the allow
+	// policy: conversion succeeds and every loss is returned as a diagnostic.
+	// safe/strict rejection is request-phase opt-in only; response and stream
+	// conversion never reject regardless of this field.
+	ToolLossPolicy types.ConversionLossPolicy
 
 	// OpenRouterDialect marks the upstream as OpenRouter's OpenAI-compatible
 	// surface, which accepts extra fields (reasoning config, cache_control on
@@ -80,6 +91,10 @@ type ClaudeOptions struct {
 	// standalone relaykit users must supply one or guarantee max_tokens on
 	// every request.
 	DefaultMaxTokens func(modelName string) int
+	// WebSearchToolVersion selects the Claude hosted web-search tool version
+	// emitted by cross-protocol conversion. Empty keeps the compatibility
+	// baseline web_search_20250305.
+	WebSearchToolVersion string
 }
 
 type GeminiOptions struct {
@@ -124,4 +139,11 @@ func (o *Options) ShouldPreserveThinkingSuffix(modelName string) bool {
 
 func (o *Options) ShouldPreserveEffortTail(modelName string) bool {
 	return o != nil && o.PreserveEffortTail != nil && o.PreserveEffortTail(modelName)
+}
+
+func (o *Options) EffectiveToolLossPolicy() types.ConversionLossPolicy {
+	if o == nil || o.ToolLossPolicy == "" {
+		return types.ConversionLossPolicyAllow
+	}
+	return o.ToolLossPolicy
 }

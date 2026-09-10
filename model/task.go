@@ -2,11 +2,13 @@ package model
 
 import (
 	"bytes"
+	"context"
 	"database/sql/driver"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"time"
 
@@ -20,6 +22,8 @@ import (
 )
 
 type TaskStatus string
+
+var ErrTaskConcurrentUpdate = errors.New("task was concurrently updated")
 
 func (t TaskStatus) ToVideoStatus() string {
 	var status string
@@ -105,6 +109,8 @@ type Task struct {
 	// 禁止返回给用户，内部可能包含key等隐私信息
 	PrivateData TaskPrivateData `json:"-" gorm:"column:private_data;type:json"`
 	Data        json.RawMessage `json:"data" gorm:"type:json"`
+
+	updateBase *Task `json:"-" gorm:"-"`
 }
 
 func (t *Task) SetData(data any) {
@@ -114,6 +120,22 @@ func (t *Task) SetData(data any) {
 
 func (t *Task) GetData(v any) error {
 	return common.Unmarshal(t.Data, &v)
+}
+
+// AfterFind captures the row as the baseline for patch-style task updates.
+// Task lifecycle callers commonly load a task, mutate one or two fields, and
+// then persist it later. Keeping that baseline prevents a stale private_data
+// snapshot from replacing values written by another lifecycle worker.
+func (t *Task) AfterFind(_ *gorm.DB) error {
+	t.updateBase = t.CloneForUpdate()
+	return nil
+}
+
+// AfterCreate gives newly inserted task objects the same baseline semantics as
+// tasks loaded from the database.
+func (t *Task) AfterCreate(_ *gorm.DB) error {
+	t.updateBase = t.CloneForUpdate()
+	return nil
 }
 
 type Properties struct {
@@ -166,6 +188,18 @@ type TaskPrivateData struct {
 	UpstreamSubmitUncertainAt    int64             `json:"upstream_submit_uncertain_at,omitempty"`
 	UpstreamSubmitUncertainCount int               `json:"upstream_submit_uncertain_count,omitempty"`
 	ResultURL                    string            `json:"result_url,omitempty"` // 任务成功后的结果 URL（视频地址等）
+	// Execution records safe, immutable request provenance. It stays in
+	// private_data so public task DTOs cannot expose it accidentally.
+	Execution *TaskExecutionSnapshot `json:"execution,omitempty"`
+	// PluginState is plugin-owned cross-round data. It is only replaced when
+	// a plugin hook explicitly returns state.
+	PluginState json.RawMessage `json:"plugin_state,omitempty"`
+	// ArtifactRefs records objects durably written by the configured artifact
+	// backend. It remains private task data and is never exposed in task DTOs.
+	ArtifactRefs map[string]TaskArtifactStorageRef `json:"artifact_refs,omitempty"`
+	// ResponsesBackground records whether the create request requested a
+	// background response protocol.
+	ResponsesBackground bool `json:"responses_background,omitempty"`
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
 	BillingSource                string                       `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
 	SubscriptionId               int                          `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
@@ -185,6 +219,39 @@ type TaskPrivateData struct {
 	CancelledAt                  int64                        `json:"cancelled_at,omitempty"`
 	CancelledReason              string                       `json:"cancelled_reason,omitempty"`
 	PollFailures                 int                          `json:"poll_failures,omitempty"`
+}
+
+type TaskArtifactStorageRef struct {
+	Backend   string `json:"backend"`
+	Bucket    string `json:"bucket"`
+	ObjectKey string `json:"object_key"`
+	Type      string `json:"type,omitempty"`
+	MimeType  string `json:"mime_type,omitempty"`
+	Size      int64  `json:"size,omitempty"`
+}
+
+type TaskExecutionSnapshot struct {
+	RequestID   string              `json:"request_id,omitempty"`
+	RequestPath string              `json:"request_path,omitempty"`
+	TaskPlugin  *TaskPluginSnapshot `json:"task_plugin,omitempty"`
+}
+
+// TaskPluginSnapshot contains credential-free plugin identity and the exact
+// source snapshot needed to replay a historical factory plugin after its
+// current runtime registration is removed.
+type TaskPluginSnapshot struct {
+	Key        string                    `json:"key"`
+	Name       string                    `json:"name"`
+	Version    string                    `json:"version"`
+	Source     string                    `json:"source,omitempty"`
+	Author     *TaskPluginAuthorSnapshot `json:"author,omitempty"`
+	APIVersion int                       `json:"api_version"`
+	Generation uint64                    `json:"generation"`
+}
+
+type TaskPluginAuthorSnapshot struct {
+	Name string `json:"name"`
+	URL  string `json:"url,omitempty"`
 }
 
 func (t *Task) ClearImageTaskExecutionSecrets() {
@@ -309,12 +376,18 @@ func (t *Task) GetUpstreamTaskID() string {
 }
 
 // GetResultURL 获取任务结果 URL（视频地址等）
-// 新数据存在 PrivateData.ResultURL 中；旧数据回退到 FailReason（历史兼容）
+// 仅成功任务允许暴露结果 URL；旧数据在成功时可回退到 FailReason 中的 legacy URL。
 func (t *Task) GetResultURL() string {
-	if t.PrivateData.ResultURL != "" {
-		return t.PrivateData.ResultURL
+	if t == nil || t.Status != TaskStatusSuccess {
+		return ""
 	}
-	return t.FailReason
+	if resultURL := strings.TrimSpace(t.PrivateData.ResultURL); resultURL != "" {
+		return resultURL
+	}
+	if legacyURL := strings.TrimSpace(t.FailReason); legacyTaskResultURL(legacyURL) {
+		return legacyURL
+	}
+	return ""
 }
 
 // GenerateTaskID 生成对外暴露的 task_xxxx 格式 ID
@@ -359,8 +432,10 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 	properties := Properties{}
 	privateData := TaskPrivateData{}
 	if relayInfo != nil && relayInfo.ChannelMeta != nil {
-		if relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeGemini ||
-			relayInfo.ChannelMeta.ChannelType == constant.ChannelTypeVertexAi {
+		// Persist the key selected for this attempt. Multi-key channels may
+		// expose a list in Channel.Key; async polling and content delivery must
+		// reuse the exact credential that submitted the task.
+		if relayInfo.ChannelMeta.ApiKey != "" {
 			privateData.Key = relayInfo.ChannelMeta.ApiKey
 		}
 		if relayInfo.UpstreamModelName != "" {
@@ -1091,19 +1166,59 @@ func GetOrphanedImageTaskCandidates(now int64, staleBefore int64, limit int) ([]
 // it, so writing the struct back with Select("*") would blank whatever the row
 // already holds.
 func (t *Task) UpdateWithStatusIfUnlocked(fromStatus TaskStatus, now int64) (bool, error) {
-	if t == nil {
+	return t.UpdateWithStatusIfUnlockedFrom(t.updateBase, fromStatus, now)
+}
+
+func (t *Task) UpdateWithStatusIfUnlockedFrom(base *Task, fromStatus TaskStatus, now int64) (bool, error) {
+	if t == nil || t.ID <= 0 {
 		return false, nil
 	}
-	result := DB.Model(t).
-		Where("status = ?", fromStatus).
-		Where("(lock_owner = '' OR lock_owner IS NULL OR COALESCE(lock_until, 0) <= ?)", now).
-		Select("*").
-		Omit("data").
-		Updates(t)
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected > 0, nil
+	won := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var current Task
+		if err := lockForUpdate(tx).Where("id = ?", t.ID).First(&current).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		if current.Status != fromStatus ||
+			(strings.TrimSpace(current.LockOwner) != "" && current.LockUntil > now) {
+			return nil
+		}
+		updates, applyPatch, err := buildTaskUpdatePatch(base, &current, t)
+		if err != nil {
+			return err
+		}
+		if !applyPatch {
+			// The row still satisfies the CAS/lease predicates. A no-op
+			// mutation is still a successful ownership check; callers use the
+			// result to decide whether it is safe to continue the external
+			// operation (for example, the first async submission attempt).
+			*t = current
+			won = true
+			return nil
+		}
+		updates["updated_at"] = nextTaskUpdatedAt(current.UpdatedAt)
+		result := tx.Model(&Task{}).
+			Where("id = ? AND status = ?", t.ID, fromStatus).
+			Where("(lock_owner = '' OR lock_owner IS NULL OR COALESCE(lock_until, 0) <= ?)", now).
+			Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		var merged Task
+		if err := tx.Where("id = ?", t.ID).First(&merged).Error; err != nil {
+			return err
+		}
+		*t = merged
+		won = true
+		return nil
+	})
+	return won, err
 }
 
 // ImageTaskCanCancelBeforeExecution reports whether a task is still safe to
@@ -1134,6 +1249,12 @@ func ImageTaskCanCancelBeforeExecution(task *Task, now int64) bool {
 // the row still passes ImageTaskCanCancelBeforeExecution under a row lock.
 // This closes the TOCTOU gap between the HTTP pre-check and a plain status+lock CAS.
 func ApplyImageTaskCancelBeforeExecution(task *Task, fromStatus TaskStatus, now int64) (bool, error) {
+	return ApplyImageTaskCancelBeforeExecutionFrom(task, task.updateBase, fromStatus, now)
+}
+
+// ApplyImageTaskCancelBeforeExecutionFrom is the baseline-aware form used by
+// callers that prepared a task mutation from a known database snapshot.
+func ApplyImageTaskCancelBeforeExecutionFrom(task, base *Task, fromStatus TaskStatus, now int64) (bool, error) {
 	if task == nil || task.ID <= 0 {
 		return false, nil
 	}
@@ -1157,15 +1278,30 @@ func ApplyImageTaskCancelBeforeExecution(task *Task, fromStatus TaskStatus, now 
 		if !ImageTaskCanCancelBeforeExecution(&current, now) {
 			return nil
 		}
+		updates, applyPatch, err := buildTaskUpdatePatch(base, &current, task)
+		if err != nil {
+			return err
+		}
+		if !applyPatch {
+			return nil
+		}
+		updates["updated_at"] = nextTaskUpdatedAt(current.UpdatedAt)
 		result := tx.Model(&Task{}).
 			Where("id = ? AND status = ?", task.ID, fromStatus).
 			Where("(lock_owner = '' OR lock_owner IS NULL OR COALESCE(lock_until, 0) <= ?)", now).
-			Select("*").
-			Updates(task)
+			Updates(updates)
 		if result.Error != nil {
 			return result.Error
 		}
-		won = result.RowsAffected > 0
+		if result.RowsAffected == 0 {
+			return nil
+		}
+		var merged Task
+		if err := tx.Where("id = ?", task.ID).First(&merged).Error; err != nil {
+			return err
+		}
+		*task = merged
+		won = true
 		return nil
 	})
 	return won, err
@@ -1346,14 +1482,16 @@ func GetByOnlyTaskId(taskId string) (*Task, bool, error) {
 	if taskId == "" {
 		return nil, false, nil
 	}
-	var task *Task
-	var err error
-	err = DB.Where("task_id = ?", taskId).First(&task).Error
-	exist, err := RecordExist(err)
-	if err != nil {
-		return nil, false, err
+	return getUniqueTaskByQuery(DB.Where("task_id = ?", taskId))
+}
+
+// GetUniqueByOnlyTaskId resolves a public task identifier only when exactly
+// one row owns it. Capability-based reads must fail closed on collisions.
+func GetUniqueByOnlyTaskId(taskId string) (*Task, bool, error) {
+	if taskId == "" {
+		return nil, false, nil
 	}
-	return task, exist, err
+	return getUniqueTaskByQuery(DB.Where("task_id = ?", taskId))
 }
 
 func GetTaskByID(id int64) (*Task, bool, error) {
@@ -1373,15 +1511,7 @@ func GetByTaskId(userId int, taskId string) (*Task, bool, error) {
 	if taskId == "" {
 		return nil, false, nil
 	}
-	var task *Task
-	var err error
-	err = DB.Where("user_id = ? and task_id = ?", userId, taskId).
-		First(&task).Error
-	exist, err := RecordExist(err)
-	if err != nil {
-		return nil, false, err
-	}
-	return task, exist, err
+	return getUniqueTaskByQuery(DB.Where("user_id = ? and task_id = ?", userId, taskId))
 }
 
 func GetByTaskIds(userId int, taskIds []any) ([]*Task, error) {
@@ -1396,6 +1526,57 @@ func GetByTaskIds(userId int, taskIds []any) ([]*Task, error) {
 		return nil, err
 	}
 	return task, nil
+}
+
+func GetByTaskIdsForPlatforms(userID int, platforms []constant.TaskPlatform, taskIDs []string) ([]*Task, error) {
+	if len(platforms) == 0 || len(taskIDs) == 0 {
+		return nil, nil
+	}
+	var tasks []*Task
+	if err := DB.
+		Where("user_id = ? AND platform IN ? AND task_id IN ?", userID, platforms, taskIDs).
+		Find(&tasks).Error; err != nil {
+		return nil, err
+	}
+	return tasks, nil
+}
+
+// GetTaskForProtocolObservation reloads a task through the ownership and
+// plugin-platform boundary used by long-lived protocol observers.
+func GetTaskForProtocolObservation(ctx context.Context, userID int, platform constant.TaskPlatform, taskID string) (*Task, bool, error) {
+	if taskID == "" {
+		return nil, false, nil
+	}
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return getUniqueTaskByQuery(DB.WithContext(ctx).
+		Where("user_id = ? AND platform = ? AND task_id = ?", userID, platform, taskID))
+}
+
+func getUniqueTaskByQuery(query *gorm.DB) (*Task, bool, error) {
+	if query == nil {
+		return nil, false, nil
+	}
+	var tasks []*Task
+	if err := query.Order("id").Limit(2).Find(&tasks).Error; err != nil {
+		return nil, false, err
+	}
+	if len(tasks) != 1 || tasks[0] == nil {
+		return nil, false, nil
+	}
+	return tasks[0], true, nil
+}
+
+func legacyTaskResultURL(value string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	lower := strings.ToLower(value)
+	return strings.HasPrefix(lower, "http://") ||
+		strings.HasPrefix(lower, "https://") ||
+		strings.HasPrefix(lower, "data:")
 }
 
 func markInlineImageTaskResultsAvailable(query *gorm.DB, tasks []*Task) error {
@@ -1539,6 +1720,22 @@ func GetPendingImageTaskRefundsAfter(afterTaskPrimaryID int64, limit int) ([]*Ta
 	var tasks []*Task
 	err := DB.Omit("data").Where(
 		"platform = ? AND status = ? AND refund_pending = ? AND COALESCE(settlement_status, '') <> ? AND id > ?",
+		constant.TaskPlatformImage,
+		TaskStatusFailure,
+		true,
+		TaskSettlementStatusReview,
+		afterTaskPrimaryID,
+	).Order("id ASC").Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+func GetPendingTaskRefundsAfter(afterTaskPrimaryID int64, limit int) ([]*Task, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var tasks []*Task
+	err := DB.Omit("data").Where(
+		"platform <> ? AND status = ? AND refund_pending = ? AND COALESCE(settlement_status, '') <> ? AND id > ?",
 		constant.TaskPlatformImage,
 		TaskStatusFailure,
 		true,
@@ -2030,6 +2227,14 @@ func (t *Task) Insert() error {
 	return err
 }
 
+func (t *Task) InsertWithContext(ctx context.Context) error {
+	t.fillMissingPublicImageTaskScalars()
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	return DB.WithContext(ctx).Create(t).Error
+}
+
 func DeleteTaskByID(id int64) error {
 	if id <= 0 {
 		return nil
@@ -2045,6 +2250,7 @@ type taskSnapshot struct {
 	FailReason   string
 	ResultURL    string
 	Data         json.RawMessage
+	PluginState  json.RawMessage
 	PollFailures int
 }
 
@@ -2056,6 +2262,7 @@ func (s taskSnapshot) Equal(other taskSnapshot) bool {
 		s.FailReason == other.FailReason &&
 		s.ResultURL == other.ResultURL &&
 		bytes.Equal(s.Data, other.Data) &&
+		bytes.Equal(s.PluginState, other.PluginState) &&
 		s.PollFailures == other.PollFailures
 }
 
@@ -2068,14 +2275,390 @@ func (t *Task) Snapshot() taskSnapshot {
 		FailReason:   t.FailReason,
 		ResultURL:    t.PrivateData.ResultURL,
 		Data:         t.Data,
+		PluginState:  t.PrivateData.PluginState,
 		PollFailures: t.PrivateData.PollFailures,
 	}
 }
 
-func (Task *Task) Update() error {
-	var err error
-	err = DB.Save(Task).Error
-	return err
+// CloneForUpdate returns a deep copy suitable for calculating a task mutation
+// patch. A patch is applied under a row lock so concurrent writers can update
+// disjoint task fields without replacing each other's private data.
+func (t *Task) CloneForUpdate() *Task {
+	if t == nil {
+		return nil
+	}
+	clone := *t
+	clone.updateBase = nil
+	clone.Data = append(json.RawMessage(nil), t.Data...)
+	privateData, err := json.Marshal(t.PrivateData)
+	if err == nil {
+		_ = json.Unmarshal(privateData, &clone.PrivateData)
+	}
+	return &clone
+}
+
+func (t *Task) Update() error {
+	if t == nil || t.ID <= 0 {
+		return fmt.Errorf("update task failed, task is invalid")
+	}
+	expectedUpdatedAt := t.UpdatedAt
+	updatedAt := nextTaskUpdatedAt(expectedUpdatedAt)
+	updates := *t
+	updates.UpdatedAt = updatedAt
+	query := DB.Model(&Task{}).Where("id = ?", t.ID)
+	if expectedUpdatedAt > 0 {
+		query = query.Where("updated_at = ?", expectedUpdatedAt)
+	}
+	result := query.Select("*").Updates(&updates)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		exists, err := taskRowExists(t.ID)
+		if err != nil {
+			return err
+		}
+		if exists {
+			return ErrTaskConcurrentUpdate
+		}
+		return fmt.Errorf("update task failed, id=%d", t.ID)
+	}
+	t.UpdatedAt = updatedAt
+	return nil
+}
+
+func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
+	return t.updateWithStatusFrom(t.updateBase, fromStatus, "", 0, false)
+}
+
+// UpdateWithStatusFrom applies only the fields changed between base and t.
+// The status check and the patch application are performed while holding the
+// task row lock, preventing stale private_data snapshots from overwriting
+// provider results, plugin state, artifacts, or billing evidence.
+func (t *Task) UpdateWithStatusFrom(base *Task, fromStatus TaskStatus) (bool, error) {
+	return t.updateWithStatusFrom(base, fromStatus, "", 0, false)
+}
+
+func (t *Task) UpdateWithStatusAndLeaseFrom(base *Task, fromStatus TaskStatus, lockOwner string, now int64) (bool, error) {
+	return t.updateWithStatusFrom(base, fromStatus, lockOwner, now, true)
+}
+
+func (t *Task) updateWithStatusFrom(base *Task, fromStatus TaskStatus, lockOwner string, now int64, requireLease bool) (bool, error) {
+	if t == nil || t.ID <= 0 {
+		return false, nil
+	}
+	won := false
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var current Task
+		query := lockForUpdate(tx).Where("id = ?", t.ID)
+		if err := query.First(&current).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return nil
+			}
+			return err
+		}
+		if current.Status != fromStatus {
+			return nil
+		}
+		if requireLease && lockOwner != "" &&
+			(current.LockOwner != lockOwner || current.LockUntil <= now) {
+			return nil
+		}
+		if base == nil && t.UpdatedAt > 0 && current.UpdatedAt != t.UpdatedAt {
+			return nil
+		}
+
+		updates, applyPatch, err := buildTaskUpdatePatch(base, &current, t)
+		if err != nil {
+			return err
+		}
+		if !applyPatch {
+			*t = current
+			won = true
+			return nil
+		}
+		if requireLease && t.Status != TaskStatusSuccess && t.Status != TaskStatusFailure {
+			delete(updates, "lock_owner")
+			delete(updates, "lock_until")
+		}
+		updatedAt := nextTaskUpdatedAt(current.UpdatedAt)
+		updates["updated_at"] = updatedAt
+		statusQuery := tx.Model(&Task{}).Where("id = ? AND status = ?", t.ID, fromStatus)
+		if requireLease && lockOwner != "" {
+			statusQuery = statusQuery.Where("lock_owner = ? AND COALESCE(lock_until, 0) > ?", lockOwner, now)
+		}
+		result := statusQuery.Updates(updates)
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return nil
+		}
+
+		var merged Task
+		if err := tx.Where("id = ?", t.ID).First(&merged).Error; err != nil {
+			return err
+		}
+		*t = merged
+		won = true
+		return nil
+	})
+	return won, err
+}
+
+func buildTaskUpdatePatch(base, current, candidate *Task) (map[string]any, bool, error) {
+	updates := make(map[string]any)
+	if base == nil {
+		updates = map[string]any{
+			"task_id":                      candidate.TaskID,
+			"platform":                     candidate.Platform,
+			"user_id":                      candidate.UserId,
+			"client_task_id":               candidate.ClientTaskID,
+			"group":                        candidate.Group,
+			"channel_id":                   candidate.ChannelId,
+			"quota":                        candidate.Quota,
+			"action":                       candidate.Action,
+			"status":                       candidate.Status,
+			"fail_reason":                  candidate.FailReason,
+			"submit_time":                  candidate.SubmitTime,
+			"start_time":                   candidate.StartTime,
+			"finish_time":                  candidate.FinishTime,
+			"progress":                     candidate.Progress,
+			"next_poll_at":                 candidate.NextPollAt,
+			"lock_until":                   candidate.LockUntil,
+			"lock_owner":                   candidate.LockOwner,
+			"storage_node":                 candidate.StorageNode,
+			"retry_count":                  candidate.RetryCount,
+			"settlement_status":            candidate.SettlementStatus,
+			"result_expires_at":            candidate.ResultExpiresAt,
+			"result_acknowledged_at":       candidate.ResultAcknowledgedAt,
+			"result_delete_after":          candidate.ResultDeleteAfter,
+			"result_cleaned_at":            candidate.ResultCleanedAt,
+			"result_cleanup_pending":       candidate.ResultCleanupPending,
+			"request_cleanup_pending":      candidate.RequestCleanupPending,
+			"request_delete_after":         candidate.RequestDeleteAfter,
+			"refund_pending":               candidate.RefundPending,
+			"execution_secrets_cleaned_at": candidate.ExecutionSecretsCleanedAt,
+			"sync_submission_started_at":   candidate.SyncSubmissionStartedAt,
+			"public_image_task":            candidate.PublicImageTask,
+			"public_image_task_token_id":   candidate.PublicImageTaskTokenID,
+			"image_task_cancelled_at":      candidate.ImageTaskCancelledAt,
+			"image_task_result_stored":     candidate.ImageTaskResultStored,
+			"image_task_result_stored_at":  candidate.ImageTaskResultStoredAt,
+			"properties":                   candidate.Properties,
+			"private_data":                 candidate.PrivateData,
+			"data":                         candidate.Data,
+		}
+		return updates, true, nil
+	}
+
+	if candidate.TaskID != base.TaskID {
+		updates["task_id"] = candidate.TaskID
+	}
+	if candidate.Platform != base.Platform {
+		updates["platform"] = candidate.Platform
+	}
+	if candidate.UserId != base.UserId {
+		updates["user_id"] = candidate.UserId
+	}
+	if candidate.ClientTaskID != base.ClientTaskID {
+		updates["client_task_id"] = candidate.ClientTaskID
+	}
+	if candidate.Group != base.Group {
+		updates["group"] = candidate.Group
+	}
+	if candidate.ChannelId != base.ChannelId {
+		updates["channel_id"] = candidate.ChannelId
+	}
+	if candidate.Quota != base.Quota {
+		updates["quota"] = candidate.Quota
+	}
+	if candidate.Action != base.Action {
+		updates["action"] = candidate.Action
+	}
+	if candidate.Status != base.Status {
+		updates["status"] = candidate.Status
+	}
+	if candidate.FailReason != base.FailReason {
+		updates["fail_reason"] = candidate.FailReason
+	}
+	if candidate.SubmitTime != base.SubmitTime {
+		updates["submit_time"] = candidate.SubmitTime
+	}
+	if candidate.StartTime != base.StartTime {
+		updates["start_time"] = candidate.StartTime
+	}
+	if candidate.FinishTime != base.FinishTime {
+		updates["finish_time"] = candidate.FinishTime
+	}
+	if candidate.Progress != base.Progress {
+		updates["progress"] = candidate.Progress
+	}
+	if candidate.NextPollAt != base.NextPollAt {
+		updates["next_poll_at"] = candidate.NextPollAt
+	}
+	if candidate.LockUntil != base.LockUntil {
+		updates["lock_until"] = candidate.LockUntil
+	}
+	if candidate.LockOwner != base.LockOwner {
+		updates["lock_owner"] = candidate.LockOwner
+	}
+	if candidate.StorageNode != base.StorageNode {
+		updates["storage_node"] = candidate.StorageNode
+	}
+	if candidate.RetryCount != base.RetryCount {
+		updates["retry_count"] = candidate.RetryCount
+	}
+	if candidate.SettlementStatus != base.SettlementStatus {
+		updates["settlement_status"] = candidate.SettlementStatus
+	}
+	if candidate.ResultExpiresAt != base.ResultExpiresAt {
+		updates["result_expires_at"] = candidate.ResultExpiresAt
+	}
+	if candidate.ResultAcknowledgedAt != base.ResultAcknowledgedAt {
+		updates["result_acknowledged_at"] = candidate.ResultAcknowledgedAt
+	}
+	if candidate.ResultDeleteAfter != base.ResultDeleteAfter {
+		updates["result_delete_after"] = candidate.ResultDeleteAfter
+	}
+	if candidate.ResultCleanedAt != base.ResultCleanedAt {
+		updates["result_cleaned_at"] = candidate.ResultCleanedAt
+	}
+	if candidate.ResultCleanupPending != base.ResultCleanupPending {
+		updates["result_cleanup_pending"] = candidate.ResultCleanupPending
+	}
+	if candidate.RequestCleanupPending != base.RequestCleanupPending {
+		updates["request_cleanup_pending"] = candidate.RequestCleanupPending
+	}
+	if candidate.RequestDeleteAfter != base.RequestDeleteAfter {
+		updates["request_delete_after"] = candidate.RequestDeleteAfter
+	}
+	if candidate.RefundPending != base.RefundPending {
+		updates["refund_pending"] = candidate.RefundPending
+	}
+	if candidate.ExecutionSecretsCleanedAt != base.ExecutionSecretsCleanedAt {
+		updates["execution_secrets_cleaned_at"] = candidate.ExecutionSecretsCleanedAt
+	}
+	if candidate.SyncSubmissionStartedAt != base.SyncSubmissionStartedAt {
+		updates["sync_submission_started_at"] = candidate.SyncSubmissionStartedAt
+	}
+	if candidate.PublicImageTask != base.PublicImageTask {
+		updates["public_image_task"] = candidate.PublicImageTask
+	}
+	if candidate.PublicImageTaskTokenID != base.PublicImageTaskTokenID {
+		updates["public_image_task_token_id"] = candidate.PublicImageTaskTokenID
+	}
+	if candidate.ImageTaskCancelledAt != base.ImageTaskCancelledAt {
+		updates["image_task_cancelled_at"] = candidate.ImageTaskCancelledAt
+	}
+	if candidate.ImageTaskResultStored != base.ImageTaskResultStored {
+		updates["image_task_result_stored"] = candidate.ImageTaskResultStored
+	}
+	if candidate.ImageTaskResultStoredAt != base.ImageTaskResultStoredAt {
+		updates["image_task_result_stored_at"] = candidate.ImageTaskResultStoredAt
+	}
+	if !reflect.DeepEqual(candidate.Properties, base.Properties) {
+		updates["properties"] = candidate.Properties
+	}
+	if !reflect.DeepEqual(candidate.PrivateData, base.PrivateData) {
+		updates["private_data"] = mergeTaskPrivateData(current.PrivateData, base.PrivateData, candidate.PrivateData)
+	}
+	if !bytes.Equal(candidate.Data, base.Data) {
+		updates["data"] = append(json.RawMessage(nil), candidate.Data...)
+	}
+	return updates, len(updates) > 0, nil
+}
+
+func mergeTaskPrivateData(current, base, candidate TaskPrivateData) TaskPrivateData {
+	merged := current
+	dst := reflect.ValueOf(&merged).Elem()
+	baseValue := reflect.ValueOf(base)
+	candidateValue := reflect.ValueOf(candidate)
+	for i := 0; i < dst.NumField(); i++ {
+		fieldName := dst.Type().Field(i).Name
+		if fieldName == "ArtifactRefs" {
+			if !reflect.DeepEqual(base.ArtifactRefs, candidate.ArtifactRefs) {
+				dst.Field(i).Set(reflect.ValueOf(mergeTaskArtifactRefs(
+					current.ArtifactRefs,
+					base.ArtifactRefs,
+					candidate.ArtifactRefs,
+				)))
+			}
+			continue
+		}
+		if fieldName == "RequestHeaders" {
+			if !reflect.DeepEqual(base.RequestHeaders, candidate.RequestHeaders) {
+				dst.Field(i).Set(reflect.ValueOf(mergeTaskStringMap(
+					current.RequestHeaders,
+					base.RequestHeaders,
+					candidate.RequestHeaders,
+				)))
+			}
+			continue
+		}
+		if !reflect.DeepEqual(baseValue.Field(i).Interface(), candidateValue.Field(i).Interface()) {
+			dst.Field(i).Set(candidateValue.Field(i))
+		}
+	}
+	return merged
+}
+
+func mergeTaskArtifactRefs(current, base, candidate map[string]TaskArtifactStorageRef) map[string]TaskArtifactStorageRef {
+	if reflect.DeepEqual(base, candidate) {
+		return current
+	}
+	merged := make(map[string]TaskArtifactStorageRef, len(current)+len(candidate))
+	for key, value := range current {
+		merged[key] = value
+	}
+	for key, baseValue := range base {
+		candidateValue, exists := candidate[key]
+		if !exists {
+			delete(merged, key)
+			continue
+		}
+		if !reflect.DeepEqual(baseValue, candidateValue) {
+			merged[key] = candidateValue
+		}
+	}
+	for key, candidateValue := range candidate {
+		if _, existedInBase := base[key]; !existedInBase {
+			merged[key] = candidateValue
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func mergeTaskStringMap(current, base, candidate map[string]string) map[string]string {
+	if reflect.DeepEqual(base, candidate) {
+		return current
+	}
+	merged := make(map[string]string, len(current)+len(candidate))
+	for key, value := range current {
+		merged[key] = value
+	}
+	for key, baseValue := range base {
+		candidateValue, exists := candidate[key]
+		if !exists {
+			delete(merged, key)
+			continue
+		}
+		if baseValue != candidateValue {
+			merged[key] = candidateValue
+		}
+	}
+	for key, candidateValue := range candidate {
+		if _, existedInBase := base[key]; !existedInBase {
+			merged[key] = candidateValue
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
 }
 
 func (t *Task) UpdateSubmitSettlementError() error {
@@ -2085,31 +2668,7 @@ func (t *Task) UpdateSubmitSettlementError() error {
 	if t.ID <= 0 {
 		return fmt.Errorf("update task settlement error failed, taskId=%s, id=%d", t.TaskID, t.ID)
 	}
-	result := DB.Model(&Task{}).
-		Where("id = ?", t.ID).
-		Updates(map[string]any{
-			"quota":                        t.Quota,
-			"fail_reason":                  t.FailReason,
-			"private_data":                 t.PrivateData,
-			"settlement_status":            t.SettlementStatus,
-			"refund_pending":               t.RefundPending,
-			"execution_secrets_cleaned_at": t.ExecutionSecretsCleanedAt,
-			"updated_at":                   common.GetTimestamp(),
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		exists, err := taskRowExists(t.ID)
-		if err != nil {
-			return err
-		}
-		if exists {
-			return nil
-		}
-		return fmt.Errorf("update task settlement error failed, taskId=%s, id=%d", t.TaskID, t.ID)
-	}
-	return nil
+	return updateTaskSettlementFields(t)
 }
 
 func (t *Task) UpdateQuota() error {
@@ -2119,31 +2678,149 @@ func (t *Task) UpdateQuota() error {
 	if t.ID <= 0 {
 		return fmt.Errorf("task quota update failed, taskId=%s, id=%d", t.TaskID, t.ID)
 	}
-	result := DB.Model(&Task{}).
-		Where("id = ?", t.ID).
-		Updates(map[string]any{
-			"quota":                        t.Quota,
-			"fail_reason":                  t.FailReason,
-			"private_data":                 t.PrivateData,
-			"settlement_status":            t.SettlementStatus,
-			"refund_pending":               t.RefundPending,
-			"execution_secrets_cleaned_at": t.ExecutionSecretsCleanedAt,
-			"updated_at":                   common.GetTimestamp(),
-		})
-	if result.Error != nil {
-		return result.Error
+	return updateTaskSettlementFields(t)
+}
+
+func nextTaskUpdatedAt(previous int64) int64 {
+	now := common.GetTimestamp()
+	if now <= previous {
+		return previous + 1
 	}
-	if result.RowsAffected == 0 {
-		exists, err := taskRowExists(t.ID)
-		if err != nil {
+	return now
+}
+
+func updateTaskSettlementFields(t *Task) error {
+	if t == nil || t.ID <= 0 {
+		return fmt.Errorf("update task settlement fields failed, task is invalid")
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var current Task
+		if err := lockForUpdate(tx).Where("id = ?", t.ID).First(&current).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("update task settlement fields failed, taskId=%s, id=%d", t.TaskID, t.ID)
+			}
 			return err
 		}
-		if exists {
-			return nil
+
+		base := t.updateBase
+		if base == nil || t.Quota != base.Quota {
+			current.Quota = t.Quota
 		}
-		return fmt.Errorf("task quota update failed, taskId=%s, id=%d", t.TaskID, t.ID)
+		if base == nil || t.FailReason != base.FailReason {
+			current.FailReason = t.FailReason
+		}
+		if base == nil || t.SettlementStatus != base.SettlementStatus {
+			current.SettlementStatus = t.SettlementStatus
+		}
+		if base == nil || t.RefundPending != base.RefundPending {
+			current.RefundPending = t.RefundPending
+		}
+		if base == nil || t.ExecutionSecretsCleanedAt != base.ExecutionSecretsCleanedAt {
+			current.ExecutionSecretsCleanedAt = t.ExecutionSecretsCleanedAt
+		}
+		if base == nil || t.PrivateData.SettlementAttemptQuota != base.PrivateData.SettlementAttemptQuota {
+			current.PrivateData.SettlementAttemptQuota = t.PrivateData.SettlementAttemptQuota
+		}
+		if base == nil || t.PrivateData.SettlementError != base.PrivateData.SettlementError {
+			current.PrivateData.SettlementError = t.PrivateData.SettlementError
+		}
+		updatedAt := nextTaskUpdatedAt(current.UpdatedAt)
+
+		if err := tx.Model(&Task{}).Where("id = ?", t.ID).Updates(map[string]any{
+			"quota":                        current.Quota,
+			"fail_reason":                  current.FailReason,
+			"private_data":                 current.PrivateData,
+			"settlement_status":            current.SettlementStatus,
+			"refund_pending":               current.RefundPending,
+			"execution_secrets_cleaned_at": current.ExecutionSecretsCleanedAt,
+			"updated_at":                   updatedAt,
+		}).Error; err != nil {
+			return err
+		}
+		t.Quota = current.Quota
+		t.FailReason = current.FailReason
+		t.SettlementStatus = current.SettlementStatus
+		t.RefundPending = current.RefundPending
+		t.ExecutionSecretsCleanedAt = current.ExecutionSecretsCleanedAt
+		t.PrivateData = current.PrivateData
+		t.UpdatedAt = updatedAt
+		return nil
+	})
+}
+
+// UpdateTaskPrivateData applies a mutation to private_data while holding the
+// task row lock and advancing updated_at. It is the safe boundary for small
+// protocol/artifact writers that must not replace a stale whole Task row.
+func UpdateTaskPrivateData(id int64, mutate func(*TaskPrivateData) error) error {
+	if id <= 0 {
+		return fmt.Errorf("update task private data failed, id=%d", id)
 	}
-	return nil
+	if mutate == nil {
+		return errors.New("update task private data failed, mutation is nil")
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var current Task
+		if err := lockForUpdate(tx).
+			Select("id", "private_data", "updated_at").
+			Where("id = ?", id).
+			First(&current).Error; err != nil {
+			return err
+		}
+		if err := mutate(&current.PrivateData); err != nil {
+			return err
+		}
+		updatedAt := nextTaskUpdatedAt(current.UpdatedAt)
+		result := tx.Model(&Task{}).
+			Where("id = ?", id).
+			Updates(map[string]any{
+				"private_data": current.PrivateData,
+				"updated_at":   updatedAt,
+			})
+		if result.Error != nil {
+			return result.Error
+		}
+		return nil
+	})
+}
+
+// UpdateTaskAfterSubmitAccountingFailure persists only the terminal/billing
+// fields owned by the submitter. The current private_data is re-read under a
+// row lock so provider results, plugin state, and artifact references survive
+// a concurrent accounting failure.
+func UpdateTaskAfterSubmitAccountingFailure(t *Task) error {
+	if t == nil || t.ID <= 0 {
+		return fmt.Errorf("fail task after submit settlement error failed, task is invalid")
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var current Task
+		if err := lockForUpdate(tx).Where("id = ?", t.ID).First(&current).Error; err != nil {
+			return err
+		}
+		current.Quota = t.Quota
+		current.Status = t.Status
+		current.Progress = t.Progress
+		current.FinishTime = t.FinishTime
+		current.FailReason = t.FailReason
+		current.SettlementStatus = t.SettlementStatus
+		current.PrivateData.SettlementAttemptQuota = t.PrivateData.SettlementAttemptQuota
+		current.PrivateData.SettlementError = t.PrivateData.SettlementError
+		updatedAt := nextTaskUpdatedAt(current.UpdatedAt)
+		if err := tx.Model(&Task{}).Where("id = ?", t.ID).Updates(map[string]any{
+			"quota":             current.Quota,
+			"status":            current.Status,
+			"progress":          current.Progress,
+			"finish_time":       current.FinishTime,
+			"fail_reason":       current.FailReason,
+			"private_data":      current.PrivateData,
+			"settlement_status": current.SettlementStatus,
+			"updated_at":        updatedAt,
+		}).Error; err != nil {
+			return err
+		}
+		*t = current
+		t.UpdatedAt = updatedAt
+		return nil
+	})
 }
 
 func taskRowExists(id int64) (bool, error) {
@@ -2260,37 +2937,11 @@ func MarkImageTaskSyncSubmissionStarted(id int64, owner string, now int64, start
 	return result.RowsAffected > 0, result.Error
 }
 
-// UpdateWithStatus performs a conditional UPDATE guarded by fromStatus (CAS).
-// Returns (true, nil) if this caller won the update, (false, nil) if
-// another process already moved the task out of fromStatus.
-//
-// Uses Model().Select("*").Updates() instead of Save() because GORM's Save
-// falls back to INSERT ON CONFLICT when the WHERE-guarded UPDATE matches
-// zero rows, which silently bypasses the CAS guard.
-func (t *Task) UpdateWithStatus(fromStatus TaskStatus) (bool, error) {
-	result := DB.Model(t).Where("status = ?", fromStatus).Select("*").Updates(t)
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected > 0, nil
-}
-
 func (t *Task) UpdateWithStatusAndLease(fromStatus TaskStatus, lockOwner string, now int64) (bool, error) {
 	if lockOwner == "" {
 		return t.UpdateWithStatus(fromStatus)
 	}
-	query := DB.Model(t).
-		Where("status = ?", fromStatus).
-		Where("lock_owner = ?", lockOwner).
-		Where("COALESCE(lock_until, 0) > ?", now)
-	if t.Status != TaskStatusSuccess && t.Status != TaskStatusFailure {
-		query = query.Omit("lock_owner", "lock_until")
-	}
-	result := query.Select("*").Updates(t)
-	if result.Error != nil {
-		return false, result.Error
-	}
-	return result.RowsAffected > 0, nil
+	return t.updateWithStatusFrom(t.updateBase, fromStatus, lockOwner, now, true)
 }
 
 func (t *Task) UpdateSettlementStatus(fromStatus TaskStatus, fromSettlementStatus string) (bool, error) {
@@ -2310,6 +2961,9 @@ func (t *Task) UpdateSettlementStatus(fromStatus TaskStatus, fromSettlementStatu
 		}
 
 		privateData := t.PrivateData
+		if t.updateBase != nil {
+			privateData = mergeTaskPrivateData(current.PrivateData, t.updateBase.PrivateData, t.PrivateData)
+		}
 		privateData.ResultBodyPath = current.PrivateData.ResultBodyPath
 		privateData.ResultBodySize = current.PrivateData.ResultBodySize
 		privateData.ResultBodySHA256 = current.PrivateData.ResultBodySHA256

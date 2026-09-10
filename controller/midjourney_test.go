@@ -12,11 +12,11 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaypkg "github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -159,7 +159,7 @@ func TestRunMidjourneyTaskUpdateOnceRollsBackRefundWhenRefundLogFails(t *testing
 
 	var user model.User
 	require.NoError(t, db.Select("quota").First(&user, 5101).Error)
-	require.Equal(t, 100, user.Quota)
+	require.EqualValues(t, 100, user.Quota)
 }
 
 func TestRunMidjourneyTaskUpdateOnceDoesNotWriteRefundLogWhenRefundCreditFails(t *testing.T) {
@@ -242,11 +242,11 @@ func TestRunMidjourneyTaskUpdateOnceRefundsTokenAndUsageCounters(t *testing.T) {
 
 	var user model.User
 	require.NoError(t, db.First(&user, 5103).Error)
-	require.Equal(t, 100, user.Quota)
+	require.EqualValues(t, 100, user.Quota)
 	require.Zero(t, user.UsedQuota)
 	var token model.Token
 	require.NoError(t, db.First(&token, 6103).Error)
-	require.Equal(t, 100, token.RemainQuota)
+	require.EqualValues(t, 100, token.RemainQuota)
 	require.Zero(t, token.UsedQuota)
 	var channel model.Channel
 	require.NoError(t, db.First(&channel, 4103).Error)
@@ -254,7 +254,7 @@ func TestRunMidjourneyTaskUpdateOnceRefundsTokenAndUsageCounters(t *testing.T) {
 	var usage model.TokenUsageDaily
 	require.NoError(t, db.Where("token_id = ? AND date = ?", 6103, submitDate).First(&usage).Error)
 	require.Zero(t, usage.Quota)
-	require.Equal(t, 1, usage.RequestCount)
+	require.EqualValues(t, 1, usage.RequestCount)
 	var todayUsageCount int64
 	require.NoError(t, db.Model(&model.TokenUsageDaily{}).Where("token_id = ? AND date = ?", 6103, todayDate).Count(&todayUsageCount).Error)
 	require.Zero(t, todayUsageCount)
@@ -318,11 +318,11 @@ func TestRunMidjourneyTaskUpdateOnceRefundsWhenChannelCacheMissing(t *testing.T)
 
 	var user model.User
 	require.NoError(t, db.First(&user, 5106).Error)
-	require.Equal(t, 100, user.Quota)
+	require.EqualValues(t, 100, user.Quota)
 	require.Zero(t, user.UsedQuota)
 	var token model.Token
 	require.NoError(t, db.First(&token, 6106).Error)
-	require.Equal(t, 100, token.RemainQuota)
+	require.EqualValues(t, 100, token.RemainQuota)
 	require.Zero(t, token.UsedQuota)
 	var channel model.Channel
 	require.NoError(t, db.First(&channel, 4106).Error)
@@ -383,7 +383,7 @@ func TestRunMidjourneyTaskUpdateOnceRefundsNullMidjourneyIdTask(t *testing.T) {
 
 	var user model.User
 	require.NoError(t, db.First(&user, 5108).Error)
-	require.Equal(t, 100, user.Quota)
+	require.EqualValues(t, 100, user.Quota)
 	require.Zero(t, user.UsedQuota)
 	var task model.Midjourney
 	require.NoError(t, db.Where("user_id = ?", 5108).First(&task).Error)
@@ -453,7 +453,7 @@ func TestRunMidjourneyTaskUpdateOnceMarksStaleApplyingRefundForTerminalFailureRe
 	require.NoError(t, db.Where("mj_id = ?", "mj-terminal-stale-applying").First(&reloaded).Error)
 	require.Equal(t, "FAILURE", reloaded.Status)
 	require.Equal(t, "100%", reloaded.Progress)
-	require.Equal(t, 25, reloaded.Quota)
+	require.EqualValues(t, 25, reloaded.Quota)
 	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
 	var record model.MidjourneySettlementRecord
 	require.NoError(t, db.Where("midjourney_id = ?", task.Id).First(&record).Error)
@@ -519,18 +519,18 @@ func TestRunMidjourneyTaskUpdateOnceRollsBackFullRefundWhenRefundLogFails(t *tes
 
 	var user model.User
 	require.NoError(t, db.First(&user, 5104).Error)
-	require.Equal(t, 75, user.Quota)
-	require.Equal(t, 25, user.UsedQuota)
+	require.EqualValues(t, 75, user.Quota)
+	require.EqualValues(t, 25, user.UsedQuota)
 	var token model.Token
 	require.NoError(t, db.First(&token, 6104).Error)
-	require.Equal(t, 75, token.RemainQuota)
-	require.Equal(t, 25, token.UsedQuota)
+	require.EqualValues(t, 75, token.RemainQuota)
+	require.EqualValues(t, 25, token.UsedQuota)
 	var channel model.Channel
 	require.NoError(t, db.First(&channel, 4104).Error)
-	require.Equal(t, int64(25), channel.UsedQuota)
+	require.EqualValues(t, int64(25), channel.UsedQuota)
 	var usage model.TokenUsageDaily
 	require.NoError(t, db.Where("token_id = ?", 6104).First(&usage).Error)
-	require.Equal(t, 25, usage.Quota)
+	require.EqualValues(t, 25, usage.Quota)
 }
 
 func TestRunMidjourneyTaskUpdateOnceRefundsSubscriptionTask(t *testing.T) {
@@ -666,11 +666,11 @@ func TestMidjourneyInsertFailureDoesNotConsumeQuota(t *testing.T) {
 	require.Equal(t, "insert_midjourney_task_failed", resp.Description)
 	var user model.User
 	require.NoError(t, db.First(&user, 5401).Error)
-	require.Equal(t, 100, user.Quota)
+	require.EqualValues(t, 100, user.Quota)
 	require.Zero(t, user.UsedQuota)
 	var token model.Token
 	require.NoError(t, db.First(&token, 6401).Error)
-	require.Equal(t, 100, token.RemainQuota)
+	require.EqualValues(t, 100, token.RemainQuota)
 	require.Zero(t, token.UsedQuota)
 	var logCount int64
 	require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ?", 5401).Count(&logCount).Error)
@@ -896,11 +896,11 @@ func TestSwapFaceInsertFailureDoesNotConsumeQuota(t *testing.T) {
 	require.Equal(t, "insert_midjourney_task_failed", resp.Description)
 	var user model.User
 	require.NoError(t, db.First(&user, 5402).Error)
-	require.Equal(t, 100, user.Quota)
+	require.EqualValues(t, 100, user.Quota)
 	require.Zero(t, user.UsedQuota)
 	var token model.Token
 	require.NoError(t, db.First(&token, 6402).Error)
-	require.Equal(t, 100, token.RemainQuota)
+	require.EqualValues(t, 100, token.RemainQuota)
 	require.Zero(t, token.UsedQuota)
 	var logCount int64
 	require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ?", 5402).Count(&logCount).Error)

@@ -15,7 +15,7 @@ func TestSetWebRouterServesIndexPageForWebAndWorkbenchRoutes(t *testing.T) {
 	indexPage := []byte("<!doctype html><html><body>web index</body></html>")
 
 	require.NotPanics(t, func() {
-		SetWebRouter(engine, WebAssets{IndexPage: indexPage})
+		SetWebRouter(engine, WebAssets{IndexPage: indexPage}, func(c *gin.Context) { c.Next() })
 	})
 
 	cases := []string{"/missing", "/image-tasks", "/image-tasks/task-1"}

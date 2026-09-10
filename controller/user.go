@@ -28,21 +28,84 @@ import (
 )
 
 type LoginRequest struct {
-	Username string `json:"username"`
-	Password string `json:"password"`
+	Username          string `json:"username"`
+	Password          string `json:"password"`
+	PasswordEncrypted string `json:"password_encrypted"`
+	EncryptionKeyID   string `json:"encryption_key_id"`
 }
 
 var (
 	errUserPasswordUnset    = errors.New("user password is not set")
 	errOriginalPasswordFail = errors.New("original password is incorrect")
+	errDefaultTokenCreate   = errors.New("create default token")
 )
+
+func resolvePasswordTransport(password, encryptedPassword, encryptionKeyID string, required bool) (string, error) {
+	if encryptedPassword != "" {
+		return common.DecryptPassword(encryptedPassword, encryptionKeyID)
+	}
+	if required {
+		return "", common.ErrPasswordEncryptionInvalid
+	}
+	return password, nil
+}
+
+func passwordTransportRequired(password string) bool {
+	return common.PasswordLoginEncryptionEnabled && strings.TrimSpace(password) != ""
+}
+
+func normalizePasswordTransportMap(values map[string]interface{}) error {
+	keyID, keyIDOK := values["encryption_key_id"].(string)
+	for _, field := range []string{"password", "original_password"} {
+		if rawPassword, ok := values[field].(string); ok &&
+			passwordTransportRequired(rawPassword) {
+			return common.ErrPasswordEncryptionInvalid
+		}
+		encryptedField := field + "_encrypted"
+		raw, exists := values[encryptedField]
+		if !exists {
+			continue
+		}
+		encryptedPassword, ok := raw.(string)
+		if !ok || encryptedPassword == "" || !keyIDOK {
+			return common.ErrPasswordEncryptionInvalid
+		}
+		password, err := resolvePasswordTransport("", encryptedPassword, keyID, true)
+		if err != nil {
+			return err
+		}
+		values[field] = password
+		delete(values, encryptedField)
+	}
+	delete(values, "encryption_key_id")
+	return nil
+}
+
+func GetPasswordEncryptionKey(c *gin.Context) {
+	if !common.PasswordLoginEncryptionEnabled {
+		common.ApiSuccess(c, gin.H{"enabled": false})
+		return
+	}
+	keyID, publicKey := common.PasswordEncryptionPublicKey()
+	if keyID == "" || publicKey == "" {
+		common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+		return
+	}
+	common.ApiSuccess(c, gin.H{
+		"enabled":    true,
+		"kid":        keyID,
+		"public_key": publicKey,
+	})
+}
 
 type registerRequest struct {
 	model.User
-	Aff           string `json:"aff"`
-	AffCode       string `json:"aff_code"`
-	AffiliateCode string `json:"affiliate_code"`
-	InviteCode    string `json:"invite_code"`
+	PasswordEncrypted string `json:"password_encrypted"`
+	EncryptionKeyID   string `json:"encryption_key_id"`
+	Aff               string `json:"aff"`
+	AffCode           string `json:"aff_code"`
+	AffiliateCode     string `json:"affiliate_code"`
+	InviteCode        string `json:"invite_code"`
 }
 
 func referralCodeFromRegisterRequest(req registerRequest) string {
@@ -67,7 +130,16 @@ func Login(c *gin.Context) {
 		return
 	}
 	username := loginRequest.Username
-	password := loginRequest.Password
+	password, err := resolvePasswordTransport(
+		loginRequest.Password,
+		loginRequest.PasswordEncrypted,
+		loginRequest.EncryptionKeyID,
+		common.PasswordLoginEncryptionEnabled,
+	)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgUserUsernameOrPasswordError)
+		return
+	}
 	if username == "" || password == "" {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
@@ -327,6 +399,16 @@ func Register(c *gin.Context) {
 		return
 	}
 	user := req.User
+	user.Password, err = resolvePasswordTransport(
+		user.Password,
+		req.PasswordEncrypted,
+		req.EncryptionKeyID,
+		common.PasswordLoginEncryptionEnabled,
+	)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
 	user.Username = strings.TrimSpace(user.Username)
 	user.Email = model.NormalizeUserEmail(user.Email)
 	if user.Email != "" {
@@ -382,9 +464,40 @@ func Register(c *gin.Context) {
 		Email:       strings.TrimSpace(user.Email),
 		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
 	}
+	var defaultToken *model.Token
+	if constant.GenerateDefaultToken {
+		defaultTokenGroup := strings.TrimSpace(cleanUser.Group)
+		if defaultTokenGroup == "" || defaultTokenGroup == "auto" {
+			defaultTokenGroup = "default"
+		}
+		key, keyErr := common.GenerateKey()
+		if keyErr != nil {
+			common.ApiErrorI18n(c, i18n.MsgUserDefaultTokenFailed)
+			common.SysLog("failed to generate token key: " + keyErr.Error())
+			return
+		}
+		defaultToken = &model.Token{
+			UserId:             user.Id,
+			Name:               user.Username + "的初始令牌",
+			Key:                key,
+			CreatedTime:        common.GetTimestamp(),
+			AccessedTime:       common.GetTimestamp(),
+			ExpiredTime:        -1,
+			RemainQuota:        500000,
+			UnlimitedQuota:     true,
+			ModelLimitsEnabled: false,
+			Group:              defaultTokenGroup,
+		}
+	}
 	if err := model.DB.Transaction(func(tx *gorm.DB) error {
 		if err := cleanUser.InsertWithTx(tx, 0); err != nil {
 			return err
+		}
+		if defaultToken != nil {
+			defaultToken.UserId = cleanUser.Id
+			if err := defaultToken.InsertWithTx(tx); err != nil {
+				return fmt.Errorf("%w: %v", errDefaultTokenCreate, err)
+			}
 		}
 		return referralService.BindInviteeByCodeWithTx(tx, cleanUser.Id, referralCode, referralBindSource(explicitCode))
 	}); err != nil {
@@ -392,48 +505,15 @@ func Register(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgUserExists)
 			return
 		}
+		if errors.Is(err, errDefaultTokenCreate) {
+			common.ApiErrorI18n(c, i18n.MsgCreateDefaultTokenErr)
+			return
+		}
 		common.ApiError(c, err)
 		return
 	}
 
-	// 获取插入后的用户ID
 	cleanUser.FinalizeOAuthUserCreation(0)
-	insertedUser := cleanUser
-	// 生成默认令牌
-	if constant.GenerateDefaultToken {
-		defaultTokenGroup, err := model.GetUserGroup(insertedUser.Id, true)
-		if err != nil {
-			common.SysLog("failed to get default token group: " + err.Error())
-		}
-		defaultTokenGroup = strings.TrimSpace(defaultTokenGroup)
-		if defaultTokenGroup == "" || defaultTokenGroup == "auto" {
-			defaultTokenGroup = "default"
-		}
-		key, err := common.GenerateKey()
-		if err != nil {
-			common.ApiErrorI18n(c, i18n.MsgUserDefaultTokenFailed)
-			common.SysLog("failed to generate token key: " + err.Error())
-			return
-		}
-		// 生成默认令牌
-		token := model.Token{
-			UserId:             insertedUser.Id, // 使用插入后的用户ID
-			Name:               cleanUser.Username + "的初始令牌",
-			Key:                key,
-			CreatedTime:        common.GetTimestamp(),
-			AccessedTime:       common.GetTimestamp(),
-			ExpiredTime:        -1,     // 永不过期
-			RemainQuota:        500000, // 示例额度
-			UnlimitedQuota:     true,
-			ModelLimitsEnabled: false,
-			Group:              defaultTokenGroup,
-		}
-		if err := token.Insert(); err != nil {
-			common.ApiErrorI18n(c, i18n.MsgCreateDefaultTokenErr)
-			return
-		}
-	}
-
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -798,16 +878,32 @@ func GetUserModels(c *gin.Context) {
 func UpdateUser(c *gin.Context) {
 	var req struct {
 		model.User
-		Email            *string               `json:"email"`
-		AdminPermissions *authz.PermissionsMap `json:"admin_permissions"`
+		PasswordEncrypted string                `json:"password_encrypted"`
+		EncryptionKeyID   string                `json:"encryption_key_id"`
+		Email             *string               `json:"email"`
+		AdminPermissions  *authz.PermissionsMap `json:"admin_permissions"`
 	}
 	err := common.DecodeJson(c.Request.Body, &req)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
 	updatedUser := req.User
+	updatedUser.Password, err = resolvePasswordTransport(
+		updatedUser.Password,
+		req.PasswordEncrypted,
+		req.EncryptionKeyID,
+		passwordTransportRequired(updatedUser.Password),
+	)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
 	emailProvided := req.Email != nil
 	if emailProvided {
 		updatedUser.Email = *req.Email
 	}
-	if err != nil || updatedUser.Id == 0 {
+	if updatedUser.Id == 0 {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
@@ -1005,6 +1101,10 @@ func UpdateSelf(c *gin.Context) {
 	}
 
 	// 原有的用户信息更新逻辑
+	if err := normalizePasswordTransportMap(requestData); err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
 	var user model.User
 	requestDataBytes, err := common.Marshal(requestData)
 	if err != nil {
@@ -1184,13 +1284,25 @@ func DeleteSelf(c *gin.Context) {
 func CreateUser(c *gin.Context) {
 	var req struct {
 		model.User
-		AdminPermissions *authz.PermissionsMap `json:"admin_permissions"`
+		PasswordEncrypted string                `json:"password_encrypted"`
+		EncryptionKeyID   string                `json:"encryption_key_id"`
+		AdminPermissions  *authz.PermissionsMap `json:"admin_permissions"`
 	}
 	err := common.DecodeJson(c.Request.Body, &req)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
 	user := req.User
+	user.Password, err = resolvePasswordTransport(
+		user.Password,
+		req.PasswordEncrypted,
+		req.EncryptionKeyID,
+		common.PasswordLoginEncryptionEnabled,
+	)
 	user.Username = strings.TrimSpace(user.Username)
 	user.Email = model.NormalizeUserEmail(user.Email)
-	if err != nil || user.Username == "" || user.Password == "" {
+	if user.Username == "" || user.Password == "" {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
@@ -1268,7 +1380,7 @@ func CreateUser(c *gin.Context) {
 type ManageRequest struct {
 	Id     int    `json:"id"`
 	Action string `json:"action"`
-	Value  int    `json:"value"`
+	Value  int64  `json:"value"`
 	Mode   string `json:"mode"`
 }
 
@@ -1405,15 +1517,15 @@ func ManageUser(c *gin.Context) {
 	if req.Action == "demote" {
 		revocationReason = "admin_demote"
 	}
-	if err := user.UpdateWithSessionRevocationReason(false, revocationReason); err != nil {
+	var authorizationHook func(tx *gorm.DB) error
+	if req.Action == "demote" {
+		authorizationHook = func(tx *gorm.DB) error {
+			return authz.ClearUserAuthorizationInTx(tx, user.Id)
+		}
+	}
+	if err := user.UpdateWithSessionRevocationReasonAndHook(false, revocationReason, authorizationHook); err != nil {
 		common.ApiError(c, err)
 		return
-	}
-	if req.Action == "demote" {
-		if err := authz.ClearUserAuthorization(user.Id); err != nil {
-			common.ApiError(c, err)
-			return
-		}
 	}
 	// 禁用 / 角色调整后，强制失效用户缓存与其全部令牌缓存，
 	// 避免在 Redis TTL 过期前仍使用旧状态（尤其是禁用后仍可发起请求的问题）。

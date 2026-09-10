@@ -181,6 +181,18 @@ func responseAnnotationToChat(annotation any) (map[string]any, error) {
 }
 
 func UsageFromResponsesUsage(src *dto.Usage) *dto.Usage {
+	return usageFromResponsesUsage(src, true)
+}
+
+// NormalizeResponsesUsage maps Responses usage into the shared accounting
+// shape without creating a BillingUsage snapshot. Native Responses handlers
+// use it so passthrough traffic preserves an existing snapshot but does not
+// introduce a conversion sidecar solely for local settlement.
+func NormalizeResponsesUsage(src *dto.Usage) *dto.Usage {
+	return usageFromResponsesUsage(src, false)
+}
+
+func usageFromResponsesUsage(src *dto.Usage, createBillingSnapshot bool) *dto.Usage {
 	usage := &dto.Usage{}
 	if src == nil {
 		return usage
@@ -188,7 +200,7 @@ func UsageFromResponsesUsage(src *dto.Usage) *dto.Usage {
 	usage.UsageSemantic = src.UsageSemantic
 	usage.UsageSource = src.UsageSource
 	usage.BillingUsage = dto.CloneBillingUsage(src.BillingUsage)
-	if usage.BillingUsage == nil {
+	if usage.BillingUsage == nil && createBillingSnapshot {
 		usage.BillingUsage = dto.NewOpenAIResponsesBillingUsage(src)
 	}
 	usage.Cost = src.Cost
@@ -242,21 +254,25 @@ func ExtractOutputTextFromResponses(resp *dto.OpenAIResponsesResponse) string {
 		if out.Role != "" && out.Role != "assistant" {
 			continue
 		}
+		var outputText strings.Builder
 		for _, c := range out.Content {
 			if c.Type == "output_text" && c.Text != "" {
-				sb.WriteString(c.Text)
+				outputText.WriteString(c.Text)
 			}
 		}
+		appendSeparatedText(&sb, outputText.String())
 	}
 	if sb.Len() > 0 {
 		return sb.String()
 	}
 	for _, out := range resp.Output {
+		var outputText strings.Builder
 		for _, c := range out.Content {
 			if c.Text != "" {
-				sb.WriteString(c.Text)
+				outputText.WriteString(c.Text)
 			}
 		}
+		appendSeparatedText(&sb, outputText.String())
 	}
 	return sb.String()
 }
@@ -271,13 +287,54 @@ func ExtractReasoningTextFromResponses(resp *dto.OpenAIResponsesResponse) string
 		if out.Type != responsesOutputTypeReasoning {
 			continue
 		}
-		for _, c := range out.Content {
-			if c.Text != "" {
-				sb.WriteString(c.Text)
-			}
-		}
+		appendSeparatedText(&sb, reasoningOutputText(&out))
 	}
 	return sb.String()
+}
+
+func reasoningOutputText(output *dto.ResponsesOutput) string {
+	if output == nil {
+		return ""
+	}
+	var text strings.Builder
+	hasContentText := false
+	for _, part := range output.Content {
+		if part.Text != "" {
+			hasContentText = true
+			break
+		}
+	}
+	if hasContentText {
+		for _, part := range output.Content {
+			appendSeparatedText(&text, part.Text)
+		}
+		return text.String()
+	}
+	for _, part := range output.Summary {
+		appendSeparatedText(&text, part.Text)
+	}
+	return text.String()
+}
+
+func appendSeparatedText(builder *strings.Builder, text string) {
+	if builder == nil || text == "" {
+		return
+	}
+	if builder.Len() > 0 {
+		current := builder.String()
+		trailingNewlines := 0
+		for index := len(current) - 1; index >= 0 && trailingNewlines < 2 && current[index] == '\n'; index-- {
+			trailingNewlines++
+		}
+		leadingNewlines := 0
+		for leadingNewlines < len(text) && leadingNewlines < 2 && text[leadingNewlines] == '\n' {
+			leadingNewlines++
+		}
+		for missing := 2 - trailingNewlines - leadingNewlines; missing > 0; missing-- {
+			builder.WriteByte('\n')
+		}
+	}
+	builder.WriteString(text)
 }
 
 func responseStatusString(resp *dto.OpenAIResponsesResponse) string {

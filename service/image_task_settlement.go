@@ -331,7 +331,7 @@ func ApplyPublicImageTaskRefundAtomic(ctx context.Context, task *model.Task, rea
 			}
 			tokenAdjusted := false
 			if persistedTask.PrivateData.TokenId > 0 {
-				if err := model.IncreaseTokenQuotaTx(tx, persistedTask.PrivateData.TokenId, quota); err != nil {
+				if err := model.IncreaseTokenQuotaTx(tx, persistedTask.PrivateData.TokenId, int64(quota)); err != nil {
 					if !model.IsTokenQuotaNoRowsError(err) {
 						return err
 					}
@@ -422,9 +422,9 @@ func applyImageTaskTokenSettlementTx(tx *gorm.DB, task *model.Task, delta int) (
 	var err error
 	switch {
 	case delta > 0:
-		err = model.DecreaseTokenQuotaTx(tx, tokenID, delta)
+		err = model.DecreaseTokenQuotaTx(tx, tokenID, int64(delta))
 	case delta < 0:
-		err = model.IncreaseTokenQuotaTx(tx, tokenID, -delta)
+		err = model.IncreaseTokenQuotaTx(tx, tokenID, int64(-delta))
 	default:
 		var count int64
 		if err := tx.Model(&model.Token{}).Where("id = ?", tokenID).Count(&count).Error; err != nil {
@@ -458,9 +458,9 @@ func applyImageTaskFundingSettlementTx(tx *gorm.DB, task *model.Task, delta int)
 	switch task.PrivateData.BillingSource {
 	case BillingSourceWallet, "":
 		if delta > 0 {
-			return model.DecreaseUserQuotaTx(tx, task.UserId, delta)
+			return model.DecreaseUserQuotaTx(tx, task.UserId, int64(delta))
 		}
-		return model.IncreaseUserQuotaTx(tx, task.UserId, -delta)
+		return model.IncreaseUserQuotaTx(tx, task.UserId, int64(-delta))
 	case BillingSourceSubscription:
 		return model.PostConsumeUserSubscriptionDeltaTx(tx, task.PrivateData.SubscriptionId, int64(delta))
 	default:

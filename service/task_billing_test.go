@@ -150,8 +150,8 @@ func TestApplyImageTaskSettlementAtomicRollsBackEveryPrimarySideEffect(t *testin
 	require.ErrorContains(t, err, "forced settlement record failure")
 	require.False(t, applied)
 
-	require.Equal(t, currentQuota, getUserQuota(t, userID))
-	require.Equal(t, tokenRemainQuota, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, currentQuota, getUserQuota(t, userID))
+	require.EqualValues(t, tokenRemainQuota, getTokenRemainQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
 	require.Zero(t, usedQuota)
 	require.Zero(t, requestCount)
@@ -159,7 +159,7 @@ func TestApplyImageTaskSettlementAtomicRollsBackEveryPrimarySideEffect(t *testin
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	require.Equal(t, preConsumedQuota, reloaded.Quota)
+	require.EqualValues(t, preConsumedQuota, reloaded.Quota)
 	require.Equal(t, model.TaskSettlementStatusPending, reloaded.SettlementStatus)
 	var record model.TaskSettlementRecord
 	require.NoError(t, model.DB.Where("task_primary_id = ?", task.ID).First(&record).Error)
@@ -203,16 +203,16 @@ func TestApplyImageTaskSettlementAtomicCommitsFinancialStateAndOutboxTogether(t 
 	require.NoError(t, err)
 	require.True(t, applied)
 
-	require.Equal(t, currentQuota-(actualQuota-preConsumedQuota), getUserQuota(t, userID))
-	require.Equal(t, tokenRemainQuota-(actualQuota-preConsumedQuota), getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, currentQuota-(actualQuota-preConsumedQuota), getUserQuota(t, userID))
+	require.EqualValues(t, tokenRemainQuota-(actualQuota-preConsumedQuota), getTokenRemainQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	require.Equal(t, actualQuota, usedQuota)
+	require.EqualValues(t, actualQuota, usedQuota)
 	require.Equal(t, 1, requestCount)
-	require.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
+	require.EqualValues(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	require.Equal(t, actualQuota, reloaded.Quota)
+	require.EqualValues(t, actualQuota, reloaded.Quota)
 	require.Equal(t, model.TaskSettlementStatusApplied, reloaded.SettlementStatus)
 	var record model.TaskSettlementRecord
 	require.NoError(t, model.DB.Where("task_primary_id = ?", task.ID).First(&record).Error)
@@ -223,8 +223,8 @@ func TestApplyImageTaskSettlementAtomicCommitsFinancialStateAndOutboxTogether(t 
 	require.NoError(t, json.Unmarshal([]byte(record.LogPayload), &payload))
 	require.Equal(t, 17, payload.UseTimeSeconds)
 	require.Equal(t, "image-create-node", payload.NodeName)
-	require.Equal(t, 1, payload.QuotaDataCount)
-	require.Equal(t, 16, payload.QuotaDataTokenUsed)
+	require.EqualValues(t, 1, payload.QuotaDataCount)
+	require.EqualValues(t, 16, payload.QuotaDataTokenUsed)
 }
 
 func TestApplyImageTaskSettlementAtomicCompletesWhenChannelWasDeleted(t *testing.T) {
@@ -257,14 +257,14 @@ func TestApplyImageTaskSettlementAtomicCompletesWhenChannelWasDeleted(t *testing
 
 	require.NoError(t, err)
 	require.True(t, applied)
-	require.Equal(t, currentQuota-(actualQuota-preConsumedQuota), getUserQuota(t, userID))
-	require.Equal(t, tokenRemainQuota-(actualQuota-preConsumedQuota), getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, currentQuota-(actualQuota-preConsumedQuota), getUserQuota(t, userID))
+	require.EqualValues(t, tokenRemainQuota-(actualQuota-preConsumedQuota), getTokenRemainQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	require.Equal(t, actualQuota, usedQuota)
+	require.EqualValues(t, actualQuota, usedQuota)
 	require.Equal(t, 1, requestCount)
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	require.Equal(t, actualQuota, reloaded.Quota)
+	require.EqualValues(t, actualQuota, reloaded.Quota)
 	require.Equal(t, model.TaskSettlementStatusApplied, reloaded.SettlementStatus)
 }
 
@@ -297,17 +297,17 @@ func TestApplyImageTaskSettlementAtomicCompletesWhenTokenWasDeleted(t *testing.T
 
 	require.NoError(t, err)
 	require.True(t, applied)
-	require.Equal(t, currentQuota-(actualQuota-preConsumedQuota), getUserQuota(t, userID))
+	require.EqualValues(t, currentQuota-(actualQuota-preConsumedQuota), getUserQuota(t, userID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	require.Equal(t, actualQuota, usedQuota)
+	require.EqualValues(t, actualQuota, usedQuota)
 	require.Equal(t, 1, requestCount)
-	require.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
+	require.EqualValues(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
 	var tokenUsageCount int64
 	require.NoError(t, model.DB.Model(&model.TokenUsageDaily{}).Where("token_id = ?", deletedTokenID).Count(&tokenUsageCount).Error)
 	require.Zero(t, tokenUsageCount)
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	require.Equal(t, actualQuota, reloaded.Quota)
+	require.EqualValues(t, actualQuota, reloaded.Quota)
 	require.Equal(t, model.TaskSettlementStatusApplied, reloaded.SettlementStatus)
 }
 
@@ -345,12 +345,12 @@ func TestRefundPublicImageTaskQuotaRollsBackEveryPrimarySideEffect(t *testing.T)
 
 	err := RefundTaskQuota(ctx, task, task.FailReason)
 	require.ErrorContains(t, err, "forced public image refund record failure")
-	require.Equal(t, currentQuota, getUserQuota(t, userID))
-	require.Equal(t, tokenRemainQuota, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, currentQuota, getUserQuota(t, userID))
+	require.EqualValues(t, tokenRemainQuota, getTokenRemainQuota(t, tokenID))
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	require.Equal(t, preConsumedQuota, reloaded.Quota)
+	require.EqualValues(t, preConsumedQuota, reloaded.Quota)
 	require.True(t, reloaded.RefundPending)
 	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
 	var logCount int64
@@ -382,8 +382,8 @@ func TestRefundPublicImageTaskQuotaCommitsWalletAndOutboxTogether(t *testing.T) 
 	require.NoError(t, model.DB.Create(task).Error)
 
 	require.NoError(t, RefundTaskQuota(ctx, task, task.FailReason))
-	require.Equal(t, currentQuota+preConsumedQuota, getUserQuota(t, userID))
-	require.Equal(t, tokenRemainQuota+preConsumedQuota, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, currentQuota+preConsumedQuota, getUserQuota(t, userID))
+	require.EqualValues(t, tokenRemainQuota+preConsumedQuota, getTokenRemainQuota(t, tokenID))
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
 	require.Zero(t, reloaded.Quota)
@@ -396,7 +396,7 @@ func TestRefundPublicImageTaskQuotaCommitsWalletAndOutboxTogether(t *testing.T) 
 	require.NotZero(t, record.LogDeliveredAt)
 	var refundLog model.Log
 	require.NoError(t, model.LOG_DB.Where("request_id = ? AND type = ?", task.TaskID, model.LogTypeRefund).First(&refundLog).Error)
-	require.Equal(t, preConsumedQuota, refundLog.Quota)
+	require.EqualValues(t, preConsumedQuota, refundLog.Quota)
 	require.Equal(t, imageTaskSettlementDeliveryKey(record.ID), refundLog.SettlementKey)
 }
 
@@ -405,7 +405,7 @@ func TestRefundPublicImageTaskQuotaCommitsSubscriptionAndTokenTogether(t *testin
 	ctx := context.Background()
 
 	const userID, tokenID, channelID, subscriptionID = 10891, 10892, 10893, 10894
-	const preConsumedQuota, tokenRemainQuota int = 2000, 8000
+	const preConsumedQuota, tokenRemainQuota = 2000, 8000
 	const subscriptionUsed int64 = 50000
 	seedUser(t, userID, 0)
 	seedToken(t, tokenID, userID, "sk-public-image-refund-subscription", tokenRemainQuota)
@@ -423,8 +423,8 @@ func TestRefundPublicImageTaskQuotaCommitsSubscriptionAndTokenTogether(t *testin
 	require.NoError(t, model.DB.Create(task).Error)
 
 	require.NoError(t, RefundTaskQuota(ctx, task, task.FailReason))
-	require.Equal(t, subscriptionUsed-int64(preConsumedQuota), getSubscriptionUsed(t, subscriptionID))
-	require.Equal(t, tokenRemainQuota+preConsumedQuota, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, subscriptionUsed-int64(preConsumedQuota), getSubscriptionUsed(t, subscriptionID))
+	require.EqualValues(t, tokenRemainQuota+preConsumedQuota, getTokenRemainQuota(t, tokenID))
 	require.Zero(t, getUserQuota(t, userID))
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
@@ -458,8 +458,8 @@ func TestRefundPublicImageTaskQuotaMarksStaleApplyingRecordForReview(t *testing.
 
 	err := RefundTaskQuota(ctx, task, task.FailReason)
 	require.Error(t, err)
-	require.Equal(t, 8000, getUserQuota(t, userID))
-	require.Equal(t, 8000, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, 8000, getUserQuota(t, userID))
+	require.EqualValues(t, 8000, getTokenRemainQuota(t, tokenID))
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
 	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
@@ -526,7 +526,7 @@ func TestRefundPublicImageTaskQuotaReturnsFreshApplyingRefund(t *testing.T) {
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	require.Equal(t, 2000, reloaded.Quota)
+	require.EqualValues(t, 2000, reloaded.Quota)
 	require.True(t, reloaded.RefundPending)
 	require.NotEqual(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
 }
@@ -691,8 +691,8 @@ func TestApplyImageTaskSettlementAtomicRejectsTaskOutsidePendingSettlement(t *te
 	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{ActualQuota: 3000})
 	require.ErrorContains(t, err, "PENDING settlement status")
 	require.False(t, applied)
-	require.Equal(t, 8000, getUserQuota(t, userID))
-	require.Equal(t, 8000, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, 8000, getUserQuota(t, userID))
+	require.EqualValues(t, 8000, getTokenRemainQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
 	require.Zero(t, usedQuota)
 	require.Zero(t, requestCount)
@@ -873,9 +873,9 @@ func TestDispatchImageTaskSettlementLogRecoversQuotaDataAfterLogWrite(t *testing
 	var quotaRows []model.QuotaData
 	require.NoError(t, model.DB.Where("user_id = ? AND model_name = ?", userID, "gpt-image-1").Find(&quotaRows).Error)
 	require.Len(t, quotaRows, 1)
-	require.Equal(t, 1, quotaRows[0].Count)
-	require.Equal(t, 16, quotaRows[0].TokenUsed)
-	require.Equal(t, 3000, quotaRows[0].Quota)
+	require.EqualValues(t, 1, quotaRows[0].Count)
+	require.EqualValues(t, 16, quotaRows[0].TokenUsed)
+	require.EqualValues(t, 3000, quotaRows[0].Quota)
 	var record model.TaskSettlementRecord
 	require.NoError(t, model.DB.Where("task_primary_id = ?", task.ID).First(&record).Error)
 	require.NotZero(t, record.LogDeliveredAt)
@@ -938,8 +938,8 @@ func TestDispatchImageTaskSettlementLogExportsRequestAndTokenUsage(t *testing.T)
 	require.NoError(t, model.DB.Where("user_id = ? AND model_name = ?", userID, "gpt-image-1").Find(&exportedRows).Error)
 	require.Len(t, exportedRows, 1)
 	require.Equal(t, 1, exportedRows[0].Count)
-	require.Equal(t, 16, exportedRows[0].TokenUsed)
-	require.Equal(t, 3000, exportedRows[0].Quota)
+	require.EqualValues(t, 16, exportedRows[0].TokenUsed)
+	require.EqualValues(t, 3000, exportedRows[0].Quota)
 	require.Equal(t, "image-create-node", exportedRows[0].NodeName)
 }
 
@@ -968,11 +968,11 @@ func TestApplyImageTaskSettlementAtomicCommitsSubscriptionDelta(t *testing.T) {
 	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{ActualQuota: actualQuota})
 	require.NoError(t, err)
 	require.True(t, applied)
-	require.Equal(t, int64(51000), getSubscriptionUsed(t, subscriptionID))
-	require.Equal(t, 7000, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, int64(51000), getSubscriptionUsed(t, subscriptionID))
+	require.EqualValues(t, 7000, getTokenRemainQuota(t, tokenID))
 	require.Zero(t, getUserQuota(t, userID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	require.Equal(t, actualQuota, usedQuota)
+	require.EqualValues(t, actualQuota, usedQuota)
 	require.Equal(t, 1, requestCount)
 }
 
@@ -1001,8 +1001,8 @@ func TestApplyImageTaskSettlementAtomicRollsBackWhenSubscriptionDeltaFails(t *te
 	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{ActualQuota: actualQuota})
 	require.ErrorContains(t, err, "subscription used exceeds total")
 	require.False(t, applied)
-	require.Equal(t, int64(99000), getSubscriptionUsed(t, subscriptionID))
-	require.Equal(t, 8000, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, int64(99000), getSubscriptionUsed(t, subscriptionID))
+	require.EqualValues(t, 8000, getTokenRemainQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
 	require.Zero(t, usedQuota)
 	require.Zero(t, requestCount)
@@ -1058,8 +1058,8 @@ func TestRollbackRefundedTaskTokenQuotaPreservesConcurrentTokenConsumption(t *te
 
 	var token model.Token
 	require.NoError(t, model.DB.First(&token, 91001).Error)
-	require.Equal(t, 80, token.RemainQuota)
-	require.Equal(t, 70, token.UsedQuota)
+	require.EqualValues(t, 80, token.RemainQuota)
+	require.EqualValues(t, 70, token.UsedQuota)
 }
 
 func TestMidjourneyUsageRollbackPreservesConcurrentUsage(t *testing.T) {
@@ -1086,20 +1086,20 @@ func TestMidjourneyUsageRollbackPreservesConcurrentUsage(t *testing.T) {
 
 	var user model.User
 	require.NoError(t, model.DB.First(&user, 91002).Error)
-	require.Equal(t, 120, user.UsedQuota)
+	require.EqualValues(t, 120, user.UsedQuota)
 
 	var channel model.Channel
 	require.NoError(t, model.DB.First(&channel, 91002).Error)
-	require.Equal(t, int64(120), channel.UsedQuota)
+	require.EqualValues(t, int64(120), channel.UsedQuota)
 
 	var usage model.TokenUsageDaily
 	require.NoError(t, model.DB.First(&usage, "token_id = ? AND date = ?", 91002, midjourneyTokenUsageDate(1710000000)).Error)
-	require.Equal(t, 20, usage.Quota)
+	require.EqualValues(t, 20, usage.Quota)
 
 	var token model.Token
 	require.NoError(t, model.DB.First(&token, 91002).Error)
-	require.Equal(t, 980, token.RemainQuota)
-	require.Equal(t, 120, token.UsedQuota)
+	require.EqualValues(t, 980, token.RemainQuota)
+	require.EqualValues(t, 120, token.UsedQuota)
 }
 
 func TestRefundMidjourneyTaskQuotaFinalizesAppliedRecordWithoutDoubleRefund(t *testing.T) {
@@ -1145,11 +1145,11 @@ func TestRefundMidjourneyTaskQuotaFinalizesAppliedRecordWithoutDoubleRefund(t *t
 
 	var user model.User
 	require.NoError(t, model.DB.Select("quota", "used_quota").First(&user, 91003).Error)
-	require.Equal(t, 100, user.Quota)
+	require.EqualValues(t, 100, user.Quota)
 	require.Zero(t, user.UsedQuota)
 	var token model.Token
 	require.NoError(t, model.DB.Select("remain_quota", "used_quota").First(&token, 91003).Error)
-	require.Equal(t, 100, token.RemainQuota)
+	require.EqualValues(t, 100, token.RemainQuota)
 	require.Zero(t, token.UsedQuota)
 	var channel model.Channel
 	require.NoError(t, model.DB.Select("used_quota").First(&channel, 91003).Error)
@@ -1167,7 +1167,7 @@ func TestRefundMidjourneyTaskQuotaFinalizesAppliedRecordWithoutDoubleRefund(t *t
 	require.NoError(t, model.DB.Where("midjourney_id = ?", task.Id).First(&record).Error)
 	require.Equal(t, model.TaskSettlementRecordStatusApplied, record.Status)
 	require.NotNil(t, record.PreConsumedQuota)
-	require.Equal(t, 25, *record.PreConsumedQuota)
+	require.EqualValues(t, 25, *record.PreConsumedQuota)
 }
 
 func TestRefundMidjourneyTaskQuotaSkipsFreshApplyingRecord(t *testing.T) {
@@ -1202,7 +1202,7 @@ func TestRefundMidjourneyTaskQuotaSkipsFreshApplyingRecord(t *testing.T) {
 
 	var reloaded model.Midjourney
 	require.NoError(t, model.DB.First(&reloaded, task.Id).Error)
-	require.Equal(t, 25, reloaded.Quota)
+	require.EqualValues(t, 25, reloaded.Quota)
 	require.Empty(t, reloaded.SettlementStatus)
 	var record model.MidjourneySettlementRecord
 	require.NoError(t, model.DB.Where("midjourney_id = ?", task.Id).First(&record).Error)
@@ -1414,7 +1414,7 @@ func TestRunTaskPollingOnceStartsOtherPlatformsWhileImageRunning(t *testing.T) {
 
 func seedUser(t *testing.T, id int, quota int) {
 	t.Helper()
-	user := &model.User{Id: id, Username: "test_user", Quota: quota, Status: common.UserStatusEnabled}
+	user := &model.User{Id: id, Username: "test_user", Quota: int64(quota), Status: common.UserStatusEnabled}
 	require.NoError(t, model.DB.Create(user).Error)
 }
 
@@ -1426,7 +1426,7 @@ func seedToken(t *testing.T, id int, userId int, key string, remainQuota int) {
 		Key:         key,
 		Name:        "test_token",
 		Status:      common.TokenStatusEnabled,
-		RemainQuota: remainQuota,
+		RemainQuota: int64(remainQuota),
 		UsedQuota:   0,
 	}
 	require.NoError(t, model.DB.Create(token).Error)
@@ -1494,14 +1494,14 @@ func makeTask(userId, channelId, quota, tokenId int, billingSource string, subsc
 // Read-back helpers
 // ---------------------------------------------------------------------------
 
-func getUserQuota(t *testing.T, id int) int {
+func getUserQuota(t *testing.T, id int) int64 {
 	t.Helper()
 	var user model.User
 	require.NoError(t, model.DB.Select("quota").Where("id = ?", id).First(&user).Error)
 	return user.Quota
 }
 
-func setUserUsageCounters(t *testing.T, id int, usedQuota int, requestCount int) {
+func setUserUsageCounters(t *testing.T, id int, usedQuota int64, requestCount int) {
 	t.Helper()
 	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", id).Updates(map[string]interface{}{
 		"used_quota":    usedQuota,
@@ -1509,7 +1509,7 @@ func setUserUsageCounters(t *testing.T, id int, usedQuota int, requestCount int)
 	}).Error)
 }
 
-func getUserUsageCounters(t *testing.T, id int) (int, int) {
+func getUserUsageCounters(t *testing.T, id int) (int64, int) {
 	t.Helper()
 	var user model.User
 	require.NoError(t, model.DB.Select("used_quota", "request_count").Where("id = ?", id).First(&user).Error)
@@ -1528,7 +1528,7 @@ func getChannelUsedQuota(t *testing.T, id int) int64 {
 	return channel.UsedQuota
 }
 
-func getTokenRemainQuota(t *testing.T, id int) int {
+func getTokenRemainQuota(t *testing.T, id int) int64 {
 	t.Helper()
 	var token model.Token
 	require.NoError(t, model.DB.Select("remain_quota").Where("id = ?", id).First(&token).Error)
@@ -1549,7 +1549,7 @@ func tokenUsageDateForTest(t *testing.T) string {
 	return time.Now().In(loc).Format("2006-01-02")
 }
 
-func getTokenUsedQuota(t *testing.T, id int) int {
+func getTokenUsedQuota(t *testing.T, id int) int64 {
 	t.Helper()
 	var token model.Token
 	require.NoError(t, model.DB.Select("used_quota").Where("id = ?", id).First(&token).Error)
@@ -1657,15 +1657,15 @@ func TestLogTaskConsumptionCountsZeroQuotaRequests(t *testing.T) {
 
 	var user model.User
 	require.NoError(t, model.DB.Select("used_quota", "request_count").First(&user, userID).Error)
-	require.Equal(t, 0, user.UsedQuota)
+	require.EqualValues(t, 0, user.UsedQuota)
 	require.Equal(t, 1, user.RequestCount)
 	var token model.Token
 	require.NoError(t, model.DB.Select("used_quota").First(&token, tokenID).Error)
-	require.Equal(t, 0, token.UsedQuota)
+	require.EqualValues(t, 0, token.UsedQuota)
 	var usage model.TokenUsageDaily
 	require.NoError(t, model.DB.First(&usage, "token_id = ? AND date = ?", tokenID, tokenUsageDateForTest(t)).Error)
-	require.Equal(t, 0, usage.Quota)
-	require.Equal(t, 1, usage.RequestCount)
+	require.EqualValues(t, 0, usage.Quota)
+	require.EqualValues(t, 1, usage.RequestCount)
 	assert.Equal(t, int64(1), countLogs(t))
 }
 
@@ -1710,15 +1710,15 @@ func TestLogTaskConsumptionRollsBackZeroQuotaRequestCountWhenConsumeLogFails(t *
 	require.Contains(t, err.Error(), "record consume log failed")
 	var user model.User
 	require.NoError(t, model.DB.Select("used_quota", "request_count").First(&user, userID).Error)
-	require.Equal(t, 0, user.UsedQuota)
+	require.EqualValues(t, 0, user.UsedQuota)
 	require.Equal(t, 0, user.RequestCount)
 	var token model.Token
 	require.NoError(t, model.DB.Select("used_quota").First(&token, tokenID).Error)
-	require.Equal(t, 0, token.UsedQuota)
+	require.EqualValues(t, 0, token.UsedQuota)
 	var usage model.TokenUsageDaily
 	require.NoError(t, model.DB.First(&usage, "token_id = ? AND date = ?", tokenID, tokenUsageDateForTest(t)).Error)
-	require.Equal(t, 0, usage.Quota)
-	require.Equal(t, 0, usage.RequestCount)
+	require.EqualValues(t, 0, usage.Quota)
+	require.EqualValues(t, 0, usage.RequestCount)
 }
 
 func TestLogTaskConsumptionRollsBackUsageWhenConsumeLogFails(t *testing.T) {
@@ -1761,13 +1761,13 @@ func TestLogTaskConsumptionRollsBackUsageWhenConsumeLogFails(t *testing.T) {
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "record consume log failed")
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, 0, usedQuota)
+	assert.EqualValues(t, 0, usedQuota)
 	assert.Equal(t, 0, requestCount)
-	assert.Equal(t, int64(0), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(0), getChannelUsedQuota(t, channelID))
 	var daily model.TokenUsageDaily
 	err = model.DB.Where("token_id = ?", tokenID).First(&daily).Error
 	if err == nil {
-		assert.Equal(t, 0, daily.Quota)
+		assert.EqualValues(t, 0, daily.Quota)
 		assert.Equal(t, 0, daily.RequestCount)
 	}
 }
@@ -1807,22 +1807,22 @@ func TestUpdateSunoTasksRefundsWhenChannelLookupFails(t *testing.T) {
 	assert.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
 	assert.Equal(t, "100%", reloaded.Progress)
 	assert.Contains(t, reloaded.FailReason, fmt.Sprintf("渠道ID：%d", missingChannelID))
-	assert.Equal(t, 0, reloaded.Quota)
+	assert.EqualValues(t, 0, reloaded.Quota)
 
-	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, initQuota+preConsumed, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, 0, getTokenUsedQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, 0, usedQuota)
+	assert.EqualValues(t, 0, usedQuota)
 	assert.Equal(t, 1, requestCount)
 	usage := getTokenUsageDaily(t, tokenID)
-	assert.Equal(t, 0, usage.Quota)
-	assert.Equal(t, 1, usage.RequestCount)
+	assert.EqualValues(t, 0, usage.Quota)
+	assert.EqualValues(t, 1, usage.RequestCount)
 
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
-	assert.Equal(t, preConsumed, log.Quota)
+	assert.EqualValues(t, preConsumed, log.Quota)
 	assert.Equal(t, userID, log.UserId)
 	assert.Equal(t, "test_user", log.Username)
 	assert.Equal(t, tokenID, log.TokenId)
@@ -3384,28 +3384,28 @@ func TestRefundTaskQuota_Wallet(t *testing.T) {
 	require.NoError(t, RefundTaskQuota(ctx, task, "task failed: upstream error"))
 
 	// User quota should increase by preConsumed
-	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
+	assert.EqualValues(t, initQuota+preConsumed, getUserQuota(t, userID))
 
 	// Token remain_quota should increase, used_quota should decrease
-	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, 0, getTokenUsedQuota(t, tokenID))
 
 	require.Eventually(t, func() bool {
 		usedQuota, requestCount := getUserUsageCounters(t, userID)
 		return usedQuota == 0 && requestCount == 1
 	}, time.Second, 10*time.Millisecond)
-	assert.Equal(t, int64(0), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(0), getChannelUsedQuota(t, channelID))
 
 	// A refund log should be created
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
-	assert.Equal(t, preConsumed, log.Quota)
+	assert.EqualValues(t, preConsumed, log.Quota)
 	assert.Equal(t, "test-model", log.ModelName)
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, 0, reloaded.Quota)
+	assert.EqualValues(t, 0, reloaded.Quota)
 	assert.False(t, reloaded.RefundPending)
 }
 
@@ -3431,19 +3431,19 @@ func TestRefundTaskQuotaRollsBackAccountingWhenRefundLogFails(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "record task billing log failed")
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, 0, getTokenUsedQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, preConsumed, usedQuota)
+	assert.EqualValues(t, preConsumed, usedQuota)
 	assert.Equal(t, 1, requestCount)
-	assert.Equal(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, preConsumed, reloaded.Quota)
+	assert.EqualValues(t, preConsumed, reloaded.Quota)
 	assert.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
-	assert.Equal(t, preConsumed, reloaded.PrivateData.SettlementAttemptQuota)
+	assert.EqualValues(t, preConsumed, reloaded.PrivateData.SettlementAttemptQuota)
 	assert.Contains(t, reloaded.PrivateData.SettlementError, "record task billing log failed")
 }
 
@@ -3468,18 +3468,18 @@ func TestRefundTaskQuota_DoesNotRefundWhenTaskQuotaPersistenceFails(t *testing.T
 	err := RefundTaskQuota(ctx, task, "missing task row")
 
 	require.Error(t, err)
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
-	assert.Equal(t, preConsumed, task.Quota)
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, 0, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, preConsumed, task.Quota)
 	assert.Equal(t, model.TaskSettlementStatusReview, task.SettlementStatus)
-	assert.Equal(t, preConsumed, task.PrivateData.SettlementAttemptQuota)
+	assert.EqualValues(t, preConsumed, task.PrivateData.SettlementAttemptQuota)
 	assert.Contains(t, task.PrivateData.SettlementError, "task refund accounting target task is missing")
 	require.Eventually(t, func() bool {
 		usedQuota, requestCount := getUserUsageCounters(t, userID)
 		return usedQuota == preConsumed && requestCount == 1
 	}, time.Second, 10*time.Millisecond)
-	assert.Equal(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
@@ -3534,7 +3534,7 @@ func TestRefundTaskQuota_ExportsNetQuotaDataWithoutExtraCount(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, 1, rows[0].Count)
-	assert.Equal(t, 0, rows[0].Quota)
+	assert.EqualValues(t, 0, rows[0].Quota)
 }
 
 func TestRefundTaskQuota_ImageTaskExportsNetQuotaDataWithoutExtraCount(t *testing.T) {
@@ -3590,7 +3590,7 @@ func TestRefundTaskQuota_ImageTaskExportsNetQuotaDataWithoutExtraCount(t *testin
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, 1, rows[0].Count)
-	assert.Equal(t, 0, rows[0].Quota)
+	assert.EqualValues(t, 0, rows[0].Quota)
 }
 
 func TestRefundTaskQuota_ClearsSettlementReviewFields(t *testing.T) {
@@ -3661,18 +3661,18 @@ func TestRefundTaskQuotaFinalizesAppliedSettlementRecordWithoutDoubleRefund(t *t
 
 	require.NoError(t, RefundTaskQuota(ctx, task, "task failed after applied record"))
 
-	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, initQuota+preConsumed, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, 0, getTokenUsedQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, 0, usedQuota)
+	assert.EqualValues(t, 0, usedQuota)
 	assert.Equal(t, 1, requestCount)
-	assert.Equal(t, int64(0), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(0), getChannelUsedQuota(t, channelID))
 	assert.Equal(t, int64(1), countLogs(t))
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, 0, reloaded.Quota)
+	assert.EqualValues(t, 0, reloaded.Quota)
 	assert.Empty(t, reloaded.SettlementStatus)
 	record, exists, err := model.GetTaskSettlementRecord(task.ID)
 	require.NoError(t, err)
@@ -3769,7 +3769,7 @@ func TestRefundTaskQuotaDoesNotRecoverAppliedRefundFromRecalculationLog(t *testi
 	require.Contains(t, err.Error(), "no valid applied refund evidence")
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	require.Equal(t, preConsumed, reloaded.Quota)
+	require.EqualValues(t, preConsumed, reloaded.Quota)
 	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
 }
 
@@ -3805,7 +3805,7 @@ func TestRefundTaskQuotaZeroQuotaFinalizesAppliedRefundRecord(t *testing.T) {
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, 0, reloaded.Quota)
+	assert.EqualValues(t, 0, reloaded.Quota)
 	assert.Empty(t, reloaded.SettlementStatus)
 	assert.Empty(t, reloaded.FailReason)
 	assert.Zero(t, reloaded.PrivateData.SettlementAttemptQuota)
@@ -3849,17 +3849,17 @@ func TestRefundTaskQuotaRejectsAppliedRecalculationRecord(t *testing.T) {
 	require.Contains(t, err.Error(), "cannot finalize refund")
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, preConsumed, reloaded.Quota)
+	assert.EqualValues(t, preConsumed, reloaded.Quota)
 	assert.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
 	assert.Equal(t, TaskSettlementReviewFailReason, reloaded.FailReason)
-	assert.Equal(t, preConsumed, reloaded.PrivateData.SettlementAttemptQuota)
+	assert.EqualValues(t, preConsumed, reloaded.PrivateData.SettlementAttemptQuota)
 	assert.Contains(t, reloaded.PrivateData.SettlementError, "cannot finalize refund")
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, preConsumed, usedQuota)
+	assert.EqualValues(t, preConsumed, usedQuota)
 	assert.Equal(t, 1, requestCount)
-	assert.Equal(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
@@ -3893,15 +3893,15 @@ func TestRefundTaskQuotaSkipsFreshApplyingSettlementRecord(t *testing.T) {
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, preConsumed, reloaded.Quota)
+	assert.EqualValues(t, preConsumed, reloaded.Quota)
 	assert.Equal(t, model.TaskSettlementStatusPending, reloaded.SettlementStatus)
 	assert.Empty(t, reloaded.PrivateData.SettlementError)
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, preConsumed, usedQuota)
+	assert.EqualValues(t, preConsumed, usedQuota)
 	assert.Equal(t, 1, requestCount)
-	assert.Equal(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
@@ -3927,23 +3927,23 @@ func TestRefundTaskQuota_MarksReviewWhenUsageCounterUpdateFails(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "update task usage counters failed")
-	assert.Equal(t, preConsumed, task.Quota)
+	assert.EqualValues(t, preConsumed, task.Quota)
 	assert.Equal(t, model.TaskSettlementStatusReview, task.SettlementStatus)
-	assert.Equal(t, preConsumed, task.PrivateData.SettlementAttemptQuota)
+	assert.EqualValues(t, preConsumed, task.PrivateData.SettlementAttemptQuota)
 	assert.Contains(t, task.PrivateData.SettlementError, "update task usage counters failed")
 	assert.Contains(t, task.FailReason, TaskSettlementReviewFailReason)
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, preConsumed, usedQuota)
+	assert.EqualValues(t, preConsumed, usedQuota)
 	assert.Equal(t, 1, requestCount)
 	assert.Equal(t, int64(0), countLogs(t))
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, preConsumed, reloaded.Quota)
+	assert.EqualValues(t, preConsumed, reloaded.Quota)
 	assert.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
-	assert.Equal(t, preConsumed, reloaded.PrivateData.SettlementAttemptQuota)
+	assert.EqualValues(t, preConsumed, reloaded.PrivateData.SettlementAttemptQuota)
 	assert.Contains(t, reloaded.PrivateData.SettlementError, "update task usage counters failed")
 }
 
@@ -3967,10 +3967,10 @@ func TestRefundTaskQuota_Subscription(t *testing.T) {
 	require.NoError(t, RefundTaskQuota(ctx, task, "subscription task failed"))
 
 	// Subscription used should decrease by preConsumed
-	assert.Equal(t, subUsed-int64(preConsumed), getSubscriptionUsed(t, subID))
+	assert.EqualValues(t, subUsed-int64(preConsumed), getSubscriptionUsed(t, subID))
 
 	// Token should also be refunded
-	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
 
 	log := getLastLog(t)
 	require.NotNil(t, log)
@@ -3989,7 +3989,7 @@ func TestRefundTaskQuota_ZeroQuota(t *testing.T) {
 	require.NoError(t, RefundTaskQuota(ctx, task, "zero quota task"))
 
 	// No change to user quota
-	assert.Equal(t, 5000, getUserQuota(t, userID))
+	assert.EqualValues(t, 5000, getUserQuota(t, userID))
 
 	// No log created
 	assert.Equal(t, int64(0), countLogs(t))
@@ -4011,7 +4011,7 @@ func TestRefundTaskQuota_NoToken(t *testing.T) {
 	require.NoError(t, RefundTaskQuota(ctx, task, "no token task failed"))
 
 	// User quota refunded
-	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
+	assert.EqualValues(t, initQuota+preConsumed, getUserQuota(t, userID))
 
 	// Log created
 	log := getLastLog(t)
@@ -4035,11 +4035,11 @@ func TestRefundTaskQuota_RefundsFundingWhenTokenDeleted(t *testing.T) {
 
 	require.NoError(t, RefundTaskQuota(ctx, task, "token deleted task failed"))
 
-	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
+	assert.EqualValues(t, initQuota+preConsumed, getUserQuota(t, userID))
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
-	assert.Equal(t, preConsumed, log.Quota)
+	assert.EqualValues(t, preConsumed, log.Quota)
 }
 
 func TestRefundTaskQuota_RollsBackTokenWhenFundingRefundFails(t *testing.T) {
@@ -4060,16 +4060,16 @@ func TestRefundTaskQuota_RollsBackTokenWhenFundingRefundFails(t *testing.T) {
 	err := RefundTaskQuota(ctx, task, "subscription refund failed")
 
 	require.Error(t, err)
-	assert.Equal(t, 0, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, quota, getTokenUsedQuota(t, tokenID))
-	assert.Equal(t, 10000, getUserQuota(t, userID))
+	assert.EqualValues(t, 0, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, quota, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, 10000, getUserQuota(t, userID))
 	assert.Equal(t, int64(0), countLogs(t))
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, quota, reloaded.Quota)
+	assert.EqualValues(t, quota, reloaded.Quota)
 	assert.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
-	assert.Equal(t, quota, reloaded.PrivateData.SettlementAttemptQuota)
+	assert.EqualValues(t, quota, reloaded.PrivateData.SettlementAttemptQuota)
 	assert.Contains(t, reloaded.PrivateData.SettlementError, "refund funding failed")
 }
 
@@ -4098,25 +4098,25 @@ func TestRecalculate_PositiveDelta(t *testing.T) {
 	require.NoError(t, RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment"))
 
 	// User quota should decrease by the delta (1000 additional charge)
-	assert.Equal(t, initQuota-(actualQuota-preConsumed), getUserQuota(t, userID))
+	assert.EqualValues(t, initQuota-(actualQuota-preConsumed), getUserQuota(t, userID))
 
 	// Token should also be charged the delta
-	assert.Equal(t, tokenRemain-(actualQuota-preConsumed), getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, tokenRemain-(actualQuota-preConsumed), getTokenRemainQuota(t, tokenID))
 
 	// task.Quota should be updated to actualQuota
-	assert.Equal(t, actualQuota, task.Quota)
+	assert.EqualValues(t, actualQuota, task.Quota)
 
 	require.Eventually(t, func() bool {
 		usedQuota, requestCount := getUserUsageCounters(t, userID)
 		return usedQuota == actualQuota && requestCount == 1
 	}, time.Second, 10*time.Millisecond)
-	assert.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
 
 	// Log type should be Consume (additional charge)
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeConsume, log.Type)
-	assert.Equal(t, actualQuota-preConsumed, log.Quota)
+	assert.EqualValues(t, actualQuota-preConsumed, log.Quota)
 }
 
 func TestTaskBillingGroupRatioUsesZeroSpecialRatioSnapshot(t *testing.T) {
@@ -4187,17 +4187,17 @@ func TestRecalculateTaskQuotaByTokensUsesBillingContextSpecialGroupRatio(t *test
 
 	require.NoError(t, RecalculateTaskQuotaByTokens(ctx, task, 100))
 
-	assert.Equal(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, actualQuota, usedQuota)
+	assert.EqualValues(t, actualQuota, usedQuota)
 	assert.Equal(t, 1, requestCount)
-	assert.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
 
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
-	assert.Equal(t, preConsumed-actualQuota, log.Quota)
+	assert.EqualValues(t, preConsumed-actualQuota, log.Quota)
 	other, err := common.StrToMap(log.Other)
 	require.NoError(t, err)
 	assert.EqualValues(t, 0.5, other["group_ratio"])
@@ -4242,18 +4242,18 @@ func TestRecalculateTaskQuotaByTokensUsesBillingContextModelRatioSnapshot(t *tes
 
 	require.NoError(t, RecalculateTaskQuotaByTokens(ctx, task, 100))
 
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, 0, getTokenUsedQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, preConsumed, usedQuota)
+	assert.EqualValues(t, preConsumed, usedQuota)
 	assert.Equal(t, 1, requestCount)
-	assert.Equal(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
 	assert.Equal(t, int64(0), countLogs(t))
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, preConsumed, reloaded.Quota)
+	assert.EqualValues(t, preConsumed, reloaded.Quota)
 	assert.Empty(t, reloaded.SettlementStatus)
 }
 
@@ -4298,20 +4298,20 @@ func TestRecalculateTaskQuotaMarksReviewWhenAppliedSettlementRecordHasNoEvidence
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "has no applied quota evidence")
-	assert.Equal(t, initQuota-delta, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain-delta, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, delta, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, initQuota-delta, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain-delta, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, delta, getTokenUsedQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, actualQuota, usedQuota)
+	assert.EqualValues(t, actualQuota, usedQuota)
 	assert.Equal(t, 1, requestCount)
-	assert.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
 	assert.Equal(t, int64(1), countLogs(t))
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, preConsumed, reloaded.Quota)
+	assert.EqualValues(t, preConsumed, reloaded.Quota)
 	assert.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
-	assert.Equal(t, actualQuota, reloaded.PrivateData.SettlementAttemptQuota)
+	assert.EqualValues(t, actualQuota, reloaded.PrivateData.SettlementAttemptQuota)
 	assert.Contains(t, reloaded.PrivateData.SettlementError, "has no applied quota evidence")
 	assert.Contains(t, reloaded.FailReason, TaskSettlementReviewFailReason)
 }
@@ -4345,18 +4345,18 @@ func TestRecalculateTaskQuotaFinalizesAppliedSettlementRecordFromStoredQuotaAfte
 
 	require.NoError(t, RecalculateTaskQuota(ctx, task, driftedQuota, "retry with drifted adaptor adjustment"))
 
-	assert.Equal(t, initQuota-delta, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain-delta, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, delta, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, initQuota-delta, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain-delta, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, delta, getTokenUsedQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, appliedQuota, usedQuota)
+	assert.EqualValues(t, appliedQuota, usedQuota)
 	assert.Equal(t, 1, requestCount)
-	assert.Equal(t, int64(appliedQuota), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(appliedQuota), getChannelUsedQuota(t, channelID))
 	assert.Equal(t, int64(0), countLogs(t))
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, appliedQuota, reloaded.Quota)
+	assert.EqualValues(t, appliedQuota, reloaded.Quota)
 	assert.Empty(t, reloaded.SettlementStatus)
 }
 
@@ -4406,18 +4406,18 @@ func TestRecalculateTaskQuotaFinalizesLegacyAppliedSettlementRecordFromBillingLo
 
 	require.NoError(t, RecalculateTaskQuota(ctx, task, driftedQuota, "retry with drifted legacy actual quota"))
 
-	assert.Equal(t, initQuota-delta, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain-delta, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, delta, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, initQuota-delta, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain-delta, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, delta, getTokenUsedQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, appliedQuota, usedQuota)
+	assert.EqualValues(t, appliedQuota, usedQuota)
 	assert.Equal(t, 1, requestCount)
-	assert.Equal(t, int64(appliedQuota), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(appliedQuota), getChannelUsedQuota(t, channelID))
 	assert.Equal(t, int64(1), countLogs(t))
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, appliedQuota, reloaded.Quota)
+	assert.EqualValues(t, appliedQuota, reloaded.Quota)
 	assert.Empty(t, reloaded.SettlementStatus)
 }
 
@@ -4444,19 +4444,19 @@ func TestRecalculatePositiveDeltaRollsBackAccountingWhenBillingLogFails(t *testi
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "record task billing log failed")
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, 0, getTokenUsedQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, preConsumed, usedQuota)
+	assert.EqualValues(t, preConsumed, usedQuota)
 	assert.Equal(t, 1, requestCount)
-	assert.Equal(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, preConsumed, reloaded.Quota)
+	assert.EqualValues(t, preConsumed, reloaded.Quota)
 	assert.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
-	assert.Equal(t, actualQuota, reloaded.PrivateData.SettlementAttemptQuota)
+	assert.EqualValues(t, actualQuota, reloaded.PrivateData.SettlementAttemptQuota)
 	assert.Contains(t, reloaded.PrivateData.SettlementError, "record task billing log failed")
 }
 
@@ -4484,8 +4484,8 @@ func TestRecalculateNegativeDeltaLogFailureRollsBackTrackedTokenDelta(t *testing
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "record task billing log failed")
-	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, 300, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, 300, getTokenUsedQuota(t, tokenID))
 }
 
 func TestRecalculate_PositiveDeltaDoesNotIncrementTokenRequestCount(t *testing.T) {
@@ -4507,8 +4507,8 @@ func TestRecalculate_PositiveDeltaDoesNotIncrementTokenRequestCount(t *testing.T
 	require.NoError(t, RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment"))
 
 	usage := getTokenUsageDaily(t, tokenID)
-	assert.Equal(t, actualQuota, usage.Quota)
-	assert.Equal(t, 1, usage.RequestCount)
+	assert.EqualValues(t, actualQuota, usage.Quota)
+	assert.EqualValues(t, 1, usage.RequestCount)
 }
 
 func TestRecalculate_PositiveDeltaDoesNotIncrementLogRPM(t *testing.T) {
@@ -4543,7 +4543,7 @@ func TestRecalculate_PositiveDeltaDoesNotIncrementLogRPM(t *testing.T) {
 
 	stat, err := model.SumUsedQuotaByUserId(model.LogTypeConsume, 0, 0, "test-model", userID, "", 0, "")
 	require.NoError(t, err)
-	assert.Equal(t, actualQuota, stat.Quota)
+	assert.EqualValues(t, actualQuota, stat.Quota)
 	assert.Equal(t, 1, stat.Rpm)
 	assert.Equal(t, 15, stat.Tpm)
 }
@@ -4600,7 +4600,7 @@ func TestRecalculate_PositiveDeltaExportsNetQuotaDataWithoutExtraCount(t *testin
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, 1, rows[0].Count)
-	assert.Equal(t, actualQuota, rows[0].Quota)
+	assert.EqualValues(t, actualQuota, rows[0].Quota)
 }
 
 func TestRecalculate_PositiveDeltaRollsBackWhenTaskQuotaUpdateFails(t *testing.T) {
@@ -4621,10 +4621,10 @@ func TestRecalculate_PositiveDeltaRollsBackWhenTaskQuotaUpdateFails(t *testing.T
 	err := RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment")
 
 	require.Error(t, err)
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
-	assert.Equal(t, preConsumed, task.Quota)
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, 0, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, preConsumed, task.Quota)
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
@@ -4645,9 +4645,9 @@ func TestRecalculate_PositiveDeltaRollsBackFundingWhenTokenAdjustmentFails(t *te
 
 	require.Error(t, RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment"))
 
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
-	assert.Equal(t, 0, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, preConsumed, task.Quota)
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, 0, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, preConsumed, task.Quota)
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
@@ -4672,25 +4672,25 @@ func TestRecalculate_NegativeDelta(t *testing.T) {
 	require.NoError(t, RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment"))
 
 	// User quota should increase by abs(delta) = 2000 (refund overpayment)
-	assert.Equal(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
+	assert.EqualValues(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
 
 	// Token should be refunded the difference
-	assert.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
 
 	// task.Quota updated
-	assert.Equal(t, actualQuota, task.Quota)
+	assert.EqualValues(t, actualQuota, task.Quota)
 
 	require.Eventually(t, func() bool {
 		usedQuota, requestCount := getUserUsageCounters(t, userID)
 		return usedQuota == actualQuota && requestCount == 1
 	}, time.Second, 10*time.Millisecond)
-	assert.Equal(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(actualQuota), getChannelUsedQuota(t, channelID))
 
 	// Log type should be Refund
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
-	assert.Equal(t, preConsumed-actualQuota, log.Quota)
+	assert.EqualValues(t, preConsumed-actualQuota, log.Quota)
 }
 
 func TestRecalculate_NegativeDeltaExportsNetQuotaDataWithoutExtraCount(t *testing.T) {
@@ -4745,7 +4745,7 @@ func TestRecalculate_NegativeDeltaExportsNetQuotaDataWithoutExtraCount(t *testin
 	require.NoError(t, err)
 	require.Len(t, rows, 1)
 	assert.Equal(t, 1, rows[0].Count)
-	assert.Equal(t, actualQuota, rows[0].Quota)
+	assert.EqualValues(t, actualQuota, rows[0].Quota)
 }
 
 func TestRecalculate_ZeroDelta(t *testing.T) {
@@ -4762,7 +4762,7 @@ func TestRecalculate_ZeroDelta(t *testing.T) {
 	RecalculateTaskQuota(ctx, task, preConsumed, "exact match")
 
 	// No change to user quota
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
 
 	// No log created (delta is zero)
 	assert.Equal(t, int64(0), countLogs(t))
@@ -4787,18 +4787,18 @@ func TestRecalculate_ActualQuotaZero(t *testing.T) {
 
 	require.NoError(t, RecalculateTaskQuota(ctx, task, 0, "zero actual"))
 
-	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, int64(0), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, initQuota+preConsumed, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, int64(0), getChannelUsedQuota(t, channelID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, 0, usedQuota)
+	assert.EqualValues(t, 0, usedQuota)
 	assert.Equal(t, 1, requestCount)
-	assert.Equal(t, 0, task.Quota)
+	assert.EqualValues(t, 0, task.Quota)
 
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
-	assert.Equal(t, preConsumed, log.Quota)
+	assert.EqualValues(t, preConsumed, log.Quota)
 	assert.Equal(t, userID, log.UserId)
 	assert.Equal(t, "test_user", log.Username)
 	assert.Equal(t, tokenID, log.TokenId)
@@ -4830,19 +4830,19 @@ func TestRecalculate_ActualQuotaZeroClearsSettlementReviewFields(t *testing.T) {
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, 0, reloaded.Quota)
+	assert.EqualValues(t, 0, reloaded.Quota)
 	assert.Empty(t, reloaded.SettlementStatus)
 	assert.Empty(t, reloaded.FailReason)
 	assert.Zero(t, reloaded.PrivateData.SettlementAttemptQuota)
 	assert.Empty(t, reloaded.PrivateData.SettlementError)
-	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, int64(0), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, initQuota+preConsumed, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, int64(0), getChannelUsedQuota(t, channelID))
 
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	assert.Equal(t, model.LogTypeRefund, log.Type)
-	assert.Equal(t, preConsumed, log.Quota)
+	assert.EqualValues(t, preConsumed, log.Quota)
 	assert.Equal(t, "test_user", log.Username)
 }
 
@@ -4867,12 +4867,12 @@ func TestRecalculate_Subscription_NegativeDelta(t *testing.T) {
 	require.NoError(t, RecalculateTaskQuota(ctx, task, actualQuota, "subscription over-charge"))
 
 	// Subscription used should decrease by delta (refund 3000)
-	assert.Equal(t, subUsed-int64(preConsumed-actualQuota), getSubscriptionUsed(t, subID))
+	assert.EqualValues(t, subUsed-int64(preConsumed-actualQuota), getSubscriptionUsed(t, subID))
 
 	// Token refunded
-	assert.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
 
-	assert.Equal(t, actualQuota, task.Quota)
+	assert.EqualValues(t, actualQuota, task.Quota)
 
 	log := getLastLog(t)
 	require.NotNil(t, log)
@@ -4939,15 +4939,15 @@ func TestRecalculateTaskQuotaSkipsFreshApplyingSettlementRecord(t *testing.T) {
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	assert.Equal(t, preConsumed, reloaded.Quota)
+	assert.EqualValues(t, preConsumed, reloaded.Quota)
 	assert.Equal(t, model.TaskSettlementStatusPending, reloaded.SettlementStatus)
 	assert.Empty(t, reloaded.PrivateData.SettlementError)
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, preConsumed, usedQuota)
+	assert.EqualValues(t, preConsumed, usedQuota)
 	assert.Equal(t, 1, requestCount)
-	assert.Equal(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(preConsumed), getChannelUsedQuota(t, channelID))
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
@@ -5029,8 +5029,8 @@ func TestCASGuardedRefund_Win(t *testing.T) {
 	assert.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
 
 	// Refund should have happened
-	assert.Equal(t, initQuota+preConsumed, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, initQuota+preConsumed, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
 
 	log := getLastLog(t)
 	require.NotNil(t, log)
@@ -5062,8 +5062,8 @@ func TestCASGuardedRefund_Lose(t *testing.T) {
 	simulatePollBilling(ctx, task, model.TaskStatus(model.TaskStatusFailure), 0)
 
 	// CAS lost: user quota should NOT change (no double refund)
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 
 	// No billing log should be created
 	assert.Equal(t, int64(0), countLogs(t))
@@ -5094,11 +5094,11 @@ func TestCASGuardedSettle_Win(t *testing.T) {
 	assert.EqualValues(t, model.TaskStatusSuccess, reloaded.Status)
 
 	// Settlement should refund the over-charge (5000 - 3000 = 2000 back to user)
-	assert.Equal(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, initQuota+(preConsumed-actualQuota), getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
 
 	// task.Quota should be updated to actualQuota
-	assert.Equal(t, actualQuota, task.Quota)
+	assert.EqualValues(t, actualQuota, task.Quota)
 }
 
 func TestNonTerminalUpdate_NoBilling(t *testing.T) {
@@ -5120,7 +5120,7 @@ func TestNonTerminalUpdate_NoBilling(t *testing.T) {
 	simulatePollBilling(ctx, task, model.TaskStatus(model.TaskStatusInProgress), 0)
 
 	// User quota should NOT change
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
 
 	// No billing log
 	assert.Equal(t, int64(0), countLogs(t))
@@ -5137,6 +5137,7 @@ func TestNonTerminalUpdate_NoBilling(t *testing.T) {
 
 type mockAdaptor struct {
 	adjustReturn int
+	adjustCalls  int
 }
 
 func (m *mockAdaptor) Init(_ *relaycommon.RelayInfo) {}
@@ -5145,6 +5146,7 @@ func (m *mockAdaptor) FetchTask(string, string, map[string]any, string) (*http.R
 }
 func (m *mockAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) { return nil, nil }
 func (m *mockAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
+	m.adjustCalls++
 	return m.adjustReturn
 }
 
@@ -5179,6 +5181,21 @@ func (m *signalTaskPollingAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *rel
 // PerCallBilling tests — settleTaskBillingOnComplete
 // ===========================================================================
 
+func TestSettle_FailureTaskAlwaysFallsBackToRefund(t *testing.T) {
+	adaptor := &mockAdaptor{adjustReturn: 2000}
+	task := &model.Task{Status: model.TaskStatusFailure}
+	taskResult := &relaycommon.TaskInfo{
+		Status:           model.TaskStatusFailure,
+		TotalTokens:      100,
+		CompletionTokens: 50,
+	}
+
+	settled := settleTaskBillingOnComplete(context.Background(), adaptor, task, taskResult)
+
+	assert.False(t, settled)
+	assert.Zero(t, adaptor.adjustCalls)
+}
+
 func TestSettle_PerCallBilling_SkipsAdaptorAdjust(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -5200,9 +5217,9 @@ func TestSettle_PerCallBilling_SkipsAdaptorAdjust(t *testing.T) {
 	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 
 	// Per-call: no adjustment despite adaptor returning 2000
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, preConsumed, task.Quota)
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, preConsumed, task.Quota)
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
@@ -5227,9 +5244,9 @@ func TestSettle_PerCallBilling_SkipsTotalTokens(t *testing.T) {
 	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 
 	// Per-call: no recalculation by tokens
-	assert.Equal(t, initQuota, getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, preConsumed, task.Quota)
+	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, preConsumed, task.Quota)
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
@@ -5256,9 +5273,9 @@ func TestSettle_NonPerCallBilling_AppliesAdaptorAdjustment(t *testing.T) {
 	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 
 	// Non-per-call: adaptor adjustment applies (refund 2000)
-	assert.Equal(t, initQuota+(preConsumed-adaptorQuota), getUserQuota(t, userID))
-	assert.Equal(t, tokenRemain+(preConsumed-adaptorQuota), getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, adaptorQuota, task.Quota)
+	assert.EqualValues(t, initQuota+(preConsumed-adaptorQuota), getUserQuota(t, userID))
+	assert.EqualValues(t, tokenRemain+(preConsumed-adaptorQuota), getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, adaptorQuota, task.Quota)
 
 	log := getLastLog(t)
 	require.NotNil(t, log)
@@ -5289,9 +5306,9 @@ func TestSettle_NonPerCallBilling_MarksReviewWhenAdaptorSettlementFails(t *testi
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	require.Equal(t, preConsumed, reloaded.Quota)
+	require.EqualValues(t, preConsumed, reloaded.Quota)
 	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
-	require.Equal(t, adaptorQuota, reloaded.PrivateData.SettlementAttemptQuota)
+	require.EqualValues(t, adaptorQuota, reloaded.PrivateData.SettlementAttemptQuota)
 	require.NotEmpty(t, reloaded.PrivateData.SettlementError)
 	require.NotEmpty(t, reloaded.FailReason)
 	require.Contains(t, reloaded.FailReason, "billing settlement requires manual review")
@@ -5300,8 +5317,8 @@ func TestSettle_NonPerCallBilling_MarksReviewWhenAdaptorSettlementFails(t *testi
 	require.True(t, exists)
 	require.Equal(t, model.TaskSettlementRecordStatusReview, record.Status)
 	require.Contains(t, record.Error, "task quota settlement funding adjustment failed")
-	require.Equal(t, initQuota, getUserQuota(t, userID))
-	require.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, initQuota, getUserQuota(t, userID))
+	require.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 }
 
 func TestSettle_NonPerCallBilling_MarksReviewWhenTokenSettlementFails(t *testing.T) {
@@ -5332,9 +5349,9 @@ func TestSettle_NonPerCallBilling_MarksReviewWhenTokenSettlementFails(t *testing
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	require.Equal(t, preConsumed, reloaded.Quota)
+	require.EqualValues(t, preConsumed, reloaded.Quota)
 	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
-	require.Equal(t, expectedActualQuota, reloaded.PrivateData.SettlementAttemptQuota)
+	require.EqualValues(t, expectedActualQuota, reloaded.PrivateData.SettlementAttemptQuota)
 	require.NotEmpty(t, reloaded.PrivateData.SettlementError)
 	require.NotEmpty(t, reloaded.FailReason)
 	require.Contains(t, reloaded.FailReason, "billing settlement requires manual review")
@@ -5343,8 +5360,8 @@ func TestSettle_NonPerCallBilling_MarksReviewWhenTokenSettlementFails(t *testing
 	require.True(t, exists)
 	require.Equal(t, model.TaskSettlementRecordStatusReview, record.Status)
 	require.Contains(t, record.Error, "task quota settlement token adjustment failed")
-	require.Equal(t, initQuota, getUserQuota(t, userID))
-	require.Equal(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, initQuota, getUserQuota(t, userID))
+	require.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 }
 
 func TestSettle_NonPerCallBilling_FloorsPositiveTokenSettlementToOne(t *testing.T) {
@@ -5385,16 +5402,16 @@ func TestSettle_NonPerCallBilling_FloorsPositiveTokenSettlementToOne(t *testing.
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	require.Equal(t, 1, reloaded.Quota)
+	require.EqualValues(t, 1, reloaded.Quota)
 	require.Empty(t, reloaded.SettlementStatus)
-	require.Equal(t, initQuota+preConsumed-1, getUserQuota(t, userID))
-	require.Equal(t, tokenRemain+preConsumed-1, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, initQuota+preConsumed-1, getUserQuota(t, userID))
+	require.EqualValues(t, tokenRemain+preConsumed-1, getTokenRemainQuota(t, tokenID))
 	require.EqualValues(t, 1, getChannelUsedQuota(t, channelID))
 
 	log := getLastLog(t)
 	require.NotNil(t, log)
 	require.Equal(t, model.LogTypeRefund, log.Type)
-	require.Equal(t, preConsumed-1, log.Quota)
+	require.EqualValues(t, preConsumed-1, log.Quota)
 	require.Equal(t, "test_user", log.Username)
 	require.Equal(t, "test_token", log.TokenName)
 }

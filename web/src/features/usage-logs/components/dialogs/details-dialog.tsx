@@ -392,6 +392,15 @@ function BillingBreakdown(props: {
     })
   }
 
+  const usageFacts =
+    other.usage_facts != null &&
+    typeof other.usage_facts === 'object' &&
+    !Array.isArray(other.usage_facts)
+      ? Object.entries(other.usage_facts).sort(([left], [right]) =>
+          left.localeCompare(right)
+        )
+      : []
+
   if (hasSettlementError(other)) {
     rows.push({
       label: t('Settlement Status'),
@@ -413,6 +422,19 @@ function BillingBreakdown(props: {
       rows.push({
         label: t('Settlement Error'),
         value: other.settlement_error,
+      })
+    }
+  }
+
+  if (usageFacts.length > 0) {
+    rows.push({
+      label: t('Usage parameters'),
+      value: '',
+    })
+    for (const [name, value] of usageFacts) {
+      rows.push({
+        label: name,
+        value: String(value),
       })
     }
   }
@@ -502,6 +524,7 @@ function TokenBreakdown(props: { log: UsageLog; other: LogOtherData }) {
 interface DetailsDialogProps {
   log: UsageLog
   isAdmin: boolean
+  isRoot?: boolean
   open: boolean
   onOpenChange: (open: boolean) => void
 }
@@ -892,6 +915,39 @@ export function DetailsDialog(props: DetailsDialogProps) {
             )}
           </DetailSection>
         )}
+
+        {props.isRoot && other?.root_info ? (
+          <DetailSection label={t('Root Diagnostics')}>
+            {other.root_info.task_plugin ? (
+              <>
+                <DetailRow
+                  label={t('API Version')}
+                  value={String(other.root_info.task_plugin.api_version)}
+                  mono
+                />
+                <DetailRow
+                  label={t('Plugin Generation')}
+                  value={String(other.root_info.task_plugin.generation)}
+                  mono
+                />
+              </>
+            ) : null}
+            {other.root_info.upstream_task_id ? (
+              <DetailRow
+                label={t('Upstream Task ID')}
+                value={other.root_info.upstream_task_id}
+                mono
+              />
+            ) : null}
+            {other.root_info.node_name ? (
+              <DetailRow
+                label={t('Node Name')}
+                value={other.root_info.node_name}
+                mono
+              />
+            ) : null}
+          </DetailSection>
+        ) : null}
 
         {/* Top-up audit info (type=1, admin only) */}
         {showTopupAuditSection && (

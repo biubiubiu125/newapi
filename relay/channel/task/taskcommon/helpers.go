@@ -3,6 +3,7 @@ package taskcommon
 import (
 	"encoding/base64"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -64,6 +65,25 @@ func DecodeLocalTaskID(id string) (string, error) {
 // e.g., "https://your-server.com/v1/videos/task_xxxx/content"
 func BuildProxyURL(taskID string) string {
 	return fmt.Sprintf("%s/v1/videos/%s/content", system_setting.ServerAddress, taskID)
+}
+
+// IsDataURL reports whether value uses the case-insensitive data URL scheme.
+// Result producers are external to the task lifecycle, so scheme casing must
+// not decide whether inline media is kept behind the task content proxy.
+func IsDataURL(value string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "data:")
+}
+
+// IsBase64DataURL reports whether value is a data URL whose final metadata
+// token is the exact case-insensitive base64 flag.
+func IsBase64DataURL(value string) bool {
+	header, _, ok := strings.Cut(value, ",")
+	if !ok || !strings.HasPrefix(strings.ToLower(header), "data:") {
+		return false
+	}
+	metadata := header[len("data:"):]
+	tokens := strings.Split(metadata, ";")
+	return len(tokens) > 1 && strings.EqualFold(tokens[len(tokens)-1], "base64")
 }
 
 // Status-to-progress mapping constants for polling updates.

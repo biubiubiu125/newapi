@@ -21,7 +21,7 @@ type Redemption struct {
 	Key                      string         `json:"key" gorm:"type:char(32);uniqueIndex"`
 	Status                   int            `json:"status" gorm:"default:1"`
 	Name                     string         `json:"name" gorm:"index"`
-	Quota                    int            `json:"quota" gorm:"default:100"`
+	Quota                    int64          `json:"quota" gorm:"type:bigint;default:100"`
 	QuotaPerUnitSnapshot     float64        `json:"quota_per_unit_snapshot" gorm:"type:decimal(20,8);default:0"`
 	CreatedTime              int64          `json:"created_time" gorm:"bigint"`
 	RedeemedTime             int64          `json:"redeemed_time" gorm:"bigint"`
@@ -40,8 +40,8 @@ type Redemption struct {
 }
 
 type RedeemResult struct {
-	RedemptionId int `json:"redemption_id"`
-	Quota        int `json:"quota"`
+	RedemptionId int   `json:"redemption_id"`
+	Quota        int64 `json:"quota"`
 }
 
 func GetAllRedemptions(startIdx int, num int) (redemptions []*Redemption, total int64, err error) {

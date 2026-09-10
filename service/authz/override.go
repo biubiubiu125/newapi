@@ -22,13 +22,13 @@ func SetUserPermissions(userID int, permissions PermissionsMap) error {
 	if e == nil {
 		return fmt.Errorf("authz enforcer is not initialized")
 	}
+	if err := ClearUserPermissions(userID); err != nil {
+		return err
+	}
 
 	for resource, actions := range permissions {
 		if !isKnownResource(resource) {
 			continue
-		}
-		if _, err := e.RemoveFilteredPolicy(0, UserSubject(userID), resource); err != nil {
-			return err
 		}
 		for _, policy := range userOverridePolicies(e, resource, actions) {
 			if _, err := e.AddPolicy(UserSubject(userID), policy.Resource, policy.Action, policy.Effect); err != nil {
@@ -44,13 +44,13 @@ func SetUserPermissionsInTx(tx *gorm.DB, userID int, permissions PermissionsMap)
 	if e == nil {
 		return fmt.Errorf("authz enforcer is not initialized")
 	}
+	if err := ClearUserPermissionsInTx(tx, userID); err != nil {
+		return err
+	}
 
 	for resource, actions := range permissions {
 		if !isKnownResource(resource) {
 			continue
-		}
-		if err := tx.Where("ptype = ? AND v0 = ? AND v1 = ?", "p", UserSubject(userID), resource).Delete(&model.CasbinRule{}).Error; err != nil {
-			return err
 		}
 		policies := userOverridePolicies(e, resource, actions)
 		if len(policies) == 0 {
@@ -73,21 +73,15 @@ func ClearUserPermissions(userID int) error {
 		return fmt.Errorf("authz enforcer is not initialized")
 	}
 
-	for _, resource := range registry {
-		if _, err := e.RemoveFilteredPolicy(0, UserSubject(userID), resource.Resource); err != nil {
-			return err
-		}
+	if _, err := e.RemoveFilteredPolicy(0, UserSubject(userID)); err != nil {
+		return err
 	}
 	return nil
 }
 
 func ClearUserPermissionsInTx(tx *gorm.DB, userID int) error {
-	for _, resource := range registry {
-		if err := tx.Where("ptype = ? AND v0 = ? AND v1 = ?", "p", UserSubject(userID), resource.Resource).Delete(&model.CasbinRule{}).Error; err != nil {
-			return err
-		}
-	}
-	return nil
+	return tx.Where("ptype = ? AND v0 = ?", "p", UserSubject(userID)).
+		Delete(&model.CasbinRule{}).Error
 }
 
 func ClearUserAuthorization(userID int) error {

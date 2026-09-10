@@ -12,6 +12,7 @@ import (
 	relaymedia "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/media"
 	sharedgemini "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/shared/gemini"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 )
 
 func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto.GeneralOpenAIRequest, info convmeta.Meta) (*dto.GeminiChatRequest, error) {
@@ -53,7 +54,6 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 		geminiRequest.GenerationConfig.StopSequences = stopSequences
 	}
 
-	adaptorWithExtraBody := false
 	if len(textRequest.ExtraBody) > 0 {
 		var extraBody map[string]interface{}
 		if err := kitutil.Unmarshal(textRequest.ExtraBody, &extraBody); err != nil {
@@ -62,7 +62,6 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 
 		if googleBody, ok := extraBody["google"].(map[string]interface{}); ok {
 			if !strings.HasSuffix(upstreamModelName, "-nothinking") {
-				adaptorWithExtraBody = true
 				if _, hasErrorParam := googleBody["thinkingConfig"]; hasErrorParam {
 					return nil, errors.New("extra_body.google.thinkingConfig is not supported, use extra_body.google.thinking_config instead")
 				}
@@ -83,13 +82,14 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 						}
 						budgetInt := int(v)
 						tempThinkingConfig.ThinkingBudget = kitutil.GetPointer(budgetInt)
-						tempThinkingConfig.IncludeThoughts = budgetInt > 0
+						includeThoughts := budgetInt > 0
+						tempThinkingConfig.IncludeThoughts = &includeThoughts
 						hasThinkingConfig = true
 					}
 
 					if includeThoughts, exists := thinkingConfig["include_thoughts"]; exists {
 						if v, ok := includeThoughts.(bool); ok {
-							tempThinkingConfig.IncludeThoughts = v
+							tempThinkingConfig.IncludeThoughts = kitutil.GetPointer(v)
 							hasThinkingConfig = true
 						} else {
 							return nil, errors.New("extra_body.google.thinking_config.include_thoughts must be a boolean")
@@ -151,8 +151,8 @@ func OpenAIChatRequestToGeminiGenerateContent(c context.Context, textRequest dto
 		}
 	}
 
-	if !adaptorWithExtraBody {
-		sharedgemini.ApplyThinkingConfig(&geminiRequest, info, textRequest)
+	if err := sharedgemini.ApplyThinkingConfig(&geminiRequest, info, textRequest); err != nil {
+		return nil, reasoning.AsClientError(err)
 	}
 
 	var safetySettings []dto.GeminiChatSafetySettings

@@ -70,7 +70,9 @@ func OpenAIResponsesRequestToGeminiChat(c context.Context, req *dto.OpenAIRespon
 		ReasoningEffort:     string(reasoning.EffectiveEffort(intent)),
 		ReasoningConversion: reasoning.StateFromIntent(intent),
 	}
-	sharedgemini.ApplyThinkingConfig(geminiRequest, info, reasoningRequest)
+	if err := sharedgemini.ApplyThinkingConfig(geminiRequest, info, reasoningRequest); err != nil {
+		return nil, reasoning.AsClientError(err)
+	}
 
 	var safetySettings []dto.GeminiChatSafetySettings
 	for _, category := range sharedgemini.SafetySettingCategories {

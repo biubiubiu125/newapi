@@ -164,6 +164,15 @@ export const CHANNEL_TYPE_CONFIGS: Record<number, ChannelTypeConfig> = {
       models: 'Models',
     },
   },
+  61: {
+    id: 61,
+    name: CHANNEL_TYPES[61],
+    icon: 'NewAPI',
+    hints: {
+      key: 'Credential used by the selected task plugin',
+      models: 'Models exposed by the selected task plugin',
+    },
+  },
 }
 
 /**

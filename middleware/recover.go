@@ -12,18 +12,23 @@ import (
 func RelayPanicRecover() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
-			if err := recover(); err != nil {
-				common.SysLog(fmt.Sprintf("panic detected: %v", err))
-				common.SysLog(fmt.Sprintf("stacktrace from panic: %s", string(debug.Stack())))
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"error": gin.H{
-						"message": fmt.Sprintf("Panic detected, error: %v. Please submit a issue here: https://github.com/Calcium-Ion/new-api", err),
-						"type":    "new_api_panic",
-					},
-				})
-				c.Abort()
+			if recovered := recover(); recovered != nil {
+				HandlePanic(c, recovered)
 			}
 		}()
 		c.Next()
 	}
+}
+
+// HandlePanic logs diagnostic details server-side but never reflects the raw
+// panic value or stack trace to the caller.
+func HandlePanic(c *gin.Context, recovered any) {
+	common.SysLog(fmt.Sprintf("panic detected: %v", recovered))
+	common.SysLog(fmt.Sprintf("stacktrace from panic: %s", string(debug.Stack())))
+	c.AbortWithStatusJSON(http.StatusInternalServerError, gin.H{
+		"error": gin.H{
+			"message": "Internal server error",
+			"type":    "new_api_panic",
+		},
+	})
 }

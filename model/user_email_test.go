@@ -430,7 +430,7 @@ func TestInsertPreserveQuotaKeepsExplicitQuota(t *testing.T) {
 
 	var stored User
 	require.NoError(t, DB.First(&stored, root.Id).Error)
-	require.Equal(t, 100000000, stored.Quota)
+	require.EqualValues(t, 100000000, stored.Quota)
 }
 
 func TestRechargeCreemBackfillsEmailLoginIdentifiers(t *testing.T) {
@@ -477,7 +477,7 @@ func TestRechargeCreemBackfillsEmailLoginIdentifiers(t *testing.T) {
 	require.Equal(t, "buyer@example.com", stored.Email)
 	require.NotNil(t, stored.EmailCanonical)
 	require.Equal(t, "buyer@example.com", *stored.EmailCanonical)
-	require.Equal(t, 123, stored.Quota)
+	require.EqualValues(t, 123, stored.Quota)
 
 	var identifier UserLoginIdentifier
 	require.NoError(t, db.Where("user_id = ? AND identifier = ? AND kind = ?", user.Id, "buyer@example.com", "email").First(&identifier).Error)
@@ -530,7 +530,7 @@ func TestRechargeCreemSkipsConflictingCustomerEmailButCreditsQuota(t *testing.T)
 	require.NoError(t, db.First(&stored, payer.Id).Error)
 	require.Empty(t, stored.Email)
 	require.Nil(t, stored.EmailCanonical)
-	require.Equal(t, 456, stored.Quota)
+	require.EqualValues(t, 456, stored.Quota)
 
 	var count int64
 	require.NoError(t, db.Model(&UserLoginIdentifier{}).Where("user_id = ? AND identifier = ?", payer.Id, "owner@example.com").Count(&count).Error)

@@ -7,7 +7,9 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -16,53 +18,74 @@ import (
 const (
 	TaskArtifactAccessQueryParameter = "access"
 	TaskArtifactResultArtifactKey    = "image-result"
-	taskArtifactAccessVersion        = "v1"
-	taskArtifactAccessLength         = 43
+	taskArtifactAccessVersion        = "v2"
 	maxTaskArtifactTaskIDLength      = 191
 	maxTaskArtifactKeyLength         = 128
 )
 
 var ErrTaskArtifactAccessInvalid = errors.New("task artifact access is invalid")
 
-func taskArtifactAccessMessage(taskID, artifactKey string) []byte {
-	return []byte(taskArtifactAccessVersion + "\x00" + taskID + "\x00" + artifactKey)
+func taskArtifactAccessMessage(taskID, artifactKey string, expiresAt int64) []byte {
+	return []byte(taskArtifactAccessVersion + "\x00" + taskID + "\x00" + artifactKey + "\x00" + strconv.FormatInt(expiresAt, 10))
 }
 
-// IssueTaskArtifactAccess creates a stable capability bound to exactly one
-// public task ID and artifact key. It contains no user or upstream data.
+func taskArtifactAccessTTL() time.Duration {
+	seconds := system_setting.LoadTaskArtifactStoreConfig().S3PresignTTLSeconds
+	if seconds <= 0 || seconds > system_setting.MaxTaskArtifactStorePresignTTLSeconds {
+		seconds = system_setting.DefaultTaskArtifactStorePresignTTLSeconds
+	}
+	return time.Duration(seconds) * time.Second
+}
+
+// IssueTaskArtifactAccess creates a time-limited capability bound to exactly
+// one public task ID and artifact key. It contains no user or upstream data.
 func IssueTaskArtifactAccess(taskID, artifactKey string) (string, error) {
+	return issueTaskArtifactAccessAt(taskID, artifactKey, time.Now())
+}
+
+func issueTaskArtifactAccessAt(taskID, artifactKey string, now time.Time) (string, error) {
 	taskID = strings.TrimSpace(taskID)
 	artifactKey = strings.TrimSpace(artifactKey)
-	if taskID == "" || len(taskID) > maxTaskArtifactTaskIDLength ||
-		artifactKey == "" || len(artifactKey) > maxTaskArtifactKeyLength ||
+	if !validTaskArtifactPathSegment(taskID) || len(taskID) > maxTaskArtifactTaskIDLength ||
+		!validTaskArtifactPathSegment(artifactKey) || len(artifactKey) > maxTaskArtifactKeyLength ||
 		common.CryptoSecret == "" {
 		return "", ErrTaskArtifactAccessInvalid
 	}
 
+	expiresAt := now.Add(taskArtifactAccessTTL()).Unix()
 	mac := hmac.New(sha256.New, []byte(common.CryptoSecret))
-	_, _ = mac.Write(taskArtifactAccessMessage(taskID, artifactKey))
-	return base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
+	_, _ = mac.Write(taskArtifactAccessMessage(taskID, artifactKey, expiresAt))
+	return strconv.FormatInt(expiresAt, 10) + "." + base64.RawURLEncoding.EncodeToString(mac.Sum(nil)), nil
 }
 
-// VerifyTaskArtifactAccess verifies the route binding without reading task,
-// user, or token state. Signature comparison is constant-time.
+// VerifyTaskArtifactAccess verifies the route binding and expiry without
+// reading task, user, or token state. Signature comparison is constant-time.
 func VerifyTaskArtifactAccess(access, taskID, artifactKey string) bool {
+	return verifyTaskArtifactAccessAt(access, taskID, artifactKey, time.Now())
+}
+
+func verifyTaskArtifactAccessAt(access, taskID, artifactKey string, now time.Time) bool {
 	taskID = strings.TrimSpace(taskID)
 	artifactKey = strings.TrimSpace(artifactKey)
-	if len(access) != taskArtifactAccessLength ||
-		taskID == "" || len(taskID) > maxTaskArtifactTaskIDLength ||
-		artifactKey == "" || len(artifactKey) > maxTaskArtifactKeyLength ||
+	parts := strings.Split(access, ".")
+	if len(parts) != 2 ||
+		!validTaskArtifactPathSegment(taskID) || len(taskID) > maxTaskArtifactTaskIDLength ||
+		!validTaskArtifactPathSegment(artifactKey) || len(artifactKey) > maxTaskArtifactKeyLength ||
 		common.CryptoSecret == "" {
 		return false
 	}
 
-	actualSignature, err := base64.RawURLEncoding.Strict().DecodeString(access)
+	expiresAt, err := strconv.ParseInt(parts[0], 10, 64)
+	if err != nil || expiresAt < now.Unix() {
+		return false
+	}
+	actualSignature, err := base64.RawURLEncoding.Strict().DecodeString(parts[1])
 	if err != nil || len(actualSignature) != sha256.Size {
 		return false
 	}
 
 	mac := hmac.New(sha256.New, []byte(common.CryptoSecret))
-	_, _ = mac.Write(taskArtifactAccessMessage(taskID, artifactKey))
+	_, _ = mac.Write(taskArtifactAccessMessage(taskID, artifactKey, expiresAt))
 	return hmac.Equal(actualSignature, mac.Sum(nil))
 }
 
@@ -93,13 +116,54 @@ func ValidateTaskArtifactBaseURL(raw string) error {
 	return nil
 }
 
+// BuildTaskArtifactContentURL returns an absolute capability URL for a
+// generic task artifact. The legacy image-result URL below remains separate
+// for compatibility with existing clients and routers.
+func BuildTaskArtifactContentURL(taskID, artifactKey string) (string, error) {
+	taskID = strings.TrimSpace(taskID)
+	artifactKey = strings.TrimSpace(artifactKey)
+	if !validTaskArtifactPathSegment(taskID) || len(taskID) > maxTaskArtifactTaskIDLength ||
+		!validTaskArtifactPathSegment(artifactKey) || len(artifactKey) > maxTaskArtifactKeyLength {
+		return "", ErrTaskArtifactAccessInvalid
+	}
+	baseAddress := strings.TrimSpace(system_setting.TaskPublicAddress)
+	if baseAddress == "" {
+		baseAddress = strings.TrimSpace(system_setting.ServerAddress)
+	}
+	if err := ValidateTaskArtifactBaseURL(baseAddress); err != nil {
+		return "", err
+	}
+	baseURL, err := url.Parse(baseAddress)
+	if err != nil {
+		return "", err
+	}
+	access, err := IssueTaskArtifactAccess(taskID, artifactKey)
+	if err != nil {
+		return "", err
+	}
+	basePath := strings.TrimRight(baseURL.Path, "/")
+	escapedBasePath := strings.TrimRight(baseURL.EscapedPath(), "/")
+	suffixPath := fmt.Sprintf("/v1/tasks/%s/artifacts/%s/content", taskID, artifactKey)
+	escapedSuffixPath := fmt.Sprintf(
+		"/v1/tasks/%s/artifacts/%s/content",
+		url.PathEscape(taskID),
+		url.PathEscape(artifactKey),
+	)
+	baseURL.Path = basePath + suffixPath
+	baseURL.RawPath = escapedBasePath + escapedSuffixPath
+	query := baseURL.Query()
+	query.Set(TaskArtifactAccessQueryParameter, access)
+	baseURL.RawQuery = query.Encode()
+	return baseURL.String(), nil
+}
+
 // BuildTaskArtifactResultURL returns the signed URL for the existing public
 // image-task result endpoint. TaskPublicAddress overrides ServerAddress when
 // configured; the latter keeps the optional setting useful on single-domain
 // deployments. This path is registered by the image-task router.
 func BuildTaskArtifactResultURL(taskID string) (string, error) {
 	taskID = strings.TrimSpace(taskID)
-	if taskID == "" || len(taskID) > maxTaskArtifactTaskIDLength {
+	if !validTaskArtifactPathSegment(taskID) || len(taskID) > maxTaskArtifactTaskIDLength {
 		return "", ErrTaskArtifactAccessInvalid
 	}
 	baseAddress := strings.TrimSpace(system_setting.TaskPublicAddress)

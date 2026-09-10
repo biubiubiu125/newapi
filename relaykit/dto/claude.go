@@ -24,9 +24,23 @@ type ClaudeMediaMessage struct {
 	PartialJson  *string              `json:"partial_json,omitempty"`
 	Role         string               `json:"role,omitempty"`
 	Thinking     *string              `json:"thinking,omitempty"`
+	Data         string               `json:"data,omitempty"`
 	Signature    string               `json:"signature,omitempty"`
 	Delta        string               `json:"delta,omitempty"`
 	CacheControl json.RawMessage      `json:"cache_control,omitempty"`
+
+	// Text blocks and citations_delta events.
+	Citations json.RawMessage `json:"citations,omitempty"`
+	Citation  json.RawMessage `json:"citation,omitempty"`
+
+	// Server-tool and tool-result blocks.
+	Caller     json.RawMessage `json:"caller,omitempty"`
+	ServerName string          `json:"server_name,omitempty"`
+	IsError    *bool           `json:"is_error,omitempty"`
+	// ErrorCode is a relaykit compatibility extension. Claude places provider
+	// error codes inside nested tool-result error content.
+	ErrorCode string `json:"error_code,omitempty"`
+
 	// tool_calls
 	Id        string `json:"id,omitempty"`
 	Name      string `json:"name,omitempty"`
@@ -173,6 +187,7 @@ type Tool struct {
 	Name        string                 `json:"name"`
 	Description string                 `json:"description,omitempty"`
 	InputSchema map[string]interface{} `json:"input_schema"`
+	Strict      *bool                  `json:"strict,omitempty"`
 }
 
 type InputSchema struct {

@@ -111,6 +111,36 @@ func TestFlowQuotaDataRoutesAreRegistered(t *testing.T) {
 	require.True(t, paths["GET /api/data/flow/self"])
 }
 
+func TestTaskPluginAndDashboardArtifactRoutesAreRegistered(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	SetApiRouter(engine)
+
+	paths := map[string]bool{}
+	for _, route := range engine.Routes() {
+		paths[route.Method+" "+route.Path] = true
+	}
+
+	for _, path := range []string{
+		"GET /api/plugin/task",
+		"POST /api/plugin/task",
+		"PUT /api/plugin/task",
+		"GET /api/plugin/task/runtime/status",
+		"GET /api/plugin/task/marketplace/sources",
+		"PUT /api/plugin/task/marketplace/sources",
+		"GET /api/plugin/task/:key",
+		"GET /api/plugin/task/:key/versions",
+		"POST /api/plugin/task/:key/activate",
+		"POST /api/plugin/task/:key/status",
+		"POST /api/plugin/task/:key/dryrun",
+		"DELETE /api/plugin/task/:key/versions/:version",
+		"GET /api/task_plugin_options",
+		"GET /api/task/:task_id/artifacts",
+	} {
+		require.Truef(t, paths[path], "missing route %s", path)
+	}
+}
+
 func TestReferralAssetRoutesSupportApiAndPublicPaths(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()

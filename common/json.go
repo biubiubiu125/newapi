@@ -3,6 +3,7 @@ package common
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"io"
 )
 
@@ -21,14 +22,28 @@ func UnmarshalJsonStr(data string, v any) error {
 }
 
 func DecodeJson(reader io.Reader, v any) error {
-	return json.NewDecoder(reader).Decode(v)
+	return decodeSingleJSON(json.NewDecoder(reader), v)
 }
 
 // DecodeJsonUseNumber 以 json.Number 解析数字，避免浮点归一化改变原始字面量。
 func DecodeJsonUseNumber(reader io.Reader, v any) error {
 	decoder := json.NewDecoder(reader)
 	decoder.UseNumber()
-	return decoder.Decode(v)
+	return decodeSingleJSON(decoder, v)
+}
+
+func decodeSingleJSON(decoder *json.Decoder, v any) error {
+	if err := decoder.Decode(v); err != nil {
+		return err
+	}
+	var trailing any
+	if err := decoder.Decode(&trailing); err != io.EOF {
+		if err == nil {
+			return errors.New("multiple JSON values are not allowed")
+		}
+		return err
+	}
+	return nil
 }
 
 func Marshal(v any) ([]byte, error) {

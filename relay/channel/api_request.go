@@ -586,7 +586,12 @@ func doRequest(c *gin.Context, req *http.Request, info *common.RelayInfo) (*http
 	return resp, nil
 }
 
-func DoTaskApiRequest(a TaskAdaptor, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+type TaskRequestBuilder interface {
+	BuildRequestURL(info *common.RelayInfo) (string, error)
+	BuildRequestHeader(c *gin.Context, req *http.Request, info *common.RelayInfo) error
+}
+
+func DoTaskApiRequest(a TaskRequestBuilder, c *gin.Context, info *common.RelayInfo, requestBody io.Reader) (*http.Response, error) {
 	fullRequestURL, err := a.BuildRequestURL(info)
 	if err != nil {
 		return nil, err

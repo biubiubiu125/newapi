@@ -6,11 +6,185 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 )
+
+func GetChannelConstraints(c *gin.Context) *dto.ChannelConstraints {
+	if c == nil {
+		return &dto.ChannelConstraints{}
+	}
+	if existing, ok := common.GetContextKeyType[*dto.ChannelConstraints](c, constant.ContextKeyChannelConstraints); ok && existing != nil {
+		return existing
+	}
+	constraints := &dto.ChannelConstraints{}
+	common.SetContextKey(c, constant.ContextKeyChannelConstraints, constraints)
+	return constraints
+}
+
+func AppendTaskPluginIdentityFilter(c *gin.Context, pluginKey string) {
+	if c == nil || pluginKey == "" {
+		return
+	}
+	GetChannelConstraints(c).AddFilter(dto.ChannelFilter{
+		Kind:                   dto.FilterTaskPluginIdentity,
+		TaskPluginKey:          pluginKey,
+		TaskPluginKeys:         pinnedTaskPluginKeys(c, pluginKey),
+		TaskPluginChannelTypes: pinnedTaskPluginChannelTypes(c, pluginKey),
+	})
+}
+
+// ChannelSatisfiesConstraints is the final channel-selection guard for
+// request-scoped constraints. Unknown constraints fail closed so a newly
+// introduced filter cannot silently be ignored by the distributor.
+func ChannelSatisfiesConstraints(channel *model.Channel, constraints *dto.ChannelConstraints) bool {
+	if channel == nil {
+		return false
+	}
+	if constraints == nil || len(constraints.Filters) == 0 {
+		return true
+	}
+	for _, filter := range constraints.Filters {
+		switch filter.Kind {
+		case dto.FilterTaskPluginIdentity:
+			if !channelMatchesTaskPluginIdentity(channel, filter) {
+				return false
+			}
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func channelMatchesTaskPluginIdentity(channel *model.Channel, filter dto.ChannelFilter) bool {
+	pluginKey := strings.TrimSpace(filter.TaskPluginKey)
+	if pluginKey == "" {
+		return false
+	}
+	if channel.Type == constant.ChannelTypeTaskPlugin {
+		channelPluginKey := strings.TrimSpace(channel.GetSetting().TaskPluginKey)
+		if channelPluginKey == pluginKey {
+			return true
+		}
+		for _, candidateKey := range filter.TaskPluginKeys {
+			if channelPluginKey == strings.TrimSpace(candidateKey) {
+				return true
+			}
+		}
+		return false
+	}
+	for _, channelType := range filter.TaskPluginChannelTypes {
+		if channel.Type == channelType {
+			return true
+		}
+	}
+	return false
+}
+
+// TaskPluginChannelFilter returns the request-scoped channel predicate used by
+// both memory-cache and database channel selection.
+func TaskPluginChannelFilter(c *gin.Context) func(*model.Channel) bool {
+	constraints := GetChannelConstraints(c)
+	if constraints == nil || len(constraints.Filters) == 0 {
+		return nil
+	}
+	return func(channel *model.Channel) bool {
+		return ChannelSatisfiesConstraints(channel, constraints)
+	}
+}
+
+func pinnedTaskPluginChannelTypes(c *gin.Context, expected string) []int {
+	if c == nil || expected == "" {
+		return nil
+	}
+	if value, exists := c.Get(jsplugin.ContextKeyPinnedEndpoint); exists {
+		pinned, ok := value.(jsplugin.PinnedEndpoint)
+		if ok && pinned.Generation != nil && len(pinned.Candidates) > 1 {
+			expectedFound := false
+			channelTypes := make([]int, 0, len(pinned.Candidates))
+			seen := make(map[int]struct{}, len(pinned.Candidates))
+			for _, candidate := range pinned.Candidates {
+				if candidate.Plugin == nil {
+					continue
+				}
+				if candidate.Plugin.Meta.Key == expected {
+					expectedFound = true
+				}
+				for _, channelType := range candidate.Plugin.Meta.ChannelTypes {
+					if channelType == 0 || channelType == constant.ChannelTypeTaskPlugin {
+						continue
+					}
+					if _, duplicate := seen[channelType]; duplicate {
+						continue
+					}
+					if plugin, indexed := pinned.Generation.GetByChannelType(channelType); indexed && plugin == candidate.Plugin {
+						seen[channelType] = struct{}{}
+						channelTypes = append(channelTypes, channelType)
+					}
+				}
+			}
+			if expectedFound {
+				return channelTypes
+			}
+		}
+	}
+	value, exists := c.Get(jsplugin.ContextKeyPinnedPlugin)
+	pinned, ok := value.(jsplugin.PinnedPlugin)
+	if !exists || !ok || pinned.Generation == nil || pinned.Plugin == nil || pinned.Plugin.Meta.Key != expected {
+		return nil
+	}
+	channelTypes := make([]int, 0, len(pinned.Plugin.Meta.ChannelTypes))
+	for _, channelType := range pinned.Plugin.Meta.ChannelTypes {
+		if channelType == 0 || channelType == constant.ChannelTypeTaskPlugin {
+			continue
+		}
+		channelTypes = append(channelTypes, channelType)
+	}
+	if len(channelTypes) == 0 {
+		return nil
+	}
+	return channelTypes
+}
+
+func pinnedTaskPluginKeys(c *gin.Context, expected string) []string {
+	if c == nil || expected == "" {
+		return nil
+	}
+	value, exists := c.Get(jsplugin.ContextKeyPinnedEndpoint)
+	pinned, ok := value.(jsplugin.PinnedEndpoint)
+	if !exists || !ok || pinned.Generation == nil || len(pinned.Candidates) < 2 {
+		return nil
+	}
+	keys := make([]string, 0, len(pinned.Candidates))
+	seen := make(map[string]struct{}, len(pinned.Candidates))
+	expectedFound := false
+	for _, candidate := range pinned.Candidates {
+		if candidate.Plugin == nil {
+			continue
+		}
+		key := strings.TrimSpace(candidate.Plugin.Meta.Key)
+		if key == "" {
+			continue
+		}
+		if key == expected {
+			expectedFound = true
+		}
+		if _, duplicate := seen[key]; duplicate {
+			continue
+		}
+		seen[key] = struct{}{}
+		keys = append(keys, key)
+	}
+	if !expectedFound || len(keys) == 0 {
+		return nil
+	}
+	return keys
+}
 
 type RetryParam struct {
 	Ctx               *gin.Context
@@ -19,6 +193,7 @@ type RetryParam struct {
 	RequestPath       string
 	Retry             *int
 	ExcludeChannelIds []int
+	ChannelFilter     func(*model.Channel) bool
 	resetNextTry      bool
 }
 
@@ -129,7 +304,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 			logger.LogDebug(param.Ctx, "Auto selecting group: %s, priorityRetry: %d", autoGroup, priorityRetry)
 
-			channel, err = model.GetRandomSatisfiedChannelWithExclude(autoGroup, param.ModelName, priorityRetry, param.ExcludeChannelIds, requestPath)
+			channel, err = model.GetRandomSatisfiedChannelWithExcludeAndFilter(autoGroup, param.ModelName, priorityRetry, param.ExcludeChannelIds, requestPath, param.ChannelFilter)
 			if err != nil {
 				return nil, autoGroup, err
 			}
@@ -154,7 +329,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			break
 		}
 	} else {
-		channel, err = model.GetRandomSatisfiedChannelWithExclude(param.TokenGroup, param.ModelName, param.GetRetry(), param.ExcludeChannelIds, requestPath)
+		channel, err = model.GetRandomSatisfiedChannelWithExcludeAndFilter(param.TokenGroup, param.ModelName, param.GetRetry(), param.ExcludeChannelIds, requestPath, param.ChannelFilter)
 		if err != nil {
 			return nil, param.TokenGroup, err
 		}

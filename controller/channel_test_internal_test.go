@@ -323,6 +323,23 @@ func TestSelectChannelsForAutomaticTestScheduledSkipsManualDisabled(t *testing.T
 	require.Equal(t, 2, selected[1].Id)
 }
 
+func TestSelectChannelsForAutomaticTestSkipsTaskPluginChannels(t *testing.T) {
+	channels := []*model.Channel{
+		{Id: 1, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled},
+		{Id: 2, Type: constant.ChannelTypeTaskPlugin, Status: common.ChannelStatusEnabled},
+	}
+
+	selected := selectChannelsForAutomaticTest(channels, operation_setting.ChannelTestModeScheduledAll)
+
+	require.Len(t, selected, 1)
+	require.Equal(t, 1, selected[0].Id)
+}
+
+func TestIsUnsupportedTestChannelTypeIncludesTaskPlugin(t *testing.T) {
+	assert.True(t, isUnsupportedTestChannelType(constant.ChannelTypeTaskPlugin))
+	assert.False(t, isUnsupportedTestChannelType(constant.ChannelTypeOpenAI))
+}
+
 func TestSelectChannelsForAutomaticTestAutoBanOnlyUsesEligibleChannels(t *testing.T) {
 	autoBanEnabled := 1
 	autoBanDisabled := 0

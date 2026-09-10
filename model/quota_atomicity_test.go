@@ -24,7 +24,7 @@ func TestDecreaseUserQuotaReturnsErrorWhenNoRowsUpdated(t *testing.T) {
 	require.Error(t, err)
 	var user User
 	require.NoError(t, DB.Select("quota").First(&user, 9301).Error)
-	require.Equal(t, 10, user.Quota)
+	require.EqualValues(t, 10, user.Quota)
 }
 
 func TestIncreaseUserQuotaIgnoresCacheRefreshFailureAfterDatabaseUpdate(t *testing.T) {
@@ -32,7 +32,7 @@ func TestIncreaseUserQuotaIgnoresCacheRefreshFailureAfterDatabaseUpdate(t *testi
 	oldRedisEnabled := common.RedisEnabled
 	oldCacheUpdateUserQuotaField := cacheUpdateUserQuotaField
 	common.RedisEnabled = true
-	cacheUpdateUserQuotaField = func(userId int, quota int) error {
+	cacheUpdateUserQuotaField = func(userId int, quota int64) error {
 		return errors.New("redis unavailable")
 	}
 	t.Cleanup(func() {
@@ -52,7 +52,7 @@ func TestIncreaseUserQuotaIgnoresCacheRefreshFailureAfterDatabaseUpdate(t *testi
 	require.NoError(t, err)
 	var user User
 	require.NoError(t, DB.Select("quota").First(&user, 9306).Error)
-	require.Equal(t, 15, user.Quota)
+	require.EqualValues(t, 15, user.Quota)
 }
 
 func TestDecreaseUserQuotaIgnoresCacheRefreshFailureAfterDatabaseUpdate(t *testing.T) {
@@ -60,7 +60,7 @@ func TestDecreaseUserQuotaIgnoresCacheRefreshFailureAfterDatabaseUpdate(t *testi
 	oldRedisEnabled := common.RedisEnabled
 	oldCacheUpdateUserQuotaField := cacheUpdateUserQuotaField
 	common.RedisEnabled = true
-	cacheUpdateUserQuotaField = func(userId int, quota int) error {
+	cacheUpdateUserQuotaField = func(userId int, quota int64) error {
 		return errors.New("redis unavailable")
 	}
 	t.Cleanup(func() {
@@ -80,7 +80,7 @@ func TestDecreaseUserQuotaIgnoresCacheRefreshFailureAfterDatabaseUpdate(t *testi
 	require.NoError(t, err)
 	var user User
 	require.NoError(t, DB.Select("quota").First(&user, 9307).Error)
-	require.Equal(t, 6, user.Quota)
+	require.EqualValues(t, 6, user.Quota)
 }
 
 func TestDecreaseTokenQuotaReturnsErrorAndKeepsBalanceWhenInsufficient(t *testing.T) {
@@ -100,8 +100,8 @@ func TestDecreaseTokenQuotaReturnsErrorAndKeepsBalanceWhenInsufficient(t *testin
 	require.Error(t, err)
 	var token Token
 	require.NoError(t, DB.Select("remain_quota", "used_quota").First(&token, 9401).Error)
-	require.Equal(t, 10, token.RemainQuota)
-	require.Equal(t, 0, token.UsedQuota)
+	require.EqualValues(t, 10, token.RemainQuota)
+	require.EqualValues(t, 0, token.UsedQuota)
 }
 
 func TestIncreaseUserQuotaUpdatesDatabaseImmediatelyWhenBatchEnabled(t *testing.T) {
@@ -124,7 +124,7 @@ func TestIncreaseUserQuotaUpdatesDatabaseImmediatelyWhenBatchEnabled(t *testing.
 	require.NoError(t, err)
 	var user User
 	require.NoError(t, DB.Select("quota").First(&user, 9303).Error)
-	require.Equal(t, 15, user.Quota)
+	require.EqualValues(t, 15, user.Quota)
 }
 
 func TestIncreaseTokenQuotaUpdatesDatabaseAfterBatchFlush(t *testing.T) {
@@ -146,14 +146,14 @@ func TestIncreaseTokenQuotaUpdatesDatabaseAfterBatchFlush(t *testing.T) {
 	require.NoError(t, err)
 	var token Token
 	require.NoError(t, DB.Select("remain_quota", "used_quota").First(&token, 9402).Error)
-	require.Equal(t, 10, token.RemainQuota)
-	require.Equal(t, 20, token.UsedQuota)
+	require.EqualValues(t, 10, token.RemainQuota)
+	require.EqualValues(t, 20, token.UsedQuota)
 
 	batchUpdate()
 
 	require.NoError(t, DB.Select("remain_quota", "used_quota").First(&token, 9402).Error)
-	require.Equal(t, 15, token.RemainQuota)
-	require.Equal(t, 15, token.UsedQuota)
+	require.EqualValues(t, 15, token.RemainQuota)
+	require.EqualValues(t, 15, token.UsedQuota)
 }
 
 func TestIncreaseTokenQuotaClampsUsedQuotaAtZero(t *testing.T) {
@@ -173,8 +173,8 @@ func TestIncreaseTokenQuotaClampsUsedQuotaAtZero(t *testing.T) {
 	require.NoError(t, err)
 	var token Token
 	require.NoError(t, DB.Select("remain_quota", "used_quota").First(&token, 9404).Error)
-	require.Equal(t, 15, token.RemainQuota)
-	require.Equal(t, 0, token.UsedQuota)
+	require.EqualValues(t, 15, token.RemainQuota)
+	require.EqualValues(t, 0, token.UsedQuota)
 }
 
 func TestIncreaseTokenQuotaKeepsUnlimitedRemainQuota(t *testing.T) {
@@ -195,8 +195,8 @@ func TestIncreaseTokenQuotaKeepsUnlimitedRemainQuota(t *testing.T) {
 	require.NoError(t, err)
 	var token Token
 	require.NoError(t, DB.Select("remain_quota", "used_quota").First(&token, 9403).Error)
-	require.Equal(t, 10, token.RemainQuota)
-	require.Equal(t, 15, token.UsedQuota)
+	require.EqualValues(t, 10, token.RemainQuota)
+	require.EqualValues(t, 15, token.UsedQuota)
 }
 
 func TestIncreaseTokenQuotaTrackedRollbackOnlyReversesItsOwnDelta(t *testing.T) {
@@ -223,8 +223,8 @@ func TestIncreaseTokenQuotaTrackedRollbackOnlyReversesItsOwnDelta(t *testing.T) 
 
 	var token Token
 	require.NoError(t, DB.Select("remain_quota", "used_quota").First(&token, 9405).Error)
-	require.Equal(t, 80, token.RemainQuota)
-	require.Equal(t, 70, token.UsedQuota)
+	require.EqualValues(t, 80, token.RemainQuota)
+	require.EqualValues(t, 70, token.UsedQuota)
 }
 
 func TestIncreaseTokenQuotaTrackedReportsClampedUsedQuotaDelta(t *testing.T) {
@@ -242,12 +242,12 @@ func TestIncreaseTokenQuotaTrackedReportsClampedUsedQuotaDelta(t *testing.T) {
 	delta, err := IncreaseTokenQuotaTracked(9406, "quota-tracked-clamp-token", 30)
 	require.NoError(t, err)
 
-	require.Equal(t, 30, delta.RemainDelta)
-	require.Equal(t, -10, delta.UsedDelta)
+	require.EqualValues(t, 30, delta.RemainDelta)
+	require.EqualValues(t, -10, delta.UsedDelta)
 	var token Token
 	require.NoError(t, DB.Select("remain_quota", "used_quota").First(&token, 9406).Error)
-	require.Equal(t, 130, token.RemainQuota)
-	require.Equal(t, 0, token.UsedQuota)
+	require.EqualValues(t, 130, token.RemainQuota)
+	require.EqualValues(t, 0, token.UsedQuota)
 }
 
 func TestUpdateUserAndChannelUsedQuotaSyncUpdatesBothCounters(t *testing.T) {
@@ -272,7 +272,7 @@ func TestUpdateUserAndChannelUsedQuotaSyncUpdatesBothCounters(t *testing.T) {
 	require.NoError(t, err)
 	var user User
 	require.NoError(t, DB.Select("used_quota").First(&user, 9310).Error)
-	require.Equal(t, 60, user.UsedQuota)
+	require.EqualValues(t, 60, user.UsedQuota)
 	var channel Channel
 	require.NoError(t, DB.Select("used_quota").First(&channel, 9410).Error)
 	require.EqualValues(t, 60, channel.UsedQuota)
@@ -293,7 +293,7 @@ func TestUpdateUserAndChannelUsedQuotaSyncRollsBackWhenChannelMissing(t *testing
 	require.Error(t, err)
 	var user User
 	require.NoError(t, DB.Select("used_quota").First(&user, 9311).Error)
-	require.Equal(t, 100, user.UsedQuota)
+	require.EqualValues(t, 100, user.UsedQuota)
 }
 
 func TestUpdateTaskConsumptionUsageSyncUpdatesUsageAndRequestCount(t *testing.T) {
@@ -319,7 +319,7 @@ func TestUpdateTaskConsumptionUsageSyncUpdatesUsageAndRequestCount(t *testing.T)
 	require.NoError(t, err)
 	var user User
 	require.NoError(t, DB.Select("used_quota", "request_count").First(&user, 9312).Error)
-	require.Equal(t, 80, user.UsedQuota)
+	require.EqualValues(t, 80, user.UsedQuota)
 	require.Equal(t, 3, user.RequestCount)
 	var channel Channel
 	require.NoError(t, DB.Select("used_quota").First(&channel, 9412).Error)
@@ -342,7 +342,7 @@ func TestUpdateTaskConsumptionUsageSyncRollsBackWhenChannelMissing(t *testing.T)
 	require.Error(t, err)
 	var user User
 	require.NoError(t, DB.Select("used_quota", "request_count").First(&user, 9313).Error)
-	require.Equal(t, 50, user.UsedQuota)
+	require.EqualValues(t, 50, user.UsedQuota)
 	require.Equal(t, 2, user.RequestCount)
 }
 
@@ -378,14 +378,14 @@ func TestUpdateTaskConsumptionUsageWithTokenSyncUpdatesUsageRequestCountAndToken
 	require.NoError(t, err)
 	var user User
 	require.NoError(t, DB.Select("used_quota", "request_count").First(&user, 9314).Error)
-	require.Equal(t, 80, user.UsedQuota)
+	require.EqualValues(t, 80, user.UsedQuota)
 	require.Equal(t, 3, user.RequestCount)
 	var channel Channel
 	require.NoError(t, DB.Select("used_quota").First(&channel, 9414).Error)
 	require.EqualValues(t, 100, channel.UsedQuota)
 	var usage TokenUsageDaily
 	require.NoError(t, DB.Where("token_id = ?", 9514).First(&usage).Error)
-	require.Equal(t, 30, usage.Quota)
+	require.EqualValues(t, 30, usage.Quota)
 	require.Equal(t, 1, usage.RequestCount)
 	require.Equal(t, 9314, usage.UserId)
 }
@@ -422,14 +422,14 @@ func TestUpdateTaskUsageAdjustmentWithTokenSyncUpdatesUsageAndTokenUsageDailyWit
 	require.NoError(t, err)
 	var user User
 	require.NoError(t, DB.Select("used_quota", "request_count").First(&user, 9315).Error)
-	require.Equal(t, 40, user.UsedQuota)
+	require.EqualValues(t, 40, user.UsedQuota)
 	require.Equal(t, 3, user.RequestCount)
 	var channel Channel
 	require.NoError(t, DB.Select("used_quota").First(&channel, 9415).Error)
 	require.EqualValues(t, 60, channel.UsedQuota)
 	var usage TokenUsageDaily
 	require.NoError(t, DB.Where("token_id = ?", 9515).First(&usage).Error)
-	require.Equal(t, -40, usage.Quota)
+	require.EqualValues(t, -40, usage.Quota)
 	require.Equal(t, 0, usage.RequestCount)
 	require.Equal(t, 9315, usage.UserId)
 }
@@ -459,7 +459,7 @@ func TestUpdateTaskConsumptionUsageWithTokenSyncRollsBackWhenChannelMissing(t *t
 	require.Error(t, err)
 	var user User
 	require.NoError(t, DB.Select("used_quota", "request_count").First(&user, 9316).Error)
-	require.Equal(t, 50, user.UsedQuota)
+	require.EqualValues(t, 50, user.UsedQuota)
 	require.Equal(t, 2, user.RequestCount)
 	var usage TokenUsageDaily
 	require.Error(t, DB.Where("token_id = ?", 9516).First(&usage).Error)

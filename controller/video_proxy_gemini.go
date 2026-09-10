@@ -2,7 +2,7 @@ package controller
 
 import (
 	"fmt"
-	"io"
+	neturl "net/url"
 	"strconv"
 	"strings"
 
@@ -10,6 +10,8 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
+	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
+	"github.com/QuantumNous/new-api/service"
 )
 
 func getGeminiVideoURL(channel *model.Channel, task *model.Task, apiKey string) (string, error) {
@@ -43,9 +45,12 @@ func getGeminiVideoURL(channel *model.Channel, task *model.Task, apiKey string) 
 	if err != nil {
 		return "", fmt.Errorf("fetch task failed: %w", err)
 	}
+	if resp == nil || resp.Body == nil {
+		return "", fmt.Errorf("fetch task returned empty response")
+	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := service.ReadResponseBodyLimited(resp, service.MaxResponseBodyBytes)
 	if err != nil {
 		return "", fmt.Errorf("read task response failed: %w", err)
 	}
@@ -105,6 +110,9 @@ func extractGeminiVideoURLFromResponse(resp map[string]any) string {
 		return ""
 	}
 	if gvr, ok := resp["generateVideoResponse"].(map[string]any); ok {
+		if uri := extractGeminiVideoURLFromGeneratedVideos(gvr); uri != "" {
+			return uri
+		}
 		if uri := extractGeminiVideoURLFromGeneratedSamples(gvr); uri != "" {
 			return uri
 		}
@@ -115,14 +123,51 @@ func extractGeminiVideoURLFromResponse(resp map[string]any) string {
 				if uri, ok := vm["uri"].(string); ok && uri != "" {
 					return uri
 				}
+				if b64, _ := vm["bytesBase64Encoded"].(string); strings.TrimSpace(b64) != "" {
+					mime, _ := vm["mimeType"].(string)
+					enc, _ := vm["encoding"].(string)
+					return buildVideoDataURL(mime, enc, b64)
+				}
 			}
 		}
 	}
+	if b64, _ := resp["bytesBase64Encoded"].(string); strings.TrimSpace(b64) != "" {
+		enc, _ := resp["encoding"].(string)
+		return buildVideoDataURL("", enc, b64)
+	}
 	if uri, ok := resp["video"].(string); ok && uri != "" {
-		return uri
+		lowerURI := strings.ToLower(uri)
+		if taskcommon.IsDataURL(uri) || strings.HasPrefix(lowerURI, "http://") || strings.HasPrefix(lowerURI, "https://") {
+			return uri
+		}
+		enc, _ := resp["encoding"].(string)
+		return buildVideoDataURL("", enc, uri)
 	}
 	if uri, ok := resp["uri"].(string); ok && uri != "" {
 		return uri
+	}
+	return ""
+}
+
+func extractGeminiVideoURLFromGeneratedVideos(gvr map[string]any) string {
+	if gvr == nil {
+		return ""
+	}
+	if videos, ok := gvr["generatedVideos"].([]any); ok {
+		for _, video := range videos {
+			if vm, ok := video.(map[string]any); ok {
+				if nested, ok := vm["video"].(map[string]any); ok {
+					if uri, ok := nested["uri"].(string); ok && uri != "" {
+						return uri
+					}
+					if b64, _ := nested["bytesBase64Encoded"].(string); strings.TrimSpace(b64) != "" {
+						mime, _ := nested["mimeType"].(string)
+						enc, _ := nested["encoding"].(string)
+						return buildVideoDataURL(mime, enc, b64)
+					}
+				}
+			}
+		}
 	}
 	return ""
 }
@@ -137,6 +182,11 @@ func extractGeminiVideoURLFromGeneratedSamples(gvr map[string]any) string {
 				if video, ok := sm["video"].(map[string]any); ok {
 					if uri, ok := video["uri"].(string); ok && uri != "" {
 						return uri
+					}
+					if b64, _ := video["bytesBase64Encoded"].(string); strings.TrimSpace(b64) != "" {
+						mime, _ := video["mimeType"].(string)
+						enc, _ := video["encoding"].(string)
+						return buildVideoDataURL(mime, enc, b64)
 					}
 				}
 			}
@@ -178,9 +228,12 @@ func getVertexVideoURL(channel *model.Channel, task *model.Task) (string, error)
 	if err != nil {
 		return "", fmt.Errorf("fetch task failed: %w", err)
 	}
+	if resp == nil || resp.Body == nil {
+		return "", fmt.Errorf("fetch task returned empty response")
+	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	body, err := service.ReadResponseBodyLimited(resp, service.MaxResponseBodyBytes)
 	if err != nil {
 		return "", fmt.Errorf("read task response failed: %w", err)
 	}
@@ -206,6 +259,14 @@ func isTaskProxyContentURL(url string, taskID string) bool {
 }
 
 func getVertexTaskKey(channel *model.Channel, task *model.Task) string {
+	return getTaskChannelKey(channel, task)
+}
+
+func getGeminiTaskKey(channel *model.Channel, task *model.Task) string {
+	return getTaskChannelKey(channel, task)
+}
+
+func getTaskChannelKey(channel *model.Channel, task *model.Task) string {
 	if task != nil {
 		if key := strings.TrimSpace(task.PrivateData.Key); key != "" {
 			return key
@@ -255,7 +316,7 @@ func extractVertexVideoURLFromPayload(body []byte) string {
 		return buildVideoDataURL("", enc, b64)
 	}
 	if video, _ := resp["video"].(string); strings.TrimSpace(video) != "" {
-		if strings.HasPrefix(video, "data:") || strings.HasPrefix(video, "http://") || strings.HasPrefix(video, "https://") {
+		if taskcommon.IsDataURL(video) || strings.HasPrefix(strings.ToLower(video), "http://") || strings.HasPrefix(strings.ToLower(video), "https://") {
 			return video
 		}
 		enc, _ := resp["encoding"].(string)
@@ -281,14 +342,34 @@ func buildVideoDataURL(mimeType string, encoding string, base64Data string) stri
 }
 
 func ensureAPIKey(uri, key string) string {
+	uri = strings.TrimSpace(uri)
+	key = strings.TrimSpace(key)
 	if key == "" || uri == "" {
 		return uri
 	}
-	if strings.Contains(uri, "key=") {
+	parsed, err := neturl.Parse(uri)
+	if err != nil || parsed == nil {
+		if strings.Contains(uri, "?") {
+			return fmt.Sprintf("%s&key=%s", uri, neturl.QueryEscape(key))
+		}
+		return fmt.Sprintf("%s?key=%s", uri, neturl.QueryEscape(key))
+	}
+	switch strings.ToLower(strings.TrimSpace(parsed.Scheme)) {
+	case "", "http", "https":
+	default:
 		return uri
 	}
-	if strings.Contains(uri, "?") {
-		return fmt.Sprintf("%s&key=%s", uri, key)
+	if parsed.Scheme == "http" || parsed.Scheme == "https" {
+		query := parsed.Query()
+		if query.Has("key") {
+			return uri
+		}
+		query.Set("key", key)
+		parsed.RawQuery = query.Encode()
+		return parsed.String()
 	}
-	return fmt.Sprintf("%s?key=%s", uri, key)
+	if strings.Contains(uri, "?") {
+		return fmt.Sprintf("%s&key=%s", uri, neturl.QueryEscape(key))
+	}
+	return fmt.Sprintf("%s?key=%s", uri, neturl.QueryEscape(key))
 }

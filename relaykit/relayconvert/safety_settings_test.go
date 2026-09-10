@@ -114,5 +114,7 @@ func TestOpenAIReasoningEffortMapsToGeminiThinkingConfig(t *testing.T) {
 
 	require.NoError(t, err)
 	require.NotNil(t, got.GenerationConfig.ThinkingConfig)
-	assert.Equal(t, "max", got.GenerationConfig.ThinkingConfig.ThinkingLevel)
+	require.NotNil(t, got.GenerationConfig.ThinkingConfig.ThinkingBudget)
+	assert.Equal(t, 24576, *got.GenerationConfig.ThinkingConfig.ThinkingBudget)
+	assert.Empty(t, got.GenerationConfig.ThinkingConfig.ThinkingLevel)
 }

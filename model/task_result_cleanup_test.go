@@ -396,6 +396,45 @@ func TestUpdateSettlementStatusPreservesCompletedResultCleanup(t *testing.T) {
 	require.Contains(t, string(reloaded.Data), "_newapi_result_file")
 }
 
+func TestUpdateSettlementStatusPreservesConcurrentArtifactRefs(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID:           "task_settlement_concurrent_artifacts",
+		Platform:         constant.TaskPlatformImage,
+		Status:           TaskStatusSuccess,
+		SettlementStatus: TaskSettlementStatusPending,
+	}
+	require.NoError(t, task.Insert())
+
+	var stale Task
+	require.NoError(t, DB.First(&stale, task.ID).Error)
+
+	var current Task
+	require.NoError(t, DB.First(&current, task.ID).Error)
+	current.PrivateData.ArtifactRefs = map[string]TaskArtifactStorageRef{
+		"video": {
+			Backend:   "s3",
+			Bucket:    "artifacts",
+			ObjectKey: "task_settlement_concurrent_artifacts/video",
+			Type:      "video",
+			MimeType:  "video/mp4",
+			Size:      6,
+		},
+	}
+	require.NoError(t, DB.Model(&Task{}).Where("id = ?", task.ID).
+		Update("private_data", current.PrivateData).Error)
+
+	stale.SettlementStatus = TaskSettlementStatusSettled
+	won, err := stale.UpdateSettlementStatus(TaskStatusSuccess, TaskSettlementStatusPending)
+	require.NoError(t, err)
+	require.True(t, won)
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	require.Contains(t, reloaded.PrivateData.ArtifactRefs, "video")
+}
+
 func TestGetPublicImageTaskByTaskIDRequiresOwnerTokenInQuery(t *testing.T) {
 	truncateTables(t)
 	task := &Task{

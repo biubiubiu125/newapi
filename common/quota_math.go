@@ -8,13 +8,34 @@ import (
 )
 
 // Quota conversions are centralized here so every billing path shares one
-// saturation + logging policy. Quota columns (user/token/log) are 32-bit
-// integers in the database, so an oversized product must clamp to the int32
-// range instead of wrapping around and turning a charge into a credit.
+// saturation + logging policy. Per-request billing remains bounded by the
+// legacy int32-compatible range, while wallet and token balances use int64.
 const (
-	MaxQuota = math.MaxInt32
-	MinQuota = math.MinInt32
+	MaxQuota             = math.MaxInt32
+	MinQuota             = math.MinInt32
+	MaxWalletQuota int64 = 1<<53 - 1
 )
+
+// WalletQuotaFromFloatStrict converts a wallet quota calculation into the
+// int64-backed, JavaScript-safe wallet domain without applying the per-request
+// int32 clamp.
+func WalletQuotaFromFloatStrict(value float64) (int64, error) {
+	if math.IsNaN(value) || math.IsInf(value, 0) || value > float64(MaxWalletQuota) || value < -float64(MaxWalletQuota) {
+		return 0, fmt.Errorf("wallet quota is outside the supported 64-bit range")
+	}
+	return int64(math.Round(value)), nil
+}
+
+// WalletQuotaFromDecimalStrict converts an exact decimal wallet calculation
+// without narrowing it through the per-request int32 quota domain.
+func WalletQuotaFromDecimalStrict(value decimal.Decimal) (int64, error) {
+	max := decimal.NewFromInt(MaxWalletQuota)
+	min := max.Neg()
+	if value.GreaterThan(max) || value.LessThan(min) {
+		return 0, fmt.Errorf("wallet quota is outside the supported 64-bit range")
+	}
+	return value.Round(0).IntPart(), nil
+}
 
 // QuotaClampKind identifies why a quota conversion had to be saturated.
 type QuotaClampKind string

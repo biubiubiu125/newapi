@@ -83,6 +83,9 @@ func ChannelType2APIType(channelType int) (int, bool) {
 		apiType = constant.APITypeNewAPI
 	}
 	if apiType == -1 {
+		if channelType == constant.ChannelTypeTaskPlugin {
+			return -1, false
+		}
 		return constant.APITypeOpenAI, false
 	}
 	return apiType, true

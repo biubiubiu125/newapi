@@ -12,7 +12,7 @@ func UpdateUserAndChannelUsedQuotaSync(userId int, channelId int, quota int) err
 		return nil
 	}
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		if err := updateUserUsedQuotaWithDB(tx, userId, quota); err != nil {
+		if err := updateUserUsedQuotaWithDB(tx, userId, int64(quota)); err != nil {
 			return err
 		}
 		if err := updateChannelUsedQuotaWithDB(tx, channelId, quota); err != nil {
@@ -31,7 +31,7 @@ func UpdateUserAndChannelUsedQuotaAllowMissingChannelRefundSync(userId int, chan
 		return nil
 	}
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		if err := updateUserUsedQuotaWithDB(tx, userId, quota); err != nil {
+		if err := updateUserUsedQuotaWithDB(tx, userId, int64(quota)); err != nil {
 			return err
 		}
 		if err := updateChannelUsedQuotaWithDB(tx, channelId, quota); err != nil {
@@ -54,7 +54,7 @@ func UpdateTaskConsumptionUsageSync(userId int, channelId int, quota int) error 
 		return nil
 	}
 	if err := DB.Transaction(func(tx *gorm.DB) error {
-		if err := updateUserUsedQuotaAndRequestCountWithDB(tx, userId, quota, 1); err != nil {
+		if err := updateUserUsedQuotaAndRequestCountWithDB(tx, userId, int64(quota), 1); err != nil {
 			return err
 		}
 		if err := updateChannelUsedQuotaWithDB(tx, channelId, quota); err != nil {
@@ -143,9 +143,9 @@ func updateTaskUsageWithTokenAtSyncOptions(db *gorm.DB, userId int, channelId in
 func updateTaskUsageWithTokenAtTx(tx *gorm.DB, userId int, channelId int, tokenId int, quota int, requestCount int, allowMissingChannel bool, usedAt int64) error {
 	var err error
 	if requestCount != 0 {
-		err = updateUserUsedQuotaAndRequestCountWithDB(tx, userId, quota, requestCount)
+		err = updateUserUsedQuotaAndRequestCountWithDB(tx, userId, int64(quota), requestCount)
 	} else {
-		err = updateUserUsedQuotaWithDB(tx, userId, quota)
+		err = updateUserUsedQuotaWithDB(tx, userId, int64(quota))
 	}
 	if err != nil {
 		return err

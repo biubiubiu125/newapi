@@ -66,11 +66,11 @@ func TestCalculateTextQuotaSummaryUnifiedForClaudeSemantic(t *testing.T) {
 	chatSummary := calculateTextQuotaSummary(ctx, chatRelayInfo, usage)
 	messageSummary := calculateTextQuotaSummary(ctx, messageRelayInfo, usage)
 
-	require.Equal(t, messageSummary.Quota, chatSummary.Quota)
+	require.EqualValues(t, messageSummary.Quota, chatSummary.Quota)
 	require.Equal(t, messageSummary.CacheCreationTokens5m, chatSummary.CacheCreationTokens5m)
 	require.Equal(t, messageSummary.CacheCreationTokens1h, chatSummary.CacheCreationTokens1h)
 	require.True(t, chatSummary.IsClaudeUsageSemantic)
-	require.Equal(t, 1488, chatSummary.Quota)
+	require.EqualValues(t, 1488, chatSummary.Quota)
 }
 
 func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.T) {
@@ -109,7 +109,7 @@ func TestCalculateTextQuotaSummaryUsesSplitClaudeCacheCreationRatios(t *testing.
 	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
 
 	// 100 + remaining(5)*1 + 2*2 + 3*3 = 118
-	require.Equal(t, 118, summary.Quota)
+	require.EqualValues(t, 118, summary.Quota)
 }
 
 func TestCalculateTextQuotaSummaryUsesAnthropicUsageSemanticFromUpstreamUsage(t *testing.T) {
@@ -149,8 +149,8 @@ func TestCalculateTextQuotaSummaryUsesAnthropicUsageSemanticFromUpstreamUsage(t 
 	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
 
 	require.True(t, summary.IsClaudeUsageSemantic)
-	require.Equal(t, "anthropic", summary.UsageSemantic)
-	require.Equal(t, 1488, summary.Quota)
+	require.EqualValues(t, "anthropic", summary.UsageSemantic)
+	require.EqualValues(t, 1488, summary.Quota)
 }
 
 func TestCalculateTextQuotaSummaryUsesClaudeBillingUsageBeforeTopLevelUsage(t *testing.T) {
@@ -192,14 +192,14 @@ func TestCalculateTextQuotaSummaryUsesClaudeBillingUsageBeforeTopLevelUsage(t *t
 	summary := calculateTextQuotaSummary(ctx, relayInfo, effectiveBillingUsage(usage))
 
 	require.True(t, summary.IsClaudeUsageSemantic)
-	require.Equal(t, dto.BillingUsageSemanticAnthropic, summary.UsageSemantic)
+	require.EqualValues(t, dto.BillingUsageSemanticAnthropic, summary.UsageSemantic)
 	require.Equal(t, 70, summary.PromptTokens)
 	require.Equal(t, 7, summary.CompletionTokens)
 	require.Equal(t, 30, summary.CacheTokens)
 	require.Equal(t, 20, summary.CacheCreationTokens)
 	require.Equal(t, 12, summary.CacheCreationTokens5m)
 	require.Equal(t, 8, summary.CacheCreationTokens1h)
-	require.Equal(t, 118, summary.Quota)
+	require.EqualValues(t, 118, summary.Quota)
 }
 
 func TestCalculateTextQuotaSummaryUsesGeminiBillingUsageBeforeTopLevelUsage(t *testing.T) {
@@ -236,12 +236,12 @@ func TestCalculateTextQuotaSummaryUsesGeminiBillingUsageBeforeTopLevelUsage(t *t
 	summary := calculateTextQuotaSummary(ctx, relayInfo, effectiveBillingUsage(usage))
 
 	require.False(t, summary.IsClaudeUsageSemantic)
-	require.Equal(t, dto.BillingUsageSemanticGemini, summary.UsageSemantic)
+	require.EqualValues(t, dto.BillingUsageSemanticGemini, summary.UsageSemantic)
 	require.Equal(t, 105, summary.PromptTokens)
 	require.Equal(t, 23, summary.CompletionTokens)
 	require.Equal(t, 7, summary.CacheTokens)
 	require.Equal(t, 128, summary.TotalTokens)
-	require.Equal(t, 145, summary.Quota)
+	require.EqualValues(t, 145, summary.Quota)
 }
 
 func TestCalculateTextQuotaSummaryUsesOpenAIBillingUsageBeforeTopLevelUsage(t *testing.T) {
@@ -274,11 +274,11 @@ func TestCalculateTextQuotaSummaryUsesOpenAIBillingUsageBeforeTopLevelUsage(t *t
 	summary := calculateTextQuotaSummary(ctx, relayInfo, effectiveBillingUsage(usage))
 
 	require.False(t, summary.IsClaudeUsageSemantic)
-	require.Equal(t, dto.BillingUsageSemanticOpenAI, summary.UsageSemantic)
+	require.EqualValues(t, dto.BillingUsageSemanticOpenAI, summary.UsageSemantic)
 	require.Equal(t, 80, summary.PromptTokens)
 	require.Equal(t, 9, summary.CompletionTokens)
 	require.Equal(t, 89, summary.TotalTokens)
-	require.Equal(t, 98, summary.Quota)
+	require.EqualValues(t, 98, summary.Quota)
 }
 
 func TestCalculateTextQuotaSummaryUsesOpenAIResponsesInputTokenDetails(t *testing.T) {
@@ -315,13 +315,13 @@ func TestCalculateTextQuotaSummaryUsesOpenAIResponsesInputTokenDetails(t *testin
 	}
 
 	effectiveUsage := effectiveBillingUsage(convertedUsage)
-	require.Equal(t, 40, effectiveUsage.PromptTokensDetails.CachedTokens)
+	require.EqualValues(t, 40, effectiveUsage.PromptTokensDetails.CachedTokens)
 	require.Zero(t, convertedUsage.BillingUsage.OpenAIUsage.PromptTokensDetails.CachedTokens)
 
 	summary := calculateTextQuotaSummary(ctx, relayInfo, effectiveUsage)
 	require.Equal(t, 40, summary.CacheTokens)
 	// 60 uncached input + 40*0.25 cached input + 10*2 output = 90.
-	require.Equal(t, 90, summary.Quota)
+	require.EqualValues(t, 90, summary.Quota)
 }
 
 func TestUsageFromOpenAIBillingUsageNormalizesCacheDetailsWithoutOverwritingCanonicalValues(t *testing.T) {
@@ -346,12 +346,12 @@ func TestUsageFromOpenAIBillingUsageNormalizesCacheDetailsWithoutOverwritingCano
 	billingUsage := dto.NewOpenAIResponsesBillingUsage(responsesUsage)
 	usage := effectiveBillingUsage(&dto.Usage{BillingUsage: billingUsage})
 
-	require.Equal(t, 8, usage.PromptTokensDetails.CachedTokens)
-	require.Equal(t, 5, usage.PromptTokensDetails.CachedCreationTokens)
-	require.Equal(t, 6, usage.PromptTokensDetails.CacheWriteTokens)
-	require.Equal(t, 12, usage.PromptTokensDetails.TextTokens)
-	require.Equal(t, 7, usage.PromptTokensDetails.ImageTokens)
-	require.Equal(t, 9, usage.PromptTokensDetails.AudioTokens)
+	require.EqualValues(t, 8, usage.PromptTokensDetails.CachedTokens)
+	require.EqualValues(t, 5, usage.PromptTokensDetails.CachedCreationTokens)
+	require.EqualValues(t, 6, usage.PromptTokensDetails.CacheWriteTokens)
+	require.EqualValues(t, 12, usage.PromptTokensDetails.TextTokens)
+	require.EqualValues(t, 7, usage.PromptTokensDetails.ImageTokens)
+	require.EqualValues(t, 9, usage.PromptTokensDetails.AudioTokens)
 	require.Zero(t, billingUsage.OpenAIUsage.PromptTokensDetails.CachedCreationTokens)
 }
 
@@ -364,25 +364,25 @@ func TestUsageFromOpenAIBillingUsageFallsBackToPromptCacheHitTokens(t *testing.T
 		}),
 	})
 
-	require.Equal(t, 35, usage.PromptTokensDetails.CachedTokens)
+	require.EqualValues(t, 35, usage.PromptTokensDetails.CachedTokens)
 }
 
 func TestUsageBillingPathForLog(t *testing.T) {
-	require.Equal(t, usageBillingPathAnthropic, usageBillingPathForLog(true, &dto.Usage{
+	require.EqualValues(t, usageBillingPathAnthropic, usageBillingPathForLog(true, &dto.Usage{
 		BillingUsage: dto.NewClaudeMessagesBillingUsage(&dto.ClaudeUsage{InputTokens: 1}),
 	}))
-	require.Equal(t, usageBillingPathLocal, usageBillingPathForLog(true, &dto.Usage{}))
-	require.Equal(t, usageBillingPathUpstream, usageBillingPathForLog(false, &dto.Usage{}))
-	require.Equal(t, usageBillingPathOpenAI, usageBillingPathForLog(false, &dto.Usage{
+	require.EqualValues(t, usageBillingPathLocal, usageBillingPathForLog(true, &dto.Usage{}))
+	require.EqualValues(t, usageBillingPathUpstream, usageBillingPathForLog(false, &dto.Usage{}))
+	require.EqualValues(t, usageBillingPathOpenAI, usageBillingPathForLog(false, &dto.Usage{
 		BillingUsage: dto.NewOpenAIChatBillingUsage(&dto.Usage{PromptTokens: 1}),
 	}))
-	require.Equal(t, usageBillingPathAnthropic, usageBillingPathForLog(false, &dto.Usage{
+	require.EqualValues(t, usageBillingPathAnthropic, usageBillingPathForLog(false, &dto.Usage{
 		BillingUsage: dto.NewClaudeMessagesBillingUsage(&dto.ClaudeUsage{InputTokens: 1}),
 	}))
-	require.Equal(t, usageBillingPathGemini, usageBillingPathForLog(false, &dto.Usage{
+	require.EqualValues(t, usageBillingPathGemini, usageBillingPathForLog(false, &dto.Usage{
 		BillingUsage: dto.NewGeminiChatBillingUsage(&dto.GeminiUsageMetadata{PromptTokenCount: 1}),
 	}))
-	require.Equal(t, usageBillingPathGeminiEstimated, usageBillingPathForLog(false, &dto.Usage{
+	require.EqualValues(t, usageBillingPathGeminiEstimated, usageBillingPathForLog(false, &dto.Usage{
 		BillingUsage: dto.NewEstimatedGeminiChatBillingUsage(&dto.Usage{PromptTokens: 1}),
 	}))
 }
@@ -397,13 +397,13 @@ func TestAppendUsageBillingPathForLogWritesAdminInfo(t *testing.T) {
 
 	adminInfo, ok := other["admin_info"].(map[string]interface{})
 	require.True(t, ok)
-	require.Equal(t, usageBillingPathAnthropic, adminInfo["usage_billing_path"])
+	require.EqualValues(t, usageBillingPathAnthropic, adminInfo["usage_billing_path"])
 
 	other = map[string]interface{}{}
 	appendUsageBillingPathForLog(other, true, nil)
 	adminInfo, ok = other["admin_info"].(map[string]interface{})
 	require.True(t, ok)
-	require.Equal(t, usageBillingPathLocal, adminInfo["usage_billing_path"])
+	require.EqualValues(t, usageBillingPathLocal, adminInfo["usage_billing_path"])
 }
 
 func TestCacheWriteTokensTotal(t *testing.T) {
@@ -462,7 +462,7 @@ func TestCalculateTextQuotaSummaryHandlesLegacyClaudeDerivedOpenAIUsage(t *testi
 	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
 
 	// 62 + 3544*0.1 + 586*1.25 + 95*5 = 1624.9 => 1624
-	require.Equal(t, 1624, summary.Quota)
+	require.EqualValues(t, 1624, summary.Quota)
 }
 
 func TestCalculateTextQuotaSummaryBillsOpenAICacheWriteTokens(t *testing.T) {
@@ -496,7 +496,7 @@ func TestCalculateTextQuotaSummaryBillsOpenAICacheWriteTokens(t *testing.T) {
 
 		require.Equal(t, 1470, summary.CacheCreationTokens)
 		// (1473-0-1470) + 1470*1.25 + 19*2 = 3 + 1837.5 + 38 = 1878.5 => 1879
-		require.Equal(t, 1879, summary.Quota)
+		require.EqualValues(t, 1879, summary.Quota)
 	})
 
 	t.Run("uncached remainder clamps to zero", func(t *testing.T) {
@@ -517,7 +517,7 @@ func TestCalculateTextQuotaSummaryBillsOpenAICacheWriteTokens(t *testing.T) {
 		require.Equal(t, 3619, summary.PromptTokens)
 		require.Equal(t, 3616, summary.CacheCreationTokens)
 		// max(3619-2921-3616, 0) + 2921*0.1 + 3616*1.25 + 36*2 = 4884.1 => 4884
-		require.Equal(t, 4884, summary.Quota)
+		require.EqualValues(t, 4884, summary.Quota)
 	})
 }
 
@@ -555,7 +555,7 @@ func TestCalculateTextQuotaSummarySeparatesOpenRouterCacheReadFromPromptBilling(
 	// but billing still separates normal input from cache read tokens.
 	// quota = (2604 - 2432) + 2432*0.1 + 383 = 798.2 => 798
 	require.Equal(t, 2604, summary.PromptTokens)
-	require.Equal(t, 798, summary.Quota)
+	require.EqualValues(t, 798, summary.Quota)
 }
 
 func TestCalculateTextQuotaSummarySeparatesOpenRouterCacheCreationFromPromptBilling(t *testing.T) {
@@ -590,7 +590,7 @@ func TestCalculateTextQuotaSummarySeparatesOpenRouterCacheCreationFromPromptBill
 	// prompt_tokens is still logged as total input, but cache creation is billed separately.
 	// quota = (2604 - 100) + 100*1.25 + 383 = 3012
 	require.Equal(t, 2604, summary.PromptTokens)
-	require.Equal(t, 3012, summary.Quota)
+	require.EqualValues(t, 3012, summary.Quota)
 }
 
 func TestCalculateTextQuotaSummaryKeepsPrePRClaudeOpenRouterBilling(t *testing.T) {
@@ -629,7 +629,7 @@ func TestCalculateTextQuotaSummaryKeepsPrePRClaudeOpenRouterBilling(t *testing.T
 	// quota = 172 + 2432*0.1 + 383 = 798.2 => 798
 	require.True(t, summary.IsClaudeUsageSemantic)
 	require.Equal(t, 172, summary.PromptTokens)
-	require.Equal(t, 798, summary.Quota)
+	require.EqualValues(t, 798, summary.Quota)
 }
 
 func TestComposeTieredTextQuotaKeepsToolCallSurcharges(t *testing.T) {
@@ -677,8 +677,8 @@ func TestComposeTieredTextQuotaKeepsToolCallSurcharges(t *testing.T) {
 		ActualQuotaAfterGroup:  1000,
 	})
 
-	require.Equal(t, int64(13000), summary.ToolCallSurchargeQuota.Round(0).IntPart())
-	require.Equal(t, 14000, quota)
+	require.EqualValues(t, int64(13000), summary.ToolCallSurchargeQuota.Round(0).IntPart())
+	require.EqualValues(t, 14000, quota)
 }
 
 func TestComposeTieredTextQuotaFallbackKeepsToolCallSurcharges(t *testing.T) {
@@ -711,8 +711,8 @@ func TestComposeTieredTextQuotaFallbackKeepsToolCallSurcharges(t *testing.T) {
 	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
 	quota := composeTieredTextQuota(relayInfo, summary, 1250, nil)
 
-	require.Equal(t, int64(12500), summary.ToolCallSurchargeQuota.Round(0).IntPart())
-	require.Equal(t, 13750, quota)
+	require.EqualValues(t, int64(12500), summary.ToolCallSurchargeQuota.Round(0).IntPart())
+	require.EqualValues(t, 13750, quota)
 }
 
 func TestComposeTieredTextQuotaErrorFallbackUsesPreConsumedQuota(t *testing.T) {
@@ -750,8 +750,8 @@ func TestComposeTieredTextQuotaErrorFallbackUsesPreConsumedQuota(t *testing.T) {
 	preConsumedFallback := 2000
 	quota := composeTieredTextQuota(relayInfo, summary, preConsumedFallback, nil)
 
-	require.Equal(t, int64(12500), summary.ToolCallSurchargeQuota.Round(0).IntPart())
-	require.Equal(t, 14500, quota)
+	require.EqualValues(t, int64(12500), summary.ToolCallSurchargeQuota.Round(0).IntPart())
+	require.EqualValues(t, 14500, quota)
 }
 
 type failingTextQuotaSettlementFunding struct {
@@ -829,7 +829,7 @@ func TestPostTextConsumeQuotaCheckedRecordsUsageLogWhenSettlementFails(t *testin
 	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", 9501, model.LogTypeConsume).First(&log).Error)
 	require.Equal(t, "settle-log-owner", log.Username)
 	require.Equal(t, "gpt-4o", log.ModelName)
-	require.Equal(t, 10, log.Quota)
+	require.EqualValues(t, 10, log.Quota)
 	require.Contains(t, log.Other, "settlement_error")
 	other, err := common.StrToMap(log.Other)
 	require.NoError(t, err)
@@ -839,7 +839,7 @@ func TestPostTextConsumeQuotaCheckedRecordsUsageLogWhenSettlementFails(t *testin
 
 	stat, err := model.SumUsedQuota(model.LogTypeConsume, 0, 0, "gpt-4o", "settle-log-owner", "settle-token", 0, "")
 	require.NoError(t, err)
-	require.Equal(t, 10, stat.Quota)
+	require.EqualValues(t, 10, stat.Quota)
 
 	require.Eventually(t, func() bool {
 		model.CacheQuotaDataLock.Lock()
@@ -850,8 +850,8 @@ func TestPostTextConsumeQuotaCheckedRecordsUsageLogWhenSettlementFails(t *testin
 
 	var quotaData model.QuotaData
 	require.NoError(t, model.DB.Where("user_id = ? AND model_name = ?", 9501, "gpt-4o").First(&quotaData).Error)
-	require.Equal(t, "settle-log-owner", quotaData.Username)
-	require.Equal(t, 10, quotaData.Quota)
+	require.EqualValues(t, "settle-log-owner", quotaData.Username)
+	require.EqualValues(t, 10, quotaData.Quota)
 }
 
 func TestPostTextConsumeQuotaRecordsAccountingErrorWhenSettlementFails(t *testing.T) {
@@ -1043,9 +1043,9 @@ func TestPostTextConsumeQuotaRecordsAccountingErrorWhenCallerIgnoresFailure(t *t
 
 	PostTextConsumeQuota(ctx, relayInfo, usage, nil)
 
-	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
-	assert.Equal(t, initialTokenRemain, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, initialUserQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, initialTokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, 0, getTokenUsedQuota(t, tokenID))
 	var consumeCount int64
 	require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ? AND type = ?", userID, model.LogTypeConsume).Count(&consumeCount).Error)
 	require.Zero(t, consumeCount)
@@ -1108,13 +1108,13 @@ func TestPostTextConsumeQuotaCheckedRollsBackSettlementWhenConsumeLogFails(t *te
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "record consume log failed")
-	assert.Equal(t, initialUserQuota, getUserQuota(t, userID))
-	assert.Equal(t, initialTokenRemain, getTokenRemainQuota(t, tokenID))
-	assert.Equal(t, 0, getTokenUsedQuota(t, tokenID))
+	assert.EqualValues(t, initialUserQuota, getUserQuota(t, userID))
+	assert.EqualValues(t, initialTokenRemain, getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, 0, getTokenUsedQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	assert.Equal(t, 0, usedQuota)
+	assert.EqualValues(t, 0, usedQuota)
 	assert.Equal(t, 0, requestCount)
-	assert.Equal(t, int64(0), getChannelUsedQuota(t, channelID))
+	assert.EqualValues(t, int64(0), getChannelUsedQuota(t, channelID))
 }
 
 // TestTryTieredSettleRecordsClampOnOverflow guards that an oversized tiered
@@ -1139,9 +1139,9 @@ func TestTryTieredSettleRecordsClampOnOverflow(t *testing.T) {
 
 	require.True(t, ok)
 	require.NotNil(t, result)
-	require.Equal(t, math.MaxInt32, quota, "oversized settlement must clamp, never wrap negative")
+	require.EqualValues(t, math.MaxInt32, quota, "oversized settlement must clamp, never wrap negative")
 	require.NotNil(t, relayInfo.QuotaClamp, "clamp must be recorded on RelayInfo for admin auditing")
-	require.Equal(t, common.QuotaClampOverflow, relayInfo.QuotaClamp.Kind)
+	require.EqualValues(t, common.QuotaClampOverflow, relayInfo.QuotaClamp.Kind)
 }
 
 // TestTryTieredSettleNoClampInRange confirms an in-range settlement leaves
@@ -1185,11 +1185,11 @@ func TestCalculateTextQuotaSummaryFixedPriceAppliesImageCountOnceAndAllowsOverri
 	usage := &dto.Usage{PromptTokens: 1, TotalTokens: 1}
 
 	summary := calculateTextQuotaSummary(ctx, relayInfo, usage)
-	require.Equal(t, 180000, summary.Quota)
+	require.EqualValues(t, 180000, summary.Quota)
 
 	// An adaptor-reported actual count replaces the requested count rather
 	// than multiplying it a second time.
 	relayInfo.PriceData.AddOtherRatio("n", 2)
 	summary = calculateTextQuotaSummary(ctx, relayInfo, usage)
-	require.Equal(t, 120000, summary.Quota)
+	require.EqualValues(t, 120000, summary.Quota)
 }

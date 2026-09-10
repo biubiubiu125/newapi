@@ -7,9 +7,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -22,7 +22,7 @@ func imageTaskCreationContext(tokenQuota int) *gin.Context {
 	return ctx
 }
 
-func seedImageTaskCreationWallet(t *testing.T, userID, tokenID, quota int) *relaycommon.RelayInfo {
+func seedImageTaskCreationWallet(t *testing.T, userID, tokenID int, quota int64) *relaycommon.RelayInfo {
 	t.Helper()
 	user := &model.User{
 		Id:       userID,
@@ -88,17 +88,17 @@ func TestCommitImageTaskCreationAtomicallyCommitsWalletBillingTaskAndReservation
 
 	require.Nil(t, apiErr)
 	require.NotZero(t, task.ID)
-	require.Equal(t, preConsumed, task.Quota)
-	require.Equal(t, BillingSourceWallet, task.PrivateData.BillingSource)
+	require.EqualValues(t, preConsumed, task.Quota)
+	require.EqualValues(t, BillingSourceWallet, task.PrivateData.BillingSource)
 	require.NotNil(t, relayInfo.Billing)
 
 	var user model.User
 	require.NoError(t, model.DB.First(&user, userID).Error)
-	require.Equal(t, initialQuota-preConsumed, user.Quota)
+	require.EqualValues(t, initialQuota-preConsumed, user.Quota)
 	var token model.Token
 	require.NoError(t, model.DB.First(&token, tokenID).Error)
-	require.Equal(t, initialQuota-preConsumed, token.RemainQuota)
-	require.Equal(t, preConsumed, token.UsedQuota)
+	require.EqualValues(t, initialQuota-preConsumed, token.RemainQuota)
+	require.EqualValues(t, preConsumed, token.UsedQuota)
 
 	lock, exists, err := model.GetImageTaskClientTaskIDLock(userID, reservation.ClientTaskID)
 	require.NoError(t, err)
@@ -136,14 +136,14 @@ func TestCommitImageTaskCreationThenRefundPreservesUnbookedUsageCounters(t *test
 	require.NoError(t, RefundTaskQuota(t.Context(), task, "upstream image task failed"))
 
 	userUsage, requestCount := getUserUsageCounters(t, userID)
-	require.Equal(t, historicalUserUsage, userUsage)
+	require.EqualValues(t, historicalUserUsage, userUsage)
 	require.Equal(t, historicalRequests, requestCount)
-	require.Equal(t, int64(historicalChannelUsage), getChannelUsedQuota(t, channelID))
+	require.EqualValues(t, int64(historicalChannelUsage), getChannelUsedQuota(t, channelID))
 	daily := getTokenUsageDaily(t, tokenID)
-	require.Equal(t, historicalTokenUsage, daily.Quota)
+	require.EqualValues(t, historicalTokenUsage, daily.Quota)
 	require.Equal(t, historicalTokenRequests, daily.RequestCount)
-	require.Equal(t, initialQuota, getUserQuota(t, userID))
-	require.Equal(t, initialQuota, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, initialQuota, getUserQuota(t, userID))
+	require.EqualValues(t, initialQuota, getTokenRemainQuota(t, tokenID))
 	require.Zero(t, getTokenUsedQuota(t, tokenID))
 }
 
@@ -165,10 +165,10 @@ func TestCommitImageTaskCreationAtomicallyRollsBackWhenReservationBindingIsLost(
 	require.Zero(t, taskCount)
 	var user model.User
 	require.NoError(t, model.DB.First(&user, userID).Error)
-	require.Equal(t, initialQuota, user.Quota)
+	require.EqualValues(t, initialQuota, user.Quota)
 	var token model.Token
 	require.NoError(t, model.DB.First(&token, tokenID).Error)
-	require.Equal(t, initialQuota, token.RemainQuota)
+	require.EqualValues(t, initialQuota, token.RemainQuota)
 	require.Zero(t, token.UsedQuota)
 	require.Nil(t, relayInfo.Billing)
 }
@@ -188,7 +188,7 @@ func TestCommitImageTaskCreationRollsBackTaskRowWhenBillingFails(t *testing.T) {
 	)
 
 	require.NotNil(t, apiErr)
-	require.Equal(t, types.ErrorCodeInsufficientUserQuota, apiErr.GetErrorCode())
+	require.EqualValues(t, types.ErrorCodeInsufficientUserQuota, apiErr.GetErrorCode())
 
 	var taskCount int64
 	require.NoError(t, model.DB.Model(&model.Task{}).Where("task_id = ?", task.TaskID).Count(&taskCount).Error)
@@ -198,10 +198,10 @@ func TestCommitImageTaskCreationRollsBackTaskRowWhenBillingFails(t *testing.T) {
 
 	var user model.User
 	require.NoError(t, model.DB.First(&user, userID).Error)
-	require.Equal(t, initialQuota, user.Quota)
+	require.EqualValues(t, initialQuota, user.Quota)
 	var token model.Token
 	require.NoError(t, model.DB.First(&token, tokenID).Error)
-	require.Equal(t, initialQuota, token.RemainQuota)
+	require.EqualValues(t, initialQuota, token.RemainQuota)
 	require.Zero(t, token.UsedQuota)
 	require.Nil(t, relayInfo.Billing)
 
@@ -278,13 +278,13 @@ func TestCommitImageTaskCreationAtomicallyCommitsSubscriptionBilling(t *testing.
 	require.Equal(t, subscriptionID, task.PrivateData.SubscriptionId)
 	var subscription model.UserSubscription
 	require.NoError(t, model.DB.First(&subscription, subscriptionID).Error)
-	require.Equal(t, int64(50+preConsumed), subscription.AmountUsed)
+	require.EqualValues(t, int64(50+preConsumed), subscription.AmountUsed)
 	var user model.User
 	require.NoError(t, model.DB.First(&user, userID).Error)
 	require.Zero(t, user.Quota)
 	var token model.Token
 	require.NoError(t, model.DB.First(&token, tokenID).Error)
-	require.Equal(t, tokenQuota-preConsumed, token.RemainQuota)
+	require.EqualValues(t, tokenQuota-preConsumed, token.RemainQuota)
 	var record model.SubscriptionPreConsumeRecord
 	require.NoError(t, model.DB.Where("request_id = ?", relayInfo.RequestId).First(&record).Error)
 	require.Equal(t, int64(preConsumed), record.PreConsumed)
@@ -303,10 +303,10 @@ func TestCommitImageTaskCreationAtomicallySubscriptionFirstFallsBackToWalletWith
 	)
 
 	require.Nil(t, apiErr)
-	require.Equal(t, BillingSourceWallet, task.PrivateData.BillingSource)
+	require.EqualValues(t, BillingSourceWallet, task.PrivateData.BillingSource)
 	var user model.User
 	require.NoError(t, model.DB.First(&user, userID).Error)
-	require.Equal(t, initialQuota-preConsumed, user.Quota)
+	require.EqualValues(t, initialQuota-preConsumed, user.Quota)
 }
 
 func TestCommitImageTaskCreationAtomicallyWalletFirstFallsBackToSubscription(t *testing.T) {
@@ -329,10 +329,10 @@ func TestCommitImageTaskCreationAtomicallyWalletFirstFallsBackToSubscription(t *
 	require.Equal(t, BillingSourceSubscription, task.PrivateData.BillingSource)
 	var user model.User
 	require.NoError(t, model.DB.First(&user, userID).Error)
-	require.Equal(t, 10, user.Quota)
+	require.EqualValues(t, 10, user.Quota)
 	var subscription model.UserSubscription
 	require.NoError(t, model.DB.First(&subscription, subscriptionID).Error)
-	require.Equal(t, int64(50+preConsumed), subscription.AmountUsed)
+	require.EqualValues(t, int64(50+preConsumed), subscription.AmountUsed)
 }
 
 func TestCommitImageTaskCreationAtomicallySubscriptionFirstHonorsNoWalletOverflow(t *testing.T) {
@@ -351,11 +351,11 @@ func TestCommitImageTaskCreationAtomicallySubscriptionFirstHonorsNoWalletOverflo
 	)
 
 	require.NotNil(t, apiErr)
-	require.Equal(t, types.ErrorCodeInsufficientUserQuota, apiErr.GetErrorCode())
+	require.EqualValues(t, types.ErrorCodeInsufficientUserQuota, apiErr.GetErrorCode())
 	var user model.User
 	require.NoError(t, model.DB.First(&user, userID).Error)
-	require.Equal(t, initialQuota, user.Quota)
+	require.EqualValues(t, initialQuota, user.Quota)
 	var token model.Token
 	require.NoError(t, model.DB.First(&token, tokenID).Error)
-	require.Equal(t, initialQuota, token.RemainQuota)
+	require.EqualValues(t, initialQuota, token.RemainQuota)
 }

@@ -75,7 +75,10 @@ func LogInfo(ctx context.Context, msg string) {
 	logHelper(ctx, loggerINFO, msg)
 }
 
-func LogWarn(ctx context.Context, msg string) {
+func LogWarn(ctx context.Context, msg string, args ...any) {
+	if len(args) > 0 {
+		msg = fmt.Sprintf(msg, args...)
+	}
 	logHelper(ctx, loggerWarn, msg)
 }
 
@@ -116,7 +119,7 @@ func logHelper(ctx context.Context, level string, msg string) {
 	}
 }
 
-func LogQuota(quota int) string {
+func LogQuota[T ~int | ~int64](quota T) string {
 	// 新逻辑：根据额度展示类型输出
 	q := float64(quota)
 	switch operation_setting.GetQuotaDisplayType() {
@@ -143,7 +146,7 @@ func LogQuota(quota int) string {
 	}
 }
 
-func FormatQuota(quota int) string {
+func FormatQuota[T ~int | ~int64](quota T) string {
 	q := float64(quota)
 	switch operation_setting.GetQuotaDisplayType() {
 	case operation_setting.QuotaDisplayTypeCNY:

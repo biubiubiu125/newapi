@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
-	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -175,27 +174,24 @@ func TestTaskDispatchStateKeyPredicateQuotesColumn(t *testing.T) {
 	require.Contains(t, stmt.SQL.String(), "`key`")
 }
 
-func TestTaskSettlementUpdatesTreatNoopRowsAffectedAsExistingRow(t *testing.T) {
-	body, err := os.ReadFile("task.go")
-	require.NoError(t, err)
-	source := string(body)
+func TestTaskSettlementUpdatesTreatExistingRowAsSuccessEvenWhenUnchanged(t *testing.T) {
+	truncateTables(t)
 
-	for _, fn := range []string{
-		"func (t *Task) UpdateSubmitSettlementError() error",
-		"func (t *Task) UpdateQuota() error",
-	} {
-		start := strings.Index(source, fn)
-		require.NotEqual(t, -1, start, fn)
-		end := strings.Index(source[start+len(fn):], "\nfunc ")
-		if end == -1 {
-			end = len(source)
-		} else {
-			end += start + len(fn)
-		}
-		block := source[start:end]
-		require.Contains(t, block, "taskRowExists(t.ID)")
-		require.Contains(t, block, "return nil")
+	task := &Task{
+		TaskID: "task_settlement_noop",
+		Status: TaskStatusSuccess,
+		Quota:  100,
 	}
+	insertTask(t, task)
+
+	require.NoError(t, task.UpdateSubmitSettlementError())
+	require.NoError(t, task.UpdateQuota())
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, task.TaskID, reloaded.TaskID)
+	require.Equal(t, TaskStatus(TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, 100, reloaded.Quota)
 }
 
 func TestGetRunnableImageTasksFairByChannelBoundsChannelSampling(t *testing.T) {
@@ -986,6 +982,149 @@ func TestUpdateWithStatus_Win(t *testing.T) {
 	require.NoError(t, DB.First(&reloaded, task.ID).Error)
 	assert.EqualValues(t, TaskStatusSuccess, reloaded.Status)
 	assert.Equal(t, "100%", reloaded.Progress)
+}
+
+func TestUpdateWithStatusFromPreservesConcurrentPrivateData(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID:   "task_cas_private_data_merge",
+		Status:   TaskStatusInProgress,
+		Progress: "20%",
+		PrivateData: TaskPrivateData{
+			ResultURL:   "https://provider.example/old.mp4",
+			PluginState: json.RawMessage(`{"round":1}`),
+			ArtifactRefs: map[string]TaskArtifactStorageRef{
+				"video": {
+					Backend:   "s3",
+					Bucket:    "artifacts",
+					ObjectKey: "task_cas_private_data_merge/video-old",
+					Type:      "video",
+				},
+			},
+		},
+	}
+	insertTask(t, task)
+
+	stale := &Task{}
+	require.NoError(t, DB.First(stale, task.ID).Error)
+	base := *stale
+	stale.Progress = "80%"
+	stale.PrivateData.ResultURL = "https://provider.example/new.mp4"
+	stale.PrivateData.PluginState = json.RawMessage(`{"round":2}`)
+
+	var current Task
+	require.NoError(t, DB.First(&current, task.ID).Error)
+	current.PrivateData.SettlementError = "manual review required"
+	current.PrivateData.ArtifactRefs["audio"] = TaskArtifactStorageRef{
+		Backend:   "s3",
+		Bucket:    "artifacts",
+		ObjectKey: "task_cas_private_data_merge/audio",
+		Type:      "audio",
+	}
+	require.NoError(t, DB.Model(&Task{}).Where("id = ?", task.ID).
+		Update("private_data", current.PrivateData).Error)
+
+	won, err := stale.UpdateWithStatusFrom(&base, TaskStatusInProgress)
+	require.NoError(t, err)
+	require.True(t, won)
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	assert.Equal(t, "80%", reloaded.Progress)
+	assert.Equal(t, "https://provider.example/new.mp4", reloaded.PrivateData.ResultURL)
+	assert.JSONEq(t, `{"round":2}`, string(reloaded.PrivateData.PluginState))
+	assert.Equal(t, "manual review required", reloaded.PrivateData.SettlementError)
+	require.Contains(t, reloaded.PrivateData.ArtifactRefs, "video")
+	require.Contains(t, reloaded.PrivateData.ArtifactRefs, "audio")
+}
+
+func TestUpdateQuotaPreservesConcurrentPrivateData(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID: "task_quota_private_data_merge",
+		Status: TaskStatusSuccess,
+		Quota:  100,
+		PrivateData: TaskPrivateData{
+			ResultURL: "https://provider.example/video.mp4",
+			ArtifactRefs: map[string]TaskArtifactStorageRef{
+				"video": {
+					Backend:   "s3",
+					Bucket:    "artifacts",
+					ObjectKey: "task_quota_private_data_merge/video",
+					Type:      "video",
+				},
+			},
+		},
+	}
+	insertTask(t, task)
+
+	stale := &Task{}
+	require.NoError(t, DB.First(stale, task.ID).Error)
+	stale.Quota = 0
+	stale.PrivateData.SettlementAttemptQuota = 100
+	stale.PrivateData.SettlementError = "refund failed"
+
+	var current Task
+	require.NoError(t, DB.First(&current, task.ID).Error)
+	current.PrivateData.ResultURL = "https://provider.example/new-video.mp4"
+	current.PrivateData.ArtifactRefs["audio"] = TaskArtifactStorageRef{
+		Backend:   "s3",
+		Bucket:    "artifacts",
+		ObjectKey: "task_quota_private_data_merge/audio",
+		Type:      "audio",
+	}
+	require.NoError(t, DB.Model(&Task{}).Where("id = ?", task.ID).
+		Update("private_data", current.PrivateData).Error)
+
+	require.NoError(t, stale.UpdateQuota())
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	assert.Zero(t, reloaded.Quota)
+	assert.Equal(t, "https://provider.example/new-video.mp4", reloaded.PrivateData.ResultURL)
+	assert.Equal(t, "refund failed", reloaded.PrivateData.SettlementError)
+	require.Contains(t, reloaded.PrivateData.ArtifactRefs, "video")
+	require.Contains(t, reloaded.PrivateData.ArtifactRefs, "audio")
+}
+
+func TestUpdateSubmitSettlementErrorPreservesConcurrentPrivateData(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID: "task_settlement_private_data_merge",
+		Status: TaskStatusSubmitted,
+		Quota:  100,
+		PrivateData: TaskPrivateData{
+			ResultURL:   "https://provider.example/video.mp4",
+			PluginState: json.RawMessage(`{"phase":"polling"}`),
+		},
+	}
+	insertTask(t, task)
+
+	stale := &Task{}
+	require.NoError(t, DB.First(stale, task.ID).Error)
+	stale.Quota = 100
+	stale.SettlementStatus = TaskSettlementStatusReview
+	stale.PrivateData.SettlementAttemptQuota = 100
+	stale.PrivateData.SettlementError = "settlement unavailable"
+
+	var current Task
+	require.NoError(t, DB.First(&current, task.ID).Error)
+	current.PrivateData.ResultURL = "https://provider.example/new-video.mp4"
+	current.PrivateData.PluginState = json.RawMessage(`{"phase":"completed"}`)
+	require.NoError(t, DB.Model(&Task{}).Where("id = ?", task.ID).
+		Update("private_data", current.PrivateData).Error)
+
+	require.NoError(t, stale.UpdateSubmitSettlementError())
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	assert.Equal(t, TaskSettlementStatusReview, reloaded.SettlementStatus)
+	assert.Equal(t, "https://provider.example/new-video.mp4", reloaded.PrivateData.ResultURL)
+	assert.JSONEq(t, `{"phase":"completed"}`, string(reloaded.PrivateData.PluginState))
+	assert.Equal(t, "settlement unavailable", reloaded.PrivateData.SettlementError)
 }
 
 func TestUpdateWithStatus_Lose(t *testing.T) {

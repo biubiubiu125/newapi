@@ -11,9 +11,11 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	claudemessages "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/claude_messages"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/convdiag"
 	geminichat "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/gemini_chat"
 	oaichat "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/oai_chat"
 	oairesponses "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/oai_responses"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/toolconv"
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
@@ -34,12 +36,13 @@ type RequestStep struct {
 }
 
 type RequestResult struct {
-	Value     any
-	From      types.RelayFormat
-	To        types.RelayFormat
-	Converter string
-	Quality   RequestConverterQuality
-	Steps     []RequestStep
+	Value       any
+	From        types.RelayFormat
+	To          types.RelayFormat
+	Converter   string
+	Quality     RequestConverterQuality
+	Steps       []RequestStep
+	Diagnostics []types.ConversionDiagnostic
 }
 
 type RequestConverterSpec struct {
@@ -236,21 +239,73 @@ func executeRequestSpec(c context.Context, info convmeta.Meta, from types.RelayF
 }
 
 func executeRequestSteps(c context.Context, info convmeta.Meta, from types.RelayFormat, target types.RelayFormat, request any, converter string, quality RequestConverterQuality, specs []RequestConverterSpec) (*RequestResult, error) {
+	c, diagnosticCollector := convdiag.WithCollector(c)
 	current := request
+	var tools toolconv.Set
 	steps := make([]RequestStep, 0, len(specs))
+	resultWithError := func(err error) (*RequestResult, error) {
+		diagnostics := diagnosticCollector.Diagnostics()
+		for i := range diagnostics {
+			if diagnostics[i].From == "" {
+				diagnostics[i].From = from
+			}
+			if diagnostics[i].To == "" {
+				diagnostics[i].To = target
+			}
+		}
+		return &RequestResult{
+			Value:       current,
+			From:        from,
+			To:          target,
+			Quality:     quality,
+			Steps:       steps,
+			Diagnostics: diagnostics,
+		}, err
+	}
+	extracted, extractedTools, err := toolconv.ExtractRequest(from, request)
+	if err != nil {
+		return resultWithError(err)
+	}
+	current = extracted
+	tools = extractedTools
 	for _, spec := range specs {
-		var err error
 		current, err = prepareRequestForStep(current, spec, target)
 		if err != nil {
-			return nil, err
+			return resultWithError(err)
 		}
 
 		var step RequestStep
 		current, step, err = executeRequestStep(c, info, spec, current)
 		if err != nil {
-			return nil, err
+			return resultWithError(err)
 		}
 		steps = append(steps, step)
+	}
+
+	current, toolDiagnostics, err := toolconv.AttachRequest(target, current, tools, convmeta.OptionsOf(info))
+	diagnostics := append(diagnosticCollector.Diagnostics(), toolDiagnostics...)
+	for i := range diagnostics {
+		if diagnostics[i].From == "" {
+			diagnostics[i].From = from
+		}
+		if diagnostics[i].To == "" {
+			diagnostics[i].To = target
+		}
+	}
+	if err != nil {
+		return &RequestResult{
+			Value:       current,
+			From:        from,
+			To:          target,
+			Quality:     quality,
+			Steps:       steps,
+			Diagnostics: diagnostics,
+		}, err
+	}
+	if info != nil {
+		for _, step := range steps {
+			info.AppendRequestConversion(step.To)
+		}
 	}
 
 	converters := make([]string, 0, len(steps))
@@ -261,12 +316,13 @@ func executeRequestSteps(c context.Context, info convmeta.Meta, from types.Relay
 		converter = strings.Join(converters, ",")
 	}
 	return &RequestResult{
-		Value:     current,
-		From:      from,
-		To:        target,
-		Converter: converter,
-		Quality:   quality,
-		Steps:     steps,
+		Value:       current,
+		From:        from,
+		To:          target,
+		Converter:   converter,
+		Quality:     quality,
+		Steps:       steps,
+		Diagnostics: diagnostics,
 	}, nil
 }
 
@@ -311,9 +367,6 @@ func executeRequestStep(c context.Context, info convmeta.Meta, spec RequestConve
 	value, err := spec.Convert(c, info, request)
 	if err != nil {
 		return nil, RequestStep{}, err
-	}
-	if info != nil {
-		info.AppendRequestConversion(spec.To)
 	}
 	return value, RequestStep{
 		Converter: spec.ID,

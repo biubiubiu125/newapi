@@ -1,6 +1,7 @@
 package common
 
 import (
+	"bytes"
 	"encoding/json"
 	"testing"
 
@@ -40,4 +41,10 @@ func TestJsonRawMessageToString(t *testing.T) {
 			require.Equal(t, tt.want, JsonRawMessageToString(tt.data))
 		})
 	}
+}
+
+func TestDecodeJsonRejectsTrailingValues(t *testing.T) {
+	var value map[string]any
+	require.Error(t, DecodeJson(bytes.NewBufferString(`{"ok":true}{"extra":true}`), &value))
+	require.NoError(t, DecodeJson(bytes.NewBufferString("{\"ok\":true} \n\t"), &value))
 }

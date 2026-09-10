@@ -160,7 +160,7 @@ func newImageTaskWalletBillingSessionTx(tx *gorm.DB, relayInfo *relaycommon.Rela
 		return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 	}
 	relayInfo.UserQuota = user.Quota
-	if user.Quota <= 0 || user.Quota < quota {
+	if user.Quota <= 0 || user.Quota < int64(quota) {
 		return nil, types.NewErrorWithStatusCode(
 			fmt.Errorf("user quota is insufficient, remaining=%d, required=%d", user.Quota, quota),
 			types.ErrorCodeInsufficientUserQuota,
@@ -172,7 +172,7 @@ func newImageTaskWalletBillingSessionTx(tx *gorm.DB, relayInfo *relaycommon.Rela
 
 	funding := &WalletFunding{userId: relayInfo.UserId}
 	if quota > 0 {
-		if err := model.DecreaseUserQuotaTx(tx, relayInfo.UserId, quota); err != nil {
+		if err := model.DecreaseUserQuotaTx(tx, relayInfo.UserId, int64(quota)); err != nil {
 			return nil, types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
 		}
 		funding.consumed = quota
@@ -188,7 +188,7 @@ func newImageTaskSubscriptionBillingSessionTx(tx *gorm.DB, relayInfo *relaycommo
 	funding := &SubscriptionFunding{
 		requestId:  relayInfo.RequestId,
 		userId:     relayInfo.UserId,
-		modelName:  relayInfo.OriginModelName,
+		modelName:  relayInfo.GetBillingModelName(),
 		usingGroup: relayInfo.UsingGroup,
 		amount:     subscriptionQuota,
 	}
@@ -222,7 +222,7 @@ func newImageTaskSubscriptionBillingSessionTx(tx *gorm.DB, relayInfo *relaycommo
 
 func finishImageTaskBillingSessionTx(tx *gorm.DB, relayInfo *relaycommon.RelayInfo, funding FundingSource, quota int) (*BillingSession, *types.NewAPIError) {
 	if quota > 0 && !relayInfo.IsPlayground {
-		if err := model.DecreaseTokenQuotaTx(tx, relayInfo.TokenId, quota); err != nil {
+		if err := model.DecreaseTokenQuotaTx(tx, relayInfo.TokenId, int64(quota)); err != nil {
 			return nil, types.NewErrorWithStatusCode(err, types.ErrorCodePreConsumeTokenQuotaFailed, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
 	}

@@ -22,6 +22,7 @@ import (
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
+	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
@@ -41,6 +42,9 @@ import (
 )
 
 func main() {
+	if isPluginCLI(os.Args) {
+		os.Exit(pluginruntime.RunCLI(os.Args[2:], os.Stdout, os.Stderr))
+	}
 	startTime := time.Now()
 	kitutil.SetLogging(common.SysLog, func(message string) {
 		logger.LogError(nil, message)
@@ -50,6 +54,10 @@ func main() {
 	err := InitResources()
 	if err != nil {
 		common.FatalLog("failed to initialize resources: " + err.Error())
+		return
+	}
+	if err := service.ConfigureTaskArtifactStore(); err != nil {
+		common.FatalLog("failed to configure task artifact store: " + err.Error())
 		return
 	}
 
@@ -99,6 +107,11 @@ func main() {
 	// endpoint inference can read cached route settings on first request.
 	model.GetPricing()
 
+	// Load database task-plugin overrides immediately, then keep the runtime
+	// generation synchronized across instances.
+	controller.SyncTaskPluginsOnce()
+	go controller.SyncTaskPlugins()
+
 	// 热更新配置
 	go model.SyncOptions(common.SyncFrequency)
 	go authz.StartPolicySync(common.SyncFrequency)
@@ -140,6 +153,24 @@ func main() {
 		}
 		return a
 	}
+	service.GetTaskPluginAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPluginPollingAdaptor {
+		a := relay.GetTaskPluginAdaptor(platform)
+		if a == nil {
+			return nil
+		}
+		return a
+	}
+	service.GetTaskPluginAdaptorForTaskFunc = func(task *model.Task) service.TaskPluginPollingAdaptor {
+		a, err := relay.GetTaskPluginAdaptorForTask(task)
+		if err != nil || a == nil {
+			return nil
+		}
+		pollingAdaptor, ok := a.(service.TaskPluginPollingAdaptor)
+		if !ok {
+			return nil
+		}
+		return pollingAdaptor
+	}
 	service.RunImageTasksFunc = relay.RunImageTasks
 
 	controller.RegisterScheduledSystemTasks()
@@ -172,13 +203,7 @@ func main() {
 		return
 	}
 	server.Use(gin.CustomRecovery(func(c *gin.Context, err any) {
-		common.SysLog(fmt.Sprintf("panic detected: %v", err))
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"error": gin.H{
-				"message": fmt.Sprintf("Panic detected, error: %v. Please submit a issue here: https://github.com/Calcium-Ion/new-api", err),
-				"type":    "new_api_panic",
-			},
-		})
+		middleware.HandlePanic(c, err)
 	}))
 	// This will cause SSE not to work!!!
 	//server.Use(gzip.Gzip(gzip.DefaultCompression))
@@ -239,6 +264,10 @@ func main() {
 		model.SaveQuotaDataCache()
 	}
 	common.SysLog("server exited")
+}
+
+func isPluginCLI(args []string) bool {
+	return len(args) >= 2 && args[1] == "plugin"
 }
 
 func InjectUmamiAnalytics() {
@@ -311,6 +340,13 @@ func InitResources() error {
 	if err != nil {
 		common.FatalLog("failed to initialize database: " + err.Error())
 		return err
+	}
+
+	if common.PasswordLoginEncryptionEnabled {
+		if err = model.InitPasswordEncryption(); err != nil {
+			common.FatalLog("failed to initialize password encryption: " + err.Error())
+			return err
+		}
 	}
 
 	model.CheckSetup()

@@ -73,6 +73,10 @@ func GetChannel(group string, model string, retry int) (*Channel, error) {
 }
 
 func GetChannelWithExclude(group string, model string, retry int, excludeChannelIds []int, requestPath string) (*Channel, error) {
+	return GetChannelWithExcludeAndFilter(group, model, retry, excludeChannelIds, requestPath, nil)
+}
+
+func GetChannelWithExcludeAndFilter(group string, model string, retry int, excludeChannelIds []int, requestPath string, channelFilter func(*Channel) bool) (*Channel, error) {
 	var abilities []Ability
 
 	var err error = nil
@@ -82,14 +86,14 @@ func GetChannelWithExclude(group string, model string, retry int, excludeChannel
 	group = strings.TrimSpace(group)
 	model = strings.TrimSpace(model)
 
-	abilities, err = findPathFilteredAbilities(group, model, model, excludeChannelIds, requestPath)
+	abilities, err = findPathFilteredAbilities(group, model, model, excludeChannelIds, requestPath, channelFilter)
 	if err != nil {
 		return nil, err
 	}
 	if len(abilities) == 0 {
 		normalizedModel := ratio_setting.FormatMatchingModelName(model)
 		if normalizedModel != "" && normalizedModel != model {
-			abilities, err = findPathFilteredAbilities(group, normalizedModel, model, excludeChannelIds, requestPath)
+			abilities, err = findPathFilteredAbilities(group, normalizedModel, model, excludeChannelIds, requestPath, channelFilter)
 			if err != nil {
 				return nil, err
 			}
@@ -126,7 +130,7 @@ func GetChannelWithExclude(group string, model string, retry int, excludeChannel
 	return &channel, err
 }
 
-func findPathFilteredAbilities(group string, queryModel string, requestModel string, excludeChannelIds []int, requestPath string) ([]Ability, error) {
+func findPathFilteredAbilities(group string, queryModel string, requestModel string, excludeChannelIds []int, requestPath string, channelFilter func(*Channel) bool) ([]Ability, error) {
 	var abilities []Ability
 	channelQuery := DB.Where("TRIM("+commonGroupCol+") = ? and TRIM(model) = ? and enabled = ?", group, queryModel, true)
 	if len(excludeChannelIds) > 0 {
@@ -139,7 +143,39 @@ func findPathFilteredAbilities(group string, queryModel string, requestModel str
 	if err != nil {
 		return nil, err
 	}
+	if channelFilter != nil {
+		filteredAbilities, err = filterAbilitiesByChannelPredicate(filteredAbilities, channelFilter)
+		if err != nil {
+			return nil, err
+		}
+	}
 	return filteredAbilities, nil
+}
+
+func filterAbilitiesByChannelPredicate(abilities []Ability, channelFilter func(*Channel) bool) ([]Ability, error) {
+	if channelFilter == nil || len(abilities) == 0 {
+		return abilities, nil
+	}
+	channelIDs := make([]int, 0, len(abilities))
+	for _, ability := range abilities {
+		channelIDs = append(channelIDs, ability.ChannelId)
+	}
+	var channels []Channel
+	if err := DB.Where("id IN ?", channelIDs).Find(&channels).Error; err != nil {
+		return nil, err
+	}
+	channelsByID := make(map[int]*Channel, len(channels))
+	for index := range channels {
+		channelsByID[channels[index].Id] = &channels[index]
+	}
+	filtered := make([]Ability, 0, len(abilities))
+	for _, ability := range abilities {
+		channel := channelsByID[ability.ChannelId]
+		if channel != nil && channelFilter(channel) {
+			filtered = append(filtered, ability)
+		}
+	}
+	return filtered, nil
 }
 
 func filterAbilitiesByRetryPriority(abilities []Ability, retry int) []Ability {

@@ -1,6 +1,7 @@
 package relayconvert
 
 import (
+	"encoding/json"
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -34,7 +35,7 @@ func TestExtractImageGenerationTextFromResponsesReadsImageResults(t *testing.T) 
 			},
 			{
 				Type:    dto.ResponsesOutputTypeImageGenerationCall,
-				Results: []string{"abc123"},
+				Results: json.RawMessage(`["abc123"]`),
 			},
 		},
 	}

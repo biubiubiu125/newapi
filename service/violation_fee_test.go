@@ -61,10 +61,10 @@ func TestViolationFeeRollsBackDirectChargeWhenConsumeLogFailsAfterRequestRefund(
 	require.False(t, charged)
 	var user model.User
 	require.NoError(t, model.DB.Select("quota", "used_quota").First(&user, userID).Error)
-	require.Equal(t, initialQuota, user.Quota)
+	require.EqualValues(t, initialQuota, user.Quota)
 	require.Zero(t, user.UsedQuota)
 	var token model.Token
 	require.NoError(t, model.DB.Select("remain_quota", "used_quota").First(&token, tokenID).Error)
-	require.Equal(t, initialQuota, token.RemainQuota)
+	require.EqualValues(t, initialQuota, token.RemainQuota)
 	require.Zero(t, token.UsedQuota)
 }

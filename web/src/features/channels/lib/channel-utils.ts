@@ -20,6 +20,7 @@ import { formatCurrencyFromUSD, formatQuotaWithCurrency } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
 
 import {
+  CHANNEL_TYPE_TASK_PLUGIN,
   CHANNEL_STATUS_CONFIG,
   CHANNEL_TYPES,
   MULTI_KEY_STATUS_CONFIG,
@@ -54,6 +55,7 @@ export function getChannelTypeIcon(type: number): string {
     58: 'NewAPI', // Advanced Custom
     59: 'Sub2API', // Sub2API
     60: 'NewAPI', // New API
+    61: 'NewAPI', // Task Plugin
     3: 'Azure', // Azure
 
     // Anthropic
@@ -121,6 +123,25 @@ export function getChannelTypeIcon(type: number): string {
   }
 
   return TYPE_TO_ICON[type] || 'OpenAI'
+}
+
+const UNSUPPORTED_TEST_CHANNEL_TYPES = new Set<number>([
+  2,
+  5,
+  36,
+  50,
+  51,
+  52,
+  54,
+  CHANNEL_TYPE_TASK_PLUGIN,
+])
+
+export function canTestChannel(type: number): boolean {
+  return !UNSUPPORTED_TEST_CHANNEL_TYPES.has(type)
+}
+
+export function canQueryBalanceChannel(type: number): boolean {
+  return type !== CHANNEL_TYPE_TASK_PLUGIN
 }
 
 // ============================================================================

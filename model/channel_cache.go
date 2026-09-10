@@ -142,9 +142,13 @@ func GetRandomSatisfiedChannel(group string, model string, retry int) (*Channel,
 }
 
 func GetRandomSatisfiedChannelWithExclude(group string, model string, retry int, excludeChannelIds []int, requestPath string) (*Channel, error) {
+	return GetRandomSatisfiedChannelWithExcludeAndFilter(group, model, retry, excludeChannelIds, requestPath, nil)
+}
+
+func GetRandomSatisfiedChannelWithExcludeAndFilter(group string, model string, retry int, excludeChannelIds []int, requestPath string, channelFilter func(*Channel) bool) (*Channel, error) {
 	// if memory cache is disabled, get channel directly from database
 	if !common.MemoryCacheEnabled {
-		return GetChannelWithExclude(group, model, retry, excludeChannelIds, requestPath)
+		return GetChannelWithExcludeAndFilter(group, model, retry, excludeChannelIds, requestPath, channelFilter)
 	}
 
 	channelSyncLock.RLock()
@@ -157,6 +161,7 @@ func GetRandomSatisfiedChannelWithExclude(group string, model string, retry int,
 
 	// First, try to find channels with the exact model name.
 	channels := filterChannelsByRequestPathAndModel(group2model2channels[group][model], requestPath, model)
+	channels = filterChannelsByPredicate(channels, channelFilter)
 	channels = filterExcludedChannels(channels, excludeSet)
 
 	// If no channels found, try to find channels with the normalized model name.
@@ -164,6 +169,7 @@ func GetRandomSatisfiedChannelWithExclude(group string, model string, retry int,
 		normalizedModel := ratio_setting.FormatMatchingModelName(model)
 		if normalizedModel != "" && normalizedModel != model {
 			channels = filterChannelsByRequestPathAndModel(group2model2channels[group][normalizedModel], requestPath, model)
+			channels = filterChannelsByPredicate(channels, channelFilter)
 			channels = filterExcludedChannels(channels, excludeSet)
 		}
 	}
@@ -270,6 +276,22 @@ func filterExcludedChannels(channels []int, excludeSet map[int]struct{}) []int {
 		filteredChannels = append(filteredChannels, channelId)
 	}
 	return filteredChannels
+}
+
+func filterChannelsByPredicate(channels []int, channelFilter func(*Channel) bool) []int {
+	if channelFilter == nil || len(channels) == 0 {
+		return channels
+	}
+	filtered := make([]int, 0, len(channels))
+	for _, channelID := range channels {
+		channel, ok := channelsIDM[channelID]
+		if !ok || channelFilter(channel) {
+			if ok {
+				filtered = append(filtered, channelID)
+			}
+		}
+	}
+	return filtered
 }
 
 // filterChannelsByRequestPathAndModel restricts candidates by request path and

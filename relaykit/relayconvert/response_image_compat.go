@@ -39,9 +39,7 @@ func appendResponsesImageOutputSeparator(sb *strings.Builder) {
 func responsesImageGenerationMarkdown(output dto.ResponsesOutput) []string {
 	items := make([]string, 0)
 	items = appendResponsesImageValue(items, output.Result)
-	for _, result := range output.Results {
-		items = appendResponsesImageValue(items, result)
-	}
+	items = appendResponsesImageRawValue(items, output.Results)
 	items = appendResponsesImageValue(items, output.Url)
 	items = appendResponsesImageRawValue(items, output.ImageUrl)
 	items = appendResponsesImageValue(items, output.B64Json)

@@ -1,8 +1,10 @@
 package claudemessages
 
 import (
+	"encoding/json"
 	"fmt"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/reasonmap"
@@ -20,6 +22,8 @@ type ClaudeResponseInfo struct {
 	Usage        *dto.Usage
 	Done         bool
 
+	// Only snapshots synthesized from partial display usage may be refreshed by
+	// later display deltas. Serialized BillingUsage always remains authoritative.
 	billingUsageSynthesized bool
 }
 
@@ -49,6 +53,10 @@ func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCo
 		if claudeResponse.ContentBlock != nil {
 			if claudeResponse.ContentBlock.Type == "text" && claudeResponse.ContentBlock.Text != nil {
 				choice.Delta.SetContentString(*claudeResponse.ContentBlock.Text)
+				annotations, err := claudeCitationsToChat(claudeResponse.ContentBlock.Citations, *claudeResponse.ContentBlock.Text, 0)
+				if err == nil {
+					choice.Delta.Annotations, _ = marshalChatAnnotations(annotations)
+				}
 			}
 			if claudeResponse.ContentBlock.Type == "tool_use" {
 				tools = append(tools, dto.ToolCallResponse{
@@ -81,6 +89,14 @@ func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCo
 				choice.Delta.ReasoningContent = &signatureContent
 			case "thinking_delta":
 				choice.Delta.ReasoningContent = claudeResponse.Delta.Thinking
+			case "citations_delta":
+				if len(claudeResponse.Delta.Citation) > 0 {
+					raw, _ := kitutil.Marshal([]json.RawMessage{claudeResponse.Delta.Citation})
+					annotations, err := claudeCitationsToChat(raw, "", 0)
+					if err == nil {
+						choice.Delta.Annotations, _ = marshalChatAnnotations(annotations)
+					}
+				}
 			}
 		}
 	} else if claudeResponse.Type == "message_delta" {
@@ -104,6 +120,101 @@ func StreamResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.ChatCo
 	return &response
 }
 
+// ClaudeToChatStreamState translates Anthropic content block indexes into the
+// independent, dense index space used by Chat Completions tool_calls. Text and
+// thinking blocks therefore do not create holes in the downstream tool array.
+type ClaudeToChatStreamState struct {
+	toolIndexByContentBlock map[int]int
+	blockTypeByContentBlock map[int]string
+	nextToolIndex           int
+}
+
+func NewClaudeToChatStreamState() *ClaudeToChatStreamState {
+	return &ClaudeToChatStreamState{
+		toolIndexByContentBlock: make(map[int]int),
+		blockTypeByContentBlock: make(map[int]string),
+	}
+}
+
+func (s *ClaudeToChatStreamState) ConvertChunk(claudeResponse *dto.ClaudeResponse) (*dto.ChatCompletionsStreamResponse, error) {
+	if s == nil {
+		return nil, fmt.Errorf("Claude-to-Chat stream state is required")
+	}
+	if claudeResponse == nil {
+		return nil, nil
+	}
+	if s.toolIndexByContentBlock == nil {
+		s.toolIndexByContentBlock = make(map[int]int)
+	}
+	if s.blockTypeByContentBlock == nil {
+		s.blockTypeByContentBlock = make(map[int]string)
+	}
+
+	converted := *claudeResponse
+	switch claudeResponse.Type {
+	case "content_block_start":
+		if claudeResponse.ContentBlock == nil {
+			break
+		}
+		blockType := strings.TrimSpace(claudeResponse.ContentBlock.Type)
+		if blockType == "" {
+			break
+		}
+		if claudeResponse.Index == nil {
+			return nil, fmt.Errorf("Claude content block stream start is missing index")
+		}
+		contentBlockIndex := *claudeResponse.Index
+		s.blockTypeByContentBlock[contentBlockIndex] = blockType
+		if blockType != "tool_use" {
+			if isClaudeHostedToolStreamBlock(blockType) {
+				return nil, nil
+			}
+			break
+		}
+		toolIndex, exists := s.toolIndexByContentBlock[contentBlockIndex]
+		if !exists {
+			toolIndex = s.nextToolIndex
+			s.nextToolIndex++
+			s.toolIndexByContentBlock[contentBlockIndex] = toolIndex
+		}
+		converted.Index = kitutil.GetPointer(toolIndex)
+	case "content_block_delta":
+		if claudeResponse.Delta == nil || claudeResponse.Delta.Type != "input_json_delta" {
+			break
+		}
+		if claudeResponse.Index == nil {
+			return nil, fmt.Errorf("Claude tool-use stream delta is missing content block index")
+		}
+		if claudeResponse.Delta.PartialJson == nil {
+			return nil, fmt.Errorf("Claude tool-use stream delta is missing partial JSON")
+		}
+		contentBlockIndex := *claudeResponse.Index
+		toolIndex, exists := s.toolIndexByContentBlock[contentBlockIndex]
+		if !exists {
+			if isClaudeHostedToolStreamBlock(s.blockTypeByContentBlock[contentBlockIndex]) {
+				return nil, nil
+			}
+			return nil, fmt.Errorf("Claude tool-use stream delta references unknown content block index %d", contentBlockIndex)
+		}
+		converted.Index = kitutil.GetPointer(toolIndex)
+	case "content_block_stop":
+		if claudeResponse.Index != nil {
+			delete(s.blockTypeByContentBlock, *claudeResponse.Index)
+		}
+	}
+
+	return StreamResponseClaude2OpenAI(&converted), nil
+}
+
+func isClaudeHostedToolStreamBlock(blockType string) bool {
+	switch blockType {
+	case "server_tool_use", "mcp_tool_use", "web_search_tool_result", "mcp_tool_result", "code_execution_tool_result", "web_fetch_tool_result":
+		return true
+	default:
+		return false
+	}
+}
+
 func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextResponse {
 	choices := make([]dto.OpenAITextResponseChoice, 0)
 	fullTextResponse := dto.OpenAITextResponse{
@@ -111,16 +222,17 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 		Object:  "chat.completion",
 		Created: kitutil.GetTimestamp(),
 	}
-	var responseText string
+	var responseText strings.Builder
+	responseTextOffset := 0
 	var responseThinking string
 	if len(claudeResponse.Content) > 0 {
-		responseText = claudeResponse.Content[0].GetText()
 		if claudeResponse.Content[0].Thinking != nil {
 			responseThinking = *claudeResponse.Content[0].Thinking
 		}
 	}
 	tools := make([]dto.ToolCallResponse, 0)
 	thinkingContent := ""
+	annotations := make([]any, 0)
 
 	fullTextResponse.Id = claudeResponse.Id
 	for _, message := range claudeResponse.Content {
@@ -140,7 +252,14 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 				thinkingContent = *message.Thinking
 			}
 		case "text":
-			responseText = message.GetText()
+			text := message.GetText()
+			offset := responseTextOffset
+			responseText.WriteString(text)
+			responseTextOffset += utf8.RuneCountInString(text)
+			converted, err := claudeCitationsToChat(message.Citations, text, offset)
+			if err == nil {
+				annotations = append(annotations, converted...)
+			}
 		}
 	}
 	choice := dto.OpenAITextResponseChoice{
@@ -150,7 +269,10 @@ func ResponseClaude2OpenAI(claudeResponse *dto.ClaudeResponse) *dto.OpenAITextRe
 		},
 		FinishReason: StopReasonClaudeToOpenAI(claudeResponse.StopReason),
 	}
-	choice.SetStringContent(responseText)
+	choice.SetStringContent(responseText.String())
+	if encodedAnnotations, err := marshalChatAnnotations(annotations); err == nil && len(encodedAnnotations) > 0 {
+		choice.Message.Annotations = encodedAnnotations
+	}
 	if len(responseThinking) > 0 {
 		choice.ReasoningContent = &responseThinking
 	}
@@ -303,7 +425,11 @@ func updateClaudeStreamBillingUsage(claudeUsage *dto.ClaudeUsage, claudeInfo *Cl
 	}
 	if billingUsage := dto.CloneBillingUsage(claudeUsage.BillingUsage); billingUsage != nil {
 		claudeInfo.Usage.BillingUsage = billingUsage
-		claudeInfo.billingUsageSynthesized = !terminal && claudeUsage.OutputTokens == 0
+		if terminal || claudeUsage.OutputTokens > 0 {
+			claudeInfo.billingUsageSynthesized = false
+			return
+		}
+		claudeInfo.billingUsageSynthesized = true
 		return
 	}
 	if claudeInfo.Usage.BillingUsage != nil && !claudeInfo.billingUsageSynthesized {
@@ -311,7 +437,14 @@ func updateClaudeStreamBillingUsage(claudeUsage *dto.ClaudeUsage, claudeInfo *Cl
 	}
 	synthesized := claudeBillingUsageFromSemanticUsage(claudeInfo.Usage)
 	if synthesized != nil && claudeInfo.Usage.BillingUsage != nil {
-		claudeInfo.Usage.BillingUsage = dto.MergeBillingUsageNonZero(claudeInfo.Usage.BillingUsage, synthesized)
+		// A preliminary Anthropic sidecar may contain provider-specific
+		// metadata (for example server-tool usage) while omitting output
+		// tokens. Refresh the numeric usage from later stream events without
+		// discarding that metadata.
+		claudeInfo.Usage.BillingUsage = dto.MergeBillingUsageNonZero(
+			claudeInfo.Usage.BillingUsage,
+			synthesized,
+		)
 	} else {
 		claudeInfo.Usage.BillingUsage = synthesized
 	}
@@ -330,14 +463,16 @@ func FinalizeClaudeStreamBillingUsage(claudeInfo *ClaudeResponseInfo) {
 	}
 
 	billingUsage := claudeBillingUsageFromSemanticUsage(claudeInfo.Usage)
+	if billingUsage != nil && claudeInfo.Usage.BillingUsage != nil {
+		billingUsage = dto.MergeBillingUsageNonZero(
+			claudeInfo.Usage.BillingUsage,
+			billingUsage,
+		)
+	}
 	if billingUsage != nil && !claudeInfo.Done {
 		billingUsage.Estimated = true
 	}
-	if billingUsage != nil && claudeInfo.Usage.BillingUsage != nil {
-		claudeInfo.Usage.BillingUsage = dto.MergeBillingUsageNonZero(claudeInfo.Usage.BillingUsage, billingUsage)
-	} else {
-		claudeInfo.Usage.BillingUsage = billingUsage
-	}
+	claudeInfo.Usage.BillingUsage = billingUsage
 	claudeInfo.billingUsageSynthesized = billingUsage != nil
 }
 

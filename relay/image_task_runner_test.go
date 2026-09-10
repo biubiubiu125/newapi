@@ -120,6 +120,33 @@ func TestTaskModel2DtoIncludesSettlementReviewDetails(t *testing.T) {
 	require.Equal(t, "record consume log failed", resp.SettlementError)
 }
 
+func TestTaskModel2DtoClearsLegacySuccessResultURLFromFailReason(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_legacy_result_dto",
+		Status:     model.TaskStatusSuccess,
+		FailReason: "https://provider.example/video.mp4",
+	}
+
+	resp := TaskModel2Dto(task)
+
+	require.Empty(t, resp.FailReason)
+	require.Equal(t, "https://provider.example/video.mp4", resp.ResultURL)
+}
+
+func TestTaskModel2DtoPreservesSuccessfulDiagnosticReason(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_success_reason_dto",
+		Status:     model.TaskStatusSuccess,
+		FailReason: "provider completed with diagnostics",
+	}
+	task.PrivateData.ResultURL = "https://provider.example/video.mp4"
+
+	resp := TaskModel2Dto(task)
+
+	require.Equal(t, "provider completed with diagnostics", resp.FailReason)
+	require.Equal(t, "https://provider.example/video.mp4", resp.ResultURL)
+}
+
 func TestParseAsyncTaskBridgeTaskResultSupportsKeyedDataMap(t *testing.T) {
 	body := []byte(`{
 		"data": {
@@ -510,10 +537,10 @@ func TestRunAsyncTaskBridgeImageTaskBatchHTTPFailureKeepsQuotaForReview(t *testi
 		require.NoFileExists(t, expected.bodyPath)
 	}
 	require.NoError(t, db.First(&user, 1).Error)
-	require.Equal(t, 1800, user.Quota, "explicit upstream business failures must refund wallet quota")
+	require.EqualValues(t, 1800, user.Quota, "explicit upstream business failures must refund wallet quota")
 	require.NoError(t, db.First(&token, 1).Error)
-	require.Equal(t, 1800, token.RemainQuota)
-	require.Equal(t, 1800, token.UsedQuota)
+	require.EqualValues(t, 1800, token.RemainQuota)
+	require.EqualValues(t, 1800, token.UsedQuota)
 }
 
 func TestRunAsyncTaskBridgeImageTaskBatchSuccessFetchesFullResultAndSettles(t *testing.T) {
@@ -2755,10 +2782,10 @@ func TestSubmitAsyncTaskBridgeOversizeResponseKeepsSubmissionUncertain(t *testin
 	require.NoFileExists(t, rejectedBodyPath)
 	var refundedUser model.User
 	require.NoError(t, db.First(&refundedUser, 1).Error)
-	require.Equal(t, 100800, refundedUser.Quota)
+	require.EqualValues(t, 100800, refundedUser.Quota)
 	var refundedToken model.Token
 	require.NoError(t, db.First(&refundedToken, 1).Error)
-	require.Equal(t, 800, refundedToken.RemainQuota)
+	require.EqualValues(t, 800, refundedToken.RemainQuota)
 	require.Zero(t, refundedToken.UsedQuota)
 }
 
@@ -3986,8 +4013,8 @@ func TestSettleImageTaskSuccessKeepsSettlementWhenFixedPriceLogDeliveryFails(t *
 
 	var user model.User
 	require.NoError(t, db.First(&user, 1).Error)
-	require.Equal(t, 100000-(reloaded.Quota-200), user.Quota)
-	require.Equal(t, reloaded.Quota, user.UsedQuota)
+	require.EqualValues(t, 100000-(reloaded.Quota-200), user.Quota)
+	require.EqualValues(t, reloaded.Quota, user.UsedQuota)
 	require.Equal(t, 1, user.RequestCount)
 
 	var channel model.Channel

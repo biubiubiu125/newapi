@@ -100,14 +100,14 @@ func adjustTokenQuotaForSettlementTracked(relayInfo *relaycommon.RelayInfo, delt
 
 	var err error
 	if delta > 0 {
-		err = model.DecreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, delta)
+		err = model.DecreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, int64(delta))
 		if err != nil {
 			return false, model.TokenQuotaDelta{}, err
 		}
 		return true, model.TokenQuotaDelta{}, nil
 	}
 
-	tokenDelta, err := model.IncreaseTokenQuotaTracked(relayInfo.TokenId, relayInfo.TokenKey, -delta)
+	tokenDelta, err := model.IncreaseTokenQuotaTracked(relayInfo.TokenId, relayInfo.TokenKey, int64(-delta))
 	if err != nil {
 		if model.IsTokenQuotaNoRowsError(err) {
 			common.SysLog(fmt.Sprintf("skip token quota refund because token no longer exists (userId=%d, tokenId=%d, delta=%d): %s",
@@ -131,7 +131,7 @@ func rollbackTrackedTokenQuotaAdjustment(relayInfo *relaycommon.RelayInfo, delta
 			UsedDelta:   -tokenDelta.UsedDelta,
 		})
 	} else {
-		return model.IncreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, delta)
+		return model.IncreaseTokenQuota(relayInfo.TokenId, relayInfo.TokenKey, int64(delta))
 	}
 }
 
@@ -308,7 +308,7 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 	}
 	if err := s.reserveFunding(delta); err != nil {
 		if !s.relayInfo.IsPlayground {
-			if rollbackErr := model.IncreaseTokenQuota(s.relayInfo.TokenId, s.relayInfo.TokenKey, delta); rollbackErr != nil {
+			if rollbackErr := model.IncreaseTokenQuota(s.relayInfo.TokenId, s.relayInfo.TokenKey, int64(delta)); rollbackErr != nil {
 				common.SysLog(fmt.Sprintf("error rolling back token quota after funding reserve failed (userId=%d, tokenId=%d, delta=%d): %s",
 					s.relayInfo.UserId, s.relayInfo.TokenId, delta, rollbackErr.Error()))
 			}
@@ -343,7 +343,7 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 			s.funding.Source(),
 			logger.FormatQuota(common.GetTrustQuota()),
 			logger.FormatQuota(s.relayInfo.UserQuota),
-			logger.FormatQuota(c.GetInt("token_quota")),
+			logger.FormatQuota(common.GetContextInt64(c, "token_quota")),
 		))
 	} else if effectiveQuota > 0 {
 		logger.LogInfo(c, fmt.Sprintf("billing_preconsume user_id=%d token_id=%d request_id=%s billing_source=%s trusted=false trust_quota=%s user_quota=%s token_quota=%s pre_consumed_quota=%s",
@@ -353,7 +353,7 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 			s.funding.Source(),
 			logger.FormatQuota(common.GetTrustQuota()),
 			logger.FormatQuota(s.relayInfo.UserQuota),
-			logger.FormatQuota(c.GetInt("token_quota")),
+			logger.FormatQuota(common.GetContextInt64(c, "token_quota")),
 			logger.FormatQuota(effectiveQuota),
 		))
 	}
@@ -370,7 +370,7 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 	if err := s.funding.PreConsume(effectiveQuota); err != nil {
 		// 预扣费失败，回滚令牌额度
 		if s.tokenConsumed > 0 && !s.relayInfo.IsPlayground {
-			if rollbackErr := model.IncreaseTokenQuota(s.relayInfo.TokenId, s.relayInfo.TokenKey, s.tokenConsumed); rollbackErr != nil {
+			if rollbackErr := model.IncreaseTokenQuota(s.relayInfo.TokenId, s.relayInfo.TokenKey, int64(s.tokenConsumed)); rollbackErr != nil {
 				common.SysLog(fmt.Sprintf("error rolling back token quota (userId=%d, tokenId=%d, amount=%d, fundingErr=%s): %s",
 					s.relayInfo.UserId, s.relayInfo.TokenId, s.tokenConsumed, err.Error(), rollbackErr.Error()))
 			}
@@ -409,7 +409,7 @@ func (s *BillingSession) reserveFunding(delta int) error {
 		// 全额无条件扣减，余额不足的部分记为欠费（余额可为负），不中断请求，
 		// 保证日志记录的预扣额度与用户余额的实际变动始终对账一致。
 		// DecreaseUserQuota 仅在数据库错误时失败。
-		if err := model.DecreaseUserQuotaAllowNegative(funding.userId, delta, false); err != nil {
+		if err := model.DecreaseUserQuotaAllowNegative(funding.userId, int64(delta), false); err != nil {
 			return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
 		}
 		funding.consumed += delta
@@ -433,7 +433,7 @@ func (s *BillingSession) reserveFunding(delta int) error {
 func (s *BillingSession) rollbackFundingReserve(delta int) {
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
-		if err := model.IncreaseUserQuota(funding.userId, delta, false); err != nil {
+		if err := model.IncreaseUserQuota(funding.userId, int64(delta), false); err != nil {
 			common.SysLog("error rolling back wallet funding reserve: " + err.Error())
 		} else {
 			funding.consumed -= delta
@@ -470,7 +470,7 @@ func (s *BillingSession) shouldTrust(c *gin.Context, requiredQuota int) bool {
 	// 检查令牌是否充足
 	tokenTrusted := s.relayInfo.TokenUnlimited
 	if !tokenTrusted {
-		tokenQuota := c.GetInt("token_quota")
+		tokenQuota := int(common.GetContextInt64(c, "token_quota"))
 		tokenTrusted = tokenQuota >= requiredQuota && tokenQuota > trustQuota
 	}
 	if !tokenTrusted {
@@ -479,7 +479,7 @@ func (s *BillingSession) shouldTrust(c *gin.Context, requiredQuota int) bool {
 
 	switch s.funding.Source() {
 	case BillingSourceWallet:
-		return s.relayInfo.UserQuota >= requiredQuota && s.relayInfo.UserQuota > trustQuota
+		return s.relayInfo.UserQuota >= int64(requiredQuota) && s.relayInfo.UserQuota > int64(trustQuota)
 	case BillingSourceSubscription:
 		// 订阅不能启用信任旁路。原因：
 		// 1. PreConsumeUserSubscription 要求 amount>0 来创建预扣记录并锁定订阅
@@ -563,7 +563,7 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
 				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
-		if userQuota-preConsumedQuota < 0 {
+		if userQuota-int64(preConsumedQuota) < 0 {
 			return nil, types.NewErrorWithStatusCode(
 				fmt.Errorf("预扣费额度失败, 用户剩余额度: %s, 需要预扣费额度: %s", logger.FormatQuota(userQuota), logger.FormatQuota(preConsumedQuota)),
 				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
@@ -591,7 +591,7 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 			funding: &SubscriptionFunding{
 				requestId:  relayInfo.RequestId,
 				userId:     relayInfo.UserId,
-				modelName:  relayInfo.OriginModelName,
+				modelName:  relayInfo.GetBillingModelName(),
 				usingGroup: relayInfo.UsingGroup,
 				amount:     subConsume,
 			},

@@ -63,7 +63,7 @@ func createRootAccountIfNeed() error {
 	var user User
 	//if user.Status != common.UserStatusEnabled {
 	if err := DB.First(&user).Error; err != nil {
-		common.SysLog("no user exists, create a root user for you: username is root, password is 123456")
+		common.SysLog("no user exists, create the initial root account; rotate its initial credential after login")
 		hashedPassword, err := common.Password2Hash("123456")
 		if err != nil {
 			return err
@@ -301,6 +301,9 @@ func migrateDB() error {
 	if err := migrateTokenKeyUniqueness(DB); err != nil {
 		return err
 	}
+	if err := MigrateQuotaSchema(DB); err != nil {
+		return err
+	}
 	if err := migratePrefillGroupUniqueness(DB); err != nil {
 		return err
 	}
@@ -338,6 +341,7 @@ func migrateDB() error {
 		&ExternalIdentityClaim{},
 		&PasskeyCredential{},
 		&Option{},
+		&LoginEncryptionKey{},
 		&Redemption{},
 		&Ability{},
 		&Log{},
@@ -348,6 +352,7 @@ func migrateDB() error {
 		&PaymentProviderCustomerLock{},
 		&QuotaData{},
 		&Task{},
+		&TaskPlugin{},
 		&TaskDispatchState{},
 		&ImageTaskChannelLease{},
 		&ImageTaskClientTaskIDLock{},
@@ -383,6 +388,12 @@ func migrateDB() error {
 		&AuthzRole{},
 	)
 	if err != nil {
+		return err
+	}
+	if err := ensureTaskPluginActiveKeys(); err != nil {
+		return err
+	}
+	if err := ValidateQuotaSchema(DB); err != nil {
 		return err
 	}
 	if err := InitializeUserAuthVersions(); err != nil {

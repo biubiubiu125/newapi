@@ -21,6 +21,7 @@ import { z } from 'zod'
 import {
   CLAUDE_FIELD_PASSTHROUGH_TYPES,
   CHANNEL_TYPE_NEW_API,
+  CHANNEL_TYPE_TASK_PLUGIN,
   CHANNEL_STATUS,
   ERROR_MESSAGES,
   FIELD_PASSTHROUGH_TYPES,
@@ -212,6 +213,7 @@ export const channelFormSchema = z
     type: z.number().min(0, ERROR_MESSAGES.REQUIRED_TYPE),
     base_url: z.string().optional(),
     key: z.string(),
+    task_plugin_key: z.string().optional(),
     openai_organization: z.string().optional(),
     models: z.string().min(1, ERROR_MESSAGES.REQUIRED_MODELS),
     group: z.array(z.string()).min(1, ERROR_MESSAGES.REQUIRED_GROUP),
@@ -307,6 +309,17 @@ export const channelFormSchema = z
     }
 
     if (
+      data.type === CHANNEL_TYPE_TASK_PLUGIN &&
+      !data.task_plugin_key?.trim()
+    ) {
+      addRequiredIssue(
+        ctx,
+        'task_plugin_key',
+        'Task plugin binding is required'
+      )
+    }
+
+    if (
       data.image_task_mode === 'async_task_bridge' &&
       !data.base_url?.trim()
     ) {
@@ -393,6 +406,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   type: 1,
   base_url: '',
   key: '',
+  task_plugin_key: '',
   openai_organization: '',
   models: '',
   group: ['default'],
@@ -455,6 +469,7 @@ export function transformChannelToFormDefaults(
 ): ChannelFormValues {
   // Parse channel extra settings from setting field
   let extraSettings = {
+    task_plugin_key: '',
     force_format: false,
     thinking_to_content: false,
     proxy: '',
@@ -473,6 +488,10 @@ export function transformChannelToFormDefaults(
         parsed.http2_connection_shards
       )
       extraSettings = {
+        task_plugin_key:
+          typeof parsed.task_plugin_key === 'string'
+            ? parsed.task_plugin_key.trim()
+            : '',
         force_format: parsed.force_format || false,
         thinking_to_content: parsed.thinking_to_content || false,
         proxy: parsed.proxy || '',
@@ -599,6 +618,13 @@ export function buildSettingJSON(formData: ChannelFormValues): string {
     pass_through_body_enabled: formData.pass_through_body_enabled || false,
     system_prompt: formData.system_prompt || '',
     system_prompt_override: formData.system_prompt_override || false,
+  }
+
+  if (formData.type === CHANNEL_TYPE_TASK_PLUGIN) {
+    const taskPluginKey = formData.task_plugin_key?.trim() || ''
+    if (taskPluginKey) {
+      settingObj.task_plugin_key = taskPluginKey
+    }
   }
 
   const protocol = normalizeHttpProtocol(formData.http_protocol)

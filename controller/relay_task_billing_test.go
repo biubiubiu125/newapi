@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"context"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -26,6 +28,10 @@ type relayTaskTestBilling struct {
 	refundCalls   int
 	rollbackCalls int
 	refundApplied int
+}
+
+type relayTaskCompletionBillingAdaptor struct {
+	calls int
 }
 
 func (b *relayTaskTestBilling) Settle(actualQuota int) error {
@@ -64,15 +70,22 @@ func (b *relayTaskTestBilling) Rollback(actualQuota int) error {
 	return nil
 }
 
+func (a *relayTaskCompletionBillingAdaptor) AdjustBillingOnComplete(*model.Task, *relaycommon.TaskInfo) int {
+	a.calls++
+	return 0
+}
+
 func installRelayTaskTestHooks(t *testing.T, billing *relayTaskTestBilling, publicTaskID string, quota int) {
 	t.Helper()
 	oldSubmit := relayTaskSubmitFunc
 	oldSettle := settleBillingFunc
 	oldLog := logTaskConsumptionFunc
+	oldRefund := refundTaskQuotaFunc
 	t.Cleanup(func() {
 		relayTaskSubmitFunc = oldSubmit
 		settleBillingFunc = oldSettle
 		logTaskConsumptionFunc = oldLog
+		refundTaskQuotaFunc = oldRefund
 	})
 	relayTaskSubmitFunc = func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
 		info.InitChannelMeta(c)
@@ -92,6 +105,189 @@ func installRelayTaskTestHooks(t *testing.T, billing *relayTaskTestBilling, publ
 			Quota:          quota,
 		}, nil
 	}
+}
+
+func TestRelayTaskImmediateFailureRefundsWithoutConsumptionSettlement(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}))
+	insertRelayTaskTestChannel(t, 303)
+
+	billing := &relayTaskTestBilling{preConsumed: 100}
+	oldSubmit := relayTaskSubmitFunc
+	oldSettle := settleBillingFunc
+	oldLog := logTaskConsumptionFunc
+	oldRefund := refundTaskQuotaFunc
+	t.Cleanup(func() {
+		relayTaskSubmitFunc = oldSubmit
+		settleBillingFunc = oldSettle
+		logTaskConsumptionFunc = oldLog
+		refundTaskQuotaFunc = oldRefund
+	})
+	relayTaskSubmitFunc = func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		info.InitChannelMeta(c)
+		info.Billing = billing
+		info.FinalPreConsumedQuota = billing.preConsumed
+		info.BillingSource = service.BillingSourceWallet
+		info.Action = "generate"
+		info.PriceData.Quota = 150
+		if info.TaskRelayInfo == nil {
+			info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+		}
+		info.TaskRelayInfo.PublicTaskID = "task-immediate-failure"
+		return &relay.TaskSubmitResult{
+			UpstreamTaskID: "upstream-immediate-failure",
+			TaskData:       []byte(`{"id":"upstream-task"}`),
+			Platform:       constant.TaskPlatformSuno,
+			Quota:          150,
+			Immediate: &relaycommon.TaskInfo{
+				Status:   string(model.TaskStatusFailure),
+				Progress: "100%",
+				Reason:   "upstream rejected the task",
+			},
+		}, nil
+	}
+	settleBillingFunc = func(*gin.Context, *relaycommon.RelayInfo, int) error {
+		t.Fatal("immediate failure must not settle successful consumption")
+		return nil
+	}
+	logTaskConsumptionFunc = func(*gin.Context, *relaycommon.RelayInfo) error {
+		t.Fatal("immediate failure must not write a consumption log")
+		return nil
+	}
+	refundTaskQuotaFunc = func(ctx context.Context, task *model.Task, reason string) error {
+		require.Equal(t, 100, task.Quota)
+		require.Equal(t, "upstream rejected the task", reason)
+		require.True(t, task.PrivateData.PreConsumedUsageCaptured)
+		require.False(t, task.PrivateData.PreConsumedUsageRecorded)
+		task.Quota = 0
+		return task.UpdateQuota()
+	}
+	ctx, recorder := newRelayTaskTestContext(303, 303, 303)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"status":"failed"`)
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-immediate-failure").Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
+	require.Zero(t, task.Quota)
+	require.Equal(t, "upstream rejected the task", task.FailReason)
+}
+
+func TestTaskSubmissionStatusReflectsImmediateTerminalState(t *testing.T) {
+	require.Equal(t, "queued", taskSubmissionStatus(&model.Task{Status: model.TaskStatusNotStart}))
+	require.Equal(t, "in_progress", taskSubmissionStatus(&model.Task{Status: model.TaskStatusInProgress}))
+	require.Equal(t, "completed", taskSubmissionStatus(&model.Task{Status: model.TaskStatusSuccess}))
+	require.Equal(t, "failed", taskSubmissionStatus(&model.Task{Status: model.TaskStatusFailure}))
+}
+
+func TestTaskPluginSubmissionPersistsSelectedChannelKey(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}))
+
+	oldSettle := settleBillingFunc
+	oldLog := logTaskConsumptionFunc
+	t.Cleanup(func() {
+		settleBillingFunc = oldSettle
+		logTaskConsumptionFunc = oldLog
+	})
+	settleBillingFunc = func(*gin.Context, *relaycommon.RelayInfo, int) error {
+		return nil
+	}
+	logTaskConsumptionFunc = func(*gin.Context, *relaycommon.RelayInfo) error {
+		return nil
+	}
+
+	ctx, _ := newRelayTaskTestContext(305, 0, 305)
+	ctx.Set(pluginruntime.ContextKeyPinnedPlugin, pluginruntime.PinnedPlugin{
+		Plugin: &pluginruntime.LoadedPlugin{
+			Meta: pluginruntime.Meta{Key: "task-plugin", Version: "1.0.0"},
+		},
+	})
+	info := &relaycommon.RelayInfo{
+		UserId:          305,
+		TokenGroup:      "default",
+		OriginModelName: "task-plugin-model",
+	}
+	info.TaskRelayInfo = &relaycommon.TaskRelayInfo{PublicTaskID: "task-plugin-key"}
+
+	outcome, taskErr := executeTaskSubmissionWith(ctx, info, func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		info.InitChannelMeta(c)
+		return &relay.TaskSubmitResult{
+			UpstreamTaskID: "upstream-task-plugin-key",
+			TaskData:       []byte(`{"status":"queued"}`),
+			Platform:       constant.TaskPlatform("task-plugin"),
+		}, nil
+	})
+	require.Nil(t, taskErr)
+	require.NotNil(t, outcome)
+	require.Equal(t, "sk-upstream", outcome.Task.PrivateData.Key)
+
+	var reloaded model.Task
+	require.NoError(t, db.First(&reloaded, "task_id = ?", "task-plugin-key").Error)
+	require.Equal(t, "sk-upstream", reloaded.PrivateData.Key)
+}
+
+func TestRelayTaskImmediateSuccessInvokesCompletionBilling(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}))
+	insertRelayTaskTestChannel(t, 304)
+
+	billing := &relayTaskTestBilling{preConsumed: 100}
+	completion := &relayTaskCompletionBillingAdaptor{}
+	oldSubmit := relayTaskSubmitFunc
+	oldSettle := settleBillingFunc
+	oldLog := logTaskConsumptionFunc
+	oldRefund := refundTaskQuotaFunc
+	t.Cleanup(func() {
+		relayTaskSubmitFunc = oldSubmit
+		settleBillingFunc = oldSettle
+		logTaskConsumptionFunc = oldLog
+		refundTaskQuotaFunc = oldRefund
+	})
+	relayTaskSubmitFunc = func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		info.InitChannelMeta(c)
+		info.Billing = billing
+		info.FinalPreConsumedQuota = billing.preConsumed
+		info.BillingSource = service.BillingSourceWallet
+		info.Action = "generate"
+		info.PriceData.Quota = 100
+		if info.TaskRelayInfo == nil {
+			info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+		}
+		info.TaskRelayInfo.PublicTaskID = "task-immediate-success"
+		return &relay.TaskSubmitResult{
+			UpstreamTaskID: "upstream-immediate-success",
+			TaskData:       []byte(`{"id":"upstream-task"}`),
+			Platform:       constant.TaskPlatformSuno,
+			Quota:          100,
+			Immediate: &relaycommon.TaskInfo{
+				Status:    string(model.TaskStatusSuccess),
+				Progress:  "80%",
+				RemoteUrl: "https://cdn.example/immediate.mp4",
+			},
+			CompletionBillingAdaptor: completion,
+		}, nil
+	}
+	settleBillingFunc = func(*gin.Context, *relaycommon.RelayInfo, int) error { return nil }
+	logTaskConsumptionFunc = func(*gin.Context, *relaycommon.RelayInfo) error { return nil }
+	refundTaskQuotaFunc = func(context.Context, *model.Task, string) error {
+		t.Fatal("immediate success must not refund")
+		return nil
+	}
+	ctx, recorder := newRelayTaskTestContext(304, 304, 304)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"status":"completed"`)
+	require.Equal(t, 1, completion.calls)
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-immediate-success").Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
+	require.Equal(t, "https://cdn.example/immediate.mp4", task.PrivateData.ResultURL)
+	require.NotZero(t, task.FinishTime)
 }
 
 func insertRelayTaskTestChannel(t *testing.T, channelID int) {
@@ -413,7 +609,7 @@ func TestTaskRelayAccountingFailuresPersistAuditRecords(t *testing.T) {
 		`RecordConsumeAccountingError(c, relayInfo, "persist task settlement review"`,
 		`RecordConsumeAccountingError(c, relayInfo, "log task consumption"`,
 		`RecordConsumeAccountingError(c, relayInfo, "persist task accounting review"`,
-		`failPersistedTaskAfterSubmitAccountingError(task, relayInfo, result.Quota, err)`,
+		`failPersistedTaskAfterSubmitAccountingError(task, relayInfo, settlementQuota, err)`,
 	} {
 		require.Contains(t, source, want)
 	}

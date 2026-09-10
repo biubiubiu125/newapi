@@ -20,12 +20,12 @@ type Token struct {
 	CreatedTime        int64          `json:"created_time" gorm:"bigint"`
 	AccessedTime       int64          `json:"accessed_time" gorm:"bigint"`
 	ExpiredTime        int64          `json:"expired_time" gorm:"bigint;default:-1"` // -1 means never expired
-	RemainQuota        int            `json:"remain_quota" gorm:"default:0"`
+	RemainQuota        int64          `json:"remain_quota" gorm:"type:bigint;default:0"`
 	UnlimitedQuota     bool           `json:"unlimited_quota"`
 	ModelLimitsEnabled bool           `json:"model_limits_enabled"`
 	ModelLimits        string         `json:"model_limits" gorm:"type:text"`
 	AllowIps           *string        `json:"allow_ips" gorm:"default:''"`
-	UsedQuota          int            `json:"used_quota" gorm:"default:0"` // used quota
+	UsedQuota          int64          `json:"used_quota" gorm:"type:bigint;default:0"` // used quota
 	Group              string         `json:"group" gorm:"default:''"`
 	CrossGroupRetry    bool           `json:"cross_group_retry"` // 跨分组重试，仅auto分组有效
 	AutoGroups         string         `json:"-" gorm:"type:text"`
@@ -65,8 +65,8 @@ func IsTokenQuotaNoRowsError(err error) bool {
 type TokenQuotaDelta struct {
 	TokenId     int
 	Key         string
-	RemainDelta int
-	UsedDelta   int
+	RemainDelta int64
+	UsedDelta   int64
 }
 
 func (token *Token) Clean() {
@@ -333,6 +333,13 @@ func (token *Token) Insert() error {
 	return err
 }
 
+func (token *Token) InsertWithTx(tx *gorm.DB) error {
+	if tx == nil {
+		return errors.New("token insert transaction is nil")
+	}
+	return tx.Create(token).Error
+}
+
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (token *Token) Update() (err error) {
 	// Invalidate before the write so a concurrent DB read cannot repopulate
@@ -403,7 +410,7 @@ func DeleteTokenById(id int, userId int) (err error) {
 	return token.Delete()
 }
 
-func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
+func IncreaseTokenQuota(tokenId int, key string, quota int64) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
@@ -430,7 +437,7 @@ func IncreaseTokenQuota(tokenId int, key string, quota int) (err error) {
 	return nil
 }
 
-func IncreaseTokenQuotaTracked(tokenId int, key string, quota int) (delta TokenQuotaDelta, err error) {
+func IncreaseTokenQuotaTracked(tokenId int, key string, quota int64) (delta TokenQuotaDelta, err error) {
 	if quota < 0 {
 		return delta, errors.New("quota 不能为负数！")
 	}
@@ -486,7 +493,7 @@ func IncreaseTokenQuotaTracked(tokenId int, key string, quota int) (delta TokenQ
 	return delta, nil
 }
 
-func IncreaseTokenQuotaTx(tx *gorm.DB, tokenId int, quota int) error {
+func IncreaseTokenQuotaTx(tx *gorm.DB, tokenId int, quota int64) error {
 	if tx == nil {
 		return errors.New("database transaction is required")
 	}
@@ -531,7 +538,7 @@ func ApplyTokenQuotaDelta(delta TokenQuotaDelta) error {
 	return nil
 }
 
-func increaseTokenQuota(id int, quota int) (err error) {
+func increaseTokenQuota(id int, quota int64) (err error) {
 	result := DB.Model(&Token{}).Where("id = ?", id).Updates(
 		map[string]interface{}{
 			"remain_quota":  gorm.Expr("CASE WHEN unlimited_quota THEN remain_quota ELSE remain_quota + ? END", quota),
@@ -548,7 +555,7 @@ func increaseTokenQuota(id int, quota int) (err error) {
 	return nil
 }
 
-func DecreaseTokenQuota(id int, key string, quota int) (err error) {
+func DecreaseTokenQuota(id int, key string, quota int64) (err error) {
 	if quota < 0 {
 		return errors.New("quota 不能为负数！")
 	}
@@ -573,7 +580,7 @@ func DecreaseTokenQuota(id int, key string, quota int) (err error) {
 	return nil
 }
 
-func DecreaseTokenQuotaTx(tx *gorm.DB, id int, quota int) (err error) {
+func DecreaseTokenQuotaTx(tx *gorm.DB, id int, quota int64) (err error) {
 	if tx == nil {
 		return errors.New("database transaction is required")
 	}

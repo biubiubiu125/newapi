@@ -708,6 +708,13 @@ func UpdateChannelBalance(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	if channel.Type == constant.ChannelTypeTaskPlugin {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "任务插件渠道不支持余额查询",
+		})
+		return
+	}
 	if channel.ChannelInfo.IsMultiKey {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
@@ -739,6 +746,9 @@ func updateAllChannelsBalance() error {
 	}
 	for _, channel := range channels {
 		if channel.Status != common.ChannelStatusEnabled {
+			continue
+		}
+		if channel.Type == constant.ChannelTypeTaskPlugin {
 			continue
 		}
 		if channel.ChannelInfo.IsMultiKey {

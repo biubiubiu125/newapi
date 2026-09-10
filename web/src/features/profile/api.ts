@@ -20,6 +20,7 @@ import { api } from '@/lib/api'
 import type { CustomOAuthBinding } from '@/lib/oauth'
 import type { LoginSession } from '@/stores/auth-store'
 
+import { encryptPasswordFields } from '../auth/lib/password-encryption'
 import type {
   ApiResponse,
   UserProfile,
@@ -48,7 +49,11 @@ export async function getUserProfile(): Promise<ApiResponse<UserProfile>> {
 export async function updateUserProfile(
   data: UpdateUserRequest
 ): Promise<ApiResponse> {
-  const res = await api.put('/api/user/self', data, {
+  const body = await encryptPasswordFields(data, [
+    'password',
+    'original_password',
+  ])
+  const res = await api.put('/api/user/self', body, {
     acceptAuthRotation: Boolean(data.password),
   })
   return res.data

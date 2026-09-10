@@ -39,6 +39,13 @@ import type {
   TagOperationParams,
 } from './types'
 
+export type TaskPluginChannelOption = {
+  key: string
+  name: string
+  models?: string[] | null
+  usageSchema?: unknown
+}
+
 const channelActionConfig = (
   config: ApiRequestConfig = {}
 ): ApiRequestConfig => ({
@@ -636,6 +643,18 @@ export async function getEnabledModels(): Promise<{
   data?: string[]
 }> {
   const res = await api.get('/api/channel/models_enabled')
+  return res.data
+}
+
+/**
+ * Get registered task plugins that can be bound to a task-plugin channel.
+ */
+export async function getTaskPluginOptions(): Promise<{
+  success: boolean
+  message?: string
+  data?: TaskPluginChannelOption[]
+}> {
+  const res = await api.get('/api/task_plugin_options')
   return res.data
 }
 

@@ -105,6 +105,9 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 			ActionSensitiveWrite: true,
 			ActionSecretView:     false,
 		},
+		ResourceTaskPlugin: {
+			ActionBind: true,
+		},
 	}, ExplicitUserPermissions(42))
 	assert.Equal(t, PermissionsMap{
 		ResourceChannel: {
@@ -132,6 +135,9 @@ func TestSetUserPermissionsStoresOnlyOverrides(t *testing.T) {
 			ActionWrite:          true,
 			ActionSensitiveWrite: false,
 			ActionSecretView:     false,
+		},
+		ResourceTaskPlugin: {
+			ActionBind: true,
 		},
 	}, ExplicitUserPermissions(42))
 	assert.Empty(t, ExplicitUserOverrides(42))
@@ -195,6 +201,21 @@ func TestSetUserPermissionsInTxRollbackLeavesNoPolicy(t *testing.T) {
 	assert.Equal(t, int64(0), count)
 }
 
+func TestSetUserPermissionsClearsOmittedResources(t *testing.T) {
+	db := newAuthzTestDB(t)
+	require.NoError(t, Init(db))
+	require.NoError(t, SetUserPermissions(44, PermissionsMap{
+		ResourceChannel:    {ActionSensitiveWrite: true},
+		ResourceTaskPlugin: {ActionBind: false},
+	}))
+	require.NotEmpty(t, ExplicitUserOverrides(44))
+
+	require.NoError(t, SetUserPermissions(44, PermissionsMap{}))
+	assert.Empty(t, ExplicitUserOverrides(44))
+	assert.False(t, Can(44, common.RoleAdminUser, ChannelSensitiveWrite))
+	assert.True(t, Can(44, common.RoleAdminUser, ChannelWrite))
+}
+
 func TestAdapterAddPolicyIsIdempotent(t *testing.T) {
 	db := newAuthzTestDB(t)
 	adapter := newGormAdapter(db)
@@ -226,4 +247,18 @@ func TestCapabilitiesUseCatalogShape(t *testing.T) {
 	assert.True(t, capabilities[ResourceChannel][ActionWrite])
 	assert.False(t, capabilities[ResourceChannel][ActionSensitiveWrite])
 	assert.False(t, capabilities[ResourceChannel][ActionSecretView])
+}
+
+func TestTaskPluginBindPermissionIsRegistered(t *testing.T) {
+	var found bool
+	for _, resource := range Catalog() {
+		if resource.Resource != "task_plugin" {
+			continue
+		}
+		found = true
+		require.Len(t, resource.Actions, 1)
+		assert.Equal(t, "bind", resource.Actions[0].Action)
+	}
+	require.True(t, found, "task_plugin resource is not registered")
+	assert.Contains(t, PermissionsForRole(BuiltInRoleAdmin), TaskPluginBind)
 }

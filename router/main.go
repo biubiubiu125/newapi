@@ -17,7 +17,10 @@ func SetRouter(router *gin.Engine, assets WebAssets) {
 	SetApiRouter(router)
 	SetDashboardRouter(router)
 	SetRelayRouter(router)
+	SetTaskPluginProtocolRouter(router)
 	SetVideoRouter(router)
+	SetTaskRouter(router)
+	pluginDispatcher := SetPluginRouter(router)
 	router.GET("/r/:code", controller.ReferralLanding)
 	router.GET("/referral-assets/*path", controller.GetReferralAsset)
 	router.GET("/system-assets/:name", controller.GetSystemAsset)
@@ -27,12 +30,15 @@ func SetRouter(router *gin.Engine, assets WebAssets) {
 		common.SysLog("FRONTEND_BASE_URL is ignored on master node")
 	}
 	if frontendBaseUrl == "" {
-		SetWebRouter(router, assets)
+		SetWebRouter(router, assets, pluginDispatcher)
 	} else {
 		frontendBaseUrl = strings.TrimSuffix(frontendBaseUrl, "/")
-		router.NoRoute(func(c *gin.Context) {
-			c.Set(middleware.RouteTagKey, "web")
-			c.Redirect(http.StatusMovedPermanently, fmt.Sprintf("%s%s", frontendBaseUrl, c.Request.RequestURI))
-		})
+		router.NoRoute(
+			pluginDispatcher,
+			middleware.RouteTag("web"),
+			func(c *gin.Context) {
+				c.Redirect(http.StatusMovedPermanently, fmt.Sprintf("%s%s", frontendBaseUrl, c.Request.RequestURI))
+			},
+		)
 	}
 }

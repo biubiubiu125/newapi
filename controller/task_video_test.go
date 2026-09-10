@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"io"
 	"net/http"
 	"strings"
@@ -10,9 +11,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/gin-gonic/gin"
@@ -20,8 +21,11 @@ import (
 )
 
 type videoTaskSettlementTestAdaptor struct {
-	totalTokens int
-	model       string
+	totalTokens  int
+	model        string
+	remoteURL    string
+	responseBody []byte
+	parseErr     error
 }
 
 func (videoTaskSettlementTestAdaptor) Init(info *relaycommon.RelayInfo) {}
@@ -71,6 +75,12 @@ func (videoTaskSettlementTestAdaptor) GetChannelName() string {
 }
 
 func (a videoTaskSettlementTestAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error) {
+	if a.responseBody != nil {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader(string(a.responseBody))),
+		}, nil
+	}
 	modelName := a.model
 	if modelName == "" {
 		modelName = "video-settlement-test"
@@ -82,6 +92,9 @@ func (a videoTaskSettlementTestAdaptor) FetchTask(baseUrl, key string, body map[
 }
 
 func (a videoTaskSettlementTestAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error) {
+	if a.parseErr != nil {
+		return nil, a.parseErr
+	}
 	totalTokens := a.totalTokens
 	if totalTokens == 0 {
 		totalTokens = 1000
@@ -89,6 +102,7 @@ func (a videoTaskSettlementTestAdaptor) ParseTaskResult(respBody []byte) (*relay
 	return &relaycommon.TaskInfo{
 		Status:      string(model.TaskStatusSuccess),
 		TotalTokens: totalTokens,
+		RemoteUrl:   a.remoteURL,
 	}, nil
 }
 
@@ -170,11 +184,11 @@ func TestUpdateVideoSingleTaskDoesNotSettleWhenStatusUpdateFails(t *testing.T) {
 	require.NoError(t, err)
 	var user model.User
 	require.NoError(t, db.Select("quota").First(&user, 9310).Error)
-	require.Equal(t, 10_000, user.Quota)
+	require.EqualValues(t, 10_000, user.Quota)
 	var token model.Token
 	require.NoError(t, db.Select("remain_quota", "used_quota").First(&token, 9410).Error)
-	require.Equal(t, 10_000, token.RemainQuota)
-	require.Equal(t, 0, token.UsedQuota)
+	require.EqualValues(t, 10_000, token.RemainQuota)
+	require.EqualValues(t, 0, token.UsedQuota)
 	var logCount int64
 	require.NoError(t, model.LOG_DB.Model(&model.Log{}).Count(&logCount).Error)
 	require.Equal(t, int64(0), logCount)
@@ -271,19 +285,19 @@ func TestUpdateVideoSingleTaskFloorsPositiveTokenSettlementToOne(t *testing.T) {
 	var reloadedTask model.Task
 	require.NoError(t, db.First(&reloadedTask, task.ID).Error)
 	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloadedTask.Status)
-	require.Equal(t, 1, reloadedTask.Quota)
+	require.EqualValues(t, 1, reloadedTask.Quota)
 	require.Empty(t, reloadedTask.SettlementStatus)
 
 	var user model.User
 	require.NoError(t, db.Select("quota", "used_quota", "request_count").First(&user, userID).Error)
-	require.Equal(t, initQuota+preConsumed-1, user.Quota)
-	require.Equal(t, 1, user.UsedQuota)
+	require.EqualValues(t, initQuota+preConsumed-1, user.Quota)
+	require.EqualValues(t, 1, user.UsedQuota)
 	require.Equal(t, 1, user.RequestCount)
 
 	var token model.Token
 	require.NoError(t, db.Select("remain_quota", "used_quota").First(&token, tokenID).Error)
-	require.Equal(t, tokenRemain+preConsumed-1, token.RemainQuota)
-	require.Equal(t, 1, token.UsedQuota)
+	require.EqualValues(t, tokenRemain+preConsumed-1, token.RemainQuota)
+	require.EqualValues(t, 1, token.UsedQuota)
 
 	var reloadedChannel model.Channel
 	require.NoError(t, db.Select("used_quota").First(&reloadedChannel, channelID).Error)
@@ -292,7 +306,138 @@ func TestUpdateVideoSingleTaskFloorsPositiveTokenSettlementToOne(t *testing.T) {
 	var log model.Log
 	require.NoError(t, model.LOG_DB.Order("id desc").First(&log).Error)
 	require.Equal(t, model.LogTypeRefund, log.Type)
-	require.Equal(t, preConsumed-1, log.Quota)
+	require.EqualValues(t, preConsumed-1, log.Quota)
 	require.Equal(t, "video-floor-owner", log.Username)
 	require.Equal(t, "video-floor-token", log.TokenName)
+}
+
+func TestUpdateVideoSingleTaskPersistsRemoteURLOnSuccess(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Token{}, &model.Log{}, &model.QuotaData{}, &model.TokenUsageDaily{}))
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       9330,
+		Username: "video-remote-owner",
+		Password: "password123",
+		Group:    "default",
+		Quota:    10_000,
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          9430,
+		UserId:      9330,
+		Key:         "video-remote-token",
+		Name:        "video-remote-token",
+		RemainQuota: 10_000,
+		Status:      common.TokenStatusEnabled,
+	}).Error)
+
+	channel := &model.Channel{
+		Id:     9530,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "upstream-key",
+		Name:   "video-channel",
+		Status: common.ChannelStatusEnabled,
+	}
+	require.NoError(t, db.Create(channel).Error)
+
+	task := &model.Task{
+		TaskID:    "video-remote-url",
+		Platform:  constant.TaskPlatform("kling"),
+		UserId:    9330,
+		ChannelId: channel.Id,
+		Group:     "default",
+		Action:    constant.TaskActionGenerate,
+		Status:    model.TaskStatusInProgress,
+		Progress:  "30%",
+		Quota:     100,
+		PrivateData: model.TaskPrivateData{
+			TokenId:       9430,
+			BillingSource: service.BillingSourceWallet,
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	err := updateVideoSingleTask(context.Background(), videoTaskSettlementTestAdaptor{
+		remoteURL: "https://example.com/video.mp4",
+	}, channel, task.TaskID, map[string]*model.Task{
+		task.TaskID: task,
+	})
+
+	require.NoError(t, err)
+	var reloaded model.Task
+	require.NoError(t, db.Where("task_id = ?", task.TaskID).First(&reloaded).Error)
+	require.Equal(t, "https://example.com/video.mp4", reloaded.PrivateData.ResultURL)
+	require.Equal(t, "https://example.com/video.mp4", reloaded.GetResultURL())
+}
+
+func TestUpdateVideoSingleTaskPersistsCrossInstanceResultURL(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Token{}, &model.Log{}, &model.QuotaData{}, &model.TokenUsageDaily{}))
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       9340,
+		Username: "video-cross-instance-owner",
+		Password: "password123",
+		Group:    "default",
+		Quota:    10_000,
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          9440,
+		UserId:      9340,
+		Key:         "video-cross-instance-token",
+		Name:        "video-cross-instance-token",
+		RemainQuota: 10_000,
+		Status:      common.TokenStatusEnabled,
+	}).Error)
+
+	channel := &model.Channel{
+		Id:     9540,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "upstream-key",
+		Name:   "video-cross-instance-channel",
+		Status: common.ChannelStatusEnabled,
+	}
+	require.NoError(t, db.Create(channel).Error)
+
+	task := &model.Task{
+		TaskID:    "video-cross-instance-result-url",
+		Platform:  constant.TaskPlatform("kling"),
+		UserId:    9340,
+		ChannelId: channel.Id,
+		Group:     "default",
+		Action:    constant.TaskActionGenerate,
+		Status:    model.TaskStatusInProgress,
+		Progress:  "30%",
+		Quota:     0,
+		PrivateData: model.TaskPrivateData{
+			TokenId: 9440,
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	responseBody, err := common.Marshal(dto.TaskResponse[dto.TaskDto]{
+		Code: dto.TaskSuccessCode,
+		Data: dto.TaskDto{
+			TaskID:    task.TaskID,
+			Status:    string(model.TaskStatusSuccess),
+			Progress:  "100%",
+			ResultURL: "https://remote-newapi.example/video.mp4",
+		},
+	})
+	require.NoError(t, err)
+
+	err = updateVideoSingleTask(context.Background(), videoTaskSettlementTestAdaptor{
+		responseBody: responseBody,
+		parseErr:     errors.New("new api response must not fall back to provider parser"),
+	}, channel, task.TaskID, map[string]*model.Task{
+		task.TaskID: task,
+	})
+	require.NoError(t, err)
+
+	var reloaded model.Task
+	require.NoError(t, db.Where("task_id = ?", task.TaskID).First(&reloaded).Error)
+	require.Equal(t, "https://remote-newapi.example/video.mp4", reloaded.PrivateData.ResultURL)
+	require.Equal(t, "https://remote-newapi.example/video.mp4", reloaded.GetResultURL())
 }

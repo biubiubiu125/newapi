@@ -1,14 +1,17 @@
 package channel
 
 import (
+	"context"
 	"io"
 	"net/http"
 
-	taskdto "github.com/QuantumNous/new-api/relaykit/dto"
+	hostdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	taskdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	hosttypes "github.com/QuantumNous/new-api/types"
 
 	"github.com/gin-gonic/gin"
 )
@@ -79,6 +82,85 @@ type TaskAdaptor interface {
 	ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error)
 }
 
+// TaskPluginAdaptor is the newer task-plugin contract. It intentionally
+// coexists with TaskAdaptor while the built-in provider adaptors remain on
+// their legacy response/polling contract.
+type TaskPluginAdaptor interface {
+	Init(info *relaycommon.RelayInfo)
+
+	ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *hostdto.TaskError
+	EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64
+	AdjustBillingOnSubmit(info *relaycommon.RelayInfo, taskData []byte) map[string]float64
+	AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
+
+	BuildRequestURL(info *relaycommon.RelayInfo) (string, error)
+	BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error
+	BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error)
+	DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error)
+	ParseResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*TaskSubmitResponse, *hostdto.TaskError)
+
+	GetModelList() []string
+	GetChannelName() string
+
+	FetchTask(baseURL, key string, task *model.Task, proxy string) (*http.Response, error)
+	ParseTaskResult(task *model.Task, resp *http.Response, respBody []byte) (*relaycommon.TaskInfo, error)
+}
+
+type TaskSubmitResponse struct {
+	UpstreamTaskID string
+	TaskData       []byte
+	ClientResponse any
+	Immediate      *relaycommon.TaskInfo
+	PluginState    []byte
+}
+
+type TaskArtifact = hosttypes.TaskArtifact
+
+type TaskArtifactClientRequest struct {
+	Method  string            `json:"method"`
+	Headers map[string]string `json:"headers,omitempty"`
+}
+
+type TaskArtifactProvider interface {
+	ListArtifacts(task *model.Task) ([]TaskArtifact, error)
+}
+
+type TaskArtifactProviderContext interface {
+	ListArtifactsContext(ctx context.Context, task *model.Task) ([]TaskArtifact, error)
+}
+
+type TaskContentRequest struct {
+	URL            string
+	Method         string
+	Headers        map[string]string
+	Body           []byte
+	Credentialless bool
+}
+
+type TaskContentRequestProvider interface {
+	BuildContentRequest(task *model.Task, artifactKey string, clientRequest TaskArtifactClientRequest) (*TaskContentRequest, error)
+}
+
+type TaskContentRequestProviderContext interface {
+	BuildContentRequestContext(ctx context.Context, task *model.Task, artifactKey string, clientRequest TaskArtifactClientRequest) (*TaskContentRequest, error)
+}
+
+type TaskUsageFactsProvider interface {
+	ExtractUsageFacts(c *gin.Context, info *relaycommon.RelayInfo) map[string]any
+}
+
+type TaskValidatedBillingProvider interface {
+	EstimateBillingValidated(c *gin.Context, info *relaycommon.RelayInfo) (map[string]float64, error)
+}
+
+type TaskValidatedUsageFactsProvider interface {
+	ExtractUsageFactsValidated(c *gin.Context, info *relaycommon.RelayInfo) (map[string]any, error)
+}
+
 type OpenAIVideoConverter interface {
 	ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error)
+}
+
+type OpenAIVideoConverterContext interface {
+	ConvertToOpenAIVideoContext(ctx context.Context, originTask *model.Task) ([]byte, error)
 }

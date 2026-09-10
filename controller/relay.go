@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"net/http"
+	"os"
 	"strings"
 	"time"
 
@@ -14,8 +15,11 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/relay"
+	"github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -35,7 +39,23 @@ var (
 	relayTaskSubmitFunc    = relay.RelayTaskSubmit
 	settleBillingFunc      = service.SettleBilling
 	logTaskConsumptionFunc = service.LogTaskConsumption
+	refundTaskQuotaFunc    = service.RefundTaskQuota
 )
+
+func newSensitiveWordsError() *types.NewAPIError {
+	return types.NewErrorWithStatusCode(
+		errors.New("sensitive words detected"),
+		types.ErrorCodeSensitiveWordsDetected,
+		http.StatusBadRequest,
+		types.ErrOptionWithSkipRetry(),
+	)
+}
+
+type taskSubmissionOutcome struct {
+	Result    *relay.TaskSubmitResult
+	Task      *model.Task
+	RelayInfo *relaycommon.RelayInfo
+}
 
 func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIError {
 	var err *types.NewAPIError
@@ -54,6 +74,8 @@ func relayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewAPIErro
 		err = relay.EmbeddingHelper(c, info)
 	case relayconstant.RelayModeResponses, relayconstant.RelayModeResponsesCompact:
 		err = relay.ResponsesHelper(c, info)
+	case relayconstant.RelayModeAlphaSearch:
+		err = relay.AlphaSearchHelper(c, info)
 	default:
 		err = relay.TextHelper(c, info)
 	}
@@ -162,7 +184,7 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 		contains, words := service.CheckSensitiveText(meta.CombineText)
 		if contains {
 			logger.LogWarn(c, fmt.Sprintf("user sensitive words detected: %s", strings.Join(words, ", ")))
-			newAPIError = types.NewError(err, types.ErrorCodeSensitiveWordsDetected)
+			newAPIError = newSensitiveWordsError()
 			return
 		}
 	}
@@ -328,9 +350,44 @@ func shouldSuppressRelayErrorResponse(c *gin.Context) bool {
 
 var upgrader = websocket.Upgrader{
 	Subprotocols: []string{"realtime"}, // WS 握手支持的协议，如果有使用 Sec-WebSocket-Protocol，则必须在此声明对应的 Protocol TODO add other protocol
-	CheckOrigin: func(r *http.Request) bool {
-		return true // 允许跨域
-	},
+	CheckOrigin:  checkRelayWebSocketOrigin,
+}
+
+func checkRelayWebSocketOrigin(request *http.Request) bool {
+	if request == nil {
+		return false
+	}
+	origins := request.Header.Values("Origin")
+	if len(origins) == 0 {
+		return true
+	}
+	if len(origins) != 1 {
+		return false
+	}
+	origin, err := common.NormalizeOrigin(origins[0])
+	if err != nil {
+		return false
+	}
+	scheme := "http"
+	if request.TLS != nil {
+		scheme = "https"
+	}
+	requestOrigin, err := common.NormalizeOrigin(scheme + "://" + request.Host)
+	if err == nil && origin == requestOrigin {
+		return true
+	}
+	for _, trusted := range common.SessionCookieTrustedURLs {
+		if origin == trusted {
+			return true
+		}
+	}
+	for _, configured := range strings.Split(os.Getenv("CORS_ALLOWED_ORIGINS"), ",") {
+		normalized, normalizeErr := common.NormalizeOrigin(configured)
+		if normalizeErr == nil && origin == normalized {
+			return true
+		}
+	}
+	return false
 }
 
 func addUsedChannel(c *gin.Context, channelId int) {
@@ -577,6 +634,33 @@ func RelayNotFound(c *gin.Context) {
 	})
 }
 
+// RelayTaskPluginEndpoint keeps unclaimed shared-endpoint traffic on its
+// existing handler while claimed requests enter the generation-pinned
+// protocol bridge.
+func RelayTaskPluginEndpoint(c *gin.Context, fallback gin.HandlerFunc) {
+	pinnedValue, exists := c.Get(pluginruntime.ContextKeyPinnedEndpoint)
+	if !exists {
+		fallback(c)
+		return
+	}
+	pinned, ok := pinnedValue.(pluginruntime.PinnedEndpoint)
+	if !ok || pinned.Plugin == nil || pinned.Generation == nil {
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"error": gin.H{
+				"message": "Task protocol request failed",
+				"type":    "new_api_error",
+				"code":    "task_protocol_error",
+			},
+		})
+		return
+	}
+	if pinned.Protocol != "openai_responses" {
+		fallback(c)
+		return
+	}
+	serveTaskPluginProtocol(c, pinned, defaultPluginProtocolBridgeDeps())
+}
+
 func RelayTaskFetch(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
@@ -595,76 +679,102 @@ func RelayTaskFetch(c *gin.Context) {
 func RelayTask(c *gin.Context) {
 	relayInfo, err := relaycommon.GenRelayInfo(c, types.RelayFormatTask, nil, nil)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, &dto.TaskError{
+		respondTaskSubmissionError(c, &dto.TaskError{
 			Code:       "gen_relay_info_failed",
 			Message:    err.Error(),
 			StatusCode: http.StatusInternalServerError,
 		})
 		return
 	}
-	relayInfo.InitChannelMeta(c)
+	if action := c.GetString("task_action"); action != "" {
+		relayInfo.Action = action
+	}
 
 	if taskErr := relay.ResolveOriginTask(c, relayInfo); taskErr != nil {
-		respondTaskError(c, taskErr)
+		respondTaskSubmissionError(c, taskErr)
+		return
+	}
+	if taskErr := relay.ApplyOriginTaskAffinity(c, relayInfo); taskErr != nil {
+		respondTaskSubmissionError(c, taskErr)
 		return
 	}
 
+	outcome, taskErr := executeTaskSubmission(c, relayInfo)
+	if taskErr != nil {
+		respondTaskSubmissionError(c, taskErr)
+		return
+	}
+	presentTaskSubmission(c, outcome)
+}
+
+// executeTaskSubmission owns the retry, billing, and persistence lifecycle.
+// It deliberately performs no client response writes so JSON and protocol
+// presenters share the same durable task barrier. Its cancellation semantics
+// come from c.Request.Context: native task endpoints use the client context,
+// while the Responses bridge supplies an independently bounded context.
+func executeTaskSubmission(c *gin.Context, relayInfo *relaycommon.RelayInfo) (*taskSubmissionOutcome, *dto.TaskError) {
+	return executeTaskSubmissionWith(c, relayInfo, relayTaskSubmitFunc)
+}
+
+type taskSubmitAttempt func(*gin.Context, *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError)
+
+func executeTaskSubmissionWith(
+	c *gin.Context,
+	relayInfo *relaycommon.RelayInfo,
+	submit taskSubmitAttempt,
+) (*taskSubmissionOutcome, *dto.TaskError) {
+	diagnostics := newTaskPluginSubmitDiagnostics(c)
+	diagnostics.start(relayInfo)
 	var result *relay.TaskSubmitResult
 	var taskErr *dto.TaskError
-	var lastUpstreamTaskErr *dto.TaskError
-	billingLogged := false
+	durable := false
+	stage := "start"
 	defer func() {
-		if taskErr != nil && relayInfo.Billing != nil && !billingLogged {
-			if refundErr := relayInfo.Billing.Refund(c); refundErr != nil {
-				common.SysError("refund billing after task error failed: " + refundErr.Error())
-				service.RecordConsumeAccountingError(c, relayInfo, "refund billing after task error", refundErr)
-			}
+		if !durable && relayInfo.Billing != nil {
+			diagnostics.refund(stage)
+			relayInfo.Billing.Refund(c)
 		}
 	}()
-
-	retryParam := &service.RetryParam{
-		Ctx:        c,
-		TokenGroup: relayInfo.TokenGroup,
-		ModelName:  relayInfo.OriginModelName,
-		Retry:      common.GetPointer(0),
+	stage = "before_attempt"
+	if requestErr := c.Request.Context().Err(); requestErr != nil {
+		diagnostics.cancelled("before_attempt", 0)
+		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
 	}
 
-	for {
-		retryParam.ExcludeChannelIds = getFailedChannelIds(c)
+	retryParam := newTaskPluginRetryParam(c, relayInfo)
+
+	for ; retryParam.GetRetry() <= common.RetryTimes; retryParam.IncreaseRetry() {
+		stage = "select_channel"
+		if requestErr := c.Request.Context().Err(); requestErr != nil {
+			diagnostics.cancelled("before_attempt", retryParam.GetRetry()+1)
+			taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
+			break
+		}
 		var channel *model.Channel
 
-		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil && retryParam.GetRetry() == 0 {
+		if lockedCh, ok := relayInfo.LockedChannel.(*model.Channel); ok && lockedCh != nil {
 			channel = lockedCh
+			if retryParam.GetRetry() > 0 {
+				if setupErr := middleware.SetupContextForSelectedChannel(c, channel, relayInfo.OriginModelName); setupErr != nil {
+					taskErr = service.TaskErrorWrapperLocal(setupErr.Err, "setup_locked_channel_failed", http.StatusInternalServerError)
+					break
+				}
+			}
 		} else {
 			var channelErr *types.NewAPIError
 			channel, channelErr = getChannel(c, relayInfo, retryParam)
 			if channelErr != nil {
 				logger.LogError(c, channelErr.Error())
-				if channel != nil {
-					addUsedChannel(c, channel.Id)
-					addFailedChannel(c, channel.Id)
-					retryParam.ExcludeChannelIds = getFailedChannelIds(c)
-					processChannelError(c,
-						*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
-							common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-						channelErr, false)
-					if shouldRetry(c, channelErr, common.RetryTimes-retryParam.GetRetry()) {
-						retryParam.IncreaseRetry()
-						continue
-					}
-				}
-				if lastUpstreamTaskErr != nil {
-					taskErr = lastUpstreamTaskErr
-				} else {
-					taskErr = service.TaskErrorWrapperLocal(channelErr.Err, "get_channel_failed", http.StatusInternalServerError)
-				}
+				taskErr = service.TaskErrorWrapperLocal(channelErr.Err, "get_channel_failed", http.StatusInternalServerError)
 				break
 			}
 		}
+		diagnostics.attempt(retryParam.GetRetry()+1, channel, relayInfo.LockedChannel != nil)
 
 		addUsedChannel(c, channel.Id)
 		bodyStorage, bodyErr := common.GetBodyStorage(c)
 		if bodyErr != nil {
+			stage = "read_body"
 			if common.IsRequestBodyTooLargeError(bodyErr) || errors.Is(bodyErr, common.ErrRequestBodyTooLarge) {
 				taskErr = service.TaskErrorWrapperLocal(bodyErr, "read_request_body_failed", http.StatusRequestEntityTooLarge)
 			} else {
@@ -674,25 +784,34 @@ func RelayTask(c *gin.Context) {
 		}
 		c.Request.Body = io.NopCloser(bodyStorage)
 
-		result, taskErr = relayTaskSubmitFunc(c, relayInfo)
+		stage = "submit"
+		result, taskErr = submit(c, relayInfo)
+		if requestErr := c.Request.Context().Err(); requestErr != nil {
+			diagnostics.cancelled("after_submit", retryParam.GetRetry()+1)
+			taskErr = service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
+			break
+		}
 		if taskErr == nil {
+			diagnostics.attemptSucceeded(retryParam.GetRetry()+1, result)
 			break
 		}
 
 		if !taskErr.LocalError {
-			lastUpstreamTaskErr = taskErr
-			addFailedChannel(c, channel.Id)
-			retryParam.ExcludeChannelIds = getFailedChannelIds(c)
 			processChannelError(c,
 				*types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey,
 					common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()),
-				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode), false)
+				types.NewOpenAIError(taskErr.Error, types.ErrorCodeBadResponseStatusCode, taskErr.StatusCode),
+				false)
 		}
 
-		if !shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry()) {
+		willRetry := shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry())
+		diagnostics.attemptFailed(retryParam.GetRetry()+1, channel, taskErr, willRetry)
+		if !willRetry {
 			break
 		}
-		retryParam.IncreaseRetry()
+		if relayInfo.LockedChannel != nil {
+			relayInfo.LockedChannel = nil
+		}
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -701,70 +820,310 @@ func RelayTask(c *gin.Context) {
 		logger.LogInfo(c, retryLogStr)
 	}
 
-	// ── 成功：先插入任务，再结算 + 日志 ──
+	if taskErr != nil {
+		diagnostics.failed(stage, "task_error", taskErr, false)
+		return nil, taskErr
+	}
+	if result == nil {
+		taskErr = service.TaskErrorWrapperLocal(errors.New("task submission returned no result"), "task_submit_failed", http.StatusInternalServerError)
+		diagnostics.failed("submit", "missing_result", taskErr, false)
+		return nil, taskErr
+	}
+	if requestErr := c.Request.Context().Err(); requestErr != nil {
+		diagnostics.cancelled("before_reserve", retryParam.GetRetry()+1)
+		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
+	}
+
+	// Reserve any submit-time upward billing adjustment before persistence.
+	// This keeps insertion failures fully refundable while ensuring settlement
+	// after the barrier normally has a zero positive delta.
+	if relayInfo.Billing != nil {
+		stage = "reserve"
+		diagnostics.reserve("reserve_start", result.Quota)
+		if reserveErr := relayInfo.Billing.Reserve(result.Quota); reserveErr != nil {
+			common.SysError("reserve adjusted task billing error: " + reserveErr.Error())
+			taskErr = service.TaskErrorWrapperLocal(errors.New("insufficient quota for adjusted task cost"), string(types.ErrorCodeInsufficientUserQuota), http.StatusForbidden)
+			diagnostics.failed("reserve", "insufficient_quota", taskErr, false)
+			return nil, taskErr
+		}
+		diagnostics.reserve("reserve_complete", result.Quota)
+	}
+	if requestErr := c.Request.Context().Err(); requestErr != nil {
+		diagnostics.cancelled("before_insert", retryParam.GetRetry()+1)
+		return nil, service.TaskErrorWrapperLocal(requestErr, "request_cancelled", http.StatusRequestTimeout)
+	}
+
+	stage = "insert"
+	task := model.InitTask(result.Platform, relayInfo)
+	task.PrivateData.Execution = service.TaskExecutionSnapshotFromContext(c)
+	captureTaskPluginKey(task, relayInfo)
+	task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
+	task.PrivateData.BillingSource = relayInfo.BillingSource
+	task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
+	task.PrivateData.TokenId = relayInfo.TokenId
+	task.PrivateData.NodeName = common.NodeName
+	task.PrivateData.BillingContext = taskBillingContextFromRelayInfo(relayInfo)
+	if relayInfo.TieredBillingSnapshot != nil {
+		snapshot := *relayInfo.TieredBillingSnapshot
+		task.PrivateData.TieredBillingSnapshot = &snapshot
+	}
+	if relayInfo.BillingRequestInput != nil {
+		requestInput := billingexpr.CloneRequestInput(*relayInfo.BillingRequestInput)
+		task.PrivateData.BillingRequestInput = &requestInput
+		task.PrivateData.BillingRequestInputCaptured = true
+	}
+	task.Quota = result.Quota
+	task.Data = result.TaskData
+	if len(result.PluginState) > 0 {
+		task.PrivateData.PluginState = result.PluginState
+	}
+	task.Action = relayInfo.Action
+	if immediate := result.Immediate; immediate != nil {
+		applyImmediateTaskResult(task, immediate, time.Now().Unix())
+	}
+	diagnostics.insertStart(task)
+	if insertErr := task.InsertWithContext(c.Request.Context()); insertErr != nil {
+		common.SysError("insert task error: " + insertErr.Error())
+		taskErr = service.TaskErrorWrapperLocal(errors.New("failed to persist task"), "task_insert_failed", http.StatusInternalServerError)
+		diagnostics.failed("insert", "database_error", taskErr, false)
+		return nil, taskErr
+	}
+	durable = true
+	stage = "settle"
+	diagnostics.durable(task)
+	settlementQuota := result.Quota
+	if result.Immediate != nil && task.Status == model.TaskStatusSuccess && result.CompletionBillingAdaptor != nil {
+		_ = service.SettleTaskBillingOnComplete(c.Request.Context(), result.CompletionBillingAdaptor, task, result.Immediate)
+		settlementQuota = task.Quota
+		relayInfo.PriceData.Quota = settlementQuota
+	}
+	diagnostics.settleStart(task, settlementQuota)
+
+	if result.Immediate != nil && task.Status == model.TaskStatusFailure {
+		// An immediate failure has not gone through the normal consumption-log
+		// path. Refund the exact amount that was pre-consumed, and tell the task
+		// refund path not to decrement usage counters that were never recorded.
+		preConsumedQuota := relayInfo.FinalPreConsumedQuota
+		if relayInfo.Billing != nil {
+			preConsumedQuota = relayInfo.Billing.GetPreConsumedQuota()
+		}
+		if preConsumedQuota < 0 {
+			preConsumedQuota = 0
+		}
+		task.Quota = preConsumedQuota
+		task.PrivateData.PreConsumedUsageCaptured = true
+		task.PrivateData.PreConsumedUsageRecorded = false
+		if task.Quota > 0 {
+			if refundErr := refundTaskQuotaFunc(c.Request.Context(), task, task.FailReason); refundErr != nil {
+				common.SysError("refund immediate task billing error: " + refundErr.Error())
+				service.RecordConsumeAccountingError(c, relayInfo, "refund immediate task billing", refundErr)
+			}
+		} else if err := task.UpdateQuota(); err != nil {
+			common.SysError("persist immediate failed task quota error: " + err.Error())
+			service.RecordConsumeAccountingError(c, relayInfo, "persist immediate failed task", err)
+		}
+		diagnostics.complete(task, task.Quota)
+		return &taskSubmissionOutcome{Result: result, Task: task, RelayInfo: relayInfo}, nil
+	}
+
+	billingLogged := false
+	if settleErr := settleBillingFunc(c, relayInfo, settlementQuota); settleErr != nil {
+		common.SysError("settle task billing error: " + settleErr.Error())
+		service.RecordConsumeAccountingError(c, relayInfo, "settle task billing", settleErr)
+		c.Set(service.ContextKeySettlementError(), settleErr.Error())
+		if updateErr := persistTaskSubmitSettlementError(task, relayInfo, settlementQuota, settleErr); updateErr != nil {
+			common.SysError("update task settlement error: " + updateErr.Error())
+			service.RecordConsumeAccountingError(c, relayInfo, "persist task settlement review", updateErr)
+			if failErr := failPersistedTaskAfterSubmitSettlementError(task, relayInfo, settlementQuota, settleErr, updateErr); failErr != nil {
+				common.SysError("fail persisted task after settlement error: " + failErr.Error())
+				service.RecordConsumeAccountingError(c, relayInfo, "fail persisted task after settlement error", failErr)
+				if deleteErr := model.DeleteTaskByID(task.ID); deleteErr != nil {
+					common.SysError("delete task after settlement failure error: " + deleteErr.Error())
+					service.RecordConsumeAccountingError(c, relayInfo, "delete task after settlement failure", deleteErr)
+				}
+			}
+			taskErr = service.TaskErrorWrapperLocal(updateErr, "update_task_settlement_failed", http.StatusInternalServerError)
+		}
+	} else {
+		c.Set(service.ContextKeySettlementApplied(), true)
+	}
+
 	if taskErr == nil {
-		task := model.InitTask(result.Platform, relayInfo)
-		task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
-		task.PrivateData.BillingSource = relayInfo.BillingSource
-		task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
-		task.PrivateData.TokenId = relayInfo.TokenId
-		task.PrivateData.NodeName = common.NodeName
-		task.PrivateData.BillingContext = taskBillingContextFromRelayInfo(relayInfo)
-		task.Quota = result.Quota
-		task.Data = result.TaskData
-		task.Action = relayInfo.Action
-		if insertErr := task.Insert(); insertErr != nil {
-			common.SysError("insert task error: " + insertErr.Error())
-			taskErr = service.TaskErrorWrapperLocal(insertErr, "insert_task_failed", http.StatusInternalServerError)
+		if err := logTaskConsumptionFunc(c, relayInfo); err != nil {
+			common.SysError("log task consumption error: " + err.Error())
+			service.RecordConsumeAccountingError(c, relayInfo, "log task consumption", err)
+			c.Set(service.ContextKeySettlementError(), err.Error())
+			if updateErr := persistTaskSubmitSettlementError(task, relayInfo, settlementQuota, err); updateErr != nil {
+				common.SysError("update task accounting error: " + updateErr.Error())
+				service.RecordConsumeAccountingError(c, relayInfo, "persist task accounting review", updateErr)
+			}
+			if failErr := failPersistedTaskAfterSubmitAccountingError(task, relayInfo, settlementQuota, err); failErr != nil {
+				common.SysError("fail persisted task after accounting error: " + failErr.Error())
+				service.RecordConsumeAccountingError(c, relayInfo, "fail persisted task after accounting error", failErr)
+				if deleteErr := model.DeleteTaskByID(task.ID); deleteErr != nil {
+					common.SysError("delete task after accounting failure error: " + deleteErr.Error())
+					service.RecordConsumeAccountingError(c, relayInfo, "delete task after accounting failure", deleteErr)
+				}
+			}
+			taskErr = service.TaskErrorWrapperLocal(err, "log_task_consumption_failed", http.StatusInternalServerError)
 		} else {
-			var settleErr error
-			if settleErr = settleBillingFunc(c, relayInfo, result.Quota); settleErr != nil {
-				common.SysError("settle task billing error: " + settleErr.Error())
-				service.RecordConsumeAccountingError(c, relayInfo, "settle task billing", settleErr)
-				c.Set(service.ContextKeySettlementError(), settleErr.Error())
-				if updateErr := persistTaskSubmitSettlementError(task, relayInfo, result.Quota, settleErr); updateErr != nil {
-					common.SysError("update task settlement error: " + updateErr.Error())
-					service.RecordConsumeAccountingError(c, relayInfo, "persist task settlement review", updateErr)
-					if failErr := failPersistedTaskAfterSubmitSettlementError(task, relayInfo, result.Quota, settleErr, updateErr); failErr != nil {
-						common.SysError("fail persisted task after settlement error: " + failErr.Error())
-						service.RecordConsumeAccountingError(c, relayInfo, "fail persisted task after settlement error", failErr)
-						if deleteErr := model.DeleteTaskByID(task.ID); deleteErr != nil {
-							common.SysError("delete task after settlement failure error: " + deleteErr.Error())
-							service.RecordConsumeAccountingError(c, relayInfo, "delete task after settlement failure", deleteErr)
-						}
+			billingLogged = true
+		}
+	}
+	if taskErr != nil && !billingLogged && relayInfo.Billing != nil {
+		if refundErr := relayInfo.Billing.Refund(c); refundErr != nil {
+			common.SysError("refund billing after task error failed: " + refundErr.Error())
+			service.RecordConsumeAccountingError(c, relayInfo, "refund billing after task error", refundErr)
+		}
+	}
+	if taskErr != nil {
+		diagnostics.failed(stage, "accounting_error", taskErr, true)
+		return nil, taskErr
+	}
+	finalQuota := result.Quota
+	if result.Immediate != nil && task.Status == model.TaskStatusSuccess {
+		finalQuota = task.Quota
+	}
+	diagnostics.complete(task, finalQuota)
+
+	return &taskSubmissionOutcome{Result: result, Task: task, RelayInfo: relayInfo}, nil
+}
+
+func captureTaskPluginKey(task *model.Task, relayInfo *relaycommon.RelayInfo) {
+	if task == nil || relayInfo == nil ||
+		task.PrivateData.Execution == nil ||
+		task.PrivateData.Execution.TaskPlugin == nil ||
+		relayInfo.ChannelMeta == nil ||
+		strings.TrimSpace(task.PrivateData.Key) != "" {
+		return
+	}
+	if strings.TrimSpace(relayInfo.ApiKey) != "" {
+		task.PrivateData.Key = relayInfo.ApiKey
+	}
+}
+
+func newTaskPluginRetryParam(c *gin.Context, relayInfo *relaycommon.RelayInfo) *service.RetryParam {
+	return &service.RetryParam{
+		Ctx:           c,
+		TokenGroup:    relayInfo.TokenGroup,
+		ModelName:     relayInfo.OriginModelName,
+		RequestPath:   c.Request.URL.Path,
+		Retry:         common.GetPointer(0),
+		ChannelFilter: service.TaskPluginChannelFilter(c),
+	}
+}
+
+func presentTaskSubmission(c *gin.Context, outcome *taskSubmissionOutcome) {
+	diagnostics := newTaskPluginSubmitDiagnostics(c)
+	otherRatios := outcome.RelayInfo.PriceData.OtherRatios()
+	if otherRatios == nil {
+		otherRatios = map[string]float64{}
+	}
+	if ratiosJSON, err := common.Marshal(otherRatios); err == nil {
+		c.Header("X-New-Api-Other-Ratios", string(ratiosJSON))
+	}
+	if pinnedValue, exists := c.Get(pluginruntime.ContextKeyPinnedRoute); exists {
+		if pinned, ok := pinnedValue.(pluginruntime.PinnedRoute); ok && pinned.Plugin != nil && pinned.Route.Render != "" {
+			view, err := service.BuildTaskPluginView(outcome.Task)
+			requestValue, _ := c.Get(pluginruntime.ContextKeyRouteRequest)
+			requestContext, _ := requestValue.(pluginruntime.RouteRequestContext)
+			if err == nil {
+				viewValue, valueErr := taskPluginProtocolJSONValue(view)
+				if valueErr == nil {
+					if body, callErr := pinned.Plugin.Engine.CallPath(c.Request.Context(), "native", []string{pinned.Route.Render}, requestContext.JSValue(), viewValue); callErr == nil {
+						diagnostics.present(outcome.Task, "native_presenter")
+						c.JSON(http.StatusOK, body)
+						return
+					} else {
+						logger.LogError(c, "task plugin native submit presenter failed: "+callErr.Error())
 					}
-					taskErr = service.TaskErrorWrapperLocal(updateErr, "update_task_settlement_failed", http.StatusInternalServerError)
+				} else {
+					logger.LogError(c, "encode task plugin native submit view failed: "+valueErr.Error())
 				}
 			} else {
-				c.Set(service.ContextKeySettlementApplied(), true)
-			}
-			if taskErr == nil {
-				if err := logTaskConsumptionFunc(c, relayInfo); err != nil {
-					common.SysError("log task consumption error: " + err.Error())
-					service.RecordConsumeAccountingError(c, relayInfo, "log task consumption", err)
-					if updateErr := persistTaskSubmitSettlementError(task, relayInfo, result.Quota, err); updateErr != nil {
-						common.SysError("update task accounting error: " + updateErr.Error())
-						service.RecordConsumeAccountingError(c, relayInfo, "persist task accounting review", updateErr)
-					}
-					if failErr := failPersistedTaskAfterSubmitAccountingError(task, relayInfo, result.Quota, err); failErr != nil {
-						common.SysError("fail persisted task after accounting error: " + failErr.Error())
-						service.RecordConsumeAccountingError(c, relayInfo, "fail persisted task after accounting error", failErr)
-						if deleteErr := model.DeleteTaskByID(task.ID); deleteErr != nil {
-							common.SysError("delete task after accounting failure error: " + deleteErr.Error())
-							service.RecordConsumeAccountingError(c, relayInfo, "delete task after accounting failure", deleteErr)
-						}
-					}
-					taskErr = service.TaskErrorWrapperLocal(err, "log_task_consumption_failed", http.StatusInternalServerError)
-				} else {
-					billingLogged = true
-				}
+				logger.LogError(c, "build task plugin native submit view failed: "+err.Error())
 			}
 		}
 	}
-
-	if taskErr != nil {
-		respondTaskError(c, taskErr)
+	if pinnedValue, exists := c.Get(pluginruntime.ContextKeyPinnedEndpoint); exists {
+		if pinned, ok := pinnedValue.(pluginruntime.PinnedEndpoint); ok && pinned.Protocol == "openai_video" && pinned.Operation.Name == "create" {
+			diagnostics.present(outcome.Task, "openai_video_create")
+			c.JSON(http.StatusOK, outcome.Task.ToOpenAIVideo())
+			return
+		}
 	}
+	createdAt := outcome.Task.CreatedAt
+	if createdAt == 0 {
+		createdAt = outcome.Task.SubmitTime
+	}
+	diagnostics.present(outcome.Task, "host_fallback")
+	c.JSON(http.StatusOK, map[string]any{
+		"id":         outcome.Task.TaskID,
+		"task_id":    outcome.Task.TaskID,
+		"status":     taskSubmissionStatus(outcome.Task),
+		"model":      outcome.RelayInfo.OriginModelName,
+		"created_at": createdAt,
+	})
+}
+
+func taskSubmissionStatus(task *model.Task) string {
+	if task == nil {
+		return "queued"
+	}
+	switch task.Status {
+	case model.TaskStatusSuccess, model.TaskStatusFailure, model.TaskStatusInProgress:
+		return task.Status.ToVideoStatus()
+	default:
+		return "queued"
+	}
+}
+
+func applyImmediateTaskResult(task *model.Task, immediate *relaycommon.TaskInfo, now int64) {
+	if task == nil || immediate == nil {
+		return
+	}
+	task.Status = model.TaskStatus(immediate.Status)
+	if immediate.Progress != "" {
+		task.Progress = immediate.Progress
+	}
+	if len(immediate.PluginState) > 0 {
+		task.PrivateData.PluginState = immediate.PluginState
+	}
+	resultURL := strings.TrimSpace(immediate.Url)
+	if resultURL == "" {
+		resultURL = strings.TrimSpace(immediate.RemoteUrl)
+	}
+	switch task.Status {
+	case model.TaskStatusSuccess:
+		task.Progress = taskcommon.ProgressComplete
+		task.FailReason = strings.TrimSpace(immediate.Reason)
+		if task.FinishTime == 0 {
+			task.FinishTime = now
+		}
+		switch {
+		case taskcommon.IsDataURL(resultURL):
+			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+		case resultURL != "":
+			task.PrivateData.ResultURL = resultURL
+		default:
+			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
+		}
+	case model.TaskStatusFailure:
+		task.Progress = taskcommon.ProgressComplete
+		if task.FinishTime == 0 {
+			task.FinishTime = now
+		}
+		task.FailReason = immediate.Reason
+		task.PrivateData.ResultURL = ""
+	}
+}
+
+func respondTaskSubmissionError(c *gin.Context, taskErr *dto.TaskError) {
+	newTaskPluginSubmitDiagnostics(c).presentError(taskErr)
+	if middleware.RespondTaskPluginError(c, taskErr) {
+		return
+	}
+	respondTaskError(c, taskErr)
 }
 
 // respondTaskError 统一输出 Task 错误响应（含 429 限流提示改写）
@@ -890,25 +1249,7 @@ func failPersistedTaskAfterSubmitAccountingFailure(task *model.Task, attemptedQu
 	task.Status = model.TaskStatusFailure
 	task.Progress = "100%"
 	task.FinishTime = common.GetTimestamp()
-	result := model.DB.Model(&model.Task{}).
-		Where("id = ?", task.ID).
-		Updates(map[string]any{
-			"quota":             task.Quota,
-			"status":            task.Status,
-			"progress":          task.Progress,
-			"finish_time":       task.FinishTime,
-			"fail_reason":       task.FailReason,
-			"private_data":      task.PrivateData,
-			"settlement_status": task.SettlementStatus,
-			"updated_at":        common.GetTimestamp(),
-		})
-	if result.Error != nil {
-		return result.Error
-	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("fail task after submit settlement error failed, taskId=%s, id=%d", task.TaskID, task.ID)
-	}
-	return nil
+	return model.UpdateTaskAfterSubmitAccountingFailure(task)
 }
 
 func shouldRetryTaskRelay(c *gin.Context, channelId int, taskErr *dto.TaskError, retryTimes int) bool {

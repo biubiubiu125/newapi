@@ -22,7 +22,34 @@ const (
 )
 
 type Mode string
+
 type Source string
+
+// ClientError marks invalid user-supplied reasoning controls so host handlers
+// can return a 4xx without classifying unrelated adapter failures as client
+// errors.
+type ClientError struct {
+	err error
+}
+
+func (e *ClientError) Error() string { return e.err.Error() }
+func (e *ClientError) Unwrap() error { return e.err }
+
+func AsClientError(err error) error {
+	if err == nil {
+		return nil
+	}
+	var clientErr *ClientError
+	if errors.As(err, &clientErr) {
+		return err
+	}
+	return &ClientError{err: err}
+}
+
+func IsClientError(err error) bool {
+	var clientErr *ClientError
+	return errors.As(err, &clientErr)
+}
 
 const (
 	ModeUnset    Mode = ""
@@ -44,31 +71,8 @@ var (
 	ErrThinkingNotDisabled = errors.New("thinking cannot be disabled")
 )
 
-// ClientError marks invalid request controls so callers can return a 4xx.
-type ClientError struct{ err error }
-
-func (e *ClientError) Error() string { return e.err.Error() }
-func (e *ClientError) Unwrap() error { return e.err }
-
-func AsClientError(err error) error {
-	if err == nil {
-		return nil
-	}
-	var clientErr *ClientError
-	if errors.As(err, &clientErr) {
-		return err
-	}
-	return &ClientError{err: err}
-}
-
-func IsClientError(err error) bool {
-	var clientErr *ClientError
-	return errors.As(err, &clientErr)
-}
-
-// Intent is the provider-neutral reasoning control used only during
-// conversion. The original request fields remain available for billing and
-// passthrough decisions.
+// Intent is the protocol-independent part of a request's reasoning controls.
+// Summary visibility is intentionally independent from reasoning strength.
 type Intent struct {
 	Mode            Mode
 	Effort          Effort
@@ -86,6 +90,8 @@ func (i Intent) IsEmpty() bool {
 	return !i.HasStrength() && i.IncludeThoughts == nil
 }
 
+// IntentFromState reconstructs a portable intent from host- or pivot-carried
+// conversion state. A nil state is an empty intent.
 func IntentFromState(state *dto.ReasoningConversionState) Intent {
 	if state == nil {
 		return Intent{}
@@ -95,11 +101,13 @@ func IntentFromState(state *dto.ReasoningConversionState) Intent {
 		Effort:          Effort(state.Effort),
 		BudgetTokens:    state.BudgetTokens,
 		IncludeThoughts: state.IncludeThoughts,
-		Source:          SourcePivot,
-		BudgetSource:    SourcePivot,
+		Source:          SourceSuffix,
+		BudgetSource:    SourceSuffix,
 	}
 }
 
+// StateFromIntent copies the portable fields of an intent into conversion
+// state. Empty intents produce nil so callers can omit the field.
 func StateFromIntent(intent Intent) *dto.ReasoningConversionState {
 	if intent.IsEmpty() {
 		return nil
@@ -114,9 +122,10 @@ func StateFromIntent(intent Intent) *dto.ReasoningConversionState {
 
 func ParseEffort(value string) (Effort, error) {
 	effort := Effort(strings.ToLower(strings.TrimSpace(value)))
-	switch effort {
-	case "":
+	if effort == "" {
 		return "", nil
+	}
+	switch effort {
 	case EffortNone, EffortMinimal, EffortLow, EffortMedium, EffortHigh, EffortXHigh, EffortMax:
 		return effort, nil
 	default:
@@ -143,8 +152,7 @@ func normalizeIntent(intent Intent) (Intent, error) {
 			return Intent{}, fmt.Errorf("thinking budget must be -1 or non-negative, got %d", budget)
 		}
 		if budget == 0 {
-			if intent.Mode == ModeEnabled || intent.Mode == ModeAdaptive ||
-				(intent.Effort != "" && intent.Effort != EffortNone) {
+			if intent.Mode == ModeEnabled || intent.Mode == ModeAdaptive || (intent.Effort != "" && intent.Effort != EffortNone) {
 				return Intent{}, fmt.Errorf("%w: zero budget disables thinking", ErrEffortConflict)
 			}
 			intent.Mode = ModeDisabled
@@ -162,9 +170,14 @@ func normalizeIntent(intent Intent) (Intent, error) {
 		}
 		intent.Mode = ModeDisabled
 	}
+
 	return intent, nil
 }
 
+// MergeExplicitAndSuffix combines structured request fields with a model-name
+// alias. Contradictions are rejected because the alias may carry a distinct
+// billing identity; silently choosing either side would make request semantics
+// and accounting disagree.
 func MergeExplicitAndSuffix(explicit Intent, suffix Intent, model string) (Intent, error) {
 	var err error
 	explicit, err = normalizeIntent(explicit)
@@ -175,6 +188,7 @@ func MergeExplicitAndSuffix(explicit Intent, suffix Intent, model string) (Inten
 	if err != nil {
 		return Intent{}, err
 	}
+
 	if !explicit.HasStrength() {
 		if explicit.IncludeThoughts != nil {
 			suffix.IncludeThoughts = explicit.IncludeThoughts
@@ -191,18 +205,17 @@ func MergeExplicitAndSuffix(explicit Intent, suffix Intent, model string) (Inten
 	explicitDisabled := explicit.Mode == ModeDisabled || explicit.Effort == EffortNone
 	suffixDisabled := suffix.Mode == ModeDisabled || suffix.Effort == EffortNone
 	if explicitDisabled != suffixDisabled {
-		return Intent{}, fmt.Errorf("%w for model %q: explicit and suffix disagree about enabled state", ErrEffortConflict, model)
+		return Intent{}, fmt.Errorf("%w for model %q: explicit fields and model suffix disagree about whether thinking is enabled", ErrEffortConflict, model)
 	}
 	if !explicitDisabled && explicit.Effort != "" && suffix.Effort != "" && explicit.Effort != suffix.Effort {
 		return Intent{}, fmt.Errorf("%w for model %q: explicit effort %q differs from suffix effort %q", ErrEffortConflict, model, explicit.Effort, suffix.Effort)
 	}
-	if explicit.BudgetTokens != nil && suffix.BudgetTokens != nil &&
-		*explicit.BudgetTokens != *suffix.BudgetTokens {
-		return Intent{}, fmt.Errorf("%w for model %q: explicit budget differs from suffix budget", ErrEffortConflict, model)
+	if explicit.BudgetTokens != nil && suffix.BudgetTokens != nil && *explicit.BudgetTokens != *suffix.BudgetTokens {
+		return Intent{}, fmt.Errorf("%w for model %q: explicit budget %d differs from suffix budget %d", ErrEffortConflict, model, *explicit.BudgetTokens, *suffix.BudgetTokens)
 	}
 	if (explicit.Effort != "" && explicit.Effort != EffortNone && suffix.BudgetTokens != nil) ||
 		(explicit.BudgetTokens != nil && suffix.Effort != "" && suffix.Effort != EffortNone) {
-		return Intent{}, fmt.Errorf("%w for model %q: effort and exact suffix budget conflict", ErrEffortConflict, model)
+		return Intent{}, fmt.Errorf("%w for model %q: effort and an exact suffix budget cannot both select reasoning strength", ErrEffortConflict, model)
 	}
 
 	merged := suffix
@@ -222,8 +235,11 @@ func MergeExplicitAndSuffix(explicit Intent, suffix Intent, model string) (Inten
 	return normalizeIntent(merged)
 }
 
-// MergeExplicit combines two structured representations of one request.
-// Effort and budget are allowed together because some providers expose both.
+// MergeExplicit combines two structured representations of the same request.
+// A numeric budget and an effort may coexist: Claude and OpenRouter expose both
+// controls, and keeping both is what lets an in-memory OpenAI pivot preserve an
+// exact budget for budget-based targets while retaining an effort for
+// level-based targets.
 func MergeExplicit(primary Intent, secondary Intent, model string) (Intent, error) {
 	var err error
 	primary, err = normalizeIntent(primary)
@@ -234,6 +250,7 @@ func MergeExplicit(primary Intent, secondary Intent, model string) (Intent, erro
 	if err != nil {
 		return Intent{}, err
 	}
+
 	if primary.IsEmpty() {
 		return secondary, nil
 	}
@@ -244,14 +261,13 @@ func MergeExplicit(primary Intent, secondary Intent, model string) (Intent, erro
 	primaryDisabled := primary.Mode == ModeDisabled || primary.Effort == EffortNone
 	secondaryDisabled := secondary.Mode == ModeDisabled || secondary.Effort == EffortNone
 	if primary.HasStrength() && secondary.HasStrength() && primaryDisabled != secondaryDisabled {
-		return Intent{}, fmt.Errorf("%w for model %q: explicit fields disagree about enabled state", ErrEffortConflict, model)
+		return Intent{}, fmt.Errorf("%w for model %q: explicit fields disagree about whether thinking is enabled", ErrEffortConflict, model)
 	}
 	if primary.Effort != "" && secondary.Effort != "" && primary.Effort != secondary.Effort {
-		return Intent{}, fmt.Errorf("%w for model %q: explicit efforts differ", ErrEffortConflict, model)
+		return Intent{}, fmt.Errorf("%w for model %q: explicit efforts %q and %q differ", ErrEffortConflict, model, primary.Effort, secondary.Effort)
 	}
-	if primary.BudgetTokens != nil && secondary.BudgetTokens != nil &&
-		*primary.BudgetTokens != *secondary.BudgetTokens {
-		return Intent{}, fmt.Errorf("%w for model %q: explicit budgets differ", ErrEffortConflict, model)
+	if primary.BudgetTokens != nil && secondary.BudgetTokens != nil && *primary.BudgetTokens != *secondary.BudgetTokens {
+		return Intent{}, fmt.Errorf("%w for model %q: explicit budgets %d and %d differ", ErrEffortConflict, model, *primary.BudgetTokens, *secondary.BudgetTokens)
 	}
 
 	merged := secondary
@@ -272,7 +288,7 @@ func MergeExplicit(primary Intent, secondary Intent, model string) (Intent, erro
 }
 
 type openRouterReasoning struct {
-	Enabled   *bool  `json:"enabled"`
+	Enabled   *bool  `json:"enabled,omitempty"`
 	Effort    string `json:"effort,omitempty"`
 	MaxTokens *int   `json:"max_tokens,omitempty"`
 	Exclude   *bool  `json:"exclude,omitempty"`
@@ -282,6 +298,7 @@ func FromOpenAIChat(req *dto.GeneralOpenAIRequest) (Intent, error) {
 	if req == nil {
 		return Intent{}, nil
 	}
+
 	var intent Intent
 	intent.Source = SourceExplicit
 	if req.ReasoningEffort != "" {
@@ -296,16 +313,13 @@ func FromOpenAIChat(req *dto.GeneralOpenAIRequest) (Intent, error) {
 			intent.Mode = ModeEnabled
 		}
 	}
+
 	if len(req.Reasoning) > 0 {
 		var raw openRouterReasoning
 		if err := kitutil.Unmarshal(req.Reasoning, &raw); err != nil {
 			return Intent{}, fmt.Errorf("invalid reasoning config: %w", err)
 		}
-		nested := Intent{
-			Source:       SourceExplicit,
-			BudgetSource: SourceExplicit,
-			BudgetTokens: raw.MaxTokens,
-		}
+		nested := Intent{BudgetTokens: raw.MaxTokens, Source: SourceExplicit, BudgetSource: SourceExplicit}
 		if raw.Enabled != nil {
 			if *raw.Enabled {
 				nested.Mode = ModeEnabled
@@ -330,121 +344,96 @@ func FromOpenAIChat(req *dto.GeneralOpenAIRequest) (Intent, error) {
 			include := !*raw.Exclude
 			nested.IncludeThoughts = &include
 		}
-		var mergeErr error
-		intent, mergeErr = MergeExplicit(intent, nested, req.Model)
-		if mergeErr != nil {
-			return Intent{}, mergeErr
+		var err error
+		intent, err = MergeExplicit(intent, nested, req.Model)
+		if err != nil {
+			return Intent{}, err
 		}
 	}
-	if req.ReasoningConversion != nil {
-		pivot := IntentFromState(req.ReasoningConversion)
-		pivot.Source = SourcePivot
-		pivot.BudgetSource = SourcePivot
-		return MergeExplicit(intent, pivot, req.Model)
+
+	if req.ReasoningConversion == nil {
+		return normalizeIntent(intent)
 	}
-	return normalizeIntent(intent)
+	pivot := Intent{
+		Mode:            Mode(req.ReasoningConversion.Mode),
+		Effort:          Effort(req.ReasoningConversion.Effort),
+		BudgetTokens:    req.ReasoningConversion.BudgetTokens,
+		IncludeThoughts: req.ReasoningConversion.IncludeThoughts,
+		Source:          SourcePivot,
+		BudgetSource:    SourcePivot,
+	}
+	if req.ReasoningEffort != "" {
+		pivotEffort := EffectiveEffort(pivot)
+		if Effort(req.ReasoningEffort) == pivotEffort {
+			intent.Effort = ""
+			intent.Mode = ModeUnset
+		}
+	}
+	return MergeExplicit(intent, pivot, req.Model)
 }
 
+// ApplyToOpenAIChat writes the portable portion of an intent to the OpenAI
+// pivot. reasoning_effort carries level-based strength; a JSON-excluded DTO
+// state retains exact budgets and summary visibility across in-process steps.
 func ApplyToOpenAIChat(req *dto.GeneralOpenAIRequest, intent Intent) error {
 	if req == nil {
 		return nil
 	}
-	var err error
-	intent, err = normalizeIntent(intent)
+	intent, err := normalizeIntent(intent)
 	if err != nil {
 		return err
 	}
-	if effort := OpenAIEffort(EffectiveEffort(intent)); effort != "" {
+
+	if effort := EffectiveEffort(intent); effort != "" {
 		req.ReasoningEffort = string(effort)
 	}
-	req.ReasoningConversion = StateFromIntent(intent)
+
+	if intent.IsEmpty() {
+		return nil
+	}
+	req.ReasoningConversion = &dto.ReasoningConversionState{
+		Mode:            string(intent.Mode),
+		Effort:          string(intent.Effort),
+		BudgetTokens:    intent.BudgetTokens,
+		IncludeThoughts: intent.IncludeThoughts,
+	}
 	return nil
 }
 
+// ApplyToOpenAIResponses writes the portable portion of an intent directly to
+// a Responses request. The JSON-excluded state retains exact provider-native
+// controls for any later in-process conversion.
 func ApplyToOpenAIResponses(req *dto.OpenAIResponsesRequest, intent Intent) error {
 	if req == nil {
 		return nil
 	}
-	var err error
-	intent, err = normalizeIntent(intent)
+	intent, err := normalizeIntent(intent)
 	if err != nil {
 		return err
 	}
-	if effort := OpenAIEffort(EffectiveEffort(intent)); effort != "" {
+
+	if effort := EffectiveEffort(intent); effort != "" {
 		summary := "detailed"
 		if effort == EffortNone || (intent.IncludeThoughts != nil && !*intent.IncludeThoughts) {
 			summary = ""
 		}
-		req.Reasoning = &dto.Reasoning{Effort: string(effort), Summary: summary}
+		req.Reasoning = &dto.Reasoning{
+			Effort:  string(effort),
+			Summary: summary,
+		}
 	}
-	req.ReasoningConversion = StateFromIntent(intent)
-	return nil
-}
 
-func ApplyToClaude(req *dto.ClaudeRequest, intent Intent) error {
-	if req == nil {
-		return nil
-	}
-	var err error
-	intent, err = normalizeIntent(intent)
-	if err != nil {
-		return err
-	}
 	if intent.IsEmpty() {
 		return nil
 	}
-	if intent.Mode == ModeDisabled || intent.Effort == EffortNone {
-		req.Thinking = nil
-		req.OutputConfig = nil
-		return nil
+	state := &dto.ReasoningConversionState{
+		Mode:            string(intent.Mode),
+		Effort:          string(intent.Effort),
+		BudgetTokens:    intent.BudgetTokens,
+		IncludeThoughts: intent.IncludeThoughts,
 	}
-
-	if intent.Mode == ModeAdaptive {
-		req.Thinking = &dto.Thinking{Type: string(ModeAdaptive)}
-		if intent.IncludeThoughts != nil && *intent.IncludeThoughts {
-			req.Thinking.Display = "summarized"
-		}
-		if intent.Effort != "" {
-			req.OutputConfig, err = kitutil.Marshal(map[string]string{
-				"effort": string(intent.Effort),
-			})
-			if err != nil {
-				return fmt.Errorf("marshal Claude output_config: %w", err)
-			}
-		}
-		return nil
-	}
-
-	budget := intent.BudgetTokens
-	if budget == nil {
-		value := claudeBudgetForEffort(intent.Effort)
-		budget = &value
-	}
-	req.Thinking = &dto.Thinking{
-		Type:         string(ModeEnabled),
-		BudgetTokens: budget,
-	}
+	req.ReasoningConversion = state
 	return nil
-}
-
-func claudeBudgetForEffort(effort Effort) int {
-	switch effort {
-	case EffortMinimal, EffortLow:
-		return 1280
-	case EffortMedium:
-		return 2048
-	case EffortHigh, EffortXHigh, EffortMax:
-		return 8192
-	default:
-		return 4096
-	}
-}
-
-func OpenAIEffort(effort Effort) Effort {
-	if effort == EffortMax {
-		return EffortXHigh
-	}
-	return effort
 }
 
 func FromOpenAIResponses(req *dto.OpenAIResponsesRequest) (Intent, error) {
@@ -460,10 +449,9 @@ func FromOpenAIResponses(req *dto.OpenAIResponsesRequest) (Intent, error) {
 				return Intent{}, err
 			}
 			intent.Effort = effort
+			intent.Mode = ModeEnabled
 			if effort == EffortNone {
 				intent.Mode = ModeDisabled
-			} else {
-				intent.Mode = ModeEnabled
 			}
 		}
 		if req.Reasoning.Summary != "" {
@@ -471,13 +459,25 @@ func FromOpenAIResponses(req *dto.OpenAIResponsesRequest) (Intent, error) {
 			intent.IncludeThoughts = &include
 		}
 	}
-	if req.ReasoningConversion != nil {
-		pivot := IntentFromState(req.ReasoningConversion)
-		pivot.Source = SourcePivot
-		pivot.BudgetSource = SourcePivot
-		return MergeExplicit(intent, pivot, req.Model)
+	if req.ReasoningConversion == nil {
+		return normalizeIntent(intent)
 	}
-	return normalizeIntent(intent)
+	pivot := Intent{
+		Mode:            Mode(req.ReasoningConversion.Mode),
+		Effort:          Effort(req.ReasoningConversion.Effort),
+		BudgetTokens:    req.ReasoningConversion.BudgetTokens,
+		IncludeThoughts: req.ReasoningConversion.IncludeThoughts,
+		Source:          SourcePivot,
+		BudgetSource:    SourcePivot,
+	}
+	if req.Reasoning != nil && req.Reasoning.Effort != "" {
+		pivotEffort := EffectiveEffort(pivot)
+		if Effort(req.Reasoning.Effort) == pivotEffort {
+			intent.Effort = ""
+			intent.Mode = ModeUnset
+		}
+	}
+	return MergeExplicit(intent, pivot, req.Model)
 }
 
 func FromClaude(req *dto.ClaudeRequest) (Intent, error) {
@@ -499,14 +499,23 @@ func FromClaude(req *dto.ClaudeRequest) (Intent, error) {
 			return Intent{}, fmt.Errorf("unsupported Claude thinking type %q", req.Thinking.Type)
 		}
 		intent.BudgetTokens = req.Thinking.BudgetTokens
-		intent.BudgetSource = SourceNative
+		if req.Thinking.BudgetTokens != nil {
+			budget := *req.Thinking.BudgetTokens
+			if budget < 1024 {
+				return Intent{}, fmt.Errorf("Claude thinking budget_tokens must be at least 1024, got %d", budget)
+			}
+			if req.MaxTokens != nil && uint(budget) >= *req.MaxTokens {
+				return Intent{}, fmt.Errorf("Claude thinking budget_tokens must be less than max_tokens")
+			}
+			intent.BudgetSource = SourceNative
+		}
 		switch req.Thinking.Display {
 		case "summarized":
-			value := true
-			intent.IncludeThoughts = &value
+			include := true
+			intent.IncludeThoughts = &include
 		case "omitted":
-			value := false
-			intent.IncludeThoughts = &value
+			include := false
+			intent.IncludeThoughts = &include
 		}
 	}
 	if len(req.OutputConfig) > 0 {
@@ -520,10 +529,10 @@ func FromClaude(req *dto.ClaudeRequest) (Intent, error) {
 				return Intent{}, err
 			}
 			intent.Effort = effort
-			if intent.Mode == ModeUnset {
-				intent.Mode = ModeEnabled
-			}
 		}
+	}
+	if intent.Mode == ModeDisabled && intent.Effort != "" && intent.Effort != EffortNone {
+		return intent, nil
 	}
 	return normalizeIntent(intent)
 }
@@ -537,13 +546,10 @@ func FromGemini(req *dto.GeminiChatRequest) (Intent, error) {
 		return Intent{}, fmt.Errorf("%w: Gemini thinkingBudget and thinkingLevel cannot both be set", ErrEffortConflict)
 	}
 	intent := Intent{
-		BudgetTokens: config.ThinkingBudget,
-		Source:       SourceNative,
-		BudgetSource: SourceNative,
-	}
-	if config.IncludeThoughts {
-		includeThoughts := true
-		intent.IncludeThoughts = &includeThoughts
+		BudgetTokens:    config.ThinkingBudget,
+		IncludeThoughts: config.IncludeThoughts,
+		Source:          SourceNative,
+		BudgetSource:    SourceNative,
 	}
 	if config.ThinkingLevel != "" {
 		effort, err := ParseEffort(config.ThinkingLevel)
@@ -577,16 +583,17 @@ func EffectiveEffort(intent Intent) Effort {
 }
 
 func EffortFromBudget(budget int) Effort {
-	switch {
-	case budget == 0:
+	if budget == 0 {
 		return EffortNone
-	case budget < 0:
-		return EffortHigh
-	case budget <= 1024:
-		return EffortLow
-	case budget <= 8192:
-		return EffortMedium
-	default:
+	}
+	if budget < 0 {
 		return EffortHigh
 	}
+	if budget <= 1024 {
+		return EffortLow
+	}
+	if budget <= 8192 {
+		return EffortMedium
+	}
+	return EffortHigh
 }

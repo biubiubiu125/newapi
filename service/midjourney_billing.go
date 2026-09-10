@@ -23,9 +23,9 @@ func adjustMidjourneyFunding(task *model.Midjourney, delta int) error {
 		return model.PostConsumeUserSubscriptionDelta(task.SubscriptionId, int64(delta))
 	}
 	if delta > 0 {
-		return model.DecreaseUserQuota(task.UserId, delta, false)
+		return model.DecreaseUserQuota(task.UserId, int64(delta), false)
 	}
-	return model.IncreaseUserQuota(task.UserId, -delta, false)
+	return model.IncreaseUserQuota(task.UserId, int64(-delta), false)
 }
 
 func refundMidjourneyTokenQuota(ctx context.Context, task *model.Midjourney, quota int) (bool, taskTokenQuotaSnapshot, error) {
@@ -39,7 +39,7 @@ func refundMidjourneyTokenQuota(ctx context.Context, task *model.Midjourney, quo
 	} else {
 		key = token.Key
 	}
-	tokenDelta, err := model.IncreaseTokenQuotaTracked(task.TokenId, key, quota)
+	tokenDelta, err := model.IncreaseTokenQuotaTracked(task.TokenId, key, int64(quota))
 	if err != nil {
 		if model.IsTokenQuotaNoRowsError(err) {
 			logger.LogWarn(ctx, fmt.Sprintf("skip midjourney token quota refund because token no longer exists userId=%d tokenId=%d quota=%d: %s", task.UserId, task.TokenId, quota, err.Error()))
@@ -68,7 +68,7 @@ func rollbackMidjourneyTokenRefund(ctx context.Context, task *model.Midjourney, 
 			UsedDelta:   -snapshot.usedQuota,
 		})
 	}
-	if err := model.DecreaseTokenQuota(task.TokenId, "", quota); err != nil {
+	if err := model.DecreaseTokenQuota(task.TokenId, "", int64(quota)); err != nil {
 		if model.IsTokenQuotaNoRowsError(err) {
 			logger.LogWarn(ctx, fmt.Sprintf("skip midjourney token refund rollback because token no longer exists userId=%d tokenId=%d quota=%d: %s", task.UserId, task.TokenId, quota, err.Error()))
 			return nil

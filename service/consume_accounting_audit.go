@@ -41,7 +41,7 @@ func RecordConsumeAccountingError(ctx *gin.Context, relayInfo *relaycommon.Relay
 		ctx,
 		relayInfo.UserId,
 		channelId,
-		relayInfo.OriginModelName,
+		relayInfo.GetBillingModelName(),
 		ctx.GetString("token_name"),
 		fmt.Sprintf("%s failed: %s", phase, errMsg),
 		relayInfo.TokenId,

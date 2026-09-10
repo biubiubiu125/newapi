@@ -7,6 +7,8 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/constant"
+	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/config"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -62,6 +64,13 @@ func InitOptionMap() {
 	common.OptionMap["DisplayTokenStatEnabled"] = strconv.FormatBool(common.DisplayTokenStatEnabled)
 	common.OptionMap["DrawingEnabled"] = strconv.FormatBool(common.DrawingEnabled)
 	common.OptionMap["TaskEnabled"] = strconv.FormatBool(common.TaskEnabled)
+	common.OptionMap["TaskPluginEnabled"] = strconv.FormatBool(constant.TaskPluginEnabled)
+	common.OptionMap["TaskPluginOverrideEnabled"] = strconv.FormatBool(constant.TaskPluginOverrideEnabled)
+	common.OptionMap[setting.TaskPluginMarketplaceSourcesKey] = setting.TaskPluginMarketplaceSources2JsonString()
+	common.OptionMap[setting.TaskPluginDisabledFactoryKeysKey] = "[]"
+	pluginruntime.DefaultRegistry.SetEnabled(constant.TaskPluginEnabled)
+	pluginruntime.DefaultRegistry.SetOverrideEnabled(constant.TaskPluginOverrideEnabled)
+	_ = pluginruntime.DefaultRegistry.SetDisabledFactoryKeys(nil)
 	common.OptionMap["DataExportEnabled"] = strconv.FormatBool(common.DataExportEnabled)
 	common.OptionMap["TicketEmailNotificationEnabled"] = strconv.FormatBool(common.TicketEmailNotificationEnabled)
 	common.OptionMap["TelegramPushBotToken"] = common.TelegramPushBotToken
@@ -156,9 +165,9 @@ func InitOptionMap() {
 	common.OptionMap["WeChatAccountQRCodeImageURL"] = ""
 	common.OptionMap["TurnstileSiteKey"] = ""
 	common.OptionMap["TurnstileSecretKey"] = ""
-	common.OptionMap["QuotaForNewUser"] = strconv.Itoa(common.QuotaForNewUser)
-	common.OptionMap["QuotaForInviter"] = strconv.Itoa(common.QuotaForInviter)
-	common.OptionMap["QuotaForInvitee"] = strconv.Itoa(common.QuotaForInvitee)
+	common.OptionMap["QuotaForNewUser"] = strconv.FormatInt(common.QuotaForNewUser, 10)
+	common.OptionMap["QuotaForInviter"] = strconv.FormatInt(common.QuotaForInviter, 10)
+	common.OptionMap["QuotaForInvitee"] = strconv.FormatInt(common.QuotaForInvitee, 10)
 	common.OptionMap["QuotaRemindThreshold"] = strconv.Itoa(common.QuotaRemindThreshold)
 	common.OptionMap["PreConsumedQuota"] = strconv.Itoa(common.PreConsumedQuota)
 	common.OptionMap["ModelRequestRateLimitCount"] = strconv.Itoa(setting.ModelRequestRateLimitCount)
@@ -276,6 +285,9 @@ func validateOptionValue(key string, value string) error {
 		}
 		return validateTaskPublicAddressValue(value)
 	}
+	if key == setting.TaskPluginDisabledFactoryKeysKey {
+		return nil
+	}
 	return nil
 }
 
@@ -291,6 +303,34 @@ func UpdateOption(key string, value string) error {
 		return err
 	}
 	value = normalizedValue
+	if key == setting.TaskPluginDisabledFactoryKeysKey {
+		var previous Option
+		previousErr := DB.Where("key = ?", key).First(&previous).Error
+		previousValue := "[]"
+		if previousErr == nil {
+			previousValue = previous.Value
+		}
+		restore := func() {
+			_ = updateOptionMap(key, previousValue)
+			if errors.Is(previousErr, gorm.ErrRecordNotFound) {
+				_ = DB.Delete(&Option{}, "key = ?", key).Error
+			}
+		}
+		if err := updateOptionMap(key, value); err != nil {
+			return err
+		}
+		option := Option{Key: key}
+		if err := DB.FirstOrCreate(&option, Option{Key: key}).Error; err != nil {
+			restore()
+			return err
+		}
+		option.Value = value
+		if err := DB.Save(&option).Error; err != nil {
+			restore()
+			return err
+		}
+		return nil
+	}
 	// Save to database first
 	option := Option{
 		Key: key,
@@ -334,6 +374,19 @@ func UpdateOptionsBulk(values map[string]string) error {
 		normalizedValues[k] = normalizedValue
 	}
 	values = normalizedValues
+	previousDisabledValue := ""
+	disabledValue, hasDisabledValue := values[setting.TaskPluginDisabledFactoryKeysKey]
+	if hasDisabledValue {
+		common.OptionMapRWMutex.RLock()
+		previousDisabledValue = common.OptionMap[setting.TaskPluginDisabledFactoryKeysKey]
+		common.OptionMapRWMutex.RUnlock()
+		if previousDisabledValue == "" {
+			previousDisabledValue = "[]"
+		}
+		if err := updateOptionMap(setting.TaskPluginDisabledFactoryKeysKey, disabledValue); err != nil {
+			return err
+		}
+	}
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		for k, v := range values {
 			option := Option{Key: k}
@@ -348,9 +401,15 @@ func UpdateOptionsBulk(values map[string]string) error {
 		return nil
 	})
 	if err != nil {
+		if hasDisabledValue {
+			_ = updateOptionMap(setting.TaskPluginDisabledFactoryKeysKey, previousDisabledValue)
+		}
 		return err
 	}
 	for k, v := range values {
+		if k == setting.TaskPluginDisabledFactoryKeysKey {
+			continue
+		}
 		if err := updateOptionMap(k, v); err != nil {
 			return err
 		}
@@ -365,12 +424,19 @@ func updateOptionMap(key string, value string) (err error) {
 		delete(common.OptionMap, key)
 		return nil
 	}
-	common.OptionMap[key] = value
 
 	// 检查是否是模型配置 - 使用更规范的方式处理
 	if handleConfigUpdate(key, value) {
+		common.OptionMap[key] = value
 		return nil // 已由配置系统处理
 	}
+
+	if key == setting.TaskPluginDisabledFactoryKeysKey {
+		if err = pluginruntime.DefaultRegistry.SetDisabledFactoryKeys(setting.ParseTaskPluginDisabledFactoryKeys(value)); err != nil {
+			return err
+		}
+	}
+	common.OptionMap[key] = value
 
 	// 处理传统配置项...
 	if strings.HasSuffix(key, "Permission") {
@@ -433,6 +499,12 @@ func updateOptionMap(key string, value string) (err error) {
 			common.DrawingEnabled = boolValue
 		case "TaskEnabled":
 			common.TaskEnabled = boolValue
+		case "TaskPluginEnabled":
+			constant.TaskPluginEnabled = boolValue
+			pluginruntime.DefaultRegistry.SetEnabled(boolValue)
+		case "TaskPluginOverrideEnabled":
+			constant.TaskPluginOverrideEnabled = boolValue
+			pluginruntime.DefaultRegistry.SetOverrideEnabled(boolValue)
 		case "DataExportEnabled":
 			common.DataExportEnabled = boolValue
 		case "TicketEmailNotificationEnabled":
@@ -499,6 +571,7 @@ func updateOptionMap(key string, value string) (err error) {
 		system_setting.ServerAddress = value
 	case "TaskPublicAddress":
 		system_setting.TaskPublicAddress = value
+	case setting.TaskPluginDisabledFactoryKeysKey:
 	case "WorkerUrl":
 		system_setting.WorkerUrl = value
 	case "WorkerValidKey":
@@ -648,11 +721,11 @@ func updateOptionMap(key string, value string) (err error) {
 	case "TurnstileSecretKey":
 		common.TurnstileSecretKey = value
 	case "QuotaForNewUser":
-		common.QuotaForNewUser, _ = strconv.Atoi(value)
+		common.QuotaForNewUser, _ = strconv.ParseInt(value, 10, 64)
 	case "QuotaForInviter":
-		common.QuotaForInviter, _ = strconv.Atoi(value)
+		common.QuotaForInviter, _ = strconv.ParseInt(value, 10, 64)
 	case "QuotaForInvitee":
-		common.QuotaForInvitee, _ = strconv.Atoi(value)
+		common.QuotaForInvitee, _ = strconv.ParseInt(value, 10, 64)
 	case "QuotaRemindThreshold":
 		common.QuotaRemindThreshold, _ = strconv.Atoi(value)
 	case "PreConsumedQuota":

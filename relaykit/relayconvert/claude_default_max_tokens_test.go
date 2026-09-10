@@ -8,6 +8,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	sharedclaude "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/shared/claude"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -88,12 +89,18 @@ func TestClaudeDefaultMaxTokensPresence(t *testing.T) {
 // "-thinking" request without max_tokens must keep converting even when no
 // DefaultMaxTokens hook is configured.
 func TestClaudeThinkingAdapterSatisfiesMaxTokensWithoutCallback(t *testing.T) {
-	meta := &convmeta.Values{Options: &convmeta.Options{
-		Claude: convmeta.ClaudeOptions{
-			ThinkingAdapterEnabled:                true,
-			ThinkingAdapterBudgetTokensPercentage: 0.8,
+	_, intent, found, err := reasoning.ParseClaudeModelSuffix("claude-test-thinking", true)
+	require.NoError(t, err)
+	require.True(t, found)
+	meta := &convmeta.Values{
+		ReasoningConversion: reasoning.StateFromIntent(intent),
+		Options: &convmeta.Options{
+			Claude: convmeta.ClaudeOptions{
+				ThinkingAdapterEnabled:                true,
+				ThinkingAdapterBudgetTokensPercentage: 0.8,
+			},
 		},
-	}}
+	}
 	got, err := OpenAIChatRequestToClaudeMessages(context.Background(), meta, dto.GeneralOpenAIRequest{
 		Model: "claude-test-thinking",
 		Messages: []dto.Message{

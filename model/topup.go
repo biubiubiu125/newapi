@@ -94,17 +94,17 @@ func (topUp *TopUp) Insert() error {
 	return err
 }
 
-func topUpQuotaMaxCurrent(creditedQuota int) (int, error) {
-	if creditedQuota <= 0 || creditedQuota >= common.MaxQuota {
+func topUpQuotaMaxCurrent(creditedQuota int64) (int64, error) {
+	if creditedQuota <= 0 || creditedQuota >= common.MaxWalletQuota {
 		return 0, ErrInvalidTopUpQuota
 	}
-	return common.MaxQuota - 1 - creditedQuota, nil
+	return common.MaxWalletQuota - creditedQuota, nil
 }
 
 // ValidateTopUpQuotaCapacity performs the user-facing pre-payment check. The
 // settlement path repeats the same invariant with an atomic conditional
 // update, because the wallet balance can change after checkout creation.
-func ValidateTopUpQuotaCapacity(userId int, creditedQuota int) error {
+func ValidateTopUpQuotaCapacity(userId int, creditedQuota int64) error {
 	maxCurrentQuota, err := topUpQuotaMaxCurrent(creditedQuota)
 	if err != nil {
 		return err
@@ -120,10 +120,10 @@ func ValidateTopUpQuotaCapacity(userId int, creditedQuota int) error {
 	return nil
 }
 
-// creditTopUpQuota atomically enforces the int32 wallet ceiling while adding
+// creditTopUpQuota atomically enforces the JavaScript-safe wallet ceiling while adding
 // quota. Keeping the predicate and increment in one UPDATE prevents two
 // concurrent callbacks from both passing a separate read/check.
-func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int, updates map[string]interface{}) error {
+func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int64, updates map[string]interface{}) error {
 	maxCurrentQuota, err := topUpQuotaMaxCurrent(creditedQuota)
 	if err != nil {
 		return err
@@ -164,12 +164,12 @@ func (topUp *TopUp) Update() error {
 	return err
 }
 
-func (topUp *TopUp) CreditQuotaAmount() int {
+func (topUp *TopUp) CreditQuotaAmount() int64 {
 	if topUp == nil {
 		return 0
 	}
 	if topUp.CreditQuotaSnapshot > 0 {
-		return int(topUp.CreditQuotaSnapshot)
+		return topUp.CreditQuotaSnapshot
 	}
 	quotaPerUnit := topUp.QuotaPerUnitSnapshot
 	if quotaPerUnit <= 0 {
@@ -179,12 +179,12 @@ func (topUp *TopUp) CreditQuotaAmount() int {
 		return 0
 	}
 	if topUp.PaymentProvider == PaymentProviderCreem {
-		return int(topUp.Amount)
+		return topUp.Amount
 	}
 	if topUp.PaymentProvider == PaymentProviderStripe {
-		return int(decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(quotaPerUnit)).IntPart())
+		return decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(quotaPerUnit)).IntPart()
 	}
-	return int(decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(quotaPerUnit)).IntPart())
+	return decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(quotaPerUnit)).IntPart()
 }
 
 func GetTopUpById(id int) *TopUp {
@@ -254,7 +254,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 		refCol = `"trade_no"`
 	}
 
-	var quotaToAdd int
+	var quotaToAdd int64
 	topUp := &TopUp{}
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
@@ -274,7 +274,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 			topUp.PaymentMethod = actualPaymentMethod
 		}
 		var quotaErr error
-		quotaToAdd, quotaErr = common.QuotaFromDecimalStrict(
+		quotaToAdd, quotaErr = common.WalletQuotaFromDecimalStrict(
 			decimal.NewFromInt(topUp.Amount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)),
 		)
 		if quotaErr != nil || quotaToAdd <= 0 {
@@ -308,7 +308,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 		return errors.New("未提供支付单号")
 	}
 
-	var quota int
+	var quota int64
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -376,7 +376,7 @@ func RechargeStripeWithValidation(referenceId string, customerId string, provide
 		validation.ExpectedPaymentProvider = PaymentProviderStripe
 	}
 
-	var quotaToAdd int
+	var quotaToAdd int64
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -604,7 +604,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	}
 
 	var userId int
-	var quotaToAdd int
+	var quotaToAdd int64
 	var payMoney float64
 	var paymentMethod string
 
@@ -677,7 +677,7 @@ func rechargeCreemWithValidation(referenceId string, customerEmail string, custo
 		return errors.New("未提供支付单号")
 	}
 
-	var quota int
+	var quota int64
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -721,7 +721,7 @@ func rechargeCreemWithValidation(referenceId string, customerEmail string, custo
 		}
 
 		// Creem 直接使用 Amount 作为充值额度（整数）
-		quota, err = common.QuotaFromDecimalStrict(decimal.NewFromInt(topUp.Amount))
+		quota, err = common.WalletQuotaFromDecimalStrict(decimal.NewFromInt(topUp.Amount))
 		if err != nil || quota <= 0 {
 			return ErrInvalidTopUpQuota
 		}
@@ -768,7 +768,7 @@ func RechargeWaffoWithValidation(tradeNo string, providerPayload string, validat
 	if tradeNo == "" {
 		return errors.New("未提供支付单号")
 	}
-	var quotaToAdd int
+	var quotaToAdd int64
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -852,7 +852,7 @@ func RechargeWaffoPancakeWithValidation(tradeNo string, providerPayload string, 
 		return errors.New("未提供支付单号")
 	}
 
-	var quotaToAdd int
+	var quotaToAdd int64
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -937,7 +937,7 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 		validation.ExpectedPaymentProvider = PaymentProviderEpay
 	}
 
-	var quotaToAdd int
+	var quotaToAdd int64
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"
@@ -1021,7 +1021,7 @@ func RechargeBEpusdtWithValidation(tradeNo string, providerPayload string, valid
 		return errors.New("未提供支付单号")
 	}
 
-	var quotaToAdd int
+	var quotaToAdd int64
 	topUp := &TopUp{}
 
 	refCol := "`trade_no`"

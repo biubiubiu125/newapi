@@ -20,12 +20,12 @@ const (
 	BatchUpdateTypeCount // if you add a new type, you need to add a new map and a new lock
 )
 
-var batchUpdateStores []map[int]int
+var batchUpdateStores []map[int]int64
 var batchUpdateLocks []sync.Mutex
 
 func init() {
 	for i := 0; i < BatchUpdateTypeCount; i++ {
-		batchUpdateStores = append(batchUpdateStores, make(map[int]int))
+		batchUpdateStores = append(batchUpdateStores, make(map[int]int64))
 		batchUpdateLocks = append(batchUpdateLocks, sync.Mutex{})
 	}
 }
@@ -39,7 +39,10 @@ func InitBatchUpdater() {
 	})
 }
 
-func addNewRecord(type_ int, id int, value int) {
+func addNewRecord(type_ int, id int, value int64) {
+	if value == 0 {
+		return
+	}
 	batchUpdateLocks[type_].Lock()
 	defer batchUpdateLocks[type_].Unlock()
 	if _, ok := batchUpdateStores[type_][id]; !ok {
@@ -67,11 +70,11 @@ func batchUpdate() {
 	}
 
 	common.SysLog("batch update started")
-	stores := make([]map[int]int, BatchUpdateTypeCount)
+	stores := make([]map[int]int64, BatchUpdateTypeCount)
 	for i := 0; i < BatchUpdateTypeCount; i++ {
 		batchUpdateLocks[i].Lock()
 		stores[i] = batchUpdateStores[i]
-		batchUpdateStores[i] = make(map[int]int)
+		batchUpdateStores[i] = make(map[int]int64)
 		batchUpdateLocks[i].Unlock()
 	}
 
@@ -85,10 +88,12 @@ func batchUpdate() {
 				err := increaseTokenQuota(key, value)
 				if err != nil {
 					common.SysLog("failed to batch update token quota: " + err.Error())
+					addNewRecord(i, key, value)
 				}
 			case BatchUpdateTypeChannelUsedQuota:
-				if err := updateChannelUsedQuota(key, value); err != nil {
+				if err := updateChannelUsedQuota(key, int(value)); err != nil {
 					common.SysLog("failed to batch update channel used quota: " + err.Error())
+					addNewRecord(i, key, value)
 				}
 			}
 		}
@@ -109,12 +114,20 @@ func batchUpdate() {
 		userIDs[key] = struct{}{}
 	}
 	for key := range userIDs {
-		updateUserQuotaUsedQuotaAndRequestCount(key, userQuotaStore[key], usedQuotaStore[key], requestCountStore[key])
+		quotaDelta := userQuotaStore[key]
+		usedQuotaDelta := usedQuotaStore[key]
+		requestCountDelta := requestCountStore[key]
+		if err := updateUserQuotaUsedQuotaAndRequestCount(key, quotaDelta, usedQuotaDelta, requestCountDelta); err != nil {
+			common.SysLog("failed to batch update user quota and usage: " + err.Error())
+			addNewRecord(BatchUpdateTypeUserQuota, key, quotaDelta)
+			addNewRecord(BatchUpdateTypeUsedQuota, key, usedQuotaDelta)
+			addNewRecord(BatchUpdateTypeRequestCount, key, requestCountDelta)
+		}
 	}
 	common.SysLog("batch update finished")
 }
 
-func updateUserQuotaUsedQuotaAndRequestCount(id int, quotaDelta int, usedQuotaDelta int, requestCountDelta int) {
+func updateUserQuotaUsedQuotaAndRequestCount(id int, quotaDelta int64, usedQuotaDelta int64, requestCountDelta int64) error {
 	updates := map[string]interface{}{}
 	if quotaDelta != 0 {
 		updates["quota"] = gorm.Expr("quota + ?", quotaDelta)
@@ -126,13 +139,13 @@ func updateUserQuotaUsedQuotaAndRequestCount(id int, quotaDelta int, usedQuotaDe
 		updates["request_count"] = gorm.Expr("request_count + ?", requestCountDelta)
 	}
 	if len(updates) == 0 {
-		return
+		return nil
 	}
 	if err := DB.Model(&User{}).Where("id = ?", id).Updates(updates).Error; err != nil {
-		common.SysLog("failed to batch update user quota and usage: " + err.Error())
-		return
+		return err
 	}
 	_ = CacheUpdateUserQuota(id)
+	return nil
 }
 
 func RecordExist(err error) (bool, error) {

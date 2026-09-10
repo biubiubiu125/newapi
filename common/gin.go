@@ -184,7 +184,87 @@ func GetContextKeyString(c *gin.Context, key constant.ContextKey) string {
 }
 
 func GetContextKeyInt(c *gin.Context, key constant.ContextKey) int {
+	if value, ok := c.Get(string(key)); ok {
+		switch v := value.(type) {
+		case int:
+			return v
+		case int8:
+			return int(v)
+		case int16:
+			return int(v)
+		case int32:
+			return int(v)
+		case int64:
+			return int(v)
+		case uint:
+			return int(v)
+		case uint8:
+			return int(v)
+		case uint16:
+			return int(v)
+		case uint32:
+			return int(v)
+		case uint64:
+			return int(v)
+		}
+	}
 	return c.GetInt(string(key))
+}
+
+func GetContextKeyInt64(c *gin.Context, key constant.ContextKey) int64 {
+	if value, ok := c.Get(string(key)); ok {
+		switch v := value.(type) {
+		case int:
+			return int64(v)
+		case int8:
+			return int64(v)
+		case int16:
+			return int64(v)
+		case int32:
+			return int64(v)
+		case int64:
+			return v
+		case uint:
+			return int64(v)
+		case uint8:
+			return int64(v)
+		case uint16:
+			return int64(v)
+		case uint32:
+			return int64(v)
+		case uint64:
+			return int64(v)
+		}
+	}
+	return int64(c.GetInt(string(key)))
+}
+
+func GetContextInt64(c *gin.Context, key string) int64 {
+	if value, ok := c.Get(key); ok {
+		switch v := value.(type) {
+		case int:
+			return int64(v)
+		case int8:
+			return int64(v)
+		case int16:
+			return int64(v)
+		case int32:
+			return int64(v)
+		case int64:
+			return v
+		case uint:
+			return int64(v)
+		case uint8:
+			return int64(v)
+		case uint16:
+			return int64(v)
+		case uint32:
+			return int64(v)
+		case uint64:
+			return int64(v)
+		}
+	}
+	return int64(c.GetInt(key))
 }
 
 func GetContextKeyBool(c *gin.Context, key constant.ContextKey) bool {

@@ -304,10 +304,10 @@ func TestBillingSessionSettleDoesNotDebitWalletWhenTokenAdjustmentFails(t *testi
 	require.Error(t, err)
 	var user model.User
 	require.NoError(t, model.DB.Select("quota").First(&user, 9701).Error)
-	require.Equal(t, 100, user.Quota)
+	require.EqualValues(t, 100, user.Quota)
 	var token model.Token
 	require.NoError(t, model.DB.Select("remain_quota").First(&token, 9702).Error)
-	require.Equal(t, 0, token.RemainQuota)
+	require.EqualValues(t, 0, token.RemainQuota)
 }
 
 func TestBillingSessionSettleRefundsWalletWhenTokenDeleted(t *testing.T) {
@@ -334,7 +334,7 @@ func TestBillingSessionSettleRefundsWalletWhenTokenDeleted(t *testing.T) {
 	require.NoError(t, err)
 	var user model.User
 	require.NoError(t, model.DB.Select("quota").First(&user, 9731).Error)
-	require.Equal(t, 960, user.Quota)
+	require.EqualValues(t, 960, user.Quota)
 }
 
 func TestBillingSessionSettleNegativeDeltaFundingFailureRollsBackTrackedTokenDelta(t *testing.T) {
@@ -363,8 +363,8 @@ func TestBillingSessionSettleNegativeDeltaFundingFailureRollsBackTrackedTokenDel
 	require.Error(t, err)
 	var token model.Token
 	require.NoError(t, model.DB.Select("remain_quota", "used_quota").First(&token, 9772).Error)
-	require.Equal(t, 100, token.RemainQuota)
-	require.Equal(t, 10, token.UsedQuota)
+	require.EqualValues(t, 100, token.RemainQuota)
+	require.EqualValues(t, 10, token.UsedQuota)
 }
 
 func TestBillingSessionRollbackRefundsWalletAfterZeroDeltaSettlement(t *testing.T) {
@@ -401,11 +401,11 @@ func TestBillingSessionRollbackRefundsWalletAfterZeroDeltaSettlement(t *testing.
 
 	var user model.User
 	require.NoError(t, model.DB.Select("quota").First(&user, 9761).Error)
-	require.Equal(t, 1000, user.Quota)
+	require.EqualValues(t, 1000, user.Quota)
 	var token model.Token
 	require.NoError(t, model.DB.Select("remain_quota", "used_quota").First(&token, 9762).Error)
-	require.Equal(t, 1000, token.RemainQuota)
-	require.Equal(t, 0, token.UsedQuota)
+	require.EqualValues(t, 1000, token.RemainQuota)
+	require.EqualValues(t, 0, token.UsedQuota)
 }
 
 func TestBillingSessionRollbackRefundsSubscriptionPreConsumeRecord(t *testing.T) {
@@ -504,8 +504,8 @@ func TestBillingSessionRollbackFundingFailureRollsBackTrackedTokenDelta(t *testi
 	require.Error(t, err)
 	var token model.Token
 	require.NoError(t, model.DB.Select("remain_quota", "used_quota").First(&token, 9776).Error)
-	require.Equal(t, 100, token.RemainQuota)
-	require.Equal(t, 10, token.UsedQuota)
+	require.EqualValues(t, 100, token.RemainQuota)
+	require.EqualValues(t, 10, token.UsedQuota)
 }
 
 func TestPostConsumeQuotaDoesNotDebitWalletWhenTokenAdjustmentFails(t *testing.T) {
@@ -536,10 +536,10 @@ func TestPostConsumeQuotaDoesNotDebitWalletWhenTokenAdjustmentFails(t *testing.T
 	require.Error(t, err)
 	var user model.User
 	require.NoError(t, model.DB.Select("quota").First(&user, 9711).Error)
-	require.Equal(t, 100, user.Quota)
+	require.EqualValues(t, 100, user.Quota)
 	var token model.Token
 	require.NoError(t, model.DB.Select("remain_quota").First(&token, 9712).Error)
-	require.Equal(t, 0, token.RemainQuota)
+	require.EqualValues(t, 0, token.RemainQuota)
 }
 
 func TestPostConsumeQuotaNegativeDeltaFundingFailureRollsBackTrackedTokenDelta(t *testing.T) {
@@ -564,8 +564,8 @@ func TestPostConsumeQuotaNegativeDeltaFundingFailureRollsBackTrackedTokenDelta(t
 	require.Error(t, err)
 	var token model.Token
 	require.NoError(t, model.DB.Select("remain_quota", "used_quota").First(&token, 9778).Error)
-	require.Equal(t, 100, token.RemainQuota)
-	require.Equal(t, 10, token.UsedQuota)
+	require.EqualValues(t, 100, token.RemainQuota)
+	require.EqualValues(t, 10, token.UsedQuota)
 }
 
 func TestPostConsumeQuotaRefundsWalletWhenTokenDeleted(t *testing.T) {
@@ -588,5 +588,5 @@ func TestPostConsumeQuotaRefundsWalletWhenTokenDeleted(t *testing.T) {
 	require.NoError(t, err)
 	var user model.User
 	require.NoError(t, model.DB.Select("quota").First(&user, 9741).Error)
-	require.Equal(t, 960, user.Quota)
+	require.EqualValues(t, 960, user.Quota)
 }

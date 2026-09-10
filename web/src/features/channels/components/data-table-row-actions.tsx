@@ -63,6 +63,8 @@ import { useAuthStore } from '@/stores/auth-store'
 
 import {
   channelsQueryKeys,
+  canTestChannel,
+  canQueryBalanceChannel,
   handleDeleteChannel,
   handleTestChannel,
   handleToggleChannelStatus,
@@ -96,6 +98,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
 
   const isEnabled = isChannelEnabled(channel)
   const isMultiKey = isMultiKeyChannel(channel)
+  const canTestConnection = canTestChannel(channel.type)
   const canEditSensitive = hasPermission(
     currentUser,
     ADMIN_PERMISSION_RESOURCES.CHANNEL,
@@ -133,7 +136,9 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     })
   const canManageOllamaModels = channel.type === 4 && canEditSensitive
   const canQueryBalance =
-    channel.type === 57 ? canEditSensitive : canOperateChannel
+    channel.type === 57
+      ? canEditSensitive
+      : canOperateChannel && canQueryBalanceChannel(channel.type)
 
   const handleEdit = () => {
     setCurrentRow(channel)
@@ -141,12 +146,14 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   }
 
   const handleTest = () => {
+    if (!canTestConnection) return
     setCurrentRow(channel)
     setOpen('test-channel')
   }
 
   const handleDirectTest = async (e: React.MouseEvent<HTMLButtonElement>) => {
     e.stopPropagation()
+    if (!canTestConnection) return
     setIsTesting(true)
     try {
       await handleTestChannel(channel.id, { channelName: channel.name }, () => {
@@ -232,28 +239,30 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         </Tooltip>
       )}
 
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              variant='ghost'
-              size='icon-sm'
-              onClick={handleDirectTest}
-              disabled={isTesting}
-              aria-label={t('Test Connection')}
-            />
-          }
-        >
-          {isTesting ? (
-            <Loader2 className='size-4 animate-spin' />
-          ) : (
-            <Gauge className='size-4' />
-          )}
-        </TooltipTrigger>
-        <TooltipContent>{t('Test Connection')}</TooltipContent>
-      </Tooltip>
+      {canTestConnection && (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <Button
+                variant='ghost'
+                size='icon-sm'
+                onClick={handleDirectTest}
+                disabled={isTesting}
+                aria-label={t('Test Connection')}
+              />
+            }
+          >
+            {isTesting ? (
+              <Loader2 className='size-4 animate-spin' />
+            ) : (
+              <Gauge className='size-4' />
+            )}
+          </TooltipTrigger>
+          <TooltipContent>{t('Test Connection')}</TooltipContent>
+        </Tooltip>
+      )}
 
-      {layout === 'card' && (
+      {layout === 'card' && canTestConnection && (
         <Tooltip>
           <TooltipTrigger
             render={
@@ -321,13 +330,14 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             </DropdownMenuItem>
           )}
 
-          {/* Test Connection */}
-          <DropdownMenuItem onClick={handleTest}>
-            {t('Test Connection')}
-            <DropdownMenuShortcut>
-              <PlugZap size={16} />
-            </DropdownMenuShortcut>
-          </DropdownMenuItem>
+          {canTestConnection && (
+            <DropdownMenuItem onClick={handleTest}>
+              {t('Test Connection')}
+              <DropdownMenuShortcut>
+                <PlugZap size={16} />
+              </DropdownMenuShortcut>
+            </DropdownMenuItem>
+          )}
 
           {/* Query Balance */}
           <DropdownMenuItem

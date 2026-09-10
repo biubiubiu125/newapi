@@ -104,6 +104,7 @@ func InitEnv() {
 	DebugEnabled = os.Getenv("DEBUG") == "true"
 	MemoryCacheEnabled = os.Getenv("MEMORY_CACHE_ENABLED") == "true"
 	IsMasterNode = os.Getenv("NODE_TYPE") != "slave"
+	PasswordLoginEncryptionEnabled = GetEnvOrDefaultBool("PASSWORD_LOGIN_ENCRYPTION_ENABLED", false)
 	initNodeNameIdentity()
 	TLSInsecureSkipVerify = GetEnvOrDefaultBool("TLS_INSECURE_SKIP_VERIFY", false)
 	if TLSInsecureSkipVerify {
@@ -229,6 +230,8 @@ func initConstantEnv() {
 	constant.TaskTimeoutMinutes = GetEnvOrDefault("TASK_TIMEOUT_MINUTES", 1440)
 	// 异步任务连续轮询失败阈值，达到后标记失败并退款；0 表示禁用。
 	constant.TaskPollMaxFailures = GetEnvOrDefault("TASK_POLL_MAX_FAILURES", 20)
+	constant.TaskPluginEnabled = GetEnvOrDefaultBool("TASK_PLUGIN_ENABLED", true)
+	constant.TaskPluginOverrideEnabled = GetEnvOrDefaultBool("TASK_PLUGIN_OVERRIDE_ENABLED", true)
 	constant.ImageTaskWorkerEnabled = GetEnvOrDefaultBool("IMAGE_TASK_WORKER_ENABLED", true)
 	constant.ImageTaskWorkerIdleSeconds = GetEnvOrDefault("IMAGE_TASK_WORKER_IDLE_SECONDS", 5)
 	constant.ImageTaskWorkerConcurrency = GetEnvOrDefault("IMAGE_TASK_WORKER_CONCURRENCY", 0)

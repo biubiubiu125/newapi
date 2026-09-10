@@ -58,7 +58,7 @@ func TestRedeemCreatesPendingReferralCommissionJob(t *testing.T) {
 	result, err := Redeem(redemption.Key, user.Id)
 	require.NoError(t, err)
 	require.Equal(t, redemption.Id, result.RedemptionId)
-	require.Equal(t, 300, result.Quota)
+	require.EqualValues(t, 300, result.Quota)
 
 	var reloaded Redemption
 	require.NoError(t, DB.First(&reloaded, redemption.Id).Error)
@@ -157,7 +157,7 @@ func TestRedeemRejectsNonPositiveQuotaCode(t *testing.T) {
 
 	var reloadedUser User
 	require.NoError(t, DB.First(&reloadedUser, user.Id).Error)
-	require.Equal(t, 100, reloadedUser.Quota)
+	require.EqualValues(t, 100, reloadedUser.Quota)
 
 	var jobs int64
 	require.NoError(t, DB.Model(&ReferralCommissionJob{}).Where("source_type = ?", "redemption").Count(&jobs).Error)

@@ -20,6 +20,7 @@ import type { PermissionCatalog } from '@/lib/admin-permissions'
 import { api } from '@/lib/api'
 import type { CustomOAuthBinding } from '@/lib/oauth'
 
+import { encryptPasswordFields } from '../auth/lib/password-encryption'
 import type {
   User,
   GetUsersParams,
@@ -107,7 +108,8 @@ export async function getUser(id: number): Promise<ApiResponse<User>> {
 export async function createUser(
   data: UserFormData
 ): Promise<ApiResponse<User>> {
-  const res = await api.post('/api/user/', data)
+  const body = await encryptPasswordFields(data, ['password'])
+  const res = await api.post('/api/user/', body)
   return res.data
 }
 
@@ -117,7 +119,8 @@ export async function createUser(
 export async function updateUser(
   data: UserFormData & { id: number }
 ): Promise<ApiResponse<Partial<User>>> {
-  const res = await api.put('/api/user/', data)
+  const body = await encryptPasswordFields(data, ['password'])
+  const res = await api.put('/api/user/', body)
   return res.data
 }
 

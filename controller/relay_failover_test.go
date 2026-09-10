@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -116,6 +117,93 @@ func TestShouldRetryRelayFailureRetriesUpstreamStatusErrors(t *testing.T) {
 			assert.Equal(t, test.want, shouldRetry(ctx, test.err, 0))
 		})
 	}
+}
+
+func TestTaskPluginSubmissionRetryKeepsChannelIdentityFilter(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	service.AppendTaskPluginIdentityFilter(ctx, "google")
+
+	retryParam := newTaskPluginRetryParam(ctx, &relaycommon.RelayInfo{
+		TokenGroup:      "default",
+		OriginModelName: "veo",
+	})
+
+	require.NotNil(t, retryParam.ChannelFilter)
+	pluginChannel := &model.Channel{Type: constant.ChannelTypeTaskPlugin}
+	pluginChannel.SetSetting(dto.ChannelSettings{TaskPluginKey: "google"})
+	otherPluginChannel := &model.Channel{Type: constant.ChannelTypeTaskPlugin}
+	otherPluginChannel.SetSetting(dto.ChannelSettings{TaskPluginKey: "other"})
+	require.True(t, retryParam.ChannelFilter(pluginChannel))
+	require.False(t, retryParam.ChannelFilter(otherPluginChannel))
+}
+
+func TestGetChannelRebindsTaskPluginEndpointOnRetry(t *testing.T) {
+	setupModelListControllerTestDB(t)
+	previousMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = previousMemoryCacheEnabled
+	})
+
+	channel := &model.Channel{
+		Type:   1002,
+		Key:    "selected-key",
+		Status: common.ChannelStatusEnabled,
+		Name:   "selected-task-plugin-channel",
+		Models: "shared-task-model",
+		Group:  "default",
+	}
+	require.NoError(t, channel.Insert())
+
+	first := &pluginruntime.LoadedPlugin{
+		Meta: pluginruntime.Meta{Key: "first-provider", ChannelTypes: []int{1001}},
+	}
+	second := &pluginruntime.LoadedPlugin{
+		Meta: pluginruntime.Meta{Key: "second-provider", ChannelTypes: []int{1002}},
+	}
+	generation := &pluginruntime.RoutingGeneration{Number: 7}
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", nil)
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	ctx.Set(pluginruntime.ContextKeyPinnedEndpoint, pluginruntime.PinnedEndpoint{
+		Generation: generation,
+		Plugin:     first,
+		Candidates: []pluginruntime.ProtocolBinding{
+			{Plugin: first},
+			{Plugin: second},
+		},
+	})
+	ctx.Set(pluginruntime.ContextKeyPinnedPlugin, pluginruntime.PinnedPlugin{
+		Generation: generation,
+		Plugin:     first,
+	})
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "shared-task-model",
+		TokenGroup:      "default",
+		ChannelMeta:     &relaycommon.ChannelMeta{},
+	}
+	channel, taskErr := getChannel(ctx, relayInfo, &service.RetryParam{
+		Ctx:        ctx,
+		TokenGroup: "default",
+		ModelName:  "shared-task-model",
+		Retry:      common.GetPointer(0),
+	})
+
+	require.Nil(t, taskErr)
+	require.NotNil(t, channel)
+	assert.Equal(t, 1002, channel.Type)
+
+	pinnedValue, exists := ctx.Get(pluginruntime.ContextKeyPinnedPlugin)
+	require.True(t, exists)
+	pinned, ok := pinnedValue.(pluginruntime.PinnedPlugin)
+	require.True(t, ok)
+	require.NotNil(t, pinned.Plugin)
+	assert.Equal(t, second.Meta.Key, pinned.Plugin.Meta.Key)
 }
 
 func TestShouldRetryRelayFailureSkipsLocalAndSpecificChannelErrors(t *testing.T) {

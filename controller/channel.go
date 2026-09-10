@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	"github.com/QuantumNous/new-api/relay/channel/ollama"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -501,6 +502,24 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		return fmt.Errorf("渠道额外设置[channel setting] 格式错误：%s", err.Error())
 	}
 
+	if channel.Type == constant.ChannelTypeTaskPlugin {
+		taskPluginKey := strings.TrimSpace(channel.GetSetting().TaskPluginKey)
+		if taskPluginKey == "" {
+			return fmt.Errorf("task plugin key is required for task plugin channels")
+		}
+		snapshot := pluginruntime.DefaultRegistry.Snapshot()
+		registered := false
+		for _, meta := range append(snapshot.Override, snapshot.Factory...) {
+			if meta.Key == taskPluginKey {
+				registered = true
+				break
+			}
+		}
+		if !registered {
+			return fmt.Errorf("task plugin %q is not registered", taskPluginKey)
+		}
+	}
+
 	// 如果是添加操作，检查 channel 和 key 是否为空
 	if isAdd {
 		if channel.Key == "" {
@@ -542,23 +561,23 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 
 	// Codex OAuth key validation (optional, only when JSON object is provided)
 	if channel.Type == constant.ChannelTypeCodex {
-			trimmedKey := strings.TrimSpace(channel.Key)
-			if isAdd || trimmedKey != "" {
-				if !strings.HasPrefix(trimmedKey, "{") {
-					return fmt.Errorf("Codex key 必须是有效的 JSON 对象")
-				}
-				var keyMap map[string]any
-				if err := common.Unmarshal([]byte(trimmedKey), &keyMap); err != nil {
-					return fmt.Errorf("Codex key 必须是有效的 JSON 对象")
-				}
-				if v, ok := keyMap["access_token"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
-					return fmt.Errorf("Codex key JSON 必须包含 access_token")
-				}
-				if v, ok := keyMap["account_id"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
-					return fmt.Errorf("Codex key JSON 必须包含 account_id")
-				}
+		trimmedKey := strings.TrimSpace(channel.Key)
+		if isAdd || trimmedKey != "" {
+			if !strings.HasPrefix(trimmedKey, "{") {
+				return fmt.Errorf("Codex key 必须是有效的 JSON 对象")
+			}
+			var keyMap map[string]any
+			if err := common.Unmarshal([]byte(trimmedKey), &keyMap); err != nil {
+				return fmt.Errorf("Codex key 必须是有效的 JSON 对象")
+			}
+			if v, ok := keyMap["access_token"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
+				return fmt.Errorf("Codex key JSON 必须包含 access_token")
+			}
+			if v, ok := keyMap["account_id"]; !ok || v == nil || strings.TrimSpace(fmt.Sprintf("%v", v)) == "" {
+				return fmt.Errorf("Codex key JSON 必须包含 account_id")
 			}
 		}
+	}
 
 	return nil
 }
@@ -771,6 +790,11 @@ func AddChannel(c *gin.Context) {
 			"success": false,
 			"message": err.Error(),
 		})
+		return
+	}
+	if channelRequiresTaskPluginBindForCreate(addChannelRequest.Channel) &&
+		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.TaskPluginBind) {
+		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
 		return
 	}
 
@@ -1651,6 +1675,11 @@ func UpdateChannel(c *gin.Context) {
 		})
 		return
 	}
+	if channelRequiresTaskPluginBindForUpdate(originChannel, &validationChannel) &&
+		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.TaskPluginBind) {
+		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
+		return
+	}
 
 	if channelHasSensitiveChanges(&channel, originChannel, requestData) &&
 		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.ChannelSensitiveWrite) {
@@ -2087,6 +2116,11 @@ func CopyChannel(c *gin.Context) {
 	}
 	if err := validateChannel(&clone, false); err != nil {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": "渠道设置无效: " + err.Error()})
+		return
+	}
+	if channelRequiresTaskPluginBindForCreate(&clone) &&
+		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.TaskPluginBind) {
+		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
 		return
 	}
 

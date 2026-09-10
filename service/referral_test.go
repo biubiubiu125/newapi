@@ -266,7 +266,7 @@ func TestProcessRedemptionCommissionUsesConfiguredExchangeRate(t *testing.T) {
 	redemption := &model.Redemption{
 		Key:          "redemption-test-key-0000000001",
 		Name:         "paid redemption code",
-		Quota:        int(common.QuotaPerUnit * 100),
+		Quota:        int64(common.QuotaPerUnit * 100),
 		Status:       common.RedemptionCodeStatusUsed,
 		UsedUserId:   invitee.Id,
 		RedeemedTime: time.Now().Unix(),
@@ -346,7 +346,7 @@ func TestBackfillRedemptionCommissionJobsProcessesUsedCodesWithoutJobs(t *testin
 	redemption := &model.Redemption{
 		Key:          "backfill-redemption-key-0001",
 		Name:         "historical used code",
-		Quota:        int(common.QuotaPerUnit * 100),
+		Quota:        int64(common.QuotaPerUnit * 100),
 		Status:       common.RedemptionCodeStatusUsed,
 		UsedUserId:   invitee.Id,
 		RedeemedTime: time.Now().Unix(),
@@ -355,7 +355,7 @@ func TestBackfillRedemptionCommissionJobsProcessesUsedCodesWithoutJobs(t *testin
 	disabledRedemption := &model.Redemption{
 		Key:                      "backfill-disabled-redeemed-key-0001",
 		Name:                     "historical disabled redeemed code",
-		Quota:                    int(common.QuotaPerUnit * 100),
+		Quota:                    int64(common.QuotaPerUnit * 100),
 		Status:                   common.RedemptionCodeStatusDisabled,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             time.Now().Unix(),
@@ -366,7 +366,7 @@ func TestBackfillRedemptionCommissionJobsProcessesUsedCodesWithoutJobs(t *testin
 	succeededIncompleteRedemption := &model.Redemption{
 		Key:                      "backfill-redemption-succeeded-0001",
 		Name:                     "already processed code",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             time.Now().Unix(),
@@ -455,7 +455,7 @@ func TestBackfillRedemptionCommissionJobsUsesSucceededCursor(t *testing.T) {
 		redemption := &model.Redemption{
 			Key:                      key,
 			Name:                     key,
-			Quota:                    int(common.QuotaPerUnit),
+			Quota:                    int64(common.QuotaPerUnit),
 			Status:                   common.RedemptionCodeStatusUsed,
 			UsedUserId:               invitee.Id,
 			RedeemedTime:             time.Now().Unix(),
@@ -507,7 +507,7 @@ func TestBackfillRedemptionCommissionJobsUsesSucceededCursor(t *testing.T) {
 	incompleteRedemption := &model.Redemption{
 		Key:                      "backfill-cursor-incomplete-0001",
 		Name:                     "backfill cursor incomplete",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             time.Now().Unix(),
@@ -748,7 +748,7 @@ func TestProcessRedemptionCommissionCreatesSkippedJobWithoutBinding(t *testing.T
 	redemption := &model.Redemption{
 		Key:                      "redemption-no-binding-key-001",
 		Name:                     "no binding redemption code",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             time.Now().Unix(),
@@ -919,7 +919,7 @@ func TestProcessRedemptionCommissionCreatesMissingSkippedTerminalJob(t *testing.
 	redemption := &model.Redemption{
 		Key:                      "redemption-skipped-missing-job",
 		Name:                     "skipped missing job",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             now,
@@ -951,7 +951,7 @@ func TestBackfillRedemptionCommissionJobsProcessesSkippedTerminalWithoutJob(t *t
 	redemption := &model.Redemption{
 		Key:                      "redemption-backfill-skipped-missing-job",
 		Name:                     "backfill skipped missing job",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             now,
@@ -1002,7 +1002,7 @@ func TestRetryCommissionJobSyncsTerminalRedemptionJob(t *testing.T) {
 	succeededRedemption := &model.Redemption{
 		Key:                      "redemption-terminal-succeeded-job",
 		Name:                     "terminal succeeded stale job",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             now,
@@ -1077,7 +1077,7 @@ func TestRetryCommissionJobSyncsTerminalRedemptionJob(t *testing.T) {
 	skippedRedemption := &model.Redemption{
 		Key:                      "redemption-terminal-skipped-job",
 		Name:                     "terminal skipped stale job",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               902,
 		RedeemedTime:             now,
@@ -1134,7 +1134,7 @@ func TestRetryCommissionJobReconcilesMismatchedTerminalRedemptionJob(t *testing.
 	succeededRedemption := &model.Redemption{
 		Key:                      "redemption-terminal-mismatch-success",
 		Name:                     "terminal mismatch success",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             now,
@@ -1211,7 +1211,7 @@ func TestRetryCommissionJobReconcilesMismatchedTerminalRedemptionJob(t *testing.
 	accountedSkippedRedemption := &model.Redemption{
 		Key:                      "redemption-terminal-skipped-with-commission",
 		Name:                     "terminal skipped with completed commission",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             now,
@@ -1294,7 +1294,7 @@ func TestRetryCommissionJobReconcilesMismatchedTerminalRedemptionJob(t *testing.
 	staleSuccessRedemption := &model.Redemption{
 		Key:                      "redemption-terminal-success-stale-snapshot",
 		Name:                     "terminal success stale snapshot",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             now,
@@ -1380,7 +1380,7 @@ func TestRetryCommissionJobReconcilesMismatchedTerminalRedemptionJob(t *testing.
 	skippedRedemption := &model.Redemption{
 		Key:                      "redemption-terminal-mismatch-skipped",
 		Name:                     "terminal mismatch skipped",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             now,
@@ -1436,7 +1436,7 @@ func TestRetryCommissionJobRebuildsIncompleteTerminalRedemptionSuccess(t *testin
 	redemption := &model.Redemption{
 		Key:                      "redemption-incomplete-terminal-success",
 		Name:                     "incomplete terminal success",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             now,
@@ -1514,7 +1514,7 @@ func TestRetryCommissionJobSyncsSourceWhenSucceededJobChainIsComplete(t *testing
 	redemption := &model.Redemption{
 		Key:                      "redemption-succeeded-job-source-stale",
 		Name:                     "stale failed source with succeeded job",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             now,
@@ -1613,7 +1613,7 @@ func TestRetryCommissionJobReconcilesNonTerminalRedemptionSourceWithCompletedCom
 	redemption := &model.Redemption{
 		Key:                      "redemption-non-terminal-complete-chain",
 		Name:                     "non terminal source with completed chain",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             now,
@@ -1712,7 +1712,7 @@ func TestRetryCommissionJobSyncsSourceWhenSkippedJobIsTerminal(t *testing.T) {
 	redemption := &model.Redemption{
 		Key:                      "redemption-skipped-job-source-stale",
 		Name:                     "stale failed source with skipped job",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             now,
@@ -1767,7 +1767,7 @@ func TestRetryCommissionJobRejectsSkippedRedemptionSourceWithResidualCommission(
 	redemption := &model.Redemption{
 		Key:                      "redemption-skipped-residual-commission",
 		Name:                     "skipped source with residual commission",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             now,
@@ -1841,7 +1841,7 @@ func TestRetryCommissionJobRejectsExistingRedemptionCommissionWithoutLedger(t *t
 	redemption := &model.Redemption{
 		Key:                      "redemption-existing-commission-no-ledger",
 		Name:                     "existing commission without ledger",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             now,
@@ -1923,7 +1923,7 @@ func TestDeleteInvalidRedemptionsKeepsUnresolvedRedemptionCommissions(t *testing
 	failedRedemption := &model.Redemption{
 		Key:                      "redemption-delete-protect-001",
 		Name:                     "failed redemption code",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               1,
 		RedeemedTime:             time.Now().Unix(),
@@ -1934,7 +1934,7 @@ func TestDeleteInvalidRedemptionsKeepsUnresolvedRedemptionCommissions(t *testing
 	unprocessedRedemption := &model.Redemption{
 		Key:          "redemption-delete-protect-empty-001",
 		Name:         "unprocessed redemption code",
-		Quota:        int(common.QuotaPerUnit),
+		Quota:        int64(common.QuotaPerUnit),
 		Status:       common.RedemptionCodeStatusUsed,
 		UsedUserId:   3,
 		RedeemedTime: time.Now().Unix(),
@@ -1956,7 +1956,7 @@ func TestDeleteInvalidRedemptionsKeepsUnresolvedRedemptionCommissions(t *testing
 	succeededRedemption := &model.Redemption{
 		Key:                      "redemption-delete-allowed-001",
 		Name:                     "succeeded redemption code",
-		Quota:                    int(common.QuotaPerUnit),
+		Quota:                    int64(common.QuotaPerUnit),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               succeededInvitee.Id,
 		RedeemedTime:             time.Now().Unix(),
@@ -2051,7 +2051,7 @@ func TestRetryCommissionJobLoadsSoftDeletedRedemption(t *testing.T) {
 	redemption := &model.Redemption{
 		Key:                      "redemption-soft-deleted-key-01",
 		Name:                     "soft deleted redemption code",
-		Quota:                    int(common.QuotaPerUnit * 10),
+		Quota:                    int64(common.QuotaPerUnit * 10),
 		Status:                   common.RedemptionCodeStatusUsed,
 		UsedUserId:               invitee.Id,
 		RedeemedTime:             time.Now().Unix(),

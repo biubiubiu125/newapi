@@ -76,24 +76,25 @@ func GetStatus(c *gin.Context) {
 		"docs_link":                   operation_setting.GetGeneralSetting().DocsLink,
 		"quota_per_unit":              common.QuotaPerUnit,
 		// 兼容旧前端：保留 display_in_currency，同时提供新的 quota_display_type
-		"display_in_currency":           operation_setting.IsCurrencyDisplay(),
-		"quota_display_type":            operation_setting.GetQuotaDisplayType(),
-		"custom_currency_symbol":        operation_setting.GetGeneralSetting().CustomCurrencySymbol,
-		"custom_currency_exchange_rate": operation_setting.GetGeneralSetting().CustomCurrencyExchangeRate,
-		"enable_batch_update":           common.BatchUpdateEnabled,
-		"enable_drawing":                common.DrawingEnabled,
-		"enable_task":                   common.TaskEnabled,
-		"enable_data_export":            common.DataExportEnabled,
-		"data_export_default_time":      common.DataExportDefaultTime,
-		"default_collapse_sidebar":      common.DefaultCollapseSidebar,
-		"mj_notify_enabled":             setting.MjNotifyEnabled,
-		"chats":                         setting.Chats,
-		"demo_site_enabled":             operation_setting.DemoSiteEnabled,
-		"self_use_mode_enabled":         operation_setting.SelfUseModeEnabled,
-		"register_enabled":              common.RegisterEnabled,
-		"password_login_enabled":        common.PasswordLoginEnabled,
-		"password_register_enabled":     common.PasswordRegisterEnabled,
-		"default_use_auto_group":        setting.DefaultUseAutoGroup,
+		"display_in_currency":               operation_setting.IsCurrencyDisplay(),
+		"quota_display_type":                operation_setting.GetQuotaDisplayType(),
+		"custom_currency_symbol":            operation_setting.GetGeneralSetting().CustomCurrencySymbol,
+		"custom_currency_exchange_rate":     operation_setting.GetGeneralSetting().CustomCurrencyExchangeRate,
+		"enable_batch_update":               common.BatchUpdateEnabled,
+		"enable_drawing":                    common.DrawingEnabled,
+		"enable_task":                       common.TaskEnabled,
+		"enable_data_export":                common.DataExportEnabled,
+		"data_export_default_time":          common.DataExportDefaultTime,
+		"default_collapse_sidebar":          common.DefaultCollapseSidebar,
+		"mj_notify_enabled":                 setting.MjNotifyEnabled,
+		"chats":                             setting.Chats,
+		"demo_site_enabled":                 operation_setting.DemoSiteEnabled,
+		"self_use_mode_enabled":             operation_setting.SelfUseModeEnabled,
+		"register_enabled":                  common.RegisterEnabled,
+		"password_login_enabled":            common.PasswordLoginEnabled,
+		"password_login_encryption_enabled": common.PasswordLoginEncryptionEnabled,
+		"password_register_enabled":         common.PasswordRegisterEnabled,
+		"default_use_auto_group":            setting.DefaultUseAutoGroup,
 
 		"usd_exchange_rate": operation_setting.USDExchangeRate,
 		"price":             operation_setting.Price,
@@ -363,7 +364,16 @@ func ResetPassword(c *gin.Context) {
 		})
 		return
 	}
-	if !common.VerifyCodeWithKey(email, req.Token, common.PasswordResetPurpose) {
+	resetUser, lookupErr := model.GetUniqueUserByEmail(email)
+	if lookupErr != nil || resetUser == nil ||
+		resetUser.Status != common.UserStatusEnabled || resetUser.DeletedAt.Valid {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": "重置链接非法或已过期",
+		})
+		return
+	}
+	if !common.ConsumeCodeWithKey(email, req.Token, common.PasswordResetPurpose) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
 			"message": "重置链接非法或已过期",
@@ -376,7 +386,6 @@ func ResetPassword(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	common.DeleteKey(email, common.PasswordResetPurpose)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",

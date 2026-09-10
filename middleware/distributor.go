@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	taskdto "github.com/QuantumNous/new-api/relaykit/dto"
@@ -52,6 +53,10 @@ func Distribute() func(c *gin.Context) {
 			}
 			if channel.Status != common.ChannelStatusEnabled {
 				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
+				return
+			}
+			if !service.ChannelSatisfiesConstraints(channel, service.GetChannelConstraints(c)) {
+				abortWithOpenAiMessage(c, http.StatusBadRequest, "selected channel does not satisfy request constraints")
 				return
 			}
 		} else {
@@ -107,7 +112,8 @@ func Distribute() func(c *gin.Context) {
 					affinityUsable := false
 					preferred, err := model.CacheGetChannel(preferredChannelID)
 					if err == nil && preferred != nil && preferred.Status == common.ChannelStatusEnabled &&
-						channelSupportsRequestPath(preferred, requestPathForChannelSelection, modelRequest.Model) {
+						channelSupportsRequestPath(preferred, requestPathForChannelSelection, modelRequest.Model) &&
+						service.ChannelSatisfiesConstraints(preferred, service.GetChannelConstraints(c)) {
 						if usingGroup == "auto" {
 							userGroup := common.GetContextKeyString(c, constant.ContextKeyUserGroup)
 							autoGroups := service.GetRequestAutoGroups(c, userGroup)
@@ -135,11 +141,12 @@ func Distribute() func(c *gin.Context) {
 
 				if channel == nil {
 					channel, selectGroup, err = service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
-						Ctx:         c,
-						ModelName:   modelRequest.Model,
-						TokenGroup:  usingGroup,
-						RequestPath: requestPathForChannelSelection,
-						Retry:       common.GetPointer(0),
+						Ctx:           c,
+						ModelName:     modelRequest.Model,
+						TokenGroup:    usingGroup,
+						RequestPath:   requestPathForChannelSelection,
+						Retry:         common.GetPointer(0),
+						ChannelFilter: service.TaskPluginChannelFilter(c),
 					})
 					if err != nil {
 						showGroup := usingGroup
@@ -156,19 +163,42 @@ func Distribute() func(c *gin.Context) {
 						return
 					}
 					if channel == nil {
-						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": usingGroup, "Model": modelRequest.Model}), types.ErrorCodeModelNotFound)
+						abortWithOpenAiMessage(c, http.StatusServiceUnavailable, noAvailableChannelMessage(c, usingGroup, modelRequest.Model), types.ErrorCodeModelNotFound)
 						return
 					}
 				}
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		SetupContextForSelectedChannel(c, channel, modelRequest.Model)
+		if setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model); setupErr != nil {
+			statusCode := setupErr.StatusCode
+			if statusCode < http.StatusBadRequest {
+				statusCode = http.StatusInternalServerError
+			}
+			abortWithOpenAiMessage(c, statusCode, setupErr.Error(), setupErr.GetErrorCode())
+			return
+		}
 		c.Next()
 		if channel != nil && c.Writer != nil && c.Writer.Status() < http.StatusBadRequest {
 			service.RecordChannelAffinity(c, channel.Id)
 		}
 	}
+}
+
+// noAvailableChannelMessage explains why a task-plugin-claimed model has no
+// fallback channel. Plugin declarations own their model names statically, so
+// another plugin or channel must not silently take over at request time.
+func noAvailableChannelMessage(c *gin.Context, group, modelName string) string {
+	value, exists := c.Get(pluginruntime.ContextKeyPinnedPlugin)
+	pinned, ok := value.(pluginruntime.PinnedPlugin)
+	if exists && ok && pinned.Plugin != nil {
+		return i18n.T(c, i18n.MsgDistributorNoAvailableChannelTaskPlugin, map[string]any{
+			"Group":  group,
+			"Model":  modelName,
+			"Plugin": pinned.Plugin.Meta.Key,
+		})
+	}
+	return i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": group, "Model": modelName})
 }
 
 func channelSelectionRequestPath(c *gin.Context) string {
@@ -532,6 +562,7 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	case constant.ChannelTypeCoze:
 		c.Set("bot_id", channel.Other)
 	}
+	rebindTaskPluginEndpointForSelectedChannel(c, channel)
 	return nil
 }
 

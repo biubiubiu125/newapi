@@ -1,6 +1,11 @@
 package controller
 
-import "github.com/QuantumNous/new-api/model"
+import (
+	"strings"
+
+	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/model"
+)
 
 func channelHasSensitiveChanges(channel *PatchChannel, origin *model.Channel, requestData map[string]any) bool {
 	if _, ok := requestData["type"]; ok && channel.Type != origin.Type {
@@ -115,6 +120,27 @@ func clearChannelReadOnlyFields(channel *PatchChannel, requestData map[string]an
 	if _, ok := requestData["used_quota"]; ok {
 		channel.UsedQuota = 0
 	}
+}
+
+func channelRequiresTaskPluginBindForCreate(channel *model.Channel) bool {
+	return channel != nil && channel.Type == constant.ChannelTypeTaskPlugin
+}
+
+func channelRequiresTaskPluginBindForUpdate(origin, channel *model.Channel) bool {
+	if origin == nil || channel == nil {
+		return false
+	}
+
+	if origin.Type != constant.ChannelTypeTaskPlugin && channel.Type != constant.ChannelTypeTaskPlugin {
+		return false
+	}
+	if origin.Type != channel.Type {
+		return true
+	}
+
+	originTaskPluginKey := strings.TrimSpace(origin.GetSetting().TaskPluginKey)
+	channelTaskPluginKey := strings.TrimSpace(channel.GetSetting().TaskPluginKey)
+	return originTaskPluginKey != channelTaskPluginKey
 }
 
 // channelNonSensitiveFields lists routing / server-managed channel

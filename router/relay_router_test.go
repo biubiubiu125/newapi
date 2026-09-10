@@ -42,6 +42,20 @@ func TestSetRelayRouterRegistersPublicImageTaskRoutes(t *testing.T) {
 	}
 }
 
+func TestSetRelayRouterRegistersAlphaSearchRoute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	SetRelayRouter(engine)
+
+	routes := make(map[string]struct{})
+	for _, route := range engine.Routes() {
+		routes[route.Method+" "+route.Path] = struct{}{}
+	}
+
+	_, exists := routes[http.MethodPost+" /v1/alpha/search"]
+	require.True(t, exists, "missing route POST /v1/alpha/search")
+}
+
 // 状态/结果/ACK/取消是以轮询为前提的接口，既不经过 ModelRequestRateLimit（无模型维度），
 // 也不在 /api 的 GlobalAPIRateLimit 覆盖范围内，必须挂上专用限流；且必须排在鉴权之后
 // 才能按用户和令牌隔离额度。
@@ -111,8 +125,11 @@ func TestPublicImageTaskResultRouteAllowsSignedAndBearerAccess(t *testing.T) {
 	}
 	authIndex := findHandler("TokenAuthForImageTaskResultAccess")
 	rateLimitIndex := findHandler("ImageTaskResultAccessRateLimit")
+	redactIndex := findHandler("RedactTaskArtifactAccessQuery")
+	require.NotEqual(t, -1, redactIndex, handlerNames)
 	require.NotEqual(t, -1, authIndex, handlerNames)
 	require.NotEqual(t, -1, rateLimitIndex, handlerNames)
+	require.Less(t, redactIndex, authIndex, handlerNames)
 	require.Less(t, authIndex, rateLimitIndex, handlerNames)
 }
 

@@ -64,6 +64,7 @@ import {
   getChannelTypeIcon,
   getChannelTypeLabel,
   getResponseTimeConfig,
+  canQueryBalanceChannel,
   isMultiKeyChannel,
   parseModelsList,
   parseGroupsList,
@@ -423,6 +424,9 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const variant = getBalanceVariant(balance)
 
   const handleClickUpdate = async () => {
+    if (!canQueryBalanceChannel(channel.type)) {
+      return
+    }
     if (isUpdating) {
       return
     }
@@ -523,14 +527,23 @@ export function BalanceCell({ channel }: { channel: Channel }) {
                 size='sm'
                 copyable={false}
                 showDot={false}
-                className='cursor-pointer'
-                onClick={handleClickUpdate}
+                className={
+                  canQueryBalanceChannel(channel.type)
+                    ? 'cursor-pointer'
+                    : 'cursor-default'
+                }
+                onClick={
+                  canQueryBalanceChannel(channel.type)
+                    ? handleClickUpdate
+                    : undefined
+                }
               />
             }
           />
           <TooltipContent>
             <p>{remainingTooltipLabel}</p>
-            {channel.type !== 57 && <p>{t('Click to update balance')}</p>}
+            {canQueryBalanceChannel(channel.type) &&
+              channel.type !== 57 && <p>{t('Click to update balance')}</p>}
           </TooltipContent>
         </Tooltip>
       </div>

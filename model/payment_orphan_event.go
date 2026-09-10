@@ -252,12 +252,8 @@ func creditExistingPaymentOrphan(id int64, resolvedBy int, callerIP string) erro
 			if err := tx.Save(topUp).Error; err != nil {
 				return err
 			}
-			update := tx.Model(&User{}).Where("id = ?", topUp.UserId).Update("quota", gorm.Expr("quota + ?", quota))
-			if update.Error != nil {
-				return update.Error
-			}
-			if update.RowsAffected != 1 {
-				return ErrPaymentOrphanNotCredit
+			if err := creditTopUpQuota(tx, topUp.UserId, quota, nil); err != nil {
+				return err
 			}
 			markPaymentOrphanCredited(orphan, resolvedBy, now, paymentOrphanTopUpResolutionNote(topUp.UserId, topUp.PaidAmount, topUp.PaidCurrency, int64(quota)))
 			if err := tx.Save(orphan).Error; err != nil {
@@ -612,15 +608,11 @@ func CreditStripePaymentOrphan(id int64, resolvedBy int, callerIP string) error 
 		if err := tx.Create(topUp).Error; err != nil {
 			return err
 		}
-		updates := map[string]interface{}{
-			"quota": gorm.Expr("quota + ?", quota),
-		}
+		updates := map[string]interface{}{}
 		if strings.TrimSpace(user.StripeCustomer) == "" {
 			updates["stripe_customer"] = customerID
 		}
-		if err := tx.Model(&User{}).
-			Where("id = ?", user.Id).
-			Updates(updates).Error; err != nil {
+		if err := creditTopUpQuota(tx, user.Id, quota, updates); err != nil {
 			return err
 		}
 		userID = user.Id

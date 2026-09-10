@@ -127,9 +127,9 @@ func taskAdjustFunding(task *model.Task, delta int) error {
 		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
 	}
 	if delta > 0 {
-		return model.DecreaseUserQuota(task.UserId, delta, false)
+		return model.DecreaseUserQuota(task.UserId, int64(delta), false)
 	}
-	return model.IncreaseUserQuota(task.UserId, -delta, false)
+	return model.IncreaseUserQuota(task.UserId, int64(-delta), false)
 }
 
 // taskAdjustTokenQuota adjusts token quota. Positive delta charges, negative delta refunds.
@@ -143,9 +143,9 @@ func taskAdjustTokenQuota(ctx context.Context, task *model.Task, delta int) (boo
 	}
 	var err error
 	if delta > 0 {
-		err = model.DecreaseTokenQuota(task.PrivateData.TokenId, tokenKey, delta)
+		err = model.DecreaseTokenQuota(task.PrivateData.TokenId, tokenKey, int64(delta))
 	} else {
-		err = model.IncreaseTokenQuota(task.PrivateData.TokenId, tokenKey, -delta)
+		err = model.IncreaseTokenQuota(task.PrivateData.TokenId, tokenKey, int64(-delta))
 	}
 	if err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("adjust token quota failed (delta=%d, task=%s): %s", delta, task.TaskID, err.Error()))
@@ -166,7 +166,7 @@ func taskAdjustRefundTokenQuota(ctx context.Context, task *model.Task, delta int
 	if tokenKey == "" {
 		logger.LogWarn(ctx, fmt.Sprintf("token key unavailable, continue quota adjustment by token id (tokenId=%d, task=%s)", task.PrivateData.TokenId, task.TaskID))
 	}
-	tokenDelta, err := model.IncreaseTokenQuotaTracked(task.PrivateData.TokenId, tokenKey, -delta)
+	tokenDelta, err := model.IncreaseTokenQuotaTracked(task.PrivateData.TokenId, tokenKey, int64(-delta))
 	if err != nil && delta < 0 && model.IsTokenQuotaNoRowsError(err) {
 		logger.LogWarn(ctx, fmt.Sprintf("skip token quota refund because token no longer exists (task=%s, tokenId=%d): %s", task.TaskID, task.PrivateData.TokenId, err.Error()))
 		return false, taskTokenQuotaSnapshot{}, nil
@@ -188,8 +188,8 @@ type taskTokenQuotaSnapshot struct {
 	valid       bool
 	tokenId     int
 	key         string
-	remainQuota int
-	usedQuota   int
+	remainQuota int64
+	usedQuota   int64
 }
 
 func rollbackRefundedTaskTokenQuota(ctx context.Context, task *model.Task, snapshot taskTokenQuotaSnapshot, fallbackQuota int) error {

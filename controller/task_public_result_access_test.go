@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
@@ -117,6 +118,45 @@ func TestGetPublicImageTaskResultServesStoredResultWithSignedAccess(t *testing.T
 
 	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
 	assert.JSONEq(t, `{"data":[{"b64_json":"c3RvcmVkLXJlc3VsdA=="}]}`, recorder.Body.String())
+}
+
+func TestGetPublicImageTaskResultServesStoredResultWithRedactedSignedAccess(t *testing.T) {
+	setupSignedImageTaskResultTestDB(t)
+	gin.SetMode(gin.TestMode)
+	require.NoError(t, model.DB.Create(&model.User{
+		Id:       802,
+		Username: "signed-result-redacted-owner",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	task := newSignedImageTaskResultFixture(t, "signed-result-redacted-task", 802, true, constant.TaskPlatformImage)
+	access, err := service.IssueTaskArtifactAccess(task.TaskID, testPublicImageTaskResultArtifactKey)
+	require.NoError(t, err)
+
+	var capturedRequestURI string
+	engine := gin.New()
+	engine.Use(func(c *gin.Context) {
+		c.Next()
+		capturedRequestURI = c.Request.RequestURI
+	})
+	engine.GET("/v1/image-tasks/:task_id/result",
+		middleware.RedactTaskArtifactAccessQuery(),
+		middleware.TokenAuthForImageTaskResultAccess(),
+		middleware.ImageTaskResultAccessRateLimit(),
+		GetPublicImageTaskResult,
+	)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(
+		http.MethodGet,
+		"/v1/image-tasks/"+url.PathEscape(task.TaskID)+"/result?access="+url.QueryEscape(access),
+		nil,
+	)
+	engine.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	assert.JSONEq(t, `{"data":[{"b64_json":"c3RvcmVkLXJlc3VsdA=="}]}`, recorder.Body.String())
+	assert.NotContains(t, capturedRequestURI, "access=")
 }
 
 func TestGetPublicImageTaskResultRejectsTamperedAccessBeforeTaskLookup(t *testing.T) {

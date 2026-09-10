@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -526,14 +527,9 @@ func GetPublicImageTaskResult(c *gin.Context) {
 }
 
 func loadPublicImageTaskResult(c *gin.Context) (*model.Task, bool) {
-	accessValues := c.QueryArray(service.TaskArtifactAccessQueryParameter)
-	if len(accessValues) > 0 {
-		access := ""
-		if len(accessValues) == 1 {
-			access = strings.TrimSpace(accessValues[0])
-		}
-		if len(accessValues) != 1 ||
-			!service.VerifyTaskArtifactAccess(access, c.Param("task_id"), service.TaskArtifactResultArtifactKey) {
+	access, present, invalid := middleware.ReadTaskArtifactAccessRequest(c)
+	if present {
+		if invalid || !service.VerifyTaskArtifactAccess(access, c.Param("task_id"), service.TaskArtifactResultArtifactKey) {
 			publicImageTaskError(c, http.StatusNotFound, "task_not_found", "image task not found")
 			return nil, false
 		}
@@ -684,6 +680,7 @@ func CancelPublicImageTask(c *gin.Context) {
 		return
 	}
 	fromStatus := task.Status
+	base := task.CloneForUpdate()
 	task.Status = model.TaskStatusFailure
 	task.Progress = "100%"
 	task.FailReason = "image task cancelled by client"
@@ -717,7 +714,7 @@ func CancelPublicImageTask(c *gin.Context) {
 	task.PrivateData.SettlementEvidenceCapturedAt = 0
 	task.RefundPending = task.Quota != 0
 	task.ClearImageTaskExecutionSecrets()
-	won, err := updateImageTaskSyncBridgeCancelledBeforeExecution(task, fromStatus, now)
+	won, err := model.ApplyImageTaskCancelBeforeExecutionFrom(task, base, fromStatus, now)
 	if err != nil {
 		publicImageTaskError(c, http.StatusInternalServerError, "cancel_failed", "failed to cancel image task")
 		return

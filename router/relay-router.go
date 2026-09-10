@@ -63,6 +63,7 @@ func SetRelayRouter(router *gin.Engine) {
 	imageTaskRouter := router.Group("/v1/image-tasks")
 	imageTaskRouter.Use(middleware.RouteTag("relay"))
 	imageTaskRouter.Use(middleware.SystemPerformanceCheck())
+	imageTaskRouter.Use(middleware.RedactTaskArtifactAccessQuery())
 	{
 		imageTaskCreateRouter := imageTaskRouter.Group("")
 		imageTaskCreateRouter.Use(middleware.TokenAuthForImageTaskCreation())
@@ -125,12 +126,16 @@ func SetRelayRouter(router *gin.Engine) {
 			controller.Relay(c, types.RelayFormatOpenAI)
 		})
 
-		// response related routes
-		httpRouter.POST("/responses", func(c *gin.Context) {
-			controller.Relay(c, types.RelayFormatOpenAIResponses)
-		})
+		// response related routes: /v1/responses is registered by the
+		// task-plugin protocol router so claimed models can enter the plugin
+		// bridge and unclaimed models fall back to the normal Responses relay.
 		httpRouter.POST("/responses/compact", func(c *gin.Context) {
 			controller.Relay(c, types.RelayFormatOpenAIResponsesCompaction)
+		})
+
+		// alpha search related routes (Codex standalone web search)
+		httpRouter.POST("/alpha/search", func(c *gin.Context) {
+			controller.Relay(c, types.RelayFormatOpenAIAlphaSearch)
 		})
 
 		// image related routes
