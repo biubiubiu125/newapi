@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -209,4 +210,63 @@ func auditResponseSuccess(status int, body []byte) bool {
 		}
 	}
 	return status < 400
+}
+
+// TokenOperationAudit runs after UserAuth. Handlers add only allowlisted metadata.
+func TokenOperationAudit() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		var action string
+		switch c.Request.Method + " " + c.FullPath() {
+		case "POST /api/token/":
+			action = "token.create"
+		case "PUT /api/token/":
+			action = "token.update"
+			if c.Query("status_only") != "" {
+				action = "token.status_update"
+			}
+		case "DELETE /api/token/:id":
+			action = "token.delete"
+		case "POST /api/token/batch":
+			action = "token.delete_batch"
+		case "POST /api/token/:id/key":
+			action = "token.key_view"
+		case "POST /api/token/batch/keys":
+			action = "token.key_view_batch"
+		default:
+			c.Next()
+			return
+		}
+
+		params := map[string]interface{}{}
+		if id, err := strconv.Atoi(c.Param("id")); err == nil && id > 0 {
+			params["id"] = id
+		}
+		common.SetContextKey(c, constant.ContextKeyTokenAuditParams, params)
+		writer := &auditResponseWriter{ResponseWriter: c.Writer, body: bytes.NewBuffer(nil), maxSize: 64 * 1024}
+		c.Writer = writer
+		c.Next()
+		if merged, ok := common.GetContextKeyType[map[string]interface{}](c, constant.ContextKeyTokenAuditParams); ok && merged != nil {
+			params = merged
+		}
+		success := auditResponseSuccess(writer.Status(), writer.body.Bytes())
+		if writer.body.Len() == writer.maxSize {
+			success = writer.Status() < 400 && common.GetContextKeyBool(c, constant.ContextKeyTokenAuditSucceeded)
+		}
+		if !success {
+			params["failure"] = true
+		}
+		content := action
+		if !success {
+			content = "Failed " + action
+		}
+		model.RecordOperationAuditLog(
+			c.GetInt("id"),
+			content,
+			c.ClientIP(),
+			action,
+			params,
+			map[string]interface{}{"username": c.GetString("username"), "role": c.GetInt("role")},
+			map[string]interface{}{"method": c.Request.Method, "route": c.FullPath(), "status": writer.Status(), "success": success},
+		)
+	}
 }

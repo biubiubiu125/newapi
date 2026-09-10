@@ -29,6 +29,13 @@ var auditContentTemplates = map[string]string{
 	"user.passkey_delete":   "Deleted a passkey",
 	"user.reset_passkey":    "Reset the user passkey",
 	"option.update":         "Updated system setting ${key}",
+	"token.create":          "Created API token ${name}",
+	"token.update":          "Updated API token ${name} (ID: ${id})",
+	"token.status_update":   "Updated API token status ${name} (ID: ${id})",
+	"token.delete":          "Deleted API token ${name} (ID: ${id})",
+	"token.delete_batch":    "Batch deleted ${count} API tokens",
+	"token.key_view":        "Viewed API token key ${name} (ID: ${id})",
+	"token.key_view_batch":  "Viewed ${count} API token keys",
 
 	"channel.create":              "Created channel ${name} (type ${type}, count ${count})",
 	"channel.update":              "Updated channel ${name} (ID: ${id})",
@@ -124,4 +131,27 @@ func recordManageAuditFor(c *gin.Context, targetUserId int, action string, param
 // 这类日志没有管理员操作者，不写 admin_info；同时不依赖 AdminAuth/RootAuth 的兜底。
 func recordUserSecurityAudit(c *gin.Context, userId int, action string, params map[string]interface{}) {
 	model.RecordOperationAuditLog(userId, auditContentEN(action, params), c.ClientIP(), action, params, nil, nil)
+}
+
+func tokenAuditParams(c *gin.Context) map[string]interface{} {
+	params, ok := common.GetContextKeyType[map[string]interface{}](c, constant.ContextKeyTokenAuditParams)
+	if !ok || params == nil {
+		params = map[string]interface{}{}
+		common.SetContextKey(c, constant.ContextKeyTokenAuditParams, params)
+	}
+	return params
+}
+
+func tokenBatchAuditParams(c *gin.Context, ids []int) map[string]interface{} {
+	params := tokenAuditParams(c)
+	params["total"] = len(ids)
+	limit := len(ids)
+	if limit > 100 {
+		limit = 100
+		params["requested_ids_truncated"] = true
+	}
+	copied := make([]int, limit)
+	copy(copied, ids[:limit])
+	params["requested_ids"] = copied
+	return params
 }

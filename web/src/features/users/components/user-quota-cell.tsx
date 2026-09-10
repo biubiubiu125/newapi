@@ -18,13 +18,9 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
+import { QuotaDetailsPopover } from '@/components/quota-details-popover'
 import { StatusBadge } from '@/components/status-badge'
 import { Progress } from '@/components/ui/progress'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
 import { formatQuota } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -58,12 +54,17 @@ export function UserQuotaCell(props: UserQuotaCellProps) {
   }
 
   return (
-    <Tooltip>
-      <TooltipTrigger
-        render={
-          <div className='w-full min-w-0 cursor-help space-y-1.5 overflow-hidden' />
-        }
-      >
+    <QuotaDetailsPopover
+      title={t('Quota')}
+      triggerLabel={t('View quota details')}
+      details={[
+        { label: t('Used'), value: formatQuota(props.used) },
+        { label: t('Remaining'), value: formattedRemaining },
+        { label: t('Total'), value: formattedTotal },
+        { label: t('Percentage'), value: `${percentage.toFixed(1)}%` },
+      ]}
+    >
+      <div className='w-full min-w-0 space-y-1.5 overflow-hidden'>
         <div className='grid min-w-0 grid-cols-2 gap-x-4 text-xs'>
           <span className='min-w-0 truncate font-medium tabular-nums'>
             {formattedRemaining}
@@ -76,23 +77,7 @@ export function UserQuotaCell(props: UserQuotaCellProps) {
           value={percentage}
           className={cn('h-1.5', getQuotaProgressColor(percentage))}
         />
-      </TooltipTrigger>
-      <TooltipContent>
-        <div className='space-y-1 text-xs'>
-          <div>
-            {t('Used:')} {formatQuota(props.used)}
-          </div>
-          <div>
-            {t('Remaining:')} {formattedRemaining}
-          </div>
-          <div>
-            {t('Total:')} {formattedTotal}
-          </div>
-          <div>
-            {t('Percentage:')} {percentage.toFixed(1)}%
-          </div>
-        </div>
-      </TooltipContent>
-    </Tooltip>
+      </div>
+    </QuotaDetailsPopover>
   )
 }
