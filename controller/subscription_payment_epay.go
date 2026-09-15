@@ -183,7 +183,7 @@ func SubscriptionEpayNotify(c *gin.Context) {
 	}
 
 	if verifyInfo.TradeStatus != epay.StatusTradeSuccess {
-		_, _ = c.Writer.Write([]byte("fail"))
+		_, _ = c.Writer.Write([]byte("success"))
 		return
 	}
 

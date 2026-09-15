@@ -646,7 +646,7 @@ func EpayNotify(c *gin.Context) {
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("epay webhook signature verified trade_no=%s callback_type=%s trade_status=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, common.GetClientIP(c)))
 	if verifyInfo.TradeStatus != epay.StatusTradeSuccess {
 		logger.LogInfo(c.Request.Context(), fmt.Sprintf("epay webhook ignored non-success event trade_no=%s callback_type=%s trade_status=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, common.GetClientIP(c)))
-		_, _ = c.Writer.Write([]byte("fail"))
+		_, _ = c.Writer.Write([]byte("success"))
 		return
 	}
 
