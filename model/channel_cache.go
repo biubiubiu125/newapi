@@ -376,6 +376,47 @@ func CacheUpdateChannelStatus(id int, status int) {
 				}
 			}
 		}
+		return
+	}
+	if channel, ok := channelsIDM[id]; ok {
+		indexEnabledChannelLocked(channel)
+	}
+}
+
+func indexEnabledChannelLocked(channel *Channel) {
+	if channel == nil {
+		return
+	}
+	if group2model2channels == nil {
+		group2model2channels = make(map[string]map[string][]int)
+	}
+	for _, group := range channel.GetGroups() {
+		if group2model2channels[group] == nil {
+			group2model2channels[group] = make(map[string][]int)
+		}
+		for _, modelName := range channel.GetModels() {
+			ids := group2model2channels[group][modelName]
+			already := false
+			for _, existing := range ids {
+				if existing == channel.Id {
+					already = true
+					break
+				}
+			}
+			if already {
+				continue
+			}
+			ids = append(ids, channel.Id)
+			sort.Slice(ids, func(i, j int) bool {
+				left, leftOK := channelsIDM[ids[i]]
+				right, rightOK := channelsIDM[ids[j]]
+				if !leftOK || !rightOK {
+					return false
+				}
+				return left.GetPriority() > right.GetPriority()
+			})
+			group2model2channels[group][modelName] = ids
+		}
 	}
 }
 

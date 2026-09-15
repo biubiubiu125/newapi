@@ -5,7 +5,9 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/stretchr/testify/require"
 )
 
@@ -149,6 +151,50 @@ func TestConvertToAliRequestWan27I2VRequiresMedia(t *testing.T) {
 
 	require.Error(t, err)
 	require.True(t, strings.Contains(err.Error(), "requires image"))
+}
+
+func TestConvertToOpenAIVideoUsesGetResultURL(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	task := &model.Task{
+		TaskID:   "task_ali_openai_video",
+		Status:   model.TaskStatusSuccess,
+		Progress: "100%",
+		Data:     []byte(`{"output":{"task_status":"SUCCEEDED","video_url":"https://ali.example/raw.mp4"}}`),
+	}
+	task.PrivateData.ResultURL = "https://api.example/v1/videos/task_ali_openai_video/content"
+
+	rendered, err := adaptor.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	var video dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(rendered, &video))
+	require.Equal(t, dto.VideoStatusCompleted, video.Status)
+	require.Equal(t, "https://api.example/v1/videos/task_ali_openai_video/content", video.Metadata["url"])
+}
+
+func TestConvertToOpenAIVideoUsesTaskStatusNotProviderPayload(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	task := &model.Task{
+		TaskID: "task_ali_failed_after_apply",
+		Status: model.TaskStatusFailure,
+		Data:   []byte(`{"output":{"task_status":"SUCCEEDED","video_url":"https://ali.example/raw.mp4"}}`),
+	}
+
+	rendered, err := adaptor.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	var video dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(rendered, &video))
+	require.Equal(t, dto.VideoStatusFailed, video.Status)
+	require.Empty(t, video.Metadata["url"])
+}
+
+func TestParseTaskResultUnknownStatusWithCodeIsFailure(t *testing.T) {
+	adaptor := &TaskAdaptor{}
+	ti, err := adaptor.ParseTaskResult([]byte(`{"code":"InvalidParameter","message":"bad request","output":{"task_status":"SOMETHING"}}`))
+	require.NoError(t, err)
+	require.Equal(t, model.TaskStatusFailure, ti.Status)
+	require.Equal(t, "bad request", ti.Reason)
 }
 
 func TestConvertToAliRequestWan25I2VKeepsLegacyImgURL(t *testing.T) {

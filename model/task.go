@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"path/filepath"
 	"reflect"
 	"strings"
@@ -17,6 +18,8 @@ import (
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	commonRelay "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -71,7 +74,7 @@ type Task struct {
 	ClientTaskID              string                `json:"client_task_id,omitempty" gorm:"type:varchar(191);index"`
 	Group                     string                `json:"group" gorm:"type:varchar(50)"` // 修正计费用
 	ChannelId                 int                   `json:"channel_id" gorm:"index;index:idx_task_image_dispatch,priority:4;index:idx_task_image_settlement_dispatch,priority:6;index:idx_task_image_node_dispatch,priority:6;index:idx_task_image_node_settlement,priority:7"`
-	Quota                     int                   `json:"quota"`
+	Quota                     int                   `json:"quota" gorm:"type:bigint"`
 	Action                    string                `json:"action" gorm:"type:varchar(40);index"`                                                                                                                                                                                                                               // 任务类型, song, lyrics, description-mode
 	Status                    TaskStatus            `json:"status" gorm:"type:varchar(20);index;index:idx_task_dispatch,priority:2;index:idx_task_image_dispatch,priority:2;index:idx_task_image_settlement_dispatch,priority:2;index:idx_task_image_node_dispatch,priority:2;index:idx_task_image_node_settlement,priority:2"` // 任务状态
 	FailReason                string                `json:"fail_reason"`
@@ -188,6 +191,10 @@ type TaskPrivateData struct {
 	UpstreamSubmitUncertainAt    int64             `json:"upstream_submit_uncertain_at,omitempty"`
 	UpstreamSubmitUncertainCount int               `json:"upstream_submit_uncertain_count,omitempty"`
 	ResultURL                    string            `json:"result_url,omitempty"` // 任务成功后的结果 URL（视频地址等）
+	// ResultProxyHosts are channel media hosts captured at submit. GetResultURL
+	// rewrites matching https URLs to /v1/videos/{id}/content so OpenAI clients
+	// do not fetch credentialed Gemini-compatible hosts directly.
+	ResultProxyHosts []string `json:"result_proxy_hosts,omitempty"`
 	// Execution records safe, immutable request provenance. It stays in
 	// private_data so public task DTOs cannot expose it accidentally.
 	Execution *TaskExecutionSnapshot `json:"execution,omitempty"`
@@ -381,13 +388,247 @@ func (t *Task) GetResultURL() string {
 	if t == nil || t.Status != TaskStatusSuccess {
 		return ""
 	}
+	extraHosts := t.resultProxyHosts()
 	if resultURL := strings.TrimSpace(t.PrivateData.ResultURL); resultURL != "" {
-		return resultURL
+		return publicTaskResultURL(t.TaskID, resultURL, extraHosts...)
 	}
 	if legacyURL := strings.TrimSpace(t.FailReason); legacyTaskResultURL(legacyURL) {
-		return legacyURL
+		return publicTaskResultURL(t.TaskID, legacyURL, extraHosts...)
 	}
 	return ""
+}
+
+func channelNeedsKeyedMediaProxy(channel *Channel) bool {
+	if channel == nil {
+		return false
+	}
+	switch channel.Type {
+	case constant.ChannelTypeGemini, constant.ChannelTypeVertexAi:
+		return true
+	default:
+		return false
+	}
+}
+
+func appendUniqueMediaHost(hosts []string, host string) []string {
+	host = strings.TrimSpace(strings.ToLower(strings.TrimSuffix(host, ".")))
+	if host == "" {
+		return hosts
+	}
+	for _, existing := range hosts {
+		if existing == host {
+			return hosts
+		}
+	}
+	return append(hosts, host)
+}
+
+func (t *Task) resultProxyHosts() []string {
+	if t == nil {
+		return nil
+	}
+	hosts := append([]string(nil), t.PrivateData.ResultProxyHosts...)
+	var channel *Channel
+	if len(hosts) == 0 && t.ChannelId > 0 && DB != nil {
+		loaded, err := CacheGetChannel(t.ChannelId)
+		if err != nil || loaded == nil {
+			loaded, err = GetChannelById(t.ChannelId, true)
+		}
+		if err == nil && loaded != nil {
+			channel = loaded
+			if host := MediaHostFromBaseURL(channel.GetBaseURL()); host != "" {
+				hosts = appendUniqueMediaHost(hosts, host)
+			}
+		}
+	}
+	if channelNeedsKeyedMediaProxy(channel) && channel.BaseURL != nil {
+		if liveHost := MediaHostFromBaseURL(*channel.BaseURL); liveHost != "" {
+			if stored := MediaHostFromBaseURL(t.PrivateData.ResultURL); stored != "" {
+				hosts = appendUniqueMediaHost(hosts, stored)
+			}
+		}
+	}
+	return hosts
+}
+
+func publicTaskResultURL(taskID, resultURL string, extraHosts ...string) string {
+	resultURL = strings.TrimSpace(resultURL)
+	if resultURL == "" {
+		return ""
+	}
+	if resultURLRequiresContentProxy(resultURL, extraHosts...) {
+		return fmt.Sprintf("%s/v1/videos/%s/content", system_setting.ServerAddress, taskID)
+	}
+	return resultURL
+}
+
+func resultURLRequiresContentProxy(value string, extraHosts ...string) bool {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return false
+	}
+	if isGCSObjectURI(value) || isInlineDataURL(value) {
+		return true
+	}
+	parsed, err := url.Parse(value)
+	if err != nil || parsed == nil {
+		return false
+	}
+	scheme := strings.ToLower(parsed.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return false
+	}
+	host := MediaHostFromBaseURL(value)
+	switch {
+	case host == "generativelanguage.googleapis.com", host == "ai.google.dev", host == "files.googleapis.com":
+		return true
+	case host == "aiplatform.googleapis.com", strings.HasSuffix(host, ".aiplatform.googleapis.com"):
+		return true
+	case host == "storage.googleapis.com", host == "storage.cloud.google.com":
+		return !gcsHTTPSIsSigned(parsed)
+	default:
+		for _, extra := range extraHosts {
+			if extraHost := MediaHostFromBaseURL(extra); extraHost != "" && extraHost == host {
+				return true
+			}
+		}
+		return false
+	}
+}
+
+// MediaHostFromBaseURL returns the lowercase hostname of a channel base URL or
+// media locator. Scheme-less values are treated as https hosts so stored proxy
+// hosts and custom Gemini-compatible BaseURLs compare the same way.
+func MediaHostFromBaseURL(baseURL string) string {
+	trimmed := strings.TrimSpace(baseURL)
+	if trimmed == "" {
+		return ""
+	}
+	if !strings.Contains(trimmed, "://") {
+		trimmed = "https://" + trimmed
+	}
+	parsed, err := url.Parse(trimmed)
+	if err != nil || parsed == nil {
+		return ""
+	}
+	return strings.ToLower(strings.TrimSuffix(strings.TrimSpace(parsed.Hostname()), "."))
+}
+
+func gcsHTTPSIsSigned(parsed *url.URL) bool {
+	if parsed == nil {
+		return false
+	}
+	query := parsed.Query()
+	return strings.TrimSpace(query.Get("X-Goog-Signature")) != "" ||
+		strings.TrimSpace(query.Get("X-Goog-Algorithm")) != "" ||
+		strings.TrimSpace(query.Get("GoogleAccessId")) != "" ||
+		strings.TrimSpace(query.Get("X-Goog-Credential")) != ""
+}
+
+const publicTaskCappedProgress = "99%"
+
+func TaskSettlementReviewIsRetryable(task *Task) bool {
+	if task == nil || task.Status != TaskStatusSuccess || task.SettlementStatus != TaskSettlementStatusReview {
+		return false
+	}
+	if task.Platform == constant.TaskPlatformImage {
+		return ImageTaskSettlementReviewIsRetryable(task)
+	}
+	return task.ResultCleanedAt <= 0 && task.NextPollAt > 0
+}
+
+func (t *Task) PublicStatus() TaskStatus {
+	if t == nil {
+		return ""
+	}
+	if t.Status != TaskStatusSuccess {
+		return t.Status
+	}
+	switch t.SettlementStatus {
+	case TaskSettlementStatusSettled:
+		return TaskStatusSuccess
+	case TaskSettlementStatusPending, TaskSettlementStatusApplied:
+		return TaskStatusInProgress
+	case TaskSettlementStatusReview:
+		if TaskSettlementReviewIsRetryable(t) {
+			return TaskStatusInProgress
+		}
+		return TaskStatusFailure
+	default:
+		return TaskStatusSuccess
+	}
+}
+
+func (t *Task) PublicMediaReady() bool {
+	return t != nil && t.PublicStatus() == TaskStatusSuccess && t.ResultCleanedAt <= 0
+}
+
+func (t *Task) PublicResultURL() string {
+	if !t.PublicMediaReady() {
+		return ""
+	}
+	return t.GetResultURL()
+}
+
+func (t *Task) PublicProgress() string {
+	if t == nil {
+		return ""
+	}
+	switch t.PublicStatus() {
+	case TaskStatusSuccess, TaskStatusFailure:
+		return t.Progress
+	}
+	if strings.TrimSpace(t.Progress) == "100%" {
+		return publicTaskCappedProgress
+	}
+	return t.Progress
+}
+
+func (t *Task) PublicFinishTime() int64 {
+	if t == nil {
+		return 0
+	}
+	switch t.PublicStatus() {
+	case TaskStatusSuccess, TaskStatusFailure:
+		return t.FinishTime
+	default:
+		return 0
+	}
+}
+
+const (
+	TaskPublicAccountingFailReason = kitutil.PublicAccountingFailReason
+	TaskPublicSettlementFailReason = kitutil.PublicSettlementFailReason
+	TaskPublicInternalFailReason   = kitutil.PublicInternalFailReason
+)
+
+func (t *Task) PublicFailReason() string {
+	if t == nil {
+		return ""
+	}
+	switch t.PublicStatus() {
+	case TaskStatusSuccess, TaskStatusInProgress, TaskStatusQueued, TaskStatusSubmitted, TaskStatusNotStart:
+		return ""
+	}
+	return SanitizePublicTaskFailReason(t.FailReason)
+}
+
+// SanitizePublicTaskFailReason strips result locators and internal billing/DB
+// details from a persisted FailReason before it is returned to clients.
+func SanitizePublicTaskFailReason(reason string) string {
+	return kitutil.SanitizePublicClientError(reason)
+}
+
+// MatchesRequestToken reports whether an API token may access this task.
+// Session requests (tokenID == 0) and legacy tasks without TokenId stay user-scoped.
+func (t *Task) MatchesRequestToken(tokenID int) bool {
+	if t == nil {
+		return false
+	}
+	if tokenID <= 0 || t.PrivateData.TokenId <= 0 {
+		return true
+	}
+	return t.PrivateData.TokenId == tokenID
 }
 
 // GenerateTaskID 生成对外暴露的 task_xxxx 格式 ID
@@ -437,6 +678,9 @@ func InitTask(platform constant.TaskPlatform, relayInfo *commonRelay.RelayInfo) 
 		// reuse the exact credential that submitted the task.
 		if relayInfo.ChannelMeta.ApiKey != "" {
 			privateData.Key = relayInfo.ChannelMeta.ApiKey
+		}
+		if host := MediaHostFromBaseURL(relayInfo.ChannelMeta.ChannelBaseUrl); host != "" {
+			privateData.ResultProxyHosts = []string{host}
 		}
 		if relayInfo.UpstreamModelName != "" {
 			properties.UpstreamModelName = relayInfo.UpstreamModelName
@@ -601,7 +845,7 @@ func GetRunnableUnfinishedSyncTasks(limit int, now int64) []*Task {
 	}
 
 	imageReserve := runnableImageTaskQueryReserve(limit)
-	nonImageTasks := getRunnableNonImageTasks(limit-imageReserve, nil)
+	nonImageTasks := getRunnableNonImageTasks(limit-imageReserve, nil, now)
 	imageLimit := runnableImageTaskQueryLimit(limit)
 	remainingSlots := limit - len(nonImageTasks)
 	if imageLimit > remainingSlots {
@@ -610,7 +854,7 @@ func GetRunnableUnfinishedSyncTasks(limit int, now int64) []*Task {
 	imageTasks := getRunnableImageTasksFair(imageLimit, now)
 	total := len(nonImageTasks) + len(imageTasks)
 	if total < limit {
-		nonImageTasks = append(nonImageTasks, getRunnableNonImageTasks(limit-total, taskPrimaryIDs(nonImageTasks))...)
+		nonImageTasks = append(nonImageTasks, getRunnableNonImageTasks(limit-total, taskPrimaryIDs(nonImageTasks), now)...)
 	}
 
 	tasks := make([]*Task, 0, len(nonImageTasks)+len(imageTasks))
@@ -620,7 +864,7 @@ func GetRunnableUnfinishedSyncTasks(limit int, now int64) []*Task {
 }
 
 func GetRunnableNonImageSyncTasks(limit int) []*Task {
-	return getRunnableNonImageTasks(limit, nil)
+	return getRunnableNonImageTasks(limit, nil, time.Now().Unix())
 }
 
 func runnableImageTaskQueryReserve(limit int) int {
@@ -662,13 +906,22 @@ func runnableImageTaskQueryLimit(limit int) int {
 	return limit
 }
 
-func getRunnableNonImageTasks(limit int, excludeIDs []int64) []*Task {
+func getRunnableNonImageTasks(limit int, excludeIDs []int64, now int64) []*Task {
 	if limit <= 0 {
 		return nil
 	}
-	query := DB.Where(taskUnfinishedProgressWhere, "100%").
-		Where("status NOT IN ?", []TaskStatus{TaskStatusFailure, TaskStatusSuccess}).
-		Where("platform <> ?", constant.TaskPlatformImage)
+	if now <= 0 {
+		now = time.Now().Unix()
+	}
+	query := DB.Where("platform <> ?", constant.TaskPlatformImage).
+		Where(
+			"(("+taskUnfinishedProgressWhere+" AND status NOT IN ?) OR (status = ? AND settlement_status = ? AND (next_poll_at IS NULL OR (next_poll_at > 0 AND next_poll_at <= ?))))",
+			"100%",
+			[]TaskStatus{TaskStatusFailure, TaskStatusSuccess},
+			TaskStatusSuccess,
+			TaskSettlementStatusReview,
+			now,
+		)
 	if len(excludeIDs) > 0 {
 		query = query.Where("id NOT IN ?", excludeIDs)
 	}
@@ -703,12 +956,16 @@ func GetRunnableImageTasks(limit int, now int64) []*Task {
 
 const taskUnfinishedProgressWhere = "(progress != ? OR progress = '' OR progress IS NULL)"
 
+func runnableImageSettlementStatuses() []string {
+	return []string{TaskSettlementStatusPending, TaskSettlementStatusApplied, TaskSettlementStatusReview}
+}
+
 func runnableImageTaskStatusQuery(query *gorm.DB) *gorm.DB {
 	return query.Where(
 		"(status NOT IN ? OR (status = ? AND settlement_status IN ?))",
 		[]TaskStatus{TaskStatusFailure, TaskStatusSuccess},
 		TaskStatusSuccess,
-		[]string{TaskSettlementStatusPending, TaskSettlementStatusApplied},
+		runnableImageSettlementStatuses(),
 	)
 }
 
@@ -717,6 +974,30 @@ type runnableImageTaskChannel struct {
 }
 
 const runnableImageTaskDueWhere = "(next_poll_at <= ? OR next_poll_at IS NULL) AND (lock_until <= ? OR lock_until IS NULL)"
+
+func runnableImageTaskOpenSettlementDueWhere() string {
+	return "settlement_status IN (?, ?) AND " + runnableImageTaskDueWhere
+}
+
+func runnableImageTaskRetryableReviewDueWhere() string {
+	payloadWhere := imageTaskRetryableReviewPayloadWhere()
+	evidenceWhere := imageTaskPrivateDataTextColumn() + ` LIKE '%"settlement_evidence_captured_at":%'`
+	return "settlement_status = ? AND (lock_until <= ? OR lock_until IS NULL) AND (" +
+		"(COALESCE(next_poll_at, 0) > 0 AND next_poll_at <= ? AND " + payloadWhere + ") OR " +
+		"(COALESCE(next_poll_at, 0) = 0 AND " + evidenceWhere + "))"
+}
+
+func imageTaskRetryableReviewPayloadWhere() string {
+	privateText := imageTaskPrivateDataTextColumn()
+	return "(" +
+		"COALESCE(image_task_result_stored, 0) != 0 OR " +
+		"(COALESCE(result_cleaned_at, 0) = 0 AND data IS NOT NULL AND LENGTH(CAST(data AS TEXT)) > 0) OR " +
+		privateText + ` LIKE '%"settlement_evidence_captured_at":%' OR ` +
+		privateText + ` LIKE '%"result_body_path":"%' OR ` +
+		privateText + ` LIKE '%"request_body_path":"%' OR ` +
+		privateText + ` LIKE '%"request_body_base64":"%'` +
+		")"
+}
 
 func runnableImageTaskNodeWhere() (string, []any) {
 	where, args := runnableImageTaskStorageNodeFilter()
@@ -830,12 +1111,15 @@ func getRunnableImageTasksForChannels(channels []runnableImageTaskChannel, perCh
 	args = append(args, nodeArgs...)
 	args = append(args,
 		constant.TaskPlatformImage, channelIDs, TaskStatusSuccess, TaskSettlementStatusPending, TaskSettlementStatusApplied, now, now,
+		constant.TaskPlatformImage, channelIDs, TaskStatusSuccess, TaskSettlementStatusReview, now, now,
 	)
 	args = append(args, perChannelLimit)
 
-	// 结算分支（SUCCESS + PENDING/APPLIED）不加 storage_node 过滤：
+	// 结算分支（SUCCESS + PENDING/APPLIED/可重试 REVIEW）不加 storage_node 过滤：
 	// 成功路径在置 SUCCESS 前已固化计费证据，结算不依赖创建节点的本地请求体文件，
 	// 任意节点接管可避免节点消失后待结算任务永久搁浅。
+	// next_poll_at=0 且无结算证据的 REVIEW 是人工/过期收口，不能再当到期任务捞起来。
+	// 有结算证据但窗口被写成 0 的 REVIEW 仍要入队，避免可恢复结算永远搁浅。
 	var rows []runnableImageTaskRow
 	err := DB.Raw(`
 SELECT id, channel_id FROM (
@@ -845,7 +1129,10 @@ SELECT id, channel_id FROM (
     WHERE platform = ? AND channel_id IN ? AND status NOT IN (?, ?) AND `+runnableImageTaskDueWhere+nodeWhere+`
     UNION
     SELECT id, channel_id FROM tasks
-    WHERE platform = ? AND channel_id IN ? AND status = ? AND settlement_status IN (?, ?) AND `+runnableImageTaskDueWhere+`
+    WHERE platform = ? AND channel_id IN ? AND status = ? AND `+runnableImageTaskOpenSettlementDueWhere()+`
+    UNION
+    SELECT id, channel_id FROM tasks
+    WHERE platform = ? AND channel_id IN ? AND status = ? AND `+runnableImageTaskRetryableReviewDueWhere()+`
   ) AS runnable_tasks
 ) AS ranked_tasks
 WHERE rn <= ?
@@ -885,7 +1172,7 @@ ORDER BY channel_id ASC, id ASC`,
 		}
 		bucket := make([]*Task, 0, len(ids))
 		for _, id := range ids {
-			if task := loadedByID[id]; task != nil {
+			if task := loadedByID[id]; imageTaskShouldDispatch(task) {
 				bucket = append(bucket, task)
 			}
 		}
@@ -909,6 +1196,7 @@ func getRunnableImageTaskChannels(limit int, now int64) []runnableImageTaskChann
 	args = append(args, nodeArgs...)
 	args = append(args,
 		constant.TaskPlatformImage, TaskStatusSuccess, TaskSettlementStatusPending, TaskSettlementStatusApplied, now, now,
+		constant.TaskPlatformImage, TaskStatusSuccess, TaskSettlementStatusReview, now, now,
 	)
 	args = append(args, cursor, limit)
 	// 结算分支不加 storage_node 过滤，允许任意节点接管结算，见 getRunnableImageTasksForChannels。
@@ -918,7 +1206,10 @@ SELECT channel_id FROM (
   WHERE platform = ? AND status NOT IN (?, ?) AND `+runnableImageTaskDueWhere+nodeWhere+`
   UNION
   SELECT DISTINCT channel_id FROM tasks
-  WHERE platform = ? AND status = ? AND settlement_status IN (?, ?) AND `+runnableImageTaskDueWhere+`
+  WHERE platform = ? AND status = ? AND `+runnableImageTaskOpenSettlementDueWhere()+`
+  UNION
+  SELECT DISTINCT channel_id FROM tasks
+  WHERE platform = ? AND status = ? AND `+runnableImageTaskRetryableReviewDueWhere()+`
 ) AS runnable_channels
 ORDER BY CASE WHEN channel_id > ? THEN 0 ELSE 1 END, channel_id ASC
 LIMIT ?`,
@@ -941,6 +1232,7 @@ func getRunnableImageTasksForChannel(channelID int, limit int, now int64) []*Tas
 	args = append(args, nodeArgs...)
 	args = append(args,
 		constant.TaskPlatformImage, channelID, TaskStatusSuccess, TaskSettlementStatusPending, TaskSettlementStatusApplied, now, now,
+		constant.TaskPlatformImage, channelID, TaskStatusSuccess, TaskSettlementStatusReview, now, now,
 	)
 	args = append(args, limit)
 	// 结算分支不加 storage_node 过滤，允许任意节点接管结算，见 getRunnableImageTasksForChannels。
@@ -950,7 +1242,10 @@ func getRunnableImageTasksForChannel(channelID int, limit int, now int64) []*Tas
   WHERE platform = ? AND channel_id = ? AND status NOT IN (?, ?) AND `+runnableImageTaskDueWhere+nodeWhere+`
   UNION
   SELECT id FROM tasks
-  WHERE platform = ? AND channel_id = ? AND status = ? AND settlement_status IN (?, ?) AND `+runnableImageTaskDueWhere+`
+  WHERE platform = ? AND channel_id = ? AND status = ? AND `+runnableImageTaskOpenSettlementDueWhere()+`
+  UNION
+  SELECT id FROM tasks
+  WHERE platform = ? AND channel_id = ? AND status = ? AND `+runnableImageTaskRetryableReviewDueWhere()+`
 ) AS runnable_tasks
 ORDER BY id ASC
 LIMIT ?`,
@@ -959,7 +1254,30 @@ LIMIT ?`,
 	if err != nil || len(ids) == 0 {
 		return nil
 	}
-	return getTasksByIDsPreserveOrder(ids)
+	return filterDispatchableImageTasks(getTasksByIDsPreserveOrder(ids))
+}
+
+func imageTaskShouldDispatch(task *Task) bool {
+	if task == nil {
+		return false
+	}
+	if task.Status == TaskStatusSuccess && task.SettlementStatus == TaskSettlementStatusReview {
+		return ImageTaskSettlementReviewIsRetryable(task)
+	}
+	return true
+}
+
+func filterDispatchableImageTasks(tasks []*Task) []*Task {
+	if len(tasks) == 0 {
+		return tasks
+	}
+	filtered := make([]*Task, 0, len(tasks))
+	for _, task := range tasks {
+		if imageTaskShouldDispatch(task) {
+			filtered = append(filtered, task)
+		}
+	}
+	return filtered
 }
 
 func getTasksByIDsPreserveOrder(ids []int64) []*Task {
@@ -1086,12 +1404,27 @@ func hasRunnableImageUnfinishedTasks(now int64) bool {
 }
 
 func hasRunnableImageSettlementTasks(now int64) bool {
+	return hasRunnableImageOpenSettlementTasks(now) || hasRunnableImageRetryableReviewTasks(now)
+}
+
+func hasRunnableImageOpenSettlementTasks(now int64) bool {
 	var id int64
 	// 结算任务不做 storage_node 过滤：任意节点均可接管结算，避免节点消失后待结算任务搁浅。
 	err := imageTaskDueQuery(DB.Model(&Task{}), now).
 		Where("platform = ?", constant.TaskPlatformImage).
 		Where("status = ?", TaskStatusSuccess).
 		Where("settlement_status IN ?", []string{TaskSettlementStatusPending, TaskSettlementStatusApplied}).
+		Limit(1).
+		Pluck("id", &id).Error
+	return err == nil && id != 0
+}
+
+func hasRunnableImageRetryableReviewTasks(now int64) bool {
+	var id int64
+	err := DB.Model(&Task{}).
+		Where("platform = ?", constant.TaskPlatformImage).
+		Where("status = ?", TaskStatusSuccess).
+		Where(runnableImageTaskRetryableReviewDueWhere(), TaskSettlementStatusReview, now, now).
 		Limit(1).
 		Pluck("id", &id).Error
 	return err == nil && id != 0
@@ -1129,7 +1462,7 @@ func imageTaskUnfinishedBaseQuery(query *gorm.DB) *gorm.DB {
 func imageTaskSettlementBaseQuery(query *gorm.DB) *gorm.DB {
 	return query.Where("platform = ?", constant.TaskPlatformImage).
 		Where("status = ?", TaskStatusSuccess).
-		Where("settlement_status IN ?", []string{TaskSettlementStatusPending, TaskSettlementStatusApplied})
+		Where("settlement_status IN ?", runnableImageSettlementStatuses())
 }
 
 func imageTaskDueQuery(query *gorm.DB, now int64) *gorm.DB {
@@ -1579,6 +1912,14 @@ func legacyTaskResultURL(value string) bool {
 		strings.HasPrefix(lower, "data:")
 }
 
+func isGCSObjectURI(value string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "gs://")
+}
+
+func isInlineDataURL(value string) bool {
+	return strings.HasPrefix(strings.ToLower(strings.TrimSpace(value)), "data:")
+}
+
 func markInlineImageTaskResultsAvailable(query *gorm.DB, tasks []*Task) error {
 	if len(tasks) == 0 {
 		return nil
@@ -1719,11 +2060,10 @@ func GetPendingImageTaskRefundsAfter(afterTaskPrimaryID int64, limit int) ([]*Ta
 	}
 	var tasks []*Task
 	err := DB.Omit("data").Where(
-		"platform = ? AND status = ? AND refund_pending = ? AND COALESCE(settlement_status, '') <> ? AND id > ?",
+		"platform = ? AND status = ? AND refund_pending = ? AND id > ?",
 		constant.TaskPlatformImage,
 		TaskStatusFailure,
 		true,
-		TaskSettlementStatusReview,
 		afterTaskPrimaryID,
 	).Order("id ASC").Limit(limit).Find(&tasks).Error
 	return tasks, err
@@ -1735,11 +2075,25 @@ func GetPendingTaskRefundsAfter(afterTaskPrimaryID int64, limit int) ([]*Task, e
 	}
 	var tasks []*Task
 	err := DB.Omit("data").Where(
-		"platform <> ? AND status = ? AND refund_pending = ? AND COALESCE(settlement_status, '') <> ? AND id > ?",
+		"platform <> ? AND status = ? AND refund_pending = ? AND id > ?",
 		constant.TaskPlatformImage,
 		TaskStatusFailure,
 		true,
-		TaskSettlementStatusReview,
+		afterTaskPrimaryID,
+	).Order("id ASC").Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+func GetPendingTaskSettlementsAfter(afterTaskPrimaryID int64, limit int) ([]*Task, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var tasks []*Task
+	err := DB.Omit("data").Where(
+		"platform <> ? AND status = ? AND COALESCE(settlement_status, '') IN ? AND id > ?",
+		constant.TaskPlatformImage,
+		TaskStatusSuccess,
+		[]string{"", TaskSettlementStatusPending},
 		afterTaskPrimaryID,
 	).Order("id ASC").Limit(limit).Find(&tasks).Error
 	return tasks, err
@@ -1866,7 +2220,62 @@ func imageTaskPendingNeedsReviewWhenResultUnavailable(task *Task) bool {
 	if task == nil || task.Status != TaskStatusSuccess || task.SettlementStatus != TaskSettlementStatusPending {
 		return false
 	}
-	return task.PrivateData.SettlementEvidenceCapturedAt <= 0
+	return !ImageTaskHasSettlementEvidence(task)
+}
+
+func ImageTaskHasSettlementEvidence(task *Task) bool {
+	return task != nil && task.PrivateData.SettlementEvidenceCapturedAt > 0
+}
+
+func ImageTaskHasRetrievableSettlementResult(task *Task) bool {
+	if task == nil || task.ResultCleanedAt > 0 {
+		return false
+	}
+	if task.ImageTaskResultStored {
+		return true
+	}
+	if strings.TrimSpace(task.PrivateData.ResultBodyPath) != "" {
+		return true
+	}
+	return len(bytes.TrimSpace(task.Data)) > 0
+}
+
+func ImageTaskHasSettlementRequestBody(task *Task) bool {
+	if task == nil {
+		return false
+	}
+	return strings.TrimSpace(task.PrivateData.RequestBodyPath) != "" ||
+		strings.TrimSpace(task.PrivateData.RequestBodyBase64) != ""
+}
+
+func parkUnrecoverableImageTaskSettlementReviewUpdates(updates map[string]any, task *Task) {
+	updates["next_poll_at"] = 0
+	updates["lock_owner"] = ""
+	updates["lock_until"] = 0
+	updates["retry_count"] = 0
+	if task != nil && strings.TrimSpace(task.FailReason) == "" {
+		updates["fail_reason"] = imageTaskResultExpiredBeforeSettlementReason
+	}
+}
+
+// ImageTaskSettlementReviewIsRetryable reports whether SUCCESS+REVIEW should still
+// be picked up by the worker. Manual/unrecoverable review stays parked:
+// no billing evidence, and either the result is already gone, never stored, or
+// no retry window was scheduled (next_poll_at=0).
+func ImageTaskSettlementReviewIsRetryable(task *Task) bool {
+	if task == nil || task.Status != TaskStatusSuccess || task.SettlementStatus != TaskSettlementStatusReview {
+		return false
+	}
+	if ImageTaskHasSettlementEvidence(task) {
+		return true
+	}
+	if task.ResultCleanedAt > 0 {
+		return false
+	}
+	if !ImageTaskHasRetrievableSettlementResult(task) && !ImageTaskHasSettlementRequestBody(task) {
+		return false
+	}
+	return task.NextPollAt > 0
 }
 
 func CleanupExpiredImageTaskResults(now int64, legacyRetention time.Duration, limit int) ([]ImageTaskResultCleanup, error) {
@@ -1940,15 +2349,14 @@ func CleanupExpiredImageTaskResults(now int64, legacyRetention time.Duration, li
 			// PENDING 且结果已到期、又没有结算证据：收口为 REVIEW，避免永久 finalizing。
 			// 已有结算证据时保留 PENDING，让 worker 继续自动结算。
 			// APPLIED 只差标 SETTLED，不得改成 REVIEW。
+			// 已是 REVIEW 且没有结算证据：结果清掉后必须停掉自动重试窗口。
 			if imageTaskPendingNeedsReviewWhenResultUnavailable(&task) {
 				updates["settlement_status"] = TaskSettlementStatusReview
-				updates["next_poll_at"] = 0
-				updates["lock_owner"] = ""
-				updates["lock_until"] = 0
-				updates["retry_count"] = 0
-				if strings.TrimSpace(task.FailReason) == "" {
-					updates["fail_reason"] = imageTaskResultExpiredBeforeSettlementReason
-				}
+				parkUnrecoverableImageTaskSettlementReviewUpdates(updates, &task)
+			} else if task.Status == TaskStatusSuccess &&
+				task.SettlementStatus == TaskSettlementStatusReview &&
+				!ImageTaskHasSettlementEvidence(&task) {
+				parkUnrecoverableImageTaskSettlementReviewUpdates(updates, &task)
 			}
 			result := tx.Model(&Task{}).
 				Where("id = ? AND COALESCE(result_cleaned_at, 0) = 0", task.ID).
@@ -2724,6 +3132,9 @@ func updateTaskSettlementFields(t *Task) error {
 		if base == nil || t.PrivateData.SettlementError != base.PrivateData.SettlementError {
 			current.PrivateData.SettlementError = t.PrivateData.SettlementError
 		}
+		if base == nil || t.NextPollAt != base.NextPollAt {
+			current.NextPollAt = t.NextPollAt
+		}
 		updatedAt := nextTaskUpdatedAt(current.UpdatedAt)
 
 		if err := tx.Model(&Task{}).Where("id = ?", t.ID).Updates(map[string]any{
@@ -2733,6 +3144,7 @@ func updateTaskSettlementFields(t *Task) error {
 			"settlement_status":            current.SettlementStatus,
 			"refund_pending":               current.RefundPending,
 			"execution_secrets_cleaned_at": current.ExecutionSecretsCleanedAt,
+			"next_poll_at":                 current.NextPollAt,
 			"updated_at":                   updatedAt,
 		}).Error; err != nil {
 			return err
@@ -2743,6 +3155,7 @@ func updateTaskSettlementFields(t *Task) error {
 		t.RefundPending = current.RefundPending
 		t.ExecutionSecretsCleanedAt = current.ExecutionSecretsCleanedAt
 		t.PrivateData = current.PrivateData
+		t.NextPollAt = current.NextPollAt
 		t.UpdatedAt = updatedAt
 		return nil
 	})
@@ -2802,8 +3215,11 @@ func UpdateTaskAfterSubmitAccountingFailure(t *Task) error {
 		current.FinishTime = t.FinishTime
 		current.FailReason = t.FailReason
 		current.SettlementStatus = t.SettlementStatus
+		current.RefundPending = t.RefundPending
 		current.PrivateData.SettlementAttemptQuota = t.PrivateData.SettlementAttemptQuota
 		current.PrivateData.SettlementError = t.PrivateData.SettlementError
+		current.PrivateData.PreConsumedUsageCaptured = t.PrivateData.PreConsumedUsageCaptured
+		current.PrivateData.PreConsumedUsageRecorded = t.PrivateData.PreConsumedUsageRecorded
 		updatedAt := nextTaskUpdatedAt(current.UpdatedAt)
 		if err := tx.Model(&Task{}).Where("id = ?", t.ID).Updates(map[string]any{
 			"quota":             current.Quota,
@@ -2813,6 +3229,7 @@ func UpdateTaskAfterSubmitAccountingFailure(t *Task) error {
 			"fail_reason":       current.FailReason,
 			"private_data":      current.PrivateData,
 			"settlement_status": current.SettlementStatus,
+			"refund_pending":    current.RefundPending,
 			"updated_at":        updatedAt,
 		}).Error; err != nil {
 			return err
@@ -2821,6 +3238,37 @@ func UpdateTaskAfterSubmitAccountingFailure(t *Task) error {
 		t.UpdatedAt = updatedAt
 		return nil
 	})
+}
+
+// ForceTaskRefundableAfterSubmitAccountingFailure writes the refundable failure
+// columns including usage flags in private_data. It is the last-resort persist
+// when the locked private_data merge cannot be written, so the 15s settlement
+// sweeper cannot SETTLED-at-prepaid a leftover SUCCESS row or double-decrement
+// used_quota after a successful usage rollback.
+func ForceTaskRefundableAfterSubmitAccountingFailure(t *Task) error {
+	if t == nil || t.ID <= 0 {
+		return fmt.Errorf("force refundable persist failed, task is invalid")
+	}
+	updatedAt := nextTaskUpdatedAt(t.UpdatedAt)
+	result := DB.Model(&Task{}).Where("id = ?", t.ID).Updates(map[string]any{
+		"quota":             t.Quota,
+		"status":            t.Status,
+		"progress":          t.Progress,
+		"finish_time":       t.FinishTime,
+		"fail_reason":       t.FailReason,
+		"private_data":      t.PrivateData,
+		"settlement_status": t.SettlementStatus,
+		"refund_pending":    t.RefundPending,
+		"updated_at":        updatedAt,
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("force refundable persist failed, taskId=%s, id=%d", t.TaskID, t.ID)
+	}
+	t.UpdatedAt = updatedAt
+	return nil
 }
 
 func taskRowExists(id int64) (bool, error) {
@@ -3125,11 +3573,19 @@ func TaskCountAllUserTask(userId int, queryParams SyncTaskQueryParams) int64 {
 func (t *Task) ToOpenAIVideo() *dto.OpenAIVideo {
 	openAIVideo := dto.NewOpenAIVideo()
 	openAIVideo.ID = t.TaskID
-	openAIVideo.Status = t.Status.ToVideoStatus()
+	openAIVideo.Status = t.PublicStatus().ToVideoStatus()
 	openAIVideo.Model = t.Properties.OriginModelName
-	openAIVideo.SetProgressStr(t.Progress)
+	openAIVideo.SetProgressStr(t.PublicProgress())
 	openAIVideo.CreatedAt = t.CreatedAt
-	openAIVideo.CompletedAt = t.UpdatedAt
-	openAIVideo.SetMetadata("url", t.GetResultURL())
+	if t.PublicStatus() == TaskStatusSuccess {
+		if t.FinishTime > 0 {
+			openAIVideo.CompletedAt = t.FinishTime
+		} else {
+			openAIVideo.CompletedAt = t.UpdatedAt
+		}
+		if resultURL := strings.TrimSpace(t.PublicResultURL()); resultURL != "" {
+			openAIVideo.SetMetadata("url", resultURL)
+		}
+	}
 	return openAIVideo
 }

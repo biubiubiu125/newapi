@@ -1296,7 +1296,7 @@ func (s *ReferralService) CreateWithdrawal(input ReferralWithdrawalCreateInput) 
 	var withdrawalId int
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		affiliate := &model.ReferralAffiliate{}
-		if err := tx.Where("user_id = ?", input.UserId).First(affiliate).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", input.UserId).First(affiliate).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
 				return errors.New("referral profile not found")
 			}
@@ -1729,7 +1729,7 @@ func (s *ReferralService) AdjustAffiliateCommission(input ReferralAdjustInput) (
 	}
 	err := model.DB.Transaction(func(tx *gorm.DB) error {
 		affiliate := &model.ReferralAffiliate{}
-		if err := tx.Where("user_id = ?", input.UserId).First(affiliate).Error; err != nil {
+		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).Where("user_id = ?", input.UserId).First(affiliate).Error; err != nil {
 			return err
 		}
 		account, err := s.getOrCreateAccountTx(tx, affiliate.Id, affiliate.UserId)
@@ -3120,8 +3120,8 @@ func (s *ReferralService) processCommissionTx(
 		return err
 	}
 	sourcePaidAmount := paidAmount
-	if sourcePaidAmount <= 0 {
-		sourcePaidAmount = baseAmount
+	if sourcePaidAmount < 0 {
+		sourcePaidAmount = 0
 	}
 	settlementBaseAmount, settlementCurrency, settlementFxRate, err := resolveReferralSettlementAmount(sourcePaidAmount, paidCurrency)
 	if err != nil {

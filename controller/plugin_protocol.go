@@ -481,7 +481,7 @@ func streamTaskPluginProtocol(
 			return
 		}
 		previousStatus := lastStatus
-		lastStatus = string(task.Status)
+		lastStatus = string(task.PublicStatus())
 		if lastStatus != previousStatus {
 			logger.LogDebug(
 				c,
@@ -719,7 +719,7 @@ func waitTaskPluginProtocol(
 		overloaded := loadOverloaded
 		if !loadOverloaded {
 			previousStatus := lastStatus
-			lastStatus = string(task.Status)
+			lastStatus = string(task.PublicStatus())
 			if lastStatus != previousStatus {
 				logger.LogDebug(
 					c,
@@ -742,9 +742,9 @@ func waitTaskPluginProtocol(
 				loadElapsed.Milliseconds(),
 			)
 		}
-		if !loadOverloaded && (task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure) {
-			if task.Status == model.TaskStatusFailure {
-				writeTaskPluginProtocolFailureResponse(c, machine, string(task.Status))
+		if !loadOverloaded && (task.PublicStatus() == model.TaskStatusSuccess || task.PublicStatus() == model.TaskStatusFailure) {
+			if task.PublicStatus() == model.TaskStatusFailure {
+				writeTaskPluginProtocolFailureResponse(c, machine, string(task.PublicStatus()))
 				return
 			}
 			response, hookElapsed, callErr := renderTaskPluginProtocolFinalResponse(
@@ -878,7 +878,7 @@ func renderTaskPluginProtocolFinalResponse(
 	if err != nil {
 		return nil, hookElapsed, err
 	}
-	response, err := machine.FinalResponse(payload, string(task.Status))
+	response, err := machine.FinalResponse(payload, string(task.PublicStatus()))
 	if err != nil {
 		return nil, hookElapsed, err
 	}
@@ -928,7 +928,7 @@ func renderTaskPluginProtocolEventsResponse(
 	if err != nil {
 		return nil, hookElapsed, err
 	}
-	response, err := machine.FinalFromEvents(result, string(task.Status))
+	response, err := machine.FinalFromEvents(result, string(task.PublicStatus()))
 	if err != nil {
 		return nil, hookElapsed, err
 	}
@@ -959,6 +959,10 @@ func retrieveTaskPluginResponse(c *gin.Context, deps pluginProtocolBridgeDeps) {
 	}
 	if !exists || task == nil {
 		writeTaskPluginResponseNotFound(c, responseID, "missing")
+		return
+	}
+	if !task.MatchesRequestToken(c.GetInt("token_id")) {
+		writeTaskPluginResponseNotFound(c, responseID, "token_mismatch")
 		return
 	}
 
@@ -1016,14 +1020,14 @@ func retrieveTaskPluginResponse(c *gin.Context, deps pluginProtocolBridgeDeps) {
 		Model:     task.Properties.OriginModelName,
 	}
 
-	if task.Status == model.TaskStatusFailure {
-		logger.LogDebug(c, "task_plugin subsystem=protocol event=retrieve_final generation=%d plugin=%q public_task_id=%q status=%q", generationNumber, plugin.Meta.Key, task.TaskID, taskPluginDebugStatus(string(task.Status)))
-		writeTaskPluginProtocolFailureResponse(c, machine, string(task.Status))
+	if task.PublicStatus() == model.TaskStatusFailure {
+		logger.LogDebug(c, "task_plugin subsystem=protocol event=retrieve_final generation=%d plugin=%q public_task_id=%q status=%q", generationNumber, plugin.Meta.Key, task.TaskID, taskPluginDebugStatus(string(task.PublicStatus())))
+		writeTaskPluginProtocolFailureResponse(c, machine, string(task.PublicStatus()))
 		return
 	}
-	if task.Status != model.TaskStatusSuccess {
-		logger.LogDebug(c, "task_plugin subsystem=protocol event=retrieve_pending generation=%d plugin=%q public_task_id=%q status=%q", generationNumber, plugin.Meta.Key, task.TaskID, taskPluginDebugStatus(string(task.Status)))
-		c.JSON(http.StatusOK, machine.PendingResponse(string(task.Status)))
+	if task.PublicStatus() != model.TaskStatusSuccess {
+		logger.LogDebug(c, "task_plugin subsystem=protocol event=retrieve_pending generation=%d plugin=%q public_task_id=%q status=%q", generationNumber, plugin.Meta.Key, task.TaskID, taskPluginDebugStatus(string(task.PublicStatus())))
+		c.JSON(http.StatusOK, machine.PendingResponse(string(task.PublicStatus())))
 		return
 	}
 
@@ -1061,7 +1065,7 @@ func retrieveTaskPluginResponse(c *gin.Context, deps pluginProtocolBridgeDeps) {
 			task.TaskID,
 			hookElapsed.Milliseconds(),
 		)
-		writeTaskPluginProtocolFailureResponse(c, machine, string(task.Status))
+		writeTaskPluginProtocolFailureResponse(c, machine, string(task.PublicStatus()))
 		return
 	}
 	logger.LogDebug(
@@ -1070,7 +1074,7 @@ func retrieveTaskPluginResponse(c *gin.Context, deps pluginProtocolBridgeDeps) {
 		generationNumber,
 		plugin.Meta.Key,
 		task.TaskID,
-		taskPluginDebugStatus(string(task.Status)),
+		taskPluginDebugStatus(string(task.PublicStatus())),
 		hookElapsed.Milliseconds(),
 	)
 	c.JSON(http.StatusOK, response)
@@ -1175,7 +1179,7 @@ func taskPluginProtocolRendererContext(
 		ctx = context.Background()
 	}
 	rendererContext := request.JSValue()
-	if task == nil || task.Status != model.TaskStatusSuccess {
+	if !task.PublicMediaReady() {
 		return rendererContext, nil
 	}
 	artifacts, err := projectTaskArtifactsContext(ctx, task)

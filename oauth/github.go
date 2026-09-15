@@ -52,10 +52,16 @@ func (p *GitHubProvider) ExchangeToken(ctx context.Context, code string, c *gin.
 
 	logger.LogDebug(ctx, "[OAuth-GitHub] ExchangeToken: code=%s...", code[:min(len(code), 10)])
 
+	redirectURI, err := oauthCallbackURIOrError(c, "/oauth/github")
+	if err != nil {
+		return nil, err
+	}
+
 	values := map[string]string{
 		"client_id":     common.GitHubClientId,
 		"client_secret": common.GitHubClientSecret,
 		"code":          code,
+		"redirect_uri":  redirectURI,
 	}
 	jsonData, err := json.Marshal(values)
 	if err != nil {

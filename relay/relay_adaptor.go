@@ -76,6 +76,7 @@ var taskPluginKeys = map[constant.TaskPlatform]string{
 	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMiniMax)):     "hailuo",
 	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSora)):        "sora",
 	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeOpenAI)):      "sora",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeNewAPI)):      "sora",
 	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVertexAi)):    "vertex-ai",
 }
 
@@ -219,7 +220,7 @@ func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 			return &taskVidu.TaskAdaptor{}
 		case constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine:
 			return &taskdoubao.TaskAdaptor{}
-		case constant.ChannelTypeSora, constant.ChannelTypeOpenAI:
+		case constant.ChannelTypeSora, constant.ChannelTypeOpenAI, constant.ChannelTypeNewAPI:
 			return &tasksora.TaskAdaptor{}
 		case constant.ChannelTypeGemini:
 			return &taskGemini.TaskAdaptor{}

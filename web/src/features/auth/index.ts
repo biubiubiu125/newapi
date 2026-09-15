@@ -81,6 +81,7 @@ export {
   buildDiscordOAuthUrl,
   buildOIDCOAuthUrl,
   buildLinuxDOOAuthUrl,
+  buildCustomOAuthUrl,
   getAvailableOAuthProviders,
   hasOAuthProviders,
 } from './lib/oauth'

@@ -173,3 +173,38 @@ func TestCacheGetRandomSatisfiedChannelExhaustsCurrentAutoGroupBeforeAdvancing(t
 	assert.Equal(t, "default", selectedGroup)
 	assert.Equal(t, 2203, third.Id)
 }
+
+func TestCacheGetRandomSatisfiedChannelHonorsDisabledCrossGroupRetry(t *testing.T) {
+	db := setupChannelSelectAutoGroupsTest(t)
+	const modelName = "auto-groups-no-cross-model"
+	createChannelSelectAutoGroupsChannel(t, db, 2301, "vip", modelName)
+	createChannelSelectAutoGroupsChannel(t, db, 2302, "default", modelName)
+	model.InitChannelCache()
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyTokenAutoGroups, []string{"vip", "default"})
+	common.SetContextKey(ctx, constant.ContextKeyTokenCrossGroupRetry, false)
+
+	retry := 0
+	param := &RetryParam{
+		Ctx:         ctx,
+		TokenGroup:  "auto",
+		ModelName:   modelName,
+		RequestPath: "/v1/chat/completions",
+		Retry:       &retry,
+	}
+
+	first, selectedGroup, err := CacheGetRandomSatisfiedChannel(param)
+	require.NoError(t, err)
+	require.NotNil(t, first)
+	assert.Equal(t, "vip", selectedGroup)
+
+	param.ExcludeChannelIds = []int{first.Id}
+	param.IncreaseRetry()
+	second, selectedGroup, err := CacheGetRandomSatisfiedChannel(param)
+	require.Error(t, err)
+	require.Nil(t, second)
+	assert.Equal(t, "vip", selectedGroup)
+}

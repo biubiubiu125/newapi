@@ -38,10 +38,6 @@ func verifyCreemSignature(payload string, signature string, secret string) bool 
 	secret = strings.TrimSpace(secret)
 	if secret == "" {
 		logger.LogWarn(context.Background(), fmt.Sprintf("Creem webhook secret 未配置 test_mode=%t referral_test_mode=%t body_size=%d", setting.CreemTestMode, common.ReferralTestMode, len(payload)))
-		if isReferralTestCreemSandboxEnabled() {
-			logger.LogInfo(context.Background(), fmt.Sprintf("Creem webhook 验签已跳过 reason=referral_test_mode body_size=%d", len(payload)))
-			return true
-		}
 		return false
 	}
 
@@ -107,7 +103,7 @@ func (*CreemAdaptor) RequestPay(c *gin.Context, req *CreemPayRequest) {
 		return
 	}
 	if _, err := validateCreditedQuota(decimal.NewFromInt(selectedProduct.Quota)); err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
+		writeTopUpClientError(c, err)
 		return
 	}
 
@@ -216,6 +212,17 @@ func RequestCreemPay(c *gin.Context) {
 		return
 	}
 	creemAdaptor.RequestPay(c, &req)
+}
+
+func creemWebhookModeMatches(event *CreemWebhookEvent) bool {
+	if event == nil {
+		return false
+	}
+	mode := strings.ToLower(strings.TrimSpace(event.Object.Order.Mode))
+	if setting.CreemTestMode {
+		return mode == "test" || mode == "sandbox"
+	}
+	return mode == "" || mode == "live" || mode == "prod" || mode == "production"
 }
 
 // 新的Creem Webhook结构体，匹配实际的webhook数据格式
@@ -352,6 +359,11 @@ func CreemWebhook(c *gin.Context) {
 
 	eventType := webhookEvent.NormalizedEventType()
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Creem webhook 解析成功 event_type=%s event_id=%s request_id=%s order_id=%s order_status=%s", eventType, webhookEvent.Id, webhookEvent.Object.RequestId, webhookEvent.Object.Order.Id, webhookEvent.Object.Order.Status))
+	if !creemWebhookModeMatches(&webhookEvent) {
+		logger.LogWarn(c.Request.Context(), fmt.Sprintf("Creem webhook mode mismatch event_type=%s order_mode=%q test_mode=%t", eventType, webhookEvent.Object.Order.Mode, setting.CreemTestMode))
+		c.AbortWithStatus(http.StatusBadRequest)
+		return
+	}
 
 	// 根据事件类型处理不同的webhook
 	switch eventType {
@@ -435,7 +447,7 @@ func handleCheckoutCompleted(c *gin.Context, event *CreemWebhookEvent) {
 	}
 
 	if !strings.EqualFold(strings.TrimSpace(event.Object.Order.Type), "onetime") {
-		if recordErr := recordPaymentReview(c.Request.Context(), model.PaymentProviderCreem, event.Id, eventType, referenceID, sessionID, "Creem payment succeeded but no matching subscription order exists", subscriptionErr, payload); recordErr != nil {
+		if recordErr := recordPaymentReview(c.Request.Context(), model.PaymentProviderCreem, event.Id, eventType, referenceID, sessionID, "Creem payment succeeded but no matching subscription order exists; requires manual review after payment succeeded", subscriptionErr, payload); recordErr != nil {
 			c.AbortWithStatus(http.StatusInternalServerError)
 			return
 		}
@@ -443,23 +455,18 @@ func handleCheckoutCompleted(c *gin.Context, event *CreemWebhookEvent) {
 		return
 	}
 
-	topUp := model.GetTopUpByTradeNo(referenceID)
-	if topUp == nil {
-		err := model.ErrTopUpNotFound
-		if recordErr := recordPaymentReview(c.Request.Context(), model.PaymentProviderCreem, event.Id, eventType, referenceID, sessionID, "Creem payment succeeded but local top-up order is missing", err, payload); recordErr != nil {
-			c.AbortWithStatus(http.StatusInternalServerError)
+	topUp, lookupErr := model.FindTopUpByTradeNo(referenceID)
+	if lookupErr != nil {
+		if errors.Is(lookupErr, model.ErrTopUpNotFound) {
+			if recordErr := recordPaymentReview(c.Request.Context(), model.PaymentProviderCreem, event.Id, eventType, referenceID, sessionID, "Creem payment succeeded but local top-up order is missing; requires manual review after payment succeeded", lookupErr, payload); recordErr != nil {
+				c.AbortWithStatus(http.StatusInternalServerError)
+				return
+			}
+			c.Status(http.StatusOK)
 			return
 		}
-		c.Status(http.StatusOK)
-		return
-	}
-	if topUp.Status != common.TopUpStatusPending && topUp.Status != common.TopUpStatusSuccess {
-		err := model.ErrTopUpStatusInvalid
-		if recordErr := recordPaymentReview(c.Request.Context(), model.PaymentProviderCreem, event.Id, eventType, referenceID, sessionID, "Creem top-up payment requires manual review after payment succeeded", err, payload); recordErr != nil {
-			c.AbortWithStatus(http.StatusInternalServerError)
-			return
-		}
-		c.Status(http.StatusOK)
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Creem top-up lookup failed trade_no=%s error=%q", referenceID, lookupErr.Error()))
+		c.AbortWithStatus(http.StatusInternalServerError)
 		return
 	}
 

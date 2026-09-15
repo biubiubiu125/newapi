@@ -104,7 +104,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 
 // BuildRequestURL constructs the upstream URL.
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
-	if isNewAPIRelay(info.ApiKey) {
+	if a.usesNewAPIRelay(info.ApiKey) {
 		return fmt.Sprintf("%s/jimeng/?Action=CVSync2AsyncSubmitTask&Version=2022-08-31", a.baseURL), nil
 	}
 	return fmt.Sprintf("%s/?Action=CVSync2AsyncSubmitTask&Version=2022-08-31", a.baseURL), nil
@@ -114,7 +114,7 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
-	if isNewAPIRelay(info.ApiKey) {
+	if a.usesNewAPIRelay(info.ApiKey) {
 		req.Header.Set("Authorization", "Bearer "+info.ApiKey)
 	} else {
 		return a.signRequest(req, a.accessKey, a.secretKey)
@@ -219,10 +219,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 		return nil, fmt.Errorf("invalid task_id")
 	}
 
-	uri := fmt.Sprintf("%s/?Action=CVSync2AsyncGetResult&Version=2022-08-31", baseUrl)
-	if isNewAPIRelay(key) {
-		uri = fmt.Sprintf("%s/jimeng/?Action=CVSync2AsyncGetResult&Version=2022-08-31", a.baseURL)
-	}
+	uri := a.fetchResultURI(baseUrl, key)
 	payload := map[string]string{
 		"req_key": "jimeng_vgfm_t2v_l20", // This is fixed value from doc: https://www.volcengine.com/docs/85621/1544774
 		"task_id": taskID,
@@ -240,7 +237,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/json")
 
-	if isNewAPIRelay(key) {
+	if a.usesNewAPIRelay(key) {
 		req.Header.Set("Authorization", "Bearer "+key)
 	} else {
 		keyParts := strings.Split(key, "|")
@@ -432,7 +429,8 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		return nil, errors.Wrap(err, "unmarshal task result failed")
 	}
 	taskResult := relaycommon.TaskInfo{}
-	if resTask.Code == 10000 {
+	apiOK := resTask.Code == 10000
+	if apiOK {
 		taskResult.Code = 0
 	} else {
 		taskResult.Code = resTask.Code // todo uni code
@@ -440,15 +438,35 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"
 	}
-	switch resTask.Data.Status {
-	case "in_queue":
-		taskResult.Status = model.TaskStatusQueued
-		taskResult.Progress = "10%"
-	case "done":
-		taskResult.Status = model.TaskStatusSuccess
+	switch strings.ToLower(strings.TrimSpace(resTask.Data.Status)) {
+	case "in_queue", "queued", "queueing":
+		if apiOK {
+			taskResult.Status = model.TaskStatusQueued
+			taskResult.Progress = "10%"
+		}
+	case "generating", "running", "processing", "in_progress", "doing":
+		if apiOK {
+			taskResult.Status = model.TaskStatusInProgress
+			taskResult.Progress = "50%"
+		}
+	case "done", "success", "succeed", "succeeded":
+		if apiOK {
+			taskResult.Status = model.TaskStatusSuccess
+			taskResult.Progress = "100%"
+			taskResult.Url = strings.TrimSpace(resTask.Data.VideoUrl)
+		}
+	case "failed", "fail", "error", "expired", "not_found":
+		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"
+		if strings.TrimSpace(taskResult.Reason) == "" {
+			taskResult.Reason = resTask.Message
+		}
+	default:
+		if apiOK {
+			taskResult.Status = model.TaskStatusInProgress
+			taskResult.Progress = "30%"
+		}
 	}
-	taskResult.Url = resTask.Data.VideoUrl
 	return &taskResult, nil
 }
 
@@ -462,7 +480,9 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.ID = originTask.TaskID
 	openAIVideo.Status = originTask.Status.ToVideoStatus()
 	openAIVideo.SetProgressStr(originTask.Progress)
-	openAIVideo.SetMetadata("url", jimengResp.Data.VideoUrl)
+	if resultURL := strings.TrimSpace(originTask.GetResultURL()); resultURL != "" {
+		openAIVideo.SetMetadata("url", resultURL)
+	}
 	openAIVideo.CreatedAt = originTask.CreatedAt
 	openAIVideo.CompletedAt = originTask.UpdatedAt
 
@@ -473,9 +493,40 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 		}
 	}
 
+	taskcommon.ApplyPublicOpenAIVideoProjection(originTask, openAIVideo)
 	return common.Marshal(openAIVideo)
 }
 
+func (a *TaskAdaptor) fetchResultURI(baseUrl, key string) string {
+	trimmed := strings.TrimRight(strings.TrimSpace(baseUrl), "/")
+	if trimmed == "" && a != nil {
+		trimmed = strings.TrimRight(strings.TrimSpace(a.baseURL), "/")
+	}
+	if a.usesNewAPIRelay(key) {
+		return trimmed + "/jimeng/?Action=CVSync2AsyncGetResult&Version=2022-08-31"
+	}
+	return trimmed + "/?Action=CVSync2AsyncGetResult&Version=2022-08-31"
+}
+
+func (a *TaskAdaptor) usesNewAPIRelay(apiKey string) bool {
+	if a != nil && a.ChannelType == constant.ChannelTypeNewAPI {
+		return true
+	}
+	return isNewAPIRelay(apiKey)
+}
+
 func isNewAPIRelay(apiKey string) bool {
-	return strings.HasPrefix(apiKey, "sk-")
+	key := strings.TrimSpace(apiKey)
+	if key == "" || strings.Contains(key, "|") || looksLikeJWT(key) {
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(key), "sk-")
+}
+
+func looksLikeJWT(token string) bool {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	return parts[0] != "" && parts[1] != "" && parts[2] != ""
 }

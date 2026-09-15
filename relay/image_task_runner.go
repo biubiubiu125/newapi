@@ -46,6 +46,7 @@ const imageTaskLargeStorageReadThreshold = 8 << 20
 const imageTaskLargeStorageReadConcurrency = 4
 const imageTaskBatchPollMaxIDs = 100
 const imageTaskReviewRequestRetention = 12 * time.Hour
+const imageTaskSettlementReviewRetrySeconds int64 = 60
 
 var errImageTaskHTTPResponseTooLarge = errors.New("image task upstream response too large")
 var imageTaskLargeStorageReadSlots = make(chan struct{}, imageTaskLargeStorageReadConcurrency)
@@ -220,10 +221,17 @@ func RunImageTasks(ctx context.Context, tasks []*model.Task) error {
 }
 
 func imageTaskNeedsSettlement(task *model.Task) bool {
-	return task != nil &&
-		task.Status == model.TaskStatusSuccess &&
-		(task.SettlementStatus == model.TaskSettlementStatusPending ||
-			task.SettlementStatus == model.TaskSettlementStatusApplied)
+	if task == nil || task.Status != model.TaskStatusSuccess {
+		return false
+	}
+	switch task.SettlementStatus {
+	case model.TaskSettlementStatusPending, model.TaskSettlementStatusApplied:
+		return true
+	case model.TaskSettlementStatusReview:
+		return model.ImageTaskSettlementReviewIsRetryable(task)
+	default:
+		return false
+	}
 }
 
 func imageTaskIsDone(task *model.Task) bool {
@@ -1681,7 +1689,12 @@ func settleImageTaskSuccess(ctx context.Context, task *model.Task, payload image
 		return nil
 	}
 	if task.SettlementStatus == model.TaskSettlementStatusReview {
-		return nil
+		if !model.ImageTaskSettlementReviewIsRetryable(task) {
+			return nil
+		}
+		if err := retryImageTaskSettlementReview(ctx, task); err != nil {
+			return err
+		}
 	}
 	if task.SettlementStatus == model.TaskSettlementStatusApplied {
 		if err := markImageTaskSettlementSettled(ctx, task, model.TaskSettlementStatusApplied); err != nil {
@@ -1947,6 +1960,64 @@ func markImageTaskSettlementApplied(ctx context.Context, task *model.Task) error
 	return nil
 }
 
+func retryImageTaskSettlementReview(ctx context.Context, task *model.Task) error {
+	if task == nil || task.SettlementStatus != model.TaskSettlementStatusReview {
+		return nil
+	}
+	if err := model.ResetTaskSettlementApplicationFromReview(task.ID); err != nil {
+		markImageTaskTransientRetry(task)
+		return err
+	}
+	fromSettlementStatus := model.TaskSettlementStatusReview
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	task.FailReason = ""
+	task.PrivateData.SettlementAttemptQuota = 0
+	task.PrivateData.SettlementError = ""
+	task.NextPollAt = 0
+	task.LockOwner = ""
+	task.LockUntil = 0
+	won, err := task.UpdateSettlementStatus(model.TaskStatusSuccess, fromSettlementStatus)
+	if err != nil {
+		markImageTaskTransientRetry(task)
+		return err
+	}
+	if !won {
+		latest, exists, loadErr := model.GetTaskByID(task.ID)
+		if loadErr != nil {
+			return loadErr
+		}
+		if exists && latest.Status == model.TaskStatusSuccess && latest.SettlementStatus == model.TaskSettlementStatusPending {
+			*task = *latest
+			return nil
+		}
+		return errors.New("image task settlement review retry lost CAS")
+	}
+	return nil
+}
+
+func imageTaskSettlementReviewShouldPark(task *model.Task, reason string) bool {
+	if task == nil {
+		return true
+	}
+	if model.ImageTaskHasSettlementEvidence(task) {
+		return false
+	}
+	reason = strings.ToLower(strings.TrimSpace(reason))
+	return strings.Contains(reason, "result is empty") ||
+		strings.Contains(reason, "expired before settlement")
+}
+
+func imageTaskSettlementReviewNextPollAt(task *model.Task, reason string) int64 {
+	if imageTaskSettlementReviewShouldPark(task, reason) {
+		return 0
+	}
+	now := time.Now().Unix()
+	if task != nil && task.NextPollAt > now {
+		return task.NextPollAt
+	}
+	return now + imageTaskSettlementReviewRetrySeconds
+}
+
 func markImageTaskSettlementReview(ctx context.Context, task *model.Task, reason string) error {
 	if task == nil {
 		return nil
@@ -1957,6 +2028,7 @@ func markImageTaskSettlementReview(ctx context.Context, task *model.Task, reason
 	}
 	minimizeImageTaskSettlementBillingEvidence(task)
 	task.ClearImageTaskExecutionSecrets()
+	task.NextPollAt = imageTaskSettlementReviewNextPollAt(task, reason)
 	if task.SettlementStatus == model.TaskSettlementStatusReview {
 		if !task.RequestCleanupPending || task.RequestDeleteAfter <= 0 {
 			service.ScheduleImageTaskRequestFileCleanup(task, imageTaskReviewRequestDeleteAfter(task))
@@ -1976,7 +2048,6 @@ func markImageTaskSettlementReview(ctx context.Context, task *model.Task, reason
 	}
 	task.SettlementStatus = model.TaskSettlementStatusReview
 	task.FailReason = reason
-	task.NextPollAt = 0
 	task.LockOwner = ""
 	task.LockUntil = 0
 	task.RetryCount = 0
@@ -2082,6 +2153,7 @@ func markImageTaskSettlementSettled(ctx context.Context, task *model.Task, fromS
 	}
 	settledAt := time.Now().Unix()
 	task.SettlementStatus = model.TaskSettlementStatusSettled
+	task.FailReason = ""
 	task.NextPollAt = 0
 	task.LockOwner = ""
 	task.LockUntil = 0
@@ -2092,6 +2164,8 @@ func markImageTaskSettlementSettled(ctx context.Context, task *model.Task, fromS
 	task.PrivateData.BillingRequestInput = nil
 	task.PrivateData.BillingRequestInputCaptured = false
 	task.PrivateData.SettlementEvidenceCapturedAt = 0
+	task.PrivateData.SettlementAttemptQuota = 0
+	task.PrivateData.SettlementError = ""
 	task.ClearImageTaskExecutionSecrets()
 	resultStoredAt := task.PrivateData.ResultStoredAt
 	if resultStoredAt <= 0 {
@@ -2990,6 +3064,10 @@ func cacheImageTaskResultURLs(result json.RawMessage) (json.RawMessage, error) {
 			continue
 		}
 		if existingB64, ok := item["b64_json"].(string); ok && strings.TrimSpace(existingB64) != "" {
+			if _, hasURL := item["url"]; hasURL {
+				delete(item, "url")
+				changed = true
+			}
 			continue
 		}
 		resultURL, ok := item["url"].(string)

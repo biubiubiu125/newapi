@@ -155,18 +155,12 @@ func ResetModelRatio(c *gin.Context) {
 	defaultStr := ratio_setting.DefaultModelRatio2JSONString()
 	err := model.UpdateOption("ModelRatio", defaultStr)
 	if err != nil {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
 	err = ratio_setting.UpdateModelRatioByJSONString(defaultStr)
 	if err != nil {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
 	c.JSON(200, gin.H{

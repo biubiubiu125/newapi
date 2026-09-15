@@ -95,12 +95,17 @@ export async function listTickets(params: ListTicketsParams) {
     end_time: params.endTime !== undefined ? String(params.endTime) : undefined,
     keyword: params.keyword || undefined,
   }
-  const res = await api.get(ticketBase(params.admin), { params: query })
+  const res = await api.get(ticketBase(params.admin), {
+    params: query,
+    skipBusinessError: true,
+  })
   return unwrapTicketResponse<TicketListResponse>(res.data)
 }
 
 export async function getTicket(ticketId: number, admin?: boolean) {
-  const res = await api.get(`${ticketBase(admin)}/${ticketId}`)
+  const res = await api.get(`${ticketBase(admin)}/${ticketId}`, {
+    skipBusinessError: true,
+  })
   return unwrapTicketResponse<TicketDetail>(res.data)
 }
 
@@ -111,7 +116,9 @@ export async function createTicket(payload: TicketCreatePayload) {
   form.append('priority', payload.priority)
   form.append('content', payload.content)
   appendFiles(form, payload.attachments)
-  const res = await api.post('/api/user/tickets', form)
+  const res = await api.post('/api/user/tickets', form, {
+    skipBusinessError: true,
+  })
   return unwrapTicketResponse<TicketDetail['ticket']>(res.data)
 }
 
@@ -123,17 +130,23 @@ export async function replyTicket(
   const form = new FormData()
   form.append('content', payload.content)
   appendFiles(form, payload.attachments)
-  const res = await api.post(`${ticketBase(admin)}/${ticketId}/reply`, form)
+  const res = await api.post(`${ticketBase(admin)}/${ticketId}/reply`, form, {
+    skipBusinessError: true,
+  })
   return unwrapTicketResponse(res.data)
 }
 
 export async function closeTicket(ticketId: number, admin?: boolean) {
-  const res = await api.post(`${ticketBase(admin)}/${ticketId}/close`)
+  const res = await api.post(`${ticketBase(admin)}/${ticketId}/close`, undefined, {
+    skipBusinessError: true,
+  })
   return unwrapTicketResponse(res.data)
 }
 
 export async function reopenTicket(ticketId: number, admin?: boolean) {
-  const res = await api.post(`${ticketBase(admin)}/${ticketId}/reopen`)
+  const res = await api.post(`${ticketBase(admin)}/${ticketId}/reopen`, undefined, {
+    skipBusinessError: true,
+  })
   return unwrapTicketResponse(res.data)
 }
 
@@ -141,7 +154,9 @@ export async function updateTicket(
   ticketId: number,
   payload: TicketUpdatePayload
 ) {
-  const res = await api.put(`/api/user/admin/tickets/${ticketId}`, payload)
+  const res = await api.put(`/api/user/admin/tickets/${ticketId}`, payload, {
+    skipBusinessError: true,
+  })
   return unwrapTicketResponse(res.data)
 }
 
@@ -163,6 +178,7 @@ export async function fetchTicketAttachmentBlob(
     {
       responseType: 'blob',
       disableDuplicate: true,
+      skipErrorHandler: true,
     }
   )
   return res.data as Blob

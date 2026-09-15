@@ -62,7 +62,6 @@ import {
   createImageGenerationTask,
   downloadImageTaskResult,
   getImageTaskResult,
-  acknowledgeImageTaskResult,
   ImageTaskRequestError,
   listImageTasks,
 } from '../api'
@@ -796,24 +795,6 @@ export function ImageTaskPage() {
     [storedTasks, taskRecords]
   )
 
-  const acknowledgeResult = useCallback(
-    async (apiKey: string, taskId: string): Promise<void> => {
-      try {
-        const acknowledgedTask = await acknowledgeImageTaskResult(apiKey, taskId)
-        updateTaskRecords((previous) => ({
-          ...previous,
-          [taskId]: {
-            ...previous[taskId],
-            task: acknowledgedTask,
-          },
-        }))
-      } catch (error) {
-        toast.error(taskErrorMessage(error, t('Request failed')))
-      }
-    },
-    [t, updateTaskRecords]
-  )
-
   const handleResult = useCallback(
     async (record: TaskRecord, notifyError = true): Promise<boolean> => {
       if (
@@ -871,7 +852,6 @@ export function ImageTaskPage() {
             resultError: undefined,
           },
         }))
-        void acknowledgeResult(apiKey, record.taskId)
         autoResultErrorNotifiedRef.current.delete(record.taskId)
         return true
       } catch (error) {
@@ -905,7 +885,6 @@ export function ImageTaskPage() {
     },
     [
       resolveKey,
-      acknowledgeResult,
       setTaskResultPreviewObjectUrls,
       t,
       updateTaskRecords,
@@ -977,12 +956,11 @@ export function ImageTaskPage() {
           imageIndex
         )
         triggerImageTaskDownload(download.blob, download.filename)
-        void acknowledgeResult(apiKey, record.taskId)
       } catch (error) {
         toast.error(taskErrorMessage(error, t('Request failed')))
       }
     },
-    [acknowledgeResult, resolveKey, t]
+    [resolveKey, t]
   )
 
   return (
@@ -1502,7 +1480,7 @@ function TaskCard({
   >({})
   const task = record.task
   const status = task?.status ?? 'queued'
-  const canCancel = status === 'queued'
+  const canCancel = task?.cancellable === true
   const title = summarizePrompt(record.prompt) || t('Untitled image generation')
 
   const handleDownloadClick = async (imageIndex: number) => {

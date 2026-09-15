@@ -34,6 +34,10 @@ type linuxdoUser struct {
 	Silenced   bool   `json:"silenced"`
 }
 
+func linuxDORedirectURI(c *gin.Context) string {
+	return oauthCallbackURI(c, "/oauth/linuxdo")
+}
+
 func (p *LinuxDOProvider) GetName() string {
 	return "Linux DO"
 }
@@ -54,12 +58,10 @@ func (p *LinuxDOProvider) ExchangeToken(ctx context.Context, code string, c *gin
 	credentials := common.LinuxDOClientId + ":" + common.LinuxDOClientSecret
 	basicAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(credentials))
 
-	// Get redirect URI from request
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
+	redirectURI, err := oauthCallbackURIOrError(c, "/oauth/linuxdo")
+	if err != nil {
+		return nil, err
 	}
-	redirectURI := fmt.Sprintf("%s://%s/api/oauth/linuxdo", scheme, c.Request.Host)
 
 	logger.LogDebug(ctx, "[OAuth-LinuxDO] ExchangeToken: token_endpoint=%s, redirect_uri=%s", tokenEndpoint, redirectURI)
 

@@ -502,3 +502,17 @@ func TestNormalizeHTTPTransportPolicyClampsWithoutPanic(t *testing.T) {
 	assert.Equal(t, HTTPTransportPolicy{Protocol: dto.HTTPProtocolAuto, Shards: 1}, NormalizeHTTPTransportPolicy(dto.ChannelSettings{HTTP2ConnectionShards: -3}))
 	assert.Equal(t, HTTPTransportPolicy{Protocol: dto.HTTPProtocolAuto, Shards: 8}, NormalizeHTTPTransportPolicy(dto.ChannelSettings{HTTP2ConnectionShards: 99}))
 }
+
+func TestGetHttpClientWithProxyRejectsUninitializedClient(t *testing.T) {
+	previous := httpClient
+	httpClient = nil
+	t.Cleanup(func() {
+		httpClient = previous
+	})
+
+	client, err := GetHttpClientWithProxy("")
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	assert.NotSame(t, http.DefaultClient, client)
+	assert.Nil(t, httpClient, "pre-init callers must not assign the process-wide client")
+}

@@ -22,7 +22,6 @@ func UpdateUserAndChannelUsedQuotaSync(userId int, channelId int, quota int) err
 	}); err != nil {
 		return err
 	}
-	refreshUserQuotaCacheBestEffort(userId)
 	return nil
 }
 
@@ -45,7 +44,6 @@ func UpdateUserAndChannelUsedQuotaAllowMissingChannelRefundSync(userId int, chan
 	}); err != nil {
 		return err
 	}
-	refreshUserQuotaCacheBestEffort(userId)
 	return nil
 }
 
@@ -64,7 +62,6 @@ func UpdateTaskConsumptionUsageSync(userId int, channelId int, quota int) error 
 	}); err != nil {
 		return err
 	}
-	refreshUserQuotaCacheBestEffort(userId)
 	return nil
 }
 
@@ -113,7 +110,7 @@ func UpdateTaskConsumptionUsageRollbackWithTokenSync(userId int, channelId int, 
 	if quota < 0 {
 		quota = -quota
 	}
-	return updateTaskUsageWithTokenSync(DB, userId, channelId, tokenId, -quota, -1)
+	return updateTaskUsageWithTokenSyncOptions(DB, userId, channelId, tokenId, -quota, -1, true)
 }
 
 func updateTaskUsageWithTokenSync(db *gorm.DB, userId int, channelId int, tokenId int, quota int, requestCount int) error {
@@ -136,7 +133,6 @@ func updateTaskUsageWithTokenAtSyncOptions(db *gorm.DB, userId int, channelId in
 	}); err != nil {
 		return err
 	}
-	refreshUserQuotaCacheBestEffort(userId)
 	return nil
 }
 

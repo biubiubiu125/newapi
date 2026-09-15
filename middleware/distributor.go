@@ -37,7 +37,7 @@ func Distribute() func(c *gin.Context) {
 		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
 		if err != nil {
-			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": common.PublicRequestErrorMessage(err.Error())}))
 			return
 		}
 		if ok {
@@ -63,7 +63,7 @@ func Distribute() func(c *gin.Context) {
 			// Select a channel for the user
 			// check token model mapping
 			modelLimitEnable := common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled)
-			if modelLimitEnable {
+			if modelLimitEnable && (shouldSelectChannel || modelRequest.Model != "") {
 				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
 				if !ok {
 					// token model limit is empty, all models are not allowed
@@ -95,7 +95,7 @@ func Distribute() func(c *gin.Context) {
 					playgroundRequest := &dto.PlayGroundRequest{}
 					err = common.UnmarshalBodyReusable(c, playgroundRequest)
 					if err != nil {
-						abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": err.Error()}))
+						abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": common.PublicRequestErrorMessage(err.Error())}))
 						return
 					}
 					if playgroundRequest.Group != "" {
@@ -153,7 +153,7 @@ func Distribute() func(c *gin.Context) {
 						if usingGroup == "auto" {
 							showGroup = fmt.Sprintf("auto(%s)", selectGroup)
 						}
-						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": err.Error()})
+						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": common.PublicRequestErrorMessage(err.Error())})
 						// 如果错误，但是渠道不为空，说明是数据库一致性问题
 						//if channel != nil {
 						//	common.SysError(fmt.Sprintf("渠道不存在：%d", channel.Id))
@@ -170,12 +170,7 @@ func Distribute() func(c *gin.Context) {
 			}
 		}
 		common.SetContextKey(c, constant.ContextKeyRequestStartTime, time.Now())
-		if setupErr := SetupContextForSelectedChannel(c, channel, modelRequest.Model); setupErr != nil {
-			statusCode := setupErr.StatusCode
-			if statusCode < http.StatusBadRequest {
-				statusCode = http.StatusInternalServerError
-			}
-			abortWithOpenAiMessage(c, statusCode, setupErr.Error(), setupErr.GetErrorCode())
+		if err := setupSelectedChannelOrFailover(c, &channel, modelRequest, shouldSelectChannel); err != nil {
 			return
 		}
 		c.Next()
@@ -311,6 +306,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			relayMode == relayconstant.RelayModeMidjourneyNotify ||
 			relayMode == relayconstant.RelayModeMidjourneyTaskImageSeed {
 			shouldSelectChannel = false
+			modelRequest.Model = getTaskOriginModelName(c)
 		} else {
 			midjourneyRequest := taskdto.MidjourneyRequest{}
 			err = common.UnmarshalBodyReusable(c, &midjourneyRequest)
@@ -337,6 +333,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 		if relayMode == relayconstant.RelayModeSunoFetch ||
 			relayMode == relayconstant.RelayModeSunoFetchByID {
 			shouldSelectChannel = false
+			modelRequest.Model = getTaskOriginModelName(c)
 		} else {
 			modelName := service.CoverTaskActionToModelName(constant.TaskPlatformSuno, c.Param("action"))
 			modelRequest.Model = modelName
@@ -346,7 +343,13 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 	} else if strings.Contains(c.Request.URL.Path, "/v1/videos/") && strings.HasSuffix(c.Request.URL.Path, "/remix") {
 		relayMode := relayconstant.RelayModeVideoSubmit
 		c.Set("relay_mode", relayMode)
-		shouldSelectChannel = false
+		modelRequest.Model = getTaskOriginModelName(c)
+		if modelRequest.Model == "" {
+			if req, reqErr := getModelFromRequest(c); reqErr == nil && req != nil {
+				modelRequest.Model = req.Model
+			}
+		}
+		shouldSelectChannel = modelRequest.Model != ""
 	} else if strings.Contains(c.Request.URL.Path, "/v1/videos") {
 		//curl https://api.openai.com/v1/videos \
 		//  -H "Authorization: Bearer $OPENAI_API_KEY" \
@@ -481,11 +484,17 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 // modelRequest.Model 为空而误报 "This token has no access to model"。
 // 从已存储的任务记录中回填 OriginModelName 即可让校验走在正确的模型上。
 func getTaskOriginModelName(c *gin.Context) string {
-	if !common.GetContextKeyBool(c, constant.ContextKeyTokenModelLimitEnabled) {
+	if model.DB == nil {
 		return ""
 	}
 
 	taskId := c.Param("task_id")
+	if taskId == "" {
+		taskId = c.Param("id")
+	}
+	if taskId == "" {
+		taskId = c.Param("video_id")
+	}
 	if taskId == "" {
 		// jimeng adapter
 		taskId = c.GetString("task_id")
@@ -501,7 +510,85 @@ func getTaskOriginModelName(c *gin.Context) string {
 	return ""
 }
 
+func setupSelectedChannelOrFailover(c *gin.Context, channel **model.Channel, modelRequest *ModelRequest, shouldSelectChannel bool) error {
+	if channel == nil || *channel == nil {
+		if shouldSelectChannel {
+			abortWithOpenAiMessage(c, http.StatusInternalServerError, "channel is nil", types.ErrorCodeGetChannelFailed)
+			return errors.New("channel is nil")
+		}
+		return nil
+	}
+	_, specificChannel := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
+	exclude := distributorFailedChannelIDs(c)
+	usingGroup := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
+	requestPath := channelSelectionRequestPath(c)
+	for range 32 {
+		setupErr := SetupContextForSelectedChannel(c, *channel, modelRequest.Model)
+		if setupErr == nil {
+			return nil
+		}
+		if specificChannel || !shouldSelectChannel || setupErr.GetErrorCode() != types.ErrorCodeChannelNoAvailableKey {
+			statusCode := setupErr.StatusCode
+			if statusCode < http.StatusBadRequest {
+				statusCode = http.StatusInternalServerError
+			}
+			abortWithOpenAiMessage(c, statusCode, common.PublicRequestErrorMessage(setupErr.Error()), setupErr.GetErrorCode())
+			return setupErr
+		}
+		exclude = appendUniqueChannelID(exclude, (*channel).Id)
+		c.Set("failed_channel_ids", exclude)
+		next, _, err := service.CacheGetRandomSatisfiedChannel(&service.RetryParam{
+			Ctx:               c,
+			ModelName:         modelRequest.Model,
+			TokenGroup:        usingGroup,
+			RequestPath:       requestPath,
+			Retry:             common.GetPointer(0),
+			ExcludeChannelIds: exclude,
+			ChannelFilter:     service.TaskPluginChannelFilter(c),
+		})
+		if err != nil || next == nil {
+			statusCode := setupErr.StatusCode
+			if statusCode < http.StatusBadRequest {
+				statusCode = http.StatusInternalServerError
+			}
+			abortWithOpenAiMessage(c, statusCode, common.PublicRequestErrorMessage(setupErr.Error()), setupErr.GetErrorCode())
+			return setupErr
+		}
+		*channel = next
+	}
+	abortWithOpenAiMessage(c, http.StatusInternalServerError, "channel is nil", types.ErrorCodeGetChannelFailed)
+	return errors.New("channel is nil")
+}
+
+func distributorFailedChannelIDs(c *gin.Context) []int {
+	raw, exists := c.Get("failed_channel_ids")
+	if !exists {
+		return nil
+	}
+	ids, ok := raw.([]int)
+	if !ok {
+		return nil
+	}
+	return append([]int(nil), ids...)
+}
+
+func appendUniqueChannelID(ids []int, channelID int) []int {
+	if channelID <= 0 {
+		return ids
+	}
+	for _, id := range ids {
+		if id == channelID {
+			return ids
+		}
+	}
+	return append(ids, channelID)
+}
+
 func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, modelName string) *types.NewAPIError {
+	return SetupContextForSelectedChannelWithKey(c, channel, modelName, "")
+}
+
+func SetupContextForSelectedChannelWithKey(c *gin.Context, channel *model.Channel, modelName string, preferredKey string) *types.NewAPIError {
 	c.Set("original_model", modelName) // for retry
 	if channel == nil {
 		return types.NewError(errors.New("channel is nil"), types.ErrorCodeGetChannelFailed, types.ErrOptionWithSkipRetry())
@@ -519,14 +606,16 @@ func SetupContextForSelectedChannel(c *gin.Context, channel *model.Channel, mode
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelParamOverride, paramOverride)
 	common.SetContextKey(c, constant.ContextKeyChannelHeaderOverride, headerOverride)
-	if nil != channel.OpenAIOrganization && *channel.OpenAIOrganization != "" {
+	if channel.OpenAIOrganization != nil && strings.TrimSpace(*channel.OpenAIOrganization) != "" {
 		common.SetContextKey(c, constant.ContextKeyChannelOrganization, *channel.OpenAIOrganization)
+	} else {
+		common.SetContextKey(c, constant.ContextKeyChannelOrganization, "")
 	}
 	common.SetContextKey(c, constant.ContextKeyChannelAutoBan, channel.GetAutoBan())
 	common.SetContextKey(c, constant.ContextKeyChannelModelMapping, channel.GetModelMapping())
 	common.SetContextKey(c, constant.ContextKeyChannelStatusCodeMapping, channel.GetStatusCodeMapping())
 
-	key, index, newAPIError := channel.GetNextEnabledKey()
+	key, index, newAPIError := channel.ResolveReusableKey(preferredKey)
 	if newAPIError != nil {
 		return newAPIError
 	}

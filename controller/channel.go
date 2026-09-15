@@ -264,10 +264,7 @@ func FetchUpstreamModels(c *gin.Context) {
 	ids, err := fetchChannelUpstreamModelIDs(c.Request.Context(), channel)
 	err = refreshRuntimeCacheAfterCodexCredentialChange(channel, originalCodexKey, err)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": fmt.Sprintf("获取模型列表失败: %s", err.Error()),
-		})
+		common.ApiErrorMsg(c, fmt.Sprintf("获取模型列表失败: %s", err.Error()))
 		return
 	}
 
@@ -307,10 +304,7 @@ func SearchChannels(c *gin.Context) {
 	if enableTagMode {
 		tags, err := model.SearchTags(keyword, group, modelKeyword, idSort)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
+			common.ApiError(c, err)
 			return
 		}
 		for _, tag := range tags {
@@ -320,10 +314,7 @@ func SearchChannels(c *gin.Context) {
 					Omit("key").
 					Find(&tagChannels).Error
 				if err != nil {
-					c.JSON(http.StatusOK, gin.H{
-						"success": false,
-						"message": err.Error(),
-					})
+					common.ApiError(c, err)
 					return
 				}
 				channelData = append(channelData, tagChannels...)
@@ -332,10 +323,7 @@ func SearchChannels(c *gin.Context) {
 	} else {
 		channels, err := model.SearchChannels(keyword, group, modelKeyword, idSort, sortOptions)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
+			common.ApiError(c, err)
 			return
 		}
 		channelData = channels
@@ -732,10 +720,7 @@ func AddChannel(c *gin.Context) {
 		if addChannelRequest.Channel.Type == constant.ChannelTypeVertexAi && addChannelRequest.Channel.GetOtherSettings().VertexKeyType != dto.VertexKeyTypeAPIKey {
 			array, err := getVertexArrayKeys(addChannelRequest.Channel.Key)
 			if err != nil {
-				c.JSON(http.StatusOK, gin.H{
-					"success": false,
-					"message": err.Error(),
-				})
+				common.ApiError(c, err)
 				return
 			}
 			addChannelRequest.Channel.ChannelInfo.MultiKeySize = len(array)
@@ -758,10 +743,7 @@ func AddChannel(c *gin.Context) {
 			// multi json
 			keys, err = getVertexArrayKeys(addChannelRequest.Channel.Key)
 			if err != nil {
-				c.JSON(http.StatusOK, gin.H{
-					"success": false,
-					"message": err.Error(),
-				})
+				common.ApiError(c, err)
 				return
 			}
 		} else {
@@ -777,19 +759,13 @@ func AddChannel(c *gin.Context) {
 		return
 	}
 	if err := normalizeChannelUpstreamModelUpdateSettingsForCreate(addChannelRequest.Channel); err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
 	// 使用统一的校验函数。multi_to_single 会在上面先标记 ChannelInfo，
 	// 因此不支持上游模型更新的聚合密钥渠道会先清理残留设置再校验。
 	if err := validateChannel(addChannelRequest.Channel, true); err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
 	if channelRequiresTaskPluginBindForCreate(addChannelRequest.Channel) &&
@@ -819,6 +795,7 @@ func AddChannel(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	model.InitChannelCache()
 	service.ResetProxyClientCache()
 	recordManageAudit(c, "channel.create", map[string]interface{}{
 		"name":  addChannelRequest.Channel.Name,
@@ -1648,10 +1625,7 @@ func UpdateChannel(c *gin.Context) {
 	// Preserve existing ChannelInfo to ensure multi-key channels keep correct state even if the client does not send ChannelInfo in the request.
 	originChannel, err := model.GetChannelById(channel.Id, true)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
 
@@ -1660,19 +1634,13 @@ func UpdateChannel(c *gin.Context) {
 
 	validationChannel, err := preparePatchChannelForValidation(&channel, originChannel, requestData)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
 	// 使用统一的校验函数。先用原始 ChannelInfo 补齐聚合密钥状态，
 	// 再清理不支持渠道的上游模型更新残留，避免旧设置阻断正常更新。
 	if err := validateChannel(&validationChannel, false); err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
 	if channelRequiresTaskPluginBindForUpdate(originChannel, &validationChannel) &&
@@ -1952,10 +1920,7 @@ func FetchModels(c *gin.Context) {
 	if req.Id > 0 {
 		existing, err := model.GetChannelById(req.Id, true)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": fmt.Sprintf("获取渠道失败: %s", err.Error()),
-			})
+			common.ApiErrorMsg(c, fmt.Sprintf("获取渠道失败: %s", err.Error()))
 			return
 		}
 		channel = existing
@@ -1989,10 +1954,7 @@ func FetchModels(c *gin.Context) {
 	})
 	err = refreshRuntimeCacheAfterCodexCredentialChange(channel, originalCodexKey, err)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": fmt.Sprintf("获取模型列表失败: %s", err.Error()),
-		})
+		common.ApiErrorMsg(c, fmt.Sprintf("获取模型列表失败: %s", err.Error()))
 		return
 	}
 
@@ -2040,10 +2002,7 @@ func GetTagModels(c *gin.Context) {
 
 	channels, err := model.GetChannelsByTag(tag, false, false) // idSort=false, selectAll=false
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiErrorWithStatus(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -2111,11 +2070,11 @@ func CopyChannel(c *gin.Context) {
 	}
 
 	if err := normalizeChannelUpstreamModelUpdateSettingsForCreate(&clone); err != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "渠道设置无效: " + err.Error()})
+		common.ApiErrorMsg(c, "渠道设置无效: "+err.Error())
 		return
 	}
 	if err := validateChannel(&clone, false); err != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "渠道设置无效: " + err.Error()})
+		common.ApiErrorMsg(c, "渠道设置无效: "+err.Error())
 		return
 	}
 	if channelRequiresTaskPluginBindForCreate(&clone) &&
@@ -2360,6 +2319,7 @@ func ManageMultiKeys(c *gin.Context) {
 		}
 
 		channel.ChannelInfo.MultiKeyStatusList[keyIndex] = 2 // disabled
+		model.SyncChannelStatusWithEnabledKeys(channel, "key disabled")
 
 		err = channel.Update()
 		if err != nil {
@@ -2402,6 +2362,7 @@ func ManageMultiKeys(c *gin.Context) {
 		if channel.ChannelInfo.MultiKeyDisabledReason != nil {
 			delete(channel.ChannelInfo.MultiKeyDisabledReason, keyIndex)
 		}
+		model.SyncChannelStatusWithEnabledKeys(channel, "")
 
 		err = channel.Update()
 		if err != nil {
@@ -2426,6 +2387,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
 		channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
 		channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
+		model.SyncChannelStatusWithEnabledKeys(channel, "")
 
 		err = channel.Update()
 		if err != nil {
@@ -2473,6 +2435,7 @@ func ManageMultiKeys(c *gin.Context) {
 			})
 			return
 		}
+		model.SyncChannelStatusWithEnabledKeys(channel, "all keys disabled")
 
 		err = channel.Update()
 		if err != nil {
@@ -2553,6 +2516,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyStatusList = newStatusList
 		channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
 		channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
+		model.SyncChannelStatusWithEnabledKeys(channel, "key deleted")
 
 		err = channel.Update()
 		if err != nil {
@@ -2621,6 +2585,7 @@ func ManageMultiKeys(c *gin.Context) {
 		channel.ChannelInfo.MultiKeyStatusList = newStatusList
 		channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
 		channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
+		model.SyncChannelStatusWithEnabledKeys(channel, "disabled keys deleted")
 
 		err = channel.Update()
 		if err != nil {
@@ -2699,10 +2664,7 @@ func OllamaPullModel(c *gin.Context) {
 	key := strings.Split(channel.Key, "\n")[0]
 	err = ollama.PullOllamaModel(baseURL, key, req.ModelName)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": fmt.Sprintf("Failed to pull model: %s", err.Error()),
-		})
+		common.ApiErrorWithStatus(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -2778,8 +2740,13 @@ func OllamaPullModelStream(c *gin.Context) {
 	err = ollama.PullOllamaModelStream(baseURL, key, req.ModelName, progressCallback)
 
 	if err != nil {
+		original := err.Error()
+		message := common.PublicDashboardErrorMessage(c, original)
+		if message != original {
+			common.SysError("api error: " + original)
+		}
 		errorData, _ := common.Marshal(gin.H{
-			"error": err.Error(),
+			"error": message,
 		})
 		fmt.Fprintf(c.Writer, "data: %s\n\n", string(errorData))
 	} else {
@@ -2844,10 +2811,7 @@ func OllamaDeleteModel(c *gin.Context) {
 	key := strings.Split(channel.Key, "\n")[0]
 	err = ollama.DeleteOllamaModel(baseURL, key, req.ModelName)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": fmt.Sprintf("Failed to delete model: %s", err.Error()),
-		})
+		common.ApiErrorWithStatus(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -2893,10 +2857,7 @@ func OllamaVersion(c *gin.Context) {
 	key := strings.Split(channel.Key, "\n")[0]
 	version, err := ollama.FetchOllamaVersion(baseURL, key)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": fmt.Sprintf("获取Ollama版本失败: %s", err.Error()),
-		})
+		common.ApiErrorMsg(c, fmt.Sprintf("获取Ollama版本失败: %s", err.Error()))
 		return
 	}
 

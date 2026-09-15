@@ -1,6 +1,7 @@
 package system_setting
 
 import (
+	"net"
 	"net/url"
 	"strings"
 
@@ -32,19 +33,55 @@ func init() {
 	config.GlobalConfig.Register("passkey", &defaultPasskeySettings)
 }
 
+func PasskeySettingsSnapshot() PasskeySettings {
+	common.OptionMapRWMutex.RLock()
+	settings := defaultPasskeySettings
+	serverAddress := ServerAddress
+	common.OptionMapRWMutex.RUnlock()
+	return settings.withDefaults(serverAddress)
+}
+
 func GetPasskeySettings() *PasskeySettings {
-	if defaultPasskeySettings.RPID == "" && ServerAddress != "" {
-		// 从ServerAddress提取域名作为RPID
-		// ServerAddress可能是 "https://newapi.pro" 这种格式
-		serverAddr := strings.TrimSpace(ServerAddress)
-		if parsed, err := url.Parse(serverAddr); err == nil && parsed.Host != "" {
-			defaultPasskeySettings.RPID = parsed.Host
+	snapshot := PasskeySettingsSnapshot()
+	return &snapshot
+}
+
+func OverridePasskeySettingsForTest(settings PasskeySettings) func() {
+	common.OptionMapRWMutex.Lock()
+	previous := defaultPasskeySettings
+	defaultPasskeySettings = settings
+	common.OptionMapRWMutex.Unlock()
+	return func() {
+		common.OptionMapRWMutex.Lock()
+		defaultPasskeySettings = previous
+		common.OptionMapRWMutex.Unlock()
+	}
+}
+
+func (s PasskeySettings) withDefaults(serverAddress string) PasskeySettings {
+	serverAddress = strings.TrimSpace(serverAddress)
+	if strings.TrimSpace(s.RPID) == "" && serverAddress != "" {
+		if parsed, err := url.Parse(serverAddress); err == nil && parsed.Host != "" {
+			s.RPID = hostWithoutPort(parsed.Host)
 		} else {
-			defaultPasskeySettings.RPID = serverAddr
+			s.RPID = hostWithoutPort(serverAddress)
 		}
+	} else {
+		s.RPID = hostWithoutPort(s.RPID)
 	}
-	if defaultPasskeySettings.Origins == "" || defaultPasskeySettings.Origins == "[]" {
-		defaultPasskeySettings.Origins = ServerAddress
+	if s.Origins == "" || s.Origins == "[]" {
+		s.Origins = serverAddress
 	}
-	return &defaultPasskeySettings
+	return s
+}
+
+func hostWithoutPort(host string) string {
+	host = strings.TrimSpace(host)
+	if host == "" {
+		return ""
+	}
+	if hostname, _, err := net.SplitHostPort(host); err == nil {
+		return hostname
+	}
+	return host
 }

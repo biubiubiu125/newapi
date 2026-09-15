@@ -28,6 +28,7 @@ import {
   buildDiscordOAuthUrl,
   buildOIDCOAuthUrl,
   buildLinuxDOOAuthUrl,
+  buildCustomOAuthUrl,
 } from '../lib/oauth'
 import {
   getOAuthSessionStorage,
@@ -118,7 +119,11 @@ export function useOAuthLogin(
       )
       rememberLoginRedirect('github', state)
 
-      const url = buildGitHubOAuthUrl(status.github_client_id, state)
+      const url = buildGitHubOAuthUrl(
+        status.github_client_id,
+        state,
+        status.server_address
+      )
       window.open(url, '_self')
     } catch {
       toast.error(t('Failed to start GitHub login'))
@@ -145,7 +150,11 @@ export function useOAuthLogin(
       )
       rememberLoginRedirect('discord', state)
 
-      const url = buildDiscordOAuthUrl(status.discord_client_id, state)
+      const url = buildDiscordOAuthUrl(
+        status.discord_client_id,
+        state,
+        status.server_address
+      )
       window.open(url, '_self')
     } catch {
       toast.error(t('Failed to start Discord login'))
@@ -171,7 +180,8 @@ export function useOAuthLogin(
       const url = buildOIDCOAuthUrl(
         status.oidc_authorization_endpoint,
         status.oidc_client_id,
-        state
+        state,
+        status.server_address
       )
       window.open(url, '_self')
     } catch {
@@ -195,7 +205,11 @@ export function useOAuthLogin(
       )
       rememberLoginRedirect('linuxdo', state)
 
-      const url = buildLinuxDOOAuthUrl(status.linuxdo_client_id, state)
+      const url = buildLinuxDOOAuthUrl(
+        status.linuxdo_client_id,
+        state,
+        status.server_address
+      )
       window.open(url, '_self')
     } catch {
       toast.error(t('Failed to start LinuxDO login'))
@@ -262,17 +276,18 @@ export function useOAuthLogin(
       )
       rememberLoginRedirect(provider.slug, state)
 
-      const redirectUri = `${window.location.origin}/oauth/${provider.slug}`
-      const url = new URL(provider.authorization_endpoint)
-      url.searchParams.set('client_id', provider.client_id)
-      url.searchParams.set('redirect_uri', redirectUri)
-      url.searchParams.set('response_type', 'code')
-      url.searchParams.set('state', state)
-      if (provider.scopes) {
-        url.searchParams.set('scope', provider.scopes)
-      }
-
-      window.open(url.toString(), '_self')
+      window.open(
+        buildCustomOAuthUrl({
+          authorizationEndpoint: provider.authorization_endpoint,
+          clientId: provider.client_id,
+          slug: provider.slug,
+          state,
+          scopes: provider.scopes,
+          serverAddress: status?.server_address,
+          fallbackOrigin: window.location.origin,
+        }),
+        '_self'
+      )
     } catch {
       toast.error(
         t('Failed to start {{provider}} login', { provider: provider.name })

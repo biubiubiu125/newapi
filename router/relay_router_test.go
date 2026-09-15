@@ -42,6 +42,61 @@ func TestSetRelayRouterRegistersPublicImageTaskRoutes(t *testing.T) {
 	}
 }
 
+func TestTaskFetchRoutesAllowExhaustedTokensAndKeepDistribute(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	for _, tt := range []struct {
+		method string
+		path   string
+	}{
+		{method: http.MethodPost, path: "/suno/fetch"},
+		{method: http.MethodGet, path: "/suno/fetch/task_x"},
+		{method: http.MethodGet, path: "/mj/task/task_x/fetch"},
+		{method: http.MethodGet, path: "/v1/video/generations/task_x"},
+	} {
+		t.Run(tt.method+" "+tt.path, func(t *testing.T) {
+			engine := gin.New()
+			var handlerNames []string
+			engine.Use(func(c *gin.Context) {
+				handlerNames = c.HandlerNames()
+				c.AbortWithStatus(http.StatusTeapot)
+			})
+			SetRelayRouter(engine)
+			SetVideoRouter(engine)
+
+			recorder := httptest.NewRecorder()
+			engine.ServeHTTP(recorder, httptest.NewRequest(tt.method, tt.path, nil))
+			require.Equal(t, http.StatusTeapot, recorder.Code)
+
+			joined := strings.Join(handlerNames, ",")
+			require.Contains(t, joined, "TokenAuthAllowExhausted", handlerNames)
+			require.Contains(t, joined, "Distribute", handlerNames)
+			require.NotContains(t, joined, "middleware.TokenAuth)", handlerNames)
+		})
+	}
+}
+
+func TestJimengGetResultUsesTaskFetchHandler(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	engine := gin.New()
+	var handlerNames []string
+	engine.Use(func(c *gin.Context) {
+		handlerNames = c.HandlerNames()
+		c.AbortWithStatus(http.StatusTeapot)
+	})
+	SetVideoRouter(engine)
+
+	req := httptest.NewRequest(http.MethodPost, "/jimeng/?Action=CVSync2AsyncGetResult", strings.NewReader(`{"task_id":"task_x"}`))
+	req.Header.Set("Content-Type", "application/json")
+	recorder := httptest.NewRecorder()
+	engine.ServeHTTP(recorder, req)
+	require.Equal(t, http.StatusTeapot, recorder.Code)
+
+	joined := strings.Join(handlerNames, ",")
+	require.Contains(t, joined, "RelayTaskOrFetch", handlerNames)
+	require.Contains(t, joined, "JimengAuth", handlerNames)
+}
+
 func TestSetRelayRouterRegistersAlphaSearchRoute(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	engine := gin.New()

@@ -15,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	plugindto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay/channel"
@@ -45,9 +46,38 @@ func isSuccessfulTaskSubmissionStatus(status int) bool {
 	return status >= http.StatusOK && status < http.StatusMultipleChoices
 }
 
+func taskSubmitFetchError(statusCode int, responseBody []byte) *dto.TaskError {
+	original := strings.TrimSpace(string(responseBody))
+	if original != "" {
+		common.SysError(fmt.Sprintf("upstream task submit failed: status=%d body=%s", statusCode, original))
+	}
+	return service.TaskErrorWrapper(errors.New(publicTaskSubmitFetchMessage(original)), "fail_to_fetch_task", statusCode)
+}
+
+func publicTaskSubmitFetchMessage(body string) string {
+	body = strings.TrimSpace(body)
+	if body == "" {
+		return "upstream request failed"
+	}
+	lower := strings.ToLower(body)
+	if strings.Contains(lower, "<html") || strings.Contains(lower, "<!doctype") {
+		return "upstream request failed"
+	}
+	var parsed dto.GeneralErrorResponse
+	if err := common.Unmarshal([]byte(body), &parsed); err == nil {
+		if msg := strings.TrimSpace(parsed.ToMessage()); msg != "" {
+			return msg
+		}
+	}
+	if len(body) > 300 || strings.HasPrefix(body, "{") || strings.HasPrefix(body, "[") {
+		return "upstream request failed"
+	}
+	return body
+}
+
 // ResolveOriginTask 处理基于已有任务的提交（remix / continuation）：
-// 查找原始任务、从中提取模型名称，并优先把请求绑定到原始任务的渠道。
-// 如果原始渠道已禁用或没有可用 key，则退回到普通选路/故障转移。
+// 查找原始任务、从中提取模型名称，并把请求绑定到原始任务的渠道。
+// 原始渠道已禁用、或 Setup 失败（含无可用 key）时直接失败，避免 remix 静默换渠道。
 // 以及提取 OtherRatios（时长、分辨率）。
 // 该函数在控制器的重试循环之前调用一次，其结果通过 info 字段和上下文持久化。
 func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
@@ -75,9 +105,10 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 	if err != nil {
 		return service.TaskErrorWrapper(err, "get_origin_task_failed", http.StatusInternalServerError)
 	}
-	if !exist {
+	if !exist || originTask == nil || !taskVisibleToRelayRequest(c, originTask) {
 		return service.TaskErrorWrapperLocal(errors.New("task_origin_not_exist"), "task_not_exist", http.StatusBadRequest)
 	}
+	info.OriginTaskID = originTask.GetUpstreamTaskID()
 
 	// 从原始任务推导模型名称
 	if info.OriginModelName == "" {
@@ -94,34 +125,15 @@ func ResolveOriginTask(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskErr
 		}
 	}
 
-	// 优先绑定到原始任务的渠道；如果原始渠道不可用，则退回通用选路。
+	// 绑定到原始任务的渠道和已存凭证。原始渠道不可用时失败，不得退回通用选路。
 	// RelayInfo 的 ChannelMeta 在 submit 尝试中才会初始化，这里只安全地
 	// 更新 Gin 上下文；如果 ChannelMeta 已存在，再同步嵌入字段。
-	currentChannelID := common.GetContextKeyInt(c, constant.ContextKeyChannelId)
 	ch, err := model.GetChannelById(originTask.ChannelId, true)
 	if err != nil {
 		return service.TaskErrorWrapperLocal(err, "channel_not_found", http.StatusBadRequest)
 	}
-	if ch.Status != common.ChannelStatusEnabled {
-		info.LockedChannel = nil
-	} else {
-		info.LockedChannel = ch
-		key, _, newAPIError := ch.GetNextEnabledKey()
-		if newAPIError != nil {
-			info.LockedChannel = nil
-		} else if originTask.ChannelId != currentChannelID {
-			common.SetContextKey(c, constant.ContextKeyChannelKey, key)
-			common.SetContextKey(c, constant.ContextKeyChannelType, ch.Type)
-			common.SetContextKey(c, constant.ContextKeyChannelBaseUrl, ch.GetBaseURL())
-			common.SetContextKey(c, constant.ContextKeyChannelId, originTask.ChannelId)
-
-			if info.ChannelMeta != nil {
-				info.ChannelBaseUrl = ch.GetBaseURL()
-				info.ChannelId = originTask.ChannelId
-				info.ChannelType = ch.Type
-				info.ApiKey = key
-			}
-		}
+	if taskErr := lockOriginChannel(c, info, ch, originTaskStoredKey(originTask)); taskErr != nil {
+		return taskErr
 	}
 
 	// 提取 remix 参数（时长、分辨率 → OtherRatios）
@@ -190,8 +202,62 @@ func ApplyChannelPin(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
 	if ch.Status != common.ChannelStatusEnabled {
 		return service.TaskErrorWrapperLocal(errors.New("the channel of the origin task is disabled"), "origin_task_channel_disabled", http.StatusBadRequest)
 	}
+	if setupErr := middleware.SetupContextForSelectedChannelWithKey(c, ch, info.OriginModelName, pinnedOriginTaskKey(c, pin.ChannelId)); setupErr != nil {
+		return service.TaskErrorWrapperLocal(setupErr.Err, "setup_locked_channel_failed", http.StatusInternalServerError)
+	}
 	info.LockedChannel = ch
+	syncLockedChannelMeta(info, ch, common.GetContextKeyString(c, constant.ContextKeyChannelKey))
 	return nil
+}
+
+func originTaskStoredKey(task *model.Task) string {
+	if task == nil {
+		return ""
+	}
+	return strings.TrimSpace(task.PrivateData.Key)
+}
+
+func pinnedOriginTaskKey(c *gin.Context, channelID int) string {
+	tasks, ok := common.GetContextKeyType[[]*model.Task](c, constant.ContextKeyOriginTasks)
+	if !ok {
+		return ""
+	}
+	for _, task := range tasks {
+		if task == nil || task.ChannelId != channelID {
+			continue
+		}
+		if key := originTaskStoredKey(task); key != "" {
+			return key
+		}
+	}
+	return ""
+}
+
+func lockOriginChannel(c *gin.Context, info *relaycommon.RelayInfo, ch *model.Channel, preferredKey string) *dto.TaskError {
+	if info == nil {
+		return nil
+	}
+	if ch == nil || ch.Status != common.ChannelStatusEnabled {
+		info.LockedChannel = nil
+		return service.TaskErrorWrapperLocal(errors.New("the channel of the origin task is disabled"), "origin_task_channel_disabled", http.StatusBadRequest)
+	}
+	if setupErr := middleware.SetupContextForSelectedChannelWithKey(c, ch, info.OriginModelName, preferredKey); setupErr != nil {
+		info.LockedChannel = nil
+		return service.TaskErrorWrapperLocal(setupErr.Err, "setup_locked_channel_failed", http.StatusInternalServerError)
+	}
+	info.LockedChannel = ch
+	syncLockedChannelMeta(info, ch, common.GetContextKeyString(c, constant.ContextKeyChannelKey))
+	return nil
+}
+
+func syncLockedChannelMeta(info *relaycommon.RelayInfo, ch *model.Channel, key string) {
+	if info == nil || info.ChannelMeta == nil || ch == nil {
+		return
+	}
+	info.ChannelBaseUrl = ch.GetBaseURL()
+	info.ChannelId = ch.Id
+	info.ChannelType = ch.Type
+	info.ApiKey = key
 }
 
 func ApplyOriginTaskAffinity(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError {
@@ -312,7 +378,16 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 			return nil, service.TaskErrorWrapper(err, "model_price_error", http.StatusBadRequest)
 		}
 	}
+	remixRatios := map[string]float64{}
+	if info.Action == constant.TaskActionRemix {
+		for name, ratio := range info.PriceData.OtherRatios() {
+			remixRatios[name] = ratio
+		}
+	}
 	info.PriceData = priceData
+	for name, ratio := range remixRatios {
+		info.PriceData.AddOtherRatio(name, ratio)
+	}
 	baseQuotaForOtherRatios := float64(info.PriceData.Quota)
 
 	// 4. 计费估算：普通倍率只在非表达式计费下应用。
@@ -367,7 +442,7 @@ func RelayTaskSubmit(c *gin.Context, info *relaycommon.RelayInfo) (*TaskSubmitRe
 		if readErr != nil && len(responseBody) == 0 {
 			responseBody = []byte(readErr.Error())
 		}
-		return nil, service.TaskErrorWrapper(fmt.Errorf("%s", string(responseBody)), "fail_to_fetch_task", resp.StatusCode)
+		return nil, taskSubmitFetchError(resp.StatusCode, responseBody)
 	}
 
 	// 8. 返回 OtherRatios 给下游（header 必须在写 body 之前设置）。
@@ -497,7 +572,10 @@ func sunoFetchRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dto.Ta
 			return
 		}
 		for _, task := range taskModels {
-			tasks = append(tasks, TaskModel2Dto(task))
+			if !taskVisibleToRelayRequest(c, task) {
+				continue
+			}
+			tasks = append(tasks, TaskModel2PublicDto(task))
 		}
 	} else {
 		tasks = make([]any, 0)
@@ -518,14 +596,14 @@ func sunoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *dt
 		taskResp = service.TaskErrorWrapper(err, "get_task_failed", http.StatusInternalServerError)
 		return
 	}
-	if !exist {
+	if !exist || !taskVisibleToRelayRequest(c, originTask) {
 		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusBadRequest)
 		return
 	}
 
 	respBody, err = common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
-		Data: TaskModel2Dto(originTask),
+		Data: TaskModel2PublicDto(originTask),
 	})
 	return
 }
@@ -542,14 +620,15 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 		taskResp = service.TaskErrorWrapper(err, "get_task_failed", http.StatusInternalServerError)
 		return
 	}
-	if !exist {
+	if !exist || !taskVisibleToRelayRequest(c, originTask) {
 		taskResp = service.TaskErrorWrapperLocal(errors.New("task_not_exist"), "task_not_exist", http.StatusBadRequest)
 		return
 	}
 
 	isOpenAIVideoAPI := strings.HasPrefix(c.Request.RequestURI, "/v1/videos/")
 
-	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态
+	// Gemini/Vertex 支持实时查询：用户 fetch 时直接从上游拉取最新状态。
+	// 成功路径必须结算；令牌耗尽时由 SettleTaskBillingOnComplete 记 REVIEW，不能跳过最终扣费。
 	if realtimeResp := tryRealtimeFetch(c.Request.Context(), originTask, isOpenAIVideoAPI); len(realtimeResp) > 0 {
 		respBody = realtimeResp
 		return
@@ -593,7 +672,7 @@ func videoFetchByIDRespBodyBuilder(c *gin.Context) (respBody []byte, taskResp *d
 	// 通用 TaskDto 格式
 	respBody, err = common.Marshal(dto.TaskResponse[any]{
 		Code: "success",
-		Data: TaskModel2Dto(originTask),
+		Data: TaskModel2PublicDto(originTask),
 	})
 	if err != nil {
 		taskResp = service.TaskErrorWrapper(err, "marshal_response_failed", http.StatusInternalServerError)
@@ -662,22 +741,15 @@ func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bo
 	}
 
 	snap := task.Snapshot()
-	originalPrivateData := task.PrivateData
-	originalData := append([]byte(nil), task.Data...)
-	if !applyRealtimeTaskResult(task, ti, body, time.Now().Unix()) {
+	original := task.CloneForUpdate()
+	if !applyRealtimeTaskResult(task, ti, body, time.Now().Unix(), channelModel.Type) {
 		return nil
 	}
 
 	if !snap.Equal(task.Snapshot()) {
 		won, updateErr := task.UpdateWithStatus(snap.Status)
 		if updateErr != nil || !won {
-			task.Status = snap.Status
-			task.Progress = snap.Progress
-			task.StartTime = snap.StartTime
-			task.FinishTime = snap.FinishTime
-			task.FailReason = snap.FailReason
-			task.PrivateData = originalPrivateData
-			task.Data = originalData
+			restoreRealtimeTaskAfterLostUpdate(task, original)
 			return nil
 		}
 	}
@@ -691,20 +763,23 @@ func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bo
 	}
 
 	// 非 OpenAI Video API: 构建自定义格式响应
-	format := detectVideoFormat(body)
-	out := map[string]any{
-		"error":    nil,
-		"format":   format,
-		"metadata": nil,
-		"status":   mapTaskStatusToSimple(task.Status),
-		"task_id":  task.TaskID,
-		"url":      task.GetResultURL(),
+	return realtimeTaskPublicBody(task, detectVideoFormat(body))
+}
+
+func restoreRealtimeTaskAfterLostUpdate(task, original *model.Task) {
+	if task == nil {
+		return
 	}
-	respBody, _ := common.Marshal(dto.TaskResponse[any]{
-		Code: "success",
-		Data: out,
-	})
-	return respBody
+	if task.ID > 0 {
+		reloaded, exist, err := model.GetTaskByID(task.ID)
+		if err == nil && exist && reloaded != nil {
+			*task = *reloaded
+			return
+		}
+	}
+	if original != nil {
+		*task = *original
+	}
 }
 
 func getLegacyRealtimeTaskKey(channel *model.Channel, task *model.Task) string {
@@ -787,21 +862,14 @@ func tryPluginRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideo
 	}
 
 	snap := task.Snapshot()
-	originalPrivateData := task.PrivateData
-	originalData := append([]byte(nil), task.Data...)
-	if !applyRealtimeTaskResult(task, result, body, time.Now().Unix()) {
+	original := task.CloneForUpdate()
+	if !applyRealtimeTaskResult(task, result, body, time.Now().Unix(), channelModel.Type) {
 		return nil
 	}
 	if !snap.Equal(task.Snapshot()) {
 		won, updateErr := task.UpdateWithStatus(snap.Status)
 		if updateErr != nil || !won {
-			task.Status = snap.Status
-			task.Progress = snap.Progress
-			task.StartTime = snap.StartTime
-			task.FinishTime = snap.FinishTime
-			task.FailReason = snap.FailReason
-			task.PrivateData = originalPrivateData
-			task.Data = originalData
+			restoreRealtimeTaskAfterLostUpdate(task, original)
 			return nil
 		}
 	}
@@ -812,18 +880,35 @@ func tryPluginRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideo
 		return nil
 	}
 
-	out := map[string]any{
-		"error": nil, "format": detectVideoFormat(body), "metadata": nil,
-		"status": mapTaskStatusToSimple(task.Status), "task_id": task.TaskID,
-		"url": task.GetResultURL(),
+	return realtimeTaskPublicBody(task, detectVideoFormat(body))
+}
+
+func realtimeTaskPublicBody(task *model.Task, format string) []byte {
+	if task == nil {
+		return nil
 	}
-	respBody, _ := common.Marshal(dto.TaskResponse[any]{Code: "success", Data: out})
+	out := map[string]any{
+		"error":    nil,
+		"format":   format,
+		"metadata": nil,
+		"status":   mapTaskStatusToSimple(PublicTaskStatus(task)),
+		"task_id":  task.TaskID,
+		"url":      PublicResultURL(task),
+	}
+	respBody, _ := common.Marshal(dto.TaskResponse[any]{
+		Code: "success",
+		Data: out,
+	})
 	return respBody
 }
 
-func applyRealtimeTaskResult(task *model.Task, result *relaycommon.TaskInfo, body []byte, now int64) bool {
+func applyRealtimeTaskResult(task *model.Task, result *relaycommon.TaskInfo, body []byte, now int64, channelTypes ...int) bool {
 	if task == nil || result == nil {
 		return false
+	}
+	channelType := 0
+	if len(channelTypes) > 0 {
+		channelType = channelTypes[0]
 	}
 	if task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure {
 		return false
@@ -846,23 +931,7 @@ func applyRealtimeTaskResult(task *model.Task, result *relaycommon.TaskInfo, bod
 	}
 	switch task.Status {
 	case model.TaskStatusSuccess:
-		task.Progress = taskcommon.ProgressComplete
-		task.FailReason = strings.TrimSpace(result.Reason)
-		if task.FinishTime == 0 {
-			task.FinishTime = now
-		}
-		resultURL := strings.TrimSpace(result.Url)
-		if resultURL == "" {
-			resultURL = strings.TrimSpace(result.RemoteUrl)
-		}
-		switch {
-		case taskcommon.IsDataURL(resultURL):
-			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
-		case resultURL != "":
-			task.PrivateData.ResultURL = resultURL
-		default:
-			task.PrivateData.ResultURL = taskcommon.BuildProxyURL(task.TaskID)
-		}
+		taskcommon.ApplyTaskSuccessResult(task, result.Url, result.RemoteUrl, result.Reason, now, taskcommon.AllowsEmptyProxyResult(task.Platform, channelType))
 	case model.TaskStatusFailure:
 		task.Progress = taskcommon.ProgressComplete
 		if task.FinishTime == 0 {
@@ -887,11 +956,14 @@ func settleRealtimeTaskBilling(
 	}
 	switch task.Status {
 	case model.TaskStatusSuccess:
-		_ = service.SettleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+		if !service.SettleTaskBillingOnComplete(ctx, adaptor, task, taskResult) {
+			logger.LogWarn(ctx, fmt.Sprintf("realtime task %s billing kept prepaid quota or did not apply", task.TaskID))
+		}
 	case model.TaskStatusFailure:
 		if task.Quota == 0 {
 			return
 		}
+		task.RefundPending = true
 		if err := service.RefundTaskQuota(ctx, task, task.FailReason); err != nil {
 			logger.LogError(ctx, fmt.Sprintf("realtime task %s refund failed: %s", task.TaskID, err.Error()))
 		}
@@ -951,17 +1023,58 @@ func mapTaskStatusToSimple(status model.TaskStatus) string {
 	}
 }
 
+func taskVisibleToRelayRequest(c *gin.Context, task *model.Task) bool {
+	if task == nil {
+		return false
+	}
+	if c != nil && c.GetInt("role") >= common.RoleAdminUser {
+		return true
+	}
+	tokenID := 0
+	if c != nil {
+		tokenID = c.GetInt("token_id")
+	}
+	return task.MatchesRequestToken(tokenID)
+}
+
+func PublicTaskStatus(task *model.Task) model.TaskStatus {
+	if task == nil {
+		return ""
+	}
+	return task.PublicStatus()
+}
+
+func PublicTaskFailReason(task *model.Task) string {
+	if task == nil {
+		return ""
+	}
+	return task.PublicFailReason()
+}
+
+func PublicResultURL(task *model.Task) string {
+	if task == nil {
+		return ""
+	}
+	return task.PublicResultURL()
+}
+
+func PublicTaskProgress(task *model.Task) string {
+	if task == nil {
+		return ""
+	}
+	return task.PublicProgress()
+}
+
+func PublicTaskFinishTime(task *model.Task) int64 {
+	if task == nil {
+		return 0
+	}
+	return task.PublicFinishTime()
+}
+
 func TaskModel2Dto(task *model.Task) *dto.TaskDto {
-	status := string(task.Status)
-	if task.Platform == constant.TaskPlatformImage &&
-		task.Status == model.TaskStatusSuccess &&
-		task.SettlementStatus == model.TaskSettlementStatusReview {
-		status = string(model.TaskStatusFailure)
-	}
-	failReason := task.FailReason
-	if task.Status == model.TaskStatusSuccess && taskFailReasonIsLegacyResultURL(failReason) {
-		failReason = ""
-	}
+	status := string(PublicTaskStatus(task))
+	failReason := PublicTaskFailReason(task)
 	return &dto.TaskDto{
 		ID:                     task.ID,
 		CreatedAt:              task.CreatedAt,
@@ -978,24 +1091,59 @@ func TaskModel2Dto(task *model.Task) *dto.TaskDto {
 		SettlementError:        task.PrivateData.SettlementError,
 		SettlementAttemptQuota: task.PrivateData.SettlementAttemptQuota,
 		FailReason:             failReason,
-		ResultURL:              task.GetResultURL(),
+		ResultURL:              dashboardTaskResultURL(task),
 		SubmitTime:             task.SubmitTime,
 		StartTime:              task.StartTime,
-		FinishTime:             task.FinishTime,
-		Progress:               task.Progress,
+		FinishTime:             PublicTaskFinishTime(task),
+		Progress:               PublicTaskProgress(task),
 		Properties:             task.Properties,
 		Username:               task.Username,
 		Data:                   task.Data,
 	}
 }
 
-func taskFailReasonIsLegacyResultURL(value string) bool {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return false
+func dashboardTaskResultURL(task *model.Task) string {
+	return PublicResultURL(task)
+}
+
+// TaskModel2PublicDto is the user-facing task fetch projection. It keeps the
+// media/status fields clients need and strips billing, channel, and settlement internals.
+func TaskModel2PublicDto(task *model.Task) *dto.TaskDto {
+	item := TaskModel2Dto(task)
+	if item == nil {
+		return nil
 	}
-	lower := strings.ToLower(value)
-	return strings.HasPrefix(lower, "http://") ||
-		strings.HasPrefix(lower, "https://") ||
-		strings.HasPrefix(lower, "data:")
+	item.ResultURL = PublicResultURL(task)
+	item.UserId = 0
+	item.Group = ""
+	item.ChannelId = 0
+	item.Quota = 0
+	item.SettlementStatus = ""
+	item.SettlementError = ""
+	item.SettlementAttemptQuota = 0
+	item.Username = ""
+	item.AdminInfo = nil
+	item.RootInfo = nil
+	item.Properties = redactPublicTaskProperties(item.Properties)
+	if task.Platform != constant.TaskPlatformSuno || task.PublicStatus() != model.TaskStatusSuccess {
+		item.Data = nil
+	}
+	return item
+}
+
+func redactPublicTaskProperties(properties any) any {
+	switch props := properties.(type) {
+	case model.Properties:
+		props.UpstreamModelName = ""
+		return props
+	case *model.Properties:
+		if props == nil {
+			return properties
+		}
+		copied := *props
+		copied.UpstreamModelName = ""
+		return copied
+	default:
+		return properties
+	}
 }

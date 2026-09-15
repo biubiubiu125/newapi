@@ -323,6 +323,8 @@ func (*recordingBillingSettler) Settle(int) error { return nil }
 
 func (*recordingBillingSettler) Refund(*gin.Context) error { return nil }
 
+func (*recordingBillingSettler) Rollback(int) error { return nil }
+
 func (*recordingBillingSettler) NeedsRefund() bool { return false }
 
 func (s *recordingBillingSettler) GetPreConsumedQuota() int {
@@ -436,15 +438,10 @@ func TestPrepareTieredBillingForSelectedGroupPaidToFreeKeepsFreeModelFalse(t *te
 	assert.EqualValues(t, 50_000, relayInfo.FinalPreConsumedQuota)
 }
 
-func TestPrepareTieredBillingForSelectedGroupTopUpArrearsAllowsNegativeBalance(t *testing.T) {
+func TestPrepareTieredBillingForSelectedGroupTopUpArrearsRejectsNegativeBalance(t *testing.T) {
 	truncate(t)
 
 	const userID = 701
-	// Balance covers the initial 50k pre-consume (already deducted before this
-	// test's seed) but not the 50k top-up to the more expensive retry group.
-	// The top-up must NOT abort the request: the full delta is deducted, the
-	// uncovered 30k becomes arrears (negative balance), mirroring how
-	// settlement charges a positive delta unconditionally.
 	seedUser(t, userID, 20_000)
 
 	relayInfo := &relaycommon.RelayInfo{
@@ -471,22 +468,11 @@ func TestPrepareTieredBillingForSelectedGroupTopUpArrearsAllowsNegativeBalance(t
 	}
 	relayInfo.Billing = session
 
-	require.Nil(t, PrepareTieredBillingForSelectedGroup(nil, relayInfo))
-
-	// Full reservation recorded; wallet charged the full delta into arrears.
-	assert.EqualValues(t, 100_000, session.GetPreConsumedQuota())
-	assert.EqualValues(t, 100_000, relayInfo.FinalPreConsumedQuota)
-	assert.EqualValues(t, 100_000, relayInfo.TieredBillingSnapshot.EstimatedQuotaAfterGroup)
+	require.NotNil(t, PrepareTieredBillingForSelectedGroup(nil, relayInfo))
+	assert.EqualValues(t, 50_000, session.GetPreConsumedQuota())
 	userQuota, err := model.GetUserQuota(userID, false)
 	require.NoError(t, err)
-	assert.EqualValues(t, -30_000, userQuota)
-
-	// Settlement still reconciles against the full reservation: actual 80k
-	// refunds the 20k over-reserve, landing at seed - (actual - initial) = -10k.
-	require.NoError(t, session.Settle(80_000))
-	userQuota, err = model.GetUserQuota(userID, false)
-	require.NoError(t, err)
-	assert.EqualValues(t, -10_000, userQuota)
+	assert.EqualValues(t, 20_000, userQuota)
 }
 
 func TestBillingSessionReserveWalletTopUpDecrementsBalance(t *testing.T) {

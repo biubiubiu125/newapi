@@ -397,7 +397,7 @@ func SyncUpstreamModels(c *gin.Context) {
 	var req syncRequest
 	// 允许空体
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "请求体无效: " + err.Error()})
+		common.ApiErrorMsg(c, "请求体无效: "+err.Error())
 		return
 	}
 	source, ok := normalizeSyncSource(req.Source)
@@ -617,7 +617,7 @@ func SyncUpstreamModels(c *gin.Context) {
 		return nil
 	})
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": err.Error()})
+		common.ApiError(c, err)
 		return
 	}
 
@@ -685,7 +685,12 @@ func SyncUpstreamPreview(c *gin.Context) {
 
 	var modelsEnv upstreamEnvelope[upstreamModel]
 	if err := fetchJSON(ctx, modelsURL, &modelsEnv); err != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取上游模型失败: " + err.Error(), "locale": locale, "source_urls": gin.H{"models_url": modelsURL, "vendors_url": vendorsURL}})
+		original := "获取上游模型失败: " + err.Error()
+		message := common.PublicDashboardErrorMessage(c, original)
+		if message != original {
+			common.SysError("api error: " + original)
+		}
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": message, "locale": locale, "source_urls": gin.H{"models_url": modelsURL, "vendors_url": vendorsURL}})
 		return
 	}
 
@@ -702,7 +707,7 @@ func SyncUpstreamPreview(c *gin.Context) {
 	var locals []model.Model
 	if len(upstreamNames) > 0 {
 		if err := model.DB.Where("model_name IN ? AND sync_official <> 0", upstreamNames).Find(&locals).Error; err != nil {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取本地模型失败: " + err.Error()})
+			common.ApiErrorMsg(c, "获取本地模型失败: "+err.Error())
 			return
 		}
 	}
@@ -722,7 +727,7 @@ func SyncUpstreamPreview(c *gin.Context) {
 	if len(vendorIDs) > 0 {
 		var dbVendors []model.Vendor
 		if err := model.DB.Where("id IN ?", vendorIDs).Find(&dbVendors).Error; err != nil {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取本地供应商失败: " + err.Error()})
+			common.ApiErrorMsg(c, "获取本地供应商失败: "+err.Error())
 			return
 		}
 		for _, v := range dbVendors {
@@ -733,7 +738,7 @@ func SyncUpstreamPreview(c *gin.Context) {
 	// 3) 缺失且上游存在的模型
 	missingList, err := model.GetMissingModels()
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取缺失模型失败: " + err.Error()})
+		common.ApiErrorMsg(c, "获取缺失模型失败: "+err.Error())
 		return
 	}
 	var missing []string

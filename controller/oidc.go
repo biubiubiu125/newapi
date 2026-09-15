@@ -134,10 +134,7 @@ func OidcAuth(c *gin.Context) {
 	if model.IsOidcIdAlreadyTaken(user.OidcId) {
 		err := user.FillUserByOidcId()
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
+			common.ApiError(c, err)
 			return
 		}
 	} else {
@@ -155,10 +152,7 @@ func OidcAuth(c *gin.Context) {
 					common.ApiErrorI18n(c, i18n.MsgUserExists)
 					return
 				}
-				c.JSON(http.StatusOK, gin.H{
-					"success": false,
-					"message": err.Error(),
-				})
+				common.ApiError(c, err)
 				return
 			}
 		} else {

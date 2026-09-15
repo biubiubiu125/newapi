@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
@@ -43,10 +44,7 @@ func ClearChannelAffinityCache(c *gin.Context) {
 
 	deleted, err := service.ClearChannelAffinityCacheByRuleName(ruleName)
 	if err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiErrorWithStatus(c, http.StatusBadRequest, err)
 		return
 	}
 

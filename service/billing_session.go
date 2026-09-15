@@ -17,10 +17,10 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-func isSubscriptionPreConsumeInsufficientError(errMsg string) bool {
-	return strings.Contains(errMsg, "no active subscription grants group") ||
-		strings.Contains(errMsg, "no active subscription") ||
-		strings.Contains(errMsg, "subscription quota insufficient")
+func isSubscriptionPreConsumeInsufficientError(err error) bool {
+	return errors.Is(err, model.ErrNoActiveSubscription) ||
+		errors.Is(err, model.ErrNoActiveSubscriptionGrantsGroup) ||
+		errors.Is(err, model.ErrSubscriptionQuotaInsufficient)
 }
 
 // ---------------------------------------------------------------------------
@@ -294,8 +294,11 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	if s.settled || s.refunded || s.trusted || targetQuota <= s.preConsumedQuota {
+	if s.settled || s.refunded || targetQuota <= s.preConsumedQuota {
 		return nil
+	}
+	if s.trusted {
+		s.trusted = false
 	}
 
 	delta := targetQuota - s.preConsumedQuota
@@ -376,7 +379,6 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 			}
 			s.tokenConsumed = 0
 		}
-		// TODO: model 层应定义哨兵错误（如 ErrNoActiveSubscription），用 errors.Is 替代字符串匹配
 		if errors.Is(err, ErrInsufficientWalletQuota) {
 			userQuota, quotaErr := model.GetUserQuota(s.relayInfo.UserId, false)
 			if quotaErr != nil {
@@ -387,9 +389,8 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
 				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
-		errMsg := err.Error()
-		if isSubscriptionPreConsumeInsufficientError(errMsg) {
-			return types.NewErrorWithStatusCode(fmt.Errorf("订阅额度不足或未配置订阅: %s", errMsg), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+		if isSubscriptionPreConsumeInsufficientError(err) {
+			return types.NewErrorWithStatusCode(fmt.Errorf("订阅额度不足或未配置订阅: %w", err), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
 		}
 		return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
 	}
@@ -405,12 +406,20 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 func (s *BillingSession) reserveFunding(delta int) error {
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
-		// 与结算补扣（SettleBilling 正差额 → WalletFunding.Settle）语义一致：
-		// 全额无条件扣减，余额不足的部分记为欠费（余额可为负），不中断请求，
-		// 保证日志记录的预扣额度与用户余额的实际变动始终对账一致。
-		// DecreaseUserQuota 仅在数据库错误时失败。
-		if err := model.DecreaseUserQuotaAllowNegative(funding.userId, int64(delta), false); err != nil {
+		// 发送前补充预扣：余额不足时拒绝，不把请求做成欠费。
+		// 最终结算（WalletFunding.Settle 正差额）才允许记欠费。
+		reserved, err := model.TryReserveUserQuota(funding.userId, delta)
+		if err != nil {
 			return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
+		}
+		if !reserved {
+			return types.NewErrorWithStatusCode(
+				ErrInsufficientWalletQuota,
+				types.ErrorCodeInsufficientUserQuota,
+				http.StatusForbidden,
+				types.ErrOptionWithSkipRetry(),
+				types.ErrOptionWithNoRecordErrorLog(),
+			)
 		}
 		funding.consumed += delta
 		return nil

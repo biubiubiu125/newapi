@@ -154,6 +154,9 @@ func FinalizeUserAuthChangeByID(userID int, previousAuthVersion int64, reason st
 	return FinalizeUserAuthChange(*user, previousAuthVersion, reason)
 }
 
+// CacheUpdateUserQuota refreshes non-quota user cache fields from the database.
+// Live Quota is never overwritten: Redis-first reserves can already be ahead of
+// this snapshot. Quota mutations must use ApplyUserQuotaCacheDelta.
 func CacheUpdateUserQuota(userId int) error {
 	if !common.RedisEnabled {
 		return nil
@@ -162,10 +165,16 @@ func CacheUpdateUserQuota(userId int) error {
 	if err != nil {
 		return err
 	}
-	if err := cacheUpdateUserQuotaField(user.Id, user.Quota); err != nil {
-		return err
-	}
 	return cacheUpdateUserFields(*user)
+}
+
+// ApplyUserQuotaCacheDelta applies a signed wallet quota change to a live Redis
+// hash. Cache misses are skipped; the next read hydrates from the database.
+func ApplyUserQuotaCacheDelta(userId int, delta int64) error {
+	if userId <= 0 || delta == 0 {
+		return nil
+	}
+	return cacheIncrUserQuota(userId, delta)
 }
 
 func cacheGetUserBase(userId int) (*UserBase, error) {
@@ -195,7 +204,7 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 // 通过守卫式 Lua 脚本执行：哈希不存在时直接跳过（下次读取会从数据库水合），
 // 不会像裸 HINCRBY 那样创建只含 Quota 字段的残缺哈希。
 func cacheIncrUserQuota(userId int, delta int64) error {
-	if !common.RedisEnabled {
+	if !common.RedisEnabled || common.RDB == nil || userId <= 0 || delta == 0 {
 		return nil
 	}
 	_, err := cacheApplyUserQuotaDelta(userId, delta)
@@ -261,10 +270,9 @@ func updateUserStatusCache(userId int, status bool) error {
 }
 
 func updateUserQuotaCache(userId int, quota int64) error {
-	if !common.RedisEnabled {
-		return nil
-	}
-	return common.RedisHSetField(getUserCacheKey(userId), "Quota", fmt.Sprintf("%d", quota))
+	// Live hashes are reserved and settled by Lua HINCRBY. A database snapshot
+	// can restore a stale higher balance and over-allow concurrent requests.
+	return nil
 }
 
 func UpdateUserGroupCache(userId int, group string) error {

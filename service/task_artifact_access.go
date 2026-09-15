@@ -18,6 +18,7 @@ import (
 const (
 	TaskArtifactAccessQueryParameter = "access"
 	TaskArtifactResultArtifactKey    = "image-result"
+	MidjourneyImageArtifactKey       = "mj-image"
 	taskArtifactAccessVersion        = "v2"
 	maxTaskArtifactTaskIDLength      = 191
 	maxTaskArtifactKeyLength         = 128
@@ -192,4 +193,17 @@ func BuildTaskArtifactResultURL(taskID string) (string, error) {
 	query.Set(TaskArtifactAccessQueryParameter, access)
 	baseURL.RawQuery = query.Encode()
 	return baseURL.String(), nil
+}
+
+func MidjourneyForwardImageURL(mjID string) string {
+	mjID = strings.TrimSpace(mjID)
+	baseAddress := strings.TrimRight(strings.TrimSpace(system_setting.ServerAddress), "/")
+	imageURL := baseAddress + "/mj/image/" + mjID
+	access, err := IssueTaskArtifactAccess(mjID, MidjourneyImageArtifactKey)
+	if err != nil {
+		return imageURL
+	}
+	query := url.Values{}
+	query.Set(TaskArtifactAccessQueryParameter, access)
+	return imageURL + "?" + query.Encode()
 }

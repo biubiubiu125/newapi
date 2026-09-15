@@ -55,7 +55,6 @@ func PostSetup(c *gin.Context) {
 		return
 	}
 
-	// Check if root user already exists
 	rootExists := model.RootUserExists()
 
 	var req SetupRequest
@@ -68,7 +67,21 @@ func PostSetup(c *gin.Context) {
 		return
 	}
 
-	// If root doesn't exist, validate and create admin account
+	if req.Password != req.ConfirmPassword {
+		c.JSON(200, gin.H{
+			"success": false,
+			"message": "两次输入的密码不一致",
+		})
+		return
+	}
+	if len(req.Password) < 8 {
+		c.JSON(200, gin.H{
+			"success": false,
+			"message": "密码长度至少为8个字符",
+		})
+		return
+	}
+
 	if !rootExists {
 		req.Username = strings.TrimSpace(req.Username)
 		if len([]rune(req.Username)) > model.RegisterUserNameMaxLength {
@@ -78,36 +91,12 @@ func PostSetup(c *gin.Context) {
 			})
 			return
 		}
-		// Validate password
-		if req.Password != req.ConfirmPassword {
-			c.JSON(200, gin.H{
-				"success": false,
-				"message": "两次输入的密码不一致",
-			})
-			return
-		}
-
-		if len(req.Password) < 8 {
-			c.JSON(200, gin.H{
-				"success": false,
-				"message": "密码长度至少为8个字符",
-			})
-			return
-		}
-
 		if err := model.ValidateNewUserUsername(req.Username); err != nil {
-			c.JSON(200, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
+			common.ApiError(c, err)
 			return
 		}
-		_, err := common.Password2Hash(req.Password)
-		if err != nil {
-			c.JSON(200, gin.H{
-				"success": false,
-				"message": "系统错误: " + err.Error(),
-			})
+		if _, err := common.Password2Hash(req.Password); err != nil {
+			respondSetupFailure(c, "系统错误", err)
 			return
 		}
 		rootUser := model.User{
@@ -121,10 +110,21 @@ func PostSetup(c *gin.Context) {
 		}
 		err = rootUser.InsertPreserveQuota(0)
 		if err != nil {
+			respondSetupFailure(c, "创建管理员账号失败", err)
+			return
+		}
+	} else {
+		rootUser := model.GetRootUser()
+		if rootUser == nil || rootUser.Id == 0 {
 			c.JSON(200, gin.H{
 				"success": false,
-				"message": "创建管理员账号失败: " + err.Error(),
+				"message": "系统中不存在管理员账号",
 			})
+			return
+		}
+		rootUser.Password = req.Password
+		if err := rootUser.Update(true); err != nil {
+			respondSetupFailure(c, "更新管理员密码失败", err)
 			return
 		}
 	}
@@ -136,24 +136,15 @@ func PostSetup(c *gin.Context) {
 	// Save operation modes to database for persistence
 	err = model.UpdateOption("SelfUseModeEnabled", boolToString(req.SelfUseModeEnabled))
 	if err != nil {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": "保存自用模式设置失败: " + err.Error(),
-		})
+		respondSetupFailure(c, "保存自用模式设置失败", err)
 		return
 	}
 
 	err = model.UpdateOption("DemoSiteEnabled", boolToString(req.DemoSiteEnabled))
 	if err != nil {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": "保存演示站点模式设置失败: " + err.Error(),
-		})
+		respondSetupFailure(c, "保存演示站点模式设置失败", err)
 		return
 	}
-
-	// Update setup status
-	constant.Setup = true
 
 	setup := model.Setup{
 		Version:       common.Version,
@@ -161,12 +152,10 @@ func PostSetup(c *gin.Context) {
 	}
 	err = model.DB.Create(&setup).Error
 	if err != nil {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": "系统初始化失败: " + err.Error(),
-		})
+		respondSetupFailure(c, "系统初始化失败", err)
 		return
 	}
+	constant.Setup = true
 
 	c.JSON(200, gin.H{
 		"success": true,
@@ -179,4 +168,14 @@ func boolToString(b bool) string {
 		return "true"
 	}
 	return "false"
+}
+
+func respondSetupFailure(c *gin.Context, publicMessage string, err error) {
+	if err != nil {
+		common.SysError(publicMessage + ": " + err.Error())
+	}
+	c.JSON(200, gin.H{
+		"success": false,
+		"message": publicMessage,
+	})
 }

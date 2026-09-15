@@ -379,3 +379,33 @@ func TestResolveWaffoPancakeSubscriptionTradeNo_FailsWhenWebhookOrderIDIsUnknown
 	require.Error(t, err)
 	require.Empty(t, tradeNo)
 }
+
+func TestResolveWaffoPancakePaidOrderRejectsMissingExternalID(t *testing.T) {
+	db := setupWaffoPancakeTestDB(t)
+
+	order := &model.SubscriptionOrder{
+		UserId:          9,
+		PlanId:          5,
+		Money:           29,
+		PaidAmount:      29,
+		PaidCurrency:    "USD",
+		TradeNo:         "WAFFO_PANCAKE_SUB-9-1700000000-abc",
+		PaymentMethod:   model.PaymentMethodWaffoPancake,
+		PaymentProvider: model.PaymentProviderWaffoPancake,
+		CreateTime:      time.Now().Unix(),
+		Status:          common.TopUpStatusPending,
+	}
+	require.NoError(t, db.Create(order).Error)
+
+	paid, err := ResolveWaffoPancakePaidOrder(&WaffoPancakeWebhookEvent{
+		Data: WaffoPancakeWebhookData{
+			OrderID:                       "ORD_internal_pancake_id",
+			Amount:                        "29",
+			Currency:                      "USD",
+			MerchantProvidedBuyerIdentity: WaffoPancakeBuyerIdentityFromUserID(order.UserId),
+		},
+	})
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "order not found")
+	require.Empty(t, paid.TradeNo)
+}

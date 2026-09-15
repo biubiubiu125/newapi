@@ -167,10 +167,7 @@ func Enable2FA(c *gin.Context) {
 	// 验证TOTP验证码
 	cleanCode, err := common.ValidateNumericCode(req.Code)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
 
@@ -252,10 +249,7 @@ func Disable2FA(c *gin.Context) {
 		// 尝试验证备用码
 		isValidBackup, err = twoFA.ValidateBackupCodeAndUpdateUsage(req.Code)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
+			common.ApiError(c, err)
 			return
 		}
 	}
@@ -363,19 +357,13 @@ func RegenerateBackupCodes(c *gin.Context) {
 	// 验证TOTP验证码
 	cleanCode, err := common.ValidateNumericCode(req.Code)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
 
 	valid, err := twoFA.ValidateTOTPAndUpdateUsage(cleanCode)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiError(c, err)
 		return
 	}
 	if !valid {
@@ -504,10 +492,7 @@ func Verify2FALogin(c *gin.Context) {
 		// 尝试验证备用码
 		isValidBackup, err = twoFA.ValidateBackupCodeAndUpdateUsage(req.Code)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
+			common.ApiError(c, err)
 			return
 		}
 	}

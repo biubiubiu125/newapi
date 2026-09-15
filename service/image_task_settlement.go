@@ -147,6 +147,7 @@ func ApplyImageTaskSettlementAtomic(ctx context.Context, task *model.Task, input
 
 	applied := false
 	preConsumedQuota := 0
+	walletQuotaDelta := 0
 	err := model.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var persistedTask model.Task
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -179,6 +180,7 @@ func ApplyImageTaskSettlementAtomic(ctx context.Context, task *model.Task, input
 		if err := applyImageTaskFundingSettlementTx(tx, &persistedTask, delta); err != nil {
 			return err
 		}
+		walletQuotaDelta = delta
 		settlementTokenID, err := applyImageTaskTokenSettlementTx(tx, &persistedTask, delta)
 		if err != nil {
 			return err
@@ -233,9 +235,7 @@ func ApplyImageTaskSettlementAtomic(ctx context.Context, task *model.Task, input
 	task.Quota = input.ActualQuota
 	task.SettlementStatus = model.TaskSettlementStatusApplied
 	model.RefreshTokenQuotaCache(task.PrivateData.TokenId, "")
-	if err := model.CacheUpdateUserQuota(task.UserId); err != nil {
-		common.SysLog(fmt.Sprintf("refresh image task settlement user cache failed, userId=%d: %s", task.UserId, err.Error()))
-	}
+	applyTaskWalletQuotaCacheDelta(task, walletQuotaDelta)
 	return true, nil
 }
 
@@ -248,6 +248,7 @@ func ApplyPublicImageTaskRefundAtomic(ctx context.Context, task *model.Task, rea
 		return errors.New("public image task is required")
 	}
 	var persistedAfter model.Task
+	walletQuotaDelta := 0
 	err := model.DB.WithContext(ctx).Transaction(func(tx *gorm.DB) error {
 		var persistedTask model.Task
 		if err := tx.Clauses(clause.Locking{Strength: "UPDATE"}).
@@ -329,6 +330,7 @@ func ApplyPublicImageTaskRefundAtomic(ctx context.Context, task *model.Task, rea
 			if err := applyImageTaskFundingSettlementTx(tx, &persistedTask, -quota); err != nil {
 				return err
 			}
+			walletQuotaDelta = -quota
 			tokenAdjusted := false
 			if persistedTask.PrivateData.TokenId > 0 {
 				if err := model.IncreaseTokenQuotaTx(tx, persistedTask.PrivateData.TokenId, int64(quota)); err != nil {
@@ -405,9 +407,7 @@ func ApplyPublicImageTaskRefundAtomic(ctx context.Context, task *model.Task, rea
 
 	*task = persistedAfter
 	model.RefreshTokenQuotaCache(task.PrivateData.TokenId, "")
-	if err := model.CacheUpdateUserQuota(task.UserId); err != nil {
-		common.SysLog(fmt.Sprintf("refresh public image refund user cache failed, userId=%d: %s", task.UserId, err.Error()))
-	}
+	applyTaskWalletQuotaCacheDelta(task, walletQuotaDelta)
 	if err := DispatchPendingImageTaskSettlementLogs(ctx, 10); err != nil {
 		common.SysLog(fmt.Sprintf("dispatch public image refund log failed, taskId=%s: %s", task.TaskID, err.Error()))
 	}
@@ -449,6 +449,20 @@ func applyImageTaskTokenSettlementTx(tx *gorm.DB, task *model.Task, delta int) (
 		return 0, nil
 	}
 	return 0, err
+}
+
+func applyTaskWalletQuotaCacheDelta(task *model.Task, quotaDelta int) {
+	if task == nil || quotaDelta == 0 || task.UserId <= 0 {
+		return
+	}
+	switch task.PrivateData.BillingSource {
+	case BillingSourceWallet, "":
+	default:
+		return
+	}
+	if err := model.ApplyUserQuotaCacheDelta(task.UserId, -int64(quotaDelta)); err != nil {
+		common.SysLog(fmt.Sprintf("apply wallet quota cache delta failed, userId=%d delta=%d: %s", task.UserId, -quotaDelta, err.Error()))
+	}
 }
 
 func applyImageTaskFundingSettlementTx(tx *gorm.DB, task *model.Task, delta int) error {

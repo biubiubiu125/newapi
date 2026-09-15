@@ -24,17 +24,24 @@ import (
 )
 
 // https://platform.minimaxi.com/docs/api-reference/video-generation-intro
+var hailuoHTTPClient = service.GetHttpClientWithProxy
+
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
 	ChannelType int
 	apiKey      string
 	baseURL     string
+	proxy       string
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
 	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
 	a.apiKey = info.ApiKey
+	a.proxy = ""
+	if info != nil && info.ChannelMeta != nil {
+		a.proxy = info.ChannelSetting.Proxy
+	}
 }
 
 func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) (taskErr *taskdto.TaskError) {
@@ -189,8 +196,8 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	}
 
 	taskResult := relaycommon.TaskInfo{}
-
-	if resTask.BaseResp.StatusCode == StatusSuccess {
+	apiOK := resTask.BaseResp.StatusCode == StatusSuccess
+	if apiOK {
 		taskResult.Code = 0
 	} else {
 		taskResult.Code = resTask.BaseResp.StatusCode
@@ -201,15 +208,19 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 
 	switch resTask.Status {
 	case TaskStatusPreparing, TaskStatusQueueing, TaskStatusProcessing:
-		taskResult.Status = model.TaskStatusInProgress
-		taskResult.Progress = "30%"
-		if resTask.Status == TaskStatusProcessing {
-			taskResult.Progress = "50%"
+		if apiOK {
+			taskResult.Status = model.TaskStatusInProgress
+			taskResult.Progress = "30%"
+			if resTask.Status == TaskStatusProcessing {
+				taskResult.Progress = "50%"
+			}
 		}
 	case TaskStatusSuccess:
-		taskResult.Status = model.TaskStatusSuccess
-		taskResult.Progress = "100%"
-		taskResult.Url = a.buildVideoURL(resTask.TaskID, resTask.FileID)
+		if apiOK {
+			taskResult.Status = model.TaskStatusSuccess
+			taskResult.Progress = "100%"
+			taskResult.Url = a.buildVideoURL(resTask.TaskID, resTask.FileID)
+		}
 	case TaskStatusFailed:
 		taskResult.Status = model.TaskStatusFailure
 		taskResult.Progress = "100%"
@@ -217,8 +228,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			taskResult.Reason = "task failed"
 		}
 	default:
-		taskResult.Status = model.TaskStatusInProgress
-		taskResult.Progress = "30%"
+		if apiOK {
+			taskResult.Status = model.TaskStatusInProgress
+			taskResult.Progress = "30%"
+		}
 	}
 
 	return &taskResult, nil
@@ -232,12 +245,17 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 
 	openAIVideo := originTask.ToOpenAIVideo()
 	if hailuoResp.BaseResp.StatusCode != StatusSuccess {
+		failMsg := strings.TrimSpace(originTask.FailReason)
+		if failMsg == "" {
+			failMsg = hailuoResp.BaseResp.StatusMsg
+		}
 		openAIVideo.Error = &dto.OpenAIVideoError{
-			Message: hailuoResp.BaseResp.StatusMsg,
+			Message: failMsg,
 			Code:    strconv.Itoa(hailuoResp.BaseResp.StatusCode),
 		}
 	}
 
+	taskcommon.ApplyPublicOpenAIVideoProjection(originTask, openAIVideo)
 	jsonData, err := common.Marshal(openAIVideo)
 	if err != nil {
 		return nil, errors.Wrap(err, "marshal openai video failed")
@@ -261,7 +279,11 @@ func (a *TaskAdaptor) buildVideoURL(_, fileID string) string {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
 
-	resp, err := service.GetHttpClient().Do(req)
+	client, err := hailuoHTTPClient(a.proxy)
+	if err != nil || client == nil {
+		return ""
+	}
+	resp, err := client.Do(req)
 	if err != nil {
 		return ""
 	}

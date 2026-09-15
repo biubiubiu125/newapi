@@ -134,6 +134,25 @@ func CloneHTTPClientWithoutRedirects(client *http.Client) *http.Client {
 	return &cloned
 }
 
+// CloneHTTPClientWithRedirectCheck returns a shallow copy whose CheckRedirect
+// still applies SSRF protection, then extra. The original client is unchanged.
+func CloneHTTPClientWithRedirectCheck(client *http.Client, extra func(*http.Request, []*http.Request) error) *http.Client {
+	if client == nil {
+		return nil
+	}
+	cloned := *client
+	cloned.CheckRedirect = func(req *http.Request, via []*http.Request) error {
+		if err := checkRedirect(req, via); err != nil {
+			return err
+		}
+		if extra != nil {
+			return extra(req, via)
+		}
+		return nil
+	}
+	return &cloned
+}
+
 func clientCacheKey(proxyCacheKey string, policy HTTPTransportPolicy) string {
 	return proxyCacheKey + "\x00" + policy.cacheKeyPart()
 }
@@ -163,6 +182,27 @@ func GetSSRFProtectedHTTPClient() *http.Client {
 		return GetHttpClient()
 	}
 	return ssrfProtectedHTTPClient
+}
+
+// GetSSRFProtectedHTTPClientWithProxy returns an SSRF-protected client that
+// still sends via the given proxy. The proxy itself may be private; the fetch
+// target is validated before the request is issued.
+func GetSSRFProtectedHTTPClientWithProxy(proxyURL string) (*http.Client, error) {
+	trimmed := strings.TrimSpace(proxyURL)
+	if trimmed == "" {
+		return GetSSRFProtectedHTTPClient(), nil
+	}
+	if fetchSetting := system_setting.GetFetchSetting(); fetchSetting != nil && !fetchSetting.EnableSSRFProtection {
+		return GetHttpClientWithProxy(trimmed)
+	}
+	parsedURL, _, err := common.ParseProxyURLRuntime(trimmed)
+	if err != nil {
+		return nil, err
+	}
+	if parsedURL == nil {
+		return GetSSRFProtectedHTTPClient(), nil
+	}
+	return newProtectedFetchHTTPClientWithProxy(nil, nil, nil, http.ProxyURL(parsedURL)), nil
 }
 
 func newProxyURLConfig(parsedURL *url.URL) *proxyURLConfig {
@@ -419,8 +459,9 @@ func getOrCreateDirectClient(policy HTTPTransportPolicy) (*http.Client, error) {
 		if client := GetHttpClient(); client != nil {
 			return client, nil
 		}
-		// Compatibility with pre-init callers: never assign httpClient outside InitHttpClient.
-		return http.DefaultClient, nil
+		// Compatibility with pre-init callers: never assign httpClient outside InitHttpClient,
+		// and never fall back to http.DefaultClient (no timeout / no relay transport policy).
+		return newDirectHTTPClient(policy, nil), nil
 	}
 
 	if client, ok := proxyClients.get("", policy); ok {

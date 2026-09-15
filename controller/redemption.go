@@ -82,6 +82,10 @@ func AddRedemption(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgRedemptionQuotaPositive)
 		return
 	}
+	if redemption.Quota >= common.MaxWalletQuota {
+		common.ApiErrorMsg(c, "兑换码额度超过钱包上限")
+		return
+	}
 	if redemption.Count <= 0 {
 		common.ApiErrorI18n(c, i18n.MsgRedemptionCountPositive)
 		return

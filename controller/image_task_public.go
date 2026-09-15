@@ -887,8 +887,12 @@ func publicImageTaskResponse(task *model.Task, now int64) *dto.PublicImageTask {
 		response.Status = "failed"
 		response.Error = &dto.PublicImageTaskError{Code: "image_task_failed", Message: "image task failed"}
 	case task.Status == model.TaskStatusSuccess && task.SettlementStatus == model.TaskSettlementStatusReview:
-		response.Status = "failed"
-		response.Error = &dto.PublicImageTaskError{Code: "settlement_review", Message: "image task settlement requires review"}
+		if model.ImageTaskSettlementReviewIsRetryable(task) {
+			response.Status = "finalizing"
+		} else {
+			response.Status = "failed"
+			response.Error = &dto.PublicImageTaskError{Code: "settlement_review", Message: "image task settlement requires review"}
+		}
 	case task.Status == model.TaskStatusSuccess && task.SettlementStatus != model.TaskSettlementStatusSettled:
 		response.Status = "finalizing"
 	case task.Status == model.TaskStatusSuccess:
@@ -904,6 +908,16 @@ func publicImageTaskResponse(task *model.Task, now int64) *dto.PublicImageTask {
 		response.Status = "running"
 	default:
 		response.Status = "queued"
+	}
+	response.Cancellable = model.ImageTaskCanCancelBeforeExecution(task, now)
+	switch response.Status {
+	case "finalizing", "running", "queued", "cancelling":
+		if strings.TrimSpace(response.Progress) == "100%" {
+			response.Progress = "99%"
+		}
+	}
+	if response.Status == "finalizing" {
+		response.CompletedAt = 0
 	}
 	return response
 }

@@ -118,7 +118,8 @@ func RedactTaskArtifactAccessQuery() gin.HandlerFunc {
 			strings.HasSuffix(path, "/content")
 		isLegacyImageResult := strings.HasPrefix(path, "/v1/image-tasks/") &&
 			strings.HasSuffix(path, "/result")
-		if !isArtifactContent && !isLegacyVideoContent && !isLegacyImageResult {
+		isMidjourneyImage := strings.Contains(path, "/mj/image/")
+		if !isArtifactContent && !isLegacyVideoContent && !isLegacyImageResult && !isMidjourneyImage {
 			c.Next()
 			return
 		}
@@ -199,7 +200,7 @@ func TokenOrTaskArtifactAccessAuth(taskParam, artifactParam string) gin.HandlerF
 
 		rawAccess, present, invalid := ReadTaskArtifactAccessRequest(c)
 		if !present {
-			TokenAuth()(c)
+			TokenAuthAllowExhausted()(c)
 			return
 		}
 

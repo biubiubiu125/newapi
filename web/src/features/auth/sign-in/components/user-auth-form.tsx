@@ -235,6 +235,15 @@ export function UserAuthForm({
     setIsWeChatSubmitting(true)
     try {
       const res = await wechatLoginByCode(wechatCode)
+      if (res?.success && res.data && 'require_2fa' in res.data && res.data.require_2fa) {
+        if (!res.data.flow_token) {
+          throw new Error(t('Login flow expired. Please sign in again.'))
+        }
+        setPending2FAFlowToken(res.data.flow_token)
+        handleWeChatDialogChange(false)
+        redirectTo2FA()
+        return
+      }
       if (res?.success && isAuthBundle(res.data)) {
         await handleLoginSuccess(res.data, redirectTo)
         toast.success(t('Signed in via WeChat'))
@@ -300,6 +309,15 @@ export function UserAuthForm({
       if (!finish.success) {
         if (getServerErrorMessageKey(finish)) return
         throw new Error(finish.message || t('Failed to complete Passkey login'))
+      }
+
+      if (finish.data && 'require_2fa' in finish.data && finish.data.require_2fa) {
+        if (!finish.data.flow_token) {
+          throw new Error(t('Login flow expired. Please sign in again.'))
+        }
+        setPending2FAFlowToken(finish.data.flow_token)
+        redirectTo2FA()
+        return
       }
 
       if (!isAuthBundle(finish.data)) {

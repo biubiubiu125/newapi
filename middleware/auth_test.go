@@ -249,3 +249,16 @@ func TestTryUserAuthCredentialClassification(t *testing.T) {
 	assert.Equal(t, http.StatusInternalServerError, databaseFailureResponse.Code)
 	assert.Contains(t, databaseFailureResponse.Body.String(), "AUTH_INTERNAL_ERROR")
 }
+
+func TestEnforceTokenIPLimitRejectsUnlistedClientIP(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	allowIps := "127.0.0.1"
+	token := &model.Token{AllowIps: &allowIps}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/usage", nil)
+	c.Request.RemoteAddr = "10.1.2.3:9999"
+	rejected := enforceTokenIPLimit(c, token)
+	require.True(t, rejected)
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+}

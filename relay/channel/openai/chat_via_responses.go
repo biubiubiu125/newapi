@@ -373,7 +373,7 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		}
 	})
 
-	if streamErr != nil {
+	if streamErr != nil && (info == nil || !info.HasClientStreamWrite()) {
 		return nil, streamErr
 	}
 	if streamErr := helper.ErrorBeforeFirstStreamResponse(info); streamErr != nil {
@@ -391,16 +391,23 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 	}
 	finalResults, err := service.FinalizeStreamResponse(c, info, state)
 	if err != nil {
-		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
-	}
-	for _, result := range finalResults {
-		if !sendStreamResult(result) {
-			return nil, streamErr
+		if info == nil || !info.HasClientStreamWrite() {
+			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+		}
+		logger.LogError(c, "finalize stream response after client write failed: "+err.Error())
+	} else {
+		for _, result := range finalResults {
+			if !sendStreamResult(result) {
+				break
+			}
 		}
 	}
 	if info.RelayFormat == types.RelayFormatOpenAI && info.ShouldIncludeUsage && usage != nil {
 		if err := helper.ObjectData(c, helper.GenerateFinalUsageResponse(responseId, createAt, info.UpstreamModelName, *usage)); err != nil {
-			return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			if info == nil || !info.HasClientStreamWrite() {
+				return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
+			}
+			logger.LogError(c, "write final usage after client write failed: "+err.Error())
 		}
 	}
 

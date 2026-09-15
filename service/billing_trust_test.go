@@ -85,6 +85,48 @@ func TestBillingSessionPreConsumeDoesNotTrustWhenRequiredQuotaExceedsAvailableQu
 	require.False(t, session.trusted)
 }
 
+func TestBillingSessionReserveChargesWhenTrustedSessionNeedsHigherQuota(t *testing.T) {
+	truncate(t)
+	oldTrustQuota := common.TrustQuota
+	t.Cleanup(func() {
+		common.TrustQuota = oldTrustQuota
+	})
+	require.NoError(t, model.DB.Create(&model.User{
+		Id:       9603,
+		Username: "trust-reserve-owner",
+		Password: "password123",
+		Quota:    10000,
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Token{
+		Id:          9604,
+		UserId:      9603,
+		Key:         "trust-reserve-token",
+		Name:        "trust-reserve-token",
+		RemainQuota: 10000,
+		Status:      common.TokenStatusEnabled,
+	}).Error)
+
+	session := &BillingSession{
+		relayInfo: &relaycommon.RelayInfo{
+			UserId:    9603,
+			UserQuota: 10000,
+			TokenId:   9604,
+			TokenKey:  "trust-reserve-token",
+		},
+		funding:          &WalletFunding{userId: 9603},
+		preConsumedQuota: 0,
+		trusted:          true,
+	}
+
+	require.NoError(t, session.Reserve(400))
+	require.False(t, session.trusted)
+	require.Equal(t, 400, session.GetPreConsumedQuota())
+	var user model.User
+	require.NoError(t, model.DB.Select("quota").First(&user, 9603).Error)
+	require.EqualValues(t, 9600, user.Quota)
+}
+
 type failingSettlementFunding struct {
 	err error
 }
@@ -302,6 +344,7 @@ func TestBillingSessionSettleDoesNotDebitWalletWhenTokenAdjustmentFails(t *testi
 	err := session.Settle(20)
 
 	require.Error(t, err)
+	require.Contains(t, err.Error(), "token quota is not enough")
 	var user model.User
 	require.NoError(t, model.DB.Select("quota").First(&user, 9701).Error)
 	require.EqualValues(t, 100, user.Quota)

@@ -21,7 +21,18 @@ export function resolveOAuthSiteUrl(
   fallback: string
 ): string {
   const normalized = serverAddress.trim().replace(/\/+$/, '')
-  return normalized || fallback
+  if (!normalized) {
+    return fallback
+  }
+  try {
+    const parsed = new URL(normalized)
+    if (!parsed.protocol || !parsed.host) {
+      return fallback
+    }
+  } catch {
+    return fallback
+  }
+  return normalized
 }
 
 export function buildOAuthCallbackUrl(
@@ -30,5 +41,8 @@ export function buildOAuthCallbackUrl(
   fallback: string
 ): string {
   const siteUrl = resolveOAuthSiteUrl(serverAddress, fallback)
+  if (!siteUrl) {
+    throw new Error('OAuth server address is not configured')
+  }
   return `${siteUrl}/oauth/${callbackPath.replace(/^\/+/, '')}`
 }

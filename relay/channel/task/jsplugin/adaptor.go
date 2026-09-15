@@ -727,6 +727,16 @@ func (a *TaskAdaptor) doFetchDescriptor(ctx context.Context, baseURL, proxy stri
 	if err != nil {
 		return nil, err
 	}
+	client = service.CloneHTTPClientWithRedirectCheck(client, func(redirectReq *http.Request, via []*http.Request) error {
+		if redirectReq == nil || redirectReq.URL == nil {
+			return fmt.Errorf("plugin fetch redirect is missing url")
+		}
+		if err := pluginruntime.ValidateRequestURL(redirectReq.URL.String(), baseURL, a.plugin.Meta.AllowedHosts); err != nil {
+			return err
+		}
+		stripPluginFetchRedirectCredentials(redirectReq, via)
+		return nil
+	})
 	started := time.Now()
 	resp, err := client.Do(req)
 	if err != nil {
@@ -748,6 +758,53 @@ func (a *TaskAdaptor) doFetchDescriptor(ctx context.Context, baseURL, proxy stri
 		time.Since(started).Milliseconds(),
 	)
 	return resp, nil
+}
+
+var pluginFetchRedirectCredentialHeaders = []string{
+	"Authorization",
+	"Proxy-Authorization",
+	"Cookie",
+	"Cookie2",
+	"X-API-Key",
+	"Api-Key",
+	"X-Auth-Token",
+	"X-Access-Token",
+}
+
+func stripPluginFetchRedirectCredentials(req *http.Request, via []*http.Request) {
+	if req == nil || req.URL == nil || len(via) == 0 || via[0] == nil || via[0].URL == nil {
+		return
+	}
+	if samePluginFetchRedirectOrigin(req.URL, via[0].URL) {
+		return
+	}
+	for _, header := range pluginFetchRedirectCredentialHeaders {
+		req.Header.Del(header)
+	}
+}
+
+func samePluginFetchRedirectOrigin(current, original *url.URL) bool {
+	currentScheme, currentHost, currentPort := pluginFetchRedirectOrigin(current)
+	originalScheme, originalHost, originalPort := pluginFetchRedirectOrigin(original)
+	return currentScheme == originalScheme && currentHost == originalHost && currentPort == originalPort
+}
+
+func pluginFetchRedirectOrigin(u *url.URL) (scheme, host, port string) {
+	if u == nil {
+		return "", "", ""
+	}
+	scheme = strings.ToLower(u.Scheme)
+	host = strings.ToLower(u.Hostname())
+	port = u.Port()
+	if port == "" {
+		switch scheme {
+		case "https", "wss":
+			port = "443"
+		default:
+			port = "80"
+		}
+	}
+	return scheme, host, port
 }
 
 func (a *TaskAdaptor) ParseBatchResult(tasks []*model.Task, resp *http.Response, body []byte) (map[string]*service.BatchTaskResult, error) {
@@ -986,35 +1043,63 @@ func (a *TaskAdaptor) ConvertToOpenAIVideoContext(ctx context.Context, task *mod
 	if err = common.Unmarshal(encoded, &rendered); err != nil || rendered == nil {
 		return nil, fmt.Errorf("plugin returned an invalid OpenAI video object")
 	}
-	// Keep provider extensions intact while the host owns the public task's
-	// identity and lifecycle, including completion timestamps after settlement.
+	var video kitdto.OpenAIVideo
+	if err = common.Unmarshal(encoded, &video); err != nil {
+		return nil, fmt.Errorf("plugin returned an invalid OpenAI video object")
+	}
 	host := task.ToOpenAIVideo()
-	rendered["id"] = host.ID
-	rendered["object"] = host.Object
-	delete(rendered, "task_id")
-	rendered["status"] = host.Status
-	rendered["progress"] = host.Progress
-	rendered["created_at"] = host.CreatedAt
-	rendered["model"] = host.Model
-	if host.Status == kitdto.VideoStatusCompleted && host.CompletedAt != 0 {
-		rendered["completed_at"] = host.CompletedAt
-	} else {
-		delete(rendered, "completed_at")
+	video.ID = host.ID
+	video.Object = host.Object
+	video.Model = host.Model
+	video.CreatedAt = host.CreatedAt
+	video.Progress = host.Progress
+	video.TaskID = ""
+	taskcommon.ApplyPublicOpenAIVideoProjection(task, &video)
+	if task.PublicStatus() != model.TaskStatusFailure {
+		video.Metadata = mergePluginOpenAIVideoMetadata(video.Metadata, rendered)
 	}
-	delete(rendered, "url")
-	delete(rendered, "upstream_url")
-	delete(rendered, "provider_payload")
-	if metadata, ok := rendered["metadata"].(map[string]any); ok {
-		for key := range metadata {
-			if strings.EqualFold(key, "url") {
-				delete(metadata, key)
-			}
-		}
-		if len(metadata) == 0 {
-			delete(rendered, "metadata")
-		}
+	return common.Marshal(video)
+}
+
+func mergePluginOpenAIVideoMetadata(owned map[string]any, rendered map[string]any) map[string]any {
+	metadata, _ := rendered["metadata"].(map[string]any)
+	if len(metadata) == 0 {
+		return owned
 	}
-	return common.Marshal(rendered)
+	merged := maps.Clone(owned)
+	if merged == nil {
+		merged = map[string]any{}
+	}
+	for key, value := range metadata {
+		if pluginMetadataLooksLikeLocator(key, value) {
+			continue
+		}
+		if _, exists := merged[key]; exists {
+			continue
+		}
+		merged[key] = value
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
+}
+
+func pluginMetadataLooksLikeLocator(key string, value any) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	if normalized == "url" || normalized == "uri" || normalized == "href" ||
+		strings.Contains(normalized, "url") || strings.HasSuffix(normalized, "_uri") {
+		return true
+	}
+	text, ok := value.(string)
+	if !ok {
+		return false
+	}
+	trimmed := strings.ToLower(strings.TrimSpace(text))
+	return strings.HasPrefix(trimmed, "http://") ||
+		strings.HasPrefix(trimmed, "https://") ||
+		strings.HasPrefix(trimmed, "data:") ||
+		strings.HasPrefix(trimmed, "gs://")
 }
 
 func (a *TaskAdaptor) ListArtifacts(task *model.Task) ([]channel.TaskArtifact, error) {

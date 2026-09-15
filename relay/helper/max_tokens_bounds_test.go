@@ -69,4 +69,18 @@ func TestMaxTokensBounds(t *testing.T) {
 		require.Error(t, err)
 		require.Contains(t, err.Error(), "max_output_tokens is invalid")
 	})
+
+	t.Run("openai n overflow rejected", func(t *testing.T) {
+		c := newJSONContext(t, `{"model":"gpt-4o","messages":[{"role":"user","content":"hi"}],"n":129}`)
+		_, err := GetAndValidateTextRequest(c, relayconstant.RelayModeChatCompletions)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "n is invalid")
+	})
+
+	t.Run("gemini candidateCount overflow rejected", func(t *testing.T) {
+		c := newJSONContext(t, `{"contents":[{"parts":[{"text":"hi"}]}],"generationConfig":{"candidateCount":129}}`)
+		_, err := GetAndValidateGeminiRequest(c)
+		require.Error(t, err)
+		require.Contains(t, err.Error(), "candidateCount is invalid")
+	})
 }

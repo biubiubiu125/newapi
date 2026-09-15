@@ -42,7 +42,7 @@ func GetTask(c *gin.Context) {
 		videoProxyError(c, http.StatusInternalServerError, "server_error", "Failed to query task")
 		return
 	}
-	if !exists || task == nil {
+	if !exists || task == nil || !taskVisibleToRequest(c, task) {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
 		return
 	}
@@ -50,18 +50,16 @@ func GetTask(c *gin.Context) {
 	if createdAt == 0 {
 		createdAt = task.SubmitTime
 	}
-	failReason := task.FailReason
-	if task.Status == model.TaskStatusSuccess && taskFailReasonIsLegacyResultURL(task.FailReason) {
-		failReason = ""
-	}
+	failReason := relay.PublicTaskFailReason(task)
 	c.JSON(http.StatusOK, gin.H{
 		"task_id":     task.TaskID,
 		"platform":    task.Platform,
-		"status":      task.Status,
-		"progress":    task.Progress,
+		"status":      relay.PublicTaskStatus(task),
+		"progress":    relay.PublicTaskProgress(task),
 		"fail_reason": failReason,
+		"result_url":  relay.PublicResultURL(task),
 		"created_at":  createdAt,
-		"finished_at": task.FinishTime,
+		"finished_at": relay.PublicTaskFinishTime(task),
 	})
 }
 
@@ -71,7 +69,7 @@ func GetTaskArtifacts(c *gin.Context) {
 		writeTaskArtifactError(c, http.StatusInternalServerError, "artifact_internal_error", "Failed to query task")
 		return
 	}
-	if !exists || task == nil {
+	if !exists || task == nil || !taskVisibleToRequest(c, task) {
 		writeTaskArtifactError(c, http.StatusNotFound, "artifact_not_found", "Task or artifact not found")
 		return
 	}
@@ -130,7 +128,7 @@ func projectTaskArtifacts(task *model.Task) ([]relaychannel.TaskArtifact, error)
 }
 
 func projectTaskArtifactsContext(ctx context.Context, task *model.Task) ([]relaychannel.TaskArtifact, error) {
-	if task == nil || task.Status != model.TaskStatusSuccess {
+	if !task.PublicMediaReady() {
 		return []relaychannel.TaskArtifact{}, nil
 	}
 	storedArtifacts := storedTaskArtifacts(task)
@@ -277,7 +275,7 @@ func taskHasPluginExecution(task *model.Task) bool {
 }
 
 func legacyVideoAvailable(task *model.Task) bool {
-	if task == nil || task.Status != model.TaskStatusSuccess ||
+	if !task.PublicMediaReady() ||
 		taskHasPluginExecution(task) || task.Platform == constant.TaskPlatformSuno ||
 		strings.TrimSpace(task.GetResultURL()) == "" {
 		return false
@@ -294,22 +292,48 @@ func legacyVideoAvailable(task *model.Task) bool {
 	}
 }
 
-func getTaskForArtifactRequest(c *gin.Context, taskID string) (*model.Task, bool, error) {
+func taskVisibleToRequest(c *gin.Context, task *model.Task) bool {
+	if task == nil {
+		return false
+	}
 	if middleware.IsTaskArtifactAccess(c) {
-		task, exists, err := model.GetUniqueByOnlyTaskId(taskID)
+		return true
+	}
+	if c.GetInt("role") >= common.RoleAdminUser {
+		return true
+	}
+	return task.MatchesRequestToken(c.GetInt("token_id"))
+}
+
+func getTaskForArtifactRequest(c *gin.Context, taskID string) (*model.Task, bool, error) {
+	var (
+		task   *model.Task
+		exists bool
+		err    error
+	)
+	if middleware.IsTaskArtifactAccess(c) {
+		task, exists, err = model.GetUniqueByOnlyTaskId(taskID)
 		if err != nil || !exists || task == nil {
 			return task, exists, err
 		}
-		owner, err := model.GetUserCache(task.UserId)
-		if err != nil || owner == nil || owner.Status != common.UserStatusEnabled {
-			return nil, false, err
+		owner, ownerErr := model.GetUserCache(task.UserId)
+		if ownerErr != nil || owner == nil || owner.Status != common.UserStatusEnabled {
+			return nil, false, ownerErr
 		}
 		return task, true, nil
 	}
 	if c.GetInt("role") >= common.RoleAdminUser {
-		return model.GetUniqueByOnlyTaskId(taskID)
+		task, exists, err = model.GetUniqueByOnlyTaskId(taskID)
+	} else {
+		task, exists, err = model.GetByTaskId(c.GetInt("id"), taskID)
 	}
-	return model.GetByTaskId(c.GetInt("id"), taskID)
+	if err != nil || !exists || task == nil {
+		return task, exists, err
+	}
+	if !taskVisibleToRequest(c, task) {
+		return nil, false, nil
+	}
+	return task, true, nil
 }
 
 func writeTaskArtifactProjectionError(c *gin.Context, err error) {
@@ -373,7 +397,7 @@ func TaskArtifactContent(c *gin.Context) {
 		writeTaskArtifactError(c, http.StatusNotFound, "artifact_not_found", "Task or artifact not found")
 		return
 	}
-	if task.Status != model.TaskStatusSuccess {
+	if !task.PublicMediaReady() {
 		writeTaskArtifactError(c, http.StatusConflict, "artifact_not_ready", "Task artifacts are not ready")
 		return
 	}
@@ -394,12 +418,11 @@ func TaskArtifactContent(c *gin.Context) {
 			}
 			return
 		}
-		resultURL := task.GetResultURL()
-		if isTaskMediaFallbackLoop(resultURL, task.TaskID) {
-			writeTaskArtifactError(c, http.StatusGone, "artifact_gone", "Artifact content is no longer available")
+		descriptor, fallbackErr := resultURLFallbackContentRequest(c, task)
+		if fallbackErr != nil {
+			writeTaskMediaProxyError(c, fallbackErr)
 			return
 		}
-		descriptor := &relaychannel.TaskContentRequest{URL: resultURL, Method: c.Request.Method, Credentialless: true}
 		if err := proxyTaskMedia(c, task, descriptor); err != nil {
 			writeTaskMediaProxyError(c, err)
 		}
@@ -507,6 +530,23 @@ func GetUserTask(c *gin.Context) {
 	common.ApiSuccess(c, pageInfo)
 }
 
+func redactUserTaskProperties(properties any) any {
+	switch props := properties.(type) {
+	case model.Properties:
+		props.UpstreamModelName = ""
+		return props
+	case *model.Properties:
+		if props == nil {
+			return properties
+		}
+		copied := *props
+		copied.UpstreamModelName = ""
+		return copied
+	default:
+		return properties
+	}
+}
+
 func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskDto {
 	var userIdMap map[int]*model.UserBase
 	if fillUser {
@@ -531,11 +571,18 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 		}
 		item := relay.TaskModel2Dto(task)
 		item.LegacyVideoAvailable = legacyVideoAvailable(task)
-		if task.Status == model.TaskStatusSuccess {
-			item.ResultURL = ""
-			if taskFailReasonIsLegacyResultURL(task.FailReason) {
-				item.FailReason = ""
-			}
+		if viewerRole < common.RoleAdminUser {
+			item.UserId = 0
+			item.Group = ""
+			item.ChannelId = 0
+			item.Quota = 0
+			item.SettlementStatus = ""
+			item.SettlementError = ""
+			item.SettlementAttemptQuota = 0
+			item.Data = nil
+			item.AdminInfo = nil
+			item.RootInfo = nil
+			item.Properties = redactUserTaskProperties(item.Properties)
 		}
 		if viewerRole >= common.RoleAdminUser {
 			adminInfo := &dto.TaskAdminInfo{}

@@ -36,6 +36,21 @@ func MarkStreamEnd(info *relaycommon.RelayInfo, reason relaycommon.StreamEndReas
 	info.StreamStatus.SetEndReason(reason, err)
 }
 
+func markClientStreamWriteFromContext(c *gin.Context) {
+	if c == nil {
+		return
+	}
+	raw, exists := c.Get("relay_info")
+	if !exists {
+		return
+	}
+	info, ok := raw.(*relaycommon.RelayInfo)
+	if !ok || info == nil {
+		return
+	}
+	info.MarkClientStreamWrite()
+}
+
 func StreamData(c *gin.Context, info *relaycommon.RelayInfo, data string) error {
 	if err := StringData(c, data); err != nil {
 		return err

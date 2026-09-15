@@ -154,9 +154,11 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 
 		_, err := helper.ModelPriceHelper(c, info, info.GetEstimatePromptTokens(), &types.TokenCountMeta{})
 		if err != nil {
+			logger.LogError(c, fmt.Sprintf("compact model price helper failed after response write: %v", err))
 			info.OriginModelName = originModelName
 			info.PriceData = originPriceData
-			return types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithSkipRetry(), types.ErrOptionWithStatusCode(http.StatusBadRequest))
+			service.PostTextConsumeQuota(c, info, usageDto, nil)
+			return nil
 		}
 		service.PostTextConsumeQuota(c, info, usageDto, nil)
 

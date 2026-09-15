@@ -299,7 +299,7 @@ func ClaudeStreamHandler(c *gin.Context, resp *http.Response, info *relaycommon.
 			sr.Stop(err)
 		}
 	})
-	if err != nil {
+	if err != nil && !info.HasClientStreamWrite() {
 		return nil, err
 	}
 

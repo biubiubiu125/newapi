@@ -141,10 +141,10 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	}
 
 	if usage.(*dto.Usage).TotalTokens == 0 {
-		usage.(*dto.Usage).TotalTokens = 1
+		usage.(*dto.Usage).TotalTokens = int(imageN)
 	}
 	if usage.(*dto.Usage).PromptTokens == 0 {
-		usage.(*dto.Usage).PromptTokens = 1
+		usage.(*dto.Usage).PromptTokens = int(imageN)
 	}
 
 	quality := request.Quality

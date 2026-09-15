@@ -137,7 +137,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
 	path := lo.Ternary(info.Action == constant.TaskActionGenerate, "/v1/videos/image2video", "/v1/videos/text2video")
 
-	if isNewAPIRelay(info.ApiKey) {
+	if a.usesNewAPIRelay(info.ApiKey) {
 		return fmt.Sprintf("%s/kling%s", a.baseURL, path), nil
 	}
 
@@ -227,7 +227,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	}
 	path := lo.Ternary(action == constant.TaskActionGenerate, "/v1/videos/image2video", "/v1/videos/text2video")
 	url := fmt.Sprintf("%s%s/%s", baseUrl, path, taskID)
-	if isNewAPIRelay(key) {
+	if a.usesNewAPIRelay(key) {
 		url = fmt.Sprintf("%s/kling%s/%s", baseUrl, path, taskID)
 	}
 
@@ -312,7 +312,7 @@ func (a *TaskAdaptor) createJWTToken() (string, error) {
 }
 
 func (a *TaskAdaptor) createJWTTokenWithKey(apiKey string) (string, error) {
-	if isNewAPIRelay(apiKey) {
+	if a.usesNewAPIRelay(apiKey) {
 		return apiKey, nil // new api relay
 	}
 	keyParts := strings.Split(apiKey, "|")
@@ -374,8 +374,27 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 	return taskInfo, nil
 }
 
+func (a *TaskAdaptor) usesNewAPIRelay(apiKey string) bool {
+	if a != nil && a.ChannelType == constant.ChannelTypeNewAPI {
+		return true
+	}
+	return isNewAPIRelay(apiKey)
+}
+
 func isNewAPIRelay(apiKey string) bool {
-	return strings.HasPrefix(apiKey, "sk-")
+	key := strings.TrimSpace(apiKey)
+	if key == "" || strings.Contains(key, "|") || looksLikeJWT(key) {
+		return false
+	}
+	return strings.HasPrefix(strings.ToLower(key), "sk-")
+}
+
+func looksLikeJWT(token string) bool {
+	parts := strings.Split(token, ".")
+	if len(parts) != 3 {
+		return false
+	}
+	return parts[0] != "" && parts[1] != "" && parts[2] != ""
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, error) {
@@ -391,11 +410,11 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.CreatedAt = klingResp.Data.CreatedAt
 	openAIVideo.CompletedAt = klingResp.Data.UpdatedAt
 
+	if resultURL := strings.TrimSpace(originTask.GetResultURL()); resultURL != "" {
+		openAIVideo.SetMetadata("url", resultURL)
+	}
 	if len(klingResp.Data.TaskResult.Videos) > 0 {
 		video := klingResp.Data.TaskResult.Videos[0]
-		if video.Url != "" {
-			openAIVideo.SetMetadata("url", video.Url)
-		}
 		if video.Duration != "" {
 			openAIVideo.Seconds = video.Duration
 		}
@@ -414,5 +433,6 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 			Message: data.TaskStatusMsg,
 		}
 	}
+	taskcommon.ApplyPublicOpenAIVideoProjection(originTask, openAIVideo)
 	return common.Marshal(openAIVideo)
 }

@@ -286,8 +286,8 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.CreatedAt = originTask.CreatedAt
 	openAIVideo.CompletedAt = originTask.UpdatedAt
 
-	if len(viduResp.Creations) > 0 && viduResp.Creations[0].URL != "" {
-		openAIVideo.SetMetadata("url", viduResp.Creations[0].URL)
+	if resultURL := strings.TrimSpace(originTask.GetResultURL()); resultURL != "" {
+		openAIVideo.SetMetadata("url", resultURL)
 	}
 
 	if viduResp.State == "failed" && viduResp.ErrCode != "" {
@@ -297,5 +297,6 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 		}
 	}
 
+	taskcommon.ApplyPublicOpenAIVideoProjection(originTask, openAIVideo)
 	return common.Marshal(openAIVideo)
 }

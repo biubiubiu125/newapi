@@ -9,12 +9,11 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
-	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
-	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -327,10 +326,11 @@ func GetAllMidjourney(c *gin.Context) {
 	items := model.GetAllTasks(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
 	total := model.CountAllTasks(queryParams)
 	fillMidjourneyUsernames(items)
+	sanitizeMidjourneyFailReasons(items)
 
 	if setting.MjForwardUrlEnabled {
 		for i, midjourney := range items {
-			midjourney.ImageUrl = system_setting.ServerAddress + "/mj/image/" + midjourney.MjId
+			midjourney.ImageUrl = service.MidjourneyForwardImageURL(midjourney.MjId)
 			items[i] = midjourney
 		}
 	}
@@ -353,10 +353,11 @@ func GetUserMidjourney(c *gin.Context) {
 	items := model.GetAllUserTask(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
 	total := model.CountAllUserTask(userId, queryParams)
 	fillMidjourneyUsernames(items)
+	sanitizeMidjourneyFailReasons(items)
 
 	if setting.MjForwardUrlEnabled {
 		for i, midjourney := range items {
-			midjourney.ImageUrl = system_setting.ServerAddress + "/mj/image/" + midjourney.MjId
+			midjourney.ImageUrl = service.MidjourneyForwardImageURL(midjourney.MjId)
 			items[i] = midjourney
 		}
 	}
@@ -386,5 +387,14 @@ func fillMidjourneyUsernames(items []*model.Midjourney) {
 			continue
 		}
 		item.Username = usernames[item.UserId]
+	}
+}
+
+func sanitizeMidjourneyFailReasons(items []*model.Midjourney) {
+	for _, item := range items {
+		if item == nil {
+			continue
+		}
+		item.FailReason = model.SanitizePublicTaskFailReason(item.FailReason)
 	}
 }

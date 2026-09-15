@@ -16,16 +16,19 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { createFileRoute, redirect } from '@tanstack/react-router'
+import { createFileRoute } from '@tanstack/react-router'
 
 import { TaskPlugins } from '@/features/task-plugins'
 import { ROLE } from '@/lib/roles'
-import { useAuthStore } from '@/stores/auth-store'
+import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute('/_authenticated/task-plugins/')({
-  beforeLoad: () => {
-    const { auth } = useAuthStore.getState()
-    if (auth.user?.role !== ROLE.SUPER_ADMIN) throw redirect({ to: '/403' })
-  },
+  beforeLoad: () =>
+    requireSidebarModule({
+      section: 'admin',
+      module: 'task_plugins',
+      minRole: ROLE.ADMIN,
+      rootOnly: true,
+    }),
   component: TaskPlugins,
 })

@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import axios from 'axios'
 
 import { api, refreshAuthentication, type RefreshOutcome } from '@/lib/api'
+import { buildGitHubOAuthUrl } from '@/lib/oauth'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { sanitizeAuthRedirect } from './lib/auth-redirect'
@@ -86,6 +87,7 @@ export async function login(payload: LoginPayload): Promise<LoginResponse> {
 export async function login2fa(payload: TwoFAPayload) {
   const res = await api.post<Login2FAResponse>('/api/user/login/2fa', payload, {
     skipAuthRefresh: true,
+    skipBusinessError: true,
   })
   return res.data
 }
@@ -160,8 +162,12 @@ export async function sendPasswordResetEmail(
 // ----------------------------------------------------------------------------
 
 // Start GitHub OAuth flow
-export async function githubOAuthStart(clientId: string, state: string) {
-  const url = `https://github.com/login/oauth/authorize?client_id=${clientId}&state=${state}&scope=user:email`
+export async function githubOAuthStart(
+  clientId: string,
+  state: string,
+  serverAddress?: string
+) {
+  const url = buildGitHubOAuthUrl(clientId, state, serverAddress)
   window.open(url)
 }
 
@@ -204,8 +210,11 @@ export async function wechatLoginByCode(
   code: string,
   aff?: string
 ): Promise<ApiResponse> {
+  const state = await createOAuthFlow('wechat', 'login', aff)
   const res = await api.get('/api/oauth/wechat', {
-    params: { code, aff: aff || undefined },
+    params: { code, aff: aff || undefined, state },
+    skipAuthRefresh: true,
+    skipBusinessError: true,
   })
   return res.data
 }

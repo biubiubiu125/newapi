@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
@@ -136,6 +137,32 @@ func TestOpenaiImageStreamHandlerUsesCompletedEventCount(t *testing.T) {
 	require.Nil(t, err)
 	require.Equal(t, 7, usage.TotalTokens)
 	require.Equal(t, 2.0, info.PriceData.OtherRatios()["n"])
+}
+
+func TestOpenaiImageStreamHandlerFinishedWithZeroImagesDoesNotKeepRequestedCount(t *testing.T) {
+	oldMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(oldMode) })
+
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	body := strings.Join([]string{
+		`data: {"type":"image_generation.partial_image","b64_json":"partial"}`,
+		``,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+
+	c, _, resp, info := newImageTestContext(t, body, "text/event-stream", true)
+	info.PriceData.UsePrice = true
+	info.PriceData.AddOtherRatio("n", 3)
+
+	usage, err := OpenaiImageStreamHandler(c, info, resp)
+	require.NotNil(t, err)
+	require.NotNil(t, usage)
+	require.False(t, service.ValidUsage(usage))
 }
 
 // blockingBody serves one SSE chunk, then blocks until Close (the scanner's

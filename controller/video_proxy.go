@@ -28,9 +28,10 @@ import (
 )
 
 var errTaskMediaRequestRejected = errors.New("task media request rejected")
+var errTaskMediaClientUnavailable = errors.New("task media http client is not initialized")
 
 var taskMediaResponseHeaderTimeout = 60 * time.Second
-var taskMediaDataURLMaxEncodedBytes = 64 << 20
+var taskMediaDataURLMaxEncodedBytes = taskcommon.MaxInlineResultURLBytes
 
 type taskMediaProxyError struct {
 	status  int
@@ -61,6 +62,10 @@ func videoProxyError(c *gin.Context, status int, errType, message string) {
 	})
 }
 
+func taskMediaReadyForProxy(task *model.Task) bool {
+	return task.PublicMediaReady()
+}
+
 func VideoProxy(c *gin.Context) {
 	taskID := c.Param("task_id")
 	if taskID == "" {
@@ -78,9 +83,9 @@ func VideoProxy(c *gin.Context) {
 		videoProxyError(c, http.StatusNotFound, "invalid_request_error", "Task not found")
 		return
 	}
-	if task.Status != model.TaskStatusSuccess {
+	if !taskMediaReadyForProxy(task) {
 		videoProxyError(c, http.StatusBadRequest, "invalid_request_error",
-			fmt.Sprintf("Task is not completed yet, current status: %s", task.Status))
+			fmt.Sprintf("Task is not completed yet, current status: %s", task.PublicStatus()))
 		return
 	}
 
@@ -152,19 +157,12 @@ func VideoProxy(c *gin.Context) {
 		}
 	}
 	if descriptor == nil {
-		resultURL := task.GetResultURL()
-		if isTaskMediaFallbackLoop(resultURL, task.TaskID) {
-			writeTaskMediaProxyError(c, &taskMediaProxyError{
-				status: http.StatusGone, code: "artifact_gone",
-				message: "Artifact content is no longer available",
-			})
+		fallbackDescriptor, fallbackErr := resultURLFallbackContentRequest(c, task)
+		if fallbackErr != nil {
+			writeTaskMediaProxyError(c, fallbackErr)
 			return
 		}
-		descriptor = &relaychannel.TaskContentRequest{
-			URL:            resultURL,
-			Method:         c.Request.Method,
-			Credentialless: true,
-		}
+		descriptor = fallbackDescriptor
 	}
 	if err := proxyTaskMediaWithArtifact(c, task, descriptor, artifactToPersist); err != nil {
 		writeTaskMediaProxyError(c, err)
@@ -192,11 +190,29 @@ func resolveStoredVideoArtifact(c *gin.Context, task *model.Task) bool {
 	return false
 }
 
+func getChannelForTaskMedia(channelId int) (*model.Channel, error) {
+	channel, err := model.CacheGetChannel(channelId)
+	if err == nil && channel != nil {
+		return channel, nil
+	}
+	loaded, dbErr := model.GetChannelById(channelId, true)
+	if dbErr == nil && loaded != nil {
+		return loaded, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	if dbErr != nil {
+		return nil, dbErr
+	}
+	return nil, fmt.Errorf("渠道# %d，已不存在", channelId)
+}
+
 func buildLegacyTaskMediaRequest(c *gin.Context, task *model.Task) (*relaychannel.TaskContentRequest, bool, error) {
 	if task == nil {
 		return nil, false, nil
 	}
-	channelModel, err := model.CacheGetChannel(task.ChannelId)
+	channelModel, err := getChannelForTaskMedia(task.ChannelId)
 	if err != nil {
 		return nil, false, &taskMediaProxyError{
 			status: http.StatusServiceUnavailable, code: "artifact_plugin_unavailable",
@@ -213,9 +229,18 @@ func buildLegacyTaskMediaRequest(c *gin.Context, task *model.Task) (*relaychanne
 	switch channelModel.Type {
 	case constant.ChannelTypeGemini:
 		apiKey := getGeminiTaskKey(channelModel, task)
-		if resultURL := strings.TrimSpace(task.GetResultURL()); resultURL != "" &&
-			!isTaskProxyContentURL(resultURL, task.TaskID) {
-			request.URL = ensureAPIKey(resultURL, apiKey)
+		geminiHosts := geminiChannelMediaHosts(channelModel)
+		resultURL := storedRetrievableTaskMediaURL(task)
+		if resultURL != "" && !isTaskProxyContentURL(resultURL, task.TaskID) {
+			decoratedURL, headers, decorateErr := decorateGeminiMediaURL(resultURL, apiKey, geminiHosts...)
+			if decorateErr != nil {
+				return nil, false, &taskMediaProxyError{
+					status: http.StatusBadGateway, code: "artifact_upstream_error",
+					message: "Failed to resolve Gemini video URL", err: decorateErr,
+				}
+			}
+			request.URL = decoratedURL
+			request.Headers = headers
 			return request, true, nil
 		}
 		videoURL, resolveErr := getGeminiVideoURL(channelModel, task, apiKey)
@@ -225,10 +250,15 @@ func buildLegacyTaskMediaRequest(c *gin.Context, task *model.Task) (*relaychanne
 				message: "Failed to resolve Gemini video URL", err: resolveErr,
 			}
 		}
-		request.URL = videoURL
-		if apiKey != "" {
-			request.Headers = map[string]string{"x-goog-api-key": apiKey}
+		decoratedURL, headers, decorateErr := decorateGeminiMediaURL(videoURL, apiKey, geminiHosts...)
+		if decorateErr != nil {
+			return nil, false, &taskMediaProxyError{
+				status: http.StatusBadGateway, code: "artifact_upstream_error",
+				message: "Failed to resolve Gemini video URL", err: decorateErr,
+			}
 		}
+		request.URL = decoratedURL
+		request.Headers = headers
 		return request, true, nil
 	case constant.ChannelTypeVertexAi:
 		videoURL, resolveErr := getVertexVideoURL(channelModel, task)
@@ -238,13 +268,28 @@ func buildLegacyTaskMediaRequest(c *gin.Context, task *model.Task) (*relaychanne
 				message: "Failed to resolve Vertex video URL", err: resolveErr,
 			}
 		}
-		request.URL = videoURL
+		decoratedURL, headers, decorateErr := decorateVertexMediaURL(channelModel, task, videoURL)
+		if decorateErr != nil {
+			return nil, false, &taskMediaProxyError{
+				status: http.StatusBadGateway, code: "artifact_upstream_error",
+				message: "Failed to resolve Vertex video URL", err: decorateErr,
+			}
+		}
+		request.URL = decoratedURL
+		request.Headers = headers
 		return request, true, nil
-	case constant.ChannelTypeOpenAI, constant.ChannelTypeSora:
+	case constant.ChannelTypeOpenAI, constant.ChannelTypeSora, constant.ChannelTypeNewAPI:
 		request.URL = fmt.Sprintf("%s/v1/videos/%s/content", strings.TrimRight(baseURL, "/"), task.GetUpstreamTaskID())
 		request.Headers = map[string]string{"Authorization": "Bearer " + getTaskChannelKey(channelModel, task)}
 		return request, true, nil
 	default:
+		resultURL := storedRetrievableTaskMediaURL(task)
+		if parsedURL, parseErr := url.Parse(resultURL); parseErr == nil && parsedURL != nil &&
+			isTaskMediaProxyPath(parsedURL.Path) && !isTaskMediaFallbackLoop(resultURL, task.TaskID) {
+			request.URL = resultURL
+			request.Headers = map[string]string{"Authorization": "Bearer " + getTaskChannelKey(channelModel, task)}
+			return request, true, nil
+		}
 		return nil, false, nil
 	}
 }
@@ -331,7 +376,7 @@ func proxyTaskMediaWithArtifact(c *gin.Context, task *model.Task, descriptor *re
 		}
 	}
 
-	channel, err := model.CacheGetChannel(task.ChannelId)
+	channel, err := getChannelForTaskMedia(task.ChannelId)
 	if err != nil {
 		return &taskMediaProxyError{
 			status: http.StatusServiceUnavailable, code: "artifact_plugin_unavailable",
@@ -348,7 +393,7 @@ func proxyTaskMediaWithArtifact(c *gin.Context, task *model.Task, descriptor *re
 
 	client := service.GetSSRFProtectedHTTPClient()
 	if proxy != "" {
-		client, err = service.GetHttpClientWithProxy(proxy)
+		client, err = service.GetSSRFProtectedHTTPClientWithProxy(proxy)
 		if err != nil {
 			return &taskMediaProxyError{
 				status: http.StatusInternalServerError, code: "artifact_internal_error",
@@ -357,7 +402,10 @@ func proxyTaskMediaWithArtifact(c *gin.Context, task *model.Task, descriptor *re
 		}
 	}
 	if client == nil {
-		client = http.DefaultClient
+		return &taskMediaProxyError{
+			status: http.StatusInternalServerError, code: "artifact_internal_error",
+			message: "HTTP client is not initialized", err: errTaskMediaClientUnavailable,
+		}
 	}
 
 	req, err := http.NewRequestWithContext(c.Request.Context(), method, parsedURL.String(), bytes.NewReader(descriptor.Body))
@@ -508,7 +556,7 @@ func (b *taskMediaCancelBody) Close() error {
 
 func doTaskMediaRequest(client *http.Client, request *http.Request, responseHeaderTimeout time.Duration) (*http.Response, error) {
 	if client == nil {
-		client = http.DefaultClient
+		return nil, errTaskMediaClientUnavailable
 	}
 	requestContext, cancel := context.WithCancel(request.Context())
 	request = request.Clone(requestContext)
@@ -613,20 +661,21 @@ func taskMediaRedirectClient(base *http.Client, proxy string, c *gin.Context, cl
 }
 
 func validateTaskMediaURL(rawURL, proxy string) error {
-	if proxy == "" {
-		return service.ValidateSSRFProtectedFetchURL(rawURL)
-	}
+	_ = proxy
 	fetchSetting := system_setting.GetFetchSetting()
+	if fetchSetting == nil || !fetchSetting.EnableSSRFProtection {
+		return nil
+	}
 	return common.ValidateURLWithFetchSetting(
 		rawURL,
-		fetchSetting.EnableSSRFProtection,
+		true,
 		fetchSetting.AllowPrivateIp,
 		fetchSetting.DomainFilterMode,
 		fetchSetting.IpFilterMode,
 		fetchSetting.DomainList,
 		fetchSetting.IpList,
 		fetchSetting.AllowedPorts,
-		fetchSetting.ApplyIPFilterForDomain,
+		true,
 	)
 }
 
@@ -685,6 +734,62 @@ func isTaskMediaProxyPath(path string) bool {
 	return strings.HasPrefix(path, "/v1/tasks/") &&
 		strings.Contains(path, "/artifacts/") &&
 		strings.HasSuffix(path, "/content")
+}
+
+func resultURLFallbackContentRequest(c *gin.Context, task *model.Task) (*relaychannel.TaskContentRequest, error) {
+	if task == nil {
+		return nil, &taskMediaProxyError{
+			status: http.StatusGone, code: "artifact_gone",
+			message: "Artifact content is no longer available",
+		}
+	}
+	resultURL := storedRetrievableTaskMediaURL(task)
+	if resultURL == "" {
+		return nil, &taskMediaProxyError{
+			status: http.StatusGone, code: "artifact_gone",
+			message: "Artifact content is no longer available",
+		}
+	}
+	request := &relaychannel.TaskContentRequest{
+		URL:    resultURL,
+		Method: http.MethodGet,
+	}
+	if c != nil && c.Request != nil {
+		request.Method = c.Request.Method
+	}
+	if parsedURL, err := url.Parse(resultURL); err == nil && parsedURL != nil && isTaskMediaProxyPath(parsedURL.Path) {
+		channelModel, err := getChannelForTaskMedia(task.ChannelId)
+		if err != nil {
+			return nil, &taskMediaProxyError{
+				status: http.StatusServiceUnavailable, code: "artifact_plugin_unavailable",
+				message: "Artifact channel is unavailable", err: err,
+			}
+		}
+		request.Headers = map[string]string{
+			"Authorization": "Bearer " + getTaskChannelKey(channelModel, task),
+		}
+		return request, nil
+	}
+	request.Credentialless = true
+	return request, nil
+}
+
+func storedTaskResultURL(task *model.Task) string {
+	if task == nil {
+		return ""
+	}
+	return strings.TrimSpace(task.PrivateData.ResultURL)
+}
+
+func storedRetrievableTaskMediaURL(task *model.Task) string {
+	if task == nil {
+		return ""
+	}
+	resultURL := storedTaskResultURL(task)
+	if resultURL == "" || isTaskMediaFallbackLoop(resultURL, task.TaskID) {
+		return ""
+	}
+	return resultURL
 }
 
 func isTaskMediaFallbackLoop(rawURL, taskID string) bool {

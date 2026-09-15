@@ -84,16 +84,13 @@ func TestCleanupExpiredRechargeOrders(t *testing.T) {
 
 	deletedTopUps, deletedSubscriptionOrders, err := CleanupExpiredRechargeOrders(DefaultExpiredOrderRetentionSeconds, 100)
 	require.NoError(t, err)
-	require.Equal(t, 2, deletedTopUps)
-	require.Equal(t, 1, deletedSubscriptionOrders)
+	require.Zero(t, deletedTopUps)
+	require.Zero(t, deletedSubscriptionOrders)
 
 	require.NoError(t, DB.Where("trade_no = ?", "topup-fresh-expired").First(&TopUp{}).Error)
 	require.NoError(t, DB.Where("trade_no = ?", "topup-old-pending").First(&TopUp{}).Error)
 	require.NoError(t, DB.Where("trade_no = ?", "sub-fresh-expired").First(&SubscriptionOrder{}).Error)
-
-	var count int64
-	require.NoError(t, DB.Model(&TopUp{}).Where("trade_no IN ?", []string{"topup-old-complete-expired", "topup-old-create-expired"}).Count(&count).Error)
-	require.Zero(t, count)
-	require.NoError(t, DB.Model(&SubscriptionOrder{}).Where("trade_no = ?", "sub-old-complete-expired").Count(&count).Error)
-	require.Zero(t, count)
+	require.NoError(t, DB.Where("trade_no = ?", "topup-old-complete-expired").First(&TopUp{}).Error)
+	require.NoError(t, DB.Where("trade_no = ?", "topup-old-create-expired").First(&TopUp{}).Error)
+	require.NoError(t, DB.Where("trade_no = ?", "sub-old-complete-expired").First(&SubscriptionOrder{}).Error)
 }

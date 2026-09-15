@@ -14,6 +14,7 @@ type PublicImageTask struct {
 	ResultExpiresAt      int64                 `json:"result_expires_at,omitempty"`
 	ResultAcknowledgedAt int64                 `json:"result_acknowledged_at,omitempty"`
 	Error                *PublicImageTaskError `json:"error,omitempty"`
+	Cancellable          bool                  `json:"cancellable,omitempty"`
 }
 
 type PublicImageTaskError struct {

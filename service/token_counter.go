@@ -411,10 +411,10 @@ func CountTextToken(text string, model string) int {
 		return 0
 	}
 	if common.IsOpenAITextModel(model) {
-		tokenEncoder := getTokenEncoder(model)
-		return getTokenNum(tokenEncoder, text)
-	} else {
-		// 非openai模型，使用tiktoken-go计算没有意义，使用估算节省资源
-		return EstimateTokenByModel(model, text)
+		if tokenEncoder := getTokenEncoder(model); tokenEncoder != nil {
+			return getTokenNum(tokenEncoder, text)
+		}
 	}
+	// 非 OpenAI 模型，或 tokenizer 尚未初始化时用估算，避免未交付路径 panic。
+	return EstimateTokenByModel(model, text)
 }

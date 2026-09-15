@@ -3,6 +3,8 @@ package model
 import (
 	"context"
 	"errors"
+	"fmt"
+	"strings"
 	"time"
 
 	"gorm.io/gorm"
@@ -17,6 +19,8 @@ const (
 )
 
 const taskSettlementApplyingReviewSeconds int64 = 10 * 60
+
+const TaskSettlementApplicationInterruptedReviewReason = "task settlement application was interrupted before completion; manual review is required"
 
 type TaskSettlementRecord struct {
 	ID               int64  `json:"id" gorm:"primary_key;AUTO_INCREMENT"`
@@ -39,6 +43,14 @@ type TaskSettlementRecord struct {
 	LogLockUntil     int64  `json:"-" gorm:"bigint;index;not null;default:0"`
 	LogLockOwner     string `json:"-" gorm:"type:varchar(128);index"`
 	LogError         string `json:"-" gorm:"type:text"`
+}
+
+func (r *TaskSettlementRecord) HasAppliedQuotaEvidence() bool {
+	return r != nil && r.AppliedQuota != nil
+}
+
+func (r *TaskSettlementRecord) WasInterrupted() bool {
+	return r != nil && strings.TrimSpace(r.Error) == TaskSettlementApplicationInterruptedReviewReason
 }
 
 type TaskSettlementApplicationAppliedDetails struct {
@@ -96,8 +108,20 @@ func BeginTaskSettlementApplication(task *Task) (*TaskSettlementRecord, bool, er
 	if existing.Status == TaskSettlementRecordStatusApplying &&
 		existing.UpdatedAt > 0 &&
 		now-existing.UpdatedAt >= taskSettlementApplyingReviewSeconds {
-		message := "task settlement application was interrupted before completion; manual review is required"
-		if err := MarkTaskSettlementApplicationReview(task.ID, message); err != nil {
+		if existing.HasAppliedQuotaEvidence() {
+			if err := MarkTaskSettlementApplicationAppliedFromEvidence(task.ID); err != nil {
+				return nil, false, err
+			}
+			existing, exists, loadErr = GetTaskSettlementRecord(task.ID)
+			if loadErr != nil {
+				return nil, false, loadErr
+			}
+			if !exists {
+				return nil, false, errors.New("task settlement record disappeared after applied evidence transition")
+			}
+			return existing, false, nil
+		}
+		if err := MarkTaskSettlementApplicationReview(task.ID, TaskSettlementApplicationInterruptedReviewReason); err != nil {
 			return nil, false, err
 		}
 		existing, exists, loadErr = GetTaskSettlementRecord(task.ID)
@@ -109,6 +133,23 @@ func BeginTaskSettlementApplication(task *Task) (*TaskSettlementRecord, bool, er
 		}
 	}
 	return existing, false, nil
+}
+
+func resetTaskSettlementApplicationPrepared(taskPrimaryID int64) error {
+	result := DB.Model(&TaskSettlementRecord{}).
+		Where("task_primary_id = ? AND status = ?", taskPrimaryID, TaskSettlementRecordStatusApplying).
+		Updates(map[string]any{
+			"status":     TaskSettlementRecordStatusPrepared,
+			"error":      "",
+			"updated_at": time.Now().Unix(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("task settlement application reset prepared lost CAS")
+	}
+	return nil
 }
 
 func MarkTaskSettlementApplicationApplying(taskPrimaryID int64) error {
@@ -230,6 +271,38 @@ func MarkTaskSettlementApplicationApplied(taskPrimaryID int64, details ...TaskSe
 		return nil
 	}
 	return errors.New("task settlement application mark applied lost CAS")
+}
+
+func MarkTaskSettlementApplicationAppliedFromEvidence(taskPrimaryID int64) error {
+	if taskPrimaryID <= 0 {
+		return errors.New("task primary id is required")
+	}
+	now := time.Now().Unix()
+	result := DB.Model(&TaskSettlementRecord{}).
+		Where("task_primary_id = ? AND status IN ? AND applied_quota IS NOT NULL", taskPrimaryID, []string{
+			TaskSettlementRecordStatusApplying,
+			TaskSettlementRecordStatusReview,
+		}).
+		Updates(map[string]any{
+			"status":     TaskSettlementRecordStatusApplied,
+			"error":      "",
+			"applied_at": now,
+			"updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected > 0 {
+		return nil
+	}
+	record, exists, err := GetTaskSettlementRecord(taskPrimaryID)
+	if err != nil {
+		return err
+	}
+	if exists && record.Status == TaskSettlementRecordStatusApplied && record.HasAppliedQuotaEvidence() {
+		return nil
+	}
+	return errors.New("task settlement application mark applied from evidence lost CAS")
 }
 
 func MarkTaskSettlementApplicationAppliedTx(tx *gorm.DB, taskPrimaryID int64, logPayload string, details TaskSettlementApplicationAppliedDetails) error {
@@ -416,6 +489,52 @@ func MarkTaskSettlementApplicationReview(taskPrimaryID int64, message string) er
 
 func MarkTaskSettlementApplicationError(taskPrimaryID int64, message string) {
 	_ = MarkTaskSettlementApplicationReview(taskPrimaryID, message)
+}
+
+func ResetTaskSettlementApplicationFromReview(taskPrimaryID int64) error {
+	if taskPrimaryID <= 0 {
+		return errors.New("task primary id is required")
+	}
+	existing, exists, err := GetTaskSettlementRecord(taskPrimaryID)
+	if err != nil {
+		return err
+	}
+	if !exists {
+		return nil
+	}
+	switch existing.Status {
+	case TaskSettlementRecordStatusPrepared:
+		return nil
+	case TaskSettlementRecordStatusApplied:
+		return errors.New("task settlement application already applied")
+	case TaskSettlementRecordStatusApplying:
+		return errors.New("task settlement application is still applying")
+	case TaskSettlementRecordStatusReview:
+		if existing.HasAppliedQuotaEvidence() {
+			return errors.New("task settlement review has applied quota evidence")
+		}
+		if existing.WasInterrupted() {
+			return errors.New("task settlement application was interrupted before completion")
+		}
+	default:
+		return fmt.Errorf("task settlement application has unexpected status %s", existing.Status)
+	}
+	now := time.Now().Unix()
+	result := DB.Model(&TaskSettlementRecord{}).
+		Where("task_primary_id = ? AND status = ? AND applied_quota IS NULL", taskPrimaryID, TaskSettlementRecordStatusReview).
+		Updates(map[string]any{
+			"status":     TaskSettlementRecordStatusPrepared,
+			"error":      "",
+			"operation":  "",
+			"updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("task settlement application reset from review lost CAS")
+	}
+	return nil
 }
 
 func CleanupTerminalTaskSettlementRecords(cutoff int64, limit int) (int64, error) {

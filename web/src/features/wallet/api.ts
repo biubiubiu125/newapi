@@ -222,7 +222,9 @@ export async function getUserBillingHistory(
   if (keyword) {
     params.append('keyword', keyword)
   }
-  const res = await api.get(`/api/user/topup/self?${params.toString()}`)
+  const res = await api.get(`/api/user/topup/self?${params.toString()}`, {
+    skipBusinessError: true,
+  })
   return res.data
 }
 

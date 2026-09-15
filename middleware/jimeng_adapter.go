@@ -65,3 +65,13 @@ func JimengRequestConvert() func(c *gin.Context) {
 		c.Next()
 	}
 }
+
+func JimengAuth() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		if c.Query("Action") == "CVSync2AsyncGetResult" {
+			TokenAuthAllowExhausted()(c)
+			return
+		}
+		TokenAuth()(c)
+	}
+}

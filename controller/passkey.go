@@ -57,10 +57,7 @@ func PasskeyRegisterBegin(c *gin.Context) {
 
 	user, err := getAuthenticatedUser(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiErrorWithStatus(c, http.StatusUnauthorized, err)
 		return
 	}
 
@@ -135,10 +132,7 @@ func PasskeyRegisterFinish(c *gin.Context) {
 
 	user, err := getAuthenticatedUser(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiErrorWithStatus(c, http.StatusUnauthorized, err)
 		return
 	}
 	if !requirePasskeyRegistrationVerification(c, user.Id) {
@@ -224,10 +218,7 @@ func PasskeyRegisterFinish(c *gin.Context) {
 func PasskeyDelete(c *gin.Context) {
 	user, err := getAuthenticatedUser(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiErrorWithStatus(c, http.StatusUnauthorized, err)
 		return
 	}
 
@@ -264,10 +255,7 @@ func PasskeyDelete(c *gin.Context) {
 func PasskeyStatus(c *gin.Context) {
 	user, err := getAuthenticatedUser(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiErrorWithStatus(c, http.StatusUnauthorized, err)
 		return
 	}
 
@@ -438,7 +426,7 @@ func PasskeyLoginFinish(c *gin.Context) {
 		return
 	}
 
-	setupLogin(modelUser, c)
+	setupLoginOrRequire2FA(modelUser, c)
 }
 
 func AdminResetPasskey(c *gin.Context) {
@@ -501,10 +489,7 @@ func PasskeyVerifyBegin(c *gin.Context) {
 
 	user, err := getAuthenticatedUser(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiErrorWithStatus(c, http.StatusUnauthorized, err)
 		return
 	}
 	var request passkeyVerifyBeginRequest
@@ -578,10 +563,7 @@ func PasskeyVerifyFinish(c *gin.Context) {
 
 	user, err := getAuthenticatedUser(c)
 	if err != nil {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiErrorWithStatus(c, http.StatusUnauthorized, err)
 		return
 	}
 
@@ -664,7 +646,7 @@ func getAuthenticatedUser(c *gin.Context) (*model.User, error) {
 	}
 	user := &model.User{Id: id}
 	if err := user.FillUserById(); err != nil {
-		return nil, err
+		return nil, errors.New("未登录")
 	}
 	if user.Status != common.UserStatusEnabled {
 		return nil, errors.New("该用户已被禁用")

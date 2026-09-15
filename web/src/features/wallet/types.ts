@@ -92,8 +92,8 @@ export interface CreemProduct {
   price: number
   /** Quota amount to credit */
   quota: number
-  /** Currency (USD or EUR) */
-  currency: 'USD' | 'EUR'
+  /** Currency (USD, EUR, or CNY) */
+  currency: 'USD' | 'EUR' | 'CNY'
 }
 
 /**
@@ -303,7 +303,7 @@ export interface UserWalletData {
 /**
  * Topup record status
  */
-export type TopupStatus = 'success' | 'pending' | 'expired'
+export type TopupStatus = 'success' | 'pending' | 'expired' | 'failed'
 
 /**
  * Topup billing record

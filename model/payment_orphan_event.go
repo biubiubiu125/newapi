@@ -333,6 +333,7 @@ func creditExistingPaymentOrphan(id int64, resolvedBy int, callerIP string) erro
 	}
 	switch result.Kind {
 	case "topup":
+		syncCreditUserQuotaCache(result.UserID, result.CreditQuota, "payment orphan topup")
 		_ = cacheUpdateUserQuota(result.UserID)
 		RecordTopupLog(result.UserID, fmt.Sprintf("支付孤儿补单成功，充值金额：%.2f %s，额度：%d", result.PaidAmount, result.PaidCurrency, result.CreditQuota), callerIP, "admin", "admin")
 	case "subscription":
@@ -635,6 +636,7 @@ func CreditStripePaymentOrphan(id int64, resolvedBy int, callerIP string) error 
 		return err
 	}
 	if userID != 0 && creditResult.Kind == "topup" {
+		syncCreditUserQuotaCache(userID, creditResult.CreditQuota, "stripe payment orphan topup")
 		_ = cacheUpdateUserQuota(userID)
 		RecordTopupLog(userID, fmt.Sprintf("Stripe 孤儿支付补单成功，充值金额：%.2f %s，额度：%d", creditResult.PaidAmount, creditResult.PaidCurrency, creditResult.CreditQuota), callerIP, PaymentMethodStripe, "admin")
 	}
@@ -712,7 +714,7 @@ func creditStripeSubscriptionPaymentOrphanTx(tx *gorm.DB, orphan *PaymentOrphanE
 	if metadataCurrency := strings.ToUpper(paymentOrphanPayloadOptionalString(payload, "paid_currency")); metadataCurrency != "" {
 		expectedCurrency = metadataCurrency
 	}
-	if !samePaymentCurrency(expectedCurrency, currency) || !samePaymentAmount(expectedAmount, paidAmount) {
+	if !samePaymentCurrency(expectedCurrency, currency) || !samePaymentAmountWithCurrency(expectedAmount, paidAmount, expectedCurrency) {
 		return result, ErrPaymentOrphanNotCredit
 	}
 
@@ -763,12 +765,12 @@ func creditStripeSubscriptionPaymentOrphanTx(tx *gorm.DB, orphan *PaymentOrphanE
 		result.ProductName = order.PlanTitleSnapshot
 		result.UpgradeGroup = order.PlanUpgradeGroupSnapshot
 		return result, nil
-	} else if order.Status != common.TopUpStatusPending ||
+	} else if !topUpStatusAllowsPaymentCompletion(order.Status) ||
 		order.UserId != int(userID) ||
 		order.PlanId != int(planID) ||
 		order.PaymentProvider != PaymentProviderStripe ||
 		!samePaymentCurrency(order.PaidCurrency, currency) ||
-		!samePaymentAmount(order.PaidAmount, paidAmount) {
+		!samePaymentAmountWithCurrency(order.PaidAmount, paidAmount, currency) {
 		return result, ErrPaymentOrphanNotCredit
 	}
 

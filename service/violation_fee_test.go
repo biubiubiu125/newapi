@@ -6,12 +6,18 @@ import (
 	"testing"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
+
+func TestCalcViolationFeeQuotaSaturatesInsteadOfWrapping(t *testing.T) {
+	quota := calcViolationFeeQuota(1e20, 1e20)
+	require.Equal(t, common.MaxQuota, quota)
+}
 
 func TestViolationFeeRollsBackDirectChargeWhenConsumeLogFailsAfterRequestRefund(t *testing.T) {
 	truncate(t)

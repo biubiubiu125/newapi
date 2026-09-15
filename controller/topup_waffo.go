@@ -115,7 +115,7 @@ func RequestWaffoAmount(c *gin.Context) {
 		return
 	}
 
-	waffoMinTopup := int64(setting.WaffoMinTopUp)
+	waffoMinTopup := getWaffoMinTopup()
 	if req.Amount < waffoMinTopup {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", waffoMinTopup)})
 		return
@@ -165,7 +165,7 @@ func RequestWaffoPay(c *gin.Context) {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "参数错误"})
 		return
 	}
-	waffoMinTopup := int64(setting.WaffoMinTopUp)
+	waffoMinTopup := getWaffoMinTopup()
 	if req.Amount < waffoMinTopup {
 		c.JSON(http.StatusOK, gin.H{"message": "error", "data": fmt.Sprintf("充值数量不能小于 %d", waffoMinTopup)})
 		return
@@ -239,9 +239,6 @@ func RequestWaffoPay(c *gin.Context) {
 	amount := req.Amount
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
 		amount = int64(float64(req.Amount) / common.QuotaPerUnit)
-		if amount < 1 {
-			amount = 1
-		}
 	}
 
 	// 创建本地订单
@@ -287,10 +284,23 @@ func RequestWaffoPay(c *gin.Context) {
 		return
 	}
 
-	callbackAddr := service.GetCallbackAddress()
-	notifyUrl := callbackAddr + "/api/waffo/webhook"
-	if customNotify := strings.TrimSpace(setting.WaffoNotifyUrl); customNotify != "" {
-		notifyUrl = customNotify
+	notifyUrl := strings.TrimSpace(setting.WaffoNotifyUrl)
+	if notifyUrl == "" {
+		callbackAddr, err := service.RequirePublicCallbackAddress()
+		if err != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo 公网回调地址未配置 user_id=%d trade_no=%s error=%q", id, merchantOrderId, err.Error()))
+			topUp.Status = common.TopUpStatusFailed
+			_ = topUp.Update()
+			c.JSON(http.StatusOK, gin.H{"message": "error", "data": "未配置公网回调地址"})
+			return
+		}
+		notifyUrl = callbackAddr + "/api/waffo/webhook"
+	} else if service.IsLocalCallbackAddress(notifyUrl) {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo 回调地址不能是本地地址 user_id=%d trade_no=%s notify_url=%q", id, merchantOrderId, notifyUrl))
+		topUp.Status = common.TopUpStatusFailed
+		_ = topUp.Update()
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "回调地址不能是本地地址"})
+		return
 	}
 	returnUrl := paymentReturnPath("/wallet?show_history=true")
 	if customReturn := strings.TrimSpace(setting.WaffoReturnUrl); customReturn != "" {
@@ -467,17 +477,17 @@ func handleWaffoPayment(c *gin.Context, wh *core.WebhookHandler, result *core.Pa
 				eventID = strings.TrimSpace(result.AcquiringOrderID)
 			}
 			if recordErr := recordPaymentReview(c.Request.Context(), model.PaymentProviderWaffo, eventID, "payment.notification", merchantOrderId, result.AcquiringOrderID, "Waffo top-up payment requires manual review after payment succeeded", err, common.GetJsonString(result)); recordErr != nil {
-				sendWaffoWebhookResponse(c, wh, false, recordErr.Error())
+				sendWaffoWebhookRetry(c, wh, recordErr.Error())
 				return
 			}
 			sendWaffoWebhookResponse(c, wh, true, "")
 			return
 		}
-		sendWaffoWebhookResponse(c, wh, false, err.Error())
+		sendWaffoWebhookRetry(c, wh, err.Error())
 		return
 	}
 	if err := processPaidTopUpCommission(c.Request.Context(), merchantOrderId); err != nil {
-		sendWaffoWebhookResponse(c, wh, false, err.Error())
+		sendWaffoWebhookRetry(c, wh, err.Error())
 		return
 	}
 
@@ -509,6 +519,14 @@ func waffoPaymentPaidCurrency(result *core.PaymentNotificationResult) string {
 
 // sendWaffoWebhookResponse 发送签名响应
 func sendWaffoWebhookResponse(c *gin.Context, wh *core.WebhookHandler, success bool, msg string) {
+	sendWaffoWebhookResponseStatus(c, wh, success, msg, http.StatusOK)
+}
+
+func sendWaffoWebhookRetry(c *gin.Context, wh *core.WebhookHandler, msg string) {
+	sendWaffoWebhookResponseStatus(c, wh, false, msg, http.StatusInternalServerError)
+}
+
+func sendWaffoWebhookResponseStatus(c *gin.Context, wh *core.WebhookHandler, success bool, msg string, status int) {
 	var body, sig string
 	if success {
 		body, sig = wh.BuildSuccessResponse()
@@ -516,5 +534,5 @@ func sendWaffoWebhookResponse(c *gin.Context, wh *core.WebhookHandler, success b
 		body, sig = wh.BuildFailedResponse(msg)
 	}
 	c.Header("X-SIGNATURE", sig)
-	c.Data(http.StatusOK, "application/json", []byte(body))
+	c.Data(status, "application/json", []byte(body))
 }

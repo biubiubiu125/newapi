@@ -40,27 +40,16 @@ func ExpireStalePendingRechargeOrders(maxAgeSeconds int64, limit int) (int, int,
 	return topUps, subscriptionOrders, nil
 }
 
-// CleanupExpiredRechargeOrders deletes expired recharge-related orders after the
-// retention window. It returns deleted top-up and subscription order counts.
+// CleanupExpiredRechargeOrders used to physically delete expired unpaid orders.
+// Late USDT/crypto callbacks still need those rows to credit or enter review,
+// so expired orders are retained for reconciliation.
 func CleanupExpiredRechargeOrders(retentionSeconds int64, limit int) (int, int, error) {
 	if DB == nil {
 		return 0, 0, errors.New("database is not initialized")
 	}
-	if retentionSeconds <= 0 {
-		retentionSeconds = DefaultExpiredOrderRetentionSeconds
-	}
-	limit = normalizeRechargeOrderMaintenanceLimit(limit)
-
-	cutoff := common.GetTimestamp() - retentionSeconds
-	topUps, err := cleanupExpiredTopUps(cutoff, limit)
-	if err != nil {
-		return 0, 0, err
-	}
-	subscriptionOrders, err := cleanupExpiredSubscriptionOrders(cutoff, limit)
-	if err != nil {
-		return topUps, 0, err
-	}
-	return topUps, subscriptionOrders, nil
+	_ = retentionSeconds
+	_ = limit
+	return 0, 0, nil
 }
 
 func normalizeRechargeOrderMaintenanceLimit(limit int) int {

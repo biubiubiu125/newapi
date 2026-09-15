@@ -128,8 +128,14 @@ function parseCreemProducts(data: unknown): CreemProduct[] {
         !!item && typeof item === 'object'
     )
     .map((item) => {
+      const rawCurrency =
+        typeof item.currency === 'string'
+          ? item.currency.trim().toUpperCase()
+          : ''
       const currency: CreemProduct['currency'] =
-        item.currency === 'EUR' ? 'EUR' : 'USD'
+        rawCurrency === 'EUR' || rawCurrency === 'CNY' || rawCurrency === 'USD'
+          ? rawCurrency
+          : 'USD'
 
       return {
         name: typeof item.name === 'string' ? item.name : '',

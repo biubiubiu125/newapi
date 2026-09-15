@@ -1588,3 +1588,225 @@ func TestUpdateWithStatus_ConcurrentWinner(t *testing.T) {
 	}
 	assert.Equal(t, 1, winCount, "exactly one goroutine should win the CAS")
 }
+
+func TestGetRunnableNonImageTasksIncludesSuccessReview(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Exec("DELETE FROM tasks").Error)
+
+	insertTask(t, &Task{
+		TaskID:           "task_video_success_review",
+		Platform:         constant.TaskPlatformSuno,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           TaskStatusSuccess,
+		Progress:         "100%",
+		SettlementStatus: TaskSettlementStatusReview,
+		NextPollAt:       time.Now().Unix(),
+	})
+	insertTask(t, &Task{
+		TaskID:    "task_video_success_plain",
+		Platform:  constant.TaskPlatformSuno,
+		UserId:    1,
+		Group:     "default",
+		ChannelId: 1,
+		Status:    TaskStatusSuccess,
+		Progress:  "100%",
+	})
+
+	require.Equal(t, []string{"task_video_success_review"}, taskIDs(GetRunnableNonImageSyncTasks(10)))
+}
+
+func TestGetRunnableNonImageTasksExcludesParkedSettlementReview(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Exec("DELETE FROM tasks").Error)
+
+	insertTask(t, &Task{
+		TaskID:           "task_video_success_review_parked",
+		Platform:         constant.TaskPlatformSuno,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           TaskStatusSuccess,
+		Progress:         "100%",
+		SettlementStatus: TaskSettlementStatusReview,
+		NextPollAt:       0,
+	})
+
+	require.Empty(t, taskIDs(GetRunnableNonImageSyncTasks(10)))
+}
+
+func TestGetRunnableNonImageTasksSkipsSuccessReviewBeforeDue(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Exec("DELETE FROM tasks").Error)
+
+	insertTask(t, &Task{
+		TaskID:           "task_video_success_review_later",
+		Platform:         constant.TaskPlatformSuno,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           TaskStatusSuccess,
+		Progress:         "100%",
+		SettlementStatus: TaskSettlementStatusReview,
+		NextPollAt:       time.Now().Unix() + 3600,
+	})
+
+	require.Empty(t, taskIDs(GetRunnableNonImageSyncTasks(10)))
+}
+
+func TestGetRunnableImageTasksIncludesSuccessReviewWhenDue(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Exec("DELETE FROM tasks").Error)
+	resetImageTaskFairChannelCursorForTest(t)
+
+	now := time.Now().Unix()
+	insertTask(t, &Task{
+		TaskID:           "task_image_success_review",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           TaskStatusSuccess,
+		Progress:         "100%",
+		SettlementStatus: TaskSettlementStatusReview,
+		SubmitTime:       now,
+		FinishTime:       now,
+		NextPollAt:       now - 1,
+		Data:             json.RawMessage(`{"ok":true}`),
+	})
+
+	require.Equal(t, []string{"task_image_success_review"}, taskIDs(GetRunnableImageTasks(10, now)))
+	require.True(t, HasRunnableImageTasks(now))
+}
+
+func TestGetRunnableImageTasksIncludesEvidenceReviewWhenNextPollAtZero(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Exec("DELETE FROM tasks").Error)
+	resetImageTaskFairChannelCursorForTest(t)
+
+	now := time.Now().Unix()
+	insertTask(t, &Task{
+		TaskID:           "task_image_evidence_review_parked_window",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           TaskStatusSuccess,
+		Progress:         "100%",
+		SettlementStatus: TaskSettlementStatusReview,
+		SubmitTime:       now,
+		FinishTime:       now,
+		NextPollAt:       0,
+		PrivateData: TaskPrivateData{
+			SettlementEvidenceCapturedAt: now,
+		},
+	})
+
+	require.Equal(t, []string{"task_image_evidence_review_parked_window"}, taskIDs(GetRunnableImageTasks(10, now)))
+	require.True(t, HasRunnableImageTasks(now))
+}
+
+func TestGetRunnableImageTasksExcludesEmptyReviewEvenWhenDue(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Exec("DELETE FROM tasks").Error)
+	resetImageTaskFairChannelCursorForTest(t)
+
+	now := time.Now().Unix()
+	insertTask(t, &Task{
+		TaskID:           "task_image_empty_review_due",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           TaskStatusSuccess,
+		Progress:         "100%",
+		SettlementStatus: TaskSettlementStatusReview,
+		SubmitTime:       now,
+		FinishTime:       now,
+		NextPollAt:       now - 1,
+	})
+
+	require.Empty(t, taskIDs(GetRunnableImageTasks(10, now)))
+	require.False(t, HasRunnableImageTasks(now))
+}
+
+func TestGetRunnableImageTasksExcludesParkedSettlementReview(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Exec("DELETE FROM tasks").Error)
+	resetImageTaskFairChannelCursorForTest(t)
+
+	now := time.Now().Unix()
+	insertTask(t, &Task{
+		TaskID:           "task_image_parked_review",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           TaskStatusSuccess,
+		Progress:         "100%",
+		SettlementStatus: TaskSettlementStatusReview,
+		SubmitTime:       now,
+		FinishTime:       now,
+		ResultCleanedAt:  now,
+		FailReason:       imageTaskResultExpiredBeforeSettlementReason,
+		NextPollAt:       0,
+	})
+
+	require.Empty(t, taskIDs(GetRunnableImageTasks(10, now)))
+	require.False(t, HasRunnableImageTasks(now))
+}
+
+func TestGetRunnableImageTasksExcludesCleanedReviewWithoutEvidence(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Exec("DELETE FROM tasks").Error)
+	resetImageTaskFairChannelCursorForTest(t)
+
+	now := time.Now().Unix()
+	insertTask(t, &Task{
+		TaskID:           "task_image_cleaned_review",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           TaskStatusSuccess,
+		Progress:         "100%",
+		SettlementStatus: TaskSettlementStatusReview,
+		SubmitTime:       now,
+		FinishTime:       now,
+		ResultCleanedAt:  now,
+		NextPollAt:       now - 1,
+	})
+
+	require.Empty(t, taskIDs(GetRunnableImageTasks(10, now)))
+	require.False(t, HasRunnableImageTasks(now))
+}
+
+func TestForceTaskRefundableAfterSubmitAccountingFailurePersistsUsageFlags(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID:   "task_force_usage_flags",
+		Status:   TaskStatusSuccess,
+		Quota:    150,
+		Progress: "100%",
+	}
+	insertTask(t, task)
+
+	task.Status = TaskStatusFailure
+	task.FailReason = "billing accounting failed after task submission"
+	task.RefundPending = true
+	task.SettlementStatus = ""
+	task.PrivateData.PreConsumedUsageCaptured = true
+	task.PrivateData.PreConsumedUsageRecorded = false
+
+	require.NoError(t, ForceTaskRefundableAfterSubmitAccountingFailure(task))
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, TaskStatus(TaskStatusFailure), reloaded.Status)
+	require.True(t, reloaded.RefundPending)
+	require.Equal(t, 150, reloaded.Quota)
+	require.True(t, reloaded.PrivateData.PreConsumedUsageCaptured)
+	require.False(t, reloaded.PrivateData.PreConsumedUsageRecorded)
+}

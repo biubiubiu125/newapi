@@ -11,16 +11,72 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay"
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
+	vertexcore "github.com/QuantumNous/new-api/relay/channel/vertex"
 	"github.com/QuantumNous/new-api/service"
 )
+
+var acquireVertexAccessToken = vertexcore.AcquireAccessToken
+
+func decorateGeminiMediaURL(videoURL, apiKey string, extraHosts ...string) (string, map[string]string, error) {
+	videoURL = strings.TrimSpace(videoURL)
+	if videoURL == "" {
+		return "", nil, fmt.Errorf("gemini video url not found")
+	}
+	if taskcommon.IsDataURL(videoURL) {
+		return videoURL, nil, nil
+	}
+	if taskcommon.IsGCSURI(videoURL) || taskcommon.IsUnsignedGCSHTTPS(videoURL) {
+		return "", nil, fmt.Errorf("gemini gcs uri not retrievable with api key")
+	}
+	if !geminiMediaURLNeedsAPIKey(videoURL, extraHosts...) {
+		return videoURL, nil, nil
+	}
+	headers := map[string]string{}
+	if strings.TrimSpace(apiKey) != "" {
+		headers["x-goog-api-key"] = apiKey
+	}
+	return ensureAPIKey(videoURL, apiKey), headers, nil
+}
+
+func geminiMediaURLNeedsAPIKey(videoURL string, extraHosts ...string) bool {
+	hostname := model.MediaHostFromBaseURL(videoURL)
+	switch hostname {
+	case "generativelanguage.googleapis.com", "ai.google.dev", "files.googleapis.com":
+		return true
+	}
+	for _, extra := range extraHosts {
+		if extraHost := model.MediaHostFromBaseURL(extra); extraHost != "" && extraHost == hostname {
+			return true
+		}
+	}
+	return false
+}
+
+func geminiChannelMediaHosts(channel *model.Channel) []string {
+	if channel == nil {
+		return nil
+	}
+	baseURL := strings.TrimSpace(channel.GetBaseURL())
+	if baseURL == "" {
+		baseURL = constant.GetChannelBaseURL(channel.Type)
+	}
+	host := model.MediaHostFromBaseURL(baseURL)
+	if host == "" {
+		return nil
+	}
+	return []string{host}
+}
 
 func getGeminiVideoURL(channel *model.Channel, task *model.Task, apiKey string) (string, error) {
 	if channel == nil || task == nil {
 		return "", fmt.Errorf("invalid channel or task")
 	}
 
+	if url := storedRetrievableTaskMediaURL(task); url != "" {
+		return url, nil
+	}
 	if url := extractGeminiVideoURLFromTaskData(task); url != "" {
-		return ensureAPIKey(url, apiKey), nil
+		return url, nil
 	}
 
 	baseURL := constant.ChannelBaseURLs[channel.Type]
@@ -57,11 +113,11 @@ func getGeminiVideoURL(channel *model.Channel, task *model.Task, apiKey string) 
 
 	taskInfo, parseErr := adaptor.ParseTaskResult(body)
 	if parseErr == nil && taskInfo != nil && taskInfo.RemoteUrl != "" {
-		return ensureAPIKey(taskInfo.RemoteUrl, apiKey), nil
+		return taskInfo.RemoteUrl, nil
 	}
 
 	if url := extractGeminiVideoURLFromPayload(body); url != "" {
-		return ensureAPIKey(url, apiKey), nil
+		return url, nil
 	}
 
 	if parseErr != nil {
@@ -199,6 +255,9 @@ func getVertexVideoURL(channel *model.Channel, task *model.Task) (string, error)
 	if channel == nil || task == nil {
 		return "", fmt.Errorf("invalid channel or task")
 	}
+	if url := storedRetrievableTaskMediaURL(task); url != "" {
+		return url, nil
+	}
 	if url := strings.TrimSpace(task.GetResultURL()); url != "" && !isTaskProxyContentURL(url, task.TaskID) {
 		return url, nil
 	}
@@ -239,8 +298,10 @@ func getVertexVideoURL(channel *model.Channel, task *model.Task) (string, error)
 	}
 
 	taskInfo, parseErr := adaptor.ParseTaskResult(body)
-	if parseErr == nil && taskInfo != nil && strings.TrimSpace(taskInfo.Url) != "" {
-		return taskInfo.Url, nil
+	if parseErr == nil && taskInfo != nil {
+		if url := firstNonEmptyTrimmed(taskInfo.Url, taskInfo.RemoteUrl); url != "" {
+			return url, nil
+		}
 	}
 	if url := extractVertexVideoURLFromPayload(body); url != "" {
 		return url, nil
@@ -249,6 +310,83 @@ func getVertexVideoURL(channel *model.Channel, task *model.Task) (string, error)
 		return "", fmt.Errorf("parse task result failed: %w", parseErr)
 	}
 	return "", fmt.Errorf("vertex video url not found")
+}
+
+func decorateVertexMediaURL(channel *model.Channel, task *model.Task, videoURL string) (string, map[string]string, error) {
+	videoURL = strings.TrimSpace(videoURL)
+	if videoURL == "" {
+		return "", nil, fmt.Errorf("vertex video url not found")
+	}
+	if taskcommon.IsGCSURI(videoURL) {
+		httpsURL, ok := taskcommon.GCSURIToHTTPS(videoURL)
+		if !ok {
+			return "", nil, fmt.Errorf("invalid vertex gcs uri")
+		}
+		token, err := vertexAccessTokenForChannel(channel, task)
+		if err != nil {
+			return "", nil, err
+		}
+		return httpsURL, map[string]string{"Authorization": "Bearer " + token}, nil
+	}
+	if vertexStorageHTTPSNeedsAuth(videoURL) {
+		token, err := vertexAccessTokenForChannel(channel, task)
+		if err != nil {
+			return "", nil, err
+		}
+		return videoURL, map[string]string{"Authorization": "Bearer " + token}, nil
+	}
+	return videoURL, nil, nil
+}
+
+func vertexStorageHTTPSNeedsAuth(rawURL string) bool {
+	parsed, err := neturl.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed == nil {
+		return false
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host != "storage.googleapis.com" && host != "storage.cloud.google.com" {
+		return false
+	}
+	query := parsed.Query()
+	return strings.TrimSpace(query.Get("X-Goog-Signature")) == "" &&
+		strings.TrimSpace(query.Get("X-Goog-Algorithm")) == "" &&
+		strings.TrimSpace(query.Get("GoogleAccessId")) == "" &&
+		strings.TrimSpace(query.Get("X-Goog-Credential")) == ""
+}
+
+func vertexAccessTokenForChannel(channel *model.Channel, task *model.Task) (string, error) {
+	key := getVertexTaskKey(channel, task)
+	if strings.TrimSpace(key) == "" {
+		return "", fmt.Errorf("vertex key not available for task")
+	}
+	var creds vertexcore.Credentials
+	if err := common.Unmarshal([]byte(key), &creds); err != nil {
+		return "", fmt.Errorf("failed to decode vertex credentials: %w", err)
+	}
+	if strings.TrimSpace(creds.ClientEmail) == "" || strings.TrimSpace(creds.PrivateKey) == "" {
+		return "", fmt.Errorf("vertex credentials missing client_email or private_key")
+	}
+	proxy := ""
+	if channel != nil {
+		proxy = strings.TrimSpace(channel.GetSetting().Proxy)
+	}
+	token, err := acquireVertexAccessToken(creds, proxy)
+	if err != nil {
+		return "", fmt.Errorf("failed to acquire vertex access token: %w", err)
+	}
+	if strings.TrimSpace(token) == "" {
+		return "", fmt.Errorf("vertex access token is empty")
+	}
+	return token, nil
+}
+
+func firstNonEmptyTrimmed(values ...string) string {
+	for _, value := range values {
+		if trimmed := strings.TrimSpace(value); trimmed != "" {
+			return trimmed
+		}
+	}
+	return ""
 }
 
 func isTaskProxyContentURL(url string, taskID string) bool {
@@ -302,6 +440,47 @@ func extractVertexVideoURLFromPayload(body []byte) string {
 		return ""
 	}
 
+	var httpURL, gcsURL string
+	collectURI := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		switch {
+		case strings.HasPrefix(strings.ToLower(value), "http://"), strings.HasPrefix(strings.ToLower(value), "https://"):
+			if httpURL == "" {
+				httpURL = value
+			}
+		case taskcommon.IsGCSURI(value):
+			if gcsURL == "" {
+				gcsURL = value
+			}
+		}
+	}
+
+	if videos, ok := resp["videos"].([]any); ok && len(videos) > 0 {
+		if video, ok := videos[0].(map[string]any); ok && video != nil {
+			collectURI(asJSONString(video["uri"]))
+			collectURI(asJSONString(video["gcsUri"]))
+		}
+	}
+	if gvr, ok := resp["generateVideoResponse"].(map[string]any); ok && gvr != nil {
+		if generated, ok := gvr["generatedVideos"].([]any); ok && len(generated) > 0 {
+			if item, ok := generated[0].(map[string]any); ok && item != nil {
+				if video, ok := item["video"].(map[string]any); ok && video != nil {
+					collectURI(asJSONString(video["uri"]))
+					collectURI(asJSONString(video["gcsUri"]))
+				}
+			}
+		}
+	}
+	if httpURL != "" {
+		return httpURL
+	}
+	if gcsURL != "" {
+		return gcsURL
+	}
+
 	if videos, ok := resp["videos"].([]any); ok && len(videos) > 0 {
 		if video, ok := videos[0].(map[string]any); ok && video != nil {
 			if b64, _ := video["bytesBase64Encoded"].(string); strings.TrimSpace(b64) != "" {
@@ -323,6 +502,11 @@ func extractVertexVideoURLFromPayload(body []byte) string {
 		return buildVideoDataURL("", enc, video)
 	}
 	return ""
+}
+
+func asJSONString(value any) string {
+	s, _ := value.(string)
+	return s
 }
 
 func buildVideoDataURL(mimeType string, encoding string, base64Data string) string {

@@ -207,9 +207,7 @@ func (e *NewAPIError) ToOpenAIError() OpenAIError {
 			Code:    e.errorCode,
 		}
 	}
-	if e.errorCode != ErrorCodeCountTokenFailed {
-		result.Message = kitutil.MaskSensitiveInfo(result.Message)
-	}
+	result.Message = e.publicMessage(result.Message)
 	if result.Message == "" {
 		result.Message = string(e.errorType)
 	}
@@ -236,13 +234,38 @@ func (e *NewAPIError) ToClaudeError() ClaudeError {
 			Type:    string(e.errorType),
 		}
 	}
-	if e.errorCode != ErrorCodeCountTokenFailed {
-		result.Message = kitutil.MaskSensitiveInfo(result.Message)
-	}
+	result.Message = e.publicMessage(result.Message)
 	if result.Message == "" {
 		result.Message = string(e.errorType)
 	}
 	return result
+}
+
+func (e *NewAPIError) publicMessage(message string) string {
+	if e != nil && e.errorCode == ErrorCodeCountTokenFailed {
+		return message
+	}
+	message = kitutil.MaskSensitiveInfo(message)
+	if e == nil || !e.sanitizeHostError() {
+		return message
+	}
+	sanitized := strings.TrimSpace(kitutil.SanitizePublicClientError(message))
+	if sanitized == "" {
+		return "request failed"
+	}
+	return sanitized
+}
+
+func (e *NewAPIError) sanitizeHostError() bool {
+	if e == nil {
+		return false
+	}
+	switch e.errorType {
+	case ErrorTypeOpenAIError, ErrorTypeClaudeError, ErrorTypeGeminiError, ErrorTypeMidjourneyError, ErrorTypeRerankError, ErrorTypeUpstreamError:
+		return false
+	default:
+		return true
+	}
 }
 
 type NewAPIErrorOptions func(*NewAPIError)

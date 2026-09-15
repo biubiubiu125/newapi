@@ -3,6 +3,7 @@ package service
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -10,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -62,6 +64,40 @@ func TestResetStatusCode(t *testing.T) {
 			require.Equal(t, tc.expectedCode, newAPIError.StatusCode)
 		})
 	}
+}
+
+func TestTaskErrorWrapperHidesInternalDatabaseError(t *testing.T) {
+	wrapped := TaskErrorWrapper(errors.New("ERROR: password authentication failed (SQLSTATE 28P01)"), "get_task_failed", http.StatusInternalServerError)
+
+	require.NotNil(t, wrapped)
+	require.Equal(t, model.TaskPublicInternalFailReason, wrapped.Message)
+	require.NotContains(t, wrapped.Message, "password")
+	require.NotContains(t, wrapped.Message, "SQLSTATE")
+}
+
+func TestTaskErrorWrapperKeepsPublicTaskMessage(t *testing.T) {
+	wrapped := TaskErrorWrapper(errors.New("task_not_exist"), "get_task_failed", http.StatusOK)
+
+	require.NotNil(t, wrapped)
+	require.Equal(t, "task_not_exist", wrapped.Message)
+}
+
+func TestTaskErrorWrapperRewritesLocatorOnlyError(t *testing.T) {
+	wrapped := TaskErrorWrapper(errors.New("https://cdn.example/video.mp4"), "get_task_failed", http.StatusInternalServerError)
+
+	require.NotNil(t, wrapped)
+	require.Equal(t, "request failed", wrapped.Message)
+	require.NotContains(t, wrapped.Message, "cdn.example")
+}
+
+func TestTaskErrorFromAPIErrorHidesInternalDatabaseError(t *testing.T) {
+	apiErr := types.NewError(errors.New("sql: database is closed"), types.ErrorCodeQueryDataError)
+	wrapped := TaskErrorFromAPIError(apiErr)
+
+	require.NotNil(t, wrapped)
+	require.Equal(t, model.TaskPublicInternalFailReason, wrapped.Message)
+	require.NotContains(t, wrapped.Message, "sql")
+	require.NotContains(t, wrapped.Message, "database")
 }
 
 func TestRelayErrorHandlerTruncatesInvalidJSONBodyInLog(t *testing.T) {

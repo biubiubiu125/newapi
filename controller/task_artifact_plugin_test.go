@@ -70,6 +70,31 @@ func TestMergeTaskArtifactsCapsAtSixtyFourItems(t *testing.T) {
 	assert.Equal(t, primary[63].Key, merged[63].Key)
 }
 
+func TestProjectTaskArtifactsContextEmptyDuringRetryableSettlementReview(t *testing.T) {
+	task := &model.Task{
+		ID:               91,
+		TaskID:           "task_stored_artifact_review",
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		NextPollAt:       9999999999,
+		PrivateData: model.TaskPrivateData{
+			ArtifactRefs: map[string]model.TaskArtifactStorageRef{
+				"video": {
+					Backend:   "s3",
+					Bucket:    "newapi-artifacts",
+					ObjectKey: "task-artifacts/task_stored_artifact_review/video",
+					MimeType:  "video/mp4",
+					Size:      6,
+				},
+			},
+		},
+	}
+
+	artifacts, err := projectTaskArtifacts(task)
+	require.NoError(t, err)
+	require.Empty(t, artifacts)
+}
+
 func TestProjectTaskArtifactsFallsBackToStoredArtifactsWhenPluginIsUnavailable(t *testing.T) {
 	task := &model.Task{
 		ID:     1,

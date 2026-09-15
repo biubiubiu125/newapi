@@ -10,7 +10,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/textproto"
+	"net/url"
+	"reflect"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -23,6 +26,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -295,8 +299,7 @@ export function parseTaskResult(){return {status:"SUCCESS"}}
 func TestTaskAdaptorReDecodesFinalCandidateAndRejectsModelDrift(t *testing.T) {
 	source := `
 export const meta = {apiVersion:1,key:"redecode",name:"Redecode",version:"1.0.0",author:{name:"Test"},models:["claimed-model"],fetchMode:"per_task",protocols:[{name:"openai_responses",supports:["sync","background"]}]};
-let calls = 0;
-export const protocols = {openai_responses:{decodeRequest:function(ctx){calls++;return {kind:"submit",model:calls === 1 ? ctx.model : "drifted-model",requestBody:ctx.body.value};},renderFinal:function(){return {};}}};
+export const protocols = {openai_responses:{decodeRequest:function(ctx){return {kind:"submit",model:"drifted-model",requestBody:ctx.body.value};},renderFinal:function(){return {};}}};
 export function buildSubmitRequest(ctx){return {url:ctx.baseUrl+"/submit"}} export function parseSubmitResponse(){return {taskId:"one"}} export function buildQueryRequest(){return {}} export function parseTaskResult(){return {status:"SUCCESS"}}
 `
 	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
@@ -305,8 +308,6 @@ export function buildSubmitRequest(ctx){return {url:ctx.baseUrl+"/submit"}} expo
 		RouteRequestContext: pluginruntime.RouteRequestContext{Body: map[string]any{"kind": "json", "value": map[string]any{"model": "claimed-model"}}, RequestBody: map[string]any{"model": "claimed-model"}},
 		Protocol:            "openai_responses", Model: "claimed-model",
 	}
-	_, err = plugin.Engine.CallPath(context.Background(), "protocols", []string{"openai_responses", "decodeRequest"}, protocolContext.JSValue())
-	require.NoError(t, err)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())
 	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
 	c.Set(pluginruntime.ContextKeyPinnedEndpoint, pluginruntime.PinnedEndpoint{Plugin: plugin, Protocol: "openai_responses", Model: "claimed-model"})
@@ -877,6 +878,97 @@ render: function() {
 	assert.NotContains(t, string(rendered), "upstream-task-id")
 }
 
+func TestTaskAdaptorDropsSignedLocatorMetadataValues(t *testing.T) {
+	source := `
+export const meta = {
+  apiVersion: 1, key: "safe-video-signed", name: "Safe Video", version: "1.0.0",
+  author: {name: "Test"}, models: ["model"], fetchMode: "per_task", protocols: ["openai_video"],
+};
+export function buildSubmitRequest(ctx) { return {url: ctx.baseUrl + "/submit"}; }
+export function parseSubmitResponse() { return {taskId: "upstream"}; }
+export function buildQueryRequest(ctx) { return {url: ctx.baseUrl + "/query"}; }
+export function parseTaskResult() { return {status: "SUCCESS"}; }
+export function listArtifacts() { return []; }
+export function buildContentRequest() { throw new Error("artifact_not_found"); }
+export const protocols = {openai_video: {
+decodeRequest: function(ctx) { return {kind:"submit", model:ctx.model, requestBody:ctx.body.value}; },
+render: function() {
+  return {
+    id: "upstream-id",
+    object: "video",
+    model: "model",
+    status: "in_progress",
+    metadata: {
+      label: "safe",
+      signed: "https://cdn.example/signed.mp4?token=secret",
+      download_url: "https://cdn.example/download.mp4",
+      poster: "https://cdn.example/poster.jpg"
+    }
+  };
+}}};
+`
+	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+	require.NoError(t, err)
+	adaptor := New(plugin)
+
+	rendered, err := adaptor.ConvertToOpenAIVideo(&model.Task{
+		TaskID:     "task_public",
+		Status:     model.TaskStatusInProgress,
+		Properties: model.Properties{OriginModelName: "origin-model"},
+	})
+	require.NoError(t, err)
+
+	var video dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(rendered, &video))
+	assert.Equal(t, map[string]any{"label": "safe"}, video.Metadata)
+	assert.NotContains(t, string(rendered), "cdn.example")
+	assert.NotContains(t, string(rendered), "token=secret")
+}
+
+func TestConvertToOpenAIVideoProjectsHostResultURL(t *testing.T) {
+	source := `
+export const meta = {
+  apiVersion: 1, key: "safe-video-url", name: "Safe Video", version: "1.0.0",
+  author: {name: "Test"}, models: ["model"], fetchMode: "per_task", protocols: ["openai_video"],
+};
+export function buildSubmitRequest(ctx) { return {url: ctx.baseUrl + "/submit"}; }
+export function parseSubmitResponse() { return {taskId: "upstream"}; }
+export function buildQueryRequest(ctx) { return {url: ctx.baseUrl + "/query"}; }
+export function parseTaskResult() { return {status: "SUCCESS"}; }
+export function listArtifacts() { return []; }
+export function buildContentRequest() { throw new Error("artifact_not_found"); }
+export const protocols = {openai_video: {
+decodeRequest: function(ctx) { return {kind:"submit", model:ctx.model, requestBody:ctx.body.value}; },
+render: function() {
+  return {
+    id: "upstream-id",
+    object: "video",
+    model: "model",
+    status: "completed",
+    metadata: {url: "https://upstream.example/video.mp4"},
+    url: "https://upstream.example/top-level.mp4",
+  };
+}}};
+`
+	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+	require.NoError(t, err)
+	adaptor := New(plugin)
+
+	task := &model.Task{
+		TaskID: "task_public",
+		Status: model.TaskStatusSuccess,
+	}
+	task.PrivateData.ResultURL = "https://api.example/v1/videos/task_public/content"
+
+	rendered, err := adaptor.ConvertToOpenAIVideo(task)
+	require.NoError(t, err)
+
+	var video dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(rendered, &video))
+	assert.Equal(t, "https://api.example/v1/videos/task_public/content", video.Metadata["url"])
+	assert.NotContains(t, string(rendered), "upstream.example")
+}
+
 func TestTaskAdaptorPreservesOpenAIVideoFailureSlotsAndOwnsLifecycle(t *testing.T) {
 	source := strings.Replace(mockPlugin, `render: function(ctx, task) { return {id: task.task_id, status: "completed"}; }`, `render: function() { return {id:"provider", object:"provider", model:"provider-model", status:"completed", progress:100, created_at:99, completed_at:20, error:{code:"provider_error",message:"provider rejected request"}}; }`, 1)
 	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
@@ -894,7 +986,38 @@ func TestTaskAdaptorPreservesOpenAIVideoFailureSlotsAndOwnsLifecycle(t *testing.
 	rendered, err := adaptor.ConvertToOpenAIVideo(task)
 
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"id":"task_public","object":"video","model":"origin-model","status":"failed","progress":0,"created_at":10,"error":{"message":"provider rejected request","code":"provider_error"}}`, string(rendered))
+	assert.JSONEq(t, `{"id":"task_public","object":"video","model":"origin-model","status":"failed","progress":0,"created_at":10,"error":{"message":"task failed","code":"task_failed"}}`, string(rendered))
+}
+
+func TestConvertToOpenAIVideoSanitizesPluginFailureAndDropsInternalFields(t *testing.T) {
+	source := strings.Replace(mockPlugin, `render: function(ctx, task) { return {id: task.task_id, status: "completed"}; }`, `render: function() { return {id:"provider", object:"provider", model:"provider-model", status:"completed", progress:100, created_at:99, completed_at:20, error:{code:"provider_error",message:"pq: password authentication failed for user newapi"}, metadata:{url:"https://upstream.example/raw.mp4", signed:"leak"}, url:"https://upstream.example/top-level.mp4", upstream_debug:"dsn=postgres://user:secret@10.0.0.8:5432/newapi"}; }`, 1)
+	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+	require.NoError(t, err)
+	adaptor := New(plugin)
+	task := &model.Task{
+		TaskID:     "task_public",
+		Status:     model.TaskStatusFailure,
+		FailReason: "pq: password authentication failed for user newapi",
+		CreatedAt:  10,
+		UpdatedAt:  20,
+		Properties: model.Properties{OriginModelName: "origin-model"},
+	}
+
+	rendered, err := adaptor.ConvertToOpenAIVideo(task)
+
+	require.NoError(t, err)
+	var video dto.OpenAIVideo
+	require.NoError(t, common.Unmarshal(rendered, &video))
+	require.Equal(t, "task_public", video.ID)
+	require.Equal(t, dto.VideoStatusFailed, video.Status)
+	require.NotNil(t, video.Error)
+	require.Equal(t, model.TaskPublicInternalFailReason, video.Error.Message)
+	require.Equal(t, "task_failed", video.Error.Code)
+	require.Nil(t, video.Metadata)
+	require.NotContains(t, string(rendered), "password")
+	require.NotContains(t, string(rendered), "upstream.example")
+	require.NotContains(t, string(rendered), "upstream_debug")
+	require.NotContains(t, string(rendered), "10.0.0.8")
 }
 
 func TestTaskAdaptorBoundsNativeUsageBeforeQuotaCalculation(t *testing.T) {
@@ -1772,4 +1895,174 @@ export function parseBatchResult(){return [];}
 	assert.Equal(t, []any{"task-a", "task-b"}, captured["ids"])
 	assert.Equal(t, []any{"model-a", "model-b"}, captured["models"])
 	assert.Equal(t, false, captured["hasRequestBody"])
+}
+
+func allowPrivatePluginFetchRedirects(t *testing.T) {
+	t.Helper()
+	setting := system_setting.GetFetchSetting()
+	oldAllowPrivate := setting.AllowPrivateIp
+	oldPorts := append([]string(nil), setting.AllowedPorts...)
+	setting.AllowPrivateIp = true
+	setting.AllowedPorts = nil
+	t.Cleanup(func() {
+		setting.AllowPrivateIp = oldAllowPrivate
+		setting.AllowedPorts = oldPorts
+	})
+}
+
+func newQueryRedirectPlugin(t *testing.T) *TaskAdaptor {
+	t.Helper()
+	source := `
+export const meta = {apiVersion:1,key:"redirect-query",name:"Redirect Query",version:"1.0.0",author:{name:"Test"},models:["m"],fetchMode:"per_task"};
+export function buildSubmitRequest(){return {url:"https://example.com"}}
+export function parseSubmitResponse(){return {taskId:"1"}}
+export function buildQueryRequest(ctx){return {url:ctx.baseUrl+"/start",headers:{"X-API-Key":"secret-key"}}}
+export function parseTaskResult(){return {status:"SUCCESS"}}
+`
+	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+	require.NoError(t, err)
+	return New(plugin)
+}
+
+func TestTaskAdaptorFetchTaskFollowsSameHostRedirect(t *testing.T) {
+	service.InitHttpClient()
+	allowPrivatePluginFetchRedirects(t)
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/start":
+			http.Redirect(w, r, "/done", http.StatusFound)
+		case "/done":
+			_, _ = w.Write([]byte(`{"status":"SUCCESS"}`))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	adaptor := newQueryRedirectPlugin(t)
+	resp, err := adaptor.FetchTask(server.URL, "secret", &model.Task{
+		PrivateData: model.TaskPrivateData{UpstreamTaskID: "upstream-1"},
+	}, "")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.JSONEq(t, `{"status":"SUCCESS"}`, string(body))
+}
+
+func TestTaskAdaptorFetchTaskRejectsRedirectOutsideAllowedHosts(t *testing.T) {
+	service.InitHttpClient()
+	allowPrivatePluginFetchRedirects(t)
+
+	sharedClient := service.GetHttpClient()
+	require.NotNil(t, sharedClient)
+	require.NotNil(t, sharedClient.CheckRedirect)
+	originalRedirectPolicy := reflect.ValueOf(sharedClient.CheckRedirect).Pointer()
+
+	var targetRequests atomic.Int32
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		targetRequests.Add(1)
+		w.WriteHeader(http.StatusTeapot)
+	}))
+	defer target.Close()
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/stolen", http.StatusFound)
+	}))
+	defer source.Close()
+
+	adaptor := newQueryRedirectPlugin(t)
+	_, err := adaptor.FetchTask(source.URL, "secret", &model.Task{
+		PrivateData: model.TaskPrivateData{UpstreamTaskID: "upstream-1"},
+	}, "")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "not allowed")
+	assert.Zero(t, targetRequests.Load())
+	assert.Equal(t, originalRedirectPolicy, reflect.ValueOf(sharedClient.CheckRedirect).Pointer(), "the cached client must not be mutated")
+}
+
+func TestStripPluginFetchRedirectCredentialsOnHTTPSToHTTPSameHost(t *testing.T) {
+	original, err := http.NewRequest(http.MethodGet, "https://provider.example/start", nil)
+	require.NoError(t, err)
+	original.Header.Set("Authorization", "Bearer secret")
+	original.Header.Set("X-API-Key", "secret-key")
+	original.Header.Set("Cookie", "session=abc")
+
+	redirect, err := http.NewRequest(http.MethodGet, "http://provider.example/done", nil)
+	require.NoError(t, err)
+	redirect.Header.Set("Authorization", "Bearer secret")
+	redirect.Header.Set("X-API-Key", "secret-key")
+	redirect.Header.Set("Cookie", "session=abc")
+
+	stripPluginFetchRedirectCredentials(redirect, []*http.Request{original})
+
+	assert.Empty(t, redirect.Header.Get("Authorization"))
+	assert.Empty(t, redirect.Header.Get("X-API-Key"))
+	assert.Empty(t, redirect.Header.Get("Cookie"))
+}
+
+func TestStripPluginFetchRedirectCredentialsKeepsSameOriginHTTPS(t *testing.T) {
+	original, err := http.NewRequest(http.MethodGet, "https://provider.example/start", nil)
+	require.NoError(t, err)
+	original.Header.Set("Authorization", "Bearer secret")
+	original.Header.Set("X-API-Key", "secret-key")
+
+	redirect, err := http.NewRequest(http.MethodGet, "https://provider.example/done", nil)
+	require.NoError(t, err)
+	redirect.Header.Set("Authorization", "Bearer secret")
+	redirect.Header.Set("X-API-Key", "secret-key")
+
+	stripPluginFetchRedirectCredentials(redirect, []*http.Request{original})
+
+	assert.Equal(t, "Bearer secret", redirect.Header.Get("Authorization"))
+	assert.Equal(t, "secret-key", redirect.Header.Get("X-API-Key"))
+}
+
+func TestStripPluginFetchRedirectCredentialsStripsExplicitPortMismatch(t *testing.T) {
+	original, err := http.NewRequest(http.MethodGet, "https://provider.example/start", nil)
+	require.NoError(t, err)
+	original.Header.Set("Authorization", "Bearer secret")
+
+	redirect, err := http.NewRequest(http.MethodGet, "https://provider.example:8443/done", nil)
+	require.NoError(t, err)
+	redirect.Header.Set("Authorization", "Bearer secret")
+
+	stripPluginFetchRedirectCredentials(redirect, []*http.Request{original})
+
+	assert.Empty(t, redirect.Header.Get("Authorization"))
+}
+
+func TestTaskAdaptorFetchTaskAllowsRedirectToConfiguredHost(t *testing.T) {
+	service.InitHttpClient()
+	allowPrivatePluginFetchRedirects(t)
+
+	var gotAPIKey string
+	target := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotAPIKey = r.Header.Get("X-API-Key")
+		_, _ = w.Write([]byte(`{"status":"SUCCESS"}`))
+	}))
+	defer target.Close()
+
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Redirect(w, r, target.URL+"/ok", http.StatusFound)
+	}))
+	defer source.Close()
+
+	targetURL, err := url.Parse(target.URL)
+	require.NoError(t, err)
+	adaptor := newQueryRedirectPlugin(t)
+	adaptor.plugin.Meta.AllowedHosts = []string{targetURL.Host}
+
+	resp, err := adaptor.FetchTask(source.URL, "secret", &model.Task{
+		PrivateData: model.TaskPrivateData{UpstreamTaskID: "upstream-1"},
+	}, "")
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	require.NoError(t, err)
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	assert.JSONEq(t, `{"status":"SUCCESS"}`, string(body))
+	assert.Empty(t, gotAPIKey, "cross-host plugin fetch redirects must not forward credential headers")
 }

@@ -69,7 +69,11 @@ func SubscriptionRequestEpay(c *gin.Context) {
 		}
 	}
 
-	callBackAddress := service.GetCallbackAddress()
+	callBackAddress, err := service.RequirePublicCallbackAddress()
+	if err != nil {
+		common.ApiErrorMsg(c, "未配置公网回调地址，无法拉起易支付")
+		return
+	}
 	returnUrl, err := url.Parse(callBackAddress + "/api/subscription/epay/return")
 	if err != nil {
 		common.ApiErrorMsg(c, "回调地址配置错误")

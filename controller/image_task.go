@@ -357,7 +357,7 @@ func waitImageTaskSyncBridgeResult(c *gin.Context, task *model.Task) (json.RawMe
 	for {
 		current, exist, err := model.GetByTaskId(task.UserId, task.TaskID)
 		if err != nil {
-			return nil, types.NewError(err, types.ErrorCodeQueryDataError)
+			return nil, imageTaskSyncBridgeQueryError(c, err)
 		}
 		if !exist || current == nil || current.Platform != constant.TaskPlatformImage {
 			return nil, types.NewErrorWithStatusCode(errors.New("image task not found"), types.ErrorCodeQueryDataError, http.StatusInternalServerError)
@@ -366,11 +366,7 @@ func waitImageTaskSyncBridgeResult(c *gin.Context, task *model.Task) (json.RawMe
 			return nil, imageTaskSyncBridgeFailureError(current)
 		}
 		if current.Status == model.TaskStatusSuccess && current.SettlementStatus == model.TaskSettlementStatusReview {
-			reason := strings.TrimSpace(current.FailReason)
-			if reason == "" {
-				reason = "image task failed"
-			}
-			return nil, types.NewErrorWithStatusCode(errors.New(reason), types.ErrorCodeDoRequestFailed, http.StatusBadGateway, types.ErrOptionWithSkipRetry())
+			return nil, imageTaskSyncBridgeFailureError(current)
 		}
 		if imageTaskResponseResultVisible(current) {
 			responseBody, _, resultErr := imageTaskResponseResult(current)
@@ -405,7 +401,7 @@ func cancelImageTaskSyncBridgeWait(c *gin.Context, task *model.Task, reason stri
 	}
 	current, exist, err := model.GetByTaskId(task.UserId, task.TaskID)
 	if err != nil {
-		return nil, types.NewError(err, types.ErrorCodeQueryDataError)
+		return nil, imageTaskSyncBridgeQueryError(c, err)
 	}
 	if !exist || current == nil || current.Platform != constant.TaskPlatformImage {
 		return nil, types.NewErrorWithStatusCode(errors.New("image task not found"), types.ErrorCodeQueryDataError, http.StatusInternalServerError)
@@ -467,7 +463,7 @@ func cancelImageTaskSyncBridgeWait(c *gin.Context, task *model.Task, reason stri
 	current.ClearImageTaskExecutionSecrets()
 	won, err := updateImageTaskSyncBridgeCancelledBeforeExecution(current, fromStatus, now)
 	if err != nil {
-		return nil, types.NewError(err, types.ErrorCodeUpdateDataError)
+		return nil, imageTaskSyncBridgeUpdateError(c, err)
 	}
 	if !won {
 		return nil, nil
@@ -551,18 +547,55 @@ func updateImageTaskSyncBridgeCancelledBeforeExecution(task *model.Task, fromSta
 	return model.ApplyImageTaskCancelBeforeExecution(task, fromStatus, now)
 }
 
+func imageTaskSyncBridgeQueryError(c *gin.Context, err error) *types.NewAPIError {
+	if err != nil {
+		if c != nil && c.Request != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("image task sync bridge query failed: %s", err.Error()))
+		} else {
+			common.SysLog(fmt.Sprintf("image task sync bridge query failed: %s", err.Error()))
+		}
+	}
+	return types.NewError(errors.New("Failed to query task"), types.ErrorCodeQueryDataError)
+}
+
+func imageTaskSyncBridgeUpdateError(c *gin.Context, err error) *types.NewAPIError {
+	if err != nil {
+		if c != nil && c.Request != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("image task sync bridge update failed: %s", err.Error()))
+		} else {
+			common.SysLog(fmt.Sprintf("image task sync bridge update failed: %s", err.Error()))
+		}
+	}
+	return types.NewError(errors.New("Failed to update task"), types.ErrorCodeUpdateDataError)
+}
+
+func publicImageTaskSyncBridgeFailReason(task *model.Task) string {
+	if task == nil {
+		return "image task failed"
+	}
+	if reason := strings.TrimSpace(task.PublicFailReason()); reason != "" {
+		return reason
+	}
+	reason := strings.TrimSpace(model.SanitizePublicTaskFailReason(task.FailReason))
+	if reason == "" {
+		return "image task failed"
+	}
+	return reason
+}
+
 func imageTaskSyncBridgeFailureError(task *model.Task) *types.NewAPIError {
-	reason := "image task failed"
-	if task != nil && strings.TrimSpace(task.FailReason) != "" {
-		reason = strings.TrimSpace(task.FailReason)
+	raw := ""
+	if task != nil {
+		raw = strings.TrimSpace(task.FailReason)
 	}
 	statusCode := http.StatusBadGateway
-	if reason == "image generation timed out" {
+	switch raw {
+	case "image generation timed out":
 		statusCode = http.StatusGatewayTimeout
-	} else if reason == "client closed request" {
+	case "client closed request":
 		statusCode = 499
 	}
-	return types.NewErrorWithStatusCode(errors.New(reason), types.ErrorCodeDoRequestFailed, statusCode, types.ErrOptionWithSkipRetry())
+	return types.NewErrorWithStatusCode(errors.New(publicImageTaskSyncBridgeFailReason(task)), types.ErrorCodeDoRequestFailed, statusCode, types.ErrOptionWithSkipRetry())
 }
 
 func validateImageTaskModeRequest(imageRequest *dto.ImageRequest, mode string) error {

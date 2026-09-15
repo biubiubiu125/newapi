@@ -144,7 +144,9 @@ func updateUserQuotaUsedQuotaAndRequestCount(id int, quotaDelta int64, usedQuota
 	if err := DB.Model(&User{}).Where("id = ?", id).Updates(updates).Error; err != nil {
 		return err
 	}
-	_ = CacheUpdateUserQuota(id)
+	if quotaDelta != 0 {
+		applyUserQuotaCacheDeltaBestEffort(id, quotaDelta)
+	}
 	return nil
 }
 

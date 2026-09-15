@@ -29,8 +29,13 @@ func GetSubscription(c *gin.Context) {
 		expiredTime = 0
 	}
 	if err != nil {
+		original := err.Error()
+		message := common.PublicRequestErrorMessage(original)
+		if message != original {
+			common.SysError("api error: " + original)
+		}
 		openAIError := types.OpenAIError{
-			Message: err.Error(),
+			Message: message,
 			Type:    "upstream_error",
 		}
 		c.JSON(200, gin.H{
@@ -81,8 +86,13 @@ func GetUsage(c *gin.Context) {
 		quota, err = model.GetUserUsedQuota(userId)
 	}
 	if err != nil {
+		original := err.Error()
+		message := common.PublicRequestErrorMessage(original)
+		if message != original {
+			common.SysError("api error: " + original)
+		}
 		openAIError := types.OpenAIError{
-			Message: err.Error(),
+			Message: message,
 			Type:    "new_api_error",
 		}
 		c.JSON(200, gin.H{

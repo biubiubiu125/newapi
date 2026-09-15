@@ -2,7 +2,9 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/model"
@@ -175,6 +177,56 @@ func WaffoPancakeBuyerIdentityFromUserID(userID int) string {
 	return fmt.Sprintf("new-api-user-%d", userID)
 }
 
+func ParseWaffoPancakeBuyerUserID(identity string) (int, bool) {
+	const prefix = "new-api-user-"
+	identity = strings.TrimSpace(identity)
+	if !strings.HasPrefix(identity, prefix) {
+		return 0, false
+	}
+	userID, err := strconv.Atoi(strings.TrimPrefix(identity, prefix))
+	if err != nil || userID <= 0 {
+		return 0, false
+	}
+	return userID, true
+}
+
+type WaffoPancakePaidOrder struct {
+	TradeNo        string
+	IsSubscription bool
+}
+
+func ResolveWaffoPancakePaidOrder(event *WaffoPancakeWebhookEvent) (WaffoPancakePaidOrder, error) {
+	candidate, _ := waffoPancakeWebhookTradeNoCandidate(event)
+	trySubscriptionFirst := strings.HasPrefix(candidate, "WAFFO_PANCAKE_SUB-")
+
+	resolveSubscription := func() (WaffoPancakePaidOrder, error) {
+		tradeNo, err := ResolveWaffoPancakeSubscriptionTradeNo(event)
+		if err != nil {
+			return WaffoPancakePaidOrder{}, err
+		}
+		return WaffoPancakePaidOrder{TradeNo: tradeNo, IsSubscription: true}, nil
+	}
+	resolveTopUp := func() (WaffoPancakePaidOrder, error) {
+		tradeNo, err := ResolveWaffoPancakeTradeNo(event)
+		if err != nil {
+			return WaffoPancakePaidOrder{}, err
+		}
+		return WaffoPancakePaidOrder{TradeNo: tradeNo, IsSubscription: false}, nil
+	}
+
+	first, second := resolveTopUp, resolveSubscription
+	if trySubscriptionFirst {
+		first, second = resolveSubscription, resolveTopUp
+	}
+	if paid, err := first(); err == nil {
+		return paid, nil
+	}
+	if paid, err := second(); err == nil {
+		return paid, nil
+	}
+	return WaffoPancakePaidOrder{}, fmt.Errorf("waffo pancake order not found")
+}
+
 // VerifyConfiguredWaffoPancakeWebhook verifies the signature header. The SDK
 // picks the matching test / prod public key from the payload's `mode` field.
 func VerifyConfiguredWaffoPancakeWebhook(payload string, signatureHeader string) (*WaffoPancakeWebhookEvent, error) {
@@ -242,8 +294,14 @@ func ResolveWaffoPancakeTradeNo(event *WaffoPancakeWebhookEvent) (string, error)
 	if tradeNo == "" {
 		return "", fmt.Errorf("missing webhook orderMerchantExternalId/orderId")
 	}
-	topUp := model.GetTopUpByTradeNo(tradeNo)
-	if topUp == nil || topUp.PaymentProvider != model.PaymentProviderWaffoPancake {
+	topUp, lookupErr := model.FindTopUpByTradeNo(tradeNo)
+	if lookupErr != nil {
+		if errors.Is(lookupErr, model.ErrTopUpNotFound) {
+			return "", fmt.Errorf("waffo pancake order not found for tradeNo=%s source=%s", tradeNo, source)
+		}
+		return "", lookupErr
+	}
+	if topUp.PaymentProvider != model.PaymentProviderWaffoPancake {
 		return "", fmt.Errorf("waffo pancake order not found for tradeNo=%s source=%s", tradeNo, source)
 	}
 	expectedIdentity := WaffoPancakeBuyerIdentityFromUserID(topUp.UserId)

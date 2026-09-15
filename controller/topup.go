@@ -26,10 +26,9 @@ import (
 func GetTopUpInfo(c *gin.Context) {
 	complianceConfirmed := operation_setting.IsPaymentComplianceConfirmed()
 
-	// 获取支付方式
-	payMethods := clonePayMethods(operation_setting.PayMethods)
-	if !complianceConfirmed {
-		payMethods = []map[string]string{}
+	payMethods := []map[string]string{}
+	if complianceConfirmed && isEpayTopUpEnabled() {
+		payMethods = clonePayMethods(operation_setting.PayMethods)
 	}
 
 	// 如果启用了 Stripe 支付，添加到支付方法列表
@@ -48,7 +47,7 @@ func GetTopUpInfo(c *gin.Context) {
 				"name":      "Stripe",
 				"type":      "stripe",
 				"color":     "rgba(var(--semi-purple-5), 1)",
-				"min_topup": strconv.Itoa(setting.StripeMinTopUp),
+				"min_topup": strconv.FormatInt(getStripeMinTopup(), 10),
 			}
 			payMethods = appendUniquePayMethod(payMethods, stripeMethod)
 		}
@@ -70,32 +69,12 @@ func GetTopUpInfo(c *gin.Context) {
 				"name":      "Waffo Pancake",
 				"type":      model.PaymentMethodWaffoPancake,
 				"color":     "rgba(var(--semi-orange-5), 1)",
-				"min_topup": strconv.Itoa(setting.WaffoPancakeMinTopUp),
+				"min_topup": strconv.FormatInt(getWaffoPancakeMinTopup(), 10),
 			})
 		}
 	}
 
-	// 如果启用了 Waffo 支付，添加到支付方法列表
 	enableWaffo := isWaffoTopUpEnabled()
-	if enableWaffo {
-		hasWaffo := false
-		for _, method := range payMethods {
-			if method["type"] == model.PaymentMethodWaffo {
-				hasWaffo = true
-				break
-			}
-		}
-
-		if !hasWaffo {
-			waffoMethod := map[string]string{
-				"name":      "Waffo (Global Payment)",
-				"type":      model.PaymentMethodWaffo,
-				"color":     "rgba(var(--semi-blue-5), 1)",
-				"min_topup": strconv.Itoa(setting.WaffoMinTopUp),
-			}
-			payMethods = appendUniquePayMethod(payMethods, waffoMethod)
-		}
-	}
 
 	enableBEpusdt := complianceConfirmed && service.IsUSDTGatewayConfigured()
 	bepusdtPayMethods := []map[string]string{}
@@ -125,12 +104,12 @@ func GetTopUpInfo(c *gin.Context) {
 		"creem_products":          setting.CreemProducts,
 		"pay_methods":             payMethods,
 		"bepusdt_pay_methods":     bepusdtPayMethods,
-		"min_topup":               operation_setting.MinTopUp,
-		"stripe_min_topup":        setting.StripeMinTopUp,
-		"waffo_min_topup":         setting.WaffoMinTopUp,
-		"waffo_pancake_min_topup": setting.WaffoPancakeMinTopUp,
+		"min_topup":               getMinTopup(),
+		"stripe_min_topup":        getStripeMinTopup(),
+		"waffo_min_topup":         getWaffoMinTopup(),
+		"waffo_pancake_min_topup": getWaffoPancakeMinTopup(),
 		"bepusdt_min_topup":       setting.BEpusdtMinTopUp,
-		"amount_options":          operation_setting.GetPaymentSetting().AmountOptions,
+		"amount_options":          scaledTopUpAmountOptions(),
 		"discount":                operation_setting.GetPaymentSetting().AmountDiscount,
 		"wallet_notice":           operation_setting.GetPaymentSetting().WalletNotice,
 		"topup_link":              common.TopUpLink,
@@ -233,7 +212,11 @@ func applyTopUpOrderSnapshot(topUp *model.TopUp, input topUpOrderSnapshotInput) 
 	case model.PaymentProviderStripe:
 		topUp.CreditQuotaSnapshot = decimal.NewFromFloat(topUp.Money).Mul(decimal.NewFromFloat(quotaPerUnit)).IntPart()
 	default:
-		topUp.CreditQuotaSnapshot = decimal.NewFromInt(creditAmount).Mul(decimal.NewFromFloat(quotaPerUnit)).IntPart()
+		if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens && input.RequestAmount > 0 {
+			topUp.CreditQuotaSnapshot = input.RequestAmount
+		} else {
+			topUp.CreditQuotaSnapshot = decimal.NewFromInt(creditAmount).Mul(decimal.NewFromFloat(quotaPerUnit)).IntPart()
+		}
 	}
 	topUp.QuotaPerUnitSnapshot = quotaPerUnit
 	topUp.PriceSnapshot = operation_setting.Price
@@ -335,6 +318,19 @@ func getMinTopup() int64 {
 	return int64(minTopup)
 }
 
+func scaledTopUpAmountOptions() []int {
+	options := operation_setting.GetPaymentSetting().AmountOptions
+	if operation_setting.GetQuotaDisplayType() != operation_setting.QuotaDisplayTypeTokens {
+		return options
+	}
+	scaled := make([]int, 0, len(options))
+	quotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
+	for _, option := range options {
+		scaled = append(scaled, int(decimal.NewFromInt(int64(option)).Mul(quotaPerUnit).IntPart()))
+	}
+	return scaled
+}
+
 func getTopUpQuota(amount int64) (int64, error) {
 	quota := decimal.NewFromInt(amount)
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
@@ -401,7 +397,7 @@ func rejectInvalidCreditedQuota(c *gin.Context, userId int, quota decimal.Decima
 		err = model.ValidateTopUpQuotaCapacity(userId, int64(creditedQuota))
 	}
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
+		writeTopUpClientError(c, err)
 		return true
 	}
 	return false
@@ -410,10 +406,22 @@ func rejectInvalidCreditedQuota(c *gin.Context, userId int, quota decimal.Decima
 func rejectInvalidTopUpQuota(c *gin.Context, userId int, amount int64) bool {
 	err := validateTopUpQuotaCapacityForAmount(userId, amount)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": err.Error()})
+		writeTopUpClientError(c, err)
 		return true
 	}
 	return false
+}
+
+func writeTopUpClientError(c *gin.Context, err error) {
+	original := ""
+	if err != nil {
+		original = err.Error()
+	}
+	message := common.PublicDashboardErrorMessage(c, original)
+	if message != original {
+		common.SysError("api error: " + original)
+	}
+	c.JSON(http.StatusOK, gin.H{"message": "error", "data": message})
 }
 
 func RequestEpay(c *gin.Context) {
@@ -457,11 +465,23 @@ func RequestEpay(c *gin.Context) {
 		return
 	}
 
-	callBackAddress := service.GetCallbackAddress()
+	callBackAddress, err := service.RequirePublicCallbackAddress()
+	if err != nil {
+		common.ApiErrorMsg(c, "未配置公网回调地址，无法拉起易支付")
+		return
+	}
 	tradeNo := fmt.Sprintf("%s%d", common.GetRandomString(6), time.Now().Unix())
 	tradeNo = fmt.Sprintf("USR%dNO%s", id, tradeNo)
-	returnUrl, _ := url.Parse(callBackAddress + "/api/user/epay/return")
-	notifyUrl, _ := url.Parse(callBackAddress + "/api/user/epay/notify")
+	returnUrl, parseErr := url.Parse(callBackAddress + "/api/user/epay/return")
+	if parseErr != nil {
+		common.ApiErrorMsg(c, "回调地址配置错误")
+		return
+	}
+	notifyUrl, parseErr := url.Parse(callBackAddress + "/api/user/epay/notify")
+	if parseErr != nil {
+		common.ApiErrorMsg(c, "回调地址配置错误")
+		return
+	}
 	client := GetEpayClient()
 	if client == nil {
 		common.ApiErrorMsg(c, "当前管理员未配置支付信息")
@@ -487,11 +507,15 @@ func RequestEpay(c *gin.Context) {
 		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
 		amount = dAmount.Div(dQuotaPerUnit).IntPart()
 	}
+	paidAmount := payMoney
+	if normalized, normalizeErr := model.NormalizePaymentAmount(payMoney, "CNY"); normalizeErr == nil {
+		paidAmount = normalized
+	}
 	topUp := &model.TopUp{
 		UserId:          id,
 		Amount:          amount,
 		Money:           payMoney,
-		PaidAmount:      payMoney,
+		PaidAmount:      paidAmount,
 		PaidCurrency:    "CNY",
 		TradeNo:         tradeNo,
 		PaymentMethod:   req.PaymentMethod,
@@ -502,7 +526,7 @@ func RequestEpay(c *gin.Context) {
 	applyTopUpOrderSnapshot(topUp, topUpOrderSnapshotInput{
 		RequestAmount: req.Amount,
 		CreditAmount:  amount,
-		PaidAmount:    payMoney,
+		PaidAmount:    paidAmount,
 		PaidCurrency:  "CNY",
 		UserGroup:     group,
 	})
@@ -863,7 +887,7 @@ func callbackAmountMatches(expected float64, actual string) bool {
 	if actualAmount <= 0 {
 		return false
 	}
-	return decimal.NewFromFloat(expected).Round(8).Equal(decimal.NewFromFloat(actualAmount).Round(8))
+	return model.PaymentCallbackAmountMatches(expected, actualAmount, "CNY")
 }
 
 func callbackCurrencyMatches(expected string, actual string) bool {

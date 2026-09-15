@@ -175,6 +175,30 @@ func TestGeminiTextGenerationHandlerPromptTokensIncludeToolUsePromptTokens(t *te
 	require.Equal(t, 1120, usage.CompletionTokenDetails.ReasoningTokens)
 }
 
+func TestGeminiChatHandlerEmptyCandidatesReturnsError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	info := &relaycommon.RelayInfo{
+		RelayFormat:     types.RelayFormatOpenAI,
+		OriginModelName: "gemini-2.5-flash",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-2.5-flash",
+		},
+	}
+	payload := dto.GeminiChatResponse{Candidates: nil}
+	body, err := common.Marshal(payload)
+	require.NoError(t, err)
+	resp := &http.Response{Body: io.NopCloser(bytes.NewReader(body))}
+
+	usage, newAPIError := GeminiChatHandler(c, info, resp)
+	require.NotNil(t, newAPIError)
+	require.Equal(t, types.ErrorCodeEmptyResponse, newAPIError.GetErrorCode())
+	require.NotNil(t, usage)
+	require.Zero(t, recorder.Body.Len())
+}
+
 func TestGeminiChatHandlerUsesEstimatedPromptTokensWhenUsagePromptMissing(t *testing.T) {
 	t.Parallel()
 

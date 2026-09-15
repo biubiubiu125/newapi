@@ -1,11 +1,14 @@
 package model
 
 import (
+	"os"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/require"
+	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
 )
 
@@ -47,11 +50,13 @@ func TestQuotaDatabaseTypeRejectsNarrowOrUnsignedTypes(t *testing.T) {
 	require.False(t, quotaDatabaseTypeIsWideEnough("INT", "postgres"))
 	require.False(t, quotaDatabaseTypeIsWideEnough("BIGINT UNSIGNED", "mysql"))
 	require.True(t, quotaDatabaseTypeIsWideEnough("BIGINT", "postgres"))
+	require.True(t, quotaDatabaseTypeIsWideEnough("INT8", "postgres"))
 	require.True(t, quotaDatabaseTypeIsWideEnough("INTEGER", "sqlite"))
 }
 
 func TestQuotaColumnNeedsWideningSkipsAlreadyWideTypes(t *testing.T) {
 	require.False(t, quotaColumnNeedsWidening(testQuotaSchemaColumn{databaseType: "BIGINT"}, "postgres"))
+	require.False(t, quotaColumnNeedsWidening(testQuotaSchemaColumn{databaseType: "INT8"}, "postgres"))
 	require.False(t, quotaColumnNeedsWidening(testQuotaSchemaColumn{databaseType: "BIGINT"}, "mysql"))
 	require.True(t, quotaColumnNeedsWidening(testQuotaSchemaColumn{databaseType: "INTEGER"}, "postgres"))
 	require.True(t, quotaColumnNeedsWidening(testQuotaSchemaColumn{databaseType: "INT"}, "mysql"))
@@ -68,4 +73,20 @@ func TestMigrateQuotaSchemaRejectsUnsupportedDialects(t *testing.T) {
 	// without opening a production database.
 	require.EqualError(t, ValidateQuotaSchema(nil), "validate quota schema: database is nil")
 	require.EqualError(t, MigrateQuotaSchema(nil), "migrate quota schema: database is nil")
+}
+
+func TestMigrateQuotaSchemaPostgresIncludesTaskAndLogQuota(t *testing.T) {
+	dsn := strings.TrimSpace(os.Getenv("TEST_POSTGRES_DSN"))
+	if dsn == "" {
+		t.Skip("set TEST_POSTGRES_DSN to run postgres quota schema test")
+	}
+	db, err := gorm.Open(postgres.New(postgres.Config{DSN: dsn, PreferSimpleProtocol: true}), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = sqlDB.Close() })
+
+	require.NoError(t, db.AutoMigrate(&Task{}, &Log{}))
+	require.NoError(t, MigrateQuotaSchema(db))
+	require.NoError(t, ValidateQuotaSchema(db))
 }

@@ -197,10 +197,44 @@ func GetTopUpById(id int) *TopUp {
 	return topUp
 }
 
+func mapLockedTopUpLookupError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return ErrTopUpNotFound
+	}
+	return err
+}
+
+func FindTopUpByTradeNo(tradeNo string) (*TopUp, error) {
+	var topUp TopUp
+	err := DB.Where("trade_no = ?", tradeNo).First(&topUp).Error
+	if err != nil {
+		return nil, mapLockedTopUpLookupError(err)
+	}
+	return &topUp, nil
+}
+
+func FindLatestPendingWaffoPancakeTopUpByUserId(userId int) (*TopUp, error) {
+	if userId <= 0 {
+		return nil, ErrTopUpNotFound
+	}
+	var topUp TopUp
+	err := DB.Where(
+		"user_id = ? AND payment_provider = ? AND status IN ?",
+		userId,
+		PaymentProviderWaffoPancake,
+		[]string{common.TopUpStatusPending, common.TopUpStatusExpired, common.TopUpStatusFailed},
+	).Order("create_time DESC, id DESC").First(&topUp).Error
+	if err != nil {
+		return nil, mapLockedTopUpLookupError(err)
+	}
+	return &topUp, nil
+}
+
 func GetTopUpByTradeNo(tradeNo string) *TopUp {
-	var topUp *TopUp
-	var err error
-	err = DB.Where("trade_no = ?", tradeNo).First(&topUp).Error
+	topUp, err := FindTopUpByTradeNo(tradeNo)
 	if err != nil {
 		return nil
 	}
@@ -258,7 +292,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 	topUp := &TopUp{}
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
-			return ErrTopUpNotFound
+			return mapLockedTopUpLookupError(err)
 		}
 		if topUp.PaymentProvider != PaymentProviderEpay {
 			return ErrPaymentMethodMismatch
@@ -267,7 +301,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 			alreadyDone = true
 			return nil
 		}
-		if topUp.Status != common.TopUpStatusPending {
+		if !topUpStatusAllowsPaymentCompletion(topUp.Status) {
 			return ErrTopUpStatusInvalid
 		}
 		if actualPaymentMethod != "" && topUp.PaymentMethod != actualPaymentMethod {
@@ -329,7 +363,7 @@ func Recharge(referenceId string, customerId string, callerIp string) (err error
 			return ErrPaymentMethodMismatch
 		}
 
-		if topUp.Status != common.TopUpStatusPending {
+		if !topUpStatusAllowsPaymentCompletion(topUp.Status) {
 			return ErrTopUpStatusInvalid
 		}
 
@@ -406,7 +440,9 @@ func RechargeStripeWithValidation(referenceId string, customerId string, provide
 			return nil
 		}
 
-		if topUp.Status != common.TopUpStatusPending {
+		if topUp.Status != common.TopUpStatusPending &&
+			topUp.Status != common.TopUpStatusExpired &&
+			topUp.Status != common.TopUpStatusFailed {
 			return ErrTopUpStatusInvalid
 		}
 
@@ -436,6 +472,7 @@ func RechargeStripeWithValidation(referenceId string, customerId string, provide
 	}
 
 	if quotaToAdd > 0 {
+		syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "stripe topup")
 		_ = cacheUpdateUserQuota(topUp.UserId)
 		RecordTopupLog(topUp.UserId, fmt.Sprintf("Stripe 在线充值成功，充值额度：%v，支付金额：%.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), validation.CallerIP, topUp.PaymentMethod, PaymentMethodStripe)
 	}
@@ -620,8 +657,8 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 			return nil
 		}
 
-		if topUp.Status != common.TopUpStatusPending {
-			return errors.New("订单状态不是待支付，无法补单")
+		if !topUpStatusAllowsPaymentCompletion(topUp.Status) {
+			return errors.New("订单状态不是待支付、已过期或已失败，无法补单")
 		}
 
 		// 计算应充值额度：
@@ -688,7 +725,7 @@ func rechargeCreemWithValidation(referenceId string, customerEmail string, custo
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		err := lockForUpdate(tx).Where(refCol+" = ?", referenceId).First(topUp).Error
 		if err != nil {
-			return ErrTopUpNotFound
+			return mapLockedTopUpLookupError(err)
 		}
 
 		if topUp.PaymentProvider != validation.ExpectedPaymentProvider {
@@ -705,7 +742,7 @@ func rechargeCreemWithValidation(referenceId string, customerEmail string, custo
 			return nil
 		}
 
-		if topUp.Status != common.TopUpStatusPending {
+		if !topUpStatusAllowsPaymentCompletion(topUp.Status) {
 			return ErrTopUpStatusInvalid
 		}
 
@@ -779,7 +816,7 @@ func RechargeWaffoWithValidation(tradeNo string, providerPayload string, validat
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error
 		if err != nil {
-			return ErrTopUpNotFound
+			return mapLockedTopUpLookupError(err)
 		}
 
 		if topUp.PaymentProvider != validation.ExpectedPaymentProvider {
@@ -796,7 +833,7 @@ func RechargeWaffoWithValidation(tradeNo string, providerPayload string, validat
 			return nil // 幂等：已成功直接返回
 		}
 
-		if topUp.Status != common.TopUpStatusPending {
+		if !topUpStatusAllowsPaymentCompletion(topUp.Status) {
 			return ErrTopUpStatusInvalid
 		}
 
@@ -863,7 +900,7 @@ func RechargeWaffoPancakeWithValidation(tradeNo string, providerPayload string, 
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error
 		if err != nil {
-			return ErrTopUpNotFound
+			return mapLockedTopUpLookupError(err)
 		}
 
 		if topUp.PaymentProvider != validation.ExpectedPaymentProvider {
@@ -880,7 +917,7 @@ func RechargeWaffoPancakeWithValidation(tradeNo string, providerPayload string, 
 			return nil
 		}
 
-		if topUp.Status != common.TopUpStatusPending {
+		if !topUpStatusAllowsPaymentCompletion(topUp.Status) {
 			return ErrTopUpStatusInvalid
 		}
 
@@ -948,7 +985,7 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error
 		if err != nil {
-			return ErrTopUpNotFound
+			return mapLockedTopUpLookupError(err)
 		}
 
 		if topUp.PaymentProvider != validation.ExpectedPaymentProvider {
@@ -967,7 +1004,7 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 		if topUp.Status == common.TopUpStatusSuccess {
 			return nil
 		}
-		if topUp.Status != common.TopUpStatusPending {
+		if !topUpStatusAllowsPaymentCompletion(topUp.Status) {
 			return ErrTopUpStatusInvalid
 		}
 
@@ -994,6 +1031,7 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 	}
 
 	if quotaToAdd > 0 {
+		syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "epay topup")
 		_ = cacheUpdateUserQuota(topUp.UserId)
 		RecordPaymentAuditLog(topUp.UserId, fmt.Sprintf("Epay topup succeeded, quota: %v, paid amount: %.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), PaymentAuditLogInfo{
 			CallerIP:              callerIp,
@@ -1032,7 +1070,7 @@ func RechargeBEpusdtWithValidation(tradeNo string, providerPayload string, valid
 	err = DB.Transaction(func(tx *gorm.DB) error {
 		err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error
 		if err != nil {
-			return ErrTopUpNotFound
+			return mapLockedTopUpLookupError(err)
 		}
 
 		if topUp.PaymentProvider != validation.ExpectedPaymentProvider {
@@ -1052,7 +1090,7 @@ func RechargeBEpusdtWithValidation(tradeNo string, providerPayload string, valid
 			return nil
 		}
 
-		if topUp.Status != common.TopUpStatusPending {
+		if !topUpStatusAllowsPaymentCompletion(topUp.Status) {
 			return ErrTopUpStatusInvalid
 		}
 
@@ -1090,6 +1128,7 @@ func RechargeBEpusdtWithValidation(tradeNo string, providerPayload string, valid
 	}
 
 	if quotaToAdd > 0 {
+		syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "bepusdt topup")
 		_ = cacheUpdateUserQuota(topUp.UserId)
 		RecordPaymentAuditLog(topUp.UserId, fmt.Sprintf("BEpusdt USDT充值成功，充值额度: %v，支付金额：%.2f %s", logger.FormatQuota(quotaToAdd), topUp.PaidAmount, topUp.PaidCurrency), PaymentAuditLogInfo{
 			CallerIP:              callerIp,
@@ -1115,21 +1154,50 @@ func samePaymentCurrency(expected string, actual string) bool {
 }
 
 func samePaymentAmount(expected float64, actual float64) bool {
-	expectedAmount := decimal.NewFromFloat(expected).Round(8)
-	actualAmount := decimal.NewFromFloat(actual).Round(8)
+	return samePaymentAmountWithCurrency(expected, actual, "")
+}
+
+func PaymentCallbackAmountMatches(expected float64, actual float64, currency string) bool {
+	return samePaymentAmountWithCurrency(expected, actual, currency)
+}
+
+func samePaymentAmountWithCurrency(expected float64, actual float64, currency string) bool {
+	digits := int32(8)
+	if strings.TrimSpace(currency) != "" {
+		digits = int32(paymentCurrencyFractionDigits(currency))
+	}
+	expectedAmount := decimal.NewFromFloat(expected).Round(digits)
+	actualAmount := decimal.NewFromFloat(actual).Round(digits)
 	return expectedAmount.Equal(actualAmount)
 }
 
 func paymentAmountMatches(expected float64, actual float64, allowDiscount bool) bool {
-	if samePaymentAmount(expected, actual) {
+	return paymentAmountMatchesWithCurrency(expected, actual, "", allowDiscount)
+}
+
+func paymentAmountMatchesWithCurrency(expected float64, actual float64, currency string, allowDiscount bool) bool {
+	if samePaymentAmountWithCurrency(expected, actual, currency) {
 		return true
 	}
 	if !allowDiscount {
 		return false
 	}
-	expectedAmount := decimal.NewFromFloat(expected).Round(8)
-	actualAmount := decimal.NewFromFloat(actual).Round(8)
+	digits := int32(8)
+	if strings.TrimSpace(currency) != "" {
+		digits = int32(paymentCurrencyFractionDigits(currency))
+	}
+	expectedAmount := decimal.NewFromFloat(expected).Round(digits)
+	actualAmount := decimal.NewFromFloat(actual).Round(digits)
 	return !actualAmount.IsNegative() && actualAmount.LessThan(expectedAmount)
+}
+
+func topUpStatusAllowsPaymentCompletion(status string) bool {
+	switch status {
+	case common.TopUpStatusPending, common.TopUpStatusExpired, common.TopUpStatusFailed:
+		return true
+	default:
+		return false
+	}
 }
 
 func paymentMethodMatchesBEpusdtToken(paymentMethod string, token string) bool {
@@ -1183,7 +1251,7 @@ func validatedPaymentFacts(expectedAmount float64, expectedCurrency string, vali
 	if expectedCurrency != "" && !samePaymentCurrency(expectedCurrency, actualCurrency) {
 		return 0, "", ErrPaymentCurrencyMismatch
 	}
-	if validation.PaidAmount < 0 || !paymentAmountMatches(expectedAmount, validation.PaidAmount, validation.AllowPaymentDiscount) {
+	if validation.PaidAmount < 0 || !paymentAmountMatchesWithCurrency(expectedAmount, validation.PaidAmount, expectedCurrency, validation.AllowPaymentDiscount) {
 		return 0, "", ErrPaymentAmountMismatch
 	}
 	return validation.PaidAmount, actualCurrency, nil

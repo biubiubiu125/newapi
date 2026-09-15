@@ -82,7 +82,28 @@ func TestCreemWebhookEnabledRequiresWebhookConfig(t *testing.T) {
 	require.False(t, isCreemWebhookEnabled())
 
 	common.ReferralTestMode = true
-	require.True(t, isCreemWebhookEnabled())
+	require.False(t, isCreemWebhookEnabled())
+}
+
+func TestCreemWebhookModeMatchesRejectsEmptyOnLive(t *testing.T) {
+	originalTestMode := setting.CreemTestMode
+	t.Cleanup(func() { setting.CreemTestMode = originalTestMode })
+
+	event := &CreemWebhookEvent{}
+	setting.CreemTestMode = false
+	require.True(t, creemWebhookModeMatches(event))
+	event.Object.Order.Mode = "test"
+	require.False(t, creemWebhookModeMatches(event))
+	event.Object.Order.Mode = "live"
+	require.True(t, creemWebhookModeMatches(event))
+
+	setting.CreemTestMode = true
+	event.Object.Order.Mode = ""
+	require.False(t, creemWebhookModeMatches(event))
+	event.Object.Order.Mode = "test"
+	require.True(t, creemWebhookModeMatches(event))
+	event.Object.Order.Mode = "live"
+	require.False(t, creemWebhookModeMatches(event))
 }
 
 func TestWaffoWebhookEnabledRequiresWebhookConfig(t *testing.T) {

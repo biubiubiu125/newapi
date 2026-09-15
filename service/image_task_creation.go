@@ -102,8 +102,8 @@ func CommitImageTaskCreation(
 			model.RefreshTokenQuotaCache(relayInfo.TokenId, relayInfo.TokenKey)
 		}
 		if wallet, ok := session.funding.(*WalletFunding); ok && wallet.consumed > 0 {
-			if err := model.CacheUpdateUserQuota(wallet.userId); err != nil {
-				common.SysLog(fmt.Sprintf("failed to refresh user quota cache after image task commit, userId=%d: %s", wallet.userId, err.Error()))
+			if err := model.ApplyUserQuotaCacheDelta(wallet.userId, -int64(wallet.consumed)); err != nil {
+				common.SysLog(fmt.Sprintf("failed to apply user quota cache delta after image task commit, userId=%d: %s", wallet.userId, err.Error()))
 			}
 		}
 	}
@@ -202,7 +202,7 @@ func newImageTaskSubscriptionBillingSessionTx(tx *gorm.DB, relayInfo *relaycommo
 		funding.usingGroup,
 	)
 	if err != nil {
-		if isSubscriptionPreConsumeInsufficientError(err.Error()) {
+		if isSubscriptionPreConsumeInsufficientError(err) {
 			return nil, types.NewErrorWithStatusCode(
 				fmt.Errorf("subscription quota is insufficient or unavailable: %w", err),
 				types.ErrorCodeInsufficientUserQuota,

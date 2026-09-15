@@ -60,9 +60,6 @@ func isCreemSubscriptionEnabled() bool {
 }
 
 func isCreemWebhookConfigured() bool {
-	if isReferralTestCreemSandboxEnabled() {
-		return true
-	}
 	return strings.TrimSpace(setting.CreemWebhookSecret) != ""
 }
 

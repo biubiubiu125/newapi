@@ -213,6 +213,21 @@ func TestGetSSRFProtectedHTTPClientFallsBackToDefaultClientWhenProtectionDisable
 	require.Same(t, expected, GetSSRFProtectedHTTPClient())
 }
 
+func TestGetSSRFProtectedHTTPClientWithProxyRejectsPrivateTarget(t *testing.T) {
+	configureSSRFTestFetchSetting(t)
+
+	client, err := GetSSRFProtectedHTTPClientWithProxy("http://127.0.0.1:3128")
+	require.NoError(t, err)
+	require.NotNil(t, client)
+
+	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1/resource", nil)
+	require.NoError(t, err)
+	resp, err := client.Do(req)
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Contains(t, err.Error(), "private IP address not allowed")
+}
+
 func TestProtectedFetchRoundTripperUsesConfiguredProxy(t *testing.T) {
 	configureSSRFTestFetchSetting(t)
 	proxyURL := mustParseURL(t, "http://127.0.0.1:3128")

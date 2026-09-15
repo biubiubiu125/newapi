@@ -131,6 +131,15 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 			return hosttypes.PriceData{}, err
 		}
 		preConsumedQuota = quota
+		if meta != nil {
+			if n, ok := meta.BillingRatios["n"]; ok && n > 1 {
+				quota, err = common.QuotaFromPositiveFloatStrict(float64(preConsumedQuota) * n)
+				if err != nil {
+					return hosttypes.PriceData{}, err
+				}
+				preConsumedQuota = quota
+			}
+		}
 	} else {
 		if meta.ImagePriceRatio != 0 {
 			modelPrice = modelPrice * meta.ImagePriceRatio
@@ -188,6 +197,7 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		logger.LogDebug(c, "model_price_helper result: %s", priceData.ToSetting())
 	}
 	info.PriceData = priceData
+	info.UsePrice = priceData.UsePrice
 	return priceData, nil
 }
 
@@ -390,5 +400,6 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, billing
 	logger.LogDebug(c, "model_price_helper_tiered result: model=%s preConsume=%d quotaBeforeGroup=%.2f groupRatio=%.2f tier=%s", billingModelName, preConsumedQuota, quotaBeforeGroup, groupRatioInfo.GroupRatio, trace.MatchedTier)
 
 	info.PriceData = priceData
+	info.UsePrice = priceData.UsePrice
 	return priceData, nil
 }

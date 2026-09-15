@@ -238,12 +238,10 @@ func TestCacheUpdateUserQuotaRefreshesQuotaField(t *testing.T) {
 		cacheUpdateUserFields = oldUserFields
 	})
 
-	var quotaUserID int
-	var quotaValue int64
+	var quotaFieldCalled bool
 	var fieldsUser User
 	cacheUpdateUserQuotaField = func(userId int, quota int64) error {
-		quotaUserID = userId
-		quotaValue = quota
+		quotaFieldCalled = true
 		return nil
 	}
 	cacheUpdateUserFields = func(user User) error {
@@ -261,8 +259,7 @@ func TestCacheUpdateUserQuotaRefreshesQuotaField(t *testing.T) {
 
 	require.NoError(t, CacheUpdateUserQuota(3))
 
-	assert.Equal(t, 3, quotaUserID)
-	assert.EqualValues(t, 1234, quotaValue)
+	assert.False(t, quotaFieldCalled, "CacheUpdateUserQuota must not snapshot Quota over a live hash")
 	assert.Equal(t, 3, fieldsUser.Id)
 	assert.Equal(t, "cached-quota-user", fieldsUser.Username)
 }
@@ -434,4 +431,22 @@ func TestResetUserPasswordByEmailRequiresSingleActiveMatch(t *testing.T) {
 
 	err = ResetUserPasswordByEmail("missing@example.com", "NewPassword123")
 	require.True(t, errors.Is(err, ErrEmailNotFound))
+}
+
+func TestFillUserByIdReturnsDatabaseErrors(t *testing.T) {
+	setupUserUpdateTestState(t)
+
+	created := createUserBindTestUser(t)
+	loaded := User{Id: created.Id}
+	require.NoError(t, loaded.FillUserById())
+	require.Equal(t, created.Username, loaded.Username)
+	require.Equal(t, created.Status, loaded.Status)
+
+	missing := User{Id: created.Id + 99999}
+	err := missing.FillUserById()
+	require.Error(t, err)
+	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
+
+	empty := User{}
+	require.EqualError(t, empty.FillUserById(), "id 为空！")
 }

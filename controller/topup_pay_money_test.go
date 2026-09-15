@@ -8,6 +8,21 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestMaxStripeTopUpAmountScalesForTokenDisplay(t *testing.T) {
+	original := operation_setting.GetGeneralSetting().QuotaDisplayType
+	t.Cleanup(func() {
+		operation_setting.GetGeneralSetting().QuotaDisplayType = original
+	})
+
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeUSD
+	require.True(t, stripeTopUpAmountExceedsMax(10001))
+	require.False(t, stripeTopUpAmountExceedsMax(10000))
+
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeTokens
+	require.False(t, stripeTopUpAmountExceedsMax(10001))
+	require.True(t, stripeTopUpAmountExceedsMax(int64(10000*common.QuotaPerUnit)+1))
+}
+
 func TestGetPayMoneyUsesConfiguredDisplayCurrencyRate(t *testing.T) {
 	originalPrice := operation_setting.Price
 	originalUSDExchangeRate := operation_setting.USDExchangeRate

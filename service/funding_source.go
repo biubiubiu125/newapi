@@ -116,6 +116,9 @@ func (s *SubscriptionFunding) Settle(delta int) error {
 	if delta == 0 {
 		return nil
 	}
+	if delta > 0 {
+		return model.PostConsumeUserSubscriptionDeltaAllowOverdraft(s.subscriptionId, int64(delta))
+	}
 	return model.PostConsumeUserSubscriptionDelta(s.subscriptionId, int64(delta))
 }
 

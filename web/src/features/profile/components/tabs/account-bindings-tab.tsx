@@ -42,6 +42,7 @@ import { useDialogs } from '@/hooks/use-dialog'
 import { useStatus } from '@/hooks/use-status'
 import { api } from '@/lib/api'
 import {
+  buildCustomOAuthUrl,
   buildDiscordOAuthUrl,
   buildGitHubOAuthUrl,
   indexCustomOAuthBindings,
@@ -203,16 +204,17 @@ export function AccountBindingsTab({
   )
 
   const handleBindCustomOAuth = async (provider: CustomOAuthProviderInfo) => {
-    await startOAuthBinding(provider.slug, (state) => {
-      const redirectUri = `${window.location.origin}/oauth/${provider.slug}`
-      const url = new URL(provider.authorization_endpoint)
-      url.searchParams.set('client_id', provider.client_id)
-      url.searchParams.set('redirect_uri', redirectUri)
-      url.searchParams.set('response_type', 'code')
-      url.searchParams.set('state', state)
-      if (provider.scopes) url.searchParams.set('scope', provider.scopes)
-      return url.toString()
-    })
+    await startOAuthBinding(provider.slug, (state) =>
+      buildCustomOAuthUrl({
+        authorizationEndpoint: provider.authorization_endpoint,
+        clientId: provider.client_id,
+        slug: provider.slug,
+        state,
+        scopes: provider.scopes,
+        serverAddress: status?.server_address,
+        fallbackOrigin: window.location.origin,
+      })
+    )
   }
 
   useEffect(() => {
@@ -333,7 +335,7 @@ export function AccountBindingsTab({
           const clientId = status?.github_client_id
           if (clientId) {
             void startOAuthBinding('github', (state) =>
-              buildGitHubOAuthUrl(clientId, state)
+              buildGitHubOAuthUrl(clientId, state, status?.server_address)
             )
           }
         },
@@ -353,7 +355,7 @@ export function AccountBindingsTab({
           const clientId = status?.discord_client_id
           if (clientId) {
             void startOAuthBinding('discord', (state) =>
-              buildDiscordOAuthUrl(clientId, state)
+              buildDiscordOAuthUrl(clientId, state, status?.server_address)
             )
           }
         },
@@ -374,7 +376,12 @@ export function AccountBindingsTab({
           const clientId = status?.oidc_client_id
           if (authorizationEndpoint && clientId) {
             void startOAuthBinding('oidc', (state) =>
-              buildOIDCOAuthUrl(authorizationEndpoint, clientId, state)
+              buildOIDCOAuthUrl(
+                authorizationEndpoint,
+                clientId,
+                state,
+                status?.server_address
+              )
             )
           }
         },
@@ -407,7 +414,7 @@ export function AccountBindingsTab({
           const clientId = status?.linuxdo_client_id
           if (clientId) {
             void startOAuthBinding('linuxdo', (state) =>
-              buildLinuxDOOAuthUrl(clientId, state)
+              buildLinuxDOOAuthUrl(clientId, state, status?.server_address)
             )
           }
         },

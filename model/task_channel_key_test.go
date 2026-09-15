@@ -26,6 +26,21 @@ func TestInitTaskPersistsSelectedChannelKeyForAsyncTaskChannels(t *testing.T) {
 	}
 }
 
+func TestInitTaskStoresResultProxyHostsFromChannelBaseURL(t *testing.T) {
+	relayInfo := &commonRelay.RelayInfo{
+		ChannelMeta: &commonRelay.ChannelMeta{
+			ChannelType:    constant.ChannelTypeGemini,
+			ChannelBaseUrl: "https://gemini.internal/v1beta",
+			ApiKey:         "selected-key",
+		},
+		TaskRelayInfo: &commonRelay.TaskRelayInfo{},
+	}
+
+	task := InitTask(constant.TaskPlatform("gemini"), relayInfo)
+
+	require.Equal(t, []string{"gemini.internal"}, task.PrivateData.ResultProxyHosts)
+}
+
 func channelTypeString(channelType int) string {
 	switch channelType {
 	case constant.ChannelTypeOpenAI:

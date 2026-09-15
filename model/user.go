@@ -1385,8 +1385,7 @@ func (user *User) FillUserById() error {
 	if user.Id == 0 {
 		return errors.New("id 为空！")
 	}
-	DB.Where(User{Id: user.Id}).First(user)
-	return nil
+	return DB.Where(User{Id: user.Id}).First(user).Error
 }
 
 func (user *User) FillUserByEmail() error {
@@ -1653,7 +1652,7 @@ func IncreaseUserQuota(id int, quota int64, db bool) (err error) {
 	if err := increaseUserQuota(id, quota); err != nil {
 		return err
 	}
-	refreshUserQuotaCacheBestEffort(id)
+	applyUserQuotaCacheDeltaBestEffort(id, quota)
 	return nil
 }
 
@@ -1698,7 +1697,7 @@ func DecreaseUserQuota(id int, quota int64, db bool) (err error) {
 	if err := decreaseUserQuota(id, quota); err != nil {
 		return err
 	}
-	refreshUserQuotaCacheBestEffort(id)
+	applyUserQuotaCacheDeltaBestEffort(id, -quota)
 	return nil
 }
 
@@ -1725,7 +1724,7 @@ func DecreaseUserQuotaAllowNegative(id int, quota int64, db bool) (err error) {
 	if err := decreaseUserQuotaAllowNegativeWithDB(DB, id, quota); err != nil {
 		return err
 	}
-	refreshUserQuotaCacheBestEffort(id)
+	applyUserQuotaCacheDeltaBestEffort(id, -quota)
 	return nil
 }
 
@@ -1850,7 +1849,6 @@ func updateUserUsedQuota(id int, quota int64) error {
 		common.SysLog("failed to update user used quota: " + err.Error())
 		return err
 	}
-	refreshUserQuotaCacheBestEffort(id)
 	return nil
 }
 

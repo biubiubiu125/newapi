@@ -8,11 +8,13 @@ import (
 	"math"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 	"github.com/QuantumNous/new-api/types"
@@ -68,13 +70,9 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) error {
 	attachQuotaSaturation(c, info, other)
 	settlementSucceeded := c.GetBool(contextKeySettlementApplied)
 	if err := model.UpdateTaskConsumptionUsageWithTokenSync(info.UserId, info.ChannelId, info.TokenId, logQuota); err != nil {
-		if settlementSucceeded {
-			if rollbackErr := RollbackBillingSettlement(c, info, logQuota); rollbackErr != nil {
-				return fmt.Errorf("log task consumption usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
-			}
-		}
-		return fmt.Errorf("log task consumption usage counter update failed: %w", err)
+		return wrapUsageCounterUpdateError(c, info, logQuota, settlementSucceeded, err, "log task consumption usage counter update failed")
 	}
+	setUsageCountersRecorded(c, true)
 	if err := model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
 		ModelName: info.OriginModelName,
@@ -85,19 +83,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) error {
 		Group:     info.UsingGroup,
 		Other:     other,
 	}); err != nil {
-		rollbackErrs := []string{}
-		if rollbackErr := RollbackTaskConsumptionUsage(info.UserId, info.ChannelId, info.TokenId, logQuota); rollbackErr != nil {
-			rollbackErrs = append(rollbackErrs, rollbackErr.Error())
-		}
-		if settlementSucceeded {
-			if rollbackErr := RollbackBillingSettlement(c, info, logQuota); rollbackErr != nil {
-				rollbackErrs = append(rollbackErrs, rollbackErr.Error())
-			}
-		}
-		if len(rollbackErrs) > 0 {
-			return fmt.Errorf("record consume log failed: %w; rollback errors: %s", err, strings.Join(rollbackErrs, "; "))
-		}
-		return fmt.Errorf("record consume log failed: %w", err)
+		return wrapRecordConsumeLogError(c, info, info.UserId, info.ChannelId, info.TokenId, logQuota, settlementSucceeded, err)
 	}
 	return nil
 }
@@ -324,6 +310,8 @@ func TaskBillingGroupRatio(task *model.Task) (float64, bool) {
 
 const TaskSettlementReviewFailReason = "billing settlement requires manual review"
 
+const TaskSettlementReviewRetrySeconds int64 = 60
+
 func clearSettlementReviewFailReason(failReason string) string {
 	failReason = strings.TrimSpace(failReason)
 	if failReason == TaskSettlementReviewFailReason {
@@ -344,7 +332,153 @@ func clearTaskSettlementReview(task *model.Task) bool {
 	task.FailReason = clearSettlementReviewFailReason(task.FailReason)
 	task.PrivateData.SettlementAttemptQuota = 0
 	task.PrivateData.SettlementError = ""
+	task.NextPollAt = 0
 	return true
+}
+
+func markTaskBillingSettled(task *model.Task) {
+	if task == nil {
+		return
+	}
+	clearTaskSettlementReview(task)
+	task.SettlementStatus = model.TaskSettlementStatusSettled
+}
+
+func persistTaskBillingSettled(task *model.Task) error {
+	if task == nil {
+		return nil
+	}
+	markTaskBillingSettled(task)
+	if task.ID <= 0 {
+		return nil
+	}
+	return task.UpdateQuota()
+}
+
+func persistTaskBillingSettledOrReview(ctx context.Context, task *model.Task) error {
+	if err := persistTaskBillingSettled(task); err != nil {
+		if task != nil {
+			logger.LogError(ctx, fmt.Sprintf("task quota settlement persist settled failed task %s: %s", task.TaskID, err.Error()))
+			MarkTaskSettlementReview(ctx, task, task.Quota, err)
+		}
+		return err
+	}
+	return nil
+}
+
+// PersistSuccessfulTaskSubmitSettlement marks an immediately successful task SETTLED
+// after prepaid settlement and consumption logging succeeded. PENDING/APPLIED rows
+// stay hidden from public media until this write lands.
+func PersistSuccessfulTaskSubmitSettlement(ctx context.Context, task *model.Task) error {
+	if task == nil || task.Status != model.TaskStatusSuccess {
+		return nil
+	}
+	switch task.SettlementStatus {
+	case model.TaskSettlementStatusSettled, model.TaskSettlementStatusReview:
+		return nil
+	}
+	return persistTaskBillingSettledOrReview(ctx, task)
+}
+
+func scheduleTaskSettlementReviewRetry(task *model.Task) {
+	if task == nil {
+		return
+	}
+	task.NextPollAt = time.Now().Unix() + TaskSettlementReviewRetrySeconds
+}
+
+func persistTaskSettlementReviewSchedule(ctx context.Context, task *model.Task) {
+	if task == nil || task.ID <= 0 {
+		return
+	}
+	var err error
+	for attempt := 0; attempt < 2; attempt++ {
+		err = task.UpdateSubmitSettlementError()
+		if err == nil {
+			return
+		}
+	}
+	logger.LogError(ctx, fmt.Sprintf("persist task settlement review schedule failed task %s: %s", task.TaskID, err.Error()))
+}
+
+func scheduleExistingTaskSettlementReviewRetry(ctx context.Context, task *model.Task) {
+	if task == nil || task.Status != model.TaskStatusSuccess || task.SettlementStatus != model.TaskSettlementStatusReview {
+		return
+	}
+	scheduleTaskSettlementReviewRetry(task)
+	persistTaskSettlementReviewSchedule(ctx, task)
+}
+
+func taskHasExpressionBilling(task *model.Task) bool {
+	if task == nil {
+		return false
+	}
+	snapshot := task.PrivateData.TieredBillingSnapshot
+	return snapshot != nil && strings.TrimSpace(snapshot.ExprString) != ""
+}
+
+func computeTaskExpressionQuota(task *model.Task, extraUsage map[string]any) (billingexpr.TieredResult, map[string]any, error) {
+	snapshot := task.PrivateData.TieredBillingSnapshot
+	requestInput := billingexpr.RequestInput{}
+	if task.PrivateData.BillingRequestInput != nil {
+		requestInput = billingexpr.CloneRequestInput(*task.PrivateData.BillingRequestInput)
+	}
+	usageFacts := make(map[string]any, len(snapshot.UsageFacts)+len(extraUsage))
+	for key, value := range snapshot.UsageFacts {
+		usageFacts[key] = value
+	}
+	for key, value := range extraUsage {
+		usageFacts[key] = value
+	}
+	requestInput.Usage = usageFacts
+	result, err := billingexpr.ComputeTieredQuotaWithRequest(snapshot, billingexpr.TokenParams{}, requestInput)
+	return result, usageFacts, err
+}
+
+func RetryTaskSettlementReview(ctx context.Context, task *model.Task) error {
+	if task == nil || task.Status != model.TaskStatusSuccess || task.SettlementStatus != model.TaskSettlementStatusReview {
+		return nil
+	}
+	actualQuota := task.PrivateData.SettlementAttemptQuota
+	if actualQuota <= 0 {
+		actualQuota = task.Quota
+	}
+	record, exists, err := model.GetTaskSettlementRecord(task.ID)
+	if err != nil {
+		return err
+	}
+	if exists && record.HasAppliedQuotaEvidence() {
+		return RecalculateTaskQuota(ctx, task, actualQuota, "settlement review retry")
+	}
+	if taskHasExpressionBilling(task) {
+		result, usageFacts, err := computeTaskExpressionQuota(task, nil)
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("任务 %s 复核表达式结算失败，保留预扣额度并转入人工复核: %v", task.TaskID, err))
+			MarkTaskSettlementReview(ctx, task, actualQuota, err)
+			return err
+		}
+		if result.Clamp != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("任务 %s 复核表达式结算额度发生饱和: %+v", task.TaskID, result.Clamp))
+		}
+		task.PrivateData.TieredBillingSnapshot.UsageFacts = usageFacts
+		task.PrivateData.TieredBillingSnapshot.EstimatedTier = result.MatchedTier
+		actualQuota = result.ActualQuotaAfterGroup
+		if err := model.ResetTaskSettlementApplicationFromReview(task.ID); err != nil {
+			scheduleTaskSettlementReviewRetry(task)
+			persistTaskSettlementReviewSchedule(ctx, task)
+			return err
+		}
+		if result.Clamp != nil {
+			return RecalculateTaskQuota(ctx, task, actualQuota, "settlement review retry", result.Clamp)
+		}
+		return RecalculateTaskQuota(ctx, task, actualQuota, "settlement review retry")
+	}
+	if err := model.ResetTaskSettlementApplicationFromReview(task.ID); err != nil {
+		scheduleTaskSettlementReviewRetry(task)
+		persistTaskSettlementReviewSchedule(ctx, task)
+		return err
+	}
+	return RecalculateTaskQuota(ctx, task, actualQuota, "settlement review retry")
 }
 
 func MarkTaskSettlementReview(ctx context.Context, task *model.Task, attemptedQuota int, settleErr error) {
@@ -355,6 +489,7 @@ func MarkTaskSettlementReview(ctx context.Context, task *model.Task, attemptedQu
 	task.PrivateData.SettlementError = strings.ReplaceAll(settleErr.Error(), "\n", " ")
 	task.FailReason = TaskSettlementReviewFailReason
 	task.SettlementStatus = model.TaskSettlementStatusReview
+	scheduleTaskSettlementReviewRetry(task)
 	if err := task.UpdateSubmitSettlementError(); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("mark task settlement review failed task %s: %s", task.TaskID, err.Error()))
 	}
@@ -474,20 +609,7 @@ func beginTaskAccountingApplication(task *model.Task, operation string) (*model.
 	if err != nil {
 		return nil, false, err
 	}
-	if !shouldApply {
-		return record, false, nil
-	}
-	if err := model.MarkTaskSettlementApplicationApplying(task.ID); err != nil {
-		latestRecord, exists, loadErr := model.GetTaskSettlementRecord(task.ID)
-		if loadErr == nil && exists && latestRecord.Status != model.TaskSettlementRecordStatusPrepared {
-			return latestRecord, false, nil
-		}
-		if loadErr != nil {
-			return record, false, fmt.Errorf("load %s accounting after applying CAS failure: %w", operation, loadErr)
-		}
-		return record, false, fmt.Errorf("mark %s accounting applying: %w", operation, err)
-	}
-	return record, true, nil
+	return record, shouldApply, nil
 }
 
 func markTaskAccountingRecordReview(ctx context.Context, task *model.Task, operation string, accountingErr error) {
@@ -518,6 +640,46 @@ func finalizeAppliedTaskRefund(task *model.Task) error {
 	task.RefundPending = false
 	clearTaskSettlementReview(task)
 	return task.UpdateQuota()
+}
+
+func finalizeExistingTaskRefund(ctx context.Context, task *model.Task, record *model.TaskSettlementRecord, originalQuota int) error {
+	if record == nil {
+		taskID := ""
+		if task != nil {
+			taskID = task.TaskID
+		}
+		return fmt.Errorf("task refund accounting record is missing for task %s", taskID)
+	}
+	if record.HasAppliedQuotaEvidence() || record.Status == model.TaskSettlementRecordStatusApplied {
+		if err := appliedTaskRefundEvidence(ctx, task, record); err != nil {
+			err = taskAccountingRecordError("finalize applied task refund", task, err)
+			markTaskRefundReview(ctx, task, originalQuota, err)
+			return err
+		}
+		if record.Status != model.TaskSettlementRecordStatusApplied {
+			if err := model.MarkTaskSettlementApplicationAppliedFromEvidence(task.ID); err != nil {
+				err = taskAccountingRecordError("finalize applied task refund", task, err)
+				markTaskRefundReview(ctx, task, originalQuota, err)
+				return err
+			}
+		}
+		if err := finalizeAppliedTaskRefund(task); err != nil {
+			err = taskAccountingRecordError("finalize applied task refund", task, err)
+			markTaskRefundReview(ctx, task, originalQuota, err)
+			return err
+		}
+		return nil
+	}
+	switch record.Status {
+	case model.TaskSettlementRecordStatusReview:
+		err := taskAccountingReviewError("task refund", record)
+		markTaskRefundReview(ctx, task, originalQuota, err)
+		return err
+	case model.TaskSettlementRecordStatusApplying:
+		return nil
+	default:
+		return fmt.Errorf("task refund accounting has unexpected record status %s for task %s", record.Status, task.TaskID)
+	}
 }
 
 func validateAppliedTaskRefundDetails(task *model.Task, record *model.TaskSettlementRecord) error {
@@ -622,6 +784,23 @@ func legacyAppliedTaskRefundDetailsFromBillingLog(task *model.Task) (model.TaskS
 	return model.TaskSettlementApplicationAppliedDetails{}, false, nil
 }
 
+func refundPendingUsageWhenQuotaAlreadyZero(ctx context.Context, task *model.Task, reason string) error {
+	if task == nil || !taskRefundHasPreConsumedUsage(task) {
+		return nil
+	}
+	usageDelta := task.PrivateData.SettlementAttemptQuota
+	if usageDelta <= 0 {
+		return nil
+	}
+	if err := model.UpdateTaskConsumptionUsageRollbackWithTokenSync(task.UserId, task.ChannelId, task.PrivateData.TokenId, usageDelta); err != nil {
+		reviewErr := taskAccountingRecordError("refund task usage counters", task, err)
+		markTaskRefundReview(ctx, task, usageDelta, reviewErr)
+		return reviewErr
+	}
+	task.PrivateData.PreConsumedUsageRecorded = false
+	return nil
+}
+
 func taskRefundHasPreConsumedUsage(task *model.Task) bool {
 	if task == nil {
 		return false
@@ -637,8 +816,45 @@ func finalizeAppliedTaskRecalculation(task *model.Task, actualQuota int) error {
 		return nil
 	}
 	task.Quota = actualQuota
-	clearTaskSettlementReview(task)
-	return task.UpdateQuota()
+	return persistTaskBillingSettled(task)
+}
+
+func finalizeExistingTaskRecalculation(ctx context.Context, task *model.Task, record *model.TaskSettlementRecord, actualQuota int) error {
+	if record == nil {
+		taskID := ""
+		if task != nil {
+			taskID = task.TaskID
+		}
+		return fmt.Errorf("task recalculation accounting record is missing for task %s", taskID)
+	}
+	if record.HasAppliedQuotaEvidence() || record.Status == model.TaskSettlementRecordStatusApplied {
+		appliedQuota, quotaErr := appliedTaskRecalculationQuota(ctx, task, record)
+		if quotaErr != nil {
+			MarkTaskSettlementReview(ctx, task, actualQuota, quotaErr)
+			return taskAccountingRecordError("finalize applied task recalculation", task, quotaErr)
+		}
+		if record.Status != model.TaskSettlementRecordStatusApplied {
+			if err := model.MarkTaskSettlementApplicationAppliedFromEvidence(task.ID); err != nil {
+				MarkTaskSettlementReview(ctx, task, actualQuota, err)
+				return taskAccountingRecordError("finalize applied task recalculation", task, err)
+			}
+		}
+		if err := finalizeAppliedTaskRecalculation(task, appliedQuota); err != nil {
+			return taskAccountingRecordError("finalize applied task recalculation", task, err)
+		}
+		return nil
+	}
+	switch record.Status {
+	case model.TaskSettlementRecordStatusReview:
+		reviewErr := taskAccountingReviewError("task recalculation", record)
+		MarkTaskSettlementReview(ctx, task, actualQuota, reviewErr)
+		return reviewErr
+	case model.TaskSettlementRecordStatusApplying:
+		scheduleExistingTaskSettlementReviewRetry(ctx, task)
+		return nil
+	default:
+		return fmt.Errorf("task recalculation accounting has unexpected record status %s for task %s", record.Status, task.TaskID)
+	}
 }
 
 func appliedTaskRecalculationQuota(ctx context.Context, task *model.Task, record *model.TaskSettlementRecord) (int, error) {
@@ -904,28 +1120,21 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) error
 			}
 		}
 		if task.RefundPending {
+			if err := refundPendingUsageWhenQuotaAlreadyZero(ctx, task, reason); err != nil {
+				return err
+			}
 			task.RefundPending = false
-			return task.UpdateQuota()
+			if task.ID > 0 {
+				if err := model.UpdateTaskAfterSubmitAccountingFailure(task); err != nil {
+					return task.UpdateQuota()
+				}
+			}
+			return nil
 		}
 		return nil
 	}
 
 	originalQuota := task.Quota
-	originalFailReason := task.FailReason
-	originalSettlementStatus := task.SettlementStatus
-	originalPrivateData := task.PrivateData
-
-	restoreTaskState := func(persist bool) {
-		task.Quota = originalQuota
-		task.FailReason = originalFailReason
-		task.SettlementStatus = originalSettlementStatus
-		task.PrivateData = originalPrivateData
-		if persist && task.ID > 0 {
-			if restoreErr := task.UpdateQuota(); restoreErr != nil {
-				logger.LogError(ctx, fmt.Sprintf("restore task quota after refund failure failed task %s: %s", task.TaskID, restoreErr.Error()))
-			}
-		}
-	}
 
 	record, shouldApply, err := beginTaskAccountingApplication(task, "task refund")
 	if err != nil {
@@ -933,108 +1142,48 @@ func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) error
 		markTaskRefundReview(ctx, task, originalQuota, err)
 		return err
 	}
-	if !shouldApply {
-		switch record.Status {
-		case model.TaskSettlementRecordStatusApplied:
-			if err := appliedTaskRefundEvidence(ctx, task, record); err != nil {
-				err = taskAccountingRecordError("finalize applied task refund", task, err)
-				markTaskRefundReview(ctx, task, originalQuota, err)
-				return err
-			}
-			if err := finalizeAppliedTaskRefund(task); err != nil {
-				err = taskAccountingRecordError("finalize applied task refund", task, err)
-				markTaskRefundReview(ctx, task, originalQuota, err)
-				return err
-			}
-			return nil
-		case model.TaskSettlementRecordStatusReview:
+	if !shouldApply && record != nil && record.Status == model.TaskSettlementRecordStatusReview &&
+		!record.HasAppliedQuotaEvidence() && !record.WasInterrupted() {
+		if resetErr := model.ResetTaskSettlementApplicationFromReview(task.ID); resetErr != nil {
 			err := taskAccountingReviewError("task refund", record)
+			markTaskRefundReview(ctx, task, originalQuota, fmt.Errorf("%w: %v", err, resetErr))
+			return err
+		}
+		record, shouldApply, err = beginTaskAccountingApplication(task, "task refund")
+		if err != nil {
+			err = taskAccountingRecordError("task refund", task, err)
 			markTaskRefundReview(ctx, task, originalQuota, err)
 			return err
-		case model.TaskSettlementRecordStatusApplying:
-			return nil
-		default:
-			return fmt.Errorf("task refund accounting has unexpected record status %s for task %s", record.Status, task.TaskID)
 		}
+	}
+	if !shouldApply {
+		return finalizeExistingTaskRefund(ctx, task, record, originalQuota)
 	}
 
-	taskStatePersisted := false
-	tokenAdjusted, tokenSnapshot, err := taskAdjustRefundTokenQuota(ctx, task, -quota)
-	if err != nil {
-		logger.LogWarn(ctx, fmt.Sprintf("refund token quota failed task %s: %s", task.TaskID, err.Error()))
-		restoreTaskState(taskStatePersisted)
-		reviewErr := fmt.Errorf("refund token quota failed: %w", err)
-		markTaskAccountingRecordReview(ctx, task, "task refund", reviewErr)
-		markTaskRefundReview(ctx, task, originalQuota, reviewErr)
-		return reviewErr
-	}
-	if err := taskAdjustFunding(task, -quota); err != nil {
-		logger.LogWarn(ctx, fmt.Sprintf("refund funding failed task %s: %s", task.TaskID, err.Error()))
-		if tokenAdjusted {
-			if rollbackErr := rollbackRefundedTaskTokenQuota(ctx, task, tokenSnapshot, quota); rollbackErr != nil {
-				logger.LogError(ctx, fmt.Sprintf("rollback refunded token quota failed task %s: %s", task.TaskID, rollbackErr.Error()))
-			}
-		}
-		restoreTaskState(taskStatePersisted)
-		reviewErr := fmt.Errorf("refund funding failed: %w", err)
-		markTaskAccountingRecordReview(ctx, task, "task refund", reviewErr)
-		markTaskRefundReview(ctx, task, originalQuota, reviewErr)
-		return reviewErr
-	}
 	usageCountersAdjusted := taskRefundHasPreConsumedUsage(task)
-	if usageCountersAdjusted {
-		if err := updateTaskUsageCounters(task, -quota, tokenAdjusted, taskRefundAllowsMissingChannel(reason)); err != nil {
-			logger.LogError(ctx, fmt.Sprintf("refund usage counter update failed task %s: %s", task.TaskID, err.Error()))
-			rollbackErr := err
-			if fundingRollbackErr := taskAdjustFunding(task, quota); fundingRollbackErr != nil {
-				logger.LogError(ctx, fmt.Sprintf("rollback funding after refund usage counter failure failed task %s: %s", task.TaskID, fundingRollbackErr.Error()))
-				rollbackErr = fmt.Errorf("%w; rollback funding failed: %v", rollbackErr, fundingRollbackErr)
-			}
-			if tokenAdjusted {
-				if tokenRollbackErr := rollbackRefundedTaskTokenQuota(ctx, task, tokenSnapshot, quota); tokenRollbackErr != nil {
-					logger.LogError(ctx, fmt.Sprintf("rollback token quota after refund usage counter failure failed task %s: %s", task.TaskID, tokenRollbackErr.Error()))
-					rollbackErr = fmt.Errorf("%w; rollback token quota failed: %v", rollbackErr, tokenRollbackErr)
-				}
-			}
-			restoreTaskState(taskStatePersisted)
-			markTaskAccountingRecordReview(ctx, task, "task refund", rollbackErr)
-			markTaskRefundReview(ctx, task, originalQuota, rollbackErr)
-			return rollbackErr
+	skipQuotaData := !usageCountersAdjusted || (task.Platform == constant.TaskPlatformImage && strings.TrimSpace(task.PrivateData.UpstreamTaskID) == "")
+	err = applyAsyncTaskAccountingAtomic(ctx, task, asyncTaskAccountingApply{
+		operation:           taskSettlementOperationRefund,
+		actualQuota:         0,
+		quotaDelta:          -quota,
+		preConsumedQuota:    originalQuota,
+		logType:             model.LogTypeRefund,
+		logQuota:            quota,
+		allowMissingChannel: taskRefundAllowsMissingChannel(reason),
+		skipQuotaData:       skipQuotaData,
+		adjustUsage:         usageCountersAdjusted,
+		extraOther: map[string]interface{}{
+			"reason":                      reason,
+			"pre_consumed_usage_recorded": usageCountersAdjusted,
+		},
+	})
+	if err != nil {
+		retryable := isRetryableAsyncTaskAccountingError(err)
+		err = taskAccountingRecordError("task refund", task, err)
+		if !retryable {
+			markTaskAccountingRecordReview(ctx, task, "task refund", err)
+			markTaskRefundReview(ctx, task, originalQuota, err)
 		}
-	}
-	other := taskBillingOther(task)
-	other["task_id"] = task.TaskID
-	other["reason"] = reason
-	other["pre_consumed_usage_recorded"] = usageCountersAdjusted
-	if err := model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:        task.UserId,
-		LogType:       model.LogTypeRefund,
-		Content:       "",
-		ChannelId:     task.ChannelId,
-		ModelName:     taskModelName(task),
-		Quota:         quota,
-		TokenId:       task.PrivateData.TokenId,
-		Group:         task.Group,
-		Other:         other,
-		SkipQuotaData: !usageCountersAdjusted || (task.Platform == constant.TaskPlatformImage && strings.TrimSpace(task.PrivateData.UpstreamTaskID) == ""),
-	}); err != nil {
-		logger.LogError(ctx, fmt.Sprintf("record task billing log failed task %s: %s", task.TaskID, err.Error()))
-		reviewErr := rollbackTaskRefundAfterBillingLogFailure(ctx, task, originalQuota, originalFailReason, originalSettlementStatus, originalPrivateData, tokenAdjusted, tokenSnapshot, usageCountersAdjusted, err)
-		markTaskAccountingRecordReview(ctx, task, "task refund", reviewErr)
-		return reviewErr
-	}
-	if err := model.MarkTaskSettlementApplicationApplied(
-		task.ID,
-		taskSettlementAppliedDetails(taskSettlementOperationRefund, 0, originalQuota, -quota, model.LogTypeRefund),
-	); err != nil {
-		reviewErr := fmt.Errorf("mark task refund accounting applied failed: %w", err)
-		markTaskAccountingRecordReview(ctx, task, "task refund", reviewErr)
-		markTaskRefundReview(ctx, task, originalQuota, reviewErr)
-		return reviewErr
-	}
-	if err := finalizeAppliedTaskRefund(task); err != nil {
-		err = taskAccountingRecordError("finalize applied task refund", task, err)
-		markTaskRefundReview(ctx, task, originalQuota, err)
 		return err
 	}
 	return nil
@@ -1054,13 +1203,21 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	if quotaDelta == 0 {
 		logger.LogInfo(ctx, fmt.Sprintf("task %s pre-consumed quota matched actual quota (%s, %s)",
 			task.TaskID, logger.LogQuota(actualQuota), reason))
-		if clearTaskSettlementReview(task) {
-			if err := task.UpdateQuota(); err != nil {
-				logger.LogError(ctx, fmt.Sprintf("task quota settlement clear review failed task %s: %s", task.TaskID, err.Error()))
-				return err
+		record, exists, err := model.GetTaskSettlementRecord(task.ID)
+		if err != nil {
+			return taskAccountingRecordError("task recalculation", task, err)
+		}
+		if exists && record != nil {
+			if record.HasAppliedQuotaEvidence() || record.Status == model.TaskSettlementRecordStatusApplied {
+				return finalizeExistingTaskRecalculation(ctx, task, record, actualQuota)
+			}
+			if record.Status == model.TaskSettlementRecordStatusReview {
+				reviewErr := taskAccountingReviewError("task recalculation", record)
+				MarkTaskSettlementReview(ctx, task, actualQuota, reviewErr)
+				return reviewErr
 			}
 		}
-		return nil
+		return persistTaskBillingSettledOrReview(ctx, task)
 	}
 
 	logger.LogInfo(ctx, fmt.Sprintf("task %s quota settlement delta=%s (actual=%s, pre-consumed=%s, %s)",
@@ -1076,93 +1233,7 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		return taskAccountingRecordError("task recalculation", task, err)
 	}
 	if !shouldApply {
-		switch record.Status {
-		case model.TaskSettlementRecordStatusApplied:
-			appliedQuota, quotaErr := appliedTaskRecalculationQuota(ctx, task, record)
-			if quotaErr != nil {
-				MarkTaskSettlementReview(ctx, task, actualQuota, quotaErr)
-				return taskAccountingRecordError("finalize applied task recalculation", task, quotaErr)
-			}
-			if err := finalizeAppliedTaskRecalculation(task, appliedQuota); err != nil {
-				return taskAccountingRecordError("finalize applied task recalculation", task, err)
-			}
-			return nil
-		case model.TaskSettlementRecordStatusReview:
-			return taskAccountingReviewError("task recalculation", record)
-		case model.TaskSettlementRecordStatusApplying:
-			return nil
-		default:
-			return fmt.Errorf("task recalculation accounting has unexpected record status %s for task %s", record.Status, task.TaskID)
-		}
-	}
-
-	tokenAdjusted := false
-	tokenRefundDelta := taskTokenQuotaSnapshot{}
-	if quotaDelta < 0 {
-		tokenAdjusted, tokenRefundDelta, err = taskAdjustRefundTokenQuota(ctx, task, quotaDelta)
-	} else {
-		tokenAdjusted, err = taskAdjustTokenQuota(ctx, task, quotaDelta)
-	}
-	if err != nil {
-		reviewErr := fmt.Errorf("task quota settlement token adjustment failed: %w", err)
-		logger.LogError(ctx, fmt.Sprintf("task quota settlement token adjustment failed task %s: %s", task.TaskID, err.Error()))
-		markTaskAccountingRecordReview(ctx, task, "task recalculation", reviewErr)
-		MarkTaskSettlementReview(ctx, task, actualQuota, reviewErr)
-		return reviewErr
-	}
-
-	if err := taskAdjustFunding(task, quotaDelta); err != nil {
-		if tokenAdjusted {
-			var rollbackErr error
-			if quotaDelta < 0 {
-				rollbackErr = rollbackRefundedTaskTokenQuota(ctx, task, tokenRefundDelta, -quotaDelta)
-			} else {
-				_, rollbackErr = taskAdjustTokenQuota(ctx, task, -quotaDelta)
-			}
-			if rollbackErr != nil {
-				logger.LogError(ctx, fmt.Sprintf("rollback token quota after task settlement failed task %s: %s", task.TaskID, rollbackErr.Error()))
-			}
-		}
-		reviewErr := fmt.Errorf("task quota settlement funding adjustment failed: %w", err)
-		logger.LogError(ctx, fmt.Sprintf("task quota settlement funding adjustment failed task %s: %s", task.TaskID, err.Error()))
-		markTaskAccountingRecordReview(ctx, task, "task recalculation", reviewErr)
-		MarkTaskSettlementReview(ctx, task, actualQuota, reviewErr)
-		return reviewErr
-	}
-
-	preSettlementStatus := task.SettlementStatus
-	preFailReason := task.FailReason
-	prePrivateData := task.PrivateData
-	if err := updateTaskUsageCounters(task, quotaDelta, tokenAdjusted); err != nil {
-		logger.LogError(ctx, fmt.Sprintf("task quota settlement usage counter update failed task %s: %s", task.TaskID, err.Error()))
-		rollbackErr := err
-		task.Quota = preConsumedQuota
-		task.SettlementStatus = preSettlementStatus
-		task.FailReason = preFailReason
-		task.PrivateData = prePrivateData
-		if restoreErr := task.UpdateQuota(); restoreErr != nil {
-			logger.LogError(ctx, fmt.Sprintf("rollback task quota after usage counter failure failed task %s: %s", task.TaskID, restoreErr.Error()))
-			rollbackErr = fmt.Errorf("%w; rollback task quota failed: %v", rollbackErr, restoreErr)
-		}
-		if fundingRollbackErr := taskAdjustFunding(task, -quotaDelta); fundingRollbackErr != nil {
-			logger.LogError(ctx, fmt.Sprintf("rollback funding after usage counter failure failed task %s: %s", task.TaskID, fundingRollbackErr.Error()))
-			rollbackErr = fmt.Errorf("%w; rollback funding failed: %v", rollbackErr, fundingRollbackErr)
-		}
-		if tokenAdjusted {
-			var tokenRollbackErr error
-			if quotaDelta < 0 {
-				tokenRollbackErr = rollbackRefundedTaskTokenQuota(ctx, task, tokenRefundDelta, -quotaDelta)
-			} else {
-				_, tokenRollbackErr = taskAdjustTokenQuota(ctx, task, -quotaDelta)
-			}
-			if tokenRollbackErr != nil {
-				logger.LogError(ctx, fmt.Sprintf("rollback token quota after usage counter failure failed task %s: %s", task.TaskID, tokenRollbackErr.Error()))
-				rollbackErr = fmt.Errorf("%w; rollback token quota failed: %v", rollbackErr, tokenRollbackErr)
-			}
-		}
-		markTaskAccountingRecordReview(ctx, task, "task recalculation", rollbackErr)
-		MarkTaskSettlementReview(ctx, task, actualQuota, rollbackErr)
-		return rollbackErr
+		return finalizeExistingTaskRecalculation(ctx, task, record, actualQuota)
 	}
 
 	var logType int
@@ -1174,42 +1245,32 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 		logType = model.LogTypeRefund
 		logQuota = -quotaDelta
 	}
-	other := taskBillingOther(task)
-	other["task_id"] = task.TaskID
-	other["pre_consumed_quota"] = preConsumedQuota
-	other["actual_quota"] = actualQuota
+	extraOther := map[string]interface{}{
+		"pre_consumed_quota": preConsumedQuota,
+		"actual_quota":       actualQuota,
+	}
 	for _, clamp := range clamps {
-		attachQuotaSaturationToOther(other, clamp)
+		attachQuotaSaturationToOther(extraOther, clamp)
 	}
-	if err := model.RecordTaskBillingLog(model.RecordTaskBillingLogParams{
-		UserId:    task.UserId,
-		LogType:   logType,
-		Content:   reason,
-		ChannelId: task.ChannelId,
-		ModelName: taskModelName(task),
-		Quota:     logQuota,
-		TokenId:   task.PrivateData.TokenId,
-		Group:     task.Group,
-		Other:     other,
-		NodeName:  task.PrivateData.NodeName,
-	}); err != nil {
-		logger.LogError(ctx, fmt.Sprintf("record task billing log failed task %s: %s", task.TaskID, err.Error()))
-		reviewErr := rollbackTaskSettlementAfterBillingLogFailure(ctx, task, preConsumedQuota, preSettlementStatus, preFailReason, prePrivateData, quotaDelta, tokenAdjusted, tokenRefundDelta, actualQuota, err)
-		markTaskAccountingRecordReview(ctx, task, "task recalculation", reviewErr)
-		return reviewErr
-	}
-	if err := model.MarkTaskSettlementApplicationApplied(
-		task.ID,
-		taskSettlementAppliedDetails(taskSettlementOperationRecalculation, actualQuota, preConsumedQuota, quotaDelta, logType),
-	); err != nil {
-		reviewErr := fmt.Errorf("mark task recalculation accounting applied failed: %w", err)
-		markTaskAccountingRecordReview(ctx, task, "task recalculation", reviewErr)
-		MarkTaskSettlementReview(ctx, task, actualQuota, reviewErr)
-		return reviewErr
-	}
-	if err := finalizeAppliedTaskRecalculation(task, actualQuota); err != nil {
-		err = taskAccountingRecordError("finalize applied task recalculation", task, err)
-		MarkTaskSettlementReview(ctx, task, actualQuota, err)
+	err = applyAsyncTaskAccountingAtomic(ctx, task, asyncTaskAccountingApply{
+		operation:        taskSettlementOperationRecalculation,
+		actualQuota:      actualQuota,
+		quotaDelta:       quotaDelta,
+		preConsumedQuota: preConsumedQuota,
+		logType:          logType,
+		logQuota:         logQuota,
+		logContent:       reason,
+		skipQuotaData:    false,
+		adjustUsage:      true,
+		extraOther:       extraOther,
+	})
+	if err != nil {
+		retryable := isRetryableAsyncTaskAccountingError(err)
+		err = taskAccountingRecordError("task recalculation", task, err)
+		if !retryable {
+			markTaskAccountingRecordReview(ctx, task, "task recalculation", err)
+			MarkTaskSettlementReview(ctx, task, actualQuota, err)
+		}
 		return err
 	}
 	return nil
@@ -1225,13 +1286,13 @@ func RecalculateTaskQuotaByTokens(ctx context.Context, task *model.Task, totalTo
 	modelRatio, hasRatioSetting := TaskBillingModelRatio(task)
 	// 只有配置了倍率（非固定价格）时才按 token 重新计费
 	if !hasRatioSetting || modelRatio <= 0 {
-		return nil
+		return persistTaskBillingSettledOrReview(ctx, task)
 	}
 
 	// 获取用户和组的倍率信息
 	finalGroupRatio, ok := TaskBillingGroupRatio(task)
 	if !ok {
-		return nil
+		return persistTaskBillingSettledOrReview(ctx, task)
 	}
 
 	// Calculate the product of OtherRatios, such as video discount and duration.

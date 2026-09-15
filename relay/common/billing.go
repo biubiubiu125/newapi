@@ -13,6 +13,10 @@ type BillingSettler interface {
 	// 已结算或已退款时不做任何操作。
 	Refund(c *gin.Context) error
 
+	// Rollback 冲回一次已经完成的结算（资金来源 + 令牌）。
+	// 用于提交后消费日志失败等“钱已入账、任务必须失败”的补偿路径。
+	Rollback(actualQuota int) error
+
 	// NeedsRefund 返回会话是否存在需要退还的预扣状态（未结算且未退款）。
 	NeedsRefund() bool
 

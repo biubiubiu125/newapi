@@ -161,52 +161,7 @@ func Login(c *gin.Context) {
 		return
 	}
 
-	// 检查是否启用2FA
-	twoFAEnabled, err := model.IsTwoFAEnabled(user.Id)
-	if err != nil {
-		common.SysLog(fmt.Sprintf("Login failed to load 2FA status for user %d: %v", user.Id, err))
-		common.ApiErrorI18n(c, i18n.MsgDatabaseError)
-		return
-	}
-	if twoFAEnabled {
-		expiresAt := time.Now().Add(5 * time.Minute)
-		payload, err := common.Marshal(twoFALoginFlowPayload{AuthVersion: user.AuthVersion})
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		flowToken, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
-			Purpose:   model.AuthFlowPurposeTwoFALogin,
-			UserId:    user.Id,
-			Payload:   string(payload),
-			ExpiresAt: expiresAt,
-		})
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-
-		// 设置pending session，等待2FA验证
-		session := sessions.Default(c)
-		session.Set("pending_username", user.Username)
-		session.Set("pending_user_id", user.Id)
-		if err := session.Save(); err != nil {
-			common.SysLog(fmt.Sprintf("Login failed to persist legacy 2FA session for user %d: %v", user.Id, err))
-		}
-
-		c.JSON(http.StatusOK, gin.H{
-			"message": i18n.T(c, i18n.MsgUserRequire2FA),
-			"success": true,
-			"data": map[string]interface{}{
-				"require_2fa": true,
-				"flow_token":  flowToken,
-				"expires_at":  expiresAt.Unix(),
-			},
-		})
-		return
-	}
-
-	setupLogin(&user, c)
+	setupLoginOrRequire2FA(&user, c)
 }
 
 // loginMethodFromContext 根据请求路径推导登录方式，用于登录审计日志。
@@ -247,6 +202,58 @@ func recordLoginAudit(user *model.User, c *gin.Context) {
 }
 
 // setupLogin creates a server-controlled login session and returns its bundle.
+func setupLoginOrRequire2FA(user *model.User, c *gin.Context) {
+	setupLoginOrRequire2FAWithExtra(user, c, nil)
+}
+
+func setupLoginOrRequire2FAWithExtra(user *model.User, c *gin.Context, extraData gin.H) {
+	if user == nil {
+		common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+		return
+	}
+	twoFAEnabled, err := model.IsTwoFAEnabled(user.Id)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("Login failed to load 2FA status for user %d: %v", user.Id, err))
+		common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+		return
+	}
+	if twoFAEnabled {
+		expiresAt := time.Now().Add(5 * time.Minute)
+		payload, err := common.Marshal(twoFALoginFlowPayload{AuthVersion: user.AuthVersion})
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		flowToken, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
+			Purpose:   model.AuthFlowPurposeTwoFALogin,
+			UserId:    user.Id,
+			Payload:   string(payload),
+			ExpiresAt: expiresAt,
+		})
+		if err != nil {
+			common.ApiError(c, err)
+			return
+		}
+		session := sessions.Default(c)
+		session.Set("pending_username", user.Username)
+		session.Set("pending_user_id", user.Id)
+		if err := session.Save(); err != nil {
+			common.SysLog(fmt.Sprintf("Login failed to persist legacy 2FA session for user %d: %v", user.Id, err))
+		}
+		c.JSON(http.StatusOK, gin.H{
+			"message": i18n.T(c, i18n.MsgUserRequire2FA),
+			"success": true,
+			"data": map[string]interface{}{
+				"require_2fa": true,
+				"flow_token":  flowToken,
+				"expires_at":  expiresAt.Unix(),
+			},
+		})
+		return
+	}
+	setupLoginWithExtra(user, c, extraData)
+}
+
 func setupLogin(user *model.User, c *gin.Context) {
 	setupLoginWithExtra(user, c, nil)
 }
@@ -330,18 +337,12 @@ func Logout(c *gin.Context) {
 		common.SysLog("legacy logout session validation skipped: " + err.Error())
 	} else if ok {
 		if _, err := model.RevokeUserSession(identity.UserID, identity.SessionID, "logout"); err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"message": err.Error(),
-				"success": false,
-			})
+			common.ApiError(c, err)
 			return
 		}
 	}
 	if err := clearLegacyLoginSession(c); err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"message": err.Error(),
-			"success": false,
-		})
+		common.ApiError(c, err)
 		return
 	}
 	service.ClearRefreshCookie(c)
@@ -1421,10 +1422,7 @@ func ManageUser(c *gin.Context) {
 			return
 		}
 		if err := user.Delete(); err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
+			common.ApiError(c, err)
 			return
 		}
 		// 删除用户后，强制清理 Redis 中所有该用户令牌的缓存，
@@ -1522,6 +1520,10 @@ func EmailBind(c *gin.Context) {
 	var req emailBindRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
 		common.ApiError(c, errors.New("invalid request body"))
+		return
+	}
+	if _, ok := middleware.GetSessionAuthIdentity(c); !ok {
+		common.ApiError(c, errors.New("当前认证方式不支持绑定邮箱"))
 		return
 	}
 	email := model.NormalizeUserEmail(req.Email)

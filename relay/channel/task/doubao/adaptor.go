@@ -6,6 +6,7 @@ import (
 	"io"
 	"net/http"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -337,9 +338,17 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		taskResult.Progress = "100%"
 		taskResult.Reason = resTask.Error.Message
 	default:
-		// Unknown status, treat as processing
-		taskResult.Status = model.TaskStatusInProgress
-		taskResult.Progress = "30%"
+		if strings.TrimSpace(resTask.Error.Message) != "" || strings.TrimSpace(resTask.Error.Code) != "" {
+			taskResult.Status = model.TaskStatusFailure
+			taskResult.Progress = "100%"
+			taskResult.Reason = resTask.Error.Message
+			if taskResult.Reason == "" {
+				taskResult.Reason = resTask.Error.Code
+			}
+		} else {
+			taskResult.Status = model.TaskStatusInProgress
+			taskResult.Progress = "30%"
+		}
 	}
 
 	return &taskResult, nil
@@ -356,7 +365,9 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 	openAIVideo.TaskID = originTask.TaskID
 	openAIVideo.Status = originTask.Status.ToVideoStatus()
 	openAIVideo.SetProgressStr(originTask.Progress)
-	openAIVideo.SetMetadata("url", dResp.Content.VideoURL)
+	if resultURL := strings.TrimSpace(originTask.GetResultURL()); resultURL != "" {
+		openAIVideo.SetMetadata("url", resultURL)
+	}
 	openAIVideo.CreatedAt = originTask.CreatedAt
 	openAIVideo.CompletedAt = originTask.UpdatedAt
 	openAIVideo.Model = originTask.Properties.OriginModelName
@@ -368,5 +379,6 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(originTask *model.Task) ([]byte, erro
 		}
 	}
 
+	taskcommon.ApplyPublicOpenAIVideoProjection(originTask, openAIVideo)
 	return common.Marshal(openAIVideo)
 }

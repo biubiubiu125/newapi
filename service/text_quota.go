@@ -81,6 +81,17 @@ func isLegacyClaudeDerivedOpenAIUsage(relayInfo *relaycommon.RelayInfo, usage *d
 	return usage.ClaudeCacheCreation5mTokens > 0 || usage.ClaudeCacheCreation1hTokens > 0
 }
 
+func toolCallCount(tools map[string]*relaycommon.BuildInToolInfo, name string) int {
+	if tools == nil {
+		return 0
+	}
+	tool, ok := tools[name]
+	if !ok || tool == nil {
+		return 0
+	}
+	return tool.CallCount
+}
+
 func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, summary *textQuotaSummary) decimal.Decimal {
 	dGroupRatio := decimal.NewFromFloat(summary.GroupRatio)
 	dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
@@ -88,11 +99,65 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 	var surcharge decimal.Decimal
 
 	if relayInfo.ResponsesUsageInfo != nil {
-		if webSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolWebSearchPreview]; exists && webSearchTool.CallCount > 0 {
-			summary.WebSearchCallCount = webSearchTool.CallCount
+		tools := relayInfo.ResponsesUsageInfo.BuiltInTools
+		previewCount := toolCallCount(tools, dto.BuildInToolWebSearchPreview)
+		webCount := toolCallCount(tools, dto.BuildInToolWebSearch)
+		if previewCount > 0 {
+			summary.WebSearchCallCount += previewCount
 			summary.WebSearchPrice = operation_setting.GetToolPriceForModel("web_search_preview", summary.ModelName)
 			surcharge = surcharge.Add(decimal.NewFromFloat(summary.WebSearchPrice).
-				Mul(decimal.NewFromInt(int64(webSearchTool.CallCount))).
+				Mul(decimal.NewFromInt(int64(previewCount))).
+				Div(decimal.NewFromInt(1000)).
+				Mul(dGroupRatio).
+				Mul(dQuotaPerUnit))
+		}
+		if webCount > 0 {
+			summary.WebSearchCallCount += webCount
+			webPrice := operation_setting.GetToolPriceForModel("web_search", summary.ModelName)
+			if summary.WebSearchPrice == 0 {
+				summary.WebSearchPrice = webPrice
+			}
+			surcharge = surcharge.Add(decimal.NewFromFloat(webPrice).
+				Mul(decimal.NewFromInt(int64(webCount))).
+				Div(decimal.NewFromInt(1000)).
+				Mul(dGroupRatio).
+				Mul(dQuotaPerUnit))
+		}
+		googleCount := toolCallCount(tools, dto.BuildInToolGoogleSearch)
+		if googleCount == 0 && ctx.GetBool("gemini_google_search_call") {
+			googleCount = 1
+		}
+		if googleCount > 0 {
+			googlePrice := operation_setting.GetToolPriceForModel("google_search", summary.ModelName)
+			surcharge = surcharge.Add(decimal.NewFromFloat(googlePrice).
+				Mul(decimal.NewFromInt(int64(googleCount))).
+				Div(decimal.NewFromInt(1000)).
+				Mul(dGroupRatio).
+				Mul(dQuotaPerUnit))
+		}
+		imageCount := toolCallCount(tools, dto.BuildInToolImageGeneration)
+		if imageCount > 0 && !ctx.GetBool("image_generation_call") {
+			imagePrice := operation_setting.GetToolPriceForModel("image_generation", summary.ModelName)
+			surcharge = surcharge.Add(decimal.NewFromFloat(imagePrice).
+				Mul(decimal.NewFromInt(int64(imageCount))).
+				Div(decimal.NewFromInt(1000)).
+				Mul(dGroupRatio).
+				Mul(dQuotaPerUnit))
+		}
+		for name, tool := range tools {
+			if tool == nil || tool.CallCount <= 0 {
+				continue
+			}
+			switch name {
+			case dto.BuildInToolWebSearchPreview, dto.BuildInToolWebSearch, dto.BuildInToolFileSearch, dto.BuildInToolGoogleSearch, dto.BuildInToolImageGeneration:
+				continue
+			}
+			customPrice := operation_setting.GetToolPriceForModel(name, summary.ModelName)
+			if customPrice <= 0 {
+				continue
+			}
+			surcharge = surcharge.Add(decimal.NewFromFloat(customPrice).
+				Mul(decimal.NewFromInt(int64(tool.CallCount))).
 				Div(decimal.NewFromInt(1000)).
 				Mul(dGroupRatio).
 				Mul(dQuotaPerUnit))
@@ -101,6 +166,12 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 		summary.WebSearchCallCount = 1
 		summary.WebSearchPrice = operation_setting.GetToolPriceForModel("web_search_preview", summary.ModelName)
 		surcharge = surcharge.Add(decimal.NewFromFloat(summary.WebSearchPrice).
+			Div(decimal.NewFromInt(1000)).
+			Mul(dGroupRatio).
+			Mul(dQuotaPerUnit))
+	} else if ctx.GetBool("gemini_google_search_call") {
+		googlePrice := operation_setting.GetToolPriceForModel("google_search", summary.ModelName)
+		surcharge = surcharge.Add(decimal.NewFromFloat(googlePrice).
 			Div(decimal.NewFromInt(1000)).
 			Mul(dGroupRatio).
 			Mul(dQuotaPerUnit))
@@ -325,7 +396,9 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		noteQuotaClamp(relayInfo, clamp)
 	}
 
-	if summary.TotalTokens == 0 {
+	if summary.TotalTokens == 0 && summary.ToolCallSurchargeQuota.LessThanOrEqual(decimal.Zero) {
+		// 上游没给 usage 时按未交付处理：退预扣，不把预扣当成已消费。
+		// 工具加价仍按已发生的调用计费。
 		summary.Quota = 0
 	} else if !ratio.IsZero() && summary.Quota == 0 {
 		summary.Quota = 1
@@ -345,7 +418,7 @@ func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) 
 }
 
 func PostTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent []string) {
-	if _, err := postTextConsumeQuota(ctx, relayInfo, usage, extraContent, false); err != nil {
+	if _, err := postTextConsumeQuota(ctx, relayInfo, usage, extraContent, true); err != nil {
 		logger.LogError(ctx, fmt.Sprintf("post text consume quota failed: %v", err))
 		RecordConsumeAccountingError(ctx, relayInfo, "post text consume quota", err)
 	}
@@ -404,11 +477,16 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 
 	settleBilling := func() error {
-		if err := SettleBilling(ctx, relayInfo, summary.Quota); err != nil {
-			logger.LogError(ctx, "error settling billing: "+err.Error())
-			return err
+		var lastErr error
+		for attempt := 0; attempt < 3; attempt++ {
+			if err := SettleBilling(ctx, relayInfo, summary.Quota); err != nil {
+				lastErr = err
+				logger.LogError(ctx, "error settling billing: "+err.Error())
+				continue
+			}
+			return nil
 		}
-		return nil
+		return lastErr
 	}
 	settlementErr := settleBilling()
 
@@ -464,12 +542,7 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	logQuota := attachSettlementLogFields(other, relayInfo, summary.Quota, settlementErr)
 	settlementSucceeded := settlementErr == nil
 	if err := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); err != nil {
-		if settlementSucceeded {
-			if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
-				return summary.Quota, fmt.Errorf("post text consume quota usage counter update failed: %w; rollback billing failed: %v", err, rollbackErr)
-			}
-		}
-		return summary.Quota, fmt.Errorf("post text consume quota usage counter update failed: %w", err)
+		return summary.Quota, wrapUsageCounterUpdateError(ctx, relayInfo, logQuota, settlementSucceeded, err, "post text consume quota usage counter update failed")
 	}
 	if summary.ImageTokens != 0 {
 		other["image"] = true
@@ -545,19 +618,7 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
 	}); err != nil {
-		rollbackErrs := []string{}
-		if rollbackErr := RollbackTaskConsumptionUsage(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); rollbackErr != nil {
-			rollbackErrs = append(rollbackErrs, rollbackErr.Error())
-		}
-		if settlementSucceeded {
-			if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, logQuota); rollbackErr != nil {
-				rollbackErrs = append(rollbackErrs, rollbackErr.Error())
-			}
-		}
-		if len(rollbackErrs) > 0 {
-			return summary.Quota, fmt.Errorf("record consume log failed: %w; rollback errors: %s", err, strings.Join(rollbackErrs, "; "))
-		}
-		return summary.Quota, fmt.Errorf("record consume log failed: %w", err)
+		return summary.Quota, wrapRecordConsumeLogError(ctx, relayInfo, relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota, settlementSucceeded, err)
 	}
 	perfmetrics.RecordRelaySampleAsync(relayInfo, true, int64(summary.CompletionTokens))
 	if settlementErr != nil {

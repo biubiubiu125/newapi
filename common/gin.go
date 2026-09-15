@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/pkg/errors"
 
 	"github.com/gin-gonic/gin"
@@ -294,17 +295,73 @@ func GetContextKeyType[T any](c *gin.Context, key constant.ContextKey) (T, bool)
 }
 
 func ApiError(c *gin.Context, err error) {
-	c.JSON(http.StatusOK, gin.H{
-		"success": false,
-		"message": err.Error(),
-	})
+	writeAPIError(c, http.StatusOK, errorMessage(err))
 }
 
 func ApiErrorMsg(c *gin.Context, msg string) {
-	c.JSON(http.StatusOK, gin.H{
+	writeAPIError(c, http.StatusOK, msg)
+}
+
+func ApiErrorWithStatus(c *gin.Context, status int, err error) {
+	writeAPIError(c, status, errorMessage(err))
+}
+
+// PublicDashboardErrorMessage sanitizes a dashboard/console error for JSON.
+func PublicDashboardErrorMessage(c *gin.Context, original string) string {
+	return publicAPIErrorMessage(c, original)
+}
+
+// PublicRequestErrorMessage sanitizes a public token/API error string.
+func PublicRequestErrorMessage(original string) string {
+	sanitized := kitutil.SanitizePublicClientError(original)
+	switch sanitized {
+	case "",
+		kitutil.PublicInternalFailReason,
+		kitutil.PublicAccountingFailReason,
+		kitutil.PublicSettlementFailReason:
+		return "invalid request"
+	default:
+		return sanitized
+	}
+}
+
+func errorMessage(err error) string {
+	if err == nil {
+		return ""
+	}
+	return err.Error()
+}
+
+func writeAPIError(c *gin.Context, status int, original string) {
+	message := publicAPIErrorMessage(c, original)
+	if message != original {
+		SysError("api error: " + original)
+	}
+	c.JSON(status, gin.H{
 		"success": false,
-		"message": msg,
+		"message": message,
 	})
+}
+
+func publicAPIErrorMessage(c *gin.Context, original string) string {
+	sanitized := kitutil.SanitizePublicClientError(original)
+	switch sanitized {
+	case "":
+		return translateAPIError(c, "common.operation_failed")
+	case kitutil.PublicInternalFailReason:
+		return translateAPIError(c, "common.database_error")
+	case kitutil.PublicAccountingFailReason, kitutil.PublicSettlementFailReason:
+		return translateAPIError(c, "common.operation_failed")
+	default:
+		return sanitized
+	}
+}
+
+func translateAPIError(c *gin.Context, key string) string {
+	if TranslateMessage == nil {
+		return key
+	}
+	return TranslateMessage(c, key)
 }
 
 func ApiSuccess(c *gin.Context, data any) {

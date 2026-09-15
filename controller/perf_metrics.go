@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/QuantumNous/new-api/common"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
@@ -22,10 +23,7 @@ func GetPerfMetricsSummary(c *gin.Context) {
 	activeGroups := append(lo.Keys(ratio_setting.GetGroupRatioCopy()), "auto")
 	result, err := perfmetrics.QuerySummaryAll(hours, activeGroups)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiErrorWithStatus(c, http.StatusInternalServerError, err)
 		return
 	}
 
@@ -58,10 +56,7 @@ func GetPerfMetrics(c *gin.Context) {
 		Hours: hours,
 	})
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiErrorWithStatus(c, http.StatusInternalServerError, err)
 		return
 	}
 

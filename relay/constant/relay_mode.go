@@ -94,6 +94,16 @@ func Path2RelayMode(path string) int {
 		relayMode = RelayModeGemini
 	} else if strings.HasPrefix(path, "/mj") {
 		relayMode = Path2RelayModeMidjourney(path)
+	} else if strings.Contains(path, "/suno/") || strings.HasPrefix(path, "/suno/") {
+		if strings.Contains(path, "/fetch/") {
+			relayMode = RelayModeSunoFetchByID
+		} else if strings.HasSuffix(path, "/fetch") {
+			relayMode = RelayModeSunoFetch
+		} else if strings.Contains(path, "/submit/") {
+			relayMode = RelayModeSunoSubmit
+		}
+	} else if strings.HasPrefix(path, "/v1/video/generations/") {
+		relayMode = RelayModeVideoFetchByID
 	}
 	return relayMode
 }

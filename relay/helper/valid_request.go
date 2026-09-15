@@ -130,6 +130,22 @@ func GetAndValidateEmbeddingRequest(c *gin.Context, relayMode int) (*dto.Embeddi
 // overflow the conversion and corrupt billing.
 const maxTokensLimit = math.MaxInt32 / 2
 
+// maxCompletionN bounds chat `n` / Gemini candidateCount. These multiply
+// completion usage after pre-consume, so they must be capped like image n.
+const maxCompletionN = 128
+
+const (
+	maxPublicImageTaskEdge   = 4096
+	maxPublicImageTaskPixels = 4096 * 4096
+)
+
+func exceedsCompletionN(n *int) bool {
+	if n == nil {
+		return false
+	}
+	return *n < 1 || *n > maxCompletionN
+}
+
 func exceedsMaxTokensLimit(values ...*uint) bool {
 	for _, v := range values {
 		if lo.FromPtrOr(v, uint(0)) > maxTokensLimit {
@@ -503,6 +519,9 @@ func validatePublicImageTaskSize(size string) error {
 	if width%16 != 0 || height%16 != 0 {
 		return errors.New("width and height must be multiples of 16")
 	}
+	if width > maxPublicImageTaskEdge || height > maxPublicImageTaskEdge || width*height > maxPublicImageTaskPixels {
+		return errors.New("size exceeds the allowed pixel limit")
+	}
 	ratio := float64(width) / float64(height)
 	if ratio > 3 || ratio < 1.0/3.0 {
 		return errors.New("size ratio must be between 1:3 and 3:1")
@@ -647,6 +666,9 @@ func GetAndValidateTextRequest(c *gin.Context, relayMode int) (*dto.GeneralOpenA
 	if exceedsMaxTokensLimit(textRequest.MaxTokens, textRequest.MaxCompletionTokens) {
 		return nil, errors.New("max_tokens is invalid")
 	}
+	if exceedsCompletionN(textRequest.N) {
+		return nil, errors.New("n is invalid")
+	}
 	if textRequest.Model == "" {
 		return nil, errors.New("model is required")
 	}
@@ -699,6 +721,9 @@ func GetAndValidateGeminiRequest(c *gin.Context) (*dto.GeminiChatRequest, error)
 	}
 	if exceedsMaxTokensLimit(request.GenerationConfig.MaxOutputTokens) {
 		return nil, errors.New("maxOutputTokens is invalid")
+	}
+	if exceedsCompletionN(request.GenerationConfig.CandidateCount) {
+		return nil, errors.New("candidateCount is invalid")
 	}
 
 	//if c.Query("alt") == "sse" {

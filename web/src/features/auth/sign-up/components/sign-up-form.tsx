@@ -64,6 +64,7 @@ import { useStatus } from '@/hooks/use-status'
 import { isAuthBundle } from '@/lib/api'
 import { getServerErrorMessageKey } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
+import { useAuthStore } from '@/stores/auth-store'
 
 export function SignUpForm({
   className,
@@ -87,7 +88,11 @@ export function SignUpForm({
     setTurnstileToken,
     validateTurnstile,
   } = useTurnstile()
-  const { redirectToLogin, handleLoginSuccess } = useAuthRedirect()
+  const { redirectToLogin, handleLoginSuccess, redirectTo2FA } =
+    useAuthRedirect()
+  const setPending2FAFlowToken = useAuthStore(
+    (state) => state.auth.setPending2FAFlowToken
+  )
   const {
     isSending: isSendingCode,
     secondsLeft,
@@ -239,6 +244,15 @@ export function SignUpForm({
     setIsWeChatSubmitting(true)
     try {
       const res = await wechatLoginByCode(wechatCode)
+      if (res?.success && res.data && 'require_2fa' in res.data && res.data.require_2fa) {
+        if (!res.data.flow_token) {
+          throw new Error(t('Login flow expired. Please sign in again.'))
+        }
+        setPending2FAFlowToken(res.data.flow_token)
+        handleWeChatDialogChange(false)
+        redirectTo2FA()
+        return
+      }
       if (res?.success && isAuthBundle(res.data)) {
         await handleLoginSuccess(res.data)
         toast.success(t('Signed in via WeChat'))

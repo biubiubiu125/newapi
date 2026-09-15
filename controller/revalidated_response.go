@@ -13,10 +13,7 @@ import (
 func serveRevalidatedJSON(c *gin.Context, namespace, content string, payload any) {
 	body, err := common.Marshal(payload)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{
-			"success": false,
-			"message": err.Error(),
-		})
+		common.ApiErrorWithStatus(c, http.StatusInternalServerError, err)
 		return
 	}
 

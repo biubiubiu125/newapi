@@ -41,6 +41,8 @@ type operationVideo struct {
 	MimeType           string `json:"mimeType"`
 	BytesBase64Encoded string `json:"bytesBase64Encoded"`
 	Encoding           string `json:"encoding"`
+	URI                string `json:"uri"`
+	GcsURI             string `json:"gcsUri"`
 }
 
 type operationResponse struct {
@@ -53,6 +55,13 @@ type operationResponse struct {
 		BytesBase64Encoded    string           `json:"bytesBase64Encoded"`
 		Encoding              string           `json:"encoding"`
 		Video                 string           `json:"video"`
+		GenerateVideoResponse struct {
+			GeneratedVideos []struct {
+				Video struct {
+					URI string `json:"uri"`
+				} `json:"video"`
+			} `json:"generatedVideos"`
+		} `json:"generateVideoResponse"`
 	} `json:"response"`
 	Error struct {
 		Message string `json:"message"`
@@ -313,8 +322,52 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		ti.Progress = "50%"
 		return ti, nil
 	}
-	ti.Status = model.TaskStatusSuccess
+	if applyVertexRemoteURI(ti, op) || applyVertexInlineVideo(ti, op) {
+		ti.Status = model.TaskStatusSuccess
+		ti.Progress = "100%"
+		return ti, nil
+	}
+	ti.Status = model.TaskStatusFailure
+	ti.Reason = "vertex video content missing"
 	ti.Progress = "100%"
+	return ti, nil
+}
+
+func vertexLooksLikeRemoteURI(value string) bool {
+	v := strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(v, "http://") || strings.HasPrefix(v, "https://") || strings.HasPrefix(v, "gs://")
+}
+
+func applyVertexRemoteURI(ti *relaycommon.TaskInfo, op operationResponse) bool {
+	if ti == nil {
+		return false
+	}
+	if len(op.Response.GenerateVideoResponse.GeneratedVideos) > 0 {
+		if uri := strings.TrimSpace(op.Response.GenerateVideoResponse.GeneratedVideos[0].Video.URI); uri != "" {
+			ti.RemoteUrl = uri
+			return true
+		}
+	}
+	if len(op.Response.Videos) > 0 {
+		v0 := op.Response.Videos[0]
+		for _, candidate := range []string{v0.URI, v0.GcsURI} {
+			if uri := strings.TrimSpace(candidate); uri != "" {
+				ti.RemoteUrl = uri
+				return true
+			}
+		}
+	}
+	if uri := strings.TrimSpace(op.Response.Video); vertexLooksLikeRemoteURI(uri) {
+		ti.RemoteUrl = uri
+		return true
+	}
+	return false
+}
+
+func applyVertexInlineVideo(ti *relaycommon.TaskInfo, op operationResponse) bool {
+	if ti == nil {
+		return false
+	}
 	if len(op.Response.Videos) > 0 {
 		v0 := op.Response.Videos[0]
 		if v0.BytesBase64Encoded != "" {
@@ -331,7 +384,7 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 				}
 			}
 			ti.Url = "data:" + mime + ";base64," + v0.BytesBase64Encoded
-			return ti, nil
+			return true
 		}
 	}
 	if op.Response.BytesBase64Encoded != "" {
@@ -344,9 +397,9 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			mime = "video/" + enc
 		}
 		ti.Url = "data:" + mime + ";base64," + op.Response.BytesBase64Encoded
-		return ti, nil
+		return true
 	}
-	if op.Response.Video != "" { // some variants use `video` as base64
+	if video := strings.TrimSpace(op.Response.Video); video != "" && !vertexLooksLikeRemoteURI(video) {
 		enc := strings.TrimSpace(op.Response.Encoding)
 		if enc == "" {
 			enc = "mp4"
@@ -355,10 +408,10 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		if !strings.Contains(enc, "/") {
 			mime = "video/" + enc
 		}
-		ti.Url = "data:" + mime + ";base64," + op.Response.Video
-		return ti, nil
+		ti.Url = "data:" + mime + ";base64," + video
+		return true
 	}
-	return ti, nil
+	return false
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
@@ -383,6 +436,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	if resultURL := strings.TrimSpace(task.GetResultURL()); resultURL != "" {
 		v.SetMetadata("url", resultURL)
 	}
+	taskcommon.ApplyPublicOpenAIVideoProjection(task, v)
 
 	return common.Marshal(v)
 }

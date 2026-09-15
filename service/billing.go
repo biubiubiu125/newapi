@@ -1,6 +1,7 @@
 package service
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"strings"
@@ -12,10 +13,11 @@ import (
 )
 
 const (
-	BillingSourceWallet         = "wallet"
-	BillingSourceSubscription   = "subscription"
-	contextKeySettlementApplied = "settlement_applied"
-	contextKeySettlementError   = "settlement_error"
+	BillingSourceWallet             = "wallet"
+	BillingSourceSubscription       = "subscription"
+	contextKeySettlementApplied     = "settlement_applied"
+	contextKeySettlementError       = "settlement_error"
+	contextKeyUsageCountersRecorded = "usage_counters_recorded"
 )
 
 func ContextKeySettlementError() string {
@@ -24,6 +26,16 @@ func ContextKeySettlementError() string {
 
 func ContextKeySettlementApplied() string {
 	return contextKeySettlementApplied
+}
+
+func ContextKeyUsageCountersRecorded() string {
+	return contextKeyUsageCountersRecorded
+}
+
+func setUsageCountersRecorded(ctx context.Context, recorded bool) {
+	if ginCtx, ok := ctx.(*gin.Context); ok && ginCtx != nil {
+		ginCtx.Set(contextKeyUsageCountersRecorded, recorded)
+	}
 }
 
 func attachSettlementError(other map[string]interface{}, settleErr error) {

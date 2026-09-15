@@ -138,7 +138,11 @@ func cozeChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *ht
 	}
 
 	if err := scanner.Err(); err != nil {
-		return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		if info != nil && info.HasClientStreamWrite() {
+			common.SysLog("coze stream scanner error after client write: " + err.Error())
+		} else {
+			return nil, types.NewError(err, types.ErrorCodeBadResponseBody)
+		}
 	}
 	helper.Done(c)
 

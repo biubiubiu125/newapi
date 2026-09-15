@@ -832,6 +832,9 @@ func (m *PluginResponsesMachine) finalMetadata(pluginValue any) map[string]strin
 			if !stringOK || len(key) > 64 || len(value) > m.limits.MaxMetadataValueBytes {
 				continue
 			}
+			if pluginResponseMetadataLooksLikeLocator(key, value) {
+				continue
+			}
 			metadata[key] = value
 		}
 	}
@@ -839,6 +842,19 @@ func (m *PluginResponsesMachine) finalMetadata(pluginValue any) map[string]strin
 		metadata[key] = value
 	}
 	return metadata
+}
+
+func pluginResponseMetadataLooksLikeLocator(key, value string) bool {
+	normalized := strings.ToLower(strings.TrimSpace(key))
+	if normalized == "url" || normalized == "uri" || normalized == "href" ||
+		strings.Contains(normalized, "url") || strings.HasSuffix(normalized, "_uri") {
+		return true
+	}
+	trimmed := strings.ToLower(strings.TrimSpace(value))
+	return strings.HasPrefix(trimmed, "http://") ||
+		strings.HasPrefix(trimmed, "https://") ||
+		strings.HasPrefix(trimmed, "data:") ||
+		strings.HasPrefix(trimmed, "gs://")
 }
 
 func pluginResponseMap(response *dto.PluginResponsesResponse) (map[string]any, error) {

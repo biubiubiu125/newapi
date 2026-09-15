@@ -583,7 +583,20 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 			taskResult.Reason = "task failed"
 		}
 	default:
-		taskResult.Status = model.TaskStatusQueued
+		if strings.TrimSpace(aliResp.Code) != "" || strings.TrimSpace(aliResp.Output.Code) != "" {
+			taskResult.Status = model.TaskStatusFailure
+			taskResult.Progress = "100%"
+			if aliResp.Message != "" {
+				taskResult.Reason = aliResp.Message
+			} else if aliResp.Output.Message != "" {
+				taskResult.Reason = aliResp.Output.Message
+			} else {
+				taskResult.Reason = "task failed"
+			}
+		} else {
+			taskResult.Status = model.TaskStatusInProgress
+			taskResult.Progress = "30%"
+		}
 	}
 
 	return &taskResult, nil
@@ -597,14 +610,15 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 
 	openAIResp := dto.NewOpenAIVideo()
 	openAIResp.ID = task.TaskID
-	openAIResp.Status = convertAliStatus(aliResp.Output.TaskStatus)
+	openAIResp.Status = task.Status.ToVideoStatus()
 	openAIResp.Model = task.Properties.OriginModelName
 	openAIResp.SetProgressStr(task.Progress)
 	openAIResp.CreatedAt = task.CreatedAt
 	openAIResp.CompletedAt = task.UpdatedAt
 
-	// 设置视频URL（核心字段）
-	openAIResp.SetMetadata("url", aliResp.Output.VideoURL)
+	if resultURL := strings.TrimSpace(task.GetResultURL()); resultURL != "" {
+		openAIResp.SetMetadata("url", resultURL)
+	}
 
 	// 错误处理
 	if aliResp.Code != "" {
@@ -619,6 +633,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 		}
 	}
 
+	taskcommon.ApplyPublicOpenAIVideoProjection(task, openAIResp)
 	return common.Marshal(openAIResp)
 }
 

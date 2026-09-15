@@ -396,3 +396,16 @@ func TestAdminUpdateSubscriptionPlanRejectsInvalidGrantGroup(t *testing.T) {
 	require.Equal(t, "Original Plan", plan.Title)
 	require.Equal(t, "default", plan.GrantGroups)
 }
+
+func TestConvertSubscriptionPlanAmountUSDToCNY(t *testing.T) {
+	previousRate := operation_setting.USDExchangeRate
+	operation_setting.USDExchangeRate = 7
+	t.Cleanup(func() { operation_setting.USDExchangeRate = previousRate })
+
+	amount, err := convertSubscriptionPlanAmount(&model.SubscriptionPlan{
+		PriceAmount: 9.99,
+		Currency:    "USD",
+	}, "CNY")
+	require.NoError(t, err)
+	require.InDelta(t, 69.93, amount, 0.001)
+}

@@ -114,9 +114,13 @@ func productionPluginRouteHandlers(generation *jsplugin.RoutingGeneration, bindi
 			c.Writer.Status(),
 		)
 	}
+	auth := middleware.TokenAuth()
+	if binding.Route.Type == jsplugin.RouteTypeQuery || binding.Route.Type == jsplugin.RouteTypeDynamic {
+		auth = middleware.TokenAuthAllowExhausted()
+	}
 	return []gin.HandlerFunc{
 		pinRoute,
-		middleware.TokenAuth(),
+		auth,
 		middleware.SystemPerformanceCheck(),
 		middleware.ModelRequestRateLimit(),
 		middleware.PrepareTaskPluginRoute(),
@@ -328,7 +332,8 @@ func markPluginRouteHit(c *gin.Context) {
 func pluginRouteRecovery() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		defer func() {
-			if recover() == nil {
+			recovered := recover()
+			if recovered == nil {
 				return
 			}
 			common.SysError("panic recovered in plugin route")
@@ -343,15 +348,7 @@ func pluginRouteRecovery() gin.HandlerFunc {
 					)
 				}
 			}
-			c.Abort()
-			if !c.Writer.Written() {
-				c.JSON(http.StatusInternalServerError, gin.H{
-					"error": gin.H{
-						"message": "internal plugin route error",
-						"type":    "plugin_route_error",
-					},
-				})
-			}
+			middleware.HandlePanic(c, recovered)
 		}()
 		c.Next()
 	}

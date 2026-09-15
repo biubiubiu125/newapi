@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-contrib/sessions"
@@ -62,13 +63,41 @@ func WeChatAuth(c *gin.Context) {
 		})
 		return
 	}
+	state := strings.TrimSpace(c.Query("state"))
+	wechatStateMatch := model.AuthFlowMatch{
+		Purpose:  model.AuthFlowPurposeOAuth,
+		Provider: "wechat",
+		Intent:   model.AuthFlowIntentLogin,
+	}
+	if state == "" {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": i18n.T(c, i18n.MsgOAuthStateInvalid),
+		})
+		return
+	}
+	session := sessions.Default(c)
+	savedState, _ := session.Get("oauth_login_state").(string)
+	if strings.TrimSpace(savedState) == "" || savedState != state {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": i18n.T(c, i18n.MsgOAuthStateInvalid),
+		})
+		return
+	}
+	if _, err := model.ConsumeAuthFlow(state, wechatStateMatch); err != nil {
+		c.JSON(http.StatusOK, gin.H{
+			"success": false,
+			"message": i18n.T(c, i18n.MsgOAuthStateInvalid),
+		})
+		return
+	}
+	session.Delete("oauth_login_state")
+	_ = session.Save()
 	code := c.Query("code")
 	wechatId, err := getWeChatIdByCode(code)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"message": err.Error(),
-			"success": false,
-		})
+		common.ApiError(c, err)
 		return
 	}
 	user := model.User{
@@ -77,10 +106,7 @@ func WeChatAuth(c *gin.Context) {
 	if model.IsWeChatIdAlreadyTaken(wechatId) {
 		err := user.FillUserByWeChatId()
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
+			common.ApiError(c, err)
 			return
 		}
 		if user.Id == 0 {
@@ -117,10 +143,7 @@ func WeChatAuth(c *gin.Context) {
 					common.ApiErrorI18n(c, i18n.MsgUserExists)
 					return
 				}
-				c.JSON(http.StatusOK, gin.H{
-					"success": false,
-					"message": err.Error(),
-				})
+				common.ApiError(c, err)
 				return
 			}
 			user.FinalizeOAuthUserCreation(0)
@@ -140,7 +163,7 @@ func WeChatAuth(c *gin.Context) {
 		})
 		return
 	}
-	setupLogin(&user, c)
+	setupLoginOrRequire2FA(&user, c)
 }
 
 type wechatBindRequest struct {
@@ -155,6 +178,10 @@ func WeChatBind(c *gin.Context) {
 		})
 		return
 	}
+	if _, ok := middleware.GetSessionAuthIdentity(c); !ok {
+		common.ApiError(c, errors.New("当前认证方式不支持绑定微信"))
+		return
+	}
 	var req wechatBindRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
 		c.JSON(http.StatusOK, gin.H{
@@ -166,10 +193,7 @@ func WeChatBind(c *gin.Context) {
 	code := req.Code
 	wechatId, err := getWeChatIdByCode(code)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"message": err.Error(),
-			"success": false,
-		})
+		common.ApiError(c, err)
 		return
 	}
 	if model.IsWeChatIdAlreadyTaken(wechatId) {

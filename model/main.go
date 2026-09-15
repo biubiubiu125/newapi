@@ -59,54 +59,15 @@ var DB *gorm.DB
 
 var LOG_DB *gorm.DB
 
-func createRootAccountIfNeed() error {
-	var user User
-	//if user.Status != common.UserStatusEnabled {
-	if err := DB.First(&user).Error; err != nil {
-		common.SysLog("no user exists, create the initial root account; rotate its initial credential after login")
-		hashedPassword, err := common.Password2Hash("123456")
-		if err != nil {
-			return err
-		}
-		rootUser := User{
-			Username:    "root",
-			Password:    hashedPassword,
-			Role:        common.RoleRootUser,
-			Status:      common.UserStatusEnabled,
-			DisplayName: "Root User",
-			AccessToken: nil,
-			Quota:       100000000,
-		}
-		DB.Create(&rootUser)
-	}
-	return nil
-}
-
 func CheckSetup() {
 	setup := GetSetup()
 	if setup == nil {
-		// No setup record exists, check if we have a root user
-		if RootUserExists() {
-			common.SysLog("system is not initialized, but root user exists")
-			// Create setup record
-			newSetup := Setup{
-				Version:       common.Version,
-				InitializedAt: time.Now().Unix(),
-			}
-			err := DB.Create(&newSetup).Error
-			if err != nil {
-				common.SysLog("failed to create setup record: " + err.Error())
-			}
-			constant.Setup = true
-		} else {
-			common.SysLog("system is not initialized and no root user exists")
-			constant.Setup = false
-		}
-	} else {
-		// Setup record exists, system is initialized
-		common.SysLog("system is already initialized at: " + time.Unix(setup.InitializedAt, 0).String())
-		constant.Setup = true
+		common.SysLog("system is not initialized")
+		constant.Setup = false
+		return
 	}
+	common.SysLog("system is already initialized at: " + time.Unix(setup.InitializedAt, 0).String())
+	constant.Setup = true
 }
 
 func isClickHouseDSN(dsn string) bool {
@@ -445,6 +406,11 @@ func migrateLOGDB() error {
 	}
 	if err := LOG_DB.AutoMigrate(&Log{}); err != nil {
 		return err
+	}
+	if LOG_DB != DB {
+		if err := MigrateQuotaSchema(LOG_DB); err != nil {
+			return err
+		}
 	}
 	if err := migrateLogUsernames(); err != nil {
 		return err

@@ -141,6 +141,61 @@ func TestOaiResponsesToChatStreamHandlerConvertsClaudeSSETerminalsAndUsage(t *te
 	)
 }
 
+type failAfterResponseWriter struct {
+	*httptest.ResponseRecorder
+	writes int
+}
+
+func (w *failAfterResponseWriter) Write(b []byte) (int, error) {
+	w.writes++
+	if w.writes >= 3 {
+		return 0, io.ErrClosedPipe
+	}
+	return w.ResponseRecorder.Write(b)
+}
+
+func TestOaiResponsesToChatStreamHandlerKeepsUsageAfterClientDisconnect(t *testing.T) {
+	oldMode := gin.Mode()
+	gin.SetMode(gin.TestMode)
+	t.Cleanup(func() { gin.SetMode(oldMode) })
+
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() { constant.StreamingTimeout = oldTimeout })
+
+	body := strings.Join([]string{
+		`data: {"type":"response.created","response":{"id":"resp_1","model":"gpt-test","created_at":1710000000}}`,
+		`data: {"type":"response.output_text.delta","delta":"hello"}`,
+		`data: {"type":"response.completed","response":{"status":"completed","usage":{"input_tokens":2,"output_tokens":3,"total_tokens":5}}}`,
+		`data: [DONE]`,
+		``,
+	}, "\n")
+
+	recorder := httptest.NewRecorder()
+	writer := &failAfterResponseWriter{ResponseRecorder: recorder}
+	c, _ := gin.CreateTestContext(writer)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	c.Set(common.RequestIdKey, "responses-test")
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(body)),
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+	}
+	info := &relaycommon.RelayInfo{
+		ChannelMeta:        &relaycommon.ChannelMeta{UpstreamModelName: "gpt-test"},
+		IsStream:           true,
+		RelayFormat:        types.RelayFormatOpenAI,
+		ShouldIncludeUsage: true,
+		DisablePing:        true,
+	}
+
+	usage, err := OaiResponsesToChatStreamHandler(c, info, resp)
+	require.Nil(t, err)
+	require.NotNil(t, usage)
+	require.True(t, info.HasClientStreamWrite() || usage.TotalTokens == 5)
+	require.Equal(t, 5, usage.TotalTokens)
+}
+
 func TestOaiResponsesToChatBufferedStreamHandlerReturnsJSONFromSSE(t *testing.T) {
 	oldMode := gin.Mode()
 	gin.SetMode(gin.TestMode)

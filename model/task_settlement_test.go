@@ -191,3 +191,126 @@ func TestBeginTaskSettlementApplicationResumesAtomicApplyingRecord(t *testing.T)
 	require.True(t, shouldApply)
 	require.Equal(t, TaskSettlementOperationImageAtomic, record.Operation)
 }
+
+func TestResetTaskSettlementApplicationFromReview(t *testing.T) {
+	prepareTaskSettlementRecordTest(t)
+
+	task := &Task{
+		TaskID:           "task_settlement_reset_review",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           TaskStatusSuccess,
+		Progress:         "100%",
+		SettlementStatus: TaskSettlementStatusReview,
+	}
+	insertTask(t, task)
+	now := time.Now().Unix()
+	require.NoError(t, DB.Create(&TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        TaskSettlementRecordStatusReview,
+		Error:         "token quota is not enough",
+		CreatedAt:     now,
+		UpdatedAt:     now,
+	}).Error)
+
+	require.NoError(t, ResetTaskSettlementApplicationFromReview(task.ID))
+
+	reloaded, exists, err := GetTaskSettlementRecord(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, TaskSettlementRecordStatusPrepared, reloaded.Status)
+	require.Empty(t, reloaded.Error)
+
+	applied := 100
+	require.NoError(t, DB.Model(&TaskSettlementRecord{}).Where("task_primary_id = ?", task.ID).Updates(map[string]any{
+		"status":        TaskSettlementRecordStatusReview,
+		"applied_quota": applied,
+	}).Error)
+	err = ResetTaskSettlementApplicationFromReview(task.ID)
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "applied quota evidence")
+}
+
+func TestBeginTaskSettlementApplicationTimesOutApplyingWithoutEvidenceToReview(t *testing.T) {
+	prepareTaskSettlementRecordTest(t)
+
+	task := &Task{
+		TaskID:           "task_settlement_applying_timeout",
+		Platform:         constant.TaskPlatformSuno,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           TaskStatusSuccess,
+		Progress:         "100%",
+		SettlementStatus: TaskSettlementStatusPending,
+	}
+	insertTask(t, task)
+	stale := time.Now().Unix() - taskSettlementApplyingReviewSeconds - 60
+	require.NoError(t, DB.Create(&TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        TaskSettlementRecordStatusApplying,
+		CreatedAt:     stale,
+		UpdatedAt:     stale,
+	}).Error)
+
+	record, shouldApply, err := BeginTaskSettlementApplication(task)
+	require.NoError(t, err)
+	require.False(t, shouldApply)
+	require.NotNil(t, record)
+	require.Equal(t, TaskSettlementRecordStatusReview, record.Status)
+	require.Nil(t, record.AppliedQuota)
+
+	second, shouldApplyAgain, err := BeginTaskSettlementApplication(task)
+	require.NoError(t, err)
+	require.False(t, shouldApplyAgain)
+	require.NotNil(t, second)
+	require.Equal(t, TaskSettlementRecordStatusReview, second.Status)
+	require.NotEqual(t, TaskSettlementRecordStatusPrepared, second.Status)
+}
+
+func TestBeginTaskSettlementApplicationDoesNotResetTimedOutApplyingWithEvidence(t *testing.T) {
+	prepareTaskSettlementRecordTest(t)
+
+	task := &Task{
+		TaskID:           "task_settlement_applying_timeout_evidence",
+		Platform:         constant.TaskPlatformSuno,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Status:           TaskStatusSuccess,
+		Progress:         "100%",
+		SettlementStatus: TaskSettlementStatusPending,
+	}
+	insertTask(t, task)
+	stale := time.Now().Unix() - taskSettlementApplyingReviewSeconds - 60
+	applied := 3000
+	preConsumed := 2000
+	delta := 1000
+	logType := LogTypeConsume
+	require.NoError(t, DB.Create(&TaskSettlementRecord{
+		TaskPrimaryID:    task.ID,
+		PublicTaskID:     task.TaskID,
+		Status:           TaskSettlementRecordStatusApplying,
+		Operation:        "recalculation",
+		AppliedQuota:     &applied,
+		PreConsumedQuota: &preConsumed,
+		QuotaDelta:       &delta,
+		LogType:          &logType,
+		CreatedAt:        stale,
+		UpdatedAt:        stale,
+	}).Error)
+
+	record, shouldApply, err := BeginTaskSettlementApplication(task)
+	require.NoError(t, err)
+	require.False(t, shouldApply)
+	require.NotNil(t, record)
+	require.NotEqual(t, TaskSettlementRecordStatusPrepared, record.Status)
+	require.NotNil(t, record.AppliedQuota)
+	require.Equal(t, 3000, *record.AppliedQuota)
+	require.NotNil(t, record.PreConsumedQuota)
+	require.Equal(t, 2000, *record.PreConsumedQuota)
+}

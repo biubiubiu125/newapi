@@ -24,6 +24,8 @@ var walletQuotaSchemaColumns = []quotaSchemaColumn{
 	{table: "tokens", column: "used_quota", model: &Token{}},
 	{table: "redemptions", column: "quota", model: &Redemption{}},
 	{table: "top_ups", column: "credit_quota_snapshot", model: &TopUp{}},
+	{table: "tasks", column: "quota", model: &Task{}},
+	{table: "logs", column: "quota", model: &Log{}},
 }
 
 // ValidateQuotaSchema checks the columns that can carry wallet or credited
@@ -73,7 +75,7 @@ func MigrateQuotaSchema(db *gorm.DB) error {
 	case "sqlite":
 		// SQLite INTEGER already uses signed 64-bit storage. AutoMigrate keeps
 		// the model contract explicit for newly created tables.
-		if err := db.AutoMigrate(&User{}, &Token{}, &Redemption{}, &TopUp{}); err != nil {
+		if err := db.AutoMigrate(&User{}, &Token{}, &Redemption{}, &TopUp{}, &Task{}, &Log{}); err != nil {
 			return fmt.Errorf("migrate SQLite quota schema: %w", err)
 		}
 	case "postgres":
@@ -214,11 +216,16 @@ func quotaColumnNeedsWidening(column gorm.ColumnType, dialect string) bool {
 
 func quotaDatabaseTypeIsWideEnough(databaseType, dialect string) bool {
 	databaseType = strings.ToUpper(strings.TrimSpace(databaseType))
-	if dialect == "sqlite" {
+	switch dialect {
+	case "sqlite":
 		return databaseType == "" || strings.Contains(databaseType, "INT")
+	case "postgres":
+		// PostgreSQL stores BIGINT as INT8; GORM may report either name.
+		return databaseType == "BIGINT" || databaseType == "INT8"
+	default:
+		return strings.HasPrefix(databaseType, "BIGINT") &&
+			!strings.Contains(databaseType, "UNSIGNED")
 	}
-	return strings.HasPrefix(databaseType, "BIGINT") &&
-		!strings.Contains(databaseType, "UNSIGNED")
 }
 
 func quotePostgresIdentifier(identifier string) string {

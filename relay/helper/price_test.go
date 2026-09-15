@@ -256,10 +256,11 @@ func TestModelPriceHelperRequestBillingRatiosOnlyApplyToFixedPrice(t *testing.T)
 			wantImageCount: true,
 		},
 		{
-			name:         "ratio price ignores request billing ratios",
-			model:        "ratio-image-price",
-			wantQuota:    15000,
-			wantUsePrice: false,
+			name:           "ratio price pre-consumes image count without storing n as a settlement ratio",
+			model:          "ratio-image-price",
+			wantQuota:      45000,
+			wantUsePrice:   false,
+			wantImageCount: false,
 		},
 	}
 

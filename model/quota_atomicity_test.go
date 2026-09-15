@@ -98,8 +98,33 @@ func TestDecreaseTokenQuotaReturnsErrorAndKeepsBalanceWhenInsufficient(t *testin
 	err := DecreaseTokenQuota(9401, "quota-token", 20)
 
 	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTokenQuotaInsufficient)
 	var token Token
 	require.NoError(t, DB.Select("remain_quota", "used_quota").First(&token, 9401).Error)
+	require.EqualValues(t, 10, token.RemainQuota)
+	require.EqualValues(t, 0, token.UsedQuota)
+}
+
+func TestDecreaseTokenQuotaRejectsInsufficientWhenBatchEnabled(t *testing.T) {
+	truncateTables(t)
+	resetBatchUpdateTestState(t)
+	common.BatchUpdateEnabled = true
+	require.NoError(t, DB.Create(&Token{
+		Id:          9411,
+		UserId:      9312,
+		Key:         "batch-quota-token",
+		Name:        "batch-quota-token",
+		RemainQuota: 10,
+		UsedQuota:   0,
+		Status:      common.TokenStatusEnabled,
+	}).Error)
+
+	err := DecreaseTokenQuota(9411, "batch-quota-token", 20)
+
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrTokenQuotaInsufficient)
+	var token Token
+	require.NoError(t, DB.Select("remain_quota", "used_quota").First(&token, 9411).Error)
 	require.EqualValues(t, 10, token.RemainQuota)
 	require.EqualValues(t, 0, token.UsedQuota)
 }
@@ -127,7 +152,7 @@ func TestIncreaseUserQuotaUpdatesDatabaseImmediatelyWhenBatchEnabled(t *testing.
 	require.EqualValues(t, 15, user.Quota)
 }
 
-func TestIncreaseTokenQuotaUpdatesDatabaseAfterBatchFlush(t *testing.T) {
+func TestIncreaseTokenQuotaUpdatesDatabaseImmediatelyWhenBatchEnabled(t *testing.T) {
 	truncateTables(t)
 	resetBatchUpdateTestState(t)
 	common.BatchUpdateEnabled = true
@@ -145,12 +170,6 @@ func TestIncreaseTokenQuotaUpdatesDatabaseAfterBatchFlush(t *testing.T) {
 
 	require.NoError(t, err)
 	var token Token
-	require.NoError(t, DB.Select("remain_quota", "used_quota").First(&token, 9402).Error)
-	require.EqualValues(t, 10, token.RemainQuota)
-	require.EqualValues(t, 20, token.UsedQuota)
-
-	batchUpdate()
-
 	require.NoError(t, DB.Select("remain_quota", "used_quota").First(&token, 9402).Error)
 	require.EqualValues(t, 15, token.RemainQuota)
 	require.EqualValues(t, 15, token.UsedQuota)
@@ -463,4 +482,58 @@ func TestUpdateTaskConsumptionUsageWithTokenSyncRollsBackWhenChannelMissing(t *t
 	require.Equal(t, 2, user.RequestCount)
 	var usage TokenUsageDaily
 	require.Error(t, DB.Where("token_id = ?", 9516).First(&usage).Error)
+}
+
+func TestUpdateTaskConsumptionUsageRollbackWithTokenSyncAllowsMissingChannel(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Create(&User{
+		Id:           9318,
+		Username:     "task-token-rollback-missing-channel-owner",
+		Password:     "password123",
+		UsedQuota:    50,
+		RequestCount: 2,
+		Status:       common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, DB.Create(&Token{
+		Id:          9518,
+		UserId:      9318,
+		Key:         "task-token-rollback-missing-channel-key",
+		Name:        "task-token-rollback-missing-channel-key",
+		RemainQuota: 100,
+		UsedQuota:   5,
+		Status:      common.TokenStatusEnabled,
+	}).Error)
+
+	err := UpdateTaskConsumptionUsageRollbackWithTokenSync(9318, 9418, 9518, 30)
+
+	require.NoError(t, err)
+	var user User
+	require.NoError(t, DB.Select("used_quota", "request_count").First(&user, 9318).Error)
+	require.EqualValues(t, 20, user.UsedQuota)
+	require.Equal(t, 1, user.RequestCount)
+	var usage TokenUsageDaily
+	require.NoError(t, DB.Where("token_id = ?", 9518).First(&usage).Error)
+	require.EqualValues(t, -30, usage.Quota)
+	require.Equal(t, -1, usage.RequestCount)
+	require.Equal(t, 9318, usage.UserId)
+}
+
+func TestUpdateUserUsedQuotaAndRequestCountFloorsAtZero(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Create(&User{
+		Id:           9320,
+		Username:     "usage-floor-owner",
+		Password:     "password123",
+		UsedQuota:    0,
+		RequestCount: 0,
+		Status:       common.UserStatusEnabled,
+	}).Error)
+
+	err := updateUserUsedQuotaAndRequestCountWithDB(DB, 9320, -150, -1)
+
+	require.NoError(t, err)
+	var user User
+	require.NoError(t, DB.Select("used_quota", "request_count").First(&user, 9320).Error)
+	require.EqualValues(t, 0, user.UsedQuota)
+	require.Equal(t, 0, user.RequestCount)
 }

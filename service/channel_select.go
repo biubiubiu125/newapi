@@ -2,6 +2,7 @@ package service
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
@@ -13,6 +14,21 @@ import (
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/gin-gonic/gin"
 )
+
+func tokenAllowsCrossGroupRetry(c *gin.Context) bool {
+	if c == nil {
+		return true
+	}
+	value, exists := common.GetContextKey(c, constant.ContextKeyTokenCrossGroupRetry)
+	if !exists {
+		return true
+	}
+	enabled, ok := value.(bool)
+	if !ok {
+		return true
+	}
+	return enabled
+}
 
 func GetChannelConstraints(c *gin.Context) *dto.ChannelConstraints {
 	if c == nil {
@@ -309,6 +325,9 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 				return nil, autoGroup, err
 			}
 			if channel == nil {
+				if i+1 < len(autoGroups) && !tokenAllowsCrossGroupRetry(param.Ctx) {
+					return nil, autoGroup, fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在", autoGroup, param.ModelName)
+				}
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组
 				logger.LogDebug(param.Ctx, "No available channel in group %s for model %s at priorityRetry %d, trying next group", autoGroup, param.ModelName, priorityRetry)

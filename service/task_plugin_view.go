@@ -18,19 +18,15 @@ func BuildTaskPluginView(task *model.Task) (dto.TaskView, error) {
 	if createdAt == 0 {
 		createdAt = task.SubmitTime
 	}
-	failReason := task.FailReason
-	if task.Status == model.TaskStatusSuccess && taskSuccessReasonIsLegacyResultURL(failReason) {
-		failReason = ""
-	}
 	view := dto.TaskView{
 		TaskID:     task.TaskID,
 		Platform:   string(task.Platform),
-		Status:     string(task.Status),
-		Progress:   task.Progress,
-		FailReason: failReason,
+		Status:     string(task.PublicStatus()),
+		Progress:   task.PublicProgress(),
+		FailReason: task.PublicFailReason(),
 		CreatedAt:  createdAt,
 		UpdatedAt:  task.UpdatedAt,
-		FinishedAt: task.FinishTime,
+		FinishedAt: task.PublicFinishTime(),
 	}
 	if len(task.Data) > 0 {
 		if err := common.Unmarshal(task.Data, &view.Data); err != nil {

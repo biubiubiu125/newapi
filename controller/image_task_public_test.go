@@ -79,6 +79,52 @@ func TestPublicImageTaskIdempotencyCandidateCachesMultipartFormUntilRequestClean
 	require.Equal(t, before, countMultipartTempFiles(t))
 }
 
+func TestPublicImageTaskResponseFinalizesRetryableSettlementReview(t *testing.T) {
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_public_retryable_review",
+		Platform:         constant.TaskPlatformImage,
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		Progress:         "100%",
+		FinishTime:       now,
+		NextPollAt:       now + 60,
+		Data:             []byte(`{"ok":true}`),
+	}
+	task.PrivateData.ResultURL = "https://example.com/image.png"
+
+	response := publicImageTaskResponse(task, now)
+
+	require.Equal(t, "finalizing", response.Status)
+	require.Equal(t, "99%", response.Progress)
+	require.Zero(t, response.CompletedAt)
+	require.Nil(t, response.Error)
+	require.False(t, response.ResultAvailable)
+	require.Empty(t, response.ResultURL)
+}
+
+func TestPublicImageTaskResponseFailsUnrecoverableSettlementReview(t *testing.T) {
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_public_unrecoverable_review",
+		Platform:         constant.TaskPlatformImage,
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		Progress:         "100%",
+		FinishTime:       now,
+		ResultCleanedAt:  now,
+		FailReason:       "image task result expired before settlement completed",
+	}
+
+	response := publicImageTaskResponse(task, now)
+
+	require.Equal(t, "failed", response.Status)
+	require.NotNil(t, response.Error)
+	require.Equal(t, "settlement_review", response.Error.Code)
+	require.False(t, response.ResultAvailable)
+	require.Empty(t, response.ResultURL)
+}
+
 func TestPublicImageTaskResponseWaitsForSettlement(t *testing.T) {
 	now := time.Now().Unix()
 	task := &model.Task{

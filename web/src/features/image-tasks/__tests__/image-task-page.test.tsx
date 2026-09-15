@@ -204,6 +204,7 @@ describe('image task page', () => {
       'sk-browser-visible-key',
       'task_completed'
     )
+    expect(acknowledgeImageTaskResultMock).not.toHaveBeenCalled()
   })
 
   it('removes tasks reported as not found from local history', async () => {

@@ -137,28 +137,36 @@ export async function resetPlanSubscriptions(
 export async function paySubscriptionStripe(
   data: SubscriptionPayRequest
 ): Promise<SubscriptionPayResponse> {
-  const res = await api.post('/api/subscription/stripe/pay', data)
+  const res = await api.post('/api/subscription/stripe/pay', data, {
+    skipBusinessError: true,
+  })
   return res.data
 }
 
 export async function paySubscriptionCreem(
   data: SubscriptionPayRequest
 ): Promise<SubscriptionPayResponse> {
-  const res = await api.post('/api/subscription/creem/pay', data)
+  const res = await api.post('/api/subscription/creem/pay', data, {
+    skipBusinessError: true,
+  })
   return res.data
 }
 
 export async function paySubscriptionWaffoPancake(
   data: SubscriptionPayRequest
 ): Promise<SubscriptionPayResponse> {
-  const res = await api.post('/api/subscription/waffo-pancake/pay', data)
+  const res = await api.post('/api/subscription/waffo-pancake/pay', data, {
+    skipBusinessError: true,
+  })
   return res.data
 }
 
 export async function paySubscriptionBalance(
   data: SubscriptionPayRequest
 ): Promise<SubscriptionPayResponse> {
-  const res = await api.post('/api/subscription/balance/pay', data)
+  const res = await api.post('/api/subscription/balance/pay', data, {
+    skipBusinessError: true,
+  })
   return res.data
 }
 
@@ -166,7 +174,8 @@ export async function getSubscriptionPaymentStatus(
   tradeNo: string
 ): Promise<ApiResponse<{ trade_no: string; status: string }>> {
   const res = await api.get(
-    `/api/subscription/orders/${encodeURIComponent(tradeNo)}/status`
+    `/api/subscription/orders/${encodeURIComponent(tradeNo)}/status`,
+    { skipBusinessError: true }
   )
   return res.data
 }
@@ -209,7 +218,9 @@ export async function listWaffoPancakeSubscriptionProductOptions(): Promise<
 export async function paySubscriptionEpay(
   data: SubscriptionPayRequest & { payment_method: string }
 ): Promise<SubscriptionPayResponse & { url?: string }> {
-  const res = await api.post('/api/subscription/epay/pay', data)
+  const res = await api.post('/api/subscription/epay/pay', data, {
+    skipBusinessError: true,
+  })
   return {
     ...res.data,
     url: res.data.url || (res as unknown as { url?: string }).url,
@@ -219,7 +230,9 @@ export async function paySubscriptionEpay(
 export async function paySubscriptionBEpusdt(
   data: SubscriptionPayRequest & { payment_method: string }
 ): Promise<SubscriptionPayResponse> {
-  const res = await api.post('/api/subscription/bepusdt/pay', data)
+  const res = await api.post('/api/subscription/bepusdt/pay', data, {
+    skipBusinessError: true,
+  })
   return res.data
 }
 

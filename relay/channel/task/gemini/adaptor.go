@@ -241,29 +241,127 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 		return ti, nil
 	}
 
-	ti.Status = model.TaskStatusSuccess
-	ti.Progress = "100%"
-
 	ti.TaskID = taskcommon.EncodeLocalTaskID(op.Name)
 
 	if len(op.Response.GenerateVideoResponse.GeneratedVideos) > 0 {
-		if uri := op.Response.GenerateVideoResponse.GeneratedVideos[0].Video.URI; uri != "" {
+		if uri := strings.TrimSpace(op.Response.GenerateVideoResponse.GeneratedVideos[0].Video.URI); uri != "" {
+			if geminiURINotRetrievable(uri) {
+				failGeminiGCSURI(ti)
+				return ti, nil
+			}
+			ti.Status = model.TaskStatusSuccess
+			ti.Progress = "100%"
 			ti.RemoteUrl = uri
+			return ti, nil
 		}
 	}
+	if applyGeminiInlineVideo(ti, op) {
+		if ti.Status == "" {
+			ti.Status = model.TaskStatusSuccess
+		}
+		if ti.Progress == "" {
+			ti.Progress = "100%"
+		}
+		return ti, nil
+	}
 
+	ti.Status = model.TaskStatusFailure
+	ti.Reason = "gemini video uri missing"
+	ti.Progress = "100%"
 	return ti, nil
 }
 
-func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
-	upstreamTaskID := task.GetUpstreamTaskID()
-	upstreamName, err := taskcommon.DecodeLocalTaskID(upstreamTaskID)
-	if err != nil {
-		upstreamName = ""
+const geminiGCSURINotRetrievableReason = "gemini gcs uri not retrievable"
+
+func geminiURINotRetrievable(uri string) bool {
+	return taskcommon.IsGCSURI(uri) || taskcommon.IsUnsignedGCSHTTPS(uri)
+}
+
+func failGeminiGCSURI(ti *relaycommon.TaskInfo) {
+	if ti == nil {
+		return
 	}
-	modelName := extractModelFromOperationName(upstreamName)
-	if strings.TrimSpace(modelName) == "" {
-		modelName = "veo-3.0-generate-001"
+	ti.Status = model.TaskStatusFailure
+	ti.Reason = geminiGCSURINotRetrievableReason
+	ti.Progress = "100%"
+	ti.Url = ""
+	ti.RemoteUrl = ""
+}
+
+func applyGeminiInlineVideo(ti *relaycommon.TaskInfo, op operationResponse) bool {
+	if ti == nil {
+		return false
+	}
+	if len(op.Response.Videos) > 0 {
+		v0 := op.Response.Videos[0]
+		if v0.BytesBase64Encoded != "" {
+			mime := strings.TrimSpace(v0.MimeType)
+			if mime == "" {
+				enc := strings.TrimSpace(v0.Encoding)
+				if enc == "" {
+					enc = "mp4"
+				}
+				if strings.Contains(enc, "/") {
+					mime = enc
+				} else {
+					mime = "video/" + enc
+				}
+			}
+			ti.Url = "data:" + mime + ";base64," + v0.BytesBase64Encoded
+			return true
+		}
+	}
+	if op.Response.BytesBase64Encoded != "" {
+		enc := strings.TrimSpace(op.Response.Encoding)
+		if enc == "" {
+			enc = "mp4"
+		}
+		mime := enc
+		if !strings.Contains(enc, "/") {
+			mime = "video/" + enc
+		}
+		ti.Url = "data:" + mime + ";base64," + op.Response.BytesBase64Encoded
+		return true
+	}
+	if video := strings.TrimSpace(op.Response.Video); video != "" {
+		if taskcommon.IsDataURL(video) {
+			ti.Url = video
+			return true
+		}
+		if geminiURINotRetrievable(video) {
+			failGeminiGCSURI(ti)
+			return true
+		}
+		if taskcommon.IsRemoteMediaLocator(video) {
+			ti.RemoteUrl = video
+			return true
+		}
+		enc := strings.TrimSpace(op.Response.Encoding)
+		if enc == "" {
+			enc = "mp4"
+		}
+		mime := enc
+		if !strings.Contains(enc, "/") {
+			mime = "video/" + enc
+		}
+		ti.Url = "data:" + mime + ";base64," + video
+		return true
+	}
+	return false
+}
+
+func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
+	modelName := strings.TrimSpace(task.Properties.OriginModelName)
+	if modelName == "" {
+		upstreamTaskID := task.GetUpstreamTaskID()
+		upstreamName, err := taskcommon.DecodeLocalTaskID(upstreamTaskID)
+		if err != nil {
+			upstreamName = ""
+		}
+		modelName = extractModelFromOperationName(upstreamName)
+		if strings.TrimSpace(modelName) == "" {
+			modelName = "veo-3.0-generate-001"
+		}
 	}
 
 	video := dto.NewOpenAIVideo()
@@ -280,6 +378,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
 	if resultURL := strings.TrimSpace(task.GetResultURL()); resultURL != "" {
 		video.SetMetadata("url", resultURL)
 	}
+	taskcommon.ApplyPublicOpenAIVideoProjection(task, video)
 
 	return common.Marshal(video)
 }

@@ -19,7 +19,7 @@ func SetTaskRouter(router *gin.Engine) {
 	}
 
 	taskReadRouter := router.Group("/v1/tasks")
-	taskReadRouter.Use(middleware.RouteTag("relay"), middleware.TokenAuth())
+	taskReadRouter.Use(middleware.RouteTag("relay"), middleware.TokenAuthAllowExhausted())
 	{
 		taskReadRouter.GET("/:key", controller.GetTask)
 		taskReadRouter.GET("/:key/artifacts", controller.GetTaskArtifacts)

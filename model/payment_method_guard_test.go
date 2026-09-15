@@ -1,6 +1,7 @@
 package model
 
 import (
+	"errors"
 	"sync"
 	"testing"
 	"time"
@@ -8,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func insertUserForPaymentGuardTest(t *testing.T, id int, quota int64) *User {
@@ -811,6 +813,36 @@ func TestSubscriptionOrderSnapshotVersion1KeepsCurrentPlanControlFields(t *testi
 	assert.False(t, *snapshot.AllowWalletOverflow)
 }
 
+func TestRechargeStripeWithValidationCreditsExpiredOrder(t *testing.T) {
+	truncateTables(t)
+	insertUserForPaymentGuardTest(t, 801, 0)
+	topUp := &TopUp{
+		UserId:              801,
+		Amount:              2,
+		Money:               2,
+		PaidAmount:          2,
+		PaidCurrency:        "USD",
+		TradeNo:             "stripe-expired-credit",
+		PaymentMethod:       PaymentMethodStripe,
+		PaymentProvider:     PaymentProviderStripe,
+		Status:              common.TopUpStatusExpired,
+		CreateTime:          time.Now().Unix() - 48*3600,
+		CreditQuotaSnapshot: 1000,
+	}
+	require.NoError(t, topUp.Insert())
+
+	err := RechargeStripeWithValidation("stripe-expired-credit", "cus_test", "{}", PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderStripe,
+		ActualPaymentMethod:     PaymentMethodStripe,
+		PaidAmount:              2,
+		PaidCurrency:            "USD",
+		RequirePaymentFacts:     true,
+	})
+	require.NoError(t, err)
+	require.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "stripe-expired-credit"))
+	require.EqualValues(t, 1000, getUserQuotaForPaymentGuardTest(t, 801))
+}
+
 func TestSubscriptionOrderSnapshotVersion2FreezesPlanControlFields(t *testing.T) {
 	falseValue := false
 	trueValue := true
@@ -889,6 +921,130 @@ func TestFailSubscriptionOrderMarksPendingOrderFailed(t *testing.T) {
 	require.NotNil(t, order)
 	assert.Equal(t, common.TopUpStatusFailed, order.Status)
 	assert.Greater(t, order.CompleteTime, int64(0))
+}
+
+func TestSamePaymentAmountMatchesGatewayCurrencyScale(t *testing.T) {
+	require.True(t, samePaymentAmountWithCurrency(23.652, 23.65, "CNY"))
+	require.False(t, samePaymentAmountWithCurrency(23.652, 23.64, "CNY"))
+	require.True(t, paymentAmountMatchesWithCurrency(23.652, 23.65, "CNY", false))
+}
+
+func TestRechargeEpayWithValidationCreditsExpiredOrderAndRoundedAmount(t *testing.T) {
+	truncateTables(t)
+	common.QuotaPerUnit = 500000
+	insertUserForPaymentGuardTest(t, 811, 0)
+	topUp := &TopUp{
+		UserId:          811,
+		Amount:          2,
+		Money:           23.652,
+		PaidAmount:      23.652,
+		PaidCurrency:    "CNY",
+		TradeNo:         "epay-expired-rounded",
+		PaymentMethod:   PaymentProviderEpay,
+		PaymentProvider: PaymentProviderEpay,
+		Status:          common.TopUpStatusExpired,
+		CreateTime:      time.Now().Unix() - 48*3600,
+	}
+	require.NoError(t, topUp.Insert())
+
+	err := RechargeEpayWithValidation("epay-expired-rounded", `{"provider":"epay"}`, PaymentCallbackValidation{
+		ExpectedPaymentProvider: PaymentProviderEpay,
+		ActualPaymentMethod:     PaymentProviderEpay,
+		PaidAmount:              23.65,
+		PaidCurrency:            "CNY",
+		RequirePaymentFacts:     true,
+	}, "127.0.0.1")
+	require.NoError(t, err)
+	require.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "epay-expired-rounded"))
+	require.EqualValues(t, 1000000, getUserQuotaForPaymentGuardTest(t, 811))
+}
+
+func TestManualCompleteTopUpCreditsExpiredOrder(t *testing.T) {
+	truncateTables(t)
+	common.QuotaPerUnit = 500000
+	insertUserForPaymentGuardTest(t, 812, 0)
+	topUp := &TopUp{
+		UserId:          812,
+		Amount:          2,
+		Money:           10,
+		PaidAmount:      10,
+		PaidCurrency:    "CNY",
+		TradeNo:         "manual-expired-credit",
+		PaymentMethod:   PaymentProviderEpay,
+		PaymentProvider: PaymentProviderEpay,
+		Status:          common.TopUpStatusExpired,
+		CreateTime:      time.Now().Unix() - 48*3600,
+	}
+	require.NoError(t, topUp.Insert())
+
+	require.NoError(t, ManualCompleteTopUp("manual-expired-credit", "127.0.0.1"))
+	require.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, "manual-expired-credit"))
+	require.EqualValues(t, 1000000, getUserQuotaForPaymentGuardTest(t, 812))
+}
+
+func TestMapLockedTopUpLookupErrorDistinguishesMissingOrderFromTransientError(t *testing.T) {
+	require.ErrorIs(t, mapLockedTopUpLookupError(gorm.ErrRecordNotFound), ErrTopUpNotFound)
+	transient := errors.New("database is locked")
+	mapped := mapLockedTopUpLookupError(transient)
+	require.ErrorIs(t, mapped, transient)
+	require.False(t, errors.Is(mapped, ErrTopUpNotFound))
+}
+
+func TestCreditStripeSubscriptionPaymentOrphanCreditsExpiredOrder(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.AutoMigrate(&PaymentOrphanEvent{}, &PaymentProviderCustomerLock{}, &UserSubscription{}))
+	user := insertUserForPaymentGuardTest(t, 814, 0)
+	user.StripeCustomer = "cus_orphan_expired"
+	require.NoError(t, DB.Save(user).Error)
+	plan := insertSubscriptionPlanForPaymentGuardTest(t, 504)
+	order := &SubscriptionOrder{
+		UserId:          user.Id,
+		PlanId:          plan.Id,
+		Money:           9.99,
+		PaidAmount:      9.99,
+		PaidCurrency:    "USD",
+		TradeNo:         "sub_ref_expired_orphan",
+		PaymentMethod:   PaymentMethodStripe,
+		PaymentProvider: PaymentProviderStripe,
+		Status:          common.TopUpStatusExpired,
+		CreateTime:      time.Now().Unix() - 48*3600,
+		CompleteTime:    time.Now().Unix() - 24*3600,
+	}
+	require.NoError(t, order.Insert())
+	orphan := &PaymentOrphanEvent{
+		Provider:    PaymentProviderStripe,
+		EventID:     "evt_sub_expired_orphan",
+		EventType:   PaymentOrphanStripeEventCheckoutSessionCompleted,
+		ReferenceID: "sub_ref_expired_orphan",
+		Status:      PaymentOrphanStatusPendingReview,
+		Reason:      PaymentOrphanReasonStripeSubscriptionPurchaseLimitAfterPaymentSucceeded,
+		Payload:     `{"customer":"cus_orphan_expired","amount_total":"999","currency":"usd","user_id":814,"plan_id":504,"paid_amount":9.99}`,
+	}
+	require.NoError(t, DB.Create(orphan).Error)
+
+	require.NoError(t, CreditStripePaymentOrphan(orphan.ID, 1, "127.0.0.1"))
+	reloaded := GetSubscriptionOrderByTradeNo(order.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusSuccess, reloaded.Status)
+	require.EqualValues(t, 1, countUserSubscriptionsForPaymentGuardTest(t, user.Id))
+}
+
+func TestCanCreditPaymentOrphanEventAcceptsResolvedLocalOrderReviewReason(t *testing.T) {
+	truncateTables(t)
+	insertUserForPaymentGuardTest(t, 813, 0)
+	insertTopUpForPaymentGuardTest(t, "pancake-resolved", 813, PaymentProviderWaffoPancake)
+	expired := GetTopUpByTradeNo("pancake-resolved")
+	require.NotNil(t, expired)
+	expired.Status = common.TopUpStatusExpired
+	require.NoError(t, DB.Save(expired).Error)
+
+	orphan := &PaymentOrphanEvent{
+		Provider:    PaymentProviderWaffoPancake,
+		ReferenceID: "pancake-resolved",
+		Status:      PaymentOrphanStatusPendingReview,
+		Reason:      "Waffo Pancake top-up payment succeeded but local order could not be resolved; requires manual review after payment succeeded",
+	}
+	require.True(t, CanCreditPaymentOrphanEvent(orphan))
 }
 
 func TestFailSubscriptionOrderRejectsMismatchedPaymentProvider(t *testing.T) {
@@ -1012,11 +1168,12 @@ func TestRechargeEpayRejectsForeignAndNonPendingOrders(t *testing.T) {
 		assert.EqualValues(t, 7, getUserQuotaForPaymentGuardTest(t, user.Id))
 	})
 
-	t.Run("order that is not pending", func(t *testing.T) {
+	t.Run("expired order is still creditable after a late callback", func(t *testing.T) {
 		order := createEpayTestOrder(t, user.Id, "EPAYTESTEXPIRED", PaymentProviderEpay, common.TopUpStatusExpired)
 		_, err := RechargeEpay(order.TradeNo, "alipay", "127.0.0.1")
-		assert.ErrorIs(t, err, ErrTopUpStatusInvalid)
-		assert.EqualValues(t, 7, getUserQuotaForPaymentGuardTest(t, user.Id))
+		require.NoError(t, err)
+		assert.Equal(t, common.TopUpStatusSuccess, getTopUpStatusForPaymentGuardTest(t, order.TradeNo))
+		assert.EqualValues(t, 7+2*500000, getUserQuotaForPaymentGuardTest(t, user.Id))
 	})
 
 	t.Run("missing order", func(t *testing.T) {

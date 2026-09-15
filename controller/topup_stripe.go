@@ -86,8 +86,8 @@ func (*StripeAdaptor) RequestPay(c *gin.Context, req *StripePayRequest) {
 		c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("充值数量不能小于 %d", getStripeMinTopup()), "data": 10})
 		return
 	}
-	if req.Amount > 10000 {
-		c.JSON(http.StatusOK, gin.H{"message": "充值数量不能大于 10000", "data": 10})
+	if stripeTopUpAmountExceedsMax(req.Amount) {
+		c.JSON(http.StatusOK, gin.H{"message": fmt.Sprintf("充值数量不能大于 %d", maxStripeTopUpAmount()), "data": 10})
 		return
 	}
 
@@ -772,9 +772,11 @@ func getStripeCreditedQuota(amount int64, group string) decimal.Decimal {
 	if topUpGroupRatio == 0 {
 		topUpGroupRatio = 1
 	}
-	return decimal.NewFromInt(amount).
-		Mul(decimal.NewFromFloat(topUpGroupRatio)).
-		Mul(decimal.NewFromFloat(common.QuotaPerUnit))
+	credited := decimal.NewFromInt(amount).Mul(decimal.NewFromFloat(topUpGroupRatio))
+	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
+		return credited
+	}
+	return credited.Mul(decimal.NewFromFloat(common.QuotaPerUnit))
 }
 
 func getStripePayMoney(amount float64, group string) float64 {
@@ -804,4 +806,31 @@ func getStripeMinTopup() int64 {
 		minTopup = minTopup * int(common.QuotaPerUnit)
 	}
 	return int64(minTopup)
+}
+
+func maxStripeTopUpAmount() int64 {
+	maxAmount := int64(10000)
+	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
+		return decimal.NewFromInt(maxAmount).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).IntPart()
+	}
+	return maxAmount
+}
+
+func stripeTopUpAmountExceedsMax(amount int64) bool {
+	return amount > maxStripeTopUpAmount()
+}
+
+func scaledTopUpMinAmount(minTopup int) int64 {
+	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
+		return decimal.NewFromInt(int64(minTopup)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).IntPart()
+	}
+	return int64(minTopup)
+}
+
+func getWaffoMinTopup() int64 {
+	return scaledTopUpMinAmount(setting.WaffoMinTopUp)
+}
+
+func getWaffoPancakeMinTopup() int64 {
+	return scaledTopUpMinAmount(setting.WaffoPancakeMinTopUp)
 }

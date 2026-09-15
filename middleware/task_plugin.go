@@ -19,6 +19,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
@@ -47,6 +48,22 @@ const (
 // PrepareTaskPluginRoute resolves and executes the pinned declarative route.
 // Query requests terminate here so channel distribution and billing are never
 // entered; submit requests continue through the remaining route handlers.
+func rejectExhaustedPluginSubmit(c *gin.Context) bool {
+	if c.GetBool("token_unlimited_quota") {
+		return false
+	}
+	if common.GetContextInt64(c, "token_quota") > 0 {
+		return false
+	}
+	abortWithOpenAiMessage(
+		c,
+		http.StatusForbidden,
+		common.TranslateMessage(c, i18n.MsgQuotaInsufficient),
+		types.ErrorCodePreConsumeTokenQuotaFailed,
+	)
+	return true
+}
+
 func PrepareTaskPluginRoute() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		pinnedValue, exists := c.Get(pluginruntime.ContextKeyPinnedRoute)
@@ -85,7 +102,7 @@ func PrepareTaskPluginRoute() gin.HandlerFunc {
 			if errors.Is(err, errTaskPluginUnsupportedMediaType) {
 				status = http.StatusUnsupportedMediaType
 			}
-			abortTaskPluginRouteErrorDetail(c, status, err.Error())
+			abortTaskPluginRouteErrorDetail(c, status, common.PublicRequestErrorMessage(err.Error()))
 			return
 		}
 		bodyObject, _ := requestContext.Body.(map[string]any)
@@ -103,6 +120,9 @@ func PrepareTaskPluginRoute() gin.HandlerFunc {
 				detail = "unsupported request body for this operation"
 			}
 			abortTaskPluginRouteErrorDetail(c, http.StatusUnsupportedMediaType, detail)
+			return
+		}
+		if pinned.Route.Type == pluginruntime.RouteTypeSubmit && rejectExhaustedPluginSubmit(c) {
 			return
 		}
 		if pinned.Route.Type == pluginruntime.RouteTypeQuery {
@@ -180,6 +200,9 @@ func PrepareTaskPluginRoute() gin.HandlerFunc {
 
 		switch kind {
 		case string(pluginruntime.RouteTypeSubmit):
+			if rejectExhaustedPluginSubmit(c) {
+				return
+			}
 			modelName, valid := resolved["model"].(string)
 			if !valid || strings.TrimSpace(modelName) == "" {
 				logger.LogWarn(
@@ -595,7 +618,7 @@ func PrepareTaskPluginEndpoint() gin.HandlerFunc {
 			if errors.Is(err, errTaskPluginUnsupportedMediaType) {
 				status = http.StatusUnsupportedMediaType
 			}
-			abortWithOpenAiMessage(c, status, err.Error())
+			abortWithOpenAiMessage(c, status, common.PublicRequestErrorMessage(err.Error()))
 			return
 		}
 		if body, ok := requestContext.Body.(map[string]any); ok {
@@ -1464,7 +1487,7 @@ func PrepareTaskPluginSubmit() gin.HandlerFunc {
 		)
 		var requestBody map[string]any
 		if err := common.UnmarshalBodyReusable(c, &requestBody); err != nil {
-			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": err.Error(), "type": "invalid_request_error"}})
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": common.PublicRequestErrorMessage(err.Error()), "type": "invalid_request_error"}})
 			return
 		}
 		modelName, _ := requestBody["model"].(string)

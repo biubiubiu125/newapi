@@ -36,9 +36,12 @@ const (
 )
 
 var (
-	ErrSubscriptionOrderNotFound      = errors.New("subscription order not found")
-	ErrSubscriptionOrderStatusInvalid = errors.New("subscription order status invalid")
-	ErrSubscriptionPurchaseLimit      = errors.New("subscription purchase limit reached")
+	ErrSubscriptionOrderNotFound       = errors.New("subscription order not found")
+	ErrSubscriptionOrderStatusInvalid  = errors.New("subscription order status invalid")
+	ErrSubscriptionPurchaseLimit       = errors.New("subscription purchase limit reached")
+	ErrNoActiveSubscription            = errors.New("no active subscription")
+	ErrNoActiveSubscriptionGrantsGroup = errors.New("no active subscription grants group")
+	ErrSubscriptionQuotaInsufficient   = errors.New("subscription quota insufficient")
 )
 
 const (
@@ -302,6 +305,22 @@ func GetSubscriptionOrderByTradeNo(tradeNo string) *SubscriptionOrder {
 	}
 	var order SubscriptionOrder
 	if err := DB.Where("trade_no = ?", tradeNo).First(&order).Error; err != nil {
+		return nil
+	}
+	return &order
+}
+
+func FindLatestPendingWaffoPancakeSubscriptionByUserId(userId int) *SubscriptionOrder {
+	if userId <= 0 {
+		return nil
+	}
+	var order SubscriptionOrder
+	if err := DB.Where(
+		"user_id = ? AND payment_provider = ? AND status IN ?",
+		userId,
+		PaymentProviderWaffoPancake,
+		[]string{common.TopUpStatusPending, common.TopUpStatusExpired, common.TopUpStatusFailed},
+	).Order("create_time DESC, id DESC").First(&order).Error; err != nil {
 		return nil
 	}
 	return &order
@@ -843,7 +862,9 @@ func CompleteSubscriptionOrderWithValidation(tradeNo string, providerPayload str
 		if order.Status == common.TopUpStatusSuccess {
 			return nil
 		}
-		if order.Status != common.TopUpStatusPending {
+		if order.Status != common.TopUpStatusPending &&
+			order.Status != common.TopUpStatusExpired &&
+			order.Status != common.TopUpStatusFailed {
 			return ErrSubscriptionOrderStatusInvalid
 		}
 		plan, err := getSubscriptionPlanByIdTx(tx, order.PlanId)
@@ -1766,10 +1787,10 @@ func PreConsumeUserSubscriptionTx(tx *gorm.DB, requestId string, userId int, mod
 			Where("user_id = ? AND status = ? AND end_time > ?", userId, "active", now).
 			Order("end_time asc, id asc").
 			Find(&subs).Error; err != nil {
-			return errors.New("no active subscription")
+			return err
 		}
 		if len(subs) == 0 {
-			return errors.New("no active subscription")
+			return ErrNoActiveSubscription
 		}
 		baseGroups, err := userBaseUsableGroupSetByIdTx(tx, userId)
 		if err != nil {
@@ -1834,12 +1855,12 @@ func PreConsumeUserSubscriptionTx(tx *gorm.DB, requestId string, userId int, mod
 			return nil
 		}
 		if sawMatchingGroupSubscription {
-			return fmt.Errorf("subscription quota insufficient, need=%d", amount)
+			return fmt.Errorf("%w, need=%d", ErrSubscriptionQuotaInsufficient, amount)
 		}
 		if sawGroupScopedSubscription {
-			return fmt.Errorf("no active subscription grants group: %s", usingGroup)
+			return fmt.Errorf("%w: %s", ErrNoActiveSubscriptionGrantsGroup, usingGroup)
 		}
-		return fmt.Errorf("subscription quota insufficient, need=%d", amount)
+		return fmt.Errorf("%w, need=%d", ErrSubscriptionQuotaInsufficient, amount)
 	}()
 	if err != nil {
 		return nil, err
@@ -1865,7 +1886,7 @@ func RefundSubscriptionPreConsume(requestId string) error {
 			record.Status = "refunded"
 			return tx.Save(&record).Error
 		}
-		if err := PostConsumeUserSubscriptionDelta(record.UserSubscriptionId, -record.PreConsumed); err != nil {
+		if err := PostConsumeUserSubscriptionDeltaTx(tx, record.UserSubscriptionId, -record.PreConsumed); err != nil {
 			return err
 		}
 		record.Status = "refunded"
@@ -2011,15 +2032,25 @@ func PostConsumeUserSubscriptionDelta(userSubscriptionId int, delta int64) error
 			First(&sub).Error; err != nil {
 			return err
 		}
-		newUsed := sub.AmountUsed + delta
-		if newUsed < 0 {
-			newUsed = 0
+		return applyUserSubscriptionDeltaTx(tx, &sub, delta, false)
+	})
+}
+
+func PostConsumeUserSubscriptionDeltaAllowOverdraft(userSubscriptionId int, delta int64) error {
+	if userSubscriptionId <= 0 {
+		return errors.New("invalid userSubscriptionId")
+	}
+	if delta == 0 {
+		return nil
+	}
+	return DB.Transaction(func(tx *gorm.DB) error {
+		var sub UserSubscription
+		if err := lockForUpdate(tx).
+			Where("id = ?", userSubscriptionId).
+			First(&sub).Error; err != nil {
+			return err
 		}
-		if sub.AmountTotal > 0 && newUsed > sub.AmountTotal {
-			return fmt.Errorf("subscription used exceeds total, used=%d total=%d", newUsed, sub.AmountTotal)
-		}
-		sub.AmountUsed = newUsed
-		return tx.Save(&sub).Error
+		return applyUserSubscriptionDeltaTx(tx, &sub, delta, true)
 	})
 }
 
@@ -2037,12 +2068,20 @@ func PostConsumeUserSubscriptionDeltaTx(tx *gorm.DB, userSubscriptionId int, del
 	if err := lockForUpdate(tx).Where("id = ?", userSubscriptionId).First(&sub).Error; err != nil {
 		return err
 	}
+	return applyUserSubscriptionDeltaTx(tx, &sub, delta, false)
+}
+
+func applyUserSubscriptionDeltaTx(tx *gorm.DB, sub *UserSubscription, delta int64, allowOverdraft bool) error {
+	if tx == nil || sub == nil {
+		return errors.New("subscription delta requires a transaction and subscription")
+	}
 	newUsed := sub.AmountUsed + delta
 	if newUsed < 0 {
 		newUsed = 0
 	}
-	if sub.AmountTotal > 0 && newUsed > sub.AmountTotal {
+	if !allowOverdraft && sub.AmountTotal > 0 && newUsed > sub.AmountTotal {
 		return fmt.Errorf("subscription used exceeds total, used=%d total=%d", newUsed, sub.AmountTotal)
 	}
-	return tx.Model(&UserSubscription{}).Where("id = ?", userSubscriptionId).Update("amount_used", newUsed).Error
+	sub.AmountUsed = newUsed
+	return tx.Model(&UserSubscription{}).Where("id = ?", sub.Id).Update("amount_used", newUsed).Error
 }

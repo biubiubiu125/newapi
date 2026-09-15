@@ -167,3 +167,14 @@ func TestMidjourneySettlementErrorsClearTaskQuotaForReview(t *testing.T) {
 
 	require.GreaterOrEqual(t, strings.Count(source, "ClearMidjourneyQuotaAfterBillingRollback(c, midjourneyTask, settlementErr)"), 2)
 }
+
+func TestRealtimeVideoFetchDoesNotSkipSettlement(t *testing.T) {
+	body, err := os.ReadFile("relay_task.go")
+	require.NoError(t, err)
+	source := string(body)
+
+	require.NotContains(t, source, "contextWithSkipRealtimeSettle")
+	require.NotContains(t, source, "skipRealtimeSettle(")
+	require.NotContains(t, source, "tokenQuotaExhaustedFromGin")
+	require.Contains(t, source, "SettleTaskBillingOnComplete(ctx, adaptor, task, taskResult)")
+}

@@ -190,21 +190,28 @@ export function Wallet(props: WalletProps) {
     async (
       tradeNo?: string,
       paymentKind?: PaymentInitiationResult['paymentKind']
-    ): Promise<boolean> => {
-      if (!tradeNo) return false
+    ): Promise<'success' | 'failed' | 'pending'> => {
+      if (!tradeNo) return 'pending'
 
       if (paymentKind === 'subscription') {
         const response = await getSubscriptionPaymentStatus(tradeNo)
-        return isApiSuccess(response) && response.data?.status === 'success'
+        const status = response.data?.status
+        if (status === 'success') return 'success'
+        if (status === 'failed' || status === 'expired') return 'failed'
+        return 'pending'
       }
 
       const response = await getUserBillingHistory(1, 1, tradeNo)
-      if (!isApiSuccess(response) || !response.data) return false
+      if (!isApiSuccess(response) || !response.data) return 'pending'
 
       const record = (response.data.items || []).find(
         (item) => item.trade_no === tradeNo
       )
-      return record?.status === 'success'
+      if (record?.status === 'success') return 'success'
+      if (record?.status === 'failed' || record?.status === 'expired') {
+        return 'failed'
+      }
+      return 'pending'
     },
     []
   )
@@ -324,10 +331,15 @@ export function Wallet(props: WalletProps) {
       )
       if (canceled) return
 
-      if (completed) {
+      if (completed === 'success') {
         markPendingPaymentCompleted(pendingTradeNo)
         await refreshPaymentData()
         toast.success(getPaymentSuccessMessage(pendingPayment))
+        clearPendingPaymentState()
+      } else if (completed === 'failed') {
+        toast.error(
+          t('Payment failed or expired. Please check your order history.')
+        )
         clearPendingPaymentState()
       }
     }
@@ -364,7 +376,7 @@ export function Wallet(props: WalletProps) {
             pendingTradeNo,
             pendingPayment.paymentKind
           )
-          if (completed) {
+          if (completed === 'success') {
             markPendingPaymentCompleted(pendingTradeNo)
             toast.success(getPaymentSuccessMessage(pendingPayment))
             clearPendingPaymentState()
@@ -420,13 +432,7 @@ export function Wallet(props: WalletProps) {
     void refetchTopupInfo()
     setPaymentRefreshKey((key) => key + 1)
 
-    if (returnedPay === 'success') {
-      toast.success(
-        getPaymentSuccessMessage({
-          paymentKind: returnedOrderType,
-        })
-      )
-    } else if (returnedPay === 'pending') {
+    if (returnedPay === 'success' || returnedPay === 'pending') {
       if (
         returnedTradeNo &&
         (returnedOrderType === 'topup' || returnedOrderType === 'subscription')
@@ -592,9 +598,14 @@ export function Wallet(props: WalletProps) {
       pendingPayment.tradeNo,
       pendingPayment.paymentKind
     )
-    if (completed) {
+    if (completed === 'success') {
       markPendingPaymentCompleted(pendingPayment.tradeNo)
       toast.success(getPaymentSuccessMessage(pendingPayment))
+      clearPendingPaymentState()
+    } else if (completed === 'failed') {
+      toast.error(
+        t('Payment failed or expired. Please check your order history.')
+      )
       clearPendingPaymentState()
     } else {
       toast.info(t('Payment is still pending. Please check again later.'))

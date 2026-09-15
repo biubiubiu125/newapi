@@ -23,7 +23,7 @@ func UpdateModelPricingConfig(c *gin.Context) {
 		Changes []model.ModelPricingChange `json:"changes"`
 	}
 	if err := common.DecodeJson(c.Request.Body, &request); err != nil {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": err.Error()})
+		common.ApiErrorWithStatus(c, http.StatusBadRequest, err)
 		return
 	}
 	if err := model.UpdateModelPricing(request.Changes); err != nil {
@@ -31,7 +31,7 @@ func UpdateModelPricingConfig(c *gin.Context) {
 		if errors.Is(err, model.ErrModelPricingConflict) {
 			status = http.StatusConflict
 		}
-		c.JSON(status, gin.H{"success": false, "message": err.Error()})
+		common.ApiErrorWithStatus(c, status, err)
 		return
 	}
 	names := make([]string, 0, len(request.Changes))

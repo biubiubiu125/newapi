@@ -21,9 +21,10 @@ func abortWithOpenAiMessage(c *gin.Context, statusCode int, message string, code
 		codeStr = string(code[0])
 	}
 	userId := c.GetInt("id")
+	publicMessage := common.PublicRequestErrorMessage(message)
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
-			"message": common.MessageWithRequestId(message, c.GetString(common.RequestIdKey)),
+			"message": common.MessageWithRequestId(publicMessage, c.GetString(common.RequestIdKey)),
 			"type":    "new_api_error",
 			"code":    codeStr,
 		},
@@ -76,9 +77,10 @@ func abortWithImageTaskMessage(c *gin.Context, statusCode int, code string, mess
 	if strings.TrimSpace(code) == "" {
 		code = "internal_error"
 	}
+	publicMessage := common.PublicRequestErrorMessage(message)
 	c.JSON(statusCode, gin.H{
 		"error": gin.H{
-			"message": common.MessageWithRequestId(message, c.GetString(common.RequestIdKey)),
+			"message": common.MessageWithRequestId(publicMessage, c.GetString(common.RequestIdKey)),
 			"type":    "image_task_error",
 			"code":    code,
 		},
@@ -89,7 +91,7 @@ func abortWithImageTaskMessage(c *gin.Context, statusCode int, code string, mess
 
 func abortWithMidjourneyMessage(c *gin.Context, statusCode int, code int, description string) {
 	c.JSON(statusCode, gin.H{
-		"description": description,
+		"description": common.PublicRequestErrorMessage(description),
 		"type":        "new_api_error",
 		"code":        code,
 	})

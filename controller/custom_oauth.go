@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"io"
 	"net/http"
 	"net/url"
@@ -10,6 +11,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/oauth"
 	"github.com/gin-gonic/gin"
@@ -521,7 +523,12 @@ func GetUserOAuthBindingsByAdmin(c *gin.Context) {
 
 // UnbindCustomOAuth unbinds a custom OAuth provider from the current user
 func UnbindCustomOAuth(c *gin.Context) {
-	userId := c.GetInt("id")
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok {
+		common.ApiError(c, errors.New("当前认证方式不支持解绑"))
+		return
+	}
+	userId := identity.UserID
 	if userId == 0 {
 		common.ApiErrorMsg(c, "未登录")
 		return

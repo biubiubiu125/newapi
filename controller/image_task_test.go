@@ -2072,6 +2072,97 @@ func TestWaitImageTaskSyncBridgeResultPreservesFailedTaskStatusCode(t *testing.T
 	}
 }
 
+func TestWaitImageTaskSyncBridgeResultHidesInternalFailureReason(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, cleanup := setupImageTaskControllerTestDB(t)
+	t.Cleanup(cleanup)
+
+	internal := "pq: password authentication failed for user newapi"
+	task := &model.Task{
+		TaskID:     "task_sync_bridge_internal_fail",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Status:     model.TaskStatusFailure,
+		Progress:   "100%",
+		FailReason: internal,
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+
+	body, apiErr := waitImageTaskSyncBridgeResult(ctx, task)
+
+	require.Empty(t, body)
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+	require.Equal(t, model.TaskPublicInternalFailReason, apiErr.ToOpenAIError().Message)
+	require.NotContains(t, apiErr.ToOpenAIError().Message, "password")
+	require.NotContains(t, apiErr.ToOpenAIError().Message, "newapi")
+	require.Equal(t, internal, task.FailReason)
+}
+
+func TestWaitImageTaskSyncBridgeResultHidesSettlementReviewInternalReason(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, cleanup := setupImageTaskControllerTestDB(t)
+	t.Cleanup(cleanup)
+
+	internal := "billing settlement failed before consumption log: pq: password authentication failed"
+	task := &model.Task{
+		TaskID:           "task_sync_bridge_review_internal",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		Progress:         "100%",
+		FailReason:       internal,
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+
+	body, apiErr := waitImageTaskSyncBridgeResult(ctx, task)
+
+	require.Empty(t, body)
+	require.NotNil(t, apiErr)
+	require.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
+	require.Equal(t, model.TaskPublicSettlementFailReason, apiErr.ToOpenAIError().Message)
+	require.NotContains(t, apiErr.ToOpenAIError().Message, "password")
+	require.Equal(t, internal, task.FailReason)
+}
+
+func TestWaitImageTaskSyncBridgeResultHidesQueryError(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	db, cleanup := setupImageTaskControllerTestDB(t)
+	t.Cleanup(cleanup)
+
+	task := &model.Task{
+		TaskID:   "task_sync_bridge_query_error",
+		Platform: constant.TaskPlatformImage,
+		UserId:   1,
+		Status:   model.TaskStatusQueued,
+		Progress: "0%",
+	}
+	require.NoError(t, db.Create(task).Error)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
+
+	body, apiErr := waitImageTaskSyncBridgeResult(ctx, task)
+
+	require.Empty(t, body)
+	require.NotNil(t, apiErr)
+	message := apiErr.ToOpenAIError().Message
+	require.Equal(t, "Failed to query task", message)
+	require.NotContains(t, message, "sql")
+	require.NotContains(t, strings.ToLower(message), "database")
+	require.NotContains(t, strings.ToLower(message), "closed")
+}
+
 func TestCancelImageTaskSyncBridgeWaitFailsOpenTaskAndRemovesBody(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	db, cleanup := setupImageTaskControllerTestDB(t)

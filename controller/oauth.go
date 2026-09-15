@@ -45,6 +45,13 @@ func providerParams(name string) map[string]any {
 	return map[string]any{"Provider": name}
 }
 
+func isOAuthStateProviderAllowed(provider string) bool {
+	if oauth.GetProvider(provider) != nil {
+		return true
+	}
+	return strings.EqualFold(strings.TrimSpace(provider), "wechat")
+}
+
 // GenerateOAuthCode generates a state code for OAuth CSRF protection
 func GenerateOAuthCode(c *gin.Context) {
 	if c.Request.Method == http.MethodGet {
@@ -62,7 +69,7 @@ func GenerateOAuthCode(c *gin.Context) {
 	request.Aff = strings.TrimSpace(request.Aff)
 	request.Redirect = strings.TrimSpace(request.Redirect)
 	redirectPath, redirectOK := normalizeOAuthRedirectPath(request.Redirect)
-	if oauth.GetProvider(request.Provider) == nil ||
+	if !isOAuthStateProviderAllowed(request.Provider) ||
 		(request.Intent != model.AuthFlowIntentLogin && request.Intent != model.AuthFlowIntentBind) ||
 		len(request.Aff) > 32 ||
 		!redirectOK ||
@@ -75,10 +82,10 @@ func GenerateOAuthCode(c *gin.Context) {
 	sessionID := ""
 	if request.Intent == model.AuthFlowIntentBind {
 		identity, ok := middleware.GetSessionAuthIdentity(c)
-	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "绑定操作需要先登录"})
-		return
-	}
+		if !ok {
+			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "绑定操作需要先登录"})
+			return
+		}
 		userID = identity.UserID
 		sessionID = identity.SessionID
 	}
@@ -104,6 +111,15 @@ func GenerateOAuthCode(c *gin.Context) {
 	if err != nil {
 		common.ApiError(c, err)
 		return
+	}
+	if strings.EqualFold(request.Provider, "wechat") && request.Intent == model.AuthFlowIntentLogin {
+		session := sessions.Default(c)
+		session.Set("oauth_login_state", state)
+		if err := session.Save(); err != nil {
+			common.SysError("save wechat oauth state failed: " + err.Error())
+			common.ApiErrorI18n(c, i18n.MsgDatabaseError)
+			return
+		}
 	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
@@ -298,7 +314,7 @@ func HandleOAuth(c *gin.Context) {
 	if payload.Redirect != "" {
 		extraData["redirect"] = payload.Redirect
 	}
-	setupLoginWithExtra(user, c, extraData)
+	setupLoginOrRequire2FAWithExtra(user, c, extraData)
 }
 
 func handleLegacyOAuth(c *gin.Context, providerName string, provider oauth.Provider, state string) bool {
@@ -370,7 +386,7 @@ func handleLegacyOAuth(c *gin.Context, providerName string, provider oauth.Provi
 		common.ApiErrorI18n(c, i18n.MsgOAuthUserBanned)
 		return true
 	}
-	setupLogin(user, c)
+	setupLoginOrRequire2FA(user, c)
 	return true
 }
 

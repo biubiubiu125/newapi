@@ -286,10 +286,7 @@ func TelegramLogin(c *gin.Context) {
 
 	user := model.User{TelegramId: telegramId}
 	if err := user.FillUserByTelegramId(); err != nil {
-		c.JSON(200, gin.H{
-			"message": err.Error(),
-			"success": false,
-		})
+		common.ApiError(c, err)
 		return
 	}
 	if err := claimTelegramAuthorization(params, time.Now()); err != nil {
@@ -300,7 +297,7 @@ func TelegramLogin(c *gin.Context) {
 		})
 		return
 	}
-	setupLogin(&user, c)
+	setupLoginOrRequire2FA(&user, c)
 }
 
 func claimTelegramAuthorization(params url.Values, now time.Time) error {

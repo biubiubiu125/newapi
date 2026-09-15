@@ -157,6 +157,17 @@ func OpenaiImageStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp 
 		if upstreamFinished || float64(completedImages) > requestedN {
 			updateOpenAIImageCount(info, completedImages)
 		}
+		if info.PriceData.UsePrice &&
+			upstreamFinished &&
+			completedImages == 0 &&
+			!service.ValidUsage(usage) &&
+			!info.StreamStatus.HasErrors() {
+			return usage, types.NewError(
+				fmt.Errorf("image stream finished without generated images"),
+				types.ErrorCodeBadResponse,
+				types.ErrOptionWithSkipRetry(),
+			)
+		}
 	}
 	return usage, nil
 }

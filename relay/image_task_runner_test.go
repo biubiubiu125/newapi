@@ -96,11 +96,189 @@ func TestTaskModel2DtoMarksImageSettlementReviewAsFailure(t *testing.T) {
 		Status:           model.TaskStatusSuccess,
 		SettlementStatus: model.TaskSettlementStatusReview,
 	}
+	task.PrivateData.ResultURL = "https://provider.example/image.png"
 
 	resp := TaskModel2Dto(task)
 
 	require.Equal(t, string(model.TaskStatusFailure), resp.Status)
 	require.Equal(t, model.TaskSettlementStatusReview, resp.SettlementStatus)
+	require.Empty(t, resp.ResultURL)
+}
+
+func TestPublicTaskStatusKeepsRetryableImageSettlementReviewInProgress(t *testing.T) {
+	task := &model.Task{
+		TaskID:           "task_retryable_review_status",
+		Platform:         constant.TaskPlatformImage,
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		NextPollAt:       time.Now().Unix() + 60,
+		Data:             json.RawMessage(`{"ok":true}`),
+	}
+	task.PrivateData.ResultURL = "https://provider.example/image.png"
+
+	require.Equal(t, model.TaskStatus(model.TaskStatusInProgress), PublicTaskStatus(task))
+	require.Empty(t, PublicResultURL(task))
+}
+
+func TestTaskModel2DtoKeepsRetryableImageSettlementReviewInProgress(t *testing.T) {
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_retryable_review_dto",
+		Platform:         constant.TaskPlatformImage,
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		FailReason:       "image task settlement requires manual review",
+		Progress:         "100%",
+		FinishTime:       now,
+		NextPollAt:       now + 60,
+		Data:             json.RawMessage(`{"ok":true}`),
+	}
+	task.PrivateData.ResultURL = "https://provider.example/image.png"
+
+	resp := TaskModel2Dto(task)
+
+	require.Equal(t, string(model.TaskStatusInProgress), resp.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, resp.SettlementStatus)
+	require.Equal(t, "99%", resp.Progress)
+	require.Equal(t, int64(0), resp.FinishTime)
+	require.Empty(t, resp.ResultURL)
+	require.Empty(t, resp.FailReason)
+}
+
+func TestPublicTaskStatusMapsRetryableVideoSettlementReviewToInProgress(t *testing.T) {
+	task := &model.Task{
+		TaskID:           "task_video_retryable_review_status",
+		Platform:         constant.TaskPlatform("gemini"),
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		Progress:         "100%",
+		FinishTime:       time.Now().Unix(),
+		NextPollAt:       time.Now().Unix() + 60,
+	}
+	task.PrivateData.ResultURL = "https://cdn.example/video.mp4"
+
+	require.Equal(t, model.TaskStatus(model.TaskStatusInProgress), PublicTaskStatus(task))
+	require.Empty(t, PublicResultURL(task))
+	require.Equal(t, "99%", PublicTaskProgress(task))
+	require.Zero(t, PublicTaskFinishTime(task))
+}
+
+func TestTaskModel2DtoKeepsRetryableVideoSettlementReviewInProgress(t *testing.T) {
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_video_retryable_review_dto",
+		Platform:         constant.TaskPlatform("gemini"),
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		FailReason:       "billing settlement requires manual review",
+		Progress:         "100%",
+		FinishTime:       now,
+		NextPollAt:       now + 60,
+	}
+	task.PrivateData.ResultURL = "https://cdn.example/video.mp4"
+
+	resp := TaskModel2Dto(task)
+
+	require.Equal(t, string(model.TaskStatusInProgress), resp.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, resp.SettlementStatus)
+	require.Equal(t, "99%", resp.Progress)
+	require.Equal(t, int64(0), resp.FinishTime)
+	require.Empty(t, resp.ResultURL)
+	require.Empty(t, resp.FailReason)
+}
+
+func TestTaskModel2DtoHidesPendingVideoResultURL(t *testing.T) {
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_video_pending_dto",
+		Platform:         constant.TaskPlatform("gemini"),
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusPending,
+		Progress:         "100%",
+		FinishTime:       now,
+	}
+	task.PrivateData.ResultURL = "https://cdn.example/video.mp4"
+
+	resp := TaskModel2Dto(task)
+
+	require.Equal(t, string(model.TaskStatusInProgress), resp.Status)
+	require.Empty(t, resp.ResultURL)
+}
+
+func TestTaskModel2DtoKeepsSettledVideoResultURL(t *testing.T) {
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_video_settled_dto",
+		Platform:         constant.TaskPlatform("gemini"),
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusSettled,
+		Progress:         "100%",
+		FinishTime:       now,
+	}
+	task.PrivateData.ResultURL = "https://cdn.example/video.mp4"
+
+	resp := TaskModel2Dto(task)
+
+	require.Equal(t, string(model.TaskStatusSuccess), resp.Status)
+	require.Equal(t, "https://cdn.example/video.mp4", resp.ResultURL)
+}
+
+func TestTaskModel2PublicDtoHidesRetryableVideoSettlementReviewURL(t *testing.T) {
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_video_public_review_dto",
+		Platform:         constant.TaskPlatform("gemini"),
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		FailReason:       "billing settlement requires manual review",
+		Progress:         "100%",
+		FinishTime:       now,
+		NextPollAt:       now + 60,
+	}
+	task.PrivateData.ResultURL = "https://cdn.example/video.mp4"
+
+	resp := TaskModel2PublicDto(task)
+
+	require.Equal(t, string(model.TaskStatusInProgress), resp.Status)
+	require.Empty(t, resp.SettlementStatus)
+	require.Equal(t, "99%", resp.Progress)
+	require.Equal(t, int64(0), resp.FinishTime)
+	require.Empty(t, resp.ResultURL)
+	require.Empty(t, resp.FailReason)
+}
+
+func TestTaskModel2DtoExposesUnrecoverableImageSettlementReviewReason(t *testing.T) {
+	task := &model.Task{
+		TaskID:           "task_unrecoverable_review_dto",
+		Platform:         constant.TaskPlatformImage,
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		FailReason:       "image task result expired before settlement completed",
+		ResultCleanedAt:  time.Now().Unix(),
+	}
+	task.PrivateData.ResultURL = "https://provider.example/image.png"
+
+	resp := TaskModel2Dto(task)
+
+	require.Equal(t, string(model.TaskStatusFailure), resp.Status)
+	require.Equal(t, "image task result expired before settlement completed", resp.FailReason)
+	require.Empty(t, resp.ResultURL)
+}
+
+func TestTaskModel2DtoHidesLegacyURLFailReasonOnUnrecoverableReview(t *testing.T) {
+	task := &model.Task{
+		TaskID:           "task_unrecoverable_review_url_reason",
+		Platform:         constant.TaskPlatformImage,
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		FailReason:       "https://provider.example/image.png",
+	}
+
+	resp := TaskModel2Dto(task)
+
+	require.Equal(t, string(model.TaskStatusFailure), resp.Status)
+	require.Empty(t, resp.FailReason)
+	require.Empty(t, resp.ResultURL)
 }
 
 func TestTaskModel2DtoIncludesSettlementReviewDetails(t *testing.T) {
@@ -133,7 +311,92 @@ func TestTaskModel2DtoClearsLegacySuccessResultURLFromFailReason(t *testing.T) {
 	require.Equal(t, "https://provider.example/video.mp4", resp.ResultURL)
 }
 
-func TestTaskModel2DtoPreservesSuccessfulDiagnosticReason(t *testing.T) {
+func TestTaskModel2PublicDtoOmitsInternalFields(t *testing.T) {
+	task := &model.Task{
+		ID:               88,
+		TaskID:           "task_public_dto",
+		Platform:         constant.TaskPlatformSuno,
+		UserId:           12,
+		Group:            "vip",
+		ChannelId:        34,
+		Quota:            56,
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusSettled,
+		Username:         "alice",
+	}
+	task.PrivateData.ResultURL = "https://provider.example/video.mp4"
+	task.PrivateData.SettlementError = "record consume log failed"
+	task.PrivateData.SettlementAttemptQuota = 321
+
+	resp := TaskModel2PublicDto(task)
+
+	require.Equal(t, "task_public_dto", resp.TaskID)
+	require.Equal(t, "https://provider.example/video.mp4", resp.ResultURL)
+	require.Zero(t, resp.UserId)
+	require.Empty(t, resp.Group)
+	require.Zero(t, resp.ChannelId)
+	require.Zero(t, resp.Quota)
+	require.Empty(t, resp.SettlementStatus)
+	require.Empty(t, resp.SettlementError)
+	require.Zero(t, resp.SettlementAttemptQuota)
+	require.Empty(t, resp.Username)
+}
+
+func TestTaskModel2PublicDtoOmitsProviderDataForVideo(t *testing.T) {
+	task := &model.Task{
+		TaskID:   "task_public_video_data",
+		Platform: constant.TaskPlatform("kling"),
+		Status:   model.TaskStatusSuccess,
+		Data:     json.RawMessage(`{"bytesBase64Encoded":"AAAA","videos":[{"url":"https://cdn.example/raw.mp4"}]}`),
+		Properties: model.Properties{
+			Input:             "a cat",
+			OriginModelName:   "kling-v1",
+			UpstreamModelName: "secret-upstream",
+		},
+	}
+	task.PrivateData.ResultURL = "https://cdn.example/video.mp4"
+
+	resp := TaskModel2PublicDto(task)
+
+	require.Equal(t, "https://cdn.example/video.mp4", resp.ResultURL)
+	require.Nil(t, resp.Data)
+	props, ok := resp.Properties.(model.Properties)
+	require.True(t, ok)
+	require.Equal(t, "a cat", props.Input)
+	require.Equal(t, "kling-v1", props.OriginModelName)
+	require.Empty(t, props.UpstreamModelName)
+}
+
+func TestTaskModel2PublicDtoKeepsSunoData(t *testing.T) {
+	task := &model.Task{
+		TaskID:   "task_public_suno_data",
+		Platform: constant.TaskPlatformSuno,
+		Status:   model.TaskStatusSuccess,
+		Data:     json.RawMessage(`{"id":"song_1","audio_url":"https://cdn.example/song.mp3"}`),
+	}
+
+	resp := TaskModel2PublicDto(task)
+
+	require.JSONEq(t, `{"id":"song_1","audio_url":"https://cdn.example/song.mp3"}`, string(resp.Data))
+}
+
+func TestTaskModel2PublicDtoHidesSunoDataDuringRetryableSettlementReview(t *testing.T) {
+	task := &model.Task{
+		TaskID:           "task_public_suno_review_data",
+		Platform:         constant.TaskPlatformSuno,
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		NextPollAt:       time.Now().Unix() + 60,
+		Data:             json.RawMessage(`{"id":"song_1","audio_url":"https://cdn.example/song.mp3"}`),
+	}
+
+	resp := TaskModel2PublicDto(task)
+
+	require.Equal(t, string(model.TaskStatusInProgress), resp.Status)
+	require.Empty(t, resp.Data)
+}
+
+func TestTaskModel2DtoHidesSuccessfulDiagnosticReason(t *testing.T) {
 	task := &model.Task{
 		TaskID:     "task_success_reason_dto",
 		Status:     model.TaskStatusSuccess,
@@ -143,7 +406,7 @@ func TestTaskModel2DtoPreservesSuccessfulDiagnosticReason(t *testing.T) {
 
 	resp := TaskModel2Dto(task)
 
-	require.Equal(t, "provider completed with diagnostics", resp.FailReason)
+	require.Empty(t, resp.FailReason)
 	require.Equal(t, "https://provider.example/video.mp4", resp.ResultURL)
 }
 
@@ -3482,7 +3745,7 @@ func TestSettleImageTaskSuccessMarksReviewWhenSettlementAlreadyApplyingIsStale(t
 	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
 	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
 	require.Contains(t, reloaded.FailReason, "manual review")
-	require.Zero(t, reloaded.NextPollAt)
+	require.Greater(t, reloaded.NextPollAt, now)
 	require.Equal(t, bodyPath, reloaded.PrivateData.RequestBodyPath)
 	require.FileExists(t, bodyPath)
 
@@ -4528,4 +4791,246 @@ func TestImageTaskRelayStartTimeFallsBackToSubmitTime(t *testing.T) {
 	startTime := imageTaskRelayStartTime(task)
 
 	require.Equal(t, task.SubmitTime, startTime.Unix())
+}
+
+func TestImageTaskNeedsSettlementIncludesReview(t *testing.T) {
+	require.True(t, imageTaskNeedsSettlement(&model.Task{
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		NextPollAt:       time.Now().Unix() + 60,
+		Data:             json.RawMessage(`{"ok":true}`),
+	}))
+	require.True(t, imageTaskNeedsSettlement(&model.Task{
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		PrivateData: model.TaskPrivateData{
+			SettlementEvidenceCapturedAt: time.Now().Unix(),
+		},
+	}))
+	require.False(t, imageTaskNeedsSettlement(&model.Task{
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusSettled,
+	}))
+	require.False(t, imageTaskNeedsSettlement(&model.Task{
+		Status:           model.TaskStatusFailure,
+		SettlementStatus: model.TaskSettlementStatusReview,
+	}))
+}
+
+func TestImageTaskNeedsSettlementExcludesUnrecoverableReview(t *testing.T) {
+	now := time.Now().Unix()
+	require.False(t, imageTaskNeedsSettlement(&model.Task{
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		ResultCleanedAt:  now,
+		FailReason:       "image task result expired before settlement completed",
+	}))
+	require.False(t, imageTaskNeedsSettlement(&model.Task{
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		NextPollAt:       0,
+	}))
+	require.False(t, imageTaskNeedsSettlement(&model.Task{
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		NextPollAt:       now + 60,
+	}))
+}
+
+func TestRunImageTasksRetriesSettlementReviewAndSettles(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&model.Task{},
+		&model.TaskSettlementRecord{},
+		&model.User{},
+		&model.Channel{},
+		&model.Log{},
+		&model.TokenUsageDaily{},
+	))
+
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldUsingSQLite := common.UsingSQLite
+	oldRedisEnabled := common.RedisEnabled
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	oldBatchUpdateEnabled := common.BatchUpdateEnabled
+	oldLogConsumeEnabled := common.LogConsumeEnabled
+	oldDataExportEnabled := common.DataExportEnabled
+	model.DB = db
+	model.LOG_DB = db
+	common.UsingSQLite = true
+	common.RedisEnabled = false
+	common.MemoryCacheEnabled = false
+	common.BatchUpdateEnabled = false
+	common.LogConsumeEnabled = true
+	common.DataExportEnabled = false
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.UsingSQLite = oldUsingSQLite
+		common.RedisEnabled = oldRedisEnabled
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+		common.BatchUpdateEnabled = oldBatchUpdateEnabled
+		common.LogConsumeEnabled = oldLogConsumeEnabled
+		common.DataExportEnabled = oldDataExportEnabled
+		_ = sqlDB.Close()
+	})
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       1,
+		Username: "image-review-retry-user",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		Quota:    100000,
+		Email:    "review-retry@example.com",
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:     1,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "upstream-key",
+		Status: common.ChannelStatusEnabled,
+		Name:   "image-review-retry-channel",
+		Group:  "default",
+		Models: "gpt-image-1",
+	}).Error)
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_run_image_settlement_review",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Quota:            200,
+		Action:           constant.TaskActionImageGeneration,
+		Status:           model.TaskStatusSuccess,
+		Progress:         "100%",
+		SubmitTime:       now,
+		FinishTime:       now,
+		FailReason:       "image task settlement requires manual review",
+		SettlementStatus: model.TaskSettlementStatusReview,
+		NextPollAt:       0,
+		Properties: model.Properties{
+			OriginModelName: "gpt-image-1",
+		},
+		PrivateData: model.TaskPrivateData{
+			BillingSource:                service.BillingSourceWallet,
+			SettlementAttemptQuota:       200,
+			SettlementError:              "record consume log failed",
+			SettlementEvidenceCapturedAt: now,
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice:      0.02,
+				ModelRatio:      1,
+				CompletionRatio: 1,
+				GroupRatio:      1,
+				OriginModelName: "gpt-image-1",
+				PerCallBilling:  true,
+			},
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+	require.NoError(t, db.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusPrepared,
+	}).Error)
+
+	require.NoError(t, RunImageTasks(context.Background(), []*model.Task{task}))
+
+	var reloaded model.Task
+	require.NoError(t, db.First(&reloaded, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, model.TaskSettlementStatusSettled, reloaded.SettlementStatus)
+	require.Empty(t, reloaded.FailReason)
+}
+
+func TestRunImageTasksDoesNotRetryExpiredSettlementReview(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.TaskSettlementRecord{}))
+
+	oldDB := model.DB
+	oldUsingSQLite := common.UsingSQLite
+	model.DB = db
+	common.UsingSQLite = true
+	t.Cleanup(func() {
+		model.DB = oldDB
+		common.UsingSQLite = oldUsingSQLite
+		_ = sqlDB.Close()
+	})
+
+	now := time.Now().Unix()
+	expiredReason := "image task result expired before settlement completed"
+	task := &model.Task{
+		TaskID:           "task_expired_settlement_review",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		ChannelId:        1,
+		Status:           model.TaskStatusSuccess,
+		Progress:         "100%",
+		FinishTime:       now - 60,
+		FailReason:       expiredReason,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		ResultCleanedAt:  now,
+		NextPollAt:       0,
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	require.NoError(t, RunImageTasks(context.Background(), []*model.Task{task}))
+
+	var reloaded model.Task
+	require.NoError(t, db.First(&reloaded, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+	require.Equal(t, expiredReason, reloaded.FailReason)
+	require.Zero(t, reloaded.NextPollAt)
+}
+
+func TestRunImageTasksParksEmptySettlementReviewWithoutEvidence(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.TaskSettlementRecord{}))
+
+	oldDB := model.DB
+	oldUsingSQLite := common.UsingSQLite
+	model.DB = db
+	common.UsingSQLite = true
+	t.Cleanup(func() {
+		model.DB = oldDB
+		common.UsingSQLite = oldUsingSQLite
+		_ = sqlDB.Close()
+	})
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_empty_settlement_review",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		ChannelId:        1,
+		Status:           model.TaskStatusSuccess,
+		Progress:         "100%",
+		FinishTime:       now,
+		SettlementStatus: model.TaskSettlementStatusPending,
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	require.NoError(t, RunImageTasks(context.Background(), []*model.Task{task}))
+
+	var reloaded model.Task
+	require.NoError(t, db.First(&reloaded, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+	require.Equal(t, "image task success result is empty, cannot settle billing", reloaded.FailReason)
+	require.Zero(t, reloaded.NextPollAt)
 }

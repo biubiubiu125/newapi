@@ -34,6 +34,7 @@ export type PublicImageTask = {
   result_expires_at?: number
   result_acknowledged_at?: number
   error?: PublicImageTaskError
+  cancellable?: boolean
 }
 
 export type PublicImageTaskList = {

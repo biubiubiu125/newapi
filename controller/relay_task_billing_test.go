@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -24,23 +25,31 @@ import (
 
 type relayTaskTestBilling struct {
 	preConsumed   int
+	settled       bool
 	refunded      bool
 	refundCalls   int
 	rollbackCalls int
 	refundApplied int
+	rollbackErr   error
+	refundErr     error
 }
 
 type relayTaskCompletionBillingAdaptor struct {
 	calls int
+	quota int
 }
 
 func (b *relayTaskTestBilling) Settle(actualQuota int) error {
+	b.settled = true
 	return nil
 }
 
 func (b *relayTaskTestBilling) Refund(c *gin.Context) error {
 	b.refundCalls++
-	if b.refunded {
+	if b.refundErr != nil {
+		return b.refundErr
+	}
+	if b.settled || b.refunded {
 		return nil
 	}
 	b.refunded = true
@@ -62,6 +71,9 @@ func (b *relayTaskTestBilling) Reserve(targetQuota int) error {
 
 func (b *relayTaskTestBilling) Rollback(actualQuota int) error {
 	b.rollbackCalls++
+	if b.rollbackErr != nil {
+		return b.rollbackErr
+	}
 	if b.refunded {
 		return nil
 	}
@@ -72,7 +84,7 @@ func (b *relayTaskTestBilling) Rollback(actualQuota int) error {
 
 func (a *relayTaskCompletionBillingAdaptor) AdjustBillingOnComplete(*model.Task, *relaycommon.TaskInfo) int {
 	a.calls++
-	return 0
+	return a.quota
 }
 
 func installRelayTaskTestHooks(t *testing.T, billing *relayTaskTestBilling, publicTaskID string, quota int) {
@@ -182,6 +194,33 @@ func TestTaskSubmissionStatusReflectsImmediateTerminalState(t *testing.T) {
 	require.Equal(t, "failed", taskSubmissionStatus(&model.Task{Status: model.TaskStatusFailure}))
 }
 
+func TestTaskSubmissionStatusMapsRetryableSettlementReviewToInProgress(t *testing.T) {
+	require.Equal(t, "in_progress", taskSubmissionStatus(&model.Task{
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		NextPollAt:       time.Now().Unix() + 60,
+	}))
+	require.Equal(t, "failed", taskSubmissionStatus(&model.Task{
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+	}))
+}
+
+func TestTaskSubmissionStatusMapsPendingSettlementToInProgress(t *testing.T) {
+	require.Equal(t, "in_progress", taskSubmissionStatus(&model.Task{
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusPending,
+	}))
+	require.Equal(t, "in_progress", taskSubmissionStatus(&model.Task{
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusApplied,
+	}))
+	require.Equal(t, "completed", taskSubmissionStatus(&model.Task{
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusSettled,
+	}))
+}
+
 func TestTaskPluginSubmissionPersistsSelectedChannelKey(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Task{}))
@@ -286,8 +325,68 @@ func TestRelayTaskImmediateSuccessInvokesCompletionBilling(t *testing.T) {
 	var task model.Task
 	require.NoError(t, db.First(&task, "task_id = ?", "task-immediate-success").Error)
 	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
+	require.Equal(t, model.TaskSettlementStatusSettled, task.SettlementStatus)
 	require.Equal(t, "https://cdn.example/immediate.mp4", task.PrivateData.ResultURL)
 	require.NotZero(t, task.FinishTime)
+}
+
+func TestRelayTaskImmediateSuccessDoesNotSettleBillingTwice(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.TaskSettlementRecord{}))
+	insertRelayTaskTestChannel(t, 305)
+
+	billing := &relayTaskTestBilling{preConsumed: 100}
+	completion := &relayTaskCompletionBillingAdaptor{quota: 150}
+	oldSubmit := relayTaskSubmitFunc
+	oldSettle := settleBillingFunc
+	oldLog := logTaskConsumptionFunc
+	oldRefund := refundTaskQuotaFunc
+	t.Cleanup(func() {
+		relayTaskSubmitFunc = oldSubmit
+		settleBillingFunc = oldSettle
+		logTaskConsumptionFunc = oldLog
+		refundTaskQuotaFunc = oldRefund
+	})
+	relayTaskSubmitFunc = func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		info.InitChannelMeta(c)
+		info.Billing = billing
+		info.FinalPreConsumedQuota = billing.preConsumed
+		info.BillingSource = service.BillingSourceWallet
+		info.Action = "generate"
+		info.PriceData.Quota = 100
+		if info.TaskRelayInfo == nil {
+			info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+		}
+		info.TaskRelayInfo.PublicTaskID = "task-immediate-no-double-settle"
+		return &relay.TaskSubmitResult{
+			UpstreamTaskID: "upstream-immediate-no-double-settle",
+			TaskData:       []byte(`{"id":"upstream-task"}`),
+			Platform:       constant.TaskPlatformSuno,
+			Quota:          100,
+			Immediate: &relaycommon.TaskInfo{
+				Status:   string(model.TaskStatusSuccess),
+				Progress: "100%",
+			},
+			CompletionBillingAdaptor: completion,
+		}, nil
+	}
+	settleCalls := 0
+	settledQuota := 0
+	settleBillingFunc = func(_ *gin.Context, _ *relaycommon.RelayInfo, quota int) error {
+		settleCalls++
+		settledQuota = quota
+		return nil
+	}
+	logTaskConsumptionFunc = func(*gin.Context, *relaycommon.RelayInfo) error { return nil }
+	refundTaskQuotaFunc = func(context.Context, *model.Task, string) error { return nil }
+	ctx, recorder := newRelayTaskTestContext(305, 305, 305)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, 1, completion.calls)
+	require.Equal(t, 1, settleCalls)
+	require.Equal(t, 150, settledQuota)
 }
 
 func insertRelayTaskTestChannel(t *testing.T, channelID int) {
@@ -402,6 +501,8 @@ func TestPersistTaskSubmitSettlementErrorWritesFallbackQuotaAndReviewStatus(t *t
 	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
 	require.Equal(t, 150, reloaded.PrivateData.SettlementAttemptQuota)
 	require.Equal(t, "settlement failed with detail", reloaded.PrivateData.SettlementError)
+	require.Greater(t, reloaded.NextPollAt, time.Now().Unix())
+	require.LessOrEqual(t, reloaded.NextPollAt, time.Now().Unix()+int64(service.TaskSettlementReviewRetrySeconds)+1)
 }
 
 func TestPersistTaskSubmitSettlementErrorDoesNotReinsertMissingTask(t *testing.T) {
@@ -456,14 +557,14 @@ func TestFailPersistedTaskAfterSubmitSettlementErrorMarksRefundedFailure(t *test
 	require.Equal(t, "100%", reloaded.Progress)
 	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
 	require.Equal(t, 150, reloaded.PrivateData.SettlementAttemptQuota)
-	require.Equal(t, "settlement failed", reloaded.PrivateData.SettlementError)
-	require.True(t, strings.Contains(reloaded.FailReason, "settlement failed"))
-	require.True(t, strings.Contains(reloaded.FailReason, "review update failed"))
+	require.Contains(t, reloaded.PrivateData.SettlementError, "settlement failed")
+	require.Contains(t, reloaded.PrivateData.SettlementError, "review update failed")
+	require.Equal(t, model.TaskPublicSettlementFailReason, reloaded.FailReason)
 	require.NotZero(t, reloaded.FinishTime)
 	require.GreaterOrEqual(t, reloaded.FinishTime, common.GetTimestamp()-5)
 }
 
-func TestFailPersistedTaskAfterSubmitAccountingErrorMarksReviewWithoutEndingTask(t *testing.T) {
+func TestFailPersistedTaskAfterSubmitAccountingErrorMarksReviewAndEndsTask(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Task{}))
 
@@ -486,17 +587,16 @@ func TestFailPersistedTaskAfterSubmitAccountingErrorMarksReviewWithoutEndingTask
 	var reloaded model.Task
 	require.NoError(t, db.First(&reloaded, task.ID).Error)
 	require.Equal(t, 0, reloaded.Quota)
-	require.Equal(t, model.TaskStatusNotStart, reloaded.Status)
-	require.Equal(t, "0%", reloaded.Progress)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
+	require.Equal(t, "100%", reloaded.Progress)
 	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
 	require.Equal(t, 150, reloaded.PrivateData.SettlementAttemptQuota)
 	require.Equal(t, "record consume log failed", reloaded.PrivateData.SettlementError)
-	require.True(t, strings.Contains(reloaded.FailReason, "billing accounting failed after task submission"))
-	require.True(t, strings.Contains(reloaded.FailReason, "record consume log failed"))
-	require.Zero(t, reloaded.FinishTime)
+	require.Equal(t, model.TaskPublicAccountingFailReason, reloaded.FailReason)
+	require.NotZero(t, reloaded.FinishTime)
 }
 
-func TestFailPersistedTaskAfterSubmitAccountingErrorKeepsSubmittedTaskPollable(t *testing.T) {
+func TestFailPersistedTaskAfterSubmitAccountingErrorStopsPolling(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Task{}))
 
@@ -519,13 +619,13 @@ func TestFailPersistedTaskAfterSubmitAccountingErrorKeepsSubmittedTaskPollable(t
 	var reloaded model.Task
 	require.NoError(t, db.First(&reloaded, task.ID).Error)
 	require.Equal(t, 0, reloaded.Quota)
-	require.Equal(t, model.TaskStatusNotStart, reloaded.Status)
-	require.Equal(t, "0%", reloaded.Progress)
-	require.Zero(t, reloaded.FinishTime)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
+	require.Equal(t, "100%", reloaded.Progress)
+	require.NotZero(t, reloaded.FinishTime)
 	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
 	require.Equal(t, 150, reloaded.PrivateData.SettlementAttemptQuota)
 	require.Contains(t, reloaded.PrivateData.SettlementError, "record consume log failed")
-	require.Contains(t, reloaded.FailReason, "billing accounting failed after task submission")
+	require.Equal(t, model.TaskPublicAccountingFailReason, reloaded.FailReason)
 }
 
 func TestRelayTaskSettleFailurePersistsReviewAndDoesNotRefundSubmittedTask(t *testing.T) {
@@ -542,14 +642,13 @@ func TestRelayTaskSettleFailurePersistsReviewAndDoesNotRefundSubmittedTask(t *te
 	logCalled := false
 	logTaskConsumptionFunc = func(c *gin.Context, info *relaycommon.RelayInfo) error {
 		logCalled = true
-		require.Contains(t, c.GetString(service.ContextKeySettlementError()), "settlement failed")
 		return nil
 	}
 	ctx, _ := newRelayTaskTestContext(301, 301, 301)
 
 	RelayTask(ctx)
 
-	require.True(t, logCalled)
+	require.False(t, logCalled)
 	require.Zero(t, billing.refundApplied)
 	require.Zero(t, billing.refundCalls)
 	var task model.Task
@@ -559,9 +658,79 @@ func TestRelayTaskSettleFailurePersistsReviewAndDoesNotRefundSubmittedTask(t *te
 	require.Equal(t, 150, task.PrivateData.SettlementAttemptQuota)
 	require.Equal(t, "settlement failed", task.PrivateData.SettlementError)
 	require.Equal(t, service.TaskSettlementReviewFailReason, task.FailReason)
+	require.Greater(t, task.NextPollAt, time.Now().Unix())
 }
 
-func TestRelayTaskLogFailureAfterSubmitKeepsReviewTaskAndRefundsOnlyOnce(t *testing.T) {
+func TestRelayTaskImmediateSuccessSettleFailureSchedulesReviewRetry(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Log{}))
+	insertRelayTaskTestChannel(t, 306)
+
+	billing := &relayTaskTestBilling{preConsumed: 100}
+	oldSubmit := relayTaskSubmitFunc
+	oldSettle := settleBillingFunc
+	oldLog := logTaskConsumptionFunc
+	oldRefund := refundTaskQuotaFunc
+	t.Cleanup(func() {
+		relayTaskSubmitFunc = oldSubmit
+		settleBillingFunc = oldSettle
+		logTaskConsumptionFunc = oldLog
+		refundTaskQuotaFunc = oldRefund
+	})
+	relayTaskSubmitFunc = func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		info.InitChannelMeta(c)
+		info.Billing = billing
+		info.FinalPreConsumedQuota = billing.preConsumed
+		info.BillingSource = service.BillingSourceWallet
+		info.Action = "generate"
+		info.PriceData.Quota = 100
+		if info.TaskRelayInfo == nil {
+			info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+		}
+		info.TaskRelayInfo.PublicTaskID = "task-immediate-settle-review"
+		return &relay.TaskSubmitResult{
+			UpstreamTaskID: "upstream-immediate-settle-review",
+			TaskData:       []byte(`{"id":"upstream-task"}`),
+			Platform:       constant.TaskPlatformSuno,
+			Quota:          100,
+			Immediate: &relaycommon.TaskInfo{
+				Status:    string(model.TaskStatusSuccess),
+				Progress:  "100%",
+				RemoteUrl: "https://cdn.example/immediate.mp4",
+			},
+		}, nil
+	}
+	settleBillingFunc = func(*gin.Context, *relaycommon.RelayInfo, int) error {
+		return errors.New("settlement failed")
+	}
+	logCalls := 0
+	logTaskConsumptionFunc = func(*gin.Context, *relaycommon.RelayInfo) error {
+		logCalls++
+		return nil
+	}
+	refundTaskQuotaFunc = func(context.Context, *model.Task, string) error {
+		t.Fatal("immediate success settlement review must not refund")
+		return nil
+	}
+	ctx, recorder := newRelayTaskTestContext(306, 306, 306)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Contains(t, recorder.Body.String(), `"status":"in_progress"`)
+	require.NotContains(t, recorder.Body.String(), `"status":"completed"`)
+	require.Zero(t, billing.refundCalls)
+	require.Zero(t, logCalls)
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-immediate-settle-review").Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, task.SettlementStatus)
+	require.Equal(t, "https://cdn.example/immediate.mp4", task.PrivateData.ResultURL)
+	require.Greater(t, task.NextPollAt, time.Now().Unix())
+	require.Equal(t, model.TaskStatus(model.TaskStatusInProgress), task.PublicStatus())
+}
+
+func TestRelayTaskLogFailureAfterSubmitMarksReviewAndRefunds(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Log{}))
 	insertRelayTaskTestChannel(t, 302)
@@ -570,10 +739,10 @@ func TestRelayTaskLogFailureAfterSubmitKeepsReviewTaskAndRefundsOnlyOnce(t *test
 	installRelayTaskTestHooks(t, billing, "task-controller-log-review", 150)
 	settleBillingFunc = func(c *gin.Context, info *relaycommon.RelayInfo, actualQuota int) error {
 		require.Equal(t, 150, actualQuota)
-		return nil
+		require.NotNil(t, info.Billing)
+		return info.Billing.Settle(actualQuota)
 	}
 	logTaskConsumptionFunc = func(c *gin.Context, info *relaycommon.RelayInfo) error {
-		require.NoError(t, service.RollbackBillingSettlement(c, info, 150))
 		return errors.New("record consume log failed")
 	}
 	ctx, recorder := newRelayTaskTestContext(302, 302, 302)
@@ -581,20 +750,323 @@ func TestRelayTaskLogFailureAfterSubmitKeepsReviewTaskAndRefundsOnlyOnce(t *test
 	RelayTask(ctx)
 
 	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "log_task_consumption_failed")
 	require.Equal(t, 1, billing.rollbackCalls)
-	require.Equal(t, 1, billing.refundCalls)
 	require.Equal(t, 1, billing.refundApplied)
+	require.Zero(t, billing.refundCalls)
 	var task model.Task
 	require.NoError(t, db.First(&task, "task_id = ?", "task-controller-log-review").Error)
 	require.Equal(t, 0, task.Quota)
-	require.Equal(t, model.TaskStatusNotStart, task.Status)
-	require.Equal(t, "0%", task.Progress)
-	require.Zero(t, task.FinishTime)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
+	require.Equal(t, "100%", task.Progress)
 	require.Equal(t, model.TaskSettlementStatusReview, task.SettlementStatus)
 	require.Equal(t, 150, task.PrivateData.SettlementAttemptQuota)
-	require.Equal(t, "record consume log failed", task.PrivateData.SettlementError)
-	require.Contains(t, task.FailReason, "billing accounting failed after task submission")
-	require.Contains(t, task.FailReason, "record consume log failed")
+	require.Contains(t, task.PrivateData.SettlementError, "record consume log failed")
+	require.Equal(t, model.TaskPublicAccountingFailReason, task.FailReason)
+}
+
+func TestRelayTaskLogFailureAfterSettleRollsBackWalletQuota(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Log{}, &model.Token{}))
+	insertRelayTaskTestChannel(t, 312)
+
+	const userID, tokenID, channelID = 312, 312, 312
+	const initQuota, preConsumed = 10000, 150
+	require.NoError(t, db.Create(&model.User{
+		Id:       userID,
+		Username: "relay-task-log-rollback",
+		Quota:    initQuota,
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          tokenID,
+		UserId:      userID,
+		Key:         "sk-relay-task-log-rollback",
+		Name:        "relay-task-log-rollback",
+		Status:      common.TokenStatusEnabled,
+		RemainQuota: initQuota,
+	}).Error)
+
+	oldSubmit := relayTaskSubmitFunc
+	oldSettle := settleBillingFunc
+	oldLog := logTaskConsumptionFunc
+	t.Cleanup(func() {
+		relayTaskSubmitFunc = oldSubmit
+		settleBillingFunc = oldSettle
+		logTaskConsumptionFunc = oldLog
+	})
+	relayTaskSubmitFunc = func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		info.InitChannelMeta(c)
+		info.UserId = userID
+		info.TokenId = tokenID
+		info.TokenKey = "sk-relay-task-log-rollback"
+		info.ForcePreConsume = true
+		info.UserSetting.BillingPreference = "wallet_only"
+		info.BillingSource = service.BillingSourceWallet
+		info.Action = "generate"
+		info.PriceData.Quota = preConsumed
+		session, apiErr := service.NewBillingSession(c, info, preConsumed)
+		require.Nil(t, apiErr)
+		require.NotNil(t, session)
+		info.Billing = session
+		info.FinalPreConsumedQuota = preConsumed
+		if info.TaskRelayInfo == nil {
+			info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+		}
+		info.TaskRelayInfo.PublicTaskID = "task-controller-log-rollback-wallet"
+		return &relay.TaskSubmitResult{
+			UpstreamTaskID: "upstream-log-rollback-wallet",
+			TaskData:       []byte(`{"id":"upstream-task"}`),
+			Platform:       constant.TaskPlatformSuno,
+			Quota:          preConsumed,
+		}, nil
+	}
+	settleBillingFunc = service.SettleBilling
+	logTaskConsumptionFunc = func(*gin.Context, *relaycommon.RelayInfo) error {
+		return errors.New("record consume log failed")
+	}
+	ctx, recorder := newRelayTaskTestContext(userID, tokenID, channelID)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "log_task_consumption_failed")
+	userQuota, err := model.GetUserQuota(userID, false)
+	require.NoError(t, err)
+	require.EqualValues(t, initQuota, userQuota)
+	var token model.Token
+	require.NoError(t, db.First(&token, tokenID).Error)
+	require.EqualValues(t, initQuota, token.RemainQuota)
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-controller-log-rollback-wallet").Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, task.SettlementStatus)
+}
+
+func TestRelayTaskLogFailureWhenRollbackFailsKeepsRefundPending(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Log{}))
+	insertRelayTaskTestChannel(t, 322)
+
+	billing := &relayTaskTestBilling{
+		preConsumed: 100,
+		rollbackErr: errors.New("wallet credit failed"),
+	}
+	installRelayTaskTestHooks(t, billing, "task-controller-log-rollback-fail", 150)
+	settleBillingFunc = func(c *gin.Context, info *relaycommon.RelayInfo, actualQuota int) error {
+		require.Equal(t, 150, actualQuota)
+		require.NotNil(t, info.Billing)
+		return info.Billing.Settle(actualQuota)
+	}
+	logTaskConsumptionFunc = func(*gin.Context, *relaycommon.RelayInfo) error {
+		return errors.New("record consume log failed")
+	}
+	ctx, recorder := newRelayTaskTestContext(322, 322, 322)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "log_task_consumption_failed")
+	require.Equal(t, 1, billing.rollbackCalls)
+	require.Zero(t, billing.refundCalls)
+	require.Zero(t, billing.refundApplied)
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-controller-log-rollback-fail").Error)
+	require.Equal(t, 150, task.Quota)
+	require.True(t, task.RefundPending)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
+	require.NotEqual(t, model.TaskSettlementStatusReview, task.SettlementStatus)
+	require.Equal(t, 150, task.PrivateData.SettlementAttemptQuota)
+	require.Equal(t, model.TaskPublicAccountingFailReason, task.FailReason)
+	require.Contains(t, task.PrivateData.SettlementError, "record consume log failed")
+
+	pending, err := model.GetPendingTaskRefundsAfter(0, 100)
+	require.NoError(t, err)
+	found := false
+	for _, item := range pending {
+		if item.TaskID == "task-controller-log-rollback-fail" {
+			found = true
+			require.Equal(t, 150, item.Quota)
+			require.True(t, item.RefundPending)
+			break
+		}
+	}
+	require.True(t, found, "rollback-failed submit must remain refundable for the pending-refund sweeper")
+}
+
+func TestRelayTaskLogFailureWhenRollbackFailsSweeperRestoresWallet(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Log{}, &model.Token{}, &model.TaskSettlementRecord{}, &model.QuotaData{}))
+	insertRelayTaskTestChannel(t, 323)
+
+	const userID, tokenID, channelID = 323, 323, 323
+	const initQuota, preConsumed = 10000, 150
+	require.NoError(t, db.Create(&model.User{
+		Id:       userID,
+		Username: "relay-task-log-rollback-fail",
+		Quota:    initQuota,
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          tokenID,
+		UserId:      userID,
+		Key:         "sk-relay-task-log-rollback-fail",
+		Name:        "relay-task-log-rollback-fail",
+		Status:      common.TokenStatusEnabled,
+		RemainQuota: initQuota,
+	}).Error)
+
+	wrapped := &rollbackFailBilling{failWith: errors.New("wallet credit failed")}
+	oldSubmit := relayTaskSubmitFunc
+	oldSettle := settleBillingFunc
+	oldLog := logTaskConsumptionFunc
+	t.Cleanup(func() {
+		relayTaskSubmitFunc = oldSubmit
+		settleBillingFunc = oldSettle
+		logTaskConsumptionFunc = oldLog
+	})
+	relayTaskSubmitFunc = func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		info.InitChannelMeta(c)
+		info.UserId = userID
+		info.TokenId = tokenID
+		info.TokenKey = "sk-relay-task-log-rollback-fail"
+		info.ForcePreConsume = true
+		info.UserSetting.BillingPreference = "wallet_only"
+		info.BillingSource = service.BillingSourceWallet
+		info.Action = "generate"
+		info.PriceData.Quota = preConsumed
+		session, apiErr := service.NewBillingSession(c, info, preConsumed)
+		require.Nil(t, apiErr)
+		require.NotNil(t, session)
+		wrapped.inner = session
+		info.Billing = wrapped
+		info.FinalPreConsumedQuota = preConsumed
+		if info.TaskRelayInfo == nil {
+			info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+		}
+		info.TaskRelayInfo.PublicTaskID = "task-controller-log-rollback-fail-wallet"
+		return &relay.TaskSubmitResult{
+			UpstreamTaskID: "upstream-log-rollback-fail-wallet",
+			TaskData:       []byte(`{"id":"upstream-task"}`),
+			Platform:       constant.TaskPlatformSuno,
+			Quota:          preConsumed,
+		}, nil
+	}
+	settleBillingFunc = service.SettleBilling
+	logTaskConsumptionFunc = func(*gin.Context, *relaycommon.RelayInfo) error {
+		return errors.New("record consume log failed")
+	}
+	ctx, recorder := newRelayTaskTestContext(userID, tokenID, channelID)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "log_task_consumption_failed")
+	require.Equal(t, 1, wrapped.rollbacks)
+	userQuota, err := model.GetUserQuota(userID, false)
+	require.NoError(t, err)
+	require.EqualValues(t, initQuota-preConsumed, userQuota)
+	var token model.Token
+	require.NoError(t, db.First(&token, tokenID).Error)
+	require.EqualValues(t, initQuota-preConsumed, token.RemainQuota)
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-controller-log-rollback-fail-wallet").Error)
+	require.Equal(t, preConsumed, task.Quota)
+	require.True(t, task.RefundPending)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
+	require.NotEqual(t, model.TaskSettlementStatusReview, task.SettlementStatus)
+
+	require.NoError(t, service.RefundTaskQuota(context.Background(), &task, task.FailReason))
+	userQuota, err = model.GetUserQuota(userID, false)
+	require.NoError(t, err)
+	require.EqualValues(t, initQuota, userQuota)
+	require.NoError(t, db.First(&token, tokenID).Error)
+	require.EqualValues(t, initQuota, token.RemainQuota)
+	require.NoError(t, db.First(&task, "task_id = ?", "task-controller-log-rollback-fail-wallet").Error)
+	require.Zero(t, task.Quota)
+	require.False(t, task.RefundPending)
+}
+
+type rollbackFailBilling struct {
+	inner     relaycommon.BillingSettler
+	failWith  error
+	rollbacks int
+}
+
+func (b *rollbackFailBilling) Settle(actualQuota int) error {
+	return b.inner.Settle(actualQuota)
+}
+
+func (b *rollbackFailBilling) Refund(c *gin.Context) error {
+	return b.inner.Refund(c)
+}
+
+func (b *rollbackFailBilling) Rollback(actualQuota int) error {
+	b.rollbacks++
+	return b.failWith
+}
+
+func (b *rollbackFailBilling) NeedsRefund() bool {
+	return b.inner.NeedsRefund()
+}
+
+func (b *rollbackFailBilling) GetPreConsumedQuota() int {
+	return b.inner.GetPreConsumedQuota()
+}
+
+func (b *rollbackFailBilling) Reserve(targetQuota int) error {
+	return b.inner.Reserve(targetQuota)
+}
+
+func TestRelayTaskKeepsUpstreamSuccessWhenClientCancelsAfterSubmit(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}))
+	insertRelayTaskTestChannel(t, 306)
+
+	billing := &relayTaskTestBilling{preConsumed: 100}
+	reqCtx, cancel := context.WithCancel(context.Background())
+	t.Cleanup(cancel)
+	oldSubmit := relayTaskSubmitFunc
+	oldSettle := settleBillingFunc
+	oldLog := logTaskConsumptionFunc
+	t.Cleanup(func() {
+		relayTaskSubmitFunc = oldSubmit
+		settleBillingFunc = oldSettle
+		logTaskConsumptionFunc = oldLog
+	})
+	relayTaskSubmitFunc = func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		info.InitChannelMeta(c)
+		info.Billing = billing
+		info.FinalPreConsumedQuota = billing.preConsumed
+		info.BillingSource = service.BillingSourceWallet
+		info.Action = "generate"
+		info.PriceData.Quota = 100
+		if info.TaskRelayInfo == nil {
+			info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+		}
+		info.TaskRelayInfo.PublicTaskID = "task-client-cancel-after-submit"
+		cancel()
+		return &relay.TaskSubmitResult{
+			UpstreamTaskID: "upstream-client-cancel-after-submit",
+			TaskData:       []byte(`{"id":"upstream-task"}`),
+			Platform:       constant.TaskPlatformSuno,
+			Quota:          100,
+		}, nil
+	}
+	settleBillingFunc = func(*gin.Context, *relaycommon.RelayInfo, int) error { return nil }
+	logTaskConsumptionFunc = func(*gin.Context, *relaycommon.RelayInfo) error { return nil }
+
+	ctx, recorder := newRelayTaskTestContext(306, 306, 306)
+	ctx.Request = ctx.Request.WithContext(reqCtx)
+
+	RelayTask(ctx)
+
+	require.Zero(t, billing.refundCalls)
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-client-cancel-after-submit").Error)
+	require.Equal(t, "upstream-client-cancel-after-submit", task.PrivateData.UpstreamTaskID)
+	require.Equal(t, 100, task.Quota)
+	_ = recorder
 }
 
 func TestTaskRelayAccountingFailuresPersistAuditRecords(t *testing.T) {
@@ -605,14 +1077,16 @@ func TestTaskRelayAccountingFailuresPersistAuditRecords(t *testing.T) {
 	for _, want := range []string{
 		`RecordConsumeAccountingError(c, relayInfo, "refund billing after relay error"`,
 		`RecordConsumeAccountingError(c, relayInfo, "refund billing after task error"`,
+		`RecordConsumeAccountingError(c, relayInfo, "rollback billing after task error"`,
 		`RecordConsumeAccountingError(c, relayInfo, "settle task billing"`,
 		`RecordConsumeAccountingError(c, relayInfo, "persist task settlement review"`,
 		`RecordConsumeAccountingError(c, relayInfo, "log task consumption"`,
 		`RecordConsumeAccountingError(c, relayInfo, "persist task accounting review"`,
-		`failPersistedTaskAfterSubmitAccountingError(task, relayInfo, settlementQuota, err)`,
 	} {
 		require.Contains(t, source, want)
 	}
+	require.NotContains(t, source, "DeleteTaskByID")
+	require.Contains(t, source, "ForceTaskRefundableAfterSubmitAccountingFailure")
 }
 
 func TestImageTaskCreationUsesAtomicBillingCommit(t *testing.T) {
@@ -636,4 +1110,498 @@ func TestChannelTestHandlesConsumeLogError(t *testing.T) {
 
 	require.Contains(t, source, "if err := model.RecordConsumeLog")
 	require.Contains(t, source, "record channel test consume log")
+}
+
+func TestRelayTaskLogFailureWhenRefundablePersistFailsStillMarksRefundPending(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}))
+	insertRelayTaskTestChannel(t, 324)
+
+	billing := &relayTaskTestBilling{
+		preConsumed: 100,
+		rollbackErr: errors.New("wallet credit failed"),
+	}
+	oldPersist := persistRefundableSubmitAccountingFailureFunc
+	installRelayTaskTestHooks(t, billing, "task-controller-log-persist-fail", 150)
+	t.Cleanup(func() {
+		persistRefundableSubmitAccountingFailureFunc = oldPersist
+	})
+	relayTaskSubmitFunc = func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		info.InitChannelMeta(c)
+		info.Billing = billing
+		info.FinalPreConsumedQuota = billing.preConsumed
+		info.BillingSource = service.BillingSourceWallet
+		info.Action = "generate"
+		info.PriceData.Quota = 150
+		if info.TaskRelayInfo == nil {
+			info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+		}
+		info.TaskRelayInfo.PublicTaskID = "task-controller-log-persist-fail"
+		return &relay.TaskSubmitResult{
+			UpstreamTaskID: "upstream-log-persist-fail",
+			TaskData:       []byte(`{"id":"upstream-task"}`),
+			Platform:       constant.TaskPlatformSuno,
+			Quota:          150,
+			Immediate: &relaycommon.TaskInfo{
+				Status:    string(model.TaskStatusSuccess),
+				Progress:  "100%",
+				RemoteUrl: "https://cdn.example/persist-fail.mp4",
+			},
+		}, nil
+	}
+	settleBillingFunc = func(c *gin.Context, info *relaycommon.RelayInfo, actualQuota int) error {
+		require.NotNil(t, info.Billing)
+		return info.Billing.Settle(actualQuota)
+	}
+	logTaskConsumptionFunc = func(*gin.Context, *relaycommon.RelayInfo) error {
+		return errors.New("record consume log failed")
+	}
+	persistRefundableSubmitAccountingFailureFunc = func(*model.Task, int, error, error) error {
+		return errors.New("persist refundable accounting failure")
+	}
+	ctx, recorder := newRelayTaskTestContext(324, 324, 324)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "log_task_consumption_failed")
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-controller-log-persist-fail").Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
+	require.True(t, task.RefundPending)
+	require.Equal(t, 150, task.Quota)
+	require.NotEqual(t, model.TaskSettlementStatusReview, task.SettlementStatus)
+
+	pendingSettlements, err := model.GetPendingTaskSettlementsAfter(0, 100)
+	require.NoError(t, err)
+	for _, item := range pendingSettlements {
+		require.NotEqual(t, "task-controller-log-persist-fail", item.TaskID)
+	}
+	pendingRefunds, err := model.GetPendingTaskRefundsAfter(0, 100)
+	require.NoError(t, err)
+	found := false
+	for _, item := range pendingRefunds {
+		if item.TaskID == "task-controller-log-persist-fail" {
+			found = true
+			require.True(t, item.RefundPending)
+			require.Equal(t, 150, item.Quota)
+			break
+		}
+	}
+	require.True(t, found, "persist-fail after rollback-fail must remain refundable")
+}
+
+func TestRelayTaskLogFailureWhenRollbackFailsDoesNotDoubleDecrementUsage(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Log{}, &model.Token{}, &model.TaskSettlementRecord{}, &model.QuotaData{}))
+	insertRelayTaskTestChannel(t, 325)
+
+	const userID, tokenID, channelID = 325, 325, 325
+	const initQuota, preConsumed = 10000, 150
+	require.NoError(t, db.Create(&model.User{
+		Id:           userID,
+		Username:     "relay-task-log-rollback-usage",
+		Quota:        initQuota,
+		UsedQuota:    0,
+		RequestCount: 0,
+		Status:       common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          tokenID,
+		UserId:      userID,
+		Key:         "sk-relay-task-log-rollback-usage",
+		Name:        "relay-task-log-rollback-usage",
+		Status:      common.TokenStatusEnabled,
+		RemainQuota: initQuota,
+	}).Error)
+
+	wrapped := &rollbackFailBilling{failWith: errors.New("wallet credit failed")}
+	oldSubmit := relayTaskSubmitFunc
+	oldSettle := settleBillingFunc
+	oldLog := logTaskConsumptionFunc
+	t.Cleanup(func() {
+		relayTaskSubmitFunc = oldSubmit
+		settleBillingFunc = oldSettle
+		logTaskConsumptionFunc = oldLog
+	})
+	relayTaskSubmitFunc = func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		info.InitChannelMeta(c)
+		info.UserId = userID
+		info.TokenId = tokenID
+		info.TokenKey = "sk-relay-task-log-rollback-usage"
+		info.ForcePreConsume = true
+		info.UserSetting.BillingPreference = "wallet_only"
+		info.BillingSource = service.BillingSourceWallet
+		info.Action = "generate"
+		info.PriceData.Quota = preConsumed
+		session, apiErr := service.NewBillingSession(c, info, preConsumed)
+		require.Nil(t, apiErr)
+		require.NotNil(t, session)
+		wrapped.inner = session
+		info.Billing = wrapped
+		info.FinalPreConsumedQuota = preConsumed
+		if info.TaskRelayInfo == nil {
+			info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+		}
+		info.TaskRelayInfo.PublicTaskID = "task-controller-log-rollback-usage"
+		return &relay.TaskSubmitResult{
+			UpstreamTaskID: "upstream-log-rollback-usage",
+			TaskData:       []byte(`{"id":"upstream-task"}`),
+			Platform:       constant.TaskPlatformSuno,
+			Quota:          preConsumed,
+		}, nil
+	}
+	settleBillingFunc = service.SettleBilling
+	logTaskConsumptionFunc = func(*gin.Context, *relaycommon.RelayInfo) error {
+		return errors.New("record consume log failed")
+	}
+	ctx, recorder := newRelayTaskTestContext(userID, tokenID, channelID)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-controller-log-rollback-usage").Error)
+	require.True(t, task.PrivateData.PreConsumedUsageCaptured)
+	require.False(t, task.PrivateData.PreConsumedUsageRecorded)
+	require.True(t, task.RefundPending)
+
+	var user model.User
+	require.NoError(t, db.Select("used_quota", "request_count", "quota").First(&user, userID).Error)
+	require.EqualValues(t, 0, user.UsedQuota)
+	require.Equal(t, 0, user.RequestCount)
+	require.EqualValues(t, initQuota-preConsumed, user.Quota)
+
+	require.NoError(t, service.RefundTaskQuota(context.Background(), &task, task.FailReason))
+	require.NoError(t, db.First(&user, userID).Error)
+	require.EqualValues(t, 0, user.UsedQuota)
+	require.Equal(t, 0, user.RequestCount)
+	require.EqualValues(t, initQuota, user.Quota)
+}
+
+func TestRelayTaskImmediateSuccessQuotaPersistFailureSettlesPrepaidAndMarksReview(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.TaskSettlementRecord{}))
+	insertRelayTaskTestChannel(t, 327)
+
+	billing := &relayTaskTestBilling{preConsumed: 100}
+	completion := &relayTaskCompletionBillingAdaptor{quota: 150}
+	oldSubmit := relayTaskSubmitFunc
+	oldSettle := settleBillingFunc
+	oldLog := logTaskConsumptionFunc
+	oldRefund := refundTaskQuotaFunc
+	oldPersistQuota := persistImmediateTaskQuotaFunc
+	t.Cleanup(func() {
+		relayTaskSubmitFunc = oldSubmit
+		settleBillingFunc = oldSettle
+		logTaskConsumptionFunc = oldLog
+		refundTaskQuotaFunc = oldRefund
+		persistImmediateTaskQuotaFunc = oldPersistQuota
+	})
+	relayTaskSubmitFunc = func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		info.InitChannelMeta(c)
+		info.Billing = billing
+		info.FinalPreConsumedQuota = billing.preConsumed
+		info.BillingSource = service.BillingSourceWallet
+		info.Action = "generate"
+		info.PriceData.Quota = 100
+		if info.TaskRelayInfo == nil {
+			info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+		}
+		info.TaskRelayInfo.PublicTaskID = "task-immediate-quota-persist-fail"
+		return &relay.TaskSubmitResult{
+			UpstreamTaskID: "upstream-immediate-quota-persist-fail",
+			TaskData:       []byte(`{"id":"upstream-task"}`),
+			Platform:       constant.TaskPlatformSuno,
+			Quota:          100,
+			Immediate: &relaycommon.TaskInfo{
+				Status:   string(model.TaskStatusSuccess),
+				Progress: "100%",
+			},
+			CompletionBillingAdaptor: completion,
+		}, nil
+	}
+	persistImmediateTaskQuotaFunc = func(*model.Task) error {
+		return errors.New("quota persist failed")
+	}
+	settleCalls := 0
+	settledQuota := 0
+	settleBillingFunc = func(_ *gin.Context, _ *relaycommon.RelayInfo, quota int) error {
+		settleCalls++
+		settledQuota = quota
+		return nil
+	}
+	logTaskConsumptionFunc = func(*gin.Context, *relaycommon.RelayInfo) error { return nil }
+	refundTaskQuotaFunc = func(context.Context, *model.Task, string) error {
+		t.Fatal("quota persist failure must not refund a successful task")
+		return nil
+	}
+	ctx, recorder := newRelayTaskTestContext(327, 327, 327)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Equal(t, 1, completion.calls)
+	require.Equal(t, 1, settleCalls)
+	require.Equal(t, 100, settledQuota)
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-immediate-quota-persist-fail").Error)
+	require.Equal(t, 100, task.Quota)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, task.SettlementStatus)
+	require.Equal(t, 150, task.PrivateData.SettlementAttemptQuota)
+	require.Greater(t, task.NextPollAt, time.Now().Unix())
+
+	pendingSettlements, err := model.GetPendingTaskSettlementsAfter(0, 100)
+	require.NoError(t, err)
+	for _, item := range pendingSettlements {
+		require.NotEqual(t, "task-immediate-quota-persist-fail", item.TaskID)
+	}
+}
+
+func TestRelayTaskSettleFailureWhenReviewPersistFailsKeepsRefundPending(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Log{}))
+	insertRelayTaskTestChannel(t, 328)
+
+	billing := &relayTaskTestBilling{
+		preConsumed: 100,
+		refundErr:   errors.New("wallet credit failed"),
+	}
+	oldPersistReview := persistTaskSubmitSettlementErrorFunc
+	installRelayTaskTestHooks(t, billing, "task-controller-settle-review-persist-fail", 150)
+	t.Cleanup(func() {
+		persistTaskSubmitSettlementErrorFunc = oldPersistReview
+	})
+	settleBillingFunc = func(c *gin.Context, info *relaycommon.RelayInfo, actualQuota int) error {
+		require.Equal(t, 150, actualQuota)
+		return errors.New("settlement failed")
+	}
+	logCalled := false
+	logTaskConsumptionFunc = func(c *gin.Context, info *relaycommon.RelayInfo) error {
+		logCalled = true
+		return nil
+	}
+	persistTaskSubmitSettlementErrorFunc = func(*model.Task, *relaycommon.RelayInfo, int, error) error {
+		return errors.New("review persist failed")
+	}
+	ctx, recorder := newRelayTaskTestContext(328, 328, 328)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	require.False(t, logCalled)
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-controller-settle-review-persist-fail").Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
+	require.True(t, task.RefundPending)
+	require.Equal(t, 100, task.Quota)
+	require.NotEqual(t, model.TaskSettlementStatusReview, task.SettlementStatus)
+
+	pendingSettlements, err := model.GetPendingTaskSettlementsAfter(0, 100)
+	require.NoError(t, err)
+	for _, item := range pendingSettlements {
+		require.NotEqual(t, "task-controller-settle-review-persist-fail", item.TaskID)
+	}
+	pendingRefunds, err := model.GetPendingTaskRefundsAfter(0, 100)
+	require.NoError(t, err)
+	found := false
+	for _, item := range pendingRefunds {
+		if item.TaskID == "task-controller-settle-review-persist-fail" {
+			found = true
+			require.True(t, item.RefundPending)
+			require.Equal(t, 100, item.Quota)
+			break
+		}
+	}
+	require.True(t, found, "settle-fail review persist fail must remain refundable at prepaid quota")
+}
+
+func TestRelayTaskLogFailureWhenBothRefundablePersistsFailStillMarksRefundPending(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}))
+	insertRelayTaskTestChannel(t, 329)
+
+	billing := &relayTaskTestBilling{
+		preConsumed: 100,
+		rollbackErr: errors.New("wallet credit failed"),
+	}
+	oldPersist := persistRefundableSubmitAccountingFailureFunc
+	oldUpdate := updateTaskAfterSubmitAccountingFailureFunc
+	installRelayTaskTestHooks(t, billing, "task-controller-log-both-persist-fail", 150)
+	t.Cleanup(func() {
+		persistRefundableSubmitAccountingFailureFunc = oldPersist
+		updateTaskAfterSubmitAccountingFailureFunc = oldUpdate
+	})
+	relayTaskSubmitFunc = func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		info.InitChannelMeta(c)
+		info.Billing = billing
+		info.FinalPreConsumedQuota = billing.preConsumed
+		info.BillingSource = service.BillingSourceWallet
+		info.Action = "generate"
+		info.PriceData.Quota = 150
+		if info.TaskRelayInfo == nil {
+			info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+		}
+		info.TaskRelayInfo.PublicTaskID = "task-controller-log-both-persist-fail"
+		return &relay.TaskSubmitResult{
+			UpstreamTaskID: "upstream-log-both-persist-fail",
+			TaskData:       []byte(`{"id":"upstream-task"}`),
+			Platform:       constant.TaskPlatformSuno,
+			Quota:          150,
+			Immediate: &relaycommon.TaskInfo{
+				Status:    string(model.TaskStatusSuccess),
+				Progress:  "100%",
+				RemoteUrl: "https://cdn.example/both-persist-fail.mp4",
+			},
+		}, nil
+	}
+	settleBillingFunc = func(c *gin.Context, info *relaycommon.RelayInfo, actualQuota int) error {
+		require.NotNil(t, info.Billing)
+		return info.Billing.Settle(actualQuota)
+	}
+	logTaskConsumptionFunc = func(*gin.Context, *relaycommon.RelayInfo) error {
+		return errors.New("record consume log failed")
+	}
+	persistRefundableSubmitAccountingFailureFunc = func(*model.Task, int, error, error) error {
+		return errors.New("persist refundable accounting failure")
+	}
+	updateTaskAfterSubmitAccountingFailureFunc = func(*model.Task) error {
+		return errors.New("private_data persist failed")
+	}
+	ctx, recorder := newRelayTaskTestContext(329, 329, 329)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "log_task_consumption_failed")
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-controller-log-both-persist-fail").Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
+	require.True(t, task.RefundPending)
+	require.Equal(t, 150, task.Quota)
+	require.NotEqual(t, model.TaskSettlementStatusReview, task.SettlementStatus)
+
+	pendingSettlements, err := model.GetPendingTaskSettlementsAfter(0, 100)
+	require.NoError(t, err)
+	for _, item := range pendingSettlements {
+		require.NotEqual(t, "task-controller-log-both-persist-fail", item.TaskID)
+	}
+	pendingRefunds, err := model.GetPendingTaskRefundsAfter(0, 100)
+	require.NoError(t, err)
+	found := false
+	for _, item := range pendingRefunds {
+		if item.TaskID == "task-controller-log-both-persist-fail" {
+			found = true
+			require.True(t, item.RefundPending)
+			require.Equal(t, 150, item.Quota)
+			break
+		}
+	}
+	require.True(t, found, "both persistRefundable attempts failing must still leave a refundable row")
+	require.True(t, task.PrivateData.PreConsumedUsageCaptured, "Force last-resort persist must keep usage-captured so the sweeper does not decrement used_quota again")
+	require.False(t, task.PrivateData.PreConsumedUsageRecorded)
+}
+
+func TestRelayTaskLogFailureWhenUsageRollbackFailsKeepsRefundPendingForUsage(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Log{}, &model.Token{}, &model.TaskSettlementRecord{}, &model.QuotaData{}, &model.TokenUsageDaily{}))
+	insertRelayTaskTestChannel(t, 330)
+
+	const userID, tokenID, channelID = 330, 330, 330
+	const initQuota, preConsumed = 10000, 150
+	require.NoError(t, db.Create(&model.User{
+		Id:           userID,
+		Username:     "relay-task-log-usage-rollback-fail",
+		Quota:        initQuota,
+		UsedQuota:    0,
+		RequestCount: 0,
+		Status:       common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          tokenID,
+		UserId:      userID,
+		Key:         "sk-relay-task-log-usage-rollback-fail",
+		Name:        "relay-task-log-usage-rollback-fail",
+		Status:      common.TokenStatusEnabled,
+		RemainQuota: initQuota,
+	}).Error)
+
+	oldSubmit := relayTaskSubmitFunc
+	oldSettle := settleBillingFunc
+	oldLog := logTaskConsumptionFunc
+	t.Cleanup(func() {
+		relayTaskSubmitFunc = oldSubmit
+		settleBillingFunc = oldSettle
+		logTaskConsumptionFunc = oldLog
+	})
+	relayTaskSubmitFunc = func(c *gin.Context, info *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		info.InitChannelMeta(c)
+		info.UserId = userID
+		info.TokenId = tokenID
+		info.TokenKey = "sk-relay-task-log-usage-rollback-fail"
+		info.ForcePreConsume = true
+		info.UserSetting.BillingPreference = "wallet_only"
+		info.BillingSource = service.BillingSourceWallet
+		info.Action = "generate"
+		info.PriceData.Quota = preConsumed
+		session, apiErr := service.NewBillingSession(c, info, preConsumed)
+		require.Nil(t, apiErr)
+		require.NotNil(t, session)
+		info.Billing = session
+		info.FinalPreConsumedQuota = preConsumed
+		if info.TaskRelayInfo == nil {
+			info.TaskRelayInfo = &relaycommon.TaskRelayInfo{}
+		}
+		info.TaskRelayInfo.PublicTaskID = "task-controller-log-usage-rollback-fail"
+		return &relay.TaskSubmitResult{
+			UpstreamTaskID: "upstream-log-usage-rollback-fail",
+			TaskData:       []byte(`{"id":"upstream-task"}`),
+			Platform:       constant.TaskPlatformSuno,
+			Quota:          preConsumed,
+		}, nil
+	}
+	settleBillingFunc = service.SettleBilling
+	logTaskConsumptionFunc = func(c *gin.Context, info *relaycommon.RelayInfo) error {
+		require.NoError(t, model.UpdateTaskConsumptionUsageWithTokenSync(userID, channelID, tokenID, preConsumed))
+		c.Set(service.ContextKeyUsageCountersRecorded(), true)
+		return errors.New("record consume log failed")
+	}
+	ctx, recorder := newRelayTaskTestContext(userID, tokenID, channelID)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-controller-log-usage-rollback-fail").Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
+	require.Zero(t, task.Quota)
+	require.True(t, task.PrivateData.PreConsumedUsageCaptured)
+	require.True(t, task.PrivateData.PreConsumedUsageRecorded)
+	require.True(t, task.RefundPending)
+
+	var user model.User
+	require.NoError(t, db.Select("used_quota", "request_count", "quota").First(&user, userID).Error)
+	require.EqualValues(t, preConsumed, user.UsedQuota)
+	require.Equal(t, 1, user.RequestCount)
+	require.EqualValues(t, initQuota, user.Quota)
+
+	pendingRefunds, err := model.GetPendingTaskRefundsAfter(0, 100)
+	require.NoError(t, err)
+	found := false
+	for _, item := range pendingRefunds {
+		if item.TaskID == "task-controller-log-usage-rollback-fail" {
+			found = true
+			break
+		}
+	}
+	require.True(t, found, "usage-rollback-fail after wallet restore must remain visible to the refund sweeper")
+
+	require.NoError(t, service.RefundTaskQuota(context.Background(), &task, task.FailReason))
+	require.NoError(t, db.First(&user, userID).Error)
+	require.EqualValues(t, 0, user.UsedQuota)
+	require.Equal(t, 0, user.RequestCount)
+	require.EqualValues(t, initQuota, user.Quota)
+	require.NoError(t, db.First(&task, task.ID).Error)
+	require.False(t, task.RefundPending)
 }

@@ -5,11 +5,14 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -31,7 +34,17 @@ func getGitHubUserInfoByCode(code string) (*GitHubUser, error) {
 	if code == "" {
 		return nil, errors.New("无效的参数")
 	}
-	values := map[string]string{"client_id": common.GitHubClientId, "client_secret": common.GitHubClientSecret, "code": code}
+	addr := strings.TrimRight(strings.TrimSpace(system_setting.ServerAddress), "/")
+	parsed, err := url.Parse(addr)
+	if err != nil || addr == "" || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, errors.New("请先配置服务器地址")
+	}
+	values := map[string]string{
+		"client_id":     common.GitHubClientId,
+		"client_secret": common.GitHubClientSecret,
+		"code":          code,
+		"redirect_uri":  addr + "/oauth/github",
+	}
 	jsonData, err := common.Marshal(values)
 	if err != nil {
 		return nil, err
@@ -115,10 +128,7 @@ func GitHubOAuth(c *gin.Context) {
 		// FillUserByGitHubId is scoped
 		err := user.FillUserByGitHubId()
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
+			common.ApiError(c, err)
 			return
 		}
 		// if user.Id == 0 , user has been deleted
@@ -145,10 +155,7 @@ func GitHubOAuth(c *gin.Context) {
 					common.ApiErrorI18n(c, i18n.MsgUserExists)
 					return
 				}
-				c.JSON(http.StatusOK, gin.H{
-					"success": false,
-					"message": err.Error(),
-				})
+				common.ApiError(c, err)
 				return
 			}
 		} else {

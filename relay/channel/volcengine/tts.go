@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/constant"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -279,6 +280,10 @@ func handleTTSWebSocketResponse(c *gin.Context, requestURL string, volcRequest V
 					)
 				}
 				c.Writer.Flush()
+				if info != nil {
+					info.MarkClientStreamWrite()
+				}
+				c.Set(string(constant.ContextKeyIsStream), true)
 			}
 
 			if msg.Sequence < 0 {

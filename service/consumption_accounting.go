@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -38,4 +39,37 @@ func RollbackDirectPostConsumeQuota(ctx context.Context, relayInfo *relaycommon.
 		return fmt.Errorf("rollback direct post consume quota failed: %w", err)
 	}
 	return nil
+}
+
+func wrapUsageCounterUpdateError(ctx context.Context, relayInfo *relaycommon.RelayInfo, quota int, settlementSucceeded bool, err error, prefix string) error {
+	if err == nil {
+		return nil
+	}
+	if settlementSucceeded {
+		if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, quota); rollbackErr != nil {
+			return fmt.Errorf("%s: %w; rollback billing failed: %v", prefix, err, rollbackErr)
+		}
+	}
+	return fmt.Errorf("%s: %w", prefix, err)
+}
+
+func wrapRecordConsumeLogError(ctx context.Context, relayInfo *relaycommon.RelayInfo, userId int, channelId int, tokenId int, quota int, settlementSucceeded bool, err error) error {
+	if err == nil {
+		return nil
+	}
+	rollbackErrs := []string{}
+	if rollbackErr := RollbackTaskConsumptionUsage(userId, channelId, tokenId, quota); rollbackErr != nil {
+		rollbackErrs = append(rollbackErrs, rollbackErr.Error())
+	} else {
+		setUsageCountersRecorded(ctx, false)
+	}
+	if settlementSucceeded {
+		if rollbackErr := RollbackBillingSettlement(ctx, relayInfo, quota); rollbackErr != nil {
+			rollbackErrs = append(rollbackErrs, rollbackErr.Error())
+		}
+	}
+	if len(rollbackErrs) > 0 {
+		return fmt.Errorf("record consume log failed: %w; rollback errors: %s", err, strings.Join(rollbackErrs, "; "))
+	}
+	return fmt.Errorf("record consume log failed: %w", err)
 }

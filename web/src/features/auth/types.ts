@@ -157,6 +157,7 @@ export interface SystemStatus {
   oidc_display_name?: string
   linuxdo_oauth?: boolean
   linuxdo_client_id?: string
+  server_address?: string
   telegram_oauth?: boolean
   telegram_bot_name?: string
   passkey_login?: boolean

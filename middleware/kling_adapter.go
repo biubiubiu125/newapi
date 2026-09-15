@@ -4,15 +4,28 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"net/http"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 
 	"github.com/gin-gonic/gin"
 )
 
 func KlingRequestConvert() func(c *gin.Context) {
 	return func(c *gin.Context) {
+		if c.Request.Method == http.MethodGet {
+			taskId := strings.TrimSpace(c.Param("task_id"))
+			if taskId != "" {
+				c.Request.URL.Path = "/v1/video/generations/" + taskId
+				c.Set("task_id", taskId)
+				c.Set("relay_mode", relayconstant.RelayModeVideoFetchByID)
+			}
+			c.Next()
+			return
+		}
 		var originalReq map[string]interface{}
 		if err := common.UnmarshalBodyReusable(c, &originalReq); err != nil {
 			c.Next()

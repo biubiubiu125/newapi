@@ -700,6 +700,44 @@ func TestEmailBindRejectsEmailMatchingOwnUsername(t *testing.T) {
 	require.Empty(t, reloaded.Email)
 }
 
+func TestEmailBindRejectsPersonalAccessToken(t *testing.T) {
+	db := setupReferralControllerTestDB(t)
+	user := &model.User{
+		Username:    "pat-binder",
+		Password:    "12345678",
+		DisplayName: "pat-binder",
+		Role:        common.RoleCommonUser,
+		Status:      common.UserStatusEnabled,
+	}
+	require.NoError(t, user.Insert(0))
+	common.RegisterVerificationCodeWithKey("pat-stolen@example.com", "123456", common.EmailVerificationPurpose)
+
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	_, router := gin.CreateTestContext(w)
+	router.Use(func(c *gin.Context) {
+		c.Set("id", user.Id)
+		c.Set("use_access_token", true)
+		c.Next()
+	})
+	router.POST("/api/user/email", EmailBind)
+
+	body := []byte(`{"email":"pat-stolen@example.com","code":"123456"}`)
+	req := httptest.NewRequest(http.MethodPost, "/api/user/email", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	var response map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &response))
+	require.Equal(t, false, response["success"])
+	require.Contains(t, fmt.Sprint(response["message"]), "当前认证方式不支持绑定邮箱")
+
+	var reloaded model.User
+	require.NoError(t, db.Where("id = ?", user.Id).First(&reloaded).Error)
+	require.Empty(t, reloaded.Email)
+}
+
 func TestAdminHardDeleteSoftDeletedUserReleasesLoginIdentifiers(t *testing.T) {
 	setupReferralControllerTestDB(t)
 	user := &model.User{

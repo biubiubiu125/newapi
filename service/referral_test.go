@@ -3220,6 +3220,44 @@ func TestCreateWithdrawalUSDTIdempotencyUsesCanonicalPayload(t *testing.T) {
 	require.Equal(t, int64(1), count)
 }
 
+func TestCreateWithdrawalRejectsDisabledAffiliate(t *testing.T) {
+	db := setupReferralServiceTestDB(t)
+	service := NewReferralService()
+
+	user := &model.User{Username: "withdraw-disabled", Password: "12345678", Role: common.RoleCommonUser, Status: common.UserStatusEnabled}
+	require.NoError(t, user.Insert(0))
+	affiliate := &model.ReferralAffiliate{
+		UserId:             user.Id,
+		InviteCode:         "WDDIS001",
+		Status:             model.ReferralAffiliateStatusApproved,
+		AcquisitionEnabled: true,
+		SettlementEnabled:  true,
+		WithdrawalEnabled:  true,
+	}
+	require.NoError(t, db.Create(affiliate).Error)
+	require.NoError(t, db.Model(affiliate).Update("withdrawal_enabled", false).Error)
+	require.NoError(t, db.Create(&model.ReferralCommissionAccount{
+		AffiliateId:        affiliate.Id,
+		UserId:             user.Id,
+		AvailableAmount:    100,
+		SettlementCurrency: "CNY",
+	}).Error)
+
+	_, err := service.CreateWithdrawal(ReferralWithdrawalCreateInput{
+		UserId:         user.Id,
+		Amount:         40,
+		AccountType:    "alipay",
+		AccountName:    "tester",
+		AccountNo:      "acct-disabled",
+		IdempotencyKey: "wd-disabled-key",
+	})
+	require.EqualError(t, err, "withdrawal is disabled for current affiliate")
+
+	var count int64
+	require.NoError(t, db.Model(&model.ReferralWithdrawal{}).Count(&count).Error)
+	require.Zero(t, count)
+}
+
 func TestCreateWithdrawalFreezesAccountAndAllocatesCommission(t *testing.T) {
 	db := setupReferralServiceTestDB(t)
 	service := NewReferralService()

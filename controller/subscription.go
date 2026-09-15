@@ -185,7 +185,54 @@ func normalizeSubscriptionPaymentAmount(plan *model.SubscriptionPlan, currency s
 	if plan == nil {
 		return 0, fmt.Errorf("subscription plan is required")
 	}
-	return model.NormalizePaymentAmount(plan.PriceAmount, currency)
+	amount, err := convertSubscriptionPlanAmount(plan, currency)
+	if err != nil {
+		return 0, err
+	}
+	return model.NormalizePaymentAmount(amount, currency)
+}
+
+func convertSubscriptionPlanAmount(plan *model.SubscriptionPlan, targetCurrency string) (float64, error) {
+	if plan == nil {
+		return 0, fmt.Errorf("subscription plan is required")
+	}
+	source, ok := normalizeSubscriptionPlanCurrency(plan.Currency)
+	if !ok {
+		return 0, fmt.Errorf("unsupported subscription currency")
+	}
+	target, ok := normalizeSubscriptionPlanCurrency(targetCurrency)
+	if !ok {
+		return 0, fmt.Errorf("unsupported payment currency")
+	}
+	amount := plan.PriceAmount
+	if source == target {
+		return amount, nil
+	}
+	rate := operation_setting.USDExchangeRate
+	if rate <= 0 {
+		return 0, fmt.Errorf("usd exchange rate is not configured")
+	}
+	switch {
+	case source == "USD" && target == "CNY":
+		return amount * rate, nil
+	case source == "CNY" && target == "USD":
+		return amount / rate, nil
+	default:
+		return 0, fmt.Errorf("cannot convert %s to %s", source, target)
+	}
+}
+
+func normalizeSubscriptionPlanCurrency(raw string) (string, bool) {
+	currency := strings.ToUpper(strings.TrimSpace(raw))
+	if currency == "" {
+		return "CNY", true
+	}
+	switch currency {
+	case "CNY", "USD":
+		return currency, true
+	default:
+		return "", false
+	}
 }
 
 func AdminCreateSubscriptionPlan(c *gin.Context) {
@@ -211,7 +258,12 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 		common.ApiErrorMsg(c, "价格不能超过9999")
 		return
 	}
-	req.Plan.Currency = "CNY"
+	currency, currencyOK := normalizeSubscriptionPlanCurrency(req.Plan.Currency)
+	if !currencyOK {
+		common.ApiErrorMsg(c, "币种无效")
+		return
+	}
+	req.Plan.Currency = currency
 	normalizedPrice, err := normalizeSubscriptionPaymentAmount(&req.Plan, req.Plan.Currency)
 	if err != nil {
 		common.ApiErrorMsg(c, "价格无效")
@@ -292,7 +344,12 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		return
 	}
 	req.Plan.Id = id
-	req.Plan.Currency = "CNY"
+	currency, currencyOK := normalizeSubscriptionPlanCurrency(req.Plan.Currency)
+	if !currencyOK {
+		common.ApiErrorMsg(c, "币种无效")
+		return
+	}
+	req.Plan.Currency = currency
 	normalizedPrice, err := normalizeSubscriptionPaymentAmount(&req.Plan, req.Plan.Currency)
 	if err != nil {
 		common.ApiErrorMsg(c, "价格无效")

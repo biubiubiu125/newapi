@@ -78,3 +78,37 @@ func TestTaskPluginProtocolRendererContextUsesStoredArtifactsWithoutPluginHook(t
 	assert.Equal(t, "video/mp4", artifact["mimeType"])
 	assert.Equal(t, "/v1/tasks/task_protocol_stored_artifact/artifacts/video", artifact["url"])
 }
+
+func TestTaskPluginProtocolRendererContextOmitsArtifactsDuringRetryableSettlementReview(t *testing.T) {
+	task := &model.Task{
+		ID:               2,
+		TaskID:           "task_protocol_review_artifact",
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		NextPollAt:       9999999999,
+		PrivateData: model.TaskPrivateData{
+			ArtifactRefs: map[string]model.TaskArtifactStorageRef{
+				"video": {
+					Backend:   "s3",
+					Bucket:    "newapi-artifacts",
+					ObjectKey: "task-artifacts/task_protocol_review_artifact/video",
+					Type:      "video",
+					MimeType:  "video/mp4",
+				},
+			},
+		},
+	}
+
+	rendererContext, err := taskPluginProtocolRendererContext(
+		t.Context(),
+		pluginruntime.ProtocolRequestContext{},
+		pluginruntime.PinnedEndpoint{},
+		task,
+		func(taskID, artifactKey string) (string, error) {
+			return "/v1/tasks/" + taskID + "/artifacts/" + artifactKey, nil
+		},
+	)
+	require.NoError(t, err)
+	_, ok := rendererContext["artifacts"]
+	require.False(t, ok)
+}

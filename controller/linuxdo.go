@@ -12,6 +12,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/setting/system_setting"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -87,12 +88,12 @@ func getLinuxdoUserInfoByCode(code string, c *gin.Context) (*LinuxdoUser, error)
 	credentials := common.LinuxDOClientId + ":" + common.LinuxDOClientSecret
 	basicAuth := "Basic " + base64.StdEncoding.EncodeToString([]byte(credentials))
 
-	// Get redirect URI from request
-	scheme := "http"
-	if c.Request.TLS != nil {
-		scheme = "https"
+	addr := strings.TrimRight(strings.TrimSpace(system_setting.ServerAddress), "/")
+	parsed, err := url.Parse(addr)
+	if err != nil || addr == "" || parsed.Scheme == "" || parsed.Host == "" {
+		return nil, errors.New("请先配置服务器地址")
 	}
-	redirectURI := fmt.Sprintf("%s://%s/api/oauth/linuxdo", scheme, c.Request.Host)
+	redirectURI := addr + "/api/oauth/linuxdo"
 
 	data := url.Values{}
 	data.Set("grant_type", "authorization_code")
@@ -205,10 +206,7 @@ func LinuxdoOAuth(c *gin.Context) {
 	if model.IsLinuxDOIdAlreadyTaken(user.LinuxDOId) {
 		err := user.FillUserByLinuxDOId()
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
+			common.ApiError(c, err)
 			return
 		}
 		if user.Id == 0 {
@@ -231,10 +229,7 @@ func LinuxdoOAuth(c *gin.Context) {
 						common.ApiErrorI18n(c, i18n.MsgUserExists)
 						return
 					}
-					c.JSON(http.StatusOK, gin.H{
-						"success": false,
-						"message": err.Error(),
-					})
+					common.ApiError(c, err)
 					return
 				}
 			} else {

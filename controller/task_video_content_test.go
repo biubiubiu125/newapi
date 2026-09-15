@@ -7,6 +7,7 @@ import (
 	"net/url"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -23,6 +24,7 @@ import (
 
 func setupTaskVideoContentTestDB(t *testing.T) *gorm.DB {
 	t.Helper()
+	service.InitHttpClient()
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Task{}))
 	return db
@@ -778,4 +780,576 @@ func TestTaskContentUsesGeminiChannelKeyWhenTaskKeyMissing(t *testing.T) {
 func TestEnsureAPIKeyAppendsWhenOtherParamsContainKeySubstring(t *testing.T) {
 	got := ensureAPIKey("https://example.com/legacy/gemini/video.mp4?apikey=existing&foo=1", "secret")
 	require.Equal(t, "https://example.com/legacy/gemini/video.mp4?apikey=existing&foo=1&key=secret", got)
+}
+
+func TestDoTaskMediaRequestRejectsNilClient(t *testing.T) {
+	req := httptest.NewRequest(http.MethodGet, "https://example.com/video.mp4", nil)
+	resp, err := doTaskMediaRequest(nil, req, time.Second)
+	require.ErrorIs(t, err, errTaskMediaClientUnavailable)
+	require.Nil(t, resp)
+}
+
+func TestTaskContentUsesChannelKeyForNestedVideoContentURL(t *testing.T) {
+	db := setupTaskVideoContentTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	fetchSetting := system_setting.GetFetchSetting()
+	oldFetchSetting := *fetchSetting
+	t.Cleanup(func() {
+		*fetchSetting = oldFetchSetting
+	})
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       93001,
+		Username: "nested-video-owner",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	upstreamCalled := int32(0)
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		atomic.AddInt32(&upstreamCalled, 1)
+		require.Equal(t, "/v1/videos/nested-upstream/content", r.URL.Path)
+		require.Equal(t, "Bearer nested-secret", r.Header.Get("Authorization"))
+		w.Header().Set("Content-Type", "video/mp4")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("nested-video"))
+	}))
+	t.Cleanup(upstream.Close)
+	upstreamURL, err := url.Parse(upstream.URL)
+	require.NoError(t, err)
+	fetchSetting.AllowPrivateIp = true
+	fetchSetting.AllowedPorts = []string{upstreamURL.Port()}
+
+	baseURL := "https://unused.example"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      93002,
+		Type:    constant.ChannelTypeKling,
+		Key:     "nested-secret",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}).Error)
+
+	task := &model.Task{
+		TaskID:    "nested-video-task",
+		Platform:  constant.TaskPlatform("kling"),
+		UserId:    93001,
+		ChannelId: 93002,
+		Action:    constant.TaskActionTextToVideo,
+		Status:    model.TaskStatusSuccess,
+		PrivateData: model.TaskPrivateData{
+			UpstreamTaskID: "unused-local-upstream",
+			ResultURL:      upstream.URL + "/v1/videos/nested-upstream/content",
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/v1/tasks/"+task.TaskID+"/artifacts/video/content",
+		nil,
+	)
+	ctx.Params = gin.Params{
+		{Key: "key", Value: task.TaskID},
+		{Key: "artifact_key", Value: "video"},
+	}
+	ctx.Set("role", common.RoleAdminUser)
+
+	TaskArtifactContent(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, "nested-video", recorder.Body.String())
+	require.Equal(t, int32(1), atomic.LoadInt32(&upstreamCalled))
+}
+
+func TestTaskContentServesStoredDataURLForKling(t *testing.T) {
+	db := setupTaskVideoContentTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	oldServerAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://media.example"
+	t.Cleanup(func() {
+		system_setting.ServerAddress = oldServerAddress
+	})
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       94001,
+		Username: "kling-data-owner",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	baseURL := "https://kling.example"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      94002,
+		Type:    constant.ChannelTypeKling,
+		Key:     "access|secret",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}).Error)
+
+	task := &model.Task{
+		TaskID:    "kling-data-task",
+		Platform:  constant.TaskPlatform("kling"),
+		UserId:    94001,
+		ChannelId: 94002,
+		Action:    constant.TaskActionTextToVideo,
+		Status:    model.TaskStatusSubmitted,
+	}
+	taskcommon.ApplyTaskSuccessResult(task, "data:video/mp4;base64,aGVsbG8=", "", "", time.Now().Unix(), false)
+	task.SettlementStatus = model.TaskSettlementStatusSettled
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
+	require.NoError(t, db.Create(task).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/v1/videos/"+task.TaskID+"/content",
+		nil,
+	)
+	ctx.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	ctx.Set("role", common.RoleAdminUser)
+
+	VideoProxy(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, "hello", recorder.Body.String())
+}
+
+func TestVideoProxyRejectsPendingSettlement(t *testing.T) {
+	db := setupTaskVideoContentTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	oldServerAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://media.example"
+	t.Cleanup(func() {
+		system_setting.ServerAddress = oldServerAddress
+	})
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       94021,
+		Username: "kling-pending-owner",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	baseURL := "https://kling.example"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      94022,
+		Type:    constant.ChannelTypeKling,
+		Key:     "access|secret",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}).Error)
+
+	task := &model.Task{
+		TaskID:    "kling-pending-data-task",
+		Platform:  constant.TaskPlatform("kling"),
+		UserId:    94021,
+		ChannelId: 94022,
+		Action:    constant.TaskActionTextToVideo,
+		Status:    model.TaskStatusSubmitted,
+	}
+	taskcommon.ApplyTaskSuccessResult(task, "data:video/mp4;base64,aGVsbG8=", "", "", time.Now().Unix(), false)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
+	require.Equal(t, model.TaskSettlementStatusPending, task.SettlementStatus)
+	require.Equal(t, model.TaskStatus(model.TaskStatusInProgress), task.PublicStatus())
+	require.NoError(t, db.Create(task).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/v1/videos/"+task.TaskID+"/content",
+		nil,
+	)
+	ctx.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	ctx.Set("role", common.RoleAdminUser)
+
+	VideoProxy(ctx)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	require.Contains(t, recorder.Body.String(), "not completed")
+	require.Contains(t, recorder.Body.String(), string(model.TaskStatusInProgress))
+	require.NotContains(t, recorder.Body.String(), "hello")
+}
+
+func TestVideoProxyRejectsRetryableSettlementReview(t *testing.T) {
+	db := setupTaskVideoContentTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	oldServerAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://media.example"
+	t.Cleanup(func() {
+		system_setting.ServerAddress = oldServerAddress
+	})
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       94101,
+		Username: "kling-review-owner",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	baseURL := "https://kling.example"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      94102,
+		Type:    constant.ChannelTypeKling,
+		Key:     "access|secret",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}).Error)
+
+	task := &model.Task{
+		TaskID:    "kling-review-data-task",
+		Platform:  constant.TaskPlatform("kling"),
+		UserId:    94101,
+		ChannelId: 94102,
+		Action:    constant.TaskActionTextToVideo,
+		Status:    model.TaskStatusSubmitted,
+	}
+	taskcommon.ApplyTaskSuccessResult(task, "data:video/mp4;base64,aGVsbG8=", "", "", time.Now().Unix(), false)
+	task.SettlementStatus = model.TaskSettlementStatusReview
+	task.NextPollAt = time.Now().Unix() + 60
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
+	require.Equal(t, model.TaskStatus(model.TaskStatusInProgress), task.PublicStatus())
+	require.NoError(t, db.Create(task).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/v1/videos/"+task.TaskID+"/content",
+		nil,
+	)
+	ctx.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	ctx.Set("role", common.RoleAdminUser)
+
+	VideoProxy(ctx)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	require.Contains(t, recorder.Body.String(), "not completed")
+	require.Contains(t, recorder.Body.String(), string(model.TaskStatusInProgress))
+	require.NotContains(t, recorder.Body.String(), "hello")
+}
+
+func TestVideoProxyRejectsUnrecoverableSettlementReview(t *testing.T) {
+	db := setupTaskVideoContentTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	oldServerAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://media.example"
+	t.Cleanup(func() {
+		system_setting.ServerAddress = oldServerAddress
+	})
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       94111,
+		Username: "kling-review-parked-owner",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	baseURL := "https://kling.example"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      94112,
+		Type:    constant.ChannelTypeKling,
+		Key:     "access|secret",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}).Error)
+
+	task := &model.Task{
+		TaskID:    "kling-review-parked-data-task",
+		Platform:  constant.TaskPlatform("kling"),
+		UserId:    94111,
+		ChannelId: 94112,
+		Action:    constant.TaskActionTextToVideo,
+		Status:    model.TaskStatusSubmitted,
+	}
+	taskcommon.ApplyTaskSuccessResult(task, "data:video/mp4;base64,aGVsbG8=", "", "", time.Now().Unix(), false)
+	task.SettlementStatus = model.TaskSettlementStatusReview
+	task.NextPollAt = 0
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), task.PublicStatus())
+	require.NoError(t, db.Create(task).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/v1/videos/"+task.TaskID+"/content",
+		nil,
+	)
+	ctx.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	ctx.Set("role", common.RoleAdminUser)
+
+	VideoProxy(ctx)
+
+	require.Equal(t, http.StatusBadRequest, recorder.Code, recorder.Body.String())
+	require.Contains(t, recorder.Body.String(), "not completed")
+	require.Contains(t, recorder.Body.String(), string(model.TaskStatusFailure))
+	require.NotContains(t, recorder.Body.String(), "hello")
+}
+
+func TestTaskArtifactContentRejectsRetryableSettlementReview(t *testing.T) {
+	db := setupTaskVideoContentTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	oldServerAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://media.example"
+	t.Cleanup(func() {
+		system_setting.ServerAddress = oldServerAddress
+	})
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       94121,
+		Username: "kling-artifact-review-owner",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	baseURL := "https://kling.example"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      94122,
+		Type:    constant.ChannelTypeKling,
+		Key:     "access|secret",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}).Error)
+
+	task := &model.Task{
+		TaskID:    "kling-artifact-review-data-task",
+		Platform:  constant.TaskPlatform("kling"),
+		UserId:    94121,
+		ChannelId: 94122,
+		Action:    constant.TaskActionTextToVideo,
+		Status:    model.TaskStatusSubmitted,
+	}
+	taskcommon.ApplyTaskSuccessResult(task, "data:video/mp4;base64,aGVsbG8=", "", "", time.Now().Unix(), false)
+	task.SettlementStatus = model.TaskSettlementStatusReview
+	task.NextPollAt = time.Now().Unix() + 60
+	require.Equal(t, model.TaskStatus(model.TaskStatusInProgress), task.PublicStatus())
+	require.NoError(t, db.Create(task).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/v1/tasks/"+task.TaskID+"/artifacts/video/content",
+		nil,
+	)
+	ctx.Params = gin.Params{
+		{Key: "key", Value: task.TaskID},
+		{Key: "artifact_key", Value: "video"},
+	}
+	ctx.Set("role", common.RoleAdminUser)
+
+	TaskArtifactContent(ctx)
+
+	require.Equal(t, http.StatusConflict, recorder.Code, recorder.Body.String())
+	require.Contains(t, recorder.Body.String(), "artifact_not_ready")
+	require.NotContains(t, recorder.Body.String(), "hello")
+}
+
+func TestLegacyVideoAvailableFalseDuringRetryableSettlementReview(t *testing.T) {
+	task := &model.Task{
+		TaskID:           "kling-legacy-review",
+		Platform:         constant.TaskPlatform("kling"),
+		Action:           constant.TaskActionTextToVideo,
+		Status:           model.TaskStatusSuccess,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		NextPollAt:       time.Now().Unix() + 60,
+		PrivateData: model.TaskPrivateData{
+			ResultURL: "https://cdn.example/video.mp4",
+		},
+	}
+
+	require.Equal(t, model.TaskStatus(model.TaskStatusInProgress), task.PublicStatus())
+	require.False(t, legacyVideoAvailable(task))
+}
+
+func TestVideoProxyServesInlineVideoWhenChannelMemoryCacheMisses(t *testing.T) {
+	db := setupTaskVideoContentTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	oldServerAddress := system_setting.ServerAddress
+	system_setting.ServerAddress = "https://media.example"
+	t.Cleanup(func() {
+		system_setting.ServerAddress = oldServerAddress
+	})
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       94111,
+		Username: "kling-cache-miss-owner",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	baseURL := "https://kling.cachemiss.example"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      94112,
+		Type:    constant.ChannelTypeKling,
+		Key:     "access|secret",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}).Error)
+
+	task := &model.Task{
+		TaskID:    "kling-cache-miss-data-task",
+		Platform:  constant.TaskPlatform("kling"),
+		UserId:    94111,
+		ChannelId: 94112,
+		Action:    constant.TaskActionTextToVideo,
+		Status:    model.TaskStatusSubmitted,
+	}
+	taskcommon.ApplyTaskSuccessResult(task, "data:video/mp4;base64,aGVsbG8=", "", "", time.Now().Unix(), false)
+	task.SettlementStatus = model.TaskSettlementStatusSettled
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
+	require.NoError(t, db.Create(task).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(
+		http.MethodGet,
+		"/v1/videos/"+task.TaskID+"/content",
+		nil,
+	)
+	ctx.Params = gin.Params{{Key: "task_id", Value: task.TaskID}}
+	ctx.Set("role", common.RoleAdminUser)
+
+	VideoProxy(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Equal(t, "hello", recorder.Body.String())
+	require.NotContains(t, recorder.Body.String(), "artifact_plugin_unavailable")
+}
+
+func TestGetTaskForArtifactRequestRejectsOtherAPIToken(t *testing.T) {
+	db := setupTaskVideoContentTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       93011,
+		Username: "token-bound-owner",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	task := &model.Task{
+		TaskID: "token-bound-task",
+		UserId: 93011,
+		Status: model.TaskStatusSuccess,
+		PrivateData: model.TaskPrivateData{
+			TokenId:   80,
+			ResultURL: "https://cdn.example/video.mp4",
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/"+task.TaskID+"/content", nil)
+	ctx.Set("id", 93011)
+	ctx.Set("token_id", 81)
+	ctx.Set("role", common.RoleCommonUser)
+
+	got, exists, err := getTaskForArtifactRequest(ctx, task.TaskID)
+	require.NoError(t, err)
+	require.False(t, exists)
+	require.Nil(t, got)
+}
+
+func TestGetTaskForArtifactRequestAllowsMatchingAPIToken(t *testing.T) {
+	db := setupTaskVideoContentTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	require.NoError(t, db.Create(&model.User{
+		Id:       93012,
+		Username: "token-match-owner",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	task := &model.Task{
+		TaskID: "token-match-task",
+		UserId: 93012,
+		Status: model.TaskStatusSuccess,
+		PrivateData: model.TaskPrivateData{
+			TokenId:   80,
+			ResultURL: "https://cdn.example/video.mp4",
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/"+task.TaskID+"/content", nil)
+	ctx.Set("id", 93012)
+	ctx.Set("token_id", 80)
+	ctx.Set("role", common.RoleCommonUser)
+
+	got, exists, err := getTaskForArtifactRequest(ctx, task.TaskID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, task.TaskID, got.TaskID)
+}
+
+func TestValidateTaskMediaURLRejectsPrivateIPWhenProxyIsConfigured(t *testing.T) {
+	fetchSetting := system_setting.GetFetchSetting()
+	oldFetchSetting := *fetchSetting
+	t.Cleanup(func() {
+		*fetchSetting = oldFetchSetting
+	})
+	fetchSetting.EnableSSRFProtection = true
+	fetchSetting.AllowPrivateIp = false
+	fetchSetting.ApplyIPFilterForDomain = false
+	fetchSetting.AllowedPorts = []string{"80", "443", "8080"}
+
+	err := validateTaskMediaURL("http://127.0.0.1:8080/video.mp4", "http://proxy.example:8080")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "private")
 }

@@ -96,6 +96,39 @@ func TestGetWaffoPancakePayMoney(t *testing.T) {
 	}
 }
 
+func TestNormalizeWaffoPancakeTopUpAmountDoesNotRoundFractionalTokensUpToOne(t *testing.T) {
+	original := operation_setting.GetGeneralSetting().QuotaDisplayType
+	t.Cleanup(func() {
+		operation_setting.GetGeneralSetting().QuotaDisplayType = original
+	})
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeTokens
+
+	require.Equal(t, int64(0), normalizeWaffoPancakeTopUpAmount(int64(common.QuotaPerUnit)-1))
+	require.Equal(t, int64(2), normalizeWaffoPancakeTopUpAmount(int64(common.QuotaPerUnit)*2))
+}
+
+func TestApplyTopUpOrderSnapshotTokensDisplayCreditsRequestAmount(t *testing.T) {
+	original := operation_setting.GetGeneralSetting().QuotaDisplayType
+	t.Cleanup(func() {
+		operation_setting.GetGeneralSetting().QuotaDisplayType = original
+	})
+	operation_setting.GetGeneralSetting().QuotaDisplayType = operation_setting.QuotaDisplayTypeTokens
+
+	topUp := &model.TopUp{
+		PaymentProvider: model.PaymentProviderWaffo,
+		Amount:          1,
+		Money:           0.01,
+	}
+	applyTopUpOrderSnapshot(topUp, topUpOrderSnapshotInput{
+		RequestAmount: 5000,
+		CreditAmount:  1,
+		PaidAmount:    0.01,
+		PaidCurrency:  "USD",
+	})
+	require.Equal(t, int64(5000), topUp.CreditQuotaSnapshot)
+	require.Equal(t, int64(5000), topUp.CreditQuotaAmount())
+}
+
 func TestWaffoPancakeSubscriptionCompletionProcessesCommission(t *testing.T) {
 	setupPaymentCallbackGuardDB(t)
 	db := model.DB

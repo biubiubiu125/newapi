@@ -683,7 +683,7 @@ func TestBEpusdtTopupNotifyQueuesMissingOrderForManualReview(t *testing.T) {
 	requirePaymentReview(t, model.PaymentProviderBEpusdt, "bepusdt-missing-order")
 }
 
-func TestBEpusdtTopupNotifyQueuesInvalidOrderStatusForManualReview(t *testing.T) {
+func TestBEpusdtTopupNotifyCreditsFailedOrderOnLateCallback(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	setupPaymentCallbackGuardDB(t)
 
@@ -721,13 +721,12 @@ func TestBEpusdtTopupNotifyQueuesInvalidOrderStatusForManualReview(t *testing.T)
 
 	require.Equal(t, http.StatusOK, w.Code)
 	require.Equal(t, "ok", w.Body.String())
-	requirePaymentReview(t, model.PaymentProviderBEpusdt, "bepusdt-invalid-status")
 	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
 	require.NotNil(t, reloaded)
-	require.Equal(t, common.TopUpStatusFailed, reloaded.Status)
+	require.Equal(t, common.TopUpStatusSuccess, reloaded.Status)
 	var updatedUser model.User
 	require.NoError(t, model.DB.Where("id = ?", user.Id).First(&updatedUser).Error)
-	require.Zero(t, updatedUser.Quota)
+	require.NotZero(t, updatedUser.Quota)
 }
 
 func TestBEpusdtTopupNotifyAcceptsNativeCallbackEvenWithLegacyExtraFields(t *testing.T) {
@@ -1544,4 +1543,63 @@ func TestProcessPaidSubscriptionCommissionDoesNotBlockPaidOrderOnReferralFailure
 	require.Equal(t, common.TopUpStatusSuccess, reloaded.Status)
 	require.Equal(t, model.ReferralCommissionJobStatusFailed, reloaded.ReferralCommissionStatus)
 	require.NotEmpty(t, reloaded.ReferralCommissionError)
+}
+
+func TestCreemWebhookCreditsExpiredTopUp(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	setupPaymentCallbackGuardDB(t)
+
+	previousSecret := setting.CreemWebhookSecret
+	setting.CreemWebhookSecret = "creem-expired-secret"
+	t.Cleanup(func() {
+		setting.CreemWebhookSecret = previousSecret
+	})
+
+	user := &model.User{Id: 930, Username: "creem_expired_topup_user", Status: common.UserStatusEnabled, Quota: 0}
+	require.NoError(t, model.DB.Create(user).Error)
+	topUp := &model.TopUp{
+		UserId:              user.Id,
+		Amount:              500,
+		Money:               2,
+		PaidAmount:          2,
+		PaidCurrency:        "USD",
+		TradeNo:             "creem-expired-topup",
+		PaymentMethod:       model.PaymentMethodCreem,
+		PaymentProvider:     model.PaymentProviderCreem,
+		Status:              common.TopUpStatusExpired,
+		CreateTime:          time.Now().Unix() - 48*3600,
+		CompleteTime:        time.Now().Unix() - 24*3600,
+		CreditQuotaSnapshot: 500,
+	}
+	require.NoError(t, topUp.Insert())
+
+	body := `{
+		"id":"evt_creem_expired_topup",
+		"eventType":"checkout.completed",
+		"object":{
+			"request_id":"creem-expired-topup",
+			"order":{"id":"ord_creem_expired","amount_paid":200,"currency":"USD","status":"paid","type":"onetime"},
+			"customer":{"email":"buyer@example.com","name":"Buyer"}
+		}
+	}`
+	req := httptest.NewRequest(http.MethodPost, "/api/creem/webhook", strings.NewReader(body))
+	req.Header.Set(CreemSignatureHeader, generateCreemSignature(body, setting.CreemWebhookSecret))
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = req
+
+	CreemWebhook(c)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	reloaded := model.GetTopUpByTradeNo(topUp.TradeNo)
+	require.NotNil(t, reloaded)
+	require.Equal(t, common.TopUpStatusSuccess, reloaded.Status)
+	var updatedUser model.User
+	require.NoError(t, model.DB.Where("id = ?", user.Id).First(&updatedUser).Error)
+	require.EqualValues(t, 500, updatedUser.Quota)
+	var orphanCount int64
+	require.NoError(t, model.DB.Model(&model.PaymentOrphanEvent{}).
+		Where("reference_id = ?", topUp.TradeNo).
+		Count(&orphanCount).Error)
+	require.Zero(t, orphanCount)
 }

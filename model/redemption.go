@@ -183,9 +183,17 @@ func Redeem(key string, userId int) (*RedeemResult, error) {
 		if redemption.Quota <= 0 {
 			return errors.New("兑换码额度必须大于0")
 		}
-		err = tx.Model(&User{}).Where("id = ?", userId).Update("quota", gorm.Expr("quota + ?", redemption.Quota)).Error
-		if err != nil {
-			return err
+		if redemption.Quota >= common.MaxWalletQuota {
+			return errors.New("兑换码额度超过钱包上限")
+		}
+		maxCurrentQuota := common.MaxWalletQuota - redemption.Quota
+		result := tx.Model(&User{}).Where("id = ? AND quota <= ?", userId, maxCurrentQuota).
+			Update("quota", gorm.Expr("quota + ?", redemption.Quota))
+		if result.Error != nil {
+			return result.Error
+		}
+		if result.RowsAffected == 0 {
+			return ErrTopUpQuotaLimitExceeded
 		}
 		redemption.RedeemedTime = common.GetTimestamp()
 		redemption.Status = common.RedemptionCodeStatusUsed

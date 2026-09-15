@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
@@ -83,9 +84,11 @@ func prepareMidjourneyBilling(c *gin.Context, relayInfo *relaycommon.RelayInfo, 
 	}
 	ensureMidjourneyRequestID(c, relayInfo)
 	if apiErr := service.PreConsumeBilling(c, quota, relayInfo); apiErr != nil {
+		original := apiErr.Error()
+		common.SysLog("prepare midjourney billing failed: " + original)
 		return &dto.MidjourneyResponse{
 			Code:        4,
-			Description: apiErr.Error(),
+			Description: common.PublicRequestErrorMessage(original),
 		}
 	}
 	return nil
@@ -113,7 +116,21 @@ func refundPreparedMidjourneyBilling(c *gin.Context, relayInfo *relaycommon.Rela
 
 func RelayMidjourneyImage(c *gin.Context) {
 	taskId := c.Param("id")
-	midjourneyTask := model.GetByOnlyMJId(taskId)
+	access, present, invalid := middleware.ReadTaskArtifactAccessRequest(c)
+	var midjourneyTask *model.Midjourney
+	if present {
+		if invalid || !service.VerifyTaskArtifactAccess(access, taskId, service.MidjourneyImageArtifactKey) {
+			c.JSON(http.StatusNotFound, gin.H{"error": "midjourney_task_not_found"})
+			return
+		}
+		midjourneyTask = model.GetByOnlyMJId(taskId)
+	} else {
+		middleware.TokenAuthAllowExhausted()(c)
+		if c.IsAborted() {
+			return
+		}
+		midjourneyTask = model.GetByMJId(c.GetInt("id"), taskId)
+	}
 	if midjourneyTask == nil {
 		c.JSON(400, gin.H{
 			"error": "midjourney_task_not_found",
@@ -235,9 +252,13 @@ func coverMidjourneyTaskDto(c *gin.Context, originTask *model.Midjourney) (midjo
 	midjourneyTask.FinishTime = originTask.FinishTime
 	midjourneyTask.ImageUrl = ""
 	if originTask.ImageUrl != "" && setting.MjForwardUrlEnabled {
-		midjourneyTask.ImageUrl = system_setting.ServerAddress + "/mj/image/" + originTask.MjId
+		midjourneyTask.ImageUrl = service.MidjourneyForwardImageURL(originTask.MjId)
 		if originTask.Status != "SUCCESS" {
-			midjourneyTask.ImageUrl += "?rand=" + strconv.FormatInt(time.Now().UnixNano(), 10)
+			separator := "?"
+			if strings.Contains(midjourneyTask.ImageUrl, "?") {
+				separator = "&"
+			}
+			midjourneyTask.ImageUrl += separator + "rand=" + strconv.FormatInt(time.Now().UnixNano(), 10)
 		}
 	} else {
 		midjourneyTask.ImageUrl = originTask.ImageUrl
@@ -290,9 +311,11 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 
 	priceData, err := helper.ModelPriceHelperPerCall(c, info)
 	if err != nil {
+		original := err.Error()
+		common.SysLog("midjourney swapface price helper failed: " + original)
 		return &dto.MidjourneyResponse{
 			Code:        4,
-			Description: err.Error(),
+			Description: common.PublicRequestErrorMessage(original),
 		}
 	}
 
@@ -334,14 +357,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 			if usageErr := model.UpdateTaskConsumptionUsageWithTokenSync(info.UserId, info.ChannelId, info.TokenId, logQuota); usageErr != nil {
 				logger.LogError(c, fmt.Sprintf("midjourney usage counter update failed: %v", usageErr))
 				recordMidjourneyAccountingError(c, info, midjourneyTask, "update midjourney usage counter", usageErr)
-				if settlementErr == nil {
-					if rollbackErr := service.RollbackBillingSettlement(c, info, logQuota); rollbackErr != nil {
-						logger.LogError(c, fmt.Sprintf("midjourney billing rollback after usage failure failed: %v", rollbackErr))
-						recordMidjourneyAccountingError(c, info, midjourneyTask, "rollback midjourney billing after usage failure", rollbackErr)
-					} else {
-						service.ClearMidjourneyQuotaAfterBillingRollback(c, midjourneyTask, usageErr)
-					}
-				}
+				billingLogged = true
 				return
 			}
 			if err := model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
@@ -360,14 +376,7 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 					common.SysLog("error rolling back midjourney usage after log failure: " + rollbackErr.Error())
 					recordMidjourneyAccountingError(c, info, midjourneyTask, "rollback midjourney usage after log failure", rollbackErr)
 				}
-				if settlementErr == nil {
-					if rollbackErr := service.RollbackBillingSettlement(c, info, logQuota); rollbackErr != nil {
-						common.SysLog("error rolling back midjourney billing after log failure: " + rollbackErr.Error())
-						recordMidjourneyAccountingError(c, info, midjourneyTask, "rollback midjourney billing after log failure", rollbackErr)
-					} else {
-						service.ClearMidjourneyQuotaAfterBillingRollback(c, midjourneyTask, err)
-					}
-				}
+				billingLogged = true
 				return
 			}
 			billingLogged = true
@@ -636,9 +645,11 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 
 	priceData, err := helper.ModelPriceHelperPerCall(c, relayInfo)
 	if err != nil {
+		original := err.Error()
+		common.SysLog("midjourney submit price helper failed: " + original)
 		return &dto.MidjourneyResponse{
 			Code:        4,
-			Description: err.Error(),
+			Description: common.PublicRequestErrorMessage(original),
 		}
 	}
 
@@ -663,6 +674,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		return &midjResponseWithStatus.Response
 	}
 	midjResponse := &midjResponseWithStatus.Response
+	duplicateExistingResult := midjResponse.Code == 21 || midjResponse.Code == 22
 
 	defer func() {
 		if taskPersisted && consumeQuota && midjResponseWithStatus.StatusCode == 200 {
@@ -680,14 +692,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			if usageErr := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); usageErr != nil {
 				logger.LogError(c, fmt.Sprintf("midjourney usage counter update failed: %v", usageErr))
 				recordMidjourneyAccountingError(c, relayInfo, midjourneyTask, "update midjourney usage counter", usageErr)
-				if settlementErr == nil {
-					if rollbackErr := service.RollbackBillingSettlement(c, relayInfo, logQuota); rollbackErr != nil {
-						logger.LogError(c, fmt.Sprintf("midjourney billing rollback after usage failure failed: %v", rollbackErr))
-						recordMidjourneyAccountingError(c, relayInfo, midjourneyTask, "rollback midjourney billing after usage failure", rollbackErr)
-					} else {
-						service.ClearMidjourneyQuotaAfterBillingRollback(c, midjourneyTask, usageErr)
-					}
-				}
+				billingLogged = true
 				return
 			}
 			if err := model.RecordConsumeLog(c, relayInfo.UserId, model.RecordConsumeLogParams{
@@ -706,14 +711,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 					common.SysLog("error rolling back midjourney usage after log failure: " + rollbackErr.Error())
 					recordMidjourneyAccountingError(c, relayInfo, midjourneyTask, "rollback midjourney usage after log failure", rollbackErr)
 				}
-				if settlementErr == nil {
-					if rollbackErr := service.RollbackBillingSettlement(c, relayInfo, logQuota); rollbackErr != nil {
-						common.SysLog("error rolling back midjourney billing after log failure: " + rollbackErr.Error())
-						recordMidjourneyAccountingError(c, relayInfo, midjourneyTask, "rollback midjourney billing after log failure", rollbackErr)
-					} else {
-						service.ClearMidjourneyQuotaAfterBillingRollback(c, midjourneyTask, err)
-					}
-				}
+				billingLogged = true
 				return
 			}
 			billingLogged = true
@@ -766,6 +764,10 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		consumeQuota = false
 	}
 
+	if midjResponse.Code == 21 || midjResponse.Code == 22 {
+		consumeQuota = false
+		midjourneyTask.Quota = 0
+	}
 	if midjResponse.Code == 21 { //21-任务已存在（处理中或者有结果了）
 		// 将 properties 转换为一个 map
 		properties, ok := midjResponse.Properties.(map[string]interface{})
@@ -793,14 +795,50 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		midjourneyTask.Progress = "100%"
 		midjourneyTask.Status = "SUCCESS"
 	}
-	err = midjourneyTask.Insert()
-	if err != nil {
-		return &dto.MidjourneyResponse{
-			Code:        4,
-			Description: "insert_midjourney_task_failed",
+	if !consumeQuota {
+		midjourneyTask.Quota = 0
+	}
+	if duplicateExistingResult && midjourneyTask.MjId != "" {
+		if existing := model.GetByMJId(relayInfo.UserId, midjourneyTask.MjId); existing != nil {
+			existing.Code = midjourneyTask.Code
+			existing.Description = midjourneyTask.Description
+			existing.FailReason = midjourneyTask.FailReason
+			if midjourneyTask.ImageUrl != "" {
+				existing.ImageUrl = midjourneyTask.ImageUrl
+			}
+			if midjourneyTask.Status != "" {
+				existing.Status = midjourneyTask.Status
+			}
+			if midjourneyTask.Progress != "" && midjourneyTask.Progress != "0%" {
+				existing.Progress = midjourneyTask.Progress
+			}
+			if midjourneyTask.StartTime != 0 {
+				existing.StartTime = midjourneyTask.StartTime
+			}
+			if midjourneyTask.FinishTime != 0 {
+				existing.FinishTime = midjourneyTask.FinishTime
+			}
+			err = existing.Update()
+			if err != nil {
+				return &dto.MidjourneyResponse{
+					Code:        4,
+					Description: "insert_midjourney_task_failed",
+				}
+			}
+			midjourneyTask = existing
+			taskPersisted = true
 		}
 	}
-	taskPersisted = true
+	if !taskPersisted {
+		err = midjourneyTask.Insert()
+		if err != nil {
+			return &dto.MidjourneyResponse{
+				Code:        4,
+				Description: "insert_midjourney_task_failed",
+			}
+		}
+		taskPersisted = true
+	}
 
 	if midjResponse.Code == 22 { //22-排队中，说明任务已存在
 		// 修改返回值

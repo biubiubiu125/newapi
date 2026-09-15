@@ -21,7 +21,6 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/pkg/errors"
-	"github.com/tidwall/sjson"
 )
 
 // ============================
@@ -329,10 +328,29 @@ func (a *TaskAdaptor) ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, e
 }
 
 func (a *TaskAdaptor) ConvertToOpenAIVideo(task *model.Task) ([]byte, error) {
-	data := task.Data
-	var err error
-	if data, err = sjson.SetBytes(data, "id", task.TaskID); err != nil {
-		return nil, errors.Wrap(err, "set id failed")
+	if task == nil {
+		return nil, errors.New("task is nil")
 	}
-	return data, nil
+	video := dto.NewOpenAIVideo()
+	if len(task.Data) > 0 {
+		_ = common.Unmarshal(task.Data, video)
+	}
+	video.ID = task.TaskID
+	video.Object = "video"
+	video.Status = task.Status.ToVideoStatus()
+	video.SetProgressStr(task.Progress)
+	if task.CreatedAt > 0 {
+		video.CreatedAt = task.CreatedAt
+	}
+	if task.FinishTime > 0 {
+		video.CompletedAt = task.FinishTime
+	}
+	if modelName := strings.TrimSpace(task.Properties.OriginModelName); modelName != "" {
+		video.Model = modelName
+	}
+	if resultURL := strings.TrimSpace(task.GetResultURL()); resultURL != "" {
+		video.SetMetadata("url", resultURL)
+	}
+	taskcommon.ApplyPublicOpenAIVideoProjection(task, video)
+	return common.Marshal(video)
 }

@@ -50,6 +50,10 @@ func TestLegacyTaskAdaptorStillAvailable(t *testing.T) {
 	assert.NotNil(t, GetTaskAdaptor(constant.TaskPlatformSuno))
 }
 
+func TestGetTaskAdaptorUsesSoraForNewAPI(t *testing.T) {
+	assert.NotNil(t, GetTaskAdaptor(constant.TaskPlatform(fmt.Sprintf("%d", constant.ChannelTypeNewAPI))))
+}
+
 func TestPluginTaskDoesNotUseLegacyRealtimeFetch(t *testing.T) {
 	task := &model.Task{
 		PrivateData: model.TaskPrivateData{

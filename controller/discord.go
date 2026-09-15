@@ -132,10 +132,7 @@ func DiscordOAuth(c *gin.Context) {
 	if model.IsDiscordIdAlreadyTaken(user.DiscordId) {
 		err := user.FillUserByDiscordId()
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": err.Error(),
-			})
+			common.ApiError(c, err)
 			return
 		}
 	} else {
@@ -152,10 +149,7 @@ func DiscordOAuth(c *gin.Context) {
 					common.ApiErrorI18n(c, i18n.MsgUserExists)
 					return
 				}
-				c.JSON(http.StatusOK, gin.H{
-					"success": false,
-					"message": err.Error(),
-				})
+				common.ApiError(c, err)
 				return
 			}
 		} else {

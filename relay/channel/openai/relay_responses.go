@@ -69,6 +69,16 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	}
 	imageCounter.Commit(info)
 
+	if usage.TotalTokens == 0 {
+		text := service.ExtractOutputTextFromResponses(&responsesResponse)
+		if text != "" {
+			estimated := service.ResponseText2Usage(c, text, info.UpstreamModelName, info.GetEstimatePromptTokens())
+			if estimated != nil {
+				usage = *estimated
+			}
+		}
+	}
+
 	return &usage, nil
 }
 
@@ -162,11 +172,15 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 		return nil, streamErr
 	}
 
+	if !imageCommitted {
+		imageCounter.Commit(info)
+		imageCommitted = true
+	}
+
 	if usage.CompletionTokens == 0 {
-		// 计算输出文本的 token 数量
+		// completed 缺失或上游未给 usage 时，用已下发文本估算，避免客户端已拿到内容却全额退预扣。
 		tempStr := responseTextBuilder.String()
 		if len(tempStr) > 0 {
-			// 非正常结束，使用输出文本的 token 数量
 			completionTokens := service.CountTextToken(tempStr, info.UpstreamModelName)
 			usage.CompletionTokens = completionTokens
 		}

@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { buildOAuthCallbackUrl } from '@/features/system-settings/auth/oauth-callback-url'
+
 // ============================================================================
 // OAuth URL Builders
 // ============================================================================
@@ -37,19 +39,35 @@ export function indexCustomOAuthBindings(
 /**
  * Build GitHub OAuth URL
  */
-export function buildGitHubOAuthUrl(clientId: string, state: string): string {
-  return `https://github.com/login/oauth/authorize?client_id=${clientId}&state=${state}&scope=user:email`
+export function buildGitHubOAuthUrl(
+  clientId: string,
+  state: string,
+  serverAddress?: string
+): string {
+  const url = new URL('https://github.com/login/oauth/authorize')
+  url.searchParams.set('client_id', clientId)
+  url.searchParams.set('state', state)
+  url.searchParams.set('scope', 'user:email')
+  url.searchParams.set(
+    'redirect_uri',
+    buildOAuthCallbackUrl(serverAddress ?? '', 'github', '')
+  )
+  return url.toString()
 }
 
 /**
  * Build Discord OAuth URL
  */
-export function buildDiscordOAuthUrl(clientId: string, state: string): string {
+export function buildDiscordOAuthUrl(
+  clientId: string,
+  state: string,
+  serverAddress?: string
+): string {
   const url = new URL('https://discord.com/oauth2/authorize')
   url.searchParams.set('client_id', clientId)
   url.searchParams.set(
     'redirect_uri',
-    `${window.location.origin}/oauth/discord`
+    buildOAuthCallbackUrl(serverAddress ?? '', 'discord', '')
   )
   url.searchParams.set('response_type', 'code')
   url.searchParams.set('scope', 'identify+openid')
@@ -63,11 +81,15 @@ export function buildDiscordOAuthUrl(clientId: string, state: string): string {
 export function buildOIDCOAuthUrl(
   authUrl: string,
   clientId: string,
-  state: string
+  state: string,
+  serverAddress?: string
 ): string {
   const url = new URL(authUrl)
   url.searchParams.set('client_id', clientId)
-  url.searchParams.set('redirect_uri', `${window.location.origin}/oauth/oidc`)
+  url.searchParams.set(
+    'redirect_uri',
+    buildOAuthCallbackUrl(serverAddress ?? '', 'oidc', '')
+  )
   url.searchParams.set('response_type', 'code')
   url.searchParams.set('scope', 'openid profile email')
   url.searchParams.set('state', state)
@@ -77,6 +99,41 @@ export function buildOIDCOAuthUrl(
 /**
  * Build LinuxDO OAuth URL
  */
-export function buildLinuxDOOAuthUrl(clientId: string, state: string): string {
-  return `https://connect.linux.do/oauth2/authorize?response_type=code&client_id=${clientId}&state=${state}`
+export function buildLinuxDOOAuthUrl(
+  clientId: string,
+  state: string,
+  serverAddress?: string
+): string {
+  const url = new URL('https://connect.linux.do/oauth2/authorize')
+  url.searchParams.set('response_type', 'code')
+  url.searchParams.set('client_id', clientId)
+  url.searchParams.set(
+    'redirect_uri',
+    buildOAuthCallbackUrl(serverAddress ?? '', 'linuxdo', '')
+  )
+  url.searchParams.set('state', state)
+  return url.toString()
+}
+
+export function buildCustomOAuthUrl(options: {
+  authorizationEndpoint: string
+  clientId: string
+  slug: string
+  state: string
+  scopes?: string
+  serverAddress?: string
+  fallbackOrigin?: string
+}): string {
+  const url = new URL(options.authorizationEndpoint)
+  url.searchParams.set('client_id', options.clientId)
+  url.searchParams.set(
+    'redirect_uri',
+    buildOAuthCallbackUrl(options.serverAddress ?? '', options.slug, '')
+  )
+  url.searchParams.set('response_type', 'code')
+  url.searchParams.set('state', options.state)
+  if (options.scopes) {
+    url.searchParams.set('scope', options.scopes)
+  }
+  return url.toString()
 }

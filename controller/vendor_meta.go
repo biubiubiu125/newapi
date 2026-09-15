@@ -144,7 +144,15 @@ func DeleteVendorMeta(c *gin.Context) {
 
 func vendorAPIError(c *gin.Context, err error) {
 	status := http.StatusBadRequest
-	payload := gin.H{"success": false, "message": err.Error()}
+	original := ""
+	if err != nil {
+		original = err.Error()
+	}
+	message := common.PublicDashboardErrorMessage(c, original)
+	if message != original {
+		common.SysError("api error: " + original)
+	}
+	payload := gin.H{"success": false, "message": message}
 	var references *model.VendorReferenceError
 	if errors.Is(err, model.ErrVendorConflict) {
 		status = http.StatusConflict

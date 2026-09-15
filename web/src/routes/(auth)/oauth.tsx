@@ -25,6 +25,7 @@ import { wechatLoginByCode } from '@/features/auth/api'
 import { sanitizeAuthRedirect } from '@/features/auth/lib/auth-redirect'
 import { applyAuthBundle, isAuthBundle } from '@/lib/api'
 import { getServerErrorMessageKey } from '@/lib/server-error-message'
+import { useAuthStore } from '@/stores/auth-store'
 
 function OAuthComponent() {
   const navigate = useNavigate()
@@ -40,6 +41,21 @@ function OAuthComponent() {
       try {
         if (search?.provider === 'wechat' && search.code) {
           const res = await wechatLoginByCode(search.code)
+          if (
+            res?.success &&
+            res.data &&
+            typeof res.data === 'object' &&
+            'require_2fa' in res.data &&
+            res.data.require_2fa
+          ) {
+            const flowToken =
+              typeof res.data.flow_token === 'string' ? res.data.flow_token : ''
+            if (flowToken) {
+              useAuthStore.getState().auth.setPending2FAFlowToken(flowToken)
+              navigate({ to: '/otp', replace: true })
+              return
+            }
+          }
           if (res?.success && isAuthBundle(res.data)) {
             applyAuthBundle(res.data)
             const target =

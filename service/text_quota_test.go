@@ -754,6 +754,52 @@ func TestComposeTieredTextQuotaErrorFallbackUsesPreConsumedQuota(t *testing.T) {
 	require.EqualValues(t, 14500, quota)
 }
 
+func TestCalculateTextQuotaSummaryBillsNativeResponsesTools(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	w := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(w)
+	ctx.Set("gemini_google_search_call", true)
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-4.1",
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+		ResponsesUsageInfo: &relaycommon.ResponsesUsageInfo{
+			BuiltInTools: map[string]*relaycommon.BuildInToolInfo{
+				dto.BuildInToolWebSearch:       {ToolName: dto.BuildInToolWebSearch, CallCount: 1},
+				dto.BuildInToolImageGeneration: {ToolName: dto.BuildInToolImageGeneration, CallCount: 1},
+			},
+		},
+		StartTime: time.Now(),
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, &dto.Usage{})
+	require.Greater(t, summary.ToolCallSurchargeQuota.InexactFloat64(), 0.0)
+	require.Greater(t, summary.Quota, 0)
+	require.Equal(t, 1, summary.WebSearchCallCount)
+}
+
+func TestPrepareTieredBillingForSelectedGroupReservesNonTieredIncrease(t *testing.T) {
+	billing := &recordingBillingSettler{preConsumedQuota: 100}
+	relayInfo := &relaycommon.RelayInfo{
+		Billing:               billing,
+		FinalPreConsumedQuota: 100,
+		PriceData: types.PriceData{
+			FreeModel:         false,
+			QuotaToPreConsume: 400,
+			GroupRatioInfo:    types.GroupRatioInfo{GroupRatio: 2},
+		},
+	}
+
+	require.Nil(t, PrepareTieredBillingForSelectedGroup(nil, relayInfo))
+	require.Equal(t, []int{400}, billing.reserveTargets)
+	assert.EqualValues(t, 400, billing.preConsumedQuota)
+	assert.EqualValues(t, 400, relayInfo.FinalPreConsumedQuota)
+}
+
 type failingTextQuotaSettlementFunding struct {
 	err error
 }
@@ -895,9 +941,32 @@ func TestPostTextConsumeQuotaRecordsAccountingErrorWhenSettlementFails(t *testin
 	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", 9545, model.LogTypeConsume).First(&consumeLog).Error)
 	require.Contains(t, consumeLog.Other, "settlement_error")
 	var errorLog model.Log
-	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", 9545, model.LogTypeError).First(&errorLog).Error)
-	require.Contains(t, errorLog.Content, "post text consume quota settlement failed")
+	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ? AND content LIKE ?", 9545, model.LogTypeError, "%post text consume quota settlement failed%").First(&errorLog).Error)
 	require.Contains(t, errorLog.Other, "accounting_error")
+}
+
+func TestPreWssConsumeQuotaSkipsWhenPriceDataUsePrice(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	relayInfo := &relaycommon.RelayInfo{
+		UsePrice: false,
+		PriceData: types.PriceData{
+			UsePrice:   true,
+			ModelPrice: 1,
+		},
+	}
+	err := PreWssConsumeQuota(ctx, relayInfo, &dto.RealtimeUsage{
+		TotalTokens: 12,
+		InputTokenDetails: dto.InputTokenDetails{
+			TextTokens:  8,
+			AudioTokens: 0,
+		},
+		OutputTokenDetails: dto.OutputTokenDetails{
+			TextTokens:  4,
+			AudioTokens: 0,
+		},
+	})
+	require.NoError(t, err)
 }
 
 func TestPostWssConsumeQuotaReturnsSettlementError(t *testing.T) {
@@ -945,6 +1014,230 @@ func TestPostWssConsumeQuotaReturnsSettlementError(t *testing.T) {
 
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "wss settlement failed")
+}
+
+func TestPostAudioConsumeQuotaKeepsCalculatedQuotaWhenTotalTokensMissing(t *testing.T) {
+	truncate(t)
+	const userID = 9570
+	const tokenID = 9571
+	const channelID = 9572
+	const preConsumed = 50
+	seedUser(t, userID, 10000-preConsumed)
+	seedChannel(t, channelID)
+	seedToken(t, tokenID, userID, "audio-zero-total", 100000)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("username", "audio-zero-total-owner")
+	ctx.Set("token_name", "audio-zero-total")
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          userID,
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID},
+		TokenId:         tokenID,
+		TokenKey:        "audio-zero-total",
+		OriginModelName: "gpt-4o-audio-preview",
+		UsingGroup:      "default",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	relayInfo.Billing = &BillingSession{
+		relayInfo:        relayInfo,
+		funding:          &WalletFunding{userId: userID, consumed: preConsumed},
+		preConsumedQuota: preConsumed,
+		tokenConsumed:    preConsumed,
+	}
+	usage := &dto.Usage{
+		TotalTokens: 0,
+		PromptTokensDetails: dto.InputTokenDetails{
+			AudioTokens: 80,
+		},
+		CompletionTokenDetails: dto.OutputTokenDetails{
+			AudioTokens: 40,
+		},
+	}
+
+	err := PostAudioConsumeQuota(ctx, relayInfo, usage, "")
+	require.NoError(t, err)
+	require.EqualValues(t, 10000-1920, getUserQuota(t, userID))
+}
+
+func TestPostWssConsumeQuotaRollsBackSettlementWhenConsumeLogFails(t *testing.T) {
+	truncate(t)
+	useBrokenLogDB(t)
+
+	const userID = 9580
+	const tokenID = 9581
+	const channelID = 9582
+	const preConsumed = 50
+	seedUser(t, userID, 10000-preConsumed)
+	seedChannel(t, channelID)
+	seedToken(t, tokenID, userID, "wss-log-fail", 1000-preConsumed)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("username", "wss-log-fail-owner")
+	ctx.Set("token_name", "wss-log-fail")
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          userID,
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID},
+		TokenId:         tokenID,
+		TokenKey:        "wss-log-fail",
+		OriginModelName: "gpt-4o-realtime-preview",
+		UsingGroup:      "default",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	relayInfo.Billing = &BillingSession{
+		relayInfo:        relayInfo,
+		funding:          &WalletFunding{userId: userID, consumed: preConsumed},
+		preConsumedQuota: preConsumed,
+		tokenConsumed:    preConsumed,
+	}
+
+	err := PostWssConsumeQuota(ctx, relayInfo, "gpt-4o-realtime-preview", &dto.RealtimeUsage{
+		TotalTokens: 50,
+		InputTokens: 50,
+		InputTokenDetails: dto.InputTokenDetails{
+			TextTokens: 50,
+		},
+	}, "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "record consume log failed")
+	require.EqualValues(t, 10000, getUserQuota(t, userID))
+}
+
+func TestPostAudioConsumeQuotaRollsBackSettlementWhenConsumeLogFails(t *testing.T) {
+	truncate(t)
+	useBrokenLogDB(t)
+
+	const userID = 9590
+	const tokenID = 9591
+	const channelID = 9592
+	const preConsumed = 50
+	seedUser(t, userID, 10000-preConsumed)
+	seedChannel(t, channelID)
+	seedToken(t, tokenID, userID, "audio-log-fail", 1000-preConsumed)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("username", "audio-log-fail-owner")
+	ctx.Set("token_name", "audio-log-fail")
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          userID,
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID},
+		TokenId:         tokenID,
+		TokenKey:        "audio-log-fail",
+		OriginModelName: "gpt-4o-audio-preview",
+		UsingGroup:      "default",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	relayInfo.Billing = &BillingSession{
+		relayInfo:        relayInfo,
+		funding:          &WalletFunding{userId: userID, consumed: preConsumed},
+		preConsumedQuota: preConsumed,
+		tokenConsumed:    preConsumed,
+	}
+	usage := &dto.Usage{
+		PromptTokens:     50,
+		CompletionTokens: 0,
+		TotalTokens:      50,
+		PromptTokensDetails: dto.InputTokenDetails{
+			AudioTokens: 50,
+		},
+	}
+
+	err := PostAudioConsumeQuota(ctx, relayInfo, usage, "")
+	require.Error(t, err)
+	require.Contains(t, err.Error(), "record consume log failed")
+	require.EqualValues(t, 10000, getUserQuota(t, userID))
+}
+
+func TestPostTextConsumeQuotaRefundsReservedQuotaWhenUsageMissingAfterDelivery(t *testing.T) {
+	truncate(t)
+	const userID = 9610
+	const tokenID = 9611
+	const channelID = 9612
+	const preConsumed = 40
+	seedUser(t, userID, 10000-preConsumed)
+	seedChannel(t, channelID)
+	seedToken(t, tokenID, userID, "text-zero-usage", 1000-preConsumed)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("username", "text-zero-usage-owner")
+	ctx.Set("token_name", "text-zero-usage")
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          userID,
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID},
+		TokenId:         tokenID,
+		TokenKey:        "text-zero-usage",
+		OriginModelName: "gpt-4o",
+		UsingGroup:      "default",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			UsePrice:       true,
+			ModelPrice:     0.00008,
+			GroupRatioInfo: types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	relayInfo.Billing = &BillingSession{
+		relayInfo:        relayInfo,
+		funding:          &WalletFunding{userId: userID, consumed: preConsumed},
+		preConsumedQuota: preConsumed,
+		tokenConsumed:    preConsumed,
+	}
+
+	err := PostTextConsumeQuotaChecked(ctx, relayInfo, &dto.Usage{}, nil)
+	require.NoError(t, err)
+	require.EqualValues(t, 10000, getUserQuota(t, userID))
+}
+
+func TestPostWssConsumeQuotaRefundsReservedQuotaWhenUsageMissing(t *testing.T) {
+	truncate(t)
+	seedUser(t, 9560, 10000-40)
+	seedChannel(t, 9561)
+	seedToken(t, 9562, 9560, "wss-zero-token", 1000)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("username", "wss-zero-owner")
+	ctx.Set("token_name", "wss-zero-token")
+	relayInfo := &relaycommon.RelayInfo{
+		UserId:          9560,
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: 9561},
+		TokenId:         9562,
+		TokenKey:        "wss-zero-token",
+		OriginModelName: "gpt-4o-realtime-preview",
+		UsingGroup:      "default",
+		StartTime:       time.Now(),
+		PriceData: types.PriceData{
+			ModelRatio:      1,
+			CompletionRatio: 1,
+			GroupRatioInfo:  types.GroupRatioInfo{GroupRatio: 1},
+		},
+	}
+	relayInfo.Billing = &BillingSession{
+		relayInfo:        relayInfo,
+		funding:          &WalletFunding{userId: 9560, consumed: 40},
+		preConsumedQuota: 40,
+	}
+
+	err := PostWssConsumeQuota(ctx, relayInfo, "gpt-4o-realtime-preview", &dto.RealtimeUsage{}, "")
+	require.NoError(t, err)
+	require.EqualValues(t, 10000, getUserQuota(t, 9560))
 }
 
 func TestPostTextConsumeQuotaCheckedReturnsErrorAndSkipsLogWhenUsageCounterUpdateFails(t *testing.T) {
@@ -1164,6 +1457,30 @@ func TestTryTieredSettleNoClampInRange(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, result)
 	require.Nil(t, relayInfo.QuotaClamp, "in-range settlement must not record a clamp")
+}
+
+func TestCalculateTextQuotaSummaryKeepsToolSurchargeWhenUsageTokensAreZero(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-4o",
+		PriceData: types.PriceData{
+			ModelRatio: 1,
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio: 1,
+			},
+		},
+		StartTime: time.Now(),
+		ResponsesUsageInfo: &relaycommon.ResponsesUsageInfo{
+			BuiltInTools: map[string]*relaycommon.BuildInToolInfo{
+				dto.BuildInToolWebSearchPreview: {ToolName: dto.BuildInToolWebSearchPreview, CallCount: 1},
+			},
+		},
+	}
+
+	summary := calculateTextQuotaSummary(ctx, relayInfo, &dto.Usage{})
+	require.Equal(t, 1, summary.WebSearchCallCount)
+	require.Greater(t, summary.Quota, 0)
 }
 
 func TestCalculateTextQuotaSummaryFixedPriceAppliesImageCountOnceAndAllowsOverride(t *testing.T) {

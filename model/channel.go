@@ -309,6 +309,22 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 	}
 }
 
+// ResolveReusableKey returns a previously stored credential when remix/polling
+// must hit the same upstream account. An empty preferred key falls back to the
+// normal enabled-key rotation used for new requests.
+func (channel *Channel) ResolveReusableKey(preferredKey string) (string, int, *types.NewAPIError) {
+	preferredKey = strings.TrimSpace(preferredKey)
+	if preferredKey == "" {
+		return channel.GetNextEnabledKey()
+	}
+	for i, key := range channel.GetKeys() {
+		if key == preferredKey {
+			return preferredKey, i, nil
+		}
+	}
+	return preferredKey, 0, nil
+}
+
 func (channel *Channel) SaveChannelInfo() error {
 	return DB.Model(channel).Update("channel_info", channel.ChannelInfo).Error
 }
@@ -770,6 +786,11 @@ func handlerMultiKeyUpdate(channel *Channel, usingKey string, status int, reason
 				return
 			}
 			channel.Status = status
+			if status == common.ChannelStatusEnabled {
+				channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
+				channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
+				channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
+			}
 			info := channel.GetOtherInfo()
 			info["status_reason"] = reason
 			info["status_time"] = common.GetTimestamp()
@@ -825,6 +846,26 @@ func hasEnabledMultiKey(keys []string, statusList map[int]int) bool {
 		}
 	}
 	return false
+}
+
+func SyncChannelStatusWithEnabledKeys(channel *Channel, reason string) {
+	if channel == nil || !channel.ChannelInfo.IsMultiKey {
+		return
+	}
+	if hasEnabledMultiKey(channel.GetKeys(), channel.ChannelInfo.MultiKeyStatusList) {
+		if channel.Status != common.ChannelStatusEnabled {
+			channel.Status = common.ChannelStatusEnabled
+		}
+		return
+	}
+	channel.Status = common.ChannelStatusAutoDisabled
+	info := channel.GetOtherInfo()
+	if reason == "" {
+		reason = "All keys are disabled"
+	}
+	info["status_reason"] = reason
+	info["status_time"] = common.GetTimestamp()
+	channel.SetOtherInfo(info)
 }
 
 func UpdateChannelStatus(channelId int, usingKey string, status int, reason string) bool {
@@ -928,12 +969,26 @@ func UpdateChannelStatus(channelId int, usingKey string, status int, reason stri
 }
 
 func EnableChannelByTag(tag string) error {
-	err := DB.Model(&Channel{}).Where("tag = ?", tag).Update("status", common.ChannelStatusEnabled).Error
+	channels, err := GetChannelsByTag(tag, true, true)
 	if err != nil {
 		return err
 	}
-	err = UpdateAbilityStatusByTag(tag, true)
-	return err
+	for _, channel := range channels {
+		channel.Status = common.ChannelStatusEnabled
+		if channel.ChannelInfo.IsMultiKey {
+			channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
+			channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
+			channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
+		}
+		info := channel.GetOtherInfo()
+		info["status_reason"] = "tag enabled"
+		info["status_time"] = common.GetTimestamp()
+		channel.SetOtherInfo(info)
+		if err := channel.saveStatusState(); err != nil {
+			return err
+		}
+	}
+	return UpdateAbilityStatusByTag(tag, true)
 }
 
 func DisableChannelByTag(tag string) error {

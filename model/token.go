@@ -32,7 +32,10 @@ type Token struct {
 	DeletedAt          gorm.DeletedAt `gorm:"index"`
 }
 
-var ErrTokenQuotaNoRows = errors.New("token quota update affected no rows")
+var (
+	ErrTokenQuotaNoRows       = errors.New("token quota update affected no rows")
+	ErrTokenQuotaInsufficient = errors.New("token quota is not enough")
+)
 
 func (token *Token) GetAutoGroups() ([]string, error) {
 	if token.AutoGroups == "" {
@@ -60,6 +63,14 @@ func (token *Token) SetAutoGroups(groups []string) error {
 
 func IsTokenQuotaNoRowsError(err error) bool {
 	return errors.Is(err, ErrTokenQuotaNoRows)
+}
+
+func IsTokenQuotaInsufficientError(err error) bool {
+	return errors.Is(err, ErrTokenQuotaInsufficient)
+}
+
+func IsTokenQuotaExtraDebitSkippedError(err error) bool {
+	return IsTokenQuotaNoRowsError(err) || IsTokenQuotaInsufficientError(err)
 }
 
 type TokenQuotaDelta struct {
@@ -417,23 +428,13 @@ func IncreaseTokenQuota(tokenId int, key string, quota int64) (err error) {
 	if quota == 0 {
 		return nil
 	}
-	if common.RedisEnabled {
-		gopool.Go(func() {
-			// 守卫式增量：哈希不存在时跳过，由下次读取从数据库水合，
-			// 绝不创建只有配额字段的残缺哈希。
-			if _, err := cacheApplyTokenQuotaDelta(tokenId, key, int64(quota)); err != nil {
-				common.SysLog("failed to increase token quota: " + err.Error())
-			}
-		})
-	}
-	if common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeTokenQuota, tokenId, quota)
-		return nil
-	}
+	// Token refunds must hit remain_quota immediately. BatchUpdate would return
+	// success before the row is durable, and an async cache apply racing Refresh
+	// can overwrite Redis with a stale database snapshot.
 	if err = increaseTokenQuota(tokenId, quota); err != nil {
 		return err
 	}
-	RefreshTokenQuotaCache(tokenId, key)
+	applyTokenQuotaCacheDelta(tokenQuotaDeltaAfterIncrease(tokenId, key, quota))
 	return nil
 }
 
@@ -489,7 +490,7 @@ func IncreaseTokenQuotaTracked(tokenId int, key string, quota int64) (delta Toke
 	if err != nil {
 		return delta, err
 	}
-	RefreshTokenQuotaCache(tokenId, key)
+	applyTokenQuotaCacheDelta(delta)
 	return delta, nil
 }
 
@@ -534,7 +535,7 @@ func ApplyTokenQuotaDelta(delta TokenQuotaDelta) error {
 	if result.RowsAffected == 0 {
 		return fmt.Errorf("%w: tokenId=%d", ErrTokenQuotaNoRows, delta.TokenId)
 	}
-	RefreshTokenQuotaCache(delta.TokenId, delta.Key)
+	applyTokenQuotaCacheDelta(delta)
 	return nil
 }
 
@@ -562,21 +563,12 @@ func DecreaseTokenQuota(id int, key string, quota int64) (err error) {
 	if quota == 0 {
 		return nil
 	}
-	if common.RedisEnabled {
-		gopool.Go(func() {
-			if _, err := cacheApplyTokenQuotaDelta(id, key, int64(-quota)); err != nil {
-				common.SysLog("failed to decrease token quota: " + err.Error())
-			}
-		})
-	}
-	if common.BatchUpdateEnabled {
-		addNewRecord(BatchUpdateTypeTokenQuota, id, -quota)
-		return nil
-	}
+	// Token debit must hit remain_quota atomically. Do not apply Redis first and
+	// refresh later: the async cache write can race RefreshTokenQuotaCache.
 	if err = DecreaseTokenQuotaTx(DB, id, quota); err != nil {
 		return err
 	}
-	RefreshTokenQuotaCache(id, key)
+	applyTokenQuotaCacheDelta(tokenQuotaDeltaAfterDecrease(id, key, quota))
 	return nil
 }
 
@@ -601,7 +593,14 @@ func DecreaseTokenQuotaTx(tx *gorm.DB, id int, quota int64) (err error) {
 		return result.Error
 	}
 	if result.RowsAffected == 0 {
-		return fmt.Errorf("%w: token quota is not enough or token not found, tokenId=%d, need quota=%d", ErrTokenQuotaNoRows, id, quota)
+		var existing Token
+		if err := tx.Select("id").Where("id = ?", id).First(&existing).Error; err != nil {
+			if errors.Is(err, gorm.ErrRecordNotFound) {
+				return fmt.Errorf("%w: token not found, tokenId=%d, need quota=%d", ErrTokenQuotaNoRows, id, quota)
+			}
+			return err
+		}
+		return fmt.Errorf("%w: tokenId=%d, need quota=%d", ErrTokenQuotaInsufficient, id, quota)
 	}
 	return nil
 }
@@ -620,6 +619,70 @@ func RefreshTokenQuotaCache(tokenId int, _ string) {
 			common.SysLog("failed to refresh token cache: " + err.Error())
 		}
 	})
+}
+
+func tokenQuotaDeltaAfterDecrease(id int, key string, quota int64) TokenQuotaDelta {
+	delta := TokenQuotaDelta{
+		TokenId:     id,
+		Key:         key,
+		RemainDelta: -quota,
+		UsedDelta:   quota,
+	}
+	if !common.RedisEnabled || id <= 0 || quota == 0 {
+		return delta
+	}
+	var token Token
+	if err := DB.Select("key", "unlimited_quota").First(&token, "id = ?", id).Error; err != nil {
+		return delta
+	}
+	if delta.Key == "" {
+		delta.Key = token.Key
+	}
+	if token.UnlimitedQuota {
+		delta.RemainDelta = 0
+	}
+	return delta
+}
+
+func tokenQuotaDeltaAfterIncrease(id int, key string, quota int64) TokenQuotaDelta {
+	delta := TokenQuotaDelta{
+		TokenId:     id,
+		Key:         key,
+		RemainDelta: quota,
+		UsedDelta:   -quota,
+	}
+	if !common.RedisEnabled || id <= 0 || quota == 0 {
+		return delta
+	}
+	var token Token
+	if err := DB.Select("key", "unlimited_quota").First(&token, "id = ?", id).Error; err != nil {
+		return delta
+	}
+	if delta.Key == "" {
+		delta.Key = token.Key
+	}
+	if token.UnlimitedQuota {
+		delta.RemainDelta = 0
+	}
+	return delta
+}
+
+func applyTokenQuotaCacheDelta(delta TokenQuotaDelta) {
+	if !common.RedisEnabled || delta.TokenId <= 0 {
+		return
+	}
+	if delta.RemainDelta == 0 && delta.UsedDelta == 0 {
+		return
+	}
+	key := delta.Key
+	if key == "" {
+		RefreshTokenQuotaCache(delta.TokenId, key)
+		return
+	}
+	result, err := cacheApplyTokenQuotaAccounting(delta.TokenId, key, delta.RemainDelta, delta.UsedDelta)
+	if err != nil || result != cacheQuotaOK {
+		RefreshTokenQuotaCache(delta.TokenId, key)
+	}
 }
 
 func TouchTokenAccessedTime(id int, accessedAt int64) error {

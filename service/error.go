@@ -12,9 +12,10 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
-	taskdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	taskdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
 
@@ -197,23 +198,36 @@ func TaskErrorWrapperLocal(err error, code string, statusCode int) *taskdto.Task
 	return openaiErr
 }
 
-func TaskErrorWrapper(err error, code string, statusCode int) *taskdto.TaskError {
-	text := err.Error()
-	lowerText := strings.ToLower(text)
-	if strings.Contains(lowerText, "post") || strings.Contains(lowerText, "dial") || strings.Contains(lowerText, "http") {
-		common.SysLog(fmt.Sprintf("error: %s", text))
-		//text = "请求上游地址失败"
-		text = common.MaskSensitiveInfo(text)
+func publicClientErrorMessage(err error) string {
+	if err == nil {
+		return "request failed"
 	}
-	//避免暴露内部错误
-	taskError := &taskdto.TaskError{
+	original := strings.TrimSpace(err.Error())
+	if original == "" {
+		return "request failed"
+	}
+	sanitized := strings.TrimSpace(model.SanitizePublicTaskFailReason(original))
+	if sanitized == "" {
+		common.SysLog(fmt.Sprintf("error: %s", original))
+		return "request failed"
+	}
+	if sanitized != original {
+		common.SysLog(fmt.Sprintf("error: %s", original))
+		return sanitized
+	}
+	return common.MaskSensitiveInfo(sanitized)
+}
+
+func TaskErrorWrapper(err error, code string, statusCode int) *taskdto.TaskError {
+	if err == nil {
+		err = errors.New("request failed")
+	}
+	return &taskdto.TaskError{
 		Code:       code,
-		Message:    text,
+		Message:    publicClientErrorMessage(err),
 		StatusCode: statusCode,
 		Error:      err,
 	}
-
-	return taskError
 }
 
 // TaskErrorFromAPIError 将 PreConsumeBilling 返回的 NewAPIError 转换为 TaskError。
@@ -221,10 +235,16 @@ func TaskErrorFromAPIError(apiErr *types.NewAPIError) *taskdto.TaskError {
 	if apiErr == nil {
 		return nil
 	}
+	var source error
+	if apiErr.Err != nil {
+		source = apiErr.Err
+	} else {
+		source = errors.New(apiErr.Error())
+	}
 	return &taskdto.TaskError{
 		Code:       string(apiErr.GetErrorCode()),
-		Message:    apiErr.Err.Error(),
+		Message:    publicClientErrorMessage(source),
 		StatusCode: apiErr.StatusCode,
-		Error:      apiErr.Err,
+		Error:      source,
 	}
 }

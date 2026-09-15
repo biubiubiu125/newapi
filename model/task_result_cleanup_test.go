@@ -132,6 +132,43 @@ func TestCleanupExpiredImageTaskResultsMarksOpenSettlementAsReview(t *testing.T)
 	require.NotContains(t, string(reloaded.Data), "pending-result")
 }
 
+func TestCleanupExpiredImageTaskResultsParksExistingReviewWithoutEvidence(t *testing.T) {
+	truncateTables(t)
+	now := time.Now().Unix()
+	task := &Task{
+		TaskID:                "task_result_cleanup_existing_review",
+		Platform:              constant.TaskPlatformImage,
+		Status:                TaskStatusSuccess,
+		SettlementStatus:      TaskSettlementStatusReview,
+		FinishTime:            now - 60,
+		ResultExpiresAt:       now - 1,
+		ImageTaskResultStored: true,
+		NextPollAt:            now + 60,
+		PrivateData: TaskPrivateData{
+			ResultBodyPath:   "/tmp/newapi-result-existing-review.json",
+			ResultBodySize:   12,
+			ResultBodySHA256: "sha",
+			ResultStoredAt:   now - 60,
+			ResultExpiresAt:  now - 1,
+		},
+	}
+	task.SetData(map[string]any{"data": []any{map[string]any{"b64_json": "review-result"}}})
+	require.NoError(t, task.Insert())
+
+	cleanups, err := CleanupExpiredImageTaskResults(now, 12*time.Hour, 100)
+	require.NoError(t, err)
+	require.Equal(t, []ImageTaskResultCleanup{{TaskPrimaryID: task.ID, Path: "/tmp/newapi-result-existing-review.json"}}, cleanups)
+
+	reloaded, exists, err := GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, TaskStatus(TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, TaskSettlementStatusReview, reloaded.SettlementStatus)
+	require.Equal(t, imageTaskResultExpiredBeforeSettlementReason, reloaded.FailReason)
+	require.Equal(t, now, reloaded.ResultCleanedAt)
+	require.Zero(t, reloaded.NextPollAt)
+}
+
 func TestCleanupExpiredImageTaskResultsKeepsPendingWhenSettlementEvidenceExists(t *testing.T) {
 	truncateTables(t)
 	now := time.Now().Unix()
@@ -580,21 +617,24 @@ func TestGetPendingImageTaskRefundsOnlyReturnsDurableIntentsWithoutResultData(t 
 		Quota:         120,
 		RefundPending: false,
 	}).Insert())
-	require.NoError(t, (&Task{
+	review := &Task{
 		TaskID:           "task_refund_manual_review",
 		Platform:         constant.TaskPlatformImage,
 		Status:           TaskStatusFailure,
 		Quota:            120,
 		RefundPending:    true,
 		SettlementStatus: TaskSettlementStatusReview,
-	}).Insert())
+	}
+	require.NoError(t, review.Insert())
 
 	tasks, err := GetPendingImageTaskRefundsAfter(0, 100)
 
 	require.NoError(t, err)
-	require.Len(t, tasks, 1)
+	require.Len(t, tasks, 2)
 	require.Equal(t, pending.ID, tasks[0].ID)
+	require.Equal(t, review.ID, tasks[1].ID)
 	require.Empty(t, tasks[0].Data)
+	require.Empty(t, tasks[1].Data)
 }
 
 func TestGetPendingImageTaskRequestFileCleanupsOnlyReturnsDueRecords(t *testing.T) {

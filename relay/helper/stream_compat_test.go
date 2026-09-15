@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -24,6 +25,34 @@ func TestStreamDataMarksClientPayloadWrite(t *testing.T) {
 
 	assert.True(t, info.HasClientStreamWrite())
 	assert.Contains(t, w.Body.String(), `data: {"ok":true}`)
+}
+
+func TestStringDataMarksClientStreamWriteFromRelayInfo(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/stream", nil)
+	info := &relaycommon.RelayInfo{}
+	c.Set("relay_info", info)
+
+	require.NoError(t, StringData(c, `{"delta":"hi"}`))
+
+	assert.True(t, info.HasClientStreamWrite())
+}
+
+func TestClaudeChunkDataMarksClientStreamWriteFromRelayInfo(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodGet, "/stream", nil)
+	info := &relaycommon.RelayInfo{}
+	c.Set("relay_info", info)
+
+	ClaudeChunkData(c, dto.ClaudeResponse{Type: "content_block_delta"}, `{"type":"content_block_delta"}`)
+
+	assert.True(t, info.HasClientStreamWrite())
 }
 
 func TestShouldFailoverBeforeStreamDoneUsesFirstPayloadGuard(t *testing.T) {
