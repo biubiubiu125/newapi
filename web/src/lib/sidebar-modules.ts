@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+export const GPT_IMAGE_WORKBENCH_URL = 'https://gptimage.rkai6.com/'
+
 export type SidebarSectionConfig = {
   enabled: boolean
   [key: string]: boolean
@@ -46,6 +48,7 @@ export const SIDEBAR_MODULES_DEFAULT: SidebarModulesAdminConfig = {
     log: true,
     midjourney: true,
     image_tasks: true,
+    gpt_image: true,
     task: true,
   },
   personal: {
@@ -135,6 +138,10 @@ export const SIDEBAR_MODULES_META: Record<string, SidebarSectionMeta> = {
       image_tasks: {
         title: '生图工作台',
         description: '内置文生图、图生图和生成历史。',
+      },
+      gpt_image: {
+        title: 'GPT生图工作台',
+        description: '打开 GPT 生图工作台（新标签页）。',
       },
       task: {
         title: '任务日志',

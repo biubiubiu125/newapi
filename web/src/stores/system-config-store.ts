@@ -19,7 +19,11 @@ For commercial licensing, please contact support@quantumnous.com
 import { create } from 'zustand'
 import { persist } from 'zustand/middleware'
 
-import { DEFAULT_SYSTEM_NAME, DEFAULT_LOGO } from '@/lib/constants'
+import {
+  DEFAULT_LOGO,
+  DEFAULT_SYSTEM_NAME,
+  resolveSystemName,
+} from '@/lib/constants'
 
 export type CurrencyDisplayType = 'USD' | 'CNY' | 'TOKENS' | 'CUSTOM'
 
@@ -81,16 +85,18 @@ export const useSystemConfigStore = create<SystemConfigState>()(
       loading: true,
       loadedLogoUrl: DEFAULT_LOGO,
       setConfig: (newConfig) =>
-        set((state) => ({
-          config: {
+        set((state) => {
+          const nextConfig = {
             ...state.config,
             ...newConfig,
             currency: {
               ...state.config.currency,
               ...newConfig.currency,
             },
-          },
-        })),
+          }
+          nextConfig.systemName = resolveSystemName(nextConfig.systemName)
+          return { config: nextConfig }
+        }),
       setLoadedLogoUrl: (url) => set({ loadedLogoUrl: url }),
       setLoading: (loading) => set({ loading }),
     }),
@@ -100,6 +106,10 @@ export const useSystemConfigStore = create<SystemConfigState>()(
         config: state.config,
         loadedLogoUrl: state.loadedLogoUrl,
       }),
+      onRehydrateStorage: () => (state) => {
+        if (!state) return
+        state.config.systemName = resolveSystemName(state.config.systemName)
+      },
     }
   )
 )

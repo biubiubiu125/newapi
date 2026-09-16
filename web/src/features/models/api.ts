@@ -102,13 +102,45 @@ export async function updateModelStatus(
   return res.data
 }
 
+type DeleteModelResponse = {
+  success: boolean
+  message?: string
+  data?: {
+    deleted_count: number
+    updated_channels: number
+  }
+}
+
 /**
  * Delete model
  */
 export async function deleteModel(
-  id: number
-): Promise<{ success: boolean; message?: string }> {
-  const res = await api.delete(`/api/models/${id}`)
+  id: number,
+  removeFromChannels = false,
+  removePricing = false
+): Promise<DeleteModelResponse> {
+  const res = await api.delete(`/api/models/${id}`, {
+    params: {
+      remove_from_channels: removeFromChannels,
+      remove_pricing: removePricing,
+    },
+  })
+  return res.data
+}
+
+/**
+ * Delete models in batch
+ */
+export async function deleteModels(
+  ids: number[],
+  removeFromChannels = false,
+  removePricing = false
+): Promise<DeleteModelResponse> {
+  const res = await api.post('/api/models/delete', {
+    model_ids: ids,
+    remove_from_channels: removeFromChannels,
+    remove_pricing: removePricing,
+  })
   return res.data
 }
 

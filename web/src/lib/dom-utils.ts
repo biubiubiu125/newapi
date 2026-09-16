@@ -17,6 +17,24 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { resolveAssetUrl } from './asset-url'
+import { resolveSystemName, STORAGE_KEYS } from './constants'
+
+export function applySystemNameToDom(name: unknown) {
+  if (typeof document === 'undefined') return
+  if (typeof name !== 'string' || !name.trim()) return
+  const resolved = resolveSystemName(name)
+  document.title = resolved
+  const titleMeta =
+    document.querySelector<HTMLMetaElement>('meta[name="title"]')
+  if (titleMeta) {
+    titleMeta.content = resolved
+  }
+  try {
+    window.localStorage.setItem(STORAGE_KEYS.SYSTEM_NAME, resolved)
+  } catch {
+    // Ignore quota / private-mode failures.
+  }
+}
 
 export function applyFaviconToDom(url: string, serverAddress?: string | null) {
   if (typeof document === 'undefined' || !url) return

@@ -13,9 +13,11 @@ import (
 )
 
 var (
-	urlRegex       = regexp.MustCompile(`^https?://(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))(?:\:[0-9]{1,5})?(?:/.*)?$`)
-	dangerousChars = []string{"<script", "<iframe", "javascript:", "onload=", "onerror=", "onclick="}
-	validColors    = map[string]bool{
+	maxAnnouncementContentCharacters = 2000
+	maxAnnouncementTitleCharacters   = 100
+	urlRegex                         = regexp.MustCompile(`^https?://(?:(?:[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?\.)*[a-zA-Z0-9](?:[a-zA-Z0-9-]{0,61}[a-zA-Z0-9])?|(?:(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?)\.){3}(?:25[0-5]|2[0-4][0-9]|[01]?[0-9][0-9]?))(?:\:[0-9]{1,5})?(?:/.*)?$`)
+	dangerousChars                   = []string{"<script", "<iframe", "javascript:", "onload=", "onerror=", "onclick="}
+	validColors                      = map[string]bool{
 		"blue": true, "green": true, "cyan": true, "purple": true, "pink": true,
 		"red": true, "orange": true, "amber": true, "yellow": true, "lime": true,
 		"light-green": true, "teal": true, "light-blue": true, "indigo": true,
@@ -178,8 +180,13 @@ func validateAnnouncements(announcementsStr string) error {
 				}
 			}
 		}
-		if exceedsMaxCharacters(content, 500) {
-			return fmt.Errorf("第%d个公告的内容长度不能超过500字符", i+1)
+		if title, exists := ann["title"]; exists {
+			if titleStr, ok := title.(string); ok && exceedsMaxCharacters(titleStr, maxAnnouncementTitleCharacters) {
+				return fmt.Errorf("第%d个公告的标题长度不能超过%d字符", i+1, maxAnnouncementTitleCharacters)
+			}
+		}
+		if exceedsMaxCharacters(content, maxAnnouncementContentCharacters) {
+			return fmt.Errorf("第%d个公告的内容长度不能超过%d字符", i+1, maxAnnouncementContentCharacters)
 		}
 		if extra, exists := ann["extra"]; exists {
 			if extraStr, ok := extra.(string); ok && exceedsMaxCharacters(extraStr, 100) {

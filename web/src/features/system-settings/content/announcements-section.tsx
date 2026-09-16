@@ -78,6 +78,7 @@ import dayjs from '@/lib/dayjs'
 import { SettingsSwitchField } from '../components/settings-form-layout'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { ANNOUNCEMENT_CONTENT_MAX_CHARS } from './utils'
 
 type Announcement = {
   id: number
@@ -98,7 +99,10 @@ const announcementSchema = z.object({
   content: z
     .string()
     .min(1, '公告内容不能为空')
-    .max(2000, '公告内容不能超过 2000 个字符'),
+    .max(
+      ANNOUNCEMENT_CONTENT_MAX_CHARS,
+      `公告内容不能超过 ${ANNOUNCEMENT_CONTENT_MAX_CHARS} 个字符`
+    ),
   publishDate: z.string().min(1, '发布时间不能为空'),
   type: z.enum(['default', 'ongoing', 'success', 'warning', 'error']),
   extra: z.string().max(100, '附加信息不能超过 100 个字符').optional(),
@@ -573,10 +577,11 @@ export function AnnouncementsSection({
                           className='h-72 resize-none overflow-y-auto'
                           placeholder='请输入公告内容（支持 Markdown/HTML）'
                           {...field}
+                          maxLength={ANNOUNCEMENT_CONTENT_MAX_CHARS}
                         />
                       </FormControl>
                       <FormDescription>
-                        公告内容最多 2000 字，保存原文，不做脱敏。
+                        {`${field.value?.length ?? 0}/${ANNOUNCEMENT_CONTENT_MAX_CHARS}，保存原文，不做脱敏。`}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>

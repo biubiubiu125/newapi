@@ -12,6 +12,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"unicode/utf16"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -20,10 +21,12 @@ import (
 )
 
 const (
-	TelegramPushMaxAttempts = 3
-	telegramPushRetryDelay  = time.Minute
-	telegramPushRetryTick   = time.Minute
-	telegramPushRetryLimit  = 50
+	TelegramPushMaxAttempts    = 3
+	telegramPushRetryDelay     = time.Minute
+	telegramPushRetryTick      = time.Minute
+	telegramPushRetryLimit     = 50
+	telegramPushMaxTextLength  = 4096
+	telegramPushTruncationMark = "…"
 )
 
 var (
@@ -51,6 +54,36 @@ func NormalizeTelegramPushSource(source string) string {
 	}
 }
 
+func telegramUTF16Len(s string) int {
+	return len(utf16.Encode([]rune(s)))
+}
+
+func truncateTelegramUTF16(s string, max int) string {
+	if max <= 0 {
+		return ""
+	}
+	encoded := utf16.Encode([]rune(s))
+	if len(encoded) <= max {
+		return s
+	}
+	cut := string(utf16.Decode(encoded[:max]))
+	if amp := strings.LastIndex(cut, "&"); amp >= 0 && !strings.Contains(cut[amp:], ";") {
+		cut = cut[:amp]
+	}
+	return cut
+}
+
+func fitTelegramPushHTML(prefix, escapedBody string) string {
+	if telegramUTF16Len(prefix+escapedBody) <= telegramPushMaxTextLength {
+		return prefix + escapedBody
+	}
+	remain := telegramPushMaxTextLength - telegramUTF16Len(prefix) - telegramUTF16Len(telegramPushTruncationMark)
+	if remain < 0 {
+		return truncateTelegramUTF16(prefix, telegramPushMaxTextLength)
+	}
+	return prefix + truncateTelegramUTF16(escapedBody, remain) + telegramPushTruncationMark
+}
+
 func BuildTelegramPushText(displayName string, title string, content string) string {
 	displayName = NormalizeTelegramPushDisplayName(displayName)
 	title = strings.TrimSpace(title)
@@ -59,12 +92,12 @@ func BuildTelegramPushText(displayName string, title string, content string) str
 	if title != "" {
 		header := "<b>" + html.EscapeString(prefix+title) + "</b>"
 		if content != "" {
-			return header + "\n" + html.EscapeString(content)
+			return fitTelegramPushHTML(header+"\n", html.EscapeString(content))
 		}
-		return header
+		return fitTelegramPushHTML(header, "")
 	}
 	if content != "" {
-		return "<b>" + html.EscapeString(prefix) + "</b>" + html.EscapeString(content)
+		return fitTelegramPushHTML("<b>"+html.EscapeString(prefix)+"</b>", html.EscapeString(content))
 	}
 	return ""
 }

@@ -188,6 +188,8 @@ func normalizeOptionValueForStorage(key string, value string) (string, error) {
 		"WaffoPancakeStoreID",
 		"WaffoPancakeProductID":
 		return strings.TrimSpace(value), nil
+	case "SystemName":
+		return common.NormalizeSystemName(value), nil
 	default:
 		return value, nil
 	}

@@ -16,24 +16,22 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-export const ANNOUNCEMENT_CONTENT_MAX_CHARS = 2000
+import assert from 'node:assert/strict'
+import { describe, test } from 'vitest'
 
-export function formatJsonForEditor(value: string, fallback = '[]') {
-  const target = value && value.trim() ? value : fallback
-  try {
-    const parsed = JSON.parse(target)
-    return JSON.stringify(parsed, null, 2)
-  } catch {
-    return target
-  }
-}
+import { DEFAULT_SYSTEM_NAME, resolveSystemName } from './constants'
 
-export function normalizeJsonString(value: string, fallback = '[]') {
-  const target = value && value.trim() ? value : fallback
-  try {
-    const parsed = JSON.parse(target)
-    return JSON.stringify(parsed)
-  } catch {
-    return target.trim()
-  }
-}
+describe('system branding defaults', () => {
+  test('uses RK API as the fallback system name', () => {
+    assert.equal(DEFAULT_SYSTEM_NAME, 'RK API')
+  })
+
+  test('rewrites leftover New API and RKAPI names', () => {
+    assert.equal(resolveSystemName('New API'), 'RK API')
+    assert.equal(resolveSystemName('NEW API'), 'RK API')
+    assert.equal(resolveSystemName(' NewAPI '), 'RK API')
+    assert.equal(resolveSystemName('RKAPI'), 'RK API')
+    assert.equal(resolveSystemName(''), 'RK API')
+    assert.equal(resolveSystemName('My Site'), 'My Site')
+  })
+})

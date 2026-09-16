@@ -17,27 +17,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { SettingsPage } from '../components/settings-page'
-import type { SiteSettings } from '../types'
+import { defaultSiteSettings } from './default-settings'
 import {
   SITE_DEFAULT_SECTION,
   getSiteSectionContent,
   getSiteSectionMeta,
 } from './section-registry.tsx'
-
-const defaultSiteSettings: SiteSettings = {
-  Notice: '',
-  SystemName: 'RKAPI',
-  Logo: '',
-  Footer: '',
-  About: '',
-  HomePageContent: '',
-  ServerAddress: '',
-  TaskPublicAddress: '',
-  'legal.user_agreement': '',
-  'legal.privacy_policy': '',
-  HeaderNavModules: '',
-  SidebarModulesAdmin: '',
-}
 
 export function SiteSettings() {
   return (

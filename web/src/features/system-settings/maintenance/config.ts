@@ -198,21 +198,35 @@ export function parseSidebarModulesAdmin(
       result[sectionKey] = sectionConfig
     })
 
-    // Merge defaults to ensure expected sections exist
+    const ordered: SidebarModulesAdminConfig = {}
     Object.entries(defaults).forEach(([sectionKey, config]) => {
-      if (!result[sectionKey]) {
-        result[sectionKey] = { ...config }
+      const existing = result[sectionKey]
+      if (!existing) {
+        ordered[sectionKey] = { ...config }
         return
       }
 
-      Object.entries(config).forEach(([moduleKey, moduleValue]) => {
-        if (!(moduleKey in result[sectionKey])) {
-          result[sectionKey][moduleKey] = moduleValue
-        }
+      const sectionConfig: SidebarSectionConfig = {
+        enabled: existing.enabled ?? config.enabled ?? true,
+      }
+      Object.keys(config).forEach((moduleKey) => {
+        if (moduleKey === 'enabled') return
+        sectionConfig[moduleKey] =
+          moduleKey in existing ? existing[moduleKey] : config[moduleKey]
       })
+      Object.keys(existing).forEach((moduleKey) => {
+        if (moduleKey === 'enabled' || moduleKey in sectionConfig) return
+        sectionConfig[moduleKey] = existing[moduleKey]
+      })
+      ordered[sectionKey] = sectionConfig
+    })
+    Object.entries(result).forEach(([sectionKey, sectionConfig]) => {
+      if (!ordered[sectionKey]) {
+        ordered[sectionKey] = sectionConfig
+      }
     })
 
-    return applyForcedSidebarModules(result)
+    return applyForcedSidebarModules(ordered)
   } catch {
     return applyForcedSidebarModules(defaults)
   }

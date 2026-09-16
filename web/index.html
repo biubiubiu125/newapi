@@ -7,8 +7,35 @@
     <meta name="google" content="notranslate" />
 
     <!-- Primary Meta Tags -->
-    <title>New API</title>
-    <meta name="title" content="New API" />
+    <title>RK API</title>
+    <meta name="title" content="RK API" />
+    <script>
+      (function () {
+        try {
+          function canonicalName(name) {
+            if (typeof name !== 'string') return ''
+            name = name.trim()
+            if (!name) return ''
+            var compact = name.toLowerCase().replace(/\s+/g, '')
+            if (compact === 'newapi' || compact === 'rkapi') return 'RK API'
+            return name
+          }
+          var name = canonicalName(localStorage.getItem('system_name'))
+          if (!name) {
+            var raw = localStorage.getItem('status')
+            if (raw) {
+              var status = JSON.parse(raw)
+              name = canonicalName(status && status.system_name)
+            }
+          }
+          if (name) {
+            document.title = name
+            var meta = document.querySelector('meta[name="title"]')
+            if (meta) meta.setAttribute('content', name)
+          }
+        } catch (e) {}
+      })()
+    </script>
     <meta
       name="description"
       content="Unified AI API gateway and admin dashboard."

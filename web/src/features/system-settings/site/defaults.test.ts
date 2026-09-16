@@ -16,24 +16,13 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-export const ANNOUNCEMENT_CONTENT_MAX_CHARS = 2000
+import assert from 'node:assert/strict'
+import { describe, test } from 'vitest'
 
-export function formatJsonForEditor(value: string, fallback = '[]') {
-  const target = value && value.trim() ? value : fallback
-  try {
-    const parsed = JSON.parse(target)
-    return JSON.stringify(parsed, null, 2)
-  } catch {
-    return target
-  }
-}
+import { defaultSiteSettings } from './default-settings'
 
-export function normalizeJsonString(value: string, fallback = '[]') {
-  const target = value && value.trim() ? value : fallback
-  try {
-    const parsed = JSON.parse(target)
-    return JSON.stringify(parsed)
-  } catch {
-    return target.trim()
-  }
-}
+describe('site settings defaults', () => {
+  test('uses RK API as the system name fallback', () => {
+    assert.equal(defaultSiteSettings.SystemName, 'RK API')
+  })
+})

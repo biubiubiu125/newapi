@@ -335,12 +335,15 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 
 	// 控制台区域 - 所有用户都可以访问
 	defaultConfig["console"] = map[string]interface{}{
-		"enabled":    true,
-		"detail":     true,
-		"token":      true,
-		"log":        true,
-		"midjourney": true,
-		"task":       true,
+		"enabled":     true,
+		"detail":      true,
+		"token":       true,
+		"model_check": true,
+		"log":         true,
+		"midjourney":  true,
+		"image_tasks": true,
+		"gpt_image":   true,
+		"task":        true,
 	}
 
 	// 个人中心区域 - 所有用户都可以访问

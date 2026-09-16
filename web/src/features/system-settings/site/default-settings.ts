@@ -16,24 +16,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-export const ANNOUNCEMENT_CONTENT_MAX_CHARS = 2000
+import { DEFAULT_SYSTEM_NAME } from '@/lib/constants'
 
-export function formatJsonForEditor(value: string, fallback = '[]') {
-  const target = value && value.trim() ? value : fallback
-  try {
-    const parsed = JSON.parse(target)
-    return JSON.stringify(parsed, null, 2)
-  } catch {
-    return target
-  }
-}
+import type { SiteSettings } from '../types'
 
-export function normalizeJsonString(value: string, fallback = '[]') {
-  const target = value && value.trim() ? value : fallback
-  try {
-    const parsed = JSON.parse(target)
-    return JSON.stringify(parsed)
-  } catch {
-    return target.trim()
-  }
+export const defaultSiteSettings: SiteSettings = {
+  Notice: '',
+  SystemName: DEFAULT_SYSTEM_NAME,
+  Logo: '',
+  Footer: '',
+  About: '',
+  HomePageContent: '',
+  ServerAddress: '',
+  TaskPublicAddress: '',
+  'legal.user_agreement': '',
+  'legal.privacy_policy': '',
+  HeaderNavModules: '',
+  SidebarModulesAdmin: '',
 }

@@ -20,7 +20,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 
-import { DEFAULT_LOGO } from '@/lib/constants'
+import { DEFAULT_LOGO, resolveSystemName } from '@/lib/constants'
 import { emitSettingsRefresh } from '@/lib/settings-refresh'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
@@ -62,7 +62,7 @@ function syncDisplayOptionToSystemConfig(request: UpdateOptionMutationRequest) {
 
   switch (request.key) {
     case 'SystemName':
-      setConfig({ systemName: value })
+      setConfig({ systemName: resolveSystemName(value) })
       break
     case 'Logo':
       setConfig({ logo: value || DEFAULT_LOGO })

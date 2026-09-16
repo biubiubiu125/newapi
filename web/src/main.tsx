@@ -29,7 +29,7 @@ import ReactDOM from 'react-dom/client'
 import { toast } from 'sonner'
 
 import { installBuildMetadata } from '@/lib/build-metadata'
-import { applyFaviconToDom } from '@/lib/dom-utils'
+import { applyFaviconToDom, applySystemNameToDom } from '@/lib/dom-utils'
 import '@/lib/dayjs'
 import { initializeFrontendCache } from '@/lib/frontend-cache'
 import { handleServerError } from '@/lib/handle-server-error'
@@ -117,15 +117,8 @@ if (!rootElement) {
 ;(function initSystemBranding() {
   try {
     if (typeof window === 'undefined' || typeof document === 'undefined') return
-    const apply = (name: string) => {
-      document.title = name
-      const metaTitle = document.querySelector(
-        'meta[name="title"]'
-      ) as HTMLMetaElement | null
-      if (metaTitle) metaTitle.setAttribute('content', name)
-    }
     const cached = readCachedStatus()
-    if (cached?.system_name) apply(cached.system_name as string)
+    if (cached?.system_name) applySystemNameToDom(cached.system_name)
     if (cached?.logo) {
       applyFaviconToDom(
         cached.logo as string,
@@ -136,7 +129,7 @@ if (!rootElement) {
     queryClient
       .ensureQueryData(statusQueryOptions)
       .then((s) => {
-        if (s?.system_name) apply(s.system_name as string)
+        if (s?.system_name) applySystemNameToDom(s.system_name)
         if (s?.logo) {
           applyFaviconToDom(
             s.logo as string,

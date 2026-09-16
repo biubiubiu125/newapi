@@ -21,7 +21,7 @@ import { useEffect, useCallback, useMemo } from 'react'
 
 import { resolveAssetUrl } from '@/lib/asset-url'
 import { DEFAULT_LOGO } from '@/lib/constants'
-import { applyFaviconToDom } from '@/lib/dom-utils'
+import { applyFaviconToDom, applySystemNameToDom } from '@/lib/dom-utils'
 import { ensureStatus, mapStatusDataToConfig } from '@/lib/status-query'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
@@ -46,16 +46,6 @@ function preloadImage(
   return () => {
     img.onload = null
     img.onerror = null
-  }
-}
-
-function applySystemNameToDom(name: string) {
-  if (typeof document === 'undefined' || !name) return
-  document.title = name
-  const titleMeta =
-    document.querySelector<HTMLMetaElement>('meta[name="title"]')
-  if (titleMeta) {
-    titleMeta.content = name
   }
 }
 

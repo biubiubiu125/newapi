@@ -36,6 +36,7 @@ import {
 } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import { DEFAULT_SYSTEM_NAME } from '@/lib/constants'
 
 import { uploadSystemLogo } from '../api'
 import { FormDirtyIndicator } from '../components/form-dirty-indicator'
@@ -179,7 +180,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                   <FormItem>
                     <FormLabel>{t('System Name')}</FormLabel>
                     <FormControl>
-                      <Input placeholder={t('RKAPI')} {...field} />
+                      <Input placeholder={DEFAULT_SYSTEM_NAME} {...field} />
                     </FormControl>
                     <FormDescription>
                       {t('The name displayed across the application')}

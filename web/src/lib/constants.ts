@@ -21,8 +21,17 @@ For commercial licensing, please contact support@quantumnous.com
  */
 
 // System Configuration Defaults
-export const DEFAULT_SYSTEM_NAME = 'RKAPI'
+export const DEFAULT_SYSTEM_NAME = 'RK API'
 export const DEFAULT_LOGO = '/logo.png'
+
+export function resolveSystemName(name: unknown): string {
+  if (typeof name !== 'string') return DEFAULT_SYSTEM_NAME
+  const trimmed = name.trim()
+  if (!trimmed) return DEFAULT_SYSTEM_NAME
+  const compact = trimmed.toLowerCase().replaceAll(/\s+/g, '')
+  if (compact === 'newapi' || compact === 'rkapi') return DEFAULT_SYSTEM_NAME
+  return trimmed
+}
 
 // LocalStorage Keys
 export const STORAGE_KEYS = {

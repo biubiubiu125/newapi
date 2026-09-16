@@ -52,6 +52,10 @@ const URL_TO_CONFIG_MAP: Record<string, { section: string; module: string }> = {
     section: 'console',
     module: 'model_check',
   },
+  'sidebar:console.gpt_image': {
+    section: 'console',
+    module: 'gpt_image',
+  },
   '/usage-logs': { section: 'console', module: 'log' },
   '/usage-logs/common': { section: 'console', module: 'log' },
   '/usage-logs/drawing': { section: 'console', module: 'midjourney' },

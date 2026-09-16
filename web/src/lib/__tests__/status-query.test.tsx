@@ -30,6 +30,7 @@ import {
 import {
   STATUS_QUERY_KEY,
   ensureStatus,
+  mapStatusDataToConfig,
   statusQueryOptions,
 } from '@/lib/status-query'
 import { useSystemConfigStore } from '@/stores/system-config-store'
@@ -87,6 +88,20 @@ afterEach(() => {
   apiClient.get = originalGet
   window.localStorage.clear()
   useSystemConfigStore.setState(useSystemConfigStore.getInitialState(), true)
+})
+
+describe('mapStatusDataToConfig branding', () => {
+  test('rewrites leftover New API system names', () => {
+    expect(mapStatusDataToConfig({ system_name: 'New API' }).systemName).toBe(
+      'RK API'
+    )
+    expect(mapStatusDataToConfig({ system_name: 'RKAPI' }).systemName).toBe(
+      'RK API'
+    )
+    expect(mapStatusDataToConfig({ system_name: 'My Site' }).systemName).toBe(
+      'My Site'
+    )
+  })
 })
 
 describe('shared status query deduplication', () => {

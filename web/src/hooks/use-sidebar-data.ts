@@ -25,6 +25,7 @@ import {
   FlaskConical,
   Image,
   ScanSearch,
+  Sparkles,
   Key,
   LayoutDashboard,
   ListTodo,
@@ -61,6 +62,7 @@ import { getTicketBadge } from '@/features/tickets/api'
 import { getAdminUsersSummary } from '@/features/users/api'
 import { useStatus } from '@/hooks/use-status'
 import { isSidebarModuleEnabledFromStatus } from '@/lib/nav-modules'
+import { GPT_IMAGE_WORKBENCH_URL } from '@/lib/sidebar-modules'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -448,6 +450,13 @@ export function useSidebarData(): SidebarData {
             url: '/image-tasks',
             icon: Image,
             configUrls: ['/image-tasks'],
+          },
+          {
+            title: 'GPT生图工作台',
+            url: GPT_IMAGE_WORKBENCH_URL,
+            icon: Sparkles,
+            external: true,
+            configUrls: ['sidebar:console.gpt_image'],
           },
           {
             title: '模型状态监测',

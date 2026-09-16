@@ -439,6 +439,9 @@ func updateOptionMap(key string, value string) (err error) {
 			return err
 		}
 	}
+	if key == "SystemName" {
+		value = common.NormalizeSystemName(value)
+	}
 	common.OptionMap[key] = value
 
 	// 处理传统配置项...
