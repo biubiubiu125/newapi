@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { type Resolver, useForm, useWatch } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
@@ -58,7 +58,7 @@ import {
   useUpdateProvider,
 } from '../hooks/use-custom-oauth-mutations'
 import {
-  customOAuthFormSchema,
+  createCustomOAuthFormSchema,
   AUTH_STYLE_OPTIONS,
   type CustomOAuthProvider,
   type CustomOAuthFormValues,
@@ -85,6 +85,10 @@ export function ProviderFormDialog(props: ProviderFormDialogProps) {
   const createProvider = useCreateProvider()
   const updateProvider = useUpdateProvider()
 
+  const customOAuthFormSchema = useMemo(
+    () => createCustomOAuthFormSchema(t),
+    [t]
+  )
   const form = useForm<CustomOAuthFormValues>({
     resolver: zodResolver(
       customOAuthFormSchema

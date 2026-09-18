@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useTranslation } from 'react-i18next'
+
 import { Checkbox } from '@/components/ui/checkbox'
 import { Label } from '@/components/ui/label'
 import { cn } from '@/lib/utils'
@@ -35,6 +37,7 @@ export function LegalConsent({
   onCheckedChange,
   className,
 }: LegalConsentProps) {
+  const { t } = useTranslation()
   const hasUserAgreement = Boolean(status?.user_agreement_enabled)
   const hasPrivacyPolicy = Boolean(status?.privacy_policy_enabled)
 
@@ -64,7 +67,7 @@ export function LegalConsent({
         className='text-muted-foreground items-start gap-1 text-left text-xs leading-5 font-normal'
       >
         <span>
-          我已阅读并同意
+          {t('I have read and agree to the')}{' '}
           {hasUserAgreement && (
             <a
               href='/user-agreement'
@@ -72,10 +75,16 @@ export function LegalConsent({
               rel='noopener noreferrer'
               className='text-primary hover:underline'
             >
-              用户协议
+              {t('User Agreement')}
             </a>
           )}
-          {hasUserAgreement && hasPrivacyPolicy && '和'}
+          {hasUserAgreement && hasPrivacyPolicy && (
+            <>
+              {' '}
+              {t('and')}
+              {' '}
+            </>
+          )}
           {hasPrivacyPolicy && (
             <a
               href='/privacy-policy'
@@ -83,10 +92,10 @@ export function LegalConsent({
               rel='noopener noreferrer'
               className='text-primary hover:underline'
             >
-              隐私政策
+              {t('Privacy Policy')}
             </a>
           )}
-          。
+          .
         </span>
       </Label>
     </div>

@@ -176,20 +176,20 @@ export function validateModelMappingJson(modelMapping: string): {
     if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
       return {
         valid: false,
-        error: '模型映射必须是有效的 JSON 对象',
+        error: 'Model mapping must be a valid JSON object',
       }
     }
     if (Object.values(parsed).some((value) => typeof value !== 'string')) {
       return {
         valid: false,
-        error: '模型映射的值必须是字符串',
+        error: 'Model mapping values must be strings',
       }
     }
     return { valid: true }
   } catch {
     return {
       valid: false,
-      error: '模型映射必须是有效的 JSON 格式',
+      error: 'Model mapping must be valid JSON',
     }
   }
 }

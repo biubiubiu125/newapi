@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useTranslation } from 'react-i18next'
+
 import { formatQuota, formatTimestampToDate } from '@/lib/format'
 
 import type { ApiKey, ApiKeyUsageStats } from '../types'
@@ -33,26 +35,29 @@ export function ApiKeyUsageCell({
   isLoading,
   isError,
 }: ApiKeyUsageCellProps) {
+  const { t } = useTranslation()
   if (isLoading) {
-    return <span className='text-muted-foreground text-xs'>加载中</span>
+    return <span className='text-muted-foreground text-xs'>{t('Loading')}</span>
   }
   if (isError) {
-    return <span className='text-destructive text-xs'>获取失败</span>
+    return (
+      <span className='text-destructive text-xs'>{t('Failed to load')}</span>
+    )
   }
   if (!usage) {
-    return <span className='text-muted-foreground text-xs'>暂无数据</span>
+    return <span className='text-muted-foreground text-xs'>{t('No data')}</span>
   }
 
   return (
     <div className='min-w-[180px] space-y-0.5 text-xs leading-5'>
       <div className='flex justify-between gap-3'>
-        <span className='text-muted-foreground'>今日</span>
+        <span className='text-muted-foreground'>{t('Today')}</span>
         <span className='font-mono tabular-nums'>
           {formatQuota(usage.today_quota)}
         </span>
       </div>
       <div className='flex justify-between gap-3'>
-        <span className='text-muted-foreground'>本月</span>
+        <span className='text-muted-foreground'>{t('This Month')}</span>
         <span className='font-mono tabular-nums'>
           {formatQuota(usage.month_quota)}
         </span>
@@ -60,22 +65,24 @@ export function ApiKeyUsageCell({
       <div className='flex justify-between gap-3'>
         <span className='text-muted-foreground'>
           {usage.reset_at
-            ? `自 ${formatTimestampToDate(usage.reset_at).slice(0, 10)} 起累计`
-            : '累计'}
+            ? t('Cumulative since {{date}}', {
+                date: formatTimestampToDate(usage.reset_at).slice(0, 10),
+              })
+            : t('Cumulative')}
         </span>
         <span className='font-mono tabular-nums'>
           {formatQuota(usage.cumulative_quota)}
         </span>
       </div>
       <div className='flex justify-between gap-3'>
-        <span className='text-muted-foreground'>最后使用</span>
+        <span className='text-muted-foreground'>{t('Last used')}</span>
         <span className='font-mono tabular-nums'>
           {usage.last_used_at ? formatTimestampToDate(usage.last_used_at) : '-'}
         </span>
       </div>
       {!apiKey.unlimited_quota ? (
         <div className='flex justify-between gap-3'>
-          <span className='text-muted-foreground'>剩余额度</span>
+          <span className='text-muted-foreground'>{t('Remaining quota')}</span>
           <span className='font-mono tabular-nums'>
             {formatQuota(apiKey.remain_quota)}
           </span>

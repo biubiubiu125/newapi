@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { LayoutDashboard } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
@@ -88,6 +89,7 @@ function buildSidebarDefaults(
 }
 
 export function SidebarModulesCard() {
+  const { t } = useTranslation()
   const [loading, setLoading] = useState(false)
   const [config, setConfig] = useState<SidebarModulesAdminConfig>({})
   const currentUser = useAuthStore((s) => s.auth.user)
@@ -182,12 +184,12 @@ export function SidebarModulesCard() {
         if (currentUser) {
           setUser({ ...currentUser, sidebar_modules: serialized })
         }
-        toast.success('侧边栏设置已保存')
+        toast.success(t('Sidebar settings saved'))
       } else {
-        toast.error(res.data.message || '侧边栏设置保存失败')
+        toast.error(res.data.message || t('Failed to save sidebar settings'))
       }
     } catch {
-      toast.error('侧边栏设置保存失败，请稍后重试')
+      toast.error(t('Failed to save sidebar settings. Please try again later.'))
     } finally {
       setLoading(false)
     }
@@ -195,7 +197,7 @@ export function SidebarModulesCard() {
 
   const handleReset = () => {
     setConfig(buildSidebarDefaults(sectionDefs, userRole))
-    toast.success('已重置为默认配置')
+    toast.success(t('Reset to default configuration'))
   }
 
   return (
@@ -207,10 +209,10 @@ export function SidebarModulesCard() {
           </IconBadge>
           <div className='min-w-0'>
             <CardTitle className='text-lg tracking-tight sm:text-xl'>
-              侧边栏个人设置
+              {t('Sidebar personal settings')}
             </CardTitle>
             <CardDescription className='text-xs sm:text-sm'>
-              自定义侧边栏显示内容。
+              {t('Customize what the sidebar displays.')}
             </CardDescription>
           </div>
         </div>
@@ -225,9 +227,9 @@ export function SidebarModulesCard() {
             >
               <div className='flex items-start justify-between gap-3'>
                 <div className='min-w-0'>
-                  <p className='text-sm font-medium'>{section.title}</p>
+                  <p className='text-sm font-medium'>{t(section.title)}</p>
                   <p className='text-muted-foreground text-xs'>
-                    {section.description}
+                    {t(section.description)}
                   </p>
                 </div>
                 <Switch
@@ -250,12 +252,14 @@ export function SidebarModulesCard() {
                     >
                       <div className='mr-2 min-w-0'>
                         <p className='truncate text-sm font-medium'>
-                          {mod.title}
+                          {t(mod.title)}
                         </p>
                         <p className='text-muted-foreground truncate text-xs'>
                           {forcedVisible
-                            ? '系统设置为必需入口，不能隐藏。'
-                            : mod.description}
+                            ? t(
+                                'This entry is required by system settings and cannot be hidden.'
+                              )
+                            : t(mod.description)}
                         </p>
                       </div>
                       <Switch
@@ -281,10 +285,10 @@ export function SidebarModulesCard() {
 
         <div className='flex flex-col-reverse gap-2 border-t pt-4 sm:flex-row sm:justify-end'>
           <Button variant='outline' onClick={handleReset}>
-            重置为默认
+            {t('Reset to default')}
           </Button>
           <Button onClick={handleSave} disabled={loading}>
-            {loading ? '保存中...' : '保存更改'}
+            {loading ? t('Saving...') : t('Save Changes')}
           </Button>
         </div>
       </CardContent>

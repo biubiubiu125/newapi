@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { t } from 'i18next'
+
 import type {
   DashboardFlowGraph,
   DashboardFlowLink,
@@ -171,7 +173,7 @@ function userNode(row: FlowQuotaDataItem): FlowPathNode {
   const userID = numberValue(row.user_id)
   return {
     id: userID > 0 ? `user:${userID}` : `user:${row.username || 'unknown'}`,
-    label: row.username || (userID > 0 ? `user-${userID}` : '未知用户'),
+    label: row.username || (userID > 0 ? `user-${userID}` : t('Unknown user')),
     kind: 'user',
   }
 }
@@ -196,7 +198,7 @@ function tokenNode(row: FlowQuotaDataItem, ctx: FlowPathContext): FlowPathNode {
 }
 
 function deletedTokenLabel(tokenID: number, ctx: FlowPathContext): string {
-  if (tokenID <= 0) return '未知令牌'
+  if (tokenID <= 0) return t('Unknown token')
   return ctx.deletedTokenLabel?.(tokenID) ?? `token-${tokenID}`
 }
 
@@ -213,7 +215,7 @@ function modelNode(row: FlowQuotaDataItem): FlowPathNode {
   const model = row.model_name || 'unknown'
   return {
     id: `model:${model}`,
-    label: row.model_name || '未知模型',
+    label: row.model_name || t('Unknown model'),
     kind: 'model',
   }
 }
@@ -226,7 +228,7 @@ function channelNode(row: FlowQuotaDataItem): FlowPathNode {
         ? `channel:${channelID}`
         : `channel:${row.channel_name || 'unknown'}`,
     label:
-      row.channel_name || (channelID > 0 ? `channel-${channelID}` : '未知'),
+      row.channel_name || (channelID > 0 ? `channel-${channelID}` : t('Unknown')),
     kind: 'channel',
   }
 }

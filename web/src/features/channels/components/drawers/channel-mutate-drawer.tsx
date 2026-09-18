@@ -1076,7 +1076,7 @@ export function ChannelMutateDrawer({
           : JSON.parse(group.items)
 
         if (!Array.isArray(items)) {
-          throw new Error('条目格式无效')
+          throw new Error(t('Invalid item format'))
         }
 
         const count = updateModels(items, true)

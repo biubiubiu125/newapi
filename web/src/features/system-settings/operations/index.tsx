@@ -84,7 +84,7 @@ export function OperationsSettings() {
         status?.version as string | undefined,
         status?.start_time as number | null | undefined,
       ]}
-      loadingMessage='正在加载运维设置...'
+      loadingMessage='Loading operations settings...'
     />
   )
 }

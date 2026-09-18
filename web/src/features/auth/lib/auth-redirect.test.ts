@@ -94,5 +94,25 @@ describe('saved authentication language', () => {
       getSavedLanguage({ ...user, setting: { language: 123 } }),
       undefined
     )
+    assert.equal(getSavedLanguage({ ...user, language: '   ' }), undefined)
+  })
+
+  test('normalizes backend and browser language tags onto interface codes', () => {
+    assert.equal(
+      getSavedLanguage({ ...user, language: 'zh-CN' }),
+      'zhCN'
+    )
+    assert.equal(
+      getSavedLanguage({ ...user, setting: { language: 'zh_CN' } }),
+      'zhCN'
+    )
+    assert.equal(
+      getSavedLanguage({ ...user, setting: '{"language":"zh-tw"}' }),
+      'zhTW'
+    )
+    assert.equal(
+      getSavedLanguage({ ...user, language: 'fr-FR' }),
+      'fr'
+    )
   })
 })

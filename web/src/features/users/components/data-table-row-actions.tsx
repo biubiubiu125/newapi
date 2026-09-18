@@ -140,7 +140,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     setOpeningAffiliate(true)
     try {
       const result = await approveReferralAffiliate(user.id, {
-        reason: '管理员从用户列表手动开通推广员',
+        reason: 'admin enabled affiliate from user list',
       })
       if (result.success) {
         toast.success(t('Affiliate access enabled'))

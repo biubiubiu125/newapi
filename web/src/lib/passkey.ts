@@ -23,6 +23,8 @@ For commercial licensing, please contact support@quantumnous.com
  * normalise server-provided credential options into browser-compatible types.
  */
 
+import { t } from 'i18next'
+
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 /**
@@ -114,7 +116,7 @@ export function prepareCredentialCreationOptions(
     payload?.Response
 
   if (!options) {
-    throw new Error('无法解析 Passkey 注册响应参数')
+    throw new Error(t('Unable to parse Passkey registration response'))
   }
 
   const publicKey: PublicKeyCredentialCreationOptions & Record<string, any> = {
@@ -158,7 +160,7 @@ export function prepareCredentialRequestOptions(
     payload?.Response
 
   if (!options) {
-    throw new Error('无法解析 Passkey 登录响应参数')
+    throw new Error(t('Unable to parse Passkey login response'))
   }
 
   const publicKey: PublicKeyCredentialRequestOptions & Record<string, any> = {

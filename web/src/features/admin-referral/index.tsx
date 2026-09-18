@@ -314,15 +314,15 @@ function commissionJobStatusLabel(
 ): string {
   switch (value) {
     case 'pending':
-      return '待处理'
+      return t('Pending')
     case 'processing':
-      return '处理中'
+      return t('Processing')
     case 'skipped':
-      return '已跳过'
+      return t('Skipped')
     case 'succeeded':
-      return '已成功'
+      return t('Job succeeded')
     case 'failed':
-      return '失败'
+      return t('Failed')
     default:
       return value ? t(value) : '-'
   }
@@ -335,44 +335,44 @@ function referralErrorLabel(value: string, t: (key: string) => string): string {
   }
   switch (normalized) {
     case 'fx_rate_missing':
-      return '返佣汇率缺失'
+      return t('Referral exchange rate is missing')
     case 'missing_referral_snapshot':
-      return '订单没有返佣快照，已跳过佣金生成'
+      return t('Order has no referral snapshot, commission generation skipped')
     case 'zero_commission_amount':
-      return '佣金金额为 0，已跳过佣金生成'
+      return t('Commission amount is 0, generation skipped')
     case 'affiliate_not_eligible':
-      return '推广员未通过审核或结算已关闭'
+      return t('Affiliate is not approved or settlement is closed')
     case 'unsupported source_type':
-      return '不支持的订单来源类型'
+      return t('Unsupported order source type')
     case 'trade_no is required':
-      return '缺少订单号'
+      return t('Order number is missing')
     case 'failed to update referral pending amount':
-      return '更新推广员待结算余额失败'
+      return t('Failed to update affiliate pending balance')
     case 'record not found':
-      return '关联记录不存在'
+      return t('Related record not found')
     case 'subscription order not found':
-      return '订阅订单不存在'
+      return t('Subscription order not found')
     case 'topup order not found':
-      return '充值订单不存在'
+      return t('Top-up order not found')
     case 'duplicate_job_superseded_by_subscription':
-      return '同一订单已按订阅订单重新生成佣金'
+      return t('Commission was regenerated from the subscription order')
     case 'paid_amount must be a positive finite number':
-      return '实付金额必须大于 0'
+      return t('Paid amount must be greater than 0')
     default:
       if (normalized.includes('UNIQUE constraint failed')) {
-        return '佣金记录已存在或唯一约束冲突'
+        return t('Commission record already exists or unique constraint conflict')
       }
       if (normalized.includes('duplicate key value')) {
-        return '佣金记录已存在或唯一约束冲突'
+        return t('Commission record already exists or unique constraint conflict')
       }
       if (normalized.includes('record not found')) {
-        return '关联记录不存在'
+        return t('Related record not found')
       }
       if (normalized.includes('subscription order not found')) {
-        return '订阅订单不存在'
+        return t('Subscription order not found')
       }
       if (normalized.includes('topup order not found')) {
-        return '充值订单不存在'
+        return t('Top-up order not found')
       }
       return normalized || t('Unknown error')
   }
@@ -461,7 +461,10 @@ function orderTypeLabel(value: string, t: (key: string) => string): string {
   }
 }
 
-function auditReasonLabel(value: string): string {
+function auditReasonLabel(
+  value: string,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
   const normalized = (value || '').trim()
   if (!normalized) {
     return '-'
@@ -471,136 +474,149 @@ function auditReasonLabel(value: string): string {
     case '':
       return '-'
     case 'settings updated':
-      return '设置已更新'
+      return t('Settings updated')
     case 'batch approve':
-      return '批量审核通过'
+      return t('Batch approved')
     case 'batch paid':
-      return '批量标记已打款'
+      return t('Batch marked as paid')
     case 'ui button smoke test':
-      return '界面按钮冒烟测试'
+      return t('UI button smoke test')
     case 'approve e2e':
-      return '审核端到端测试'
+      return t('Approve end-to-end test')
     case 'paid e2e':
-      return '打款端到端测试'
+      return t('Payout end-to-end test')
     case 'approve flow':
-      return '审核流程'
+      return t('Approval flow')
     case 'paid flow':
-      return '打款流程'
+      return t('Payout flow')
     case 'withdrawal flow':
-      return '提现流程'
+      return t('Withdrawal flow')
     case 'e2e':
-      return '端到端测试'
+      return t('End-to-end test')
     case 'test reject release':
-      return '测试拒绝后释放冻结金额'
+      return t('Test reject and release frozen amount')
     case 'test machine withdrawal':
-      return '测试机提现申请'
+      return t('Test-machine withdrawal request')
     case 'paid in test-machine chain':
-      return '测试机链路已打款'
+      return t('Paid in test-machine chain')
     case 'approved in test-machine chain':
-      return '测试机链路审核通过'
+      return t('Approved in test-machine chain')
     case 'test machine paid':
-      return '测试机打款测试'
+      return t('Test-machine payout test')
     case 'test machine approve':
-      return '测试机审核测试'
+      return t('Test-machine approval test')
     case 'user canceled within 30 minutes':
     case 'user cancelled within 30 minutes':
-      return '用户在 30 分钟内取消'
+      return t('User canceled within 30 minutes')
     case 'user canceled':
     case 'user cancelled':
-      return '用户取消'
+      return t('User canceled')
     case 'manual retry':
     case 'retry':
-      return '手动重试'
+      return t('Manual retry')
     case 'fx_rate_missing':
-      return '返佣结算汇率缺失'
+      return t('Referral settlement exchange rate is missing')
     case 'missing_referral_snapshot':
-      return '订单缺少推广快照'
+      return t('Order is missing a referral snapshot')
     case 'zero_commission_amount':
-      return '佣金金额为 0'
+      return t('Commission amount is 0')
     case 'affiliate_not_eligible':
-      return '推广员当前不可结算'
+      return t('Affiliate is not currently eligible for settlement')
     case 'affiliate_not_found':
-      return '推广员不存在'
+      return t('Affiliate not found')
     case 'affiliate_not_approved':
-      return '推广员未审核通过'
+      return t('Affiliate is not approved')
     case 'affiliate_acquisition_disabled':
-      return '推广员拉新已冻结'
+      return t('Affiliate acquisition is frozen')
     case 'affiliate_settlement_disabled':
-      return '推广员结算已冻结'
+      return t('Affiliate settlement is frozen')
     case 'no_binding':
-      return '订单用户没有有效邀请绑定'
+      return t('Order user has no valid invite binding')
     case 'invalid_rate':
-      return '返佣比例无效'
+      return t('Referral rate is invalid')
     case 'record not found':
-      return '关联记录不存在'
+      return t('Related record not found')
     case 'subscription order not found':
-      return '订阅订单不存在'
+      return t('Subscription order not found')
     case 'topup order not found':
-      return '充值订单不存在'
+      return t('Top-up order not found')
     case 'duplicate_job_superseded_by_subscription':
-      return '同一订单已按订阅订单重新生成佣金'
+      return t('Commission was regenerated from the subscription order')
     default:
-      return auditReasonPatternLabel(normalized)
+      return auditReasonPatternLabel(normalized, t)
   }
 }
 
-function auditReasonPatternLabel(value: string): string {
+function auditReasonPatternLabel(
+  value: string,
+  t: (key: string, options?: Record<string, unknown>) => string
+): string {
   const lower = value.toLowerCase()
   if (lower.includes('reject') && lower.includes('release')) {
-    return '拒绝后释放冻结金额'
+    return t('Release frozen amount after rejection')
   }
   if (lower.includes('approved') || lower.includes('approve')) {
-    return lower.includes('test') ? '测试链路审核通过' : '审核通过'
+    return lower.includes('test')
+      ? t('Approved in test chain')
+      : t('Approved')
   }
   if (lower.includes('paid') || lower.includes('payment')) {
-    return lower.includes('test') ? '测试链路已打款' : '已打款'
+    return lower.includes('test') ? t('Paid in test chain') : t('Paid')
   }
   if (lower.includes('withdrawal')) {
-    return lower.includes('test') ? '测试提现流程' : '提现流程'
+    return lower.includes('test')
+      ? t('Test withdrawal flow')
+      : t('Withdrawal flow')
   }
   if (lower.includes('canceled') || lower.includes('cancelled')) {
-    return lower.includes('30 minutes') ? '用户在 30 分钟内取消' : '用户取消'
+    return lower.includes('30 minutes')
+      ? t('User canceled within 30 minutes')
+      : t('User canceled')
   }
   if (lower.includes('test-machine') || lower.includes('test machine')) {
-    return `测试机记录：${value.replaceAll(/test-machine|test machine/gi, '').trim() || value}`
+    const detail = value.replaceAll(/test-machine|test machine/gi, '').trim()
+    return t('Test-machine record: {{detail}}', { detail: detail || value })
   }
   return value || '-'
 }
 
-function auditActionLabel(value: string): string {
+function auditActionLabel(
+  value: string,
+  t: (key: string) => string
+): string {
   switch (value) {
     case 'referral_affiliate_approve':
-      return '推广员审核通过'
+      return t('Affiliate approved')
     case 'referral_affiliate_reject':
-      return '推广员审核拒绝'
+      return t('Affiliate rejected')
     case 'referral_affiliate_disable':
-      return '推广员已禁用'
+      return t('Affiliate disabled')
     case 'referral_affiliate_restore':
-      return '推广员已恢复'
+      return t('Affiliate restored')
     case 'referral_affiliate_adjust':
-      return '推广员余额调整'
+      return t('Affiliate balance adjusted')
     case 'referral_affiliate_rate':
-      return '推广员比例更新'
+      return t('Affiliate rate updated')
     case 'referral_withdrawal_create':
-      return '提现申请创建'
+      return t('Withdrawal request created')
     case 'referral_withdrawal_cancel':
-      return '提现申请取消'
+      return t('Withdrawal request canceled')
     case 'referral_withdrawal_approve':
-      return '提现审核通过'
+      return t('Withdrawal approved')
     case 'referral_withdrawal_reject':
-      return '提现审核拒绝'
+      return t('Withdrawal rejected')
     case 'referral_withdrawal_paid':
-      return '提现已打款'
+      return t('Withdrawal paid')
     case 'referral_settings_update':
-      return '推广设置更新'
+      return t('Referral settings updated')
     case 'referral_withdrawal_freeze':
-      return '提现已冻结'
+      return t('Withdrawal frozen')
     case 'referral_withdrawal_restore':
-      return '提现已恢复'
+      return t('Withdrawal restored')
     case 'referral_settlement_freeze':
-      return '结算已冻结'
+      return t('Settlement frozen')
     case 'referral_settlement_restore':
-      return '结算已恢复'
+      return t('Settlement restored')
     default:
       return value || '-'
   }
@@ -823,12 +839,14 @@ export function AdminReferral() {
         key: `audit-${item.id}`,
         time: item.created_at,
         cells: [
-          '管理员操作',
-          auditActionLabel(item.action),
-          item.admin_user_id > 0 ? `管理员 #${item.admin_user_id}` : '-',
+          t('Admin operation'),
+          auditActionLabel(item.action, t),
+          item.admin_user_id > 0
+            ? t('Admin #{{id}}', { id: item.admin_user_id })
+            : '-',
           item.target_username ||
             (item.target_user_id > 0 ? `#${item.target_user_id}` : '-'),
-          auditReasonLabel(item.reason),
+          auditReasonLabel(item.reason, t),
           formatTimestamp(item.created_at),
         ],
       })
@@ -839,13 +857,13 @@ export function AdminReferral() {
       const displaySource = commissionJobDisplaySource(item)
       const detailParts = [
         `${commissionJobSourceLabel(displaySource.orderType, t)} ${displaySource.tradeNo || '-'}`,
-        `推广员 #${item.affiliate_id || '-'}`,
+        t('Affiliate #{{id}}', { id: item.affiliate_id || '-' }),
       ]
       if (item.order_label) {
         detailParts.push(item.order_label)
       }
       if (!item.order_exists) {
-        detailParts.push('订单未找到')
+        detailParts.push(t('Order not found'))
       }
       if (
         item.source_type &&
@@ -854,19 +872,22 @@ export function AdminReferral() {
           item.source_trade_no !== displaySource.tradeNo)
       ) {
         detailParts.push(
-          `任务来源 ${commissionJobSourceLabel(item.source_type, t)} ${item.source_trade_no}`
+          t('Job source {{source}} {{tradeNo}}', {
+            source: commissionJobSourceLabel(item.source_type, t),
+            tradeNo: item.source_trade_no,
+          })
         )
       }
       if (item.attempt_count > 0) {
-        detailParts.push(`尝试 ${item.attempt_count} 次`)
+        detailParts.push(t('{{count}} attempts', { count: item.attempt_count }))
       }
       rows.push({
         key: `commission-job-${item.id}`,
         time,
         cells: [
-          '佣金任务',
-          '佣金生成任务',
-          '系统',
+          t('Commission job'),
+          t('Commission generation job'),
+          t('System'),
           detailParts.join(' / '),
           item.last_error
             ? referralErrorLabel(item.last_error, t)
@@ -880,7 +901,7 @@ export function AdminReferral() {
               variant='outline'
               onClick={() => void handleRetryCommissionJob(item)}
             >
-              重试生成佣金
+              {t('Retry commission generation')}
             </Button>
           ) : undefined,
       })
@@ -1840,11 +1861,11 @@ export function AdminReferral() {
                 />
                 <SimpleAdminTable
                   headers={[
-                    '类型',
+                    t('Type'),
                     t('Action'),
-                    '执行方',
-                    '对象',
-                    '原因/错误',
+                    t('Operator'),
+                    t('Target'),
+                    t('Reason / Error'),
                     t('Created'),
                   ]}
                   rows={auditTimelineRows}

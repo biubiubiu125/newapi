@@ -48,26 +48,29 @@ export interface CustomOAuthProvider {
 // Form Schema
 // ============================================================================
 
-export const customOAuthFormSchema = z.object({
-  name: z.string().min(1, 'Name is required'),
+export function createCustomOAuthFormSchema(
+  t: (key: string) => string
+) {
+  return z.object({
+  name: z.string().min(1, t('Name is required')),
   slug: z
     .string()
-    .min(1, 'Slug is required')
+    .min(1, t('Slug is required'))
     .regex(
       /^[a-z0-9-]+$/,
-      'Slug must only contain lowercase letters, numbers, and hyphens'
+      t('Slug must only contain lowercase letters, numbers, and hyphens')
     ),
   icon: z.string().optional().default(''),
   enabled: z.boolean().default(true),
-  client_id: z.string().min(1, '客户端 ID 不能为空'),
+  client_id: z.string().min(1, t('Client ID cannot be empty')),
   client_secret: z.string().optional().default(''),
   authorization_endpoint: z
     .string()
-    .min(1, '授权端点不能为空'),
-  token_endpoint: z.string().min(1, '令牌端点不能为空'),
-  user_info_endpoint: z.string().min(1, '用户信息端点不能为空'),
+    .min(1, t('Authorization endpoint cannot be empty')),
+  token_endpoint: z.string().min(1, t('Token endpoint cannot be empty')),
+  user_info_endpoint: z.string().min(1, t('User info endpoint cannot be empty')),
   scopes: z.string().optional().default(''),
-  user_id_field: z.string().min(1, '用户 ID 字段不能为空'),
+  user_id_field: z.string().min(1, t('User ID field cannot be empty')),
   username_field: z.string().optional().default(''),
   display_name_field: z.string().optional().default(''),
   email_field: z.string().optional().default(''),
@@ -75,9 +78,14 @@ export const customOAuthFormSchema = z.object({
   auth_style: z.number().int().min(0).max(2).default(0),
   access_policy: z.string().optional().default(''),
   access_denied_message: z.string().optional().default(''),
-})
+  })
+}
 
-export type CustomOAuthFormValues = z.infer<typeof customOAuthFormSchema>
+export const customOAuthFormSchema = createCustomOAuthFormSchema((key) => key)
+
+export type CustomOAuthFormValues = z.infer<
+  ReturnType<typeof createCustomOAuthFormSchema>
+>
 
 // ============================================================================
 // OIDC Discovery

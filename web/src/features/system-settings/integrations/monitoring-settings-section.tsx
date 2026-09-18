@@ -56,12 +56,6 @@ import { useResetForm } from '../hooks/use-reset-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { safeNumberFieldProps } from '../utils/numeric-field'
 
-const numericString = z.string().refine((value) => {
-  const trimmed = value.trim()
-  if (!trimmed) return true
-  return !Number.isNaN(Number(trimmed)) && Number(trimmed) >= 0
-}, '请输入非负数字，或留空')
-
 const channelTestModes = [
   'scheduled_all',
   'passive_recovery',
@@ -69,50 +63,64 @@ const channelTestModes = [
 ] as const
 type ChannelTestMode = (typeof channelTestModes)[number]
 
-const monitoringSchema = z
-  .object({
-    ChannelDisableThreshold: numericString,
-    QuotaRemindThreshold: numericString,
-    AutomaticDisableChannelEnabled: z.boolean(),
-    AutomaticEnableChannelEnabled: z.boolean(),
-    AutomaticDisableKeywords: z.string(),
-    AutomaticDisableStatusCodes: z.string(),
-    AutomaticRetryStatusCodes: z.string(),
-    monitor_setting: z.object({
-      auto_test_channel_enabled: z.boolean(),
-      auto_test_channel_minutes: z.coerce
-        .number()
-        .int()
-        .min(1, '测试间隔至少为 1 分钟'),
-      channel_test_mode: z.enum(channelTestModes),
-    }),
-  })
-  .superRefine((values, ctx) => {
-    const disableParsed = parseHttpStatusCodeRules(
-      values.AutomaticDisableStatusCodes
-    )
-    if (!disableParsed.ok) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['AutomaticDisableStatusCodes'],
-        message: `状态码规则不正确：${disableParsed.invalidTokens.join(', ')}`,
-      })
-    }
+function createMonitoringSchema(
+  t: (key: string, options?: Record<string, unknown>) => string
+) {
+  const numericString = z.string().refine((value) => {
+    const trimmed = value.trim()
+    if (!trimmed) return true
+    return !Number.isNaN(Number(trimmed)) && Number(trimmed) >= 0
+  }, t('Enter a non-negative number, or leave empty'))
 
-    const retryParsed = parseHttpStatusCodeRules(
-      values.AutomaticRetryStatusCodes
-    )
-    if (!retryParsed.ok) {
-      ctx.addIssue({
-        code: 'custom',
-        path: ['AutomaticRetryStatusCodes'],
-        message: `状态码规则不正确：${retryParsed.invalidTokens.join(', ')}`,
-      })
-    }
-  })
+  return z
+    .object({
+      ChannelDisableThreshold: numericString,
+      QuotaRemindThreshold: numericString,
+      AutomaticDisableChannelEnabled: z.boolean(),
+      AutomaticEnableChannelEnabled: z.boolean(),
+      AutomaticDisableKeywords: z.string(),
+      AutomaticDisableStatusCodes: z.string(),
+      AutomaticRetryStatusCodes: z.string(),
+      monitor_setting: z.object({
+        auto_test_channel_enabled: z.boolean(),
+        auto_test_channel_minutes: z.coerce
+          .number()
+          .int()
+          .min(1, t('Test interval must be at least 1 minute')),
+        channel_test_mode: z.enum(channelTestModes),
+      }),
+    })
+    .superRefine((values, ctx) => {
+      const disableParsed = parseHttpStatusCodeRules(
+        values.AutomaticDisableStatusCodes
+      )
+      if (!disableParsed.ok) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['AutomaticDisableStatusCodes'],
+          message: t('Invalid status code rules: {{tokens}}', {
+            tokens: disableParsed.invalidTokens.join(', '),
+          }),
+        })
+      }
 
-type MonitoringFormValues = z.output<typeof monitoringSchema>
-type MonitoringFormInput = z.input<typeof monitoringSchema>
+      const retryParsed = parseHttpStatusCodeRules(
+        values.AutomaticRetryStatusCodes
+      )
+      if (!retryParsed.ok) {
+        ctx.addIssue({
+          code: 'custom',
+          path: ['AutomaticRetryStatusCodes'],
+          message: t('Invalid status code rules: {{tokens}}', {
+            tokens: retryParsed.invalidTokens.join(', '),
+          }),
+        })
+      }
+    })
+}
+
+type MonitoringFormValues = z.output<ReturnType<typeof createMonitoringSchema>>
+type MonitoringFormInput = z.input<ReturnType<typeof createMonitoringSchema>>
 
 type MonitoringSettingsSectionProps = {
   defaultValues: {
@@ -232,6 +240,7 @@ export function MonitoringSettingsSection({
   const baselineRef = useRef<NormalizedMonitoringValues>(
     normalizeDefaults(defaultValues)
   )
+  const monitoringSchema = useMemo(() => createMonitoringSchema(t), [t])
 
   const formDefaults = useMemo(
     () => buildFormDefaults(defaultValues),
@@ -303,7 +312,7 @@ export function MonitoringSettingsSection({
           <SettingsPageFormActions
             onSave={form.handleSubmit(onSubmit)}
             isSaving={updateOption.isPending}
-            saveLabel='保存监控规则'
+            saveLabel={t('Save monitoring rules')}
           />
           <div className='grid gap-6 md:grid-cols-2'>
             <FormField
@@ -497,7 +506,9 @@ export function MonitoringSettingsSection({
                     'If an upstream error contains any of these keywords (case insensitive), the channel will be disabled automatically.'
                   )}
                   <br />
-                  余额不足类错误会额外按内置关键词识别：balance、quota、insufficient、billing、credit、余额不足、额度不足。
+                  {t(
+                    'Balance-related errors are also matched by built-in keywords: balance, quota, insufficient, billing, credit, 余额不足, 额度不足.'
+                  )}
                 </FormDescription>
                 <FormMessage />
               </FormItem>
@@ -522,7 +533,9 @@ export function MonitoringSettingsSection({
                     {t(
                       'Accepts comma-separated status codes and inclusive ranges.'
                     )}{' '}
-                    这里只填写状态码或范围，不填写关键词。
+                    {t(
+                      'Enter status codes or ranges only, not keywords.'
+                    )}
                     {autoDisableParsed.ok &&
                       autoDisableParsed.normalized &&
                       autoDisableParsed.normalized !== field.value.trim() && (
@@ -553,8 +566,9 @@ export function MonitoringSettingsSection({
                     {t(
                       'Accepts comma-separated status codes and inclusive ranges.'
                     )}{' '}
-                    这里只填写状态码或范围；默认排除 400、408、504 和 524
-                    等高风险状态码。
+                    {t(
+                      'Enter status codes or ranges only; 400, 408, 504, and 524 are excluded by default as high-risk codes.'
+                    )}
                     {autoRetryParsed.ok &&
                       autoRetryParsed.normalized &&
                       autoRetryParsed.normalized !== field.value.trim() && (

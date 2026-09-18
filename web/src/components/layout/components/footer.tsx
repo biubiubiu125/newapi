@@ -81,19 +81,20 @@ function FooterLinkItem(props: { link: FooterLink }) {
 
 // Render legal links inline so the parent flex gap controls spacing.
 function LegalLinks(props: { leadingSeparator?: boolean }) {
+  const { t } = useTranslation()
   const { status } = useStatus()
   const items: { key: string; label: string; href: string }[] = []
   if (status?.user_agreement_enabled) {
     items.push({
       key: 'user-agreement',
-      label: '用户协议',
+      label: 'User Agreement',
       href: '/user-agreement',
     })
   }
   if (status?.privacy_policy_enabled) {
     items.push({
       key: 'privacy-policy',
-      label: '隐私政策',
+      label: 'Privacy Policy',
       href: '/privacy-policy',
     })
   }
@@ -113,7 +114,7 @@ function LegalLinks(props: { leadingSeparator?: boolean }) {
             to={item.href}
             className='hover:text-foreground transition-colors duration-200'
           >
-            {item.label}
+            {t(item.label)}
           </Link>
         </Fragment>
       ))}

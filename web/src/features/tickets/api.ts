@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { t } from 'i18next'
+
 import { api } from '@/lib/api'
 
 import type {
@@ -76,7 +78,7 @@ function appendFiles(form: FormData, files?: File[]) {
 
 function unwrapTicketResponse<T>(res: ApiResponse<T>): T {
   if (!res?.success) {
-    throw new Error(res?.message || '工单请求失败')
+    throw new Error(res?.message || t('Ticket request failed'))
   }
   return res.data as T
 }

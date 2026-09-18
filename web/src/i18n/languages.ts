@@ -32,22 +32,30 @@ export type InterfaceLanguageCode =
 export function normalizeInterfaceLanguage(value?: string | null): string {
   if (!value) return 'en'
 
-  let normalized = value.trim().replaceAll('_', '-').toLowerCase()
+  const trimmed = value.trim()
+  if (!trimmed) return 'en'
+
+  const lower = trimmed.replaceAll('_', '-').toLowerCase()
   if (
-    value === 'zh-TW' ||
-    value === 'zh-HK' ||
-    value === 'zh-MO' ||
-    value === 'zhTW'
+    lower === 'zhtw' ||
+    lower === 'zh-tw' ||
+    lower === 'zh-hk' ||
+    lower === 'zh-mo' ||
+    lower.startsWith('zh-hant')
   ) {
-    normalized = 'zhTW'
+    return 'zhTW'
   }
-  if (value === 'zh-CN' || value === 'zh-Hans' || value === 'zhCN') {
-    normalized = 'zhCN'
+  if (lower.startsWith('zh')) {
+    return 'zhCN'
   }
 
-  return INTERFACE_LANGUAGE_OPTIONS.some((lang) => lang.code === normalized)
-    ? normalized
-    : 'en'
+  const supported = INTERFACE_LANGUAGE_OPTIONS.map((lang) => lang.code)
+  const exact = supported.find((code) => code.toLowerCase() === lower)
+  if (exact) return exact
+
+  const prefix = lower.split('-')[0]
+  const prefixed = supported.find((code) => code.toLowerCase() === prefix)
+  return prefixed ?? 'en'
 }
 
 /**
@@ -61,17 +69,11 @@ export function normalizeInterfaceLanguage(value?: string | null): string {
  * matching still applies (e.g. `fr-FR` -> `fr`, `ja` -> `ja`).
  */
 export function convertDetectedLanguage(value: string): string {
-  const lower = value.trim().replaceAll('_', '-').toLowerCase()
+  const trimmed = value.trim()
+  if (!trimmed) return value
+  const lower = trimmed.replaceAll('_', '-').toLowerCase()
   if (!lower.startsWith('zh')) return value
-  if (
-    lower === 'zh-tw' ||
-    lower === 'zh-hk' ||
-    lower === 'zh-mo' ||
-    lower.startsWith('zh-hant')
-  ) {
-    return 'zhTW'
-  }
-  return 'zhCN'
+  return normalizeInterfaceLanguage(trimmed)
 }
 
 /**

@@ -16,11 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { normalizeInterfaceLanguage } from '@/i18n/languages'
 import type { AuthUser } from '@/stores/auth-store'
 
 const allowedRedirectProtocols = new Set(['http:', 'https:'])
 
-export function getSavedLanguage(user: AuthUser): string | undefined {
+function readRawSavedLanguage(user: AuthUser): string | undefined {
   if (typeof user.language === 'string') {
     return user.language
   }
@@ -41,6 +42,14 @@ export function getSavedLanguage(user: AuthUser): string | undefined {
   } catch {
     return undefined
   }
+}
+
+export function getSavedLanguage(user: AuthUser): string | undefined {
+  const raw = readRawSavedLanguage(user)
+  if (typeof raw !== 'string') return undefined
+  const trimmed = raw.trim()
+  if (!trimmed) return undefined
+  return normalizeInterfaceLanguage(trimmed)
 }
 
 export function sanitizeAuthRedirect(

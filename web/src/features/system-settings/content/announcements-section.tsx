@@ -20,6 +20,7 @@ import { zodResolver } from '@hookform/resolvers/zod'
 import { Plus, Edit, Trash2, Save, Send } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { useForm } from 'react-hook-form'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
 
@@ -94,50 +95,61 @@ type AnnouncementsSectionProps = {
   data: string
 }
 
-const announcementSchema = z.object({
-  title: z.string().max(100, '标题不能超过 100 个字符').optional(),
-  content: z
-    .string()
-    .min(1, '公告内容不能为空')
-    .max(
-      ANNOUNCEMENT_CONTENT_MAX_CHARS,
-      `公告内容不能超过 ${ANNOUNCEMENT_CONTENT_MAX_CHARS} 个字符`
-    ),
-  publishDate: z.string().min(1, '发布时间不能为空'),
-  type: z.enum(['default', 'ongoing', 'success', 'warning', 'error']),
-  extra: z.string().max(100, '附加信息不能超过 100 个字符').optional(),
-})
+function createAnnouncementSchema(
+  t: (key: string, options?: Record<string, unknown>) => string
+) {
+  return z.object({
+    title: z.string().max(100, t('Title cannot exceed 100 characters')).optional(),
+    content: z
+      .string()
+      .min(1, t('Announcement content cannot be empty'))
+      .max(
+        ANNOUNCEMENT_CONTENT_MAX_CHARS,
+        t('Announcement content cannot exceed {{count}} characters', {
+          count: ANNOUNCEMENT_CONTENT_MAX_CHARS,
+        })
+      ),
+    publishDate: z.string().min(1, t('Publish time is required')),
+    type: z.enum(['default', 'ongoing', 'success', 'warning', 'error']),
+    extra: z
+      .string()
+      .max(100, t('Additional information cannot exceed 100 characters'))
+      .optional(),
+  })
+}
 
-type AnnouncementFormValues = z.infer<typeof announcementSchema>
+type AnnouncementFormValues = z.infer<
+  ReturnType<typeof createAnnouncementSchema>
+>
 
 const typeOptions = [
   {
     value: 'default',
-    label: '默认',
+    label: 'Default',
     color: 'bg-gray-500',
     badgeVariant: 'neutral' as const,
   },
   {
     value: 'ongoing',
-    label: '进行中',
+    label: 'In Progress',
     color: 'bg-blue-500',
     badgeVariant: 'info' as const,
   },
   {
     value: 'success',
-    label: '成功',
+    label: 'Success',
     color: 'bg-green-500',
     badgeVariant: 'success' as const,
   },
   {
     value: 'warning',
-    label: '警告',
+    label: 'Warning',
     color: 'bg-orange-500',
     badgeVariant: 'warning' as const,
   },
   {
     value: 'error',
-    label: '错误',
+    label: 'Error',
     color: 'bg-red-500',
     badgeVariant: 'danger' as const,
   },
@@ -147,6 +159,8 @@ export function AnnouncementsSection({
   enabled,
   data,
 }: AnnouncementsSectionProps) {
+  const { t } = useTranslation()
+  const announcementSchema = useMemo(() => createAnnouncementSchema(t), [t])
   const updateOption = useUpdateOption()
   const [announcements, setAnnouncements] = useState<Announcement[]>([])
   const [isEnabled, setIsEnabled] = useState(enabled)
@@ -213,9 +227,9 @@ export function AnnouncementsSection({
         value: checked,
       })
       setIsEnabled(checked)
-      toast.success('设置已保存')
+      toast.success(t('Settings saved'))
     } catch {
-      toast.error('设置保存失败')
+      toast.error(t('Failed to save settings'))
     }
   }
 
@@ -251,7 +265,7 @@ export function AnnouncementsSection({
 
   const handleBatchDelete = () => {
     if (selectedIds.length === 0) {
-      toast.error('请选择要删除的公告')
+      toast.error(t('Please select announcements to delete'))
       return
     }
     setDeleteTarget('batch')
@@ -264,14 +278,18 @@ export function AnnouncementsSection({
         prev.filter((item) => item.id !== editingAnnouncement.id)
       )
       setHasChanges(true)
-      toast.success('公告已删除，点击“保存设置”后生效')
+      toast.success(t('Announcement deleted. Click "Save Settings" to apply.'))
     } else if (deleteTarget === 'batch') {
       setAnnouncements((prev) =>
         prev.filter((item) => !selectedIds.includes(item.id))
       )
       setSelectedIds([])
       setHasChanges(true)
-      toast.success(`已删除 ${selectedIds.length} 条公告，点击“保存设置”后生效`)
+      toast.success(
+        t('Deleted {{count}} announcements. Click "Save Settings" to apply.', {
+          count: selectedIds.length,
+        })
+      )
     }
     setShowDeleteDialog(false)
     setEditingAnnouncement(null)
@@ -292,11 +310,11 @@ export function AnnouncementsSection({
             : item
         )
       )
-      toast.success('公告已更新，点击“保存设置”后生效')
+      toast.success(t('Announcement updated. Click "Save Settings" to apply.'))
     } else {
       const newId = Math.max(...announcements.map((item) => item.id), 0) + 1
       setAnnouncements((prev) => [...prev, { id: newId, ...normalizedValues }])
-      toast.success('公告已添加，点击“保存设置”后生效')
+      toast.success(t('Announcement added. Click "Save Settings" to apply.'))
     }
     setHasChanges(true)
     setShowDialog(false)
@@ -311,10 +329,12 @@ export function AnnouncementsSection({
       })
       setHasChanges(false)
       toast.success(
-        '公告已保存；如有新增或变更公告，将自动创建 Telegram 推送任务'
+        t(
+          'Announcements saved. New or changed announcements will automatically create Telegram push jobs.'
+        )
       )
     } catch {
-      toast.error('公告保存失败')
+      toast.error(t('Failed to save announcements'))
     }
   }
 
@@ -344,10 +364,10 @@ export function AnnouncementsSection({
     const diffHours = Math.floor(diffMins / 60)
     const diffDays = Math.floor(diffHours / 24)
 
-    if (diffMins <= 0) return '刚刚'
-    if (diffMins < 60) return `${diffMins} 分钟前`
-    if (diffHours < 24) return `${diffHours} 小时前`
-    return `${diffDays} 天前`
+    if (diffMins <= 0) return t('Just now')
+    if (diffMins < 60) return t('{{count}} minutes ago', { count: diffMins })
+    if (diffHours < 24) return t('{{count}} hours ago', { count: diffHours })
+    return t('{{count}} days ago', { count: diffDays })
   }
 
   const getAnnouncementTitle = (announcement: Announcement) => {
@@ -366,22 +386,24 @@ export function AnnouncementsSection({
         content: announcement.content,
       })
       if (!res.data.success) throw new Error(res.data.message)
-      toast.success('公告推送任务已创建')
+      toast.success(t('Announcement push task created'))
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : '公告推送失败')
+      toast.error(
+        error instanceof Error ? error.message : t('Failed to push announcement')
+      )
     } finally {
       setTelegramPushingId(null)
     }
   }
 
   return (
-    <SettingsSection title='公告'>
+    <SettingsSection title={t('Announcements')}>
       <div className='space-y-4'>
         <div className='flex flex-wrap items-center justify-between gap-2'>
           <div className='flex flex-wrap items-center gap-2'>
             <Button onClick={handleAdd} size='sm'>
               <Plus className='mr-2 h-4 w-4' />
-              新增公告
+              {t('Add Announcement')}
             </Button>
             <Button
               onClick={handleBatchDelete}
@@ -390,7 +412,7 @@ export function AnnouncementsSection({
               disabled={selectedIds.length === 0}
             >
               <Trash2 className='mr-2 h-4 w-4' />
-              删除（{selectedIds.length}）
+              {t('Delete ({{count}})', { count: selectedIds.length })}
             </Button>
             <Button
               onClick={handleSaveAll}
@@ -399,13 +421,13 @@ export function AnnouncementsSection({
               disabled={!hasChanges || updateOption.isPending}
             >
               <Save className='mr-2 h-4 w-4' />
-              {updateOption.isPending ? '保存中...' : '保存设置'}
+              {updateOption.isPending ? t('Saving...') : t('Save Settings')}
             </Button>
           </div>
           <SettingsSwitchField
             checked={isEnabled}
             onCheckedChange={handleToggleEnabled}
-            label='启用公告'
+            label={t('Enable announcements')}
             className='border-b-0 py-0'
           />
         </div>
@@ -423,19 +445,19 @@ export function AnnouncementsSection({
                     onCheckedChange={toggleSelectAll}
                   />
                 </TableHead>
-                <TableHead>标题</TableHead>
-                <TableHead>内容</TableHead>
-                <TableHead>发布时间</TableHead>
-                <TableHead>类型</TableHead>
-                <TableHead>附加信息</TableHead>
-                <TableHead className='w-40'>操作</TableHead>
+                <TableHead>{t('Title')}</TableHead>
+                <TableHead>{t('Content')}</TableHead>
+                <TableHead>{t('Publish Date')}</TableHead>
+                <TableHead>{t('Type')}</TableHead>
+                <TableHead>{t('Additional information')}</TableHead>
+                <TableHead className='w-40'>{t('Actions')}</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
               {sortedAnnouncements.length === 0 ? (
                 <TableRow>
                   <TableCell colSpan={7} className='h-24 text-center'>
-                    暂无公告，点击“新增公告”创建
+                    {t('No announcements yet. Click "Add Announcement" to create one.')}
                   </TableCell>
                 </TableRow>
               ) : (
@@ -479,11 +501,11 @@ export function AnnouncementsSection({
                     </TableCell>
                     <TableCell>
                       <StatusBadge
-                        label={
+                        label={t(
                           typeOptions.find(
                             (opt) => opt.value === announcement.type
-                          )?.label
-                        }
+                          )?.label || 'Default'
+                        )}
                         variant={
                           typeOptions.find(
                             (opt) => opt.value === announcement.type
@@ -505,8 +527,8 @@ export function AnnouncementsSection({
                           size='sm'
                           variant='ghost'
                           disabled={telegramPushingId === announcement.id}
-                          aria-label='推送到 Telegram'
-                          title='推送到 Telegram'
+                          aria-label={t('Push to Telegram')}
+                          title={t('Push to Telegram')}
                         >
                           <Send className='h-4 w-4' />
                         </Button>
@@ -538,10 +560,12 @@ export function AnnouncementsSection({
         <DialogContent className='max-h-[85vh] max-w-4xl overflow-hidden'>
           <DialogHeader>
             <DialogTitle>
-              {editingAnnouncement ? '编辑公告' : '新增公告'}
+              {editingAnnouncement
+                ? t('Edit Announcement')
+                : t('Add Announcement')}
             </DialogTitle>
             <DialogDescription>
-              创建或更新控制台显示的系统公告
+              {t('Create or update system announcements for the dashboard')}
             </DialogDescription>
           </DialogHeader>
           <Form {...form}>
@@ -555,12 +579,17 @@ export function AnnouncementsSection({
                   name='title'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>标题</FormLabel>
+                      <FormLabel>{t('Title')}</FormLabel>
                       <FormControl>
-                        <Input placeholder='公告标题（可选）' {...field} />
+                        <Input
+                          placeholder={t('Announcement title (optional)')}
+                          {...field}
+                        />
                       </FormControl>
                       <FormDescription>
-                        没有标题时，列表会使用内容前 40 个字作为标题。
+                        {t(
+                          'If no title is provided, the list uses the first 40 characters of the content.'
+                        )}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -571,17 +600,25 @@ export function AnnouncementsSection({
                   name='content'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>内容</FormLabel>
+                      <FormLabel>{t('Content')}</FormLabel>
                       <FormControl>
                         <Textarea
                           className='h-72 resize-none overflow-y-auto'
-                          placeholder='请输入公告内容（支持 Markdown/HTML）'
+                          placeholder={t(
+                            'Enter announcement content (supports Markdown/HTML)'
+                          )}
                           {...field}
                           maxLength={ANNOUNCEMENT_CONTENT_MAX_CHARS}
                         />
                       </FormControl>
                       <FormDescription>
-                        {`${field.value?.length ?? 0}/${ANNOUNCEMENT_CONTENT_MAX_CHARS}，保存原文，不做脱敏。`}
+                        {t(
+                          '{{used}}/{{max}}, saved as original text without redaction.',
+                          {
+                            used: field.value?.length ?? 0,
+                            max: ANNOUNCEMENT_CONTENT_MAX_CHARS,
+                          }
+                        )}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -592,7 +629,7 @@ export function AnnouncementsSection({
                   name='publishDate'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>发布时间</FormLabel>
+                      <FormLabel>{t('Publish Date')}</FormLabel>
                       <FormControl>
                         <DateTimePicker
                           value={
@@ -601,11 +638,11 @@ export function AnnouncementsSection({
                           onChange={(date) =>
                             field.onChange(date ? date.toISOString() : '')
                           }
-                          placeholder='选择发布时间'
+                          placeholder={t('Select publish date')}
                         />
                       </FormControl>
                       <FormDescription>
-                        公告开始显示的日期和时间。
+                        {t('Date and time when this announcement should be displayed')}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -616,7 +653,7 @@ export function AnnouncementsSection({
                   name='type'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>类型</FormLabel>
+                      <FormLabel>{t('Type')}</FormLabel>
                       <Select
                         items={typeOptions.map((option) => ({
                           value: option.value,
@@ -625,7 +662,7 @@ export function AnnouncementsSection({
                               <div
                                 className={`h-3 w-3 rounded-full ${option.color}`}
                               />
-                              {option.label}
+                              {t(option.label)}
                             </div>
                           ),
                         }))}
@@ -634,7 +671,7 @@ export function AnnouncementsSection({
                       >
                         <FormControl>
                           <SelectTrigger>
-                            <SelectValue placeholder='选择公告类型' />
+                            <SelectValue placeholder={t('Select announcement type')} />
                           </SelectTrigger>
                         </FormControl>
                         <SelectContent alignItemWithTrigger={false}>
@@ -648,7 +685,7 @@ export function AnnouncementsSection({
                                   <div
                                     className={`h-3 w-3 rounded-full ${option.color}`}
                                   />
-                                  {option.label}
+                                  {t(option.label)}
                                 </div>
                               </SelectItem>
                             ))}
@@ -664,12 +701,14 @@ export function AnnouncementsSection({
                   name='extra'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>附加信息（可选）</FormLabel>
+                      <FormLabel>
+                        {t('Additional information (optional)')}
+                      </FormLabel>
                       <FormControl>
-                        <Input placeholder='附加信息' {...field} />
+                        <Input placeholder={t('Additional information')} {...field} />
                       </FormControl>
                       <FormDescription>
-                        可选补充信息，最多 100 个字符。
+                        {t('Optional additional information, up to 100 characters.')}
                       </FormDescription>
                       <FormMessage />
                     </FormItem>
@@ -682,10 +721,10 @@ export function AnnouncementsSection({
                   variant='outline'
                   onClick={() => setShowDialog(false)}
                 >
-                  取消
+                  {t('Cancel')}
                 </Button>
                 <Button type='submit'>
-                  {editingAnnouncement ? '更新' : '新增'}
+                  {editingAnnouncement ? t('Update') : t('Add')}
                 </Button>
               </DialogFooter>
             </form>
@@ -696,16 +735,20 @@ export function AnnouncementsSection({
       <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>确认删除？</AlertDialogTitle>
+            <AlertDialogTitle>{t('Confirm delete')}</AlertDialogTitle>
             <AlertDialogDescription>
               {deleteTarget === 'single'
-                ? '该公告将从列表中移除。'
-                : `${selectedIds.length} 条公告将从列表中移除。`}
+                ? t('This announcement will be removed from the list.')
+                : t('{{count}} announcements will be removed from the list.', {
+                    count: selectedIds.length,
+                  })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel>取消</AlertDialogCancel>
-            <AlertDialogAction onClick={confirmDelete}>删除</AlertDialogAction>
+            <AlertDialogCancel>{t('Cancel')}</AlertDialogCancel>
+            <AlertDialogAction onClick={confirmDelete}>
+              {t('Delete')}
+            </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

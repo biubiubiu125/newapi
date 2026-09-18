@@ -107,7 +107,7 @@ export function SettingsPage<
   getSectionContent,
   getSectionMeta,
   extraArgs,
-  loadingMessage = '正在加载设置...',
+  loadingMessage = 'Loading settings...',
   resolveSettings,
 }: SettingsPageProps<TSettings, TSectionId, TExtraArgs>) {
   const { t } = useTranslation()

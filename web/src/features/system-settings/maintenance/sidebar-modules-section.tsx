@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useMemo } from 'react'
 import { useForm } from 'react-hook-form'
+import { useTranslation } from 'react-i18next'
 
 import {
   Form,
@@ -61,6 +62,7 @@ export function SidebarModulesSection({
   config,
   initialSerialized,
 }: SidebarModulesSectionProps) {
+  const { t } = useTranslation()
   const updateOption = useUpdateOption()
   const formDefaults = useMemo(() => config, [config])
 
@@ -91,20 +93,20 @@ export function SidebarModulesSection({
   const sections = Object.entries(config)
 
   return (
-    <SettingsSection title='侧边栏模块'>
+    <SettingsSection title={t('Sidebar Modules')}>
       <Form {...form}>
         <SettingsForm onSubmit={form.handleSubmit(onSubmit)}>
           <SettingsPageFormActions
             onSave={form.handleSubmit(onSubmit)}
             onReset={resetToDefault}
             isSaving={updateOption.isPending}
-            resetLabel='重置为默认'
-            saveLabel='保存侧边栏模块'
+            resetLabel={t('Reset to default')}
+            saveLabel={t('Save sidebar modules')}
           />
           {sections.map(([sectionKey, sectionConfig]) => {
             const sectionInfo = SIDEBAR_MODULES_META[sectionKey] ?? {
               title: toTitleCase(sectionKey),
-              description: '自定义侧边栏分区。',
+              description: 'Custom sidebar section.',
               modules: {},
             }
             const modules = Object.entries(sectionConfig).filter(
@@ -120,9 +122,9 @@ export function SidebarModulesSection({
                   render={({ field }) => (
                     <SettingsSwitchItem>
                       <SettingsSwitchContent>
-                        <FormLabel>{sectionInfo.title}</FormLabel>
+                        <FormLabel>{t(sectionInfo.title)}</FormLabel>
                         <FormDescription>
-                          {sectionInfo.description}
+                          {t(sectionInfo.description)}
                         </FormDescription>
                       </SettingsSwitchContent>
                       <FormControl>
@@ -139,7 +141,7 @@ export function SidebarModulesSection({
                   {modules.map(([moduleKey]) => {
                     const moduleInfo = sectionInfo.modules[moduleKey] ?? {
                       title: toTitleCase(moduleKey),
-                      description: '自定义模块。',
+                      description: 'Custom module.',
                     }
                     const forcedEnabled =
                       sectionKey === 'admin' && moduleKey === 'setting'
@@ -157,11 +159,13 @@ export function SidebarModulesSection({
                         render={({ field }) => (
                           <SettingsSwitchItem className='border-b-0 py-2'>
                             <SettingsSwitchContent>
-                              <FormLabel>{moduleInfo.title}</FormLabel>
+                              <FormLabel>{t(moduleInfo.title)}</FormLabel>
                               <FormDescription>
                                 {forcedEnabled
-                                  ? '系统设置为必需入口，不能隐藏。'
-                                  : moduleInfo.description}
+                                  ? t(
+                                      'This entry is required by system settings and cannot be hidden.'
+                                    )
+                                  : t(moduleInfo.description)}
                               </FormDescription>
                             </SettingsSwitchContent>
                             <FormControl>

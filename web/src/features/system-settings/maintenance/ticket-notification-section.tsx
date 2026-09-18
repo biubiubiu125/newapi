@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { SettingsSwitchField } from '../components/settings-form-layout'
@@ -29,29 +30,34 @@ type TicketNotificationSectionProps = {
 export function TicketNotificationSection({
   emailEnabled,
 }: TicketNotificationSectionProps) {
+  const { t } = useTranslation()
   const updateOption = useUpdateOption()
 
   const updateBoolean = async (key: string, value: boolean) => {
     try {
       await updateOption.mutateAsync({ key, value, skipToast: true })
-      toast.success('工单通知设置已保存')
+      toast.success(t('Ticket notification settings saved'))
     } catch {
-      toast.error('工单通知设置保存失败')
+      toast.error(t('Failed to save ticket notification settings'))
     }
   }
 
   return (
     <SettingsSection
-      title='工单通知'
-      description='工单角标默认启用；这里仅控制普通邮件提醒，不启用独立站内消息中心。'
+      title={t('Ticket Notifications')}
+      description={t(
+        'Ticket badges are enabled by default. This only controls ordinary email reminders and does not enable a separate in-app message center.'
+      )}
     >
       <SettingsSwitchField
         checked={emailEnabled}
         onCheckedChange={(value) =>
           updateBoolean('TicketEmailNotificationEnabled', value)
         }
-        label='邮件通知'
-        description='新工单通知管理员，管理员回复通知用户；用户回复不发送邮件，邮件只包含提醒和站内链接。开启前请先在系统信息中配置站点地址。'
+        label={t('Email notifications')}
+        description={t(
+          'New tickets notify admins, and admin replies notify users. User replies do not send email. Emails only include a reminder and an in-site link. Configure the site address in System Info before enabling this.'
+        )}
         disabled={updateOption.isPending}
       />
     </SettingsSection>

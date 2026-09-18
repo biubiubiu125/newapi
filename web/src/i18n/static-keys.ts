@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 // Static translation keys that don't get picked up by the t('...') regex.
 // These cover dynamic labels (e.g. constants, configs) that are passed into t at runtime.
-export const STATIC_I18N_KEYS = [
+const STATIC_I18N_KEY_LIST = [
   // Model listing channel-state labels used via t(state.label/description)
   'No matching channels',
   'Metadata only',
@@ -897,4 +897,149 @@ export const STATIC_I18N_KEYS = [
   'UTC+8 Singapore (Asia/Singapore)',
   'UTC+9 Seoul (Asia/Seoul)',
   'UTC+10 Sydney (Australia/Sydney)',
+
+  // Referral section meta used via t(pageMeta.title/description)
+  'Referral Overview',
+  'Review platform-wide referral performance and balances',
+  'Referral Settings',
+  'Configure referral rates, settlement, and withdrawal rules',
+  'Pending Affiliates',
+  'Review and process pending affiliate applications',
+  'Affiliates',
+  'Manage affiliates, bindings, and account controls',
+  'Referral Commissions',
+  'Review commission records and settlement status',
+  'Referral Withdrawals',
+  'Review withdrawal requests and payout status',
+  'Referral Ledgers',
+  'Review account balance movements and settlement records',
+  'Referral Audit Logs',
+  'Review administrator actions and audit trails',
+  'Referral Center',
+  'View your referral performance and commission balance',
+  'Commission Details',
+  'Review referral commission records and settlement progress',
+  'Withdraw Application',
+  'Submit a referral withdrawal request',
+  'Withdrawal Records',
+  'Track referral withdrawal applications and payouts',
+
+  // Models section meta used via t(meta.titleKey/tabKey)
+  'Model management',
+  'Vendor management',
+  'Vendors',
+  'Models',
+  'Deployments',
+  'Metadata',
+
+  // Prefill group types used via t(type.label/description)
+  'Model Group',
+  'Reusable sets of models you can attach to channels.',
+  'Tag Group',
+  'Collections of metadata tags for bulk operations.',
+  'Endpoint Group',
+  'HTTP endpoint mappings shared across providers.',
+
+  // Order / payment-orphan statuses used via t(labelKey) / t(order.status)
+  'All Statuses',
+  'pending',
+  'success',
+  'failed',
+  'expired',
+  'Pending review',
+  'Credited',
+  'Refunded',
+  'Dismissed',
+  'All statuses',
+  'Credit this Stripe payment?',
+  'This creates the missing top-up or subscription and credits the matched Stripe customer exactly once.',
+  'Credit this verified payment?',
+  'This credits only the matching local top-up or subscription order exactly once. It does not recreate missing orders.',
+
+  // Custom OAuth auth-style options used via t(option.labelKey)
+  'Auto Detect',
+  'Params (in body)',
+  'Header (Basic Auth)',
+
+  // API info color labels used via t(option.label)
+  'Blue',
+  'Green',
+  'Cyan',
+  'Purple',
+  'Pink',
+  'Red',
+  'Orange',
+  'Amber',
+  'Yellow',
+  'Lime',
+  'Teal',
+  'Indigo',
+  'Violet',
+  'Slate',
+
+  // Audit log operations used via t(operation.labelKey/namedKey)
+  'Create API token',
+  'Create API token “{{name}}”',
+  'Update API token',
+  'Update API token “{{name}}”',
+  'Delete API token',
+  'Delete API token “{{name}}”',
+  'View API token key',
+  'View key for API token “{{name}}”',
+  'Batch delete API tokens',
+  'View API token keys in batch',
+  'Increase user quota',
+  'Decrease user quota',
+  'Override user quota',
+  'Adjust user quota',
+  'Increase quota for user “{{name}}”',
+  'Decrease quota for user “{{name}}”',
+  'Override quota for user “{{name}}”',
+  'Adjust quota for user “{{name}}”',
+
+  // Billing / group-rule / notification labels used via t(variable)
+  'Input length',
+  'Add (+:)',
+  'Remove (-:)',
+  'Webhook',
+  'Bark',
+  'Gotify',
+
+  // Telegram push status/source via t(mapped label)
+  'Waiting to push',
+  'Pushing',
+  'Sent',
+  'Failed',
+  'Manual push',
+  'Automatic push',
+
+  // Payment color presets via t(preset.label)
+  'Alipay Blue',
+  'WeChat Green',
+
+  // Sidebar fallback copy via t(sectionInfo.description)
+  'Custom sidebar section.',
+  'Custom module.',
+
+  // Ticket image validation keys returned then t()'d
+  'Only png, jpg, jpeg, and webp images are supported',
+  'Each image must be 5MB or smaller',
+
+  // Settings page loading messages passed through t(loadingMessage)
+  'Loading settings...',
+  'Loading operations settings...',
+  'Loading console content settings...',
+
+  // Usage cell / users / leftover i18n keys used via t(variable) or mapping
+  'This Month',
+  'Last used',
+  'Last Active',
+  'Reason / Error',
+  'Table horizontal scrollbar',
+  'Admin operation',
+  'Retry commission generation',
+  'Job succeeded',
+  'Admin enabled affiliate from user list',
 ] as const
+
+export const STATIC_I18N_KEYS = [...new Set(STATIC_I18N_KEY_LIST)]

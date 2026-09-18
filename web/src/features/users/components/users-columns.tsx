@@ -385,7 +385,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
       accessorKey: 'last_active_at',
       size: 132,
       header: ({ column }) => (
-        <DataTableColumnHeader column={column} title='最近活跃' />
+        <DataTableColumnHeader column={column} title={t('Last Active')} />
       ),
       cell: ({ row }) => {
         const ts = row.getValue('last_active_at') as number | undefined
@@ -395,7 +395,7 @@ export function useUsersColumns(): ColumnDef<User>[] {
           </span>
         )
       },
-      meta: { label: '最近活跃', mobileHidden: true },
+      meta: { label: t('Last Active'), mobileHidden: true },
     },
     {
       id: 'actions',

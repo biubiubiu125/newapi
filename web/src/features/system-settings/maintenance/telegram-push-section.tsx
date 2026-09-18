@@ -50,23 +50,29 @@ type TelegramRecord = {
   sent_at: number
 }
 
-function formatPushStatus(status: string) {
+function formatPushStatus(
+  status: string,
+  t: (key: string) => string
+) {
   const statusMap: Record<string, string> = {
-    pending: '等待推送',
-    running: '推送中',
-    succeeded: '已发送',
-    failed: '失败',
+    pending: 'Waiting to push',
+    running: 'Pushing',
+    succeeded: 'Sent',
+    failed: 'Failed',
   }
-  return statusMap[status] ?? status
+  return t(statusMap[status] ?? status)
 }
 
-function formatPushSource(source: string) {
-  if (!source) return '手动推送'
+function formatPushSource(
+  source: string,
+  t: (key: string) => string
+) {
+  if (!source) return t('Manual push')
   const sourceMap: Record<string, string> = {
-    auto: '自动推送',
-    manual: '手动推送',
+    auto: 'Automatic push',
+    manual: 'Manual push',
   }
-  return sourceMap[source] ?? (source || '-')
+  return t(sourceMap[source] ?? source)
 }
 
 export function TelegramPushSection() {
@@ -75,7 +81,9 @@ export function TelegramPushSection() {
   const [botToken, setBotToken] = useState('')
   const [chatId, setChatId] = useState('')
   const [displayName, setDisplayName] = useState('RKAPI')
-  const [testText, setTestText] = useState('Telegram 推送测试成功')
+  const [testText, setTestText] = useState(() =>
+    t('Telegram push test succeeded')
+  )
   const [title, setTitle] = useState('')
   const [content, setContent] = useState('')
   const [detailRecord, setDetailRecord] = useState<TelegramRecord | null>(null)
@@ -118,7 +126,7 @@ export function TelegramPushSection() {
       })
       if (!res.data.success) throw new Error(res.data.message)
     },
-    onSuccess: () => toast.success('Telegram 推送配置已保存'),
+    onSuccess: () => toast.success(t('Telegram push settings saved')),
     onError: (error: Error) => toast.error(error.message),
   })
 
@@ -127,14 +135,16 @@ export function TelegramPushSection() {
       const res = await api.post('/api/telegram_push/test', { text: testText })
       if (!res.data.success) throw new Error(res.data.message)
     },
-    onSuccess: () => toast.success('测试推送已发送'),
+    onSuccess: () => toast.success(t('Test push sent')),
     onError: (error: Error) => toast.error(error.message),
   })
 
   const pushAnnouncement = useMutation({
     mutationFn: async () => {
       if (!title.trim() && !content.trim()) {
-        throw new Error('公告标题和内容不能同时为空')
+        throw new Error(
+          t('Announcement title and content cannot both be empty')
+        )
       }
       const res = await api.post('/api/telegram_push/announcements', {
         title,
@@ -143,7 +153,7 @@ export function TelegramPushSection() {
       if (!res.data.success) throw new Error(res.data.message)
     },
     onSuccess: () => {
-      toast.success('公告推送任务已创建')
+      toast.success(t('Announcement push task created'))
       queryClient.invalidateQueries({ queryKey: ['telegram-push-records'] })
     },
     onError: (error: Error) => toast.error(error.message),
@@ -155,7 +165,7 @@ export function TelegramPushSection() {
       if (!res.data.success) throw new Error(res.data.message)
     },
     onSuccess: () => {
-      toast.success('已重新推送')
+      toast.success(t('Pushed again'))
       queryClient.invalidateQueries({ queryKey: ['telegram-push-records'] })
     },
     onError: (error: Error) => toast.error(error.message),
@@ -163,12 +173,14 @@ export function TelegramPushSection() {
 
   return (
     <SettingsSection
-      title='Telegram 推送'
-      description='公告推送按原文发送，不做脱敏，消息前缀使用项目显示名称。'
+      title={t('Telegram Push')}
+      description={t(
+        'Announcements are sent as original text without redaction. The message prefix uses the project display name.'
+      )}
     >
       <div className='grid gap-4 lg:grid-cols-3'>
         <div className='space-y-2'>
-          <Label>项目显示名称</Label>
+          <Label>{t('Project display name')}</Label>
           <Input
             value={displayName}
             maxLength={32}
@@ -176,7 +188,10 @@ export function TelegramPushSection() {
             onChange={(e) => setDisplayName(e.target.value)}
           />
           <p className='text-muted-foreground text-xs'>
-            Telegram 文本前缀，例如 [{displayName.trim() || 'RKAPI'}]公告标题
+            {t(
+              'Telegram text prefix, for example [{{name}}] announcement title',
+              { name: displayName.trim() || 'RKAPI' }
+            )}
           </p>
         </div>
         <div className='space-y-2'>
@@ -188,17 +203,18 @@ export function TelegramPushSection() {
             onChange={(e) => setBotToken(e.target.value)}
           />
           <p className='text-muted-foreground text-xs leading-5'>
-            在 Telegram 搜索 @BotFather，发送 /newbot 创建机器人后复制 Bot
-            Token。 Token 等同机器人密钥，只填写在这里，不要发到群组或公开页面。
+            {t(
+              'Search @BotFather in Telegram, send /newbot to create a bot, then copy the Bot Token. The token is the bot secret: fill it in here only, and never post it in a group or public page.'
+            )}
           </p>
         </div>
         <div className='space-y-2'>
           <Label>{t('Chat ID')}</Label>
           <Input value={chatId} onChange={(e) => setChatId(e.target.value)} />
           <p className='text-muted-foreground text-xs leading-5'>
-            私聊填管理员 Telegram 用户 ID，频道填频道 ID 或
-            @频道用户名，群组填群组 ID。
-            私聊用户需先主动给机器人发过消息；频道/群组需把机器人加入并授予发消息权限。
+            {t(
+              'For private chat, enter the admin Telegram user ID. For a channel, enter the channel ID or @username. For a group, enter the group ID. Private-chat users must message the bot first; the bot must be added to the channel or group with permission to send messages.'
+            )}
           </p>
         </div>
       </div>
@@ -207,7 +223,7 @@ export function TelegramPushSection() {
           onClick={() => saveSettings.mutate()}
           disabled={saveSettings.isPending}
         >
-          保存配置
+          {t('Save configuration')}
         </Button>
         <Input
           className='max-w-md'
@@ -220,32 +236,32 @@ export function TelegramPushSection() {
           disabled={testPush.isPending}
         >
           <Send className='mr-2 size-4' />
-          测试推送
+          {t('Test push')}
         </Button>
       </div>
       <div className='grid gap-3'>
-        <Label>手动推送公告</Label>
+        <Label>{t('Manually push announcement')}</Label>
         <Input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
-          placeholder='公告标题'
+          placeholder={t('Announcement title')}
         />
         <Textarea
           value={content}
           onChange={(e) => setContent(e.target.value)}
           className='h-40 resize-none'
-          placeholder='公告内容原文'
+          placeholder={t('Original announcement content')}
         />
         <Button
           className='w-fit'
           onClick={() => pushAnnouncement.mutate()}
           disabled={pushAnnouncement.isPending}
         >
-          推送公告
+          {t('Push announcement')}
         </Button>
       </div>
       <div className='flex items-center justify-between'>
-        <Label>推送记录</Label>
+        <Label>{t('Push records')}</Label>
         <Button
           variant='outline'
           size='sm'
@@ -256,21 +272,21 @@ export function TelegramPushSection() {
           }
         >
           <RefreshCw className='mr-2 size-4' />
-          刷新
+          {t('Refresh')}
         </Button>
       </div>
       <div className='overflow-x-auto rounded-md border'>
         <table className='w-full min-w-[800px] text-sm'>
           <thead className='bg-muted/50'>
             <tr>
-              <th className='px-3 py-2 text-left'>记录</th>
-              <th className='px-3 py-2 text-left'>项目</th>
-              <th className='px-3 py-2 text-left'>方式</th>
-              <th className='px-3 py-2 text-left'>标题</th>
-              <th className='px-3 py-2 text-left'>状态</th>
-              <th className='px-3 py-2 text-left'>次数</th>
-              <th className='px-3 py-2 text-left'>失败原因</th>
-              <th className='px-3 py-2 text-left'>操作</th>
+              <th className='px-3 py-2 text-left'>{t('Record')}</th>
+              <th className='px-3 py-2 text-left'>{t('Project')}</th>
+              <th className='px-3 py-2 text-left'>{t('Method')}</th>
+              <th className='px-3 py-2 text-left'>{t('Title')}</th>
+              <th className='px-3 py-2 text-left'>{t('Status')}</th>
+              <th className='px-3 py-2 text-left'>{t('Count')}</th>
+              <th className='px-3 py-2 text-left'>{t('Failure reason')}</th>
+              <th className='px-3 py-2 text-left'>{t('Actions')}</th>
             </tr>
           </thead>
           <tbody>
@@ -278,11 +294,15 @@ export function TelegramPushSection() {
               <tr key={record.id} className='border-t'>
                 <td className='px-3 py-2'>#{record.id}</td>
                 <td className='px-3 py-2'>{record.display_name || '-'}</td>
-                <td className='px-3 py-2'>{formatPushSource(record.source)}</td>
+                <td className='px-3 py-2'>
+                  {formatPushSource(record.source, t)}
+                </td>
                 <td className='max-w-[240px] truncate px-3 py-2'>
                   {record.title || record.content || '-'}
                 </td>
-                <td className='px-3 py-2'>{formatPushStatus(record.status)}</td>
+                <td className='px-3 py-2'>
+                  {formatPushStatus(record.status, t)}
+                </td>
                 <td className='px-3 py-2'>{record.attempt_count}</td>
                 <td className='max-w-[280px] truncate px-3 py-2'>
                   {record.failure_reason || '-'}
@@ -295,7 +315,7 @@ export function TelegramPushSection() {
                       onClick={() => setDetailRecord(record)}
                     >
                       <Eye className='mr-1 size-4' />
-                      详情
+                      {t('Details')}
                     </Button>
                     {record.status === 'failed' ? (
                       <Button
@@ -303,7 +323,7 @@ export function TelegramPushSection() {
                         variant='outline'
                         onClick={() => retryRecord.mutate(record.id)}
                       >
-                        重试
+                        {t('Retry')}
                       </Button>
                     ) : null}
                   </div>
@@ -316,7 +336,7 @@ export function TelegramPushSection() {
                   colSpan={8}
                   className='text-muted-foreground px-3 py-8 text-center'
                 >
-                  暂无推送记录
+                  {t('No push records')}
                 </td>
               </tr>
             ) : null}
@@ -329,31 +349,31 @@ export function TelegramPushSection() {
       >
         <DialogContent className='max-h-[85vh] max-w-3xl overflow-y-auto'>
           <DialogHeader>
-            <DialogTitle>推送记录详情</DialogTitle>
+            <DialogTitle>{t('Push record details')}</DialogTitle>
           </DialogHeader>
           {detailRecord ? (
             <div className='space-y-4'>
               <div className='grid gap-3 sm:grid-cols-2'>
                 <div className='space-y-1'>
-                  <Label>记录</Label>
+                  <Label>{t('Record')}</Label>
                   <div className='rounded-md border px-3 py-2 text-sm'>
                     #{detailRecord.id}
                   </div>
                 </div>
                 <div className='space-y-1'>
-                  <Label>状态</Label>
+                  <Label>{t('Status')}</Label>
                   <div className='rounded-md border px-3 py-2 text-sm'>
-                    {formatPushStatus(detailRecord.status)}
+                    {formatPushStatus(detailRecord.status, t)}
                   </div>
                 </div>
                 <div className='space-y-1'>
-                  <Label>推送方式</Label>
+                  <Label>{t('Push method')}</Label>
                   <div className='rounded-md border px-3 py-2 text-sm'>
-                    {formatPushSource(detailRecord.source)}
+                    {formatPushSource(detailRecord.source, t)}
                   </div>
                 </div>
                 <div className='space-y-1'>
-                  <Label>推送次数</Label>
+                  <Label>{t('Push count')}</Label>
                   <div className='rounded-md border px-3 py-2 text-sm'>
                     {detailRecord.attempt_count}
                   </div>
@@ -365,26 +385,26 @@ export function TelegramPushSection() {
                   </div>
                 </div>
                 <div className='space-y-1'>
-                  <Label>项目显示名称</Label>
+                  <Label>{t('Project display name')}</Label>
                   <div className='rounded-md border px-3 py-2 text-sm break-all'>
                     {detailRecord.display_name || '-'}
                   </div>
                 </div>
               </div>
               <div className='space-y-1'>
-                <Label>标题原文</Label>
+                <Label>{t('Original title')}</Label>
                 <div className='rounded-md border px-3 py-2 text-sm break-words whitespace-pre-wrap'>
                   {detailRecord.title || '-'}
                 </div>
               </div>
               <div className='space-y-1'>
-                <Label>内容原文</Label>
+                <Label>{t('Original content')}</Label>
                 <div className='max-h-80 overflow-y-auto rounded-md border px-3 py-2 text-sm break-words whitespace-pre-wrap'>
                   {detailRecord.content || '-'}
                 </div>
               </div>
               <div className='space-y-1'>
-                <Label>失败原因</Label>
+                <Label>{t('Failure reason')}</Label>
                 <div className='rounded-md border px-3 py-2 text-sm break-words whitespace-pre-wrap'>
                   {detailRecord.failure_reason || '-'}
                 </div>

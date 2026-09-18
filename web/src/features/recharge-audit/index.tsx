@@ -102,14 +102,18 @@ function paidAmountDetail(
 ) {
   const currency = orderPaidCurrency(order).toUpperCase()
   if (order.paid_cny_fx_missing) {
-    return `折合人民币: ${t('Missing referral FX rate')}`
+    return t('CNY equivalent: {{amount}}', {
+      amount: t('Missing referral FX rate'),
+    })
   }
   if (currency !== 'CNY' && (order.paid_amount_cny || 0) > 0) {
     const rateDetail =
       order.paid_cny_fx_rate > 0
         ? ` / ${t('FX Rate')}: ${order.paid_cny_fx_rate}`
         : ''
-    return `折合人民币: ${formatMoney(order.paid_amount_cny || 0, 'CNY')}${rateDetail}`
+    return t('CNY equivalent: {{amount}}', {
+      amount: `${formatMoney(order.paid_amount_cny || 0, 'CNY')}${rateDetail}`,
+    })
   }
   return ''
 }
@@ -137,16 +141,22 @@ function formatOrderDelivery(
   if (order.order_type === 'subscription') {
     const parts: string[] = []
     if (order.product_name) {
-      parts.push(`订阅套餐: ${order.product_name}`)
+      parts.push(
+        t('Subscription plan: {{name}}', { name: order.product_name })
+      )
     }
     if (order.credit_quota > 0) {
       parts.push(
         `${t('Subscription Quota')}: ${formatQuota(order.credit_quota)}`
       )
     }
-    return parts.length > 0 ? parts.join(' / ') : '订阅服务: 已开通'
+    return parts.length > 0
+      ? parts.join(' / ')
+      : t('Subscription service: activated')
   }
-  return `余额充值: ${formatSiteCreditAmount(order.credit_amount ?? order.amount)}`
+  return t('Balance top-up: {{amount}}', {
+    amount: formatSiteCreditAmount(order.credit_amount ?? order.amount),
+  })
 }
 
 function statusVariant(status: string) {
@@ -504,8 +514,8 @@ export function RechargeAudit() {
                       <TableHead>{t('Order Type')}</TableHead>
                       <TableHead>{t('User')}</TableHead>
                       <TableHead>{t('Payment Gateway')}</TableHead>
-                      <TableHead>金额</TableHead>
-                      <TableHead>交付内容</TableHead>
+                      <TableHead>{t('Amount')}</TableHead>
+                      <TableHead>{t('Delivered Content')}</TableHead>
                       <TableHead>{t('Status')}</TableHead>
                       <TableHead>{t('Referral Status')}</TableHead>
                       <TableHead>{t('Created At')}</TableHead>

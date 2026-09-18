@@ -452,14 +452,14 @@ export function useSidebarData(): SidebarData {
             configUrls: ['/image-tasks'],
           },
           {
-            title: 'GPT生图工作台',
+            title: t('GPT Image Workbench'),
             url: GPT_IMAGE_WORKBENCH_URL,
             icon: Sparkles,
             external: true,
             configUrls: ['sidebar:console.gpt_image'],
           },
           {
-            title: '模型状态监测',
+            title: t('Model Status Monitor'),
             url: 'https://cx.rkai6.com/',
             icon: ScanSearch,
             external: true,
@@ -499,7 +499,7 @@ export function useSidebarData(): SidebarData {
             icon: Share2,
           },
           {
-            title: '工单中心',
+            title: t('Ticket Center'),
             url: '/tickets',
             icon: Ticket,
             configUrls: ['/tickets'],
@@ -563,7 +563,7 @@ export function useSidebarData(): SidebarData {
             ],
           },
           {
-            title: '工单管理',
+            title: t('Ticket Management'),
             url: '/admin-tickets',
             icon: Ticket,
             configUrls: ['/admin-tickets'],

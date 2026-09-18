@@ -104,12 +104,12 @@ const OPERATIONS_SECTIONS = [
   },
   {
     id: 'telegram-push',
-    titleKey: 'Telegram 推送',
+    titleKey: 'Telegram Push',
     build: () => <TelegramPushSection />,
   },
   {
     id: 'tickets',
-    titleKey: '工单通知',
+    titleKey: 'Ticket Notifications',
     build: (settings: OperationsSettings) => (
       <TicketNotificationSection
         emailEnabled={settings.TicketEmailNotificationEnabled}

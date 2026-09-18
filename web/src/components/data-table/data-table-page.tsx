@@ -33,6 +33,8 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { useTranslation } from 'react-i18next'
+
 import { useMediaQuery } from '@/hooks'
 import { cn } from '@/lib/utils'
 
@@ -422,6 +424,7 @@ function SyncedHorizontalScrollbar(props: {
   scrollContainerRef: React.RefObject<HTMLDivElement | null>
   contentWidth: number
 }) {
+  const { t } = useTranslation()
   const scrollbarRef = React.useRef<HTMLDivElement | null>(null)
   const [metrics, setMetrics] = React.useState({
     clientWidth: 0,
@@ -497,7 +500,7 @@ function SyncedHorizontalScrollbar(props: {
         <div
           ref={scrollbarRef}
           className='h-3 w-full overflow-x-auto overflow-y-hidden'
-          aria-label='表格横向滚动条'
+          aria-label={t('Table horizontal scrollbar')}
         >
           <div style={{ width: metrics.scrollWidth, height: 1 }} />
         </div>

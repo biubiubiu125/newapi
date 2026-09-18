@@ -71,8 +71,8 @@ type PaymentMethodDialogProps = {
 }
 
 const PAYMENT_TYPES = [
-  { value: 'alipay', label: '支付宝', icon: getPaymentIcon('alipay') },
-  { value: 'wxpay', label: '微信支付', icon: getPaymentIcon('wxpay') },
+  { value: 'alipay', label: 'Alipay', icon: getPaymentIcon('alipay') },
+  { value: 'wxpay', label: 'WeChat Pay', icon: getPaymentIcon('wxpay') },
   { value: 'stripe', label: 'Stripe', icon: getPaymentIcon('stripe') },
   {
     value: 'usdt',
@@ -102,8 +102,8 @@ const getColorPreview = (color: string) => {
 }
 
 const COLOR_PRESETS = [
-  { value: '#1677FF', label: '支付宝蓝' },
-  { value: '#07C160', label: '微信绿' },
+  { value: '#1677FF', label: 'Alipay Blue' },
+  { value: '#07C160', label: 'WeChat Green' },
   { value: '#635BFF', label: 'Purple (Stripe)' },
   { value: '#1890FF', label: 'Sky Blue' },
   { value: '#52C41A', label: 'Lime Green' },
@@ -134,7 +134,14 @@ export function PaymentMethodDialog({
   const { t } = useTranslation()
   const isEditMode = !!editData
   const paymentMethodDialogSchema = createPaymentMethodDialogSchema(t)
-  const paymentTypeOptionsMemo = useMemo(() => paymentTypeOptions(), [])
+  const paymentTypeOptionsMemo = useMemo(
+    () =>
+      paymentTypeOptions().map((item) => ({
+        ...item,
+        label: t(item.label),
+      })),
+    [t]
+  )
 
   const form = useForm<PaymentMethodDialogFormValues>({
     resolver: zodResolver(paymentMethodDialogSchema),

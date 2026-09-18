@@ -90,7 +90,7 @@ export function ContentSettings() {
       defaultSection={CONTENT_DEFAULT_SECTION}
       getSectionContent={getContentSectionContent}
       getSectionMeta={getContentSectionMeta}
-      loadingMessage='正在加载控制台内容设置...'
+      loadingMessage='Loading console content settings...'
       resolveSettings={resolveContentSettings}
     />
   )

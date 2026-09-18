@@ -98,122 +98,124 @@ export const REMOVED_SIDEBAR_MODULES: Record<string, string[]> = {
 
 export const SIDEBAR_MODULES_META: Record<string, SidebarSectionMeta> = {
   chat: {
-    title: '聊天区域',
-    description: 'Playground 实验和实时对话。',
+    title: 'Chat Area',
+    description: 'Playground experiments and live conversations.',
     modules: {
       playground: {
-        title: '游乐场',
-        description: '用于测试提示词和模型。',
+        title: 'Playground',
+        description: 'Used to test prompts and models.',
       },
       chat: {
-        title: '聊天',
-        description: '访问历史对话并开始新的对话。',
+        title: 'Chat',
+        description: 'Access historical conversations and start new ones.',
       },
     },
   },
   console: {
-    title: '控制台区域',
-    description: '仪表板、令牌和使用分析。',
+    title: 'Console Area',
+    description: 'Dashboard, tokens, and usage analytics.',
     modules: {
       detail: {
-        title: '数据看板',
-        description: '聚合使用指标和趋势图表。',
+        title: 'Dashboard',
+        description: 'Aggregated usage metrics and trend charts.',
       },
       token: {
-        title: '令牌管理',
-        description: '创建、撤销和审计 API 令牌。',
+        title: 'Token Management',
+        description: 'Create, revoke, and audit API tokens.',
       },
       model_check: {
-        title: '模型状态监测',
-        description: '外部模型状态监测入口。',
+        title: 'Model Status Monitor',
+        description: 'External model status monitor entry.',
       },
       log: {
-        title: '使用日志',
-        description: '用于调查的详细请求日志。',
+        title: 'Usage Logs',
+        description: 'Detailed request logs for investigation.',
       },
       midjourney: {
-        title: '绘制日志',
-        description: 'Midjourney 风格图像任务历史。',
+        title: 'Drawing Logs',
+        description: 'Midjourney-style image task history.',
       },
       image_tasks: {
-        title: '生图工作台',
-        description: '内置文生图、图生图和生成历史。',
+        title: 'Image Workbench',
+        description:
+          'Built-in text-to-image, image-to-image, and generation history.',
       },
       gpt_image: {
-        title: 'GPT生图工作台',
-        description: '打开 GPT 生图工作台（新标签页）。',
+        title: 'GPT Image Workbench',
+        description: 'Open the GPT image workbench (new tab).',
       },
       task: {
-        title: '任务日志',
-        description: '队列工作的后台任务跟踪器。',
+        title: 'Task Logs',
+        description: 'Background task tracker for queued jobs.',
       },
     },
   },
   personal: {
-    title: '个人中心',
-    description: '钱包管理和个人偏好设置。',
+    title: 'Personal area',
+    description: 'Wallet management and personal preferences.',
     modules: {
       topup: {
-        title: '钱包',
-        description: '充值余额并查看账单历史。',
+        title: 'Wallet',
+        description: 'Top up balance and view billing history.',
       },
       referral: {
-        title: '推广中心',
-        description: '邀请链接、佣金和提现。',
+        title: 'Referral Center',
+        description: 'Invite links, commissions, and withdrawals.',
       },
       tickets: {
-        title: '工单中心',
-        description: '用户创建、查看和回复自己的工单。',
+        title: 'Ticket Center',
+        description: 'Users create, view, and reply to their own tickets.',
       },
       personal: {
-        title: '个人资料',
-        description: '个人设置和资料管理。',
+        title: 'Profile',
+        description: 'Personal settings and profile management.',
       },
     },
   },
   admin: {
-    title: '管理员区域',
-    description: '全局配置和管理工具。',
+    title: 'Admin area',
+    description: 'Global configuration and admin tools.',
     modules: {
       channel: {
-        title: '渠道',
-        description: '配置上游提供者和路由。',
+        title: 'Channels',
+        description: 'Configure upstream providers and routing.',
       },
       models: {
-        title: '模型',
-        description: '管理模型目录可见性和定价。',
+        title: 'Models',
+        description: 'Manage model catalog visibility and pricing.',
       },
       redemption: {
-        title: '兑换码',
-        description: '创建和审核邀请或额度代码。',
+        title: 'Redemption Codes',
+        description: 'Create and review invitation or quota codes.',
       },
       user: {
-        title: '用户',
-        description: '管理用户账户和角色。',
+        title: 'Users',
+        description: 'Manage user accounts and roles.',
       },
       referral: {
-        title: '推广管理',
-        description: '推广员、返佣和提现管理。',
+        title: 'Referral Management',
+        description: 'Manage affiliates, commissions, and withdrawals.',
       },
       ticket_management: {
-        title: '工单管理',
-        description: '管理员查看和处理所有用户工单。',
+        title: 'Ticket Management',
+        description: 'Admins review and handle all user tickets.',
       },
       setting: {
-        title: '系统设置',
-        description: '高级平台配置。',
+        title: 'System Settings',
+        description: 'Advanced platform configuration.',
       },
       subscription: {
-        title: '订阅管理',
-        description: '管理订阅套餐和定价。',
+        title: 'Subscription Management',
+        description: 'Manage subscription plans and pricing.',
       },
       recharge_audit: {
-        title: '订单管理',
-        description: '查看充值和订阅订单。',
+        title: 'Order Management',
+        description: 'Review top-up and subscription orders.',
       },
       task_plugins: {
-        title: '任务插件',
-        description: '管理上游任务插件、沙箱和内置任务协议。',
+        title: 'Task Plugins',
+        description:
+          'Manage upstream task plugins, sandboxes, and built-in task protocols.',
       },
     },
   },

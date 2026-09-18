@@ -323,7 +323,11 @@ export const channelFormSchema = z
       data.image_task_mode === 'async_task_bridge' &&
       !data.base_url?.trim()
     ) {
-      addRequiredIssue(ctx, 'base_url', '异步任务桥接模式必须填写基础地址')
+      addRequiredIssue(
+        ctx,
+        'base_url',
+        'Async task bridge mode requires a base URL'
+      )
     }
 
     if ([3, 18, 21, 39, 41, 49].includes(data.type) && !data.other?.trim()) {

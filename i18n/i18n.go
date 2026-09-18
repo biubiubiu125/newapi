@@ -197,15 +197,25 @@ func ParseAcceptLanguage(header string) string {
 	return normalizeLang(firstLang)
 }
 
+// CanonicalLang normalizes frontend and BCP-47 language tags onto supported codes.
+func CanonicalLang(lang string) string {
+	return normalizeLang(lang)
+}
+
 // normalizeLang normalizes language code to supported format
 func normalizeLang(lang string) string {
 	lang = strings.ToLower(strings.TrimSpace(lang))
+	lang = strings.ReplaceAll(lang, "_", "-")
+	compact := strings.ReplaceAll(lang, "-", "")
 
-	// Handle common variations
 	switch {
-	case strings.HasPrefix(lang, "zh-tw"):
+	case compact == "zhtw" ||
+		strings.HasPrefix(lang, "zh-tw") ||
+		strings.HasPrefix(lang, "zh-hk") ||
+		strings.HasPrefix(lang, "zh-mo") ||
+		strings.HasPrefix(lang, "zh-hant"):
 		return LangZhTW
-	case strings.HasPrefix(lang, "zh"):
+	case compact == "zhcn" || strings.HasPrefix(lang, "zh"):
 		return LangZhCN
 	case strings.HasPrefix(lang, "en"):
 		return LangEn

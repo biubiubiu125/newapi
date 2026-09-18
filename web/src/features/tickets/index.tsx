@@ -38,6 +38,7 @@ import {
   X,
 } from 'lucide-react'
 import { useEffect, useMemo, useRef, useState } from 'react'
+import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { SectionPageLayout } from '@/components/layout'
@@ -135,10 +136,10 @@ function formatTime(timestamp?: number) {
 
 function validateImageFile(file: File) {
   if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
-    return '只支持 png、jpg、jpeg、webp 图片'
+    return 'Only png, jpg, jpeg, and webp images are supported'
   }
   if (file.size > MAX_IMAGE_SIZE) {
-    return '单张图片不能超过 5MB'
+    return 'Each image must be 5MB or smaller'
   }
   return ''
 }
@@ -158,6 +159,7 @@ function TicketSelect<T extends string>({
   onValueChange: (value: T) => void
   placeholder?: string
 }) {
+  const { t } = useTranslation()
   return (
     <Select
       value={value}
@@ -171,7 +173,7 @@ function TicketSelect<T extends string>({
       <SelectContent>
         {options.map((option) => (
           <SelectItem key={option} value={option}>
-            {option}
+            {t(option)}
           </SelectItem>
         ))}
       </SelectContent>
@@ -188,6 +190,7 @@ function AttachmentPicker({
   setFiles: (files: TicketAttachmentInput[]) => void
   disabled?: boolean
 }) {
+  const { t } = useTranslation()
   const inputRef = useRef<HTMLInputElement | null>(null)
 
   const addFiles = (incoming: File[]) => {
@@ -195,11 +198,15 @@ function AttachmentPicker({
     for (const file of incoming) {
       const error = validateImageFile(file)
       if (error) {
-        toast.error(error)
+        toast.error(t(error))
         continue
       }
       if (files.length + accepted.length >= MAX_REPLY_IMAGES) {
-        toast.error(`单次最多上传 ${MAX_REPLY_IMAGES} 张图片`)
+        toast.error(
+          t('You can upload at most {{count}} images at a time', {
+            count: MAX_REPLY_IMAGES,
+          })
+        )
         break
       }
       accepted.push({ file, previewUrl: URL.createObjectURL(file) })
@@ -236,10 +243,12 @@ function AttachmentPicker({
           onClick={() => inputRef.current?.click()}
         >
           <Upload className='h-4 w-4' />
-          添加图片
+          {t('Add images')}
         </Button>
         <span className='text-muted-foreground text-xs'>
-          支持粘贴图片；单张 5MB，单次最多 5 张。
+          {t(
+            'You can paste images. Each image must be 5MB or smaller, and you can upload at most 5 at a time.'
+          )}
         </span>
       </div>
       {files.length > 0 && (
@@ -282,6 +291,7 @@ function TicketListItem({
   onSelect: () => void
   showUser?: boolean
 }) {
+  const { t } = useTranslation()
   return (
     <button
       type='button'
@@ -294,14 +304,16 @@ function TicketListItem({
         <div className='min-w-0'>
           <div className='truncate text-sm font-medium'>{ticket.title}</div>
           <div className='text-muted-foreground mt-1 text-xs'>
-            {ticket.number} · {ticket.category}
+            {ticket.number} · {t(ticket.category)}
           </div>
         </div>
-        <Badge variant={statusVariants[ticket.status]}>{ticket.status}</Badge>
+        <Badge variant={statusVariants[ticket.status]}>
+          {t(ticket.status)}
+        </Badge>
       </div>
       <div className='text-muted-foreground flex flex-wrap items-center gap-2 text-xs'>
         <Badge variant={priorityVariants[ticket.priority]}>
-          {ticket.priority}
+          {t(ticket.priority)}
         </Badge>
         <span>{formatTime(ticket.updated_at)}</span>
         {showUser && ticket.username && <span>{ticket.username}</span>}
@@ -315,6 +327,7 @@ function CreateTicketPanel({
 }: {
   onCreated: (ticket: Ticket) => void
 }) {
+  const { t } = useTranslation()
   const [title, setTitle] = useState('')
   const [category, setCategory] = useState<TicketCategory>('客服部门')
   const [priority, setPriority] = useState<TicketPriority>('普通')
@@ -338,7 +351,7 @@ function CreateTicketPanel({
         attachments: files.map((item) => item.file),
       }),
     onSuccess: (ticket) => {
-      toast.success('工单已创建')
+      toast.success(t('Ticket created'))
       revokePreviews(files)
       setTitle('')
       setCategory('客服部门')
@@ -348,16 +361,17 @@ function CreateTicketPanel({
       filesRef.current = []
       onCreated(ticket)
     },
-    onError: (error: Error) => toast.error(error.message || '工单创建失败'),
+    onError: (error: Error) =>
+      toast.error(error.message || t('Failed to create ticket')),
   })
 
   const submit = () => {
     if (!title.trim()) {
-      toast.error('请输入工单标题')
+      toast.error(t('Please enter the ticket title'))
       return
     }
     if (!content.trim()) {
-      toast.error('请输入工单内容')
+      toast.error(t('Please enter the ticket content'))
       return
     }
     createMutation.mutate()
@@ -368,22 +382,22 @@ function CreateTicketPanel({
       <div className='border-b px-4 py-3'>
         <div className='flex items-center gap-2 font-medium'>
           <Plus className='h-4 w-4' />
-          创建工单
+          {t('Create Ticket')}
         </div>
       </div>
       <div className='flex-1 space-y-4 overflow-y-auto p-4'>
         <div className='grid gap-2'>
-          <Label>标题</Label>
+          <Label>{t('Title')}</Label>
           <Input
             value={title}
             onChange={(event) => setTitle(event.target.value)}
             maxLength={200}
-            placeholder='请简要描述问题'
+            placeholder={t('Briefly describe the issue')}
           />
         </div>
         <div className='grid gap-3 sm:grid-cols-2'>
           <div className='grid gap-2'>
-            <Label>分类</Label>
+            <Label>{t('Category')}</Label>
             <TicketSelect
               value={category}
               options={TICKET_CATEGORIES}
@@ -391,7 +405,7 @@ function CreateTicketPanel({
             />
           </div>
           <div className='grid gap-2'>
-            <Label>优先级</Label>
+            <Label>{t('Priority')}</Label>
             <TicketSelect
               value={priority}
               options={TICKET_PRIORITIES}
@@ -409,18 +423,22 @@ function CreateTicketPanel({
                 file.type.startsWith('image/')
               )
               if (accepted.length === 0) {
-                toast.error('粘贴内容不是图片')
+                toast.error(t('Pasted content is not an image'))
                 return
               }
               const next = [...files]
               accepted.forEach((file) => {
                 const error = validateImageFile(file)
                 if (error) {
-                  toast.error(error)
+                  toast.error(t(error))
                   return
                 }
                 if (next.length >= MAX_REPLY_IMAGES) {
-                  toast.error(`单次最多上传 ${MAX_REPLY_IMAGES} 张图片`)
+                  toast.error(
+                    t('You can upload at most {{count}} images at a time', {
+                      count: MAX_REPLY_IMAGES,
+                    })
+                  )
                   return
                 }
                 next.push({ file, previewUrl: URL.createObjectURL(file) })
@@ -429,12 +447,12 @@ function CreateTicketPanel({
             }
           }}
         >
-          <Label>内容</Label>
+          <Label>{t('Content')}</Label>
           <Textarea
             value={content}
             onChange={(event) => setContent(event.target.value)}
             className='min-h-40 resize-none'
-            placeholder='请输入问题详情，可直接粘贴图片'
+            placeholder={t('Enter the issue details. You can paste images directly.')}
           />
           <AttachmentPicker files={files} setFiles={setFiles} />
         </div>
@@ -446,7 +464,7 @@ function CreateTicketPanel({
           onClick={submit}
         >
           <Send className='h-4 w-4' />
-          {createMutation.isPending ? '提交中...' : '提交工单'}
+          {createMutation.isPending ? t('Submitting...') : t('Submit Ticket')}
         </Button>
       </div>
     </div>
@@ -464,6 +482,7 @@ function TicketAttachments({
   attachments: TicketAttachment[]
   adminMode: boolean
 }) {
+  const { t } = useTranslation()
   const items = useMemo(
     () => attachments.filter((item) => item.message_id === messageId),
     [attachments, messageId]
@@ -493,7 +512,7 @@ function TicketAttachments({
 
     void loadAttachments().catch(() => {
       if (alive) setBlobUrls({})
-      toast.error('附件加载失败')
+      toast.error(t('Failed to load attachments'))
     })
 
     return () => {
@@ -520,7 +539,7 @@ function TicketAttachments({
               className='size-full object-cover'
             />
           ) : (
-            '加载中'
+            t('Loading')
           )}
         </a>
       ))}
@@ -537,13 +556,14 @@ function AssigneeSelect({
   disabled?: boolean
   onSelect: (payload: { assignee_id: number; assignee_name: string }) => void
 }) {
+  const { t } = useTranslation()
   const [open, setOpen] = useState(false)
   const [keyword, setKeyword] = useState('')
   const debouncedKeyword = useDebounce(keyword, 300)
   const currentLabel =
     ticket.assignee_id && ticket.assignee_name
       ? `#${ticket.assignee_id} ${ticket.assignee_name}`
-      : ticket.assignee_name || '未指派'
+      : ticket.assignee_name || t('Unassigned')
 
   const assigneesQuery = useQuery({
     queryKey: ['ticket-assignees', debouncedKeyword],
@@ -593,11 +613,11 @@ function AssigneeSelect({
           <CommandInput
             value={keyword}
             onValueChange={setKeyword}
-            placeholder='搜索管理员'
+            placeholder={t('Search admins')}
           />
           <CommandList>
             <CommandEmpty>
-              {assigneesQuery.isFetching ? '正在搜索...' : '没有可指派用户'}
+              {assigneesQuery.isFetching ? t('Searching...') : t('No assignable users')}
             </CommandEmpty>
             <CommandGroup>
               <CommandItem
@@ -614,7 +634,7 @@ function AssigneeSelect({
                     !ticket.assignee_id ? 'opacity-100' : 'opacity-0'
                   )}
                 />
-                <span>未指派</span>
+                <span>{t('Unassigned')}</span>
               </CommandItem>
               {users.map((user) => (
                 <CommandItem
@@ -641,7 +661,7 @@ function AssigneeSelect({
                     #{user.id} {user.username}
                   </span>
                   <Badge variant='outline'>
-                    {user.role >= ROLE.SUPER_ADMIN ? '超级管理员' : '管理员'}
+                    {user.role >= ROLE.SUPER_ADMIN ? t('Super Admin') : t('Admin')}
                   </Badge>
                 </CommandItem>
               ))}
@@ -662,6 +682,7 @@ function TicketDetailPanel({
   adminMode: boolean
   onChanged: () => void
 }) {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const [reply, setReply] = useState('')
   const [files, setFiles] = useState<TicketAttachmentInput[]>([])
@@ -700,32 +721,32 @@ function TicketDetailPanel({
         adminMode
       ),
     onSuccess: () => {
-      toast.success('回复已发送')
+      toast.success(t('Reply sent'))
       revokePreviews(files)
       setReply('')
       setFiles([])
       filesRef.current = []
       refreshDetail()
     },
-    onError: (error: Error) => toast.error(error.message || '回复发送失败'),
+    onError: (error: Error) => toast.error(error.message || t('Failed to send reply')),
   })
 
   const closeMutation = useMutation({
     mutationFn: () => closeTicket(ticketId!, adminMode),
     onSuccess: () => {
-      toast.success('工单已关闭')
+      toast.success(t('Ticket closed'))
       refreshDetail()
     },
-    onError: (error: Error) => toast.error(error.message || '工单关闭失败'),
+    onError: (error: Error) => toast.error(error.message || t('Failed to close ticket')),
   })
 
   const reopenMutation = useMutation({
     mutationFn: () => reopenTicket(ticketId!, adminMode),
     onSuccess: () => {
-      toast.success('工单已重新打开')
+      toast.success(t('Ticket reopened'))
       refreshDetail()
     },
-    onError: (error: Error) => toast.error(error.message || '工单重新打开失败'),
+    onError: (error: Error) => toast.error(error.message || t('Failed to reopen ticket')),
   })
 
   const updateMutation = useMutation({
@@ -737,16 +758,16 @@ function TicketDetailPanel({
       assignee_name?: string
     }) => updateTicket(ticketId!, payload),
     onSuccess: () => {
-      toast.success('工单已更新')
+      toast.success(t('Ticket updated'))
       refreshDetail()
     },
-    onError: (error: Error) => toast.error(error.message || '工单更新失败'),
+    onError: (error: Error) => toast.error(error.message || t('Failed to update ticket')),
   })
 
   if (!ticketId) {
     return (
       <div className='border-border text-muted-foreground flex h-full min-h-[360px] items-center justify-center rounded-md border'>
-        请选择工单
+        {t('Select a ticket')}
       </div>
     )
   }
@@ -754,7 +775,7 @@ function TicketDetailPanel({
   if (detailQuery.isLoading || !ticket) {
     return (
       <div className='border-border text-muted-foreground flex h-full min-h-[360px] items-center justify-center rounded-md border'>
-        {detailQuery.isError ? '工单不存在或无权访问' : '正在加载工单...'}
+        {detailQuery.isError ? t('Ticket does not exist or you do not have access') : t('Loading ticket...')}
       </div>
     )
   }
@@ -776,9 +797,10 @@ function TicketDetailPanel({
               </Badge>
             </div>
             <div className='text-muted-foreground mt-1 text-xs'>
-              {ticket.number} · {ticket.category} · 创建于{' '}
-              {formatTime(ticket.created_at)}
-              {adminMode && ` · 用户 ${ticket.username || ticket.user_id}`}
+              {ticket.number} · {t(ticket.category)} ·{' '}
+              {t('Created at {{time}}', { time: formatTime(ticket.created_at) })}
+              {adminMode &&
+                ` · ${t('User')} ${ticket.username || ticket.user_id}`}
             </div>
           </div>
           <div className='flex flex-wrap items-center gap-2'>
@@ -788,7 +810,7 @@ function TicketDetailPanel({
               onClick={() => detailQuery.refetch()}
             >
               <RefreshCw className='h-4 w-4' />
-              刷新
+              {t('Refresh')}
             </Button>
             {isClosed ? (
               <Button
@@ -798,7 +820,7 @@ function TicketDetailPanel({
                 disabled={reopenMutation.isPending}
               >
                 <RotateCcw className='h-4 w-4' />
-                重新打开
+                {t('Reopen')}
               </Button>
             ) : (
               <Button
@@ -808,7 +830,7 @@ function TicketDetailPanel({
                 disabled={closeMutation.isPending}
               >
                 <Lock className='h-4 w-4' />
-                关闭工单
+                {t('Close Ticket')}
               </Button>
             )}
           </div>
@@ -816,7 +838,7 @@ function TicketDetailPanel({
         {adminMode && (
           <div className='mt-4 grid gap-3 lg:grid-cols-4'>
             <div className='grid gap-1'>
-              <Label>分类</Label>
+              <Label>{t('Category')}</Label>
               <TicketSelect
                 value={ticket.category}
                 options={TICKET_CATEGORIES}
@@ -826,7 +848,7 @@ function TicketDetailPanel({
               />
             </div>
             <div className='grid gap-1'>
-              <Label>优先级</Label>
+              <Label>{t('Priority')}</Label>
               <TicketSelect
                 value={ticket.priority}
                 options={TICKET_PRIORITIES}
@@ -836,7 +858,7 @@ function TicketDetailPanel({
               />
             </div>
             <div className='grid gap-1'>
-              <Label>状态</Label>
+              <Label>{t('Status')}</Label>
               <TicketSelect
                 value={ticket.status}
                 options={TICKET_STATUSES}
@@ -844,7 +866,7 @@ function TicketDetailPanel({
               />
             </div>
             <div className='grid gap-1'>
-              <Label>指派处理人</Label>
+              <Label>{t('Assignee')}</Label>
               <AssigneeSelect
                 ticket={ticket}
                 disabled={updateMutation.isPending}
@@ -869,7 +891,7 @@ function TicketDetailPanel({
                 <Badge
                   variant={message.sender === 'admin' ? 'default' : 'secondary'}
                 >
-                  {message.sender === 'admin' ? '管理员' : '用户'}
+                  {message.sender === 'admin' ? t('Admin') : t('User')}
                 </Badge>
                 <span>{message.username}</span>
               </div>
@@ -900,11 +922,15 @@ function TicketDetailPanel({
             if (!file.type.startsWith('image/')) return
             const error = validateImageFile(file)
             if (error) {
-              toast.error(error)
+              toast.error(t(error))
               return
             }
             if (next.length >= MAX_REPLY_IMAGES) {
-              toast.error(`单次最多上传 ${MAX_REPLY_IMAGES} 张图片`)
+              toast.error(
+                t('You can upload at most {{count}} images at a time', {
+                  count: MAX_REPLY_IMAGES,
+                })
+              )
               return
             }
             next.push({ file, previewUrl: URL.createObjectURL(file) })
@@ -915,7 +941,7 @@ function TicketDetailPanel({
         {isClosed ? (
           <div className='text-muted-foreground flex items-center gap-2 text-sm'>
             <CheckCircle2 className='h-4 w-4' />
-            工单已关闭，重新打开后可以继续回复。
+            {t('This ticket is closed. Reopen it to continue replying.')}
           </div>
         ) : (
           <div className='space-y-3'>
@@ -923,21 +949,21 @@ function TicketDetailPanel({
               value={reply}
               onChange={(event) => setReply(event.target.value)}
               className='bg-background min-h-24 resize-none'
-              placeholder='输入回复内容，可直接粘贴图片'
+              placeholder={t('Enter a reply. You can paste images directly.')}
             />
             <AttachmentPicker files={files} setFiles={setFiles} />
             <Button
               disabled={replyMutation.isPending}
               onClick={() => {
                 if (!reply.trim()) {
-                  toast.error('请输入回复内容')
+                  toast.error(t('Please enter a reply'))
                   return
                 }
                 replyMutation.mutate()
               }}
             >
               <MessageCircleReply className='h-4 w-4' />
-              {replyMutation.isPending ? '发送中...' : '发送回复'}
+              {replyMutation.isPending ? t('Sending...') : t('Send Reply')}
             </Button>
           </div>
         )}
@@ -1011,6 +1037,7 @@ function TicketListPanel({
   onPrevPage: () => void
   onNextPage: () => void
 }) {
+  const { t } = useTranslation()
   return (
     <div className='border-border flex min-h-[320px] w-full flex-col rounded-md border'>
       <div className='border-b p-3'>
@@ -1023,12 +1050,12 @@ function TicketListPanel({
             {onCreate && (
               <Button size='sm' onClick={onCreate}>
                 <Plus className='h-4 w-4' />
-                创建工单
+                {t('Create Ticket')}
               </Button>
             )}
             <Button size='sm' variant='outline' onClick={onRefresh}>
               <RefreshCw className='h-4 w-4' />
-              刷新
+              {t('Refresh')}
             </Button>
           </div>
         </div>
@@ -1045,7 +1072,7 @@ function TicketListPanel({
               <Input
                 value={keyword}
                 onChange={(event) => onKeywordChange(event.target.value)}
-                placeholder='搜索编号、标题、用户名'
+                placeholder={t('Search number, title, or username')}
               />
             )}
             <Select
@@ -1055,13 +1082,13 @@ function TicketListPanel({
               }}
             >
               <SelectTrigger>
-                <SelectValue placeholder='全部状态' />
+                <SelectValue placeholder={t('All statuses')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value='all'>全部状态</SelectItem>
+                <SelectItem value='all'>{t('All statuses')}</SelectItem>
                 {TICKET_STATUSES.map((status) => (
                   <SelectItem key={status} value={status}>
-                    {status}
+                    {t(status)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1073,13 +1100,13 @@ function TicketListPanel({
               }}
             >
               <SelectTrigger>
-                <SelectValue placeholder='全部分类' />
+                <SelectValue placeholder={t('All categories')} />
               </SelectTrigger>
               <SelectContent>
-                <SelectItem value='all'>全部分类</SelectItem>
+                <SelectItem value='all'>{t('All categories')}</SelectItem>
                 {TICKET_CATEGORIES.map((category) => (
                   <SelectItem key={category} value={category}>
-                    {category}
+                    {t(category)}
                   </SelectItem>
                 ))}
               </SelectContent>
@@ -1095,13 +1122,13 @@ function TicketListPanel({
                   }}
                 >
                   <SelectTrigger>
-                    <SelectValue placeholder='全部优先级' />
+                    <SelectValue placeholder={t('All priorities')} />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value='all'>全部优先级</SelectItem>
+                    <SelectItem value='all'>{t('All priorities')}</SelectItem>
                     {TICKET_PRIORITIES.map((priority) => (
                       <SelectItem key={priority} value={priority}>
-                        {priority}
+                        {t(priority)}
                       </SelectItem>
                     ))}
                   </SelectContent>
@@ -1112,19 +1139,19 @@ function TicketListPanel({
                     onAssigneeFilterChange(event.target.value)
                   }
                   inputMode='numeric'
-                  placeholder='处理人 ID'
+                  placeholder={t('Assignee ID')}
                 />
                 <Input
                   value={startDate}
                   onChange={(event) => onStartDateChange(event.target.value)}
                   type='date'
-                  aria-label='开始日期'
+                  aria-label={t('Start date')}
                 />
                 <Input
                   value={endDate}
                   onChange={(event) => onEndDateChange(event.target.value)}
                   type='date'
-                  aria-label='结束日期'
+                  aria-label={t('End date')}
                 />
               </>
             )}
@@ -1134,15 +1161,15 @@ function TicketListPanel({
       <div className='flex-1 overflow-y-auto'>
         {listQuery.isLoading ? (
           <div className='text-muted-foreground p-4 text-sm'>
-            正在加载工单...
+            {t('Loading ticket...')}
           </div>
         ) : listQuery.isError ? (
           <div className='text-destructive flex h-full min-h-[180px] items-center justify-center p-4 text-sm'>
-            工单列表加载失败，请稍后重试
+            {t('Ticket list failed to load. Please try again later.')}
           </div>
         ) : tickets.length === 0 ? (
           <div className='text-muted-foreground flex h-full min-h-[180px] items-center justify-center p-4 text-sm'>
-            暂无工单
+            {t('No tickets yet')}
           </div>
         ) : (
           <>
@@ -1157,7 +1184,11 @@ function TicketListPanel({
             ))}
             <div className='border-t p-3'>
               <div className='text-muted-foreground mb-2 text-center text-xs'>
-                第 {ticketPage} / {ticketTotalPages} 页，共 {ticketTotal} 个工单
+                {t('Page {{page}} / {{totalPages}}, {{total}} tickets', {
+                  page: ticketPage,
+                  totalPages: ticketTotalPages,
+                  total: ticketTotal,
+                })}
               </div>
               <div className='grid grid-cols-2 gap-2'>
                 <Button
@@ -1168,7 +1199,7 @@ function TicketListPanel({
                   onClick={onPrevPage}
                   disabled={!hasPrevTicketPage || listQuery.isFetching}
                 >
-                  上一页
+                  {t('Previous')}
                 </Button>
                 <Button
                   type='button'
@@ -1178,7 +1209,7 @@ function TicketListPanel({
                   onClick={onNextPage}
                   disabled={!hasNextTicketPage || listQuery.isFetching}
                 >
-                  下一页
+                  {t('Next')}
                 </Button>
               </div>
             </div>
@@ -1190,19 +1221,22 @@ function TicketListPanel({
 }
 
 function TicketSecurityNote() {
+  const { t } = useTranslation()
   return (
     <div className='border-border bg-muted/20 rounded-md border p-4'>
       <ImagePlus className='text-muted-foreground mb-3 h-6 w-6' />
-      <div className='font-medium'>附件安全规则</div>
+      <div className='font-medium'>{t('Attachment security rules')}</div>
       <div className='text-muted-foreground mt-2 text-sm leading-6'>
-        工单仅接受 png、jpg、jpeg、webp 图片。单张图片不超过 5MB，单次回复最多 5
-        张；不接受压缩包、文档、脚本或可执行文件。
+        {t(
+          'Tickets only accept png, jpg, jpeg, and webp images. Each image must be 5MB or smaller, and each reply can include at most 5 images. Archives, documents, scripts, and executables are not accepted.'
+        )}
       </div>
     </div>
   )
 }
 
 export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const initialSearchParams = useMemo(() => {
     if (typeof window === 'undefined') return new URLSearchParams()
@@ -1401,10 +1435,10 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
   const goPrevTicketPage = () => setTicketPage((page) => Math.max(1, page - 1))
   const goNextTicketPage = () =>
     setTicketPage((page) => Math.min(ticketTotalPages, page + 1))
-  const title = adminMode ? '工单管理' : '工单中心'
+  const title = adminMode ? t('Ticket Management') : t('Ticket Center')
   const description = adminMode
-    ? '查看和处理用户提交的工单。'
-    : '创建、查看和回复自己的工单。'
+    ? t('Review and handle tickets submitted by users.')
+    : t('Create, view, and reply to your own tickets.')
 
   return (
     <SectionPageLayout>
@@ -1415,7 +1449,7 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
       <SectionPageLayout.Content>
         <div className='grid gap-4'>
           <TicketListPanel
-            title='工单列表'
+            title={t('Ticket List')}
             tickets={tickets}
             selectedId={selectedId}
             listQuery={listQuery}
@@ -1455,11 +1489,11 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
         >
           <SheetContent className='w-full sm:max-w-5xl'>
             <SheetHeader>
-              <SheetTitle>{adminMode ? '处理工单' : '工单详情'}</SheetTitle>
+              <SheetTitle>{adminMode ? t('Handle Ticket') : t('Ticket Details')}</SheetTitle>
               <SheetDescription>
                 {adminMode
-                  ? '查看回复记录，继续回复或调整工单状态。'
-                  : '查看回复记录，继续回复工单。'}
+                  ? t('View replies, continue the conversation, or update the ticket status.')
+                  : t('View replies and continue the conversation.')}
               </SheetDescription>
             </SheetHeader>
             <div className='min-h-0 flex-1 px-4 pb-4'>
@@ -1479,9 +1513,11 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
           >
             <SheetContent className='w-full sm:max-w-xl'>
               <SheetHeader>
-                <SheetTitle>创建工单</SheetTitle>
+                <SheetTitle>{t('Create Ticket')}</SheetTitle>
                 <SheetDescription>
-                  提交问题描述和图片附件，客服或财务人员会在工单内回复。
+                  {t(
+                    'Submit a problem description and image attachments. Support or finance staff will reply in the ticket.'
+                  )}
                 </SheetDescription>
               </SheetHeader>
               <div className='min-h-0 flex-1 px-4 pb-4'>

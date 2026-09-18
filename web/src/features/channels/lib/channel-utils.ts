@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { t } from 'i18next'
+
 import { formatCurrencyFromUSD, formatQuotaWithCurrency } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
 
@@ -483,7 +485,7 @@ export function formatRelativeTime(
     }
     return formatted
   } catch {
-    return '未知'
+    return t('Unknown')
   }
 }
 
@@ -498,7 +500,7 @@ export function formatTimestamp(timestamp: number): string {
   try {
     return formatTimestampToDate(timestamp)
   } catch {
-    return '无效日期'
+    return t('Invalid date')
   }
 }
 
