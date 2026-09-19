@@ -55,7 +55,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { toIntlLocale } from '@/i18n/languages'
+import { resolveIntlLocale } from '@/i18n/languages'
 import { formatTimestampRelative, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -438,7 +438,7 @@ function SystemInstancesList(props: SystemInstancesTableProps) {
                   {formatTimestampRelative(
                     instance.last_seen_at,
                     'seconds',
-                    toIntlLocale(i18n.language)
+                    resolveIntlLocale(i18n.language)
                   )}
                 </TableCell>
                 <TableCell className='py-2.5 pr-4 text-right align-middle'>

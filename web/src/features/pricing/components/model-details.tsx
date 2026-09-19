@@ -55,6 +55,7 @@ import {
   formatUptimePct,
   getSuccessRateTextClass,
 } from '@/features/performance-metrics/lib/format'
+import { currentIntlLocale } from '@/i18n/languages'
 import { getLobeIcon } from '@/lib/lobe-icon'
 import { cn } from '@/lib/utils'
 
@@ -139,7 +140,10 @@ function formatCatalogYearMonth(value?: string): string {
   const month = Number(monthStr)
   if (!Number.isFinite(year) || !Number.isFinite(month)) return value
   const date = new Date(Date.UTC(year, month - 1, 1))
-  return date.toLocaleString(undefined, { year: 'numeric', month: 'short' })
+  return date.toLocaleString(currentIntlLocale(), {
+    year: 'numeric',
+    month: 'short',
+  })
 }
 
 function normalizeCatalogItems(items?: readonly string[]): string[] {

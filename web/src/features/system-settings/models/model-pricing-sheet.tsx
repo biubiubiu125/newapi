@@ -246,9 +246,9 @@ export const ModelPricingEditorPanel = forwardRef<
       ),
     [pricingModels]
   )
-  const taskUsageSchema =
-    usageSchema ?? usageSchemaByModel.get(watchedValues.name.trim())
-  const taskUsageExamples = usageExamplesByModel.get(watchedValues.name.trim())
+  const modelName = (watchedValues.name ?? '').trim()
+  const taskUsageSchema = usageSchema ?? usageSchemaByModel.get(modelName)
+  const taskUsageExamples = usageExamplesByModel.get(modelName)
   const defaultTaskBillingExpr = useMemo(
     () =>
       taskUsageSchema
@@ -583,7 +583,7 @@ export const ModelPricingEditorPanel = forwardRef<
   const buildSubmitData = useCallback(
     (values: ModelPricingFormValues) => {
       const data: ModelRatioData = {
-        name: values.name.trim(),
+        name: (values.name ?? '').trim(),
         billingMode: pricingMode,
         price: values.price || '',
         ratio: values.ratio || '',
@@ -938,7 +938,7 @@ export const ModelPricingEditorPanel = forwardRef<
                 {onSave && (
                   <Button
                     type='button'
-                    onClick={onSave}
+                    onClick={() => void onSave()}
                     disabled={isSaving}
                     className='w-full sm:w-auto'
                   >

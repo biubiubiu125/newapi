@@ -17,9 +17,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import axios, { type AxiosRequestConfig } from 'axios'
-import { t } from 'i18next'
+import i18n, { t } from 'i18next'
 import { toast } from 'sonner'
 
+import { resolveIntlLocale } from '@/i18n/languages'
 import {
   applyAuthRotation,
   clearAuthentication,
@@ -146,5 +147,8 @@ api.interceptors.request.use((config) => {
   if (accessToken) {
     config.headers.Authorization = `Bearer ${accessToken}`
   }
+  config.headers['Accept-Language'] = resolveIntlLocale(
+    i18n.resolvedLanguage || i18n.language
+  )
   return config
 })

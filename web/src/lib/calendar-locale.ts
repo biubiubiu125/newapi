@@ -16,24 +16,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import dayjs from 'dayjs'
-import 'dayjs/locale/en'
-import 'dayjs/locale/fr'
-import 'dayjs/locale/ja'
-import 'dayjs/locale/ru'
-import 'dayjs/locale/vi'
-import 'dayjs/locale/zh-cn'
-import 'dayjs/locale/zh-tw'
-import relativeTime from 'dayjs/plugin/relativeTime'
+import { enUS, fr, ja, ru, vi, zhCN, zhTW } from 'react-day-picker/locale'
 
-import { dayjsLocaleForLanguage } from '@/i18n/languages'
+import {
+  normalizeInterfaceLanguage,
+  type InterfaceLanguageCode,
+} from '@/i18n/languages'
 
-dayjs.extend(relativeTime)
-
-export function applyDayjsLocale(language?: string | null): string {
-  const locale = dayjsLocaleForLanguage(language)
-  dayjs.locale(locale)
-  return locale
+const calendarLocales: Record<InterfaceLanguageCode, typeof enUS> = {
+  en: enUS,
+  zhCN,
+  zhTW,
+  fr,
+  ru,
+  ja,
+  vi,
 }
 
-export default dayjs
+export function resolveDayPickerLocale(language?: string | null): typeof enUS {
+  return calendarLocales[normalizeInterfaceLanguage(language)]
+}

@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { currentIntlLocale } from '@/i18n/languages'
+
 // ----------------------------------------------------------------------------
 // Rankings formatting helpers
 // ----------------------------------------------------------------------------
@@ -35,7 +37,7 @@ export function formatTokens(value: number): string {
   if (value >= 1_000) {
     return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}K`
   }
-  return value.toLocaleString()
+  return value.toLocaleString(currentIntlLocale())
 }
 
 /** Format a 0..1 share as a percentage with two decimals. */
@@ -49,7 +51,7 @@ export function formatShare(share: number): string {
 export function formatReleaseDate(iso: string): string {
   const ts = Date.parse(iso)
   if (!Number.isFinite(ts)) return iso
-  return new Date(ts).toLocaleDateString(undefined, {
+  return new Date(ts).toLocaleDateString(currentIntlLocale(), {
     year: 'numeric',
     month: 'short',
     day: 'numeric',

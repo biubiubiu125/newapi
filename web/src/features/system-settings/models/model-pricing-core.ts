@@ -24,7 +24,7 @@ import { formatPricingNumber } from './pricing-format'
 
 export const createModelPricingSchema = (t: (key: string) => string) =>
   z.object({
-    name: z.string().min(1, t('Model name is required')),
+    name: z.string().trim().min(1, t('Model name is required')),
     price: z.string().optional(),
     ratio: z.string().optional(),
     cacheRatio: z.string().optional(),

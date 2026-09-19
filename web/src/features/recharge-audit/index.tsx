@@ -41,6 +41,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { formatSiteCreditAmount } from '@/features/wallet/lib'
+import { currentIntlLocale } from '@/i18n/languages'
 import { formatQuota } from '@/lib/format'
 
 import {
@@ -120,7 +121,7 @@ function paidAmountDetail(
 
 function formatTime(timestamp: number) {
   if (!timestamp) return '-'
-  return new Date(timestamp * 1000).toLocaleString()
+  return new Date(timestamp * 1000).toLocaleString(currentIntlLocale())
 }
 
 function orderTypeLabel(orderType: string, t: (key: string) => string) {
@@ -141,9 +142,7 @@ function formatOrderDelivery(
   if (order.order_type === 'subscription') {
     const parts: string[] = []
     if (order.product_name) {
-      parts.push(
-        t('Subscription plan: {{name}}', { name: order.product_name })
-      )
+      parts.push(t('Subscription plan: {{name}}', { name: order.product_name }))
     }
     if (order.credit_quota > 0) {
       parts.push(

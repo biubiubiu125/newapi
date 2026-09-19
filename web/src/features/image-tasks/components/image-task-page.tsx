@@ -55,6 +55,7 @@ import { Spinner } from '@/components/ui/spinner'
 import { Textarea } from '@/components/ui/textarea'
 import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 import { API_KEY_STATUS } from '@/features/keys/constants'
+import { currentIntlLocale } from '@/i18n/languages'
 
 import {
   cancelImageTask,
@@ -237,7 +238,7 @@ function getStatusLabel(status: string, t: (key: string) => string): string {
 
 function formatTaskTime(timestamp: number): string {
   if (!timestamp) return '-'
-  return new Intl.DateTimeFormat(undefined, {
+  return new Intl.DateTimeFormat(currentIntlLocale(), {
     dateStyle: 'short',
     timeStyle: 'medium',
   }).format(timestamp * 1000)
@@ -467,9 +468,9 @@ export function ImageTaskPage() {
   )
   const autoResultInFlightRef = useRef(0)
   const autoResultErrorNotifiedRef = useRef<Set<string>>(new Set())
-  const resultPreviewObjectUrlsRef = useRef<Record<string, string[] | undefined>>(
-    {}
-  )
+  const resultPreviewObjectUrlsRef = useRef<
+    Record<string, string[] | undefined>
+  >({})
   const [autoResultRetryTick, setAutoResultRetryTick] = useState(0)
   const resolvedKeysRef = useRef<Record<number, string>>({})
   const pendingKeyRequests = useRef<
@@ -489,7 +490,9 @@ export function ImageTaskPage() {
 
   const updateTaskRecords = useCallback(
     (
-      updater: (previous: Record<string, TaskRecord>) => Record<string, TaskRecord>
+      updater: (
+        previous: Record<string, TaskRecord>
+      ) => Record<string, TaskRecord>
     ) => {
       const next = updater(taskRecordsRef.current)
       taskRecordsRef.current = next
@@ -883,12 +886,7 @@ export function ImageTaskPage() {
         return !retryable
       }
     },
-    [
-      resolveKey,
-      setTaskResultPreviewObjectUrls,
-      t,
-      updateTaskRecords,
-    ]
+    [resolveKey, setTaskResultPreviewObjectUrls, t, updateTaskRecords]
   )
 
   useEffect(() => {
@@ -1142,7 +1140,9 @@ function ImageTaskForm({
           )
         } else if (createdCount > 1) {
           toast.success(
-            t('Created {{count}} image generation tasks', { count: createdCount })
+            t('Created {{count}} image generation tasks', {
+              count: createdCount,
+            })
           )
         } else {
           toast.success(t('Image generation task created'))

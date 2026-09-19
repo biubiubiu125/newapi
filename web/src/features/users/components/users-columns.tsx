@@ -31,6 +31,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { currentIntlLocale } from '@/i18n/languages'
 import { formatQuota, formatTimestamp } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -200,7 +201,8 @@ export function useUsersColumns(): ColumnDef<User>[] {
             </TooltipTrigger>
             <TooltipContent>
               <p className='text-xs'>
-                {t('Requests:')} {requestCount.toLocaleString()}
+                {t('Requests:')}{' '}
+                {requestCount.toLocaleString(currentIntlLocale())}
               </p>
             </TooltipContent>
           </Tooltip>

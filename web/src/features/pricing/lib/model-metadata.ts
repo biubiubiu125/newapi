@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { currentIntlLocale } from '@/i18n/languages'
+
 import type { Modality, ModelCapability, PricingModel } from '../types'
 import { hashStringToSeed, seededRandom } from './seed'
 
@@ -378,7 +380,10 @@ export function formatYearMonth(value: string): string {
   const month = Number(monthStr)
   if (!Number.isFinite(year) || !Number.isFinite(month)) return value
   const date = new Date(Date.UTC(year, month - 1, 1))
-  return date.toLocaleString(undefined, { year: 'numeric', month: 'short' })
+  return date.toLocaleString(currentIntlLocale(), {
+    year: 'numeric',
+    month: 'short',
+  })
 }
 
 // ---------------------------------------------------------------------------

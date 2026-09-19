@@ -46,6 +46,7 @@ import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { currentIntlLocale } from '@/i18n/languages'
 import { cn } from '@/lib/utils'
 
 import { confirmPaymentCompliance } from '../api'
@@ -841,7 +842,7 @@ export function PaymentSettingsSection({
               time: complianceDefaults.confirmedAt
                 ? new Date(
                     complianceDefaults.confirmedAt * 1000
-                  ).toLocaleString()
+                  ).toLocaleString(currentIntlLocale())
                 : '-',
               userId: complianceDefaults.confirmedBy || '-',
             })}

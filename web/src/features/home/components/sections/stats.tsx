@@ -19,6 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import { useRef, useEffect, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { currentIntlLocale } from '@/i18n/languages'
+
 interface CounterProps {
   end: number
   suffix?: string
@@ -34,7 +36,9 @@ function Counter(props: CounterProps) {
 
   const formatValue = useCallback(
     (v: number) =>
-      decimals > 0 ? v.toFixed(decimals) : Math.round(v).toLocaleString(),
+      decimals > 0
+        ? v.toFixed(decimals)
+        : Math.round(v).toLocaleString(currentIntlLocale()),
     [decimals]
   )
 

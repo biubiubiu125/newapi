@@ -41,3 +41,27 @@ func TestTranslateZhTWFrontendCodeUsesTraditional(t *testing.T) {
 		t.Fatalf("zhTW should not use simplified %q", cn)
 	}
 }
+
+func TestDefaultLangIsSimplifiedChinese(t *testing.T) {
+	if DefaultLang != LangZhCN {
+		t.Fatalf("DefaultLang=%q want %q", DefaultLang, LangZhCN)
+	}
+}
+
+func TestNormalizeLangUnknownFallsBackToSimplifiedChinese(t *testing.T) {
+	cases := []string{"", "fr", "ja", "pt-BR"}
+	for _, in := range cases {
+		if got := normalizeLang(in); got != LangZhCN {
+			t.Fatalf("normalizeLang(%q)=%q want %q", in, got, LangZhCN)
+		}
+	}
+}
+
+func TestParseAcceptLanguageEmptyUsesSimplifiedChinese(t *testing.T) {
+	if got := ParseAcceptLanguage(""); got != LangZhCN {
+		t.Fatalf("ParseAcceptLanguage empty=%q want %q", got, LangZhCN)
+	}
+	if got := ParseAcceptLanguage("en-US,en;q=0.9"); got != LangEn {
+		t.Fatalf("ParseAcceptLanguage en-US=%q want %q", got, LangEn)
+	}
+}

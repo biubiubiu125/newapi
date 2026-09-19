@@ -23,7 +23,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { toIntlLocale } from '@/i18n/languages'
+import { resolveIntlLocale } from '@/i18n/languages'
 import { formatTimestampRelative, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -97,7 +97,7 @@ export function ActivityTimeCell(props: {
   layout?: 'rows' | 'columns'
 }) {
   const { t, i18n } = useTranslation()
-  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const locale = resolveIntlLocale(i18n.resolvedLanguage || i18n.language)
 
   return (
     <div

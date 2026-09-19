@@ -198,7 +198,7 @@ export function ComboboxInput({
         aria-haspopup='listbox'
         aria-autocomplete='list'
         autoComplete='off'
-        placeholder={placeholder}
+        placeholder={t(placeholder)}
         value={displayValue}
         onChange={(e) => {
           const nextValue = e.target.value

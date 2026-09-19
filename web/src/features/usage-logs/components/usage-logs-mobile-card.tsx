@@ -34,6 +34,7 @@ import {
   EmptyTitle,
 } from '@/components/ui/empty'
 import { Skeleton } from '@/components/ui/skeleton'
+import { currentIntlLocale } from '@/i18n/languages'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
@@ -42,13 +43,13 @@ import { LOG_TYPE_ENUM } from '../constants'
 import type { UsageLog } from '../data/schema'
 import { parseLogOther } from '../lib/format'
 import { getLogUserDisplayName, openLogUserInfo } from '../lib/log-user'
-import { CommonLogMobileCard } from './common-log-mobile-card'
 import {
   getLogTypeConfig,
   isDisplayableLogType,
   isTimingLogType,
 } from '../lib/utils'
 import type { LogCategory } from '../types'
+import { CommonLogMobileCard } from './common-log-mobile-card'
 import { StreamTpsCell, TimingMetricsCell } from './timing-metrics-cell'
 import { useUsageLogsContext } from './usage-logs-provider'
 
@@ -219,17 +220,21 @@ function MobileTokensField({ log }: { log: UsageLog }) {
     <div className='bg-muted/20 min-w-0 rounded-md px-2 py-1.5'>
       <div className='flex flex-col gap-0.5'>
         <span className='font-mono text-xs font-medium tabular-nums'>
-          {promptTokens.toLocaleString()} / {completionTokens.toLocaleString()}
+          {promptTokens.toLocaleString(currentIntlLocale())} /{' '}
+          {completionTokens.toLocaleString(currentIntlLocale())}
         </span>
         {showCache ? (
           <div className='text-muted-foreground flex flex-wrap items-center gap-x-1.5 gap-y-0.5 text-[11px] leading-none'>
             {cacheReadTokens > 0 && (
               <span>
-                {t('Cache')}↓ {cacheReadTokens.toLocaleString()}
+                {t('Cache')}↓{' '}
+                {cacheReadTokens.toLocaleString(currentIntlLocale())}
               </span>
             )}
             {cacheWriteTokens > 0 && (
-              <span>↑ {cacheWriteTokens.toLocaleString()}</span>
+              <span>
+                ↑ {cacheWriteTokens.toLocaleString(currentIntlLocale())}
+              </span>
             )}
           </div>
         ) : (

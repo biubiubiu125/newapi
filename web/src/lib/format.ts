@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { currentIntlLocale } from '@/i18n/languages'
 import dayjs from '@/lib/dayjs'
 
 import {
@@ -34,9 +35,9 @@ export function formatNumber(
   locales?: Intl.LocalesArgument
 ): string {
   if (value == null || Number.isNaN(value as number)) return '-'
-  return Intl.NumberFormat(locales, { maximumFractionDigits: 2 }).format(
-    value as number
-  )
+  return Intl.NumberFormat(locales ?? currentIntlLocale(), {
+    maximumFractionDigits: 2,
+  }).format(value as number)
 }
 
 export function formatCompactNumber(
@@ -44,7 +45,7 @@ export function formatCompactNumber(
   locales?: Intl.LocalesArgument
 ): string {
   if (value == null || Number.isNaN(value as number)) return '-'
-  return Intl.NumberFormat(locales, {
+  return Intl.NumberFormat(locales ?? currentIntlLocale(), {
     notation: 'compact',
     maximumFractionDigits: 1,
   }).format(value as number)
@@ -52,7 +53,7 @@ export function formatCompactNumber(
 
 export function formatPercent(value: number | null | undefined): string {
   if (value == null || Number.isNaN(value as number)) return '-'
-  return Intl.NumberFormat(undefined, {
+  return Intl.NumberFormat(currentIntlLocale(), {
     style: 'percent',
     maximumFractionDigits: 2,
   }).format((value as number) / 100)
@@ -197,9 +198,12 @@ export function formatTimestampRelative(
   const ms = unit === 'seconds' ? timestamp * 1000 : timestamp
   const diffSeconds = Math.round((ms - Date.now()) / 1000)
   const absSeconds = Math.abs(diffSeconds)
-  const formatter = new Intl.RelativeTimeFormat(locales, {
-    numeric: 'always',
-  })
+  const formatter = new Intl.RelativeTimeFormat(
+    locales ?? currentIntlLocale(),
+    {
+      numeric: 'always',
+    }
+  )
 
   if (absSeconds < 60) {
     return formatter.format(diffSeconds, 'second')

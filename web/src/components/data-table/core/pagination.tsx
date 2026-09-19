@@ -34,6 +34,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { currentIntlLocale } from '@/i18n/languages'
 import { cn, getPageNumbers } from '@/lib/utils'
 
 type DataTablePaginationProps<TData> = {
@@ -68,7 +69,7 @@ export function DataTablePagination<TData>({
         <div className='flex shrink-0 items-baseline gap-1.5 text-xs font-medium whitespace-nowrap sm:text-sm'>
           <span className='text-muted-foreground/80'>{t('Total:')}</span>
           <span className='text-foreground tabular-nums'>
-            {totalRows.toLocaleString()}
+            {totalRows.toLocaleString(currentIntlLocale())}
           </span>
         </div>
 

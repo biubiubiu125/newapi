@@ -16,15 +16,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { QueryClientProvider, type QueryClient } from '@tanstack/react-query'
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { AxiosError, type AxiosAdapter } from 'axios'
 import { toast } from 'sonner'
 import { afterEach, expect, it, vi } from 'vitest'
 
+import { handleServerError } from '@/lib/handle-server-error'
 import { api } from '@/lib/http-client'
-import { createAppQueryClient } from '@/lib/query-client'
 import { useAuthStore } from '@/stores/auth-store'
 import { usePricingPreferencesStore } from '@/stores/pricing-preferences-store'
 
@@ -118,25 +118,36 @@ it.each([200, 400])(
       throw new Error(`Unexpected request: ${config.method} ${config.url}`)
     }
     api.defaults.adapter = adapter
-    client = createAppQueryClient()
+    client = new QueryClient({
+      defaultOptions: {
+        queries: { retry: false },
+        mutations: {
+          retry: false,
+          onError: handleServerError,
+        },
+      },
+    })
     render(
       <QueryClientProvider client={client}>
         <ModelPricingPanel modelName='example' />
       </QueryClientProvider>
     )
     const user = userEvent.setup()
-    const price = await screen.findByRole('textbox', {
-      name: 'Input price',
+    const save = await screen.findByRole('button', {
+      name: 'Save model prices',
     })
+    await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+    const price = screen.getByRole('textbox', { name: 'Fixed price' })
     await user.clear(price)
-    await user.type(price, '3')
-    const save = screen.getByRole('button', { name: 'Save model prices' })
+    await user.type(price, '0.25')
     await user.click(save)
     await waitFor(() =>
       expect(notify.mock.calls.map(([text]) => text)).toEqual([message])
     )
     expect(await screen.findByRole('alert')).toHaveTextContent(message)
-    expect(price).toHaveValue('3')
+    expect(screen.getByRole('textbox', { name: 'Fixed price' })).toHaveValue(
+      '0.25'
+    )
     await waitFor(() => expect(save).toBeEnabled())
     await user.click(save)
     await waitFor(() =>
@@ -146,6 +157,7 @@ it.each([200, 400])(
       ])
     )
     expect(requests).toHaveLength(2)
-    expect(requests[0]).toContain('p * 3')
+    expect(String(requests[0])).toContain('"ModelPrice":0.25')
+    expect(String(requests[0])).not.toMatch(/nativeEvent|SyntheticBaseEvent/)
   }
 )

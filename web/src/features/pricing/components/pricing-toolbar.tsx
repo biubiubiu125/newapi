@@ -45,6 +45,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { currentIntlLocale } from '@/i18n/languages'
 import { cn } from '@/lib/utils'
 
 import {
@@ -187,12 +188,12 @@ export function PricingToolbar(props: PricingToolbarProps) {
 
           <div className='text-muted-foreground flex items-baseline gap-1 text-sm'>
             <span className='text-foreground font-semibold tabular-nums'>
-              {props.filteredCount.toLocaleString()}
+              {props.filteredCount.toLocaleString(currentIntlLocale())}
             </span>
             <span>{props.filteredCount === 1 ? t('model') : t('models')}</span>
             {props.hasActiveFilters && props.totalCount && (
               <span className='text-muted-foreground/60 text-xs'>
-                / {props.totalCount.toLocaleString()}
+                / {props.totalCount.toLocaleString(currentIntlLocale())}
               </span>
             )}
           </div>

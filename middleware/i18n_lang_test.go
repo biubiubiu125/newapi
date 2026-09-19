@@ -38,3 +38,24 @@ func TestDetectLanguageCanonicalizesFrontendZhCN(t *testing.T) {
 		t.Fatalf("detectLanguage(zhCN)=%q want %q", got, i18n.LangZhCN)
 	}
 }
+
+func TestDetectLanguageDefaultsToSimplifiedChinese(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	if got := detectLanguage(ctx); got != i18n.LangZhCN {
+		t.Fatalf("detectLanguage default=%q want %q", got, i18n.LangZhCN)
+	}
+}
+
+func TestDetectLanguageEnglishHeaderStaysEnglish(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/", nil)
+	ctx.Request.Header.Set("Accept-Language", "en-US,en;q=0.9")
+	if got := detectLanguage(ctx); got != i18n.LangEn {
+		t.Fatalf("detectLanguage en-US=%q want %q", got, i18n.LangEn)
+	}
+}

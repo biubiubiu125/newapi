@@ -93,7 +93,9 @@ describe('local billing expression evaluation', () => {
     )
     expect(
       formatBillingCondition(`!(${peakCondition})`, translations.t, 'zh')
-    ).toBe('周一至周五 09:00至12:00或14:00至18:00以外的时段（Asia/Shanghai）')
+    ).toBe(
+      '这些时段之外：周一至周五 09:00至12:00或14:00至18:00（Asia/Shanghai）'
+    )
   })
   test('keeps log prices tied to the recorded tier regardless of the current time', () => {
     vi.useFakeTimers()

@@ -97,6 +97,14 @@ export function ModelPricingPanel(props: {
       setResetOpen(false)
       toast.success(t('Model pricing saved'))
     } catch (error) {
+      // Axios interceptors already toast HTTP and success:false errors.
+      if (
+        error instanceof Error &&
+        (error.cause != null ||
+          (error as { isAxiosError?: boolean }).isAxiosError)
+      ) {
+        return
+      }
       handleServerError(error)
     }
   }

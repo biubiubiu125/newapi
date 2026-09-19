@@ -22,6 +22,7 @@ import {
   useQueryClient,
   type QueryClient,
 } from '@tanstack/react-query'
+import { AxiosError } from 'axios'
 import { t } from 'i18next'
 
 import type { BillingUsageSchema } from '@/features/pricing/types'
@@ -94,9 +95,19 @@ export async function invalidateModelPricing(client: QueryClient) {
 
 export async function saveModelPricing(changes: ModelPricingChange[]) {
   if (!changes.length) return
-  const res = await api.patch('/api/option/model_pricing', { changes })
-  if (!res.data.success) {
-    throw createServerError(res.data, t('Failed to save model pricing'))
+  try {
+    const res = await api.patch('/api/option/model_pricing', { changes })
+    if (!res.data.success) {
+      throw createServerError(res.data, t('Failed to save model pricing'))
+    }
+  } catch (error) {
+    if (error instanceof AxiosError) {
+      throw createServerError(
+        error.response?.data ?? error,
+        t('Failed to save model pricing')
+      )
+    }
+    throw error
   }
 }
 
@@ -105,6 +116,10 @@ export function useSaveModelPricing() {
   return useMutation({
     mutationFn: saveModelPricing,
     onSuccess: () => invalidateModelPricing(client),
+    // Axios interceptors already toast HTTP and success:false errors.
+    // Override the app-wide mutations.onError so handleServerError does not
+    // add a generic second toast.
+    onError: () => undefined,
   })
 }
 

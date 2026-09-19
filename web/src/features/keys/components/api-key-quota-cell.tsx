@@ -20,7 +20,7 @@ import { useTranslation } from 'react-i18next'
 
 import { QuotaDetailsPopover } from '@/components/quota-details-popover'
 import { Progress } from '@/components/ui/progress'
-import { toIntlLocale } from '@/i18n/languages'
+import { resolveIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency, getCurrencyDisplay } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
@@ -52,7 +52,7 @@ export function ApiKeyQuotaCell(props: ApiKeyQuotaCellProps) {
   })
   const formattedTotal = formatQuotaWithCurrency(total, { showSymbol: false })
   const formattedPercentage = new Intl.NumberFormat(
-    toIntlLocale(i18n.resolvedLanguage || i18n.language),
+    resolveIntlLocale(i18n.resolvedLanguage || i18n.language),
     { maximumFractionDigits: 1 }
   ).format(percentage)
   const isInactive =

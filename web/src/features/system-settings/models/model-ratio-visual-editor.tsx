@@ -50,7 +50,7 @@ import { Button } from '@/components/ui/button'
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
 import { useMediaQuery } from '@/hooks'
 
-import { safeJsonParse } from '../utils/json-parser'
+import { safeJsonParse, tryJsonParse } from '../utils/json-parser'
 import type { PricingMode } from './model-pricing-core'
 import {
   ModelPricingEditorPanel,
@@ -100,6 +100,92 @@ export type ModelRatioVisualEditorHandle = {
 }
 
 const STORAGE_KEY = 'model-ratio-column-visibility'
+
+function parsePricingObjectMap<T extends Record<string, unknown>>(
+  raw: string
+): T | null {
+  if (!raw || raw.trim() === '') return {} as T
+  const parsed = tryJsonParse<unknown>(raw)
+  if (
+    !parsed.success ||
+    parsed.data === null ||
+    typeof parsed.data !== 'object' ||
+    Array.isArray(parsed.data)
+  ) {
+    return null
+  }
+  return parsed.data as T
+}
+
+function parsePricingMaps(source: {
+  modelPrice: string
+  modelRatio: string
+  cacheRatio: string
+  createCacheRatio: string
+  completionRatio: string
+  imageRatio: string
+  audioRatio: string
+  audioCompletionRatio: string
+  billingMode: string
+  billingExpr: string
+}) {
+  const priceMap = parsePricingObjectMap<Record<string, number>>(
+    source.modelPrice
+  )
+  const ratioMap = parsePricingObjectMap<Record<string, number>>(
+    source.modelRatio
+  )
+  const cacheMap = parsePricingObjectMap<Record<string, number>>(
+    source.cacheRatio
+  )
+  const createCacheMap = parsePricingObjectMap<Record<string, number>>(
+    source.createCacheRatio
+  )
+  const completionMap = parsePricingObjectMap<Record<string, number>>(
+    source.completionRatio
+  )
+  const imageMap = parsePricingObjectMap<Record<string, number>>(
+    source.imageRatio
+  )
+  const audioMap = parsePricingObjectMap<Record<string, number>>(
+    source.audioRatio
+  )
+  const audioCompletionMap = parsePricingObjectMap<Record<string, number>>(
+    source.audioCompletionRatio
+  )
+  const billingModeMap = parsePricingObjectMap<Record<string, string>>(
+    source.billingMode
+  )
+  const billingExprMap = parsePricingObjectMap<Record<string, string>>(
+    source.billingExpr
+  )
+  if (
+    !priceMap ||
+    !ratioMap ||
+    !cacheMap ||
+    !createCacheMap ||
+    !completionMap ||
+    !imageMap ||
+    !audioMap ||
+    !audioCompletionMap ||
+    !billingModeMap ||
+    !billingExprMap
+  ) {
+    return null
+  }
+  return {
+    priceMap,
+    ratioMap,
+    cacheMap,
+    createCacheMap,
+    completionMap,
+    imageMap,
+    audioMap,
+    audioCompletionMap,
+    billingModeMap,
+    billingExprMap,
+  }
+}
 
 const ModelRatioVisualEditorComponent = forwardRef<
   ModelRatioVisualEditorHandle,
@@ -323,6 +409,10 @@ const ModelRatioVisualEditorComponent = forwardRef<
     if (isMobile) setSheetOpen(true)
   }, [isMobile])
 
+  useEffect(() => {
+    if (isMobile && editorOpen) setSheetOpen(true)
+  }, [isMobile, editorOpen])
+
   const handleGlobalFilterChange = useCallback<OnChangeFn<string>>(
     (updater) => {
       setGlobalFilter((previous) => {
@@ -340,46 +430,34 @@ const ModelRatioVisualEditorComponent = forwardRef<
 
   const handleDelete = useCallback(
     (name: string) => {
-      const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
-        fallback: {},
-        silent: true,
-      })
-      const ratioMap = safeJsonParse<Record<string, number>>(modelRatio, {
-        fallback: {},
-        silent: true,
-      })
-      const cacheMap = safeJsonParse<Record<string, number>>(cacheRatio, {
-        fallback: {},
-        silent: true,
-      })
-      const createCacheMap = safeJsonParse<Record<string, number>>(
+      const maps = parsePricingMaps({
+        modelPrice,
+        modelRatio,
+        cacheRatio,
         createCacheRatio,
-        { fallback: {}, silent: true }
-      )
-      const completionMap = safeJsonParse<Record<string, number>>(
         completionRatio,
-        { fallback: {}, silent: true }
-      )
-      const imageMap = safeJsonParse<Record<string, number>>(imageRatio, {
-        fallback: {},
-        silent: true,
-      })
-      const audioMap = safeJsonParse<Record<string, number>>(audioRatio, {
-        fallback: {},
-        silent: true,
-      })
-      const audioCompletionMap = safeJsonParse<Record<string, number>>(
+        imageRatio,
+        audioRatio,
         audioCompletionRatio,
-        { fallback: {}, silent: true }
-      )
-      const billingModeMap = safeJsonParse<Record<string, string>>(
         billingMode,
-        { fallback: {}, silent: true }
-      )
-      const billingExprMap = safeJsonParse<Record<string, string>>(
         billingExpr,
-        { fallback: {}, silent: true }
-      )
+      })
+      if (!maps) {
+        toast.error(t('Invalid JSON format'))
+        return
+      }
+      const {
+        priceMap,
+        ratioMap,
+        cacheMap,
+        createCacheMap,
+        completionMap,
+        imageMap,
+        audioMap,
+        audioCompletionMap,
+        billingModeMap,
+        billingExprMap,
+      } = maps
 
       delete priceMap[name]
       delete ratioMap[name]
@@ -431,6 +509,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
       billingExpr,
       onChange,
       editData,
+      t,
     ]
   )
 
@@ -479,47 +558,39 @@ const ModelRatioVisualEditorComponent = forwardRef<
   })
 
   const persistPricingData = useCallback(
-    (data: ModelRatioData, targetNames: string[] = [data.name]) => {
-      const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
-        fallback: {},
-        silent: true,
-      })
-      const ratioMap = safeJsonParse<Record<string, number>>(modelRatio, {
-        fallback: {},
-        silent: true,
-      })
-      const cacheMap = safeJsonParse<Record<string, number>>(cacheRatio, {
-        fallback: {},
-        silent: true,
-      })
-      const createCacheMap = safeJsonParse<Record<string, number>>(
+    (data: ModelRatioData, targetNames?: string[]): boolean => {
+      if (typeof data?.name !== 'string' || data.name.trim() === '') {
+        return false
+      }
+      const names = targetNames ?? [data.name]
+      const maps = parsePricingMaps({
+        modelPrice,
+        modelRatio,
+        cacheRatio,
         createCacheRatio,
-        { fallback: {}, silent: true }
-      )
-      const completionMap = safeJsonParse<Record<string, number>>(
         completionRatio,
-        { fallback: {}, silent: true }
-      )
-      const imageMap = safeJsonParse<Record<string, number>>(imageRatio, {
-        fallback: {},
-        silent: true,
-      })
-      const audioMap = safeJsonParse<Record<string, number>>(audioRatio, {
-        fallback: {},
-        silent: true,
-      })
-      const audioCompletionMap = safeJsonParse<Record<string, number>>(
+        imageRatio,
+        audioRatio,
         audioCompletionRatio,
-        { fallback: {}, silent: true }
-      )
-      const billingModeMap = safeJsonParse<Record<string, string>>(
         billingMode,
-        { fallback: {}, silent: true }
-      )
-      const billingExprMap = safeJsonParse<Record<string, string>>(
         billingExpr,
-        { fallback: {}, silent: true }
-      )
+      })
+      if (!maps) {
+        toast.error(t('Invalid JSON format'))
+        return false
+      }
+      const {
+        priceMap,
+        ratioMap,
+        cacheMap,
+        createCacheMap,
+        completionMap,
+        imageMap,
+        audioMap,
+        audioCompletionMap,
+        billingModeMap,
+        billingExprMap,
+      } = maps
 
       const setIfPresent = (
         target: Record<string, number>,
@@ -531,7 +602,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
         if (Number.isFinite(parsed)) target[name] = parsed
       }
 
-      targetNames.forEach((name) => {
+      names.forEach((name) => {
         delete priceMap[name]
         delete ratioMap[name]
         delete cacheMap[name]
@@ -596,6 +667,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
         'billing_setting.billing_expr',
         JSON.stringify(billingExprMap, null, 2)
       )
+      return true
     },
     [
       modelPrice,
@@ -609,16 +681,8 @@ const ModelRatioVisualEditorComponent = forwardRef<
       billingMode,
       billingExpr,
       onChange,
+      t,
     ]
-  )
-
-  const handleEditorSave = useCallback(
-    async (data: ModelRatioData) => {
-      persistPricingData(data)
-      setEditData(data)
-      await onSave()
-    },
-    [onSave, persistPricingData]
   )
 
   const handleBatchCopy = useCallback(async () => {
@@ -646,9 +710,13 @@ const ModelRatioVisualEditorComponent = forwardRef<
 
     // Persist to the source model too, so targets never carry pricing the
     // source itself would lose if the editor draft were abandoned.
-    persistPricingData(sourceData, [
-      ...new Set([sourceData.name, ...targetNames]),
-    ])
+    if (
+      !persistPricingData(sourceData, [
+        ...new Set([sourceData.name, ...targetNames]),
+      ])
+    ) {
+      return
+    }
     table.resetRowSelection()
     toast.success(
       t('Applied {{name}} pricing to {{count}} models', {
@@ -665,7 +733,7 @@ const ModelRatioVisualEditorComponent = forwardRef<
         if (!editorOpen || !editorPanelRef.current) return true
         const data = await editorPanelRef.current.commitDraft()
         if (!data) return false
-        persistPricingData(data)
+        if (!persistPricingData(data)) return false
         setEditData(data)
         return true
       },
@@ -782,34 +850,36 @@ const ModelRatioVisualEditorComponent = forwardRef<
           {hasRows && <DataTablePagination table={table} />}
         </div>
 
-        <div className='hidden min-h-0 min-w-0 md:block'>
-          {editorOpen ? (
-            <ModelPricingEditorPanel
-              ref={editorPanelRef}
-              editData={editData}
-              onSave={handleEditorSave}
-              isSaving={isSaving}
-              className='h-full min-h-0'
-            />
-          ) : (
-            <div className='bg-card text-muted-foreground flex h-full min-h-0 flex-col items-center justify-center gap-3 rounded-xl border border-dashed p-6 text-center'>
-              <div className='text-foreground text-base font-medium'>
-                {t('Select a model to edit pricing')}
-              </div>
-              <p className='max-w-sm text-sm'>
-                {t(
-                  'Use the full-width table to scan prices, then select a row to edit it here.'
+        {!isMobile && (
+          <div className='min-h-0 min-w-0'>
+            {editorOpen ? (
+              <ModelPricingEditorPanel
+                ref={editorPanelRef}
+                editData={editData}
+                onSave={onSave}
+                isSaving={isSaving}
+                className='h-full min-h-0'
+              />
+            ) : (
+              <div className='bg-card text-muted-foreground flex h-full min-h-0 flex-col items-center justify-center gap-3 rounded-xl border border-dashed p-6 text-center'>
+                <div className='text-foreground text-base font-medium'>
+                  {t('Select a model to edit pricing')}
+                </div>
+                <p className='max-w-sm text-sm'>
+                  {t(
+                    'Use the full-width table to scan prices, then select a row to edit it here.'
+                  )}
+                </p>
+                {filterMode !== 'unset' && (
+                  <Button variant='outline' onClick={handleAdd}>
+                    <Plus data-icon='inline-start' />
+                    {t('Add model')}
+                  </Button>
                 )}
-              </p>
-              {filterMode !== 'unset' && (
-                <Button variant='outline' onClick={handleAdd}>
-                  <Plus data-icon='inline-start' />
-                  {t('Add model')}
-                </Button>
-              )}
-            </div>
-          )}
-        </div>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       <DataTableBulkActions table={table} entityName={t('model')}>
@@ -825,9 +895,12 @@ const ModelRatioVisualEditorComponent = forwardRef<
         <ModelPricingSheet
           ref={editorPanelRef}
           open={sheetOpen}
-          onOpenChange={setSheetOpen}
+          onOpenChange={(open) => {
+            setSheetOpen(open)
+            setEditorOpen(open)
+          }}
           editData={editData}
-          onSave={handleEditorSave}
+          onSave={onSave}
           isSaving={isSaving}
         />
       )}

@@ -60,6 +60,7 @@ import type {
   PlanRecord,
   UserSubscriptionRecord,
 } from '@/features/subscriptions/types'
+import { currentIntlLocale } from '@/i18n/languages'
 import { formatQuota } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
@@ -503,14 +504,14 @@ export function SubscriptionPlansCard({
                             : t('Expired at')}{' '}
                         {new Date(
                           (subscription?.end_time || 0) * 1000
-                        ).toLocaleString()}
+                        ).toLocaleString(currentIntlLocale())}
                       </div>
                       {isActive && (subscription?.next_reset_time ?? 0) > 0 && (
                         <div className='text-muted-foreground mt-1'>
                           {t('Next reset')}:{' '}
                           {new Date(
                             subscription!.next_reset_time! * 1000
-                          ).toLocaleString()}
+                          ).toLocaleString(currentIntlLocale())}
                         </div>
                       )}
                       <div className='text-muted-foreground mt-1'>

@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import i18n from 'i18next'
+
 export const INTERFACE_LANGUAGE_OPTIONS = [
   { code: 'zhCN', label: '简体中文' },
   { code: 'en', label: 'English' },
@@ -29,11 +31,16 @@ export const INTERFACE_LANGUAGE_OPTIONS = [
 export type InterfaceLanguageCode =
   (typeof INTERFACE_LANGUAGE_OPTIONS)[number]['code']
 
-export function normalizeInterfaceLanguage(value?: string | null): string {
-  if (!value) return 'en'
+export const DEFAULT_INTERFACE_LANGUAGE: InterfaceLanguageCode = 'zhCN'
+export const DEFAULT_INTL_LOCALE = 'zh-CN'
+
+export function normalizeInterfaceLanguage(
+  value?: string | null
+): InterfaceLanguageCode {
+  if (!value) return DEFAULT_INTERFACE_LANGUAGE
 
   const trimmed = value.trim()
-  if (!trimmed) return 'en'
+  if (!trimmed) return DEFAULT_INTERFACE_LANGUAGE
 
   const lower = trimmed.replaceAll('_', '-').toLowerCase()
   if (
@@ -55,7 +62,7 @@ export function normalizeInterfaceLanguage(value?: string | null): string {
 
   const prefix = lower.split('-')[0]
   const prefixed = supported.find((code) => code.toLowerCase() === prefix)
-  return prefixed ?? 'en'
+  return prefixed ?? DEFAULT_INTERFACE_LANGUAGE
 }
 
 /**
@@ -64,7 +71,7 @@ export function normalizeInterfaceLanguage(value?: string | null): string {
  *
  * Browsers report standard BCP-47 tags (`zh-CN`, `zh-TW`, `zh-Hant`, `zh`, ...),
  * but `supportedLngs`/resources use the non-standard camelCase codes, so without
- * this mapping a Chinese browser would never match and fall back to English.
+ * this mapping a Chinese browser would never match and fall back to simplified Chinese.
  * Non-Chinese codes are returned unchanged so i18next's own `supportedLngs`
  * matching still applies (e.g. `fr-FR` -> `fr`, `ja` -> `ja`).
  */
@@ -83,7 +90,8 @@ export function convertDetectedLanguage(value: string): string {
  * `new Intl.NumberFormat('zhCN')` throws `RangeError: Invalid language tag`, so
  * any locale derived from `i18n.language` / `i18n.resolvedLanguage` MUST be run
  * through this before it reaches an `Intl` constructor. Unknown values fall back
- * to `undefined`, which makes `Intl` use the runtime default locale.
+ * to `undefined`; callers that need a guaranteed locale should use
+ * `resolveIntlLocale` instead of letting `Intl` follow the OS language.
  */
 export function toIntlLocale(value?: string | null): string | undefined {
   if (!value) return undefined
@@ -99,5 +107,32 @@ export function toIntlLocale(value?: string | null): string | undefined {
     return Intl.getCanonicalLocales(value)[0]
   } catch {
     return undefined
+  }
+}
+
+export function resolveIntlLocale(value?: string | null): string {
+  return toIntlLocale(value) ?? DEFAULT_INTL_LOCALE
+}
+
+export function currentIntlLocale(): string {
+  return resolveIntlLocale(i18n.resolvedLanguage || i18n.language)
+}
+
+export function dayjsLocaleForLanguage(value?: string | null): string {
+  switch (normalizeInterfaceLanguage(value)) {
+    case 'zhCN':
+      return 'zh-cn'
+    case 'zhTW':
+      return 'zh-tw'
+    case 'fr':
+      return 'fr'
+    case 'ru':
+      return 'ru'
+    case 'ja':
+      return 'ja'
+    case 'vi':
+      return 'vi'
+    case 'en':
+      return 'en'
   }
 }

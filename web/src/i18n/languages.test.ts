@@ -18,11 +18,16 @@ General Public License along with this program, see
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import i18n from 'i18next'
 import { describe, expect, it } from 'vitest'
 
 import {
   convertDetectedLanguage,
+  currentIntlLocale,
+  dayjsLocaleForLanguage,
   normalizeInterfaceLanguage,
+  resolveIntlLocale,
+  toIntlLocale,
 } from './languages'
 
 describe('normalizeInterfaceLanguage', () => {
@@ -54,10 +59,10 @@ describe('normalizeInterfaceLanguage', () => {
     expect(normalizeInterfaceLanguage('vi-VN')).toBe('vi')
   })
 
-  it('falls back to English for empty or unknown values', () => {
-    expect(normalizeInterfaceLanguage(undefined)).toBe('en')
-    expect(normalizeInterfaceLanguage('')).toBe('en')
-    expect(normalizeInterfaceLanguage('pt-BR')).toBe('en')
+  it('falls back to simplified Chinese for empty or unknown values', () => {
+    expect(normalizeInterfaceLanguage(undefined)).toBe('zhCN')
+    expect(normalizeInterfaceLanguage('')).toBe('zhCN')
+    expect(normalizeInterfaceLanguage('pt-BR')).toBe('zhCN')
   })
 })
 
@@ -86,5 +91,38 @@ describe('convertDetectedLanguage', () => {
     expect(convertDetectedLanguage('fr-FR')).toBe('fr-FR')
     expect(convertDetectedLanguage('ja-JP')).toBe('ja-JP')
     expect(convertDetectedLanguage('en-US')).toBe('en-US')
+  })
+})
+
+describe('resolveIntlLocale', () => {
+  it('maps interface codes onto BCP-47 tags for HTTP and Intl', () => {
+    expect(resolveIntlLocale('zhCN')).toBe('zh-CN')
+    expect(resolveIntlLocale('zhTW')).toBe('zh-TW')
+    expect(resolveIntlLocale('en')).toBe('en')
+    expect(toIntlLocale('zhCN')).toBe('zh-CN')
+  })
+
+  it('falls back to zh-CN when the language is missing', () => {
+    expect(resolveIntlLocale(undefined)).toBe('zh-CN')
+    expect(resolveIntlLocale('')).toBe('zh-CN')
+  })
+})
+
+describe('dayjsLocaleForLanguage', () => {
+  it('maps interface languages onto dayjs locale ids', () => {
+    expect(dayjsLocaleForLanguage('zhCN')).toBe('zh-cn')
+    expect(dayjsLocaleForLanguage('zhTW')).toBe('zh-tw')
+    expect(dayjsLocaleForLanguage('en')).toBe('en')
+    expect(dayjsLocaleForLanguage('ja')).toBe('ja')
+    expect(dayjsLocaleForLanguage(undefined)).toBe('zh-cn')
+  })
+})
+
+describe('currentIntlLocale', () => {
+  it('follows the active i18next language', async () => {
+    await i18n.changeLanguage('zhCN')
+    expect(currentIntlLocale()).toBe('zh-CN')
+    await i18n.changeLanguage('en')
+    expect(currentIntlLocale()).toBe('en')
   })
 })

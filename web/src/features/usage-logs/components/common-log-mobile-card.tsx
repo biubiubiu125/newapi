@@ -27,6 +27,7 @@ import { GroupBadge } from '@/components/group-badge'
 import { StatusBadge, type StatusVariant } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
+import { currentIntlLocale } from '@/i18n/languages'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import dayjs from '@/lib/dayjs'
 import { formatLogQuota, formatTimestampToDate } from '@/lib/format'
@@ -291,23 +292,23 @@ export function CommonLogMobileCard<TData>(props: {
           <span>
             {t('Input')}{' '}
             <span className='text-foreground tabular-nums'>
-              {log.prompt_tokens.toLocaleString()}
+              {log.prompt_tokens.toLocaleString(currentIntlLocale())}
             </span>
           </span>
           <span>
             {t('Output')}{' '}
             <span className='text-foreground tabular-nums'>
-              {log.completion_tokens.toLocaleString()}
+              {log.completion_tokens.toLocaleString(currentIntlLocale())}
             </span>
           </span>
           {cacheRead > 0 && (
             <span>
-              {t('Cache')} ↓ {cacheRead.toLocaleString()}
+              {t('Cache')} ↓ {cacheRead.toLocaleString(currentIntlLocale())}
             </span>
           )}
           {cacheWrite > 0 && (
             <span>
-              {t('Cache')} ↑ {cacheWrite.toLocaleString()}
+              {t('Cache')} ↑ {cacheWrite.toLocaleString(currentIntlLocale())}
             </span>
           )}
         </div>

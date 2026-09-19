@@ -452,7 +452,9 @@ function CreateTicketPanel({
             value={content}
             onChange={(event) => setContent(event.target.value)}
             className='min-h-40 resize-none'
-            placeholder={t('Enter the issue details. You can paste images directly.')}
+            placeholder={t(
+              'Enter the issue details. You can paste images directly.'
+            )}
           />
           <AttachmentPicker files={files} setFiles={setFiles} />
         </div>
@@ -617,7 +619,9 @@ function AssigneeSelect({
           />
           <CommandList>
             <CommandEmpty>
-              {assigneesQuery.isFetching ? t('Searching...') : t('No assignable users')}
+              {assigneesQuery.isFetching
+                ? t('Searching...')
+                : t('No assignable users')}
             </CommandEmpty>
             <CommandGroup>
               <CommandItem
@@ -661,7 +665,9 @@ function AssigneeSelect({
                     #{user.id} {user.username}
                   </span>
                   <Badge variant='outline'>
-                    {user.role >= ROLE.SUPER_ADMIN ? t('Super Admin') : t('Admin')}
+                    {user.role >= ROLE.SUPER_ADMIN
+                      ? t('Super Admin')
+                      : t('Admin')}
                   </Badge>
                 </CommandItem>
               ))}
@@ -728,7 +734,8 @@ function TicketDetailPanel({
       filesRef.current = []
       refreshDetail()
     },
-    onError: (error: Error) => toast.error(error.message || t('Failed to send reply')),
+    onError: (error: Error) =>
+      toast.error(error.message || t('Failed to send reply')),
   })
 
   const closeMutation = useMutation({
@@ -737,7 +744,8 @@ function TicketDetailPanel({
       toast.success(t('Ticket closed'))
       refreshDetail()
     },
-    onError: (error: Error) => toast.error(error.message || t('Failed to close ticket')),
+    onError: (error: Error) =>
+      toast.error(error.message || t('Failed to close ticket')),
   })
 
   const reopenMutation = useMutation({
@@ -746,7 +754,8 @@ function TicketDetailPanel({
       toast.success(t('Ticket reopened'))
       refreshDetail()
     },
-    onError: (error: Error) => toast.error(error.message || t('Failed to reopen ticket')),
+    onError: (error: Error) =>
+      toast.error(error.message || t('Failed to reopen ticket')),
   })
 
   const updateMutation = useMutation({
@@ -761,7 +770,8 @@ function TicketDetailPanel({
       toast.success(t('Ticket updated'))
       refreshDetail()
     },
-    onError: (error: Error) => toast.error(error.message || t('Failed to update ticket')),
+    onError: (error: Error) =>
+      toast.error(error.message || t('Failed to update ticket')),
   })
 
   if (!ticketId) {
@@ -775,7 +785,9 @@ function TicketDetailPanel({
   if (detailQuery.isLoading || !ticket) {
     return (
       <div className='border-border text-muted-foreground flex h-full min-h-[360px] items-center justify-center rounded-md border'>
-        {detailQuery.isError ? t('Ticket does not exist or you do not have access') : t('Loading ticket...')}
+        {detailQuery.isError
+          ? t('Ticket does not exist or you do not have access')
+          : t('Loading ticket...')}
       </div>
     )
   }
@@ -790,15 +802,17 @@ function TicketDetailPanel({
                 {ticket.title}
               </h2>
               <Badge variant={statusVariants[ticket.status]}>
-                {ticket.status}
+                {t(ticket.status)}
               </Badge>
               <Badge variant={priorityVariants[ticket.priority]}>
-                {ticket.priority}
+                {t(ticket.priority)}
               </Badge>
             </div>
             <div className='text-muted-foreground mt-1 text-xs'>
               {ticket.number} · {t(ticket.category)} ·{' '}
-              {t('Created at {{time}}', { time: formatTime(ticket.created_at) })}
+              {t('Created at {{time}}', {
+                time: formatTime(ticket.created_at),
+              })}
               {adminMode &&
                 ` · ${t('User')} ${ticket.username || ticket.user_id}`}
             </div>
@@ -1489,10 +1503,14 @@ export function TicketsPage({ mode = 'user' }: { mode?: TicketsPageMode }) {
         >
           <SheetContent className='w-full sm:max-w-5xl'>
             <SheetHeader>
-              <SheetTitle>{adminMode ? t('Handle Ticket') : t('Ticket Details')}</SheetTitle>
+              <SheetTitle>
+                {adminMode ? t('Handle Ticket') : t('Ticket Details')}
+              </SheetTitle>
               <SheetDescription>
                 {adminMode
-                  ? t('View replies, continue the conversation, or update the ticket status.')
+                  ? t(
+                      'View replies, continue the conversation, or update the ticket status.'
+                    )
                   : t('View replies and continue the conversation.')}
               </SheetDescription>
             </SheetHeader>
