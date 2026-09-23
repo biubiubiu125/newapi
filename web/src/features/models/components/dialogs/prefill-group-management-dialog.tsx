@@ -66,11 +66,11 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useIsMobile } from '@/hooks/use-mobile'
-import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
 import {
   getServerErrorDisplayMessage,
-  localizeConsoleErrorText,
-} from '@/lib/server-error-message'
+  toastUnhandledConsoleError,
+} from '@/lib/handle-server-error'
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import { deletePrefillGroup, getPrefillGroups } from '../../api'
