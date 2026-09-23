@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import { PublicLayout } from '@/components/layout'
 import { PageTransition } from '@/components/page-transition'
 import { Skeleton } from '@/components/ui/skeleton'
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 import {
   MarketShareSection,
@@ -80,11 +81,12 @@ export function Rankings() {
             <RankingsLoading />
           ) : !snapshot ? (
             <RankingsError
-              message={
+              message={localizeConsoleErrorText(
                 rankingsQuery.error instanceof Error
                   ? rankingsQuery.error.message
-                  : t('Unable to load rankings data')
-              }
+                  : '',
+                'Unable to load rankings data'
+              )}
             />
           ) : (
             <>

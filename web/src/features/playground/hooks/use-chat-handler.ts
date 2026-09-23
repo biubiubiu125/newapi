@@ -33,6 +33,7 @@ import {
   hasChatCompletionChoice,
   isAssistantMessageFinal,
   isAssistantMessagePending,
+  getPlaygroundDisplayError,
 } from '../lib'
 import type { Message, PlaygroundConfig, ParameterEnabled } from '../types'
 import { useStreamRequest } from './use-stream-request'
@@ -43,7 +44,6 @@ interface UseChatHandlerOptions {
   onMessageUpdate: (updater: (prev: Message[]) => Message[]) => void
 }
 
-const KNOWN_ERROR_MESSAGES = new Set<string>(Object.values(ERROR_MESSAGES))
 const STREAM_UPDATE_FLUSH_MS = 50
 
 type PendingStreamChunks = {
@@ -169,21 +169,8 @@ export function useChatHandler({
   )
 
   const getDisplayError = useCallback(
-    (error: string) => {
-      if (KNOWN_ERROR_MESSAGES.has(error)) {
-        return t(error)
-      }
-
-      const connectionClosedSuffix = `: ${ERROR_MESSAGES.CONNECTION_CLOSED}`
-      if (error.endsWith(connectionClosedSuffix)) {
-        return `${error.slice(0, -ERROR_MESSAGES.CONNECTION_CLOSED.length)}${t(
-          ERROR_MESSAGES.CONNECTION_CLOSED
-        )}`
-      }
-
-      return error
-    },
-    [t]
+    (error: string) => getPlaygroundDisplayError(error),
+    []
   )
 
   // Handle stream update

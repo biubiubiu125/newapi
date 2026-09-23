@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 
@@ -42,16 +43,16 @@ func GetTelegramPushSettings(c *gin.Context) {
 func UpdateTelegramPushSettings(c *gin.Context) {
 	var req telegramPushSettingsRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
-		common.ApiErrorMsg(c, "无效的 Telegram 推送配置")
+		common.ApiErrorI18n(c, i18n.MsgTelegramPushInvalidConfig)
 		return
 	}
 	displayName := service.NormalizeTelegramPushDisplayName(req.DisplayName)
 	if strings.ContainsAny(displayName, "\r\n") {
-		common.ApiErrorMsg(c, "项目显示名称不能包含换行")
+		common.ApiErrorI18n(c, i18n.MsgTelegramPushNameNewline)
 		return
 	}
 	if len([]rune(displayName)) > 32 {
-		common.ApiErrorMsg(c, "项目显示名称不能超过 32 个字符")
+		common.ApiErrorI18n(c, i18n.MsgTelegramPushNameTooLong)
 		return
 	}
 	if err := model.UpdateOption("TelegramPushBotToken", strings.TrimSpace(req.BotToken)); err != nil {
@@ -72,12 +73,12 @@ func UpdateTelegramPushSettings(c *gin.Context) {
 func TestTelegramPush(c *gin.Context) {
 	var req telegramPushTestRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
-		common.ApiErrorMsg(c, "无效的测试内容")
+		common.ApiErrorI18n(c, i18n.MsgTelegramPushInvalidTest)
 		return
 	}
 	text := strings.TrimSpace(req.Text)
 	if text == "" {
-		text = "Telegram 推送测试成功"
+		text = i18n.T(c, i18n.MsgTelegramPushTestSuccess)
 	}
 	if err := service.SendTelegramPush(common.TelegramPushBotToken, common.TelegramPushChatId, common.TelegramPushDisplayName, text, ""); err != nil {
 		common.ApiError(c, err)
@@ -89,11 +90,11 @@ func TestTelegramPush(c *gin.Context) {
 func PushAnnouncementToTelegram(c *gin.Context) {
 	var req telegramPushAnnouncementRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
-		common.ApiErrorMsg(c, "无效的公告推送内容")
+		common.ApiErrorI18n(c, i18n.MsgTelegramPushInvalidAnnouncement)
 		return
 	}
 	if strings.TrimSpace(req.Title) == "" && strings.TrimSpace(req.Content) == "" {
-		common.ApiErrorMsg(c, "公告标题和内容不能同时为空")
+		common.ApiErrorI18n(c, i18n.MsgTelegramPushAnnouncementEmpty)
 		return
 	}
 	record, err := service.CreateTelegramPushRecord(req.AnnouncementId, req.Title, req.Content, model.TelegramPushSourceManual)
@@ -116,15 +117,42 @@ func ListTelegramPushRecords(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	for _, record := range records {
+		if record == nil {
+			continue
+		}
+		record.FailureReason = localizeTelegramFailureReason(c, record.FailureReason)
+	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(records)
 	common.ApiSuccess(c, pageInfo)
 }
 
+func localizeTelegramFailureReason(c *gin.Context, reason string) string {
+	reason = strings.TrimSpace(reason)
+	switch reason {
+	case "":
+		return ""
+	case i18n.MsgTelegramPushInvalidConfig, "Telegram Bot Token 和 Chat ID 不能为空":
+		return i18n.T(c, i18n.MsgTelegramPushInvalidConfig)
+	case i18n.MsgTelegramPushContentEmpty, "推送内容不能为空":
+		return i18n.T(c, i18n.MsgTelegramPushContentEmpty)
+	case i18n.MsgTelegramPushInterrupted, "推送任务中断，等待自动重试":
+		return i18n.T(c, i18n.MsgTelegramPushInterrupted)
+	case i18n.MsgTelegramPushSendFailed:
+		return i18n.T(c, i18n.MsgTelegramPushSendFailed)
+	default:
+		if strings.HasPrefix(reason, "Telegram 推送失败") {
+			return i18n.T(c, i18n.MsgTelegramPushSendFailed)
+		}
+		return reason
+	}
+}
+
 func RetryTelegramPushRecord(c *gin.Context) {
 	id, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		common.ApiErrorMsg(c, "推送记录 ID 不正确")
+		common.ApiErrorI18n(c, i18n.MsgTelegramPushRecordIdInvalid)
 		return
 	}
 	tx := model.DB.Model(&model.TelegramPushRecord{}).
@@ -141,7 +169,7 @@ func RetryTelegramPushRecord(c *gin.Context) {
 		return
 	}
 	if tx.RowsAffected == 0 {
-		common.ApiErrorMsg(c, "只有失败的推送记录可以重试")
+		common.ApiErrorI18n(c, i18n.MsgTelegramPushRetryFailedOnly)
 		return
 	}
 	startTelegramPushRecord(id)

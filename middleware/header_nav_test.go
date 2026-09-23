@@ -1,11 +1,13 @@
 package middleware
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -94,6 +96,41 @@ func TestHeaderNavModuleAuthRejectsDisabledPricing(t *testing.T) {
 	recorder := performHeaderNavRequest(t, HeaderNavModuleAuth("pricing"), false)
 
 	require.Equal(t, http.StatusForbidden, recorder.Code)
+}
+
+func TestHeaderNavModuleAuthDisabledFollowsAcceptLanguage(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	withHeaderNavModules(t, `{"pricing":{"enabled":false,"requireAuth":false}}`)
+
+	run := func(accept string) map[string]any {
+		t.Helper()
+		gin.SetMode(gin.TestMode)
+		router := gin.New()
+		router.Use(I18n())
+		router.GET("/api/test", HeaderNavModuleAuth("pricing"), func(c *gin.Context) {
+			c.JSON(http.StatusOK, gin.H{"success": true})
+		})
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+		req.Header.Set("Accept-Language", accept)
+		router.ServeHTTP(rec, req)
+		require.Equal(t, http.StatusForbidden, rec.Code)
+		var body map[string]any
+		require.NoError(t, json.Unmarshal(rec.Body.Bytes(), &body), "body=%s", rec.Body.String())
+		return body
+	}
+
+	en := run("en-US")
+	require.Equal(t, false, en["success"])
+	require.Equal(t, "pricing is disabled", en["message"])
+
+	zh := run("zh-CN")
+	require.Equal(t, false, zh["success"])
+	require.Equal(t, "pricing 模块已禁用", zh["message"])
+
+	tw := run("zh-TW")
+	require.Equal(t, false, tw["success"])
+	require.Equal(t, "pricing 模組已停用", tw["message"])
 }
 
 func TestHeaderNavModuleAuthRequiresLoginForPricing(t *testing.T) {

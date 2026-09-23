@@ -20,7 +20,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { describe, expect, it } from 'vitest'
 
-import { resolveDayPickerLocale } from './calendar-locale'
+import {
+  monthGridLeadingDays,
+  resolveDayPickerLocale,
+  resolveWeekStartsOn,
+  weekdayColumnKeys,
+} from './calendar-locale'
 
 describe('resolveDayPickerLocale', () => {
   it('uses simplified Chinese for zhCN instead of falling back to English', () => {
@@ -38,5 +43,36 @@ describe('resolveDayPickerLocale', () => {
 
   it('defaults to simplified Chinese when the language is missing', () => {
     expect(resolveDayPickerLocale(undefined).code).toBe('zh-CN')
+  })
+
+  it('starts simplified and traditional weeks on Monday and English on Sunday', () => {
+    expect(resolveWeekStartsOn('zhCN')).toBe(1)
+    expect(resolveWeekStartsOn('zh-TW')).toBe(1)
+    expect(resolveWeekStartsOn('en')).toBe(0)
+    expect(resolveWeekStartsOn(undefined)).toBe(1)
+  })
+
+  it('rotates weekday columns to the locale week start', () => {
+    expect(weekdayColumnKeys(1)).toEqual([
+      'Mon',
+      'Tue',
+      'Wed',
+      'Thu',
+      'Fri',
+      'Sat',
+      'Sun',
+    ])
+    expect(weekdayColumnKeys(0)).toEqual([
+      'Sun',
+      'Mon',
+      'Tue',
+      'Wed',
+      'Thu',
+      'Fri',
+      'Sat',
+    ])
+    expect(monthGridLeadingDays(0, 1)).toBe(6)
+    expect(monthGridLeadingDays(1, 1)).toBe(0)
+    expect(monthGridLeadingDays(0, 0)).toBe(0)
   })
 })

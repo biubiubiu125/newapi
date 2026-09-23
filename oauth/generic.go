@@ -627,10 +627,9 @@ func containsValue(current any, expected any) bool {
 }
 
 func renderAccessDeniedMessage(template string, providerName string, body string, failure *accessPolicyFailure) string {
-	defaultMessage := "Access denied: your account does not meet this provider's access requirements."
 	message := strings.TrimSpace(template)
 	if message == "" {
-		return defaultMessage
+		return ""
 	}
 
 	if failure == nil {

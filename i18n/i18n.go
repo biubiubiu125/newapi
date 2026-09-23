@@ -2,8 +2,10 @@ package i18n
 
 import (
 	"embed"
+	"io/fs"
 	"strings"
 	"sync"
+	"unicode"
 
 	"github.com/gin-gonic/gin"
 	"github.com/nicksnyder/go-i18n/v2/i18n"
@@ -19,6 +21,10 @@ const (
 	LangZhCN    = "zh-CN"
 	LangZhTW    = "zh-TW"
 	LangEn      = "en"
+	LangFr      = "fr"
+	LangJa      = "ja"
+	LangRu      = "ru"
+	LangVi      = "vi"
 	DefaultLang = LangZhCN // Fallback to simplified Chinese if language not supported
 )
 
@@ -26,62 +32,96 @@ const (
 var localeFS embed.FS
 
 var (
-	bundle     *i18n.Bundle
-	localizers = make(map[string]*i18n.Localizer)
-	mu         sync.RWMutex
-	initOnce   sync.Once
+	bundle      *i18n.Bundle
+	localizers  = make(map[string]*i18n.Localizer)
+	mu          sync.RWMutex
+	initMu      sync.Mutex
+	initialized bool
+	// emptyLocalizer is used when Init has not loaded a catalog yet.
+	emptyLocalizer = i18n.NewLocalizer(i18n.NewBundle(language.English), LangEn)
 )
 
-// Init initializes the i18n bundle and loads all translation files
+// Init initializes the i18n bundle and loads all translation files.
+// A failed load stays retryable so a later successful catalog can still be used.
 func Init() error {
-	var initErr error
-	initOnce.Do(func() {
-		bundle = i18n.NewBundle(language.Chinese)
-		bundle.RegisterUnmarshalFunc("yaml", yaml.Unmarshal)
-
-		// Load embedded translation files
-		files := []string{"locales/zh-CN.yaml", "locales/zh-TW.yaml", "locales/en.yaml"}
-		for _, file := range files {
-			_, err := bundle.LoadMessageFileFS(localeFS, file)
-			if err != nil {
-				initErr = err
-				return
-			}
-		}
-
-		// Pre-create localizers for supported languages
-		localizers[LangZhCN] = i18n.NewLocalizer(bundle, LangZhCN)
-		localizers[LangZhTW] = i18n.NewLocalizer(bundle, LangZhTW)
-		localizers[LangEn] = i18n.NewLocalizer(bundle, LangEn)
-
-		// Set the TranslateMessage function in common package
-		common.TranslateMessage = T
-	})
-	return initErr
+	return initFromFS(localeFS)
 }
 
-// GetLocalizer returns a localizer for the specified language
+func initFromFS(fsys fs.FS) error {
+	initMu.Lock()
+	defer initMu.Unlock()
+	if initialized {
+		return nil
+	}
+
+	b := i18n.NewBundle(language.Chinese)
+	b.RegisterUnmarshalFunc("yaml", yaml.Unmarshal)
+
+	entries, err := fs.ReadDir(fsys, "locales")
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".yaml") {
+			continue
+		}
+		if _, err := b.LoadMessageFileFS(fsys, "locales/"+entry.Name()); err != nil {
+			return err
+		}
+	}
+
+	locs := make(map[string]*i18n.Localizer, len(SupportedLanguages()))
+	for _, lang := range SupportedLanguages() {
+		if lang == LangZhCN || lang == LangZhTW || lang == LangEn {
+			locs[lang] = i18n.NewLocalizer(b, lang)
+			continue
+		}
+		locs[lang] = i18n.NewLocalizer(b, lang, LangEn)
+	}
+
+	mu.Lock()
+	bundle = b
+	localizers = locs
+	mu.Unlock()
+	common.TranslateMessage = T
+	common.DashboardLanguage = GetLangFromContext
+	initialized = true
+	return nil
+}
+
+// GetLocalizer returns a localizer for the specified language.
+// If Init has not loaded a catalog yet, it returns a non-nil empty localizer
+// so Translate can fall back to the message key instead of panicking.
 func GetLocalizer(lang string) *i18n.Localizer {
 	lang = normalizeLang(lang)
 
 	mu.RLock()
-	loc, ok := localizers[lang]
+	if loc, ok := localizers[lang]; ok && loc != nil {
+		mu.RUnlock()
+		return loc
+	}
+	b := bundle
 	mu.RUnlock()
 
-	if ok {
-		return loc
+	if b == nil {
+		return emptyLocalizer
 	}
 
 	// Create new localizer for unknown language (fallback to default)
 	mu.Lock()
 	defer mu.Unlock()
 
-	// Double-check after acquiring write lock
-	if loc, ok = localizers[lang]; ok {
+	if loc, ok := localizers[lang]; ok && loc != nil {
 		return loc
 	}
+	if bundle == nil {
+		return emptyLocalizer
+	}
+	if localizers == nil {
+		localizers = make(map[string]*i18n.Localizer)
+	}
 
-	loc = i18n.NewLocalizer(bundle, lang, DefaultLang)
+	loc := i18n.NewLocalizer(bundle, lang, DefaultLang)
 	localizers[lang] = loc
 	return loc
 }
@@ -92,16 +132,26 @@ func T(c *gin.Context, key string, args ...map[string]any) string {
 	return Translate(lang, key, args...)
 }
 
+// ProtocolMessage always returns the English catalog. OpenAI-compatible and
+// public image-task envelopes must stay English regardless of Accept-Language.
+func ProtocolMessage(key string, args ...map[string]any) string {
+	return Translate(LangEn, key, args...)
+}
+
 // Translate translates a message key for the specified language
 func Translate(lang, key string, args ...map[string]any) string {
+	lang = normalizeLang(lang)
 	loc := GetLocalizer(lang)
+	if loc == nil {
+		return key
+	}
 
 	config := &i18n.LocalizeConfig{
 		MessageID: key,
 	}
 
 	if len(args) > 0 && args[0] != nil {
-		config.TemplateData = args[0]
+		config.TemplateData = publicTemplateData(lang, args[0])
 	}
 
 	msg, err := loc.Localize(config)
@@ -110,6 +160,47 @@ func Translate(lang, key string, args ...map[string]any) string {
 		return key
 	}
 	return msg
+}
+
+// publicTemplateData drops an untranslated Error detail on Chinese catalogs.
+// The Chinese sentence stays; English, French, and the protocol catalog keep it.
+// English clauses glued onto a Chinese reason are removed, and one brand or
+// format token such as "不是合法 JSON" is kept.
+func publicTemplateData(lang string, data map[string]any) map[string]any {
+	if lang != LangZhCN && lang != LangZhTW {
+		return data
+	}
+	var out map[string]any
+	for key, value := range data {
+		text, ok := value.(string)
+		if !ok || !strings.EqualFold(key, "Error") {
+			continue
+		}
+		cleaned := common.SanitizeChineseConsoleText(text)
+		if cleaned != "" && cleaned == strings.TrimSpace(text) {
+			continue
+		}
+		if out == nil {
+			out = make(map[string]any, len(data))
+			for existingKey, existingValue := range data {
+				out[existingKey] = existingValue
+			}
+		}
+		out[key] = cleaned
+	}
+	if out == nil {
+		return data
+	}
+	return out
+}
+
+func containsHan(text string) bool {
+	for _, r := range text {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
 }
 
 // userLangLoaderFunc is a function that loads user language from database/cache
@@ -121,15 +212,35 @@ func SetUserLangLoader(loader func(userId int) string) {
 	userLangLoaderFunc = loader
 }
 
+// PinRequestLanguage forces this request to use a recognized interface language.
+// Unknown values are ignored so Accept-Language and user settings still apply.
+func PinRequestLanguage(c *gin.Context, lang string) {
+	if c == nil {
+		return
+	}
+	canonical, ok := RecognizedLang(lang)
+	if !ok {
+		return
+	}
+	c.Set(string(constant.ContextKeyPinnedLanguage), canonical)
+}
+
 // GetLangFromContext extracts the language setting from gin context
 // It checks multiple sources in priority order:
-// 1. User settings (ContextKeyUserSetting) - if already loaded (e.g., by TokenAuth)
-// 2. Lazy load user language from cache/DB using user ID
-// 3. Language set by middleware (ContextKeyLanguage) - from Accept-Language header
-// 4. Default language (simplified Chinese)
+// 1. Language pinned for this request (OAuth callback flow language)
+// 2. User settings (ContextKeyUserSetting) - if already loaded (e.g., by TokenAuth)
+// 3. Lazy load user language from cache/DB using user ID
+// 4. Language set by middleware (ContextKeyLanguage) - from Accept-Language header
+// 5. Default language (simplified Chinese)
 func GetLangFromContext(c *gin.Context) string {
 	if c == nil {
 		return DefaultLang
+	}
+
+	if lang := c.GetString(string(constant.ContextKeyPinnedLanguage)); lang != "" {
+		if canonical, ok := RecognizedLang(lang); ok {
+			return canonical
+		}
 	}
 
 	// 1. Try to get language from user settings (if already loaded by TokenAuth or other middleware)
@@ -202,9 +313,21 @@ func CanonicalLang(lang string) string {
 	return normalizeLang(lang)
 }
 
-// normalizeLang normalizes language code to supported format
-func normalizeLang(lang string) string {
+// RecognizedLang maps a frontend or BCP-47 tag onto a supported code.
+// Unknown or empty values return false instead of silently falling back.
+func RecognizedLang(lang string) (string, bool) {
+	mapped := mapSupportedLang(lang)
+	if mapped == "" {
+		return "", false
+	}
+	return mapped, true
+}
+
+func mapSupportedLang(lang string) string {
 	lang = strings.ToLower(strings.TrimSpace(lang))
+	if lang == "" {
+		return ""
+	}
 	lang = strings.ReplaceAll(lang, "_", "-")
 	compact := strings.ReplaceAll(lang, "-", "")
 
@@ -219,17 +342,35 @@ func normalizeLang(lang string) string {
 		return LangZhCN
 	case strings.HasPrefix(lang, "en"):
 		return LangEn
+	case strings.HasPrefix(lang, "fr"):
+		return LangFr
+	case strings.HasPrefix(lang, "ja"):
+		return LangJa
+	case strings.HasPrefix(lang, "ru"):
+		return LangRu
+	case strings.HasPrefix(lang, "vi"):
+		return LangVi
 	default:
-		return DefaultLang
+		return ""
 	}
+}
+
+// normalizeLang normalizes language code to supported format
+func normalizeLang(lang string) string {
+	if mapped := mapSupportedLang(lang); mapped != "" {
+		return mapped
+	}
+	return DefaultLang
 }
 
 // SupportedLanguages returns a list of supported language codes
 func SupportedLanguages() []string {
-	return []string{LangZhCN, LangZhTW, LangEn}
+	return []string{LangZhCN, LangZhTW, LangEn, LangFr, LangJa, LangRu, LangVi}
 }
 
-// IsSupported checks if a language code is supported
+// IsSupported reports whether lang maps onto a catalog after normalizeLang.
+// Unknown tags therefore return true because they fall back to DefaultLang.
+// Write paths that must reject unknown tags should call RecognizedLang.
 func IsSupported(lang string) bool {
 	lang = normalizeLang(lang)
 	for _, supported := range SupportedLanguages() {

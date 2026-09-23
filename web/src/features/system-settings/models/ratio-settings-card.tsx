@@ -26,6 +26,11 @@ import * as z from 'zod'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { saveModelPricingOptions } from '@/features/model-pricing/api'
+import {
+  getServerErrorDisplayMessage,
+  toastUnhandledConsoleError,
+} from '@/lib/handle-server-error'
 
 import { resetModelRatios } from '../api'
 import { SettingsPageTitleStatusPortal } from '../components/settings-page-context'
@@ -33,15 +38,18 @@ import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { positiveIntegerSchema } from '../utils/numeric-field'
 import { GroupRatioForm } from './group-ratio-form'
-import { ModelRatioForm } from './model-ratio-form'
+import { ModelRatioForm, type ModelRatioFormHandle } from './model-ratio-form'
 import { ToolPriceSettings } from './tool-price-settings'
 import { UpstreamRatioSync } from './upstream-ratio-sync'
 import {
   formatJsonForTextarea,
   type JsonValidationError,
+  mergeIncomingJsonObjectExtras,
   normalizeJsonString,
   validateJsonString,
 } from './utils'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 type Translate = (key: string, options?: Record<string, unknown>) => string
 
@@ -145,6 +153,42 @@ type RatioTabId =
   | 'tool-prices'
   | 'upstream-sync'
 
+function isModelPricingTab(tab: RatioTabId) {
+  return tab === 'models' || tab === 'unset-models'
+}
+
+function sameNormalizedValues<T extends Record<string, unknown>>(
+  left: T,
+  right: T
+) {
+  const keys = Object.keys(left) as Array<keyof T>
+  return (
+    keys.length === Object.keys(right).length &&
+    keys.every((key) => left[key] === right[key])
+  )
+}
+
+const MODEL_JSON_OBJECT_KEYS = [
+  'ModelPrice',
+  'ModelRatio',
+  'CacheRatio',
+  'CreateCacheRatio',
+  'CompletionRatio',
+  'ImageRatio',
+  'AudioRatio',
+  'AudioCompletionRatio',
+  'BillingMode',
+  'BillingExpr',
+] as const
+
+const GROUP_JSON_OBJECT_KEYS = [
+  'GroupRatio',
+  'TopupGroupRatio',
+  'UserUsableGroups',
+  'GroupGroupRatio',
+  'GroupSpecialUsableGroup',
+] as const
+
 type RatioSettingsCardProps = {
   modelDefaults: ModelFormValues
   groupDefaults: GroupFormValues
@@ -164,6 +208,15 @@ export function RatioSettingsCard({
   const updateOption = useUpdateOption()
   const queryClient = useQueryClient()
   const [confirmOpen, setConfirmOpen] = useState(false)
+  const [savingModelPrices, setSavingModelPrices] = useState(false)
+  const modelRatioFormRef = useRef<ModelRatioFormHandle>(null)
+  const [activeTab, setActiveTab] = useState<RatioTabId>(
+    visibleTabs[0] ?? 'models'
+  )
+  const handleTabChange = useCallback((next: string) => {
+    modelRatioFormRef.current?.flushOpenEditor()
+    setActiveTab(next as RatioTabId)
+  }, [])
 
   const resetMutation = useMutation({
     mutationFn: resetModelRatios,
@@ -173,12 +226,10 @@ export function RatioSettingsCard({
         queryClient.invalidateQueries({ queryKey: ['system-options'] })
         setConfirmOpen(false)
       } else {
-        toast.error(data.message || t('Failed to reset model ratios'))
+        toast.error(localizeConsoleErrorText(data.message, 'Failed to reset model ratios'))
       }
     },
-    onError: (error: Error) => {
-      toast.error(error.message || t('Failed to reset model ratios'))
-    },
+    onError: toastUnhandledConsoleError,
   })
 
   const modelNormalizedDefaults = useRef({
@@ -252,7 +303,7 @@ export function RatioSettingsCard({
   })
 
   useEffect(() => {
-    modelNormalizedDefaults.current = {
+    const next = {
       ModelPrice: normalizeJsonString(modelDefaults.ModelPrice),
       ModelRatio: normalizeJsonString(modelDefaults.ModelRatio),
       CacheRatio: normalizeJsonString(modelDefaults.CacheRatio),
@@ -267,9 +318,10 @@ export function RatioSettingsCard({
       BillingMode: normalizeJsonString(modelDefaults.BillingMode),
       BillingExpr: normalizeJsonString(modelDefaults.BillingExpr),
     }
-    setSavedModelValues(modelNormalizedDefaults.current)
+    const previousSaved = modelNormalizedDefaults.current
+    if (sameNormalizedValues(next, previousSaved)) return
 
-    modelForm.reset({
+    const incoming = {
       ...modelDefaults,
       ModelPrice: formatJsonForTextarea(modelDefaults.ModelPrice),
       ModelRatio: formatJsonForTextarea(modelDefaults.ModelRatio),
@@ -283,11 +335,34 @@ export function RatioSettingsCard({
       ),
       BillingMode: formatJsonForTextarea(modelDefaults.BillingMode),
       BillingExpr: formatJsonForTextarea(modelDefaults.BillingExpr),
-    })
+    }
+    const current = modelForm.getValues()
+    const dirtyFields = { ...modelForm.formState.dirtyFields }
+
+    modelNormalizedDefaults.current = next
+    setSavedModelValues(next)
+    modelForm.reset(incoming)
+    for (const key of MODEL_JSON_OBJECT_KEYS) {
+      if (!dirtyFields[key]) continue
+      modelForm.setValue(
+        key,
+        mergeIncomingJsonObjectExtras(
+          current[key],
+          incoming[key],
+          String(previousSaved[key] ?? '')
+        ),
+        { shouldDirty: true }
+      )
+    }
+    if (dirtyFields.ExposeRatioEnabled) {
+      modelForm.setValue('ExposeRatioEnabled', current.ExposeRatioEnabled, {
+        shouldDirty: true,
+      })
+    }
   }, [modelDefaults, modelForm])
 
   useEffect(() => {
-    groupNormalizedDefaults.current = {
+    const next = {
       GroupRatio: normalizeJsonString(groupDefaults.GroupRatio),
       TopupGroupRatio: normalizeJsonString(groupDefaults.TopupGroupRatio),
       UserUsableGroups: normalizeJsonString(groupDefaults.UserUsableGroups),
@@ -299,8 +374,10 @@ export function RatioSettingsCard({
         groupDefaults.GroupSpecialUsableGroup
       ),
     }
+    const previousSaved = groupNormalizedDefaults.current
+    if (sameNormalizedValues(next, previousSaved)) return
 
-    groupForm.reset({
+    const incoming = {
       ...groupDefaults,
       GroupRatio: formatJsonForTextarea(groupDefaults.GroupRatio),
       TopupGroupRatio: formatJsonForTextarea(groupDefaults.TopupGroupRatio),
@@ -310,7 +387,39 @@ export function RatioSettingsCard({
       GroupSpecialUsableGroup: formatJsonForTextarea(
         groupDefaults.GroupSpecialUsableGroup
       ),
-    })
+    }
+    const current = groupForm.getValues()
+    const dirtyFields = { ...groupForm.formState.dirtyFields }
+
+    groupNormalizedDefaults.current = next
+    groupForm.reset(incoming)
+    for (const key of GROUP_JSON_OBJECT_KEYS) {
+      if (!dirtyFields[key]) continue
+      groupForm.setValue(
+        key,
+        mergeIncomingJsonObjectExtras(
+          current[key],
+          incoming[key],
+          String(previousSaved[key] ?? '')
+        ),
+        { shouldDirty: true }
+      )
+    }
+    if (dirtyFields.AutoGroups) {
+      groupForm.setValue('AutoGroups', current.AutoGroups, {
+        shouldDirty: true,
+      })
+    }
+    if (dirtyFields.MaxTokenAutoGroups) {
+      groupForm.setValue('MaxTokenAutoGroups', current.MaxTokenAutoGroups, {
+        shouldDirty: true,
+      })
+    }
+    if (dirtyFields.DefaultUseAutoGroup) {
+      groupForm.setValue('DefaultUseAutoGroup', current.DefaultUseAutoGroup, {
+        shouldDirty: true,
+      })
+    }
   }, [groupDefaults, groupForm])
 
   const saveModelRatios = useCallback(
@@ -334,30 +443,87 @@ export function RatioSettingsCard({
         BillingExpr: 'billing_setting.billing_expr',
       }
 
-      const updates = (
-        Object.keys(normalized) as Array<keyof ModelFormValues>
-      ).filter(
+      const pricingUpdates = MODEL_JSON_OBJECT_KEYS.filter(
         (key) => normalized[key] !== modelNormalizedDefaults.current[key]
       )
+      const exposeDirty =
+        normalized.ExposeRatioEnabled !==
+        modelNormalizedDefaults.current.ExposeRatioEnabled
 
-      if (updates.length === 0) {
+      if (pricingUpdates.length === 0 && !exposeDirty) {
         toast.info(t('No model price changes to save'))
         return
       }
 
-      for (const key of updates) {
-        const apiKey = apiKeyMap[key as string] || (key as string)
-        const result = await updateOption.mutateAsync({
-          key: apiKey,
-          value: normalized[key],
-        })
-        if (!result.success) return
+      setSavingModelPrices(true)
+      try {
+        if (pricingUpdates.length > 0) {
+          const options: Record<string, string> = {}
+          const expectedOptions: Record<string, string> = {}
+          for (const key of pricingUpdates) {
+            const apiKey = apiKeyMap[key] ?? key
+            options[apiKey] = String(normalized[key])
+            expectedOptions[apiKey] = String(
+              modelNormalizedDefaults.current[key] ?? '{}'
+            )
+          }
+          let result: { success: boolean; message?: string }
+          try {
+            result = await saveModelPricingOptions(options, expectedOptions)
+          } catch (error) {
+            toast.error(getServerErrorDisplayMessage(error))
+            return
+          }
+          if (!result.success) {
+            toast.error(localizeConsoleErrorText(result.message, 'Failed to save model pricing'))
+            return
+          }
+          const nextSaved = { ...modelNormalizedDefaults.current }
+          for (const key of pricingUpdates) {
+            nextSaved[key] = normalized[key]
+          }
+          modelNormalizedDefaults.current = nextSaved
+          setSavedModelValues(nextSaved)
+        }
+
+        if (exposeDirty) {
+          try {
+            const result = await updateOption.mutateAsync({
+              key: 'ExposeRatioEnabled',
+              value: normalized.ExposeRatioEnabled,
+              skipInvalidate: true,
+              skipToast: true,
+            })
+            if (!result.success) return
+          } catch {
+            return
+          }
+        }
+      } finally {
+        setSavingModelPrices(false)
       }
 
       modelNormalizedDefaults.current = normalized
       setSavedModelValues(normalized)
+      modelForm.reset({
+        ...values,
+        ModelPrice: formatJsonForTextarea(normalized.ModelPrice),
+        ModelRatio: formatJsonForTextarea(normalized.ModelRatio),
+        CacheRatio: formatJsonForTextarea(normalized.CacheRatio),
+        CreateCacheRatio: formatJsonForTextarea(normalized.CreateCacheRatio),
+        CompletionRatio: formatJsonForTextarea(normalized.CompletionRatio),
+        ImageRatio: formatJsonForTextarea(normalized.ImageRatio),
+        AudioRatio: formatJsonForTextarea(normalized.AudioRatio),
+        AudioCompletionRatio: formatJsonForTextarea(
+          normalized.AudioCompletionRatio
+        ),
+        BillingMode: formatJsonForTextarea(normalized.BillingMode),
+        BillingExpr: formatJsonForTextarea(normalized.BillingExpr),
+      })
+      await queryClient.invalidateQueries({ queryKey: ['system-options'] })
+      toast.success(t('Setting updated successfully'))
     },
-    [t, updateOption]
+    [modelForm, queryClient, t, updateOption]
   )
 
   const saveGroupRatios = useCallback(
@@ -387,14 +553,42 @@ export function RatioSettingsCard({
         (key) => normalized[key] !== groupNormalizedDefaults.current[key]
       )
 
-      for (const key of updates) {
-        const apiKey = apiKeyMap[key] || key
-        await updateOption.mutateAsync({ key: apiKey, value: normalized[key] })
+      if (updates.length === 0) {
+        groupNormalizedDefaults.current = normalized
+        return
+      }
+
+      try {
+        for (const key of updates) {
+          const apiKey = apiKeyMap[key] || key
+          const result = await updateOption.mutateAsync({
+            key: apiKey,
+            value: normalized[key],
+            skipInvalidate: true,
+            skipToast: true,
+          })
+          if (!result.success) return
+        }
+      } catch {
+        return
       }
 
       groupNormalizedDefaults.current = normalized
+      groupForm.reset({
+        ...values,
+        GroupRatio: formatJsonForTextarea(normalized.GroupRatio),
+        TopupGroupRatio: formatJsonForTextarea(normalized.TopupGroupRatio),
+        UserUsableGroups: formatJsonForTextarea(normalized.UserUsableGroups),
+        GroupGroupRatio: formatJsonForTextarea(normalized.GroupGroupRatio),
+        AutoGroups: formatJsonForTextarea(normalized.AutoGroups),
+        GroupSpecialUsableGroup: formatJsonForTextarea(
+          normalized.GroupSpecialUsableGroup
+        ),
+      })
+      await queryClient.invalidateQueries({ queryKey: ['system-options'] })
+      toast.success(t('Setting updated successfully'))
     },
-    [updateOption]
+    [groupForm, queryClient, t, updateOption]
   )
 
   const handleResetRatios = useCallback(() => {
@@ -427,13 +621,15 @@ export function RatioSettingsCard({
     if (tab === 'models' || tab === 'unset-models') {
       return (
         <ModelRatioForm
+          ref={modelRatioFormRef}
           form={modelForm}
           savedValues={savedModelValues}
           onSave={saveModelRatios}
           onReset={handleResetRatios}
-          isSaving={updateOption.isPending}
+          isSaving={updateOption.isPending || savingModelPrices}
           isResetting={resetMutation.isPending}
           variant={tab === 'unset-models' ? 'unset' : 'default'}
+          showExposeRatio={tab === 'models'}
         />
       )
     }
@@ -484,17 +680,49 @@ export function RatioSettingsCard({
           {renderTabContent(defaultTab)}
         </SettingsSection>
       ) : (
-        <Tabs defaultValue={defaultTab} className='h-full min-h-0 gap-6'>
+        <Tabs
+          value={activeTab}
+          onValueChange={handleTabChange}
+          className='h-full min-h-0 gap-6'
+        >
           <SettingsPageTitleStatusPortal>
             {renderTabSwitcher()}
           </SettingsPageTitleStatusPortal>
 
           <SettingsSection title={t(titleKey)} className='min-h-0 flex-1'>
-            {visibleTabs.map((tab) => (
-              <TabsContent key={tab} value={tab} className='min-h-0'>
-                {renderTabContent(tab)}
-              </TabsContent>
-            ))}
+            {visibleTabs.some(isModelPricingTab) && (
+              <div
+                hidden={!isModelPricingTab(activeTab)}
+                className='min-h-0 flex-1'
+              >
+                <ModelRatioForm
+                  ref={modelRatioFormRef}
+                  form={modelForm}
+                  savedValues={savedModelValues}
+                  onSave={saveModelRatios}
+                  onReset={handleResetRatios}
+                  isSaving={updateOption.isPending || savingModelPrices}
+                  isResetting={resetMutation.isPending}
+                  variant={activeTab === 'unset-models' ? 'unset' : 'default'}
+                  showExposeRatio={activeTab === 'models'}
+                />
+              </div>
+            )}
+            {visibleTabs.map((tab) =>
+              isModelPricingTab(tab) ? (
+                <TabsContent
+                  key={tab}
+                  value={tab}
+                  className='min-h-0'
+                  keepMounted
+                  hidden
+                />
+              ) : (
+                <TabsContent key={tab} value={tab} className='min-h-0'>
+                  {renderTabContent(tab)}
+                </TabsContent>
+              )
+            )}
           </SettingsSection>
         </Tabs>
       )}

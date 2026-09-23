@@ -49,6 +49,8 @@ import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
+
 import {
   sideDrawerContentClassName,
   sideDrawerFooterClassName,
@@ -190,6 +192,8 @@ import {
   ChannelEditorLoadingState,
   ChannelModelsSection,
 } from './sections'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 type ChannelMutateDrawerProps = {
   open: boolean
@@ -892,7 +896,7 @@ export function ChannelMutateDrawer({
     try {
       const res = await getChannelKey(channelId)
       if (!res.success) {
-        throw new Error(res.message || t('Failed to fetch channel key'))
+        throw new Error(localizeConsoleErrorText(res.message, 'Failed to fetch channel key'))
       }
 
       const keyValue = res.data?.key ?? ''
@@ -917,9 +921,7 @@ export function ChannelMutateDrawer({
         ),
       })
     } catch (error) {
-      if (error instanceof Error) {
-        toast.error(error.message)
-      }
+      toastUnhandledConsoleError(error)
     }
   }, [channelId, withVerification, fetchChannelKey])
 
@@ -933,14 +935,14 @@ export function ChannelMutateDrawer({
     try {
       const res = await refreshCodexCredential(channelId)
       if (!res.success) {
-        throw new Error(res.message || t('Failed to refresh credential'))
+        throw new Error(localizeConsoleErrorText(res.message, 'Failed to refresh credential'))
       }
       toast.success(t('Credential refreshed'))
       queryClient.invalidateQueries({
         queryKey: channelsQueryKeys.detail(channelId),
       })
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('Refresh failed'))
+      toastUnhandledConsoleError(error)
     } finally {
       setIsCodexCredentialRefreshing(false)
     }
@@ -1015,7 +1017,7 @@ export function ChannelMutateDrawer({
     if (response.success && response.data) {
       return response.data
     }
-    throw new Error(response.message || t('No models fetched from upstream'))
+    throw new Error(localizeConsoleErrorText(response.message, 'No models fetched from upstream'))
   }, [buildFetchModelsDraftPayload, form, t])
 
   const savedModelsFetcher = useCallback(async (): Promise<string[]> => {
@@ -1024,7 +1026,7 @@ export function ChannelMutateDrawer({
     if (response.success && response.data) {
       return response.data
     }
-    throw new Error(response.message || t('No models fetched from upstream'))
+    throw new Error(localizeConsoleErrorText(response.message, 'No models fetched from upstream'))
   }, [channelId, t])
 
   const fetchModelsDialogFetcher = useDraftFetchModelsForDialog

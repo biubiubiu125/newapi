@@ -4,8 +4,10 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"unicode"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
@@ -354,5 +356,23 @@ func TestModelPriceHelperPerCallFloorsPositiveBaseQuotaToOne(t *testing.T) {
 			require.Equal(t, 1, priceData.Quota)
 			require.Equal(t, tt.wantUsePrice, priceData.UsePrice)
 		})
+	}
+}
+
+func TestModelPriceNotConfiguredErrorStaysEnglish(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	err := modelPriceNotConfiguredError("gpt-unpriced", 0)
+	require.Error(t, err)
+	requireNoHan(t, err.Error())
+	require.Contains(t, err.Error(), "has not been priced")
+	require.NotContains(t, err.Error(), "模型")
+}
+
+func requireNoHan(t *testing.T, s string) {
+	t.Helper()
+	for _, r := range s {
+		if unicode.In(r, unicode.Han) {
+			t.Fatalf("contains Han: %q", s)
+		}
 	}
 }

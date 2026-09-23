@@ -57,6 +57,8 @@ import {
 } from '../../lib'
 import { useChannels } from '../channels-provider'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 function normalizeModelNameList(models: readonly string[]): string[] {
   return [...new Set(models.map((m) => normalizeModelName(m)).filter(Boolean))]
 }
@@ -185,7 +187,7 @@ export function FetchModelsDialog({
             t('Fetched {{count}} models', { count: normalizedList.length })
           )
         } else {
-          toast.error(response.message || t('Failed to fetch models'))
+          toast.error(localizeConsoleErrorText(response.message, 'Failed to fetch models'))
           setFetchedModels([])
           setSelectedModels([])
           setHasSuccessfulFetch(false)
@@ -194,7 +196,7 @@ export function FetchModelsDialog({
     } catch (error: unknown) {
       if (!isCurrentFetch()) return
       toast.error(
-        error instanceof Error ? error.message : t('Failed to fetch models')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to fetch models')
       )
       setFetchedModels([])
       setSelectedModels([])
@@ -237,11 +239,11 @@ export function FetchModelsDialog({
         queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
         onOpenChange(false)
       } else {
-        toast.error(response.message || t('Failed to update models'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to update models'))
       }
     } catch (error: unknown) {
       toast.error(
-        error instanceof Error ? error.message : t('Failed to update models')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to update models')
       )
     } finally {
       setIsSaving(false)

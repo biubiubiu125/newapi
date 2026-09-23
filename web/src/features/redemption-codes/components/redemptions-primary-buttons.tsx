@@ -28,6 +28,8 @@ import { deleteInvalidRedemptions } from '../api'
 import { ERROR_MESSAGES } from '../constants'
 import { useRedemptions } from './redemptions-provider'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 export function RedemptionsPrimaryButtons() {
   const { t } = useTranslation()
   const { setOpen, triggerRefresh } = useRedemptions()
@@ -49,7 +51,7 @@ export function RedemptionsPrimaryButtons() {
         triggerRefresh()
         setShowDeleteInvalidConfirm(false)
       } else {
-        toast.error(result.message || t(ERROR_MESSAGES.DELETE_INVALID_FAILED))
+        toast.error(localizeConsoleErrorText(result.message, ERROR_MESSAGES.DELETE_INVALID_FAILED))
       }
     } finally {
       setIsDeleting(false)

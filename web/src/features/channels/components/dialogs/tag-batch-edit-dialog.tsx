@@ -42,6 +42,8 @@ import type { TagOperationParams } from '../../types'
 import { useChannels } from '../channels-provider'
 import { ModelMappingEditor } from '../model-mapping-editor'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type TagBatchEditDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -107,7 +109,7 @@ export function TagBatchEditDialog({
       setNewTag(currentTag)
     } catch (_error: unknown) {
       toast.error(
-        _error instanceof Error ? _error.message : t('Failed to load tag data')
+        localizeConsoleErrorText(_error instanceof Error ? _error.message : '', 'Failed to load tag data')
       )
     } finally {
       setIsLoading(false)
@@ -163,11 +165,11 @@ export function TagBatchEditDialog({
         queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
         handleClose()
       } else {
-        toast.error(response.message || t('Failed to update tag'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to update tag'))
       }
     } catch (error: unknown) {
       toast.error(
-        error instanceof Error ? error.message : t('Failed to update tag')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to update tag')
       )
     } finally {
       setIsSaving(false)

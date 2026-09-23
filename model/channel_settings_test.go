@@ -29,7 +29,7 @@ func TestValidateSettingsRequiresBaseURLForAsyncTaskBridgeMode(t *testing.T) {
 		OtherSettings: `{"image_task_mode":"` + dto.ImageTaskModeAsyncTaskBridge + `"}`,
 	}
 
-	require.ErrorContains(t, channel.ValidateSettings(), "异步任务桥接模式必须配置")
+	require.ErrorContains(t, channel.ValidateSettings(), "async task bridge mode requires a base_url that supports /api/image-tasks")
 
 	baseURL := "https://async-task-bridge.example.com"
 	channel.BaseURL = &baseURL

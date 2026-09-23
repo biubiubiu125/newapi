@@ -33,6 +33,7 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
 import { tryPrettyJson } from '@/lib/utils'
 
 import { completeCodexOAuth, startCodexOAuth } from '../../api'
@@ -80,7 +81,7 @@ export function CodexOAuthDialog({
     try {
       const res = await startCodexOAuth()
       if (!res.success) {
-        throw new Error(res.message || 'Failed to start OAuth')
+        return
       }
 
       const url = res.data?.authorize_url || ''
@@ -98,9 +99,7 @@ export function CodexOAuthDialog({
         toast.warning(t('Please manually copy and open the authorization link'))
       }
     } catch (error) {
-      toast.error(
-        error instanceof Error ? error.message : t('OAuth start failed')
-      )
+      toastUnhandledConsoleError(error)
     } finally {
       setState((prev) => ({ ...prev, isStarting: false }))
     }
@@ -112,7 +111,7 @@ export function CodexOAuthDialog({
     try {
       const res = await completeCodexOAuth(state.callbackUrl.trim())
       if (!res.success) {
-        throw new Error(res.message || 'OAuth failed')
+        return
       }
 
       const rawKey = res.data?.key || ''
@@ -124,7 +123,7 @@ export function CodexOAuthDialog({
       toast.success(t('Credential generated'))
       onOpenChange(false)
     } catch (error) {
-      toast.error(error instanceof Error ? error.message : t('OAuth failed'))
+      toastUnhandledConsoleError(error)
     } finally {
       setState((prev) => ({ ...prev, isCompleting: false }))
     }

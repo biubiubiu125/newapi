@@ -45,6 +45,7 @@ import {
   fetchPluginSourceText,
   PluginSourceFetchError,
 } from '../lib/plugin-url'
+import { pluginVisibleError } from '../lib/rejection-text'
 import type { MarketplacePlugin, MarketplaceSource } from '../types'
 import { JavaScriptViewer } from './javascript-viewer'
 import { MarketplaceCapabilities } from './marketplace-capabilities'
@@ -100,7 +101,9 @@ function MarketplaceInstallContent(
     retry: false,
     meta: { errorToast: false },
     queryFn: async () => {
-      if (!entry) throw new Error('missing marketplace entry')
+      if (!entry) {
+        throw new Error(t('Could not load this source'))
+      }
       const url = resolvePluginSourceUrl(target.source.index_url, entry.path)
       if (!url) {
         throw new Error(
@@ -145,7 +148,7 @@ function MarketplaceInstallContent(
         sourceQuery.isError ||
         digestMismatch
       ) {
-        throw new Error('source not fetched')
+        throw new Error(t('Could not load this source'))
       }
       const detail = await installMarketplacePlugin({
         source: sourceQuery.data.text,
@@ -186,7 +189,10 @@ function MarketplaceInstallContent(
             'Could not fetch the plugin source from this browser. The host may block cross-origin requests or be unreachable.'
           )
   } else if (fetchError) {
-    fetchErrorMessage = fetchError.message
+    fetchErrorMessage = pluginVisibleError(
+      fetchError,
+      'Could not load this source'
+    )
   }
 
   const digestMismatch = Boolean(
@@ -341,7 +347,7 @@ function MarketplaceInstallContent(
             )}
             {installedQuery.error && (
               <p role='alert' className='text-destructive text-sm'>
-                {installedQuery.error.message}
+                {pluginVisibleError(installedQuery.error, 'Failed to load')}
               </p>
             )}
             {sourceQuery.data &&
@@ -412,7 +418,7 @@ function MarketplaceInstallContent(
           </p>
           {/* Verbatim: preflight rejections name the conflicting plugin. */}
           <p className='text-destructive text-sm whitespace-pre-wrap'>
-            {installMutation.error.message}
+            {pluginVisibleError(installMutation.error)}
           </p>
           <p className='text-muted-foreground text-xs'>
             {t(

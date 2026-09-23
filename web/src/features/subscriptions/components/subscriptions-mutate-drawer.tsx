@@ -23,6 +23,8 @@ import { useForm, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 import {
   SideDrawerSection,
   sideDrawerContentClassName,
@@ -235,14 +237,18 @@ export function SubscriptionsMutateDrawer({
       } else {
         const reason = typeof res.data === 'string' ? res.data : undefined
         toast.error(
-          reason
-            ? `${t('Waffo Pancake product creation failed')}: ${reason}`
-            : t('Waffo Pancake product creation failed')
+          localizeConsoleErrorText(
+            reason,
+            'Waffo Pancake product creation failed'
+          )
         )
       }
     } catch (err) {
       toast.error(
-        `${t('Waffo Pancake product creation failed')}: ${err instanceof Error ? err.message : String(err)}`
+        localizeConsoleErrorText(
+          err instanceof Error ? err.message : '',
+          'Waffo Pancake product creation failed'
+        )
       )
     } finally {
       setCreatingPancakeProduct(false)

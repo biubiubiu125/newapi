@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 
@@ -16,7 +17,7 @@ func CreateLogCleanupSystemTask(c *gin.Context) {
 	if targetTimestamp == 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "必须提供目标时间戳",
+			"message": i18n.T(c, i18n.MsgSystemTaskTargetRequired),
 		})
 		return
 	}
@@ -30,7 +31,7 @@ func CreateLogCleanupSystemTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    task.ToResponse(),
+		"data":    localizeSystemTaskResponse(c, task.ToResponse()),
 	})
 }
 
@@ -39,7 +40,7 @@ func GetCurrentSystemTask(c *gin.Context) {
 	if taskType == "" {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "必须提供任务类型",
+			"message": i18n.T(c, i18n.MsgSystemTaskTypeRequired),
 		})
 		return
 	}
@@ -61,7 +62,7 @@ func GetCurrentSystemTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    task.ToResponse(),
+		"data":    localizeSystemTaskResponse(c, task.ToResponse()),
 	})
 }
 
@@ -76,7 +77,7 @@ func ListSystemTasks(c *gin.Context) {
 
 	responses := make([]model.SystemTaskResponse, 0, len(tasks))
 	for _, task := range tasks {
-		responses = append(responses, task.ToResponse())
+		responses = append(responses, localizeSystemTaskResponse(c, task.ToResponse()))
 	}
 
 	c.JSON(http.StatusOK, gin.H{
@@ -91,7 +92,7 @@ func GetSystemTask(c *gin.Context) {
 	if taskID == "" {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "必须提供任务 ID",
+			"message": i18n.T(c, i18n.MsgSystemTaskIdRequired),
 		})
 		return
 	}
@@ -104,7 +105,7 @@ func GetSystemTask(c *gin.Context) {
 	if task == nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
-			"message": "未找到任务",
+			"message": i18n.T(c, i18n.MsgSystemTaskNotFound),
 		})
 		return
 	}
@@ -112,6 +113,6 @@ func GetSystemTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    task.ToResponse(),
+		"data":    localizeSystemTaskResponse(c, task.ToResponse()),
 	})
 }

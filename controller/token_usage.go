@@ -4,6 +4,7 @@ import (
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
@@ -17,7 +18,7 @@ type tokenUsageBatchRequest struct {
 func GetTokenUsageStats(c *gin.Context) {
 	tokenId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		common.ApiErrorMsg(c, "API 密钥 ID 不正确")
+		common.ApiErrorI18n(c, i18n.MsgTokenUsageInvalidId)
 		return
 	}
 	token, err := model.GetTokenByIds(tokenId, c.GetInt("id"))
@@ -45,7 +46,7 @@ func GetTokenUsageStats(c *gin.Context) {
 func ResetTokenUsageStats(c *gin.Context) {
 	tokenId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		common.ApiErrorMsg(c, "API 密钥 ID 不正确")
+		common.ApiErrorI18n(c, i18n.MsgTokenUsageInvalidId)
 		return
 	}
 	token, err := model.GetTokenByIds(tokenId, c.GetInt("id"))
@@ -69,7 +70,7 @@ func ResetTokenUsageStats(c *gin.Context) {
 func GetTokenUsageStatsBatch(c *gin.Context) {
 	var req tokenUsageBatchRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		common.ApiErrorMsg(c, "请求参数不正确")
+		common.ApiErrorI18n(c, i18n.MsgTokenUsageInvalidParams)
 		return
 	}
 	if len(req.Ids) == 0 {
@@ -77,7 +78,7 @@ func GetTokenUsageStatsBatch(c *gin.Context) {
 		return
 	}
 	if len(req.Ids) > 100 {
-		common.ApiErrorMsg(c, "单次最多查询 100 个 API Key")
+		common.ApiErrorI18n(c, i18n.MsgTokenUsageBatchMax)
 		return
 	}
 

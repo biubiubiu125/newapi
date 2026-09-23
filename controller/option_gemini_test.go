@@ -7,12 +7,14 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestUpdateOptionRejectsInvalidGeminiSafetyThreshold(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	response := httptest.NewRecorder()
 	context, _ := gin.CreateTestContext(response)
 	context.Request = httptest.NewRequest(
@@ -20,6 +22,7 @@ func TestUpdateOptionRejectsInvalidGeminiSafetyThreshold(t *testing.T) {
 		"/api/option/",
 		strings.NewReader(`{"key":"gemini.safety_settings","value":"{\"default\":\"BLOCK_SOME\"}"}`),
 	)
+	context.Request.Header.Set("Accept-Language", "zh-CN")
 
 	UpdateOption(context)
 
@@ -31,4 +34,5 @@ func TestUpdateOptionRejectsInvalidGeminiSafetyThreshold(t *testing.T) {
 	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &payload))
 	assert.False(t, payload.Success)
 	assert.Contains(t, payload.Message, "BLOCK_SOME")
+	assert.Contains(t, payload.Message, "安全阈值")
 }

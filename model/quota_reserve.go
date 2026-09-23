@@ -170,7 +170,7 @@ func reserveTokenQuotaDB(id int, quota int64) (bool, error) {
 // 缓存命中时以缓存余额为准，落库始终同步；Redis 异常或水合失败时降级为数据库条件更新。
 func TryReserveUserQuota(id int, quota int) (bool, error) {
 	if quota < 0 {
-		return false, errors.New("quota 不能为负数！")
+		return false, errors.New("quota cannot be negative")
 	}
 	if quota == 0 {
 		return true, nil
@@ -205,7 +205,7 @@ func TryReserveUserQuota(id int, quota int) (bool, error) {
 // tokens skip the balance check but still update remain/used accounting.
 func TryReserveTokenQuota(id int, key string, quota int, unlimited bool) (bool, error) {
 	if quota < 0 {
-		return false, errors.New("quota 不能为负数！")
+		return false, errors.New("quota cannot be negative")
 	}
 	if quota == 0 {
 		return true, nil

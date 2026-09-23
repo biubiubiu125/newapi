@@ -39,6 +39,51 @@ var (
 	errDefaultTokenCreate   = errors.New("create default token")
 )
 
+func registerTransactionError(err error) (string, bool) {
+	if model.IsUserEmailUniqueError(err) {
+		return i18n.MsgUserExists, false
+	}
+	if errors.Is(err, errDefaultTokenCreate) {
+		return i18n.MsgCreateDefaultTokenErr, false
+	}
+	switch err.Error() {
+	case "self invite is not allowed":
+		return i18n.MsgUserSelfInviteNotAllowed, false
+	case "referral cycle is not allowed":
+		return i18n.MsgUserReferralCycleNotAllowed, false
+	default:
+		return i18n.MsgDatabaseError, true
+	}
+}
+
+func applyInterfaceLanguageToNewUser(c *gin.Context, user *model.User) {
+	if user == nil {
+		return
+	}
+	setting := user.GetSetting()
+	if strings.TrimSpace(setting.Language) != "" {
+		return
+	}
+	setting.Language = i18n.GetLangFromContext(c)
+	user.SetSetting(setting)
+}
+
+func applyStoredInterfaceLanguageToNewUser(user *model.User, requested string) {
+	if user == nil {
+		return
+	}
+	setting := user.GetSetting()
+	if strings.TrimSpace(setting.Language) != "" {
+		return
+	}
+	canonical, ok := i18n.RecognizedLang(requested)
+	if !ok {
+		return
+	}
+	setting.Language = canonical
+	user.SetSetting(setting)
+}
+
 func resolvePasswordTransport(password, encryptedPassword, encryptionKeyID string, required bool) (string, error) {
 	if encryptedPassword != "" {
 		return common.DecryptPassword(encryptedPassword, encryptionKeyID)
@@ -221,7 +266,8 @@ func setupLoginOrRequire2FAWithExtra(user *model.User, c *gin.Context, extraData
 		expiresAt := time.Now().Add(5 * time.Minute)
 		payload, err := common.Marshal(twoFALoginFlowPayload{AuthVersion: user.AuthVersion})
 		if err != nil {
-			common.ApiError(c, err)
+			common.SysLog(fmt.Sprintf("Login failed to marshal 2FA flow for user %d: %v", user.Id, err))
+			common.ApiErrorI18n(c, i18n.MsgOperationFailed)
 			return
 		}
 		flowToken, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
@@ -231,7 +277,8 @@ func setupLoginOrRequire2FAWithExtra(user *model.User, c *gin.Context, extraData
 			ExpiresAt: expiresAt,
 		})
 		if err != nil {
-			common.ApiError(c, err)
+			common.SysLog(fmt.Sprintf("Login failed to create 2FA flow for user %d: %v", user.Id, err))
+			common.ApiErrorI18n(c, i18n.MsgDatabaseError)
 			return
 		}
 		session := sessions.Default(c)
@@ -273,7 +320,8 @@ func setupLoginAtAuthVersionWithExtra(user *model.User, expectedAuthVersion int6
 	}
 	currentUser, err := model.GetUserById(user.Id, false)
 	if err != nil {
-		common.ApiError(c, err)
+		common.SysLog(fmt.Sprintf("Login failed to load user %d: %v", user.Id, err))
+		common.ApiErrorI18n(c, i18n.MsgDatabaseError)
 		return
 	}
 
@@ -413,16 +461,16 @@ func Register(c *gin.Context) {
 	user.Email = model.NormalizeUserEmail(user.Email)
 	if user.Email != "" {
 		if err := common.Validate.Var(user.Email, "email"); err != nil {
-			common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+			respondUserInputError(c, err)
 			return
 		}
 	}
 	if err := model.ValidateNewUserUsername(user.Username); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+		respondUserInputError(c, err)
 		return
 	}
 	if err := common.Validate.Struct(&user); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+		respondUserInputError(c, err)
 		return
 	}
 	if common.EmailVerificationEnabled {
@@ -464,6 +512,7 @@ func Register(c *gin.Context) {
 		Email:       strings.TrimSpace(user.Email),
 		Role:        common.RoleCommonUser, // 明确设置角色为普通用户
 	}
+	applyInterfaceLanguageToNewUser(c, &cleanUser)
 	var defaultToken *model.Token
 	if constant.GenerateDefaultToken {
 		defaultTokenGroup := strings.TrimSpace(cleanUser.Group)
@@ -501,15 +550,11 @@ func Register(c *gin.Context) {
 		}
 		return referralService.BindInviteeByCodeWithTx(tx, cleanUser.Id, referralCode, referralBindSource(explicitCode))
 	}); err != nil {
-		if model.IsUserEmailUniqueError(err) {
-			common.ApiErrorI18n(c, i18n.MsgUserExists)
-			return
+		key, logRaw := registerTransactionError(err)
+		if logRaw {
+			common.SysLog("user register failed: " + err.Error())
 		}
-		if errors.Is(err, errDefaultTokenCreate) {
-			common.ApiErrorI18n(c, i18n.MsgCreateDefaultTokenErr)
-			return
-		}
-		common.ApiError(c, err)
+		common.ApiErrorI18n(c, key)
 		return
 	}
 
@@ -672,11 +717,11 @@ func GenerateAccessToken(c *gin.Context) {
 }
 
 func TransferAffQuota(c *gin.Context) {
-	common.ApiErrorMsg(c, "legacy affiliate quota transfer is deprecated")
+	common.ApiErrorI18n(c, i18n.MsgReferralLegacyTransferDeprecated)
 }
 
 func GetAffCode(c *gin.Context) {
-	common.ApiErrorMsg(c, "legacy affiliate code endpoint is deprecated")
+	common.ApiErrorI18n(c, i18n.MsgReferralLegacyCodeDeprecated)
 }
 
 func GetSelf(c *gin.Context) {
@@ -910,7 +955,7 @@ func UpdateUser(c *gin.Context) {
 	updatedUser.Email = model.NormalizeUserEmail(updatedUser.Email)
 	if updatedUser.Email != "" {
 		if err := common.Validate.Var(updatedUser.Email, "email"); err != nil {
-			common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+			respondUserInputError(c, err)
 			return
 		}
 	}
@@ -918,7 +963,7 @@ func UpdateUser(c *gin.Context) {
 		updatedUser.Password = "$I_LOVE_U" // make Validator happy :)
 	}
 	if err := common.Validate.Struct(&updatedUser); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+		respondUserInputError(c, err)
 		return
 	}
 	originUser, err := model.GetUserById(updatedUser.Id, false)
@@ -929,7 +974,7 @@ func UpdateUser(c *gin.Context) {
 	updatedUser.Role = originUser.Role
 	if updatedUser.Username != originUser.Username {
 		if err := model.ValidateNewUserUsername(updatedUser.Username); err != nil {
-			common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+			respondUserInputError(c, err)
 			return
 		}
 	}
@@ -1086,7 +1131,15 @@ func UpdateSelf(c *gin.Context) {
 
 		// 更新language字段
 		if langStr, ok := language.(string); ok {
-			currentSetting.Language = langStr
+			langStr = strings.TrimSpace(langStr)
+			if langStr != "" {
+				canonical, recognized := i18n.RecognizedLang(langStr)
+				if !recognized {
+					common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+					return
+				}
+				currentSetting.Language = canonical
+			}
 		}
 
 		// 保存更新后的设置
@@ -1125,7 +1178,7 @@ func UpdateSelf(c *gin.Context) {
 		}
 		if user.Username != currentUser.Username {
 			if err := model.ValidateNewUserUsername(user.Username); err != nil {
-				common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+				respondUserInputError(c, err)
 				return
 			}
 		}
@@ -1135,7 +1188,7 @@ func UpdateSelf(c *gin.Context) {
 		user.Password = "$I_LOVE_U" // make Validator happy :)
 	}
 	if err := common.Validate.Struct(&user); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgInvalidInput)
+		respondUserInputError(c, err)
 		return
 	}
 
@@ -1151,13 +1204,20 @@ func UpdateSelf(c *gin.Context) {
 	}
 	updatePassword, err := checkUpdatePassword(user.OriginalPassword, user.Password, cleanUser.Id)
 	if err != nil {
-		common.ApiError(c, err)
+		switch {
+		case errors.Is(err, errUserPasswordUnset):
+			common.ApiErrorI18n(c, i18n.MsgUserPasswordUnset)
+		case errors.Is(err, errOriginalPasswordFail):
+			common.ApiErrorI18n(c, i18n.MsgUserOriginalPasswordError)
+		default:
+			common.ApiError(c, err)
+		}
 		return
 	}
 	if updatePassword {
 		identity, ok := middleware.GetSessionAuthIdentity(c)
 		if !ok {
-			common.ApiError(c, errors.New("当前认证方式不支持修改密码"))
+			common.ApiErrorI18n(c, i18n.MsgUserPasswordMethodUnsupported)
 			return
 		}
 		if err := model.DB.Transaction(func(tx *gorm.DB) error {
@@ -1308,16 +1368,16 @@ func CreateUser(c *gin.Context) {
 	}
 	if user.Email != "" {
 		if err := common.Validate.Var(user.Email, "email"); err != nil {
-			common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+			respondUserInputError(c, err)
 			return
 		}
 	}
 	if err := model.ValidateNewUserUsername(user.Username); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+		respondUserInputError(c, err)
 		return
 	}
 	if err := common.Validate.Struct(&user); err != nil {
-		common.ApiErrorI18n(c, i18n.MsgUserInputInvalid, map[string]any{"Error": err.Error()})
+		respondUserInputError(c, err)
 		return
 	}
 	if user.DisplayName == "" {
@@ -1519,11 +1579,11 @@ type emailBindRequest struct {
 func EmailBind(c *gin.Context) {
 	var req emailBindRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
-		common.ApiError(c, errors.New("invalid request body"))
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
 	if _, ok := middleware.GetSessionAuthIdentity(c); !ok {
-		common.ApiError(c, errors.New("当前认证方式不支持绑定邮箱"))
+		common.ApiErrorI18n(c, i18n.MsgUserEmailMethodUnsupported)
 		return
 	}
 	email := model.NormalizeUserEmail(req.Email)
@@ -1767,6 +1827,9 @@ func UpdateUserSetting(c *gin.Context) {
 		UpstreamModelUpdateNotifyEnabled: upstreamModelUpdateNotifyEnabled,
 		AcceptUnsetRatioModel:            req.AcceptUnsetModelRatioModel,
 		RecordIpLog:                      req.RecordIpLog,
+		Language:                         existingSettings.Language,
+		SidebarModules:                   existingSettings.SidebarModules,
+		BillingPreference:                existingSettings.BillingPreference,
 	}
 
 	// 如果是webhook类型,添加webhook相关设置

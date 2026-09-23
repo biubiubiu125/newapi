@@ -17,6 +17,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -883,7 +884,7 @@ func TestChannel(c *gin.Context) {
 	if result.localErr != nil {
 		resp := gin.H{
 			"success": false,
-			"message": result.localErr.Error(),
+			"message": consoleUpstreamDetail(c, result.localErr.Error(), i18n.MsgChannelTestFailed),
 			"time":    0.0,
 		}
 		if result.newAPIError != nil {
@@ -899,7 +900,7 @@ func TestChannel(c *gin.Context) {
 	if result.newAPIError != nil {
 		c.JSON(http.StatusOK, gin.H{
 			"success":    false,
-			"message":    result.newAPIError.Error(),
+			"message":    consoleUpstreamDetail(c, result.newAPIError.Error(), i18n.MsgChannelTestFailed),
 			"time":       consumedTime,
 			"error_code": result.newAPIError.GetErrorCode(),
 		})
@@ -910,6 +911,10 @@ func TestChannel(c *gin.Context) {
 		"message": "",
 		"time":    consumedTime,
 	})
+}
+
+func channelResponseTimeExceededError(latencyMs, thresholdMs int64) error {
+	return fmt.Errorf("response time %.2fs exceeds threshold %.2fs", float64(latencyMs)/1000.0, float64(thresholdMs)/1000.0)
 }
 
 type channelTestSummary struct {
@@ -943,8 +948,7 @@ func testChannelForHealthCheck(ctx context.Context, channel *model.Channel, test
 
 	if common.AutomaticDisableChannelEnabled && !shouldBanChannel {
 		if milliseconds > disableThreshold {
-			err := fmt.Errorf("响应时间 %.2fs 超过阈值 %.2fs", float64(milliseconds)/1000.0, float64(disableThreshold)/1000.0)
-			newAPIError = types.NewOpenAIError(err, types.ErrorCodeChannelResponseTimeExceeded, http.StatusRequestTimeout)
+			newAPIError = types.NewOpenAIError(channelResponseTimeExceededError(milliseconds, disableThreshold), types.ErrorCodeChannelResponseTimeExceeded, http.StatusRequestTimeout)
 			shouldBanChannel = true
 		}
 	}
@@ -1146,7 +1150,7 @@ func TestAllChannels(c *gin.Context) {
 	if !created {
 		c.JSON(http.StatusConflict, gin.H{
 			"success": false,
-			"message": "已有通道测试任务正在运行或等待中，不能启动本次手动任务",
+			"message": i18n.T(c, i18n.MsgChannelTestTaskRunning),
 			"data": gin.H{
 				"task_id": task.TaskID,
 				"status":  task.Status,

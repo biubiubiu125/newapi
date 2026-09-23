@@ -50,7 +50,10 @@ export function StaticRowActions(props: StaticRowActionsProps) {
       </Button>
       <DataTableRowActionMenu ariaLabel={props.menuLabel}>
         <DropdownMenuItem
-          onClick={props.onDelete}
+          onClick={(event) => {
+            event.stopPropagation()
+            props.onDelete()
+          }}
           disabled={props.deleteDisabled}
           className='text-destructive focus:text-destructive'
         >

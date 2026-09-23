@@ -20,6 +20,8 @@ import type { QueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 
+import { consoleFailureText } from '@/lib/console-failure-text'
+
 import {
   copyChannel,
   deleteChannel,
@@ -39,6 +41,8 @@ import {
 } from '../api'
 import { CHANNEL_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import type { CopyChannelParams } from '../types'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 // ============================================================================
 // Query Keys
@@ -72,7 +76,7 @@ export async function handleEnableChannel(
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       onSuccess?.()
     } else {
-      toast.error(response.message || i18next.t(ERROR_MESSAGES.UPDATE_FAILED))
+      toast.error(localizeConsoleErrorText(response.message, ERROR_MESSAGES.UPDATE_FAILED))
     }
   } catch {
     toast.error(i18next.t(ERROR_MESSAGES.UPDATE_FAILED))
@@ -97,7 +101,7 @@ export async function handleDisableChannel(
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       onSuccess?.()
     } else {
-      toast.error(response.message || i18next.t(ERROR_MESSAGES.UPDATE_FAILED))
+      toast.error(localizeConsoleErrorText(response.message, ERROR_MESSAGES.UPDATE_FAILED))
     }
   } catch {
     toast.error(i18next.t(ERROR_MESSAGES.UPDATE_FAILED))
@@ -135,7 +139,7 @@ export async function handleDeleteChannel(
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       onSuccess?.()
     } else {
-      toast.error(response.message || i18next.t(ERROR_MESSAGES.DELETE_FAILED))
+      toast.error(localizeConsoleErrorText(response.message, ERROR_MESSAGES.DELETE_FAILED))
     }
   } catch {
     toast.error(i18next.t(ERROR_MESSAGES.DELETE_FAILED))
@@ -167,7 +171,7 @@ export async function handleUpdateChannelField(
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       onSuccess?.()
     } else {
-      toast.error(response.message || i18next.t(ERROR_MESSAGES.UPDATE_FAILED))
+      toast.error(localizeConsoleErrorText(response.message, ERROR_MESSAGES.UPDATE_FAILED))
     }
   } catch {
     toast.error(i18next.t(ERROR_MESSAGES.UPDATE_FAILED))
@@ -201,11 +205,20 @@ export async function handleUpdateTagField(
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       onSuccess?.()
     } else {
-      toast.error(response.message || i18next.t(ERROR_MESSAGES.UPDATE_FAILED))
+      toast.error(localizeConsoleErrorText(response.message, ERROR_MESSAGES.UPDATE_FAILED))
     }
   } catch {
     toast.error(i18next.t(ERROR_MESSAGES.UPDATE_FAILED))
   }
+}
+
+function channelTestFailureText(message?: string) {
+  return consoleFailureText(
+    message,
+    i18next.language,
+    (key) => i18next.t(key),
+    ERROR_MESSAGES.TEST_FAILED
+  )
 }
 
 /**
@@ -246,15 +259,15 @@ export async function handleTestChannel(
       }
       onTestComplete?.(true, response.data?.response_time)
     } else {
+      const errorMsg = channelTestFailureText(response.message)
       if (!options?.silent) {
-        toast.error(response.message || i18next.t(ERROR_MESSAGES.TEST_FAILED))
+        toast.error(errorMsg)
       }
-      onTestComplete?.(false, undefined, response.message, response.error_code)
+      onTestComplete?.(false, undefined, errorMsg, response.error_code)
     }
   } catch (_error: unknown) {
     const err = _error as { response?: { data?: { message?: string } } }
-    const errorMsg =
-      err?.response?.data?.message || i18next.t(ERROR_MESSAGES.TEST_FAILED)
+    const errorMsg = channelTestFailureText(err?.response?.data?.message)
     if (!options?.silent) {
       toast.error(errorMsg)
     }
@@ -278,7 +291,7 @@ export async function handleCopyChannel(
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       onSuccess?.(response.data?.id ?? 0)
     } else {
-      toast.error(response.message || i18next.t('Failed to copy channel'))
+      toast.error(localizeConsoleErrorText(response.message, 'Failed to copy channel'))
     }
   } catch {
     toast.error(i18next.t('Failed to copy channel'))
@@ -313,7 +326,7 @@ export async function handleBatchDelete(
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       onSuccess?.(response.data || ids.length)
     } else {
-      toast.error(response.message || i18next.t(ERROR_MESSAGES.DELETE_FAILED))
+      toast.error(localizeConsoleErrorText(response.message, ERROR_MESSAGES.DELETE_FAILED))
     }
   } catch {
     toast.error(i18next.t(ERROR_MESSAGES.DELETE_FAILED))
@@ -347,7 +360,7 @@ export async function handleBatchEnable(
     }
 
     if (!response.success) {
-      toast.error(response.message || i18next.t('Failed to enable channels'))
+      toast.error(localizeConsoleErrorText(response.message, 'Failed to enable channels'))
     } else if (failCount > 0) {
       toast.error(
         i18next.t('{{count}} channel(s) failed to enable', { count: failCount })
@@ -388,7 +401,7 @@ export async function handleBatchDisable(
     }
 
     if (!response.success) {
-      toast.error(response.message || i18next.t('Failed to disable channels'))
+      toast.error(localizeConsoleErrorText(response.message, 'Failed to disable channels'))
     } else if (failCount > 0) {
       toast.error(
         i18next.t('{{count}} channel(s) failed to disable', {
@@ -422,7 +435,7 @@ export async function handleBatchSetTag(
       queryClient?.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       onSuccess?.()
     } else {
-      toast.error(response.message || i18next.t('Failed to set tag'))
+      toast.error(localizeConsoleErrorText(response.message, 'Failed to set tag'))
     }
   } catch {
     toast.error(i18next.t('Failed to set tag'))
@@ -451,7 +464,7 @@ export async function handleEnableTagChannels(
       onSuccess?.()
     } else {
       toast.error(
-        response.message || i18next.t('Failed to enable tag channels')
+        localizeConsoleErrorText(response.message, 'Failed to enable tag channels')
       )
     }
   } catch {
@@ -477,7 +490,7 @@ export async function handleDisableTagChannels(
       onSuccess?.()
     } else {
       toast.error(
-        response.message || i18next.t('Failed to disable tag channels')
+        localizeConsoleErrorText(response.message, 'Failed to disable tag channels')
       )
     }
   } catch {
@@ -508,7 +521,7 @@ export async function handleDeleteAllDisabled(
       onSuccess?.(response.data || 0)
     } else {
       toast.error(
-        response.message || i18next.t('Failed to delete disabled channels')
+        localizeConsoleErrorText(response.message, 'Failed to delete disabled channels')
       )
     }
   } catch {
@@ -539,7 +552,7 @@ export async function handleFixAbilities(
       onSuccess?.(response.data)
     } else {
       toast.error(
-        response.message || i18next.t('Failed to repair channel consistency')
+        localizeConsoleErrorText(response.message, 'Failed to repair channel consistency')
       )
     }
   } catch {
@@ -566,7 +579,7 @@ export async function handleTestAllChannels(
       onSuccess?.()
     } else {
       toast.error(
-        response.message || i18next.t('Failed to start testing all channels')
+        localizeConsoleErrorText(response.message, 'Failed to start testing all channels')
       )
     }
   } catch {
@@ -593,7 +606,7 @@ export async function handleUpdateAllBalances(
       onSuccess?.()
     } else {
       toast.error(
-        response.message || i18next.t('Failed to update all balances')
+        localizeConsoleErrorText(response.message, 'Failed to update all balances')
       )
     }
   } catch {

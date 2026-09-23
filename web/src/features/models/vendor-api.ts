@@ -21,7 +21,10 @@ import { isAxiosError } from 'axios'
 import { t } from 'i18next'
 
 import { api } from '@/lib/api'
-import { createServerError } from '@/lib/server-error-message'
+import {
+  createServerError,
+  localizeConsoleErrorText,
+} from '@/lib/server-error-message'
 
 import type { Model, Vendor } from './types'
 
@@ -90,7 +93,7 @@ export function vendorErrorMessage(error: unknown): string {
     case 'a selected model no longer exists':
       return t('A selected model no longer exists. Reload the model list.')
     default:
-      return message || t('Operation failed')
+      return localizeConsoleErrorText(message, 'Operation failed')
   }
 }
 

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -25,18 +26,18 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 		return
 	}
 	if !service.IsUSDTGatewayConfigured() {
-		common.ApiErrorMsg(c, "USDT 网关未启用或配置不完整")
+		common.ApiErrorI18n(c, i18n.MsgPaymentUSDTNotConfigured)
 		return
 	}
 
 	var req SubscriptionBEpusdtPayRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.PlanId <= 0 {
-		common.ApiErrorMsg(c, "参数错误")
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
 	token, network, ok := service.ParseBEpusdtPaymentMethod(req.PaymentMethod)
 	if !ok || token != "usdt" || network != "" {
-		common.ApiErrorMsg(c, "支付链不存在或未启用")
+		common.ApiErrorI18n(c, i18n.MsgPaymentChainNotEnabled)
 		return
 	}
 
@@ -46,11 +47,11 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 		return
 	}
 	if !plan.Enabled {
-		common.ApiErrorMsg(c, "套餐未启用")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionNotEnabled)
 		return
 	}
 	if plan.PriceAmount < 0.01 {
-		common.ApiErrorMsg(c, "套餐金额过低")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionAmountTooLow)
 		return
 	}
 
@@ -62,7 +63,7 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 			return
 		}
 		if count >= int64(plan.MaxPurchasePerUser) {
-			common.ApiErrorMsg(c, "已达到该套餐购买上限")
+			common.ApiErrorI18n(c, i18n.MsgSubscriptionPurchaseMax)
 			return
 		}
 	}
@@ -72,18 +73,18 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 		currency = "CNY"
 	}
 	if currency != "CNY" {
-		common.ApiErrorMsg(c, "USDT 网关订单计价币种必须为 CNY")
+		common.ApiErrorI18n(c, i18n.MsgPaymentUSDTCNYRequired)
 		return
 	}
 	callbackAddress := paymentPublicBaseURLForRequest(c)
 	if callbackAddress == "" {
-		common.ApiErrorMsg(c, "USDT 网关回调地址必须配置为公网地址，不能使用 localhost")
+		common.ApiErrorI18n(c, i18n.MsgPaymentUSDTCallbackLocalhost)
 		return
 	}
 	notifyURL := callbackAddress + "/api/subscription/bepusdt/notify"
 	paidAmount, err := normalizeSubscriptionPaymentAmount(plan, currency)
 	if err != nil {
-		common.ApiErrorMsg(c, "套餐金额无效")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionAmountInvalid)
 		return
 	}
 	snapshot, _ := referralService.BuildOrderSnapshot(userId, paidAmount, currency)
@@ -92,7 +93,7 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 	provider := service.ActiveUSDTGatewayProvider()
 	returnURL := paymentWalletReturnPathForRequest(c, "pending", provider, "subscription", tradeNo)
 	if returnURL == "" {
-		common.ApiErrorMsg(c, "USDT 网关返回地址必须配置为公网地址，不能使用 localhost")
+		common.ApiErrorI18n(c, i18n.MsgPaymentUSDTReturnLocalhost)
 		return
 	}
 	order := &model.SubscriptionOrder{
@@ -117,7 +118,7 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 		order.ReferralCommissionError = snapshot.Error
 	}
 	if err := order.Insert(); err != nil {
-		common.ApiErrorMsg(c, "创建订单失败")
+		common.ApiErrorI18n(c, i18n.MsgPaymentCreateFailed)
 		return
 	}
 
@@ -135,13 +136,13 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 		var gatewayErr service.BEpusdtGatewayError
 		if errors.As(err, &gatewayErr) {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt gateway rejected subscription order user_id=%d trade_no=%s payment_method=%s plan_id=%d error=%q", userId, tradeNo, method, plan.Id, err.Error()))
-			if message := gatewayErr.PublicMessage(); message != "" {
-				common.ApiErrorMsg(c, message)
+			if detail := gatewayErr.PublicDetail(); detail != "" {
+				common.ApiErrorI18n(c, i18n.MsgPaymentBepusdtRejected, map[string]any{"Error": detail})
 				return
 			}
 		}
 		logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt subscription payment create failed user_id=%d trade_no=%s payment_method=%s plan_id=%d error=%q", userId, tradeNo, method, plan.Id, err.Error()))
-		common.ApiErrorMsg(c, "BEpusdt 网关连接失败，请检查 BEpusdt 端点和密钥配置")
+		common.ApiErrorI18n(c, i18n.MsgPaymentBepusdtConnectFailed)
 		return
 	}
 	order.ProviderPayload = common.GetJsonString(paymentOrder.Raw)

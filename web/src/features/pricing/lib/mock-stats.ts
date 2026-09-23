@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { currentIntlLocale } from '@/i18n/languages'
+
 import type { PricingModel } from '../types'
 import {
   hashStringToSeed,
@@ -837,5 +839,5 @@ export function formatRateLimit(value: number): string {
   if (value >= 1_000) {
     return `${(value / 1_000).toFixed(value >= 10_000 ? 0 : 1)}K`
   }
-  return value.toLocaleString()
+  return value.toLocaleString(currentIntlLocale())
 }

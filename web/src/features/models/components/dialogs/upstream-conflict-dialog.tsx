@@ -29,6 +29,8 @@ import { useEffect, useMemo, useState, useCallback } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
+
 import { DataTableView, useDataTable } from '@/components/data-table'
 import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
@@ -61,6 +63,8 @@ import {
 } from '../../lib'
 import { useModels } from '../models-provider'
 import type { SyncOverwritePayload } from '../../types'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 const FIELD_LABELS: Record<string, string> = {
   description: 'Description',
@@ -516,9 +520,9 @@ export function UpstreamConflictDialog({
         return
       }
 
-      toast.error(result.message || t('Failed to apply overwrite.'))
+      toast.error(localizeConsoleErrorText(result.message, 'Failed to apply overwrite.'))
     } catch (error: unknown) {
-      toast.error((error as Error)?.message || t('Failed to apply overwrite.'))
+      toastUnhandledConsoleError(error)
     } finally {
       setIsSubmitting(false)
     }

@@ -21,6 +21,7 @@ import { ListChecks, RefreshCw } from 'lucide-react'
 import { useTranslation } from 'react-i18next'
 
 import { ErrorState } from '@/components/error-state'
+import { storedTaskErrorText } from '@/lib/console-stored-detail'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { Progress } from '@/components/ui/progress'
@@ -40,6 +41,8 @@ import type {
 } from '@/features/system-settings/types'
 import { formatTimestampRelative, formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 const TASK_LIMIT = 20
 const ACTIVE_POLL_INTERVAL_MS = 8000
@@ -206,9 +209,21 @@ function SystemTasksTable(props: SystemTasksTableProps) {
                 </TableCell>
                 <TableCell
                   className='text-destructive max-w-[220px] truncate py-3 pr-4 align-middle text-xs'
-                  title={task.error || undefined}
+                  title={
+                    storedTaskErrorText(
+                      task.error || '',
+                      i18n.language,
+                      t,
+                      'Request failed'
+                    ) || undefined
+                  }
                 >
-                  {task.error || '-'}
+                  {storedTaskErrorText(
+                    task.error || '',
+                    i18n.language,
+                    t,
+                    'Request failed'
+                  ) || '-'}
                 </TableCell>
               </TableRow>
             )
@@ -226,7 +241,7 @@ export function SystemTasksPanel() {
     queryFn: async () => {
       const res = await listSystemTasks(TASK_LIMIT)
       if (!res.success || !Array.isArray(res.data)) {
-        throw new Error(res.message || t('We could not load system tasks.'))
+        throw new Error(localizeConsoleErrorText(res.message, 'We could not load system tasks.'))
       }
       return res.data
     },
@@ -258,9 +273,10 @@ export function SystemTasksPanel() {
     tasksContent = (
       <ErrorState
         title={t('We could not load system tasks.')}
-        description={
-          tasksQuery.error instanceof Error ? tasksQuery.error.message : undefined
-        }
+        description={localizeConsoleErrorText(
+          tasksQuery.error instanceof Error ? tasksQuery.error.message : '',
+          'We could not load system tasks.'
+        )}
         onRetry={() => {
           void tasksQuery.refetch()
         }}

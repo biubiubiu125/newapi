@@ -17,10 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
-import { afterEach, describe, test } from 'vitest'
+import { afterEach, describe, test, vi } from 'vitest'
 
 import { QueryClient } from '@tanstack/react-query'
 
+import { applySavedLanguage } from '@/features/auth/lib/auth-redirect'
 import { useAuthStore, type AuthBundle } from '../stores/auth-store'
 import {
   applyAuthRotation,
@@ -30,6 +31,15 @@ import {
   isAuthBundle,
   type AuthRefreshRuntime,
 } from './auth-session'
+
+vi.mock('@/features/auth/lib/auth-redirect', async (importOriginal) => {
+  const actual =
+    await importOriginal<typeof import('@/features/auth/lib/auth-redirect')>()
+  return {
+    ...actual,
+    applySavedLanguage: vi.fn(),
+  }
+})
 
 const bundle: AuthBundle = {
   access_token: 'access-token',
@@ -54,6 +64,7 @@ const bundle: AuthBundle = {
 
 afterEach(() => {
   useAuthStore.getState().auth.reset('idle')
+  vi.mocked(applySavedLanguage).mockClear()
 })
 
 describe('authentication session coordination', () => {
@@ -66,6 +77,8 @@ describe('authentication session coordination', () => {
       kind: 'authenticated',
       bundle,
     })
+    assert.equal(vi.mocked(applySavedLanguage).mock.calls.length, 1)
+    assert.equal(vi.mocked(applySavedLanguage).mock.calls[0]?.[0], bundle.user)
   })
 
   test('a session mismatch clears only local state and retries without the stale SID', async () => {

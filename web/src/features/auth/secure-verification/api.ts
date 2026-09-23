@@ -38,6 +38,8 @@ import type {
   VerificationMethods,
 } from './types'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 /**
  * Fetch available verification methods for the current user.
  */
@@ -113,7 +115,7 @@ async function verifyTwoFA(
   })
 
   if (!res.data?.success) {
-    throw new Error(res.data?.message || i18next.t('Verification failed'))
+    throw new Error(localizeConsoleErrorText(res.data?.message, 'Verification failed'))
   }
   if (!res.data.data?.proof_token) {
     throw new Error(i18next.t('Verification proof was not returned'))
@@ -137,7 +139,7 @@ async function verifyPasskey(
     const beginResponse = await beginPasskeyVerification(scope)
     if (!beginResponse.success) {
       throw new Error(
-        beginResponse.message || i18next.t('Failed to start verification')
+        localizeConsoleErrorText(beginResponse.message, 'Failed to start verification')
       )
     }
 
@@ -165,7 +167,7 @@ async function verifyPasskey(
     const finishResponse = await finishPasskeyVerification(flowToken, assertion)
     if (!finishResponse.success) {
       throw new Error(
-        finishResponse.message || i18next.t('Passkey verification failed')
+        localizeConsoleErrorText(finishResponse.message, 'Passkey verification failed')
       )
     }
 

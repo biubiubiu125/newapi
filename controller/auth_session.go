@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
@@ -113,7 +114,7 @@ func DeleteLoginSession(c *gin.Context) {
 	}
 	sid := strings.TrimSpace(c.Param("sid"))
 	if sid == "" {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "code": "AUTH_SESSION_ID_REQUIRED", "message": "会话 ID 不能为空"})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "code": "AUTH_SESSION_ID_REQUIRED", "message": i18n.T(c, i18n.MsgAuthSessionIdRequired)})
 		return
 	}
 	revoked, err := model.RevokeUserSession(identity.UserID, sid, "user_revoked")
@@ -122,7 +123,7 @@ func DeleteLoginSession(c *gin.Context) {
 		return
 	}
 	if !revoked {
-		c.JSON(http.StatusNotFound, gin.H{"success": false, "code": "AUTH_SESSION_NOT_FOUND", "message": "会话不存在"})
+		c.JSON(http.StatusNotFound, gin.H{"success": false, "code": "AUTH_SESSION_NOT_FOUND", "message": i18n.T(c, i18n.MsgAuthSessionNotFound)})
 		return
 	}
 	if rawRefreshToken, cookieErr := c.Cookie(service.RefreshCookieName); cookieErr == nil {
@@ -153,7 +154,7 @@ func requireBrowserSession(c *gin.Context) (service.AuthIdentity, bool) {
 		c.JSON(http.StatusForbidden, gin.H{
 			"success": false,
 			"code":    "AUTH_SESSION_REQUIRED",
-			"message": "需要先登录控制台会话",
+			"message": i18n.T(c, i18n.MsgAuthSessionRequired),
 		})
 		return service.AuthIdentity{}, false
 	}
@@ -171,7 +172,32 @@ func writeAuthSessionError(c *gin.Context, err error) {
 		// failure is indistinguishable from the client side.
 		logger.LogError(c.Request.Context(), fmt.Sprintf("auth session internal error (%s %s): %v", c.Request.Method, c.Request.URL.Path, err))
 	}
-	c.JSON(status, gin.H{"success": false, "code": code, "message": http.StatusText(status)})
+	c.JSON(status, gin.H{
+		"success": false,
+		"code":    code,
+		"message": i18n.T(c, authSessionMessageKey(code)),
+	})
+}
+
+func authSessionMessageKey(code string) string {
+	switch code {
+	case "AUTH_SESSION_LIMIT":
+		return i18n.MsgAuthSessionLimit
+	case "AUTH_SESSION_ISSUANCE_LIMIT":
+		return i18n.MsgAuthSessionIssuanceLimit
+	case "AUTH_SESSION_MISMATCH":
+		return i18n.MsgAuthSessionMismatch
+	case "AUTH_REFRESH_RACE":
+		return i18n.MsgAuthRefreshRace
+	case "AUTH_TOKEN_EXPIRED":
+		return i18n.MsgAuthTokenExpired
+	case "AUTH_SESSION_REVOKED":
+		return i18n.MsgAuthSessionRevoked
+	case "AUTH_UNAUTHORIZED":
+		return i18n.MsgUnauthorized
+	default:
+		return i18n.MsgOperationFailed
+	}
 }
 
 func setAuthNoStore(c *gin.Context) {
@@ -189,7 +215,7 @@ func authRotationData(bundle *service.AuthBundle) gin.H {
 
 func persistAuthRotationLegacyLoginSession(c *gin.Context, userID int, bundle *service.AuthBundle) bool {
 	if bundle == nil {
-		common.ApiError(c, errors.New("auth rotation bundle is empty"))
+		common.ApiErrorI18n(c, i18n.MsgAuthRotationBundleEmpty)
 		return false
 	}
 	user, err := model.GetUserById(userID, false)

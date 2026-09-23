@@ -15,7 +15,7 @@ import (
 func generateMessageID() (string, error) {
 	split := strings.Split(SMTPFrom, "@")
 	if len(split) < 2 {
-		return "", fmt.Errorf("SMTP 账号格式无效")
+		return "", Localized("smtp.from_invalid")
 	}
 	domain := strings.Split(SMTPFrom, "@")[1]
 	return fmt.Sprintf("<%d.%s@%s>", time.Now().UnixNano(), GetRandomString(12), domain), nil
@@ -70,7 +70,7 @@ func newSMTPClient(addr string) (*smtp.Client, error) {
 		startTLSSupported, _ := client.Extension("STARTTLS")
 		if !startTLSSupported {
 			_ = client.Close()
-			return nil, fmt.Errorf("SMTP 服务器不支持 STARTTLS")
+			return nil, Localized("smtp.starttls_unsupported")
 		}
 		if err := client.StartTLS(smtpTLSConfig()); err != nil {
 			_ = client.Close()
@@ -90,7 +90,7 @@ func SendEmail(subject string, receiver string, content string) error {
 		return err2
 	}
 	if SMTPServer == "" && SMTPAccount == "" {
-		return fmt.Errorf("SMTP 服务器未配置")
+		return Localized("smtp.not_configured")
 	}
 	encodedSubject := fmt.Sprintf("=?UTF-8?B?%s?=", base64.StdEncoding.EncodeToString([]byte(subject)))
 	mail := []byte(fmt.Sprintf("To: %s\r\n"+

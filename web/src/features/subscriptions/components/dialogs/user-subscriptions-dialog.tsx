@@ -67,6 +67,8 @@ import {
 import { formatTimestamp, splitGroupList } from '../../lib'
 import type { PlanRecord, UserSubscriptionRecord } from '../../types'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -178,7 +180,7 @@ export function UserSubscriptionsDialog(props: Props) {
         plan_id: Number(selectedPlanId),
       })
       if (res.success) {
-        toast.success(res.data?.message || t('Added successfully'))
+        toast.success(localizeConsoleErrorText(res.data?.message, 'Added successfully'))
         setSelectedPlanId('')
         await loadData()
         props.onSuccess?.()
@@ -198,7 +200,7 @@ export function UserSubscriptionsDialog(props: Props) {
       if (confirmAction.type === 'invalidate') {
         const res = await invalidateUserSubscription(confirmAction.subId)
         if (res.success) {
-          toast.success(res.data?.message || t('Has been invalidated'))
+          toast.success(localizeConsoleErrorText(res.data?.message, 'Has been invalidated'))
           await loadData()
           props.onSuccess?.()
         }

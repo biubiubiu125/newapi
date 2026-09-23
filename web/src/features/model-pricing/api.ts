@@ -111,6 +111,22 @@ export async function saveModelPricing(changes: ModelPricingChange[]) {
   }
 }
 
+export async function saveModelPricingOptions(
+  options: Record<string, string>,
+  expectedOptions: Record<string, string> = {}
+): Promise<{ success: boolean; message?: string }> {
+  if (!Object.keys(options).length) return { success: true }
+  const res = await api.patch(
+    '/api/option/model_pricing',
+    { options, expected_options: expectedOptions },
+    {
+      skipBusinessError: true,
+      skipErrorHandler: true,
+    }
+  )
+  return res.data
+}
+
 export function useSaveModelPricing() {
   const client = useQueryClient()
   return useMutation({

@@ -16,6 +16,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { consoleJsonErrorText } from '../utils/json-error-text'
+import { parseJsonObjectMap } from '../utils/json-parser'
+
 export function formatJsonForTextarea(value: string) {
   if (!value || !value.trim()) {
     return ''
@@ -29,6 +32,20 @@ export function formatJsonForTextarea(value: string) {
   }
 }
 
+function stableJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) return value.map(stableJsonValue)
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>
+    return Object.keys(record)
+      .sort()
+      .reduce<Record<string, unknown>>((acc, key) => {
+        acc[key] = stableJsonValue(record[key])
+        return acc
+      }, {})
+  }
+  return value
+}
+
 export function normalizeJsonString(value: string) {
   const trimmed = value.trim()
   if (!trimmed) {
@@ -36,8 +53,7 @@ export function normalizeJsonString(value: string) {
   }
 
   try {
-    const parsed = JSON.parse(trimmed)
-    return JSON.stringify(parsed)
+    return JSON.stringify(stableJsonValue(JSON.parse(trimmed)))
   } catch {
     return trimmed
   }
@@ -121,25 +137,7 @@ function buildSyntaxError(
 }
 
 function formatErrorMessage(error: unknown, jsonString: string): string {
-  if (!(error instanceof Error)) return 'Invalid JSON'
-
-  const position = extractErrorPosition(error, jsonString)
-  const message = error.message
-  const syntaxError = buildSyntaxError(error, jsonString)
-
-  if (position.line && position.column) {
-    let hint = ''
-    if (syntaxError.missingCommaLine) {
-      hint = ` (check line ${syntaxError.missingCommaLine} for missing comma)`
-    }
-    return `Error at line ${position.line}, column ${position.column}: ${message}${hint}`
-  }
-
-  if (position.position !== undefined) {
-    return `Error at position ${position.position}: ${message}`
-  }
-
-  return message
+  return consoleJsonErrorText(error, jsonString)
 }
 
 export function validateJsonString(
@@ -181,4 +179,25 @@ export function validateJsonString(
       error: buildSyntaxError(error, trimmed),
     }
   }
+}
+
+export function mergeIncomingJsonObjectExtras(
+  current: string,
+  incoming: string,
+  saved: string
+) {
+  const currentMap = parseJsonObjectMap<Record<string, unknown>>(current)
+  const incomingMap = parseJsonObjectMap<Record<string, unknown>>(incoming)
+  if (!currentMap || !incomingMap) {
+    return formatJsonForTextarea(current)
+  }
+  const savedMap = parseJsonObjectMap<Record<string, unknown>>(saved) ?? {}
+  const next = { ...currentMap }
+  for (const [key, value] of Object.entries(incomingMap)) {
+    if (Object.hasOwn(currentMap, key) || Object.hasOwn(savedMap, key)) {
+      continue
+    }
+    next[key] = value
+  }
+  return formatJsonForTextarea(JSON.stringify(next))
 }

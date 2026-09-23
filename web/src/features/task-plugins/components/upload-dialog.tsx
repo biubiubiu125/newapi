@@ -35,6 +35,7 @@ import {
   MAX_PLUGIN_SOURCE_BYTES,
   pluginSourceByteLength,
 } from '../lib/plugin-url'
+import { pluginRejectionText } from '../lib/rejection-text'
 import type { TaskPluginDetail } from '../types'
 import { PluginSourcePicker } from './plugin-source-picker'
 import { PluginUrlImportField } from './plugin-url-import-field'
@@ -192,9 +193,8 @@ export function UploadDialog(props: UploadDialogProps) {
         <Alert variant='destructive'>
           <AlertTriangle />
           <AlertTitle>{t('The gateway rejected this plugin')}</AlertTitle>
-          {/* Verbatim: preflight rejections name the conflicting plugin. */}
           <AlertDescription className='whitespace-pre-wrap'>
-            {mutation.error.message}
+            {pluginRejectionText(mutation.error.message)}
           </AlertDescription>
         </Alert>
       ) : null}

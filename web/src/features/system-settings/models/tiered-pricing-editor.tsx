@@ -26,6 +26,7 @@ import {
   useRef,
   useState,
 } from 'react'
+import { t } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -104,6 +105,7 @@ import {
   normalizeVisualTier,
   tryParseVisualConfig,
 } from '@/features/pricing/lib/tier-expr'
+import { currentIntlLocale } from '@/i18n/languages'
 import { cn } from '@/lib/utils'
 
 import {
@@ -323,9 +325,18 @@ function formatTokenHint(n: number | string | null | undefined): string {
   if (n == null || n === '' || Number.isNaN(Number(n))) return ''
   const v = Number(n)
   if (v === 0) return '= 0'
-  if (v >= 1_000_000) return `= ${(v / 1_000_000).toLocaleString()}M tokens`
-  if (v >= 1_000) return `= ${(v / 1_000).toLocaleString()}K tokens`
-  return `= ${v.toLocaleString()} tokens`
+  const locale = currentIntlLocale()
+  if (v >= 1_000_000) {
+    return t('= {{count}}M tokens', {
+      count: (v / 1_000_000).toLocaleString(locale),
+    })
+  }
+  if (v >= 1_000) {
+    return t('= {{count}}K tokens', {
+      count: (v / 1_000).toLocaleString(locale),
+    })
+  }
+  return t('= {{count}} tokens', { count: v.toLocaleString(locale) })
 }
 
 // ---------------------------------------------------------------------------

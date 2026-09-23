@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { t } from 'i18next'
 
+import { currentIntlLocale } from '@/i18n/languages'
 import { formatCurrencyFromUSD, formatQuotaWithCurrency } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
 
@@ -438,13 +439,13 @@ export function formatRelativeTime(
   locale?: Intl.LocalesArgument
 ): string {
   if (!timestamp || timestamp === 0) {
-    return 'Never'
+    return t('Never')
   }
 
   try {
     const diffSec = timestamp - Date.now() / 1000
     const absSec = Math.abs(diffSec)
-    const rtf = new Intl.RelativeTimeFormat(locale, {
+    const rtf = new Intl.RelativeTimeFormat(locale ?? currentIntlLocale(), {
       numeric: 'always',
       style: 'narrow',
     })

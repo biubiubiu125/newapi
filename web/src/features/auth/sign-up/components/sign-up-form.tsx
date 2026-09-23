@@ -62,7 +62,8 @@ import {
 } from '@/features/auth/lib/storage'
 import { useStatus } from '@/hooks/use-status'
 import { isAuthBundle } from '@/lib/api'
-import { getServerErrorMessageKey } from '@/lib/server-error-message'
+import { getServerErrorMessageKey,
+  localizeConsoleErrorText,} from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -204,7 +205,7 @@ export function SignUpForm({
         toast.success(t('Account created! Please sign in'))
         redirectToLogin()
       } else {
-        toast.error(res?.message || t('Failed to create account'))
+        toast.error(localizeConsoleErrorText(res?.message, 'Failed to create account'))
       }
     } catch {
       // Errors are handled by global interceptor
@@ -261,7 +262,7 @@ export function SignUpForm({
         handleWeChatDialogChange(false)
       } else {
         if (getServerErrorMessageKey(res)) return
-        toast.error(res?.message || t('Login failed'))
+        toast.error(localizeConsoleErrorText(res?.message, 'Login failed'))
       }
     } catch (error: unknown) {
       if (getServerErrorMessageKey(error)) return

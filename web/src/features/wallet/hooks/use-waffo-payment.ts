@@ -20,6 +20,8 @@ import i18next from 'i18next'
 import { useState, useCallback } from 'react'
 import { toast } from 'sonner'
 
+import { currentConsoleFailureText } from '@/lib/console-failure-text'
+
 import { requestWaffoPayment, isApiSuccess } from '../api'
 import { openCheckoutUrl } from '../lib'
 import type { PaymentInitiationResult } from '../types'
@@ -53,11 +55,8 @@ function getTradeNo(data: unknown): string | undefined {
 }
 
 function getErrorMessage(message: string | undefined, data: unknown): string {
-  if (typeof data === 'string' && data.trim()) {
-    return data
-  }
-
-  return message || i18next.t('Payment request failed')
+  const detail = typeof data === 'string' && data.trim() ? data : message
+  return currentConsoleFailureText(detail, 'Payment request failed')
 }
 
 /**

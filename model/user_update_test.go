@@ -448,5 +448,9 @@ func TestFillUserByIdReturnsDatabaseErrors(t *testing.T) {
 	require.ErrorIs(t, err, gorm.ErrRecordNotFound)
 
 	empty := User{}
-	require.EqualError(t, empty.FillUserById(), "id 为空！")
+	err = empty.FillUserById()
+	require.Error(t, err)
+	loc, ok := common.AsLocalizedError(err)
+	require.True(t, ok, "want LocalizedError, got %v", err)
+	require.Equal(t, "common.id_empty", loc.Key)
 }

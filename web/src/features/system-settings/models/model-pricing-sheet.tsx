@@ -24,6 +24,7 @@ import {
   useEffect,
   useImperativeHandle,
   useId,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -85,6 +86,8 @@ import {
   createModelPricingSchema,
   hasValue,
   laneConfigs,
+  pricingDraftCanPersist,
+  pricingPromptLaneValuesAreValid,
   ratioFieldByLane,
   toNumberOrNull,
   type LaneKey,
@@ -107,6 +110,7 @@ type ModelPricingSheetProps = {
   isSaving?: boolean
   usageSchema?: BillingUsageSchema
   onDirtyChange?: (dirty: boolean) => void
+  onUnmountSnapshot?: (data: ModelRatioData) => void
 }
 
 type ModelPricingEditorPanelProps = Omit<
@@ -120,6 +124,8 @@ type ModelPricingEditorPanelProps = Omit<
 
 export type ModelPricingEditorPanelHandle = {
   commitDraft: () => Promise<ModelRatioData | null>
+  snapshotDraft: () => ModelRatioData | null
+  snapshotPersistableDraft: () => ModelRatioData | null
 }
 
 const DEFAULT_TOKEN_BILLING_EXPR = 'tier("base", p * 0 + c * 0)'
@@ -136,6 +142,7 @@ export const ModelPricingSheet = forwardRef<
     isSaving,
     usageSchema,
     onDirtyChange,
+    onUnmountSnapshot,
   },
   ref
 ) {
@@ -158,6 +165,7 @@ export const ModelPricingSheet = forwardRef<
           editData={editData}
           usageSchema={usageSchema}
           onDirtyChange={onDirtyChange}
+          onUnmountSnapshot={onUnmountSnapshot}
           onSave={onSave}
           isSaving={isSaving}
           className='h-full rounded-none border-0'
@@ -178,6 +186,7 @@ export const ModelPricingEditorPanel = forwardRef<
     isSaving,
     usageSchema,
     onDirtyChange,
+    onUnmountSnapshot,
     embedded = false,
     scrollHeader,
   },
@@ -536,15 +545,24 @@ export const ModelPricingEditorPanel = forwardRef<
 
   const validatePricingValues = useCallback(() => {
     if (
-      pricingMode === 'per-token' &&
-      ((toNumberOrNull(promptPrice) === 0 &&
+      pricingPromptLaneValuesAreValid({
+        billingMode: pricingMode,
+        promptPrice,
+        laneEnabled,
+        lanePrices,
+      })
+    ) {
+      return true
+    }
+    if (
+      (toNumberOrNull(promptPrice) === 0 &&
         laneConfigs.some(
           ({ key }) =>
             laneEnabled[key] && (toNumberOrNull(lanePrices[key]) ?? 0) > 0
         )) ||
-        (toNumberOrNull(lanePrices.audioInput) === 0 &&
-          laneEnabled.audioOutput &&
-          (toNumberOrNull(lanePrices.audioOutput) ?? 0) > 0))
+      (toNumberOrNull(lanePrices.audioInput) === 0 &&
+        laneEnabled.audioOutput &&
+        (toNumberOrNull(lanePrices.audioOutput) ?? 0) > 0)
     ) {
       form.setError('ratio', {
         message: t(
@@ -554,7 +572,6 @@ export const ModelPricingEditorPanel = forwardRef<
       return false
     }
     if (
-      pricingMode === 'per-token' &&
       toNumberOrNull(promptPrice) === null &&
       laneConfigs.some(
         ({ key }) => laneEnabled[key] && hasValue(lanePrices[key])
@@ -566,18 +583,14 @@ export const ModelPricingEditorPanel = forwardRef<
       return false
     }
 
-    if (
-      pricingMode === 'per-token' &&
-      laneEnabled.audioOutput &&
-      !hasValue(lanePrices.audioInput)
-    ) {
+    if (laneEnabled.audioOutput && !hasValue(lanePrices.audioInput)) {
       form.setError('audioRatio', {
         message: t('Audio output price requires an audio input price.'),
       })
       return false
     }
 
-    return true
+    return false
   }, [form, laneEnabled, lanePrices, pricingMode, promptPrice, t])
 
   const buildSubmitData = useCallback(
@@ -593,6 +606,9 @@ export const ModelPricingEditorPanel = forwardRef<
         imageRatio: values.imageRatio || '',
         audioRatio: values.audioRatio || '',
         audioCompletionRatio: values.audioCompletionRatio || '',
+        promptPrice,
+        laneEnabled: { ...laneEnabled },
+        lanePrices: { ...lanePrices },
       }
 
       if (pricingMode === 'tiered_expr') {
@@ -602,7 +618,14 @@ export const ModelPricingEditorPanel = forwardRef<
 
       return data
     },
-    [pricingMode, requestRuleExpr, resolvedBillingExpr]
+    [
+      laneEnabled,
+      lanePrices,
+      pricingMode,
+      promptPrice,
+      requestRuleExpr,
+      resolvedBillingExpr,
+    ]
   )
 
   useImperativeHandle(
@@ -623,11 +646,71 @@ export const ModelPricingEditorPanel = forwardRef<
         }
         const isValid = await form.trigger()
         if (!isValid || !validatePricingValues()) return null
-        return buildSubmitData(form.getValues())
+        const data = buildSubmitData(form.getValues())
+        if (!pricingDraftCanPersist(data)) return null
+        return data
+      },
+      snapshotDraft: () => {
+        const data = buildSubmitData(form.getValues())
+        if (!data.name) return null
+        return data
+      },
+      snapshotPersistableDraft: () => {
+        if (
+          formElementRef.current?.querySelector('[data-billing-invalid="true"]')
+        ) {
+          return null
+        }
+        const amounts =
+          formElementRef.current?.querySelectorAll<HTMLInputElement>(
+            'input[data-pricing-amount]'
+          )
+        if (amounts && [...amounts].some((input) => !input.checkValidity())) {
+          return null
+        }
+        const data = buildSubmitData(form.getValues())
+        if (!data.name || !pricingDraftCanPersist(data)) return null
+        return data
       },
     }),
-    [form, validatePricingValues, buildSubmitData]
+    [buildSubmitData, form, validatePricingValues]
   )
+
+  const onUnmountSnapshotRef = useRef(onUnmountSnapshot)
+  onUnmountSnapshotRef.current = onUnmountSnapshot
+  const buildSubmitDataRef = useRef(buildSubmitData)
+  buildSubmitDataRef.current = buildSubmitData
+  const promptLaneValuesValidRef = useRef(true)
+  promptLaneValuesValidRef.current = pricingPromptLaneValuesAreValid({
+    billingMode: pricingMode,
+    promptPrice,
+    laneEnabled,
+    lanePrices,
+  })
+
+  useLayoutEffect(() => {
+    return () => {
+      const flush = onUnmountSnapshotRef.current
+      if (!flush) return
+      if (
+        formElementRef.current?.querySelector('[data-billing-invalid="true"]')
+      ) {
+        return
+      }
+      const amounts =
+        formElementRef.current?.querySelectorAll<HTMLInputElement>(
+          'input[data-pricing-amount]'
+        )
+      if (amounts && [...amounts].some((input) => !input.checkValidity())) {
+        return
+      }
+      if (!promptLaneValuesValidRef.current) return
+      const data = buildSubmitDataRef.current(form.getValues())
+      if (!data.name) return
+      if (!pricingDraftCanPersist(data)) return
+      flush(data)
+    }
+  }, [form])
 
   const showActions = Boolean(onSave)
 

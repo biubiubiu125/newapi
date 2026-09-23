@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	relaypkg "github.com/QuantumNous/new-api/relay"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -1386,6 +1387,7 @@ func TestRelayMidjourneyKeepsBindRequestBodyFailed(t *testing.T) {
 }
 
 func TestRelayMidjourneySubmitKeepsUnpricedModelMessage(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	db := setupMidjourneyPollingTest(t)
 	oldModelPrices := ratio_setting.ModelPrice2JSONString()
 	oldGroupRatios := ratio_setting.GroupRatio2JSONString()
@@ -1422,6 +1424,7 @@ func TestRelayMidjourneySubmitKeepsUnpricedModelMessage(t *testing.T) {
 
 	require.NotNil(t, resp)
 	require.Equal(t, 4, resp.Code)
-	require.Contains(t, resp.Description, "价格尚未由管理员配置")
+	require.Contains(t, resp.Description, "has not been priced by the administrator yet")
+	require.NotContains(t, resp.Description, "价格")
 	require.NotContains(t, strings.ToLower(resp.Description), "sql")
 }

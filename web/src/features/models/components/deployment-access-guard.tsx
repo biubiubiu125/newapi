@@ -31,6 +31,7 @@ import { useTranslation } from 'react-i18next'
 
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 type LoadingPhase = 'idle' | 'settings' | 'connection' | 'done'
@@ -183,7 +184,9 @@ export function DeploymentAccessGuard({
           <Alert variant='destructive'>
             <AlertCircle className='h-4 w-4' />
             <AlertTitle>{t('Connection error')}</AlertTitle>
-            <AlertDescription>{t(connectionError)}</AlertDescription>
+            <AlertDescription>
+              {localizeConsoleErrorText(connectionError, 'Connection failed')}
+            </AlertDescription>
           </Alert>
           <div className='flex gap-2'>
             <Button variant='outline' onClick={onRetry} className='flex-1'>

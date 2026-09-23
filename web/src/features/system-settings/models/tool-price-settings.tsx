@@ -30,6 +30,8 @@ import { Input } from '@/components/ui/input'
 
 import { useUpdateOption } from '../hooks/use-update-option'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 const OPTION_KEY = 'tool_price_setting.prices'
 
 const DEFAULT_PRICES: Record<string, number> = {
@@ -175,7 +177,7 @@ export const ToolPriceSettings = memo(function ToolPriceSettings({
         setNextRowId(nextRows.length + 1)
         setJsonError('')
       } catch (error) {
-        setJsonError(error instanceof Error ? error.message : t('Invalid JSON'))
+        setJsonError(localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Invalid JSON'))
       }
     },
     [t]

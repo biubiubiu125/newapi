@@ -1040,6 +1040,23 @@ const STATIC_I18N_KEY_LIST = [
   'Retry commission generation',
   'Job succeeded',
   'Admin enabled affiliate from user list',
+
+  // Console transport / HTTP / auth-session chrome used via dynamic t()
+  'Unable to connect to the server',
+  'Request timed out',
+  'Internal Server Error',
+  'Forbidden',
+  'Not Found',
+  'Too Many Requests',
+  'Service Unavailable',
+  'Gateway Timeout',
+  'Login session mismatch. Please sign in again.',
+  'Login session is being refreshed. Please retry.',
+  'This login session has been revoked.',
+  'Referral code can only contain letters, numbers, underscores, and hyphens',
+  'Referral code must be at most 32 characters long',
+  'Invalid token',
+  'Invalid request',
 ] as const
 
 export const STATIC_I18N_KEYS = [...new Set(STATIC_I18N_KEY_LIST)]

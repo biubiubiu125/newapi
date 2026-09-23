@@ -71,6 +71,8 @@ import type {
   TopupInfo,
 } from '../types'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 interface SubscriptionPlansCardProps {
   topupInfo: TopupInfo | null
   onAvailabilityChange?: (available: boolean) => void
@@ -223,7 +225,7 @@ export function SubscriptionPlansCard({
         const normalized = res.data?.billing_preference || pref
         setBillingPreference(normalized)
       } else {
-        toast.error(res.message || t('Update failed'))
+        toast.error(localizeConsoleErrorText(res.message, 'Update failed'))
         setBillingPreference(previous)
       }
     } catch {

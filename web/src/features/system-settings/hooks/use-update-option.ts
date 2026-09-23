@@ -21,11 +21,14 @@ import i18next from 'i18next'
 import { toast } from 'sonner'
 
 import { DEFAULT_LOGO, resolveSystemName } from '@/lib/constants'
+import { getServerErrorDisplayMessage } from '@/lib/handle-server-error'
 import { emitSettingsRefresh } from '@/lib/settings-refresh'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
 import { updateSystemOption } from '../api'
 import type { UpdateOptionRequest } from '../types'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 type UpdateOptionMutationRequest = UpdateOptionRequest & {
   skipInvalidate?: boolean
@@ -118,11 +121,11 @@ export function useUpdateOption() {
           toast.success(i18next.t('Setting updated successfully'))
         }
       } else {
-        toast.error(data.message || i18next.t('Failed to update setting'))
+        toast.error(localizeConsoleErrorText(data.message, 'Failed to update setting'))
       }
     },
     onError: (error: Error) => {
-      toast.error(error.message || i18next.t('Failed to update setting'))
+      toast.error(getServerErrorDisplayMessage(error))
     },
   })
 }

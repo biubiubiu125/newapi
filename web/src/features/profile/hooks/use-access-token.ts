@@ -24,6 +24,8 @@ import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 
 import { generateAccessToken } from '../api'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 // ============================================================================
 // Access Token Hook
 // ============================================================================
@@ -46,7 +48,7 @@ export function useAccessToken() {
         return true
       }
 
-      toast.error(response.message || i18next.t('Failed to generate token'))
+      toast.error(localizeConsoleErrorText(response.message, 'Failed to generate token'))
       return false
     } catch (error) {
       // eslint-disable-next-line no-console

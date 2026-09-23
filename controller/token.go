@@ -70,7 +70,7 @@ func buildMaskedTokenResponses(tokens []*model.Token) []*tokenResponse {
 func normalizeAndValidateTokenGroup(c *gin.Context, group string) (string, bool) {
 	group = strings.TrimSpace(group)
 	if group == "" {
-		common.ApiErrorMsg(c, "请选择 API 密钥分组")
+		common.ApiErrorI18n(c, i18n.MsgTokenGroupRequired)
 		return "", false
 	}
 	if group == "auto" {
@@ -81,11 +81,11 @@ func normalizeAndValidateTokenGroup(c *gin.Context, group string) (string, bool)
 		userGroup, _ = model.GetUserGroup(c.GetInt("id"), false)
 	}
 	if !service.GroupInUserUsableGroupsByUser(c.GetInt("id"), userGroup, group) {
-		common.ApiErrorMsg(c, fmt.Sprintf("无权访问 %s 分组", group))
+		common.ApiErrorI18n(c, i18n.MsgTokenGroupForbidden, map[string]any{"Group": group})
 		return "", false
 	}
 	if !ratio_setting.ContainsGroupRatio(group) {
-		common.ApiErrorMsg(c, fmt.Sprintf("分组 %s 已被弃用", group))
+		common.ApiErrorI18n(c, i18n.MsgTokenGroupDeprecated, map[string]any{"Group": group})
 		return "", false
 	}
 	return group, true
@@ -250,7 +250,7 @@ func GetTokenUsage(c *gin.Context) {
 	if authHeader == "" {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"success": false,
-			"message": "缺少 Authorization 头",
+			"message": i18n.T(c, i18n.MsgTokenMissingAuthorization),
 		})
 		return
 	}
@@ -259,7 +259,7 @@ func GetTokenUsage(c *gin.Context) {
 	if len(parts) != 2 || strings.ToLower(parts[0]) != "bearer" {
 		c.JSON(http.StatusUnauthorized, gin.H{
 			"success": false,
-			"message": "Bearer token 无效",
+			"message": i18n.T(c, i18n.MsgTokenBearerInvalid),
 		})
 		return
 	}
@@ -279,7 +279,7 @@ func GetTokenUsage(c *gin.Context) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"code":    true,
-		"message": "成功",
+		"message": i18n.T(c, i18n.MsgTokenSuccess),
 		"data": gin.H{
 			"object":               "token_usage",
 			"name":                 token.Name,
@@ -328,7 +328,7 @@ func AddToken(c *gin.Context) {
 	if int(count) >= maxTokens {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": fmt.Sprintf("已达到最大令牌数量限制 (%d)", maxTokens),
+			"message": i18n.T(c, i18n.MsgTokenMaxCount, map[string]any{"Max": maxTokens}),
 		})
 		return
 	}

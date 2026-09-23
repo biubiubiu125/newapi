@@ -36,6 +36,8 @@ import { deleteInvalidRedemptions, deleteRedemptionBatch } from '../api'
 import type { Redemption } from '../types'
 import { useRedemptions } from './redemptions-provider'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type DataTableBulkActionsProps<TData> = {
   table: Table<TData>
 }
@@ -81,14 +83,12 @@ export function DataTableBulkActions<TData>({
         table.resetRowSelection()
         triggerRefresh()
       } else {
-        toast.error(result.message || t('Failed to delete selected redemption codes'))
+        toast.error(localizeConsoleErrorText(result.message, 'Failed to delete selected redemption codes'))
       }
       setShowDeleteSelectedConfirm(false)
     } catch (error) {
       toast.error(
-        error instanceof Error
-          ? error.message
-          : t('Failed to delete selected redemption codes')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to delete selected redemption codes')
       )
     } finally {
       setIsDeleting(false)

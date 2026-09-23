@@ -39,6 +39,7 @@ import {
   normalizePluginSourceUrl,
   PluginSourceFetchError,
 } from '../lib/plugin-url'
+import { pluginVisibleError } from '../lib/rejection-text'
 
 type PluginUrlImportFieldProps = {
   /** URL text, owned by the dialog so closing it clears this field too. */
@@ -68,7 +69,7 @@ export function PluginUrlImportField(props: PluginUrlImportFieldProps) {
     },
     onError: (error) => {
       if (!(error instanceof PluginSourceFetchError)) {
-        props.onError(error.message)
+        props.onError(pluginVisibleError(error, 'Request failed'))
         return
       }
       if (error.reason === 'too_large') {

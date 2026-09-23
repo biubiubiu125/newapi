@@ -41,12 +41,19 @@ import {
   TooltipTrigger,
   TooltipProvider,
 } from '@/components/ui/tooltip'
+import {
+  monthGridLeadingDays,
+  resolveWeekStartsOn,
+  weekdayColumnKeys,
+} from '@/lib/calendar-locale'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import dayjs from '@/lib/dayjs'
 import { cn } from '@/lib/utils'
 
 import { getCheckinStatus, performCheckin } from '../api'
 import type { CheckinRecord } from '../types'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 interface CheckinCalendarCardProps {
   checkinEnabled: boolean
@@ -59,7 +66,7 @@ export function CheckinCalendarCard({
   turnstileEnabled,
   turnstileSiteKey,
 }: CheckinCalendarCardProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [currentMonth, setCurrentMonth] = useState(() => {
     const now = new Date()
     return new Date(now.getFullYear(), now.getMonth(), 1)
@@ -89,7 +96,7 @@ export function CheckinCalendarCard({
       if (res.success && res.data) {
         return res.data
       }
-      throw new Error(res.message || t('Failed to fetch checkin status'))
+      throw new Error(localizeConsoleErrorText(res.message, 'Failed to fetch checkin status'))
     },
     enabled: checkinEnabled,
     staleTime: 30000,
@@ -161,7 +168,7 @@ export function CheckinCalendarCard({
           if (token && shouldTriggerTurnstile(res.message)) {
             setTurnstileWidgetKey((v) => v + 1)
           }
-          toast.error(res.message || t('Check-in failed'))
+          toast.error(localizeConsoleErrorText(res.message, 'Check-in failed'))
         }
       } catch {
         toast.error(t('Check-in failed'))
@@ -185,19 +192,20 @@ export function CheckinCalendarCard({
   }
 
   // Build calendar grid
+  const weekStartsOn = resolveWeekStartsOn(i18n.language)
   const calendarDays = useMemo(() => {
     const year = currentMonth.getFullYear()
     const month = currentMonth.getMonth()
     const firstDay = new Date(year, month, 1)
     const lastDay = new Date(year, month + 1, 0)
     const daysInMonth = lastDay.getDate()
-    const startDayOfWeek = firstDay.getDay() // 0 = Sunday
+    const startOffset = monthGridLeadingDays(firstDay.getDay(), weekStartsOn)
 
     const days: Array<{ date: Date; isCurrentMonth: boolean }> = []
 
-    // Fill leading empty days
-    for (let i = 0; i < startDayOfWeek; i++) {
-      const d = new Date(year, month, -startDayOfWeek + i + 1)
+    // Fill leading days from the previous month so the first column matches the locale week start.
+    for (let i = 0; i < startOffset; i++) {
+      const d = new Date(year, month, -startOffset + i + 1)
       days.push({ date: d, isCurrentMonth: false })
     }
 
@@ -218,17 +226,9 @@ export function CheckinCalendarCard({
     }
 
     return days
-  }, [currentMonth])
+  }, [currentMonth, weekStartsOn])
 
-  const weekDays = [
-    t('Sun'),
-    t('Mon'),
-    t('Tue'),
-    t('Wed'),
-    t('Thu'),
-    t('Fri'),
-    t('Sat'),
-  ]
+  const weekDays = weekdayColumnKeys(weekStartsOn).map((key) => t(key))
 
   if (!checkinEnabled) {
     return null
@@ -361,7 +361,7 @@ export function CheckinCalendarCard({
                   {formatQuotaWithCurrency(monthlyQuota, { digitsLarge: 0 })}
                 </div>
                 <div className='text-muted-foreground mt-0.5 text-[10px] font-medium sm:mt-1 sm:text-xs'>
-                  {t('This month')}
+                  {t('This month earned')}
                 </div>
               </div>
               <div className='bg-card p-3 text-center sm:p-5'>

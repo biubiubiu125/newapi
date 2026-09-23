@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -47,15 +48,15 @@ var (
 
 func TelegramBindStart(c *gin.Context) {
 	if !common.TelegramOAuthEnabled {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "管理员未开启通过 Telegram 登录以及注册",
-			"success": false,
-		})
+		respondOAuthDisabled(c, "Telegram")
 		return
 	}
 	identity, ok := middleware.GetSessionAuthIdentity(c)
 	if !ok {
-		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "未登录"})
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"message": i18n.T(c, i18n.MsgAuthLoginRequired),
+		})
 		return
 	}
 	expiresAt := time.Now().Add(telegramBindFlowTTL)
@@ -267,20 +268,14 @@ func telegramBindFailure(c *gin.Context, errorCode string) {
 
 func TelegramLogin(c *gin.Context) {
 	if !common.TelegramOAuthEnabled {
-		c.JSON(200, gin.H{
-			"message": "管理员未开启通过 Telegram 登录以及注册",
-			"success": false,
-		})
+		respondOAuthDisabled(c, "Telegram")
 		return
 	}
 	params := c.Request.URL.Query()
 	telegramId, err := verifyTelegramAuthorization(params, common.TelegramBotToken, time.Now())
 	if err != nil {
 		common.SysLog("TelegramLogin authorization failed: " + err.Error())
-		c.JSON(200, gin.H{
-			"message": "无效的请求",
-			"success": false,
-		})
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
 
@@ -291,10 +286,7 @@ func TelegramLogin(c *gin.Context) {
 	}
 	if err := claimTelegramAuthorization(params, time.Now()); err != nil {
 		common.SysLog("TelegramLogin assertion replay rejected: " + err.Error())
-		c.JSON(http.StatusForbidden, gin.H{
-			"message": "该登录凭据已被使用",
-			"success": false,
-		})
+		common.ApiErrorWithStatus(c, http.StatusForbidden, common.Localized(i18n.MsgOAuthCredentialUsed))
 		return
 	}
 	setupLoginOrRequire2FA(&user, c)

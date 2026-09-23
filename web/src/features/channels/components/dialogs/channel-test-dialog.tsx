@@ -88,6 +88,8 @@ import { useIsMobile } from '@/hooks/use-mobile'
 import { formatResponseTime, handleTestChannel } from '../../lib'
 import { useChannels } from '../channels-provider'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type ChannelTestDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -350,7 +352,7 @@ export function ChannelTestDialog({
       } catch (error: unknown) {
         finalResult = {
           status: 'error',
-          error: error instanceof Error ? error.message : t('Test failed'),
+          error: localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Test failed'),
         }
         updateTestResult(model, finalResult)
       } finally {

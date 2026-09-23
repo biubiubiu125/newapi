@@ -29,6 +29,8 @@ import { useCountdown } from '@/hooks/use-countdown'
 
 import { sendEmailVerification, bindEmail } from '../../api'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 // ============================================================================
 // Email Bind Dialog Component
 // ============================================================================
@@ -74,7 +76,7 @@ export function EmailBindDialog({
         toast.success(t('Verification code sent! Please check your email.'))
         startCountdown()
       } else {
-        toast.error(response.message || t('Failed to send verification code'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to send verification code'))
       }
     } catch {
       toast.error(t('Failed to send verification code'))
@@ -102,7 +104,7 @@ export function EmailBindDialog({
         setCode('')
         resetCountdown()
       } else {
-        toast.error(response.message || t('Failed to bind email'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to bind email'))
       }
     } catch {
       toast.error(t('Failed to bind email'))

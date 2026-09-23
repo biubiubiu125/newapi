@@ -23,6 +23,8 @@ import * as React from 'react'
 import { useForm, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
 import * as z from 'zod'
 
 import { RiskAcknowledgementDialog } from '@/components/risk-acknowledgement-dialog'
@@ -84,6 +86,8 @@ import {
   WaffoSettingsSection,
   type WaffoSettingsValues,
 } from './waffo-settings-section'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 const paymentSchema = z.object({
   PayAddress: z.string().refine((value) => {
@@ -333,12 +337,10 @@ export function PaymentSettingsSection({
         setShowComplianceDialog(false)
         queryClient.invalidateQueries({ queryKey: ['system-options'] })
       } else {
-        toast.error(data.message || t('Failed to confirm compliance'))
+        toast.error(localizeConsoleErrorText(data.message, 'Failed to confirm compliance'))
       }
     },
-    onError: (error: Error) => {
-      toast.error(error.message || t('Failed to confirm compliance'))
-    },
+    onError: toastUnhandledConsoleError,
   })
 
   const form = useForm<PaymentFormValues>({
@@ -766,15 +768,14 @@ export function PaymentSettingsSection({
 
       const reason = typeof body?.data === 'string' ? body.data : undefined
       toast.error(
-        reason
-          ? `${t('Waffo Pancake save failed')}: ${reason}`
-          : t('Waffo Pancake save failed')
+        localizeConsoleErrorText(reason, 'Waffo Pancake save failed')
       )
     } catch (error) {
       toast.error(
-        `${t('Waffo Pancake save failed')}: ${
-          error instanceof Error ? error.message : String(error)
-        }`
+        localizeConsoleErrorText(
+          error instanceof Error ? error.message : '',
+          'Waffo Pancake save failed'
+        )
       )
     }
   }

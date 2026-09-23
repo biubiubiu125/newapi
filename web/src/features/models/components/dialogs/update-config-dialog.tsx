@@ -52,6 +52,8 @@ import { Textarea } from '@/components/ui/textarea'
 import { getDeployment, updateDeployment } from '../../api'
 import { deploymentsQueryKeys } from '../../lib'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 const schema = z.object({
   image_url: z.string().optional(),
   traffic_port: z.coerce.number().int().min(1).max(65535).optional(),
@@ -206,9 +208,9 @@ export function UpdateConfigDialog({
         onOpenChange(false)
         return
       }
-      toast.error(res.message || t('Update failed'))
+      toast.error(localizeConsoleErrorText(res.message, 'Update failed'))
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : t('Update failed')
+      const msg = localizeConsoleErrorText(err instanceof Error ? err.message : '', 'Update failed')
       toast.error(msg)
     }
   }

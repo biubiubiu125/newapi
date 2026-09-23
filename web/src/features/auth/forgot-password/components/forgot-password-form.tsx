@@ -44,6 +44,8 @@ import { useTurnstile } from '@/features/auth/hooks/use-turnstile'
 import { useCountdown } from '@/hooks/use-countdown'
 import { cn } from '@/lib/utils'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 export function ForgotPasswordForm({
   className,
   ...props
@@ -85,7 +87,7 @@ export function ForgotPasswordForm({
           )
         )
       } else {
-        toast.error(res?.message || t('Failed to send reset email'))
+        toast.error(localizeConsoleErrorText(res?.message, 'Failed to send reset email'))
       }
     } catch {
       // Errors are handled by global interceptor

@@ -12,6 +12,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/codex"
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -69,7 +70,7 @@ func StartCodexOAuth(c *gin.Context) {
 func StartCodexOAuthForChannel(c *gin.Context) {
 	channelID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		common.ApiError(c, fmt.Errorf("渠道 ID 无效: %w", err))
+		common.ApiErrorI18n(c, i18n.MsgChannelIdInvalid)
 		return
 	}
 	startCodexOAuthWithChannelID(c, channelID)
@@ -83,11 +84,11 @@ func startCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 			return
 		}
 		if ch == nil {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": "未找到渠道"})
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgChannelNotFound)})
 			return
 		}
 		if ch.Type != constant.ChannelTypeCodex {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": "渠道类型不是 Codex"})
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgChannelNotCodex)})
 			return
 		}
 	}
@@ -120,7 +121,7 @@ func CompleteCodexOAuth(c *gin.Context) {
 func CompleteCodexOAuthForChannel(c *gin.Context) {
 	channelID, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		common.ApiError(c, fmt.Errorf("渠道 ID 无效: %w", err))
+		common.ApiErrorI18n(c, i18n.MsgChannelIdInvalid)
 		return
 	}
 	completeCodexOAuthWithChannelID(c, channelID)
@@ -136,15 +137,15 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 	code, state, err := parseCodexAuthorizationInput(req.Input)
 	if err != nil {
 		common.SysError("failed to parse codex authorization input: " + err.Error())
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "解析授权信息失败，请检查输入格式"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgCodexOAuthParseFailed)})
 		return
 	}
 	if strings.TrimSpace(code) == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "缺少授权 code"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgCodexOAuthMissingCode)})
 		return
 	}
 	if strings.TrimSpace(state) == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "缺少 state 参数"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgCodexOAuthMissingState)})
 		return
 	}
 
@@ -157,11 +158,11 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 			return
 		}
 		if ch == nil {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": "未找到渠道"})
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgChannelNotFound)})
 			return
 		}
 		if ch.Type != constant.ChannelTypeCodex {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": "渠道类型不是 Codex"})
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgChannelNotCodex)})
 			return
 		}
 		channelProxy = ch.GetSetting().Proxy
@@ -172,11 +173,11 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 	expectedState, _ := session.Get(codexOAuthSessionKey(channelID, "state")).(string)
 	verifier, _ := session.Get(codexOAuthSessionKey(channelID, "verifier")).(string)
 	if strings.TrimSpace(expectedState) == "" || strings.TrimSpace(verifier) == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "OAuth 流程未启动或会话已过期"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgCodexOAuthFlowExpired)})
 		return
 	}
 	if state != expectedState {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "state 不匹配"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgCodexOAuthStateMismatch)})
 		return
 	}
 
@@ -186,13 +187,13 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 	tokenRes, err := exchangeCodexAuthorizationCodeWithProxyAndSettings(ctx, code, verifier, channelProxy, channelSettings)
 	if err != nil {
 		common.SysError("failed to exchange codex authorization code: " + err.Error())
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "授权码交换失败，请重试"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgCodexOAuthExchangeFailed)})
 		return
 	}
 
 	accountID, ok := service.ExtractCodexAccountIDFromJWT(tokenRes.AccessToken)
 	if !ok {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "无法从 access_token 中提取 account_id"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgCodexOAuthAccountIdMissing)})
 		return
 	}
 	email, _ := service.ExtractEmailFromJWT(tokenRes.AccessToken)
@@ -226,7 +227,7 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 		service.ResetProxyClientCache()
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
-			"message": "已保存",
+			"message": i18n.T(c, i18n.MsgCommonSaved),
 			"data": gin.H{
 				"channel_id":   channelID,
 				"account_id":   accountID,
@@ -240,7 +241,7 @@ func completeCodexOAuthWithChannelID(c *gin.Context, channelID int) {
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
-		"message": "已生成",
+		"message": i18n.T(c, i18n.MsgCommonGenerated),
 		"data": gin.H{
 			"key":          string(encoded),
 			"account_id":   accountID,

@@ -20,6 +20,8 @@ import type { QueryClient } from '@tanstack/react-query'
 import axios from 'axios'
 import { t } from 'i18next'
 
+import { applySavedLanguage } from '@/features/auth/lib/auth-redirect'
+import { currentIntlLocale } from '@/i18n/languages'
 import { publishAuthSessionEvent } from '@/lib/auth-session-sync'
 import {
   useAuthStore,
@@ -66,12 +68,17 @@ export class AuthRotationError extends Error {
   }
 }
 
-const authClient = axios.create({
+export const authClient = axios.create({
   baseURL: '',
   withCredentials: true,
   headers: {
     'Cache-Control': 'no-store',
   },
+})
+
+authClient.interceptors.request.use((config) => {
+  config.headers['Accept-Language'] = currentIntlLocale()
+  return config
 })
 
 const refreshRaceDelays = [80, 200, 500] as const
@@ -155,6 +162,7 @@ export function applyAuthBundle(
   if (synchronizeTabs && previousSID !== bundle.session.sid) {
     publishAuthSessionEvent('authenticated', bundle.session.sid)
   }
+  void applySavedLanguage(bundle.user)
 }
 
 export function applyAuthRotation(value: unknown): void {
@@ -364,6 +372,7 @@ export async function bootstrapAuthentication(): Promise<RefreshOutcome> {
   const bundle = currentValidAuthBundle()
   if (bundle) {
     useAuthStore.getState().auth.setBootstrapState('complete')
+    void applySavedLanguage(bundle.user)
     return { kind: 'authenticated', bundle }
   }
 
@@ -380,6 +389,7 @@ export async function bootstrapAuthentication(): Promise<RefreshOutcome> {
 export function getCommonHeaders(): Record<string, string> {
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
+    'Accept-Language': currentIntlLocale(),
   }
   const accessToken = useAuthStore.getState().auth.accessToken
   if (accessToken) {

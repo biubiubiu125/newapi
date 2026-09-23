@@ -48,12 +48,18 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { login, wechatLoginByCode } from '@/features/auth/api'
+import { getOAuthLoginDisplayError } from '@/features/auth/lib/login-display-error'
 import { LegalConsent } from '@/features/auth/components/legal-consent'
 import { OAuthProviders } from '@/features/auth/components/oauth-providers'
 import { loginFormSchema } from '@/features/auth/constants'
 import { useAuthRedirect } from '@/features/auth/hooks/use-auth-redirect'
 import { useTurnstile } from '@/features/auth/hooks/use-turnstile'
-import { beginPasskeyLogin, finishPasskeyLogin } from '@/features/auth/passkey'
+import {
+  beginPasskeyLogin,
+  finishPasskeyLogin,
+  getPasskeyDisplayError,
+  isPasskeyCancelledError,
+} from '@/features/auth/passkey'
 import type { AuthFormProps } from '@/features/auth/types'
 import { useStatus } from '@/hooks/use-status'
 import { isAuthBundle } from '@/lib/api'
@@ -62,7 +68,7 @@ import {
   prepareCredentialRequestOptions,
   isPasskeySupported as detectPasskeySupport,
 } from '@/lib/passkey'
-import { getServerErrorMessageKey } from '@/lib/server-error-message'
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -81,7 +87,6 @@ export function UserAuthForm({
   const [isWeChatSubmitting, setIsWeChatSubmitting] = useState(false)
   const [turnstileWidgetKey, setTurnstileWidgetKey] = useState(0)
   const legalConsentErrorMessage = t('Please agree to the legal terms first')
-  const loginFailedMessage = t('Login failed')
 
   const { status } = useStatus()
   const passkeyLoginEnabled = Boolean(
@@ -203,7 +208,12 @@ export function UserAuthForm({
       }
     } catch (error: unknown) {
       if (axios.isAxiosError(error)) return
-      toast.error(error instanceof Error ? error.message : loginFailedMessage)
+      toast.error(
+        localizeConsoleErrorText(
+          error instanceof Error ? error.message : '',
+          'Login failed'
+        )
+      )
     } finally {
       setIsLoading(false)
     }
@@ -249,12 +259,10 @@ export function UserAuthForm({
         toast.success(t('Signed in via WeChat'))
         handleWeChatDialogChange(false)
       } else {
-        if (getServerErrorMessageKey(res)) return
-        toast.error(res?.message || loginFailedMessage)
+        toast.error(getOAuthLoginDisplayError(res, 'Login failed'))
       }
     } catch (error: unknown) {
-      if (getServerErrorMessageKey(error)) return
-      toast.error(loginFailedMessage)
+      toast.error(getOAuthLoginDisplayError(error, 'Login failed'))
     } finally {
       setIsWeChatSubmitting(false)
     }
@@ -280,7 +288,7 @@ export function UserAuthForm({
     try {
       const begin = await beginPasskeyLogin()
       if (!begin.success) {
-        throw new Error(begin.message || t('Failed to start Passkey login'))
+        return
       }
 
       const publicKey = prepareCredentialRequestOptions(
@@ -307,8 +315,10 @@ export function UserAuthForm({
 
       const finish = await finishPasskeyLogin(flowToken, assertion)
       if (!finish.success) {
-        if (getServerErrorMessageKey(finish)) return
-        throw new Error(finish.message || t('Failed to complete Passkey login'))
+        toast.error(
+          getPasskeyDisplayError(finish, 'Failed to complete Passkey login')
+        )
+        return
       }
 
       if (finish.data && 'require_2fa' in finish.data && finish.data.require_2fa) {
@@ -327,13 +337,11 @@ export function UserAuthForm({
       await handleLoginSuccess(finish.data, redirectTo)
       toast.success(t('Signed in with Passkey'))
     } catch (error: unknown) {
-      if (getServerErrorMessageKey(error)) return
-      if (error instanceof DOMException && error.name === 'NotAllowedError') {
-        toast.info(t('Passkey login was cancelled or timed out'))
-      } else if (error instanceof Error) {
-        toast.error(error.message)
+      if (axios.isAxiosError(error)) return
+      if (isPasskeyCancelledError(error)) {
+        toast.info(getPasskeyDisplayError(error))
       } else {
-        toast.error(t('Passkey login failed'))
+        toast.error(getPasskeyDisplayError(error))
       }
     } finally {
       setIsPasskeyLoading(false)

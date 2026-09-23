@@ -16,6 +16,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/advancedcustom"
 	"github.com/QuantumNous/new-api/relay/channel/gemini"
@@ -529,7 +530,7 @@ func fetchChannelUpstreamModelIDsWithOptions(ctx context.Context, channel *model
 	if channel.Type == constant.ChannelTypeOllama {
 		key, _, apiErr := channel.GetNextEnabledKey()
 		if apiErr != nil {
-			return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
+			return nil, fmt.Errorf("failed to get channel key: %w", apiErr)
 		}
 		key = strings.TrimSpace(key)
 		client, err := newChannelUpstreamModelFetchHTTPClient(channel)
@@ -558,7 +559,7 @@ func fetchChannelUpstreamModelIDsWithOptions(ctx context.Context, channel *model
 	if channel.Type == constant.ChannelTypeGemini {
 		key, _, apiErr := channel.GetNextEnabledKey()
 		if apiErr != nil {
-			return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
+			return nil, fmt.Errorf("failed to get channel key: %w", apiErr)
 		}
 		key = strings.TrimSpace(key)
 		client, err := newChannelUpstreamModelFetchHTTPClient(channel)
@@ -589,7 +590,7 @@ func fetchChannelUpstreamModelIDsWithOptions(ctx context.Context, channel *model
 	if channel.Type == constant.ChannelTypeCodex {
 		key, _, apiErr := channel.GetNextEnabledKey()
 		if apiErr != nil {
-			return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
+			return nil, fmt.Errorf("failed to get channel key: %w", apiErr)
 		}
 		key = strings.TrimSpace(key)
 		headers, err := buildFetchModelsHeaderOverrides(channel, key)
@@ -646,7 +647,7 @@ func fetchChannelUpstreamModelIDsWithOptions(ctx context.Context, channel *model
 
 	key, _, apiErr := channel.GetNextEnabledKey()
 	if apiErr != nil {
-		return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
+		return nil, fmt.Errorf("failed to get channel key: %w", apiErr)
 	}
 	key = strings.TrimSpace(key)
 
@@ -666,7 +667,7 @@ func fetchChannelUpstreamModelIDsWithOptions(ctx context.Context, channel *model
 func fetchAdvancedCustomUpstreamModelIDs(ctx context.Context, channel *model.Channel, baseURL string) ([]string, error) {
 	key, _, apiErr := channel.GetNextEnabledKey()
 	if apiErr != nil {
-		return nil, fmt.Errorf("获取渠道密钥失败: %w", apiErr)
+		return nil, fmt.Errorf("failed to get channel key: %w", apiErr)
 	}
 	key = strings.TrimSpace(key)
 
@@ -799,7 +800,7 @@ func withLockedChannelUpstreamModelUpdateContext(
 	handler func(tx *gorm.DB, channel *model.Channel) error,
 ) error {
 	if channelID <= 0 {
-		return errors.New("渠道 ID 无效")
+		return errors.New("invalid channel id")
 	}
 	if handler == nil {
 		return errors.New("channel update handler is required")
@@ -1805,7 +1806,7 @@ func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 	if req.ID <= 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "渠道 ID 无效",
+			"message": i18n.T(c, i18n.MsgChannelIdInvalid),
 		})
 		return
 	}
@@ -1818,7 +1819,7 @@ func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 	if channel.Status != common.ChannelStatusEnabled {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "渠道已禁用",
+			"message": i18n.T(c, i18n.MsgChannelDisabled),
 		})
 		return
 	}
@@ -1843,21 +1844,22 @@ func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 	if channel.Status != common.ChannelStatusEnabled {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "渠道已禁用",
+			"message": i18n.T(c, i18n.MsgChannelDisabled),
 		})
 		return
 	}
 	needsCacheRefresh := modelsChanged || channel.OtherSettings != originalSettingsRaw
 	if needsCacheRefresh {
 		if err := refreshChannelRuntimeCache(); err != nil {
-			common.ApiError(c, fmt.Errorf("channel update persisted but runtime cache refresh failed: %w", err))
+			common.SysError("channel update persisted but runtime cache refresh failed: " + err.Error())
+			common.ApiErrorI18n(c, i18n.MsgChannelRuntimeCacheRefreshFailed)
 			return
 		}
 	}
 	if !channelSupportsUpstreamModelUpdate(channel) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "该渠道不支持上游模型更新",
+			"message": i18n.T(c, i18n.MsgChannelUpstreamUpdateUnsupported),
 		})
 		return
 	}
@@ -1890,7 +1892,7 @@ func DetectChannelUpstreamModelUpdates(c *gin.Context) {
 	if req.ID <= 0 {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "渠道 ID 无效",
+			"message": i18n.T(c, i18n.MsgChannelIdInvalid),
 		})
 		return
 	}
@@ -1903,7 +1905,7 @@ func DetectChannelUpstreamModelUpdates(c *gin.Context) {
 	if channel.Status != common.ChannelStatusEnabled {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "渠道已禁用",
+			"message": i18n.T(c, i18n.MsgChannelDisabled),
 		})
 		return
 	}
@@ -1938,7 +1940,7 @@ func DetectChannelUpstreamModelUpdates(c *gin.Context) {
 	if channel.Status != common.ChannelStatusEnabled {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "渠道已禁用",
+			"message": i18n.T(c, i18n.MsgChannelDisabled),
 		})
 		return
 	}
@@ -1947,14 +1949,15 @@ func DetectChannelUpstreamModelUpdates(c *gin.Context) {
 		channel.OtherSettings != originalSettingsRaw
 	if needsCacheRefresh {
 		if err := refreshChannelRuntimeCache(); err != nil {
-			common.ApiError(c, fmt.Errorf("channel detection persisted but runtime cache refresh failed: %w", err))
+			common.SysError("channel detection persisted but runtime cache refresh failed: " + err.Error())
+			common.ApiErrorI18n(c, i18n.MsgChannelRuntimeCacheRefreshFailed)
 			return
 		}
 	}
 	if !channelSupportsUpstreamModelUpdate(channel) {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "该渠道不支持上游模型更新",
+			"message": i18n.T(c, i18n.MsgChannelUpstreamUpdateUnsupported),
 		})
 		return
 	}
@@ -2423,7 +2426,7 @@ func ApplyAllChannelUpstreamModelUpdates(c *gin.Context) {
 func renderModelUpdateTaskConflict(c *gin.Context, task *model.SystemTask) {
 	c.JSON(http.StatusConflict, gin.H{
 		"success": false,
-		"message": "已有模型更新任务正在运行或等待中，不能启动本次任务",
+		"message": i18n.T(c, i18n.MsgChannelUpstreamTaskRunning),
 		"data": gin.H{
 			"task_id": task.TaskID,
 			"status":  task.Status,
@@ -2435,7 +2438,7 @@ func renderModelUpdateTaskConflict(c *gin.Context, task *model.SystemTask) {
 func renderModelUpdateOperationConflict(c *gin.Context) {
 	c.JSON(http.StatusConflict, gin.H{
 		"success": false,
-		"message": "已有模型更新任务正在运行或等待中，不能启动本次任务",
+		"message": i18n.T(c, i18n.MsgChannelUpstreamTaskRunning),
 		"data": gin.H{
 			"status": model.SystemTaskStatusRunning,
 			"type":   model.SystemTaskTypeModelUpdate,
@@ -2512,7 +2515,7 @@ func GetCurrentChannelUpstreamModelUpdateTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    activeTask.ToResponse(),
+		"data":    localizeSystemTaskResponse(c, activeTask.ToResponse()),
 	})
 }
 
@@ -2529,7 +2532,7 @@ func CancelChannelUpstreamModelUpdateTask(c *gin.Context) {
 	if taskID == "" {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "必须提供任务 ID",
+			"message": i18n.T(c, i18n.MsgSystemTaskIdRequired),
 		})
 		return
 	}
@@ -2550,7 +2553,7 @@ func CancelChannelUpstreamModelUpdateTask(c *gin.Context) {
 	if task == nil {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
-			"message": "未找到任务",
+			"message": i18n.T(c, i18n.MsgSystemTaskNotFound),
 		})
 		return
 	}
@@ -2566,7 +2569,7 @@ func CancelChannelUpstreamModelUpdateTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": message,
-		"data":    task.ToResponse(),
+		"data":    localizeSystemTaskResponse(c, task.ToResponse()),
 	})
 }
 
@@ -2575,7 +2578,7 @@ func GetChannelUpstreamModelUpdateTask(c *gin.Context) {
 	if taskID == "" {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "必须提供任务 ID",
+			"message": i18n.T(c, i18n.MsgSystemTaskIdRequired),
 		})
 		return
 	}
@@ -2591,7 +2594,7 @@ func GetChannelUpstreamModelUpdateTask(c *gin.Context) {
 			task.Type != model.SystemTaskTypeModelUpdateApplyAll) {
 		c.JSON(http.StatusNotFound, gin.H{
 			"success": false,
-			"message": "未找到任务",
+			"message": i18n.T(c, i18n.MsgSystemTaskNotFound),
 		})
 		return
 	}
@@ -2599,6 +2602,6 @@ func GetChannelUpstreamModelUpdateTask(c *gin.Context) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data":    task.ToResponse(),
+		"data":    localizeSystemTaskResponse(c, task.ToResponse()),
 	})
 }

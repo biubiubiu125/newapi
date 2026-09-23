@@ -78,6 +78,8 @@ import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import type { LogCleanupTask } from '../types'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 const logSettingsSchema = z.object({
   LogConsumeEnabled: z.boolean(),
 })
@@ -241,7 +243,7 @@ export function LogSettingsSection({
                 : t('No log entries matched the selected time.')
             )
           } else if (res.data.status === 'failed') {
-            toast.error(res.data.error || t('Failed to clean logs'))
+            toast.error(localizeConsoleErrorText(res.data.error, 'Failed to clean logs'))
           }
         }
       } catch {
@@ -282,7 +284,7 @@ export function LogSettingsSection({
     try {
       const res = await startLogCleanupTask(purgeTimestamp)
       if (!res.success) {
-        throw new Error(res.message || t('Failed to clean logs'))
+        throw new Error(localizeConsoleErrorText(res.message, 'Failed to clean logs'))
       }
       if (!res.data) {
         throw new Error(t('Failed to clean logs'))
@@ -292,7 +294,7 @@ export function LogSettingsSection({
       toast.success(t('Log cleanup task started.'))
     } catch (error) {
       const message =
-        error instanceof Error ? error.message : t('Failed to clean logs')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to clean logs')
       toast.error(message)
     } finally {
       setIsStartingLogCleanup(false)
@@ -323,7 +325,7 @@ export function LogSettingsSection({
           })
         )
       } else {
-        toast.error(res.data.message || t('Cleanup failed'))
+        toast.error(localizeConsoleErrorText(res.data.message, 'Cleanup failed'))
       }
       fetchServerLogInfo()
     } catch {

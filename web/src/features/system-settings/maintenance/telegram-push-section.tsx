@@ -22,6 +22,8 @@ import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
+
 import { Button } from '@/components/ui/button'
 import {
   Dialog,
@@ -127,7 +129,7 @@ export function TelegramPushSection() {
       if (!res.data.success) throw new Error(res.data.message)
     },
     onSuccess: () => toast.success(t('Telegram push settings saved')),
-    onError: (error: Error) => toast.error(error.message),
+    onError: toastUnhandledConsoleError,
   })
 
   const testPush = useMutation({
@@ -136,7 +138,7 @@ export function TelegramPushSection() {
       if (!res.data.success) throw new Error(res.data.message)
     },
     onSuccess: () => toast.success(t('Test push sent')),
-    onError: (error: Error) => toast.error(error.message),
+    onError: toastUnhandledConsoleError,
   })
 
   const pushAnnouncement = useMutation({
@@ -156,7 +158,7 @@ export function TelegramPushSection() {
       toast.success(t('Announcement push task created'))
       queryClient.invalidateQueries({ queryKey: ['telegram-push-records'] })
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: toastUnhandledConsoleError,
   })
 
   const retryRecord = useMutation({
@@ -168,7 +170,7 @@ export function TelegramPushSection() {
       toast.success(t('Pushed again'))
       queryClient.invalidateQueries({ queryKey: ['telegram-push-records'] })
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: toastUnhandledConsoleError,
   })
 
   return (

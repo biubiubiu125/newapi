@@ -29,7 +29,10 @@ import {
   useCanEditModelPricing,
   invalidateModelPricing,
 } from '@/features/model-pricing/api'
-import { createServerError } from '@/lib/server-error-message'
+import {
+  createServerError,
+  localizeConsoleErrorText,
+} from '@/lib/server-error-message'
 
 import { deleteModel, deleteModels } from '../../api'
 import type { Model } from '../../types'
@@ -150,7 +153,10 @@ export function ModelDeleteDialog(props: ModelDeleteDialogProps) {
         )}
         {mutation.isError && (
           <p role='alert' className='text-destructive text-sm'>
-            {errorMessage || t('Failed to delete model')}
+            {localizeConsoleErrorText(
+              errorMessage,
+              'Failed to delete model'
+            )}
           </p>
         )}
       </div>

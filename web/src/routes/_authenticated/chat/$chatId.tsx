@@ -29,6 +29,7 @@ import {
   chatLinkRequiresApiKey,
   resolveChatUrl,
 } from '@/features/chat/lib/chat-links'
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 export const Route = createFileRoute('/_authenticated/chat/$chatId')({
@@ -139,10 +140,10 @@ function ChatRouteComponent() {
   }
 
   if (requiresActiveKey && (isError || !activeKey || !iframeSrc)) {
-    const message =
-      error instanceof Error
-        ? error.message
-        : 'Unable to generate chat link. Please check your API keys.'
+    const message = localizeConsoleErrorText(
+      error instanceof Error ? error.message : '',
+      'Unable to generate chat link. Please contact your administrator.'
+    )
     return (
       <div className='flex h-full flex-col items-center justify-center p-6'>
         <Alert variant='destructive' className='max-w-xl'>

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -26,7 +27,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 
 	var req SubscriptionWaffoPancakePayRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.PlanId <= 0 {
-		common.ApiErrorMsg(c, "参数错误")
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
 
@@ -36,21 +37,21 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		return
 	}
 	if !plan.Enabled {
-		common.ApiErrorMsg(c, "套餐未启用")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionNotEnabled)
 		return
 	}
 	if plan.PriceAmount < 0.01 {
-		common.ApiErrorMsg(c, "套餐金额过低")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionAmountTooLow)
 		return
 	}
 	if strings.TrimSpace(plan.WaffoPancakeProductId) == "" {
-		common.ApiErrorMsg(c, "该套餐未配置 WaffoPancakeProductId")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionWaffoProductMissing)
 		return
 	}
 	// Plan targets its own Pancake product, so the checkout gate only needs
 	// gateway credentials here — not the gateway-level WaffoPancakeProductID.
 	if !isWaffoPancakeSubscriptionEnabled() {
-		common.ApiErrorMsg(c, "Waffo Pancake 未配置或密钥无效")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionWaffoNotConfigured)
 		return
 	}
 
@@ -61,7 +62,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		return
 	}
 	if user == nil {
-		common.ApiErrorMsg(c, "用户不存在")
+		common.ApiErrorI18n(c, i18n.MsgUserNotExists)
 		return
 	}
 
@@ -72,7 +73,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 			return
 		}
 		if count >= int64(plan.MaxPurchasePerUser) {
-			common.ApiErrorMsg(c, "已达到该套餐购买上限")
+			common.ApiErrorI18n(c, i18n.MsgSubscriptionPurchaseMax)
 			return
 		}
 	}
@@ -81,7 +82,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 			"Waffo Pancake 订阅产品与店铺校验失败 plan_id=%d product_id=%q store_id=%q error=%q",
 			plan.Id, plan.WaffoPancakeProductId, setting.WaffoPancakeStoreID, err.Error(),
 		))
-		common.ApiErrorMsg(c, "该套餐 Waffo Pancake 产品与当前店铺不匹配")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionWaffoShopMismatch)
 		return
 	}
 
@@ -97,12 +98,12 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 	}
 	paidAmount, err := normalizeSubscriptionPaymentAmount(plan, paidCurrency)
 	if err != nil {
-		common.ApiErrorMsg(c, "套餐金额无效")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionAmountInvalid)
 		return
 	}
 	priceSnapshot, err := model.FormatPaymentAmount(paidAmount, paidCurrency)
 	if err != nil {
-		common.ApiErrorMsg(c, "套餐金额无效")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionAmountInvalid)
 		return
 	}
 	snapshot, _ := referralService.BuildOrderSnapshot(userId, paidAmount, paidCurrency)
@@ -133,7 +134,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 	}
 	if err := order.Insert(); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅订单创建失败 user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": i18n.T(c, i18n.MsgPaymentCreateFailed)})
 		return
 	}
 
@@ -154,7 +155,7 @@ func SubscriptionRequestWaffoPancakePay(c *gin.Context) {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅结账会话创建失败 user_id=%d plan_id=%d trade_no=%s error=%q", userId, plan.Id, tradeNo, err.Error()))
 		order.Status = common.TopUpStatusFailed
 		_ = order.Update()
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": i18n.T(c, i18n.MsgPaymentStartFailed)})
 		return
 	}
 	logger.LogInfo(c.Request.Context(), fmt.Sprintf("Waffo Pancake 订阅订单创建成功 user_id=%d plan_id=%d trade_no=%s session_id=%s money=%.2f", userId, plan.Id, tradeNo, session.SessionID, paidAmount))

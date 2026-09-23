@@ -4,6 +4,9 @@ import (
 	"html"
 	"strings"
 	"testing"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 )
 
 func TestBuildTelegramPushTextKeepsShortMessagesUnchanged(t *testing.T) {
@@ -37,5 +40,25 @@ func TestNormalizeTelegramPushDisplayNameStaysRKAPI(t *testing.T) {
 	}
 	if got := NormalizeTelegramPushDisplayName("RKAPI"); got != "RKAPI" {
 		t.Fatalf("display name = %q, want RKAPI", got)
+	}
+}
+
+func TestSendTelegramPushHidesUpstreamEnglish(t *testing.T) {
+	err := SendTelegramPush("", "", "RKAPI", "hello", "")
+	loc, ok := common.AsLocalizedError(err)
+	if !ok {
+		t.Fatalf("empty config error=%v, want LocalizedError", err)
+	}
+	if loc.Key != i18n.MsgTelegramPushInvalidConfig {
+		t.Fatalf("empty config key=%q want %q", loc.Key, i18n.MsgTelegramPushInvalidConfig)
+	}
+
+	err = SendTelegramPush("token", "chat", "RKAPI", "", "")
+	loc, ok = common.AsLocalizedError(err)
+	if !ok {
+		t.Fatalf("empty content error=%v, want LocalizedError", err)
+	}
+	if loc.Key != i18n.MsgTelegramPushContentEmpty {
+		t.Fatalf("empty content key=%q want %q", loc.Key, i18n.MsgTelegramPushContentEmpty)
 	}
 }

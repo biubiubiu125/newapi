@@ -18,14 +18,16 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
 
+import { InputGroup, InputGroupAddon } from '@/components/ui/input-group'
 import {
-  InputGroup,
-  InputGroupAddon,
-  InputGroupInput,
-} from '@/components/ui/input-group'
+  USD_PRICING_CURRENCY,
+  type PricingCurrency,
+} from '@/features/model-pricing/currency'
+import { PricingAmountInput } from '@/features/model-pricing/pricing-amount-input'
 import { cn } from '@/lib/utils'
 
 import {
+  SettingsControlChildren,
   SettingsControlGroup,
   SettingsSwitchField,
 } from '../components/settings-form-layout'
@@ -35,16 +37,25 @@ export function PriceInput(props: {
   placeholder?: string
   disabled?: boolean
   onChange: (value: string) => void
+  currency?: PricingCurrency
+  id?: string
+  'aria-describedby'?: string
+  'aria-label'?: string
 }) {
+  const currency = props.currency ?? USD_PRICING_CURRENCY
   return (
-    <InputGroup>
-      <InputGroupAddon>$</InputGroupAddon>
-      <InputGroupInput
-        inputMode='decimal'
+    <InputGroup className='has-[[data-pricing-error]]:h-auto has-[[data-pricing-error]]:flex-wrap'>
+      <InputGroupAddon>{currency.symbol}</InputGroupAddon>
+      <PricingAmountInput
+        grouped
+        id={props.id}
+        aria-describedby={props['aria-describedby']}
+        aria-label={props['aria-label']}
+        currency={currency}
         value={props.value}
         placeholder={props.placeholder}
         disabled={props.disabled}
-        onChange={(event) => props.onChange(event.target.value)}
+        onChange={props.onChange}
       />
       <InputGroupAddon align='inline-end'>$/1M</InputGroupAddon>
     </InputGroup>
@@ -58,36 +69,55 @@ export function PriceLane(props: {
   value: string
   enabled: boolean
   disabled?: boolean
+  disabledReason?: string
+  compact?: boolean
+  currency?: PricingCurrency
   onEnabledChange: (checked: boolean) => void
   onChange: (value: string) => void
 }) {
   const { t } = useTranslation()
-  const effectiveDisabled = props.disabled || !props.enabled
+  const disabled = Boolean(props.disabled || !props.enabled)
+  const description =
+    props.disabled && props.disabledReason
+      ? props.disabledReason
+      : props.compact
+        ? undefined
+        : props.description
 
   return (
     <SettingsControlGroup
-      className={cn('space-y-3', effectiveDisabled && 'opacity-75')}
-      data-disabled={effectiveDisabled || undefined}
+      className={cn(
+        'space-y-3',
+        disabled && 'opacity-75',
+        props.compact && 'rounded-lg border bg-transparent p-3'
+      )}
+      data-disabled={disabled || undefined}
     >
       <SettingsSwitchField
         checked={props.enabled}
         disabled={props.disabled}
         onCheckedChange={props.onEnabledChange}
         label={props.title}
-        description={props.description}
+        description={description}
         aria-label={props.title}
       />
-      <PriceInput
-        value={props.value}
-        placeholder={props.placeholder}
-        disabled={effectiveDisabled}
-        onChange={props.onChange}
-      />
-      <p className='text-muted-foreground text-xs'>
-        {props.enabled
-          ? t('USD price per 1M tokens.')
-          : t('Disabled lanes are omitted on save.')}
-      </p>
+      <SettingsControlChildren className='space-y-2'>
+        <PriceInput
+          aria-label={props.title}
+          currency={props.currency}
+          value={props.value}
+          placeholder={props.placeholder}
+          disabled={disabled}
+          onChange={props.onChange}
+        />
+        {!props.compact && (
+          <p className='text-muted-foreground text-xs'>
+            {t('{{currency}} price per 1M tokens.', {
+              currency: (props.currency ?? USD_PRICING_CURRENCY).label,
+            })}
+          </p>
+        )}
+      </SettingsControlChildren>
     </SettingsControlGroup>
   )
 }

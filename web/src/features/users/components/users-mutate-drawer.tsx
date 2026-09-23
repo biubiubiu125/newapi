@@ -71,6 +71,7 @@ import {
 } from '@/lib/admin-permissions'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 import { ROLE } from '@/lib/roles'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -193,10 +194,12 @@ export function UsersMutateDrawer({
         triggerRefresh()
       } else {
         toast.error(
-          result.message ||
-            (isUpdate
-              ? t(ERROR_MESSAGES.UPDATE_FAILED)
-              : t(ERROR_MESSAGES.CREATE_FAILED))
+          localizeConsoleErrorText(
+            result.message,
+            isUpdate
+              ? ERROR_MESSAGES.UPDATE_FAILED
+              : ERROR_MESSAGES.CREATE_FAILED
+          )
         )
       }
     } catch {

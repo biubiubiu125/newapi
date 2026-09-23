@@ -47,6 +47,8 @@ import {
   type CodexUsageDialogData,
 } from './codex-usage-dialog'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type BalanceQueryDialogProps = {
   initialRawResponse?: string
   open: boolean
@@ -89,12 +91,12 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
     try {
       const res = await getCodexUsage(row.id)
       if (!res.success) {
-        throw new Error(res.message || t('Failed to fetch usage'))
+        throw new Error(localizeConsoleErrorText(res.message, 'Failed to fetch usage'))
       }
       setCodexUsageResponse(res)
     } catch (error: unknown) {
       toast.error(
-        error instanceof Error ? error.message : t('Failed to fetch usage')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to fetch usage')
       )
     } finally {
       setIsQuerying(false)
@@ -141,11 +143,11 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
       } else if (response.success && response.raw_response !== undefined) {
         setRawResponse(response.raw_response)
       } else {
-        toast.error(response.message || t('Failed to query balance'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to query balance'))
       }
     } catch (error: unknown) {
       toast.error(
-        error instanceof Error ? error.message : t('Failed to query balance')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to query balance')
       )
     } finally {
       setIsQuerying(false)
@@ -168,7 +170,7 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
     })
 
   const formatDate = (timestamp: number) => {
-    if (!timestamp) return 'Never'
+    if (!timestamp) return t('Never')
     return formatTimestampToDate(timestamp)
   }
 

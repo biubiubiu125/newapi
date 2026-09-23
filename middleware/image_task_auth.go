@@ -56,10 +56,10 @@ func imageTaskTokenAuth() func(c *gin.Context) {
 		if err != nil {
 			if errors.Is(err, model.ErrDatabase) || (!errors.Is(err, model.ErrTokenInvalid) && !errors.Is(err, model.ErrTokenNotProvided)) {
 				common.SysLog("image task token authentication failed: " + err.Error())
-				abortWithOpenAiMessage(c, http.StatusInternalServerError, common.TranslateMessage(c, i18n.MsgDatabaseError))
+				abortWithOpenAiMessage(c, http.StatusInternalServerError, i18n.ProtocolMessage(i18n.MsgDatabaseError))
 				return
 			}
-			abortWithOpenAiMessage(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenInvalid))
+			abortWithOpenAiMessage(c, http.StatusUnauthorized, i18n.ProtocolMessage(i18n.MsgTokenInvalid))
 			return
 		}
 		if !applyImageTaskTokenContext(c, token, parts...) {
@@ -101,15 +101,15 @@ func applyImageTaskTokenContext(c *gin.Context, token *model.Token, parts ...str
 	userCache, err := model.GetUserCache(token.UserId)
 	if err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			abortWithOpenAiMessage(c, http.StatusUnauthorized, common.TranslateMessage(c, i18n.MsgTokenInvalid))
+			abortWithOpenAiMessage(c, http.StatusUnauthorized, i18n.ProtocolMessage(i18n.MsgTokenInvalid))
 			return false
 		}
 		common.SysLog(fmt.Sprintf("image task token user cache error for user %d: %v", token.UserId, err))
-		abortWithOpenAiMessage(c, http.StatusInternalServerError, common.TranslateMessage(c, i18n.MsgDatabaseError))
+		abortWithOpenAiMessage(c, http.StatusInternalServerError, i18n.ProtocolMessage(i18n.MsgDatabaseError))
 		return false
 	}
 	if userCache.Status != common.UserStatusEnabled {
-		abortWithOpenAiMessage(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthUserBanned))
+		abortWithOpenAiMessage(c, http.StatusForbidden, i18n.ProtocolMessage(i18n.MsgAuthUserBanned))
 		return false
 	}
 	userCache.WriteContext(c)
@@ -144,7 +144,7 @@ func RejectExhaustedTokenForImageTaskCreation() func(c *gin.Context) {
 			abortWithOpenAiMessage(
 				c,
 				http.StatusForbidden,
-				common.TranslateMessage(c, i18n.MsgQuotaInsufficient),
+				i18n.ProtocolMessage(i18n.MsgQuotaInsufficient),
 				types.ErrorCodePreConsumeTokenQuotaFailed,
 			)
 			return

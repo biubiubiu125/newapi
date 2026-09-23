@@ -57,7 +57,10 @@ import {
 } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
+import { currentConsoleFailureText } from '@/lib/console-failure-text'
 import { cn } from '@/lib/utils'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 // ---------------------------------------------------------------------------
 // Types
@@ -1515,15 +1518,17 @@ export function ParamOverrideEditorDialog(
       setJsonText(buildVisualJson())
       setJsonError('')
     } catch (error) {
-      toast.error((error as Error).message)
+      const message = currentConsoleFailureText(
+        error instanceof Error ? error.message : '',
+        'Parameter override must be valid JSON format'
+      )
+      toast.error(message)
       if (visualMode === 'legacy') {
         setJsonText(legacyValue)
       } else {
         setJsonText(buildOperationsJson(operations, { validate: false }, t))
       }
-      setJsonError(
-        (error as Error).message || t('Parameter configuration error')
-      )
+      setJsonError(message)
     }
     setEditMode('json')
   }, [buildVisualJson, editMode, legacyValue, operations, t, visualMode])
@@ -1683,7 +1688,10 @@ export function ParamOverrideEditorDialog(
       buildVisualJson()
       return ''
     } catch (error) {
-      return (error as Error)?.message || t('Parameter configuration error')
+      return localizeConsoleErrorText(
+        (error as Error)?.message,
+        'Parameter configuration error'
+      )
     }
   }, [buildVisualJson, editMode, t])
 
@@ -1705,7 +1713,13 @@ export function ParamOverrideEditorDialog(
       props.onSave(result)
       props.onOpenChange(false)
     } catch (error) {
-      toast.error((error as Error).message)
+      const message = error instanceof Error ? error.message : ''
+      toast.error(
+        currentConsoleFailureText(
+          message,
+          'Parameter override must be valid JSON format'
+        )
+      )
     }
   }, [buildVisualJson, editMode, jsonText, props, t])
 

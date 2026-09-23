@@ -37,6 +37,8 @@ import {
 import { parseUserSettings } from '../../lib'
 import type { UserProfile, UserSettings, NotifyType } from '../../types'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 const NOTIFICATION_ICONS: Record<NotifyType, typeof Mail> = {
   email: Mail,
   webhook: Webhook,
@@ -123,7 +125,7 @@ export function NotificationTab({ profile, onUpdate }: NotificationTabProps) {
         toast.success(t('Settings updated successfully'))
         onUpdate()
       } else {
-        toast.error(response.message || t('Failed to update settings'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to update settings'))
       }
     } catch {
       toast.error(t('Failed to update settings'))

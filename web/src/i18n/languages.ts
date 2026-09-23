@@ -33,6 +33,13 @@ export type InterfaceLanguageCode =
 
 export const DEFAULT_INTERFACE_LANGUAGE: InterfaceLanguageCode = 'zhCN'
 export const DEFAULT_INTL_LOCALE = 'zh-CN'
+// Guests: an explicit localStorage choice, then the browser language.
+// Anything still unresolved uses the i18next fallback, simplified Chinese.
+// A signed-in account language replaces this after login.
+export const GUEST_LANGUAGE_DETECTION_ORDER = [
+  'localStorage',
+  'navigator',
+] as const
 
 export function normalizeInterfaceLanguage(
   value?: string | null
@@ -72,14 +79,12 @@ export function normalizeInterfaceLanguage(
  * Browsers report standard BCP-47 tags (`zh-CN`, `zh-TW`, `zh-Hant`, `zh`, ...),
  * but `supportedLngs`/resources use the non-standard camelCase codes, so without
  * this mapping a Chinese browser would never match and fall back to simplified Chinese.
- * Non-Chinese codes are returned unchanged so i18next's own `supportedLngs`
- * matching still applies (e.g. `fr-FR` -> `fr`, `ja` -> `ja`).
+ * Other browser tags are mapped onto supported interface codes (`en-US` -> `en`).
+ * Unknown tags become simplified Chinese instead of being left as raw BCP-47 text.
  */
 export function convertDetectedLanguage(value: string): string {
   const trimmed = value.trim()
   if (!trimmed) return value
-  const lower = trimmed.replaceAll('_', '-').toLowerCase()
-  if (!lower.startsWith('zh')) return value
   return normalizeInterfaceLanguage(trimmed)
 }
 
@@ -115,7 +120,35 @@ export function resolveIntlLocale(value?: string | null): string {
 }
 
 export function currentIntlLocale(): string {
-  return resolveIntlLocale(i18n.resolvedLanguage || i18n.language)
+  return resolveIntlLocale(i18n.language || i18n.resolvedLanguage)
+}
+
+export function speechRecognitionLocale(value?: string | null): string {
+  return resolveIntlLocale(value ?? (i18n.language || i18n.resolvedLanguage))
+}
+
+export async function changeInterfaceLanguage(
+  code: string,
+  persist?: (code: string) => Promise<void>
+): Promise<void> {
+  const previous = i18n.language
+  const next = normalizeInterfaceLanguage(code)
+  if (!persist) {
+    await i18n.changeLanguage(next)
+    return
+  }
+  try {
+    await persist(next)
+    await i18n.changeLanguage(next)
+  } catch (error) {
+    await i18n.changeLanguage(previous)
+    throw error
+  }
+}
+
+export function applyDocumentLang(language?: string | null): void {
+  if (typeof document === 'undefined') return
+  document.documentElement.lang = resolveIntlLocale(language)
 }
 
 export function dayjsLocaleForLanguage(value?: string | null): string {

@@ -26,6 +26,8 @@ import {
   type ReactNode,
 } from 'react'
 import { useTranslation } from 'react-i18next'
+
+import { consoleDetailText, referralErrorLabel } from '@/lib/referral-error-label'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
@@ -79,6 +81,7 @@ import type {
   ReferralWithdrawal,
   ReferralAdminAuditLog,
 } from '@/features/referral/types'
+import { currentIntlLocale } from '@/i18n/languages'
 import { formatTimestamp } from '@/lib/format'
 
 import {
@@ -90,6 +93,8 @@ import {
   type AdminReferralSectionId,
   isAdminReferralSectionId,
 } from './section-registry'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 const route = getRouteApi('/_authenticated/admin-referral/$section')
 const FIXED_REFERRAL_REDIRECT_PATH = '/sign-up'
@@ -164,7 +169,7 @@ type AuditTimelineItem = {
 
 function formatMoney(value: number): string {
   const amount = Number.isFinite(value) ? value : 0
-  const formatted = new Intl.NumberFormat(undefined, {
+  const formatted = new Intl.NumberFormat(currentIntlLocale(), {
     minimumFractionDigits: 0,
     maximumFractionDigits: Math.abs(amount) >= 1 ? 2 : 4,
   }).format(amount)
@@ -177,7 +182,7 @@ function formatSettlementMoney(value: number, currency?: string): string {
       ? '\u00a5'
       : `${currency || ''} `
   const amount = Number.isFinite(value) ? value : 0
-  const formatted = new Intl.NumberFormat(undefined, {
+  const formatted = new Intl.NumberFormat(currentIntlLocale(), {
     minimumFractionDigits: 0,
     maximumFractionDigits: Math.abs(amount) >= 1 ? 2 : 4,
   }).format(amount)
@@ -187,7 +192,7 @@ function formatSettlementMoney(value: number, currency?: string): string {
 function formatOriginalPaidAmount(item: ReferralCommission): string {
   const currency = (item.paid_currency || '-').toUpperCase()
   const amount = Number.isFinite(item.paid_amount) ? item.paid_amount : 0
-  const formatted = new Intl.NumberFormat(undefined, {
+  const formatted = new Intl.NumberFormat(currentIntlLocale(), {
     minimumFractionDigits: 0,
     maximumFractionDigits: Math.abs(amount) >= 1 ? 2 : 4,
   }).format(amount)
@@ -328,56 +333,6 @@ function commissionJobStatusLabel(
   }
 }
 
-function referralErrorLabel(value: string, t: (key: string) => string): string {
-  const normalized = (value || '').trim()
-  if (!normalized) {
-    return '-'
-  }
-  switch (normalized) {
-    case 'fx_rate_missing':
-      return t('Referral exchange rate is missing')
-    case 'missing_referral_snapshot':
-      return t('Order has no referral snapshot, commission generation skipped')
-    case 'zero_commission_amount':
-      return t('Commission amount is 0, generation skipped')
-    case 'affiliate_not_eligible':
-      return t('Affiliate is not approved or settlement is closed')
-    case 'unsupported source_type':
-      return t('Unsupported order source type')
-    case 'trade_no is required':
-      return t('Order number is missing')
-    case 'failed to update referral pending amount':
-      return t('Failed to update affiliate pending balance')
-    case 'record not found':
-      return t('Related record not found')
-    case 'subscription order not found':
-      return t('Subscription order not found')
-    case 'topup order not found':
-      return t('Top-up order not found')
-    case 'duplicate_job_superseded_by_subscription':
-      return t('Commission was regenerated from the subscription order')
-    case 'paid_amount must be a positive finite number':
-      return t('Paid amount must be greater than 0')
-    default:
-      if (normalized.includes('UNIQUE constraint failed')) {
-        return t('Commission record already exists or unique constraint conflict')
-      }
-      if (normalized.includes('duplicate key value')) {
-        return t('Commission record already exists or unique constraint conflict')
-      }
-      if (normalized.includes('record not found')) {
-        return t('Related record not found')
-      }
-      if (normalized.includes('subscription order not found')) {
-        return t('Subscription order not found')
-      }
-      if (normalized.includes('topup order not found')) {
-        return t('Top-up order not found')
-      }
-      return normalized || t('Unknown error')
-  }
-}
-
 function commissionJobSourceLabel(
   value: string,
   t: (key: string) => string
@@ -463,6 +418,7 @@ function orderTypeLabel(value: string, t: (key: string) => string): string {
 
 function auditReasonLabel(
   value: string,
+  language: string,
   t: (key: string, options?: Record<string, unknown>) => string
 ): string {
   const normalized = (value || '').trim()
@@ -543,12 +499,13 @@ function auditReasonLabel(
     case 'duplicate_job_superseded_by_subscription':
       return t('Commission was regenerated from the subscription order')
     default:
-      return auditReasonPatternLabel(normalized, t)
+      return auditReasonPatternLabel(normalized, language, t)
   }
 }
 
 function auditReasonPatternLabel(
   value: string,
+  language: string,
   t: (key: string, options?: Record<string, unknown>) => string
 ): string {
   const lower = value.toLowerCase()
@@ -556,9 +513,7 @@ function auditReasonPatternLabel(
     return t('Release frozen amount after rejection')
   }
   if (lower.includes('approved') || lower.includes('approve')) {
-    return lower.includes('test')
-      ? t('Approved in test chain')
-      : t('Approved')
+    return lower.includes('test') ? t('Approved in test chain') : t('Approved')
   }
   if (lower.includes('paid') || lower.includes('payment')) {
     return lower.includes('test') ? t('Paid in test chain') : t('Paid')
@@ -577,13 +532,10 @@ function auditReasonPatternLabel(
     const detail = value.replaceAll(/test-machine|test machine/gi, '').trim()
     return t('Test-machine record: {{detail}}', { detail: detail || value })
   }
-  return value || '-'
+  return consoleDetailText(value, language, t)
 }
 
-function auditActionLabel(
-  value: string,
-  t: (key: string) => string
-): string {
+function auditActionLabel(value: string, t: (key: string) => string): string {
   switch (value) {
     case 'referral_affiliate_approve':
       return t('Affiliate approved')
@@ -623,7 +575,7 @@ function auditActionLabel(
 }
 
 export function AdminReferral() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const navigate = useNavigate()
   const params = route.useParams()
   const activeSection: AdminReferralSectionId =
@@ -774,7 +726,7 @@ export function AdminReferral() {
         trade_no: displaySource.tradeNo,
       })
       if (!res.success) {
-        toast.error(res.message || t('Retry failed'))
+        toast.error(localizeConsoleErrorText(res.message, 'Retry failed'))
         return
       }
       toast.success(t('Commission retry submitted'))
@@ -798,7 +750,7 @@ export function AdminReferral() {
       succeeded_scan_limit: 1000,
     })
     if (!res.success) {
-      toast.error(res.message || t('Backfill failed'))
+      toast.error(localizeConsoleErrorText(res.message, 'Backfill failed'))
       return
     }
     const result = res.data
@@ -846,7 +798,7 @@ export function AdminReferral() {
             : '-',
           item.target_username ||
             (item.target_user_id > 0 ? `#${item.target_user_id}` : '-'),
-          auditReasonLabel(item.reason, t),
+          auditReasonLabel(item.reason, i18n.language, t),
           formatTimestamp(item.created_at),
         ],
       })
@@ -890,7 +842,7 @@ export function AdminReferral() {
           t('System'),
           detailParts.join(' / '),
           item.last_error
-            ? referralErrorLabel(item.last_error, t)
+            ? referralErrorLabel(item.last_error, i18n.language, t)
             : commissionJobStatusLabel(item.status, t),
           formatTimestamp(time),
         ],
@@ -917,7 +869,7 @@ export function AdminReferral() {
         )
       : rows
     return filtered.sort((a, b) => b.time - a.time)
-  }, [auditKeyword, auditLogItems, commissionJobs, handleRetryCommissionJob, t])
+  }, [auditKeyword, auditLogItems, commissionJobs, handleRetryCommissionJob, i18n.language, t])
 
   const loadCurrentSection = useEffectEvent(
     async function loadCurrentSection() {
@@ -961,7 +913,7 @@ export function AdminReferral() {
           await loadCommissionJobs()
         }
       } else {
-        toast.error(res.message || t('Settlement run failed'))
+        toast.error(localizeConsoleErrorText(res.message, 'Settlement run failed'))
       }
     } finally {
       setRunningSettlement(false)
@@ -980,7 +932,7 @@ export function AdminReferral() {
         toast.success(t('Settings saved'))
         setSettings(res.data)
       } else {
-        toast.error(res.message || t('Failed to save settings'))
+        toast.error(localizeConsoleErrorText(res.message, 'Failed to save settings'))
       }
     } finally {
       setSavingSettings(false)
@@ -1001,7 +953,7 @@ export function AdminReferral() {
         reason: reasonInput.trim(),
       })
       if (!res.success) {
-        toast.error(res.message || t('Approve failed'))
+        toast.error(localizeConsoleErrorText(res.message, 'Approve failed'))
         return
       }
       toast.success(t('Affiliate approved'))
@@ -1010,7 +962,7 @@ export function AdminReferral() {
         reason: reasonInput.trim(),
       })
       if (!res.success) {
-        toast.error(res.message || t('Reject failed'))
+        toast.error(localizeConsoleErrorText(res.message, 'Reject failed'))
         return
       }
       toast.success(t('Affiliate rejected'))
@@ -1034,13 +986,13 @@ export function AdminReferral() {
           reason: reasonInput.trim(),
         })
         success = res.success
-        message = res.message || t('Disable failed')
+        message = localizeConsoleErrorText(res.message, 'Disable failed')
         break
       }
       case 'restore': {
         const res = await restoreReferralAffiliate(item.user_id)
         success = res.success
-        message = res.message || t('Restore failed')
+        message = localizeConsoleErrorText(res.message, 'Restore failed')
         break
       }
       case 'freeze_settlement': {
@@ -1048,13 +1000,13 @@ export function AdminReferral() {
           reason: reasonInput.trim(),
         })
         success = res.success
-        message = res.message || t('Settlement freeze failed')
+        message = localizeConsoleErrorText(res.message, 'Settlement freeze failed')
         break
       }
       case 'restore_settlement': {
         const res = await restoreReferralSettlement(item.user_id)
         success = res.success
-        message = res.message || t('Settlement restore failed')
+        message = localizeConsoleErrorText(res.message, 'Settlement restore failed')
         break
       }
       case 'freeze_withdrawal': {
@@ -1062,13 +1014,13 @@ export function AdminReferral() {
           reason: reasonInput.trim(),
         })
         success = res.success
-        message = res.message || t('Withdrawal freeze failed')
+        message = localizeConsoleErrorText(res.message, 'Withdrawal freeze failed')
         break
       }
       case 'restore_withdrawal': {
         const res = await restoreReferralWithdrawal(item.user_id)
         success = res.success
-        message = res.message || t('Withdrawal restore failed')
+        message = localizeConsoleErrorText(res.message, 'Withdrawal restore failed')
         break
       }
       case 'update_rate': {
@@ -1082,7 +1034,7 @@ export function AdminReferral() {
           reason: reasonInput.trim(),
         })
         success = res.success
-        message = res.message || t('Rate update failed')
+        message = localizeConsoleErrorText(res.message, 'Rate update failed')
         break
       }
       case 'adjust_increase':
@@ -1101,7 +1053,7 @@ export function AdminReferral() {
           idempotency_key: buildIdempotencyKey(),
         })
         success = res.success
-        message = res.message || t('Adjust failed')
+        message = localizeConsoleErrorText(res.message, 'Adjust failed')
         break
       }
     }
@@ -1158,7 +1110,7 @@ export function AdminReferral() {
     }
 
     if (!res?.success) {
-      toast.error(res?.message || t('Withdrawal action failed'))
+      toast.error(localizeConsoleErrorText(res?.message, 'Withdrawal action failed'))
       return
     }
     toast.success(t('Withdrawal updated'))
@@ -1193,7 +1145,7 @@ export function AdminReferral() {
         setPaymentProofURL(res.data.url)
         toast.success(t('Payment proof uploaded'))
       } else {
-        toast.error(res.message || t('Upload failed'))
+        toast.error(localizeConsoleErrorText(res.message, 'Upload failed'))
       }
     } finally {
       event.target.value = ''
@@ -1211,7 +1163,7 @@ export function AdminReferral() {
         setRejectProofURL(res.data.url)
         toast.success(t('Reject proof uploaded'))
       } else {
-        toast.error(res.message || t('Upload failed'))
+        toast.error(localizeConsoleErrorText(res.message, 'Upload failed'))
       }
     } finally {
       event.target.value = ''

@@ -89,6 +89,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from '@/components/ui/select'
+import { speechRecognitionLocale } from '@/i18n/languages'
 import { cn } from '@/lib/utils'
 
 // ============================================================================
@@ -1108,6 +1109,7 @@ export const PromptInputSpeechButton = ({
   onTranscriptionChange,
   ...props
 }: PromptInputSpeechButtonProps) => {
+  const { i18n } = useTranslation()
   const [isListening, setIsListening] = useState(false)
   const [recognition, setRecognition] = useState<SpeechRecognition | null>(null)
   const recognitionRef = useRef<SpeechRecognition | null>(null)
@@ -1123,7 +1125,7 @@ export const PromptInputSpeechButton = ({
 
       speechRecognition.continuous = true
       speechRecognition.interimResults = true
-      speechRecognition.lang = 'en-US'
+      speechRecognition.lang = speechRecognitionLocale()
 
       speechRecognition.onstart = () => {
         setIsListening(true)
@@ -1172,7 +1174,7 @@ export const PromptInputSpeechButton = ({
         recognitionRef.current.stop()
       }
     }
-  }, [textareaRef, onTranscriptionChange])
+  }, [textareaRef, onTranscriptionChange, i18n.language])
 
   const toggleListening = useCallback(() => {
     if (!recognition) {

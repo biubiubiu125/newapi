@@ -17,8 +17,9 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Languages, Check } from 'lucide-react'
-import { useCallback } from 'react'
+import { useCallback, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
+import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import {
@@ -28,10 +29,16 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import {
+  changeInterfaceLanguage,
   INTERFACE_LANGUAGE_OPTIONS,
   normalizeInterfaceLanguage,
 } from '@/i18n/languages'
-import { api } from '@/lib/api'
+import {
+  persistInterfaceLanguageErrorMessage,
+  persistSignedInInterfaceLanguage,
+  syncSignedInInterfaceLanguage,
+} from '@/i18n/persist-interface-language'
+import { getServerErrorDisplayMessage } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -39,18 +46,29 @@ export function LanguageSwitcher() {
   const { i18n, t } = useTranslation()
   const user = useAuthStore((s) => s.auth.user)
   const currentLanguage = normalizeInterfaceLanguage(i18n.language)
+
+  useEffect(() => {
+    if (!user) return
+    void syncSignedInInterfaceLanguage(user)
+  }, [user])
+
   const handleChangeLanguage = useCallback(
     async (code: string) => {
-      await i18n.changeLanguage(code)
-      if (user) {
-        try {
-          await api.put('/api/user/self', { language: code })
-        } catch {
-          // Best-effort persistence; don't block the UI on failure
-        }
+      try {
+        await changeInterfaceLanguage(
+          code,
+          user ? persistSignedInInterfaceLanguage : undefined
+        )
+      } catch (error) {
+        toast.error(
+          persistInterfaceLanguageErrorMessage(
+            error,
+            getServerErrorDisplayMessage(error)
+          )
+        )
       }
     },
-    [i18n, user]
+    [user]
   )
 
   return (

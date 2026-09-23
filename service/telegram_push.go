@@ -15,6 +15,7 @@ import (
 	"unicode/utf16"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/bytedance/gopkg/util/gopool"
@@ -106,11 +107,11 @@ func SendTelegramPush(botToken string, chatId string, displayName string, title 
 	botToken = strings.TrimSpace(botToken)
 	chatId = strings.TrimSpace(chatId)
 	if botToken == "" || chatId == "" {
-		return fmt.Errorf("Telegram Bot Token 和 Chat ID 不能为空")
+		return common.Localized(i18n.MsgTelegramPushInvalidConfig)
 	}
 	text := BuildTelegramPushText(displayName, title, content)
 	if text == "" {
-		return fmt.Errorf("推送内容不能为空")
+		return common.Localized(i18n.MsgTelegramPushContentEmpty)
 	}
 	form := url.Values{}
 	form.Set("chat_id", chatId)
@@ -119,21 +120,21 @@ func SendTelegramPush(botToken string, chatId string, displayName string, title 
 	endpoint := "https://api.telegram.org/bot" + botToken + "/sendMessage"
 	req, err := http.NewRequest(http.MethodPost, endpoint, bytes.NewBufferString(form.Encode()))
 	if err != nil {
-		return err
+		common.SysLog("telegram push request build failed: " + err.Error())
+		return common.Localized(i18n.MsgTelegramPushSendFailed)
 	}
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	resp, err := GetHttpClient().Do(req)
 	if err != nil {
-		return err
+		common.SysLog("telegram push request failed: " + err.Error())
+		return common.Localized(i18n.MsgTelegramPushSendFailed)
 	}
 	defer resp.Body.Close()
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		reason := strings.TrimSpace(string(body))
-		if reason != "" {
-			return fmt.Errorf("Telegram 推送失败，HTTP 状态码 %d: %s", resp.StatusCode, reason)
-		}
-		return fmt.Errorf("Telegram 推送失败，HTTP 状态码 %d", resp.StatusCode)
+		common.SysLog(fmt.Sprintf("telegram push upstream status=%d body=%s", resp.StatusCode, reason))
+		return common.Localized(i18n.MsgTelegramPushSendFailed)
 	}
 	return nil
 }
@@ -341,7 +342,7 @@ func runTelegramPushRetryOnce() {
 				Where("id = ? AND status = ?", record.Id, model.TelegramPushStatusRunning).
 				Updates(map[string]interface{}{
 					"status":         model.TelegramPushStatusFailed,
-					"failure_reason": "推送任务中断，等待自动重试",
+					"failure_reason": i18n.MsgTelegramPushInterrupted,
 					"updated_at":     now,
 				}).Error
 			record.Status = model.TelegramPushStatusFailed

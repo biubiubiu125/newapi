@@ -23,8 +23,10 @@ import { initReactI18next } from 'react-i18next'
 import { applyDayjsLocale } from '@/lib/dayjs'
 
 import {
+  applyDocumentLang,
   convertDetectedLanguage,
   DEFAULT_INTERFACE_LANGUAGE,
+  GUEST_LANGUAGE_DETECTION_ORDER,
 } from './languages'
 import en from './locales/en.json'
 import fr from './locales/fr.json'
@@ -44,9 +46,16 @@ export const resources = {
   zhTW,
 } as const
 
-i18n.on('languageChanged', applyDayjsLocale)
+function applyInterfaceRuntime(language?: string | null) {
+  applyDayjsLocale(language)
+  applyDocumentLang(language)
+}
 
-void i18n
+i18n.on('languageChanged', applyInterfaceRuntime)
+
+applyInterfaceRuntime(DEFAULT_INTERFACE_LANGUAGE)
+
+export const whenInterfaceLanguageReady: Promise<void> = i18n
   .use(LanguageDetector)
   .use(initReactI18next)
   .init({
@@ -61,15 +70,16 @@ void i18n
       escapeValue: false, // not needed for react as it escapes by default
     },
     detection: {
-      order: ['localStorage', 'navigator'],
+      order: [...GUEST_LANGUAGE_DETECTION_ORDER],
       caches: ['localStorage'],
-      // Browsers report `zh-CN`/`zh-TW`/`zh`; map them onto our `zhCN`/`zhTW`
-      // codes (non-Chinese codes pass through for normal supportedLngs matching).
+      // Browsers report `zh-CN`/`zh-TW`/`en-US`; map them onto interface codes.
+      // Unknown tags become simplified Chinese.
       convertDetectedLanguage,
     },
   })
   .then(() => {
-    applyDayjsLocale(i18n.resolvedLanguage || i18n.language)
+    applyInterfaceRuntime(i18n.language || i18n.resolvedLanguage)
   })
+  .then(() => undefined)
 
 export default i18n

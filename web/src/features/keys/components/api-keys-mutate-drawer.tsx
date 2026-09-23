@@ -89,6 +89,8 @@ import {
 import { useApiKeys } from './api-keys-provider'
 import { AutoGroupOrderEditor } from './auto-group-order-editor'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type ApiKeyMutateDrawerProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -295,7 +297,7 @@ export function ApiKeysMutateDrawer({
           onOpenChange(false)
           triggerRefresh()
         } else {
-          toast.error(result.message || t(ERROR_MESSAGES.UPDATE_FAILED))
+          toast.error(localizeConsoleErrorText(result.message, ERROR_MESSAGES.UPDATE_FAILED))
         }
       } else {
         // Create mode - handle batch creation
@@ -313,7 +315,7 @@ export function ApiKeysMutateDrawer({
           if (result.success) {
             successCount++
           } else {
-            toast.error(result.message || t(ERROR_MESSAGES.CREATE_FAILED))
+            toast.error(localizeConsoleErrorText(result.message, ERROR_MESSAGES.CREATE_FAILED))
             break
           }
         }

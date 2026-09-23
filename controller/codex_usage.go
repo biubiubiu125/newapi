@@ -2,7 +2,6 @@ package controller
 
 import (
 	"context"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -10,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/relay/channel/codex"
 	"github.com/QuantumNous/new-api/service"
@@ -26,7 +26,7 @@ func GetCodexChannelUsage(c *gin.Context) {
 		c,
 		service.FetchCodexWhamUsage,
 		"failed to fetch codex usage",
-		"获取用量信息失败，请稍后重试",
+		i18n.MsgCodexUsageGetFailed,
 	)
 }
 
@@ -35,7 +35,7 @@ func GetCodexChannelRateLimitResetCredits(c *gin.Context) {
 		c,
 		service.FetchCodexWhamRateLimitResetCredits,
 		"failed to fetch codex reset credits",
-		"获取重置次数详情失败，请稍后重试",
+		i18n.MsgCodexUsageResetDetailFailed,
 	)
 }
 
@@ -44,7 +44,7 @@ func ResetCodexChannelUsage(c *gin.Context) {
 		c,
 		service.ConsumeCodexWhamRateLimitResetCredit,
 		"failed to reset codex usage",
-		"重置用量失败，请稍后重试",
+		i18n.MsgCodexUsageResetFailed,
 	)
 }
 
@@ -64,7 +64,7 @@ func fetchCodexChannelWhamData(
 ) {
 	channelId, err := strconv.Atoi(c.Param("id"))
 	if err != nil {
-		common.ApiError(c, fmt.Errorf("渠道 ID 无效: %w", err))
+		common.ApiErrorI18n(c, i18n.MsgChannelIdInvalid)
 		return
 	}
 
@@ -74,32 +74,32 @@ func fetchCodexChannelWhamData(
 		return
 	}
 	if ch == nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "未找到渠道"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgChannelNotFound)})
 		return
 	}
 	if ch.Type != constant.ChannelTypeCodex {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "渠道类型不是 Codex"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgChannelNotCodex)})
 		return
 	}
 	if ch.ChannelInfo.IsMultiKey {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "不支持多 Key 渠道"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgChannelMultiKeyUnsupported)})
 		return
 	}
 
 	oauthKey, err := codex.ParseOAuthKey(strings.TrimSpace(ch.Key))
 	if err != nil {
 		common.SysError("failed to parse oauth key: " + err.Error())
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "解析凭证失败，请检查渠道配置"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgChannelCredentialParseFailed)})
 		return
 	}
 	accessToken := strings.TrimSpace(oauthKey.AccessToken)
 	accountID := strings.TrimSpace(oauthKey.AccountID)
 	if accessToken == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "Codex 渠道：access_token 不能为空"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgChannelCodexAccessTokenEmpty)})
 		return
 	}
 	if accountID == "" {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "Codex 渠道：account_id 不能为空"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgChannelCodexAccountIdEmpty)})
 		return
 	}
 
@@ -115,7 +115,7 @@ func fetchCodexChannelWhamData(
 	statusCode, body, err := fetch(ctx, client, ch.GetBaseURL(), accessToken, accountID)
 	if err != nil {
 		common.SysError(logPrefix + ": " + err.Error())
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": userMessage})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, userMessage)})
 		return
 	}
 
@@ -136,18 +136,18 @@ func fetchCodexChannelWhamData(
 			encoded, encErr := common.Marshal(oauthKey)
 			if encErr != nil {
 				common.SysError("failed to marshal refreshed codex credential: " + encErr.Error())
-				c.JSON(http.StatusOK, gin.H{"success": false, "message": userMessage})
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, userMessage)})
 				return
 			}
 
 			updated, updateErr := updateCodexChannelCredentialIfUnchanged(ch.Id, ch.Key, string(encoded))
 			if updateErr != nil {
 				common.SysError("failed to persist refreshed codex credential: " + updateErr.Error())
-				c.JSON(http.StatusOK, gin.H{"success": false, "message": "Codex 凭证刷新失败，请重试"})
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgChannelCodexRefreshFailed)})
 				return
 			}
 			if !updated {
-				c.JSON(http.StatusOK, gin.H{"success": false, "message": "Codex 凭证在刷新过程中发生变化，请重试"})
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgChannelCodexRefreshChanged)})
 				return
 			}
 			initChannelCache()
@@ -158,7 +158,7 @@ func fetchCodexChannelWhamData(
 			statusCode, body, err = fetch(ctx2, client, ch.GetBaseURL(), oauthKey.AccessToken, accountID)
 			if err != nil {
 				common.SysError(logPrefix + " after refresh: " + err.Error())
-				c.JSON(http.StatusOK, gin.H{"success": false, "message": userMessage})
+				c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, userMessage)})
 				return
 			}
 		}
@@ -177,7 +177,7 @@ func fetchCodexChannelWhamData(
 		"data":            payload,
 	}
 	if !ok {
-		resp["message"] = fmt.Sprintf("上游状态码：%d", statusCode)
+		resp["message"] = i18n.T(c, i18n.MsgCodexUsageUpstreamStatus, map[string]any{"Status": statusCode})
 	}
 	c.JSON(http.StatusOK, resp)
 }

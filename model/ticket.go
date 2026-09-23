@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
+
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
@@ -183,14 +186,14 @@ func initialTicketNextSeqTx(tx *gorm.DB, year int) (int, error) {
 func CreateTicketWithMessage(ticket *Ticket, message *TicketMessage, attachments []*TicketAttachment) error {
 	return DB.Transaction(func(tx *gorm.DB) error {
 		if len(attachments) > TicketMaxAttachments {
-			return fmt.Errorf("单个工单最多保存 %d 张图片", TicketMaxAttachments)
+			return common.Localized(i18n.MsgTicketImagesTooMany, map[string]any{"Count": TicketMaxAttachments})
 		}
 		totalBytes := int64(0)
 		for _, attachment := range attachments {
 			totalBytes += attachment.Size
 		}
 		if totalBytes > TicketMaxTotalImageBytes {
-			return fmt.Errorf("单个工单图片总大小不能超过 100MB")
+			return common.Localized(i18n.MsgTicketImagesTotalTooLarge)
 		}
 		if err := tx.Create(ticket).Error; err != nil {
 			return err
@@ -217,7 +220,7 @@ func AddTicketMessage(ticket *Ticket, message *TicketMessage, attachments []*Tic
 			return err
 		}
 		if locked.Status == TicketStatusClosed {
-			return fmt.Errorf("工单已关闭，重新打开后才能回复")
+			return common.Localized(i18n.MsgTicketClosedCannotReply)
 		}
 		if len(attachments) > 0 {
 			existingCount, existingBytes, err := CountTicketAttachmentsTx(tx, locked.Id)
@@ -229,10 +232,10 @@ func AddTicketMessage(ticket *Ticket, message *TicketMessage, attachments []*Tic
 				addBytes += attachment.Size
 			}
 			if existingCount+int64(len(attachments)) > TicketMaxAttachments {
-				return fmt.Errorf("单个工单最多保存 %d 张图片", TicketMaxAttachments)
+				return common.Localized(i18n.MsgTicketImagesTooMany, map[string]any{"Count": TicketMaxAttachments})
 			}
 			if existingBytes+addBytes > TicketMaxTotalImageBytes {
-				return fmt.Errorf("单个工单图片总大小不能超过 100MB")
+				return common.Localized(i18n.MsgTicketImagesTotalTooLarge)
 			}
 		}
 		message.TicketId = locked.Id

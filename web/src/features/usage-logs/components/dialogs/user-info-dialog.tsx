@@ -34,6 +34,8 @@ import { formatQuota, formatCompactNumber } from '@/lib/format'
 import { getUserInfo } from '../../api'
 import type { UserInfo } from '../../types'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 interface UserInfoDialogProps {
   userId: number | null
   open: boolean
@@ -57,7 +59,7 @@ export function UserInfoDialog({
         if (result.success) {
           setUserInfo(result.data || null)
         } else {
-          toast.error(result.message || t('Failed to fetch user information'))
+          toast.error(localizeConsoleErrorText(result.message, 'Failed to fetch user information'))
         }
       } catch (error) {
         // eslint-disable-next-line no-console

@@ -29,7 +29,9 @@ import {
 } from '@/features/tickets/types'
 import { SIDEBAR_MODULES_META } from '@/lib/sidebar-modules'
 
+import en from './locales/en.json'
 import zhCN from './locales/zh.json'
+import zhTW from './locales/zh-TW.json'
 import { STATIC_I18N_KEYS } from './static-keys'
 
 const SRC_DIR = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
@@ -190,6 +192,9 @@ const KEEP_ENGLISH = new Set([
   'edit_this',
   'vip',
   '"default": "us-central1", "claude-3-5-sonnet-20240620": "europe-west1"',
+  '= {{count}} tokens',
+  '= {{count}}K tokens',
+  '= {{count}}M tokens',
 ])
 
 function walk(dir: string, acc: string[] = []): string[] {
@@ -366,7 +371,71 @@ describe('zhCN console copy coverage', () => {
 
     expect(zh['Last Active']).toBe('最近活跃')
     expect(zh['This Month']).toBe('本月')
+    expect(zh['This month earned']).toBe('本月获得')
     expect(zh['Last used']).toBe('最后使用')
+  })
+
+  it('translates This Month in every console locale', () => {
+    const expected: Record<string, string> = {
+      en: 'This Month',
+      fr: 'Ce mois',
+      ja: '今月',
+      ru: 'Этот месяц',
+      vi: 'Tháng này',
+      zh: '本月',
+      'zh-TW': '本月',
+    }
+    for (const [locale, want] of Object.entries(expected)) {
+      const fileName = locale === 'zh' ? 'zh.json' : `${locale}.json`
+      const data = JSON.parse(
+        fs.readFileSync(path.join(path.dirname(fileURLToPath(import.meta.url)), 'locales', fileName), 'utf8'),
+      ) as { translation: Record<string, string> }
+      expect(data.translation['This Month'], locale).toBe(want)
+    }
+  })
+
+  it('localizes model and prefill group console toasts', () => {
+    expect(zh['Model updated successfully']).toBe('模型已更新')
+    expect(zh['Model created successfully']).toBe('模型已创建')
+    expect(zh['Prefill group updated']).toBe('预填组已更新')
+    expect(zh['Prefill group created']).toBe('预填组已创建')
+    expect(zh['Deleted "{{name}}"']).toBe('已删除「{{name}}」')
+    expect(zh['{{count}} groups']).toBe('{{count}} 个分组')
+    expect(zh['Please retry or refresh the page.']).toBe('请重试或刷新页面。')
+
+    const modelDrawer = fs.readFileSync(
+      path.join(
+        SRC_DIR,
+        'features/models/components/drawers/model-mutate-drawer.tsx'
+      ),
+      'utf8'
+    )
+    const prefillDrawer = fs.readFileSync(
+      path.join(
+        SRC_DIR,
+        'features/models/components/drawers/prefill-group-form-drawer.tsx'
+      ),
+      'utf8'
+    )
+    const prefillDialog = fs.readFileSync(
+      path.join(
+        SRC_DIR,
+        'features/models/components/dialogs/prefill-group-management-dialog.tsx'
+      ),
+      'utf8'
+    )
+    expect(modelDrawer).toContain("t('Model updated successfully')")
+    expect(modelDrawer).toContain("t('Model created successfully')")
+    expect(modelDrawer).not.toContain("|| 'Operation failed'")
+    expect(prefillDrawer).toContain("t('Prefill group updated')")
+    expect(prefillDrawer).toContain("t('Prefill group created')")
+    expect(prefillDialog).toContain('t(\'Deleted "{{name}}"\'')
+    expect(prefillDialog).toContain("t('{{count}} groups'")
+    expect(prefillDialog).toContain("t('Please retry or refresh the page.')")
+    expect(prefillDialog).not.toContain('group${groups.length')
+  })
+
+  it('uses agreed Chinese wording for remaining awkward keys', () => {
     expect(zh['Reason / Error']).toBe('原因/错误')
     expect(zh['Loading operations settings...']).toBe('正在加载运维设置...')
     expect(zh['Loading console content settings...']).toBe(
@@ -378,6 +447,88 @@ describe('zhCN console copy coverage', () => {
     expect(zh['Table horizontal scrollbar']).toBe('表格横向滚动条')
     expect(zh['Admin operation']).toBe('管理员操作')
     expect(zh['Retry commission generation']).toBe('重试生成佣金')
+  })
+
+  it('translates remaining console chrome keys in zh-TW', () => {
+    const tw = (zhTW as { translation: Record<string, string> }).translation
+    const chromeKeys = [
+      'Select or type...',
+      'No option found.',
+      'Unable to connect to the server',
+      'Request timed out',
+      'Internal Server Error',
+      'This login session has been revoked.',
+      'Login session mismatch. Please sign in again.',
+      'Login session is being refreshed. Please retry.',
+      'Referral code can only contain letters, numbers, underscores, and hyphens',
+      'Referral code must be at most 32 characters long',
+      'Add at least one condition to this group.',
+      'Enter a valid condition value.',
+      'Choose a valid IANA timezone.',
+      'Enter a finite, non-negative price.',
+      'Include at least one price variable.',
+      'Invalid token',
+      'Invalid request',
+      'This month earned',
+      'Confirm',
+      'Loading...',
+      'Filter',
+      'Used amount',
+      'Low',
+      '待处理',
+    ]
+    const leftover = chromeKeys.filter((key) => tw[key] === key || !tw[key])
+    expect(leftover).toEqual([])
+    expect(tw.Confirm).toBe('確認')
+    expect(tw['Loading...']).toBe('載入中...')
+    expect(tw.Filter).toBe('篩選')
+    expect(tw['Used amount']).toBe('已用金額')
+    expect(tw.Low).toBe('低')
+    expect(tw['待处理']).toBe('待處理')
+    expect(tw['This month earned']).toBe('本月獲得')
+
+    const ticketKeys = [
+      ...TICKET_STATUSES,
+      ...TICKET_PRIORITIES,
+      ...TICKET_CATEGORIES,
+      'Assignee',
+    ]
+    const leftoverTickets = ticketKeys.filter((key) => {
+      const value = tw[key]
+      if (!value || !/[\u4e00-\u9fff]/.test(value)) return true
+      return /[A-Za-z]/.test(key) && value === key
+    })
+    expect(leftoverTickets).toEqual([])
+    expect(tw['处理中']).toBe('處理中')
+    expect(tw['等待用户回复']).toBe('等待使用者回覆')
+    expect(tw['管理员已回复']).toBe('管理員已回覆')
+    expect(tw['已解决']).toBe('已解決')
+    expect(tw['已关闭']).toBe('已關閉')
+    expect(tw['低']).toBe('低')
+    expect(tw['普通']).toBe('普通')
+    expect(tw['高']).toBe('高')
+    expect(tw['紧急']).toBe('緊急')
+    expect(tw['客服部门']).toBe('客服部門')
+    expect(tw['财务部门']).toBe('財務部門')
+    expect(tw.Assignee).toBe('指派處理人')
+  })
+
+  it('does not leave zh-TW in English when simplified Chinese is translated', () => {
+    const zh = (zhCN as { translation: Record<string, string> }).translation
+    const tw = (zhTW as { translation: Record<string, string> }).translation
+    const english = (en as { translation: Record<string, string> }).translation
+    const leftover = Object.keys(english).filter(
+      (key) => zh[key] !== english[key] && tw[key] === english[key]
+    )
+    const missingChinese = Object.keys(zh).filter(
+      (key) =>
+        /[\u4e00-\u9fff]/.test(zh[key] ?? '') &&
+        !/[\u4e00-\u9fff]/.test(tw[key] ?? '')
+    )
+    expect(leftover).toEqual([])
+    expect(missingChinese).toEqual([])
+    expect(tw.Medium).toBe('中')
+    expect(tw.High).toBe('高')
   })
 
   it('does not hardcode Chinese console copy in remaining i18n files', () => {

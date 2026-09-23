@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -34,7 +33,7 @@ type DiscordUser struct {
 
 func getDiscordUserInfoByCode(code string) (*DiscordUser, error) {
 	if code == "" {
-		return nil, errors.New("无效的参数")
+		return nil, oauthInvalidParams()
 	}
 
 	values := url.Values{}
@@ -56,7 +55,7 @@ func getDiscordUserInfoByCode(code string) (*DiscordUser, error) {
 	res, err := client.Do(req)
 	if err != nil {
 		common.SysLog(err.Error())
-		return nil, errors.New("无法连接至 Discord 服务器，请稍后重试！")
+		return nil, oauthConnectFailed("Discord")
 	}
 	defer res.Body.Close()
 	var discordResponse DiscordResponse
@@ -67,7 +66,7 @@ func getDiscordUserInfoByCode(code string) (*DiscordUser, error) {
 
 	if discordResponse.AccessToken == "" {
 		common.SysError("Discord 获取 Token 失败，请检查设置！")
-		return nil, errors.New("Discord 获取 Token 失败，请检查设置！")
+		return nil, oauthTokenFailed("Discord")
 	}
 
 	req, err = http.NewRequest("GET", "https://discord.com/api/v10/users/@me", nil)
@@ -78,12 +77,12 @@ func getDiscordUserInfoByCode(code string) (*DiscordUser, error) {
 	res2, err := client.Do(req)
 	if err != nil {
 		common.SysLog(err.Error())
-		return nil, errors.New("无法连接至 Discord 服务器，请稍后重试！")
+		return nil, oauthConnectFailed("Discord")
 	}
 	defer res2.Body.Close()
 	if res2.StatusCode != http.StatusOK {
 		common.SysError("Discord 获取用户信息失败！请检查设置！")
-		return nil, errors.New("Discord 获取用户信息失败！请检查设置！")
+		return nil, oauthGetUserError()
 	}
 
 	var discordUser DiscordUser
@@ -93,19 +92,19 @@ func getDiscordUserInfoByCode(code string) (*DiscordUser, error) {
 	}
 	if discordUser.UID == "" || discordUser.ID == "" {
 		common.SysError("Discord 获取用户信息为空！请检查设置！")
-		return nil, errors.New("Discord 获取用户信息为空！请检查设置！")
+		return nil, oauthUserInfoEmpty("Discord")
 	}
 	return &discordUser, nil
 }
 
+// DiscordOAuth is the legacy dedicated Discord callback. Live login uses
+// HandleOAuth on GET /api/oauth/:provider; this handler is kept for tests
+// and is not mounted on the production router.
 func DiscordOAuth(c *gin.Context) {
 	session := sessions.Default(c)
 	state := c.Query("state")
 	if state == "" || session.Get("oauth_state") == nil || state != session.Get("oauth_state").(string) {
-		c.JSON(http.StatusForbidden, gin.H{
-			"success": false,
-			"message": "state is empty or not same",
-		})
+		respondOAuthStateInvalid(c)
 		return
 	}
 	username := session.Get("username")
@@ -114,10 +113,7 @@ func DiscordOAuth(c *gin.Context) {
 		return
 	}
 	if !system_setting.GetDiscordSettings().Enabled {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "管理员未开启通过 Discord 登录以及注册",
-		})
+		respondOAuthDisabled(c, "Discord")
 		return
 	}
 	code := c.Query("code")
@@ -143,6 +139,7 @@ func DiscordOAuth(c *gin.Context) {
 			} else {
 				user.DisplayName = "Discord User"
 			}
+			applyStoredInterfaceLanguageToNewUser(&user, oauthSessionInterfaceLanguage(c))
 			err := user.Insert(0)
 			if err != nil {
 				if model.IsUserEmailUniqueError(err) {
@@ -153,19 +150,13 @@ func DiscordOAuth(c *gin.Context) {
 				return
 			}
 		} else {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "管理员关闭了新用户注册",
-			})
+			respondRegisterDisabled(c)
 			return
 		}
 	}
 
 	if user.Status != common.UserStatusEnabled {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "用户已被封禁",
-			"success": false,
-		})
+		respondOAuthUserBanned(c)
 		return
 	}
 	setupLogin(&user, c)
@@ -173,10 +164,7 @@ func DiscordOAuth(c *gin.Context) {
 
 func DiscordBind(c *gin.Context) {
 	if !system_setting.GetDiscordSettings().Enabled {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "管理员未开启通过 Discord 登录以及注册",
-		})
+		respondOAuthDisabled(c, "Discord")
 		return
 	}
 	code := c.Query("code")
@@ -189,10 +177,7 @@ func DiscordBind(c *gin.Context) {
 		DiscordId: discordUser.UID,
 	}
 	if model.IsDiscordIdAlreadyTaken(user.DiscordId) {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "该 Discord 账户已被绑定",
-		})
+		respondOAuthAlreadyBound(c, "Discord")
 		return
 	}
 	session := sessions.Default(c)

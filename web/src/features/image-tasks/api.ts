@@ -16,6 +16,10 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import i18n from 'i18next'
+
+import { currentIntlLocale } from '@/i18n/languages'
+
 import type {
   ImageEditTaskInput,
   ImageTaskDownload,
@@ -80,8 +84,18 @@ async function imageTaskRequest<T>(
   throw new ImageTaskRequestError(
     response.status,
     error?.code || 'image_task_request_failed',
-    error?.message || 'Image workbench request failed'
+    error?.message || i18n.t('Image workbench request failed')
   )
+}
+
+function imageTaskHeaders(apiKey: string, extra?: HeadersInit): Headers {
+  const headers = new Headers(extra)
+  if (!headers.has('Accept')) {
+    headers.set('Accept', 'application/json')
+  }
+  headers.set('Authorization', `Bearer ${apiKey}`)
+  headers.set('Accept-Language', currentIntlLocale())
+  return headers
 }
 
 async function imageTaskFetch(
@@ -92,11 +106,7 @@ async function imageTaskFetch(
   return fetch(path, {
     ...init,
     credentials: 'include',
-    headers: {
-      Accept: 'application/json',
-      Authorization: `Bearer ${apiKey}`,
-      ...init.headers,
-    },
+    headers: imageTaskHeaders(apiKey, init.headers),
   })
 }
 
@@ -223,7 +233,7 @@ export async function downloadImageTaskResult(
     throw new ImageTaskRequestError(
       response.status,
       error?.code || 'image_task_request_failed',
-      error?.message || 'Image workbench request failed'
+      error?.message || i18n.t('Image workbench request failed')
     )
   }
 

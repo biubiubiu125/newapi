@@ -81,6 +81,8 @@ import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { ANNOUNCEMENT_CONTENT_MAX_CHARS } from './utils'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type Announcement = {
   id: number
   title?: string
@@ -389,7 +391,7 @@ export function AnnouncementsSection({
       toast.success(t('Announcement push task created'))
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : t('Failed to push announcement')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to push announcement')
       )
     } finally {
       setTelegramPushingId(null)

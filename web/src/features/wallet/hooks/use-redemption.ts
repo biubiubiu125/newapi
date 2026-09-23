@@ -21,6 +21,7 @@ import { useState, useCallback } from 'react'
 import { toast } from 'sonner'
 
 import { getSelf } from '@/lib/api'
+import { currentConsoleFailureText } from '@/lib/console-failure-text'
 import { formatQuota } from '@/lib/format'
 
 import { redeemTopupCode } from '../api'
@@ -53,7 +54,9 @@ export function useRedemption() {
         return true
       }
 
-      toast.error(response.message || i18next.t('Redemption failed'))
+      toast.error(
+        currentConsoleFailureText(response.message, 'Redemption failed')
+      )
       return false
     } catch {
       toast.error(i18next.t('Redemption failed'))

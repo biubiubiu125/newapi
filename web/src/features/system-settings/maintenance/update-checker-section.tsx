@@ -28,6 +28,8 @@ import { formatTimestamp, formatTimestampToDate } from '@/lib/format'
 
 import { SettingsSection } from '../components/settings-section'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type ReleaseInfo = {
   tag_name: string
   name?: string
@@ -88,9 +90,7 @@ export function UpdateCheckerSection({
       setDialogOpen(true)
     } catch (error) {
       const message =
-        error instanceof Error
-          ? error.message
-          : t('Failed to check for updates')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to check for updates')
       toast.error(message)
     } finally {
       setChecking(false)

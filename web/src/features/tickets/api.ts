@@ -28,6 +28,8 @@ import type {
   TicketStatus,
 } from './types'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type ApiResponse<T = unknown> = {
   success?: boolean
   message?: string
@@ -78,7 +80,7 @@ function appendFiles(form: FormData, files?: File[]) {
 
 function unwrapTicketResponse<T>(res: ApiResponse<T>): T {
   if (!res?.success) {
-    throw new Error(res?.message || t('Ticket request failed'))
+    throw new Error(localizeConsoleErrorText(res?.message, 'Ticket request failed'))
   }
   return res.data as T
 }

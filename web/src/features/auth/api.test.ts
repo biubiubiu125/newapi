@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import assert from "node:assert/strict";
 import { afterEach, describe, test, vi } from "vitest";
+import i18n from "i18next";
 
 import { api, type RefreshOutcome } from "@/lib/api";
 import type { AuthBundle } from "@/stores/auth-store";
@@ -145,8 +146,13 @@ describe("OAuth flow initialization", () => {
       intent: "login",
       aff: "typed-affiliate",
       redirect: "/keys?tab=default#active",
+      language: i18n.language,
     });
-    assert.deepEqual(postSpy.mock.calls[0]?.[2], { skipAuthRefresh: true });
+    assert.deepEqual(postSpy.mock.calls[0]?.[2], {
+      skipAuthRefresh: true,
+      skipBusinessError: true,
+      skipErrorHandler: true,
+    });
   });
 
   test("drops unsafe login redirects before creating OAuth state", async () => {
@@ -161,6 +167,7 @@ describe("OAuth flow initialization", () => {
       intent: "login",
       aff: undefined,
       redirect: undefined,
+      language: i18n.language,
     });
   });
 
@@ -178,7 +185,12 @@ describe("OAuth flow initialization", () => {
       intent: "bind",
       aff: undefined,
       redirect: undefined,
+      language: i18n.language,
     });
-    assert.deepEqual(postSpy.mock.calls[0]?.[2], { skipAuthRefresh: false });
+    assert.deepEqual(postSpy.mock.calls[0]?.[2], {
+      skipAuthRefresh: false,
+      skipBusinessError: true,
+      skipErrorHandler: true,
+    });
   });
 });

@@ -67,6 +67,8 @@ import { PerformanceHealthPanel } from './performance-health-panel'
 import { SummaryCards } from './summary-cards'
 import { UptimePanel } from './uptime-panel'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 const SETUP_GUIDE_VISIBILITY_STORAGE_KEY =
   'dashboard_overview_setup_guide_expanded'
 
@@ -297,7 +299,7 @@ function RequestPreview(props: {
       const result = await fetchTokenKey(props.example.keyId)
       const key = result.success && result.data?.key ? result.data.key : ''
       if (!key) {
-        toast.error(result.message || t('Failed to copy to clipboard'))
+        toast.error(localizeConsoleErrorText(result.message, 'Failed to copy to clipboard'))
         return
       }
 

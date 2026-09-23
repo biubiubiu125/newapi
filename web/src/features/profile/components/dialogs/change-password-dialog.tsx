@@ -35,6 +35,8 @@ import { Label } from '@/components/ui/label'
 
 import { updateUserProfile } from '../../api'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 // ============================================================================
 // Change Password Dialog Component
 // ============================================================================
@@ -107,7 +109,7 @@ export function ChangePasswordDialog({
           confirmPassword: '',
         })
       } else {
-        toast.error(response.message || t('Failed to change password'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to change password'))
       }
     } catch {
       toast.error(t('Failed to change password'))

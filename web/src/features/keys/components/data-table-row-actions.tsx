@@ -58,6 +58,8 @@ import { API_KEY_STATUS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import { apiKeySchema } from '../types'
 import { useApiKeys } from './api-keys-provider'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 function getServerAddress(): string {
   try {
     const raw = localStorage.getItem('status')
@@ -173,7 +175,7 @@ export function DataTableRowActions<TData>({
         toast.success(message)
         triggerRefresh()
       } else {
-        toast.error(result.message || t(ERROR_MESSAGES.STATUS_UPDATE_FAILED))
+        toast.error(localizeConsoleErrorText(result.message, ERROR_MESSAGES.STATUS_UPDATE_FAILED))
       }
     } catch {
       toast.error(t(ERROR_MESSAGES.UNEXPECTED))

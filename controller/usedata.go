@@ -5,6 +5,7 @@ import (
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
@@ -13,16 +14,16 @@ import (
 func parseFlowQuotaTimeRange(c *gin.Context) (int64, int64, bool) {
 	startTimestamp, err := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	if err != nil || startTimestamp <= 0 {
-		common.ApiErrorMsg(c, "invalid start_timestamp")
+		common.ApiErrorI18n(c, i18n.MsgUsedataInvalidStart)
 		return 0, 0, false
 	}
 	endTimestamp, err := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 	if err != nil || endTimestamp <= 0 {
-		common.ApiErrorMsg(c, "invalid end_timestamp")
+		common.ApiErrorI18n(c, i18n.MsgUsedataInvalidEnd)
 		return 0, 0, false
 	}
 	if endTimestamp < startTimestamp {
-		common.ApiErrorMsg(c, "invalid time range")
+		common.ApiErrorI18n(c, i18n.MsgUsedataInvalidRange)
 		return 0, 0, false
 	}
 	return startTimestamp, endTimestamp, true
@@ -68,7 +69,7 @@ func GetUserQuotaDates(c *gin.Context) {
 	if endTimestamp-startTimestamp > 2592000 {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "时间跨度不能超过 1 个月",
+			"message": i18n.T(c, i18n.MsgQuotaRangeExceedsMonth),
 		})
 		return
 	}
@@ -113,7 +114,7 @@ func GetUserFlowQuotaDates(c *gin.Context) {
 	if endTimestamp-startTimestamp > 2592000 {
 		c.JSON(http.StatusOK, gin.H{
 			"success": false,
-			"message": "时间跨度不能超过 1 个月",
+			"message": i18n.T(c, i18n.MsgQuotaRangeExceedsMonth),
 		})
 		return
 	}

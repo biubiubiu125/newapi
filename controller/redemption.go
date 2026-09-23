@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"errors"
 	"net/http"
 	"strconv"
 	"unicode/utf8"
@@ -83,7 +82,7 @@ func AddRedemption(c *gin.Context) {
 		return
 	}
 	if redemption.Quota >= common.MaxWalletQuota {
-		common.ApiErrorMsg(c, "兑换码额度超过钱包上限")
+		common.ApiErrorI18n(c, i18n.MsgRedemptionQuotaExceedWallet)
 		return
 	}
 	if redemption.Count <= 0 {
@@ -162,7 +161,7 @@ func UpdateRedemption(c *gin.Context) {
 		return
 	}
 	if cleanRedemption.Status == common.RedemptionCodeStatusUsed || cleanRedemption.UsedUserId > 0 || cleanRedemption.RedeemedTime > 0 {
-		common.ApiError(c, errors.New("已使用的兑换码不能修改"))
+		common.ApiErrorI18n(c, i18n.MsgRedemptionUsedCannotModify)
 		return
 	}
 	if statusOnly == "" {

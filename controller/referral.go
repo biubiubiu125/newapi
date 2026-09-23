@@ -19,6 +19,11 @@ import (
 
 var referralService = service.NewReferralService()
 
+var (
+	errInvalidReferralAssetPurpose        = errors.New("invalid referral asset purpose")
+	errInvalidReferralAssetUploadEndpoint = errors.New("invalid referral asset upload endpoint")
+)
+
 type referralApplyRequest struct {
 	ApplicantNote string `json:"applicant_note"`
 }
@@ -72,7 +77,7 @@ func ReferralLanding(c *gin.Context) {
 func GetReferralProfile(c *gin.Context) {
 	id := c.GetInt("id")
 	if !referralService.IsEnabled() {
-		common.ApiErrorMsg(c, common.TranslateMessage(c, i18n.MsgPaymentComplianceRequired))
+		common.ApiErrorI18n(c, i18n.MsgReferralDisabled)
 		return
 	}
 	item, err := referralService.GetProfile(id)
@@ -86,7 +91,7 @@ func GetReferralProfile(c *gin.Context) {
 func GetReferralSummary(c *gin.Context) {
 	id := c.GetInt("id")
 	if !referralService.IsEnabled() {
-		common.ApiErrorMsg(c, "referral disabled")
+		common.ApiErrorI18n(c, i18n.MsgReferralDisabled)
 		return
 	}
 	item, err := referralService.GetSummary(id)
@@ -100,7 +105,7 @@ func GetReferralSummary(c *gin.Context) {
 func ApplyReferralAffiliate(c *gin.Context) {
 	id := c.GetInt("id")
 	if !referralService.IsEnabled() {
-		common.ApiErrorMsg(c, "referral disabled")
+		common.ApiErrorI18n(c, i18n.MsgReferralDisabled)
 		return
 	}
 	var req referralApplyRequest
@@ -122,7 +127,7 @@ func ApplyReferralAffiliate(c *gin.Context) {
 func GetReferralCommissions(c *gin.Context) {
 	id := c.GetInt("id")
 	if !referralService.IsEnabled() {
-		common.ApiErrorMsg(c, "referral disabled")
+		common.ApiErrorI18n(c, i18n.MsgReferralDisabled)
 		return
 	}
 	pageInfo := common.GetPageQuery(c)
@@ -143,7 +148,7 @@ func GetReferralCommissions(c *gin.Context) {
 func GetReferralWithdrawals(c *gin.Context) {
 	id := c.GetInt("id")
 	if !referralService.IsEnabled() {
-		common.ApiErrorMsg(c, "referral disabled")
+		common.ApiErrorI18n(c, i18n.MsgReferralDisabled)
 		return
 	}
 	pageInfo := common.GetPageQuery(c)
@@ -164,7 +169,7 @@ func GetReferralWithdrawals(c *gin.Context) {
 func CreateReferralWithdrawal(c *gin.Context) {
 	id := c.GetInt("id")
 	if !referralService.IsEnabled() {
-		common.ApiErrorMsg(c, "referral disabled")
+		common.ApiErrorI18n(c, i18n.MsgReferralDisabled)
 		return
 	}
 	var req referralWithdrawalCreateRequest
@@ -201,12 +206,12 @@ func CreateReferralWithdrawal(c *gin.Context) {
 func CancelReferralWithdrawal(c *gin.Context) {
 	id := c.GetInt("id")
 	if !referralService.IsEnabled() {
-		common.ApiErrorMsg(c, "referral disabled")
+		common.ApiErrorI18n(c, i18n.MsgReferralDisabled)
 		return
 	}
 	withdrawalId, err := strconv.Atoi(strings.TrimSpace(c.Param("id")))
 	if err != nil || withdrawalId <= 0 {
-		common.ApiErrorMsg(c, "invalid id")
+		common.ApiErrorI18n(c, i18n.MsgInvalidId)
 		return
 	}
 	item, err := referralService.CancelWithdrawal(withdrawalId, id)
@@ -219,7 +224,7 @@ func CancelReferralWithdrawal(c *gin.Context) {
 
 func UploadReferralAsset(c *gin.Context) {
 	if !referralService.IsEnabled() {
-		common.ApiErrorMsg(c, "referral disabled")
+		common.ApiErrorI18n(c, i18n.MsgReferralDisabled)
 		return
 	}
 	userId := c.GetInt("id")
@@ -230,12 +235,19 @@ func UploadReferralAsset(c *gin.Context) {
 	}
 	purpose, createdBy, err := resolveReferralAssetUploadPurpose(c.FullPath(), strings.TrimSpace(req.Purpose))
 	if err != nil {
-		common.ApiErrorMsg(c, err.Error())
+		switch {
+		case errors.Is(err, errInvalidReferralAssetPurpose):
+			common.ApiErrorI18n(c, i18n.MsgReferralInvalidAssetPurpose)
+		case errors.Is(err, errInvalidReferralAssetUploadEndpoint):
+			common.ApiErrorI18n(c, i18n.MsgReferralInvalidAssetUploadEndpoint)
+		default:
+			common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		}
 		return
 	}
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
-		common.ApiErrorMsg(c, "please choose image file")
+		common.ApiErrorI18n(c, i18n.MsgLogoFileRequired)
 		return
 	}
 	file, err := fileHeader.Open()
@@ -250,7 +262,7 @@ func UploadReferralAsset(c *gin.Context) {
 		return
 	}
 	if len(data) > 5*1024*1024 {
-		common.ApiErrorMsg(c, "image size must not exceed 5 MB")
+		common.ApiErrorI18n(c, i18n.MsgLogoFileTooLarge)
 		return
 	}
 	contentType := http.DetectContentType(data)
@@ -275,16 +287,16 @@ func resolveReferralAssetUploadPurpose(fullPath string, requestedPurpose string)
 	switch path {
 	case service.ReferralUserUploadPath:
 		if requestedPurpose != "" && requestedPurpose != model.ReferralAssetPurposeWithdrawalQR {
-			return "", "", errors.New("invalid referral asset purpose")
+			return "", "", errInvalidReferralAssetPurpose
 		}
 		return model.ReferralAssetPurposeWithdrawalQR, "user", nil
 	case service.ReferralAdminUploadPath:
 		if requestedPurpose != "" && requestedPurpose != model.ReferralAssetPurposePaymentProof {
-			return "", "", errors.New("invalid referral asset purpose")
+			return "", "", errInvalidReferralAssetPurpose
 		}
 		return model.ReferralAssetPurposePaymentProof, "admin", nil
 	default:
-		return "", "", errors.New("invalid referral asset upload endpoint")
+		return "", "", errInvalidReferralAssetUploadEndpoint
 	}
 }
 

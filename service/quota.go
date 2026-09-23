@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -416,7 +417,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 
 func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 	if quota < 0 {
-		return errors.New("quota 不能为负数！")
+		return errors.New(i18n.ProtocolMessage(i18n.MsgQuotaNegative))
 	}
 	if relayInfo.IsPlayground {
 		return nil
@@ -505,32 +506,13 @@ func checkAndSendQuotaNotify(relayInfo *relaycommon.RelayInfo, quota int, preCon
 			quotaTooLow = true
 		}
 		if quotaTooLow {
-			prompt := "您的额度即将用尽"
 			topUpLink := PaymentReturnURL("/wallet")
-
-			// 根据通知方式生成不同的内容格式
-			var content string
-			var values []interface{}
-
 			notifyType := userSetting.NotifyType
 			if notifyType == "" {
 				notifyType = dto.NotifyTypeEmail
 			}
-
-			if notifyType == dto.NotifyTypeBark {
-				// Bark 推送使用简短文本，不支持 HTML
-				content = "{{value}}，剩余额度：{{value}}，请及时充值"
-				values = []interface{}{prompt, logger.FormatQuota(relayInfo.UserQuota)}
-			} else if notifyType == dto.NotifyTypeGotify {
-				content = "{{value}}，当前剩余额度为 {{value}}，请及时充值。"
-				values = []interface{}{prompt, logger.FormatQuota(relayInfo.UserQuota)}
-			} else {
-				// 默认内容格式，适用于 Email 和 Webhook（支持 HTML）
-				content = "{{value}}，当前剩余额度为 {{value}}，为了不影响您的使用，请及时充值。<br/>充值链接：<a href='{{value}}'>{{value}}</a>"
-				values = []interface{}{prompt, logger.FormatQuota(relayInfo.UserQuota), topUpLink, topUpLink}
-			}
-
-			err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values))
+			prompt, content := quotaNotifyCopy(userSetting.Language, notifyType, "quota", logger.FormatQuota(relayInfo.UserQuota), topUpLink)
+			err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, nil))
 			if err != nil {
 				common.SysError(fmt.Sprintf("failed to send quota notify to user %d: %s", relayInfo.UserId, err.Error()))
 			}
@@ -559,29 +541,43 @@ func checkAndSendSubscriptionQuotaNotify(relayInfo *relaycommon.RelayInfo) {
 			return
 		}
 
-		prompt := "您的订阅额度即将用尽"
 		topUpLink := PaymentReturnURL("/wallet")
-
-		var content string
-		var values []interface{}
 		notifyType := userSetting.NotifyType
 		if notifyType == "" {
 			notifyType = dto.NotifyTypeEmail
 		}
-
-		if notifyType == dto.NotifyTypeBark {
-			content = "{{value}}，剩余额度：{{value}}，请及时充值"
-			values = []interface{}{prompt, logger.FormatQuota(int(remaining))}
-		} else if notifyType == dto.NotifyTypeGotify {
-			content = "{{value}}，当前剩余额度为 {{value}}，请及时充值。"
-			values = []interface{}{prompt, logger.FormatQuota(int(remaining))}
-		} else {
-			content = "{{value}}，当前剩余额度为 {{value}}，为了不影响您的使用，请及时充值。<br/>充值链接：<a href='{{value}}'>{{value}}</a>"
-			values = []interface{}{prompt, logger.FormatQuota(int(remaining)), topUpLink, topUpLink}
-		}
-
-		if err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, values)); err != nil {
+		prompt, content := quotaNotifyCopy(userSetting.Language, notifyType, "subscription", logger.FormatQuota(int(remaining)), topUpLink)
+		if err := NotifyUser(relayInfo.UserId, relayInfo.UserEmail, relayInfo.UserSetting, dto.NewNotify(dto.NotifyTypeQuotaExceed, prompt, content, nil)); err != nil {
 			common.SysError(fmt.Sprintf("failed to send subscription quota notify to user %d: %s", relayInfo.UserId, err.Error()))
 		}
 	})
+}
+
+func quotaNotifyCopy(lang, notifyType, kind, quota, link string) (title, content string) {
+	lang = i18n.CanonicalLang(lang)
+	titleKey := i18n.MsgNotifyQuotaExceedTitle
+	htmlKey := i18n.MsgNotifyQuotaExceedHTML
+	barkKey := i18n.MsgNotifyQuotaExceedBark
+	gotifyKey := i18n.MsgNotifyQuotaExceedGotify
+	if kind == "subscription" {
+		titleKey = i18n.MsgNotifySubscriptionExceedTitle
+		htmlKey = i18n.MsgNotifySubscriptionExceedHTML
+		barkKey = i18n.MsgNotifySubscriptionExceedBark
+		gotifyKey = i18n.MsgNotifySubscriptionExceedGotify
+	}
+	title = i18n.Translate(lang, titleKey)
+	data := map[string]any{
+		"Prompt": title,
+		"Quota":  quota,
+		"Link":   link,
+	}
+	switch notifyType {
+	case dto.NotifyTypeBark:
+		content = i18n.Translate(lang, barkKey, data)
+	case dto.NotifyTypeGotify:
+		content = i18n.Translate(lang, gotifyKey, data)
+	default:
+		content = i18n.Translate(lang, htmlKey, data)
+	}
+	return title, content
 }

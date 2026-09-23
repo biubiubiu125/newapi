@@ -26,6 +26,8 @@ import { fetchTokenKey, fetchTokenKeysBatch } from '../api'
 import { ERROR_MESSAGES } from '../constants'
 import type { ApiKey, ApiKeysDialogType } from '../types'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type ApiKeysContextType = {
   open: ApiKeysDialogType | null
   setOpen: (str: ApiKeysDialogType | null) => void
@@ -87,7 +89,7 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
             setResolvedKeys((prev) => ({ ...prev, [id]: fullKey }))
             return fullKey
           }
-          toast.error(res.message || t(ERROR_MESSAGES.UNEXPECTED))
+          toast.error(localizeConsoleErrorText(res.message, ERROR_MESSAGES.UNEXPECTED))
           return null
         } catch {
           toast.error(t(ERROR_MESSAGES.UNEXPECTED))
@@ -136,7 +138,7 @@ export function ApiKeysProvider({ children }: { children: React.ReactNode }) {
           }
           return result
         }
-        toast.error(res.message || t(ERROR_MESSAGES.UNEXPECTED))
+        toast.error(localizeConsoleErrorText(res.message, ERROR_MESSAGES.UNEXPECTED))
         return {}
       } catch {
         toast.error(t(ERROR_MESSAGES.UNEXPECTED))

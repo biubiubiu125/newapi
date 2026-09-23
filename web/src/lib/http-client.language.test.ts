@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import i18n from 'i18next'
 import { afterEach, describe, expect, it } from 'vitest'
 
+import { authClient } from './auth-session'
 import { api } from './http-client'
 
 describe('api Accept-Language', () => {
@@ -50,6 +51,34 @@ describe('api Accept-Language', () => {
       disableDuplicate: true,
     })
 
+    expect(header).toBe('zh-CN')
+  })
+})
+
+describe('authClient Accept-Language', () => {
+  const originalAdapter = authClient.defaults.adapter
+
+  afterEach(() => {
+    authClient.defaults.adapter = originalAdapter
+  })
+
+  it('sends a BCP-47 locale on session refresh requests', async () => {
+    await i18n.changeLanguage('zhCN')
+    let header: unknown
+    authClient.defaults.adapter = async (config) => {
+      header =
+        config.headers?.get?.('Accept-Language') ??
+        config.headers?.['Accept-Language']
+      return {
+        data: { success: true },
+        status: 200,
+        statusText: 'OK',
+        headers: {},
+        config,
+      }
+    }
+
+    await authClient.get('/api/user/session/refresh')
     expect(header).toBe('zh-CN')
   })
 })

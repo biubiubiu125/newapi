@@ -84,6 +84,7 @@ import type {
   FlowOverflowMode,
   FlowRole,
 } from '@/features/dashboard/types'
+import { currentIntlLocale } from '@/i18n/languages'
 import { formatQuota } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
 import { computeTimeRange } from '@/lib/time'
@@ -93,6 +94,8 @@ import { VCHART_OPTION } from '@/lib/vchart'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { FlowNodeFilterControl } from './flow-node-filter'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 interface FlowChartsProps {
   filters?: DashboardFilters
@@ -247,9 +250,9 @@ function toggleSelectedNodeFilter(
 }
 
 function formatFlowMetricNumber(value: number): string {
-  return Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(
-    value
-  )
+  return Intl.NumberFormat(currentIntlLocale(), {
+    maximumFractionDigits: 0,
+  }).format(value)
 }
 
 export function FlowCharts(props: FlowChartsProps) {
@@ -486,9 +489,7 @@ export function FlowCharts(props: FlowChartsProps) {
     themeReady,
   })
   const flowErrorMessage =
-    flowError instanceof Error
-      ? flowError.message
-      : t('Please try again later.')
+    localizeConsoleErrorText(flowError instanceof Error ? flowError.message : '', 'Please try again later.')
   let chartContent = (
     <VChart
       key={`flow-${chartKey}`}

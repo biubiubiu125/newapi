@@ -12,10 +12,14 @@ type RWMap[K comparable, V any] struct {
 }
 
 func (m *RWMap[K, V]) UnmarshalJSON(b []byte) error {
+	next, err := unmarshalRWMap[K, V](b)
+	if err != nil {
+		return err
+	}
 	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	m.data = make(map[K]V)
-	return common.Unmarshal(b, &m.data)
+	m.data = next
+	m.mutex.Unlock()
+	return nil
 }
 
 func (m *RWMap[K, V]) MarshalJSON() ([]byte, error) {
@@ -82,22 +86,40 @@ func (m *RWMap[K, V]) Len() int {
 	return len(m.data)
 }
 
+func unmarshalRWMap[K comparable, V any](raw []byte) (map[K]V, error) {
+	next := make(map[K]V)
+	if err := common.Unmarshal(raw, &next); err != nil {
+		return nil, err
+	}
+	if next == nil {
+		next = make(map[K]V)
+	}
+	return next, nil
+}
+
 func LoadFromJsonString[K comparable, V any](m *RWMap[K, V], jsonStr string) error {
+	next, err := unmarshalRWMap[K, V]([]byte(jsonStr))
+	if err != nil {
+		return err
+	}
 	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	m.data = make(map[K]V)
-	return common.Unmarshal([]byte(jsonStr), &m.data)
+	m.data = next
+	m.mutex.Unlock()
+	return nil
 }
 
 func LoadFromJsonStringWithCallback[K comparable, V any](m *RWMap[K, V], jsonStr string, onSuccess func()) error {
+	next, err := unmarshalRWMap[K, V]([]byte(jsonStr))
+	if err != nil {
+		return err
+	}
 	m.mutex.Lock()
-	defer m.mutex.Unlock()
-	m.data = make(map[K]V)
-	err := common.Unmarshal([]byte(jsonStr), &m.data)
-	if err == nil && onSuccess != nil {
+	m.data = next
+	m.mutex.Unlock()
+	if onSuccess != nil {
 		onSuccess()
 	}
-	return err
+	return nil
 }
 
 func (m *RWMap[K, V]) MarshalJSONString() string {

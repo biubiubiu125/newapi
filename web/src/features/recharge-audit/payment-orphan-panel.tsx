@@ -28,6 +28,10 @@ import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { StatusBadge, type StatusVariant } from '@/components/status-badge'
+import {
+  paymentOrphanErrorText,
+  paymentOrphanReasonText,
+} from '@/lib/console-stored-detail'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -47,6 +51,8 @@ import {
   type PaymentOrphanStatusFilter,
 } from './api'
 import { paymentOrphanCreditDialogCopy } from './payment-orphan-copy'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 type PendingAction = {
   event: PaymentOrphanEvent
@@ -107,7 +113,7 @@ export function PaymentOrphanPanel(props: {
   onPageSizeChange: (pageSize: number) => void
   onRefresh: () => void
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null)
   const [note, setNote] = useState('')
   const [submitting, setSubmitting] = useState(false)
@@ -135,7 +141,7 @@ export function PaymentOrphanPanel(props: {
               note.trim()
             )
       if (!result.success) {
-        toast.error(result.message || t('Operation failed'))
+        toast.error(localizeConsoleErrorText(result.message, 'Operation failed'))
         return
       }
       toast.success(t('Payment orphan updated'))
@@ -144,7 +150,7 @@ export function PaymentOrphanPanel(props: {
       props.onRefresh()
     } catch (error) {
       toast.error(
-        error instanceof Error ? error.message : t('Operation failed')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Operation failed')
       )
     } finally {
       setSubmitting(false)
@@ -236,10 +242,24 @@ export function PaymentOrphanPanel(props: {
                           </div>
                         </td>
                         <td className='max-w-72 p-2 align-top'>
-                          <div>{event.reason || '-'}</div>
-                          {event.error ? (
+                          <div>
+                            {paymentOrphanReasonText(
+                              event.reason || '',
+                              i18n.language,
+                              t
+                            ) || '-'}
+                          </div>
+                          {paymentOrphanErrorText(
+                            event.error || '',
+                            i18n.language,
+                            t
+                          ) ? (
                             <div className='text-destructive mt-1 text-xs'>
-                              {event.error}
+                              {paymentOrphanErrorText(
+                                event.error || '',
+                                i18n.language,
+                                t
+                              )}
                             </div>
                           ) : null}
                         </td>

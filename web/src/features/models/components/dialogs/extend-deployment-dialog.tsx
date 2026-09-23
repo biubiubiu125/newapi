@@ -22,6 +22,8 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
+
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -29,6 +31,8 @@ import { Separator } from '@/components/ui/separator'
 
 import { estimatePrice, extendDeployment, getDeployment } from '../../api'
 import { deploymentsQueryKeys } from '../../lib'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 function toInt(value: unknown, fallback: number) {
   const n = typeof value === 'number' ? value : Number(value)
@@ -151,9 +155,9 @@ export function ExtendDeploymentDialog({
         onOpenChange(false)
         return
       }
-      toast.error(res.message || t('Extend failed'))
+      toast.error(localizeConsoleErrorText(res.message, 'Extend failed'))
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : t('Extend failed'))
+      toastUnhandledConsoleError(err)
     } finally {
       setIsSubmitting(false)
     }

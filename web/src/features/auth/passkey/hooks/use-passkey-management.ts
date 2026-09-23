@@ -33,7 +33,13 @@ import {
   finishPasskeyRegistration,
   getPasskeyStatus,
 } from '../api'
+import {
+  getPasskeyDisplayError,
+  isPasskeyCancelledError,
+} from '../display-error'
 import type { PasskeyStatus } from '../types'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 interface UsePasskeyManagementOptions {
   onStatusChange?: (status: PasskeyStatus | null) => void
@@ -59,7 +65,7 @@ export function usePasskeyManagement(
         onStatusChange?.(res.data ?? null)
       } else {
         setStatus(null)
-        toast.error(res.message || i18next.t('Failed to load Passkey status'))
+        toast.error(localizeConsoleErrorText(res.message, 'Failed to load Passkey status'))
       }
     } catch (error) {
       // eslint-disable-next-line no-console
@@ -96,10 +102,6 @@ export function usePasskeyManagement(
       try {
         const beginResponse = await beginPasskeyRegistration(proofToken)
         if (!beginResponse.success) {
-          toast.error(
-            beginResponse.message ||
-              i18next.t('Failed to start Passkey registration')
-          )
           return false
         }
 
@@ -132,9 +134,6 @@ export function usePasskeyManagement(
           proofToken
         )
         if (!finishResponse.success) {
-          toast.error(
-            finishResponse.message || i18next.t('Failed to register Passkey')
-          )
           return false
         }
 
@@ -142,17 +141,13 @@ export function usePasskeyManagement(
         await fetchStatus()
         return true
       } catch (error: unknown) {
-        if (error instanceof DOMException && error.name === 'NotAllowedError') {
+        if (isPasskeyCancelledError(error)) {
           toast.info(i18next.t('Passkey registration was cancelled'))
           return false
         }
         // eslint-disable-next-line no-console
         console.error('[Passkey] Registration error', error)
-        toast.error(
-          error instanceof Error
-            ? error.message
-            : i18next.t('Failed to register Passkey')
-        )
+        toast.error(getPasskeyDisplayError(error, 'Failed to register Passkey'))
         return false
       } finally {
         setRegistering(false)
@@ -167,7 +162,7 @@ export function usePasskeyManagement(
       try {
         const res = await deletePasskey(proofToken)
         if (!res.success) {
-          toast.error(res.message || i18next.t('Failed to remove Passkey'))
+          toast.error(localizeConsoleErrorText(res.message, 'Failed to remove Passkey'))
           return false
         }
 

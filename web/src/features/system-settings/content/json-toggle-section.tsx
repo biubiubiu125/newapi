@@ -42,6 +42,7 @@ import {
 } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { useUpdateOption } from '../hooks/use-update-option'
+import { consoleJsonErrorText } from '../utils/json-error-text'
 import { formatJsonForEditor, normalizeJsonString } from './utils'
 
 type JsonToggleSectionProps = {
@@ -113,9 +114,7 @@ export function JsonToggleSection({
           } catch (error: unknown) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
-              message:
-                (error instanceof Error ? error.message : null) ||
-                'Invalid JSON data',
+              message: consoleJsonErrorText(error, value),
             })
           }
         }),

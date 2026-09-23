@@ -326,7 +326,7 @@ func CacheGetRandomSatisfiedChannel(param *RetryParam) (*model.Channel, string, 
 			}
 			if channel == nil {
 				if i+1 < len(autoGroups) && !tokenAllowsCrossGroupRetry(param.Ctx) {
-					return nil, autoGroup, fmt.Errorf("分组 %s 下模型 %s 的可用渠道不存在", autoGroup, param.ModelName)
+					return nil, autoGroup, fmt.Errorf("no available channel for model %s under group %s", param.ModelName, autoGroup)
 				}
 				// Current group has no available channel for this model, try next group
 				// 当前分组没有该模型的可用渠道，尝试下一个分组

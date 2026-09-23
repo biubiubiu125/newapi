@@ -33,6 +33,7 @@ import {
   OAUTH_BIND_RESULT_MESSAGE,
 } from '@/features/auth/constants'
 import { sanitizeAuthRedirect } from '@/features/auth/lib/auth-redirect'
+import { getOAuthLoginDisplayError } from '@/features/auth/lib/login-display-error'
 import {
   parseTelegramBindCallback,
   postTelegramBindResult,
@@ -43,8 +44,8 @@ import {
   resolveOAuthLoginRedirectTarget,
   resolveOAuthCallbackMode,
 } from '@/features/auth/lib/oauth-callback-mode'
+import { syncSignedInInterfaceLanguage } from '@/i18n/persist-interface-language'
 import { api, applyAuthBundle, isAuthBundle } from '@/lib/api'
-import { getServerErrorMessageKey } from '@/lib/server-error-message'
 
 type OAuthRequestConfig = AxiosRequestConfig & {
   skipBusinessError?: boolean
@@ -148,7 +149,12 @@ function OAuthCallback() {
           window.close()
           return
         }
-        toast.error(result.message || i18next.t('OAuth failed'))
+        toast.error(
+          getOAuthLoginDisplayError(
+            { message: result.message },
+            'OAuth failed'
+          )
+        )
         delayedClose = window.setTimeout(() => window.close(), 1500)
       }
 
@@ -197,11 +203,13 @@ function OAuthCallback() {
             error_description: search.error_description,
           },
           skipBusinessError: true,
+          skipErrorHandler: true,
         }
         const response = await api.get(`/api/oauth/${provider}`, config)
         if (response.data?.success && isAuthBundle(response.data?.data)) {
           const bundle = response.data.data
           applyAuthBundle(bundle)
+          await syncSignedInInterfaceLanguage(bundle.user)
           const redirectTarget = resolveOAuthLoginRedirectTarget(
             getOAuthSessionStorage(window),
             provider,
@@ -213,25 +221,9 @@ function OAuthCallback() {
           toast.success(i18next.t('Signed in successfully!'))
           return
         }
-        const messageKey = getServerErrorMessageKey(response.data)
-        toast.error(
-          messageKey
-            ? i18next.t(messageKey)
-            : response.data?.message || i18next.t('OAuth failed')
-        )
+        toast.error(getOAuthLoginDisplayError(response.data, 'OAuth failed'))
       } catch (error: unknown) {
-        const messageKey = getServerErrorMessageKey(error)
-        const responseMessage = (
-          error as { response?: { data?: { message?: string } } }
-        ).response?.data?.message
-        if (!messageKey) {
-          toast.error(
-            responseMessage ||
-              (error instanceof Error
-                ? error.message
-                : i18next.t('OAuth failed'))
-          )
-        }
+        toast.error(getOAuthLoginDisplayError(error, 'OAuth failed'))
       }
       safeNavigate('/sign-in', '/sign-in')
     })()

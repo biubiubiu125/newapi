@@ -24,6 +24,7 @@ import { StaticDataTable } from '@/components/data-table/static/static-data-tabl
 import { StaticRowActions } from '@/components/data-table/static/static-row-actions'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { currentIntlLocale } from '@/i18n/languages'
 
 import { safeJsonParseWithValidation } from '../utils/json-parser'
 import { isObjectRecord } from '../utils/json-validators'
@@ -164,7 +165,7 @@ export function RateLimitVisualEditor({
               <span className='font-mono'>
                 {limit.maxRequests === 0
                   ? t('Unlimited')
-                  : limit.maxRequests.toLocaleString()}
+                  : limit.maxRequests.toLocaleString(currentIntlLocale())}
               </span>
             ),
           },
@@ -175,7 +176,7 @@ export function RateLimitVisualEditor({
             cellClassName: 'text-right',
             cell: (limit) => (
               <span className='font-mono'>
-                {limit.maxSuccess.toLocaleString()}
+                {limit.maxSuccess.toLocaleString(currentIntlLocale())}
               </span>
             ),
           },

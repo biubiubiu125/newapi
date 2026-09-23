@@ -17,16 +17,16 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import axios, { type AxiosRequestConfig } from 'axios'
-import i18n, { t } from 'i18next'
+import { t } from 'i18next'
 import { toast } from 'sonner'
 
-import { resolveIntlLocale } from '@/i18n/languages'
+import { currentIntlLocale } from '@/i18n/languages'
 import {
   applyAuthRotation,
   clearAuthentication,
   refreshAuthentication,
 } from '@/lib/auth-session'
-import { getServerErrorMessageKey } from '@/lib/server-error-message'
+import { getServerErrorDisplayMessage } from '@/lib/handle-server-error'
 import { useAuthStore } from '@/stores/auth-store'
 
 declare module 'axios' {
@@ -89,12 +89,7 @@ api.interceptors.response.use(
       typeof response.data?.success === 'boolean' &&
       !response.data.success
     ) {
-      const messageKey = getServerErrorMessageKey(response.data)
-      toast.error(
-        messageKey
-          ? t(messageKey)
-          : response.data.message || t('Request failed')
-      )
+      toast.error(getServerErrorDisplayMessage(response.data))
     }
     return response
   },
@@ -130,13 +125,7 @@ api.interceptors.response.use(
         toast.error(t('Session expired!'))
       }
     } else if (!skipErrorHandler) {
-      const messageKey = getServerErrorMessageKey(error)
-      const message = messageKey
-        ? t(messageKey)
-        : error?.response?.data?.message ||
-          error?.message ||
-          t('Request failed')
-      toast.error(message)
+      toast.error(getServerErrorDisplayMessage(error))
     }
     throw error
   }
@@ -147,8 +136,6 @@ api.interceptors.request.use((config) => {
   if (accessToken) {
     config.headers.Authorization = `Bearer ${accessToken}`
   }
-  config.headers['Accept-Language'] = resolveIntlLocale(
-    i18n.resolvedLanguage || i18n.language
-  )
+  config.headers['Accept-Language'] = currentIntlLocale()
   return config
 })

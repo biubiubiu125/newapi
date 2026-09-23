@@ -20,9 +20,9 @@ import { ChevronDownIcon } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 
+import { TimeInput } from '@/components/time-input'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
-import { Input } from '@/components/ui/input'
 import {
   Popover,
   PopoverContent,
@@ -80,8 +80,7 @@ export function DateTimePicker({
     }
   }
 
-  const handleTimeChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const newTime = e.target.value
+  const handleTimeChange = (newTime: string) => {
     setTime(newTime)
 
     if (date) {
@@ -131,11 +130,10 @@ export function DateTimePicker({
           />
         </PopoverContent>
       </Popover>
-      <Input
-        type='time'
+      <TimeInput
         value={time}
         onChange={handleTimeChange}
-        className='w-32 appearance-none [&::-webkit-calendar-picker-indicator]:hidden [&::-webkit-calendar-picker-indicator]:appearance-none'
+        className='w-32'
         disabled={!date}
       />
       {date && (

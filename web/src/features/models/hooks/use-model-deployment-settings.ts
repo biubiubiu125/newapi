@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useCallback, useEffect, useRef, useState } from 'react'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 import { getDeploymentSettings, testDeploymentConnection } from '../api'
 
 interface ConnectionState {
@@ -108,13 +110,18 @@ export function useModelDeploymentSettings() {
           setCachedConnection(true)
           setConnectionState({ loading: false, ok: true, error: null })
         } else {
-          const message = connResponse?.message || 'Connection failed'
+          const message = localizeConsoleErrorText(
+            connResponse?.message,
+            'Connection failed'
+          )
           setCachedConnection(false)
           setConnectionState({ loading: false, ok: false, error: message })
         }
       } catch (error: unknown) {
-        const errMsg =
-          error instanceof Error ? error.message : 'Connection failed'
+        const errMsg = localizeConsoleErrorText(
+          error instanceof Error ? error.message : '',
+          'Connection failed'
+        )
         setCachedConnection(false)
         setConnectionState({ loading: false, ok: false, error: errMsg })
       }
@@ -150,12 +157,17 @@ export function useModelDeploymentSettings() {
         setConnectionState({ loading: false, ok: true, error: null })
         return
       }
-      const message = response?.message || 'Connection failed'
+      const message = localizeConsoleErrorText(
+        response?.message,
+        'Connection failed'
+      )
       setCachedConnection(false)
       setConnectionState({ loading: false, ok: false, error: message })
     } catch (error: unknown) {
-      const errMsg =
-        error instanceof Error ? error.message : 'Connection failed'
+      const errMsg = localizeConsoleErrorText(
+        error instanceof Error ? error.message : '',
+        'Connection failed'
+      )
       setCachedConnection(false)
       setConnectionState({ loading: false, ok: false, error: errMsg })
     } finally {

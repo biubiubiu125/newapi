@@ -56,6 +56,8 @@ import {
 import { formatSiteCreditAmount } from '@/features/wallet/lib'
 import { formatQuota, formatTimestamp } from '@/lib/format'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -179,7 +181,7 @@ export function UserRechargeRecordsDialog(props: Props) {
             ? state
             : { key: requestKey, records: [], total: 0 }
         )
-        toast.error(res.message || t('Loading failed'))
+        toast.error(localizeConsoleErrorText(res.message, 'Loading failed'))
       }
     } catch {
       if (latestRequestKeyRef.current === requestKey) {

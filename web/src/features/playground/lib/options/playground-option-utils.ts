@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 import type { GroupOption, ModelOption } from '../../types'
 
 export function getModelFallback(
@@ -61,5 +63,8 @@ export function getOptionLoadErrorMessage(
   error: unknown,
   fallbackMessage: string
 ): string {
-  return error instanceof Error ? error.message : fallbackMessage
+  if (error instanceof Error && error.message.trim()) {
+    return localizeConsoleErrorText(error.message)
+  }
+  return localizeConsoleErrorText(fallbackMessage)
 }

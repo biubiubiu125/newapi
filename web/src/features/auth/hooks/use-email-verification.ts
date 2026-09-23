@@ -21,6 +21,7 @@ import { useState } from 'react'
 import { toast } from 'sonner'
 
 import { useCountdown } from '@/hooks/use-countdown'
+import { currentConsoleFailureText } from '@/lib/console-failure-text'
 
 import { sendEmailVerification } from '../api'
 import { EMAIL_VERIFICATION_COUNTDOWN } from '../constants'
@@ -68,7 +69,10 @@ export function useEmailVerification(options?: UseEmailVerificationOptions) {
         return true
       }
       toast.error(
-        res?.message || i18next.t('Failed to send verification email')
+        currentConsoleFailureText(
+          res?.message,
+          'Failed to send verification email'
+        )
       )
       return false
     } catch {

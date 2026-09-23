@@ -27,6 +27,8 @@ import { ERROR_MESSAGES } from '../constants'
 import { getUserActionMessage } from '../lib'
 import { useUsers } from './users-provider'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 export function UsersDeleteDialog() {
   const { t } = useTranslation()
   const { open, setOpen, currentRow, triggerRefresh } = useUsers()
@@ -43,7 +45,7 @@ export function UsersDeleteDialog() {
         setOpen(null)
         triggerRefresh()
       } else {
-        toast.error(result.message || t(ERROR_MESSAGES.DELETE_FAILED))
+        toast.error(localizeConsoleErrorText(result.message, ERROR_MESSAGES.DELETE_FAILED))
       }
     } catch {
       toast.error(t(ERROR_MESSAGES.UNEXPECTED))

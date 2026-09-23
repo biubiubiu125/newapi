@@ -19,22 +19,28 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/pkg/jsplugin"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/gin-gonic/gin"
 )
 
 type pluginDispatchStateKey struct{}
 
 type pluginDispatchState struct {
-	generation *jsplugin.RoutingGeneration
-	hit        atomic.Bool
-	writer     *gatedResponseWriter
-	requestID  string
-	language   string
+	generation     *jsplugin.RoutingGeneration
+	hit            atomic.Bool
+	writer         *gatedResponseWriter
+	requestID      string
+	language       string
+	userID         int
+	userSetting    dto.UserSetting
+	hasUserSetting bool
 }
 
 func (s *pluginDispatchState) markHit() {
 	s.hit.Store(true)
-	s.writer.activate()
+	if s.writer != nil {
+		s.writer.activate()
+	}
 }
 
 type pluginRouteHandlers func(*jsplugin.RoutingGeneration, jsplugin.RouteBinding) []gin.HandlerFunc
@@ -316,6 +322,12 @@ func importPluginDispatchState() gin.HandlerFunc {
 			if state.language != "" {
 				c.Set(string(constant.ContextKeyLanguage), state.language)
 			}
+			if state.userID > 0 {
+				c.Set("id", state.userID)
+			}
+			if state.hasUserSetting {
+				common.SetContextKey(c, constant.ContextKeyUserSetting, state.userSetting)
+			}
 		}
 		c.Set(middleware.RouteTagKey, "relay")
 		c.Next()
@@ -364,10 +376,14 @@ func (d *pluginRouteDispatcher) dispatch(c *gin.Context) {
 	previousTag, hadPreviousTag := c.Get(middleware.RouteTagKey)
 	c.Set(middleware.RouteTagKey, "relay")
 	originalContext := c.Request.Context()
+	userSetting, hasUserSetting := common.GetContextKeyType[dto.UserSetting](c, constant.ContextKeyUserSetting)
 	state := &pluginDispatchState{
-		generation: generation,
-		requestID:  c.GetString(common.RequestIdKey),
-		language:   c.GetString(string(constant.ContextKeyLanguage)),
+		generation:     generation,
+		requestID:      c.GetString(common.RequestIdKey),
+		language:       c.GetString(string(constant.ContextKeyLanguage)),
+		userID:         c.GetInt("id"),
+		userSetting:    userSetting,
+		hasUserSetting: hasUserSetting,
 	}
 	gatedWriter := newGatedResponseWriter(c.Writer)
 	state.writer = gatedWriter

@@ -22,6 +22,8 @@ import { useMemo, useCallback, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 import {
   Collapsible,
   CollapsibleContent,
@@ -188,13 +190,12 @@ export function ChatPresetsItem({ item }: { item: NavChatPresets }) {
         try {
           activeKey = await fetchActiveChatKey()
         } catch (error) {
-          const message =
-            error instanceof Error
-              ? error.message
-              : t(
-                  'Unable to prepare chat link. Please ensure you have an enabled API key.'
-                )
-          toast.error(message)
+          toast.error(
+            localizeConsoleErrorText(
+              error instanceof Error ? error.message : '',
+              'Unable to prepare chat link. Please ensure you have an enabled API key.'
+            )
+          )
           return
         } finally {
           loadingPresetIdRef.current = null

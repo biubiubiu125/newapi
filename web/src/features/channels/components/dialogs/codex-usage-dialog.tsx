@@ -84,6 +84,8 @@ import {
   type CodexResetCreditsResponse,
 } from '../../api'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type CodexRateLimitWindow = {
   used_percent?: number
   reset_at?: number
@@ -965,7 +967,7 @@ export function CodexUsageDialog({
 
   const errorMessage =
     response?.success === false
-      ? response?.message?.trim() || t('Failed to fetch usage')
+      ? localizeConsoleErrorText(response?.message?.trim(), 'Failed to fetch usage')
       : ''
 
   const loadResetCredits = useCallback(
@@ -984,15 +986,13 @@ export function CodexUsageDialog({
         const res = await getCodexResetCredits(channelId)
         if (!res.success) {
           throw new Error(
-            res.message || t('Failed to fetch reset credit details')
+            localizeConsoleErrorText(res.message, 'Failed to fetch reset credit details')
           )
         }
         setResetCreditsResponse(res)
       } catch (error) {
         setResetCreditsError(
-          error instanceof Error
-            ? error.message
-            : t('Failed to fetch reset credit details')
+          localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to fetch reset credit details')
         )
       } finally {
         setIsLoadingResetCredits(false)
@@ -1034,7 +1034,7 @@ export function CodexUsageDialog({
     try {
       const res = await resetCodexUsage(channelId)
       if (!res.success) {
-        throw new Error(res.message || t('Failed to reset usage'))
+        throw new Error(localizeConsoleErrorText(res.message, 'Failed to reset usage'))
       }
 
       const resetPayload = res.data as
@@ -1053,7 +1053,7 @@ export function CodexUsageDialog({
       await loadResetCredits(true)
     } catch (error) {
       setResetActionError(
-        error instanceof Error ? error.message : t('Failed to reset usage')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to reset usage')
       )
     } finally {
       setIsResetting(false)

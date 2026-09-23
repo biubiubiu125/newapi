@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/pkg/cachex"
 	"github.com/QuantumNous/new-api/setting"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -753,7 +754,7 @@ func createUserSubscriptionFromPlanTx(tx *gorm.DB, userId int, plan *Subscriptio
 			return nil, err
 		}
 		if count >= int64(plan.MaxPurchasePerUser) {
-			return nil, fmt.Errorf("%w: 已达到该套餐购买上限", ErrSubscriptionPurchaseLimit)
+			return nil, ErrSubscriptionPurchaseLimit
 		}
 	}
 	nowUnix := getDBTimestampTx(tx)
@@ -1108,7 +1109,7 @@ func AdminBindSubscription(userId int, planId int, sourceNote string) (string, e
 	}
 	if strings.TrimSpace(plan.UpgradeGroup) != "" {
 		_ = UpdateUserGroupCache(userId, plan.UpgradeGroup)
-		return fmt.Sprintf("用户分组将升级到 %s", plan.UpgradeGroup), nil
+		return plan.UpgradeGroup, nil
 	}
 	return "", nil
 }
@@ -1118,7 +1119,7 @@ func calcSubscriptionBalanceQuota(priceAmount float64) (int64, error) {
 		return 0, nil
 	}
 	if common.QuotaPerUnit <= 0 {
-		return 0, errors.New("额度单位配置错误")
+		return 0, common.Localized(i18n.MsgSubscriptionQuotaUnitInvalid)
 	}
 	quota := decimal.NewFromFloat(priceAmount).
 		Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
@@ -1146,13 +1147,13 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 			return err
 		}
 		if !plan.Enabled {
-			return errors.New("套餐未启用")
+			return common.Localized(i18n.MsgSubscriptionNotEnabled)
 		}
 		if plan.PriceAmount < 0 {
-			return errors.New("套餐价格不能为负数")
+			return common.Localized(i18n.MsgSubscriptionPriceNegative)
 		}
 		if plan.AllowBalancePay != nil && !*plan.AllowBalancePay {
-			return errors.New("该套餐不允许使用余额兑换")
+			return common.Localized(i18n.MsgSubscriptionBalanceRedeemDisabled)
 		}
 
 		requiredQuota, err := calcSubscriptionBalanceQuota(plan.PriceAmount)
@@ -1165,7 +1166,7 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 			return err
 		}
 		if requiredQuota > 0 && user.Quota < requiredQuota {
-			return errors.New("余额不足")
+			return common.Localized(i18n.MsgSubscriptionBalanceInsufficient)
 		}
 		if requiredQuota > 0 {
 			if err := tx.Model(&User{}).Where("id = ?", userId).
@@ -1204,6 +1205,9 @@ func PurchaseSubscriptionWithBalance(userId int, planId int) error {
 		return nil
 	})
 	if err != nil {
+		if errors.Is(err, ErrSubscriptionPurchaseLimit) {
+			return common.Localized(i18n.MsgSubscriptionPurchaseMax)
+		}
 		return err
 	}
 
@@ -1400,7 +1404,7 @@ func AdminInvalidateUserSubscription(userSubscriptionId int) (string, error) {
 		_ = UpdateUserGroupCache(userId, cacheGroup)
 	}
 	if downgradeGroup != "" {
-		return fmt.Sprintf("用户分组将回退到 %s", downgradeGroup), nil
+		return downgradeGroup, nil
 	}
 	return "", nil
 }
@@ -1441,7 +1445,7 @@ func AdminDeleteUserSubscription(userSubscriptionId int) (string, error) {
 		_ = UpdateUserGroupCache(userId, cacheGroup)
 	}
 	if downgradeGroup != "" {
-		return fmt.Sprintf("用户分组将回退到 %s", downgradeGroup), nil
+		return downgradeGroup, nil
 	}
 	return "", nil
 }
@@ -1496,7 +1500,7 @@ func adminResetUserSubscriptionsByPlanTx(tx *gorm.DB, userId int, plan *Subscrip
 		return nil, err
 	}
 	if len(subs) == 0 {
-		return nil, errors.New("该用户没有有效的此套餐订阅")
+		return nil, common.Localized(i18n.MsgSubscriptionNoActivePlan)
 	}
 	for i := range subs {
 		if err := resetUserSubscriptionTx(tx, &subs[i], plan, now, advanceResetTime); err != nil {

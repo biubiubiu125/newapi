@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
@@ -28,7 +29,7 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 
 	var req SubscriptionStripePayRequest
 	if err := c.ShouldBindJSON(&req); err != nil || req.PlanId <= 0 {
-		common.ApiErrorMsg(c, "参数错误")
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
 
@@ -38,20 +39,20 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 		return
 	}
 	if !plan.Enabled {
-		common.ApiErrorMsg(c, "套餐未启用")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionNotEnabled)
 		return
 	}
 	if plan.PriceAmount < 0.01 {
-		common.ApiErrorMsg(c, "套餐金额过低")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionAmountTooLow)
 		return
 	}
 	priceID := strings.TrimSpace(plan.StripePriceId)
 	if priceID == "" {
-		common.ApiErrorMsg(c, "该套餐未配置 StripePriceId")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionStripePriceMissing)
 		return
 	}
 	if !isStripeSubscriptionEnabled() {
-		common.ApiErrorMsg(c, "Stripe 未配置或密钥无效")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionStripeNotConfigured)
 		return
 	}
 
@@ -62,7 +63,7 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 		return
 	}
 	if user == nil {
-		common.ApiErrorMsg(c, "用户不存在")
+		common.ApiErrorI18n(c, i18n.MsgUserNotExists)
 		return
 	}
 
@@ -73,7 +74,7 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 			return
 		}
 		if count >= int64(plan.MaxPurchasePerUser) {
-			common.ApiErrorMsg(c, "已达到该套餐购买上限")
+			common.ApiErrorI18n(c, i18n.MsgSubscriptionPurchaseMax)
 			return
 		}
 	}
@@ -86,7 +87,7 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 	}
 	paidAmount, err := normalizeSubscriptionPaymentAmount(plan, paidCurrency)
 	if err != nil {
-		common.ApiErrorMsg(c, "套餐金额无效")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionAmountInvalid)
 		return
 	}
 	if err := validateStripeSubscriptionPrice(priceID, paidAmount, paidCurrency); err != nil {
@@ -94,7 +95,7 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 			"Stripe 订阅价格校验失败 plan_id=%d price_id=%q amount=%.8f currency=%s error=%q",
 			plan.Id, priceID, paidAmount, paidCurrency, err.Error(),
 		))
-		common.ApiErrorMsg(c, "套餐 Stripe 价格配置无效")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionStripePriceInvalid)
 		return
 	}
 	snapshot, _ := referralService.BuildOrderSnapshot(userId, paidAmount, paidCurrency)
@@ -123,7 +124,7 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 
 	if err := order.Insert(); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Stripe 创建订阅订单失败 trade_no=%s plan_id=%d error=%q", referenceId, plan.Id, err.Error()))
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": i18n.T(c, i18n.MsgPaymentCreateFailed)})
 		return
 	}
 
@@ -133,7 +134,7 @@ func SubscriptionRequestStripePay(c *gin.Context) {
 		if expireErr := model.ExpireSubscriptionOrder(referenceId, model.PaymentProviderStripe); expireErr != nil {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("Stripe 创建订阅支付链接失败后关闭订单失败 trade_no=%s plan_id=%d error=%q", referenceId, plan.Id, expireErr.Error()))
 		}
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": i18n.T(c, i18n.MsgPaymentStartFailed)})
 		return
 	}
 

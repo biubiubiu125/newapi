@@ -20,7 +20,7 @@ import { useTranslation } from 'react-i18next'
 
 import { QuotaDetailsPopover } from '@/components/quota-details-popover'
 import { Progress } from '@/components/ui/progress'
-import { resolveIntlLocale } from '@/i18n/languages'
+import { currentIntlLocale } from '@/i18n/languages'
 import { formatQuotaWithCurrency, getCurrencyDisplay } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { useSystemConfigStore } from '@/stores/system-config-store'
@@ -35,7 +35,7 @@ type ApiKeyQuotaCellProps = {
 }
 
 export function ApiKeyQuotaCell(props: ApiKeyQuotaCellProps) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   useSystemConfigStore((state) => state.config.currency)
   const { meta: currency } = getCurrencyDisplay()
   const quotaUnit = currency.kind === 'tokens' ? t('Tokens') : currency.symbol
@@ -51,10 +51,9 @@ export function ApiKeyQuotaCell(props: ApiKeyQuotaCellProps) {
     showSymbol: false,
   })
   const formattedTotal = formatQuotaWithCurrency(total, { showSymbol: false })
-  const formattedPercentage = new Intl.NumberFormat(
-    resolveIntlLocale(i18n.resolvedLanguage || i18n.language),
-    { maximumFractionDigits: 1 }
-  ).format(percentage)
+  const formattedPercentage = new Intl.NumberFormat(currentIntlLocale(), {
+    maximumFractionDigits: 1,
+  }).format(percentage)
   const isInactive =
     props.apiKey.status !== API_KEY_STATUS.ENABLED ||
     remaining <= 0 ||

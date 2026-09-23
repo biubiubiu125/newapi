@@ -26,6 +26,7 @@ import { toast } from 'sonner'
 import * as z from 'zod'
 
 import { CopyButton } from '@/components/copy-button'
+import { currentIntlLocale } from '@/i18n/languages'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import {
   Form,
@@ -303,7 +304,9 @@ export function OAuthSection(props: OAuthSectionProps) {
       }
 
       try {
-        const res = await axios.create().get(wellKnown)
+        const res = await axios.create().get(wellKnown, {
+          headers: { 'Accept-Language': currentIntlLocale() },
+        })
         const authEndpoint = res.data['authorization_endpoint'] || ''
         const tokenEndpoint = res.data['token_endpoint'] || ''
         const userInfoEndpoint = res.data['userinfo_endpoint'] || ''

@@ -2,7 +2,6 @@ package controller
 
 import (
 	"bytes"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -32,12 +31,12 @@ type GitHubUser struct {
 
 func getGitHubUserInfoByCode(code string) (*GitHubUser, error) {
 	if code == "" {
-		return nil, errors.New("无效的参数")
+		return nil, oauthInvalidParams()
 	}
 	addr := strings.TrimRight(strings.TrimSpace(system_setting.ServerAddress), "/")
 	parsed, err := url.Parse(addr)
 	if err != nil || addr == "" || parsed.Scheme == "" || parsed.Host == "" {
-		return nil, errors.New("请先配置服务器地址")
+		return nil, oauthServerAddressRequired()
 	}
 	values := map[string]string{
 		"client_id":     common.GitHubClientId,
@@ -61,7 +60,7 @@ func getGitHubUserInfoByCode(code string) (*GitHubUser, error) {
 	res, err := client.Do(req)
 	if err != nil {
 		common.SysLog(err.Error())
-		return nil, errors.New("无法连接至 GitHub 服务器，请稍后重试！")
+		return nil, oauthConnectFailed("GitHub")
 	}
 	defer res.Body.Close()
 	var oAuthResponse GitHubOAuthResponse
@@ -77,7 +76,7 @@ func getGitHubUserInfoByCode(code string) (*GitHubUser, error) {
 	res2, err := client.Do(req)
 	if err != nil {
 		common.SysLog(err.Error())
-		return nil, errors.New("无法连接至 GitHub 服务器，请稍后重试！")
+		return nil, oauthConnectFailed("GitHub")
 	}
 	defer res2.Body.Close()
 	var githubUser GitHubUser
@@ -86,19 +85,19 @@ func getGitHubUserInfoByCode(code string) (*GitHubUser, error) {
 		return nil, err
 	}
 	if githubUser.Login == "" {
-		return nil, errors.New("返回值非法，用户字段为空，请稍后重试！")
+		return nil, oauthUserInfoEmpty("GitHub")
 	}
 	return &githubUser, nil
 }
 
+// GitHubOAuth is the legacy dedicated GitHub callback. Live login uses
+// HandleOAuth on GET /api/oauth/:provider; this handler is kept for tests
+// and is not mounted on the production router.
 func GitHubOAuth(c *gin.Context) {
 	session := sessions.Default(c)
 	state := c.Query("state")
 	if state == "" || session.Get("oauth_state") == nil || state != session.Get("oauth_state").(string) {
-		c.JSON(http.StatusForbidden, gin.H{
-			"success": false,
-			"message": "state is empty or not same",
-		})
+		respondOAuthStateInvalid(c)
 		return
 	}
 	username := session.Get("username")
@@ -108,10 +107,7 @@ func GitHubOAuth(c *gin.Context) {
 	}
 
 	if !common.GitHubOAuthEnabled {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "管理员未开启通过 GitHub 登录以及注册",
-		})
+		respondOAuthDisabled(c, "GitHub")
 		return
 	}
 	code := c.Query("code")
@@ -133,10 +129,7 @@ func GitHubOAuth(c *gin.Context) {
 		}
 		// if user.Id == 0 , user has been deleted
 		if user.Id == 0 {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "用户已注销",
-			})
+			respondOAuthUserDeleted(c)
 			return
 		}
 	} else {
@@ -150,6 +143,7 @@ func GitHubOAuth(c *gin.Context) {
 			user.Email = githubUser.Email
 			user.Role = common.RoleCommonUser
 			user.Status = common.UserStatusEnabled
+			applyStoredInterfaceLanguageToNewUser(&user, oauthSessionInterfaceLanguage(c))
 			if err := user.Insert(0); err != nil {
 				if model.IsUserEmailUniqueError(err) {
 					common.ApiErrorI18n(c, i18n.MsgUserExists)
@@ -159,19 +153,13 @@ func GitHubOAuth(c *gin.Context) {
 				return
 			}
 		} else {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "管理员关闭了新用户注册",
-			})
+			respondRegisterDisabled(c)
 			return
 		}
 	}
 
 	if user.Status != common.UserStatusEnabled {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "用户已被封禁",
-			"success": false,
-		})
+		respondOAuthUserBanned(c)
 		return
 	}
 	setupLogin(&user, c)
@@ -179,10 +167,7 @@ func GitHubOAuth(c *gin.Context) {
 
 func GitHubBind(c *gin.Context) {
 	if !common.GitHubOAuthEnabled {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "管理员未开启通过 GitHub 登录以及注册",
-		})
+		respondOAuthDisabled(c, "GitHub")
 		return
 	}
 	code := c.Query("code")
@@ -195,10 +180,7 @@ func GitHubBind(c *gin.Context) {
 		GitHubId: githubUser.Login,
 	}
 	if model.IsGitHubIdAlreadyTaken(user.GitHubId) {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "该 GitHub 账户已被绑定",
-		})
+		respondOAuthAlreadyBound(c, "GitHub")
 		return
 	}
 	session := sessions.Default(c)

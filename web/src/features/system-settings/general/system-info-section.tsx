@@ -52,6 +52,8 @@ import { useSettingsForm } from '../hooks/use-settings-form'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { isValidTaskPublicAddress } from './task-public-address'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 function isValidLogoValue(value: string): boolean {
   const trimmed = value.trim()
   if (!trimmed) return true
@@ -276,7 +278,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                           const res = await uploadSystemLogo(file)
                           const url = res.data?.url || ''
                           if (!res.success || !url) {
-                            toast.error(res.message || t('Upload failed'))
+                            toast.error(localizeConsoleErrorText(res.message, 'Upload failed'))
                             return
                           }
                           form.setValue('Logo', url, {
@@ -287,9 +289,7 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                           toast.success(t('Logo uploaded'))
                         } catch (error) {
                           toast.error(
-                            error instanceof Error
-                              ? error.message
-                              : t('Upload failed')
+                            localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Upload failed')
                           )
                         } finally {
                           setLogoUploading(false)

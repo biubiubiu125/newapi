@@ -22,6 +22,9 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 import { Dialog } from '@/components/dialog'
 import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
@@ -139,13 +142,15 @@ export function SyncWizardDialog({
       }
 
       toast.error(
-        result.message ||
-          (result.status === 'preview_failed'
-            ? t('Failed to preview upstream diff')
-            : t('Sync failed'))
+        localizeConsoleErrorText(
+          result.message,
+          result.status === 'preview_failed'
+            ? 'Failed to preview upstream diff'
+            : 'Sync failed'
+        )
       )
     } catch (error: unknown) {
-      toast.error((error as Error)?.message || t('Sync failed'))
+      toastUnhandledConsoleError(error)
     } finally {
       setIsSyncing(false)
     }

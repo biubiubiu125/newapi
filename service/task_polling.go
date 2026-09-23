@@ -1214,8 +1214,8 @@ func sweepTimedOutTasks(ctx context.Context) {
 		return
 	}
 
-	reason := fmt.Sprintf("任务超时（%d分钟）", constant.TaskTimeoutMinutes)
-	legacyReason := "任务超时（旧系统遗留任务，不进行退款，请联系管理员）"
+	reason := model.FormatPublicTaskTimeoutFailReason(constant.TaskTimeoutMinutes)
+	legacyReason := model.PublicFailReasonLegacyTaskTimeout
 	now := time.Now().Unix()
 	timedOutCount := 0
 
@@ -2171,7 +2171,7 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 	ch, err := model.CacheGetChannel(channelId)
 	if err != nil {
 		common.SysLog(fmt.Sprintf("CacheGetChannel: %v", err))
-		reason := fmt.Sprintf("获取渠道信息失败，请联系管理员，渠道ID：%d", channelId)
+		reason := model.FormatPublicChannelInfoFailReason(channelId)
 		now := common.GetTimestamp()
 		for _, taskRef := range taskIds {
 			task := taskForPollingReference(channelId, taskRef, taskM)

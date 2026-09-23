@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 )
@@ -19,7 +20,7 @@ func ListPaymentOrphans(c *gin.Context) {
 		model.PaymentOrphanStatusRefunded,
 		model.PaymentOrphanStatusDismissed:
 	default:
-		common.ApiErrorMsg(c, "支付悬单状态无效")
+		common.ApiErrorI18n(c, i18n.MsgPaymentOrphanStatusInvalid)
 		return
 	}
 
@@ -29,6 +30,13 @@ func ListPaymentOrphans(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
+	for _, event := range events {
+		if event == nil {
+			continue
+		}
+		event.Reason = consolePaymentOrphanReason(c, event.Reason)
+		event.Error = consolePaymentOrphanError(c, event.Error)
+	}
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(events)
 	common.ApiSuccess(c, pageInfo)
@@ -37,7 +45,7 @@ func ListPaymentOrphans(c *gin.Context) {
 func CreditPaymentOrphan(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
 	if err != nil || id <= 0 {
-		common.ApiErrorMsg(c, "支付悬单 ID 无效")
+		common.ApiErrorI18n(c, i18n.MsgPaymentOrphanIdInvalid)
 		return
 	}
 	if err := model.CreditPaymentOrphan(id, c.GetInt("id"), common.GetClientIP(c)); err != nil {
@@ -56,14 +64,14 @@ type resolvePaymentOrphanRequest struct {
 func ResolvePaymentOrphan(c *gin.Context) {
 	id, err := strconv.ParseInt(strings.TrimSpace(c.Param("id")), 10, 64)
 	if err != nil || id <= 0 {
-		common.ApiErrorMsg(c, "支付悬单 ID 无效")
+		common.ApiErrorI18n(c, i18n.MsgPaymentOrphanIdInvalid)
 		return
 	}
 	var req resolvePaymentOrphanRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
 		c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "请求无效",
+			"message": i18n.T(c, i18n.MsgInvalidParams),
 		})
 		return
 	}

@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { t } from 'i18next'
+
 import { currentIntlLocale } from '@/i18n/languages'
 import dayjs from '@/lib/dayjs'
 
@@ -165,7 +167,7 @@ export function getEditableQuotaStep(): number {
  */
 export function formatTimestamp(timestamp: number): string {
   if (timestamp === -1) {
-    return 'Never'
+    return t('Never')
   }
   return formatTimestampToDate(timestamp)
 }
@@ -255,19 +257,22 @@ export function formatLogQuota(quota: number): string {
  */
 export function formatTokens(tokens: number): string {
   if (tokens === 0) return '-'
-  if (tokens < 1000) return tokens.toString()
-  if (tokens < 1000000) return `${(tokens / 1000).toFixed(1)}K`
-  return `${(tokens / 1000000).toFixed(2)}M`
+  return formatCompactNumber(tokens)
 }
 
 /**
  * Format use time in seconds with appropriate unit
  */
 export function formatUseTime(seconds: number): string {
-  if (seconds < 60) return `${seconds.toFixed(1)}s`
+  if (seconds < 60) {
+    return t('{{seconds}}s', { seconds: seconds.toFixed(1) })
+  }
   const minutes = Math.floor(seconds / 60)
   const remainingSeconds = seconds % 60
-  return `${minutes}m ${remainingSeconds.toFixed(0)}s`
+  return t('{{minutes}}m {{seconds}}s', {
+    minutes,
+    seconds: remainingSeconds.toFixed(0),
+  })
 }
 
 /**

@@ -27,6 +27,8 @@ import type {
   UpdateUserSettingsRequest,
 } from '../types'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 // ============================================================================
 // Profile Hook
 // ============================================================================
@@ -78,7 +80,7 @@ export function useProfile() {
           return true
         }
 
-        toast.error(response.message || i18next.t('Failed to update profile'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to update profile'))
         return false
       } catch (error) {
         // eslint-disable-next-line no-console
@@ -105,7 +107,7 @@ export function useProfile() {
           return true
         }
 
-        toast.error(response.message || i18next.t('Failed to update settings'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to update settings'))
         return false
       } catch (error) {
         // eslint-disable-next-line no-console

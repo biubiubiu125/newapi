@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -256,9 +257,38 @@ func TestEnforceTokenIPLimitRejectsUnlistedClientIP(t *testing.T) {
 	token := &model.Token{AllowIps: &allowIps}
 	recorder := httptest.NewRecorder()
 	c, _ := gin.CreateTestContext(recorder)
-	c.Request = httptest.NewRequest(http.MethodGet, "/usage", nil)
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
 	c.Request.RemoteAddr = "10.1.2.3:9999"
-	rejected := enforceTokenIPLimit(c, token)
+	rejected := enforceTokenIPLimit(c, token, false)
 	require.True(t, rejected)
 	require.Equal(t, http.StatusForbidden, recorder.Code)
+	var body struct {
+		Error struct {
+			Message string `json:"message"`
+		} `json:"error"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &body))
+	require.Contains(t, body.Error.Message, "client IP is not allowed")
+}
+
+func TestEnforceTokenIPLimitDashboardFollowsAcceptLanguage(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	gin.SetMode(gin.TestMode)
+	allowIps := "127.0.0.1"
+	token := &model.Token{AllowIps: &allowIps}
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodGet, "/api/log/self", nil)
+	c.Request.Header.Set("Accept-Language", "zh-CN,zh;q=0.9")
+	c.Request.RemoteAddr = "10.1.2.3:9999"
+	rejected := enforceTokenIPLimit(c, token, true)
+	require.True(t, rejected)
+	require.Equal(t, http.StatusForbidden, recorder.Code)
+	var body struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &body))
+	require.False(t, body.Success)
+	require.Equal(t, "当前 IP 不在令牌允许范围内", body.Message)
 }

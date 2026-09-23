@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { t } from 'i18next'
+
 import { flattenBinary } from './display'
 import { compileBillingExpression } from './parser'
 import {
@@ -258,7 +260,7 @@ function writeVisualCondition(
     if (node.children.length === 0) {
       issues.push({
         id: node.id,
-        message: 'Add at least one condition to this group.',
+        message: t('Add at least one condition to this group.'),
       })
     }
     const children = node.children.map((child) =>
@@ -291,7 +293,7 @@ function writeVisualCondition(
       Number(value) <= max + (node.operator === '<' ? 1 : 0)
   }
   if (!valid) {
-    issues.push({ id: node.id, message: 'Enter a valid condition value.' })
+    issues.push({ id: node.id, message: t('Enter a valid condition value.') })
   }
   const isTime = (TIME_FUNCTIONS as readonly string[]).includes(node.probe)
   if (isTime) {
@@ -308,7 +310,10 @@ function writeVisualCondition(
           timeZone: node.timezone.trim(),
         }).format(0)
       } catch {
-        issues.push({ id: node.id, message: 'Choose a valid IANA timezone.' })
+        issues.push({
+          id: node.id,
+          message: t('Choose a valid IANA timezone.'),
+        })
       }
     }
   }
@@ -374,7 +379,7 @@ function writeVisualPricing(
     if (value === null || !Number.isFinite(value * 1_000_000)) {
       issues.push({
         id: `${node.id}:fixed`,
-        message: 'Enter a finite, non-negative price.',
+        message: t('Enter a finite, non-negative price.'),
       })
     }
     const origin = node.origin
@@ -408,7 +413,7 @@ function writeVisualPricing(
   if (node.prices.length === 0) {
     issues.push({
       id: node.id,
-      message: 'Include at least one price variable.',
+      message: t('Include at least one price variable.'),
     })
   }
   const terms: string[] = []
@@ -418,7 +423,7 @@ function writeVisualPricing(
     if (value === null) {
       issues.push({
         id: `${node.id}:${price.variable}`,
-        message: 'Enter a finite, non-negative price.',
+        message: t('Enter a finite, non-negative price.'),
       })
     }
     if (
@@ -473,8 +478,9 @@ export function serializeVisualBillingDocument(
       issues: [
         {
           id: document.root.id,
-          message:
-            'This expression cannot be edited visually without losing information.',
+          message: t(
+            'This expression cannot be edited visually without losing information.'
+          ),
         },
       ],
     }
@@ -487,7 +493,10 @@ export function serializeVisualBillingDocument(
     return {
       ok: false,
       issues: [
-        { id: document.root.id, message: 'Enter a valid condition value.' },
+        {
+          id: document.root.id,
+          message: t('Enter a valid condition value.'),
+        },
       ],
     }
   }

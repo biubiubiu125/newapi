@@ -48,6 +48,8 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 const schema = z.object({
   enabled: z.boolean(),
   apiKey: z.string().optional(),
@@ -125,13 +127,13 @@ export function IoNetDeploymentSettingsSection({
       setTestState({
         loading: false,
         ok: false,
-        error: res?.message || t('Connection failed'),
+        error: localizeConsoleErrorText(res?.message, 'Connection failed'),
       })
     } catch (err) {
       setTestState({
         loading: false,
         ok: false,
-        error: err instanceof Error ? err.message : t('Connection failed'),
+        error: localizeConsoleErrorText(err instanceof Error ? err.message : '', 'Connection failed'),
       })
     }
   }

@@ -64,6 +64,88 @@ func IsModelPricingOption(key string) bool {
 	return false
 }
 
+func CanonicalBillingMode(value any) (string, bool) {
+	mode, ok := value.(string)
+	if !ok {
+		return "", false
+	}
+	switch mode {
+	case billing_setting.BillingModeRatio, "per-request", "per-token":
+		return billing_setting.BillingModeRatio, true
+	case billing_setting.BillingModeTieredExpr:
+		return billing_setting.BillingModeTieredExpr, true
+	default:
+		return mode, false
+	}
+}
+
+func canonicalizeBillingModeEntries(entries map[string]any) {
+	for name, mode := range entries {
+		if canonical, ok := CanonicalBillingMode(mode); ok {
+			entries[name] = canonical
+		}
+	}
+}
+
+func canonicalizePricingValues(values PricingValues) {
+	if values == nil {
+		return
+	}
+	if mode, exists := values["billing_setting.billing_mode"]; exists {
+		if canonical, ok := CanonicalBillingMode(mode); ok {
+			values["billing_setting.billing_mode"] = canonical
+		}
+	}
+}
+
+func applyJSONOptionMaps(
+	keys []string,
+	values map[string]map[string]any,
+	apply func(string, string) error,
+) error {
+	var first error
+	failedKeys := make([]string, 0)
+	for _, key := range keys {
+		entries, ok := values[key]
+		if !ok {
+			continue
+		}
+		encoded, err := common.Marshal(entries)
+		if err != nil {
+			if first == nil {
+				first = err
+			}
+			failedKeys = append(failedKeys, key)
+			continue
+		}
+		if err := apply(key, string(encoded)); err != nil {
+			if first == nil {
+				first = err
+			}
+			failedKeys = append(failedKeys, key)
+		}
+	}
+	if len(failedKeys) == 0 {
+		return first
+	}
+	var retryErr error
+	for _, key := range failedKeys {
+		encoded, err := common.Marshal(values[key])
+		if err != nil {
+			if retryErr == nil {
+				retryErr = err
+			}
+			continue
+		}
+		if err := apply(key, string(encoded)); err != nil {
+			if retryErr == nil {
+				retryErr = err
+			}
+		}
+	}
+	return retryErr
+}
+
 func ModelPricingVersion(values PricingValues) string {
 	encoded, _ := common.Marshal(values)
 	return fmt.Sprintf("%x", sha256.Sum256(encoded))
@@ -229,7 +311,7 @@ func ValidateModelPricing(name string, values PricingValues) error {
 			return fmt.Errorf("unsupported pricing field: %s", key)
 		}
 		if key == "billing_setting.billing_mode" {
-			if value != "ratio" && value != "tiered_expr" {
+			if _, ok := CanonicalBillingMode(value); !ok {
 				return errors.New("invalid billing mode")
 			}
 			continue
@@ -285,11 +367,16 @@ func UpdateModelPricing(changes []ModelPricingChange) error {
 		if change.ExpectedVersion == "" {
 			return ErrModelPricingConflict
 		}
+		canonicalizePricingValues(change.Pricing)
 		if err := ValidateModelPricing(change.ModelName, change.Pricing); err != nil {
 			return err
 		}
 	}
 	return mutateModelPricingOptions(func(_ *gorm.DB, values map[string]map[string]any) error {
+		previous := map[string]map[string]any{
+			"billing_setting.billing_mode": cloneStringAnyMap(values["billing_setting.billing_mode"]),
+			"billing_setting.billing_expr": cloneStringAnyMap(values["billing_setting.billing_expr"]),
+		}
 		defaults := defaultPricingMaps()
 		for _, change := range changes {
 			if ModelPricingVersion(modelPricingValues(values, change.ModelName)) != change.ExpectedVersion {
@@ -306,6 +393,7 @@ func UpdateModelPricing(changes []ModelPricingChange) error {
 				}
 			}
 		}
+		stripDisplayOnlyBuiltinPricing(previous, values)
 		return nil
 	})
 }
@@ -313,34 +401,159 @@ func UpdateModelPricing(changes []ModelPricingChange) error {
 // UpdateModelPricingOptions keeps legacy single-option callers on the same
 // locking, validation and transaction path as the model-level API.
 func UpdateModelPricingOptions(updates map[string]string) error {
+	return updateModelPricingOptions(updates, nil)
+}
+
+func UpdateModelPricingOptionsChecked(updates, expected map[string]string) error {
+	if expected == nil {
+		return fmt.Errorf("%w", ErrModelPricingConflict)
+	}
+	return updateModelPricingOptions(updates, expected)
+}
+
+func updateModelPricingOptions(updates, expected map[string]string) error {
 	return mutateModelPricingOptions(func(_ *gorm.DB, values map[string]map[string]any) error {
-		names := make(map[string]bool)
-		for key, raw := range updates {
-			if !IsModelPricingOption(key) {
-				return fmt.Errorf("unsupported pricing field: %s", key)
-			}
-			var entries map[string]any
-			if err := common.UnmarshalJsonStr(raw, &entries); err != nil {
-				return err
-			}
-			if entries == nil {
-				return fmt.Errorf("%s must be a JSON object", key)
-			}
-			for name := range values[key] {
-				names[name] = true
-			}
-			values[key] = entries
-			for name := range entries {
-				names[name] = true
-			}
-		}
-		for name := range names {
-			if err := ValidateModelPricing(name, modelPricingValues(values, name)); err != nil {
+		if expected != nil {
+			if err := checkExpectedModelPricingOptions(expected, updates, values); err != nil {
 				return err
 			}
 		}
-		return nil
+		return applyModelPricingOptionUpdates(updates, values)
 	})
+}
+
+func applyModelPricingOptionUpdates(updates map[string]string, values map[string]map[string]any) error {
+	previous := map[string]map[string]any{
+		"billing_setting.billing_mode": cloneStringAnyMap(values["billing_setting.billing_mode"]),
+		"billing_setting.billing_expr": cloneStringAnyMap(values["billing_setting.billing_expr"]),
+	}
+	names := make(map[string]bool)
+	for key, raw := range updates {
+		if !IsModelPricingOption(key) {
+			return fmt.Errorf("unsupported pricing field: %s", key)
+		}
+		var entries map[string]any
+		if err := common.UnmarshalJsonStr(raw, &entries); err != nil {
+			return err
+		}
+		if entries == nil {
+			return fmt.Errorf("%s must be a JSON object", key)
+		}
+		for name := range values[key] {
+			names[name] = true
+		}
+		values[key] = entries
+		if key == "billing_setting.billing_mode" {
+			canonicalizeBillingModeEntries(entries)
+		}
+		for name := range entries {
+			names[name] = true
+		}
+	}
+	stripDisplayOnlyBuiltinPricing(previous, values)
+	for name := range names {
+		if err := ValidateModelPricing(name, modelPricingValues(values, name)); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func checkExpectedModelPricingOptions(expected, updates map[string]string, current map[string]map[string]any) error {
+	for key := range updates {
+		raw, ok := expected[key]
+		if !ok {
+			return fmt.Errorf("%w", ErrModelPricingConflict)
+		}
+		var want map[string]any
+		if err := common.UnmarshalJsonStr(raw, &want); err != nil {
+			return fmt.Errorf("%w", ErrModelPricingConflict)
+		}
+		if want == nil {
+			want = map[string]any{}
+		}
+		got := cloneStringAnyMap(current[key])
+		stripDisplayOnlyBuiltinFromExpected(key, want, got)
+		if !modelPricingJSONEqual(want, got) {
+			return fmt.Errorf("%w", ErrModelPricingConflict)
+		}
+	}
+	return nil
+}
+
+func stripDisplayOnlyBuiltinPricing(previous, values map[string]map[string]any) {
+	prevMode := previous["billing_setting.billing_mode"]
+	prevExpr := previous["billing_setting.billing_expr"]
+	inMode := values["billing_setting.billing_mode"]
+	inExpr := values["billing_setting.billing_expr"]
+	if inMode == nil {
+		inMode = map[string]any{}
+		values["billing_setting.billing_mode"] = inMode
+	}
+	if inExpr == nil {
+		inExpr = map[string]any{}
+		values["billing_setting.billing_expr"] = inExpr
+	}
+	for name, builtinExpr := range billing_setting.GetBuiltinBillingExprCopy() {
+		if _, ok := prevMode[name]; ok {
+			continue
+		}
+		if _, ok := prevExpr[name]; ok {
+			continue
+		}
+		mode, _ := inMode[name].(string)
+		expr, _ := inExpr[name].(string)
+		if mode != "" && mode != billing_setting.BillingModeTieredExpr {
+			continue
+		}
+		if expr != "" && expr != builtinExpr {
+			continue
+		}
+		delete(inMode, name)
+		delete(inExpr, name)
+	}
+}
+
+func stripDisplayOnlyBuiltinFromExpected(key string, want, current map[string]any) {
+	if key != "billing_setting.billing_mode" && key != "billing_setting.billing_expr" {
+		return
+	}
+	for name, builtinExpr := range billing_setting.GetBuiltinBillingExprCopy() {
+		if _, exists := current[name]; exists {
+			continue
+		}
+		if key == "billing_setting.billing_mode" {
+			mode, _ := want[name].(string)
+			if mode == "" || mode == billing_setting.BillingModeTieredExpr {
+				delete(want, name)
+			}
+			continue
+		}
+		expr, _ := want[name].(string)
+		if expr == "" || expr == builtinExpr {
+			delete(want, name)
+		}
+	}
+}
+
+func cloneStringAnyMap(src map[string]any) map[string]any {
+	dst := make(map[string]any, len(src))
+	for key, value := range src {
+		dst[key] = value
+	}
+	return dst
+}
+
+func modelPricingJSONEqual(left, right map[string]any) bool {
+	if left == nil {
+		left = map[string]any{}
+	}
+	if right == nil {
+		right = map[string]any{}
+	}
+	encodedLeft, errLeft := common.Marshal(left)
+	encodedRight, errRight := common.Marshal(right)
+	return errLeft == nil && errRight == nil && string(encodedLeft) == string(encodedRight)
 }
 
 func mutateModelPricingOptions(mutate func(*gorm.DB, map[string]map[string]any) error) error {
@@ -388,13 +601,15 @@ func mutateModelPricingOptions(mutate func(*gorm.DB, map[string]map[string]any) 
 	if err != nil {
 		return err
 	}
-	for _, key := range modelPricingOptionKeys {
-		encoded, _ := common.Marshal(committed[key])
-		if err := updateOptionMap(key, string(encoded)); err != nil {
-			return err
-		}
+	applyErr := applyCommittedModelPricing(committed)
+	if applyErr != nil {
+		return applyErr
 	}
 	RefreshPricing()
 	ratio_setting.InvalidateExposedDataCache()
 	return nil
+}
+
+var applyCommittedModelPricing = func(committed map[string]map[string]any) error {
+	return applyJSONOptionMaps(modelPricingOptionKeys, committed, updateOptionMap)
 }

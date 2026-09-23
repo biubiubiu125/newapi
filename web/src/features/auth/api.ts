@@ -17,9 +17,11 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import axios from 'axios'
+import i18n from 'i18next'
 
 import { api, refreshAuthentication, type RefreshOutcome } from '@/lib/api'
 import { buildGitHubOAuthUrl } from '@/lib/oauth'
+import { createServerError } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { sanitizeAuthRedirect } from './lib/auth-redirect'
@@ -88,6 +90,7 @@ export async function login2fa(payload: TwoFAPayload) {
   const res = await api.post<Login2FAResponse>('/api/user/login/2fa', payload, {
     skipAuthRefresh: true,
     skipBusinessError: true,
+    skipErrorHandler: true,
   })
   return res.data
 }
@@ -193,8 +196,18 @@ export async function createOAuthFlow(
       : undefined
   const res = await api.post(
     '/api/oauth/state',
-    { provider, intent, aff: aff || undefined, redirect },
-    { skipAuthRefresh: intent === 'login' }
+    {
+      provider,
+      intent,
+      aff: aff || undefined,
+      redirect,
+      language: i18n.language,
+    },
+    {
+      skipAuthRefresh: intent === 'login',
+      skipBusinessError: true,
+      skipErrorHandler: true,
+    }
   )
   if (res.data?.success) {
     if (typeof res.data.data === 'string') return res.data.data
@@ -202,7 +215,7 @@ export async function createOAuthFlow(
       return res.data.data.flow_token
     }
   }
-  throw new Error(res.data?.message || 'Failed to initialize OAuth')
+  throw createServerError(res.data, i18n.t('Failed to initialize OAuth'))
 }
 
 // WeChat login by authorization code
@@ -215,6 +228,7 @@ export async function wechatLoginByCode(
     params: { code, aff: aff || undefined, state },
     skipAuthRefresh: true,
     skipBusinessError: true,
+    skipErrorHandler: true,
   })
   return res.data
 }

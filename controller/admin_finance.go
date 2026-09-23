@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	referralservice "github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -276,7 +277,7 @@ func GetRechargeAuditSummary(c *gin.Context) {
 	}
 	applyRechargeAuditCNYSummary(nil, nil, nil, byStatus)
 
-	anomalies, err := buildRechargeAnomalies(filters)
+	anomalies, err := buildRechargeAnomalies(c, filters)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -443,7 +444,7 @@ func parseRechargeAuditStatus(c *gin.Context) (string, bool) {
 		common.TopUpStatusExpired:
 		return status, true
 	default:
-		common.ApiErrorMsg(c, "invalid status")
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return "", false
 	}
 }
@@ -482,7 +483,7 @@ func parseRechargeAuditUserID(c *gin.Context) (int, bool) {
 	}
 	userID, err := strconv.Atoi(raw)
 	if err != nil || userID <= 0 {
-		common.ApiErrorMsg(c, "invalid user_id")
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return 0, false
 	}
 	return userID, true
@@ -976,7 +977,7 @@ func applyRechargeAuditCNYSummary(
 	}
 }
 
-func buildRechargeAnomalies(filters rechargeAuditFilters) ([]auditAnomaly, error) {
+func buildRechargeAnomalies(c *gin.Context, filters rechargeAuditFilters) ([]auditAnomaly, error) {
 	now := common.GetTimestamp()
 	baseSQL, baseArgs := orderManagementBaseSQL(filters)
 	whereSQL, whereArgs := orderManagementWhereSQL(filters)
@@ -1030,7 +1031,7 @@ func buildRechargeAnomalies(filters rechargeAuditFilters) ([]auditAnomaly, error
 				TradeNo:   row.TradeNo,
 				UserID:    row.UserID,
 				Username:  row.Username,
-				Message:   fmt.Sprintf("返佣生成失败：%s", row.ReferralCommissionError),
+				Message:   referralCommissionAnomalyMessage(c, row.ReferralCommissionError),
 				CreatedAt: row.CreateTime,
 			})
 		}

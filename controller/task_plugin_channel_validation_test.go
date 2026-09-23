@@ -3,6 +3,7 @@ package controller
 import (
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/stretchr/testify/require"
@@ -17,7 +18,9 @@ func TestValidateChannelRequiresTaskPluginBinding(t *testing.T) {
 
 	err := validateChannel(channel, false)
 
-	require.ErrorContains(t, err, "task plugin key")
+	loc, ok := common.AsLocalizedError(err)
+	require.True(t, ok, "want LocalizedError, got %v", err)
+	require.Equal(t, "channel.task_plugin_key_required", loc.Key)
 }
 
 func TestValidateChannelRejectsUnknownTaskPluginBinding(t *testing.T) {
@@ -29,5 +32,9 @@ func TestValidateChannelRejectsUnknownTaskPluginBinding(t *testing.T) {
 
 	err := validateChannel(channel, false)
 
-	require.ErrorContains(t, err, "task plugin")
+	loc, ok := common.AsLocalizedError(err)
+	require.True(t, ok, "want LocalizedError, got %v", err)
+	require.Equal(t, "channel.task_plugin_not_registered", loc.Key)
+	require.NotEmpty(t, loc.Args)
+	require.Equal(t, "missing-task-plugin", loc.Args[0]["Plugin"])
 }

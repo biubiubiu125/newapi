@@ -29,7 +29,7 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { useMediaQuery } from '@/hooks'
-import { resolveIntlLocale } from '@/i18n/languages'
+import { currentIntlLocale } from '@/i18n/languages'
 import { getUserGroups } from '@/lib/api'
 import dayjs from '@/lib/dayjs'
 import { formatQuota } from '@/lib/format'
@@ -74,10 +74,10 @@ function useGroupRatios(): Record<string, number | string> {
 }
 
 export function useApiKeysColumns(now: number): ColumnDef<ApiKey>[] {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const groupRatios = useGroupRatios()
   const shouldReduceMotion = useMediaQuery('(prefers-reduced-motion: reduce)')
-  const locale = resolveIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const locale = currentIntlLocale()
   const justNowLabel = t('Just now')
   const staleAccessThreshold = dayjs(now).subtract(3, 'month').valueOf()
   return [

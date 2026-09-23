@@ -89,7 +89,9 @@ export function processChartData(
   const otherLabel = tt('Other')
 
   const formatInt = (value: number) =>
-    Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(value)
+    Intl.NumberFormat(currentIntlLocale(), {
+      maximumFractionDigits: 0,
+    }).format(value)
   const formatQuotaValue = (value: number) => renderQuotaCompat(value, 4)
   const formatQuotaTotal = (value: number) => renderQuotaCompat(value, 2)
 

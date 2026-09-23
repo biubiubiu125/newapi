@@ -22,6 +22,8 @@ import { useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
+
 import { DataTablePage, useDataTable } from '@/components/data-table'
 import {
   AlertDialog,
@@ -46,6 +48,8 @@ import { RenameDeploymentDialog } from './dialogs/rename-deployment-dialog'
 import { UpdateConfigDialog } from './dialogs/update-config-dialog'
 import { ViewDetailsDialog } from './dialogs/view-details-dialog'
 import { ViewLogsDialog } from './dialogs/view-logs-dialog'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 const route = getRouteApi('/_authenticated/models/$section')
 
@@ -153,10 +157,10 @@ export function DeploymentsTable() {
           queryKey: deploymentsQueryKeys.lists(),
         })
       } else {
-        toast.error(res?.message || t('Delete failed'))
+        toast.error(localizeConsoleErrorText(res?.message, 'Delete failed'))
       }
     } catch (err) {
-      toast.error(err instanceof Error ? err.message : t('Delete failed'))
+      toastUnhandledConsoleError(err)
     } finally {
       setIsDeleting(false)
       setDeleteOpen(false)

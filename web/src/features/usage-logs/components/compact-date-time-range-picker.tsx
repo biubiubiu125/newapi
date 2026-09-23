@@ -12,21 +12,26 @@ MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the
 GNU Affero General Public License for more details.
 
 You should have received a copy of the GNU Affero General Public License
-along with this program. If not, see <https://www.gnu.org/licenses/>.
+along with this program. If you did not receive a copy of the GNU Affero
+General Public License along with this program, see
+<https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
 import { CalendarDays } from 'lucide-react'
 import { useMemo, useState } from 'react'
+import type { DateRange } from 'react-day-picker'
 import { useTranslation } from 'react-i18next'
 
+import { TimeInput } from '@/components/time-input'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Calendar } from '@/components/ui/calendar'
 import {
   Popover,
   PopoverContent,
   PopoverTrigger,
 } from '@/components/ui/popover'
+import { resolveDayPickerLocale } from '@/lib/calendar-locale'
 import dayjs from '@/lib/dayjs'
 import { cn } from '@/lib/utils'
 
@@ -37,14 +42,17 @@ interface CompactDateTimeRangePickerProps {
   className?: string
 }
 
-function toInputValue(date?: Date): string {
-  return date ? dayjs(date).format('YYYY-MM-DDTHH:mm') : ''
+function timeFromDate(date?: Date, fallback = '00:00'): string {
+  if (!date) return fallback
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
 }
 
-function fromInputValue(value: string): Date | undefined {
-  if (!value) return undefined
-  const date = new Date(value)
-  return Number.isNaN(date.getTime()) ? undefined : date
+function withTime(date: Date | undefined, time: string): Date | undefined {
+  if (!date) return undefined
+  const [hours, minutes] = time.split(':').map(Number)
+  const next = new Date(date)
+  next.setHours(hours || 0, minutes || 0, 0, 0)
+  return next
 }
 
 export function CompactDateTimeRangePicker({
@@ -53,17 +61,16 @@ export function CompactDateTimeRangePicker({
   onChange,
   className,
 }: CompactDateTimeRangePickerProps) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
+  const calendarLocale = resolveDayPickerLocale(i18n.language)
   const [open, setOpen] = useState(false)
-  const [draftStart, setDraftStart] = useState(toInputValue(start))
-  const [draftEnd, setDraftEnd] = useState(toInputValue(end))
+  const [draftStart, setDraftStart] = useState<Date | undefined>(start)
+  const [draftEnd, setDraftEnd] = useState<Date | undefined>(end)
+  const [startTime, setStartTime] = useState(timeFromDate(start))
+  const [endTime, setEndTime] = useState(timeFromDate(end, '23:59'))
 
   const label = useMemo(() => {
     if (!start && !end) return t('Date Range')
-    // The popover's <input type="datetime-local"> only supports minute
-    // precision, so seconds are always 00 (manual pick) or 59 (preset
-    // end-of-day). Hide them in the trigger label to keep the button
-    // width compact while still showing the meaningful timestamp.
     const startText = start ? dayjs(start).format('YYYY-MM-DD HH:mm') : '-'
     const endText = end ? dayjs(end).format('YYYY-MM-DD HH:mm') : '-'
     return `${startText} ~ ${endText}`
@@ -71,16 +78,18 @@ export function CompactDateTimeRangePicker({
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
-      setDraftStart(toInputValue(start))
-      setDraftEnd(toInputValue(end))
+      setDraftStart(start)
+      setDraftEnd(end)
+      setStartTime(timeFromDate(start))
+      setEndTime(timeFromDate(end, '23:59'))
     }
     setOpen(nextOpen)
   }
 
   const applyDraft = () => {
     onChange({
-      start: fromInputValue(draftStart),
-      end: fromInputValue(draftEnd),
+      start: withTime(draftStart, startTime),
+      end: withTime(draftEnd, endTime),
     })
     setOpen(false)
   }
@@ -110,10 +119,13 @@ export function CompactDateTimeRangePicker({
       },
     }
     const range = presets[kind]
-    setDraftStart(toInputValue(range.start))
-    setDraftEnd(toInputValue(range.end))
     onChange(range)
     setOpen(false)
+  }
+
+  const handleRangeSelect = (range: DateRange | undefined) => {
+    setDraftStart(range?.from)
+    setDraftEnd(range?.to)
   }
 
   return (
@@ -139,16 +151,24 @@ export function CompactDateTimeRangePicker({
         className='w-[min(520px,calc(100vw-2rem))] p-3'
       >
         <div className='space-y-3'>
+          <Calendar
+            mode='range'
+            selected={{ from: draftStart, to: draftEnd }}
+            onSelect={handleRangeSelect}
+            locale={calendarLocale}
+            captionLayout='label'
+          />
+
           <div className='grid gap-2 sm:grid-cols-[1fr_auto_1fr] sm:items-end'>
             <div className='space-y-1.5'>
               <div className='text-muted-foreground text-xs'>
                 {t('Start Time')}
               </div>
-              <Input
-                type='datetime-local'
-                value={draftStart}
-                onChange={(e) => setDraftStart(e.target.value)}
-                className='h-8 text-sm leading-5 tabular-nums'
+              <TimeInput
+                value={startTime}
+                onChange={setStartTime}
+                disabled={!draftStart}
+                aria-label={t('Start Time')}
               />
             </div>
             <span className='text-muted-foreground hidden pb-2 text-xs sm:block'>
@@ -158,11 +178,11 @@ export function CompactDateTimeRangePicker({
               <div className='text-muted-foreground text-xs'>
                 {t('End Time')}
               </div>
-              <Input
-                type='datetime-local'
-                value={draftEnd}
-                onChange={(e) => setDraftEnd(e.target.value)}
-                className='h-8 text-sm leading-5 tabular-nums'
+              <TimeInput
+                value={endTime}
+                onChange={setEndTime}
+                disabled={!draftEnd}
+                aria-label={t('End Time')}
               />
             </div>
           </div>
@@ -211,7 +231,7 @@ export function CompactDateTimeRangePicker({
               className='h-7 flex-1 px-2 text-xs'
               onClick={() => applyPreset('month')}
             >
-              {t('This month')}
+              {t('This calendar month')}
             </Button>
           </div>
 

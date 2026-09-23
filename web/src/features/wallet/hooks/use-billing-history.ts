@@ -23,6 +23,8 @@ import { toast } from 'sonner'
 import { useIsAdmin } from '@/hooks/use-admin'
 import { useDebounce } from '@/hooks/use-debounce'
 
+import { currentConsoleFailureText } from '@/lib/console-failure-text'
+
 import {
   getUserBillingHistory,
   getAllBillingHistory,
@@ -30,6 +32,8 @@ import {
   isApiSuccess,
 } from '../api'
 import type { TopupRecord } from '../types'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 // ============================================================================
 // Billing History Hook
@@ -74,7 +78,7 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
         setTotal(response.data.total || 0)
       } else {
         toast.error(
-          response.message || i18next.t('Failed to load billing history')
+          localizeConsoleErrorText(response.message, 'Failed to load billing history')
         )
         setRecords([])
         setTotal(0)
@@ -113,7 +117,12 @@ export function useBillingHistory(options: UseBillingHistoryOptions = {}) {
           await fetchBillingHistory()
           return true
         } else {
-          toast.error(response.message || i18next.t('Failed to complete order'))
+          toast.error(
+            currentConsoleFailureText(
+              response.message,
+              'Failed to complete order'
+            )
+          )
           return false
         }
       } catch (error) {

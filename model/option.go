@@ -427,11 +427,25 @@ func updateOptionMap(key string, value string) (err error) {
 		delete(common.OptionMap, key)
 		return nil
 	}
+	previous, hadPrevious := common.OptionMap[key]
+	defer func() {
+		if err == nil {
+			return
+		}
+		if hadPrevious {
+			common.OptionMap[key] = previous
+		} else {
+			delete(common.OptionMap, key)
+		}
+	}()
 
-	// 检查是否是模型配置 - 使用更规范的方式处理
-	if handleConfigUpdate(key, value) {
+	handled, handleErr := handleConfigUpdate(key, value)
+	if handled {
+		if handleErr != nil {
+			return handleErr
+		}
 		common.OptionMap[key] = value
-		return nil // 已由配置系统处理
+		return nil
 	}
 
 	if key == setting.TaskPluginDisabledFactoryKeysKey {
@@ -827,40 +841,36 @@ func updateOptionMap(key string, value string) (err error) {
 }
 
 // handleConfigUpdate 处理分层配置更新，返回是否已处理
-func handleConfigUpdate(key, value string) bool {
+func handleConfigUpdate(key, value string) (bool, error) {
 	parts := strings.SplitN(key, ".", 2)
 	if len(parts) != 2 {
-		return false // 不是分层配置
+		return false, nil
 	}
 
 	configName := parts[0]
 	configKey := parts[1]
 
-	// 获取配置对象
 	cfg := config.GlobalConfig.Get(configName)
 	if cfg == nil {
-		return false // 未注册的配置
+		return false, nil
 	}
 
-	// 更新配置
 	configMap := map[string]string{
 		configKey: value,
 	}
-	config.UpdateConfigFromMap(cfg, configMap)
+	if err := config.UpdateConfigFromMap(cfg, configMap); err != nil {
+		return true, err
+	}
 
-	// 特定配置的后处理
 	if configName == "performance_setting" {
 		performance_setting.UpdateAndSync()
 	} else if configName == "tool_price_setting" {
 		operation_setting.RebuildToolPriceIndex()
-	} else if configName == "billing_setting" {
-		InvalidatePricingCache()
-		ratio_setting.InvalidateExposedDataCache()
 	} else if configName == "theme" {
 		system_setting.UpdateAndSyncTheme()
 	} else if configName == "group_ratio_setting" && configKey == "group_special_usable_group" {
 		ratio_setting.NormalizeGroupSpecialUsableGroup()
 	}
 
-	return true // 已处理
+	return true, nil
 }

@@ -516,8 +516,9 @@ func markTaskRefundReview(ctx context.Context, task *model.Task, attemptedQuota 
 }
 
 func taskRefundAllowsMissingChannel(reason string) bool {
+	normalized := strings.ToLower(reason)
 	return strings.Contains(reason, "获取渠道信息失败") ||
-		strings.Contains(reason, "Failed to get channel info")
+		strings.Contains(normalized, "failed to get channel info")
 }
 
 func updateTaskUsageCounters(task *model.Task, quotaDelta int, includeTokenUsage bool, allowMissingChannelRefund ...bool) error {

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -119,11 +120,13 @@ func TestGetUserFlowQuotaDatesRestrictsToAuthenticatedUser(t *testing.T) {
 
 func TestGetUserFlowQuotaDatesRejectsInvalidTimeRange(t *testing.T) {
 	setupFlowControllerTestDB(t)
+	require.NoError(t, i18n.Init())
 
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Set("id", 1)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/data/flow/self?start_timestamp=bad&end_timestamp=2000", nil)
+	ctx.Request.Header.Set("Accept-Language", "en-US")
 
 	GetUserFlowQuotaDates(ctx)
 
@@ -131,5 +134,5 @@ func TestGetUserFlowQuotaDatesRejectsInvalidTimeRange(t *testing.T) {
 	var payload flowQuotaResponse
 	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &payload))
 	require.False(t, payload.Success)
-	require.Equal(t, "invalid start_timestamp", payload.Message)
+	require.Equal(t, "Invalid start timestamp", payload.Message)
 }

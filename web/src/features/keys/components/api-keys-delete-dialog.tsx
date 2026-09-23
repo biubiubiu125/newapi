@@ -35,6 +35,8 @@ import { deleteApiKey } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
 import { useApiKeys } from './api-keys-provider'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 export function ApiKeysDeleteDialog() {
   const { t } = useTranslation()
   const { open, setOpen, currentRow, triggerRefresh } = useApiKeys()
@@ -51,7 +53,7 @@ export function ApiKeysDeleteDialog() {
         setOpen(null)
         triggerRefresh()
       } else {
-        toast.error(result.message || t(ERROR_MESSAGES.DELETE_FAILED))
+        toast.error(localizeConsoleErrorText(result.message, ERROR_MESSAGES.DELETE_FAILED))
       }
     } catch {
       toast.error(t(ERROR_MESSAGES.UNEXPECTED))

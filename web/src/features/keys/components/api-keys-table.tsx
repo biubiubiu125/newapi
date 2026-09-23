@@ -43,6 +43,7 @@ import { Input } from '@/components/ui/input'
 import { Skeleton } from '@/components/ui/skeleton'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
 import { formatQuota } from '@/lib/format'
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import { getApiKeys, searchApiKeys } from '../api'
@@ -256,12 +257,12 @@ export function ApiKeysTable() {
 
       if (!result.success) {
         toast.error(
-          result.message ||
-            t(
-              shouldSearch
-                ? ERROR_MESSAGES.SEARCH_FAILED
-                : ERROR_MESSAGES.LOAD_FAILED
-            )
+          localizeConsoleErrorText(
+            result.message,
+            shouldSearch
+              ? ERROR_MESSAGES.SEARCH_FAILED
+              : ERROR_MESSAGES.LOAD_FAILED
+          )
         )
         return { items: [], total: 0 }
       }

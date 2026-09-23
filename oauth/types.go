@@ -1,5 +1,7 @@
 package oauth
 
+import "strings"
+
 // OAuthToken represents the token received from OAuth provider
 type OAuthToken struct {
 	AccessToken  string `json:"access_token"`
@@ -58,11 +60,24 @@ func NewOAuthErrorWithRaw(msgKey string, params map[string]any, rawError string)
 	}
 }
 
+const defaultAccessDeniedMessage = "Access denied: your account does not meet this provider's access requirements."
+
 // AccessDeniedError is a direct user-facing access denial message.
 type AccessDeniedError struct {
 	Message string
 }
 
 func (e *AccessDeniedError) Error() string {
+	if e == nil {
+		return ""
+	}
 	return e.Message
+}
+
+func (e *AccessDeniedError) UseCatalogDefault() bool {
+	if e == nil {
+		return true
+	}
+	message := strings.TrimSpace(e.Message)
+	return message == "" || message == defaultAccessDeniedMessage
 }

@@ -2,6 +2,7 @@ package model
 
 import (
 	"testing"
+	"unicode"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -584,4 +585,74 @@ func TestGetResultURLKeepsExampleCDNWhenGeminiLiveBaseURLEmpty(t *testing.T) {
 
 	assert.Equal(t, cdn, task.GetResultURL())
 	assert.Empty(t, task.PrivateData.ResultProxyHosts)
+}
+
+func TestSanitizePublicTaskFailReasonNormalizesChineseInternals(t *testing.T) {
+	cases := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{
+			name: "empty upstream task id",
+			in:   "上游任务ID为空",
+			want: "upstream task id is empty",
+		},
+		{
+			name: "upstream timeout",
+			in:   "上游任务超时（超过1小时）",
+			want: "upstream task timed out (over 1 hour)",
+		},
+		{
+			name: "missing channel info",
+			in:   "获取渠道信息失败，请联系管理员，渠道ID：42",
+			want: "failed to get channel information, please contact the administrator, channel id: 42",
+		},
+		{
+			name: "already english channel info",
+			in:   "failed to get channel information, please contact the administrator, channel id: 7",
+			want: "failed to get channel information, please contact the administrator, channel id: 7",
+		},
+		{
+			name: "sweep timeout minutes",
+			in:   "任务超时（1440分钟）",
+			want: "task timed out (1440 minutes)",
+		},
+		{
+			name: "legacy sweep timeout",
+			in:   "任务超时（旧系统遗留任务，不进行退款，请联系管理员）",
+			want: "task timed out (legacy task, no refund, please contact the administrator)",
+		},
+		{
+			name: "already english sweep timeout",
+			in:   "task timed out (60 minutes)",
+			want: "task timed out (60 minutes)",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := SanitizePublicTaskFailReason(tc.in)
+			assert.Equal(t, tc.want, got)
+			assertNoHanReason(t, got)
+		})
+	}
+}
+
+func TestPublicFailReasonNormalizesChineseInternals(t *testing.T) {
+	task := &Task{
+		Status:     TaskStatusFailure,
+		FailReason: "上游任务ID为空",
+	}
+	got := task.PublicFailReason()
+	assert.Equal(t, "upstream task id is empty", got)
+	assertNoHanReason(t, got)
+}
+
+func assertNoHanReason(t *testing.T, reason string) {
+	t.Helper()
+	for _, r := range reason {
+		if unicode.In(r, unicode.Han) {
+			t.Fatalf("public fail reason contains Chinese: %q", reason)
+		}
+	}
 }

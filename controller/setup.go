@@ -1,12 +1,12 @@
 package controller
 
 import (
-	"fmt"
 	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -48,10 +48,7 @@ func GetSetup(c *gin.Context) {
 func PostSetup(c *gin.Context) {
 	// Check if setup is already completed
 	if constant.Setup {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": "系统已经初始化完成",
-		})
+		common.ApiErrorI18n(c, i18n.MsgSetupAlreadyInitialized)
 		return
 	}
 
@@ -60,35 +57,23 @@ func PostSetup(c *gin.Context) {
 	var req SetupRequest
 	err := c.ShouldBindJSON(&req)
 	if err != nil {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": "请求参数有误",
-		})
+		common.ApiErrorI18n(c, i18n.MsgSetupInvalidRequest)
 		return
 	}
 
 	if req.Password != req.ConfirmPassword {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": "两次输入的密码不一致",
-		})
+		common.ApiErrorI18n(c, i18n.MsgSetupPasswordMismatch)
 		return
 	}
 	if len(req.Password) < 8 {
-		c.JSON(200, gin.H{
-			"success": false,
-			"message": "密码长度至少为8个字符",
-		})
+		common.ApiErrorI18n(c, i18n.MsgSetupPasswordTooShort)
 		return
 	}
 
 	if !rootExists {
 		req.Username = strings.TrimSpace(req.Username)
 		if len([]rune(req.Username)) > model.RegisterUserNameMaxLength {
-			c.JSON(200, gin.H{
-				"success": false,
-				"message": fmt.Sprintf("用户名长度不能超过%d个字符", model.RegisterUserNameMaxLength),
-			})
+			common.ApiErrorI18n(c, i18n.MsgSetupUsernameTooLong, map[string]any{"Max": model.RegisterUserNameMaxLength})
 			return
 		}
 		if err := model.ValidateNewUserUsername(req.Username); err != nil {
@@ -96,7 +81,7 @@ func PostSetup(c *gin.Context) {
 			return
 		}
 		if _, err := common.Password2Hash(req.Password); err != nil {
-			respondSetupFailure(c, "系统错误", err)
+			respondSetupFailure(c, i18n.MsgSetupSystemError, err)
 			return
 		}
 		rootUser := model.User{
@@ -110,21 +95,18 @@ func PostSetup(c *gin.Context) {
 		}
 		err = rootUser.InsertPreserveQuota(0)
 		if err != nil {
-			respondSetupFailure(c, "创建管理员账号失败", err)
+			respondSetupFailure(c, i18n.MsgSetupCreateAdminFailed, err)
 			return
 		}
 	} else {
 		rootUser := model.GetRootUser()
 		if rootUser == nil || rootUser.Id == 0 {
-			c.JSON(200, gin.H{
-				"success": false,
-				"message": "系统中不存在管理员账号",
-			})
+			common.ApiErrorI18n(c, i18n.MsgSetupRootMissing)
 			return
 		}
 		rootUser.Password = req.Password
 		if err := rootUser.Update(true); err != nil {
-			respondSetupFailure(c, "更新管理员密码失败", err)
+			respondSetupFailure(c, i18n.MsgSetupUpdatePasswordFailed, err)
 			return
 		}
 	}
@@ -136,13 +118,13 @@ func PostSetup(c *gin.Context) {
 	// Save operation modes to database for persistence
 	err = model.UpdateOption("SelfUseModeEnabled", boolToString(req.SelfUseModeEnabled))
 	if err != nil {
-		respondSetupFailure(c, "保存自用模式设置失败", err)
+		respondSetupFailure(c, i18n.MsgSetupSaveSelfUseFailed, err)
 		return
 	}
 
 	err = model.UpdateOption("DemoSiteEnabled", boolToString(req.DemoSiteEnabled))
 	if err != nil {
-		respondSetupFailure(c, "保存演示站点模式设置失败", err)
+		respondSetupFailure(c, i18n.MsgSetupSaveDemoFailed, err)
 		return
 	}
 
@@ -152,15 +134,12 @@ func PostSetup(c *gin.Context) {
 	}
 	err = model.DB.Create(&setup).Error
 	if err != nil {
-		respondSetupFailure(c, "系统初始化失败", err)
+		respondSetupFailure(c, i18n.MsgSetupInitFailed, err)
 		return
 	}
 	constant.Setup = true
 
-	c.JSON(200, gin.H{
-		"success": true,
-		"message": "系统初始化成功",
-	})
+	common.ApiSuccessI18n(c, i18n.MsgSetupSuccess, nil)
 }
 
 func boolToString(b bool) string {
@@ -170,12 +149,9 @@ func boolToString(b bool) string {
 	return "false"
 }
 
-func respondSetupFailure(c *gin.Context, publicMessage string, err error) {
+func respondSetupFailure(c *gin.Context, key string, err error) {
 	if err != nil {
-		common.SysError(publicMessage + ": " + err.Error())
+		common.SysError(i18n.T(c, key) + ": " + err.Error())
 	}
-	c.JSON(200, gin.H{
-		"success": false,
-		"message": publicMessage,
-	})
+	common.ApiErrorI18n(c, key)
 }

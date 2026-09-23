@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
@@ -29,13 +30,13 @@ func listModelsMeta(c *gin.Context, keyword, vendor string) {
 	switch squareState {
 	case "", model.ModelSquareVisible, model.ModelSquareUnavailable, model.ModelSquareHidden, model.ModelSquarePartial:
 	default:
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid model square state"})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": i18n.T(c, i18n.MsgModelInvalidSquareState)})
 		return
 	}
 
 	pageInfo := common.GetPageQuery(c)
 	if squareState != "" && (pageInfo.GetPage() < 1 || pageInfo.GetPageSize() < 1) {
-		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Invalid pagination"})
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": i18n.T(c, i18n.MsgModelInvalidPagination)})
 		return
 	}
 	offset, limit := pageInfo.GetStartIdx(), pageInfo.GetPageSize()
@@ -128,7 +129,7 @@ func CreateModelMeta(c *gin.Context) {
 	}
 	m.ModelName = strings.TrimSpace(m.ModelName)
 	if m.ModelName == "" {
-		common.ApiErrorMsg(c, "模型名称不能为空")
+		common.ApiErrorI18n(c, i18n.MsgModelNameEmpty)
 		return
 	}
 	// 名称冲突检查
@@ -136,7 +137,7 @@ func CreateModelMeta(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	} else if dup {
-		common.ApiErrorMsg(c, "模型名称已存在")
+		common.ApiErrorI18n(c, i18n.MsgModelNameExists)
 		return
 	}
 
@@ -159,7 +160,7 @@ func UpdateModelMeta(c *gin.Context) {
 		return
 	}
 	if m.Id == 0 {
-		common.ApiErrorMsg(c, "缺少模型 ID")
+		common.ApiErrorI18n(c, i18n.MsgModelIdMissing)
 		return
 	}
 
@@ -172,7 +173,7 @@ func UpdateModelMeta(c *gin.Context) {
 	} else {
 		m.ModelName = strings.TrimSpace(m.ModelName)
 		if m.ModelName == "" {
-			common.ApiErrorMsg(c, "模型名称不能为空")
+			common.ApiErrorI18n(c, i18n.MsgModelNameEmpty)
 			return
 		}
 		// 名称冲突检查
@@ -180,7 +181,7 @@ func UpdateModelMeta(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		} else if dup {
-			common.ApiErrorMsg(c, "模型名称已存在")
+			common.ApiErrorI18n(c, i18n.MsgModelNameExists)
 			return
 		}
 
@@ -213,7 +214,7 @@ func DeleteModelMeta(c *gin.Context) {
 		return
 	}
 	if removePricing && c.GetInt("role") != common.RoleRootUser {
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "Model pricing is managed by a super administrator."})
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": i18n.T(c, i18n.MsgModelPricingRootOnly)})
 		return
 	}
 	result, err := model.DeleteModelMetadata([]int{id}, removeFromChannels, removePricing)
@@ -241,7 +242,7 @@ func BatchDeleteModelMeta(c *gin.Context) {
 		return
 	}
 	if request.RemovePricing && c.GetInt("role") != common.RoleRootUser {
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": "Model pricing is managed by a super administrator."})
+		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": i18n.T(c, i18n.MsgModelPricingRootOnly)})
 		return
 	}
 	result, err := model.DeleteModelMetadata(request.ModelIDs, request.RemoveFromChannels, request.RemovePricing)

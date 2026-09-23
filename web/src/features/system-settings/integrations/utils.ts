@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { consoleJsonErrorText } from '../utils/json-error-text'
+
 export function removeTrailingSlash(value: string) {
   const trimmed = value.trim()
   if (!trimmed) return ''
@@ -42,55 +44,8 @@ export function normalizeJsonForComparison(value: string) {
   }
 }
 
-function extractErrorPosition(
-  error: unknown,
-  jsonString: string
-): { line?: number; column?: number } {
-  if (!(error instanceof Error)) return {}
-
-  const message = error.message
-  const positionMatch = message.match(/at position (\d+)/i)
-
-  if (positionMatch) {
-    const position = Number.parseInt(positionMatch[1], 10)
-    const lines = jsonString.substring(0, position).split('\n')
-    return {
-      line: lines.length,
-      column: (lines.at(-1) ?? '').length + 1,
-    }
-  }
-
-  const lineColMatch = message.match(/at line (\d+) column (\d+)/i)
-  if (lineColMatch) {
-    return {
-      line: Number.parseInt(lineColMatch[1], 10),
-      column: Number.parseInt(lineColMatch[2], 10),
-    }
-  }
-
-  return {}
-}
-
 function formatJsonError(error: unknown, jsonString: string): string {
-  if (!(error instanceof Error)) return 'Invalid JSON'
-
-  const position = extractErrorPosition(error, jsonString)
-  const message = error.message
-
-  const isMissingCommaError =
-    message.includes("Expected ','") ||
-    message.includes('Expected property name') ||
-    message.includes('Unexpected string')
-
-  if (position.line && position.column) {
-    let hint = ''
-    if (isMissingCommaError && position.line > 1) {
-      hint = ` (check line ${position.line - 1} for missing comma)`
-    }
-    return `Error at line ${position.line}, column ${position.column}: ${message}${hint}`
-  }
-
-  return message
+  return consoleJsonErrorText(error, jsonString)
 }
 
 export function isValidJson(

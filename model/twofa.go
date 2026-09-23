@@ -38,7 +38,7 @@ type TwoFABackupCode struct {
 // GetTwoFAByUserId 根据用户ID获取2FA设置
 func GetTwoFAByUserId(userId int) (*TwoFA, error) {
 	if userId == 0 {
-		return nil, errors.New("用户ID不能为空")
+		return nil, common.Localized("twofa.user_id_empty")
 	}
 
 	var twoFA TwoFA
@@ -66,7 +66,7 @@ func IsTwoFAEnabled(userId int) (bool, error) {
 // enrollment. Enabling a factor must use EnableWithAuthVersion.
 func (t *TwoFA) CreatePendingTwoFASetup() error {
 	if t == nil || t.UserId <= 0 || t.IsEnabled {
-		return errors.New("无效的2FA待验证设置")
+		return common.Localized("twofa.pending_invalid")
 	}
 	// 检查用户是否已存在2FA设置
 	existing, err := GetTwoFAByUserId(t.UserId)
@@ -74,14 +74,14 @@ func (t *TwoFA) CreatePendingTwoFASetup() error {
 		return err
 	}
 	if existing != nil {
-		return errors.New("用户已存在2FA设置")
+		return common.Localized("twofa.already_exists")
 	}
 
 	// 验证用户存在
 	var user User
 	if err := DB.First(&user, t.UserId).Error; err != nil {
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			return errors.New("用户不存在")
+			return common.Localized("user.not_exists")
 		}
 		return err
 	}
@@ -91,7 +91,7 @@ func (t *TwoFA) CreatePendingTwoFASetup() error {
 
 func (t *TwoFA) updateUsageState() error {
 	if t.Id == 0 {
-		return errors.New("2FA记录ID不能为空")
+		return common.Localized("twofa.record_id_empty")
 	}
 	return DB.Model(&TwoFA{}).Where("id = ?", t.Id).Updates(map[string]interface{}{
 		"failed_attempts": t.FailedAttempts,
@@ -104,7 +104,7 @@ func (t *TwoFA) updateUsageState() error {
 // must use DisableTwoFAWithAuthVersion.
 func (t *TwoFA) DeletePendingTwoFASetup() error {
 	if t == nil || t.Id == 0 || t.UserId <= 0 {
-		return errors.New("2FA记录ID不能为空")
+		return common.Localized("twofa.record_id_empty")
 	}
 
 	return DB.Transaction(func(tx *gorm.DB) error {
@@ -131,7 +131,7 @@ func (t *TwoFA) ResetFailedAttempts() error {
 // IncrementFailedAttempts 增加失败尝试次数
 func (t *TwoFA) IncrementFailedAttempts() error {
 	if t.Id == 0 {
-		return errors.New("2FA记录ID不能为空")
+		return common.Localized("twofa.record_id_empty")
 	}
 
 	const maxUpdateRetries = 5
@@ -173,7 +173,7 @@ func (t *TwoFA) IncrementFailedAttempts() error {
 		return nil
 	}
 
-	return errors.New("更新2FA失败次数冲突，请重试")
+	return common.Localized("twofa.update_attempts_conflict")
 }
 
 // IsLocked 检查账户是否被锁定
@@ -236,7 +236,7 @@ func ReplaceBackupCodesWithAuthVersion(userId int, codes []string) error {
 // ValidateBackupCode 验证并使用备用码
 func ValidateBackupCode(userId int, code string) (bool, error) {
 	if !common.ValidateBackupCode(code) {
-		return false, errors.New("验证码或备用码不正确")
+		return false, common.Localized("twofa.code_invalid")
 	}
 
 	normalizedCode := common.NormalizeBackupCode(code)
@@ -302,7 +302,7 @@ func DisableTwoFAWithAuthVersion(userId int) error {
 // authentication version so pre-enrollment sessions cannot remain valid.
 func (t *TwoFA) EnableWithAuthVersion() error {
 	if t == nil || t.Id == 0 || t.UserId == 0 {
-		return errors.New("2FA记录ID不能为空")
+		return common.Localized("twofa.record_id_empty")
 	}
 	if err := DB.Transaction(func(tx *gorm.DB) error {
 		var pending TwoFA
@@ -337,7 +337,7 @@ func (t *TwoFA) EnableWithAuthVersion() error {
 func (t *TwoFA) ValidateTOTPAndUpdateUsage(code string) (bool, error) {
 	// 检查是否被锁定
 	if t.IsLocked() {
-		return false, fmt.Errorf("账户已被锁定，请在%v后重试", t.LockedUntil.Format("2006-01-02 15:04:05"))
+		return false, common.Localized("twofa.lockout", map[string]any{"Until": t.LockedUntil.Format("2006-01-02 15:04:05")})
 	}
 
 	// 验证TOTP码
@@ -366,7 +366,7 @@ func (t *TwoFA) ValidateTOTPAndUpdateUsage(code string) (bool, error) {
 func (t *TwoFA) ValidateBackupCodeAndUpdateUsage(code string) (bool, error) {
 	// 检查是否被锁定
 	if t.IsLocked() {
-		return false, fmt.Errorf("账户已被锁定，请在%v后重试", t.LockedUntil.Format("2006-01-02 15:04:05"))
+		return false, common.Localized("twofa.lockout", map[string]any{"Until": t.LockedUntil.Format("2006-01-02 15:04:05")})
 	}
 
 	// 验证备用码

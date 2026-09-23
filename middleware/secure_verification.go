@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
@@ -26,24 +27,24 @@ func SecureVerificationRequired() gin.HandlerFunc {
 func RequireSecurityProof(c *gin.Context, requiredScope string, allowedMethods []string) bool {
 	identity, ok := GetSessionAuthIdentity(c)
 	if !ok {
-		securityProofError(c, "SECURITY_PROOF_INVALID", "安全验证状态无效")
+		securityProofError(c, "SECURITY_PROOF_INVALID", i18n.T(c, i18n.MsgSecureInvalid))
 		return false
 	}
 	raw := strings.TrimSpace(c.GetHeader("X-Security-Proof"))
 	if raw == "" {
-		securityProofError(c, "SECURITY_PROOF_REQUIRED", "需要安全验证")
+		securityProofError(c, "SECURITY_PROOF_REQUIRED", i18n.T(c, i18n.MsgSecureRequired))
 		return false
 	}
 	if _, err := service.VerifySecurityProof(raw, identity, requiredScope, allowedMethods); err != nil {
 		switch {
 		case errors.Is(err, service.ErrAuthTokenExpired):
-			securityProofError(c, "SECURITY_PROOF_EXPIRED", "安全验证已过期")
+			securityProofError(c, "SECURITY_PROOF_EXPIRED", i18n.T(c, i18n.MsgSecureExpired))
 		case errors.Is(err, service.ErrProofScope):
-			securityProofError(c, "SECURITY_PROOF_SCOPE_MISMATCH", "安全验证范围不匹配")
+			securityProofError(c, "SECURITY_PROOF_SCOPE_MISMATCH", i18n.T(c, i18n.MsgSecureScopeMismatch))
 		case errors.Is(err, service.ErrProofMethod):
-			securityProofError(c, "SECURITY_PROOF_METHOD_MISMATCH", "安全验证方式不匹配")
+			securityProofError(c, "SECURITY_PROOF_METHOD_MISMATCH", i18n.T(c, i18n.MsgSecureMethodMismatch))
 		default:
-			securityProofError(c, "SECURITY_PROOF_INVALID", "安全验证状态无效")
+			securityProofError(c, "SECURITY_PROOF_INVALID", i18n.T(c, i18n.MsgSecureInvalid))
 		}
 		return false
 	}

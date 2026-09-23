@@ -58,7 +58,7 @@ func rejectExhaustedPluginSubmit(c *gin.Context) bool {
 	abortWithOpenAiMessage(
 		c,
 		http.StatusForbidden,
-		common.TranslateMessage(c, i18n.MsgQuotaInsufficient),
+		i18n.ProtocolMessage(i18n.MsgQuotaInsufficient),
 		types.ErrorCodePreConsumeTokenQuotaFailed,
 	)
 	return true

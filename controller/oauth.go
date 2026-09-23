@@ -29,11 +29,13 @@ type oauthStateRequest struct {
 	Intent   string `json:"intent"`
 	Aff      string `json:"aff,omitempty"`
 	Redirect string `json:"redirect,omitempty"`
+	Language string `json:"language,omitempty"`
 }
 
 type oauthFlowPayload struct {
 	AffiliateCode string `json:"affiliate_code,omitempty"`
 	Redirect      string `json:"redirect,omitempty"`
+	Language      string `json:"language,omitempty"`
 }
 
 func buildOAuthUsername(provider oauth.Provider, oauthUser *oauth.OAuthUser) string {
@@ -43,6 +45,84 @@ func buildOAuthUsername(provider oauth.Provider, oauthUser *oauth.OAuthUser) str
 // providerParams returns map with Provider key for i18n templates
 func providerParams(name string) map[string]any {
 	return map[string]any{"Provider": name}
+}
+
+func respondOAuthDisabled(c *gin.Context, provider string) {
+	common.ApiErrorI18n(c, i18n.MsgOAuthNotEnabled, providerParams(provider))
+}
+
+func respondOAuthAlreadyBound(c *gin.Context, provider string) {
+	common.ApiErrorI18n(c, i18n.MsgOAuthAlreadyBound, providerParams(provider))
+}
+
+func respondOAuthUserDeleted(c *gin.Context) {
+	common.ApiErrorI18n(c, i18n.MsgOAuthUserDeleted)
+}
+
+func respondOAuthUserBanned(c *gin.Context) {
+	common.ApiErrorI18n(c, i18n.MsgOAuthUserBanned)
+}
+
+func respondRegisterDisabled(c *gin.Context) {
+	common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
+}
+
+func respondOAuthStateInvalid(c *gin.Context) {
+	c.JSON(http.StatusForbidden, gin.H{
+		"success": false,
+		"message": i18n.T(c, i18n.MsgOAuthStateInvalid),
+	})
+}
+
+func oauthInvalidParams() error {
+	return common.Localized(i18n.MsgInvalidParams)
+}
+
+func oauthConnectFailed(provider string) error {
+	return common.Localized(i18n.MsgOAuthConnectFailed, providerParams(provider))
+}
+
+func oauthTokenFailed(provider string) error {
+	return common.Localized(i18n.MsgOAuthTokenFailed, providerParams(provider))
+}
+
+func oauthUserInfoEmpty(provider string) error {
+	return common.Localized(i18n.MsgOAuthUserInfoEmpty, providerParams(provider))
+}
+
+func oauthServerAddressRequired() error {
+	return common.Localized(i18n.MsgOAuthServerAddressRequired)
+}
+
+func oauthGetUserError() error {
+	return common.Localized(i18n.MsgOAuthGetUserErr)
+}
+
+func captureOAuthInterfaceLanguage(c *gin.Context, requested string) string {
+	if canonical, ok := i18n.RecognizedLang(requested); ok {
+		return canonical
+	}
+	return i18n.GetLangFromContext(c)
+}
+
+func oauthSessionInterfaceLanguage(c *gin.Context) string {
+	if c == nil {
+		return ""
+	}
+	rawSession, exists := c.Get(sessions.DefaultKey)
+	if !exists {
+		return ""
+	}
+	session, ok := rawSession.(sessions.Session)
+	if !ok || session == nil {
+		return ""
+	}
+	if raw := session.Get("oauth_language"); raw != nil {
+		if value, ok := raw.(string); ok {
+			return value
+		}
+	}
+	return ""
 }
 
 func isOAuthStateProviderAllowed(provider string) bool {
@@ -83,16 +163,21 @@ func GenerateOAuthCode(c *gin.Context) {
 	if request.Intent == model.AuthFlowIntentBind {
 		identity, ok := middleware.GetSessionAuthIdentity(c)
 		if !ok {
-			c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "绑定操作需要先登录"})
+			c.JSON(http.StatusUnauthorized, gin.H{
+				"success": false,
+				"message": i18n.T(c, i18n.MsgOAuthBindRequiresLogin),
+			})
 			return
 		}
 		userID = identity.UserID
 		sessionID = identity.SessionID
 	}
 
+	lang := captureOAuthInterfaceLanguage(c, request.Language)
 	payload, err := common.Marshal(oauthFlowPayload{
 		AffiliateCode: strings.TrimSpace(request.Aff),
 		Redirect:      redirectPath,
+		Language:      lang,
 	})
 	if err != nil {
 		common.ApiError(c, err)
@@ -115,6 +200,7 @@ func GenerateOAuthCode(c *gin.Context) {
 	if strings.EqualFold(request.Provider, "wechat") && request.Intent == model.AuthFlowIntentLogin {
 		session := sessions.Default(c)
 		session.Set("oauth_login_state", state)
+		session.Set("oauth_language", lang)
 		if err := session.Save(); err != nil {
 			common.SysError("save wechat oauth state failed: " + err.Error())
 			common.ApiErrorI18n(c, i18n.MsgDatabaseError)
@@ -158,6 +244,7 @@ func generateLegacyOAuthState(c *gin.Context) {
 		session.Set("aff", affCode)
 	}
 	session.Set("oauth_state", state)
+	session.Set("oauth_language", i18n.GetLangFromContext(c))
 	err := session.Save()
 	if err != nil {
 		common.ApiError(c, err)
@@ -198,6 +285,7 @@ func HandleOAuth(c *gin.Context) {
 		})
 		return
 	}
+	pinStoredOAuthLanguage(c, pendingFlow.Payload)
 
 	consumeMatch := model.AuthFlowMatch{
 		Purpose:  model.AuthFlowPurposeOAuth,
@@ -239,14 +327,7 @@ func HandleOAuth(c *gin.Context) {
 			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": i18n.T(c, i18n.MsgOAuthStateInvalid)})
 			return
 		}
-		errorDescription := c.Query("error_description")
-		if errorDescription == "" {
-			errorDescription = errorCode
-		}
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": errorDescription,
-		})
+		respondOAuthProviderQueryError(c)
 		return
 	}
 	if pendingFlow.Intent == model.AuthFlowIntentBind {
@@ -280,7 +361,7 @@ func HandleOAuth(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	user, err := findOrCreateOAuthUser(c, pendingFlow.Provider, provider, oauthUser, payload.AffiliateCode)
+	user, err := findOrCreateOAuthUser(c, pendingFlow.Provider, provider, oauthUser, payload.AffiliateCode, payload.Language)
 	if err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
@@ -317,11 +398,22 @@ func HandleOAuth(c *gin.Context) {
 	setupLoginOrRequire2FAWithExtra(user, c, extraData)
 }
 
+func pinStoredOAuthLanguage(c *gin.Context, payloadRaw string) {
+	var payload oauthFlowPayload
+	if err := common.UnmarshalJsonStr(payloadRaw, &payload); err != nil {
+		return
+	}
+	i18n.PinRequestLanguage(c, payload.Language)
+}
+
 func handleLegacyOAuth(c *gin.Context, providerName string, provider oauth.Provider, state string) bool {
 	session := sessions.Default(c)
 	if state == "" || session.Get("oauth_state") == nil || state != session.Get("oauth_state").(string) {
 		return false
 	}
+	// Pin only after the legacy state matches. A stale oauth_language must not
+	// override Accept-Language when this request is rejected as invalid.
+	i18n.PinRequestLanguage(c, oauthSessionInterfaceLanguage(c))
 	if session.Get("username") != nil {
 		identity, ok, err := middleware.GetLegacySessionAuthIdentity(c)
 		if err != nil || !ok {
@@ -336,11 +428,7 @@ func handleLegacyOAuth(c *gin.Context, providerName string, provider oauth.Provi
 		return true
 	}
 	if errorCode := c.Query("error"); errorCode != "" {
-		errorDescription := c.Query("error_description")
-		if errorDescription == "" {
-			errorDescription = errorCode
-		}
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": errorDescription})
+		respondOAuthProviderQueryError(c)
 		return true
 	}
 	code := c.Query("code")
@@ -360,7 +448,7 @@ func handleLegacyOAuth(c *gin.Context, providerName string, provider oauth.Provi
 			affiliateCode = value
 		}
 	}
-	user, err := findOrCreateOAuthUser(c, providerName, provider, oauthUser, affiliateCode)
+	user, err := findOrCreateOAuthUser(c, providerName, provider, oauthUser, affiliateCode, oauthSessionInterfaceLanguage(c))
 	if err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
@@ -592,7 +680,7 @@ func handleLegacyOAuthBind(c *gin.Context, providerName string, provider oauth.P
 }
 
 // findOrCreateOAuthUser finds existing user or creates new user
-func findOrCreateOAuthUser(c *gin.Context, providerName string, provider oauth.Provider, oauthUser *oauth.OAuthUser, affiliateCode string) (*model.User, error) {
+func findOrCreateOAuthUser(c *gin.Context, providerName string, provider oauth.Provider, oauthUser *oauth.OAuthUser, affiliateCode, language string) (*model.User, error) {
 	user := &model.User{}
 
 	// Check if user already exists with new ID
@@ -656,6 +744,10 @@ func findOrCreateOAuthUser(c *gin.Context, providerName string, provider oauth.P
 	}
 	user.Role = common.RoleCommonUser
 	user.Status = common.UserStatusEnabled
+	if language == "" {
+		language = oauthSessionInterfaceLanguage(c)
+	}
+	applyStoredInterfaceLanguageToNewUser(user, language)
 
 	// Handle affiliate code
 	referralCode := referralService.ResolveAffiliateCode(affiliateCode, c.Query("aff"), referralCookieValue(c))
@@ -790,6 +882,17 @@ func (e *OAuthEmailAlreadyTakenError) Error() string {
 	return "email is already in use"
 }
 
+func respondOAuthProviderQueryError(c *gin.Context) {
+	code := strings.ToLower(strings.TrimSpace(c.Query("error")))
+	common.SysLog("oauth provider returned error code " + code)
+	switch code {
+	case "access_denied":
+		common.ApiErrorI18n(c, i18n.MsgOAuthAuthorizationCancelled)
+	default:
+		common.ApiErrorI18n(c, i18n.MsgOAuthAuthorizationFailed)
+	}
+}
+
 // handleOAuthError handles OAuth errors and returns translated message
 func handleOAuthError(c *gin.Context, err error) {
 	switch e := err.(type) {
@@ -800,6 +903,10 @@ func handleOAuthError(c *gin.Context, err error) {
 			common.ApiErrorI18n(c, e.MsgKey)
 		}
 	case *oauth.AccessDeniedError:
+		if e.UseCatalogDefault() {
+			common.ApiErrorI18n(c, i18n.MsgOAuthAccessDenied)
+			return
+		}
 		common.ApiErrorMsg(c, e.Message)
 	case *oauth.TrustLevelError:
 		common.ApiErrorI18n(c, i18n.MsgOAuthTrustLevelLow)

@@ -55,6 +55,8 @@ import {
 } from '../../api'
 import type { User } from '../../types'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 interface Props {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -300,7 +302,7 @@ export function UserBindingDialog(props: Props) {
         await fetchData()
         props.onUnbindSuccess?.()
       } else {
-        toast.error(res?.message || t('Unbind failed'))
+        toast.error(localizeConsoleErrorText(res?.message, 'Unbind failed'))
       }
     } catch {
       toast.error(t('Unbind failed'))

@@ -29,6 +29,8 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { disable2FA } from '@/lib/api'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 // ============================================================================
 // Two-FA Disable Dialog Component
 // ============================================================================
@@ -72,7 +74,7 @@ export function TwoFADisableDialog({
         setCode('')
         setConfirmed(false)
       } else {
-        toast.error(response.message || t('Failed to disable 2FA'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to disable 2FA'))
       }
     } catch {
       toast.error(t('Failed to disable 2FA'))

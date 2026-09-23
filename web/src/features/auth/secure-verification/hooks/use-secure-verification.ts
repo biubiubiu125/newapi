@@ -34,6 +34,8 @@ import type {
   VerificationMethods,
 } from '../types'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type ApiCall = ((proofToken?: string) => Promise<unknown>) | null
 
 interface InternalState extends SecureVerificationState {
@@ -173,9 +175,7 @@ export function useSecureVerification(
         return result
       } catch (error) {
         const message =
-          error instanceof Error
-            ? error.message
-            : i18next.t('Verification failed')
+          localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Verification failed')
         toast.error(message)
         onError?.(error)
         throw error
@@ -208,7 +208,12 @@ export function useSecureVerification(
       } catch (error) {
         if (isVerificationRequiredError(error)) {
           const info = extractVerificationInfo(error)
-          toast.info(info.message)
+          toast.info(
+            localizeConsoleErrorText(
+              info.message,
+              'Secure verification is required'
+            )
+          )
           await startVerification(apiCall, config)
           return null
         }

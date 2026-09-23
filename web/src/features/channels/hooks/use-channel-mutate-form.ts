@@ -36,6 +36,8 @@ import {
 } from '../lib'
 import type { Channel } from '../types'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type UseChannelMutateFormParams = {
   currentRow?: Channel | null
   isEditing: boolean
@@ -139,7 +141,7 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
           payloadWithKeyMode
         )
         if (!response.success) {
-          throw new Error(response.message || t(ERROR_MESSAGES.UPDATE_FAILED))
+          throw new Error(localizeConsoleErrorText(response.message, ERROR_MESSAGES.UPDATE_FAILED))
         }
         let warning: string | undefined
         if (
@@ -166,8 +168,7 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
                   'Channel saved, but status update failed: {{reason}}',
                   {
                     reason:
-                      statusResponse.message ||
-                      t('No permission to perform this action'),
+                      localizeConsoleErrorText(statusResponse.message, 'No permission to perform this action'),
                   }
                 )
               }
@@ -175,9 +176,10 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
               warning = t(
                 'Channel saved, but status update failed: {{reason}}',
                 {
-                  reason:
-                    getErrorMessage(error) ||
-                    t('No permission to perform this action'),
+                  reason: localizeConsoleErrorText(
+                    getErrorMessage(error),
+                    'No permission to perform this action'
+                  ),
                 }
               )
             }
@@ -192,7 +194,7 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
       const payload = transformFormDataToCreatePayload(data)
       const response = await createChannel(payload)
       if (!response.success) {
-        throw new Error(response.message || t(ERROR_MESSAGES.CREATE_FAILED))
+        throw new Error(localizeConsoleErrorText(response.message, ERROR_MESSAGES.CREATE_FAILED))
       }
       return {
         messageKey: SUCCESS_MESSAGES.CREATED,
@@ -206,7 +208,12 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
       props.onSuccess()
     },
     onError: (error: unknown) => {
-      toast.error(getErrorMessage(error) || t(ERROR_MESSAGES.CREATE_FAILED))
+      toast.error(
+        localizeConsoleErrorText(
+          getErrorMessage(error),
+          ERROR_MESSAGES.CREATE_FAILED
+        )
+      )
     },
   })
 }

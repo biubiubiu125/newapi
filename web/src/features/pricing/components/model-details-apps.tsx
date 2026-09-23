@@ -33,6 +33,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table'
+import { currentIntlLocale } from '@/i18n/languages'
 import { cn } from '@/lib/utils'
 
 import {
@@ -42,10 +43,12 @@ import {
 } from '../lib/mock-stats'
 import type { PricingModel } from '../types'
 
-const COMPACT_NUMBER = new Intl.NumberFormat(undefined, {
-  notation: 'compact',
-  maximumFractionDigits: 1,
-})
+function formatCompactNumber(value: number): string {
+  return new Intl.NumberFormat(currentIntlLocale(), {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(value)
+}
 
 function RankBadge(props: { rank: number }) {
   const rank = props.rank
@@ -147,7 +150,7 @@ export function ModelDetailsApps(props: { model: PricingModel }) {
             {t('Monthly tokens')}
           </div>
           <div className='text-foreground mt-1 font-mono text-lg font-semibold tabular-nums'>
-            {COMPACT_NUMBER.format(totalMonthlyTokens)}
+            {formatCompactNumber(totalMonthlyTokens)}
           </div>
           <p className='text-muted-foreground/70 text-[11px]'>
             {t('Aggregated across the apps below')}

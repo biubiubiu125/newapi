@@ -62,6 +62,8 @@ import { UserBindingDialog } from './dialogs/user-binding-dialog'
 import { UserRechargeRecordsDialog } from './dialogs/user-recharge-records-dialog'
 import { useUsers } from './users-provider'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 interface DataTableRowActionsProps {
   row: Row<User>
 }
@@ -96,7 +98,9 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         triggerRefresh()
       } else {
         toast.error(
-          result.message || t('Failed to {{action}} user', { action })
+          result.message
+            ? localizeConsoleErrorText(result.message, 'Operation failed')
+            : t('Failed to {{action}} user', { action })
         )
       }
     } catch {
@@ -111,7 +115,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         toast.success(t('Passkey reset successfully'))
         triggerRefresh()
       } else {
-        toast.error(result.message || t('Failed to reset Passkey'))
+        toast.error(localizeConsoleErrorText(result.message, 'Failed to reset Passkey'))
       }
     } catch {
       toast.error(t(ERROR_MESSAGES.UNEXPECTED))
@@ -127,7 +131,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         toast.success(t('Two-factor authentication reset'))
         triggerRefresh()
       } else {
-        toast.error(result.message || t('Failed to reset 2FA'))
+        toast.error(localizeConsoleErrorText(result.message, 'Failed to reset 2FA'))
       }
     } catch {
       toast.error(t(ERROR_MESSAGES.UNEXPECTED))
@@ -146,7 +150,7 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         toast.success(t('Affiliate access enabled'))
         triggerRefresh()
       } else {
-        toast.error(result.message || t('Failed to enable affiliate access'))
+        toast.error(localizeConsoleErrorText(result.message, 'Failed to enable affiliate access'))
       }
     } catch {
       toast.error(t(ERROR_MESSAGES.UNEXPECTED))

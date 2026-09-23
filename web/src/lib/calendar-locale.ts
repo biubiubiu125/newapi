@@ -33,6 +33,44 @@ const calendarLocales: Record<InterfaceLanguageCode, typeof enUS> = {
   vi,
 }
 
+const weekdayColumnMessageKeys = [
+  'Sun',
+  'Mon',
+  'Tue',
+  'Wed',
+  'Thu',
+  'Fri',
+  'Sat',
+] as const
+
 export function resolveDayPickerLocale(language?: string | null): typeof enUS {
   return calendarLocales[normalizeInterfaceLanguage(language)]
+}
+
+export function resolveWeekStartsOn(language?: string | null): number {
+  const start = resolveDayPickerLocale(language).options?.weekStartsOn
+  if (typeof start !== 'number' || start < 0 || start > 6) return 0
+  return start
+}
+
+export function weekdayColumnKeys(weekStartsOn: number): string[] {
+  const start = normalizeWeekdayIndex(weekStartsOn)
+  return [
+    ...weekdayColumnMessageKeys.slice(start),
+    ...weekdayColumnMessageKeys.slice(0, start),
+  ]
+}
+
+export function monthGridLeadingDays(
+  firstDayOfWeek: number,
+  weekStartsOn: number
+): number {
+  return (
+    normalizeWeekdayIndex(firstDayOfWeek) - normalizeWeekdayIndex(weekStartsOn) + 7
+  ) % 7
+}
+
+function normalizeWeekdayIndex(day: number): number {
+  if (!Number.isFinite(day)) return 0
+  return ((Math.trunc(day) % 7) + 7) % 7
 }

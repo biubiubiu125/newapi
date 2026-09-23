@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -21,6 +22,39 @@ func isSubscriptionPreConsumeInsufficientError(err error) bool {
 	return errors.Is(err, model.ErrNoActiveSubscription) ||
 		errors.Is(err, model.ErrNoActiveSubscriptionGrantsGroup) ||
 		errors.Is(err, model.ErrSubscriptionQuotaInsufficient)
+}
+
+func insufficientUserQuotaProtocolError(remain int64) *types.NewAPIError {
+	return types.NewErrorWithStatusCode(
+		errors.New(i18n.ProtocolMessage(i18n.MsgProtocolInsufficientUserQuota, map[string]any{"Quota": logger.FormatQuota(remain)})),
+		types.ErrorCodeInsufficientUserQuota,
+		http.StatusForbidden,
+		types.ErrOptionWithSkipRetry(),
+		types.ErrOptionWithNoRecordErrorLog(),
+	)
+}
+
+func insufficientSubscriptionQuotaProtocolError() *types.NewAPIError {
+	return types.NewErrorWithStatusCode(
+		errors.New(i18n.ProtocolMessage(i18n.MsgProtocolInsufficientSubscriptionQuota)),
+		types.ErrorCodeInsufficientUserQuota,
+		http.StatusForbidden,
+		types.ErrOptionWithSkipRetry(),
+		types.ErrOptionWithNoRecordErrorLog(),
+	)
+}
+
+func preConsumeQuotaProtocolError(remain int64, required int) *types.NewAPIError {
+	return types.NewErrorWithStatusCode(
+		errors.New(i18n.ProtocolMessage(i18n.MsgProtocolPreConsumeFailed, map[string]any{
+			"Quota":    logger.FormatQuota(remain),
+			"Required": logger.FormatQuota(required),
+		})),
+		types.ErrorCodeInsufficientUserQuota,
+		http.StatusForbidden,
+		types.ErrOptionWithSkipRetry(),
+		types.ErrOptionWithNoRecordErrorLog(),
+	)
 }
 
 // ---------------------------------------------------------------------------
@@ -384,13 +418,10 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 			if quotaErr != nil {
 				userQuota = 0
 			}
-			return types.NewErrorWithStatusCode(
-				fmt.Errorf("用户额度不足, 剩余额度: %s", logger.FormatQuota(userQuota)),
-				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
-				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			return insufficientUserQuotaProtocolError(userQuota)
 		}
 		if isSubscriptionPreConsumeInsufficientError(err) {
-			return types.NewErrorWithStatusCode(fmt.Errorf("订阅额度不足或未配置订阅: %w", err), types.ErrorCodeInsufficientUserQuota, http.StatusForbidden, types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			return insufficientSubscriptionQuotaProtocolError()
 		}
 		return types.NewError(err, types.ErrorCodeUpdateDataError, types.ErrOptionWithSkipRetry())
 	}
@@ -425,13 +456,7 @@ func (s *BillingSession) reserveFunding(delta int) error {
 		return nil
 	case *SubscriptionFunding:
 		if err := model.PostConsumeUserSubscriptionDelta(funding.subscriptionId, int64(delta)); err != nil {
-			return types.NewErrorWithStatusCode(
-				fmt.Errorf("订阅额度不足或未配置订阅: %s", err.Error()),
-				types.ErrorCodeInsufficientUserQuota,
-				http.StatusForbidden,
-				types.ErrOptionWithSkipRetry(),
-				types.ErrOptionWithNoRecordErrorLog(),
-			)
+			return insufficientSubscriptionQuotaProtocolError()
 		}
 		return nil
 	default:
@@ -567,16 +592,10 @@ func NewBillingSession(c *gin.Context, relayInfo *relaycommon.RelayInfo, preCons
 			return nil, types.NewError(err, types.ErrorCodeQueryDataError, types.ErrOptionWithSkipRetry())
 		}
 		if userQuota <= 0 {
-			return nil, types.NewErrorWithStatusCode(
-				fmt.Errorf("用户额度不足, 剩余额度: %s", logger.FormatQuota(userQuota)),
-				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
-				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			return nil, insufficientUserQuotaProtocolError(userQuota)
 		}
 		if userQuota-int64(preConsumedQuota) < 0 {
-			return nil, types.NewErrorWithStatusCode(
-				fmt.Errorf("预扣费额度失败, 用户剩余额度: %s, 需要预扣费额度: %s", logger.FormatQuota(userQuota), logger.FormatQuota(preConsumedQuota)),
-				types.ErrorCodeInsufficientUserQuota, http.StatusForbidden,
-				types.ErrOptionWithSkipRetry(), types.ErrOptionWithNoRecordErrorLog())
+			return nil, preConsumeQuotaProtocolError(userQuota, preConsumedQuota)
 		}
 		relayInfo.UserQuota = userQuota
 

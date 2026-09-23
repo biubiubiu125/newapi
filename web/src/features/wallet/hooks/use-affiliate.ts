@@ -22,6 +22,7 @@ import { toast } from 'sonner'
 
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { getSelf } from '@/lib/api'
+import { currentConsoleFailureText } from '@/lib/console-failure-text'
 
 import { getAffiliateCode, transferAffiliateQuota } from '../api'
 import { generateAffiliateLink } from '../lib'
@@ -68,12 +69,14 @@ export function useAffiliate() {
       const response = await transferAffiliateQuota({ quota })
 
       if (response.success) {
-        toast.success(response.message || i18next.t('Transfer successful'))
+        toast.success(
+          currentConsoleFailureText(response.message, 'Transfer successful')
+        )
         await getSelf()
         return true
       }
 
-      toast.error(response.message || i18next.t('Transfer failed'))
+      toast.error(currentConsoleFailureText(response.message, 'Transfer failed'))
       return false
     } catch {
       toast.error(i18next.t('Transfer failed'))

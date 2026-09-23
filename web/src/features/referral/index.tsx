@@ -41,6 +41,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Tabs, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { currentIntlLocale } from '@/i18n/languages'
 import { copyToClipboard } from '@/lib/copy-to-clipboard'
 import { formatTimestamp } from '@/lib/format'
 
@@ -66,6 +67,8 @@ import type {
   ReferralSummary,
   ReferralWithdrawal,
 } from './types'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 const route = getRouteApi('/_authenticated/referral/$section')
 
@@ -114,7 +117,7 @@ type WithdrawalSubmission = {
 
 function formatMoney(value: number): string {
   const amount = Number.isFinite(value) ? value : 0
-  const formatted = new Intl.NumberFormat(undefined, {
+  const formatted = new Intl.NumberFormat(currentIntlLocale(), {
     minimumFractionDigits: 0,
     maximumFractionDigits: Math.abs(amount) >= 1 ? 2 : 4,
   }).format(amount)
@@ -412,7 +415,7 @@ export function Referral() {
         setApplicantNote('')
         await loadBase()
       } else {
-        toast.error(res.message || t('Application failed'))
+        toast.error(localizeConsoleErrorText(res.message, 'Application failed'))
       }
     } finally {
       setApplying(false)
@@ -435,12 +438,12 @@ export function Referral() {
         updateWithdrawForm('qr_image_url', res.data.url)
         toast.success(t('QR code uploaded'))
       } else {
-        toast.error(res.message || t('Upload failed'))
+        toast.error(localizeConsoleErrorText(res.message, 'Upload failed'))
       }
     } catch (error) {
       const message =
         error instanceof Error && error.message ? error.message : ''
-      toast.error(message || t('Upload failed'))
+      toast.error(localizeConsoleErrorText(message, 'Upload failed'))
     } finally {
       uploadingRef.current = false
       setUploading(false)
@@ -605,12 +608,12 @@ export function Referral() {
           params: { section: 'withdrawals' },
         })
       } else {
-        showWithdrawalSubmitError(res.message || t('Withdrawal request failed'))
+        showWithdrawalSubmitError(localizeConsoleErrorText(res.message, 'Withdrawal request failed'))
       }
     } catch (error) {
       const message =
         error instanceof Error && error.message ? error.message : ''
-      showWithdrawalSubmitError(message || t('Withdrawal request failed'))
+      showWithdrawalSubmitError(localizeConsoleErrorText(message, 'Withdrawal request failed'))
     } finally {
       submittingWithdrawalRef.current = false
       setSubmittingWithdrawal(false)
@@ -624,7 +627,7 @@ export function Referral() {
       await loadBase()
       await loadWithdrawals()
     } else {
-      toast.error(res.message || t('Cancel withdrawal failed'))
+      toast.error(localizeConsoleErrorText(res.message, 'Cancel withdrawal failed'))
     }
   }
 

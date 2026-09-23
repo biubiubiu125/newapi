@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 
 	"github.com/shopspring/decimal"
@@ -243,7 +244,7 @@ func GetTopUpByTradeNo(tradeNo string) *TopUp {
 
 func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, targetStatus string) error {
 	if tradeNo == "" {
-		return errors.New("未提供支付单号")
+		return common.Localized(i18n.MsgTopupTradeNoMissing)
 	}
 
 	refCol := "`trade_no`"
@@ -280,7 +281,7 @@ func UpdatePendingTopUpStatus(tradeNo string, expectedPaymentProvider string, ta
 // 进程内的 LockOrder 只是优化，正确性由本函数的数据库行锁保证。
 func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (alreadyDone bool, err error) {
 	if tradeNo == "" {
-		return false, errors.New("未提供支付单号")
+		return false, common.Localized(i18n.MsgTopupTradeNoMissing)
 	}
 
 	refCol := "`trade_no`"
@@ -339,7 +340,7 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 
 func Recharge(referenceId string, customerId string, callerIp string) (err error) {
 	if referenceId == "" {
-		return errors.New("未提供支付单号")
+		return common.Localized(i18n.MsgTopupTradeNoMissing)
 	}
 
 	var quota int64
@@ -574,13 +575,13 @@ func SearchUserTopUps(userId int, keyword string, pageInfo *common.PageInfo) (to
 	if err = query.Limit(searchTopUpCountHardLimit).Count(&total).Error; err != nil {
 		tx.Rollback()
 		common.SysError("failed to count search topups: " + err.Error())
-		return nil, 0, errors.New("搜索充值记录失败")
+		return nil, 0, common.Localized(i18n.MsgTopupSearchFailed)
 	}
 
 	if err = query.Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&topups).Error; err != nil {
 		tx.Rollback()
 		common.SysError("failed to search topups: " + err.Error())
-		return nil, 0, errors.New("搜索充值记录失败")
+		return nil, 0, common.Localized(i18n.MsgTopupSearchFailed)
 	}
 
 	if err = tx.Commit().Error; err != nil {
@@ -614,13 +615,13 @@ func SearchAllTopUps(keyword string, pageInfo *common.PageInfo) (topups []*TopUp
 	if err = query.Limit(searchTopUpCountHardLimit).Count(&total).Error; err != nil {
 		tx.Rollback()
 		common.SysError("failed to count search topups: " + err.Error())
-		return nil, 0, errors.New("搜索充值记录失败")
+		return nil, 0, common.Localized(i18n.MsgTopupSearchFailed)
 	}
 
 	if err = query.Order("id desc").Limit(pageInfo.GetPageSize()).Offset(pageInfo.GetStartIdx()).Find(&topups).Error; err != nil {
 		tx.Rollback()
 		common.SysError("failed to search topups: " + err.Error())
-		return nil, 0, errors.New("搜索充值记录失败")
+		return nil, 0, common.Localized(i18n.MsgTopupSearchFailed)
 	}
 
 	if err = tx.Commit().Error; err != nil {
@@ -632,7 +633,7 @@ func SearchAllTopUps(keyword string, pageInfo *common.PageInfo) (topups []*TopUp
 // ManualCompleteTopUp 管理员手动完成订单并给用户充值
 func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 	if tradeNo == "" {
-		return errors.New("未提供订单号")
+		return common.Localized(i18n.MsgTopupOrderNoMissing)
 	}
 
 	refCol := "`trade_no`"
@@ -649,7 +650,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		topUp := &TopUp{}
 		// 行级锁，避免并发补单
 		if err := lockForUpdate(tx).Where(refCol+" = ?", tradeNo).First(topUp).Error; err != nil {
-			return errors.New("充值订单不存在")
+			return common.Localized(i18n.MsgTopupOrderNotExists)
 		}
 
 		// 幂等处理：已成功直接返回
@@ -658,7 +659,7 @@ func ManualCompleteTopUp(tradeNo string, callerIp string) error {
 		}
 
 		if !topUpStatusAllowsPaymentCompletion(topUp.Status) {
-			return errors.New("订单状态不是待支付、已过期或已失败，无法补单")
+			return common.Localized(i18n.MsgTopupCannotManualSettle)
 		}
 
 		// 计算应充值额度：
@@ -711,7 +712,7 @@ func RechargeCreemWithValidation(referenceId string, customerEmail string, custo
 
 func rechargeCreemWithValidation(referenceId string, customerEmail string, customerName string, providerPayload string, validation PaymentCallbackValidation, callerIp string) (err error) {
 	if referenceId == "" {
-		return errors.New("未提供支付单号")
+		return common.Localized(i18n.MsgTopupTradeNoMissing)
 	}
 
 	var quota int64
@@ -782,7 +783,7 @@ func rechargeCreemWithValidation(referenceId string, customerEmail string, custo
 			errors.Is(err, ErrPaymentCurrencyMismatch) {
 			return err
 		}
-		return errors.New("充值失败，请稍后重试")
+		return common.Localized(i18n.MsgTopupFailed)
 	}
 	syncCreditUserQuotaCache(topUp.UserId, quota, "creem topup")
 
@@ -803,7 +804,7 @@ func RechargeWaffoWithValidation(tradeNo string, providerPayload string, validat
 		validation.ExpectedPaymentProvider = PaymentProviderWaffo
 	}
 	if tradeNo == "" {
-		return errors.New("未提供支付单号")
+		return common.Localized(i18n.MsgTopupTradeNoMissing)
 	}
 	var quotaToAdd int64
 	topUp := &TopUp{}
@@ -863,7 +864,7 @@ func RechargeWaffoWithValidation(tradeNo string, providerPayload string, validat
 			errors.Is(err, ErrPaymentCurrencyMismatch) {
 			return err
 		}
-		return errors.New("充值失败，请稍后重试")
+		return common.Localized(i18n.MsgTopupFailed)
 	}
 	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "waffo topup")
 
@@ -886,7 +887,7 @@ func RechargeWaffoPancakeWithValidation(tradeNo string, providerPayload string, 
 		validation.ExpectedPaymentProvider = PaymentProviderWaffoPancake
 	}
 	if tradeNo == "" {
-		return errors.New("未提供支付单号")
+		return common.Localized(i18n.MsgTopupTradeNoMissing)
 	}
 
 	var quotaToAdd int64
@@ -947,7 +948,7 @@ func RechargeWaffoPancakeWithValidation(tradeNo string, providerPayload string, 
 			errors.Is(err, ErrPaymentCurrencyMismatch) {
 			return err
 		}
-		return errors.New("充值失败，请稍后重试")
+		return common.Localized(i18n.MsgTopupFailed)
 	}
 	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "waffo pancake topup")
 
@@ -1056,7 +1057,7 @@ func RechargeBEpusdt(tradeNo string, providerPayload string, actualPaymentMethod
 
 func RechargeBEpusdtWithValidation(tradeNo string, providerPayload string, validation PaymentCallbackValidation, callerIp string) (err error) {
 	if tradeNo == "" {
-		return errors.New("未提供支付单号")
+		return common.Localized(i18n.MsgTopupTradeNoMissing)
 	}
 
 	var quotaToAdd int64
@@ -1124,7 +1125,7 @@ func RechargeBEpusdtWithValidation(tradeNo string, providerPayload string, valid
 			errors.Is(err, ErrTopUpStatusInvalid) {
 			return err
 		}
-		return errors.New("充值失败，请稍后重试")
+		return common.Localized(i18n.MsgTopupFailed)
 	}
 
 	if quotaToAdd > 0 {

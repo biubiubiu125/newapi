@@ -22,6 +22,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -603,7 +604,7 @@ func validateImageTaskModeRequest(imageRequest *dto.ImageRequest, mode string) e
 		return nil
 	}
 	if *imageRequest.N > 1 {
-		return errors.New("异步任务桥接模式暂不支持 n 大于 1，请拆分为多个图片任务")
+		return errors.New(i18n.ProtocolMessage(i18n.MsgProtocolImageTaskNGtOne))
 	}
 	return nil
 }

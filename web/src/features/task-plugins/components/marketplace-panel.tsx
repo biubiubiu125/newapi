@@ -24,6 +24,7 @@ import { useTranslation } from 'react-i18next'
 import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 import {
   Empty,
   EmptyDescription,
@@ -239,7 +240,12 @@ function MarketplaceSourceSection(props: MarketplaceSourceSectionProps) {
           <AlertDescription>
             {t(
               'The index could not be fetched or parsed: {{message}}. The host may block cross-origin requests.',
-              { message: props.error.message }
+              {
+                message: localizeConsoleErrorText(
+                  props.error.message,
+                  'Request failed'
+                ),
+              }
             )}
           </AlertDescription>
         </Alert>

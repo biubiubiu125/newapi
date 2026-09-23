@@ -23,6 +23,8 @@ import { toast } from 'sonner'
 import { deleteVendor as deleteVendorAPI } from '../api'
 import { vendorsQueryKeys, modelsQueryKeys } from './query-keys'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 // ============================================================================
 // Vendor Actions
 // ============================================================================
@@ -43,11 +45,11 @@ export async function handleDeleteVendor(
       queryClient?.invalidateQueries({ queryKey: modelsQueryKeys.lists() })
       onSuccess?.()
     } else {
-      toast.error(response.message || i18next.t('Failed to delete vendor'))
+      toast.error(localizeConsoleErrorText(response.message, 'Failed to delete vendor'))
     }
   } catch (error: unknown) {
     toast.error(
-      (error as Error)?.message || i18next.t('Failed to delete vendor')
+      localizeConsoleErrorText((error as Error)?.message, 'Failed to delete vendor')
     )
   }
 }

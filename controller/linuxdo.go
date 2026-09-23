@@ -2,7 +2,6 @@ package controller
 
 import (
 	"encoding/base64"
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -29,10 +28,7 @@ type LinuxdoUser struct {
 
 func LinuxDoBind(c *gin.Context) {
 	if !common.LinuxDOOAuthEnabled {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "管理员未开启通过 Linux DO 登录以及注册",
-		})
+		respondOAuthDisabled(c, "Linux DO")
 		return
 	}
 
@@ -48,10 +44,7 @@ func LinuxDoBind(c *gin.Context) {
 	}
 
 	if model.IsLinuxDOIdAlreadyTaken(user.LinuxDOId) {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "该 Linux DO 账户已被绑定",
-		})
+		respondOAuthAlreadyBound(c, "Linux DO")
 		return
 	}
 
@@ -80,7 +73,7 @@ func LinuxDoBind(c *gin.Context) {
 
 func getLinuxdoUserInfoByCode(code string, c *gin.Context) (*LinuxdoUser, error) {
 	if code == "" {
-		return nil, errors.New("invalid code")
+		return nil, common.Localized(i18n.MsgOAuthInvalidCode)
 	}
 
 	// Get access token using Basic auth
@@ -91,7 +84,7 @@ func getLinuxdoUserInfoByCode(code string, c *gin.Context) (*LinuxdoUser, error)
 	addr := strings.TrimRight(strings.TrimSpace(system_setting.ServerAddress), "/")
 	parsed, err := url.Parse(addr)
 	if err != nil || addr == "" || parsed.Scheme == "" || parsed.Host == "" {
-		return nil, errors.New("请先配置服务器地址")
+		return nil, oauthServerAddressRequired()
 	}
 	redirectURI := addr + "/api/oauth/linuxdo"
 
@@ -112,7 +105,7 @@ func getLinuxdoUserInfoByCode(code string, c *gin.Context) (*LinuxdoUser, error)
 	client := http.Client{Timeout: 5 * time.Second}
 	res, err := client.Do(req)
 	if err != nil {
-		return nil, errors.New("failed to connect to Linux DO server")
+		return nil, oauthConnectFailed("Linux DO")
 	}
 	defer res.Body.Close()
 
@@ -125,7 +118,7 @@ func getLinuxdoUserInfoByCode(code string, c *gin.Context) (*LinuxdoUser, error)
 	}
 
 	if tokenRes.AccessToken == "" {
-		return nil, fmt.Errorf("failed to get access token: %s", tokenRes.Message)
+		return nil, oauthTokenFailed("Linux DO")
 	}
 
 	// Get user info
@@ -139,7 +132,7 @@ func getLinuxdoUserInfoByCode(code string, c *gin.Context) (*LinuxdoUser, error)
 
 	res2, err := client.Do(req)
 	if err != nil {
-		return nil, errors.New("failed to get user info from Linux DO")
+		return nil, oauthGetUserError()
 	}
 	defer res2.Body.Close()
 
@@ -149,12 +142,15 @@ func getLinuxdoUserInfoByCode(code string, c *gin.Context) (*LinuxdoUser, error)
 	}
 
 	if linuxdoUser.Id == 0 {
-		return nil, errors.New("invalid user info returned")
+		return nil, oauthUserInfoEmpty("Linux DO")
 	}
 
 	return &linuxdoUser, nil
 }
 
+// LinuxdoOAuth is the legacy dedicated Linux DO callback. Live login uses
+// HandleOAuth on GET /api/oauth/:provider; this handler is kept for tests
+// and is not mounted on the production router.
 func LinuxdoOAuth(c *gin.Context) {
 	session := sessions.Default(c)
 
@@ -170,10 +166,7 @@ func LinuxdoOAuth(c *gin.Context) {
 
 	state := c.Query("state")
 	if state == "" || session.Get("oauth_state") == nil || state != session.Get("oauth_state").(string) {
-		c.JSON(http.StatusForbidden, gin.H{
-			"success": false,
-			"message": "state is empty or not same",
-		})
+		respondOAuthStateInvalid(c)
 		return
 	}
 
@@ -184,10 +177,7 @@ func LinuxdoOAuth(c *gin.Context) {
 	}
 
 	if !common.LinuxDOOAuthEnabled {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "管理员未开启通过 Linux DO 登录以及注册",
-		})
+		respondOAuthDisabled(c, "Linux DO")
 		return
 	}
 
@@ -210,10 +200,7 @@ func LinuxdoOAuth(c *gin.Context) {
 			return
 		}
 		if user.Id == 0 {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "用户已注销",
-			})
+			respondOAuthUserDeleted(c)
 			return
 		}
 	} else {
@@ -223,6 +210,7 @@ func LinuxdoOAuth(c *gin.Context) {
 				user.DisplayName = linuxdoUser.Name
 				user.Role = common.RoleCommonUser
 				user.Status = common.UserStatusEnabled
+				applyStoredInterfaceLanguageToNewUser(&user, oauthSessionInterfaceLanguage(c))
 
 				if err := user.Insert(0); err != nil {
 					if model.IsUserEmailUniqueError(err) {
@@ -233,26 +221,17 @@ func LinuxdoOAuth(c *gin.Context) {
 					return
 				}
 			} else {
-				c.JSON(http.StatusOK, gin.H{
-					"success": false,
-					"message": "Linux DO 信任等级未达到管理员设置的最低信任等级",
-				})
+				common.ApiErrorI18n(c, i18n.MsgOAuthTrustLevelLow)
 				return
 			}
 		} else {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "管理员关闭了新用户注册",
-			})
+			respondRegisterDisabled(c)
 			return
 		}
 	}
 
 	if user.Status != common.UserStatusEnabled {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "用户已被封禁",
-			"success": false,
-		})
+		respondOAuthUserBanned(c)
 		return
 	}
 

@@ -28,6 +28,8 @@ import { ERROR_MESSAGES } from '../constants'
 import type { ApiKey } from '../types'
 import { useApiKeys } from './api-keys-provider'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type ApiKeysMultiDeleteDialogProps<TData> = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -57,7 +59,7 @@ export function ApiKeysMultiDeleteDialog<TData>({
         triggerRefresh()
         onOpenChange(false)
       } else {
-        toast.error(result.message || t(ERROR_MESSAGES.BATCH_DELETE_FAILED))
+        toast.error(localizeConsoleErrorText(result.message, ERROR_MESSAGES.BATCH_DELETE_FAILED))
       }
     } catch {
       toast.error(t(ERROR_MESSAGES.UNEXPECTED))

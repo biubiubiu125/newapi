@@ -68,6 +68,8 @@ import type { Redemption } from '../types'
 import { CreatedRedemptionsDialog } from './redemptions-created-dialog'
 import { useRedemptions } from './redemptions-provider'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type RedemptionsMutateDrawerProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -178,7 +180,7 @@ export function RedemptionsMutateDrawer({
           onOpenChange(false)
           triggerRefresh()
         } else {
-          toast.error(result.message || t(ERROR_MESSAGES.UPDATE_FAILED))
+          toast.error(localizeConsoleErrorText(result.message, ERROR_MESSAGES.UPDATE_FAILED))
         }
       } else {
         // Create mode
@@ -199,7 +201,7 @@ export function RedemptionsMutateDrawer({
           onOpenChange(false)
           triggerRefresh()
         } else {
-          toast.error(result.message || t(ERROR_MESSAGES.CREATE_FAILED))
+          toast.error(localizeConsoleErrorText(result.message, ERROR_MESSAGES.CREATE_FAILED))
         }
       }
     } catch (error) {

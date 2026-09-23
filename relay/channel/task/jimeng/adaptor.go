@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/samber/lo"
 
@@ -72,6 +73,13 @@ const (
 	// 即梦限制单个文件最大4.7MB https://www.volcengine.com/docs/85621/1747301
 	MaxFileSize int64 = 4*1024*1024 + 700*1024 // 4.7MB (4MB + 724KB)
 )
+
+func fileTooLargeError(name string) error {
+	return fmt.Errorf("%s", i18n.ProtocolMessage(i18n.MsgProtocolFileTooLarge, map[string]any{
+		"Name":  name,
+		"MaxMB": MaxFileSize / (1024 * 1024),
+	}))
+}
 
 // ============================
 // Adaptor implementation
@@ -146,7 +154,7 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 			for _, fileHeader := range files {
 				// 检查文件大小
 				if fileHeader.Size > MaxFileSize {
-					return nil, fmt.Errorf("文件 %s 大小超过限制，最大允许 %d MB", fileHeader.Filename, MaxFileSize/(1024*1024))
+					return nil, fileTooLargeError(fileHeader.Filename)
 				}
 
 				file, err := fileHeader.Open()

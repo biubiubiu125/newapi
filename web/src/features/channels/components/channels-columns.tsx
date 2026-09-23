@@ -46,7 +46,7 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { resolveIntlLocale } from '@/i18n/languages'
+import { currentIntlLocale } from '@/i18n/languages'
 import {
   formatCurrencyFromUSD,
   formatQuotaWithCurrency,
@@ -93,6 +93,8 @@ import {
   type CodexUsageDialogData,
 } from './dialogs/codex-usage-dialog'
 import { NumericSpinnerInput } from './numeric-spinner-input'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 function parseIonetMeta(otherInfo: string | null | undefined): null | {
   source?: string
@@ -333,7 +335,7 @@ const SENSITIVE_MASK = '••••'
  * Balance cell component with click to update
  */
 export function BalanceCell({ channel }: { channel: Channel }) {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const queryClient = useQueryClient()
   const layout = useContext(ChannelRowActionsLayoutContext)
   const { sensitiveVisible, setCurrentRow } = useChannels()
@@ -352,7 +354,7 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const withSuffix = (value: string) =>
     tokenSuffix && value !== '-' ? `${value}${tokenSuffix}` : value
 
-  const locale = resolveIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const locale = currentIntlLocale()
   const balanceFormatOptions = {
     digitsLarge: 2,
     digitsSmall: 4,
@@ -441,13 +443,13 @@ export function BalanceCell({ channel }: { channel: Channel }) {
       try {
         const res = await getCodexUsage(channel.id)
         if (!res.success) {
-          throw new Error(res.message || t('Failed to fetch usage'))
+          throw new Error(localizeConsoleErrorText(res.message, 'Failed to fetch usage'))
         }
         setCodexUsageResponse(res)
         setCodexUsageOpen(true)
       } catch (error) {
         toast.error(
-          error instanceof Error ? error.message : t('Failed to fetch usage')
+          localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to fetch usage')
         )
       } finally {
         setIsUpdating(false)
@@ -474,11 +476,11 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         setCurrentRow(channel)
         setRawBalanceResponse(response.raw_response)
       } else {
-        toast.error(response.message || t('Failed to update balance'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to update balance'))
       }
     } catch (error: unknown) {
       toast.error(
-        error instanceof Error ? error.message : t('Failed to update balance')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to update balance')
       )
     } finally {
       setIsUpdating(false)
@@ -570,14 +572,12 @@ export function BalanceCell({ channel }: { channel: Channel }) {
           try {
             const res = await getCodexUsage(channel.id)
             if (!res.success) {
-              throw new Error(res.message || t('Failed to fetch usage'))
+              throw new Error(localizeConsoleErrorText(res.message, 'Failed to fetch usage'))
             }
             setCodexUsageResponse(res)
           } catch (error) {
             toast.error(
-              error instanceof Error
-                ? error.message
-                : t('Failed to fetch usage')
+              localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to fetch usage')
             )
           } finally {
             setIsUpdating(false)
@@ -608,10 +608,10 @@ export function useChannelsColumns(
     enableSelection?: boolean
   } = {}
 ): ColumnDef<Channel>[] {
-  const { t, i18n } = useTranslation()
+  const { t } = useTranslation()
   const { sensitiveVisible } = useChannels()
   const enableSelection = options.enableSelection ?? true
-  const locale = resolveIntlLocale(i18n.resolvedLanguage || i18n.language)
+  const locale = currentIntlLocale()
   // The column definitions only depend on the translation function, the active
   // locale, and sensitive-data visibility. Memoizing keeps the array (and every
   // cell renderer reference) stable across unrelated re-renders, so react-table

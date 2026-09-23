@@ -27,7 +27,10 @@ import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useDebounce } from '@/hooks/use-debounce'
-import { createServerError } from '@/lib/server-error-message'
+import {
+  createServerError,
+  localizeConsoleErrorText,
+} from '@/lib/server-error-message'
 
 import { searchVendors } from '../../api'
 import { vendorsQueryKeys } from '../../lib'
@@ -98,7 +101,10 @@ export function VendorsManagementDialog(props: {
           {query.isPending ? <LoadingState /> : null}
           {query.isError && (
             <ErrorState
-              description={query.error.message}
+              description={localizeConsoleErrorText(
+                query.error.message,
+                'Request failed'
+              )}
               onRetry={() => void query.refetch()}
             />
           )}

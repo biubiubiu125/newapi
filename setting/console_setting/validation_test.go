@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 )
 
 func announcementJSON(t *testing.T, content string) string {
@@ -49,8 +52,12 @@ func TestValidateAnnouncementsRejects2001Characters(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected 2001-character announcement to fail")
 	}
-	if !strings.Contains(err.Error(), "2000") {
-		t.Fatalf("expected error to mention 2000, got %v", err)
+	loc, ok := common.AsLocalizedError(err)
+	if !ok || loc.Key != i18n.MsgConsoleAnnouncementContentTooLong {
+		t.Fatalf("expected LocalizedError %s, got %v", i18n.MsgConsoleAnnouncementContentTooLong, err)
+	}
+	if len(loc.Args) == 0 || loc.Args[0]["Max"] != maxAnnouncementContentCharacters {
+		t.Fatalf("expected Max=%d, got %#v", maxAnnouncementContentCharacters, loc.Args)
 	}
 }
 
@@ -83,7 +90,11 @@ func TestValidateAnnouncementsRejects101CharacterTitle(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected 101-character title to fail")
 	}
-	if !strings.Contains(err.Error(), "100") {
-		t.Fatalf("expected error to mention 100, got %v", err)
+	loc, ok := common.AsLocalizedError(err)
+	if !ok || loc.Key != i18n.MsgConsoleAnnouncementTitleTooLong {
+		t.Fatalf("expected LocalizedError %s, got %v", i18n.MsgConsoleAnnouncementTitleTooLong, err)
+	}
+	if len(loc.Args) == 0 || loc.Args[0]["Max"] != maxAnnouncementTitleCharacters {
+		t.Fatalf("expected Max=%d, got %#v", maxAnnouncementTitleCharacters, loc.Args)
 	}
 }

@@ -22,11 +22,14 @@ import i18n from 'i18next'
 import { describe, expect, it } from 'vitest'
 
 import {
+  changeInterfaceLanguage,
   convertDetectedLanguage,
   currentIntlLocale,
   dayjsLocaleForLanguage,
+  GUEST_LANGUAGE_DETECTION_ORDER,
   normalizeInterfaceLanguage,
   resolveIntlLocale,
+  speechRecognitionLocale,
   toIntlLocale,
 } from './languages'
 
@@ -87,10 +90,11 @@ describe('convertDetectedLanguage', () => {
     expect(convertDetectedLanguage('zh-Hant')).toBe('zhTW')
   })
 
-  it('leaves non-Chinese tags unchanged for i18next supportedLngs matching', () => {
-    expect(convertDetectedLanguage('fr-FR')).toBe('fr-FR')
-    expect(convertDetectedLanguage('ja-JP')).toBe('ja-JP')
-    expect(convertDetectedLanguage('en-US')).toBe('en-US')
+  it('maps browser tags onto interface codes and unknown tags to simplified Chinese', () => {
+    expect(convertDetectedLanguage('fr-FR')).toBe('fr')
+    expect(convertDetectedLanguage('ja-JP')).toBe('ja')
+    expect(convertDetectedLanguage('en-US')).toBe('en')
+    expect(convertDetectedLanguage('pt-BR')).toBe('zhCN')
   })
 })
 
@@ -122,7 +126,54 @@ describe('currentIntlLocale', () => {
   it('follows the active i18next language', async () => {
     await i18n.changeLanguage('zhCN')
     expect(currentIntlLocale()).toBe('zh-CN')
+    await i18n.changeLanguage('fr')
+    expect(currentIntlLocale()).toBe('fr')
     await i18n.changeLanguage('en')
     expect(currentIntlLocale()).toBe('en')
+  })
+})
+
+describe('guest language detection', () => {
+  it('uses an explicit choice, then the browser, then simplified Chinese', () => {
+    expect(GUEST_LANGUAGE_DETECTION_ORDER).toEqual(['localStorage', 'navigator'])
+  })
+})
+
+describe('speechRecognitionLocale', () => {
+  it('maps the interface language onto a BCP-47 speech locale', async () => {
+    await i18n.changeLanguage('zhCN')
+    expect(speechRecognitionLocale()).toBe('zh-CN')
+    expect(speechRecognitionLocale('ja')).toBe('ja')
+  })
+})
+
+describe('changeInterfaceLanguage', () => {
+  it('reverts the UI language when persistence fails', async () => {
+    await i18n.changeLanguage('zhCN')
+    await expect(
+      changeInterfaceLanguage('en', async () => {
+        throw new Error('persist failed')
+      })
+    ).rejects.toThrow('persist failed')
+    expect(i18n.language).toBe('zhCN')
+  })
+
+  it('keeps the new language when persistence succeeds', async () => {
+    await i18n.changeLanguage('zhCN')
+    await changeInterfaceLanguage('en', async () => undefined)
+    expect(i18n.language).toBe('en')
+  })
+
+  it('persists while the UI is still on the previous language', async () => {
+    await i18n.changeLanguage('zhCN')
+    let localeDuringPersist = ''
+    await expect(
+      changeInterfaceLanguage('en', async () => {
+        localeDuringPersist = currentIntlLocale()
+        throw new Error('更新失败')
+      })
+    ).rejects.toThrow('更新失败')
+    expect(localeDuringPersist).toBe('zh-CN')
+    expect(i18n.language).toBe('zhCN')
   })
 })

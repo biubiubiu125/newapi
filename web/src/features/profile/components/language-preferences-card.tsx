@@ -31,12 +31,17 @@ import {
 } from '@/components/ui/select'
 import { TitledCard } from '@/components/ui/titled-card'
 import {
+  changeInterfaceLanguage,
   INTERFACE_LANGUAGE_OPTIONS,
   normalizeInterfaceLanguage,
 } from '@/i18n/languages'
+import {
+  displayedInterfaceLanguage,
+  persistInterfaceLanguageErrorMessage,
+  persistSignedInInterfaceLanguage,
+} from '@/i18n/persist-interface-language'
 import { useAuthStore } from '@/stores/auth-store'
 
-import { updateUserLanguage } from '../api'
 import { parseUserSettings } from '../lib'
 import type { UserProfile } from '../types'
 
@@ -47,13 +52,17 @@ type LanguagePreferencesCardProps = {
 
 export function LanguagePreferencesCard(props: LanguagePreferencesCardProps) {
   const { t, i18n } = useTranslation()
-  const { auth } = useAuthStore()
+  const user = useAuthStore((state) => state.auth.user)
   const [saving, setSaving] = useState(false)
 
   const savedLanguage = useMemo(() => {
     const settings = parseUserSettings(props.profile?.setting)
-    return normalizeInterfaceLanguage(settings.language || i18n.language)
-  }, [props.profile?.setting, i18n.language])
+    return displayedInterfaceLanguage({
+      user,
+      profileLanguage: settings.language,
+      fallback: i18n.language,
+    })
+  }, [user, props.profile?.setting, i18n.language])
 
   const [currentLanguage, setCurrentLanguage] = useState(savedLanguage)
 
@@ -69,34 +78,22 @@ export function LanguagePreferencesCard(props: LanguagePreferencesCardProps) {
     const previousLanguage = currentLanguage
     setCurrentLanguage(nextLanguage)
     setSaving(true)
-    await i18n.changeLanguage(nextLanguage)
 
     try {
-      const response = await updateUserLanguage(nextLanguage)
-      if (!response.success) {
-        throw new Error(response.message || t('Failed to update settings'))
-      }
-
-      if (auth.user) {
-        const existingSetting =
-          typeof auth.user.setting === 'string'
-            ? parseUserSettings(auth.user.setting)
-            : (auth.user.setting ?? {})
-        auth.setUser({
-          ...auth.user,
-          setting: JSON.stringify({
-            ...existingSetting,
-            language: nextLanguage,
-          }),
-        })
-      }
-
+      await changeInterfaceLanguage(
+        nextLanguage,
+        persistSignedInInterfaceLanguage
+      )
       props.onProfileUpdate()
       toast.success(t('Language preference saved'))
-    } catch {
+    } catch (error) {
       setCurrentLanguage(previousLanguage)
-      await i18n.changeLanguage(previousLanguage)
-      toast.error(t('Failed to update settings'))
+      toast.error(
+        persistInterfaceLanguageErrorMessage(
+          error,
+          t('Failed to update settings')
+        )
+      )
     } finally {
       setSaving(false)
     }
@@ -115,7 +112,7 @@ export function LanguagePreferencesCard(props: LanguagePreferencesCardProps) {
           <div className='text-sm font-medium'>{t('Interface Language')}</div>
           <p className='text-muted-foreground line-clamp-2 text-xs sm:text-sm'>
             {t(
-              'Language preferences sync across your signed-in devices and affect API error messages.'
+              'Language preferences sync across your signed-in devices and affect console error messages.'
             )}
           </p>
         </div>

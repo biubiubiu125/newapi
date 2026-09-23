@@ -49,6 +49,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
 import { resolveLocalizedText } from '@/lib/localized-text'
 
 import {
@@ -96,7 +97,7 @@ export function PluginDetailSheet(props: PluginDetailSheetProps) {
       queryClient.invalidateQueries({ queryKey: ['task-plugin', key] })
       queryClient.invalidateQueries({ queryKey: ['task-plugin-versions', key] })
     },
-    onError: (error) => toast.error(error.message),
+    onError: toastUnhandledConsoleError,
   })
   const detail = detailQuery.data
   const versions = versionsQuery.data ?? []

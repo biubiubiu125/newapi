@@ -9,11 +9,13 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
 func TestWeChatBindRejectsPersonalAccessToken(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	previous := common.WeChatAuthEnabled
 	common.WeChatAuthEnabled = true
 	t.Cleanup(func() { common.WeChatAuthEnabled = previous })
@@ -40,6 +42,7 @@ func TestWeChatBindRejectsPersonalAccessToken(t *testing.T) {
 }
 
 func TestUnbindCustomOAuthRejectsPersonalAccessToken(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	gin.SetMode(gin.TestMode)
 	w := httptest.NewRecorder()
 	_, router := gin.CreateTestContext(w)

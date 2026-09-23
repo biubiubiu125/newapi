@@ -23,10 +23,12 @@ import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 import { API_KEY_STATUS } from '@/features/keys/constants'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 export async function fetchActiveChatKey() {
   const result = await getApiKeys({ p: 1, size: 50 })
   if (!result.success) {
-    throw new Error(result.message || i18next.t('Failed to load API keys'))
+    throw new Error(localizeConsoleErrorText(result.message, 'Failed to load API keys'))
   }
 
   const items = result.data?.items ?? []
@@ -39,7 +41,7 @@ export async function fetchActiveChatKey() {
 
   const keyResult = await fetchTokenKey(active.id)
   if (!keyResult.success || !keyResult.data?.key) {
-    throw new Error(keyResult.message || i18next.t('Failed to load API key'))
+    throw new Error(localizeConsoleErrorText(keyResult.message, 'Failed to load API key'))
   }
 
   return `sk-${keyResult.data.key}`

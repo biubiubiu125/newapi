@@ -35,6 +35,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Switch } from '@/components/ui/switch'
 import { getChannelTypeLabel } from '@/features/channels/lib'
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
 import { resolveLocalizedText } from '@/lib/localized-text'
 
 import {
@@ -98,7 +99,7 @@ export function PluginsTable(props: PluginsTableProps) {
         setBlockedAction('disable')
         return
       }
-      toast.error(error.message)
+      toastUnhandledConsoleError(error)
     },
   })
   const deleteMutation = useMutation({
@@ -115,7 +116,7 @@ export function PluginsTable(props: PluginsTableProps) {
         setBlockedAction('delete')
         return
       }
-      toast.error(error.message)
+      toastUnhandledConsoleError(error)
     },
   })
   const columns = useMemo<ColumnDef<TaskPluginListItem, unknown>[]>(
@@ -460,7 +461,7 @@ export function PluginsTable(props: PluginsTableProps) {
                       queryKey: ['task-plugins'],
                     })
                   })
-                  .catch((error: Error) => toast.error(error.message))
+                  .catch((error: Error) => toastUnhandledConsoleError(error))
               }
               if (blockedAction === 'disable' && statusTarget) {
                 statusMutation.mutate({

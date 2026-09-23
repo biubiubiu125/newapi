@@ -26,8 +26,11 @@ import type {
   SystemTaskStatus,
 } from '@/features/system-settings/types'
 import { api, type ApiRequestConfig } from '@/lib/api'
+import { storedTaskErrorText } from '@/lib/console-stored-detail'
 
 import { normalizeModelList } from '../lib/upstream-update-utils'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 const upstreamUpdateRequestConfig = {
   skipBusinessError: true,
@@ -433,13 +436,24 @@ function hasModelUpdateTaskPartialResult(task: ModelUpdateTask): boolean {
 function formatModelUpdateTaskFailureMessage(
   task: ModelUpdateTask,
   fallbackMessage: string,
+  language: string,
   t: ReturnType<typeof useTranslation>['t']
 ): string {
-  const errorMessage = typeof task.error === 'string' ? task.error.trim() : ''
-  const cacheRefreshError =
+  const errorMessage = storedTaskErrorText(
+    typeof task.error === 'string' ? task.error : '',
+    language,
+    t
+  )
+  const cacheRefreshError = storedTaskErrorText(
     typeof task.result?.runtime_cache_refresh_error === 'string'
-      ? task.result.runtime_cache_refresh_error.trim()
-      : ''
+      ? task.result.runtime_cache_refresh_error
+      : '',
+    language,
+    t
+  )
+  const suffix = [errorMessage, cacheRefreshError]
+    .filter((part, index, all) => Boolean(part) && all.indexOf(part) === index)
+    .join(' ')
   if (task.type === modelUpdateApplyAllTaskType && task.result) {
     const result = task.result
     const processed = modelUpdateTaskResultNumber(
@@ -459,12 +473,10 @@ function formatModelUpdateTaskFailureMessage(
         'Batch upstream model additions partially completed: {{channels}} channels, {{added}} added, {{kept}} pending removals kept for manual review, {{fails}} failed.',
         { channels: processed, added, kept, fails: failed }
       )
-      const suffix = [errorMessage, cacheRefreshError].filter(Boolean).join(' ')
       return suffix ? `${partialMessage} ${suffix}` : partialMessage
     }
   }
   if (!hasModelUpdateTaskPartialResult(task)) {
-    const suffix = [errorMessage, cacheRefreshError].filter(Boolean).join(' ')
     return suffix || fallbackMessage
   }
   const result = task.result
@@ -478,7 +490,6 @@ function formatModelUpdateTaskFailureMessage(
       fails: modelUpdateTaskResultNumber(result, 'failed_channels'),
     }
   )
-  const suffix = [errorMessage, cacheRefreshError].filter(Boolean).join(' ')
   return suffix ? `${partialMessage} ${suffix}` : partialMessage
 }
 
@@ -565,7 +576,7 @@ export function useChannelUpstreamUpdates(
     canApplyUpstreamUpdates?: boolean
   } = {}
 ) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const canAccessModelUpdateTasks =
     canDetectUpstreamUpdates || canApplyUpstreamUpdates
 
@@ -751,7 +762,7 @@ export function useChannelUpstreamUpdates(
         )
         const { success, message, data } = res.data || {}
         if (!success) {
-          toast.error(message || t('Operation failed'))
+          toast.error(localizeConsoleErrorText(message, 'Operation failed'))
           await refreshChannelsBestEffort(refresh)
           return
         }
@@ -775,7 +786,7 @@ export function useChannelUpstreamUpdates(
           message?: string
         }
         toast.error(
-          err?.response?.data?.message || err?.message || t('Operation failed')
+          localizeConsoleErrorText(err?.response?.data?.message || err?.message, 'Operation failed')
         )
         await refreshChannelsBestEffort(refresh)
       } finally {
@@ -803,7 +814,10 @@ export function useChannelUpstreamUpdates(
       const taskInfo = getModelUpdateTaskStartInfo(res.data)
       if (!isSuccessPayload(res.data) || !taskInfo) {
         toast.error(
-          getResponseMessage(res.data) || t('Batch processing failed')
+          localizeConsoleErrorText(
+            getResponseMessage(res.data),
+            'Batch processing failed'
+          )
         )
         await refreshChannelsBestEffort(refresh)
         return
@@ -825,9 +839,10 @@ export function useChannelUpstreamUpdates(
         message?: string
       }
       toast.error(
-        err?.response?.data?.message ||
-          err?.message ||
-          t('Batch processing failed')
+        localizeConsoleErrorText(
+          err?.response?.data?.message || err?.message,
+          'Batch processing failed'
+        )
       )
       try {
         await refreshChannelsBestEffort(refresh)
@@ -862,7 +877,7 @@ export function useChannelUpstreamUpdates(
         )
         const { success, message, data } = res.data || {}
         if (!success) {
-          toast.error(message || t('Detection failed'))
+          toast.error(localizeConsoleErrorText(message, 'Detection failed'))
           await refreshChannelsBestEffort(refresh)
           return
         }
@@ -880,7 +895,7 @@ export function useChannelUpstreamUpdates(
           message?: string
         }
         toast.error(
-          err?.response?.data?.message || err?.message || t('Detection failed')
+          localizeConsoleErrorText(err?.response?.data?.message || err?.message, 'Detection failed')
         )
         await refreshChannelsBestEffort(refresh)
       } finally {
@@ -962,6 +977,7 @@ export function useChannelUpstreamUpdates(
             formatModelUpdateTaskFailureMessage(
               task,
               t('Batch detection failed'),
+              i18n.language,
               t
             )
           )
@@ -1018,6 +1034,7 @@ export function useChannelUpstreamUpdates(
     [
       beginModelUpdateTaskRun,
       finishModelUpdateTaskRun,
+      i18n.language,
       isCurrentModelUpdateTaskRun,
       refresh,
       t,
@@ -1196,7 +1213,12 @@ export function useChannelUpstreamUpdates(
       )
       const taskInfo = getModelUpdateTaskStartInfo(res.data)
       if (!isSuccessPayload(res.data) || !taskInfo) {
-        toast.error(getResponseMessage(res.data) || t('Batch detection failed'))
+        toast.error(
+          localizeConsoleErrorText(
+            getResponseMessage(res.data),
+            'Batch detection failed'
+          )
+        )
         await refreshChannelsBestEffort(refresh)
         return
       }
@@ -1334,7 +1356,10 @@ export function useChannelUpstreamUpdates(
     } catch (e: unknown) {
       clearTrackedTaskIfMissing(e)
       toast.error(
-        getErrorMessage(e) || t('Failed to cancel upstream model update task')
+        localizeConsoleErrorText(
+          getErrorMessage(e),
+          'Failed to cancel upstream model update task'
+        )
       )
       await refreshChannelsBestEffort(refresh)
     } finally {

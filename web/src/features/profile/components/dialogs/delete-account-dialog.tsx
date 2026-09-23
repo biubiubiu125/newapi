@@ -32,6 +32,8 @@ import { clearAuthentication } from '@/lib/api'
 
 import { deleteUserAccount } from '../../api'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 // ============================================================================
 // Delete Account Dialog Component
 // ============================================================================
@@ -75,7 +77,7 @@ export function DeleteAccountDialog({
         clearAuthentication()
         navigate({ to: '/sign-in' })
       } else {
-        toast.error(response.message || t('Failed to delete account'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to delete account'))
       }
     } catch {
       toast.error(t('Failed to delete account'))

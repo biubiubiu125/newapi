@@ -55,8 +55,9 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { resolveIntlLocale } from '@/i18n/languages'
+import { currentIntlLocale, resolveIntlLocale } from '@/i18n/languages'
 import { formatTimestampRelative, formatTimestampToDate } from '@/lib/format'
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
 
 import {
@@ -65,6 +66,8 @@ import {
   listSystemInstances,
 } from '../api'
 import type { SystemInstance, SystemInstanceStatus } from '../types'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 const INSTANCE_POLL_INTERVAL_MS = 30_000
 const INSTANCE_SKELETON_KEYS = [
@@ -113,7 +116,7 @@ function getNodeName(instance: SystemInstance) {
 
 function formatPercent(value?: number) {
   if (typeof value !== 'number' || Number.isNaN(value)) return '-'
-  return `${new Intl.NumberFormat(undefined, {
+  return `${new Intl.NumberFormat(currentIntlLocale(), {
     maximumFractionDigits: 1,
   }).format(value)}%`
 }
@@ -129,7 +132,7 @@ function formatBytes(bytes?: number): string {
     units.length - 1
   )
   const value = bytes / 1024 ** index
-  return `${new Intl.NumberFormat(undefined, {
+  return `${new Intl.NumberFormat(currentIntlLocale(), {
     maximumFractionDigits: index === 0 ? 0 : 1,
   }).format(value)} ${units[index]}`
 }
@@ -500,7 +503,7 @@ export function SystemInstancesPanel() {
     queryFn: async () => {
       const res = await listSystemInstances()
       if (!res.success || !Array.isArray(res.data)) {
-        throw new Error(res.message || t('We could not load instances.'))
+        throw new Error(localizeConsoleErrorText(res.message, 'We could not load instances.'))
       }
       return res.data
     },
@@ -527,7 +530,7 @@ export function SystemInstancesPanel() {
     mutationFn: async (nodeName: string) => {
       const res = await deleteStaleSystemInstance(nodeName)
       if (!res.success) {
-        throw new Error(res.message || t('Delete failed'))
+        throw new Error(localizeConsoleErrorText(res.message, 'Delete failed'))
       }
       return res
     },
@@ -540,7 +543,7 @@ export function SystemInstancesPanel() {
       setDeleteTarget(null)
     },
     onError: (error) => {
-      toast.error(error instanceof Error ? error.message : t('Delete failed'))
+      toastUnhandledConsoleError(error)
       void invalidateInstances()
     },
     onSettled: () => {
@@ -552,7 +555,7 @@ export function SystemInstancesPanel() {
     mutationFn: async () => {
       const res = await deleteStaleSystemInstances()
       if (!res.success) {
-        throw new Error(res.message || t('Delete failed'))
+        throw new Error(localizeConsoleErrorText(res.message, 'Delete failed'))
       }
       return res
     },
@@ -565,9 +568,7 @@ export function SystemInstancesPanel() {
       await invalidateInstances()
       setDeleteAllConfirmOpen(false)
     },
-    onError: (error) => {
-      toast.error(error instanceof Error ? error.message : t('Delete failed'))
-    },
+    onError: toastUnhandledConsoleError,
   })
 
   const isMutatingInstance =
@@ -586,11 +587,12 @@ export function SystemInstancesPanel() {
     instancesContent = (
       <ErrorState
         title={t('We could not load instances.')}
-        description={
+        description={localizeConsoleErrorText(
           instancesQuery.error instanceof Error
             ? instancesQuery.error.message
-            : undefined
-        }
+            : '',
+          'We could not load instances.'
+        )}
         onRetry={() => {
           void instancesQuery.refetch()
         }}

@@ -24,7 +24,15 @@ const (
 	maxTaskArtifactKeyLength         = 128
 )
 
-var ErrTaskArtifactAccessInvalid = errors.New("task artifact access is invalid")
+var (
+	ErrTaskArtifactAccessInvalid = errors.New("task artifact access is invalid")
+	ErrTaskArtifactURLEmpty      = errors.New("task artifact base URL is empty")
+	ErrTaskArtifactURLWhitespace = errors.New("task artifact base URL must not contain surrounding whitespace")
+	ErrTaskArtifactURLInvalid    = errors.New("task artifact base URL is invalid")
+	ErrTaskArtifactURLScheme     = errors.New("task artifact base URL must use http or https")
+	ErrTaskArtifactURLHost       = errors.New("task artifact base URL must contain a host and no userinfo")
+	ErrTaskArtifactURLQuery      = errors.New("task artifact base URL must not contain a query or fragment")
+)
 
 func taskArtifactAccessMessage(taskID, artifactKey string, expiresAt int64) []byte {
 	return []byte(taskArtifactAccessVersion + "\x00" + taskID + "\x00" + artifactKey + "\x00" + strconv.FormatInt(expiresAt, 10))
@@ -95,24 +103,24 @@ func verifyTaskArtifactAccessAt(access, taskID, artifactKey string, now time.Tim
 func ValidateTaskArtifactBaseURL(raw string) error {
 	trimmed := strings.TrimSpace(raw)
 	if trimmed == "" {
-		return errors.New("task artifact base URL is empty")
+		return ErrTaskArtifactURLEmpty
 	}
 	if raw != trimmed {
-		return errors.New("task artifact base URL must not contain surrounding whitespace")
+		return ErrTaskArtifactURLWhitespace
 	}
 	raw = trimmed
 	parsed, err := url.Parse(raw)
 	if err != nil || parsed == nil {
-		return errors.New("task artifact base URL is invalid")
+		return ErrTaskArtifactURLInvalid
 	}
 	if !strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
-		return errors.New("task artifact base URL must use http or https")
+		return ErrTaskArtifactURLScheme
 	}
 	if parsed.Host == "" || parsed.User != nil || parsed.Opaque != "" {
-		return errors.New("task artifact base URL must contain a host and no userinfo")
+		return ErrTaskArtifactURLHost
 	}
 	if parsed.RawQuery != "" || parsed.ForceQuery || parsed.Fragment != "" || strings.Contains(raw, "#") {
-		return errors.New("task artifact base URL must not contain a query or fragment")
+		return ErrTaskArtifactURLQuery
 	}
 	return nil
 }

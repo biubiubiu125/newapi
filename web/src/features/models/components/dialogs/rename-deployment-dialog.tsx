@@ -22,12 +22,16 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
+
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
 import { checkClusterNameAvailability, updateDeploymentName } from '../../api'
 import { deploymentsQueryKeys } from '../../lib'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 export function RenameDeploymentDialog({
   open,
@@ -98,9 +102,9 @@ export function RenameDeploymentDialog({
         onOpenChange(false)
         return
       }
-      toast.error(res.message || t('Rename failed'))
+      toast.error(localizeConsoleErrorText(res.message, 'Rename failed'))
     } catch (err: unknown) {
-      toast.error(err instanceof Error ? err.message : t('Rename failed'))
+      toastUnhandledConsoleError(err)
     } finally {
       setIsSubmitting(false)
     }

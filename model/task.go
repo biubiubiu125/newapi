@@ -10,6 +10,8 @@ import (
 	"net/url"
 	"path/filepath"
 	"reflect"
+	"regexp"
+	"strconv"
 	"strings"
 	"time"
 
@@ -613,10 +615,86 @@ func (t *Task) PublicFailReason() string {
 	return SanitizePublicTaskFailReason(t.FailReason)
 }
 
+// Public protocol fail reasons. These stay English on the public envelope.
+const (
+	PublicFailReasonEmptyUpstreamTaskID = "upstream task id is empty"
+	PublicFailReasonUpstreamTaskTimeout = "upstream task timed out (over 1 hour)"
+	PublicFailReasonLegacyTaskTimeout   = "task timed out (legacy task, no refund, please contact the administrator)"
+	publicFailReasonChannelInfoFmt      = "failed to get channel information, please contact the administrator, channel id: %d"
+	publicFailReasonTaskTimeoutFmt      = "task timed out (%d minutes)"
+	legacyFailReasonEmptyUpstreamTaskID = "上游任务ID为空"
+	legacyFailReasonUpstreamTaskTimeout = "上游任务超时（超过1小时）"
+	legacyFailReasonLegacyTaskTimeout   = "任务超时（旧系统遗留任务，不进行退款，请联系管理员）"
+)
+
+var (
+	legacyPublicChannelInfoFailReasonRE = regexp.MustCompile(`^获取渠道信息失败，请联系管理员，渠道ID[:：]\s*(\d+)$`)
+	publicChannelInfoFailReasonRE       = regexp.MustCompile(`(?i)^failed to get channel information, please contact the administrator, channel id:\s*(\d+)$`)
+	legacySweepTimeoutFailReasonRE      = regexp.MustCompile(`^任务超时（(\d+)分钟）$`)
+	publicSweepTimeoutFailReasonRE      = regexp.MustCompile(`(?i)^task timed out \((\d+) minutes\)$`)
+)
+
+func FormatPublicChannelInfoFailReason(channelID int) string {
+	return fmt.Sprintf(publicFailReasonChannelInfoFmt, channelID)
+}
+
+func FormatPublicTaskTimeoutFailReason(minutes int) string {
+	return fmt.Sprintf(publicFailReasonTaskTimeoutFmt, minutes)
+}
+
+func normalizeLegacyPublicTaskFailReason(reason string) string {
+	trimmed := strings.TrimSpace(reason)
+	switch trimmed {
+	case legacyFailReasonEmptyUpstreamTaskID, PublicFailReasonEmptyUpstreamTaskID:
+		return PublicFailReasonEmptyUpstreamTaskID
+	case legacyFailReasonUpstreamTaskTimeout, PublicFailReasonUpstreamTaskTimeout:
+		return PublicFailReasonUpstreamTaskTimeout
+	case legacyFailReasonLegacyTaskTimeout, PublicFailReasonLegacyTaskTimeout:
+		return PublicFailReasonLegacyTaskTimeout
+	}
+	if id, ok := parsePublicChannelInfoFailReasonID(trimmed); ok {
+		return FormatPublicChannelInfoFailReason(id)
+	}
+	if minutes, ok := parsePublicTaskTimeoutMinutes(trimmed); ok {
+		return FormatPublicTaskTimeoutFailReason(minutes)
+	}
+	return reason
+}
+
+func parsePublicTaskTimeoutMinutes(reason string) (int, bool) {
+	for _, re := range []*regexp.Regexp{legacySweepTimeoutFailReasonRE, publicSweepTimeoutFailReasonRE} {
+		match := re.FindStringSubmatch(reason)
+		if len(match) != 2 {
+			continue
+		}
+		minutes, err := strconv.Atoi(match[1])
+		if err != nil {
+			continue
+		}
+		return minutes, true
+	}
+	return 0, false
+}
+
+func parsePublicChannelInfoFailReasonID(reason string) (int, bool) {
+	for _, re := range []*regexp.Regexp{legacyPublicChannelInfoFailReasonRE, publicChannelInfoFailReasonRE} {
+		match := re.FindStringSubmatch(reason)
+		if len(match) != 2 {
+			continue
+		}
+		id, err := strconv.Atoi(match[1])
+		if err != nil {
+			continue
+		}
+		return id, true
+	}
+	return 0, false
+}
+
 // SanitizePublicTaskFailReason strips result locators and internal billing/DB
 // details from a persisted FailReason before it is returned to clients.
 func SanitizePublicTaskFailReason(reason string) string {
-	return kitutil.SanitizePublicClientError(reason)
+	return kitutil.SanitizePublicClientError(normalizeLegacyPublicTaskFailReason(reason))
 }
 
 // MatchesRequestToken reports whether an API token may access this task.

@@ -2,6 +2,7 @@ package config
 
 import (
 	"encoding/json"
+	"fmt"
 	"reflect"
 	"strconv"
 	"strings"
@@ -249,7 +250,7 @@ func updateConfigFromMap(config interface{}, configMap map[string]string) error 
 				// 反序列化到指针指向的值
 				err := json.Unmarshal([]byte(strValue), field.Interface())
 				if err != nil {
-					continue
+					return fmt.Errorf("%s: %w", key, err)
 				}
 			}
 		case reflect.Map:
@@ -258,13 +259,13 @@ func updateConfigFromMap(config interface{}, configMap map[string]string) error 
 			// are properly cleared.
 			fresh := reflect.New(field.Type())
 			if err := json.Unmarshal([]byte(strValue), fresh.Interface()); err != nil {
-				continue
+				return fmt.Errorf("%s: %w", key, err)
 			}
 			field.Set(fresh.Elem())
 		case reflect.Slice, reflect.Struct:
 			err := json.Unmarshal([]byte(strValue), field.Addr().Interface())
 			if err != nil {
-				continue
+				return fmt.Errorf("%s: %w", key, err)
 			}
 		}
 	}

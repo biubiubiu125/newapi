@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import * as z from 'zod'
 
 import { combineBillingExpr } from '@/features/pricing/lib/billing-expr'
+import { compileBillingExpression } from '@/features/pricing/lib/billing-expression/parser'
 
 import { formatPricingNumber } from './pricing-format'
 
@@ -62,6 +63,113 @@ export type ModelRatioData = {
   billingMode?: PricingMode
   billingExpr?: string
   requestRuleExpr?: string
+  promptPrice?: string
+  laneEnabled?: Record<LaneKey, boolean>
+  lanePrices?: Record<LaneKey, string>
+}
+
+function hasFiniteDraftNumber(value?: string) {
+  if (!value || value === '') return false
+  return Number.isFinite(Number.parseFloat(value))
+}
+
+export function pricingDraftKeepsModel(data: ModelRatioData) {
+  if (typeof data?.name !== 'string' || data.name.trim() === '') {
+    return false
+  }
+  if (data.billingMode === 'tiered_expr') {
+    if (
+      combineBillingExpr(data.billingExpr || '', data.requestRuleExpr || '')
+    ) {
+      return true
+    }
+  } else if (hasFiniteDraftNumber(data.price)) {
+    return true
+  }
+  return (
+    hasFiniteDraftNumber(data.ratio) ||
+    hasFiniteDraftNumber(data.cacheRatio) ||
+    hasFiniteDraftNumber(data.createCacheRatio) ||
+    hasFiniteDraftNumber(data.completionRatio) ||
+    hasFiniteDraftNumber(data.imageRatio) ||
+    hasFiniteDraftNumber(data.audioRatio) ||
+    hasFiniteDraftNumber(data.audioCompletionRatio)
+  )
+}
+
+export function pricingDraftExpressionIsValid(data: ModelRatioData) {
+  if (data.billingMode !== 'tiered_expr') return true
+  const combined = combineBillingExpr(
+    data.billingExpr || '',
+    data.requestRuleExpr || ''
+  )
+  if (!combined) return false
+  return compileBillingExpression(combined).status === 'ready'
+}
+
+export function canonicalizeBillingModeMap(
+  map: Record<string, string>
+): Record<string, string> {
+  const next: Record<string, string> = {}
+  for (const [name, mode] of Object.entries(map)) {
+    if (mode === 'tiered_expr') {
+      next[name] = mode
+    } else if (
+      mode === 'ratio' ||
+      mode === 'per-request' ||
+      mode === 'per-token'
+    ) {
+      next[name] = 'ratio'
+    }
+  }
+  return next
+}
+
+export function pricingDraftValuesAreValid(data: ModelRatioData) {
+  if (
+    data.billingMode === 'per-request' ||
+    data.billingMode === 'tiered_expr'
+  ) {
+    return true
+  }
+  const prompt = toNumberOrNull(data.ratio)
+  const dependents = [
+    data.completionRatio,
+    data.cacheRatio,
+    data.createCacheRatio,
+    data.imageRatio,
+    data.audioRatio,
+  ]
+  const dependentPositive = dependents.some(
+    (value) => (toNumberOrNull(value) ?? 0) > 0
+  )
+  const dependentPresent = dependents.some((value) => hasValue(value))
+  if (prompt === 0 && dependentPositive) return false
+  if (prompt === null && dependentPresent) return false
+  if (hasValue(data.audioCompletionRatio) && !hasValue(data.audioRatio)) {
+    return false
+  }
+  if (
+    toNumberOrNull(data.audioRatio) === 0 &&
+    (toNumberOrNull(data.audioCompletionRatio) ?? 0) > 0
+  ) {
+    return false
+  }
+  return true
+}
+
+export function pricingDraftCanPersist(data: ModelRatioData) {
+  if (!pricingDraftExpressionIsValid(data)) return false
+  if (!pricingDraftValuesAreValid(data)) return false
+  if (data.laneEnabled && data.lanePrices) {
+    return pricingPromptLaneValuesAreValid({
+      billingMode: data.billingMode,
+      promptPrice: data.promptPrice,
+      laneEnabled: data.laneEnabled,
+      lanePrices: data.lanePrices,
+    })
+  }
+  return true
 }
 
 export type PreviewRow = {
@@ -156,6 +264,41 @@ export function toNumberOrNull(value: unknown): number | null {
   return Number.isFinite(num) ? num : null
 }
 
+export function pricingPromptLaneValuesAreValid(input: {
+  billingMode?: string
+  promptPrice?: string
+  laneEnabled: Record<LaneKey, boolean>
+  lanePrices: Record<LaneKey, string>
+}) {
+  if (
+    input.billingMode === 'per-request' ||
+    input.billingMode === 'tiered_expr'
+  ) {
+    return true
+  }
+  const prompt = toNumberOrNull(input.promptPrice)
+  const dependentPositive = laneConfigs.some(
+    ({ key }) =>
+      input.laneEnabled[key] && (toNumberOrNull(input.lanePrices[key]) ?? 0) > 0
+  )
+  const dependentPresent = laneConfigs.some(
+    ({ key }) => input.laneEnabled[key] && hasValue(input.lanePrices[key])
+  )
+  if (prompt === 0 && dependentPositive) return false
+  if (prompt === null && dependentPresent) return false
+  if (input.laneEnabled.audioOutput && !hasValue(input.lanePrices.audioInput)) {
+    return false
+  }
+  if (
+    toNumberOrNull(input.lanePrices.audioInput) === 0 &&
+    input.laneEnabled.audioOutput &&
+    (toNumberOrNull(input.lanePrices.audioOutput) ?? 0) > 0
+  ) {
+    return false
+  }
+  return true
+}
+
 function ratioToBasePrice(ratio: unknown): string {
   const num = toNumberOrNull(ratio)
   if (num === null) return ''
@@ -179,6 +322,17 @@ export function createInitialLaneState(data?: ModelRatioData | null) {
       promptPrice: '',
       prices: { ...EMPTY_LANE_PRICES },
       enabled: { ...EMPTY_LANE_ENABLED },
+    }
+  }
+
+  if (data.laneEnabled && data.lanePrices) {
+    return {
+      promptPrice:
+        data.promptPrice !== undefined && data.promptPrice !== null
+          ? data.promptPrice
+          : ratioToBasePrice(data.ratio),
+      prices: { ...EMPTY_LANE_PRICES, ...data.lanePrices },
+      enabled: { ...EMPTY_LANE_ENABLED, ...data.laneEnabled },
     }
   }
 

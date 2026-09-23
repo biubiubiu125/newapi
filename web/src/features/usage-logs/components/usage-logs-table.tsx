@@ -47,6 +47,8 @@ import { TaskLogsFilterBar } from './task-logs-filter-bar'
 import { UsageLogsMobileList } from './usage-logs-mobile-card'
 import { useLogsViewScope } from './usage-logs-provider'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 const route = getRouteApi('/_authenticated/usage-logs/$section')
 
 const logTypeRowTint: Record<number, string> = {
@@ -142,7 +144,7 @@ export function UsageLogsTable({ logCategory }: UsageLogsTableProps) {
       })
 
       if (!result?.success) {
-        toast.error(result?.message || t('Failed to load logs'))
+        toast.error(localizeConsoleErrorText(result?.message, 'Failed to load logs'))
         return DEFAULT_LOGS_DATA
       }
 

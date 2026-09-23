@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting"
@@ -106,7 +108,7 @@ func buildCompletionRatioMetaValue(optionValues map[string]string) string {
 func UploadSystemLogo(c *gin.Context) {
 	fileHeader, err := c.FormFile("file")
 	if err != nil {
-		common.ApiErrorMsg(c, "请选择图片文件")
+		common.ApiErrorI18n(c, i18n.MsgLogoFileRequired)
 		return
 	}
 	file, err := fileHeader.Open()
@@ -122,13 +124,13 @@ func UploadSystemLogo(c *gin.Context) {
 		return
 	}
 	if len(data) > 5*1024*1024 {
-		common.ApiErrorMsg(c, "图片大小不能超过 5 MB")
+		common.ApiErrorI18n(c, i18n.MsgLogoFileTooLarge)
 		return
 	}
 	contentType := http.DetectContentType(data)
 	ext, ok := systemAssetExtensionFromContentType(contentType)
 	if !ok {
-		common.ApiErrorMsg(c, "仅支持 png、jpg、jpeg、webp、gif、ico 图片")
+		common.ApiErrorI18n(c, i18n.MsgLogoFileType)
 		return
 	}
 	dir, err := ensureSystemAssetDir()
@@ -259,12 +261,12 @@ func UpdateOption(c *gin.Context) {
 	if err != nil {
 		c.JSON(http.StatusBadRequest, gin.H{
 			"success": false,
-			"message": "无效的参数",
+			"message": i18n.T(c, i18n.MsgInvalidParams),
 		})
 		return
 	}
 	if model.IsDeprecatedOptionKey(option.Key) {
-		common.ApiErrorMsg(c, "该配置项已废弃")
+		common.ApiErrorI18n(c, i18n.MsgOptionDeprecated)
 		return
 	}
 	switch option.Value.(type) {
@@ -280,7 +282,7 @@ func UpdateOption(c *gin.Context) {
 	if option.Key == "payment_setting.wallet_notice" {
 		walletNotice := strings.TrimSpace(option.Value.(string))
 		if len([]rune(walletNotice)) > walletNoticeMaxLength {
-			common.ApiErrorMsg(c, "钱包页提示公告不能超过 1000 个字符")
+			common.ApiErrorI18n(c, i18n.MsgOptionWalletNoticeTooLong)
 			return
 		}
 		option.Value = walletNotice
@@ -292,88 +294,60 @@ func UpdateOption(c *gin.Context) {
 	switch option.Key {
 	default:
 		if isPaymentComplianceOptionKey(option.Key) {
-			common.ApiErrorMsg(c, "合规确认字段不允许通过通用设置接口修改")
+			common.ApiErrorI18n(c, i18n.MsgOptionComplianceFieldReadonly)
 			return
 		}
 	}
 	if option.Key == "TaskPublicAddress" && option.Value.(string) != "" {
 		if err := service.ValidateTaskArtifactBaseURL(option.Value.(string)); err != nil {
-			common.ApiErrorMsg(c, err.Error())
+			common.ApiErrorI18n(c, mapTaskArtifactBaseURLError(err))
 			return
 		}
 	}
 	switch option.Key {
 	case "GitHubOAuthEnabled":
 		if option.Value == "true" && common.GitHubClientId == "" {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "无法启用 GitHub OAuth，请先填入 GitHub Client Id 以及 GitHub Client Secret！",
-			})
+			common.ApiErrorI18n(c, i18n.MsgOptionOAuthGitHubMissing)
 			return
 		}
 	case "discord.enabled":
 		if option.Value == "true" && system_setting.GetDiscordSettings().ClientId == "" {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "无法启用 Discord OAuth，请先填入 Discord Client Id 以及 Discord Client Secret！",
-			})
+			common.ApiErrorI18n(c, i18n.MsgOptionOAuthDiscordMissing)
 			return
 		}
 	case "oidc.enabled":
 		if option.Value == "true" && system_setting.GetOIDCSettings().ClientId == "" {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "无法启用 OIDC 登录，请先填入 OIDC Client Id 以及 OIDC Client Secret！",
-			})
+			common.ApiErrorI18n(c, i18n.MsgOptionOAuthOIDCMissing)
 			return
 		}
 	case "LinuxDOOAuthEnabled":
 		if option.Value == "true" && common.LinuxDOClientId == "" {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "无法启用 LinuxDO OAuth，请先填入 LinuxDO Client Id 以及 LinuxDO Client Secret！",
-			})
+			common.ApiErrorI18n(c, i18n.MsgOptionOAuthLinuxDOMissing)
 			return
 		}
 	case "EmailDomainRestrictionEnabled":
 		if option.Value == "true" && len(common.EmailDomainWhitelist) == 0 {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "无法启用邮箱域名限制，请先填入限制的邮箱域名！",
-			})
+			common.ApiErrorI18n(c, i18n.MsgOptionEmailDomainRestrictionEmpty)
 			return
 		}
 	case "WeChatAuthEnabled":
 		if option.Value == "true" && common.WeChatServerAddress == "" {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "无法启用微信登录，请先填入微信登录相关配置信息！",
-			})
+			common.ApiErrorI18n(c, i18n.MsgOptionWeChatMissing)
 			return
 		}
 	case "TurnstileCheckEnabled":
 		if option.Value == "true" && common.TurnstileSiteKey == "" {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "无法启用 Turnstile 校验，请先填入 Turnstile 校验相关配置信息！",
-			})
-
+			common.ApiErrorI18n(c, i18n.MsgOptionTurnstileMissing)
 			return
 		}
 	case "TelegramOAuthEnabled":
 		if option.Value == "true" && common.TelegramBotToken == "" {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "无法启用 Telegram OAuth，请先填入 Telegram Bot Token！",
-			})
+			common.ApiErrorI18n(c, i18n.MsgOptionTelegramMissing)
 			return
 		}
 	case "theme.frontend":
 		if option.Value != "default" {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "Classic \u524d\u7aef\u5df2\u79fb\u9664\uff0c\u4e3b\u9898\u53ea\u80fd\u8bbe\u7f6e\u4e3a default",
-			})
+			common.ApiErrorI18n(c, i18n.MsgOptionThemeClassicRemoved)
 			return
 		}
 	case "claude.default_max_tokens":
@@ -390,30 +364,6 @@ func UpdateOption(c *gin.Context) {
 		err = ratio_setting.CheckGroupRatio(option.Value.(string))
 		if err != nil {
 			common.ApiError(c, err)
-			return
-		}
-	case "ImageRatio":
-		err = ratio_setting.UpdateImageRatioByJSONString(option.Value.(string))
-		if err != nil {
-			common.ApiErrorMsg(c, "图片倍率设置失败: "+err.Error())
-			return
-		}
-	case "AudioRatio":
-		err = ratio_setting.UpdateAudioRatioByJSONString(option.Value.(string))
-		if err != nil {
-			common.ApiErrorMsg(c, "音频倍率设置失败: "+err.Error())
-			return
-		}
-	case "AudioCompletionRatio":
-		err = ratio_setting.UpdateAudioCompletionRatioByJSONString(option.Value.(string))
-		if err != nil {
-			common.ApiErrorMsg(c, "音频补全倍率设置失败: "+err.Error())
-			return
-		}
-	case "CreateCacheRatio":
-		err = ratio_setting.UpdateCreateCacheRatioByJSONString(option.Value.(string))
-		if err != nil {
-			common.ApiErrorMsg(c, "缓存创建倍率设置失败: "+err.Error())
 			return
 		}
 	case "ModelRequestRateLimitGroup":
@@ -473,4 +423,23 @@ func UpdateOption(c *gin.Context) {
 		"success": true,
 		"message": "",
 	})
+}
+
+func mapTaskArtifactBaseURLError(err error) string {
+	switch {
+	case errors.Is(err, service.ErrTaskArtifactURLEmpty):
+		return i18n.MsgOptionTaskArtifactURLEmpty
+	case errors.Is(err, service.ErrTaskArtifactURLWhitespace):
+		return i18n.MsgOptionTaskArtifactURLWhitespace
+	case errors.Is(err, service.ErrTaskArtifactURLInvalid):
+		return i18n.MsgOptionTaskArtifactURLInvalid
+	case errors.Is(err, service.ErrTaskArtifactURLScheme):
+		return i18n.MsgOptionTaskArtifactURLScheme
+	case errors.Is(err, service.ErrTaskArtifactURLHost):
+		return i18n.MsgOptionTaskArtifactURLHost
+	case errors.Is(err, service.ErrTaskArtifactURLQuery):
+		return i18n.MsgOptionTaskArtifactURLQuery
+	default:
+		return i18n.MsgInvalidParams
+	}
 }

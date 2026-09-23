@@ -259,7 +259,8 @@ function FormMessage({ className, ...props }: React.ComponentProps<'p'>) {
     return null
   }
 
-  const translatedBody = typeof body === 'string' ? t(body) : body
+  const translatedBody =
+    typeof body === 'string' ? t(body, { keySeparator: false }) : body
 
   return (
     <p

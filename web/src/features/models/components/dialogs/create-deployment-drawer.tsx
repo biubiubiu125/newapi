@@ -22,6 +22,8 @@ import { useEffect, useMemo } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
+
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
 import { z } from 'zod'
 
 import {
@@ -69,6 +71,8 @@ import {
   getHardwareTypes,
 } from '../../api'
 import { deploymentsQueryKeys } from '../../lib'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 const BUILTIN_IMAGE = 'ollama/ollama:latest'
 const DEFAULT_TRAFFIC_PORT = 11434
@@ -332,11 +336,9 @@ export function CreateDeploymentDrawer({
         onOpenChange(false)
         return
       }
-      toast.error(data?.message || t('Failed to create deployment'))
+      toast.error(localizeConsoleErrorText(data?.message, 'Failed to create deployment'))
     },
-    onError: (err: Error) => {
-      toast.error(err.message || t('Failed to create deployment'))
-    },
+    onError: toastUnhandledConsoleError,
   })
 
   // Reset form when opening

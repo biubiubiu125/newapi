@@ -1561,15 +1561,21 @@ func TestPublicImageTaskStatusRejectsDisabledOwnerToken(t *testing.T) {
 }
 
 func TestValidateImageTaskModeRequestRejectsAsyncTaskBridgeMultipleImages(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	n := uint(2)
 	err := validateImageTaskModeRequest(&dto.ImageRequest{N: &n}, dto.ImageTaskModeAsyncTaskBridge)
-	require.ErrorContains(t, err, "n 大于 1")
+	require.ErrorContains(t, err, "n greater than 1")
+	require.NotRegexp(t, "[\u4e00-\u9fff]", err.Error())
 
 	require.NoError(t, validateImageTaskModeRequest(&dto.ImageRequest{N: &n}, dto.ImageTaskModeSyncWrapper))
 
 	one := uint(1)
 	require.NoError(t, validateImageTaskModeRequest(&dto.ImageRequest{N: &one}, dto.ImageTaskModeAsyncTaskBridge))
 	require.NoError(t, validateImageTaskModeRequest(&dto.ImageRequest{}, dto.ImageTaskModeAsyncTaskBridge))
+
+	apiErr := types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest)
+	require.Contains(t, apiErr.ToOpenAIError().Message, "n greater than 1")
+	require.NotRegexp(t, "[\u4e00-\u9fff]", apiErr.ToOpenAIError().Message)
 }
 
 func TestTryRelayImageTaskSyncBridgeSkipsNonAsyncWithoutInitializingChannelMeta(t *testing.T) {

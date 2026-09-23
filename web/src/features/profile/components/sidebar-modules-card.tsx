@@ -45,6 +45,8 @@ import {
 } from '@/lib/sidebar-modules'
 import { useAuthStore } from '@/stores/auth-store'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type SectionDef = {
   key: string
   title: string
@@ -186,7 +188,7 @@ export function SidebarModulesCard() {
         }
         toast.success(t('Sidebar settings saved'))
       } else {
-        toast.error(res.data.message || t('Failed to save sidebar settings'))
+        toast.error(localizeConsoleErrorText(res.data.message, 'Failed to save sidebar settings'))
       }
     } catch {
       toast.error(t('Failed to save sidebar settings. Please try again later.'))

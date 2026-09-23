@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -31,13 +32,13 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 	bodyBytes, err := io.ReadAll(c.Request.Body)
 	if err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Creem 订阅支付请求读取失败 error=%q", err.Error()))
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "read query error"})
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": i18n.T(c, i18n.MsgCommonReadFailed)})
 		return
 	}
 	c.Request.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 
 	if err := c.ShouldBindJSON(&req); err != nil || req.PlanId <= 0 {
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "参数错误"})
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": i18n.T(c, i18n.MsgInvalidParams)})
 		return
 	}
 
@@ -47,20 +48,20 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 		return
 	}
 	if !plan.Enabled {
-		common.ApiErrorMsg(c, "套餐未启用")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionNotEnabled)
 		return
 	}
 	if plan.PriceAmount < 0.01 {
-		common.ApiErrorMsg(c, "套餐金额过低")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionAmountTooLow)
 		return
 	}
 	productID := strings.TrimSpace(plan.CreemProductId)
 	if productID == "" {
-		common.ApiErrorMsg(c, "该套餐未配置 CreemProductId")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionCreemProductMissing)
 		return
 	}
 	if !isCreemSubscriptionEnabled() {
-		common.ApiErrorMsg(c, "Creem 未配置或密钥无效")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionCreemNotConfigured)
 		return
 	}
 
@@ -71,7 +72,7 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 		return
 	}
 	if user == nil {
-		common.ApiErrorMsg(c, "用户不存在")
+		common.ApiErrorI18n(c, i18n.MsgUserNotExists)
 		return
 	}
 
@@ -82,7 +83,7 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 			return
 		}
 		if count >= int64(plan.MaxPurchasePerUser) {
-			common.ApiErrorMsg(c, "已达到该套餐购买上限")
+			common.ApiErrorI18n(c, i18n.MsgSubscriptionPurchaseMax)
 			return
 		}
 	}
@@ -101,7 +102,7 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 	}
 	paidAmount, err := normalizeSubscriptionPaymentAmount(plan, currency)
 	if err != nil {
-		common.ApiErrorMsg(c, "套餐金额无效")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionAmountInvalid)
 		return
 	}
 	if err := validateCreemSubscriptionProduct(c.Request.Context(), productID, paidAmount, currency); err != nil {
@@ -109,7 +110,7 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 			"Creem 订阅产品校验失败 plan_id=%d product_id=%q amount=%.8f currency=%s error=%q",
 			plan.Id, productID, paidAmount, currency, err.Error(),
 		))
-		common.ApiErrorMsg(c, "套餐 Creem 产品价格配置无效")
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionCreemPriceInvalid)
 		return
 	}
 	snapshot, _ := referralService.BuildOrderSnapshot(userId, paidAmount, currency)
@@ -137,7 +138,7 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 		order.ReferralCommissionError = snapshot.Error
 	}
 	if err := order.Insert(); err != nil {
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "创建订单失败"})
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": i18n.T(c, i18n.MsgPaymentCreateFailed)})
 		return
 	}
 
@@ -156,7 +157,7 @@ func SubscriptionRequestCreemPay(c *gin.Context) {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("Creem 订阅支付链接创建失败后关闭订单失败 trade_no=%s error=%q", referenceId, expireErr.Error()))
 		}
 		logger.LogError(c.Request.Context(), fmt.Sprintf("Creem 订阅支付链接创建失败 trade_no=%s product_id=%s error=%q", referenceId, product.ProductId, err.Error()))
-		c.JSON(http.StatusOK, gin.H{"message": "error", "data": "拉起支付失败"})
+		c.JSON(http.StatusOK, gin.H{"message": "error", "data": i18n.T(c, i18n.MsgPaymentStartFailed)})
 		return
 	}
 

@@ -91,7 +91,7 @@ func (err BEpusdtGatewayError) Error() string {
 	return fmt.Sprintf("bepusdt create order status %d: %s", err.StatusCode, err.Body)
 }
 
-func (err BEpusdtGatewayError) PublicMessage() string {
+func (err BEpusdtGatewayError) PublicDetail() string {
 	var payload map[string]interface{}
 	if common.UnmarshalJsonStr(err.Body, &payload) != nil {
 		return ""
@@ -102,9 +102,13 @@ func (err BEpusdtGatewayError) PublicMessage() string {
 	}
 	statusCode := firstString(payload, "status_code", "code")
 	if statusCode != "" {
-		return fmt.Sprintf("BEpusdt 网关拒绝订单：%s（%s）", message, statusCode)
+		return fmt.Sprintf("%s (%s)", message, statusCode)
 	}
-	return fmt.Sprintf("BEpusdt 网关拒绝订单：%s", message)
+	return message
+}
+
+func (err BEpusdtGatewayError) PublicMessage() string {
+	return err.PublicDetail()
 }
 
 func IsUSDTGatewayConfigured() bool {

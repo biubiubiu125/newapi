@@ -1209,7 +1209,7 @@ func (channel *Channel) ValidateSettings() error {
 	case "", dto.ImageTaskModeSyncWrapper:
 	case dto.ImageTaskModeAsyncTaskBridge:
 		if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
-			return fmt.Errorf("异步任务桥接模式必须配置支持 /api/image-tasks 协议的 base_url")
+			return fmt.Errorf("async task bridge mode requires a base_url that supports /api/image-tasks")
 		}
 	default:
 		return fmt.Errorf("image_task_mode is invalid")

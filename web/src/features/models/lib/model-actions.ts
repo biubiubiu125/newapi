@@ -20,8 +20,12 @@ import type { QueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
+
 import { updateModelStatus, deleteModel as deleteModelAPI } from '../api'
 import { modelsQueryKeys } from './query-keys'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 // ============================================================================
 // Model Status Actions
@@ -42,11 +46,11 @@ export async function handleEnableModel(
       queryClient?.invalidateQueries({ queryKey: modelsQueryKeys.lists() })
       onSuccess?.()
     } else {
-      toast.error(response.message || i18next.t('Failed to enable model'))
+      toast.error(localizeConsoleErrorText(response.message, 'Failed to enable model'))
     }
   } catch (error: unknown) {
     toast.error(
-      (error as Error)?.message || i18next.t('Failed to enable model')
+      localizeConsoleErrorText((error as Error)?.message, 'Failed to enable model')
     )
   }
 }
@@ -66,11 +70,11 @@ export async function handleDisableModel(
       queryClient?.invalidateQueries({ queryKey: modelsQueryKeys.lists() })
       onSuccess?.()
     } else {
-      toast.error(response.message || i18next.t('Failed to disable model'))
+      toast.error(localizeConsoleErrorText(response.message, 'Failed to disable model'))
     }
   } catch (error: unknown) {
     toast.error(
-      (error as Error)?.message || i18next.t('Failed to disable model')
+      localizeConsoleErrorText((error as Error)?.message, 'Failed to disable model')
     )
   }
 }
@@ -110,11 +114,11 @@ export async function handleDeleteModel(
       queryClient?.invalidateQueries({ queryKey: modelsQueryKeys.lists() })
       onSuccess?.()
     } else {
-      toast.error(response.message || i18next.t('Failed to delete model'))
+      toast.error(localizeConsoleErrorText(response.message, 'Failed to delete model'))
     }
   } catch (error: unknown) {
     toast.error(
-      (error as Error)?.message || i18next.t('Failed to delete model')
+      localizeConsoleErrorText((error as Error)?.message, 'Failed to delete model')
     )
   }
 }
@@ -165,7 +169,7 @@ export async function handleBatchDeleteModels(
       )
     }
   } catch (error: unknown) {
-    toast.error((error as Error)?.message || i18next.t('Batch delete failed'))
+    toastUnhandledConsoleError(error)
   }
 }
 
@@ -217,7 +221,7 @@ export async function handleBatchEnableModels(
       )
     }
   } catch (error: unknown) {
-    toast.error((error as Error)?.message || i18next.t('Batch enable failed'))
+    toastUnhandledConsoleError(error)
   }
 }
 
@@ -267,6 +271,6 @@ export async function handleBatchDisableModels(
       )
     }
   } catch (error: unknown) {
-    toast.error((error as Error)?.message || i18next.t('Batch disable failed'))
+    toastUnhandledConsoleError(error)
   }
 }

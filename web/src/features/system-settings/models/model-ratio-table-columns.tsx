@@ -21,7 +21,6 @@ import type { ColumnDef } from '@tanstack/react-table'
 import { DataTableColumnHeader } from '@/components/data-table/core/column-header'
 import { StaticRowActions } from '@/components/data-table/static/static-row-actions'
 import { StatusBadge } from '@/components/status-badge'
-import { Checkbox } from '@/components/ui/checkbox'
 
 import {
   getModeLabel,
@@ -56,20 +55,29 @@ export function buildModelRatioColumns({
     {
       id: 'select',
       header: ({ table }) => (
-        <Checkbox
+        <input
+          type='checkbox'
+          className='border-input size-4 shrink-0 translate-y-[2px] cursor-pointer rounded-sm border'
           checked={table.getIsAllPageRowsSelected()}
-          indeterminate={table.getIsSomePageRowsSelected()}
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
+          ref={(element) => {
+            if (element) {
+              element.indeterminate = table.getIsSomePageRowsSelected()
+            }
+          }}
+          onChange={(event) =>
+            table.toggleAllPageRowsSelected(event.target.checked)
+          }
           aria-label={t('Select all')}
-          className='translate-y-[2px]'
         />
       ),
       cell: ({ row }) => (
-        <Checkbox
+        <input
+          type='checkbox'
+          className='border-input size-4 shrink-0 translate-y-[2px] cursor-pointer rounded-sm border'
           checked={row.getIsSelected()}
-          onCheckedChange={(value) => row.toggleSelected(!!value)}
+          onChange={(event) => row.toggleSelected(event.target.checked)}
+          onClick={(event) => event.stopPropagation()}
           aria-label={t('Select row')}
-          className='translate-y-[2px]'
         />
       ),
       enableSorting: false,

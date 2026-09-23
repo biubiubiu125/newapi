@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
@@ -41,13 +42,13 @@ func RequestBEpusdtPay(c *gin.Context) {
 		return
 	}
 	if !service.IsUSDTGatewayConfigured() {
-		common.ApiErrorMsg(c, "USDT 网关未启用或配置不完整")
+		common.ApiErrorI18n(c, i18n.MsgPaymentUSDTNotConfigured)
 		return
 	}
 
 	var req BEpusdtPayRequest
 	if err := c.ShouldBindJSON(&req); err != nil {
-		common.ApiErrorMsg(c, "参数错误")
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
 	minTopup := int64(setting.BEpusdtMinTopUp)
@@ -55,12 +56,12 @@ func RequestBEpusdtPay(c *gin.Context) {
 		minTopup = getMinTopup()
 	}
 	if req.Amount < minTopup {
-		common.ApiErrorMsg(c, fmt.Sprintf("充值数量不能小于 %d", minTopup))
+		common.ApiErrorI18n(c, i18n.MsgTopupAmountMin, map[string]any{"Min": minTopup})
 		return
 	}
 	token, network, ok := service.ParseBEpusdtPaymentMethod(req.PaymentMethod)
 	if !ok || token != "usdt" || network != "" {
-		common.ApiErrorMsg(c, "支付链不存在或未启用")
+		common.ApiErrorI18n(c, i18n.MsgPaymentChainNotEnabled)
 		return
 	}
 
@@ -70,12 +71,12 @@ func RequestBEpusdtPay(c *gin.Context) {
 	}
 	group, err := model.GetUserGroup(id, true)
 	if err != nil {
-		common.ApiErrorMsg(c, "获取用户分组失败")
+		common.ApiErrorI18n(c, i18n.MsgTopupGetGroupFailed)
 		return
 	}
 	payMoney := getPayMoney(req.Amount, group)
 	if payMoney < 0.01 {
-		common.ApiErrorMsg(c, "充值金额过低")
+		common.ApiErrorI18n(c, i18n.MsgPaymentAmountTooLow)
 		return
 	}
 	currency := strings.ToUpper(strings.TrimSpace(setting.BEpusdtCurrency))
@@ -83,7 +84,7 @@ func RequestBEpusdtPay(c *gin.Context) {
 		currency = "CNY"
 	}
 	if currency != "CNY" {
-		common.ApiErrorMsg(c, "USDT 网关订单计价币种必须为 CNY")
+		common.ApiErrorI18n(c, i18n.MsgPaymentUSDTCNYRequired)
 		return
 	}
 	snapshot, _ := referralService.BuildOrderSnapshot(id, payMoney, currency)
@@ -92,13 +93,13 @@ func RequestBEpusdtPay(c *gin.Context) {
 	provider := service.ActiveUSDTGatewayProvider()
 	callbackAddress := paymentPublicBaseURLForRequest(c)
 	if callbackAddress == "" {
-		common.ApiErrorMsg(c, "USDT 网关回调地址必须配置为公网地址，不能使用 localhost")
+		common.ApiErrorI18n(c, i18n.MsgPaymentUSDTCallbackLocalhost)
 		return
 	}
 	notifyURL := callbackAddress + "/api/user/bepusdt/notify"
 	returnURL := paymentWalletReturnPathForRequest(c, "pending", provider, "topup", tradeNo)
 	if returnURL == "" {
-		common.ApiErrorMsg(c, "USDT 网关返回地址必须配置为公网地址，不能使用 localhost")
+		common.ApiErrorI18n(c, i18n.MsgPaymentUSDTReturnLocalhost)
 		return
 	}
 
@@ -137,7 +138,7 @@ func RequestBEpusdtPay(c *gin.Context) {
 	}
 	if err := topUp.Insert(); err != nil {
 		logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt 创建充值订单失败 user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, method, req.Amount, err.Error()))
-		common.ApiErrorMsg(c, "创建订单失败")
+		common.ApiErrorI18n(c, i18n.MsgPaymentCreateFailed)
 		return
 	}
 
@@ -155,13 +156,13 @@ func RequestBEpusdtPay(c *gin.Context) {
 		var gatewayErr service.BEpusdtGatewayError
 		if errors.As(err, &gatewayErr) {
 			logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt gateway rejected topup order user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, method, req.Amount, err.Error()))
-			if message := gatewayErr.PublicMessage(); message != "" {
-				common.ApiErrorMsg(c, message)
+			if detail := gatewayErr.PublicDetail(); detail != "" {
+				common.ApiErrorI18n(c, i18n.MsgPaymentBepusdtRejected, map[string]any{"Error": detail})
 				return
 			}
 		}
 		logger.LogError(c.Request.Context(), fmt.Sprintf("BEpusdt topup payment create failed user_id=%d trade_no=%s payment_method=%s amount=%d error=%q", id, tradeNo, method, req.Amount, err.Error()))
-		common.ApiErrorMsg(c, "BEpusdt 网关连接失败，请检查 BEpusdt 端点和密钥配置")
+		common.ApiErrorI18n(c, i18n.MsgPaymentBepusdtConnectFailed)
 		return
 	}
 	topUp.ProviderPayload = common.GetJsonString(paymentOrder.Raw)

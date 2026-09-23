@@ -324,7 +324,7 @@ func TokenOrUserAuth() func(c *gin.Context) {
 			return
 		} else if ok {
 			if user.Status != common.UserStatusEnabled {
-				abortWithOpenAiMessage(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthUserBanned))
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.ProtocolMessage(i18n.MsgAuthUserBanned))
 				return
 			}
 			setDashboardAuthContext(c, user, identity, false)
@@ -490,7 +490,7 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 			c.Abort()
 			return
 		}
-		if enforceTokenIPLimit(c, token) {
+		if enforceTokenIPLimit(c, token, true) {
 			return
 		}
 
@@ -501,7 +501,15 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 	}
 }
 
-func enforceTokenIPLimit(c *gin.Context, token *model.Token) bool {
+func abortWithDashboardMessage(c *gin.Context, statusCode int, key string, args ...map[string]any) {
+	c.JSON(statusCode, gin.H{
+		"success": false,
+		"message": common.TranslateMessage(c, key, args...),
+	})
+	c.Abort()
+}
+
+func enforceTokenIPLimit(c *gin.Context, token *model.Token, dashboard bool) bool {
 	if c == nil || token == nil {
 		return false
 	}
@@ -513,11 +521,19 @@ func enforceTokenIPLimit(c *gin.Context, token *model.Token) bool {
 	logger.LogDebug(c, "Token has IP restrictions, checking client IP %s", clientIp)
 	ip := net.ParseIP(clientIp)
 	if ip == nil {
-		abortWithOpenAiMessage(c, http.StatusForbidden, "无法解析客户端 IP 地址")
+		if dashboard {
+			abortWithDashboardMessage(c, http.StatusForbidden, i18n.MsgTokenClientIPUnparseable)
+		} else {
+			abortWithOpenAiMessage(c, http.StatusForbidden, "unable to parse client IP")
+		}
 		return true
 	}
 	if !common.IsIpInCIDRList(ip, allowIps) {
-		abortWithOpenAiMessage(c, http.StatusForbidden, "您的 IP 不在令牌允许访问的列表中", types.ErrorCodeAccessDenied)
+		if dashboard {
+			abortWithDashboardMessage(c, http.StatusForbidden, i18n.MsgTokenClientIPNotAllowed)
+		} else {
+			abortWithOpenAiMessage(c, http.StatusForbidden, "client IP is not allowed", types.ErrorCodeAccessDenied)
+		}
 		return true
 	}
 	logger.LogDebug(c, "Client IP %s passed the token IP restrictions check", clientIp)
@@ -606,15 +622,15 @@ func tokenAuth(allowExhausted bool) func(c *gin.Context) {
 			if errors.Is(err, model.ErrDatabase) {
 				common.SysLog("TokenAuth ValidateUserToken database error: " + err.Error())
 				abortWithOpenAiMessage(c, http.StatusInternalServerError,
-					common.TranslateMessage(c, i18n.MsgDatabaseError))
+					i18n.ProtocolMessage(i18n.MsgDatabaseError))
 			} else {
 				abortWithOpenAiMessage(c, http.StatusUnauthorized,
-					common.TranslateMessage(c, i18n.MsgTokenInvalid))
+					i18n.ProtocolMessage(i18n.MsgTokenInvalid))
 			}
 			return
 		}
 
-		if enforceTokenIPLimit(c, token) {
+		if enforceTokenIPLimit(c, token, false) {
 			return
 		}
 
@@ -622,12 +638,12 @@ func tokenAuth(allowExhausted bool) func(c *gin.Context) {
 		if err != nil {
 			common.SysLog(fmt.Sprintf("TokenAuth GetUserCache error for user %d: %v", token.UserId, err))
 			abortWithOpenAiMessage(c, http.StatusInternalServerError,
-				common.TranslateMessage(c, i18n.MsgDatabaseError))
+				i18n.ProtocolMessage(i18n.MsgDatabaseError))
 			return
 		}
 		userEnabled := userCache.Status == common.UserStatusEnabled
 		if !userEnabled {
-			abortWithOpenAiMessage(c, http.StatusForbidden, common.TranslateMessage(c, i18n.MsgAuthUserBanned))
+			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.ProtocolMessage(i18n.MsgAuthUserBanned))
 			return
 		}
 
@@ -638,13 +654,13 @@ func tokenAuth(allowExhausted bool) func(c *gin.Context) {
 		if tokenGroup != "" {
 			// check common.UserUsableGroups[userGroup]
 			if _, ok := service.GetUserUsableGroups(userGroup)[tokenGroup]; !ok {
-				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("无权访问 %s 分组", tokenGroup))
+				abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("no access to group %s", tokenGroup))
 				return
 			}
 			// check group in common.GroupRatio
 			if !ratio_setting.ContainsGroupRatio(tokenGroup) {
 				if tokenGroup != "auto" {
-					abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("分组 %s 已被弃用", tokenGroup))
+					abortWithOpenAiMessage(c, http.StatusForbidden, fmt.Sprintf("group %s is unavailable", tokenGroup))
 					return
 				}
 			}
@@ -695,8 +711,8 @@ func SetupContextForToken(c *gin.Context, token *model.Token, parts ...string) e
 			c.Set("specific_channel_id", parts[1])
 		} else {
 			c.Header("specific_channel_version", "701e3ae1dc3f7975556d354e0675168d004891c8")
-			abortWithOpenAiMessage(c, http.StatusForbidden, "普通用户不支持指定渠道")
-			return fmt.Errorf("普通用户不支持指定渠道")
+			abortWithOpenAiMessage(c, http.StatusForbidden, "ordinary users cannot specify a channel")
+			return fmt.Errorf("ordinary users cannot specify a channel")
 		}
 	}
 	return nil

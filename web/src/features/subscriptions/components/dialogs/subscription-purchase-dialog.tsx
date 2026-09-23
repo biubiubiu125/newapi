@@ -32,6 +32,7 @@ import {
 } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
 import { getPaymentIcon } from '@/features/wallet/lib'
+import { paymentFailureText } from '@/features/wallet/lib/payment-error'
 import { isSafeHttpCheckoutUrl } from '@/features/wallet/lib/payment-url'
 import type { PaymentInitiationResult } from '@/features/wallet/types'
 import { formatQuota } from '@/lib/format'
@@ -73,6 +74,13 @@ interface Props {
   purchaseCount?: number
   onBalancePurchaseSuccess?: () => void | Promise<void>
   onPaymentStarted?: (payment?: PaymentInitiationResult | string) => void
+}
+
+function subscriptionPaymentError(response: {
+  message?: string
+  data?: unknown
+}): string {
+  return paymentFailureText(response)
 }
 
 export function SubscriptionPurchaseDialog(props: Props) {
@@ -136,11 +144,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
         props.onOpenChange(false)
         await props.onBalancePurchaseSuccess?.()
       } else {
-        toast.error(
-          res.message && res.message !== 'success'
-            ? res.message
-            : t('Payment request failed')
-        )
+        toast.error(subscriptionPaymentError(res))
       }
     } catch {
       toast.error(t('Payment request failed'))
@@ -162,11 +166,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
       } else if (res.message === 'success') {
         toast.error(t('Invalid payment redirect URL'))
       } else {
-        toast.error(
-          res.message && res.message !== 'success'
-            ? res.message
-            : t('Payment request failed')
-        )
+        toast.error(subscriptionPaymentError(res))
       }
     } catch {
       toast.error(t('Payment request failed'))
@@ -188,11 +188,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
       } else if (res.message === 'success') {
         toast.error(t('Invalid payment redirect URL'))
       } else {
-        toast.error(
-          res.message && res.message !== 'success'
-            ? res.message
-            : t('Payment request failed')
-        )
+        toast.error(subscriptionPaymentError(res))
       }
     } catch {
       toast.error(t('Payment request failed'))
@@ -216,11 +212,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
       } else if (res.message === 'success') {
         toast.error(t('Invalid payment redirect URL'))
       } else {
-        toast.error(
-          res.message && res.message !== 'success'
-            ? res.message
-            : t('Payment request failed')
-        )
+        toast.error(subscriptionPaymentError(res))
       }
     } catch {
       toast.error(t('Payment request failed'))
@@ -261,11 +253,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
       } else if (res.message === 'success') {
         toast.error(t('Invalid payment redirect URL'))
       } else {
-        toast.error(
-          res.message && res.message !== 'success'
-            ? res.message
-            : t('Payment request failed')
-        )
+        toast.error(subscriptionPaymentError(res))
       }
     } catch {
       toast.error(t('Payment request failed'))
@@ -297,11 +285,7 @@ export function SubscriptionPurchaseDialog(props: Props) {
       } else if (res.success || res.message === 'success') {
         toast.error(t('Invalid payment redirect URL'))
       } else {
-        toast.error(
-          res.message && res.message !== 'success'
-            ? res.message
-            : t('Payment request failed')
-        )
+        toast.error(subscriptionPaymentError(res))
       }
     } catch {
       toast.error(t('Payment request failed'))

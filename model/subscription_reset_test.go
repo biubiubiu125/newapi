@@ -1,9 +1,10 @@
 package model
 
 import (
-	"strings"
 	"testing"
 	"time"
+
+	"github.com/QuantumNous/new-api/i18n"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -134,7 +135,7 @@ func TestAdminResetUserSubscriptionsByPlanNoActiveMatchReturnsError(t *testing.T
 
 	require.Error(t, err)
 	assert.Nil(t, result)
-	assert.True(t, strings.Contains(err.Error(), "该用户没有有效的此套餐订阅"))
+	assert.Equal(t, i18n.MsgSubscriptionNoActivePlan, err.Error())
 }
 
 func TestAdminResetPlanSubscriptionsResetsAllActiveUsers(t *testing.T) {

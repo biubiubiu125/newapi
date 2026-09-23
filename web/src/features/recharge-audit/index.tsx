@@ -42,6 +42,7 @@ import {
 } from '@/components/ui/table'
 import { formatSiteCreditAmount } from '@/features/wallet/lib'
 import { currentIntlLocale } from '@/i18n/languages'
+import { referralErrorLabel } from '@/lib/referral-error-label'
 import { formatQuota } from '@/lib/format'
 
 import {
@@ -207,24 +208,16 @@ function commissionJobStatusLabel(
   }
 }
 
-function referralErrorLabel(value: string, t: (key: string) => string): string {
-  switch (value) {
-    case 'fx_rate_missing':
-      return t('Missing referral FX rate')
-    default:
-      return value || '-'
-  }
-}
-
 function referralStatusText(
   order: RechargeAuditOrder,
+  language: string,
   t: (key: string) => string
 ) {
   const status = order.referral_commission_status
   if (!status) return '-'
   const label = commissionJobStatusLabel(status, t)
   if (status === 'failed' && order.referral_commission_error) {
-    return `${label}: ${referralErrorLabel(order.referral_commission_error, t)}`
+    return `${label}: ${referralErrorLabel(order.referral_commission_error, language, t)}`
   }
   return label
 }
@@ -240,7 +233,7 @@ const ORDER_STATUS_OPTIONS = [
 const PAGE_SIZE_OPTIONS = [10, 20, 50, 100]
 
 export function RechargeAudit() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const initialKeyword =
     typeof window === 'undefined'
       ? ''
@@ -561,7 +554,7 @@ export function RechargeAudit() {
                           </TableCell>
                           <TableCell>
                             <StatusBadge
-                              label={referralStatusText(order, t)}
+                              label={referralStatusText(order, i18n.language, t)}
                               variant={referralStatusVariant(
                                 order.referral_commission_status
                               )}

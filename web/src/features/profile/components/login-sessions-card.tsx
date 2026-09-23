@@ -43,6 +43,7 @@ import {
 import { Separator } from '@/components/ui/separator'
 import { Skeleton } from '@/components/ui/skeleton'
 import { clearAuthenticatedClientState } from '@/lib/api'
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
 import type { LoginSession } from '@/stores/auth-store'
 
 import {
@@ -52,6 +53,8 @@ import {
 } from '../api'
 import { LoginSessionDialogs } from './login-session-dialogs'
 import { LoginSessionItem } from './login-session-item'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 const sessionQueryKey = ['profile', 'login-sessions'] as const
 
@@ -67,7 +70,7 @@ export function LoginSessionsCard() {
     queryFn: async () => {
       const response = await getLoginSessions()
       if (!response.success) {
-        throw new Error(response.message || t('Failed to load login sessions'))
+        throw new Error(localizeConsoleErrorText(response.message, 'Failed to load login sessions'))
       }
       return response.data ?? []
     },
@@ -77,7 +80,7 @@ export function LoginSessionsCard() {
     mutationFn: async (sid: string) => {
       const response = await revokeLoginSession(sid)
       if (!response.success) {
-        throw new Error(response.message || t('Failed to sign out session'))
+        throw new Error(localizeConsoleErrorText(response.message, 'Failed to sign out session'))
       }
       return sid
     },
@@ -94,7 +97,7 @@ export function LoginSessionsCard() {
       toast.success(t('Session signed out'))
       await queryClient.invalidateQueries({ queryKey: sessionQueryKey })
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: toastUnhandledConsoleError,
   })
 
   const revokeOthersMutation = useMutation({
@@ -102,7 +105,7 @@ export function LoginSessionsCard() {
       const response = await revokeOtherLoginSessions()
       if (!response.success) {
         throw new Error(
-          response.message || t('Failed to sign out other sessions')
+          localizeConsoleErrorText(response.message, 'Failed to sign out other sessions')
         )
       }
     },
@@ -111,7 +114,7 @@ export function LoginSessionsCard() {
       toast.success(t('Other sessions signed out'))
       await queryClient.invalidateQueries({ queryKey: sessionQueryKey })
     },
-    onError: (error: Error) => toast.error(error.message),
+    onError: toastUnhandledConsoleError,
   })
 
   const sessions = sessionsQuery.data ?? []

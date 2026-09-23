@@ -22,6 +22,7 @@ import { toast } from 'sonner'
 
 import { requestCreemPayment, isApiSuccess } from '../api'
 import { openCheckoutUrl } from '../lib'
+import { paymentFailureText } from '../lib/payment-error'
 import type { PaymentInitiationResult } from '../types'
 
 /**
@@ -51,7 +52,7 @@ export function useCreemPayment() {
           }
         }
 
-        toast.error(response.message || i18next.t('Payment request failed'))
+        toast.error(paymentFailureText(response))
         return { ok: false }
       } catch {
         toast.error(i18next.t('Payment request failed'))

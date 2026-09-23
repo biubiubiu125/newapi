@@ -36,4 +36,8 @@ export function applyDayjsLocale(language?: string | null): string {
   return locale
 }
 
+// Simplified Chinese is the console default. Detection replaces this before
+// the first render; do not leave dayjs on its English built-in locale.
+applyDayjsLocale()
+
 export default dayjs

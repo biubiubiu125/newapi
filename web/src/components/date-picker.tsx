@@ -28,17 +28,24 @@ import {
 } from '@/components/ui/popover'
 import { resolveDayPickerLocale } from '@/lib/calendar-locale'
 import dayjs from '@/lib/dayjs'
+import { cn } from '@/lib/utils'
 
 type DatePickerProps = {
   selected: Date | undefined
   onSelect: (date: Date | undefined) => void
   placeholder?: string
+  className?: string
+  disableFuture?: boolean
+  'aria-label'?: string
 }
 
 export function DatePicker({
   selected,
   onSelect,
   placeholder,
+  className,
+  disableFuture = true,
+  'aria-label': ariaLabel,
 }: DatePickerProps) {
   const { t, i18n } = useTranslation()
   const placeholderText = placeholder ?? t('Pick a date')
@@ -50,7 +57,11 @@ export function DatePicker({
           <Button
             variant='outline'
             data-empty={!selected}
-            className='data-[empty=true]:text-muted-foreground w-[240px] justify-start text-start font-normal'
+            aria-label={ariaLabel}
+            className={cn(
+              'data-[empty=true]:text-muted-foreground w-[240px] justify-start text-start font-normal',
+              className
+            )}
           />
         }
       >
@@ -69,7 +80,8 @@ export function DatePicker({
           onSelect={onSelect}
           locale={calendarLocale}
           disabled={(date: Date) =>
-            date > new Date() || date < new Date('1900-01-01')
+            date < new Date('1900-01-01') ||
+            (disableFuture && date > new Date())
           }
         />
       </PopoverContent>

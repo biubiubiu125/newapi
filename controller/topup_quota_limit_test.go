@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -100,6 +101,7 @@ func TestValidateTopUpQuotaReturnsMaximumAmount(t *testing.T) {
 }
 
 func TestRequestAmountRejectsTopUpThatCannotBeSettled(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	oldQuotaPerUnit := common.QuotaPerUnit
 	oldDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
 	common.QuotaPerUnit = 500000
@@ -129,6 +131,7 @@ func TestRequestAmountRejectsTopUpThatCannotBeSettled(t *testing.T) {
 }
 
 func TestRequestAmountRejectsTopUpThatWouldOverflowWallet(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	oldQuotaPerUnit := common.QuotaPerUnit
 	oldDisplayType := operation_setting.GetGeneralSetting().QuotaDisplayType
 	oldDB := model.DB
@@ -175,7 +178,7 @@ func TestRequestAmountRejectsTopUpThatWouldOverflowWallet(t *testing.T) {
 	RequestAmount(ctx)
 
 	assert.Equal(t, http.StatusOK, recorder.Code)
-	assert.JSONEq(t, `{"message":"error","data":"top-up quota limit exceeded"}`, recorder.Body.String())
+	assert.JSONEq(t, `{"message":"error","data":"充值额度超出上限"}`, recorder.Body.String())
 }
 
 func TestValidateCreditedQuotaRejectsOverflow(t *testing.T) {

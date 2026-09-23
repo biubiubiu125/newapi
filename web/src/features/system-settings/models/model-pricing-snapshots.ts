@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { splitBillingExprAndRequestRules } from '@/features/pricing/lib/billing-expr'
 
-import { safeJsonParse } from '../utils/json-parser'
+import { parseJsonNumberMap, parseJsonObjectMap } from '../utils/json-parser'
 import { formatPricingNumber } from './pricing-format'
 
 export type ModelPricingSnapshotInput = {
@@ -175,46 +175,18 @@ export const buildModelSnapshots = ({
   billingMode,
   billingExpr,
 }: ModelPricingSnapshotInput): ModelPricingSnapshot[] => {
-  const priceMap = safeJsonParse<Record<string, number>>(modelPrice, {
-    fallback: {},
-    context: 'model prices',
-  })
-  const ratioMap = safeJsonParse<Record<string, number>>(modelRatio, {
-    fallback: {},
-    context: 'model ratios',
-  })
-  const cacheMap = safeJsonParse<Record<string, number>>(cacheRatio, {
-    fallback: {},
-    context: 'cache ratios',
-  })
-  const createCacheMap = safeJsonParse<Record<string, number>>(
-    createCacheRatio,
-    { fallback: {}, context: 'create cache ratios' }
-  )
-  const completionMap = safeJsonParse<Record<string, number>>(completionRatio, {
-    fallback: {},
-    context: 'completion ratios',
-  })
-  const imageMap = safeJsonParse<Record<string, number>>(imageRatio, {
-    fallback: {},
-    context: 'image ratios',
-  })
-  const audioMap = safeJsonParse<Record<string, number>>(audioRatio, {
-    fallback: {},
-    context: 'audio ratios',
-  })
-  const audioCompletionMap = safeJsonParse<Record<string, number>>(
-    audioCompletionRatio,
-    { fallback: {}, context: 'audio completion ratios' }
-  )
-  const billingModeMap = safeJsonParse<Record<string, string>>(billingMode, {
-    fallback: {},
-    context: 'billing mode',
-  })
-  const billingExprMap = safeJsonParse<Record<string, string>>(billingExpr, {
-    fallback: {},
-    context: 'billing expression',
-  })
+  const priceMap = parseJsonNumberMap(modelPrice) ?? {}
+  const ratioMap = parseJsonNumberMap(modelRatio) ?? {}
+  const cacheMap = parseJsonNumberMap(cacheRatio) ?? {}
+  const createCacheMap = parseJsonNumberMap(createCacheRatio) ?? {}
+  const completionMap = parseJsonNumberMap(completionRatio) ?? {}
+  const imageMap = parseJsonNumberMap(imageRatio) ?? {}
+  const audioMap = parseJsonNumberMap(audioRatio) ?? {}
+  const audioCompletionMap = parseJsonNumberMap(audioCompletionRatio) ?? {}
+  const billingModeMap =
+    parseJsonObjectMap<Record<string, string>>(billingMode) ?? {}
+  const billingExprMap =
+    parseJsonObjectMap<Record<string, string>>(billingExpr) ?? {}
 
   const modelNames = new Set([
     ...Object.keys(priceMap),

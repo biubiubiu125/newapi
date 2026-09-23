@@ -26,6 +26,8 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { logout } from '@/features/auth/api'
 import { clearAuthenticatedClientState } from '@/lib/auth-session'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 interface SignOutDialogProps {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -42,7 +44,7 @@ export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
     try {
       const response = await logout()
       if (!response.success) {
-        toast.error(response.message || t('Failed to sign out session'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to sign out session'))
         return
       }
 
@@ -51,7 +53,7 @@ export function SignOutDialog({ open, onOpenChange }: SignOutDialogProps) {
       void navigate({ to: '/sign-in', replace: true })
     } catch (error: unknown) {
       toast.error(
-        error instanceof Error ? error.message : t('Failed to sign out session')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to sign out session')
       )
     } finally {
       setIsSigningOut(false)

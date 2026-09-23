@@ -32,6 +32,8 @@ import { setup2FA, enable2FA } from '@/lib/api'
 
 import type { TwoFASetupData } from '../../types'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 // ============================================================================
 // Two-FA Setup Dialog Component
 // ============================================================================
@@ -68,7 +70,7 @@ export function TwoFASetupDialog({
         setSetupData(response.data)
         setStep(0)
       } else {
-        toast.error(response.message || t('Failed to setup 2FA'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to setup 2FA'))
         onOpenChange(false)
       }
     } catch (error) {
@@ -100,7 +102,7 @@ export function TwoFASetupDialog({
         setCode('')
         setSetupData(null)
       } else {
-        toast.error(response.message || t('Failed to enable 2FA'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to enable 2FA'))
       }
     } catch {
       toast.error(t('Failed to enable 2FA'))

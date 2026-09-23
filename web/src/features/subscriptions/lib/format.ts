@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { TFunction } from 'i18next'
 
+import { currentIntlLocale } from '@/i18n/languages'
 import dayjs from '@/lib/dayjs'
 
 import type { SubscriptionPlan } from '../types'
@@ -71,7 +72,7 @@ export function formatCnyPrice(amount: number | string): string {
   const numeric =
     typeof amount === 'number' ? amount : Number.parseFloat(String(amount))
   if (!Number.isFinite(numeric)) return '-'
-  const formatted = new Intl.NumberFormat(undefined, {
+  const formatted = new Intl.NumberFormat(currentIntlLocale(), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(numeric)

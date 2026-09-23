@@ -41,10 +41,8 @@ func detectLanguage(c *gin.Context) string {
 	return i18n.DefaultLang
 }
 
-// GetLanguage returns the current language from gin context
+// GetLanguage returns the current language from gin context.
+// After auth writes the user setting, this follows the same priority as i18n.T.
 func GetLanguage(c *gin.Context) string {
-	if lang := c.GetString(string(constant.ContextKeyLanguage)); lang != "" {
-		return lang
-	}
-	return i18n.DefaultLang
+	return i18n.GetLangFromContext(c)
 }

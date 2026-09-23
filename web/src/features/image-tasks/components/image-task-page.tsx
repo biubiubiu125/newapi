@@ -66,6 +66,10 @@ import {
   ImageTaskRequestError,
   listImageTasks,
 } from '../api'
+import {
+  getImageTaskDisplayError,
+  getImageTaskStoredErrorLabel,
+} from '../lib/display-error'
 import { imageTaskResultRenderKey } from '../lib/render'
 import {
   CUSTOM_IMAGE_TASK_SIZE_VALUE,
@@ -83,6 +87,8 @@ import type {
   PublicImageTask,
   StoredImageTask,
 } from '../types'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 type TaskRecord = StoredImageTask & {
   task: PublicImageTask | null
@@ -386,15 +392,11 @@ class ImageTaskPermanentResultError extends Error {
   }
 }
 
-function taskErrorMessage(error: unknown, fallback: string): string {
-  if (error instanceof ImageTaskRequestError) {
-    return `${error.code}: ${error.message}`
-  }
+function taskErrorMessage(error: unknown, _fallback: string): string {
   if (error instanceof ImageTaskPermanentResultError) {
     return error.message
   }
-  if (error instanceof Error) return error.message
-  return fallback
+  return getImageTaskDisplayError(error)
 }
 
 function getImageTaskRequestErrorDetails(error: unknown): {
@@ -506,7 +508,7 @@ export function ImageTaskPage() {
     queryFn: async () => {
       const response = await getApiKeys({ p: 1, size: 100 })
       if (!response.success) {
-        throw new Error(response.message || t('Request failed'))
+        throw new Error(localizeConsoleErrorText(response.message, 'Request failed'))
       }
       return response.data?.items ?? []
     },
@@ -534,7 +536,7 @@ export function ImageTaskPage() {
         try {
           const response = await fetchTokenKey(tokenId)
           if (!response.success || !response.data?.key) {
-            throw new Error(response.message || t('Failed to load API keys'))
+            throw new Error(localizeConsoleErrorText(response.message, 'Failed to load API keys'))
           }
           const fullKey = response.data.key.startsWith('sk-')
             ? response.data.key
@@ -1544,7 +1546,7 @@ function TaskCard({
       <CardContent className='grid gap-3'>
         {task?.error && (
           <div className='text-destructive border-destructive/30 bg-destructive/5 rounded-md border px-3 py-2 text-sm'>
-            {task.error.code}: {task.error.message}
+            {getImageTaskStoredErrorLabel(task.error)}
           </div>
         )}
         {record.resultError && (

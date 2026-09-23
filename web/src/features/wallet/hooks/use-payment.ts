@@ -38,6 +38,7 @@ import {
   openCheckoutUrl,
   submitPaymentForm,
 } from '../lib'
+import { paymentFailureText } from '../lib/payment-error'
 import type {
   AmountRequest,
   AmountResponse,
@@ -49,18 +50,7 @@ import type {
 // ============================================================================
 
 function getPaymentErrorMessage(response: unknown): string {
-  const payload = response as
-    | {
-        message?: unknown
-        data?: unknown
-      }
-    | undefined
-  const message =
-    typeof payload?.message === 'string' && payload.message !== 'error'
-      ? payload.message
-      : ''
-  const dataMessage = typeof payload?.data === 'string' ? payload.data : ''
-  return message || dataMessage || i18next.t('Payment request failed')
+  return paymentFailureText(response)
 }
 
 type AmountCalculator = (request: AmountRequest) => Promise<AmountResponse>

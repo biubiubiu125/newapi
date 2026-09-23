@@ -50,6 +50,8 @@ import { channelsQueryKeys } from '../../lib'
 import type { TagOperationParams } from '../../types'
 import { useChannels } from '../channels-provider'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type EditTagDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -199,11 +201,11 @@ export function EditTagDialog({ open, onOpenChange }: EditTagDialogProps) {
         queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
         onOpenChange(false)
       } else {
-        toast.error(response.message || t('Failed to update tag'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to update tag'))
       }
     } catch (error: unknown) {
       toast.error(
-        error instanceof Error ? error.message : t('Failed to update tag')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to update tag')
       )
     } finally {
       setIsSubmitting(false)

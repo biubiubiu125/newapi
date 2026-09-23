@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"net/http"
 	"strings"
+	"unicode"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
@@ -82,10 +83,49 @@ func DisableChannel(channelError types.ChannelError, reason string) {
 
 	success := model.UpdateChannelStatus(channelError.ChannelId, channelError.UsingKey, common.ChannelStatusAutoDisabled, reason)
 	if success {
-		subject := fmt.Sprintf("通道「%s」（#%d）已被禁用", channelError.ChannelName, channelError.ChannelId)
-		content := fmt.Sprintf("通道「%s」（#%d）已被禁用，原因：%s", channelError.ChannelName, channelError.ChannelId, reason)
+		subject, content := ChannelDisableNotice(channelError.ChannelName, channelError.ChannelId, reason)
 		NotifyRootUser(formatNotifyType(channelError.ChannelId, common.ChannelStatusAutoDisabled), subject, content)
 	}
+}
+
+func ChannelDisableNotice(name string, id int, reason string) (string, string) {
+	subject := fmt.Sprintf("通道「%s」（#%d）已被禁用", name, id)
+	detail := channelDisableNoticeReason(reason)
+	if detail == "" {
+		return subject, subject
+	}
+	return subject, fmt.Sprintf("通道「%s」（#%d）已被禁用，原因：%s", name, id, detail)
+}
+
+func channelDisableNoticeReason(reason string) string {
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		return ""
+	}
+	lower := strings.ToLower(reason)
+	if strings.HasPrefix(lower, BalanceInsufficientDisableReasonPrefix) {
+		rest := strings.TrimSpace(reason[len(BalanceInsufficientDisableReasonPrefix):])
+		if rest == "" || !noticeHasHan(rest) {
+			return "余额不足"
+		}
+		reason = rest
+	}
+	if IsBalanceInsufficientMessage(reason) && !noticeHasHan(reason) {
+		return "余额不足"
+	}
+	if noticeHasHan(reason) {
+		return reason
+	}
+	return ""
+}
+
+func noticeHasHan(value string) bool {
+	for _, r := range value {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
 }
 
 func EnableChannel(channelId int, usingKey string, channelName string) {

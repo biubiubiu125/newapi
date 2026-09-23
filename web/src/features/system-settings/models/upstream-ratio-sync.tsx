@@ -32,10 +32,12 @@ import {
   type ModelPricingConfig,
 } from '@/features/model-pricing/api'
 import { applyPriceSyncSelections } from '@/features/model-pricing/pricing'
+import { consoleFailureText } from '@/lib/console-failure-text'
 import { handleServerError } from '@/lib/handle-server-error'
 import {
   requireServerSuccess,
   createServerError,
+  localizeConsoleErrorText,
 } from '@/lib/server-error-message'
 
 import { fetchUpstreamRatios, getUpstreamChannels } from '../api'
@@ -68,6 +70,20 @@ import {
 } from './upstream-ratio-sync-helpers'
 import { UpstreamRatioSyncTable } from './upstream-ratio-sync-table'
 
+function upstreamFailureLine(
+  name: string,
+  error: string | undefined,
+  language: string,
+  t: (key: string) => string
+) {
+  return `${getUpstreamDisplayName(name, t)}: ${consoleFailureText(
+    error,
+    language,
+    t,
+    'Request failed'
+  )}`
+}
+
 function getDefaultEndpointForChannel(channel: UpstreamChannel): string {
   if (channel.id === MODELS_DEV_PRESET_ID) return MODELS_DEV_PRESET_ENDPOINT
   if (channel.id === OFFICIAL_CHANNEL_ID) return OFFICIAL_CHANNEL_ENDPOINT
@@ -76,7 +92,7 @@ function getDefaultEndpointForChannel(channel: UpstreamChannel): string {
 }
 
 export function UpstreamRatioSync() {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const queryClient = useQueryClient()
   const [pricingBaseline, setPricingBaseline] =
     useState<ModelPricingConfig | null>(null)
@@ -131,9 +147,13 @@ export function UpstreamRatioSync() {
       ) {
         throw new Error(
           results
-            .map(
-              (result) =>
-                `${getUpstreamDisplayName(result.name, t)}: ${result.error}`
+            .map((result) =>
+              upstreamFailureLine(
+                result.name,
+                result.error,
+                i18n.language,
+                t
+              )
             )
             .join(', ')
         )
@@ -153,9 +173,13 @@ export function UpstreamRatioSync() {
         toast.warning(
           t('Some channels failed: {{errorMsg}}', {
             errorMsg: errors
-              .map(
-                (result) =>
-                  `${getUpstreamDisplayName(result.name, t)}: ${result.error}`
+              .map((result) =>
+                upstreamFailureLine(
+                  result.name,
+                  result.error,
+                  i18n.language,
+                  t
+                )
               )
               .join(', '),
           })
@@ -285,7 +309,10 @@ export function UpstreamRatioSync() {
       <div className='min-h-0 flex-1'>
         {fetchMutation.isError ? (
           <ErrorState
-            description={fetchMutation.error.message}
+            description={localizeConsoleErrorText(
+              fetchMutation.error.message,
+              'Request failed'
+            )}
             action={
               <Button
                 variant='outline'

@@ -6,11 +6,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync/atomic"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
@@ -50,12 +52,55 @@ func TestValidateChannelProxy(t *testing.T) {
 			err = validateChannel(channel, false)
 
 			if test.wantErr {
-				require.ErrorContains(t, err, "invalid channel proxy")
+				requireLocalizedKey(t, err, "channel.setting_invalid")
+				loc, _ := common.AsLocalizedError(err)
+				require.NotEmpty(t, loc.Args)
+				require.Contains(t, fmt.Sprint(loc.Args[0]["Error"]), "invalid channel proxy")
 				return
 			}
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestValidateChannelCodexKeyRequiresJSONObject(t *testing.T) {
+	channel := &model.Channel{
+		Type: constant.ChannelTypeCodex,
+		Key:  "not-json",
+	}
+
+	err := validateChannel(channel, true)
+	loc, ok := common.AsLocalizedError(err)
+	require.True(t, ok)
+	require.Equal(t, "channel.codex_key_json", loc.Key)
+}
+
+func TestValidateChannelCodexKeyRequiresAccessTokenAndAccountID(t *testing.T) {
+	missingToken := &model.Channel{
+		Type: constant.ChannelTypeCodex,
+		Key:  `{"account_id":"acct"}`,
+	}
+	err := validateChannel(missingToken, true)
+	loc, ok := common.AsLocalizedError(err)
+	require.True(t, ok)
+	require.Equal(t, "channel.codex_key_access_token", loc.Key)
+
+	missingAccount := &model.Channel{
+		Type: constant.ChannelTypeCodex,
+		Key:  `{"access_token":"token"}`,
+	}
+	err = validateChannel(missingAccount, true)
+	loc, ok = common.AsLocalizedError(err)
+	require.True(t, ok)
+	require.Equal(t, "channel.codex_key_account_id", loc.Key)
+}
+
+func requireLocalizedKey(t *testing.T, err error, key string) {
+	t.Helper()
+	require.Error(t, err)
+	loc, ok := common.AsLocalizedError(err)
+	require.True(t, ok, "want LocalizedError, got %v", err)
+	require.Equal(t, key, loc.Key)
 }
 
 func TestValidateChannelRequiresNewAPIBaseURL(t *testing.T) {
@@ -79,12 +124,49 @@ func TestValidateChannelRequiresNewAPIBaseURL(t *testing.T) {
 			err := validateChannel(channel, false)
 
 			if test.wantErr {
-				require.ErrorContains(t, err, "New API 渠道基础地址不能为空")
+				requireLocalizedKey(t, err, "channel.newapi_base_url_required")
 				return
 			}
 			require.NoError(t, err)
 		})
 	}
+}
+
+func TestValidateChannelRequiresSub2APIBaseURL(t *testing.T) {
+	channel := &model.Channel{Type: constant.ChannelTypeSub2API}
+	requireLocalizedKey(t, validateChannel(channel, false), "channel.sub2api_base_url_required")
+}
+
+func TestValidateChannelNilReturnsLocalized(t *testing.T) {
+	requireLocalizedKey(t, validateChannel(nil, false), "channel.empty")
+}
+
+func TestValidateChannelAddEmptyKeyReturnsLocalized(t *testing.T) {
+	channel := &model.Channel{Type: constant.ChannelTypeOpenAI}
+	requireLocalizedKey(t, validateChannel(channel, true), "channel.empty")
+}
+
+func TestValidateChannelModelNameTooLongReturnsLocalized(t *testing.T) {
+	channel := &model.Channel{
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "sk-test",
+		Models: strings.Repeat("m", 256),
+	}
+	err := validateChannel(channel, true)
+	requireLocalizedKey(t, err, "channel.model_name_too_long")
+	loc, _ := common.AsLocalizedError(err)
+	require.NotEmpty(t, loc.Args)
+	require.Equal(t, strings.Repeat("m", 256), loc.Args[0]["Model"])
+}
+
+func TestValidateChannelVertexRegionMessagesAreLocalized(t *testing.T) {
+	requireLocalizedKey(t, validateChannel(&model.Channel{Type: constant.ChannelTypeVertexAi}, false), "channel.vertex_region_required")
+	requireLocalizedKey(t, validateChannel(&model.Channel{Type: constant.ChannelTypeVertexAi, Other: "{not-json"}, false), "channel.vertex_region_json")
+	requireLocalizedKey(t, validateChannel(&model.Channel{Type: constant.ChannelTypeVertexAi, Other: `{"region2":"us-east1"}`}, false), "channel.vertex_region_default")
+	require.NoError(t, validateChannel(&model.Channel{
+		Type:  constant.ChannelTypeVertexAi,
+		Other: `{"default":"us-central1"}`,
+	}, false))
 }
 
 func TestNewAPIChannelRegistration(t *testing.T) {
@@ -151,14 +233,26 @@ func TestCopyChannelRejectsInvalidLegacyProxySettings(t *testing.T) {
 	}
 	require.NoError(t, db.Create(origin).Error)
 
+	require.NoError(t, i18n.Init())
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Params = gin.Params{{Key: "id", Value: fmt.Sprintf("%d", origin.Id)}}
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/copy", nil)
+	ctx.Request.Header.Set("Accept-Language", "zh-CN")
 
 	CopyChannel(ctx)
 
-	assert.Contains(t, recorder.Body.String(), "渠道设置无效")
+	body := recorder.Body.String()
+	assert.Contains(t, body, "渠道额外设置[channel setting] 格式错误")
+	assert.NotContains(t, body, "invalid channel proxy")
+
+	english := httptest.NewRecorder()
+	englishCtx, _ := gin.CreateTestContext(english)
+	englishCtx.Params = gin.Params{{Key: "id", Value: fmt.Sprintf("%d", origin.Id)}}
+	englishCtx.Request = httptest.NewRequest(http.MethodPost, "/api/channel/copy", nil)
+	englishCtx.Request.Header.Set("Accept-Language", "en-US")
+	CopyChannel(englishCtx)
+	assert.Contains(t, english.Body.String(), "invalid channel proxy")
 	var channelCount int64
 	require.NoError(t, db.Model(&model.Channel{}).Count(&channelCount).Error)
 	assert.Equal(t, int64(1), channelCount)

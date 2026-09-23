@@ -354,22 +354,25 @@ export function inferModelMetadata(model: PricingModel): ModelMetadata {
   }
 }
 
-const TOKEN_FORMAT = new Intl.NumberFormat(undefined, {
-  maximumFractionDigits: 1,
-})
+function tokenCountFormat() {
+  return new Intl.NumberFormat(currentIntlLocale(), {
+    maximumFractionDigits: 1,
+  })
+}
 
 /** Format a token count compactly: 128_000 → "128K", 1_000_000 → "1M". */
 export function formatTokenCount(tokens: number): string {
   if (!Number.isFinite(tokens) || tokens <= 0) return '—'
+  const formatter = tokenCountFormat()
   if (tokens >= 1_000_000) {
     const value = tokens / 1_000_000
-    return `${TOKEN_FORMAT.format(value)}M`
+    return `${formatter.format(value)}M`
   }
   if (tokens >= 1_000) {
     const value = tokens / 1_000
-    return `${TOKEN_FORMAT.format(value)}K`
+    return `${formatter.format(value)}K`
   }
-  return TOKEN_FORMAT.format(tokens)
+  return formatter.format(tokens)
 }
 
 /** Format a YYYY-MM (or YYYY-MM-DD) date as `Mon YYYY` for display. */

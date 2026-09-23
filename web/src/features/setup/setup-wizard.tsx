@@ -49,6 +49,8 @@ import { StepNavigation } from './components/step-navigation'
 import { UsageModeStep } from './components/usage-mode-step'
 import type { SetupFormValues, SetupStatus } from './types'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 const STEPS = [
   {
     titleKey: 'Database check',
@@ -115,7 +117,7 @@ export function SetupWizard() {
         }, 1200)
       } else {
         toast.error(
-          response.message || t('Initialization failed, please try again.')
+          localizeConsoleErrorText(response.message, 'Initialization failed, please try again.')
         )
       }
     },
@@ -128,7 +130,7 @@ export function SetupWizard() {
     if (!statusResponse) return
 
     if (!statusResponse.success) {
-      toast.error(statusResponse.message || t('Failed to load setup status'))
+      toast.error(localizeConsoleErrorText(statusResponse.message, 'Failed to load setup status'))
       return
     }
 

@@ -25,11 +25,14 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
 import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
 import { cn } from '@/lib/utils'
 
 import { adjustUserQuota } from '../api'
 import type { QuotaAdjustMode } from '../types'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 interface UserQuotaDialogProps {
   open: boolean
@@ -90,10 +93,10 @@ export function UserQuotaDialog(props: UserQuotaDialogProps) {
         props.onOpenChange(false)
         props.onSuccess()
       } else {
-        toast.error(result.message || t('Failed to adjust quota'))
+        toast.error(localizeConsoleErrorText(result.message, 'Failed to adjust quota'))
       }
     } catch (e: unknown) {
-      toast.error(e instanceof Error ? e.message : t('Failed to adjust quota'))
+      toastUnhandledConsoleError(e)
     } finally {
       setLoading(false)
     }

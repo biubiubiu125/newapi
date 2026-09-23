@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
@@ -397,19 +398,19 @@ func SyncUpstreamModels(c *gin.Context) {
 	var req syncRequest
 	// 允许空体
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
-		common.ApiErrorMsg(c, "请求体无效: "+err.Error())
+		common.ApiErrorI18n(c, i18n.MsgModelSyncBodyInvalid, map[string]any{"Error": err.Error()})
 		return
 	}
 	source, ok := normalizeSyncSource(req.Source)
 	if !ok {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "不支持的同步来源: " + strings.TrimSpace(req.Source)})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgModelSyncSourceUnsupported, map[string]any{"Source": strings.TrimSpace(req.Source)})})
 		return
 	}
 	// 1) 获取未配置模型列表
 	missing, err := model.GetMissingModels()
 	if err != nil {
 		common.SysError("failed to get missing models: " + err.Error())
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取模型列表失败，请稍后重试"})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgModelSyncListFailed)})
 		return
 	}
 	if req.SkipMissing {
@@ -452,7 +453,7 @@ func SyncUpstreamModels(c *gin.Context) {
 	var vendorFetchErr error
 	fetchErr := fetchJSON(ctx, modelsURL, &modelsEnv)
 	if fetchErr != nil {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "获取上游模型失败: " + fetchErr.Error(), "locale": req.Locale, "source_urls": gin.H{"models_url": modelsURL, "vendors_url": vendorsURL}})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgModelSyncUpstreamFailed, map[string]any{"Error": fetchErr.Error()}), "locale": req.Locale, "source_urls": gin.H{"models_url": modelsURL, "vendors_url": vendorsURL}})
 		return
 	}
 
@@ -678,14 +679,14 @@ func SyncUpstreamPreview(c *gin.Context) {
 	locale := c.Query("locale")
 	source, ok := normalizeSyncSource(c.Query("source"))
 	if !ok {
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": "不支持的同步来源: " + strings.TrimSpace(c.Query("source"))})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgModelSyncSourceUnsupported, map[string]any{"Source": strings.TrimSpace(c.Query("source"))})})
 		return
 	}
 	modelsURL, vendorsURL := getUpstreamURLs(locale)
 
 	var modelsEnv upstreamEnvelope[upstreamModel]
 	if err := fetchJSON(ctx, modelsURL, &modelsEnv); err != nil {
-		original := "获取上游模型失败: " + err.Error()
+		original := i18n.T(c, i18n.MsgModelSyncUpstreamFailed, map[string]any{"Error": err.Error()})
 		message := common.PublicDashboardErrorMessage(c, original)
 		if message != original {
 			common.SysError("api error: " + original)
@@ -707,7 +708,7 @@ func SyncUpstreamPreview(c *gin.Context) {
 	var locals []model.Model
 	if len(upstreamNames) > 0 {
 		if err := model.DB.Where("model_name IN ? AND sync_official <> 0", upstreamNames).Find(&locals).Error; err != nil {
-			common.ApiErrorMsg(c, "获取本地模型失败: "+err.Error())
+			common.ApiErrorI18n(c, i18n.MsgModelSyncLocalModelsFailed, map[string]any{"Error": err.Error()})
 			return
 		}
 	}
@@ -727,7 +728,7 @@ func SyncUpstreamPreview(c *gin.Context) {
 	if len(vendorIDs) > 0 {
 		var dbVendors []model.Vendor
 		if err := model.DB.Where("id IN ?", vendorIDs).Find(&dbVendors).Error; err != nil {
-			common.ApiErrorMsg(c, "获取本地供应商失败: "+err.Error())
+			common.ApiErrorI18n(c, i18n.MsgModelSyncLocalVendorsFailed, map[string]any{"Error": err.Error()})
 			return
 		}
 		for _, v := range dbVendors {
@@ -738,7 +739,7 @@ func SyncUpstreamPreview(c *gin.Context) {
 	// 3) 缺失且上游存在的模型
 	missingList, err := model.GetMissingModels()
 	if err != nil {
-		common.ApiErrorMsg(c, "获取缺失模型失败: "+err.Error())
+		common.ApiErrorI18n(c, i18n.MsgModelSyncMissingFailed, map[string]any{"Error": err.Error()})
 		return
 	}
 	var missing []string
@@ -777,7 +778,7 @@ func SyncUpstreamPreview(c *gin.Context) {
 		}
 		upstreamEndpoints, err := canonicalUpstreamEndpoints(up.Endpoints)
 		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": fmt.Sprintf("invalid upstream endpoints for %s: %v", local.ModelName, err)})
+			c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgModelSyncEndpointsInvalid, map[string]any{"Model": local.ModelName, "Error": err.Error()})})
 			return
 		}
 		localEndpoints, err := canonicalEndpointsString(local.Endpoints)

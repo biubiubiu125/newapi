@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
@@ -68,24 +69,28 @@ func TestAuthLogoutRejectsRefreshCookieSessionMismatch(t *testing.T) {
 }
 
 func TestWriteAuthSessionErrorMapsSessionGrowthLimits(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	gin.SetMode(gin.TestMode)
 	tests := []struct {
-		name           string
-		err            error
-		expectedStatus int
-		expectedCode   string
+		name            string
+		err             error
+		expectedStatus  int
+		expectedCode    string
+		expectedMessage string
 	}{
 		{
-			name:           "active session limit",
-			err:            model.ErrUserSessionLimit,
-			expectedStatus: http.StatusConflict,
-			expectedCode:   "AUTH_SESSION_LIMIT",
+			name:            "active session limit",
+			err:             model.ErrUserSessionLimit,
+			expectedStatus:  http.StatusConflict,
+			expectedCode:    "AUTH_SESSION_LIMIT",
+			expectedMessage: "当前登录会话数量已达上限",
 		},
 		{
-			name:           "issuance limit",
-			err:            model.ErrUserSessionIssuanceLimit,
-			expectedStatus: http.StatusTooManyRequests,
-			expectedCode:   "AUTH_SESSION_ISSUANCE_LIMIT",
+			name:            "issuance limit",
+			err:             model.ErrUserSessionIssuanceLimit,
+			expectedStatus:  http.StatusTooManyRequests,
+			expectedCode:    "AUTH_SESSION_ISSUANCE_LIMIT",
+			expectedMessage: "登录会话创建过于频繁，请稍后再试",
 		},
 	}
 
@@ -93,18 +98,42 @@ func TestWriteAuthSessionErrorMapsSessionGrowthLimits(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			recorder := httptest.NewRecorder()
 			c, _ := gin.CreateTestContext(recorder)
+			c.Request = httptest.NewRequest(http.MethodPost, "/api/user/auth/refresh", nil)
+			c.Request.Header.Set("Accept-Language", "zh-CN")
 			writeAuthSessionError(c, test.err)
 
 			assert.Equal(t, test.expectedStatus, recorder.Code)
 			var response struct {
 				Success bool   `json:"success"`
 				Code    string `json:"code"`
+				Message string `json:"message"`
 			}
 			require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
 			assert.False(t, response.Success)
 			assert.Equal(t, test.expectedCode, response.Code)
+			assert.Equal(t, test.expectedMessage, response.Message)
 		})
 	}
+}
+
+func TestWriteAuthSessionErrorLocalizesUnauthorized(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/user/auth/refresh", nil)
+	c.Request.Header.Set("Accept-Language", "zh-CN")
+	writeAuthSessionError(c, service.ErrRefreshTokenInvalid)
+	assert.Equal(t, http.StatusUnauthorized, recorder.Code)
+	var response struct {
+		Success bool   `json:"success"`
+		Code    string `json:"code"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	assert.False(t, response.Success)
+	assert.Equal(t, "AUTH_UNAUTHORIZED", response.Code)
+	assert.Equal(t, "未授权", response.Message)
 }
 
 func TestSessionLimitDoesNotRecordRejectedLoginAsSuccessful(t *testing.T) {

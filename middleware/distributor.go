@@ -37,22 +37,22 @@ func Distribute() func(c *gin.Context) {
 		channelId, ok := common.GetContextKey(c, constant.ContextKeyTokenSpecificChannelId)
 		modelRequest, shouldSelectChannel, err := getModelRequest(c)
 		if err != nil {
-			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": common.PublicRequestErrorMessage(err.Error())}))
+			abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.ProtocolMessage(i18n.MsgDistributorInvalidRequest, map[string]any{"Error": common.PublicRequestErrorMessage(err.Error())}))
 			return
 		}
 		if ok {
 			id, err := strconv.Atoi(channelId.(string))
 			if err != nil {
-				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
+				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.ProtocolMessage(i18n.MsgDistributorInvalidChannelId))
 				return
 			}
 			channel, err = model.GetChannelById(id, true)
 			if err != nil {
-				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidChannelId))
+				abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.ProtocolMessage(i18n.MsgDistributorInvalidChannelId))
 				return
 			}
 			if channel.Status != common.ChannelStatusEnabled {
-				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorChannelDisabled))
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.ProtocolMessage(i18n.MsgDistributorChannelDisabled))
 				return
 			}
 			if !service.ChannelSatisfiesConstraints(channel, service.GetChannelConstraints(c)) {
@@ -67,7 +67,7 @@ func Distribute() func(c *gin.Context) {
 				s, ok := common.GetContextKey(c, constant.ContextKeyTokenModelLimit)
 				if !ok {
 					// token model limit is empty, all models are not allowed
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenNoModelAccess))
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.ProtocolMessage(i18n.MsgDistributorTokenNoModelAccess))
 					return
 				}
 				var tokenModelLimit map[string]bool
@@ -77,14 +77,14 @@ func Distribute() func(c *gin.Context) {
 				}
 				matchName := ratio_setting.FormatMatchingModelName(modelRequest.Model) // match gpts & thinking-*
 				if _, ok := tokenModelLimit[matchName]; !ok {
-					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
+					abortWithOpenAiMessage(c, http.StatusForbidden, i18n.ProtocolMessage(i18n.MsgDistributorTokenModelForbidden, map[string]any{"Model": modelRequest.Model}))
 					return
 				}
 			}
 
 			if shouldSelectChannel {
 				if modelRequest.Model == "" {
-					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorModelNameRequired))
+					abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.ProtocolMessage(i18n.MsgDistributorModelNameRequired))
 					return
 				}
 				var selectGroup string
@@ -95,12 +95,12 @@ func Distribute() func(c *gin.Context) {
 					playgroundRequest := &dto.PlayGroundRequest{}
 					err = common.UnmarshalBodyReusable(c, playgroundRequest)
 					if err != nil {
-						abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.T(c, i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": common.PublicRequestErrorMessage(err.Error())}))
+						abortWithOpenAiMessage(c, http.StatusBadRequest, i18n.ProtocolMessage(i18n.MsgDistributorInvalidPlayground, map[string]any{"Error": common.PublicRequestErrorMessage(err.Error())}))
 						return
 					}
 					if playgroundRequest.Group != "" {
 						if !service.GroupInUserUsableGroups(usingGroup, playgroundRequest.Group) && playgroundRequest.Group != usingGroup {
-							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.T(c, i18n.MsgDistributorGroupAccessDenied))
+							abortWithOpenAiMessage(c, http.StatusForbidden, i18n.ProtocolMessage(i18n.MsgDistributorGroupAccessDenied))
 							return
 						}
 						usingGroup = playgroundRequest.Group
@@ -153,7 +153,7 @@ func Distribute() func(c *gin.Context) {
 						if usingGroup == "auto" {
 							showGroup = fmt.Sprintf("auto(%s)", selectGroup)
 						}
-						message := i18n.T(c, i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": common.PublicRequestErrorMessage(err.Error())})
+						message := i18n.ProtocolMessage(i18n.MsgDistributorGetChannelFailed, map[string]any{"Group": showGroup, "Model": modelRequest.Model, "Error": common.PublicRequestErrorMessage(err.Error())})
 						// 如果错误，但是渠道不为空，说明是数据库一致性问题
 						//if channel != nil {
 						//	common.SysError(fmt.Sprintf("渠道不存在：%d", channel.Id))
@@ -187,13 +187,13 @@ func noAvailableChannelMessage(c *gin.Context, group, modelName string) string {
 	value, exists := c.Get(pluginruntime.ContextKeyPinnedPlugin)
 	pinned, ok := value.(pluginruntime.PinnedPlugin)
 	if exists && ok && pinned.Plugin != nil {
-		return i18n.T(c, i18n.MsgDistributorNoAvailableChannelTaskPlugin, map[string]any{
+		return i18n.ProtocolMessage(i18n.MsgDistributorNoAvailableChannelTaskPlugin, map[string]any{
 			"Group":  group,
 			"Model":  modelName,
 			"Plugin": pinned.Plugin.Meta.Key,
 		})
 	}
-	return i18n.T(c, i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": group, "Model": modelName})
+	return i18n.ProtocolMessage(i18n.MsgDistributorNoAvailableChannel, map[string]any{"Group": group, "Model": modelName})
 }
 
 func channelSelectionRequestPath(c *gin.Context) string {
@@ -238,7 +238,7 @@ func getModelFromRequest(c *gin.Context) (*ModelRequest, error) {
 	if strings.HasPrefix(c.Request.Header.Get("Content-Type"), "application/json") {
 		modelRequest, err := getModelFromJSONBody(c)
 		if err != nil {
-			return nil, errors.New(i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+			return nil, err
 		}
 		return modelRequest, nil
 	}
@@ -246,7 +246,7 @@ func getModelFromRequest(c *gin.Context) (*ModelRequest, error) {
 	var modelRequest ModelRequest
 	err := common.UnmarshalBodyReusable(c, &modelRequest)
 	if err != nil {
-		return nil, errors.New(i18n.T(c, i18n.MsgDistributorInvalidRequest, map[string]any{"Error": err.Error()}))
+		return nil, err
 	}
 	return &modelRequest, nil
 }
@@ -311,7 +311,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			midjourneyRequest := taskdto.MidjourneyRequest{}
 			err = common.UnmarshalBodyReusable(c, &midjourneyRequest)
 			if err != nil {
-				return nil, false, errors.New(i18n.T(c, i18n.MsgDistributorInvalidMidjourney, map[string]any{"Error": err.Error()}))
+				return nil, false, err
 			}
 			midjourneyModel, mjErr, success := service.GetMjRequestModel(relayMode, &midjourneyRequest)
 			if mjErr != nil {
@@ -319,7 +319,7 @@ func getModelRequest(c *gin.Context) (*ModelRequest, bool, error) {
 			}
 			if midjourneyModel == "" {
 				if !success {
-					return nil, false, fmt.Errorf("%s", i18n.T(c, i18n.MsgDistributorInvalidParseModel))
+					return nil, false, fmt.Errorf("%s", i18n.ProtocolMessage(i18n.MsgDistributorInvalidParseModel))
 				} else {
 					// task fetch, task fetch by condition, notify
 					shouldSelectChannel = false

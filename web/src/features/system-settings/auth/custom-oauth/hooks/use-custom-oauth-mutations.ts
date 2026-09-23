@@ -20,6 +20,8 @@ import { useMutation, useQueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
 
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
+
 import {
   createCustomOAuthProvider,
   updateCustomOAuthProvider,
@@ -50,9 +52,7 @@ export function useCreateProvider() {
         invalidate.onSuccess()
       }
     },
-    onError: (error: Error) => {
-      toast.error(error.message || i18next.t('Failed to create provider'))
-    },
+    onError: toastUnhandledConsoleError,
   })
 }
 
@@ -73,9 +73,7 @@ export function useUpdateProvider() {
         invalidate.onSuccess()
       }
     },
-    onError: (error: Error) => {
-      toast.error(error.message || i18next.t('Failed to update provider'))
-    },
+    onError: toastUnhandledConsoleError,
   })
 }
 
@@ -90,9 +88,7 @@ export function useDeleteProvider() {
         invalidate.onSuccess()
       }
     },
-    onError: (error: Error) => {
-      toast.error(error.message || i18next.t('Failed to delete provider'))
-    },
+    onError: toastUnhandledConsoleError,
   })
 }
 
@@ -105,9 +101,7 @@ export function useDiscoverEndpoints() {
       }
     },
     onError: (error: Error) => {
-      toast.error(
-        error.message || i18next.t('Failed to discover OIDC endpoints')
-      )
+      toastUnhandledConsoleError(error)
     },
   })
 }

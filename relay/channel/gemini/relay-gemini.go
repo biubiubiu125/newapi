@@ -506,7 +506,7 @@ func FetchGeminiModels(baseURL, apiKey, proxyURL string) ([]string, error) {
 func FetchGeminiModelsWithContext(parentCtx context.Context, baseURL, apiKey, proxyURL string) ([]string, error) {
 	client, err := service.GetHttpClientWithProxy(proxyURL)
 	if err != nil {
-		return nil, fmt.Errorf("创建HTTP客户端失败: %v", err)
+		return nil, fmt.Errorf("failed to create HTTP client: %v", err)
 	}
 	return FetchGeminiModelsWithContextAndClient(parentCtx, baseURL, apiKey, client)
 }
@@ -544,14 +544,14 @@ func FetchGeminiModelsWithContextAndClientAndHeaders(
 	for page := 0; page < maxPages; page++ {
 		requestURL, err := buildGeminiModelsURL(baseURL, nextPageToken)
 		if err != nil {
-			return nil, fmt.Errorf("创建请求失败: %v", err)
+			return nil, fmt.Errorf("failed to create request: %v", err)
 		}
 
 		ctx, cancel := context.WithTimeout(parentCtx, 30*time.Second)
 		request, err := http.NewRequestWithContext(ctx, "GET", requestURL, nil)
 		if err != nil {
 			cancel()
-			return nil, fmt.Errorf("创建请求失败: %v", err)
+			return nil, fmt.Errorf("failed to create request: %v", err)
 		}
 
 		request.Header.Set("x-goog-api-key", apiKey)
@@ -560,21 +560,21 @@ func FetchGeminiModelsWithContextAndClientAndHeaders(
 		response, err := client.Do(request)
 		if err != nil {
 			cancel()
-			return nil, fmt.Errorf("请求失败: %v", err)
+			return nil, fmt.Errorf("request failed: %v", err)
 		}
 
 		if response.StatusCode != http.StatusOK {
 			redactedBody := "response body redacted"
 			response.Body.Close()
 			cancel()
-			return nil, fmt.Errorf("服务器返回错误 %d: %s", response.StatusCode, redactedBody)
+			return nil, fmt.Errorf("upstream returned HTTP %d: %s", response.StatusCode, redactedBody)
 		}
 
 		body, err := io.ReadAll(io.LimitReader(response.Body, maxGeminiModelsResponseBytes+1))
 		response.Body.Close()
 		cancel()
 		if err != nil {
-			return nil, fmt.Errorf("读取响应失败: %v", err)
+			return nil, fmt.Errorf("failed to read response: %v", err)
 		}
 		if len(body) > maxGeminiModelsResponseBytes {
 			return nil, fmt.Errorf("response body exceeds %d bytes", maxGeminiModelsResponseBytes)
@@ -586,7 +586,7 @@ func FetchGeminiModelsWithContextAndClientAndHeaders(
 
 		var modelsResponse GeminiModelsResponse
 		if err = common.Unmarshal(body, &modelsResponse); err != nil {
-			return nil, fmt.Errorf("解析响应失败: %v", err)
+			return nil, fmt.Errorf("failed to parse response: %v", err)
 		}
 
 		for _, model := range modelsResponse.Models {

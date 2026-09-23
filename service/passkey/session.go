@@ -5,12 +5,13 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 
 	webauthn "github.com/go-webauthn/webauthn/webauthn"
 )
 
-var errSessionNotFound = errors.New("Passkey 会话不存在或已过期")
+var errSessionNotFound = common.Localized(i18n.MsgPasskeySessionExpired)
 
 const passkeyFlowTTL = 5 * time.Minute
 
@@ -21,7 +22,7 @@ type flowPayload struct {
 
 func CreateSessionDataFlow(purpose string, userID int, sessionID, scope string, data *webauthn.SessionData) (string, int64, error) {
 	if data == nil {
-		return "", 0, errors.New("Passkey 会话数据不能为空")
+		return "", 0, common.Localized(i18n.MsgPasskeySessionEmpty)
 	}
 	payload, err := common.Marshal(flowPayload{SessionData: *data, Scope: scope})
 	if err != nil {

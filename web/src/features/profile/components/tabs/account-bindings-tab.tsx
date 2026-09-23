@@ -28,6 +28,7 @@ import { StatusBadge } from '@/components/status-badge'
 import { Button } from '@/components/ui/button'
 import { Separator } from '@/components/ui/separator'
 import { createOAuthFlow } from '@/features/auth/api'
+import { getOAuthLoginDisplayError } from '@/features/auth/lib/login-display-error'
 import {
   OAUTH_BIND_CALLBACK_MESSAGE,
   OAUTH_BIND_RESULT_MESSAGE,
@@ -56,6 +57,8 @@ import type { UserProfile, BindingItem } from '../../types'
 import { EmailBindDialog } from '../dialogs/email-bind-dialog'
 import { TelegramBindDialog } from '../dialogs/telegram-bind-dialog'
 import { WeChatBindDialog } from '../dialogs/wechat-bind-dialog'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 // ============================================================================
 // Account Bindings Tab Component
@@ -146,7 +149,7 @@ export function AccountBindingsTab({
         await fetchCustomBindings()
         onUpdate()
       } else {
-        toast.error(res.message || t('Unbind failed'))
+        toast.error(localizeConsoleErrorText(res.message, 'Unbind failed'))
       }
     } catch {
       toast.error(t('Unbind failed'))
@@ -193,11 +196,15 @@ export function AccountBindingsTab({
         }
         pending.state = state
         popup.location.replace(buildUrl(state))
-      } catch {
+      } catch (error: unknown) {
         const isCurrent = pendingOAuthBinding.current === pending
         clearPendingOAuthBinding(pending)
         popup.close()
-        if (isCurrent) toast.error(t('Failed to initialize OAuth'))
+        if (isCurrent) {
+          toast.error(
+            getOAuthLoginDisplayError(error, 'Failed to initialize OAuth')
+          )
+        }
       }
     },
     [clearPendingOAuthBinding, t]
@@ -252,21 +259,23 @@ export function AccountBindingsTab({
           params,
           acceptAuthRotation: true,
           skipBusinessError: true,
+          skipErrorHandler: true,
         })
         success = Boolean(response.data?.success)
-        resultMessage = response.data?.message || resultMessage
         if (success) {
-          toast.success(t('Binding successful!'))
+          resultMessage = t('Binding successful!')
+          toast.success(resultMessage)
           onUpdate()
           await fetchCustomBindings()
         } else {
+          resultMessage = getOAuthLoginDisplayError(
+            response.data,
+            'OAuth failed'
+          )
           toast.error(resultMessage)
         }
       } catch (error: unknown) {
-        resultMessage =
-          (error as { response?: { data?: { message?: string } } }).response
-            ?.data?.message ||
-          (error instanceof Error ? error.message : resultMessage)
+        resultMessage = getOAuthLoginDisplayError(error, 'OAuth failed')
         toast.error(resultMessage)
       }
 

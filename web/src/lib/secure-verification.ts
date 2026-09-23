@@ -18,6 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { AxiosError } from 'axios'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 export interface VerificationRequiredInfo {
   code?: string
   message: string
@@ -60,8 +62,10 @@ export function extractVerificationInfo(
 ): VerificationRequiredInfo {
   const axiosError = error as AxiosError<{ code?: string; message?: string }>
   const code = axiosError.response?.data?.code
-  const message =
-    axiosError.response?.data?.message ?? 'Secure verification is required'
+  const message = localizeConsoleErrorText(
+    axiosError.response?.data?.message,
+    'Secure verification is required'
+  )
 
   return {
     code,

@@ -66,6 +66,11 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useIsMobile } from '@/hooks/use-mobile'
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
+import {
+  getServerErrorDisplayMessage,
+  localizeConsoleErrorText,
+} from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import { deletePrefillGroup, getPrefillGroups } from '../../api'
@@ -157,16 +162,22 @@ export function PrefillGroupManagementDialog({
     try {
       const response = await deletePrefillGroup(deleteState.group.id)
       if (response.success) {
-        toast.success(`Deleted "${deleteState.group.name}"`)
+        toast.success(
+          t('Deleted "{{name}}"', { name: deleteState.group.name })
+        )
         queryClient.invalidateQueries({
           queryKey: prefillGroupsQueryKeys.lists(),
         })
         setDeleteState({ open: false, group: null })
       } else {
-        toast.error(response.message || 'Failed to delete group')
+        toast.error(
+          response.message?.trim()
+            ? localizeConsoleErrorText(response.message)
+            : t('Failed to delete group')
+        )
       }
     } catch (err: unknown) {
-      toast.error((err as Error)?.message || 'Failed to delete group')
+      toastUnhandledConsoleError(err)
     } finally {
       setIsDeleting(false)
     }
@@ -239,7 +250,7 @@ export function PrefillGroupManagementDialog({
                 </Button>
               </div>
               <StatusBadge
-                label={`${groups.length} group${groups.length === 1 ? '' : 's'}`}
+                label={t('{{count}} groups', { count: groups.length })}
                 variant='neutral'
                 copyable={false}
               />
@@ -257,8 +268,10 @@ export function PrefillGroupManagementDialog({
                     <Alert variant='destructive'>
                       <AlertTitle>{t('Unable to load groups')}</AlertTitle>
                       <AlertDescription>
-                        {(error as Error).message ||
-                          'Please retry or refresh the page.'}
+                        {getServerErrorDisplayMessage(error) ===
+                        t('Something went wrong!')
+                          ? t('Please retry or refresh the page.')
+                          : getServerErrorDisplayMessage(error)}
                       </AlertDescription>
                     </Alert>
                   )}

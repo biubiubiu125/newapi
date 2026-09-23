@@ -32,6 +32,7 @@ import {
   SelectValue,
 } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 import { removeTrailingSlash } from './utils'
 import {
@@ -166,11 +167,10 @@ export function WaffoPancakeSettingsSection({
         } else {
           const reason = typeof body?.data === 'string' ? body.data : undefined
           toast.error(
-            reason
-              ? `${t('Credentials verification failed')}: ${reason}`
-              : t(
-                  'Credentials verification failed — double-check Merchant ID and API private key.'
-                )
+            localizeConsoleErrorText(
+              reason,
+              'Credentials verification failed — double-check Merchant ID and API private key.'
+            )
           )
           setPhase('idle')
           return
@@ -178,9 +178,10 @@ export function WaffoPancakeSettingsSection({
       } catch (err) {
         if (serial !== fetchSerialRef.current) return
         toast.error(
-          `${t('Credentials verification failed')}: ${
-            err instanceof Error ? err.message : String(err)
-          }`
+          localizeConsoleErrorText(
+            err instanceof Error ? err.message : '',
+            'Credentials verification failed — double-check Merchant ID and API private key.'
+          )
         )
         setPhase('idle')
         return
@@ -329,12 +330,13 @@ export function WaffoPancakeSettingsSection({
       const reason =
         errData?.error ??
         (typeof body?.data === 'string' ? body.data : undefined)
-      toast.error(
-        reason ? `${t('Creation failed')}: ${reason}` : t('Creation failed')
-      )
+      toast.error(localizeConsoleErrorText(reason, 'Creation failed'))
     } catch (err) {
       toast.error(
-        `${t('Creation failed')}: ${err instanceof Error ? err.message : String(err)}`
+        localizeConsoleErrorText(
+          err instanceof Error ? err.message : '',
+          'Creation failed'
+        )
       )
     } finally {
       setCreatingPair(false)

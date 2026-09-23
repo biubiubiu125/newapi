@@ -1889,7 +1889,7 @@ func TestUpdateSunoTasksRefundsWhenChannelLookupFails(t *testing.T) {
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
 	assert.EqualValues(t, model.TaskStatusFailure, reloaded.Status)
 	assert.Equal(t, "100%", reloaded.Progress)
-	assert.Contains(t, reloaded.FailReason, fmt.Sprintf("渠道ID：%d", missingChannelID))
+	assert.Equal(t, model.FormatPublicChannelInfoFailReason(missingChannelID), reloaded.FailReason)
 	assert.EqualValues(t, 0, reloaded.Quota)
 
 	assert.EqualValues(t, initQuota+preConsumed, getUserQuota(t, userID))
@@ -2194,7 +2194,8 @@ func TestSweepTimedOutTasksStillFailsNonImageTask(t *testing.T) {
 	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&reloaded).Error)
 	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
 	require.Equal(t, "100%", reloaded.Progress)
-	require.NotEmpty(t, reloaded.FailReason)
+	require.Equal(t, "task timed out (1 minutes)", reloaded.FailReason)
+	require.Equal(t, "task timed out (1 minutes)", reloaded.PublicFailReason())
 }
 
 func TestSweepTimedOutTasksClearsLegacyTaskQuota(t *testing.T) {
@@ -2227,7 +2228,8 @@ func TestSweepTimedOutTasksClearsLegacyTaskQuota(t *testing.T) {
 	require.NoError(t, model.DB.Where("task_id = ?", task.TaskID).First(&reloaded).Error)
 	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
 	require.Zero(t, reloaded.Quota)
-	require.Contains(t, reloaded.FailReason, "旧系统遗留任务")
+	require.Equal(t, "task timed out (legacy task, no refund, please contact the administrator)", reloaded.FailReason)
+	require.Equal(t, "task timed out (legacy task, no refund, please contact the administrator)", reloaded.PublicFailReason())
 }
 
 func TestRunTaskPollingOnceSkipsFutureImageTask(t *testing.T) {

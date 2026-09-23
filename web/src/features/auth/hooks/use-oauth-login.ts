@@ -23,6 +23,7 @@ import { toast } from 'sonner'
 import { clearAuthentication, isAuthBundle } from '@/lib/api'
 
 import { createOAuthFlow, logout, telegramLogin } from '../api'
+import { getOAuthLoginDisplayError } from '../lib/login-display-error'
 import {
   buildGitHubOAuthUrl,
   buildDiscordOAuthUrl,
@@ -37,6 +38,8 @@ import {
 import { pickTelegramAuthorization } from '../lib/telegram-login'
 import type { SystemStatus, CustomOAuthProviderInfo } from '../types'
 import { useAuthRedirect } from './use-auth-redirect'
+
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 type OAuthLoginOptions = {
   redirectTo?: string
@@ -73,7 +76,7 @@ export function useOAuthLogin(
   const resetSession = async () => {
     const response = await logout()
     if (!response.success) {
-      throw new Error(response.message || t('Failed to sign out session'))
+      throw new Error(localizeConsoleErrorText(response.message, 'Failed to sign out session'))
     }
     clearAuthentication()
   }
@@ -125,8 +128,8 @@ export function useOAuthLogin(
         status.server_address
       )
       window.open(url, '_self')
-    } catch {
-      toast.error(t('Failed to start GitHub login'))
+    } catch (error: unknown) {
+      toast.error(getOAuthLoginDisplayError(error, 'Failed to start GitHub login'))
       if (githubTimeoutRef.current) {
         clearTimeout(githubTimeoutRef.current)
       }
@@ -156,8 +159,8 @@ export function useOAuthLogin(
         status.server_address
       )
       window.open(url, '_self')
-    } catch {
-      toast.error(t('Failed to start Discord login'))
+    } catch (error: unknown) {
+      toast.error(getOAuthLoginDisplayError(error, 'Failed to start Discord login'))
     } finally {
       setIsLoading(false)
     }
@@ -184,8 +187,8 @@ export function useOAuthLogin(
         status.server_address
       )
       window.open(url, '_self')
-    } catch {
-      toast.error(t('Failed to start OIDC login'))
+    } catch (error: unknown) {
+      toast.error(getOAuthLoginDisplayError(error, 'Failed to start OIDC login'))
     } finally {
       setIsLoading(false)
     }
@@ -211,8 +214,8 @@ export function useOAuthLogin(
         status.server_address
       )
       window.open(url, '_self')
-    } catch {
-      toast.error(t('Failed to start LinuxDO login'))
+    } catch (error: unknown) {
+      toast.error(getOAuthLoginDisplayError(error, 'Failed to start LinuxDO login'))
     } finally {
       setIsLoading(false)
     }
@@ -248,15 +251,15 @@ export function useOAuthLogin(
     try {
       const response = await telegramLogin(authorization)
       if (!response.success || !isAuthBundle(response.data)) {
-        toast.error(t('Login failed'))
+        toast.error(getOAuthLoginDisplayError(response, 'Login failed'))
         return
       }
 
       setIsTelegramDialogOpen(false)
       await handleLoginSuccess(response.data, redirectTo)
       toast.success(t('Welcome back!'))
-    } catch {
-      toast.error(t('Login failed'))
+    } catch (error: unknown) {
+      toast.error(getOAuthLoginDisplayError(error, 'Login failed'))
     } finally {
       setIsTelegramPending(false)
     }
@@ -288,9 +291,13 @@ export function useOAuthLogin(
         }),
         '_self'
       )
-    } catch {
+    } catch (error: unknown) {
       toast.error(
-        t('Failed to start {{provider}} login', { provider: provider.name })
+        getOAuthLoginDisplayError(
+          error,
+          'Failed to start {{provider}} login',
+          { provider: provider.name }
+        )
       )
     } finally {
       setIsLoading(false)

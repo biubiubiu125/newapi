@@ -1,7 +1,6 @@
 package controller
 
 import (
-	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -26,11 +25,13 @@ type wechatLoginResponse struct {
 
 func getWeChatIdByCode(code string) (string, error) {
 	if code == "" {
-		return "", errors.New("无效的参数")
+		return "", oauthInvalidParams()
 	}
+	wechatConnectErr := common.Localized(i18n.MsgOAuthConnectFailed, map[string]any{"Provider": "WeChat"})
 	req, err := http.NewRequest("GET", fmt.Sprintf("%s/api/wechat/user?code=%s", common.WeChatServerAddress, url.QueryEscape(code)), nil)
 	if err != nil {
-		return "", err
+		common.SysLog(fmt.Sprintf("wechat request build failed: %s", err.Error()))
+		return "", wechatConnectErr
 	}
 	req.Header.Set("Authorization", common.WeChatServerToken)
 	client := http.Client{
@@ -38,29 +39,29 @@ func getWeChatIdByCode(code string) (string, error) {
 	}
 	httpResponse, err := client.Do(req)
 	if err != nil {
-		return "", err
+		common.SysLog(fmt.Sprintf("wechat connect failed: %s", err.Error()))
+		return "", wechatConnectErr
 	}
 	defer httpResponse.Body.Close()
 	var res wechatLoginResponse
 	err = common.DecodeJson(httpResponse.Body, &res)
 	if err != nil {
-		return "", err
+		common.SysLog(fmt.Sprintf("wechat response decode failed: %s", err.Error()))
+		return "", common.Localized(i18n.MsgOAuthGetUserErr)
 	}
 	if !res.Success {
-		return "", errors.New(res.Message)
+		common.SysLog(fmt.Sprintf("wechat login rejected: %s", res.Message))
+		return "", common.Localized(i18n.MsgUserVerificationCodeError)
 	}
 	if res.Data == "" {
-		return "", errors.New("验证码错误或已过期")
+		return "", common.Localized(i18n.MsgUserVerificationCodeError)
 	}
 	return res.Data, nil
 }
 
 func WeChatAuth(c *gin.Context) {
 	if !common.WeChatAuthEnabled {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "管理员未开启通过微信登录以及注册",
-			"success": false,
-		})
+		respondOAuthDisabled(c, "WeChat")
 		return
 	}
 	state := strings.TrimSpace(c.Query("state"))
@@ -110,10 +111,7 @@ func WeChatAuth(c *gin.Context) {
 			return
 		}
 		if user.Id == 0 {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "用户已注销",
-			})
+			respondOAuthUserDeleted(c)
 			return
 		}
 	} else {
@@ -122,6 +120,7 @@ func WeChatAuth(c *gin.Context) {
 			user.DisplayName = "WeChat User"
 			user.Role = common.RoleCommonUser
 			user.Status = common.UserStatusEnabled
+			applyStoredInterfaceLanguageToNewUser(&user, oauthSessionInterfaceLanguage(c))
 			session := sessions.Default(c)
 			sessionCode := ""
 			if raw := session.Get("aff"); raw != nil {
@@ -148,19 +147,13 @@ func WeChatAuth(c *gin.Context) {
 			}
 			user.FinalizeOAuthUserCreation(0)
 		} else {
-			c.JSON(http.StatusOK, gin.H{
-				"success": false,
-				"message": "管理员关闭了新用户注册",
-			})
+			respondRegisterDisabled(c)
 			return
 		}
 	}
 
 	if user.Status != common.UserStatusEnabled {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "用户已被封禁",
-			"success": false,
-		})
+		respondOAuthUserBanned(c)
 		return
 	}
 	setupLoginOrRequire2FA(&user, c)
@@ -172,22 +165,16 @@ type wechatBindRequest struct {
 
 func WeChatBind(c *gin.Context) {
 	if !common.WeChatAuthEnabled {
-		c.JSON(http.StatusOK, gin.H{
-			"message": "管理员未开启通过微信登录以及注册",
-			"success": false,
-		})
+		respondOAuthDisabled(c, "WeChat")
 		return
 	}
 	if _, ok := middleware.GetSessionAuthIdentity(c); !ok {
-		common.ApiError(c, errors.New("当前认证方式不支持绑定微信"))
+		common.ApiError(c, common.Localized(i18n.MsgOAuthWeChatBindUnsupported))
 		return
 	}
 	var req wechatBindRequest
 	if err := common.DecodeJson(c.Request.Body, &req); err != nil {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "无效的请求",
-		})
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
 	code := req.Code
@@ -197,15 +184,15 @@ func WeChatBind(c *gin.Context) {
 		return
 	}
 	if model.IsWeChatIdAlreadyTaken(wechatId) {
-		c.JSON(http.StatusOK, gin.H{
-			"success": false,
-			"message": "该微信账号已被绑定",
-		})
+		respondOAuthAlreadyBound(c, "WeChat")
 		return
 	}
 	userId := c.GetInt("id")
 	if userId == 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{"success": false, "message": "未登录"})
+		c.JSON(http.StatusUnauthorized, gin.H{
+			"success": false,
+			"message": i18n.T(c, i18n.MsgAuthLoginRequired),
+		})
 		return
 	}
 	user := model.User{Id: userId}

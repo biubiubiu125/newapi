@@ -17,6 +17,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 
+import { currentIntlLocale } from '@/i18n/languages'
+
 /** Must match the animation duration on `[data-stream-fade]` in styles/index.css */
 export const FADE_DURATION_MS = 250
 export const FADE_STAGGER_MS = 25
@@ -74,12 +76,15 @@ const SPACELESS_REGEX =
   /[\u0E00-\u0EFF\u0F00-\u0FFF\u1000-\u109F\u1780-\u17FF\u2E80-\u9FFF\uAC00-\uD7AF\uF900-\uFAFF]/
 
 let wordSegmenter: Intl.Segmenter | null | undefined
+let wordSegmenterLocale: string | undefined
 
 function getWordSegmenter(): Intl.Segmenter | null {
-  if (wordSegmenter === undefined) {
+  const locale = currentIntlLocale()
+  if (wordSegmenter === undefined || wordSegmenterLocale !== locale) {
+    wordSegmenterLocale = locale
     wordSegmenter =
       typeof Intl !== 'undefined' && typeof Intl.Segmenter === 'function'
-        ? new Intl.Segmenter(undefined, { granularity: 'word' })
+        ? new Intl.Segmenter(locale, { granularity: 'word' })
         : null
   }
   return wordSegmenter

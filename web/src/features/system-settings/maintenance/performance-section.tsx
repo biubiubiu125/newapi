@@ -72,6 +72,8 @@ import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { safeNumberFieldProps } from '../utils/numeric-field'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 /**
  * IMPORTANT: react-hook-form 7 interprets dotted `name` strings as nested
  * paths. If we declare the schema with literal flat keys like
@@ -358,7 +360,7 @@ export function PerformanceSection(props: Props) {
           })
         )
       } else {
-        toast.error(res.data.message || t('Cleanup failed'))
+        toast.error(localizeConsoleErrorText(res.data.message, 'Cleanup failed'))
       }
       fetchLogInfo()
     } catch {

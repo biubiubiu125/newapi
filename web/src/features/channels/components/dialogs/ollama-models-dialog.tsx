@@ -55,6 +55,11 @@ import {
 } from '../../api'
 import { channelsQueryKeys, parseModelsString } from '../../lib'
 import {
+  ollamaActionFailureText,
+  ollamaPullFailureText,
+  ollamaPullStatusText,
+} from '../../lib/ollama-pull-message'
+import {
   formatBytes,
   normalizeOllamaModels,
   resolveOllamaBaseUrl,
@@ -72,7 +77,7 @@ export function OllamaModelsDialog({
   open: boolean
   onOpenChange: (open: boolean) => void
 }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const queryClient = useQueryClient()
   const { currentRow } = useChannels()
   const currentUser = useAuthStore((s) => s.auth.user)
@@ -177,7 +182,14 @@ export function OllamaModelsDialog({
       }
 
       if (!normalized.length && lastErr) {
-        toast.error(lastErr || t('Failed to fetch models'))
+        toast.error(
+          ollamaActionFailureText(
+            lastErr,
+            i18n.language,
+            t,
+            'Failed to fetch models'
+          )
+        )
       }
 
       setModels(normalized)
@@ -191,8 +203,10 @@ export function OllamaModelsDialog({
           : normalized.map((m) => m.id)
       })
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : undefined
-      toast.error(msg || t('Failed to fetch models'))
+      const msg = err instanceof Error ? err.message : ''
+      toast.error(
+        ollamaActionFailureText(msg, i18n.language, t, 'Failed to fetch models')
+      )
       setModels([])
     } finally {
       setIsFetching(false)
@@ -203,6 +217,7 @@ export function OllamaModelsDialog({
     canFetchSavedModels,
     channelId,
     currentRow,
+    i18n.language,
     isOllamaChannel,
     t,
   ])
@@ -274,11 +289,24 @@ export function OllamaModelsDialog({
         )
         queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
       } else {
-        toast.error(res.message || t('Failed to update models'))
+        toast.error(
+          ollamaActionFailureText(
+            res.message || '',
+            i18n.language,
+            t,
+            'Failed to update models'
+          )
+        )
       }
     } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : ''
       toast.error(
-        err instanceof Error ? err.message : t('Failed to update models')
+        ollamaActionFailureText(
+          msg,
+          i18n.language,
+          t,
+          'Failed to update models'
+        )
       )
     }
   }
@@ -354,7 +382,9 @@ export function OllamaModelsDialog({
             if (data?.status) {
               setPullProgress(data)
             } else if (data?.error) {
-              toast.error(String(data.error))
+              toast.error(
+                ollamaPullFailureText(String(data.error), i18n.language, t)
+              )
               setIsPulling(false)
               setPullProgress(null)
               pullAbortRef.current = null
@@ -390,7 +420,7 @@ export function OllamaModelsDialog({
         (err as { name?: unknown }).name === 'AbortError'
       if (!isAbort) {
         const msg = err instanceof Error ? err.message : ''
-        toast.error(t('Model pull failed: {{msg}}', { msg }))
+        toast.error(ollamaPullFailureText(msg, i18n.language, t))
       }
       setIsPulling(false)
       setPullProgress(null)
@@ -417,11 +447,25 @@ export function OllamaModelsDialog({
         setDeleteOpen(false)
         setDeleteTarget(null)
       } else {
-        toast.error(payload?.message || t('Failed to delete model'))
+        toast.error(
+          ollamaActionFailureText(
+            payload?.message || '',
+            i18n.language,
+            t,
+            'Failed to delete model'
+          )
+        )
       }
     } catch (err: unknown) {
-      const msg = err instanceof Error ? err.message : undefined
-      toast.error(msg || t('Failed to delete model'))
+      const msg = err instanceof Error ? err.message : ''
+      toast.error(
+        ollamaActionFailureText(
+          msg,
+          i18n.language,
+          t,
+          'Failed to delete model'
+        )
+      )
     } finally {
       setIsDeleting(false)
     }
@@ -491,7 +535,12 @@ export function OllamaModelsDialog({
               {pullProgress && (
                 <div className='space-y-2'>
                   <div className='text-muted-foreground text-xs'>
-                    {t('Status:')} {String(pullProgress.status || '-')}
+                    {t('Status:')}{' '}
+                    {ollamaPullStatusText(
+                      String(pullProgress.status || ''),
+                      i18n.language,
+                      t
+                    )}
                   </div>
                   <Progress
                     value={

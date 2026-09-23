@@ -18,11 +18,42 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { t } from 'i18next'
 
+import { currentConsoleFailureText } from './console-failure-text'
+
+const TRANSPORT_ERROR_KEYS = [
+  {
+    test: (value: string) => value === 'Network Error',
+    key: 'Unable to connect to the server',
+  },
+  {
+    test: (value: string) => /^timeout of \d+ms exceeded$/i.test(value),
+    key: 'Request timed out',
+  },
+  {
+    test: (value: string) =>
+      /^Request failed with status code \d+$/i.test(value),
+    key: 'Request failed',
+  },
+  {
+    test: (value: string) =>
+      value === 'Failed to fetch' ||
+      value === 'Load failed' ||
+      value === 'NetworkError when attempting to fetch resource.',
+    key: 'Unable to connect to the server',
+  },
+] as const
+
 const serverErrorMessageKeys = {
   AUTH_SESSION_LIMIT:
     'Too many active login sessions. On a device where you are already signed in, open Login sessions and use “Sign out other sessions” to revoke them. If you cannot access a signed-in device, reset your password to sign out all sessions.',
   AUTH_SESSION_ISSUANCE_LIMIT:
     'Too many login sessions were created recently. Please wait for the rolling window to pass, then try again.',
+  AUTH_SESSION_MISMATCH: 'Login session mismatch. Please sign in again.',
+  AUTH_REFRESH_RACE: 'Login session is being refreshed. Please retry.',
+  AUTH_TOKEN_EXPIRED: 'Login flow expired. Please sign in again.',
+  AUTH_SESSION_REVOKED: 'This login session has been revoked.',
+  AUTH_UNAUTHORIZED: 'Session expired!',
+  AUTH_INTERNAL_ERROR: 'Something went wrong!',
   TELEGRAM_BIND_DISABLED: 'Telegram binding is disabled.',
   TELEGRAM_BIND_INVALID_REQUEST:
     'The Telegram authorization request is invalid or expired.',
@@ -40,7 +71,9 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object'
 }
 
-function serverErrorPayload(value: unknown): Record<string, unknown> | null {
+export function serverErrorPayload(
+  value: unknown
+): Record<string, unknown> | null {
   if (!isRecord(value)) return null
 
   const response = value.response
@@ -59,6 +92,22 @@ export function getServerErrorMessageKey(value: unknown): string | null {
       payload.code as keyof typeof serverErrorMessageKeys
     ] ?? null
   )
+}
+
+export function localizeConsoleErrorText(
+  message: string | null | undefined,
+  fallbackKey = 'Request failed'
+): string {
+  const trimmed = message?.trim() ?? ''
+  if (!trimmed) return t(fallbackKey)
+
+  for (const rule of TRANSPORT_ERROR_KEYS) {
+    if (rule.test(trimmed)) return t(rule.key)
+  }
+
+  const translated = t(trimmed)
+  if (translated !== trimmed) return translated
+  return currentConsoleFailureText(trimmed, fallbackKey)
 }
 
 export function requireServerSuccess<T>(response: {

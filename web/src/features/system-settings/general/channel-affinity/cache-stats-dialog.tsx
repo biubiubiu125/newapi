@@ -25,6 +25,8 @@ import { formatTimestampToDate } from '@/lib/format'
 
 import { getAffinityUsageCache } from './api'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 function formatRate(hit: number, total: number): string {
   if (!total || total <= 0) return '-'
   const r = (hit / total) * 100
@@ -66,7 +68,7 @@ export function CacheStatsDialog(props: Props) {
       .then((res) => {
         if (seq !== seqRef.current) return
         if (res.success) setStats((res.data as Record<string, unknown>) || {})
-        else toast.error(res.message || t('Request failed'))
+        else toast.error(localizeConsoleErrorText(res.message, 'Request failed'))
       })
       .catch(() => {
         if (seq !== seqRef.current) return

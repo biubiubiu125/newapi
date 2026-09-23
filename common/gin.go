@@ -8,8 +8,10 @@ import (
 	"mime/multipart"
 	"net/http"
 	"net/url"
+	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
@@ -294,7 +296,13 @@ func GetContextKeyType[T any](c *gin.Context, key constant.ContextKey) (T, bool)
 	return t, false
 }
 
+// ApiError translates LocalizedError (and known sentinels inside
+// respondLocalizedAPIError). Remaining dashboard errors keep their original
+// text; do not globally wrap every ApiError as an i18n key.
 func ApiError(c *gin.Context, err error) {
+	if respondLocalizedAPIError(c, http.StatusOK, err) {
+		return
+	}
 	writeAPIError(c, http.StatusOK, errorMessage(err))
 }
 
@@ -303,7 +311,23 @@ func ApiErrorMsg(c *gin.Context, msg string) {
 }
 
 func ApiErrorWithStatus(c *gin.Context, status int, err error) {
+	if respondLocalizedAPIError(c, status, err) {
+		return
+	}
 	writeAPIError(c, status, errorMessage(err))
+}
+
+func respondLocalizedAPIError(c *gin.Context, status int, err error) bool {
+	loc, ok := AsLocalizedError(err)
+	if !ok {
+		return false
+	}
+	msg := TranslateMessage(c, loc.Key, loc.Args...)
+	c.JSON(status, gin.H{
+		"success": false,
+		"message": msg,
+	})
+	return true
 }
 
 // PublicDashboardErrorMessage sanitizes a dashboard/console error for JSON.
@@ -334,7 +358,7 @@ func errorMessage(err error) string {
 
 func writeAPIError(c *gin.Context, status int, original string) {
 	message := publicAPIErrorMessage(c, original)
-	if message != original {
+	if message != original && !isRecordNotFoundMessage(original) {
 		SysError("api error: " + original)
 	}
 	c.JSON(status, gin.H{
@@ -345,23 +369,138 @@ func writeAPIError(c *gin.Context, status int, original string) {
 
 func publicAPIErrorMessage(c *gin.Context, original string) string {
 	sanitized := kitutil.SanitizePublicClientError(original)
-	switch sanitized {
-	case "":
+	switch {
+	case sanitized == "":
 		return translateAPIError(c, "common.operation_failed")
-	case kitutil.PublicInternalFailReason:
+	case isRecordNotFoundMessage(sanitized):
+		return translateAPIError(c, "common.not_found")
+	case sanitized == kitutil.PublicInternalFailReason:
 		return translateAPIError(c, "common.database_error")
-	case kitutil.PublicAccountingFailReason, kitutil.PublicSettlementFailReason:
+	case sanitized == kitutil.PublicAccountingFailReason, sanitized == kitutil.PublicSettlementFailReason:
 		return translateAPIError(c, "common.operation_failed")
 	default:
+		if key := consoleSentinelMessageKey(sanitized); key != "" {
+			return translateAPIError(c, key)
+		}
+		if detail, ok := dashboardDetailMessage(c, sanitized); ok {
+			return detail
+		}
+		if dashboardLanguageIsChinese(c) {
+			if cleaned := SanitizeChineseConsoleText(sanitized); cleaned != "" {
+				return cleaned
+			}
+			return translateAPIError(c, "common.operation_failed")
+		}
+		if dashboardHidesUntranslated(c, sanitized) {
+			return translateAPIError(c, "common.operation_failed")
+		}
 		return sanitized
 	}
 }
 
-func translateAPIError(c *gin.Context, key string) string {
+// DashboardLanguage is the console language for this request.
+// i18n.Init points it at GetLangFromContext. A nil hook leaves the original text.
+var DashboardLanguage func(c *gin.Context) string
+
+var (
+	claudeNegativeMaxTokensPattern = regexp.MustCompile(`^negative Claude default max_tokens (-?\d+) for "(.*)"$`)
+	geminiSafetyThresholdPattern   = regexp.MustCompile(`^invalid Gemini safety threshold "(.*)" for "(.*)"$`)
+	nonNegativeNumberPattern       = regexp.MustCompile(`^(.+) must be a finite, non-negative number$`)
+)
+
+func dashboardLanguage(c *gin.Context) string {
+	if DashboardLanguage == nil || c == nil || c.Request == nil {
+		return ""
+	}
+	return DashboardLanguage(c)
+}
+
+func dashboardLanguageIsChinese(c *gin.Context) bool {
+	switch dashboardLanguage(c) {
+	case "zh-CN", "zh-TW":
+		return true
+	default:
+		return false
+	}
+}
+
+func dashboardHidesUntranslated(c *gin.Context, msg string) bool {
+	return !containsHan(msg) && dashboardLanguageIsChinese(c)
+}
+
+// dashboardDetailMessage keeps the invalid value in known admin validation errors.
+func dashboardDetailMessage(c *gin.Context, msg string) (string, bool) {
+	if !dashboardLanguageIsChinese(c) {
+		return "", false
+	}
+	msg = strings.TrimSpace(msg)
+	switch msg {
+	case "provide either option maps or model pricing changes":
+		return translateAPIError(c, "option.pricing_input_conflict"), true
+	case "model pricing changed; reload before saving":
+		return translateAPIError(c, "model.pricing_conflict"), true
+	}
+	if match := claudeNegativeMaxTokensPattern.FindStringSubmatch(msg); len(match) == 3 {
+		return translateAPIError(c, "option.claude_negative_max_tokens", map[string]any{
+			"Value": match[1],
+			"Model": match[2],
+		}), true
+	}
+	if match := geminiSafetyThresholdPattern.FindStringSubmatch(msg); len(match) == 3 {
+		return translateAPIError(c, "option.gemini_invalid_safety_threshold", map[string]any{
+			"Threshold": match[1],
+			"Category":  match[2],
+		}), true
+	}
+	if match := nonNegativeNumberPattern.FindStringSubmatch(msg); len(match) == 2 {
+		return translateAPIError(c, "option.non_negative_number", map[string]any{
+			"Key": match[1],
+		}), true
+	}
+	return "", false
+}
+
+func containsHan(msg string) bool {
+	for _, r := range msg {
+		if unicode.Is(unicode.Han, r) {
+			return true
+		}
+	}
+	return false
+}
+
+func consoleSentinelMessageKey(msg string) string {
+	switch strings.TrimSpace(msg) {
+	case "auth flow is invalid":
+		return "auth.flow_invalid"
+	case "auth flow has expired":
+		return "auth.flow_expired"
+	case "auth flow has already been consumed":
+		return "auth.flow_consumed"
+	}
+	lower := strings.ToLower(msg)
+	switch {
+	case strings.HasPrefix(lower, "generate auth flow token:"):
+		return "common.operation_failed"
+	case strings.Contains(lower, "runtime cache refresh failed"):
+		return "channel.runtime_cache_refresh_failed"
+	case strings.HasPrefix(lower, "failed to check name availability"):
+		return "deployment.name_check_failed"
+	default:
+		return ""
+	}
+}
+
+func isRecordNotFoundMessage(msg string) bool {
+	msg = strings.ToLower(strings.TrimSpace(msg))
+	return msg == "record not found" || strings.HasSuffix(msg, ": record not found")
+}
+
+func translateAPIError(c *gin.Context, key string, args ...map[string]any) string {
 	if TranslateMessage == nil {
 		return key
 	}
-	return TranslateMessage(c, key)
+	return TranslateMessage(c, key, args...)
 }
 
 func ApiSuccess(c *gin.Context, data any) {
@@ -401,7 +540,6 @@ func init() {
 	// Default implementation that returns the key as-is
 	// This will be replaced by i18n.T during i18n initialization
 	TranslateMessage = func(c *gin.Context, key string, args ...map[string]any) string {
-		c.Header("X-Translate-id", "d5e7afdfc7f03414b941f9c1e7096be9966510e7")
 		return key
 	}
 }

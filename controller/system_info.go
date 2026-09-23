@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
@@ -48,7 +49,7 @@ func DeleteStaleSystemInstance(c *gin.Context) {
 		nodeName = c.Param("node_name")
 	}
 	if strings.TrimSpace(nodeName) == "" {
-		common.ApiErrorMsg(c, "node name is required")
+		common.ApiErrorI18n(c, i18n.MsgSystemNodeNameRequired)
 		return
 	}
 
@@ -58,7 +59,7 @@ func DeleteStaleSystemInstance(c *gin.Context) {
 		return
 	}
 	if !deleted {
-		common.ApiErrorMsg(c, "instance is not stale or no longer exists")
+		common.ApiErrorI18n(c, i18n.MsgSystemInstanceNotStale)
 		return
 	}
 

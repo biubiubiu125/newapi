@@ -51,6 +51,8 @@ import { Separator } from '@/components/ui/separator'
 
 import { getDeployment, listDeploymentContainers } from '../../api'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 export function ViewDetailsDialog({
   open,
   onOpenChange,
@@ -192,7 +194,10 @@ export function ViewDetailsDialog({
         ) : null}
         {showDetailsError ? (
           <div className='text-muted-foreground py-10 text-center text-sm'>
-            {detailsRes?.message || t('Failed to fetch deployment details')}
+            {localizeConsoleErrorText(
+              detailsRes?.message,
+              'Failed to fetch deployment details'
+            )}
           </div>
         ) : null}
         {showDetailsContent ? (

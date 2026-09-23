@@ -166,6 +166,37 @@ export function safeJsonParseWithValidation<T>(
   return parsed
 }
 
+export function parseJsonObjectMap<T extends Record<string, unknown>>(
+  raw: string | undefined | null
+): T | null {
+  if (!raw || raw.trim() === '') return {} as T
+  const parsed = tryJsonParse<unknown>(raw)
+  if (
+    !parsed.success ||
+    parsed.data === null ||
+    typeof parsed.data !== 'object' ||
+    Array.isArray(parsed.data)
+  ) {
+    return null
+  }
+  return parsed.data as T
+}
+
+function isFiniteNonNegativeNumber(value: unknown): value is number {
+  return typeof value === 'number' && Number.isFinite(value) && value >= 0
+}
+
+export function parseJsonNumberMap(
+  raw: string | undefined | null
+): Record<string, number> | null {
+  const parsed = parseJsonObjectMap<Record<string, unknown>>(raw)
+  if (!parsed) return null
+  for (const value of Object.values(parsed)) {
+    if (!isFiniteNonNegativeNumber(value)) return null
+  }
+  return parsed as Record<string, number>
+}
+
 export function tryJsonParse<T = unknown>(
   value: string | undefined | null
 ): JsonParseResult<T> {

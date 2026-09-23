@@ -29,8 +29,10 @@ import {
   type DayButton,
   type Locale,
 } from 'react-day-picker'
+import { useTranslation } from 'react-i18next'
 
 import { Button, buttonVariants } from '@/components/ui/button'
+import { resolveDayPickerLocale } from '@/lib/calendar-locale'
 import { cn } from '@/lib/utils'
 
 function Calendar({
@@ -46,10 +48,13 @@ function Calendar({
 }: React.ComponentProps<typeof DayPicker> & {
   buttonVariant?: React.ComponentProps<typeof Button>['variant']
 }) {
+  const { i18n } = useTranslation()
+  const resolvedLocale = locale ?? resolveDayPickerLocale(i18n.language)
   const defaultClassNames = getDefaultClassNames()
 
   return (
     <DayPicker
+      data-slot='calendar'
       showOutsideDays={showOutsideDays}
       className={cn(
         'group/calendar bg-background p-2 [--cell-radius:var(--radius-md)] [--cell-size:--spacing(7)] in-data-[slot=card-content]:bg-transparent in-data-[slot=popover-content]:bg-transparent',
@@ -58,10 +63,10 @@ function Calendar({
         className
       )}
       captionLayout={captionLayout}
-      locale={locale}
+      locale={resolvedLocale}
       formatters={{
         formatMonthDropdown: (date) =>
-          date.toLocaleString(locale?.code, { month: 'short' }),
+          date.toLocaleString(resolvedLocale?.code, { month: 'short' }),
         ...formatters,
       }}
       classNames={{
@@ -198,7 +203,7 @@ function Calendar({
           )
         },
         DayButton: ({ ...props }) => (
-          <CalendarDayButton locale={locale} {...props} />
+          <CalendarDayButton locale={resolvedLocale} {...props} />
         ),
         WeekNumber: ({ children, ...props }) => {
           return (

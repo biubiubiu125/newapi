@@ -65,6 +65,8 @@ import { useChannels } from '../channels-provider'
 import { StatisticsCard } from './multi-key-statistics-card'
 import { MultiKeyTableRowActions } from './multi-key-table-row-actions'
 
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
+
 type MultiKeyManageDialogProps = {
   open: boolean
   onOpenChange: (open: boolean) => void
@@ -137,11 +139,11 @@ export function MultiKeyManageDialog({
         setManualDisabledCount(response.data.manual_disabled_count || 0)
         setAutoDisabledCount(response.data.auto_disabled_count || 0)
       } else {
-        toast.error(response.message || t('Failed to load key status'))
+        toast.error(localizeConsoleErrorText(response.message, 'Failed to load key status'))
       }
     } catch (error: unknown) {
       toast.error(
-        error instanceof Error ? error.message : t('Failed to load key status')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to load key status')
       )
     } finally {
       setIsLoading(false)
@@ -192,7 +194,7 @@ export function MultiKeyManageDialog({
       }
 
       if (response?.success) {
-        toast.success(response.message || t('Operation successful'))
+        toast.success(localizeConsoleErrorText(response.message, 'Operation successful'))
         queryClient.invalidateQueries({ queryKey: channelsQueryKeys.lists() })
 
         // Reload data - reset to page 1 for bulk actions
@@ -204,11 +206,11 @@ export function MultiKeyManageDialog({
           loadKeyStatus(currentPage, pageSize)
         }
       } else {
-        toast.error(response?.message || t('Operation failed'))
+        toast.error(localizeConsoleErrorText(response?.message, 'Operation failed'))
       }
     } catch (error: unknown) {
       toast.error(
-        error instanceof Error ? error.message : t('Operation failed')
+        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Operation failed')
       )
     } finally {
       setIsPerformingAction(false)

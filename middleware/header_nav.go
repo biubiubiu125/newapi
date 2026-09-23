@@ -1,11 +1,11 @@
 package middleware
 
 import (
-	"fmt"
 	"net/http"
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/gin-gonic/gin"
 )
 
@@ -107,7 +107,7 @@ func HeaderNavModuleAuth(module string) gin.HandlerFunc {
 		if !access.Enabled {
 			c.JSON(http.StatusForbidden, gin.H{
 				"success": false,
-				"message": fmt.Sprintf("%s is disabled", module),
+				"message": i18n.T(c, i18n.MsgNavModuleDisabled, map[string]any{"Module": module}),
 			})
 			c.Abort()
 			return

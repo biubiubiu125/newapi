@@ -40,6 +40,7 @@ import {
 } from '@/components/data-table'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
+import { currentConsoleFailureText } from '@/lib/console-failure-text'
 
 import { getUsers, searchUsers } from '../api'
 import {
@@ -137,7 +138,10 @@ export function UsersTable() {
 
       if (!result.success) {
         toast.error(
-          result.message || `Failed to ${hasFilter ? 'search' : 'load'} users`
+          currentConsoleFailureText(
+            result.message,
+            hasFilter ? 'Failed to search users' : 'Failed to load users'
+          )
         )
         return { items: [], total: 0 }
       }

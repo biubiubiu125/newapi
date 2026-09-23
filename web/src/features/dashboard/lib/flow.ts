@@ -34,6 +34,7 @@ import type {
   FlowSummary,
   ProcessedFlowData,
 } from '@/features/dashboard/types'
+import { currentIntlLocale } from '@/i18n/languages'
 
 import { getDashboardChartColors } from './charts'
 
@@ -228,7 +229,8 @@ function channelNode(row: FlowQuotaDataItem): FlowPathNode {
         ? `channel:${channelID}`
         : `channel:${row.channel_name || 'unknown'}`,
     label:
-      row.channel_name || (channelID > 0 ? `channel-${channelID}` : t('Unknown')),
+      row.channel_name ||
+      (channelID > 0 ? `channel-${channelID}` : t('Unknown')),
     kind: 'channel',
   }
 }
@@ -831,9 +833,9 @@ function buildFlowGraph(
 }
 
 function formatNumber(value: number): string {
-  return Intl.NumberFormat(undefined, { maximumFractionDigits: 0 }).format(
-    value
-  )
+  return Intl.NumberFormat(currentIntlLocale(), {
+    maximumFractionDigits: 0,
+  }).format(value)
 }
 
 function buildUserFilterOptions(

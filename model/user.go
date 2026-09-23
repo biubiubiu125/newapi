@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -251,7 +252,7 @@ func (user *User) SetAccessToken(token string) {
 // writing a stale user snapshot back over concurrently updated fields.
 func UpdateUserAccessToken(id int, token string) error {
 	if id == 0 {
-		return errors.New("id 为空！")
+		return common.Localized("common.id_empty")
 	}
 	result := DB.Model(&User{}).Where("id = ?", id).Update("access_token", token)
 	if result.Error != nil {
@@ -285,7 +286,7 @@ func (user *User) SetSetting(setting dto.UserSetting) {
 
 func UpdateUserSetting(userId int, setting dto.UserSetting) error {
 	if userId == 0 {
-		return errors.New("id 为空！")
+		return common.Localized("common.id_empty")
 	}
 	settingBytes, err := common.Marshal(setting)
 	if err != nil {
@@ -314,7 +315,7 @@ var userBindColumns = map[string]bool{
 // 角色、状态、分组只允许通过各自带锁/CAS 的专用方法修改。
 func UpdateUserBindColumn(userId int, column string, value string) error {
 	if userId <= 0 {
-		return errors.New("id 为空！")
+		return common.Localized("common.id_empty")
 	}
 	if !userBindColumns[column] {
 		return fmt.Errorf("invalid user bind column: %s", column)
@@ -728,7 +729,7 @@ func populateActiveSubscriptionNames(users []*User) {
 
 func GetUserById(id int, selectAll bool) (*User, error) {
 	if id == 0 {
-		return nil, errors.New("id is empty")
+		return nil, common.Localized("common.id_empty")
 	}
 	user := User{Id: id}
 	var err error = nil
@@ -742,7 +743,7 @@ func GetUserById(id int, selectAll bool) (*User, error) {
 
 func GetUserByIdUnscoped(id int, selectAll bool) (*User, error) {
 	if id == 0 {
-		return nil, errors.New("id 为空！")
+		return nil, common.Localized("common.id_empty")
 	}
 	user := User{Id: id}
 	query := DB.Unscoped()
@@ -755,7 +756,7 @@ func GetUserByIdUnscoped(id int, selectAll bool) (*User, error) {
 
 func GetUserIdByAffCode(affCode string) (int, error) {
 	if affCode == "" {
-		return 0, errors.New("affCode 为空！")
+		return 0, common.Localized(i18n.MsgUserAffCodeEmpty)
 	}
 	var user User
 	err := DB.Select("id").First(&user, "aff_code = ?", affCode).Error
@@ -764,7 +765,7 @@ func GetUserIdByAffCode(affCode string) (int, error) {
 
 func DeleteUserById(id int) (err error) {
 	if id == 0 {
-		return errors.New("id 为空！")
+		return common.Localized("common.id_empty")
 	}
 	user := User{Id: id}
 	return user.Delete()
@@ -772,7 +773,7 @@ func DeleteUserById(id int) (err error) {
 
 func HardDeleteUserById(id int) error {
 	if id == 0 {
-		return errors.New("id 为空！")
+		return common.Localized("common.id_empty")
 	}
 	user := User{Id: id}
 	return user.HardDelete()
@@ -796,7 +797,7 @@ func inviteUser(inviterId int) error {
 func (user *User) TransferAffQuotaToQuota(quota int64) error {
 	// 检查quota是否小于最小额度
 	if float64(quota) < common.QuotaPerUnit {
-		return fmt.Errorf("转移额度最小为%s！", logger.LogQuota(common.QuotaFromFloat(common.QuotaPerUnit)))
+		return common.Localized(i18n.MsgUserTransferQuotaMinimum, map[string]any{"Min": logger.LogQuota(common.QuotaFromFloat(common.QuotaPerUnit))})
 	}
 
 	// 开始数据库事务
@@ -814,7 +815,7 @@ func (user *User) TransferAffQuotaToQuota(quota int64) error {
 
 	// 再次检查用户的AffQuota是否足够
 	if user.AffQuota < quota {
-		return errors.New("邀请额度不足！")
+		return common.Localized(i18n.MsgUserAffQuotaInsufficient)
 	}
 
 	// 更新用户额度
@@ -1283,7 +1284,7 @@ func (user *User) ClearBinding(bindingType string) error {
 
 func (user *User) Delete() error {
 	if user.Id == 0 {
-		return errors.New("id 为空！")
+		return common.Localized("common.id_empty")
 	}
 	var nextAuthVersion int64
 	if err := DB.Transaction(func(tx *gorm.DB) error {
@@ -1304,7 +1305,7 @@ func (user *User) Delete() error {
 
 func (user *User) HardDelete() error {
 	if user.Id == 0 {
-		return errors.New("id 为空！")
+		return common.Localized("common.id_empty")
 	}
 	var tokens []Token
 	var deletedAuthVersion int64
@@ -1386,7 +1387,7 @@ func (user *User) ValidateAndFill() (err error) {
 
 func (user *User) FillUserById() error {
 	if user.Id == 0 {
-		return errors.New("id 为空！")
+		return common.Localized("common.id_empty")
 	}
 	return DB.Where(User{Id: user.Id}).First(user).Error
 }
@@ -1394,14 +1395,14 @@ func (user *User) FillUserById() error {
 func (user *User) FillUserByEmail() error {
 	user.Email = NormalizeUserEmail(user.Email)
 	if user.Email == "" {
-		return errors.New("email 为空！")
+		return common.Localized("user.email_empty")
 	}
 	return DB.First(user, "email_canonical = ? OR LOWER(email) = ?", user.Email, user.Email).Error
 }
 
 func (user *User) FillUserByGitHubId() error {
 	if user.GitHubId == "" {
-		return errors.New("GitHub id 为空！")
+		return common.Localized("user.github_id_empty")
 	}
 	return user.fillByExternalIdentity(ExternalIdentityProviderGitHub, user.GitHubId)
 }
@@ -1416,32 +1417,32 @@ func (user *User) UpdateGitHubId(newGitHubId string) error {
 
 func (user *User) FillUserByDiscordId() error {
 	if user.DiscordId == "" {
-		return errors.New("discord id 为空！")
+		return common.Localized("user.discord_id_empty")
 	}
 	return user.fillByExternalIdentity(ExternalIdentityProviderDiscord, user.DiscordId)
 }
 
 func (user *User) FillUserByOidcId() error {
 	if user.OidcId == "" {
-		return errors.New("oidc id 为空！")
+		return common.Localized("user.oidc_id_empty")
 	}
 	return user.fillByExternalIdentity(ExternalIdentityProviderOIDC, user.OidcId)
 }
 
 func (user *User) FillUserByWeChatId() error {
 	if user.WeChatId == "" {
-		return errors.New("WeChat id 为空！")
+		return common.Localized("user.wechat_id_empty")
 	}
 	return user.fillByExternalIdentity(ExternalIdentityProviderWeChat, user.WeChatId)
 }
 
 func (user *User) FillUserByTelegramId() error {
 	if user.TelegramId == "" {
-		return errors.New("Telegram id 为空！")
+		return common.Localized("user.telegram_id_empty")
 	}
 	err := user.fillByExternalIdentity(ExternalIdentityProviderTelegram, user.TelegramId)
 	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return errors.New("该 Telegram 账户未绑定")
+		return common.Localized("user.telegram_not_bound")
 	}
 	return err
 }
@@ -1505,7 +1506,7 @@ func IsTelegramIdAlreadyTaken(telegramId string) bool {
 func ResetUserPasswordByEmail(email string, password string) error {
 	email = NormalizeUserEmail(email)
 	if email == "" || password == "" {
-		return errors.New("邮箱地址或密码为空！")
+		return common.Localized(i18n.MsgUserEmailOrPasswordEmpty)
 	}
 	user, err := GetUniqueUserByEmail(email)
 	if err != nil {
@@ -1647,7 +1648,7 @@ func GetUserSetting(id int, fromDB bool) (settingMap dto.UserSetting, err error)
 
 func IncreaseUserQuota(id int, quota int64, db bool) (err error) {
 	if quota < 0 {
-		return errors.New("quota 不能为负数！")
+		return common.Localized(i18n.MsgUserQuotaNegative)
 	}
 	if quota == 0 {
 		return nil
@@ -1692,7 +1693,7 @@ func IncreaseUserQuotaTx(tx *gorm.DB, id int, quota int64) error {
 
 func DecreaseUserQuota(id int, quota int64, db bool) (err error) {
 	if quota < 0 {
-		return errors.New("quota 不能为负数！")
+		return common.Localized(i18n.MsgUserQuotaNegative)
 	}
 	if quota == 0 {
 		return nil
@@ -1898,7 +1899,7 @@ func IsLinuxDOIdAlreadyTaken(linuxDOId string) bool {
 
 func (user *User) FillUserByLinuxDOId() error {
 	if user.LinuxDOId == "" {
-		return errors.New("linux do id is empty")
+		return common.Localized("user.linux_do_id_empty")
 	}
 	return user.fillByExternalIdentity(ExternalIdentityProviderLinuxDO, user.LinuxDOId)
 }

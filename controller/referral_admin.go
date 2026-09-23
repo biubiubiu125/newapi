@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 )
@@ -175,7 +176,7 @@ func GetAdminReferralCommissions(c *gin.Context) {
 	if raw := strings.TrimSpace(c.Query("affiliate_user_id")); raw != "" {
 		userId, err := strconv.Atoi(raw)
 		if err != nil || userId <= 0 {
-			common.ApiErrorMsg(c, "invalid affiliate_user_id")
+			common.ApiErrorI18n(c, i18n.MsgReferralInvalidAffiliateUserID)
 			return
 		}
 		items, total, err := referralService.ListAffiliateCommissions(userId, service.ReferralListParams{
@@ -445,7 +446,7 @@ func GetAdminReferralWithdrawals(c *gin.Context) {
 	if raw := strings.TrimSpace(c.Query("affiliate_user_id")); raw != "" {
 		userId, err := strconv.Atoi(raw)
 		if err != nil || userId <= 0 {
-			common.ApiErrorMsg(c, "invalid affiliate_user_id")
+			common.ApiErrorI18n(c, i18n.MsgReferralInvalidAffiliateUserID)
 			return
 		}
 		items, total, err := referralService.ListAffiliateWithdrawals(userId, service.ReferralListParams{
@@ -598,7 +599,7 @@ func parseAdminReferralTarget(c *gin.Context) (adminId int, userId int, ok bool)
 func parseReferralUserID(c *gin.Context, key string) (int, bool) {
 	value, err := strconv.Atoi(strings.TrimSpace(c.Param(key)))
 	if err != nil || value <= 0 {
-		common.ApiErrorMsg(c, "invalid id")
+		common.ApiErrorI18n(c, i18n.MsgInvalidId)
 		return 0, false
 	}
 	return value, true

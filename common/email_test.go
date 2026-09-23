@@ -321,7 +321,22 @@ func TestSendEmailExplicitStartTLSRequiresServerSupport(t *testing.T) {
 
 	err := SendEmail("Verification", "receiver@example.com", "<p>123456</p>")
 	require.Error(t, err)
-	require.Contains(t, err.Error(), "STARTTLS")
+	loc, ok := AsLocalizedError(err)
+	require.True(t, ok, "STARTTLS failure should be LocalizedError, got %v", err)
+	require.Equal(t, "smtp.starttls_unsupported", loc.Key)
+}
+
+func TestSendEmailUnconfiguredReturnsLocalizedError(t *testing.T) {
+	withSMTPSettings(t)
+	SMTPServer = ""
+	SMTPAccount = ""
+	SMTPFrom = "sender@example.com"
+
+	err := SendEmail("Verification", "receiver@example.com", "<p>123456</p>")
+	require.Error(t, err)
+	loc, ok := AsLocalizedError(err)
+	require.True(t, ok, "unconfigured SMTP should be LocalizedError, got %v", err)
+	require.Equal(t, "smtp.not_configured", loc.Key)
 }
 
 func TestSendEmailDoesNotAutoUpgradeWhenStartTLSDisabled(t *testing.T) {

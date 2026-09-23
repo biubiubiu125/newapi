@@ -22,6 +22,7 @@ import {
   useQueryClient,
   type UseQueryResult,
 } from '@tanstack/react-query'
+import i18n from 'i18next'
 import {
   CheckCircle2,
   Check,
@@ -41,6 +42,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
+import { DatePicker } from '@/components/date-picker'
 import { SectionPageLayout } from '@/components/layout'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -78,6 +80,7 @@ import { searchUsers } from '@/features/users/api'
 import type { User } from '@/features/users/types'
 import { useDebounce } from '@/hooks'
 import dayjs from '@/lib/dayjs'
+import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
 import { ROLE } from '@/lib/roles'
 import { cn } from '@/lib/utils'
 
@@ -136,10 +139,10 @@ function formatTime(timestamp?: number) {
 
 function validateImageFile(file: File) {
   if (!ACCEPTED_IMAGE_TYPES.has(file.type)) {
-    return 'Only png, jpg, jpeg, and webp images are supported'
+    return i18n.t('Only png, jpg, jpeg, and webp images are supported')
   }
   if (file.size > MAX_IMAGE_SIZE) {
-    return 'Each image must be 5MB or smaller'
+    return i18n.t('Each image must be 5MB or smaller')
   }
   return ''
 }
@@ -361,8 +364,9 @@ function CreateTicketPanel({
       filesRef.current = []
       onCreated(ticket)
     },
-    onError: (error: Error) =>
-      toast.error(error.message || t('Failed to create ticket')),
+    onError: (error: Error) => {
+      toastUnhandledConsoleError(error)
+    },
   })
 
   const submit = () => {
@@ -734,8 +738,7 @@ function TicketDetailPanel({
       filesRef.current = []
       refreshDetail()
     },
-    onError: (error: Error) =>
-      toast.error(error.message || t('Failed to send reply')),
+    onError: toastUnhandledConsoleError,
   })
 
   const closeMutation = useMutation({
@@ -744,8 +747,7 @@ function TicketDetailPanel({
       toast.success(t('Ticket closed'))
       refreshDetail()
     },
-    onError: (error: Error) =>
-      toast.error(error.message || t('Failed to close ticket')),
+    onError: toastUnhandledConsoleError,
   })
 
   const reopenMutation = useMutation({
@@ -754,8 +756,7 @@ function TicketDetailPanel({
       toast.success(t('Ticket reopened'))
       refreshDetail()
     },
-    onError: (error: Error) =>
-      toast.error(error.message || t('Failed to reopen ticket')),
+    onError: toastUnhandledConsoleError,
   })
 
   const updateMutation = useMutation({
@@ -770,8 +771,7 @@ function TicketDetailPanel({
       toast.success(t('Ticket updated'))
       refreshDetail()
     },
-    onError: (error: Error) =>
-      toast.error(error.message || t('Failed to update ticket')),
+    onError: toastUnhandledConsoleError,
   })
 
   if (!ticketId) {
@@ -1155,17 +1155,29 @@ function TicketListPanel({
                   inputMode='numeric'
                   placeholder={t('Assignee ID')}
                 />
-                <Input
-                  value={startDate}
-                  onChange={(event) => onStartDateChange(event.target.value)}
-                  type='date'
+                <DatePicker
+                  selected={startDate ? dayjs(startDate).toDate() : undefined}
+                  onSelect={(date) =>
+                    onStartDateChange(
+                      date ? dayjs(date).format('YYYY-MM-DD') : ''
+                    )
+                  }
+                  placeholder={t('Start date')}
                   aria-label={t('Start date')}
+                  className='w-full'
+                  disableFuture={false}
                 />
-                <Input
-                  value={endDate}
-                  onChange={(event) => onEndDateChange(event.target.value)}
-                  type='date'
+                <DatePicker
+                  selected={endDate ? dayjs(endDate).toDate() : undefined}
+                  onSelect={(date) =>
+                    onEndDateChange(
+                      date ? dayjs(date).format('YYYY-MM-DD') : ''
+                    )
+                  }
+                  placeholder={t('End date')}
                   aria-label={t('End date')}
+                  className='w-full'
+                  disableFuture={false}
                 />
               </>
             )}

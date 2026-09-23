@@ -78,6 +78,7 @@ For commercial licensing, please contact support@quantumnous.com
  * 4. **Billing displays**: Use formatBillingCurrencyFromUSD() to avoid token display
  * 5. **Effective exchange rate**: When quotaDisplayType is 'USD', use rate of 1 regardless of config
  */
+import { currentIntlLocale } from '@/i18n/languages'
 import {
   useSystemConfigStore,
   DEFAULT_CURRENCY_CONFIG,
@@ -231,16 +232,15 @@ function getBillingDisplayMeta(config: CurrencyConfig): DisplayMeta {
 function mergeOptions(
   options?: CurrencyFormatOptions
 ): ResolvedCurrencyFormatOptions {
-  if (!options) return DEFAULT_FORMAT_OPTIONS
   return {
-    digitsLarge: options.digitsLarge ?? DEFAULT_FORMAT_OPTIONS.digitsLarge,
-    digitsSmall: options.digitsSmall ?? DEFAULT_FORMAT_OPTIONS.digitsSmall,
-    abbreviate: options.abbreviate ?? DEFAULT_FORMAT_OPTIONS.abbreviate,
+    digitsLarge: options?.digitsLarge ?? DEFAULT_FORMAT_OPTIONS.digitsLarge,
+    digitsSmall: options?.digitsSmall ?? DEFAULT_FORMAT_OPTIONS.digitsSmall,
+    abbreviate: options?.abbreviate ?? DEFAULT_FORMAT_OPTIONS.abbreviate,
     minimumNonZero:
-      options.minimumNonZero ?? DEFAULT_FORMAT_OPTIONS.minimumNonZero,
-    compact: options.compact ?? DEFAULT_FORMAT_OPTIONS.compact,
-    showSymbol: options.showSymbol ?? DEFAULT_FORMAT_OPTIONS.showSymbol,
-    locale: options.locale ?? DEFAULT_FORMAT_OPTIONS.locale,
+      options?.minimumNonZero ?? DEFAULT_FORMAT_OPTIONS.minimumNonZero,
+    compact: options?.compact ?? DEFAULT_FORMAT_OPTIONS.compact,
+    showSymbol: options?.showSymbol ?? DEFAULT_FORMAT_OPTIONS.showSymbol,
+    locale: options?.locale ?? currentIntlLocale(),
   }
 }
 
@@ -274,8 +274,10 @@ function formatNumberWithSuffix(
 ): string {
   const abs = Math.abs(value)
   if (abbreviate && abs >= 1000) {
-    const result = value / 1000
-    return `${removeTrailingZeros(result.toFixed(1))}k`
+    return new Intl.NumberFormat(currentIntlLocale(), {
+      notation: 'compact',
+      maximumFractionDigits: 1,
+    }).format(value)
   }
 
   const digits = getFractionDigits(value, digitsLarge, digitsSmall)

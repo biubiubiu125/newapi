@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 
 	"github.com/go-webauthn/webauthn/protocol"
 	"github.com/go-webauthn/webauthn/webauthn"
@@ -16,7 +17,7 @@ import (
 
 var (
 	ErrPasskeyNotFound         = errors.New("passkey credential not found")
-	ErrFriendlyPasskeyNotFound = errors.New("Passkey 验证失败，请重试或联系管理员")
+	ErrFriendlyPasskeyNotFound = common.Localized(i18n.MsgPasskeyVerifyFailed)
 )
 
 type PasskeyCredential struct {
@@ -163,7 +164,7 @@ func GetPasskeyByCredentialID(credentialID []byte) (*PasskeyCredential, error) {
 // transports and attestation metadata) is immutable on this path.
 func UpdatePasskeyAssertionState(userID int, credential *webauthn.Credential, lastUsedAt time.Time) error {
 	if userID <= 0 || credential == nil || len(credential.ID) == 0 || lastUsedAt.IsZero() {
-		return fmt.Errorf("Passkey 保存失败，请重试")
+		return common.Localized(i18n.MsgPasskeySaveFailed)
 	}
 	credentialID := base64.StdEncoding.EncodeToString(credential.ID)
 	result := DB.Model(&PasskeyCredential{}).
@@ -189,11 +190,11 @@ func UpdatePasskeyAssertionState(userID int, credential *webauthn.Credential, la
 func upsertPasskeyCredentialWithTx(tx *gorm.DB, credential *PasskeyCredential) error {
 	if err := tx.Unscoped().Where("user_id = ?", credential.UserID).Delete(&PasskeyCredential{}).Error; err != nil {
 		common.SysLog(fmt.Sprintf("UpsertPasskeyCredential: failed to delete existing credential for user %d: %v", credential.UserID, err))
-		return fmt.Errorf("Passkey 保存失败，请重试")
+		return common.Localized(i18n.MsgPasskeySaveFailed)
 	}
 	if err := tx.Create(credential).Error; err != nil {
 		common.SysLog(fmt.Sprintf("UpsertPasskeyCredential: failed to create credential for user %d: %v", credential.UserID, err))
-		return fmt.Errorf("Passkey 保存失败，请重试")
+		return common.Localized(i18n.MsgPasskeySaveFailed)
 	}
 	return nil
 }
@@ -202,7 +203,7 @@ func upsertPasskeyCredentialWithTx(tx *gorm.DB, credential *PasskeyCredential) e
 // assertion sign-count updates must use UpdatePasskeyAssertionState.
 func UpsertPasskeyCredentialWithAuthVersion(credential *PasskeyCredential) error {
 	if credential == nil || credential.UserID <= 0 {
-		return fmt.Errorf("Passkey 保存失败，请重试")
+		return common.Localized(i18n.MsgPasskeySaveFailed)
 	}
 	if err := DB.Transaction(func(tx *gorm.DB) error {
 		if _, err := IncrementUserAuthVersionWithTx(tx, credential.UserID); err != nil {
@@ -217,7 +218,7 @@ func UpsertPasskeyCredentialWithAuthVersion(credential *PasskeyCredential) error
 
 func DeletePasskeyByUserIDWithAuthVersion(userID int) error {
 	if userID == 0 {
-		return fmt.Errorf("删除失败，请重试")
+		return common.Localized(i18n.MsgPasskeyDeleteRetry)
 	}
 	if err := DB.Transaction(func(tx *gorm.DB) error {
 		var credential PasskeyCredential

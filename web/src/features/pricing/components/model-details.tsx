@@ -117,20 +117,20 @@ const MODALITY_LABEL_KEYS: Record<string, string> = {
   file: 'File',
 }
 
-const TOKEN_FORMAT = new Intl.NumberFormat(undefined, {
-  maximumFractionDigits: 1,
-})
 const MODEL_DETAILS_SKELETON_KEYS = ['first', 'second', 'third', 'fourth']
 
 function formatCatalogTokenCount(tokens: number): string {
   if (!Number.isFinite(tokens) || tokens <= 0) return ''
+  const format = new Intl.NumberFormat(currentIntlLocale(), {
+    maximumFractionDigits: 1,
+  })
   if (tokens >= 1_000_000) {
-    return `${TOKEN_FORMAT.format(tokens / 1_000_000)}M`
+    return `${format.format(tokens / 1_000_000)}M`
   }
   if (tokens >= 1_000) {
-    return `${TOKEN_FORMAT.format(tokens / 1_000)}K`
+    return `${format.format(tokens / 1_000)}K`
   }
-  return TOKEN_FORMAT.format(tokens)
+  return format.format(tokens)
 }
 
 function formatCatalogYearMonth(value?: string): string {

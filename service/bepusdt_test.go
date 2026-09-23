@@ -164,3 +164,13 @@ func TestBEpusdtSignAndNotifyHelpers(t *testing.T) {
 	values["signature"] = BEpusdtSign(values, "secret")
 	require.Equal(t, "usdt", BEpusdtCallbackToken(values))
 }
+
+func TestBEpusdtGatewayErrorPublicDetailOmitsChineseWrapper(t *testing.T) {
+	err := BEpusdtGatewayError{
+		StatusCode: 400,
+		Body:       `{"message":"order amount too small","status_code":"AMOUNT_TOO_SMALL"}`,
+	}
+	got := err.PublicDetail()
+	require.Equal(t, "order amount too small (AMOUNT_TOO_SMALL)", got)
+	require.NotContains(t, got, "网关拒绝")
+}

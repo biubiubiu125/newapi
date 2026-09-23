@@ -30,6 +30,7 @@ import {
 } from '@/components/data-table'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 import { getRedemptions, searchRedemptions } from '../api'
 import {
@@ -109,12 +110,12 @@ export function RedemptionsTable() {
 
       if (!result.success) {
         toast.error(
-          result.message ||
-            t(
-              hasFilter || hasStatusFilter
-                ? ERROR_MESSAGES.SEARCH_FAILED
-                : ERROR_MESSAGES.LOAD_FAILED
-            )
+          localizeConsoleErrorText(
+            result.message,
+            hasFilter || hasStatusFilter
+              ? ERROR_MESSAGES.SEARCH_FAILED
+              : ERROR_MESSAGES.LOAD_FAILED
+          )
         )
         return { items: [], total: 0 }
       }

@@ -18,13 +18,22 @@ General Public License along with this program, see
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 
 import dayjs, { applyDayjsLocale } from './dayjs'
 
 describe('applyDayjsLocale', () => {
   afterEach(() => {
     applyDayjsLocale('en')
+  })
+
+  it('uses simplified Chinese as soon as the module loads', async () => {
+    vi.resetModules()
+    const loaded = await import('./dayjs')
+    expect(loaded.default.locale()).toBe('zh-cn')
+    expect(loaded.default().subtract(3, 'minute').fromNow()).toMatch(
+      /分钟|分鐘|前/
+    )
   })
 
   it('makes relative time use simplified Chinese for zhCN', () => {

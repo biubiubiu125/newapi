@@ -54,7 +54,9 @@ import {
   formatBackupCode,
   cleanBackupCode,
 } from '@/features/auth/lib/validation'
-import { getServerErrorMessageKey } from '@/lib/server-error-message'
+import { getUnhandledConsoleErrorMessage } from '@/lib/handle-server-error'
+import { getServerErrorMessageKey,
+  localizeConsoleErrorText,} from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 import { useAuthStore } from '@/stores/auth-store'
 
@@ -107,7 +109,7 @@ export function OtpForm({ className, ...props }: OtpFormProps) {
 
       if (!res.success) {
         if (getServerErrorMessageKey(res)) return
-        toast.error(res.message || t('Invalid code'))
+        toast.error(localizeConsoleErrorText(res.message, 'Invalid code'))
         return
       }
 
@@ -120,10 +122,8 @@ export function OtpForm({ className, ...props }: OtpFormProps) {
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('2FA verification error:', error)
-      if (getServerErrorMessageKey(error)) return
-      const errorMessage =
-        error instanceof Error ? error.message : t('Verification failed')
-      toast.error(errorMessage)
+      const message = getUnhandledConsoleErrorMessage(error)
+      if (message) toast.error(message)
     } finally {
       setIsLoading(false)
     }

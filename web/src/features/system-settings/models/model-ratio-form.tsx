@@ -18,12 +18,21 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { Code2, Eye, RotateCcw, Save } from 'lucide-react'
-import { memo, useCallback, useEffect, useRef, useState } from 'react'
+import {
+  forwardRef,
+  memo,
+  useCallback,
+  useEffect,
+  useImperativeHandle,
+  useRef,
+  useState,
+} from 'react'
 import type { UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { JsonCodeEditor } from '@/components/json-code-editor'
+import { LearnMore } from '@/components/learn-more'
 import { Button } from '@/components/ui/button'
 import {
   Form,
@@ -36,12 +45,10 @@ import {
 } from '@/components/ui/form'
 import { Switch } from '@/components/ui/switch'
 import { getEnabledModels } from '@/features/channels/api'
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
-import {
-  SettingsForm,
-  SettingsSwitchContent,
-  SettingsSwitchItem,
-} from '../components/settings-form-layout'
+import { SettingsForm } from '../components/settings-form-layout'
+import { SettingsPageActionsPortal } from '../components/settings-page-context'
 import {
   ModelRatioVisualEditor,
   type ModelRatioVisualEditorHandle,
@@ -69,6 +76,7 @@ type ModelRatioFormProps = {
   isSaving: boolean
   isResetting: boolean
   variant?: 'default' | 'unset'
+  showExposeRatio?: boolean
 }
 
 type ModelJsonFieldName =
@@ -164,211 +172,221 @@ function ModelJsonTextareaField(props: {
   )
 }
 
-export const ModelRatioForm = memo(function ModelRatioForm({
-  form,
-  savedValues,
-  onSave,
-  onReset,
-  isSaving,
-  isResetting,
-  variant = 'default',
-}: ModelRatioFormProps) {
-  const { t } = useTranslation()
-  const isUnsetVariant = variant === 'unset'
-  const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
-  const visualEditorRef = useRef<ModelRatioVisualEditorHandle>(null)
+export type ModelRatioFormHandle = {
+  flushOpenEditor: () => void
+}
 
-  const enabledModelsQuery = useQuery({
-    queryKey: ['enabled-models'],
-    queryFn: getEnabledModels,
-    enabled: isUnsetVariant,
-  })
-
-  const enabledModelsError = isUnsetVariant
-    ? enabledModelsQuery.isError ||
-      (enabledModelsQuery.data !== undefined &&
-        !enabledModelsQuery.data.success)
-    : false
-  const enabledModelsErrorMessage = enabledModelsQuery.data?.message
-
-  useEffect(() => {
-    if (!enabledModelsError) return
-    toast.error(enabledModelsErrorMessage || t('Failed to load enabled models'))
-  }, [enabledModelsError, enabledModelsErrorMessage, t])
-
-  const handleFieldChange = useCallback(
-    (field: keyof ModelFormValues, value: string) => {
-      form.setValue(field, value, {
-        shouldValidate: true,
-        shouldDirty: true,
-      })
+export const ModelRatioForm = memo(
+  forwardRef<ModelRatioFormHandle, ModelRatioFormProps>(function ModelRatioForm(
+    {
+      form,
+      savedValues,
+      onSave,
+      onReset,
+      isSaving,
+      isResetting,
+      variant = 'default',
+      showExposeRatio = true,
     },
-    [form]
-  )
+    ref
+  ) {
+    const { t } = useTranslation()
+    const isUnsetVariant = variant === 'unset'
+    const shouldShowExposeRatio = !isUnsetVariant && showExposeRatio
+    const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
+    const visualEditorRef = useRef<ModelRatioVisualEditorHandle>(null)
 
-  const toggleEditMode = useCallback(() => {
-    setEditMode((prev) => (prev === 'visual' ? 'json' : 'visual'))
-  }, [])
+    const enabledModelsQuery = useQuery({
+      queryKey: ['enabled-models'],
+      queryFn: getEnabledModels,
+      enabled: isUnsetVariant,
+    })
 
-  const handleSave = useCallback(async () => {
-    if (editMode === 'visual') {
-      const committed = await visualEditorRef.current?.commitOpenEditor()
-      if (committed === false) return
-    }
+    const enabledModelsError = isUnsetVariant
+      ? enabledModelsQuery.isError ||
+        (enabledModelsQuery.data !== undefined &&
+          !enabledModelsQuery.data.success)
+      : false
+    const enabledModelsErrorMessage = enabledModelsQuery.data?.message
 
-    await form.handleSubmit(onSave)()
-  }, [editMode, form, onSave])
+    useEffect(() => {
+      if (!enabledModelsError) return
+      toast.error(
+        localizeConsoleErrorText(
+          enabledModelsErrorMessage,
+          'Failed to load enabled models'
+        )
+      )
+    }, [enabledModelsError, enabledModelsErrorMessage, t])
 
-  return (
-    <div className='space-y-6'>
-      {!isUnsetVariant && (
-        <div className='flex flex-wrap justify-end gap-2'>
-          <Button
-            type='button'
-            variant='destructive'
-            size='sm'
-            onClick={onReset}
-            disabled={isResetting}
-          >
-            <RotateCcw data-icon='inline-start' />
-            {t('Reset prices')}
-          </Button>
-          {editMode === 'json' && (
+    const handleFieldChange = useCallback(
+      (field: keyof ModelFormValues, value: string) => {
+        form.setValue(field, value, {
+          shouldValidate: true,
+          shouldDirty: true,
+        })
+      },
+      [form]
+    )
+
+    const toggleEditMode = useCallback(() => {
+      visualEditorRef.current?.flushOpenEditor()
+      setEditMode((prev) => (prev === 'visual' ? 'json' : 'visual'))
+    }, [])
+
+    useImperativeHandle(
+      ref,
+      () => ({
+        flushOpenEditor: () => {
+          visualEditorRef.current?.flushOpenEditor()
+        },
+      }),
+      []
+    )
+
+    const handleSave = useCallback(async () => {
+      if (editMode === 'visual') {
+        const committed = await visualEditorRef.current?.commitOpenEditor()
+        if (committed === false) return
+      }
+
+      await form.handleSubmit(onSave)()
+    }, [editMode, form, onSave])
+
+    return (
+      <div className='space-y-6'>
+        {!isUnsetVariant && (
+          <div className='flex flex-wrap justify-end gap-2'>
             <Button
               type='button'
+              variant='destructive'
               size='sm'
-              onClick={handleSave}
-              disabled={isSaving}
+              onClick={onReset}
+              disabled={isResetting}
             >
-              <Save data-icon='inline-start' />
-              {isSaving ? t('Saving...') : t('Save model prices')}
+              <RotateCcw data-icon='inline-start' />
+              {t('Reset prices')}
             </Button>
-          )}
-          <Button variant='outline' size='sm' onClick={toggleEditMode}>
-            {editMode === 'visual' ? (
-              <>
-                <Code2 className='mr-2 h-4 w-4' />
-                {t('Switch to JSON')}
-              </>
-            ) : (
-              <>
-                <Eye className='mr-2 h-4 w-4' />
-                {t('Switch to Visual')}
-              </>
+            {editMode === 'json' && (
+              <Button
+                type='button'
+                size='sm'
+                onClick={handleSave}
+                disabled={isSaving}
+              >
+                <Save data-icon='inline-start' />
+                {isSaving ? t('Saving...') : t('Save model prices')}
+              </Button>
             )}
-          </Button>
-        </div>
-      )}
+            <Button variant='outline' size='sm' onClick={toggleEditMode}>
+              {editMode === 'visual' ? (
+                <>
+                  <Code2 className='mr-2 h-4 w-4' />
+                  {t('Switch to JSON')}
+                </>
+              ) : (
+                <>
+                  <Eye className='mr-2 h-4 w-4' />
+                  {t('Switch to Visual')}
+                </>
+              )}
+            </Button>
+          </div>
+        )}
 
-      <Form {...form}>
-        {editMode === 'visual' ? (
-          <div className='space-y-6'>
-            <ModelRatioVisualEditor
-              ref={visualEditorRef}
-              savedModelPrice={savedValues.ModelPrice}
-              savedModelRatio={savedValues.ModelRatio}
-              savedCacheRatio={savedValues.CacheRatio}
-              savedCreateCacheRatio={savedValues.CreateCacheRatio}
-              savedCompletionRatio={savedValues.CompletionRatio}
-              savedImageRatio={savedValues.ImageRatio}
-              savedAudioRatio={savedValues.AudioRatio}
-              savedAudioCompletionRatio={savedValues.AudioCompletionRatio}
-              savedBillingMode={savedValues.BillingMode}
-              savedBillingExpr={savedValues.BillingExpr}
-              modelPrice={form.watch('ModelPrice')}
-              modelRatio={form.watch('ModelRatio')}
-              cacheRatio={form.watch('CacheRatio')}
-              createCacheRatio={form.watch('CreateCacheRatio')}
-              completionRatio={form.watch('CompletionRatio')}
-              imageRatio={form.watch('ImageRatio')}
-              audioRatio={form.watch('AudioRatio')}
-              audioCompletionRatio={form.watch('AudioCompletionRatio')}
-              billingMode={form.watch('BillingMode')}
-              billingExpr={form.watch('BillingExpr')}
-              candidateModelNames={
-                isUnsetVariant ? enabledModelsQuery.data?.data : undefined
-              }
-              candidateModelsLoading={
-                isUnsetVariant && enabledModelsQuery.isLoading
-              }
-              filterMode={isUnsetVariant ? 'unset' : 'all'}
-              onSave={handleSave}
-              isSaving={isSaving}
-              onChange={(field, value) => {
-                const fieldMap: Record<string, keyof ModelFormValues> = {
-                  'billing_setting.billing_mode': 'BillingMode',
-                  'billing_setting.billing_expr': 'BillingExpr',
-                }
-                const formField =
-                  fieldMap[field] || (field as keyof ModelFormValues)
-                handleFieldChange(formField, value)
-              }}
-            />
-
-            {!isUnsetVariant && (
+        <Form {...form}>
+          {shouldShowExposeRatio && (
+            <SettingsPageActionsPortal>
               <FormField
                 control={form.control}
                 name='ExposeRatioEnabled'
                 render={({ field }) => (
-                  <SettingsSwitchItem>
-                    <SettingsSwitchContent>
-                      <FormLabel>{t('Expose ratio API')}</FormLabel>
-                      <FormDescription>
-                        {t(
-                          'Allow clients to query configured ratios via `/api/ratio`.'
-                        )}
-                      </FormDescription>
-                    </SettingsSwitchContent>
+                  <FormItem className='flex flex-row items-center gap-2 space-y-0'>
+                    <FormLabel className='text-sm font-medium'>
+                      {t('Expose ratio API')}
+                    </FormLabel>
                     <FormControl>
                       <Switch
                         checked={field.value}
                         onCheckedChange={field.onChange}
                       />
                     </FormControl>
-                  </SettingsSwitchItem>
-                )}
-              />
-            )}
-          </div>
-        ) : (
-          <SettingsForm onSubmit={form.handleSubmit(onSave)}>
-            <div className='grid min-w-0 gap-x-5 gap-y-8 lg:grid-cols-2 2xl:grid-cols-3'>
-              {modelJsonFields.map((config) => (
-                <ModelJsonTextareaField
-                  key={config.name}
-                  form={form}
-                  name={config.name}
-                  label={t(config.labelKey)}
-                  description={t(config.descriptionKey)}
-                />
-              ))}
-            </div>
-
-            <FormField
-              control={form.control}
-              name='ExposeRatioEnabled'
-              render={({ field }) => (
-                <SettingsSwitchItem>
-                  <SettingsSwitchContent>
-                    <FormLabel>{t('Expose ratio API')}</FormLabel>
-                    <FormDescription>
+                    <LearnMore>
                       {t(
-                        'Allow clients to query configured ratios via `/api/ratio`.'
+                        'Allow clients to query configured prices via `/api/ratio`.'
+                      )}
+                    </LearnMore>
+                    <FormDescription className='sr-only'>
+                      {t(
+                        'Allow clients to query configured prices via `/api/ratio`.'
                       )}
                     </FormDescription>
-                  </SettingsSwitchContent>
-                  <FormControl>
-                    <Switch
-                      checked={field.value}
-                      onCheckedChange={field.onChange}
-                    />
-                  </FormControl>
-                </SettingsSwitchItem>
-              )}
-            />
-          </SettingsForm>
-        )}
-      </Form>
-    </div>
-  )
-})
+                  </FormItem>
+                )}
+              />
+            </SettingsPageActionsPortal>
+          )}
+          {editMode === 'visual' ? (
+            <div className='space-y-6'>
+              <ModelRatioVisualEditor
+                ref={visualEditorRef}
+                savedModelPrice={savedValues.ModelPrice}
+                savedModelRatio={savedValues.ModelRatio}
+                savedCacheRatio={savedValues.CacheRatio}
+                savedCreateCacheRatio={savedValues.CreateCacheRatio}
+                savedCompletionRatio={savedValues.CompletionRatio}
+                savedImageRatio={savedValues.ImageRatio}
+                savedAudioRatio={savedValues.AudioRatio}
+                savedAudioCompletionRatio={savedValues.AudioCompletionRatio}
+                savedBillingMode={savedValues.BillingMode}
+                savedBillingExpr={savedValues.BillingExpr}
+                modelPrice={form.watch('ModelPrice')}
+                modelRatio={form.watch('ModelRatio')}
+                cacheRatio={form.watch('CacheRatio')}
+                createCacheRatio={form.watch('CreateCacheRatio')}
+                completionRatio={form.watch('CompletionRatio')}
+                imageRatio={form.watch('ImageRatio')}
+                audioRatio={form.watch('AudioRatio')}
+                audioCompletionRatio={form.watch('AudioCompletionRatio')}
+                billingMode={form.watch('BillingMode')}
+                billingExpr={form.watch('BillingExpr')}
+                candidateModelNames={
+                  isUnsetVariant ? enabledModelsQuery.data?.data : undefined
+                }
+                candidateModelsLoading={
+                  isUnsetVariant && enabledModelsQuery.isLoading
+                }
+                filterMode={isUnsetVariant ? 'unset' : 'all'}
+                onSave={handleSave}
+                isSaving={isSaving}
+                onChange={(field, value) => {
+                  const fieldMap: Record<string, keyof ModelFormValues> = {
+                    'billing_setting.billing_mode': 'BillingMode',
+                    'billing_setting.billing_expr': 'BillingExpr',
+                  }
+                  const formField =
+                    fieldMap[field] || (field as keyof ModelFormValues)
+                  handleFieldChange(formField, value)
+                }}
+              />
+            </div>
+          ) : (
+            <SettingsForm onSubmit={form.handleSubmit(onSave)}>
+              <div className='grid min-w-0 gap-x-5 gap-y-8 lg:grid-cols-2 2xl:grid-cols-3'>
+                {modelJsonFields.map((config) => (
+                  <ModelJsonTextareaField
+                    key={config.name}
+                    form={form}
+                    name={config.name}
+                    label={t(config.labelKey)}
+                    description={t(config.descriptionKey)}
+                  />
+                ))}
+              </div>
+            </SettingsForm>
+          )}
+        </Form>
+      </div>
+    )
+  })
+)

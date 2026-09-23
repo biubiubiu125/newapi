@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { currentIntlLocale } from '@/i18n/languages'
 import { formatCurrencyFromUSD } from '@/lib/currency'
 
 import { DEFAULT_DISCOUNT_RATE } from '../constants'
@@ -39,13 +40,10 @@ export function formatCreemPrice(
  * Format large quota numbers with K/M suffix
  */
 export function formatQuotaShort(quota: number): string {
-  if (quota >= 1000000) {
-    return `${(quota / 1000000).toFixed(1)}M`
-  }
-  if (quota >= 1000) {
-    return `${(quota / 1000).toFixed(1)}K`
-  }
-  return quota.toString()
+  return new Intl.NumberFormat(currentIntlLocale(), {
+    notation: 'compact',
+    maximumFractionDigits: 1,
+  }).format(quota)
 }
 
 /**
@@ -57,7 +55,7 @@ export function formatCurrency(amount: number | string): string {
     typeof amount === 'number' ? amount : Number.parseFloat(String(amount))
   if (!Number.isFinite(numeric)) return '-'
 
-  return new Intl.NumberFormat(undefined, {
+  return new Intl.NumberFormat(currentIntlLocale(), {
     minimumFractionDigits: 0,
     maximumFractionDigits: Math.abs(numeric) >= 1 ? 2 : 4,
   }).format(numeric)
@@ -83,7 +81,7 @@ export function formatCnyPrice(amount: number | string): string {
   const numeric =
     typeof amount === 'number' ? amount : Number.parseFloat(String(amount))
   if (!Number.isFinite(numeric)) return '-'
-  const formatted = new Intl.NumberFormat(undefined, {
+  const formatted = new Intl.NumberFormat(currentIntlLocale(), {
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(numeric)

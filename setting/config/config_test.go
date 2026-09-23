@@ -94,3 +94,19 @@ func TestUpdateConfigFromMap_ScalarFieldsUnchanged(t *testing.T) {
 		t.Errorf("Modes should be unchanged, got %v", cfg.Modes)
 	}
 }
+
+func TestUpdateConfigFromMap_InvalidMapJSONReturnsError(t *testing.T) {
+	cfg := &testConfigWithMap{
+		Modes: map[string]string{"model-a": "tiered_expr"},
+	}
+
+	err := UpdateConfigFromMap(cfg, map[string]string{
+		"modes": `{`,
+	})
+	if err == nil {
+		t.Fatal("UpdateConfigFromMap should reject invalid map JSON")
+	}
+	if cfg.Modes["model-a"] != "tiered_expr" {
+		t.Errorf("Modes should stay unchanged on invalid JSON, got %v", cfg.Modes)
+	}
+}

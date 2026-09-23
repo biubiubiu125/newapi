@@ -68,7 +68,7 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 	if len(nullTasks) > 0 {
 		summary.NullTasksFailed = len(nullTasks)
 		for _, task := range nullTasks {
-			if failMidjourneyTaskAndRefund(ctx, task, "上游任务ID为空") {
+			if failMidjourneyTaskAndRefund(ctx, task, model.PublicFailReasonEmptyUpstreamTaskID) {
 				logger.LogInfo(ctx, fmt.Sprintf("Fix null mj_id task success: %d", task.Id))
 			}
 		}
@@ -95,7 +95,7 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 		midjourneyChannel, err := model.CacheGetChannel(channelId)
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("CacheGetChannel: %v", err))
-			failReason := fmt.Sprintf("获取渠道信息失败，请联系管理员，渠道ID：%d", channelId)
+			failReason := model.FormatPublicChannelInfoFailReason(channelId)
 			for _, taskId := range taskIds {
 				task := taskM[taskId]
 				if task == nil {
@@ -161,7 +161,7 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 
 			useTime := (time.Now().UnixNano() / int64(time.Millisecond)) - task.SubmitTime
 			if useTime > 3600000 && task.Progress != "100%" {
-				responseItem.FailReason = "上游任务超时（超过1小时）"
+				responseItem.FailReason = model.PublicFailReasonUpstreamTaskTimeout
 				responseItem.Status = "FAILURE"
 			}
 			if !checkMjTaskNeedUpdate(task, responseItem) {

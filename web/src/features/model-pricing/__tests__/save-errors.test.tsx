@@ -29,13 +29,17 @@ import { useAuthStore } from '@/stores/auth-store'
 import { usePricingPreferencesStore } from '@/stores/pricing-preferences-store'
 
 import type { ModelPricingConfig } from '../api'
-import { ModelPricingPanel } from '../model-pricing-panel'
+import {
+  ModelPricingPanel,
+  unsavedModelPricingDrafts,
+} from '../model-pricing-panel'
 import { pricingOptions } from '../pricing'
 
 const originalAdapter = api.defaults.adapter
 let client: QueryClient | undefined
 
 afterEach(() => {
+  unsavedModelPricingDrafts.clear()
   client?.clear()
   api.defaults.adapter = originalAdapter
   useAuthStore.getState().auth.setUser(null)
@@ -161,3 +165,118 @@ it.each([200, 400])(
     expect(String(requests[0])).not.toMatch(/nativeEvent|SyntheticBaseEvent/)
   }
 )
+
+it('toasts when highlighted pricing fields are invalid before saving', async () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, role: 100, status: 1, username: 'root' })
+  const snapshot: ModelPricingConfig = {
+    entries: [
+      {
+        model_name: 'example',
+        version: 'v1',
+        configured: { ModelRatio: 1 },
+        effective: { ModelRatio: 1 },
+      },
+    ],
+    options: pricingOptions({ ModelRatio: '{"example":1}' }),
+    empty_version: 'empty',
+  }
+  api.defaults.adapter = (async (config) => {
+    const url = String(config.url ?? '')
+    if (
+      config.method === 'get' &&
+      ['/api/status', '/api/pricing'].includes(url)
+    ) {
+      const data =
+        url === '/api/status'
+          ? { success: true, data: {} }
+          : { success: true, data: [], vendors: [] }
+      return { data, status: 200, statusText: 'OK', headers: {}, config }
+    }
+    if (config.method === 'get' && url.includes('/api/option/model_pricing')) {
+      return {
+        data: { success: true, data: snapshot },
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' },
+        config,
+      }
+    }
+    throw new Error(`unexpected ${config.method} ${url}`)
+  }) as AxiosAdapter
+  const notify = vi.spyOn(toast, 'error')
+  client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  render(
+    <QueryClientProvider client={client}>
+      <ModelPricingPanel modelName='example' />
+    </QueryClientProvider>
+  )
+  const user = userEvent.setup()
+  await user.click(await screen.findByRole('tab', { name: 'Per-token' }))
+  const inputPrice = screen.getByPlaceholderText('3')
+  await user.clear(inputPrice)
+  await user.type(inputPrice, '0')
+  await user.click(screen.getAllByRole('switch')[0])
+  await user.type(screen.getByPlaceholderText('15'), '15')
+  await user.click(screen.getByRole('button', { name: 'Save model prices' }))
+  await waitFor(() =>
+    expect(notify.mock.calls.map(([text]) => text)).toEqual([
+      'Please fix the highlighted fields before saving',
+    ])
+  )
+})
+
+it('keeps an unsaved pricing draft after the panel unmounts', async () => {
+  useAuthStore
+    .getState()
+    .auth.setUser({ id: 1, role: 100, status: 1, username: 'root' })
+  const snapshot: ModelPricingConfig = {
+    entries: [
+      {
+        model_name: 'example',
+        version: 'v1',
+        configured: { ModelPrice: 0.1 },
+        effective: { ModelPrice: 0.1 },
+      },
+    ],
+    options: pricingOptions({ ModelPrice: '{"example":0.1}' }),
+    empty_version: 'empty',
+  }
+  api.defaults.adapter = (async (config) => {
+    const url = String(config.url ?? '')
+    if (config.method === 'get' && url.includes('/api/option/model_pricing')) {
+      return {
+        data: { success: true, data: snapshot },
+        status: 200,
+        statusText: 'OK',
+        headers: { 'content-type': 'application/json' },
+        config,
+      }
+    }
+    throw new Error(`unexpected ${config.method} ${url}`)
+  }) as AxiosAdapter
+  client = new QueryClient({
+    defaultOptions: { queries: { retry: false } },
+  })
+  const user = userEvent.setup()
+  const view = render(
+    <QueryClientProvider client={client}>
+      <ModelPricingPanel modelName='example' />
+    </QueryClientProvider>
+  )
+  const price = await screen.findByRole('textbox', { name: 'Fixed price' })
+  await user.clear(price)
+  await user.type(price, '0.25')
+  view.unmount()
+  render(
+    <QueryClientProvider client={client}>
+      <ModelPricingPanel modelName='example' />
+    </QueryClientProvider>
+  )
+  expect(
+    await screen.findByRole('textbox', { name: 'Fixed price' })
+  ).toHaveValue('0.25')
+})

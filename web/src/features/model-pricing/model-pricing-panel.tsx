@@ -24,6 +24,7 @@ import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ErrorState } from '@/components/error-state'
 import { LoadingState } from '@/components/loading-state'
 import { Button } from '@/components/ui/button'
+import { localizeConsoleErrorText } from '@/lib/server-error-message'
 import { DynamicPricingBreakdown } from '@/features/pricing/components/dynamic-pricing-breakdown'
 import { ModelPriceCell } from '@/features/pricing/components/model-price-cell'
 import { isDynamicPricingModel } from '@/features/pricing/lib/dynamic-price'
@@ -31,6 +32,7 @@ import { formatPrice } from '@/features/pricing/lib/price'
 import {
   ModelPricingEditorPanel,
   type ModelPricingEditorPanelHandle,
+  type ModelRatioData,
 } from '@/features/system-settings/models/model-pricing-sheet'
 import { handleServerError } from '@/lib/handle-server-error'
 import { useSystemConfigStore } from '@/stores/system-config-store'
@@ -42,6 +44,8 @@ import {
   type ModelPricingEntry,
 } from './api'
 import { modelPricingDisplay, pricingFromDraft, pricingRow } from './pricing'
+
+export const unsavedModelPricingDrafts = new Map<string, ModelRatioData>()
 
 export function ModelPricingPanel(props: {
   modelName: string
@@ -55,7 +59,11 @@ export function ModelPricingPanel(props: {
   const [entry, setEntry] = useState<ModelPricingEntry | null>(null)
   const [resetOpen, setResetOpen] = useState(false)
   const editor = useRef<ModelPricingEditorPanelHandle>(null)
+  const cachedDraft = unsavedModelPricingDrafts.get(props.modelName)
   const editData = useMemo(() => {
+    if (cachedDraft?.name === props.modelName) {
+      return cachedDraft
+    }
     if (!entry) return null
     const values = { ...entry.configured }
     if (entry.effective['billing_setting.billing_mode'] === 'tiered_expr') {
@@ -64,7 +72,7 @@ export function ModelPricingPanel(props: {
         entry.effective['billing_setting.billing_expr']
     }
     return pricingRow(entry.model_name, values)
-  }, [entry])
+  }, [cachedDraft, entry, props.modelName])
 
   useEffect(() => {
     const loaded = query.data?.entries.find(
@@ -79,7 +87,10 @@ export function ModelPricingPanel(props: {
     if (!entry) return
     try {
       const draft = reset ? null : await editor.current?.commitDraft()
-      if (!reset && !draft) return
+      if (!reset && !draft) {
+        toast.error(t('Please fix the highlighted fields before saving'))
+        return
+      }
       await save.mutateAsync([
         {
           model_name: entry.model_name,
@@ -88,6 +99,7 @@ export function ModelPricingPanel(props: {
           reset,
         },
       ])
+      unsavedModelPricingDrafts.delete(entry.model_name)
       const refreshed = await query.refetch()
       setEntry(
         refreshed.data?.entries.find(
@@ -119,7 +131,10 @@ export function ModelPricingPanel(props: {
   if (query.isError) {
     return (
       <ErrorState
-        description={query.error.message}
+        description={localizeConsoleErrorText(
+          query.error.message,
+          'Request failed'
+        )}
         onRetry={() => void query.refetch()}
       />
     )
@@ -135,6 +150,9 @@ export function ModelPricingPanel(props: {
         editData={editData}
         usageSchema={entry.usage_schema}
         onDirtyChange={props.onDirtyChange}
+        onUnmountSnapshot={(data) => {
+          unsavedModelPricingDrafts.set(data.name, data)
+        }}
         onSave={() => persist()}
         isSaving={save.isPending}
         className='rounded-none border-0'
@@ -230,7 +248,10 @@ export function ModelPricingPanel(props: {
             {save.isError && (
               <div>
                 <p role='alert' className='text-destructive mb-2 text-sm'>
-                  {save.error?.message}
+                  {localizeConsoleErrorText(
+                    save.error?.message,
+                    'Failed to save model pricing'
+                  )}
                 </p>
                 <Button
                   variant='outline'

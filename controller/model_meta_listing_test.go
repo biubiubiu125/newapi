@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
@@ -24,9 +25,11 @@ type modelMetaListResponse struct {
 
 func searchModelsMeta(t *testing.T, query string) (int, modelMetaListResponse) {
 	t.Helper()
+	require.NoError(t, i18n.Init())
 	recorder := httptest.NewRecorder()
 	ctx, _ := gin.CreateTestContext(recorder)
 	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/models/search?"+query, nil)
+	ctx.Request.Header.Set("Accept-Language", "en-US")
 	SearchModelsMeta(ctx)
 	var payload modelMetaListResponse
 	if recorder.Body.Len() > 0 {

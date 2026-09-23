@@ -17,11 +17,17 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import assert from 'node:assert/strict'
+
+import i18n from 'i18next'
 import { describe, test } from 'vitest'
 
 import type { AuthUser } from '@/stores/auth-store'
 
-import { getSavedLanguage, sanitizeAuthRedirect } from './auth-redirect'
+import {
+  applySavedLanguage,
+  getSavedLanguage,
+  sanitizeAuthRedirect,
+} from './auth-redirect'
 
 const origin = 'https://dashboard.example.com'
 
@@ -98,10 +104,7 @@ describe('saved authentication language', () => {
   })
 
   test('normalizes backend and browser language tags onto interface codes', () => {
-    assert.equal(
-      getSavedLanguage({ ...user, language: 'zh-CN' }),
-      'zhCN'
-    )
+    assert.equal(getSavedLanguage({ ...user, language: 'zh-CN' }), 'zhCN')
     assert.equal(
       getSavedLanguage({ ...user, setting: { language: 'zh_CN' } }),
       'zhCN'
@@ -110,9 +113,22 @@ describe('saved authentication language', () => {
       getSavedLanguage({ ...user, setting: '{"language":"zh-tw"}' }),
       'zhTW'
     )
-    assert.equal(
-      getSavedLanguage({ ...user, language: 'fr-FR' }),
-      'fr'
-    )
+    assert.equal(getSavedLanguage({ ...user, language: 'fr-FR' }), 'fr')
+  })
+})
+
+describe('applySavedLanguage', () => {
+  const user: AuthUser = { id: 1, username: 'user', role: 1 }
+
+  test('switches the interface language from the saved user setting', async () => {
+    await i18n.changeLanguage('en')
+    await applySavedLanguage({ ...user, language: 'zh-CN' })
+    assert.equal(i18n.language, 'zhCN')
+  })
+
+  test('keeps the current language when the user has no saved language', async () => {
+    await i18n.changeLanguage('en')
+    await applySavedLanguage(user)
+    assert.equal(i18n.language, 'en')
   })
 })

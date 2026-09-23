@@ -32,6 +32,11 @@ const (
 	defaultDBStartupConnectRetryIntervalMs = 1000
 )
 
+// InitColumnNames initializes quoted SQL identifiers for the current database type.
+func InitColumnNames() {
+	initCol()
+}
+
 func initCol() {
 	// init common column names
 	if common.UsingMainDatabase(common.DatabaseTypePostgreSQL) {
