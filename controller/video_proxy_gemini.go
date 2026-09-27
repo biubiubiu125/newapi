@@ -94,10 +94,7 @@ func getGeminiVideoURL(channel *model.Channel, task *model.Task, apiKey string) 
 	}
 
 	proxy := channel.GetSetting().Proxy
-	resp, err := adaptor.FetchTask(baseURL, apiKey, map[string]any{
-		"task_id": task.GetUpstreamTaskID(),
-		"action":  task.Action,
-	}, proxy)
+	resp, err := adaptor.FetchTask(baseURL, apiKey, task, proxy)
 	if err != nil {
 		return "", fmt.Errorf("fetch task failed: %w", err)
 	}
@@ -111,7 +108,7 @@ func getGeminiVideoURL(channel *model.Channel, task *model.Task, apiKey string) 
 		return "", fmt.Errorf("read task response failed: %w", err)
 	}
 
-	taskInfo, parseErr := adaptor.ParseTaskResult(body)
+	taskInfo, parseErr := adaptor.ParseTaskResult(task, resp, body)
 	if parseErr == nil && taskInfo != nil && taskInfo.RemoteUrl != "" {
 		return taskInfo.RemoteUrl, nil
 	}
@@ -280,10 +277,7 @@ func getVertexVideoURL(channel *model.Channel, task *model.Task) (string, error)
 		return "", fmt.Errorf("vertex key not available for task")
 	}
 
-	resp, err := adaptor.FetchTask(baseURL, key, map[string]any{
-		"task_id": task.GetUpstreamTaskID(),
-		"action":  task.Action,
-	}, channel.GetSetting().Proxy)
+	resp, err := adaptor.FetchTask(baseURL, key, task, channel.GetSetting().Proxy)
 	if err != nil {
 		return "", fmt.Errorf("fetch task failed: %w", err)
 	}
@@ -297,7 +291,7 @@ func getVertexVideoURL(channel *model.Channel, task *model.Task) (string, error)
 		return "", fmt.Errorf("read task response failed: %w", err)
 	}
 
-	taskInfo, parseErr := adaptor.ParseTaskResult(body)
+	taskInfo, parseErr := adaptor.ParseTaskResult(task, resp, body)
 	if parseErr == nil && taskInfo != nil {
 		if url := firstNonEmptyTrimmed(taskInfo.Url, taskInfo.RemoteUrl); url != "" {
 			return url, nil

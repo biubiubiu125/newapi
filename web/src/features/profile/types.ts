@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { UserPermissions } from '@/stores/auth-store'
+
 // ============================================================================
 // Profile Type Definitions
 // ============================================================================
@@ -33,6 +35,8 @@ export interface ApiResponse<T = unknown> {
  * User profile data
  */
 export interface UserProfile {
+  has_password?: boolean
+  permissions?: UserPermissions
   /** User ID */
   id: number
   /** Username */
@@ -71,6 +75,9 @@ export interface UserProfile {
   telegram_id?: string
   /** LinuxDO ID (OAuth) */
   linux_do_id?: string
+  aff_count?: number
+  aff_quota?: number
+  aff_history_quota?: number
 }
 
 /**
@@ -119,6 +126,19 @@ export interface UpdateUserRequest {
   original_password?: string
 }
 
+export interface AccountSecurityResult {
+  notification_warning?: boolean
+}
+
+export interface EmailBindingFlow extends AccountSecurityResult {
+  flow_token: string
+  email: string
+  current_email?: string
+  old_email_required: boolean
+  expires_at: number
+  resend_at: number
+}
+
 /**
  * User settings update request
  */
@@ -135,13 +155,6 @@ export interface UpdateUserSettingsRequest {
   accept_unset_model_ratio_model?: boolean
   record_ip_log?: boolean
   upstream_model_update_notify_enabled?: boolean
-}
-
-/**
- * Account deletion request
- */
-export interface DeleteAccountRequest {
-  password?: string
 }
 
 /**
@@ -164,15 +177,6 @@ export interface TwoFAStatus {
   enabled: boolean
   locked: boolean
   backup_codes_remaining: number
-}
-
-/**
- * Two-Factor Authentication Setup Data
- */
-export interface TwoFASetupData {
-  secret: string
-  qr_code_data: string
-  backup_codes: string[]
 }
 
 // ============================================================================

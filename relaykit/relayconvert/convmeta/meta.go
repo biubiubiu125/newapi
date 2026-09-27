@@ -30,6 +30,9 @@ type Meta interface {
 	SetReasoningEffort(effort string)
 	// ReasoningState carries host-derived conversion state across format hops.
 	ReasoningState() *dto.ReasoningConversionState
+	// ReasoningState returns the suffix-derived reasoning intent attached at
+	// the host entry layer. Standalone callers that do not set it receive nil;
+	// converters then use only explicit request fields.
 	GetEstimatePromptTokens() int
 
 	// EnsureClaudeConvertInfo lazily creates and returns the mutable
@@ -62,6 +65,20 @@ type ClaudeConvertInfo struct {
 
 	ToolCallBaseIndex      int
 	ToolCallMaxIndexOffset int
+	ToolCalls              []*ClaudeStreamToolCall
+	ToolCallByIndex        map[int]*ClaudeStreamToolCall
+	ToolCallByID           map[string]*ClaudeStreamToolCall
+}
+
+// ClaudeStreamToolCall tracks one OpenAI tool_calls entry while it is encoded
+// as a Claude tool_use content block. Chat tool indexes and Claude content
+// block indexes are separate domains, so the mapping must remain explicit.
+type ClaudeStreamToolCall struct {
+	BlockIndex       int
+	ID               string
+	Name             string
+	PendingArguments string
+	Started          bool
 }
 
 const (
@@ -224,6 +241,7 @@ func OptionsOf(m Meta) *Options {
 	return m.ConvOptions()
 }
 
+// ReasoningStateOf is a nil-safe reader for Meta.ReasoningState.
 func ReasoningStateOf(m Meta) *dto.ReasoningConversionState {
 	if m == nil {
 		return nil

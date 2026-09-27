@@ -675,7 +675,7 @@ func CancelPublicImageTask(c *gin.Context) {
 		return
 	}
 	now := time.Now().Unix()
-	if !imageTaskSyncBridgeCanFailBeforeExecutionAt(task, now) {
+	if !model.ImageTaskCanCancelBeforeExecution(task, now) {
 		publicImageTaskError(c, http.StatusConflict, "not_cancellable", "image task has already started")
 		return
 	}
@@ -1183,10 +1183,9 @@ func writePublicImageTaskStoredResult(c *gin.Context, task *model.Task, file *os
 }
 
 // respondPublicImageTaskAPIError 把内部 *types.NewAPIError 翻译成 /v1/image-tasks/* 的
-// 统一错误信封。createImageTaskInternal 与同步桥共用，直接透出 NewAPIError 会让同一个
+// 统一错误信封。createImageTaskInternal 只服务公开图片任务，直接透出 NewAPIError 会让同一个
 // 幂等冲突在预检 handler 和创建流程里给出两套 error.code（预检给 idempotency_conflict，
 // 创建流程给 invalid_request），而这两条路径的先后完全取决于并发竞态。
-// 同步桥 /v1/images/* 继续使用 respondImageTaskError，信封不变。
 func respondPublicImageTaskAPIError(c *gin.Context, apiErr *types.NewAPIError) {
 	if apiErr == nil {
 		return

@@ -123,24 +123,52 @@ func clearChannelReadOnlyFields(channel *PatchChannel, requestData map[string]an
 }
 
 func channelRequiresTaskPluginBindForCreate(channel *model.Channel) bool {
-	return channel != nil && channel.Type == constant.ChannelTypeTaskPlugin
+	if channel == nil {
+		return false
+	}
+	if channel.Type == constant.ChannelTypeTaskPlugin {
+		return true
+	}
+	return len(channel.GetSetting().TaskExtendPluginKeys) > 0
 }
 
 func channelRequiresTaskPluginBindForUpdate(origin, channel *model.Channel) bool {
 	if origin == nil || channel == nil {
 		return false
 	}
-
-	if origin.Type != constant.ChannelTypeTaskPlugin && channel.Type != constant.ChannelTypeTaskPlugin {
+	if origin.Type == constant.ChannelTypeTaskPlugin || channel.Type == constant.ChannelTypeTaskPlugin {
+		return true
+	}
+	if !channelRequiresTaskPluginBindForCreate(origin) && !channelRequiresTaskPluginBindForCreate(channel) {
 		return false
 	}
 	if origin.Type != channel.Type {
 		return true
 	}
+	originSetting := origin.GetSetting()
+	channelSetting := channel.GetSetting()
+	if strings.TrimSpace(originSetting.TaskPluginKey) != strings.TrimSpace(channelSetting.TaskPluginKey) {
+		return true
+	}
+	return !sameStringSet(originSetting.TaskExtendPluginKeys, channelSetting.TaskExtendPluginKeys)
+}
 
-	originTaskPluginKey := strings.TrimSpace(origin.GetSetting().TaskPluginKey)
-	channelTaskPluginKey := strings.TrimSpace(channel.GetSetting().TaskPluginKey)
-	return originTaskPluginKey != channelTaskPluginKey
+func sameStringSet(left, right []string) bool {
+	if len(left) != len(right) {
+		return false
+	}
+	seen := make(map[string]int, len(left))
+	for _, value := range left {
+		seen[strings.TrimSpace(value)]++
+	}
+	for _, value := range right {
+		key := strings.TrimSpace(value)
+		seen[key]--
+		if seen[key] < 0 {
+			return false
+		}
+	}
+	return true
 }
 
 // channelNonSensitiveFields lists routing / server-managed channel

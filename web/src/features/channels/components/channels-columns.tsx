@@ -16,21 +16,12 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-/* eslint-disable react-refresh/only-export-components */
 import { useQueryClient } from '@tanstack/react-query'
 import type { ColumnDef } from '@tanstack/react-table'
-import {
-  AlertTriangle,
-  ChevronDown,
-  ChevronRight,
-  ListOrdered,
-  Shuffle,
-  SlidersHorizontal,
-} from 'lucide-react'
+import { AlertTriangle, ChevronDown, ChevronRight, ListOrdered, Shuffle, SlidersHorizontal } from 'lucide-react'
 import { useState, useMemo, useContext, useEffect } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { BadgeListCell } from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
@@ -40,46 +31,14 @@ import { TableId } from '@/components/table-id'
 import { TruncatedText } from '@/components/truncated-text'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { currentIntlLocale } from '@/i18n/languages'
-import {
-  formatCurrencyFromUSD,
-  formatQuotaWithCurrency,
-  getCurrencyLabel,
-} from '@/lib/currency'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import { currentIntlLocale, toIntlLocale } from '@/i18n/languages'
+import { formatCurrencyFromUSD, formatQuotaWithCurrency, getCurrencyLabel } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
 import { truncateText } from '@/lib/utils'
-
 import { getCodexUsage, updateChannelBalance } from '../api'
-import {
-  CHANNEL_STATUS_CONFIG,
-  CHANNEL_TYPE_TASK_PLUGIN,
-  MODEL_FETCHABLE_TYPES,
-} from '../constants'
-import {
-  formatRelativeTime,
-  formatResponseTime,
-  getBalanceVariant,
-  getChannelTypeIcon,
-  getChannelTypeLabel,
-  getResponseTimeConfig,
-  canQueryBalanceChannel,
-  isMultiKeyChannel,
-  parseModelsList,
-  parseGroupsList,
-  parseChannelSettings,
-  channelsQueryKeys,
-  handleUpdateChannelField,
-  handleUpdateTagField,
-  createChannelFieldUpdateScheduler,
-  isTagAggregateRow,
-  type TagRow,
-} from '../lib'
+import { CHANNEL_STATUS_CONFIG, CHANNEL_TYPE_TASK_PLUGIN, MODEL_FETCHABLE_TYPES, CHANNEL_TYPE_VLLM, CHANNEL_TYPE_SGLANG } from '../constants'
+import {formatRelativeTime, formatResponseTime, getBalanceVariant, getChannelTypeIcon, getChannelTypeLabel, getResponseTimeConfig, isMultiKeyChannel, parseModelsList, parseGroupsList, parseChannelSettings, channelsQueryKeys, handleUpdateChannelField, handleUpdateTagField, createChannelFieldUpdateScheduler, isTagAggregateRow, type TagRow} from '../lib'
 import { parseUpstreamUpdateMeta } from '../lib/upstream-update-utils'
 import type { Channel } from '../types'
 import { ChannelRowActionsLayoutContext } from './channel-row-actions-context'
@@ -88,13 +47,10 @@ import { useChannels } from './channels-provider'
 import { DataTableRowActions } from './data-table-row-actions'
 import { DataTableTagRowActions } from './data-table-tag-row-actions'
 import { BalanceQueryDialog } from './dialogs/balance-query-dialog'
-import {
-  CodexUsageDialog,
-  type CodexUsageDialogData,
-} from './dialogs/codex-usage-dialog'
+import { CodexUsageDialog, type CodexUsageDialogData } from './dialogs/codex-usage-dialog'
 import { NumericSpinnerInput } from './numeric-spinner-input'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
+import {createServerError} from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
 
 function parseIonetMeta(otherInfo: string | null | undefined): null | {
   source?: string
@@ -114,9 +70,6 @@ function parseIonetMeta(otherInfo: string | null | undefined): null | {
   return null
 }
 
-/**
- * Upstream update tags (+N / -N) shown on channel name for model-fetchable channels
- */
 function UpstreamUpdateTags({ channel }: { channel: Channel }) {
   const { upstream, setCurrentRow } = useChannels()
   if (!MODEL_FETCHABLE_TYPES.has(channel.type)) {
@@ -178,9 +131,6 @@ function UpstreamUpdateTags({ channel }: { channel: Channel }) {
   )
 }
 
-/**
- * Priority cell component with inline editing
- */
 function PriorityCell({ channel }: { channel: Channel }) {
   if (isTagAggregateRow(channel)) {
     return <TagPriorityCell channel={channel} />
@@ -267,9 +217,6 @@ function ChannelFieldCell({
   )
 }
 
-/**
- * Weight cell component with inline editing
- */
 function WeightCell({ channel }: { channel: Channel }) {
   if (isTagAggregateRow(channel)) {
     return <TagWeightCell channel={channel} />
@@ -324,21 +271,16 @@ function TagWeightCell({ channel }: { channel: TagRow }) {
   )
 }
 
-/**
- * Inline balance/used values longer than this switch to locale-aware compact
- * notation (e.g. "$28万"); the precise value stays available in the tooltip.
- */
 const MAX_INLINE_BALANCE_CHARS = 8
+
 const SENSITIVE_MASK = '••••'
 
-/**
- * Balance cell component with click to update
- */
+
 export function BalanceCell({ channel }: { channel: Channel }) {
-  const { t } = useTranslation()
+  const { t, i18n } = useTranslation()
   const queryClient = useQueryClient()
   const layout = useContext(ChannelRowActionsLayoutContext)
-  const { sensitiveVisible, setCurrentRow } = useChannels()
+  const { sensitiveVisible, setCurrentRow, setOpen } = useChannels()
   const isTagRow = isTagAggregateRow(channel)
   const balance = channel.balance || 0
   const usedQuota = channel.used_quota || 0
@@ -354,7 +296,7 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   const withSuffix = (value: string) =>
     tokenSuffix && value !== '-' ? `${value}${tokenSuffix}` : value
 
-  const locale = currentIntlLocale()
+  const locale = toIntlLocale(i18n.resolvedLanguage || i18n.language)
   const balanceFormatOptions = {
     digitsLarge: 2,
     digitsSmall: 4,
@@ -429,9 +371,15 @@ export function BalanceCell({ channel }: { channel: Channel }) {
 
   // Regular channel row: show used and remaining with click to update
   const variant = getBalanceVariant(balance)
+  const isInferenceChannel =
+    channel.type === CHANNEL_TYPE_VLLM || channel.type === CHANNEL_TYPE_SGLANG
+  const inferenceStatusLabel =
+    channel.type === CHANNEL_TYPE_SGLANG ? t('SGLang status') : t('vLLM status')
 
   const handleClickUpdate = async () => {
-    if (!canQueryBalanceChannel(channel.type)) {
+    if (isInferenceChannel) {
+      setCurrentRow(channel)
+      setOpen('inference-status')
       return
     }
     if (isUpdating) {
@@ -443,14 +391,12 @@ export function BalanceCell({ channel }: { channel: Channel }) {
       try {
         const res = await getCodexUsage(channel.id)
         if (!res.success) {
-          throw new Error(localizeConsoleErrorText(res.message, 'Failed to fetch usage'))
+          throw createServerError(res, t('Failed to fetch usage'))
         }
         setCodexUsageResponse(res)
         setCodexUsageOpen(true)
       } catch (error) {
-        toast.error(
-          localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to fetch usage')
-        )
+        handleServerError(error, t('Failed to fetch usage'))
       } finally {
         setIsUpdating(false)
       }
@@ -476,12 +422,10 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         setCurrentRow(channel)
         setRawBalanceResponse(response.raw_response)
       } else {
-        toast.error(localizeConsoleErrorText(response.message, 'Failed to update balance'))
+        handleServerError(response, t('Failed to update balance'))
       }
     } catch (error: unknown) {
-      toast.error(
-        localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to update balance')
-      )
+      handleServerError(error, t('Failed to update balance'))
     } finally {
       setIsUpdating(false)
     }
@@ -491,19 +435,34 @@ export function BalanceCell({ channel }: { channel: Channel }) {
     remainingBadgeLabel = t('Updating...')
   } else if (sensitiveVisible && channel.type === 57) {
     remainingBadgeLabel = t('Account Info')
+  } else if (sensitiveVisible && isInferenceChannel) {
+    remainingBadgeLabel = inferenceStatusLabel
   }
   let remainingTooltipLabel = remainingLabel
   if (!sensitiveVisible) {
     remainingTooltipLabel = maskedRemainingLabel
   } else if (channel.type === 57) {
     remainingTooltipLabel = t('Click to view Codex usage')
+  } else if (isInferenceChannel) {
+    remainingTooltipLabel = inferenceStatusLabel
   }
   let remainingBadgeVariant: StatusBadgeProps['variant'] = variant
-  if (channel.type === 57) {
+  if (channel.type === 57 || isInferenceChannel) {
     remainingBadgeVariant = 'info'
   } else if (isUpdating) {
     remainingBadgeVariant = 'neutral'
   }
+  const remainingBadge = (
+    <StatusBadge
+      label={remainingBadgeLabel}
+      variant={remainingBadgeVariant}
+      size='sm'
+      copyable={false}
+      showDot={false}
+      className='cursor-pointer'
+      onClick={isInferenceChannel ? undefined : handleClickUpdate}
+    />
+  )
 
   return (
     <TooltipProvider>
@@ -528,28 +487,24 @@ export function BalanceCell({ channel }: { channel: Channel }) {
         <Tooltip>
           <TooltipTrigger
             render={
-              <StatusBadge
-                label={remainingBadgeLabel}
-                variant={remainingBadgeVariant}
-                size='sm'
-                copyable={false}
-                showDot={false}
-                className={
-                  canQueryBalanceChannel(channel.type)
-                    ? 'cursor-pointer'
-                    : 'cursor-default'
-                }
-                onClick={
-                  canQueryBalanceChannel(channel.type)
-                    ? handleClickUpdate
-                    : undefined
-                }
-              />
+              isInferenceChannel ? (
+                <Button
+                  variant='ghost'
+                  size='sm'
+                  className='h-auto rounded-full p-0'
+                  aria-haspopup='dialog'
+                  onClick={handleClickUpdate}
+                >
+                  {remainingBadge}
+                </Button>
+              ) : (
+                remainingBadge
+              )
             }
           />
           <TooltipContent>
             <p>{remainingTooltipLabel}</p>
-            {canQueryBalanceChannel(channel.type) && channel.type !== 57 && (
+            {channel.type !== 57 && !isInferenceChannel && (
               <p>{t('Click to update balance')}</p>
             )}
           </TooltipContent>
@@ -572,13 +527,11 @@ export function BalanceCell({ channel }: { channel: Channel }) {
           try {
             const res = await getCodexUsage(channel.id)
             if (!res.success) {
-              throw new Error(localizeConsoleErrorText(res.message, 'Failed to fetch usage'))
+              throw createServerError(res, t('Failed to fetch usage'))
             }
             setCodexUsageResponse(res)
           } catch (error) {
-            toast.error(
-              localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to fetch usage')
-            )
+            handleServerError(error, t('Failed to fetch usage'))
           } finally {
             setIsUpdating(false)
           }
@@ -600,9 +553,6 @@ export function BalanceCell({ channel }: { channel: Channel }) {
   )
 }
 
-/**
- * Generate channels columns configuration
- */
 export function useChannelsColumns(
   options: {
     enableSelection?: boolean
@@ -848,26 +798,34 @@ export function useChannelsColumns(
                   </Tooltip>
                 </TooltipProvider>
               )}
-              <TooltipProvider delay={300}>
-                <Tooltip>
-                  <TooltipTrigger
-                    render={
-                      <div className='max-w-full min-w-0 overflow-hidden' />
-                    }
-                  >
-                    <ProviderBadge
-                      iconKey={`${iconName}.Color`}
-                      iconSize={18}
-                      label={typeName}
-                      colorText={false}
-                      copyable={false}
-                      showDot={false}
-                      className='max-w-full min-w-0 overflow-hidden'
-                    />
-                  </TooltipTrigger>
-                  <TooltipContent side='top'>{typeName}</TooltipContent>
-                </Tooltip>
-              </TooltipProvider>
+              {type === CHANNEL_TYPE_TASK_PLUGIN ? (
+                <TaskPluginChannelBadge
+                  pluginKey={
+                    parseChannelSettings(channel.setting)?.task_plugin_key
+                  }
+                />
+              ) : (
+                <TooltipProvider delay={300}>
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <div className='max-w-full min-w-0 overflow-hidden' />
+                      }
+                    >
+                      <ProviderBadge
+                        iconKey={`${iconName}.Color`}
+                        iconSize={18}
+                        label={typeName}
+                        colorText={false}
+                        copyable={false}
+                        showDot={false}
+                        className='max-w-full min-w-0 overflow-hidden'
+                      />
+                    </TooltipTrigger>
+                    <TooltipContent side='top'>{typeName}</TooltipContent>
+                  </Tooltip>
+                </TooltipProvider>
+              )}
               {isIonet && (
                 <TooltipProvider delay={100}>
                   <Tooltip>

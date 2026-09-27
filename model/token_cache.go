@@ -115,6 +115,7 @@ return 1`
 	return err
 }
 
+
 // cacheGetTokenByKey 从缓存读取 token；不完整的哈希（如仅有配额字段）会被拒绝。
 func cacheGetTokenByKey(key string) (*Token, error) {
 	if !common.RedisEnabled {

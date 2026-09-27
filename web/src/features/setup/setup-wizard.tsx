@@ -39,6 +39,8 @@ import { Form } from '@/components/ui/form'
 import { Skeleton } from '@/components/ui/skeleton'
 import { REGISTER_USERNAME_MAX_LENGTH } from '@/features/auth/constants'
 import { useSystemConfig } from '@/hooks/use-system-config'
+import { handleServerError } from '@/lib/handle-server-error'
+import { requireServerSuccess } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import { buildSetupPayload, getSetupStatus, submitSetup } from './api'
@@ -49,7 +51,6 @@ import { StepNavigation } from './components/step-navigation'
 import { UsageModeStep } from './components/usage-mode-step'
 import type { SetupFormValues, SetupStatus } from './types'
 
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 const STEPS = [
   {
@@ -101,7 +102,7 @@ export function SetupWizard() {
     refetch,
   } = useQuery({
     queryKey: ['setup-status'],
-    queryFn: getSetupStatus,
+    queryFn: async () => requireServerSuccess(await getSetupStatus()),
     retry: false,
   })
 
@@ -116,13 +117,14 @@ export function SetupWizard() {
           navigate({ to: '/' })
         }, 1200)
       } else {
-        toast.error(
-          localizeConsoleErrorText(response.message, 'Initialization failed, please try again.')
+        handleServerError(
+          response,
+          t('Initialization failed, please try again.')
         )
       }
     },
-    onError: () => {
-      toast.error(t('Failed to initialize system'))
+    onError: (error) => {
+      handleServerError(error, t('Failed to initialize system'))
     },
   })
 
@@ -130,7 +132,7 @@ export function SetupWizard() {
     if (!statusResponse) return
 
     if (!statusResponse.success) {
-      toast.error(localizeConsoleErrorText(statusResponse.message, 'Failed to load setup status'))
+      handleServerError(statusResponse, t('Failed to load setup status'))
       return
     }
 
@@ -213,8 +215,8 @@ export function SetupWizard() {
     if (setupStatus?.root_init) return true
 
     const username = form.getValues('username')?.trim()
-    const password = form.getValues('password')?.trim()
-    const confirmPassword = form.getValues('confirmPassword')?.trim()
+    const password = form.getValues('password')
+    const confirmPassword = form.getValues('confirmPassword')
 
     if (!username) {
       form.setError('username', {
@@ -255,6 +257,7 @@ export function SetupWizard() {
         message: t('Password must be at least 8 characters long'),
       })
       toast.error(t('Password must be at least 8 characters long'))
+      toast.error(t('Password must contain between 8 and 128 characters.'))
       return false
     }
 
@@ -357,24 +360,20 @@ export function SetupWizard() {
                 return (
                   <li
                     key={step.titleKey}
-                    className={cn(
-                      'rounded-xl border p-3',
-                      isActive
-                        ? 'border-primary ring-primary/20 ring-2'
-                        : isCompleted
-                          ? 'border-primary/40 bg-primary/5'
-                          : 'border-muted bg-card'
-                    )}
+                    className={cn('rounded-xl border p-3', {
+                      'border-primary ring-primary/20 ring-2': isActive,
+                      'border-primary/40 bg-primary/5':
+                        !isActive && isCompleted,
+                      'border-muted bg-card': !isActive && !isCompleted,
+                    })}
                   >
                     <div className='flex items-start gap-3'>
                       <span
                         className={cn(
                           'flex size-6 items-center justify-center rounded-md border text-xs font-semibold',
-                          isActive
+                          isActive || isCompleted
                             ? 'border-primary bg-primary text-primary-foreground'
-                            : isCompleted
-                              ? 'border-primary bg-primary text-primary-foreground'
-                              : 'border-muted-foreground/40 text-muted-foreground'
+                            : 'border-muted-foreground/40 text-muted-foreground'
                         )}
                       >
                         {index + 1}
@@ -393,14 +392,14 @@ export function SetupWizard() {
               })}
             </ol>
 
-            {isLoading ? (
-              <LoadingState message={t('Loading setup status…')} />
-            ) : isError ? (
+            {isLoading && <LoadingState message={t('Loading setup status…')} />}
+            {!isLoading && isError && (
               <ErrorState
                 title={t('We could not load the setup status.')}
                 onRetry={() => refetch()}
               />
-            ) : (
+            )}
+            {!isLoading && !isError && (
               <Form {...form}>
                 <form
                   className='space-y-6'

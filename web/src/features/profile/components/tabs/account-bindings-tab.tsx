@@ -30,13 +30,13 @@ import { Separator } from '@/components/ui/separator'
 import { createOAuthFlow } from '@/features/auth/api'
 import { getOAuthLoginDisplayError } from '@/features/auth/lib/login-display-error'
 import {
-  OAUTH_BIND_CALLBACK_MESSAGE,
-  OAUTH_BIND_RESULT_MESSAGE,
+  OAUTH_POPUP_CALLBACK_MESSAGE,
+  OAUTH_POPUP_RESULT_MESSAGE,
 } from '@/features/auth/constants'
 import { watchOAuthPopupClosed } from '@/features/auth/lib/oauth-bind-window'
 import {
   getOAuthSessionStorage,
-  markOAuthBindPopup,
+  markOAuthPopup,
 } from '@/features/auth/lib/oauth-callback-mode'
 import type { CustomOAuthProviderInfo } from '@/features/auth/types'
 import { useDialogs } from '@/hooks/use-dialog'
@@ -55,8 +55,8 @@ import {
 import { getSelfOAuthBindings, unbindCustomOAuth } from '../../api'
 import type { UserProfile, BindingItem } from '../../types'
 import { EmailBindDialog } from '../dialogs/email-bind-dialog'
-import { TelegramBindDialog } from '../dialogs/telegram-bind-dialog'
-import { WeChatBindDialog } from '../dialogs/wechat-bind-dialog'
+import { TelegramBindDialog } from '@/features/security/components/dialogs/telegram-bind-dialog'
+import { WeChatBindDialog } from '@/features/security/components/dialogs/wechat-bind-dialog'
 
 import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
@@ -79,7 +79,7 @@ interface PendingOAuthBinding {
 }
 
 interface OAuthBindingCallback {
-  type: typeof OAUTH_BIND_CALLBACK_MESSAGE
+  type: typeof OAUTH_POPUP_CALLBACK_MESSAGE
   provider: string
   state: string
   code?: string
@@ -190,7 +190,12 @@ export function AccountBindingsTab({
         // login callback. If storage is blocked, do not navigate into a
         // callback that cannot safely identify the bind flow.
         if (
-          !markOAuthBindPopup(getOAuthSessionStorage(popup), provider, state)
+          !markOAuthPopup(
+            getOAuthSessionStorage(popup),
+            provider,
+            state,
+            'bind'
+          )
         ) {
           throw new Error('OAuth bind popup storage is unavailable')
         }
@@ -233,7 +238,7 @@ export function AccountBindingsTab({
       const pending = pendingOAuthBinding.current
       if (
         !message ||
-        message.type !== OAUTH_BIND_CALLBACK_MESSAGE ||
+        message.type !== OAUTH_POPUP_CALLBACK_MESSAGE ||
         !pending ||
         message.provider !== pending.provider ||
         message.state !== pending.state ||
@@ -281,7 +286,7 @@ export function AccountBindingsTab({
 
       pending.popup.postMessage(
         {
-          type: OAUTH_BIND_RESULT_MESSAGE,
+          type: OAUTH_POPUP_RESULT_MESSAGE,
           provider: message.provider,
           state: message.state,
           success,

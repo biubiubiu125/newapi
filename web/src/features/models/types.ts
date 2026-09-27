@@ -18,22 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
-// ============================================================================
-// Model Types
-// ============================================================================
-
-/**
- * Bound channel information
- */
 export interface BoundChannel {
   name: string
   type: number
 }
 
-/**
- * Model entity from API
- */
 export interface Model {
+  square_state?: ModelSquareState
+  has_metadata?: boolean
+  configured_channel_count?: number
   id: number
   model_name: string
   description?: string
@@ -41,6 +34,7 @@ export interface Model {
   tags?: string
   vendor_id?: number
   endpoints?: string
+  supported_endpoints?: string[]
   status: number
   sync_official: number
   created_time: number
@@ -52,15 +46,11 @@ export interface Model {
   quota_types?: number[]
   matched_models?: string[]
   matched_count?: number
-  has_metadata?: boolean
-  configured_channel_count?: number
-  square_state?: 'visible' | 'unavailable' | 'hidden' | 'partial'
 }
 
-/**
- * Vendor entity from API
- */
 export interface Vendor {
+  model_count?: number
+  version?: string
   id: number
   name: string
   description?: string
@@ -68,13 +58,8 @@ export interface Vendor {
   status: number
   created_time: number
   updated_time: number
-  model_count?: number
-  version?: string
 }
 
-/**
- * Prefill group entity
- */
 export interface PrefillGroup {
   id: number
   name: string
@@ -83,42 +68,29 @@ export interface PrefillGroup {
   description?: string
 }
 
-// ============================================================================
-// API Request/Response Types
-// ============================================================================
-
-/**
- * Get models list parameters
- */
 export type ModelSquareState = 'visible' | 'unavailable' | 'hidden' | 'partial'
 
 export interface GetModelsParams {
+  square_state?: ModelSquareState
+  include_channel_models?: boolean
   p?: number
   page_size?: number
   vendor?: string // vendor ID to filter by
   status?: string // filter by status
   sync_official?: string // filter by sync_official status
-  square_state?: ModelSquareState
-  include_channel_models?: boolean
 }
 
-/**
- * Search models parameters
- */
 export interface SearchModelsParams {
+  square_state?: ModelSquareState
+  include_channel_models?: boolean
   keyword?: string
   vendor?: string // vendor ID to filter by
   status?: string // filter by status
   sync_official?: string // filter by sync_official status
   p?: number
   page_size?: number
-  square_state?: ModelSquareState
-  include_channel_models?: boolean
 }
 
-/**
- * Get models response
- */
 export interface GetModelsResponse {
   success: boolean
   message?: string
@@ -131,18 +103,12 @@ export interface GetModelsResponse {
   }
 }
 
-/**
- * Get model detail response
- */
 export interface GetModelResponse {
   success: boolean
   message?: string
   data?: Model
 }
 
-/**
- * Get vendors response
- */
 export interface GetVendorsResponse {
   success: boolean
   message?: string
@@ -154,18 +120,12 @@ export interface GetVendorsResponse {
   }
 }
 
-/**
- * Get vendor response
- */
 export interface GetVendorResponse {
   success: boolean
   message?: string
   data?: Vendor
 }
 
-/**
- * Sync diff data
- */
 export interface SyncDiffData {
   missing?: string[]
   conflicts?: Array<{
@@ -194,54 +154,30 @@ export interface SyncUpstreamParams {
   skip_missing?: boolean
 }
 
-/**
- * Sync upstream response
- */
 export interface SyncUpstreamResponse {
   success: boolean
   message?: string
-  data?: {
-    created_models?: number
-    updated_models?: number
-    created_vendors?: number
-    skipped_models?: string[]
-  }
+  data?: MetadataSyncResult
 }
 
-/**
- * Preview upstream diff response
- */
 export interface PreviewUpstreamDiffResponse {
   success: boolean
   message?: string
-  data?: SyncDiffData
+  data?: MetadataSyncPreview
 }
 
-/**
- * Missing models response
- */
 export interface MissingModelsResponse {
   success: boolean
   message?: string
   data?: string[]
 }
 
-/**
- * Prefill groups response
- */
 export interface PrefillGroupsResponse {
   success: boolean
   message?: string
   data?: PrefillGroup[]
 }
 
-// ============================================================================
-// Form Data Types
-// ============================================================================
-
-/**
- * Model form schema
- */
 export const modelFormSchema = z.object({
   id: z.number().optional(),
   model_name: z.string().min(1, 'Model name is required'),
@@ -257,22 +193,23 @@ export const modelFormSchema = z.object({
 
 export type ModelFormValues = z.infer<typeof modelFormSchema>
 
-/**
- * Vendor form schema
- */
 export const vendorFormSchema = z.object({
   id: z.number().optional(),
-  name: z.string().min(1, 'Vendor name is required'),
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Vendor name is required')
+    .max(128, 'Vendor name and icon must not exceed 128 characters.'),
   description: z.string().default(''),
-  icon: z.string().default(''),
-  status: z.number().default(1),
+  icon: z
+    .string()
+    .max(128, 'Vendor name and icon must not exceed 128 characters.')
+    .default(''),
+  version: z.string().optional(),
 })
 
 export type VendorFormValues = z.infer<typeof vendorFormSchema>
 
-/**
- * Prefill group form schema
- */
 export const prefillGroupFormSchema = z.object({
   id: z.number().optional(),
   name: z.string().min(1, 'Group name is required'),
@@ -283,47 +220,18 @@ export const prefillGroupFormSchema = z.object({
 
 export type PrefillGroupFormValues = z.infer<typeof prefillGroupFormSchema>
 
-// ============================================================================
-// Utility Types
-// ============================================================================
+export type NameRule = 0 | 1 | 2 | 3
 
-/**
- * Name rule type
- */
-export type NameRule = 0 | 1 | 2 | 3 // exact, prefix, contains, suffix
+export type ModelStatus = 0 | 1
 
-/**
- * Model status type
- */
-export type ModelStatus = 0 | 1 // disabled, enabled
+export type QuotaType = 0 | 1
 
-/**
- * Quota type
- */
-export type QuotaType = 0 | 1 // usage-based, per-call
+export type SyncLocale = 'zh' | 'zh-CN' | 'en' | 'ja'
 
-/**
- * Sync locale
- */
-export type SyncLocale = 'zh' | 'en' | 'ja'
+export type SyncSource = 'official'
 
-/**
- * Sync upstream source
- */
-export type SyncSource = 'official' | 'config'
-
-// ============================================================================
-// Model Deployments Types
-// ============================================================================
-
-/**
- * Model tab type
- */
 export type ModelTabCategory = 'metadata' | 'vendors' | 'deployments'
 
-/**
- * Deployment entity from API
- */
 export interface Deployment {
   id: string | number
   container_name?: string
@@ -357,9 +265,6 @@ export interface Deployment {
   [key: string]: unknown
 }
 
-/**
- * Deployment settings response
- */
 export interface DeploymentSettingsResponse {
   success: boolean
   message?: string
@@ -369,9 +274,6 @@ export interface DeploymentSettingsResponse {
   }
 }
 
-/**
- * List deployments response
- */
 export interface ListDeploymentsResponse {
   success: boolean
   message?: string
@@ -384,9 +286,6 @@ export interface ListDeploymentsResponse {
   }
 }
 
-/**
- * Deployment logs response
- */
 export interface DeploymentLogsResponse {
   success: boolean
   message?: string
@@ -399,4 +298,76 @@ export interface DeploymentLogsResponse {
     }>
     cursor?: string
   }
+}
+
+export type MetadataSyncField =
+  | 'description'
+  | 'icon'
+  | 'tags'
+  | 'vendor'
+  | 'endpoints'
+  | 'name_rule'
+  | 'status'
+
+export type MetadataSyncValues = {
+  description: string
+  icon: string
+  tags: string
+  vendor: string
+  endpoints: string
+  name_rule: number
+  status: number
+}
+
+export type MetadataSyncCandidate = {
+  model_name: string
+  kind:
+    | 'create'
+    | 'update'
+    | 'unchanged'
+    | 'blocked'
+    | 'missing_upstream'
+    | 'missing_vendor'
+  scope: 'site' | 'catalog'
+  record_version: string
+  fields: Array<{
+    field: MetadataSyncField
+    local: string | number
+    upstream: string | number
+  }>
+  upstream?: MetadataSyncValues
+  vendor_to_create?: string
+}
+
+export type MetadataSyncSource = {
+  locale: SyncLocale
+  models_url: string
+  vendors_url: string
+  version: string
+}
+
+export type MetadataSyncPreview = {
+  source: MetadataSyncSource
+  candidates: MetadataSyncCandidate[]
+  missing?: string[]
+  conflicts?: SyncDiffData['conflicts']
+}
+
+export type MetadataSyncSelection = {
+  model_name: string
+  record_version: string
+  create: boolean
+  fields: MetadataSyncField[]
+}
+
+export type MetadataSyncRequest = {
+  locale: SyncLocale
+  source_version: string
+  selections: MetadataSyncSelection[]
+}
+
+export type MetadataSyncResult = {
+  created_models: string[]
+  updated_models: MetadataSyncSelection[]
+  created_vendors: string[]
 }

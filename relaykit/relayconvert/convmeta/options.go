@@ -73,11 +73,13 @@ func (c HostedToolCapabilities) Supports(toolName string) bool {
 
 func (o *Options) SupportsHostedTool(toolName string) bool {
 	return o != nil && o.HostedTools.Supports(toolName)
+	// effort-like token (for example qwen-max). Nil means "never preserve".
 }
 
 type ClaudeOptions struct {
-	// ThinkingAdapterEnabled turns "-thinking"-suffixed OpenAI model names
-	// into Claude extended-thinking requests.
+	// ThinkingAdapterEnabled controls whether suffix-derived reasoning intent
+	// is rendered onto Claude thinking / output_config. Suffix parsing itself
+	// is the host entry layer's job (standalone users call Parse* themselves).
 	ThinkingAdapterEnabled bool
 	// ThinkingAdapterBudgetTokensPercentage sizes thinking budget_tokens as a
 	// fraction of max_tokens when the adapter fires.
@@ -98,8 +100,9 @@ type ClaudeOptions struct {
 }
 
 type GeminiOptions struct {
-	// ThinkingAdapterEnabled maps -thinking/-nothinking/effort suffixes to
-	// Gemini thinkingConfig.
+	// ThinkingAdapterEnabled controls whether suffix-derived reasoning intent
+	// is rendered onto Gemini thinkingConfig. Suffix parsing itself is the
+	// host entry layer's job (standalone users call Parse* themselves).
 	ThinkingAdapterEnabled bool
 	// ThinkingAdapterBudgetTokensPercentage sizes thinkingBudget as a fraction
 	// of maxOutputTokens when the adapter fires.

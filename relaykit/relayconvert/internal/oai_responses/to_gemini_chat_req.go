@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"context"
+
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	relaymedia "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/media"
@@ -60,7 +61,7 @@ func OpenAIResponsesRequestToGeminiChat(c context.Context, req *dto.OpenAIRespon
 	if err := applyResponsesTextToGemini(req.Text, geminiRequest); err != nil {
 		return nil, err
 	}
-	intent, err := reasoning.FromOpenAIResponses(req)
+	intent, _, err := reasoning.FromOpenAIResponses(req)
 	if err != nil {
 		return nil, reasoning.AsClientError(err)
 	}
@@ -70,7 +71,7 @@ func OpenAIResponsesRequestToGeminiChat(c context.Context, req *dto.OpenAIRespon
 		ReasoningEffort:     string(reasoning.EffectiveEffort(intent)),
 		ReasoningConversion: reasoning.StateFromIntent(intent),
 	}
-	if err := sharedgemini.ApplyThinkingConfig(geminiRequest, info, reasoningRequest); err != nil {
+	if err := sharedgemini.ApplyThinkingConfig(c, geminiRequest, info, reasoningRequest); err != nil {
 		return nil, reasoning.AsClientError(err)
 	}
 
@@ -94,8 +95,8 @@ func OpenAIResponsesRequestToGeminiChat(c context.Context, req *dto.OpenAIRespon
 		return nil, err
 	}
 	for i := range functions {
-		if params, ok := functions[i].Parameters.(map[string]interface{}); ok {
-			if props, hasProps := params["properties"].(map[string]interface{}); hasProps && len(props) == 0 {
+		if params, ok := functions[i].Parameters.(map[string]any); ok {
+			if props, hasProps := params["properties"].(map[string]any); hasProps && len(props) == 0 {
 				functions[i].Parameters = nil
 				continue
 			}

@@ -30,7 +30,6 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 			types.ErrOptionWithSkipRetry(),
 		)
 	}
-
 	var responsesReq *dto.OpenAIResponsesRequest
 	switch req := info.Request.(type) {
 	case *dto.OpenAIResponsesRequest:
@@ -167,13 +166,19 @@ func ResponsesHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *
 		return nil
 	}
 
+	ConsumeResponsesQuota(c, info, usageDto)
+	return nil
+}
+
+// ConsumeResponsesQuota applies the same settlement dispatch to HTTP and
+// WebSocket Responses usage. Compact requests keep their separate repricing.
+func ConsumeResponsesQuota(c *gin.Context, info *relaycommon.RelayInfo, usage *dto.Usage) {
 	if strings.HasPrefix(info.OriginModelName, "gpt-4o-audio") {
-		if err := service.PostAudioConsumeQuota(c, info, usageDto, ""); err != nil {
+		if err := service.PostAudioConsumeQuota(c, info, usage, ""); err != nil {
 			logger.LogError(c, fmt.Sprintf("post audio consume quota failed: %v", err))
 			service.RecordConsumeAccountingError(c, info, "post audio consume quota", err)
 		}
-	} else {
-		service.PostTextConsumeQuota(c, info, usageDto, nil)
+		return
 	}
-	return nil
+	service.PostTextConsumeQuota(c, info, usage, nil)
 }

@@ -73,7 +73,6 @@ func invalidateUserCache(userId int) error {
 func InvalidateUserCache(userId int) error {
 	return invalidateUserCache(userId)
 }
-
 func populateUserCache(user User) error {
 	if !common.RedisEnabled {
 		return nil
@@ -226,7 +225,6 @@ func syncCreditUserQuotaCache(userId int, quota int64, operation string) {
 		common.SysLog(fmt.Sprintf("failed to sync %s credit to user quota cache: %s", operation, err.Error()))
 	}
 }
-
 // Helper functions to get individual fields if needed
 func getUserGroupCache(userId int) (string, error) {
 	cache, err := GetUserCache(userId)
@@ -285,7 +283,6 @@ func UpdateUserGroupCache(userId int, group string) error {
 	}
 	return updateUserCacheFieldAtVersion(userId, "Group", strings.TrimSpace(group), user.AuthVersion)
 }
-
 // RefreshUserGroupCache writes the database-authoritative group into an
 // existing user hash without changing the user's authentication version.
 func RefreshUserGroupCache(userId int) error {
@@ -342,7 +339,7 @@ func updateUserSettingCache(userId int, setting string) error {
 // updateUserCacheField prevents individual cache refreshes from bypassing the
 // auth-version fence. It intentionally does nothing when the complete hash is
 // absent; the next GetUserCache call will repopulate it from the database.
-func updateUserCacheField(userId int, field string, value interface{}) error {
+func updateUserCacheField(userId int, field string, value any) error {
 	if !common.RedisEnabled {
 		return nil
 	}

@@ -24,35 +24,16 @@ import { useForm, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import { z } from 'zod'
-
 import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
-import {
-  Dialog,
-  DialogContent,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Dialog, DialogContent, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
-
 import { getDeployment, updateDeployment } from '../../api'
 import { deploymentsQueryKeys } from '../../lib'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
+import {requireServerSuccess} from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
 
 const schema = z.object({
   image_url: z.string().optional(),
@@ -111,7 +92,10 @@ export function UpdateConfigDialog({
 
   const { data: detailsRes, isLoading } = useQuery({
     queryKey: ['deployment-details-for-update', deploymentId],
-    queryFn: () => (deploymentId ? getDeployment(deploymentId) : null),
+    queryFn: async () =>
+      requireServerSuccess(
+        await (deploymentId ? getDeployment(deploymentId) : null)
+      ),
     enabled: open && deploymentId !== null,
   })
 
@@ -208,10 +192,10 @@ export function UpdateConfigDialog({
         onOpenChange(false)
         return
       }
-      toast.error(localizeConsoleErrorText(res.message, 'Update failed'))
+      handleServerError(res, t('Update failed'))
     } catch (err: unknown) {
-      const msg = localizeConsoleErrorText(err instanceof Error ? err.message : '', 'Update failed')
-      toast.error(msg)
+      const msg = err instanceof Error ? err.message : t('Update failed')
+      handleServerError(err, msg)
     }
   }
 

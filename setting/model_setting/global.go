@@ -40,6 +40,8 @@ type GlobalSettings struct {
 	PassThroughRequestEnabled        bool                             `json:"pass_through_request_enabled"`
 	ThinkingModelBlacklist           []string                         `json:"thinking_model_blacklist"`
 	EffortTailModelIDs               []string                         `json:"effort_tail_model_ids"`
+	// EffortTailModelIDs lists real model IDs that sit inside the GPT/o-series
+	// family whitelist but whose names already end in an effort word.
 	ChatCompletionsToResponsesPolicy ChatCompletionsToResponsesPolicy `json:"chat_completions_to_responses_policy"`
 }
 

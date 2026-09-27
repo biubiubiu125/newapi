@@ -17,24 +17,15 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { createContext, useContext } from 'react'
-
-import {
-  BILLING_PRICING_VARS,
-  splitBillingExprAndRequestRules,
-} from '@/features/pricing/lib/billing-expr'
+import { BILLING_PRICING_VARS, splitBillingExprAndRequestRules } from '@/features/pricing/lib/billing-expr'
 import { tryParseVisualConfig } from '@/features/pricing/lib/tier-expr'
 import { currentIntlLocale } from '@/i18n/languages'
-
 import type { PricingSyncValues } from '../types'
-import {
-  OFFICIAL_CHANNEL_ID,
-  OFFICIAL_CHANNEL_NAME,
-  MODELS_DEV_PRESET_ID,
-  MODELS_DEV_PRESET_NAME,
-} from './constants'
+import { OFFICIAL_CHANNEL_ID, OFFICIAL_CHANNEL_NAME, MODELS_DEV_PRESET_ID, MODELS_DEV_PRESET_NAME } from './constants'
 import { formatPricingNumber } from './pricing-format'
 
 export type PricingSourceSelection = { model: string; source: string }
+
 export type PricingSourceSelections = Record<string, string>
 
 export function getUpstreamDisplayName(
@@ -86,8 +77,6 @@ export function sameSyncPrice(
   return true
 }
 
-// Prices are USD before group or recharge adjustments. Audio output uses
-// the audio input price as its base, matching realtime quota calculation.
 export function getSyncPriceLines(
   values: PricingSyncValues,
   t: (key: string) => string
@@ -171,6 +160,7 @@ export function getSyncExpressionPricing(
   }
 }
 
+
 export function describeSyncPrice(
   values: PricingSyncValues,
   t: (key: string) => string
@@ -183,14 +173,10 @@ export function describeSyncPrice(
         t('Expression pricing'),
         `USD / ${t('1M token')}`,
         ...parsed.tiers.flatMap((tier) => [
-          ...(parsed.tiers.length > 1
-            ? [tier.condition || tier.label || t('Default')]
-            : []),
+          ...(parsed.tiers.length > 1 ? [tier.condition || tier.label || t('Default')] : []),
           ...tier.lines.map((line) => `${line.label}: ${line.value}`),
         ]),
-        ...(parsed.requestRuleExpr
-          ? [`${t('Includes request rules')}: ${parsed.requestRuleExpr}`]
-          : []),
+        ...(parsed.requestRuleExpr ? [`${t('Includes request rules')}: ${parsed.requestRuleExpr}`] : []),
       ].join('\n')
     }
     return `${t('Expression pricing')}\n${values.billing_expr}`
@@ -216,9 +202,11 @@ export type SyncPriceSelectionContext = {
   onSelectPrices: (selections: PricingSourceSelection[]) => void
   onUnselectPrices: (models: string[]) => void
 }
+
 export const SyncPriceContext = createContext<SyncPriceSelectionContext | null>(
   null
 )
+
 export function useSyncPriceSelection() {
   const context = useContext(SyncPriceContext)
   if (!context) throw new Error('Sync price selection provider is required')

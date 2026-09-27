@@ -1,5 +1,7 @@
 # French translations
 
+# Task plugin messages
+task_plugin.unknown_meta_field: 'Les métadonnées du plugin contiennent un champ inconnu "{{.Field}}". Si ce plugin provient de la marketplace officielle, une version plus récente de new-api peut être requise. Essayez de mettre à jour new-api, puis réinstallez le plugin.'
 
 # Common messages
 common.invalid_params: "Paramètres invalides"
@@ -277,6 +279,7 @@ oauth.server_address_required: "Veuillez d'abord configurer l'adresse du serveur
 oauth.bind_requires_login: "La liaison nécessite d'abord une connexion"
 oauth.wechat_bind_unsupported: "La méthode d'authentification actuelle ne permet pas de lier WeChat"
 oauth.credential_used: "Cet identifiant de connexion a déjà été utilisé"
+oauth.not_auto_linked: "Ce compte {{.Provider}} ne peut pas être associé automatiquement à un compte existant. Connectez-vous ou inscrivez-vous autrement, puis associez {{.Provider}} dans les paramètres du compte"
 
 # Model layer error messages
 redeem.failed: "Échec du rachat, veuillez réessayer plus tard"
@@ -296,7 +299,7 @@ distributor.invalid_playground_request: "Invalid playground request: {{.Error}}"
 distributor.group_access_denied: "No permission to access this group"
 distributor.get_channel_failed: "Failed to get available channel for model {{.Model}} under group {{.Group}} (distributor): {{.Error}}"
 distributor.no_available_channel: "No available channel for model {{.Model}} under group {{.Group}} (distributor)"
-distributor.no_available_channel_task_plugin: "No available channel for model {{.Model}} under group {{.Group}}: the model is claimed by task plugin \"{{.Plugin}}\", which has no enabled channel serving it. To let another plugin or channel serve this model, disable or override plugin \"{{.Plugin}}\" in the task plugin console (distributor)"
+distributor.no_available_channel_task_plugin: "No available channel for model {{.Model}} under group {{.Group}}: the model is claimed by a task plugin, which has no enabled channel serving it (distributor)"
 distributor.invalid_midjourney_request: "Invalid Midjourney request: {{.Error}}"
 distributor.invalid_request_parse_model: "Invalid request, unable to parse model"
 
@@ -355,6 +358,8 @@ channel.vertex_region_json: "La région de déploiement doit être un JSON stand
 channel.vertex_region_default: "La région de déploiement doit inclure un champ default"
 channel.task_plugin_key_required: "La clé du plugin de tâche est requise pour les canaux de plugin de tâche"
 channel.task_plugin_not_registered: "Le plugin de tâche {{.Plugin}} n'est pas enregistré"
+channel.task_plugin_base_url_required: "L'adresse de base est obligatoire pour un canal de plugin de tâche"
+channel.task_plugin_bind_required: "Les canaux de plugin de tâche exigent l'autorisation task_plugin.bind"
 channel.get_tag_count_failed: "Échec de la récupération du nombre de tags, veuillez réessayer plus tard"
 channel.get_tag_channels_failed: "Échec de la récupération des canaux par tag, veuillez réessayer plus tard"
 channel.get_count_failed: "Échec de la récupération du nombre de canaux, veuillez réessayer plus tard"
@@ -415,7 +420,6 @@ notify.subscription_exceed_gotify: "{{.Prompt}}. Quota d'abonnement restant : {{
 status.db_failed: "Échec de la connexion à la base de données"
 status.running: "Le serveur est en cours d'exécution"
 protocol.access_token_unsupported: "Access token is not supported"
-protocol.image_task_n_gt_one: "async task bridge mode does not support n greater than 1; split into multiple image tasks"
 protocol.channel_retry_failed: "failed to get available channels for model {{.Model}} under group {{.Group}} (retry): {{.Error}}"
 protocol.channel_retry_missing: "no available channel for model {{.Model}} under group {{.Group}} (retry)"
 protocol.channel_missing: "no available channel for model {{.Model}} under group {{.Group}}"
@@ -680,6 +684,9 @@ passkey.https_required: "Passkey nécessite HTTPS. Accès actuel : {{.URL}}. Aut
 passkey.origin_undetermined: "Impossible de déterminer l'Origin Passkey. Spécifiez-le dans les paramètres système ou Passkey. Host : '{{.Host}}', ServerAddress : '{{.ServerAddress}}'"
 passkey.origin_parse_failed: "Impossible d'analyser l'Origin Passkey"
 passkey.rpid_origin_missing: "L'Origin Passkey n'est pas configuré, impossible de déterminer le RPID"
+passkey.rp_id_invalid: "Domaine Passkey invalide. Saisissez un domaine sans schéma, port, chemin ni caractère générique."
+passkey.rp_id_unavailable: "Ce domaine Passkey n'est pas disponible sur ce site. Utilisez son site d'origine ou une autre méthode de vérification."
+passkey.rp_id_removal_confirmation: "Vérifiez les Passkey concernés et confirmez la suppression du domaine. Si les paramètres ou l'impact changent, une nouvelle confirmation est requise."
 token.search_consecutive_wildcard: "Search pattern cannot contain consecutive % wildcards"
 token.search_wildcard_max: "Search pattern can contain at most 2 % wildcards"
 token.search_keyword_short: "Fuzzy search keywords must be at least 2 characters"
@@ -739,9 +746,10 @@ option.theme_classic_removed: "The Classic frontend has been removed. Theme can 
 option.claude_negative_max_tokens: "Le max_tokens Claude par défaut ne peut pas être négatif : {{.Model}} = {{.Value}}"
 option.gemini_invalid_safety_threshold: "Seuil de sécurité Gemini invalide {{.Threshold}} ({{.Category}})"
 option.non_negative_number: "{{.Key}} doit être un nombre fini et non négatif"
+option.billing_expr_invalid: "expression de facturation invalide pour le modèle {{.Model}}: {{.Reason}}"
 option.pricing_input_conflict: "Envoyez soit les options, soit les changements de prix, mais pas les deux"
 referral.disabled: "Referral program is not enabled"
-plugin.source_too_large: "Plugin source exceeds 1 MiB"
+plugin.source_too_large: "Plugin source exceeds 8 MiB"
 plugin.sha256_mismatch: "Plugin source sha256 mismatch"
 plugin.not_found: "Task plugin not found"
 plugin.compile_failed: "Impossible de charger le plugin : {{.Error}}"

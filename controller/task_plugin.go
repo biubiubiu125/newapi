@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/url"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -25,7 +26,7 @@ import (
 	"gorm.io/gorm"
 )
 
-const maxTaskPluginSourceBytes = 1024 * 1024
+const maxTaskPluginSourceBytes = 8 << 20
 
 type taskPluginUploadRequest struct {
 	Source       string `json:"source" binding:"required"`
@@ -43,13 +44,13 @@ func UploadTaskPlugin(c *gin.Context) {
 		return
 	}
 	if len(request.Source) > maxTaskPluginSourceBytes {
-		common.ApiErrorI18n(c, i18n.MsgPluginSourceTooLarge)
+		writeTaskPluginLocalizedError(c, i18n.MsgPluginSourceTooLarge, nil, "plugin source exceeds 8 MiB")
 		return
 	}
 	if expected := strings.TrimSpace(request.SourceSha256); expected != "" {
 		actual := fmt.Sprintf("%x", sha256.Sum256([]byte(request.Source)))
 		if !strings.EqualFold(actual, expected) {
-			common.ApiErrorI18n(c, i18n.MsgPluginSHA256Mismatch)
+			writeTaskPluginLocalizedError(c, i18n.MsgPluginSHA256Mismatch, nil, "plugin source sha256 mismatch")
 			return
 		}
 	}
@@ -212,6 +213,11 @@ func ListTaskPlugins(c *gin.Context) {
 			} else {
 				item.RuntimeStatus = "not_registered"
 			}
+			// "disabled_fallback" promises that the built-in still serves. When the
+			// factory layer is suppressed as well, nothing serves this key.
+			if item.RuntimeStatus == "disabled_fallback" && hasFactory && setting.IsTaskPluginFactoryDisabled(key) {
+				item.RuntimeStatus = "disabled"
+			}
 		} else {
 			item.Source = "factory"
 			item.Meta = factoryMeta
@@ -239,7 +245,12 @@ func ListTaskPlugins(c *gin.Context) {
 		}
 		items = append(items, item)
 	}
-	sort.Slice(items, func(i, j int) bool { return items[i].Meta.Key < items[j].Meta.Key })
+	sort.Slice(items, func(i, j int) bool {
+		if items[i].Meta.SortPriority != items[j].Meta.SortPriority {
+			return items[i].Meta.SortPriority > items[j].Meta.SortPriority
+		}
+		return items[i].Meta.Key < items[j].Meta.Key
+	})
 	common.ApiSuccess(c, items)
 }
 
@@ -335,6 +346,7 @@ func GetTaskPluginIcon(c *gin.Context) {
 		return
 	}
 	c.Header("Cache-Control", "private, max-age=300")
+	c.Header("X-Content-Type-Options", "nosniff")
 	c.Data(http.StatusOK, mediaType, data)
 }
 
@@ -393,7 +405,7 @@ func DryRunTaskPlugin(c *gin.Context) {
 	args := make([]any, len(request.Args))
 	for index, raw := range request.Args {
 		if err = common.Unmarshal(raw, &args[index]); err != nil {
-			common.ApiErrorI18n(c, i18n.MsgPluginInvalidArgument, map[string]any{"Index": index + 1, "Error": err.Error()})
+			writeTaskPluginLocalizedError(c, i18n.MsgPluginInvalidArgument, map[string]any{"Index": index + 1, "Error": err.Error()}, err.Error())
 			return
 		}
 	}
@@ -416,7 +428,7 @@ func DeleteTaskPluginVersion(c *gin.Context) {
 	plugin, lookupErr := model.GetTaskPluginVersion(key, version)
 	if lookupErr != nil {
 		if errors.Is(lookupErr, gorm.ErrRecordNotFound) {
-			common.ApiErrorI18n(c, i18n.MsgPluginOverrideNotFound)
+			writeTaskPluginLocalizedError(c, i18n.MsgPluginOverrideNotFound, nil, "factory plugins cannot be deleted")
 			return
 		}
 		common.ApiError(c, lookupErr)
@@ -465,7 +477,7 @@ func DeleteTaskPluginVersion(c *gin.Context) {
 			return
 		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
-			common.ApiErrorI18n(c, i18n.MsgPluginOverrideNotFound)
+			writeTaskPluginLocalizedError(c, i18n.MsgPluginOverrideNotFound, nil, "factory plugins cannot be deleted")
 			return
 		}
 		common.ApiError(c, err)
@@ -523,7 +535,7 @@ func ActivateTaskPlugin(c *gin.Context) {
 func writeTaskPluginStillInUse(c *gin.Context, channels []model.TaskPluginChannelRef, inFlight int64) {
 	c.JSON(http.StatusOK, gin.H{
 		"success": false,
-		"message": i18n.T(c, i18n.MsgPluginStillInUse),
+		"message": taskPluginLocalizedMessage(c, i18n.MsgPluginStillInUse, nil, "task plugin is still in use"),
 		"data": gin.H{
 			"channels":        channels,
 			"in_flight_count": inFlight,
@@ -565,9 +577,11 @@ func SetTaskPluginStatus(c *gin.Context) {
 		common.ApiError(c, lookupErr)
 		return
 	}
-	// The disabled set suppresses only the factory fallback layer. An enabled
-	// override for the same key keeps serving and is toggled independently.
-	if taskPluginHasFactory(key) && !hasActiveOverride {
+	// Switching a key off must silence every layer that can serve it. The
+	// factory built-in goes into the disabled set even when an override row
+	// exists; otherwise the built-in would keep routing the same models after
+	// the administrator disabled the plugin. Switching on reverses both layers.
+	if taskPluginHasFactory(key) {
 		keys := setting.GetTaskPluginDisabledFactoryKeys()
 		if *request.Enabled {
 			next := make([]string, 0, len(keys))
@@ -577,7 +591,7 @@ func SetTaskPluginStatus(c *gin.Context) {
 				}
 			}
 			keys = next
-		} else {
+		} else if !slices.Contains(keys, key) {
 			keys = append(append([]string{}, keys...), key)
 		}
 		encoded, err := setting.EncodeTaskPluginDisabledFactoryKeys(keys)
@@ -589,13 +603,15 @@ func SetTaskPluginStatus(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
-		disabledChannels, failedChannels := cascadeTaskPluginChannels(channels, cascade)
-		response := gin.H{"plugin_enabled": *request.Enabled, "disabled_channels": disabledChannels}
-		if len(failedChannels) > 0 {
-			response["cascade_failed_channels"] = failedChannels
+		if !hasActiveOverride {
+			disabledChannels, unboundChannels, failedChannels := cascadeTaskPluginChannels(key, channels, cascade)
+			response := gin.H{"plugin_enabled": *request.Enabled, "disabled_channels": disabledChannels, "unbound_channels": unboundChannels}
+			if len(failedChannels) > 0 {
+				response["cascade_failed_channels"] = failedChannels
+			}
+			common.ApiSuccess(c, response)
+			return
 		}
-		common.ApiSuccess(c, response)
-		return
 	}
 	if err := model.WithTaskPluginKeyLock(key, func() error {
 		previousVersions, err := model.ListTaskPluginVersions(key)
@@ -610,8 +626,8 @@ func SetTaskPluginStatus(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	disabledChannels, failedChannels := cascadeTaskPluginChannels(channels, cascade)
-	response := gin.H{"plugin_enabled": *request.Enabled, "disabled_channels": disabledChannels}
+	disabledChannels, unboundChannels, failedChannels := cascadeTaskPluginChannels(key, channels, cascade)
+	response := gin.H{"plugin_enabled": *request.Enabled, "disabled_channels": disabledChannels, "unbound_channels": unboundChannels}
 	if len(failedChannels) > 0 {
 		response["cascade_failed_channels"] = failedChannels
 	}
@@ -629,20 +645,33 @@ func taskPluginHasFactory(key string) bool {
 
 var updateTaskPluginChannelStatus = model.UpdateChannelStatus
 
-func cascadeTaskPluginChannels(channels []model.TaskPluginChannelRef, cascade bool) (int, []int) {
+func cascadeTaskPluginChannels(key string, channels []model.TaskPluginChannelRef, cascade bool) (int, int, []int) {
 	if !cascade {
-		return 0, nil
+		return 0, 0, nil
 	}
 	disabledChannels := 0
+	unboundChannels := 0
 	failedChannels := make([]int, 0)
 	for _, channel := range channels {
+		if channel.Type == constant.ChannelTypeNewAPI {
+			changed, err := model.UnbindTaskPlugin(channel.Id, key)
+			if err != nil || !changed {
+				failedChannels = append(failedChannels, channel.Id)
+				continue
+			}
+			unboundChannels++
+			continue
+		}
 		if updateTaskPluginChannelStatus(channel.Id, "", common.ChannelStatusManuallyDisabled, "task plugin disabled") {
 			disabledChannels++
 		} else {
 			failedChannels = append(failedChannels, channel.Id)
 		}
 	}
-	return disabledChannels, failedChannels
+	if unboundChannels > 0 {
+		model.InitChannelCache()
+	}
+	return disabledChannels, unboundChannels, failedChannels
 }
 
 func GetTaskPluginMarketplaceSources(c *gin.Context) {
@@ -662,12 +691,12 @@ func UpdateTaskPluginMarketplaceSources(c *gin.Context) {
 		name := strings.TrimSpace(sources[i].Name)
 		indexURL := strings.TrimSpace(sources[i].IndexURL)
 		if name == "" {
-			common.ApiErrorI18n(c, i18n.MsgPluginMarketplaceNameRequired)
+			writeTaskPluginLocalizedError(c, i18n.MsgPluginMarketplaceNameRequired, nil, "marketplace source name is required")
 			return
 		}
 		parsed, err := url.Parse(indexURL)
 		if err != nil || !parsed.IsAbs() || parsed.Host == "" || (!strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https")) {
-			common.ApiErrorI18n(c, i18n.MsgPluginMarketplaceURLInvalid)
+			writeTaskPluginLocalizedError(c, i18n.MsgPluginMarketplaceURLInvalid, nil, "marketplace source index_url must be an absolute http(s) URL")
 			return
 		}
 		sources[i].Name = name
@@ -718,15 +747,19 @@ func GetTaskPluginOptions(c *gin.Context) {
 			hasIcon = factoryPluginHasIcon(meta.Key)
 		}
 		options = append(options, gin.H{
-			"key":          meta.Key,
-			"name":         meta.Name,
-			"icon":         meta.Icon,
-			"hasIcon":      hasIcon,
-			"baseUrl":      meta.BaseURL,
-			"website":      meta.Website,
-			"sortPriority": meta.SortPriority,
-			"models":       meta.Models,
-			"usageSchema":  meta.UsageSchema,
+			"key":           meta.Key,
+			"name":          meta.Name,
+			"description":   meta.Description,
+			"icon":          meta.Icon,
+			"hasIcon":       hasIcon,
+			"baseUrl":       meta.BaseURL,
+			"website":       meta.Website,
+			"sortPriority":  meta.SortPriority,
+			"channelTypes":  meta.ChannelTypes,
+			"upstreams":     meta.Upstreams,
+			"models":        meta.Models,
+			"usageSchema":   meta.UsageSchema,
+			"usageProfiles": meta.UsageProfiles,
 		})
 	}
 	common.ApiSuccess(c, options)
@@ -920,16 +953,56 @@ func SyncTaskPluginsOnce() {
 	}
 }
 
+func taskPluginLocalizedMessage(c *gin.Context, key string, data map[string]any, diagnostic string) string {
+	message := i18n.T(c, key, data)
+	diagnostic = strings.TrimSpace(diagnostic)
+	if diagnostic == "" {
+		return message
+	}
+	if message == "" {
+		return diagnostic
+	}
+	if strings.Contains(strings.ToLower(message), strings.ToLower(diagnostic)) {
+		return message
+	}
+	// An explicit language already has a catalog sentence. Do not append the
+	// English diagnostic. Requests without a language still need it so older
+	// callers can match the English error text.
+	if taskPluginLanguageExplicit(c) && message != key {
+		return message
+	}
+	return message + ": " + diagnostic
+}
+
+func taskPluginLanguageExplicit(c *gin.Context) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	return strings.TrimSpace(c.GetHeader("Accept-Language")) != "" || strings.TrimSpace(c.Query("lang")) != ""
+}
+
+func writeTaskPluginLocalizedError(c *gin.Context, key string, data map[string]any, diagnostic string) {
+	c.JSON(http.StatusOK, gin.H{
+		"success": false,
+		"message": taskPluginLocalizedMessage(c, key, data, diagnostic),
+	})
+}
+
 func respondTaskPluginCompileError(c *gin.Context, err error) {
-	if key, data, ok := taskPluginConflictMessage(err); ok {
-		common.ApiErrorI18n(c, key, data)
+	var unknown *jsplugin.UnknownMetaFieldError
+	if errors.As(err, &unknown) {
+		common.ApiErrorI18n(c, i18n.MsgTaskPluginUnknownMetaField, map[string]any{"Field": unknown.Field})
 		return
 	}
-	common.ApiErrorI18n(c, i18n.MsgPluginCompileFailed, map[string]any{"Error": err.Error()})
+	if key, data, ok := taskPluginConflictMessage(err); ok {
+		writeTaskPluginLocalizedError(c, key, data, err.Error())
+		return
+	}
+	writeTaskPluginLocalizedError(c, i18n.MsgPluginCompileFailed, map[string]any{"Error": err.Error()}, err.Error())
 }
 
 func respondTaskPluginRuntimeError(c *gin.Context, err error) {
-	common.ApiErrorI18n(c, i18n.MsgPluginRuntimeFailed, map[string]any{"Error": err.Error()})
+	writeTaskPluginLocalizedError(c, i18n.MsgPluginRuntimeFailed, map[string]any{"Error": err.Error()}, err.Error())
 }
 
 func SyncTaskPlugins() {

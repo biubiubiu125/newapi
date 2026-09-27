@@ -64,6 +64,8 @@ export function SidebarModulesSection({
 }: SidebarModulesSectionProps) {
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
+
+
   const formDefaults = useMemo(() => config, [config])
 
   const form = useForm<SidebarFormValues>({

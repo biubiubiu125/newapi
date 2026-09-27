@@ -23,7 +23,7 @@
 
 创建接口在解析请求体前执行数据库共享准入：按用户限频，并限制所有节点合计的在途创建数和请求体预留字节。对应配置为 `IMAGE_TASK_CREATE_RATE_LIMIT`、`IMAGE_TASK_CREATE_RATE_LIMIT_DURATION`、`IMAGE_TASK_CREATE_MAX_IN_FLIGHT` 和 `IMAGE_TASK_CREATE_MAX_RESERVED_MB`。活跃请求每 2 分钟续期一次；进程异常遗留的准入租约最多保留 10 分钟。
 
-`generations` 使用 JSON 请求体，`edits` 使用 `multipart/form-data`。公开图片任务接口未传 `model` 时默认使用 `gpt-image-2`，未传 `quality` 且模型为 `gpt-image-2` 时默认使用 `high`。图生图会统计 `image`、`image[]`、`image[n]`（`n` 为数字下标）三类图片字段，图片数量必须为 1-6 张。若传入自定义 `size`，格式必须为 `宽x高`，宽高为正整数且都是 16 的倍数，比例必须在 1:3 到 3:1 之间。异步任务桥接模式不支持单任务 `n > 1`，客户端需要拆成多个 `n=1` 的独立任务。
+`generations` 使用 JSON 请求体，`edits` 使用 `multipart/form-data`。公开图片任务接口未传 `model` 时默认使用 `gpt-image-2`，未传 `quality` 且模型为 `gpt-image-2` 时默认使用 `high`。图生图会统计 `image`、`image[]`、`image[n]`（`n` 为数字下标）三类图片字段，图片数量必须为 1-6 张。若传入自定义 `size`，格式必须为 `宽x高`，宽高为正整数且都是 16 的倍数，比例必须在 1:3 到 3:1 之间。
 
 完整的请求与响应结构见 `docs/openapi/relay.json`。
 
@@ -100,7 +100,7 @@
 - 创建任务耗尽令牌剩余额度后，客户端仍可用原令牌和相同请求重放同一幂等键，以恢复丢失的 `202` 响应；该令牌提交新键或无幂等键时返回 `403 insufficient_token_quota`。
 - 命中已有幂等任务的重放不占用新建任务的创建容量和模型请求限流；未命中、需要新建任务时仍按正常创建链路限流。
 - 同一幂等键在窗口内对应不同请求内容或不同令牌时返回 `409 idempotency_conflict`，不要重试。
-- `client_task_id` / `Idempotency-Key` 在同一用户下是**图片任务全局命名空间**：同步桥 `/v1/images/*` 与公开异步 `/v1/image-tasks/*` 共用。若同步桥已占用某键，公开接口用同一键会得到 `409 idempotency_conflict`（公开接口额外要求 `PublicImageTask` 与创建令牌匹配）。
+- `client_task_id` / `Idempotency-Key` 只属于公开异步接口 `/v1/image-tasks/*`。同步接口 `/v1/images/generations` 和 `/v1/images/edits` 不创建图片任务，也不占用这个键。同一用户下，公开接口的键被不同请求内容或不同令牌占用时返回 `409 idempotency_conflict`。桥接移除前已经写入的历史任务，在结果仍可复用期间仍会占用原键。
 - 幂等预约行按 `IMAGE_TASK_IDEMPOTENCY_LOCK_RETENTION_HOURS`（默认 720 小时）回收，只清理绑定任务已终态且超期的行，在途任务和未绑定预约不受影响。
 
 ## 取消范围
@@ -167,7 +167,6 @@ bash scripts/image-task-dual-node-smoke.sh
 | `IMAGE_TASK_WORKER_IDLE_SECONDS` | `5` | worker 无可运行任务时的轮询间隔，单位秒 |
 | `IMAGE_TASK_WORKER_CONCURRENCY` | `0`（不限） | 全局并发 |
 | `IMAGE_TASK_CHANNEL_CONCURRENCY` | `0`（不限） | 单渠道并发 |
-| `IMAGE_TASK_BATCH_POLL_SIZE` | `20` | 状态批量轮询大小，上限 100 |
 | `IMAGE_TASK_LEASE_SECONDS` | `120` | 执行租约时长 |
 | `IMAGE_TASK_RESULT_RETENTION_MINUTES` | `4320` | 结果保留时长，硬上限 4320 |
 | `IMAGE_TASK_ORPHAN_FAIL_SECONDS` | `1800` | 孤儿任务失败退款兜底（需节点心跳确认归属节点消失），`0` 关闭 |
@@ -186,4 +185,4 @@ bash scripts/image-task-dual-node-smoke.sh
 | `IMAGE_TASK_FILE_CACHE_SHARED_TRUSTED` | `false` | 共享缓存是否可信，决定结果是否外置为文件 |
 | `IMAGE_TASK_LOCAL_FILE_CACHE_AFFINITY` | `true` | 无共享缓存时是否按节点亲和调度 |
 | `IMAGE_TASK_REQUEST_BODY_BASE64_MAX_MB` | `16` | base64 便携请求体上限 |
-| `TASK_TIMEOUT_MINUTES` | `1440` | 异步任务全量超时，超时失败并退款 |
+| `TASK_TIMEOUT_MINUTES` | `1440` | 图片任务执行超时。尚未提交上游的任务失败并退款；已开始提交或旧桥接已提交的任务进入 `settlement_review`，不自动退款 |

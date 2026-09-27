@@ -18,7 +18,6 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
 import { useEffect, useCallback, useMemo } from 'react'
-
 import { resolveAssetUrl } from '@/lib/asset-url'
 import { DEFAULT_LOGO } from '@/lib/constants'
 import { applyFaviconToDom, applySystemNameToDom } from '@/lib/dom-utils'
@@ -32,7 +31,6 @@ interface UseSystemConfigOptions {
   autoLoad?: boolean
 }
 
-// Preload image and return cleanup function
 function preloadImage(
   src: string,
   onLoad: () => void,
@@ -49,17 +47,6 @@ function preloadImage(
   }
 }
 
-/**
- * System configuration hook with auto-loading and logo preloading
- *
- * @example
- * // Root component - auto-load from backend
- * useSystemConfig({ autoLoad: true })
- *
- * @example
- * // Other components - use cached config
- * const { systemName, logo, loading } = useSystemConfig()
- */
 export function useSystemConfig(options: UseSystemConfigOptions = {}) {
   const { autoLoad = false } = options
   const queryClient = useQueryClient()
@@ -67,6 +54,8 @@ export function useSystemConfig(options: UseSystemConfigOptions = {}) {
     useSystemConfigStore()
 
   // Load config from backend via the shared `/api/status` cache.
+  // `ensureStatus` writes the mapped config into this store itself, so there is
+  // no second request and no second mapping path here.
   const loadConfig = useCallback(async () => {
     try {
       setLoading(true)

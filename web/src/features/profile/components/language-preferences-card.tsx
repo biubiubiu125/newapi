@@ -21,14 +21,7 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Combobox } from '@/components/ui/combobox'
 import { TitledCard } from '@/components/ui/titled-card'
 import {
   changeInterfaceLanguage,
@@ -40,6 +33,7 @@ import {
   persistInterfaceLanguageErrorMessage,
   persistSignedInInterfaceLanguage,
 } from '@/i18n/persist-interface-language'
+import { handleServerError } from '@/lib/handle-server-error'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { parseUserSettings } from '../lib'
@@ -94,6 +88,8 @@ export function LanguagePreferencesCard(props: LanguagePreferencesCardProps) {
           t('Failed to update settings')
         )
       )
+      await i18n.changeLanguage(previousLanguage)
+      handleServerError(error, t('Failed to update settings'))
     } finally {
       setSaving(false)
     }
@@ -117,28 +113,17 @@ export function LanguagePreferencesCard(props: LanguagePreferencesCardProps) {
           </p>
         </div>
         <div className='flex items-center gap-2 sm:min-w-48'>
-          <Select
-            items={INTERFACE_LANGUAGE_OPTIONS.map((language) => ({
+          <Combobox
+            options={INTERFACE_LANGUAGE_OPTIONS.map((language) => ({
               value: language.code,
               label: language.label,
             }))}
             value={currentLanguage}
             onValueChange={handleLanguageChange}
             disabled={saving}
-          >
-            <SelectTrigger className='w-full sm:w-48'>
-              <SelectValue placeholder={t('Select language')} />
-            </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false}>
-              <SelectGroup>
-                {INTERFACE_LANGUAGE_OPTIONS.map((language) => (
-                  <SelectItem key={language.code} value={language.code}>
-                    {language.label}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+            className='w-full sm:w-48'
+            placeholder={t('Select language')}
+          />
           {saving && (
             <Loader2 className='text-muted-foreground size-4 animate-spin' />
           )}

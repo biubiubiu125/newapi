@@ -22,36 +22,13 @@ import { NotificationPopover } from '@/components/notification-popover'
 import { ProfileDropdown } from '@/components/profile-dropdown'
 import { useNotifications } from '@/hooks/use-notifications'
 import { useTopNavLinks } from '@/hooks/use-top-nav-links'
-
 import { defaultTopNavLinks } from '../config/top-nav.config'
 import type { TopNavLink } from '../types'
 import { Header } from './header'
 import { SystemBrand } from './system-brand'
 import { TopNav } from './top-nav'
-
-/**
- * General application Header component
- * Integrates navigation bar, search, configuration and profile functions
- *
- * @example
- * // Basic usage
- * <AppHeader />
- *
- * @example
- * // Custom navigation links
- * <AppHeader navLinks={customLinks} />
- *
- * @example
- * // Hide navigation bar
- * <AppHeader showTopNav={false} />
- *
- * @example
- * // Fully customize left and right content
- * <AppHeader
- *   leftContent={<CustomLeft />}
- *   rightContent={<CustomRight />}
- * />
- */
+import { SystemUpdateAction } from '@/features/system-update/system-update-action'
+import { Search } from '@/components/search'
 type AppHeaderProps = {
   /**
    * Custom navigation links, uses default global navigation or dynamically generated from backend if not provided
@@ -85,6 +62,11 @@ type AppHeaderProps = {
    * @default true
    */
   showProfileDropdown?: boolean
+  /**
+   * Whether to show the header search control
+   * @default true
+   */
+  showSearch?: boolean
 }
 
 export function AppHeader({
@@ -95,6 +77,7 @@ export function AppHeader({
   showNotifications = true,
   showConfigDrawer = true,
   showProfileDropdown = true,
+  showSearch = true,
 }: AppHeaderProps) {
   // Prioritize dynamically generated links from backend
   const dynamicLinks = useTopNavLinks()
@@ -104,39 +87,44 @@ export function AppHeader({
   const notifications = useNotifications()
 
   return (
-    <>
-      <Header>
+    <Header>
+      <div className='@container/system-brand flex min-w-0 flex-1 items-center gap-1'>
         <SystemBrand variant='inline' />
+        <SystemUpdateAction presentation='version' />
+      </div>
 
-        {leftContent ? (
-          <div className='ms-2 flex items-center'>{leftContent}</div>
-        ) : null}
+      {leftContent ? (
+        <div className='ms-2 flex items-center'>{leftContent}</div>
+      ) : null}
 
-        {rightContent ?? (
-          <div className='ms-auto flex items-center gap-1 sm:gap-2'>
-            {showTopNav && (
-              <div className='me-1 hidden lg:block'>
-                <TopNav links={links} />
-              </div>
-            )}
-            {showNotifications && (
-              <NotificationPopover
-                open={notifications.popoverOpen}
-                onOpenChange={notifications.setPopoverOpen}
-                unreadCount={notifications.unreadCount}
-                activeTab={notifications.activeTab}
-                onTabChange={notifications.setActiveTab}
-                notice={notifications.notice}
-                announcements={notifications.announcements}
-                loading={notifications.loading}
-              />
-            )}
-            <LanguageSwitcher />
-            {showConfigDrawer && <ConfigDrawer />}
-            {showProfileDropdown && <ProfileDropdown />}
-          </div>
-        )}
-      </Header>
-    </>
+
+      {rightContent ?? (
+        <div className='ms-auto flex shrink-0 items-center gap-1 sm:gap-2'>
+          {showTopNav && (
+            <div className='me-1 hidden lg:block'>
+              <TopNav links={links} />
+            </div>
+          )}
+          {showSearch && (
+            <Search className='w-8 flex-none [&>span]:hidden sm:[&>span]:inline' />
+          )}
+          {showNotifications && (
+            <NotificationPopover
+              open={notifications.popoverOpen}
+              onOpenChange={notifications.setPopoverOpen}
+              unreadCount={notifications.unreadCount}
+              activeTab={notifications.activeTab}
+              onTabChange={notifications.setActiveTab}
+              notice={notifications.notice}
+              announcements={notifications.announcements}
+              loading={notifications.loading}
+            />
+          )}
+          <LanguageSwitcher />
+          {showConfigDrawer && <ConfigDrawer />}
+          {showProfileDropdown && <ProfileDropdown />}
+        </div>
+      )}
+    </Header>
   )
 }

@@ -22,16 +22,16 @@ import { useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
+import { toastUnhandledConsoleError, handleServerError } from '@/lib/handle-server-error'
 
 import { Dialog } from '@/components/dialog'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 
+import { requireServerSuccess, localizeConsoleErrorText } from '@/lib/server-error-message'
+
 import { checkClusterNameAvailability, updateDeploymentName } from '../../api'
 import { deploymentsQueryKeys } from '../../lib'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 export function RenameDeploymentDialog({
   open,
@@ -57,7 +57,10 @@ export function RenameDeploymentDialog({
 
   const { data: checkRes, isFetching: isChecking } = useQuery({
     queryKey: ['deployment-rename-check', trimmed],
-    queryFn: () => (trimmed ? checkClusterNameAvailability(trimmed) : null),
+    queryFn: async () =>
+      requireServerSuccess(
+        await (trimmed ? checkClusterNameAvailability(trimmed) : null)
+      ),
     enabled: open && Boolean(trimmed),
     staleTime: 10_000,
   })
@@ -103,8 +106,10 @@ export function RenameDeploymentDialog({
         return
       }
       toast.error(localizeConsoleErrorText(res.message, 'Rename failed'))
+      handleServerError(res, t('Rename failed'))
     } catch (err: unknown) {
       toastUnhandledConsoleError(err)
+      handleServerError(err, t('Rename failed'))
     } finally {
       setIsSubmitting(false)
     }

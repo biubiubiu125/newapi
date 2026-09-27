@@ -218,13 +218,17 @@ func parseHostModelSuffix(name string, opts *convmeta.Options) (string, reasonin
 func explicitIntentFromRequest(req dto.Request) (reasoning.Intent, error) {
 	switch r := req.(type) {
 	case *dto.ClaudeRequest:
-		return reasoning.FromClaude(r)
+		intent, _, err := reasoning.FromClaude(r)
+		return intent, err
 	case *dto.GeminiChatRequest:
-		return reasoning.FromGemini(r)
+		intent, _, err := reasoning.FromGemini(r)
+		return intent, err
 	case *dto.GeneralOpenAIRequest:
-		return reasoning.FromOpenAIChat(r)
+		intent, _, err := reasoning.FromOpenAIChat(r)
+		return intent, err
 	case *dto.OpenAIResponsesRequest:
-		return reasoning.FromOpenAIResponses(r)
+		intent, _, err := reasoning.FromOpenAIResponses(r)
+		return intent, err
 	default:
 		return reasoning.Intent{}, nil
 	}

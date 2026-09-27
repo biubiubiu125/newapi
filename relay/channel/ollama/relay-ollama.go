@@ -41,7 +41,6 @@ func toOllamaResponseFormat(responseFormat *dto.ResponseFormat) (any, error) {
 		return nil, nil
 	}
 }
-
 func openAIChatToOllamaChat(c *gin.Context, r *dto.GeneralOpenAIRequest) (*OllamaChatRequest, error) {
 	think := r.Think
 	if len(think) == 0 {
@@ -184,7 +183,7 @@ func openAIChatToOllamaChat(c *gin.Context, r *dto.GeneralOpenAIRequest) (*Ollam
 			if len(parsed) > 0 {
 				calls := make([]OllamaToolCall, 0, len(parsed))
 				for _, tc := range parsed {
-					var args interface{}
+					var args any
 					if tc.Function.Arguments != "" {
 						_ = common.Unmarshal([]byte(tc.Function.Arguments), &args)
 					}

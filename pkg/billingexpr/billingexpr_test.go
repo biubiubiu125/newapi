@@ -3,9 +3,11 @@ package billingexpr_test
 import (
 	"encoding/json"
 	"math"
+	"os"
 	"strings"
 	"testing"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -40,6 +42,10 @@ func TestFixedPriceBranches(t *testing.T) {
 	cost, _, err := billingexpr.RunExpr(`tier("free", fixed(0))`, billingexpr.TokenParams{P: 1000})
 	require.NoError(t, err)
 	assert.Zero(t, cost)
+	for _, count := range []int{-1, 0, 129} {
+		_, _, err := billingexpr.RunExprWithRequest(`tier("image", fixed(0.04)) * image_count`, billingexpr.TokenParams{}, billingexpr.RequestInput{ImageCount: &count})
+		require.ErrorContains(t, err, "image_count")
+	}
 }
 
 func TestFixedPriceRejectsInvalidLeavesIncludingUnselectedBranches(t *testing.T) {
@@ -452,9 +458,9 @@ func TestQuotaRound(t *testing.T) {
 		{999.4999, 999},
 		{999.5, 1000},
 		{1e9 + 0.5, 1e9 + 1},
-		// Oversized expression results saturate at int32 (delegated to
+		// Oversized expression results saturate at the single-request limit (delegated to
 		// common.QuotaRound); full saturation coverage lives in common.
-		{3.6893488147419103e19, math.MaxInt32},
+		{3.6893488147419103e19, common.MaxQuota},
 	}
 	for _, tt := range tests {
 		got := billingexpr.QuotaRound(tt.in)
@@ -1168,5 +1174,49 @@ func BenchmarkExprRunCached(b *testing.B) {
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
 		billingexpr.RunExpr(benchComplexExpr, params)
+	}
+}
+
+// Shared fixtures protect the frontend simulator against drift from the real engine.
+func TestFrontendSimulationContract(t *testing.T) {
+	data, err := os.ReadFile("testdata/frontend_simulation.json")
+	require.NoError(t, err)
+	var cases []struct {
+		Name        string
+		Expression  string
+		Tokens      billingexpr.TokenParams
+		Body        map[string]any
+		Headers     map[string]string
+		Usage       map[string]any
+		Cost        float64
+		Tier        string
+		Multipliers []float64
+		Matched     []bool
+		BillingUnit billingexpr.BillingUnit
+		FixedPrice  *float64
+		ImageCount  *int
+	}
+	require.NoError(t, common.Unmarshal(data, &cases))
+	for _, tc := range cases {
+		t.Run(tc.Name, func(t *testing.T) {
+			body, err := common.Marshal(tc.Body)
+			require.NoError(t, err)
+			cost, trace, err := billingexpr.RunExprWithRequest(tc.Expression, tc.Tokens, billingexpr.RequestInput{Body: body, Headers: tc.Headers, Usage: tc.Usage, ImageCount: tc.ImageCount})
+			require.NoError(t, err)
+			assert.InDelta(t, tc.Cost, cost, 1e-9)
+			assert.Equal(t, tc.Tier, trace.MatchedTier)
+			if tc.ImageCount != nil {
+				assert.Equal(t, tc.ImageCount, trace.ImageCount)
+			}
+			if tc.BillingUnit != "" {
+				assert.Equal(t, tc.BillingUnit, trace.BillingUnit)
+				assert.Equal(t, tc.FixedPrice, trace.FixedPrice)
+			}
+			require.Len(t, trace.RequestRules, len(tc.Multipliers))
+			for i, rule := range trace.RequestRules {
+				assert.Equal(t, tc.Multipliers[i], rule.Multiplier)
+				assert.Equal(t, tc.Matched[i], rule.Matched)
+			}
+		})
 	}
 }

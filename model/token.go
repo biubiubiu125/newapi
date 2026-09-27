@@ -117,8 +117,8 @@ func (token *Token) GetIpLimits() []string {
 	if cleanIps == "" {
 		return ipLimits
 	}
-	ips := strings.Split(cleanIps, "\n")
-	for _, ip := range ips {
+	ips := strings.SplitSeq(cleanIps, "\n")
+	for ip := range ips {
 		ip = strings.TrimSpace(ip)
 		ip = strings.ReplaceAll(ip, ",", "")
 		if ip != "" {

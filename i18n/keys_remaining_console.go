@@ -279,6 +279,7 @@ const (
 	MsgOptionTurnstileMissing               = "option.turnstile_missing"
 	MsgOptionTelegramMissing                = "option.telegram_missing"
 	MsgOptionThemeClassicRemoved            = "option.theme_classic_removed"
+	MsgOptionBillingExprInvalid             = "option.billing_expr_invalid"
 	MsgReferralDisabled                     = "referral.disabled"
 	MsgPluginSourceTooLarge                 = "plugin.source_too_large"
 	MsgPluginSHA256Mismatch                 = "plugin.sha256_mismatch"

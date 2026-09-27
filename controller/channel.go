@@ -99,6 +99,16 @@ func GetChannelOps(c *gin.Context) {
 	})
 }
 
+func GetChannelDefaultBaseURLs(c *gin.Context) {
+	baseURLs := make(map[int]string)
+	for channelType, baseURL := range constant.ChannelBaseURLs {
+		if baseURL != "" {
+			baseURLs[channelType] = baseURL
+		}
+	}
+	common.ApiSuccess(c, baseURLs)
+}
+
 func GetAllChannels(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
 	channelData := make([]*model.Channel, 0)
@@ -437,13 +447,12 @@ func GetChannelKey(c *gin.Context) {
 
 	// 获取渠道信息（包含密钥）
 	channel, err := model.GetChannelById(channelId, true)
-	if err != nil {
-		common.ApiErrorI18n(c, i18n.MsgChannelGetInfoFailed)
+	if errors.Is(err, gorm.ErrRecordNotFound) || (err == nil && channel == nil) {
+		common.ApiErrorI18n(c, i18n.MsgChannelNotExists)
 		return
 	}
-
-	if channel == nil {
-		common.ApiErrorI18n(c, i18n.MsgChannelNotExists)
+	if err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
@@ -476,6 +485,9 @@ func validateTwoFactorAuth(twoFA *model.TwoFA, code string) bool {
 	return false
 }
 
+// maxTaskExtendPluginKeys bounds the plugins one New API channel can bind.
+const maxTaskExtendPluginKeys = 32
+
 // validateChannel 通用的渠道校验函数
 func validateChannel(channel *model.Channel, isAdd bool) error {
 	// 校验 channel settings
@@ -491,17 +503,63 @@ func validateChannel(channel *model.Channel, isAdd bool) error {
 		if taskPluginKey == "" {
 			return common.Localized(i18n.MsgChannelTaskPluginKeyRequired)
 		}
-		snapshot := pluginruntime.DefaultRegistry.Snapshot()
-		registered := false
-		for _, meta := range append(snapshot.Override, snapshot.Factory...) {
-			if meta.Key == taskPluginKey {
-				registered = true
-				break
-			}
+		if len(taskPluginKey) > 30 {
+			return fmt.Errorf("task plugin key must not exceed 30 characters")
 		}
+		plugin, registered := pluginruntime.DefaultRegistry.Get(taskPluginKey)
 		if !registered {
 			return common.Localized(i18n.MsgChannelTaskPluginNotRegistered, map[string]any{"Plugin": taskPluginKey})
 		}
+		if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
+			// Persist the plugin default so the destination host stays an auditable
+			// channel property that only an administrator edit can change.
+			if plugin.Meta.BaseURL == "" {
+				return common.Localized(i18n.MsgChannelTaskPluginBaseURLRequired)
+			}
+			defaultBaseURL := plugin.Meta.BaseURL
+			channel.BaseURL = &defaultBaseURL
+		}
+	}
+
+	setting := channel.GetSetting()
+	if channel.Type != constant.ChannelTypeNewAPI && len(setting.TaskExtendPluginKeys) > 0 {
+		return fmt.Errorf("task_extend_plugin_keys is only supported on New API channels")
+	}
+	if channel.Type == constant.ChannelTypeNewAPI {
+		if len(setting.TaskExtendPluginKeys) > maxTaskExtendPluginKeys {
+			return fmt.Errorf("task_extend_plugin_keys must not exceed %d plugins", maxTaskExtendPluginKeys)
+		}
+		keys := setting.TaskExtendPluginKeys
+		if setting.TaskPluginKey != "" {
+			keys = append([]string{setting.TaskPluginKey}, keys...)
+		}
+		bound := make(map[string]struct{}, len(keys))
+		for _, key := range keys {
+			if key == "" || key != strings.TrimSpace(key) {
+				return fmt.Errorf("task plugin key %q is invalid", key)
+			}
+			if len(key) > 30 {
+				return fmt.Errorf("task plugin key must not exceed 30 characters")
+			}
+			if _, duplicate := bound[key]; duplicate {
+				return fmt.Errorf("task plugin %q is bound more than once", key)
+			}
+			plugin, ok := pluginruntime.DefaultRegistry.Get(key)
+			if !ok {
+				return fmt.Errorf("task plugin %q is not registered", key)
+			}
+			if !plugin.Meta.SupportsUpstream(pluginruntime.UpstreamKindNewAPI) {
+				return fmt.Errorf("task plugin %q does not support a New API upstream and cannot be bound to a New API channel", key)
+			}
+			bound[key] = struct{}{}
+		}
+	}
+
+	if channel.Type == constant.ChannelTypeVLLM && strings.TrimSpace(channel.GetBaseURL()) == "" {
+		return fmt.Errorf("vLLM channel base URL cannot be empty")
+	}
+	if channel.Type == constant.ChannelTypeSGLang && strings.TrimSpace(channel.GetBaseURL()) == "" {
+		return fmt.Errorf("SGLang channel base URL cannot be empty")
 	}
 
 	// 如果是添加操作，检查 channel 和 key 是否为空
@@ -702,6 +760,7 @@ func AddChannel(c *gin.Context) {
 	}
 	addChannelRequest.Channel.CreatedTime = common.GetTimestamp()
 	keys := make([]string, 0)
+	requestedBaseURL := strings.TrimSpace(addChannelRequest.Channel.GetBaseURL())
 	switch addChannelRequest.Mode {
 	case "multi_to_single":
 		addChannelRequest.Channel.ChannelInfo.IsMultiKey = true
@@ -756,7 +815,7 @@ func AddChannel(c *gin.Context) {
 	}
 	if channelRequiresTaskPluginBindForCreate(addChannelRequest.Channel) &&
 		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.TaskPluginBind) {
-		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
+		common.ApiErrorI18n(c, i18n.MsgChannelTaskPluginBindRequired)
 		return
 	}
 
@@ -783,11 +842,15 @@ func AddChannel(c *gin.Context) {
 	}
 	model.InitChannelCache()
 	service.ResetProxyClientCache()
-	recordManageAudit(c, "channel.create", map[string]interface{}{
+	createAudit := map[string]interface{}{
 		"name":  addChannelRequest.Channel.Name,
 		"type":  addChannelRequest.Channel.Type,
 		"count": len(channels),
-	})
+	}
+	if addChannelRequest.Channel.Type == constant.ChannelTypeTaskPlugin && requestedBaseURL == "" && strings.TrimSpace(addChannelRequest.Channel.GetBaseURL()) != "" {
+		createAudit["base_url_source"] = "plugin_default"
+	}
+	recordManageAudit(c, "channel.create", createAudit)
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
@@ -1611,7 +1674,7 @@ func UpdateChannel(c *gin.Context) {
 	}
 	if channelRequiresTaskPluginBindForUpdate(originChannel, &validationChannel) &&
 		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.TaskPluginBind) {
-		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
+		common.ApiErrorI18n(c, i18n.MsgChannelTaskPluginBindRequired)
 		return
 	}
 
@@ -2034,7 +2097,7 @@ func CopyChannel(c *gin.Context) {
 	}
 	if channelRequiresTaskPluginBindForCreate(&clone) &&
 		!authz.Can(c.GetInt("id"), c.GetInt("role"), authz.TaskPluginBind) {
-		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
+		common.ApiErrorI18n(c, i18n.MsgChannelTaskPluginBindRequired)
 		return
 	}
 

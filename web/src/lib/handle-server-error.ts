@@ -17,58 +17,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { AxiosError } from 'axios'
-import i18next from 'i18next'
 import { toast } from 'sonner'
 
 import {
-  getServerErrorMessageKey,
-  localizeConsoleErrorText,
-  serverErrorPayload,
-} from '@/lib/server-error-message'
+  getServerErrorMessage,
+  getServerErrorSources,
+  isServerErrorCancelled,
+} from './server-error-message'
 
-function readErrorText(value: unknown): string | undefined {
-  if (typeof value !== 'string') return undefined
-  const trimmed = value.trim()
-  return trimmed || undefined
+const reportedErrors = new WeakSet<object>()
+
+/** Also used when a failure has already been presented inline. */
+export function markServerErrorHandled(error: unknown): void {
+  for (const source of getServerErrorSources(error)) reportedErrors.add(source)
 }
 
 export function getServerErrorDisplayMessage(error: unknown): string {
-  const messageKey = getServerErrorMessageKey(error)
-  if (messageKey) return i18next.t(messageKey)
-
-  if (
-    error &&
-    typeof error === 'object' &&
-    'status' in error &&
-    Number(error.status) === 204
-  ) {
-    return i18next.t('Content not found.')
-  }
-
-  if (error instanceof AxiosError && error.response?.status === 401) {
-    return i18next.t('Session expired!')
-  }
-
-  const payload = serverErrorPayload(error)
-  const message =
-    readErrorText(payload?.message) || readErrorText(payload?.title)
-  if (message) return localizeConsoleErrorText(message)
-
-  if (error instanceof AxiosError) {
-    if (!error.response) {
-      return localizeConsoleErrorText(
-        error.message,
-        'Unable to connect to the server'
-      )
-    }
-    return i18next.t('Something went wrong!')
-  }
-
-  if (error instanceof Error && error.message.trim()) {
-    return localizeConsoleErrorText(error.message)
-  }
-
-  return i18next.t('Something went wrong!')
+  return getServerErrorMessage(error)
 }
 
 export function getUnhandledConsoleErrorMessage(error: unknown): string | null {
@@ -83,8 +48,23 @@ export function toastUnhandledConsoleError(error: unknown): void {
   if (message) toast.error(message)
 }
 
-export function handleServerError(error: unknown) {
-  toast.error(getServerErrorDisplayMessage(error))
+export function handleServerError(
+  error: unknown,
+  fallbackMessage?: string,
+  presentation?: { title: string; description?: string }
+): void {
+  if (isServerErrorCancelled(error)) return
+  const sources = getServerErrorSources(error)
+  const reported = sources.some((source) => reportedErrors.has(source))
+  markServerErrorHandled(error)
+  if (reported) return
+  const message =
+    presentation?.title || getServerErrorMessage(error, fallbackMessage)
+  if (presentation?.description) {
+    toast.error(message, { description: presentation.description })
+  } else {
+    toast.error(message)
+  }
 }
 
 export function notifyQueryCacheError(

@@ -271,7 +271,6 @@ func parseProviderModelSuffix(modelName string, requiredPrefix string, allowThin
 	}
 	return baseModel, intent, true, nil
 }
-
 func ParseDeepSeekV4ThinkingSuffix(modelName string) (baseModel string, thinkingType string, effort string, ok bool) {
 	baseModel, suffix, ok := TrimEffortSuffixWithSuffixes(modelName, DeepSeekV4EffortSuffixes)
 	if !ok || !strings.HasPrefix(baseModel, "deepseek-v4-") {

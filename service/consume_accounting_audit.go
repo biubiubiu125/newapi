@@ -30,11 +30,10 @@ func RecordConsumeAccountingError(ctx *gin.Context, relayInfo *relaycommon.Relay
 		phase = "consume accounting"
 	}
 	errMsg := strings.ReplaceAll(err.Error(), "\n", " ")
-	other := map[string]interface{}{
-		"accounting_error": true,
-		"accounting_phase": phase,
-		"error":            errMsg,
-	}
+	other := &model.LogOther{}
+	other.SetPublic("accounting_error", true)
+	other.SetPublic("accounting_phase", phase)
+	other.SetPublic("error", errMsg)
 	appendRequestPath(ctx, relayInfo, other)
 	appendBillingInfo(relayInfo, other)
 	model.RecordErrorLog(
@@ -48,6 +47,6 @@ func RecordConsumeAccountingError(ctx *gin.Context, relayInfo *relaycommon.Relay
 		useTimeSeconds,
 		relayInfo.IsStream,
 		relayInfo.UsingGroup,
-		other,
+		other.Snapshot(),
 	)
 }

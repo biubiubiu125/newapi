@@ -18,17 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
-import {
-  CLAUDE_FIELD_PASSTHROUGH_TYPES,
-  CHANNEL_TYPE_NEW_API,
-  CHANNEL_TYPE_TASK_PLUGIN,
-  CHANNEL_STATUS,
-  ERROR_MESSAGES,
-  FIELD_PASSTHROUGH_TYPES,
-  OPENAI_FIELD_PASSTHROUGH_TYPES,
-} from '../constants'
+import {CLAUDE_FIELD_PASSTHROUGH_TYPES, CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_OLLAMA, CHANNEL_TYPE_TASK_PLUGIN, CHANNEL_TYPE_VLLM, CHANNEL_TYPE_SGLANG, CHANNEL_STATUS, ERROR_MESSAGES, FIELD_PASSTHROUGH_TYPES, OPENAI_FIELD_PASSTHROUGH_TYPES} from '../constants'
 import type { Channel } from '../types'
 import { supportsChannelUpstreamModelUpdate } from './upstream-update-utils'
+import {CHANNEL_TYPE_ADVANCED_CUSTOM} from './advanced-custom'
+import { readTaskExtendPluginKeys } from './channel-plugin-extensions'
+import { supportsResponsesWebSocket } from './responses-websocket'
 
 // ============================================================================
 // Form Validation Schema
@@ -212,8 +207,9 @@ export const channelFormSchema = z
     name: z.string().min(1, ERROR_MESSAGES.REQUIRED_NAME),
     type: z.number().min(0, ERROR_MESSAGES.REQUIRED_TYPE),
     base_url: z.string().optional(),
-    key: z.string(),
     task_plugin_key: z.string().optional(),
+    task_extend_plugin_keys: z.array(z.string()).optional(),
+    key: z.string(),
     openai_organization: z.string().optional(),
     models: z.string().min(1, ERROR_MESSAGES.REQUIRED_MODELS),
     group: z.array(z.string()).min(1, ERROR_MESSAGES.REQUIRED_GROUP),
@@ -253,7 +249,7 @@ export const channelFormSchema = z
       .string()
       .optional()
       .refine(isOptionalJsonObject, ERROR_MESSAGES.INVALID_JSON),
-    advanced_custom: z.unknown().optional(),
+    advanced_custom: z.string().optional(),
     settings: z
       .string()
       .optional()
@@ -274,6 +270,7 @@ export const channelFormSchema = z
     http_protocol: z.enum(['auto', 'http1']).optional(),
     http2_connection_shards: z.number().int().optional(),
     pass_through_body_enabled: z.boolean().optional(),
+    responses_websocket_enabled: z.boolean().optional(),
     system_prompt: z.string().optional(),
     system_prompt_override: z.boolean().optional(),
     // Type-specific settings (stored in settings JSON)
@@ -289,8 +286,8 @@ export const channelFormSchema = z
     allow_inference_geo: z.boolean().optional(), // OpenAI/Anthropic: inference geography
     allow_speed: z.boolean().optional(), // Anthropic: speed mode control
     claude_beta_query: z.boolean().optional(), // Anthropic: beta query passthrough
+    ollama_openai_chat: z.boolean().optional(), // Ollama: OpenAI-compatible /v1/chat/completions instead of native /api/chat
     disable_task_polling_sleep: z.boolean().optional(),
-    image_task_mode: z.enum(['sync_wrapper', 'async_task_bridge']).optional(),
     // Upstream model update settings (stored in settings JSON)
     upstream_model_update_check_enabled: z.boolean().optional(),
     upstream_model_update_auto_sync_enabled: z.boolean().optional(),
@@ -299,6 +296,16 @@ export const channelFormSchema = z
   .superRefine((data, ctx) => {
     if (
       [3, 8, 36, 45, 59, CHANNEL_TYPE_NEW_API].includes(data.type) &&
+      [
+        3,
+        8,
+        36,
+        45,
+        CHANNEL_TYPE_NEW_API,
+        CHANNEL_TYPE_TASK_PLUGIN,
+        CHANNEL_TYPE_VLLM,
+        CHANNEL_TYPE_SGLANG,
+      ].includes(data.type) &&
       !data.base_url?.trim()
     ) {
       addRequiredIssue(
@@ -306,6 +313,12 @@ export const channelFormSchema = z
         'base_url',
         'Base URL is required for this channel type'
       )
+    }
+    if (
+      data.type === CHANNEL_TYPE_TASK_PLUGIN &&
+      !data.task_plugin_key?.trim()
+    ) {
+      addRequiredIssue(ctx, 'task_plugin_key', 'Task plugin is required')
     }
 
     if (
@@ -316,17 +329,6 @@ export const channelFormSchema = z
         ctx,
         'task_plugin_key',
         'Task plugin binding is required'
-      )
-    }
-
-    if (
-      data.image_task_mode === 'async_task_bridge' &&
-      !data.base_url?.trim()
-    ) {
-      addRequiredIssue(
-        ctx,
-        'base_url',
-        'Async task bridge mode requires a base URL'
       )
     }
 
@@ -409,8 +411,9 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   name: '',
   type: 1,
   base_url: '',
-  key: '',
   task_plugin_key: '',
+  task_extend_plugin_keys: [],
+  key: '',
   openai_organization: '',
   models: '',
   group: ['default'],
@@ -439,6 +442,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   http_protocol: HTTP_PROTOCOL_AUTO,
   http2_connection_shards: 1,
   pass_through_body_enabled: false,
+  responses_websocket_enabled: false,
   system_prompt: '',
   system_prompt_override: false,
   // Type-specific settings
@@ -454,8 +458,8 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   allow_inference_geo: false,
   allow_speed: false,
   claude_beta_query: false,
+  ollama_openai_chat: false,
   disable_task_polling_sleep: false,
-  image_task_mode: 'sync_wrapper',
   upstream_model_update_check_enabled: false,
   upstream_model_update_auto_sync_enabled: false,
   upstream_model_update_ignored_models: '',
@@ -474,12 +478,14 @@ export function transformChannelToFormDefaults(
   // Parse channel extra settings from setting field
   let extraSettings = {
     task_plugin_key: '',
+    task_extend_plugin_keys: [] as string[],
     force_format: false,
     thinking_to_content: false,
     proxy: '',
     http_protocol: HTTP_PROTOCOL_AUTO as 'auto' | 'http1',
     http2_connection_shards: 1,
     pass_through_body_enabled: false,
+    responses_websocket_enabled: false,
     system_prompt: '',
     system_prompt_override: false,
   }
@@ -496,12 +502,15 @@ export function transformChannelToFormDefaults(
           typeof parsed.task_plugin_key === 'string'
             ? parsed.task_plugin_key.trim()
             : '',
+        task_extend_plugin_keys: readTaskExtendPluginKeys(channel.type, parsed),
         force_format: parsed.force_format || false,
         thinking_to_content: parsed.thinking_to_content || false,
         proxy: parsed.proxy || '',
         http_protocol: protocol,
         http2_connection_shards: protocol === HTTP_PROTOCOL_HTTP1 ? 1 : shards,
         pass_through_body_enabled: parsed.pass_through_body_enabled || false,
+        responses_websocket_enabled:
+          parsed.responses_websocket_enabled === true,
         system_prompt: parsed.system_prompt || '',
         system_prompt_override: parsed.system_prompt_override || false,
       }
@@ -523,8 +532,8 @@ export function transformChannelToFormDefaults(
   let allowInferenceGeo = false
   let allowSpeed = false
   let claudeBetaQuery = false
+  let ollamaOpenAIChat = false
   let disableTaskPollingSleep = false
-  let imageTaskMode: 'sync_wrapper' | 'async_task_bridge' = 'sync_wrapper'
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
@@ -543,11 +552,8 @@ export function transformChannelToFormDefaults(
       allowInferenceGeo = parsed.allow_inference_geo === true
       allowSpeed = parsed.allow_speed === true
       claudeBetaQuery = parsed.claude_beta_query === true
+      ollamaOpenAIChat = parsed.ollama_openai_chat === true
       disableTaskPollingSleep = parsed.disable_task_polling_sleep === true
-      imageTaskMode =
-        parsed.image_task_mode === 'async_task_bridge'
-          ? 'async_task_bridge'
-          : 'sync_wrapper'
       upstreamModelUpdateCheckEnabled =
         parsed.upstream_model_update_check_enabled === true
       upstreamModelUpdateAutoSyncEnabled =
@@ -602,8 +608,8 @@ export function transformChannelToFormDefaults(
     allow_inference_geo: allowInferenceGeo,
     allow_speed: allowSpeed,
     claude_beta_query: claudeBetaQuery,
+    ollama_openai_chat: ollamaOpenAIChat,
     disable_task_polling_sleep: disableTaskPollingSleep,
-    image_task_mode: imageTaskMode,
     allow_safety_identifier: allowSafetyIdentifier,
     upstream_model_update_check_enabled: upstreamModelUpdateCheckEnabled,
     upstream_model_update_auto_sync_enabled: upstreamModelUpdateAutoSyncEnabled,
@@ -616,10 +622,24 @@ export function transformChannelToFormDefaults(
  */
 export function buildSettingJSON(formData: ChannelFormValues): string {
   const settingObj: Record<string, unknown> = {
+    task_plugin_key:
+      formData.type === CHANNEL_TYPE_TASK_PLUGIN
+        ? formData.task_plugin_key?.trim() || ''
+        : undefined,
+    task_extend_plugin_keys:
+      formData.type === CHANNEL_TYPE_NEW_API &&
+      formData.task_extend_plugin_keys?.length
+        ? formData.task_extend_plugin_keys
+        : undefined,
     force_format: formData.force_format || false,
     thinking_to_content: formData.thinking_to_content || false,
     proxy: formData.proxy?.trim() || '',
-    pass_through_body_enabled: formData.pass_through_body_enabled || false,
+    pass_through_body_enabled:
+      formData.type !== CHANNEL_TYPE_ADVANCED_CUSTOM &&
+      formData.pass_through_body_enabled === true,
+    responses_websocket_enabled:
+      supportsResponsesWebSocket(formData.type) &&
+      formData.responses_websocket_enabled === true,
     system_prompt: formData.system_prompt || '',
     system_prompt_override: formData.system_prompt_override || false,
   }
@@ -706,7 +726,6 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
       formData.allow_safety_identifier === true
     settingsObj.allow_include_obfuscation =
       formData.allow_include_obfuscation === true
-    settingsObj.allow_inference_geo = formData.allow_inference_geo === true
   } else {
     if ('disable_store' in settingsObj) delete settingsObj.disable_store
     if ('allow_safety_identifier' in settingsObj) {
@@ -739,9 +758,16 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     delete settingsObj.claude_beta_query
   }
 
+  // Only the Ollama adaptor can switch chat completions to the OpenAI-compatible endpoint.
+  if (formData.type === CHANNEL_TYPE_OLLAMA) {
+    settingsObj.ollama_openai_chat = formData.ollama_openai_chat === true
+  } else if ('ollama_openai_chat' in settingsObj) {
+    delete settingsObj.ollama_openai_chat
+  }
+
   settingsObj.disable_task_polling_sleep =
     formData.disable_task_polling_sleep === true
-  settingsObj.image_task_mode = formData.image_task_mode || 'sync_wrapper'
+  delete settingsObj.image_task_mode
 
   // Upstream model update settings (for model-fetchable channel types)
   if (formDataSupportsUpstreamModelUpdate(formData)) {

@@ -1,5 +1,8 @@
 # English translations
 
+# Task plugin messages
+task_plugin.unknown_meta_field: 'Plugin metadata contains an unknown field "{{.Field}}". If this plugin was downloaded from the official marketplace, it may require a newer version of new-api. Try updating new-api and installing the plugin again.'
+
 # Common messages
 common.invalid_params: "Invalid parameters"
 common.database_error: "Database error, please contact the administrator"
@@ -205,6 +208,9 @@ passkey.login_abnormal: "Passkey login status is abnormal"
 passkey.update_failed: "Passkey credential update failed"
 passkey.invalid_user_id: "Invalid user ID"
 passkey.verify_failed: "Passkey verification failed, please try again or contact administrator"
+passkey.rp_id_invalid: "Invalid Passkey domain. Enter a domain without a scheme, port, path or wildcard."
+passkey.rp_id_unavailable: "This Passkey domain is not available on this website. Use its original website or another verification method."
+passkey.rp_id_removal_confirmation: "Review the affected Passkeys and confirm the domain removal. If the settings or impact have changed, confirmation is required again."
 
 # 2FA messages
 twofa.not_enabled: "User has not enabled 2FA"
@@ -268,6 +274,7 @@ oauth.already_bound: "This {{.Provider}} account has already been bound"
 oauth.access_denied: "Access denied: your account does not meet this provider's access requirements."
 oauth.authorization_cancelled: "Authorization was cancelled or access was denied."
 oauth.authorization_failed: "Authorization failed. Please try again."
+oauth.not_auto_linked: "This {{.Provider}} account cannot be linked to an existing account automatically, please sign in or register another way and then link {{.Provider}} in account settings"
 oauth.connect_failed: "Unable to connect to {{.Provider}} server, please try again later"
 oauth.token_failed: "Failed to get token from {{.Provider}}, please check settings"
 oauth.user_info_empty: "{{.Provider}} returned empty user info, please check settings"
@@ -295,7 +302,7 @@ distributor.invalid_playground_request: "Invalid playground request: {{.Error}}"
 distributor.group_access_denied: "No permission to access this group"
 distributor.get_channel_failed: "Failed to get available channel for model {{.Model}} under group {{.Group}} (distributor): {{.Error}}"
 distributor.no_available_channel: "No available channel for model {{.Model}} under group {{.Group}} (distributor)"
-distributor.no_available_channel_task_plugin: "No available channel for model {{.Model}} under group {{.Group}}: the model is claimed by task plugin \"{{.Plugin}}\", which has no enabled channel serving it. To let another plugin or channel serve this model, disable or override plugin \"{{.Plugin}}\" in the task plugin console (distributor)"
+distributor.no_available_channel_task_plugin: "No available channel for model {{.Model}} under group {{.Group}}: the model is claimed by a task plugin, which has no enabled channel serving it (distributor)"
 distributor.invalid_midjourney_request: "Invalid Midjourney request: {{.Error}}"
 distributor.invalid_request_parse_model: "Invalid request, unable to parse model"
 
@@ -354,6 +361,8 @@ channel.vertex_region_json: "Deployment region must be standard JSON, e.g. {\"de
 channel.vertex_region_default: "Deployment region must include a default field"
 channel.task_plugin_key_required: "Task plugin key is required for task plugin channels"
 channel.task_plugin_not_registered: "Task plugin {{.Plugin}} is not registered"
+channel.task_plugin_base_url_required: "base URL is required for task plugin channels"
+channel.task_plugin_bind_required: "task plugin channels require the task_plugin.bind permission"
 channel.get_tag_count_failed: "Failed to get tag count, please try again later"
 channel.get_tag_channels_failed: "Failed to get channels by tag, please try again later"
 channel.get_count_failed: "Failed to get channel count, please try again later"
@@ -414,7 +423,6 @@ notify.subscription_exceed_gotify: "{{.Prompt}}. Remaining subscription quota is
 status.db_failed: "Database connection failed"
 status.running: "Server is running"
 protocol.access_token_unsupported: "Access token is not supported"
-protocol.image_task_n_gt_one: "async task bridge mode does not support n greater than 1; split into multiple image tasks"
 protocol.channel_retry_failed: "failed to get available channels for model {{.Model}} under group {{.Group}} (retry): {{.Error}}"
 protocol.channel_retry_missing: "no available channel for model {{.Model}} under group {{.Group}} (retry)"
 protocol.channel_missing: "no available channel for model {{.Model}} under group {{.Group}}"
@@ -738,9 +746,10 @@ option.theme_classic_removed: "The Classic frontend has been removed. Theme can 
 option.claude_negative_max_tokens: "negative Claude default max_tokens {{.Value}} for \"{{.Model}}\""
 option.gemini_invalid_safety_threshold: "invalid Gemini safety threshold \"{{.Threshold}}\" for \"{{.Category}}\""
 option.non_negative_number: "{{.Key}} must be a finite, non-negative number"
+option.billing_expr_invalid: "invalid billing expression for model {{.Model}}: {{.Reason}}"
 option.pricing_input_conflict: "provide either option maps or model pricing changes"
 referral.disabled: "Referral program is not enabled"
-plugin.source_too_large: "Plugin source exceeds 1 MiB"
+plugin.source_too_large: "Plugin source exceeds 8 MiB"
 plugin.sha256_mismatch: "Plugin source sha256 mismatch"
 plugin.not_found: "Task plugin not found"
 plugin.compile_failed: "Failed to load plugin: {{.Error}}"

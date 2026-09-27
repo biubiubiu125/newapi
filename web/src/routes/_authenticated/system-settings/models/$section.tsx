@@ -30,6 +30,20 @@ export const Route = createFileRoute(
 )({
   beforeLoad: async ({ params }) => {
     await requireSystemSettingsModule()
+    if (params.section === 'channel-affinity') {
+      throw redirect({
+        to: '/system-settings/request-policies/$section',
+        params: { section: 'routing' },
+        replace: true,
+      })
+    }
+    if (params.section === 'routing-reliability') {
+      throw redirect({
+        to: '/system-settings/request-policies/$section',
+        params: { section: 'routing' },
+        replace: true,
+      })
+    }
     const validSections = MODELS_SECTION_IDS as unknown as string[]
     if (!validSections.includes(params.section)) {
       throw redirect({

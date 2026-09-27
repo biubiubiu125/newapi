@@ -19,22 +19,12 @@ For commercial licensing, please contact support@quantumnous.com
 import { Loader2 } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
-
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Label } from '@/components/ui/label'
 import { formatQuota, formatCompactNumber } from '@/lib/format'
-
 import { getUserInfo } from '../../api'
 import type { UserInfo } from '../../types'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
 
 interface UserInfoDialogProps {
   userId: number | null
@@ -59,12 +49,10 @@ export function UserInfoDialog({
         if (result.success) {
           setUserInfo(result.data || null)
         } else {
-          toast.error(localizeConsoleErrorText(result.message, 'Failed to fetch user information'))
+          handleServerError(result, t('Failed to fetch user information'))
         }
       } catch (error) {
-        // eslint-disable-next-line no-console
-        console.error('Failed to fetch user info:', error)
-        toast.error(t('Failed to fetch user information'))
+        handleServerError(error, t('Failed to fetch user information'))
       } finally {
         setIsLoading(false)
       }
@@ -77,19 +65,6 @@ export function UserInfoDialog({
       fetchUserInfo(userId)
     }
   }, [open, userId, fetchUserInfo])
-
-  const InfoItem = ({
-    label,
-    value,
-  }: {
-    label: string
-    value: string | number
-  }) => (
-    <div className='space-y-1.5'>
-      <Label className='text-muted-foreground text-xs'>{label}</Label>
-      <div className='text-sm font-semibold'>{value}</div>
-    </div>
-  )
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
@@ -162,5 +137,14 @@ export function UserInfoDialog({
         )}
       </DialogContent>
     </Dialog>
+  )
+}
+
+function InfoItem({ label, value }: { label: string; value: string | number }) {
+  return (
+    <div className='space-y-1.5'>
+      <Label className='text-muted-foreground text-xs'>{label}</Label>
+      <div className='text-sm font-semibold'>{value}</div>
+    </div>
   )
 }

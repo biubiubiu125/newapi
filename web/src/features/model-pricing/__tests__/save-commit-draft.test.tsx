@@ -43,32 +43,46 @@ import { handleServerError } from '@/lib/handle-server-error'
 const clients: QueryClient[] = []
 const originalAdapter = api.defaults.adapter
 
+type MatchMediaListener = (this: MediaQueryList, ev: MediaQueryListEvent) => void
+
 function stubMatchMedia(matchesQuery?: (query: string) => boolean) {
-  const listeners = new Set<() => void>()
+  const listeners = new Set<MatchMediaListener>()
   Object.defineProperty(window, 'matchMedia', {
     configurable: true,
     value: (query: string): MediaQueryList => ({
       matches: matchesQuery ? matchesQuery(query) : false,
       media: query,
       onchange: null,
-      addListener: (listener) => {
-        listeners.add(listener)
+      addListener: (listener: MatchMediaListener | null) => {
+        if (listener) listeners.add(listener)
       },
-      removeListener: (listener) => {
-        listeners.delete(listener)
+      removeListener: (listener: MatchMediaListener | null) => {
+        if (listener) listeners.delete(listener)
       },
-      addEventListener: (_event, listener) => {
-        listeners.add(listener as () => void)
+      addEventListener: (
+        _event: string,
+        listener: EventListenerOrEventListenerObject | null
+      ) => {
+        if (typeof listener === 'function') {
+          listeners.add(listener as MatchMediaListener)
+        }
       },
-      removeEventListener: (_event, listener) => {
-        listeners.delete(listener as () => void)
+      removeEventListener: (
+        _event: string,
+        listener: EventListenerOrEventListenerObject | null
+      ) => {
+        if (typeof listener === 'function') {
+          listeners.delete(listener as MatchMediaListener)
+        }
       },
       dispatchEvent: () => false,
     }),
   })
   return {
     notify() {
-      for (const listener of listeners) listener()
+      const media = window.matchMedia('')
+      const event = new Event('change') as MediaQueryListEvent
+      for (const listener of listeners) listener.call(media, event)
     },
   }
 }
@@ -84,6 +98,7 @@ const EMPTY_MODEL_VALUES = {
   AudioCompletionRatio: '{}',
   BillingMode: '{}',
   BillingExpr: '{}',
+  PluginBillingExpr: '{}',
   ExposeRatioEnabled: false,
 }
 
@@ -120,7 +135,9 @@ function renderWithClient(ui: ReactNode) {
       queries: { retry: false },
       mutations: {
         retry: false,
-        onError: handleServerError,
+        onError: (error) => {
+          handleServerError(error)
+        },
       },
     },
   })
@@ -129,7 +146,14 @@ function renderWithClient(ui: ReactNode) {
 }
 
 function PricingFormFixture(props: {
-  onSave: (values?: unknown) => Promise<void>
+  onSave: (values: {
+    ModelPrice: string
+    ModelRatio: string
+    BillingMode: string
+    BillingExpr: string
+    CompletionRatio: string
+    [key: string]: unknown
+  }) => Promise<void>
   values?: Partial<typeof EMPTY_MODEL_VALUES>
   savedValues?: Partial<typeof EMPTY_MODEL_VALUES>
 }) {
@@ -248,7 +272,7 @@ async function editRowFixedPrice(
   await user.click(
     within(row as HTMLElement).getByRole('button', { name: 'Edit' })
   )
-  await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+  await user.click(screen.getByRole('tab', { name: 'Per-request (deprecated)' }))
   const input = screen.getByRole('textbox', { name: 'Fixed price' })
   await user.clear(input)
   await user.type(input, price)
@@ -291,8 +315,11 @@ function jsonEditorValue(name: string) {
 }
 
 async function editExamplePrice(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(await screen.findByRole('button', { name: 'Edit' }))
-  await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+  const edit = await screen.findByRole('button', { name: 'Edit' })
+  console.log('EDIT_NODE', edit.tagName, edit.getAttribute('data-slot'), edit.outerHTML.slice(0, 180))
+  edit.dispatchEvent(new MouseEvent('click', { bubbles: true }))
+  await user.click(edit)
+  await user.click(screen.getByRole('tab', { name: 'Per-request (deprecated)' }))
   const price = screen.getByRole('textbox', { name: 'Fixed price' })
   await user.clear(price)
   await user.type(price, '0.25')
@@ -326,7 +353,7 @@ it('does not pass the click event to the editor save handler', async () => {
 
 it('commits the editor draft instead of the click event when saving model prices', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(<PricingFormFixture onSave={save} />)
 
   await editExamplePrice(user)
@@ -380,7 +407,7 @@ it('PATCHes the committed ModelPrice JSON through /api/option/model_pricing', as
 
 it('keeps stored ratio billing modes when saving another model price', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(
     <PricingFormFixture
       onSave={save}
@@ -615,7 +642,7 @@ it('keeps model prices dirty when PATCH returns success:false', async () => {
 
 it('does not wipe sibling maps when current pricing JSON is invalid', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   const error = vi.spyOn(toast, 'error')
   const consoleError = vi.spyOn(console, 'error').mockImplementation(() => {})
   renderWithClient(
@@ -638,12 +665,12 @@ it('does not wipe sibling maps when current pricing JSON is invalid', async () =
 
 it('rejects a whitespace-only model name instead of saving', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(<PricingFormFixture onSave={save} />)
 
   await clickAddModel(user)
   await user.type(screen.getByRole('textbox', { name: 'Model name' }), '   ')
-  await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+  await user.click(screen.getByRole('tab', { name: 'Per-request (deprecated)' }))
   await user.type(screen.getByRole('textbox', { name: 'Fixed price' }), '0.5')
   await user.click(screen.getByRole('button', { name: 'Save model prices' }))
 
@@ -653,7 +680,7 @@ it('rejects a whitespace-only model name instead of saving', async () => {
 
 it('saves a newly added model name into ModelPrice', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(<PricingFormFixture onSave={save} />)
 
   await clickAddModel(user)
@@ -661,7 +688,7 @@ it('saves a newly added model name into ModelPrice', async () => {
     screen.getByRole('textbox', { name: 'Model name' }),
     'new-model'
   )
-  await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+  await user.click(screen.getByRole('tab', { name: 'Per-request (deprecated)' }))
   await user.type(screen.getByRole('textbox', { name: 'Fixed price' }), '0.5')
   await user.click(screen.getByRole('button', { name: 'Save model prices' }))
 
@@ -674,7 +701,7 @@ it('saves a newly added model name into ModelPrice', async () => {
 
 it('does not wipe sibling models when deleting while a pricing map is invalid JSON', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   const error = vi.spyOn(toast, 'error')
   renderWithClient(
     <PricingFormFixture
@@ -709,7 +736,7 @@ it('does not wipe sibling models when deleting while a pricing map is invalid JS
 it('saves from the single mobile editor without mounting a second copy', async () => {
   stubMatchMedia((query) => query.includes('max-width: 767px'))
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(<PricingFormFixture onSave={save} />)
 
   await clickAddModel(user)
@@ -721,7 +748,7 @@ it('saves from the single mobile editor without mounting a second copy', async (
   ).toHaveLength(1)
 
   await user.type(await screen.findByLabelText('Model name'), 'mobile-model')
-  await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+  await user.click(screen.getByRole('tab', { name: 'Per-request (deprecated)' }))
   await user.type(screen.getByRole('textbox', { name: 'Fixed price' }), '0.5')
   await user.click(screen.getByRole('button', { name: 'Save model prices' }))
 
@@ -791,11 +818,11 @@ it('keeps the unsaved editor draft when the viewport crosses 767px', async () =>
     (query) => query.includes('max-width: 767px') && mobile
   )
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(<PricingFormFixture onSave={save} />)
 
   await user.click(await screen.findByRole('button', { name: 'Edit' }))
-  await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+  await user.click(screen.getByRole('tab', { name: 'Per-request (deprecated)' }))
   const price = screen.getByRole('textbox', { name: 'Fixed price' })
   await user.clear(price)
   await user.type(price, '0.25')
@@ -829,7 +856,7 @@ it('does not persist a zero input price with a dependent lane when the viewport 
     (query) => query.includes('max-width: 767px') && mobile
   )
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(
     <PricingFormFixture onSave={save} values={TOKEN_MODEL_VALUES} />
   )
@@ -1087,11 +1114,11 @@ it('keeps the unsaved editor draft when the viewport crosses 767px from mobile t
     (query) => query.includes('max-width: 767px') && mobile
   )
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(<PricingFormFixture onSave={save} />)
 
   await user.click(await screen.findByRole('button', { name: 'Edit' }))
-  await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+  await user.click(screen.getByRole('tab', { name: 'Per-request (deprecated)' }))
   const price = screen.getByRole('textbox', { name: 'Fixed price' })
   await user.clear(price)
   await user.type(price, '0.25')
@@ -1121,7 +1148,7 @@ it('keeps the unsaved editor draft when the viewport crosses 767px from mobile t
 
 it('keeps the previous model draft when switching to another row', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(
     <PricingFormFixture onSave={save} values={TWO_MODEL_VALUES} />
   )
@@ -1139,7 +1166,7 @@ it('keeps the previous model draft when switching to another row', async () => {
 
 it('keeps the unsaved editor draft when adding a new model', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(<PricingFormFixture onSave={save} />)
 
   await editRowFixedPrice(user, 'example-model', '0.25')
@@ -1148,7 +1175,7 @@ it('keeps the unsaved editor draft when adding a new model', async () => {
     screen.getByRole('textbox', { name: 'Model name' }),
     'new-model'
   )
-  await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+  await user.click(screen.getByRole('tab', { name: 'Per-request (deprecated)' }))
   await user.type(screen.getByRole('textbox', { name: 'Fixed price' }), '0.5')
   await user.click(screen.getByRole('button', { name: 'Save model prices' }))
 
@@ -1161,7 +1188,7 @@ it('keeps the unsaved editor draft when adding a new model', async () => {
 
 it('keeps the unsaved editor draft when table search closes the editor', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(<PricingFormFixture onSave={save} />)
 
   await editRowFixedPrice(user, 'example-model', '0.25')
@@ -1184,11 +1211,11 @@ it('keeps the unsaved editor draft when table search closes the editor', async (
 it('keeps the unsaved editor draft when the mobile sheet is closed', async () => {
   stubMatchMedia((query) => query.includes('max-width: 767px'))
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(<PricingFormFixture onSave={save} />)
 
   await user.click(await screen.findByRole('button', { name: 'Edit' }))
-  await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+  await user.click(screen.getByRole('tab', { name: 'Per-request (deprecated)' }))
   const price = screen.getByRole('textbox', { name: 'Fixed price' })
   await user.clear(price)
   await user.type(price, '0.25')
@@ -1215,7 +1242,7 @@ it('keeps the unsaved editor draft when the mobile sheet is closed', async () =>
 it('copies the flushed mobile editor price after the sheet is closed', async () => {
   stubMatchMedia((query) => query.includes('max-width: 767px'))
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(
     <PricingFormFixture onSave={save} values={TWO_MODEL_VALUES} />
   )
@@ -1226,7 +1253,7 @@ it('copies the flushed mobile editor price after the sheet is closed', async () 
   await user.click(
     within(keepRow as HTMLElement).getByRole('button', { name: 'Edit' })
   )
-  await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+  await user.click(screen.getByRole('tab', { name: 'Per-request (deprecated)' }))
   const price = screen.getByRole('textbox', { name: 'Fixed price' })
   await user.clear(price)
   await user.type(price, '0.25')
@@ -1261,7 +1288,7 @@ it('copies the flushed mobile editor price after the sheet is closed', async () 
 
 it('keeps the unsaved editor draft after switching to JSON', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(<PricingFormFixture onSave={save} />)
 
   await editRowFixedPrice(user, 'example-model', '0.25')
@@ -1313,7 +1340,7 @@ it('keeps the unsaved editor draft after switching billing tabs', async () => {
 
 it('does not wipe a model when the flushed editor draft has an empty price', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(
     <PricingFormFixture onSave={save} values={TWO_MODEL_VALUES} />
   )
@@ -1324,7 +1351,7 @@ it('does not wipe a model when the flushed editor draft has an empty price', asy
   await user.click(
     within(keepRow as HTMLElement).getByRole('button', { name: 'Edit' })
   )
-  await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+  await user.click(screen.getByRole('tab', { name: 'Per-request (deprecated)' }))
   await user.clear(screen.getByRole('textbox', { name: 'Fixed price' }))
   await editRowFixedPrice(user, 'other-model', '0.33')
   await user.click(screen.getByRole('button', { name: 'Save model prices' }))
@@ -1338,7 +1365,7 @@ it('does not wipe a model when the flushed editor draft has an empty price', asy
 
 it('keeps the unsaved editor draft after the visual editor unmounts', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
 
   function Harness() {
     const [actionsContainer, setActionsContainer] =
@@ -1438,7 +1465,7 @@ it('shows a single error toast when model price PATCH returns HTTP 500', async (
 
 it('still opens the editor after a failed delete while a pricing map is invalid JSON', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   const error = vi.spyOn(toast, 'error')
   renderWithClient(
     <PricingFormFixture
@@ -1476,7 +1503,7 @@ it('still opens the editor after a failed delete while a pricing map is invalid 
 
 it('keeps a re-added model after switching to JSON', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(
     <PricingFormFixture onSave={save} values={TWO_MODEL_VALUES} />
   )
@@ -1499,7 +1526,7 @@ it('keeps a re-added model after switching to JSON', async () => {
     screen.getByRole('textbox', { name: 'Model name' }),
     'other-model'
   )
-  await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+  await user.click(screen.getByRole('tab', { name: 'Per-request (deprecated)' }))
   await user.type(screen.getByRole('textbox', { name: 'Fixed price' }), '0.5')
   await user.click(screen.getByRole('button', { name: 'Switch to JSON' }))
 
@@ -1659,7 +1686,7 @@ it('applies newly fetched group ratio keys after a successful save', async () =>
 })
 
 it('still shows saved models when draft pricing JSON is invalid', async () => {
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(
     <PricingFormFixture
       onSave={save}
@@ -1672,7 +1699,7 @@ it('still shows saved models when draft pricing JSON is invalid', async () => {
 
 it('does not persist a zero input price with a dependent lane when switching to JSON', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(
     <PricingFormFixture onSave={save} values={TOKEN_MODEL_VALUES} />
   )
@@ -1701,11 +1728,11 @@ it('does not persist a zero input price with a dependent lane when switching to 
 
 it('rewrites leftover per-request price when saving the per-token tab', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(<PricingFormFixture onSave={save} />)
 
   await user.click(await screen.findByRole('button', { name: 'Edit' }))
-  await user.click(screen.getByRole('tab', { name: 'Per-token' }))
+  await user.click(screen.getByRole('tab', { name: 'Per-token (deprecated)' }))
   const input = screen.getByRole('textbox', { name: 'Input price' })
   await user.clear(input)
   await user.type(input, '4')
@@ -1720,7 +1747,7 @@ it('rewrites leftover per-request price when saving the per-token tab', async ()
 
 it('does not persist an invalid billing expression when switching to JSON', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(<PricingFormFixture onSave={save} />)
 
   await user.click(await screen.findByRole('button', { name: 'Edit' }))
@@ -1747,7 +1774,7 @@ it('does not persist an invalid billing expression when switching to JSON', asyn
 
 it('toasts when visual save is blocked by an invalid billing expression', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   const error = vi.spyOn(toast, 'error')
   renderWithClient(<PricingFormFixture onSave={save} />)
 
@@ -1772,7 +1799,7 @@ it('toasts when visual save is blocked by an invalid billing expression', async 
 
 it('keeps a re-added model when table search closes the add editor', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   renderWithClient(
     <PricingFormFixture onSave={save} values={TWO_MODEL_VALUES} />
   )
@@ -1795,7 +1822,7 @@ it('keeps a re-added model when table search closes the add editor', async () =>
     screen.getByRole('textbox', { name: 'Model name' }),
     'other-model'
   )
-  await user.click(screen.getByRole('tab', { name: 'Per-request' }))
+  await user.click(screen.getByRole('tab', { name: 'Per-request (deprecated)' }))
   await user.type(screen.getByRole('textbox', { name: 'Fixed price' }), '0.5')
   await user.type(screen.getByPlaceholderText('Search models...'), 'keep')
   await waitFor(() =>
@@ -1967,7 +1994,7 @@ it('does not restore locally deleted group ratio keys when applying newly fetche
 
 it('toasts when batch copy is blocked by an invalid billing expression', async () => {
   const user = userEvent.setup()
-  const save = vi.fn(async () => undefined)
+  const save = vi.fn(async (values: { ModelPrice: string; ModelRatio: string; BillingMode: string; BillingExpr: string; CompletionRatio: string; [key: string]: unknown }): Promise<void> => { void values })
   const error = vi.spyOn(toast, 'error')
   renderWithClient(
     <PricingFormFixture onSave={save} values={TWO_MODEL_VALUES} />

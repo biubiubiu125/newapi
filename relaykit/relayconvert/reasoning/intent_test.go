@@ -19,7 +19,7 @@ func TestReasoningIntentCarriesExplicitStateAcrossOpenAIFormats(t *testing.T) {
 		Reasoning:       []byte(`{"max_tokens":4096,"exclude":false}`),
 	}
 
-	intent, err := FromOpenAIChat(chat)
+	intent, _, err := FromOpenAIChat(chat)
 	require.NoError(t, err)
 	assert.Equal(t, ModeEnabled, intent.Mode)
 	assert.Equal(t, EffortHigh, intent.Effort)
@@ -39,11 +39,12 @@ func TestReasoningIntentCarriesExplicitStateAcrossOpenAIFormats(t *testing.T) {
 func TestReasoningIntentRejectsConflictingExplicitControls(t *testing.T) {
 	t.Parallel()
 
-	_, err := FromOpenAIChat(&dto.GeneralOpenAIRequest{
+	intent, diagnostics, err := FromOpenAIChat(&dto.GeneralOpenAIRequest{
 		Model:           "gpt-5.6-sol",
 		ReasoningEffort: "low",
 		Reasoning:       []byte(`{"effort":"high"}`),
 	})
-	require.Error(t, err)
-	assert.ErrorIs(t, err, ErrEffortConflict)
+	require.NoError(t, err)
+	assert.Equal(t, EffortLow, intent.Effort)
+	assert.Contains(t, diagnosticCodes(diagnostics), "explicit_fields_conflict")
 }

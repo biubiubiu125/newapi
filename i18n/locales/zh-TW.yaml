@@ -1,6 +1,9 @@
 # Chinese (Traditional) translations
 # 中文（繁體）翻譯檔案
 
+# Task plugin messages
+task_plugin.unknown_meta_field: '外掛中繼資料包含未知欄位「{{.Field}}」。如果外掛來自官方市集，可能需要較新版本的 new-api。請嘗試更新 new-api 後重新安裝外掛。'
+
 # Common messages
 common.invalid_params: "無效的參數"
 common.database_error: "資料庫出錯，請聯繫管理員"
@@ -206,6 +209,9 @@ passkey.login_abnormal: "Passkey 登錄狀態異常"
 passkey.update_failed: "Passkey 憑證更新失敗"
 passkey.invalid_user_id: "無效的使用者 ID"
 passkey.verify_failed: "Passkey 驗證失敗，請重試或聯繫管理員"
+passkey.rp_id_invalid: "通行金鑰網域無效。請填寫網域，不包含通訊協定、連接埠、路徑或萬用字元。"
+passkey.rp_id_unavailable: "此通行金鑰網域無法在目前網站使用。請前往原網站或選擇其他驗證方式。"
+passkey.rp_id_removal_confirmation: "請核對受影響的通行金鑰並確認刪除網域。設定或影響範圍變更後，需要重新確認。"
 
 # 2FA messages
 twofa.not_enabled: "使用者未啟用2FA"
@@ -269,6 +275,7 @@ oauth.already_bound: "該 {{.Provider}} 帳號已被綁定"
 oauth.access_denied: "存取被拒絕：目前帳號不符合此登入方式的存取要求。"
 oauth.authorization_cancelled: "授權已取消，或此登入方式拒絕了存取。"
 oauth.authorization_failed: "授權失敗，請重試。"
+oauth.not_auto_linked: "無法自動將該 {{.Provider}} 帳號關聯到現有帳號，請使用其他方式登入或註冊後，在帳號設定中綁定 {{.Provider}}"
 oauth.connect_failed: "無法連接至 {{.Provider}} 伺服器，請稍後重試"
 oauth.token_failed: "{{.Provider}} 獲取 Token 失敗，請檢查設定"
 oauth.user_info_empty: "{{.Provider}} 獲取使用者資訊為空，請檢查設定"
@@ -296,7 +303,7 @@ distributor.invalid_playground_request: "無效的playground請求{{if .Error}}�
 distributor.group_access_denied: "無權存取該分組"
 distributor.get_channel_failed: "獲取分組 {{.Group}} 下模型 {{.Model}} 的可用管道失敗（distributor）{{if .Error}}：{{.Error}}{{end}}"
 distributor.no_available_channel: "分組 {{.Group}} 下模型 {{.Model}} 無可用管道（distributor）"
-distributor.no_available_channel_task_plugin: "分組 {{.Group}} 下模型 {{.Model}} 無可用管道：該模型由任務插件「{{.Plugin}}」認領，但該插件目前沒有啟用的管道可服務此模型。若要讓其他插件或管道服務該模型，請在任務插件管理中停用或覆蓋插件「{{.Plugin}}」（distributor）"
+distributor.no_available_channel_task_plugin: "分組 {{.Group}} 下模型 {{.Model}} 無可用管道：該模型由任務插件認領，但目前沒有啟用的管道可服務此模型（distributor）"
 distributor.invalid_midjourney_request: "無效的midjourney請求{{if .Error}}，{{.Error}}{{end}}"
 distributor.invalid_request_parse_model: "無效的請求，無法解析模型"
 
@@ -355,6 +362,8 @@ channel.vertex_region_json: "部署地區必須是標準的 Json 格式，例如
 channel.vertex_region_default: "部署地區必須包含 default 欄位"
 channel.task_plugin_key_required: "任務外掛渠道必須填寫任務外掛識別碼"
 channel.task_plugin_not_registered: "任務外掛 {{.Plugin}} 未註冊"
+channel.task_plugin_base_url_required: "任務外掛渠道基礎位址不能為空"
+channel.task_plugin_bind_required: "綁定任務外掛需要 task_plugin.bind 權限"
 channel.get_tag_count_failed: "取得標籤數量失敗，請稍後重試"
 channel.get_tag_channels_failed: "取得標籤渠道失敗，請稍後重試"
 channel.get_count_failed: "取得渠道數量失敗，請稍後重試"
@@ -415,7 +424,6 @@ notify.subscription_exceed_gotify: "{{.Prompt}}，目前剩餘額度為 {{.Quota
 status.db_failed: "資料庫連線失敗"
 status.running: "伺服器運行中"
 protocol.access_token_unsupported: "暫不支援使用 access token"
-protocol.image_task_n_gt_one: "非同步任務橋接模式暫不支援 n 大於 1，請拆成多個圖片任務"
 protocol.channel_retry_failed: "取得分組 {{.Group}} 下模型 {{.Model}} 的可用渠道失敗（retry）{{if .Error}}：{{.Error}}{{end}}"
 protocol.channel_retry_missing: "分組 {{.Group}} 下模型 {{.Model}} 的可用渠道不存在（retry）"
 protocol.channel_missing: "分組 {{.Group}} 下模型 {{.Model}} 的可用渠道不存在"
@@ -739,9 +747,10 @@ option.theme_classic_removed: "Classic 前端已移除，主題只能設定為 d
 option.claude_negative_max_tokens: "Claude 預設 max_tokens 不能為負數：{{.Model}} = {{.Value}}"
 option.gemini_invalid_safety_threshold: "無效的 Gemini 安全閾值 {{.Threshold}}（{{.Category}}）"
 option.non_negative_number: "{{.Key}} 必須是有限的非負數"
+option.billing_expr_invalid: "模型 {{.Model}} 的計費表達式無效: {{.Reason}}"
 option.pricing_input_conflict: "請只提交選項映射或模型價格變更"
 referral.disabled: "邀請返利未啟用"
-plugin.source_too_large: "外掛原始碼超過 1 MiB"
+plugin.source_too_large: "外掛原始碼超過 8 MiB"
 plugin.sha256_mismatch: "外掛原始碼 SHA256 不相符"
 plugin.not_found: "找不到任務外掛"
 plugin.compile_failed: "外掛無法載入{{if .Error}}：{{.Error}}{{end}}"

@@ -16,6 +16,7 @@ func SetApiRouter(router *gin.Engine) {
 	apiRouter := router.Group("/api")
 	apiRouter.Use(middleware.RouteTag("api"))
 	apiRouter.Use(gzip.Gzip(gzip.DefaultCompression))
+	apiRouter.Use(middleware.AccessTokenAudit())
 	apiRouter.Use(middleware.BodyStorageCleanup()) // 清理请求体存储
 	apiRouter.Use(middleware.GlobalAPIRateLimit())
 	anonymousRequestBodyLimit := middleware.AnonymousRequestBodyLimit()
@@ -48,16 +49,20 @@ func SetApiRouter(router *gin.Engine) {
 		// OAuth routes - specific routes must come before :provider wildcard
 		apiRouter.GET("/oauth/state", middleware.SetupRequired(), middleware.SessionNonceCriticalRateLimit("CT:oauth-state", "rate_limit_oauth_state"), controller.GenerateOAuthCode)
 		apiRouter.POST("/oauth/state", middleware.SetupRequired(), middleware.TryUserAuth(), anonymousRequestBodyLimit, middleware.SessionNonceCriticalRateLimit("CT:oauth-state", "rate_limit_oauth_state"), controller.GenerateOAuthCode)
-		apiRouter.POST("/oauth/email/bind", middleware.SetupRequired(), middleware.UserAuth(), anonymousRequestBodyLimit, middleware.UserCriticalRateLimit("CT:oauth-email-bind"), controller.EmailBind)
+		apiRouter.POST("/oauth/email/bind", middleware.SetupRequired(), middleware.UserAuth(), anonymousRequestBodyLimit, middleware.UserCriticalRateLimit("CT:oauth-email-bind"), middleware.DisableCache(), controller.EmailBind)
 		// Non-standard OAuth (WeChat, Telegram) - keep original routes
 		apiRouter.GET("/oauth/wechat", middleware.SetupRequired(), middleware.SessionNonceCriticalRateLimit("CT:oauth-wechat-login", "rate_limit_oauth_wechat"), controller.WeChatAuth)
-		apiRouter.POST("/oauth/wechat/bind", middleware.SetupRequired(), middleware.UserAuth(), anonymousRequestBodyLimit, middleware.UserCriticalRateLimit("CT:oauth-wechat-bind"), controller.WeChatBind)
+		apiRouter.POST("/oauth/wechat/bind", middleware.SetupRequired(), middleware.UserAuth(), anonymousRequestBodyLimit, middleware.UserCriticalRateLimit("CT:oauth-wechat-bind"), middleware.DisableCache(), controller.WeChatBind)
 		apiRouter.GET("/oauth/telegram/login", middleware.SetupRequired(), middleware.TelegramCriticalRateLimit("CT:oauth-telegram-login"), controller.TelegramLogin)
 		apiRouter.POST("/oauth/telegram/bind/start", middleware.SetupRequired(), middleware.UserAuth(), middleware.UserCriticalRateLimit("CT:oauth-telegram-bind-start"), middleware.DisableCache(), controller.TelegramBindStart)
 		apiRouter.GET("/oauth/telegram/bind/:flow_token", middleware.SetupRequired(), middleware.TelegramCriticalRateLimit("CT:oauth-telegram-bind"), middleware.DisableCache(), controller.TelegramBind)
 		// Standard OAuth providers (GitHub, Discord, OIDC, LinuxDO) - unified route
-		apiRouter.GET("/oauth/:provider", middleware.SetupRequired(), middleware.SessionFieldCriticalRateLimit("CT:oauth-callback", "oauth_state"), controller.HandleOAuth)
+		apiRouter.GET("/oauth/:provider", middleware.SetupRequired(), middleware.TryUserAuth(), middleware.SessionFieldCriticalRateLimit("CT:oauth-callback", "oauth_state"), middleware.DisableCache(), controller.HandleOAuth)
 		apiRouter.GET("/ratio_config", middleware.SessionNonceCriticalRateLimit("CT:ratio-config", "rate_limit_ratio_config"), controller.GetRatioConfig)
+		apiRouter.POST("/oauth/email/bind/start", middleware.UserAuth(), middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("account-security"), middleware.EmailVerificationRateLimit(), middleware.DisableCache(), controller.EmailBindStart)
+		apiRouter.POST("/oauth/email/bind/resend", middleware.UserAuth(), middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("account-security"), middleware.EmailVerificationRateLimit(), middleware.DisableCache(), controller.EmailBindResend)
+		// WeChat uses its existing authorization-code service.
+		// Standard OAuth providers (GitHub, Discord, OIDC, LinuxDO, Telegram) - unified route
 
 		apiRouter.POST("/stripe/webhook", anonymousRequestBodyLimit, controller.StripeWebhook)
 		apiRouter.POST("/creem/webhook", anonymousRequestBodyLimit, controller.CreemWebhook)
@@ -67,7 +72,8 @@ func SetApiRouter(router *gin.Engine) {
 		apiRouter.POST("/waffo-pancake/webhook/:env", anonymousRequestBodyLimit, controller.WaffoPancakeWebhook)
 
 		// Universal secure verification routes
-		apiRouter.POST("/verify", middleware.UserAuth(), middleware.UserCriticalRateLimit("CT:secure-verify"), controller.UniversalVerify)
+		apiRouter.POST("/verify", middleware.UserAuth(), middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("CT:secure-verify"), middleware.DisableCache(), controller.UniversalVerify)
+		apiRouter.GET("/verify/methods", middleware.UserAuth(), middleware.DisableCache(), controller.GetVerificationMethods)
 
 		userRoute := apiRouter.Group("/user")
 		{
@@ -80,6 +86,10 @@ func SetApiRouter(router *gin.Engine) {
 			userRoute.POST("/passkey/login/begin", middleware.SetupRequired(), anonymousRequestBodyLimit, middleware.SessionNonceCriticalRateLimit("CT:passkey-login-begin", "rate_limit_passkey_login_begin"), controller.PasskeyLoginBegin)
 			userRoute.POST("/passkey/login/finish", middleware.SetupRequired(), anonymousRequestBodyLimit, middleware.SessionFieldCriticalRateLimit("CT:passkey-login-finish", "passkey_login_session"), controller.PasskeyLoginFinish)
 			//userRoute.POST("/tokenlog", middleware.UserCriticalRateLimit("CT:token-log"), controller.TokenLog)
+			userRoute.POST("/login/verify", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.VerifyLogin)
+			userRoute.POST("/login/passkey/begin", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.LoginPasskeyBegin)
+			userRoute.POST("/login/passkey/finish", middleware.CriticalRateLimit(), middleware.DisableCache(), anonymousRequestBodyLimit, controller.LoginPasskeyFinish)
+			//userRoute.POST("/tokenlog", middleware.CriticalRateLimit(), controller.TokenLog)
 			userRoute.POST("/epay/notify", anonymousRequestBodyLimit, controller.EpayNotify)
 			userRoute.GET("/epay/notify", controller.EpayNotify)
 			userRoute.POST("/epay/return", anonymousRequestBodyLimit, controller.EpayReturn)
@@ -89,7 +99,7 @@ func SetApiRouter(router *gin.Engine) {
 			userRoute.GET("/groups", controller.GetUserGroups)
 
 			selfRoute := userRoute.Group("/")
-			selfRoute.Use(middleware.UserAuth())
+			selfRoute.Use(middleware.DisableCache(), middleware.UserAuth())
 			{
 				selfRoute.GET("/sessions", middleware.DisableCache(), controller.GetLoginSessions)
 				selfRoute.DELETE("/sessions/:sid", middleware.DisableCache(), controller.DeleteLoginSession)
@@ -98,13 +108,16 @@ func SetApiRouter(router *gin.Engine) {
 				selfRoute.GET("/self", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.GetSelf)
 				selfRoute.GET("/models", controller.GetUserModels)
 				selfRoute.PUT("/self", middleware.CriticalRateLimit(), middleware.DisableCache(), controller.UpdateSelf)
-				selfRoute.DELETE("/self", controller.DeleteSelf)
+				selfRoute.DELETE("/self", middleware.DisableCache(), controller.DeleteSelf)
 				selfRoute.GET("/token", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("UC:access-token"), middleware.DisableCache(), controller.GenerateAccessToken)
 				selfRoute.GET("/passkey", middleware.DisableCache(), controller.PasskeyStatus)
-				selfRoute.POST("/passkey/register/begin", middleware.DisableCache(), controller.PasskeyRegisterBegin)
-				selfRoute.POST("/passkey/register/finish", middleware.DisableCache(), controller.PasskeyRegisterFinish)
-				selfRoute.POST("/passkey/verify/begin", middleware.DisableCache(), controller.PasskeyVerifyBegin)
-				selfRoute.POST("/passkey/verify/finish", middleware.DisableCache(), controller.PasskeyVerifyFinish)
+				selfRoute.POST("/passkey/register/begin", middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.PasskeyRegisterBegin)
+				selfRoute.POST("/passkey/register/finish", middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.PasskeyRegisterFinish)
+				selfRoute.POST("/passkey/verify/begin", middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.PasskeyVerifyBegin)
+				selfRoute.POST("/passkey/verify/finish", middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.PasskeyVerifyFinish)
+				selfRoute.GET("/token/status", middleware.DisableCache(), controller.GetAccessTokenStatus)
+				selfRoute.POST("/token", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("access-token"), middleware.DisableCache(), controller.GenerateAccessToken)
+				selfRoute.DELETE("/token", middleware.CriticalRateLimit(), middleware.UserCriticalRateLimit("access-token"), middleware.DisableCache(), controller.RevokeAccessToken)
 				selfRoute.DELETE("/passkey", middleware.DisableCache(), controller.PasskeyDelete)
 				selfRoute.GET("/referral/profile", controller.GetReferralProfile)
 				selfRoute.GET("/referral/summary", controller.GetReferralSummary)
@@ -141,10 +154,10 @@ func SetApiRouter(router *gin.Engine) {
 
 				// 2FA routes
 				selfRoute.GET("/2fa/status", controller.Get2FAStatus)
-				selfRoute.POST("/2fa/setup", controller.Setup2FA)
-				selfRoute.POST("/2fa/enable", controller.Enable2FA)
-				selfRoute.POST("/2fa/disable", controller.Disable2FA)
-				selfRoute.POST("/2fa/backup_codes", controller.RegenerateBackupCodes)
+				selfRoute.POST("/2fa/setup", middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.Setup2FA)
+				selfRoute.POST("/2fa/enable", middleware.UserCriticalRateLimit("security-verification"), middleware.DisableCache(), controller.Enable2FA)
+				selfRoute.POST("/2fa/disable", middleware.DisableCache(), controller.Disable2FA)
+				selfRoute.POST("/2fa/backup_codes", middleware.DisableCache(), controller.RegenerateBackupCodes)
 
 				// Check-in routes
 				selfRoute.GET("/checkin", controller.GetCheckinStatus)
@@ -265,10 +278,15 @@ func SetApiRouter(router *gin.Engine) {
 		optionRoute.Use(middleware.RootAuth())
 		{
 			optionRoute.GET("/", controller.GetOptions)
+			optionRoute.GET("/request_policy", controller.GetRequestPolicy)
+			optionRoute.PATCH("/request_policy", controller.UpdateRequestPolicy)
 			optionRoute.PUT("/", controller.UpdateOption)
 			optionRoute.GET("/model_pricing", controller.GetModelPricingConfig)
 			optionRoute.PATCH("/model_pricing", controller.UpdateModelPricingConfig)
 			optionRoute.POST("/logo/upload", controller.UploadSystemLogo)
+			optionRoute.PUT("/passkey/domains", controller.UpdatePasskeyDomains)
+			optionRoute.POST("/model_pricing/convert", controller.PreviewModelPricingConversion)
+			optionRoute.POST("/model_pricing/preview", controller.PreviewModelPricing)
 			optionRoute.POST("/payment_compliance", controller.ConfirmPaymentCompliance)
 			optionRoute.GET("/channel_affinity_cache", controller.GetChannelAffinityCacheStats)
 			optionRoute.DELETE("/channel_affinity_cache", controller.ClearChannelAffinityCache)
@@ -335,8 +353,8 @@ func SetApiRouter(router *gin.Engine) {
 			telegramPushRoute.GET("/records", controller.ListTelegramPushRecords)
 			telegramPushRoute.POST("/records/:id/retry", controller.RetryTelegramPushRecord)
 		}
-		registerAuthzRoutes(apiRouter)
 		registerChannelRoutes(apiRouter)
+		registerAuthzRoutes(apiRouter)
 		tokenRoute := apiRouter.Group("/token")
 		tokenRoute.Use(middleware.UserAuth())
 		tokenRoute.Use(middleware.TokenOperationAudit())
@@ -378,6 +396,8 @@ func SetApiRouter(router *gin.Engine) {
 			redemptionRoute.DELETE("/invalid", controller.DeleteInvalidRedemption)
 			redemptionRoute.DELETE("/:id", controller.DeleteRedemption)
 		}
+		apiRouter.GET("/audit", middleware.DisableCache(), middleware.AdminAuth(), middleware.RequirePermission(authz.AuditRead), controller.GetAuditLogs)
+		apiRouter.GET("/audit/self", middleware.DisableCache(), middleware.UserAuth(), controller.GetAuditLogs)
 		logRoute := apiRouter.Group("/log")
 		logRoute.GET("/", middleware.AdminAuth(), controller.GetAllLogs)
 		logRoute.GET("/stat", middleware.AdminAuth(), controller.GetLogsStat)

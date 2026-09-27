@@ -25,6 +25,8 @@ export const TOKEN_VARIABLES = [
   'cc1h',
   'img',
   'img_o',
+  'img_cr',
+  'image_count',
   'ai',
   'ao',
 ] as const
@@ -128,6 +130,7 @@ export type BillingSimulationContext = {
   request?: { body?: unknown; headers?: Record<string, string> }
   usage?: Record<string, unknown>
   now?: Date
+  imageCount?: number
 }
 export type BillingEvaluationResult =
   | ExpressionFailure
@@ -137,6 +140,7 @@ export type BillingEvaluationResult =
       cost: number
       billingUnit: 'token' | 'request'
       fixedPrice?: number
+      imageCount?: number
       matchedTier: string
       requestRules: BillingRequestRule[]
     }

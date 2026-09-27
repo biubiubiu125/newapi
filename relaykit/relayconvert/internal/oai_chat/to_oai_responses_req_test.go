@@ -1,6 +1,7 @@
 package oaichat
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 
@@ -28,7 +29,7 @@ func TestChatCompletionsRequestToResponsesRequestInstructionsAndTools(t *testing
 		},
 	}
 
-	got, err := ChatCompletionsRequestToResponsesRequest(req)
+	got, err := ChatCompletionsRequestToResponsesRequest(context.Background(), req)
 	require.NoError(t, err)
 
 	assert.Equal(t, "gpt-test", got.Model)
@@ -42,7 +43,7 @@ func TestChatCompletionsRequestToResponsesRequestInstructionsAndTools(t *testing
 func TestChatCompletionsRequestToResponsesRequestPreservesPromptCacheKey(t *testing.T) {
 	t.Run("present", func(t *testing.T) {
 		key := "session-\"quoted\"\\path\n世界"
-		got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		got, err := ChatCompletionsRequestToResponsesRequest(context.Background(), &dto.GeneralOpenAIRequest{
 			Model:          "gpt-test",
 			Messages:       []dto.Message{{Role: "user", Content: "hello"}},
 			PromptCacheKey: key,
@@ -59,7 +60,7 @@ func TestChatCompletionsRequestToResponsesRequestPreservesPromptCacheKey(t *test
 	})
 
 	t.Run("absent", func(t *testing.T) {
-		got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+		got, err := ChatCompletionsRequestToResponsesRequest(context.Background(), &dto.GeneralOpenAIRequest{
 			Model:    "gpt-test",
 			Messages: []dto.Message{{Role: "user", Content: "hello"}},
 		})
@@ -70,7 +71,6 @@ func TestChatCompletionsRequestToResponsesRequestPreservesPromptCacheKey(t *test
 		assert.False(t, gjson.GetBytes(encoded, "prompt_cache_key").Exists())
 	})
 }
-
 func TestChatCompletionsRequestToResponsesRequestPreservesQwenThinkingBudget(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -92,7 +92,7 @@ func TestChatCompletionsRequestToResponsesRequestPreservesQwenThinkingBudget(t *
 				},
 			}
 
-			got, err := ChatCompletionsRequestToResponsesRequest(req)
+			got, err := ChatCompletionsRequestToResponsesRequest(context.Background(), req)
 			require.NoError(t, err)
 			assert.Equal(t, tt.budget, got.ThinkingBudget)
 
@@ -108,7 +108,7 @@ func TestChatCompletionsRequestToResponsesRequestPreservesQwenThinkingBudget(t *
 }
 
 func TestChatCompletionsRequestToResponsesRequestRejectsMultipleChoices(t *testing.T) {
-	_, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+	_, err := ChatCompletionsRequestToResponsesRequest(context.Background(), &dto.GeneralOpenAIRequest{
 		Model: "gpt-test",
 		N:     lo.ToPtr(2),
 	})
@@ -147,7 +147,7 @@ func TestChatCompletionsRequestToResponsesRequestPreservesPenalties(t *testing.T
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := ChatCompletionsRequestToResponsesRequest(&dto.GeneralOpenAIRequest{
+			got, err := ChatCompletionsRequestToResponsesRequest(context.Background(), &dto.GeneralOpenAIRequest{
 				Model:            "gpt-test",
 				Messages:         []dto.Message{{Role: "user", Content: "hello"}},
 				FrequencyPenalty: tt.frequency,
@@ -160,7 +160,6 @@ func TestChatCompletionsRequestToResponsesRequestPreservesPenalties(t *testing.T
 		})
 	}
 }
-
 func assistantMessageWithTool(content string, id string, name string, args string) dto.Message {
 	msg := dto.Message{Role: "assistant", Content: content}
 	msg.SetToolCalls([]dto.ToolCallRequest{

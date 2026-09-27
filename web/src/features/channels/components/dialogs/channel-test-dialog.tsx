@@ -32,6 +32,14 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { DataTableBulkActions as BulkActionsToolbar } from '@/components/data-table'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 import { DataTablePagination } from '@/components/data-table/pagination'
 import {
   sideDrawerContentClassName,
@@ -52,14 +60,6 @@ import {
 } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 import {
   Sheet,
   SheetContent,

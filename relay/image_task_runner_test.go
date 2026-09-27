@@ -8,16 +8,12 @@ import (
 	"image"
 	"image/color"
 	"image/png"
-	"io"
-	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
-	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -26,7 +22,6 @@ import (
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
-	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 
@@ -410,841 +405,6 @@ func TestTaskModel2DtoHidesSuccessfulDiagnosticReason(t *testing.T) {
 	require.Equal(t, "https://provider.example/video.mp4", resp.ResultURL)
 }
 
-func TestParseAsyncTaskBridgeTaskResultSupportsKeyedDataMap(t *testing.T) {
-	body := []byte(`{
-		"data": {
-			"upstream_123": {
-				"task_id": "upstream_123",
-				"status": "completed",
-				"progress": 1,
-				"result": {"data":[{"url":"https://example.com/a.png"}]}
-			}
-		}
-	}`)
-
-	result, err := parseAsyncTaskBridgeTaskResult(body, "upstream_123")
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, "upstream_123", result.TaskID)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), result.Status)
-	require.Equal(t, "100%", result.Progress)
-	require.JSONEq(t, `{"data":[{"url":"https://example.com/a.png"}]}`, string(result.Result))
-}
-
-func TestParseAsyncTaskBridgeTaskResultMatchesClientTaskID(t *testing.T) {
-	body := []byte(`{
-		"data": [
-			{
-				"task_id": "upstream_456",
-				"client_task_id": "task_local_456",
-				"status": "running",
-				"progress": "42%"
-			}
-		]
-	}`)
-
-	result, err := parseAsyncTaskBridgeTaskResult(body, "task_local_456")
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, "upstream_456", result.TaskID)
-	require.Equal(t, model.TaskStatus(model.TaskStatusInProgress), result.Status)
-	require.Equal(t, "42%", result.Progress)
-}
-
-func TestParseAsyncTaskBridgeTaskResultTreatsDataObjectWithStatusAsTaskItem(t *testing.T) {
-	body := []byte(`{
-		"data": {
-			"task_id": "upstream_data",
-			"status": "success",
-			"progress": "100%",
-			"data": [{"url":"https://example.com/data.png"}]
-		}
-	}`)
-
-	result, err := parseAsyncTaskBridgeTaskResult(body, "upstream_data")
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, "upstream_data", result.TaskID)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), result.Status)
-	require.JSONEq(t, `{"data":[{"url":"https://example.com/data.png"}]}`, string(result.Result))
-}
-
-func TestParseAsyncTaskBridgeBatchTaskResultRejectsAnonymousItemForMultipleTasks(t *testing.T) {
-	body := []byte(`{"items":[{"status":"failed","reason":"generation failed"}]}`)
-
-	result, err := parseAsyncTaskBridgeBatchTaskResult(body, "upstream_a", 2)
-
-	require.NoError(t, err)
-	require.Nil(t, result)
-
-	result, err = parseAsyncTaskBridgeBatchTaskResult(body, "upstream_a", 1)
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), result.Status)
-}
-
-func TestParseAsyncTaskBridgeTaskResultFromStorageRejectsSuccessWithoutResult(t *testing.T) {
-	storage, err := common.CreateBodyStorage([]byte(`{"items":[{"task_id":"upstream_empty","status":"success"}]}`))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = storage.Close() })
-
-	result, err := parseAsyncTaskBridgeTaskResultFromStorage(storage, "upstream_empty")
-
-	require.ErrorContains(t, err, "success result is missing")
-	require.Nil(t, result)
-}
-
-func TestRunAsyncTaskBridgeImageTaskBatchPollsStatusWithoutImageData(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Channel{}))
-
-	oldDB := model.DB
-	oldUsingSQLite := common.UsingSQLite
-	oldMemoryCacheEnabled := common.MemoryCacheEnabled
-	oldBatchSize := constant.ImageTaskBatchPollSize
-	model.DB = db
-	common.UsingSQLite = true
-	common.MemoryCacheEnabled = false
-	constant.ImageTaskBatchPollSize = 20
-	t.Cleanup(func() {
-		model.DB = oldDB
-		common.UsingSQLite = oldUsingSQLite
-		common.MemoryCacheEnabled = oldMemoryCacheEnabled
-		constant.ImageTaskBatchPollSize = oldBatchSize
-		_ = sqlDB.Close()
-	})
-
-	var mu sync.Mutex
-	requests := make([]url.Values, 0)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/api/image-tasks", r.URL.Path)
-		mu.Lock()
-		requests = append(requests, r.URL.Query())
-		mu.Unlock()
-		require.Equal(t, "false", r.URL.Query().Get("include_image_data"))
-		require.ElementsMatch(t, []string{"upstream_a", "upstream_b"}, strings.Split(r.URL.Query().Get("ids"), ","))
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"items": [
-				{"task_id": "upstream_a", "status": "running", "progress": "25%"},
-				{"task_id": "upstream_b", "status": "queued", "progress": "0%"}
-			]
-		}`))
-	}))
-	defer upstream.Close()
-
-	baseURL := upstream.URL
-	require.NoError(t, db.Create(&model.Channel{
-		Id:      1,
-		Type:    constant.ChannelTypeOpenAI,
-		Key:     "upstream-key",
-		Status:  common.ChannelStatusEnabled,
-		Name:    "async-task-bridge",
-		Group:   "default",
-		Models:  "gpt-image-1",
-		BaseURL: &baseURL,
-	}).Error)
-	now := time.Now().Unix()
-	tasks := []*model.Task{
-		{
-			TaskID:     "task_batch_status_a",
-			Platform:   constant.TaskPlatformImage,
-			UserId:     1,
-			Group:      "default",
-			ChannelId:  1,
-			Action:     constant.TaskActionImageGeneration,
-			Status:     model.TaskStatusSubmitted,
-			Progress:   "0%",
-			SubmitTime: now,
-			StartTime:  now,
-			Properties: model.Properties{OriginModelName: "gpt-image-1"},
-			PrivateData: model.TaskPrivateData{
-				ImageTaskMode:  dto.ImageTaskModeAsyncTaskBridge,
-				UpstreamTaskID: "upstream_a",
-				Key:            "upstream-key",
-			},
-		},
-		{
-			TaskID:     "task_batch_status_b",
-			Platform:   constant.TaskPlatformImage,
-			UserId:     1,
-			Group:      "default",
-			ChannelId:  1,
-			Action:     constant.TaskActionImageGeneration,
-			Status:     model.TaskStatusSubmitted,
-			Progress:   "0%",
-			SubmitTime: now,
-			StartTime:  now,
-			Properties: model.Properties{OriginModelName: "gpt-image-1"},
-			PrivateData: model.TaskPrivateData{
-				ImageTaskMode:  dto.ImageTaskModeAsyncTaskBridge,
-				UpstreamTaskID: "upstream_b",
-				Key:            "upstream-key",
-			},
-		},
-	}
-	require.NoError(t, db.Create(tasks[0]).Error)
-	require.NoError(t, db.Create(tasks[1]).Error)
-
-	err = RunImageTasks(context.Background(), tasks)
-
-	require.NoError(t, err)
-	mu.Lock()
-	require.Len(t, requests, 1)
-	mu.Unlock()
-	var reloadedA model.Task
-	var reloadedB model.Task
-	require.NoError(t, db.Where("task_id = ?", "task_batch_status_a").First(&reloadedA).Error)
-	require.NoError(t, db.Where("task_id = ?", "task_batch_status_b").First(&reloadedB).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusInProgress), reloadedA.Status)
-	require.Equal(t, "25%", reloadedA.Progress)
-	require.Equal(t, model.TaskStatus(model.TaskStatusQueued), reloadedB.Status)
-	require.Equal(t, "0%", reloadedB.Progress)
-}
-
-func TestRunAsyncTaskBridgeImageTaskBatchHTTPFailureKeepsQuotaForReview(t *testing.T) {
-	withTempImageTaskCache(t)
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(
-		&model.Task{},
-		&model.TaskSettlementRecord{},
-		&model.User{},
-		&model.Token{},
-		&model.Channel{},
-		&model.Log{},
-		&model.QuotaData{},
-		&model.TokenUsageDaily{},
-	))
-
-	oldDB := model.DB
-	oldLogDB := model.LOG_DB
-	oldUsingSQLite := common.UsingSQLite
-	oldRedisEnabled := common.RedisEnabled
-	oldMemoryCacheEnabled := common.MemoryCacheEnabled
-	model.DB = db
-	model.LOG_DB = db
-	common.UsingSQLite = true
-	common.RedisEnabled = false
-	common.MemoryCacheEnabled = false
-	t.Cleanup(func() {
-		model.DB = oldDB
-		model.LOG_DB = oldLogDB
-		common.UsingSQLite = oldUsingSQLite
-		common.RedisEnabled = oldRedisEnabled
-		common.MemoryCacheEnabled = oldMemoryCacheEnabled
-		_ = sqlDB.Close()
-	})
-
-	var returnBusinessFailure atomic.Bool
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		if returnBusinessFailure.Load() {
-			ids := strings.Split(r.URL.Query().Get("ids"), ",")
-			items := make([]map[string]any, 0, len(ids))
-			for _, id := range ids {
-				items = append(items, map[string]any{
-					"task_id": id,
-					"status":  "failed",
-					"error":   map[string]any{"message": "generation failed"},
-				})
-			}
-			_ = json.NewEncoder(w).Encode(map[string]any{"items": items})
-			return
-		}
-		w.WriteHeader(http.StatusForbidden)
-		_, _ = w.Write([]byte(`{"error":{"message":"poll forbidden"}}`))
-	}))
-	defer upstream.Close()
-
-	require.NoError(t, db.Create(&model.User{
-		Id:       1,
-		Username: "batch-review-user",
-		Password: "password123",
-		Status:   common.UserStatusEnabled,
-		Group:    "default",
-		Quota:    0,
-	}).Error)
-	require.NoError(t, db.Create(&model.Token{
-		Id:          1,
-		UserId:      1,
-		Key:         "batch-review-token",
-		Name:        "batch-review-token",
-		Status:      common.TokenStatusEnabled,
-		RemainQuota: 0,
-		UsedQuota:   3600,
-	}).Error)
-	baseURL := upstream.URL
-	require.NoError(t, db.Create(&model.Channel{
-		Id:      1,
-		Type:    constant.ChannelTypeOpenAI,
-		Key:     "upstream-key",
-		Status:  common.ChannelStatusEnabled,
-		Name:    "async-task-bridge",
-		Group:   "default",
-		Models:  "gpt-image-1",
-		BaseURL: &baseURL,
-	}).Error)
-
-	now := time.Now().Unix()
-	tasks := make([]*model.Task, 0, 2)
-	for index, ids := range [][2]string{{"task_batch_review_a", "upstream_review_a"}, {"task_batch_review_b", "upstream_review_b"}} {
-		task := &model.Task{
-			TaskID:                 ids[0],
-			Platform:               constant.TaskPlatformImage,
-			UserId:                 1,
-			Group:                  "default",
-			ChannelId:              1,
-			Action:                 constant.TaskActionImageGeneration,
-			Status:                 model.TaskStatusSubmitted,
-			Progress:               "0%",
-			SubmitTime:             now - int64(index+1),
-			StartTime:              now - int64(index+1),
-			Quota:                  900,
-			PublicImageTask:        true,
-			PublicImageTaskTokenID: 1,
-			Properties:             model.Properties{OriginModelName: "gpt-image-1"},
-			PrivateData: model.TaskPrivateData{
-				PublicImageTask: true,
-				ImageTaskMode:   dto.ImageTaskModeAsyncTaskBridge,
-				UpstreamTaskID:  ids[1],
-				Key:             "upstream-key",
-				BillingSource:   service.BillingSourceWallet,
-				TokenId:         1,
-			},
-		}
-		require.NoError(t, db.Create(task).Error)
-		tasks = append(tasks, task)
-	}
-
-	err = runAsyncTaskBridgeImageTaskBatch(context.Background(), tasks)
-
-	require.NoError(t, err)
-	for _, task := range tasks {
-		var reloaded model.Task
-		require.NoError(t, db.First(&reloaded, task.ID).Error)
-		require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
-		require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
-		require.Equal(t, 900, reloaded.Quota)
-		require.False(t, reloaded.RefundPending)
-		require.NotEmpty(t, reloaded.PrivateData.UpstreamTaskID)
-	}
-	var user model.User
-	require.NoError(t, db.First(&user, 1).Error)
-	require.Zero(t, user.Quota, "poll failure must not refund wallet quota")
-	var token model.Token
-	require.NoError(t, db.First(&token, 1).Error)
-	require.Zero(t, token.RemainQuota, "poll failure must not refund token quota")
-
-	returnBusinessFailure.Store(true)
-	newFailureTask := func(taskID string, upstreamID string) (*model.Task, string) {
-		body := []byte(`{"model":"gpt-image-1","stream":false}`)
-		bodyPath, writeErr := common.WriteImageTaskBodyCacheFile(body)
-		require.NoError(t, writeErr)
-		t.Cleanup(func() { _ = common.RemoveDiskCacheFile(bodyPath) })
-		task := &model.Task{
-			TaskID:     taskID,
-			Platform:   constant.TaskPlatformImage,
-			UserId:     1,
-			Group:      "default",
-			ChannelId:  1,
-			Action:     constant.TaskActionImageGeneration,
-			Status:     model.TaskStatusSubmitted,
-			Progress:   "0%",
-			SubmitTime: now,
-			StartTime:  now,
-			Quota:      900,
-			Properties: model.Properties{OriginModelName: "gpt-image-1"},
-			PrivateData: model.TaskPrivateData{
-				ImageTaskMode:            dto.ImageTaskModeAsyncTaskBridge,
-				RequestBodyPath:          bodyPath,
-				RequestBodySize:          int64(len(body)),
-				UpstreamTaskID:           upstreamID,
-				Key:                      "upstream-key",
-				BillingSource:            service.BillingSourceWallet,
-				TokenId:                  1,
-				PreConsumedUsageCaptured: true,
-				PreConsumedUsageRecorded: false,
-			},
-		}
-		require.NoError(t, db.Create(task).Error)
-		return task, bodyPath
-	}
-
-	batchFailureTask, batchFailureBodyPath := newFailureTask("task_batch_business_failure", "upstream_batch_business_failure")
-	require.NoError(t, runAsyncTaskBridgeImageTaskBatch(context.Background(), []*model.Task{batchFailureTask}))
-	singleFailureTask, singleFailureBodyPath := newFailureTask("task_single_business_failure", "upstream_single_business_failure")
-	require.NoError(t, pollAsyncTaskBridgeImageTask(context.Background(), singleFailureTask))
-
-	for _, expected := range []struct {
-		task     *model.Task
-		bodyPath string
-	}{{batchFailureTask, batchFailureBodyPath}, {singleFailureTask, singleFailureBodyPath}} {
-		var reloaded model.Task
-		require.NoError(t, db.First(&reloaded, expected.task.ID).Error)
-		require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
-		require.Empty(t, reloaded.SettlementStatus)
-		require.Zero(t, reloaded.Quota)
-		require.False(t, reloaded.RefundPending)
-		require.Contains(t, reloaded.FailReason, "generation failed")
-		require.Empty(t, reloaded.PrivateData.RequestBodyPath)
-		require.NoFileExists(t, expected.bodyPath)
-	}
-	require.NoError(t, db.First(&user, 1).Error)
-	require.EqualValues(t, 1800, user.Quota, "explicit upstream business failures must refund wallet quota")
-	require.NoError(t, db.First(&token, 1).Error)
-	require.EqualValues(t, 1800, token.RemainQuota)
-	require.EqualValues(t, 1800, token.UsedQuota)
-}
-
-func TestRunAsyncTaskBridgeImageTaskBatchSuccessFetchesFullResultAndSettles(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(
-		&model.Task{},
-		&model.TaskSettlementRecord{},
-		&model.User{},
-		&model.Token{},
-		&model.Channel{},
-		&model.Log{},
-		&model.Option{},
-		&model.TokenUsageDaily{},
-	))
-
-	oldDB := model.DB
-	oldLogDB := model.LOG_DB
-	oldUsingSQLite := common.UsingSQLite
-	oldRedisEnabled := common.RedisEnabled
-	oldMemoryCacheEnabled := common.MemoryCacheEnabled
-	oldBatchUpdateEnabled := common.BatchUpdateEnabled
-	oldLogConsumeEnabled := common.LogConsumeEnabled
-	oldDataExportEnabled := common.DataExportEnabled
-	oldQuotaRemindThreshold := common.QuotaRemindThreshold
-	oldBatchSize := constant.ImageTaskBatchPollSize
-	oldImageTaskFileCacheShared := constant.ImageTaskFileCacheShared
-	oldImageTaskFileCacheSharedTrusted := constant.ImageTaskFileCacheSharedTrusted
-	oldImageTaskSharedCacheDisabled := common.ImageTaskSharedCacheDisabled()
-	oldDiskCacheConfig := common.GetDiskCacheConfig()
-	diskCacheConfig := oldDiskCacheConfig
-	diskCacheConfig.Path = t.TempDir()
-	model.DB = db
-	model.LOG_DB = db
-	common.UsingSQLite = true
-	common.RedisEnabled = false
-	common.MemoryCacheEnabled = false
-	common.BatchUpdateEnabled = false
-	common.LogConsumeEnabled = true
-	common.DataExportEnabled = false
-	common.QuotaRemindThreshold = 0
-	constant.ImageTaskBatchPollSize = 20
-	constant.ImageTaskFileCacheShared = true
-	constant.ImageTaskFileCacheSharedTrusted = true
-	common.SetImageTaskSharedCacheDisabled(false)
-	common.ResetDiskCacheUsage()
-	common.ResetDiskCacheStats()
-	common.SetDiskCacheConfig(diskCacheConfig)
-	t.Cleanup(func() {
-		model.DB = oldDB
-		model.LOG_DB = oldLogDB
-		common.UsingSQLite = oldUsingSQLite
-		common.RedisEnabled = oldRedisEnabled
-		common.MemoryCacheEnabled = oldMemoryCacheEnabled
-		common.BatchUpdateEnabled = oldBatchUpdateEnabled
-		common.LogConsumeEnabled = oldLogConsumeEnabled
-		common.DataExportEnabled = oldDataExportEnabled
-		common.QuotaRemindThreshold = oldQuotaRemindThreshold
-		constant.ImageTaskBatchPollSize = oldBatchSize
-		constant.ImageTaskFileCacheShared = oldImageTaskFileCacheShared
-		constant.ImageTaskFileCacheSharedTrusted = oldImageTaskFileCacheSharedTrusted
-		common.SetImageTaskSharedCacheDisabled(oldImageTaskSharedCacheDisabled)
-		common.ResetDiskCacheUsage()
-		common.ResetDiskCacheStats()
-		common.SetDiskCacheConfig(oldDiskCacheConfig)
-		_ = sqlDB.Close()
-	})
-
-	type pollRequest struct {
-		includeImageData string
-		ids              []string
-	}
-	var mu sync.Mutex
-	requests := make([]pollRequest, 0, 2)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/api/image-tasks", r.URL.Path)
-		ids := strings.Split(r.URL.Query().Get("ids"), ",")
-		includeImageData := r.URL.Query().Get("include_image_data")
-		mu.Lock()
-		requests = append(requests, pollRequest{
-			includeImageData: includeImageData,
-			ids:              append([]string(nil), ids...),
-		})
-		mu.Unlock()
-
-		w.Header().Set("Content-Type", "application/json")
-		switch includeImageData {
-		case "false":
-			require.ElementsMatch(t, []string{"upstream_success", "upstream_running"}, ids)
-			_, _ = w.Write([]byte(`{
-				"items": [
-					{"task_id": "upstream_success", "status": "completed", "progress": "100%"},
-					{"task_id": "upstream_running", "status": "running", "progress": "42%"}
-				]
-			}`))
-		case "true":
-			require.Equal(t, []string{"upstream_success"}, ids)
-			_, _ = w.Write([]byte(`{
-				"items": [{
-					"task_id": "upstream_success",
-					"status": "completed",
-					"progress": "100%",
-					"result": {
-						"data": [{"b64_json": "batch-success-b64"}],
-						"usage": {
-							"prompt_tokens": 100,
-							"completion_tokens": 0,
-							"total_tokens": 100
-						}
-					}
-				}]
-			}`))
-		default:
-			http.Error(w, "missing include_image_data", http.StatusBadRequest)
-		}
-	}))
-	defer upstream.Close()
-
-	require.NoError(t, db.Create(&model.User{
-		Id:       1,
-		Username: "image-user",
-		Password: "password123",
-		Status:   common.UserStatusEnabled,
-		Group:    "default",
-		Quota:    100000,
-		Email:    "image@example.com",
-	}).Error)
-	require.NoError(t, db.Create(&model.Token{
-		Id:             1,
-		UserId:         1,
-		Key:            "token-key",
-		Status:         common.TokenStatusEnabled,
-		Name:           "image-token",
-		ExpiredTime:    -1,
-		RemainQuota:    100000,
-		UnlimitedQuota: false,
-		Group:          "default",
-	}).Error)
-	baseURL := upstream.URL
-	require.NoError(t, db.Create(&model.Channel{
-		Id:      1,
-		Type:    constant.ChannelTypeOpenAI,
-		Key:     "upstream-key",
-		Status:  common.ChannelStatusEnabled,
-		Name:    "async-task-bridge",
-		Group:   "default",
-		Models:  "gpt-image-1",
-		BaseURL: &baseURL,
-	}).Error)
-
-	body := []byte(`{"model":"gpt-image-1","quality":"high","stream":false}`)
-	bodyPath, err := common.WriteImageTaskBodyCacheFile(body)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = os.Remove(bodyPath)
-	})
-	expr := `param("quality") == "high" ? tier("high", p * 4) : tier("normal", p)`
-	now := time.Now().Add(-time.Minute).Unix()
-	successTask := &model.Task{
-		TaskID:     "task_batch_success",
-		Platform:   constant.TaskPlatformImage,
-		UserId:     1,
-		Group:      "default",
-		ChannelId:  1,
-		Quota:      50,
-		Action:     constant.TaskActionImageGeneration,
-		Status:     model.TaskStatusSubmitted,
-		Progress:   "0%",
-		SubmitTime: now,
-		StartTime:  now,
-		Properties: model.Properties{
-			OriginModelName: "gpt-image-1",
-		},
-		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
-			RequestPath:        "/v1/images/generations",
-			RequestMethod:      http.MethodPost,
-			RequestContentType: "application/json",
-			RequestBodyPath:    bodyPath,
-			RequestBodySize:    int64(len(body)),
-			UpstreamTaskID:     "upstream_success",
-			Key:                "upstream-key",
-			BillingSource:      service.BillingSourceWallet,
-			TokenId:            1,
-			BillingContext: &model.TaskBillingContext{
-				ModelRatio:      1,
-				CompletionRatio: 1,
-				GroupRatio:      1,
-				OriginModelName: "gpt-image-1",
-			},
-			TieredBillingSnapshot: &billingexpr.BillingSnapshot{
-				BillingMode:               "tiered_expr",
-				ExprString:                expr,
-				ExprHash:                  billingexpr.ExprHashString(expr),
-				GroupRatio:                1,
-				EstimatedPromptTokens:     100,
-				EstimatedCompletionTokens: 0,
-				EstimatedQuotaAfterGroup:  50,
-				EstimatedTier:             "normal",
-				QuotaPerUnit:              common.QuotaPerUnit,
-				ExprVersion:               billingexpr.ExprVersion(expr),
-			},
-		},
-	}
-	runningTask := &model.Task{
-		TaskID:     "task_batch_running",
-		Platform:   constant.TaskPlatformImage,
-		UserId:     1,
-		Group:      "default",
-		ChannelId:  1,
-		Action:     constant.TaskActionImageGeneration,
-		Status:     model.TaskStatusSubmitted,
-		Progress:   "0%",
-		SubmitTime: now,
-		StartTime:  now,
-		Properties: model.Properties{
-			OriginModelName: "gpt-image-1",
-		},
-		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:  dto.ImageTaskModeAsyncTaskBridge,
-			UpstreamTaskID: "upstream_running",
-			Key:            "upstream-key",
-		},
-	}
-	require.NoError(t, db.Create(successTask).Error)
-	require.NoError(t, db.Create(runningTask).Error)
-
-	require.NoError(t, RunImageTasks(context.Background(), []*model.Task{successTask, runningTask}))
-
-	mu.Lock()
-	requestSnapshot := append([]pollRequest(nil), requests...)
-	mu.Unlock()
-	require.Len(t, requestSnapshot, 2)
-	require.Equal(t, "false", requestSnapshot[0].includeImageData)
-	require.ElementsMatch(t, []string{"upstream_success", "upstream_running"}, requestSnapshot[0].ids)
-	require.Equal(t, "true", requestSnapshot[1].includeImageData)
-	require.Equal(t, []string{"upstream_success"}, requestSnapshot[1].ids)
-
-	var updatedSuccess model.Task
-	require.NoError(t, db.First(&updatedSuccess, successTask.ID).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), updatedSuccess.Status)
-	require.Equal(t, model.TaskSettlementStatusSettled, updatedSuccess.SettlementStatus)
-	require.Equal(t, 200, updatedSuccess.Quota)
-	require.Empty(t, updatedSuccess.PrivateData.RequestBodyPath)
-	require.NoFileExists(t, bodyPath)
-	require.Contains(t, string(updatedSuccess.Data), imageTaskStoredResultMarker)
-	require.NotContains(t, string(updatedSuccess.Data), "batch-success-b64")
-	require.NotEmpty(t, updatedSuccess.PrivateData.ResultBodyPath)
-	require.FileExists(t, updatedSuccess.PrivateData.ResultBodyPath)
-	t.Cleanup(func() {
-		_ = os.Remove(updatedSuccess.PrivateData.ResultBodyPath)
-	})
-	storedResult, err := os.ReadFile(updatedSuccess.PrivateData.ResultBodyPath)
-	require.NoError(t, err)
-	require.Contains(t, string(storedResult), "batch-success-b64")
-
-	var updatedRunning model.Task
-	require.NoError(t, db.First(&updatedRunning, runningTask.ID).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusInProgress), updatedRunning.Status)
-	require.Equal(t, "42%", updatedRunning.Progress)
-	require.Empty(t, updatedRunning.SettlementStatus)
-
-	var log model.Log
-	require.NoError(t, db.Where("type = ?", model.LogTypeConsume).First(&log).Error)
-	require.Equal(t, 200, log.Quota)
-
-	settlementRecord, exists, err := model.GetTaskSettlementRecord(successTask.ID)
-	require.NoError(t, err)
-	require.True(t, exists)
-	require.Equal(t, model.TaskSettlementRecordStatusApplied, settlementRecord.Status)
-	require.Equal(t, "image_consumption", settlementRecord.Operation)
-	require.NotNil(t, settlementRecord.AppliedQuota)
-	require.NotNil(t, settlementRecord.PreConsumedQuota)
-	require.NotNil(t, settlementRecord.QuotaDelta)
-	require.NotNil(t, settlementRecord.LogType)
-	require.Equal(t, 200, *settlementRecord.AppliedQuota)
-	require.Equal(t, 50, *settlementRecord.PreConsumedQuota)
-	require.Equal(t, 150, *settlementRecord.QuotaDelta)
-	require.Equal(t, model.LogTypeConsume, *settlementRecord.LogType)
-	require.NotZero(t, settlementRecord.LogDeliveredAt)
-	require.NotEmpty(t, settlementRecord.LogPayload)
-}
-
-func TestParseAsyncTaskBridgeTaskResultSupportsRealItemsShape(t *testing.T) {
-	body := []byte(`{
-		"items": [{
-			"id": "task_local_123",
-			"task_id": "task_local_123",
-			"status": "success",
-			"data": [{"b64_json":"abc"}],
-			"usage": {
-				"prompt_tokens": 3,
-				"completion_tokens": 4,
-				"total_tokens": 7
-			}
-		}],
-		"missing_ids": []
-	}`)
-
-	result, err := parseAsyncTaskBridgeTaskResult(body, "task_local_123")
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), result.Status)
-	require.JSONEq(t, `{
-		"data": [{"b64_json":"abc"}],
-		"usage": {
-			"prompt_tokens": 3,
-			"completion_tokens": 4,
-			"total_tokens": 7
-		}
-	}`, string(result.Result))
-}
-
-func TestParseAsyncTaskBridgeTaskResultMergesSiblingUsageIntoResult(t *testing.T) {
-	body := []byte(`{
-		"items": [{
-			"id": "task_result_usage",
-			"status": "success",
-			"result": {"data": [{"b64_json":"abc"}]},
-			"usage": {
-				"input_tokens": 5,
-				"output_tokens": 6,
-				"total_tokens": 11
-			}
-		}]
-	}`)
-
-	result, err := parseAsyncTaskBridgeTaskResult(body, "task_result_usage")
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), result.Status)
-	require.JSONEq(t, `{
-		"data": [{"b64_json":"abc"}],
-		"usage": {
-			"input_tokens": 5,
-			"output_tokens": 6,
-			"total_tokens": 11
-		}
-	}`, string(result.Result))
-	usage, ok := imageTaskUsageFromResult(result.Result)
-	require.True(t, ok)
-	require.Equal(t, 5, usage.PromptTokens)
-	require.Equal(t, 6, usage.CompletionTokens)
-	require.Equal(t, 11, usage.TotalTokens)
-}
-
-func TestParseAsyncTaskBridgeTaskResultPrefersItemsOverTopLevelData(t *testing.T) {
-	body := []byte(`{
-		"items": [{
-			"id": "task_local_123",
-			"status": "success",
-			"data": [{"b64_json":"abc"}]
-		}],
-		"data": [{"url":"https://example.com/not-a-task.png"}]
-	}`)
-
-	result, err := parseAsyncTaskBridgeTaskResult(body, "task_local_123")
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), result.Status)
-	require.JSONEq(t, `{"data":[{"b64_json":"abc"}]}`, string(result.Result))
-}
-
-func TestParseAsyncTaskBridgeTaskResultDoesNotUseTopLevelStatusEnvelope(t *testing.T) {
-	body := []byte(`{
-		"status": "success",
-		"items": [{
-			"id": "task_local_123",
-			"status": "success",
-			"data": [{"b64_json":"abc"}]
-		}]
-	}`)
-
-	result, err := parseAsyncTaskBridgeTaskResult(body, "task_local_123")
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, "task_local_123", result.TaskID)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), result.Status)
-	require.JSONEq(t, `{"data":[{"b64_json":"abc"}]}`, string(result.Result))
-}
-
-func TestParseAsyncTaskBridgeTaskResultIgnoresUnmatchedTopLevelStatusEnvelope(t *testing.T) {
-	body := []byte(`{
-		"status": "success",
-		"items": [{
-			"id": "other_task",
-			"status": "success",
-			"data": [{"b64_json":"abc"}]
-		}]
-	}`)
-
-	result, err := parseAsyncTaskBridgeTaskResult(body, "task_missing")
-
-	require.NoError(t, err)
-	require.Nil(t, result)
-}
-
-func TestParseAsyncTaskBridgeTaskResultIgnoresMissingIDs(t *testing.T) {
-	body := []byte(`{"items":[],"missing_ids":["task_missing"]}`)
-
-	result, err := parseAsyncTaskBridgeTaskResult(body, "task_missing")
-
-	require.NoError(t, err)
-	require.Nil(t, result)
-}
-
-func TestAsyncTaskBridgeRecoveredUpstreamIDAllowsLocalTaskID(t *testing.T) {
-	body := []byte(`{
-		"data": [
-			{
-				"task_id": "task_local_same",
-				"client_task_id": "task_local_same",
-				"status": "running",
-				"progress": "10%"
-			}
-		]
-	}`)
-
-	result, err := parseAsyncTaskBridgeTaskResult(body, "task_local_same")
-
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, "task_local_same", asyncTaskBridgeRecoveredUpstreamID(result, body))
-}
-
-func TestBuildAsyncTaskBridgeRecoverQueryIncludesLocalTaskID(t *testing.T) {
-	values, err := url.ParseQuery(buildAsyncTaskBridgeRecoverQuery(&model.Task{TaskID: " task_local_123 "}))
-
-	require.NoError(t, err)
-	require.Equal(t, "task_local_123", values.Get("ids"))
-	require.Equal(t, "task_local_123", values.Get("client_task_id"))
-	require.Equal(t, "false", values.Get("include_image_data"))
-}
-
 func TestImageTaskShouldRetryStaleSyncExecutionBeforeTaskTimeout(t *testing.T) {
 	withImageTaskAsyncTimeoutMinutes(t, 30)
 	task := &model.Task{
@@ -1324,53 +484,6 @@ func TestImageTaskShouldRecoverPendingAsyncSubmission(t *testing.T) {
 	require.False(t, imageTaskShouldRecoverPendingAsyncSubmission(withUpstreamID))
 }
 
-func TestAsyncTaskBridgeCanSubmitPendingRetry(t *testing.T) {
-	task := &model.Task{
-		Status:    model.TaskStatusInProgress,
-		StartTime: time.Now().Unix(),
-	}
-	require.True(t, asyncTaskBridgeCanSubmit(task))
-
-	task.PrivateData.UpstreamTaskID = "upstream_123"
-	require.False(t, asyncTaskBridgeCanSubmit(task))
-}
-
-func TestImageTaskShouldFailMissingUpstreamPollResultAfterTimeout(t *testing.T) {
-	withImageTaskAsyncTimeoutMinutes(t, 30)
-	staleSubmitted := &model.Task{
-		Status:    model.TaskStatusSubmitted,
-		StartTime: time.Now().Add(-imageTaskAsyncTimeout() - time.Second).Unix(),
-	}
-	require.True(t, imageTaskShouldFailMissingUpstreamPollResult(staleSubmitted))
-
-	recentSubmitted := &model.Task{
-		Status:    model.TaskStatusSubmitted,
-		StartTime: time.Now().Add(-imageTaskAsyncTimeout() + time.Second).Unix(),
-	}
-	require.False(t, imageTaskShouldFailMissingUpstreamPollResult(recentSubmitted))
-
-	staleQueued := &model.Task{
-		Status:    model.TaskStatusQueued,
-		StartTime: time.Now().Add(-imageTaskAsyncTimeout() - time.Second).Unix(),
-	}
-	require.True(t, imageTaskShouldFailMissingUpstreamPollResult(staleQueued))
-}
-
-func TestImageTaskShouldFailInvalidUpstreamPollResultAfterTimeout(t *testing.T) {
-	withImageTaskAsyncTimeoutMinutes(t, 30)
-	staleSubmitted := &model.Task{
-		Status:    model.TaskStatusSubmitted,
-		StartTime: time.Now().Add(-imageTaskAsyncTimeout() - time.Second).Unix(),
-	}
-	require.True(t, imageTaskShouldFailInvalidUpstreamPollResult(staleSubmitted))
-
-	recentSubmitted := &model.Task{
-		Status:    model.TaskStatusSubmitted,
-		StartTime: time.Now().Add(-imageTaskAsyncTimeout() + time.Second).Unix(),
-	}
-	require.False(t, imageTaskShouldFailInvalidUpstreamPollResult(recentSubmitted))
-}
-
 func TestImageTaskShouldFailLongRunningUpstreamStatusAfterTimeout(t *testing.T) {
 	withImageTaskAsyncTimeoutMinutes(t, 30)
 	for _, status := range []model.TaskStatus{
@@ -1398,76 +511,6 @@ func TestImageTaskShouldFailLongRunningUpstreamStatusAfterTimeout(t *testing.T) 
 	require.False(t, imageTaskShouldFailLongRunningUpstreamStatus(doneTask))
 }
 
-func TestApplyAsyncTaskBridgeStatusOnlyMarksTimedOutSubmittedTaskForReview(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.Task{}))
-
-	oldDB := model.DB
-	model.DB = db
-	t.Cleanup(func() {
-		model.DB = oldDB
-		_ = sqlDB.Close()
-	})
-	withImageTaskAsyncTimeoutMinutes(t, 1)
-
-	task := &model.Task{
-		TaskID:     "task_async_timeout_review",
-		Platform:   constant.TaskPlatformImage,
-		Status:     model.TaskStatusSubmitted,
-		StartTime:  time.Now().Add(-2 * time.Minute).Unix(),
-		SubmitTime: time.Now().Add(-2 * time.Minute).Unix(),
-		Quota:      0,
-		PrivateData: model.TaskPrivateData{
-			UpstreamTaskID: "upstream_still_running",
-		},
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	require.NoError(t, applyAsyncTaskBridgeStatusOnly(context.Background(), task, &asyncTaskBridgeTaskResult{
-		Status:   model.TaskStatusInProgress,
-		Progress: "50%",
-	}, "upstream-key"))
-
-	var reloaded model.Task
-	require.NoError(t, db.First(&reloaded, task.ID).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
-	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
-	require.Zero(t, reloaded.Quota)
-	require.Equal(t, "upstream_still_running", reloaded.PrivateData.UpstreamTaskID)
-	require.False(t, reloaded.RefundPending)
-}
-
-func TestImageTaskShouldFailTransientUpstreamErrorAfterTimeout(t *testing.T) {
-	withImageTaskAsyncTimeoutMinutes(t, 30)
-	for _, status := range []model.TaskStatus{
-		model.TaskStatusQueued,
-		model.TaskStatusSubmitted,
-		model.TaskStatusInProgress,
-	} {
-		task := &model.Task{
-			Status:    status,
-			StartTime: time.Now().Add(-imageTaskAsyncTimeout() - time.Second).Unix(),
-		}
-		require.True(t, imageTaskShouldFailTransientUpstreamError(task))
-	}
-
-	recentTask := &model.Task{
-		Status:    model.TaskStatusSubmitted,
-		StartTime: time.Now().Add(-imageTaskAsyncTimeout() + time.Second).Unix(),
-	}
-	require.False(t, imageTaskShouldFailTransientUpstreamError(recentTask))
-
-	doneTask := &model.Task{
-		Status:    model.TaskStatusSuccess,
-		StartTime: time.Now().Add(-imageTaskAsyncTimeout() - time.Second).Unix(),
-	}
-	require.False(t, imageTaskShouldFailTransientUpstreamError(doneTask))
-}
-
 func TestImageTaskAsyncStatusDoesNotUseSyncWrapperTimeout(t *testing.T) {
 	withImageTaskAsyncTimeoutMinutes(t, 30)
 	task := &model.Task{
@@ -1476,30 +519,6 @@ func TestImageTaskAsyncStatusDoesNotUseSyncWrapperTimeout(t *testing.T) {
 	}
 
 	require.False(t, imageTaskShouldFailLongRunningUpstreamStatus(task))
-}
-
-func TestAsyncTaskBridgeSubmissionShouldRecover(t *testing.T) {
-	require.True(t, asyncTaskBridgeSubmissionShouldRecover(408))
-	require.True(t, asyncTaskBridgeSubmissionShouldRecover(429))
-	require.True(t, asyncTaskBridgeSubmissionShouldRecover(500))
-	require.True(t, asyncTaskBridgeSubmissionShouldRecover(524))
-
-	require.False(t, asyncTaskBridgeSubmissionShouldRecover(400))
-	require.False(t, asyncTaskBridgeSubmissionShouldRecover(401))
-	require.False(t, asyncTaskBridgeSubmissionShouldRecover(404))
-}
-
-func TestAsyncTaskBridgePollShouldRetryOnlyTransientStatus(t *testing.T) {
-	require.True(t, asyncTaskBridgePollShouldRetry(408))
-	require.True(t, asyncTaskBridgePollShouldRetry(429))
-	require.True(t, asyncTaskBridgePollShouldRetry(500))
-	require.True(t, asyncTaskBridgePollShouldRetry(524))
-
-	require.False(t, asyncTaskBridgePollShouldRetry(400))
-	require.False(t, asyncTaskBridgePollShouldRetry(401))
-	require.False(t, asyncTaskBridgePollShouldRetry(403))
-	require.False(t, asyncTaskBridgePollShouldRetry(404))
-	require.False(t, asyncTaskBridgePollShouldRetry(422))
 }
 
 func TestImageTaskFixedUpstreamKeyPrefersStoredKey(t *testing.T) {
@@ -1604,40 +623,6 @@ func TestImageTaskUsageFromResultFindsNestedUsage(t *testing.T) {
 	require.Equal(t, 9, usage.CompletionTokens)
 	require.Equal(t, 17, usage.TotalTokens)
 	require.Equal(t, 5, usage.PromptTokensDetails.ImageTokens)
-}
-
-func TestParseAsyncTaskBridgeTaskResultKeepsStageUsageShape(t *testing.T) {
-	body := []byte(`{
-		"items": [{
-			"id": "task_stage_usage",
-			"task_id": "task_stage_usage",
-			"status": "success",
-			"data": [{"_b64_path": "task_stage_usage/0.bin", "width": 1024, "height": 1024}],
-			"usage": {
-				"input_tokens": 11,
-				"output_tokens": 22,
-				"total_tokens": 33,
-				"input_tokens_details": {
-					"image_tokens": 7,
-					"text_tokens": 4
-				}
-			}
-		}],
-		"missing_ids": []
-	}`)
-
-	result, err := parseAsyncTaskBridgeTaskResult(body, "task_stage_usage")
-	require.NoError(t, err)
-	require.NotNil(t, result)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), result.Status)
-
-	usage, ok := imageTaskUsageFromResult(result.Result)
-	require.True(t, ok)
-	require.Equal(t, 11, usage.PromptTokens)
-	require.Equal(t, 22, usage.CompletionTokens)
-	require.Equal(t, 33, usage.TotalTokens)
-	require.Equal(t, 7, usage.PromptTokensDetails.ImageTokens)
-	require.Equal(t, 4, usage.PromptTokensDetails.TextTokens)
 }
 
 func TestImageTaskUsageFromResultWithoutUsageFallsBack(t *testing.T) {
@@ -2122,6 +1107,310 @@ func TestStoreImageTaskResultDataMarksReviewInsteadOfInliningOversizeResult(t *t
 	require.Empty(t, reloaded.PrivateData.ResultBodyPath)
 }
 
+func TestRunImageTasksRetiresRemovedBridgeTasksWithoutUpstreamCall(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&model.Task{},
+		&model.TaskSettlementRecord{},
+		&model.User{},
+		&model.Token{},
+		&model.Channel{},
+		&model.Log{},
+		&model.QuotaData{},
+		&model.TokenUsageDaily{},
+	))
+
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldUsingSQLite := common.UsingSQLite
+	oldRedisEnabled := common.RedisEnabled
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	oldBatchUpdateEnabled := common.BatchUpdateEnabled
+	model.DB = db
+	model.LOG_DB = db
+	common.UsingSQLite = true
+	common.RedisEnabled = false
+	common.MemoryCacheEnabled = false
+	common.BatchUpdateEnabled = false
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.UsingSQLite = oldUsingSQLite
+		common.RedisEnabled = oldRedisEnabled
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+		common.BatchUpdateEnabled = oldBatchUpdateEnabled
+		_ = sqlDB.Close()
+	})
+
+	var calls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
+		http.Error(w, "removed image task bridge", http.StatusBadGateway)
+	}))
+	defer upstream.Close()
+
+	const userQuota int64 = 10000
+	const preConsumed = 250
+	require.NoError(t, db.Create(&model.User{
+		Id:       1,
+		Username: "bridge-retire-user",
+		Password: "password123",
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		Quota:    userQuota,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          1,
+		UserId:      1,
+		Key:         "sk-bridge-retire",
+		Name:        "bridge-retire",
+		Status:      common.TokenStatusEnabled,
+		RemainQuota: userQuota,
+	}).Error)
+	baseURL := upstream.URL
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      1,
+		Type:    constant.ChannelTypeOpenAI,
+		Key:     "upstream-key",
+		Status:  common.ChannelStatusEnabled,
+		Name:    "removed-bridge",
+		Group:   "default",
+		Models:  "gpt-image-1",
+		BaseURL: &baseURL,
+	}).Error)
+
+	now := time.Now().Unix()
+	queued := &model.Task{
+		TaskID:     "task_removed_bridge_queued",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Quota:      preConsumed,
+		Action:     constant.TaskActionImageGeneration,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: now,
+		Properties: model.Properties{OriginModelName: "gpt-image-1"},
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
+			TokenId:       1,
+			BillingSource: service.BillingSourceWallet,
+		},
+	}
+	submitted := &model.Task{
+		TaskID:     "task_removed_bridge_submitted",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Quota:      preConsumed,
+		Action:     constant.TaskActionImageGeneration,
+		Status:     model.TaskStatusSubmitted,
+		Progress:   "10%",
+		SubmitTime: now,
+		Properties: model.Properties{OriginModelName: "gpt-image-1"},
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: "gpt_image2api_async",
+			TokenId:       1,
+			BillingSource: service.BillingSourceWallet,
+		},
+	}
+	inProgress := &model.Task{
+		TaskID:     "task_removed_bridge_in_progress",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Quota:      preConsumed,
+		Action:     constant.TaskActionImageGeneration,
+		Status:     model.TaskStatusInProgress,
+		Progress:   "40%",
+		SubmitTime: now,
+		Properties: model.Properties{OriginModelName: "gpt-image-1"},
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode:  dto.ImageTaskModeAsyncTaskBridge,
+			UpstreamTaskID: "upstream_still_running",
+			TokenId:        1,
+			BillingSource:  service.BillingSourceWallet,
+		},
+	}
+	applied := &model.Task{
+		TaskID:           "task_removed_bridge_applied",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Quota:            preConsumed,
+		Action:           constant.TaskActionImageGeneration,
+		Status:           model.TaskStatusSuccess,
+		Progress:         "100%",
+		SubmitTime:       now,
+		FinishTime:       now,
+		SettlementStatus: model.TaskSettlementStatusApplied,
+		Properties:       model.Properties{OriginModelName: "gpt-image-1"},
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
+			TokenId:       1,
+		},
+	}
+	require.NoError(t, db.Create(queued).Error)
+	require.NoError(t, db.Create(submitted).Error)
+	require.NoError(t, db.Create(inProgress).Error)
+	require.NoError(t, db.Create(applied).Error)
+
+	require.NoError(t, RunImageTasks(context.Background(), []*model.Task{queued, submitted, inProgress, applied}))
+	require.Zero(t, calls.Load())
+
+	var failed, review, running, settled model.Task
+	require.NoError(t, db.First(&failed, queued.ID).Error)
+	require.NoError(t, db.First(&review, submitted.ID).Error)
+	require.NoError(t, db.First(&running, inProgress.ID).Error)
+	require.NoError(t, db.First(&settled, applied.ID).Error)
+
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), failed.Status)
+	require.Equal(t, "async task bridge mode has been removed", failed.FailReason)
+	require.NotEqual(t, model.TaskSettlementStatusReview, failed.SettlementStatus)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), review.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, review.SettlementStatus)
+	require.Equal(t, "async task bridge mode has been removed", review.FailReason)
+	require.False(t, review.RefundPending)
+	require.EqualValues(t, preConsumed, review.Quota)
+	require.Empty(t, review.PrivateData.UpstreamTaskID)
+	require.Equal(t, model.TaskSettlementStatusReview, running.SettlementStatus)
+	require.False(t, running.RefundPending)
+	require.EqualValues(t, preConsumed, running.Quota)
+	require.Equal(t, "upstream_still_running", running.PrivateData.UpstreamTaskID)
+	require.Equal(t, model.TaskSettlementStatusSettled, settled.SettlementStatus)
+
+	var user model.User
+	require.NoError(t, db.First(&user, 1).Error)
+	require.EqualValues(t, userQuota+int64(preConsumed), user.Quota)
+}
+
+func TestRunSyncWrapperImageTaskDoesNotPreConsumeFixedPriceAgain(t *testing.T) {
+	withTempImageTaskCache(t)
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&model.Task{},
+		&model.TaskSettlementRecord{},
+		&model.User{},
+		&model.Token{},
+		&model.Channel{},
+		&model.Log{},
+		&model.QuotaData{},
+		&model.TokenUsageDaily{},
+	))
+
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldUsingSQLite := common.UsingSQLite
+	oldRedisEnabled := common.RedisEnabled
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	oldBatchUpdateEnabled := common.BatchUpdateEnabled
+	model.DB = db
+	model.LOG_DB = db
+	common.UsingSQLite = true
+	common.RedisEnabled = false
+	common.MemoryCacheEnabled = false
+	common.BatchUpdateEnabled = false
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.UsingSQLite = oldUsingSQLite
+		common.RedisEnabled = oldRedisEnabled
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+		common.BatchUpdateEnabled = oldBatchUpdateEnabled
+		_ = sqlDB.Close()
+	})
+
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"created":1710000000,"data":[{"b64_json":"already-reserved"}]}`))
+	}))
+	defer upstream.Close()
+
+	const remainingQuota int64 = 100000
+	const alreadyReserved = 5000
+	require.NoError(t, db.Create(&model.User{
+		Id: 1, Username: "priced-image-user", Password: "password123",
+		Status: common.UserStatusEnabled, Group: "default", Quota: remainingQuota,
+		Setting: `{"billing_preference":"wallet_only"}`,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id: 1, UserId: 1, Key: "sk-priced-image", Name: "priced-image",
+		Status: common.TokenStatusEnabled, RemainQuota: remainingQuota,
+	}).Error)
+	baseURL := upstream.URL
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1, Type: constant.ChannelTypeOpenAI, Key: "upstream-key",
+		Status: common.ChannelStatusEnabled, Name: "priced-image", Group: "default",
+		Models: "gpt-image-1", BaseURL: &baseURL,
+	}).Error)
+
+	body := []byte(`{"model":"gpt-image-1","prompt":"cat","n":1}`)
+	bodyPath, err := common.WriteImageTaskBodyCacheFile(body)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(bodyPath) })
+
+	task := &model.Task{
+		TaskID:     "task_priced_already_reserved",
+		Platform:   constant.TaskPlatformImage,
+		UserId:     1,
+		Group:      "default",
+		ChannelId:  1,
+		Quota:      alreadyReserved,
+		Action:     constant.TaskActionImageGeneration,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: time.Now().Unix(),
+		Properties: model.Properties{OriginModelName: "gpt-image-1"},
+		PrivateData: model.TaskPrivateData{
+			PublicImageTask:    true,
+			BillingSource:      service.BillingSourceWallet,
+			TokenId:            1,
+			ImageTaskMode:      dto.ImageTaskModeSyncWrapper,
+			RequestPath:        "/v1/images/generations",
+			RequestMethod:      http.MethodPost,
+			RequestContentType: "application/json",
+			RequestBodyPath:    bodyPath,
+			RequestBodySize:    int64(len(body)),
+			Key:                "upstream-key",
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice:      0.04,
+				GroupRatio:      1,
+				OriginModelName: "gpt-image-1",
+				PerCallBilling:  true,
+			},
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	require.NoError(t, runSyncWrapperImageTask(context.Background(), task))
+
+	var updated model.Task
+	require.NoError(t, db.First(&updated, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), updated.Status)
+	require.Equal(t, model.TaskSettlementStatusSettled, updated.SettlementStatus)
+	require.NotZero(t, updated.Quota)
+
+	var user model.User
+	require.NoError(t, db.First(&user, 1).Error)
+	require.EqualValues(t, remainingQuota+int64(alreadyReserved), int64(updated.Quota)+user.Quota,
+		"worker execution must not open a second pre-consume; settlement may only adjust the creation reserve")
+	var token model.Token
+	require.NoError(t, db.First(&token, 1).Error)
+	require.EqualValues(t, remainingQuota+int64(alreadyReserved), int64(updated.Quota)+token.RemainQuota)
+}
+
 func TestRunSyncWrapperImageTaskReleasesMultipartTempFiles(t *testing.T) {
 	// multipart 临时文件重定向到本用例独占目录，避免跨包并行统计串扰。
 	isolatedTempDir := t.TempDir()
@@ -2551,619 +1840,6 @@ func TestRunSyncWrapperImageTaskMarksReviewWhenResultStoreFails(t *testing.T) {
 	require.FileExists(t, bodyPath)
 }
 
-func TestReadImageTaskHTTPResponseBodyRejectsOversize(t *testing.T) {
-	oldMaxFileDownloadMB := constant.MaxFileDownloadMB
-	constant.MaxFileDownloadMB = 1
-	t.Cleanup(func() {
-		constant.MaxFileDownloadMB = oldMaxFileDownloadMB
-	})
-
-	_, err := readImageTaskHTTPResponseBody(bytes.NewReader(bytes.Repeat([]byte("a"), (1<<20)+1)))
-
-	require.ErrorIs(t, err, errImageTaskHTTPResponseTooLarge)
-}
-
-func TestPollAsyncTaskBridgeOversizeResponseMarksReview(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Channel{}))
-
-	oldDB := model.DB
-	oldUsingSQLite := common.UsingSQLite
-	oldMemoryCacheEnabled := common.MemoryCacheEnabled
-	oldMaxFileDownloadMB := constant.MaxFileDownloadMB
-	oldDiskCacheConfig := common.GetDiskCacheConfig()
-	diskCacheConfig := oldDiskCacheConfig
-	diskCacheConfig.Path = t.TempDir()
-	model.DB = db
-	common.UsingSQLite = true
-	common.MemoryCacheEnabled = false
-	constant.MaxFileDownloadMB = 1
-	common.SetDiskCacheConfig(diskCacheConfig)
-	t.Cleanup(func() {
-		model.DB = oldDB
-		common.UsingSQLite = oldUsingSQLite
-		common.MemoryCacheEnabled = oldMemoryCacheEnabled
-		constant.MaxFileDownloadMB = oldMaxFileDownloadMB
-		common.SetDiskCacheConfig(oldDiskCacheConfig)
-		_ = sqlDB.Close()
-	})
-
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write(bytes.Repeat([]byte("a"), (1<<20)+1))
-	}))
-	defer upstream.Close()
-
-	baseURL := upstream.URL
-	require.NoError(t, db.Create(&model.Channel{
-		Id:      1,
-		Type:    constant.ChannelTypeOpenAI,
-		Key:     "upstream-key",
-		Status:  common.ChannelStatusEnabled,
-		Name:    "async-task-bridge",
-		Group:   "default",
-		Models:  "gpt-image-1",
-		BaseURL: &baseURL,
-	}).Error)
-	bodyPath, err := common.WriteImageTaskBodyCacheFile([]byte(`{"model":"gpt-image-1","stream":false}`))
-	require.NoError(t, err)
-	task := &model.Task{
-		TaskID:     "task_oversize_poll",
-		Platform:   constant.TaskPlatformImage,
-		UserId:     1,
-		Group:      "default",
-		ChannelId:  1,
-		Status:     model.TaskStatusInProgress,
-		Progress:   "1%",
-		SubmitTime: time.Now().Add(-time.Minute).Unix(),
-		StartTime:  time.Now().Add(-time.Minute).Unix(),
-		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
-			RequestContentType: "application/json",
-			RequestBodyPath:    bodyPath,
-			RequestBodySize:    int64(len(`{"model":"gpt-image-1","stream":false}`)),
-			UpstreamTaskID:     "upstream_oversize",
-		},
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	require.NoError(t, pollAsyncTaskBridgeImageTask(context.Background(), task))
-
-	var updated model.Task
-	require.NoError(t, db.First(&updated, task.ID).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), updated.Status)
-	require.Equal(t, "100%", updated.Progress)
-	require.Equal(t, model.TaskSettlementStatusReview, updated.SettlementStatus)
-	require.Contains(t, updated.FailReason, "image task upstream response too large")
-	require.Equal(t, bodyPath, updated.PrivateData.RequestBodyPath)
-	require.FileExists(t, bodyPath)
-	_ = os.Remove(bodyPath)
-}
-
-func TestPollAsyncTaskBridgeHTTPFailuresMarkReview(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Channel{}))
-
-	oldDB := model.DB
-	oldUsingSQLite := common.UsingSQLite
-	oldMemoryCacheEnabled := common.MemoryCacheEnabled
-	oldMaxFileDownloadMB := constant.MaxFileDownloadMB
-	oldDiskCacheConfig := common.GetDiskCacheConfig()
-	model.DB = db
-	common.UsingSQLite = true
-	common.MemoryCacheEnabled = false
-	constant.MaxFileDownloadMB = 1
-	common.ResetDiskCacheUsage()
-	common.ResetDiskCacheStats()
-	common.SetDiskCacheConfig(common.DiskCacheConfig{
-		MaxSizeMB: 8,
-		Path:      t.TempDir(),
-	})
-	t.Cleanup(func() {
-		model.DB = oldDB
-		common.UsingSQLite = oldUsingSQLite
-		common.MemoryCacheEnabled = oldMemoryCacheEnabled
-		constant.MaxFileDownloadMB = oldMaxFileDownloadMB
-		common.ResetDiskCacheUsage()
-		common.ResetDiskCacheStats()
-		common.SetDiskCacheConfig(oldDiskCacheConfig)
-		_ = sqlDB.Close()
-	})
-
-	var upstreamStatus atomic.Int64
-	upstreamStatus.Store(http.StatusBadRequest)
-	var oversizedResponse atomic.Bool
-	oversizedResponse.Store(true)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(int(upstreamStatus.Load()))
-		if oversizedResponse.Load() {
-			_, _ = w.Write(bytes.Repeat([]byte("a"), (1<<20)+1))
-			return
-		}
-		_, _ = w.Write([]byte(`{"error":{"message":"poll authorization failed"}}`))
-	}))
-	defer upstream.Close()
-
-	baseURL := upstream.URL
-	require.NoError(t, db.Create(&model.Channel{
-		Id:      1,
-		Type:    constant.ChannelTypeOpenAI,
-		Key:     "upstream-key",
-		Status:  common.ChannelStatusEnabled,
-		Name:    "async-task-bridge",
-		Group:   "default",
-		Models:  "gpt-image-1",
-		BaseURL: &baseURL,
-	}).Error)
-	bodyPath, err := common.WriteImageTaskBodyCacheFile([]byte(`{"model":"gpt-image-1","stream":false}`))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = common.RemoveDiskCacheFile(bodyPath) })
-	task := &model.Task{
-		TaskID:     "task_oversize_error_poll",
-		Platform:   constant.TaskPlatformImage,
-		UserId:     1,
-		Group:      "default",
-		ChannelId:  1,
-		Status:     model.TaskStatusInProgress,
-		Progress:   "1%",
-		SubmitTime: time.Now().Add(-time.Minute).Unix(),
-		StartTime:  time.Now().Add(-time.Minute).Unix(),
-		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
-			RequestContentType: "application/json",
-			RequestBodyPath:    bodyPath,
-			RequestBodySize:    int64(len(`{"model":"gpt-image-1","stream":false}`)),
-			UpstreamTaskID:     "upstream_oversize_error",
-		},
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	require.NoError(t, pollAsyncTaskBridgeImageTask(context.Background(), task))
-
-	var updated model.Task
-	require.NoError(t, db.First(&updated, task.ID).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), updated.Status)
-	require.Equal(t, model.TaskSettlementStatusReview, updated.SettlementStatus)
-	require.Contains(t, updated.FailReason, "status=400")
-	require.Equal(t, "upstream_oversize_error", updated.PrivateData.UpstreamTaskID)
-	require.FileExists(t, bodyPath)
-
-	upstreamStatus.Store(http.StatusUnauthorized)
-	oversizedResponse.Store(false)
-	secondBodyPath, err := common.WriteImageTaskBodyCacheFile([]byte(`{"model":"gpt-image-1","stream":false}`))
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = common.RemoveDiskCacheFile(secondBodyPath) })
-	secondTask := &model.Task{
-		TaskID:     "task_unauthorized_poll",
-		Platform:   constant.TaskPlatformImage,
-		UserId:     1,
-		Group:      "default",
-		ChannelId:  1,
-		Status:     model.TaskStatusSubmitted,
-		Progress:   "0%",
-		SubmitTime: time.Now().Add(-time.Minute).Unix(),
-		StartTime:  time.Now().Add(-time.Minute).Unix(),
-		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
-			RequestContentType: "application/json",
-			RequestBodyPath:    secondBodyPath,
-			RequestBodySize:    int64(len(`{"model":"gpt-image-1","stream":false}`)),
-			UpstreamTaskID:     "upstream_unauthorized",
-		},
-	}
-	require.NoError(t, db.Create(secondTask).Error)
-	require.NoError(t, pollAsyncTaskBridgeImageTask(context.Background(), secondTask))
-
-	var secondUpdated model.Task
-	require.NoError(t, db.First(&secondUpdated, secondTask.ID).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), secondUpdated.Status)
-	require.Equal(t, model.TaskSettlementStatusReview, secondUpdated.SettlementStatus)
-	require.Contains(t, secondUpdated.FailReason, "status=401")
-	require.Equal(t, "upstream_unauthorized", secondUpdated.PrivateData.UpstreamTaskID)
-	require.FileExists(t, secondBodyPath)
-}
-
-func TestPollAsyncTaskBridgeDiskCapacityUnavailableRetries(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Channel{}))
-
-	oldDB := model.DB
-	oldUsingSQLite := common.UsingSQLite
-	oldMemoryCacheEnabled := common.MemoryCacheEnabled
-	oldMaxFileDownloadMB := constant.MaxFileDownloadMB
-	oldDiskCacheConfig := common.GetDiskCacheConfig()
-	model.DB = db
-	common.UsingSQLite = true
-	common.MemoryCacheEnabled = false
-	constant.MaxFileDownloadMB = 2
-	common.ResetDiskCacheUsage()
-	common.ResetDiskCacheStats()
-	common.SetDiskCacheConfig(common.DiskCacheConfig{
-		MaxSizeMB: 1,
-		Path:      t.TempDir(),
-	})
-	t.Cleanup(func() {
-		model.DB = oldDB
-		common.UsingSQLite = oldUsingSQLite
-		common.MemoryCacheEnabled = oldMemoryCacheEnabled
-		constant.MaxFileDownloadMB = oldMaxFileDownloadMB
-		common.ResetDiskCacheUsage()
-		common.ResetDiskCacheStats()
-		common.SetDiskCacheConfig(oldDiskCacheConfig)
-		_ = sqlDB.Close()
-	})
-
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"items":[{"id":"upstream_capacity","status":"success","data":[{"url":"https://example.com/a.png"}]}]}`))
-		if flusher, ok := w.(http.Flusher); ok {
-			flusher.Flush()
-		}
-	}))
-	defer upstream.Close()
-
-	baseURL := upstream.URL
-	require.NoError(t, db.Create(&model.Channel{
-		Id:      1,
-		Type:    constant.ChannelTypeOpenAI,
-		Key:     "upstream-key",
-		Status:  common.ChannelStatusEnabled,
-		Name:    "async-task-bridge",
-		Group:   "default",
-		Models:  "gpt-image-1",
-		BaseURL: &baseURL,
-	}).Error)
-	body := []byte(`{"model":"gpt-image-1","stream":false}`)
-	bodyPath, err := common.WriteImageTaskBodyCacheFile(body)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = common.RemoveDiskCacheFile(bodyPath)
-	})
-	task := &model.Task{
-		TaskID:     "task_capacity_poll",
-		Platform:   constant.TaskPlatformImage,
-		UserId:     1,
-		Group:      "default",
-		ChannelId:  1,
-		Status:     model.TaskStatusInProgress,
-		Progress:   "1%",
-		SubmitTime: time.Now().Add(-time.Minute).Unix(),
-		StartTime:  time.Now().Add(-time.Minute).Unix(),
-		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
-			RequestContentType: "application/json",
-			RequestBodyPath:    bodyPath,
-			RequestBodySize:    int64(len(body)),
-			UpstreamTaskID:     "upstream_capacity",
-		},
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	err = pollAsyncTaskBridgeImageTask(context.Background(), task)
-
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "disk cache capacity unavailable")
-	var updated model.Task
-	require.NoError(t, db.First(&updated, task.ID).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusInProgress), updated.Status)
-	require.Empty(t, updated.SettlementStatus)
-	require.Empty(t, updated.FailReason)
-	require.Empty(t, updated.PrivateData.ResultBodyPath)
-	require.Equal(t, bodyPath, updated.PrivateData.RequestBodyPath)
-	require.FileExists(t, bodyPath)
-}
-
-func TestSubmitAsyncTaskBridgeOversizeResponseKeepsSubmissionUncertain(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(
-		&model.Task{},
-		&model.TaskSettlementRecord{},
-		&model.User{},
-		&model.Token{},
-		&model.Channel{},
-		&model.Log{},
-		&model.QuotaData{},
-		&model.TokenUsageDaily{},
-	))
-
-	oldDB := model.DB
-	oldLogDB := model.LOG_DB
-	oldUsingSQLite := common.UsingSQLite
-	oldRedisEnabled := common.RedisEnabled
-	oldMemoryCacheEnabled := common.MemoryCacheEnabled
-	oldMaxFileDownloadMB := constant.MaxFileDownloadMB
-	oldDiskCacheConfig := common.GetDiskCacheConfig()
-	diskCacheConfig := oldDiskCacheConfig
-	diskCacheConfig.Path = t.TempDir()
-	model.DB = db
-	model.LOG_DB = db
-	common.UsingSQLite = true
-	common.RedisEnabled = false
-	common.MemoryCacheEnabled = false
-	constant.MaxFileDownloadMB = 1
-	common.SetDiskCacheConfig(diskCacheConfig)
-	t.Cleanup(func() {
-		model.DB = oldDB
-		model.LOG_DB = oldLogDB
-		common.UsingSQLite = oldUsingSQLite
-		common.RedisEnabled = oldRedisEnabled
-		common.MemoryCacheEnabled = oldMemoryCacheEnabled
-		constant.MaxFileDownloadMB = oldMaxFileDownloadMB
-		common.SetDiskCacheConfig(oldDiskCacheConfig)
-		_ = sqlDB.Close()
-	})
-
-	var submissionMarkerPersisted atomic.Bool
-	var upstreamStatus atomic.Int64
-	upstreamStatus.Store(http.StatusOK)
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/image-tasks/generations" {
-			http.Error(w, "unexpected path", http.StatusBadRequest)
-			return
-		}
-		var persisted model.Task
-		if err := db.Where("task_id = ?", "task_submit_oversize").First(&persisted).Error; err == nil &&
-			persisted.PrivateData.UpstreamSubmitUncertainAt > 0 &&
-			persisted.PrivateData.UpstreamSubmitUncertainCount == 1 {
-			submissionMarkerPersisted.Store(true)
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.WriteHeader(int(upstreamStatus.Load()))
-		_, _ = w.Write(bytes.Repeat([]byte("a"), (1<<20)+1))
-	}))
-	defer upstream.Close()
-
-	require.NoError(t, db.Create(&model.User{
-		Id:       1,
-		Username: "image-user",
-		Password: "password123",
-		Status:   common.UserStatusEnabled,
-		Group:    "default",
-		Quota:    100000,
-	}).Error)
-	baseURL := upstream.URL
-	require.NoError(t, db.Create(&model.Channel{
-		Id:      1,
-		Type:    constant.ChannelTypeOpenAI,
-		Key:     "upstream-key",
-		Status:  common.ChannelStatusEnabled,
-		Name:    "async-task-bridge",
-		Group:   "default",
-		Models:  "gpt-image-1",
-		BaseURL: &baseURL,
-	}).Error)
-	body := []byte(`{"model":"gpt-image-1","prompt":"cat","stream":false}`)
-	bodyPath, err := common.WriteImageTaskBodyCacheFile(body)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = os.Remove(bodyPath)
-	})
-	task := &model.Task{
-		TaskID:     "task_submit_oversize",
-		Platform:   constant.TaskPlatformImage,
-		UserId:     1,
-		Group:      "default",
-		ChannelId:  1,
-		Action:     constant.TaskActionImageGeneration,
-		Status:     model.TaskStatusQueued,
-		Progress:   "0%",
-		SubmitTime: time.Now().Unix(),
-		Properties: model.Properties{
-			OriginModelName: "gpt-image-1",
-		},
-		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
-			RequestPath:        "/v1/images/generations",
-			RequestMethod:      http.MethodPost,
-			RequestContentType: "application/json",
-			RequestBodyPath:    bodyPath,
-			RequestBodySize:    int64(len(body)),
-		},
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	require.NoError(t, submitAsyncTaskBridgeImageTask(context.Background(), task))
-
-	var updated model.Task
-	require.NoError(t, db.First(&updated, task.ID).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusInProgress), updated.Status)
-	require.Equal(t, "1%", updated.Progress)
-	require.Empty(t, updated.PrivateData.UpstreamTaskID)
-	require.NotZero(t, updated.PrivateData.UpstreamSubmitUncertainAt)
-	require.Equal(t, 1, updated.PrivateData.UpstreamSubmitUncertainCount)
-	require.True(t, submissionMarkerPersisted.Load(), "submission uncertainty must be durable before the upstream POST is sent")
-	require.Equal(t, bodyPath, updated.PrivateData.RequestBodyPath)
-	require.FileExists(t, bodyPath)
-
-	require.NoError(t, db.Create(&model.Token{
-		Id:          1,
-		UserId:      1,
-		Key:         "submit-reject-token",
-		Name:        "submit-reject-token",
-		Status:      common.TokenStatusEnabled,
-		RemainQuota: 0,
-		UsedQuota:   800,
-	}).Error)
-	upstreamStatus.Store(http.StatusBadRequest)
-	rejectedBodyPath, err := common.WriteImageTaskBodyCacheFile(body)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = common.RemoveDiskCacheFile(rejectedBodyPath) })
-	rejectedTask := &model.Task{
-		TaskID:     "task_submit_oversize_rejected",
-		Platform:   constant.TaskPlatformImage,
-		UserId:     1,
-		Group:      "default",
-		ChannelId:  1,
-		Action:     constant.TaskActionImageGeneration,
-		Status:     model.TaskStatusQueued,
-		Progress:   "0%",
-		SubmitTime: time.Now().Unix(),
-		Quota:      800,
-		Properties: model.Properties{OriginModelName: "gpt-image-1"},
-		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:            dto.ImageTaskModeAsyncTaskBridge,
-			RequestPath:              "/v1/images/generations",
-			RequestMethod:            http.MethodPost,
-			RequestContentType:       "application/json",
-			RequestBodyPath:          rejectedBodyPath,
-			RequestBodySize:          int64(len(body)),
-			BillingSource:            service.BillingSourceWallet,
-			TokenId:                  1,
-			PreConsumedUsageCaptured: true,
-			PreConsumedUsageRecorded: false,
-		},
-	}
-	require.NoError(t, db.Create(rejectedTask).Error)
-	require.NoError(t, submitAsyncTaskBridgeImageTask(context.Background(), rejectedTask))
-
-	var rejectedUpdated model.Task
-	require.NoError(t, db.First(&rejectedUpdated, rejectedTask.ID).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), rejectedUpdated.Status)
-	require.Empty(t, rejectedUpdated.SettlementStatus)
-	require.Zero(t, rejectedUpdated.Quota)
-	require.False(t, rejectedUpdated.RefundPending)
-	require.Zero(t, rejectedUpdated.PrivateData.UpstreamSubmitUncertainAt)
-	require.Zero(t, rejectedUpdated.PrivateData.UpstreamSubmitUncertainCount)
-	require.Empty(t, rejectedUpdated.PrivateData.RequestBodyPath)
-	require.NoFileExists(t, rejectedBodyPath)
-	var refundedUser model.User
-	require.NoError(t, db.First(&refundedUser, 1).Error)
-	require.EqualValues(t, 100800, refundedUser.Quota)
-	var refundedToken model.Token
-	require.NoError(t, db.First(&refundedToken, 1).Error)
-	require.EqualValues(t, 800, refundedToken.RemainQuota)
-	require.Zero(t, refundedToken.UsedQuota)
-}
-
-func TestAsyncTaskBridgeRepeatedSubmissionHTTPFailureNeedsReview(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.User{}, &model.Channel{}))
-
-	oldDB := model.DB
-	oldUsingSQLite := common.UsingSQLite
-	oldMemoryCacheEnabled := common.MemoryCacheEnabled
-	oldDiskCacheConfig := common.GetDiskCacheConfig()
-	diskCacheConfig := oldDiskCacheConfig
-	diskCacheConfig.Path = t.TempDir()
-	model.DB = db
-	common.UsingSQLite = true
-	common.MemoryCacheEnabled = false
-	common.SetDiskCacheConfig(diskCacheConfig)
-	t.Cleanup(func() {
-		model.DB = oldDB
-		common.UsingSQLite = oldUsingSQLite
-		common.MemoryCacheEnabled = oldMemoryCacheEnabled
-		common.SetDiskCacheConfig(oldDiskCacheConfig)
-		_ = sqlDB.Close()
-	})
-
-	var recoverRequests atomic.Int32
-	var submitRequests atomic.Int32
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/image-tasks":
-			recoverRequests.Add(1)
-			_, _ = w.Write([]byte(`{"items":[],"missing_ids":["task_repeated_submit_http_failure"]}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/image-tasks/generations":
-			submitRequests.Add(1)
-			w.WriteHeader(http.StatusUnauthorized)
-			_, _ = w.Write([]byte(`{"error":{"message":"repeated submission rejected"}}`))
-		default:
-			http.Error(w, "unexpected request", http.StatusBadRequest)
-		}
-	}))
-	defer upstream.Close()
-
-	require.NoError(t, db.Create(&model.User{
-		Id:       1,
-		Username: "repeated-submit-user",
-		Password: "password123",
-		Status:   common.UserStatusEnabled,
-		Group:    "default",
-		Quota:    0,
-	}).Error)
-	baseURL := upstream.URL
-	require.NoError(t, db.Create(&model.Channel{
-		Id:      1,
-		Type:    constant.ChannelTypeOpenAI,
-		Key:     "upstream-key",
-		Status:  common.ChannelStatusEnabled,
-		Name:    "async-task-bridge",
-		Group:   "default",
-		Models:  "gpt-image-1",
-		BaseURL: &baseURL,
-	}).Error)
-	body := []byte(`{"model":"gpt-image-1","prompt":"cat","stream":false}`)
-	bodyPath, err := common.WriteImageTaskBodyCacheFile(body)
-	require.NoError(t, err)
-	t.Cleanup(func() { _ = common.RemoveDiskCacheFile(bodyPath) })
-
-	now := time.Now().Unix()
-	task := &model.Task{
-		TaskID:     "task_repeated_submit_http_failure",
-		Platform:   constant.TaskPlatformImage,
-		UserId:     1,
-		Group:      "default",
-		ChannelId:  1,
-		Action:     constant.TaskActionImageGeneration,
-		Status:     model.TaskStatusInProgress,
-		Progress:   "1%",
-		Quota:      800,
-		SubmitTime: now - 60,
-		StartTime:  now - 60,
-		Properties: model.Properties{OriginModelName: "gpt-image-1"},
-		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:                dto.ImageTaskModeAsyncTaskBridge,
-			RequestPath:                  "/v1/images/generations",
-			RequestMethod:                http.MethodPost,
-			RequestContentType:           "application/json",
-			RequestBodyPath:              bodyPath,
-			RequestBodySize:              int64(len(body)),
-			Key:                          "upstream-key",
-			UpstreamSubmitUncertainAt:    now - int64(imageTaskUncertainSubmissionRetryCooldown.Seconds()) - 1,
-			UpstreamSubmitUncertainCount: 1,
-		},
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	require.NoError(t, recoverAsyncTaskBridgeSubmission(context.Background(), task))
-
-	var updated model.Task
-	require.NoError(t, db.First(&updated, task.ID).Error)
-	require.EqualValues(t, 1, recoverRequests.Load())
-	require.EqualValues(t, 1, submitRequests.Load())
-	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), updated.Status)
-	require.Equal(t, model.TaskSettlementStatusReview, updated.SettlementStatus)
-	require.Equal(t, 800, updated.Quota)
-	require.False(t, updated.RefundPending)
-	require.Contains(t, updated.FailReason, "repeated submission rejected")
-	require.Equal(t, 2, updated.PrivateData.UpstreamSubmitUncertainCount)
-	require.Equal(t, bodyPath, updated.PrivateData.RequestBodyPath)
-	require.FileExists(t, bodyPath)
-}
-
 func TestFailImageTaskRejectsLostLeaseOwner(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -3411,129 +2087,6 @@ func TestMarkImageTaskSettlementSettledDefersRequestDeletionToOwnerNode(t *testi
 	require.NoError(t, db.First(&reloaded, task.ID).Error)
 	require.Empty(t, reloaded.PrivateData.RequestBodyPath)
 	require.False(t, reloaded.RequestCleanupPending)
-}
-
-func TestMarkImageTaskStorageNodePortableAfterSubmission(t *testing.T) {
-	t.Run("releases node binding once upstream accepted", func(t *testing.T) {
-		task := &model.Task{StorageNode: "worker-node-a"}
-		markImageTaskStorageNodePortableAfterSubmission(task)
-		require.Equal(t, model.ImageTaskPortableStorageNode, task.StorageNode)
-	})
-
-	t.Run("keeps node binding when tiered billing evidence is not captured", func(t *testing.T) {
-		task := &model.Task{
-			StorageNode: "worker-node-a",
-			PrivateData: model.TaskPrivateData{
-				TieredBillingSnapshot:       &billingexpr.BillingSnapshot{BillingMode: "tiered_expr"},
-				BillingRequestInputCaptured: false,
-			},
-		}
-		markImageTaskStorageNodePortableAfterSubmission(task)
-		require.Equal(t, "worker-node-a", task.StorageNode)
-	})
-
-	t.Run("releases node binding when tiered billing evidence is captured", func(t *testing.T) {
-		task := &model.Task{
-			StorageNode: "worker-node-a",
-			PrivateData: model.TaskPrivateData{
-				TieredBillingSnapshot:       &billingexpr.BillingSnapshot{BillingMode: "tiered_expr"},
-				BillingRequestInputCaptured: true,
-			},
-		}
-		markImageTaskStorageNodePortableAfterSubmission(task)
-		require.Equal(t, model.ImageTaskPortableStorageNode, task.StorageNode)
-	})
-}
-
-func TestSaveAsyncTaskBridgeSubmissionMarksTaskPortable(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.Task{}))
-
-	oldDB := model.DB
-	model.DB = db
-	t.Cleanup(func() {
-		model.DB = oldDB
-		_ = sqlDB.Close()
-	})
-
-	now := time.Now().Unix()
-	task := &model.Task{
-		TaskID:      "task_submit_portable",
-		Platform:    constant.TaskPlatformImage,
-		UserId:      1,
-		Group:       "default",
-		ChannelId:   1,
-		Status:      model.TaskStatusInProgress,
-		Progress:    "1%",
-		SubmitTime:  now,
-		StartTime:   now,
-		StorageNode: "worker-node-a",
-		PrivateData: model.TaskPrivateData{NodeName: "worker-node-a"},
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	require.NoError(t, saveAsyncTaskBridgeSubmission(context.Background(), task, "upstream_task_1"))
-
-	var reloaded model.Task
-	require.NoError(t, db.First(&reloaded, task.ID).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSubmitted), reloaded.Status)
-	require.Equal(t, "upstream_task_1", reloaded.PrivateData.UpstreamTaskID)
-	require.Equal(t, model.ImageTaskPortableStorageNode, reloaded.StorageNode)
-	// 请求体归属仍留在创建节点，清理由该节点负责。
-	require.Equal(t, "worker-node-a", reloaded.PrivateData.NodeName)
-}
-
-func TestSubmittedImageTaskIsRunnableFromForeignNode(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.TaskDispatchState{}))
-
-	oldDB := model.DB
-	oldNodeName := common.NodeName
-	oldShared := constant.ImageTaskFileCacheShared
-	oldAffinity := constant.ImageTaskLocalFileCacheAffinity
-	model.DB = db
-	constant.ImageTaskFileCacheShared = false
-	constant.ImageTaskLocalFileCacheAffinity = true
-	common.NodeName = "worker-node-a"
-	t.Cleanup(func() {
-		model.DB = oldDB
-		common.NodeName = oldNodeName
-		constant.ImageTaskFileCacheShared = oldShared
-		constant.ImageTaskLocalFileCacheAffinity = oldAffinity
-		_ = sqlDB.Close()
-	})
-
-	now := time.Now().Unix()
-	task := &model.Task{
-		TaskID:      "task_submit_foreign_pickup",
-		Platform:    constant.TaskPlatformImage,
-		UserId:      1,
-		Group:       "default",
-		ChannelId:   1,
-		Status:      model.TaskStatusInProgress,
-		Progress:    "1%",
-		SubmitTime:  now,
-		StartTime:   now,
-		NextPollAt:  now - 1,
-		StorageNode: "worker-node-a",
-		PrivateData: model.TaskPrivateData{NodeName: "worker-node-a"},
-	}
-	require.NoError(t, db.Create(task).Error)
-	require.NoError(t, saveAsyncTaskBridgeSubmission(context.Background(), task, "upstream_task_2"))
-	require.NoError(t, db.Model(&model.Task{}).Where("id = ?", task.ID).Update("next_poll_at", now-1).Error)
-
-	common.NodeName = "worker-node-b"
-	runnable := model.GetRunnableImageTasks(10, now)
-	require.Len(t, runnable, 1)
-	require.Equal(t, "task_submit_foreign_pickup", runnable[0].TaskID)
 }
 
 func TestSettleImageTaskSuccessSkipsConsumptionWhenSettlementAlreadyApplying(t *testing.T) {
@@ -4283,493 +2836,6 @@ func TestSettleImageTaskSuccessKeepsSettlementWhenFixedPriceLogDeliveryFails(t *
 	var channel model.Channel
 	require.NoError(t, db.First(&channel, 1).Error)
 	require.Equal(t, int64(reloaded.Quota), channel.UsedQuota)
-}
-
-func TestPollAsyncTaskBridgeSuccessSettlesTieredBillingWithStoredBody(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(
-		&model.Task{},
-		&model.TaskSettlementRecord{},
-		&model.User{},
-		&model.Token{},
-		&model.Channel{},
-		&model.Log{},
-		&model.Option{},
-		&model.TokenUsageDaily{},
-	))
-
-	oldDB := model.DB
-	oldLogDB := model.LOG_DB
-	oldUsingSQLite := common.UsingSQLite
-	oldRedisEnabled := common.RedisEnabled
-	oldMemoryCacheEnabled := common.MemoryCacheEnabled
-	oldBatchUpdateEnabled := common.BatchUpdateEnabled
-	oldLogConsumeEnabled := common.LogConsumeEnabled
-	oldDataExportEnabled := common.DataExportEnabled
-	oldQuotaRemindThreshold := common.QuotaRemindThreshold
-	oldImageTaskFileCacheShared := constant.ImageTaskFileCacheShared
-	oldImageTaskFileCacheSharedTrusted := constant.ImageTaskFileCacheSharedTrusted
-	oldImageTaskSharedCacheDisabled := common.ImageTaskSharedCacheDisabled()
-	oldDiskCacheConfig := common.GetDiskCacheConfig()
-	diskCacheConfig := oldDiskCacheConfig
-	diskCacheConfig.Path = t.TempDir()
-	model.DB = db
-	model.LOG_DB = db
-	common.UsingSQLite = true
-	common.RedisEnabled = false
-	common.MemoryCacheEnabled = false
-	common.BatchUpdateEnabled = false
-	common.LogConsumeEnabled = true
-	common.DataExportEnabled = false
-	common.QuotaRemindThreshold = 0
-	constant.ImageTaskFileCacheShared = true
-	constant.ImageTaskFileCacheSharedTrusted = true
-	common.SetImageTaskSharedCacheDisabled(false)
-	common.SetDiskCacheConfig(diskCacheConfig)
-	t.Cleanup(func() {
-		model.DB = oldDB
-		model.LOG_DB = oldLogDB
-		common.UsingSQLite = oldUsingSQLite
-		common.RedisEnabled = oldRedisEnabled
-		common.MemoryCacheEnabled = oldMemoryCacheEnabled
-		common.BatchUpdateEnabled = oldBatchUpdateEnabled
-		common.LogConsumeEnabled = oldLogConsumeEnabled
-		common.DataExportEnabled = oldDataExportEnabled
-		common.QuotaRemindThreshold = oldQuotaRemindThreshold
-		constant.ImageTaskFileCacheShared = oldImageTaskFileCacheShared
-		constant.ImageTaskFileCacheSharedTrusted = oldImageTaskFileCacheSharedTrusted
-		common.SetImageTaskSharedCacheDisabled(oldImageTaskSharedCacheDisabled)
-		common.SetDiskCacheConfig(oldDiskCacheConfig)
-		_ = sqlDB.Close()
-	})
-
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/image-tasks" || r.URL.Query().Get("ids") != "upstream_123" {
-			http.Error(w, "unexpected request", http.StatusBadRequest)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{
-			"data": [{
-				"task_id": "upstream_123",
-				"status": "completed",
-				"progress": "100%",
-				"result": {
-					"data": [{"b64_json": "test-b64-payload"}],
-					"usage": {
-						"prompt_tokens": 100,
-						"completion_tokens": 0,
-						"total_tokens": 100
-					}
-				}
-			}]
-		}`))
-	}))
-	defer upstream.Close()
-
-	require.NoError(t, db.Create(&model.User{
-		Id:       1,
-		Username: "image-user",
-		Password: "password123",
-		Status:   common.UserStatusEnabled,
-		Group:    "default",
-		Quota:    100000,
-		Email:    "image@example.com",
-	}).Error)
-	require.NoError(t, db.Create(&model.Token{
-		Id:             1,
-		UserId:         1,
-		Key:            "token-key",
-		Status:         common.TokenStatusEnabled,
-		Name:           "image-token",
-		ExpiredTime:    -1,
-		RemainQuota:    100000,
-		UnlimitedQuota: false,
-		Group:          "default",
-	}).Error)
-	baseURL := upstream.URL
-	require.NoError(t, db.Create(&model.Channel{
-		Id:      1,
-		Type:    constant.ChannelTypeOpenAI,
-		Key:     "upstream-key",
-		Status:  common.ChannelStatusEnabled,
-		Name:    "async-task-bridge",
-		Group:   "default",
-		Models:  "gpt-image-1",
-		BaseURL: &baseURL,
-	}).Error)
-
-	body := []byte(`{"model":"gpt-image-1","quality":"high","stream":false}`)
-	bodyPath, err := common.WriteImageTaskBodyCacheFile(body)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = os.Remove(bodyPath)
-	})
-
-	expr := `param("quality") == "high" ? tier("high", p * 4) : tier("normal", p)`
-	task := &model.Task{
-		TaskID:     "task_local_123",
-		Platform:   constant.TaskPlatformImage,
-		UserId:     1,
-		Group:      "default",
-		ChannelId:  1,
-		Quota:      50,
-		Action:     constant.TaskActionImageGeneration,
-		Status:     model.TaskStatusSubmitted,
-		Progress:   "0%",
-		SubmitTime: time.Now().Add(-time.Minute).Unix(),
-		StartTime:  time.Now().Add(-time.Minute).Unix(),
-		Properties: model.Properties{
-			OriginModelName: "gpt-image-1",
-		},
-		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
-			RequestPath:        "/v1/images/generations",
-			RequestMethod:      http.MethodPost,
-			RequestContentType: "application/json",
-			RequestBodyPath:    bodyPath,
-			RequestBodySize:    int64(len(body)),
-			UpstreamTaskID:     "upstream_123",
-			BillingSource:      service.BillingSourceWallet,
-			TokenId:            1,
-			BillingContext: &model.TaskBillingContext{
-				ModelRatio:      1,
-				CompletionRatio: 1,
-				GroupRatio:      1,
-				OriginModelName: "gpt-image-1",
-			},
-			TieredBillingSnapshot: &billingexpr.BillingSnapshot{
-				BillingMode:               "tiered_expr",
-				ExprString:                expr,
-				ExprHash:                  billingexpr.ExprHashString(expr),
-				GroupRatio:                1,
-				EstimatedPromptTokens:     100,
-				EstimatedCompletionTokens: 0,
-				EstimatedQuotaAfterGroup:  50,
-				EstimatedTier:             "normal",
-				QuotaPerUnit:              common.QuotaPerUnit,
-				ExprVersion:               billingexpr.ExprVersion(expr),
-			},
-		},
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	require.NoError(t, pollAsyncTaskBridgeImageTask(context.Background(), task))
-
-	var updated model.Task
-	require.NoError(t, db.First(&updated, task.ID).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), updated.Status)
-	require.Equal(t, model.TaskSettlementStatusSettled, updated.SettlementStatus)
-	require.Empty(t, updated.PrivateData.RequestBodyPath)
-	require.NoFileExists(t, bodyPath)
-	require.NotContains(t, string(updated.Data), "test-b64-payload")
-	require.Contains(t, string(updated.Data), imageTaskStoredResultMarker)
-	require.NotEmpty(t, updated.PrivateData.ResultBodyPath)
-	require.NotZero(t, updated.PrivateData.ResultBodySize)
-	require.NotEmpty(t, updated.PrivateData.ResultBodySHA256)
-	require.Equal(t, "application/json", updated.PrivateData.ResultContentType)
-	require.FileExists(t, updated.PrivateData.ResultBodyPath)
-	t.Cleanup(func() {
-		_ = os.Remove(updated.PrivateData.ResultBodyPath)
-	})
-	storedResult, err := os.ReadFile(updated.PrivateData.ResultBodyPath)
-	require.NoError(t, err)
-	require.Contains(t, string(storedResult), "test-b64-payload")
-	require.Equal(t, int64(len(storedResult)), updated.PrivateData.ResultBodySize)
-
-	var log model.Log
-	require.NoError(t, db.Where("type = ?", model.LogTypeConsume).First(&log).Error)
-	require.Equal(t, 200, log.Quota)
-	require.Equal(t, "gpt-image-1", log.ModelName)
-	other, err := common.StrToMap(log.Other)
-	require.NoError(t, err)
-	require.Equal(t, task.TaskID, other["task_id"])
-
-	require.Eventually(t, func() bool {
-		var user model.User
-		if err := db.First(&user, 1).Error; err != nil {
-			return false
-		}
-		return user.UsedQuota == 200 && user.RequestCount == 1
-	}, time.Second, 10*time.Millisecond)
-}
-
-func TestRecoverAsyncTaskBridgeSubmissionRetriesCreateWhenRecoverMissing(t *testing.T) {
-	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
-	require.NoError(t, err)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	sqlDB.SetMaxOpenConns(1)
-	require.NoError(t, db.AutoMigrate(
-		&model.Task{},
-		&model.User{},
-		&model.Channel{},
-	))
-
-	oldDB := model.DB
-	oldUsingSQLite := common.UsingSQLite
-	oldMemoryCacheEnabled := common.MemoryCacheEnabled
-	oldDiskCacheConfig := common.GetDiskCacheConfig()
-	diskCacheConfig := oldDiskCacheConfig
-	diskCacheConfig.Path = t.TempDir()
-	model.DB = db
-	common.UsingSQLite = true
-	common.MemoryCacheEnabled = false
-	common.SetDiskCacheConfig(diskCacheConfig)
-	t.Cleanup(func() {
-		model.DB = oldDB
-		common.UsingSQLite = oldUsingSQLite
-		common.MemoryCacheEnabled = oldMemoryCacheEnabled
-		common.SetDiskCacheConfig(oldDiskCacheConfig)
-		_ = sqlDB.Close()
-	})
-
-	var recoverRequests int
-	var submitRequests int
-	var submitBody string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodGet && r.URL.Path == "/api/image-tasks":
-			recoverRequests++
-			if r.URL.Query().Get("ids") != "task_local_retry" {
-				http.Error(w, "unexpected recover id", http.StatusBadRequest)
-				return
-			}
-			_, _ = w.Write([]byte(`{"items":[],"missing_ids":["task_local_retry"]}`))
-		case r.Method == http.MethodPost && r.URL.Path == "/api/image-tasks/generations":
-			submitRequests++
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			submitBody = string(body)
-			_, _ = w.Write([]byte(`{"id":"task_local_retry","task_id":"task_local_retry","status":"queued"}`))
-		default:
-			http.Error(w, "unexpected request", http.StatusBadRequest)
-		}
-	}))
-	defer upstream.Close()
-
-	require.NoError(t, db.Create(&model.User{
-		Id:       1,
-		Username: "image-user",
-		Password: "password123",
-		Status:   common.UserStatusEnabled,
-		Group:    "default",
-		Quota:    100000,
-	}).Error)
-	baseURL := upstream.URL
-	require.NoError(t, db.Create(&model.Channel{
-		Id:      1,
-		Type:    constant.ChannelTypeOpenAI,
-		Key:     "upstream-key",
-		Status:  common.ChannelStatusEnabled,
-		Name:    "async-task-bridge",
-		Group:   "default",
-		Models:  "gpt-image-1",
-		BaseURL: &baseURL,
-	}).Error)
-
-	body := []byte(`{"model":"gpt-image-1","prompt":"cat","stream":false}`)
-	bodyPath, err := common.WriteImageTaskBodyCacheFile(body)
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = os.Remove(bodyPath)
-	})
-
-	now := time.Now().Unix()
-	task := &model.Task{
-		TaskID:     "task_local_retry",
-		Platform:   constant.TaskPlatformImage,
-		UserId:     1,
-		Group:      "default",
-		ChannelId:  1,
-		Action:     constant.TaskActionImageGeneration,
-		Status:     model.TaskStatusInProgress,
-		Progress:   "1%",
-		SubmitTime: now - 10,
-		StartTime:  now - 5,
-		Properties: model.Properties{
-			OriginModelName: "gpt-image-1",
-		},
-		PrivateData: model.TaskPrivateData{
-			ImageTaskMode:      dto.ImageTaskModeAsyncTaskBridge,
-			RequestPath:        "/v1/images/generations",
-			RequestMethod:      http.MethodPost,
-			RequestContentType: "application/json",
-			RequestBodyPath:    bodyPath,
-			RequestBodySize:    int64(len(body)),
-			Key:                "upstream-key",
-		},
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	require.NoError(t, recoverAsyncTaskBridgeSubmission(context.Background(), task))
-
-	var updated model.Task
-	require.NoError(t, db.First(&updated, task.ID).Error)
-	require.Equal(t, 1, recoverRequests)
-	require.Equal(t, 1, submitRequests)
-	require.JSONEq(t, `{
-		"model":"gpt-image-1",
-		"prompt":"cat",
-		"client_task_id":"task_local_retry",
-		"stream":false
-	}`, submitBody)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSubmitted), updated.Status)
-	require.Equal(t, "task_local_retry", updated.PrivateData.UpstreamTaskID)
-}
-
-func TestImageTaskCanResubmitUncertainSubmissionHonorsCooldownAndLimit(t *testing.T) {
-	now := time.Now().Unix()
-	task := &model.Task{
-		PrivateData: model.TaskPrivateData{
-			UpstreamSubmitUncertainAt:    now,
-			UpstreamSubmitUncertainCount: 1,
-		},
-	}
-
-	require.False(t, imageTaskCanResubmitUncertainSubmission(task, now))
-
-	task.PrivateData.UpstreamSubmitUncertainAt = now - int64(imageTaskUncertainSubmissionRetryCooldown.Seconds()) - 1
-	require.True(t, imageTaskCanResubmitUncertainSubmission(task, now))
-
-	task.PrivateData.UpstreamSubmitUncertainCount = imageTaskUncertainSubmissionMaxAttempts
-	require.False(t, imageTaskCanResubmitUncertainSubmission(task, now))
-
-	task.PrivateData.UpstreamSubmitUncertainAt = 0
-	task.PrivateData.UpstreamSubmitUncertainCount = 0
-	require.True(t, imageTaskCanResubmitUncertainSubmission(task, now))
-}
-
-func TestBuildAsyncTaskBridgeCreateBodyAppliesModelMappingAndParamOverride(t *testing.T) {
-	storage, err := common.CreateBodyStorage([]byte(`{
-		"model": "public-model",
-		"prompt": "hello",
-		"size": "1024x1024"
-	}`))
-	require.NoError(t, err)
-	defer storage.Close()
-
-	relayInfo := &relaycommon.RelayInfo{
-		ChannelMeta: &relaycommon.ChannelMeta{
-			ParamOverride: map[string]any{
-				"size": "512x512",
-			},
-		},
-	}
-	outbound, err := buildAsyncTaskBridgeCreateBody(storage, "application/json", "task_local", &dto.ImageRequest{
-		Model: "mapped-model",
-	}, relayInfo)
-	require.NoError(t, err)
-	defer outbound.Close()
-
-	body, err := io.ReadAll(outbound.Reader)
-	require.NoError(t, err)
-	require.Equal(t, "application/json", outbound.ContentType)
-	require.JSONEq(t, `{
-		"model": "mapped-model",
-		"prompt": "hello",
-		"size": "512x512",
-		"client_task_id": "task_local",
-		"stream": false
-	}`, string(body))
-}
-
-func TestBuildAsyncTaskBridgeMultipartBodyStreamsToDiskAndInjectsClientTaskID(t *testing.T) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	require.NoError(t, writer.WriteField("prompt", "hello"))
-	require.NoError(t, writer.WriteField("client_task_id", "old"))
-	require.NoError(t, writer.WriteField("stream", "true"))
-	part, err := writer.CreateFormFile("image", "image.txt")
-	require.NoError(t, err)
-	_, err = part.Write([]byte("image-bytes"))
-	require.NoError(t, err)
-	require.NoError(t, writer.Close())
-
-	storage, err := common.CreateBodyStorage(body.Bytes())
-	require.NoError(t, err)
-	defer storage.Close()
-
-	outbound, err := buildAsyncTaskBridgeCreateBody(storage, writer.FormDataContentType(), "task_local", nil, nil)
-	require.NoError(t, err)
-	defer outbound.Close()
-	require.Greater(t, outbound.ContentLength, int64(0))
-
-	_, params, err := mime.ParseMediaType(outbound.ContentType)
-	require.NoError(t, err)
-	reader := multipart.NewReader(outbound.Reader, params["boundary"])
-	form, err := reader.ReadForm(32 << 20)
-	require.NoError(t, err)
-	defer form.RemoveAll()
-
-	require.Equal(t, []string{"hello"}, form.Value["prompt"])
-	require.Equal(t, []string{"task_local"}, form.Value["client_task_id"])
-	require.Equal(t, []string{"false"}, form.Value["stream"])
-	require.Len(t, form.File["image"], 1)
-	file, err := form.File["image"][0].Open()
-	require.NoError(t, err)
-	defer file.Close()
-	content, err := io.ReadAll(file)
-	require.NoError(t, err)
-	require.Equal(t, []byte("image-bytes"), content)
-}
-
-func TestBuildAsyncTaskBridgeMultipartBodyAppliesModelMappingAndParamOverride(t *testing.T) {
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	require.NoError(t, writer.WriteField("model", "public-model"))
-	require.NoError(t, writer.WriteField("prompt", "hello"))
-	require.NoError(t, writer.WriteField("size", "1024x1024"))
-	part, err := writer.CreateFormFile("image", "image.txt")
-	require.NoError(t, err)
-	_, err = part.Write([]byte("image-bytes"))
-	require.NoError(t, err)
-	require.NoError(t, writer.Close())
-
-	storage, err := common.CreateBodyStorage(body.Bytes())
-	require.NoError(t, err)
-	defer storage.Close()
-
-	relayInfo := &relaycommon.RelayInfo{
-		ChannelMeta: &relaycommon.ChannelMeta{
-			ParamOverride: map[string]any{
-				"size": "512x512",
-			},
-		},
-	}
-	outbound, err := buildAsyncTaskBridgeCreateBody(storage, writer.FormDataContentType(), "task_local", &dto.ImageRequest{
-		Model: "mapped-model",
-	}, relayInfo)
-	require.NoError(t, err)
-	defer outbound.Close()
-
-	_, params, err := mime.ParseMediaType(outbound.ContentType)
-	require.NoError(t, err)
-	reader := multipart.NewReader(outbound.Reader, params["boundary"])
-	form, err := reader.ReadForm(32 << 20)
-	require.NoError(t, err)
-	defer form.RemoveAll()
-
-	require.Equal(t, []string{"mapped-model"}, form.Value["model"])
-	require.Equal(t, []string{"hello"}, form.Value["prompt"])
-	require.Equal(t, []string{"512x512"}, form.Value["size"])
-	require.Equal(t, []string{"task_local"}, form.Value["client_task_id"])
-	require.Equal(t, []string{"false"}, form.Value["stream"])
-	require.Len(t, form.File["image"], 1)
-	file, err := form.File["image"][0].Open()
-	require.NoError(t, err)
-	defer file.Close()
-	content, err := io.ReadAll(file)
-	require.NoError(t, err)
-	require.Equal(t, []byte("image-bytes"), content)
 }
 
 func TestImageTaskRelayStartTimePrefersExecutionStart(t *testing.T) {

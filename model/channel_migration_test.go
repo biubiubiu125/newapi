@@ -109,6 +109,69 @@ func TestMigrateImageTaskModeAsyncTaskBridgeRenamesTaskPrivateDataLegacyValue(t 
 	require.Equal(t, "upstream_123", task.PrivateData.UpstreamTaskID)
 }
 
+func TestMigrateRemoveChannelImageTaskModeDeletesChannelKeyOnly(t *testing.T) {
+	setupRiskCleanupTestDB(t)
+	require.NoError(t, DB.AutoMigrate(&Channel{}))
+	require.NoError(t, DB.AutoMigrate(&Task{}))
+
+	require.NoError(t, DB.Create(&Channel{
+		Id:            1,
+		Name:          "legacy image task mode",
+		OtherSettings: `{"image_task_mode":"gpt_image2api_async","disable_task_polling_sleep":true,"custom_large_id":9007199254740993}`,
+	}).Error)
+	require.NoError(t, DB.Create(&Channel{
+		Id:            2,
+		Name:          "bridge image task mode",
+		OtherSettings: `{"image_task_mode":"async_task_bridge","disable_task_polling_sleep":false,"custom_large_id":9007199254740993}`,
+	}).Error)
+	require.NoError(t, DB.Create(&Channel{
+		Id:            3,
+		Name:          "kept sync wrapper",
+		OtherSettings: `{"image_task_mode":"sync_wrapper","disable_task_polling_sleep":true}`,
+	}).Error)
+	require.NoError(t, DB.Create(&Channel{
+		Id:            4,
+		Name:          "invalid settings",
+		OtherSettings: `{"image_task_mode":`,
+	}).Error)
+
+	require.NoError(t, DB.Create(&Task{
+		ID:       1,
+		TaskID:   "legacy_private_data",
+		Platform: constant.TaskPlatformImage,
+		Status:   TaskStatusQueued,
+	}).Error)
+	rawPrivateData := `{"image_task_mode":"gpt_image2api_async","upstream_task_id":"upstream_123","custom_large_id":9007199254740993}`
+	require.NoError(t, DB.Exec("UPDATE tasks SET private_data = ? WHERE id = ?", rawPrivateData, 1).Error)
+
+	require.NoError(t, migrateImageTaskModeAsyncTaskBridge())
+	require.NoError(t, migrateRemoveChannelImageTaskMode())
+
+	var legacy Channel
+	require.NoError(t, DB.First(&legacy, "id = ?", 1).Error)
+	require.JSONEq(t, `{"disable_task_polling_sleep":true,"custom_large_id":9007199254740993}`, legacy.OtherSettings)
+	require.Contains(t, legacy.OtherSettings, `"custom_large_id":9007199254740993`)
+	require.NotContains(t, legacy.OtherSettings, "image_task_mode")
+
+	var bridge Channel
+	require.NoError(t, DB.First(&bridge, "id = ?", 2).Error)
+	require.JSONEq(t, `{"disable_task_polling_sleep":false,"custom_large_id":9007199254740993}`, bridge.OtherSettings)
+	require.NotContains(t, bridge.OtherSettings, "image_task_mode")
+
+	var kept Channel
+	require.NoError(t, DB.First(&kept, "id = ?", 3).Error)
+	require.JSONEq(t, `{"image_task_mode":"sync_wrapper","disable_task_polling_sleep":true}`, kept.OtherSettings)
+
+	var invalid Channel
+	require.NoError(t, DB.First(&invalid, "id = ?", 4).Error)
+	require.Equal(t, `{"image_task_mode":`, invalid.OtherSettings)
+
+	var privateDataRaw string
+	require.NoError(t, DB.Raw("SELECT private_data FROM tasks WHERE id = ?", 1).Scan(&privateDataRaw).Error)
+	require.JSONEq(t, `{"image_task_mode":"async_task_bridge","upstream_task_id":"upstream_123","custom_large_id":9007199254740993}`, privateDataRaw)
+	require.Contains(t, privateDataRaw, `"custom_large_id":9007199254740993`)
+}
+
 func TestImageTaskPrivateDataMigrationValueUsesJSONString(t *testing.T) {
 	value := imageTaskPrivateDataMigrationValue(`{"image_task_mode":"async_task_bridge"}`)
 

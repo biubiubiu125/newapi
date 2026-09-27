@@ -52,6 +52,11 @@ func rejectExhaustedPluginSubmit(c *gin.Context) bool {
 	if c.GetBool("token_unlimited_quota") {
 		return false
 	}
+	// TokenAuth always stores the key, including zero. A route unit test that
+	// never entered auth has no quota decision to enforce.
+	if _, exists := c.Get("token_quota"); !exists {
+		return false
+	}
 	if common.GetContextInt64(c, "token_quota") > 0 {
 		return false
 	}
@@ -576,6 +581,89 @@ func TaskPluginEndpointOnly(handler gin.HandlerFunc) gin.HandlerFunc {
 // PrepareTaskPluginEndpoint normalizes a claimed shared request through the
 // deterministic parser pinned before distribution. A shared-model request can
 // later rebind to another declared legacy provider from the same generation.
+type taskPluginDecodeFailure struct {
+	key    string
+	detail string
+}
+
+func filterTaskPluginDecodeCandidates(c *gin.Context, pinned pluginruntime.PinnedEndpoint, protocolContext pluginruntime.ProtocolRequestContext) ([]pluginruntime.ProtocolBinding, []taskPluginDecodeFailure) {
+	accepted := make([]pluginruntime.ProtocolBinding, 0, len(pinned.Candidates))
+	var failures []taskPluginDecodeFailure
+	for _, candidate := range pinned.Candidates {
+		if candidate.Plugin == nil || candidate.Plugin.Engine == nil {
+			continue
+		}
+		probe := protocolContext
+		if candidate.Protocol != "" {
+			probe.Protocol = candidate.Protocol
+		}
+		if candidate.Model != "" {
+			probe.Model = candidate.Model
+		}
+		if _, detail := decodeTaskPluginCandidate(c, candidate, probe, pinned.MappedModel); detail != "" {
+			failures = append(failures, taskPluginDecodeFailure{key: candidate.Plugin.Meta.Key, detail: detail})
+			continue
+		}
+		accepted = append(accepted, candidate)
+	}
+	return accepted, failures
+}
+
+func decodeTaskPluginCandidate(c *gin.Context, candidate pluginruntime.ProtocolBinding, protocolContext pluginruntime.ProtocolRequestContext, mappedModel string) (map[string]any, string) {
+	resolvedValue, callErr := candidate.Plugin.Engine.CallPathWithAdmissionTimeout(
+		context.WithoutCancel(c.Request.Context()),
+		pluginruntime.DefaultCallTimeout,
+		"protocols",
+		[]string{protocolContext.Protocol, "decodeRequest"},
+		protocolContext.JSValue(),
+	)
+	if callErr != nil {
+		detail := taskPluginHookDetail(callErr)
+		if detail == "" {
+			detail = "Invalid task protocol request"
+		}
+		return nil, detail
+	}
+	resolved, ok := resolvedValue.(map[string]any)
+	if !ok {
+		return nil, taskPluginInvalidRouteResult
+	}
+	if kind, _ := resolved["kind"].(string); kind != string(pluginruntime.RouteTypeSubmit) {
+		return nil, taskPluginInvalidRouteResult
+	}
+	resolvedModel, ok := resolved["model"].(string)
+	if !ok || strings.TrimSpace(resolvedModel) == "" {
+		return nil, "decoded request is missing a model"
+	}
+	modelOwned := slices.Contains(candidate.Plugin.Meta.Models, resolvedModel)
+	if resolvedModel != protocolContext.Model || (!modelOwned && mappedModel == "") {
+		return nil, fmt.Sprintf("model %q is not served by this plugin", resolvedModel)
+	}
+	return resolved, ""
+}
+
+func formatTaskPluginDecodeFailures(failures []taskPluginDecodeFailure) string {
+	type groupedFailure struct {
+		detail string
+		keys   []string
+	}
+	groups := make([]groupedFailure, 0, len(failures))
+	index := make(map[string]int, len(failures))
+	for _, failure := range failures {
+		if at, ok := index[failure.detail]; ok {
+			groups[at].keys = append(groups[at].keys, failure.key)
+			continue
+		}
+		index[failure.detail] = len(groups)
+		groups = append(groups, groupedFailure{detail: failure.detail, keys: []string{failure.key}})
+	}
+	parts := make([]string, 0, len(groups))
+	for _, group := range groups {
+		parts = append(parts, strings.Join(group.keys, ", ")+": "+group.detail)
+	}
+	return strings.Join(parts, "; ")
+}
+
 func PrepareTaskPluginEndpoint() gin.HandlerFunc {
 	return func(c *gin.Context) {
 		pinnedValue, exists := c.Get(pluginruntime.ContextKeyPinnedEndpoint)
@@ -678,6 +766,17 @@ func PrepareTaskPluginEndpoint() gin.HandlerFunc {
 			Stream:              stream,
 		}
 		c.Set(pluginruntime.ContextKeyProtocolRequest, protocolContext)
+		if len(pinned.Candidates) > 1 {
+			accepted, failures := filterTaskPluginDecodeCandidates(c, pinned, protocolContext)
+			if len(accepted) == 0 {
+				abortWithOpenAiMessage(c, http.StatusBadRequest, formatTaskPluginDecodeFailures(failures))
+				return
+			}
+			pinned.Candidates = accepted
+			pinned.Plugin = accepted[0].Plugin
+			c.Set(pluginruntime.ContextKeyPinnedEndpoint, pinned)
+			c.Set(pluginruntime.ContextKeyPinnedPlugin, pluginruntime.PinnedPlugin{Generation: pinned.Generation, Plugin: pinned.Plugin})
+		}
 		hookStarted := time.Now()
 		// Parsing belongs to the durable task submission path. A client
 		// disconnect only stops the later Responses observation.
@@ -777,6 +876,22 @@ func PrepareTaskPluginEndpoint() gin.HandlerFunc {
 		c.Set("task_plugin_key", pinned.Plugin.Meta.Key)
 		c.Set("platform", pinned.Plugin.Meta.Key)
 		service.AppendTaskPluginIdentityFilter(c, pinned.Plugin.Meta.Key)
+		if len(pinned.Candidates) > 0 {
+			keys := make([]string, 0, len(pinned.Candidates))
+			for _, candidate := range pinned.Candidates {
+				if candidate.Plugin == nil {
+					continue
+				}
+				key := strings.TrimSpace(candidate.Plugin.Meta.Key)
+				if key != "" {
+					keys = append(keys, key)
+				}
+			}
+			constraints := service.GetChannelConstraints(c)
+			if n := len(constraints.Filters); n > 0 && len(keys) > 0 {
+				constraints.Filters[n-1].TaskPluginKeys = keys
+			}
+		}
 		c.Set("relay_mode", relayconstant.RelayModeVideoSubmit)
 		if strings.TrimSpace(action) != "" {
 			c.Set("task_action", action)
@@ -1008,7 +1123,7 @@ func buildTaskPluginRouteRequest(c *gin.Context) (pluginruntime.RouteRequestCont
 			if !utf8.ValidString(field) || len(field) > maxTaskPluginFieldNameBytes {
 				return requestContext, fmt.Errorf("invalid multipart file field name")
 			}
-			for _, header := range headers {
+			for index, header := range headers {
 				if !utf8.ValidString(header.Filename) || len(header.Filename) > maxTaskPluginFilenameBytes {
 					return requestContext, fmt.Errorf("invalid multipart filename")
 				}
@@ -1023,6 +1138,9 @@ func buildTaskPluginRouteRequest(c *gin.Context) (pluginruntime.RouteRequestCont
 					return requestContext, fmt.Errorf("multipart file exceeds %d MB", fileLimitMB)
 				}
 				ref := "request_file:" + field
+				if index > 0 {
+					ref = fmt.Sprintf("%s#%d", ref, index)
+				}
 				files = append(files, map[string]any{"ref": ref, "field": field, "filename": header.Filename, "mimeType": header.Header.Get("Content-Type"), "size": header.Size})
 			}
 		}
@@ -1241,7 +1359,7 @@ func renderTaskPluginQuery(
 	views := make([]map[string]any, 0, len(taskIDs))
 	for _, taskID := range taskIDs {
 		task := tasksByID[taskID]
-		if task == nil {
+		if task == nil || task.PrivateData.ResultDiscarded {
 			logger.LogDebug(
 				c,
 				"task_plugin subsystem=query event=lookup_failed generation=%d plugin=%q reason=task_not_found requested=%d found=%d",

@@ -5,6 +5,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"slices"
 	"strings"
 	"time"
 
@@ -16,8 +17,14 @@ import (
 	webauthn "github.com/go-webauthn/webauthn/webauthn"
 )
 
+var ErrRPIDUnavailable = system_setting.ErrPasskeyRPIDUnavailable
+
 // BuildWebAuthn constructs a WebAuthn instance using the current passkey settings and request context.
 func BuildWebAuthn(r *http.Request) (*webauthn.WebAuthn, error) {
+	return BuildWebAuthnForRPID(r, "")
+}
+
+func BuildWebAuthnForRPID(r *http.Request, selectedRPID string) (*webauthn.WebAuthn, error) {
 	settings := system_setting.GetPasskeySettings()
 	if settings == nil {
 		return nil, common.Localized(i18n.MsgPasskeySettingsMissing)
@@ -36,6 +43,19 @@ func BuildWebAuthn(r *http.Request) (*webauthn.WebAuthn, error) {
 	rpID, err := resolveRPID(r, settings, origins)
 	if err != nil {
 		return nil, err
+	}
+	if selectedRPID != "" && selectedRPID != rpID {
+		if !slices.Contains(settings.RelyingPartyIDs(), selectedRPID) {
+			return nil, ErrRPIDUnavailable
+		}
+		rpID = selectedRPID
+	}
+	origins = originsForRPID(origins, rpID)
+	if len(origins) == 0 {
+		return nil, ErrRPIDUnavailable
+	}
+	if origin := r.Header.Get("Origin"); origin != "" && !protocol.IsOriginInHaystack(origin, origins) {
+		return nil, ErrRPIDUnavailable
 	}
 
 	selection := protocol.AuthenticatorSelection{
@@ -71,6 +91,71 @@ func BuildWebAuthn(r *http.Request) (*webauthn.WebAuthn, error) {
 	}
 
 	return webauthn.New(config)
+}
+
+// BuildLoginWebAuthn gives a known credential's binding precedence over a
+// browser's last-successful-domain hint. All choices remain server controlled.
+func BuildLoginWebAuthn(r *http.Request, hint, credentialRPID string) (*webauthn.WebAuthn, []string, error) {
+	settings := system_setting.PasskeySettingsSnapshot()
+	origins, err := resolveOrigins(r, &settings)
+	if err != nil {
+		return nil, nil, err
+	}
+	primary, err := resolveRPID(r, &settings, origins)
+	if err != nil {
+		return nil, nil, err
+	}
+	configured := append([]string{primary}, settings.RelyingPartyIDs()...)
+	available := []string{}
+	for _, id := range configured {
+		if credentialRPID != "" && id != credentialRPID {
+			continue
+		}
+		allowedOrigins := originsForRPID(origins, id)
+		if len(allowedOrigins) == 0 || (r.Header.Get("Origin") != "" && !protocol.IsOriginInHaystack(r.Header.Get("Origin"), allowedOrigins)) {
+			continue
+		}
+		if !slices.Contains(available, id) {
+			available = append(available, id)
+		}
+	}
+	if len(available) == 0 {
+		return nil, nil, ErrRPIDUnavailable
+	}
+	selected := credentialRPID
+	if selected == "" {
+		selected = hint
+	}
+	if selected == "" {
+		selected = available[0]
+	}
+	if !slices.Contains(available, selected) {
+		return nil, nil, ErrRPIDUnavailable
+	}
+	wa, err := BuildWebAuthnForRPID(r, selected)
+	return wa, available, err
+}
+
+func originsForRPID(origins []string, rpID string) []string {
+	allowed := []string{}
+	for _, origin := range origins {
+		parsed, err := url.Parse(origin)
+		if err != nil || (parsed.Scheme != "https" && parsed.Scheme != "http") || parsed.User != nil {
+			continue
+		}
+		host := strings.ToLower(parsed.Hostname())
+		domain := strings.ToLower(rpID)
+		if !strings.Contains(domain, ".") && domain != "localhost" {
+			if host == domain && parsed.Scheme == "https" {
+				allowed = append(allowed, origin)
+			}
+			continue
+		}
+		if host == domain || strings.HasSuffix(host, "."+domain) {
+			allowed = append(allowed, origin)
+		}
+	}
+	return allowed
 }
 
 func resolveOrigins(r *http.Request, settings *system_setting.PasskeySettings) ([]string, error) {

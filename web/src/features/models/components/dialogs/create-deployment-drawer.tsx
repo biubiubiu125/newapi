@@ -23,7 +23,7 @@ import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
-import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
+import { handleServerError } from '@/lib/handle-server-error'
 import { z } from 'zod'
 
 import {
@@ -63,6 +63,8 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet'
 
+import { requireServerSuccess, localizeConsoleErrorText } from '@/lib/server-error-message'
+
 import {
   checkClusterNameAvailability,
   createDeployment,
@@ -71,8 +73,6 @@ import {
   getHardwareTypes,
 } from '../../api'
 import { deploymentsQueryKeys } from '../../lib'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 const BUILTIN_IMAGE = 'ollama/ollama:latest'
 const DEFAULT_TRAFFIC_PORT = 11434
@@ -146,7 +146,7 @@ export function CreateDeploymentDrawer({
 
   const { data: hardwareTypesData, isLoading: isLoadingHardware } = useQuery({
     queryKey: ['deployment-hardware-types'],
-    queryFn: getHardwareTypes,
+    queryFn: async () => requireServerSuccess(await getHardwareTypes()),
     enabled: open,
   })
 
@@ -175,11 +175,13 @@ export function CreateDeploymentDrawer({
 
   const { data: replicasData, isLoading: isLoadingReplicas } = useQuery({
     queryKey: ['deployment-available-replicas', hardwareId, gpuCount],
-    queryFn: () =>
-      getAvailableReplicas({
-        hardware_id: hardwareId,
-        gpu_count: gpuCount,
-      }),
+    queryFn: async () =>
+      requireServerSuccess(
+        await getAvailableReplicas({
+          hardware_id: hardwareId,
+          gpu_count: gpuCount,
+        })
+      ),
     enabled: open && Boolean(hardwareId) && gpuCount > 0,
   })
 
@@ -213,15 +215,17 @@ export function CreateDeploymentDrawer({
       locationIds,
       currency,
     ],
-    queryFn: () =>
-      estimatePrice({
-        location_ids: locationIds,
-        hardware_id: hardwareId,
-        gpus_per_container: gpuCount,
-        duration_hours: durationHours,
-        replica_count: replicaCount,
-        currency: currency || 'usdc',
-      }),
+    queryFn: async () =>
+      requireServerSuccess(
+        await estimatePrice({
+          location_ids: locationIds,
+          hardware_id: hardwareId,
+          gpus_per_container: gpuCount,
+          duration_hours: durationHours,
+          replica_count: replicaCount,
+          currency: currency || 'usdc',
+        })
+      ),
     enabled:
       open &&
       Boolean(hardwareId) &&
@@ -236,7 +240,7 @@ export function CreateDeploymentDrawer({
     queryFn: async () => {
       const name = (resourceName || '').trim()
       if (!name) return null
-      return await checkClusterNameAvailability(name)
+      return requireServerSuccess(await checkClusterNameAvailability(name))
     },
     enabled: open && Boolean(resourceName && resourceName.trim().length > 0),
     staleTime: 10_000,
@@ -337,8 +341,11 @@ export function CreateDeploymentDrawer({
         return
       }
       toast.error(localizeConsoleErrorText(data?.message, 'Failed to create deployment'))
+      handleServerError(data, t('Failed to create deployment'))
     },
-    onError: toastUnhandledConsoleError,
+    onError: (err: Error) => {
+      handleServerError(err, t('Failed to create deployment'))
+    },
   })
 
   // Reset form when opening
@@ -419,13 +426,18 @@ export function CreateDeploymentDrawer({
                     </FormControl>
                     {open && field.value?.trim() ? (
                       <div className='text-muted-foreground text-xs'>
-                        {isCheckingName
-                          ? t('Checking name...')
-                          : nameAvailable === true
-                            ? t('Name is available')
-                            : nameAvailable === false
-                              ? t('Name is not available')
-                              : ''}
+                        {isCheckingName && t('Checking name...')}
+                        {!isCheckingName &&
+                          nameAvailable === true &&
+                          t('Name is available')}
+                        {!isCheckingName &&
+                          !(nameAvailable === true) &&
+                          nameAvailable === false &&
+                          t('Name is not available')}
+                        {!isCheckingName &&
+                          !(nameAvailable === true) &&
+                          !(nameAvailable === false) &&
+                          ''}
                       </div>
                     ) : null}
                     <FormMessage />

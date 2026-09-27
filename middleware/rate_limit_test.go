@@ -16,6 +16,14 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func performRateLimitRequest(router http.Handler, path, remoteAddr string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(http.MethodGet, path, nil)
+	request.RemoteAddr = remoteAddr
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, request)
+	return recorder
+}
+
 func useRateLimitMiniRedis(t *testing.T) (*miniredis.Miniredis, *redis.Client) {
 	t.Helper()
 

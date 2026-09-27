@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
 	"github.com/gin-contrib/sessions"
 	"github.com/gin-gonic/gin"
@@ -164,12 +165,24 @@ type wechatBindRequest struct {
 }
 
 func WeChatBind(c *gin.Context) {
-	if !common.WeChatAuthEnabled {
-		respondOAuthDisabled(c, "WeChat")
+	// Personal access tokens are not a WeChat bind session. Reject them as a
+	// business error before the missing-session security check, matching
+	// custom OAuth unbind.
+	if c.GetBool("use_access_token") {
+		common.ApiError(c, common.Localized(i18n.MsgOAuthWeChatBindUnsupported))
 		return
 	}
-	if _, ok := middleware.GetSessionAuthIdentity(c); !ok {
-		common.ApiError(c, common.Localized(i18n.MsgOAuthWeChatBindUnsupported))
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok {
+		writeSecurityOperationError(c, service.ErrAuthTokenInvalid)
+		return
+	}
+	succeeded, notificationFailed := false, false
+	defer func() {
+		recordUserSecurityAudit(c, identity.UserID, "user.binding_bind", map[string]any{"provider": "wechat", "success": succeeded, "notification_failed": notificationFailed})
+	}()
+	if !common.WeChatAuthEnabled {
+		respondOAuthDisabled(c, "WeChat")
 		return
 	}
 	var req wechatBindRequest
@@ -177,7 +190,15 @@ func WeChatBind(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	code := req.Code
+	code := strings.TrimSpace(req.Code)
+	context, err := common.Marshal(service.AccountBindingContext{Provider: "wechat", Code: code})
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeAccountBind, Context: context}) == nil {
+		return
+	}
 	wechatId, err := getWeChatIdByCode(code)
 	if err != nil {
 		common.ApiError(c, err)
@@ -187,28 +208,23 @@ func WeChatBind(c *gin.Context) {
 		respondOAuthAlreadyBound(c, "WeChat")
 		return
 	}
-	userId := c.GetInt("id")
-	if userId == 0 {
-		c.JSON(http.StatusUnauthorized, gin.H{
-			"success": false,
-			"message": i18n.T(c, i18n.MsgAuthLoginRequired),
-		})
+	if err := model.DB.Transaction(func(tx *gorm.DB) error {
+		return model.UpdateUserBindColumnForSessionWithTx(tx, identity, "wechat_id", wechatId)
+	}); err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
-	user := model.User{Id: userId}
-	err = user.FillUserById()
+	succeeded = true
+	user, err := model.GetUserById(identity.UserID, false)
 	if err != nil {
-		common.ApiError(c, err)
+		writeSecurityOperationError(c, err)
 		return
 	}
-	err = user.ClaimExternalIdentity(model.ExternalIdentityProviderWeChat, wechatId)
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
+	notificationFailed = service.NotifyAccountSecurityChange(user.Email, "WeChat account linked") != nil
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
+		"data":    gin.H{"notification_warning": notificationFailed},
 	})
 	return
 }

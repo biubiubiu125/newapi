@@ -1,6 +1,7 @@
 package model
 
 import (
+	"strconv"
 	"testing"
 	"time"
 
@@ -442,4 +443,45 @@ func TestIncreaseDecreaseUserQuotaAppliesCacheDelta(t *testing.T) {
 	require.NoError(t, err)
 	assert.EqualValues(t, 85, cached.Quota)
 	assert.EqualValues(t, 85, getUserQuotaFromDB(t, user.Id))
+}
+
+func TestQuotaReserveKeepsValuesBeyondFloat64SafeInteger(t *testing.T) {
+	truncateTables(t)
+	resetBatchUpdateTestState(t)
+	useUserCacheMiniRedis(t)
+
+	const beyond = int64(18014398509481981) // 2^54-3 is not an exact float64.
+	beyondText := strconv.FormatInt(beyond, 10)
+
+	user := createReserveTestUser(t, 1)
+	require.NoError(t, populateUserCache(user))
+	require.NoError(t, common.RDB.HSet(t.Context(), getUserCacheKey(user.Id), "Quota", beyondText).Err())
+	result, err := cacheTryReserveUserQuota(user.Id, beyond)
+	require.NoError(t, err)
+	require.Equal(t, cacheQuotaOK, result)
+	left, err := common.RDB.HGet(t.Context(), getUserCacheKey(user.Id), "Quota").Result()
+	require.NoError(t, err)
+	assert.Equal(t, "0", left)
+
+	result, err = cacheApplyUserQuotaDelta(user.Id, beyond)
+	require.NoError(t, err)
+	require.Equal(t, cacheQuotaOK, result)
+	restored, err := common.RDB.HGet(t.Context(), getUserCacheKey(user.Id), "Quota").Result()
+	require.NoError(t, err)
+	assert.Equal(t, beyondText, restored)
+
+	token := createReserveTestToken(t, 1)
+	code, err := cacheInitToken(token)
+	require.NoError(t, err)
+	require.Equal(t, 1, code)
+	require.NoError(t, common.RDB.HSet(t.Context(), getTokenCacheKey(token.Key), "RemainQuota", beyondText).Err())
+	result, err = cacheTryReserveTokenQuota(token.Id, token.Key, beyond)
+	require.NoError(t, err)
+	require.Equal(t, cacheQuotaOK, result)
+	remain, err := common.RDB.HGet(t.Context(), getTokenCacheKey(token.Key), "RemainQuota").Result()
+	require.NoError(t, err)
+	assert.Equal(t, "0", remain)
+	used, err := common.RDB.HGet(t.Context(), getTokenCacheKey(token.Key), "UsedQuota").Result()
+	require.NoError(t, err)
+	assert.Equal(t, beyondText, used)
 }

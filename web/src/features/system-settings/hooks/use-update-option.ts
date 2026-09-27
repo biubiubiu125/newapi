@@ -19,23 +19,19 @@ For commercial licensing, please contact support@quantumnous.com
 import { useMutation, useQueryClient } from '@tanstack/react-query'
 import i18next from 'i18next'
 import { toast } from 'sonner'
-
 import { DEFAULT_LOGO, resolveSystemName } from '@/lib/constants'
-import { getServerErrorDisplayMessage } from '@/lib/handle-server-error'
+import {handleServerError} from '@/lib/handle-server-error'
 import { emitSettingsRefresh } from '@/lib/settings-refresh'
 import { useSystemConfigStore } from '@/stores/system-config-store'
-
-import { updateSystemOption } from '../api'
-import type { UpdateOptionRequest } from '../types'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
+import { updateSystemOption, updatePasskeyDomains } from '../api'
+import type { UpdateOptionRequest, UpdatePasskeyDomainsRequest } from '../types'
+import {requireServerSuccess} from '@/lib/server-error-message'
 
 type UpdateOptionMutationRequest = UpdateOptionRequest & {
   skipInvalidate?: boolean
   skipToast?: boolean
 }
 
-// Configuration keys that require status refresh
 const STATUS_RELATED_KEYS = new Set([
   'SystemName',
   'ServerAddress',
@@ -54,9 +50,15 @@ const STATUS_RELATED_KEYS = new Set([
   'general_setting.quota_display_type',
   'general_setting.custom_currency_symbol',
   'general_setting.custom_currency_exchange_rate',
+  'oidc.display_name',
+  'passkey.enabled',
+  'passkey.rp_id',
+  'passkey.legacy_rp_ids',
+  'passkey.origins',
 ])
 
 const NOTICE_RELATED_KEYS = new Set(['Notice'])
+
 const WALLET_RELATED_KEYS = ['TopUpLink', 'payment_setting.wallet_notice']
 
 function syncDisplayOptionToSystemConfig(request: UpdateOptionMutationRequest) {
@@ -86,8 +88,10 @@ export function useUpdateOption() {
   const queryClient = useQueryClient()
 
   return useMutation({
-    mutationFn: (request: UpdateOptionMutationRequest) =>
-      updateSystemOption({ key: request.key, value: request.value }),
+    mutationFn: async (request: UpdateOptionMutationRequest) =>
+      requireServerSuccess(
+        await updateSystemOption({ key: request.key, value: request.value })
+      ),
     onSuccess: (data, variables) => {
       if (data.success) {
         // Always refresh system-options
@@ -121,11 +125,40 @@ export function useUpdateOption() {
           toast.success(i18next.t('Setting updated successfully'))
         }
       } else {
-        toast.error(localizeConsoleErrorText(data.message, 'Failed to update setting'))
+        handleServerError(data, i18next.t('Failed to update setting'))
       }
     },
     onError: (error: Error) => {
-      toast.error(getServerErrorDisplayMessage(error))
+      handleServerError(error, i18next.t('Failed to update setting'))
     },
+  })
+}
+
+export function useUpdatePasskeyDomains() {
+  const queryClient = useQueryClient()
+  return useMutation({
+    mutationFn: async (request: UpdatePasskeyDomainsRequest) => {
+      const result = await updatePasskeyDomains(request)
+      if (
+        result.code === 'PASSKEY_RP_ID_REMOVAL_CONFIRMATION_REQUIRED' &&
+        result.data
+      ) {
+        return result
+      }
+      return requireServerSuccess(result)
+    },
+    onSuccess: (result, request) => {
+      if (request.preview || !result.success) return
+      queryClient.invalidateQueries({ queryKey: ['system-options'] })
+      queryClient.invalidateQueries({ queryKey: ['status'] })
+      try {
+        window.localStorage.removeItem('status')
+      } catch {
+        /* Storage may be disabled. */
+      }
+      toast.success(i18next.t('Setting updated successfully'))
+    },
+    onError: (error: Error) =>
+      handleServerError(error, i18next.t('Failed to update setting')),
   })
 }

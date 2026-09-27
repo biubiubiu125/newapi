@@ -18,41 +18,19 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
-import {
-  type SortingState,
-  type VisibilityState,
-  getCoreRowModel,
-  getFacetedRowModel,
-  getFacetedUniqueValues,
-  getFilteredRowModel,
-  getPaginationRowModel,
-  getSortedRowModel,
-  useReactTable,
-} from '@tanstack/react-table'
-import { useEffect, useState } from 'react'
+import { type SortingState, type VisibilityState, getCoreRowModel, getFacetedRowModel, getFacetedUniqueValues, getFilteredRowModel, getPaginationRowModel, getSortedRowModel, useReactTable } from '@tanstack/react-table'
+import {useEffect, useState} from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
-
-import {
-  DISABLED_ROW_DESKTOP,
-  DISABLED_ROW_MOBILE,
-  DataTablePage,
-} from '@/components/data-table'
+import {DISABLED_ROW_DESKTOP, DISABLED_ROW_MOBILE, DataTablePage} from '@/components/data-table'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
-import { currentConsoleFailureText } from '@/lib/console-failure-text'
-
 import { getUsers, searchUsers } from '../api'
-import {
-  USER_STATUS,
-  getUserStatusOptions,
-  getUserRoleOptions,
-  isUserDeleted,
-} from '../constants'
-import type { User } from '../types'
+import { USER_STATUS, getUserStatusOptions, getUserRoleOptions, isUserDeleted } from '../constants'
+import type {User} from '../types'
 import { DataTableBulkActions } from './data-table-bulk-actions'
 import { useUsersColumns } from './users-columns'
 import { useUsers } from './users-provider'
+import { createServerError } from '@/lib/server-error-message'
 
 const route = getRouteApi('/_authenticated/users/')
 
@@ -137,13 +115,10 @@ export function UsersTable() {
           : await getUsers(params)
 
       if (!result.success) {
-        toast.error(
-          currentConsoleFailureText(
-            result.message,
-            hasFilter ? 'Failed to search users' : 'Failed to load users'
-          )
+        throw createServerError(
+          result,
+          t(hasFilter ? 'Failed to search users' : 'Failed to load users')
         )
-        return { items: [], total: 0 }
       }
 
       return {
@@ -235,13 +210,10 @@ export function UsersTable() {
           },
         ],
       }}
-      getRowClassName={(row, { isMobile }) =>
-        isDisabledUserRow(row.original)
-          ? isMobile
-            ? DISABLED_ROW_MOBILE
-            : DISABLED_ROW_DESKTOP
-          : undefined
-      }
+      getRowClassName={(row, { isMobile }) => {
+        if (!isDisabledUserRow(row.original)) return undefined
+        return isMobile ? DISABLED_ROW_MOBILE : DISABLED_ROW_DESKTOP
+      }}
       bulkActions={<DataTableBulkActions table={table} />}
     />
   )

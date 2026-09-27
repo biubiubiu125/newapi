@@ -21,6 +21,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"github.com/tidwall/gjson"
 )
 
 func buildUsageFromGeminiMetadata(metadata *dto.GeminiUsageMetadata, fallbackPromptTokens int) dto.Usage {
@@ -93,6 +94,23 @@ func markGeminiGoogleSearchCall(c *gin.Context, response *dto.GeminiChatResponse
 	}
 }
 
+func countGeminiBillableFunctionCalls(info *relaycommon.RelayInfo, response *dto.GeminiChatResponse) {
+	if info == nil || response == nil {
+		return
+	}
+	for _, candidate := range response.Candidates {
+		for _, part := range candidate.Content.Parts {
+			if part.FunctionCall == nil {
+				continue
+			}
+			if part.FunctionCall.WillContinue != nil && *part.FunctionCall.WillContinue {
+				continue
+			}
+			info.CountBillableToolCall(dto.BuildInCallFunctionCall, part.FunctionCall.FunctionName)
+		}
+	}
+}
+
 func buildUsageFromGeminiResponse(c *gin.Context, info *relaycommon.RelayInfo, response *dto.GeminiChatResponse) dto.Usage {
 	metadata := response.GetUsageMetadata()
 	if dto.HasGeminiUsageMetadataTokens(metadata) {
@@ -153,21 +171,36 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 	var usage = &dto.Usage{}
 	var imageCount int
 	var hasBillableUsageMetadata bool
+	var streamErr error
 	var accumulatedUsageMetadata *dto.GeminiUsageMetadata
 	responseText := strings.Builder{}
 
 	helper.StreamScannerHandler(c, resp, info, func(data string, sr *helper.StreamResult) {
 		var geminiResponse dto.GeminiChatResponse
 		if err := common.UnmarshalJsonStr(data, &geminiResponse); err != nil {
-			sr.Stop(fmt.Errorf("unmarshal: %w", err))
+			streamErr = fmt.Errorf("unmarshal Gemini stream response: %w", err)
+			sr.Stop(streamErr)
 			return
 		}
 
 		if len(geminiResponse.Candidates) == 0 && geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
+			info.PerformanceBusinessRejection = true
 			common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", *geminiResponse.PromptFeedback.BlockReason))
+		}
+		info.ObserveResponseModel(gjson.Get(data, "modelVersion").Str)
+		for _, candidate := range geminiResponse.Candidates {
+			if candidate.FinishReason == nil || *candidate.FinishReason == "" || *candidate.FinishReason == "FINISH_REASON_UNSPECIFIED" {
+				continue
+			}
+			switch *candidate.FinishReason {
+			case "SAFETY", "RECITATION", "BLOCKLIST", "PROHIBITED_CONTENT", "SPII", "IMAGE_SAFETY", "IMAGE_PROHIBITED_CONTENT", "IMAGE_RECITATION":
+				info.PerformanceBusinessRejection = true
+			}
+			info.StreamStatus.MarkCompleted()
 		}
 
 		markGeminiGoogleSearchCall(c, &geminiResponse)
+		countGeminiBillableFunctionCalls(info, &geminiResponse)
 
 		// 统计图片数量
 		for _, candidate := range geminiResponse.Candidates {
@@ -190,9 +223,15 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		}
 
 		if !callback(data, &geminiResponse) {
-			sr.Stop(fmt.Errorf("gemini callback stopped"))
+			if isGeminiDownstreamStop(c, info) {
+				sr.Stop(nil)
+				return
+			}
+			streamErr = errors.New("Gemini stream callback stopped")
+			sr.Stop(streamErr)
 		}
 	})
+	info.StreamStatus.RequireTerminal()
 
 	if streamErr := helper.ErrorBeforeFirstStreamResponse(info); streamErr != nil {
 		return nil, streamErr
@@ -214,7 +253,22 @@ func geminiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 		patchGeminiZeroCompletionUsage(c, info, usage, responseText.String(), imageCount)
 	}
 
+	if streamErr != nil {
+		return usage, types.NewOpenAIError(streamErr, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
+	}
+	if info.StreamStatus != nil && !info.StreamStatus.IsNormalEnd() {
+		logger.LogWarn(c, fmt.Sprintf("Gemini stream ended unexpectedly: %s", info.StreamStatus.Summary()))
+	}
+
 	return usage, nil
+}
+
+func isGeminiDownstreamStop(c *gin.Context, info *relaycommon.RelayInfo) bool {
+	if c != nil && c.Request != nil && c.Request.Context().Err() != nil {
+		return true
+	}
+	return info != nil && info.StreamStatus != nil &&
+		info.StreamStatus.EndReason == relaycommon.StreamEndReasonClientGone
 }
 
 func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Response) (*dto.Usage, *types.NewAPIError) {
@@ -265,6 +319,9 @@ func GeminiChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *
 		if info.SendResponseCount == 0 {
 			// send first response
 			emptyResponse := helper.GenerateStartEmptyResponse(id, createAt, info.UpstreamModelName, nil)
+			// Claude message_start is emitted from this first OpenAI chunk.
+			// Carry upstream usage when the current Gemini frame provided it.
+			emptyResponse.Usage = response.Usage
 			if response.IsToolCall() {
 				if len(emptyResponse.Choices) > 0 && len(response.Choices) > 0 {
 					toolCalls := response.Choices[0].Delta.ToolCalls
@@ -333,12 +390,15 @@ func GeminiChatHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.R
 	if err != nil {
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponseBody, http.StatusInternalServerError)
 	}
+	info.ObserveResponseModel(gjson.GetBytes(responseBody, "modelVersion").Str)
 	markGeminiGoogleSearchCall(c, &geminiResponse)
+	countGeminiBillableFunctionCalls(info, &geminiResponse)
 	if len(geminiResponse.Candidates) == 0 {
 		usage := buildUsageFromGeminiResponse(c, info, &geminiResponse)
 
 		var newAPIError *types.NewAPIError
 		if geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
+			info.PerformanceBusinessRejection = true
 			common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", *geminiResponse.PromptFeedback.BlockReason))
 			newAPIError = types.NewOpenAIError(
 				errors.New("request blocked by Gemini API: "+*geminiResponse.PromptFeedback.BlockReason),

@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"testing"
 
+	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/gin-gonic/gin"
@@ -22,7 +23,7 @@ func TestRetrieveTaskPluginResponseRejectsOtherToken(t *testing.T) {
 			task.PrivateData.TokenId = 80
 			return task, true, nil
 		},
-		resolvePlugin: func(*model.Task) (*pluginruntime.LoadedPlugin, *pluginruntime.RoutingGeneration, bool) {
+		resolvePlugin: func(constant.TaskPlatform) (*pluginruntime.LoadedPlugin, *pluginruntime.RoutingGeneration, bool) {
 			resolved = true
 			return nil, nil, false
 		},
@@ -70,7 +71,7 @@ func TestRetrieveTaskPluginResponseAllowsMatchingAndSessionTokens(t *testing.T) 
 					task.PrivateData.TokenId = 80
 					return task, true, nil
 				},
-				resolvePlugin: func(*model.Task) (*pluginruntime.LoadedPlugin, *pluginruntime.RoutingGeneration, bool) {
+				resolvePlugin: func(constant.TaskPlatform) (*pluginruntime.LoadedPlugin, *pluginruntime.RoutingGeneration, bool) {
 					resolved = true
 					return nil, nil, false
 				},

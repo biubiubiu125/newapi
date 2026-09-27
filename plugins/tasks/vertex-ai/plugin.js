@@ -24,6 +24,7 @@ export const meta = {
     },
     resolution: {
       enum: ["720p", "1080p", "4k"],
+      enumLabels: { "720p": { en: "720p", zh: "720p" }, "1080p": { en: "1080p", zh: "1080p" }, "4k": { en: "4k", zh: "4k" } },
       description: { en: "Requested video output resolution.", zh: "请求的输出视频分辨率。" },
     },
     generate_audio: {

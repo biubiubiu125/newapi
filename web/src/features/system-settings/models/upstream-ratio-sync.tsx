@@ -83,7 +83,6 @@ function upstreamFailureLine(
     'Request failed'
   )}`
 }
-
 function getDefaultEndpointForChannel(channel: UpstreamChannel): string {
   if (channel.id === MODELS_DEV_PRESET_ID) return MODELS_DEV_PRESET_ENDPOINT
   if (channel.id === OFFICIAL_CHANNEL_ID) return OFFICIAL_CHANNEL_ENDPOINT
@@ -113,7 +112,7 @@ export function UpstreamRatioSync() {
     queryFn: async () => requireServerSuccess(await getUpstreamChannels()),
     enabled: channelDialogOpen,
   })
-  const channels = useMemo(() => channelsData ?? [], [channelsData])
+  const channels = useMemo(() => channelsData?.data ?? [], [channelsData?.data])
   useEffect(() => {
     if (!channels.length) return
     setChannelEndpoints((previous) => {

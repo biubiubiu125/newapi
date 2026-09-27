@@ -21,9 +21,8 @@ import { t } from 'i18next'
 import { api } from '@/lib/api'
 
 interface PasswordEncryptionKey {
-  enabled?: boolean
-  kid?: string
-  public_key?: string
+  kid: string
+  public_key: string
 }
 
 export interface EncryptedPassword {
@@ -41,15 +40,43 @@ export function clearPasswordEncryptionCache(): void {
   cachedAt = 0
 }
 
+export async function encryptPasswordFields<T extends object>(
+  payload: T,
+  fields: readonly string[]
+): Promise<T> {
+  const record = payload as T & Record<string, unknown>
+  const present = fields.filter((field) => {
+    const value = record[field]
+    return typeof value === 'string' && value.length > 0
+  })
+  if (present.length === 0) return payload
+
+  const response = await api.get<{
+    success: boolean
+    data?: PasswordEncryptionKey & { enabled?: boolean }
+  }>('/api/user/login/encryption-key')
+  if (response.data?.success && response.data.data?.enabled === false) {
+    return payload
+  }
+
+  const next: Record<string, unknown> = { ...record }
+  let encryptionKeyId = ''
+  for (const field of present) {
+    const encrypted = await encryptPassword(String(record[field]))
+    delete next[field]
+    next[`${field}_encrypted`] = encrypted.password_encrypted
+    encryptionKeyId = encrypted.encryption_key_id
+  }
+  next.encryption_key_id = encryptionKeyId
+  return next as T
+}
+
 export async function encryptPassword(
   password: string
 ): Promise<EncryptedPassword> {
   try {
     const key = await getPasswordEncryptionKey()
-    if (key.enabled === false || !key.kid || !key.public_key) {
-      throw new Error('Password encryption is disabled')
-    }
-    const ciphertext = await rsaOaepEncrypt(password, key.public_key)
+    const ciphertext = await rsaOaepEncrypt(password, key.public_key, key.kid)
     return {
       password_encrypted: ciphertext,
       encryption_key_id: key.kid,
@@ -57,44 +84,6 @@ export async function encryptPassword(
   } catch (error: unknown) {
     clearPasswordEncryptionCache()
     throw new Error(t('Login failed'), { cause: error })
-  }
-}
-
-export async function encryptPasswordFields<T extends object>(
-  payload: T,
-  fields: readonly string[]
-): Promise<T> {
-  const values = { ...(payload as Record<string, unknown>) }
-  const passwordFields = fields.filter((field) => {
-    const value = values[field]
-    return typeof value === 'string' && value !== ''
-  })
-  if (passwordFields.length === 0) {
-    return payload
-  }
-
-  try {
-    const key = await getPasswordEncryptionKey()
-    if (key.enabled === false) {
-      return payload
-    }
-    if (!key.kid || !key.public_key) {
-      throw new Error('Password encryption key is unavailable')
-    }
-
-    for (const field of passwordFields) {
-      const value = values[field]
-      if (typeof value !== 'string') {
-        continue
-      }
-      values[`${field}_encrypted`] = await rsaOaepEncrypt(value, key.public_key)
-      delete values[field]
-    }
-    values.encryption_key_id = key.kid
-    return values as T
-  } catch (error: unknown) {
-    clearPasswordEncryptionCache()
-    throw new Error(t('Password encryption unavailable'), { cause: error })
   }
 }
 
@@ -109,7 +98,7 @@ async function getPasswordEncryptionKey(): Promise<PasswordEncryptionKey> {
     data?: PasswordEncryptionKey
   }>('/api/user/login/encryption-key')
   const key = response.data?.data
-  if (!response.data?.success || !key) {
+  if (!response.data?.success || !key?.kid || !key.public_key) {
     throw new Error('Password encryption key is unavailable')
   }
   cachedKey = key
@@ -119,7 +108,8 @@ async function getPasswordEncryptionKey(): Promise<PasswordEncryptionKey> {
 
 async function rsaOaepEncrypt(
   password: string,
-  publicKeyPEM: string
+  publicKeyPEM: string,
+  keyId: string
 ): Promise<string> {
   if (typeof globalThis.crypto?.subtle !== 'undefined') {
     try {
@@ -130,10 +120,48 @@ async function rsaOaepEncrypt(
         false,
         ['encrypt']
       )
+      const plaintext = new TextEncoder().encode(password)
+      const algorithm = publicKey.algorithm as RsaHashedKeyAlgorithm
+      if (plaintext.byteLength > algorithm.modulusLength / 8 - 66) {
+        const secret = globalThis.crypto.getRandomValues(new Uint8Array(32))
+        const nonce = globalThis.crypto.getRandomValues(new Uint8Array(12))
+        const key = await globalThis.crypto.subtle.importKey(
+          'raw',
+          secret,
+          'AES-GCM',
+          false,
+          ['encrypt']
+        )
+        const [wrappedKey, ciphertext] = await Promise.all([
+          globalThis.crypto.subtle.encrypt(
+            {
+              name: 'RSA-OAEP',
+              label: new TextEncoder().encode('password-v2'),
+            },
+            publicKey,
+            secret
+          ),
+          globalThis.crypto.subtle.encrypt(
+            {
+              name: 'AES-GCM',
+              iv: nonce,
+              additionalData: new TextEncoder().encode(`password-v2:${keyId}`),
+            },
+            key,
+            plaintext
+          ),
+        ])
+        return [
+          'v2',
+          arrayBufferToBase64(wrappedKey),
+          arrayBufferToBase64(nonce.buffer),
+          arrayBufferToBase64(ciphertext),
+        ].join('.')
+      }
       const ciphertext = await globalThis.crypto.subtle.encrypt(
         { name: 'RSA-OAEP' },
         publicKey,
-        new TextEncoder().encode(password)
+        plaintext
       )
       return arrayBufferToBase64(ciphertext)
     } catch {
@@ -146,11 +174,33 @@ async function rsaOaepEncrypt(
   // forge keeps the normal HTTPS bundle small while supporting HTTP intranets.
   const forge = await import('node-forge')
   const publicKey = forge.pki.publicKeyFromPem(publicKeyPEM)
-  const ciphertext = publicKey.encrypt(
-    forge.util.encodeUtf8(password),
-    'RSA-OAEP',
-    { md: forge.md.sha256.create() }
-  )
+  const plaintext = forge.util.encodeUtf8(password)
+  if (plaintext.length > publicKey.n.bitLength() / 8 - 66) {
+    const secret = forge.random.getBytesSync(32)
+    const nonce = forge.random.getBytesSync(12)
+    const wrappedKey = publicKey.encrypt(secret, 'RSA-OAEP', {
+      md: forge.md.sha256.create(),
+      label: 'password-v2',
+    })
+    const cipher = forge.cipher.createCipher('AES-GCM', secret)
+    cipher.start({
+      iv: nonce,
+      additionalData: `password-v2:${keyId}`,
+      tagLength: 128,
+    })
+    cipher.update(forge.util.createBuffer(plaintext))
+    if (!cipher.finish()) throw new Error('Password encryption failed')
+    const ciphertext = cipher.output.getBytes() + cipher.mode.tag.getBytes()
+    return [
+      'v2',
+      forge.util.encode64(wrappedKey),
+      forge.util.encode64(nonce),
+      forge.util.encode64(ciphertext),
+    ].join('.')
+  }
+  const ciphertext = publicKey.encrypt(plaintext, 'RSA-OAEP', {
+    md: forge.md.sha256.create(),
+  })
   return forge.util.encode64(ciphertext)
 }
 

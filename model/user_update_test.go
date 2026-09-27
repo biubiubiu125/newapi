@@ -64,7 +64,7 @@ func TestUserUpdateDoesNotOverwriteConcurrentAccountingOrTokenChanges(t *testing
 	staleUser, err := GetUserById(user.Id, true)
 	require.NoError(t, err)
 
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]any{
 		"quota":         gorm.Expr("quota - ?", 400),
 		"used_quota":    gorm.Expr("used_quota + ?", 400),
 		"request_count": gorm.Expr("request_count + ?", 1),
@@ -143,7 +143,6 @@ func TestUsageAccountingSupportsSignedDirectAndBatchDeltas(t *testing.T) {
 	require.NoError(t, DB.Select("used_quota").First(&gotChannel, channel.Id).Error)
 	assert.Equal(t, int64(1150), gotChannel.UsedQuota)
 }
-
 func TestUpdateUserAccessTokenOnlyUpdatesAccessToken(t *testing.T) {
 	setupUserUpdateTestState(t)
 
@@ -159,7 +158,7 @@ func TestUpdateUserAccessTokenOnlyUpdatesAccessToken(t *testing.T) {
 	}
 	require.NoError(t, DB.Create(&user).Error)
 
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]any{
 		"quota":        gorm.Expr("quota + ?", 500),
 		"aff_quota":    gorm.Expr("aff_quota - ?", 500),
 		"display_name": "concurrent-update",
@@ -211,7 +210,7 @@ func TestUpdateUserSettingOnlyUpdatesSetting(t *testing.T) {
 	}
 	require.NoError(t, DB.Create(&user).Error)
 
-	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]interface{}{
+	require.NoError(t, DB.Model(&User{}).Where("id = ?", user.Id).Updates(map[string]any{
 		"quota":         gorm.Expr("quota - ?", 250),
 		"used_quota":    gorm.Expr("used_quota + ?", 250),
 		"request_count": gorm.Expr("request_count + ?", 1),
@@ -369,7 +368,6 @@ func TestUpdateUserBindColumnRejectsNonWhitelistedColumns(t *testing.T) {
 	assert.Error(t, UpdateUserBindColumn(user.Id, "github_id; DROP TABLE users", "x"))
 	assert.Error(t, UpdateUserBindColumn(0, "github_id", "x"))
 }
-
 func TestValidateAndFillRejectsPasswordlessUser(t *testing.T) {
 	setupUserUpdateTestState(t)
 

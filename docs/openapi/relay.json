@@ -2834,7 +2834,7 @@
             "minimum": 1,
             "maximum": 1,
             "default": 1,
-            "description": "Async task bridge mode requires n=1; create multiple tasks for counts greater than one."
+            "description": "n must be 1; create multiple tasks for counts greater than one."
           },
           "size": {
             "type": "string",
@@ -2924,7 +2924,7 @@
             "minimum": 1,
             "maximum": 1,
             "default": 1,
-            "description": "Async task bridge mode requires n=1; create multiple tasks for counts greater than one."
+            "description": "n must be 1; create multiple tasks for counts greater than one."
           },
           "size": {
             "type": "string",

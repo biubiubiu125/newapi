@@ -340,7 +340,9 @@ func RelaySwapFace(c *gin.Context, info *relaycommon.RelayInfo) *dto.MidjourneyR
 	requestURL := getMjRequestPath(c.Request.URL.String())
 	baseURL := c.GetString("base_url")
 	fullRequestURL := fmt.Sprintf("%s%s", baseURL, requestURL)
+	service.RequestPolicy(c).BeginAttempt(&model.Channel{Id: c.GetInt("channel_id")}, info.UsingGroup)
 	mjResp, _, err := service.DoMidjourneyHttpRequest(c, time.Second*60, fullRequestURL)
+	service.RecordMidjourneyPolicyResponse(c, mjResp, err)
 	if err != nil {
 		return &mjResp.Response
 	}
@@ -673,7 +675,9 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		}
 	}()
 
+	service.RequestPolicy(c).BeginAttempt(&model.Channel{Id: c.GetInt("channel_id")}, relayInfo.UsingGroup)
 	midjResponseWithStatus, responseBody, err := service.DoMidjourneyHttpRequest(c, time.Second*60, fullRequestURL)
+	accepted := service.RecordMidjourneyPolicyResponse(c, midjResponseWithStatus, err)
 	if err != nil {
 		return &midjResponseWithStatus.Response
 	}
@@ -721,7 +725,6 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			billingLogged = true
 		}
 	}()
-
 	// 文档：https://github.com/novicezk/midjourney-proxy/blob/main/docs/api.md
 	//1-提交成功
 	// 21-任务已存在（处理中或者有结果了） {"code":21,"description":"任务已存在","result":"0741798445574458","properties":{"status":"SUCCESS","imageUrl":"https://xxxx"}}
@@ -758,8 +761,11 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 		if err != nil {
 			common.SysLog("get_channel_null: " + err.Error())
 		}
-		if channel.GetAutoBan() && common.AutomaticDisableChannelEnabled {
-			model.UpdateChannelStatus(midjourneyTask.ChannelId, "", 2, "No available account instance")
+		if channel != nil && channel.GetAutoBan() && common.AutomaticDisableChannelEnabled {
+			if model.UpdateChannelStatus(midjourneyTask.ChannelId, "", common.ChannelStatusManuallyDisabled, "No available account instance") {
+				service.CloseActiveWebSocketsForChannel(midjourneyTask.ChannelId, service.ChannelDisabledCloseReason)
+				service.RequestPolicy(c).AddEvent(service.PolicyEvent{ChannelID: midjourneyTask.ChannelId, Decision: service.PolicyDecision{Action: "stop", Reason: "task_failed", Source: "upstream"}, Health: "channel_disable_requested"})
+			}
 		}
 	}
 	if midjResponse.Code != 1 && midjResponse.Code != 21 && midjResponse.Code != 22 {
@@ -774,7 +780,7 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 	}
 	if midjResponse.Code == 21 { //21-任务已存在（处理中或者有结果了）
 		// 将 properties 转换为一个 map
-		properties, ok := midjResponse.Properties.(map[string]interface{})
+		properties, ok := midjResponse.Properties.(map[string]any)
 		if ok {
 			imageUrl, ok1 := properties["imageUrl"].(string)
 			status, ok2 := properties["status"].(string)
@@ -842,6 +848,9 @@ func RelayMidjourneySubmit(c *gin.Context, relayInfo *relaycommon.RelayInfo) *dt
 			}
 		}
 		taskPersisted = true
+	}
+	if accepted {
+		service.MarkRequestPolicySuccess(c, nil)
 	}
 
 	if midjResponse.Code == 22 { //22-排队中，说明任务已存在

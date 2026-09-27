@@ -49,3 +49,55 @@ export declare function extractUsageOnSubmit(ctx: DriverContext, taskData: unkno
 export declare function extractUsageOnComplete(task: TaskView, result: NormalizedTaskResult, data: unknown): Readonly<Record<string, string | number | boolean>> | null;
 export declare function listArtifacts(task: {taskId: string; status: string; action: string; data: unknown; producerVersion: string}): readonly TaskArtifact[];
 export declare function buildContentRequest(ctx: DriverContext & {artifactKey: string; data: unknown; state?: unknown; upstreamTaskId: string; clientRequest: {method: "GET" | "HEAD"; headers: Readonly<Record<string, string>>}}): RequestDescriptor;
+export type HostCapability = "json-clone@1" | "submit-sse-delta@1";
+/** Kinds of upstream a driver can address: the vendor API itself, or another New API gateway with the same plugin installed. */
+export type UpstreamKind = "vendor" | "new_api";
+/** Host-injected on every driver hook context. With "new_api" the driver uses its own native-route prefix and the host already set Bearer credentials. */
+export interface UpstreamContext {kind: UpstreamKind}
+export type MutableJSON<T> = T extends readonly (infer Item)[] ? MutableJSON<Item>[] : T extends object ? {-readonly [Key in keyof T]: MutableJSON<T[Key]>} : T;
+export interface HostUtils {
+  hasCapability(name: string): boolean;
+  /** Independent native JS containers; at most 1 MiB encoded JSON, depth 32 and 32,768 nodes. */
+  json: {clone<T extends JSONValue>(value: T): MutableJSON<T>};
+  unixNow(): number;
+  uuid(): string;
+  hmacSHA256(message: string, secret: string): string;
+  jwtSignHS256(claims: Record<string, JSONValue>, secret: string): string;
+  base64(value: string): string;
+  base64URL(value: string): string;
+  base64URLDecode(value: string): string;
+  volcSignV4(request: {method: string; url: string; headers?: Record<string, string>; body?: string; accessKey: string; secretKey: string; region?: string; service?: string; timestamp?: number}): Record<string, string>;
+}
+declare global {const utils: HostUtils;}
+export interface ProtocolDecodeContext extends NativeDecodeContext {protocol: ProtocolName; operation: string; model: string; upstreamModel?: string; stream: boolean}
+export interface NativeRoute {method: "GET" | "POST" | "PUT" | "PATCH" | "DELETE"; path: string; type: "submit" | "query" | "dynamic"; action?: string; taskIdParam?: string; decode?: string; render: string; models?: readonly string[]; retainResult?: boolean}
+export type ProtocolName = "openai_responses" | "openai_video" | "openai_image";
+  | "openai_image"
+  | {name: "openai_video"; models?: readonly string[]}
+  | {name: "openai_image"; models?: readonly string[]};
+/** One entry of the OpenAI ImageResponse `data` array rendered by protocols.openai_image.render. */
+export type ImageResponseEntry = {url?: string; b64_json?: string; revised_prompt?: string};
+export type UsageFieldSchema =
+  | {type: "number"; unit: "count"; unitLabel?: LocalizedText; description?: LocalizedText}
+  | {type: "number"; unit: "second" | "token" | "credit"; unitLabel?: never; description?: LocalizedText}
+  | {type: "boolean"; unitLabel?: never; description?: LocalizedText}
+  | {enum: readonly string[]; unitLabel?: never; description?: LocalizedText; enumLabels?: Readonly<Record<string, LocalizedText>>};
+export type UsageExample = {label: string; facts: Readonly<Record<string, string | number | boolean>>};
+export type UsageProfile = {models: readonly string[]; schema: Readonly<Record<string, UsageFieldSchema>>; examples?: readonly UsageExample[]};
+export interface Meta {requiredCapabilities?: readonly HostCapability[]; submitResponseTypes?: readonly ("json" | "sse")[]; sortPriority?: number; website?: string; apiVersion: 1; key: string; name: string; icon?: string; description?: LocalizedText; version: string; author: {name: string; url?: string}; baseUrl?: string; channelTypes?: readonly number[]; models: readonly string[]; fetchMode: "per_task" | "batch"; allowedHosts?: readonly string[]; upstreams?: readonly UpstreamKind[]; routes?: readonly NativeRoute[]; protocols?: readonly ProtocolClaim[]; usageSchema?: Readonly<Record<string, UsageFieldSchema>>; usageExamples?: readonly UsageExample[]; usageProfiles?: readonly UsageProfile[]; auth?: "none" | "api_key" | "vertex_oauth" | {type: "none" | "api_key" | "oauth2_jwt"}}
+export interface DriverContext {requestBody: unknown; requestHeaders: Readonly<Record<string, string>>; action: string; model: string; upstreamModel: string; baseUrl: string; apiKey?: string; authHeader: string; upstream: UpstreamContext; files: readonly FileReference[]; publicTaskId: string; originTasks?: readonly {taskId: string; upstreamTaskId: string; action: string; status: string; data: unknown}[]}
+export interface TaskQueryContext {taskId: string; publicTaskId: string; action: string; model: string; upstreamModel: string; baseUrl: string; apiKey?: string; authHeader: string; auth?: unknown; upstream: UpstreamContext; data: unknown; state: unknown}
+export interface BatchQueryContext {baseUrl: string; apiKey?: string; authHeader: string; auth?: unknown; upstream: UpstreamContext; tasks: readonly TaskQueryContext[]}
+export interface RequestDescriptor {responseType?: "json" | "sse"; url: string; method?: string; headers?: Record<string, string>; /** JSON body may contain FilePlaceholder objects at any depth; the host replaces each with a Base64 or data-URL string. */ body?: unknown; credentialless?: boolean; action?: string; model?: string; rewriteModel?: string; bodyType?: "json" | "multipart"; parts?: readonly {name: string; value?: unknown; fileRef?: string; filename?: string}[]}
+  /** render returns the OpenAI ImageResponse; the host adds `created` when absent and resolves response_format b64_json. */
+  openai_image?: {decodeRequest(ctx: ProtocolDecodeContext): SubmitIntent; render(ctx: unknown, task: TaskView): {created?: number; data: readonly ImageResponseEntry[]} & Record<string, unknown>};
+export interface SubmitEvent {event: string; id: string; data: string}
+export type JSONPath = readonly (string | number)[];
+export type JSONChange =
+  | {op: "set" | "append"; path: JSONPath; value: JSONValue}
+  | {op: "appendText"; path: JSONPath; value: string};
+export interface SubmitEventDeltaResult {changes: readonly JSONChange[]; state: JSONValue; done: boolean}
+/** With submit-sse-delta@1, state is small control data; changes build the separate response body. */
+export declare function parseSubmitEventDelta(ctx: DriverContext, event: SubmitEvent, previousState: JSONValue | null): SubmitEventDeltaResult;
+export declare function parseSubmitEvent(ctx: DriverContext, event: SubmitEvent, previousState: JSONValue | null): {state: JSONValue; done: boolean};
+export declare function extractUsageOnComplete(task: TaskQueryContext, result: NormalizedTaskResult, data: unknown): Readonly<Record<string, string | number | boolean>> | null;

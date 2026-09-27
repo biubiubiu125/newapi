@@ -1,6 +1,7 @@
 package gemini
 
 import (
+	"context"
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
@@ -23,7 +24,7 @@ func TestApplyThinkingConfigPreservesRealEffortTailModelID(t *testing.T) {
 		},
 	}
 
-	ApplyThinkingConfig(request, info)
+	ApplyThinkingConfig(context.Background(), request, info)
 
 	require.Nil(t, request.GenerationConfig.ThinkingConfig)
 }

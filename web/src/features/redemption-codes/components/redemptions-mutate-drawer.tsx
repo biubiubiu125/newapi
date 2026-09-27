@@ -17,58 +17,26 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useEffect, useState } from 'react'
+import {useEffect, useState} from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-
 import { DateTimePicker } from '@/components/datetime-picker'
-import {
-  SideDrawerSection,
-  sideDrawerContentClassName,
-  sideDrawerFooterClassName,
-  sideDrawerFormClassName,
-  sideDrawerHeaderClassName,
-} from '@/components/drawer-layout'
+import { SideDrawerSection, sideDrawerContentClassName, sideDrawerFooterClassName, sideDrawerFormClassName, sideDrawerHeaderClassName } from '@/components/drawer-layout'
 import { Button } from '@/components/ui/button'
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
-import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
-import { getEditableQuotaStep } from '@/lib/format'
+import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import { getCurrencyDisplay, getCurrencyLabel, formatQuotaWithCurrency } from '@/lib/currency'
+import {getEditableQuotaStep} from '@/lib/format'
 import { handleServerError } from '@/lib/handle-server-error'
 import { addTimeToDate } from '@/lib/time'
-
 import { createRedemption, updateRedemption, getRedemption } from '../api'
-import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
-import {
-  getRedemptionFormSchema,
-  type RedemptionFormValues,
-  REDEMPTION_FORM_DEFAULT_VALUES,
-  transformFormDataToPayload,
-  transformRedemptionToFormDefaults,
-} from '../lib'
+import {SUCCESS_MESSAGES} from '../constants'
+import { getRedemptionFormSchema, type RedemptionFormValues, REDEMPTION_FORM_DEFAULT_VALUES, transformFormDataToPayload, transformRedemptionToFormDefaults } from '../lib'
 import type { Redemption } from '../types'
-import { CreatedRedemptionsDialog } from './redemptions-created-dialog'
 import { useRedemptions } from './redemptions-provider'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
+import { RedemptionsExportDialog, type RedemptionExportData } from './redemptions-export-dialog'
 
 type RedemptionsMutateDrawerProps = {
   open: boolean
@@ -86,9 +54,10 @@ export function RedemptionsMutateDrawer({
   const redemptionId = currentRow?.id
   const { triggerRefresh } = useRedemptions()
   const [isSubmitting, setIsSubmitting] = useState(false)
-  const [createdCodes, setCreatedCodes] = useState<string[]>([])
-  const [createdQuota, setCreatedQuota] = useState(0)
-  const [createdDialogOpen, setCreatedDialogOpen] = useState(false)
+
+  const [createdCodes, setCreatedCodes] = useState<RedemptionExportData | null>(
+    null
+  )
   const [redemptionLoadState, setRedemptionLoadState] = useState<
     'idle' | 'loading' | 'ready' | 'error'
   >('idle')
@@ -132,7 +101,7 @@ export function RedemptionsMutateDrawer({
           result.data.id !== redemptionId
         ) {
           setRedemptionLoadState('error')
-          toast.error(t('Failed to load'))
+          handleServerError(result, t('Failed to load'))
           return
         }
 
@@ -179,8 +148,9 @@ export function RedemptionsMutateDrawer({
           toast.success(t(SUCCESS_MESSAGES.REDEMPTION_UPDATED))
           onOpenChange(false)
           triggerRefresh()
+
         } else {
-          toast.error(localizeConsoleErrorText(result.message, ERROR_MESSAGES.UPDATE_FAILED))
+          handleServerError(result)
         }
       } else {
         // Create mode
@@ -195,13 +165,21 @@ export function RedemptionsMutateDrawer({
                 })
               : t(SUCCESS_MESSAGES.REDEMPTION_CREATED)
           )
-          setCreatedCodes(codes)
-          setCreatedQuota(basePayload.quota)
-          setCreatedDialogOpen(codes.length > 0)
+
+          if (result.data?.length) {
+            setCreatedCodes({
+              keys: result.data,
+              name: basePayload.name,
+              quota: formatQuotaWithCurrency(basePayload.quota, {
+                abbreviate: false,
+              }),
+            })
+          }
           onOpenChange(false)
           triggerRefresh()
+
         } else {
-          toast.error(localizeConsoleErrorText(result.message, ERROR_MESSAGES.CREATE_FAILED))
+          handleServerError(result)
         }
       }
     } catch (error) {
@@ -321,6 +299,7 @@ export function RedemptionsMutateDrawer({
                     )}
                   />
 
+
                   <FormField
                     control={form.control}
                     name='expired_time'
@@ -427,12 +406,12 @@ export function RedemptionsMutateDrawer({
           </SheetFooter>
         </SheetContent>
       </Sheet>
-      <CreatedRedemptionsDialog
-        open={createdDialogOpen}
-        codes={createdCodes}
-        quota={createdQuota}
-        onOpenChange={setCreatedDialogOpen}
-      />
+      {createdCodes && (
+        <RedemptionsExportDialog
+          data={createdCodes}
+          onClose={() => setCreatedCodes(null)}
+        />
+      )}
     </>
   )
 }

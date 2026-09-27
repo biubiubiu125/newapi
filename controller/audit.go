@@ -1,8 +1,10 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -16,26 +18,43 @@ import (
 // action 的 params 填充。本地化展示文案在前端 i18n 模板中维护，本表是语言中立的
 // 英文基线——调用方因此无需在每个埋点处手写句子（避免与 params 重复书写同一份值）。
 var auditContentTemplates = map[string]string{
-	"user.create":           "Created user ${username} (role ${role})",
-	"user.update":           "Updated user ${username} (ID: ${id})",
-	"user.delete":           "Deleted user ${username} (ID: ${id})",
-	"user.manage":           "Performed ${action} on user ${username} (ID: ${id})",
-	"user.quota_add":        "Increased user quota by ${quota}",
-	"user.quota_subtract":   "Decreased user quota by ${quota}",
-	"user.quota_override":   "Overrode user quota from ${from} to ${to}",
-	"user.binding_clear":    "Cleared ${bindingType} binding for user ${username}",
-	"user.2fa_disable":      "Force-disabled two-factor authentication for the user",
-	"user.passkey_register": "Registered a passkey",
-	"user.passkey_delete":   "Deleted a passkey",
-	"user.reset_passkey":    "Reset the user passkey",
-	"option.update":         "Updated system setting ${key}",
-	"token.create":          "Created API token ${name}",
-	"token.update":          "Updated API token ${name} (ID: ${id})",
-	"token.status_update":   "Updated API token status ${name} (ID: ${id})",
-	"token.delete":          "Deleted API token ${name} (ID: ${id})",
-	"token.delete_batch":    "Batch deleted ${count} API tokens",
-	"token.key_view":        "Viewed API token key ${name} (ID: ${id})",
-	"token.key_view_batch":  "Viewed ${count} API token keys",
+	"user.create":                      "Created user ${username} (role ${role})",
+	"user.update":                      "Updated user ${username} (ID: ${id})",
+	"user.delete":                      "Deleted user ${username} (ID: ${id})",
+	"user.manage":                      "Performed ${action} on user ${username} (ID: ${id})",
+	"user.quota_add":                   "Increased user quota by ${quota}",
+	"user.quota_subtract":              "Decreased user quota by ${quota}",
+	"user.quota_override":              "Overrode user quota from ${from} to ${to}",
+	"user.binding_clear":               "Cleared ${bindingType} binding for user ${username}",
+	"user.2fa_disable":                 "Force-disabled two-factor authentication for the user",
+	"user.passkey_register":            "Registered a passkey",
+	"user.passkey_delete":              "Deleted a passkey",
+	"user.reset_passkey":               "Reset the user passkey",
+	"option.update":                    "Updated system setting ${key}",
+	"token.create":                     "Created API token ${name}",
+	"token.update":                     "Updated API token ${name} (ID: ${id})",
+	"token.status_update":              "Updated API token status ${name} (ID: ${id})",
+	"token.delete":                     "Deleted API token ${name} (ID: ${id})",
+	"token.delete_batch":               "Batch deleted ${count} API tokens",
+	"token.key_view":                   "Viewed API token key ${name} (ID: ${id})",
+	"token.key_view_batch":             "Viewed ${count} API token keys",
+	"user.account_delete":              "Account deletion",
+	"access_token.generate":            "Generated a system access token",
+	"access_token.revoke":              "Revoked the system access token",
+	"user.2fa_setup":                   "Started two-factor authentication setup",
+	"user.2fa_enable":                  "Enabled two-factor authentication",
+	"user.2fa_disable_self":            "Disabled two-factor authentication",
+	"user.2fa_backup_codes":            "Regenerated two-factor backup codes",
+	"user.security_verify":             "Completed security verification",
+	"user.password_change":             "Account password change",
+	"user.binding_start":               "Account binding request",
+	"user.binding_bind":                "Account binding",
+	"user.binding_unbind":              "Account unlinking",
+	"user.email_binding_resend":        "Email confirmation code resend",
+	"option.passkey_domains":           "Updated Passkey domains: removed ${domains}; affected ${known}; unknown ${unknown}",
+	"option.passkey_domains_confirmed": "Confirmed removal of Passkey domains: ${domains}; affected ${known}; unknown ${unknown}",
+	"option.passkey_domains_blocked":   "Passkey domain change blocked: ${domains}; affected ${known}; unknown ${unknown}",
+	"option.passkey_domains_failed":    "Passkey domain update failed",
 
 	"channel.create":              "Created channel ${name} (type ${type}, count ${count})",
 	"channel.update":              "Updated channel ${name} (ID: ${id})",
@@ -57,21 +76,48 @@ var auditContentTemplates = map[string]string{
 	"redemption.create":       "Created ${count} redemption codes named ${name} (${quota} each)",
 	"redemption.delete_batch": "Batch deleted ${count} redemption codes",
 
-	"model.delete":          "Deleted model metadata",
-	"model.delete_batch":    "Batch deleted model metadata",
-	"model.pricing.update":  "Updated model pricing",
-	"vendor.metadata.save":  "Saved vendor metadata",
+	"model.delete":           "Deleted model metadata",
+	"model.delete_batch":     "Batch deleted model metadata",
+	"model.pricing.update":   "Updated model pricing",
+	"vendor.metadata.save":   "Saved vendor metadata",
 	"vendor.metadata.delete": "Deleted vendor metadata",
-	"vendor.assign":         "Assigned models to a vendor",
-	"vendor.merge":          "Merged vendors",
-	"vendor.delete":         "Deleted vendors",
+	"vendor.assign":          "Assigned models to a vendor",
+	"vendor.merge":           "Merged vendors",
+	"vendor.delete":          "Deleted vendors",
 
 	"subscription.plan_reset":      "Reset active subscriptions for plan ${plan_id}",
 	"subscription.user_plan_reset": "Reset active plan ${plan_id} subscriptions for user ${target_user_id}",
 }
 
+func recordPasskeyDomainAudit(c *gin.Context, change *model.PasskeyDomainChange, confirmed bool, err error) {
+	confirmed = confirmed && err == nil && change != nil && len(change.RemovedRPIDs) > 0
+	params := map[string]any{"success": err == nil, "confirmed": confirmed}
+	if change != nil {
+		params["domains"] = strings.Join(change.RemovedRPIDs, ", ")
+		params["removed_rp_ids"] = change.RemovedRPIDs
+		params["known"] = change.AffectedCredentials
+		params["unknown"] = change.UnknownCredentials
+		params["previous_rp_id"] = change.PreviousRPID
+		params["effective_rp_id"] = change.EffectiveRPID
+	}
+	action := "option.passkey_domains"
+	if errors.Is(err, model.ErrPasskeyDomainRemovalConfirmation) {
+		action = "option.passkey_domains_blocked"
+	} else if err != nil {
+		action = "option.passkey_domains_failed"
+	} else if confirmed && change != nil && len(change.RemovedRPIDs) > 0 {
+		action = "option.passkey_domains_confirmed"
+	}
+	auditInfo := &model.AuditRequestInfo{
+		Method: c.Request.Method, Route: c.FullPath(), Path: c.FullPath(),
+		Status: c.Writer.Status(), Success: err == nil,
+	}
+	writeOperationAuditLog(c, c.GetInt("id"), auditContentEN(action, params), c.ClientIP(), action, params, auditOperatorInfo(c), auditInfo)
+	markAuditLogged(c)
+}
+
 // auditContentEN 按 action 模板渲染英文兜底文本；未登记的 action 退回 action 本身。
-func auditContentEN(action string, params map[string]interface{}) string {
+func auditContentEN(action string, params map[string]any) string {
 	tmpl, ok := auditContentTemplates[action]
 	if !ok {
 		return action
@@ -85,12 +131,12 @@ func auditContentEN(action string, params map[string]interface{}) string {
 }
 
 // auditOperatorInfo 从上下文构建操作者身份信息（管理员 id/用户名/角色）。
-func auditOperatorInfo(c *gin.Context) map[string]interface{} {
-	return map[string]interface{}{
-		"admin_id":       c.GetInt("id"),
-		"admin_username": c.GetString("username"),
-		"admin_role":     c.GetInt("role"),
-		"auth_method":    auditAuthMethod(c),
+func auditOperatorInfo(c *gin.Context) *model.AuditAdminInfo {
+	return &model.AuditAdminInfo{
+		AdminID:       c.GetInt("id"),
+		AdminUsername: c.GetString("username"),
+		AdminRole:     c.GetInt("role"),
+		AuthMethod:    auditAuthMethod(c),
 	}
 }
 
@@ -109,49 +155,107 @@ func markAuditLogged(c *gin.Context) {
 
 // recordManageAudit 记录一条由操作者本人归属的管理/高危审计日志（资源类操作：
 // 渠道 / 系统设置 / 兑换码等）。content 由 action+params 自动渲染。
-func recordManageAudit(c *gin.Context, action string, params map[string]interface{}) {
+func recordManageAudit(c *gin.Context, action string, params map[string]any) {
 	recordManageAuditFor(c, c.GetInt("id"), action, params)
 }
 
 // recordManageAuditFor 记录一条管理审计日志，日志归属于操作者；targetUserId
 // 只表示被操作用户，用于在结构化参数中保留目标上下文。
-func recordManageAuditFor(c *gin.Context, targetUserId int, action string, params map[string]interface{}) {
+func recordManageAuditFor(c *gin.Context, targetUserId int, action string, params map[string]any) {
 	if params == nil {
-		params = map[string]interface{}{}
+		params = map[string]any{}
 	}
 	operatorUserId := c.GetInt("id")
 	if _, ok := params["target_user_id"]; !ok && targetUserId > 0 && targetUserId != operatorUserId {
 		params["target_user_id"] = targetUserId
 	}
-	model.RecordOperationAuditLog(operatorUserId, auditContentEN(action, params), c.ClientIP(), action, params, auditOperatorInfo(c), nil)
+	writeOperationAuditLog(c, operatorUserId, auditContentEN(action, params), c.ClientIP(), action, params, auditOperatorInfo(c), nil)
 	markAuditLogged(c)
 }
 
 // recordUserSecurityAudit 记录普通用户自己的安全敏感操作（如 passkey 绑定/解绑）。
 // 这类日志没有管理员操作者，不写 admin_info；同时不依赖 AdminAuth/RootAuth 的兜底。
-func recordUserSecurityAudit(c *gin.Context, userId int, action string, params map[string]interface{}) {
-	model.RecordOperationAuditLog(userId, auditContentEN(action, params), c.ClientIP(), action, params, nil, nil)
+func recordUserSecurityAudit(c *gin.Context, userId int, action string, params map[string]any) {
+	if code := c.GetString("security_error_code"); code != "" {
+		if params == nil {
+			params = map[string]any{}
+		}
+		params["code"] = code
+	}
+	var auditInfo *model.AuditRequestInfo
+	if success, ok := params["success"].(bool); ok {
+		auditInfo = &model.AuditRequestInfo{
+			Method: c.Request.Method, Route: c.FullPath(), Path: c.FullPath(),
+			Status: c.Writer.Status(), Success: success,
+		}
+	}
+	writeOperationAuditLog(c, userId, auditContentEN(action, params), c.ClientIP(), action, params, nil, auditInfo)
 }
 
-func tokenAuditParams(c *gin.Context) map[string]interface{} {
-	params, ok := common.GetContextKeyType[map[string]interface{}](c, constant.ContextKeyTokenAuditParams)
-	if !ok || params == nil {
-		params = map[string]interface{}{}
+func writeOperationAuditLog(c *gin.Context, userId int, content, ip, action string, params map[string]any, admin *model.AuditAdminInfo, request *model.AuditRequestInfo) {
+	fields := model.AuditFields{}
+	for key, value := range params {
+		fields[key] = value
+	}
+	entry := model.AuditLog{
+		UserId: userId, Category: model.AuditCategoryOperation, Action: action, Content: content, Ip: ip,
+		Other: model.AuditOther{Op: &model.AuditOperation{Action: action, Params: fields}},
+	}
+	if admin != nil {
+		entry.ActorRole = admin.AdminRole
+		entry.Other.AdminInfo = admin
+	}
+	if request != nil {
+		entry.Status = request.Status
+		entry.Success = request.Success
+		entry.Other.AuditInfo = request
+	} else {
+		entry.Success = true
+	}
+	if entry.ActorRole == 0 && c != nil {
+		entry.ActorRole = c.GetInt("role")
+	}
+	model.RecordAuditLog(c, entry)
+}
+
+func recordLegacyGitHubBindingAudit(c *gin.Context, user *model.User, success bool, params map[string]any) {
+	if user == nil || c == nil {
+		return
+	}
+	if params == nil {
+		params = map[string]any{}
+	}
+	params["provider"] = "github"
+	params["legacy_migration"] = true
+	params["success"] = success
+	fields := model.AuditFields{}
+	for key, value := range params {
+		fields[key] = value
+	}
+	model.RecordAuditLog(c, model.AuditLog{
+		UserId: user.Id, Username: user.Username, ActorRole: user.Role,
+		Category: model.AuditCategoryOperation, Action: "user.binding_bind",
+		Content: auditContentEN("user.binding_bind", params), Ip: c.ClientIP(), Success: success,
+		Other: model.AuditOther{Op: &model.AuditOperation{Action: "user.binding_bind", Params: fields}},
+	})
+}
+
+func tokenAuditParams(c *gin.Context) model.AuditFields {
+	params, ok := common.GetContextKeyType[model.AuditFields](c, constant.ContextKeyTokenAuditParams)
+	if !ok {
+		params = model.AuditFields{}
 		common.SetContextKey(c, constant.ContextKeyTokenAuditParams, params)
 	}
 	return params
 }
 
-func tokenBatchAuditParams(c *gin.Context, ids []int) map[string]interface{} {
+func tokenBatchAuditParams(c *gin.Context, ids []int) model.AuditFields {
 	params := tokenAuditParams(c)
 	params["total"] = len(ids)
-	limit := len(ids)
-	if limit > 100 {
-		limit = 100
+	// Bound audit payloads without changing the batch operation's limits.
+	params["requested_ids"] = append([]int{}, ids[:min(len(ids), 100)]...)
+	if len(ids) > 100 {
 		params["requested_ids_truncated"] = true
 	}
-	copied := make([]int, limit)
-	copy(copied, ids[:limit])
-	params["requested_ids"] = copied
 	return params
 }

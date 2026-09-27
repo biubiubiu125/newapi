@@ -18,392 +18,288 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import type { ColumnDef } from '@tanstack/react-table'
 import { useTranslation } from 'react-i18next'
-
-import { DataTableColumnHeader } from '@/components/data-table'
+import {BadgeCell} from '@/components/data-table'
 import { GroupBadge } from '@/components/group-badge'
 import { LongText } from '@/components/long-text'
 import { StatusBadge } from '@/components/status-badge'
 import { TableId } from '@/components/table-id'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Progress } from '@/components/ui/progress'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { currentIntlLocale } from '@/i18n/languages'
-import { formatQuota, formatTimestamp } from '@/lib/format'
-import { cn } from '@/lib/utils'
-
-import {
-  USER_STATUS,
-  USER_STATUSES,
-  USER_ROLES,
-  isUserDeleted,
-} from '../constants'
+import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip'
+import {formatQuota} from '@/lib/format'
+import { USER_STATUS, USER_STATUSES, USER_ROLES, isUserDeleted } from '../constants'
 import type { User } from '../types'
 import { DataTableRowActions } from './data-table-row-actions'
-
-function getQuotaProgressColor(percentage: number): string {
-  if (percentage <= 10) return '[&_[data-slot=progress-indicator]]:bg-rose-500'
-  if (percentage <= 30) return '[&_[data-slot=progress-indicator]]:bg-amber-500'
-  return '[&_[data-slot=progress-indicator]]:bg-emerald-500'
-}
+import { useMemo } from 'react'
+import { ActivityTimeCell } from '@/components/activity-time-cell'
+import { getCurrencyDisplay } from '@/lib/currency'
+import { useSystemConfigStore } from '@/stores/system-config-store'
+import { UserQuotaCell } from './user-quota-cell'
 
 export function useUsersColumns(): ColumnDef<User>[] {
   const { t } = useTranslation()
-  return [
-    {
-      id: 'select',
-      size: 32,
-      header: ({ table }) => (
-        <Checkbox
-          checked={table.getIsAllPageRowsSelected()}
-          indeterminate={table.getIsSomePageRowsSelected()}
-          onCheckedChange={(value) => table.toggleAllPageRowsSelected(!!value)}
-          aria-label={t('Select all')}
-          className='translate-y-[2px]'
-        />
-      ),
-      cell: ({ row }) => (
-        <Checkbox
-          checked={row.getIsSelected()}
-          onCheckedChange={(value) => row.toggleSelected(!!value)}
-          aria-label={t('Select row')}
-          className='translate-y-[2px]'
-        />
-      ),
-      enableSorting: false,
-      enableHiding: false,
-      meta: { label: t('Select') },
-    },
-    {
-      accessorKey: 'id',
-      size: 60,
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('ID')} />
-      ),
-      cell: ({ row }) => {
-        return (
-          <TableId
-            value={row.getValue('id') as number}
-            className='max-w-full'
+
+  const currencyConfig = useSystemConfigStore((state) => state.config.currency)
+  const { meta: currency } = getCurrencyDisplay()
+  const quotaUnit = currency.kind === 'tokens' ? t('Tokens') : currency.symbol
+  return useMemo<ColumnDef<User>[]>(
+    () => [
+      {
+        id: 'select',
+        header: ({ table }) => (
+          <Checkbox
+            checked={table.getIsAllPageRowsSelected()}
+            indeterminate={table.getIsSomePageRowsSelected()}
+            onCheckedChange={(value) =>
+              table.toggleAllPageRowsSelected(!!value)
+            }
+            aria-label={t('Select all')}
+            className='translate-y-[2px]'
           />
-        )
+        ),
+        cell: ({ row }) => (
+          <Checkbox
+            checked={row.getIsSelected()}
+            onCheckedChange={(value) => row.toggleSelected(!!value)}
+            aria-label={t('Select row')}
+            className='translate-y-[2px]'
+          />
+        ),
+        enableSorting: false,
+        enableHiding: false,
+        size: 40,
       },
-      meta: { label: t('ID'), mobileHidden: true },
-    },
-    {
-      accessorKey: 'username',
-      size: 172,
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Username')} />
-      ),
-      cell: ({ row }) => {
-        const username = row.getValue('username') as string
-        const displayName = row.original.display_name
-        const remark = row.original.remark
-
-        return (
-          <div className='flex max-w-full min-w-0 flex-col gap-1'>
-            <div className='flex items-center gap-2 overflow-hidden'>
-              <LongText className='min-w-0 flex-1 font-medium'>
-                {username}
-              </LongText>
-              {remark && (
-                <Tooltip>
-                  <TooltipTrigger
-                    render={<StatusBadge variant='success' copyable={false} />}
-                  >
-                    <LongText className='max-w-[64px] shrink-0'>
-                      {remark}
-                    </LongText>
-                  </TooltipTrigger>
-                  <TooltipContent>
-                    <p className='text-xs'>{remark}</p>
-                  </TooltipContent>
-                </Tooltip>
-              )}
-            </div>
-            {displayName && displayName !== username && (
-              <LongText className='text-muted-foreground max-w-full text-xs'>
-                {displayName}
-              </LongText>
-            )}
-          </div>
-        )
-      },
-      enableHiding: false,
-      meta: { label: t('Username'), mobileTitle: true },
-    },
-    {
-      accessorKey: 'email',
-      size: 220,
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Email')} />
-      ),
-      cell: ({ row }) => {
-        const email = row.original.email
-        return email ? (
-          <LongText className='text-muted-foreground max-w-full text-sm'>
-            {email}
-          </LongText>
-        ) : (
-          <span className='text-muted-foreground text-sm'>-</span>
-        )
-      },
-      enableSorting: false,
-      meta: { label: t('Email'), mobileHidden: true },
-    },
-    {
-      accessorKey: 'referral_inviter_username',
-      size: 116,
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Promoter')} />
-      ),
-      cell: ({ row }) => {
-        const username = row.original.referral_inviter_username
-        return username ? (
-          <LongText className='max-w-full text-sm'>{username}</LongText>
-        ) : (
-          <span className='text-muted-foreground text-sm'>-</span>
-        )
-      },
-      enableSorting: false,
-      meta: { label: t('Promoter'), mobileHidden: true },
-    },
-    {
-      accessorKey: 'status',
-      size: 88,
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Status')} />
-      ),
-      cell: ({ row }) => {
-        const user = row.original
-        const requestCount = user.request_count
-
-        const statusConfig = isUserDeleted(user)
-          ? USER_STATUSES[USER_STATUS.DELETED]
-          : USER_STATUSES[user.status as keyof typeof USER_STATUSES]
-
-        if (!statusConfig) {
-          return null
-        }
-
-        return (
-          <Tooltip>
-            <TooltipTrigger render={<div className='cursor-help' />}>
-              <StatusBadge
-                label={t(statusConfig.labelKey)}
-                variant={statusConfig.variant}
-                copyable={false}
-              />
-            </TooltipTrigger>
-            <TooltipContent>
-              <p className='text-xs'>
-                {t('Requests:')}{' '}
-                {requestCount.toLocaleString(currentIntlLocale())}
-              </p>
-            </TooltipContent>
-          </Tooltip>
-        )
-      },
-      filterFn: (row, id, value) => {
-        return value.includes(String(row.getValue(id)))
-      },
-      enableSorting: false,
-      meta: { label: t('Status'), mobileBadge: true },
-    },
-    {
-      id: 'quota',
-      accessorKey: 'quota',
-      size: 124,
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Quota')} />
-      ),
-      cell: ({ row }) => {
-        const user = row.original
-        const used = user.used_quota
-        const remaining = user.quota
-        const total = used + remaining
-        const percentage = total > 0 ? (remaining / total) * 100 : 0
-
-        if (total === 0) {
+      {
+        accessorKey: 'id',
+        header: t('ID'),
+        cell: ({ row }) => {
           return (
-            <StatusBadge
-              label={t('No Quota')}
-              variant='neutral'
-              copyable={false}
+            <TableId
+              value={row.getValue('id') as number}
+              className='w-[60px] [font-family:inherit] text-sm'
             />
           )
-        }
+        },
+        size: 80,
+        meta: { mobileOrder: 10 },
+      },
 
-        return (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                <div className='w-full max-w-[112px] cursor-help space-y-1' />
-              }
+      {
+        accessorKey: 'username',
+        header: t('Username'),
+        cell: ({ row }) => {
+          const username = row.getValue('username') as string
+          const displayName = row.original.display_name
+          const remark = row.original.remark
+
+
+          return (
+            <div className='flex min-w-[160px] flex-col gap-1'>
+              <div className='flex items-center gap-2'>
+                <LongText className='max-w-[140px] text-sm font-normal'>
+                  {username}
+                </LongText>
+                {remark && (
+                  <Tooltip>
+                    <TooltipTrigger
+                      render={
+                        <StatusBadge
+                          variant='success'
+                          copyable={false}
+                          className='font-normal'
+                        />
+                      }
+                    >
+                      <LongText className='max-w-[80px]'>{remark}</LongText>
+                    </TooltipTrigger>
+                    <TooltipContent>
+                      <p className='text-xs'>{remark}</p>
+                    </TooltipContent>
+                  </Tooltip>
+                )}
+              </div>
+              {displayName && displayName !== username && (
+                <div
+                  data-table-text='secondary'
+                  className='text-muted-foreground max-w-[180px] text-xs font-normal'
+                >
+                  <LongText>{displayName}</LongText>
+                </div>
+              )}
+            </div>
+
+          )
+        },
+        enableHiding: false,
+        size: 220,
+        meta: { mobileTitle: true },
+      },
+
+      {
+        accessorKey: 'status',
+        header: t('Status'),
+        cell: ({ row }) => {
+          const user = row.original
+          const requestCount = user.request_count
+
+          const statusConfig = isUserDeleted(user)
+            ? USER_STATUSES[USER_STATUS.DELETED]
+            : USER_STATUSES[user.status as keyof typeof USER_STATUSES]
+
+          if (!statusConfig) {
+            return null
+          }
+
+
+          return (
+            <Tooltip>
+              <TooltipTrigger render={<div className='-ml-1.5 cursor-help' />}>
+                <StatusBadge
+                  label={t(statusConfig.labelKey)}
+                  variant={
+                    isUserDeleted(user) ? 'neutral' : statusConfig.variant
+                  }
+                  copyable={false}
+                  className='font-normal'
+                />
+              </TooltipTrigger>
+              <TooltipContent>
+                <p className='text-xs'>
+                  {t('Requests:')} {requestCount.toLocaleString()}
+                </p>
+              </TooltipContent>
+            </Tooltip>
+          )
+        },
+        filterFn: (row, id, value) => {
+          return value.includes(String(row.getValue(id)))
+        },
+        enableSorting: false,
+        size: 120,
+        meta: { mobileBadge: true },
+      },
+
+      {
+        id: 'quota',
+        accessorKey: 'quota',
+        header: `${t('Available Balance')} (${quotaUnit})`,
+        cell: ({ row }) => {
+          const user = row.original
+          return <UserQuotaCell remaining={user.quota} used={user.used_quota} />
+        },
+        size: 180,
+        minSize: 160,
+        meta: { mobileOrder: 40 },
+      },
+      {
+        accessorKey: 'group',
+        header: t('User Group'),
+        cell: ({ row }) => {
+          const group = row.getValue('group') as string
+          return (
+            <BadgeCell>
+              <GroupBadge group={group} className='font-normal' />
+            </BadgeCell>
+          )
+        },
+        filterFn: (row, id, value) => {
+          const group = String(
+            row.getValue(id) || t('User Group')
+          ).toLowerCase()
+          const searchValue = String(value).toLowerCase()
+          return group.includes(searchValue)
+        },
+        size: 140,
+        meta: { mobileOrder: 30 },
+      },
+
+      {
+        accessorKey: 'role',
+        header: t('Role'),
+        cell: ({ row }) => {
+          const roleValue = row.getValue('role') as number
+          const roleConfig = USER_ROLES[roleValue as keyof typeof USER_ROLES]
+
+          if (!roleConfig) {
+            return null
+          }
+
+
+          return <span className='text-sm'>{t(roleConfig.labelKey)}</span>
+        },
+        filterFn: (row, id, value) => {
+          return value.includes(String(row.getValue(id)))
+        },
+        enableSorting: false,
+        size: 120,
+        meta: { mobileOrder: 20 },
+      },
+
+      {
+        id: 'invite_info',
+        header: t('Invite Info'),
+        cell: ({ row }) => {
+          const user = row.original
+          const affCount = user.aff_count || 0
+          const affHistoryQuota = user.aff_history_quota || 0
+          const inviterId = user.inviter_id || 0
+
+          if (affCount === 0 && affHistoryQuota === 0 && inviterId === 0) {
+            return <span className='text-muted-foreground text-sm'>—</span>
+          }
+
+          return (
+            <div
+              data-table-text='secondary'
+              className='min-w-0 space-y-1 text-xs font-normal'
             >
-              <div className='flex justify-between text-xs'>
-                <span className='font-medium tabular-nums'>
-                  {formatQuota(remaining)}
-                </span>
-                <span className='text-muted-foreground tabular-nums'>
-                  {formatQuota(total)}
-                </span>
-              </div>
-              <Progress
-                value={percentage}
-                className={cn('h-1.5', getQuotaProgressColor(percentage))}
-              />
-            </TooltipTrigger>
-            <TooltipContent>
-              <div className='space-y-1 text-xs'>
-                <div>
-                  {t('Used:')} {formatQuota(used)}
-                </div>
-                <div>
-                  {t('Remaining:')} {formatQuota(remaining)}
-                </div>
-                <div>
-                  {t('Total:')} {formatQuota(total)}
-                </div>
-                <div>
-                  {t('Percentage:')} {percentage.toFixed(1)}%
-                </div>
-              </div>
-            </TooltipContent>
-          </Tooltip>
-        )
+              {(affCount > 0 || affHistoryQuota !== 0) && (
+                <LongText>
+                  {t('Invited {{count}} users', { count: affCount })} ·{' '}
+                  {t('Earnings')}:{' '}
+                  <span className='tabular-nums'>
+                    {formatQuota(affHistoryQuota)}
+                  </span>
+                </LongText>
+              )}
+              {inviterId > 0 && (
+                <LongText className='text-muted-foreground'>
+                  {t('Inviter')} ID: {inviterId}
+                </LongText>
+              )}
+            </div>
+          )
+        },
+        size: 240,
+        enableSorting: false,
+        meta: { mobileHidden: true },
       },
-      meta: { label: t('Quota') },
-    },
-    {
-      accessorKey: 'active_subscription_name',
-      size: 128,
-      header: ({ column }) => (
-        <DataTableColumnHeader
-          column={column}
-          title={t('Subscription')}
-          className='max-w-full truncate'
-        />
-      ),
-      cell: ({ row }) => {
-        const subscriptionName = row.original.active_subscription_name
-        return subscriptionName ? (
-          <LongText className='max-w-full text-sm'>{subscriptionName}</LongText>
-        ) : (
-          <span className='text-muted-foreground text-sm'>-</span>
-        )
-      },
-      enableSorting: false,
-      meta: { label: t('Subscription'), mobileHidden: true },
-    },
-    {
-      accessorKey: 'group',
-      size: 104,
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Group')} />
-      ),
-      cell: ({ row }) => {
-        const group = row.getValue('group') as string
-        return <GroupBadge group={group} />
-      },
-      filterFn: (row, id, value) => {
-        const group = String(row.getValue(id) || t('User Group')).toLowerCase()
-        const searchValue = String(value).toLowerCase()
-        return group.includes(searchValue)
-      },
-      meta: { label: t('Group') },
-    },
-    {
-      accessorKey: 'role',
-      size: 80,
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Role')} />
-      ),
-      cell: ({ row }) => {
-        const roleValue = row.getValue('role') as number
-        const roleConfig = USER_ROLES[roleValue as keyof typeof USER_ROLES]
 
-        if (!roleConfig) {
-          return null
-        }
+      {
+        accessorKey: 'created_at',
+        header: t('Time'),
+        cell: ({ row }) => (
+          <ActivityTimeCell
+            createdAt={row.original.created_at ?? 0}
+            lastAt={row.original.last_login_at ?? 0}
+            lastLabel={t('Last Login')}
+            format='absolute'
+          />
+        ),
+        size: 260,
+        minSize: 240,
+        meta: { mobileHidden: true },
+      },
 
-        return (
-          <div className='flex min-w-0 items-center gap-x-1.5'>
-            {roleConfig.icon && (
-              <roleConfig.icon
-                size={16}
-                className='text-muted-foreground shrink-0'
-              />
-            )}
-            <span className='min-w-0 truncate text-sm'>
-              {t(roleConfig.labelKey)}
-            </span>
-          </div>
-        )
+      {
+        id: 'actions',
+        header: () => t('Actions'),
+        cell: ({ row }) => <DataTableRowActions row={row} />,
+        meta: { pinned: 'right' as const },
       },
-      filterFn: (row, id, value) => {
-        return value.includes(String(row.getValue(id)))
-      },
-      enableSorting: false,
-      meta: { label: t('Role') },
-    },
-    {
-      accessorKey: 'created_at',
-      size: 150,
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Created At')} />
-      ),
-      cell: ({ row }) => {
-        const ts = row.getValue('created_at') as number | undefined
-        return (
-          <span className='text-muted-foreground inline-block max-w-full truncate text-sm'>
-            {ts ? formatTimestamp(ts) : '-'}
-          </span>
-        )
-      },
-      meta: { label: t('Created At'), mobileHidden: true },
-    },
-    {
-      accessorKey: 'last_login_at',
-      size: 150,
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Last Login')} />
-      ),
-      cell: ({ row }) => {
-        const ts = row.getValue('last_login_at') as number | undefined
-        return (
-          <span className='text-muted-foreground inline-block max-w-full truncate text-sm'>
-            {ts ? formatTimestamp(ts) : '-'}
-          </span>
-        )
-      },
-      meta: { label: t('Last Login'), mobileHidden: true },
-    },
-    {
-      accessorKey: 'last_active_at',
-      size: 132,
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Last Active')} />
-      ),
-      cell: ({ row }) => {
-        const ts = row.getValue('last_active_at') as number | undefined
-        return (
-          <span className='text-muted-foreground inline-block max-w-full truncate text-sm'>
-            {ts ? formatTimestamp(ts) : '-'}
-          </span>
-        )
-      },
-      meta: { label: t('Last Active'), mobileHidden: true },
-    },
-    {
-      id: 'actions',
-      size: 48,
-      cell: ({ row }) => <DataTableRowActions row={row} />,
-      meta: { label: t('Actions') },
-    },
-  ]
+
+    ],
+    // formatQuota reads the currency configuration from the store.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [t, quotaUnit, currencyConfig]
+  )
 }

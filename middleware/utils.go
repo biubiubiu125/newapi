@@ -7,6 +7,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
+	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
 )
@@ -14,6 +15,13 @@ import (
 func abortWithOpenAiMessage(c *gin.Context, statusCode int, message string, code ...types.ErrorCode) {
 	if isPublicImageTaskRequest(c) {
 		abortWithImageTaskMessage(c, statusCode, imageTaskMiddlewareErrorCode(statusCode, code...), message)
+		return
+	}
+	if _, pinned := c.Get(pluginruntime.ContextKeyPinnedRoute); pinned {
+		// A pinned task route owns the public error shape. The raw message can
+		// contain an upstream URL and stays in the operator log only.
+		abortTaskPluginRouteError(c, statusCode)
+		logger.LogError(c.Request.Context(), fmt.Sprintf("user %d | %s", c.GetInt("id"), message))
 		return
 	}
 	codeStr := ""

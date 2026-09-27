@@ -139,19 +139,18 @@ func ChargeViolationFeeIfNeeded(ctx *gin.Context, relayInfo *relaycommon.RelayIn
 	tokenName := ctx.GetString("token_name")
 	oai := apiErr.ToOpenAIError()
 
-	other := map[string]any{
-		"violation_fee":        true,
-		"violation_fee_code":   string(types.ErrorCodeViolationFeeGrokCSAM),
-		"fee_quota":            feeQuota,
-		"base_amount":          settings.ViolationDeductionAmount,
-		"group_ratio":          groupRatio,
-		"status_code":          apiErr.StatusCode,
-		"upstream_error_type":  oai.Type,
-		"upstream_error_code":  fmt.Sprintf("%v", oai.Code),
-		"violation_fee_marker": CSAMViolationMarker,
-	}
+	other := model.NewLogOther()
+	other.SetPublic("violation_fee", true)
+	other.SetPublic("violation_fee_code", string(types.ErrorCodeViolationFeeGrokCSAM))
+	other.SetPublic("fee_quota", feeQuota)
+	other.SetPublic("base_amount", settings.ViolationDeductionAmount)
+	other.SetPublic("group_ratio", groupRatio)
+	other.SetPublic("status_code", apiErr.StatusCode)
+	other.SetPublic("upstream_error_type", oai.Type)
+	other.SetPublic("upstream_error_code", fmt.Sprintf("%v", oai.Code))
+	other.SetPublic("violation_fee_marker", CSAMViolationMarker)
 	if relayInfo.TaskRelayInfo != nil && relayInfo.TaskRelayInfo.PublicTaskID != "" {
-		other["task_id"] = relayInfo.TaskRelayInfo.PublicTaskID
+		other.SetPublic("task_id", relayInfo.TaskRelayInfo.PublicTaskID)
 	}
 
 	if err := model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{

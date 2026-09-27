@@ -191,6 +191,13 @@ export function getModuleAccess(module: HeaderNavModule): ModuleAccess {
  *
  * Reads through the shared `['status']` cache, so a guard on a fresh page load
  * reuses the request already started during boot instead of issuing its own.
+ *
+ * Fresh entries resolve immediately. Stale or invalidated entries await a
+ * shared refresh before deciding navigation; a background refresh cannot undo
+ * a redirect already made by a guard. The backend still authorizes requests.
+ *
+ * On failure this fails closed, reporting the module as disabled and
+ * auth-required.
  */
 export async function getModuleAccessForGuard(
   queryClient: QueryClient,
@@ -232,7 +239,12 @@ function isModuleAllowedByConfig(
   if (sectionConfig[module] === true) return true
   return defaultAllowed
 }
-
+/**
+ * Whether an admin sidebar entry is enabled by `SidebarModulesAdmin`.
+ *
+ * Fails open: an absent, blank, or unparsable configuration keeps every module
+ * visible, so a status read that has not landed yet cannot blank the sidebar.
+ */
 export function isSidebarModuleEnabled(
   section: string,
   module: string

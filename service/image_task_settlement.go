@@ -60,7 +60,7 @@ func PrepareImageTaskAtomicSettlement(ctx *gin.Context, info *relaycommon.RelayI
 		}
 	}
 
-	var other map[string]interface{}
+	var other *model.LogOther
 	if summary.IsClaudeUsageSemantic {
 		other = GenerateClaudeOtherInfo(
 			ctx,
@@ -79,7 +79,7 @@ func PrepareImageTaskAtomicSettlement(ctx *gin.Context, info *relaycommon.RelayI
 			summary.ModelPrice,
 			info.PriceData.GroupRatioInfo.GroupSpecialRatio,
 		)
-		other["usage_semantic"] = "anthropic"
+		other.SetPublic("usage_semantic", "anthropic")
 	} else {
 		other = GenerateTextOtherInfo(
 			ctx,
@@ -93,8 +93,8 @@ func PrepareImageTaskAtomicSettlement(ctx *gin.Context, info *relaycommon.RelayI
 			info.PriceData.GroupRatioInfo.GroupSpecialRatio,
 		)
 	}
-	if firstResponseTime, ok := other["frt"].(float64); ok && firstResponseTime < 0 {
-		other["frt"] = float64(0)
+	if firstResponseTime, ok := other.Snapshot()["frt"].(float64); ok && firstResponseTime < 0 {
+		other.SetPublic("frt", float64(0))
 	}
 	appendUsageBillingPathForLog(other, common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens), originUsage)
 	appendImageTaskUsageLogDetails(other, summary)
@@ -110,30 +110,33 @@ func PrepareImageTaskAtomicSettlement(ctx *gin.Context, info *relaycommon.RelayI
 		ModelName:        summary.ModelName,
 		TokenName:        summary.TokenName,
 		Content:          strings.Join(extraContent, ", "),
-		Other:            other,
+		Other:            other.Snapshot(),
 	}, nil
 }
 
-func appendImageTaskUsageLogDetails(other map[string]interface{}, summary textQuotaSummary) {
+func appendImageTaskUsageLogDetails(other *model.LogOther, summary textQuotaSummary) {
+	if other == nil {
+		return
+	}
 	if summary.ImageTokens != 0 {
-		other["image"] = true
-		other["image_ratio"] = summary.ImageRatio
-		other["image_output"] = summary.ImageTokens
+		other.SetPublic("image", true)
+		other.SetPublic("image_ratio", summary.ImageRatio)
+		other.SetPublic("image_output", summary.ImageTokens)
 	}
 	if summary.CacheCreationTokens > 0 {
-		other["cache_creation_tokens"] = summary.CacheCreationTokens
-		other["cache_creation_ratio"] = summary.CacheCreationRatio
+		other.SetPublic("cache_creation_tokens", summary.CacheCreationTokens)
+		other.SetPublic("cache_creation_ratio", summary.CacheCreationRatio)
 	}
 	if summary.CacheCreationTokens5m > 0 {
-		other["cache_creation_tokens_5m"] = summary.CacheCreationTokens5m
-		other["cache_creation_ratio_5m"] = summary.CacheCreationRatio5m
+		other.SetPublic("cache_creation_tokens_5m", summary.CacheCreationTokens5m)
+		other.SetPublic("cache_creation_ratio_5m", summary.CacheCreationRatio5m)
 	}
 	if summary.CacheCreationTokens1h > 0 {
-		other["cache_creation_tokens_1h"] = summary.CacheCreationTokens1h
-		other["cache_creation_ratio_1h"] = summary.CacheCreationRatio1h
+		other.SetPublic("cache_creation_tokens_1h", summary.CacheCreationTokens1h)
+		other.SetPublic("cache_creation_ratio_1h", summary.CacheCreationRatio1h)
 	}
 	if cacheWriteTokens := cacheWriteTokensTotal(summary); cacheWriteTokens > 0 {
-		other["cache_write_tokens"] = cacheWriteTokens
+		other.SetPublic("cache_write_tokens", cacheWriteTokens)
 	}
 }
 
@@ -540,9 +543,9 @@ func buildImageTaskSettlementLogPayload(task *model.Task, input ImageTaskAtomicS
 
 func buildPublicImageTaskRefundLogPayload(task *model.Task, quota int, reason string, usageCountersAdjusted bool) (string, error) {
 	other := taskBillingOther(task)
-	other["task_id"] = task.TaskID
-	other["reason"] = reason
-	other["pre_consumed_usage_recorded"] = usageCountersAdjusted
+	other.SetPublic("task_id", task.TaskID)
+	other.SetPublic("reason", reason)
+	other.SetPublic("pre_consumed_usage_recorded", usageCountersAdjusted)
 	payload := imageTaskSettlementLogPayload{
 		UserID:            task.UserId,
 		LogType:           model.LogTypeRefund,
@@ -552,7 +555,7 @@ func buildPublicImageTaskRefundLogPayload(task *model.Task, quota int, reason st
 		TokenID:           task.PrivateData.TokenId,
 		Group:             task.Group,
 		RequestID:         task.TaskID,
-		Other:             other,
+		Other:             other.Snapshot(),
 		CreatedAt:         time.Now().Unix(),
 		NodeName:          task.PrivateData.NodeName,
 		QuotaDataCaptured: true,

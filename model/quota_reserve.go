@@ -17,40 +17,95 @@ const (
 	cacheQuotaMiss
 )
 
-const userQuotaReserveScript = `
+const quotaIntegerCompareScript = `
+local function cmp_int(a, b)
+  if type(a) ~= 'string' or type(b) ~= 'string' then return nil end
+  if string.match(a, '^-?%d+$') == nil or string.match(b, '^-?%d+$') == nil then return nil end
+  local function norm(s)
+    local neg = string.sub(s, 1, 1) == '-'
+    if neg then s = string.sub(s, 2) end
+    s = string.gsub(s, '^0+', '')
+    if s == '' then return false, '0' end
+    return neg, s
+  end
+  local an, av = norm(a)
+  local bn, bv = norm(b)
+  if an ~= bn then
+    if an then return -1 else return 1 end
+  end
+  local c = 0
+  if #av ~= #bv then
+    if #av > #bv then c = 1 else c = -1 end
+  elseif av ~= bv then
+    if av > bv then c = 1 else c = -1 end
+  end
+  if an then return -c end
+  return c
+end
+local function intarg(v)
+  local s = tostring(v)
+  if string.match(s, '^-?%d+$') == nil then return nil end
+  local neg = string.sub(s, 1, 1) == '-'
+  if neg then s = string.sub(s, 2) end
+  s = string.gsub(s, '^0+', '')
+  if s == '' then return '0' end
+  if neg then return '-' .. s end
+  return s
+end
+`
+
+const userQuotaReserveScript = quotaIntegerCompareScript + `
 if tonumber(redis.call('HGET', KEYS[1], 'Id') or '0') ~= tonumber(ARGV[2])
   or tonumber(redis.call('HGET', KEYS[1], 'CacheSchema') or '0') ~= tonumber(ARGV[3])
   or redis.call('HEXISTS', KEYS[1], 'Quota') == 0 then
   return -1
 end
-local quota = tonumber(redis.call('HGET', KEYS[1], 'Quota'))
-if quota == nil or quota < tonumber(ARGV[1]) then
+local amount = intarg(ARGV[1])
+local quota = redis.call('HGET', KEYS[1], 'Quota')
+local order = nil
+if amount ~= nil and string.sub(amount, 1, 1) ~= '-' then
+  order = cmp_int(tostring(quota), amount)
+end
+if order == nil or order < 0 then
   return 0
 end
-redis.call('HINCRBY', KEYS[1], 'Quota', -tonumber(ARGV[1]))
+local delta = '0'
+if amount ~= '0' then delta = '-' .. amount end
+redis.call('HINCRBY', KEYS[1], 'Quota', delta)
 return 1`
 
-const userQuotaDeltaScript = `
+const userQuotaDeltaScript = quotaIntegerCompareScript + `
 if tonumber(redis.call('HGET', KEYS[1], 'Id') or '0') ~= tonumber(ARGV[2])
   or tonumber(redis.call('HGET', KEYS[1], 'CacheSchema') or '0') ~= tonumber(ARGV[3])
   or redis.call('HEXISTS', KEYS[1], 'Quota') == 0 then
   return -1
 end
-redis.call('HINCRBY', KEYS[1], 'Quota', tonumber(ARGV[1]))
+local delta = intarg(ARGV[1])
+if delta == nil then
+  return -1
+end
+redis.call('HINCRBY', KEYS[1], 'Quota', delta)
 return 1`
 
-const tokenQuotaReserveScript = `
+const tokenQuotaReserveScript = quotaIntegerCompareScript + `
 if tonumber(redis.call('HGET', KEYS[1], 'Id') or '0') ~= tonumber(ARGV[2])
   or redis.call('HEXISTS', KEYS[1], 'RemainQuota') == 0
   or redis.call('HEXISTS', KEYS[1], 'UsedQuota') == 0 then
   return -1
 end
-local remain = tonumber(redis.call('HGET', KEYS[1], 'RemainQuota'))
-if remain == nil or remain < tonumber(ARGV[1]) then
+local amount = intarg(ARGV[1])
+local remain = redis.call('HGET', KEYS[1], 'RemainQuota')
+local order = nil
+if amount ~= nil and string.sub(amount, 1, 1) ~= '-' then
+  order = cmp_int(tostring(remain), amount)
+end
+if order == nil or order < 0 then
   return 0
 end
-redis.call('HINCRBY', KEYS[1], 'RemainQuota', -tonumber(ARGV[1]))
-redis.call('HINCRBY', KEYS[1], 'UsedQuota', tonumber(ARGV[1]))
+local delta = '0'
+if amount ~= '0' then delta = '-' .. amount end
+redis.call('HINCRBY', KEYS[1], 'RemainQuota', delta)
+redis.call('HINCRBY', KEYS[1], 'UsedQuota', amount)
 redis.call('HSET', KEYS[1], 'AccessedTime', ARGV[3])
 return 1`
 
@@ -90,14 +145,19 @@ func cacheApplyTokenQuotaDelta(id int, key string, delta int64) (cacheQuotaResul
 	return cacheApplyTokenQuotaAccounting(id, key, delta, -delta)
 }
 
-const tokenQuotaAccountingScript = `
+const tokenQuotaAccountingScript = quotaIntegerCompareScript + `
 if tonumber(redis.call('HGET', KEYS[1], 'Id') or '0') ~= tonumber(ARGV[2])
   or redis.call('HEXISTS', KEYS[1], 'RemainQuota') == 0
   or redis.call('HEXISTS', KEYS[1], 'UsedQuota') == 0 then
   return -1
 end
-redis.call('HINCRBY', KEYS[1], 'RemainQuota', tonumber(ARGV[1]))
-redis.call('HINCRBY', KEYS[1], 'UsedQuota', tonumber(ARGV[3]))
+local remainDelta = intarg(ARGV[1])
+local usedDelta = intarg(ARGV[3])
+if remainDelta == nil or usedDelta == nil then
+  return -1
+end
+redis.call('HINCRBY', KEYS[1], 'RemainQuota', remainDelta)
+redis.call('HINCRBY', KEYS[1], 'UsedQuota', usedDelta)
 redis.call('HSET', KEYS[1], 'AccessedTime', ARGV[4])
 return 1`
 

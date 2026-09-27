@@ -1,5 +1,7 @@
 # Japanese translations
 
+# Task plugin messages
+task_plugin.unknown_meta_field: 'プラグインのメタデータに不明なフィールド "{{.Field}}" があります。公式マーケットプレイスから入手したプラグインの場合は、より新しい new-api が必要な場合があります。new-api を更新してからプラグインを再インストールしてください。'
 
 # Common messages
 common.invalid_params: "パラメータが無効です"
@@ -277,6 +279,7 @@ oauth.server_address_required: "先にサーバーアドレスを設定してく
 oauth.bind_requires_login: "連携するには先にログインしてください"
 oauth.wechat_bind_unsupported: "現在の認証方式では WeChat を連携できません"
 oauth.credential_used: "このログイン認証情報は既に使用されています"
+oauth.not_auto_linked: "この {{.Provider}} アカウントは既存のアカウントに自動で紐付けできません。別の方法でログインまたは登録した後、アカウント設定で {{.Provider}} を紐付けてください"
 
 # Model layer error messages
 redeem.failed: "引き換えに失敗しました。後でもう一度お試しください"
@@ -296,7 +299,7 @@ distributor.invalid_playground_request: "Invalid playground request: {{.Error}}"
 distributor.group_access_denied: "No permission to access this group"
 distributor.get_channel_failed: "Failed to get available channel for model {{.Model}} under group {{.Group}} (distributor): {{.Error}}"
 distributor.no_available_channel: "No available channel for model {{.Model}} under group {{.Group}} (distributor)"
-distributor.no_available_channel_task_plugin: "No available channel for model {{.Model}} under group {{.Group}}: the model is claimed by task plugin \"{{.Plugin}}\", which has no enabled channel serving it. To let another plugin or channel serve this model, disable or override plugin \"{{.Plugin}}\" in the task plugin console (distributor)"
+distributor.no_available_channel_task_plugin: "No available channel for model {{.Model}} under group {{.Group}}: the model is claimed by a task plugin, which has no enabled channel serving it (distributor)"
 distributor.invalid_midjourney_request: "Invalid Midjourney request: {{.Error}}"
 distributor.invalid_request_parse_model: "Invalid request, unable to parse model"
 
@@ -355,6 +358,8 @@ channel.vertex_region_json: "デプロイリージョンは標準 JSON である
 channel.vertex_region_default: "デプロイリージョンには default フィールドが必要です"
 channel.task_plugin_key_required: "タスクプラグインチャネルにはタスクプラグインキーが必要です"
 channel.task_plugin_not_registered: "タスクプラグイン {{.Plugin}} は登録されていません"
+channel.task_plugin_base_url_required: "タスクプラグインチャネルにはベース URL が必要です"
+channel.task_plugin_bind_required: "タスクプラグインの割り当てには task_plugin.bind 権限が必要です"
 channel.get_tag_count_failed: "タグ数の取得に失敗しました。後でもう一度お試しください"
 channel.get_tag_channels_failed: "タグのチャネル取得に失敗しました。後でもう一度お試しください"
 channel.get_count_failed: "チャネル数の取得に失敗しました。後でもう一度お試しください"
@@ -415,7 +420,6 @@ notify.subscription_exceed_gotify: "{{.Prompt}}。残りサブスクリプショ
 status.db_failed: "データベース接続に失敗しました"
 status.running: "サーバーは稼働中です"
 protocol.access_token_unsupported: "Access token is not supported"
-protocol.image_task_n_gt_one: "async task bridge mode does not support n greater than 1; split into multiple image tasks"
 protocol.channel_retry_failed: "failed to get available channels for model {{.Model}} under group {{.Group}} (retry): {{.Error}}"
 protocol.channel_retry_missing: "no available channel for model {{.Model}} under group {{.Group}} (retry)"
 protocol.channel_missing: "no available channel for model {{.Model}} under group {{.Group}}"
@@ -680,6 +684,9 @@ passkey.https_required: "Passkey は HTTPS が必要です。現在のアクセ�
 passkey.origin_undetermined: "Passkey Origin を特定できません。システム設定または Passkey 設定で指定してください。Host: '{{.Host}}', ServerAddress: '{{.ServerAddress}}'"
 passkey.origin_parse_failed: "Passkey Origin を解析できません"
 passkey.rpid_origin_missing: "Passkey Origin が未設定のため RPID を特定できません"
+passkey.rp_id_invalid: "Passkey ドメインが無効です。スキーム、ポート、パス、ワイルドカードを含まないドメインを入力してください。"
+passkey.rp_id_unavailable: "この Passkey ドメインはこのサイトでは使えません。元のサイトか、別の確認方法を使ってください。"
+passkey.rp_id_removal_confirmation: "影響を受ける Passkey を確認し、ドメイン削除を承認してください。設定や影響範囲が変わった場合は、再度確認が必要です。"
 token.search_consecutive_wildcard: "Search pattern cannot contain consecutive % wildcards"
 token.search_wildcard_max: "Search pattern can contain at most 2 % wildcards"
 token.search_keyword_short: "Fuzzy search keywords must be at least 2 characters"
@@ -739,9 +746,10 @@ option.theme_classic_removed: "The Classic frontend has been removed. Theme can 
 option.claude_negative_max_tokens: "Claude の既定 max_tokens は負の数にできません：{{.Model}} = {{.Value}}"
 option.gemini_invalid_safety_threshold: "無効な Gemini 安全しきい値 {{.Threshold}}（{{.Category}}）"
 option.non_negative_number: "{{.Key}} は有限の 0 以上の数である必要があります"
+option.billing_expr_invalid: "モデル {{.Model}} の課金式が無効です: {{.Reason}}"
 option.pricing_input_conflict: "オプションマップかモデル価格の変更のどちらか一方だけを送信してください"
 referral.disabled: "Referral program is not enabled"
-plugin.source_too_large: "Plugin source exceeds 1 MiB"
+plugin.source_too_large: "Plugin source exceeds 8 MiB"
 plugin.sha256_mismatch: "Plugin source sha256 mismatch"
 plugin.not_found: "Task plugin not found"
 plugin.compile_failed: "プラグインを読み込めません：{{.Error}}"

@@ -22,19 +22,13 @@ import { CalendarDays } from 'lucide-react'
 import { useMemo, useState } from 'react'
 import type { DateRange } from 'react-day-picker'
 import { useTranslation } from 'react-i18next'
-
 import { TimeInput } from '@/components/time-input'
 import { Button } from '@/components/ui/button'
 import { Calendar } from '@/components/ui/calendar'
-import {
-  Popover,
-  PopoverContent,
-  PopoverTrigger,
-} from '@/components/ui/popover'
+import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { resolveDayPickerLocale } from '@/lib/calendar-locale'
 import dayjs from '@/lib/dayjs'
 import { cn } from '@/lib/utils'
-
 interface CompactDateTimeRangePickerProps {
   start?: Date
   end?: Date
@@ -75,6 +69,14 @@ export function CompactDateTimeRangePicker({
     const endText = end ? dayjs(end).format('YYYY-MM-DD HH:mm') : '-'
     return `${startText} ~ ${endText}`
   }, [end, start, t])
+
+  const mobileLabel = useMemo(() => {
+    if (!start || !end) return label
+    if (dayjs(start).isSame(end, 'day')) {
+      return `${dayjs(start).format('MM/DD HH:mm')}–${dayjs(end).format('HH:mm')}`
+    }
+    return label
+  }, [start, end, label])
 
   const handleOpenChange = (nextOpen: boolean) => {
     if (nextOpen) {
@@ -135,6 +137,7 @@ export function CompactDateTimeRangePicker({
           <Button
             type='button'
             variant='outline'
+            aria-label={label}
             className={cn(
               'w-full justify-start gap-2 px-2.5 text-sm leading-5 font-normal tabular-nums',
               !start && !end && 'text-muted-foreground',
@@ -144,7 +147,10 @@ export function CompactDateTimeRangePicker({
         }
       >
         <CalendarDays className='text-muted-foreground size-4 shrink-0' />
-        <span className='truncate'>{label}</span>
+        <span className='hidden truncate sm:block'>{label}</span>
+        <span className='min-w-0 [overflow-wrap:anywhere] whitespace-normal sm:hidden'>
+          {mobileLabel}
+        </span>
       </PopoverTrigger>
       <PopoverContent
         align='start'
@@ -164,11 +170,11 @@ export function CompactDateTimeRangePicker({
               <div className='text-muted-foreground text-xs'>
                 {t('Start Time')}
               </div>
+
               <TimeInput
                 value={startTime}
-                onChange={setStartTime}
-                disabled={!draftStart}
                 aria-label={t('Start Time')}
+                onChange={setStartTime}
               />
             </div>
             <span className='text-muted-foreground hidden pb-2 text-xs sm:block'>
@@ -178,11 +184,11 @@ export function CompactDateTimeRangePicker({
               <div className='text-muted-foreground text-xs'>
                 {t('End Time')}
               </div>
+
               <TimeInput
                 value={endTime}
-                onChange={setEndTime}
-                disabled={!draftEnd}
                 aria-label={t('End Time')}
+                onChange={setEndTime}
               />
             </div>
           </div>
@@ -231,7 +237,8 @@ export function CompactDateTimeRangePicker({
               className='h-7 flex-1 px-2 text-xs'
               onClick={() => applyPreset('month')}
             >
-              {t('This calendar month')}
+
+              {t('Current month')}
             </Button>
           </div>
 

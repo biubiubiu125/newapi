@@ -66,11 +66,9 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { useIsMobile } from '@/hooks/use-mobile'
-import {
-  getServerErrorDisplayMessage,
-  toastUnhandledConsoleError,
-} from '@/lib/handle-server-error'
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
+import { getServerErrorDisplayMessage, toastUnhandledConsoleError, handleServerError } from '@/lib/handle-server-error'
+import { localizeConsoleErrorText, requireServerSuccess } from '@/lib/server-error-message'
+
 import { cn } from '@/lib/utils'
 
 import { deletePrefillGroup, getPrefillGroups } from '../../api'
@@ -112,7 +110,7 @@ export function PrefillGroupManagementDialog({
     refetch: refetchGroups,
   } = useQuery({
     queryKey: prefillGroupsQueryKeys.list(),
-    queryFn: () => getPrefillGroups(),
+    queryFn: async () => requireServerSuccess(await getPrefillGroups()),
     enabled: open,
   })
 
@@ -175,9 +173,11 @@ export function PrefillGroupManagementDialog({
             ? localizeConsoleErrorText(response.message)
             : t('Failed to delete group')
         )
+        handleServerError(response, t('Failed to delete group'))
       }
     } catch (err: unknown) {
       toastUnhandledConsoleError(err)
+      handleServerError(err, t('Failed to delete group'))
     } finally {
       setIsDeleting(false)
     }

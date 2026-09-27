@@ -46,6 +46,9 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 		defaultMaxTokens := uint(model_setting.GetClaudeSettings().GetDefaultMaxTokens(request.Model))
 		request.MaxTokens = &defaultMaxTokens
 	}
+	// ApplyClaudeThinkingModel no longer rewrites request.Model. Do not write
+	// a still-suffixed name back over the entry-normalized UpstreamModelName
+	// (AWS/Vertex look up getAwsModelID / claudeModelMap from that field).
 	if info != nil && info.UpstreamModelName == "" {
 		info.UpstreamModelName = request.Model
 	}

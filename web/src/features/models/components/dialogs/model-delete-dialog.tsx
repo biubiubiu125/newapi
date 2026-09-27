@@ -83,7 +83,7 @@ export function ModelDeleteDialog(props: ModelDeleteDialogProps) {
       }
       toast.success(
         t('Successfully deleted {{count}} model(s)', {
-          count: result.deleted_count,
+          count: result?.deleted_count ?? props.models.length,
         })
       )
       props.onSuccess?.()

@@ -57,15 +57,7 @@ import { fetchTokenKey, getApiKeys } from '@/features/keys/api'
 import { API_KEY_STATUS } from '@/features/keys/constants'
 import { currentIntlLocale } from '@/i18n/languages'
 
-import {
-  cancelImageTask,
-  createImageEditTask,
-  createImageGenerationTask,
-  downloadImageTaskResult,
-  getImageTaskResult,
-  ImageTaskRequestError,
-  listImageTasks,
-} from '../api'
+import {cancelImageTask, createImageEditTask, createImageGenerationTask, downloadImageTaskResult, getImageTaskResult, listImageTasks} from '../api'
 import {
   getImageTaskDisplayError,
   getImageTaskStoredErrorLabel,

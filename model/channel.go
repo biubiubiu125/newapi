@@ -58,6 +58,8 @@ type Channel struct {
 	Keys []string `json:"-" gorm:"-"`
 }
 
+const ChannelStatusReasonAllKeysDisabled = "All keys are disabled"
+
 type ChannelInfo struct {
 	IsMultiKey             bool                  `json:"is_multi_key"`                        // 是否多Key模式
 	MultiKeySize           int                   `json:"multi_key_size"`                      // 多Key模式下的Key数量
@@ -161,6 +163,8 @@ func ApplyChannelGroupFilter(query *gorm.DB, group string) *gorm.DB {
 }
 
 // Value implements driver.Valuer interface
+// 必须返回 string 而非 []byte:PG simple protocol 下 []byte 参数按 bytea
+// 编码,写 json 列会触发 SQLSTATE 22P02。
 func (c ChannelInfo) Value() (driver.Value, error) {
 	data, err := common.Marshal(&c)
 	if err != nil {
@@ -293,7 +297,7 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 		if start < 0 || start >= len(keys) {
 			start = 0
 		}
-		for i := 0; i < len(keys); i++ {
+		for i := range keys {
 			idx := (start + i) % len(keys)
 			if getStatus(idx) == common.ChannelStatusEnabled {
 				// update polling index for next call (point to the next position)
@@ -343,8 +347,8 @@ func (channel *Channel) GetGroups() []string {
 	return common.SplitCommaSeparated(channel.Group)
 }
 
-func (channel *Channel) GetOtherInfo() map[string]interface{} {
-	otherInfo := make(map[string]interface{})
+func (channel *Channel) GetOtherInfo() map[string]any {
+	otherInfo := make(map[string]any)
 	if channel.OtherInfo != "" {
 		err := common.Unmarshal([]byte(channel.OtherInfo), &otherInfo)
 		if err != nil {
@@ -458,6 +462,15 @@ func SearchChannels(keyword string, group string, model string, idSort bool, sor
 	return channels, nil
 }
 
+// GetChannelById loads a channel directly from the database, bypassing the
+// in-memory channel cache.
+//
+// WARNING: do NOT call this on request hot paths (middleware, distribution,
+// relay submit/retry, polling). Every call is a synchronous DB query and will
+// not see cache-only state. Use CacheGetChannel instead: it serves from the
+// in-memory cache and falls back to this function automatically when
+// MemoryCacheEnabled is false. Direct use is appropriate only where fresh DB
+// state is required, e.g. admin CRUD, channel testing, or cache (re)building.
 func GetChannelById(id int, selectAll bool) (*Channel, error) {
 	channel := &Channel{Id: id}
 	var err error = nil
@@ -759,7 +772,7 @@ func CleanupChannelPollingLocks() {
 		activeChannelSet[id] = true
 	}
 
-	channelPollingLocks.Range(func(key, value interface{}) bool {
+	channelPollingLocks.Range(func(key, value any) bool {
 		channelId := key.(int)
 		if !activeChannelSet[channelId] {
 			channelPollingLocks.Delete(channelId)
@@ -850,6 +863,12 @@ func hasEnabledMultiKey(keys []string, statusList map[int]int) bool {
 
 func SyncChannelStatusWithEnabledKeys(channel *Channel, reason string) {
 	if channel == nil || !channel.ChannelInfo.IsMultiKey {
+		return
+	}
+	// A manual or tag disable is an operator decision. Enabling a key may
+	// restore a channel that was auto-disabled because every key was exhausted,
+	// but it must not reopen one that an operator turned off.
+	if channel.Status == common.ChannelStatusManuallyDisabled {
 		return
 	}
 	if hasEnabledMultiKey(channel.GetKeys(), channel.ChannelInfo.MultiKeyStatusList) {
@@ -992,6 +1011,19 @@ func EnableChannelByTag(tag string) error {
 }
 
 func DisableChannelByTag(tag string) error {
+	// Explicit tag-level disable also cancels automatic restoration for
+	// channels that were already disabled because all keys were unavailable.
+	var channels []Channel
+	if err := DB.Where("tag = ?", tag).Find(&channels).Error; err != nil {
+		return err
+	}
+	for _, channel := range channels {
+		if channel.ChannelInfo.IsMultiKey && channel.GetOtherInfo()["status_reason"] == ChannelStatusReasonAllKeysDisabled {
+			if !UpdateChannelStatus(channel.Id, "", common.ChannelStatusManuallyDisabled, "manual tag operation") {
+				return fmt.Errorf("failed to disable channel #%d by tag", channel.Id)
+			}
+		}
+	}
 	err := DB.Model(&Channel{}).Where("tag = ?", tag).Update("status", common.ChannelStatusManuallyDisabled).Error
 	if err != nil {
 		return err
@@ -1205,12 +1237,8 @@ func (channel *Channel) ValidateSettings() error {
 			return fmt.Errorf("advanced_custom is required")
 		}
 	}
-	switch channelOtherSettings.ImageTaskMode {
+	switch strings.TrimSpace(channelOtherSettings.ImageTaskMode) {
 	case "", dto.ImageTaskModeSyncWrapper:
-	case dto.ImageTaskModeAsyncTaskBridge:
-		if channel.BaseURL == nil || strings.TrimSpace(*channel.BaseURL) == "" {
-			return fmt.Errorf("async task bridge mode requires a base_url that supports /api/image-tasks")
-		}
 	default:
 		return fmt.Errorf("image_task_mode is invalid")
 	}
@@ -1219,7 +1247,7 @@ func (channel *Channel) ValidateSettings() error {
 			return err
 		}
 	}
-	if channel.Type == constant.ChannelTypeAdvancedCustom && channelOtherSettings.UpstreamModelUpdateCheckEnabled {
+	if constant.IsAdvancedCustomChannel(channel.Type) && channelOtherSettings.UpstreamModelUpdateCheckEnabled {
 		if _, ok := channelOtherSettings.AdvancedCustom.ModelListRoute(); !ok {
 			return fmt.Errorf("advanced custom channels require a %s route when upstream model update checks are enabled", dto.AdvancedCustomModelListPath)
 		}
@@ -1255,6 +1283,9 @@ func (channel *Channel) GetOtherSettings() dto.ChannelOtherSettings {
 			common.SysLog(fmt.Sprintf("failed to unmarshal setting: channel_id=%d, error=%v", channel.Id, err))
 		}
 	}
+	if preset := common.GetAdvancedCustomPreset(channel.Type); preset != nil {
+		setting.AdvancedCustom = preset
+	}
 	return setting
 }
 
@@ -1267,8 +1298,8 @@ func (channel *Channel) SetOtherSettings(setting dto.ChannelOtherSettings) {
 	channel.OtherSettings = string(settingBytes)
 }
 
-func (channel *Channel) GetParamOverride() map[string]interface{} {
-	paramOverride := make(map[string]interface{})
+func (channel *Channel) GetParamOverride() map[string]any {
+	paramOverride := make(map[string]any)
 	if channel.ParamOverride != nil && *channel.ParamOverride != "" {
 		err := common.Unmarshal([]byte(*channel.ParamOverride), &paramOverride)
 		if err != nil {
@@ -1278,8 +1309,8 @@ func (channel *Channel) GetParamOverride() map[string]interface{} {
 	return paramOverride
 }
 
-func (channel *Channel) GetHeaderOverride() map[string]interface{} {
-	headerOverride := make(map[string]interface{})
+func (channel *Channel) GetHeaderOverride() map[string]any {
+	headerOverride := make(map[string]any)
 	if channel.HeaderOverride != nil && *channel.HeaderOverride != "" {
 		err := common.Unmarshal([]byte(*channel.HeaderOverride), &headerOverride)
 		if err != nil {

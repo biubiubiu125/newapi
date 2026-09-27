@@ -19,21 +19,18 @@ For commercial licensing, please contact support@quantumnous.com
 import i18next from 'i18next'
 import { useState } from 'react'
 import { toast } from 'sonner'
-
 import { useCountdown } from '@/hooks/use-countdown'
-import { currentConsoleFailureText } from '@/lib/console-failure-text'
-
 import { sendEmailVerification } from '../api'
 import { EMAIL_VERIFICATION_COUNTDOWN } from '../constants'
+import { handleServerError } from '@/lib/handle-server-error'
+import { AuthOperationError } from '@/lib/secure-verification'
+import { createServerError } from '@/lib/server-error-message'
 
 interface UseEmailVerificationOptions {
   turnstileToken?: string
   validateTurnstile?: () => boolean
 }
 
-/**
- * Hook for managing email verification code sending
- */
 export function useEmailVerification(options?: UseEmailVerificationOptions) {
   const [isSending, setIsSending] = useState(false)
   const {
@@ -68,15 +65,18 @@ export function useEmailVerification(options?: UseEmailVerificationOptions) {
         )
         return true
       }
-      toast.error(
-        currentConsoleFailureText(
-          res?.message,
-          'Failed to send verification email'
-        )
+      handleServerError(
+        createServerError(res, i18next.t('Failed to send verification email'))
       )
       return false
-    } catch {
-      // Errors are handled by global interceptor
+
+    } catch (_error) {
+      handleServerError(
+        AuthOperationError.from(
+          _error,
+          i18next.t('Failed to send verification email')
+        )
+      )
       return false
     } finally {
       setIsSending(false)

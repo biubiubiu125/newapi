@@ -10,16 +10,14 @@ import (
 type digestAnchor struct{}
 
 func modulePath() string {
-	return reflect.TypeOf(digestAnchor{}).PkgPath()
+	return reflect.TypeFor[digestAnchor]().PkgPath()
 }
 
 var digestSeed = func() (s [sha256.Size]byte) {
 	return sha256.Sum256([]byte(modulePath()))
 }()
 
-// ETagFor returns a weak ETag derived from a namespace and semantic content.
-// Hashing the semantic value rather than a package-specific JSON byte stream
-// keeps validators stable when equivalent payloads use different encoders.
+// ETagFor returns a weak ETag derived from the namespace and content.
 func ETagFor(namespace, content string) string {
 	buf := make([]byte, 0, sha256.Size+1+len(namespace)+1+len(content))
 	buf = append(buf, digestSeed[:]...)
@@ -32,8 +30,8 @@ func ETagFor(namespace, content string) string {
 }
 
 // ETagMatches reports whether an If-None-Match header matches etag under weak
-// comparison (RFC 9110 section 13.1.2). The W/ prefix is ignored on both
-// sides, and * matches everything.
+// comparison (RFC 9110 §13.1.2): the W/ prefix is ignored on both sides, and
+// "*" matches everything.
 func ETagMatches(ifNoneMatch, etag string) bool {
 	ifNoneMatch = strings.TrimSpace(ifNoneMatch)
 	if ifNoneMatch == "" {
@@ -43,7 +41,7 @@ func ETagMatches(ifNoneMatch, etag string) bool {
 		return true
 	}
 	etag = strings.TrimPrefix(etag, "W/")
-	for _, candidate := range strings.Split(ifNoneMatch, ",") {
+	for candidate := range strings.SplitSeq(ifNoneMatch, ",") {
 		if strings.TrimPrefix(strings.TrimSpace(candidate), "W/") == etag {
 			return true
 		}

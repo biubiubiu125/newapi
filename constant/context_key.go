@@ -72,6 +72,7 @@ const (
 	// OAuth callbacks pin the interface language captured when the flow was created.
 	ContextKeyPinnedLanguage ContextKey = "pinned_language"
 	ContextKeyIsStream       ContextKey = "is_stream"
+	ContextKeyResponseStreamStatus ContextKey = "response_stream_status"
 
 	// ContextKeyAuditLogged marks that the current request has already recorded
 	// a manage/operation audit log inside the handler. When set, the admin-audit

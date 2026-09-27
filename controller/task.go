@@ -2,6 +2,7 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net/http"
@@ -16,10 +17,9 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	relaychannel "github.com/QuantumNous/new-api/relay/channel"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
-	"github.com/QuantumNous/new-api/relaykit/dto"
+	taskdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/types"
-
 	"github.com/gin-gonic/gin"
 )
 
@@ -51,16 +51,24 @@ func GetTask(c *gin.Context) {
 		createdAt = task.SubmitTime
 	}
 	failReason := relay.PublicTaskFailReason(task)
-	c.JSON(http.StatusOK, gin.H{
+	response := gin.H{
 		"task_id":     task.TaskID,
 		"platform":    task.Platform,
 		"status":      relay.PublicTaskStatus(task),
 		"progress":    relay.PublicTaskProgress(task),
 		"fail_reason": failReason,
-		"result_url":  relay.PublicResultURL(task),
 		"created_at":  createdAt,
 		"finished_at": relay.PublicTaskFinishTime(task),
-	})
+	}
+	// A settlement review can leave the stored status as success while the
+	// public status is failure or in progress. Only a publicly successful,
+	// non-plugin task may expose a result URL, and the key stays present.
+	resultURL := ""
+	if relay.PublicTaskStatus(task) == model.TaskStatusSuccess && !taskHasPluginExecution(task) {
+		resultURL = relay.PublicResultURL(task)
+	}
+	response["result_url"] = resultURL
+	c.JSON(http.StatusOK, response)
 }
 
 func GetTaskArtifacts(c *gin.Context) {
@@ -108,6 +116,9 @@ func writeTaskArtifacts(c *gin.Context, task *model.Task, dashboard bool) {
 		})
 	}
 	response := gin.H{"task_id": task.TaskID, "artifacts": items}
+	if dashboard && task.Status == model.TaskStatusSuccess && task.Platform == constant.TaskPlatformSuno {
+		response["legacy_audio_clips"] = legacySunoAudioClips(task.Data)
+	}
 	if legacyVideoAvailable(task) {
 		legacyContentURL, buildErr := service.BuildTaskArtifactContentURL(task.TaskID, "video")
 		if buildErr != nil {
@@ -121,6 +132,34 @@ func writeTaskArtifacts(c *gin.Context, task *model.Task, dashboard bool) {
 		return
 	}
 	c.JSON(http.StatusOK, response)
+}
+
+func legacySunoAudioClips(data json.RawMessage) []map[string]any {
+	clips := make([]map[string]any, 0)
+	if len(data) == 0 {
+		return clips
+	}
+	var items []map[string]any
+	if err := common.Unmarshal(data, &items); err != nil {
+		var encoded string
+		if common.Unmarshal(data, &encoded) != nil || common.UnmarshalJsonStr(encoded, &items) != nil {
+			return clips
+		}
+	}
+	for _, item := range items {
+		audioURL, _ := item["audio_url"].(string)
+		if strings.TrimSpace(audioURL) == "" {
+			continue
+		}
+		clip := map[string]any{"audio_url": audioURL}
+		for _, key := range []string{"clip_id", "id", "title", "tags", "duration", "image_url", "image_large_url", "metadata"} {
+			if value, ok := item[key]; ok {
+				clip[key] = value
+			}
+		}
+		clips = append(clips, clip)
+	}
+	return clips
 }
 
 func projectTaskArtifacts(task *model.Task) ([]relaychannel.TaskArtifact, error) {
@@ -299,10 +338,18 @@ func taskVisibleToRequest(c *gin.Context, task *model.Task) bool {
 	if middleware.IsTaskArtifactAccess(c) {
 		return true
 	}
-	if c.GetInt("role") >= common.RoleAdminUser {
+	// Root carrying a token id is an API-token caller, not a dashboard admin.
+	// A mismatched or missing task token stays hidden. Admin session tokens
+	// still use the dashboard role and may read another user's task.
+	tokenID := c.GetInt("token_id")
+	role := c.GetInt("role")
+	if tokenID > 0 && role >= common.RoleRootUser {
+		return task.PrivateData.TokenId > 0 && task.PrivateData.TokenId == tokenID
+	}
+	if role >= common.RoleAdminUser {
 		return true
 	}
-	return task.MatchesRequestToken(c.GetInt("token_id"))
+	return task.MatchesRequestToken(tokenID)
 }
 
 func getTaskForArtifactRequest(c *gin.Context, taskID string) (*model.Task, bool, error) {
@@ -482,35 +529,22 @@ func taskArtifactClientHeaders(headers http.Header) map[string]string {
 	}
 	return result
 }
-
 func GetAllTask(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
-	// 解析其他查询参数
-	queryParams := model.SyncTaskQueryParams{
-		Platform:       constant.TaskPlatform(c.Query("platform")),
-		TaskID:         c.Query("task_id"),
-		Status:         c.Query("status"),
-		Action:         c.Query("action"),
-		StartTimestamp: startTimestamp,
-		EndTimestamp:   endTimestamp,
-		ChannelID:      c.Query("channel_id"),
-	}
-
+	queryParams := model.SyncTaskQueryParams{Platform: constant.TaskPlatform(c.Query("platform")), TaskID: c.Query("task_id"), Status: c.Query("status"), Action: c.Query("action"), StartTimestamp: startTimestamp, EndTimestamp: endTimestamp, ChannelID: c.Query("channel_id")}
 	items := model.TaskGetAllTasks(pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
 	total := model.TaskCountAllTasks(queryParams)
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(tasksToDto(items, true, c.GetInt("role")))
+	pageInfo.SetTotal(int(model.TaskCountAllTasks(queryParams)))
 	common.ApiSuccess(c, pageInfo)
 }
 
 func GetUserTask(c *gin.Context) {
 	pageInfo := common.GetPageQuery(c)
-
-	userId := c.GetInt("id")
-
+	userID := c.GetInt("id")
 	startTimestamp, _ := strconv.ParseInt(c.Query("start_timestamp"), 10, 64)
 	endTimestamp, _ := strconv.ParseInt(c.Query("end_timestamp"), 10, 64)
 
@@ -523,10 +557,11 @@ func GetUserTask(c *gin.Context) {
 		EndTimestamp:   endTimestamp,
 	}
 
-	items := model.TaskGetAllUserTask(userId, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
-	total := model.TaskCountAllUserTask(userId, queryParams)
+	items := model.TaskGetAllUserTask(userID, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), queryParams)
+	total := model.TaskCountAllUserTask(userID, queryParams)
 	pageInfo.SetTotal(int(total))
 	pageInfo.SetItems(tasksToDto(items, false, common.RoleCommonUser))
+	pageInfo.SetTotal(int(model.TaskCountAllUserTask(userID, queryParams)))
 	common.ApiSuccess(c, pageInfo)
 }
 
@@ -547,30 +582,36 @@ func redactUserTaskProperties(properties any) any {
 	}
 }
 
-func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskDto {
-	var userIdMap map[int]*model.UserBase
+func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*taskdto.TaskDto {
+	var userIDMap map[int]*model.UserBase
 	if fillUser {
-		userIdMap = make(map[int]*model.UserBase)
-		userIds := types.NewSet[int]()
+		userIDMap = make(map[int]*model.UserBase)
+		userIDs := types.NewSet[int]()
 		for _, task := range tasks {
-			userIds.Add(task.UserId)
+			userIDs.Add(task.UserId)
 		}
-		for _, userId := range userIds.Items() {
-			cacheUser, err := model.GetUserCache(userId)
-			if err == nil {
-				userIdMap[userId] = cacheUser
+		for _, userID := range userIDs.Items() {
+			if cacheUser, err := model.GetUserCache(userID); err == nil {
+				userIDMap[userID] = cacheUser
 			}
 		}
 	}
-	result := make([]*dto.TaskDto, len(tasks))
+	result := make([]*taskdto.TaskDto, len(tasks))
 	for i, task := range tasks {
 		if fillUser {
-			if user, ok := userIdMap[task.UserId]; ok {
+			if user, ok := userIDMap[task.UserId]; ok {
 				task.Username = user.Username
 			}
 		}
 		item := relay.TaskModel2Dto(task)
 		item.LegacyVideoAvailable = legacyVideoAvailable(task)
+		item.ResultDiscarded = task.PrivateData.ResultDiscarded
+		if task.Status == model.TaskStatusSuccess {
+			item.ResultURL = ""
+			if taskFailReasonIsLegacyResultURL(task.FailReason) {
+				item.FailReason = ""
+			}
+		}
 		if viewerRole < common.RoleAdminUser {
 			item.UserId = 0
 			item.Group = ""
@@ -585,14 +626,14 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 			item.Properties = redactUserTaskProperties(item.Properties)
 		}
 		if viewerRole >= common.RoleAdminUser {
-			adminInfo := &dto.TaskAdminInfo{}
+			adminInfo := &taskdto.TaskAdminInfo{}
 			if execution := task.PrivateData.Execution; execution != nil {
 				adminInfo.RequestID = execution.RequestID
 				adminInfo.RequestPath = execution.RequestPath
 				if snapshot := execution.TaskPlugin; snapshot != nil {
-					adminInfo.TaskPlugin = &dto.TaskPluginInfo{Key: snapshot.Key, Name: snapshot.Name, Version: snapshot.Version}
+					adminInfo.TaskPlugin = &taskdto.TaskPluginInfo{Key: snapshot.Key, Name: snapshot.Name, Version: snapshot.Version}
 					if snapshot.Author != nil {
-						adminInfo.TaskPlugin.Author = &dto.TaskPluginAuthorInfo{Name: snapshot.Author.Name, URL: snapshot.Author.URL}
+						adminInfo.TaskPlugin.Author = &taskdto.TaskPluginAuthorInfo{Name: snapshot.Author.Name, URL: snapshot.Author.URL}
 					}
 				}
 			}
@@ -601,10 +642,10 @@ func tasksToDto(tasks []*model.Task, fillUser bool, viewerRole int) []*dto.TaskD
 			}
 		}
 		if viewerRole >= common.RoleRootUser {
-			rootInfo := &dto.TaskRootInfo{UpstreamTaskID: task.PrivateData.UpstreamTaskID, NodeName: task.PrivateData.NodeName}
+			rootInfo := &taskdto.TaskRootInfo{UpstreamTaskID: task.PrivateData.UpstreamTaskID, NodeName: task.PrivateData.NodeName}
 			if execution := task.PrivateData.Execution; execution != nil {
 				if snapshot := execution.TaskPlugin; snapshot != nil {
-					rootInfo.TaskPlugin = &dto.TaskPluginRuntimeInfo{Key: snapshot.Key, Version: snapshot.Version, APIVersion: snapshot.APIVersion, Generation: snapshot.Generation}
+					rootInfo.TaskPlugin = &taskdto.TaskPluginRuntimeInfo{Key: snapshot.Key, Version: snapshot.Version, APIVersion: snapshot.APIVersion, Generation: snapshot.Generation}
 				}
 			}
 			if rootInfo.TaskPlugin != nil || rootInfo.UpstreamTaskID != "" || rootInfo.NodeName != "" {

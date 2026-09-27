@@ -34,6 +34,8 @@ jobs:
         with:
           bun-version: latest
       - name: Build Frontend (default)
+          bun-version: '1.4.0'
+      - name: Build Frontend
         env:
           CI: ""
         run: |
@@ -54,6 +56,7 @@ jobs:
           sudo apt-get update
           DEBIAN_FRONTEND=noninteractive sudo apt-get install -y gcc-aarch64-linux-gnu
           CC=aarch64-linux-gnu-gcc CGO_ENABLED=1 GOOS=linux GOARCH=arm64 go build -tags webdist -ldflags "-s -w -X=github.com/QuantumNous/new-api/common.Version=$VERSION -extldflags '-static'" -o new-api-arm64-$VERSION
+          CC=aarch64-linux-gnu-gcc CGO_ENABLED=1 GOOS=linux GOARCH=arm64 go build -ldflags "-s -w -X 'github.com/QuantumNous/new-api/common.Version=$VERSION' -extldflags '-static'" -o new-api-arm64-$VERSION
       - name: Generate checksums
         run: sha256sum new-api-* > checksums-linux.txt
 
@@ -87,6 +90,8 @@ jobs:
         with:
           bun-version: latest
       - name: Build Frontend (default)
+          bun-version: '1.4.0'
+      - name: Build Frontend
         env:
           CI: ""
           NODE_OPTIONS: "--max-old-space-size=4096"
@@ -139,6 +144,8 @@ jobs:
         with:
           bun-version: latest
       - name: Build Frontend (default)
+          bun-version: '1.4.0'
+      - name: Build Frontend
         env:
           CI: ""
         run: |

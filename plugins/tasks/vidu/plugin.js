@@ -25,6 +25,12 @@ export const meta = {
     },
     resolution: {
       enum: ["360p", "540p", "720p", "1080p"],
+      enumLabels: {
+        "360p": { en: "360p", zh: "360p" },
+        "540p": { en: "540p", zh: "540p" },
+        "720p": { en: "720p", zh: "720p" },
+        "1080p": { en: "1080p", zh: "1080p" },
+      },
       description: { en: "Requested output video resolution.", zh: "请求的输出视频分辨率。" },
     },
   },

@@ -151,7 +151,6 @@ func (p *GenericOAuthProvider) ExchangeToken(ctx context.Context, code string, c
 	}
 
 	bodyStr := string(body)
-	logger.LogDebug(ctx, "[OAuth-Generic-%s] ExchangeToken response body: %s", p.config.Slug, bodyStr[:min(len(bodyStr), 500)])
 
 	// Try to parse as JSON first
 	var tokenResponse struct {
@@ -237,7 +236,6 @@ func (p *GenericOAuthProvider) GetUserInfo(ctx context.Context, token *OAuthToke
 	}
 
 	bodyStr := string(body)
-	logger.LogDebug(ctx, "[OAuth-Generic-%s] GetUserInfo response body: %s", p.config.Slug, bodyStr[:min(len(bodyStr), 500)])
 
 	// Extract fields using gjson (supports JSONPath-like syntax)
 	userId := gjson.Get(bodyStr, p.config.UserIdField).String()

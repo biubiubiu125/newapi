@@ -17,6 +17,8 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
+	relaychannel "github.com/QuantumNous/new-api/relay/channel"
+	taskjsplugin "github.com/QuantumNous/new-api/relay/channel/task/jsplugin"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relay/helper"
@@ -40,8 +42,19 @@ type pluginProtocolBridgeDeps struct {
 	heartbeatInterval  time.Duration
 	admissionTimeout   time.Duration
 	getByTaskId        func(int, string) (*model.Task, bool, error)
-	resolvePlugin      func(*model.Task) (*pluginruntime.LoadedPlugin, *pluginruntime.RoutingGeneration, bool)
+	resolvePlugin      func(constant.TaskPlatform) (*pluginruntime.LoadedPlugin, *pluginruntime.RoutingGeneration, bool)
+	// imagePollInterval, pollTask and downloadImage serve the synchronous
+	// OpenAI Images protocol: an asynchronous upstream image task is polled
+	// inside the request, and b64_json responses download each image URL.
+	imagePollInterval time.Duration
+	pollTask          func(context.Context, *model.Task) error
+	downloadImage     func(url string) (mimeType string, base64Data string, err error)
 }
+
+// taskPluginImagePollInterval paces the in-request polling of asynchronous
+// image tasks. Legacy DashScope text-to-image jobs finish within tens of
+// seconds, so a short interval keeps the synchronous response prompt.
+const taskPluginImagePollInterval = 3 * time.Second
 
 func defaultPluginProtocolBridgeDeps() pluginProtocolBridgeDeps {
 	timeout := time.Duration(constant.TaskPluginProtocolTimeoutSeconds) * time.Second
@@ -77,6 +90,9 @@ func defaultPluginProtocolBridgeDeps() pluginProtocolBridgeDeps {
 		admissionTimeout:   pluginruntime.DefaultCallTimeout,
 		getByTaskId:        model.GetByTaskId,
 		resolvePlugin:      resolveTaskPluginForProtocolRetrieve,
+		imagePollInterval:  taskPluginImagePollInterval,
+		pollTask:           pollTaskPluginImageTask,
+		downloadImage:      service.GetImageFromUrl,
 	}
 }
 
@@ -127,19 +143,22 @@ func (d pluginProtocolBridgeDeps) withDefaults() pluginProtocolBridgeDeps {
 	if d.resolvePlugin == nil {
 		d.resolvePlugin = defaults.resolvePlugin
 	}
+	if d.imagePollInterval <= 0 {
+		d.imagePollInterval = defaults.imagePollInterval
+	}
+	if d.pollTask == nil {
+		d.pollTask = defaults.pollTask
+	}
+	if d.downloadImage == nil {
+		d.downloadImage = defaults.downloadImage
+	}
 	return d
 }
 
-func resolveTaskPluginForProtocolRetrieve(task *model.Task) (*pluginruntime.LoadedPlugin, *pluginruntime.RoutingGeneration, bool) {
-	plugin, generation, err := relay.ResolveTaskPluginForTask(task)
-	return plugin, generation, err == nil && plugin != nil
-}
-
-func pluginGenerationNumber(generation *pluginruntime.RoutingGeneration) uint64 {
-	if generation == nil {
-		return 0
-	}
-	return generation.Number
+func resolveTaskPluginForProtocolRetrieve(platform constant.TaskPlatform) (*pluginruntime.LoadedPlugin, *pluginruntime.RoutingGeneration, bool) {
+	generation := pluginruntime.DefaultRegistry.Generation()
+	plugin, ok := relay.ResolveTaskPluginForPlatform(generation, platform)
+	return plugin, generation, ok
 }
 
 func serveTaskPluginProtocol(
@@ -344,17 +363,11 @@ func serveTaskPluginProtocol(
 		}
 	}
 	if background {
+		outcome.Task.PrivateData.ResponsesBackground = true
 		if outcome.Task.ID != 0 {
-			if err := model.UpdateTaskPrivateData(outcome.Task.ID, func(privateData *model.TaskPrivateData) error {
-				privateData.ResponsesBackground = true
-				return nil
-			}); err != nil {
+			if err := model.DB.Model(outcome.Task).Update("private_data", outcome.Task.PrivateData).Error; err != nil {
 				logger.LogError(c, "persist task background flag failed: "+err.Error())
-			} else {
-				outcome.Task.PrivateData.ResponsesBackground = true
 			}
-		} else {
-			outcome.Task.PrivateData.ResponsesBackground = true
 		}
 		machine.SetBackground(true)
 		if !protocolRequest.Stream {
@@ -388,7 +401,7 @@ func streamTaskPluginProtocol(
 	machine *relay.PluginResponsesMachine,
 	deps pluginProtocolBridgeDeps,
 ) {
-	generation := pluginGenerationNumber(pinned.Generation)
+	generation := pinned.Generation.Number
 	pluginKey := pinned.Plugin.Meta.Key
 	logger.LogDebug(
 		c,
@@ -481,7 +494,7 @@ func streamTaskPluginProtocol(
 			return
 		}
 		previousStatus := lastStatus
-		lastStatus = string(task.PublicStatus())
+		lastStatus = string(task.Status)
 		if lastStatus != previousStatus {
 			logger.LogDebug(
 				c,
@@ -507,7 +520,7 @@ func streamTaskPluginProtocol(
 			return
 		}
 		hookStarted := deps.now()
-		rendererContext, contextErr := taskPluginProtocolRendererContext(c.Request.Context(), protocolRequest, pinned, task, deps.artifactContentURL)
+		rendererContext, contextErr := taskPluginProtocolRendererContext(protocolRequest, pinned, task, deps.artifactContentURL)
 		if contextErr != nil {
 			logger.LogError(c, "build task protocol renderer context failed")
 			writeTaskPluginProtocolFailure(c, machine, lastStatus)
@@ -655,7 +668,7 @@ func waitTaskPluginProtocol(
 	machine *relay.PluginResponsesMachine,
 	deps pluginProtocolBridgeDeps,
 ) {
-	generation := pluginGenerationNumber(pinned.Generation)
+	generation := pinned.Generation.Number
 	pluginKey := pinned.Plugin.Meta.Key
 	logger.LogDebug(
 		c,
@@ -719,7 +732,7 @@ func waitTaskPluginProtocol(
 		overloaded := loadOverloaded
 		if !loadOverloaded {
 			previousStatus := lastStatus
-			lastStatus = string(task.PublicStatus())
+			lastStatus = string(task.Status)
 			if lastStatus != previousStatus {
 				logger.LogDebug(
 					c,
@@ -742,9 +755,9 @@ func waitTaskPluginProtocol(
 				loadElapsed.Milliseconds(),
 			)
 		}
-		if !loadOverloaded && (task.PublicStatus() == model.TaskStatusSuccess || task.PublicStatus() == model.TaskStatusFailure) {
-			if task.PublicStatus() == model.TaskStatusFailure {
-				writeTaskPluginProtocolFailureResponse(c, machine, string(task.PublicStatus()))
+		if !loadOverloaded && (task.Status == model.TaskStatusSuccess || task.Status == model.TaskStatusFailure) {
+			if task.Status == model.TaskStatusFailure {
+				writeTaskPluginProtocolFailureResponse(c, machine, string(task.Status))
 				return
 			}
 			response, hookElapsed, callErr := renderTaskPluginProtocolFinalResponse(
@@ -856,7 +869,6 @@ func renderTaskPluginProtocolFinalResponse(
 		return nil, 0, err
 	}
 	rendererContext, err := taskPluginProtocolRendererContext(
-		ctx,
 		protocolRequest,
 		pinned,
 		task,
@@ -878,7 +890,7 @@ func renderTaskPluginProtocolFinalResponse(
 	if err != nil {
 		return nil, hookElapsed, err
 	}
-	response, err := machine.FinalResponse(payload, string(task.PublicStatus()))
+	response, err := machine.FinalResponse(payload, string(task.Status))
 	if err != nil {
 		return nil, hookElapsed, err
 	}
@@ -902,7 +914,6 @@ func renderTaskPluginProtocolEventsResponse(
 		return nil, 0, err
 	}
 	rendererContext, err := taskPluginProtocolRendererContext(
-		ctx,
 		protocolRequest,
 		pinned,
 		task,
@@ -928,7 +939,7 @@ func renderTaskPluginProtocolEventsResponse(
 	if err != nil {
 		return nil, hookElapsed, err
 	}
-	response, err := machine.FinalFromEvents(result, string(task.PublicStatus()))
+	response, err := machine.FinalFromEvents(result, string(task.Status))
 	if err != nil {
 		return nil, hookElapsed, err
 	}
@@ -961,12 +972,16 @@ func retrieveTaskPluginResponse(c *gin.Context, deps pluginProtocolBridgeDeps) {
 		writeTaskPluginResponseNotFound(c, responseID, "missing")
 		return
 	}
-	if !task.MatchesRequestToken(c.GetInt("token_id")) {
+	if !task.MatchesRequestToken(common.GetContextKeyInt(c, constant.ContextKeyTokenId)) {
 		writeTaskPluginResponseNotFound(c, responseID, "token_mismatch")
 		return
 	}
+	if !task.ResultRetrievable() {
+		writeTaskPluginResponseNotFound(c, responseID, "result_discarded")
+		return
+	}
 
-	plugin, generation, ok := deps.resolvePlugin(task)
+	plugin, generation, ok := deps.resolvePlugin(task.Platform)
 	if !ok || plugin == nil {
 		writeTaskPluginResponseNotFound(c, responseID, "no_plugin")
 		return
@@ -1020,14 +1035,14 @@ func retrieveTaskPluginResponse(c *gin.Context, deps pluginProtocolBridgeDeps) {
 		Model:     task.Properties.OriginModelName,
 	}
 
-	if task.PublicStatus() == model.TaskStatusFailure {
-		logger.LogDebug(c, "task_plugin subsystem=protocol event=retrieve_final generation=%d plugin=%q public_task_id=%q status=%q", generationNumber, plugin.Meta.Key, task.TaskID, taskPluginDebugStatus(string(task.PublicStatus())))
-		writeTaskPluginProtocolFailureResponse(c, machine, string(task.PublicStatus()))
+	if task.Status == model.TaskStatusFailure {
+		logger.LogDebug(c, "task_plugin subsystem=protocol event=retrieve_final generation=%d plugin=%q public_task_id=%q status=%q", generationNumber, plugin.Meta.Key, task.TaskID, taskPluginDebugStatus(string(task.Status)))
+		writeTaskPluginProtocolFailureResponse(c, machine, string(task.Status))
 		return
 	}
-	if task.PublicStatus() != model.TaskStatusSuccess {
-		logger.LogDebug(c, "task_plugin subsystem=protocol event=retrieve_pending generation=%d plugin=%q public_task_id=%q status=%q", generationNumber, plugin.Meta.Key, task.TaskID, taskPluginDebugStatus(string(task.PublicStatus())))
-		c.JSON(http.StatusOK, machine.PendingResponse(string(task.PublicStatus())))
+	if task.Status != model.TaskStatusSuccess {
+		logger.LogDebug(c, "task_plugin subsystem=protocol event=retrieve_pending generation=%d plugin=%q public_task_id=%q status=%q", generationNumber, plugin.Meta.Key, task.TaskID, taskPluginDebugStatus(string(task.Status)))
+		c.JSON(http.StatusOK, machine.PendingResponse(string(task.Status)))
 		return
 	}
 
@@ -1065,7 +1080,7 @@ func retrieveTaskPluginResponse(c *gin.Context, deps pluginProtocolBridgeDeps) {
 			task.TaskID,
 			hookElapsed.Milliseconds(),
 		)
-		writeTaskPluginProtocolFailureResponse(c, machine, string(task.PublicStatus()))
+		writeTaskPluginProtocolFailureResponse(c, machine, string(task.Status))
 		return
 	}
 	logger.LogDebug(
@@ -1074,7 +1089,7 @@ func retrieveTaskPluginResponse(c *gin.Context, deps pluginProtocolBridgeDeps) {
 		generationNumber,
 		plugin.Meta.Key,
 		task.TaskID,
-		taskPluginDebugStatus(string(task.PublicStatus())),
+		taskPluginDebugStatus(string(task.Status)),
 		hookElapsed.Milliseconds(),
 	)
 	c.JSON(http.StatusOK, response)
@@ -1169,20 +1184,22 @@ func taskPluginProtocolJSONValue(value any) (any, error) {
 }
 
 func taskPluginProtocolRendererContext(
-	ctx context.Context,
 	request pluginruntime.ProtocolRequestContext,
 	pinned pluginruntime.PinnedEndpoint,
 	task *model.Task,
 	artifactContentURL func(taskID, artifactKey string) (string, error),
 ) (map[string]any, error) {
-	if ctx == nil {
-		ctx = context.Background()
-	}
 	rendererContext := request.JSValue()
-	if !task.PublicMediaReady() {
+	if task == nil || !task.PublicMediaReady() {
 		return rendererContext, nil
 	}
-	artifacts, err := projectTaskArtifactsContext(ctx, task)
+	var artifacts []relaychannel.TaskArtifact
+	var err error
+	if pinned.Plugin != nil {
+		artifacts, err = taskjsplugin.New(pinned.Plugin).ListArtifacts(task)
+	} else {
+		artifacts, err = projectTaskArtifacts(task)
+	}
 	if err != nil {
 		return nil, fmt.Errorf("project task artifacts: %w", err)
 	}

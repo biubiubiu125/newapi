@@ -44,8 +44,10 @@ import {
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
 } from '@/lib/admin-permissions'
-import { getCommonHeaders } from '@/lib/api'
+import {getCommonHeaders} from '@/lib/api'
 import { useAuthStore } from '@/stores/auth-store'
+
+import { handleServerError } from '@/lib/handle-server-error'
 
 import {
   deleteOllamaModel,
@@ -190,6 +192,7 @@ export function OllamaModelsDialog({
             'Failed to fetch models'
           )
         )
+        handleServerError(new Error(lastErr), t('Failed to fetch models'))
       }
 
       setModels(normalized)
@@ -207,6 +210,7 @@ export function OllamaModelsDialog({
       toast.error(
         ollamaActionFailureText(msg, i18n.language, t, 'Failed to fetch models')
       )
+      handleServerError(err, t('Failed to fetch models'))
       setModels([])
     } finally {
       setIsFetching(false)
@@ -297,6 +301,7 @@ export function OllamaModelsDialog({
             'Failed to update models'
           )
         )
+        handleServerError(res, t('Failed to update models'))
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : ''
@@ -308,6 +313,7 @@ export function OllamaModelsDialog({
           'Failed to update models'
         )
       )
+      handleServerError(err, t('Failed to update models'))
     }
   }
 
@@ -385,6 +391,7 @@ export function OllamaModelsDialog({
               toast.error(
                 ollamaPullFailureText(String(data.error), i18n.language, t)
               )
+              handleServerError(data, String(data.error))
               setIsPulling(false)
               setPullProgress(null)
               pullAbortRef.current = null
@@ -421,6 +428,7 @@ export function OllamaModelsDialog({
       if (!isAbort) {
         const msg = err instanceof Error ? err.message : ''
         toast.error(ollamaPullFailureText(msg, i18n.language, t))
+        handleServerError(err, t('Model pull failed: {{msg}}', { msg }))
       }
       setIsPulling(false)
       setPullProgress(null)
@@ -455,6 +463,7 @@ export function OllamaModelsDialog({
             'Failed to delete model'
           )
         )
+        handleServerError(payload, t('Failed to delete model'))
       }
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : ''
@@ -466,6 +475,7 @@ export function OllamaModelsDialog({
           'Failed to delete model'
         )
       )
+      handleServerError(err, t('Failed to delete model'))
     } finally {
       setIsDeleting(false)
     }

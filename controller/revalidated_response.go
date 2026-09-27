@@ -7,22 +7,51 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// serveRevalidatedJSON writes a public JSON payload with a weak semantic ETag
-// and answers conditional requests with 304 Not Modified. The namespace keeps
-// different endpoints from sharing validators when their content is equal.
-func serveRevalidatedJSON(c *gin.Context, namespace, content string, payload any) {
+// etagVersionPublicContent namespaces the public-content ETag; bump it when
+// the JSON envelope served by serveRevalidatedJSON changes shape.
+const etagVersionPublicContent = "public-content:v1"
+
+type publicContentResponse struct {
+	Success bool   `json:"success"`
+	Message string `json:"message"`
+	Data    string `json:"data"`
+}
+
+// serveRevalidatedJSON writes public content as JSON with a weak
+// content-derived ETag and answers conditional requests with 304 Not
+// Modified. The ETag is a weak validator derived from the content, so it is
+// stable across replicas and JSON encodings, and a new one is issued when
+// the content changes. Cache-Control: no-cache forces revalidation before
+// reuse, so an admin edit takes effect on the next request; Vary:
+// Accept-Encoding keeps the gzip and identity encodings apart in shared
+// caches.
+func serveRevalidatedJSON(c *gin.Context, content string) {
+	serveRevalidatedPayload(c, etagVersionPublicContent, content, publicContentResponse{
+		Success: true,
+		Message: "",
+		Data:    content,
+	})
+}
+
+func serveRevalidatedPayload(c *gin.Context, namespace, content string, payload any) {
 	body, err := common.Marshal(payload)
 	if err != nil {
-		common.ApiErrorWithStatus(c, http.StatusInternalServerError, err)
+		c.JSON(http.StatusInternalServerError, gin.H{
+			"success": false,
+			"message": err.Error(),
+		})
 		return
 	}
 
 	etag := common.ETagFor(namespace, content)
+
 	c.Header("ETag", etag)
 	c.Header("Cache-Control", "no-cache")
 	c.Header("Vary", "Accept-Encoding")
+
 	if common.ETagMatches(c.GetHeader("If-None-Match"), etag) {
 		c.Status(http.StatusNotModified)
+		// Direct callers and tests never reach gin's post-handler flush.
 		c.Writer.WriteHeaderNow()
 		return
 	}

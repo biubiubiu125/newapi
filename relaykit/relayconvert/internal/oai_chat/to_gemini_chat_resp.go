@@ -396,6 +396,11 @@ func (s *ChatToGeminiStreamState) StreamUsage() *dto.Usage {
 
 func (s *ChatToGeminiStreamState) SetStreamUsage(usage *dto.Usage) {
 	s.SetUsage(usage)
+	// Cross-step usage is billing state. Once a choice already finished, do not
+	// append another client-visible usage-only chunk for that injected snapshot.
+	if len(s.finishedChoices) > 0 {
+		s.usageEmitted = true
+	}
 }
 
 func (s *ChatToGeminiStreamState) appendToolCallDelta(choiceIndex int, toolCall dto.ToolCallResponse) error {
@@ -525,7 +530,6 @@ func geminiFinishReason(finishReason string) string {
 		return "STOP"
 	}
 }
-
 func geminiBillingMetadataFromOpenAIUsage(usage *dto.Usage) (dto.GeminiUsageMetadata, bool) {
 	if usage == nil || usage.BillingUsage == nil || usage.BillingUsage.GeminiUsageMetadata == nil {
 		return dto.GeminiUsageMetadata{}, false

@@ -30,10 +30,11 @@ import { ModelPriceCell } from '@/features/pricing/components/model-price-cell'
 import { isDynamicPricingModel } from '@/features/pricing/lib/dynamic-price'
 import { formatPrice } from '@/features/pricing/lib/price'
 import {
+  latestPersistablePricingDraft,
   ModelPricingEditorPanel,
   type ModelPricingEditorPanelHandle,
-  type ModelRatioData,
 } from '@/features/system-settings/models/model-pricing-sheet'
+import { unsavedModelPricingDrafts } from './unsaved-pricing-drafts'
 import { handleServerError } from '@/lib/handle-server-error'
 import { useSystemConfigStore } from '@/stores/system-config-store'
 
@@ -45,7 +46,7 @@ import {
 } from './api'
 import { modelPricingDisplay, pricingFromDraft, pricingRow } from './pricing'
 
-export const unsavedModelPricingDrafts = new Map<string, ModelRatioData>()
+export { unsavedModelPricingDrafts } from './unsaved-pricing-drafts'
 
 export function ModelPricingPanel(props: {
   modelName: string
@@ -59,6 +60,15 @@ export function ModelPricingPanel(props: {
   const [entry, setEntry] = useState<ModelPricingEntry | null>(null)
   const [resetOpen, setResetOpen] = useState(false)
   const editor = useRef<ModelPricingEditorPanelHandle>(null)
+  useEffect(() => {
+    return () => {
+      const data =
+        editor.current?.snapshotPersistableDraft() ??
+        latestPersistablePricingDraft.current
+      latestPersistablePricingDraft.current = null
+      if (data?.name) unsavedModelPricingDrafts.set(data.name, data)
+    }
+  }, [])
   const cachedDraft = unsavedModelPricingDrafts.get(props.modelName)
   const editData = useMemo(() => {
     if (cachedDraft?.name === props.modelName) {
@@ -150,9 +160,6 @@ export function ModelPricingPanel(props: {
         editData={editData}
         usageSchema={entry.usage_schema}
         onDirtyChange={props.onDirtyChange}
-        onUnmountSnapshot={(data) => {
-          unsavedModelPricingDrafts.set(data.name, data)
-        }}
         onSave={() => persist()}
         isSaving={save.isPending}
         className='rounded-none border-0'

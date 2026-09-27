@@ -8,6 +8,8 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"slices"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -218,11 +220,8 @@ func GetOptions(c *gin.Context) {
 			Key:   k,
 			Value: value,
 		})
-		for _, optionKey := range completionRatioMetaOptionKeys {
-			if optionKey == k {
-				optionValues[k] = value
-				break
-			}
+		if slices.Contains(completionRatioMetaOptionKeys, k) {
+			optionValues[k] = value
 		}
 	}
 	common.OptionMapRWMutex.Unlock()
@@ -253,6 +252,50 @@ func GetOptions(c *gin.Context) {
 type OptionUpdateRequest struct {
 	Key   string `json:"key"`
 	Value any    `json:"value"`
+}
+
+func UpdatePasskeyDomains(c *gin.Context) {
+	var request struct {
+		RPID                *string `json:"rp_id"`
+		LegacyRPIDs         *string `json:"legacy_rp_ids"`
+		Origins             *string `json:"origins"`
+		Preview             bool    `json:"preview"`
+		RemovalConfirmation string  `json:"removal_confirmation"`
+	}
+	if err := common.DecodeJson(c.Request.Body, &request); err != nil || request.RPID == nil || request.LegacyRPIDs == nil || request.Origins == nil {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
+		return
+	}
+	change, err := model.UpdatePasskeyDomainOptions(map[string]string{
+		"passkey.rp_id": *request.RPID, "passkey.legacy_rp_ids": *request.LegacyRPIDs, "passkey.origins": *request.Origins,
+	}, request.Preview, request.RemovalConfirmation)
+	if err != nil {
+		writePasskeyDomainSettingsError(c, err)
+		if !request.Preview {
+			recordPasskeyDomainAudit(c, change, request.RemovalConfirmation != "", err)
+		}
+		return
+	}
+	if !request.Preview {
+		recordPasskeyDomainAudit(c, change, request.RemovalConfirmation != "", nil)
+	}
+	common.ApiSuccess(c, change)
+}
+
+func writePasskeyDomainSettingsError(c *gin.Context, err error) {
+	var removal *model.PasskeyDomainRemovalError
+	if errors.As(err, &removal) {
+		c.JSON(http.StatusConflict, gin.H{
+			"success": false, "code": "PASSKEY_RP_ID_REMOVAL_CONFIRMATION_REQUIRED",
+			"message": i18n.T(c, i18n.MsgPasskeyRPIDRemovalConfirmation), "data": removal.Change,
+		})
+		return
+	}
+	if errors.Is(err, system_setting.ErrPasskeyRPIDInvalid) {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	common.ApiError(c, err)
 }
 
 func UpdateOption(c *gin.Context) {
@@ -384,6 +427,50 @@ func UpdateOption(c *gin.Context) {
 			common.ApiError(c, err)
 			return
 		}
+	case "billing_setting.billing_expr":
+		expressions := make(map[string]string)
+		if err = common.UnmarshalJsonStr(option.Value.(string), &expressions); err != nil {
+			common.ApiErrorMsg(c, "计费表达式配置必须是模型到表达式的 JSON 对象: "+err.Error())
+			return
+		}
+		models := make([]string, 0, len(expressions))
+		for modelName := range expressions {
+			models = append(models, modelName)
+		}
+		sort.Strings(models)
+		storedVariants := billing_setting.GetPluginBillingExprCopy()
+		for _, modelName := range models {
+			variants := make(map[string]any)
+			for key, expression := range storedVariants {
+				if plugin, name, ok := billing_setting.SplitPluginBillingExprKey(key); ok && name == modelName {
+					variants[plugin] = expression
+				}
+			}
+			err = model.ValidateModelPricing(modelName, model.PricingValues{
+				"billing_setting.billing_expr":          expressions[modelName],
+				billing_setting.PluginBillingExprOption: variants,
+			})
+			if err != nil {
+				reportBillingExprInvalid(c, modelName, err)
+				return
+			}
+		}
+	case billing_setting.PluginBillingExprOption:
+		var expressions map[string]string
+		if err = common.UnmarshalJsonStr(option.Value.(string), &expressions); err != nil || expressions == nil {
+			common.ApiErrorMsg(c, "plugin billing expressions must be a JSON object")
+			return
+		}
+		for key := range expressions {
+			if _, _, valid := billing_setting.SplitPluginBillingExprKey(key); !valid {
+				common.ApiErrorMsg(c, "invalid plugin billing expression key: "+key)
+				return
+			}
+		}
+		if modelName, validateErr := model.ValidatePluginBillingExprReplacement(expressions); validateErr != nil {
+			reportBillingExprInvalid(c, modelName, validateErr)
+			return
+		}
 	case "console_setting.api_info":
 		err = console_setting.ValidateConsoleSettings(option.Value.(string), "ApiInfo")
 		if err != nil {
@@ -409,9 +496,24 @@ func UpdateOption(c *gin.Context) {
 			return
 		}
 	}
+	if model.IsPasskeyDomainOption(option.Key) {
+		change, updateErr := model.UpdatePasskeyDomainOptions(map[string]string{option.Key: option.Value.(string)}, false, "")
+		if updateErr != nil {
+			writePasskeyDomainSettingsError(c, updateErr)
+			recordPasskeyDomainAudit(c, change, false, updateErr)
+			return
+		}
+		recordPasskeyDomainAudit(c, change, false, nil)
+		common.ApiSuccess(c, change)
+		return
+	}
 	err = model.UpdateOption(option.Key, option.Value.(string))
 	if err != nil {
-		common.ApiError(c, err)
+		if errors.Is(err, system_setting.ErrPasskeyRPIDInvalid) {
+			writeSecurityOperationError(c, err)
+		} else {
+			common.ApiError(c, err)
+		}
 		return
 	}
 	if option.Key == "console_setting.announcements" {
@@ -423,6 +525,22 @@ func UpdateOption(c *gin.Context) {
 		"success": true,
 		"message": "",
 	})
+}
+
+func reportBillingExprInvalid(c *gin.Context, modelName string, err error) {
+	reason := ""
+	if err != nil {
+		reason = err.Error()
+	}
+	args := map[string]any{"Model": modelName, "Reason": reason}
+	message := fmt.Sprintf("模型 %s 的计费表达式无效: %s", modelName, reason)
+	if common.TranslateMessage != nil {
+		message = common.TranslateMessage(c, i18n.MsgOptionBillingExprInvalid, args)
+		if reason != "" && !strings.Contains(message, reason) {
+			message = message + ": " + reason
+		}
+	}
+	c.JSON(http.StatusOK, gin.H{"success": false, "message": message})
 }
 
 func mapTaskArtifactBaseURLError(err error) string {

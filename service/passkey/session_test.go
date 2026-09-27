@@ -8,7 +8,7 @@ import (
 )
 
 func TestCreateSessionDataFlowRejectsEmptySessionWithLocalizedError(t *testing.T) {
-	_, _, err := CreateSessionDataFlow("passkey_register", 1, "session", "scope", nil)
+	_, _, err := CreateSessionDataFlow("passkey_register", FlowSecurity{}, nil)
 	loc, ok := common.AsLocalizedError(err)
 	require.True(t, ok, "empty session should be LocalizedError, got %v", err)
 	require.Equal(t, "passkey.session_empty", loc.Key)

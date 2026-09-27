@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/QuantumNous/new-api/setting/billing_setting"
@@ -32,11 +33,6 @@ func modelPriceNotConfiguredError(modelName string, userId int) error {
 
 // https://docs.claude.com/en/docs/build-with-claude/prompt-caching#1-hour-cache-duration
 const claudeCacheCreation1hMultiplier = 6 / 3.75
-
-// defaultTieredPreConsumeMaxTokens is the fallback completion-token estimate
-// used for tiered expression pre-consume when the client omits max_tokens, so
-// the pre-consumed quota still reflects a plausible output cost in paid groups.
-const defaultTieredPreConsumeMaxTokens = 8192
 
 // HandleGroupRatio checks for "auto_group" in the context and updates the group ratio and relayInfo.UsingGroup if present
 func HandleGroupRatio(ctx *gin.Context, relayInfo *relaycommon.RelayInfo) hosttypes.GroupRatioInfo {
@@ -95,10 +91,11 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	var audioCompletionRatio float64
 	var freeModel bool
 	if !usePrice {
-		preConsumedTokens := common.Max(promptTokens, common.PreConsumedQuota)
-		if meta.MaxTokens != 0 {
-			preConsumedTokens += meta.MaxTokens
+		preConsumeMultiplier, err := operation_setting.InputPreConsumeMultiplier()
+		if err != nil {
+			return hosttypes.PriceData{}, err
 		}
+		preConsumedTokens := float64(promptTokens) * preConsumeMultiplier
 		var success bool
 		var matchName string
 		modelRatio, success, matchName = ratio_setting.GetModelRatio(billingModelName)
@@ -138,6 +135,9 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 	} else {
 		if meta.ImagePriceRatio != 0 {
 			modelPrice = modelPrice * meta.ImagePriceRatio
+		}
+		if _, image := info.Request.(*dto.ImageRequest); image {
+			info.ImageQuotaBeforeGroup = modelPrice * common.QuotaPerUnit
 		}
 	}
 
@@ -180,6 +180,24 @@ func ModelPriceHelper(c *gin.Context, info *relaycommon.RelayInfo, promptTokens 
 		for name, ratio := range meta.BillingRatios {
 			priceData.AddOtherRatio(name, ratio)
 		}
+	}
+	if request, image := info.Request.(*dto.ImageRequest); image {
+		count, err := request.ImageCount(false)
+		if err != nil {
+			return hosttypes.PriceData{}, err
+		}
+		if usePrice {
+			priceData.AddOtherRatio("n", float64(count))
+		}
+		if !usePrice && info.ImageQuotaBeforeGroup > 0 {
+			quota, err := common.QuotaFromFloatStrict(priceData.ApplyOtherRatiosToFloat(info.ImageQuotaBeforeGroup * groupRatioInfo.GroupRatio))
+			if err != nil {
+				return hosttypes.PriceData{}, err
+			}
+			priceData.QuotaToPreConsume = quota
+		}
+	}
+	if usePrice {
 		quotaToPreConsume := priceData.ApplyOtherRatiosToFloat(modelPrice * common.QuotaPerUnit * groupRatioInfo.GroupRatio)
 		quota, err := common.QuotaFromPositiveFloatStrict(quotaToPreConsume)
 		if err != nil {
@@ -328,23 +346,30 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, billing
 	if !ok {
 		return hosttypes.PriceData{}, fmt.Errorf("model %s is configured as tiered_expr but has no billing expression", billingModelName)
 	}
+	exprHash := billingexpr.ExprHashString(exprStr)
 	if info.RelayFormat == types.RelayFormatOpenAIRealtime && billingexpr.UsesFixedPricing(exprStr) {
 		return hosttypes.PriceData{}, fmt.Errorf("fixed pricing is not supported for Realtime requests")
 	}
 
-	estimatedCompletionTokens := meta.MaxTokens
-	if estimatedCompletionTokens == 0 && groupRatioInfo.GroupRatio != 0 {
-		estimatedCompletionTokens = defaultTieredPreConsumeMaxTokens
+	preConsumeMultiplier, err := operation_setting.InputPreConsumeMultiplier()
+	if err != nil {
+		return hosttypes.PriceData{}, err
 	}
 
 	requestInput, err := ResolveIncomingBillingExprRequestInput(c, info)
 	if err != nil {
 		return hosttypes.PriceData{}, err
 	}
+	if billingexpr.UsedVarsByHash(exprStr, exprHash)["image_count"] {
+		requestInput, err = ResolveImageBillingRequestInput(c, info, requestInput)
+		if err != nil {
+			return hosttypes.PriceData{}, err
+		}
+	}
 
-	rawCost, trace, err := billingexpr.RunExprWithRequest(exprStr, billingexpr.TokenParams{
+	rawCost, trace, err := billingexpr.RunExprByHashWithRequest(exprStr, exprHash, billingexpr.TokenParams{
 		P:   float64(promptTokens),
-		C:   float64(estimatedCompletionTokens),
+		C:   0,
 		Len: float64(promptTokens),
 	}, requestInput)
 	if err != nil {
@@ -352,8 +377,9 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, billing
 	}
 
 	// Expression coefficients are $/1M tokens prices; convert to quota the same way per-call billing does.
+	// The pre-consume multiplier scales only the reservation, not the expression snapshot used at settlement.
 	quotaBeforeGroup := rawCost / 1_000_000 * common.QuotaPerUnit
-	preConsumedQuota, err := billingexpr.QuotaRoundPositiveStrict(quotaBeforeGroup * groupRatioInfo.GroupRatio)
+	preConsumedQuota, err := billingexpr.QuotaRoundPositiveStrict(quotaBeforeGroup * groupRatioInfo.GroupRatio * preConsumeMultiplier)
 	if err != nil {
 		return hosttypes.PriceData{}, err
 	}
@@ -366,15 +392,16 @@ func modelPriceHelperTiered(c *gin.Context, info *relaycommon.RelayInfo, billing
 		}
 	}
 
-	exprHash := billingexpr.ExprHashString(exprStr)
 	snapshot := &billingexpr.BillingSnapshot{
+		EstimatedImageCount:       trace.ImageCount,
 		BillingMode:               billing_setting.BillingModeTieredExpr,
 		ModelName:                 billingModelName,
 		ExprString:                exprStr,
 		ExprHash:                  exprHash,
 		GroupRatio:                groupRatioInfo.GroupRatio,
 		EstimatedPromptTokens:     promptTokens,
-		EstimatedCompletionTokens: estimatedCompletionTokens,
+		EstimatedCompletionTokens: 0,
+		PreConsumeMultiplier:      preConsumeMultiplier,
 		EstimatedQuotaBeforeGroup: quotaBeforeGroup,
 		EstimatedQuotaAfterGroup:  preConsumedQuota,
 		EstimatedTier:             trace.MatchedTier,

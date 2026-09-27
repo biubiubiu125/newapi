@@ -41,6 +41,9 @@ type TaskDto struct {
 	FailReason           string          `json:"fail_reason"`
 	ResultURL            string          `json:"result_url,omitempty"` // 任务结果 URL（视频地址等）
 	LegacyVideoAvailable bool            `json:"legacy_video_available,omitempty"`
+	// ResultDiscarded marks a synchronous result that was returned inline and
+	// never persisted; the UI must not offer artifact retrieval for it.
+	ResultDiscarded bool            `json:"result_discarded,omitempty"`
 	SubmitTime           int64           `json:"submit_time"`
 	StartTime            int64           `json:"start_time"`
 	FinishTime           int64           `json:"finish_time"`

@@ -64,6 +64,7 @@ func TestMain(m *testing.M) {
 		&model.QuotaData{},
 		&model.TokenUsageDaily{},
 		&model.Channel{},
+		&model.Midjourney{},
 		&model.TopUp{},
 		&model.SubscriptionPlan{},
 		&model.UserSubscription{},
@@ -98,6 +99,7 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM quota_data")
 		model.DB.Exec("DELETE FROM token_usage_dailies")
 		model.DB.Exec("DELETE FROM channels")
+		model.DB.Exec("DELETE FROM midjourneys")
 		model.DB.Exec("DELETE FROM top_ups")
 		model.DB.Exec("DELETE FROM subscription_plans")
 		model.DB.Exec("DELETE FROM user_subscriptions")
@@ -1009,16 +1011,6 @@ func TestApplyImageTaskSettlementAtomicRollsBackWhenSubscriptionDeltaFails(t *te
 	require.Zero(t, requestCount)
 }
 
-func TestImageTaskBatchPollSizeClampsToProtocolLimit(t *testing.T) {
-	oldBatchSize := constant.ImageTaskBatchPollSize
-	constant.ImageTaskBatchPollSize = 250
-	t.Cleanup(func() {
-		constant.ImageTaskBatchPollSize = oldBatchSize
-	})
-
-	require.Equal(t, 100, imageTaskBatchPollSize())
-}
-
 func TestTaskPollingPlatformOrderPrioritizesImage(t *testing.T) {
 	order := taskPollingPlatformOrder(map[constant.TaskPlatform][]*model.Task{
 		constant.TaskPlatformSuno:      {},
@@ -1451,6 +1443,16 @@ func seedChannel(t *testing.T, id int) {
 	t.Helper()
 	ch := &model.Channel{Id: id, Name: "test_channel", Key: "sk-test", Status: common.ChannelStatusEnabled}
 	require.NoError(t, model.DB.Create(ch).Error)
+}
+
+func seedChargedAccounting(t *testing.T, userID, channelID, tokenID, quota, requestCount int) {
+	t.Helper()
+	require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", userID).Updates(map[string]any{
+		"used_quota":    quota,
+		"request_count": requestCount,
+	}).Error)
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", channelID).Update("used_quota", quota).Error)
+	require.NoError(t, model.DB.Model(&model.Token{}).Where("id = ?", tokenID).Update("used_quota", quota).Error)
 }
 
 func useBrokenLogDB(t *testing.T) {
@@ -4008,7 +4010,15 @@ func TestRefundTaskQuota_MarksReviewWhenUsageCounterUpdateFails(t *testing.T) {
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 	require.NoError(t, model.DB.Create(task).Error)
-	require.NoError(t, model.DB.Delete(&model.Channel{}, channelID).Error)
+	callbackName := "test:fail_refund_channel_usage"
+	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement != nil && tx.Statement.Table == "channels" {
+			tx.AddError(errors.New("forced channel usage counter failure"))
+		}
+	}))
+	t.Cleanup(func() {
+		model.DB.Callback().Update().Remove(callbackName)
+	})
 
 	err := RefundTaskQuota(ctx, task, "task failed after submit")
 
@@ -5237,6 +5247,7 @@ func TestRecalculate_Subscription_NegativeDelta(t *testing.T) {
 	seedToken(t, tokenID, userID, "sk-sub-recalc", tokenRemain)
 	seedChannel(t, channelID)
 	seedSubscription(t, subID, userID, subTotal, subUsed)
+	seedChargedAccounting(t, userID, channelID, tokenID, preConsumed, 1)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceSubscription, subID)
 	require.NoError(t, model.DB.Create(task).Error)
@@ -5432,6 +5443,7 @@ func TestCASGuardedRefund_Win(t *testing.T) {
 	seedUser(t, userID, initQuota)
 	seedToken(t, tokenID, userID, "sk-cas-refund-win", tokenRemain)
 	seedChannel(t, channelID)
+	seedChargedAccounting(t, userID, channelID, tokenID, preConsumed, 1)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 	task.Status = model.TaskStatus(model.TaskStatusInProgress)
@@ -5464,6 +5476,7 @@ func TestCASGuardedRefund_Lose(t *testing.T) {
 	seedUser(t, userID, initQuota)
 	seedToken(t, tokenID, userID, "sk-cas-refund-lose", tokenRemain)
 	seedChannel(t, channelID)
+	seedChargedAccounting(t, userID, channelID, tokenID, preConsumed, 1)
 
 	// Create task with IN_PROGRESS in DB
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
@@ -5497,6 +5510,7 @@ func TestCASGuardedSettle_Win(t *testing.T) {
 	seedUser(t, userID, initQuota)
 	seedToken(t, tokenID, userID, "sk-cas-settle-win", tokenRemain)
 	seedChannel(t, channelID)
+	seedChargedAccounting(t, userID, channelID, tokenID, preConsumed, 1)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 	task.Status = model.TaskStatus(model.TaskStatusInProgress)
@@ -5557,10 +5571,12 @@ type mockAdaptor struct {
 }
 
 func (m *mockAdaptor) Init(_ *relaycommon.RelayInfo) {}
-func (m *mockAdaptor) FetchTask(string, string, map[string]any, string) (*http.Response, error) {
+func (m *mockAdaptor) FetchTask(string, string, *model.Task, string) (*http.Response, error) {
 	return nil, nil
 }
-func (m *mockAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) { return nil, nil }
+func (m *mockAdaptor) ParseTaskResult(*model.Task, *http.Response, []byte) (*relaycommon.TaskInfo, error) {
+	return nil, nil
+}
 func (m *mockAdaptor) AdjustBillingOnComplete(_ *model.Task, _ *relaycommon.TaskInfo) int {
 	m.adjustCalls++
 	return m.adjustReturn
@@ -5630,7 +5646,7 @@ func TestSettle_PerCallBilling_SkipsAdaptorAdjust(t *testing.T) {
 	adaptor := &mockAdaptor{adjustReturn: 2000}
 	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}
 
-	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+	_ = settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 
 	// Per-call: no adjustment despite adaptor returning 2000
 	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
@@ -5657,7 +5673,7 @@ func TestSettle_PerCallBilling_SkipsTotalTokens(t *testing.T) {
 	adaptor := &mockAdaptor{adjustReturn: 0}
 	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess, TotalTokens: 9999}
 
-	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+	_ = settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 
 	// Per-call: no recalculation by tokens
 	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
@@ -5686,7 +5702,7 @@ func TestSettle_NonPerCallBilling_AppliesAdaptorAdjustment(t *testing.T) {
 	adaptor := &mockAdaptor{adjustReturn: adaptorQuota}
 	taskResult := &relaycommon.TaskInfo{Status: model.TaskStatusSuccess}
 
-	settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
+	_ = settleTaskBillingOnComplete(ctx, adaptor, task, taskResult)
 
 	// Non-per-call: adaptor adjustment applies (refund 2000)
 	assert.EqualValues(t, initQuota+(preConsumed-adaptorQuota), getUserQuota(t, userID))
@@ -5932,8 +5948,18 @@ func TestRefundTaskQuotaReviewParkRemainsVisibleAndRetryable(t *testing.T) {
 	task.RefundPending = true
 	task.FailReason = "billing accounting failed after task submission"
 	require.NoError(t, model.DB.Create(task).Error)
+	callbackName := "test:fail_refund_review_channel_usage"
+	require.NoError(t, model.DB.Callback().Update().Before("gorm:update").Register(callbackName, func(tx *gorm.DB) {
+		if tx.Statement != nil && tx.Statement.Table == "channels" {
+			tx.AddError(errors.New("forced channel usage counter failure"))
+		}
+	}))
+	t.Cleanup(func() {
+		model.DB.Callback().Update().Remove(callbackName)
+	})
 
 	firstErr := RefundTaskQuota(ctx, task, task.FailReason)
+	model.DB.Callback().Update().Remove(callbackName)
 	require.Error(t, firstErr)
 	require.Contains(t, firstErr.Error(), "update task usage counters failed")
 

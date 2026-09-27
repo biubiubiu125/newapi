@@ -53,7 +53,7 @@ func nearlyEqual(a, b float64) bool {
 	return b-a < floatEpsilon
 }
 
-func valuesEqual(a, b interface{}) bool {
+func valuesEqual(a, b any) bool {
 	af, aok := a.(float64)
 	bf, bok := b.(float64)
 	if aok && bok {
@@ -353,7 +353,7 @@ func FetchUpstreamRatios(c *gin.Context) {
 			// 简单重试：最多 3 次，指数退避
 			var resp *http.Response
 			var lastErr error
-			for attempt := 0; attempt < 3; attempt++ {
+			for attempt := range 3 {
 				resp, lastErr = client.Do(httpReq)
 				if lastErr == nil {
 					break

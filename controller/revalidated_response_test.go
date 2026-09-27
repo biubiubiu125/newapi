@@ -15,11 +15,7 @@ func TestServeRevalidatedJSONReturnsNotModifiedForMatchingETag(t *testing.T) {
 	firstRecorder := httptest.NewRecorder()
 	firstContext, _ := gin.CreateTestContext(firstRecorder)
 	firstContext.Request = httptest.NewRequest(http.MethodGet, "/api/notice", nil)
-	serveRevalidatedJSON(firstContext, "public-content:notice:v1", "notice", gin.H{
-		"success": true,
-		"message": "",
-		"data":    "notice",
-	})
+	serveRevalidatedJSON(firstContext, "notice")
 
 	etag := firstRecorder.Header().Get("ETag")
 	require.NotEmpty(t, etag)
@@ -29,11 +25,7 @@ func TestServeRevalidatedJSONReturnsNotModifiedForMatchingETag(t *testing.T) {
 	secondContext, _ := gin.CreateTestContext(secondRecorder)
 	secondContext.Request = httptest.NewRequest(http.MethodGet, "/api/notice", nil)
 	secondContext.Request.Header.Set("If-None-Match", etag)
-	serveRevalidatedJSON(secondContext, "public-content:notice:v1", "notice", gin.H{
-		"success": true,
-		"message": "",
-		"data":    "notice",
-	})
+	serveRevalidatedJSON(secondContext, "notice")
 
 	require.Equal(t, http.StatusNotModified, secondRecorder.Code)
 	require.Empty(t, secondRecorder.Body.Bytes())

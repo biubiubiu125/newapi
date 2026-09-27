@@ -23,71 +23,33 @@ import * as React from 'react'
 import { useForm, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-
-import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
+import {handleServerError} from '@/lib/handle-server-error'
 import * as z from 'zod'
-
 import { RiskAcknowledgementDialog } from '@/components/risk-acknowledgement-dialog'
-import {
-  Alert,
-  AlertAction,
-  AlertDescription,
-  AlertTitle,
-} from '@/components/ui/alert'
+import { Alert, AlertAction, AlertDescription, AlertTitle } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Separator } from '@/components/ui/separator'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { currentIntlLocale } from '@/i18n/languages'
 import { cn } from '@/lib/utils'
-
 import { confirmPaymentCompliance } from '../api'
-import {
-  SettingsForm,
-  SettingsSwitchContent,
-  SettingsSwitchItem,
-} from '../components/settings-form-layout'
+import { SettingsForm, SettingsSwitchContent, SettingsSwitchItem } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { safeNumberFieldProps } from '../utils/numeric-field'
 import { AmountDiscountVisualEditor } from './amount-discount-visual-editor'
 import { AmountOptionsVisualEditor } from './amount-options-visual-editor'
-import {
-  BEpusdtSettingsSection,
-  type BEpusdtSettingsValues,
-} from './bepusdt-settings-section'
+import { BEpusdtSettingsSection, type BEpusdtSettingsValues } from './bepusdt-settings-section'
 import { CreemProductsVisualEditor } from './creem-products-visual-editor'
 import { PaymentMethodsVisualEditor } from './payment-methods-visual-editor'
-import {
-  formatJsonForEditor,
-  getJsonError,
-  normalizeJsonForComparison,
-  removeTrailingSlash,
-} from './utils'
+import { formatJsonForEditor, getJsonError, normalizeJsonForComparison, removeTrailingSlash } from './utils'
 import { saveWaffoPancakeConfig } from './waffo-pancake-api'
-import {
-  WaffoPancakeSettingsSection,
-  type WaffoPancakeBinding,
-  type WaffoPancakeSettingsValues,
-} from './waffo-pancake-settings-section'
-import {
-  type PayMethod,
-  WaffoSettingsSection,
-  type WaffoSettingsValues,
-} from './waffo-settings-section'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
+import { WaffoPancakeSettingsSection, type WaffoPancakeBinding, type WaffoPancakeSettingsValues } from './waffo-pancake-settings-section'
+import { type PayMethod, WaffoSettingsSection, type WaffoSettingsValues } from './waffo-settings-section'
 
 const paymentSchema = z.object({
   PayAddress: z.string().refine((value) => {
@@ -176,7 +138,9 @@ const paymentSchema = z.object({
 })
 
 type PaymentFormValues = z.infer<typeof paymentSchema>
+
 type WaffoFormFieldValues = Omit<WaffoSettingsValues, 'WaffoPayMethods'>
+
 type PaymentBaseFormValues = Omit<
   PaymentFormValues,
   keyof WaffoFormFieldValues | keyof WaffoPancakeSettingsValues
@@ -337,10 +301,12 @@ export function PaymentSettingsSection({
         setShowComplianceDialog(false)
         queryClient.invalidateQueries({ queryKey: ['system-options'] })
       } else {
-        toast.error(localizeConsoleErrorText(data.message, 'Failed to confirm compliance'))
+        handleServerError(data, t('Failed to confirm compliance'))
       }
     },
-    onError: toastUnhandledConsoleError,
+    onError: (error: Error) => {
+      handleServerError(error, t('Failed to confirm compliance'))
+    },
   })
 
   const form = useForm<PaymentFormValues>({
@@ -767,15 +733,17 @@ export function PaymentSettingsSection({
       }
 
       const reason = typeof body?.data === 'string' ? body.data : undefined
-      toast.error(
-        localizeConsoleErrorText(reason, 'Waffo Pancake save failed')
-      )
+      handleServerError(body, undefined, {
+        title: reason
+          ? `${t('Waffo Pancake save failed')}: ${reason}`
+          : t('Waffo Pancake save failed'),
+      })
     } catch (error) {
-      toast.error(
-        localizeConsoleErrorText(
-          error instanceof Error ? error.message : '',
-          'Waffo Pancake save failed'
-        )
+      handleServerError(
+        error,
+        `${t('Waffo Pancake save failed')}: ${
+          error instanceof Error ? error.message : String(error)
+        }`
       )
     }
   }

@@ -17,101 +17,28 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { Copy, Plus, Trash2 } from 'lucide-react'
-import {
-  memo,
-  useCallback,
-  useEffect,
-  useId,
-  useMemo,
-  useRef,
-  useState,
-} from 'react'
+import { memo, useCallback, useEffect, useId, useMemo, useRef, useState } from 'react'
 import { t } from 'i18next'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Field, FieldLabel } from '@/components/ui/field'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Textarea } from '@/components/ui/textarea'
-import {
-  formatPricingAmount,
-  USD_PRICING_CURRENCY,
-  type PricingCurrency,
-} from '@/features/model-pricing/currency'
+import { formatPricingAmount, USD_PRICING_CURRENCY, type PricingCurrency } from '@/features/model-pricing/currency'
 import { useBillingTime } from '@/features/pricing/hooks/use-billing-time'
-import {
-  BILLING_EXTRA_VARS,
-  MATCH_CONTAINS,
-  MATCH_EQ,
-  MATCH_EXISTS,
-  MATCH_GT,
-  MATCH_GTE,
-  MATCH_LT,
-  MATCH_LTE,
-  MATCH_RANGE,
-  SOURCE_HEADER,
-  SOURCE_PARAM,
-  SOURCE_TIME,
-  buildRequestRuleExpr,
-  combineBillingExpr,
-  createEmptyCondition,
-  createEmptyRuleGroup,
-  createEmptyTimeCondition,
-  getRequestRuleMatchOptions,
-  splitBillingExprAndRequestRules,
-  tryParseRequestRuleExpr,
-  type ParamHeaderCondition,
-  type RequestCondition,
-  type RequestRuleGroup,
-  type TimeCondition,
-  type TimeFunc,
-} from '@/features/pricing/lib/billing-expr'
+import { BILLING_EXTRA_VARS, MATCH_CONTAINS, MATCH_EQ, MATCH_EXISTS, MATCH_GT, MATCH_GTE, MATCH_LT, MATCH_LTE, MATCH_RANGE, SOURCE_HEADER, SOURCE_PARAM, SOURCE_TIME, buildRequestRuleExpr, combineBillingExpr, createEmptyCondition, createEmptyRuleGroup, createEmptyTimeCondition, getRequestRuleMatchOptions, splitBillingExprAndRequestRules, tryParseRequestRuleExpr, type ParamHeaderCondition, type RequestCondition, type RequestRuleGroup, type TimeCondition, type TimeFunc } from '@/features/pricing/lib/billing-expr'
 import { compileBillingExpression } from '@/features/pricing/lib/billing-expression/parser'
-import {
-  parseVisualBillingDocument,
-  serializeVisualBillingDocument,
-  type VisualBillingDocument,
-} from '@/features/pricing/lib/billing-expression/visual'
-import {
-  CACHE_MODE_TIMED,
-  type ExtraTokenValues,
-  type TierConditionInput,
-  type VisualConfig,
-  type VisualTier,
-  createDefaultVisualConfig,
-  evalExprLocally,
-  buildEstimatorTokens,
-  exprUsesExtraVars,
-  generateExprFromVisualConfig,
-  getTierCacheMode,
-  normalizeVisualConfig,
-  normalizeVisualTier,
-  tryParseVisualConfig,
-} from '@/features/pricing/lib/tier-expr'
+import { parseVisualBillingDocument, serializeVisualBillingDocument, type VisualBillingDocument } from '@/features/pricing/lib/billing-expression/visual'
+import { CACHE_MODE_TIMED, type ExtraTokenValues, type TierConditionInput, type VisualConfig, type VisualTier, createDefaultVisualConfig, evalExprLocally, buildEstimatorTokens, exprUsesExtraVars, generateExprFromVisualConfig, getTierCacheMode, normalizeVisualConfig, normalizeVisualTier, tryParseVisualConfig } from '@/features/pricing/lib/tier-expr'
 import { currentIntlLocale } from '@/i18n/languages'
 import { cn } from '@/lib/utils'
-
-import {
-  BillingTimeProbeFields,
-  BillingTimeRangeFields,
-} from './billing-time-fields'
+import { BillingTimeProbeFields, BillingTimeRangeFields } from './billing-time-fields'
 import { DraftNumberInput } from './draft-number-input'
 import { RequestSimulation } from './request-simulation'
 import { TierPriceFields } from './tier-price-fields'
@@ -339,10 +266,6 @@ function formatTokenHint(n: number | string | null | undefined): string {
   return t('= {{count}} tokens', { count: v.toLocaleString(locale) })
 }
 
-// ---------------------------------------------------------------------------
-// Tier condition row
-// ---------------------------------------------------------------------------
-
 type ConditionRowProps = {
   condition: TierConditionInput
   onChange: (next: TierConditionInput) => void
@@ -426,10 +349,6 @@ function ConditionRow({ condition, onChange, onRemove }: ConditionRowProps) {
     </div>
   )
 }
-
-// ---------------------------------------------------------------------------
-// Single tier card (visual editor)
-// ---------------------------------------------------------------------------
 
 type VisualTierCardProps = {
   currency: PricingCurrency
@@ -571,10 +490,6 @@ function VisualTierCard({
   )
 }
 
-// ---------------------------------------------------------------------------
-// Visual editor (list of tiers)
-// ---------------------------------------------------------------------------
-
 type VisualEditorProps = {
   currency: PricingCurrency
   visualConfig: VisualConfig | null
@@ -680,10 +595,6 @@ function VisualEditor({ visualConfig, onChange, currency }: VisualEditorProps) {
   )
 }
 
-// ---------------------------------------------------------------------------
-// Raw expression editor
-// ---------------------------------------------------------------------------
-
 type RawExprEditorProps = {
   exprString: string
   onChange: (value: string) => void
@@ -698,8 +609,8 @@ function RawExprEditor({ exprString, onChange }: RawExprEditorProps) {
           <div>
             {t('Variables')}: <code>len</code>, <code>p</code>, <code>c</code>,{' '}
             <code>cr</code>, <code>cc</code>, <code>cc1h</code>,{' '}
-            <code>img</code>, <code>img_o</code>, <code>ai</code>,{' '}
-            <code>ao</code>
+            <code>img</code>, <code>img_cr</code>, <code>img_o</code>,{' '}
+            <code>ai</code>, <code>ao</code>
           </div>
           <div>
             {t('Functions')}: <code>tier(name, value)</code>,{' '}
@@ -727,10 +638,6 @@ function RawExprEditor({ exprString, onChange }: RawExprEditorProps) {
     </div>
   )
 }
-
-// ---------------------------------------------------------------------------
-// Request rule condition row
-// ---------------------------------------------------------------------------
 
 type RuleConditionRowProps = {
   condition: RequestCondition
@@ -925,10 +832,6 @@ function RuleConditionRow({
   )
 }
 
-// ---------------------------------------------------------------------------
-// Request rule group card
-// ---------------------------------------------------------------------------
-
 type RuleGroupCardProps = {
   group: RequestRuleGroup
   index: number
@@ -1036,10 +939,6 @@ function RuleGroupCard({
   )
 }
 
-// ---------------------------------------------------------------------------
-// Preset section
-// ---------------------------------------------------------------------------
-
 type PresetSectionProps = {
   applyPreset: (preset: Preset) => void
 }
@@ -1092,10 +991,6 @@ function PresetSection({ applyPreset }: PresetSectionProps) {
   )
 }
 
-// ---------------------------------------------------------------------------
-// Cost estimator
-// ---------------------------------------------------------------------------
-
 type EstimatorProps = {
   currency: PricingCurrency
   effectiveExpr: string
@@ -1116,6 +1011,7 @@ function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
     cacheCreateTokens: 0,
     cacheCreate1hTokens: 0,
     imageTokens: 0,
+    imageCacheTokens: 0,
     imageOutputTokens: 0,
     audioInputTokens: 0,
     audioOutputTokens: 0,
@@ -1140,6 +1036,18 @@ function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
       }),
     [effectiveExpr, promptTokens, completionTokens, extras, tokens, billingTime]
   )
+
+  if (result.error === 'task usage') {
+    return (
+      <Alert>
+        <AlertDescription>
+          {t(
+            "Task usage data is required to estimate this expression. Check the model's task plugin configuration."
+          )}
+        </AlertDescription>
+      </Alert>
+    )
+  }
 
   return (
     <div className='bg-muted/30 space-y-3 rounded-md border p-3'>
@@ -1254,10 +1162,6 @@ function CostEstimator({ effectiveExpr, fullExpr, currency }: EstimatorProps) {
   )
 }
 
-// ---------------------------------------------------------------------------
-// LLM prompt helper
-// ---------------------------------------------------------------------------
-
 const LLM_PROMPT_TEMPLATE = `You are an AI API billing expression design assistant. The user needs help designing a billing expression for an AI API gateway.
 
 ## Expression Language
@@ -1278,6 +1182,7 @@ Input side:
 Output side:
 - c — output token count. Also auto-excludes sub-categories priced separately
 - img_o — image output token count
+- img_cr — image cache input tokens; deducted from img and cr only when the upstream reports a valid image cache breakdown
 - ao — audio output token count
 
 ### p/c Auto-exclusion
@@ -1403,10 +1308,6 @@ function LlmPromptHelper({ modelName }: LlmPromptHelperProps) {
   )
 }
 
-// ---------------------------------------------------------------------------
-// Main editor
-// ---------------------------------------------------------------------------
-
 export type TieredPricingEditorProps = {
   currency?: PricingCurrency
   modelName?: string
@@ -1418,8 +1319,6 @@ export type TieredPricingEditorProps = {
 
 type EditorMode = 'visual' | 'raw'
 
-// The legacy form omits zero-valued extra variables when generating prices.
-// Keep that API unchanged for synchronization callers; route explicit zero to the document form.
 function parseTierEditorConfig(source: string): VisualConfig | null {
   const config = tryParseVisualConfig(source)
   if (!config) return null
@@ -1448,24 +1347,19 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
   onRequestRuleExprChange,
 }: TieredPricingEditorProps) {
   const { t } = useTranslation()
+
+  const [visualDocument, setVisualDocument] =
+    useState<VisualBillingDocument | null>(() =>
+      parseTierEditorDocument(currentExpr)
+    )
   const [editorMode, setEditorMode] = useState<EditorMode>(() =>
-    currentExpr &&
-    !parseTierEditorConfig(currentExpr) &&
-    !parseVisualBillingDocument(currentExpr)
-      ? 'raw'
-      : 'visual'
+    visualDocument ? 'visual' : 'raw'
   )
   const [visualConfig, setVisualConfig] = useState<VisualConfig | null>(
     () =>
       parseTierEditorConfig(currentExpr) ??
       (!currentExpr ? createDefaultVisualConfig() : null)
   )
-  const [visualDocument, setVisualDocument] =
-    useState<VisualBillingDocument | null>(() =>
-      parseTierEditorConfig(currentExpr)
-        ? null
-        : parseVisualBillingDocument(currentExpr)
-    )
   const [baseExpr, setBaseExpr] = useState(currentExpr)
   const [ruleExpr, setRuleExpr] = useState(currentRequestRuleExpr)
   const [rawExpr, setRawExpr] = useState(() =>
@@ -1476,15 +1370,12 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
   >(() => tryParseRequestRuleExpr(currentRequestRuleExpr) || [])
   const loadedModel = useRef(modelName)
   useEffect(() => {
+
     if (loadedModel.current === modelName) return
     loadedModel.current = modelName
-    const config = parseTierEditorConfig(currentExpr)
-    const document = config ? null : parseVisualBillingDocument(currentExpr)
-    setVisualConfig(
-      config ?? (!currentExpr ? createDefaultVisualConfig() : null)
-    )
+    const document = parseTierEditorDocument(currentExpr)
     setVisualDocument(document)
-    setEditorMode(config || document || !currentExpr ? 'visual' : 'raw')
+    setEditorMode(document ? 'visual' : 'raw')
     setBaseExpr(currentExpr)
     setRuleExpr(currentRequestRuleExpr)
     setRawExpr(combineBillingExpr(currentExpr, currentRequestRuleExpr))
@@ -1555,8 +1446,9 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
       if (next === editorMode) return
       if (invalidDraft) return
       if (next === 'visual') {
+
         const parsed = parseTierEditorConfig(baseExpr)
-        const document = parsed ? null : parseVisualBillingDocument(baseExpr)
+        const document = parseTierEditorDocument(baseExpr)
         if (!parsed && !document) {
           toast.error(
             t(
@@ -1578,16 +1470,15 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
 
   const applyPreset = useCallback(
     (preset: Preset) => {
+
       const groups = preset.requestRules || []
       const rules = buildRequestRuleExpr(groups)
-      const config = parseTierEditorConfig(preset.expr)
-      const document = config ? null : parseVisualBillingDocument(preset.expr)
+      const document = parseTierEditorDocument(preset.expr)
       setRawExpr(combineBillingExpr(preset.expr, rules))
       setBaseExpr(preset.expr)
       setRuleExpr(rules)
-      setVisualConfig(config)
       setVisualDocument(document)
-      setEditorMode(config || document ? 'visual' : 'raw')
+      setEditorMode(document ? 'visual' : 'raw')
       setRequestRuleGroups(groups)
       onBillingExprChange(preset.expr)
       onRequestRuleExprChange(rules)
@@ -1749,3 +1640,9 @@ export const TieredPricingEditor = memo(function TieredPricingEditor({
     </div>
   )
 })
+
+function parseTierEditorDocument(source: string): VisualBillingDocument | null {
+  return parseVisualBillingDocument(
+    source || generateExprFromVisualConfig(createDefaultVisualConfig())
+  )
+}

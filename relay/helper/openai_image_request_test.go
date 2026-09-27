@@ -12,6 +12,8 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/pkg/billingexpr"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/gin-gonic/gin"
@@ -24,7 +26,6 @@ func validOpenAIImageRequestTestPNG(t *testing.T) []byte {
 	require.NoError(t, err)
 	return data
 }
-
 // TestGetAndValidOpenAIImageRequestMultipartStream verifies multipart image
 // edit parsing: the stream field is parsed and validated, and the request body
 // stays replayable for the upstream request.
@@ -69,6 +70,11 @@ func TestGetAndValidOpenAIImageRequestMultipartStream(t *testing.T) {
 		require.NoError(t, err)
 		require.Equal(t, "true", url.Values(form.Value).Get("stream"))
 		require.Len(t, form.File["image"], 1)
+		billing, err := ResolveImageBillingRequestInput(c, &relaycommon.RelayInfo{Request: req}, billingexpr.RequestInput{})
+		require.NoError(t, err)
+		require.Equal(t, 1, *billing.ImageCount)
+		require.NotContains(t, string(billing.Body), "fake image")
+		require.NotContains(t, string(billing.Body), "edit this image")
 	})
 
 	t.Run("invalid stream value is rejected", func(t *testing.T) {
@@ -102,7 +108,6 @@ func TestGetAndValidOpenAIImageRequestPublicMultipartPreservesImageURL(t *testin
 	require.NoError(t, err)
 	require.JSONEq(t, `"https://example.test/input.png"`, string(req.ImageUrl))
 }
-
 // TestGetAndValidOpenAIImageRequestNBounds guards the billing invariant that
 // the image generation count can never reach quota calculation with a value
 // large enough to overflow int64 into a negative charge.

@@ -19,14 +19,8 @@ For commercial licensing, please contact support@quantumnous.com
 import type { ColumnDef } from '@tanstack/react-table'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-
 import { DataTableColumnHeader } from '@/components/data-table'
-
-import {
-  SyncPriceCell,
-  SyncSourceHeader,
-  SyncSourcePriceCell,
-} from './upstream-price-cells'
+import { SyncPriceCell, SyncSourceHeader, SyncSourcePriceCell } from './upstream-price-cells'
 import { getUpstreamDisplayName } from './upstream-ratio-sync-helpers'
 import type { PricingSyncRow } from './upstream-ratio-sync-table'
 
@@ -58,11 +52,15 @@ export function useUpstreamRatioSyncColumns(
       },
       {
         id: 'current',
+
         header: t('Current Price'),
-        size: 240,
-        minSize: 220,
+        size: upstreamNames.length === 1 ? 420 : 320,
+        minSize: 280,
+        // Offset source cells' checkbox (pl-7) and ui/table's checkbox pr-0 (-mr-3).
         cell: ({ row }) => (
-          <SyncPriceCell values={row.original.prices.current} />
+          <div className='-mr-3 pl-7'>
+            <SyncPriceCell values={row.original.prices.current} />
+          </div>
         ),
       },
       ...upstreamNames.map(

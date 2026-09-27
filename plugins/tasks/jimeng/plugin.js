@@ -7,11 +7,12 @@ export const meta = {
     en: "Volcengine Jimeng video generation (text-to-video, image-to-video, and first-and-last-frame)",
     zh: "火山引擎即梦视频生成（文生视频、图生视频、首尾帧）",
   },
-  version: "1.0.1",
+  version: "1.1.0",
   author: { name: "QuantumNous" },
   channelTypes: [51],
   models: ["jimeng_vgfm_t2v_l20"],
   fetchMode: "per_task",
+  upstreams: ["vendor", "new_api"],
   usageSchema: {
     seconds: {
       type: "number",
@@ -23,6 +24,12 @@ export const meta = {
     },
     product: {
       enum: ["s2_pro", "v30_720p", "v30_1080p", "v30_pro"],
+      enumLabels: {
+        s2_pro: { en: "S2.0 Pro", zh: "S2.0 Pro" },
+        v30_720p: { en: "3.0 720p", zh: "3.0 720p" },
+        v30_1080p: { en: "3.0 1080p", zh: "3.0 1080p" },
+        v30_pro: { en: "3.0 Pro", zh: "3.0 Pro" },
+      },
       description: { en: "Product tier derived from the final outbound req_key.", zh: "由最终出站 req_key 推导出的产品档位。" },
     },
   },
@@ -79,6 +86,12 @@ function responsesVideoText(ctx) {
   if (!url) throw new Error("video artifact is unavailable");
   const escaped = url.replace(/&/g, "&amp;").replace(/"/g, "&quot;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return '<video controls src="' + escaped + '"></video>';
+}
+
+// The host signal is authoritative on New API channels; the sk- key prefix
+// stays as the heuristic for legacy type-51 channels pointed at a gateway.
+function viaGateway(ctx) {
+  return !!(ctx.upstream && ctx.upstream.kind === "new_api") || isRelay(ctx.apiKey);
 }
 
 function isRelay(apiKey) {
@@ -148,13 +161,13 @@ function decodeNativeRequest(ctx) {
   };
 }
 
-function endpoint(baseUrl, apiKey, action) {
-  return baseUrl + (isRelay(apiKey) ? "/jimeng/" : "/") + "?Action=" + action + "&Version=2022-08-31";
+function endpoint(ctx, action) {
+  return ctx.baseUrl + (viaGateway(ctx) ? "/jimeng/" : "/") + "?Action=" + action + "&Version=2022-08-31";
 }
 
 function requestHeaders(ctx, method, url, bodyText) {
   const headers = { "Content-Type": "application/json", Accept: "application/json" };
-  if (isRelay(ctx.apiKey)) {
+  if (viaGateway(ctx)) {
     headers.Authorization = "Bearer " + ctx.apiKey;
     return headers;
   }
@@ -332,7 +345,7 @@ export function buildSubmitRequest(ctx) {
   ordered.seed = body.seed;
   if (body.aspect_ratio) ordered.aspect_ratio = body.aspect_ratio;
   if (body.frames) ordered.frames = body.frames;
-  const url = endpoint(ctx.baseUrl, ctx.apiKey, "CVSync2AsyncSubmitTask");
+  const url = endpoint(ctx, "CVSync2AsyncSubmitTask");
   const bodyText = JSON.stringify(ordered);
   return {
     url: url,
@@ -358,7 +371,7 @@ export function extractUsage(ctx) {
 
 export function buildQueryRequest(ctx) {
   const body = JSON.stringify({ req_key: queryReqKey(ctx), task_id: ctx.taskId });
-  const url = endpoint(ctx.baseUrl, ctx.apiKey, "CVSync2AsyncGetResult");
+  const url = endpoint(ctx, "CVSync2AsyncGetResult");
   return { url: url, method: "POST", headers: requestHeaders(ctx, "POST", url, body), body: body };
 }
 

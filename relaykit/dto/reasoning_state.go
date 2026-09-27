@@ -8,3 +8,8 @@ type ReasoningConversionState struct {
 	BudgetTokens    *int
 	IncludeThoughts *bool
 }
+// in-process conversion steps. It is not part of any provider wire protocol;
+// request fields that reference it must use json:"-".
+//
+// Converters that rebuild an OpenAI request must copy this state so exact
+// budgets and explicit include-thoughts choices survive multi-step routes.

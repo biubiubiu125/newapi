@@ -35,6 +35,7 @@ function getInitialStatus(): SystemStatus | undefined {
 export function useStatus() {
   const { data, isLoading, error } = useQuery({
     ...statusQueryOptions,
+    // Use localStorage data as initial data
     placeholderData: getInitialStatus(),
   })
 

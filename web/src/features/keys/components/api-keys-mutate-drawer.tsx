@@ -23,73 +23,30 @@ import { useEffect, useMemo, useState } from 'react'
 import { useForm, type SubmitErrorHandler } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-
 import { DateTimePicker } from '@/components/datetime-picker'
-import {
-  SideDrawerSection,
-  SideDrawerSectionHeader,
-  sideDrawerContentClassName,
-  sideDrawerFooterClassName,
-  sideDrawerFormClassName,
-  sideDrawerHeaderClassName,
-  sideDrawerSwitchItemClassName,
-} from '@/components/drawer-layout'
+import { SideDrawerSection, SideDrawerSectionHeader, sideDrawerContentClassName, sideDrawerFooterClassName, sideDrawerFormClassName, sideDrawerHeaderClassName, sideDrawerSwitchItemClassName } from '@/components/drawer-layout'
 import { MultiSelect } from '@/components/multi-select'
 import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
+import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { useStatus } from '@/hooks/use-status'
 import { getUserModels, getUserGroups } from '@/lib/api'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { cn } from '@/lib/utils'
-
-import {
-  createApiKey,
-  updateApiKey,
-  getApiKey,
-  getTokenAutoGroups,
-} from '../api'
+import { createApiKey, updateApiKey, getApiKey, getTokenAutoGroups } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
-import {
-  getApiKeyFormSchema,
-  type ApiKeyFormValues,
-  getApiKeyFormDefaultValues,
-  transformFormDataToPayload,
-  transformApiKeyToFormDefaults,
-} from '../lib'
+import { getApiKeyFormSchema, type ApiKeyFormValues, getApiKeyFormDefaultValues, transformFormDataToPayload, transformApiKeyToFormDefaults } from '../lib'
 import type { ApiKey } from '../types'
-import {
-  ApiKeyGroupCombobox,
-  type ApiKeyGroupOption,
-} from './api-key-group-combobox'
+import { ApiKeyGroupCombobox, type ApiKeyGroupOption } from './api-key-group-combobox'
 import { useApiKeys } from './api-keys-provider'
 import { AutoGroupOrderEditor } from './auto-group-order-editor'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
+import {requireServerSuccess} from '@/lib/server-error-message'
+import { RelatedPolicyLink } from '@/features/system-settings/request-policies/related-policy-link'
+import { handleServerError } from '@/lib/handle-server-error'
 
 type ApiKeyMutateDrawerProps = {
   open: boolean
@@ -116,7 +73,7 @@ export function ApiKeysMutateDrawer({
   // Fetch models
   const { data: modelsData } = useQuery({
     queryKey: ['user-models'],
-    queryFn: getUserModels,
+    queryFn: async () => requireServerSuccess(await getUserModels()),
     enabled: open,
     staleTime: 0,
   })
@@ -128,7 +85,7 @@ export function ApiKeysMutateDrawer({
     isFetching: groupsFetching,
   } = useQuery({
     queryKey: ['user-groups'],
-    queryFn: getUserGroups,
+    queryFn: async () => requireServerSuccess(await getUserGroups()),
     enabled: open,
     staleTime: 0,
   })
@@ -138,8 +95,10 @@ export function ApiKeysMutateDrawer({
     isFetched: apiKeyFetched,
     isFetching: apiKeyFetching,
   } = useQuery({
+
     queryKey: ['api-key', currentRow?.id],
-    queryFn: () => getApiKey(currentRow?.id ?? 0),
+    queryFn: async () =>
+      requireServerSuccess(await getApiKey(currentRow?.id ?? 0)),
     enabled: open && isUpdate && currentRow?.id !== undefined,
     staleTime: 0,
   })
@@ -150,7 +109,7 @@ export function ApiKeysMutateDrawer({
     isFetching: autoGroupsFetching,
   } = useQuery({
     queryKey: ['token-auto-groups'],
-    queryFn: getTokenAutoGroups,
+    queryFn: async () => requireServerSuccess(await getTokenAutoGroups()),
     enabled: open,
     staleTime: 0,
   })
@@ -297,7 +256,7 @@ export function ApiKeysMutateDrawer({
           onOpenChange(false)
           triggerRefresh()
         } else {
-          toast.error(localizeConsoleErrorText(result.message, ERROR_MESSAGES.UPDATE_FAILED))
+          handleServerError(result, t(ERROR_MESSAGES.UPDATE_FAILED))
         }
       } else {
         // Create mode - handle batch creation
@@ -315,7 +274,7 @@ export function ApiKeysMutateDrawer({
           if (result.success) {
             successCount++
           } else {
-            toast.error(localizeConsoleErrorText(result.message, ERROR_MESSAGES.CREATE_FAILED))
+            handleServerError(result, t(ERROR_MESSAGES.CREATE_FAILED))
             break
           }
         }
@@ -330,8 +289,8 @@ export function ApiKeysMutateDrawer({
           triggerRefresh()
         }
       }
-    } catch {
-      toast.error(t(ERROR_MESSAGES.UNEXPECTED))
+    } catch (error) {
+      handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
     } finally {
       setIsSubmitting(false)
     }
@@ -496,6 +455,7 @@ export function ApiKeysMutateDrawer({
                           {t(
                             'When enabled, if channels in the current group fail, it will try channels in the next group in order.'
                           )}
+                          <RelatedPolicyLink section='routing' />
                         </FormDescription>
                       </div>
                       <FormControl>

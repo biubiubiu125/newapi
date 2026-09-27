@@ -19,16 +19,10 @@ For commercial licensing, please contact support@quantumnous.com
 import i18next from 'i18next'
 import { useState, useCallback } from 'react'
 import { toast } from 'sonner'
-
 import { getSelf } from '@/lib/api'
-import { currentConsoleFailureText } from '@/lib/console-failure-text'
 import { formatQuota } from '@/lib/format'
-
 import { redeemTopupCode } from '../api'
-
-// ============================================================================
-// Redemption Hook
-// ============================================================================
+import { handleServerError } from '@/lib/handle-server-error'
 
 export function useRedemption() {
   const [redeeming, setRedeeming] = useState(false)
@@ -54,12 +48,10 @@ export function useRedemption() {
         return true
       }
 
-      toast.error(
-        currentConsoleFailureText(response.message, 'Redemption failed')
-      )
+      handleServerError(response, i18next.t('Redemption failed'))
       return false
-    } catch {
-      toast.error(i18next.t('Redemption failed'))
+    } catch (_error) {
+      handleServerError(_error, i18next.t('Redemption failed'))
       return false
     } finally {
       setRedeeming(false)

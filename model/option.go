@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"maps"
 	"strconv"
 	"strings"
 	"time"
@@ -224,16 +225,24 @@ func InitOptionMap() {
 
 	// 自动添加所有注册的模型配置
 	modelConfigs := config.GlobalConfig.ExportAllConfigs()
-	for k, v := range modelConfigs {
-		common.OptionMap[k] = v
-	}
+	maps.Copy(common.OptionMap, modelConfigs)
 
 	common.OptionMapRWMutex.Unlock()
 	loadOptionsFromDatabase()
 }
 
 func loadOptionsFromDatabase() {
+	requestPolicyOptionMutex.Lock()
+	defer requestPolicyOptionMutex.Unlock()
+	defer func() {
+		if err := refreshRequestPolicySnapshot(); err != nil {
+			common.SysError("invalid request policy: " + err.Error())
+		}
+	}()
+	passkeyOptionMutex.Lock()
+	defer passkeyOptionMutex.Unlock()
 	options, _ := AllOption()
+	passkeyOptions := make(map[string]string)
 	for _, option := range options {
 		if option == nil {
 			continue
@@ -259,6 +268,7 @@ func loadOptionsFromDatabase() {
 			common.SysLog("failed to update option map: " + err.Error())
 		}
 	}
+	applyPasskeyDomainOptions(passkeyOptions)
 }
 
 func SyncOptions(frequency int) {
@@ -270,6 +280,9 @@ func SyncOptions(frequency int) {
 }
 
 func validateOptionValue(key string, value string) error {
+	if err := operation_setting.ValidateQuotaOption(key, value); err != nil {
+		return err
+	}
 	if key == operation_setting.ToolPriceOptionKey {
 		return operation_setting.ValidateToolPricesJSON(value)
 	}
@@ -294,6 +307,10 @@ func validateOptionValue(key string, value string) error {
 func UpdateOption(key string, value string) error {
 	if IsDeprecatedOptionKey(key) {
 		return errors.New("deprecated option key")
+	}
+	if IsPasskeyDomainOption(key) {
+		_, err := UpdatePasskeyDomainOptions(map[string]string{key: value}, false, "")
+		return err
 	}
 	if IsModelPricingOption(key) {
 		return UpdateModelPricingOptions(map[string]string{key: value})
@@ -349,8 +366,17 @@ func UpdateOption(key string, value string) error {
 	if err := DB.Save(&option).Error; err != nil {
 		return err
 	}
-	// Update OptionMap
-	return updateOptionMap(key, value)
+	if err := updateOptionMap(key, value); err != nil {
+		return err
+	}
+	// The policy snapshot is otherwise rebuilt only by the batch writer and
+	// database reload, so a single-key write left readers on the startup default.
+	if IsRequestPolicyOption(key) {
+		requestPolicyOptionMutex.Lock()
+		defer requestPolicyOptionMutex.Unlock()
+		return refreshRequestPolicySnapshot()
+	}
+	return nil
 }
 
 // UpdateOptionsBulk persists multiple key/value pairs in a single database
@@ -361,6 +387,12 @@ func UpdateOption(key string, value string) error {
 func UpdateOptionsBulk(values map[string]string) error {
 	if len(values) == 0 {
 		return nil
+	}
+	for key := range values {
+		if IsPasskeyDomainOption(key) {
+			_, err := UpdatePasskeyDomainOptions(values, false, "")
+			return err
+		}
 	}
 	normalizedValues := make(map[string]string, len(values))
 	for k, v := range values {
@@ -390,6 +422,26 @@ func UpdateOptionsBulk(values map[string]string) error {
 			return err
 		}
 	}
+	var policySnapshot *RequestPolicySnapshot
+	for key := range values {
+		if IsRequestPolicyOption(key) {
+			requestPolicyOptionMutex.Lock()
+			defer requestPolicyOptionMutex.Unlock()
+			options := maps.Clone(CurrentRequestPolicy().Options)
+			for key, value := range values {
+				if IsRequestPolicyOption(key) {
+					options[key] = value
+				}
+			}
+			var err error
+			policySnapshot, err = BuildRequestPolicy(options)
+			if err != nil {
+				return err
+			}
+			break
+		}
+	}
+
 	err := DB.Transaction(func(tx *gorm.DB) error {
 		for k, v := range values {
 			option := Option{Key: k}
@@ -416,6 +468,9 @@ func UpdateOptionsBulk(values map[string]string) error {
 		if err := updateOptionMap(k, v); err != nil {
 			return err
 		}
+	}
+	if policySnapshot != nil {
+		requestPolicySnapshot.Store(policySnapshot)
 	}
 	return nil
 }
@@ -572,6 +627,9 @@ func updateOptionMap(key string, value string) (err error) {
 		case "ReferralRequireApproval":
 			common.ReferralRequireApproval = boolValue
 		}
+	}
+	if key == setting.TaskPluginDisabledFactoryKeysKey {
+		pluginruntime.DefaultRegistry.SetDisabledFactoryKeys(setting.ParseTaskPluginDisabledFactoryKeys(value))
 	}
 	switch key {
 	case "EmailDomainWhitelist":

@@ -27,7 +27,6 @@ var ImageTaskWorkerEnabled bool
 var ImageTaskWorkerIdleSeconds int
 var ImageTaskWorkerConcurrency int
 var ImageTaskChannelConcurrency int
-var ImageTaskBatchPollSize int
 var ImageTaskLeaseSeconds int
 var ImageTaskResultRetentionMinutes int
 var ImageTaskRequestBodyBase64MaxMB int

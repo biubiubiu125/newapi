@@ -51,8 +51,6 @@ func (p *DiscordProvider) ExchangeToken(ctx context.Context, code string, c *gin
 		return nil, NewOAuthError(i18n.MsgOAuthInvalidCode, nil)
 	}
 
-	logger.LogDebug(ctx, "[OAuth-Discord] ExchangeToken: code=%s...", code[:min(len(code), 10)])
-
 	settings := system_setting.GetDiscordSettings()
 	redirectUri, err := oauthCallbackURIOrError(c, "/oauth/discord")
 	if err != nil {

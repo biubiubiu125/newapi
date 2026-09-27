@@ -82,7 +82,7 @@ type GeneralOpenAIRequest struct {
 	ExtraBody json.RawMessage `json:"extra_body,omitempty"`
 	//xai
 	SearchParameters json.RawMessage `json:"search_parameters,omitempty"`
-	// claude
+	// OpenAI Chat web search.
 	WebSearchOptions *WebSearchOptions `json:"web_search_options,omitempty"`
 	// OpenRouter Params
 	Usage     json.RawMessage `json:"usage,omitempty"`
@@ -112,6 +112,26 @@ type GeneralOpenAIRequest struct {
 
 	// Internal conversion state; never serialized to an upstream protocol.
 	ReasoningConversion *ReasoningConversionState `json:"-"`
+	// vLLM
+	IncludeReasoning    json.RawMessage `json:"include_reasoning,omitempty"`
+	MinP                json.RawMessage `json:"min_p,omitempty"`
+	RepetitionPenalty   json.RawMessage `json:"repetition_penalty,omitempty"`
+	StructuredOutputs   json.RawMessage `json:"structured_outputs,omitempty"`
+	ReturnTokenIds      json.RawMessage `json:"return_token_ids,omitempty"`
+	// SGLang OpenAI-compatible sampling and reasoning controls (v0.5.19).
+	// Native /generate sampling_params and server routing controls are not chat fields.
+	MinTokens            *uint           `json:"min_tokens,omitempty"`
+	SeparateReasoning    json.RawMessage `json:"separate_reasoning,omitempty"`
+	StreamReasoning      json.RawMessage `json:"stream_reasoning,omitempty"`
+	Regex                json.RawMessage `json:"regex,omitempty"`
+	EBNF                 json.RawMessage `json:"ebnf,omitempty"`
+	StopTokenIDs         json.RawMessage `json:"stop_token_ids,omitempty"`
+	StopRegex            json.RawMessage `json:"stop_regex,omitempty"`
+	NoStopTrim           json.RawMessage `json:"no_stop_trim,omitempty"`
+	IgnoreEOS            json.RawMessage `json:"ignore_eos,omitempty"`
+	SkipSpecialTokens    json.RawMessage `json:"skip_special_tokens,omitempty"`
+	ContinueFinalMessage json.RawMessage `json:"continue_final_message,omitempty"`
+	CacheSalt            json.RawMessage `json:"cache_salt,omitempty"`
 }
 
 func (r GeneralOpenAIRequest) MarshalJSON() ([]byte, error) {
@@ -248,6 +268,9 @@ func (r *GeneralOpenAIRequest) GetTokenCountMeta() *types.TokenCountMeta {
 			texts = append(texts, fmt.Sprintf("%v", tool.Function.Parameters))
 		}
 	}
+	//toolTokens := CountTokenInput(countStr, request.Model)
+	//tkm += 8
+	//tkm += toolTokens
 	tokenCountMeta.CombineText = strings.Join(texts, "\n")
 	tokenCountMeta.Files = fileMeta
 	return &tokenCountMeta
@@ -313,6 +336,12 @@ func GetOpenAIChatCapabilities(modelName, reasoningEffort string) OpenAIChatCapa
 	capabilities.UseMaxCompletionTokens = true
 	capabilities.UseDeveloperRole = true
 
+	// These standard GPT-5 models default to none and support sampling only
+	// without reasoning. Named variants (pro, codex, chat-latest, etc.) do not
+	// inherit this exception. GPT-6 Astra never supports these parameters.
+	// https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.2
+	// https://developers.openai.com/api/docs/guides/latest-model?model=gpt-5.4
+	// https://developers.openai.com/api/docs/guides/latest-model?model=gpt-6-astra
 	supportsSampling := false
 	if isGPT5Model && (reasoningEffort == "" || reasoningEffort == "none") {
 		for _, model := range []string{"gpt-5.1", "gpt-5.2", "gpt-5.4"} {
@@ -360,7 +389,7 @@ const CustomType = "custom"
 type ToolCallRequest struct {
 	ID       string          `json:"id,omitempty"`
 	Type     string          `json:"type"`
-	Function FunctionRequest `json:"function,omitempty"`
+	Function FunctionRequest `json:"function"`
 	Custom   json.RawMessage `json:"custom,omitempty"`
 }
 
@@ -377,6 +406,9 @@ type StreamOptions struct {
 	// IncludeObfuscation is only for /v1/responses stream payload.
 	// This field is filtered by default and can be enabled via channel setting allow_include_obfuscation.
 	IncludeObfuscation bool `json:"include_obfuscation,omitempty"`
+	// ContinuousUsageStats is a vLLM stream_options extension that emits
+	// usage on intermediate chunks. Optional so an explicit false is kept.
+	// ContinuousUsageStats *bool `json:"continuous_usage_stats,omitempty"`
 }
 
 func (r *GeneralOpenAIRequest) GetMaxTokens() uint {
@@ -420,6 +452,8 @@ type Message struct {
 	Tools json.RawMessage `json:"tools,omitempty"`
 	Annotations      json.RawMessage `json:"annotations,omitempty"`
 	parsedContent    []MediaContent
+	// Annotations is an official Chat response field. Keeping it on the shared
+	// message type also preserves annotations when clients replay assistant output.
 	//parsedStringContent *string
 }
 
@@ -609,7 +643,7 @@ func (m *Message) StringContent() string {
 	case string:
 		return m.Content.(string)
 	case []any:
-		var contentStr string
+		var contentStr strings.Builder
 		for _, contentItem := range m.Content.([]any) {
 			contentMap, ok := contentItem.(map[string]any)
 			if !ok {
@@ -617,11 +651,11 @@ func (m *Message) StringContent() string {
 			}
 			if contentMap["type"] == ContentTypeText {
 				if subStr, ok := contentMap["text"].(string); ok {
-					contentStr += subStr
+					contentStr.WriteString(subStr)
 				}
 			}
 		}
-		return contentStr
+		return contentStr.String()
 	}
 
 	return ""
@@ -670,6 +704,11 @@ func (m *Message) ParseContent() []MediaContent {
 		return contentList
 	}
 
+	if content, ok := m.Content.([]MediaContent); ok {
+		m.parsedContent = content
+		return content
+	}
+
 	// 尝试解析为数组
 	//var arrayContent []map[string]interface{}
 
@@ -713,7 +752,7 @@ func (m *Message) ParseContent() []MediaContent {
 			switch v := imageUrl.(type) {
 			case string:
 				temp.Url = v
-			case map[string]interface{}:
+			case map[string]any:
 				url, ok1 := v["url"].(string)
 				detail, ok2 := v["detail"].(string)
 				if ok2 {
@@ -729,7 +768,7 @@ func (m *Message) ParseContent() []MediaContent {
 			})
 
 		case ContentTypeInputAudio:
-			if audioData, ok := contentItem["input_audio"].(map[string]interface{}); ok {
+			if audioData, ok := contentItem["input_audio"].(map[string]any); ok {
 				data, ok1 := audioData["data"].(string)
 				format, ok2 := audioData["format"].(string)
 				if ok1 && ok2 {
@@ -744,7 +783,7 @@ func (m *Message) ParseContent() []MediaContent {
 				}
 			}
 		case ContentTypeFile:
-			if fileData, ok := contentItem["file"].(map[string]interface{}); ok {
+			if fileData, ok := contentItem["file"].(map[string]any); ok {
 				fileId, ok3 := fileData["file_id"].(string)
 				if ok3 {
 					contentList = append(contentList, MediaContent{
@@ -809,155 +848,7 @@ func (m *Message) ParseContent() []MediaContent {
 
 	return stringContent
 }
-
-func (m *Message) SetNullContent() {
-	m.Content = nil
-	m.parsedStringContent = nil
-	m.parsedContent = nil
-}
-
-func (m *Message) SetStringContent(content string) {
-	jsonContent, _ := kitutil.Marshal(content)
-	m.Content = jsonContent
-	m.parsedStringContent = &content
-	m.parsedContent = nil
-}
-
-func (m *Message) SetMediaContent(content []MediaContent) {
-	jsonContent, _ := kitutil.Marshal(content)
-	m.Content = jsonContent
-	m.parsedContent = nil
-	m.parsedStringContent = nil
-}
-
-func (m *Message) IsStringContent() bool {
-	if m.parsedStringContent != nil {
-		return true
-	}
-	var stringContent string
-	if err := kitutil.Unmarshal(m.Content, &stringContent); err == nil {
-		m.parsedStringContent = &stringContent
-		return true
-	}
-	return false
-}
-
-func (m *Message) ParseContent() []MediaContent {
-	if m.parsedContent != nil {
-		return m.parsedContent
-	}
-
-	var contentList []MediaContent
-
-	// 先尝试解析为字符串
-	var stringContent string
-	if err := kitutil.Unmarshal(m.Content, &stringContent); err == nil {
-		contentList = []MediaContent{{
-			Type: ContentTypeText,
-			Text: stringContent,
-		}}
-		m.parsedContent = contentList
-		return contentList
-	}
-
-	// 尝试解析为数组
-	var arrayContent []map[string]interface{}
-	if err := kitutil.Unmarshal(m.Content, &arrayContent); err == nil {
-		for _, contentItem := range arrayContent {
-			contentType, ok := contentItem["type"].(string)
-			if !ok {
-				continue
-			}
-
-			switch contentType {
-			case ContentTypeText:
-				if text, ok := contentItem["text"].(string); ok {
-					contentList = append(contentList, MediaContent{
-						Type: ContentTypeText,
-						Text: text,
-					})
-				}
-
-			case ContentTypeImageURL:
-				imageUrl := contentItem["image_url"]
-				temp := &MessageImageUrl{
-					Detail: "high",
-				}
-				switch v := imageUrl.(type) {
-				case string:
-					temp.Url = v
-				case map[string]interface{}:
-					url, ok1 := v["url"].(string)
-					detail, ok2 := v["detail"].(string)
-					if ok2 {
-						temp.Detail = detail
-					}
-					if ok1 {
-						temp.Url = url
-					}
-				}
-				contentList = append(contentList, MediaContent{
-					Type:     ContentTypeImageURL,
-					ImageUrl: temp,
-				})
-
-			case ContentTypeInputAudio:
-				if audioData, ok := contentItem["input_audio"].(map[string]interface{}); ok {
-					data, ok1 := audioData["data"].(string)
-					format, ok2 := audioData["format"].(string)
-					if ok1 && ok2 {
-						temp := &MessageInputAudio{
-							Data:   data,
-							Format: format,
-						}
-						contentList = append(contentList, MediaContent{
-							Type:       ContentTypeInputAudio,
-							InputAudio: temp,
-						})
-					}
-				}
-			case ContentTypeFile:
-				if fileData, ok := contentItem["file"].(map[string]interface{}); ok {
-					fileId, ok3 := fileData["file_id"].(string)
-					if ok3 {
-						contentList = append(contentList, MediaContent{
-							Type: ContentTypeFile,
-							File: &MessageFile{
-								FileId: fileId,
-							},
-						})
-					} else {
-						fileName, ok1 := fileData["filename"].(string)
-						fileDataStr, ok2 := fileData["file_data"].(string)
-						if ok1 && ok2 {
-							contentList = append(contentList, MediaContent{
-								Type: ContentTypeFile,
-								File: &MessageFile{
-									FileName: fileName,
-									FileData: fileDataStr,
-								},
-							})
-						}
-					}
-				}
-			case ContentTypeVideoUrl:
-				if videoUrl, ok := contentItem["video_url"].(string); ok {
-					contentList = append(contentList, MediaContent{
-						Type: ContentTypeVideoUrl,
-						VideoUrl: &MessageVideoUrl{
-							Url: videoUrl,
-						},
-					})
-				}
-			}
-		}
-	}
-
-	if len(contentList) > 0 {
-		m.parsedContent = contentList
-	}
-	return contentList
-}*/
+*/
 
 type WebSearchOptions struct {
 	SearchContextSize string          `json:"search_context_size,omitempty"`
@@ -1015,6 +906,14 @@ type OpenAIResponsesRequest struct {
 	// qwen
 	EnableThinking json.RawMessage `json:"enable_thinking,omitempty"`
 	ThinkingBudget json.RawMessage `json:"thinking_budget,omitempty"`
+	// vLLM
+	ChatTemplateKwargs json.RawMessage `json:"chat_template_kwargs,omitempty"`
+	// SGLang Responses sampling extensions.
+	TopK              json.RawMessage `json:"top_k,omitempty"`
+	MinP              json.RawMessage `json:"min_p,omitempty"`
+	RepetitionPenalty json.RawMessage `json:"repetition_penalty,omitempty"`
+	Stop              json.RawMessage `json:"stop,omitempty"`
+	CacheSalt         json.RawMessage `json:"cache_salt,omitempty"`
 	// perplexity
 	Preset json.RawMessage `json:"preset,omitempty"`
 

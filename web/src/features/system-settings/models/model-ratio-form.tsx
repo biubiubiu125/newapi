@@ -18,41 +18,20 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
 import { Code2, Eye, RotateCcw, Save } from 'lucide-react'
-import {
-  forwardRef,
-  memo,
-  useCallback,
-  useEffect,
-  useImperativeHandle,
-  useRef,
-  useState,
-} from 'react'
+import { forwardRef, memo, useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react'
 import type { UseFormReturn } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
-
 import { JsonCodeEditor } from '@/components/json-code-editor'
 import { LearnMore } from '@/components/learn-more'
 import { Button } from '@/components/ui/button'
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Switch } from '@/components/ui/switch'
 import { getEnabledModels } from '@/features/channels/api'
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
-
-import { SettingsForm } from '../components/settings-form-layout'
+import {requireServerSuccess} from '@/lib/server-error-message'
+import {SettingsForm} from '../components/settings-form-layout'
 import { SettingsPageActionsPortal } from '../components/settings-page-context'
-import {
-  ModelRatioVisualEditor,
-  type ModelRatioVisualEditorHandle,
-} from './model-ratio-visual-editor'
+import { ModelRatioVisualEditor, type ModelRatioVisualEditorHandle } from './model-ratio-visual-editor'
+import { handleServerError } from '@/lib/handle-server-error'
 
 type ModelFormValues = {
   ModelPrice: string
@@ -66,6 +45,7 @@ type ModelFormValues = {
   ExposeRatioEnabled: boolean
   BillingMode: string
   BillingExpr: string
+  PluginBillingExpr: string
 }
 
 type ModelRatioFormProps = {
@@ -196,11 +176,12 @@ export const ModelRatioForm = memo(
     const [editMode, setEditMode] = useState<'visual' | 'json'>('visual')
     const visualEditorRef = useRef<ModelRatioVisualEditorHandle>(null)
 
-    const enabledModelsQuery = useQuery({
-      queryKey: ['enabled-models'],
-      queryFn: getEnabledModels,
-      enabled: isUnsetVariant,
-    })
+
+  const enabledModelsQuery = useQuery({
+    queryKey: ['enabled-models'],
+    queryFn: async () => requireServerSuccess(await getEnabledModels()),
+    enabled: isUnsetVariant,
+  })
 
     const enabledModelsError = isUnsetVariant
       ? enabledModelsQuery.isError ||
@@ -209,15 +190,19 @@ export const ModelRatioForm = memo(
       : false
     const enabledModelsErrorMessage = enabledModelsQuery.data?.message
 
-    useEffect(() => {
-      if (!enabledModelsError) return
-      toast.error(
-        localizeConsoleErrorText(
-          enabledModelsErrorMessage,
-          'Failed to load enabled models'
-        )
-      )
-    }, [enabledModelsError, enabledModelsErrorMessage, t])
+  useEffect(() => {
+    if (!enabledModelsError) return
+    handleServerError(
+      enabledModelsQuery.error ?? enabledModelsQuery.data,
+      t('Failed to load enabled models')
+    )
+  }, [
+    enabledModelsError,
+    enabledModelsErrorMessage,
+    enabledModelsQuery.error,
+    enabledModelsQuery.data,
+    t,
+  ])
 
     const handleFieldChange = useCallback(
       (field: keyof ModelFormValues, value: string) => {

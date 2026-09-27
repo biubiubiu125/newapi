@@ -33,7 +33,7 @@ var ErrTaskConcurrentUpdate = errors.New("task was concurrently updated")
 func (t TaskStatus) ToVideoStatus() string {
 	var status string
 	switch t {
-	case TaskStatusQueued, TaskStatusSubmitted:
+	case TaskStatusNotStart, TaskStatusQueued, TaskStatusSubmitted:
 		status = dto.VideoStatusQueued
 	case TaskStatusInProgress:
 		status = dto.VideoStatusInProgress
@@ -162,6 +162,8 @@ func (m Properties) Value() (driver.Value, error) {
 	if m == (Properties{}) {
 		return nil, nil
 	}
+	// 必须返回 string 而非 []byte:PG simple protocol 下 []byte 按 bytea 编码,
+	// 写 json 列会触发 SQLSTATE 22P02。
 	b, err := common.Marshal(m)
 	if err != nil {
 		return nil, err
@@ -193,6 +195,9 @@ type TaskPrivateData struct {
 	UpstreamSubmitUncertainAt    int64             `json:"upstream_submit_uncertain_at,omitempty"`
 	UpstreamSubmitUncertainCount int               `json:"upstream_submit_uncertain_count,omitempty"`
 	ResultURL                    string            `json:"result_url,omitempty"` // 任务成功后的结果 URL（视频地址等）
+	// ResultDiscarded marks an immediate terminal result whose submit route
+	// already returned the artifact, so later retrieval must not expose it.
+	ResultDiscarded bool `json:"result_discarded,omitempty"`
 	// ResultProxyHosts are channel media hosts captured at submit. GetResultURL
 	// rewrites matching https URLs to /v1/videos/{id}/content so OpenAI clients
 	// do not fetch credentialed Gemini-compatible hosts directly.
@@ -209,6 +214,8 @@ type TaskPrivateData struct {
 	// ResponsesBackground records whether the create request requested a
 	// background response protocol.
 	ResponsesBackground bool `json:"responses_background,omitempty"`
+	// Execution records safe, immutable request provenance. It lives next to
+	// other private task state so public task DTOs cannot expose it by accident.
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
 	BillingSource                string                       `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
 	SubscriptionId               int                          `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
@@ -356,23 +363,29 @@ func (state *TaskDispatchState) BeforeCreate(_ *gorm.DB) error {
 
 // TaskBillingContext 记录任务提交时的计费参数，以便轮询阶段可以重新计算额度。
 type TaskBillingContext struct {
-	ModelPrice           float64            `json:"model_price,omitempty"`             // 模型单价
-	GroupRatio           float64            `json:"group_ratio,omitempty"`             // 分组倍率
-	GroupRatioCaptured   bool               `json:"group_ratio_captured,omitempty"`    // 是否已捕获分组倍率
-	GroupSpecialRatio    float64            `json:"group_special_ratio,omitempty"`     // 用户分组特殊倍率
-	GroupHasSpecialRatio bool               `json:"group_has_special_ratio,omitempty"` // 是否命中特殊倍率
-	ModelRatio           float64            `json:"model_ratio,omitempty"`             // 模型倍率
-	CompletionRatio      float64            `json:"completion_ratio,omitempty"`        // 输出倍率
-	CacheRatio           float64            `json:"cache_ratio,omitempty"`             // 缓存读取倍率
-	CacheCreationRatio   float64            `json:"cache_creation_ratio,omitempty"`    // 缓存写入倍率
-	CacheCreation5mRatio float64            `json:"cache_creation_5m_ratio,omitempty"` // 5 分钟缓存写入倍率
-	CacheCreation1hRatio float64            `json:"cache_creation_1h_ratio,omitempty"` // 1 小时缓存写入倍率
-	ImageRatio           float64            `json:"image_ratio,omitempty"`             // 图片 token 倍率
-	AudioRatio           float64            `json:"audio_ratio,omitempty"`             // 音频输入倍率
-	AudioCompletionRatio float64            `json:"audio_completion_ratio,omitempty"`  // 音频输出倍率
-	OtherRatios          map[string]float64 `json:"other_ratios,omitempty"`            // 附加倍率（时长、分辨率等）
-	OriginModelName      string             `json:"origin_model_name,omitempty"`       // 模型名称，必须为OriginModelName
-	PerCallBilling       bool               `json:"per_call_billing,omitempty"`        // 按次计费：跳过轮询阶段的差额结算
+	ModelPrice           float64                      `json:"model_price,omitempty"`             // 模型单价
+	GroupRatio           float64                      `json:"group_ratio,omitempty"`             // 分组倍率
+	GroupRatioCaptured   bool                         `json:"group_ratio_captured,omitempty"`    // 是否已捕获分组倍率
+	GroupSpecialRatio    float64                      `json:"group_special_ratio,omitempty"`     // 用户分组特殊倍率
+	GroupHasSpecialRatio bool                         `json:"group_has_special_ratio,omitempty"` // 是否命中特殊倍率
+	ModelRatio           float64                      `json:"model_ratio,omitempty"`             // 模型倍率
+	CompletionRatio      float64                      `json:"completion_ratio,omitempty"`        // 输出倍率
+	CacheRatio           float64                      `json:"cache_ratio,omitempty"`             // 缓存读取倍率
+	CacheCreationRatio   float64                      `json:"cache_creation_ratio,omitempty"`    // 缓存写入倍率
+	CacheCreation5mRatio float64                      `json:"cache_creation_5m_ratio,omitempty"` // 5 分钟缓存写入倍率
+	CacheCreation1hRatio float64                      `json:"cache_creation_1h_ratio,omitempty"` // 1 小时缓存写入倍率
+	ImageRatio           float64                      `json:"image_ratio,omitempty"`             // 图片 token 倍率
+	AudioRatio           float64                      `json:"audio_ratio,omitempty"`             // 音频输入倍率
+	AudioCompletionRatio float64                      `json:"audio_completion_ratio,omitempty"`  // 音频输出倍率
+	OtherRatios          map[string]float64           `json:"other_ratios,omitempty"`            // 附加倍率（时长、分辨率等）
+	OriginModelName      string                       `json:"origin_model_name,omitempty"`       // 模型名称，必须为OriginModelName
+	PerCallBilling       bool                         `json:"per_call_billing,omitempty"`        // 按次计费：跳过轮询阶段的差额结算
+	TieredSnapshot       *billingexpr.BillingSnapshot `json:"tiered_snapshot,omitempty"`
+}
+
+// ResultRetrievable reports whether retrieval may serve this task.
+func (t *Task) ResultRetrievable() bool {
+	return t != nil && !t.PrivateData.ResultDiscarded
 }
 
 // GetUpstreamTaskID 获取上游真实 task ID（用于与 provider 通信）
@@ -731,6 +744,7 @@ func (p TaskPrivateData) Value() (driver.Value, error) {
 	if string(b) == "{}" {
 		return nil, nil
 	}
+	// 同 Properties.Value:string 避免 PG simple protocol 的 bytea 编码。
 	return string(b), nil
 }
 
@@ -819,7 +833,9 @@ func TaskGetAllUserTask(userId int, startIdx int, num int, queryParams SyncTaskQ
 	}
 
 	// 获取数据
-	err = query.Omit("channel_id").Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
+	// Task lists never render the persisted upstream snapshot; the dashboard
+	// loads media through the artifacts endpoint instead.
+	err = query.Omit("channel_id", "data").Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -864,7 +880,7 @@ func TaskGetAllTasks(startIdx int, num int, queryParams SyncTaskQueryParams) []*
 	}
 
 	// 获取数据
-	err = query.Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
+	err = query.Omit("data").Order("id desc").Limit(num).Offset(startIdx).Find(&tasks).Error
 	if err != nil {
 		return nil
 	}
@@ -2713,12 +2729,16 @@ func (t *Task) Insert() error {
 	return err
 }
 
-func (t *Task) InsertWithContext(ctx context.Context) error {
+func (t *Task) InsertWithContext(ctx context.Context, omitColumns ...string) error {
 	t.fillMissingPublicImageTaskScalars()
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	return DB.WithContext(ctx).Create(t).Error
+	tx := DB.WithContext(ctx)
+	if len(omitColumns) > 0 {
+		tx = tx.Omit(omitColumns...)
+	}
+	return tx.Create(t).Error
 }
 
 func DeleteTaskByID(id int64) error {
@@ -3661,9 +3681,26 @@ func (t *Task) ToOpenAIVideo() *dto.OpenAIVideo {
 		} else {
 			openAIVideo.CompletedAt = t.UpdatedAt
 		}
-		if resultURL := strings.TrimSpace(t.PublicResultURL()); resultURL != "" {
+		if resultURL := strings.TrimSpace(t.PublicResultURL()); resultURL != "" && !resultURLCarriesCredentialQuery(resultURL) {
 			openAIVideo.SetMetadata("url", resultURL)
 		}
 	}
 	return openAIVideo
+}
+
+// resultURLCarriesCredentialQuery reports a provider locator that is still
+// signed. Those URLs stay out of OpenAI video metadata; unsigned public URLs
+// and the content proxy do not.
+func resultURLCarriesCredentialQuery(value string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(value))
+	if err != nil || parsed == nil {
+		return false
+	}
+	for key := range parsed.Query() {
+		switch strings.ToLower(key) {
+		case "signature", "sig", "token", "access_token", "x-goog-signature", "x-amz-signature":
+			return true
+		}
+	}
+	return false
 }

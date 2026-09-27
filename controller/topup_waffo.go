@@ -240,6 +240,7 @@ func RequestWaffoPay(c *gin.Context) {
 	amount := req.Amount
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
 		amount = int64(float64(req.Amount) / common.QuotaPerUnit)
+		amount = max(int64(float64(req.Amount)/common.QuotaPerUnit), 1)
 	}
 
 	// 创建本地订单

@@ -86,10 +86,14 @@ export async function getTaskPluginVersions(key: string) {
   return requireSuccess(response.data)
 }
 
-export async function uploadTaskPlugin(source: string, remark: string) {
+export async function uploadTaskPlugin(
+  source: string,
+  remark: string,
+  icon = ''
+) {
   const response = await api.post<ApiResponse<TaskPluginDetail>>(
     '/api/plugin/task',
-    { source, remark },
+    { source, remark, icon },
     mutationConfig
   )
   return requireSuccess(response.data)

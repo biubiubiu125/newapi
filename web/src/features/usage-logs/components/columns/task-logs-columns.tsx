@@ -19,29 +19,20 @@ For commercial licensing, please contact support@quantumnous.com
 import { ViewIcon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
 import type { ColumnDef } from '@tanstack/react-table'
-/* eslint-disable react-refresh/only-export-components */
-import { useState } from 'react'
+import { useState, useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-
-import { DataTableColumnHeader } from '@/components/data-table'
 import { StatusBadge } from '@/components/status-badge'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { getUserAvatarFallback, getUserAvatarStyle } from '@/lib/avatar'
 import { formatTimestampToDate } from '@/lib/format'
 import { cn } from '@/lib/utils'
-
-import { getLogUserDisplayName, openLogUserInfo } from '../../lib/log-user'
 import { taskActionMapper, taskStatusMapper } from '../../lib/mappers'
 import type { TaskLog } from '../../types'
 import { TaskDetailsDialog } from '../dialogs/task-details-dialog'
 import { PluginAuthorLink } from '../plugin-author-link'
 import { TaskArtifactsCell } from '../task-artifacts'
 import { useUsageLogsContext } from '../usage-logs-provider'
-import {
-  createDurationColumn,
-  createChannelColumn,
-  createProgressColumn,
-} from './column-helpers'
+import { createDurationColumn, createChannelColumn, createProgressColumn } from './column-helpers'
 
 function TaskDetailsCell(props: {
   log: TaskLog
@@ -107,216 +98,198 @@ export function useTaskLogsColumns(
   isRoot: boolean
 ): ColumnDef<TaskLog>[] {
   const { t } = useTranslation()
-  const columns: ColumnDef<TaskLog>[] = [
-    {
-      accessorKey: 'submit_time',
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Submit Time')} />
-      ),
-      cell: ({ row }) => {
-        const log = row.original
-        const submitTime = row.getValue('submit_time') as number
 
-        return (
-          <div className='flex min-w-0 flex-col gap-0.5'>
-            <span className='truncate font-mono text-xs tabular-nums'>
-              {formatTimestampToDate(submitTime, 'seconds')}
-            </span>
-            {log.finish_time ? (
-              <span className='text-muted-foreground/60 truncate font-mono text-[11px] tabular-nums'>
-                {formatTimestampToDate(log.finish_time, 'seconds')}
-              </span>
-            ) : (
-              <span className='text-muted-foreground/50 text-[11px]'>-</span>
-            )}
-          </div>
-        )
-      },
-      meta: { label: t('Submit Time') },
-      size: 180,
-    },
-  ]
-
-  if (isAdmin) {
-    columns.push(
-      createChannelColumn<TaskLog>({ headerLabel: t('Channel') }),
+  return useMemo(() => {
+    const columns: ColumnDef<TaskLog>[] = [
       {
-        id: 'user',
-        accessorFn: (row) => row.username || row.user_id,
-        header: ({ column }) => (
-          <DataTableColumnHeader column={column} title={t('User')} />
-        ),
-        cell: function UserCell({ row }) {
-          const { sensitiveVisible, setSelectedUserId, setUserInfoDialogOpen } =
-            useUsageLogsContext()
+        accessorKey: 'submit_time',
+        header: t('Submit Time'),
+        cell: ({ row }) => {
           const log = row.original
-          const displayName = getLogUserDisplayName(log)
-
-          if (!displayName) return null
+          const submitTime = row.getValue('submit_time') as number
 
           return (
-            <button
-              type='button'
-              className='flex items-center gap-1.5 text-left'
-              onClick={(e) => {
-                openLogUserInfo(
-                  log,
-                  setSelectedUserId,
-                  setUserInfoDialogOpen,
-                  e
-                )
-              }}
-            >
-              <Avatar className='ring-border/60 size-6 ring-1 max-sm:hidden'>
-                <AvatarFallback
-                  className={cn(
-                    'text-[11px] font-semibold',
-                    !sensitiveVisible && 'bg-muted text-muted-foreground'
-                  )}
-                  style={
-                    sensitiveVisible
-                      ? getUserAvatarStyle(displayName)
-                      : undefined
-                  }
-                >
-                  {sensitiveVisible ? getUserAvatarFallback(displayName) : '•'}
-                </AvatarFallback>
-              </Avatar>
-              <span className='text-muted-foreground truncate text-sm hover:underline'>
-                {sensitiveVisible ? displayName : '••••'}
+            <div className='flex min-w-0 flex-col gap-0.5'>
+              <span className='truncate font-mono text-xs tabular-nums'>
+                {formatTimestampToDate(submitTime, 'seconds')}
               </span>
-            </button>
+              {log.finish_time ? (
+                <span className='text-muted-foreground/60 truncate font-mono text-[11px] tabular-nums'>
+                  {formatTimestampToDate(log.finish_time, 'seconds')}
+                </span>
+              ) : (
+                <span className='text-muted-foreground/50 text-[11px]'>-</span>
+              )}
+            </div>
           )
         },
-        meta: { label: t('User') },
+        size: 180,
       },
+
+    ]
+
+
+    if (isAdmin) {
+      columns.push(
+        createChannelColumn<TaskLog>({ headerLabel: t('Channel') }),
+        {
+          id: 'user',
+          header: t('User'),
+          accessorFn: (row) => row.username || row.user_id,
+          cell: function UserCell({ row }) {
+            const {
+              sensitiveVisible,
+              setSelectedUserId,
+              setUserInfoDialogOpen,
+            } = useUsageLogsContext()
+            const log = row.original
+            const displayName = log.username || String(log.user_id || '?')
+
+
+            return (
+              <button
+                type='button'
+                className='flex items-center gap-1.5 text-left'
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setSelectedUserId(log.user_id)
+                  setUserInfoDialogOpen(true)
+                }}
+              >
+                <Avatar className='ring-border/60 size-6 ring-1 max-sm:hidden'>
+                  <AvatarFallback
+                    className={cn(
+                      'text-[11px] font-semibold',
+                      !sensitiveVisible && 'bg-muted text-muted-foreground'
+                    )}
+                    style={
+                      sensitiveVisible
+                        ? getUserAvatarStyle(displayName)
+                        : undefined
+                    }
+                  >
+                    {sensitiveVisible
+                      ? getUserAvatarFallback(displayName)
+                      : '•'}
+                  </AvatarFallback>
+                </Avatar>
+                <span className='text-muted-foreground truncate text-sm hover:underline'>
+                  {sensitiveVisible ? displayName : '••••'}
+                </span>
+              </button>
+            )
+          },
+        },
+        {
+          id: 'plugin',
+          header: t('Plugin'),
+          accessorFn: (row) => row.admin_info?.task_plugin?.key ?? '',
+          cell: ({ row }) => {
+            const plugin = row.original.admin_info?.task_plugin
+            if (!plugin) {
+              return <span className='text-muted-foreground/60 text-xs'>-</span>
+            }
+            return (
+              <div className='flex max-w-[170px] flex-col gap-0.5'>
+                <span className='truncate text-xs font-medium'>
+                  {plugin.name || plugin.key}
+                </span>
+                <span className='text-muted-foreground truncate font-mono text-[11px]'>
+                  {plugin.key}
+                  {plugin.version ? ` @ ${plugin.version}` : ''}
+                </span>
+                {plugin.author ? (
+                  <PluginAuthorLink
+                    author={plugin.author}
+                    showUrl
+                    className='text-muted-foreground text-[11px]'
+                  />
+                ) : null}
+              </div>
+            )
+          },
+        }
+      )
+    }
+
+    columns.push(
       {
-        id: 'plugin',
-        header: ({ column }) => (
-          <DataTableColumnHeader column={column} title={t('Plugin')} />
-        ),
-        accessorFn: (row) => row.admin_info?.task_plugin?.key ?? '',
+        accessorKey: 'task_id',
+        header: t('Task ID'),
         cell: ({ row }) => {
-          const plugin = row.original.admin_info?.task_plugin
-          if (!plugin) {
+          const log = row.original
+          const taskId = row.getValue('task_id') as string
+          if (!taskId) {
             return <span className='text-muted-foreground/60 text-xs'>-</span>
           }
           return (
             <div className='flex max-w-[170px] flex-col gap-0.5'>
-              <span className='truncate text-xs font-medium'>
-                {plugin.name || plugin.key}
+              <StatusBadge
+                label={taskId}
+                copyText={taskId}
+                variant='neutral'
+                size='sm'
+                className='border-border/60 bg-muted/30 !text-foreground max-w-full truncate rounded-md border px-1.5 py-0.5 font-mono'
+              />
+              <span className='text-muted-foreground/60 truncate text-[11px]'>
+                {t(log.platform)} · {t(taskActionMapper.getLabel(log.action))}
               </span>
-              <span className='text-muted-foreground truncate font-mono text-[11px]'>
-                {plugin.key}
-                {plugin.version ? ` @ ${plugin.version}` : ''}
-              </span>
-              {plugin.author ? (
-                <PluginAuthorLink
-                  author={plugin.author}
-                  showUrl
-                  className='text-muted-foreground text-[11px]'
-                />
-              ) : null}
             </div>
           )
         },
-        meta: { label: t('Plugin') },
+        meta: { mobileTitle: true },
+      },
+      createDurationColumn<TaskLog>({
+        submitTimeKey: 'submit_time',
+        finishTimeKey: 'finish_time',
+        unit: 'seconds',
+        headerLabel: t('Duration'),
+        warningThresholdSec: 300,
+      }),
+      {
+        accessorKey: 'status',
+        header: t('Status'),
+        cell: ({ row }) => {
+          const status = row.getValue('status') as string
+          return (
+            <StatusBadge
+              label={t(
+                taskStatusMapper.getLabel(status, status || 'Submitting')
+              )}
+              variant={taskStatusMapper.getVariant(status)}
+              size='sm'
+              copyable={false}
+              className='-ml-1.5'
+            />
+          )
+        },
+      },
+      createProgressColumn<TaskLog>({ headerLabel: t('Progress') }),
+      {
+        id: 'artifacts',
+        header: t('Artifacts'),
+        cell: ({ row }) => (
+          <TaskArtifactsCell key={row.original.task_id} log={row.original} />
+        ),
+        size: 120,
+        maxSize: 140,
+      },
+      {
+        accessorKey: 'fail_reason',
+        header: t('Details'),
+        cell: ({ row }) => (
+          <TaskDetailsCell
+            key={row.original.task_id}
+            log={row.original}
+            isAdmin={isAdmin}
+            isRoot={isRoot}
+          />
+        ),
+        size: 220,
+        maxSize: 240,
       }
     )
-  }
 
-  columns.push(
-    {
-      accessorKey: 'task_id',
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Task ID')} />
-      ),
-      cell: ({ row }) => {
-        const log = row.original
-        const taskId = row.getValue('task_id') as string
-        if (!taskId) {
-          return <span className='text-muted-foreground/60 text-xs'>-</span>
-        }
-        return (
-          <div className='flex max-w-[170px] flex-col gap-0.5'>
-            <StatusBadge
-              label={taskId}
-              autoColor={taskId}
-              size='sm'
-              className='border-border/60 bg-muted/30 max-w-full truncate rounded-md border px-1.5 py-0.5 font-mono'
-            />
-            <span className='text-muted-foreground/60 truncate text-[11px]'>
-              {t(log.platform)} · {t(taskActionMapper.getLabel(log.action))}
-            </span>
-          </div>
-        )
-      },
-      meta: { label: t('Task ID'), mobileTitle: true },
-    },
-    createDurationColumn<TaskLog>({
-      submitTimeKey: 'submit_time',
-      finishTimeKey: 'finish_time',
-      unit: 'seconds',
-      headerLabel: t('Duration'),
-      warningThresholdSec: 300,
-    }),
-    {
-      accessorKey: 'status',
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Status')} />
-      ),
-      cell: ({ row }) => {
-        const log = row.original
-        const status = row.getValue('status') as string
-        const settlementFailed = log.settlement_status === 'REVIEW'
-        return (
-          <StatusBadge
-            label={
-              settlementFailed
-                ? t('Settlement review')
-                : t(taskStatusMapper.getLabel(status, status || 'Submitting'))
-            }
-            variant={
-              settlementFailed ? 'red' : taskStatusMapper.getVariant(status)
-            }
-            size='sm'
-            copyable={false}
-          />
-        )
-      },
-      meta: { label: t('Status') },
-    },
-    createProgressColumn<TaskLog>({ headerLabel: t('Progress') }),
-    {
-      id: 'artifacts',
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Artifacts')} />
-      ),
-      cell: ({ row }) => (
-        <TaskArtifactsCell key={row.original.task_id} log={row.original} />
-      ),
-      meta: { label: t('Artifacts') },
-      size: 120,
-      maxSize: 140,
-    },
-    {
-      accessorKey: 'fail_reason',
-      header: ({ column }) => (
-        <DataTableColumnHeader column={column} title={t('Details')} />
-      ),
-      cell: ({ row }) => (
-        <TaskDetailsCell
-          key={row.original.task_id}
-          log={row.original}
-          isAdmin={isAdmin}
-          isRoot={isRoot}
-        />
-      ),
-      meta: { label: t('Details') },
-      size: 220,
-      maxSize: 240,
-    }
-  )
-
-  return columns
+    return columns
+  }, [t, isAdmin, isRoot])
 }

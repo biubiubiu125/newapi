@@ -21,7 +21,6 @@ import { useState, useCallback } from 'react'
 import { toast } from 'sonner'
 
 import { currentConsoleFailureText } from '@/lib/console-failure-text'
-
 import { requestWaffoPancakePayment, isApiSuccess } from '../api'
 import { isSafeHttpCheckoutUrl } from '../lib/payment-url'
 import type { PaymentInitiationResult } from '../types'

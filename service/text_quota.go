@@ -10,7 +10,6 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
-	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
@@ -237,8 +236,8 @@ func composeTieredTextQuota(relayInfo *relaycommon.RelayInfo, summary textQuotaS
 	}
 
 	// Saturate the final sum, not just the surcharge: tieredQuota can be near
-	// MaxQuota and adding the surcharge could push the total past the int32
-	// quota policy bound (persisted quota columns are 32-bit).
+	// MaxQuota and adding the surcharge could push the total past the
+	// single-request quota policy bound.
 	total, clamp := common.QuotaFromDecimalChecked(
 		decimal.NewFromInt(int64(tieredQuota)).Add(summary.ToolCallSurchargeQuota),
 	)
@@ -340,10 +339,7 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 				baseTokens = baseTokens.Sub(dCachedCreationTokens)
 				cachedCreationTokensWithRatio = dCachedCreationTokens.Mul(dCacheCreationRatio)
 			} else {
-				remaining := summary.CacheCreationTokens - summary.CacheCreationTokens5m - summary.CacheCreationTokens1h
-				if remaining < 0 {
-					remaining = 0
-				}
+				remaining := max(summary.CacheCreationTokens-summary.CacheCreationTokens5m-summary.CacheCreationTokens1h, 0)
 				cachedCreationTokensWithRatio = decimal.NewFromInt(int64(remaining)).Mul(dCacheCreationRatio)
 				cachedCreationTokensWithRatio = cachedCreationTokensWithRatio.Add(decimal.NewFromInt(int64(summary.CacheCreationTokens5m)).Mul(dCacheCreationRatio5m))
 				cachedCreationTokensWithRatio = cachedCreationTokensWithRatio.Add(decimal.NewFromInt(int64(summary.CacheCreationTokens1h)).Mul(dCacheCreationRatio1h))
@@ -447,6 +443,7 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	summary := calculateTextQuotaSummary(ctx, relayInfo, billingUsage)
 
 	var tieredResult *billingexpr.TieredResult
+	var tieredTokens billingexpr.TokenParams
 	tieredBillingApplied := false
 	snap := relayInfo.TieredBillingSnapshot
 	// Providers normally estimate missing usage before settlement. Preserve the
@@ -464,7 +461,8 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		if snap != nil {
 			tieredUsedVars = billingexpr.UsedVars(snap.ExprString)
 		}
-		tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParams(billingUsage, summary.IsClaudeUsageSemantic, tieredUsedVars))
+		tieredTokens = BuildTieredTokenParams(billingUsage, summary.IsClaudeUsageSemantic, tieredUsedVars)
+		tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, tieredTokens)
 		if tieredOk {
 			tieredBillingApplied = true
 			tieredResult = tieredRes
@@ -522,7 +520,7 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 
 	logContent := strings.Join(extraContent, ", ")
-	var other map[string]interface{}
+	var other *model.LogOther
 	if summary.IsClaudeUsageSemantic {
 		other = GenerateClaudeOtherInfo(ctx, relayInfo,
 			summary.ModelRatio, summary.GroupRatio, summary.CompletionRatio,
@@ -531,13 +529,13 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			summary.CacheCreationTokens5m, summary.CacheCreationRatio5m,
 			summary.CacheCreationTokens1h, summary.CacheCreationRatio1h,
 			summary.ModelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
-		other["usage_semantic"] = "anthropic"
+		other.SetPublic("usage_semantic", "anthropic")
 	} else {
 		other = GenerateTextOtherInfo(ctx, relayInfo, summary.ModelRatio, summary.GroupRatio, summary.CompletionRatio, summary.CacheTokens, summary.CacheRatio, summary.ModelPrice, relayInfo.PriceData.GroupRatioInfo.GroupSpecialRatio)
 	}
 	appendUsageBillingPathForLog(other, common.GetContextKeyBool(ctx, constant.ContextKeyLocalCountTokens), originUsage)
 	if adminRejectReason != "" {
-		other["reject_reason"] = adminRejectReason
+		other.SetAdmin("reject_reason", adminRejectReason)
 	}
 	logQuota := attachSettlementLogFields(other, relayInfo, summary.Quota, settlementErr)
 	settlementSucceeded := settlementErr == nil
@@ -545,61 +543,62 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		return summary.Quota, wrapUsageCounterUpdateError(ctx, relayInfo, logQuota, settlementSucceeded, err, "post text consume quota usage counter update failed")
 	}
 	if summary.ImageTokens != 0 {
-		other["image"] = true
-		other["image_ratio"] = summary.ImageRatio
-		other["image_output"] = summary.ImageTokens
+		other.SetPublic("image", true)
+		other.SetPublic("image_ratio", summary.ImageRatio)
+		other.SetPublic("image_output", summary.ImageTokens)
 	}
 	if summary.WebSearchCallCount > 0 {
-		other["web_search"] = true
-		other["web_search_call_count"] = summary.WebSearchCallCount
-		other["web_search_price"] = summary.WebSearchPrice
+		other.SetPublic("web_search", true)
+		other.SetPublic("web_search_call_count", summary.WebSearchCallCount)
+		other.SetPublic("web_search_price", summary.WebSearchPrice)
 	} else if summary.ClaudeWebSearchCallCount > 0 {
-		other["web_search"] = true
-		other["web_search_call_count"] = summary.ClaudeWebSearchCallCount
-		other["web_search_price"] = summary.ClaudeWebSearchPrice
+		other.SetPublic("web_search", true)
+		other.SetPublic("web_search_call_count", summary.ClaudeWebSearchCallCount)
+		other.SetPublic("web_search_price", summary.ClaudeWebSearchPrice)
 	}
 	if summary.FileSearchCallCount > 0 {
-		other["file_search"] = true
-		other["file_search_call_count"] = summary.FileSearchCallCount
-		other["file_search_price"] = summary.FileSearchPrice
+		other.SetPublic("file_search", true)
+		other.SetPublic("file_search_call_count", summary.FileSearchCallCount)
+		other.SetPublic("file_search_price", summary.FileSearchPrice)
 	}
 	if summary.AudioInputPrice > 0 && summary.AudioTokens > 0 {
-		other["audio_input_seperate_price"] = true
-		other["audio_input_token_count"] = summary.AudioTokens
-		other["audio_input_price"] = summary.AudioInputPrice
+		other.SetPublic("audio_input_seperate_price", true)
+		other.SetPublic("audio_input_token_count", summary.AudioTokens)
+		other.SetPublic("audio_input_price", summary.AudioInputPrice)
 	}
 	if summary.ImageGenerationCallPrice > 0 {
-		other["image_generation_call"] = true
-		other["image_generation_call_price"] = summary.ImageGenerationCallPrice
+		other.SetPublic("image_generation_call", true)
+		other.SetPublic("image_generation_call_price", summary.ImageGenerationCallPrice)
 	}
 	if summary.CacheCreationTokens > 0 {
-		other["cache_creation_tokens"] = summary.CacheCreationTokens
-		other["cache_creation_ratio"] = summary.CacheCreationRatio
+		other.SetPublic("cache_creation_tokens", summary.CacheCreationTokens)
+		other.SetPublic("cache_creation_ratio", summary.CacheCreationRatio)
 	}
 	if summary.CacheCreationTokens5m > 0 {
-		other["cache_creation_tokens_5m"] = summary.CacheCreationTokens5m
-		other["cache_creation_ratio_5m"] = summary.CacheCreationRatio5m
+		other.SetPublic("cache_creation_tokens_5m", summary.CacheCreationTokens5m)
+		other.SetPublic("cache_creation_ratio_5m", summary.CacheCreationRatio5m)
 	}
 	if summary.CacheCreationTokens1h > 0 {
-		other["cache_creation_tokens_1h"] = summary.CacheCreationTokens1h
-		other["cache_creation_ratio_1h"] = summary.CacheCreationRatio1h
+		other.SetPublic("cache_creation_tokens_1h", summary.CacheCreationTokens1h)
+		other.SetPublic("cache_creation_ratio_1h", summary.CacheCreationRatio1h)
 	}
 	cacheWriteTokens := cacheWriteTokensTotal(summary)
 	if cacheWriteTokens > 0 {
 		// cache_write_tokens: normalized cache creation total for UI display.
 		// If split 5m/1h values are present, this is their sum; otherwise it falls back
 		// to cache_creation_tokens.
-		other["cache_write_tokens"] = cacheWriteTokens
+		other.SetPublic("cache_write_tokens", cacheWriteTokens)
 	}
 	if relayInfo.GetFinalRequestRelayFormat() != types.RelayFormatClaude && billingUsage != nil && billingUsage.UsageSource != "" && billingUsage.InputTokens > 0 {
 		// input_tokens_total: explicit normalized total input used by the usage log UI.
 		// Only write this field when upstream/current conversion has already provided a
 		// reliable total input value and tagged the usage source. Do not infer it from
 		// prompt/cache fields here, otherwise old upstream payloads may be double-counted.
-		other["input_tokens_total"] = billingUsage.InputTokens
+		other.SetPublic("input_tokens_total", billingUsage.InputTokens)
 	}
 	if tieredBillingApplied {
 		InjectTieredBillingInfo(other, relayInfo, tieredResult)
+
 	}
 
 	attachQuotaSaturation(ctx, relayInfo, other)
@@ -620,7 +619,7 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}); err != nil {
 		return summary.Quota, wrapRecordConsumeLogError(ctx, relayInfo, relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota, settlementSucceeded, err)
 	}
-	perfmetrics.RecordRelaySampleAsync(relayInfo, true, int64(summary.CompletionTokens))
+	relayInfo.PerformanceOutputTokens = int64(summary.CompletionTokens)
 	if settlementErr != nil {
 		RecordConsumeAccountingError(ctx, relayInfo, "post text consume quota settlement", settlementErr)
 	}

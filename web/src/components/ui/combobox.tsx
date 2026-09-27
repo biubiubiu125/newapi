@@ -50,6 +50,7 @@ type LegacyComboboxProps = {
   allowCustomValue?: boolean
   showSelectedIcon?: boolean
   className?: string
+  popupClassName?: string
   id?: string
   openOnFocus?: boolean
   disabled?: boolean
@@ -87,6 +88,7 @@ function Combobox(
         placeholder={props.searchPlaceholder ?? props.placeholder}
         emptyText={props.emptyText}
         className={props.className}
+        popupClassName={props.popupClassName}
         allowCustomValue={props.allowCustomValue}
         openOnFocus={props.openOnFocus}
       />
@@ -184,7 +186,6 @@ function OptionCombobox(props: LegacyComboboxProps) {
     </ComboboxPrimitive.Root>
   )
 }
-
 function ComboboxValue({ ...props }: ComboboxPrimitive.Value.Props) {
   return <ComboboxPrimitive.Value data-slot='combobox-value' {...props} />
 }

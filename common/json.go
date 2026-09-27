@@ -7,7 +7,11 @@ import (
 	"io"
 
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
+
+	"github.com/gin-gonic/gin/binding"
 )
+
+type RawMessage = json.RawMessage
 
 // 本包是业务代码唯一允许的 JSON 编解码入口。
 //
@@ -17,9 +21,11 @@ import (
 // 并按版本前缀隔离比较逻辑，否则同内容重试会被误判为幂等键冲突（409）。
 
 // hostJSONCodec is the single place where the host chooses its JSON engine.
-// Swap the implementation here and every common.* and kitutil.* JSON helper,
-// including relaykit DTO (un)marshalling, follows. Injected from init() rather
-// than main() so tests run on the same engine as production.
+// Swap the implementation here (for example to sonic.ConfigStd) and every
+// common.* and kitutil.* JSON helper, including relaykit DTO (un)marshalling,
+// follows. Injected from init() rather than main() so tests run on the same
+// engine as production: common is imported by virtually every root package
+// and test binary, while main() never executes under `go test`.
 type hostJSONCodec struct{}
 
 func (hostJSONCodec) Marshal(v any) ([]byte, error) {
@@ -52,6 +58,18 @@ func UnmarshalJsonStr(data string, v any) error {
 
 func DecodeJson(reader io.Reader, v any) error {
 	return decodeSingleJSON(json.NewDecoder(reader), v)
+}
+
+// DecodeJsonWithValidation decodes JSON and applies Gin's configured binding-tag
+// validator, including binding:"required" and any registered custom validators.
+func DecodeJsonWithValidation(reader io.Reader, v any) error {
+	if err := DecodeJson(reader, v); err != nil {
+		return err
+	}
+	if binding.Validator == nil {
+		return nil
+	}
+	return binding.Validator.ValidateStruct(v)
 }
 
 // DecodeJsonUseNumber 以 json.Number 解析数字，避免浮点归一化改变原始字面量。

@@ -253,6 +253,12 @@ func Redeem(key string, userId int) (*RedeemResult, error) {
 }
 
 func (redemption *Redemption) Insert() error {
+	if redemption.Quota <= 0 {
+		return errors.New("redemption quota must be positive")
+	}
+	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+		return err
+	}
 	var err error
 	if redemption.QuotaPerUnitSnapshot <= 0 {
 		redemption.QuotaPerUnitSnapshot = common.QuotaPerUnit
@@ -268,6 +274,12 @@ func (redemption *Redemption) SelectUpdate() error {
 
 // Update Make sure your token's fields is completed, because this will update non-zero values
 func (redemption *Redemption) Update() error {
+	if redemption.Quota <= 0 {
+		return errors.New("redemption quota must be positive")
+	}
+	if err := common.ValidateWalletQuota(redemption.Quota); err != nil {
+		return err
+	}
 	var err error
 	err = DB.Model(redemption).Select("name", "status", "quota", "quota_per_unit_snapshot", "redeemed_time", "expired_time").Updates(redemption).Error
 	return err
@@ -508,6 +520,9 @@ func redemptionReferralCommissionDeletionBlocked(redemption *Redemption) bool {
 		if err != nil || !complete {
 			return true
 		}
+	}
+	if !redemptionRedeemedForReferral(redemption) {
+		return false
 	}
 	var count int64
 	if err := DB.Model(&ReferralCommissionJob{}).

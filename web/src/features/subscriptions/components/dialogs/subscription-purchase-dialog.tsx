@@ -17,41 +17,23 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { CalendarClock, Crown, Package } from 'lucide-react'
-import { useState } from 'react'
+import {useState} from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-
 import { GroupBadge } from '@/components/group-badge'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog'
 import { Separator } from '@/components/ui/separator'
 import { getPaymentIcon } from '@/features/wallet/lib'
 import { paymentFailureText } from '@/features/wallet/lib/payment-error'
 import { isSafeHttpCheckoutUrl } from '@/features/wallet/lib/payment-url'
 import type { PaymentInitiationResult } from '@/features/wallet/types'
 import { formatQuota } from '@/lib/format'
-
-import {
-  paySubscriptionCreem,
-  paySubscriptionEpay,
-  paySubscriptionBEpusdt,
-  paySubscriptionBalance,
-  paySubscriptionStripe,
-  paySubscriptionWaffoPancake,
-} from '../../api'
-import {
-  formatCnyPrice,
-  formatDuration,
-  formatResetPeriod,
-  splitGroupList,
-} from '../../lib'
+import { paySubscriptionCreem, paySubscriptionEpay, paySubscriptionBEpusdt, paySubscriptionBalance, paySubscriptionStripe, paySubscriptionWaffoPancake } from '../../api'
+import { formatCnyPrice, formatDuration, formatResetPeriod, splitGroupList } from '../../lib'
 import type { PlanRecord, SubscriptionPayResponse } from '../../types'
+import { handleServerError } from '@/lib/handle-server-error'
 
 interface PaymentMethod {
   type: string
@@ -166,10 +148,11 @@ export function SubscriptionPurchaseDialog(props: Props) {
       } else if (res.message === 'success') {
         toast.error(t('Invalid payment redirect URL'))
       } else {
-        toast.error(subscriptionPaymentError(res))
+
+        handleServerError(res, t('Payment request failed'))
       }
-    } catch {
-      toast.error(t('Payment request failed'))
+    } catch (error) {
+      handleServerError(error, t('Payment request failed'))
     } finally {
       setPaying(false)
     }
@@ -188,10 +171,11 @@ export function SubscriptionPurchaseDialog(props: Props) {
       } else if (res.message === 'success') {
         toast.error(t('Invalid payment redirect URL'))
       } else {
-        toast.error(subscriptionPaymentError(res))
+
+        handleServerError(res, t('Payment request failed'))
       }
-    } catch {
-      toast.error(t('Payment request failed'))
+    } catch (error) {
+      handleServerError(error, t('Payment request failed'))
     } finally {
       setPaying(false)
     }
@@ -212,10 +196,11 @@ export function SubscriptionPurchaseDialog(props: Props) {
       } else if (res.message === 'success') {
         toast.error(t('Invalid payment redirect URL'))
       } else {
-        toast.error(subscriptionPaymentError(res))
+
+        handleServerError(res, t('Payment request failed'))
       }
-    } catch {
-      toast.error(t('Payment request failed'))
+    } catch (error) {
+      handleServerError(error, t('Payment request failed'))
     } finally {
       setPaying(false)
     }
@@ -253,10 +238,11 @@ export function SubscriptionPurchaseDialog(props: Props) {
       } else if (res.message === 'success') {
         toast.error(t('Invalid payment redirect URL'))
       } else {
-        toast.error(subscriptionPaymentError(res))
+
+        handleServerError(res, t('Payment request failed'))
       }
-    } catch {
-      toast.error(t('Payment request failed'))
+    } catch (error) {
+      handleServerError(error, t('Payment request failed'))
     } finally {
       setPaying(false)
     }
@@ -285,10 +271,11 @@ export function SubscriptionPurchaseDialog(props: Props) {
       } else if (res.success || res.message === 'success') {
         toast.error(t('Invalid payment redirect URL'))
       } else {
-        toast.error(subscriptionPaymentError(res))
+
+        handleServerError(res, t('Payment request failed'))
       }
-    } catch {
-      toast.error(t('Payment request failed'))
+    } catch (error) {
+      handleServerError(error, t('Payment request failed'))
     } finally {
       setPaying(false)
     }

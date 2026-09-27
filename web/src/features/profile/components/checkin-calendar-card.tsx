@@ -48,12 +48,12 @@ import {
 } from '@/lib/calendar-locale'
 import { formatQuotaWithCurrency } from '@/lib/currency'
 import dayjs from '@/lib/dayjs'
+import { handleServerError } from '@/lib/handle-server-error'
+import { createServerError, localizeConsoleErrorText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
 import { getCheckinStatus, performCheckin } from '../api'
 import type { CheckinRecord } from '../types'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 interface CheckinCalendarCardProps {
   checkinEnabled: boolean
@@ -97,6 +97,7 @@ export function CheckinCalendarCard({
         return res.data
       }
       throw new Error(localizeConsoleErrorText(res.message, 'Failed to fetch checkin status'))
+      throw createServerError(res, t('Failed to fetch checkin status'))
     },
     enabled: checkinEnabled,
     staleTime: 30000,
@@ -169,9 +170,10 @@ export function CheckinCalendarCard({
             setTurnstileWidgetKey((v) => v + 1)
           }
           toast.error(localizeConsoleErrorText(res.message, 'Check-in failed'))
+          handleServerError(res, t('Check-in failed'))
         }
-      } catch {
-        toast.error(t('Check-in failed'))
+      } catch (error) {
+        handleServerError(error, t('Check-in failed'))
       } finally {
         setCheckinLoading(false)
       }

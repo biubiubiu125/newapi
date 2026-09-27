@@ -20,14 +20,22 @@ For commercial licensing, please contact support@quantumnous.com
 // Pricing Types
 // ----------------------------------------------------------------------------
 
+export type PricingVendor = {
+  id: number
+  name: string
+  icon?: string
+  description?: string
+}
+
 export type BillingUsageUnit = 'second' | 'count' | 'token' | 'credit'
 
 export type BillingUsageFieldSchema = {
   type?: 'number' | 'boolean'
   unit?: BillingUsageUnit
+  unitLabel?: string | Record<string, string>
   enum?: string[]
-  description?: string | Record<string, string>
   enumLabels?: Record<string, string | Record<string, string>>
+  description?: string | Record<string, string>
 }
 
 export type BillingUsageSchema = Record<string, BillingUsageFieldSchema>
@@ -36,14 +44,19 @@ export type BillingUsageExample = {
   label: string
   facts: Record<string, string | number>
 }
-export type PricingVendor = {
-  id: number
-  name: string
+
+export type BillingPluginVariant = {
+  plugin_key: string
+  plugin_name: string
   icon?: string
-  description?: string
+  billing_expr: string
+  billing_mode?: 'ratio' | 'tiered_expr'
+  billing_usage_schema: BillingUsageSchema
+  billing_usage_examples?: BillingUsageExample[]
 }
 
 export type PricingModel = {
+  billing_plugin_variants?: BillingPluginVariant[]
   id: number
   model_name: string
   description?: string

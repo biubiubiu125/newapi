@@ -4,13 +4,14 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	"strconv"
 	"strings"
 
 	"github.com/QuantumNous/new-api/constant"
-	hostdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
+
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	_ "github.com/QuantumNous/new-api/plugins"
 	"github.com/QuantumNous/new-api/relay/channel"
@@ -61,52 +62,11 @@ import (
 	"github.com/QuantumNous/new-api/relay/channel/zhipu"
 	"github.com/QuantumNous/new-api/relay/channel/zhipu_4v"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	taskdto "github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
-
-var taskPluginKeys = map[constant.TaskPlatform]string{
-	constant.TaskPlatformSuno:                                            "sunoapi",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAli)):         "alibaba",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling)):       "kling",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeJimeng)):      "jimeng",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVidu)):        "vidu",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)): "doubao",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVolcEngine)):  "doubao",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)):      "google",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMiniMax)):     "hailuo",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSora)):        "sora",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeOpenAI)):      "sora",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeNewAPI)):      "sora",
-	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVertexAi)):    "vertex-ai",
-}
-
-func ResolveTaskPluginForPlatform(generation *pluginruntime.RoutingGeneration, platform constant.TaskPlatform) (*pluginruntime.LoadedPlugin, bool) {
-	if generation == nil {
-		return nil, false
-	}
-	if key, ok := taskPluginKeys[platform]; ok {
-		if plugin, found := generation.Get(key); found {
-			return plugin, true
-		}
-	}
-	return generation.Get(string(platform))
-}
-
-func TaskPlatformUnavailableError(platform constant.TaskPlatform) (string, string) {
-	if !pluginruntime.DefaultRegistry.Enabled() {
-		return "task_plugin_system_disabled", "the task plugin system is disabled on this gateway"
-	}
-	key := string(platform)
-	if mapped, ok := taskPluginKeys[platform]; ok {
-		key = mapped
-	}
-	for _, meta := range pluginruntime.DefaultRegistry.Snapshot().Factory {
-		if meta.Key == key {
-			return "task_plugin_disabled", fmt.Sprintf("task plugin %q is disabled on this gateway", key)
-		}
-	}
-	return "invalid_api_platform", fmt.Sprintf("invalid api platform: %s", platform)
-}
 
 func GetAdaptor(apiType int) channel.Adaptor {
 	switch apiType {
@@ -199,77 +159,252 @@ func GetTaskPlatform(c *gin.Context) constant.TaskPlatform {
 	return constant.TaskPlatform(c.GetString("platform"))
 }
 
+var taskPluginKeys = map[constant.TaskPlatform]string{
+	constant.TaskPlatformSuno:                                            "sunoapi",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeAli)):         "alibaba",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling)):       "kling",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeJimeng)):      "jimeng",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVidu)):        "vidu",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeDoubaoVideo)): "doubao",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVolcEngine)):  "doubao",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeGemini)):      "google",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeMiniMax)):     "hailuo",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeSora)):        "sora",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeOpenAI)):      "sora",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeNewAPI)):      "sora",
+	constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeVertexAi)):    "vertex-ai",
+}
+
+func ResolveTaskPluginForPlatform(generation *pluginruntime.RoutingGeneration, platform constant.TaskPlatform) (*pluginruntime.LoadedPlugin, bool) {
+	if generation == nil {
+		return nil, false
+	}
+	if key, ok := taskPluginKeys[platform]; ok {
+		if plugin, found := generation.Get(key); found {
+			return plugin, true
+		}
+	}
+	return generation.Get(string(platform))
+}
+
+// TaskPlatformUnavailableError explains why no adaptor serves the platform:
+// the task-plugin system is switched off, the resolved plugin is disabled,
+// or the platform simply names nothing. The distinction is user-actionable,
+// so it must survive into the client-facing message.
+func TaskPlatformUnavailableError(platform constant.TaskPlatform) (string, string) {
+	if !pluginruntime.DefaultRegistry.Enabled() {
+		return "task_plugin_system_disabled", "the task plugin system is disabled on this gateway"
+	}
+	key := string(platform)
+	if mapped, ok := taskPluginKeys[platform]; ok {
+		key = mapped
+	}
+	for _, meta := range pluginruntime.DefaultRegistry.Snapshot().Factory {
+		if meta.Key == key {
+			return "task_plugin_disabled", fmt.Sprintf("task plugin %q is disabled on this gateway", key)
+		}
+	}
+	return "invalid_api_platform", fmt.Sprintf("invalid api platform: %s", platform)
+}
+
 func GetTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
+	// Factory plugins own usage facts and provider validation. Keep the Go
+	// adaptors only when that plugin is not loaded.
+	if plugin, ok := ResolveTaskPluginForPlatform(pluginruntime.DefaultRegistry.Generation(), platform); ok {
+		return jspluginadaptor.New(plugin)
+	}
+	return legacyTaskAdaptor(platform)
+}
+
+func legacyTaskAdaptor(platform constant.TaskPlatform) channel.TaskAdaptor {
 	switch platform {
-	//case constant.APITypeAIProxyLibrary:
-	//	return &aiproxy.Adaptor{}
 	case constant.TaskPlatformSuno:
-		return &suno.TaskAdaptor{}
+		return newLegacyTaskAdaptor(&suno.TaskAdaptor{})
 	}
 	if channelType, err := strconv.ParseInt(string(platform), 10, 64); err == nil {
 		switch channelType {
 		case constant.ChannelTypeAli:
-			return &taskali.TaskAdaptor{}
+			return newLegacyTaskAdaptor(&taskali.TaskAdaptor{})
 		case constant.ChannelTypeKling:
-			return &kling.TaskAdaptor{}
+			return newLegacyTaskAdaptor(&kling.TaskAdaptor{})
 		case constant.ChannelTypeJimeng:
-			return &taskjimeng.TaskAdaptor{}
+			return newLegacyTaskAdaptor(&taskjimeng.TaskAdaptor{})
 		case constant.ChannelTypeVertexAi:
-			return &taskvertex.TaskAdaptor{}
+			return newLegacyTaskAdaptor(&taskvertex.TaskAdaptor{})
 		case constant.ChannelTypeVidu:
-			return &taskVidu.TaskAdaptor{}
+			return newLegacyTaskAdaptor(&taskVidu.TaskAdaptor{})
 		case constant.ChannelTypeDoubaoVideo, constant.ChannelTypeVolcEngine:
-			return &taskdoubao.TaskAdaptor{}
+			return newLegacyTaskAdaptor(&taskdoubao.TaskAdaptor{})
 		case constant.ChannelTypeSora, constant.ChannelTypeOpenAI, constant.ChannelTypeNewAPI:
-			return &tasksora.TaskAdaptor{}
+			return newLegacyTaskAdaptor(&tasksora.TaskAdaptor{})
 		case constant.ChannelTypeGemini:
-			return &taskGemini.TaskAdaptor{}
+			return newLegacyTaskAdaptor(&taskGemini.TaskAdaptor{})
 		case constant.ChannelTypeMiniMax:
-			return &hailuo.TaskAdaptor{}
+			return newLegacyTaskAdaptor(&hailuo.TaskAdaptor{})
 		}
 	}
 	return nil
 }
 
-type legacyTaskAdaptorBridge struct {
-	channel.TaskAdaptor
+// legacyBuiltinTaskAdaptor is the provider contract still implemented by the
+// built-in video adaptors. The host task interface now uses ParseResponse and
+// a task object; this bridge keeps those providers working.
+type legacyBuiltinTaskAdaptor interface {
+	Init(info *relaycommon.RelayInfo)
+	ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *taskdto.TaskError
+	BuildRequestURL(info *relaycommon.RelayInfo) (string, error)
+	BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error
+	BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error)
+	DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error)
+	DoResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (taskID string, taskData []byte, err *taskdto.TaskError)
+	GetModelList() []string
+	GetChannelName() string
+	FetchTask(baseUrl, key string, body map[string]any, proxy string) (*http.Response, error)
+	ParseTaskResult(respBody []byte) (*relaycommon.TaskInfo, error)
 }
 
-func (a legacyTaskAdaptorBridge) ParseResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*channel.TaskSubmitResponse, *hostdto.TaskError) {
-	upstreamTaskID, taskData, taskErr := a.TaskAdaptor.DoResponse(c, resp, info)
+type legacyTaskAdaptorBridge struct {
+	inner legacyBuiltinTaskAdaptor
+}
+
+func newLegacyTaskAdaptor(inner legacyBuiltinTaskAdaptor) channel.TaskAdaptor {
+	return legacyTaskAdaptorBridge{inner: inner}
+}
+
+func (a legacyTaskAdaptorBridge) Init(info *relaycommon.RelayInfo) {
+	a.inner.Init(info)
+}
+
+func (a legacyTaskAdaptorBridge) ValidateRequestAndSetAction(c *gin.Context, info *relaycommon.RelayInfo) *taskdto.TaskError {
+	return a.inner.ValidateRequestAndSetAction(c, info)
+}
+
+func (a legacyTaskAdaptorBridge) EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64 {
+	estimator, ok := a.inner.(interface {
+		EstimateBilling(c *gin.Context, info *relaycommon.RelayInfo) map[string]float64
+	})
+	if !ok {
+		return nil
+	}
+	return estimator.EstimateBilling(c, info)
+}
+
+func (a legacyTaskAdaptorBridge) AdjustBillingOnSubmit(info *relaycommon.RelayInfo, taskData []byte) map[string]float64 {
+	adjuster, ok := a.inner.(interface {
+		AdjustBillingOnSubmit(info *relaycommon.RelayInfo, taskData []byte) map[string]float64
+	})
+	if !ok {
+		return nil
+	}
+	return adjuster.AdjustBillingOnSubmit(info, taskData)
+}
+
+func (a legacyTaskAdaptorBridge) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
+	adjuster, ok := a.inner.(interface {
+		AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
+	})
+	if !ok {
+		return 0
+	}
+	return adjuster.AdjustBillingOnComplete(task, taskResult)
+}
+
+func (a legacyTaskAdaptorBridge) BuildRequestURL(info *relaycommon.RelayInfo) (string, error) {
+	return a.inner.BuildRequestURL(info)
+}
+
+func (a legacyTaskAdaptorBridge) BuildRequestHeader(c *gin.Context, req *http.Request, info *relaycommon.RelayInfo) error {
+	return a.inner.BuildRequestHeader(c, req, info)
+}
+
+func (a legacyTaskAdaptorBridge) BuildRequestBody(c *gin.Context, info *relaycommon.RelayInfo) (io.Reader, error) {
+	return a.inner.BuildRequestBody(c, info)
+}
+
+func (a legacyTaskAdaptorBridge) DoRequest(c *gin.Context, info *relaycommon.RelayInfo, requestBody io.Reader) (*http.Response, error) {
+	return a.inner.DoRequest(c, info, requestBody)
+}
+
+func (a legacyTaskAdaptorBridge) ParseResponse(c *gin.Context, resp *http.Response, info *relaycommon.RelayInfo) (*channel.TaskSubmitResponse, *taskdto.TaskError) {
+	upstreamTaskID, taskData, taskErr := a.inner.DoResponse(c, resp, info)
 	if taskErr != nil {
 		return nil, taskErr
 	}
 	return &channel.TaskSubmitResponse{UpstreamTaskID: upstreamTaskID, TaskData: taskData}, nil
 }
 
+func (a legacyTaskAdaptorBridge) GetModelList() []string {
+	return a.inner.GetModelList()
+}
+
+func (a legacyTaskAdaptorBridge) GetChannelName() string {
+	return a.inner.GetChannelName()
+}
+
 func (a legacyTaskAdaptorBridge) FetchTask(baseURL, key string, task *model.Task, proxy string) (*http.Response, error) {
-	if task == nil {
-		return a.TaskAdaptor.FetchTask(baseURL, key, nil, proxy)
+	body := map[string]any{}
+	if task != nil {
+		body["task_id"] = task.GetUpstreamTaskID()
+		body["action"] = task.Action
 	}
-	return a.TaskAdaptor.FetchTask(baseURL, key, map[string]any{
-		"task_id": task.GetUpstreamTaskID(),
-		"action":  task.Action,
-	}, proxy)
+	return a.inner.FetchTask(baseURL, key, body, proxy)
 }
 
 func (a legacyTaskAdaptorBridge) FetchTaskContext(ctx context.Context, baseURL, key string, task *model.Task, proxy string) (*http.Response, error) {
-	if contextAdaptor, ok := a.TaskAdaptor.(interface {
+	contextAdaptor, ok := a.inner.(interface {
 		FetchTaskContext(context.Context, string, string, map[string]any, string) (*http.Response, error)
-	}); ok {
-		if task == nil {
-			return contextAdaptor.FetchTaskContext(ctx, baseURL, key, nil, proxy)
-		}
-		return contextAdaptor.FetchTaskContext(ctx, baseURL, key, map[string]any{
-			"task_id": task.GetUpstreamTaskID(),
-			"action":  task.Action,
-		}, proxy)
+	})
+	if !ok {
+		return a.FetchTask(baseURL, key, task, proxy)
 	}
-	return a.FetchTask(baseURL, key, task, proxy)
+	body := map[string]any{}
+	if task != nil {
+		body["task_id"] = task.GetUpstreamTaskID()
+		body["action"] = task.Action
+	}
+	return contextAdaptor.FetchTaskContext(ctx, baseURL, key, body, proxy)
 }
 
 func (a legacyTaskAdaptorBridge) ParseTaskResult(_ *model.Task, _ *http.Response, respBody []byte) (*relaycommon.TaskInfo, error) {
-	return a.TaskAdaptor.ParseTaskResult(respBody)
+	return a.inner.ParseTaskResult(respBody)
+}
+
+// GetLegacyTaskPollingAdaptor returns the built-in provider adaptor for the
+// service polling loop. That loop still sends a map body, including Suno
+// batch ids. Plugin platforms stay on the plugin polling factory.
+func GetLegacyTaskPollingAdaptor(platform constant.TaskPlatform) service.TaskPollingAdaptor {
+	adaptor := GetTaskAdaptor(platform)
+	bridge, ok := adaptor.(legacyTaskAdaptorBridge)
+	if !ok || bridge.inner == nil {
+		return nil
+	}
+	return legacyPollingAdaptor{inner: bridge.inner}
+}
+
+type legacyPollingAdaptor struct {
+	inner legacyBuiltinTaskAdaptor
+}
+
+func (a legacyPollingAdaptor) Init(info *relaycommon.RelayInfo) {
+	a.inner.Init(info)
+}
+
+func (a legacyPollingAdaptor) FetchTask(baseURL, key string, body map[string]any, proxy string) (*http.Response, error) {
+	return a.inner.FetchTask(baseURL, key, body, proxy)
+}
+
+func (a legacyPollingAdaptor) ParseTaskResult(body []byte) (*relaycommon.TaskInfo, error) {
+	return a.inner.ParseTaskResult(body)
+}
+
+func (a legacyPollingAdaptor) AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int {
+	adjuster, ok := a.inner.(interface {
+		AdjustBillingOnComplete(task *model.Task, taskResult *relaycommon.TaskInfo) int
+	})
+	if !ok {
+		return 0
+	}
+	return adjuster.AdjustBillingOnComplete(task, taskResult)
 }
 
 func GetTaskPluginAdaptor(platform constant.TaskPlatform) channel.TaskPluginAdaptor {
@@ -305,14 +440,14 @@ func ResolveTaskPluginForTask(task *model.Task) (*pluginruntime.LoadedPlugin, *p
 
 	generation := pluginruntime.DefaultRegistry.Generation()
 	if plugin, ok := ResolveTaskPluginForPlatform(generation, constant.TaskPlatform(key)); ok &&
-		(version == "" || plugin.Meta.Version == version) {
+		(version == "" || plugin.Meta.Version == version) &&
+		(snapshotSource == "" || plugin.Source == snapshotSource) {
 		// A generation mismatch is acceptable when the registry still exposes
-		// the same immutable key/version. Versioned database rows reject source
-		// replacement, so this remains the exact executable.
-		if strings.TrimSpace(snapshotSource) == "" || plugin.Source == snapshotSource {
-			_ = generationNumber
-			return plugin, generation, nil
-		}
+		// the same immutable key/version and source. A task captured with a
+		// different source keeps that snapshot even if the version string did
+		// not change.
+		_ = generationNumber
+		return plugin, generation, nil
 	}
 
 	if version == "" {
@@ -342,10 +477,29 @@ func ResolveTaskPluginForTask(task *model.Task) (*pluginruntime.LoadedPlugin, *p
 		persistedErr = fmt.Errorf("compile persisted task plugin: %w", compileErr)
 	}
 
+	// A captured version that was never stored still uses the registered
+	// factory plugin. Tests and older tasks pin 1.0.0 after the factory moved
+	// to 1.0.1; there is no snapshot source to compile instead.
+	if persistedErr != nil && strings.TrimSpace(snapshotSource) == "" && taskPluginVersionUnavailable(persistedErr) {
+		if plugin, ok := ResolveTaskPluginForPlatform(generation, constant.TaskPlatform(key)); ok {
+			return plugin, generation, nil
+		}
+	}
 	if persistedErr == nil {
 		persistedErr = errors.New("task plugin source is unavailable")
 	}
 	return nil, nil, fmt.Errorf("load task plugin %s@%s: %w", key, version, persistedErr)
+}
+
+func taskPluginVersionUnavailable(err error) bool {
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "no such table") || strings.Contains(message, "does not exist")
 }
 
 // GetTaskPluginAdaptorForTask is the task-lifecycle counterpart to
@@ -391,11 +545,11 @@ func getTaskAdaptorForRequest(c *gin.Context, platform constant.TaskPlatform) (c
 				Plugin:     plugin,
 			})
 		}
-		return constant.TaskPlatform(plugin.Meta.Key), jspluginadaptor.New(plugin)
+		return platform, jspluginadaptor.New(plugin)
 	}
 	legacy := GetTaskAdaptor(platform)
 	if legacy == nil {
 		return platform, nil
 	}
-	return platform, legacyTaskAdaptorBridge{TaskAdaptor: legacy}
+	return platform, legacy
 }

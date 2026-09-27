@@ -19,44 +19,14 @@ For commercial licensing, please contact support@quantumnous.com
 import { Link, useLocation } from '@tanstack/react-router'
 import { ChevronRight } from 'lucide-react'
 import { type ReactNode, useState, useEffect } from 'react'
-
 import { Badge } from '@/components/ui/badge'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
-import {
-  DropdownMenu,
-  DropdownMenuContent,
-  DropdownMenuGroup,
-  DropdownMenuItem,
-  DropdownMenuLabel,
-  DropdownMenuSeparator,
-  DropdownMenuTrigger,
-} from '@/components/ui/dropdown-menu'
-import {
-  SidebarGroup,
-  SidebarGroupLabel,
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-  SidebarMenuSub,
-  SidebarMenuSubButton,
-  SidebarMenuSubItem,
-  useSidebar,
-} from '@/components/ui/sidebar'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
+import { DropdownMenu, DropdownMenuContent, DropdownMenuGroup, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
+import { SidebarGroup, SidebarGroupLabel, SidebarMenu, SidebarMenuButton, SidebarMenuItem, SidebarMenuSub, SidebarMenuSubButton, SidebarMenuSubItem, useSidebar } from '@/components/ui/sidebar'
 import { useAuthStore } from '@/stores/auth-store'
-
 import { acknowledgeAdminSidebarBadge } from '../lib/admin-sidebar-badge-ack'
 import { checkIsActive } from '../lib/url-utils'
-import type {
-  NavCollapsible,
-  NavChatPresets,
-  NavItem,
-  NavLink,
-  NavGroup as NavGroupProps,
-} from '../types'
+import type { NavCollapsible, NavChatPresets, NavItem, NavLink, NavGroup as NavGroupProps } from '../types'
 import { ChatPresetsItem } from './chat-presets-item'
 
 function acknowledgeNavItemBadges(
@@ -78,10 +48,6 @@ function acknowledgeNavItemBadges(
   })
 }
 
-/**
- * Sidebar navigation group component
- * Renders a group of navigation items, supporting regular links and collapsible submenus
- */
 export function NavGroup({ title, items }: NavGroupProps) {
   const { state, isMobile } = useSidebar()
   const href = useLocation({ select: (location) => location.href })
@@ -132,16 +98,10 @@ export function NavGroup({ title, items }: NavGroupProps) {
   )
 }
 
-/**
- * Navigation badge component
- */
 function NavBadge({ children }: { children: ReactNode }) {
   return <Badge className='shrink-0 px-1 py-0 text-xs'>{children}</Badge>
 }
 
-/**
- * Sidebar menu link item
- */
 function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
   const { isMobile, setOpenMobile } = useSidebar()
   const userId = useAuthStore((state) => state.auth.user?.id)
@@ -179,9 +139,6 @@ function SidebarMenuLink({ item, href }: { item: NavLink; href: string }) {
   )
 }
 
-/**
- * Sidebar collapsible menu item
- */
 function SidebarMenuCollapsible({
   item,
   href,
@@ -260,9 +217,6 @@ function SidebarMenuCollapsible({
   )
 }
 
-/**
- * Sidebar dropdown menu item when collapsed
- */
 function SidebarMenuCollapsedDropdown({
   item,
   href,

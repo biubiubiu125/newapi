@@ -19,7 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import { api, type ApiRequestConfig } from '@/lib/api'
 
 import { parseTaskArtifactsResponse } from './lib/task-artifacts'
-import { buildQueryParams } from './lib/utils'
+import { buildQueryParams } from './lib/query-params'
 import type {
   GetLogsParams,
   GetLogsResponse,

@@ -16,55 +16,25 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  ChevronDown,
-  ChevronUp,
-  Copy,
-  GripVertical,
-  Plus,
-  Search,
-  Trash2,
-} from 'lucide-react'
-import {
-  type DragEvent,
-  type KeyboardEvent,
-  useCallback,
-  useEffect,
-  useMemo,
-  useState,
-} from 'react'
+import { ChevronDown, ChevronUp, Copy, GripVertical, Plus, Search, Trash2 } from 'lucide-react'
+import { type DragEvent, type KeyboardEvent, useCallback, useEffect, useMemo, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-
 import { Dialog } from '@/components/dialog'
 import { JsonCodeEditor } from '@/components/json-code-editor'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
 import { ScrollArea } from '@/components/ui/scroll-area'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
 import { Textarea } from '@/components/ui/textarea'
 import { currentConsoleFailureText } from '@/lib/console-failure-text'
 import { cn } from '@/lib/utils'
-
 import { localizeConsoleErrorText } from '@/lib/server-error-message'
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+import { Combobox } from '@/components/ui/combobox'
+import { Label } from '@/components/ui/label'
 
 type ParamOverrideCondition = {
   id: string
@@ -94,10 +64,6 @@ export type ParamOverrideEditorDialogProps = {
   onOpenChange: (open: boolean) => void
   onSave: (value: string) => void
 }
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
 
 const OPERATION_MODE_OPTIONS = [
   { label: 'Set Field', value: 'set' },
@@ -249,8 +215,6 @@ const SYNC_TARGET_TYPE_OPTIONS = [
   { label: 'Request Header Field', value: 'header' },
 ]
 
-// Templates
-
 const LEGACY_TEMPLATE = { temperature: 0, max_tokens: 1000 }
 
 const OPERATION_TEMPLATE = {
@@ -295,10 +259,6 @@ const GEMINI_IMAGE_4K_TEMPLATE = {
   ],
 }
 
-// Keep in sync with upstream Codex request headers:
-// https://github.com/openai/codex/commit/7c7b4861d88960f7e3bd5b7f30f8351be666dd84
-// https://github.com/openai/codex/commit/14df0e8833aad0d6d78287954b61ffac67af936c
-// https://github.com/openai/codex/commit/ebdd8795e924a8149b616e46ca2ed7848c207a4b
 const CODEX_CLI_HEADER_PASSTHROUGH_HEADERS = [
   'Originator',
   'Session_id',
@@ -351,6 +311,7 @@ const CODEX_CLI_HEADER_PASSTHROUGH_TEMPLATE = {
     },
   ],
 }
+
 const CLAUDE_CLI_HEADER_PASSTHROUGH_TEMPLATE = buildPassHeadersTemplate(
   CLAUDE_CLI_HEADER_PASSTHROUGH_HEADERS
 )
@@ -442,11 +403,8 @@ const TEMPLATE_PRESET_CONFIG: Record<string, TemplatePresetConfig> = {
   },
 }
 
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
 let localIdSeed = 0
+
 const nextLocalId = () => `po_${Date.now()}_${localIdSeed++}`
 
 const toValueText = (value: unknown): string => {
@@ -684,8 +642,6 @@ const buildSyncTargetSpec = (type: string, key: string): string => {
   return `${normalizedType}:${normalizedKey}`
 }
 
-// return_error helpers
-
 type ReturnErrorDraft = {
   message: string
   statusCode: number
@@ -755,8 +711,6 @@ const buildReturnErrorValueText = (
   if (draft.skipRetry === false) payload.skip_retry = false
   return JSON.stringify(payload)
 }
-
-// prune_objects helpers
 
 type PruneRule = {
   id: string
@@ -883,8 +837,6 @@ const buildPruneObjectsValueText = (draft: PruneObjectsDraft): string => {
   return JSON.stringify(payload)
 }
 
-// pass_headers helpers
-
 const parsePassHeaderNames = (rawValue: unknown): string[] => {
   if (Array.isArray(rawValue)) {
     return rawValue.map((i) => String(i ?? '').trim()).filter(Boolean)
@@ -909,7 +861,6 @@ const parsePassHeaderNames = (rawValue: unknown): string[] => {
   return []
 }
 
-// Condition payload builder
 const buildConditionPayload = (
   condition: ParamOverrideCondition
 ): Record<string, unknown> | null => {
@@ -924,8 +875,6 @@ const buildConditionPayload = (
   if (condition.pass_missing_key) payload.pass_missing_key = true
   return payload
 }
-
-// Validation
 
 const validateOperations = (
   operations: ParamOverrideOperation[],
@@ -997,8 +946,6 @@ const validateOperations = (
   }
   return ''
 }
-
-// Parse initial state
 
 type EditorState = {
   editMode: 'visual' | 'json'
@@ -1079,8 +1026,6 @@ const parseInitialState = (rawValue: string): EditorState => {
   }
 }
 
-// Build operations JSON
-
 const buildOperationsJson = (
   sourceOperations: ParamOverrideOperation[],
   options: { validate: boolean },
@@ -1126,10 +1071,6 @@ const buildOperationsJson = (
 
   return JSON.stringify({ operations: payloadOps }, null, 2)
 }
-
-// ---------------------------------------------------------------------------
-// Component
-// ---------------------------------------------------------------------------
 
 export function ParamOverrideEditorDialog(
   props: ParamOverrideEditorDialogProps
@@ -1750,7 +1691,7 @@ export function ParamOverrideEditorDialog(
       description={t(
         'Create request parameter override rules with a visual editor or raw JSON.'
       )}
-      contentClassName='flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-5xl'
+      contentClassName='flex max-h-[min(90dvh,var(--dialog-available-height))] flex-col gap-0 p-0 sm:max-w-5xl'
       headerClassName='border-b px-6 py-4'
       footerClassName='border-t px-6 py-4'
       contentHeight='min(72vh, 720px)'
@@ -1798,8 +1739,9 @@ export function ParamOverrideEditorDialog(
           <span className='text-muted-foreground text-xs font-medium'>
             {t('Template')}
           </span>
-          <Select
-            items={templatePresetOptions.map((o) => ({
+
+          <Combobox
+            options={templatePresetOptions.map((o) => ({
               value: o.value,
               label: t(o.label),
             }))}
@@ -1807,20 +1749,8 @@ export function ParamOverrideEditorDialog(
             onValueChange={(v) =>
               setTemplatePresetKey(v || 'operations_default')
             }
-          >
-            <SelectTrigger className='h-8 w-[220px]'>
-              <SelectValue />
-            </SelectTrigger>
-            <SelectContent alignItemWithTrigger={false}>
-              <SelectGroup>
-                {templatePresetOptions.map((o) => (
-                  <SelectItem key={o.value} value={o.value}>
-                    {t(o.label)}
-                  </SelectItem>
-                ))}
-              </SelectGroup>
-            </SelectContent>
-          </Select>
+            className='h-8 w-[220px]'
+          />
           <Button
             type='button'
             variant='outline'
@@ -1849,8 +1779,8 @@ export function ParamOverrideEditorDialog(
       </div>
       {/* Content */}
       <div className='min-h-0 flex-1 overflow-hidden'>
-        {editMode === 'visual' ? (
-          visualMode === 'legacy' ? (
+        {editMode === 'visual' &&
+          (visualMode === 'legacy' ? (
             <div className='p-4'>
               <p className='text-muted-foreground mb-2 text-sm'>
                 {t('Legacy Format (JSON Object)')}
@@ -2062,9 +1992,9 @@ export function ParamOverrideEditorDialog(
                 )}
               </div>
             </div>
-          )
-        ) : (
-          /* JSON mode */
+          ))}
+        {/* JSON mode */}
+        {editMode !== 'visual' && (
           <div className='p-4'>
             <div className='mb-2 flex items-center gap-2'>
               <span className='text-muted-foreground text-xs'>
@@ -2092,10 +2022,6 @@ export function ParamOverrideEditorDialog(
     </Dialog>
   )
 }
-
-// ---------------------------------------------------------------------------
-// RuleEditor sub-component
-// ---------------------------------------------------------------------------
 
 type RuleEditorProps = {
   operation: ParamOverrideOperation
@@ -2145,6 +2071,10 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
   const { t } = useTranslation()
   const operation = ruleEditorProps.operation
   const mode = operation.mode || 'set'
+  const returnErrorDraft =
+    mode === 'return_error' ? ruleEditorProps.returnErrorDraft : null
+  const pruneObjectsDraft =
+    mode === 'prune_objects' ? ruleEditorProps.pruneObjectsDraft : null
   const meta = MODE_META[mode] || MODE_META.set
   const conditions = operation.conditions
   const syncFromTarget =
@@ -2192,8 +2122,9 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
         <div className='grid gap-3 sm:grid-cols-2'>
           <div className='space-y-1.5'>
             <label className='text-xs font-medium'>{t('Operation Type')}</label>
-            <Select
-              items={OPERATION_MODE_OPTIONS.map((o) => ({
+
+            <Combobox
+              options={OPERATION_MODE_OPTIONS.map((o) => ({
                 value: o.value,
                 label: t(o.label),
               }))}
@@ -2204,20 +2135,8 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
                   mode: nextMode,
                 })
               }
-            >
-              <SelectTrigger className='h-9'>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent alignItemWithTrigger={false}>
-                <SelectGroup>
-                  {OPERATION_MODE_OPTIONS.map((o) => (
-                    <SelectItem key={o.value} value={o.value}>
-                      {t(o.label)}
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+              className='h-9'
+            />
           </div>
           {(meta.path || meta.pathOptional) && (
             <div className='space-y-1.5'>
@@ -2271,62 +2190,68 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
         </div>
 
         {/* Value section */}
-        {meta.value &&
-          (mode === 'return_error' && ruleEditorProps.returnErrorDraft ? (
-            <ReturnErrorEditor
-              operationId={operation.id}
-              draft={ruleEditorProps.returnErrorDraft}
-              updateDraft={ruleEditorProps.updateReturnErrorDraft}
-            />
-          ) : mode === 'prune_objects' && ruleEditorProps.pruneObjectsDraft ? (
-            <PruneObjectsEditor
-              operationId={operation.id}
-              draft={ruleEditorProps.pruneObjectsDraft}
-              updateDraft={ruleEditorProps.updatePruneObjectsDraft}
-              addRule={ruleEditorProps.addPruneRule}
-              updateRule={ruleEditorProps.updatePruneRule}
-              removeRule={ruleEditorProps.removePruneRule}
-            />
-          ) : (
-            <div className='space-y-1.5'>
-              <div className='flex items-center justify-between'>
-                <label className='text-xs font-medium'>
-                  {t(getModeValueLabel(mode))}
-                </label>
-                {operation.value_text.trim().startsWith('{') && (
-                  <Button
-                    type='button'
-                    variant='ghost'
-                    size='sm'
-                    className='text-muted-foreground h-auto px-1.5 py-0.5 text-xs'
-                    onClick={() => {
-                      try {
-                        const parsed = JSON.parse(operation.value_text)
-                        ruleEditorProps.updateOperation(operation.id, {
-                          value_text: JSON.stringify(parsed, null, 2),
-                        })
-                      } catch {
-                        /* not valid JSON */
-                      }
-                    }}
-                  >
-                    {t('Format')}
-                  </Button>
-                )}
-              </div>
-              <Textarea
-                value={operation.value_text}
-                onChange={(e) =>
-                  ruleEditorProps.updateOperation(operation.id, {
-                    value_text: e.target.value,
-                  })
-                }
-                placeholder={getModeValuePlaceholder(mode)}
-                rows={3}
-                className='max-h-[200px] resize-y overflow-y-auto font-mono text-xs'
+
+        {meta.value && (
+          <>
+            {returnErrorDraft && (
+              <ReturnErrorEditor
+                operationId={operation.id}
+                draft={returnErrorDraft}
+                updateDraft={ruleEditorProps.updateReturnErrorDraft}
               />
-            </div>
-          ))}
+            )}
+            {pruneObjectsDraft && (
+              <PruneObjectsEditor
+                operationId={operation.id}
+                draft={pruneObjectsDraft}
+                updateDraft={ruleEditorProps.updatePruneObjectsDraft}
+                addRule={ruleEditorProps.addPruneRule}
+                updateRule={ruleEditorProps.updatePruneRule}
+                removeRule={ruleEditorProps.removePruneRule}
+              />
+            )}
+            {!returnErrorDraft && !pruneObjectsDraft && (
+              <div className='space-y-1.5'>
+                <div className='flex items-center justify-between'>
+                  <label className='text-xs font-medium'>
+                    {t(getModeValueLabel(mode))}
+                  </label>
+                  {operation.value_text.trim().startsWith('{') && (
+                    <Button
+                      type='button'
+                      variant='ghost'
+                      size='sm'
+                      className='text-muted-foreground h-auto px-1.5 py-0.5 text-xs'
+                      onClick={() => {
+                        try {
+                          const parsed = JSON.parse(operation.value_text)
+                          ruleEditorProps.updateOperation(operation.id, {
+                            value_text: JSON.stringify(parsed, null, 2),
+                          })
+                        } catch {
+                          /* not valid JSON */
+                        }
+                      }}
+                    >
+                      {t('Format')}
+                    </Button>
+                  )}
+                </div>
+                <Textarea
+                  value={operation.value_text}
+                  onChange={(e) =>
+                    ruleEditorProps.updateOperation(operation.id, {
+                      value_text: e.target.value,
+                    })
+                  }
+                  placeholder={getModeValuePlaceholder(mode)}
+                  rows={3}
+                  className='max-h-[200px] resize-y overflow-y-auto font-mono text-xs'
+                />
+              </div>
+            )}
+          </>
+        )}
 
         {/* keep_origin */}
         {meta.keepOrigin && (
@@ -2346,14 +2271,15 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
         )}
 
         {/* sync_fields */}
-        {mode === 'sync_fields' && syncFromTarget && syncToTarget ? (
+        {mode === 'sync_fields' && syncFromTarget && syncToTarget && (
           <SyncFieldsEditor
             operationId={operation.id}
             syncFromTarget={syncFromTarget}
             syncToTarget={syncToTarget}
             updateOperation={ruleEditorProps.updateOperation}
           />
-        ) : (meta.from || meta.to !== undefined) && mode !== 'sync_fields' ? (
+        )}
+        {(meta.from || meta.to !== undefined) && mode !== 'sync_fields' && (
           <div className='grid gap-3 sm:grid-cols-2'>
             {(meta.from || meta.to === false) && (
               <div className='space-y-1.5'>
@@ -2390,7 +2316,7 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
               </div>
             )}
           </div>
-        ) : null}
+        )}
 
         {/* Conditions */}
         <div className='rounded-lg border p-3'>
@@ -2492,10 +2418,6 @@ function RuleEditor(ruleEditorProps: RuleEditorProps) {
   )
 }
 
-// ---------------------------------------------------------------------------
-// ConditionEditor
-// ---------------------------------------------------------------------------
-
 type ConditionEditorProps = {
   condition: ParamOverrideCondition
   conditionIndex: number
@@ -2579,8 +2501,9 @@ function ConditionEditor(conditionEditorProps: ConditionEditorProps) {
                 <label className='text-[10px] font-medium'>
                   {t('Match Mode')}
                 </label>
-                <Select
-                  items={CONDITION_MODE_OPTIONS.map((o) => ({
+
+                <Combobox
+                  options={CONDITION_MODE_OPTIONS.map((o) => ({
                     value: o.value,
                     label: t(o.label),
                   }))}
@@ -2593,20 +2516,8 @@ function ConditionEditor(conditionEditorProps: ConditionEditorProps) {
                       { mode: v }
                     )
                   }
-                >
-                  <SelectTrigger className='h-8 text-xs'>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent alignItemWithTrigger={false}>
-                    <SelectGroup>
-                      {CONDITION_MODE_OPTIONS.map((o) => (
-                        <SelectItem key={o.value} value={o.value}>
-                          {t(o.label)}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
+                  className='h-8 text-xs'
+                />
               </div>
               <div className='space-y-1'>
                 <label className='text-[10px] font-medium'>
@@ -2661,10 +2572,6 @@ function ConditionEditor(conditionEditorProps: ConditionEditorProps) {
   )
 }
 
-// ---------------------------------------------------------------------------
-// ReturnErrorEditor
-// ---------------------------------------------------------------------------
-
 type ReturnErrorEditorProps = {
   operationId: string
   draft: ReturnErrorDraft
@@ -2718,9 +2625,9 @@ function ReturnErrorEditor(returnErrorEditorProps: ReturnErrorEditorProps) {
       </div>
 
       <div className='space-y-1.5'>
-        <label className='text-xs font-medium'>
-          {t('Error Message (required)')}
-        </label>
+        <Label required className='text-xs font-medium'>
+          {t('Error Message')}
+        </Label>
         <Textarea
           value={draft.message}
           onChange={(e) =>
@@ -2871,10 +2778,6 @@ function ReturnErrorEditor(returnErrorEditorProps: ReturnErrorEditorProps) {
     </div>
   )
 }
-
-// ---------------------------------------------------------------------------
-// PruneObjectsEditor
-// ---------------------------------------------------------------------------
 
 type PruneObjectsEditorProps = {
   operationId: string
@@ -3097,8 +3000,9 @@ function PruneObjectsEditor(pruneObjectsEditorProps: PruneObjectsEditorProps) {
                         <label className='text-[10px] font-medium'>
                           {t('Match Mode')}
                         </label>
-                        <Select
-                          items={CONDITION_MODE_OPTIONS.map((o) => ({
+
+                        <Combobox
+                          options={CONDITION_MODE_OPTIONS.map((o) => ({
                             value: o.value,
                             label: t(o.label),
                           }))}
@@ -3111,20 +3015,8 @@ function PruneObjectsEditor(pruneObjectsEditorProps: PruneObjectsEditorProps) {
                               { mode: v }
                             )
                           }
-                        >
-                          <SelectTrigger className='h-7 text-xs'>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent alignItemWithTrigger={false}>
-                            <SelectGroup>
-                              {CONDITION_MODE_OPTIONS.map((o) => (
-                                <SelectItem key={o.value} value={o.value}>
-                                  {t(o.label)}
-                                </SelectItem>
-                              ))}
-                            </SelectGroup>
-                          </SelectContent>
-                        </Select>
+                          className='h-7 text-xs'
+                        />
                       </div>
                       <div className='space-y-0.5'>
                         <label className='text-[10px] font-medium'>
@@ -3182,10 +3074,6 @@ function PruneObjectsEditor(pruneObjectsEditorProps: PruneObjectsEditorProps) {
     </div>
   )
 }
-
-// ---------------------------------------------------------------------------
-// SyncFieldsEditor
-// ---------------------------------------------------------------------------
 
 type SyncFieldsEditorProps = {
   operationId: string

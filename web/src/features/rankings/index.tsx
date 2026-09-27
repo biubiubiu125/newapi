@@ -36,7 +36,6 @@ import type { RankingPeriod } from './types'
 const VALID_PERIODS = new Set<RankingPeriod>(['today', 'week', 'month', 'year'])
 
 export function Rankings() {
-  const { t } = useTranslation()
   const search = useSearch({ from: '/rankings/' })
   const navigate = useNavigate()
 

@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"math"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -264,6 +263,13 @@ func testChannel(ctx context.Context, channel *model.Channel, testUserID int, te
 			context:     c,
 			localErr:    err,
 			newAPIError: types.NewError(err, types.ErrorCodeChannelModelMappedError),
+		}
+	}
+	if err := helper.ApplyReasoningModelSuffix(c, info, request); err != nil {
+		return testResult{
+			context:     c,
+			localErr:    err,
+			newAPIError: types.NewErrorWithStatusCode(err, types.ErrorCodeConvertRequestFailed, http.StatusBadRequest, types.ErrOptionWithSkipRetry()),
 		}
 	}
 
@@ -554,18 +560,19 @@ func settleTestQuota(info *relaycommon.RelayInfo, priceData types.PriceData, usa
 
 	quota := 0
 	if !priceData.UsePrice {
-		quota = usage.PromptTokens + int(math.Round(float64(usage.CompletionTokens)*priceData.CompletionRatio))
-		quota = int(math.Round(float64(quota) * priceData.ModelRatio))
+		completionQuota := common.QuotaRound(float64(usage.CompletionTokens) * priceData.CompletionRatio)
+		quota = common.QuotaRound(float64(usage.PromptTokens) + float64(completionQuota))
+		quota = common.QuotaRound(float64(quota) * priceData.ModelRatio)
 		if priceData.ModelRatio != 0 && quota <= 0 {
 			quota = 1
 		}
 		return quota, nil
 	}
 
-	return int(priceData.ModelPrice * common.QuotaPerUnit), nil
+	return common.QuotaFromFloat(priceData.ModelPrice * common.QuotaPerUnit), nil
 }
 
-func buildTestLogOther(c *gin.Context, info *relaycommon.RelayInfo, priceData types.PriceData, usage *dto.Usage, tieredResult *billingexpr.TieredResult) map[string]interface{} {
+func buildTestLogOther(c *gin.Context, info *relaycommon.RelayInfo, priceData types.PriceData, usage *dto.Usage, tieredResult *billingexpr.TieredResult) *model.LogOther {
 	other := service.GenerateTextOtherInfo(c, info, priceData.ModelRatio, priceData.GroupRatioInfo.GroupRatio, priceData.CompletionRatio,
 		usage.PromptTokensDetails.CachedTokens, priceData.CacheRatio, priceData.ModelPrice, priceData.GroupRatioInfo.GroupSpecialRatio)
 	if tieredResult != nil {
@@ -619,7 +626,7 @@ func detectErrorFromTestResponseBody(respBody []byte) error {
 		return fmt.Errorf("upstream error: %s", message)
 	}
 
-	for _, line := range bytes.Split(b, []byte{'\n'}) {
+	for line := range bytes.SplitSeq(b, []byte{'\n'}) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 {
 			continue
@@ -645,7 +652,7 @@ func validateStreamTestResponseBody(respBody []byte) error {
 		return errors.New("stream response body is empty")
 	}
 
-	for _, line := range bytes.Split(b, []byte{'\n'}) {
+	for line := range bytes.SplitSeq(b, []byte{'\n'}) {
 		line = bytes.TrimSpace(line)
 		if len(line) == 0 || !bytes.HasPrefix(line, []byte("data:")) {
 			continue

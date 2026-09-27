@@ -83,11 +83,12 @@ func TestCascadeTaskPluginChannelsReportsUpdateFailures(t *testing.T) {
 	updateTaskPluginChannelStatus = func(id int, _ string, _ int, _ string) bool {
 		return id == 1
 	}
-	disabled, failed := cascadeTaskPluginChannels([]model.TaskPluginChannelRef{
+	disabled, unbound, failed := cascadeTaskPluginChannels("unused", []model.TaskPluginChannelRef{
 		{Id: 1},
 		{Id: 2},
 	}, true)
 
 	require.Equal(t, 1, disabled)
+	require.Equal(t, 0, unbound)
 	require.Equal(t, []int{2}, failed)
 }

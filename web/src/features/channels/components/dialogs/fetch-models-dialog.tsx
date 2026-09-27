@@ -18,7 +18,8 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { useQueryClient } from '@tanstack/react-query'
 import { Loader2, Search, Info, ChevronDown } from 'lucide-react'
-import { useState, useEffect, useMemo, useRef } from 'react'
+import {useState, useEffect, useMemo, useRef} from 'react'
+
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -45,6 +46,7 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import { fetchUpstreamModels, updateChannel } from '../../api'
 import {
@@ -103,6 +105,7 @@ export function FetchModelsDialog({
   const [isFetching, setIsFetching] = useState(false)
   const [isSaving, setIsSaving] = useState(false)
   const [fetchedModels, setFetchedModels] = useState<string[]>([])
+  const [, setCandidateModels] = useState<string[]>([])
   const [selectedModels, setSelectedModels] = useState<string[]>([])
   const [hasSuccessfulFetch, setHasSuccessfulFetch] = useState(false)
   const [searchKeyword, setSearchKeyword] = useState('')
@@ -115,7 +118,6 @@ export function FetchModelsDialog({
     [existingModelsOverride, activeChannel?.models]
   )
 
-  // Categorize models with redirect models
   const modelCategories = useMemo(
     () => categorizeModelsWithRedirect(existingModels, redirectModels),
     [existingModels, redirectModels]
@@ -138,7 +140,6 @@ export function FetchModelsDialog({
     redirectSourceModels,
     searchKeyword,
   ])
-
   useEffect(() => {
     if (open && (activeChannel || customFetcher)) {
       handleFetchModels()
@@ -186,8 +187,13 @@ export function FetchModelsDialog({
           toast.success(
             t('Fetched {{count}} models', { count: normalizedList.length })
           )
+          setFetchedModels(list)
+          setCandidateModels(existingModels)
+          setSelectedModels(existingModels)
+          toast.success(t('Fetched {{count}} models', { count: list.length }))
         } else {
           toast.error(localizeConsoleErrorText(response.message, 'Failed to fetch models'))
+          handleServerError(response, t('Failed to fetch models'))
           setFetchedModels([])
           setSelectedModels([])
           setHasSuccessfulFetch(false)
@@ -240,11 +246,13 @@ export function FetchModelsDialog({
         onOpenChange(false)
       } else {
         toast.error(localizeConsoleErrorText(response.message, 'Failed to update models'))
+        handleServerError(response, t('Failed to update models'))
       }
     } catch (error: unknown) {
       toast.error(
         localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to update models')
       )
+      handleServerError(error, t('Failed to update models'))
     } finally {
       setIsSaving(false)
     }
@@ -254,6 +262,7 @@ export function FetchModelsDialog({
     fetchRequestGenerationRef.current += 1
     setIsFetching(false)
     setFetchedModels([])
+    setCandidateModels([])
     setSelectedModels([])
     setHasSuccessfulFetch(false)
     setSearchKeyword('')

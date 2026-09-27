@@ -393,6 +393,78 @@ func replaceLegacyImageTaskModeRaw(jsonText string) (string, bool, error) {
 	return string(data), true, nil
 }
 
+func migrateRemoveChannelImageTaskMode() error {
+	const batchSize = 500
+	if !DB.Migrator().HasTable(&Channel{}) {
+		return nil
+	}
+
+	var total int64
+	var lastID int
+	for {
+		var channels []Channel
+		err := DB.Model(&Channel{}).
+			Select("id", "settings").
+			Where("id > ?", lastID).
+			Where("settings LIKE ?", "%image_task_mode%").
+			Order("id ASC").
+			Limit(batchSize).
+			Find(&channels).Error
+		if err != nil {
+			return err
+		}
+		if len(channels) == 0 {
+			if total > 0 {
+				common.SysLog(fmt.Sprintf("removed image_task_mode from %d channel settings", total))
+			}
+			return nil
+		}
+
+		for _, channel := range channels {
+			lastID = channel.Id
+			settings, changed, err := removeRemovedImageTaskModeRaw(channel.OtherSettings)
+			if err != nil {
+				common.SysLog(fmt.Sprintf("skip channel #%d image_task_mode removal: %s", channel.Id, err.Error()))
+				continue
+			}
+			if !changed {
+				continue
+			}
+			result := DB.Model(&Channel{}).Where("id = ?", channel.Id).Update("settings", settings)
+			if result.Error != nil {
+				return result.Error
+			}
+			total += result.RowsAffected
+		}
+	}
+}
+
+func removeRemovedImageTaskModeRaw(jsonText string) (string, bool, error) {
+	fields := map[string]json.RawMessage{}
+	if err := common.UnmarshalJsonStr(jsonText, &fields); err != nil {
+		return "", false, err
+	}
+	rawMode, ok := fields["image_task_mode"]
+	if !ok {
+		return "", false, nil
+	}
+	var mode string
+	if err := common.Unmarshal(rawMode, &mode); err != nil {
+		return "", false, err
+	}
+	switch mode {
+	case dto.ImageTaskModeAsyncTaskBridge, legacyImageTaskModeValue:
+	default:
+		return "", false, nil
+	}
+	delete(fields, "image_task_mode")
+	data, err := common.Marshal(fields)
+	if err != nil {
+		return "", false, err
+	}
+	return string(data), true, nil
+}
+
 func migrateImageTaskPortableStorageNodes() error {
 	const batchSize = 1000
 	var total int64

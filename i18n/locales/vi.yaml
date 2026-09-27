@@ -1,5 +1,7 @@
 # Vietnamese translations
 
+# Task plugin messages
+task_plugin.unknown_meta_field: 'Siêu dữ liệu plugin chứa trường không xác định "{{.Field}}". Nếu plugin được tải từ chợ chính thức, có thể cần phiên bản new-api mới hơn. Hãy cập nhật new-api rồi cài lại plugin.'
 
 # Common messages
 common.invalid_params: "Tham số không hợp lệ"
@@ -277,6 +279,7 @@ oauth.server_address_required: "Vui lòng cấu hình địa chỉ máy chủ tr
 oauth.bind_requires_login: "Liên kết yêu cầu đăng nhập trước"
 oauth.wechat_bind_unsupported: "Phương thức xác thực hiện tại không hỗ trợ liên kết WeChat"
 oauth.credential_used: "Thông tin đăng nhập này đã được sử dụng"
+oauth.not_auto_linked: "Không thể tự động liên kết tài khoản {{.Provider}} này với tài khoản hiện có. Hãy đăng nhập hoặc đăng ký bằng cách khác, rồi liên kết {{.Provider}} trong cài đặt tài khoản"
 
 # Model layer error messages
 redeem.failed: "Đổi thất bại, vui lòng thử lại sau"
@@ -296,7 +299,7 @@ distributor.invalid_playground_request: "Invalid playground request: {{.Error}}"
 distributor.group_access_denied: "No permission to access this group"
 distributor.get_channel_failed: "Failed to get available channel for model {{.Model}} under group {{.Group}} (distributor): {{.Error}}"
 distributor.no_available_channel: "No available channel for model {{.Model}} under group {{.Group}} (distributor)"
-distributor.no_available_channel_task_plugin: "No available channel for model {{.Model}} under group {{.Group}}: the model is claimed by task plugin \"{{.Plugin}}\", which has no enabled channel serving it. To let another plugin or channel serve this model, disable or override plugin \"{{.Plugin}}\" in the task plugin console (distributor)"
+distributor.no_available_channel_task_plugin: "No available channel for model {{.Model}} under group {{.Group}}: the model is claimed by a task plugin, which has no enabled channel serving it (distributor)"
 distributor.invalid_midjourney_request: "Invalid Midjourney request: {{.Error}}"
 distributor.invalid_request_parse_model: "Invalid request, unable to parse model"
 
@@ -355,6 +358,8 @@ channel.vertex_region_json: "Khu vực triển khai phải là JSON chuẩn, ví
 channel.vertex_region_default: "Khu vực triển khai phải có trường default"
 channel.task_plugin_key_required: "Kênh plugin tác vụ phải có khóa plugin tác vụ"
 channel.task_plugin_not_registered: "Plugin tác vụ {{.Plugin}} chưa được đăng ký"
+channel.task_plugin_base_url_required: "Kênh plugin tác vụ phải có địa chỉ cơ sở"
+channel.task_plugin_bind_required: "Gắn plugin tác vụ cần quyền task_plugin.bind"
 channel.get_tag_count_failed: "Không lấy được số lượng thẻ, vui lòng thử lại sau"
 channel.get_tag_channels_failed: "Không lấy được kênh theo thẻ, vui lòng thử lại sau"
 channel.get_count_failed: "Không lấy được số lượng kênh, vui lòng thử lại sau"
@@ -415,7 +420,6 @@ notify.subscription_exceed_gotify: "{{.Prompt}}. Han muc dang ky con lai la {{.Q
 status.db_failed: "Kết nối cơ sở dữ liệu thất bại"
 status.running: "Máy chủ đang chạy"
 protocol.access_token_unsupported: "Access token is not supported"
-protocol.image_task_n_gt_one: "async task bridge mode does not support n greater than 1; split into multiple image tasks"
 protocol.channel_retry_failed: "failed to get available channels for model {{.Model}} under group {{.Group}} (retry): {{.Error}}"
 protocol.channel_retry_missing: "no available channel for model {{.Model}} under group {{.Group}} (retry)"
 protocol.channel_missing: "no available channel for model {{.Model}} under group {{.Group}}"
@@ -680,6 +684,9 @@ passkey.https_required: "Passkey yêu cầu HTTPS. Truy cập hiện tại: {{.U
 passkey.origin_undetermined: "Không xác định được Origin Passkey. Hãy chỉ định trong cài đặt hệ thống hoặc Passkey. Host: '{{.Host}}', ServerAddress: '{{.ServerAddress}}'"
 passkey.origin_parse_failed: "Không phân tích được Origin Passkey"
 passkey.rpid_origin_missing: "Origin Passkey chưa được cấu hình, không thể xác định RPID"
+passkey.rp_id_invalid: "Tên miền Passkey không hợp lệ. Nhập tên miền không có scheme, cổng, đường dẫn hoặc ký tự đại diện."
+passkey.rp_id_unavailable: "Tên miền Passkey này không dùng được trên trang web này. Hãy dùng trang gốc hoặc phương thức xác minh khác."
+passkey.rp_id_removal_confirmation: "Hãy kiểm tra các Passkey bị ảnh hưởng và xác nhận xóa tên miền. Nếu cài đặt hoặc phạm vi ảnh hưởng thay đổi, cần xác nhận lại."
 token.search_consecutive_wildcard: "Search pattern cannot contain consecutive % wildcards"
 token.search_wildcard_max: "Search pattern can contain at most 2 % wildcards"
 token.search_keyword_short: "Fuzzy search keywords must be at least 2 characters"
@@ -739,9 +746,10 @@ option.theme_classic_removed: "The Classic frontend has been removed. Theme can 
 option.claude_negative_max_tokens: "max_tokens mặc định của Claude không được âm: {{.Model}} = {{.Value}}"
 option.gemini_invalid_safety_threshold: "Ngưỡng an toàn Gemini không hợp lệ {{.Threshold}} ({{.Category}})"
 option.non_negative_number: "{{.Key}} phải là số hữu hạn không âm"
+option.billing_expr_invalid: "biểu thức tính phí không hợp lệ cho mô hình {{.Model}}: {{.Reason}}"
 option.pricing_input_conflict: "Chỉ gửi bản đồ tùy chọn hoặc thay đổi giá mô hình"
 referral.disabled: "Referral program is not enabled"
-plugin.source_too_large: "Plugin source exceeds 1 MiB"
+plugin.source_too_large: "Plugin source exceeds 8 MiB"
 plugin.sha256_mismatch: "Plugin source sha256 mismatch"
 plugin.not_found: "Task plugin not found"
 plugin.compile_failed: "Không tải được plugin: {{.Error}}"

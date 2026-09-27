@@ -22,66 +22,20 @@ import { useEffect, useState } from 'react'
 import { useForm, type Resolver } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
-
-import {
-  SideDrawerSection,
-  sideDrawerContentClassName,
-  sideDrawerFooterClassName,
-  sideDrawerFormClassName,
-  sideDrawerHeaderClassName,
-  sideDrawerSwitchItemClassName,
-} from '@/components/drawer-layout'
-import { MultiSelect } from '@/components/multi-select'
+import { SideDrawerSection, sideDrawerContentClassName, sideDrawerFooterClassName, sideDrawerFormClassName, sideDrawerHeaderClassName, sideDrawerSwitchItemClassName } from '@/components/drawer-layout'
 import { Button } from '@/components/ui/button'
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Switch } from '@/components/ui/switch'
-
-import {
-  createPlan,
-  updatePlan,
-  getGroups,
-  createWaffoPancakeSubscriptionProduct,
-  listWaffoPancakeSubscriptionProductOptions,
-} from '../api'
+import { createPlan, updatePlan, getGroups, createWaffoPancakeSubscriptionProduct, listWaffoPancakeSubscriptionProductOptions } from '../api'
 import { getDurationUnitOptions, getResetPeriodOptions } from '../constants'
-import {
-  getPlanFormSchema,
-  PLAN_FORM_DEFAULTS,
-  planToFormValues,
-  formValuesToPlanPayload,
-  splitGroupList,
-  type PlanFormValues,
-} from '../lib'
+import {getPlanFormSchema, PLAN_FORM_DEFAULTS, planToFormValues, formValuesToPlanPayload, type PlanFormValues} from '../lib'
 import type { PlanRecord } from '../types'
 import { useSubscriptions } from './subscriptions-provider'
+import { Combobox } from '@/components/ui/combobox'
+import { handleServerError } from '@/lib/handle-server-error'
 
 interface Props {
   open: boolean
@@ -122,7 +76,11 @@ export function SubscriptionsMutateDrawer({
       setSyncActiveUserSubscriptions(false)
       getGroups()
         .then((res) => {
-          if (res.success) setGroupOptions(res.data || [])
+          if (res.success) {
+            setGroupOptions(res.data || [])
+          } else {
+            handleServerError(res)
+          }
         })
         .catch(() => {})
       // Best-effort — empty list still lets the operator use "+ Create".
@@ -168,6 +126,8 @@ export function SubscriptionsMutateDrawer({
           toast.success(t('Update succeeded'))
           onOpenChange(false)
           triggerRefresh()
+        } else {
+          handleServerError(res)
         }
       } else {
         const res = await createPlan(payload)
@@ -175,10 +135,12 @@ export function SubscriptionsMutateDrawer({
           toast.success(t('Create succeeded'))
           onOpenChange(false)
           triggerRefresh()
+        } else {
+          handleServerError(res)
         }
       }
-    } catch {
-      toast.error(t('Request failed'))
+    } catch (error) {
+      handleServerError(error, t('Request failed'))
     } finally {
       setIsSubmitting(false)
     }
@@ -236,19 +198,16 @@ export function SubscriptionsMutateDrawer({
         )
       } else {
         const reason = typeof res.data === 'string' ? res.data : undefined
-        toast.error(
-          localizeConsoleErrorText(
-            reason,
-            'Waffo Pancake product creation failed'
-          )
-        )
+        handleServerError(res.data, undefined, {
+          title: reason
+            ? `${t('Waffo Pancake product creation failed')}: ${reason}`
+            : t('Waffo Pancake product creation failed'),
+        })
       }
     } catch (err) {
-      toast.error(
-        localizeConsoleErrorText(
-          err instanceof Error ? err.message : '',
-          'Waffo Pancake product creation failed'
-        )
+      handleServerError(
+        err,
+        `${t('Waffo Pancake product creation failed')}: ${err instanceof Error ? err.message : String(err)}`
       )
     } finally {
       setCreatingPancakeProduct(false)
@@ -391,34 +350,23 @@ export function SubscriptionsMutateDrawer({
                   render={({ field }) => (
                     <FormItem>
                       <FormLabel>{t('Upgrade Group')}</FormLabel>
-                      <Select
-                        items={[
-                          { value: '__none__', label: t('No Upgrade') },
-                          ...groupOptions.map((g) => ({ value: g, label: g })),
-                        ]}
-                        onValueChange={(v) =>
-                          field.onChange(v === '__none__' ? '' : v)
-                        }
-                        value={field.value || ''}
-                      >
-                        <FormControl>
-                          <SelectTrigger>
-                            <SelectValue placeholder={t('No Upgrade')} />
-                          </SelectTrigger>
-                        </FormControl>
-                        <SelectContent alignItemWithTrigger={false}>
-                          <SelectGroup>
-                            <SelectItem value='__none__'>
-                              {t('No Upgrade')}
-                            </SelectItem>
-                            {groupOptions.map((g) => (
-                              <SelectItem key={g} value={g}>
-                                {g}
-                              </SelectItem>
-                            ))}
-                          </SelectGroup>
-                        </SelectContent>
-                      </Select>
+                      <FormControl>
+                        <Combobox
+                          options={[
+                            { value: '__none__', label: t('No Upgrade') },
+                            ...groupOptions.map((g) => ({
+                              value: g,
+                              label: g,
+                            })),
+                          ]}
+                          onValueChange={(v) =>
+                            field.onChange(v === '__none__' ? '' : v)
+                          }
+                          value={field.value || ''}
+                          className='w-full'
+                          placeholder={t('No Upgrade')}
+                        />
+                      </FormControl>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -429,20 +377,33 @@ export function SubscriptionsMutateDrawer({
                   name='grant_groups'
                   render={({ field }) => (
                     <FormItem>
-                      <FormLabel>{t('Granted Groups')}</FormLabel>
+
+                      <FormLabel>{t('Downgrade Group')}</FormLabel>
                       <FormControl>
-                        <MultiSelect
-                          options={groupOptions.map((g) => ({
-                            value: g,
-                            label: g,
-                          }))}
-                          selected={splitGroupList(field.value)}
-                          onChange={(values) =>
-                            field.onChange(values.join(','))
+                        <Combobox
+                          options={[
+                            {
+                              value: '__none__',
+                              label: t('Downgrade to pre-purchase group'),
+                            },
+                            ...groupOptions.map((g) => ({
+                              value: g,
+                              label: g,
+                            })),
+                          ]}
+                          onValueChange={(v) =>
+                            field.onChange(v === '__none__' ? '' : v)
                           }
-                          placeholder={t('Select groups')}
+                          value={field.value || ''}
+                          className='w-full'
+                          placeholder={t('Downgrade to pre-purchase group')}
                         />
                       </FormControl>
+                      <FormDescription>
+                        {t(
+                          'Downgrade to this group after the subscription expires'
+                        )}
+                      </FormDescription>
                       <FormMessage />
                     </FormItem>
                   )}
@@ -780,23 +741,14 @@ export function SubscriptionsMutateDrawer({
                     <FormItem>
                       <FormLabel>{t('Waffo Pancake Product ID')}</FormLabel>
                       <div className='flex gap-2'>
-                        <Select
-                          items={items}
+                        <Combobox
+                          options={items}
                           value={field.value || ''}
                           onValueChange={(v) => field.onChange(v)}
                           disabled={items.length === 0}
-                        >
-                          <SelectTrigger className='w-full flex-1'>
-                            <SelectValue placeholder={t('Select a product')} />
-                          </SelectTrigger>
-                          <SelectContent>
-                            {items.map((item) => (
-                              <SelectItem key={item.value} value={item.value}>
-                                {item.label}
-                              </SelectItem>
-                            ))}
-                          </SelectContent>
-                        </Select>
+                          className='w-full flex-1'
+                          placeholder={t('Select a product')}
+                        />
                         <Button
                           type='button'
                           variant='outline'

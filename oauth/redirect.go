@@ -2,10 +2,10 @@ package oauth
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strings"
 
-	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/gin-gonic/gin"
 )
@@ -30,7 +30,7 @@ func oauthCallbackURIOrError(c *gin.Context, path string) (string, error) {
 
 func oauthPublicSiteURL() string {
 	addr := strings.TrimRight(strings.TrimSpace(system_setting.ServerAddress), "/")
-	if addr == "" || service.IsLocalCallbackAddress(addr) {
+	if addr == "" || isLocalCallbackAddress(addr) {
 		return ""
 	}
 	parsed, err := url.Parse(addr)
@@ -38,4 +38,20 @@ func oauthPublicSiteURL() string {
 		return ""
 	}
 	return addr
+}
+
+func isLocalCallbackAddress(raw string) bool {
+	parsed, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return true
+	}
+	host := strings.ToLower(parsed.Hostname())
+	if host == "" || host == "localhost" || host == "127.0.0.1" || host == "::1" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	if ip == nil {
+		return false
+	}
+	return ip.IsLoopback() || ip.IsPrivate() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() || ip.IsUnspecified()
 }

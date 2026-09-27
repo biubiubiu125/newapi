@@ -24,8 +24,8 @@ import { cn } from '@/lib/utils'
 import { StatusBadge, type StatusBadgeProps } from './status-badge'
 
 type ProviderBadgeProps = Omit<StatusBadgeProps, 'children' | 'label'> & {
-  iconKey?: string | null
   iconNode?: ReactNode
+  iconKey?: string | null
   iconSize?: number
   label: string
   /** Color the label text by provider name. Set false for a neutral label. */

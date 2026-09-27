@@ -8,8 +8,10 @@ import (
 	"strings"
 
 	"context"
+
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/convdiag"
 	relaymedia "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/media"
 	sharedclaude "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/shared/claude"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
@@ -52,9 +54,9 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 				Type: "approximate",
 			}
 
-			var userLocationMap map[string]interface{}
+			var userLocationMap map[string]any
 			if err := kitutil.Unmarshal(textRequest.WebSearchOptions.UserLocation, &userLocationMap); err == nil {
-				if approximateData, ok := userLocationMap["approximate"].(map[string]interface{}); ok {
+				if approximateData, ok := userLocationMap["approximate"].(map[string]any); ok {
 					if timezone, ok := approximateData["timezone"].(string); ok && timezone != "" {
 						anthropicUserLocation.Timezone = timezone
 					}
@@ -73,15 +75,6 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 			webSearchTool.UserLocation = anthropicUserLocation
 		}
 
-		switch textRequest.WebSearchOptions.SearchContextSize {
-		case "low":
-			webSearchTool.MaxUses = webSearchMaxUsesLow
-		case "medium":
-			webSearchTool.MaxUses = webSearchMaxUsesMedium
-		case "high":
-			webSearchTool.MaxUses = webSearchMaxUsesHigh
-		}
-
 		claudeTools = append(claudeTools, &webSearchTool)
 	}
 
@@ -93,8 +86,13 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 	if len(claudeTools) > 0 {
 		claudeRequest.Tools = claudeTools
 	}
-	if maxTokens := textRequest.GetMaxTokens(); maxTokens > 0 {
-		claudeRequest.MaxTokens = kitutil.GetPointer(maxTokens)
+	if len(claudeTools) > 0 {
+		claudeRequest.Tools = claudeTools
+	}
+	if textRequest.MaxCompletionTokens != nil && *textRequest.MaxCompletionTokens > 0 {
+		claudeRequest.MaxTokens = kitutil.GetPointer(*textRequest.MaxCompletionTokens)
+	} else if textRequest.MaxTokens != nil && *textRequest.MaxTokens > 0 {
+		claudeRequest.MaxTokens = kitutil.GetPointer(*textRequest.MaxTokens)
 	}
 	if textRequest.TopP != nil {
 		claudeRequest.TopP = kitutil.GetPointer(*textRequest.TopP)
@@ -113,13 +111,14 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 		}
 	}
 
-	sourceReasoning, err := reasoning.FromOpenAIChat(&textRequest)
+	sourceReasoning, diagnostics, err := reasoning.FromOpenAIChat(&textRequest)
 	if err != nil {
 		return nil, reasoning.AsClientError(err)
 	}
 	if err := sharedclaude.ApplyReasoning(c, &claudeRequest, info, sourceReasoning, true); err != nil {
 		return nil, reasoning.AsClientError(err)
 	}
+	convdiag.Add(c, diagnostics...)
 	if claudeRequest.MaxTokens == nil {
 		if defaultMaxTokens, configured := opts.Claude.DefaultMaxTokensFor(claudeRequest.Model); configured {
 			value := uint(defaultMaxTokens)
@@ -131,7 +130,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 		switch stop := textRequest.Stop.(type) {
 		case string:
 			claudeRequest.StopSequences = []string{stop}
-		case []interface{}:
+		case []any:
 			stopSequences := make([]string, 0)
 			for _, item := range stop {
 				stopSequences = append(stopSequences, item.(string))
@@ -144,9 +143,25 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 	lastMessage := dto.Message{
 		Role: "tool",
 	}
-	for i, message := range textRequest.Messages {
-		if message.Role == "" {
-			textRequest.Messages[i].Role = "user"
+	for _, message := range textRequest.Messages {
+		switch message.Role {
+		case "":
+			message.Role = "user"
+		case "developer":
+			message.Role = "system"
+		case "function":
+			if message.ToolCallId != "" {
+				message.Role = "tool"
+			} else {
+				message.Role = "user"
+			}
+		case "tool":
+			if message.ToolCallId == "" {
+				message.Role = "user"
+			}
+		case "system", "user", "assistant":
+		default:
+			message.Role = "user"
 		}
 		fmtMessage := dto.Message{
 			Role:    message.Role,
@@ -160,7 +175,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 		}
 		if lastMessage.Role == message.Role && lastMessage.Role != "tool" {
 			if lastMessage.IsStringContent() && message.IsStringContent() {
-				fmtMessage.SetStringContent(strings.Trim(fmt.Sprintf("%s %s", lastMessage.StringContent(), message.StringContent()), "\""))
+				fmtMessage.SetStringContent(fmt.Sprintf("%s %s", lastMessage.StringContent(), message.StringContent()))
 				formatMessages = formatMessages[:len(formatMessages)-1]
 			}
 		}
@@ -174,6 +189,15 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 	claudeMessages := make([]dto.ClaudeMessage, 0)
 	isFirstMessage := true
 	var systemMessages []dto.ClaudeMediaMessage
+	placeholderUserMessage := dto.ClaudeMessage{
+		Role: "user",
+		Content: []dto.ClaudeMediaMessage{
+			{
+				Type: "text",
+				Text: kitutil.GetPointer[string]("..."),
+			},
+		},
+	}
 
 	for _, message := range formatMessages {
 		if message.Role == "system" {
@@ -200,16 +224,7 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 		if isFirstMessage {
 			isFirstMessage = false
 			if message.Role != "user" {
-				claudeMessage := dto.ClaudeMessage{
-					Role: "user",
-					Content: []dto.ClaudeMediaMessage{
-						{
-							Type: "text",
-							Text: kitutil.GetPointer[string]("..."),
-						},
-					},
-				}
-				claudeMessages = append(claudeMessages, claudeMessage)
+				claudeMessages = append(claudeMessages, placeholderUserMessage)
 			}
 		}
 
@@ -331,6 +346,9 @@ func OpenAIChatRequestToClaudeMessages(c context.Context, info convmeta.Meta, te
 			claudeMessage.Content = claudeMediaMessages
 		}
 		claudeMessages = append(claudeMessages, claudeMessage)
+	}
+	if len(claudeMessages) == 0 && len(systemMessages) > 0 {
+		claudeMessages = append(claudeMessages, placeholderUserMessage)
 	}
 
 	if len(systemMessages) > 0 {

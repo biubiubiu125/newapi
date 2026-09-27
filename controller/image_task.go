@@ -22,7 +22,6 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
-	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
@@ -42,8 +41,6 @@ const (
 	imageTaskResultUnreadableMessage = "image task result is temporarily unavailable"
 	imageTaskStoredResultMarker      = "_newapi_result_file"
 	maxImageTaskClientTaskIDLength   = 191
-	imageTaskSyncBridgeTimeout       = 10 * time.Minute
-	imageTaskSyncBridgePollEvery     = 500 * time.Millisecond
 	imageTaskIdempotencyWait         = 5 * time.Second
 	imageTaskIdempotencyPollEvery    = 25 * time.Millisecond
 )
@@ -98,10 +95,6 @@ func createImageTaskInternal(c *gin.Context, imageRequest *dto.ImageRequest, rel
 	}
 	relayInfo.ForcePreConsume = true
 	relayInfo.InitChannelMeta(c)
-	imageTaskMode := relayInfo.ChannelOtherSettings.GetImageTaskMode()
-	if err := validateImageTaskModeRequest(imageRequest, imageTaskMode); err != nil {
-		return nil, types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest, types.ErrOptionWithSkipRetry())
-	}
 	service.EnsureImageTaskSharedCacheReady(c)
 	persistedRequest, err := acquireImageTaskPersistedRequestWithOverrides(c, relayMode, imageTaskRequestOverridesFromRequest(c, imageRequest))
 	if err != nil {
@@ -216,6 +209,12 @@ func createImageTaskInternal(c *gin.Context, imageRequest *dto.ImageRequest, rel
 		_ = common.RemoveDiskCacheFile(persistedRequest.Path)
 		return nil, types.NewError(err, types.ErrorCodeModelPriceError, types.ErrOptionWithStatusCode(http.StatusBadRequest))
 	}
+	// Token counting can be off for image-task intake. A priced model must still
+	// reserve quota, otherwise cancel/refund has nothing to return.
+	if !priceData.FreeModel && priceData.QuotaToPreConsume == 0 {
+		priceData.QuotaToPreConsume = common.PreConsumedQuota
+		relayInfo.PriceData.QuotaToPreConsume = priceData.QuotaToPreConsume
+	}
 
 	requestBodyBase64, err := imageTaskRequestBodyBase64ForStorage(persistedRequest)
 	if err != nil {
@@ -270,7 +269,7 @@ func createImageTaskInternal(c *gin.Context, imageRequest *dto.ImageRequest, rel
 	task.PublicImageTaskTokenID = relayInfo.TokenId
 	task.PrivateData.NodeName = common.NodeName
 	task.PrivateData.BillingContext = taskBillingContextFromRelayInfo(relayInfo)
-	task.PrivateData.ImageTaskMode = imageTaskMode
+	task.PrivateData.ImageTaskMode = dto.ImageTaskModeSyncWrapper
 	task.PrivateData.RequestPath = imageTaskRequestPath(relayMode)
 	task.PrivateData.RequestMethod = http.MethodPost
 	task.PrivateData.RequestContentType = persistedRequest.ContentType
@@ -303,310 +302,6 @@ func createImageTaskInternal(c *gin.Context, imageRequest *dto.ImageRequest, rel
 	service.NotifyImageTaskQueued(c)
 
 	return &imageTaskCreateInternalResult{Task: task}, nil
-}
-
-func tryRelayImageTaskSyncBridge(c *gin.Context, request dto.Request, relayInfo *relaycommon.RelayInfo) (bool, *types.NewAPIError) {
-	imageRequest, ok := request.(*dto.ImageRequest)
-	if !ok || relayInfo == nil {
-		return false, nil
-	}
-	switch relayInfo.RelayMode {
-	case relayconstant.RelayModeImagesGenerations, relayconstant.RelayModeImagesEdits:
-	default:
-		return false, nil
-	}
-	channelOtherSettings, ok := common.GetContextKeyType[dto.ChannelOtherSettings](c, constant.ContextKeyChannelOtherSetting)
-	if !ok || channelOtherSettings.GetImageTaskMode() != dto.ImageTaskModeAsyncTaskBridge {
-		return false, nil
-	}
-	relayInfo.InitChannelMeta(c)
-	return true, relayImageTaskSyncBridge(c, imageRequest, relayInfo)
-}
-
-func relayImageTaskSyncBridge(c *gin.Context, imageRequest *dto.ImageRequest, relayInfo *relaycommon.RelayInfo) *types.NewAPIError {
-	if !service.ImageTaskExecutionAvailable() {
-		return types.NewErrorWithStatusCode(errors.New("image task system is disabled"), types.ErrorCodeDoRequestFailed, http.StatusServiceUnavailable, types.ErrOptionWithSkipRetry())
-	}
-	result, newAPIError := createImageTaskInternal(c, imageRequest, relayInfo)
-	if newAPIError != nil {
-		return newAPIError
-	}
-	if result == nil || result.Task == nil {
-		return types.NewError(errors.New("image task create result is empty"), types.ErrorCodeUpdateDataError)
-	}
-	setImageTaskSyncBridgeTaskHeaders(c, result.Task)
-	if result.Existing {
-		service.NotifyImageTaskQueued(c)
-	}
-	responseBody, newAPIError := waitImageTaskSyncBridgeResult(c, result.Task)
-	if newAPIError != nil {
-		return newAPIError
-	}
-	c.Data(http.StatusOK, "application/json; charset=utf-8", responseBody)
-	return nil
-}
-
-func waitImageTaskSyncBridgeResult(c *gin.Context, task *model.Task) (json.RawMessage, *types.NewAPIError) {
-	if task == nil {
-		return nil, types.NewError(errors.New("image task is nil"), types.ErrorCodeQueryDataError)
-	}
-	timer := time.NewTimer(imageTaskSyncBridgeTimeout)
-	defer timer.Stop()
-	ticker := time.NewTicker(imageTaskSyncBridgePollEvery)
-	defer ticker.Stop()
-
-	for {
-		current, exist, err := model.GetByTaskId(task.UserId, task.TaskID)
-		if err != nil {
-			return nil, imageTaskSyncBridgeQueryError(c, err)
-		}
-		if !exist || current == nil || current.Platform != constant.TaskPlatformImage {
-			return nil, types.NewErrorWithStatusCode(errors.New("image task not found"), types.ErrorCodeQueryDataError, http.StatusInternalServerError)
-		}
-		if current.Status == model.TaskStatusFailure {
-			return nil, imageTaskSyncBridgeFailureError(current)
-		}
-		if current.Status == model.TaskStatusSuccess && current.SettlementStatus == model.TaskSettlementStatusReview {
-			return nil, imageTaskSyncBridgeFailureError(current)
-		}
-		if imageTaskResponseResultVisible(current) {
-			responseBody, _, resultErr := imageTaskResponseResult(current)
-			if resultErr != "" {
-				return nil, types.NewErrorWithStatusCode(errors.New(resultErr), types.ErrorCodeBadResponseBody, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
-			}
-			if len(responseBody) == 0 {
-				return nil, types.NewErrorWithStatusCode(errors.New("empty image task result"), types.ErrorCodeEmptyResponse, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
-			}
-			return responseBody, nil
-		}
-
-		select {
-		case <-ticker.C:
-		case <-timer.C:
-			if responseBody, cancelErr := cancelImageTaskSyncBridgeWait(c, task, "image generation timed out"); len(responseBody) > 0 || cancelErr != nil {
-				return responseBody, cancelErr
-			}
-			return nil, imageTaskSyncBridgeWaitStoppedError(c, task, "image generation timed out", http.StatusGatewayTimeout)
-		case <-c.Request.Context().Done():
-			if responseBody, cancelErr := cancelImageTaskSyncBridgeWait(c, task, "client closed request"); len(responseBody) > 0 || cancelErr != nil {
-				return responseBody, cancelErr
-			}
-			return nil, imageTaskSyncBridgeWaitStoppedError(c, task, "client closed request", 499)
-		}
-	}
-}
-
-func cancelImageTaskSyncBridgeWait(c *gin.Context, task *model.Task, reason string) (json.RawMessage, *types.NewAPIError) {
-	if task == nil {
-		return nil, nil
-	}
-	current, exist, err := model.GetByTaskId(task.UserId, task.TaskID)
-	if err != nil {
-		return nil, imageTaskSyncBridgeQueryError(c, err)
-	}
-	if !exist || current == nil || current.Platform != constant.TaskPlatformImage {
-		return nil, types.NewErrorWithStatusCode(errors.New("image task not found"), types.ErrorCodeQueryDataError, http.StatusInternalServerError)
-	}
-	if current.Status == model.TaskStatusFailure ||
-		(current.Status == model.TaskStatusSuccess && current.SettlementStatus == model.TaskSettlementStatusReview) {
-		return nil, imageTaskSyncBridgeFailureError(current)
-	}
-	if imageTaskResponseResultVisible(current) {
-		responseBody, _, resultErr := imageTaskResponseResult(current)
-		if resultErr != "" {
-			return nil, types.NewErrorWithStatusCode(errors.New(resultErr), types.ErrorCodeBadResponseBody, http.StatusInternalServerError, types.ErrOptionWithSkipRetry())
-		}
-		if len(responseBody) > 0 {
-			return responseBody, nil
-		}
-	}
-	if current.Status == model.TaskStatusSuccess {
-		return nil, nil
-	}
-	if reason == "" {
-		reason = "image task sync bridge cancelled"
-	}
-	now := time.Now().Unix()
-	if !imageTaskSyncBridgeCanFailBeforeExecutionAt(current, now) {
-		setImageTaskSyncBridgeRetryHeaders(c, current)
-		logger.LogWarn(c, fmt.Sprintf("image task %s sync bridge wait stopped after execution started: %s", current.TaskID, reason))
-		return nil, nil
-	}
-	clearImageTaskSyncBridgeHeaders(c)
-	fromStatus := current.Status
-	resultPath := strings.TrimSpace(current.PrivateData.ResultBodyPath)
-	current.Status = model.TaskStatusFailure
-	current.Progress = "100%"
-	current.FailReason = reason
-	current.FinishTime = now
-	current.NextPollAt = 0
-	current.LockOwner = ""
-	current.LockUntil = 0
-	current.RetryCount = 0
-	current.SettlementStatus = ""
-	service.ScheduleImageTaskRequestFileCleanup(current, current.FinishTime)
-	current.PrivateData.ResultBodyPath = ""
-	current.ImageTaskResultStored = false
-	current.ImageTaskResultStoredAt = 0
-	current.PrivateData.ResultBodySize = 0
-	current.PrivateData.ResultBodySHA256 = ""
-	current.PrivateData.ResultContentType = ""
-	current.PrivateData.ResultStoredAt = 0
-	current.PrivateData.ResultExpiresAt = 0
-	current.PrivateData.UpstreamSubmitUncertainAt = 0
-	current.PrivateData.UpstreamSubmitUncertainCount = 0
-	current.PrivateData.SettlementUsage = nil
-	current.PrivateData.SettlementExtraContent = nil
-	current.PrivateData.BillingRequestInput = nil
-	current.PrivateData.BillingRequestInputCaptured = false
-	current.PrivateData.SettlementEvidenceCapturedAt = 0
-	current.RefundPending = current.Quota != 0
-	current.ClearImageTaskExecutionSecrets()
-	won, err := updateImageTaskSyncBridgeCancelledBeforeExecution(current, fromStatus, now)
-	if err != nil {
-		return nil, imageTaskSyncBridgeUpdateError(c, err)
-	}
-	if !won {
-		return nil, nil
-	}
-	if current.Quota != 0 {
-		if err := service.RefundTaskQuota(c.Request.Context(), current, reason); err != nil {
-			logger.LogError(c.Request.Context(), fmt.Sprintf("refund task quota failed task %s: %s", current.TaskID, err.Error()))
-		}
-	}
-	if cleanupErr := service.CleanupDueImageTaskRequestFile(c.Request.Context(), current); cleanupErr != nil {
-		logger.LogWarn(c.Request.Context(), fmt.Sprintf("image task %s request file cleanup failed: %s", current.TaskID, cleanupErr.Error()))
-	}
-	_ = common.RemoveDiskCacheFile(resultPath)
-	return nil, imageTaskSyncBridgeFailureError(current)
-}
-
-func imageTaskSyncBridgeWaitStoppedError(c *gin.Context, task *model.Task, reason string, statusCode int) *types.NewAPIError {
-	setImageTaskSyncBridgeRetryHeaders(c, task)
-	retryID := imageTaskSyncBridgeRetryID(task)
-	if retryID != "" {
-		reason = fmt.Sprintf("%s; image task is still running, retry with Idempotency-Key: %s", reason, retryID)
-	}
-	return types.NewErrorWithStatusCode(errors.New(reason), types.ErrorCodeDoRequestFailed, statusCode, types.ErrOptionWithSkipRetry())
-}
-
-func setImageTaskSyncBridgeRetryHeaders(c *gin.Context, task *model.Task) {
-	setImageTaskSyncBridgeTaskHeaders(c, task)
-	if c == nil || task == nil {
-		return
-	}
-	if retryID := imageTaskSyncBridgeRetryID(task); retryID != "" {
-		c.Header("X-NewAPI-Retry-Idempotency-Key", retryID)
-	}
-}
-
-func setImageTaskSyncBridgeTaskHeaders(c *gin.Context, task *model.Task) {
-	if c == nil || task == nil {
-		return
-	}
-	if task.TaskID != "" {
-		c.Header("X-NewAPI-Image-Task-ID", task.TaskID)
-	}
-	if retryID := imageTaskSyncBridgeRetryID(task); retryID != "" {
-		c.Header("X-NewAPI-Image-Client-Task-ID", retryID)
-	}
-}
-
-func clearImageTaskSyncBridgeHeaders(c *gin.Context) {
-	if c == nil || c.Writer == nil {
-		return
-	}
-	headers := c.Writer.Header()
-	headers.Del("X-NewAPI-Image-Task-ID")
-	headers.Del("X-NewAPI-Image-Client-Task-ID")
-	headers.Del("X-NewAPI-Retry-Idempotency-Key")
-}
-
-func imageTaskSyncBridgeRetryID(task *model.Task) string {
-	if task == nil {
-		return ""
-	}
-	retryID := strings.TrimSpace(task.ClientTaskID)
-	if retryID == "" {
-		retryID = strings.TrimSpace(task.TaskID)
-	}
-	return retryID
-}
-
-func imageTaskSyncBridgeCanFailBeforeExecution(task *model.Task) bool {
-	return imageTaskSyncBridgeCanFailBeforeExecutionAt(task, time.Now().Unix())
-}
-
-func imageTaskSyncBridgeCanFailBeforeExecutionAt(task *model.Task, now int64) bool {
-	return model.ImageTaskCanCancelBeforeExecution(task, now)
-}
-
-func updateImageTaskSyncBridgeCancelledBeforeExecution(task *model.Task, fromStatus model.TaskStatus, now int64) (bool, error) {
-	// Authoritative cancel CAS lives in the model layer: it re-reads under a row
-	// lock and re-checks lease + upstream submission markers so the WHERE clause
-	// cannot race past imageTaskSyncBridgeCanFailBeforeExecutionAt.
-	return model.ApplyImageTaskCancelBeforeExecution(task, fromStatus, now)
-}
-
-func imageTaskSyncBridgeQueryError(c *gin.Context, err error) *types.NewAPIError {
-	if err != nil {
-		if c != nil && c.Request != nil {
-			logger.LogError(c.Request.Context(), fmt.Sprintf("image task sync bridge query failed: %s", err.Error()))
-		} else {
-			common.SysLog(fmt.Sprintf("image task sync bridge query failed: %s", err.Error()))
-		}
-	}
-	return types.NewError(errors.New("Failed to query task"), types.ErrorCodeQueryDataError)
-}
-
-func imageTaskSyncBridgeUpdateError(c *gin.Context, err error) *types.NewAPIError {
-	if err != nil {
-		if c != nil && c.Request != nil {
-			logger.LogError(c.Request.Context(), fmt.Sprintf("image task sync bridge update failed: %s", err.Error()))
-		} else {
-			common.SysLog(fmt.Sprintf("image task sync bridge update failed: %s", err.Error()))
-		}
-	}
-	return types.NewError(errors.New("Failed to update task"), types.ErrorCodeUpdateDataError)
-}
-
-func publicImageTaskSyncBridgeFailReason(task *model.Task) string {
-	if task == nil {
-		return "image task failed"
-	}
-	if reason := strings.TrimSpace(task.PublicFailReason()); reason != "" {
-		return reason
-	}
-	reason := strings.TrimSpace(model.SanitizePublicTaskFailReason(task.FailReason))
-	if reason == "" {
-		return "image task failed"
-	}
-	return reason
-}
-
-func imageTaskSyncBridgeFailureError(task *model.Task) *types.NewAPIError {
-	raw := ""
-	if task != nil {
-		raw = strings.TrimSpace(task.FailReason)
-	}
-	statusCode := http.StatusBadGateway
-	switch raw {
-	case "image generation timed out":
-		statusCode = http.StatusGatewayTimeout
-	case "client closed request":
-		statusCode = 499
-	}
-	return types.NewErrorWithStatusCode(errors.New(publicImageTaskSyncBridgeFailReason(task)), types.ErrorCodeDoRequestFailed, statusCode, types.ErrOptionWithSkipRetry())
-}
-
-func validateImageTaskModeRequest(imageRequest *dto.ImageRequest, mode string) error {
-	if mode != dto.ImageTaskModeAsyncTaskBridge || imageRequest == nil || imageRequest.N == nil {
-		return nil
-	}
-	if *imageRequest.N > 1 {
-		return errors.New(i18n.ProtocolMessage(i18n.MsgProtocolImageTaskNGtOne))
-	}
-	return nil
 }
 
 func imageTaskResponseResult(task *model.Task) (json.RawMessage, imageTaskResultAvailability, string) {
@@ -1023,9 +718,8 @@ func imageTaskIdempotencyFingerprintConflicts(existing *model.Task, fingerprint 
 	return existing.PrivateData.RequestFingerprint != fingerprint
 }
 
-// logImageTaskLooseIdempotencyReuse 记录内部同步桥复用旧任务但请求内容已变化的情况。
-// 同步接口为兼容存量客户端不做指纹门禁（只有 /v1/image-tasks/* 返回 409），
-// 因此这里只告警，不改变行为。
+// logImageTaskLooseIdempotencyReuse 记录非公开创建路径复用旧任务但请求内容已变化的情况。
+// 公开 /v1/image-tasks/* 会返回 409。同步 /v1/images/* 已不再进入创建任务。
 func logImageTaskLooseIdempotencyReuse(c *gin.Context, existing *model.Task, fingerprint string) {
 	if !imageTaskIdempotencyFingerprintConflicts(existing, fingerprint) {
 		return
@@ -1708,6 +1402,7 @@ func taskBillingContextFromRelayInfo(relayInfo *relaycommon.RelayInfo) *model.Ta
 		OtherRatios:          cloneImageTaskFloatMap(priceData.OtherRatios()),
 		OriginModelName:      relayInfo.OriginModelName,
 		PerCallBilling:       common.StringsContains(constant.TaskPricePatches, relayInfo.OriginModelName) || priceData.UsePrice,
+		TieredSnapshot:       relayInfo.TieredBillingSnapshot,
 	}
 }
 

@@ -88,12 +88,11 @@ func (t *TwoFA) CreatePendingTwoFASetup() error {
 
 	return DB.Create(t).Error
 }
-
 func (t *TwoFA) updateUsageState() error {
 	if t.Id == 0 {
 		return common.Localized("twofa.record_id_empty")
 	}
-	return DB.Model(&TwoFA{}).Where("id = ?", t.Id).Updates(map[string]interface{}{
+	return DB.Model(&TwoFA{}).Where("id = ?", t.Id).Updates(map[string]any{
 		"failed_attempts": t.FailedAttempts,
 		"locked_until":    t.LockedUntil,
 		"last_used_at":    t.LastUsedAt,
@@ -120,7 +119,6 @@ func (t *TwoFA) DeletePendingTwoFASetup() error {
 		return tx.Unscoped().Delete(&pending).Error
 	})
 }
-
 // ResetFailedAttempts 重置失败尝试次数
 func (t *TwoFA) ResetFailedAttempts() error {
 	t.FailedAttempts = 0
@@ -157,7 +155,7 @@ func (t *TwoFA) IncrementFailedAttempts() error {
 
 		result := DB.Model(&TwoFA{}).
 			Where("id = ? AND failed_attempts = ? AND (locked_until IS NULL OR locked_until <= ?)", current.Id, current.FailedAttempts, now).
-			Updates(map[string]interface{}{
+			Updates(map[string]any{
 				"failed_attempts": nextFailedAttempts,
 				"locked_until":    nextLockedUntil,
 			})
@@ -184,18 +182,6 @@ func (t *TwoFA) IsLocked() bool {
 	return time.Now().Before(*t.LockedUntil)
 }
 
-// CreatePendingTwoFASetupBackupCodes stores recovery codes for an unverified
-// setup. Regeneration for an enabled factor must advance auth_version.
-func CreatePendingTwoFASetupBackupCodes(userId int, codes []string) error {
-	return DB.Transaction(func(tx *gorm.DB) error {
-		var pending TwoFA
-		if err := lockForUpdate(tx).Where("user_id = ? AND is_enabled = ?", userId, false).First(&pending).Error; err != nil {
-			return err
-		}
-		return replaceBackupCodesWithTx(tx, userId, codes)
-	})
-}
-
 func replaceBackupCodesWithTx(tx *gorm.DB, userId int, codes []string) error {
 	if err := tx.Where("user_id = ?", userId).Delete(&TwoFABackupCode{}).Error; err != nil {
 		return err
@@ -215,7 +201,22 @@ func replaceBackupCodesWithTx(tx *gorm.DB, userId int, codes []string) error {
 // ReplaceBackupCodesWithAuthVersion atomically replaces the factor's recovery
 // credentials and advances the user's authentication version.
 func ReplaceBackupCodesWithAuthVersion(userId int, codes []string) error {
+	return replaceBackupCodesWithAuthVersion(userId, codes, nil)
+}
+
+func ReplaceBackupCodesForSession(identity AuthSessionIdentity, codes []string) error {
+	return replaceBackupCodesWithAuthVersion(identity.UserID, codes, &identity)
+}
+
+func replaceBackupCodesWithAuthVersion(userId int, codes []string, identity *AuthSessionIdentity) error {
 	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if identity != nil {
+			if err := ValidateAuthSessionWithTx(tx, *identity); err != nil {
+				return err
+			}
+		} else if err := lockForUpdate(tx).Select("id").First(&User{}, userId).Error; err != nil {
+			return err
+		}
 		var enabled TwoFA
 		if err := lockForUpdate(tx).Where("user_id = ? AND is_enabled = ?", userId, true).First(&enabled).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -253,7 +254,7 @@ func ValidateBackupCode(userId int, code string) (bool, error) {
 			now := time.Now()
 			result := DB.Model(&TwoFABackupCode{}).
 				Where("id = ? AND is_used = ?", bc.Id, false).
-				Updates(map[string]interface{}{
+				Updates(map[string]any{
 					"is_used": true,
 					"used_at": now,
 				})
@@ -277,7 +278,22 @@ func GetUnusedBackupCodeCount(userId int) (int, error) {
 // DisableTwoFAWithAuthVersion atomically removes the factor and invalidates
 // every access token issued against the previous security configuration.
 func DisableTwoFAWithAuthVersion(userId int) error {
+	return disableTwoFAWithAuthVersion(userId, nil)
+}
+
+func DisableTwoFAForSession(identity AuthSessionIdentity) error {
+	return disableTwoFAWithAuthVersion(identity.UserID, &identity)
+}
+
+func disableTwoFAWithAuthVersion(userId int, identity *AuthSessionIdentity) error {
 	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if identity != nil {
+			if err := ValidateAuthSessionWithTx(tx, *identity); err != nil {
+				return err
+			}
+		} else if err := lockForUpdate(tx).Select("id").First(&User{}, userId).Error; err != nil {
+			return err
+		}
 		var twoFA TwoFA
 		if err := lockForUpdate(tx).Where("user_id = ? AND is_enabled = ?", userId, true).First(&twoFA).Error; err != nil {
 			if errors.Is(err, gorm.ErrRecordNotFound) {
@@ -332,7 +348,6 @@ func (t *TwoFA) EnableWithAuthVersion() error {
 	t.LockedUntil = nil
 	return publishUserAuthCacheAfterCommit(t.UserId)
 }
-
 // ValidateTOTPAndUpdateUsage 验证TOTP并更新使用记录
 func (t *TwoFA) ValidateTOTPAndUpdateUsage(code string) (bool, error) {
 	// 检查是否被锁定
@@ -344,7 +359,7 @@ func (t *TwoFA) ValidateTOTPAndUpdateUsage(code string) (bool, error) {
 	if !common.ValidateTOTPCode(t.Secret, code) {
 		// 增加失败次数
 		if err := t.IncrementFailedAttempts(); err != nil {
-			common.SysLog("更新2FA失败次数失败: " + err.Error())
+			return false, err
 		}
 		return false, nil
 	}
@@ -356,7 +371,7 @@ func (t *TwoFA) ValidateTOTPAndUpdateUsage(code string) (bool, error) {
 	t.LastUsedAt = &now
 
 	if err := t.updateUsageState(); err != nil {
-		common.SysLog("更新2FA使用记录失败: " + err.Error())
+		return false, err
 	}
 
 	return true, nil
@@ -378,7 +393,7 @@ func (t *TwoFA) ValidateBackupCodeAndUpdateUsage(code string) (bool, error) {
 	if !valid {
 		// 增加失败次数
 		if err := t.IncrementFailedAttempts(); err != nil {
-			common.SysLog("更新2FA失败次数失败: " + err.Error())
+			return false, err
 		}
 		return false, nil
 	}
@@ -390,14 +405,14 @@ func (t *TwoFA) ValidateBackupCodeAndUpdateUsage(code string) (bool, error) {
 	t.LastUsedAt = &now
 
 	if err := t.updateUsageState(); err != nil {
-		common.SysLog("更新2FA使用记录失败: " + err.Error())
+		return false, err
 	}
 
 	return true, nil
 }
 
 // GetTwoFAStats 获取2FA统计信息（管理员使用）
-func GetTwoFAStats() (map[string]interface{}, error) {
+func GetTwoFAStats() (map[string]any, error) {
 	var totalUsers, enabledUsers int64
 
 	// 总用户数
@@ -415,7 +430,7 @@ func GetTwoFAStats() (map[string]interface{}, error) {
 		enabledRate = float64(enabledUsers) / float64(totalUsers) * 100
 	}
 
-	return map[string]interface{}{
+	return map[string]any{
 		"total_users":   totalUsers,
 		"enabled_users": enabledUsers,
 		"enabled_rate":  fmt.Sprintf("%.1f%%", enabledRate),

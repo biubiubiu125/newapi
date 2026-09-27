@@ -19,17 +19,13 @@ For commercial licensing, please contact support@quantumnous.com
 import i18next from 'i18next'
 import { useState, useEffect, useCallback } from 'react'
 import { toast } from 'sonner'
-
 import { useCopyToClipboard } from '@/hooks/use-copy-to-clipboard'
 import { getSelf } from '@/lib/api'
 import { currentConsoleFailureText } from '@/lib/console-failure-text'
-
 import { getAffiliateCode, transferAffiliateQuota } from '../api'
 import { generateAffiliateLink } from '../lib'
-
-// ============================================================================
-// Affiliate Hook
-// ============================================================================
+import { handleServerError } from '@/lib/handle-server-error'
+import { requireServerSuccess } from '@/lib/server-error-message'
 
 export function useAffiliate() {
   const [affiliateCode, setAffiliateCode] = useState<string>('')
@@ -42,7 +38,7 @@ export function useAffiliate() {
   const fetchAffiliateCode = useCallback(async () => {
     try {
       setLoading(true)
-      const response = await getAffiliateCode()
+      const response = requireServerSuccess(await getAffiliateCode())
 
       if (response.success && response.data) {
         setAffiliateCode(response.data)
@@ -50,8 +46,7 @@ export function useAffiliate() {
         setAffiliateLink(link)
       }
     } catch (error) {
-      // eslint-disable-next-line no-console
-      console.error('Failed to fetch affiliate code:', error)
+      handleServerError(error)
     } finally {
       setLoading(false)
     }
@@ -76,10 +71,10 @@ export function useAffiliate() {
         return true
       }
 
-      toast.error(currentConsoleFailureText(response.message, 'Transfer failed'))
+      handleServerError(response, i18next.t('Transfer failed'))
       return false
-    } catch {
-      toast.error(i18next.t('Transfer failed'))
+    } catch (_error) {
+      handleServerError(_error, i18next.t('Transfer failed'))
       return false
     } finally {
       setTransferring(false)

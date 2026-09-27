@@ -34,7 +34,8 @@ import {
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 
-import { useAccessToken } from '../../hooks'
+import { SecureVerificationDialog } from '@/features/auth/secure-verification'
+import { useAccessToken } from '@/features/security/hooks/use-access-token'
 
 // ============================================================================
 // Access Token Dialog Component
@@ -50,11 +51,12 @@ export function AccessTokenDialog({
   onOpenChange,
 }: AccessTokenDialogProps) {
   const { t } = useTranslation()
-  const { token, generating, generate, clearToken } = useAccessToken()
+  const { token, pending, generate, clearToken, verificationDialogProps } =
+    useAccessToken()
   const [confirmOpen, setConfirmOpen] = useState(false)
 
   const handleOpenChange = (nextOpen: boolean) => {
-    if (generating) return
+    if (pending) return
 
     if (!nextOpen) {
       setConfirmOpen(false)
@@ -63,10 +65,9 @@ export function AccessTokenDialog({
     onOpenChange(nextOpen)
   }
 
-  const handleGenerate = async () => {
-    if (await generate()) {
-      setConfirmOpen(false)
-    }
+  const handleGenerate = () => {
+    setConfirmOpen(false)
+    void generate()
   }
 
   return (
@@ -87,22 +88,22 @@ export function AccessTokenDialog({
               type='button'
               variant='outline'
               onClick={() => handleOpenChange(false)}
-              disabled={generating}
+              disabled={pending}
             >
               {t('Close')}
             </Button>
             <Button
               type='button'
               onClick={() => setConfirmOpen(true)}
-              disabled={generating}
+              disabled={pending}
               className='gap-2'
             >
-              {generating ? (
+              {pending ? (
                 <Loader2 className='h-4 w-4 animate-spin' aria-hidden='true' />
               ) : (
                 <RefreshCw className='h-4 w-4' aria-hidden='true' />
               )}
-              {generating ? t('Generating...') : t('Regenerate')}
+              {pending ? t('Generating...') : t('Regenerate')}
             </Button>
           </>
         }
@@ -162,7 +163,7 @@ export function AccessTokenDialog({
       <ConfirmDialog
         open={confirmOpen}
         onOpenChange={(nextOpen) => {
-          if (!generating) setConfirmOpen(nextOpen)
+          if (!pending) setConfirmOpen(nextOpen)
         }}
         title={t('Regenerate access token?')}
         desc={
@@ -180,7 +181,7 @@ export function AccessTokenDialog({
           </div>
         }
         confirmText={
-          generating ? (
+          pending ? (
             <>
               <Loader2 className='h-4 w-4 animate-spin' aria-hidden='true' />
               {t('Generating...')}
@@ -190,9 +191,10 @@ export function AccessTokenDialog({
           )
         }
         destructive
-        isLoading={generating}
+        isLoading={pending}
         handleConfirm={handleGenerate}
       />
+      <SecureVerificationDialog {...verificationDialogProps} />
     </>
   )
 }

@@ -28,11 +28,7 @@ func TestGPT6AstraBuiltinBilling(t *testing.T) {
 		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
 		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
 	})
-
-	common.OptionMap = map[string]string{
-		"billing_setting.billing_mode": `{}`,
-		"billing_setting.billing_expr": `{}`,
-	}
+	common.OptionMap = map[string]string{"billing_setting.billing_mode": `{}`, "billing_setting.billing_expr": `{}`}
 	require.NoError(t, config.GlobalConfig.LoadFromDB(common.OptionMap))
 	require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
 	require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
@@ -85,10 +81,7 @@ func TestGPT6AstraBuiltinBilling(t *testing.T) {
 				assert.Equal(t, `{}`, common.OptionMap[option.Key])
 			}
 		}
-		assert.Equal(t, map[string]string{
-			"billing_setting.billing_mode": "tiered_expr",
-			"billing_setting.billing_expr": expression,
-		}, found)
+		assert.Equal(t, map[string]string{"billing_setting.billing_mode": "tiered_expr", "billing_setting.billing_expr": expression}, found)
 	})
 
 	for _, tc := range []struct {
@@ -100,10 +93,7 @@ func TestGPT6AstraBuiltinBilling(t *testing.T) {
 		{"existing per-call price", "", "", `{}`, `{"gpt-6-astra":0.1}`, "ratio"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			*settings = billing_setting.BillingSetting{
-				BillingMode: map[string]string{},
-				BillingExpr: map[string]string{},
-			}
+			*settings = billing_setting.BillingSetting{BillingMode: map[string]string{}, BillingExpr: map[string]string{}}
 			if tc.mode != "" {
 				settings.BillingMode["gpt-6-astra"] = tc.mode
 			}
@@ -116,6 +106,45 @@ func TestGPT6AstraBuiltinBilling(t *testing.T) {
 			actual, ok := billing_setting.GetBillingExpr("gpt-6-astra")
 			assert.Equal(t, tc.expr, actual)
 			assert.Equal(t, tc.expr != "", ok)
+		})
+	}
+}
+
+func TestImageModelBuiltinPricesAndOverrides(t *testing.T) {
+	settings := config.GlobalConfig.Get("billing_setting").(*billing_setting.BillingSetting)
+	saved := *settings
+	savedRatios, savedPrices := ratio_setting.ModelRatio2JSONString(), ratio_setting.ModelPrice2JSONString()
+	t.Cleanup(func() {
+		*settings = saved
+		require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(savedRatios))
+		require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(savedPrices))
+	})
+	for _, name := range []string{"gpt-image-2", "gpt-image-2.5-sunburst", "gpt-image-2.5-flare"} {
+		t.Run(name, func(t *testing.T) {
+			*settings = billing_setting.BillingSetting{BillingMode: map[string]string{}, BillingExpr: map[string]string{}}
+			require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+			require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(`{}`))
+			expression, ok := billing_setting.GetBillingExpr(name)
+			require.True(t, ok)
+			usage := &dto.Usage{PromptTokens: 1000, CompletionTokens: 100, PromptTokensDetails: dto.InputTokenDetails{
+				CachedTokens: 300, ImageTokens: 600, CachedTokensDetails: &dto.CachedTokenDetails{ImageTokens: common.GetPointer(200)},
+			}}
+			result, err := billingexpr.ComputeTieredQuota(&billingexpr.BillingSnapshot{ExprString: expression, ExprHash: billingexpr.ExprHashString(expression), GroupRatio: 1, QuotaPerUnit: 500000},
+				service.BuildTieredTokenParams(usage, false, billingexpr.UsedVars(expression)))
+			require.NoError(t, err)
+			assert.Equal(t, 4113, result.ActualQuotaAfterGroup)
+			encoded, err := common.Marshal(map[string]float64{name: 0})
+			require.NoError(t, err)
+			require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(string(encoded)))
+			assert.Equal(t, "ratio", billing_setting.GetBillingMode(name))
+			require.NoError(t, ratio_setting.UpdateModelRatioByJSONString(`{}`))
+			require.NoError(t, ratio_setting.UpdateModelPriceByJSONString(string(encoded)))
+			assert.Equal(t, "ratio", billing_setting.GetBillingMode(name))
+			settings.BillingMode[name] = "tiered_expr"
+			settings.BillingExpr[name] = `tier("custom", p * 7)`
+			actual, ok := billing_setting.GetBillingExpr(name)
+			require.True(t, ok)
+			assert.Equal(t, settings.BillingExpr[name], actual)
 		})
 	}
 }

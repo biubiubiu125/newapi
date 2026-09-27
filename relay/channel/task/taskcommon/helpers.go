@@ -87,7 +87,9 @@ func AllowsEmptyProxyResult(platform constant.TaskPlatform, channelType int) boo
 		return true
 	}
 	switch channelType {
-	case constant.ChannelTypeSora, constant.ChannelTypeOpenAI, constant.ChannelTypeNewAPI:
+	case constant.ChannelTypeSora, constant.ChannelTypeOpenAI, constant.ChannelTypeNewAPI, constant.ChannelTypeTaskPlugin:
+		// Task plugins can finish with inline payload and no media URL. The proxy
+		// URL keeps the success billable; native video channels still fail closed.
 		return true
 	}
 	parsed, err := strconv.Atoi(string(platform))

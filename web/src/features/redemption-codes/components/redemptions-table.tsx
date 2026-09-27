@@ -20,24 +20,12 @@ import { useQuery } from '@tanstack/react-query'
 import { getRouteApi } from '@tanstack/react-router'
 import { useMemo } from 'react'
 import { useTranslation } from 'react-i18next'
-import { toast } from 'sonner'
-
-import {
-  DISABLED_ROW_DESKTOP,
-  DISABLED_ROW_MOBILE,
-  DataTablePage,
-  useDataTable,
-} from '@/components/data-table'
+import { DISABLED_ROW_DESKTOP, DISABLED_ROW_MOBILE, DataTablePage, useDataTable } from '@/components/data-table'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
-
+import {createServerError} from '@/lib/server-error-message'
 import { getRedemptions, searchRedemptions } from '../api'
-import {
-  ERROR_MESSAGES,
-  REDEMPTION_STATUS,
-  getRedemptionStatusOptions,
-} from '../constants'
+import { ERROR_MESSAGES, REDEMPTION_STATUS, getRedemptionStatusOptions } from '../constants'
 import { isRedemptionExpired } from '../lib'
 import type { Redemption } from '../types'
 import { DataTableBulkActions } from './data-table-bulk-actions'
@@ -109,15 +97,14 @@ export function RedemptionsTable() {
           : await getRedemptions(params)
 
       if (!result.success) {
-        toast.error(
-          localizeConsoleErrorText(
-            result.message,
+        throw createServerError(
+          result,
+          t(
             hasFilter || hasStatusFilter
               ? ERROR_MESSAGES.SEARCH_FAILED
               : ERROR_MESSAGES.LOAD_FAILED
           )
         )
-        return { items: [], total: 0 }
       }
 
       return {
@@ -134,6 +121,7 @@ export function RedemptionsTable() {
     data: redemptions,
     columns,
     enableRowSelection: true,
+    getRowId: (row) => String(row.id),
     columnFilters,
     globalFilter,
     pagination,

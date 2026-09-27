@@ -17,6 +17,8 @@ var defaultTrustedProxyCIDRs = []string{
 	"fc00::/7",
 }
 
+// ResolveTrustedProxies parses TRUSTED_PROXIES without applying it to an
+// engine. The returned slice can be reused by the outer and plugin engines.
 func ResolveTrustedProxies(raw string) (trustedProxies []string, usedDefaults bool, err error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {
@@ -25,6 +27,7 @@ func ResolveTrustedProxies(raw string) (trustedProxies []string, usedDefaults bo
 	if strings.EqualFold(raw, "none") {
 		return nil, false, nil
 	}
+
 	parts := strings.Split(raw, ",")
 	trustedProxies = make([]string, 0, len(parts))
 	for _, part := range parts {

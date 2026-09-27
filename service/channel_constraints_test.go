@@ -33,10 +33,10 @@ func TestChannelSatisfiesTaskPluginIdentity(t *testing.T) {
 	sharedChannel := &model.Channel{Type: constant.ChannelTypeOpenAI}
 	unrelatedChannel := &model.Channel{Type: constant.ChannelTypeAnthropic}
 
-	require.True(t, ChannelSatisfiesConstraints(taskPluginChannel, constraints))
-	require.False(t, ChannelSatisfiesConstraints(otherTaskPluginChannel, constraints))
-	require.True(t, ChannelSatisfiesConstraints(sharedChannel, constraints))
-	require.False(t, ChannelSatisfiesConstraints(unrelatedChannel, constraints))
+	require.True(t, ChannelSatisfiesConstraints(taskPluginChannel, "", constraints))
+	require.False(t, ChannelSatisfiesConstraints(otherTaskPluginChannel, "", constraints))
+	require.True(t, ChannelSatisfiesConstraints(sharedChannel, "", constraints))
+	require.False(t, ChannelSatisfiesConstraints(unrelatedChannel, "", constraints))
 }
 
 func TestTaskPluginIdentityIncludesSharedEndpointTaskPluginKeys(t *testing.T) {
@@ -64,6 +64,35 @@ func TestTaskPluginIdentityIncludesSharedEndpointTaskPluginKeys(t *testing.T) {
 	otherChannel.SetSetting(relaydto.ChannelSettings{TaskPluginKey: "unrelated-plugin"})
 	constraints := GetChannelConstraints(c)
 
-	require.True(t, ChannelSatisfiesConstraints(secondChannel, constraints))
-	require.False(t, ChannelSatisfiesConstraints(otherChannel, constraints))
+	require.True(t, ChannelSatisfiesConstraints(secondChannel, "", constraints))
+	require.False(t, ChannelSatisfiesConstraints(otherChannel, "", constraints))
+}
+
+func TestChannelSatisfiesRequestPathAndResponsesWebSocket(t *testing.T) {
+	imagePath := &appdto.ChannelConstraints{}
+	imagePath.AddFilter(appdto.ChannelFilter{Kind: appdto.FilterRequestPath, RequestPath: "/v1/image-tasks/generations"})
+	require.True(t, ChannelSatisfiesConstraints(&model.Channel{Type: constant.ChannelTypeOpenAI}, "gpt-image-1", imagePath))
+
+	advanced := &model.Channel{Type: constant.ChannelTypeAdvancedCustom}
+	advanced.SetOtherSettings(relaydto.ChannelOtherSettings{AdvancedCustom: &relaydto.AdvancedCustomConfig{Routes: []relaydto.AdvancedCustomRoute{{
+		IncomingPath: "/v1/images/generations",
+		UpstreamPath: "/v1/images/generations",
+		Models:       []string{"gpt-image-1"},
+	}}}})
+	selectionPath := &appdto.ChannelConstraints{}
+	selectionPath.AddFilter(appdto.ChannelFilter{Kind: appdto.FilterRequestPath, RequestPath: "/v1/images/generations"})
+	require.True(t, ChannelSatisfiesConstraints(advanced, "gpt-image-1", selectionPath))
+	require.False(t, ChannelSatisfiesConstraints(advanced, "other-model", selectionPath))
+	require.False(t, ChannelSatisfiesConstraints(advanced, "gpt-image-1", imagePath))
+
+	websocket := &appdto.ChannelConstraints{}
+	websocket.AddFilter(appdto.ChannelFilter{Kind: appdto.FilterResponsesWebSocket})
+	enabled := &model.Channel{Type: constant.ChannelTypeOpenAI}
+	enabled.SetSetting(relaydto.ChannelSettings{ResponsesWebSocketEnabled: true})
+	require.True(t, ChannelSatisfiesConstraints(enabled, "gpt-4o", websocket))
+	require.False(t, ChannelSatisfiesConstraints(&model.Channel{Type: constant.ChannelTypeOpenAI}, "gpt-4o", websocket))
+
+	unknown := &appdto.ChannelConstraints{}
+	unknown.AddFilter(appdto.ChannelFilter{Kind: "not-a-real-filter"})
+	require.False(t, ChannelSatisfiesConstraints(&model.Channel{Type: constant.ChannelTypeOpenAI}, "gpt-image-1", unknown))
 }

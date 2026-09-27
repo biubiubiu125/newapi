@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { Table } from '@tanstack/react-table'
 import { Trash2 } from 'lucide-react'
 import { useState, useMemo } from 'react'
+
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
@@ -31,21 +32,20 @@ import {
   TooltipContent,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
+import {localizeConsoleErrorText} from '@/lib/server-error-message'
 
-import { deleteInvalidRedemptions, deleteRedemptionBatch } from '../api'
+import {deleteInvalidRedemptions, deleteRedemptionBatch} from '../api'
+
 import type { Redemption } from '../types'
 import { useRedemptions } from './redemptions-provider'
 
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
-
-type DataTableBulkActionsProps<TData> = {
-  table: Table<TData>
+type DataTableBulkActionsProps = {
+  table: Table<Redemption>
 }
 
-export function DataTableBulkActions<TData>({
-  table,
-}: DataTableBulkActionsProps<TData>) {
+export function DataTableBulkActions(props: DataTableBulkActionsProps) {
   const { t } = useTranslation()
+  const { table } = props
   const { triggerRefresh } = useRedemptions()
   const [showDeleteSelectedConfirm, setShowDeleteSelectedConfirm] =
     useState(false)
@@ -115,6 +115,7 @@ export function DataTableBulkActions<TData>({
       setIsDeleting(false)
     }
   }
+
 
   return (
     <>

@@ -20,32 +20,15 @@ import { LayoutDashboard } from 'lucide-react'
 import { useCallback, useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-
 import { Button } from '@/components/ui/button'
-import {
-  Card,
-  CardContent,
-  CardDescription,
-  CardHeader,
-  CardTitle,
-} from '@/components/ui/card'
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { IconBadge } from '@/components/ui/icon-badge'
 import { Switch } from '@/components/ui/switch'
 import { api } from '@/lib/api'
 import { ROLE } from '@/lib/roles'
-import {
-  SIDEBAR_MODULES_DEFAULT,
-  SIDEBAR_MODULES_META,
-  applyForcedSidebarModules,
-  cloneSidebarModulesDefault,
-  isForcedVisibleSidebarModule,
-  normalizeSidebarModuleAliases,
-  removeRemovedSidebarModules,
-  type SidebarModulesAdminConfig,
-} from '@/lib/sidebar-modules'
+import {SIDEBAR_MODULES_DEFAULT, SIDEBAR_MODULES_META, applyForcedSidebarModules, cloneSidebarModulesDefault, isForcedVisibleSidebarModule, normalizeSidebarModuleAliases, removeRemovedSidebarModules, type SidebarModulesAdminConfig} from '@/lib/sidebar-modules'
 import { useAuthStore } from '@/stores/auth-store'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
 
 type SectionDef = {
   key: string
@@ -188,10 +171,12 @@ export function SidebarModulesCard() {
         }
         toast.success(t('Sidebar settings saved'))
       } else {
-        toast.error(localizeConsoleErrorText(res.data.message, 'Failed to save sidebar settings'))
+
+        handleServerError(res.data, t('Save failed'))
       }
-    } catch {
-      toast.error(t('Failed to save sidebar settings. Please try again later.'))
+
+    } catch (error) {
+      handleServerError(error, t('Save failed, please retry'))
     } finally {
       setLoading(false)
     }

@@ -61,6 +61,8 @@ import { Switch } from '@/components/ui/switch'
 import { api } from '@/lib/api'
 import dayjs from '@/lib/dayjs'
 import { formatTimestampToDate } from '@/lib/format'
+import { handleServerError } from '@/lib/handle-server-error'
+import { requireServerSuccess, createServerError, localizeConsoleErrorText } from '@/lib/server-error-message'
 
 import {
   getCurrentLogCleanupTask,
@@ -77,8 +79,6 @@ import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import type { LogCleanupTask } from '../types'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 const logSettingsSchema = z.object({
   LogConsumeEnabled: z.boolean(),
@@ -169,9 +169,10 @@ export function LogSettingsSection({
   const fetchServerLogInfo = useCallback(async () => {
     try {
       const res = await api.get('/api/performance/logs')
+      requireServerSuccess(res.data)
       if (res.data.success) setServerLogInfo(res.data.data)
-    } catch {
-      /* ignore */
+    } catch (error) {
+      handleServerError(error)
     }
   }, [])
 
@@ -244,6 +245,7 @@ export function LogSettingsSection({
             )
           } else if (res.data.status === 'failed') {
             toast.error(localizeConsoleErrorText(res.data.error, 'Failed to clean logs'))
+            handleServerError(res.data, t('Failed to clean logs'))
           }
         }
       } catch {
@@ -285,6 +287,7 @@ export function LogSettingsSection({
       const res = await startLogCleanupTask(purgeTimestamp)
       if (!res.success) {
         throw new Error(localizeConsoleErrorText(res.message, 'Failed to clean logs'))
+        throw createServerError(res, t('Failed to clean logs'))
       }
       if (!res.data) {
         throw new Error(t('Failed to clean logs'))
@@ -296,6 +299,8 @@ export function LogSettingsSection({
       const message =
         localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to clean logs')
       toast.error(message)
+        error instanceof Error ? error.message : t('Failed to clean logs')
+      handleServerError(error, message)
     } finally {
       setIsStartingLogCleanup(false)
     }
@@ -326,10 +331,11 @@ export function LogSettingsSection({
         )
       } else {
         toast.error(localizeConsoleErrorText(res.data.message, 'Cleanup failed'))
+        handleServerError(res.data, t('Cleanup failed'))
       }
       fetchServerLogInfo()
-    } catch {
-      toast.error(t('Cleanup failed'))
+    } catch (error) {
+      handleServerError(error, t('Cleanup failed'))
     } finally {
       setServerLogCleanupLoading(false)
     }

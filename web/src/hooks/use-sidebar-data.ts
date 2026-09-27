@@ -17,30 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useQuery } from '@tanstack/react-query'
-import {
-  Activity,
-  Box,
-  CreditCard,
-  FileText,
-  FlaskConical,
-  Image,
-  ScanSearch,
-  Sparkles,
-  Key,
-  LayoutDashboard,
-  ListTodo,
-  MessageSquare,
-  PlugZap,
-  Radio,
-  ServerCog,
-  Settings,
-  Ticket,
-  User,
-  BadgeDollarSign,
-  Share2,
-  Users,
-  Wallet,
-} from 'lucide-react'
+import {Activity, Box, CreditCard, FileText, FlaskConical, Image, ScanSearch, Sparkles, Key, LayoutDashboard, ListTodo, MessageSquare, PlugZap, Radio, ServerCog, Settings, ShieldCheck, Ticket, User, BadgeDollarSign, Share2, Users, Wallet} from 'lucide-react'
 import { useEffect, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -514,6 +491,11 @@ export function useSidebarData(): SidebarData {
             url: '/profile',
             icon: User,
           },
+          {
+            title: t('Security & Access'),
+            url: '/security',
+            icon: ShieldCheck,
+          },
         ],
       },
       {
@@ -592,6 +574,7 @@ export function useSidebarData(): SidebarData {
             badgeValue: adminAlerts.orderIssues,
             badgeCursor: adminAlerts.latestOrderCursor,
             badgeMode: 'cursor',
+            requiredRole: ROLE.SUPER_ADMIN,
           },
           ...(isRoot
             ? [

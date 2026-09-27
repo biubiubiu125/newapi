@@ -475,7 +475,6 @@ func FinalizeClaudeStreamBillingUsage(claudeInfo *ClaudeResponseInfo) {
 	claudeInfo.Usage.BillingUsage = billingUsage
 	claudeInfo.billingUsageSynthesized = billingUsage != nil
 }
-
 func PatchClaudeMessageDeltaUsageData(data string, usage *dto.ClaudeUsage) string {
 	if data == "" || usage == nil {
 		return data

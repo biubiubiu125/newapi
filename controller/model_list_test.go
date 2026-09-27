@@ -453,10 +453,10 @@ func TestCheckUpdatePasswordRejectsHistoricalEmptyPassword(t *testing.T) {
 	assert.False(t, updatePassword)
 	assert.ErrorIs(t, err, errUserPasswordUnset)
 }
-
 func TestSetupLoginDoesNotTouchPasswordWhenPasswordFieldOmitted(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Log{}))
+	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.AuditLog{}, &model.UserSession{}, &model.TwoFA{}, &model.PasskeyCredential{}))
 
 	hashedPassword, err := common.Password2Hash("CurrentPassword123")
 	require.NoError(t, err)
@@ -474,11 +474,12 @@ func TestSetupLoginDoesNotTouchPasswordWhenPasswordFieldOmitted(t *testing.T) {
 	router.Use(sessions.Sessions("session", store))
 	router.GET("/", func(c *gin.Context) {
 		setupLogin(&model.User{
-			Id:       user.Id,
-			Username: user.Username,
-			Role:     user.Role,
-			Status:   user.Status,
-			Group:    user.Group,
+			Id:          user.Id,
+			AuthVersion: user.AuthVersion,
+			Username:    user.Username,
+			Role:        user.Role,
+			Status:      user.Status,
+			Group:       user.Group,
 		}, c)
 	})
 

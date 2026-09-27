@@ -23,66 +23,22 @@ import { useEffect, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-
-import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
-
-import {
-  SideDrawerSection,
-  sideDrawerContentClassName,
-  sideDrawerFooterClassName,
-  sideDrawerFormClassName,
-  sideDrawerHeaderClassName,
-} from '@/components/drawer-layout'
+import {handleServerError} from '@/lib/handle-server-error'
+import { SideDrawerSection, sideDrawerContentClassName, sideDrawerFooterClassName, sideDrawerFormClassName, sideDrawerHeaderClassName } from '@/components/drawer-layout'
 import { JsonEditor } from '@/components/json-editor'
 import { StatusBadge } from '@/components/status-badge'
 import { TagInput } from '@/components/tag-input'
 import { Button } from '@/components/ui/button'
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Sheet,
-  SheetClose,
-  SheetContent,
-  SheetDescription,
-  SheetFooter,
-  SheetHeader,
-  SheetTitle,
-} from '@/components/ui/sheet'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
-
 import { createPrefillGroup, updatePrefillGroup } from '../../api'
 import { ENDPOINT_TEMPLATES } from '../../constants'
 import { prefillGroupsQueryKeys } from '../../lib'
-import {
-  prefillGroupFormSchema,
-  type PrefillGroup,
-  type PrefillGroupFormValues,
-} from '../../types'
-import {
-  DEFAULT_FORM_VALUES,
-  PREFILL_GROUP_TYPE_META,
-  PREFILL_GROUP_TYPES,
-  type PrefillGroupType,
-  parseStringItems,
-  serializeEndpointItems,
-} from '../prefill-group-shared'
+import { prefillGroupFormSchema, type PrefillGroup, type PrefillGroupFormValues } from '../../types'
+import { DEFAULT_FORM_VALUES, PREFILL_GROUP_TYPE_META, PREFILL_GROUP_TYPES, type PrefillGroupType, parseStringItems, serializeEndpointItems } from '../prefill-group-shared'
 
 type PrefillGroupFormDrawerProps = {
   open: boolean
@@ -146,27 +102,27 @@ export function PrefillGroupFormDrawer({
 
   const handleSubmit = async (values: PrefillGroupFormValues) => {
     setIsSaving(true)
+    let items: string | string[] = []
+    if (values.type === 'endpoint') {
+      items = typeof values.items === 'string' ? values.items : ''
+    } else if (Array.isArray(values.items)) {
+      items = values.items
+    }
     const payload = {
       name: values.name.trim(),
       type: values.type,
       description: values.description?.trim() || '',
-      items:
-        values.type === 'endpoint'
-          ? typeof values.items === 'string'
-            ? values.items
-            : ''
-          : Array.isArray(values.items)
-            ? values.items
-            : [],
+      items,
     }
 
     try {
-      const response = isEdit
-        ? await updatePrefillGroup({
-            id: currentGroup!.id,
-            ...payload,
-          })
-        : await createPrefillGroup(payload)
+      const response =
+        isEdit && currentGroup
+          ? await updatePrefillGroup({
+              id: currentGroup.id,
+              ...payload,
+            })
+          : await createPrefillGroup(payload)
 
       if (response.success) {
         toast.success(
@@ -177,14 +133,11 @@ export function PrefillGroupFormDrawer({
         })
         onClose()
       } else {
-        toast.error(
-          response.message?.trim()
-            ? localizeConsoleErrorText(response.message)
-            : t('Operation failed')
-        )
+
+        handleServerError(response, t('Operation failed'))
       }
     } catch (err: unknown) {
-      toastUnhandledConsoleError(err)
+      handleServerError(err, t('Operation failed'))
     } finally {
       setIsSaving(false)
     }
@@ -284,16 +237,17 @@ export function PrefillGroupFormDrawer({
                   <FormItem>
                     <FormLabel>{t('Group Type')}</FormLabel>
                     <Select
+
                       items={PREFILL_GROUP_TYPES.map((type) => ({
                         value: type.value,
                         label: (
                           <div className='flex flex-col text-left'>
-                            <span className='font-medium'>{t(type.label)}</span>
+                            <span className='font-medium'>{type.label}</span>
                             <span
                               data-prefill-description
                               className='text-muted-foreground text-xs'
                             >
-                              {t(type.description)}
+                              {type.description}
                             </span>
                           </div>
                         ),
@@ -404,11 +358,9 @@ export function PrefillGroupFormDrawer({
           </SheetClose>
           <Button type='submit' form='prefill-group-form' disabled={isSaving}>
             {isSaving && <Loader2 className='mr-2 h-4 w-4 animate-spin' />}
-            {isSaving
-              ? t('Saving...')
-              : isEdit
-                ? t('Save changes')
-                : t('Create')}
+            {isSaving && t('Saving...')}
+            {!isSaving && isEdit && t('Save changes')}
+            {!isSaving && !isEdit && t('Create')}
           </Button>
         </SheetFooter>
       </SheetContent>

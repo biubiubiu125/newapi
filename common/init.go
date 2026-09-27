@@ -217,6 +217,7 @@ func initConstantEnv() {
 	constant.GetMediaToken = GetEnvOrDefaultBool("GET_MEDIA_TOKEN", true)
 	constant.GetMediaTokenNotStream = GetEnvOrDefaultBool("GET_MEDIA_TOKEN_NOT_STREAM", false)
 	constant.UpdateTask = GetEnvOrDefaultBool("UPDATE_TASK", true)
+	constant.TaskPluginEnabled = GetEnvOrDefaultBool("TASK_PLUGIN_ENABLED", true)
 	constant.AzureDefaultAPIVersion = GetEnvOrDefaultString("AZURE_DEFAULT_API_VERSION", "2025-04-01-preview")
 	constant.NotifyLimitCount = GetEnvOrDefault("NOTIFY_LIMIT_COUNT", 2)
 	constant.NotificationLimitDurationMinute = GetEnvOrDefault("NOTIFICATION_LIMIT_DURATION_MINUTE", 10)
@@ -236,7 +237,6 @@ func initConstantEnv() {
 	constant.ImageTaskWorkerIdleSeconds = GetEnvOrDefault("IMAGE_TASK_WORKER_IDLE_SECONDS", 5)
 	constant.ImageTaskWorkerConcurrency = GetEnvOrDefault("IMAGE_TASK_WORKER_CONCURRENCY", 0)
 	constant.ImageTaskChannelConcurrency = GetEnvOrDefault("IMAGE_TASK_CHANNEL_CONCURRENCY", 0)
-	constant.ImageTaskBatchPollSize = GetEnvOrDefault("IMAGE_TASK_BATCH_POLL_SIZE", 20)
 	constant.ImageTaskLeaseSeconds = GetEnvOrDefault("IMAGE_TASK_LEASE_SECONDS", 120)
 	constant.ImageTaskResultRetentionMinutes = GetEnvOrDefault("IMAGE_TASK_RESULT_RETENTION_MINUTES", 4320)
 	if constant.ImageTaskResultRetentionMinutes <= 0 || constant.ImageTaskResultRetentionMinutes > 4320 {
@@ -268,12 +268,19 @@ func initConstantEnv() {
 	constant.ImageTaskIdempotencyLockRetentionHours = GetEnvOrDefault("IMAGE_TASK_IDEMPOTENCY_LOCK_RETENTION_HOURS", 24*30)
 	constant.SystemTaskHistoryRetentionHours = GetEnvOrDefault("SYSTEM_TASK_HISTORY_RETENTION_HOURS", 24*7)
 	constant.TaskSettlementRecordRetentionHours = GetEnvOrDefault("TASK_SETTLEMENT_RECORD_RETENTION_HOURS", 24*30)
+	// Consecutive unrecognized/transient poll failures before the task is failed and refunded.
+	// 声明式任务协议桥只观察数据库；这些值控制一次客户端观察连接，
+	// 不改变后台轮询或结算生命周期。
+	constant.TaskPluginProtocolTimeoutSeconds = GetEnvOrDefault("TASK_PLUGIN_PROTOCOL_TIMEOUT_SECONDS", 600)
+	constant.TaskPluginProtocolTickMilliseconds = GetEnvOrDefault("TASK_PLUGIN_PROTOCOL_TICK_MILLISECONDS", 2000)
+	constant.TaskPluginProtocolTickJitterMilliseconds = GetEnvOrDefault("TASK_PLUGIN_PROTOCOL_TICK_JITTER_MILLISECONDS", 500)
+	constant.TaskPluginProtocolHeartbeatSeconds = GetEnvOrDefault("TASK_PLUGIN_PROTOCOL_HEARTBEAT_SECONDS", 15)
 
 	soraPatchStr := GetEnvOrDefaultString("TASK_PRICE_PATCH", "")
 	if soraPatchStr != "" {
 		var taskPricePatches []string
-		soraPatches := strings.Split(soraPatchStr, ",")
-		for _, patch := range soraPatches {
+		soraPatches := strings.SplitSeq(soraPatchStr, ",")
+		for patch := range soraPatches {
 			trimmedPatch := strings.TrimSpace(patch)
 			if trimmedPatch != "" {
 				taskPricePatches = append(taskPricePatches, trimmedPatch)
@@ -285,8 +292,8 @@ func initConstantEnv() {
 	// Initialize trusted redirect domains for URL validation
 	trustedDomainsStr := GetEnvOrDefaultString("TRUSTED_REDIRECT_DOMAINS", "")
 	var trustedDomains []string
-	domains := strings.Split(trustedDomainsStr, ",")
-	for _, domain := range domains {
+	domains := strings.SplitSeq(trustedDomainsStr, ",")
+	for domain := range domains {
 		trimmedDomain := strings.TrimSpace(domain)
 		if trimmedDomain != "" {
 			// Normalize domain to lowercase

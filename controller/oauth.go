@@ -1,8 +1,8 @@
 package controller
 
 import (
+	"encoding/json"
 	"errors"
-	"fmt"
 	"net/http"
 	"net/url"
 	"strings"
@@ -25,17 +25,23 @@ const (
 )
 
 type oauthStateRequest struct {
-	Provider string `json:"provider"`
-	Intent   string `json:"intent"`
-	Aff      string `json:"aff,omitempty"`
-	Redirect string `json:"redirect,omitempty"`
-	Language string `json:"language,omitempty"`
+	Provider string          `json:"provider"`
+	Intent   string          `json:"intent"`
+	Aff      string          `json:"aff,omitempty"`
+	Redirect string          `json:"redirect,omitempty"`
+	Language string          `json:"language,omitempty"`
+	Scope    string          `json:"scope,omitempty"`
+	Context  json.RawMessage `json:"context,omitempty"`
 }
 
 type oauthFlowPayload struct {
-	AffiliateCode string `json:"affiliate_code,omitempty"`
-	Redirect      string `json:"redirect,omitempty"`
-	Language      string `json:"language,omitempty"`
+	AffiliateCode   string                         `json:"affiliate_code,omitempty"`
+	Redirect        string                         `json:"redirect,omitempty"`
+	Language        string                         `json:"language,omitempty"`
+	Verification    *service.OAuthVerificationFlow `json:"verification,omitempty"`
+	Telegram        *oauth.TelegramOAuthFlow       `json:"telegram,omitempty"`
+	SessionIdentity *service.AuthIdentity          `json:"session_identity,omitempty"`
+	Authorization   *model.AuthFlowAuthorization   `json:"authorization,omitempty"`
 }
 
 func buildOAuthUsername(provider oauth.Provider, oauthUser *oauth.OAuthUser) string {
@@ -150,17 +156,35 @@ func GenerateOAuthCode(c *gin.Context) {
 	request.Redirect = strings.TrimSpace(request.Redirect)
 	redirectPath, redirectOK := normalizeOAuthRedirectPath(request.Redirect)
 	if !isOAuthStateProviderAllowed(request.Provider) ||
-		(request.Intent != model.AuthFlowIntentLogin && request.Intent != model.AuthFlowIntentBind) ||
+		(request.Intent != model.AuthFlowIntentLogin && request.Intent != model.AuthFlowIntentBind && request.Intent != model.AuthFlowIntentVerify) ||
 		len(request.Aff) > 32 ||
 		!redirectOK ||
-		(request.Intent == model.AuthFlowIntentBind && (request.Aff != "" || request.Redirect != "")) {
+		(request.Intent == model.AuthFlowIntentBind && (request.Aff != "" || request.Redirect != "")) ||
+		(request.Intent == model.AuthFlowIntentVerify && (request.Aff != "" || request.Redirect != "")) ||
+		(request.Intent != model.AuthFlowIntentVerify && (request.Scope != "" || len(request.Context) != 0)) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
+	}
+	var telegramFlow *oauth.TelegramOAuthFlow
+	if request.Provider == "telegram" {
+		flow, flowErr := oauth.NewTelegramOAuthFlow()
+		if flowErr != nil {
+			common.ApiError(c, flowErr)
+			return
+		}
+		telegramFlow = flow
 	}
 
 	userID := 0
 	sessionID := ""
-	if request.Intent == model.AuthFlowIntentBind {
+	lang := captureOAuthInterfaceLanguage(c, request.Language)
+	flowPayload := oauthFlowPayload{
+		AffiliateCode: strings.TrimSpace(request.Aff),
+		Redirect:      redirectPath,
+		Language:      lang,
+		Telegram:      telegramFlow,
+	}
+	if request.Intent == model.AuthFlowIntentBind || request.Intent == model.AuthFlowIntentVerify {
 		identity, ok := middleware.GetSessionAuthIdentity(c)
 		if !ok {
 			c.JSON(http.StatusUnauthorized, gin.H{
@@ -171,14 +195,35 @@ func GenerateOAuthCode(c *gin.Context) {
 		}
 		userID = identity.UserID
 		sessionID = identity.SessionID
+		flowPayload.SessionIdentity = &identity
+		if request.Intent == model.AuthFlowIntentBind {
+			bindContext, contextErr := common.Marshal(service.AccountBindingContext{Provider: request.Provider})
+			if contextErr != nil {
+				writeSecurityOperationError(c, contextErr)
+				return
+			}
+			flowPayload.Authorization = middleware.RequireSecurityProof(c, service.VerificationOperation{
+				Scope:   service.VerificationScopeAccountBind,
+				Context: bindContext,
+			})
+			if flowPayload.Authorization == nil {
+				return
+			}
+		}
+		if request.Intent == model.AuthFlowIntentVerify {
+			verification, verifyErr := service.StartOAuthVerification(identity, service.VerificationOperation{
+				Scope:   request.Scope,
+				Context: request.Context,
+			}, request.Provider)
+			if verifyErr != nil {
+				writeSecurityOperationError(c, verifyErr)
+				return
+			}
+			flowPayload.Verification = verification
+		}
 	}
 
-	lang := captureOAuthInterfaceLanguage(c, request.Language)
-	payload, err := common.Marshal(oauthFlowPayload{
-		AffiliateCode: strings.TrimSpace(request.Aff),
-		Redirect:      redirectPath,
-		Language:      lang,
-	})
+	payload, err := common.Marshal(flowPayload)
 	if err != nil {
 		common.ApiError(c, err)
 		return
@@ -207,13 +252,14 @@ func GenerateOAuthCode(c *gin.Context) {
 			return
 		}
 	}
+	data := gin.H{"flow_token": state, "expires_at": expiresAt.Unix()}
+	if telegramFlow != nil {
+		data["authorization_url"] = telegramFlow.AuthorizationURL(state)
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
-		"data": gin.H{
-			"flow_token": state,
-			"expires_at": expiresAt.Unix(),
-		},
+		"data":    data,
 	})
 }
 
@@ -293,8 +339,8 @@ func HandleOAuth(c *gin.Context) {
 		Intent:   pendingFlow.Intent,
 	}
 	var bindIdentity service.AuthIdentity
-	// 2. Bind flows are bound to the live dashboard session that created them.
-	if pendingFlow.Intent == model.AuthFlowIntentBind {
+	// Bind and verification callbacks must use the dashboard session that started them.
+	if pendingFlow.Intent == model.AuthFlowIntentBind || pendingFlow.Intent == model.AuthFlowIntentVerify {
 		identity, ok, identityErr := getOAuthBindSessionIdentity(c)
 		if identityErr != nil {
 			common.SysError("OAuth bind session validation failed: " + identityErr.Error())
@@ -312,6 +358,15 @@ func HandleOAuth(c *gin.Context) {
 	} else if pendingFlow.Intent != model.AuthFlowIntentLogin {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
+	}
+
+	if providerName == "telegram" {
+		var telegramPayload oauthFlowPayload
+		if err := common.UnmarshalJsonStr(pendingFlow.Payload, &telegramPayload); err != nil || telegramPayload.Telegram == nil {
+			writeSecurityOperationError(c, model.ErrAuthFlowInvalid)
+			return
+		}
+		c.Set(oauth.TelegramOAuthFlowContextKey, telegramPayload.Telegram)
 	}
 
 	// 3. Check if provider is enabled
@@ -339,14 +394,23 @@ func HandleOAuth(c *gin.Context) {
 	code := c.Query("code")
 	token, err := provider.ExchangeToken(c.Request.Context(), code, c)
 	if err != nil {
-		handleOAuthError(c, err)
+		respondOAuthProviderError(c, providerName, err)
 		return
 	}
 
 	// 6. Get user info
 	oauthUser, err := provider.GetUserInfo(c.Request.Context(), token)
 	if err != nil {
-		handleOAuthError(c, err)
+		respondOAuthProviderError(c, providerName, err)
+		return
+	}
+	if pendingFlow.Intent == model.AuthFlowIntentVerify {
+		flow, consumeErr := model.ConsumeAuthFlow(state, consumeMatch)
+		if consumeErr != nil {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": i18n.T(c, i18n.MsgOAuthStateInvalid)})
+			return
+		}
+		handleOAuthVerification(c, providerName, oauthUser, flow)
 		return
 	}
 	flow, err := model.ConsumeAuthFlow(state, consumeMatch)
@@ -361,10 +425,14 @@ func HandleOAuth(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	user, err := findOrCreateOAuthUser(c, pendingFlow.Provider, provider, oauthUser, payload.AffiliateCode, payload.Language)
+	user, migration, err := findOrCreateOAuthUser(c, pendingFlow.Provider, provider, token, oauthUser, payload.AffiliateCode, payload.Language)
 	if err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
+			return
+		}
+		if errors.Is(err, oauth.ErrTelegramAccountNotBound) || errors.Is(err, oauth.ErrTelegramOAuthFailed) {
+			writeSecurityOperationError(c, err)
 			return
 		}
 		switch err.(type) {
@@ -374,6 +442,8 @@ func HandleOAuth(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
 		case *OAuthEmailAlreadyTakenError:
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
+		case *OAuthLegacyBindingNotConfirmedError:
+			common.ApiErrorI18n(c, i18n.MsgOAuthNotAutoLinked, providerParams(provider.GetName()))
 		default:
 			if model.IsUserEmailUniqueError(err) {
 				common.ApiErrorI18n(c, i18n.MsgUserExists)
@@ -395,7 +465,7 @@ func HandleOAuth(c *gin.Context) {
 	if payload.Redirect != "" {
 		extraData["redirect"] = payload.Redirect
 	}
-	setupLoginOrRequire2FAWithExtra(user, c, extraData)
+	setupLoginOrRequire2FAWithMigration(user, c, extraData, migration)
 }
 
 func pinStoredOAuthLanguage(c *gin.Context, payloadRaw string) {
@@ -407,7 +477,14 @@ func pinStoredOAuthLanguage(c *gin.Context, payloadRaw string) {
 }
 
 func handleLegacyOAuth(c *gin.Context, providerName string, provider oauth.Provider, state string) bool {
-	session := sessions.Default(c)
+	rawSession, exists := c.Get(sessions.DefaultKey)
+	if !exists {
+		return false
+	}
+	session, ok := rawSession.(sessions.Session)
+	if !ok || session == nil {
+		return false
+	}
 	if state == "" || session.Get("oauth_state") == nil || state != session.Get("oauth_state").(string) {
 		return false
 	}
@@ -448,7 +525,7 @@ func handleLegacyOAuth(c *gin.Context, providerName string, provider oauth.Provi
 			affiliateCode = value
 		}
 	}
-	user, err := findOrCreateOAuthUser(c, providerName, provider, oauthUser, affiliateCode, oauthSessionInterfaceLanguage(c))
+	user, migration, err := findOrCreateOAuthUser(c, providerName, provider, token, oauthUser, affiliateCode, oauthSessionInterfaceLanguage(c))
 	if err != nil {
 		if errors.Is(err, model.ErrEmailAlreadyTaken) {
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
@@ -461,6 +538,8 @@ func handleLegacyOAuth(c *gin.Context, providerName string, provider oauth.Provi
 			common.ApiErrorI18n(c, i18n.MsgUserRegisterDisabled)
 		case *OAuthEmailAlreadyTakenError:
 			common.ApiErrorI18n(c, i18n.MsgUserEmailAlreadyTaken)
+		case *OAuthLegacyBindingNotConfirmedError:
+			common.ApiErrorI18n(c, i18n.MsgOAuthNotAutoLinked, providerParams(provider.GetName()))
 		default:
 			if model.IsUserEmailUniqueError(err) {
 				common.ApiErrorI18n(c, i18n.MsgUserExists)
@@ -474,7 +553,7 @@ func handleLegacyOAuth(c *gin.Context, providerName string, provider oauth.Provi
 		common.ApiErrorI18n(c, i18n.MsgOAuthUserBanned)
 		return true
 	}
-	setupLoginOrRequire2FA(user, c)
+	setupLoginOrRequire2FAWithMigration(user, c, nil, migration)
 	return true
 }
 
@@ -498,20 +577,54 @@ func getOAuthBindSessionIdentity(c *gin.Context) (service.AuthIdentity, bool, er
 	return middleware.GetLegacySessionAuthIdentity(c)
 }
 
+func handleOAuthVerification(c *gin.Context, provider string, oauthUser *oauth.OAuthUser, flow *model.AuthFlow) {
+	var payload oauthFlowPayload
+	if err := common.UnmarshalJsonStr(flow.Payload, &payload); err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	identity, ok := middleware.GetSessionAuthIdentity(c)
+	if !ok {
+		writeSecurityOperationError(c, service.ErrAuthTokenInvalid)
+		return
+	}
+	proof, err := service.FinishOAuthVerification(identity, provider, oauthUser.ProviderUserID, payload.Verification)
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	recordUserSecurityAudit(c, identity.UserID, "user.security_verify", map[string]any{"method": proof.Method, "scope": proof.Scope, "provider": provider})
+	common.ApiSuccess(c, proof)
+}
+
 // handleOAuthBind handles binding OAuth account to existing user
 func handleOAuthBind(c *gin.Context, provider oauth.Provider, pendingFlow *model.AuthFlow, flowToken string, identity service.AuthIdentity) {
 	// Exchange code for token
 	code := c.Query("code")
 	token, err := provider.ExchangeToken(c.Request.Context(), code, c)
 	if err != nil {
-		handleOAuthError(c, err)
+		respondOAuthProviderError(c, pendingFlow.Provider, err)
 		return
 	}
 
 	// Get user info
 	oauthUser, err := provider.GetUserInfo(c.Request.Context(), token)
 	if err != nil {
-		handleOAuthError(c, err)
+		respondOAuthProviderError(c, pendingFlow.Provider, err)
+		return
+	}
+	var payload oauthFlowPayload
+	if err := common.UnmarshalJsonStr(pendingFlow.Payload, &payload); err != nil {
+		writeSecurityOperationError(c, model.ErrAuthFlowInvalid)
+		return
+	}
+	bindContext, err := common.Marshal(service.AccountBindingContext{Provider: pendingFlow.Provider})
+	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	if err := service.ValidateFlowAuthorization(identity, service.VerificationOperation{Scope: service.VerificationScopeAccountBind, Context: bindContext}, payload.Authorization); err != nil {
+		writeSecurityOperationError(c, err)
 		return
 	}
 
@@ -520,12 +633,27 @@ func handleOAuthBind(c *gin.Context, provider oauth.Provider, pendingFlow *model
 		common.ApiErrorI18n(c, i18n.MsgOAuthAlreadyBound, providerParams(provider.GetName()))
 		return
 	}
-	// Also check legacy ID to prevent duplicate bindings during migration period
-	if legacyID, ok := oauthUser.Extra["legacy_id"].(string); ok && legacyID != "" {
-		if provider.IsUserIDTaken(legacyID) {
-			common.ApiErrorI18n(c, i18n.MsgOAuthAlreadyBound, providerParams(provider.GetName()))
+	if pendingFlow.Provider == "telegram" {
+		if _, err := model.ConsumeAuthFlowWithAction(flowToken, model.AuthFlowMatch{
+			Purpose:   model.AuthFlowPurposeOAuth,
+			Provider:  pendingFlow.Provider,
+			Intent:    model.AuthFlowIntentBind,
+			UserId:    pendingFlow.UserId,
+			SessionId: pendingFlow.SessionId,
+		}, func(tx *gorm.DB, _ *model.AuthFlow) error {
+			return model.BindTelegramForSessionWithTx(tx, identity, oauthUser.ProviderUserID)
+		}); err != nil {
+			if errors.Is(err, model.ErrAuthFlowInvalid) ||
+				errors.Is(err, model.ErrAuthFlowExpired) ||
+				errors.Is(err, model.ErrAuthFlowConsumed) {
+				c.JSON(http.StatusForbidden, gin.H{"success": false, "message": i18n.T(c, i18n.MsgOAuthStateInvalid)})
+				return
+			}
+			writeSecurityOperationError(c, err)
 			return
 		}
+		common.ApiSuccessI18n(c, i18n.MsgOAuthBindSuccess, gin.H{"action": "bind"})
+		return
 	}
 
 	if _, ok := builtInOAuthExternalIdentityProvider(pendingFlow.Provider); ok {
@@ -576,47 +704,30 @@ func handleOAuthBind(c *gin.Context, provider oauth.Provider, pendingFlow *model
 		return
 	}
 
-	if _, err := model.ConsumeAuthFlow(flowToken, model.AuthFlowMatch{
+	if _, err := model.ConsumeAuthFlowWithAction(flowToken, model.AuthFlowMatch{
 		Purpose:   model.AuthFlowPurposeOAuth,
 		Provider:  pendingFlow.Provider,
 		Intent:    model.AuthFlowIntentBind,
 		UserId:    pendingFlow.UserId,
 		SessionId: pendingFlow.SessionId,
+	}, func(tx *gorm.DB, _ *model.AuthFlow) error {
+		if genericProvider, ok := provider.(*oauth.GenericOAuthProvider); ok {
+			return model.UpdateUserOAuthBindingForSessionWithTx(tx, identity, genericProvider.GetProviderId(), oauthUser.ProviderUserID)
+		}
+		column := provider.ProviderUserIDColumn()
+		if column == "" {
+			return model.ErrAccountBindingChanged
+		}
+		return model.UpdateUserBindColumnForSessionWithTx(tx, identity, column, oauthUser.ProviderUserID)
 	}); err != nil {
-		c.JSON(http.StatusForbidden, gin.H{"success": false, "message": i18n.T(c, i18n.MsgOAuthStateInvalid)})
+		if errors.Is(err, model.ErrAuthFlowInvalid) ||
+			errors.Is(err, model.ErrAuthFlowExpired) ||
+			errors.Is(err, model.ErrAuthFlowConsumed) {
+			c.JSON(http.StatusForbidden, gin.H{"success": false, "message": i18n.T(c, i18n.MsgOAuthStateInvalid)})
+			return
+		}
+		writeSecurityOperationError(c, err)
 		return
-	}
-
-	userId := pendingFlow.UserId
-
-	// Handle binding based on provider type
-	if genericProvider, ok := provider.(*oauth.GenericOAuthProvider); ok {
-		// Custom provider: use user_oauth_bindings table
-		err = model.UpdateUserOAuthBinding(userId, genericProvider.GetProviderId(), oauthUser.ProviderUserID)
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
-	} else {
-		// Built-in provider: claim and update recognized built-in identities atomically.
-		user := model.User{Id: userId}
-		if err := user.FillUserById(); err != nil {
-			common.ApiError(c, err)
-			return
-		}
-		claimed, claimErr := claimBuiltInOAuthIdentity(&user, pendingFlow.Provider, oauthUser.ProviderUserID)
-		if claimErr != nil {
-			common.ApiError(c, claimErr)
-			return
-		}
-		if !claimed {
-			provider.SetProviderUserID(&user, oauthUser.ProviderUserID)
-			err = user.Update(false)
-		}
-		if err != nil {
-			common.ApiError(c, err)
-			return
-		}
 	}
 
 	common.ApiSuccessI18n(c, i18n.MsgOAuthBindSuccess, gin.H{
@@ -643,12 +754,6 @@ func handleLegacyOAuthBind(c *gin.Context, providerName string, provider oauth.P
 	if provider.IsUserIDTaken(oauthUser.ProviderUserID) {
 		common.ApiErrorI18n(c, i18n.MsgOAuthAlreadyBound, providerParams(provider.GetName()))
 		return
-	}
-	if legacyID, ok := oauthUser.Extra["legacy_id"].(string); ok && legacyID != "" {
-		if provider.IsUserIDTaken(legacyID) {
-			common.ApiErrorI18n(c, i18n.MsgOAuthAlreadyBound, providerParams(provider.GetName()))
-			return
-		}
 	}
 	if userID <= 0 {
 		common.ApiErrorI18n(c, i18n.MsgAuthNotLoggedIn)
@@ -679,48 +784,60 @@ func handleLegacyOAuthBind(c *gin.Context, providerName string, provider oauth.P
 	common.ApiSuccessI18n(c, i18n.MsgOAuthBindSuccess, gin.H{"action": "bind"})
 }
 
-// findOrCreateOAuthUser finds existing user or creates new user
-func findOrCreateOAuthUser(c *gin.Context, providerName string, provider oauth.Provider, oauthUser *oauth.OAuthUser, affiliateCode, language string) (*model.User, error) {
+// findOrCreateOAuthUser finds existing user or creates new user.
+// A pending legacy GitHub rewrite is returned only when login verification must
+// finish before the stored login name can be replaced.
+func respondOAuthProviderError(c *gin.Context, providerName string, err error) {
+	if providerName == "telegram" {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	handleOAuthError(c, err)
+}
+
+func findOrCreateOAuthUser(c *gin.Context, providerName string, provider oauth.Provider, token *oauth.OAuthToken, oauthUser *oauth.OAuthUser, affiliateCode, language string) (*model.User, *service.LegacyGitHubMigration, error) {
 	user := &model.User{}
+	// Telegram login only enters an account that is already bound. It must not
+	// register a new user or attach the Telegram id to a different account.
+	if provider.ProviderUserIDColumn() == "telegram_id" {
+		err := provider.FillUserByProviderID(user, oauthUser.ProviderUserID)
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, oauth.ErrTelegramAccountNotBound
+		}
+		return user, nil, err
+	}
 
 	// Check if user already exists with new ID
 	if provider.IsUserIDTaken(oauthUser.ProviderUserID) {
 		err := provider.FillUserByProviderID(user, oauthUser.ProviderUserID)
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 		// Check if user has been deleted
 		if user.Id == 0 {
-			return nil, &OAuthUserDeletedError{}
+			return nil, nil, &OAuthUserDeletedError{}
 		}
-		return user, nil
+		return user, nil, nil
 	}
 
-	// Try to find user with legacy ID (for GitHub migration from login to numeric ID)
-	if providerName == model.ExternalIdentityProviderGitHub {
-		if legacyID, ok := oauthUser.Extra["legacy_id"].(string); ok && legacyID != "" {
-			if provider.IsUserIDTaken(legacyID) {
-				err := provider.FillUserByProviderID(user, legacyID)
-				if err != nil {
-					return nil, err
-				}
-				if user.Id != 0 {
-					// Found user with legacy ID, migrate to new ID
-					common.SysLog(fmt.Sprintf("[OAuth] Migrating user %d from legacy_id=%s to new_id=%s",
-						user.Id, legacyID, oauthUser.ProviderUserID))
-					if _, err := claimBuiltInOAuthIdentity(user, providerName, oauthUser.ProviderUserID); err != nil {
-						common.SysError(fmt.Sprintf("[OAuth] Failed to migrate user %d: %s", user.Id, err.Error()))
-						return nil, err
-					}
-					return user, nil
-				}
-			}
+	// GitHub used to store the login name. A numeric legacy value, or a login
+	// name whose row is gone, is not the current account. A live login-name row
+	// migrates only after verified email evidence, or after login verification.
+	if legacyID, ok := oauthUser.Extra["legacy_id"].(string); ok && legacyGitHubLoginName(legacyID) && provider.IsUserIDTaken(legacyID) {
+		candidate := &model.User{}
+		err := provider.FillUserByProviderID(candidate, legacyID)
+		if err != nil && !errors.Is(err, gorm.ErrRecordNotFound) {
+			return nil, nil, err
+		}
+		if err == nil && candidate.Id != 0 {
+			migration, err := confirmLegacyGitHubBinding(c, provider, token, candidate, legacyID, oauthUser.ProviderUserID)
+			return candidate, migration, err
 		}
 	}
 
 	// User doesn't exist, create new user if registration is enabled
 	if !common.RegisterEnabled {
-		return nil, &OAuthRegistrationDisabledError{}
+		return nil, nil, &OAuthRegistrationDisabledError{}
 	}
 
 	// Set up new user
@@ -737,9 +854,9 @@ func findOrCreateOAuthUser(c *gin.Context, providerName string, provider oauth.P
 		user.Email = model.NormalizeEmail(oauthUser.Email)
 		if err := model.EnsureEmailAvailable(user.Email, 0); err != nil {
 			if errors.Is(err, model.ErrEmailAlreadyTaken) {
-				return nil, &OAuthEmailAlreadyTakenError{}
+				return nil, nil, &OAuthEmailAlreadyTakenError{}
 			}
-			return nil, err
+			return nil, nil, err
 		}
 	}
 	user.Role = common.RoleCommonUser
@@ -781,7 +898,7 @@ func findOrCreateOAuthUser(c *gin.Context, providerName string, provider oauth.P
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		// Perform post-transaction tasks (logs, sidebar config, inviter rewards)
@@ -811,14 +928,90 @@ func findOrCreateOAuthUser(c *gin.Context, providerName string, provider oauth.P
 			return nil
 		})
 		if err != nil {
-			return nil, err
+			return nil, nil, err
 		}
 
 		// Perform post-transaction tasks
 		user.FinalizeOAuthUserCreation(0)
 	}
 
-	return user, nil
+	return user, nil, nil
+}
+
+// legacyGitHubLoginName reports a stored GitHub login. Numeric account IDs are
+// the current identifier and must not be treated as a login-name binding.
+func legacyGitHubLoginName(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, r := range value {
+		if r < '0' || r > '9' {
+			return true
+		}
+	}
+	return false
+}
+
+func verifiedOAuthEmails(provider oauth.Provider, c *gin.Context, token *oauth.OAuthToken) ([]string, error) {
+	emailProvider, ok := provider.(oauth.VerifiedEmailProvider)
+	if !ok {
+		return nil, errors.New("verified emails unavailable")
+	}
+	return emailProvider.GetVerifiedEmails(c.Request.Context(), token)
+}
+
+// confirmLegacyGitHubBinding rewrites a live login-name binding when the
+// provider proves the same verified email. Two-factor and passkey accounts wait
+// until that login verification completes. Anything else is refused.
+func confirmLegacyGitHubBinding(c *gin.Context, provider oauth.Provider, token *oauth.OAuthToken, candidate *model.User, legacyID, providerUserID string) (*service.LegacyGitHubMigration, error) {
+	state, err := model.GetUserVerificationState(candidate.Id)
+	if err != nil {
+		return nil, err
+	}
+	if state.HasTwoFA || state.HasPasskey {
+		return &service.LegacyGitHubMigration{GitHubID: providerUserID, LegacyID: legacyID}, nil
+	}
+	reason := ""
+	if strings.TrimSpace(candidate.Email) == "" {
+		reason = "no_matching_evidence"
+	} else {
+		emails, emailErr := verifiedOAuthEmails(provider, c, token)
+		matched := false
+		if emailErr == nil {
+			normalized := model.NormalizeEmail(candidate.Email)
+			for _, email := range emails {
+				if normalized != "" && model.NormalizeEmail(email) == normalized {
+					matched = true
+					break
+				}
+			}
+		}
+		if !matched {
+			reason = "no_matching_evidence"
+			if emailErr != nil {
+				reason = "verified_emails_unavailable"
+			}
+		}
+	}
+	if reason != "" {
+		recordLegacyGitHubBindingAudit(c, candidate, false, map[string]any{
+			"legacy_id": legacyID, "provider_user_id": providerUserID, "reason": reason,
+		})
+		return nil, &OAuthLegacyBindingNotConfirmedError{}
+	}
+	written, err := model.MigrateLegacyGitHubBindingWithTx(model.DB, candidate.Id, legacyID, providerUserID)
+	if err != nil {
+		return nil, err
+	}
+	if written {
+		candidate.GitHubId = providerUserID
+		recordLegacyGitHubBindingAudit(c, candidate, true, map[string]any{
+			"legacy_id": legacyID, "provider_user_id": providerUserID,
+			"verified_email_matched": true,
+			"notification_failed":    service.NotifyAccountSecurityChange(candidate.Email, "GitHub binding migrated") != nil,
+		})
+	}
+	return nil, nil
 }
 
 func builtInOAuthExternalIdentityProvider(providerName string) (string, bool) {
@@ -880,6 +1073,12 @@ type OAuthEmailAlreadyTakenError struct{}
 
 func (e *OAuthEmailAlreadyTakenError) Error() string {
 	return "email is already in use"
+}
+
+type OAuthLegacyBindingNotConfirmedError struct{}
+
+func (e *OAuthLegacyBindingNotConfirmedError) Error() string {
+	return "legacy binding was not confirmed"
 }
 
 func respondOAuthProviderQueryError(c *gin.Context) {

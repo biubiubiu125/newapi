@@ -24,23 +24,32 @@ import { cn } from '@/lib/utils'
 
 type TableProps = React.ComponentProps<'table'> & {
   containerRef?: React.Ref<HTMLDivElement>
+  withContainer?: boolean
 }
 
-function Table({ className, containerRef, ...props }: TableProps) {
+function Table({
+  className,
+  containerRef,
+  withContainer = true,
+  ...props
+}: TableProps) {
+  const table = (
+    <table
+      data-slot='table'
+      className={cn('w-full caption-bottom text-sm', className)}
+      {...props}
+    />
+  )
+
+  if (!withContainer) return table
+
   return (
     <div
       ref={containerRef}
       data-slot='table-container'
       className='relative w-full overflow-x-auto overflow-y-hidden'
     >
-      <table
-        data-slot='table'
-        className={cn(
-          'w-full caption-bottom text-sm tabular-nums [&_td]:text-sm [&_td_*]:text-sm [&_th]:text-sm [&_th_*]:text-sm',
-          className
-        )}
-        {...props}
-      />
+      {table}
     </div>
   )
 }

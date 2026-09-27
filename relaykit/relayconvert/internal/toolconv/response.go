@@ -315,7 +315,7 @@ func inspectOpenAIResponsesResponse(response *dto.OpenAIResponsesResponse, to ty
 				fmt.Sprintf("Claude cannot preserve hosted-tool status %q", output.Status),
 			))
 		}
-		if output.Status == "failed" && !rawJSONPresent(output.ItemError) && !rawJSONPresent(output.Output) && len(output.Results) == 0 {
+		if output.Status == "failed" && !rawJSONPresent(output.ItemError) && !rawJSONPresent(output.Output) && !rawJSONPresent(output.Results) {
 			diagnostics = append(diagnostics, responseSemanticLoss(
 				fmt.Sprintf("output[%d].status", index),
 				"hosted_tool_error_missing",

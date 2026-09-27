@@ -13,26 +13,12 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
-// GetAllVendors 获取供应商列表（分页）
-func GetAllVendors(c *gin.Context) {
-	pageInfo := common.GetPageQuery(c)
-	vendors, err := model.GetAllVendors(pageInfo.GetStartIdx(), pageInfo.GetPageSize())
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	var total int64
-	model.DB.Model(&model.Vendor{}).Count(&total)
-	pageInfo.SetTotal(int(total))
-	pageInfo.SetItems(vendors)
-	common.ApiSuccess(c, pageInfo)
-}
+// GetAllVendors uses the same paged filters and counts as the search endpoint.
+func GetAllVendors(c *gin.Context) { SearchVendors(c) }
 
-// SearchVendors 搜索供应商
 func SearchVendors(c *gin.Context) {
-	keyword := c.Query("keyword")
 	pageInfo := common.GetPageQuery(c)
-	vendors, total, err := model.SearchVendors(keyword, pageInfo.GetStartIdx(), pageInfo.GetPageSize(), c.Query("association"))
+	vendors, total, err := model.SearchVendors(c.Query("keyword"), pageInfo.GetStartIdx(), pageInfo.GetPageSize(), c.Query("association"))
 	if err != nil {
 		vendorAPIError(c, err)
 		return
@@ -47,12 +33,12 @@ func GetVendorMeta(c *gin.Context) {
 	idStr := c.Param("id")
 	id, err := strconv.Atoi(idStr)
 	if err != nil {
-		common.ApiError(c, err)
+		vendorAPIError(c, err)
 		return
 	}
 	v, err := model.GetVendorByID(id)
 	if err != nil {
-		common.ApiError(c, err)
+		vendorAPIError(c, err)
 		return
 	}
 	common.ApiSuccess(c, v)
@@ -90,7 +76,6 @@ func CreateVendorMeta(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgVendorNameExists)
 		return
 	}
-
 	if err := v.Insert(); err != nil {
 		vendorAPIError(c, err)
 		return
@@ -103,7 +88,7 @@ func CreateVendorMeta(c *gin.Context) {
 func UpdateVendorMeta(c *gin.Context) {
 	var v model.Vendor
 	if err := c.ShouldBindJSON(&v); err != nil {
-		common.ApiError(c, err)
+		vendorAPIError(c, err)
 		return
 	}
 	if v.Id == 0 {
@@ -118,7 +103,6 @@ func UpdateVendorMeta(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgVendorNameExists)
 		return
 	}
-
 	if err := v.Update(); err != nil {
 		vendorAPIError(c, err)
 		return

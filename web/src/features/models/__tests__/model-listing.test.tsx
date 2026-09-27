@@ -341,7 +341,8 @@ it('prefills and creates metadata only when the user explicitly saves it', async
   await waitFor(() =>
     expect(post).toHaveBeenCalledWith(
       '/api/models/',
-      expect.objectContaining({ model_name: 'channel-only' })
+      expect.objectContaining({ model_name: 'channel-only' }),
+      expect.anything()
     )
   )
 })

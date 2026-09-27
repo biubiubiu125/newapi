@@ -63,6 +63,7 @@ import {
   TableRow,
 } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import { SettingsSwitchField } from '../components/settings-form-layout'
 import { SettingsSection } from '../components/settings-section'
@@ -140,8 +141,8 @@ export function FAQSection({ enabled, data }: FAQSectionProps) {
       })
       setIsEnabled(checked)
       toast.success(t('Setting saved'))
-    } catch {
-      toast.error(t('Failed to update setting'))
+    } catch (error) {
+      handleServerError(error, t('Failed to update setting'))
     }
   }
 
@@ -224,8 +225,8 @@ export function FAQSection({ enabled, data }: FAQSectionProps) {
       })
       setHasChanges(false)
       toast.success(t('FAQ saved successfully'))
-    } catch {
-      toast.error(t('Failed to save FAQ'))
+    } catch (error) {
+      handleServerError(error, t('Failed to save FAQ'))
     }
   }
 

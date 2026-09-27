@@ -28,6 +28,7 @@ import { resolveChatUrl } from '@/features/chat/lib/chat-links'
 import { requireSidebarModule } from '@/lib/sidebar-route-guard'
 
 import { localizeConsoleErrorText } from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
 
 export const Route = createFileRoute('/_authenticated/chat2link')({
   beforeLoad: () =>
@@ -66,6 +67,10 @@ function Chat2LinkPage() {
       const message =
         localizeConsoleErrorText(keyError instanceof Error ? keyError.message : '', 'No enabled tokens available')
       toast.error(message)
+        keyError instanceof Error
+          ? keyError.message
+          : t('No enabled tokens available')
+      handleServerError(keyError, message)
       navigate({ to: '/keys' })
       return
     }

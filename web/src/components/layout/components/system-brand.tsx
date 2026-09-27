@@ -18,18 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Link } from '@tanstack/react-router'
 import { useTranslation } from 'react-i18next'
-
-import {
-  SidebarMenu,
-  SidebarMenuButton,
-  SidebarMenuItem,
-} from '@/components/ui/sidebar'
+import { SidebarMenu, SidebarMenuButton, SidebarMenuItem } from '@/components/ui/sidebar'
 import { useStatus } from '@/hooks/use-status'
 import { useSystemConfig } from '@/hooks/use-system-config'
 import { resolveAssetUrl } from '@/lib/asset-url'
 import { DEFAULT_LOGO, DEFAULT_SYSTEM_NAME } from '@/lib/constants'
 import { cn } from '@/lib/utils'
-
 import { BrandImage } from './brand-image'
 
 type SystemBrandProps = {
@@ -43,12 +37,6 @@ type SystemBrandProps = {
   variant?: 'sidebar' | 'inline'
 }
 
-/**
- * System brand component
- * Displays current system logo + name.
- * - inline: compact pill in the top app bar; clicking navigates to home (/)
- * - sidebar: stacked card in the sidebar header (display only)
- */
 export function SystemBrand(props: SystemBrandProps) {
   const { t } = useTranslation()
   const { status } = useStatus()
@@ -74,11 +62,11 @@ export function SystemBrand(props: SystemBrandProps) {
         to='/'
         aria-label={t('Go to home')}
         className={cn(
-          'text-foreground inline-flex h-7 items-center gap-1.5 rounded-md px-1.5 text-sm font-medium transition-colors outline-none select-none',
+          'text-foreground inline-flex h-7 min-w-0 items-center gap-1.5 rounded-md px-1.5 text-sm font-medium transition-colors outline-none select-none',
           'hover:bg-accent focus-visible:ring-ring/40 focus-visible:ring-2'
         )}
       >
-        <div className='flex size-5 items-center justify-center overflow-hidden rounded-md'>
+        <div className='flex size-5 shrink-0 items-center justify-center overflow-hidden rounded-md'>
           <BrandImage
             src={logoSrc}
             alt={t('Logo')}

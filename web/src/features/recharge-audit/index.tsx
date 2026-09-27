@@ -100,7 +100,7 @@ function paymentProviderLabel(provider: string) {
 
 function paidAmountDetail(
   order: RechargeAuditOrder,
-  t: (key: string) => string
+  t: (key: string, options?: Record<string, unknown>) => string
 ) {
   const currency = orderPaidCurrency(order).toUpperCase()
   if (order.paid_cny_fx_missing) {
@@ -125,7 +125,7 @@ function formatTime(timestamp: number) {
   return new Date(timestamp * 1000).toLocaleString(currentIntlLocale())
 }
 
-function orderTypeLabel(orderType: string, t: (key: string) => string) {
+function orderTypeLabel(orderType: string, t: (key: string, options?: Record<string, unknown>) => string) {
   switch (orderType) {
     case 'topup':
       return t('Top-up')
@@ -138,7 +138,7 @@ function orderTypeLabel(orderType: string, t: (key: string) => string) {
 
 function formatOrderDelivery(
   order: RechargeAuditOrder,
-  t: (key: string) => string
+  t: (key: string, options?: Record<string, unknown>) => string
 ) {
   if (order.order_type === 'subscription') {
     const parts: string[] = []
@@ -190,7 +190,7 @@ function referralStatusVariant(status: string) {
 
 function commissionJobStatusLabel(
   value: string,
-  t: (key: string) => string
+  t: (key: string, options?: Record<string, unknown>) => string
 ): string {
   switch (value) {
     case 'pending':
@@ -211,7 +211,7 @@ function commissionJobStatusLabel(
 function referralStatusText(
   order: RechargeAuditOrder,
   language: string,
-  t: (key: string) => string
+  t: (key: string, options?: Record<string, unknown>) => string
 ) {
   const status = order.referral_commission_status
   if (!status) return '-'

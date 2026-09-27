@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/relay/constant"
 	relayhelper "github.com/QuantumNous/new-api/relay/helper"
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -158,4 +159,16 @@ func TestMappedAliImageModelUsesUpstreamProtocol(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, adaptor.IsSyncImageModel)
 	assert.IsType(t, &AliImageRequest{}, converted)
+}
+
+func TestConvertImageRequestRejectsUnclaimedModelWithoutRetry(t *testing.T) {
+	for _, name := range []string{"wanx-style-repaint-v1", "custom-image-model"} {
+		info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{UpstreamModelName: name}}
+		_, err := (&Adaptor{}).ConvertImageRequest(nil, info, dto.ImageRequest{Model: name, Prompt: "a cat"})
+		var apiErr *types.NewAPIError
+		require.ErrorAs(t, err, &apiErr, name)
+		assert.Equal(t, http.StatusBadRequest, apiErr.StatusCode, name)
+		assert.True(t, types.IsSkipRetryError(apiErr), name)
+		assert.Contains(t, apiErr.Error(), name)
+	}
 }

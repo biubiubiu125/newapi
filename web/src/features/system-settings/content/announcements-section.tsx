@@ -23,65 +23,25 @@ import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import * as z from 'zod'
-
 import { DateTimePicker } from '@/components/datetime-picker'
 import { StatusBadge } from '@/components/status-badge'
-import {
-  AlertDialog,
-  AlertDialogAction,
-  AlertDialogCancel,
-  AlertDialogContent,
-  AlertDialogDescription,
-  AlertDialogFooter,
-  AlertDialogHeader,
-  AlertDialogTitle,
-} from '@/components/ui/alert-dialog'
+import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from '@/components/ui/alert-dialog'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import {
-  Dialog,
-  DialogContent,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog'
-import {
-  Form,
-  FormControl,
-  FormDescription,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
 import { Textarea } from '@/components/ui/textarea'
 import { api } from '@/lib/api'
 import dayjs from '@/lib/dayjs'
-
 import { SettingsSwitchField } from '../components/settings-form-layout'
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
 import { ANNOUNCEMENT_CONTENT_MAX_CHARS } from './utils'
-
 import { localizeConsoleErrorText } from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
 
 type Announcement = {
   id: number
@@ -229,9 +189,10 @@ export function AnnouncementsSection({
         value: checked,
       })
       setIsEnabled(checked)
-      toast.success(t('Settings saved'))
-    } catch {
-      toast.error(t('Failed to save settings'))
+
+      toast.success(t('Setting saved'))
+    } catch (error) {
+      handleServerError(error, t('Failed to update setting'))
     }
   }
 
@@ -330,13 +291,10 @@ export function AnnouncementsSection({
         skipToast: true,
       })
       setHasChanges(false)
-      toast.success(
-        t(
-          'Announcements saved. New or changed announcements will automatically create Telegram push jobs.'
-        )
-      )
-    } catch {
-      toast.error(t('Failed to save announcements'))
+
+      toast.success(t('Announcements saved successfully'))
+    } catch (error) {
+      handleServerError(error, t('Failed to save announcements'))
     }
   }
 

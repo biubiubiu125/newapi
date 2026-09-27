@@ -61,6 +61,7 @@ func GetStatus(c *gin.Context) {
 		"linuxdo_client_id":           common.LinuxDOClientId,
 		"linuxdo_minimum_trust_level": common.LinuxDOMinimumTrustLevel,
 		"telegram_oauth":              common.TelegramOAuthEnabled,
+		"telegram_oauth_configured":   oauth.TelegramConfigurationError() == nil,
 		"telegram_bot_name":           common.TelegramBotName,
 		"theme":                       "default",
 		"system_name":                 common.SystemName,
@@ -117,8 +118,8 @@ func GetStatus(c *gin.Context) {
 		"oidc_display_name":           system_setting.GetOIDCSettings().GetEffectiveDisplayName(),
 		"passkey_login":               passkeySetting.Enabled,
 		"passkey_display_name":        passkeySetting.RPDisplayName,
-		"passkey_rp_id":               passkeySetting.RPID,
-		"passkey_origins":             passkeySetting.Origins,
+		"passkey_rp_id":               passkeySetting.EffectiveRPID(),
+		"passkey_rp_ids":              passkeySetting.RelyingPartyIDs(),
 		"passkey_allow_insecure":      passkeySetting.AllowInsecureOrigin,
 		"passkey_user_verification":   passkeySetting.UserVerification,
 		"passkey_attachment":          passkeySetting.AttachmentPreference,
@@ -179,7 +180,9 @@ func GetNotice(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
 	systemNotice := common.OptionMap["Notice"]
 	common.OptionMapRWMutex.RUnlock()
-	serveRevalidatedJSON(c, "public-content:notice:v1", systemNotice, gin.H{
+	// Keep the legacy notice/announcements fields. Announcements now come from
+	// /api/status, so this endpoint must not fall back to console announcements.
+	serveRevalidatedPayload(c, "public-content:notice:v1", systemNotice, gin.H{
 		"success":       true,
 		"message":       "",
 		"data":          systemNotice,
@@ -192,51 +195,29 @@ func GetAbout(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
 	about := common.OptionMap["About"]
 	common.OptionMapRWMutex.RUnlock()
-	serveRevalidatedJSON(c, "public-content:about:v1", about, gin.H{
-		"success": true,
-		"message": "",
-		"data":    about,
-	})
+	serveRevalidatedJSON(c, about)
 }
 
 func GetUserAgreement(c *gin.Context) {
-	content := system_setting.GetLegalSettings().UserAgreement
-	serveRevalidatedJSON(c, "public-content:user-agreement:v1", content, gin.H{
-		"success": true,
-		"message": "",
-		"data":    content,
-	})
+	serveRevalidatedJSON(c, system_setting.GetLegalSettings().UserAgreement)
 }
 
 func GetPrivacyPolicy(c *gin.Context) {
-	content := system_setting.GetLegalSettings().PrivacyPolicy
-	serveRevalidatedJSON(c, "public-content:privacy-policy:v1", content, gin.H{
-		"success": true,
-		"message": "",
-		"data":    content,
-	})
+	serveRevalidatedJSON(c, system_setting.GetLegalSettings().PrivacyPolicy)
 }
 
 func GetMidjourney(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
 	content := common.OptionMap["Midjourney"]
 	common.OptionMapRWMutex.RUnlock()
-	serveRevalidatedJSON(c, "public-content:midjourney:v1", content, gin.H{
-		"success": true,
-		"message": "",
-		"data":    content,
-	})
+	serveRevalidatedJSON(c, content)
 }
 
 func GetHomePageContent(c *gin.Context) {
 	common.OptionMapRWMutex.RLock()
 	content := common.OptionMap["HomePageContent"]
 	common.OptionMapRWMutex.RUnlock()
-	serveRevalidatedJSON(c, "public-content:home-page:v1", content, gin.H{
-		"success": true,
-		"message": "",
-		"data":    content,
-	})
+	serveRevalidatedJSON(c, content)
 }
 
 func emailTemplateParams(systemName, code, link string, minutes int) map[string]any {

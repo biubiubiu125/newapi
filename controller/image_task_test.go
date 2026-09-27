@@ -13,7 +13,6 @@ import (
 	"image/color"
 	"image/png"
 	"io"
-	"mime"
 	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
@@ -31,7 +30,6 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
 	"github.com/QuantumNous/new-api/relay"
-	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	relayconstant "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/service"
@@ -1168,14 +1166,10 @@ func TestPublicImageTaskFullLifecycleEndToEnd(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/image-tasks/generations":
-			_, _ = w.Write([]byte(`{"task_id":"upstream_public_lifecycle","status":"queued"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/image-tasks":
-			if r.URL.Query().Get("include_image_data") == "true" {
-				_, _ = w.Write([]byte(`{"items":[{"task_id":"upstream_public_lifecycle","status":"completed","progress":"100%","result":{"data":[{"b64_json":"` + controllerImageTaskTestB64 + `"}],"usage":{"total_tokens":17}}}]}`))
-				return
-			}
-			_, _ = w.Write([]byte(`{"items":[{"task_id":"upstream_public_lifecycle","status":"completed","progress":"100%"}]}`))
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/images/generations":
+			_, _ = w.Write([]byte(`{"data":[{"b64_json":"` + controllerImageTaskTestB64 + `"}],"usage":{"total_tokens":17}}`))
+		case strings.HasPrefix(r.URL.Path, "/api/image-tasks"):
+			http.Error(w, "removed image task bridge", http.StatusBadGateway)
 		default:
 			http.Error(w, "unexpected request", http.StatusBadRequest)
 		}
@@ -1560,382 +1554,12 @@ func TestPublicImageTaskStatusRejectsDisabledOwnerToken(t *testing.T) {
 	require.NotContains(t, statusRecorder.Body.String(), created.TaskID)
 }
 
-func TestValidateImageTaskModeRequestRejectsAsyncTaskBridgeMultipleImages(t *testing.T) {
-	require.NoError(t, i18n.Init())
-	n := uint(2)
-	err := validateImageTaskModeRequest(&dto.ImageRequest{N: &n}, dto.ImageTaskModeAsyncTaskBridge)
-	require.ErrorContains(t, err, "n greater than 1")
-	require.NotRegexp(t, "[\u4e00-\u9fff]", err.Error())
-
-	require.NoError(t, validateImageTaskModeRequest(&dto.ImageRequest{N: &n}, dto.ImageTaskModeSyncWrapper))
-
-	one := uint(1)
-	require.NoError(t, validateImageTaskModeRequest(&dto.ImageRequest{N: &one}, dto.ImageTaskModeAsyncTaskBridge))
-	require.NoError(t, validateImageTaskModeRequest(&dto.ImageRequest{}, dto.ImageTaskModeAsyncTaskBridge))
-
-	apiErr := types.NewErrorWithStatusCode(err, types.ErrorCodeInvalidRequest, http.StatusBadRequest)
-	require.Contains(t, apiErr.ToOpenAIError().Message, "n greater than 1")
-	require.NotRegexp(t, "[\u4e00-\u9fff]", apiErr.ToOpenAIError().Message)
-}
-
-func TestTryRelayImageTaskSyncBridgeSkipsNonAsyncWithoutInitializingChannelMeta(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	common.SetContextKey(ctx, constant.ContextKeyChannelOtherSetting, dto.ChannelOtherSettings{
-		ImageTaskMode: dto.ImageTaskModeSyncWrapper,
-	})
-	relayInfo := &relaycommon.RelayInfo{}
-
-	handled, err := tryRelayImageTaskSyncBridge(ctx, &dto.ImageRequest{}, relayInfo)
-
-	require.False(t, handled)
-	require.Nil(t, err)
-	require.Nil(t, relayInfo.ChannelMeta)
-}
-
-func TestTryRelayImageTaskSyncBridgeSkipsUnsupportedRelayMode(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	common.SetContextKey(ctx, constant.ContextKeyChannelOtherSetting, dto.ChannelOtherSettings{
-		ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
-	})
-	relayInfo := &relaycommon.RelayInfo{RelayMode: relayconstant.RelayModeEdits}
-
-	handled, err := tryRelayImageTaskSyncBridge(ctx, &dto.ImageRequest{}, relayInfo)
-
-	require.False(t, handled)
-	require.Nil(t, err)
-	require.Nil(t, relayInfo.ChannelMeta)
-}
-
 func TestImageTaskRelayModeRecognizesOpenAIImageEditPath(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
 	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/edits", nil)
 
 	require.Equal(t, relayconstant.RelayModeImagesEdits, imageTaskRelayMode(ctx))
-}
-
-func TestRelayImageTaskSyncBridgeRejectsWhenTaskExecutionDisabled(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	oldUpdateTask := constant.UpdateTask
-	oldRunImageTasks := service.RunImageTasksFunc
-	constant.UpdateTask = false
-	service.RunImageTasksFunc = func(context.Context, []*model.Task) error { return nil }
-	t.Cleanup(func() {
-		constant.UpdateTask = oldUpdateTask
-		service.RunImageTasksFunc = oldRunImageTasks
-	})
-
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
-
-	err := relayImageTaskSyncBridge(ctx, &dto.ImageRequest{}, &relaycommon.RelayInfo{})
-
-	require.NotNil(t, err)
-	require.Equal(t, http.StatusServiceUnavailable, err.StatusCode)
-}
-
-func TestImageGenerationRouteUsesSyncBridgeForAsyncTaskBridgeChannel(t *testing.T) {
-	router := setupImageTaskSyncBridgeE2E(t)
-	updateErr := completeFirstImageTaskWhenCreated(constant.TaskActionImageGeneration, json.RawMessage(`{"data":[{"url":"https://example.com/sync-bridge.png"}],"usage":{"total_tokens":7}}`))
-
-	reqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	req := httptest.NewRequest(
-		http.MethodPost,
-		"/v1/images/generations",
-		strings.NewReader(`{"model":"gpt-image-1","prompt":"draw a cat","n":1}`),
-	).WithContext(reqCtx)
-	req.Header.Set("Authorization", "Bearer sk-testtoken")
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-
-	router.ServeHTTP(recorder, req)
-
-	require.NoError(t, <-updateErr)
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.JSONEq(t, `{"data":[{"url":"https://example.com/sync-bridge.png"}],"usage":{"total_tokens":7}}`, recorder.Body.String())
-
-	var task model.Task
-	require.NoError(t, model.DB.First(&task, "platform = ?", constant.TaskPlatformImage).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
-	require.Equal(t, model.TaskSettlementStatusSettled, task.SettlementStatus)
-	require.Equal(t, constant.TaskActionImageGeneration, task.Action)
-	require.Equal(t, dto.ImageTaskModeAsyncTaskBridge, task.PrivateData.ImageTaskMode)
-	require.Equal(t, "/v1/images/generations", task.PrivateData.RequestPath)
-	require.Equal(t, "application/json", task.PrivateData.RequestContentType)
-	require.Equal(t, "gpt-image-1", task.Properties.OriginModelName)
-	require.NotEmpty(t, task.ClientTaskID)
-	require.NotEmpty(t, task.PrivateData.RequestBodyPath)
-	require.NotContains(t, recorder.Body.String(), "task_id")
-	require.Equal(t, task.TaskID, recorder.Header().Get("X-NewAPI-Image-Task-ID"))
-	require.Equal(t, task.ClientTaskID, recorder.Header().Get("X-NewAPI-Image-Client-Task-ID"))
-	require.Empty(t, recorder.Header().Get("X-NewAPI-Retry-Idempotency-Key"))
-}
-
-func TestImageEditRouteUsesSyncBridgeForAsyncTaskBridgeChannel(t *testing.T) {
-	router := setupImageTaskSyncBridgeE2E(t)
-	updateErr := completeFirstImageTaskWhenCreated(constant.TaskActionImageEdit, json.RawMessage(`{"data":[{"url":"https://example.com/edit-sync-bridge.png"}],"usage":{"total_tokens":9}}`))
-
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	require.NoError(t, writer.WriteField("model", "gpt-image-1"))
-	require.NoError(t, writer.WriteField("prompt", "edit this image"))
-	require.NoError(t, writer.WriteField("n", "1"))
-	part, err := writer.CreateFormFile("image", "input.png")
-	require.NoError(t, err)
-	_, err = part.Write([]byte("fake image"))
-	require.NoError(t, err)
-	require.NoError(t, writer.Close())
-
-	reqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", &body).WithContext(reqCtx)
-	req.Header.Set("Authorization", "Bearer sk-testtoken")
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	recorder := httptest.NewRecorder()
-
-	router.ServeHTTP(recorder, req)
-
-	require.NoError(t, <-updateErr)
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.JSONEq(t, `{"data":[{"url":"https://example.com/edit-sync-bridge.png"}],"usage":{"total_tokens":9}}`, recorder.Body.String())
-
-	var task model.Task
-	require.NoError(t, model.DB.First(&task, "platform = ? AND action = ?", constant.TaskPlatformImage, constant.TaskActionImageEdit).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
-	require.Equal(t, model.TaskSettlementStatusSettled, task.SettlementStatus)
-	require.Equal(t, dto.ImageTaskModeAsyncTaskBridge, task.PrivateData.ImageTaskMode)
-	require.Equal(t, "/v1/images/edits", task.PrivateData.RequestPath)
-	require.Contains(t, task.PrivateData.RequestContentType, "multipart/form-data")
-	require.Equal(t, "gpt-image-1", task.Properties.OriginModelName)
-	require.NotEmpty(t, task.ClientTaskID)
-	require.NotEmpty(t, task.PrivateData.RequestBodyPath)
-	require.NotContains(t, recorder.Body.String(), "task_id")
-	require.Equal(t, task.TaskID, recorder.Header().Get("X-NewAPI-Image-Task-ID"))
-	require.Equal(t, task.ClientTaskID, recorder.Header().Get("X-NewAPI-Image-Client-Task-ID"))
-	require.Empty(t, recorder.Header().Get("X-NewAPI-Retry-Idempotency-Key"))
-}
-
-func TestImageGenerationRouteRunsAsyncTaskBridgeEndToEnd(t *testing.T) {
-	var submitCount int
-	var statusOnlyCount int
-	var fullResultCount int
-	var submitBody []byte
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/image-tasks/generations":
-			submitCount++
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			submitBody = append([]byte(nil), body...)
-			_, _ = w.Write([]byte(`{"task_id":"upstream_sync_bridge_e2e","status":"queued"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/image-tasks":
-			if r.URL.Query().Get("ids") != "upstream_sync_bridge_e2e" {
-				http.Error(w, "unexpected ids", http.StatusBadRequest)
-				return
-			}
-			if r.URL.Query().Get("include_image_data") == "true" {
-				fullResultCount++
-				_, _ = w.Write([]byte(`{
-					"items": [{
-						"task_id": "upstream_sync_bridge_e2e",
-						"status": "completed",
-						"progress": "100%",
-						"result": {
-							"data": [{"b64_json": "` + controllerImageTaskTestB64 + `"}],
-							"usage": {"total_tokens": 11}
-						}
-					}]
-				}`))
-				return
-			}
-			statusOnlyCount++
-			_, _ = w.Write([]byte(`{
-				"items": [{
-					"task_id": "upstream_sync_bridge_e2e",
-					"status": "completed",
-					"progress": "100%"
-				}]
-			}`))
-		default:
-			http.Error(w, "unexpected request", http.StatusBadRequest)
-		}
-	}))
-	defer upstream.Close()
-
-	router := setupImageTaskSyncBridgeE2E(t)
-	service.RunImageTasksFunc = relay.RunImageTasks
-	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 301).Update("base_url", upstream.URL).Error)
-	workerCtx, workerCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer workerCancel()
-	workerDone := driveImageTaskSyncBridgeWorkerUntilSettled(workerCtx)
-
-	reqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	req := httptest.NewRequest(
-		http.MethodPost,
-		"/v1/images/generations",
-		strings.NewReader(`{"model":"gpt-image-1","prompt":"draw the full chain","n":1}`),
-	).WithContext(reqCtx)
-	req.Header.Set("Authorization", "Bearer sk-testtoken")
-	req.Header.Set("Content-Type", "application/json")
-	recorder := httptest.NewRecorder()
-
-	router.ServeHTTP(recorder, req)
-
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.JSONEq(t, `{"data":[{"b64_json":"`+controllerImageTaskTestB64+`"}],"usage":{"total_tokens":11}}`, recorder.Body.String())
-	require.NoError(t, <-workerDone)
-	require.Equal(t, 1, submitCount)
-	require.GreaterOrEqual(t, statusOnlyCount, 1)
-	require.Equal(t, 1, fullResultCount)
-
-	var submitted map[string]any
-	require.NoError(t, json.Unmarshal(submitBody, &submitted))
-	require.Equal(t, "gpt-image-1", submitted["model"])
-	require.Equal(t, "draw the full chain", submitted["prompt"])
-	require.Equal(t, false, submitted["stream"])
-	require.NotEmpty(t, submitted["client_task_id"])
-
-	var task model.Task
-	require.NoError(t, model.DB.First(&task, "platform = ?", constant.TaskPlatformImage).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
-	require.Equal(t, model.TaskSettlementStatusSettled, task.SettlementStatus)
-	require.Equal(t, "upstream_sync_bridge_e2e", task.PrivateData.UpstreamTaskID)
-	require.Equal(t, constant.TaskActionImageGeneration, task.Action)
-	require.Equal(t, dto.ImageTaskModeAsyncTaskBridge, task.PrivateData.ImageTaskMode)
-}
-
-func TestImageEditRouteRunsAsyncTaskBridgeEndToEnd(t *testing.T) {
-	var submitCount int
-	var statusOnlyCount int
-	var fullResultCount int
-	var submitBody []byte
-	var submitContentType string
-	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		switch {
-		case r.Method == http.MethodPost && r.URL.Path == "/api/image-tasks/edits":
-			submitCount++
-			submitContentType = r.Header.Get("Content-Type")
-			body, err := io.ReadAll(r.Body)
-			if err != nil {
-				http.Error(w, err.Error(), http.StatusBadRequest)
-				return
-			}
-			submitBody = append([]byte(nil), body...)
-			_, _ = w.Write([]byte(`{"task_id":"upstream_sync_bridge_edit_e2e","status":"queued"}`))
-		case r.Method == http.MethodGet && r.URL.Path == "/api/image-tasks":
-			if r.URL.Query().Get("ids") != "upstream_sync_bridge_edit_e2e" {
-				http.Error(w, "unexpected ids", http.StatusBadRequest)
-				return
-			}
-			if r.URL.Query().Get("include_image_data") == "true" {
-				fullResultCount++
-				_, _ = w.Write([]byte(`{
-					"items": [{
-						"task_id": "upstream_sync_bridge_edit_e2e",
-							"status": "completed",
-							"progress": "100%",
-							"result": {
-							"data": [{"b64_json": "` + controllerImageTaskTestB64 + `"}],
-							"usage": {"total_tokens": 13}
-						}
-					}]
-				}`))
-				return
-			}
-			statusOnlyCount++
-			_, _ = w.Write([]byte(`{
-				"items": [{
-					"task_id": "upstream_sync_bridge_edit_e2e",
-					"status": "completed",
-					"progress": "100%"
-				}]
-			}`))
-		default:
-			http.Error(w, "unexpected request", http.StatusBadRequest)
-		}
-	}))
-	defer upstream.Close()
-
-	router := setupImageTaskSyncBridgeE2E(t)
-	service.RunImageTasksFunc = relay.RunImageTasks
-	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 301).Update("base_url", upstream.URL).Error)
-	workerCtx, workerCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer workerCancel()
-	workerDone := driveImageTaskSyncBridgeWorkerUntilSettled(workerCtx)
-
-	var body bytes.Buffer
-	writer := multipart.NewWriter(&body)
-	require.NoError(t, writer.WriteField("model", "gpt-image-1"))
-	require.NoError(t, writer.WriteField("prompt", "edit the full chain"))
-	require.NoError(t, writer.WriteField("n", "1"))
-	part, err := writer.CreateFormFile("image", "input.png")
-	require.NoError(t, err)
-	_, err = part.Write(validControllerImageTaskTestPNG(t, color.RGBA{R: 0x21, G: 0x43, B: 0x65, A: 0xff}))
-	require.NoError(t, err)
-	require.NoError(t, writer.Close())
-
-	reqCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	req := httptest.NewRequest(http.MethodPost, "/v1/images/edits", &body).WithContext(reqCtx)
-	req.Header.Set("Authorization", "Bearer sk-testtoken")
-	req.Header.Set("Content-Type", writer.FormDataContentType())
-	recorder := httptest.NewRecorder()
-
-	router.ServeHTTP(recorder, req)
-
-	require.Equal(t, http.StatusOK, recorder.Code)
-	require.JSONEq(t, `{"data":[{"b64_json":"`+controllerImageTaskTestB64+`"}],"usage":{"total_tokens":13}}`, recorder.Body.String())
-	require.NoError(t, <-workerDone)
-	require.Equal(t, 1, submitCount)
-	require.GreaterOrEqual(t, statusOnlyCount, 1)
-	require.Equal(t, 1, fullResultCount)
-
-	mediaType, params, err := mime.ParseMediaType(submitContentType)
-	require.NoError(t, err)
-	require.Equal(t, "multipart/form-data", mediaType)
-	require.NotEmpty(t, params["boundary"])
-	fields := make(map[string]string)
-	files := make(map[string][]byte)
-	reader := multipart.NewReader(bytes.NewReader(submitBody), params["boundary"])
-	for {
-		part, err := reader.NextPart()
-		if errors.Is(err, io.EOF) {
-			break
-		}
-		require.NoError(t, err)
-		data, err := io.ReadAll(part)
-		require.NoError(t, err)
-		if part.FileName() != "" {
-			files[part.FormName()] = data
-			continue
-		}
-		fields[part.FormName()] = string(data)
-	}
-	require.Equal(t, "gpt-image-1", fields["model"])
-	require.Equal(t, "edit the full chain", fields["prompt"])
-	require.Equal(t, "1", fields["n"])
-	require.Equal(t, "false", fields["stream"])
-	require.NotEmpty(t, fields["client_task_id"])
-	require.Equal(t, validControllerImageTaskTestPNG(t, color.RGBA{R: 0x21, G: 0x43, B: 0x65, A: 0xff}), files["image"])
-
-	var task model.Task
-	require.NoError(t, model.DB.First(&task, "platform = ?", constant.TaskPlatformImage).Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), task.Status)
-	require.Equal(t, model.TaskSettlementStatusSettled, task.SettlementStatus)
-	require.Equal(t, "upstream_sync_bridge_edit_e2e", task.PrivateData.UpstreamTaskID)
-	require.Equal(t, constant.TaskActionImageEdit, task.Action)
-	require.Equal(t, dto.ImageTaskModeAsyncTaskBridge, task.PrivateData.ImageTaskMode)
 }
 
 func driveImageTaskSyncBridgeWorkerUntilSettled(ctx context.Context) <-chan error {
@@ -2007,371 +1631,6 @@ func completeFirstImageTaskWhenCreated(action string, result json.RawMessage) <-
 		}
 	}()
 	return updateErr
-}
-
-func TestWaitImageTaskSyncBridgeResultReturnsAsyncResult(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db, cleanup := setupImageTaskControllerTestDB(t)
-	task := &model.Task{
-		TaskID:   "task_sync_bridge_success",
-		Platform: constant.TaskPlatformImage,
-		UserId:   1,
-		Status:   model.TaskStatusQueued,
-		Progress: "0%",
-	}
-	require.NoError(t, db.Create(task).Error)
-	t.Cleanup(cleanup)
-
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
-	go func() {
-		time.Sleep(50 * time.Millisecond)
-		_ = db.Model(&model.Task{}).Where("id = ?", task.ID).Updates(map[string]any{
-			"status":            model.TaskStatusSuccess,
-			"settlement_status": model.TaskSettlementStatusSettled,
-			"progress":          "100%",
-			"data":              json.RawMessage(`{"data":[{"url":"https://example.com/image.png"}]}`),
-		}).Error
-	}()
-
-	body, err := waitImageTaskSyncBridgeResult(ctx, task)
-
-	require.Nil(t, err)
-	require.JSONEq(t, `{"data":[{"url":"https://example.com/image.png"}]}`, string(body))
-}
-
-func TestWaitImageTaskSyncBridgeResultPreservesFailedTaskStatusCode(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db, cleanup := setupImageTaskControllerTestDB(t)
-	t.Cleanup(cleanup)
-
-	cases := []struct {
-		name       string
-		reason     string
-		statusCode int
-	}{
-		{name: "timeout", reason: "image generation timed out", statusCode: http.StatusGatewayTimeout},
-		{name: "client closed", reason: "client closed request", statusCode: 499},
-	}
-	for _, tc := range cases {
-		t.Run(tc.name, func(t *testing.T) {
-			task := &model.Task{
-				TaskID:     "task_sync_bridge_failed_" + strings.ReplaceAll(tc.name, " ", "_"),
-				Platform:   constant.TaskPlatformImage,
-				UserId:     1,
-				Status:     model.TaskStatusFailure,
-				Progress:   "100%",
-				FailReason: tc.reason,
-			}
-			require.NoError(t, db.Create(task).Error)
-
-			ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-			ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
-
-			body, apiErr := waitImageTaskSyncBridgeResult(ctx, task)
-
-			require.Empty(t, body)
-			require.NotNil(t, apiErr)
-			require.Equal(t, tc.statusCode, apiErr.StatusCode)
-			require.Contains(t, apiErr.ToOpenAIError().Message, tc.reason)
-		})
-	}
-}
-
-func TestWaitImageTaskSyncBridgeResultHidesInternalFailureReason(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db, cleanup := setupImageTaskControllerTestDB(t)
-	t.Cleanup(cleanup)
-
-	internal := "pq: password authentication failed for user newapi"
-	task := &model.Task{
-		TaskID:     "task_sync_bridge_internal_fail",
-		Platform:   constant.TaskPlatformImage,
-		UserId:     1,
-		Status:     model.TaskStatusFailure,
-		Progress:   "100%",
-		FailReason: internal,
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
-
-	body, apiErr := waitImageTaskSyncBridgeResult(ctx, task)
-
-	require.Empty(t, body)
-	require.NotNil(t, apiErr)
-	require.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
-	require.Equal(t, model.TaskPublicInternalFailReason, apiErr.ToOpenAIError().Message)
-	require.NotContains(t, apiErr.ToOpenAIError().Message, "password")
-	require.NotContains(t, apiErr.ToOpenAIError().Message, "newapi")
-	require.Equal(t, internal, task.FailReason)
-}
-
-func TestWaitImageTaskSyncBridgeResultHidesSettlementReviewInternalReason(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db, cleanup := setupImageTaskControllerTestDB(t)
-	t.Cleanup(cleanup)
-
-	internal := "billing settlement failed before consumption log: pq: password authentication failed"
-	task := &model.Task{
-		TaskID:           "task_sync_bridge_review_internal",
-		Platform:         constant.TaskPlatformImage,
-		UserId:           1,
-		Status:           model.TaskStatusSuccess,
-		SettlementStatus: model.TaskSettlementStatusReview,
-		Progress:         "100%",
-		FailReason:       internal,
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
-
-	body, apiErr := waitImageTaskSyncBridgeResult(ctx, task)
-
-	require.Empty(t, body)
-	require.NotNil(t, apiErr)
-	require.Equal(t, http.StatusBadGateway, apiErr.StatusCode)
-	require.Equal(t, model.TaskPublicSettlementFailReason, apiErr.ToOpenAIError().Message)
-	require.NotContains(t, apiErr.ToOpenAIError().Message, "password")
-	require.Equal(t, internal, task.FailReason)
-}
-
-func TestWaitImageTaskSyncBridgeResultHidesQueryError(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db, cleanup := setupImageTaskControllerTestDB(t)
-	t.Cleanup(cleanup)
-
-	task := &model.Task{
-		TaskID:   "task_sync_bridge_query_error",
-		Platform: constant.TaskPlatformImage,
-		UserId:   1,
-		Status:   model.TaskStatusQueued,
-		Progress: "0%",
-	}
-	require.NoError(t, db.Create(task).Error)
-	sqlDB, err := db.DB()
-	require.NoError(t, err)
-	require.NoError(t, sqlDB.Close())
-
-	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
-
-	body, apiErr := waitImageTaskSyncBridgeResult(ctx, task)
-
-	require.Empty(t, body)
-	require.NotNil(t, apiErr)
-	message := apiErr.ToOpenAIError().Message
-	require.Equal(t, "Failed to query task", message)
-	require.NotContains(t, message, "sql")
-	require.NotContains(t, strings.ToLower(message), "database")
-	require.NotContains(t, strings.ToLower(message), "closed")
-}
-
-func TestCancelImageTaskSyncBridgeWaitFailsOpenTaskAndRemovesBody(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db, cleanup := setupImageTaskControllerTestDB(t)
-	t.Cleanup(cleanup)
-	bodyPath, err := common.WriteImageTaskBodyCacheFile([]byte(`{"prompt":"draw"}`))
-	require.NoError(t, err)
-	task := &model.Task{
-		TaskID:   "task_sync_bridge_timeout",
-		Platform: constant.TaskPlatformImage,
-		UserId:   1,
-		Status:   model.TaskStatusQueued,
-		Progress: "0%",
-		PrivateData: model.TaskPrivateData{
-			RequestBodyPath: bodyPath,
-		},
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
-	setImageTaskSyncBridgeTaskHeaders(ctx, task)
-	body, apiErr := cancelImageTaskSyncBridgeWait(ctx, task, "image generation timed out")
-
-	require.Empty(t, body)
-	require.NotNil(t, apiErr)
-	require.Equal(t, http.StatusGatewayTimeout, apiErr.StatusCode)
-	require.Empty(t, recorder.Header().Get("X-NewAPI-Image-Task-ID"))
-	require.Empty(t, recorder.Header().Get("X-NewAPI-Image-Client-Task-ID"))
-	require.Empty(t, recorder.Header().Get("X-NewAPI-Retry-Idempotency-Key"))
-	reloaded, exist, err := model.GetByTaskId(1, task.TaskID)
-	require.NoError(t, err)
-	require.True(t, exist)
-	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
-	require.Equal(t, "image generation timed out", reloaded.FailReason)
-	require.Empty(t, reloaded.PrivateData.RequestBodyPath)
-	_, statErr := os.Stat(bodyPath)
-	require.ErrorIs(t, statErr, os.ErrNotExist)
-}
-
-func TestCancelImageTaskSyncBridgeWaitDoesNotExportRefundWithoutConsume(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db, cleanup := setupImageTaskControllerTestDB(t)
-	t.Cleanup(cleanup)
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Token{}, &model.Log{}, &model.QuotaData{}, &model.TokenUsageDaily{}, &model.Channel{}))
-	oldDataExportEnabled := common.DataExportEnabled
-	oldNodeName := common.NodeName
-	common.DataExportEnabled = true
-	common.NodeName = "sync-cancel-node"
-	model.CacheQuotaDataLock.Lock()
-	model.CacheQuotaData = make(map[string]*model.QuotaData)
-	model.CacheQuotaDataLock.Unlock()
-	t.Cleanup(func() {
-		common.DataExportEnabled = oldDataExportEnabled
-		common.NodeName = oldNodeName
-		model.CacheQuotaDataLock.Lock()
-		model.CacheQuotaData = make(map[string]*model.QuotaData)
-		model.CacheQuotaDataLock.Unlock()
-	})
-	require.NoError(t, db.Create(&model.User{Id: 2, Username: "image-owner", Password: "password123", Quota: 10000, Status: common.UserStatusEnabled}).Error)
-	require.NoError(t, db.Create(&model.Token{Id: 2, UserId: 2, Name: "image-token", Key: "sk-image", RemainQuota: 5000, Status: common.TokenStatusEnabled}).Error)
-	require.NoError(t, db.Create(&model.Channel{Id: 2, Name: "image-channel", Status: common.ChannelStatusEnabled}).Error)
-	bodyPath, err := common.WriteImageTaskBodyCacheFile([]byte(`{"prompt":"draw"}`))
-	require.NoError(t, err)
-	task := &model.Task{
-		TaskID:    "task_sync_bridge_export_cancel",
-		Platform:  constant.TaskPlatformImage,
-		UserId:    2,
-		ChannelId: 2,
-		Status:    model.TaskStatusQueued,
-		Progress:  "0%",
-		Quota:     3000,
-		Group:     "default",
-		Properties: model.Properties{
-			OriginModelName: "gpt-image-1",
-		},
-		PrivateData: model.TaskPrivateData{
-			RequestBodyPath: bodyPath,
-			TokenId:         2,
-			NodeName:        "sync-cancel-node",
-			BillingSource:   service.BillingSourceWallet,
-		},
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
-	body, apiErr := cancelImageTaskSyncBridgeWait(ctx, task, "image generation timed out")
-	model.SaveQuotaDataCache()
-
-	require.Empty(t, body)
-	require.NotNil(t, apiErr)
-	var rows []model.QuotaData
-	require.NoError(t, db.Find(&rows).Error)
-	require.Empty(t, rows)
-}
-
-func TestCancelImageTaskSyncBridgeWaitKeepsSubmittedTaskRunning(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db, cleanup := setupImageTaskControllerTestDB(t)
-	t.Cleanup(cleanup)
-	bodyPath, err := common.WriteImageTaskBodyCacheFile([]byte(`{"prompt":"draw"}`))
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = os.Remove(bodyPath)
-	})
-	task := &model.Task{
-		TaskID:   "task_sync_bridge_submitted",
-		Platform: constant.TaskPlatformImage,
-		UserId:   1,
-		Status:   model.TaskStatusSubmitted,
-		Progress: "0%",
-		PrivateData: model.TaskPrivateData{
-			RequestBodyPath: bodyPath,
-			UpstreamTaskID:  "upstream_submitted",
-		},
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
-	body, apiErr := cancelImageTaskSyncBridgeWait(ctx, task, "client closed request")
-
-	require.Empty(t, body)
-	require.Nil(t, apiErr)
-	require.Equal(t, "task_sync_bridge_submitted", recorder.Header().Get("X-NewAPI-Image-Task-ID"))
-	require.Equal(t, "task_sync_bridge_submitted", recorder.Header().Get("X-NewAPI-Image-Client-Task-ID"))
-	require.Equal(t, "task_sync_bridge_submitted", recorder.Header().Get("X-NewAPI-Retry-Idempotency-Key"))
-	reloaded, exist, err := model.GetByTaskId(1, task.TaskID)
-	require.NoError(t, err)
-	require.True(t, exist)
-	require.Equal(t, model.TaskStatus(model.TaskStatusSubmitted), reloaded.Status)
-	require.Equal(t, "upstream_submitted", reloaded.PrivateData.UpstreamTaskID)
-	require.Equal(t, bodyPath, reloaded.PrivateData.RequestBodyPath)
-	require.FileExists(t, bodyPath)
-}
-
-func TestCancelImageTaskSyncBridgeWaitKeepsLeasedQueuedTaskRunning(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	db, cleanup := setupImageTaskControllerTestDB(t)
-	t.Cleanup(cleanup)
-	bodyPath, err := common.WriteImageTaskBodyCacheFile([]byte(`{"prompt":"draw"}`))
-	require.NoError(t, err)
-	t.Cleanup(func() {
-		_ = os.Remove(bodyPath)
-	})
-	task := &model.Task{
-		TaskID:    "task_sync_bridge_leased",
-		Platform:  constant.TaskPlatformImage,
-		UserId:    1,
-		Status:    model.TaskStatusQueued,
-		Progress:  "0%",
-		LockOwner: "worker-owner",
-		LockUntil: time.Now().Add(time.Minute).Unix(),
-		PrivateData: model.TaskPrivateData{
-			RequestBodyPath: bodyPath,
-		},
-	}
-	require.NoError(t, db.Create(task).Error)
-
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
-	body, apiErr := cancelImageTaskSyncBridgeWait(ctx, task, "image generation timed out")
-
-	require.Empty(t, body)
-	require.Nil(t, apiErr)
-	require.Equal(t, "task_sync_bridge_leased", recorder.Header().Get("X-NewAPI-Image-Task-ID"))
-	require.Equal(t, "task_sync_bridge_leased", recorder.Header().Get("X-NewAPI-Image-Client-Task-ID"))
-	require.Equal(t, "task_sync_bridge_leased", recorder.Header().Get("X-NewAPI-Retry-Idempotency-Key"))
-	reloaded, exist, err := model.GetByTaskId(1, task.TaskID)
-	require.NoError(t, err)
-	require.True(t, exist)
-	require.Equal(t, model.TaskStatus(model.TaskStatusQueued), reloaded.Status)
-	require.Equal(t, "worker-owner", reloaded.LockOwner)
-	require.Equal(t, bodyPath, reloaded.PrivateData.RequestBodyPath)
-	require.FileExists(t, bodyPath)
-}
-
-func TestImageTaskSyncBridgeWaitStoppedErrorIncludesRetryHeaders(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-	recorder := httptest.NewRecorder()
-	ctx, _ := gin.CreateTestContext(recorder)
-	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/images/generations", nil)
-	task := &model.Task{
-		TaskID:       "task_sync_bridge_retry",
-		ClientTaskID: "client_retry_123",
-		Platform:     constant.TaskPlatformImage,
-		UserId:       1,
-		Status:       model.TaskStatusSubmitted,
-		Progress:     "0%",
-	}
-
-	apiErr := imageTaskSyncBridgeWaitStoppedError(ctx, task, "image generation timed out", http.StatusGatewayTimeout)
-
-	require.NotNil(t, apiErr)
-	require.Equal(t, http.StatusGatewayTimeout, apiErr.StatusCode)
-	require.Contains(t, apiErr.ToOpenAIError().Message, "Idempotency-Key: client_retry_123")
-	require.Equal(t, "task_sync_bridge_retry", recorder.Header().Get("X-NewAPI-Image-Task-ID"))
-	require.Equal(t, "client_retry_123", recorder.Header().Get("X-NewAPI-Image-Client-Task-ID"))
-	require.Equal(t, "client_retry_123", recorder.Header().Get("X-NewAPI-Retry-Idempotency-Key"))
 }
 
 func TestImageTaskBillingRequestInputUsesPersistedJSONBody(t *testing.T) {
@@ -2453,6 +1712,69 @@ func TestPersistImageTaskRequestUsesIdempotencyKeyAsClientTaskID(t *testing.T) {
 
 	require.JSONEq(t, `{"model":"gpt-image-1","prompt":"draw a cat","stream":false}`, string(persisted.Body))
 	require.Equal(t, "idem_local_123", persisted.ClientTaskID)
+}
+
+func TestImageGenerationRouteIgnoresRemovedAsyncTaskBridge(t *testing.T) {
+	assertImageRouteIgnoresRemovedAsyncTaskBridge(t, false)
+}
+
+func TestImageEditRouteIgnoresRemovedAsyncTaskBridge(t *testing.T) {
+	assertImageRouteIgnoresRemovedAsyncTaskBridge(t, true)
+}
+
+func assertImageRouteIgnoresRemovedAsyncTaskBridge(t *testing.T, edit bool) {
+	t.Helper()
+	var bridgeCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		if strings.HasPrefix(r.URL.Path, "/api/image-tasks") {
+			bridgeCalls.Add(1)
+			http.Error(w, "removed image task bridge", http.StatusBadGateway)
+			return
+		}
+		expectedPath := "/v1/images/generations"
+		if edit {
+			expectedPath = "/v1/images/edits"
+		}
+		if r.Method != http.MethodPost || r.URL.Path != expectedPath {
+			http.Error(w, "unexpected request", http.StatusBadRequest)
+			return
+		}
+		_, _ = w.Write([]byte(`{"data":[{"b64_json":"` + controllerImageTaskTestB64 + `"}],"usage":{"total_tokens":11}}`))
+	}))
+	defer upstream.Close()
+
+	router := setupImageTaskSyncBridgeE2E(t)
+	require.NoError(t, model.DB.Model(&model.Channel{}).Where("id = ?", 301).Update("base_url", upstream.URL).Error)
+
+	var body bytes.Buffer
+	req := httptest.NewRequest(http.MethodPost, "/v1/images/generations", strings.NewReader(`{"model":"gpt-image-1","prompt":"ignore bridge","n":1}`))
+	req.Header.Set("Content-Type", "application/json")
+	if edit {
+		writer := multipart.NewWriter(&body)
+		require.NoError(t, writer.WriteField("model", "gpt-image-1"))
+		require.NoError(t, writer.WriteField("prompt", "ignore bridge"))
+		require.NoError(t, writer.WriteField("n", "1"))
+		part, err := writer.CreateFormFile("image", "input.png")
+		require.NoError(t, err)
+		imageBytes, err := base64.StdEncoding.DecodeString(controllerImageTaskTestB64)
+		require.NoError(t, err)
+		_, err = part.Write(imageBytes)
+		require.NoError(t, err)
+		require.NoError(t, writer.Close())
+		req = httptest.NewRequest(http.MethodPost, "/v1/images/edits", bytes.NewReader(body.Bytes()))
+		req.Header.Set("Content-Type", writer.FormDataContentType())
+	}
+	req.Header.Set("Authorization", "Bearer sk-testtoken")
+	recorder := httptest.NewRecorder()
+	router.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	require.Contains(t, recorder.Body.String(), controllerImageTaskTestB64)
+	require.Zero(t, bridgeCalls.Load())
+	var taskCount int64
+	require.NoError(t, model.DB.Model(&model.Task{}).Count(&taskCount).Error)
+	require.Zero(t, taskCount)
 }
 
 func TestPersistImageTaskRequestRejectsMismatchedIdempotencyIdentifiers(t *testing.T) {

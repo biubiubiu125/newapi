@@ -58,7 +58,7 @@ const creemProductDialogSchema = z.object({
   productId: z.string().min(1, 'Product ID is required'),
   price: z.number().min(0.01, 'Price must be greater than 0'),
   quota: z.number().min(1, 'Quota must be at least 1'),
-  currency: z.enum(['USD', 'EUR']),
+  currency: z.enum(['USD', 'EUR', 'CNY']),
 })
 
 type CreemProductDialogFormValues = z.infer<typeof creemProductDialogSchema>
@@ -186,6 +186,7 @@ export function CreemProductDialog({
                       items={[
                         { value: 'USD', label: t('USD ($)') },
                         { value: 'EUR', label: t('EUR (€)') },
+                        { value: 'CNY', label: t('CNY (¥)') },
                       ]}
                       onValueChange={field.onChange}
                       value={field.value}
@@ -199,6 +200,7 @@ export function CreemProductDialog({
                         <SelectGroup>
                           <SelectItem value='USD'>{t('USD ($)')}</SelectItem>
                           <SelectItem value='EUR'>{t('EUR (€)')}</SelectItem>
+                          <SelectItem value='CNY'>{t('CNY (¥)')}</SelectItem>
                         </SelectGroup>
                       </SelectContent>
                     </Select>

@@ -25,6 +25,8 @@ import {
   ADMIN_PERMISSION_RESOURCES,
   hasPermission,
 } from '@/lib/admin-permissions'
+import { handleServerError } from '@/lib/handle-server-error'
+import {localizeConsoleErrorText} from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { createChannel, updateChannel, updateChannelStatus } from '../api'
@@ -35,8 +37,6 @@ import {
   type ChannelFormValues,
 } from '../lib'
 import type { Channel } from '../types'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 type UseChannelMutateFormParams = {
   currentRow?: Channel | null
@@ -95,7 +95,6 @@ function isManageableStatus(status: number): boolean {
     status === CHANNEL_STATUS.MANUAL_DISABLED
   )
 }
-
 export function useChannelMutateForm(props: UseChannelMutateFormParams) {
   const { t } = useTranslation()
   const currentUser = useAuthStore((s) => s.auth.user)
@@ -136,10 +135,12 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
               }
             : payload
 
-        const response = await updateChannel(
-          props.currentRow.id,
-          payloadWithKeyMode
-        )
+        const response = await updateChannel(props.currentRow.id, {
+          ...payloadWithKeyMode,
+          ...(canEditSensitive && props.isMultiKeyChannel
+            ? { multi_key_mode: data.multi_key_type }
+            : {}),
+        })
         if (!response.success) {
           throw new Error(localizeConsoleErrorText(response.message, ERROR_MESSAGES.UPDATE_FAILED))
         }
@@ -214,6 +215,7 @@ export function useChannelMutateForm(props: UseChannelMutateFormParams) {
           ERROR_MESSAGES.CREATE_FAILED
         )
       )
+      handleServerError(error, t(ERROR_MESSAGES.CREATE_FAILED))
     },
   })
 }

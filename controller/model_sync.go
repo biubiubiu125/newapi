@@ -1,7 +1,9 @@
 package controller
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -9,6 +11,7 @@ import (
 	"math/rand"
 	"net"
 	"net/http"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -33,7 +36,7 @@ func normalizeLocale(locale string) (string, bool) {
 	case "en", "ja":
 		return l, true
 	case "zh", "zh-cn", "zh_cn":
-		return "zh-CN", true
+		return "zh", true
 	case "zh-tw", "zh_tw":
 		return "zh-TW", true
 	default:
@@ -220,10 +223,7 @@ func decodeUpstreamJSON[T any](buf []byte, out *upstreamEnvelope[T]) error {
 
 func fetchJSON[T any](ctx context.Context, url string, out *upstreamEnvelope[T]) error {
 	var lastErr error
-	attempts := common.GetEnvOrDefault("SYNC_HTTP_RETRY", 3)
-	if attempts < 1 {
-		attempts = 1
-	}
+	attempts := max(common.GetEnvOrDefault("SYNC_HTTP_RETRY", 3), 1)
 	baseDelay := 200 * time.Millisecond
 	maxMB := common.GetEnvOrDefault("SYNC_HTTP_MAX_MB", 10)
 	maxBytes := int64(maxMB) << 20
@@ -253,7 +253,7 @@ func fetchJSON[T any](ctx context.Context, url string, out *upstreamEnvelope[T])
 			switch resp.StatusCode {
 			case http.StatusOK:
 				// read body into buffer for caching and flexible decode
-				limited := io.LimitReader(resp.Body, maxBytes)
+				limited := io.LimitReader(resp.Body, maxBytes+1)
 				buf, err := io.ReadAll(limited)
 				if err != nil {
 					lastErr = err
@@ -395,8 +395,18 @@ func shouldFetchUpstreamVendors(missing []string, overwrite []overwriteField, mo
 // - 仅创建请求中显式列出的「未配置模型」
 // - 可通过 overwrite 选择性覆盖更新本地已有模型的字段（前提：sync_official <> 0）
 func SyncUpstreamModels(c *gin.Context) {
+	body, err := io.ReadAll(io.LimitReader(c.Request.Body, 1<<20))
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgModelSyncBodyInvalid, map[string]any{"Error": err.Error()})
+		return
+	}
+	if metadataSelectionRequest(body) {
+		applyMetadataSelection(c, body)
+		return
+	}
+	c.Request.Body = io.NopCloser(bytes.NewReader(body))
 	var req syncRequest
-	// 允许空体
+	// 旧前端仍按 locale/source/missing/overwrite 同步；完全空体走上面的选择接口并返回 400。
 	if err := c.ShouldBindJSON(&req); err != nil && !errors.Is(err, io.EOF) {
 		common.ApiErrorI18n(c, i18n.MsgModelSyncBodyInvalid, map[string]any{"Error": err.Error()})
 		return
@@ -446,7 +456,6 @@ func SyncUpstreamModels(c *gin.Context) {
 	timeoutSec := common.GetEnvOrDefault("SYNC_HTTP_TIMEOUT_SECONDS", 15)
 	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(timeoutSec)*time.Second)
 	defer cancel()
-
 	modelsURL, vendorsURL := getUpstreamURLs(req.Locale)
 	var vendorsEnv upstreamEnvelope[upstreamVendor]
 	var modelsEnv upstreamEnvelope[upstreamModel]
@@ -669,74 +678,271 @@ func chooseStatus(primary *int, fallback int) int {
 	return fallback
 }
 
-// SyncUpstreamPreview 预览上游与本地的差异（仅用于弹窗选择）
-func SyncUpstreamPreview(c *gin.Context) {
-	// 1) 拉取上游数据
-	timeoutSec := common.GetEnvOrDefault("SYNC_HTTP_TIMEOUT_SECONDS", 15)
-	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(timeoutSec)*time.Second)
-	defer cancel()
+type metadataSyncSource struct {
+	Locale     string `json:"locale"`
+	ModelsURL  string `json:"models_url"`
+	VendorsURL string `json:"vendors_url"`
+	Version    string `json:"version"`
+	Type       string `json:"type,omitempty"`
+}
 
+type metadataSyncField struct {
+	Field    string `json:"field"`
+	Local    any    `json:"local"`
+	Upstream any    `json:"upstream"`
+}
+
+type metadataSyncCandidate struct {
+	ModelName      string                `json:"model_name"`
+	Kind           string                `json:"kind"`
+	Scope          string                `json:"scope"`
+	RecordVersion  string                `json:"record_version"`
+	Fields         []metadataSyncField   `json:"fields"`
+	Upstream       *model.MetadataValues `json:"upstream,omitempty"`
+	VendorToCreate string                `json:"vendor_to_create,omitempty"`
+}
+
+func metadataSelectionRequest(body []byte) bool {
+	trimmed := bytes.TrimSpace(body)
+	if len(trimmed) == 0 {
+		return true
+	}
+	var probe map[string]json.RawMessage
+	if err := json.Unmarshal(trimmed, &probe); err != nil {
+		return false
+	}
+	if _, ok := probe["selections"]; ok {
+		return true
+	}
+	if _, ok := probe["source_version"]; ok {
+		return true
+	}
+	return len(probe) == 0
+}
+
+func metadataValuesFromUpstream(item upstreamModel) (model.MetadataValues, error) {
+	endpoints := ""
+	if len(item.Endpoints) > 0 && string(item.Endpoints) != "null" {
+		if err := common.Unmarshal(item.Endpoints, &endpoints); err != nil {
+			endpoints = string(item.Endpoints)
+		}
+	}
+	values := model.MetadataValues{
+		Description: item.Description, Icon: item.Icon, Tags: item.Tags,
+		Vendor: strings.TrimSpace(item.VendorName), Endpoints: endpoints,
+		NameRule: item.NameRule, Status: chooseStatus(item.Status, 0),
+	}
+	if err := model.ValidateMetadataValues(values); err != nil {
+		return model.MetadataValues{}, err
+	}
+	return values, nil
+}
+
+func fetchMetadataCatalog(c *gin.Context, locale string) (metadataSyncSource, map[string]model.MetadataValues, map[string]model.Vendor, error) {
+	resolved := strings.TrimSpace(locale)
+	if resolved != "" {
+		var valid bool
+		resolved, valid = normalizeLocale(locale)
+		if !valid {
+			return metadataSyncSource{}, nil, nil, errors.New("unsupported metadata language")
+		}
+	}
+	modelsURL, vendorsURL := getUpstreamURLs(resolved)
+	source := metadataSyncSource{Locale: resolved, ModelsURL: modelsURL, VendorsURL: vendorsURL}
+	ctx, cancel := context.WithTimeout(c.Request.Context(), time.Duration(common.GetEnvOrDefault("SYNC_HTTP_TIMEOUT_SECONDS", 15))*time.Second)
+	defer cancel()
+	var modelsEnv upstreamEnvelope[upstreamModel]
+	var vendorsEnv upstreamEnvelope[upstreamVendor]
+	var modelsErr, vendorsErr error
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); modelsErr = fetchJSON(ctx, modelsURL, &modelsEnv) }()
+	go func() { defer wg.Done(); vendorsErr = fetchJSON(ctx, vendorsURL, &vendorsEnv) }()
+	wg.Wait()
+	if modelsErr != nil {
+		return source, nil, nil, fmt.Errorf("fetch models (%s, %s): %w", resolved, modelsURL, modelsErr)
+	}
+	if vendorsErr != nil {
+		return source, nil, nil, fmt.Errorf("fetch vendors (%s, %s): %w", resolved, vendorsURL, vendorsErr)
+	}
+	if !modelsEnv.Success || !vendorsEnv.Success {
+		return source, nil, nil, errors.New("upstream metadata source reported failure")
+	}
+	models := make(map[string]model.MetadataValues)
+	vendors := make(map[string]model.Vendor)
+	for _, vendor := range vendorsEnv.Data {
+		vendor.Name = strings.TrimSpace(vendor.Name)
+		if vendor.Name == "" {
+			continue
+		}
+		vendors[vendor.Name] = model.Vendor{Name: vendor.Name, Description: vendor.Description, Icon: vendor.Icon, Status: chooseStatus(vendor.Status, 1)}
+	}
+	for _, item := range modelsEnv.Data {
+		if strings.TrimSpace(item.ModelName) == "" {
+			continue
+		}
+		values, err := metadataValuesFromUpstream(item)
+		if err != nil {
+			return source, nil, nil, fmt.Errorf("model %s: %w", item.ModelName, err)
+		}
+		if _, duplicate := models[item.ModelName]; duplicate {
+			return source, nil, nil, fmt.Errorf("duplicate upstream model: %s", item.ModelName)
+		}
+		models[item.ModelName] = values
+	}
+	encoded, err := common.Marshal([]any{source.Locale, models, vendors})
+	if err != nil {
+		return source, nil, nil, err
+	}
+	source.Version = fmt.Sprintf("%x", sha256.Sum256(encoded))
+	return source, models, vendors, nil
+}
+
+func metadataSyncCandidates(locals map[string]*model.Model, vendors map[string]*model.Vendor, missing []string, upstream map[string]model.MetadataValues, upstreamVendors map[string]model.Vendor) []metadataSyncCandidate {
+	siteNames := make(map[string]bool)
+	allNames := make(map[string]bool)
+	for name := range locals {
+		siteNames[name] = true
+		allNames[name] = true
+	}
+	for _, name := range missing {
+		siteNames[name] = true
+		allNames[name] = true
+	}
+	for name := range upstream {
+		allNames[name] = true
+	}
+	names := make([]string, 0, len(allNames))
+	for name := range allNames {
+		names = append(names, name)
+	}
+	sort.Strings(names)
+	vendorByID := make(map[int]*model.Vendor, len(vendors))
+	for _, vendor := range vendors {
+		vendorByID[vendor.Id] = vendor
+	}
+	candidates := make([]metadataSyncCandidate, 0, len(names))
+	for _, name := range names {
+		candidate := metadataSyncCandidate{ModelName: name, Scope: "catalog", Kind: "create", Fields: []metadataSyncField{}}
+		if siteNames[name] {
+			candidate.Scope = "site"
+		}
+		local := locals[name]
+		up, found := upstream[name]
+		if !found {
+			candidate.Kind = "missing_upstream"
+			candidates = append(candidates, candidate)
+			continue
+		}
+		candidate.Upstream = &up
+		var localVendor *model.Vendor
+		if local != nil {
+			localVendor = vendorByID[local.VendorID]
+		}
+		candidate.RecordVersion = model.MetadataRecordVersion(local, localVendor, model.FindMetadataVendor(vendors, up.Vendor))
+		if local != nil && local.SyncOfficial == 0 {
+			candidate.Kind = "blocked"
+			candidates = append(candidates, candidate)
+			continue
+		}
+		if up.Vendor != "" && model.FindMetadataVendor(vendors, up.Vendor) == nil {
+			if _, exists := upstreamVendors[up.Vendor]; !exists {
+				candidate.Kind = "missing_vendor"
+				candidates = append(candidates, candidate)
+				continue
+			}
+			candidate.VendorToCreate = up.Vendor
+		}
+		localValues := model.MetadataValues{}
+		if local != nil {
+			candidate.Kind = "update"
+			localValues = model.MetadataValues{Description: local.Description, Icon: local.Icon, Tags: local.Tags, Endpoints: local.Endpoints, NameRule: local.NameRule, Status: local.Status}
+			if localVendor != nil {
+				localValues.Vendor = localVendor.Name
+			}
+		}
+		localRaw, _ := common.Marshal(localValues)
+		upRaw, _ := common.Marshal(up)
+		var localFields, upFields map[string]any
+		_ = common.Unmarshal(localRaw, &localFields)
+		_ = common.Unmarshal(upRaw, &upFields)
+		for _, field := range model.MetadataSyncFields {
+			if local == nil || localFields[field] != upFields[field] {
+				candidate.Fields = append(candidate.Fields, metadataSyncField{Field: field, Local: localFields[field], Upstream: upFields[field]})
+			}
+		}
+		if local != nil && len(candidate.Fields) == 0 {
+			candidate.Kind = "unchanged"
+		}
+		candidates = append(candidates, candidate)
+	}
+	return candidates
+}
+
+func applyMetadataSelection(c *gin.Context, body []byte) {
+	var request struct {
+		Locale        string                        `json:"locale"`
+		SourceVersion string                        `json:"source_version"`
+		Selections    []model.MetadataSyncSelection `json:"selections"`
+	}
+	if err := common.Unmarshal(body, &request); err != nil || len(request.Selections) == 0 || request.SourceVersion == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"success": false, "message": "Preview and select metadata changes before applying"})
+		return
+	}
+	source, upstream, vendors, err := fetchMetadataCatalog(c, request.Locale)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if source.Version != request.SourceVersion {
+		c.JSON(http.StatusConflict, gin.H{"success": false, "message": "Upstream metadata changed; preview again"})
+		return
+	}
+	updates := make([]model.MetadataSyncUpdate, 0, len(request.Selections))
+	for _, selection := range request.Selections {
+		values, exists := upstream[selection.ModelName]
+		if !exists {
+			c.JSON(http.StatusConflict, gin.H{"success": false, "message": "Selected upstream model is no longer available"})
+			return
+		}
+		updates = append(updates, model.MetadataSyncUpdate{MetadataSyncSelection: selection, Values: values})
+	}
+	result, err := model.ApplyMetadataSync(updates, vendors)
+	if err != nil {
+		status := http.StatusBadRequest
+		if errors.Is(err, model.ErrMetadataSyncConflict) {
+			status = http.StatusConflict
+		}
+		c.JSON(status, gin.H{"success": false, "message": err.Error()})
+		return
+	}
+	recordManageAudit(c, "model.metadata.sync", map[string]any{"created_models": result.CreatedModels, "updated_models": result.UpdatedModels, "created_vendors": result.CreatedVendors})
+	common.ApiSuccess(c, result)
+}
+
+func SyncUpstreamPreview(c *gin.Context) {
 	locale := c.Query("locale")
-	source, ok := normalizeSyncSource(c.Query("source"))
+	sourceType, ok := normalizeSyncSource(c.Query("source"))
 	if !ok {
 		c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgModelSyncSourceUnsupported, map[string]any{"Source": strings.TrimSpace(c.Query("source"))})})
 		return
 	}
-	modelsURL, vendorsURL := getUpstreamURLs(locale)
-
-	var modelsEnv upstreamEnvelope[upstreamModel]
-	if err := fetchJSON(ctx, modelsURL, &modelsEnv); err != nil {
+	source, upstreamValues, upstreamVendors, err := fetchMetadataCatalog(c, locale)
+	if err != nil {
 		original := i18n.T(c, i18n.MsgModelSyncUpstreamFailed, map[string]any{"Error": err.Error()})
 		message := common.PublicDashboardErrorMessage(c, original)
 		if message != original {
 			common.SysError("api error: " + original)
 		}
-		c.JSON(http.StatusOK, gin.H{"success": false, "message": message, "locale": locale, "source_urls": gin.H{"models_url": modelsURL, "vendors_url": vendorsURL}})
+		c.JSON(http.StatusOK, gin.H{"success": false, "message": message, "locale": locale, "source_urls": gin.H{"models_url": source.ModelsURL, "vendors_url": source.VendorsURL}})
 		return
 	}
-
-	modelByName := make(map[string]upstreamModel)
-	upstreamNames := make([]string, 0, len(modelsEnv.Data))
-	for _, m := range modelsEnv.Data {
-		if m.ModelName != "" {
-			modelByName[m.ModelName] = m
-			upstreamNames = append(upstreamNames, m.ModelName)
-		}
+	source.Type = sourceType
+	localModels, localVendors, err := model.GetMetadataSyncState(model.DB)
+	if err != nil {
+		common.ApiErrorI18n(c, i18n.MsgModelSyncLocalModelsFailed, map[string]any{"Error": err.Error()})
+		return
 	}
-
-	// 2) 本地已有模型
-	var locals []model.Model
-	if len(upstreamNames) > 0 {
-		if err := model.DB.Where("model_name IN ? AND sync_official <> 0", upstreamNames).Find(&locals).Error; err != nil {
-			common.ApiErrorI18n(c, i18n.MsgModelSyncLocalModelsFailed, map[string]any{"Error": err.Error()})
-			return
-		}
-	}
-
-	// 本地 vendor 名称映射
-	vendorIdSet := make(map[int]struct{})
-	for _, m := range locals {
-		if m.VendorID != 0 {
-			vendorIdSet[m.VendorID] = struct{}{}
-		}
-	}
-	vendorIDs := make([]int, 0, len(vendorIdSet))
-	for id := range vendorIdSet {
-		vendorIDs = append(vendorIDs, id)
-	}
-	idToVendorName := make(map[int]string)
-	if len(vendorIDs) > 0 {
-		var dbVendors []model.Vendor
-		if err := model.DB.Where("id IN ?", vendorIDs).Find(&dbVendors).Error; err != nil {
-			common.ApiErrorI18n(c, i18n.MsgModelSyncLocalVendorsFailed, map[string]any{"Error": err.Error()})
-			return
-		}
-		for _, v := range dbVendors {
-			idToVendorName[v.Id] = v.Name
-		}
-	}
-
-	// 3) 缺失且上游存在的模型
 	missingList, err := model.GetMissingModels()
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgModelSyncMissingFailed, map[string]any{"Error": err.Error()})
@@ -744,77 +950,40 @@ func SyncUpstreamPreview(c *gin.Context) {
 	}
 	var missing []string
 	for _, name := range missingList {
-		if _, ok := modelByName[name]; ok {
+		if _, ok := upstreamValues[name]; ok {
 			missing = append(missing, name)
 		}
 	}
+	candidates := metadataSyncCandidates(localModels, localVendors, missingList, upstreamValues, upstreamVendors)
 
-	// 4) 计算冲突字段
 	type conflictField struct {
-		Field    string      `json:"field"`
-		Local    interface{} `json:"local"`
-		Upstream interface{} `json:"upstream"`
+		Field    string `json:"field"`
+		Local    any    `json:"local"`
+		Upstream any    `json:"upstream"`
 	}
 	type conflictItem struct {
 		ModelName string          `json:"model_name"`
 		Fields    []conflictField `json:"fields"`
 	}
-
 	var conflicts []conflictItem
-	for _, local := range locals {
-		up, ok := modelByName[local.ModelName]
-		if !ok {
+	for _, candidate := range candidates {
+		if candidate.Kind != "update" || len(candidate.Fields) == 0 {
 			continue
 		}
-		fields := make([]conflictField, 0, 7)
-		if strings.TrimSpace(local.Description) != strings.TrimSpace(up.Description) {
-			fields = append(fields, conflictField{Field: "description", Local: local.Description, Upstream: up.Description})
+		fields := make([]conflictField, 0, len(candidate.Fields))
+		for _, field := range candidate.Fields {
+			fields = append(fields, conflictField{Field: field.Field, Local: field.Local, Upstream: field.Upstream})
 		}
-		if strings.TrimSpace(local.Icon) != strings.TrimSpace(up.Icon) {
-			fields = append(fields, conflictField{Field: "icon", Local: local.Icon, Upstream: up.Icon})
-		}
-		if strings.TrimSpace(local.Tags) != strings.TrimSpace(up.Tags) {
-			fields = append(fields, conflictField{Field: "tags", Local: local.Tags, Upstream: up.Tags})
-		}
-		upstreamEndpoints, err := canonicalUpstreamEndpoints(up.Endpoints)
-		if err != nil {
-			c.JSON(http.StatusOK, gin.H{"success": false, "message": i18n.T(c, i18n.MsgModelSyncEndpointsInvalid, map[string]any{"Model": local.ModelName, "Error": err.Error()})})
-			return
-		}
-		localEndpoints, err := canonicalEndpointsString(local.Endpoints)
-		if err != nil {
-			localEndpoints = strings.TrimSpace(local.Endpoints)
-		}
-		if localEndpoints != upstreamEndpoints {
-			fields = append(fields, conflictField{Field: "endpoints", Local: localEndpoints, Upstream: upstreamEndpoints})
-		}
-		// vendor 对比使用名称
-		localVendor := idToVendorName[local.VendorID]
-		if strings.TrimSpace(localVendor) != strings.TrimSpace(up.VendorName) {
-			fields = append(fields, conflictField{Field: "vendor", Local: localVendor, Upstream: up.VendorName})
-		}
-		if local.NameRule != up.NameRule {
-			fields = append(fields, conflictField{Field: "name_rule", Local: local.NameRule, Upstream: up.NameRule})
-		}
-		if local.Status != chooseStatus(up.Status, local.Status) {
-			fields = append(fields, conflictField{Field: "status", Local: local.Status, Upstream: up.Status})
-		}
-		if len(fields) > 0 {
-			conflicts = append(conflicts, conflictItem{ModelName: local.ModelName, Fields: fields})
-		}
+		conflicts = append(conflicts, conflictItem{ModelName: candidate.ModelName, Fields: fields})
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"data": gin.H{
-			"missing":   missing,
-			"conflicts": conflicts,
-			"source": gin.H{
-				"type":        source,
-				"locale":      locale,
-				"models_url":  modelsURL,
-				"vendors_url": vendorsURL,
-			},
+			"missing":    missing,
+			"conflicts":  conflicts,
+			"candidates": candidates,
+			"source":     source,
 		},
 	})
 }

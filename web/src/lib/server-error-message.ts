@@ -16,9 +16,82 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { t } from 'i18next'
-
+import { isCancelledError } from '@tanstack/react-query'
+import { isCancel } from 'axios'
+import i18next from 'i18next'
 import { currentConsoleFailureText } from './console-failure-text'
+
+export const safeServerErrorMessage = Symbol('safeServerErrorMessage')
+
+const serverErrorMessageKeys = {
+  AUTH_SESSION_MISMATCH: 'Login session mismatch. Please sign in again.',
+  AUTH_REFRESH_RACE: 'Login session is being refreshed. Please retry.',
+  AUTH_TOKEN_EXPIRED: 'Login flow expired. Please sign in again.',
+  AUTH_SESSION_REVOKED: 'This login session has been revoked.',
+  AUTH_UNAUTHORIZED: 'Session expired!',
+  TELEGRAM_OAUTH_NOT_CONFIGURED:
+    'Telegram OAuth is not configured or enabled. Please contact your administrator.',
+  TELEGRAM_OAUTH_CONFLICT:
+    'The telegram OAuth provider name is reserved. Ask your administrator to rename the conflicting custom provider.',
+  TELEGRAM_OAUTH_FAILED: 'Telegram authorization failed. Please try again.',
+  TELEGRAM_ACCOUNT_NOT_BOUND:
+    'This Telegram account is not linked. Sign in using another method and link it first.',
+  TELEGRAM_LEGACY_AUTH_REMOVED:
+    'Telegram login has changed. Reload the page and start Telegram OAuth again.',
+  AUTH_INTERNAL_ERROR: 'Please try again later.',
+  SECURITY_VERIFICATION_FAILED: 'Verification failed. Please try again.',
+  PASSKEY_RP_ID_UNAVAILABLE:
+    'This Passkey domain is not available on this website. Use its original website or another verification method.',
+  PASSKEY_RP_ID_INVALID:
+    'Invalid Passkey domain. Enter a domain without a scheme, port, path or wildcard.',
+  SECURITY_VERIFICATION_FLOW_REQUIRED:
+    'This verification method requires its dedicated verification flow.',
+  SECURITY_VERIFICATION_LOCKED:
+    'Two-factor authentication is temporarily locked.',
+  OAUTH_ACCOUNT_MISMATCH:
+    'The OAuth account does not match the account linked to your profile.',
+  TWOFA_CODE_INVALID: 'The authenticator code is incorrect.',
+  TWOFA_ALREADY_ENABLED: 'Two-factor authentication is already enabled.',
+  TWOFA_NOT_ENABLED: 'Two-factor authentication is not enabled.',
+  PASSKEY_NOT_FOUND: 'No Passkey is registered.',
+  AUTH_FLOW_INVALID: 'Verification flow expired',
+  SECURITY_PROOF_REQUIRED: 'Additional verification required',
+  SECURITY_PROOF_EXPIRED:
+    'Security verification has expired. Please verify again.',
+  SECURITY_PROOF_INVALID:
+    'Security verification is no longer valid. Please verify again.',
+  SECURITY_PROOF_SCOPE_MISMATCH: 'Verification does not match this action.',
+  SECURITY_PROOF_CONSUMED:
+    'This verification has already been used. Please verify again.',
+  SECURITY_PROOF_CONTEXT_MISMATCH:
+    "Verification does not match this action's details. Please verify again.",
+  SECURITY_CONTEXT_INVALID: 'The action details are invalid.',
+  SECURITY_ACTION_FORBIDDEN:
+    'You do not have permission to perform this action.',
+  SECURITY_PROOF_METHOD_MISMATCH:
+    'This verification method is not allowed for this action.',
+  SECURITY_METHOD_UNAVAILABLE:
+    'This verification method is currently unavailable.',
+  TWOFA_SETUP_INVALID:
+    'The two-factor setup has expired or changed. Start setup again.',
+
+  AUTH_SESSION_LIMIT:
+    'Too many active login sessions. On a device where you are already signed in, open Login sessions and use “Sign out other sessions” to revoke them. If you cannot access a signed-in device, reset your password to sign out all sessions.',
+  AUTH_SESSION_ISSUANCE_LIMIT:
+    'Too many login sessions were created recently. Please wait for the rolling window to pass, then try again.',
+  TELEGRAM_BIND_DISABLED: 'Telegram binding is disabled.',
+  TELEGRAM_BIND_INVALID_REQUEST:
+    'The Telegram authorization request is invalid or expired.',
+  TELEGRAM_BIND_FLOW_INVALID:
+    'This Telegram binding request has expired or has already been used.',
+  TELEGRAM_BIND_SESSION_INVALID:
+    'The login session that started this Telegram binding is no longer valid.',
+  TELEGRAM_BIND_ALREADY_BOUND: 'This Telegram account is already bound.',
+  TELEGRAM_BIND_USER_DELETED: 'This user account no longer exists.',
+  TELEGRAM_BIND_USER_DISABLED: 'This user account is disabled.',
+  TELEGRAM_BIND_INTERNAL_ERROR: 'Telegram binding failed. Please try again.',
+} as const
+
 
 const TRANSPORT_ERROR_KEYS = [
   {
@@ -43,32 +116,21 @@ const TRANSPORT_ERROR_KEYS = [
   },
 ] as const
 
-const serverErrorMessageKeys = {
-  AUTH_SESSION_LIMIT:
-    'Too many active login sessions. On a device where you are already signed in, open Login sessions and use “Sign out other sessions” to revoke them. If you cannot access a signed-in device, reset your password to sign out all sessions.',
-  AUTH_SESSION_ISSUANCE_LIMIT:
-    'Too many login sessions were created recently. Please wait for the rolling window to pass, then try again.',
-  AUTH_SESSION_MISMATCH: 'Login session mismatch. Please sign in again.',
-  AUTH_REFRESH_RACE: 'Login session is being refreshed. Please retry.',
-  AUTH_TOKEN_EXPIRED: 'Login flow expired. Please sign in again.',
-  AUTH_SESSION_REVOKED: 'This login session has been revoked.',
-  AUTH_UNAUTHORIZED: 'Session expired!',
-  AUTH_INTERNAL_ERROR: 'Something went wrong!',
-  TELEGRAM_BIND_DISABLED: 'Telegram binding is disabled.',
-  TELEGRAM_BIND_INVALID_REQUEST:
-    'The Telegram authorization request is invalid or expired.',
-  TELEGRAM_BIND_FLOW_INVALID:
-    'This Telegram binding request has expired or has already been used.',
-  TELEGRAM_BIND_SESSION_INVALID:
-    'The login session that started this Telegram binding is no longer valid.',
-  TELEGRAM_BIND_ALREADY_BOUND: 'This Telegram account is already bound.',
-  TELEGRAM_BIND_USER_DELETED: 'This user account no longer exists.',
-  TELEGRAM_BIND_USER_DISABLED: 'This user account is disabled.',
-  TELEGRAM_BIND_INTERNAL_ERROR: 'Telegram binding failed. Please try again.',
-} as const
+/** Translate known console text and strip unsanitized foreign diagnostics on Chinese UI. */
+export function localizeConsoleErrorText(
+  message: string | null | undefined,
+  fallbackKey = 'Request failed'
+): string {
+  const trimmed = message?.trim() ?? ''
+  if (!trimmed) return i18next.t(fallbackKey)
 
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === 'object'
+  for (const rule of TRANSPORT_ERROR_KEYS) {
+    if (rule.test(trimmed)) return i18next.t(rule.key)
+  }
+
+  const translated = i18next.t(trimmed)
+  if (translated !== trimmed) return translated
+  return currentConsoleFailureText(trimmed, fallbackKey)
 }
 
 export function serverErrorPayload(
@@ -83,55 +145,141 @@ export function serverErrorPayload(
   return value
 }
 
-export function getServerErrorMessageKey(value: unknown): string | null {
-  const payload = serverErrorPayload(value)
-  if (!payload || typeof payload.code !== 'string') return null
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object'
+}
 
-  return (
-    serverErrorMessageKeys[
-      payload.code as keyof typeof serverErrorMessageKeys
-    ] ?? null
+/** Walk only error origins, never request configs or arbitrary response data. */
+export function getServerErrorSources(
+  value: unknown
+): Record<string | symbol, unknown>[] {
+  const sources: Record<string | symbol, unknown>[] = []
+  const pending = [value]
+  const seen = new Set<object>()
+  for (let index = 0; index < pending.length; index++) {
+    const source = pending[index]
+    if (!isRecord(source) || seen.has(source)) continue
+    seen.add(source)
+    sources.push(source)
+    if (isRecord(source.response)) pending.push(source.response.data)
+    pending.push(source.cause, source.error)
+  }
+  return sources
+}
+
+export function getServerErrorMessageKey(value: unknown): string | null {
+  for (const source of getServerErrorSources(value)) {
+    if (typeof source.code === 'string') {
+      const key =
+        serverErrorMessageKeys[
+          source.code as keyof typeof serverErrorMessageKeys
+        ]
+      if (key) return key
+    }
+    if (source[safeServerErrorMessage]) break
+  }
+  return null
+}
+
+export function getServerErrorStatus(value: unknown): number | undefined {
+  for (const source of getServerErrorSources(value)) {
+    const status = isRecord(source.response)
+      ? source.response.status
+      : source.status
+    if (typeof status === 'number') return status
+  }
+  return undefined
+}
+
+export function isServerErrorCancelled(value: unknown): boolean {
+  return getServerErrorSources(value).some(
+    (source) =>
+      isCancel(source) ||
+      isCancelledError(source) ||
+      source.name === 'AbortError'
   )
 }
 
-export function localizeConsoleErrorText(
-  message: string | null | undefined,
-  fallbackKey = 'Request failed'
+function messageText(value: unknown): string | undefined {
+  if (
+    typeof value !== 'string' ||
+    !value.trim() ||
+    value.trim() === 'success'
+  ) {
+    return undefined
+  }
+  // A proxy's HTML error document is not an actionable API error message.
+  if (/^\s*(?:<!doctype|<html[\s>])/i.test(value)) return undefined
+  return value
+}
+
+function rawServerErrorMessage(
+  value: unknown,
+  fallback?: string
 ): string {
-  const trimmed = message?.trim() ?? ''
-  if (!trimmed) return t(fallbackKey)
-
-  for (const rule of TRANSPORT_ERROR_KEYS) {
-    if (rule.test(trimmed)) return t(rule.key)
+  const sources = getServerErrorSources(value)
+  // AuthOperationError deliberately hides internal server details. Never unwrap
+  // its cause for presentation, even when a caller wraps it in another Error.
+  const safe = sources.find((source) => source[safeServerErrorMessage])
+  if (safe) {
+    return i18next.t(
+      getServerErrorMessageKey(safe) ||
+        messageText(safe.message) ||
+        fallback ||
+        'Something went wrong!'
+    )
   }
-
-  const translated = t(trimmed)
-  if (translated !== trimmed) return translated
-  return currentConsoleFailureText(trimmed, fallbackKey)
-}
-
-export function requireServerSuccess<T>(response: {
-  success?: boolean
-  message?: string
-  data?: T
-}): T {
-  if (response == null || response.success === false) {
-    throw createServerError(response, response?.message)
-  }
-  if (response.data === undefined) {
-    throw createServerError(response, response.message)
-  }
-  return response.data
-}
-
-export function createServerError(value: unknown, fallback?: string): Error {
-  const payload = serverErrorPayload(value)
   const key = getServerErrorMessageKey(value)
-  const message =
-    (typeof payload?.message === 'string' && payload.message.trim()
-      ? payload.message
-      : undefined) ||
-    fallback ||
-    t('Something went wrong!')
-  return new Error(key || message, { cause: value })
+  if (key) return i18next.t(key)
+  for (const source of sources) {
+    if (
+      source instanceof Error ||
+      source.isAxiosError ||
+      isRecord(source.response)
+    ) {
+      continue
+    }
+    const detail = isRecord(source.error)
+      ? messageText(source.error.message)
+      : messageText(source.error)
+    const message =
+      messageText(source.message) || detail || messageText(source.title)
+    if (message) return message
+  }
+  const status = getServerErrorStatus(value)
+  if (status === 304) return i18next.t('Content not modified!')
+  if (status === 204) return i18next.t('Content not found.')
+  for (const source of sources) {
+    const message = messageText(source.message)
+    if (message) return message
+  }
+  return messageText(value) || (fallback ?? i18next.t('Something went wrong!'))
+}
+
+
+export function getServerErrorMessage(
+  value: unknown,
+  fallback?: string
+): string {
+  const raw = rawServerErrorMessage(value, fallback)
+  if (!raw.trim()) return raw
+  return localizeConsoleErrorText(
+    raw,
+    fallback?.trim() || 'Something went wrong!'
+  )
+}
+
+/** Preserve the payload/cause so every layer can recognize the same failure. */
+export function createServerError(value: unknown, fallback?: string): Error {
+  return new Error(getServerErrorMessage(value, fallback ?? ''), {
+    cause: value,
+  })
+}
+
+/** Queries reject failed business responses without changing the raw API contract. */
+export function requireServerSuccess<T>(response: T): T {
+  if (isRecord(response) && response.success === false) {
+    throw createServerError(response)
+  }
+  return response
 }

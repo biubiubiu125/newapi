@@ -366,11 +366,14 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
               onClick={() => {
                 upstream.detectChannelUpdates(channel)
               }}
-              disabled={upstream.detectChannelLoadingId === channel.id}
+              disabled={
+                upstream.detectLoading && upstream.channel?.id === channel.id
+              }
             >
               {t('Detect Upstream Updates')}
               <DropdownMenuShortcut>
-                {upstream.detectChannelLoadingId === channel.id ? (
+                {upstream.detectLoading &&
+                upstream.channel?.id === channel.id ? (
                   <Loader2 className='h-4 w-4 animate-spin' />
                 ) : (
                   <RefreshCw size={16} />

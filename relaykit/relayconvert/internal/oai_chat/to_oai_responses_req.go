@@ -1,12 +1,14 @@
 package oaichat
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/convdiag"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/reasoning"
 	"github.com/samber/lo"
@@ -74,7 +76,7 @@ func convertChatResponseFormatToResponsesText(reqFormat *dto.ResponseFormat) jso
 	return textRaw
 }
 
-func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*dto.OpenAIResponsesRequest, error) {
+func ChatCompletionsRequestToResponsesRequest(ctx context.Context, req *dto.GeneralOpenAIRequest) (*dto.OpenAIResponsesRequest, error) {
 	if req == nil {
 		return nil, errors.New("request is nil")
 	}
@@ -359,9 +361,8 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 	textRaw := convertChatResponseFormatToResponsesText(req.ResponseFormat)
 
 	maxOutputTokens := lo.FromPtrOr(req.MaxTokens, uint(0))
-	maxCompletionTokens := lo.FromPtrOr(req.MaxCompletionTokens, uint(0))
-	if maxCompletionTokens > maxOutputTokens {
-		maxOutputTokens = maxCompletionTokens
+	if req.MaxCompletionTokens != nil {
+		maxOutputTokens = *req.MaxCompletionTokens
 	}
 	// OpenAI Responses API rejects max_output_tokens < 16 when explicitly provided.
 	//if maxOutputTokens > 0 && maxOutputTokens < 16 {
@@ -412,10 +413,11 @@ func ChatCompletionsRequestToResponsesRequest(req *dto.GeneralOpenAIRequest) (*d
 		out.MaxOutputTokens = lo.ToPtr(maxOutputTokens)
 	}
 
-	intent, err := reasoning.FromOpenAIChat(req)
+	intent, diagnostics, err := reasoning.FromOpenAIChat(req)
 	if err != nil {
 		return nil, reasoning.AsClientError(err)
 	}
+	convdiag.Add(ctx, diagnostics...)
 	if err := reasoning.ApplyToOpenAIResponses(out, intent); err != nil {
 		return nil, reasoning.AsClientError(err)
 	}

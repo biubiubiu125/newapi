@@ -30,6 +30,13 @@ export const Route = createFileRoute(
 )({
   beforeLoad: async ({ params }) => {
     await requireSystemSettingsModule()
+    if (params.section === 'monitoring') {
+      throw redirect({
+        to: '/system-settings/request-policies/$section',
+        params: { section: 'health' },
+        replace: true,
+      })
+    }
     const validSections = OPERATIONS_SECTION_IDS as unknown as string[]
     if (!validSections.includes(params.section)) {
       throw redirect({

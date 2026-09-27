@@ -62,7 +62,6 @@ func TestTaskPluginProtocolRendererContextUsesStoredArtifactsWithoutPluginHook(t
 	}
 
 	rendererContext, err := taskPluginProtocolRendererContext(
-		t.Context(),
 		pluginruntime.ProtocolRequestContext{},
 		pluginruntime.PinnedEndpoint{},
 		task,
@@ -100,7 +99,6 @@ func TestTaskPluginProtocolRendererContextOmitsArtifactsDuringRetryableSettlemen
 	}
 
 	rendererContext, err := taskPluginProtocolRendererContext(
-		t.Context(),
 		pluginruntime.ProtocolRequestContext{},
 		pluginruntime.PinnedEndpoint{},
 		task,

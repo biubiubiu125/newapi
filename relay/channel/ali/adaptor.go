@@ -26,16 +26,13 @@ type Adaptor struct {
 	IsSyncImageModel bool
 }
 
+func isSyncImageModel(modelName string) bool {
+	return model_setting.IsSyncImageModel(modelName)
+}
+
 const aliAnthropicMessagesModelsEnv = "ALI_ANTHROPIC_MESSAGES_MODELS"
 const defaultAliAnthropicMessagesModels = "qwen,deepseek-v4,kimi,glm,minimax-m"
 
-/*
-	var syncModels = []string{
-		"z-image",
-		"qwen-image",
-		"wan2.6",
-	}
-*/
 func supportsAliAnthropicMessages(modelName string) bool {
 	normalizedModelName := strings.ToLower(strings.TrimSpace(modelName))
 	if normalizedModelName == "" {
@@ -53,16 +50,6 @@ func aliAnthropicMessagesModelPatterns() []string {
 		pattern := strings.ToLower(strings.TrimSpace(item))
 		return pattern, pattern != ""
 	})
-}
-
-var syncModels = []string{
-	"z-image",
-	"qwen-image",
-	"wan2.6",
-}
-
-func isSyncImageModel(modelName string) bool {
-	return model_setting.IsSyncImageModel(modelName)
 }
 
 func (a *Adaptor) ConvertGeminiRequest(*gin.Context, *relaycommon.RelayInfo, *dto.GeminiChatRequest) (any, error) {
@@ -181,7 +168,30 @@ func (a *Adaptor) ConvertOpenAIRequest(c *gin.Context, info *relaycommon.RelayIn
 	}
 }
 
+// ConvertImageRequest is not implemented: Ali image generation and editing
+// are served by the alibaba task plugin through the openai_image host
+// protocol, which claims every declared image model on /v1/images/*. A model
+// reaching this adaptor is not declared by the plugin (or is named
+// differently from the Bailian model list), so the request cannot be served.
+// The rejection is a 400 that skips channel retries: every channel of this
+// type refuses the same name, and a retryable 500 would only hide the
+// misconfiguration behind unrelated channels.
 func (a *Adaptor) ConvertImageRequest(c *gin.Context, info *relaycommon.RelayInfo, request dto.ImageRequest) (any, error) {
+	// Sync DashScope names (qwen-image*, wan2.6, wan2.7) stay on this adaptor.
+	// Anything else belongs to the Alibaba task plugin and must not be retried
+	// as a generic image conversion failure.
+	if info == nil || !isSyncImageModel(info.UpstreamModelName) {
+		modelName := ""
+		if info != nil {
+			modelName = info.UpstreamModelName
+		}
+		return nil, types.NewErrorWithStatusCode(
+			fmt.Errorf("image model %q is not served by the alibaba task plugin; use a Bailian image model name declared by the plugin or map it with the channel model mapping", modelName),
+			types.ErrorCodeInvalidRequest,
+			http.StatusBadRequest,
+			types.ErrOptionWithSkipRetry(),
+		)
+	}
 	if info.RelayMode == constant.RelayModeImagesGenerations {
 		if isSyncImageModel(info.UpstreamModelName) {
 			a.IsSyncImageModel = true
@@ -254,10 +264,6 @@ func (a *Adaptor) DoResponse(c *gin.Context, resp *http.Response, info *relaycom
 		return adaptor.DoResponse(c, resp, info)
 	default:
 		switch info.RelayMode {
-		case constant.RelayModeImagesGenerations:
-			err, usage = aliImageHandler(a, c, resp, info)
-		case constant.RelayModeImagesEdits:
-			err, usage = aliImageHandler(a, c, resp, info)
 		case constant.RelayModeRerank:
 			err, usage = RerankHandler(c, resp, info)
 		default:

@@ -33,7 +33,7 @@ describe('image workbench request language', () => {
   it('sends Accept-Language as a BCP-47 tag', async () => {
     await i18n.changeLanguage('zhCN')
     const fetchMock = vi.fn(
-      async () =>
+      async (_input: RequestInfo | URL, _init?: RequestInit) =>
         new Response(JSON.stringify({ data: [] }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
@@ -43,8 +43,8 @@ describe('image workbench request language', () => {
 
     await listImageTasks('sk-test', ['task-1'])
 
-    const init = fetchMock.mock.calls[0]?.[1] as RequestInit
-    const headers = new Headers(init.headers)
+    const init = fetchMock.mock.calls[0]?.[1]
+    const headers = new Headers(init?.headers)
     expect(headers.get('Accept-Language')).toBe('zh-CN')
   })
 

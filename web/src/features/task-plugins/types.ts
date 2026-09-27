@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import type { BillingUsageSchema } from '@/features/pricing/types'
+import type { BillingUsageSchema, BillingUsageExample } from '@/features/pricing/types'
 
 export type TaskPluginProtocolClaim =
   | string
@@ -26,11 +26,6 @@ export type TaskPluginProtocolClaim =
       supports?: ('stream' | 'sync' | 'background')[]
     }
 
-/**
- * One native route declared by `meta.routes` (backend `jsplugin.Route`). Only
- * the fields the admin UI renders are typed; hook bindings such as `decode`,
- * `render` and `action` are implementation detail of the plugin.
- */
 export type TaskPluginRoute = {
   method: string
   path: string
@@ -38,10 +33,11 @@ export type TaskPluginRoute = {
   models?: string[]
 }
 
+
 export type PluginPreviewField<T> =
+  | { state: 'value'; value: T; origin: 'source' | 'index' }
+  | { state: 'missing'; origin: 'source' }
   | { state: 'unknown' }
-  | { state: 'missing'; origin: 'source' | 'index' }
-  | { state: 'value'; origin: 'source' | 'index'; value: T }
 
 export type PluginPreviewValues = {
   models: string[]
@@ -53,12 +49,16 @@ export type PluginPreviewValues = {
   auth: string
 }
 
+
 export type PluginMetaPreview = {
-  status: 'unavailable' | 'parsed' | 'partial'
+  status: 'parsed' | 'partial' | 'unavailable'
   fields: {
-    [K in keyof PluginPreviewValues]: PluginPreviewField<PluginPreviewValues[K]>
+    [Key in keyof PluginPreviewValues]: PluginPreviewField<
+      PluginPreviewValues[Key]
+    >
   }
 }
+
 
 export type TaskPluginMeta = {
   sortPriority?: number
@@ -73,12 +73,18 @@ export type TaskPluginMeta = {
     name: string
     url?: string
   }
+  baseUrl?: string
   channelTypes?: number[] | null
   models: string[] | null
   fetchMode: string
   routes?: TaskPluginRoute[]
   protocols?: TaskPluginProtocolClaim[]
   usageSchema?: BillingUsageSchema
+  usageProfiles?: {
+    models: string[]
+    schema: BillingUsageSchema
+    examples?: BillingUsageExample[]
+  }[]
 }
 
 export type TaskPluginRecord = {
@@ -144,11 +150,6 @@ export type MarketplaceSource = {
   index_url: string
 }
 
-/**
- * A single installable version from a marketplace index. `allowedHosts`, `auth`
- * and `sha256` are optional: older or hand-rolled indexes may omit them, and
- * the confirmation dialog degrades to a warning rather than refusing to render.
- */
 export type MarketplaceIndexVersion = {
   version: string
   path: string
@@ -166,16 +167,19 @@ export type MarketplaceIconFile = {
   sha256?: string
 }
 
+
 export type MarketplacePlugin = {
+  protocols?: TaskPluginProtocolClaim[]
+  sortPriority?: number
+  website?: string
   key: string
   name: string
-  website?: string
   icon?: string
-  iconFile?: MarketplaceIconFile
+  /** Sidecar logo published by the index; rendered from the source repository. */
+  iconFile?: MarketplacePluginIcon
   description?: string | Record<string, string>
   channelTypes?: number[]
   models?: string[]
-  protocols?: TaskPluginProtocolClaim[]
   latest: string
   versions: MarketplaceIndexVersion[]
 }
@@ -184,4 +188,10 @@ export type MarketplaceIndex = {
   indexVersion: number
   name: string
   plugins: MarketplacePlugin[]
+}
+
+export type MarketplacePluginIcon = {
+  /** Index-relative path of the sidecar icon.svg / icon.png, resolved like `path`. */
+  path: string
+  sha256?: string
 }

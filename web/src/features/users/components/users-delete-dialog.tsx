@@ -21,6 +21,7 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import { deleteUser } from '../api'
 import { ERROR_MESSAGES } from '../constants'
@@ -46,9 +47,10 @@ export function UsersDeleteDialog() {
         triggerRefresh()
       } else {
         toast.error(localizeConsoleErrorText(result.message, ERROR_MESSAGES.DELETE_FAILED))
+        handleServerError(result, t(ERROR_MESSAGES.DELETE_FAILED))
       }
-    } catch {
-      toast.error(t(ERROR_MESSAGES.UNEXPECTED))
+    } catch (error) {
+      handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
     } finally {
       setIsDeleting(false)
     }

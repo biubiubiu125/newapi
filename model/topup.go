@@ -155,7 +155,6 @@ func creditTopUpQuota(tx *gorm.DB, userId int, creditedQuota int64, updates map[
 	}
 	return ErrTopUpQuotaLimitExceeded
 }
-
 func (topUp *TopUp) Update() error {
 	if topUp.Status != "" && topUp.Status != common.TopUpStatusPending && topUp.CompleteTime <= 0 {
 		topUp.CompleteTime = common.GetTimestamp()
@@ -337,7 +336,6 @@ func RechargeEpay(tradeNo string, actualPaymentMethod string, callerIp string) (
 	RecordTopupLog(topUp.UserId, fmt.Sprintf("使用在线充值成功，充值金额: %v，支付金额：%f", logger.LogQuota(quotaToAdd), topUp.Money), callerIp, topUp.PaymentMethod, PaymentProviderEpay)
 	return false, nil
 }
-
 func Recharge(referenceId string, customerId string, callerIp string) (err error) {
 	if referenceId == "" {
 		return common.Localized(i18n.MsgTopupTradeNoMissing)
@@ -764,7 +762,7 @@ func rechargeCreemWithValidation(referenceId string, customerEmail string, custo
 			return ErrInvalidTopUpQuota
 		}
 
-		updateFields := map[string]interface{}{}
+		updateFields := map[string]any{}
 		if customerEmail != "" {
 			if _, emailErr := setUserEmailIfEmptyWithTx(tx, topUp.UserId, customerEmail); emailErr != nil {
 				common.SysLog(fmt.Sprintf("skip Creem customer email binding for user_id=%d trade_no=%s: %v", topUp.UserId, topUp.TradeNo, emailErr))
@@ -1030,6 +1028,7 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 		common.SysError("epay topup failed: " + err.Error())
 		return err
 	}
+	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "waffo topup")
 
 	if quotaToAdd > 0 {
 		syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "epay topup")
@@ -1127,6 +1126,7 @@ func RechargeBEpusdtWithValidation(tradeNo string, providerPayload string, valid
 		}
 		return common.Localized(i18n.MsgTopupFailed)
 	}
+	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "waffo pancake topup")
 
 	if quotaToAdd > 0 {
 		syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "bepusdt topup")

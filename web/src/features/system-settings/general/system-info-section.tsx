@@ -75,6 +75,9 @@ const _systemInfoSchema = z.object({
   Footer: z.string().optional(),
   About: z.string().optional(),
   HomePageContent: z.string().optional(),
+  general_setting: z.object({
+    docs_link: z.string(),
+  }),
   legal: z.object({
     user_agreement: z.string().optional(),
     privacy_policy: z.string().optional(),
@@ -105,6 +108,9 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
     Footer: normalizeValue(defaultValues.Footer),
     About: normalizeValue(defaultValues.About),
     HomePageContent: normalizeValue(defaultValues.HomePageContent),
+    general_setting: {
+      docs_link: normalizeValue(defaultValues.general_setting?.docs_link),
+    },
     legal: {
       user_agreement: normalizeValue(defaultValues.legal?.user_agreement),
       privacy_policy: normalizeValue(defaultValues.legal?.privacy_policy),
@@ -129,6 +135,9 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
     Footer: z.string().optional(),
     About: z.string().optional(),
     HomePageContent: z.string().optional(),
+    general_setting: z.object({
+      docs_link: z.string(),
+    }),
     legal: z.object({
       user_agreement: z.string().optional(),
       privacy_policy: z.string().optional(),
@@ -238,6 +247,28 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                 name='Logo'
                 render={({ field }) => (
                   <FormItem>
+                    <FormLabel>{t('Async Task Public Address')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder='https://media.example.com/tasks'
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t(
+                        'Public base URL for async task media. Supports a dedicated media domain, port, or Nginx path prefix; falls back to Server Address when empty.'
+                      )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='Logo'
+                render={({ field }) => (
+                  <FormItem>
                     <FormLabel>{t('Logo')}</FormLabel>
                     <div className='grid gap-2 md:grid-cols-[minmax(0,1fr)_auto]'>
                       <FormControl>
@@ -300,6 +331,26 @@ export function SystemInfoSection({ defaultValues }: SystemInfoSectionProps) {
                       {t(
                         'Use an image URL or upload a png, jpg, webp, gif or ico image. Uploaded images are stored on the server and the returned URL is saved after you submit.'
                       )}
+                    </FormDescription>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
+
+              <FormField
+                control={form.control}
+                name='general_setting.docs_link'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Documentation Link')}</FormLabel>
+                    <FormControl>
+                      <Input
+                        placeholder={t('https://docs.example.com')}
+                        {...field}
+                      />
+                    </FormControl>
+                    <FormDescription>
+                      {t('Link to your documentation site')}
                     </FormDescription>
                     <FormMessage />
                   </FormItem>

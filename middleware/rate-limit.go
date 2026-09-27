@@ -89,7 +89,11 @@ func redisIPRateLimitKey(mark string, clientIP string) string {
 	return fmt.Sprintf("%s:ip:%s:%s", redisRateLimitNamespace, mark, clientIP)
 }
 
-func redisReplyInteger(value interface{}) (int64, error) {
+func redisUserRateLimitKey(mark string, userID int) string {
+	return fmt.Sprintf("%s:user:%s:%d", redisRateLimitNamespace, mark, userID)
+}
+
+func redisReplyInteger(value any) (int64, error) {
 	switch typed := value.(type) {
 	case int64:
 		return typed, nil

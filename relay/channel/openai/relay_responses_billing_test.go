@@ -69,36 +69,6 @@ func TestOaiResponsesHandlerCountsOutputCallsNotDeclarations(t *testing.T) {
 	assert.NotContains(t, info.ResponsesUsageInfo.BuiltInTools, "unpriced_fn")
 }
 
-func TestOaiResponsesHandlerEstimatesUsageWhenUpstreamOmitsUsage(t *testing.T) {
-	gin.SetMode(gin.TestMode)
-
-	body, err := common.Marshal(dto.OpenAIResponsesResponse{
-		Output: []dto.ResponsesOutput{
-			{Type: "message", Role: "assistant", Content: []dto.ResponsesOutputContent{{Type: "output_text", Text: "hello from responses"}}},
-		},
-	})
-	require.NoError(t, err)
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	info := &relaycommon.RelayInfo{
-		OriginModelName: "gpt-5.1",
-		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.1"},
-	}
-	resp := &http.Response{
-		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(bytes.NewReader(body)),
-		Header:     http.Header{"Content-Type": []string{"application/json"}},
-	}
-
-	usage, apiErr := OaiResponsesHandler(c, info, resp)
-	require.Nil(t, apiErr)
-	require.NotNil(t, usage)
-	require.Greater(t, usage.TotalTokens, 0)
-	require.Contains(t, w.Body.String(), "hello from responses")
-}
-
 func TestOaiResponsesHandlerDeclaredToolsWithoutOutputCountZero(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 
@@ -286,15 +256,6 @@ func TestOaiResponsesStreamHandlerDiscardsImageOutputOnIncomplete(t *testing.T) 
 	assert.Equal(t, 0, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolImageGeneration].CallCount)
 }
 
-func TestOaiResponsesStreamHandlerCountsImageWhenCompletedMissing(t *testing.T) {
-	info := runResponsesImageBillingStream(
-		t,
-		`{"type":"response.output_item.done","output_index":0,"item":{"type":"image_generation_call","id":"img_1","status":"completed","result":"base64-a"}}`,
-	)
-
-	assert.Equal(t, 1, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolImageGeneration].CallCount)
-}
-
 func TestOaiResponsesStreamHandlerDoesNotCountPartialImageEvent(t *testing.T) {
 	info := runResponsesImageBillingStream(
 		t,
@@ -303,6 +264,134 @@ func TestOaiResponsesStreamHandlerDoesNotCountPartialImageEvent(t *testing.T) {
 	)
 
 	assert.Equal(t, 0, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolImageGeneration].CallCount)
+}
+
+func TestOaiResponsesHandlerRewritesSGLangCreatedAtToInt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+
+	info := &relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeSGLang},
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(strings.NewReader(`{"id":"resp_1","object":"response","created_at":1786588600.0,"status":"completed","output":[]}`)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}
+
+	_, apiErr := OaiResponsesHandler(c, info, resp)
+	require.Nil(t, apiErr)
+	assert.Contains(t, w.Body.String(), `"created_at":1786588600`)
+	assert.NotContains(t, w.Body.String(), `1786588600.0`)
+}
+
+func TestOaiResponsesStreamHandlerRewritesSGLangCreatedAtToInt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() {
+		constant.StreamingTimeout = oldTimeout
+	})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Set(common.RequestIdKey, "sglang-created-at-test")
+
+	info := &relaycommon.RelayInfo{
+		DisablePing: true,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:       constant.ChannelTypeSGLang,
+			UpstreamModelName: "served-model",
+		},
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"created_at\":1.7865886E9,\"status\":\"completed\",\"output\":[]}}\n\n" +
+				"data: [DONE]\n\n",
+		)),
+		Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+	}
+
+	_, apiErr := OaiResponsesStreamHandler(c, info, resp)
+	require.Nil(t, apiErr)
+	assert.Contains(t, w.Body.String(), `"created_at":1786588600`)
+	assert.NotContains(t, w.Body.String(), `1.7865886E9`)
+	assert.NotContains(t, w.Body.String(), `1786588600.0`)
+}
+
+func TestOaiResponsesStreamHandlerKeepsNonSGLangCreatedAt(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	oldTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 30
+	t.Cleanup(func() {
+		constant.StreamingTimeout = oldTimeout
+	})
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	c.Set(common.RequestIdKey, "openai-created-at-test")
+
+	info := &relaycommon.RelayInfo{
+		DisablePing: true,
+		ChannelMeta: &relaycommon.ChannelMeta{ChannelType: constant.ChannelTypeOpenAI, UpstreamModelName: "gpt-test"},
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body: io.NopCloser(strings.NewReader(
+			"data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\",\"created_at\":1786588600.0,\"status\":\"completed\",\"output\":[]}}\n\n" +
+				"data: [DONE]\n\n",
+		)),
+		Header: http.Header{"Content-Type": []string{"text/event-stream"}},
+	}
+
+	_, apiErr := OaiResponsesStreamHandler(c, info, resp)
+	require.Nil(t, apiErr)
+	assert.Contains(t, w.Body.String(), `1786588600.0`)
+}
+
+func TestOaiResponsesHandlerEstimatesUsageWhenUpstreamOmitsUsage(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+
+	body, err := common.Marshal(dto.OpenAIResponsesResponse{
+		Output: []dto.ResponsesOutput{
+			{Type: "message", Role: "assistant", Content: []dto.ResponsesOutputContent{{Type: "output_text", Text: "hello from responses"}}},
+		},
+	})
+	require.NoError(t, err)
+
+	w := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(w)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-5.1",
+		ChannelMeta:     &relaycommon.ChannelMeta{UpstreamModelName: "gpt-5.1"},
+	}
+	resp := &http.Response{
+		StatusCode: http.StatusOK,
+		Body:       io.NopCloser(bytes.NewReader(body)),
+		Header:     http.Header{"Content-Type": []string{"application/json"}},
+	}
+
+	usage, apiErr := OaiResponsesHandler(c, info, resp)
+	require.Nil(t, apiErr)
+	require.NotNil(t, usage)
+	require.Greater(t, usage.TotalTokens, 0)
+	require.Contains(t, w.Body.String(), "hello from responses")
+}
+
+func TestOaiResponsesStreamHandlerCountsImageWhenCompletedMissing(t *testing.T) {
+	info := runResponsesImageBillingStream(
+		t,
+		`{"type":"response.output_item.done","output_index":0,"item":{"type":"image_generation_call","id":"img_1","status":"completed","result":"base64-a"}}`,
+	)
+
+	assert.Equal(t, 1, info.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolImageGeneration].CallCount)
 }
 
 func TestOaiResponsesStreamHandlerEstimatesUsageWhenCompletedMissing(t *testing.T) {
@@ -340,41 +429,4 @@ func TestOaiResponsesStreamHandlerEstimatesUsageWhenCompletedMissing(t *testing.
 	require.NotNil(t, usage)
 	assert.Greater(t, usage.CompletionTokens, 0)
 	assert.Equal(t, usage.PromptTokens+usage.CompletionTokens, usage.TotalTokens)
-}
-
-func TestOaiResponsesStreamHandlerKeepsZeroUsageWhenStreamHasNoOutput(t *testing.T) {
-	oldTimeout := constant.StreamingTimeout
-	constant.StreamingTimeout = 30
-	t.Cleanup(func() {
-		constant.StreamingTimeout = oldTimeout
-	})
-
-	body := strings.Join([]string{
-		`data: [DONE]`,
-		"",
-	}, "\n\n")
-
-	w := httptest.NewRecorder()
-	c, _ := gin.CreateTestContext(w)
-	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
-	c.Set(common.RequestIdKey, "responses-empty-stream-billing-test")
-	info := &relaycommon.RelayInfo{
-		OriginModelName: "gpt-5.1",
-		DisablePing:     true,
-		ChannelMeta: &relaycommon.ChannelMeta{
-			UpstreamModelName: "gpt-5.1",
-		},
-	}
-	resp := &http.Response{
-		StatusCode: http.StatusOK,
-		Body:       io.NopCloser(strings.NewReader(body)),
-		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
-	}
-
-	usage, apiErr := OaiResponsesStreamHandler(c, info, resp)
-	require.Nil(t, apiErr)
-	require.NotNil(t, usage)
-	assert.Equal(t, 0, usage.PromptTokens)
-	assert.Equal(t, 0, usage.CompletionTokens)
-	assert.Equal(t, 0, usage.TotalTokens)
 }

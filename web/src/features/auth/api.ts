@@ -18,38 +18,18 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import axios from 'axios'
 import i18n from 'i18next'
-
 import { api, refreshAuthentication, type RefreshOutcome } from '@/lib/api'
 import { buildGitHubOAuthUrl } from '@/lib/oauth'
-import { createServerError } from '@/lib/server-error-message'
+import {getServerErrorMessageKey} from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
-
 import { sanitizeAuthRedirect } from './lib/auth-redirect'
-import {
-  clearPasswordEncryptionCache,
-  encryptPassword,
-  encryptPasswordFields,
-} from './lib/password-encryption'
+import { clearPasswordEncryptionCache, encryptPassword, encryptPasswordFields } from './lib/password-encryption'
 import { getAffiliateCode } from './lib/storage'
 import type { TelegramAuthorization } from './lib/telegram-login'
-import type {
-  LoginPayload,
-  LoginResponse,
-  Login2FAResponse,
-  TwoFAPayload,
-  RegisterPayload,
-  ApiResponse,
-} from './types'
+import type { LoginPayload, LoginResponse, Login2FAResponse, TwoFAPayload, RegisterPayload, ApiResponse } from './types'
+import { AuthOperationError } from '@/lib/secure-verification'
+import type { VerificationOperation } from './secure-verification/types'
 
-// ============================================================================
-// Authentication APIs
-// ============================================================================
-
-// ----------------------------------------------------------------------------
-// Login & Logout
-// ----------------------------------------------------------------------------
-
-// User login with username and password
 export async function login(payload: LoginPayload): Promise<LoginResponse> {
   const turnstile = payload.turnstile ?? ''
   try {
@@ -85,7 +65,6 @@ export async function login(payload: LoginPayload): Promise<LoginResponse> {
   }
 }
 
-// Two-factor authentication login
 export async function login2fa(payload: TwoFAPayload) {
   const res = await api.post<Login2FAResponse>('/api/user/login/2fa', payload, {
     skipAuthRefresh: true,
@@ -129,7 +108,6 @@ export async function executeLogout(
   }
 }
 
-// User logout
 export async function logout(): Promise<ApiResponse> {
   return executeLogout({
     getExpectedSID: () => useAuthStore.getState().auth.session?.sid,
@@ -145,11 +123,6 @@ export async function logout(): Promise<ApiResponse> {
   })
 }
 
-// ----------------------------------------------------------------------------
-// Password Management
-// ----------------------------------------------------------------------------
-
-// Send password reset email
 export async function sendPasswordResetEmail(
   email: string,
   turnstile?: string
@@ -160,11 +133,6 @@ export async function sendPasswordResetEmail(
   return res.data
 }
 
-// ----------------------------------------------------------------------------
-// OAuth
-// ----------------------------------------------------------------------------
-
-// Start GitHub OAuth flow
 export async function githubOAuthStart(
   clientId: string,
   state: string,
@@ -174,7 +142,6 @@ export async function githubOAuthStart(
   window.open(url)
 }
 
-// Get OAuth state for CSRF protection
 export async function getOAuthState(affiliateCode?: string): Promise<string> {
   const aff = affiliateCode?.trim() || getAffiliateCode()
   const res = await api.get('/api/oauth/state', { params: { aff } })
@@ -184,10 +151,36 @@ export async function getOAuthState(affiliateCode?: string): Promise<string> {
 
 export async function createOAuthFlow(
   provider: string,
-  intent: 'login' | 'bind',
-  affiliateCode?: string,
-  redirectTo?: string
+  intent: 'login' | 'bind' | 'verify',
+  affiliateOrOperation?: string | VerificationOperation,
+  redirectOrSignal?: string | AbortSignal
 ): Promise<string> {
+  if (
+    typeof affiliateOrOperation === 'object' &&
+    affiliateOrOperation !== null
+  ) {
+    const signal =
+      redirectOrSignal instanceof AbortSignal ? redirectOrSignal : undefined
+    return (
+      await createOAuthAuthorization(
+        provider,
+        intent,
+        affiliateOrOperation,
+        signal
+      )
+    ).state
+  }
+  if (intent === 'verify') {
+    const signal =
+      redirectOrSignal instanceof AbortSignal ? redirectOrSignal : undefined
+    return (
+      await createOAuthAuthorization(provider, intent, undefined, signal)
+    ).state
+  }
+
+  const affiliateCode = affiliateOrOperation
+  const redirectTo =
+    typeof redirectOrSignal === 'string' ? redirectOrSignal : undefined
   const aff =
     intent === 'login' ? affiliateCode?.trim() || getAffiliateCode() : ''
   const redirect =
@@ -215,10 +208,14 @@ export async function createOAuthFlow(
       return res.data.data.flow_token
     }
   }
-  throw createServerError(res.data, i18n.t('Failed to initialize OAuth'))
+  throw new AuthOperationError(
+    getServerErrorMessageKey(res.data) ||
+      res.data?.message ||
+      'Failed to initialize OAuth',
+    res.data?.code
+  )
 }
 
-// WeChat login by authorization code
 export async function wechatLoginByCode(
   code: string,
   aff?: string
@@ -246,11 +243,6 @@ export async function telegramLogin(
   return res.data
 }
 
-// ----------------------------------------------------------------------------
-// Registration
-// ----------------------------------------------------------------------------
-
-// User registration
 export async function register(payload: RegisterPayload): Promise<ApiResponse> {
   const body = await encryptPasswordFields(payload, ['password'])
   const res = await api.post(`/api/user/register`, body, {
@@ -259,7 +251,6 @@ export async function register(payload: RegisterPayload): Promise<ApiResponse> {
   return res.data
 }
 
-// Send email verification code
 export async function sendEmailVerification(
   email: string,
   turnstile?: string
@@ -270,14 +261,71 @@ export async function sendEmailVerification(
   return res.data
 }
 
-// Bind email to OAuth account
 export async function bindEmail(
-  email: string,
-  code: string
+  flowToken: string,
+  newCode: string,
+  oldCode = '',
+  signal?: AbortSignal
 ): Promise<ApiResponse> {
-  const res = await api.post('/api/oauth/email/bind', {
-    email,
-    code,
-  })
+  const res = await api.post(
+    '/api/oauth/email/bind',
+    {
+      flow_token: flowToken,
+      new_code: newCode,
+      old_code: oldCode,
+    },
+    { singleUseAuthorization: true, signal }
+  )
   return res.data
+}
+
+export async function createOAuthAuthorization(
+  provider: string,
+  intent: 'login' | 'bind' | 'verify',
+  operation?: VerificationOperation,
+  signal?: AbortSignal,
+  proofToken?: string,
+  affiliateCode?: string,
+  redirectTo?: string
+): Promise<{ state: string; authorizationUrl?: string }> {
+  const aff =
+    intent === 'login' ? affiliateCode?.trim() || getAffiliateCode() : ''
+  const redirect =
+    intent === 'login' && typeof window !== 'undefined'
+      ? (sanitizeAuthRedirect(redirectTo, window.location.origin) ?? undefined)
+      : undefined
+  const res = await api.post(
+    '/api/oauth/state',
+    {
+      provider,
+      intent,
+      aff: aff || undefined,
+      ...(intent === 'login' ? { redirect, language: i18n.language } : {}),
+      scope: operation?.scope,
+      ...(operation?.context ? { context: operation.context } : {}),
+    },
+    {
+      skipAuthRefresh: intent === 'login',
+      ...(proofToken ? { headers: { 'X-Security-Proof': proofToken } } : {}),
+      singleUseAuthorization: intent === 'bind',
+      signal,
+      skipBusinessError: true,
+      skipErrorHandler: true,
+    }
+  )
+  if (res.data?.success) {
+    if (typeof res.data.data === 'string') return { state: res.data.data }
+    if (typeof res.data.data?.flow_token === 'string') {
+      return {
+        state: res.data.data.flow_token,
+        authorizationUrl: res.data.data.authorization_url,
+      }
+    }
+  }
+  throw new AuthOperationError(
+    getServerErrorMessageKey(res.data) ||
+      res.data?.message ||
+      'Failed to initialize OAuth',
+    res.data?.code
+  )
 }

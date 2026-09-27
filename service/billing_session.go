@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math"
 	"net/http"
 	"strings"
 	"sync"
@@ -14,6 +15,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
 )
@@ -343,7 +345,7 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 	if err := s.reserveToken(delta); err != nil {
 		return err
 	}
-	if err := s.reserveFunding(delta); err != nil {
+	if err := s.reserveFunding(delta, true); err != nil {
 		if !s.relayInfo.IsPlayground {
 			if rollbackErr := model.IncreaseTokenQuota(s.relayInfo.TokenId, s.relayInfo.TokenKey, int64(delta)); rollbackErr != nil {
 				common.SysLog(fmt.Sprintf("error rolling back token quota after funding reserve failed (userId=%d, tokenId=%d, delta=%d): %s",
@@ -368,6 +370,7 @@ func (s *BillingSession) Reserve(targetQuota int) error {
 // 任一步骤失败时原子回滚已完成的步骤。
 func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIError {
 	effectiveQuota := quota
+	trustQuotaLabel := logger.FormatQuota(configuredTrustQuotaUnits())
 
 	// ---- 信任额度旁路 ----
 	if s.shouldTrust(c, quota) {
@@ -378,7 +381,7 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 			s.relayInfo.TokenId,
 			s.relayInfo.RequestId,
 			s.funding.Source(),
-			logger.FormatQuota(common.GetTrustQuota()),
+			trustQuotaLabel,
 			logger.FormatQuota(s.relayInfo.UserQuota),
 			logger.FormatQuota(common.GetContextInt64(c, "token_quota")),
 		))
@@ -388,7 +391,7 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 			s.relayInfo.TokenId,
 			s.relayInfo.RequestId,
 			s.funding.Source(),
-			logger.FormatQuota(common.GetTrustQuota()),
+			trustQuotaLabel,
 			logger.FormatQuota(s.relayInfo.UserQuota),
 			logger.FormatQuota(common.GetContextInt64(c, "token_quota")),
 			logger.FormatQuota(effectiveQuota),
@@ -434,7 +437,7 @@ func (s *BillingSession) preConsume(c *gin.Context, quota int) *types.NewAPIErro
 	return nil
 }
 
-func (s *BillingSession) reserveFunding(delta int) error {
+func (s *BillingSession) reserveFunding(delta int, requireAvailableQuota bool) error {
 	switch funding := s.funding.(type) {
 	case *WalletFunding:
 		// 发送前补充预扣：余额不足时拒绝，不把请求做成欠费。
@@ -490,22 +493,40 @@ func (s *BillingSession) reserveToken(delta int) error {
 }
 
 // shouldTrust 统一信任额度检查，适用于钱包和订阅。
+func configuredTrustQuota() float64 {
+	trustQuota := operation_setting.GetQuotaSetting().TrustQuotaUSD * common.QuotaPerUnit
+	if trustQuota <= 0 || math.IsNaN(trustQuota) || math.IsInf(trustQuota, 0) {
+		return 0
+	}
+	return trustQuota
+}
+
+func configuredTrustQuotaUnits() int64 {
+	trustQuota := configuredTrustQuota()
+	if trustQuota > float64(math.MaxInt64) {
+		return math.MaxInt64
+	}
+	return int64(trustQuota)
+}
+
 func (s *BillingSession) shouldTrust(c *gin.Context, requiredQuota int) bool {
-	// 异步任务（ForcePreConsume=true）必须预扣全额，不允许信任旁路
+	// 异步任务（ForcePreConsume=true）必须预扣全额，不允许信任旁路。
+	// requiredQuota 不再参与阈值比较：旁路只看账户余额是否高于配置的美元信任额度。
+	_ = requiredQuota
 	if s.relayInfo.ForcePreConsume {
 		return false
 	}
 
-	trustQuota := common.GetTrustQuota()
-	if trustQuota <= 0 || requiredQuota <= 0 || requiredQuota > trustQuota {
+	trustQuota := configuredTrustQuota()
+	if trustQuota <= 0 {
 		return false
 	}
 
 	// 检查令牌是否充足
 	tokenTrusted := s.relayInfo.TokenUnlimited
 	if !tokenTrusted {
-		tokenQuota := int(common.GetContextInt64(c, "token_quota"))
-		tokenTrusted = tokenQuota >= requiredQuota && tokenQuota > trustQuota
+		tokenQuota := common.GetContextInt64(c, "token_quota")
+		tokenTrusted = float64(tokenQuota) > trustQuota
 	}
 	if !tokenTrusted {
 		return false
@@ -513,7 +534,7 @@ func (s *BillingSession) shouldTrust(c *gin.Context, requiredQuota int) bool {
 
 	switch s.funding.Source() {
 	case BillingSourceWallet:
-		return s.relayInfo.UserQuota >= int64(requiredQuota) && s.relayInfo.UserQuota > int64(trustQuota)
+		return float64(s.relayInfo.UserQuota) > trustQuota
 	case BillingSourceSubscription:
 		// 订阅不能启用信任旁路。原因：
 		// 1. PreConsumeUserSubscription 要求 amount>0 来创建预扣记录并锁定订阅

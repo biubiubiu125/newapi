@@ -35,8 +35,8 @@ type AliParameters struct {
 
 type AliChatRequest struct {
 	Model      string        `json:"model"`
-	Input      AliInput      `json:"input,omitempty"`
-	Parameters AliParameters `json:"parameters,omitempty"`
+	Input      AliInput      `json:"input"`
+	Parameters AliParameters `json:"parameters"`
 }
 
 type AliEmbeddingRequest struct {
@@ -223,7 +223,7 @@ type AliRerankInput struct {
 type AliRerankRequest struct {
 	Model      string              `json:"model"`
 	Input      AliRerankInput      `json:"input"`
-	Parameters AliRerankParameters `json:"parameters,omitempty"`
+	Parameters AliRerankParameters `json:"parameters"`
 }
 
 type AliRerankResponse struct {

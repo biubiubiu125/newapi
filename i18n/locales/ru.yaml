@@ -1,5 +1,7 @@
 # Russian translations
 
+# Task plugin messages
+task_plugin.unknown_meta_field: 'Метаданные плагина содержат неизвестное поле "{{.Field}}". Если плагин загружен из официального маркетплейса, может потребоваться более новая версия new-api. Обновите new-api и установите плагин снова.'
 
 # Common messages
 common.invalid_params: "Недопустимые параметры"
@@ -277,6 +279,7 @@ oauth.server_address_required: "Сначала настройте адрес с�
 oauth.bind_requires_login: "Для привязки необходимо сначала войти"
 oauth.wechat_bind_unsupported: "Текущий способ входа не поддерживает привязку WeChat"
 oauth.credential_used: "Эти учётные данные уже были использованы"
+oauth.not_auto_linked: "Этот аккаунт {{.Provider}} нельзя автоматически привязать к существующему аккаунту. Войдите или зарегистрируйтесь другим способом, затем привяжите {{.Provider}} в настройках аккаунта"
 
 # Model layer error messages
 redeem.failed: "Погашение не выполнено, повторите попытку позже"
@@ -296,7 +299,7 @@ distributor.invalid_playground_request: "Invalid playground request: {{.Error}}"
 distributor.group_access_denied: "No permission to access this group"
 distributor.get_channel_failed: "Failed to get available channel for model {{.Model}} under group {{.Group}} (distributor): {{.Error}}"
 distributor.no_available_channel: "No available channel for model {{.Model}} under group {{.Group}} (distributor)"
-distributor.no_available_channel_task_plugin: "No available channel for model {{.Model}} under group {{.Group}}: the model is claimed by task plugin \"{{.Plugin}}\", which has no enabled channel serving it. To let another plugin or channel serve this model, disable or override plugin \"{{.Plugin}}\" in the task plugin console (distributor)"
+distributor.no_available_channel_task_plugin: "No available channel for model {{.Model}} under group {{.Group}}: the model is claimed by a task plugin, which has no enabled channel serving it (distributor)"
 distributor.invalid_midjourney_request: "Invalid Midjourney request: {{.Error}}"
 distributor.invalid_request_parse_model: "Invalid request, unable to parse model"
 
@@ -355,6 +358,8 @@ channel.vertex_region_json: "Регион развёртывания долже�
 channel.vertex_region_default: "Регион развёртывания должен содержать поле default"
 channel.task_plugin_key_required: "Для каналов плагина задач требуется ключ плагина задач"
 channel.task_plugin_not_registered: "Плагин задач {{.Plugin}} не зарегистрирован"
+channel.task_plugin_base_url_required: "Для канала плагина задач нужен базовый URL"
+channel.task_plugin_bind_required: "Для привязки плагина задач нужно право task_plugin.bind"
 channel.get_tag_count_failed: "Не удалось получить количество тегов, повторите попытку позже"
 channel.get_tag_channels_failed: "Не удалось получить каналы по тегу, повторите попытку позже"
 channel.get_count_failed: "Не удалось получить количество каналов, повторите попытку позже"
@@ -415,7 +420,6 @@ notify.subscription_exceed_gotify: "{{.Prompt}}. Остаток квоты по�
 status.db_failed: "Не удалось подключиться к базе данных"
 status.running: "Сервер работает"
 protocol.access_token_unsupported: "Access token is not supported"
-protocol.image_task_n_gt_one: "async task bridge mode does not support n greater than 1; split into multiple image tasks"
 protocol.channel_retry_failed: "failed to get available channels for model {{.Model}} under group {{.Group}} (retry): {{.Error}}"
 protocol.channel_retry_missing: "no available channel for model {{.Model}} under group {{.Group}} (retry)"
 protocol.channel_missing: "no available channel for model {{.Model}} under group {{.Group}}"
@@ -680,6 +684,9 @@ passkey.https_required: "Passkey требует HTTPS. Текущий досту
 passkey.origin_undetermined: "Не удалось определить Origin Passkey. Укажите его в системных или Passkey настройках. Host: '{{.Host}}', ServerAddress: '{{.ServerAddress}}'"
 passkey.origin_parse_failed: "Не удалось разобрать Origin Passkey"
 passkey.rpid_origin_missing: "Origin Passkey не настроен, невозможно определить RPID"
+passkey.rp_id_invalid: "Недопустимый домен Passkey. Укажите домен без схемы, порта, пути и шаблона."
+passkey.rp_id_unavailable: "Этот домен Passkey недоступен на этом сайте. Используйте исходный сайт или другой способ проверки."
+passkey.rp_id_removal_confirmation: "Проверьте затронутые Passkey и подтвердите удаление домена. Если настройки или влияние изменились, подтверждение нужно снова."
 token.search_consecutive_wildcard: "Search pattern cannot contain consecutive % wildcards"
 token.search_wildcard_max: "Search pattern can contain at most 2 % wildcards"
 token.search_keyword_short: "Fuzzy search keywords must be at least 2 characters"
@@ -739,9 +746,10 @@ option.theme_classic_removed: "The Classic frontend has been removed. Theme can 
 option.claude_negative_max_tokens: "Значение Claude default max_tokens не может быть отрицательным: {{.Model}} = {{.Value}}"
 option.gemini_invalid_safety_threshold: "Недопустимый порог безопасности Gemini {{.Threshold}} ({{.Category}})"
 option.non_negative_number: "{{.Key}} должно быть конечным неотрицательным числом"
+option.billing_expr_invalid: "недействительное выражение тарификации для модели {{.Model}}: {{.Reason}}"
 option.pricing_input_conflict: "Отправьте либо карты параметров, либо изменения цен, но не оба сразу"
 referral.disabled: "Referral program is not enabled"
-plugin.source_too_large: "Plugin source exceeds 1 MiB"
+plugin.source_too_large: "Plugin source exceeds 8 MiB"
 plugin.sha256_mismatch: "Plugin source sha256 mismatch"
 plugin.not_found: "Task plugin not found"
 plugin.compile_failed: "Не удалось загрузить плагин: {{.Error}}"

@@ -310,13 +310,17 @@ func getPayMoney(amount int64, group string) float64 {
 }
 
 func getMinTopup() int64 {
-	minTopup := operation_setting.MinTopUp
+	minTopup := int64(operation_setting.MinTopUp)
 	if operation_setting.GetQuotaDisplayType() == operation_setting.QuotaDisplayTypeTokens {
-		dMinTopup := decimal.NewFromInt(int64(minTopup))
+		dMinTopup := decimal.NewFromInt(minTopup)
 		dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
-		minTopup = int(dMinTopup.Mul(dQuotaPerUnit).IntPart())
+		quota, err := common.WalletQuotaFromDecimalStrict(dMinTopup.Mul(dQuotaPerUnit))
+		if err != nil {
+			return common.MaxWalletQuota
+		}
+		minTopup = quota
 	}
-	return int64(minTopup)
+	return minTopup
 }
 
 func scaledTopUpAmountOptions() []int {
@@ -462,7 +466,6 @@ func writeTopUpClientError(c *gin.Context, err error) {
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "error", "data": message})
 }
-
 func RequestEpay(c *gin.Context) {
 	if !requirePaymentCompliance(c) {
 		return
@@ -828,8 +831,11 @@ func epayNotifyLegacy(c *gin.Context) {
 		}
 		return
 	}
+	logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 webhook 验签成功 trade_no=%s callback_type=%s trade_status=%s client_ip=%s verify_info=%q", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, c.ClientIP(), common.GetJsonString(verifyInfo)))
 
 	if verifyInfo.TradeStatus == epay.StatusTradeSuccess {
+		// 进程内锁只是优化；重复/并发回调的正确性由 RechargeEpay 的
+		// 数据库行锁 + 事务内状态校验保证（多实例部署下同样安全）。
 		LockOrder(verifyInfo.ServiceTradeNo)
 		defer UnlockOrder(verifyInfo.ServiceTradeNo)
 		topUp := model.GetTopUpByTradeNo(verifyInfo.ServiceTradeNo)
@@ -880,6 +886,9 @@ func epayNotifyLegacy(c *gin.Context) {
 		}
 	} else {
 		logger.LogInfo(c.Request.Context(), fmt.Sprintf("易支付 webhook 忽略事件 trade_no=%s callback_type=%s trade_status=%s client_ip=%s", verifyInfo.ServiceTradeNo, verifyInfo.Type, verifyInfo.TradeStatus, common.GetClientIP(c)))
+	}
+	if _, writeErr := c.Writer.Write([]byte("success")); writeErr != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("易支付 webhook 响应写入失败 trade_no=%s client_ip=%s error=%q", verifyInfo.ServiceTradeNo, c.ClientIP(), writeErr.Error()))
 	}
 }
 */

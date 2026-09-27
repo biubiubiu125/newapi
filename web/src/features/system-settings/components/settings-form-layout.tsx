@@ -16,8 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useId, type ComponentProps, type ReactNode } from 'react'
-
+import { type ComponentProps, type ReactNode } from 'react'
 import { FormItem } from '@/components/ui/form'
 import { Label } from '@/components/ui/label'
 import { Switch } from '@/components/ui/switch'
@@ -33,10 +32,15 @@ type SettingsFormGridItemProps = SettingsFormGridProps & {
 }
 
 type SettingsSwitchItemProps = ComponentProps<typeof FormItem>
+
 type SettingsSwitchRowProps = ComponentProps<'div'>
+
 type SettingsControlGroupProps = ComponentProps<'div'>
+
 type SettingsControlChildrenProps = ComponentProps<'div'>
+
 type SettingsSwitchFieldProps = SettingsSwitchRowProps & {
+  controlId?: string
   checked: boolean
   onCheckedChange: (checked: boolean) => void
   label: ReactNode
@@ -103,6 +107,7 @@ export function SettingsSwitchRow({
 }
 
 export function SettingsSwitchField({
+  controlId,
   checked,
   onCheckedChange,
   label,
@@ -111,28 +116,34 @@ export function SettingsSwitchField({
   className,
   ...props
 }: SettingsSwitchFieldProps) {
-  const switchId = useId()
-  const descriptionId = useId()
   const labelText = typeof label === 'string' ? label : undefined
   return (
     <SettingsSwitchRow className={className} {...props}>
       <SettingsSwitchContent>
-        <Label htmlFor={switchId} className='text-sm font-medium'>
+
+        <Label htmlFor={controlId} className='text-sm font-medium'>
           {label}
         </Label>
         {description ? (
-          <p id={descriptionId} className='text-muted-foreground text-xs'>
+
+          <p
+            id={controlId ? `${controlId}-description` : undefined}
+            className='text-muted-foreground text-xs'
+          >
             {description}
           </p>
         ) : null}
       </SettingsSwitchContent>
       <Switch
-        id={switchId}
+
+        id={controlId}
+        aria-describedby={
+          controlId && description ? `${controlId}-description` : undefined
+        }
         checked={checked}
         onCheckedChange={onCheckedChange}
         disabled={disabled}
         aria-label={labelText}
-        aria-describedby={description ? descriptionId : undefined}
       />
     </SettingsSwitchRow>
   )

@@ -552,3 +552,29 @@ func TestDeleteInvalidRedemptionsKeepsSucceededUsedCodeWithAccountMismatch(t *te
 	require.NoError(t, DB.First(&Redemption{}, redemption.Id).Error)
 	require.ErrorContains(t, DeleteRedemptionById(redemption.Id), "unresolved")
 }
+
+func TestRedeemRejectsWalletOverflow(t *testing.T) {
+	truncateTables(t)
+
+	user := &User{Username: "redeem-overflow-user", Status: common.UserStatusEnabled, Quota: common.MaxWalletQuota - 10}
+	require.NoError(t, DB.Create(user).Error)
+	redemption := &Redemption{
+		Key:         "redeem-overflow-key",
+		Name:        "overflow",
+		Status:      common.RedemptionCodeStatusEnabled,
+		Quota:       11,
+		CreatedTime: common.GetTimestamp(),
+	}
+	require.NoError(t, DB.Create(redemption).Error)
+
+	_, err := Redeem(redemption.Key, user.Id)
+	require.ErrorIs(t, err, ErrRedeemFailed)
+
+	var reloaded User
+	require.NoError(t, DB.First(&reloaded, user.Id).Error)
+	require.EqualValues(t, common.MaxWalletQuota-10, reloaded.Quota)
+
+	var stored Redemption
+	require.NoError(t, DB.First(&stored, redemption.Id).Error)
+	require.Equal(t, common.RedemptionCodeStatusEnabled, stored.Status)
+}

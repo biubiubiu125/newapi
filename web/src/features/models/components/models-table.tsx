@@ -26,7 +26,7 @@ import { ErrorState } from '@/components/error-state'
 import { useModelPricing } from '@/features/model-pricing/api'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
+import { localizeConsoleErrorText, requireServerSuccess } from '@/lib/server-error-message'
 
 import { getModels, searchModels, getVendors } from '../api'
 import { DEFAULT_PAGE_SIZE } from '../constants'
@@ -85,7 +85,8 @@ export function ModelsTable() {
   // Fetch vendors for filter
   const { data: vendorsData } = useQuery({
     queryKey: vendorsQueryKeys.list(),
-    queryFn: () => getVendors({ page_size: 1000 }),
+    queryFn: async () =>
+      requireServerSuccess(await getVendors({ page_size: 1000 })),
   })
 
   const vendors = useMemo(
@@ -227,7 +228,6 @@ export function ModelsTable() {
       />
     )
   }
-
   return (
     <DataTablePage
       showMobileBulkActions

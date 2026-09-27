@@ -407,6 +407,9 @@ func proxyTaskMediaWithArtifact(c *gin.Context, task *model.Task, descriptor *re
 			message: "HTTP client is not initialized", err: errTaskMediaClientUnavailable,
 		}
 	}
+	if client == nil {
+		client = http.DefaultClient
+	}
 
 	req, err := http.NewRequestWithContext(c.Request.Context(), method, parsedURL.String(), bytes.NewReader(descriptor.Body))
 	if err != nil {

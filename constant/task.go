@@ -30,11 +30,6 @@ const (
 	TaskActionRemixCanonical   = "remix"
 )
 
-var SunoModel2Action = map[string]string{
-	"suno_music":  SunoActionMusic,
-	"suno_lyrics": SunoActionLyrics,
-}
-
 var legacyTaskActionAliases = map[string]string{
 	TaskActionGenerate:          TaskActionImageToVideo,
 	TaskActionTextGenerate:      TaskActionTextToVideo,

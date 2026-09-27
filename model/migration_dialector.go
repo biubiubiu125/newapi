@@ -11,8 +11,8 @@ import (
 	"gorm.io/gorm/schema"
 )
 
-// Embed the concrete dialectors to retain their transaction/savepoint and other
-// optional GORM interfaces. Only schema comparison needs normalization.
+// Embed the concrete dialectors to customize schema reconciliation while
+// retaining transaction/savepoint and other optional GORM interfaces.
 type mysqlMigrationDialector struct{ mysql.Dialector }
 
 func (d mysqlMigrationDialector) Migrator(db *gorm.DB) gorm.Migrator {

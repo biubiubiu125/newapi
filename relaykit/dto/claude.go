@@ -42,6 +42,7 @@ type ClaudeMediaMessage struct {
 	ErrorCode string `json:"error_code,omitempty"`
 
 	// tool_calls
+	// Tool-use and tool-result blocks.
 	Id        string `json:"id,omitempty"`
 	Name      string `json:"name,omitempty"`
 	Input     any    `json:"input,omitempty"`
@@ -79,7 +80,7 @@ func (c *ClaudeMediaMessage) GetStringContent() string {
 	case string:
 		return c.Content.(string)
 	case []any:
-		var contentStr string
+		var contentStr strings.Builder
 		for _, contentItem := range c.Content.([]any) {
 			contentMap, ok := contentItem.(map[string]any)
 			if !ok {
@@ -87,11 +88,11 @@ func (c *ClaudeMediaMessage) GetStringContent() string {
 			}
 			if contentMap["type"] == ContentTypeText {
 				if subStr, ok := contentMap["text"].(string); ok {
-					contentStr += subStr
+					contentStr.WriteString(subStr)
 				}
 			}
 		}
-		return contentStr
+		return contentStr.String()
 	}
 
 	return ""
@@ -135,6 +136,9 @@ type ClaudeMessageSource struct {
 type ClaudeMessage struct {
 	Role    string `json:"role"`
 	Content any    `json:"content"`
+	// OutputConfig carries per-message effort (beta): an effort-only system
+	// message has empty content and the new level in output_config.effort.
+	OutputConfig json.RawMessage `json:"output_config,omitempty"`
 }
 
 func (c *ClaudeMessage) IsStringContent() bool {
@@ -153,7 +157,7 @@ func (c *ClaudeMessage) GetStringContent() string {
 	case string:
 		return c.Content.(string)
 	case []any:
-		var contentStr string
+		var contentStr strings.Builder
 		for _, contentItem := range c.Content.([]any) {
 			contentMap, ok := contentItem.(map[string]any)
 			if !ok {
@@ -161,11 +165,11 @@ func (c *ClaudeMessage) GetStringContent() string {
 			}
 			if contentMap["type"] == ContentTypeText {
 				if subStr, ok := contentMap["text"].(string); ok {
-					contentStr += subStr
+					contentStr.WriteString(subStr)
 				}
 			}
 		}
-		return contentStr
+		return contentStr.String()
 	}
 
 	return ""
@@ -184,10 +188,10 @@ func (c *ClaudeMessage) ParseContent() ([]ClaudeMediaMessage, error) {
 }
 
 type Tool struct {
-	Name        string                 `json:"name"`
-	Description string                 `json:"description,omitempty"`
-	InputSchema map[string]interface{} `json:"input_schema"`
-	Strict      *bool                  `json:"strict,omitempty"`
+	Name        string         `json:"name"`
+	Description string         `json:"description,omitempty"`
+	InputSchema map[string]any `json:"input_schema"`
+	Strict      *bool          `json:"strict,omitempty"`
 }
 
 type InputSchema struct {
@@ -197,10 +201,14 @@ type InputSchema struct {
 }
 
 type ClaudeWebSearchTool struct {
-	Type         string                       `json:"type"`
-	Name         string                       `json:"name"`
-	MaxUses      int                          `json:"max_uses,omitempty"`
-	UserLocation *ClaudeWebSearchUserLocation `json:"user_location,omitempty"`
+	Type              string                       `json:"type"`
+	Name              string                       `json:"name"`
+	MaxUses           int                          `json:"max_uses,omitempty"`
+	AllowedDomains    []string                     `json:"allowed_domains,omitempty"`
+	BlockedDomains    []string                     `json:"blocked_domains,omitempty"`
+	AllowedCallers    []string                     `json:"allowed_callers,omitempty"`
+	ResponseInclusion string                       `json:"response_inclusion,omitempty"`
+	UserLocation      *ClaudeWebSearchUserLocation `json:"user_location,omitempty"`
 }
 
 type ClaudeWebSearchUserLocation struct {
@@ -242,6 +250,8 @@ type ClaudeRequest struct {
 	Thinking          *Thinking       `json:"thinking,omitempty"`
 	McpServers        json.RawMessage `json:"mcp_servers,omitempty"`
 	Metadata          json.RawMessage `json:"metadata,omitempty"`
+	// vLLM Messages extension; forwarded verbatim when present.
+	ChatTemplateKwargs json.RawMessage `json:"chat_template_kwargs,omitempty"`
 	// Speed specifies the Claude inference speed mode.
 	// This field is filtered by default and can be enabled via channel setting allow_speed.
 	Speed json.RawMessage `json:"speed,omitempty"`
@@ -385,18 +395,6 @@ func (c *ClaudeRequest) SetModelName(modelName string) {
 	}
 }
 
-func (c *ClaudeRequest) SearchToolNameByToolCallId(toolCallId string) string {
-	for _, message := range c.Messages {
-		content, _ := message.ParseContent()
-		for _, mediaMessage := range content {
-			if mediaMessage.Id == toolCallId {
-				return mediaMessage.Name
-			}
-		}
-	}
-	return ""
-}
-
 // AddTool 添加工具到请求中
 func (c *ClaudeRequest) AddTool(tool any) {
 	if c.Tools == nil {
@@ -428,7 +426,7 @@ func (c *ClaudeRequest) GetTools() []any {
 
 func (c *ClaudeRequest) GetEfforts() string {
 	var OutputConfig OutputConfigForEffort
-	if err := json.Unmarshal(c.OutputConfig, &OutputConfig); err == nil {
+	if err := kitutil.Unmarshal(c.OutputConfig, &OutputConfig); err == nil {
 		effort := OutputConfig.Effort
 		return effort
 	}
@@ -543,7 +541,7 @@ func (c *ClaudeResponse) GetClaudeError() *types.ClaudeError {
 		return &err
 	case *types.ClaudeError:
 		return err
-	case map[string]interface{}:
+	case map[string]any:
 		// 处理从JSON解析来的map结构
 		claudeErr := &types.ClaudeError{}
 		if errType, ok := err["type"].(string); ok {

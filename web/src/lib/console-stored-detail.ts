@@ -189,6 +189,7 @@ export function paymentOrphanErrorText(
   language: string,
   t: Translate
 ): string {
+  void t
   const text = value.trim()
   if (!text) return ''
   if (!chineseInterface(language)) return text

@@ -3,7 +3,6 @@ package service
 import (
 	"errors"
 	"fmt"
-	"math"
 	"strings"
 	"time"
 
@@ -13,7 +12,6 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/pkg/billingexpr"
-	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
@@ -288,11 +286,16 @@ func CalcOpenRouterCacheCreateTokens(usage dto.Usage, priceData types.PriceData)
 	completionTokens := float64(usage.CompletionTokens)
 	promptCacheReadTokens := float64(usage.PromptTokensDetails.CachedTokens)
 
-	return int(math.Round((cost -
+	value := (cost -
 		totalPromptTokens*quotaPrice +
 		promptCacheReadTokens*(quotaPrice-promptCacheReadPrice) -
 		completionTokens*completionPrice) /
-		(promptCacheCreatePrice - quotaPrice)))
+		(promptCacheCreatePrice - quotaPrice)
+	quota, clamp := common.QuotaRoundChecked(value)
+	if clamp != nil {
+		return -1
+	}
+	return quota
 }
 
 func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, usage *dto.Usage, extraContent string) error {
@@ -302,7 +305,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 
 	var tieredUsedVars map[string]bool
 	if snap := relayInfo.TieredBillingSnapshot; snap != nil {
-		tieredUsedVars = billingexpr.UsedVars(snap.ExprString)
+		tieredUsedVars = billingexpr.UsedVarsByHash(snap.ExprString, snap.ExprHash)
 	}
 	var tieredResult *billingexpr.TieredResult
 	tieredOk, tieredQuota, tieredRes := TryTieredSettle(relayInfo, BuildTieredTokenParams(usage, false, tieredUsedVars))
@@ -408,7 +411,7 @@ func PostAudioConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, u
 	}); err != nil {
 		return wrapRecordConsumeLogError(ctx, relayInfo, relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota, settlementSucceeded, err)
 	}
-	perfmetrics.RecordRelaySampleAsync(relayInfo, true, int64(usage.CompletionTokens))
+	relayInfo.PerformanceOutputTokens = int64(usage.CompletionTokens)
 	if settlementErr != nil {
 		return settlementErr
 	}
@@ -437,18 +440,28 @@ func PreConsumeTokenQuota(relayInfo *relaycommon.RelayInfo, quota int) error {
 	return nil
 }
 
-func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (err error) {
+type postConsumeQuotaResult struct {
+	FundingApplied bool
+	TokenApplied   bool
+}
+
+func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) error {
+	_, err := postConsumeQuotaWithResult(relayInfo, quota, preConsumedQuota, sendEmail)
+	return err
+}
+
+func postConsumeQuotaWithResult(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int, sendEmail bool) (result postConsumeQuotaResult, err error) {
 	if relayInfo == nil {
-		return errors.New("relayInfo is nil")
+		return result, errors.New("relayInfo is nil")
 	}
 	isSubscription := relayInfo.BillingSource == BillingSourceSubscription
 	if isSubscription && relayInfo.SubscriptionId == 0 {
-		return errors.New("subscription id is missing")
+		return result, errors.New("subscription id is missing")
 	}
 
 	tokenAdjusted, tokenDelta, err := adjustTokenQuotaForSettlementTracked(relayInfo, quota)
 	if err != nil {
-		return err
+		return result, err
 	}
 
 	rollbackToken := func() {
@@ -466,7 +479,7 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 		if delta != 0 {
 			if err := model.PostConsumeUserSubscriptionDelta(relayInfo.SubscriptionId, delta); err != nil {
 				rollbackToken()
-				return err
+				return result, err
 			}
 			relayInfo.SubscriptionPostDelta += delta
 		}
@@ -478,9 +491,11 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 		}
 		if err != nil {
 			rollbackToken()
-			return err
+			return result, err
 		}
 	}
+	result.FundingApplied = true
+	result.TokenApplied = tokenAdjusted
 
 	if sendEmail {
 		if (quota + preConsumedQuota) != 0 {
@@ -488,7 +503,7 @@ func PostConsumeQuota(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQu
 		}
 	}
 
-	return nil
+	return result, nil
 }
 
 func checkAndSendQuotaNotify(relayInfo *relaycommon.RelayInfo, quota int, preConsumedQuota int) {

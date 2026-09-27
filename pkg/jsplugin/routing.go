@@ -29,6 +29,11 @@ type Route struct {
 	Decode      string    `json:"decode,omitempty"`
 	Render      string    `json:"render,omitempty"`
 	TaskIDParam string    `json:"taskIdParam,omitempty"`
+	// RetainResult, when explicitly false on a submit or dynamic route, tells
+	// the host not to persist the upstream snapshot of an immediate terminal
+	// result and to treat the task as not found on every retrieval surface
+	// afterwards. nil means the route did not declare it (retain).
+	RetainResult *bool `json:"retainResult,omitempty"`
 	// Models restricts this route to the listed models. The host matches the
 	// canonical top-level "model" body field before any JS hook runs; empty
 	// means unrestricted. Must be a subset of meta.models.
@@ -78,6 +83,9 @@ type HostProtocolDefinition struct {
 	Operations []HostProtocolOperation
 }
 
+// ProtocolOpenAIImage is the host protocol that serves the OpenAI Images API.
+const ProtocolOpenAIImage = "openai_image"
+
 var hostProtocols = []HostProtocolDefinition{
 	{Name: "openai_responses", Operations: []HostProtocolOperation{
 		{Name: "create", Methods: []string{http.MethodPost}, Path: "/v1/responses", BodyKinds: []BodyKind{BodyJSON}, ModelField: "model", RequiredProtocolMembers: []string{"decodeRequest"}, Modes: []ProtocolMode{{Name: "stream", Hook: "renderEvents"}, {Name: "sync", Hook: "renderFinal"}, {Name: "background", Hook: "renderFinal"}}},
@@ -87,6 +95,10 @@ var hostProtocols = []HostProtocolDefinition{
 		{Name: "create", Methods: []string{http.MethodPost}, Path: "/v1/videos", BodyKinds: []BodyKind{BodyJSON, BodyMultipart}, ModelField: "model", RequiredProtocolMembers: []string{"decodeRequest"}},
 		{Name: "retrieve", Methods: []string{http.MethodGet}, Path: "/v1/videos/:task_id", BodyKinds: []BodyKind{BodyNone}, RequiredProtocolMembers: []string{"render"}},
 		{Name: "content", Methods: []string{http.MethodGet, http.MethodHead}, Path: "/v1/videos/:task_id/content", BodyKinds: []BodyKind{BodyNone}, RequiredDriverHooks: []string{"listArtifacts", "buildContentRequest"}},
+	}},
+	{Name: ProtocolOpenAIImage, Operations: []HostProtocolOperation{
+		{Name: "generate", Methods: []string{http.MethodPost}, Path: "/v1/images/generations", BodyKinds: []BodyKind{BodyJSON, BodyMultipart}, ModelField: "model", RequiredProtocolMembers: []string{"decodeRequest", "render"}},
+		{Name: "edit", Methods: []string{http.MethodPost}, Path: "/v1/images/edits", BodyKinds: []BodyKind{BodyMultipart, BodyJSON}, ModelField: "model", RequiredProtocolMembers: []string{"decodeRequest", "render"}},
 	}},
 }
 
@@ -328,6 +340,7 @@ type RoutingGeneration struct {
 
 	byKey                map[string]*LoadedPlugin
 	byModel              map[string]*LoadedPlugin
+	byModelAll           map[string][]*LoadedPlugin
 	canonicalModelByFold map[string]string
 	byChannelType        map[int]*LoadedPlugin
 	routeIndex           map[string]RouteBinding
@@ -416,6 +429,27 @@ func (g *RoutingGeneration) GetByModel(model string) (*LoadedPlugin, bool) {
 	}
 	plugin, ok := g.byModel[model]
 	return plugin, ok
+}
+
+// PluginsByModel returns every plugin that declares model, in plugin-key
+// order. GetByModel still returns only the first of those plugins.
+func (g *RoutingGeneration) PluginsByModel(model string) []*LoadedPlugin {
+	if g == nil || model == "" {
+		return nil
+	}
+	plugins := g.byModelAll[model]
+	if len(plugins) == 0 {
+		return nil
+	}
+	out := make([]*LoadedPlugin, len(plugins))
+	copy(out, plugins)
+	return out
+}
+
+// SharedModel reports whether at least two plugins declare model. Billing
+// uses this to require an expression that fits every declared usage schema.
+func (g *RoutingGeneration) SharedModel(model string) bool {
+	return g != nil && len(g.byModelAll[model]) >= 2
 }
 
 // CanonicalModel returns the declared spelling for model. An exact byModel
@@ -700,6 +734,9 @@ func validateRoute(route *Route) error {
 		if route.Action != "" {
 			return fmt.Errorf("query route %s %s must not declare action", route.Method, route.Path)
 		}
+		if route.RetainResult != nil {
+			return fmt.Errorf("query route %s %s must not declare retainResult", route.Method, route.Path)
+		}
 		if route.TaskIDParam == "" {
 			route.TaskIDParam = "task_id"
 		}
@@ -864,6 +901,7 @@ func buildRoutingGenerationFromPlugins(effective map[string]*LoadedPlugin, numbe
 		PublishedAt:          time.Now(),
 		byKey:                make(map[string]*LoadedPlugin, len(effective)),
 		byModel:              make(map[string]*LoadedPlugin),
+		byModelAll:           make(map[string][]*LoadedPlugin),
 		canonicalModelByFold: make(map[string]string),
 		byChannelType:        make(map[int]*LoadedPlugin),
 		routeIndex:           make(map[string]RouteBinding),
@@ -877,6 +915,16 @@ func buildRoutingGenerationFromPlugins(effective map[string]*LoadedPlugin, numbe
 		for _, model := range plugin.Meta.Models {
 			if _, exists := generation.byModel[model]; !exists {
 				generation.byModel[model] = plugin
+			}
+			alreadyListed := false
+			for _, listed := range generation.byModelAll[model] {
+				if listed == plugin {
+					alreadyListed = true
+					break
+				}
+			}
+			if !alreadyListed {
+				generation.byModelAll[model] = append(generation.byModelAll[model], plugin)
 			}
 			folded := asciiFold(model)
 			if existing, exists := generation.canonicalModelByFold[folded]; exists {
@@ -932,8 +980,9 @@ func buildRoutingGenerationFromPlugins(effective map[string]*LoadedPlugin, numbe
 						bindings := generation.protocolIndex[indexKey]
 						if len(bindings) > 0 {
 							other := bindings[0]
-							legacyProviders := len(plugin.Meta.ChannelTypes) > 0 && len(other.Plugin.Meta.ChannelTypes) > 0
-							if !legacyProviders || claim.Name != other.Protocol {
+							// The same host protocol may be implemented by more than one plugin.
+							// A different protocol on the same method, path, and model is a conflict.
+							if claim.Name != other.Protocol {
 								return nil, fmt.Errorf("plugin %s protocol %s %s model %q conflicts with plugin %s", plugin.Meta.Key, method, operation.Path, model, other.Plugin.Meta.Key)
 							}
 						}

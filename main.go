@@ -24,6 +24,7 @@ import (
 	"github.com/QuantumNous/new-api/oauth"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	perfmetrics "github.com/QuantumNous/new-api/pkg/perf_metrics"
+	"github.com/QuantumNous/new-api/pkg/wsmanager"
 	"github.com/QuantumNous/new-api/relay"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
 	"github.com/QuantumNous/new-api/router"
@@ -102,6 +103,7 @@ func main() {
 
 		go model.SyncChannelCache(common.SyncFrequency)
 	}
+	wsmanager.StartSubscriber(context.Background())
 
 	// Warm pricing after channel cache initialization so Advanced Custom
 	// endpoint inference can read cached route settings on first request.
@@ -146,13 +148,7 @@ func main() {
 	service.StartSystemInstanceReporter()
 
 	// Wire task polling adaptor factory (breaks service -> relay import cycle)
-	service.GetTaskAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPollingAdaptor {
-		a := relay.GetTaskAdaptor(platform)
-		if a == nil {
-			return nil
-		}
-		return a
-	}
+	service.GetTaskAdaptorFunc = relay.GetLegacyTaskPollingAdaptor
 	service.GetTaskPluginAdaptorFunc = func(platform constant.TaskPlatform) service.TaskPluginPollingAdaptor {
 		a := relay.GetTaskPluginAdaptor(platform)
 		if a == nil {
@@ -342,6 +338,12 @@ func InitResources() error {
 		return err
 	}
 
+	if common.PasswordLoginEncryptionEnabled {
+		if err = model.InitPasswordEncryption(); err != nil {
+			common.FatalLog("failed to initialize password encryption: " + err.Error())
+			return err
+		}
+	}
 	if common.PasswordLoginEncryptionEnabled {
 		if err = model.InitPasswordEncryption(); err != nil {
 			common.FatalLog("failed to initialize password encryption: " + err.Error())

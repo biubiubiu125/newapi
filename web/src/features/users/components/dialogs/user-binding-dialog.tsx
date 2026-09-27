@@ -16,6 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import { useQuery } from '@tanstack/react-query'
 import {
   Mail,
   Globe,
@@ -44,8 +45,10 @@ import {
   TooltipProvider,
   TooltipTrigger,
 } from '@/components/ui/tooltip'
-import { api } from '@/lib/api'
 import { indexCustomOAuthBindings, type CustomOAuthBinding } from '@/lib/oauth'
+import { handleServerError } from '@/lib/handle-server-error'
+import { requireServerSuccess } from '@/lib/server-error-message'
+import { statusQueryOptions } from '@/lib/status-query'
 
 import {
   getUser,
@@ -104,42 +107,42 @@ const BUILTIN_BINDINGS: ReadonlyArray<{
     statusKey: null,
   },
   {
-    key: 'github_id',
+    key: 'github',
     field: 'github_id',
     label: 'GitHub',
     icon: <SiGithub className='h-4 w-4' />,
     statusKey: 'github_oauth',
   },
   {
-    key: 'discord_id',
+    key: 'discord',
     field: 'discord_id',
     label: 'Discord',
     icon: <SiDiscord className='h-4 w-4' />,
     statusKey: 'discord_oauth',
   },
   {
-    key: 'wechat_id',
+    key: 'wechat',
     field: 'wechat_id',
     label: 'WeChat',
     icon: <MessageCircle className='h-4 w-4' />,
     statusKey: 'wechat_login',
   },
   {
-    key: 'oidc_id',
+    key: 'oidc',
     field: 'oidc_id',
     label: 'OIDC',
     icon: <Globe className='h-4 w-4' />,
     statusKey: 'oidc_enabled',
   },
   {
-    key: 'telegram_id',
+    key: 'telegram',
     field: 'telegram_id',
     label: 'Telegram',
     icon: <Send className='h-4 w-4' />,
     statusKey: 'telegram_oauth',
   },
   {
-    key: 'linux_do_id',
+    key: 'linuxdo',
     field: 'linux_do_id',
     label: 'LinuxDO',
     icon: <Globe className='h-4 w-4' />,
@@ -165,41 +168,35 @@ export function UserBindingDialog(props: Props) {
   const { t } = useTranslation()
   const [user, setUser] = useState<User | null>(null)
   const [oauthBindings, setOauthBindings] = useState<CustomOAuthBinding[]>([])
-  const [statusInfo, setStatusInfo] = useState<StatusInfo>({})
   const [loading, setLoading] = useState(false)
   const [showBoundOnly, setShowBoundOnly] = useState(true)
   const [unbindTarget, setUnbindTarget] = useState<BindingItem | null>(null)
   const [unbinding, setUnbinding] = useState(false)
+  const { data: statusInfo, isLoading: statusLoading } = useQuery({
+    ...statusQueryOptions,
+    enabled: props.open && !!props.userId,
+  })
 
   const fetchData = useCallback(async () => {
     if (!props.userId) return
     setLoading(true)
     try {
-      const [userRes, oauthRes, statusRes] = await Promise.all([
+      const [userRes, oauthRes] = await Promise.all([
         getUser(props.userId),
         getUserOAuthBindings(props.userId).catch(() => ({
           success: false,
           data: [],
         })),
-        api
-          .get('/api/status')
-          .then((r) => r.data)
-          .catch(() => ({
-            success: false,
-            data: {},
-          })),
       ])
+      requireServerSuccess(userRes)
       if (userRes.success && userRes.data) {
         setUser(userRes.data)
       }
       if (oauthRes.success && oauthRes.data) {
         setOauthBindings(oauthRes.data)
       }
-      if (statusRes.success && statusRes.data) {
-        setStatusInfo(statusRes.data as StatusInfo)
-      }
-    } catch {
-      toast.error(t('Failed to load'))
+    } catch (error) {
+      handleServerError(error, t('Failed to load'))
     } finally {
       setLoading(false)
     }
@@ -212,12 +209,12 @@ export function UserBindingDialog(props: Props) {
     } else {
       setUser(null)
       setOauthBindings([])
-      setStatusInfo({})
     }
   }, [props.open, props.userId, fetchData])
 
   const allBindings = useMemo<BindingItem[]>(() => {
     const items: BindingItem[] = []
+    const status = statusInfo as StatusInfo | undefined
 
     for (const field of BUILTIN_BINDINGS) {
       const value = user
@@ -225,7 +222,7 @@ export function UserBindingDialog(props: Props) {
         : ''
       const isBound = !!value
       const isEnabled =
-        field.statusKey == null ? true : Boolean(statusInfo[field.statusKey])
+        field.statusKey == null ? true : Boolean(status?.[field.statusKey])
 
       items.push({
         key: field.key,
@@ -240,8 +237,8 @@ export function UserBindingDialog(props: Props) {
 
     const oauthBindingMap = indexCustomOAuthBindings(oauthBindings)
 
-    const customProviders = statusInfo.custom_oauth_providers || []
     const seenProviderIds = new Set<number>()
+    const customProviders = status?.custom_oauth_providers || []
 
     for (const provider of customProviders) {
       seenProviderIds.add(provider.id)
@@ -303,9 +300,10 @@ export function UserBindingDialog(props: Props) {
         props.onUnbindSuccess?.()
       } else {
         toast.error(localizeConsoleErrorText(res?.message, 'Unbind failed'))
+        handleServerError(res, t('Unbind failed'))
       }
-    } catch {
-      toast.error(t('Unbind failed'))
+    } catch (error) {
+      handleServerError(error, t('Unbind failed'))
     } finally {
       setUnbinding(false)
       setUnbindTarget(null)
@@ -330,7 +328,7 @@ export function UserBindingDialog(props: Props) {
         contentHeight='auto'
         bodyClassName='space-y-4'
       >
-        {loading ? (
+        {loading || statusLoading ? (
           <div className='flex items-center justify-center py-8'>
             <Loader2 className='text-muted-foreground h-6 w-6 animate-spin' />
           </div>

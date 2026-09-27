@@ -16,105 +16,28 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import {
-  ArrowDown,
-  ArrowDownToLine,
-  ArrowRight,
-  ArrowUp,
-  Check,
-  ChevronDown,
-  ChevronRight,
-  CircleDollarSign,
-  Code2,
-  Info,
-  ListTree,
-  Plus,
-  Shuffle,
-  Trash2,
-  type LucideIcon,
-} from 'lucide-react'
+import { ArrowDown, ArrowDownToLine, ArrowRight, ArrowUp, Check, ChevronDown, ChevronRight, CircleDollarSign, Code2, Info, ListTree, Plus, Shuffle, Trash2, type LucideIcon, Send } from 'lucide-react'
 import { type ReactNode, useEffect, useMemo, useRef, useState } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { Dialog } from '@/components/dialog'
 import { JsonCodeEditor } from '@/components/json-code-editor'
 import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Collapsible,
-  CollapsibleContent,
-  CollapsibleTrigger,
-} from '@/components/ui/collapsible'
+import { Collapsible, CollapsibleContent, CollapsibleTrigger } from '@/components/ui/collapsible'
 import { Input } from '@/components/ui/input'
-import {
-  Popover,
-  PopoverContent,
-  PopoverDescription,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger,
-} from '@/components/ui/popover'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
+import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/components/ui/popover'
+import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
 import { Separator } from '@/components/ui/separator'
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
 import { cn } from '@/lib/utils'
-
-import {
-  ADVANCED_CUSTOM_BALANCE_LABEL,
-  ADVANCED_CUSTOM_BALANCE_PATH,
-  ADVANCED_CUSTOM_AUTH_MODE_OPTIONS,
-  ADVANCED_CUSTOM_CONVERTER_OPTIONS,
-  ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS,
-  ADVANCED_CUSTOM_MODEL_LIST_LABEL,
-  ADVANCED_CUSTOM_MODEL_LIST_PATH,
-  ADVANCED_CUSTOM_TEMPLATE_OPTIONS,
-  type AdvancedCustomAuthMode,
-  buildAdvancedCustomAuth,
-  createAdvancedCustomConfig,
-  createAdvancedCustomManagementRoute,
-  createAdvancedCustomRoute,
-  getAdvancedCustomAuthMode,
-  getAdvancedCustomConverterDefaults,
-  getAdvancedCustomConverterOptions,
-  getAdvancedCustomIncomingPathLabel,
-  getAdvancedCustomModelRuleKind,
-  getAdvancedCustomManagementRoute,
-  getAdvancedCustomRegexModelPattern,
-  getAdvancedCustomTemplateConfig,
-  getAdvancedCustomUpstreamPathPlaceholder,
-  getDefaultAdvancedCustomIncomingPath,
-  isAdvancedCustomIncomingPathAllowed,
-  isAdvancedCustomManagementPath,
-  normalizeAdvancedCustomConfig,
-  parseAdvancedCustomRouteModels,
-  parseAdvancedCustomConfig,
-  stringifyAdvancedCustomConfig,
-  validateAdvancedCustomConfig,
-  replaceAdvancedCustomForwardingRoutes,
-  replaceAdvancedCustomManagementRoute,
-} from '../../lib/advanced-custom'
-import type {
-  AdvancedCustomAuthType,
-  AdvancedCustomConfig,
-  AdvancedCustomConverter,
-  AdvancedCustomRoute,
-} from '../../types'
+import { ADVANCED_CUSTOM_BALANCE_LABEL, ADVANCED_CUSTOM_BALANCE_PATH, ADVANCED_CUSTOM_AUTH_MODE_OPTIONS, ADVANCED_CUSTOM_CONVERTER_OPTIONS, ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS, ADVANCED_CUSTOM_MODEL_LIST_LABEL, ADVANCED_CUSTOM_MODEL_LIST_PATH, ADVANCED_CUSTOM_TEMPLATE_OPTIONS, type AdvancedCustomAuthMode, buildAdvancedCustomAuth, createAdvancedCustomConfig, createAdvancedCustomManagementRoute, createAdvancedCustomRoute, getAdvancedCustomAuthMode, getAdvancedCustomConverterDefaults, getAdvancedCustomConverterOptions, getAdvancedCustomIncomingPathLabel, getAdvancedCustomModelRuleKind, getAdvancedCustomManagementRoute, getAdvancedCustomRegexModelPattern, getAdvancedCustomTemplateConfig, getAdvancedCustomUpstreamPathPlaceholder, getDefaultAdvancedCustomIncomingPath, isAdvancedCustomIncomingPathAllowed, isAdvancedCustomManagementPath, normalizeAdvancedCustomConfig, parseAdvancedCustomRouteModels, parseAdvancedCustomConfig, stringifyAdvancedCustomConfig, validateAdvancedCustomConfig, replaceAdvancedCustomForwardingRoutes, replaceAdvancedCustomManagementRoute, isAdvancedCustomPassThroughAllowed } from '../../lib/advanced-custom'
+import type { AdvancedCustomAuthType, AdvancedCustomConfig, AdvancedCustomConverter, AdvancedCustomRoute } from '../../types'
+import { Combobox } from '@/components/ui/combobox'
+import { Switch } from '@/components/ui/switch'
 
 type AdvancedCustomEditorDialogProps = {
   open: boolean
@@ -126,15 +49,22 @@ type AdvancedCustomEditorDialogProps = {
 type AdvancedCustomEditorTab = 'forwarding' | 'models' | 'balance' | 'json'
 
 const longSelectContentClass = 'w-[360px] max-w-[calc(100vw-2rem)]'
+
 const longSelectItemClass =
   'items-start py-2 [&_[data-slot=select-item-text]]:min-w-0 [&_[data-slot=select-item-text]]:shrink [&_[data-slot=select-item-text]]:whitespace-normal'
+
 const routeEditorGridClassName =
-  'lg:grid-cols-[minmax(9rem,0.9fr)_minmax(0,1fr)_minmax(0,1.25fr)_minmax(0,1.1fr)_minmax(0,0.85fr)_7rem]'
+
+  'lg:grid-cols-[minmax(9rem,0.9fr)_minmax(0,1fr)_minmax(0,1.25fr)_minmax(0,1.1fr)_minmax(0,0.85fr)_5.5rem_7rem]'
+
 const upstreamPathDescriptionKey =
   'Use a path to append it to the channel Base URL, or enter a full URL to override the Base URL for this route.'
+
 const catchAllOrderErrorMessage =
   'Catch-all route must be last for the same incoming path'
+
 const emptyAdvancedRoutes: AdvancedCustomRoute[] = []
+
 const advancedCustomTabs = new Set<AdvancedCustomEditorTab>([
   'forwarding',
   'models',
@@ -196,22 +126,36 @@ function getRouteConverters(
   return [...converters.values()]
 }
 
+
 export function RouteModeBadges(props: { routes: AdvancedCustomRoute[] }) {
   const { t } = useTranslation()
-  return getRouteConverters(props.routes).map((item) => (
-    <Badge
-      key={item.converter}
-      variant={item.converter === 'none' ? 'secondary' : 'outline'}
-      className='max-w-full'
-    >
-      {item.converter === 'none' ? (
-        <ArrowRight aria-hidden='true' />
-      ) : (
-        <Shuffle aria-hidden='true' />
-      )}
-      <span className='truncate'>{t(item.label)}</span>
-    </Badge>
-  ))
+  const hasPassThrough = props.routes.some(
+    (route) => route.pass_through_body_enabled === true
+  )
+  return (
+    <>
+      {getRouteConverters(props.routes).map((item) => (
+        <Badge
+          key={item.converter}
+          variant={item.converter === 'none' ? 'secondary' : 'outline'}
+          className='max-w-full'
+        >
+          {item.converter === 'none' ? (
+            <ArrowRight aria-hidden='true' />
+          ) : (
+            <Shuffle aria-hidden='true' />
+          )}
+          <span className='truncate'>{t(item.label)}</span>
+        </Badge>
+      ))}
+      {hasPassThrough ? (
+        <Badge variant='outline' className='max-w-full'>
+          <Send aria-hidden='true' />
+          <span className='truncate'>{t('Pass-through')}</span>
+        </Badge>
+      ) : null}
+    </>
+  )
 }
 
 function buildRouteGroups(
@@ -661,7 +605,7 @@ export function AdvancedCustomEditorDialog({
       onOpenChange={onOpenChange}
       title={t('Advanced Custom Routes')}
       description={t('Advanced Custom')}
-      contentClassName='flex max-h-[90vh] flex-col gap-0 p-0 sm:max-w-5xl'
+      contentClassName='flex max-h-[min(90dvh,var(--dialog-available-height))] flex-col gap-0 p-0 sm:max-w-5xl'
       headerClassName='border-b px-6 py-4'
       footerClassName='border-t px-6 py-4'
       contentHeight='70vh'
@@ -714,6 +658,7 @@ export function AdvancedCustomEditorDialog({
           </TabsList>
         </div>
 
+
         <TabsContent value='forwarding' className='flex flex-col gap-4 p-4'>
           <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
             <div>
@@ -723,49 +668,23 @@ export function AdvancedCustomEditorDialog({
               </p>
             </div>
             <div className='flex flex-wrap gap-2'>
-              <Select
-                items={availableIncomingPathOptions}
-                value={null}
+              <Combobox
+                options={availableIncomingPathOptions}
+                value=''
                 onValueChange={(incomingPath) => {
                   if (typeof incomingPath === 'string') addRoute(incomingPath)
                 }}
-              >
-                <SelectTrigger
-                  size='sm'
-                  disabled={availableIncomingPathOptions.length === 0}
-                >
-                  <Plus data-icon='inline-start' />
-                  <SelectValue placeholder={t('Add route')} />
-                </SelectTrigger>
-                <SelectContent
-                  align='end'
-                  alignItemWithTrigger={false}
-                  className={longSelectContentClass}
-                >
-                  <SelectGroup>
-                    {availableIncomingPathOptions.map((option) => (
-                      <SelectItem
-                        key={option.value}
-                        value={option.value}
-                        className={longSelectItemClass}
-                      >
-                        <div className='flex min-w-0 flex-col gap-1 leading-snug whitespace-normal'>
-                          <span>{t(option.label)}</span>
-                          <span className='text-muted-foreground font-mono text-xs break-all'>
-                            {option.value}
-                          </span>
-                        </div>
-                      </SelectItem>
-                    ))}
-                  </SelectGroup>
-                </SelectContent>
-              </Select>
+                disabled={availableIncomingPathOptions.length === 0}
+                className='w-full'
+                placeholder={t('Add route')}
+              />
               <Select
                 value={null}
                 onValueChange={(value) => {
                   if (typeof value === 'string') selectTemplate(value)
                 }}
               >
+
                 <SelectTrigger size='sm'>
                   <SelectValue placeholder={t('Add template')} />
                 </SelectTrigger>
@@ -785,6 +704,7 @@ export function AdvancedCustomEditorDialog({
                 size='sm'
                 onClick={() => setExpandedRouteGroups(new Set())}
               >
+
                 {t('Collapse all')}
               </Button>
               <Button
@@ -829,6 +749,7 @@ export function AdvancedCustomEditorDialog({
             {routeGroups.map((routeGroup) => (
               <Collapsible
                 key={routeGroup.incomingPath || 'advanced-custom-empty-path'}
+
                 open={expandedRouteGroups.has(routeGroup.incomingPath)}
                 onOpenChange={(expanded) =>
                   setExpandedRouteGroups((current) => {
@@ -862,10 +783,8 @@ export function AdvancedCustomEditorDialog({
                   <span className='min-w-0 flex-1'>
                     <span className='flex min-w-0 flex-wrap items-center gap-2'>
                       <span className='truncate font-medium'>
-                        {t(
-                          getAdvancedCustomIncomingPathLabel(
-                            routeGroup.incomingPath
-                          )
+                        {getAdvancedCustomIncomingPathLabel(
+                          routeGroup.incomingPath
                         )}
                       </span>
                       <RouteModeBadges
@@ -905,13 +824,14 @@ export function AdvancedCustomEditorDialog({
               </Collapsible>
             ))}
           </div>
+
         </TabsContent>
 
         <TabsContent value='models' className='p-4'>
           <ManagementRouteEditor
             route={modelListRoute}
             path={ADVANCED_CUSTOM_MODEL_LIST_PATH}
-            title={t(ADVANCED_CUSTOM_MODEL_LIST_LABEL)}
+            title={ADVANCED_CUSTOM_MODEL_LIST_LABEL}
             description={t(
               'This route is used only by channel management to discover upstream models.'
             )}
@@ -931,7 +851,7 @@ export function AdvancedCustomEditorDialog({
           <ManagementRouteEditor
             route={balanceRoute}
             path={ADVANCED_CUSTOM_BALANCE_PATH}
-            title={t(ADVANCED_CUSTOM_BALANCE_LABEL)}
+            title={ADVANCED_CUSTOM_BALANCE_LABEL}
             description={t(
               'This route is used only by channel management to query the upstream balance.'
             )}
@@ -964,6 +884,7 @@ export function AdvancedCustomEditorDialog({
           {jsonError ? (
             <p className='text-destructive mt-1 text-xs'>{jsonError}</p>
           ) : null}
+
         </TabsContent>
       </Tabs>
 
@@ -976,7 +897,7 @@ export function AdvancedCustomEditorDialog({
           {
             removed: routeRows.length,
             created: selectedTemplate?.config.advanced_routes?.length || 0,
-            template: t(selectedTemplate?.label || ''),
+            template: selectedTemplate?.label || '',
           }
         )}
         confirmText={t('Replace')}
@@ -1156,9 +1077,6 @@ function RouteGroupEditor({
   const { t } = useTranslation()
   const incomingPath = group.incomingPath || '/v1/chat/completions'
   const isModelListGroup = incomingPath === ADVANCED_CUSTOM_MODEL_LIST_PATH
-  const incomingPathLabel = t(
-    getAdvancedCustomIncomingPathLabel(incomingPath)
-  )
   const catchAllRoute = group.routeRows.find((routeRow) =>
     isCatchAllRoute(routeRow.route)
   )
@@ -1183,6 +1101,7 @@ function RouteGroupEditor({
         groupHasError && 'border-destructive/60'
       )}
     >
+
       {!hideHeader ? (
         <div className='bg-muted/20 flex flex-col gap-3 p-3 lg:flex-row lg:items-center lg:justify-between'>
           <div className='flex min-w-0 flex-1 flex-col gap-2'>
@@ -1193,7 +1112,7 @@ function RouteGroupEditor({
               </Badge>
               {isModelListGroup ? (
                 <Badge variant='outline'>
-                  {t(ADVANCED_CUSTOM_MODEL_LIST_LABEL)}
+                  {ADVANCED_CUSTOM_MODEL_LIST_LABEL}
                 </Badge>
               ) : (
                 <Badge variant={hasCatchAll ? 'outline' : 'secondary'}>
@@ -1206,47 +1125,20 @@ function RouteGroupEditor({
                 </Badge>
               ) : null}
             </div>
-            <Select
-              items={ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS.map((option) => ({
+            <Combobox
+              options={ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS.map((option) => ({
                 ...option,
-                label: t(option.label),
+                description: option.value,
+                disabled:
+                  (option.value !== incomingPath &&
+                    usedIncomingPaths.has(option.value)) ||
+                  (option.value === ADVANCED_CUSTOM_MODEL_LIST_PATH &&
+                    group.routeRows.length > 1),
               }))}
               value={incomingPath}
               onValueChange={onIncomingPathChange}
-            >
-              <SelectTrigger className='h-9 max-w-full lg:max-w-[420px]'>
-                <SelectValue className='min-w-0 truncate'>
-                  {incomingPathLabel}
-                </SelectValue>
-              </SelectTrigger>
-              <SelectContent
-                alignItemWithTrigger={false}
-                className={longSelectContentClass}
-              >
-                <SelectGroup>
-                  {ADVANCED_CUSTOM_INCOMING_PATH_OPTIONS.map((option) => (
-                    <SelectItem
-                      key={option.value}
-                      value={option.value}
-                      disabled={
-                        (option.value !== incomingPath &&
-                          usedIncomingPaths.has(option.value)) ||
-                        (option.value === ADVANCED_CUSTOM_MODEL_LIST_PATH &&
-                          group.routeRows.length > 1)
-                      }
-                      className={longSelectItemClass}
-                    >
-                      <div className='flex min-w-0 flex-col gap-1 leading-snug whitespace-normal'>
-                        <span>{t(option.label)}</span>
-                        <span className='text-muted-foreground font-mono text-xs break-all'>
-                          {option.value}
-                        </span>
-                      </div>
-                    </SelectItem>
-                  ))}
-                </SelectGroup>
-              </SelectContent>
-            </Select>
+              className='h-9 max-w-full lg:max-w-[420px]'
+            />
           </div>
         </div>
       ) : null}
@@ -1298,6 +1190,10 @@ function RouteGroupEditor({
         <span>{t('Upstream path')}</span>
         <span>{t('Converter')}</span>
         <span>{t('Auth')}</span>
+        <span className='inline-flex items-center gap-1'>
+          {t('Pass-through')}
+          <PassThroughHelpPopover />
+        </span>
         <span className='text-right'>{t('Actions')}</span>
       </div>
 
@@ -1377,6 +1273,10 @@ function RouteEditor({
   const modelsInputValue = route.models?.join(', ') || ''
   const parsedRouteModels = parseAdvancedCustomRouteModels(modelsInputValue)
   const isFallback = !isModelListRoute && parsedRouteModels.length === 0
+  const passThroughAllowed =
+    !isModelListRoute && isAdvancedCustomPassThroughAllowed(converter)
+  const passThroughEnabled =
+    passThroughAllowed && route.pass_through_body_enabled === true
 
   const setConverter = (nextConverter: AdvancedCustomConverter) => {
     let nextIncomingPath = incomingPath
@@ -1392,6 +1292,11 @@ function RouteEditor({
       incoming_path: nextIncomingPath,
       upstream_path: defaults.upstream_path,
       auth: defaults.auth,
+      pass_through_body_enabled: isAdvancedCustomPassThroughAllowed(
+        nextConverter
+      )
+        ? route.pass_through_body_enabled
+        : false,
     })
   }
 
@@ -1629,6 +1534,31 @@ function RouteEditor({
           </Select>
         </FieldBlock>
 
+        <FieldBlock
+          label={
+            <span className='inline-flex items-center gap-1'>
+              {t('Pass-through')}
+              <PassThroughHelpPopover />
+            </span>
+          }
+          className='lg:gap-1'
+          labelClassName='lg:sr-only'
+        >
+          <div className='flex h-9 items-center lg:h-8'>
+            <Switch
+              checked={passThroughEnabled}
+              disabled={!passThroughAllowed}
+              aria-label={t('Pass-through')}
+              onCheckedChange={(checked) =>
+                onChange({ pass_through_body_enabled: checked })
+              }
+            />
+          </div>
+          <p className='text-muted-foreground text-xs leading-relaxed lg:hidden'>
+            {t(passThroughDescriptionKey)}
+          </p>
+        </FieldBlock>
+
         <div className='hidden items-center justify-end gap-1 lg:flex'>
           <TooltipIconButton
             label={t('Move route up')}
@@ -1697,6 +1627,7 @@ function RouteEditor({
                 }
               />
             </FieldBlock>
+            <span className='hidden lg:block' aria-hidden='true' />
             <span className='hidden lg:block' aria-hidden='true' />
             <span className='hidden lg:block' aria-hidden='true' />
             <span className='hidden lg:block' aria-hidden='true' />
@@ -1811,5 +1742,43 @@ function FieldBlock({
       <span className={cn('text-sm font-medium', labelClassName)}>{label}</span>
       {children}
     </div>
+  )
+}
+
+const passThroughDescriptionKey =
+  'Send the original request body to upstream without conversion. Only available for native forwarding routes.'
+
+function PassThroughHelpPopover() {
+  const { t } = useTranslation()
+
+  return (
+    <Popover>
+      <PopoverTrigger
+        render={
+          <Button
+            type='button'
+            variant='ghost'
+            size='icon'
+            className='text-muted-foreground hover:text-foreground size-6'
+            aria-label={t('Pass-through help')}
+          />
+        }
+      >
+        <Info className='size-3.5' aria-hidden='true' />
+      </PopoverTrigger>
+      <PopoverContent
+        align='start'
+        side='bottom'
+        sideOffset={8}
+        className='w-[min(22rem,calc(100vw-2rem))] p-3'
+      >
+        <PopoverHeader className='gap-1'>
+          <PopoverTitle>{t('Pass-through')}</PopoverTitle>
+          <PopoverDescription className='text-xs leading-relaxed'>
+            {t(passThroughDescriptionKey)}
+          </PopoverDescription>
+        </PopoverHeader>
+      </PopoverContent>
+    </Popover>
   )
 }

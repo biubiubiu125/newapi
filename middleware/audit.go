@@ -7,8 +7,8 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 
-	"github.com/bytedance/gopkg/util/gopool"
 	"github.com/gin-gonic/gin"
 )
 
@@ -156,7 +156,7 @@ func finishAdminAudit(c *gin.Context, writer *auditResponseWriter) {
 	}
 
 	// op.params 为语言无关参数，供前端 i18n 渲染；generic 时携带 method/route。
-	opParams := map[string]interface{}{}
+	opParams := map[string]any{}
 	if action == "generic" {
 		opParams["method"] = method
 		opParams["route"] = route
@@ -165,25 +165,34 @@ func finishAdminAudit(c *gin.Context, writer *auditResponseWriter) {
 	// content 为英文兜底文本（供导出等非本地化消费者使用）。
 	content := method + " " + route
 
-	adminInfo := map[string]interface{}{
-		"admin_id":       operatorId,
-		"admin_username": operatorName,
-		"admin_role":     operatorRole,
-		"auth_method":    auditAuthMethod(c),
+	adminInfo := &model.AuditAdminInfo{
+		AdminID:       operatorId,
+		AdminUsername: operatorName,
+		AdminRole:     operatorRole,
+		AuthMethod:    auditAuthMethod(c),
 	}
-	auditInfo := map[string]interface{}{
-		"method":  method,
-		"route":   route,
-		"path":    c.Request.URL.Path,
-		"status":  status,
-		"success": success,
-	}
-	if len(routeParams) > 0 {
-		auditInfo["params"] = routeParams
+	auditInfo := &model.AuditRequestInfo{
+		Method:  method,
+		Route:   route,
+		Path:    route,
+		Status:  status,
+		Success: success,
+		Params:  routeParams,
 	}
 
-	gopool.Go(func() {
-		model.RecordOperationAuditLog(operatorId, content, ip, action, opParams, adminInfo, auditInfo)
+	opFields := model.AuditFields{}
+	for key, value := range opParams {
+		opFields[key] = value
+	}
+	model.RecordAuditLog(c, model.AuditLog{
+		UserId: operatorId, Username: operatorName, ActorRole: operatorRole,
+		Category: model.AuditCategoryOperation, Action: action, Content: content,
+		Status: status, Success: success, Ip: ip,
+		Other: model.AuditOther{
+			Op:        &model.AuditOperation{Action: action, Params: opFields},
+			AdminInfo: adminInfo,
+			AuditInfo: auditInfo,
+		},
 	})
 }
 
@@ -212,61 +221,104 @@ func auditResponseSuccess(status int, body []byte) bool {
 	return status < 400
 }
 
-// TokenOperationAudit runs after UserAuth. Handlers add only allowlisted metadata.
+const accessTokenAuditContextKey = "access_token_request_audit"
+
+// TokenOperationAudit runs after UserAuth and before endpoint rate limits.
+// Handlers add only allowlisted metadata; neither bodies nor raw errors are persisted.
 func TokenOperationAudit() gin.HandlerFunc {
 	return func(c *gin.Context) {
-		var action string
+		var action, content string
 		switch c.Request.Method + " " + c.FullPath() {
 		case "POST /api/token/":
-			action = "token.create"
+			action, content = "token.create", "API token creation"
 		case "PUT /api/token/":
-			action = "token.update"
+			action, content = "token.update", "API token configuration update"
 			if c.Query("status_only") != "" {
-				action = "token.status_update"
+				action, content = "token.status_update", "API token status update"
 			}
 		case "DELETE /api/token/:id":
-			action = "token.delete"
+			action, content = "token.delete", "API token deletion"
 		case "POST /api/token/batch":
-			action = "token.delete_batch"
+			action, content = "token.delete_batch", "API token batch deletion"
 		case "POST /api/token/:id/key":
-			action = "token.key_view"
+			action, content = "token.key_view", "API token key access"
 		case "POST /api/token/batch/keys":
-			action = "token.key_view_batch"
+			action, content = "token.key_view_batch", "API token batch key access"
 		default:
 			c.Next()
 			return
 		}
 
-		params := map[string]interface{}{}
+		params := model.AuditFields{}
 		if id, err := strconv.Atoi(c.Param("id")); err == nil && id > 0 {
 			params["id"] = id
 		}
 		common.SetContextKey(c, constant.ContextKeyTokenAuditParams, params)
+		entry := model.AuditLog{
+			UserId: c.GetInt("id"), Username: c.GetString("username"), ActorRole: c.GetInt("role"),
+			Category: model.AuditCategorySecurity, Action: action, Content: content,
+			Other: model.AuditOther{Op: &model.AuditOperation{Action: action, Params: params}},
+		}
 		writer := &auditResponseWriter{ResponseWriter: c.Writer, body: bytes.NewBuffer(nil), maxSize: 64 * 1024}
 		c.Writer = writer
 		c.Next()
-		if merged, ok := common.GetContextKeyType[map[string]interface{}](c, constant.ContextKeyTokenAuditParams); ok && merged != nil {
-			params = merged
-		}
-		success := auditResponseSuccess(writer.Status(), writer.body.Bytes())
+		entry.Status = writer.Status()
+		entry.Success = auditResponseSuccess(entry.Status, writer.body.Bytes())
 		if writer.body.Len() == writer.maxSize {
-			success = writer.Status() < 400 && common.GetContextKeyBool(c, constant.ContextKeyTokenAuditSucceeded)
+			// JSON may be truncated before its success field. A completed handler
+			// supplies the result without retaining an unbounded response body.
+			entry.Success = entry.Status < 400 && common.GetContextKeyBool(c, constant.ContextKeyTokenAuditSucceeded)
 		}
-		if !success {
-			params["failure"] = true
-		}
-		content := action
-		if !success {
-			content = "Failed " + action
-		}
-		model.RecordOperationAuditLog(
-			c.GetInt("id"),
-			content,
-			c.ClientIP(),
-			action,
-			params,
-			map[string]interface{}{"username": c.GetString("username"), "role": c.GetInt("role")},
-			map[string]interface{}{"method": c.Request.Method, "route": c.FullPath(), "status": writer.Status(), "success": success},
-		)
+		model.RecordAuditLog(c, entry)
 	}
+}
+
+type accessTokenRequestAudit struct {
+	entry  model.AuditLog
+	writer *auditResponseWriter
+}
+
+// AccessTokenAudit also captures public reads and rejections before route-level
+// authentication (for example, rate limiting). It does not grant authentication.
+func AccessTokenAudit() gin.HandlerFunc {
+	return func(c *gin.Context) {
+		raw, present := authorizationToken(c.GetHeader("Authorization"))
+		if present {
+			_, internal, _ := service.ParseDashboardAccessToken(raw)
+			if !internal {
+				user, err := model.ValidateAccessToken(raw)
+				if err == nil && user != nil && user.Id > 0 {
+					beginAccessTokenAudit(c, user, raw)
+					defer finishAccessTokenAudit(c)
+				}
+			}
+		}
+		c.Next()
+	}
+}
+
+func beginAccessTokenAudit(c *gin.Context, user *model.User, token string) {
+	if _, exists := c.Get(accessTokenAuditContextKey); exists {
+		return
+	}
+	writer := &auditResponseWriter{ResponseWriter: c.Writer, body: bytes.NewBuffer(nil), maxSize: 64 * 1024}
+	c.Writer = writer
+	c.Set(accessTokenAuditContextKey, &accessTokenRequestAudit{
+		entry:  model.AuditLog{UserId: user.Id, Username: user.Username, ActorRole: user.Role, Category: model.AuditCategoryAccessToken, AuthMethod: "access_token", TokenRef: model.AccessTokenFingerprint(token), CreatedAt: common.GetTimestamp(), EventId: common.NewRequestId()},
+		writer: writer,
+	})
+}
+
+func finishAccessTokenAudit(c *gin.Context) {
+	value, exists := c.Get(accessTokenAuditContextKey)
+	if !exists {
+		return
+	}
+	audit, ok := value.(*accessTokenRequestAudit)
+	if !ok {
+		return
+	}
+	audit.entry.Status = audit.writer.Status()
+	audit.entry.Success = auditResponseSuccess(audit.entry.Status, audit.writer.body.Bytes())
+	model.RecordAuditLog(c, audit.entry)
 }

@@ -61,11 +61,11 @@ import {
   saveAffiliateCode,
 } from '@/features/auth/lib/storage'
 import { useStatus } from '@/hooks/use-status'
-import { isAuthBundle } from '@/lib/api'
-import { getServerErrorMessageKey,
-  localizeConsoleErrorText,} from '@/lib/server-error-message'
+import { localizeConsoleErrorText, createServerError } from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
+import { AuthOperationError } from '@/lib/secure-verification'
+
 import { cn } from '@/lib/utils'
-import { useAuthStore } from '@/stores/auth-store'
 
 export function SignUpForm({
   className,
@@ -91,11 +91,7 @@ export function SignUpForm({
     setTurnstileToken,
     validateTurnstile,
   } = useTurnstile()
-  const { redirectToLogin, handleLoginSuccess, redirectTo2FA } =
-    useAuthRedirect()
-  const setPending2FAFlowToken = useAuthStore(
-    (state) => state.auth.setPending2FAFlowToken
-  )
+  const { redirectToLogin, handleLoginResult } = useAuthRedirect()
   const {
     isSending: isSendingCode,
     secondsLeft,
@@ -206,9 +202,12 @@ export function SignUpForm({
         redirectToLogin()
       } else {
         toast.error(localizeConsoleErrorText(res?.message, 'Failed to create account'))
+        handleServerError(createServerError(res, t('Failed to create account')))
       }
-    } catch {
-      // Errors are handled by global interceptor
+    } catch (error) {
+      handleServerError(
+        AuthOperationError.from(error, t('Failed to create account'))
+      )
     } finally {
       setIsLoading(false)
     }
@@ -247,26 +246,14 @@ export function SignUpForm({
     setIsWeChatSubmitting(true)
     try {
       const res = await wechatLoginByCode(wechatCode)
-      if (res?.success && res.data && 'require_2fa' in res.data && res.data.require_2fa) {
-        if (!res.data.flow_token) {
-          throw new Error(t('Login flow expired. Please sign in again.'))
-        }
-        setPending2FAFlowToken(res.data.flow_token)
-        handleWeChatDialogChange(false)
-        redirectTo2FA()
-        return
-      }
-      if (res?.success && isAuthBundle(res.data)) {
-        await handleLoginSuccess(res.data)
+      if (res?.success && (await handleLoginResult(res.data))) {
         toast.success(t('Signed in via WeChat'))
         handleWeChatDialogChange(false)
-      } else {
-        if (getServerErrorMessageKey(res)) return
-        toast.error(localizeConsoleErrorText(res?.message, 'Login failed'))
+      } else if (!res?.success) {
+        handleServerError(createServerError(res, t('Login failed')))
       }
     } catch (error: unknown) {
-      if (getServerErrorMessageKey(error)) return
-      toast.error(t('Login failed'))
+      handleServerError(AuthOperationError.from(error, t('Login failed')))
     } finally {
       setIsWeChatSubmitting(false)
     }
@@ -307,7 +294,7 @@ export function SignUpForm({
               <FormLabel>{t('Password')}</FormLabel>
               <FormControl>
                 <PasswordInput
-                  placeholder={t('Enter password (8-20 characters)')}
+                  placeholder={t('Enter password (8–128 characters)')}
                   {...field}
                 />
               </FormControl>

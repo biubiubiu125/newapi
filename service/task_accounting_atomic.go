@@ -104,11 +104,9 @@ func applyAsyncTaskAccountingAtomic(ctx context.Context, task *model.Task, input
 		}
 
 		other := taskBillingOther(&persisted)
-		other["task_id"] = persisted.TaskID
-		for key, value := range input.extraOther {
-			other[key] = value
-		}
-		payload, err := buildAsyncTaskAccountingLogPayload(&persisted, input, other)
+		other.SetPublic("task_id", persisted.TaskID)
+		other.MergePublic(input.extraOther)
+		payload, err := buildAsyncTaskAccountingLogPayload(&persisted, input, other.Snapshot())
 		if err != nil {
 			return err
 		}

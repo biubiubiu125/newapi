@@ -19,17 +19,17 @@ For commercial licensing, please contact support@quantumnous.com
 import { createFileRoute, useNavigate, useSearch } from '@tanstack/react-router'
 import i18next from 'i18next'
 import { useEffect } from 'react'
-import { toast } from 'sonner'
 
 import { wechatLoginByCode } from '@/features/auth/api'
-import { sanitizeAuthRedirect } from '@/features/auth/lib/auth-redirect'
-import { syncSignedInInterfaceLanguage } from '@/i18n/persist-interface-language'
-import { applyAuthBundle, isAuthBundle } from '@/lib/api'
-import { getServerErrorMessageKey } from '@/lib/server-error-message'
-import { useAuthStore } from '@/stores/auth-store'
+import { useAuthRedirect } from '@/features/auth/hooks/use-auth-redirect'
+import { isLoginChallenge } from '@/features/auth/secure-verification/api'
+import { createServerError } from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
+import { AuthOperationError } from '@/lib/secure-verification'
 
 function OAuthComponent() {
   const navigate = useNavigate()
+  const { handleLoginResult } = useAuthRedirect()
   const search = useSearch({ from: '/(auth)/oauth' }) as {
     redirect?: string
     provider?: 'github' | 'discord' | 'oidc' | 'linuxdo' | 'telegram' | 'wechat'
@@ -42,45 +42,21 @@ function OAuthComponent() {
       try {
         if (search?.provider === 'wechat' && search.code) {
           const res = await wechatLoginByCode(search.code)
-          if (
-            res?.success &&
-            res.data &&
-            typeof res.data === 'object' &&
-            'require_2fa' in res.data &&
-            res.data.require_2fa
-          ) {
-            const flowToken =
-              typeof res.data.flow_token === 'string' ? res.data.flow_token : ''
-            if (flowToken) {
-              useAuthStore.getState().auth.setPending2FAFlowToken(flowToken)
-              navigate({ to: '/otp', replace: true })
-              return
-            }
+          if (res?.success) {
+            const signedIn = await handleLoginResult(res.data, search.redirect)
+            if (signedIn || isLoginChallenge(res.data)) return
           }
-          if (res?.success && isAuthBundle(res.data)) {
-            applyAuthBundle(res.data)
-            await syncSignedInInterfaceLanguage(res.data.user)
-            const target =
-              sanitizeAuthRedirect(search?.redirect, window.location.origin) ??
-              '/dashboard'
-            navigate({ href: target, replace: true })
-            return
-          }
-          if (getServerErrorMessageKey(res)) {
-            navigate({ to: '/sign-in', replace: true })
-            return
-          }
+          throw createServerError(res, i18next.t('OAuth failed'))
         }
+        handleServerError(new AuthOperationError(i18next.t('OAuth failed')))
       } catch (error: unknown) {
-        if (getServerErrorMessageKey(error)) {
-          navigate({ to: '/sign-in', replace: true })
-          return
-        }
+        handleServerError(
+          AuthOperationError.from(error, i18next.t('OAuth failed'))
+        )
       }
-      toast.error(i18next.t('OAuth failed'))
       navigate({ to: '/sign-in', replace: true })
     })()
-  }, [navigate, search])
+  }, [handleLoginResult, navigate, search])
 
   return null
 }

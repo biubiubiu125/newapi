@@ -35,15 +35,13 @@ func TaskExecutionSnapshotFromContext(ctx *gin.Context) *model.TaskExecutionSnap
 				Key:     meta.Key,
 				Name:    meta.Name,
 				Version: meta.Version,
+				Source:  pinned.Plugin.Source,
 				Author: &model.TaskPluginAuthorSnapshot{
 					Name: meta.Author.Name,
 					URL:  meta.Author.URL,
 				},
 				APIVersion: meta.APIVersion,
 				Generation: generation,
-			}
-			if pinned.Plugin.Factory {
-				snapshot.TaskPlugin.Source = pinned.Plugin.Source
 			}
 		}
 	}

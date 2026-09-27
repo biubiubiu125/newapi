@@ -48,6 +48,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { approveReferralAffiliate } from '@/features/referral/api'
 import { UserSubscriptionsDialog } from '@/features/subscriptions/components/dialogs/user-subscriptions-dialog'
+import { handleServerError } from '@/lib/handle-server-error'
 
 import { manageUser, resetUserPasskey, resetUserTwoFA } from '../api'
 import {
@@ -102,9 +103,10 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
             ? localizeConsoleErrorText(result.message, 'Operation failed')
             : t('Failed to {{action}} user', { action })
         )
+        handleServerError(result, t('Failed to {{action}} user', { action }))
       }
-    } catch {
-      toast.error(t(ERROR_MESSAGES.UNEXPECTED))
+    } catch (error) {
+      handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
     }
   }
 
@@ -116,9 +118,10 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         triggerRefresh()
       } else {
         toast.error(localizeConsoleErrorText(result.message, 'Failed to reset Passkey'))
+        handleServerError(result, t('Failed to reset Passkey'))
       }
-    } catch {
-      toast.error(t(ERROR_MESSAGES.UNEXPECTED))
+    } catch (error) {
+      handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
     } finally {
       setResetPasskeyOpen(false)
     }
@@ -132,9 +135,10 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         triggerRefresh()
       } else {
         toast.error(localizeConsoleErrorText(result.message, 'Failed to reset 2FA'))
+        handleServerError(result, t('Failed to reset 2FA'))
       }
-    } catch {
-      toast.error(t(ERROR_MESSAGES.UNEXPECTED))
+    } catch (error) {
+      handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
     } finally {
       setResetTwoFAOpen(false)
     }

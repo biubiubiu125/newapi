@@ -8,8 +8,9 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/i18n"
-	"github.com/QuantumNous/new-api/relaykit/dto"
+	kitdto "github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/ratio_setting"
 
 	"github.com/samber/lo"
@@ -238,7 +239,7 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
 		return nil, err
 	}
 
-	advancedConfigs := make(map[int]*dto.AdvancedCustomConfig)
+	advancedConfigs := make(map[int]*kitdto.AdvancedCustomConfig)
 	for _, channel := range channels {
 		if channel.Type == constant.ChannelTypeAdvancedCustom {
 			advancedConfigs[channel.Id] = channel.GetOtherSettings().AdvancedCustom
@@ -257,6 +258,53 @@ func filterAbilitiesByRequestPathAndModel(abilities []Ability, requestPath strin
 		}
 	}
 	return filtered, nil
+}
+
+func filterAbilitiesByConstraints(abilities []Ability, modelName string, filters []dto.ChannelFilter) []Ability {
+	if len(abilities) == 0 {
+		return nil
+	}
+
+	channelIds := make([]int, 0, len(abilities))
+	seen := make(map[int]struct{}, len(abilities))
+	for _, ability := range abilities {
+		if _, ok := seen[ability.ChannelId]; ok {
+			continue
+		}
+		seen[ability.ChannelId] = struct{}{}
+		channelIds = append(channelIds, ability.ChannelId)
+	}
+
+	var channels []*Channel
+	if err := DB.Where("id IN ?", channelIds).Find(&channels).Error; err != nil {
+		if identityFilterRequiresKey(filters) {
+			return nil
+		}
+		return abilities
+	}
+
+	channelsByID := make(map[int]*Channel, len(channels))
+	for _, channel := range channels {
+		channelsByID[channel.Id] = channel
+	}
+
+	filtered := make([]Ability, 0, len(abilities))
+	for _, ability := range abilities {
+		channel := channelsByID[ability.ChannelId]
+		if ok, _ := ChannelSatisfiesFilters(channel, modelName, filters); ok {
+			filtered = append(filtered, ability)
+		}
+	}
+	return filtered
+}
+
+func identityFilterRequiresKey(filters []dto.ChannelFilter) bool {
+	for _, filter := range filters {
+		if filter.Kind == dto.FilterTaskPluginIdentity && filter.TaskPluginKey != "" {
+			return true
+		}
+	}
+	return false
 }
 
 func (channel *Channel) AddAbilities(tx *gorm.DB) error {

@@ -11,16 +11,20 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
 )
 
 func TestBillingSessionShouldTrustUsesConfiguredTrustQuota(t *testing.T) {
-	oldTrustQuota := common.TrustQuota
+	previousUnit := common.QuotaPerUnit
+	previous := *operation_setting.GetQuotaSetting()
 	t.Cleanup(func() {
-		common.TrustQuota = oldTrustQuota
+		common.QuotaPerUnit = previousUnit
+		*operation_setting.GetQuotaSetting() = previous
 	})
+	common.QuotaPerUnit = 1
 
 	gin.SetMode(gin.TestMode)
 	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
@@ -32,23 +36,30 @@ func TestBillingSessionShouldTrustUsesConfiguredTrustQuota(t *testing.T) {
 		},
 		funding: &WalletFunding{userId: 1},
 	}
+	setting := operation_setting.GetQuotaSetting()
 
-	common.TrustQuota = 100
+	setting.TrustQuotaUSD = 100
 	require.True(t, session.shouldTrust(ctx, 50))
 
-	common.TrustQuota = 0
+	setting.TrustQuotaUSD = 0
 	require.False(t, session.shouldTrust(ctx, 50))
 
-	common.TrustQuota = 200
+	setting.TrustQuotaUSD = 200
 	require.False(t, session.shouldTrust(ctx, 50))
 }
 
 func TestBillingSessionPreConsumeDoesNotTrustWhenRequiredQuotaExceedsAvailableQuota(t *testing.T) {
 	truncate(t)
-	oldTrustQuota := common.TrustQuota
+	previousUnit := common.QuotaPerUnit
+	previous := *operation_setting.GetQuotaSetting()
 	t.Cleanup(func() {
-		common.TrustQuota = oldTrustQuota
+		common.QuotaPerUnit = previousUnit
+		*operation_setting.GetQuotaSetting() = previous
 	})
+	// Wallet 150 is below the configured dollar threshold, so the request is charged
+	// and then rejected. Request size no longer decides the trust bypass.
+	common.QuotaPerUnit = 1
+	operation_setting.GetQuotaSetting().TrustQuotaUSD = 1000
 	require.NoError(t, model.DB.Create(&model.User{
 		Id:       9601,
 		Username: "trust-owner",
@@ -78,7 +89,6 @@ func TestBillingSessionPreConsumeDoesNotTrustWhenRequiredQuotaExceedsAvailableQu
 		funding: &WalletFunding{userId: 9601},
 	}
 
-	common.TrustQuota = 100
 	err := session.preConsume(ctx, 200)
 
 	require.NotNil(t, err)

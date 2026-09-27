@@ -23,28 +23,18 @@ import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 import type { z } from 'zod'
-
 import { Turnstile } from '@/components/turnstile'
 import { Button } from '@/components/ui/button'
-import {
-  Form,
-  FormControl,
-  FormField,
-  FormItem,
-  FormLabel,
-  FormMessage,
-} from '@/components/ui/form'
+import { Form, FormControl, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { sendPasswordResetEmail } from '@/features/auth/api'
-import {
-  forgotPasswordFormSchema,
-  PASSWORD_RESET_COUNTDOWN,
-} from '@/features/auth/constants'
+import { forgotPasswordFormSchema, PASSWORD_RESET_COUNTDOWN } from '@/features/auth/constants'
 import { useTurnstile } from '@/features/auth/hooks/use-turnstile'
 import { useCountdown } from '@/hooks/use-countdown'
 import { cn } from '@/lib/utils'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
+import {createServerError} from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
+import { AuthOperationError } from '@/lib/secure-verification'
 
 export function ForgotPasswordForm({
   className,
@@ -87,10 +77,15 @@ export function ForgotPasswordForm({
           )
         )
       } else {
-        toast.error(localizeConsoleErrorText(res?.message, 'Failed to send reset email'))
+        handleServerError(
+          createServerError(res, t('Failed to send reset email'))
+        )
       }
-    } catch {
-      // Errors are handled by global interceptor
+
+    } catch (_error) {
+      handleServerError(
+        AuthOperationError.from(_error, t('Failed to send reset email'))
+      )
     } finally {
       setIsLoading(false)
     }

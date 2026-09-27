@@ -17,59 +17,28 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  AlertTriangle,
-  Loader2,
-  RefreshCw,
-  ServerCog,
-  Trash2,
-} from 'lucide-react'
+import { AlertTriangle, Loader2, RefreshCw, ServerCog, Trash2 } from 'lucide-react'
 import { useState, type ReactNode } from 'react'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { ErrorState } from '@/components/error-state'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
-import {
-  Popover,
-  PopoverContent,
-  PopoverDescription,
-  PopoverHeader,
-  PopoverTitle,
-  PopoverTrigger,
-} from '@/components/ui/popover'
+import { Popover, PopoverContent, PopoverDescription, PopoverHeader, PopoverTitle, PopoverTrigger } from '@/components/ui/popover'
 import { Skeleton } from '@/components/ui/skeleton'
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from '@/components/ui/table'
-import {
-  Tooltip,
-  TooltipContent,
-  TooltipProvider,
-  TooltipTrigger,
-} from '@/components/ui/tooltip'
-import { currentIntlLocale, resolveIntlLocale } from '@/i18n/languages'
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '@/components/ui/table'
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '@/components/ui/tooltip'
+import {currentIntlLocale, resolveIntlLocale} from '@/i18n/languages'
 import { formatTimestampRelative, formatTimestampToDate } from '@/lib/format'
-import { toastUnhandledConsoleError } from '@/lib/handle-server-error'
+import {handleServerError} from '@/lib/handle-server-error'
 import { cn } from '@/lib/utils'
-
-import {
-  deleteStaleSystemInstance,
-  deleteStaleSystemInstances,
-  listSystemInstances,
-} from '../api'
+import { deleteStaleSystemInstance, deleteStaleSystemInstances, listSystemInstances } from '../api'
 import type { SystemInstance, SystemInstanceStatus } from '../types'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
+import { localizeConsoleErrorText, createServerError } from '@/lib/server-error-message'
 
 const INSTANCE_POLL_INTERVAL_MS = 30_000
+
 const INSTANCE_SKELETON_KEYS = [
   'system-instance-skeleton-1',
   'system-instance-skeleton-2',
@@ -503,7 +472,7 @@ export function SystemInstancesPanel() {
     queryFn: async () => {
       const res = await listSystemInstances()
       if (!res.success || !Array.isArray(res.data)) {
-        throw new Error(localizeConsoleErrorText(res.message, 'We could not load instances.'))
+        throw createServerError(res, t('We could not load instances.'))
       }
       return res.data
     },
@@ -530,7 +499,7 @@ export function SystemInstancesPanel() {
     mutationFn: async (nodeName: string) => {
       const res = await deleteStaleSystemInstance(nodeName)
       if (!res.success) {
-        throw new Error(localizeConsoleErrorText(res.message, 'Delete failed'))
+        throw createServerError(res, t('Delete failed'))
       }
       return res
     },
@@ -543,7 +512,7 @@ export function SystemInstancesPanel() {
       setDeleteTarget(null)
     },
     onError: (error) => {
-      toastUnhandledConsoleError(error)
+      handleServerError(error, t('Delete failed'))
       void invalidateInstances()
     },
     onSettled: () => {
@@ -555,7 +524,7 @@ export function SystemInstancesPanel() {
     mutationFn: async () => {
       const res = await deleteStaleSystemInstances()
       if (!res.success) {
-        throw new Error(localizeConsoleErrorText(res.message, 'Delete failed'))
+        throw createServerError(res, t('Delete failed'))
       }
       return res
     },
@@ -568,7 +537,9 @@ export function SystemInstancesPanel() {
       await invalidateInstances()
       setDeleteAllConfirmOpen(false)
     },
-    onError: toastUnhandledConsoleError,
+    onError: (error) => {
+      handleServerError(error, t('Delete failed'))
+    },
   })
 
   const isMutatingInstance =

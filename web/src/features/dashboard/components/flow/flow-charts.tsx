@@ -87,6 +87,7 @@ import type {
 import { currentIntlLocale } from '@/i18n/languages'
 import { formatQuota } from '@/lib/format'
 import { ROLE } from '@/lib/roles'
+import { requireServerSuccess, localizeConsoleErrorText } from '@/lib/server-error-message'
 import { computeTimeRange } from '@/lib/time'
 import { useChartTheme } from '@/lib/use-chart-theme'
 import { cn } from '@/lib/utils'
@@ -94,8 +95,6 @@ import { VCHART_OPTION } from '@/lib/vchart'
 import { useAuthStore } from '@/stores/auth-store'
 
 import { FlowNodeFilterControl } from './flow-node-filter'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 interface FlowChartsProps {
   filters?: DashboardFilters
@@ -339,7 +338,8 @@ export function FlowCharts(props: FlowChartsProps) {
     isLoading,
   } = useQuery({
     queryKey: ['dashboard', 'flow', flowQueryParams, flowRole],
-    queryFn: () => getFlowQuotaDates(flowQueryParams, isAdmin),
+    queryFn: async () =>
+      requireServerSuccess(await getFlowQuotaDates(flowQueryParams, isAdmin)),
     select: (res) =>
       requireSuccessfulFlowRows(res, t('Please try again later.')),
     staleTime: 60_000,

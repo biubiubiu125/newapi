@@ -148,6 +148,7 @@ const (
 	LogTypeSystem  = 4
 	LogTypeError   = 5
 	LogTypeRefund  = 6
+	LogTypeLogin   = 7
 )
 
 func ensureLogRequestId(log *Log) {
@@ -169,6 +170,9 @@ func resolveLogUsername(c *gin.Context, userId int) string {
 }
 
 func createLog(log *Log) error {
+	if LOG_DB == nil {
+		return errors.New("log database is not initialized")
+	}
 	ensureLogRequestId(log)
 	return LOG_DB.Create(log).Error
 }
@@ -443,18 +447,20 @@ func formatUserLogs(logs []*Log, startIdx int) {
 }
 
 // FormatAdminLogs removes root-only diagnostics while retaining operational
-// admin_info for admin views.
+// admin_info. Root callers must not pass their results through this formatter.
 func FormatAdminLogs(logs []*Log) {
 	for i := range logs {
-		otherMap, _ := common.StrToMap(logs[i].Other)
-		if otherMap == nil {
-			continue
-		}
-		delete(otherMap, "root_info")
-		logs[i].Other = common.MapToJsonStr(otherMap)
+		logs[i].Other = formatLogOtherJSON(logs[i].Other, logOtherVisibilityAdmin)
 	}
 }
 
+// FormatRootLogs normalizes legacy metadata into the current scoped shape
+// without removing root-only diagnostics.
+func FormatRootLogs(logs []*Log) {
+	for i := range logs {
+		logs[i].Other = formatLogOtherJSON(logs[i].Other, logOtherVisibilityRoot)
+	}
+}
 func GetLogByTokenId(tokenId int) (logs []*Log, err error) {
 	order := "id desc"
 	if common.UsingLogDatabase(common.DatabaseTypeClickHouse) {
@@ -489,8 +495,9 @@ func RecordLog(userId int, logType int, content string) {
 	}
 }
 
-// RecordLogWithAdminInfo 记录操作日志，并将管理员相关信息存入 Other.admin_info，
-func RecordLogWithAdminInfo(userId int, logType int, content string, adminInfo map[string]interface{}) {
+// RecordLogWithAdminInfo stores operator metadata under other.admin_info and
+// an optional, user-visible operation descriptor under other.op for localization.
+func RecordLogWithAdminInfo(userId int, logType int, content string, adminInfo *AuditAdminInfo, operation *AuditOperation, request ...*gin.Context) {
 	if logType == LogTypeConsume && !common.LogConsumeEnabled {
 		return
 	}
@@ -502,11 +509,28 @@ func RecordLogWithAdminInfo(userId int, logType int, content string, adminInfo m
 		Type:      logType,
 		Content:   content,
 	}
-	if len(adminInfo) > 0 {
-		other := map[string]interface{}{
-			"admin_info": adminInfo,
+	if logType == LogTypeManage {
+		var c *gin.Context
+		if len(request) > 0 {
+			c = request[0]
 		}
-		log.Other = common.MapToJsonStr(other)
+		actorRole := 0
+		if c != nil {
+			actorRole = c.GetInt("role")
+		}
+		RecordAuditLog(c, AuditLog{UserId: userId, Username: username, ActorRole: actorRole, Category: AuditCategoryOperation, Content: content, Other: AuditOther{AdminInfo: adminInfo, Op: operation}, Success: true})
+		return
+	}
+	if len(request) > 0 && request[0] != nil {
+		log.RequestId = request[0].GetString(common.RequestIdKey)
+	}
+	if adminInfo != nil || operation != nil {
+		data, err := common.Marshal(AuditOther{AdminInfo: adminInfo, Op: operation})
+		if err != nil {
+			common.SysError("failed to encode log admin info: " + err.Error())
+			return
+		}
+		log.Other = string(data)
 	}
 	if err := createLog(log); err != nil {
 		common.SysLog("failed to record log: " + err.Error())
@@ -551,34 +575,17 @@ func RecordOperationAuditLog(userId int, content string, ip string, action strin
 	}
 }
 
-func RecordLoginLog(userId int, username string, content string, ip string, action string, params map[string]interface{}, extra map[string]interface{}) {
-	other := map[string]interface{}{}
-	if action = strings.TrimSpace(action); action != "" {
-		other["action"] = action
+// RecordLoginLog writes new login events to the independent audit table.
+// username 由调用方传入（登录流程已持有用户对象），避免额外的数据库查询。
+// content 为英文兜底文本（用于导出）；action+params 供前端本地化渲染。
+// other 包含 login_method、user_agent 等结构化信息。
+func RecordLoginLog(userId, actorRole int, username string, content string, ip string, action string, params map[string]any, other AuditOther, request ...*gin.Context) {
+	other.Op = &AuditOperation{Action: action, Params: params}
+	var c *gin.Context
+	if len(request) > 0 {
+		c = request[0]
 	}
-	if len(params) > 0 {
-		other["params"] = params
-	}
-	if len(extra) > 0 {
-		other["login_info"] = extra
-	}
-	log := &Log{
-		UserId:    userId,
-		Username:  strings.TrimSpace(username),
-		CreatedAt: common.GetTimestamp(),
-		Type:      LogTypeSystem,
-		Content:   content,
-		Ip:        strings.TrimSpace(ip),
-	}
-	if log.Username == "" {
-		log.Username, _ = GetUsernameById(userId, false)
-	}
-	if len(other) > 0 {
-		log.Other = common.MapToJsonStr(other)
-	}
-	if err := createLog(log); err != nil {
-		common.SysLog("failed to record login log: " + err.Error())
-	}
+	RecordAuditLog(c, AuditLog{UserId: userId, Username: username, ActorRole: actorRole, Category: AuditCategoryLogin, Action: action, Content: content, Ip: ip, Other: other, Success: true})
 }
 
 type PaymentAuditLogInfo struct {
@@ -717,18 +724,18 @@ func RecordErrorLog(c *gin.Context, userId int, channelId int, modelName string,
 }
 
 type RecordConsumeLogParams struct {
-	ChannelId        int                    `json:"channel_id"`
-	PromptTokens     int                    `json:"prompt_tokens"`
-	CompletionTokens int                    `json:"completion_tokens"`
-	ModelName        string                 `json:"model_name"`
-	TokenName        string                 `json:"token_name"`
-	Quota            int                    `json:"quota"`
-	Content          string                 `json:"content"`
-	TokenId          int                    `json:"token_id"`
-	UseTimeSeconds   int                    `json:"use_time_seconds"`
-	IsStream         bool                   `json:"is_stream"`
-	Group            string                 `json:"group"`
-	Other            map[string]interface{} `json:"other"`
+	ChannelId        int       `json:"channel_id"`
+	PromptTokens     int       `json:"prompt_tokens"`
+	CompletionTokens int       `json:"completion_tokens"`
+	ModelName        string    `json:"model_name"`
+	TokenName        string    `json:"token_name"`
+	Quota            int       `json:"quota"`
+	Content          string    `json:"content"`
+	TokenId          int       `json:"token_id"`
+	UseTimeSeconds   int       `json:"use_time_seconds"`
+	IsStream         bool      `json:"is_stream"`
+	Group            string    `json:"group"`
+	Other            *LogOther `json:"other"`
 }
 
 func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams) error {
@@ -739,7 +746,7 @@ func RecordConsumeLog(c *gin.Context, userId int, params RecordConsumeLogParams)
 	username := resolveLogUsername(c, userId)
 	requestId := c.GetString(common.RequestIdKey)
 	upstreamRequestId := c.GetString(common.UpstreamRequestIdKey)
-	otherStr := common.MapToJsonStr(params.Other)
+	otherStr := params.Other.JSONString()
 	// 判断是否需要记录 IP
 	needRecordIp := false
 	if settingMap, err := GetUserSetting(userId, false); err == nil {

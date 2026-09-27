@@ -38,6 +38,8 @@ import {
 import { formatCurrencyFromUSD } from '@/lib/currency'
 import { formatTimestampToDate } from '@/lib/format'
 import { useAuthStore } from '@/stores/auth-store'
+import { handleServerError } from '@/lib/handle-server-error'
+import { createServerError, localizeConsoleErrorText } from '@/lib/server-error-message'
 
 import { getCodexUsage, updateChannelBalance } from '../../api'
 import { channelsQueryKeys } from '../../lib'
@@ -46,8 +48,6 @@ import {
   CodexUsageDialog,
   type CodexUsageDialogData,
 } from './codex-usage-dialog'
-
-import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 type BalanceQueryDialogProps = {
   initialRawResponse?: string
@@ -92,12 +92,14 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
       const res = await getCodexUsage(row.id)
       if (!res.success) {
         throw new Error(localizeConsoleErrorText(res.message, 'Failed to fetch usage'))
+        throw createServerError(res, t('Failed to fetch usage'))
       }
       setCodexUsageResponse(res)
     } catch (error: unknown) {
       toast.error(
         localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to fetch usage')
       )
+      handleServerError(error, t('Failed to fetch usage'))
     } finally {
       setIsQuerying(false)
     }
@@ -144,11 +146,13 @@ export function BalanceQueryDialog(props: BalanceQueryDialogProps) {
         setRawResponse(response.raw_response)
       } else {
         toast.error(localizeConsoleErrorText(response.message, 'Failed to query balance'))
+        handleServerError(response, t('Failed to query balance'))
       }
     } catch (error: unknown) {
       toast.error(
         localizeConsoleErrorText(error instanceof Error ? error.message : '', 'Failed to query balance')
       )
+      handleServerError(error, t('Failed to query balance'))
     } finally {
       setIsQuerying(false)
     }

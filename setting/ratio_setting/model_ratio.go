@@ -5,6 +5,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
+	hostreasoning "github.com/QuantumNous/new-api/setting/reasoning"
 	"github.com/QuantumNous/new-api/types"
 )
 
@@ -432,7 +433,6 @@ func GetDefaultPricingMaps() map[string]map[string]float64 {
 	}
 	return result
 }
-
 func CompletionRatio2JSONString() string {
 	return completionRatioMap.MarshalJSONString()
 }
@@ -442,21 +442,7 @@ func UpdateCompletionRatioByJSONString(jsonStr string) error {
 }
 
 func GetCompletionRatio(name string) float64 {
-	name = FormatMatchingModelName(name)
-
-	if strings.Contains(name, "/") {
-		if ratio, ok := completionRatioMap.Get(name); ok {
-			return ratio
-		}
-	}
-	hardCodedRatio, contain := getHardcodedCompletionModelRatio(name)
-	if contain {
-		return hardCodedRatio
-	}
-	if ratio, ok := completionRatioMap.Get(name); ok {
-		return ratio
-	}
-	return hardCodedRatio
+	return GetCompletionRatioInfo(name).Ratio
 }
 
 type CompletionRatioInfo struct {
@@ -466,14 +452,19 @@ type CompletionRatioInfo struct {
 
 func GetCompletionRatioInfo(name string) CompletionRatioInfo {
 	name = FormatMatchingModelName(name)
+	var configured *float64
+	if ratio, ok := completionRatioMap.Get(name); ok {
+		configured = &ratio
+	}
+	return ResolveCompletionRatio(name, configured)
+}
 
-	if strings.Contains(name, "/") {
-		if ratio, ok := completionRatioMap.Get(name); ok {
-			return CompletionRatioInfo{
-				Ratio:  ratio,
-				Locked: false,
-			}
-		}
+// ResolveCompletionRatio applies relay's enforced and fallback ratios to a
+// configuration snapshot or draft without consulting mutable saved settings.
+func ResolveCompletionRatio(name string, configured *float64) CompletionRatioInfo {
+	name = FormatMatchingModelName(name)
+	if strings.Contains(name, "/") && configured != nil {
+		return CompletionRatioInfo{Ratio: *configured}
 	}
 
 	hardCodedRatio, locked := getHardcodedCompletionModelRatio(name)
@@ -484,9 +475,9 @@ func GetCompletionRatioInfo(name string) CompletionRatioInfo {
 		}
 	}
 
-	if ratio, ok := completionRatioMap.Get(name); ok {
+	if configured != nil {
 		return CompletionRatioInfo{
-			Ratio:  ratio,
+			Ratio:  *configured,
 			Locked: false,
 		}
 	}
@@ -574,9 +565,6 @@ func getHardcodedCompletionModelRatio(name string) (float64, bool) {
 			return 8, false
 		} else if strings.HasPrefix(name, "gemini-2.5-flash") { // 处理不同的flash模型倍率
 			if strings.HasPrefix(name, "gemini-2.5-flash-preview") {
-				if strings.HasSuffix(name, "-nothinking") {
-					return 4, false
-				}
 				return 3.5 / 0.15, false
 			}
 			if strings.HasPrefix(name, "gemini-2.5-flash-lite") {
@@ -676,10 +664,12 @@ func UpdateImageRatioByJSONString(jsonStr string) error {
 	return types.LoadFromJsonString(imageRatioMap, jsonStr)
 }
 
+const DefaultImageRatio = 1.0
+
 func GetImageRatio(name string) (float64, bool) {
 	ratio, ok := imageRatioMap.Get(name)
 	if !ok {
-		return 1, false // Default to 1 if not found
+		return DefaultImageRatio, false
 	}
 	return ratio, true
 }
@@ -724,6 +714,13 @@ func GetAudioCompletionRatioCopy() map[string]float64 {
 	return audioCompletionRatioMap.ReadAll()
 }
 
+// RoutingMatchModelName returns the name used for channel-ability and token-limit
+// fallback matching: strip @ modifiers and legacy aliases first, then apply
+// wildcard normalization.
+func RoutingMatchModelName(name string) string {
+	return FormatMatchingModelName(hostreasoning.BaseModelName(name))
+}
+
 // HasConfiguredModelRatio reports whether name has an explicit ratio entry
 // after wildcard normalization. Self-use fallback does not count.
 func HasConfiguredModelRatio(name string) bool {
@@ -734,7 +731,6 @@ func HasConfiguredModelRatio(name string) bool {
 
 // 转换模型名，减少渠道必须配置各种带参数模型
 func FormatMatchingModelName(name string) string {
-
 	if strings.HasPrefix(name, "gemini-2.5-flash-lite") {
 		name = handleThinkingBudgetModel(name, "gemini-2.5-flash-lite", "gemini-2.5-flash-lite-thinking-*")
 	} else if strings.HasPrefix(name, "gemini-2.5-flash") {

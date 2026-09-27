@@ -68,6 +68,15 @@ func formatNotifyType(channelId int, status int) string {
 	return fmt.Sprintf("%s_%d_%d", dto.NotifyTypeChannelUpdate, channelId, status)
 }
 
+func shouldCloseActiveWebSocketsAfterDisable(channelId int) bool {
+	channel, err := model.GetChannelById(channelId, true)
+	if err != nil {
+		common.SysLog(fmt.Sprintf("failed to check channel status before closing active websockets: channel_id=%d, error=%v", channelId, err))
+		return true
+	}
+	return channel.Status != common.ChannelStatusEnabled
+}
+
 // disable & notify
 func DisableChannel(channelError types.ChannelError, reason string) {
 	isBalanceInsufficient := IsBalanceInsufficientMessage(reason)
@@ -114,6 +123,11 @@ func channelDisableNoticeReason(reason string) string {
 		return "余额不足"
 	}
 	if noticeHasHan(reason) {
+		return reason
+	}
+	// Structured disable summaries are already redacted before notification.
+	// Raw provider English stays out of the console notice.
+	if strings.HasPrefix(lower, "status_code=") && strings.Contains(reason, "***") {
 		return reason
 	}
 	return ""

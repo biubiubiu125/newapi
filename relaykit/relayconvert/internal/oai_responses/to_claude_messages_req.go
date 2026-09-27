@@ -1,12 +1,13 @@
 package oairesponses
 
 import (
+	"context"
 	"fmt"
 	"strings"
 
-	"context"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/internal/convdiag"
 	relaymedia "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/media"
 	sharedclaude "github.com/QuantumNous/new-api/relaykit/relayconvert/internal/shared/claude"
 	kitutil "github.com/QuantumNous/new-api/relaykit/relayconvert/kitutil"
@@ -41,7 +42,6 @@ func OpenAIResponsesRequestToClaudeMessages(c context.Context, info convmeta.Met
 	if req.MaxOutputTokens != nil && *req.MaxOutputTokens > 0 {
 		claudeRequest.MaxTokens = kitutil.GetPointer(*req.MaxOutputTokens)
 	}
-
 	functions, err := RequestFunctionDeclarations(req.Tools)
 	if err != nil {
 		return nil, err
@@ -57,10 +57,11 @@ func OpenAIResponsesRequestToClaudeMessages(c context.Context, info convmeta.Met
 	if toolChoice != nil || RawJSONPresent(req.ParallelToolCalls) {
 		claudeRequest.ToolChoice = sharedclaude.MapOpenAIToolChoice(toolChoice, ParallelToolCalls(req.ParallelToolCalls))
 	}
-	sourceReasoning, err := reasoning.FromOpenAIResponses(req)
+	sourceReasoning, diagnostics, err := reasoning.FromOpenAIResponses(req)
 	if err != nil {
 		return nil, reasoning.AsClientError(err)
 	}
+	convdiag.Add(c, diagnostics...)
 	if err := sharedclaude.ApplyReasoning(c, claudeRequest, info, sourceReasoning, true); err != nil {
 		return nil, reasoning.AsClientError(err)
 	}
@@ -99,13 +100,21 @@ func OpenAIResponsesRequestToClaudeMessages(c context.Context, info convmeta.Met
 		case ResponsesInputTypeFunctionCallOutput, ResponsesInputTypeCustomToolOutput:
 			claudeRequest.Messages = appendClaudeToolResult(claudeRequest.Messages, responsesFunctionOutputItemToClaudeToolResult(item))
 		default:
-			role := responsesClaudeRole(item)
+			sourceRole := strings.TrimSpace(kitutil.Interface2String(item["role"]))
+			role := responsesClaudeRole(sourceRole)
 			parts, err := responsesInputContentToClaudeMediaMessages(c, item["content"])
 			if err != nil {
 				return nil, err
 			}
+			if sourceRole == "" && len(parts) == 0 {
+				continue
+			}
 			if role == "system" {
-				systemMessages = append(systemMessages, parts...)
+				for _, part := range parts {
+					if part.Type == "text" {
+						systemMessages = append(systemMessages, part)
+					}
+				}
 				continue
 			}
 			if len(parts) == 0 {
@@ -126,7 +135,9 @@ func OpenAIResponsesRequestToClaudeMessages(c context.Context, info convmeta.Met
 	if len(systemMessages) > 0 {
 		claudeRequest.System = systemMessages
 	}
-	claudeRequest.Messages = ensureClaudeMessagesStartWithUser(claudeRequest.Messages)
+	if len(claudeRequest.Messages) > 0 || len(systemMessages) > 0 {
+		claudeRequest.Messages = ensureClaudeMessagesStartWithUser(claudeRequest.Messages)
+	}
 	// Checked last so every injection path has had its chance to satisfy the
 	// required field.
 	if claudeRequest.MaxTokens == nil {
@@ -266,8 +277,8 @@ func claudeMessageContentParts(content any) []dto.ClaudeMediaMessage {
 	}
 }
 
-func responsesClaudeRole(item map[string]any) string {
-	switch strings.TrimSpace(kitutil.Interface2String(item["role"])) {
+func responsesClaudeRole(role string) string {
+	switch role {
 	case "assistant":
 		return "assistant"
 	case "system", "developer":
@@ -278,7 +289,7 @@ func responsesClaudeRole(item map[string]any) string {
 }
 
 func ensureClaudeMessagesStartWithUser(messages []dto.ClaudeMessage) []dto.ClaudeMessage {
-	if len(messages) == 0 || messages[0].Role == "user" {
+	if len(messages) > 0 && messages[0].Role == "user" {
 		return messages
 	}
 	return append([]dto.ClaudeMessage{

@@ -85,6 +85,7 @@ type User struct {
 	Id                      int                        `json:"id"`
 	Username                string                     `json:"username" gorm:"unique;index" validate:"max=20"`
 	Password                string                     `json:"password" gorm:"not null;" validate:"min=8,max=20"`
+	HasPassword             bool                       `json:"-" gorm:"-:all"`
 	OriginalPassword        string                     `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
 	DisplayName             string                     `json:"display_name" gorm:"index" validate:"max=20"`
 	Role                    int                        `json:"role" gorm:"type:int;default:1"`   // admin, common
@@ -98,6 +99,7 @@ type User struct {
 	TelegramId              string                     `json:"telegram_id" gorm:"column:telegram_id;index"`
 	VerificationCode        string                     `json:"verification_code" gorm:"-:all"`                         // this field is only for Email verification, don't save it to database!
 	AccessToken             *string                    `json:"-" gorm:"type:char(32);column:access_token;uniqueIndex"` // this token is for system management
+	AccessTokenCreatedAt    *int64                     `json:"-" gorm:"type:bigint;column:access_token_created_at"`
 	Quota                   int64                      `json:"quota" gorm:"type:bigint;default:0"`
 	UsedQuota               int64                      `json:"used_quota" gorm:"type:bigint;default:0;column:used_quota"` // used quota
 	RequestCount            int                        `json:"request_count" gorm:"type:int;default:0;"`                  // request number
@@ -254,7 +256,9 @@ func UpdateUserAccessToken(id int, token string) error {
 	if id == 0 {
 		return common.Localized("common.id_empty")
 	}
-	result := DB.Model(&User{}).Where("id = ?", id).Update("access_token", token)
+	result := DB.Model(&User{}).Where("id = ?", id).Updates(map[string]any{
+		"access_token": token, "access_token_created_at": common.GetTimestamp(),
+	})
 	if result.Error != nil {
 		return result.Error
 	}
@@ -262,6 +266,23 @@ func UpdateUserAccessToken(id int, token string) error {
 		return gorm.ErrRecordNotFound
 	}
 	return nil
+}
+
+// RevokeUserAccessToken returns the generation actually revoked under the row lock.
+func RevokeUserAccessToken(id int) (string, error) {
+	var tokenRef string
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var user User
+		if err := lockForUpdate(tx).Select("id", "access_token").First(&user, id).Error; err != nil {
+			return err
+		}
+		tokenRef = AccessTokenFingerprint(user.GetAccessToken())
+		if tokenRef == "" {
+			return nil
+		}
+		return tx.Model(&User{}).Where("id = ?", id).Updates(map[string]any{"access_token": nil, "access_token_created_at": nil}).Error
+	})
+	return tokenRef, err
 }
 
 func (user *User) GetSetting() dto.UserSetting {
@@ -325,10 +346,10 @@ func UpdateUserBindColumn(userId int, column string, value string) error {
 
 // 根据用户角色生成默认的边栏配置
 func generateDefaultSidebarConfigForRole(userRole int) string {
-	defaultConfig := map[string]interface{}{}
+	defaultConfig := map[string]any{}
 
 	// 聊天区域 - 所有用户都可以访问
-	defaultConfig["chat"] = map[string]interface{}{
+	defaultConfig["chat"] = map[string]any{
 		"enabled":    true,
 		"playground": true,
 		"chat":       true,
@@ -348,7 +369,7 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 	}
 
 	// 个人中心区域 - 所有用户都可以访问
-	defaultConfig["personal"] = map[string]interface{}{
+	defaultConfig["personal"] = map[string]any{
 		"enabled":  true,
 		"topup":    true,
 		"personal": true,
@@ -357,7 +378,7 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 	// 管理员区域 - 根据角色决定
 	if userRole == common.RoleAdminUser {
 		// 管理员可以访问管理员区域，但不能访问系统设置
-		defaultConfig["admin"] = map[string]interface{}{
+		defaultConfig["admin"] = map[string]any{
 			"enabled":    true,
 			"channel":    true,
 			"models":     true,
@@ -367,7 +388,7 @@ func generateDefaultSidebarConfigForRole(userRole int) string {
 		}
 	} else if userRole == common.RoleRootUser {
 		// 超级管理员可以访问所有功能
-		defaultConfig["admin"] = map[string]interface{}{
+		defaultConfig["admin"] = map[string]any{
 			"enabled":    true,
 			"channel":    true,
 			"models":     true,
@@ -459,9 +480,16 @@ func EnsureEmailAvailable(email string, excludeUserID int) error {
 //
 // An empty email is allowed to repeat and needs no serialization.
 func withNormalizedEmailLock(tx *gorm.DB, email string, fn func(tx *gorm.DB) error) error {
+	if err := lockNormalizedEmail(tx, email); err != nil {
+		return err
+	}
+	return fn(tx)
+}
+
+func lockNormalizedEmail(tx *gorm.DB, email string) error {
 	email = NormalizeEmail(email)
 	if email == "" {
-		return fn(tx)
+		return nil
 	}
 	switch {
 	case common.UsingMainDatabase(common.DatabaseTypePostgreSQL):
@@ -474,7 +502,7 @@ func withNormalizedEmailLock(tx *gorm.DB, email string, fn func(tx *gorm.DB) err
 			return err
 		}
 	}
-	return fn(tx)
+	return nil
 }
 
 func GetMaxUserId() int {
@@ -567,14 +595,14 @@ func SearchUsers(keyword string, group string, role *int, status *int, startIdx 
 
 	// 构建搜索条件
 	likeCondition := "username LIKE ? OR email LIKE ? OR display_name LIKE ?"
-	likeArgs := []interface{}{"%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%"}
+	likeArgs := []any{"%" + keyword + "%", "%" + keyword + "%", "%" + keyword + "%"}
 
 	// 尝试将关键字转换为整数ID
 	keywordInt, err := strconv.Atoi(keyword)
 	if err == nil {
 		// 如果是数字，同时搜索ID和其他字段
 		likeCondition = "id = ? OR " + likeCondition
-		likeArgs = append([]interface{}{keywordInt}, likeArgs...)
+		likeArgs = append([]any{keywordInt}, likeArgs...)
 	}
 
 	if strings.TrimSpace(keyword) != "" {
@@ -741,6 +769,28 @@ func GetUserById(id int, selectAll bool) (*User, error) {
 	return &user, err
 }
 
+// GetSelfUserById reads dashboard profile data and password existence in one
+// query. The password hash and management access token are never selected.
+func GetSelfUserById(id int) (*User, error) {
+	if id == 0 {
+		return nil, common.Localized("common.id_empty")
+	}
+	var profile struct {
+		User
+		HasPassword bool `gorm:"column:has_password"`
+	}
+	err := DB.Model(&User{}).Select([]string{
+		"id", "username", "display_name", "role", "status", "email",
+		"github_id", "discord_id", "oidc_id", "wechat_id", "telegram_id",
+		"group", "quota", "used_quota", "request_count", "aff_code", "aff_count",
+		"aff_quota", "aff_history", "inviter_id", "linux_do_id", "setting",
+		"stripe_customer", "auth_version",
+		"CASE WHEN password <> '' THEN 1 ELSE 0 END AS has_password",
+	}).First(&profile, "id = ?", id).Error
+	profile.User.HasPassword = profile.HasPassword
+	return &profile.User, err
+}
+
 func GetUserByIdUnscoped(id int, selectAll bool) (*User, error) {
 	if id == 0 {
 		return nil, common.Localized("common.id_empty")
@@ -753,7 +803,6 @@ func GetUserByIdUnscoped(id int, selectAll bool) (*User, error) {
 	err := query.First(&user, "id = ?", id).Error
 	return &user, err
 }
-
 func GetUserIdByAffCode(affCode string) (int, error) {
 	if affCode == "" {
 		return 0, common.Localized(i18n.MsgUserAffCodeEmpty)
@@ -780,7 +829,7 @@ func HardDeleteUserById(id int) error {
 }
 
 func inviteUser(inviterId int) error {
-	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]interface{}{
+	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]any{
 		"aff_count":   gorm.Expr("aff_count + ?", 1),
 		"aff_quota":   gorm.Expr("aff_quota + ?", common.QuotaForInviter),
 		"aff_history": gorm.Expr("aff_history + ?", common.QuotaForInviter),
@@ -1283,11 +1332,32 @@ func (user *User) ClearBinding(bindingType string) error {
 }
 
 func (user *User) Delete() error {
+	return user.delete(nil)
+}
+
+func DeleteUserForSession(identity AuthSessionIdentity) error {
+	user := User{Id: identity.UserID}
+	return user.delete(&identity)
+}
+
+func (user *User) delete(identity *AuthSessionIdentity) error {
 	if user.Id == 0 {
 		return common.Localized("common.id_empty")
 	}
 	var nextAuthVersion int64
 	if err := DB.Transaction(func(tx *gorm.DB) error {
+		if identity != nil {
+			if err := ValidateAuthSessionWithTx(tx, *identity); err != nil {
+				return err
+			}
+			var role int
+			if err := tx.Model(&User{}).Where("id = ?", user.Id).Select("role").Scan(&role).Error; err != nil {
+				return err
+			}
+			if role == common.RoleRootUser {
+				return ErrCannotDeleteRootUser
+			}
+		}
 		var err error
 		nextAuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
 		if err != nil {
@@ -1414,7 +1484,6 @@ func (user *User) UpdateGitHubId(newGitHubId string) error {
 	}
 	return user.ClaimExternalIdentity(ExternalIdentityProviderGitHub, newGitHubId)
 }
-
 func (user *User) FillUserByDiscordId() error {
 	if user.DiscordId == "" {
 		return common.Localized("user.discord_id_empty")
@@ -1829,7 +1898,7 @@ func UpdateUserUsedQuota(id int, quota int64) {
 
 func updateUserUsedQuotaAndRequestCount(id int, quota int64, count int) {
 	err := DB.Model(&User{}).Where("id = ?", id).Updates(
-		map[string]interface{}{
+		map[string]any{
 			"used_quota":    gorm.Expr("used_quota + ?", quota),
 			"request_count": gorm.Expr("request_count + ?", count),
 		},

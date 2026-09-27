@@ -12,6 +12,8 @@ export const meta = {
   author: { name: "QuantumNous" },
   models: ["sora-2", "sora-2-pro"],
   fetchMode: "per_task",
+  // A New API gateway serves /v1/videos as a host protocol, so no URL changes.
+  upstreams: ["vendor", "new_api"],
   usageSchema: {
     seconds: {
       type: "number",
@@ -20,6 +22,12 @@ export const meta = {
     },
     size: {
       enum: ["720x1280", "1280x720", "1792x1024", "1024x1792"],
+      enumLabels: {
+        "720x1280": { en: "720x1280", zh: "720x1280" },
+        "1280x720": { en: "1280x720", zh: "1280x720" },
+        "1792x1024": { en: "1792x1024", zh: "1792x1024" },
+        "1024x1792": { en: "1024x1792", zh: "1024x1792" },
+      },
       description: { en: "Requested output video dimensions.", zh: "请求的输出视频尺寸。" },
     },
   },

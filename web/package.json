@@ -10,6 +10,9 @@
     "typecheck": "tsgo -b",
     "lint": "oxlint -c .oxlintrc.json .",
     "lint:fix": "oxlint -c .oxlintrc.json . --fix",
+    "lint:plugins": "cd ../plugins && oxlint -c .oxlintrc.json .",
+    "format:plugins": "cd ../plugins && oxfmt -c .oxfmtrc.json --write .",
+    "format:plugins:check": "cd ../plugins && oxfmt -c .oxfmtrc.json --check .",
     "preview": "rsbuild preview",
     "test": "vitest run",
     "test:watch": "vitest",
@@ -22,8 +25,8 @@
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
+    "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-markdown": "^6.5.0",
-    "@codemirror/lang-javascript": "^6.2.3",
     "@codemirror/language": "^6.12.4",
     "@codemirror/state": "^6.7.0",
     "@codemirror/view": "^6.43.4",
@@ -79,6 +82,7 @@
     "use-stick-to-bottom": "^1.1.6",
     "vaul": "^1.1.2",
     "yace": "^1.1.0",
+    "yaml": "^2.9.0",
     "zod": "^4.4.3",
     "zustand": "^5.0.14"
   },

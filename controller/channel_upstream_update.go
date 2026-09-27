@@ -676,7 +676,7 @@ func fetchAdvancedCustomUpstreamModelIDs(ctx context.Context, channel *model.Cha
 		RelayMode:      relayconstant.RelayModeUnknown,
 		RequestURLPath: dto.AdvancedCustomModelListPath,
 		ChannelMeta: &relaycommon.ChannelMeta{
-			ChannelType:          constant.ChannelTypeAdvancedCustom,
+			ChannelType:          channel.Type,
 			ChannelBaseUrl:       baseURL,
 			ApiKey:               key,
 			ChannelOtherSettings: channel.GetOtherSettings(),
@@ -1864,7 +1864,7 @@ func ApplyChannelUpstreamModelUpdates(c *gin.Context) {
 		return
 	}
 
-	recordManageAudit(c, "channel.upstream_apply", map[string]interface{}{
+	recordManageAudit(c, "channel.upstream_apply", map[string]any{
 		"id": channel.Id,
 	})
 	c.JSON(http.StatusOK, gin.H{
@@ -2483,7 +2483,7 @@ func DetectAllChannelUpstreamModelUpdates(c *gin.Context) {
 		return
 	}
 
-	recordManageAudit(c, "channel.upstream_detect_all", map[string]interface{}{
+	recordManageAudit(c, "channel.upstream_detect_all", map[string]any{
 		"task_id": task.TaskID,
 	})
 	c.JSON(http.StatusOK, gin.H{

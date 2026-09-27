@@ -42,7 +42,10 @@ export function StaticRowActions(props: StaticRowActionsProps) {
       <Button
         variant='ghost'
         size='icon-sm'
-        onClick={props.onEdit}
+        onClick={() => {
+          console.log('EDIT_CLICK')
+          props.onEdit()
+        }}
         disabled={props.editDisabled}
         aria-label={props.editLabel}
       >

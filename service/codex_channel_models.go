@@ -82,7 +82,7 @@ func FetchCodexChannelModelsWithOptions(
 	defer cancel()
 	baseURL := channel.GetBaseURL()
 	if baseURL == "" {
-		baseURL = constant.ChannelBaseURLs[constant.ChannelTypeCodex]
+		baseURL = constant.GetChannelBaseURL(constant.ChannelTypeCodex)
 	}
 	originalKey := channel.Key
 	models, fetchErr := fetchCodexChannelModelsWithHeaders(

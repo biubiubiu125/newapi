@@ -10,6 +10,7 @@ type TaskError struct {
 	Data       any    `json:"data"`
 	StatusCode int    `json:"-"`
 	LocalError bool   `json:"-"`
+	NoRetry    bool   `json:"-"`
 	Error      error  `json:"-"`
 }
 
@@ -46,6 +47,7 @@ type TaskDto struct {
 	SettlementAttemptQuota int             `json:"settlement_attempt_quota,omitempty"`
 	FailReason             string          `json:"fail_reason"`
 	ResultURL              string          `json:"result_url,omitempty"` // 任务结果 URL（视频地址等）
+	ResultDiscarded        bool            `json:"result_discarded,omitempty"`
 	LegacyVideoAvailable   bool            `json:"legacy_video_available,omitempty"`
 	SubmitTime             int64           `json:"submit_time"`
 	StartTime              int64           `json:"start_time"`

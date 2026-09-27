@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/logger"
+	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/relaykit/types"
 	"github.com/gin-gonic/gin"
@@ -18,6 +19,7 @@ const (
 	contextKeySettlementApplied     = "settlement_applied"
 	contextKeySettlementError       = "settlement_error"
 	contextKeyUsageCountersRecorded = "usage_counters_recorded"
+	contextKeySubmittedTask         = "submitted_task"
 )
 
 func ContextKeySettlementError() string {
@@ -32,32 +34,36 @@ func ContextKeyUsageCountersRecorded() string {
 	return contextKeyUsageCountersRecorded
 }
 
+func ContextKeySubmittedTask() string {
+	return contextKeySubmittedTask
+}
+
 func setUsageCountersRecorded(ctx context.Context, recorded bool) {
 	if ginCtx, ok := ctx.(*gin.Context); ok && ginCtx != nil {
 		ginCtx.Set(contextKeyUsageCountersRecorded, recorded)
 	}
 }
 
-func attachSettlementError(other map[string]interface{}, settleErr error) {
+func attachSettlementError(other *model.LogOther, settleErr error) {
 	if settleErr == nil {
 		return
 	}
 	attachSettlementErrorMessage(other, settleErr.Error())
 }
 
-func attachSettlementErrorMessage(other map[string]interface{}, errMsg string) {
+func attachSettlementErrorMessage(other *model.LogOther, errMsg string) {
 	if other == nil || errMsg == "" {
 		return
 	}
-	other["settlement_status"] = "error"
-	other["settlement_error"] = strings.ReplaceAll(errMsg, "\n", " ")
+	other.SetPublic("settlement_status", "error")
+	other.SetPublic("settlement_error", strings.ReplaceAll(errMsg, "\n", " "))
 }
 
-func AttachSettlementError(other map[string]interface{}, settleErr error) {
+func AttachSettlementError(other *model.LogOther, settleErr error) {
 	attachSettlementError(other, settleErr)
 }
 
-func AttachSettlementLogFields(other map[string]interface{}, relayInfo *relaycommon.RelayInfo, attemptedQuota int, settleErr error) int {
+func AttachSettlementLogFields(other *model.LogOther, relayInfo *relaycommon.RelayInfo, attemptedQuota int, settleErr error) int {
 	return attachSettlementLogFields(other, relayInfo, attemptedQuota, settleErr)
 }
 
@@ -85,15 +91,15 @@ func LogQuotaAfterSettlement(relayInfo *relaycommon.RelayInfo, attemptedQuota in
 	return logQuotaAfterSettlement(relayInfo, attemptedQuota, settleErr != nil)
 }
 
-func attachSettlementAccountingFields(other map[string]interface{}, attemptedQuota int, settledQuota int) {
+func attachSettlementAccountingFields(other *model.LogOther, attemptedQuota int, settledQuota int) {
 	if other == nil {
 		return
 	}
-	other["attempted_quota"] = attemptedQuota
-	other["settled_quota"] = settledQuota
+	other.SetPublic("attempted_quota", attemptedQuota)
+	other.SetPublic("settled_quota", settledQuota)
 }
 
-func attachSettlementLogFields(other map[string]interface{}, relayInfo *relaycommon.RelayInfo, attemptedQuota int, settleErr error) int {
+func attachSettlementLogFields(other *model.LogOther, relayInfo *relaycommon.RelayInfo, attemptedQuota int, settleErr error) int {
 	logQuota := LogQuotaAfterSettlement(relayInfo, attemptedQuota, settleErr)
 	if settleErr != nil {
 		attachSettlementError(other, settleErr)
@@ -102,7 +108,7 @@ func attachSettlementLogFields(other map[string]interface{}, relayInfo *relaycom
 	return logQuota
 }
 
-func attachSettlementLogFieldsMessage(other map[string]interface{}, relayInfo *relaycommon.RelayInfo, attemptedQuota int, errMsg string) int {
+func attachSettlementLogFieldsMessage(other *model.LogOther, relayInfo *relaycommon.RelayInfo, attemptedQuota int, errMsg string) int {
 	logQuota := logQuotaAfterSettlement(relayInfo, attemptedQuota, errMsg != "")
 	if errMsg != "" {
 		attachSettlementErrorMessage(other, errMsg)

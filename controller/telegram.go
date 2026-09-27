@@ -23,8 +23,6 @@ import (
 )
 
 const (
-	// The legacy Telegram widget has no nonce. Keep its signed assertion short-lived
-	// so captured callbacks cannot be reused indefinitely.
 	telegramAuthorizationMaxAge     = 5 * time.Minute
 	telegramAuthorizationFutureSkew = 2 * time.Minute
 	telegramBindFlowTTL             = 5 * time.Minute
@@ -45,6 +43,16 @@ var (
 	errTelegramBindUserDeleted      = errors.New("telegram bind user was deleted")
 	errTelegramBindUserDisabled     = errors.New("telegram bind user is disabled")
 )
+
+// TelegramLegacyAuth retires the unsigned-flow widget endpoints. Existing
+// Telegram bindings are used by the unified OAuth provider instead.
+func TelegramLegacyAuth(c *gin.Context) {
+	c.JSON(http.StatusGone, gin.H{
+		"success": false,
+		"code":    "TELEGRAM_LEGACY_AUTH_REMOVED",
+		"message": "Telegram login has changed. Reload the page and start Telegram OAuth again.",
+	})
+}
 
 func TelegramBindStart(c *gin.Context) {
 	if !common.TelegramOAuthEnabled {
