@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -335,6 +336,57 @@ func CacheGetChannel(id int) (*Channel, error) {
 		return nil, fmt.Errorf("channel #%d no longer exists", id)
 	}
 	return c, nil
+}
+
+// ChannelLookupError is a failed channel read. Callers must not treat every
+// failure as deletion: a closed database connection is not a missing channel.
+type ChannelLookupError struct {
+	ChannelID int
+	Err       error
+}
+
+func (e *ChannelLookupError) Error() string {
+	if e == nil || e.Err == nil {
+		return "channel lookup failed"
+	}
+	return e.Err.Error()
+}
+
+func (e *ChannelLookupError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+// IsChannelLookupMissing reports that the channel row or cache entry is gone.
+// Connection failures and unknown database errors are not missing.
+func IsChannelLookupMissing(err error) bool {
+	if err == nil {
+		return false
+	}
+	var lookup *ChannelLookupError
+	if errors.As(err, &lookup) {
+		err = lookup.Err
+	}
+	if err == nil {
+		return false
+	}
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return true
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "channel") && strings.Contains(message, "no longer exists")
+}
+
+// IsChannelLookupTemporarilyUnavailable reports a wrapped channel read that
+// failed for a reason other than the channel being gone.
+func IsChannelLookupTemporarilyUnavailable(err error) bool {
+	var lookup *ChannelLookupError
+	if !errors.As(err, &lookup) || lookup == nil || lookup.Err == nil {
+		return false
+	}
+	return !IsChannelLookupMissing(lookup.Err)
 }
 
 func CacheGetChannelInfo(id int) (*ChannelInfo, error) {

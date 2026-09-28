@@ -275,6 +275,32 @@ func ListTaskPlugins() ([]TaskPlugin, error) {
 	return plugins, err
 }
 
+// TaskPluginTemporarilyUnavailableError means the snapshot plugin could not
+// be loaded because the store was briefly unreachable. Polling must retry
+// without counting a poll failure or refunding a task that may still be running.
+type TaskPluginTemporarilyUnavailableError struct {
+	Err error
+}
+
+func (e *TaskPluginTemporarilyUnavailableError) Error() string {
+	if e == nil || e.Err == nil {
+		return "task plugin temporarily unavailable"
+	}
+	return e.Err.Error()
+}
+
+func (e *TaskPluginTemporarilyUnavailableError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
+func IsTaskPluginTemporarilyUnavailable(err error) bool {
+	var target *TaskPluginTemporarilyUnavailableError
+	return errors.As(err, &target)
+}
+
 func GetTaskPluginVersion(key, version string) (*TaskPlugin, error) {
 	var plugin TaskPlugin
 	query := DB.Where(&TaskPlugin{Key: key})

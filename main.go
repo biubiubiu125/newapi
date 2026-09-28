@@ -167,6 +167,20 @@ func main() {
 		}
 		return pollingAdaptor
 	}
+	service.ResolveTaskPluginPollingAdaptorFunc = func(task *model.Task) (service.TaskPluginPollingAdaptor, error) {
+		a, err := relay.GetTaskPluginAdaptorForTask(task)
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil
+		}
+		pollingAdaptor, ok := a.(service.TaskPluginPollingAdaptor)
+		if !ok {
+			return nil, fmt.Errorf("task plugin adaptor %T does not support polling", a)
+		}
+		return pollingAdaptor, nil
+	}
 	service.RunImageTasksFunc = relay.RunImageTasks
 
 	controller.RegisterScheduledSystemTasks()

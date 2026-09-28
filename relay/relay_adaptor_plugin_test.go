@@ -377,4 +377,61 @@ export function parseTaskResult() { return {}; }
 		},
 	})
 	require.Error(t, err)
+	assert.False(t, model.IsTaskPluginTemporarilyUnavailable(err))
+}
+
+func TestResolveTaskPluginForTaskMissingVersionIsNotTemporary(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:task-plugin-resolver-missing?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.TaskPlugin{}))
+	originalDB := model.DB
+	model.DB = db
+	t.Cleanup(func() {
+		model.DB = originalDB
+		sqlDB, _ := db.DB()
+		_ = sqlDB.Close()
+	})
+
+	_, _, err = ResolveTaskPluginForTask(&model.Task{
+		Platform: constant.TaskPlatform("missing-version"),
+		PrivateData: model.TaskPrivateData{
+			Execution: &model.TaskExecutionSnapshot{
+				TaskPlugin: &model.TaskPluginSnapshot{Key: "missing-version", Version: "9.9.9"},
+			},
+		},
+	})
+	require.Error(t, err)
+	assert.False(t, model.IsTaskPluginTemporarilyUnavailable(err))
+}
+
+func TestTaskPluginStoreErrorIsTransientOnlyForStoreBlips(t *testing.T) {
+	assert.False(t, taskPluginStoreErrorIsTransient(nil))
+	assert.False(t, taskPluginStoreErrorIsTransient(gorm.ErrRecordNotFound))
+	assert.False(t, taskPluginStoreErrorIsTransient(fmt.Errorf("compile persisted task plugin: boom")))
+	assert.False(t, taskPluginStoreErrorIsTransient(fmt.Errorf("invalid plugin row")))
+	assert.True(t, taskPluginStoreErrorIsTransient(fmt.Errorf("dial tcp 127.0.0.1:5432: connect: connection refused")))
+	assert.True(t, taskPluginStoreErrorIsTransient(fmt.Errorf("sql: database is closed")))
+}
+
+func TestResolveTaskPluginForTaskClosedStoreIsTemporary(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open("file:task-plugin-resolver-closed?mode=memory&cache=shared"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.TaskPlugin{}))
+	originalDB := model.DB
+	model.DB = db
+	t.Cleanup(func() { model.DB = originalDB })
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	_, _, err = ResolveTaskPluginForTask(&model.Task{
+		Platform: constant.TaskPlatform("closed-store"),
+		PrivateData: model.TaskPrivateData{
+			Execution: &model.TaskExecutionSnapshot{
+				TaskPlugin: &model.TaskPluginSnapshot{Key: "closed-store", Version: "1.0.0"},
+			},
+		},
+	})
+	require.Error(t, err)
+	assert.True(t, model.IsTaskPluginTemporarilyUnavailable(err))
 }

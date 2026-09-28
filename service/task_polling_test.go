@@ -2388,17 +2388,17 @@ func TestSweepRemovedImageTaskBridgeHoldsRefundsParkedReview(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists)
 	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloadedWallet.Status)
-	require.Equal(t, model.TaskSettlementStatusReview, reloadedWallet.SettlementStatus)
+	require.NotEqual(t, model.TaskSettlementStatusReview, reloadedWallet.SettlementStatus)
 	require.False(t, reloadedWallet.RefundPending)
-	require.EqualValues(t, preConsumed, reloadedWallet.Quota)
+	require.Zero(t, reloadedWallet.Quota)
 
 	reloadedPublic, exists, err := model.GetTaskByID(publicTask.ID)
 	require.NoError(t, err)
 	require.True(t, exists)
 	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloadedPublic.Status)
-	require.Equal(t, model.TaskSettlementStatusReview, reloadedPublic.SettlementStatus)
+	require.NotEqual(t, model.TaskSettlementStatusReview, reloadedPublic.SettlementStatus)
 	require.False(t, reloadedPublic.RefundPending)
-	require.EqualValues(t, preConsumed, reloadedPublic.Quota)
+	require.Zero(t, reloadedPublic.Quota)
 	require.Equal(t, "upstream-public", reloadedPublic.PrivateData.UpstreamTaskID)
 
 	reloadedKept, exists, err := model.GetTaskByID(kept.ID)
@@ -2408,8 +2408,8 @@ func TestSweepRemovedImageTaskBridgeHoldsRefundsParkedReview(t *testing.T) {
 	require.EqualValues(t, preConsumed, reloadedKept.Quota)
 	require.False(t, reloadedKept.RefundPending)
 
-	require.Zero(t, getUserQuota(t, walletUserID))
-	require.Zero(t, getUserQuota(t, publicUserID))
+	require.EqualValues(t, preConsumed, getUserQuota(t, walletUserID))
+	require.EqualValues(t, preConsumed, getUserQuota(t, publicUserID))
 	require.Zero(t, getUserQuota(t, otherUserID))
 }
 
@@ -3408,6 +3408,56 @@ func TestDispatchUnresolvedSunoSnapshotDoesNotUseCurrentPlugin(t *testing.T) {
 	require.True(t, exists)
 	assert.Equal(t, 1, reloaded.PrivateData.PollFailures)
 	assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), reloaded.Status)
+}
+
+func TestDispatchTransientPluginResolveDoesNotConsumePollFailures(t *testing.T) {
+	truncate(t)
+	const channelID = 3612
+	baseURL := "https://suno.example"
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: channelID, Type: constant.ChannelTypeSunoAPI, Name: "suno-transient", Key: "suno-key",
+		Status: common.ChannelStatusEnabled, BaseURL: &baseURL,
+	}).Error)
+	task := seedPollingTask(t, channelID, "suno-transient-public", "suno-transient-upstream")
+	task.Platform = constant.TaskPlatform("sunoapi")
+	task.Quota = 900
+	task.PrivateData.Execution = &model.TaskExecutionSnapshot{
+		TaskPlugin: &model.TaskPluginSnapshot{Key: "sunoapi", Version: "9.9.9", APIVersion: 1, Generation: 9},
+	}
+	require.NoError(t, model.DB.Save(task).Error)
+
+	current := &snapshotBatchPollingAdaptor{}
+	legacyAdaptor := &sunoResponsePollingAdaptor{}
+	previousAdaptor := GetTaskAdaptorFunc
+	previousPlugin := GetTaskPluginAdaptorFunc
+	previousForTask := GetTaskPluginAdaptorForTaskFunc
+	previousResolve := ResolveTaskPluginPollingAdaptorFunc
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return legacyAdaptor }
+	GetTaskPluginAdaptorFunc = func(constant.TaskPlatform) TaskPluginPollingAdaptor { return current }
+	GetTaskPluginAdaptorForTaskFunc = func(*model.Task) TaskPluginPollingAdaptor { return current }
+	ResolveTaskPluginPollingAdaptorFunc = func(*model.Task) (TaskPluginPollingAdaptor, error) {
+		return nil, &model.TaskPluginTemporarilyUnavailableError{Err: errors.New("dial tcp: connection refused")}
+	}
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc = previousAdaptor
+		GetTaskPluginAdaptorFunc = previousPlugin
+		GetTaskPluginAdaptorForTaskFunc = previousForTask
+		ResolveTaskPluginPollingAdaptorFunc = previousResolve
+	})
+
+	DispatchPlatformUpdate(context.Background(), constant.TaskPlatform("sunoapi"), map[int][]string{
+		channelID: {task.GetUpstreamTaskID()},
+	}, map[string]*model.Task{task.GetUpstreamTaskID(): task})
+
+	assert.Zero(t, current.batchCalls, "a transient snapshot resolve must not poll with the current plugin")
+	assert.Empty(t, legacyAdaptor.fetchedBodies())
+	reloaded, exists, err := model.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Zero(t, reloaded.PrivateData.PollFailures)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), reloaded.Status)
+	assert.EqualValues(t, 900, reloaded.Quota)
+	assert.False(t, reloaded.RefundPending)
 }
 
 func TestUpdateBatchTasksSettlesTieredUsageForTerminalStates(t *testing.T) {

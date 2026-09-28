@@ -87,6 +87,25 @@ type BatchTaskPollingAdaptor interface {
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
 var GetTaskPluginAdaptorFunc func(platform constant.TaskPlatform) TaskPluginPollingAdaptor
 var GetTaskPluginAdaptorForTaskFunc func(task *model.Task) TaskPluginPollingAdaptor
+
+// ResolveTaskPluginPollingAdaptorFunc is the error-preserving snapshot resolver.
+// A temporary store error must not be collapsed into a nil adaptor, because a
+// nil adaptor is counted as a poll failure and can refund a live upstream task.
+var ResolveTaskPluginPollingAdaptorFunc func(task *model.Task) (TaskPluginPollingAdaptor, error)
+
+// lookupPollingChannel is the channel read used by task polling. A transient
+// database error must stay retryable; only a channel that is actually gone
+// fails and refunds the precharge.
+var lookupPollingChannel = model.CacheGetChannel
+
+func pollingChannelTemporarilyUnavailable(ctx context.Context, channelID int, err error) error {
+	if err == nil || model.IsChannelLookupMissing(err) {
+		return nil
+	}
+	logger.LogError(ctx, fmt.Sprintf("channel %d lookup is temporarily unavailable: %s", channelID, err.Error()))
+	return fmt.Errorf("channel %d lookup temporarily unavailable: %w", channelID, err)
+}
+
 var RunImageTasksFunc func(ctx context.Context, tasks []*model.Task) error
 var imageTaskResultCacheCleanupUnix int64
 var imageTaskResultRecordCleanupUnix int64
@@ -155,16 +174,28 @@ func taskPollingAdaptorForPlatform(platform constant.TaskPlatform) TaskPluginPol
 }
 
 func taskPollingAdaptorForTask(task *model.Task, platform constant.TaskPlatform) TaskPluginPollingAdaptor {
+	adaptor, _ := resolveTaskPollingAdaptor(task, platform)
+	return adaptor
+}
+
+func resolveTaskPollingAdaptor(task *model.Task, platform constant.TaskPlatform) (TaskPluginPollingAdaptor, error) {
 	if task != nil && task.PrivateData.Execution != nil && task.PrivateData.Execution.TaskPlugin != nil {
-		if GetTaskPluginAdaptorForTaskFunc == nil {
-			return nil
-		}
-		// A persisted task plugin identity is an immutable execution
-		// contract. If its exact version cannot be resolved, fail closed
-		// instead of polling it with the current platform plugin.
-		return GetTaskPluginAdaptorForTaskFunc(task)
+		return resolveTaskPollingPluginAdaptor(task)
 	}
-	return taskPollingAdaptorForPlatformWithoutPlugin(platform)
+	return taskPollingAdaptorForPlatformWithoutPlugin(platform), nil
+}
+
+func resolveTaskPollingPluginAdaptor(task *model.Task) (TaskPluginPollingAdaptor, error) {
+	if ResolveTaskPluginPollingAdaptorFunc != nil {
+		return ResolveTaskPluginPollingAdaptorFunc(task)
+	}
+	if GetTaskPluginAdaptorForTaskFunc == nil {
+		return nil, nil
+	}
+	// A persisted task plugin identity is an immutable execution
+	// contract. If its exact version cannot be resolved, fail closed
+	// instead of polling it with the current platform plugin.
+	return GetTaskPluginAdaptorForTaskFunc(task), nil
 }
 
 func taskPollingAdaptorForPlatformWithoutPlugin(platform constant.TaskPlatform) TaskPluginPollingAdaptor {
@@ -386,9 +417,6 @@ func ReleaseRemovedImageTaskBridgeHold(ctx context.Context, task *model.Task) er
 	if !removedImageTaskBridgeMode(task) {
 		return nil
 	}
-	if RemovedImageTaskBridgeMustHoldPrecharge(task) {
-		return nil
-	}
 	if task.SettlementStatus == model.TaskSettlementStatusReview {
 		won, err := task.MarkRemovedImageTaskBridgeRefundable()
 		if err != nil || !won {
@@ -541,9 +569,12 @@ func removedImageTaskBridgeForeignResultAbandoned(task *model.Task, now int64) b
 	return !alive
 }
 
-// RemovedImageTaskBridgeMustHoldPrecharge reports a removed-bridge task whose
-// upstream may already have produced an image. Those stay in review. A queued
-// task that never left this gateway can still be refunded.
+// RemovedImageTaskBridgeMustHoldPrecharge reports a removed-bridge task that
+// must not be refunded in the same step that retires or times it out. The
+// failure is parked in review first. ReleaseRemovedImageTaskBridgeHold then
+// returns the precharge, because the removed executor can no longer fetch a
+// result. A queued task that never left this gateway can still be refunded
+// immediately.
 func RemovedImageTaskBridgeMustHoldPrecharge(task *model.Task) bool {
 	if task == nil || !removedImageTaskBridgeMode(task) {
 		return false
@@ -1993,9 +2024,10 @@ func dispatchSnapshottedPlatformTasks(ctx context.Context, platform constant.Tas
 	for channelID, refs := range taskChannelM {
 		for _, ref := range refs {
 			task := taskM[ref]
-			var adaptor TaskPluginPollingAdaptor
-			if GetTaskPluginAdaptorForTaskFunc != nil && task != nil {
-				adaptor = GetTaskPluginAdaptorForTaskFunc(task)
+			adaptor, resolveErr := resolveTaskPollingPluginAdaptor(task)
+			if model.IsTaskPluginTemporarilyUnavailable(resolveErr) {
+				logger.LogError(ctx, fmt.Sprintf("video task %s plugin resolve is temporarily unavailable: %s", ref, resolveErr.Error()))
+				continue
 			}
 			if adaptor == nil {
 				unresolvedChannels[channelID] = append(unresolvedChannels[channelID], ref)
@@ -2101,7 +2133,10 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 			tasks = append(tasks, task)
 		}
 	}
-	ch, err := model.CacheGetChannel(channelID)
+	ch, err := lookupPollingChannel(channelID)
+	if temporaryErr := pollingChannelTemporarilyUnavailable(ctx, channelID, err); temporaryErr != nil {
+		return temporaryErr
+	}
 	if err != nil {
 		reason := fmt.Sprintf("Failed to get channel info, channel ID: %d", channelID)
 		now := common.GetTimestamp()
@@ -2900,7 +2935,10 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 	if len(taskIds) == 0 {
 		return nil
 	}
-	ch, err := model.CacheGetChannel(channelId)
+	ch, err := lookupPollingChannel(channelId)
+	if temporaryErr := pollingChannelTemporarilyUnavailable(ctx, channelId, err); temporaryErr != nil {
+		return temporaryErr
+	}
 	if err != nil {
 		common.SysLog(fmt.Sprintf("CacheGetChannel: %v", err))
 		reason := model.FormatPublicChannelInfoFailReason(channelId)
@@ -3195,7 +3233,10 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 	if len(taskIds) == 0 {
 		return nil
 	}
-	cacheGetChannel, err := model.CacheGetChannel(channelId)
+	cacheGetChannel, err := lookupPollingChannel(channelId)
+	if temporaryErr := pollingChannelTemporarilyUnavailable(ctx, channelId, err); temporaryErr != nil {
+		return temporaryErr
+	}
 	if err != nil {
 		reason := fmt.Sprintf("Failed to get channel info, channel ID: %d", channelId)
 		now := common.GetTimestamp()
@@ -3242,14 +3283,16 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 			return ctx.Err()
 		}
 		task := taskForPollingReference(channelId, taskId, taskM)
-		adaptor := taskPollingAdaptorForTask(task, platform)
+		adaptor, resolveErr := resolveTaskPollingAdaptor(task, platform)
 		if adaptor == nil {
 			logger.LogError(ctx, fmt.Sprintf("No adaptor found for video task %s", taskId))
 		} else {
 			adaptor.Init(info)
 		}
 		if adaptor == nil {
-			if task != nil {
+			if model.IsTaskPluginTemporarilyUnavailable(resolveErr) {
+				logger.LogError(ctx, fmt.Sprintf("video task %s plugin resolve is temporarily unavailable: %s", taskId, resolveErr.Error()))
+			} else if task != nil {
 				_ = recordPollFailure(ctx, task, task.Status, pollClassHookError, 0, "video adaptor not found")
 			}
 		} else if err := updateVideoSingleTask(ctx, adaptor, cacheGetChannel, taskId, taskM); err != nil {

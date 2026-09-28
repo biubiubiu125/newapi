@@ -101,4 +101,41 @@ func TestPostgreSQLImageTaskQueriesAcceptBooleanResultFlag(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, bridgeTasks, 1)
 	require.Equal(t, stored.ID, bridgeTasks[0].ID)
+
+	nested := &Task{
+		TaskID:           "pg_bridge_nested_decoy",
+		Platform:         constant.TaskPlatformImage,
+		ChannelId:        9101,
+		Status:           TaskStatusFailure,
+		Progress:         "100%",
+		SettlementStatus: TaskSettlementStatusReview,
+		Quota:            500,
+		PrivateData: TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeSyncWrapper,
+			PluginState:   []byte(`{"copied":{"image_task_mode":"async_task_bridge"}}`),
+		},
+	}
+	require.NoError(t, pg.Create(nested).Error)
+	realBridge := &Task{
+		TaskID:           "pg_bridge_real_failure",
+		Platform:         constant.TaskPlatformImage,
+		ChannelId:        9101,
+		Status:           TaskStatusFailure,
+		Progress:         "100%",
+		SettlementStatus: TaskSettlementStatusReview,
+		Quota:            700,
+		PrivateData: TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
+		},
+	}
+	require.NoError(t, pg.Create(realBridge).Error)
+
+	holds, holdErr := GetRemovedImageTaskBridgeRefundHolds(0, 10)
+	require.NoError(t, holdErr)
+	got = map[int64]bool{}
+	for _, task := range holds {
+		got[task.ID] = true
+	}
+	require.False(t, got[nested.ID], "nested image_task_mode must not select a PostgreSQL refund hold")
+	require.True(t, got[realBridge.ID])
 }

@@ -34,6 +34,10 @@ import (
 	"github.com/tidwall/gjson"
 )
 
+// cacheGetChannel is the channel read for image-task execution. Tests replace
+// it to separate a database blip from a channel that is actually gone.
+var cacheGetChannel = model.CacheGetChannel
+
 const imageTaskSyncTimeout = 120 * time.Second
 const imageTaskStoredResultMarker = "_newapi_result_file"
 const imageTaskLargeStorageReadThreshold = 8 << 20
@@ -331,6 +335,9 @@ func runSyncWrapperImageTask(ctx context.Context, task *model.Task) error {
 		if task.SyncSubmissionStartedAt > 0 {
 			return markImageTaskExecutionReview(ctx, task, model.TaskStatusInProgress, err.Error())
 		}
+		if model.IsChannelLookupTemporarilyUnavailable(err) {
+			return retryImageTaskAfterTemporaryChannelLookup(task)
+		}
 		return failImageTask(ctx, task, model.TaskStatusInProgress, err.Error(), true, true)
 	}
 
@@ -466,13 +473,27 @@ func executeSyncImageTask(ctx context.Context, task *model.Task, bodyStorage com
 	return result, nil
 }
 
+func retryImageTaskAfterTemporaryChannelLookup(task *model.Task) error {
+	if task == nil {
+		return errors.New("image task channel lookup is temporarily unavailable")
+	}
+	next := time.Now().Unix() + 2
+	task.NextPollAt = next
+	if task.ID > 0 && model.DB != nil {
+		if err := model.DB.Model(&model.Task{}).Where("id = ?", task.ID).Update("next_poll_at", next).Error; err != nil {
+			return fmt.Errorf("image task channel lookup is temporarily unavailable: %w", err)
+		}
+	}
+	return errors.New("image task channel lookup is temporarily unavailable")
+}
+
 func setupImageTaskGinContext(c *gin.Context, task *model.Task) error {
 	if err := setupImageTaskBaseGinContext(c, task); err != nil {
 		return err
 	}
-	channel, err := model.CacheGetChannel(task.ChannelId)
+	channel, err := cacheGetChannel(task.ChannelId)
 	if err != nil {
-		return err
+		return &model.ChannelLookupError{ChannelID: task.ChannelId, Err: err}
 	}
 	return setupImageTaskSelectedChannelContext(c, task, channel, imageTaskFixedUpstreamKey(task, ""))
 }

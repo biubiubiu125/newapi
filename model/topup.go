@@ -1028,7 +1028,6 @@ func RechargeEpayWithValidation(tradeNo string, providerPayload string, validati
 		common.SysError("epay topup failed: " + err.Error())
 		return err
 	}
-	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "waffo topup")
 
 	if quotaToAdd > 0 {
 		syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "epay topup")
@@ -1126,7 +1125,6 @@ func RechargeBEpusdtWithValidation(tradeNo string, providerPayload string, valid
 		}
 		return common.Localized(i18n.MsgTopupFailed)
 	}
-	syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "waffo pancake topup")
 
 	if quotaToAdd > 0 {
 		syncCreditUserQuotaCache(topUp.UserId, quotaToAdd, "bepusdt topup")

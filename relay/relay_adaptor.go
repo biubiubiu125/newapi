@@ -487,6 +487,11 @@ func ResolveTaskPluginForTask(task *model.Task) (*pluginruntime.LoadedPlugin, *p
 			return plugin, generation, nil
 		}
 	}
+	if persistedErr != nil && taskPluginStoreErrorIsTransient(persistedErr) {
+		return nil, nil, &model.TaskPluginTemporarilyUnavailableError{
+			Err: fmt.Errorf("load task plugin %s@%s: %w", key, version, persistedErr),
+		}
+	}
 	if persistedErr == nil {
 		persistedErr = errors.New("task plugin source is unavailable")
 	}
@@ -502,6 +507,50 @@ func taskPluginVersionUnavailable(err error) bool {
 	}
 	message := strings.ToLower(err.Error())
 	return strings.Contains(message, "no such table") || strings.Contains(message, "does not exist")
+}
+
+// taskPluginStoreErrorIsTransient reports a plugin-row read that failed for a
+// reason other than "this version does not exist" or a bad stored source.
+// Those failures must be retried; treating them as a missing plugin refunds
+// an upstream task that may still be generating.
+func taskPluginStoreErrorIsTransient(err error) bool {
+	if err == nil || taskPluginVersionUnavailable(err) {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	if strings.Contains(message, "compile") {
+		return false
+	}
+	for _, marker := range []string{
+		"database is closed",
+		"bad connection",
+		"connection refused",
+		"connection reset",
+		"connection timed out",
+		"broken pipe",
+		"i/o timeout",
+		"context deadline exceeded",
+		"too many connections",
+		"too many clients",
+		"remaining connection slots",
+		"server closed",
+		"unexpected eof",
+		"database is locked",
+		"deadlock",
+		"dial tcp",
+		"network is unreachable",
+		"database system is starting up",
+		"database system is shutting down",
+		"sqlstate 08",
+		"sqlstate 40",
+		"sqlstate 53",
+		"sqlstate 57",
+	} {
+		if strings.Contains(message, marker) {
+			return true
+		}
+	}
+	return false
 }
 
 // GetTaskPluginAdaptorForTask is the task-lifecycle counterpart to

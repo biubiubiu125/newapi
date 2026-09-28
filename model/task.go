@@ -1912,6 +1912,25 @@ func imageTaskPrivateDataTextColumn() string {
 	return column
 }
 
+// removedImageTaskBridgeModeWhere matches only the top-level image_task_mode
+// field. A LIKE over the whole private_data document also matches the same
+// text when it is nested in plugin state or another copied object.
+func removedImageTaskBridgeModeWhere() (string, []any) {
+	modes := []string{dto.ImageTaskModeAsyncTaskBridge, "gpt_image2api_async"}
+	args := make([]any, len(modes))
+	for i, mode := range modes {
+		args[i] = mode
+	}
+	expr := "json_extract(private_data, '$.image_task_mode')"
+	switch common.MainDatabaseType() {
+	case common.DatabaseTypePostgreSQL:
+		expr = "private_data ->> 'image_task_mode'"
+	case common.DatabaseTypeMySQL:
+		expr = "JSON_UNQUOTE(JSON_EXTRACT(private_data, '$.image_task_mode'))"
+	}
+	return expr + " IN (?, ?)", args
+}
+
 func addImageTaskCachePathForCandidates(paths map[string]struct{}, path string, candidates map[string]struct{}) {
 	path = strings.TrimSpace(path)
 	if path == "" {
@@ -2212,22 +2231,12 @@ func GetRemovedImageTaskBridgeRefundHolds(afterTaskPrimaryID int64, limit int) (
 	if limit <= 0 {
 		limit = 100
 	}
-	column := imageTaskPrivateDataTextColumn()
-	modes := []string{dto.ImageTaskModeAsyncTaskBridge, "gpt_image2api_async"}
-	clauses := make([]string, 0, len(modes)*2)
-	args := make([]any, 0, len(modes)*2)
-	for _, mode := range modes {
-		clauses = append(clauses, column+" LIKE ?", column+" LIKE ?")
-		args = append(args,
-			`%"image_task_mode":"`+mode+`"%`,
-			`%"image_task_mode": "`+mode+`"%`,
-		)
-	}
+	modeWhere, modeArgs := removedImageTaskBridgeModeWhere()
 	var tasks []*Task
 	err := DB.Omit("data").
 		Where("platform = ? AND status = ? AND settlement_status = ? AND id > ?",
 			constant.TaskPlatformImage, TaskStatusFailure, TaskSettlementStatusReview, afterTaskPrimaryID).
-		Where("("+strings.Join(clauses, " OR ")+")", args...).
+		Where(modeWhere, modeArgs...).
 		Order("id ASC").Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
@@ -2290,16 +2299,7 @@ func GetRemovedImageTaskBridgeUnsettledSuccesses(afterTaskPrimaryID int64, limit
 	}
 	column := imageTaskPrivateDataTextColumn()
 	dataLength := imageTaskDataTextLengthExpr()
-	modes := []string{dto.ImageTaskModeAsyncTaskBridge, "gpt_image2api_async"}
-	clauses := make([]string, 0, len(modes)*2)
-	args := make([]any, 0, len(modes)*2)
-	for _, mode := range modes {
-		clauses = append(clauses, column+" LIKE ?", column+" LIKE ?")
-		args = append(args,
-			`%"image_task_mode":"`+mode+`"%`,
-			`%"image_task_mode": "`+mode+`"%`,
-		)
-	}
+	modeWhere, modeArgs := removedImageTaskBridgeModeWhere()
 	unavailable := "(COALESCE(result_cleaned_at, 0) > 0 OR " + imageTaskStoredResultIsTrueExpr() + " OR " +
 		column + ` LIKE '%"result_body_path":"%' OR ` +
 		dataLength + " IS NULL OR " + dataLength + " = 0)"
@@ -2308,7 +2308,7 @@ func GetRemovedImageTaskBridgeUnsettledSuccesses(afterTaskPrimaryID int64, limit
 		Where("platform = ? AND status = ? AND settlement_status IN ? AND id > ?",
 			constant.TaskPlatformImage, TaskStatusSuccess,
 			[]string{TaskSettlementStatusPending, TaskSettlementStatusReview}, afterTaskPrimaryID).
-		Where("("+strings.Join(clauses, " OR ")+")", args...).
+		Where(modeWhere, modeArgs...).
 		Where(column + ` NOT LIKE '%"settlement_evidence_captured_at":%'`).
 		Where(unavailable).
 		Order("id ASC").Limit(limit).Find(&tasks).Error
@@ -2323,22 +2323,12 @@ func GetRemovedImageTaskBridgeParkedSuccessReviews(afterTaskPrimaryID int64, lim
 	if limit <= 0 {
 		limit = 100
 	}
-	column := imageTaskPrivateDataTextColumn()
-	modes := []string{dto.ImageTaskModeAsyncTaskBridge, "gpt_image2api_async"}
-	clauses := make([]string, 0, len(modes)*2)
-	args := make([]any, 0, len(modes)*2)
-	for _, mode := range modes {
-		clauses = append(clauses, column+" LIKE ?", column+" LIKE ?")
-		args = append(args,
-			`%"image_task_mode":"`+mode+`"%`,
-			`%"image_task_mode": "`+mode+`"%`,
-		)
-	}
+	modeWhere, modeArgs := removedImageTaskBridgeModeWhere()
 	var tasks []*Task
 	err := DB.
 		Where("platform = ? AND status = ? AND settlement_status = ? AND COALESCE(next_poll_at, 0) = 0 AND id > ?",
 			constant.TaskPlatformImage, TaskStatusSuccess, TaskSettlementStatusReview, afterTaskPrimaryID).
-		Where("("+strings.Join(clauses, " OR ")+")", args...).
+		Where(modeWhere, modeArgs...).
 		Order("id ASC").Limit(limit).Find(&tasks).Error
 	return tasks, err
 }
