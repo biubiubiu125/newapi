@@ -369,11 +369,13 @@ func (a legacyTaskAdaptorBridge) ParseTaskResult(_ *model.Task, _ *http.Response
 	return a.inner.ParseTaskResult(respBody)
 }
 
-// GetLegacyTaskPollingAdaptor returns the built-in provider adaptor for the
-// service polling loop. That loop still sends a map body, including Suno
-// batch ids. Plugin platforms stay on the plugin polling factory.
+// GetLegacyTaskPollingAdaptor returns the built-in provider adaptor for tasks
+// that never recorded a plugin execution snapshot. A loaded JS plugin must not
+// hide that adaptor, or an in-flight Kling/Jimeng/Sora/Suno task stops being
+// polled and is refunded after repeated empty polls. Snapshot tasks use the
+// plugin factory and do not come through here.
 func GetLegacyTaskPollingAdaptor(platform constant.TaskPlatform) service.TaskPollingAdaptor {
-	adaptor := GetTaskAdaptor(platform)
+	adaptor := legacyTaskAdaptor(platform)
 	bridge, ok := adaptor.(legacyTaskAdaptorBridge)
 	if !ok || bridge.inner == nil {
 		return nil

@@ -153,13 +153,13 @@ func RunImageTasks(ctx context.Context, tasks []*model.Task) error {
 		if mode == "" {
 			mode = dto.ImageTaskModeSyncWrapper
 		}
-		if imageTaskIsDone(task) && !imageTaskNeedsSettlement(task) {
-			continue
-		}
 		if isRemovedImageTaskBridgeMode(mode) {
 			if err := retireRemovedImageTaskBridgeTask(ctx, task); err != nil {
 				logger.LogError(ctx, fmt.Sprintf("image task %s removed bridge retirement failed: %s", task.TaskID, err.Error()))
 			}
+			continue
+		}
+		if imageTaskIsDone(task) && !imageTaskNeedsSettlement(task) {
 			continue
 		}
 		if imageTaskShouldFailUnstarted(task) {
@@ -193,29 +193,41 @@ func isRemovedImageTaskBridgeMode(mode string) bool {
 	return mode == dto.ImageTaskModeAsyncTaskBridge || mode == "gpt_image2api_async"
 }
 
-func retireRemovedImageTaskBridgeTask(ctx context.Context, task *model.Task) error {
-	if imageTaskNeedsSettlement(task) {
+func init() {
+	service.FinalizeRemovedImageTaskBridgeAppliedSettlement = func(ctx context.Context, task *model.Task) error {
 		return settleImageTaskSuccess(ctx, task, imageTaskSettlementPayload{})
 	}
-	if removedImageTaskBridgeNeedsReview(task) {
-		return markImageTaskExecutionReview(ctx, task, task.Status, "async task bridge mode has been removed")
-	}
-	return failImageTask(ctx, task, task.Status, "async task bridge mode has been removed", true, true)
 }
 
-func removedImageTaskBridgeNeedsReview(task *model.Task) bool {
-	if task == nil {
-		return false
+func retireRemovedImageTaskBridgeTask(ctx context.Context, task *model.Task) error {
+	if task != nil && task.Status == model.TaskStatusSuccess {
+		blocks, err := service.RemovedImageTaskBridgeSettlementBlocksRefund(task)
+		if err != nil {
+			return err
+		}
+		if blocks {
+			return settleImageTaskSuccess(ctx, task, imageTaskSettlementPayload{})
+		}
 	}
-	if strings.TrimSpace(task.PrivateData.UpstreamTaskID) != "" {
-		return true
+	if service.RemovedImageTaskBridgeSuccessResultUnavailable(task) {
+		return service.ReleaseRemovedImageTaskBridgeUnsettledSuccess(ctx, task)
 	}
-	switch task.Status {
-	case model.TaskStatusSubmitted, model.TaskStatusInProgress:
-		return true
-	default:
-		return false
+	if service.RemovedImageTaskBridgeSuccessCanSettleLocally(task) || imageTaskNeedsSettlement(task) {
+		return settleImageTaskSuccess(ctx, task, imageTaskSettlementPayload{})
 	}
+	if task != nil && task.Status == model.TaskStatusSuccess {
+		return nil
+	}
+	if task != nil && task.Status == model.TaskStatusFailure {
+		return service.ReleaseRemovedImageTaskBridgeHold(ctx, task)
+	}
+	if service.RemovedImageTaskBridgeMustHoldPrecharge(task) {
+		if task.PrivateData.UpstreamSubmitUncertainAt <= 0 {
+			task.PrivateData.UpstreamSubmitUncertainAt = time.Now().Unix()
+		}
+		return markImageTaskExecutionReview(ctx, task, task.Status, service.RemovedImageTaskBridgeFailReason)
+	}
+	return failImageTask(ctx, task, task.Status, service.RemovedImageTaskBridgeFailReason, true, true)
 }
 
 func imageTaskNeedsSettlement(task *model.Task) bool {
@@ -785,6 +797,23 @@ func markImageTaskStorageNodePortableAfterSubmission(task *model.Task) {
 	task.StorageNode = model.ImageTaskPortableStorageNode
 }
 
+func imageTaskAppliedConsumptionRecord(task *model.Task) (bool, error) {
+	if task == nil || task.ID <= 0 {
+		return false, nil
+	}
+	record, exists, err := model.GetTaskSettlementRecord(task.ID)
+	if err != nil || !exists || record == nil {
+		return false, err
+	}
+	if record.Status != model.TaskSettlementRecordStatusApplied || record.AppliedQuota == nil {
+		return false, nil
+	}
+	if record.Operation != "" && record.Operation != "image_consumption" {
+		return false, nil
+	}
+	return true, nil
+}
+
 func clearImageTaskUpstreamSubmissionUncertainty(task *model.Task) {
 	if task == nil {
 		return
@@ -801,11 +830,17 @@ func settleImageTaskSuccess(ctx context.Context, task *model.Task, payload image
 		return nil
 	}
 	if task.SettlementStatus == model.TaskSettlementStatusReview {
-		if !model.ImageTaskSettlementReviewIsRetryable(task) {
-			return nil
-		}
-		if err := retryImageTaskSettlementReview(ctx, task); err != nil {
+		applied, err := imageTaskAppliedConsumptionRecord(task)
+		if err != nil {
 			return err
+		}
+		if !applied {
+			if !model.ImageTaskSettlementReviewIsRetryable(task) && !service.RemovedImageTaskBridgeSuccessCanSettleLocally(task) {
+				return nil
+			}
+			if err := retryImageTaskSettlementReview(ctx, task); err != nil {
+				return err
+			}
 		}
 	}
 	if task.SettlementStatus == model.TaskSettlementStatusApplied {
@@ -984,7 +1019,7 @@ func finalizeAppliedImageTaskSettlement(ctx context.Context, task *model.Task, d
 	if task.SettlementStatus == model.TaskSettlementStatusSettled {
 		return nil
 	}
-	if task.SettlementStatus == model.TaskSettlementStatusPending {
+	if task.SettlementStatus == model.TaskSettlementStatusPending || task.SettlementStatus == model.TaskSettlementStatusReview {
 		if err := markImageTaskSettlementApplied(ctx, task); err != nil {
 			markImageTaskTransientRetry(task)
 			return err
@@ -1041,13 +1076,17 @@ func markImageTaskSettlementApplied(ctx context.Context, task *model.Task) error
 	if task == nil {
 		return nil
 	}
+	fromSettlementStatus := task.SettlementStatus
+	if fromSettlementStatus != model.TaskSettlementStatusPending && fromSettlementStatus != model.TaskSettlementStatusReview {
+		fromSettlementStatus = model.TaskSettlementStatusPending
+	}
 	task.SettlementStatus = model.TaskSettlementStatusApplied
 	task.NextPollAt = 0
 	task.RetryCount = 0
 	var won bool
 	var err error
 	for attempt := 0; attempt < 3; attempt++ {
-		won, err = task.UpdateSettlementStatus(model.TaskStatusSuccess, model.TaskSettlementStatusPending)
+		won, err = task.UpdateSettlementStatus(model.TaskStatusSuccess, fromSettlementStatus)
 		if err == nil {
 			break
 		}
@@ -1116,7 +1155,9 @@ func imageTaskSettlementReviewShouldPark(task *model.Task, reason string) bool {
 	}
 	reason = strings.ToLower(strings.TrimSpace(reason))
 	return strings.Contains(reason, "result is empty") ||
-		strings.Contains(reason, "expired before settlement")
+		strings.Contains(reason, "expired before settlement") ||
+		strings.Contains(reason, "checksum mismatch") ||
+		strings.Contains(reason, "size mismatch")
 }
 
 func imageTaskSettlementReviewNextPollAt(task *model.Task, reason string) int64 {

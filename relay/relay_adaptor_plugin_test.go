@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"testing"
 
 	"github.com/QuantumNous/new-api/constant"
@@ -44,6 +45,19 @@ func TestGetTaskAdaptorForRequestUsesPinnedPlugin(t *testing.T) {
 	assert.Equal(t, constant.TaskPlatform("google"), platform)
 	_, ok = adaptor.(channel.TaskPluginAdaptor)
 	assert.True(t, ok)
+}
+
+func TestGetLegacyTaskPollingAdaptorIgnoresLoadedPlugin(t *testing.T) {
+	klingPlatform := constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeKling))
+	pluginAdaptor := GetTaskAdaptor(klingPlatform)
+	require.NotNil(t, pluginAdaptor)
+	_, isLegacy := pluginAdaptor.(legacyTaskAdaptorBridge)
+	require.False(t, isLegacy, "loaded kling plugin must own new submits")
+
+	require.NotNil(t, GetLegacyTaskPollingAdaptor(klingPlatform))
+	require.NotNil(t, GetLegacyTaskPollingAdaptor(constant.TaskPlatform(strconv.Itoa(constant.ChannelTypeJimeng))))
+	require.NotNil(t, GetLegacyTaskPollingAdaptor(constant.TaskPlatformSuno))
+	require.Nil(t, GetLegacyTaskPollingAdaptor(constant.TaskPlatform("not-a-legacy-platform")))
 }
 
 func TestLegacyTaskAdaptorStillAvailable(t *testing.T) {

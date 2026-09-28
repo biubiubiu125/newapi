@@ -1084,7 +1084,7 @@ func runnableImageTaskRetryableReviewDueWhere() string {
 func imageTaskRetryableReviewPayloadWhere() string {
 	privateText := imageTaskPrivateDataTextColumn()
 	return "(" +
-		"COALESCE(image_task_result_stored, 0) != 0 OR " +
+		imageTaskStoredResultIsTrueExpr() + " OR " +
 		"(COALESCE(result_cleaned_at, 0) = 0 AND data IS NOT NULL AND LENGTH(CAST(data AS TEXT)) > 0) OR " +
 		privateText + ` LIKE '%"settlement_evidence_captured_at":%' OR ` +
 		privateText + ` LIKE '%"result_body_path":"%' OR ` +
@@ -1234,6 +1234,7 @@ ORDER BY channel_id ASC, id ASC`,
 		args...,
 	).Scan(&rows).Error
 	if err != nil {
+		common.SysError(fmt.Sprintf("runnable image task query failed (tasks): %v", err))
 		return nil, false
 	}
 	if len(rows) == 0 {
@@ -1244,7 +1245,10 @@ ORDER BY channel_id ASC, id ASC`,
 	for _, row := range rows {
 		ids = append(ids, row.ID)
 	}
-	loaded := getTasksByIDsPreserveOrder(ids)
+	loaded, loadedOK := getTasksByIDsPreserveOrder(ids)
+	if !loadedOK {
+		return nil, false
+	}
 	if len(loaded) == 0 {
 		return nil, true
 	}
@@ -1309,6 +1313,7 @@ ORDER BY CASE WHEN channel_id > ? THEN 0 ELSE 1 END, channel_id ASC
 LIMIT ?`,
 		args...,
 	).Scan(&channels).Error; err != nil {
+		common.SysError(fmt.Sprintf("runnable image task query failed (channels): %v", err))
 		return nil
 	}
 	return channels
@@ -1345,10 +1350,18 @@ ORDER BY id ASC
 LIMIT ?`,
 		args...,
 	).Scan(&ids).Error
-	if err != nil || len(ids) == 0 {
+	if err != nil {
+		common.SysError(fmt.Sprintf("runnable image task query failed (channel): %v", err))
 		return nil
 	}
-	return filterDispatchableImageTasks(getTasksByIDsPreserveOrder(ids))
+	if len(ids) == 0 {
+		return nil
+	}
+	loaded, loadedOK := getTasksByIDsPreserveOrder(ids)
+	if !loadedOK {
+		return nil
+	}
+	return filterDispatchableImageTasks(loaded)
 }
 
 func imageTaskShouldDispatch(task *Task) bool {
@@ -1374,13 +1387,14 @@ func filterDispatchableImageTasks(tasks []*Task) []*Task {
 	return filtered
 }
 
-func getTasksByIDsPreserveOrder(ids []int64) []*Task {
+func getTasksByIDsPreserveOrder(ids []int64) ([]*Task, bool) {
 	if len(ids) == 0 {
-		return nil
+		return nil, true
 	}
 	var loaded []*Task
 	if err := DB.Where("id IN ?", ids).Find(&loaded).Error; err != nil {
-		return nil
+		common.SysError(fmt.Sprintf("runnable image task query failed (load): %v", err))
+		return nil, false
 	}
 	byID := make(map[int64]*Task, len(loaded))
 	for _, task := range loaded {
@@ -1394,7 +1408,7 @@ func getTasksByIDsPreserveOrder(ids []int64) []*Task {
 			tasks = append(tasks, task)
 		}
 	}
-	return tasks
+	return tasks, true
 }
 
 func advanceImageTaskFairChannelCursorFromTasks(tasks []*Task) {
@@ -1420,6 +1434,9 @@ func getImageTaskFairChannelCursor() int64 {
 	if err := DB.Select("value").
 		Where(taskDispatchStateKeyEq(imageTaskFairChannelCursorKey)).
 		First(&state).Error; err != nil {
+		if !errors.Is(err, gorm.ErrRecordNotFound) {
+			common.SysError(fmt.Sprintf("runnable image task query failed (cursor): %v", err))
+		}
 		return 0
 	}
 	return state.Value
@@ -1872,6 +1889,18 @@ func applyImageTaskPrivateDataCandidateFilter(query *gorm.DB, names []string) *g
 	return query.Where("("+strings.Join(clauses, " OR ")+")", args...)
 }
 
+// imageTaskStoredResultIsTrueExpr matches a real stored-result flag.
+// PostgreSQL migrates the bool column as boolean, so COALESCE(column, 0)
+// aborts the whole runnable UNION and the image worker sees no tasks.
+func imageTaskStoredResultIsTrueExpr() string {
+	switch common.MainDatabaseType() {
+	case common.DatabaseTypePostgreSQL:
+		return "image_task_result_stored IS TRUE"
+	default:
+		return "COALESCE(image_task_result_stored, 0) != 0"
+	}
+}
+
 func imageTaskPrivateDataTextColumn() string {
 	column := "CAST(private_data AS TEXT)"
 	switch common.MainDatabaseType() {
@@ -2146,6 +2175,207 @@ func GetPublicImageTasksByTaskIDs(userID int, tokenID int, taskIDs []any) ([]*Ta
 		return nil, err
 	}
 	return tasks, nil
+}
+
+// MarkRemovedImageTaskBridgeRefundable clears a removed-bridge review hold and
+// records a durable refund intent in the same write. A crash after this commit
+// is recovered by the pending image-task refund sweep.
+func (t *Task) MarkRemovedImageTaskBridgeRefundable() (bool, error) {
+	if t == nil || t.ID <= 0 {
+		return false, nil
+	}
+	refundPending := t.Quota != 0 || t.RefundPending
+	updatedAt := common.GetTimestamp()
+	result := DB.Model(&Task{}).
+		Where("id = ? AND status = ? AND settlement_status = ?", t.ID, TaskStatusFailure, TaskSettlementStatusReview).
+		Updates(map[string]any{
+			"settlement_status": "",
+			"refund_pending":    refundPending,
+			"updated_at":        updatedAt,
+		})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return false, nil
+	}
+	t.SettlementStatus = ""
+	t.RefundPending = refundPending
+	t.UpdatedAt = updatedAt
+	return true, nil
+}
+
+// GetRemovedImageTaskBridgeRefundHolds returns failed image tasks parked in
+// review because the async bridge executor was removed. The executor cannot
+// resume them, so the precharge has to be released.
+func GetRemovedImageTaskBridgeRefundHolds(afterTaskPrimaryID int64, limit int) ([]*Task, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	column := imageTaskPrivateDataTextColumn()
+	modes := []string{dto.ImageTaskModeAsyncTaskBridge, "gpt_image2api_async"}
+	clauses := make([]string, 0, len(modes)*2)
+	args := make([]any, 0, len(modes)*2)
+	for _, mode := range modes {
+		clauses = append(clauses, column+" LIKE ?", column+" LIKE ?")
+		args = append(args,
+			`%"image_task_mode":"`+mode+`"%`,
+			`%"image_task_mode": "`+mode+`"%`,
+		)
+	}
+	var tasks []*Task
+	err := DB.Omit("data").
+		Where("platform = ? AND status = ? AND settlement_status = ? AND id > ?",
+			constant.TaskPlatformImage, TaskStatusFailure, TaskSettlementStatusReview, afterTaskPrimaryID).
+		Where("("+strings.Join(clauses, " OR ")+")", args...).
+		Order("id ASC").Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+// MarkRemovedImageTaskBridgeSuccessRefundable turns a removed-bridge success
+// that can no longer settle into a failed refund. The settlement status is
+// cleared in the same write so a public refund is not rejected as a review hold.
+func (t *Task) MarkRemovedImageTaskBridgeSuccessRefundable(reason string) (bool, error) {
+	if t == nil || t.ID <= 0 || t.Status != TaskStatusSuccess {
+		return false, nil
+	}
+	if t.SettlementStatus != TaskSettlementStatusPending && t.SettlementStatus != TaskSettlementStatusReview {
+		return false, nil
+	}
+	reason = strings.TrimSpace(reason)
+	if reason == "" {
+		reason = "async task bridge mode has been removed"
+	}
+	now := common.GetTimestamp()
+	finishTime := t.FinishTime
+	if finishTime <= 0 {
+		finishTime = now
+	}
+	refundPending := t.Quota != 0 || t.RefundPending
+	result := DB.Model(&Task{}).
+		Where("id = ? AND status = ? AND settlement_status = ?", t.ID, TaskStatusSuccess, t.SettlementStatus).
+		Updates(map[string]any{
+			"status":            TaskStatusFailure,
+			"progress":          "100%",
+			"fail_reason":       reason,
+			"finish_time":       finishTime,
+			"settlement_status": "",
+			"refund_pending":    refundPending,
+			"next_poll_at":      0,
+			"updated_at":        now,
+		})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return false, nil
+	}
+	t.Status = TaskStatusFailure
+	t.Progress = "100%"
+	t.FailReason = reason
+	t.FinishTime = finishTime
+	t.SettlementStatus = ""
+	t.RefundPending = refundPending
+	t.NextPollAt = 0
+	t.UpdatedAt = now
+	return true, nil
+}
+
+// GetRemovedImageTaskBridgeUnsettledSuccesses returns removed-bridge successes
+// that are still pending or parked in review and have no inline result body.
+// Rows with a result file are included so the caller can confirm the file is gone.
+func GetRemovedImageTaskBridgeUnsettledSuccesses(afterTaskPrimaryID int64, limit int) ([]*Task, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	column := imageTaskPrivateDataTextColumn()
+	dataLength := imageTaskDataTextLengthExpr()
+	modes := []string{dto.ImageTaskModeAsyncTaskBridge, "gpt_image2api_async"}
+	clauses := make([]string, 0, len(modes)*2)
+	args := make([]any, 0, len(modes)*2)
+	for _, mode := range modes {
+		clauses = append(clauses, column+" LIKE ?", column+" LIKE ?")
+		args = append(args,
+			`%"image_task_mode":"`+mode+`"%`,
+			`%"image_task_mode": "`+mode+`"%`,
+		)
+	}
+	unavailable := "(COALESCE(result_cleaned_at, 0) > 0 OR " + imageTaskStoredResultIsTrueExpr() + " OR " +
+		column + ` LIKE '%"result_body_path":"%' OR ` +
+		dataLength + " IS NULL OR " + dataLength + " = 0)"
+	var tasks []*Task
+	err := DB.
+		Where("platform = ? AND status = ? AND settlement_status IN ? AND id > ?",
+			constant.TaskPlatformImage, TaskStatusSuccess,
+			[]string{TaskSettlementStatusPending, TaskSettlementStatusReview}, afterTaskPrimaryID).
+		Where("("+strings.Join(clauses, " OR ")+")", args...).
+		Where(column + ` NOT LIKE '%"settlement_evidence_captured_at":%'`).
+		Where(unavailable).
+		Order("id ASC").Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+// GetRemovedImageTaskBridgeParkedSuccessReviews returns removed-bridge successes
+// left in review with no retry window. The caller decides whether this node can
+// still settle them. The prefilter stays free of boolean/integer casts so
+// PostgreSQL can execute it.
+func GetRemovedImageTaskBridgeParkedSuccessReviews(afterTaskPrimaryID int64, limit int) ([]*Task, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	column := imageTaskPrivateDataTextColumn()
+	modes := []string{dto.ImageTaskModeAsyncTaskBridge, "gpt_image2api_async"}
+	clauses := make([]string, 0, len(modes)*2)
+	args := make([]any, 0, len(modes)*2)
+	for _, mode := range modes {
+		clauses = append(clauses, column+" LIKE ?", column+" LIKE ?")
+		args = append(args,
+			`%"image_task_mode":"`+mode+`"%`,
+			`%"image_task_mode": "`+mode+`"%`,
+		)
+	}
+	var tasks []*Task
+	err := DB.
+		Where("platform = ? AND status = ? AND settlement_status = ? AND COALESCE(next_poll_at, 0) = 0 AND id > ?",
+			constant.TaskPlatformImage, TaskStatusSuccess, TaskSettlementStatusReview, afterTaskPrimaryID).
+		Where("("+strings.Join(clauses, " OR ")+")", args...).
+		Order("id ASC").Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
+// ScheduleRemovedImageTaskBridgeSettlement reopens one parked success review so
+// the normal image worker can settle it. It does not change quota or status.
+func (t *Task) ScheduleRemovedImageTaskBridgeSettlement(now int64) (bool, error) {
+	if t == nil || t.ID <= 0 || now <= 0 {
+		return false, nil
+	}
+	result := DB.Model(&Task{}).
+		Where("id = ? AND status = ? AND settlement_status = ? AND COALESCE(next_poll_at, 0) = 0",
+			t.ID, TaskStatusSuccess, TaskSettlementStatusReview).
+		Updates(map[string]any{
+			"next_poll_at": now,
+			"updated_at":   now,
+		})
+	if result.Error != nil {
+		return false, result.Error
+	}
+	if result.RowsAffected == 0 {
+		return false, nil
+	}
+	t.NextPollAt = now
+	t.UpdatedAt = now
+	return true, nil
+}
+
+func imageTaskDataTextLengthExpr() string {
+	switch common.MainDatabaseType() {
+	case common.DatabaseTypeMySQL:
+		return "LENGTH(CAST(data AS CHAR))"
+	case common.DatabaseTypePostgreSQL:
+		return "LENGTH(data::text)"
+	default:
+		return "LENGTH(CAST(data AS TEXT))"
+	}
 }
 
 func GetPendingImageTaskRefundsAfter(afterTaskPrimaryID int64, limit int) ([]*Task, error) {

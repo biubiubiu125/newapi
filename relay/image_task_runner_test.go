@@ -1258,38 +1258,154 @@ func TestRunImageTasksRetiresRemovedBridgeTasksWithoutUpstreamCall(t *testing.T)
 			TokenId:       1,
 		},
 	}
+	missingResult := &model.Task{
+		TaskID:           "task_removed_bridge_missing_result",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Quota:            preConsumed,
+		Action:           constant.TaskActionImageGeneration,
+		Status:           model.TaskStatusSuccess,
+		Progress:         "100%",
+		SubmitTime:       now,
+		FinishTime:       now,
+		SettlementStatus: model.TaskSettlementStatusPending,
+		Properties:       model.Properties{OriginModelName: "gpt-image-1"},
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode: dto.ImageTaskModeAsyncTaskBridge,
+			TokenId:       1,
+			BillingSource: service.BillingSourceWallet,
+		},
+	}
 	require.NoError(t, db.Create(queued).Error)
 	require.NoError(t, db.Create(submitted).Error)
 	require.NoError(t, db.Create(inProgress).Error)
 	require.NoError(t, db.Create(applied).Error)
+	require.NoError(t, db.Create(missingResult).Error)
 
-	require.NoError(t, RunImageTasks(context.Background(), []*model.Task{queued, submitted, inProgress, applied}))
+	require.NoError(t, RunImageTasks(context.Background(), []*model.Task{queued, submitted, inProgress, applied, missingResult}))
 	require.Zero(t, calls.Load())
 
-	var failed, review, running, settled model.Task
+	var failed, review, running, settled, missing model.Task
 	require.NoError(t, db.First(&failed, queued.ID).Error)
 	require.NoError(t, db.First(&review, submitted.ID).Error)
 	require.NoError(t, db.First(&running, inProgress.ID).Error)
 	require.NoError(t, db.First(&settled, applied.ID).Error)
+	require.NoError(t, db.First(&missing, missingResult.ID).Error)
 
 	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), failed.Status)
-	require.Equal(t, "async task bridge mode has been removed", failed.FailReason)
+	require.Equal(t, service.RemovedImageTaskBridgeFailReason, failed.FailReason)
 	require.NotEqual(t, model.TaskSettlementStatusReview, failed.SettlementStatus)
+	require.False(t, failed.RefundPending)
+	require.Zero(t, failed.Quota)
 	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), review.Status)
 	require.Equal(t, model.TaskSettlementStatusReview, review.SettlementStatus)
-	require.Equal(t, "async task bridge mode has been removed", review.FailReason)
+	require.Equal(t, service.RemovedImageTaskBridgeFailReason, review.FailReason)
 	require.False(t, review.RefundPending)
 	require.EqualValues(t, preConsumed, review.Quota)
-	require.Empty(t, review.PrivateData.UpstreamTaskID)
+	require.NotZero(t, review.PrivateData.UpstreamSubmitUncertainAt)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), running.Status)
 	require.Equal(t, model.TaskSettlementStatusReview, running.SettlementStatus)
 	require.False(t, running.RefundPending)
 	require.EqualValues(t, preConsumed, running.Quota)
 	require.Equal(t, "upstream_still_running", running.PrivateData.UpstreamTaskID)
 	require.Equal(t, model.TaskSettlementStatusSettled, settled.SettlementStatus)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), missing.Status)
+	require.Equal(t, service.RemovedImageTaskBridgeFailReason, missing.FailReason)
+	require.NotEqual(t, model.TaskSettlementStatusReview, missing.SettlementStatus)
+	require.False(t, missing.RefundPending)
+	require.Zero(t, missing.Quota)
 
 	var user model.User
 	require.NoError(t, db.First(&user, 1).Error)
-	require.EqualValues(t, userQuota+int64(preConsumed), user.Quota)
+	require.EqualValues(t, userQuota+int64(preConsumed)*2, user.Quota)
+}
+
+func TestRunImageTasksFinalizesRemovedBridgeAppliedConsumptionWithoutResult(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.TaskSettlementRecord{}, &model.User{}, &model.Token{}, &model.Channel{}))
+
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldUsingSQLite := common.UsingSQLite
+	oldNode := common.NodeName
+	model.DB = db
+	model.LOG_DB = db
+	common.UsingSQLite = true
+	common.NodeName = "node-a"
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.UsingSQLite = oldUsingSQLite
+		common.NodeName = oldNode
+		_ = sqlDB.Close()
+	})
+
+	require.NoError(t, db.Create(&model.User{
+		Id: 1, Username: "bridge-applied-user", Password: "password123",
+		Status: common.UserStatusEnabled, Group: "default", Quota: 10000,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id: 1, UserId: 1, Key: "sk-bridge-applied", Name: "bridge-applied",
+		Status: common.TokenStatusEnabled, RemainQuota: 10000,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1, Type: constant.ChannelTypeOpenAI, Key: "upstream-key",
+		Status: common.ChannelStatusEnabled, Name: "bridge-applied", Group: "default", Models: "gpt-image-1",
+	}).Error)
+
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_removed_bridge_applied_record",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Quota:            250,
+		Action:           constant.TaskActionImageGeneration,
+		Status:           model.TaskStatusSuccess,
+		Progress:         "100%",
+		SubmitTime:       now,
+		FinishTime:       now,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		Properties:       model.Properties{OriginModelName: "gpt-image-1"},
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode:  dto.ImageTaskModeAsyncTaskBridge,
+			TokenId:        1,
+			BillingSource:  service.BillingSourceWallet,
+			NodeName:       common.NodeName,
+			ResultBodyPath: filepath.Join(t.TempDir(), "applied-missing.json"),
+		},
+		ImageTaskResultStored: true,
+		Data:                  json.RawMessage(`{"_newapi_result_file":true}`),
+	}
+	require.NoError(t, db.Create(task).Error)
+	appliedQuota := 80
+	require.NoError(t, db.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplied,
+		Operation:     "image_consumption",
+		AppliedQuota:  &appliedQuota,
+		AppliedAt:     now,
+	}).Error)
+
+	require.NoError(t, RunImageTasks(context.Background(), []*model.Task{task}))
+
+	var reloaded model.Task
+	require.NoError(t, db.First(&reloaded, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, model.TaskSettlementStatusSettled, reloaded.SettlementStatus)
+	require.Equal(t, appliedQuota, reloaded.Quota)
+	require.False(t, reloaded.RefundPending)
+	var user model.User
+	require.NoError(t, db.First(&user, 1).Error)
+	require.EqualValues(t, 10000, user.Quota)
 }
 
 func TestRunSyncWrapperImageTaskDoesNotPreConsumeFixedPriceAgain(t *testing.T) {
@@ -2504,6 +2620,71 @@ func TestSettleImageTaskSuccessMarksReviewForMissingStoredResultBeforeCreatingSe
 	require.Zero(t, recordCount)
 }
 
+func TestSettleImageTaskSuccessParksChecksumMismatchWithoutRetry(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.TaskSettlementRecord{}))
+
+	oldDB := model.DB
+	oldNode := common.NodeName
+	model.DB = db
+	common.NodeName = "node-a"
+	t.Cleanup(func() {
+		model.DB = oldDB
+		common.NodeName = oldNode
+		_ = sqlDB.Close()
+	})
+
+	body := []byte(`{"data":[{"b64_json":"mismatch"}]}`)
+	resultPath := filepath.Join(t.TempDir(), "checksum-mismatch.json")
+	require.NoError(t, os.WriteFile(resultPath, body, 0o600))
+	now := time.Now().Unix()
+	task := &model.Task{
+		TaskID:           "task_checksum_mismatch_park",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Quota:            200,
+		Status:           model.TaskStatusSuccess,
+		Progress:         "100%",
+		SubmitTime:       now,
+		FinishTime:       now,
+		SettlementStatus: model.TaskSettlementStatusPending,
+		Data:             json.RawMessage(`{"_newapi_result_file":true}`),
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode:    dto.ImageTaskModeAsyncTaskBridge,
+			NodeName:         common.NodeName,
+			ResultBodyPath:   resultPath,
+			ResultBodySize:   int64(len(body)),
+			ResultBodySHA256: "deadbeef",
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	require.Error(t, settleImageTaskSuccess(context.Background(), task, imageTaskSettlementPayload{}))
+
+	var reloaded model.Task
+	require.NoError(t, db.First(&reloaded, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+	require.Contains(t, reloaded.FailReason, "checksum mismatch")
+	require.Zero(t, reloaded.NextPollAt)
+	require.EqualValues(t, 200, reloaded.Quota)
+
+	reloaded.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	reloaded.PrivateData.NodeName = common.NodeName
+	require.NoError(t, settleImageTaskSuccess(context.Background(), &reloaded, imageTaskSettlementPayload{}))
+	var parked model.Task
+	require.NoError(t, db.First(&parked, task.ID).Error)
+	require.Equal(t, model.TaskSettlementStatusReview, parked.SettlementStatus)
+	require.Zero(t, parked.NextPollAt)
+	require.EqualValues(t, 200, parked.Quota)
+}
+
 func TestSettleImageTaskSuccessUsesCapturedEvidenceAfterResultCleanup(t *testing.T) {
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
 	require.NoError(t, err)
@@ -3058,6 +3239,110 @@ func TestRunImageTasksDoesNotRetryExpiredSettlementReview(t *testing.T) {
 	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
 	require.Equal(t, expiredReason, reloaded.FailReason)
 	require.Zero(t, reloaded.NextPollAt)
+}
+
+func TestRunImageTasksSettlesRemovedBridgeWhenCleanupMarkedResultButFileRemains(t *testing.T) {
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&model.Task{},
+		&model.TaskSettlementRecord{},
+		&model.User{},
+		&model.Channel{},
+		&model.Log{},
+		&model.TokenUsageDaily{},
+	))
+
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldUsingSQLite := common.UsingSQLite
+	oldNode := common.NodeName
+	oldRedisEnabled := common.RedisEnabled
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	oldBatchUpdateEnabled := common.BatchUpdateEnabled
+	oldLogConsumeEnabled := common.LogConsumeEnabled
+	model.DB = db
+	model.LOG_DB = db
+	common.UsingSQLite = true
+	common.NodeName = "node-a"
+	common.RedisEnabled = false
+	common.MemoryCacheEnabled = false
+	common.BatchUpdateEnabled = false
+	common.LogConsumeEnabled = false
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.UsingSQLite = oldUsingSQLite
+		common.NodeName = oldNode
+		common.RedisEnabled = oldRedisEnabled
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+		common.BatchUpdateEnabled = oldBatchUpdateEnabled
+		common.LogConsumeEnabled = oldLogConsumeEnabled
+		_ = sqlDB.Close()
+	})
+
+	require.NoError(t, db.Create(&model.User{
+		Id: 1, Username: "bridge-cleaned-file-user", Password: "password123",
+		Status: common.UserStatusEnabled, Group: "default", Quota: 0,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 1, Type: constant.ChannelTypeOpenAI, Key: "upstream-key",
+		Status: common.ChannelStatusEnabled, Name: "bridge-cleaned-file", Group: "default", Models: "gpt-image-1",
+	}).Error)
+
+	now := time.Now().Unix()
+	body := []byte(`{"data":[{"b64_json":"still-billable"}]}`)
+	resultPath := filepath.Join(t.TempDir(), "cleaned-still-there.json")
+	require.NoError(t, os.WriteFile(resultPath, body, 0o600))
+	task := &model.Task{
+		TaskID:           "task_bridge_cleaned_file_still_billable",
+		Platform:         constant.TaskPlatformImage,
+		UserId:           1,
+		Group:            "default",
+		ChannelId:        1,
+		Quota:            200,
+		Action:           constant.TaskActionImageGeneration,
+		Status:           model.TaskStatusSuccess,
+		Progress:         "100%",
+		SubmitTime:       now,
+		FinishTime:       now,
+		SettlementStatus: model.TaskSettlementStatusReview,
+		ResultCleanedAt:  now,
+		NextPollAt:       0,
+		Data:             json.RawMessage(`{"_newapi_result_file":true,"removed":true}`),
+		Properties:       model.Properties{OriginModelName: "gpt-image-1"},
+		PrivateData: model.TaskPrivateData{
+			ImageTaskMode:    dto.ImageTaskModeAsyncTaskBridge,
+			BillingSource:    service.BillingSourceWallet,
+			NodeName:         common.NodeName,
+			ResultBodyPath:   resultPath,
+			ResultBodySize:   int64(len(body)),
+			ResultBodySHA256: "",
+			BillingContext: &model.TaskBillingContext{
+				ModelPrice:      0.02,
+				ModelRatio:      1,
+				CompletionRatio: 1,
+				GroupRatio:      1,
+				OriginModelName: "gpt-image-1",
+				PerCallBilling:  true,
+			},
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+
+	require.NoError(t, RunImageTasks(context.Background(), []*model.Task{task}))
+
+	var reloaded model.Task
+	require.NoError(t, db.First(&reloaded, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, model.TaskSettlementStatusSettled, reloaded.SettlementStatus)
+	require.NotZero(t, reloaded.Quota)
+	var user model.User
+	require.NoError(t, db.First(&user, 1).Error)
+	require.Less(t, user.Quota, int64(200))
 }
 
 func TestRunImageTasksParksEmptySettlementReviewWithoutEvidence(t *testing.T) {

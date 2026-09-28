@@ -761,6 +761,18 @@ type batchPollingAdaptor struct {
 	results    map[string]*BatchTaskResult
 }
 
+type snapshotBatchPollingAdaptor struct {
+	batchPollingAdaptor
+}
+
+func (a *snapshotBatchPollingAdaptor) FetchTask(string, string, *model.Task, string) (*http.Response, error) {
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(bytes.NewReader([]byte("{}")))}, nil
+}
+
+func (a *snapshotBatchPollingAdaptor) ParseTaskResult(*model.Task, *http.Response, []byte) (*relaycommon.TaskInfo, error) {
+	return &relaycommon.TaskInfo{Status: model.TaskStatusInProgress}, nil
+}
+
 func (a *batchPollingAdaptor) FetchMode() string { return "batch" }
 
 func (a *batchPollingAdaptor) FetchBatchTasks(_, _ string, _ []*model.Task, _ string) (*http.Response, error) {
@@ -2216,7 +2228,7 @@ func TestOrphanedImageTaskFailureDoesNotRefundMarkedSyncSubmission(t *testing.T)
 	require.EqualValues(t, quota, token.UsedQuota)
 }
 
-func TestSweepOrphanedImageTasksReviewsRemovedBridgeWithoutRefund(t *testing.T) {
+func TestSweepOrphanedImageTasksRefundsRemovedBridge(t *testing.T) {
 	truncate(t)
 	resetImageTaskOrphanSweepThrottle(t)
 	oldOrphanSeconds := constant.ImageTaskOrphanFailSeconds
@@ -2256,6 +2268,7 @@ func TestSweepOrphanedImageTasksReviewsRemovedBridgeWithoutRefund(t *testing.T) 
 		require.True(t, exists)
 		require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
 		require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+		require.Equal(t, RemovedImageTaskBridgeFailReason, reloaded.FailReason)
 		require.False(t, reloaded.RefundPending)
 		require.EqualValues(t, quota, reloaded.Quota)
 		require.Empty(t, reloaded.PrivateData.UpstreamTaskID)
@@ -2263,10 +2276,880 @@ func TestSweepOrphanedImageTasksReviewsRemovedBridgeWithoutRefund(t *testing.T) 
 
 	var user model.User
 	require.NoError(t, model.DB.First(&user, userID).Error)
-	require.Zero(t, user.Quota, "a submitted removed-bridge task must stay in review instead of being refunded")
+	require.Zero(t, user.Quota)
 	var token model.Token
 	require.NoError(t, model.DB.First(&token, tokenID).Error)
 	require.Zero(t, token.RemainQuota)
+}
+
+func TestSweepOrphanedImageTasksRefundsQueuedRemovedBridge(t *testing.T) {
+	truncate(t)
+	resetImageTaskOrphanSweepThrottle(t)
+	oldOrphanSeconds := constant.ImageTaskOrphanFailSeconds
+	oldTimeout := constant.TaskTimeoutMinutes
+	constant.ImageTaskOrphanFailSeconds = 1800
+	constant.TaskTimeoutMinutes = 60
+	t.Cleanup(func() {
+		constant.ImageTaskOrphanFailSeconds = oldOrphanSeconds
+		constant.TaskTimeoutMinutes = oldTimeout
+	})
+
+	const userID, tokenID, channelID, quota = 4212, 4212, 4212, 900
+	seedOrphanSweepBilling(t, userID, tokenID, channelID, quota)
+	now := time.Now().Unix()
+	task := newOrphanImageTask("task_orphan_queued_removed_bridge", userID, tokenID, channelID, quota)
+	task.Status = model.TaskStatusQueued
+	task.SubmitTime = now - 7200
+	task.StartTime = 0
+	task.NextPollAt = now - 7200
+	task.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	require.NoError(t, model.DB.Create(task).Error)
+
+	sweepOrphanedImageTasks(context.Background(), 100)
+
+	reloaded, exists, err := model.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
+	require.NotEqual(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+	require.Zero(t, reloaded.Quota)
+	require.EqualValues(t, quota, getUserQuota(t, userID))
+}
+
+func TestSweepRemovedImageTaskBridgeHoldsRefundsParkedReview(t *testing.T) {
+	truncate(t)
+
+	const walletUserID, walletTokenID, walletChannelID = 4311, 4312, 4313
+	const publicUserID, publicTokenID, publicChannelID = 4321, 4322, 4323
+	const otherUserID, otherTokenID, otherChannelID = 4331, 4332, 4333
+	const preConsumed = 2500
+	seedOrphanSweepBilling(t, walletUserID, walletTokenID, walletChannelID, preConsumed)
+	require.NoError(t, model.DB.Create(&model.User{
+		Id: publicUserID, Username: "bridge_hold_public", Quota: 0, Status: common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Token{
+		Id: publicTokenID, UserId: publicUserID, Key: "sk-bridge-hold-public", Name: "bridge_hold_public",
+		Status: common.TokenStatusEnabled, RemainQuota: 0,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: publicChannelID, Type: constant.ChannelTypeOpenAI, Name: "bridge_hold_public",
+		Key: "sk-test", Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.User{
+		Id: otherUserID, Username: "bridge_hold_other", Quota: 0, Status: common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Token{
+		Id: otherTokenID, UserId: otherUserID, Key: "sk-bridge-hold-other", Name: "bridge_hold_other",
+		Status: common.TokenStatusEnabled, RemainQuota: 0,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: otherChannelID, Type: constant.ChannelTypeOpenAI, Name: "bridge_hold_other",
+		Key: "sk-test", Status: common.ChannelStatusEnabled,
+	}).Error)
+
+	wallet := makeTask(walletUserID, walletChannelID, preConsumed, walletTokenID, BillingSourceWallet, 0)
+	wallet.TaskID = "task_bridge_hold_wallet"
+	wallet.Platform = constant.TaskPlatformImage
+	wallet.Status = model.TaskStatusFailure
+	wallet.Progress = "100%"
+	wallet.FailReason = RemovedImageTaskBridgeFailReason
+	wallet.SettlementStatus = model.TaskSettlementStatusReview
+	wallet.RefundPending = false
+	wallet.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	require.NoError(t, model.DB.Create(wallet).Error)
+
+	publicTask := makeTask(publicUserID, publicChannelID, preConsumed, publicTokenID, BillingSourceWallet, 0)
+	publicTask.TaskID = "task_bridge_hold_public"
+	publicTask.Platform = constant.TaskPlatformImage
+	publicTask.Status = model.TaskStatusFailure
+	publicTask.Progress = "100%"
+	publicTask.FailReason = RemovedImageTaskBridgeFailReason
+	publicTask.SettlementStatus = model.TaskSettlementStatusReview
+	publicTask.RefundPending = false
+	publicTask.PrivateData.PublicImageTask = true
+	publicTask.PrivateData.ImageTaskMode = "gpt_image2api_async"
+	publicTask.PrivateData.UpstreamTaskID = "upstream-public"
+	require.NoError(t, model.DB.Create(publicTask).Error)
+
+	kept := makeTask(otherUserID, otherChannelID, preConsumed, otherTokenID, BillingSourceWallet, 0)
+	kept.TaskID = "task_sync_wrapper_review"
+	kept.Platform = constant.TaskPlatformImage
+	kept.Status = model.TaskStatusFailure
+	kept.Progress = "100%"
+	kept.FailReason = "image task upstream execution outcome requires manual review"
+	kept.SettlementStatus = model.TaskSettlementStatusReview
+	kept.RefundPending = false
+	kept.PrivateData.ImageTaskMode = dto.ImageTaskModeSyncWrapper
+	require.NoError(t, model.DB.Create(kept).Error)
+
+	sweepRemovedImageTaskBridgeHolds(context.Background(), 100)
+
+	reloadedWallet, exists, err := model.GetTaskByID(wallet.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloadedWallet.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, reloadedWallet.SettlementStatus)
+	require.False(t, reloadedWallet.RefundPending)
+	require.EqualValues(t, preConsumed, reloadedWallet.Quota)
+
+	reloadedPublic, exists, err := model.GetTaskByID(publicTask.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloadedPublic.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, reloadedPublic.SettlementStatus)
+	require.False(t, reloadedPublic.RefundPending)
+	require.EqualValues(t, preConsumed, reloadedPublic.Quota)
+	require.Equal(t, "upstream-public", reloadedPublic.PrivateData.UpstreamTaskID)
+
+	reloadedKept, exists, err := model.GetTaskByID(kept.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskSettlementStatusReview, reloadedKept.SettlementStatus)
+	require.EqualValues(t, preConsumed, reloadedKept.Quota)
+	require.False(t, reloadedKept.RefundPending)
+
+	require.Zero(t, getUserQuota(t, walletUserID))
+	require.Zero(t, getUserQuota(t, publicUserID))
+	require.Zero(t, getUserQuota(t, otherUserID))
+}
+
+func TestSweepRemovedImageTaskBridgeUnsettledSuccessRefundsMissingResult(t *testing.T) {
+	truncate(t)
+	oldNode := common.NodeName
+	oldShared := constant.ImageTaskFileCacheShared
+	oldTrusted := constant.ImageTaskFileCacheSharedTrusted
+	common.NodeName = "node-a"
+	constant.ImageTaskFileCacheShared = false
+	constant.ImageTaskFileCacheSharedTrusted = false
+	t.Cleanup(func() {
+		common.NodeName = oldNode
+		constant.ImageTaskFileCacheShared = oldShared
+		constant.ImageTaskFileCacheSharedTrusted = oldTrusted
+	})
+
+	const walletUserID, walletTokenID, walletChannelID = 4411, 4412, 4413
+	const publicUserID, publicTokenID, publicChannelID = 4421, 4422, 4423
+	const otherUserID, otherTokenID, otherChannelID = 4431, 4432, 4433
+	const preConsumed = 2500
+	seedOrphanSweepBilling(t, walletUserID, walletTokenID, walletChannelID, preConsumed)
+	require.NoError(t, model.DB.Create(&model.User{
+		Id: publicUserID, Username: "bridge_success_public", Quota: 0, Status: common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Token{
+		Id: publicTokenID, UserId: publicUserID, Key: "sk-bridge-success-public", Name: "bridge_success_public",
+		Status: common.TokenStatusEnabled, RemainQuota: 0,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: publicChannelID, Type: constant.ChannelTypeOpenAI, Name: "bridge_success_public",
+		Key: "sk-test", Status: common.ChannelStatusEnabled,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.User{
+		Id: otherUserID, Username: "bridge_success_other", Quota: 0, Status: common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Token{
+		Id: otherTokenID, UserId: otherUserID, Key: "sk-bridge-success-other", Name: "bridge_success_other",
+		Status: common.TokenStatusEnabled, RemainQuota: 0,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: otherChannelID, Type: constant.ChannelTypeOpenAI, Name: "bridge_success_other",
+		Key: "sk-test", Status: common.ChannelStatusEnabled,
+	}).Error)
+
+	empty := makeTask(walletUserID, walletChannelID, preConsumed, walletTokenID, BillingSourceWallet, 0)
+	empty.TaskID = "task_bridge_success_empty"
+	empty.Platform = constant.TaskPlatformImage
+	empty.Status = model.TaskStatusSuccess
+	empty.Progress = "100%"
+	empty.SettlementStatus = model.TaskSettlementStatusReview
+	empty.Data = nil
+	empty.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	require.NoError(t, model.DB.Create(empty).Error)
+
+	missingPath := filepath.Join(t.TempDir(), "missing-result.json")
+	missingFile := makeTask(walletUserID, walletChannelID, preConsumed, walletTokenID, BillingSourceWallet, 0)
+	missingFile.TaskID = "task_bridge_success_missing_file"
+	missingFile.Platform = constant.TaskPlatformImage
+	missingFile.Status = model.TaskStatusSuccess
+	missingFile.Progress = "100%"
+	missingFile.SettlementStatus = model.TaskSettlementStatusPending
+	missingFile.ImageTaskResultStored = true
+	missingFile.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	missingFile.PrivateData.ImageTaskMode = "gpt_image2api_async"
+	missingFile.PrivateData.ResultBodyPath = missingPath
+	missingFile.PrivateData.NodeName = common.NodeName
+	require.NoError(t, model.DB.Create(missingFile).Error)
+
+	publicTask := makeTask(publicUserID, publicChannelID, preConsumed, publicTokenID, BillingSourceWallet, 0)
+	publicTask.TaskID = "task_bridge_success_public"
+	publicTask.Platform = constant.TaskPlatformImage
+	publicTask.Status = model.TaskStatusSuccess
+	publicTask.Progress = "100%"
+	publicTask.SettlementStatus = model.TaskSettlementStatusReview
+	publicTask.Data = nil
+	publicTask.PrivateData.PublicImageTask = true
+	publicTask.PrivateData.ImageTaskMode = "gpt_image2api_async"
+	require.NoError(t, model.DB.Create(publicTask).Error)
+
+	kept := makeTask(otherUserID, otherChannelID, preConsumed, otherTokenID, BillingSourceWallet, 0)
+	kept.TaskID = "task_bridge_success_has_result"
+	kept.Platform = constant.TaskPlatformImage
+	kept.Status = model.TaskStatusSuccess
+	kept.Progress = "100%"
+	kept.SettlementStatus = model.TaskSettlementStatusPending
+	kept.Data = json.RawMessage(`{"data":[{"b64_json":"abc"}]}`)
+	kept.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	require.NoError(t, model.DB.Create(kept).Error)
+
+	evidence := makeTask(otherUserID, otherChannelID, preConsumed, otherTokenID, BillingSourceWallet, 0)
+	evidence.TaskID = "task_bridge_success_evidence"
+	evidence.Platform = constant.TaskPlatformImage
+	evidence.Status = model.TaskStatusSuccess
+	evidence.Progress = "100%"
+	evidence.SettlementStatus = model.TaskSettlementStatusPending
+	evidence.Data = nil
+	evidence.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	evidence.PrivateData.SettlementEvidenceCapturedAt = time.Now().Unix()
+	require.NoError(t, model.DB.Create(evidence).Error)
+
+	syncWrapper := makeTask(otherUserID, otherChannelID, preConsumed, otherTokenID, BillingSourceWallet, 0)
+	syncWrapper.TaskID = "task_sync_wrapper_success_review"
+	syncWrapper.Platform = constant.TaskPlatformImage
+	syncWrapper.Status = model.TaskStatusSuccess
+	syncWrapper.Progress = "100%"
+	syncWrapper.SettlementStatus = model.TaskSettlementStatusReview
+	syncWrapper.Data = nil
+	syncWrapper.PrivateData.ImageTaskMode = dto.ImageTaskModeSyncWrapper
+	require.NoError(t, model.DB.Create(syncWrapper).Error)
+
+	sweepRemovedImageTaskBridgeUnsettledSuccess(context.Background(), 100)
+
+	for _, id := range []int64{empty.ID, missingFile.ID, publicTask.ID} {
+		reloaded, exists, err := model.GetTaskByID(id)
+		require.NoError(t, err)
+		require.True(t, exists)
+		require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
+		require.Equal(t, RemovedImageTaskBridgeFailReason, reloaded.FailReason)
+		require.NotEqual(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+		require.False(t, reloaded.RefundPending)
+		require.Zero(t, reloaded.Quota)
+	}
+	for _, id := range []int64{kept.ID, evidence.ID} {
+		reloaded, exists, err := model.GetTaskByID(id)
+		require.NoError(t, err)
+		require.True(t, exists)
+		require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+		require.Equal(t, model.TaskSettlementStatusPending, reloaded.SettlementStatus)
+		require.EqualValues(t, preConsumed, reloaded.Quota)
+	}
+	reloadedSync, exists, err := model.GetTaskByID(syncWrapper.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloadedSync.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, reloadedSync.SettlementStatus)
+	require.EqualValues(t, preConsumed, reloadedSync.Quota)
+
+	require.EqualValues(t, int64(preConsumed*2), getUserQuota(t, walletUserID))
+	require.EqualValues(t, preConsumed, getUserQuota(t, publicUserID))
+	require.Zero(t, getUserQuota(t, otherUserID))
+}
+
+func TestSweepRemovedImageTaskBridgeDoesNotRefundForeignOrUnownedResultFile(t *testing.T) {
+	truncate(t)
+	oldNode := common.NodeName
+	oldShared := constant.ImageTaskFileCacheShared
+	oldTrusted := constant.ImageTaskFileCacheSharedTrusted
+	common.NodeName = "node-a"
+	constant.ImageTaskFileCacheShared = false
+	constant.ImageTaskFileCacheSharedTrusted = false
+	t.Cleanup(func() {
+		common.NodeName = oldNode
+		constant.ImageTaskFileCacheShared = oldShared
+		constant.ImageTaskFileCacheSharedTrusted = oldTrusted
+	})
+
+	const userID, tokenID, channelID, preConsumed = 4511, 4512, 4513, 2500
+	seedOrphanSweepBilling(t, userID, tokenID, channelID, preConsumed)
+
+	foreign := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	foreign.TaskID = "task_bridge_success_foreign_file"
+	foreign.Platform = constant.TaskPlatformImage
+	foreign.Status = model.TaskStatusSuccess
+	foreign.Progress = "100%"
+	foreign.SettlementStatus = model.TaskSettlementStatusPending
+	foreign.ImageTaskResultStored = true
+	foreign.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	foreign.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	foreign.PrivateData.NodeName = "node-b"
+	foreign.PrivateData.ResultBodyPath = filepath.Join(t.TempDir(), "foreign-missing.json")
+	require.NoError(t, model.DB.Create(foreign).Error)
+
+	unowned := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	unowned.TaskID = "task_bridge_success_unowned_file"
+	unowned.Platform = constant.TaskPlatformImage
+	unowned.Status = model.TaskStatusSuccess
+	unowned.Progress = "100%"
+	unowned.SettlementStatus = model.TaskSettlementStatusReview
+	unowned.ImageTaskResultStored = true
+	unowned.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	unowned.PrivateData.ImageTaskMode = "gpt_image2api_async"
+	unowned.StorageNode = model.ImageTaskPortableStorageNode
+	unowned.PrivateData.ResultBodyPath = filepath.Join(t.TempDir(), "unowned-missing.json")
+	require.NoError(t, model.DB.Create(unowned).Error)
+
+	sweepRemovedImageTaskBridgeUnsettledSuccess(context.Background(), 100)
+
+	for _, id := range []int64{foreign.ID, unowned.ID} {
+		reloaded, exists, err := model.GetTaskByID(id)
+		require.NoError(t, err)
+		require.True(t, exists)
+		require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+		require.EqualValues(t, preConsumed, reloaded.Quota)
+		require.False(t, reloaded.RefundPending)
+	}
+	require.Zero(t, getUserQuota(t, userID))
+}
+
+func TestSweepRemovedImageTaskBridgeRefundsMissingTrustedSharedResult(t *testing.T) {
+	truncate(t)
+	oldNode := common.NodeName
+	oldShared := constant.ImageTaskFileCacheShared
+	oldTrusted := constant.ImageTaskFileCacheSharedTrusted
+	oldDisabled := common.ImageTaskSharedCacheDisabled()
+	common.NodeName = "node-a"
+	constant.ImageTaskFileCacheShared = true
+	constant.ImageTaskFileCacheSharedTrusted = true
+	common.SetImageTaskSharedCacheDisabled(false)
+	t.Cleanup(func() {
+		common.NodeName = oldNode
+		constant.ImageTaskFileCacheShared = oldShared
+		constant.ImageTaskFileCacheSharedTrusted = oldTrusted
+		common.SetImageTaskSharedCacheDisabled(oldDisabled)
+	})
+
+	const userID, tokenID, channelID, preConsumed = 4711, 4712, 4713, 900
+	seedOrphanSweepBilling(t, userID, tokenID, channelID, preConsumed)
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_bridge_success_shared_missing"
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.Progress = "100%"
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	task.ImageTaskResultStored = true
+	task.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	task.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	task.PrivateData.NodeName = "node-b"
+	task.PrivateData.ResultBodyPath = filepath.Join(t.TempDir(), "shared-missing.json")
+	require.NoError(t, model.DB.Create(task).Error)
+
+	sweepRemovedImageTaskBridgeUnsettledSuccess(context.Background(), 100)
+
+	reloaded, exists, err := model.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
+	require.Zero(t, reloaded.Quota)
+	require.EqualValues(t, preConsumed, getUserQuota(t, userID))
+}
+
+func TestSweepRemovedImageTaskBridgeDoesNotRefundUnreadableResult(t *testing.T) {
+	truncate(t)
+	oldNode := common.NodeName
+	oldShared := constant.ImageTaskFileCacheShared
+	oldTrusted := constant.ImageTaskFileCacheSharedTrusted
+	common.NodeName = "node-a"
+	constant.ImageTaskFileCacheShared = false
+	constant.ImageTaskFileCacheSharedTrusted = false
+	t.Cleanup(func() {
+		common.NodeName = oldNode
+		constant.ImageTaskFileCacheShared = oldShared
+		constant.ImageTaskFileCacheSharedTrusted = oldTrusted
+	})
+
+	const userID, tokenID, channelID, preConsumed = 4811, 4812, 4813, 700
+	seedOrphanSweepBilling(t, userID, tokenID, channelID, preConsumed)
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_bridge_success_unreadable"
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.Progress = "100%"
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	task.ImageTaskResultStored = true
+	task.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	task.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	task.PrivateData.NodeName = common.NodeName
+	task.PrivateData.ResultBodyPath = t.TempDir()
+	require.NoError(t, model.DB.Create(task).Error)
+
+	sweepRemovedImageTaskBridgeUnsettledSuccess(context.Background(), 100)
+
+	reloaded, exists, err := model.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, model.TaskSettlementStatusPending, reloaded.SettlementStatus)
+	require.EqualValues(t, preConsumed, reloaded.Quota)
+	require.False(t, reloaded.RefundPending)
+	require.Zero(t, getUserQuota(t, userID))
+}
+
+func TestSweepRemovedImageTaskBridgeRefundsExpiredUnownedMissingResult(t *testing.T) {
+	truncate(t)
+	oldNode := common.NodeName
+	oldShared := constant.ImageTaskFileCacheShared
+	oldTrusted := constant.ImageTaskFileCacheSharedTrusted
+	common.NodeName = "node-a"
+	constant.ImageTaskFileCacheShared = false
+	constant.ImageTaskFileCacheSharedTrusted = false
+	t.Cleanup(func() {
+		common.NodeName = oldNode
+		constant.ImageTaskFileCacheShared = oldShared
+		constant.ImageTaskFileCacheSharedTrusted = oldTrusted
+	})
+
+	const userID, tokenID, channelID, preConsumed = 4911, 4912, 4913, 800
+	seedOrphanSweepBilling(t, userID, tokenID, channelID, preConsumed)
+
+	expired := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	expired.TaskID = "task_bridge_success_unowned_expired"
+	expired.Platform = constant.TaskPlatformImage
+	expired.Status = model.TaskStatusSuccess
+	expired.Progress = "100%"
+	expired.SettlementStatus = model.TaskSettlementStatusReview
+	expired.ImageTaskResultStored = true
+	expired.ResultExpiresAt = 1
+	expired.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	expired.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	expired.StorageNode = model.ImageTaskPortableStorageNode
+	expired.PrivateData.ResultBodyPath = filepath.Join(t.TempDir(), "expired-missing.json")
+	require.NoError(t, model.DB.Create(expired).Error)
+
+	foreign := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	foreign.TaskID = "task_bridge_success_foreign_expired"
+	foreign.Platform = constant.TaskPlatformImage
+	foreign.Status = model.TaskStatusSuccess
+	foreign.Progress = "100%"
+	foreign.SettlementStatus = model.TaskSettlementStatusPending
+	foreign.ImageTaskResultStored = true
+	foreign.ResultExpiresAt = 1
+	foreign.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	foreign.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	foreign.PrivateData.NodeName = "node-b"
+	foreign.PrivateData.ResultBodyPath = filepath.Join(t.TempDir(), "foreign-expired.json")
+	require.NoError(t, model.DB.Create(foreign).Error)
+
+	sweepRemovedImageTaskBridgeUnsettledSuccess(context.Background(), 100)
+
+	reloadedExpired, exists, err := model.GetTaskByID(expired.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloadedExpired.Status)
+	require.Zero(t, reloadedExpired.Quota)
+	require.False(t, reloadedExpired.RefundPending)
+
+	reloadedForeign, exists, err := model.GetTaskByID(foreign.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloadedForeign.Status)
+	require.EqualValues(t, preConsumed, reloadedForeign.Quota)
+	require.False(t, reloadedForeign.RefundPending)
+	require.EqualValues(t, preConsumed, getUserQuota(t, userID))
+}
+
+func TestSweepRemovedImageTaskBridgeRefundsForeignResultOnlyAfterOwnerVanishes(t *testing.T) {
+	truncate(t)
+	oldNode := common.NodeName
+	oldShared := constant.ImageTaskFileCacheShared
+	oldTrusted := constant.ImageTaskFileCacheSharedTrusted
+	oldOrphan := constant.ImageTaskOrphanFailSeconds
+	common.NodeName = "node-a"
+	constant.ImageTaskFileCacheShared = false
+	constant.ImageTaskFileCacheSharedTrusted = false
+	constant.ImageTaskOrphanFailSeconds = 1800
+	t.Cleanup(func() {
+		common.NodeName = oldNode
+		constant.ImageTaskFileCacheShared = oldShared
+		constant.ImageTaskFileCacheSharedTrusted = oldTrusted
+		constant.ImageTaskOrphanFailSeconds = oldOrphan
+	})
+	seedLiveInstances(t, "node-a", "node-b")
+
+	const userID, tokenID, channelID, preConsumed = 5111, 5112, 5113, 600
+	seedOrphanSweepBilling(t, userID, tokenID, channelID, preConsumed)
+
+	gone := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	gone.TaskID = "task_bridge_foreign_owner_gone"
+	gone.Platform = constant.TaskPlatformImage
+	gone.Status = model.TaskStatusSuccess
+	gone.Progress = "100%"
+	gone.SettlementStatus = model.TaskSettlementStatusPending
+	gone.ImageTaskResultStored = true
+	gone.ResultExpiresAt = 1
+	gone.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	gone.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	gone.PrivateData.NodeName = "node-c"
+	gone.PrivateData.ResultBodyPath = filepath.Join(t.TempDir(), "owner-gone.json")
+	require.NoError(t, model.DB.Create(gone).Error)
+
+	live := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	live.TaskID = "task_bridge_foreign_owner_live"
+	live.Platform = constant.TaskPlatformImage
+	live.Status = model.TaskStatusSuccess
+	live.Progress = "100%"
+	live.SettlementStatus = model.TaskSettlementStatusPending
+	live.ImageTaskResultStored = true
+	live.ResultExpiresAt = 1
+	live.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	live.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	live.PrivateData.NodeName = "node-b"
+	live.PrivateData.ResultBodyPath = filepath.Join(t.TempDir(), "owner-live.json")
+	require.NoError(t, model.DB.Create(live).Error)
+
+	recent := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	recent.TaskID = "task_bridge_foreign_owner_gone_recent"
+	recent.Platform = constant.TaskPlatformImage
+	recent.Status = model.TaskStatusSuccess
+	recent.Progress = "100%"
+	recent.FinishTime = time.Now().Unix()
+	recent.SettlementStatus = model.TaskSettlementStatusReview
+	recent.ImageTaskResultStored = true
+	recent.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	recent.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	recent.PrivateData.NodeName = "node-c"
+	recent.PrivateData.ResultBodyPath = filepath.Join(t.TempDir(), "owner-gone-recent.json")
+	require.NoError(t, model.DB.Create(recent).Error)
+
+	sweepRemovedImageTaskBridgeUnsettledSuccess(context.Background(), 100)
+
+	reloadedGone, exists, err := model.GetTaskByID(gone.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloadedGone.Status)
+	require.Zero(t, reloadedGone.Quota)
+
+	reloadedLive, exists, err := model.GetTaskByID(live.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloadedLive.Status)
+	require.EqualValues(t, preConsumed, reloadedLive.Quota)
+
+	reloadedRecent, exists, err := model.GetTaskByID(recent.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloadedRecent.Status)
+	require.EqualValues(t, preConsumed, reloadedRecent.Quota)
+	require.EqualValues(t, preConsumed, getUserQuota(t, userID))
+}
+
+func TestSweepRemovedImageTaskBridgeFinalizesAppliedConsumptionInsteadOfRefund(t *testing.T) {
+	truncate(t)
+	oldNode := common.NodeName
+	oldHook := FinalizeRemovedImageTaskBridgeAppliedSettlement
+	common.NodeName = "node-a"
+	var calls atomic.Int32
+	FinalizeRemovedImageTaskBridgeAppliedSettlement = func(ctx context.Context, task *model.Task) error {
+		calls.Add(1)
+		return model.DB.Model(&model.Task{}).Where("id = ?", task.ID).Updates(map[string]any{
+			"settlement_status": model.TaskSettlementStatusSettled,
+			"quota":             100,
+		}).Error
+	}
+	t.Cleanup(func() {
+		common.NodeName = oldNode
+		FinalizeRemovedImageTaskBridgeAppliedSettlement = oldHook
+	})
+
+	const userID, tokenID, channelID, preConsumed = 5011, 5012, 5013, 900
+	seedOrphanSweepBilling(t, userID, tokenID, channelID, preConsumed)
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_bridge_success_applied_record"
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.Progress = "100%"
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	task.ImageTaskResultStored = true
+	task.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	task.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	task.PrivateData.NodeName = common.NodeName
+	task.PrivateData.ResultBodyPath = filepath.Join(t.TempDir(), "applied-missing.json")
+	require.NoError(t, model.DB.Create(task).Error)
+	appliedQuota := 100
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplied,
+		Operation:     "image_consumption",
+		AppliedQuota:  &appliedQuota,
+	}).Error)
+
+	sweepRemovedImageTaskBridgeUnsettledSuccess(context.Background(), 100)
+
+	reloaded, exists, err := model.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, model.TaskSettlementStatusSettled, reloaded.SettlementStatus)
+	require.Equal(t, 100, reloaded.Quota)
+	require.False(t, reloaded.RefundPending)
+	require.EqualValues(t, int32(1), calls.Load())
+	require.Zero(t, getUserQuota(t, userID))
+}
+
+func TestSweepRemovedImageTaskBridgeRequeuesReviewWhenResultRemains(t *testing.T) {
+	truncate(t)
+	oldNode := common.NodeName
+	oldShared := constant.ImageTaskFileCacheShared
+	oldTrusted := constant.ImageTaskFileCacheSharedTrusted
+	common.NodeName = "node-a"
+	constant.ImageTaskFileCacheShared = false
+	constant.ImageTaskFileCacheSharedTrusted = false
+	t.Cleanup(func() {
+		common.NodeName = oldNode
+		constant.ImageTaskFileCacheShared = oldShared
+		constant.ImageTaskFileCacheSharedTrusted = oldTrusted
+	})
+
+	const userID, tokenID, channelID, preConsumed = 4611, 4612, 4613, 1800
+	seedOrphanSweepBilling(t, userID, tokenID, channelID, preConsumed)
+
+	inline := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	inline.TaskID = "task_bridge_review_inline"
+	inline.Platform = constant.TaskPlatformImage
+	inline.Status = model.TaskStatusSuccess
+	inline.Progress = "100%"
+	inline.SettlementStatus = model.TaskSettlementStatusReview
+	inline.NextPollAt = 0
+	inline.Data = json.RawMessage(`{"data":[{"b64_json":"abc"}]}`)
+	inline.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	require.NoError(t, model.DB.Create(inline).Error)
+
+	resultPath := filepath.Join(t.TempDir(), "owned-result.json")
+	require.NoError(t, os.WriteFile(resultPath, []byte(`{"data":[{"b64_json":"file"}]}`), 0o600))
+	ownedFile := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	ownedFile.TaskID = "task_bridge_review_owned_file"
+	ownedFile.Platform = constant.TaskPlatformImage
+	ownedFile.Status = model.TaskStatusSuccess
+	ownedFile.Progress = "100%"
+	ownedFile.SettlementStatus = model.TaskSettlementStatusReview
+	ownedFile.NextPollAt = 0
+	ownedFile.ImageTaskResultStored = true
+	ownedFile.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	ownedFile.PrivateData.ImageTaskMode = "gpt_image2api_async"
+	ownedFile.PrivateData.NodeName = common.NodeName
+	ownedFile.PrivateData.ResultBodyPath = resultPath
+	require.NoError(t, model.DB.Create(ownedFile).Error)
+
+	foreignPath := filepath.Join(t.TempDir(), "foreign-present.json")
+	require.NoError(t, os.WriteFile(foreignPath, []byte(`{"data":[{"b64_json":"other"}]}`), 0o600))
+	foreign := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	foreign.TaskID = "task_bridge_review_foreign_file"
+	foreign.Platform = constant.TaskPlatformImage
+	foreign.Status = model.TaskStatusSuccess
+	foreign.Progress = "100%"
+	foreign.SettlementStatus = model.TaskSettlementStatusReview
+	foreign.NextPollAt = 0
+	foreign.ImageTaskResultStored = true
+	foreign.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	foreign.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	foreign.PrivateData.NodeName = "node-b"
+	foreign.PrivateData.ResultBodyPath = foreignPath
+	require.NoError(t, model.DB.Create(foreign).Error)
+
+	portablePath := filepath.Join(t.TempDir(), "portable-present.json")
+	require.NoError(t, os.WriteFile(portablePath, []byte(`{"data":[{"b64_json":"portable"}]}`), 0o600))
+	portable := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	portable.TaskID = "task_bridge_review_portable_file"
+	portable.Platform = constant.TaskPlatformImage
+	portable.Status = model.TaskStatusSuccess
+	portable.Progress = "100%"
+	portable.SettlementStatus = model.TaskSettlementStatusReview
+	portable.NextPollAt = 0
+	portable.StorageNode = model.ImageTaskPortableStorageNode
+	portable.ImageTaskResultStored = true
+	portable.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	portable.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	portable.PrivateData.ResultBodyPath = portablePath
+	require.NoError(t, model.DB.Create(portable).Error)
+
+	sweepRemovedImageTaskBridgeUnsettledSuccess(context.Background(), 100)
+	sweepRemovedImageTaskBridgeSettleableReviews(context.Background(), 100)
+
+	for _, id := range []int64{inline.ID, ownedFile.ID, portable.ID} {
+		reloaded, exists, err := model.GetTaskByID(id)
+		require.NoError(t, err)
+		require.True(t, exists)
+		require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+		require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+		require.Greater(t, reloaded.NextPollAt, int64(0))
+		require.EqualValues(t, preConsumed, reloaded.Quota)
+		require.False(t, reloaded.RefundPending)
+	}
+	reloadedForeign, exists, err := model.GetTaskByID(foreign.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloadedForeign.Status)
+	require.Zero(t, reloadedForeign.NextPollAt)
+	require.EqualValues(t, preConsumed, reloadedForeign.Quota)
+	require.Zero(t, getUserQuota(t, userID))
+}
+
+func TestSweepRemovedImageTaskBridgeDoesNotRefundCleanedResultWhileOwnerFileRemains(t *testing.T) {
+	truncate(t)
+	oldNode := common.NodeName
+	oldShared := constant.ImageTaskFileCacheShared
+	oldTrusted := constant.ImageTaskFileCacheSharedTrusted
+	common.NodeName = "node-a"
+	constant.ImageTaskFileCacheShared = false
+	constant.ImageTaskFileCacheSharedTrusted = false
+	t.Cleanup(func() {
+		common.NodeName = oldNode
+		constant.ImageTaskFileCacheShared = oldShared
+		constant.ImageTaskFileCacheSharedTrusted = oldTrusted
+	})
+
+	const userID, tokenID, channelID, preConsumed = 4811, 4812, 4813, 1600
+	seedOrphanSweepBilling(t, userID, tokenID, channelID, preConsumed)
+	now := time.Now().Unix()
+
+	keptPath := filepath.Join(t.TempDir(), "cleaned-but-present.json")
+	require.NoError(t, os.WriteFile(keptPath, []byte(`{"data":[{"b64_json":"still-here"}]}`), 0o600))
+	kept := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	kept.TaskID = "task_bridge_cleaned_file_remains"
+	kept.Platform = constant.TaskPlatformImage
+	kept.Status = model.TaskStatusSuccess
+	kept.Progress = "100%"
+	kept.SettlementStatus = model.TaskSettlementStatusReview
+	kept.NextPollAt = 0
+	kept.ResultCleanedAt = now
+	kept.ImageTaskResultStored = false
+	kept.Data = json.RawMessage(`{"_newapi_result_file":true,"removed":true}`)
+	kept.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	kept.PrivateData.NodeName = common.NodeName
+	kept.PrivateData.ResultBodyPath = keptPath
+	require.NoError(t, model.DB.Create(kept).Error)
+
+	missing := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	missing.TaskID = "task_bridge_cleaned_file_gone"
+	missing.Platform = constant.TaskPlatformImage
+	missing.Status = model.TaskStatusSuccess
+	missing.Progress = "100%"
+	missing.SettlementStatus = model.TaskSettlementStatusPending
+	missing.ResultCleanedAt = now
+	missing.ImageTaskResultStored = false
+	missing.Data = json.RawMessage(`{"_newapi_result_file":true,"removed":true}`)
+	missing.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	missing.PrivateData.NodeName = common.NodeName
+	missing.PrivateData.ResultBodyPath = filepath.Join(t.TempDir(), "cleaned-missing.json")
+	require.NoError(t, model.DB.Create(missing).Error)
+
+	foreign := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	foreign.TaskID = "task_bridge_cleaned_foreign_owner"
+	foreign.Platform = constant.TaskPlatformImage
+	foreign.Status = model.TaskStatusSuccess
+	foreign.Progress = "100%"
+	foreign.SettlementStatus = model.TaskSettlementStatusReview
+	foreign.NextPollAt = 0
+	foreign.ResultCleanedAt = now
+	foreign.ResultExpiresAt = now + 86400
+	foreign.ImageTaskResultStored = false
+	foreign.Data = json.RawMessage(`{"_newapi_result_file":true,"removed":true}`)
+	foreign.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	foreign.PrivateData.NodeName = "node-b"
+	foreign.PrivateData.ResultBodyPath = filepath.Join(t.TempDir(), "cleaned-foreign-missing.json")
+	foreign.PrivateData.ResultExpiresAt = now + 86400
+	require.NoError(t, model.DB.Create(foreign).Error)
+
+	var settledCalls atomic.Int32
+	oldFinalize := FinalizeRemovedImageTaskBridgeAppliedSettlement
+	FinalizeRemovedImageTaskBridgeAppliedSettlement = func(_ context.Context, task *model.Task) error {
+		if task == nil || task.TaskID != kept.TaskID {
+			return nil
+		}
+		settledCalls.Add(1)
+		task.SettlementStatus = model.TaskSettlementStatusSettled
+		return model.DB.Model(&model.Task{}).Where("id = ?", task.ID).Update("settlement_status", model.TaskSettlementStatusSettled).Error
+	}
+	t.Cleanup(func() {
+		FinalizeRemovedImageTaskBridgeAppliedSettlement = oldFinalize
+	})
+
+	sweepRemovedImageTaskBridgeUnsettledSuccess(context.Background(), 100)
+	sweepRemovedImageTaskBridgeSettleableReviews(context.Background(), 100)
+
+	require.Equal(t, int32(1), settledCalls.Load())
+	reloadedKept, exists, err := model.GetTaskByID(kept.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloadedKept.Status)
+	require.Equal(t, model.TaskSettlementStatusSettled, reloadedKept.SettlementStatus)
+	require.Zero(t, reloadedKept.NextPollAt)
+	require.EqualValues(t, preConsumed, reloadedKept.Quota)
+	require.False(t, reloadedKept.RefundPending)
+
+	reloadedMissing, exists, err := model.GetTaskByID(missing.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloadedMissing.Status)
+	require.Zero(t, reloadedMissing.Quota)
+
+	reloadedForeign, exists, err := model.GetTaskByID(foreign.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloadedForeign.Status)
+	require.Zero(t, reloadedForeign.NextPollAt)
+	require.EqualValues(t, preConsumed, reloadedForeign.Quota)
+	require.False(t, reloadedForeign.RefundPending)
+	require.EqualValues(t, preConsumed, getUserQuota(t, userID))
+}
+
+func TestSweepRemovedImageTaskBridgeDoesNotRequeueChecksumMismatch(t *testing.T) {
+	truncate(t)
+	oldNode := common.NodeName
+	oldShared := constant.ImageTaskFileCacheShared
+	oldTrusted := constant.ImageTaskFileCacheSharedTrusted
+	common.NodeName = "node-a"
+	constant.ImageTaskFileCacheShared = false
+	constant.ImageTaskFileCacheSharedTrusted = false
+	t.Cleanup(func() {
+		common.NodeName = oldNode
+		constant.ImageTaskFileCacheShared = oldShared
+		constant.ImageTaskFileCacheSharedTrusted = oldTrusted
+	})
+
+	const userID, tokenID, channelID, preConsumed = 4821, 4822, 4823, 700
+	seedOrphanSweepBilling(t, userID, tokenID, channelID, preConsumed)
+	body := []byte(`{"data":[{"b64_json":"corrupt"}]}`)
+	resultPath := filepath.Join(t.TempDir(), "checksum-mismatch.json")
+	require.NoError(t, os.WriteFile(resultPath, body, 0o600))
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_bridge_checksum_mismatch"
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.Progress = "100%"
+	task.SettlementStatus = model.TaskSettlementStatusReview
+	task.NextPollAt = 0
+	task.FailReason = "image task settlement result unavailable: image task result body checksum mismatch"
+	task.ImageTaskResultStored = true
+	task.Data = json.RawMessage(`{"_newapi_result_file":true}`)
+	task.PrivateData.ImageTaskMode = dto.ImageTaskModeAsyncTaskBridge
+	task.PrivateData.NodeName = common.NodeName
+	task.PrivateData.ResultBodyPath = resultPath
+	task.PrivateData.ResultBodySize = int64(len(body))
+	task.PrivateData.ResultBodySHA256 = "deadbeef"
+	require.NoError(t, model.DB.Create(task).Error)
+
+	sweepRemovedImageTaskBridgeUnsettledSuccess(context.Background(), 100)
+	sweepRemovedImageTaskBridgeSettleableReviews(context.Background(), 100)
+
+	reloaded, exists, err := model.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, model.TaskStatus(model.TaskStatusSuccess), reloaded.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+	require.Zero(t, reloaded.NextPollAt)
+	require.EqualValues(t, preConsumed, reloaded.Quota)
+	require.False(t, reloaded.RefundPending)
+	require.Zero(t, getUserQuota(t, userID))
 }
 
 func TestSweepOrphanedImageTasksIsDisabledWhenGraceAndTimeoutOff(t *testing.T) {
@@ -2419,6 +3302,112 @@ func TestDispatchPlatformUpdateUsesFetchMode(t *testing.T) {
 	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return nil }
 	assert.NotPanics(t, func() { DispatchPlatformUpdate(context.Background(), "missing-plugin", taskChannels, tasks) })
 	GetTaskAdaptorFunc = previousFactory
+}
+
+func TestDispatchSunoChannel36SplitsSnapshotFromLegacy(t *testing.T) {
+	truncate(t)
+	const channelID = 3610
+	baseURL := "https://suno.example"
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: channelID, Type: constant.ChannelTypeSunoAPI, Name: "suno-36", Key: "suno-key",
+		Status: common.ChannelStatusEnabled, BaseURL: &baseURL,
+	}).Error)
+
+	legacy := seedPollingTask(t, channelID, "suno-legacy-public", "suno-legacy-upstream")
+	legacy.Platform = constant.TaskPlatform("36")
+	require.NoError(t, model.DB.Save(legacy).Error)
+	snapshotTask := seedPollingTask(t, channelID, "suno-snapshot-public", "suno-snapshot-upstream")
+	snapshotTask.Platform = constant.TaskPlatform("36")
+	snapshotTask.PrivateData.Execution = &model.TaskExecutionSnapshot{
+		TaskPlugin: &model.TaskPluginSnapshot{Key: "sunoapi", Version: "1.2.3", APIVersion: 1, Generation: 4},
+	}
+	require.NoError(t, model.DB.Save(snapshotTask).Error)
+
+	current := &snapshotBatchPollingAdaptor{}
+	exact := &snapshotBatchPollingAdaptor{}
+	legacyAdaptor := &sunoResponsePollingAdaptor{response: dto.TaskResponse[[]dto.SunoDataResponse]{
+		Code: dto.TaskSuccessCode,
+		Data: []dto.SunoDataResponse{{TaskID: "suno-legacy-upstream", Status: string(model.TaskStatusInProgress)}},
+	}}
+	previousAdaptor := GetTaskAdaptorFunc
+	previousPlugin := GetTaskPluginAdaptorFunc
+	previousForTask := GetTaskPluginAdaptorForTaskFunc
+	GetTaskAdaptorFunc = func(platform constant.TaskPlatform) TaskPollingAdaptor {
+		if platform == constant.TaskPlatformSuno {
+			return legacyAdaptor
+		}
+		return nil
+	}
+	GetTaskPluginAdaptorFunc = func(constant.TaskPlatform) TaskPluginPollingAdaptor { return current }
+	GetTaskPluginAdaptorForTaskFunc = func(task *model.Task) TaskPluginPollingAdaptor {
+		if taskHasPollingPluginSnapshot(task) {
+			return exact
+		}
+		return nil
+	}
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc = previousAdaptor
+		GetTaskPluginAdaptorFunc = previousPlugin
+		GetTaskPluginAdaptorForTaskFunc = previousForTask
+	})
+
+	references := []string{legacy.GetUpstreamTaskID(), snapshotTask.GetUpstreamTaskID()}
+	DispatchPlatformUpdate(context.Background(), constant.TaskPlatform("36"), map[int][]string{
+		channelID: references,
+	}, map[string]*model.Task{
+		legacy.GetUpstreamTaskID():       legacy,
+		snapshotTask.GetUpstreamTaskID(): snapshotTask,
+	})
+
+	assert.Zero(t, current.batchCalls)
+	assert.Equal(t, 1, exact.batchCalls)
+	bodies := legacyAdaptor.fetchedBodies()
+	require.Len(t, bodies, 1)
+	ids, ok := bodies[0]["ids"].([]string)
+	require.True(t, ok)
+	assert.Equal(t, []string{"suno-legacy-upstream"}, ids)
+}
+
+func TestDispatchUnresolvedSunoSnapshotDoesNotUseCurrentPlugin(t *testing.T) {
+	truncate(t)
+	const channelID = 3611
+	baseURL := "https://suno.example"
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: channelID, Type: constant.ChannelTypeSunoAPI, Name: "suno-unresolved", Key: "suno-key",
+		Status: common.ChannelStatusEnabled, BaseURL: &baseURL,
+	}).Error)
+	task := seedPollingTask(t, channelID, "suno-unresolved-public", "suno-unresolved-upstream")
+	task.Platform = constant.TaskPlatform("sunoapi")
+	task.PrivateData.Execution = &model.TaskExecutionSnapshot{
+		TaskPlugin: &model.TaskPluginSnapshot{Key: "sunoapi", Version: "9.9.9", APIVersion: 1, Generation: 9},
+	}
+	require.NoError(t, model.DB.Save(task).Error)
+
+	current := &snapshotBatchPollingAdaptor{}
+	legacyAdaptor := &sunoResponsePollingAdaptor{}
+	previousAdaptor := GetTaskAdaptorFunc
+	previousPlugin := GetTaskPluginAdaptorFunc
+	previousForTask := GetTaskPluginAdaptorForTaskFunc
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return legacyAdaptor }
+	GetTaskPluginAdaptorFunc = func(constant.TaskPlatform) TaskPluginPollingAdaptor { return current }
+	GetTaskPluginAdaptorForTaskFunc = func(*model.Task) TaskPluginPollingAdaptor { return nil }
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc = previousAdaptor
+		GetTaskPluginAdaptorFunc = previousPlugin
+		GetTaskPluginAdaptorForTaskFunc = previousForTask
+	})
+
+	DispatchPlatformUpdate(context.Background(), constant.TaskPlatform("sunoapi"), map[int][]string{
+		channelID: {task.GetUpstreamTaskID()},
+	}, map[string]*model.Task{task.GetUpstreamTaskID(): task})
+
+	assert.Zero(t, current.batchCalls)
+	assert.Empty(t, legacyAdaptor.fetchedBodies())
+	reloaded, exists, err := model.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, 1, reloaded.PrivateData.PollFailures)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), reloaded.Status)
 }
 
 func TestUpdateBatchTasksSettlesTieredUsageForTerminalStates(t *testing.T) {

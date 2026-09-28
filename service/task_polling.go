@@ -1,7 +1,10 @@
 package service
 
 import (
+	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"math/rand"
@@ -9,6 +12,7 @@ import (
 	"os"
 	"runtime/debug"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -357,6 +361,421 @@ func cleanupPendingImageTaskRequestFiles(ctx context.Context, batchSize int) {
 	}
 }
 
+const RemovedImageTaskBridgeFailReason = "async task bridge mode has been removed"
+
+// FinalizeRemovedImageTaskBridgeAppliedSettlement closes a removed-bridge success
+// whose consumption record is already applied. The cleanup loop must not refund
+// that task. relay wires this to the normal settlement finalizer.
+var FinalizeRemovedImageTaskBridgeAppliedSettlement func(context.Context, *model.Task) error
+
+func removedImageTaskBridgeMode(task *model.Task) bool {
+	if task == nil {
+		return false
+	}
+	mode := strings.TrimSpace(task.PrivateData.ImageTaskMode)
+	return mode == dto.ImageTaskModeAsyncTaskBridge || mode == "gpt_image2api_async"
+}
+
+// ReleaseRemovedImageTaskBridgeHold refunds a failed image task left in review
+// after the async bridge executor was removed. The upstream result can no longer
+// be fetched, so keeping the precharge does not protect a delivery.
+func ReleaseRemovedImageTaskBridgeHold(ctx context.Context, task *model.Task) error {
+	if task == nil || task.ID <= 0 || task.Status != model.TaskStatusFailure {
+		return nil
+	}
+	if !removedImageTaskBridgeMode(task) {
+		return nil
+	}
+	if RemovedImageTaskBridgeMustHoldPrecharge(task) {
+		return nil
+	}
+	if task.SettlementStatus == model.TaskSettlementStatusReview {
+		won, err := task.MarkRemovedImageTaskBridgeRefundable()
+		if err != nil || !won {
+			return err
+		}
+	}
+	if task.Quota == 0 && !task.RefundPending {
+		return nil
+	}
+	reason := strings.TrimSpace(task.FailReason)
+	if reason == "" {
+		reason = RemovedImageTaskBridgeFailReason
+	}
+	return RefundTaskQuota(ctx, task, reason)
+}
+
+// RemovedImageTaskBridgeSuccessResultUnavailable reports a removed-bridge success
+// whose billing can never be completed. Settlement evidence is still enough to
+// close the charge; a missing result file is not, because the executor is gone.
+func RemovedImageTaskBridgeSuccessResultUnavailable(task *model.Task) bool {
+	if task == nil || task.Status != model.TaskStatusSuccess || !removedImageTaskBridgeMode(task) {
+		return false
+	}
+	switch task.SettlementStatus {
+	case model.TaskSettlementStatusPending, model.TaskSettlementStatusReview:
+	default:
+		return false
+	}
+	if model.ImageTaskHasSettlementEvidence(task) {
+		return false
+	}
+	// ResultCleanedAt is a cleanup marker, not proof the bytes are gone.
+	// A still-readable owner or shared file must settle instead of refunding.
+	if removedImageTaskBridgeInlineResult(task) {
+		return false
+	}
+	path := strings.TrimSpace(task.PrivateData.ResultBodyPath)
+	hasFileLocator := path != "" || task.ImageTaskResultStored || removedImageTaskBridgeResultPlaceholder(task.Data)
+	if hasFileLocator {
+		// A missing local file is proof only on the owner node, a trusted
+		// shared cache, or an unowned file whose retention window has ended.
+		// Another node's disk must not refund. A read error is not absence.
+		missing, readErr := removedImageTaskBridgeResultFileMissing(path)
+		if readErr != nil || !missing {
+			return false
+		}
+		if removedImageTaskBridgeResultAbsenceAuthoritative(task) {
+			return true
+		}
+		now := time.Now().Unix()
+		if removedImageTaskBridgeUnownedResultExpired(task, now) {
+			return true
+		}
+		return removedImageTaskBridgeForeignResultAbandoned(task, now)
+	}
+	return len(bytes.TrimSpace(task.Data)) == 0
+}
+
+func removedImageTaskBridgeInlineResult(task *model.Task) bool {
+	if task == nil || removedImageTaskBridgeResultPlaceholder(task.Data) {
+		return false
+	}
+	return len(bytes.TrimSpace(task.Data)) > 0
+}
+
+// removedImageTaskBridgeResultAbsenceAuthoritative is stricter than
+// ImageTaskResultFileAccessibleFromCurrentNode. An empty owner makes that
+// helper true on every node, which is not enough to decide a refund.
+func removedImageTaskBridgeResultAbsenceAuthoritative(task *model.Task) bool {
+	if ImageTaskFileCacheSharedTrusted() {
+		return true
+	}
+	owner := strings.TrimSpace(imageTaskFileOwnerNode(task))
+	node := strings.TrimSpace(common.NodeName)
+	return owner != "" && node != "" && owner == node
+}
+
+// removedImageTaskBridgeResultFileMissing is true only when the file is gone
+// or empty. Permission and IO errors are not proof the result was deleted.
+func removedImageTaskBridgeResultFileMissing(path string) (bool, error) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return true, nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return true, nil
+		}
+		return false, err
+	}
+	return len(bytes.TrimSpace(data)) == 0, nil
+}
+
+// removedImageTaskBridgeUnownedResultExpired lets a portable result with no
+// owner node refund after its retention deadline. Before that, the file may
+// still be on the node that wrote it.
+func removedImageTaskBridgeUnownedResultExpired(task *model.Task, now int64) bool {
+	if task == nil || strings.TrimSpace(imageTaskFileOwnerNode(task)) != "" {
+		return false
+	}
+	if ImageTaskFileCacheSharedTrusted() {
+		return false
+	}
+	return removedImageTaskBridgeResultRetentionEnded(task, now)
+}
+
+func removedImageTaskBridgeResultRetentionEnded(task *model.Task, now int64) bool {
+	if task == nil {
+		return false
+	}
+	if now <= 0 {
+		now = time.Now().Unix()
+	}
+	deadline := task.ResultExpiresAt
+	if deadline <= 0 {
+		deadline = task.PrivateData.ResultExpiresAt
+	}
+	if deadline <= 0 {
+		base := task.FinishTime
+		if base <= 0 {
+			base = task.SubmitTime
+		}
+		if base <= 0 {
+			return false
+		}
+		deadline = base + int64(common.GetImageTaskResultCacheRetention().Seconds())
+	}
+	return now >= deadline
+}
+
+// removedImageTaskBridgeForeignResultAbandoned refunds a missing result only
+// after its owner node is confirmed gone and the result can no longer be
+// delivered. A live owner, a heartbeat we cannot trust, or an unexpired
+// result stays untouched.
+func removedImageTaskBridgeForeignResultAbandoned(task *model.Task, now int64) bool {
+	owner := strings.TrimSpace(imageTaskFileOwnerNode(task))
+	node := strings.TrimSpace(common.NodeName)
+	if task == nil || owner == "" || owner == node || ImageTaskFileCacheSharedTrusted() {
+		return false
+	}
+	if !removedImageTaskBridgeResultRetentionEnded(task, now) {
+		return false
+	}
+	view := loadImageTaskOrphanNodeView(context.Background(), now, imageTaskOrphanFailSeconds())
+	if !view.usable {
+		return false
+	}
+	_, alive := view.activeNodes[owner]
+	return !alive
+}
+
+// RemovedImageTaskBridgeMustHoldPrecharge reports a removed-bridge task whose
+// upstream may already have produced an image. Those stay in review. A queued
+// task that never left this gateway can still be refunded.
+func RemovedImageTaskBridgeMustHoldPrecharge(task *model.Task) bool {
+	if task == nil || !removedImageTaskBridgeMode(task) {
+		return false
+	}
+	if strings.TrimSpace(task.PrivateData.UpstreamTaskID) != "" {
+		return true
+	}
+	if task.PrivateData.UpstreamSubmitUncertainAt > 0 {
+		return true
+	}
+	if task.StartTime > 0 {
+		return true
+	}
+	if task.SettlementStatus == model.TaskSettlementStatusReview {
+		return true
+	}
+	switch task.Status {
+	case model.TaskStatusSubmitted, model.TaskStatusInProgress:
+		return true
+	default:
+		return false
+	}
+}
+
+// RemovedImageTaskBridgeSettlementBlocksRefund reports a settlement record that
+// already applied, or is still applying, the image consumption. Refunding it
+// would turn a completed charge into a failure review.
+func RemovedImageTaskBridgeSettlementBlocksRefund(task *model.Task) (bool, error) {
+	if task == nil || task.ID <= 0 || task.Status != model.TaskStatusSuccess || !removedImageTaskBridgeMode(task) {
+		return false, nil
+	}
+	record, exists, err := model.GetTaskSettlementRecord(task.ID)
+	if err != nil || !exists || record == nil {
+		return false, err
+	}
+	switch record.Status {
+	case model.TaskSettlementRecordStatusApplied, model.TaskSettlementRecordStatusApplying, model.TaskSettlementRecordStatusReview:
+		return true, nil
+	default:
+		return false, nil
+	}
+}
+
+// RemovedImageTaskBridgeSuccessCanSettleLocally reports a parked success review
+// whose result this node can still bill. Foreign files stay untouched so the
+// owner node can reopen them.
+func RemovedImageTaskBridgeSuccessCanSettleLocally(task *model.Task) bool {
+	if task == nil || task.Status != model.TaskStatusSuccess || !removedImageTaskBridgeMode(task) {
+		return false
+	}
+	if task.SettlementStatus != model.TaskSettlementStatusReview || task.NextPollAt > 0 {
+		return false
+	}
+	if model.ImageTaskHasSettlementEvidence(task) || RemovedImageTaskBridgeSuccessResultUnavailable(task) {
+		return false
+	}
+	if removedImageTaskBridgeInlineResult(task) {
+		return true
+	}
+	path := strings.TrimSpace(task.PrivateData.ResultBodyPath)
+	if path == "" {
+		return false
+	}
+	owner := strings.TrimSpace(imageTaskFileOwnerNode(task))
+	node := strings.TrimSpace(common.NodeName)
+	if owner != "" && owner != node && !ImageTaskFileCacheSharedTrusted() {
+		return false
+	}
+	data, err := os.ReadFile(path)
+	return err == nil && removedImageTaskBridgeStoredBodyMatches(task, data)
+}
+
+func removedImageTaskBridgeStoredBodyMatches(task *model.Task, data []byte) bool {
+	if task == nil || len(bytes.TrimSpace(data)) == 0 {
+		return false
+	}
+	if task.PrivateData.ResultBodySize > 0 && int64(len(data)) != task.PrivateData.ResultBodySize {
+		return false
+	}
+	sum := strings.TrimSpace(task.PrivateData.ResultBodySHA256)
+	if sum == "" {
+		return true
+	}
+	digest := sha256.Sum256(data)
+	return strings.EqualFold(hex.EncodeToString(digest[:]), sum)
+}
+
+func removedImageTaskBridgeResultPlaceholder(data []byte) bool {
+	if len(bytes.TrimSpace(data)) == 0 {
+		return false
+	}
+	var payload struct {
+		Stored bool `json:"_newapi_result_file"`
+	}
+	if err := common.Unmarshal(data, &payload); err != nil {
+		return false
+	}
+	return payload.Stored
+}
+
+// ReleaseRemovedImageTaskBridgeUnsettledSuccess refunds a removed-bridge success
+// that can no longer be settled. The precharge is not kept for a result the
+// retired executor cannot restore.
+func ReleaseRemovedImageTaskBridgeUnsettledSuccess(ctx context.Context, task *model.Task) error {
+	blocks, err := RemovedImageTaskBridgeSettlementBlocksRefund(task)
+	if err != nil || blocks || !RemovedImageTaskBridgeSuccessResultUnavailable(task) {
+		return err
+	}
+	won, err := task.MarkRemovedImageTaskBridgeSuccessRefundable(RemovedImageTaskBridgeFailReason)
+	if err != nil || !won {
+		return err
+	}
+	if task.Quota == 0 && !task.RefundPending {
+		return nil
+	}
+	return RefundTaskQuota(ctx, task, RemovedImageTaskBridgeFailReason)
+}
+
+func sweepRemovedImageTaskBridgeHolds(ctx context.Context, batchSize int) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if batchSize <= 0 {
+		batchSize = 100
+	}
+	var afterTaskPrimaryID int64
+	for ctx.Err() == nil {
+		tasks, err := model.GetRemovedImageTaskBridgeRefundHolds(afterTaskPrimaryID, batchSize)
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("load removed image task bridge holds failed: %v", err))
+			return
+		}
+		for _, task := range tasks {
+			if ctx.Err() != nil {
+				return
+			}
+			if err := ReleaseRemovedImageTaskBridgeHold(ctx, task); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("release removed image task bridge hold failed task %s: %v", task.TaskID, err))
+			}
+		}
+		if len(tasks) < batchSize {
+			return
+		}
+		afterTaskPrimaryID = tasks[len(tasks)-1].ID
+	}
+}
+
+func sweepRemovedImageTaskBridgeUnsettledSuccess(ctx context.Context, batchSize int) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if batchSize <= 0 {
+		batchSize = 100
+	}
+	var afterTaskPrimaryID int64
+	for ctx.Err() == nil {
+		tasks, err := model.GetRemovedImageTaskBridgeUnsettledSuccesses(afterTaskPrimaryID, batchSize)
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("load removed image task bridge unsettled successes failed: %v", err))
+			return
+		}
+		for _, task := range tasks {
+			if ctx.Err() != nil {
+				return
+			}
+			blocks, blockErr := RemovedImageTaskBridgeSettlementBlocksRefund(task)
+			if blockErr != nil {
+				logger.LogError(ctx, fmt.Sprintf("load removed image task bridge settlement record failed task %s: %v", task.TaskID, blockErr))
+				continue
+			}
+			if blocks {
+				if FinalizeRemovedImageTaskBridgeAppliedSettlement == nil {
+					logger.LogWarn(ctx, fmt.Sprintf("removed image task bridge applied settlement finalizer is not wired for task %s", task.TaskID))
+					continue
+				}
+				if err := FinalizeRemovedImageTaskBridgeAppliedSettlement(ctx, task); err != nil {
+					logger.LogError(ctx, fmt.Sprintf("finalize removed image task bridge applied settlement failed task %s: %v", task.TaskID, err))
+				}
+				continue
+			}
+			if err := ReleaseRemovedImageTaskBridgeUnsettledSuccess(ctx, task); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("release removed image task bridge unsettled success failed task %s: %v", task.TaskID, err))
+			}
+		}
+		if len(tasks) < batchSize {
+			return
+		}
+		afterTaskPrimaryID = tasks[len(tasks)-1].ID
+	}
+}
+
+func sweepRemovedImageTaskBridgeSettleableReviews(ctx context.Context, batchSize int) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	if batchSize <= 0 {
+		batchSize = 100
+	}
+	var afterTaskPrimaryID int64
+	now := time.Now().Unix()
+	for ctx.Err() == nil {
+		tasks, err := model.GetRemovedImageTaskBridgeParkedSuccessReviews(afterTaskPrimaryID, batchSize)
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("load removed image task bridge parked reviews failed: %v", err))
+			return
+		}
+		for _, task := range tasks {
+			if ctx.Err() != nil {
+				return
+			}
+			if !RemovedImageTaskBridgeSuccessCanSettleLocally(task) {
+				continue
+			}
+			// A cleanup flag makes the generic worker skip this review, so bill it
+			// here when the finalizer is wired. Otherwise reopen it for the worker.
+			if FinalizeRemovedImageTaskBridgeAppliedSettlement != nil {
+				if err := FinalizeRemovedImageTaskBridgeAppliedSettlement(ctx, task); err != nil {
+					logger.LogError(ctx, fmt.Sprintf("settle removed image task bridge parked review failed task %s: %v", task.TaskID, err))
+				}
+				continue
+			}
+			if _, err := task.ScheduleRemovedImageTaskBridgeSettlement(now); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("schedule removed image task bridge settlement failed task %s: %v", task.TaskID, err))
+			}
+		}
+		if len(tasks) < batchSize {
+			return
+		}
+		afterTaskPrimaryID = tasks[len(tasks)-1].ID
+	}
+}
+
 func recoverPendingImageTaskRefunds(ctx context.Context, batchSize int) {
 	var afterTaskPrimaryID int64
 	for ctx.Err() == nil {
@@ -640,32 +1059,15 @@ func orphanedImageTaskFailure(task *model.Task, now int64, orphanGrace int64, ex
 		}
 	}
 	if executionTimeout > 0 && task.SubmitTime > 0 && now-task.SubmitTime > executionTimeout {
-		refund := notSubmitted && !removedImageTaskBridgeNeedsReview(task)
-		return fmt.Sprintf("image task execution timeout (%d minutes)", executionTimeout/60), refund, true
+		if removedImageTaskBridgeMode(task) {
+			if RemovedImageTaskBridgeMustHoldPrecharge(task) {
+				return RemovedImageTaskBridgeFailReason, false, true
+			}
+			return RemovedImageTaskBridgeFailReason, true, true
+		}
+		return fmt.Sprintf("image task execution timeout (%d minutes)", executionTimeout/60), notSubmitted, true
 	}
 	return "", false, false
-}
-
-// removedImageTaskBridgeNeedsReview matches the worker retirement rule. A
-// removed bridge task that was already submitted must be held for review, even
-// when the upstream id was never persisted. Queued tasks stay refundable.
-func removedImageTaskBridgeNeedsReview(task *model.Task) bool {
-	if task == nil {
-		return false
-	}
-	mode := strings.TrimSpace(task.PrivateData.ImageTaskMode)
-	if mode != dto.ImageTaskModeAsyncTaskBridge && mode != "gpt_image2api_async" {
-		return false
-	}
-	if strings.TrimSpace(task.PrivateData.UpstreamTaskID) != "" {
-		return true
-	}
-	switch task.Status {
-	case model.TaskStatusSubmitted, model.TaskStatusInProgress:
-		return true
-	default:
-		return false
-	}
 }
 
 func imageTaskOrphanFailSeconds() int64 {
@@ -854,6 +1256,9 @@ func runImageTaskRequestCleanupPass(ctx context.Context) {
 			logger.LogError(ctx, fmt.Sprintf("image task request cleanup panic: %v\n%s", recovered, string(debug.Stack())))
 		}
 	}()
+	sweepRemovedImageTaskBridgeHolds(ctx, 100)
+	sweepRemovedImageTaskBridgeUnsettledSuccess(ctx, 100)
+	sweepRemovedImageTaskBridgeSettleableReviews(ctx, 100)
 	recoverPendingImageTaskRefunds(ctx, 100)
 	if err := DispatchPendingImageTaskSettlementLogs(ctx, 100); err != nil {
 		logger.LogWarn(ctx, fmt.Sprintf("image task billing log outbox dispatch failed: %s", err.Error()))
@@ -1508,37 +1913,154 @@ func DispatchPlatformUpdate(ctx context.Context, platform constant.TaskPlatform,
 		DispatchImageTasks(ctx, tasks)
 	case constant.TaskPlatformMidjourney:
 		// MJ 轮询由其自身处理，这里预留入口
-	case constant.TaskPlatformSuno:
-		_ = UpdateSunoTasks(ctx, taskChannelM, taskM)
 	default:
-		if batchAdaptor := batchAdaptorForPlatform(platform); batchAdaptor != nil {
-			if err := UpdateBatchTasks(ctx, batchAdaptor, taskChannelM, taskM); err != nil {
+		dispatchPlatformTasks(ctx, platform, taskChannelM, taskM)
+	}
+}
+
+func dispatchPlatformTasks(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) {
+	legacyChannels, legacyTasks, pluginChannels, pluginTasks := splitPollingTasksBySnapshot(taskChannelM, taskM)
+	if len(legacyChannels) > 0 {
+		dispatchLegacyPlatformTasks(ctx, platform, legacyChannels, legacyTasks)
+	}
+	if len(pluginChannels) > 0 {
+		dispatchSnapshottedPlatformTasks(ctx, platform, pluginChannels, pluginTasks)
+	}
+}
+
+func splitPollingTasksBySnapshot(taskChannelM map[int][]string, taskM map[string]*model.Task) (map[int][]string, map[string]*model.Task, map[int][]string, map[string]*model.Task) {
+	legacyChannels := make(map[int][]string)
+	legacyTasks := make(map[string]*model.Task)
+	pluginChannels := make(map[int][]string)
+	pluginTasks := make(map[string]*model.Task)
+	for channelID, refs := range taskChannelM {
+		for _, ref := range refs {
+			task := taskM[ref]
+			if taskHasPollingPluginSnapshot(task) {
+				pluginChannels[channelID] = append(pluginChannels[channelID], ref)
+				if task != nil {
+					pluginTasks[ref] = task
+				}
+				continue
+			}
+			legacyChannels[channelID] = append(legacyChannels[channelID], ref)
+			if task != nil {
+				legacyTasks[ref] = task
+			}
+		}
+	}
+	return legacyChannels, legacyTasks, pluginChannels, pluginTasks
+}
+
+func taskHasPollingPluginSnapshot(task *model.Task) bool {
+	return task != nil && task.PrivateData.Execution != nil && task.PrivateData.Execution.TaskPlugin != nil
+}
+
+func dispatchLegacyPlatformTasks(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) {
+	if legacySunoPollingPlatform(platform) {
+		_ = UpdateSunoTasks(ctx, taskChannelM, taskM)
+		return
+	}
+	if batchAdaptor := batchAdaptorForPlatform(platform); batchAdaptor != nil {
+		if err := UpdateBatchTasks(ctx, batchAdaptor, taskChannelM, taskM); err != nil {
+			common.SysLog(fmt.Sprintf("UpdateBatchTasks fail: %s", err))
+		}
+		return
+	}
+	if err := UpdateVideoTasks(ctx, platform, taskChannelM, taskM); err != nil {
+		common.SysLog(fmt.Sprintf("UpdateVideoTasks fail: %s", err))
+	}
+}
+
+func legacySunoPollingPlatform(platform constant.TaskPlatform) bool {
+	switch string(platform) {
+	case string(constant.TaskPlatformSuno), "sunoapi":
+		return true
+	}
+	channelType, err := strconv.Atoi(string(platform))
+	return err == nil && channelType == constant.ChannelTypeSunoAPI
+}
+
+func dispatchSnapshottedPlatformTasks(ctx context.Context, platform constant.TaskPlatform, taskChannelM map[int][]string, taskM map[string]*model.Task) {
+	type snapshotGroup struct {
+		adaptor  TaskPluginPollingAdaptor
+		channels map[int][]string
+		tasks    map[string]*model.Task
+	}
+	groups := make(map[string]*snapshotGroup)
+	unresolvedChannels := make(map[int][]string)
+	unresolvedTasks := make(map[string]*model.Task)
+	for channelID, refs := range taskChannelM {
+		for _, ref := range refs {
+			task := taskM[ref]
+			var adaptor TaskPluginPollingAdaptor
+			if GetTaskPluginAdaptorForTaskFunc != nil && task != nil {
+				adaptor = GetTaskPluginAdaptorForTaskFunc(task)
+			}
+			if adaptor == nil {
+				unresolvedChannels[channelID] = append(unresolvedChannels[channelID], ref)
+				if task != nil {
+					unresolvedTasks[ref] = task
+				}
+				continue
+			}
+			key := taskPollingSnapshotGroupKey(task)
+			group := groups[key]
+			if group == nil {
+				group = &snapshotGroup{
+					adaptor:  adaptor,
+					channels: make(map[int][]string),
+					tasks:    make(map[string]*model.Task),
+				}
+				groups[key] = group
+			}
+			group.channels[channelID] = append(group.channels[channelID], ref)
+			if task != nil {
+				group.tasks[ref] = task
+			}
+		}
+	}
+	if len(unresolvedChannels) > 0 {
+		if err := UpdateVideoTasks(ctx, platform, unresolvedChannels, unresolvedTasks); err != nil {
+			common.SysLog(fmt.Sprintf("UpdateVideoTasks fail: %s", err))
+		}
+	}
+	keys := make([]string, 0, len(groups))
+	for key := range groups {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+	for _, key := range keys {
+		group := groups[key]
+		if batchAdaptor, ok := group.adaptor.(BatchTaskPollingAdaptor); ok && batchAdaptor != nil && batchAdaptor.FetchMode() == "batch" {
+			if err := UpdateBatchTasks(ctx, batchAdaptor, group.channels, group.tasks); err != nil {
 				common.SysLog(fmt.Sprintf("UpdateBatchTasks fail: %s", err))
 			}
-			return
+			continue
 		}
-		if err := UpdateVideoTasks(ctx, platform, taskChannelM, taskM); err != nil {
+		if err := UpdateVideoTasks(ctx, platform, group.channels, group.tasks); err != nil {
 			common.SysLog(fmt.Sprintf("UpdateVideoTasks fail: %s", err))
 		}
 	}
 }
 
+func taskPollingSnapshotGroupKey(task *model.Task) string {
+	plugin := task.PrivateData.Execution.TaskPlugin
+	return fmt.Sprintf("%s\x00%s\x00%d\x00%d", plugin.Key, plugin.Version, plugin.APIVersion, plugin.Generation)
+}
+
 func batchAdaptorForPlatform(platform constant.TaskPlatform) BatchTaskPollingAdaptor {
-	if GetTaskPluginAdaptorFunc != nil {
-		if adaptor := GetTaskPluginAdaptorFunc(platform); adaptor != nil {
-			if batchAdaptor, ok := adaptor.(BatchTaskPollingAdaptor); ok && batchAdaptor.FetchMode() == "batch" {
-				return batchAdaptor
-			}
-		}
+	// Snapshot tasks are dispatched on their own. A loaded task plugin must not
+	// poll rows that never recorded that plugin, including old Suno channel 36.
+	if GetTaskAdaptorFunc == nil {
+		return nil
 	}
-	if GetTaskAdaptorFunc != nil {
-		if adaptor := GetTaskAdaptorFunc(platform); adaptor != nil {
-			if batchAdaptor, ok := adaptor.(BatchTaskPollingAdaptor); ok && batchAdaptor.FetchMode() == "batch" {
-				return batchAdaptor
-			}
-		}
+	adaptor := GetTaskAdaptorFunc(platform)
+	batchAdaptor, ok := adaptor.(BatchTaskPollingAdaptor)
+	if !ok || batchAdaptor == nil || batchAdaptor.FetchMode() != "batch" {
+		return nil
 	}
-	return nil
+	return batchAdaptor
 }
 
 // UpdateBatchTasks polls every channel with one batch request and settles each
