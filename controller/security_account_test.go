@@ -238,6 +238,26 @@ func TestSecurityAccountDeletionConcurrentRequestsHaveOneWinner(t *testing.T) {
 	assert.Equal(t, identity.UserAuthVersion+1, deleted.AuthVersion)
 }
 
+func TestSecurityAccountDeletionRetriesSQLiteLock(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	var once sync.Once
+	require.NoError(t, model.DB.Callback().Delete().Before("gorm:delete").Register("account-delete-sqlite-lock", func(tx *gorm.DB) {
+		if tx.Statement.Table == "users" {
+			once.Do(func() {
+				_ = tx.AddError(errors.New("database is locked (5) (SQLITE_BUSY)"))
+			})
+		}
+	}))
+	t.Cleanup(func() {
+		require.NoError(t, model.DB.Callback().Delete().Remove("account-delete-sqlite-lock"))
+	})
+	require.NoError(t, model.DeleteUserForSession(identity))
+	var deleted model.User
+	require.NoError(t, model.DB.Unscoped().First(&deleted, user.Id).Error)
+	assert.True(t, deleted.DeletedAt.Valid)
+	assert.Equal(t, identity.UserAuthVersion+1, deleted.AuthVersion)
+}
+
 type securityMailbox struct {
 	mutex sync.Mutex
 	mail  map[string][]string

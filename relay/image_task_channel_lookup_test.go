@@ -3,6 +3,7 @@ package relay
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"os"
 	"testing"
@@ -126,7 +127,10 @@ func TestRunSyncWrapperImageTaskMissingChannelStillRefunds(t *testing.T) {
 	common.BatchUpdateEnabled = false
 	previousLookup := cacheGetChannel
 	cacheGetChannel = func(int) (*model.Channel, error) {
-		return nil, errors.New("channel #77 no longer exists")
+		return nil, &model.ChannelLookupError{
+			ChannelID: 77,
+			Err:       fmt.Errorf("channel #77 no longer exists: %w", gorm.ErrRecordNotFound),
+		}
 	}
 	t.Cleanup(func() {
 		cacheGetChannel = previousLookup

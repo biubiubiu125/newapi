@@ -156,16 +156,19 @@ func main() {
 		}
 		return a
 	}
-	service.GetTaskPluginAdaptorForTaskFunc = func(task *model.Task) service.TaskPluginPollingAdaptor {
+	service.GetTaskPluginAdaptorForTaskFunc = func(task *model.Task) (service.TaskPluginPollingAdaptor, error) {
 		a, err := relay.GetTaskPluginAdaptorForTask(task)
-		if err != nil || a == nil {
-			return nil
+		if err != nil {
+			return nil, err
+		}
+		if a == nil {
+			return nil, nil
 		}
 		pollingAdaptor, ok := a.(service.TaskPluginPollingAdaptor)
 		if !ok {
-			return nil
+			return nil, fmt.Errorf("task plugin adaptor %T does not support polling", a)
 		}
-		return pollingAdaptor
+		return pollingAdaptor, nil
 	}
 	service.ResolveTaskPluginPollingAdaptorFunc = func(task *model.Task) (service.TaskPluginPollingAdaptor, error) {
 		a, err := relay.GetTaskPluginAdaptorForTask(task)

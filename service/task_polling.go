@@ -86,7 +86,7 @@ type BatchTaskPollingAdaptor interface {
 // 打破 service -> relay -> relay/channel -> service 的循环依赖。
 var GetTaskAdaptorFunc func(platform constant.TaskPlatform) TaskPollingAdaptor
 var GetTaskPluginAdaptorFunc func(platform constant.TaskPlatform) TaskPluginPollingAdaptor
-var GetTaskPluginAdaptorForTaskFunc func(task *model.Task) TaskPluginPollingAdaptor
+var GetTaskPluginAdaptorForTaskFunc func(task *model.Task) (TaskPluginPollingAdaptor, error)
 
 // ResolveTaskPluginPollingAdaptorFunc is the error-preserving snapshot resolver.
 // A temporary store error must not be collapsed into a nil adaptor, because a
@@ -173,9 +173,8 @@ func taskPollingAdaptorForPlatform(platform constant.TaskPlatform) TaskPluginPol
 	return nil
 }
 
-func taskPollingAdaptorForTask(task *model.Task, platform constant.TaskPlatform) TaskPluginPollingAdaptor {
-	adaptor, _ := resolveTaskPollingAdaptor(task, platform)
-	return adaptor
+func taskPollingAdaptorForTask(task *model.Task, platform constant.TaskPlatform) (TaskPluginPollingAdaptor, error) {
+	return resolveTaskPollingAdaptor(task, platform)
 }
 
 func resolveTaskPollingAdaptor(task *model.Task, platform constant.TaskPlatform) (TaskPluginPollingAdaptor, error) {
@@ -194,8 +193,10 @@ func resolveTaskPollingPluginAdaptor(task *model.Task) (TaskPluginPollingAdaptor
 	}
 	// A persisted task plugin identity is an immutable execution
 	// contract. If its exact version cannot be resolved, fail closed
-	// instead of polling it with the current platform plugin.
-	return GetTaskPluginAdaptorForTaskFunc(task), nil
+	// instead of polling it with the current platform plugin. A store
+	// error must stay an error: a nil adaptor is a poll failure and can
+	// refund a task that is still running upstream.
+	return GetTaskPluginAdaptorForTaskFunc(task)
 }
 
 func taskPollingAdaptorForPlatformWithoutPlugin(platform constant.TaskPlatform) TaskPluginPollingAdaptor {
@@ -1837,9 +1838,13 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 		taskM := make(map[string]*model.Task)
 		nullTaskIds := make([]int64, 0)
 		for _, task := range tasks {
-			upstreamID := task.GetUpstreamTaskID()
+			upstreamID := pollingUpstreamTaskID(task)
 			if upstreamID == "" {
-				nullTaskIds = append(nullTaskIds, task.ID)
+				// A finished synchronous task has no provider id. Leave it for
+				// settlement instead of failing it as an empty upstream id.
+				if task.Status != model.TaskStatusSuccess {
+					nullTaskIds = append(nullTaskIds, task.ID)
+				}
 				continue
 			}
 			taskRef := pollingTaskReference(task)
@@ -1851,8 +1856,15 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 		}
 		if len(nullTaskIds) > 0 {
 			summary.NullTasksFailed += len(nullTaskIds)
+			nullTaskIDSet := make(map[int64]struct{}, len(nullTaskIds))
+			for _, id := range nullTaskIds {
+				nullTaskIDSet[id] = struct{}{}
+			}
 			for _, task := range tasks {
-				if task == nil || strings.TrimSpace(task.GetUpstreamTaskID()) != "" {
+				if task == nil {
+					continue
+				}
+				if _, selected := nullTaskIDSet[task.ID]; !selected {
 					continue
 				}
 				reason := "task_id is empty; upstream task cannot be polled"
@@ -3050,8 +3062,18 @@ func updateSunoTaskBatch(
 	adaptor TaskPollingAdaptor,
 	batch sunoTaskBatch,
 ) error {
+	baseURL := ""
+	if ch != nil && ch.BaseURL != nil {
+		baseURL = strings.TrimRight(strings.TrimSpace(*ch.BaseURL), "/")
+	}
+	if baseURL == "" {
+		// A missing address is not a deleted channel. Do not fall back to the
+		// channel type default host; that would send the Suno secret elsewhere.
+		logger.LogError(ctx, fmt.Sprintf("渠道 #%d 没有可用的 Suno BaseURL，跳过本轮轮询", channelId))
+		return nil
+	}
 	proxy := ch.GetSetting().Proxy
-	resp, err := adaptor.FetchTask(*ch.BaseURL, batch.key, map[string]any{
+	resp, err := adaptor.FetchTask(baseURL, batch.key, map[string]any{
 		"ids": batch.upstreamTaskIDs,
 	}, proxy)
 	if err != nil {
@@ -3448,11 +3470,33 @@ func taskPollingTasksForChannel(channelID int, references []string, taskM map[st
 // polling round. Provider task IDs are only unique within a channel, so using
 // the upstream ID as the global map key can silently make one channel poll or
 // update the task belonging to another channel.
+// pollingUpstreamTaskID is the provider id for one poll round. Image tasks
+// are stored before upstream submission, so an empty provider id still has
+// to reach the image worker. After public ids were split from provider ids,
+// a generated task_ id is not a provider id and must not be polled. Older
+// rows, and rows whose TaskID is itself the provider id, keep that id.
+func pollingUpstreamTaskID(task *model.Task) string {
+	if task == nil {
+		return ""
+	}
+	if id := strings.TrimSpace(task.PrivateData.UpstreamTaskID); id != "" {
+		return id
+	}
+	taskID := strings.TrimSpace(task.TaskID)
+	if task.Platform == constant.TaskPlatformImage {
+		return taskID
+	}
+	if task.SubmitTime >= model.TaskRefundLegacyCutoff && strings.HasPrefix(taskID, "task_") {
+		return ""
+	}
+	return taskID
+}
+
 func pollingTaskReference(task *model.Task) string {
 	if task == nil {
 		return ""
 	}
-	upstreamID := strings.TrimSpace(task.GetUpstreamTaskID())
+	upstreamID := pollingUpstreamTaskID(task)
 	if upstreamID == "" {
 		return ""
 	}

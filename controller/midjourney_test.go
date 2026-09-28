@@ -312,7 +312,7 @@ func TestRunMidjourneyTaskUpdateOnceRefundsTokenAndUsageCounters(t *testing.T) {
 	require.Zero(t, refundedTask.Quota)
 }
 
-func TestRunMidjourneyTaskUpdateOnceRefundsWhenChannelCacheMissing(t *testing.T) {
+func TestRunMidjourneyTaskUpdateOnceKeepsPrechargeWhenChannelCacheMissesExistingRow(t *testing.T) {
 	db := setupMidjourneyPollingTest(t)
 	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.TokenUsageDaily{}, &model.Channel{}))
 	oldMemoryCacheEnabled := common.MemoryCacheEnabled
@@ -363,23 +363,282 @@ func TestRunMidjourneyTaskUpdateOnceRefundsWhenChannelCacheMissing(t *testing.T)
 
 	var user model.User
 	require.NoError(t, db.First(&user, 5106).Error)
+	require.EqualValues(t, 75, user.Quota)
+	require.EqualValues(t, 25, user.UsedQuota)
+	var token model.Token
+	require.NoError(t, db.First(&token, 6106).Error)
+	require.EqualValues(t, 75, token.RemainQuota)
+	require.EqualValues(t, 25, token.UsedQuota)
+	var channel model.Channel
+	require.NoError(t, db.First(&channel, 4106).Error)
+	require.EqualValues(t, 25, channel.UsedQuota)
+	var task model.Midjourney
+	require.NoError(t, db.Where("mj_id = ?", "mj-cache-missing").First(&task).Error)
+	require.Equal(t, "IN_PROGRESS", task.Status)
+	require.Equal(t, "50%", task.Progress)
+	require.Equal(t, 25, task.Quota)
+	require.Empty(t, task.FailReason)
+	var refundLogs int64
+	require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ? AND type = ?", 5106, model.LogTypeRefund).Count(&refundLogs).Error)
+	require.Zero(t, refundLogs)
+}
+
+func TestRunMidjourneyTaskUpdateOnceRefundsWhenChannelRowIsGone(t *testing.T) {
+	db := setupMidjourneyPollingTest(t)
+	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.TokenUsageDaily{}, &model.Channel{}))
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+	submitAt := time.Now().AddDate(0, 0, -1).Unix()
+	require.NoError(t, db.Create(&model.User{
+		Id:        5110,
+		Username:  "row-gone-owner",
+		Password:  "password123",
+		Quota:     75,
+		UsedQuota: 25,
+		Status:    common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          6110,
+		UserId:      5110,
+		Key:         "mj-row-gone-token",
+		Name:        "mj-row-gone-token",
+		RemainQuota: 75,
+		UsedQuota:   25,
+		Status:      common.TokenStatusEnabled,
+	}).Error)
+	model.RecordTokenUsage(6110, 5110, 25, submitAt)
+	require.NoError(t, db.Create(&model.Midjourney{
+		UserId:     5110,
+		Action:     constant.MjActionImagine,
+		MjId:       "mj-row-gone",
+		Status:     "IN_PROGRESS",
+		Progress:   "50%",
+		ChannelId:  4110,
+		Quota:      25,
+		TokenId:    6110,
+		Group:      "default",
+		SubmitTime: submitAt * 1000,
+	}).Error)
+
+	runMidjourneyTaskUpdateOnce(context.Background(), nil)
+
+	var user model.User
+	require.NoError(t, db.First(&user, 5110).Error)
 	require.EqualValues(t, 100, user.Quota)
 	require.Zero(t, user.UsedQuota)
 	var token model.Token
-	require.NoError(t, db.First(&token, 6106).Error)
+	require.NoError(t, db.First(&token, 6110).Error)
 	require.EqualValues(t, 100, token.RemainQuota)
 	require.Zero(t, token.UsedQuota)
-	var channel model.Channel
-	require.NoError(t, db.First(&channel, 4106).Error)
-	require.Zero(t, channel.UsedQuota)
 	var task model.Midjourney
-	require.NoError(t, db.Where("mj_id = ?", "mj-cache-missing").First(&task).Error)
+	require.NoError(t, db.Where("mj_id = ?", "mj-row-gone").First(&task).Error)
 	require.Equal(t, "FAILURE", task.Status)
 	require.Equal(t, "100%", task.Progress)
 	require.Zero(t, task.Quota)
+	require.Equal(t, model.FormatPublicChannelInfoFailReason(4110), task.FailReason)
 	var refundLog model.Log
-	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", 5106, model.LogTypeRefund).First(&refundLog).Error)
-	require.Equal(t, 6106, refundLog.TokenId)
+	require.NoError(t, model.LOG_DB.Where("user_id = ? AND type = ?", 5110, model.LogTypeRefund).First(&refundLog).Error)
+	require.Equal(t, 6110, refundLog.TokenId)
+}
+
+func TestRunMidjourneyTaskUpdateOnceTransientChannelLookupDoesNotRefund(t *testing.T) {
+	db := setupMidjourneyPollingTest(t)
+	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.Channel{}))
+	submitAt := time.Now().AddDate(0, 0, -1).Unix()
+	require.NoError(t, db.Create(&model.User{
+		Id:        5111,
+		Username:  "lookup-blip-owner",
+		Password:  "password123",
+		Quota:     75,
+		UsedQuota: 25,
+		Status:    common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          6111,
+		UserId:      5111,
+		Key:         "mj-lookup-blip-token",
+		Name:        "mj-lookup-blip-token",
+		RemainQuota: 75,
+		UsedQuota:   25,
+		Status:      common.TokenStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:        4111,
+		Name:      "mj-lookup-blip",
+		Type:      constant.ChannelTypeMidjourney,
+		Status:    common.ChannelStatusEnabled,
+		UsedQuota: 25,
+	}).Error)
+	require.NoError(t, db.Create(&model.Midjourney{
+		UserId:     5111,
+		Action:     constant.MjActionImagine,
+		MjId:       "mj-lookup-blip",
+		Status:     "IN_PROGRESS",
+		Progress:   "50%",
+		ChannelId:  4111,
+		Quota:      25,
+		TokenId:    6111,
+		Group:      "default",
+		SubmitTime: submitAt * 1000,
+	}).Error)
+	previous := midjourneyChannelLookup
+	midjourneyChannelLookup = func(int) (*model.Channel, error) {
+		return nil, &model.ChannelLookupError{ChannelID: 4111, Err: errors.New("dial tcp: connection refused")}
+	}
+	t.Cleanup(func() { midjourneyChannelLookup = previous })
+
+	runMidjourneyTaskUpdateOnce(context.Background(), nil)
+
+	var user model.User
+	require.NoError(t, db.First(&user, 5111).Error)
+	require.EqualValues(t, 75, user.Quota)
+	require.EqualValues(t, 25, user.UsedQuota)
+	var channel model.Channel
+	require.NoError(t, db.First(&channel, 4111).Error)
+	require.EqualValues(t, 25, channel.UsedQuota)
+	var task model.Midjourney
+	require.NoError(t, db.Where("mj_id = ?", "mj-lookup-blip").First(&task).Error)
+	require.Equal(t, "IN_PROGRESS", task.Status)
+	require.Equal(t, "50%", task.Progress)
+	require.Equal(t, 25, task.Quota)
+	require.Empty(t, task.FailReason)
+	var refundLogs int64
+	require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ? AND type = ?", 5111, model.LogTypeRefund).Count(&refundLogs).Error)
+	require.Zero(t, refundLogs)
+}
+
+func TestRunMidjourneyTaskUpdateOnceDeletionPhraseDoesNotRefund(t *testing.T) {
+	db := setupMidjourneyPollingTest(t)
+	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.Channel{}))
+	submitAt := time.Now().AddDate(0, 0, -1).Unix()
+	require.NoError(t, db.Create(&model.User{
+		Id:        5112,
+		Username:  "lookup-phrase-owner",
+		Password:  "password123",
+		Quota:     75,
+		UsedQuota: 25,
+		Status:    common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          6112,
+		UserId:      5112,
+		Key:         "mj-lookup-phrase-token",
+		Name:        "mj-lookup-phrase-token",
+		RemainQuota: 75,
+		UsedQuota:   25,
+		Status:      common.TokenStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:        4112,
+		Name:      "mj-lookup-phrase",
+		Type:      constant.ChannelTypeMidjourney,
+		Status:    common.ChannelStatusEnabled,
+		UsedQuota: 25,
+	}).Error)
+	require.NoError(t, db.Create(&model.Midjourney{
+		UserId:     5112,
+		Action:     constant.MjActionImagine,
+		MjId:       "mj-lookup-phrase",
+		Status:     "IN_PROGRESS",
+		Progress:   "50%",
+		ChannelId:  4112,
+		Quota:      25,
+		TokenId:    6112,
+		Group:      "default",
+		SubmitTime: submitAt * 1000,
+	}).Error)
+	previous := midjourneyChannelLookup
+	midjourneyChannelLookup = func(int) (*model.Channel, error) {
+		return nil, errors.New("channel #4112 no longer exists: SSL connection has been closed unexpectedly")
+	}
+	t.Cleanup(func() { midjourneyChannelLookup = previous })
+
+	runMidjourneyTaskUpdateOnce(context.Background(), nil)
+
+	var user model.User
+	require.NoError(t, db.First(&user, 5112).Error)
+	require.EqualValues(t, 75, user.Quota)
+	require.EqualValues(t, 25, user.UsedQuota)
+	var task model.Midjourney
+	require.NoError(t, db.Where("mj_id = ?", "mj-lookup-phrase").First(&task).Error)
+	require.Equal(t, "IN_PROGRESS", task.Status)
+	require.Equal(t, 25, task.Quota)
+	require.Empty(t, task.FailReason)
+	var refundLogs int64
+	require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ? AND type = ?", 5112, model.LogTypeRefund).Count(&refundLogs).Error)
+	require.Zero(t, refundLogs)
+}
+
+func TestRunMidjourneyTaskUpdateOnceNilBaseURLDoesNotPanicOrRefund(t *testing.T) {
+	db := setupMidjourneyPollingTest(t)
+	require.NoError(t, db.AutoMigrate(&model.Token{}, &model.Channel{}))
+	submitAt := time.Now().AddDate(0, 0, -1).Unix()
+	require.NoError(t, db.Create(&model.User{
+		Id:        5113,
+		Username:  "nil-base-url-owner",
+		Password:  "password123",
+		Quota:     75,
+		UsedQuota: 25,
+		Status:    common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Token{
+		Id:          6113,
+		UserId:      5113,
+		Key:         "mj-nil-base-url-token",
+		Name:        "mj-nil-base-url-token",
+		RemainQuota: 75,
+		UsedQuota:   25,
+		Status:      common.TokenStatusEnabled,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id:        4113,
+		Name:      "mj-nil-base-url",
+		Type:      constant.ChannelTypeMidjourney,
+		Status:    common.ChannelStatusEnabled,
+		UsedQuota: 25,
+	}).Error)
+	require.NoError(t, db.Create(&model.Midjourney{
+		UserId:     5113,
+		Action:     constant.MjActionImagine,
+		MjId:       "mj-nil-base-url",
+		Status:     "IN_PROGRESS",
+		Progress:   "50%",
+		ChannelId:  4113,
+		Quota:      25,
+		TokenId:    6113,
+		Group:      "default",
+		SubmitTime: submitAt * 1000,
+	}).Error)
+	previous := midjourneyChannelLookup
+	midjourneyChannelLookup = func(int) (*model.Channel, error) {
+		return &model.Channel{
+			Id:     4113,
+			Type:   constant.ChannelTypeMidjourney,
+			Key:    "mj-secret",
+			Status: common.ChannelStatusEnabled,
+		}, nil
+	}
+	t.Cleanup(func() { midjourneyChannelLookup = previous })
+
+	require.NotPanics(t, func() {
+		runMidjourneyTaskUpdateOnce(context.Background(), nil)
+	})
+
+	var user model.User
+	require.NoError(t, db.First(&user, 5113).Error)
+	require.EqualValues(t, 75, user.Quota)
+	require.EqualValues(t, 25, user.UsedQuota)
+	var task model.Midjourney
+	require.NoError(t, db.Where("mj_id = ?", "mj-nil-base-url").First(&task).Error)
+	require.Equal(t, "IN_PROGRESS", task.Status)
+	require.Equal(t, 25, task.Quota)
+	require.Empty(t, task.FailReason)
+	var refundLogs int64
+	require.NoError(t, model.LOG_DB.Model(&model.Log{}).Where("user_id = ? AND type = ?", 5113, model.LogTypeRefund).Count(&refundLogs).Error)
+	require.Zero(t, refundLogs)
 }
 
 func TestRunMidjourneyTaskUpdateOnceRefundsNullMidjourneyIdTask(t *testing.T) {

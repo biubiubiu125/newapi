@@ -300,8 +300,15 @@ func (channel *Channel) GetNextEnabledKey() (string, int, *types.NewAPIError) {
 		for i := range keys {
 			idx := (start + i) % len(keys)
 			if getStatus(idx) == common.ChannelStatusEnabled {
-				// update polling index for next call (point to the next position)
-				channel.ChannelInfo.MultiKeyPollingIndex = (idx + 1) % len(keys)
+				// update polling index for next call (point to the next position).
+				// channelInfo is the shared cache entry when memory cache is on; the
+				// caller object can be a separate database copy and must not be the
+				// only place the next index is stored.
+				nextIndex := (idx + 1) % len(keys)
+				if channelInfo != nil {
+					channelInfo.MultiKeyPollingIndex = nextIndex
+				}
+				channel.ChannelInfo.MultiKeyPollingIndex = nextIndex
 				return keys[idx], idx, nil
 			}
 		}

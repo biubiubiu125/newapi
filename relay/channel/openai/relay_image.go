@@ -38,7 +38,13 @@ func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 	}
 
 	if oaiError := usageResp.GetOpenAIError(); oaiError != nil && oaiError.Type != "" {
-		return nil, types.WithOpenAIError(*oaiError, resp.StatusCode)
+		statusCode := resp.StatusCode
+		if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+			if restored := openAIImageErrorStatus(responseBody); restored != 0 {
+				statusCode = restored
+			}
+		}
+		return nil, types.WithOpenAIError(*oaiError, statusCode)
 	}
 
 	info.UpdateImageCount(openaiImageResponseCount(responseBody))
@@ -59,6 +65,21 @@ func OpenaiImageHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.
 // entry and a b64_json entry bills once, and entries without any image payload
 // bill nothing. A zero result leaves the requested quantity in place because
 // UpdateImageCount ignores non-positive counts.
+// openAIImageErrorStatus reads a numeric error.status from an already-200
+// JSON body. chatgpt-2api keeps the failure reason in error.code and cannot
+// change the HTTP status after the keepalive response has started.
+func openAIImageErrorStatus(responseBody []byte) int {
+	value := gjson.GetBytes(responseBody, "error.status")
+	if !value.Exists() || value.Type != gjson.Number {
+		return 0
+	}
+	status := int(value.Int())
+	if status < 400 || status > 599 {
+		return 0
+	}
+	return status
+}
+
 func openaiImageResponseCount(responseBody []byte) int64 {
 	data := gjson.GetBytes(responseBody, "data")
 	if data.IsObject() {

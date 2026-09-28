@@ -205,7 +205,7 @@ func getChannelForTaskMedia(channelId int) (*model.Channel, error) {
 	if dbErr != nil {
 		return nil, dbErr
 	}
-	return nil, fmt.Errorf("channel #%d no longer exists", channelId)
+	return nil, model.NewMissingChannelLookupError(channelId)
 }
 
 func buildLegacyTaskMediaRequest(c *gin.Context, task *model.Task) (*relaychannel.TaskContentRequest, bool, error) {

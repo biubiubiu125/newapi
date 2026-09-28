@@ -1,11 +1,31 @@
 package model
 
 import (
+	"strings"
+	"sync"
+
 	"github.com/QuantumNous/new-api/common"
 
 	"gorm.io/gorm"
 	"gorm.io/gorm/clause"
 )
+
+func sqliteDatabaseLocked(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := strings.ToLower(err.Error())
+	return strings.Contains(message, "database is locked") || strings.Contains(message, "sqlite_busy")
+}
+
+var userDeleteLocks [64]sync.Mutex
+
+func userDeleteLock(userID int) *sync.Mutex {
+	if userID < 0 {
+		userID = -userID
+	}
+	return &userDeleteLocks[userID%len(userDeleteLocks)]
+}
 
 // lockForUpdate makes the next query emit SELECT ... FOR UPDATE so the matched
 // rows stay locked until the surrounding transaction ends.

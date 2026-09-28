@@ -614,11 +614,33 @@ func TestOpenaiImageHandlersReturnJSONError(t *testing.T) {
 		usage, err := OpenaiImageHandler(c, info, resp)
 		require.Nil(t, usage)
 		require.NotNil(t, err)
-		require.Equal(t, http.StatusOK, err.StatusCode)
+		require.Equal(t, http.StatusBadGateway, err.StatusCode)
 		oaiError := err.ToOpenAIError()
 		require.Equal(t, "content moderation failed", oaiError.Message)
 		require.Equal(t, "upstream_error", oaiError.Type)
 		require.Equal(t, "content_moderation_failed", oaiError.Code)
+		require.Empty(t, recorder.Body.String())
+	})
+
+	t.Run("non-streaming missing status stays 200", func(t *testing.T) {
+		missing := `{"error":{"message":"content moderation failed","type":"upstream_error","code":"content_moderation_failed"}}`
+		c, recorder, resp, info := newImageTestContext(t, missing, "application/json", false)
+
+		usage, err := OpenaiImageHandler(c, info, resp)
+		require.Nil(t, usage)
+		require.NotNil(t, err)
+		require.Equal(t, http.StatusOK, err.StatusCode)
+		require.Empty(t, recorder.Body.String())
+	})
+
+	t.Run("non-streaming upstream status wins over body status", func(t *testing.T) {
+		c, recorder, resp, info := newImageTestContext(t, body, "application/json", false)
+		resp.StatusCode = http.StatusUnauthorized
+
+		usage, err := OpenaiImageHandler(c, info, resp)
+		require.Nil(t, usage)
+		require.NotNil(t, err)
+		require.Equal(t, http.StatusUnauthorized, err.StatusCode)
 		require.Empty(t, recorder.Body.String())
 	})
 

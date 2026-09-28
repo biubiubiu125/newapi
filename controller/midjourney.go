@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
@@ -23,6 +24,10 @@ type midjourneyPollSummary struct {
 	ChannelsScanned int `json:"channels_scanned"`
 	NullTasksFailed int `json:"null_tasks_failed"`
 }
+
+// midjourneyChannelLookup is the channel read used by Midjourney polling.
+// Only a confirmed deletion may fail the task and refund its precharge.
+var midjourneyChannelLookup = model.CacheGetChannel
 
 func recoverTerminalFailedMidjourneyRefunds(ctx context.Context) {
 	tasks := model.GetFailedMidjourneyTasksNeedingRefundSettlement()
@@ -92,9 +97,14 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 		if len(taskIds) == 0 {
 			continue
 		}
-		midjourneyChannel, err := model.CacheGetChannel(channelId)
+		midjourneyChannel, err := midjourneyChannelLookup(channelId)
 		if err != nil {
 			logger.LogError(ctx, fmt.Sprintf("CacheGetChannel: %v", err))
+			// A closed database or a deletion phrase is not proof the channel
+			// row is gone. Leave the task in progress and keep its precharge.
+			if !model.IsChannelLookupMissing(err) {
+				continue
+			}
 			failReason := model.FormatPublicChannelInfoFailReason(channelId)
 			for _, taskId := range taskIds {
 				task := taskM[taskId]
@@ -105,7 +115,17 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 			}
 			continue
 		}
-		requestUrl := fmt.Sprintf("%s/mj/task/list-by-condition", *midjourneyChannel.BaseURL)
+		baseURL := ""
+		if midjourneyChannel.BaseURL != nil {
+			baseURL = strings.TrimRight(strings.TrimSpace(*midjourneyChannel.BaseURL), "/")
+		}
+		if baseURL == "" {
+			// A missing address is not a deleted channel. Do not fall back to the
+			// channel type default host; that would send the Midjourney secret elsewhere.
+			logger.LogError(ctx, fmt.Sprintf("渠道 #%d 没有可用的 Midjourney BaseURL，跳过本轮轮询", channelId))
+			continue
+		}
+		requestUrl := baseURL + "/mj/task/list-by-condition"
 
 		body, err := common.Marshal(map[string]any{
 			"ids": taskIds,

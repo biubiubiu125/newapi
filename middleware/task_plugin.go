@@ -1185,6 +1185,8 @@ type originTaskIntentError struct {
 	StatusCode int
 }
 
+var originTaskChannelLookup = model.CacheGetChannel
+
 // taskPluginLegacyPlatforms lists the Task.Platform values a plugin owns: its
 // key (plugin-era tasks) plus every numeric legacy channel type its driver
 // can drive (pre-plugin tasks, e.g. sora tasks submitted on OpenAI-type
@@ -1279,7 +1281,10 @@ func applyOriginTaskIntent(c *gin.Context, intent map[string]any, meta pluginrun
 		tasks = append(tasks, task)
 	}
 
-	channel, err := model.CacheGetChannel(channelID)
+	channel, err := originTaskChannelLookup(channelID)
+	if err != nil && !model.IsChannelLookupMissing(err) {
+		return &originTaskIntentError{Code: "channel_temporarily_unavailable", Message: "origin task channel is temporarily unavailable", StatusCode: http.StatusServiceUnavailable}
+	}
 	if err != nil || channel == nil || channel.Status != common.ChannelStatusEnabled {
 		return &originTaskIntentError{Code: "origin_task_channel_disabled", Message: "origin task channel is disabled", StatusCode: http.StatusBadRequest}
 	}

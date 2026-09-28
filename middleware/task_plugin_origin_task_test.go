@@ -2,6 +2,7 @@ package middleware
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -209,6 +210,24 @@ func TestApplyOriginTaskIntent(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestApplyOriginTaskIntentLookupBlipIsRetryable(t *testing.T) {
+	setupOriginTaskDB(t)
+	channel := insertOriginTaskChannel(t, common.ChannelStatusEnabled)
+	insertOriginOwnedTask(t, "task-blip", 7, channel.Id, "origin-blip")
+	previous := originTaskChannelLookup
+	originTaskChannelLookup = func(int) (*model.Channel, error) {
+		return nil, &model.ChannelLookupError{ChannelID: channel.Id, Err: errors.New("dial tcp: connection refused")}
+	}
+	t.Cleanup(func() { originTaskChannelLookup = previous })
+
+	err := applyOriginTaskIntent(originTaskTestContext(7), map[string]any{
+		"originTaskIds": []any{"task-blip"},
+	}, jsplugin.Meta{Key: "origin-blip"})
+	require.NotNil(t, err)
+	require.Equal(t, http.StatusServiceUnavailable, err.StatusCode)
+	require.NotEqual(t, "origin_task_channel_disabled", err.Code)
 }
 
 func TestApplyOriginTaskIntentAbsentAndEmptyAreNoop(t *testing.T) {

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -32,4 +33,30 @@ func TestUpdateChannelBalanceRejectsTaskPluginChannels(t *testing.T) {
 	UpdateChannelBalance(ctx)
 
 	assert.Contains(t, recorder.Body.String(), "任务插件渠道不支持余额查询")
+}
+
+func TestUpdateChannelBalanceKeepsOrdinaryChannels(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+
+	channel := &model.Channel{
+		Name:   "azure",
+		Type:   constant.ChannelTypeAzure,
+		Key:    "sk-test",
+		Status: common.ChannelStatusEnabled,
+	}
+	require.NoError(t, db.Create(channel).Error)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: fmt.Sprintf("%d", channel.Id)}}
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/api/channel/update_balance", nil)
+
+	UpdateChannelBalance(ctx)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.Equal(t, false, payload["success"])
+	message, _ := payload["message"].(string)
+	require.NotContains(t, message, "Task Plugin")
+	require.NotContains(t, message, "任务插件")
 }

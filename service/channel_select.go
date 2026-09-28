@@ -478,6 +478,13 @@ func SelectChannelForRequest(c *gin.Context, modelName string, retry *RetryParam
 		}
 		channel, err := model.CacheGetChannel(pin.ChannelId)
 		if err != nil {
+			if !model.IsChannelLookupMissing(err) {
+				return nil, "", &ChannelSelectError{
+					StatusCode: http.StatusServiceUnavailable,
+					Code:       "channel_temporarily_unavailable",
+					Message:    "channel_temporarily_unavailable",
+				}
+			}
 			return nil, "", pinnedChannelUnavailable(pin, http.StatusBadRequest, i18n.MsgDistributorInvalidChannelId)
 		}
 		if channel.Status != common.ChannelStatusEnabled {

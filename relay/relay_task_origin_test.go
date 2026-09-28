@@ -3,6 +3,7 @@ package relay
 import (
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
@@ -259,4 +260,36 @@ func TestApplyChannelPinSetsOriginChannelContextAndPrivateKey(t *testing.T) {
 	require.Equal(t, "key-b", info.ApiKey)
 	require.Equal(t, mapping, common.GetContextKeyString(ctx, constant.ContextKeyChannelModelMapping))
 	require.Equal(t, originChannel.Id, common.GetContextKeyInt(ctx, constant.ContextKeyChannelId))
+}
+
+func TestApplyChannelPinLookupBlipIsRetryable(t *testing.T) {
+	setupOriginTaskDB(t)
+	broken, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "closed.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := broken.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+	previousDB := model.DB
+	model.DB = broken
+	t.Cleanup(func() { model.DB = previousDB })
+
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos/generations", nil)
+	service.GetChannelConstraints(ctx).AddPin(plugindto.ChannelPin{
+		ChannelId: 880011,
+		Source:    plugindto.PinSourceOriginTask,
+		Rank:      plugindto.PinRankOriginTask,
+		RetryMode: plugindto.PinRetrySameChannel,
+	})
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "kling-video",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+		ChannelMeta:     &relaycommon.ChannelMeta{},
+	}
+
+	taskErr := ApplyChannelPin(ctx, info)
+	require.NotNil(t, taskErr)
+	require.Equal(t, http.StatusServiceUnavailable, taskErr.StatusCode)
+	require.NotEqual(t, "origin_task_channel_disabled", taskErr.Code)
+	require.Nil(t, info.LockedChannel)
 }

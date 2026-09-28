@@ -3,6 +3,7 @@ package e2e
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -123,16 +124,19 @@ func TestDocumentPluginRunsGenericBatchArtifactChain(t *testing.T) {
 		}
 		return adaptor
 	}
-	service.GetTaskPluginAdaptorForTaskFunc = func(task *model.Task) service.TaskPluginPollingAdaptor {
+	service.GetTaskPluginAdaptorForTaskFunc = func(task *model.Task) (service.TaskPluginPollingAdaptor, error) {
 		adaptor, err := relay.GetTaskPluginAdaptorForTask(task)
-		if err != nil || adaptor == nil {
-			return nil
+		if err != nil {
+			return nil, err
+		}
+		if adaptor == nil {
+			return nil, nil
 		}
 		pollingAdaptor, ok := adaptor.(service.TaskPluginPollingAdaptor)
 		if !ok {
-			return nil
+			return nil, fmt.Errorf("task plugin adaptor %T does not support polling", adaptor)
 		}
-		return pollingAdaptor
+		return pollingAdaptor, nil
 	}
 	t.Cleanup(func() {
 		service.GetTaskAdaptorFunc = originalFactory

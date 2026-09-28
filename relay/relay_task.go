@@ -198,6 +198,9 @@ func ApplyChannelPin(c *gin.Context, info *relaycommon.RelayInfo) *dto.TaskError
 	}
 	ch, err := model.CacheGetChannel(pin.ChannelId)
 	if err != nil {
+		if !model.IsChannelLookupMissing(err) {
+			return service.TaskErrorWrapperLocal(err, "channel_temporarily_unavailable", http.StatusServiceUnavailable)
+		}
 		return service.TaskErrorWrapperLocal(err, "origin_task_channel_disabled", http.StatusBadRequest)
 	}
 	if ch.Status != common.ChannelStatusEnabled {

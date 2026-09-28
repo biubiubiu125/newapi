@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
@@ -1345,26 +1346,40 @@ func (user *User) delete(identity *AuthSessionIdentity) error {
 		return common.Localized("common.id_empty")
 	}
 	var nextAuthVersion int64
-	if err := DB.Transaction(func(tx *gorm.DB) error {
-		if identity != nil {
-			if err := ValidateAuthSessionWithTx(tx, *identity); err != nil {
+	var err error
+	// SQLite has no row lock, so two deletes of the same account can both roll
+	// back with SQLITE_BUSY. Serialize same-account deletes in this process, and
+	// retry a lock that still escapes from another process.
+	lock := userDeleteLock(user.Id)
+	lock.Lock()
+	defer lock.Unlock()
+	for attempt := 0; attempt < 5; attempt++ {
+		err = DB.Transaction(func(tx *gorm.DB) error {
+			if identity != nil {
+				if err := ValidateAuthSessionWithTx(tx, *identity); err != nil {
+					return err
+				}
+				var role int
+				if err := tx.Model(&User{}).Where("id = ?", user.Id).Select("role").Scan(&role).Error; err != nil {
+					return err
+				}
+				if role == common.RoleRootUser {
+					return ErrCannotDeleteRootUser
+				}
+			}
+			var err error
+			nextAuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
+			if err != nil {
 				return err
 			}
-			var role int
-			if err := tx.Model(&User{}).Where("id = ?", user.Id).Select("role").Scan(&role).Error; err != nil {
-				return err
-			}
-			if role == common.RoleRootUser {
-				return ErrCannotDeleteRootUser
-			}
+			return tx.Delete(user).Error
+		})
+		if err == nil || !sqliteDatabaseLocked(err) {
+			break
 		}
-		var err error
-		nextAuthVersion, err = IncrementUserAuthVersionWithTx(tx, user.Id)
-		if err != nil {
-			return err
-		}
-		return tx.Delete(user).Error
-	}); err != nil {
+		time.Sleep(time.Duration(attempt+1) * 5 * time.Millisecond)
+	}
+	if err != nil {
 		return err
 	}
 	publishErr := publishCommittedUserAuthVersion(user.Id, nextAuthVersion)

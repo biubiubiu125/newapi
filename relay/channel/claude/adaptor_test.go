@@ -103,6 +103,27 @@ func TestConvertClaudeRequestPreservesMessageOutputConfig(t *testing.T) {
 	assert.NotContains(t, upstream.Messages[2], "output_config")
 }
 
+func TestConvertClaudeRequestPreservesSafeguards(t *testing.T) {
+	body := `{"model":"claude-opus-4-8","max_tokens":64,"safeguards":{"mode":"auto","policy":"default"},"messages":[{"role":"user","content":"hello"}]}`
+	var req dto.ClaudeRequest
+	require.NoError(t, common.UnmarshalJsonStr(body, &req))
+	info := &relaycommon.RelayInfo{
+		OriginModelName: req.Model,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: req.Model,
+		},
+	}
+
+	out, err := (&Adaptor{}).ConvertClaudeRequest(nil, info, &req)
+	require.NoError(t, err)
+	encoded, err := common.Marshal(out)
+	require.NoError(t, err)
+
+	var upstream map[string]any
+	require.NoError(t, common.Unmarshal(encoded, &upstream))
+	assert.Equal(t, map[string]any{"mode": "auto", "policy": "default"}, upstream["safeguards"])
+}
+
 func TestConvertClaudeRequestZeroMaxTokensStillRaisesThinkingBudget(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	c, _ := gin.CreateTestContext(httptest.NewRecorder())

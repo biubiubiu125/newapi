@@ -381,6 +381,261 @@ func TestRunTaskPollingOnceFailsNullUpstreamTaskWithBillingClosure(t *testing.T)
 	require.EqualValues(t, 1100, getTokenRemainQuota(t, tokenID))
 }
 
+func TestRunTaskPollingOnceRefundsPublicTaskIDWithoutUpstreamID(t *testing.T) {
+	truncate(t)
+
+	oldTaskQueryLimit := constant.TaskQueryLimit
+	constant.TaskQueryLimit = 10
+	t.Cleanup(func() {
+		constant.TaskQueryLimit = oldTaskQueryLimit
+	})
+
+	oldAdaptor := GetTaskAdaptorFunc
+	oldPluginAdaptor := GetTaskPluginAdaptorFunc
+	oldPluginAdaptorForTask := GetTaskPluginAdaptorForTaskFunc
+	oldImageRunner := RunImageTasksFunc
+	fetcher := &countingPollingAdaptor{}
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return fetcher }
+	GetTaskPluginAdaptorFunc = nil
+	GetTaskPluginAdaptorForTaskFunc = nil
+	RunImageTasksFunc = nil
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc = oldAdaptor
+		GetTaskPluginAdaptorFunc = oldPluginAdaptor
+		GetTaskPluginAdaptorForTaskFunc = oldPluginAdaptorForTask
+		RunImageTasksFunc = oldImageRunner
+	})
+
+	const userID, tokenID, channelID = 3614, 3615, 3616
+	seedUser(t, userID, 1000)
+	seedToken(t, tokenID, userID, "public-id-empty-upstream-token", 1000)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, 100, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_public_empty_upstream"
+	task.Platform = constant.TaskPlatform("kling")
+	task.Progress = "30%"
+	task.SubmitTime = model.TaskRefundLegacyCutoff
+	task.PrivateData.UpstreamTaskID = ""
+	require.NoError(t, model.DB.Create(task).Error)
+
+	summary := RunTaskPollingOnce(context.Background(), nil)
+
+	require.Equal(t, 1, summary.NullTasksFailed)
+	require.Zero(t, fetcher.fetches)
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, string(model.TaskStatusFailure), string(reloaded.Status))
+	require.Equal(t, "100%", reloaded.Progress)
+	require.Contains(t, reloaded.FailReason, "task_id")
+	require.Zero(t, reloaded.Quota)
+	require.EqualValues(t, 1100, getUserQuota(t, userID))
+	require.EqualValues(t, 1100, getTokenRemainQuota(t, tokenID))
+}
+
+func TestRunTaskPollingOnceKeepsLegacyProviderIDWithoutUpstreamField(t *testing.T) {
+	truncate(t)
+
+	oldTaskQueryLimit := constant.TaskQueryLimit
+	constant.TaskQueryLimit = 10
+	t.Cleanup(func() {
+		constant.TaskQueryLimit = oldTaskQueryLimit
+	})
+
+	oldAdaptor := GetTaskAdaptorFunc
+	oldPluginAdaptor := GetTaskPluginAdaptorFunc
+	oldPluginAdaptorForTask := GetTaskPluginAdaptorForTaskFunc
+	oldImageRunner := RunImageTasksFunc
+	fetcher := &countingPollingAdaptor{}
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return fetcher }
+	GetTaskPluginAdaptorFunc = nil
+	GetTaskPluginAdaptorForTaskFunc = nil
+	RunImageTasksFunc = nil
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc = oldAdaptor
+		GetTaskPluginAdaptorFunc = oldPluginAdaptor
+		GetTaskPluginAdaptorForTaskFunc = oldPluginAdaptorForTask
+		RunImageTasksFunc = oldImageRunner
+	})
+
+	const userID, tokenID, channelID = 3617, 3618, 3619
+	seedUser(t, userID, 1000)
+	seedToken(t, tokenID, userID, "legacy-provider-id-token", 1000)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, 100, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "provider-legacy-id"
+	task.Platform = constant.TaskPlatform("kling")
+	task.Progress = "30%"
+	task.SubmitTime = model.TaskRefundLegacyCutoff - 1
+	task.PrivateData.UpstreamTaskID = ""
+	require.NoError(t, model.DB.Create(task).Error)
+
+	summary := RunTaskPollingOnce(context.Background(), nil)
+
+	require.Zero(t, summary.NullTasksFailed)
+	require.Equal(t, 1, fetcher.fetches)
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, string(model.TaskStatusInProgress), string(reloaded.Status))
+	require.EqualValues(t, 100, reloaded.Quota)
+	require.EqualValues(t, 1000, getUserQuota(t, userID))
+}
+
+type countingPollingAdaptor struct {
+	fetches int
+}
+
+func (a *countingPollingAdaptor) Init(_ *relaycommon.RelayInfo) {}
+
+func (a *countingPollingAdaptor) FetchTask(_ string, _ string, _ map[string]any, _ string) (*http.Response, error) {
+	if a != nil {
+		a.fetches++
+	}
+	return &http.Response{StatusCode: http.StatusOK, Body: io.NopCloser(strings.NewReader(`{}`))}, nil
+}
+
+func (a *countingPollingAdaptor) ParseTaskResult([]byte) (*relaycommon.TaskInfo, error) {
+	return &relaycommon.TaskInfo{Status: model.TaskStatusInProgress, Progress: "30%"}, nil
+}
+
+func (a *countingPollingAdaptor) AdjustBillingOnComplete(*model.Task, *relaycommon.TaskInfo) int {
+	return 0
+}
+
+func TestRunTaskPollingOnceKeepsSuccessfulTaskWithoutUpstreamID(t *testing.T) {
+	truncate(t)
+
+	oldTaskQueryLimit := constant.TaskQueryLimit
+	constant.TaskQueryLimit = 10
+	t.Cleanup(func() {
+		constant.TaskQueryLimit = oldTaskQueryLimit
+	})
+
+	oldAdaptor := GetTaskAdaptorFunc
+	oldPluginAdaptor := GetTaskPluginAdaptorFunc
+	oldPluginAdaptorForTask := GetTaskPluginAdaptorForTaskFunc
+	oldImageRunner := RunImageTasksFunc
+	fetcher := &countingPollingAdaptor{}
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return fetcher }
+	GetTaskPluginAdaptorFunc = nil
+	GetTaskPluginAdaptorForTaskFunc = nil
+	RunImageTasksFunc = nil
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc = oldAdaptor
+		GetTaskPluginAdaptorFunc = oldPluginAdaptor
+		GetTaskPluginAdaptorForTaskFunc = oldPluginAdaptorForTask
+		RunImageTasksFunc = oldImageRunner
+	})
+
+	const userID, tokenID, channelID = 3620, 3621, 3622
+	seedUser(t, userID, 1000)
+	seedToken(t, tokenID, userID, "sync-success-empty-upstream-token", 1000)
+	seedChannel(t, channelID)
+
+	task := makeTask(userID, channelID, 100, tokenID, BillingSourceWallet, 0)
+	task.TaskID = "task_sync_success_empty_upstream"
+	task.Platform = constant.TaskPlatform("kling")
+	task.Status = model.TaskStatusSuccess
+	task.Progress = "100%"
+	task.SettlementStatus = model.TaskSettlementStatusReview
+	task.SubmitTime = model.TaskRefundLegacyCutoff
+	task.NextPollAt = model.TaskRefundLegacyCutoff
+	task.PrivateData.UpstreamTaskID = ""
+	require.NoError(t, model.DB.Create(task).Error)
+
+	summary := RunTaskPollingOnce(context.Background(), nil)
+
+	require.Zero(t, summary.NullTasksFailed)
+	require.Zero(t, fetcher.fetches)
+	var reloaded model.Task
+	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+	require.Equal(t, string(model.TaskStatusSuccess), string(reloaded.Status))
+	require.EqualValues(t, 100, reloaded.Quota)
+	require.EqualValues(t, 1000, getUserQuota(t, userID))
+}
+
+func TestRunTaskPollingOnceKeepsSuccessfulTaskWhenSiblingUpstreamIDIsEmpty(t *testing.T) {
+	truncate(t)
+
+	oldTaskQueryLimit := constant.TaskQueryLimit
+	constant.TaskQueryLimit = 10
+	t.Cleanup(func() {
+		constant.TaskQueryLimit = oldTaskQueryLimit
+	})
+
+	oldAdaptor := GetTaskAdaptorFunc
+	oldPluginAdaptor := GetTaskPluginAdaptorFunc
+	oldPluginAdaptorForTask := GetTaskPluginAdaptorForTaskFunc
+	oldImageRunner := RunImageTasksFunc
+	fetcher := &countingPollingAdaptor{}
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return fetcher }
+	GetTaskPluginAdaptorFunc = nil
+	GetTaskPluginAdaptorForTaskFunc = nil
+	RunImageTasksFunc = nil
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc = oldAdaptor
+		GetTaskPluginAdaptorFunc = oldPluginAdaptor
+		GetTaskPluginAdaptorForTaskFunc = oldPluginAdaptorForTask
+		RunImageTasksFunc = oldImageRunner
+	})
+
+	const userID, emptyTokenID, successTokenID, channelID = 3623, 3624, 3627, 3625
+	seedUser(t, userID, 1000)
+	seedToken(t, emptyTokenID, userID, "sibling-empty-upstream-token", 1000)
+	seedToken(t, successTokenID, userID, "sibling-success-empty-upstream-token", 1000)
+	seedChannel(t, channelID)
+
+	emptyTask := makeTask(userID, channelID, 100, emptyTokenID, BillingSourceWallet, 0)
+	emptyTask.TaskID = "task_public_empty_upstream_sibling"
+	emptyTask.Platform = constant.TaskPlatform("kling")
+	emptyTask.Progress = "30%"
+	emptyTask.SubmitTime = model.TaskRefundLegacyCutoff
+	emptyTask.PrivateData.UpstreamTaskID = ""
+	require.NoError(t, model.DB.Create(emptyTask).Error)
+
+	successTask := makeTask(userID, channelID, 100, successTokenID, BillingSourceWallet, 0)
+	successTask.TaskID = "task_sync_success_beside_empty_upstream"
+	successTask.Platform = constant.TaskPlatform("kling")
+	successTask.Status = model.TaskStatusSuccess
+	successTask.Progress = "100%"
+	successTask.SettlementStatus = model.TaskSettlementStatusReview
+	successTask.SubmitTime = model.TaskRefundLegacyCutoff
+	successTask.NextPollAt = model.TaskRefundLegacyCutoff
+	successTask.PrivateData.UpstreamTaskID = ""
+	require.NoError(t, model.DB.Create(successTask).Error)
+
+	summary := RunTaskPollingOnce(context.Background(), nil)
+
+	require.Equal(t, 1, summary.NullTasksFailed)
+	require.Zero(t, fetcher.fetches)
+
+	var reloadedEmpty model.Task
+	require.NoError(t, model.DB.First(&reloadedEmpty, emptyTask.ID).Error)
+	require.Equal(t, string(model.TaskStatusFailure), string(reloadedEmpty.Status))
+	require.Zero(t, reloadedEmpty.Quota)
+	require.EqualValues(t, 1100, getTokenRemainQuota(t, emptyTokenID))
+
+	var reloadedSuccess model.Task
+	require.NoError(t, model.DB.First(&reloadedSuccess, successTask.ID).Error)
+	require.Equal(t, string(model.TaskStatusSuccess), string(reloadedSuccess.Status))
+	require.Equal(t, model.TaskSettlementStatusReview, reloadedSuccess.SettlementStatus)
+	require.Empty(t, reloadedSuccess.FailReason)
+	require.EqualValues(t, 100, reloadedSuccess.Quota)
+	require.False(t, reloadedSuccess.RefundPending)
+	require.EqualValues(t, 1100, getUserQuota(t, userID))
+	require.EqualValues(t, 1000, getTokenRemainQuota(t, successTokenID))
+}
+
+func TestPollingUpstreamTaskIDKeepsUnsubmittedImageTask(t *testing.T) {
+	task := &model.Task{
+		TaskID:     "task_image_waiting",
+		Platform:   constant.TaskPlatformImage,
+		SubmitTime: model.TaskRefundLegacyCutoff,
+	}
+	require.Equal(t, "task_image_waiting", pollingUpstreamTaskID(task))
+}
+
 func (a *contextAwarePollingAdaptor) Init(_ *relaycommon.RelayInfo) {}
 
 func (a *contextAwarePollingAdaptor) FetchTask(_ string, _ string, _ *model.Task, _ string) (*http.Response, error) {
@@ -446,8 +701,8 @@ func TestTaskPollingAdaptorForTaskDoesNotFallbackAcrossPluginSnapshot(t *testing
 	previousTaskFactory := GetTaskPluginAdaptorForTaskFunc
 	previousPlatformFactory := GetTaskPluginAdaptorFunc
 	previousLegacyFactory := GetTaskAdaptorFunc
-	GetTaskPluginAdaptorForTaskFunc = func(*model.Task) TaskPluginPollingAdaptor {
-		return nil
+	GetTaskPluginAdaptorForTaskFunc = func(*model.Task) (TaskPluginPollingAdaptor, error) {
+		return nil, nil
 	}
 	GetTaskPluginAdaptorFunc = func(constant.TaskPlatform) TaskPluginPollingAdaptor {
 		return fallback
@@ -459,7 +714,35 @@ func TestTaskPollingAdaptorForTaskDoesNotFallbackAcrossPluginSnapshot(t *testing
 		GetTaskAdaptorFunc = previousLegacyFactory
 	})
 
-	assert.Nil(t, taskPollingAdaptorForTask(task, task.Platform))
+	adaptor, err := taskPollingAdaptorForTask(task, task.Platform)
+	assert.NoError(t, err)
+	assert.Nil(t, adaptor)
+}
+
+func TestTaskPollingAdaptorForTaskReturnsTransientResolveError(t *testing.T) {
+	task := &model.Task{
+		Platform: constant.TaskPlatform("sunoapi"),
+		PrivateData: model.TaskPrivateData{
+			Execution: &model.TaskExecutionSnapshot{
+				TaskPlugin: &model.TaskPluginSnapshot{Key: "sunoapi", Version: "9.9.9"},
+			},
+		},
+	}
+	previousForTask := GetTaskPluginAdaptorForTaskFunc
+	previousResolve := ResolveTaskPluginPollingAdaptorFunc
+	GetTaskPluginAdaptorForTaskFunc = func(*model.Task) (TaskPluginPollingAdaptor, error) {
+		return nil, &model.TaskPluginTemporarilyUnavailableError{Err: errors.New("dial tcp: connection refused")}
+	}
+	ResolveTaskPluginPollingAdaptorFunc = nil
+	t.Cleanup(func() {
+		GetTaskPluginAdaptorForTaskFunc = previousForTask
+		ResolveTaskPluginPollingAdaptorFunc = previousResolve
+	})
+
+	adaptor, err := taskPollingAdaptorForTask(task, task.Platform)
+	assert.Nil(t, adaptor)
+	require.Error(t, err)
+	assert.True(t, model.IsTaskPluginTemporarilyUnavailable(err))
 }
 
 func TestTaskPollingAdaptorForLegacyTaskDoesNotSilentlyUseCurrentPlugin(t *testing.T) {
@@ -476,7 +759,9 @@ func TestTaskPollingAdaptorForLegacyTaskDoesNotSilentlyUseCurrentPlugin(t *testi
 	})
 
 	task := &model.Task{Platform: constant.TaskPlatform("google")}
-	assert.Nil(t, taskPollingAdaptorForTask(task, task.Platform))
+	adaptor, err := taskPollingAdaptorForTask(task, task.Platform)
+	assert.NoError(t, err)
+	assert.Nil(t, adaptor)
 }
 
 func TestTaskPollingAdaptorForLegacyTaskStillUsesLegacyAdaptor(t *testing.T) {
@@ -496,7 +781,8 @@ func TestTaskPollingAdaptorForLegacyTaskStillUsesLegacyAdaptor(t *testing.T) {
 	})
 
 	task := &model.Task{Platform: constant.TaskPlatform("suno")}
-	adaptor := taskPollingAdaptorForTask(task, task.Platform)
+	adaptor, err := taskPollingAdaptorForTask(task, task.Platform)
+	assert.NoError(t, err)
 	assert.NotNil(t, adaptor)
 	assert.False(t, called)
 }
@@ -3339,11 +3625,11 @@ func TestDispatchSunoChannel36SplitsSnapshotFromLegacy(t *testing.T) {
 		return nil
 	}
 	GetTaskPluginAdaptorFunc = func(constant.TaskPlatform) TaskPluginPollingAdaptor { return current }
-	GetTaskPluginAdaptorForTaskFunc = func(task *model.Task) TaskPluginPollingAdaptor {
+	GetTaskPluginAdaptorForTaskFunc = func(task *model.Task) (TaskPluginPollingAdaptor, error) {
 		if taskHasPollingPluginSnapshot(task) {
-			return exact
+			return exact, nil
 		}
-		return nil
+		return nil, nil
 	}
 	t.Cleanup(func() {
 		GetTaskAdaptorFunc = previousAdaptor
@@ -3390,7 +3676,7 @@ func TestDispatchUnresolvedSunoSnapshotDoesNotUseCurrentPlugin(t *testing.T) {
 	previousForTask := GetTaskPluginAdaptorForTaskFunc
 	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return legacyAdaptor }
 	GetTaskPluginAdaptorFunc = func(constant.TaskPlatform) TaskPluginPollingAdaptor { return current }
-	GetTaskPluginAdaptorForTaskFunc = func(*model.Task) TaskPluginPollingAdaptor { return nil }
+	GetTaskPluginAdaptorForTaskFunc = func(*model.Task) (TaskPluginPollingAdaptor, error) { return nil, nil }
 	t.Cleanup(func() {
 		GetTaskAdaptorFunc = previousAdaptor
 		GetTaskPluginAdaptorFunc = previousPlugin
@@ -3434,7 +3720,7 @@ func TestDispatchTransientPluginResolveDoesNotConsumePollFailures(t *testing.T) 
 	previousResolve := ResolveTaskPluginPollingAdaptorFunc
 	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return legacyAdaptor }
 	GetTaskPluginAdaptorFunc = func(constant.TaskPlatform) TaskPluginPollingAdaptor { return current }
-	GetTaskPluginAdaptorForTaskFunc = func(*model.Task) TaskPluginPollingAdaptor { return current }
+	GetTaskPluginAdaptorForTaskFunc = func(*model.Task) (TaskPluginPollingAdaptor, error) { return current, nil }
 	ResolveTaskPluginPollingAdaptorFunc = func(*model.Task) (TaskPluginPollingAdaptor, error) {
 		return nil, &model.TaskPluginTemporarilyUnavailableError{Err: errors.New("dial tcp: connection refused")}
 	}
@@ -3450,6 +3736,56 @@ func TestDispatchTransientPluginResolveDoesNotConsumePollFailures(t *testing.T) 
 	}, map[string]*model.Task{task.GetUpstreamTaskID(): task})
 
 	assert.Zero(t, current.batchCalls, "a transient snapshot resolve must not poll with the current plugin")
+	assert.Empty(t, legacyAdaptor.fetchedBodies())
+	reloaded, exists, err := model.GetTaskByID(task.ID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Zero(t, reloaded.PrivateData.PollFailures)
+	assert.Equal(t, model.TaskStatus(model.TaskStatusInProgress), reloaded.Status)
+	assert.EqualValues(t, 900, reloaded.Quota)
+	assert.False(t, reloaded.RefundPending)
+}
+
+func TestDispatchFallbackTaskFuncTransientResolveDoesNotConsumePollFailures(t *testing.T) {
+	truncate(t)
+	const channelID = 3613
+	baseURL := "https://suno.example"
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id: channelID, Type: constant.ChannelTypeSunoAPI, Name: "suno-fallback-transient", Key: "suno-key",
+		Status: common.ChannelStatusEnabled, BaseURL: &baseURL,
+	}).Error)
+	task := seedPollingTask(t, channelID, "suno-fallback-transient-public", "suno-fallback-transient-upstream")
+	task.Platform = constant.TaskPlatform("sunoapi")
+	task.Quota = 900
+	task.PrivateData.Execution = &model.TaskExecutionSnapshot{
+		TaskPlugin: &model.TaskPluginSnapshot{Key: "sunoapi", Version: "9.9.9", APIVersion: 1, Generation: 9},
+	}
+	require.NoError(t, model.DB.Save(task).Error)
+
+	current := &snapshotBatchPollingAdaptor{}
+	legacyAdaptor := &sunoResponsePollingAdaptor{}
+	previousAdaptor := GetTaskAdaptorFunc
+	previousPlugin := GetTaskPluginAdaptorFunc
+	previousForTask := GetTaskPluginAdaptorForTaskFunc
+	previousResolve := ResolveTaskPluginPollingAdaptorFunc
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return legacyAdaptor }
+	GetTaskPluginAdaptorFunc = func(constant.TaskPlatform) TaskPluginPollingAdaptor { return current }
+	GetTaskPluginAdaptorForTaskFunc = func(*model.Task) (TaskPluginPollingAdaptor, error) {
+		return nil, &model.TaskPluginTemporarilyUnavailableError{Err: errors.New("dial tcp: connection refused")}
+	}
+	ResolveTaskPluginPollingAdaptorFunc = nil
+	t.Cleanup(func() {
+		GetTaskAdaptorFunc = previousAdaptor
+		GetTaskPluginAdaptorFunc = previousPlugin
+		GetTaskPluginAdaptorForTaskFunc = previousForTask
+		ResolveTaskPluginPollingAdaptorFunc = previousResolve
+	})
+
+	DispatchPlatformUpdate(context.Background(), constant.TaskPlatform("sunoapi"), map[int][]string{
+		channelID: {task.GetUpstreamTaskID()},
+	}, map[string]*model.Task{task.GetUpstreamTaskID(): task})
+
+	assert.Zero(t, current.batchCalls)
 	assert.Empty(t, legacyAdaptor.fetchedBodies())
 	reloaded, exists, err := model.GetTaskByID(task.ID)
 	require.NoError(t, err)

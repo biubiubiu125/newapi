@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math/rand"
 	"sort"
-	"strings"
 	"sync"
 	"time"
 
@@ -328,14 +327,55 @@ func CacheGetChannel(id int) (*Channel, error) {
 	if !common.MemoryCacheEnabled {
 		return GetChannelById(id, true)
 	}
+	if channel, ok := cachedChannel(id); ok {
+		return channel, nil
+	}
+	// An empty or stale cache is not deletion. Confirm the row before callers
+	// fail a live task and refund its precharge.
+	return channelConfirmedByDatabase(id)
+}
+
+func cachedChannel(id int) (*Channel, bool) {
 	channelSyncLock.RLock()
 	defer channelSyncLock.RUnlock()
-
-	c, ok := channelsIDM[id]
-	if !ok {
-		return nil, fmt.Errorf("channel #%d no longer exists", id)
+	if channelsIDM == nil {
+		return nil, false
 	}
-	return c, nil
+	channel, ok := channelsIDM[id]
+	return channel, ok && channel != nil
+}
+
+func channelConfirmedByDatabase(id int) (*Channel, error) {
+	channel, err := GetChannelById(id, true)
+	if err == nil && channel != nil {
+		return rememberCachedChannel(channel), nil
+	}
+	if err == nil || errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil, NewMissingChannelLookupError(id)
+	}
+	return nil, &ChannelLookupError{ChannelID: id, Err: err}
+}
+
+// rememberCachedChannel keeps a database row loaded after a cache miss so later
+// id lookups and multi-key polling share one object. A channel already present
+// wins; a miss must not replace a newer polling index.
+func rememberCachedChannel(channel *Channel) *Channel {
+	if channel == nil || !common.MemoryCacheEnabled {
+		return channel
+	}
+	if channel.ChannelInfo.IsMultiKey {
+		channel.Keys = channel.GetKeys()
+	}
+	channelSyncLock.Lock()
+	defer channelSyncLock.Unlock()
+	if channelsIDM == nil {
+		channelsIDM = make(map[int]*Channel)
+	}
+	if existing, ok := channelsIDM[channel.Id]; ok && existing != nil {
+		return existing
+	}
+	channelsIDM[channel.Id] = channel
+	return channel
 }
 
 // ChannelLookupError is a failed channel read. Callers must not treat every
@@ -359,8 +399,18 @@ func (e *ChannelLookupError) Unwrap() error {
 	return e.Err
 }
 
-// IsChannelLookupMissing reports that the channel row or cache entry is gone.
-// Connection failures and unknown database errors are not missing.
+// NewMissingChannelLookupError is a confirmed deletion. The message text is
+// not itself proof: only ErrRecordNotFound may fail and refund a live task.
+func NewMissingChannelLookupError(id int) error {
+	return &ChannelLookupError{
+		ChannelID: id,
+		Err:       fmt.Errorf("channel #%d no longer exists: %w", id, gorm.ErrRecordNotFound),
+	}
+}
+
+// IsChannelLookupMissing reports that the channel row is gone. Connection
+// failures and unknown database errors are not missing, even when their text
+// says the channel no longer exists.
 func IsChannelLookupMissing(err error) bool {
 	if err == nil {
 		return false
@@ -372,11 +422,7 @@ func IsChannelLookupMissing(err error) bool {
 	if err == nil {
 		return false
 	}
-	if errors.Is(err, gorm.ErrRecordNotFound) {
-		return true
-	}
-	message := strings.ToLower(err.Error())
-	return strings.Contains(message, "channel") && strings.Contains(message, "no longer exists")
+	return errors.Is(err, gorm.ErrRecordNotFound)
 }
 
 // IsChannelLookupTemporarilyUnavailable reports a wrapped channel read that
@@ -397,14 +443,14 @@ func CacheGetChannelInfo(id int) (*ChannelInfo, error) {
 		}
 		return &channel.ChannelInfo, nil
 	}
-	channelSyncLock.RLock()
-	defer channelSyncLock.RUnlock()
-
-	c, ok := channelsIDM[id]
-	if !ok {
-		return nil, fmt.Errorf("channel #%d no longer exists", id)
+	if channel, ok := cachedChannel(id); ok {
+		return &channel.ChannelInfo, nil
 	}
-	return &c.ChannelInfo, nil
+	channel, err := channelConfirmedByDatabase(id)
+	if err != nil {
+		return nil, err
+	}
+	return &channel.ChannelInfo, nil
 }
 
 func CacheUpdateChannelStatus(id int, status int) {
