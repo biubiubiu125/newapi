@@ -1,0 +1,97 @@
+name: Publish commit release
+
+on:
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: write
+
+concurrency:
+  group: commit-release-main
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Publish commit release
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out
+        uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0 # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Publish a release for each new commit
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BEFORE: ${{ github.event.before }}
+          AFTER: ${{ github.event.after }}
+          FORCED: ${{ github.event.forced }}
+          REF_NAME: ${{ github.ref_name }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          ZERO=0000000000000000000000000000000000000000
+          if [ "$AFTER" = "$ZERO" ]; then
+            echo "Branch deleted; no release"
+            exit 0
+          fi
+
+          if [ "$BEFORE" = "$ZERO" ] || [ "$FORCED" = "true" ]; then
+            COMMITS=("$AFTER")
+          elif COMMITS_TEXT=$(git rev-list --reverse "$BEFORE..$AFTER"); then
+            if [ -z "$COMMITS_TEXT" ]; then
+              COMMITS=()
+            else
+              mapfile -t COMMITS <<< "$COMMITS_TEXT"
+            fi
+          else
+            echo "Previous tip is unavailable; releasing only the pushed tip"
+            COMMITS=("$AFTER")
+          fi
+
+          TAG_PREFIX=$(printf '%s' "$REF_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
+          TAG_PREFIX=${TAG_PREFIX:-main}
+
+          commit_tags_are_safe() {
+            local commit="$1"
+            local file
+            for file in .github/workflows/docker-build.yml .github/workflows/release.yml; do
+              local content
+              content=$(git show "$commit:$file" 2>/dev/null || true)
+              if printf '%s\n' "$content" | grep -Eq "^[[:space:]]*-[[:space:]]*'\\*'[[:space:]]*$"; then
+                return 1
+              fi
+              if ! printf '%s\n' "$content" | grep -Eq "^[[:space:]]*-[[:space:]]*'v\\*'[[:space:]]*$"; then
+                return 1
+              fi
+            done
+            return 0
+          }
+
+          for COMMIT in "${COMMITS[@]}"; do
+            [ -n "$COMMIT" ] || continue
+            if ! commit_tags_are_safe "$COMMIT"; then
+              echo "Skip $COMMIT: tag workflows would still build every tag"
+              continue
+            fi
+            SHORT_SHA=$(git rev-parse --short "$COMMIT")
+            VERSION="${TAG_PREFIX}-${SHORT_SHA}"
+            if gh release view "$VERSION" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+              echo "Release $VERSION already exists"
+              continue
+            fi
+            NOTES_FILE=$(mktemp)
+            git log -1 --format=%B "$COMMIT" > "$NOTES_FILE"
+            if [ ! -s "$NOTES_FILE" ]; then
+              printf '%s\n' "$VERSION" > "$NOTES_FILE"
+            fi
+            gh release create "$VERSION" \
+              --repo "$GITHUB_REPOSITORY" \
+              --target "$COMMIT" \
+              --title "$VERSION" \
+              --notes-file "$NOTES_FILE" \
+              --latest=false
+            rm -f "$NOTES_FILE"
+          done

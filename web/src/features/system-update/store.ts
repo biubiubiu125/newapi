@@ -29,6 +29,11 @@ import { systemReleaseSchema } from './releases'
 const updateSnapshotSchema = z
   .object({
     release: systemReleaseSchema.nullable(),
+    commitShas: z
+      .array(z.string().regex(/^[0-9a-f]{7,40}$/))
+      .max(100)
+      .optional(),
+    checkedVersion: z.string().trim().min(1).optional(),
     lastCheckedAt: z.number().finite().nonnegative(),
     lastAttemptAt: z.number().finite().nonnegative(),
     error: z.enum(['network', 'rate-limit', 'timeout', 'payload']).nullable(),

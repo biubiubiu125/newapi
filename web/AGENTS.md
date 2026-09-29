@@ -206,6 +206,7 @@
 - 使用 Rsbuild，配置见 `rsbuild.config.ts`；脚本以 `package.json` 为准（如 `bun run dev`、`bun run build`、`bun run typecheck`、`bun run lint`、`bun run format`），包管理见 [3.15 依赖管理](#315-依赖管理)。
 - 代码分割与懒加载策略见 [3.4 性能](#34-性能)；资源使用合适格式与压缩，环境变量用 `.env` 且以 `VITE_` 前缀，不在代码中硬编码。
 - **发布前**：执行 typecheck、lint、format 检查，完成生产构建并检查产物体积与环境变量配置。
+- 管理端系统更新只检查公开仓库 `biubiubiu125/newapi`。`main` 推送的镜像版本与轻量 Release 标签都是 `main-<短 SHA>`；正式版本仍用 `v*`。提交标签不发 `:latest`，也不打三端二进制包。
 
 ---
 
@@ -226,3 +227,4 @@
 - **2026-01-31**：在 3.2 中补充「类型检查」要求：改动 TS/TSX 后须执行 typecheck 并修复至无错。
 - **2026-06-21**：在 3.2 中补充「Lint 检查」要求：完成代码改动前须修复所涉及文件的所有 lint error。
 - **2026-09-06**：明确组件复用的强制检索流程、业务封装优先级、新增条件、常用入口及审查要求。
+- **2026-09-29**：系统更新改为检查 `biubiubiu125/newapi`。`main` 的镜像版本与 Release 标签同为 `main-<短 SHA>`，正式版本仍为 `v*`。

@@ -18,7 +18,15 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { describe, expect, test } from 'vitest'
 
-import { compareSystemVersions, selectLatestRelease } from '../releases'
+import {
+  compareRunningToRelease,
+  compareSystemVersions,
+  getSystemReleaseApiUrl,
+  getSystemReleaseUrl,
+  orderedCommitHistory,
+  parseCompareStatus,
+  selectLatestRelease,
+} from '../releases'
 
 describe('system release ordering', () => {
   test.each([
@@ -69,5 +77,159 @@ describe('system release ordering', () => {
   test('rejects malformed payloads instead of reporting that the system is current', () => {
     expect(() => selectLatestRelease({ message: 'bad response' })).toThrow()
     expect(() => selectLatestRelease([{ tag_name: 42 }])).toThrow()
+  })
+
+  test('selects the newest same-branch commit by history, not publication time', () => {
+    const releases = [
+      {
+        tag_name: 'main-aaaaaaaaa',
+        draft: false,
+        prerelease: false,
+        published_at: '2026-09-20T00:00:00Z',
+      },
+      {
+        tag_name: 'v9.9.9',
+        draft: false,
+        prerelease: false,
+        published_at: '2026-09-25T00:00:00Z',
+      },
+      {
+        tag_name: 'main-bbbbbbbbb',
+        draft: false,
+        prerelease: false,
+        published_at: '2026-09-26T00:00:00Z',
+      },
+      {
+        tag_name: 'main-ccccccccc',
+        draft: true,
+        prerelease: false,
+        published_at: '2026-09-27T00:00:00Z',
+      },
+      {
+        tag_name: 'main-ddddddddd',
+        draft: false,
+        prerelease: false,
+      },
+      {
+        tag_name: 'other-eeeeeeeee',
+        draft: false,
+        prerelease: false,
+        published_at: '2026-09-28T00:00:00Z',
+      },
+    ]
+    const history = [
+      `${'a'.repeat(9)}${'a'.repeat(31)}`,
+      `${'b'.repeat(9)}${'b'.repeat(31)}`,
+    ]
+    expect(
+      selectLatestRelease(releases, 'main-aaaaaaaaa', history)?.tag_name
+    ).toBe('main-aaaaaaaaa')
+    expect(selectLatestRelease(releases, 'main-aaaaaaaaa')).toBeNull()
+  })
+
+  test('keeps semver selection for a release build and when the running version is unknown', () => {
+    const releases = [
+      {
+        tag_name: 'main-bbbbbbbbb',
+        draft: false,
+        prerelease: false,
+        published_at: '2026-09-22T00:00:00Z',
+      },
+      {
+        tag_name: 'v1.0.0-rc.36',
+        draft: false,
+        prerelease: true,
+        published_at: '2026-09-08T13:01:00Z',
+      },
+      { tag_name: 'v2.0.0', draft: true, prerelease: false },
+      {
+        tag_name: 'v1.0.0',
+        draft: false,
+        prerelease: false,
+        published_at: '2026-09-01T00:00:00Z',
+      },
+    ]
+    expect(selectLatestRelease(releases, 'v1.0.0-rc.35')?.tag_name).toBe(
+      'v1.0.0'
+    )
+    expect(selectLatestRelease(releases)?.tag_name).toBe('v1.0.0')
+    expect(selectLatestRelease(releases, 'dev')?.tag_name).toBe('v1.0.0')
+  })
+
+  test('compares commit builds by branch history and leaves unordered tags unknown', () => {
+    const newer = `${'b'.repeat(9)}${'b'.repeat(31)}`
+    const older = `${'a'.repeat(9)}${'a'.repeat(31)}`
+    const history = [newer, older]
+    expect(
+      compareRunningToRelease('main-aaaaaaaaa', 'main-bbbbbbbbb', history)
+    ).toBe(-1)
+    expect(
+      compareRunningToRelease('main-bbbbbbbbb', 'main-aaaaaaaaa', history)
+    ).toBe(1)
+    expect(
+      compareRunningToRelease('main-bbbbbbbbb', 'main-bbbbbbbbb', history)
+    ).toBe(0)
+    expect(compareRunningToRelease('main-bbbbbbbbb', 'main-bbbbbbbbb')).toBe(0)
+    expect(
+      compareRunningToRelease('main-aaaaaaaaa', 'main-bbbbbbbbb')
+    ).toBeNull()
+    expect(
+      compareRunningToRelease('main-aaaaaaaaa', 'main-bbbbbbbbb', [newer])
+    ).toBeNull()
+    expect(
+      compareRunningToRelease('main-bbbbbbbbb', 'main-aaaaaaaaa', [newer])
+    ).toBeNull()
+    expect(
+      compareRunningToRelease('main-bbbbbbbbb', 'v1.0.0', history)
+    ).toBeNull()
+    expect(compareRunningToRelease('v1.0.0-rc.35', 'v1.0.0-rc.36')).toBe(-1)
+    expect(compareRunningToRelease(undefined, 'main-bbbbbbbbb')).toBeNull()
+    const colliding = `${'b'.repeat(9)}1${'c'.repeat(30)}`
+    expect(
+      compareRunningToRelease('main-bbbbbbbbb', 'main-aaaaaaaaa', [
+        newer,
+        colliding,
+      ])
+    ).toBeNull()
+  })
+
+  test('points release checks and links at biubiubiu125/newapi', () => {
+    expect(getSystemReleaseApiUrl()).toBe(
+      'https://api.github.com/repos/biubiubiu125/newapi/releases?per_page=100'
+    )
+    expect(
+      getSystemReleaseUrl({
+        tag_name: 'main-bbbbbbbbb',
+        prerelease: false,
+      })
+    ).toBe('https://github.com/biubiubiu125/newapi/releases/tag/main-bbbbbbbbb')
+    expect(getSystemReleaseApiUrl()).not.toContain('QuantumNous/new-api')
+  })
+
+  test('turns a confirmed GitHub comparison into history the checker can reuse', () => {
+    const newer = `${'b'.repeat(40)}`
+    const older = `${'a'.repeat(9)}`
+    expect(parseCompareStatus({ status: 'ahead' })).toBe(-1)
+    expect(parseCompareStatus({ status: 'behind' })).toBe(1)
+    expect(parseCompareStatus({ status: 'identical' })).toBe(0)
+    expect(parseCompareStatus({ status: 'diverged' })).toBeNull()
+    expect(() => parseCompareStatus({ status: 'weird' })).toThrow()
+    expect(
+      orderedCommitHistory('main-aaaaaaaaa', 'main-bbbbbbbbb', [newer], -1)
+    ).toEqual([newer, older])
+    expect(
+      compareRunningToRelease(
+        'main-aaaaaaaaa',
+        'main-bbbbbbbbb',
+        orderedCommitHistory('main-aaaaaaaaa', 'main-bbbbbbbbb', [newer], -1)
+      )
+    ).toBe(-1)
+    expect(
+      compareRunningToRelease(
+        'main-ccccccccc',
+        'main-bbbbbbbbb',
+        orderedCommitHistory('main-ccccccccc', 'main-bbbbbbbbb', [newer], 1)
+      )
+    ).toBe(1)
   })
 })

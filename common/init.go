@@ -29,13 +29,22 @@ func printHelp() {
 	fmt.Println("Usage: newapi [--port <port>] [--log-dir <log directory>] [--version] [--help]")
 }
 
+func applyVersionOverride(baked string, envVersion string) string {
+	override := strings.TrimSpace(envVersion)
+	if override == "" {
+		return baked
+	}
+	trimmed := strings.TrimSpace(baked)
+	if trimmed == "" || trimmed == "v0.0.0" || trimmed == "0.0.0" {
+		return override
+	}
+	return trimmed
+}
+
 func InitEnv() {
 	flag.Parse()
 
-	envVersion := os.Getenv("VERSION")
-	if envVersion != "" {
-		Version = envVersion
-	}
+	Version = applyVersionOverride(Version, os.Getenv("VERSION"))
 
 	if *PrintVersion {
 		fmt.Println(Version)

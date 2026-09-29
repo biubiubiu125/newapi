@@ -5,8 +5,8 @@ on:
     branches:
       - main
     tags:
-      - '*'
-      - '!nightly*'
+      # Commit releases use main-<sha> and must not rebuild or retag :latest.
+      - 'v*'
   workflow_dispatch:
     inputs:
       ref:
@@ -59,7 +59,15 @@ jobs:
           if [ "$REF_TYPE" = "tag" ]; then
             TAG_PREFIX="$REF_NAME"
             VERSION="$REF_NAME"
-            PUBLISH_LATEST=true
+            # publish-latest-policy:begin
+            # Commit tags such as main-<sha> must not retag :latest. Formal v* tags still do.
+            if printf '%s' "$REF_NAME" | grep -Eq '^[a-z0-9]([a-z0-9_.-]*[a-z0-9])?-[0-9a-f]{7,40}$' \
+              && ! printf '%s' "$REF_NAME" | grep -Eq '^v[0-9]'; then
+              PUBLISH_LATEST=false
+            else
+              PUBLISH_LATEST=true
+            fi
+            # publish-latest-policy:end
           else
             TAG_PREFIX=$(printf '%s' "$REF_NAME" | tr '[:upper:]' '[:lower:]' | sed -E 's/[^a-z0-9_.-]+/-/g; s/^[.-]+//; s/[.-]+$//')
             TAG_PREFIX=${TAG_PREFIX:-main}

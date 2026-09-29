@@ -137,7 +137,7 @@ describe('administrator update entry', () => {
       expect(fetchMock).toHaveBeenCalledTimes(1)
       const [url, options] = fetchMock.mock.calls[0]
       expect(String(url)).toBe(
-        'https://api.github.com/repos/QuantumNous/new-api/releases?per_page=100'
+        'https://api.github.com/repos/biubiubiu125/newapi/releases?per_page=100'
       )
       expect(options?.credentials).toBe('omit')
       expect(options?.headers).toEqual({
@@ -145,6 +145,156 @@ describe('administrator update entry', () => {
       })
     }
   )
+
+  test('shows an update when a newer commit release exists for the running build', async () => {
+    client.setQueryData(STATUS_QUERY_KEY, { version: 'main-aaaaaaaaa' })
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: { version: 'main-aaaaaaaaa' } },
+    })
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      const body = url.includes('/commits?')
+        ? [{ sha: `${'b'.repeat(40)}` }, { sha: `${'a'.repeat(40)}` }]
+        : [
+            {
+              tag_name: 'v9.9.9',
+              draft: false,
+              prerelease: false,
+              published_at: '2026-09-25T00:00:00Z',
+              body: 'semver',
+            },
+            {
+              tag_name: 'main-bbbbbbbbb',
+              draft: false,
+              prerelease: false,
+              published_at: '2026-09-22T00:00:00Z',
+              body: 'newer build',
+            },
+            {
+              tag_name: 'main-aaaaaaaaa',
+              draft: false,
+              prerelease: false,
+              published_at: '2026-09-20T00:00:00Z',
+              body: 'current build',
+            },
+          ]
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    render(<SystemUpdateAction />, { wrapper: Wrapper })
+    expect(
+      await screen.findByRole('button', {
+        name: 'New version available: main-bbbbbbbbb',
+      })
+    ).toBeInTheDocument()
+  })
+
+  test('does not show an update when the running build is the latest commit release', async () => {
+    client.setQueryData(STATUS_QUERY_KEY, { version: 'main-bbbbbbbbb' })
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: { version: 'main-bbbbbbbbb' } },
+    })
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      const body = url.includes('/commits?')
+        ? [{ sha: `${'b'.repeat(40)}` }]
+        : [
+            {
+              tag_name: 'v9.9.9',
+              draft: false,
+              prerelease: false,
+              published_at: '2026-09-25T00:00:00Z',
+              body: 'semver',
+            },
+            {
+              tag_name: 'main-bbbbbbbbb',
+              draft: false,
+              prerelease: false,
+              published_at: '2026-09-22T00:00:00Z',
+              body: 'current build',
+            },
+          ]
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    render(<SystemUpdateAction />, { wrapper: Wrapper })
+    expect(
+      await screen.findByRole('button', { name: 'Check for updates' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /New version available/ })
+    ).not.toBeInTheDocument()
+  })
+
+  test('does not show an update when the running commit is newer than the latest release', async () => {
+    client.setQueryData(STATUS_QUERY_KEY, { version: 'main-ccccccccc' })
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: { version: 'main-ccccccccc' } },
+    })
+    fetchMock.mockImplementation(async (input) => {
+      const url = String(input)
+      const body = url.includes('/commits?')
+        ? [{ sha: `${'c'.repeat(40)}` }, { sha: `${'b'.repeat(40)}` }]
+        : [
+            {
+              tag_name: 'main-bbbbbbbbb',
+              draft: false,
+              prerelease: false,
+              published_at: '2026-09-26T00:00:00Z',
+              body: 'older commit published later',
+            },
+          ]
+      return new Response(JSON.stringify(body), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    })
+    render(<SystemUpdateAction />, { wrapper: Wrapper })
+    expect(
+      await screen.findByRole('button', { name: 'Check for updates' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /New version available/ })
+    ).not.toBeInTheDocument()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(String(fetchMock.mock.calls[1]?.[0])).toContain(
+      '/commits?sha=main&per_page=100'
+    )
+  })
+
+  test('does not reuse an older commit list after the running version changes', async () => {
+    useSystemUpdateStore.setState({
+      snapshot: {
+        release: {
+          tag_name: 'main-bbbbbbbbb',
+          prerelease: false,
+          published_at: '2026-09-26T00:00:00Z',
+        },
+        commitShas: ['b'.repeat(40)],
+        checkedVersion: 'main-aaaaaaaaa',
+        lastCheckedAt: Date.now(),
+        lastAttemptAt: Date.now(),
+        error: null,
+      },
+    })
+    client.setQueryData(STATUS_QUERY_KEY, { version: 'main-ccccccccc' })
+    vi.spyOn(api, 'get').mockResolvedValue({
+      data: { success: true, data: { version: 'main-ccccccccc' } },
+    })
+    fetchMock.mockImplementation(() => new Promise<Response>(() => undefined))
+    render(<SystemUpdateAction />, { wrapper: Wrapper })
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled())
+    expect(
+      await screen.findByRole('button', { name: 'Check for updates' })
+    ).toBeInTheDocument()
+    expect(
+      screen.queryByRole('button', { name: /New version available/ })
+    ).not.toBeInTheDocument()
+  })
 
   test('shares results with maintenance, opens release details by keyboard and returns focus on Escape', async () => {
     const user = userEvent.setup()
@@ -190,7 +340,7 @@ describe('administrator update entry', () => {
       within(dialog).getByRole('link', { name: 'Go to GitHub' })
     ).toHaveAttribute(
       'href',
-      'https://github.com/QuantumNous/new-api/releases/tag/v1.0.0-rc.36'
+      'https://github.com/biubiubiu125/newapi/releases/tag/v1.0.0-rc.36'
     )
     await user.keyboard('{Escape}')
     await waitFor(() =>
@@ -388,6 +538,7 @@ describe('version label presentation', () => {
     expect(
       within(trigger).queryByText('Check for updates')
     ).not.toBeInTheDocument()
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
     await act(async () => {
       finishRequest?.(new Response(JSON.stringify([release])))
     })
