@@ -113,6 +113,9 @@ func geminiRelayHandler(c *gin.Context, info *relaycommon.RelayInfo) *types.NewA
 }
 
 func Relay(c *gin.Context, relayFormat types.RelayFormat) {
+	if c != nil && c.Writer != nil {
+		c.Writer = &clientDeliveredWriter{ResponseWriter: c.Writer, c: c}
+	}
 
 	requestId := c.GetString(common.RequestIdKey)
 	//group := common.GetContextKeyString(c, constant.ContextKeyUsingGroup)
@@ -337,19 +340,28 @@ func Relay(c *gin.Context, relayFormat types.RelayFormat) {
 
 		newAPIError = service.NormalizeViolationFeeError(newAPIError)
 		relayInfo.LastError = newAPIError
-		// A multi-key channel still has another key to try. Excluding the whole
-		// channel here would stop that retry before the next key is used.
-		if !common.GetContextKeyBool(c, constant.ContextKeyChannelIsMultiKey) {
+		// Try another key on this channel before excluding it, but do not spend
+		// RetryTimes on that rotation. The cross-channel budget starts once this
+		// channel is excluded, so a bad key cannot block a peer channel.
+		rotatedKey := rememberFailedMultiKey(c, channel.Id, common.GetContextKeyString(c, constant.ContextKeyChannelKey))
+		if !rotatedKey {
 			addFailedChannel(c, channel.Id)
 		}
 		retryParam.ExcludeChannelIds = getFailedChannelIds(c)
 
 		processChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, common.GetContextKeyString(c, constant.ContextKeyChannelKey), channel.GetAutoBan()), newAPIError, true)
 
+		// A same-channel key is not a new channel attempt. RetryTimes, a pinned
+		// channel, and strict affinity stop cross-channel failover only.
+		if rotatedKey && sameChannelKeyRotationAllowed(c, newAPIError) {
+			continue
+		}
 		if !shouldRetry(c, newAPIError, common.RetryTimes-retryParam.GetRetry()) {
 			break
 		}
-		retryParam.IncreaseRetry()
+		if !rotatedKey {
+			retryParam.IncreaseRetry()
+		}
 	}
 
 	useChannel := c.GetStringSlice("use_channel")
@@ -475,6 +487,9 @@ func fastTokenCountMetaForPricing(request dto.Request) *types.TokenCountMeta {
 }
 
 func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service.RetryParam) (*model.Channel, *types.NewAPIError) {
+	if channel, holdErr, handled := takeMultiKeyRetryChannel(c, info); handled {
+		return channel, holdErr
+	}
 	if info.ChannelMeta == nil {
 		channelId := c.GetInt("channel_id")
 		preselectedUsable := channelId > 0
@@ -517,6 +532,57 @@ func getChannel(c *gin.Context, info *relaycommon.RelayInfo, retryParam *service
 	return channel, nil
 }
 
+func nextUnusedEnabledKey(channel *model.Channel, used map[string]struct{}) (string, bool) {
+	return service.NextUnusedEnabledKey(channel, used)
+}
+
+// rememberFailedMultiKey keeps the next retry on this channel when another
+// enabled key has not been used. The distributor stub does not carry the key
+// list, so the real channel is loaded here.
+func rememberFailedMultiKey(c *gin.Context, channelID int, failedKey string) bool {
+	return service.RememberFailedMultiKey(c, channelID, failedKey)
+}
+
+func takeMultiKeyRetryChannel(c *gin.Context, info *relaycommon.RelayInfo) (*model.Channel, *types.NewAPIError, bool) {
+	channel, key, ok := service.TakeMultiKeyRetryKey(c)
+	if !ok {
+		return nil, nil, false
+	}
+	modelName := ""
+	if info != nil {
+		modelName = info.OriginModelName
+	}
+	if setupErr := middleware.SetupContextForSelectedChannelWithKey(c, channel, modelName, key); setupErr != nil {
+		service.ClearMultiKeyRetryHold(c)
+		return channel, setupErr, true
+	}
+	return channel, nil, true
+}
+
+func sameChannelKeyRotationAllowed(c *gin.Context, openaiErr *types.NewAPIError) bool {
+	return service.SameChannelKeyRotationAllowed(c, openaiErr)
+}
+
+func sameChannelTaskKeyRotationAllowed(c *gin.Context, taskErr *dto.TaskError) bool {
+	if taskErr == nil || taskErr.NoRetry || taskErr.LocalError {
+		return false
+	}
+	if c != nil && service.GetChannelConstraints(c).SuppressesRetry() {
+		return false
+	}
+	code := taskErr.StatusCode
+	if code/100 == 2 {
+		return false
+	}
+	if code < 100 || code > 599 {
+		return true
+	}
+	if operation_setting.IsAlwaysSkipRetryStatusCode(code) {
+		return false
+	}
+	return operation_setting.ShouldRetryByStatusCode(code)
+}
+
 func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) bool {
 	if openaiErr == nil || retryTimes <= 0 {
 		return false
@@ -529,6 +595,9 @@ func shouldRetry(c *gin.Context, openaiErr *types.NewAPIError, retryTimes int) b
 		}
 	}
 	if _, ok := c.Get("specific_channel_id"); ok {
+		return false
+	}
+	if service.GetChannelConstraints(c).SuppressesRetry() {
 		return false
 	}
 	if service.ShouldSkipRetryAfterChannelAffinityFailure(c) {
@@ -886,7 +955,12 @@ func executeTaskSubmissionWith(
 			break
 		}
 
-		addFailedChannel(c, channel.Id)
+		rotatedKey := false
+		if relayInfo.LockedChannel != nil || !rememberFailedMultiKey(c, channel.Id, common.GetContextKeyString(c, constant.ContextKeyChannelKey)) {
+			addFailedChannel(c, channel.Id)
+		} else {
+			rotatedKey = true
+		}
 		retryParam.ExcludeChannelIds = getFailedChannelIds(c)
 
 		if !taskErr.LocalError {
@@ -898,9 +972,17 @@ func executeTaskSubmissionWith(
 		}
 
 		willRetry := shouldRetryTaskRelay(c, channel.Id, taskErr, common.RetryTimes-retryParam.GetRetry())
-		diagnostics.attemptFailed(retryParam.GetRetry()+1, channel, taskErr, willRetry)
-		if !willRetry {
+		// Key rotation stays on this channel, so a zero cross-channel budget, a
+		// pinned channel, or strict affinity must not discard the next key.
+		rotateSameChannel := rotatedKey && sameChannelTaskKeyRotationAllowed(c, taskErr)
+		diagnostics.attemptFailed(retryParam.GetRetry()+1, channel, taskErr, willRetry || rotateSameChannel)
+		if !willRetry && !rotateSameChannel {
 			break
+		}
+		// The for-loop increments RetryTimes at the end of every iteration.
+		// A same-channel key rotation must not consume that budget.
+		if rotatedKey {
+			retryParam.ResetRetryNextTry()
 		}
 	}
 
@@ -943,6 +1025,9 @@ func executeTaskSubmissionWith(
 	task.PrivateData.UpstreamTaskID = result.UpstreamTaskID
 	task.PrivateData.BillingSource = relayInfo.BillingSource
 	task.PrivateData.SubscriptionId = relayInfo.SubscriptionId
+	if relayInfo.BillingSource == service.BillingSourceSubscription {
+		task.PrivateData.SubscriptionConsumedAt = model.SubscriptionPreConsumeCreatedAtTx(model.DB, relayInfo.RequestId)
+	}
 	task.PrivateData.TokenId = relayInfo.TokenId
 	task.PrivateData.NodeName = common.NodeName
 	task.PrivateData.BillingContext = taskBillingContextFromRelayInfo(relayInfo)
@@ -1053,20 +1138,38 @@ func executeTaskSubmissionWith(
 				prepaid = task.Quota
 			}
 			applyTaskSubmitAccountingUsageFlags(c, task)
+			keepLiveDeferredTask := false
 			if persistErr := persistRefundableSubmitAccountingFailureFunc(task, prepaid, settleErr, updateErr); persistErr != nil {
 				common.SysError("update task accounting error: " + persistErr.Error())
 				service.RecordConsumeAccountingError(c, relayInfo, "persist task accounting review", persistErr)
 				if persistErr = persistRefundableSubmitAccountingFailure(task, prepaid, settleErr, updateErr); persistErr != nil {
 					common.SysError("update task accounting error: " + persistErr.Error())
 					service.RecordConsumeAccountingError(c, relayInfo, "persist task accounting review", persistErr)
+					if !submitTaskRowSurvives(task) {
+						// 任务行已经没了，内存里的 review / refund 标记不能拦住账本回滚。
+						if task != nil {
+							task.RefundPending = false
+							if task.SettlementStatus == model.TaskSettlementStatusReview {
+								task.SettlementStatus = ""
+							}
+						}
+					} else if errors.Is(settleErr, model.ErrBillingAdjustmentDeferred) {
+						// 行还在。预扣留给后续完成对齐，不能退掉后再按差额少扣，也不能让客户端再提交一次。
+						if reloaded, reloadErr := reloadSubmitTask(task); reloadErr == nil {
+							*task = *reloaded
+							keepLiveDeferredTask = true
+						}
+					}
 				}
 			}
-			taskErr = service.TaskErrorWrapperLocal(updateErr, "update_task_settlement_failed", http.StatusInternalServerError)
+			if !keepLiveDeferredTask {
+				taskErr = service.TaskErrorWrapperLocal(updateErr, "update_task_settlement_failed", http.StatusInternalServerError)
+			}
 		}
-		if taskErr == nil && (result.Immediate == nil || task.Status != model.TaskStatusSuccess) {
-			// The task row is already durable. Keep the reservation for review
-			// instead of reporting success or refunding it. An immediate success
-			// still returns the task so the client sees in-progress review.
+		if taskErr == nil && !errors.Is(settleErr, model.ErrBillingAdjustmentDeferred) && !task.PrivateData.BillingAdjustmentUnresolved && (result.Immediate == nil || task.Status != model.TaskStatusSuccess) {
+			// The task row is already durable. A ledger-backed review returns the
+			// task so the client does not submit a second one. Other failures stay
+			// local and do not switch channels.
 			taskErr = service.TaskErrorWrapperLocal(settleErr, "task_billing_settlement_failed", http.StatusInternalServerError)
 		}
 	} else {
@@ -1075,7 +1178,7 @@ func executeTaskSubmissionWith(
 
 	if taskErr == nil && c.GetBool(service.ContextKeySettlementApplied()) {
 		c.Set(service.ContextKeySubmittedTask(), task)
-		if err := logTaskConsumptionFunc(c, relayInfo); err != nil {
+		if err := logTaskConsumptionFunc(c, relayInfo); err != nil && !service.DeliveredConsumeLogKept(err) {
 			common.SysError("log task consumption error: " + err.Error())
 			service.RecordConsumeAccountingError(c, relayInfo, "log task consumption", err)
 			c.Set(service.ContextKeySettlementError(), err.Error())
@@ -1088,6 +1191,10 @@ func executeTaskSubmissionWith(
 				}
 			}
 			if relayInfo.Billing == nil || rollbackErr != nil {
+				if session, ok := relayInfo.Billing.(*service.BillingSession); ok && session.LedgerBacked() {
+					service.AttachBillingAdjustmentIdentity(task, relayInfo, settlementQuota)
+					task.PrivateData.BillingAdjustmentRollback = true
+				}
 				applyTaskSubmitAccountingUsageFlags(c, task)
 				if persistErr := persistRefundableSubmitAccountingFailureFunc(task, settlementQuota, err, rollbackErr); persistErr != nil {
 					common.SysError("update task accounting error: " + persistErr.Error())
@@ -1110,6 +1217,10 @@ func executeTaskSubmissionWith(
 			}
 			taskErr = service.TaskErrorWrapperLocal(err, "log_task_consumption_failed", http.StatusInternalServerError)
 		} else {
+			if err != nil {
+				common.SysError("log task consumption error: " + err.Error())
+				service.RecordConsumeAccountingError(c, relayInfo, "log task consumption", err)
+			}
 			billingLogged = true
 			if persistErr := service.PersistSuccessfulTaskSubmitSettlement(c.Request.Context(), task); persistErr != nil {
 				common.SysError("persist task billing settled error: " + persistErr.Error())
@@ -1309,6 +1420,7 @@ func persistTaskSubmitSettlementError(task *model.Task, relayInfo *relaycommon.R
 	}
 	task.Quota = taskQuotaAfterSubmitSettlement(relayInfo, attemptedQuota, settleErr)
 	attachTaskSubmitSettlementError(task, attemptedQuota, settleErr)
+	service.AttachBillingAdjustmentIdentity(task, relayInfo, attemptedQuota)
 	task.SettlementStatus = model.TaskSettlementStatusReview
 	task.NextPollAt = time.Now().Unix() + service.TaskSettlementReviewRetrySeconds
 	return task.UpdateSubmitSettlementError()
@@ -1320,6 +1432,31 @@ func applyTaskSubmitAccountingUsageFlags(c *gin.Context, task *model.Task) {
 	}
 	task.PrivateData.PreConsumedUsageCaptured = true
 	task.PrivateData.PreConsumedUsageRecorded = c != nil && c.GetBool(service.ContextKeyUsageCountersRecorded())
+}
+
+// submitTaskRowSurvives reports whether the inserted task row is still readable.
+// A failed status write does not mean the insert was rolled back. When the
+// lookup itself fails, treat the row as live so the reservation is not refunded.
+func submitTaskRowSurvives(task *model.Task) bool {
+	if task == nil || task.ID <= 0 || model.DB == nil {
+		return false
+	}
+	var count int64
+	if err := model.DB.Model(&model.Task{}).Where("id = ?", task.ID).Count(&count).Error; err != nil {
+		return true
+	}
+	return count > 0
+}
+
+func reloadSubmitTask(task *model.Task) (*model.Task, error) {
+	if task == nil || task.ID <= 0 || model.DB == nil {
+		return nil, fmt.Errorf("reload task failed")
+	}
+	var current model.Task
+	if err := model.DB.Where("id = ?", task.ID).First(&current).Error; err != nil {
+		return nil, err
+	}
+	return &current, nil
 }
 
 func persistRefundableSubmitAccountingFailure(task *model.Task, attemptedQuota int, accountingErr error, rollbackErr error) error {

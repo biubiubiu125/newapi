@@ -2,11 +2,14 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"strings"
 
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+
+	"github.com/gin-gonic/gin"
 )
 
 func RollbackTaskConsumptionUsage(userId int, channelId int, tokenId int, quota int) error {
@@ -51,6 +54,50 @@ func wrapUsageCounterUpdateError(ctx context.Context, relayInfo *relaycommon.Rel
 		}
 	}
 	return fmt.Errorf("%s: %w", prefix, err)
+}
+
+// keepDeliveredUsageCounterError leaves a delivered text, audio, or realtime charge in place when only the usage counters failed.
+func keepDeliveredUsageCounterError(err error) error {
+	if err == nil {
+		return nil
+	}
+	// 用量计数失败和消费日志失败一样，都不能把已经交付的扣费退掉。
+	return fmt.Errorf("usage counter update failed: %w", errors.Join(ErrDeliveredConsumeLogKept, err))
+}
+
+// ErrDeliveredConsumeLogKept marks a consume-log failure that must not refund a delivered charge.
+var ErrDeliveredConsumeLogKept = errors.New("delivered consume log kept")
+
+// DeliveredConsumeLogKept reports a consume-log failure that left the charge in place.
+func DeliveredConsumeLogKept(err error) bool {
+	return errors.Is(err, ErrDeliveredConsumeLogKept)
+}
+
+// keepDeliveredConsumeLogError leaves a delivered charge in place when only the consume log failed.
+func keepDeliveredConsumeLogError(err error) error {
+	if err == nil {
+		return nil
+	}
+	return fmt.Errorf("record consume log failed: %w", errors.Join(ErrDeliveredConsumeLogKept, err))
+}
+
+// recordDeliveredConsumption writes usage counters and the consume log for a charge that was already accepted.
+// 失败时留下审计行，主节点稍后补记，不能把已经交付的钱退掉。
+func recordDeliveredConsumption(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, params model.RecordConsumeLogParams) error {
+	if relayInfo == nil {
+		return keepDeliveredUsageCounterError(errors.New("relay info is required"))
+	}
+	req := model.NewConsumptionAuditRequest(ctx, relayInfo.RequestId, relayInfo.UserId, params)
+	if err := model.EnsureConsumptionAudit(req); err != nil {
+		return keepDeliveredUsageCounterError(err)
+	}
+	if err := model.ApplyConsumptionAuditUsage(req.IdempotencyKey); err != nil {
+		return keepDeliveredUsageCounterError(err)
+	}
+	if err := model.CompleteConsumptionAudit(req.IdempotencyKey); err != nil {
+		return keepDeliveredConsumeLogError(err)
+	}
+	return nil
 }
 
 func wrapRecordConsumeLogError(ctx context.Context, relayInfo *relaycommon.RelayInfo, userId int, channelId int, tokenId int, quota int, settlementSucceeded bool, err error) error {

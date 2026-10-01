@@ -18,6 +18,12 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import React, { useState } from 'react'
 
+import {
+  SecureVerificationDialog,
+  useSecureVerification,
+  type RequestVerificationOptions,
+  type SecurityProof,
+} from '@/features/auth/secure-verification'
 import useDialogState from '@/hooks/use-dialog'
 
 import type { User, UsersDialogType } from '../types'
@@ -29,6 +35,11 @@ type UsersContextType = {
   setCurrentRow: React.Dispatch<React.SetStateAction<User | null>>
   refreshTrigger: number
   triggerRefresh: () => void
+  requestVerification: (
+    request: RequestVerificationOptions,
+    initialPassword?: string
+  ) => Promise<SecurityProof | null>
+  verificationActive: boolean
 }
 
 const UsersContext = React.createContext<UsersContextType | null>(null)
@@ -37,22 +48,28 @@ export function UsersProvider({ children }: { children: React.ReactNode }) {
   const [open, setOpen] = useDialogState<UsersDialogType>(null)
   const [currentRow, setCurrentRow] = useState<User | null>(null)
   const [refreshTrigger, setRefreshTrigger] = useState(0)
+  const verification = useSecureVerification()
 
   const triggerRefresh = () => setRefreshTrigger((prev) => prev + 1)
 
   return (
-    <UsersContext
-      value={{
-        open,
-        setOpen,
-        currentRow,
-        setCurrentRow,
-        refreshTrigger,
-        triggerRefresh,
-      }}
-    >
-      {children}
-    </UsersContext>
+    <>
+      <UsersContext
+        value={{
+          open,
+          setOpen,
+          currentRow,
+          setCurrentRow,
+          refreshTrigger,
+          triggerRefresh,
+          requestVerification: verification.requestVerification,
+          verificationActive: verification.isActive,
+        }}
+      >
+        {children}
+      </UsersContext>
+      <SecureVerificationDialog {...verification.dialogProps} />
+    </>
   )
 }
 

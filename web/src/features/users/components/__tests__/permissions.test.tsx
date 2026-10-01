@@ -28,6 +28,28 @@ import type { User } from '../../types'
 import { UsersMutateDrawer } from '../users-mutate-drawer'
 import { UsersProvider } from '../users-provider'
 
+vi.mock('@/features/auth/secure-verification', () => ({
+  useSecureVerification: () => ({
+    requestVerification: async () => ({
+      proof_token: 'test-proof',
+      expires_at: 1,
+      method: 'password',
+      scope: 'admin.user.update',
+    }),
+    cancel: () => undefined,
+    isActive: false,
+    dialogProps: {
+      state: { phase: 'idle' },
+      passkeyDomains: [],
+      onCancel: () => undefined,
+      onRetry: () => undefined,
+      onInputChange: () => undefined,
+      onVerify: () => undefined,
+    },
+  }),
+  SecureVerificationDialog: () => null,
+}))
+
 const target: User = {
   id: 2,
   username: 'managed-admin',
@@ -130,6 +152,10 @@ it.each([undefined, true])(
         expect.objectContaining({
           id: 2,
           admin_permissions: { audit: { read: !allowed } },
+        }),
+        expect.objectContaining({
+          headers: { 'X-Security-Proof': 'test-proof' },
+          singleUseAuthorization: true,
         })
       )
     )

@@ -30,6 +30,75 @@ export function parseTaskResult() { return {}; }
 `, version, usageSchema)
 }
 
+func TestPricingKeepsUnchangedExpressionAfterUsageProfileNarrows(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	const pluginKey = "pricing-usage-probe"
+	wideSource := pricingUsagePluginSource("1.0.0", `{
+  seconds: {type: "number", unit: "second", description: "Estimated duration."},
+  clips: {type: "number", unit: "count", description: "Clip count."}
+}`)
+	_, err := jsplugin.DefaultRegistry.Register(wideSource, jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister(pluginKey) })
+
+	expression := `u("seconds") + u("clips")`
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode": `{"pricing-usage-model":"tiered_expr"}`,
+		"billing_setting.billing_expr": `{"pricing-usage-model":"u(\"seconds\") + u(\"clips\")"}`,
+	}))
+
+	narrowSource := pricingUsagePluginSource("1.0.1", `{
+  seconds: {type: "number", unit: "second", description: "Estimated duration."}
+}`)
+	_, err = jsplugin.DefaultRegistry.Register(narrowSource, jsplugin.Options{})
+	require.NoError(t, err)
+
+	require.NoError(t, ValidateModelPricing("pricing-usage-model", PricingValues{
+		"billing_setting.billing_mode": billing_setting.BillingModeTieredExpr,
+		"billing_setting.billing_expr": expression,
+	}))
+	require.ErrorContains(t, ValidateModelPricing("pricing-usage-model", PricingValues{
+		"billing_setting.billing_mode": billing_setting.BillingModeTieredExpr,
+		"billing_setting.billing_expr": `u("clips")`,
+	}), "not declared")
+}
+
+func TestPricingKeepsUnchangedSinglePluginOverrideAfterUsageProfileNarrows(t *testing.T) {
+	resetPricingEndpointTestTables(t)
+	const pluginKey = "pricing-usage-probe"
+	wideSource := pricingUsagePluginSource("1.0.0", `{
+  seconds: {type: "number", unit: "second", description: "Estimated duration."},
+  clips: {type: "number", unit: "count", description: "Clip count."}
+}`)
+	_, err := jsplugin.DefaultRegistry.Register(wideSource, jsplugin.Options{})
+	require.NoError(t, err)
+	t.Cleanup(func() { jsplugin.DefaultRegistry.Unregister(pluginKey) })
+
+	expression := `u("clips")`
+	require.NoError(t, config.GlobalConfig.LoadFromDB(map[string]string{
+		"billing_setting.billing_mode":          `{"pricing-usage-model":"tiered_expr"}`,
+		"billing_setting.billing_expr":          `{"pricing-usage-model":"u(\"seconds\")"}`,
+		billing_setting.PluginBillingExprOption: `{"pricing-usage-probe::pricing-usage-model":"u(\"clips\")"}`,
+	}))
+
+	narrowSource := pricingUsagePluginSource("1.0.1", `{
+  seconds: {type: "number", unit: "second", description: "Estimated duration."}
+}`)
+	_, err = jsplugin.DefaultRegistry.Register(narrowSource, jsplugin.Options{})
+	require.NoError(t, err)
+
+	require.NoError(t, ValidateModelPricing("pricing-usage-model", PricingValues{
+		"billing_setting.billing_mode":        billing_setting.BillingModeTieredExpr,
+		"billing_setting.billing_expr":        `u("seconds")`,
+		"billing_setting.plugin_billing_expr": map[string]any{pluginKey: expression},
+	}))
+	require.ErrorContains(t, ValidateModelPricing("pricing-usage-model", PricingValues{
+		"billing_setting.billing_mode":        billing_setting.BillingModeTieredExpr,
+		"billing_setting.billing_expr":        `u("seconds")`,
+		"billing_setting.plugin_billing_expr": map[string]any{pluginKey: `u("clips") + 1`},
+	}), "not declared")
+}
+
 func TestPricingCarriesTaskUsageSchemaAndRefreshesWithPluginGeneration(t *testing.T) {
 	resetPricingEndpointTestTables(t)
 	const pluginKey = "pricing-usage-probe"

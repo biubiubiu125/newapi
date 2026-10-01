@@ -101,7 +101,7 @@ func EmailBind(c *gin.Context) {
 		recordUserSecurityAudit(c, identity.UserID, "user.binding_bind", map[string]any{"provider": "email", "success": succeeded, "notification_failed": notificationFailed})
 	}()
 	if request.FlowToken == "" {
-		succeeded = bindLegacyEmail(c, identity.UserID, request)
+		common.ApiErrorI18n(c, i18n.MsgUserEmailMethodUnsupported)
 		return
 	}
 	state, err := service.FinishEmailBinding(identity, request.FlowToken, request.NewCode, request.OldCode)
@@ -114,44 +114,23 @@ func EmailBind(c *gin.Context) {
 	if err := service.NotifyAccountSecurityChange(state.Email, "Email address confirmed"); err != nil {
 		notificationFailed = true
 	}
-	if err := model.PublishUserAuthCache(identity.UserID); err != nil {
+	if err := model.PublishUserAuthCacheAfterCommit(identity.UserID); err != nil && !continueAfterCommittedUserAuthStateError("email binding", err) {
 		writeSecurityOperationError(c, err)
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": gin.H{"notification_warning": notificationFailed}})
-}
-
-func bindLegacyEmail(c *gin.Context, userID int, request emailBindRequest) bool {
-	email := model.NormalizeUserEmail(request.Email)
-	if !common.VerifyCodeWithKey(email, request.Code, common.EmailVerificationPurpose) {
-		common.ApiErrorI18n(c, i18n.MsgUserVerificationCodeError)
-		return false
-	}
-	if userID <= 0 {
-		common.ApiErrorI18n(c, i18n.MsgAuthNotLoggedIn)
-		return false
-	}
-	user := model.User{Id: userID}
-	if err := user.FillUserById(); err != nil {
-		common.ApiError(c, err)
-		return false
-	}
-	if exists, err := model.IsLoginIdentifierTakenByOther(user.Username, email, user.Id); err != nil {
-		common.ApiError(c, err)
-		return false
-	} else if exists {
-		common.ApiErrorI18n(c, i18n.MsgUserExists)
-		return false
-	}
-	user.Email = email
-	if err := user.Update(false); err != nil {
-		if model.IsUserEmailUniqueError(err) {
-			common.ApiErrorI18n(c, i18n.MsgUserExists)
-			return false
+	data := gin.H{"notification_warning": notificationFailed}
+	if state.AuthVersion > identity.UserAuthVersion {
+		bundle, err := service.AdvanceCurrentSessionToVersion(identity, state.AuthVersion, "email_changed")
+		if err != nil {
+			writeSecurityOperationError(c, err)
+			return
 		}
-		common.ApiError(c, err)
-		return false
+		if user, err := model.GetUserById(identity.UserID, false); err == nil {
+			persistLegacyLoginSession(c, user, bundle.Session)
+		}
+		for key, value := range authRotationData(bundle) {
+			data[key] = value
+		}
 	}
-	c.JSON(http.StatusOK, gin.H{"success": true, "message": ""})
-	return true
+	c.JSON(http.StatusOK, gin.H{"success": true, "message": "", "data": data})
 }

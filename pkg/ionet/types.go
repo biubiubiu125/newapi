@@ -1,6 +1,7 @@
 package ionet
 
 import (
+	"encoding/json"
 	"time"
 )
 
@@ -228,17 +229,71 @@ type LogEntry struct {
 	Source    string    `json:"source,omitempty"`
 }
 
+// clearableStringList distinguishes a field the client did not send from an
+// explicit empty list. omitempty cannot do that: it drops both.
+type clearableStringList struct {
+	set   bool
+	items []string
+}
+
+func (v clearableStringList) IsZero() bool {
+	return !v.set
+}
+
+func (v clearableStringList) MarshalJSON() ([]byte, error) {
+	items := v.items
+	if items == nil {
+		items = []string{}
+	}
+	return json.Marshal(items)
+}
+
+func (v *clearableStringList) UnmarshalJSON(data []byte) error {
+	v.set = true
+	if string(data) == "null" {
+		v.items = []string{}
+		return nil
+	}
+	return json.Unmarshal(data, &v.items)
+}
+
+type clearableStringMap struct {
+	set   bool
+	items map[string]string
+}
+
+func (v clearableStringMap) IsZero() bool {
+	return !v.set
+}
+
+func (v clearableStringMap) MarshalJSON() ([]byte, error) {
+	items := v.items
+	if items == nil {
+		items = map[string]string{}
+	}
+	return json.Marshal(items)
+}
+
+func (v *clearableStringMap) UnmarshalJSON(data []byte) error {
+	v.set = true
+	if string(data) == "null" {
+		v.items = map[string]string{}
+		return nil
+	}
+	return json.Unmarshal(data, &v.items)
+}
+
 // UpdateDeploymentRequest represents request to update deployment configuration
 type UpdateDeploymentRequest struct {
-	EnvVariables       map[string]string `json:"env_variables,omitempty"`
-	SecretEnvVariables map[string]string `json:"secret_env_variables,omitempty"`
-	Entrypoint         []string          `json:"entrypoint,omitempty"`
-	TrafficPort        *int              `json:"traffic_port,omitempty"`
-	ImageURL           string            `json:"image_url,omitempty"`
-	RegistryUsername   string            `json:"registry_username,omitempty"`
-	RegistrySecret     string            `json:"registry_secret,omitempty"`
-	Args               []string          `json:"args,omitempty"`
-	Command            string            `json:"command,omitempty"`
+	EnvVariables       clearableStringMap  `json:"env_variables,omitzero"`
+	SecretEnvVariables clearableStringMap  `json:"secret_env_variables,omitzero"`
+	Entrypoint         clearableStringList `json:"entrypoint,omitzero"`
+	TrafficPort        *int                `json:"traffic_port,omitempty"`
+	ImageURL           string              `json:"image_url,omitempty"`
+	RegistryUsername   string              `json:"registry_username,omitempty"`
+	RegistrySecret     string              `json:"registry_secret,omitempty"`
+	Args               clearableStringList `json:"args,omitzero"`
+	Command            string              `json:"command,omitempty"`
 }
 
 // ExtendDurationRequest represents request to extend deployment duration

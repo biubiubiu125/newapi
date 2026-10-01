@@ -26,6 +26,8 @@ import {
 } from 'react-hook-form'
 import { toast } from 'sonner'
 
+import { shouldApplyServerDefaults } from './settings-form-reset'
+
 type SettingsFormOptions<T extends FieldValues> = UseFormProps<T> & {
   onSubmit: (data: T, changedFields: Record<string, unknown>) => Promise<void>
   compareValues?: (a: unknown, b: unknown) => boolean
@@ -206,13 +208,25 @@ export function useSettingsForm<T extends FieldValues>({
   )
   /* eslint-enable react-hooks/refs */
 
+  const isDirty = form.formState.isDirty
+
   useEffect(() => {
     if (!expandedDefaults) return
 
     const flattened = flattenValues(expandedDefaults as T)
     const serialized = JSON.stringify(flattened)
-
-    if (serialized === serializedDefaultsRef.current) {
+    const current = JSON.stringify(flattenValues(form.getValues()))
+    // isDirty is subscribed during render. Keeping it out of the dependencies
+    // avoids resetting saved values when dirtiness clears before the server
+    // payload has caught up.
+    if (
+      !shouldApplyServerDefaults(
+        serialized,
+        serializedDefaultsRef.current,
+        current,
+        isDirty
+      )
+    ) {
       return
     }
 
@@ -220,6 +234,9 @@ export function useSettingsForm<T extends FieldValues>({
     defaultValuesRef.current = expandedDefaults as T
     serializedDefaultsRef.current = serialized
     form.reset(expandedDefaults as T)
+    // isDirty is omitted on purpose: after save it becomes false while the
+    // server payload can still be stale, and reacting to it would wipe the form.
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isDirty is read during render and must not retrigger reset
   }, [expandedDefaults, form])
 
   const defaultCompare = (a: unknown, b: unknown): boolean => {

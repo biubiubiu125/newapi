@@ -32,15 +32,23 @@ import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 export function UsersDeleteDialog() {
   const { t } = useTranslation()
-  const { open, setOpen, currentRow, triggerRefresh } = useUsers()
+  const { open, setOpen, currentRow, triggerRefresh, requestVerification, verificationActive } = useUsers()
   const [isDeleting, setIsDeleting] = useState(false)
 
   const handleDelete = async () => {
     if (!currentRow) return
 
+    if (verificationActive) return
+    const proof = await requestVerification({
+      scope: 'admin.user.delete',
+      context: { user_id: currentRow.id },
+      title: t('Verify to delete this user'),
+    })
+    if (!proof) return
+
     setIsDeleting(true)
     try {
-      const result = await deleteUser(currentRow.id)
+      const result = await deleteUser(currentRow.id, proof.proof_token)
       if (result.success) {
         toast.success(t(getUserActionMessage('delete')))
         setOpen(null)
@@ -58,7 +66,7 @@ export function UsersDeleteDialog() {
 
   return (
     <ConfirmDialog
-      open={open === 'delete'}
+      open={open === 'delete' && !verificationActive}
       onOpenChange={(open) => !open && setOpen(null)}
       title={t('Are you sure?')}
       desc={

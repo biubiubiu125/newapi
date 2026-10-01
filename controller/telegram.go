@@ -67,6 +67,14 @@ func TelegramBindStart(c *gin.Context) {
 		})
 		return
 	}
+	payload, err := common.Marshal(service.AccountBindingContext{Provider: "telegram"})
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
+	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeAccountBind, Context: payload}) == nil {
+		return
+	}
 	expiresAt := time.Now().Add(telegramBindFlowTTL)
 	flowToken, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
 		Purpose:   model.AuthFlowPurposeTelegramBind,

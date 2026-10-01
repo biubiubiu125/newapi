@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strings"
 
 	"github.com/QuantumNous/new-api/common"
 	"gorm.io/gorm"
@@ -87,6 +88,34 @@ end
 redis.call('HINCRBY', KEYS[1], 'Quota', delta)
 return 1`
 
+// userQuotaCreditScript applies a positive quota credit without raising the
+// cache to a stale ceiling. A missing hash stays missing. The credit is
+// applied when current + delta still fits under the ceiling, including a
+// live reserve that already sits below the pre-credit balance. If the cache
+// is already above that pre-credit balance, adding the full delta would pass
+// the ceiling, so the hash is left unchanged instead of being clamped upward.
+const userQuotaCreditScript = quotaIntegerCompareScript + `
+if tonumber(redis.call('HGET', KEYS[1], 'Id') or '0') ~= tonumber(ARGV[2])
+  or tonumber(redis.call('HGET', KEYS[1], 'CacheSchema') or '0') ~= tonumber(ARGV[3])
+  or redis.call('HEXISTS', KEYS[1], 'Quota') == 0 then
+  return -1
+end
+local delta = intarg(ARGV[1])
+local ceiling = intarg(ARGV[4])
+local expected = intarg(ARGV[5])
+if delta == nil or ceiling == nil or expected == nil or string.sub(delta, 1, 1) == '-' or string.sub(expected, 1, 1) == '-' then
+  return -1
+end
+local current = redis.call('HGET', KEYS[1], 'Quota')
+if cmp_int(tostring(current), ceiling) == nil or cmp_int(tostring(current), expected) == nil then
+  return -1
+end
+if cmp_int(tostring(current), ceiling) >= 0 or cmp_int(tostring(current), expected) > 0 then
+  return 1
+end
+redis.call('HINCRBY', KEYS[1], 'Quota', delta)
+return 1`
+
 const tokenQuotaReserveScript = quotaIntegerCompareScript + `
 if tonumber(redis.call('HGET', KEYS[1], 'Id') or '0') ~= tonumber(ARGV[2])
   or redis.call('HEXISTS', KEYS[1], 'RemainQuota') == 0
@@ -133,6 +162,15 @@ func cacheApplyUserQuotaDelta(userID int, delta int64) (cacheQuotaResult, error)
 	result, err := common.RDB.Eval(context.Background(), userQuotaDeltaScript,
 		[]string{getUserCacheKey(userID)}, delta, userID, userCacheSchemaVersion).Int()
 	return quotaResultFromLua(result, err)
+}
+
+func cacheCreditUserQuota(userID int, delta int64, ceiling int64) error {
+	if delta <= 0 || ceiling < delta {
+		return nil
+	}
+	_, err := common.RDB.Eval(context.Background(), userQuotaCreditScript,
+		[]string{getUserCacheKey(userID)}, delta, userID, userCacheSchemaVersion, ceiling, ceiling-delta).Int()
+	return err
 }
 
 func cacheTryReserveTokenQuota(id int, key string, amount int64) (cacheQuotaResult, error) {
@@ -252,13 +290,41 @@ func TryReserveUserQuota(id int, quota int) (bool, error) {
 		return reserveUserQuotaDB(id, int64(quota))
 	}
 	if result == cacheQuotaInsufficient {
-		return false, nil
+		// 缓存偏低不能直接判余额不足。缓存可能还停在失败补偿之前，
+		// 数据库够付时只走条件更新，不再对这块缓存做一次 HINCRBY。
+		return reserveUserQuotaWhenCacheIsShort(id, int64(quota))
 	}
 	if err = persistUserQuotaDelta(id, -int64(quota)); err != nil {
 		compensateReservedUserQuotaCache(id, int64(quota))
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			rejected, missing, checkErr := reserveRejectedByPersistedBalance(id, int64(quota))
+			if checkErr != nil {
+				return false, checkErr
+			}
+			if missing {
+				return false, err
+			}
+			// 缓存高于数据库且数据库余额不够时，这是余额不足，不是数据库故障。
+			// wallet_first 只在这种结果上回退到订阅。用户不存在或余额其实够的竞态失败仍返回原错误。
+			if rejected {
+				return false, nil
+			}
+		}
 		return false, err
 	}
 	return true, nil
+}
+
+func reserveRejectedByPersistedBalance(id int, quota int64) (rejected bool, missing bool, err error) {
+	var user User
+	err = DB.Select("id", "quota").Where("id = ?", id).Take(&user).Error
+	if errors.Is(err, gorm.ErrRecordNotFound) {
+		return false, true, nil
+	}
+	if err != nil {
+		return false, false, err
+	}
+	return user.Quota < quota, false, nil
 }
 
 // TryReserveTokenQuota atomically checks and deducts a token quota. Unlimited
@@ -338,4 +404,66 @@ func dropTokenQuotaCache(key string) error {
 		return nil
 	}
 	return common.RDB.Del(context.Background(), getTokenCacheKey(key)).Err()
+}
+
+// WalletQuotaForPreConsume is the wallet_first gate. A cache hit that already
+// covers the estimate is used as-is. A missing, empty, or low cache is checked
+// against the database so a stale-low hash cannot send a payable wallet onto
+// the subscription.
+func WalletQuotaForPreConsume(id int, required int64) (int64, error) {
+	if !common.RedisEnabled || common.RDB == nil {
+		return GetUserQuota(id, true)
+	}
+	cached, cacheErr := getUserQuotaCache(id)
+	if cacheErr == nil && cached > 0 && cached >= required {
+		return cached, nil
+	}
+	dbQuota, dbErr := GetUserQuota(id, true)
+	if dbErr != nil {
+		if cacheErr == nil && cached > 0 {
+			return cached, nil
+		}
+		if cacheErr != nil {
+			return 0, cacheErr
+		}
+		return 0, dbErr
+	}
+	if cacheErr == nil && cached > dbQuota {
+		return cached, nil
+	}
+	return dbQuota, nil
+}
+
+func reserveUserQuotaWhenCacheIsShort(id int, amount int64) (bool, error) {
+	if amount <= 0 {
+		return true, nil
+	}
+	quota, err := GetUserQuota(id, true)
+	if err != nil {
+		return false, err
+	}
+	if quota < amount {
+		return false, nil
+	}
+	if err := InvalidateUserCache(id); err != nil {
+		return false, err
+	}
+	if err := DecreaseUserQuota(id, amount, false); err != nil {
+		if walletQuotaUpdateRejected(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if err := InvalidateUserCache(id); err != nil {
+		common.SysLog(fmt.Sprintf("failed to drop user quota cache after database reserve, userId=%d amount=%d: %s", id, amount, err.Error()))
+	}
+	return true, nil
+}
+
+func walletQuotaUpdateRejected(err error) bool {
+	if err == nil {
+		return false
+	}
+	message := err.Error()
+	return strings.Contains(message, "not enough") || strings.Contains(message, "update failed")
 }

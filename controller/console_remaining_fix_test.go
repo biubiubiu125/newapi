@@ -690,10 +690,16 @@ func TestUpdateSelfPasswordErrorsFollowAcceptLanguage(t *testing.T) {
 		return payload
 	}
 
-	requireConsoleMessage(t, run(withPassword.Id, `{"password":"NewPassword123","original_password":"wrong-pass"}`, "zh-CN"), "原密码错误")
-	requireConsoleMessage(t, run(withPassword.Id, `{"password":"NewPassword123","original_password":"wrong-pass"}`, "en-US"), "Original password is incorrect")
-	requireConsoleMessage(t, run(unset.Id, `{"password":"NewPassword123"}`, "zh-CN"), "当前账号未设置密码，请使用密码重置或联系管理员重置密码")
-	requireConsoleMessage(t, run(unset.Id, `{"password":"NewPassword123"}`, "en-US"), "This account has no password set. Please use password reset or contact an administrator to reset it.")
+	requireConsoleMessage(t, run(withPassword.Id, `{"password":"NewPassword123","original_password":"wrong-pass"}`, "zh-CN"), "当前认证方式不支持修改密码")
+	requireConsoleMessage(t, run(withPassword.Id, `{"password":"NewPassword123","original_password":"wrong-pass"}`, "en-US"), "The current authentication method does not support changing password")
+	right := run(withPassword.Id, `{"password":"NewPassword123","original_password":"CurrentPassword123"}`, "zh-CN")
+	requireConsoleMessage(t, right, "当前认证方式不支持修改密码")
+	requireConsoleMessage(t, run(unset.Id, `{"password":"NewPassword123"}`, "zh-CN"), "当前认证方式不支持修改密码")
+	requireConsoleMessage(t, run(unset.Id, `{"password":"NewPassword123"}`, "en-US"), "The current authentication method does not support changing password")
+
+	var stored model.User
+	require.NoError(t, db.First(&stored, withPassword.Id).Error)
+	require.Equal(t, hashed, stored.Password)
 }
 
 func TestEmailBindInvalidJSONFollowsAcceptLanguage(t *testing.T) {

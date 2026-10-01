@@ -44,7 +44,14 @@ func isAllowedSecurityProofScope(scope string) bool {
 		service.VerificationScopeAccountUnbind,
 		service.VerificationScopePasswordSet,
 		service.VerificationScopePasswordChange,
-		service.VerificationScopeAccountDelete:
+		service.VerificationScopeAccountDelete,
+		service.VerificationScopeAdminUserCreate,
+		service.VerificationScopeAdminUserUpdate,
+		service.VerificationScopeAdminUserDelete,
+		service.VerificationScopeAdminUserManage,
+		service.VerificationScopeAdminUserPasskeyReset,
+		service.VerificationScopeAdminUserTwoFADisable,
+		service.VerificationScopeAdminUserBindingClear:
 		return true
 	default:
 		return false
@@ -492,6 +499,10 @@ func AdminResetPasskey(c *gin.Context) {
 		writeSecurityOperationError(c, err)
 		return
 	}
+	authorization := requireAdminUserProof(c, service.VerificationScopeAdminUserPasskeyReset, service.AdminUserContext{UserID: user.Id})
+	if authorization == nil {
+		return
+	}
 
 	if err := model.DeletePasskeyByUserIDWithAuthVersion(user.Id); !continueAfterCommittedUserAuthStateError("admin passkey reset", err) {
 		common.ApiError(c, err)
@@ -502,10 +513,14 @@ func AdminResetPasskey(c *gin.Context) {
 		return
 	}
 
-	recordManageAuditFor(c, user.Id, "user.reset_passkey", map[string]any{
+	passkeyAudit := map[string]any{
 		"username": user.Username,
 		"id":       user.Id,
-	})
+	}
+	if authorization.Method != "" {
+		passkeyAudit["verification_method"] = authorization.Method
+	}
+	recordManageAuditFor(c, user.Id, "user.reset_passkey", passkeyAudit)
 	common.ApiSuccessI18n(c, i18n.MsgPasskeyResetSuccess, nil)
 }
 

@@ -140,6 +140,10 @@ const STATIC_I18N_KEY_LIST = [
   'Failed to delete API keys',
   'Failed to update API key status',
   'Successfully created {{count}} API Key(s)',
+  'Created {{success}} of {{total}} API keys. The remaining keys were not created.',
+  'Custom duration must be greater than 0 seconds',
+  'Custom reset cycle must be greater than 0 seconds',
+  'Token name is too long',
   'Successfully deleted {{count}} API key(s)',
   'Enter API key for this channel',
 

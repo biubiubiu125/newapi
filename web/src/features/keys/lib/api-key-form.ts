@@ -28,13 +28,22 @@ import type { ApiKey, ApiKeyFormData } from '../types'
 // Form Schema
 // ============================================================================
 
+function apiKeyNameByteLength(value: string) {
+  return new TextEncoder().encode(value).length
+}
+
 export function getApiKeyFormSchema(t: TFunction, maxAutoGroups = 5) {
   const autoGroupLimit =
     Number.isInteger(maxAutoGroups) && maxAutoGroups > 0 ? maxAutoGroups : 5
 
   return z
     .object({
-      name: z.string().min(1, t('Please enter a name')),
+      name: z
+        .string()
+        .min(1, t('Please enter a name'))
+        .refine((value) => apiKeyNameByteLength(value) <= 50, {
+          message: t('Token name is too long'),
+        }),
       remain_quota_dollars: z.number().optional(),
       expired_time: z.date().optional(),
       unlimited_quota: z.boolean(),
@@ -195,4 +204,11 @@ export function transformApiKeyToFormDefaults(
     cross_group_retry: !!apiKey.cross_group_retry,
     tokenCount: 1,
   }
+}
+
+export function isCompleteApiKeyBatch(
+  successCount: number,
+  requestedCount: number
+): boolean {
+  return requestedCount > 0 && successCount === requestedCount
 }

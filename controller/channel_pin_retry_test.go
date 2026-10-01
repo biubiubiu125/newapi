@@ -50,6 +50,8 @@ func TestShouldRetryHonorsPinRetryMode(t *testing.T) {
 		RetryMode: dto.PinRetrySingleAttempt,
 	})
 	assert.Equal(t, service.PolicyDecision{Action: "stop", Reason: "pinned_channel", Source: "channel_constraint"}, service.DecideRelayRetry(token, openaiErr, 1), "token pin suppresses retry")
+	assert.False(t, shouldRetry(token, openaiErr, 1), "the relay loop must stop on a token pin")
+	assert.True(t, shouldRetry(origin, openaiErr, 1), "same-channel origin pin still retries")
 }
 
 func TestShouldRetryTaskRelayHonorsPinRetryMode(t *testing.T) {

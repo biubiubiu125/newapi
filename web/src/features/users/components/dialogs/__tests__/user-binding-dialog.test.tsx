@@ -198,6 +198,72 @@ describe('UserBindingDialog built-in bindings', () => {
 
     expect(deletedUrls).toHaveLength(expectedBindings.length)
   })
+
+  test('sends a single-use step-up proof when verification is provided', async () => {
+    const deleted: Array<{
+      url: string
+      config?: {
+        headers?: Record<string, string>
+        singleUseAuthorization?: boolean
+      }
+    }> = []
+    apiClient.get = async (url) => {
+      if (url === '/api/user/7') return { data: { success: true, data: user } }
+      if (url === '/api/user/7/oauth/bindings') {
+        return { data: { success: true, data: [] } }
+      }
+      if (url === '/api/status') {
+        return { data: { success: true, data: { github_oauth: true } } }
+      }
+      throw new Error(`Unexpected GET ${url}`)
+    }
+    apiClient.delete = (async (
+      url: string,
+      config?: {
+        headers?: Record<string, string>
+        singleUseAuthorization?: boolean
+      }
+    ) => {
+      deleted.push({ url, config })
+      return { data: { success: true, message: 'success' } }
+    }) as ApiMethod
+
+    renderWithQueryClient(
+      <UserBindingDialog
+        open
+        userId={7}
+        onOpenChange={() => undefined}
+        requestVerification={async (request) => {
+          expect(request).toEqual({
+            scope: 'admin.user.binding.clear',
+            context: { user_id: 7, binding_type: 'github' },
+            title: 'Verify to clear this binding',
+          })
+          return {
+            proof_token: 'binding-proof',
+            expires_at: 1,
+            method: 'password',
+            scope: 'admin.user.binding.clear',
+          }
+        }}
+      />
+    )
+
+    await screen.findByText('bound-user (ID: 7)')
+    fireEvent.click(findUnbindButton('GitHub'))
+    fireEvent.click(screen.getByRole('button', { name: 'Confirm Unbind' }))
+    await waitFor(() => {
+      expect(deleted).toEqual([
+        {
+          url: '/api/user/7/bindings/github',
+          config: {
+            headers: { 'X-Security-Proof': 'binding-proof' },
+            singleUseAuthorization: true,
+          },
+        },
+      ])
+    })
+  })
 })
 
 describe('UserBindingDialog shared status updates', () => {

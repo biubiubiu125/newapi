@@ -8,13 +8,7 @@ import (
 )
 
 const (
-	geminiResponsesInputTypeCustomToolCall       = "custom_tool_call"
-	geminiResponsesInputTypeCustomToolCallOutput = "custom_tool_call_output"
-	geminiResponsesInputTypeFunctionCallOutput   = "function_call_output"
-)
-
-const (
-	ResponsesInputTypeCustomToolCallOutput = geminiResponsesInputTypeCustomToolCallOutput
+	ResponsesInputTypeCustomToolCallOutput = "custom_tool_call_output"
 )
 
 func PrepareOpenAIResponsesRequest(request dto.OpenAIResponsesRequest) (dto.OpenAIResponsesRequest, error) {
@@ -45,7 +39,8 @@ func filterGeminiResponsesTools(raw []byte) ([]byte, error) {
 
 	filtered := make([]map[string]any, 0, len(tools))
 	for _, tool := range tools {
-		if strings.TrimSpace(kitutil.Interface2String(tool["type"])) != "function" {
+		toolType := strings.TrimSpace(kitutil.Interface2String(tool["type"]))
+		if toolType != "function" && toolType != "custom" {
 			continue
 		}
 		filtered = append(filtered, tool)
@@ -66,31 +61,7 @@ func filterGeminiResponsesInput(raw []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	skippedCustomCallIDs := make(map[string]struct{})
-	for _, item := range items {
-		if strings.TrimSpace(kitutil.Interface2String(item["type"])) != geminiResponsesInputTypeCustomToolCall {
-			continue
-		}
-		if callID := strings.TrimSpace(kitutil.Interface2String(item["call_id"])); callID != "" {
-			skippedCustomCallIDs[callID] = struct{}{}
-		}
-	}
-
-	filtered := make([]map[string]any, 0, len(items))
-	for _, item := range items {
-		itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
-		switch itemType {
-		case geminiResponsesInputTypeCustomToolCall, geminiResponsesInputTypeCustomToolCallOutput:
-			continue
-		case geminiResponsesInputTypeFunctionCallOutput:
-			if _, ok := skippedCustomCallIDs[strings.TrimSpace(kitutil.Interface2String(item["call_id"]))]; ok {
-				continue
-			}
-		}
-		filtered = append(filtered, item)
-	}
-
-	return kitutil.Marshal(filtered)
+	return kitutil.Marshal(items)
 }
 
 func geminiRawJSONPresent(raw []byte) bool {

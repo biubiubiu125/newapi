@@ -3,10 +3,26 @@ package model
 import (
 	"database/sql/driver"
 	"encoding/json"
+	"errors"
+	"strings"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 
 	"gorm.io/gorm"
+)
+
+const (
+	prefillGroupNameMaxRunes        = 64
+	prefillGroupTypeMaxRunes        = 32
+	prefillGroupDescriptionMaxRunes = 255
+)
+
+var (
+	ErrPrefillGroupNameTypeEmpty      = errors.New("prefill group name and type cannot be empty")
+	ErrPrefillGroupNameTooLong        = errors.New("prefill group name is too long")
+	ErrPrefillGroupTypeTooLong        = errors.New("prefill group type is too long")
+	ErrPrefillGroupDescriptionTooLong = errors.New("prefill group description is too long")
 )
 
 // PrefillGroup 用于存储可复用的“组”信息，例如模型组、标签组、端点组等。
@@ -86,8 +102,34 @@ type PrefillGroup struct {
 	DeletedAt   gorm.DeletedAt `json:"-" gorm:"index"`
 }
 
+// NormalizePrefillGroup trims fields and enforces the PostgreSQL column limits.
+func NormalizePrefillGroup(g *PrefillGroup) error {
+	if g == nil {
+		return ErrPrefillGroupNameTypeEmpty
+	}
+	g.Name = strings.TrimSpace(g.Name)
+	g.Type = strings.TrimSpace(g.Type)
+	g.Description = strings.TrimSpace(g.Description)
+	if g.Name == "" || g.Type == "" {
+		return ErrPrefillGroupNameTypeEmpty
+	}
+	if utf8.RuneCountInString(g.Name) > prefillGroupNameMaxRunes {
+		return ErrPrefillGroupNameTooLong
+	}
+	if utf8.RuneCountInString(g.Type) > prefillGroupTypeMaxRunes {
+		return ErrPrefillGroupTypeTooLong
+	}
+	if utf8.RuneCountInString(g.Description) > prefillGroupDescriptionMaxRunes {
+		return ErrPrefillGroupDescriptionTooLong
+	}
+	return nil
+}
+
 // Insert 新建组
 func (g *PrefillGroup) Insert() error {
+	if err := NormalizePrefillGroup(g); err != nil {
+		return err
+	}
 	now := common.GetTimestamp()
 	g.CreatedTime = now
 	g.UpdatedTime = now
@@ -104,10 +146,35 @@ func IsPrefillGroupNameDuplicated(id int, name string) (bool, error) {
 	return cnt > 0, err
 }
 
-// Update 更新组
+// Update 更新组。只写可编辑列，保留创建时间，不复活已删除行。
 func (g *PrefillGroup) Update() error {
-	g.UpdatedTime = common.GetTimestamp()
-	return DB.Save(g).Error
+	if err := NormalizePrefillGroup(g); err != nil {
+		return err
+	}
+	if g.Id == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	var current PrefillGroup
+	if err := DB.First(&current, g.Id).Error; err != nil {
+		return err
+	}
+	now := common.GetTimestamp()
+	result := DB.Model(&PrefillGroup{}).Where("id = ?", current.Id).Updates(map[string]any{
+		"name":         g.Name,
+		"type":         g.Type,
+		"items":        g.Items,
+		"description":  g.Description,
+		"updated_time": now,
+	})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return gorm.ErrRecordNotFound
+	}
+	g.CreatedTime = current.CreatedTime
+	g.UpdatedTime = now
+	return nil
 }
 
 // DeleteByID 根据 ID 删除组

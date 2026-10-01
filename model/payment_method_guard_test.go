@@ -982,6 +982,38 @@ func TestManualCompleteTopUpCreditsExpiredOrder(t *testing.T) {
 	require.EqualValues(t, 1000000, getUserQuotaForPaymentGuardTest(t, 812))
 }
 
+func TestManualCompleteTopUpReplayDoesNotWriteZeroUserLog(t *testing.T) {
+	truncateTables(t)
+	common.QuotaPerUnit = 500000
+	insertUserForPaymentGuardTest(t, 813, 0)
+	topUp := &TopUp{
+		UserId:          813,
+		Amount:          2,
+		Money:           10,
+		PaidAmount:      10,
+		PaidCurrency:    "CNY",
+		TradeNo:         "manual-replay-log",
+		PaymentMethod:   PaymentProviderEpay,
+		PaymentProvider: PaymentProviderEpay,
+		Status:          common.TopUpStatusExpired,
+		CreateTime:      time.Now().Unix() - 48*3600,
+	}
+	require.NoError(t, topUp.Insert())
+
+	require.NoError(t, ManualCompleteTopUp("manual-replay-log", "127.0.0.1"))
+	var logs int64
+	require.NoError(t, DB.Model(&Log{}).Count(&logs).Error)
+	require.EqualValues(t, 1, logs)
+
+	require.NoError(t, ManualCompleteTopUp("manual-replay-log", "127.0.0.1"))
+	require.NoError(t, DB.Model(&Log{}).Count(&logs).Error)
+	require.EqualValues(t, 1, logs)
+	var zeroUserLogs int64
+	require.NoError(t, DB.Model(&Log{}).Where("user_id = ?", 0).Count(&zeroUserLogs).Error)
+	require.Zero(t, zeroUserLogs)
+	require.EqualValues(t, 1000000, getUserQuotaForPaymentGuardTest(t, 813))
+}
+
 func TestMapLockedTopUpLookupErrorDistinguishesMissingOrderFromTransientError(t *testing.T) {
 	require.ErrorIs(t, mapLockedTopUpLookupError(gorm.ErrRecordNotFound), ErrTopUpNotFound)
 	transient := errors.New("database is locked")

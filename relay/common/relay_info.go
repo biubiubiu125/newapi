@@ -130,6 +130,8 @@ type RelayInfo struct {
 	ChatToGeminiStreamState any
 	ReceivedResponseCount   int
 	ClientStreamWriteCount  int64
+	clientDeliveredHook     func() error
+	clientDeliveredNoted    atomic.Bool
 	FinalPreConsumedQuota   int // 最终预消耗的配额
 	// ForcePreConsume 为 true 时禁用 BillingSession 的信任额度旁路，
 	// 强制预扣全额。用于异步任务（视频/音乐生成等），因为请求返回后任务仍在运行，
@@ -197,7 +199,10 @@ type RelayInfo struct {
 	PerformanceBusinessRejection bool
 
 	// convOptions caches the converter settings snapshot (see ConvOptions).
-	convOptions                    *convmeta.Options
+	convOptions *convmeta.Options
+	// responsesToolState is written by request conversion and read by the
+	// matching response conversion (see ResponsesToolState).
+	responsesToolState             *convmeta.ResponsesToolState
 	conversionDiagnostics          []types.ConversionDiagnostic
 	conversionDiagnosticKeys       map[conversionDiagnosticKey]struct{}
 	conversionDiagnosticsTruncated bool
@@ -928,6 +933,19 @@ func (info *RelayInfo) EnsureClaudeConvertInfo() *convmeta.ClaudeConvertInfo {
 	return info.ClaudeConvertInfo
 }
 
+func (info *RelayInfo) ResponsesToolState() *convmeta.ResponsesToolState {
+	if info == nil {
+		return nil
+	}
+	return info.responsesToolState
+}
+
+func (info *RelayInfo) SetResponsesToolState(state *convmeta.ResponsesToolState) {
+	if info != nil {
+		info.responsesToolState = state
+	}
+}
+
 func (info *RelayInfo) GetSendResponseCount() int {
 	if info == nil {
 		return 0
@@ -1006,11 +1024,26 @@ func (info *RelayInfo) HasSendResponse() bool {
 	return info.FirstResponseTime.After(info.StartTime)
 }
 
+func (info *RelayInfo) SetClientDeliveredHook(hook func() error) {
+	if info == nil {
+		return
+	}
+	info.clientDeliveredHook = hook
+}
+
 func (info *RelayInfo) MarkClientStreamWrite() {
 	if info == nil {
 		return
 	}
 	atomic.AddInt64(&info.ClientStreamWriteCount, 1)
+	hook := info.clientDeliveredHook
+	if hook == nil || info.clientDeliveredNoted.Load() {
+		return
+	}
+	if err := hook(); err != nil {
+		return
+	}
+	info.clientDeliveredNoted.Store(true)
 }
 
 func (info *RelayInfo) HasClientStreamWrite() bool {

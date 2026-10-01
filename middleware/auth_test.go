@@ -35,6 +35,7 @@ func setupDashboardAuthMiddlewareTest(t *testing.T) {
 	model.DB = db
 	model.LOG_DB = db
 	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	model.InitColumnNames()
 	common.RedisEnabled = false
 	common.SessionSecret = "middleware-auth-test-secret"
 	t.Cleanup(func() {
@@ -86,6 +87,37 @@ func createMiddlewarePATUser(t *testing.T, username, token string) *model.User {
 	}
 	require.NoError(t, model.DB.Create(user).Error)
 	return user
+}
+
+func TestTokenAuthRejectsSoftDeletedUserInsteadOfDatabaseError(t *testing.T) {
+	setupDashboardAuthMiddlewareTest(t)
+	require.NoError(t, model.DB.AutoMigrate(&model.Token{}))
+	if err := i18n.Init(); err != nil {
+		t.Fatal(err)
+	}
+	user := &model.User{
+		Username: "deleted-relay-user", Password: "password", Role: common.RoleCommonUser,
+		Status: common.UserStatusEnabled, Group: "default", AuthVersion: 1, AffCode: "deleted-relay-aff",
+	}
+	require.NoError(t, model.DB.Create(user).Error)
+	require.NoError(t, model.DB.Create(&model.Token{
+		UserId: user.Id, Key: "stillenabledrelaykey", Status: common.TokenStatusEnabled, Name: "relay", UnlimitedQuota: true,
+	}).Error)
+	require.NoError(t, model.DB.Delete(user).Error)
+
+	router := gin.New()
+	router.Use(I18n())
+	router.POST("/v1/chat/completions", TokenAuth(), func(c *gin.Context) {
+		c.Status(http.StatusOK)
+	})
+	request := httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	request.Header.Set("Authorization", "Bearer sk-stillenabledrelaykey")
+	response := httptest.NewRecorder()
+	router.ServeHTTP(response, request)
+
+	assert.Equal(t, http.StatusForbidden, response.Code, response.Body.String())
+	assert.NotEqual(t, http.StatusInternalServerError, response.Code)
+	assert.Contains(t, response.Body.String(), "banned")
 }
 
 func TestUserAuthAllowsOpaqueDottedPAT(t *testing.T) {

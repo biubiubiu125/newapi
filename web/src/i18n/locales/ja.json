@@ -2429,6 +2429,8 @@
     "Must be at least 0.1": "0.1 以上にしてください",
     "Must be 1 or less": "1 以下にしてください",
     "Group name is required": "グループ名は必須です",
+    "Group name must be at most 64 characters long": "グループ名は64文字以内にしてください",
+    "Description must be at most 255 characters long": "説明は255文字以内にしてください",
     "Must be ≥ 0": "0 以上にしてください",
     "Must be ≥ 1": "1 以上にしてください",
     "Must be ≤ 2,147,483,647": "2,147,483,647 以下にしてください",
@@ -7450,6 +7452,9 @@
     "Passkeys with an unknown domain that may be affected: {{amount}}": "ドメインが不明で影響を受ける可能性があるパスキー：{{amount}}",
     "Password authentication is disabled.": "パスワード認証は無効になっています。",
     "Password must contain between 8 and 128 characters.": "パスワードは8～128文字で入力してください。",
+    "Display name must be at most 20 characters long": "表示名は20文字以内にしてください",
+    "Email must be at most 50 characters long": "メールアドレスは50文字以内にしてください",
+    "Remark must be at most 255 characters long": "備考は255文字以内にしてください",
     "Password set successfully": "パスワードを設定しました",
     "Password settings have changed. Reload the page and try again.": "パスワード設定が変わりました。ページを再読み込みしてお試しください。",
     "Peak KV cache usage": "最大 KV キャッシュ使用率",
@@ -7834,6 +7839,10 @@
     "You can add models manually or try fetching again.": "モデルを手動で追加するか、再取得できます。",
     "You do not have permission to perform this action.": "この操作を実行する権限がありません。",
     "Your identity has been verified. Continue to the provider to finish linking your account.": "本人確認が完了しました。連携先でアカウント連携を完了してください。",
-    "Zhipu GLM": "Zhipu GLM"
+    "Zhipu GLM": "Zhipu GLM",
+    "Created {{success}} of {{total}} API keys. The remaining keys were not created.": "{{total}} 件中 {{success}} 件の API キーを作成しました。残りは作成されていません。",
+    "Custom duration must be greater than 0 seconds": "カスタム期間は 0 秒より大きくする必要があります",
+    "Custom reset cycle must be greater than 0 seconds": "カスタムリセット周期は 0 秒より大きくする必要があります",
+    "Token name is too long": "トークン名が長すぎます"
   }
 }

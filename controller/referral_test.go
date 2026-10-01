@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-contrib/sessions"
@@ -701,6 +702,7 @@ func TestEmailBindRejectsEmailMatchingOwnUsername(t *testing.T) {
 }
 
 func TestEmailBindRejectsPersonalAccessToken(t *testing.T) {
+	require.NoError(t, i18n.Init())
 	db := setupReferralControllerTestDB(t)
 	user := &model.User{
 		Username:    "pat-binder",
@@ -761,6 +763,7 @@ func TestAdminHardDeleteSoftDeletedUserReleasesLoginIdentifiers(t *testing.T) {
 	c.Params = gin.Params{{Key: "id", Value: strconv.Itoa(user.Id)}}
 	c.Set("role", common.RoleAdminUser)
 	c.Request = httptest.NewRequest(http.MethodDelete, "/api/user/"+strconv.Itoa(user.Id), nil)
+	attachAdminStepUpProof(t, c, service.VerificationScopeAdminUserDelete, service.AdminUserContext{UserID: user.Id})
 
 	DeleteUser(c)
 
@@ -837,6 +840,7 @@ func TestAdminUpdateUserEmailAllowsEmailLogin(t *testing.T) {
 		"role":1,
 		"group":"default"
 	}`, user.Id))))
+	attachAdminStepUpProof(t, c, service.VerificationScopeAdminUserUpdate, service.AdminUserContext{UserID: user.Id})
 
 	UpdateUser(c)
 
@@ -879,6 +883,7 @@ func TestAdminUpdateUserCanClearEmail(t *testing.T) {
 		"role":1,
 		"group":"default"
 	}`, user.Id))))
+	attachAdminStepUpProof(t, c, service.VerificationScopeAdminUserUpdate, service.AdminUserContext{UserID: user.Id})
 
 	UpdateUser(c)
 

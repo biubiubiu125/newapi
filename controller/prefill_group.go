@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"strconv"
 
 	"github.com/QuantumNous/new-api/common"
@@ -8,6 +9,7 @@ import (
 	"github.com/QuantumNous/new-api/model"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 // GetPrefillGroups 获取预填组列表，可通过 ?type=xxx 过滤
@@ -28,8 +30,8 @@ func CreatePrefillGroup(c *gin.Context) {
 		common.ApiError(c, err)
 		return
 	}
-	if g.Name == "" || g.Type == "" {
-		common.ApiErrorI18n(c, i18n.MsgGroupNameTypeEmpty)
+	if err := model.NormalizePrefillGroup(&g); err != nil {
+		prefillGroupError(c, err)
 		return
 	}
 	// 创建前检查名称
@@ -42,7 +44,7 @@ func CreatePrefillGroup(c *gin.Context) {
 	}
 
 	if err := g.Insert(); err != nil {
-		common.ApiError(c, err)
+		prefillGroupError(c, err)
 		return
 	}
 	common.ApiSuccess(c, &g)
@@ -53,6 +55,10 @@ func UpdatePrefillGroup(c *gin.Context) {
 	var g model.PrefillGroup
 	if err := c.ShouldBindJSON(&g); err != nil {
 		common.ApiError(c, err)
+		return
+	}
+	if err := model.NormalizePrefillGroup(&g); err != nil {
+		prefillGroupError(c, err)
 		return
 	}
 	if g.Id == 0 {
@@ -69,7 +75,7 @@ func UpdatePrefillGroup(c *gin.Context) {
 	}
 
 	if err := g.Update(); err != nil {
-		common.ApiError(c, err)
+		prefillGroupError(c, err)
 		return
 	}
 	common.ApiSuccess(c, &g)
@@ -88,4 +94,21 @@ func DeletePrefillGroup(c *gin.Context) {
 		return
 	}
 	common.ApiSuccess(c, nil)
+}
+
+func prefillGroupError(c *gin.Context, err error) {
+	switch {
+	case errors.Is(err, model.ErrPrefillGroupNameTypeEmpty):
+		common.ApiErrorI18n(c, i18n.MsgGroupNameTypeEmpty)
+	case errors.Is(err, model.ErrPrefillGroupNameTooLong):
+		common.ApiErrorI18n(c, i18n.MsgGroupNameTooLong)
+	case errors.Is(err, model.ErrPrefillGroupTypeTooLong):
+		common.ApiErrorI18n(c, i18n.MsgGroupTypeTooLong)
+	case errors.Is(err, model.ErrPrefillGroupDescriptionTooLong):
+		common.ApiErrorI18n(c, i18n.MsgGroupDescriptionTooLong)
+	case errors.Is(err, gorm.ErrRecordNotFound):
+		common.ApiErrorI18n(c, i18n.MsgGroupNotFound)
+	default:
+		common.ApiError(c, err)
+	}
 }

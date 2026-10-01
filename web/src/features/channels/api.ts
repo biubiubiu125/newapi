@@ -438,7 +438,7 @@ export async function editTagChannels(
 
 export async function getTagModels(
   tag: string
-): Promise<{ success: boolean; message?: string; data?: string }> {
+): Promise<{ success: boolean; message?: string; data?: string; groups?: string }> {
   const res = await api.get('/api/channel/tag/models', { params: { tag } })
   return res.data
 }

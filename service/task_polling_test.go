@@ -1404,6 +1404,83 @@ func TestUpdateSunoTasksDoesNotRefundWhenStatusCASIsLost(t *testing.T) {
 	require.Equal(t, 1, requestCount)
 }
 
+func TestMissingChannelFailureKeepsRefundPendingWhenRefundStopsEarly(t *testing.T) {
+	truncate(t)
+	previousLookup := lookupPollingChannel
+	lookupPollingChannel = func(id int) (*model.Channel, error) {
+		return nil, model.NewMissingChannelLookupError(id)
+	}
+	t.Cleanup(func() { lookupPollingChannel = previousLookup })
+
+	const userID = 99111
+	const initialQuota = 10000
+	const preConsumed = 2500
+	seedUser(t, userID, initialQuota)
+	cases := []struct {
+		name    string
+		channel int
+		poll    func(task *model.Task) error
+	}{
+		{
+			name:    "video",
+			channel: 99112,
+			poll: func(task *model.Task) error {
+				return updateVideoTasks(context.Background(), constant.TaskPlatform("kling"), task.ChannelId, []string{task.TaskID}, map[string]*model.Task{
+					task.TaskID: task,
+				})
+			},
+		},
+		{
+			name:    "suno",
+			channel: 99122,
+			poll: func(task *model.Task) error {
+				return updateSunoTasks(context.Background(), task.ChannelId, []string{task.TaskID}, map[string]*model.Task{
+					task.TaskID: task,
+				})
+			},
+		},
+		{
+			name:    "batch",
+			channel: 99132,
+			poll: func(task *model.Task) error {
+				return updateBatchTasks(context.Background(), nil, task.ChannelId, []string{task.TaskID}, map[string]*model.Task{
+					task.TaskID: task,
+				})
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			task := makeTask(userID, tc.channel, preConsumed, 0, BillingSourceWallet, 0)
+			task.TaskID = "missing-channel-" + tc.name
+			task.PrivateData.BillingAdjustmentUnresolved = true
+			task.PrivateData.BillingAdjustmentKey = "billing:missing-channel-" + tc.name
+			task.PrivateData.BillingAdjustmentReservation = -1
+			require.NoError(t, model.DB.Create(task).Error)
+
+			require.Error(t, tc.poll(task))
+
+			var reloaded model.Task
+			require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
+			require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
+			require.True(t, reloaded.RefundPending)
+			require.Equal(t, preConsumed, reloaded.Quota)
+			require.EqualValues(t, initialQuota, getUserQuota(t, userID))
+
+			pending, err := model.GetRefundPendingFailureTasksAfter(0, 100)
+			require.NoError(t, err)
+			found := false
+			for _, row := range pending {
+				if row != nil && row.ID == task.ID {
+					found = true
+				}
+			}
+			require.True(t, found)
+		})
+	}
+}
+
 func TestUpdateSunoTasksUsesPersistedKeyPerTaskBatch(t *testing.T) {
 	truncate(t)
 
@@ -1466,6 +1543,99 @@ func TestUpdateSunoTasksUsesPersistedKeyPerTaskBatch(t *testing.T) {
 		fetchedIDs = append(fetchedIDs, ids)
 	}
 	assert.ElementsMatch(t, [][]string{{"suno-upstream-a"}, {"suno-upstream-b"}}, fetchedIDs)
+}
+
+func TestUpdateSunoTasksDoesNotSendMultiKeyBlobWithoutStoredKey(t *testing.T) {
+	truncate(t)
+
+	const channelID = 9814
+	baseURL := "https://suno-fallback.example"
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id:      channelID,
+		Name:    "suno-fallback-channel",
+		Key:     "channel-key-a\nchannel-key-b",
+		Status:  common.ChannelStatusEnabled,
+		BaseURL: &baseURL,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:         true,
+			MultiKeySize:       2,
+			MultiKeyMode:       constant.MultiKeyModePolling,
+			MultiKeyStatusList: map[int]int{0: common.ChannelStatusAutoDisabled},
+		},
+	}).Error)
+
+	task := makeTask(1, channelID, 0, 0, BillingSourceWallet, 0)
+	task.TaskID = "suno-fallback-task"
+	task.Platform = constant.TaskPlatformSuno
+	task.PrivateData.UpstreamTaskID = "suno-fallback-upstream"
+	require.NoError(t, model.DB.Create(task).Error)
+
+	adaptor := &sunoResponsePollingAdaptor{
+		response: dto.TaskResponse[[]dto.SunoDataResponse]{
+			Code: dto.TaskSuccessCode,
+			Data: []dto.SunoDataResponse{{
+				TaskID: "suno-fallback-upstream",
+				Status: string(model.TaskStatusInProgress),
+			}},
+		},
+	}
+	previousFactory := GetTaskAdaptorFunc
+	GetTaskAdaptorFunc = func(constant.TaskPlatform) TaskPollingAdaptor { return adaptor }
+	t.Cleanup(func() { GetTaskAdaptorFunc = previousFactory })
+
+	require.NoError(t, updateSunoTasks(context.Background(), channelID, []string{pollingTaskReference(task)}, map[string]*model.Task{
+		pollingTaskReference(task): task,
+	}))
+	assert.Equal(t, []string{"channel-key-b"}, adaptor.fetchedKeys())
+}
+
+type keyCaptureBatchAdaptor struct {
+	batchPollingAdaptor
+	keys []string
+}
+
+func (a *keyCaptureBatchAdaptor) FetchBatchTasks(_ string, key string, tasks []*model.Task, _ string) (*http.Response, error) {
+	a.keys = append(a.keys, key)
+	return a.batchPollingAdaptor.FetchBatchTasks("", key, tasks, "")
+}
+
+func TestUpdateBatchTasksUsesPersistedKeyNotChannelBlob(t *testing.T) {
+	truncate(t)
+
+	const channelID = 9815
+	require.NoError(t, model.DB.Create(&model.Channel{
+		Id:     channelID,
+		Name:   "batch-multi-key",
+		Key:    "channel-key-a\nchannel-key-b",
+		Status: common.ChannelStatusEnabled,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+			MultiKeyMode: constant.MultiKeyModePolling,
+		},
+	}).Error)
+
+	first := makeTask(1, channelID, 0, 0, BillingSourceWallet, 0)
+	first.TaskID = "batch-key-first"
+	first.PrivateData.UpstreamTaskID = "batch-upstream-a"
+	first.PrivateData.Key = "selected-key-a"
+	require.NoError(t, model.DB.Create(first).Error)
+	second := makeTask(1, channelID, 0, 0, BillingSourceWallet, 0)
+	second.TaskID = "batch-key-second"
+	second.PrivateData.UpstreamTaskID = "batch-upstream-b"
+	second.PrivateData.Key = "selected-key-b"
+	require.NoError(t, model.DB.Create(second).Error)
+
+	adaptor := &keyCaptureBatchAdaptor{}
+	require.NoError(t, updateBatchTasks(context.Background(), adaptor, channelID, []string{
+		pollingTaskReference(first),
+		pollingTaskReference(second),
+	}, map[string]*model.Task{
+		pollingTaskReference(first):  first,
+		pollingTaskReference(second): second,
+	}))
+	assert.ElementsMatch(t, []string{"selected-key-a", "selected-key-b"}, adaptor.keys)
+	assert.NotContains(t, adaptor.keys, "channel-key-a\nchannel-key-b")
 }
 
 func TestUpdateSunoTasksFailsAndRefundsWhenUpstreamTaskGone(t *testing.T) {

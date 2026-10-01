@@ -10,6 +10,7 @@ import (
 	"github.com/QuantumNous/new-api/relaykit/dto"
 
 	"github.com/gin-gonic/gin"
+	"gorm.io/gorm"
 )
 
 const userCacheSchemaVersion = 2
@@ -103,6 +104,9 @@ func GetUserCache(userId int) (*UserBase, error) {
 	// snapshot would re-authorize a user while a restrictive update is pending.
 	user, err := GetUserById(userId, false)
 	if err != nil {
+		if deletedErr := softDeletedUserError(userId, err); deletedErr != nil {
+			return nil, deletedErr
+		}
 		return nil, err
 	}
 	if common.RedisEnabled {
@@ -122,6 +126,25 @@ func GetUserCache(userId int) (*UserBase, error) {
 
 func CacheGetUserById(userId int) (*UserBase, error) {
 	return GetUserCache(userId)
+}
+
+// softDeletedUserError distinguishes a removed account from a database outage.
+// A hard-deleted or never-created id stays the original not-found error.
+func softDeletedUserError(userId int, err error) error {
+	if !errors.Is(err, gorm.ErrRecordNotFound) {
+		return nil
+	}
+	user, unscopedErr := GetUserByIdUnscoped(userId, false)
+	if unscopedErr != nil {
+		if errors.Is(unscopedErr, gorm.ErrRecordNotFound) {
+			return nil
+		}
+		return unscopedErr
+	}
+	if user.DeletedAt.Valid {
+		return ErrUserDeleted
+	}
+	return nil
 }
 
 var cacheUpdateUserQuota = CacheUpdateUserQuota
@@ -202,16 +225,67 @@ func cacheGetUserBase(userId int) (*UserBase, error) {
 // Add atomic quota operations using hash fields.
 // 通过守卫式 Lua 脚本执行：哈希不存在时直接跳过（下次读取会从数据库水合），
 // 不会像裸 HINCRBY 那样创建只含 Quota 字段的残缺哈希。
+// 正向入账再按已提交的数据库余额封顶，避免冷缓存先水合再叠加同一笔入账。
 func cacheIncrUserQuota(userId int, delta int64) error {
 	if !common.RedisEnabled || common.RDB == nil || userId <= 0 || delta == 0 {
 		return nil
 	}
-	_, err := cacheApplyUserQuotaDelta(userId, delta)
-	return err
+	if delta < 0 {
+		_, err := cacheApplyUserQuotaDelta(userId, delta)
+		return err
+	}
+	var balance struct {
+		Quota int64
+	}
+	if err := DB.Model(&User{}).Select("quota").Where("id = ?", userId).Take(&balance).Error; err != nil {
+		common.SysError(fmt.Sprintf("skip user quota cache credit because the database balance could not be read, userId=%d delta=%d: %s", userId, delta, err.Error()))
+		return nil
+	}
+	return cacheCreditUserQuota(userId, delta, balance.Quota)
 }
 
 func cacheDecrUserQuota(userId int, delta int64) error {
 	return cacheIncrUserQuota(userId, -delta)
+}
+
+// syncDebitedUserQuotaCache moves a wallet debit into Redis before the
+// database transaction commits. A live hash is decremented in place. If that
+// cannot be done, the hash is removed so a trusted request cannot keep
+// spending the pre-debit balance. An error means the higher balance is still
+// readable and the caller must roll the debit back.
+func syncDebitedUserQuotaCache(userId int, amount int64) (bool, error) {
+	if userId <= 0 || amount <= 0 || !common.RedisEnabled || common.RDB == nil {
+		return false, nil
+	}
+	result, applyErr := cacheApplyUserQuotaDelta(userId, -amount)
+	if applyErr == nil && result == cacheQuotaOK {
+		return true, nil
+	}
+	if invErr := invalidateUserCache(userId); invErr != nil {
+		if applyErr != nil {
+			return false, applyErr
+		}
+		return false, invErr
+	}
+	return false, nil
+}
+
+// restoreDebitedUserQuotaCache undoes a cache debit after the database
+// transaction rolls back. Invalidating is the fallback so a failed restore
+// cannot leave the cache above the database balance.
+func restoreDebitedUserQuotaCache(userId int, amount int64, applied bool) {
+	if userId <= 0 || amount <= 0 || !common.RedisEnabled || common.RDB == nil {
+		return
+	}
+	if applied {
+		result, err := cacheApplyUserQuotaDelta(userId, amount)
+		if err == nil && result == cacheQuotaOK {
+			return
+		}
+	}
+	if err := invalidateUserCache(userId); err != nil {
+		common.SysLog(fmt.Sprintf("failed to restore user quota cache after rolled back wallet debit, userId=%d amount=%d: %s", userId, amount, err.Error()))
+	}
 }
 
 // syncCreditUserQuotaCache 在授信事务（充值/兑换等）提交后同步把增量补进缓存
@@ -225,6 +299,7 @@ func syncCreditUserQuotaCache(userId int, quota int64, operation string) {
 		common.SysLog(fmt.Sprintf("failed to sync %s credit to user quota cache: %s", operation, err.Error()))
 	}
 }
+
 // Helper functions to get individual fields if needed
 func getUserGroupCache(userId int) (string, error) {
 	cache, err := GetUserCache(userId)
@@ -283,6 +358,7 @@ func UpdateUserGroupCache(userId int, group string) error {
 	}
 	return updateUserCacheFieldAtVersion(userId, "Group", strings.TrimSpace(group), user.AuthVersion)
 }
+
 // RefreshUserGroupCache writes the database-authoritative group into an
 // existing user hash without changing the user's authentication version.
 func RefreshUserGroupCache(userId int) error {

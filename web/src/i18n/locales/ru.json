@@ -2429,6 +2429,8 @@
     "Must be at least 0.1": "Должно быть не меньше 0.1",
     "Must be 1 or less": "Должно быть не больше 1",
     "Group name is required": "Имя группы обязательно",
+    "Group name must be at most 64 characters long": "Имя группы не может превышать 64 символа",
+    "Description must be at most 255 characters long": "Описание не может превышать 255 символов",
     "Must be ≥ 0": "Должно быть ≥ 0",
     "Must be ≥ 1": "Должно быть ≥ 1",
     "Must be ≤ 2,147,483,647": "Должно быть ≤ 2,147,483,647",
@@ -7450,6 +7452,9 @@
     "Passkeys with an unknown domain that may be affected: {{amount}}": "Ключи доступа с неизвестным доменом, которые могут быть затронуты: {{amount}}",
     "Password authentication is disabled.": "Аутентификация по паролю отключена.",
     "Password must contain between 8 and 128 characters.": "Пароль должен содержать от 8 до 128 символов.",
+    "Display name must be at most 20 characters long": "Отображаемое имя должно содержать не более 20 символов",
+    "Email must be at most 50 characters long": "Адрес электронной почты должен содержать не более 50 символов",
+    "Remark must be at most 255 characters long": "Примечание должно содержать не более 255 символов",
     "Password set successfully": "Пароль установлен",
     "Password settings have changed. Reload the page and try again.": "Настройки пароля изменились. Перезагрузите страницу и повторите попытку.",
     "Peak KV cache usage": "Максимальная загрузка KV-кэша",
@@ -7834,6 +7839,10 @@
     "You can add models manually or try fetching again.": "Добавьте модели вручную или повторите запрос.",
     "You do not have permission to perform this action.": "У вас нет прав на выполнение этого действия.",
     "Your identity has been verified. Continue to the provider to finish linking your account.": "Ваша личность подтверждена. Перейдите к провайдеру, чтобы завершить привязку аккаунта.",
-    "Zhipu GLM": "Zhipu GLM"
+    "Zhipu GLM": "Zhipu GLM",
+    "Created {{success}} of {{total}} API keys. The remaining keys were not created.": "Создано {{success}} из {{total}} API-ключей. Остальные не созданы.",
+    "Custom duration must be greater than 0 seconds": "Пользовательская длительность должна быть больше 0 секунд",
+    "Custom reset cycle must be greater than 0 seconds": "Пользовательский цикл сброса должен быть больше 0 секунд",
+    "Token name is too long": "Слишком длинное имя токена"
   }
 }

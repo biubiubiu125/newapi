@@ -8,9 +8,44 @@ import (
 
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 
 	"github.com/stretchr/testify/require"
 )
+
+func TestBillingSessionSettleDoesNotReapplyFundingAfterCommitAmbiguity(t *testing.T) {
+	funding := &scriptedFundingSource{settleErr: errors.New("driver lost the response after commit")}
+	session := &BillingSession{
+		relayInfo:        &relaycommon.RelayInfo{UserId: 7, IsPlayground: true},
+		funding:          funding,
+		preConsumedQuota: 100,
+	}
+
+	require.Error(t, session.Settle(80))
+	require.Error(t, session.Settle(80))
+	require.Equal(t, 1, funding.settleCalls)
+
+	funding.settleErr = nil
+	require.Error(t, session.Settle(40))
+	require.Equal(t, 1, funding.settleCalls)
+}
+
+type scriptedFundingSource struct {
+	settleErr   error
+	settleCalls int
+	settleDelta int
+}
+
+func (f *scriptedFundingSource) Source() string { return BillingSourceWallet }
+func (f *scriptedFundingSource) PreConsume(amount int) error {
+	return nil
+}
+func (f *scriptedFundingSource) Settle(delta int) error {
+	f.settleCalls++
+	f.settleDelta += delta
+	return f.settleErr
+}
+func (f *scriptedFundingSource) Refund() error { return nil }
 
 func TestIsSubscriptionPreConsumeInsufficientErrorUsesSentinels(t *testing.T) {
 	require.True(t, isSubscriptionPreConsumeInsufficientError(model.ErrNoActiveSubscription))

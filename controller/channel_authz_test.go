@@ -223,6 +223,134 @@ func TestUpdateChannelPersistsExplicitEmptyOther(t *testing.T) {
 	assert.Equal(t, "default", updated.Group)
 }
 
+func TestUpdateChannelReplaceKeyDropsOldPerKeyDisable(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	channel := model.Channel{
+		Id:     9002,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "old-a\nold-b",
+		Status: common.ChannelStatusEnabled,
+		Name:   "replace-keys",
+		Models: "gpt-4o",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:           true,
+			MultiKeySize:         2,
+			MultiKeyMode:         constant.MultiKeyModePolling,
+			MultiKeyPollingIndex: 1,
+			MultiKeyStatusList: map[int]int{
+				0: common.ChannelStatusAutoDisabled,
+			},
+			MultiKeyDisabledReason: map[int]string{0: "provider rejected key"},
+			MultiKeyDisabledTime:   map[int]int64{0: 111},
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	putChannel(t, `{"id":9002,"name":"replace-keys","key":"new-a\nnew-b","key_mode":"replace","models":"gpt-4o","group":"default"}`)
+
+	var updated model.Channel
+	require.NoError(t, db.First(&updated, "id = ?", 9002).Error)
+	assert.Equal(t, "new-a\nnew-b", updated.Key)
+	assert.Equal(t, common.ChannelStatusEnabled, updated.Status)
+	assert.Empty(t, updated.ChannelInfo.MultiKeyStatusList)
+	assert.Empty(t, updated.ChannelInfo.MultiKeyDisabledReason)
+	assert.Empty(t, updated.ChannelInfo.MultiKeyDisabledTime)
+	assert.Equal(t, 0, updated.ChannelInfo.MultiKeyPollingIndex)
+	assert.Equal(t, 2, updated.ChannelInfo.MultiKeySize)
+}
+
+func TestUpdateChannelReplaceKeyReopensAutoDisabledChannel(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	channel := model.Channel{
+		Id:     9003,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "old-a\nold-b",
+		Status: common.ChannelStatusAutoDisabled,
+		Name:   "replace-disabled",
+		Models: "gpt-4o",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+			MultiKeyMode: constant.MultiKeyModePolling,
+			MultiKeyStatusList: map[int]int{
+				0: common.ChannelStatusAutoDisabled,
+				1: common.ChannelStatusAutoDisabled,
+			},
+		},
+	}
+	channel.SetOtherInfo(map[string]interface{}{"status_reason": model.ChannelStatusReasonAllKeysDisabled})
+	require.NoError(t, db.Create(&channel).Error)
+	require.NoError(t, db.Create(&model.Ability{
+		Group: "default", Model: "gpt-4o", ChannelId: channel.Id, Enabled: false,
+	}).Error)
+
+	putChannel(t, `{"id":9003,"name":"replace-disabled","key":"new-a\nnew-b","key_mode":"replace","models":"gpt-4o","group":"default"}`)
+
+	var updated model.Channel
+	require.NoError(t, db.First(&updated, "id = ?", 9003).Error)
+	assert.Equal(t, common.ChannelStatusEnabled, updated.Status)
+	assert.Empty(t, updated.ChannelInfo.MultiKeyStatusList)
+	assert.NotEqual(t, model.ChannelStatusReasonAllKeysDisabled, updated.GetOtherInfo()["status_reason"])
+	var ability model.Ability
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&ability).Error)
+	assert.True(t, ability.Enabled)
+	assert.Equal(t, "gpt-4o", ability.Model)
+}
+
+func TestUpdateChannelReplaceKeyKeepsManualDisable(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	channel := model.Channel{
+		Id:     9004,
+		Type:   constant.ChannelTypeOpenAI,
+		Key:    "old-a\nold-b",
+		Status: common.ChannelStatusManuallyDisabled,
+		Name:   "replace-manual",
+		Models: "gpt-4o",
+		Group:  "default",
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+			MultiKeyMode: constant.MultiKeyModePolling,
+			MultiKeyStatusList: map[int]int{
+				0: common.ChannelStatusAutoDisabled,
+			},
+		},
+	}
+	require.NoError(t, db.Create(&channel).Error)
+
+	putChannel(t, `{"id":9004,"name":"replace-manual","key":"new-a\nnew-b","key_mode":"replace","models":"gpt-4o","group":"default"}`)
+
+	var updated model.Channel
+	require.NoError(t, db.First(&updated, "id = ?", 9004).Error)
+	assert.Equal(t, common.ChannelStatusManuallyDisabled, updated.Status)
+	assert.Empty(t, updated.ChannelInfo.MultiKeyStatusList)
+	var ability model.Ability
+	require.NoError(t, db.Where("channel_id = ?", channel.Id).First(&ability).Error)
+	assert.False(t, ability.Enabled)
+}
+
+func putChannel(t *testing.T, body string) {
+	t.Helper()
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Set("id", 1)
+	ctx.Set("role", common.RoleRootUser)
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/channel/", bytes.NewBufferString(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	UpdateChannel(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &response))
+	require.True(t, response.Success, response.Message)
+}
+
 func TestChannelStatusValidation(t *testing.T) {
 	assert.True(t, isManageableChannelStatus(common.ChannelStatusEnabled))
 	assert.True(t, isManageableChannelStatus(common.ChannelStatusManuallyDisabled))

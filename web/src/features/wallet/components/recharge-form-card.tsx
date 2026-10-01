@@ -42,6 +42,7 @@ import {
   getPaymentIcon,
   getMinTopupAmount,
   calculatePresetPricing,
+  parseTopupAmountInput,
 } from '../lib'
 import type {
   PaymentMethod,
@@ -122,11 +123,10 @@ export function RechargeFormCard({
   }, [topupAmount])
 
   const handleAmountChange = (value: string) => {
+    const amount = parseTopupAmountInput(value)
+    if (amount === null) return
     setLocalAmount(value)
-    const numValue = Number.parseInt(value) || 0
-    if (numValue >= 0) {
-      onTopupAmountChange(numValue)
-    }
+    onTopupAmountChange(amount)
   }
 
   const hasConfigurableTopup =
@@ -288,6 +288,8 @@ export function RechargeFormCard({
                   <Input
                     id='topup-amount'
                     type='number'
+                    inputMode='numeric'
+                    step={1}
                     value={localAmount}
                     onChange={(e) => handleAmountChange(e.target.value)}
                     min={minTopup}

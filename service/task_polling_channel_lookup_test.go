@@ -76,6 +76,7 @@ func TestUpdateVideoTasksMissingChannelStillFailsAndRefunds(t *testing.T) {
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
 	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), reloaded.Status)
 	require.Zero(t, reloaded.Quota)
+	require.False(t, reloaded.RefundPending)
 	require.EqualValues(t, 4900, getUserQuota(t, userID))
 }
 

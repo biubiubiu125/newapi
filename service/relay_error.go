@@ -61,16 +61,56 @@ func ShouldRetryRelayError(c *gin.Context, openaiErr *types.NewAPIError, retryTi
 	return DecideRelayRetry(c, openaiErr, retryTimes).Action == "retry"
 }
 
+// SameChannelKeyRotationAllowed reports that another key on the channel that
+// just failed may be tried. A cross-channel stop (no retry budget, a strict
+// session, or a specific channel) does not block it. A single-attempt pin, a
+// local skip, or a response the client has already started reading does.
+func SameChannelKeyRotationAllowed(c *gin.Context, openaiErr *types.NewAPIError) bool {
+	if openaiErr == nil || c == nil {
+		return false
+	}
+	if common.GetContextKeyBool(c, constant.ContextKeyIsStream) {
+		if relayInfo, ok := c.Get("relay_info"); ok {
+			if info, ok := relayInfo.(*relaycommon.RelayInfo); ok && info.HasClientStreamWrite() {
+				return false
+			}
+		}
+	}
+	if GetChannelConstraints(c).SuppressesRetry() {
+		return false
+	}
+	if types.IsSkipRetryError(openaiErr) {
+		return false
+	}
+	if types.IsChannelError(openaiErr) || IsBalanceInsufficientError(openaiErr) {
+		return true
+	}
+	code := openaiErr.StatusCode
+	if code >= 200 && code < 300 {
+		return false
+	}
+	if code < 100 || code > 599 {
+		return true
+	}
+	return operation_setting.ShouldRetryByStatusCode(code)
+}
+
 func ProcessChannelError(c *gin.Context, channelError types.ChannelError, err *types.NewAPIError, relayInfo *relaycommon.RelayInfo) {
 	if err == nil {
 		return
 	}
 	logger.LogError(c, fmt.Sprintf("channel error (channel #%d, status code: %d): %s", channelError.ChannelId, err.StatusCode, common.LocalLogPreview(err.MaskSensitiveErrorWithStatusCode())))
-	if ShouldDisableChannel(err) && channelError.AutoBan {
+	if ShouldDisableChannel(err) && (channelError.AutoBan || IsBalanceInsufficientError(err)) {
 		reason := err.MaskSensitiveErrorWithStatusCode()
-		gopool.Go(func() {
+		// Balance disable has to finish before the next retry selects a channel.
+		// Auto-ban stays asynchronous, matching the HTTP relay.
+		if IsBalanceInsufficientError(err) {
 			DisableChannel(channelError, reason)
-		})
+		} else {
+			gopool.Go(func() {
+				DisableChannel(channelError, reason)
+			})
+		}
 	}
 
 	if constant.ErrorLogEnabled && types.IsRecordErrorLog(err) {

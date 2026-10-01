@@ -34,6 +34,15 @@ import type {
   AdminUsersSummary,
 } from './types'
 
+function securityProofConfig(proofToken?: string) {
+  const proof = proofToken?.trim()
+  if (!proof) return undefined
+  return {
+    headers: { 'X-Security-Proof': proof },
+    singleUseAuthorization: true,
+  }
+}
+
 // ============================================================================
 // User Management APIs
 // ============================================================================
@@ -107,10 +116,11 @@ export async function getUser(id: number): Promise<ApiResponse<User>> {
  * Create a new user
  */
 export async function createUser(
-  data: UserFormData
+  data: UserFormData,
+  proofToken?: string
 ): Promise<ApiResponse<User>> {
   const body = await encryptPasswordFields(data, ['password'])
-  const res = await api.post('/api/user/', body)
+  const res = await api.post('/api/user/', body, securityProofConfig(proofToken))
   return res.data
 }
 
@@ -118,18 +128,29 @@ export async function createUser(
  * Update an existing user
  */
 export async function updateUser(
-  data: UserFormData & { id: number }
+  data: UserFormData & { id: number },
+  proofToken?: string
 ): Promise<ApiResponse<Partial<User>>> {
   const body = await encryptPasswordFields(data, ['password'])
-  const res = await api.put('/api/user/', body)
+  const res = await api.put(
+    '/api/user/',
+    body,
+    securityProofConfig(proofToken)
+  )
   return res.data
 }
 
 /**
  * Delete a single user (hard delete)
  */
-export async function deleteUser(id: number): Promise<ApiResponse> {
-  const res = await api.delete(`/api/user/${id}/`)
+export async function deleteUser(
+  id: number,
+  proofToken?: string
+): Promise<ApiResponse> {
+  const res = await api.delete(
+    `/api/user/${id}/`,
+    securityProofConfig(proofToken)
+  )
   return res.data
 }
 
@@ -138,9 +159,14 @@ export async function deleteUser(id: number): Promise<ApiResponse> {
  */
 export async function manageUser(
   id: number,
-  action: ManageUserAction
+  action: ManageUserAction,
+  proofToken?: string
 ): Promise<ApiResponse<Partial<User>>> {
-  const res = await api.post('/api/user/manage', { id, action })
+  const res = await api.post(
+    '/api/user/manage',
+    { id, action },
+    securityProofConfig(proofToken)
+  )
   return res.data
 }
 
@@ -157,16 +183,28 @@ export async function adjustUserQuota(
 /**
  * Reset user's Passkey registration
  */
-export async function resetUserPasskey(id: number): Promise<ApiResponse> {
-  const res = await api.delete(`/api/user/${id}/reset_passkey`)
+export async function resetUserPasskey(
+  id: number,
+  proofToken?: string
+): Promise<ApiResponse> {
+  const res = await api.delete(
+    `/api/user/${id}/reset_passkey`,
+    securityProofConfig(proofToken)
+  )
   return res.data
 }
 
 /**
  * Reset user's Two-Factor Authentication setup
  */
-export async function resetUserTwoFA(id: number): Promise<ApiResponse> {
-  const res = await api.delete(`/api/user/${id}/2fa`)
+export async function resetUserTwoFA(
+  id: number,
+  proofToken?: string
+): Promise<ApiResponse> {
+  const res = await api.delete(
+    `/api/user/${id}/2fa`,
+    securityProofConfig(proofToken)
+  )
   return res.data
 }
 
@@ -210,9 +248,13 @@ export async function getUserOAuthBindings(
  */
 export async function adminClearUserBinding(
   userId: number,
-  bindingType: string
+  bindingType: string,
+  proofToken?: string
 ): Promise<ApiResponse> {
-  const res = await api.delete(`/api/user/${userId}/bindings/${bindingType}`)
+  const res = await api.delete(
+    `/api/user/${userId}/bindings/${bindingType}`,
+    securityProofConfig(proofToken)
+  )
   return res.data
 }
 
@@ -221,10 +263,12 @@ export async function adminClearUserBinding(
  */
 export async function adminUnbindCustomOAuth(
   userId: number,
-  providerId: number
+  providerId: number,
+  proofToken?: string
 ): Promise<ApiResponse> {
   const res = await api.delete(
-    `/api/user/${userId}/oauth/bindings/${providerId}`
+    `/api/user/${userId}/oauth/bindings/${providerId}`,
+    securityProofConfig(proofToken)
   )
   return res.data
 }

@@ -138,7 +138,7 @@ func TestAccessTokenAuditsResultsAndExcludesBrowserSessions(t *testing.T) {
 		method, path string
 		status       int
 		success      bool
-	}{{"GET", "/missing", 404, false}, {"GET", "/public", 200, true}, {"GET", "/rate-limited", 429, false}, {"GET", "/read/sensitive-id?password=secret-query", 200, true}, {"POST", "/write", 200, true}, {"POST", "/business-failure", 200, false}, {"GET", "/forbidden", 403, false}}
+	}{{"GET", "/missing", 404, false}, {"GET", "/public", 200, true}, {"GET", "/rate-limited", 429, false}, {"GET", "/read/sensitive-id?password=secret-query", 200, true}, {"POST", "/write", 403, false}, {"POST", "/business-failure", 403, false}, {"GET", "/forbidden", 403, false}}
 	for _, tc := range cases {
 		response := auditRequest(router, tc.method, tc.path, pat)
 		require.Equal(t, tc.status, response.Code)
@@ -153,13 +153,17 @@ func TestAccessTokenAuditsResultsAndExcludesBrowserSessions(t *testing.T) {
 	}
 	var operationCount int64
 	require.NoError(t, model.LOG_DB.Model(&model.AuditLog{}).Where("category = ?", model.AuditCategoryOperation).Count(&operationCount).Error)
-	assert.EqualValues(t, 2, operationCount, "manual operation must not be duplicated by fallback")
+	assert.Zero(t, operationCount, "a system access token cannot start an admin write")
 	now := time.Now().Unix()
 	session := &model.UserSession{SID: "audit-session", UserID: user.Id, Version: 1, UserAuthVersion: 1, Status: model.UserSessionStatusActive, RefreshHash: "refresh-placeholder", LoginMethod: "password", LastActiveAt: now, ExpiresAt: now + 3600}
 	require.NoError(t, model.CreateUserSession(session))
 	jwt, _, err := service.IssueAccessToken(service.AuthIdentity{UserID: user.Id, SessionID: session.SID, UserAuthVersion: 1, SessionVersion: 1})
 	require.NoError(t, err)
 	assert.Equal(t, 200, auditRequest(router, "GET", "/read/123", jwt).Code)
+	assert.Equal(t, 200, auditRequest(router, "POST", "/write", jwt).Code)
+	assert.Equal(t, 200, auditRequest(router, "POST", "/business-failure", jwt).Code)
+	require.NoError(t, model.LOG_DB.Model(&model.AuditLog{}).Where("category = ?", model.AuditCategoryOperation).Count(&operationCount).Error)
+	assert.EqualValues(t, 2, operationCount, "a signed-in admin write is audited once, including the business-failure fallback")
 	assert.Equal(t, 401, auditRequest(router, "GET", "/read/123", "unknown-token").Code)
 	entries, total, err := model.GetAuditLogs(model.AuditLogFilter{Category: model.AuditCategoryAccessToken}, 0, 20, common.RoleRootUser)
 	require.NoError(t, err)

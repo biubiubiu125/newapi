@@ -5,10 +5,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	appdto "github.com/QuantumNous/new-api/dto"
 	"github.com/QuantumNous/new-api/model"
 	pluginruntime "github.com/QuantumNous/new-api/pkg/jsplugin"
 	"github.com/QuantumNous/new-api/relay"
@@ -61,6 +63,264 @@ func TestGetChannelSelectsWhenNoPreselectedChannel(t *testing.T) {
 	require.Nil(t, err)
 	require.NotNil(t, selected)
 	assert.Equal(t, channel.Id, selected.Id)
+}
+
+func TestTaskSubmissionRotatesMultiKeyBeforeLowerPriority(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	previousMemoryCache := common.MemoryCacheEnabled
+	previousRetryTimes := common.RetryTimes
+	common.MemoryCacheEnabled = true
+	common.RetryTimes = 1
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = previousMemoryCache
+		common.RetryTimes = previousRetryTimes
+		model.InitChannelCache()
+	})
+
+	highPriority := int64(10)
+	lowPriority := int64(0)
+	weight := uint(100)
+	high := &model.Channel{
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "key-a\nkey-b",
+		Status:   common.ChannelStatusEnabled,
+		Name:     "multi-key-high",
+		Weight:   &weight,
+		Models:   "multi-key-model",
+		Group:    "default",
+		Priority: &highPriority,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+			MultiKeyMode: constant.MultiKeyModePolling,
+		},
+	}
+	low := &model.Channel{
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "low-key",
+		Status:   common.ChannelStatusEnabled,
+		Name:     "single-key-low",
+		Weight:   &weight,
+		Models:   "multi-key-model",
+		Group:    "default",
+		Priority: &lowPriority,
+	}
+	require.NoError(t, db.Create(high).Error)
+	require.NoError(t, db.Create(low).Error)
+	model.InitChannelCache()
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader("{}"))
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyChannelId, high.Id)
+	common.SetContextKey(ctx, constant.ContextKeyChannelType, high.Type)
+	common.SetContextKey(ctx, constant.ContextKeyChannelName, high.Name)
+	common.SetContextKey(ctx, constant.ContextKeyChannelIsMultiKey, true)
+	common.SetContextKey(ctx, constant.ContextKeyChannelKey, "key-a")
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "multi-key-model",
+		TokenGroup:      "default",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+	var keys []string
+	_, taskErr := executeTaskSubmissionWith(ctx, relayInfo, func(c *gin.Context, _ *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		keys = append(keys, common.GetContextKeyString(c, constant.ContextKeyChannelKey))
+		return nil, service.TaskErrorWrapper(errors.New("upstream"), "upstream_error", http.StatusInternalServerError)
+	})
+	require.NotNil(t, taskErr)
+	// Both keys are tried, then the one cross-channel retry still reaches the
+	// lower-priority channel. Key rotation must not spend RetryTimes.
+	assert.Equal(t, []string{"key-a", "key-b", "low-key"}, keys)
+}
+
+func TestTaskSubmissionRotatesKeysWhenRetryBudgetIsZero(t *testing.T) {
+	keys := runMultiKeySubmission(t, 0, nil, http.StatusInternalServerError, false)
+	assert.Equal(t, []string{"key-a", "key-b"}, keys)
+}
+
+func TestTaskSubmissionRotatesKeysWhenChannelIsPinned(t *testing.T) {
+	keys := runMultiKeySubmission(t, 1, func(ctx *gin.Context, highID int) {
+		ctx.Set("specific_channel_id", highID)
+	}, http.StatusInternalServerError, false)
+	assert.Equal(t, []string{"key-a", "key-b"}, keys)
+}
+
+func TestTaskSubmissionRotatesKeysWhenAffinitySkipsChannelSwitch(t *testing.T) {
+	keys := runMultiKeySubmission(t, 1, func(ctx *gin.Context, _ int) {
+		ctx.Set("channel_affinity_skip_retry_on_failure", true)
+	}, http.StatusInternalServerError, false)
+	assert.Equal(t, []string{"key-a", "key-b"}, keys)
+}
+
+func TestTaskSubmissionDoesNotRotateKeysOnSingleAttemptPin(t *testing.T) {
+	keys := runMultiKeySubmission(t, 1, func(ctx *gin.Context, highID int) {
+		service.GetChannelConstraints(ctx).AddPin(appdto.ChannelPin{
+			ChannelId: highID,
+			Source:    appdto.PinSourceToken,
+			Rank:      appdto.PinRankToken,
+			RetryMode: appdto.PinRetrySingleAttempt,
+		})
+	}, http.StatusInternalServerError, false)
+	assert.Equal(t, []string{"key-a"}, keys)
+}
+
+func TestTaskSubmissionDoesNotRotateKeysOnLocalRejection(t *testing.T) {
+	keys := runMultiKeySubmission(t, 1, nil, http.StatusBadRequest, true)
+	assert.Equal(t, []string{"key-a"}, keys)
+}
+
+func runMultiKeySubmission(t *testing.T, retryTimes int, configure func(*gin.Context, int), statusCode int, local bool) []string {
+	t.Helper()
+	db := setupModelListControllerTestDB(t)
+	previousMemoryCache := common.MemoryCacheEnabled
+	previousRetryTimes := common.RetryTimes
+	common.MemoryCacheEnabled = true
+	common.RetryTimes = retryTimes
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = previousMemoryCache
+		common.RetryTimes = previousRetryTimes
+		model.InitChannelCache()
+	})
+
+	highPriority := int64(10)
+	lowPriority := int64(0)
+	weight := uint(100)
+	high := &model.Channel{
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "key-a\nkey-b",
+		Status:   common.ChannelStatusEnabled,
+		Name:     "multi-key-rotation",
+		Weight:   &weight,
+		Models:   "multi-key-rotation-model",
+		Group:    "default",
+		Priority: &highPriority,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 2,
+			MultiKeyMode: constant.MultiKeyModePolling,
+		},
+	}
+	low := &model.Channel{
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "low-key",
+		Status:   common.ChannelStatusEnabled,
+		Name:     "single-key-rotation-peer",
+		Weight:   &weight,
+		Models:   "multi-key-rotation-model",
+		Group:    "default",
+		Priority: &lowPriority,
+	}
+	require.NoError(t, db.Create(high).Error)
+	require.NoError(t, db.Create(low).Error)
+	model.InitChannelCache()
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader("{}"))
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyChannelId, high.Id)
+	common.SetContextKey(ctx, constant.ContextKeyChannelType, high.Type)
+	common.SetContextKey(ctx, constant.ContextKeyChannelName, high.Name)
+	common.SetContextKey(ctx, constant.ContextKeyChannelIsMultiKey, true)
+	common.SetContextKey(ctx, constant.ContextKeyChannelKey, "key-a")
+	if configure != nil {
+		configure(ctx, high.Id)
+	}
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "multi-key-rotation-model",
+		TokenGroup:      "default",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+	var keys []string
+	_, taskErr := executeTaskSubmissionWith(ctx, relayInfo, func(c *gin.Context, _ *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		keys = append(keys, common.GetContextKeyString(c, constant.ContextKeyChannelKey))
+		if local {
+			return nil, service.TaskErrorWrapperLocal(errors.New("bad request"), "invalid_request", statusCode)
+		}
+		return nil, service.TaskErrorWrapper(errors.New("upstream"), "upstream_error", statusCode)
+	})
+	require.NotNil(t, taskErr)
+	return keys
+}
+
+func TestTaskSubmissionReachesSamePriorityPeerAfterMultiKeyCap(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	previousMemoryCache := common.MemoryCacheEnabled
+	previousRetryTimes := common.RetryTimes
+	common.MemoryCacheEnabled = true
+	common.RetryTimes = 1
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = previousMemoryCache
+		common.RetryTimes = previousRetryTimes
+		model.InitChannelCache()
+	})
+
+	priority := int64(10)
+	weight := uint(100)
+	multi := &model.Channel{
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "k1\nk2\nk3\nk4",
+		Status:   common.ChannelStatusEnabled,
+		Name:     "multi-key-peer",
+		Weight:   &weight,
+		Models:   "multi-key-peer-model",
+		Group:    "default",
+		Priority: &priority,
+		ChannelInfo: model.ChannelInfo{
+			IsMultiKey:   true,
+			MultiKeySize: 4,
+			MultiKeyMode: constant.MultiKeyModePolling,
+		},
+	}
+	peer := &model.Channel{
+		Type:     constant.ChannelTypeOpenAI,
+		Key:      "peer-key",
+		Status:   common.ChannelStatusEnabled,
+		Name:     "same-priority-peer",
+		Weight:   &weight,
+		Models:   "multi-key-peer-model",
+		Group:    "default",
+		Priority: &priority,
+	}
+	require.NoError(t, db.Create(multi).Error)
+	require.NoError(t, db.Create(peer).Error)
+	model.InitChannelCache()
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", strings.NewReader("{}"))
+	common.SetContextKey(ctx, constant.ContextKeyUserGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyUsingGroup, "default")
+	common.SetContextKey(ctx, constant.ContextKeyChannelId, multi.Id)
+	common.SetContextKey(ctx, constant.ContextKeyChannelType, multi.Type)
+	common.SetContextKey(ctx, constant.ContextKeyChannelName, multi.Name)
+	common.SetContextKey(ctx, constant.ContextKeyChannelIsMultiKey, true)
+	common.SetContextKey(ctx, constant.ContextKeyChannelKey, "k1")
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "multi-key-peer-model",
+		TokenGroup:      "default",
+		UserGroup:       "default",
+		UsingGroup:      "default",
+		TaskRelayInfo:   &relaycommon.TaskRelayInfo{},
+	}
+	var keys []string
+	_, taskErr := executeTaskSubmissionWith(ctx, relayInfo, func(c *gin.Context, _ *relaycommon.RelayInfo) (*relay.TaskSubmitResult, *dto.TaskError) {
+		keys = append(keys, common.GetContextKeyString(c, constant.ContextKeyChannelKey))
+		return nil, service.TaskErrorWrapper(errors.New("upstream"), "upstream_error", http.StatusInternalServerError)
+	})
+	require.NotNil(t, taskErr)
+	assert.Equal(t, []string{"k1", "k2", "k3", "peer-key"}, keys)
+	assert.NotContains(t, keys, "k4")
 }
 
 func TestGetChannelReturnsSelectedChannelWhenKeySetupFails(t *testing.T) {
@@ -248,6 +508,16 @@ func TestShouldRetryRelayFailureSkipsLocalAndSpecificChannelErrors(t *testing.T)
 	ctx.Set("specific_channel_id", 123)
 	retryable := apptypes.NewOpenAIError(errors.New("server error"), apptypes.ErrorCodeBadResponseStatusCode, http.StatusInternalServerError)
 	assert.False(t, shouldRetry(ctx, retryable, 0))
+	assert.True(t, sameChannelKeyRotationAllowed(ctx, retryable))
+
+	service.GetChannelConstraints(ctx).AddPin(appdto.ChannelPin{
+		ChannelId: 123,
+		Source:    appdto.PinSourceToken,
+		Rank:      appdto.PinRankToken,
+		RetryMode: appdto.PinRetrySingleAttempt,
+	})
+	assert.False(t, sameChannelKeyRotationAllowed(ctx, retryable))
+	assert.False(t, sameChannelKeyRotationAllowed(ctx, localErr))
 }
 
 func TestShouldRetryTaskRelayFailureRetriesUpstreamStatusErrors(t *testing.T) {
@@ -761,4 +1031,42 @@ func TestRelayTaskRetryExcludesFailedSamePriorityChannel(t *testing.T) {
 	require.Equal(t, failingChannel.Id, selectedChannelIDs[0])
 	require.Equal(t, fallbackChannel.Id, selectedChannelIDs[1])
 	require.Equal(t, http.StatusOK, recorder.Code)
+}
+
+func TestNextUnusedEnabledKeyDoesNotRaceStatusUpdates(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Ability{}))
+	originalCache := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = true
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = originalCache
+		model.InitChannelCache()
+	})
+	channel := &model.Channel{
+		Name: t.Name(), Type: constant.ChannelTypeOpenAI, Key: "key-a\nkey-b", Status: common.ChannelStatusEnabled,
+		Models: "race-model", Group: "default",
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModePolling},
+	}
+	require.NoError(t, channel.Insert())
+	model.InitChannelCache()
+	cached, err := model.CacheGetChannel(channel.Id)
+	require.NoError(t, err)
+	require.NotNil(t, cached)
+
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			nextUnusedEnabledKey(cached, map[string]struct{}{"key-a": {}})
+		}
+	}()
+	go func() {
+		defer wg.Done()
+		for i := 0; i < 100; i++ {
+			model.UpdateChannelStatus(channel.Id, "key-b", common.ChannelStatusAutoDisabled, "race")
+			model.UpdateChannelStatus(channel.Id, "key-b", common.ChannelStatusEnabled, "")
+		}
+	}()
+	wg.Wait()
 }

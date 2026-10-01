@@ -2429,6 +2429,8 @@
     "Must be at least 0.1": "Phải ít nhất 0.1",
     "Must be 1 or less": "Phải nhỏ hơn hoặc bằng 1",
     "Group name is required": "Tên nhóm là bắt buộc",
+    "Group name must be at most 64 characters long": "Tên nhóm không được vượt quá 64 ký tự",
+    "Description must be at most 255 characters long": "Mô tả không được vượt quá 255 ký tự",
     "Must be ≥ 0": "Phải ≥ 0",
     "Must be ≥ 1": "Phải ≥ 1",
     "Must be ≤ 2,147,483,647": "Phải ≤ 2,147,483,647",
@@ -7450,6 +7452,9 @@
     "Passkeys with an unknown domain that may be affected: {{amount}}": "Khóa truy cập chưa rõ miền và có thể bị ảnh hưởng: {{amount}}",
     "Password authentication is disabled.": "Xác thực bằng mật khẩu đã bị tắt.",
     "Password must contain between 8 and 128 characters.": "Mật khẩu phải có từ 8 đến 128 ký tự.",
+    "Display name must be at most 20 characters long": "Tên hiển thị tối đa 20 ký tự",
+    "Email must be at most 50 characters long": "Email tối đa 50 ký tự",
+    "Remark must be at most 255 characters long": "Ghi chú tối đa 255 ký tự",
     "Password set successfully": "Đã đặt mật khẩu thành công",
     "Password settings have changed. Reload the page and try again.": "Cài đặt mật khẩu đã thay đổi. Tải lại trang và thử lại.",
     "Peak KV cache usage": "Mức sử dụng bộ nhớ đệm KV cao nhất",
@@ -7834,6 +7839,10 @@
     "You can add models manually or try fetching again.": "Bạn có thể thêm mô hình thủ công hoặc thử lấy lại.",
     "You do not have permission to perform this action.": "Bạn không có quyền thực hiện thao tác này.",
     "Your identity has been verified. Continue to the provider to finish linking your account.": "Danh tính đã được xác minh. Tiếp tục đến nhà cung cấp để hoàn tất liên kết tài khoản.",
-    "Zhipu GLM": "Zhipu GLM"
+    "Zhipu GLM": "Zhipu GLM",
+    "Created {{success}} of {{total}} API keys. The remaining keys were not created.": "Đã tạo {{success}}/{{total}} khóa API. Các khóa còn lại chưa được tạo.",
+    "Custom duration must be greater than 0 seconds": "Thời lượng tùy chỉnh phải lớn hơn 0 giây",
+    "Custom reset cycle must be greater than 0 seconds": "Chu kỳ đặt lại tùy chỉnh phải lớn hơn 0 giây",
+    "Token name is too long": "Tên mã thông báo quá dài"
   }
 }

@@ -43,15 +43,32 @@ const newUsernameSchema = z
     'Username must be at most 20 characters long'
   )
 
+const atMostCodePoints = (max: number) => (value: string) =>
+  [...value].length <= max
+
 export const userFormSchema = z.object({
   username: z.string().min(1, 'Username is required'),
-  display_name: z.string().optional(),
-  email: z.string().email('Invalid email address').or(z.literal('')).optional(),
+  display_name: z
+    .string()
+    .refine(
+      atMostCodePoints(20),
+      'Display name must be at most 20 characters long'
+    )
+    .optional(),
+  email: z
+    .string()
+    .max(50, 'Email must be at most 50 characters long')
+    .email('Invalid email address')
+    .or(z.literal(''))
+    .optional(),
   password: z.string().optional(),
   role: z.number().optional(),
   quota_dollars: z.number().min(0).optional(),
   group: z.string().optional(),
-  remark: z.string().optional(),
+  remark: z
+    .string()
+    .refine(atMostCodePoints(255), 'Remark must be at most 255 characters long')
+    .optional(),
   admin_permissions: z
     .record(z.string(), z.record(z.string(), z.boolean()))
     .optional(),

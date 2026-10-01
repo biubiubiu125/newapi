@@ -31,7 +31,8 @@ import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHe
 import { Switch } from '@/components/ui/switch'
 import { createPlan, updatePlan, getGroups, createWaffoPancakeSubscriptionProduct, listWaffoPancakeSubscriptionProductOptions } from '../api'
 import { getDurationUnitOptions, getResetPeriodOptions } from '../constants'
-import {getPlanFormSchema, PLAN_FORM_DEFAULTS, planToFormValues, formValuesToPlanPayload, type PlanFormValues} from '../lib'
+import {getPlanFormSchema, PLAN_FORM_DEFAULTS, planToFormValues, formValuesToPlanPayload, convertPlanPriceAmount, type PlanFormValues} from '../lib'
+import { useSystemConfigStore } from '@/stores/system-config-store'
 import type { PlanRecord } from '../types'
 import { useSubscriptions } from './subscriptions-provider'
 import { Combobox } from '@/components/ui/combobox'
@@ -60,6 +61,9 @@ export function SubscriptionsMutateDrawer({
     { id: string; name: string; status: string }[]
   >([])
 
+  const usdExchangeRate = useSystemConfigStore(
+    (state) => state.config.currency.usdExchangeRate
+  )
   const schema = getPlanFormSchema(t)
   const form = useForm<PlanFormValues>({
     resolver: zodResolver(schema) as unknown as Resolver<PlanFormValues>,
@@ -165,7 +169,7 @@ export function SubscriptionsMutateDrawer({
       const res = await createWaffoPancakeSubscriptionProduct({
         name: title,
         amount: priceAmount.toFixed(2),
-        currency: 'CNY',
+        currency: form.getValues('currency') || 'CNY',
       })
       if (
         res.message === 'success' &&
@@ -342,6 +346,54 @@ export function SubscriptionsMutateDrawer({
                   )}
                 />
               </div>
+
+              <FormField
+                control={form.control}
+                name='currency'
+                render={({ field }) => (
+                  <FormItem>
+                    <FormLabel>{t('Currency')}</FormLabel>
+                    <Select
+                      items={[
+                        { value: 'CNY', label: 'CNY' },
+                        { value: 'USD', label: 'USD' },
+                      ]}
+                      value={field.value}
+                      onValueChange={(next) => {
+                        if (next !== 'CNY' && next !== 'USD') return
+                        if (next === field.value) return
+                        const converted = convertPlanPriceAmount(
+                          Number(form.getValues('price_amount') || 0),
+                          field.value,
+                          next,
+                          usdExchangeRate
+                        )
+                        if (converted === null) {
+                          toast.error(t('Exchange rate is required'))
+                          return
+                        }
+                        field.onChange(next)
+                        form.setValue('price_amount', converted, {
+                          shouldDirty: true,
+                        })
+                      }}
+                    >
+                      <FormControl>
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                      </FormControl>
+                      <SelectContent alignItemWithTrigger={false}>
+                        <SelectGroup>
+                          <SelectItem value='CNY'>CNY</SelectItem>
+                          <SelectItem value='USD'>USD</SelectItem>
+                        </SelectGroup>
+                      </SelectContent>
+                    </Select>
+                    <FormMessage />
+                  </FormItem>
+                )}
+              />
 
               <div className='grid grid-cols-1 gap-3 sm:grid-cols-2'>
                 <FormField

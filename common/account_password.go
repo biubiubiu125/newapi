@@ -38,22 +38,34 @@ func ValidateNewAccountPassword(password string) error {
 	return nil
 }
 
-// HashAccountPassword is for account passwords, not MFA backup codes. The
-// temporary bcrypt mode permits rolling out dual-format readers to all nodes
-// before enabling Argon2id writes. Existing hashes are never rewritten in bulk.
-func HashAccountPassword(password string) (string, error) {
+// ValidateStorableAccountPassword checks the account policy and the active
+// hash mode without writing a hash. Bcrypt mode still cannot store more than
+// 72 bytes; the default Argon2id mode accepts the full 8-128 character policy.
+func ValidateStorableAccountPassword(password string) error {
 	if err := ValidateNewAccountPassword(password); err != nil {
-		return "", err
+		return err
 	}
 	switch os.Getenv("ACCOUNT_PASSWORD_HASH_ALGORITHM") {
 	case "bcrypt":
 		if len(password) > 72 {
-			return "", ErrPasswordLegacyLimit
+			return ErrPasswordLegacyLimit
 		}
-		return Password2Hash(password)
 	case "", "argon2id":
 	default:
-		return "", errors.New("Unsupported account password hashing configuration.")
+		return errors.New("Unsupported account password hashing configuration.")
+	}
+	return nil
+}
+
+// HashAccountPassword is for account passwords, not MFA backup codes. The
+// temporary bcrypt mode permits rolling out dual-format readers to all nodes
+// before enabling Argon2id writes. Existing hashes are never rewritten in bulk.
+func HashAccountPassword(password string) (string, error) {
+	if err := ValidateStorableAccountPassword(password); err != nil {
+		return "", err
+	}
+	if os.Getenv("ACCOUNT_PASSWORD_HASH_ALGORITHM") == "bcrypt" {
+		return Password2Hash(password)
 	}
 	salt := make([]byte, accountPasswordSaltBytes)
 	if _, err := rand.Read(salt); err != nil {

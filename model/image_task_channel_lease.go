@@ -47,6 +47,20 @@ func TryAcquireImageTaskChannelLease(channelID int, taskPrimaryID int64, owner s
 		return true, nil
 	}
 	_ = cleanupExpiredImageTaskChannelLeasesForAcquire(channelID, now, limit*2)
+	acquired, err := insertImageTaskChannelLease(channelID, taskPrimaryID, owner, now, leaseSeconds, limit)
+	if err != nil || acquired {
+		return acquired, err
+	}
+	// The periodic cleanup can skip for a few seconds. An expired row still
+	// occupies its slot, so a full channel must clear those rows before giving up.
+	if err = cleanupExpiredImageTaskChannelLeases(channelID, now, limit*2); err != nil {
+		return false, err
+	}
+	imageTaskChannelLeaseCleanupUnix.Store(channelID, now)
+	return insertImageTaskChannelLease(channelID, taskPrimaryID, owner, now, leaseSeconds, limit)
+}
+
+func insertImageTaskChannelLease(channelID int, taskPrimaryID int64, owner string, now int64, leaseSeconds int64, limit int) (bool, error) {
 	expiresAt := now + leaseSeconds
 	for slot := 0; slot < limit; slot++ {
 		lease := &ImageTaskChannelLease{

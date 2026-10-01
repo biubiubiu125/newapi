@@ -48,6 +48,7 @@ const (
 	MsgTokenNameTooLong          = "token.name_too_long"
 	MsgTokenQuotaNegative        = "token.quota_negative"
 	MsgTokenQuotaExceedMax       = "token.quota_exceed_max"
+	MsgTokenRemainChanged        = "token.remain_changed"
 	MsgTokenGenerateFailed       = "token.generate_failed"
 	MsgTokenGetInfoFailed        = "token.get_info_failed"
 	MsgTokenExpiredCannotEnable  = "token.expired_cannot_enable"
@@ -145,17 +146,18 @@ const (
 
 // Subscription related messages
 const (
-	MsgSubscriptionNotEnabled       = "subscription.not_enabled"
-	MsgSubscriptionTitleEmpty       = "subscription.title_empty"
-	MsgSubscriptionPriceNegative    = "subscription.price_negative"
-	MsgSubscriptionPriceMax         = "subscription.price_max"
-	MsgSubscriptionPurchaseLimitNeg = "subscription.purchase_limit_negative"
-	MsgSubscriptionQuotaNegative    = "subscription.quota_negative"
-	MsgSubscriptionGroupNotExists   = "subscription.group_not_exists"
-	MsgSubscriptionResetCycleGtZero = "subscription.reset_cycle_gt_zero"
-	MsgSubscriptionPurchaseMax      = "subscription.purchase_max"
-	MsgSubscriptionInvalidId        = "subscription.invalid_id"
-	MsgSubscriptionInvalidUserId    = "subscription.invalid_user_id"
+	MsgSubscriptionNotEnabled          = "subscription.not_enabled"
+	MsgSubscriptionTitleEmpty          = "subscription.title_empty"
+	MsgSubscriptionPriceNegative       = "subscription.price_negative"
+	MsgSubscriptionPriceMax            = "subscription.price_max"
+	MsgSubscriptionPurchaseLimitNeg    = "subscription.purchase_limit_negative"
+	MsgSubscriptionQuotaNegative       = "subscription.quota_negative"
+	MsgSubscriptionGroupNotExists      = "subscription.group_not_exists"
+	MsgSubscriptionResetCycleGtZero    = "subscription.reset_cycle_gt_zero"
+	MsgSubscriptionCustomSecondsGtZero = "subscription.custom_seconds_gt_zero"
+	MsgSubscriptionPurchaseMax         = "subscription.purchase_max"
+	MsgSubscriptionInvalidId           = "subscription.invalid_id"
+	MsgSubscriptionInvalidUserId       = "subscription.invalid_user_id"
 )
 
 // Payment related messages
@@ -280,9 +282,13 @@ const (
 
 // Group related messages
 const (
-	MsgGroupNameTypeEmpty = "group.name_type_empty"
-	MsgGroupNameExists    = "group.name_exists"
-	MsgGroupIdMissing     = "group.id_missing"
+	MsgGroupNameTypeEmpty      = "group.name_type_empty"
+	MsgGroupNameExists         = "group.name_exists"
+	MsgGroupIdMissing          = "group.id_missing"
+	MsgGroupNameTooLong        = "group.name_too_long"
+	MsgGroupTypeTooLong        = "group.type_too_long"
+	MsgGroupDescriptionTooLong = "group.description_too_long"
+	MsgGroupNotFound           = "group.not_found"
 )
 
 // Checkin related messages

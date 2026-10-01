@@ -2,9 +2,14 @@ package service
 
 import (
 	"errors"
+	"strings"
+	"sync"
 	"time"
 
+	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+
+	"github.com/bytedance/gopkg/util/gopool"
 )
 
 // ---------------------------------------------------------------------------
@@ -33,14 +38,29 @@ type FundingSource interface {
 var ErrInsufficientWalletQuota = errors.New("wallet quota insufficient")
 
 type WalletFunding struct {
-	userId   int
-	consumed int // 实际预扣的用户额度
+	userId    int
+	consumed  int // 实际预扣的用户额度
+	requestId string
+	leaseStop chan struct{}
+	leaseOnce sync.Once
 }
 
 func (w *WalletFunding) Source() string { return BillingSourceWallet }
 
 func (w *WalletFunding) PreConsume(amount int) error {
 	if amount <= 0 {
+		return nil
+	}
+	if strings.TrimSpace(w.requestId) != "" {
+		err := model.ReserveWalletPreConsume(w.requestId, w.userId, int64(amount))
+		if err != nil {
+			if errors.Is(err, model.ErrWalletPreConsumeInsufficient) {
+				return ErrInsufficientWalletQuota
+			}
+			return err
+		}
+		w.consumed = amount
+		w.startLease()
 		return nil
 	}
 	reserved, err := model.TryReserveUserQuota(w.userId, amount)
@@ -61,16 +81,70 @@ func (w *WalletFunding) Settle(delta int) error {
 	if delta > 0 {
 		return model.DecreaseUserQuotaAllowNegative(w.userId, int64(delta), false)
 	}
-	return model.IncreaseUserQuota(w.userId, int64(-delta), false)
+	// 负差额是退款。顶格时整笔回滚，不能把被截掉的部分记成已退。
+	return model.CreditUserQuotaStrict(w.userId, int64(-delta))
 }
 
 func (w *WalletFunding) Refund() error {
+	if strings.TrimSpace(w.requestId) != "" {
+		err := model.RefundWalletPreConsume(w.requestId)
+		if err == nil {
+			w.consumed = 0
+			w.stopLease()
+			return nil
+		}
+		if !errors.Is(err, model.ErrWalletPreConsumeNotFound) {
+			return err
+		}
+	}
 	if w.consumed <= 0 {
+		w.stopLease()
 		return nil
 	}
-	// IncreaseUserQuota 是 quota += N 的非幂等操作，不能重试，否则会多退额度。
-	// 订阅的 RefundSubscriptionPreConsume 有 requestId 幂等保护所以可以重试。
-	return model.IncreaseUserQuota(w.userId, int64(w.consumed), false)
+	// 全额入账才算退回。钱包已经顶格时交易回滚，余额不变，调用方不能把 consumed 当成已退。
+	if err := model.CreditUserQuotaStrict(w.userId, int64(w.consumed)); err != nil {
+		return err
+	}
+	w.consumed = 0
+	w.stopLease()
+	return nil
+}
+
+func (w *WalletFunding) startLease() {
+	if w == nil || strings.TrimSpace(w.requestId) == "" || w.leaseStop != nil {
+		return
+	}
+	w.leaseStop = make(chan struct{})
+	requestID := w.requestId
+	stop := w.leaseStop
+	gopool.Go(func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				alive, err := model.RefreshWalletPreConsumeLease(requestID)
+				if err != nil {
+					common.SysLog("wallet pre-consume lease refresh failed: " + err.Error())
+					continue
+				}
+				if !alive {
+					return
+				}
+			}
+		}
+	})
+}
+
+func (w *WalletFunding) stopLease() {
+	if w == nil || w.leaseStop == nil {
+		return
+	}
+	w.leaseOnce.Do(func() {
+		close(w.leaseStop)
+	})
 }
 
 // ---------------------------------------------------------------------------
@@ -85,6 +159,8 @@ type SubscriptionFunding struct {
 	amount         int64 // 预扣的订阅额度（subConsume）
 	subscriptionId int
 	preConsumed    int64
+	leaseStop      chan struct{}
+	leaseOnce      sync.Once
 	// 以下字段在 PreConsume 成功后填充，供 RelayInfo 同步使用
 	AmountTotal     int64
 	AmountUsedAfter int64
@@ -109,6 +185,12 @@ func (s *SubscriptionFunding) PreConsume(_ int) error {
 		s.PlanId = planInfo.PlanId
 		s.PlanTitle = planInfo.PlanTitle
 	}
+	if err := model.ArmSubscriptionPreConsumeLease(s.requestId); err != nil {
+		// 预扣已经成功。租约失败只留下不能被清扫的占用，不能把这次请求打回去。
+		common.SysLog("arm subscription pre-consume lease: " + err.Error())
+		return nil
+	}
+	s.startLease()
 	return nil
 }
 
@@ -126,8 +208,49 @@ func (s *SubscriptionFunding) Refund() error {
 	if s.preConsumed <= 0 {
 		return nil
 	}
-	return refundWithRetry(func() error {
+	if err := refundWithRetry(func() error {
 		return model.RefundSubscriptionPreConsume(s.requestId)
+	}); err != nil {
+		return err
+	}
+	s.stopLease()
+	return nil
+}
+
+func (s *SubscriptionFunding) startLease() {
+	if s == nil || strings.TrimSpace(s.requestId) == "" || s.leaseStop != nil {
+		return
+	}
+	s.leaseStop = make(chan struct{})
+	requestID := s.requestId
+	stop := s.leaseStop
+	gopool.Go(func() {
+		ticker := time.NewTicker(30 * time.Second)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-stop:
+				return
+			case <-ticker.C:
+				alive, err := model.RefreshSubscriptionPreConsumeLease(requestID)
+				if err != nil {
+					common.SysLog("subscription pre-consume lease refresh failed: " + err.Error())
+					continue
+				}
+				if !alive {
+					return
+				}
+			}
+		}
+	})
+}
+
+func (s *SubscriptionFunding) stopLease() {
+	if s == nil || s.leaseStop == nil {
+		return
+	}
+	s.leaseOnce.Do(func() {
+		close(s.leaseStop)
 	})
 }
 

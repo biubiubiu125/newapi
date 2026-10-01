@@ -49,6 +49,7 @@ func TestMain(m *testing.M) {
 		&UserLoginIdentifier{},
 		&UserSession{},
 		&AuthFlow{},
+		&VerificationCode{},
 		&ExternalIdentityClaim{},
 		&PasskeyCredential{},
 		&TwoFA{},
@@ -107,6 +108,7 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM image_task_create_rate_buckets")
 		DB.Exec("DELETE FROM image_task_create_guards")
 		DB.Exec("DELETE FROM task_settlement_records")
+		DB.Exec("DELETE FROM verification_codes")
 		DB.Exec("DELETE FROM users")
 		DB.Exec("DELETE FROM user_login_identifiers")
 		DB.Exec("DELETE FROM user_sessions")
@@ -871,6 +873,26 @@ func TestImageTaskChannelLeaseEnforcesSlotsAndExpiry(t *testing.T) {
 	require.Equal(t, int64(1), count)
 }
 
+func TestImageTaskChannelLeaseAcquireClearsExpiredSlotDuringCleanupThrottle(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Exec("DELETE FROM image_task_channel_leases").Error)
+	now := time.Now().Unix()
+	imageTaskChannelLeaseCleanupUnix.Store(88011, now)
+	t.Cleanup(func() { imageTaskChannelLeaseCleanupUnix.Delete(88011) })
+
+	require.NoError(t, DB.Create(&ImageTaskChannelLease{
+		ChannelID:     88011,
+		Slot:          0,
+		TaskPrimaryID: 501,
+		Owner:         "expired-throttled",
+		ExpiresAt:     now,
+	}).Error)
+
+	acquired, err := TryAcquireImageTaskChannelLease(88011, 502, "fresh-owner", now, 60, 1)
+	require.NoError(t, err)
+	require.True(t, acquired, "an expired slot must not block acquire during the cleanup throttle")
+}
+
 func taskChannelIDs(tasks []*Task) []int {
 	channelIDs := make([]int, 0, len(tasks))
 	for _, task := range tasks {
@@ -892,6 +914,7 @@ func taskIDs(tasks []*Task) []string {
 	}
 	return ids
 }
+
 // ---------------------------------------------------------------------------
 // Snapshot / Equal — pure logic tests (no DB)
 // ---------------------------------------------------------------------------

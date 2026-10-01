@@ -85,7 +85,7 @@ func resolveUserSortOptions(sortOptions []UserSortOptions) UserSortOptions {
 type User struct {
 	Id                      int                        `json:"id"`
 	Username                string                     `json:"username" gorm:"unique;index" validate:"max=20"`
-	Password                string                     `json:"password" gorm:"not null;" validate:"min=8,max=20"`
+	Password                string                     `json:"password" gorm:"not null;" validate:"min=8,max=128"`
 	HasPassword             bool                       `json:"-" gorm:"-:all"`
 	OriginalPassword        string                     `json:"original_password" gorm:"-:all"` // this field is only for Password change verification, don't save it to database!
 	DisplayName             string                     `json:"display_name" gorm:"index" validate:"max=20"`
@@ -321,6 +321,81 @@ func UpdateUserSetting(userId int, setting dto.UserSetting) error {
 	return updateUserSettingCache(userId, settingValue)
 }
 
+// UpdateUserEmail changes only the email columns and login identifier.
+// A full-row snapshot must not be saved here: a concurrent ban, demotion,
+// group change, or binding removal would otherwise be restored.
+func UpdateUserEmail(userID int, email string) error {
+	email = NormalizeUserEmail(email)
+	if userID <= 0 || email == "" {
+		return common.Localized(i18n.MsgInvalidParams)
+	}
+	if err := common.Validate.Var(email, "email"); err != nil {
+		return err
+	}
+	var previousAuthVersion int64
+	var nextAuthVersion int64
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		var err error
+		previousAuthVersion, nextAuthVersion, err = applyUserEmailChangeWithTx(tx, userID, email)
+		return err
+	})
+	if err != nil || nextAuthVersion == previousAuthVersion {
+		return err
+	}
+	return FinalizeUserAuthChangeByID(userID, previousAuthVersion, "user_security_changed")
+}
+
+// applyUserEmailChangeWithTx moves email, email_canonical and login identifiers
+// together, then bumps the auth version. Callers that already hold the
+// normalized-email lock may call it again; PostgreSQL advisory locks reenter.
+// An unchanged address returns the current version twice and writes nothing.
+func applyUserEmailChangeWithTx(tx *gorm.DB, userID int, email string) (int64, int64, error) {
+	email = NormalizeUserEmail(email)
+	if tx == nil || userID <= 0 || email == "" {
+		return 0, 0, common.Localized(i18n.MsgInvalidParams)
+	}
+	if err := common.Validate.Var(email, "email"); err != nil {
+		return 0, 0, err
+	}
+	var previousAuthVersion int64
+	var nextAuthVersion int64
+	err := withNormalizedEmailLock(tx, email, func(tx *gorm.DB) error {
+		var current User
+		if err := lockForUpdate(tx).First(&current, userID).Error; err != nil {
+			return err
+		}
+		previousAuthVersion = current.AuthVersion
+		nextAuthVersion = current.AuthVersion
+		canonicalMatches := current.EmailCanonical != nil && NormalizeUserEmail(*current.EmailCanonical) == email
+		if NormalizeUserEmail(current.Email) == email && canonicalMatches {
+			return nil
+		}
+		if err := ensureEmailAvailableWithTx(tx, email, current.Id); err != nil {
+			return err
+		}
+		taken, err := isLoginIdentifierTakenByOtherWithTx(tx, current.Username, email, current.Id)
+		if err != nil {
+			return err
+		}
+		if taken {
+			return ErrUserLoginIdentifierTaken
+		}
+		nextAuthVersion, err = IncrementUserAuthVersionWithTx(tx, current.Id)
+		if err != nil {
+			return err
+		}
+		canonical := email
+		if err = tx.Model(&User{}).Where("id = ?", current.Id).Updates(map[string]any{
+			"email":           email,
+			"email_canonical": &canonical,
+		}).Error; err != nil {
+			return err
+		}
+		return syncUserLoginIdentifiersWithTx(tx, current.Id, current.Username, email)
+	})
+	return previousAuthVersion, nextAuthVersion, err
+}
+
 // userBindColumns 允许通过 UpdateUserBindColumn 更新的第三方账号绑定列白名单。
 // 列名只可能来自代码内部的 provider 实现，白名单是防御纵深，不依赖调用方自律。
 var userBindColumns = map[string]bool{
@@ -343,6 +418,58 @@ func UpdateUserBindColumn(userId int, column string, value string) error {
 		return fmt.Errorf("invalid user bind column: %s", column)
 	}
 	return DB.Model(&User{}).Where("id = ?", userId).Update(column, value).Error
+}
+
+var oauthProviderColumns = map[string]bool{
+	"github_id":   true,
+	"discord_id":  true,
+	"oidc_id":     true,
+	"linux_do_id": true,
+	"wechat_id":   true,
+	"telegram_id": true,
+}
+
+// UpdateOAuthProviderColumnWithTx writes one provider id column. bumpAuth
+// invalidates existing sessions when an existing user's binding changes.
+func UpdateOAuthProviderColumnWithTx(tx *gorm.DB, userID int, column, value string, bumpAuth bool) error {
+	if tx == nil || userID <= 0 || !oauthProviderColumns[column] {
+		return fmt.Errorf("invalid user bind column")
+	}
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return errors.New("invalid oauth binding")
+	}
+	if bumpAuth {
+		var current []string
+		if err := tx.Model(&User{}).Where("id = ?", userID).Limit(1).Pluck(column, &current).Error; err != nil {
+			return err
+		}
+		if len(current) == 0 {
+			return gorm.ErrRecordNotFound
+		}
+		if current[0] != value {
+			if _, err := IncrementUserAuthVersionWithTx(tx, userID); err != nil {
+				return err
+			}
+		}
+	}
+	return tx.Model(&User{}).Where("id = ?", userID).Update(column, value).Error
+}
+
+// BindOAuthProviderColumn binds one provider column and publishes the auth
+// version change without rewriting the rest of the user row.
+func BindOAuthProviderColumn(userID int, column, value string) error {
+	var current User
+	if err := DB.Select("id", "auth_version").Where("id = ?", userID).First(&current).Error; err != nil {
+		return err
+	}
+	previousAuthVersion := current.AuthVersion
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		return UpdateOAuthProviderColumnWithTx(tx, userID, column, value, true)
+	}); err != nil {
+		return err
+	}
+	return FinalizeUserAuthChangeByID(userID, previousAuthVersion, "user_security_changed")
 }
 
 // 根据用户角色生成默认的边栏配置
@@ -829,6 +956,33 @@ func HardDeleteUserById(id int) error {
 	return user.HardDelete()
 }
 
+// creditInviteeQuota adds an invitee wallet bonus only while the result stays
+// within the JavaScript-safe ceiling. Refunds and other credits must not use
+// this path: a rejected bonus leaves the existing balance unchanged.
+func creditInviteeQuota(userId int, quota int64) error {
+	if userId <= 0 || quota <= 0 || quota >= common.MaxWalletQuota {
+		return ErrWalletQuotaLimitExceeded
+	}
+	result := DB.Model(&User{}).Where("id = ? AND quota <= ?", userId, common.MaxWalletQuota-quota).
+		Update("quota", gorm.Expr("quota + ?", quota))
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return ErrWalletQuotaLimitExceeded
+	}
+	applyUserQuotaCacheDeltaBestEffort(userId, quota)
+	return nil
+}
+
+func grantInviteeQuota(userId int, quota int64) {
+	if err := creditInviteeQuota(userId, quota); err != nil {
+		common.SysLog(fmt.Sprintf("邀请奖励未入账，用户 %d，额度 %d: %s", userId, quota, err.Error()))
+		return
+	}
+	RecordLog(userId, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(quota)))
+}
+
 func inviteUser(inviterId int) error {
 	result := DB.Model(&User{}).Where("id = ?", inviterId).Updates(map[string]any{
 		"aff_count":   gorm.Expr("aff_count + ?", 1),
@@ -867,6 +1021,10 @@ func (user *User) TransferAffQuotaToQuota(quota int64) error {
 	if user.AffQuota < quota {
 		return common.Localized(i18n.MsgUserAffQuotaInsufficient)
 	}
+	// 钱包余额不能越过 JavaScript 安全整数上限，否则后续退款会因 ErrUserQuotaCap 失败。
+	if user.Quota >= common.MaxWalletQuota || quota > common.MaxWalletQuota-user.Quota {
+		return ErrWalletQuotaLimitExceeded
+	}
 
 	// 更新用户额度
 	user.AffQuota -= quota
@@ -896,7 +1054,7 @@ func (user *User) prepareForInsert(tx *gorm.DB) error {
 	if user.Password == "" {
 		return nil
 	}
-	user.Password, err = common.Password2Hash(user.Password)
+	user.Password, err = common.HashAccountPassword(user.Password)
 	return err
 }
 
@@ -988,8 +1146,7 @@ func (user *User) finishInsert(inviterId int) {
 	}
 	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
 		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
+			grantInviteeQuota(user.Id, common.QuotaForInvitee)
 		}
 		if common.QuotaForInviter > 0 {
 			//_ = IncreaseUserQuota(inviterId, common.QuotaForInviter)
@@ -1048,8 +1205,7 @@ func (user *User) FinalizeOAuthUserCreation(inviterId int) {
 	}
 	if inviterId != 0 && operation_setting.IsPaymentComplianceConfirmed() {
 		if common.QuotaForInvitee > 0 {
-			_ = IncreaseUserQuota(user.Id, common.QuotaForInvitee, true)
-			RecordLog(user.Id, LogTypeSystem, fmt.Sprintf("使用邀请码赠送 %s", logger.LogQuota(common.QuotaForInvitee)))
+			grantInviteeQuota(user.Id, common.QuotaForInvitee)
 		}
 		if common.QuotaForInviter > 0 {
 			RecordLog(inviterId, LogTypeSystem, fmt.Sprintf("邀请用户赠送 %s", logger.LogQuota(common.QuotaForInviter)))
@@ -1064,6 +1220,51 @@ func (user *User) Update(updatePassword bool) error {
 
 func (user *User) UpdateWithSessionRevocationReason(updatePassword bool, revocationReason string) error {
 	return user.UpdateWithSessionRevocationReasonAndHook(updatePassword, revocationReason, nil)
+}
+
+// UserAccessUpdate changes only status and role. Nil fields are left untouched.
+type UserAccessUpdate struct {
+	Status *int
+	Role   *int
+}
+
+// ApplyUserAccessUpdate locks the user and writes status/role only. Password,
+// email, OAuth bindings, group, and settings loaded before the lock are not written back.
+func ApplyUserAccessUpdate(userID int, update UserAccessUpdate, revocationReason string, hook func(tx *gorm.DB) error) error {
+	if userID <= 0 || (update.Status == nil && update.Role == nil) {
+		return fmt.Errorf("invalid user access update")
+	}
+	var previousAuthVersion int64
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		var current User
+		if err := lockForUpdate(tx).Select("id", "role", "status", "auth_version").Where("id = ?", userID).First(&current).Error; err != nil {
+			return err
+		}
+		previousAuthVersion = current.AuthVersion
+		updates := map[string]any{}
+		if update.Status != nil && *update.Status != current.Status {
+			updates["status"] = *update.Status
+		}
+		if update.Role != nil && *update.Role != current.Role {
+			updates["role"] = *update.Role
+		}
+		if len(updates) == 0 {
+			return nil
+		}
+		if _, err := IncrementUserAuthVersionWithTx(tx, userID); err != nil {
+			return err
+		}
+		if err := tx.Model(&User{}).Where("id = ?", userID).Updates(updates).Error; err != nil {
+			return err
+		}
+		if hook != nil {
+			return hook(tx)
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
+	return FinalizeUserAuthChangeByID(userID, previousAuthVersion, revocationReason)
 }
 
 func (user *User) UpdateWithSessionRevocationReasonAndHook(updatePassword bool, revocationReason string, hook func(tx *gorm.DB) error) error {
@@ -1156,7 +1357,7 @@ func (user *User) UpdateWithTx(tx *gorm.DB, updatePassword bool) error {
 		return ErrUserLoginIdentifierTaken
 	}
 	if updatePassword {
-		newUser.Password, err = common.Password2Hash(newUser.Password)
+		newUser.Password, err = common.HashAccountPassword(newUser.Password)
 		if err != nil {
 			return err
 		}
@@ -1227,7 +1428,7 @@ func (user *User) EditWithTx(tx *gorm.DB, updatePassword bool) error {
 		return ErrUserLoginIdentifierTaken
 	}
 	if updatePassword {
-		newUser.Password, err = common.Password2Hash(newUser.Password)
+		newUser.Password, err = common.HashAccountPassword(newUser.Password)
 		if err != nil {
 			return err
 		}
@@ -1372,6 +1573,10 @@ func (user *User) delete(identity *AuthSessionIdentity) error {
 			if err != nil {
 				return err
 			}
+			if err := tx.Model(&Token{}).Where("user_id = ? AND status <> ?", user.Id, common.TokenStatusDisabled).
+				Update("status", common.TokenStatusDisabled).Error; err != nil {
+				return err
+			}
 			return tx.Delete(user).Error
 		})
 		if err == nil || !sqliteDatabaseLocked(err) {
@@ -1385,7 +1590,8 @@ func (user *User) delete(identity *AuthSessionIdentity) error {
 	publishErr := publishCommittedUserAuthVersion(user.Id, nextAuthVersion)
 	_, revokeErr := RevokeAllUserSessions(user.Id, "user_deleted")
 	cacheErr := invalidateUserCache(user.Id)
-	return errors.Join(publishErr, revokeErr, cacheErr)
+	tokenCacheErr := InvalidateUserTokensCache(user.Id)
+	return errors.Join(publishErr, revokeErr, cacheErr, tokenCacheErr)
 }
 
 func (user *User) HardDelete() error {
@@ -1587,6 +1793,28 @@ func IsTelegramIdAlreadyTaken(telegramId string) bool {
 	return DB.Unscoped().Where("telegram_id = ?", telegramId).Find(&User{}).RowsAffected > 0
 }
 
+var ErrPasswordResetCodeInvalid = errors.New("password reset code is invalid")
+
+// PasswordResetCommittedError means the new password is stored, but cache or
+// session revocation failed afterwards. The caller must still return the password.
+type PasswordResetCommittedError struct {
+	Err error
+}
+
+func (e *PasswordResetCommittedError) Error() string {
+	if e == nil || e.Err == nil {
+		return "password reset committed"
+	}
+	return e.Err.Error()
+}
+
+func (e *PasswordResetCommittedError) Unwrap() error {
+	if e == nil {
+		return nil
+	}
+	return e.Err
+}
+
 func ResetUserPasswordByEmail(email string, password string) error {
 	email = NormalizeUserEmail(email)
 	if email == "" || password == "" {
@@ -1597,7 +1825,7 @@ func ResetUserPasswordByEmail(email string, password string) error {
 		return err
 	}
 	previousAuthVersion := user.AuthVersion
-	hashedPassword, err := common.Password2Hash(password)
+	hashedPassword, err := common.HashAccountPassword(password)
 	if err != nil {
 		return err
 	}
@@ -1610,6 +1838,58 @@ func ResetUserPasswordByEmail(email string, password string) error {
 		return err
 	}
 	return FinalizeUserAuthChangeByID(user.Id, previousAuthVersion, "password_reset")
+}
+
+// ResetUserPasswordByEmailAndConsumeCode stores the new password and consumes
+// the reset code in one transaction. A failed write leaves the code usable.
+func ResetUserPasswordByEmailAndConsumeCode(email string, password string, code string) error {
+	email = NormalizeUserEmail(email)
+	code = strings.TrimSpace(code)
+	if email == "" || password == "" || code == "" {
+		return common.Localized(i18n.MsgUserEmailOrPasswordEmpty)
+	}
+	user, err := GetUniqueUserByEmail(email)
+	if err != nil {
+		return err
+	}
+	if user.Status != common.UserStatusEnabled || user.DeletedAt.Valid {
+		return ErrPasswordResetCodeInvalid
+	}
+	hashedPassword, err := common.HashAccountPassword(password)
+	if err != nil {
+		return err
+	}
+	if _, err := verificationDB(); err != nil {
+		return err
+	}
+	var previousAuthVersion int64
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		var current User
+		if err := lockForUpdate(tx).Select("id", "status", "deleted_at", "auth_version").Where("id = ?", user.Id).First(&current).Error; err != nil {
+			return err
+		}
+		if current.Status != common.UserStatusEnabled || current.DeletedAt.Valid {
+			return ErrPasswordResetCodeInvalid
+		}
+		previousAuthVersion = current.AuthVersion
+		consumed, err := consumeVerificationCodeTx(tx, email, code, common.PasswordResetPurpose, time.Now())
+		if err != nil {
+			return err
+		}
+		if !consumed {
+			return ErrPasswordResetCodeInvalid
+		}
+		if _, err := IncrementUserAuthVersionWithTx(tx, user.Id); err != nil {
+			return err
+		}
+		return tx.Model(&User{}).Where("id = ?", user.Id).Update("password", hashedPassword).Error
+	}); err != nil {
+		return err
+	}
+	if err := FinalizeUserAuthChangeByID(user.Id, previousAuthVersion, "password_reset"); err != nil {
+		return &PasswordResetCommittedError{Err: err}
+	}
+	return nil
 }
 
 func IsAdmin(userId int) bool {
@@ -1737,22 +2017,75 @@ func IncreaseUserQuota(id int, quota int64, db bool) (err error) {
 	if quota == 0 {
 		return nil
 	}
-	if err := increaseUserQuota(id, quota); err != nil {
+	applied, err := increaseUserQuotaCapped(DB, id, quota)
+	if err != nil {
 		return err
 	}
-	applyUserQuotaCacheDeltaBestEffort(id, quota)
+	if applied > 0 {
+		applyUserQuotaCacheDeltaBestEffort(id, applied)
+	}
 	return nil
 }
 
-func increaseUserQuota(id int, quota int64) (err error) {
-	result := DB.Model(&User{}).Where("id = ?", id).Update("quota", gorm.Expr("quota + ?", quota))
-	if result.Error != nil {
-		return result.Error
+// ErrUserQuotaCap means the wallet cannot store the full credit without
+// passing MaxWalletQuota. Billing transactions must roll back; a partial
+// credit that is reported as success would hide the shortfall.
+var ErrUserQuotaCap = errors.New("user quota credit exceeds MaxWalletQuota")
+
+// increaseUserQuotaCapped adds quota without crossing MaxWalletQuota.
+// It returns the amount actually stored. IncreaseUserQuota still reports
+// success when the ceiling drops the overflow, because top-up callers treat
+// a capped wallet as a completed credit. IncreaseUserQuotaTx does not: a
+// billing transaction has to roll the partial write back and surface the cap.
+// A missing user is still an error. Balances already above the ceiling are
+// left as they are.
+func increaseUserQuotaCapped(tx *gorm.DB, id int, quota int64) (int64, error) {
+	if tx == nil {
+		return 0, errors.New("database transaction is required")
 	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("user quota update failed, user_id=%d, delta_quota=%d", id, quota)
+	if quota <= 0 {
+		return 0, nil
 	}
-	return nil
+	for attempt := 0; attempt < 3; attempt++ {
+		if quota < common.MaxWalletQuota {
+			result := tx.Model(&User{}).Where("id = ? AND quota <= ?", id, common.MaxWalletQuota-quota).
+				Update("quota", gorm.Expr("quota + ?", quota))
+			if result.Error != nil {
+				return 0, result.Error
+			}
+			if result.RowsAffected == 1 {
+				return quota, nil
+			}
+		}
+		var user User
+		err := tx.Select("id", "quota").Where("id = ?", id).Take(&user).Error
+		if errors.Is(err, gorm.ErrRecordNotFound) {
+			return 0, fmt.Errorf("user quota update failed, user_id=%d, delta_quota=%d", id, quota)
+		}
+		if err != nil {
+			return 0, err
+		}
+		if user.Quota >= common.MaxWalletQuota {
+			return 0, nil
+		}
+		room := common.MaxWalletQuota - user.Quota
+		applied := quota
+		if applied > room {
+			applied = room
+		}
+		result := tx.Model(&User{}).Where("id = ? AND quota = ?", id, user.Quota).
+			Update("quota", gorm.Expr("quota + ?", applied))
+		if result.Error != nil {
+			return 0, result.Error
+		}
+		if result.RowsAffected == 1 {
+			if applied < quota {
+				common.SysLog(fmt.Sprintf("wallet credit capped at MaxWalletQuota, user_id=%d requested=%d applied=%d", id, quota, applied))
+			}
+			return applied, nil
+		}
+	}
+	return 0, fmt.Errorf("user quota update failed, user_id=%d, delta_quota=%d", id, quota)
 }
 
 func IncreaseUserQuotaTx(tx *gorm.DB, id int, quota int64) error {
@@ -1765,13 +2098,32 @@ func IncreaseUserQuotaTx(tx *gorm.DB, id int, quota int64) error {
 	if quota == 0 {
 		return nil
 	}
-	result := tx.Model(&User{}).Where("id = ?", id).Update("quota", gorm.Expr("quota + ?", quota))
-	if result.Error != nil {
-		return result.Error
+	applied, err := increaseUserQuotaCapped(tx, id, quota)
+	if err != nil {
+		return err
 	}
-	if result.RowsAffected == 0 {
-		return fmt.Errorf("user quota update failed, user_id=%d, delta_quota=%d", id, quota)
+	if applied != quota {
+		return fmt.Errorf("%w: user_id=%d requested=%d applied=%d", ErrUserQuotaCap, id, quota, applied)
 	}
+	return nil
+}
+
+// CreditUserQuotaStrict stores the full credit or leaves the wallet unchanged.
+// The partial amount that would fit under MaxWalletQuota is rolled back with
+// the transaction, so a retry cannot add it a second time.
+func CreditUserQuotaStrict(id int, quota int64) error {
+	if quota < 0 {
+		return errors.New("quota cannot be negative")
+	}
+	if quota == 0 {
+		return nil
+	}
+	if err := DB.Transaction(func(tx *gorm.DB) error {
+		return IncreaseUserQuotaTx(tx, id, quota)
+	}); err != nil {
+		return err
+	}
+	applyUserQuotaCacheDeltaBestEffort(id, quota)
 	return nil
 }
 

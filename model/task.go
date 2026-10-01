@@ -219,6 +219,7 @@ type TaskPrivateData struct {
 	// 计费上下文：用于异步退款/差额结算（轮询阶段读取）
 	BillingSource                string                       `json:"billing_source,omitempty"`  // "wallet" 或 "subscription"
 	SubscriptionId               int                          `json:"subscription_id,omitempty"` // 订阅 ID，用于订阅退款
+	SubscriptionConsumedAt       int64                        `json:"subscription_consumed_at,omitempty"`
 	TokenId                      int                          `json:"token_id,omitempty"`        // 令牌 ID，用于令牌额度退款
 	NodeName                     string                       `json:"node_name,omitempty"`       // 发起任务的节点名，轮询结算阶段据此归属日志
 	BillingContext               *TaskBillingContext          `json:"billing_context,omitempty"` // 计费参数快照（用于轮询阶段重新计算）
@@ -232,6 +233,12 @@ type TaskPrivateData struct {
 	SettlementEvidenceCapturedAt int64                        `json:"settlement_evidence_captured_at,omitempty"`
 	SettlementAttemptQuota       int                          `json:"settlement_attempt_quota,omitempty"`
 	SettlementError              string                       `json:"settlement_error,omitempty"`
+	BillingAdjustmentKey         string                       `json:"billing_adjustment_key,omitempty"`
+	BillingAdjustmentUnresolved  bool                         `json:"billing_adjustment_unresolved,omitempty"`
+	BillingAdjustmentRollback    bool                         `json:"billing_adjustment_rollback,omitempty"`
+	BillingAdjustmentActual      int                          `json:"billing_adjustment_actual,omitempty"`
+	BillingAdjustmentReservation int                          `json:"billing_adjustment_reservation,omitempty"`
+	BillingAdjustmentExtra       int                          `json:"billing_adjustment_extra,omitempty"`
 	CancelledAt                  int64                        `json:"cancelled_at,omitempty"`
 	CancelledReason              string                       `json:"cancelled_reason,omitempty"`
 	PollFailures                 int                          `json:"poll_failures,omitempty"`
@@ -2398,6 +2405,22 @@ func GetPendingTaskRefundsAfter(afterTaskPrimaryID int64, limit int) ([]*Task, e
 	return tasks, err
 }
 
+// GetRefundPendingFailureTasksAfter lists failed tasks that still need a refund,
+// including image tasks. Callers must ignore rows that do not belong to them.
+func GetRefundPendingFailureTasksAfter(afterTaskPrimaryID int64, limit int) ([]*Task, error) {
+	if limit <= 0 {
+		limit = 100
+	}
+	var tasks []*Task
+	err := DB.Omit("data").Where(
+		"status = ? AND refund_pending = ? AND id > ?",
+		TaskStatusFailure,
+		true,
+		afterTaskPrimaryID,
+	).Order("id ASC").Limit(limit).Find(&tasks).Error
+	return tasks, err
+}
+
 func GetPendingTaskSettlementsAfter(afterTaskPrimaryID int64, limit int) ([]*Task, error) {
 	if limit <= 0 {
 		limit = 100
@@ -3415,6 +3438,22 @@ func nextTaskUpdatedAt(previous int64) int64 {
 	return now
 }
 
+func overlayBillingAdjustmentPrivateData(dst *TaskPrivateData, src TaskPrivateData) {
+	if dst == nil {
+		return
+	}
+	// 没有账本身份的旧写入不能把已经记下的键清掉。
+	if src.BillingAdjustmentKey == "" && !src.BillingAdjustmentUnresolved && !src.BillingAdjustmentRollback && src.BillingAdjustmentActual == 0 && src.BillingAdjustmentReservation == 0 && src.BillingAdjustmentExtra == 0 {
+		return
+	}
+	dst.BillingAdjustmentKey = src.BillingAdjustmentKey
+	dst.BillingAdjustmentUnresolved = src.BillingAdjustmentUnresolved
+	dst.BillingAdjustmentRollback = src.BillingAdjustmentRollback
+	dst.BillingAdjustmentActual = src.BillingAdjustmentActual
+	dst.BillingAdjustmentReservation = src.BillingAdjustmentReservation
+	dst.BillingAdjustmentExtra = src.BillingAdjustmentExtra
+}
+
 func updateTaskSettlementFields(t *Task) error {
 	if t == nil || t.ID <= 0 {
 		return fmt.Errorf("update task settlement fields failed, task is invalid")
@@ -3450,6 +3489,7 @@ func updateTaskSettlementFields(t *Task) error {
 		if base == nil || t.PrivateData.SettlementError != base.PrivateData.SettlementError {
 			current.PrivateData.SettlementError = t.PrivateData.SettlementError
 		}
+		overlayBillingAdjustmentPrivateData(&current.PrivateData, t.PrivateData)
 		if base == nil || t.NextPollAt != base.NextPollAt {
 			current.NextPollAt = t.NextPollAt
 		}
@@ -3538,6 +3578,7 @@ func UpdateTaskAfterSubmitAccountingFailure(t *Task) error {
 		current.PrivateData.SettlementError = t.PrivateData.SettlementError
 		current.PrivateData.PreConsumedUsageCaptured = t.PrivateData.PreConsumedUsageCaptured
 		current.PrivateData.PreConsumedUsageRecorded = t.PrivateData.PreConsumedUsageRecorded
+		overlayBillingAdjustmentPrivateData(&current.PrivateData, t.PrivateData)
 		updatedAt := nextTaskUpdatedAt(current.UpdatedAt)
 		if err := tx.Model(&Task{}).Where("id = ?", t.ID).Updates(map[string]any{
 			"quota":             current.Quota,

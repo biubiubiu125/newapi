@@ -324,49 +324,29 @@ func UpdateCustomOAuthProvider(c *gin.Context) {
 		}
 	}
 
-	// Update fields
-	if req.Name != "" {
-		provider.Name = req.Name
-	}
-	if req.Slug != "" {
-		provider.Slug = req.Slug
-	}
+	// The admin form submits the full provider. Empty optional mapping fields
+	// must replace the previous values; validation then applies the same defaults
+	// used on create. An empty client secret still means "keep the stored secret".
+	provider.Name = req.Name
+	provider.Slug = req.Slug
 	if req.Icon != nil {
 		provider.Icon = *req.Icon
 	}
 	if req.Enabled != nil {
 		provider.Enabled = *req.Enabled
 	}
-	if req.ClientId != "" {
-		provider.ClientId = req.ClientId
-	}
+	provider.ClientId = req.ClientId
 	if req.ClientSecret != "" {
 		provider.ClientSecret = req.ClientSecret
 	}
-	if req.AuthorizationEndpoint != "" {
-		provider.AuthorizationEndpoint = req.AuthorizationEndpoint
-	}
-	if req.TokenEndpoint != "" {
-		provider.TokenEndpoint = req.TokenEndpoint
-	}
-	if req.UserInfoEndpoint != "" {
-		provider.UserInfoEndpoint = req.UserInfoEndpoint
-	}
-	if req.Scopes != "" {
-		provider.Scopes = req.Scopes
-	}
-	if req.UserIdField != "" {
-		provider.UserIdField = req.UserIdField
-	}
-	if req.UsernameField != "" {
-		provider.UsernameField = req.UsernameField
-	}
-	if req.DisplayNameField != "" {
-		provider.DisplayNameField = req.DisplayNameField
-	}
-	if req.EmailField != "" {
-		provider.EmailField = req.EmailField
-	}
+	provider.AuthorizationEndpoint = req.AuthorizationEndpoint
+	provider.TokenEndpoint = req.TokenEndpoint
+	provider.UserInfoEndpoint = req.UserInfoEndpoint
+	provider.Scopes = req.Scopes
+	provider.UserIdField = req.UserIdField
+	provider.UsernameField = req.UsernameField
+	provider.DisplayNameField = req.DisplayNameField
+	provider.EmailField = req.EmailField
 	if req.WellKnown != nil {
 		provider.WellKnown = *req.WellKnown
 	}
@@ -587,6 +567,10 @@ func UnbindCustomOAuthByAdmin(c *gin.Context) {
 	providerId, err := strconv.Atoi(providerIdStr)
 	if err != nil {
 		common.ApiErrorI18n(c, i18n.MsgCustomOAuthInvalidProviderId)
+		return
+	}
+	authorization := requireAdminUserProof(c, service.VerificationScopeAdminUserBindingClear, service.AdminUserBindingContext{UserID: targetUser.Id, ProviderID: providerId})
+	if authorization == nil {
 		return
 	}
 

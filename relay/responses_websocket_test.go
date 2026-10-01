@@ -335,6 +335,149 @@ func TestSelectResponsesWSChannelHonorsStrictSessionBinding(t *testing.T) {
 	assert.Equal(t, fallback.Id, channel.Id)
 }
 
+// A failed dial must leave the same-priority sibling available. The retry
+// counter is a priority cursor, so just incrementing it drops to the lower tier.
+func TestSelectResponsesWSChannelSkipsFailedSiblingBeforeLowerPriority(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	database := setupRelayChannelDB(t)
+	require.NoError(t, database.AutoMigrate(&model.Ability{}))
+	weight := uint(100)
+	newChannel := func(name string, priority int64) *model.Channel {
+		channel := &model.Channel{
+			Name: name, Key: "sk-" + name, Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled,
+			Group: "default", Models: "ws-model", Priority: common.GetPointer(priority), Weight: &weight,
+		}
+		channel.SetSetting(dto.ChannelSettings{ResponsesWebSocketEnabled: true})
+		require.NoError(t, database.Create(channel).Error)
+		require.NoError(t, database.Create(&model.Ability{ChannelId: channel.Id, Model: "ws-model", Group: "default", Enabled: true, Priority: channel.Priority, Weight: weight}).Error)
+		return channel
+	}
+	siblingA := newChannel("sibling-a", 10)
+	siblingB := newChannel("sibling-b", 10)
+	low := newChannel("low", 0)
+	previousCache := common.MemoryCacheEnabled
+	t.Cleanup(func() {
+		defer func() { common.MemoryCacheEnabled = previousCache }()
+		ids := []int{siblingA.Id, siblingB.Id, low.Id}
+		require.NoError(t, database.Where("channel_id IN ?", ids).Delete(&model.Ability{}).Error)
+		require.NoError(t, database.Where("id IN ?", ids).Delete(&model.Channel{}).Error)
+		model.InitChannelCache()
+	})
+	common.MemoryCacheEnabled = true
+	model.InitChannelCache()
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	c.Set("failed_channel_ids", []int{siblingA.Id})
+	params := &service.RetryParam{Ctx: c, ModelName: "ws-model", TokenGroup: "default", Retry: common.GetPointer(1)}
+	selected, apiErr := selectResponsesWSChannel(c, "ws-model", params)
+	require.Nil(t, apiErr)
+	require.NotNil(t, selected)
+	assert.Equal(t, siblingB.Id, selected.Id)
+}
+
+func TestResponsesWSDialRotatesKeyWhenCrossChannelRetryStops(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	newContext := func() *gin.Context {
+		c, _ := gin.CreateTestContext(httptest.NewRecorder())
+		c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+		return c
+	}
+	dialErr := types.NewError(errors.New("dial failed"), types.ErrorCodeDoRequestFailed)
+
+	exhausted := newContext()
+	decision := service.DecideRelayRetry(exhausted, dialErr, 0)
+	assert.Equal(t, "stop", decision.Action)
+	assert.Equal(t, "attempt_budget_exhausted", decision.Reason)
+	continueRetry, resetBudget := responsesWSDialFailureContinuation(exhausted, dialErr, decision, true)
+	assert.True(t, continueRetry)
+	assert.True(t, resetBudget)
+	continueRetry, resetBudget = responsesWSDialFailureContinuation(exhausted, dialErr, decision, false)
+	assert.False(t, continueRetry)
+	assert.False(t, resetBudget)
+
+	affinity := newContext()
+	affinity.Set("channel_affinity_skip_retry_on_failure", true)
+	decision = service.DecideRelayRetry(affinity, dialErr, 2)
+	assert.Equal(t, "stop", decision.Action)
+	assert.Equal(t, "strict_session", decision.Reason)
+	continueRetry, resetBudget = responsesWSDialFailureContinuation(affinity, dialErr, decision, true)
+	assert.True(t, continueRetry)
+	assert.True(t, resetBudget)
+
+	pinned := newContext()
+	service.GetChannelConstraints(pinned).AddPin(appdto.ChannelPin{
+		ChannelId: 123,
+		Source:    appdto.PinSourceToken,
+		Rank:      appdto.PinRankToken,
+		RetryMode: appdto.PinRetrySingleAttempt,
+	})
+	decision = service.DecideRelayRetry(pinned, dialErr, 2)
+	assert.Equal(t, "stop", decision.Action)
+	continueRetry, resetBudget = responsesWSDialFailureContinuation(pinned, dialErr, decision, true)
+	assert.False(t, continueRetry)
+	assert.False(t, resetBudget)
+
+	local := newContext()
+	localErr := types.NewError(errors.New("invalid request"), types.ErrorCodeInvalidRequest, types.ErrOptionWithSkipRetry())
+	decision = service.DecideRelayRetry(local, localErr, 2)
+	assert.Equal(t, "stop", decision.Action)
+	continueRetry, resetBudget = responsesWSDialFailureContinuation(local, localErr, decision, true)
+	assert.False(t, continueRetry)
+	assert.False(t, resetBudget)
+
+	retryable := newContext()
+	decision = service.DecideRelayRetry(retryable, dialErr, 1)
+	assert.Equal(t, "retry", decision.Action)
+	continueRetry, resetBudget = responsesWSDialFailureContinuation(retryable, dialErr, decision, false)
+	assert.True(t, continueRetry)
+	assert.False(t, resetBudget)
+}
+
+func TestSelectResponsesWSChannelRotatesMultiKeyBeforeLowerPriority(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	database := setupRelayChannelDB(t)
+	require.NoError(t, database.AutoMigrate(&model.Ability{}))
+	weight := uint(100)
+	multi := &model.Channel{
+		Name: "multi", Key: "key-a\nkey-b", Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled,
+		Group: "default", Models: "ws-model", Priority: common.GetPointer(int64(10)), Weight: &weight,
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2, MultiKeyMode: constant.MultiKeyModePolling},
+	}
+	low := &model.Channel{
+		Name: "low", Key: "low-key", Type: constant.ChannelTypeOpenAI, Status: common.ChannelStatusEnabled,
+		Group: "default", Models: "ws-model", Priority: common.GetPointer(int64(0)), Weight: &weight,
+	}
+	multi.SetSetting(dto.ChannelSettings{ResponsesWebSocketEnabled: true})
+	low.SetSetting(dto.ChannelSettings{ResponsesWebSocketEnabled: true})
+	for _, channel := range []*model.Channel{multi, low} {
+		require.NoError(t, database.Create(channel).Error)
+		require.NoError(t, database.Create(&model.Ability{ChannelId: channel.Id, Model: "ws-model", Group: "default", Enabled: true, Priority: channel.Priority, Weight: weight}).Error)
+	}
+	previousCache := common.MemoryCacheEnabled
+	t.Cleanup(func() {
+		defer func() { common.MemoryCacheEnabled = previousCache }()
+		ids := []int{multi.Id, low.Id}
+		require.NoError(t, database.Where("channel_id IN ?", ids).Delete(&model.Ability{}).Error)
+		require.NoError(t, database.Where("id IN ?", ids).Delete(&model.Channel{}).Error)
+		model.InitChannelCache()
+	})
+	common.MemoryCacheEnabled = true
+	model.InitChannelCache()
+
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodGet, "/v1/responses", nil)
+	common.SetContextKey(c, constant.ContextKeyChannelIsMultiKey, true)
+	require.True(t, service.RememberFailedMultiKey(c, multi.Id, "key-a"))
+	params := &service.RetryParam{Ctx: c, ModelName: "ws-model", TokenGroup: "default", Retry: common.GetPointer(1)}
+	selected, apiErr := selectResponsesWSChannel(c, "ws-model", params)
+	require.Nil(t, apiErr)
+	require.NotNil(t, selected)
+	assert.Equal(t, multi.Id, selected.Id)
+	assert.Equal(t, "key-b", common.GetContextKeyString(c, constant.ContextKeyChannelKey))
+	assert.Equal(t, 1, common.GetContextKeyInt(c, constant.ContextKeyChannelMultiKeyIndex))
+}
+
 func TestNormalizeResponsesWSCreateEventWrapper(t *testing.T) {
 	message := []byte(`{
 		"type": "response.create",

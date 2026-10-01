@@ -491,6 +491,43 @@ func MarkTaskSettlementApplicationError(taskPrimaryID int64, message string) {
 	_ = MarkTaskSettlementApplicationReview(taskPrimaryID, message)
 }
 
+// ReopenAppliedTaskSettlement moves one applied settlement back to prepared
+// so a later refund can credit exactly that applied amount. The update is
+// conditional: a refund record or a different amount is left untouched.
+func ReopenAppliedTaskSettlement(taskPrimaryID int64, operation string, appliedQuota int) error {
+	if taskPrimaryID <= 0 || strings.TrimSpace(operation) == "" || appliedQuota <= 0 {
+		return errors.New("applied task settlement reopen requires task, operation, and quota")
+	}
+	result := DB.Model(&TaskSettlementRecord{}).
+		Where("task_primary_id = ? AND status = ? AND operation = ? AND applied_quota = ?",
+			taskPrimaryID, TaskSettlementRecordStatusApplied, operation, appliedQuota).
+		Updates(map[string]any{
+			"status":              TaskSettlementRecordStatusPrepared,
+			"operation":           "",
+			"applied_quota":       gorm.Expr("NULL"),
+			"pre_consumed_quota":  gorm.Expr("NULL"),
+			"quota_delta":         gorm.Expr("NULL"),
+			"log_type":            gorm.Expr("NULL"),
+			"error":               "",
+			"applied_at":          0,
+			"log_payload":         "",
+			"log_delivered_at":    0,
+			"log_attempt_count":   0,
+			"log_next_attempt_at": 0,
+			"log_lock_until":      0,
+			"log_lock_owner":      "",
+			"log_error":           "",
+			"updated_at":          time.Now().Unix(),
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected != 1 {
+		return errors.New("applied task settlement could not be reopened")
+	}
+	return nil
+}
+
 func ResetTaskSettlementApplicationFromReview(taskPrimaryID int64) error {
 	if taskPrimaryID <= 0 {
 		return errors.New("task primary id is required")

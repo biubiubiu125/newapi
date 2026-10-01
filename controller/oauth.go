@@ -673,8 +673,7 @@ func handleOAuthBind(c *gin.Context, provider oauth.Provider, pendingFlow *model
 				return err
 			}
 			if !claimed {
-				provider.SetProviderUserID(&user, oauthUser.ProviderUserID)
-				return updateOAuthUserProviderIDsWithTx(tx, &user)
+				return updateOAuthProviderColumnWithTx(tx, user.Id, provider, oauthUser.ProviderUserID, true)
 			}
 			return nil
 		}); err != nil {
@@ -735,53 +734,12 @@ func handleOAuthBind(c *gin.Context, provider oauth.Provider, pendingFlow *model
 	})
 }
 
-func handleLegacyOAuthBind(c *gin.Context, providerName string, provider oauth.Provider, userID int) {
-	if !provider.IsEnabled() {
-		common.ApiErrorI18n(c, i18n.MsgOAuthNotEnabled, providerParams(provider.GetName()))
-		return
-	}
-	code := c.Query("code")
-	token, err := provider.ExchangeToken(c.Request.Context(), code, c)
-	if err != nil {
-		handleOAuthError(c, err)
-		return
-	}
-	oauthUser, err := provider.GetUserInfo(c.Request.Context(), token)
-	if err != nil {
-		handleOAuthError(c, err)
-		return
-	}
-	if provider.IsUserIDTaken(oauthUser.ProviderUserID) {
-		common.ApiErrorI18n(c, i18n.MsgOAuthAlreadyBound, providerParams(provider.GetName()))
-		return
-	}
-	if userID <= 0 {
-		common.ApiErrorI18n(c, i18n.MsgAuthNotLoggedIn)
-		return
-	}
-	user := model.User{Id: userID}
-	if err := user.FillUserById(); err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	if genericProvider, ok := provider.(*oauth.GenericOAuthProvider); ok {
-		err = model.UpdateUserOAuthBinding(user.Id, genericProvider.GetProviderId(), oauthUser.ProviderUserID)
-	} else {
-		claimed, claimErr := claimBuiltInOAuthIdentity(&user, providerName, oauthUser.ProviderUserID)
-		if claimErr != nil {
-			common.ApiError(c, claimErr)
-			return
-		}
-		if !claimed {
-			provider.SetProviderUserID(&user, oauthUser.ProviderUserID)
-			err = user.Update(false)
-		}
-	}
-	if err != nil {
-		common.ApiError(c, err)
-		return
-	}
-	common.ApiSuccessI18n(c, i18n.MsgOAuthBindSuccess, gin.H{"action": "bind"})
+func handleLegacyOAuthBind(c *gin.Context, _ string, _ oauth.Provider, _ int) {
+	c.JSON(http.StatusForbidden, gin.H{
+		"success": false,
+		"code":    "OAUTH_LEGACY_BIND_REMOVED",
+		"message": "This account binding flow is no longer available. Start binding again from account security.",
+	})
 }
 
 // findOrCreateOAuthUser finds existing user or creates new user.
@@ -919,8 +877,7 @@ func findOrCreateOAuthUser(c *gin.Context, providerName string, provider oauth.P
 				return err
 			}
 			if !claimed {
-				provider.SetProviderUserID(user, oauthUser.ProviderUserID)
-				if err := updateOAuthUserProviderIDsWithTx(tx, user); err != nil {
+				if err := updateOAuthProviderColumnWithTx(tx, user.Id, provider, oauthUser.ProviderUserID, false); err != nil {
 					return err
 				}
 			}
@@ -1045,15 +1002,11 @@ func claimBuiltInOAuthIdentityWithTx(tx *gorm.DB, user *model.User, providerName
 	return true, user.ClaimExternalIdentityWithTx(tx, identityProvider, providerUserID)
 }
 
-func updateOAuthUserProviderIDsWithTx(tx *gorm.DB, user *model.User) error {
-	return tx.Model(user).Updates(map[string]interface{}{
-		"github_id":   user.GitHubId,
-		"discord_id":  user.DiscordId,
-		"oidc_id":     user.OidcId,
-		"linux_do_id": user.LinuxDOId,
-		"wechat_id":   user.WeChatId,
-		"telegram_id": user.TelegramId,
-	}).Error
+func updateOAuthProviderColumnWithTx(tx *gorm.DB, userID int, provider oauth.Provider, providerUserID string, bumpAuth bool) error {
+	if provider == nil {
+		return errors.New("invalid oauth binding")
+	}
+	return model.UpdateOAuthProviderColumnWithTx(tx, userID, provider.ProviderUserIDColumn(), providerUserID, bumpAuth)
 }
 
 // Error types for OAuth

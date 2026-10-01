@@ -221,6 +221,10 @@ func AdminDisable2FA(c *gin.Context) {
 		})
 		return
 	}
+	authorization := requireAdminUserProof(c, service.VerificationScopeAdminUserTwoFADisable, service.AdminUserContext{UserID: targetUser.Id})
+	if authorization == nil {
+		return
+	}
 
 	// 禁用2FA
 	if err := model.DisableTwoFAWithAuthVersion(userId); err != nil {
@@ -239,7 +243,11 @@ func AdminDisable2FA(c *gin.Context) {
 		return
 	}
 
-	recordManageAuditFor(c, userId, "user.2fa_disable", nil)
+	twoFAAudit := map[string]any{"username": targetUser.Username, "id": targetUser.Id}
+	if authorization.Method != "" {
+		twoFAAudit["verification_method"] = authorization.Method
+	}
+	recordManageAuditFor(c, userId, "user.2fa_disable", twoFAAudit)
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,

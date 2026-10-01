@@ -35,7 +35,11 @@ test('hinted options show the hint in the dropdown and mark their chips without 
     />
   )
 
-  expect(screen.getByRole('button', { name: 'alias' })).toBeVisible()
+  expect(screen.getByText('alias')).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Remove alias' })).toBeVisible()
+  expect(
+    screen.queryByRole('button', { name: 'alias' })
+  ).not.toBeInTheDocument()
   expect(screen.getByTitle('Redirects to upstream')).toHaveAttribute(
     'aria-hidden',
     'true'

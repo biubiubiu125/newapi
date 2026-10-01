@@ -26,6 +26,10 @@ import { Alert, AlertDescription } from '@/components/ui/alert'
 import { Button } from '@/components/ui/button'
 import { Skeleton } from '@/components/ui/skeleton'
 import { TELEGRAM_BIND_RESULT_MESSAGE } from '@/features/auth/constants'
+import {
+  SecureVerificationDialog,
+  useSecureVerification,
+} from '@/features/auth/secure-verification'
 import { startTelegramBind } from '@/features/profile/api'
 import {
   createServerError,
@@ -51,17 +55,28 @@ export function TelegramBindDialog({
   onSuccess,
 }: TelegramBindDialogProps) {
   const { t } = useTranslation()
+  const verification = useSecureVerification()
   const widgetRef = useRef<HTMLDivElement>(null)
   const [callbackUrl, setCallbackUrl] = useState<string | null>(null)
   const [flowToken, setFlowToken] = useState<string | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
+  const requestVerification = verification.requestVerification
   const createBindFlow = useCallback(async () => {
     setLoading(true)
     setError(null)
     try {
-      const response = await startTelegramBind()
+      const proof = await requestVerification({
+        scope: 'account.binding.bind',
+        context: { provider: 'telegram' },
+        title: t('Verify to bind Telegram'),
+      })
+      if (!proof) {
+        setError(t('Verification is required before binding Telegram.'))
+        return
+      }
+      const response = await startTelegramBind(proof.proof_token)
       if (!response.success || !response.data?.callback_url) {
         throw createServerError(response, t('Failed to start Telegram binding'))
       }
@@ -76,7 +91,7 @@ export function TelegramBindDialog({
     } finally {
       setLoading(false)
     }
-  }, [t])
+  }, [requestVerification, t])
 
   useEffect(() => {
     if (!open) {
@@ -138,8 +153,9 @@ export function TelegramBindDialog({
   }, [botName, callbackUrl])
 
   return (
+    <>
     <Dialog
-      open={open}
+      open={open && !verification.isActive}
       onOpenChange={onOpenChange}
       title={t('Bind Telegram Account')}
       description={t('Click the button below to bind your Telegram account')}
@@ -191,5 +207,7 @@ export function TelegramBindDialog({
         </p>
       </div>
     </Dialog>
+    <SecureVerificationDialog {...verification.dialogProps} />
+    </>
   )
 }

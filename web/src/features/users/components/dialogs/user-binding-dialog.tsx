@@ -47,6 +47,10 @@ import {
 } from '@/components/ui/tooltip'
 import { indexCustomOAuthBindings, type CustomOAuthBinding } from '@/lib/oauth'
 import { handleServerError } from '@/lib/handle-server-error'
+import type {
+  RequestVerificationOptions,
+  SecurityProof,
+} from '@/features/auth/secure-verification'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { statusQueryOptions } from '@/lib/status-query'
 
@@ -164,7 +168,14 @@ function CustomProviderIcon(props: { iconUrl?: string }) {
   )
 }
 
-export function UserBindingDialog(props: Props) {
+export function UserBindingDialog(
+  props: Props & {
+    requestVerification?: (
+      request: RequestVerificationOptions
+    ) => Promise<SecurityProof | null>
+    verificationActive?: boolean
+  }
+) {
   const { t } = useTranslation()
   const [user, setUser] = useState<User | null>(null)
   const [oauthBindings, setOauthBindings] = useState<CustomOAuthBinding[]>([])
@@ -281,15 +292,34 @@ export function UserBindingDialog(props: Props) {
 
   const handleUnbind = async () => {
     if (!unbindTarget || !props.userId) return
+    if (props.verificationActive) return
+    let proofToken: string | undefined
+    if (props.requestVerification) {
+      const proof = await props.requestVerification({
+        scope: 'admin.user.binding.clear',
+        context:
+          unbindTarget.type === 'builtin'
+            ? { user_id: props.userId, binding_type: unbindTarget.key }
+            : { user_id: props.userId, provider_id: unbindTarget.providerId },
+        title: t('Verify to clear this binding'),
+      })
+      if (!proof) return
+      proofToken = proof.proof_token
+    }
     setUnbinding(true)
     try {
       let res
       if (unbindTarget.type === 'builtin') {
-        res = await adminClearUserBinding(props.userId, unbindTarget.key)
+        res = await adminClearUserBinding(
+          props.userId,
+          unbindTarget.key,
+          proofToken
+        )
       } else if (unbindTarget.providerId) {
         res = await adminUnbindCustomOAuth(
           props.userId,
-          unbindTarget.providerId
+          unbindTarget.providerId,
+          proofToken
         )
       }
       if (res?.success) {

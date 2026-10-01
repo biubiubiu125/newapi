@@ -16,6 +16,77 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestManageMultiKeysDisableRecordsReason(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.AuditLog{}))
+	root := &model.User{Username: "multi-key-disable-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(root).Error)
+	channel := &model.Channel{
+		Name: t.Name(), Type: 1, Key: "key-one\nkey-two", Status: common.ChannelStatusEnabled, Models: "test-model", Group: "default",
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2},
+	}
+	require.NoError(t, channel.Insert())
+
+	payload, err := common.Marshal(MultiKeyManageRequest{ChannelId: channel.Id, Action: "disable_key", KeyIndex: common.GetPointer(0)})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("id", root.Id)
+	c.Set("role", common.RoleRootUser)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/channel/multi_key", bytes.NewReader(payload))
+	c.Request.Header.Set("Content-Type", "application/json")
+	ManageMultiKeys(c)
+
+	var result struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &result))
+	require.True(t, result.Success, recorder.Body.String())
+	loaded, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusManuallyDisabled, loaded.ChannelInfo.MultiKeyStatusList[0])
+	assert.Equal(t, "manual disable", loaded.ChannelInfo.MultiKeyDisabledReason[0])
+	assert.NotZero(t, loaded.ChannelInfo.MultiKeyDisabledTime[0])
+	assert.Equal(t, common.ChannelStatusEnabled, loaded.Status)
+}
+
+func TestManageMultiKeysDisableAllRecordsReason(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Log{}, &model.AuditLog{}))
+	root := &model.User{Username: "multi-key-disable-all-root", Role: common.RoleRootUser, Status: common.UserStatusEnabled}
+	require.NoError(t, db.Create(root).Error)
+	channel := &model.Channel{
+		Name: t.Name(), Type: 1, Key: "key-one\nkey-two", Status: common.ChannelStatusEnabled, Models: "test-model", Group: "default",
+		ChannelInfo: model.ChannelInfo{IsMultiKey: true, MultiKeySize: 2},
+	}
+	require.NoError(t, channel.Insert())
+
+	payload, err := common.Marshal(MultiKeyManageRequest{ChannelId: channel.Id, Action: "disable_all_keys"})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Set("id", root.Id)
+	c.Set("role", common.RoleRootUser)
+	c.Request = httptest.NewRequest(http.MethodPost, "/api/channel/multi_key", bytes.NewReader(payload))
+	c.Request.Header.Set("Content-Type", "application/json")
+	ManageMultiKeys(c)
+
+	var result struct {
+		Success bool `json:"success"`
+	}
+	require.NoError(t, common.Unmarshal(recorder.Body.Bytes(), &result))
+	require.True(t, result.Success, recorder.Body.String())
+	loaded, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusManuallyDisabled, loaded.ChannelInfo.MultiKeyStatusList[0])
+	assert.Equal(t, common.ChannelStatusManuallyDisabled, loaded.ChannelInfo.MultiKeyStatusList[1])
+	assert.Equal(t, "manual disable", loaded.ChannelInfo.MultiKeyDisabledReason[0])
+	assert.Equal(t, "manual disable", loaded.ChannelInfo.MultiKeyDisabledReason[1])
+	assert.NotZero(t, loaded.ChannelInfo.MultiKeyDisabledTime[0])
+	assert.NotZero(t, loaded.ChannelInfo.MultiKeyDisabledTime[1])
+	assert.Equal(t, common.ChannelStatusAutoDisabled, loaded.Status)
+}
+
 func TestMultiKeyEnableRestoresOnlyExhaustedChannels(t *testing.T) {
 	previousDB, previousLogDB := model.DB, model.LOG_DB
 	previousType, previousLogType := common.MainDatabaseType(), common.LogDatabaseType()

@@ -210,10 +210,27 @@ export const vendorFormSchema = z.object({
 
 export type VendorFormValues = z.infer<typeof vendorFormSchema>
 
+const atMostCodePoints = (max: number) => (value: string) =>
+  [...value].length <= max
+
 export const prefillGroupFormSchema = z.object({
   id: z.number().optional(),
-  name: z.string().min(1, 'Group name is required'),
-  description: z.string().optional(),
+  name: z
+    .string()
+    .trim()
+    .min(1, 'Group name is required')
+    .refine(
+      atMostCodePoints(64),
+      'Group name must be at most 64 characters long'
+    ),
+  description: z
+    .string()
+    .trim()
+    .refine(
+      atMostCodePoints(255),
+      'Description must be at most 255 characters long'
+    )
+    .optional(),
   type: z.enum(['model', 'tag', 'endpoint']),
   items: z.union([z.string(), z.array(z.string())]),
 })

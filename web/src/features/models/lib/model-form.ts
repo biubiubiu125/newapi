@@ -58,6 +58,7 @@ export const vendorFormSchema = z.object({
   description: z.string().default(''),
   icon: z.string().default(''),
   status: z.number().default(1),
+  version: z.string().optional(),
 })
 
 export type VendorFormValues = z.infer<typeof vendorFormSchema>

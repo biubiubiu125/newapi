@@ -32,6 +32,10 @@ import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
 import { getDeployment, updateDeployment } from '../../api'
 import { deploymentsQueryKeys } from '../../lib'
+import {
+  buildDeploymentUpdatePayload,
+  deploymentConfigFormValues,
+} from '../../lib/deployment-update'
 import {requireServerSuccess} from '@/lib/server-error-message'
 import { handleServerError } from '@/lib/handle-server-error'
 
@@ -49,18 +53,10 @@ const schema = z.object({
 
 type Values = z.input<typeof schema>
 
-function normalizeJsonObject(input?: string) {
-  if (!input || !input.trim()) return undefined
-  const parsed = JSON.parse(input)
-  if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
-    throw new Error('JSON must be an object')
-  }
-  return Object.fromEntries(
-    Object.entries(parsed as Record<string, unknown>).map(([k, v]) => [
-      k,
-      String(v),
-    ])
-  ) as Record<string, string>
+function stringList(value: unknown) {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === 'string' && item !== '')
+    : []
 }
 
 export function UpdateConfigDialog({
@@ -115,11 +111,6 @@ export function UpdateConfigDialog({
       typeof containerConfig.traffic_port === 'number'
         ? containerConfig.traffic_port
         : undefined
-    const entrypointArr = Array.isArray(containerConfig.entrypoint)
-      ? (containerConfig.entrypoint as unknown[])
-          .map((x) => (typeof x === 'string' ? x : ''))
-          .filter(Boolean)
-      : []
     const envVars =
       containerConfig.env_variables &&
       typeof containerConfig.env_variables === 'object' &&
@@ -127,19 +118,15 @@ export function UpdateConfigDialog({
         ? (containerConfig.env_variables as Record<string, unknown>)
         : {}
 
-    form.reset({
-      image_url: imageUrl,
-      traffic_port: trafficPort,
-      entrypoint: entrypointArr.join(' '),
-      args: '',
-      command: '',
-      registry_username: '',
-      registry_secret: '',
-      env_json: Object.keys(envVars).length
-        ? JSON.stringify(envVars, null, 2)
-        : '',
-      secret_env_json: '',
-    })
+    form.reset(
+      deploymentConfigFormValues({
+        image_url: imageUrl,
+        traffic_port: trafficPort,
+        entrypoint: stringList(containerConfig.entrypoint),
+        args: stringList(containerConfig.args),
+        env_variables: envVars,
+      })
+    )
   }, [open, details, form])
 
   const title = useMemo(
@@ -153,35 +140,23 @@ export function UpdateConfigDialog({
   const onSubmit = async (values: Values) => {
     if (!deploymentId) return
     try {
-      const env_variables = normalizeJsonObject(values.env_json)
-      const secret_env_variables = normalizeJsonObject(values.secret_env_json)
-      const entrypoint = values.entrypoint
-        ? values.entrypoint
-            .split(' ')
-            .map((x) => x.trim())
-            .filter(Boolean)
-        : undefined
-      const args = values.args
-        ? values.args
-            .split(' ')
-            .map((x) => x.trim())
-            .filter(Boolean)
-        : undefined
-
-      const res = await updateDeployment(deploymentId, {
-        image_url: values.image_url?.trim() || undefined,
-        traffic_port:
-          typeof values.traffic_port === 'number'
-            ? values.traffic_port
-            : undefined,
-        registry_username: values.registry_username?.trim() || undefined,
-        registry_secret: values.registry_secret?.trim() || undefined,
-        command: values.command?.trim() || undefined,
-        ...(entrypoint?.length ? { entrypoint } : {}),
-        ...(args?.length ? { args } : {}),
-        ...(env_variables ? { env_variables } : {}),
-        ...(secret_env_variables ? { secret_env_variables } : {}),
-      })
+      const res = await updateDeployment(
+        deploymentId,
+        buildDeploymentUpdatePayload({
+          image_url: values.image_url,
+          traffic_port:
+            typeof values.traffic_port === 'number'
+              ? values.traffic_port
+              : undefined,
+          entrypoint: values.entrypoint,
+          args: values.args,
+          command: values.command,
+          registry_username: values.registry_username,
+          registry_secret: values.registry_secret,
+          env_json: values.env_json,
+          secret_env_json: values.secret_env_json,
+        })
+      )
 
       if (res.success) {
         toast.success(t('Updated successfully'))

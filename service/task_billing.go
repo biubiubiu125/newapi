@@ -96,11 +96,7 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) error {
 	appendTaskLogInfo(submittedTask, other)
 	attachQuotaSaturation(c, info, other)
 	settlementSucceeded := c.GetBool(contextKeySettlementApplied)
-	if err := model.UpdateTaskConsumptionUsageWithTokenSync(info.UserId, info.ChannelId, info.TokenId, logQuota); err != nil {
-		return wrapUsageCounterUpdateError(c, info, logQuota, settlementSucceeded, err, "log task consumption usage counter update failed")
-	}
-	setUsageCountersRecorded(c, true)
-	if err := model.RecordConsumeLog(c, info.UserId, model.RecordConsumeLogParams{
+	logParams := model.RecordConsumeLogParams{
 		ChannelId: info.ChannelId,
 		ModelName: info.OriginModelName,
 		TokenName: tokenName,
@@ -109,7 +105,16 @@ func LogTaskConsumption(c *gin.Context, info *relaycommon.RelayInfo) error {
 		TokenId:   info.TokenId,
 		Group:     info.UsingGroup,
 		Other:     other,
-	}); err != nil {
+	}
+	if settlementSucceeded {
+		// 上游任务已经提交。用量或日志写失败只留审计，主节点稍后补记，不能退钱逼客户端再下一单。
+		return recordDeliveredConsumption(c, info, logParams)
+	}
+	if err := model.UpdateTaskConsumptionUsageWithTokenSync(info.UserId, info.ChannelId, info.TokenId, logQuota); err != nil {
+		return wrapUsageCounterUpdateError(c, info, logQuota, settlementSucceeded, err, "log task consumption usage counter update failed")
+	}
+	setUsageCountersRecorded(c, true)
+	if err := model.RecordConsumeLog(c, info.UserId, logParams); err != nil {
 		return wrapRecordConsumeLogError(c, info, info.UserId, info.ChannelId, info.TokenId, logQuota, settlementSucceeded, err)
 	}
 	return nil
@@ -131,18 +136,33 @@ func resolveTokenKey(ctx context.Context, tokenId int, taskID string) string {
 
 // taskIsSubscription reports whether the task is billed through subscription quota.
 func taskIsSubscription(task *model.Task) bool {
-	return task.PrivateData.BillingSource == BillingSourceSubscription && task.PrivateData.SubscriptionId > 0
+	return task != nil && task.PrivateData.BillingSource == BillingSourceSubscription && task.PrivateData.SubscriptionId > 0
+}
+
+func subscriptionPreconsumeClearedByReset(task *model.Task) (bool, error) {
+	if !taskIsSubscription(task) {
+		return false, nil
+	}
+	var sub model.UserSubscription
+	if err := model.DB.Select("last_reset_time").Where("id = ?", task.PrivateData.SubscriptionId).Take(&sub).Error; err != nil {
+		return false, err
+	}
+	consumedAt := model.TaskSubscriptionConsumedAtTx(nil, task)
+	return consumedAt > 0 && sub.LastResetTime > consumedAt, nil
 }
 
 // taskAdjustFunding adjusts the task funding source. Positive delta charges, negative delta refunds.
 func taskAdjustFunding(task *model.Task, delta int) error {
 	if taskIsSubscription(task) {
+		if delta > 0 {
+			return model.PostConsumeUserSubscriptionDeltaAllowOverdraft(task.PrivateData.SubscriptionId, int64(delta))
+		}
 		return model.PostConsumeUserSubscriptionDelta(task.PrivateData.SubscriptionId, int64(delta))
 	}
 	if delta > 0 {
-		return model.DecreaseUserQuota(task.UserId, int64(delta), false)
+		return model.DecreaseUserQuotaAllowNegative(task.UserId, int64(delta), false)
 	}
-	return model.IncreaseUserQuota(task.UserId, int64(-delta), false)
+	return model.CreditUserQuotaStrict(task.UserId, int64(-delta))
 }
 
 // taskAdjustTokenQuota adjusts token quota. Positive delta charges, negative delta refunds.
@@ -156,7 +176,7 @@ func taskAdjustTokenQuota(ctx context.Context, task *model.Task, delta int) (boo
 	}
 	var err error
 	if delta > 0 {
-		err = model.DecreaseTokenQuota(task.PrivateData.TokenId, tokenKey, int64(delta))
+		err = model.DecreaseTokenQuotaAllowNegative(task.PrivateData.TokenId, tokenKey, int64(delta))
 	} else {
 		err = model.IncreaseTokenQuota(task.PrivateData.TokenId, tokenKey, int64(-delta))
 	}
@@ -1222,10 +1242,286 @@ func rollbackTaskRefundAfterBillingLogFailure(
 	return reviewErr
 }
 
+// taskBillingAdjustmentKey is the shared ledger key. The submit path stores it
+// on the task, but a failed status write still leaves the request id that was
+// saved with the original insert.
+func taskBillingAdjustmentKey(task *model.Task) string {
+	if task == nil {
+		return ""
+	}
+	if key := strings.TrimSpace(task.PrivateData.BillingAdjustmentKey); key != "" {
+		return key
+	}
+	if task.PrivateData.Execution == nil {
+		return ""
+	}
+	requestID := strings.TrimSpace(task.PrivateData.Execution.RequestID)
+	if requestID == "" {
+		return ""
+	}
+	return "billing:" + requestID
+}
+
+func taskBillingAdjustmentStillOpen(task *model.Task) bool {
+	if task == nil {
+		return false
+	}
+	switch task.SettlementStatus {
+	case "", model.TaskSettlementStatusPending:
+		return true
+	default:
+		return false
+	}
+}
+
+// reopenRolledBackCompletionCharge lets a failure refund the completion
+// price that was charged after the original reservation had already been
+// returned. The rolled-back ledger row is not credited again. A task that
+// still only shows the returned reservation keeps the no-second-credit path.
+func reopenRolledBackCompletionCharge(task *model.Task) (bool, error) {
+	if task == nil || task.ID <= 0 || task.Quota <= 0 {
+		return false, nil
+	}
+	row, err := loadTaskBillingAdjustment(task)
+	if err != nil || row == nil || row.Status != model.BillingAdjustmentRolledBack {
+		return false, err
+	}
+	record, exists, err := model.GetTaskSettlementRecord(task.ID)
+	if err != nil || !exists || record == nil {
+		return false, err
+	}
+	if record.Status != model.TaskSettlementRecordStatusApplied ||
+		record.Operation != taskSettlementOperationRecalculation ||
+		record.AppliedQuota == nil ||
+		*record.AppliedQuota != task.Quota {
+		return false, nil
+	}
+	if err := model.ReopenAppliedTaskSettlement(task.ID, taskSettlementOperationRecalculation, task.Quota); err != nil {
+		return false, err
+	}
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	return true, nil
+}
+
+func loadTaskBillingAdjustment(task *model.Task) (*model.BillingAdjustment, error) {
+	if task == nil {
+		return nil, nil
+	}
+	key := taskBillingAdjustmentKey(task)
+	if key == "" {
+		return nil, nil
+	}
+	row, found, err := model.GetBillingAdjustment(key)
+	if err != nil || !found {
+		return nil, err
+	}
+	task.PrivateData.BillingAdjustmentKey = key
+	return row, nil
+}
+
+// loadUnflaggedBillingAdjustment finds a ledger row for a task whose settlement
+// write never stored the unresolved flag. Settled tasks are left alone so a
+// later retry cannot replace the final quota with the submit charge.
+func loadUnflaggedBillingAdjustment(task *model.Task) (*model.BillingAdjustment, error) {
+	if task == nil || task.PrivateData.BillingAdjustmentUnresolved || task.PrivateData.BillingAdjustmentRollback || !taskBillingAdjustmentStillOpen(task) {
+		return nil, nil
+	}
+	key := taskBillingAdjustmentKey(task)
+	if key == "" {
+		return nil, nil
+	}
+	row, found, err := model.GetBillingAdjustment(key)
+	if err != nil || !found {
+		return nil, err
+	}
+	task.PrivateData.BillingAdjustmentKey = key
+	return row, nil
+}
+
+// syncTaskBillingAdjustment aligns task.Quota with a committed ledger row
+// before a completion delta is calculated. A rollback flag closes the task
+// instead of charging it again. handled is true when the caller must stop.
+func syncTaskBillingAdjustment(ctx context.Context, task *model.Task) (bool, error) {
+	_ = ctx
+	if task == nil {
+		return false, nil
+	}
+	if !task.PrivateData.BillingAdjustmentUnresolved {
+		row, err := loadUnflaggedBillingAdjustment(task)
+		if err != nil {
+			return false, err
+		}
+		switch {
+		case row == nil:
+			return false, nil
+		case row.Status == model.BillingAdjustmentPending:
+			task.PrivateData.BillingAdjustmentUnresolved = true
+		case row.Status == model.BillingAdjustmentApplied:
+			if task.Quota == row.ChargeQuota {
+				return false, nil
+			}
+			// The submit charge is already in the ledger. Completion must not add
+			// actual-prepaid on top of it.
+			task.Quota = row.ChargeQuota
+			return false, persistTaskBillingAdjustment(task, false)
+		case row.Status == model.BillingAdjustmentRolledBack:
+			if task.Quota == 0 {
+				return false, nil
+			}
+			// The reservation was returned when the settlement row could not be
+			// saved. The prepaid figure on the task is no longer held.
+			task.Quota = 0
+			return false, persistTaskBillingAdjustment(task, false)
+		default:
+			return false, nil
+		}
+	}
+	if task.PrivateData.BillingAdjustmentRollback {
+		return releaseTaskBillingAdjustment(ctx, task)
+	}
+	key := strings.TrimSpace(task.PrivateData.BillingAdjustmentKey)
+	if key == "" {
+		task.PrivateData.BillingAdjustmentUnresolved = false
+		return false, persistTaskBillingAdjustment(task, false)
+	}
+	row, found, err := model.GetBillingAdjustment(key)
+	if err != nil {
+		return false, err
+	}
+	if !found {
+		// The pending charge may still be on the node that accepted the request.
+		// Import this node's spool, but do not clear the flag or charge the task
+		// delta until the shared ledger row exists.
+		if err := model.RecoverUnpersistedBillingAdjustments(100); err != nil {
+			return false, err
+		}
+		row, found, err = model.GetBillingAdjustment(key)
+		if err != nil {
+			return false, err
+		}
+		if !found {
+			return false, fmt.Errorf("billing adjustment %s is not in the shared ledger yet: %w", key, model.ErrBillingAdjustmentDeferred)
+		}
+	}
+	if row.Status == model.BillingAdjustmentPending {
+		if _, err := model.ApplyBillingAdjustment(billingAdjustmentRequestFromRow(row)); err != nil {
+			return false, err
+		}
+		row, found, err = model.GetBillingAdjustment(key)
+		if err != nil {
+			return false, err
+		}
+		if !found {
+			return false, fmt.Errorf("billing adjustment %s disappeared after apply", key)
+		}
+	}
+	if row.Status == model.BillingAdjustmentApplied {
+		task.Quota = row.ChargeQuota
+	}
+	task.PrivateData.BillingAdjustmentUnresolved = false
+	return false, persistTaskBillingAdjustment(task, false)
+}
+
+// releaseTaskBillingAdjustment reverses one ledger charge and stops the
+// generic refund from crediting that quota a second time.
+func releaseTaskBillingAdjustment(ctx context.Context, task *model.Task) (bool, error) {
+	_ = ctx
+	if task == nil || (!task.PrivateData.BillingAdjustmentUnresolved && !task.PrivateData.BillingAdjustmentRollback) {
+		return false, nil
+	}
+	key := strings.TrimSpace(task.PrivateData.BillingAdjustmentKey)
+	if key == "" {
+		task.PrivateData.BillingAdjustmentUnresolved = false
+		task.PrivateData.BillingAdjustmentRollback = false
+		return false, persistTaskBillingAdjustment(task, false)
+	}
+	err := model.RollbackBillingAdjustment(key, task.PrivateData.BillingAdjustmentActual)
+	if errors.Is(err, model.ErrBillingAdjustmentAbsent) {
+		err = model.RefundBillingReservation(model.BillingReservationRefund{
+			IdempotencyKey:   key,
+			RequestID:        strings.TrimPrefix(key, "billing:"),
+			UserID:           task.UserId,
+			TokenID:          task.PrivateData.TokenId,
+			Source:           task.PrivateData.BillingSource,
+			SubscriptionID:   task.PrivateData.SubscriptionId,
+			ReservationQuota: task.PrivateData.BillingAdjustmentReservation,
+			ExtraReserved:    task.PrivateData.BillingAdjustmentExtra,
+			TokenIncluded:    task.PrivateData.TokenId > 0 && task.PrivateData.BillingSource != "",
+		})
+	}
+	if err != nil {
+		return true, err
+	}
+	task.Quota = 0
+	task.RefundPending = false
+	task.PrivateData.BillingAdjustmentUnresolved = false
+	task.PrivateData.BillingAdjustmentRollback = false
+	if task.Status != model.TaskStatusFailure {
+		task.Status = model.TaskStatusFailure
+		task.Progress = "100%"
+		if task.FinishTime == 0 {
+			task.FinishTime = common.GetTimestamp()
+		}
+	}
+	return true, persistTaskBillingAdjustment(task, true)
+}
+
+func billingAdjustmentRequestFromRow(row *model.BillingAdjustment) model.BillingAdjustmentRequest {
+	if row == nil {
+		return model.BillingAdjustmentRequest{}
+	}
+	return model.BillingAdjustmentRequest{
+		IdempotencyKey:   row.IdempotencyKey,
+		RequestID:        row.RequestID,
+		UserID:           row.UserID,
+		TokenID:          row.TokenID,
+		Source:           row.Source,
+		SubscriptionID:   row.SubscriptionID,
+		FundingDelta:     row.FundingDelta,
+		TokenDelta:       row.TokenDelta,
+		ChargeQuota:      row.ChargeQuota,
+		ReservationQuota: row.ReservationQuota,
+		ExtraReserved:    row.ExtraReserved,
+		TokenIncluded:    row.TokenIncluded,
+	}
+}
+
+func persistTaskBillingAdjustment(task *model.Task, includeStatus bool) error {
+	if task == nil || task.ID <= 0 {
+		return nil
+	}
+	if includeStatus {
+		return model.UpdateTaskAfterSubmitAccountingFailure(task)
+	}
+	return task.UpdateSubmitSettlementError()
+}
+
 // RefundTaskQuota refunds pre-consumed quota after an async task fails.
 func RefundTaskQuota(ctx context.Context, task *model.Task, reason string) error {
 	if task == nil {
 		return nil
+	}
+	reopened, err := reopenRolledBackCompletionCharge(task)
+	if err != nil {
+		return err
+	}
+	if !reopened {
+		if row, err := loadUnflaggedBillingAdjustment(task); err != nil {
+			return err
+		} else if row != nil {
+			// The ledger already returned or still owns this reservation. Refunding
+			// task.Quota as well credits the prepaid amount a second time.
+			task.PrivateData.BillingAdjustmentUnresolved = true
+			if row.Status == model.BillingAdjustmentRolledBack {
+				task.PrivateData.BillingAdjustmentRollback = true
+			}
+		}
+	}
+	if task.PrivateData.BillingAdjustmentUnresolved || task.PrivateData.BillingAdjustmentRollback {
+		handled, err := releaseTaskBillingAdjustment(ctx, task)
+		if err != nil || handled {
+			return err
+		}
 	}
 	if isPublicImageTaskAccounting(task) {
 		attemptedQuota := task.Quota
@@ -1341,27 +1637,38 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	if actualQuota < 0 {
 		return fmt.Errorf("actual quota cannot be negative: %d", actualQuota)
 	}
+	if handled, err := syncTaskBillingAdjustment(ctx, task); err != nil {
+		return err
+	} else if handled {
+		return nil
+	}
 	preConsumedQuota := task.Quota
 	quotaDelta := actualQuota - preConsumedQuota
 
 	if quotaDelta == 0 {
-		logger.LogInfo(ctx, fmt.Sprintf("task %s pre-consumed quota matched actual quota (%s, %s)",
-			task.TaskID, logger.LogQuota(actualQuota), reason))
-		record, exists, err := model.GetTaskSettlementRecord(task.ID)
-		if err != nil {
-			return taskAccountingRecordError("task recalculation", task, err)
+		cleared, clearErr := subscriptionPreconsumeClearedByReset(task)
+		if clearErr != nil {
+			return clearErr
 		}
-		if exists && record != nil {
-			if record.HasAppliedQuotaEvidence() || record.Status == model.TaskSettlementRecordStatusApplied {
-				return finalizeExistingTaskRecalculation(ctx, task, record, actualQuota)
+		if !cleared {
+			logger.LogInfo(ctx, fmt.Sprintf("task %s pre-consumed quota matched actual quota (%s, %s)",
+				task.TaskID, logger.LogQuota(actualQuota), reason))
+			record, exists, err := model.GetTaskSettlementRecord(task.ID)
+			if err != nil {
+				return taskAccountingRecordError("task recalculation", task, err)
 			}
-			if record.Status == model.TaskSettlementRecordStatusReview {
-				reviewErr := taskAccountingReviewError("task recalculation", record)
-				MarkTaskSettlementReview(ctx, task, actualQuota, reviewErr)
-				return reviewErr
+			if exists && record != nil {
+				if record.HasAppliedQuotaEvidence() || record.Status == model.TaskSettlementRecordStatusApplied {
+					return finalizeExistingTaskRecalculation(ctx, task, record, actualQuota)
+				}
+				if record.Status == model.TaskSettlementRecordStatusReview {
+					reviewErr := taskAccountingReviewError("task recalculation", record)
+					MarkTaskSettlementReview(ctx, task, actualQuota, reviewErr)
+					return reviewErr
+				}
 			}
+			return persistTaskBillingSettledOrReview(ctx, task)
 		}
-		return persistTaskBillingSettledOrReview(ctx, task)
 	}
 
 	logger.LogInfo(ctx, fmt.Sprintf("task %s quota settlement delta=%s (actual=%s, pre-consumed=%s, %s)",
@@ -1385,9 +1692,12 @@ func RecalculateTaskQuota(ctx context.Context, task *model.Task, actualQuota int
 	if quotaDelta > 0 {
 		logType = model.LogTypeConsume
 		logQuota = quotaDelta
-	} else {
+	} else if quotaDelta < 0 {
 		logType = model.LogTypeRefund
 		logQuota = -quotaDelta
+	} else {
+		logType = model.LogTypeConsume
+		logQuota = actualQuota
 	}
 	extraOther := map[string]interface{}{
 		"pre_consumed_quota": preConsumedQuota,

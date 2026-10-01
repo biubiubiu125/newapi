@@ -46,6 +46,21 @@ func TestRelayHTTPTransportAppliesResponseHeaderTimeout(t *testing.T) {
 	assert.Equal(t, 7*time.Second, transport.ResponseHeaderTimeout)
 }
 
+func TestRelayHTTPTransportClonesInsecureTLSConfig(t *testing.T) {
+	previous := common.TLSInsecureSkipVerify
+	common.TLSInsecureSkipVerify = true
+	t.Cleanup(func() { common.TLSInsecureSkipVerify = previous })
+
+	first := newRelayHTTPTransport()
+	second := newRelayHTTPTransport()
+	require.NotNil(t, first.TLSClientConfig)
+	require.NotNil(t, second.TLSClientConfig)
+	assert.True(t, first.TLSClientConfig.InsecureSkipVerify)
+	assert.True(t, second.TLSClientConfig.InsecureSkipVerify)
+	assert.NotSame(t, common.InsecureTLSConfig, first.TLSClientConfig)
+	assert.NotSame(t, first.TLSClientConfig, second.TLSClientConfig)
+}
+
 func initDefaultHTTPClientFixture(t *testing.T) *http.Client {
 	t.Helper()
 	withRelayHTTPTransportSettings(t)

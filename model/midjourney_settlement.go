@@ -2,6 +2,7 @@ package model
 
 import (
 	"errors"
+	"fmt"
 	"time"
 
 	"gorm.io/gorm"
@@ -180,4 +181,45 @@ func MarkMidjourneySettlementApplicationReview(midjourneyID int, message string)
 		return nil
 	}
 	return errors.New("midjourney settlement application mark review lost CAS")
+}
+
+// ReleaseMidjourneySettlementForRetry returns a refund attempt to prepared when
+// no quota evidence was stored. The caller has already restored the charged
+// balances, so the next poll can refund again instead of leaving a failed task paid.
+func ReleaseMidjourneySettlementForRetry(midjourneyID int) error {
+	if midjourneyID <= 0 {
+		return errors.New("midjourney id is required")
+	}
+	existing, exists, err := GetMidjourneySettlementRecord(midjourneyID)
+	if err != nil {
+		return err
+	}
+	if !exists || existing.Status == TaskSettlementRecordStatusPrepared {
+		return nil
+	}
+	if existing.Status == TaskSettlementRecordStatusApplied || existing.AppliedQuota != nil {
+		return errors.New("midjourney settlement application already applied")
+	}
+	if existing.Error == "midjourney settlement application was interrupted before completion; manual review is required" {
+		return errors.New("midjourney settlement application was interrupted before completion")
+	}
+	if existing.Status != TaskSettlementRecordStatusApplying && existing.Status != TaskSettlementRecordStatusReview {
+		return fmt.Errorf("midjourney settlement application has unexpected status %s", existing.Status)
+	}
+	now := time.Now().Unix()
+	result := DB.Model(&MidjourneySettlementRecord{}).
+		Where("midjourney_id = ? AND status = ? AND applied_quota IS NULL", midjourneyID, existing.Status).
+		Updates(map[string]any{
+			"status":     TaskSettlementRecordStatusPrepared,
+			"error":      "",
+			"operation":  "",
+			"updated_at": now,
+		})
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return errors.New("midjourney settlement application release for retry lost CAS")
+	}
+	return nil
 }

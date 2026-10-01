@@ -203,9 +203,11 @@ return 1`
 }
 
 // IncrementUserAuthVersionWithTx locks the user, publishes the next deny
-// fence, then persists the version in the caller's transaction. Unscoped is
-// intentional so the same fail-closed path also covers hard deletion of an
-// already soft-deleted user.
+// fence, then persists the version in the caller's transaction. The same
+// update clears the dashboard access token, so a copied system token cannot
+// survive the security change if the transaction commits, and a rollback
+// restores it. Unscoped is intentional so the same fail-closed path also
+// covers hard deletion of an already soft-deleted user.
 func IncrementUserAuthVersionWithTx(tx *gorm.DB, userId int) (int64, error) {
 	if tx == nil || userId <= 0 {
 		return 0, fmt.Errorf("invalid user auth version update")
@@ -222,7 +224,11 @@ func IncrementUserAuthVersionWithTx(tx *gorm.DB, userId int) (int64, error) {
 		}
 		result := tx.Unscoped().Model(&User{}).
 			Where("id = ? AND auth_version = ?", userId, user.AuthVersion).
-			Update("auth_version", next)
+			Updates(map[string]any{
+				"auth_version":            next,
+				"access_token":            nil,
+				"access_token_created_at": nil,
+			})
 		if result.Error != nil {
 			return 0, result.Error
 		}

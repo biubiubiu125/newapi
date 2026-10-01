@@ -75,6 +75,7 @@ func ValidateSSRFProtectedFetchURL(urlStr string) error {
 // maxTimeoutSeconds prevents an overflowing time.Duration conversion when an
 // operator supplies an unusually large timeout value.
 const maxTimeoutSeconds = int(math.MaxInt64 / int64(time.Second))
+
 // maxTimeoutSeconds is the largest number of seconds that still converts to a
 // time.Duration without overflowing (~292 years).
 func newRelayHTTPTransport() *http.Transport {
@@ -117,7 +118,7 @@ func newRelayHTTPTransport() *http.Transport {
 	}
 	transport.ForceAttemptHTTP2 = true
 	if common.TLSInsecureSkipVerify {
-		transport.TLSClientConfig = common.InsecureTLSConfig
+		transport.TLSClientConfig = common.InsecureTLSConfig.Clone()
 	}
 	return transport
 }

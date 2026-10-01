@@ -2,6 +2,7 @@ package openai
 
 import (
 	"fmt"
+	"sync"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/logger"
@@ -34,6 +35,7 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	usage := &dto.RealtimeUsage{}
 	localUsage := &dto.RealtimeUsage{}
 	sumUsage := &dto.RealtimeUsage{}
+	var usageMu sync.Mutex
 
 	gopool.Go(func() {
 		defer func() {
@@ -76,10 +78,12 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					return
 				}
 				logger.LogInfo(c, fmt.Sprintf("type: %s, textToken: %d, audioToken: %d", realtimeEvent.Type, textToken, audioToken))
+				usageMu.Lock()
 				localUsage.TotalTokens += textToken + audioToken
 				localUsage.InputTokens += textToken + audioToken
 				localUsage.InputTokenDetails.TextTokens += textToken
 				localUsage.InputTokenDetails.AudioTokens += audioToken
+				usageMu.Unlock()
 
 				err = helper.WssString(c, targetConn, string(message))
 				if err != nil {
@@ -122,9 +126,11 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 					return
 				}
 
+				var commitAfterDelivery func() error
 				if realtimeEvent.Type == dto.RealtimeEventTypeResponseDone {
 					realtimeUsage := realtimeEvent.Response.Usage
 					if realtimeUsage != nil {
+						usageMu.Lock()
 						usage.TotalTokens += realtimeUsage.TotalTokens
 						usage.InputTokens += realtimeUsage.InputTokens
 						usage.OutputTokens += realtimeUsage.OutputTokens
@@ -133,15 +139,15 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 						usage.InputTokenDetails.TextTokens += realtimeUsage.InputTokenDetails.TextTokens
 						usage.OutputTokenDetails.AudioTokens += realtimeUsage.OutputTokenDetails.AudioTokens
 						usage.OutputTokenDetails.TextTokens += realtimeUsage.OutputTokenDetails.TextTokens
-						err := preConsumeUsage(c, info, usage, sumUsage)
-						if err != nil {
-							errChan <- fmt.Errorf("error consume usage: %v", err)
-							return
-						}
-						// 本次计费完成，清除
+						snapshot := usage
 						usage = &dto.RealtimeUsage{}
-
 						localUsage = &dto.RealtimeUsage{}
+						usageMu.Unlock()
+						commitAfterDelivery = func() error {
+							return commitRealtimeUsageLocked(true, snapshot, sumUsage, &usageMu, func() error {
+								return preConsumeUsage(c, info, snapshot, sumUsage, &usageMu)
+							})
+						}
 					} else {
 						textToken, audioToken, err := service.CountTokenRealtime(info, *realtimeEvent, info.UpstreamModelName)
 						if err != nil {
@@ -149,19 +155,20 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 							return
 						}
 						logger.LogInfo(c, fmt.Sprintf("type: %s, textToken: %d, audioToken: %d", realtimeEvent.Type, textToken, audioToken))
+						usageMu.Lock()
 						localUsage.TotalTokens += textToken + audioToken
 						info.IsFirstRequest = false
 						localUsage.InputTokens += textToken + audioToken
 						localUsage.InputTokenDetails.TextTokens += textToken
 						localUsage.InputTokenDetails.AudioTokens += audioToken
-						err = preConsumeUsage(c, info, localUsage, sumUsage)
-						if err != nil {
-							errChan <- fmt.Errorf("error consume usage: %v", err)
-							return
-						}
-						// 本次计费完成，清除
+						snapshot := localUsage
 						localUsage = &dto.RealtimeUsage{}
-						// print now usage
+						usageMu.Unlock()
+						commitAfterDelivery = func() error {
+							return commitRealtimeUsageLocked(true, snapshot, sumUsage, &usageMu, func() error {
+								return preConsumeUsage(c, info, snapshot, sumUsage, &usageMu)
+							})
+						}
 					}
 					logger.LogInfo(c, fmt.Sprintf("realtime streaming sumUsage: %v", sumUsage))
 					logger.LogInfo(c, fmt.Sprintf("realtime streaming localUsage: %v", localUsage))
@@ -181,16 +188,30 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 						return
 					}
 					logger.LogInfo(c, fmt.Sprintf("type: %s, textToken: %d, audioToken: %d", realtimeEvent.Type, textToken, audioToken))
-					localUsage.TotalTokens += textToken + audioToken
-					localUsage.OutputTokens += textToken + audioToken
-					localUsage.OutputTokenDetails.TextTokens += textToken
-					localUsage.OutputTokenDetails.AudioTokens += audioToken
+					pendingText := textToken
+					pendingAudio := audioToken
+					commitAfterDelivery = func() error {
+						usageMu.Lock()
+						localUsage.TotalTokens += pendingText + pendingAudio
+						localUsage.OutputTokens += pendingText + pendingAudio
+						localUsage.OutputTokenDetails.TextTokens += pendingText
+						localUsage.OutputTokenDetails.AudioTokens += pendingAudio
+						usageMu.Unlock()
+						return nil
+					}
 				}
 
 				err = helper.WssString(c, clientConn, string(message))
 				if err != nil {
 					errChan <- fmt.Errorf("error writing to client: %v", err)
 					return
+				}
+				info.MarkClientStreamWrite()
+				if commitAfterDelivery != nil {
+					if err = commitAfterDelivery(); err != nil {
+						errChan <- fmt.Errorf("error consume usage: %v", err)
+						return
+					}
 				}
 
 				select {
@@ -210,20 +231,42 @@ func OpenaiRealtimeHandler(c *gin.Context, info *relaycommon.RelayInfo) (*types.
 	case <-c.Done():
 	}
 
-	if usage.TotalTokens != 0 {
-		_ = preConsumeUsage(c, info, usage, sumUsage)
+	usageMu.Lock()
+	pendingUsage := usage
+	pendingLocal := localUsage
+	usage = &dto.RealtimeUsage{}
+	localUsage = &dto.RealtimeUsage{}
+	usageMu.Unlock()
+	if err := finalizeRealtimeUsage(pendingUsage, pendingLocal, sumUsage, &usageMu, func(item *dto.RealtimeUsage) error {
+		return preConsumeUsage(c, info, item, sumUsage, &usageMu)
+	}); err != nil {
+		logger.LogError(c, fmt.Sprintf("realtime final reserve failed: %v", err))
 	}
-
-	if localUsage.TotalTokens != 0 {
-		_ = preConsumeUsage(c, info, localUsage, sumUsage)
-	}
-
-	// check usage total tokens, if 0, use local usage
 
 	return nil, sumUsage
 }
 
-func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.RealtimeUsage, totalUsage *dto.RealtimeUsage) error {
+// finalizeRealtimeUsage flushes whatever was still unbilled when the socket ended.
+func finalizeRealtimeUsage(usage *dto.RealtimeUsage, local *dto.RealtimeUsage, sum *dto.RealtimeUsage, mu *sync.Mutex, reserve func(*dto.RealtimeUsage) error) error {
+	var first error
+	for _, item := range []*dto.RealtimeUsage{usage, local} {
+		if item == nil || item.TotalTokens == 0 {
+			continue
+		}
+		err := commitRealtimeUsageLocked(true, item, sum, mu, func() error {
+			if reserve == nil {
+				return nil
+			}
+			return reserve(item)
+		})
+		if err != nil && first == nil {
+			first = err
+		}
+	}
+	return first
+}
+
+func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.RealtimeUsage, totalUsage *dto.RealtimeUsage, mu *sync.Mutex) error {
 	if usage == nil || totalUsage == nil {
 		return fmt.Errorf("invalid usage pointer")
 	}
@@ -231,14 +274,50 @@ func preConsumeUsage(ctx *gin.Context, info *relaycommon.RelayInfo, usage *dto.R
 	if err := service.PreWssConsumeQuota(ctx, info, usage); err != nil {
 		return err
 	}
-
-	totalUsage.TotalTokens += usage.TotalTokens
-	totalUsage.InputTokens += usage.InputTokens
-	totalUsage.OutputTokens += usage.OutputTokens
-	totalUsage.InputTokenDetails.CachedTokens += usage.InputTokenDetails.CachedTokens
-	totalUsage.InputTokenDetails.TextTokens += usage.InputTokenDetails.TextTokens
-	totalUsage.InputTokenDetails.AudioTokens += usage.InputTokenDetails.AudioTokens
-	totalUsage.OutputTokenDetails.TextTokens += usage.OutputTokenDetails.TextTokens
-	totalUsage.OutputTokenDetails.AudioTokens += usage.OutputTokenDetails.AudioTokens
+	addRealtimeUsageLocked(mu, totalUsage, usage)
 	return nil
+}
+
+// commitRealtimeUsageAfterDelivery bills a frame only after the client has it.
+// A failed reserve still adds the usage so the final settlement can charge the delivered frame.
+// A failed client write must not call this.
+func commitRealtimeUsageAfterDelivery(delivered bool, usage *dto.RealtimeUsage, total *dto.RealtimeUsage, reserve func() error) error {
+	return commitRealtimeUsageLocked(delivered, usage, total, nil, reserve)
+}
+
+func commitRealtimeUsageLocked(delivered bool, usage *dto.RealtimeUsage, total *dto.RealtimeUsage, mu *sync.Mutex, reserve func() error) error {
+	if !delivered || usage == nil {
+		return nil
+	}
+	if reserve != nil {
+		if err := reserve(); err != nil {
+			addRealtimeUsageLocked(mu, total, usage)
+			return err
+		}
+		return nil
+	}
+	addRealtimeUsageLocked(mu, total, usage)
+	return nil
+}
+
+func addRealtimeUsageLocked(mu *sync.Mutex, total *dto.RealtimeUsage, usage *dto.RealtimeUsage) {
+	if mu != nil {
+		mu.Lock()
+		defer mu.Unlock()
+	}
+	addRealtimeUsage(total, usage)
+}
+
+func addRealtimeUsage(total *dto.RealtimeUsage, usage *dto.RealtimeUsage) {
+	if total == nil || usage == nil {
+		return
+	}
+	total.TotalTokens += usage.TotalTokens
+	total.InputTokens += usage.InputTokens
+	total.OutputTokens += usage.OutputTokens
+	total.InputTokenDetails.CachedTokens += usage.InputTokenDetails.CachedTokens
+	total.InputTokenDetails.TextTokens += usage.InputTokenDetails.TextTokens
+	total.InputTokenDetails.AudioTokens += usage.InputTokenDetails.AudioTokens
+	total.OutputTokenDetails.TextTokens += usage.OutputTokenDetails.TextTokens
+	total.OutputTokenDetails.AudioTokens += usage.OutputTokenDetails.AudioTokens
 }

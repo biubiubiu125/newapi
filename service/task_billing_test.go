@@ -56,6 +56,8 @@ func TestMain(m *testing.M) {
 		&model.Midjourney{},
 		&model.MidjourneySettlementRecord{},
 		&model.TaskSettlementRecord{},
+		&model.BillingAdjustment{},
+		&model.ConsumptionAudit{},
 		&model.ImageTaskClientTaskIDLock{},
 		&model.User{},
 		&model.UserLoginIdentifier{},
@@ -69,6 +71,7 @@ func TestMain(m *testing.M) {
 		&model.SubscriptionPlan{},
 		&model.UserSubscription{},
 		&model.SubscriptionPreConsumeRecord{},
+		&model.WalletPreConsumeRecord{},
 		&model.SystemTask{},
 		&model.SystemTaskLock{},
 		&model.SystemInstance{},
@@ -92,6 +95,8 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM midjourneys")
 		model.DB.Exec("DELETE FROM midjourney_settlement_records")
 		model.DB.Exec("DELETE FROM task_settlement_records")
+		model.DB.Exec("DELETE FROM billing_adjustments")
+		model.DB.Exec("DELETE FROM consumption_audits")
 		model.DB.Exec("DELETE FROM image_task_client_task_id_locks")
 		model.DB.Exec("DELETE FROM users")
 		model.DB.Exec("DELETE FROM tokens")
@@ -104,6 +109,7 @@ func truncate(t *testing.T) {
 		model.DB.Exec("DELETE FROM subscription_plans")
 		model.DB.Exec("DELETE FROM user_subscriptions")
 		model.DB.Exec("DELETE FROM subscription_pre_consume_records")
+		model.DB.Exec("DELETE FROM wallet_pre_consume_records")
 		model.DB.Exec("DELETE FROM system_task_locks")
 		model.DB.Exec("DELETE FROM system_tasks")
 		model.DB.Exec("DELETE FROM system_instances")
@@ -979,14 +985,14 @@ func TestApplyImageTaskSettlementAtomicCommitsSubscriptionDelta(t *testing.T) {
 	require.Equal(t, 1, requestCount)
 }
 
-func TestApplyImageTaskSettlementAtomicRollsBackWhenSubscriptionDeltaFails(t *testing.T) {
+func TestApplyImageTaskSettlementAtomicAllowsDeliveredSubscriptionOverdraft(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
 
 	const userID, tokenID, channelID, subscriptionID = 10851, 10852, 10853, 10854
 	const preConsumedQuota, actualQuota = 2000, 4000
 	seedUser(t, userID, 0)
-	seedToken(t, tokenID, userID, "sk-image-atomic-subscription-rollback", 8000)
+	seedToken(t, tokenID, userID, "sk-image-atomic-subscription-overdraft", 100)
 	seedChannel(t, channelID)
 	seedSubscription(t, subscriptionID, userID, 100000, 99000)
 	task := makeTask(userID, channelID, preConsumedQuota, tokenID, BillingSourceSubscription, subscriptionID)
@@ -1002,13 +1008,76 @@ func TestApplyImageTaskSettlementAtomicRollsBackWhenSubscriptionDeltaFails(t *te
 	}).Error)
 
 	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{ActualQuota: actualQuota})
-	require.ErrorContains(t, err, "subscription used exceeds total")
-	require.False(t, applied)
-	require.EqualValues(t, int64(99000), getSubscriptionUsed(t, subscriptionID))
-	require.EqualValues(t, 8000, getTokenRemainQuota(t, tokenID))
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.EqualValues(t, int64(101000), getSubscriptionUsed(t, subscriptionID))
+	require.EqualValues(t, 100-(actualQuota-preConsumedQuota), getTokenRemainQuota(t, tokenID))
 	usedQuota, requestCount := getUserUsageCounters(t, userID)
-	require.Zero(t, usedQuota)
-	require.Zero(t, requestCount)
+	require.EqualValues(t, actualQuota, usedQuota)
+	require.Equal(t, 1, requestCount)
+}
+
+func TestApplyImageTaskSettlementAtomicAllowsDeliveredWalletOverdraft(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 10861, 10862, 10863
+	const preConsumedQuota, actualQuota = 2000, 3000
+	seedUser(t, userID, 0)
+	seedToken(t, tokenID, userID, "sk-image-atomic-wallet-overdraft", 100)
+	seedChannel(t, channelID)
+	task := makeTask(userID, channelID, preConsumedQuota, tokenID, BillingSourceWallet, 0)
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+
+	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{ActualQuota: actualQuota})
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.EqualValues(t, -(actualQuota - preConsumedQuota), getUserQuota(t, userID))
+	require.EqualValues(t, 100-(actualQuota-preConsumedQuota), getTokenRemainQuota(t, tokenID))
+}
+
+func TestApplyImageTaskSettlementAtomic_SubscriptionAfterResetAllowsOverdraft(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID, subID = 10871, 10872, 10873, 10874
+	const preConsumed, actualQuota = 2000, 2000
+	consumedAt := time.Now().Unix() - 3600
+
+	seedUser(t, userID, 0)
+	seedToken(t, tokenID, userID, "sk-sub-reset-overdraft", 5000)
+	seedChannel(t, channelID)
+	seedSubscription(t, subID, userID, 1500, 0)
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", subID).Update("last_reset_time", consumedAt+10).Error)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceSubscription, subID)
+	task.TaskID = "task_sub_reset_overdraft"
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	task.SubmitTime = consumedAt
+	task.CreatedAt = consumedAt
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+
+	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{ActualQuota: actualQuota})
+	require.NoError(t, err)
+	require.True(t, applied)
+	require.EqualValues(t, int64(actualQuota), getSubscriptionUsed(t, subID))
 }
 
 func TestTaskPollingPlatformOrderPrioritizesImage(t *testing.T) {
@@ -1163,6 +1232,108 @@ func TestRefundMidjourneyTaskQuotaFinalizesAppliedRecordWithoutDoubleRefund(t *t
 	require.EqualValues(t, 25, *record.PreConsumedQuota)
 }
 
+func TestRefundMidjourneyTaskQuotaRetriesWhenRefundLogFailsAfterMoneyIsRestored(t *testing.T) {
+	truncate(t)
+	useBrokenLogDB(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID = 91021, 91022, 91023
+	require.NoError(t, model.DB.Create(&model.User{
+		Id:        userID,
+		Username:  "mj-refund-retry",
+		Quota:     75,
+		UsedQuota: 25,
+		Status:    common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Channel{Id: channelID, Name: "mj-retry", UsedQuota: 25}).Error)
+	require.NoError(t, model.DB.Create(&model.Token{
+		Id:          tokenID,
+		UserId:      userID,
+		Key:         "mj-refund-retry-token",
+		Name:        "mj-refund-retry-token",
+		RemainQuota: 75,
+		UsedQuota:   25,
+		Status:      common.TokenStatusEnabled,
+	}).Error)
+	task := &model.Midjourney{
+		UserId:     userID,
+		Action:     constant.MjActionImagine,
+		MjId:       "mj-refund-log-retry",
+		Status:     "FAILURE",
+		Progress:   "100%",
+		ChannelId:  channelID,
+		Quota:      25,
+		TokenId:    tokenID,
+		Group:      "default",
+		SubmitTime: 1710000000,
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	err := RefundMidjourneyTaskQuota(ctx, task, "upstream failed")
+	require.Error(t, err)
+
+	var user model.User
+	require.NoError(t, model.DB.Select("quota", "used_quota").First(&user, userID).Error)
+	require.EqualValues(t, 75, user.Quota)
+	require.EqualValues(t, 25, user.UsedQuota)
+	var reloaded model.Midjourney
+	require.NoError(t, model.DB.First(&reloaded, task.Id).Error)
+	require.EqualValues(t, 25, reloaded.Quota)
+	require.NotEqual(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+	var record model.MidjourneySettlementRecord
+	require.NoError(t, model.DB.Where("midjourney_id = ?", task.Id).First(&record).Error)
+	require.Equal(t, model.TaskSettlementRecordStatusPrepared, record.Status)
+
+	model.LOG_DB = model.DB
+	task.Quota = reloaded.Quota
+	task.SettlementStatus = reloaded.SettlementStatus
+	require.NoError(t, RefundMidjourneyTaskQuota(ctx, task, "upstream failed"))
+	require.NoError(t, model.DB.Select("quota", "used_quota").First(&user, userID).Error)
+	require.EqualValues(t, 100, user.Quota)
+	require.Zero(t, user.UsedQuota)
+	var token model.Token
+	require.NoError(t, model.DB.Select("remain_quota", "used_quota").First(&token, tokenID).Error)
+	require.EqualValues(t, 100, token.RemainQuota)
+	require.Zero(t, token.UsedQuota)
+}
+
+func TestAdjustMidjourneyFundingReDebitAllowsWalletOverdraft(t *testing.T) {
+	truncate(t)
+	const userID = 91031
+	require.NoError(t, model.DB.Create(&model.User{
+		Id:       userID,
+		Username: "mj-overdraft",
+		Quota:    0,
+		Status:   common.UserStatusEnabled,
+	}).Error)
+	task := &model.Midjourney{UserId: userID, Quota: 40}
+
+	require.NoError(t, adjustMidjourneyFunding(task, 40))
+
+	require.EqualValues(t, -40, getUserQuota(t, userID))
+}
+
+func TestAdjustMidjourneySubscriptionReDebitAllowsOverdraft(t *testing.T) {
+	truncate(t)
+	const userID, subscriptionID = 91041, 91042
+	require.NoError(t, model.DB.Create(&model.User{
+		Id: userID, Username: "mj-sub-overdraft", Status: common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.SubscriptionPlan{Id: 91043, Title: "mj-sub-overdraft", PriceAmount: 1}).Error)
+	seedSubscription(t, subscriptionID, userID, 100, 90)
+	task := &model.Midjourney{
+		UserId:                 userID,
+		Quota:                  40,
+		BillingSource:          BillingSourceSubscription,
+		SubscriptionId:         subscriptionID,
+		SubscriptionConsumedAt: time.Now().Unix(),
+	}
+
+	require.NoError(t, adjustMidjourneyFunding(task, 40))
+
+	require.EqualValues(t, 130, getSubscriptionUsed(t, subscriptionID))
+}
+
 func TestRefundMidjourneyTaskQuotaSkipsFreshApplyingRecord(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
@@ -1238,6 +1409,72 @@ func TestRefundMidjourneyTaskQuotaRejectsAppliedNonRefundRecordWhenQuotaIsZero(t
 	var reloaded model.Midjourney
 	require.NoError(t, model.DB.First(&reloaded, task.Id).Error)
 	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
+}
+
+func TestRefundMidjourneyTaskQuota_SubscriptionAfterResetKeepsNewUsage(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+	const userID, tokenID, channelID, subscriptionID = 9911, 9912, 9913, 9914
+	consumedAt := time.Now().Unix() - 3600
+	require.NoError(t, model.DB.Create(&model.User{
+		Id: userID, Username: "mj-reset-refund", Quota: 0, UsedQuota: 1000, Status: common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Channel{Id: channelID, Name: "mj-reset", UsedQuota: 1000}).Error)
+	require.NoError(t, model.DB.Create(&model.Token{
+		Id: tokenID, UserId: userID, Key: "mj-reset-refund-token", Name: "mj-reset-refund-token",
+		RemainQuota: 5000, UsedQuota: 1000, Status: common.TokenStatusEnabled,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.SubscriptionPlan{Id: 9915, Title: "mj-reset", PriceAmount: 1}).Error)
+	seedSubscription(t, subscriptionID, userID, 100000, 400)
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", subscriptionID).Update("last_reset_time", consumedAt+10).Error)
+	task := &model.Midjourney{
+		UserId: userID, Action: constant.MjActionImagine, MjId: "mj-reset-refund",
+		Status: "FAILURE", Progress: "100%", ChannelId: channelID, Quota: 1000,
+		TokenId: tokenID, Group: "default", SubmitTime: consumedAt * 1000,
+		BillingSource: BillingSourceSubscription, SubscriptionId: subscriptionID,
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	require.NoError(t, RefundMidjourneyTaskQuota(ctx, task, "upstream failed"))
+
+	require.EqualValues(t, 400, getSubscriptionUsed(t, subscriptionID))
+	require.EqualValues(t, 6000, getTokenRemainQuota(t, tokenID))
+	var user model.User
+	require.NoError(t, model.DB.Select("quota", "used_quota").First(&user, userID).Error)
+	require.Zero(t, user.Quota)
+	require.Zero(t, user.UsedQuota)
+}
+
+func TestChargeMidjourneySubscriptionAfterResetChargesOnce(t *testing.T) {
+	truncate(t)
+	const userID, tokenID, channelID, subscriptionID = 9921, 9922, 9923, 9924
+	consumedAt := time.Now().Unix() - 3600
+	require.NoError(t, model.DB.Create(&model.User{
+		Id: userID, Username: "mj-reset-success", Quota: 0, UsedQuota: 1000, Status: common.UserStatusEnabled,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.Channel{Id: channelID, Name: "mj-success", UsedQuota: 1000}).Error)
+	require.NoError(t, model.DB.Create(&model.Token{
+		Id: tokenID, UserId: userID, Key: "mj-reset-success-token", Name: "mj-reset-success-token",
+		RemainQuota: 5000, UsedQuota: 1000, Status: common.TokenStatusEnabled,
+	}).Error)
+	require.NoError(t, model.DB.Create(&model.SubscriptionPlan{Id: 9925, Title: "mj-success", PriceAmount: 1}).Error)
+	seedSubscription(t, subscriptionID, userID, 100000, 400)
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", subscriptionID).Update("last_reset_time", consumedAt+10).Error)
+	task := &model.Midjourney{
+		UserId: userID, Action: constant.MjActionImagine, MjId: "mj-reset-success",
+		Status: "SUCCESS", Progress: "100%", ChannelId: channelID, Quota: 1000,
+		TokenId: tokenID, Group: "default", SubmitTime: consumedAt * 1000,
+		BillingSource: BillingSourceSubscription, SubscriptionId: subscriptionID,
+	}
+	require.NoError(t, model.DB.Create(task).Error)
+
+	require.NoError(t, ChargeMidjourneySubscriptionAfterReset(task))
+	require.NoError(t, ChargeMidjourneySubscriptionAfterReset(task))
+	require.EqualValues(t, 1400, getSubscriptionUsed(t, subscriptionID))
+	require.EqualValues(t, 5000, getTokenRemainQuota(t, tokenID))
+	var user model.User
+	require.NoError(t, model.DB.Select("used_quota").First(&user, userID).Error)
+	require.EqualValues(t, 1000, user.UsedQuota)
 }
 
 func TestRunTaskPollingOnceRunsImageTasksWithoutGenericAdaptor(t *testing.T) {
@@ -1753,7 +1990,7 @@ func TestLogTaskConsumptionRollsBackZeroQuotaRequestCountWhenConsumeLogFails(t *
 	require.EqualValues(t, 0, usage.RequestCount)
 }
 
-func TestLogTaskConsumptionRollsBackSettlementWhenConsumeLogFails(t *testing.T) {
+func TestLogTaskConsumptionKeepsSettlementWhenConsumeLogFails(t *testing.T) {
 	truncate(t)
 	useBrokenLogDB(t)
 
@@ -1775,6 +2012,7 @@ func TestLogTaskConsumptionRollsBackSettlementWhenConsumeLogFails(t *testing.T) 
 		UserId:          userID,
 		TokenId:         tokenID,
 		TokenKey:        "task-keep-settlement-token",
+		RequestId:       "req-task-keep-log",
 		OriginModelName: "gpt-4o",
 		UsingGroup:      "default",
 		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: channelID},
@@ -1802,8 +2040,84 @@ func TestLogTaskConsumptionRollsBackSettlementWhenConsumeLogFails(t *testing.T) 
 	err := LogTaskConsumption(ctx, info)
 
 	require.Error(t, err)
+	require.True(t, DeliveredConsumeLogKept(err))
 	require.Contains(t, err.Error(), "record consume log failed")
-	require.EqualValues(t, 10000, getUserQuota(t, userID))
+	require.EqualValues(t, 10000-preConsumed, getUserQuota(t, userID))
+	var audit model.ConsumptionAudit
+	require.NoError(t, model.DB.Where("idempotency_key = ?", "audit:req-task-keep-log").First(&audit).Error)
+	require.Equal(t, model.ConsumptionAuditUsageApplied, audit.Status)
+	var user model.User
+	require.NoError(t, model.DB.Select("used_quota", "request_count").First(&user, userID).Error)
+	require.EqualValues(t, preConsumed, user.UsedQuota)
+	require.Equal(t, 1, user.RequestCount)
+
+	model.LOG_DB = model.DB
+	require.NoError(t, model.RecoverPendingConsumptionAudits(10))
+	require.NoError(t, model.RecoverPendingConsumptionAudits(10))
+	var logCount int64
+	require.NoError(t, model.DB.Model(&model.Log{}).Where("user_id = ? AND type = ?", userID, model.LogTypeConsume).Count(&logCount).Error)
+	require.EqualValues(t, 1, logCount)
+	require.EqualValues(t, 10000-preConsumed, getUserQuota(t, userID))
+	require.NoError(t, model.DB.Select("used_quota", "request_count").First(&user, userID).Error)
+	require.EqualValues(t, preConsumed, user.UsedQuota)
+	require.Equal(t, 1, user.RequestCount)
+}
+
+func TestLogTaskConsumptionKeepsSettlementWhenUsageCounterUpdateFails(t *testing.T) {
+	truncate(t)
+
+	const userID = 9130
+	const tokenID = 9131
+	const missingChannelID = 9132
+	const preConsumed = 10
+	seedUser(t, userID, 10000-preConsumed)
+	seedToken(t, tokenID, userID, "task-keep-usage-token", 1000-preConsumed)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/v1/tasks/log", nil)
+	ctx.Set("token_name", "task-keep-usage")
+	ctx.Set(ContextKeySettlementApplied(), true)
+
+	info := &relaycommon.RelayInfo{
+		UserId:          userID,
+		TokenId:         tokenID,
+		TokenKey:        "task-keep-usage-token",
+		RequestId:       "req-task-keep-usage",
+		OriginModelName: "gpt-4o",
+		UsingGroup:      "default",
+		ChannelMeta:     &relaycommon.ChannelMeta{ChannelId: missingChannelID},
+		PriceData: types.PriceData{
+			Quota:      preConsumed,
+			ModelPrice: 0.1,
+			GroupRatioInfo: types.GroupRatioInfo{
+				GroupRatio: 1,
+			},
+		},
+		TaskRelayInfo: &relaycommon.TaskRelayInfo{
+			Action:       constant.TaskActionImageGeneration,
+			PublicTaskID: "task_keep_usage",
+		},
+	}
+	info.Billing = &BillingSession{
+		relayInfo:        info,
+		funding:          &WalletFunding{userId: userID, consumed: preConsumed},
+		preConsumedQuota: preConsumed,
+		tokenConsumed:    preConsumed,
+		settled:          true,
+		fundingSettled:   true,
+	}
+
+	err := LogTaskConsumption(ctx, info)
+
+	require.Error(t, err)
+	require.True(t, DeliveredConsumeLogKept(err))
+	require.Contains(t, err.Error(), "usage counter update failed")
+	require.EqualValues(t, 10000-preConsumed, getUserQuota(t, userID))
+	require.EqualValues(t, 1000-preConsumed, getTokenRemainQuota(t, tokenID))
+	var audit model.ConsumptionAudit
+	require.NoError(t, model.DB.Where("idempotency_key = ?", "audit:req-task-keep-usage").First(&audit).Error)
+	require.Equal(t, model.ConsumptionAuditPending, audit.Status)
 }
 
 func TestLogTaskConsumptionRollsBackUsageWhenConsumeLogFails(t *testing.T) {
@@ -4904,7 +5218,7 @@ func TestRecalculate_PositiveDeltaRollsBackWhenTaskQuotaUpdateFails(t *testing.T
 	assert.Equal(t, int64(0), countLogs(t))
 }
 
-func TestRecalculate_PositiveDeltaRollsBackFundingWhenTokenAdjustmentFails(t *testing.T) {
+func TestRecalculate_PositiveDeltaAllowsTokenOverdraftWhenRemainIsZero(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
 
@@ -4913,18 +5227,17 @@ func TestRecalculate_PositiveDeltaRollsBackFundingWhenTokenAdjustmentFails(t *te
 	const actualQuota = 3000
 
 	seedUser(t, userID, initQuota)
-	seedToken(t, tokenID, userID, "sk-recalc-token-fail", 0)
+	seedToken(t, tokenID, userID, "sk-recalc-token-overdraft", 0)
 	seedChannel(t, channelID)
 
 	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceWallet, 0)
 	require.NoError(t, model.DB.Create(task).Error)
 
-	require.Error(t, RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment"))
+	require.NoError(t, RecalculateTaskQuota(ctx, task, actualQuota, "adaptor adjustment"))
 
-	assert.EqualValues(t, initQuota, getUserQuota(t, userID))
-	assert.EqualValues(t, 0, getTokenRemainQuota(t, tokenID))
-	assert.EqualValues(t, preConsumed, task.Quota)
-	assert.Equal(t, int64(0), countLogs(t))
+	assert.EqualValues(t, initQuota-(actualQuota-preConsumed), getUserQuota(t, userID))
+	assert.EqualValues(t, -(actualQuota - preConsumed), getTokenRemainQuota(t, tokenID))
+	assert.EqualValues(t, actualQuota, task.Quota)
 }
 
 func TestRecalculate_NegativeDelta(t *testing.T) {
@@ -5714,7 +6027,7 @@ func TestSettle_NonPerCallBilling_AppliesAdaptorAdjustment(t *testing.T) {
 	assert.Equal(t, model.LogTypeRefund, log.Type)
 }
 
-func TestSettle_NonPerCallBilling_MarksReviewWhenAdaptorSettlementFails(t *testing.T) {
+func TestSettle_NonPerCallBilling_AllowsWalletOverdraftWhenBalanceIsShort(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
 
@@ -5738,22 +6051,13 @@ func TestSettle_NonPerCallBilling_MarksReviewWhenAdaptorSettlementFails(t *testi
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	require.EqualValues(t, preConsumed, reloaded.Quota)
-	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
-	require.EqualValues(t, adaptorQuota, reloaded.PrivateData.SettlementAttemptQuota)
-	require.NotEmpty(t, reloaded.PrivateData.SettlementError)
-	require.NotEmpty(t, reloaded.FailReason)
-	require.Contains(t, reloaded.FailReason, "billing settlement requires manual review")
-	record, exists, err := model.GetTaskSettlementRecord(task.ID)
-	require.NoError(t, err)
-	require.True(t, exists)
-	require.Equal(t, model.TaskSettlementRecordStatusReview, record.Status)
-	require.Contains(t, record.Error, "task quota settlement funding adjustment failed")
-	require.EqualValues(t, initQuota, getUserQuota(t, userID))
-	require.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, adaptorQuota, reloaded.Quota)
+	require.Equal(t, model.TaskSettlementStatusSettled, reloaded.SettlementStatus)
+	require.EqualValues(t, initQuota-(adaptorQuota-preConsumed), getUserQuota(t, userID))
+	require.EqualValues(t, tokenRemain-(adaptorQuota-preConsumed), getTokenRemainQuota(t, tokenID))
 }
 
-func TestSettle_NonPerCallBilling_MarksReviewWhenTokenSettlementFails(t *testing.T) {
+func TestSettle_NonPerCallBilling_AllowsTokenOverdraftWhenRemainIsZero(t *testing.T) {
 	truncate(t)
 	ctx := context.Background()
 	ratio_setting.InitRatioSettings()
@@ -5781,19 +6085,10 @@ func TestSettle_NonPerCallBilling_MarksReviewWhenTokenSettlementFails(t *testing
 
 	var reloaded model.Task
 	require.NoError(t, model.DB.First(&reloaded, task.ID).Error)
-	require.EqualValues(t, preConsumed, reloaded.Quota)
-	require.Equal(t, model.TaskSettlementStatusReview, reloaded.SettlementStatus)
-	require.EqualValues(t, expectedActualQuota, reloaded.PrivateData.SettlementAttemptQuota)
-	require.NotEmpty(t, reloaded.PrivateData.SettlementError)
-	require.NotEmpty(t, reloaded.FailReason)
-	require.Contains(t, reloaded.FailReason, "billing settlement requires manual review")
-	record, exists, err := model.GetTaskSettlementRecord(task.ID)
-	require.NoError(t, err)
-	require.True(t, exists)
-	require.Equal(t, model.TaskSettlementRecordStatusReview, record.Status)
-	require.Contains(t, record.Error, "task quota settlement token adjustment failed")
-	require.EqualValues(t, initQuota, getUserQuota(t, userID))
-	require.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+	require.EqualValues(t, expectedActualQuota, reloaded.Quota)
+	require.Equal(t, model.TaskSettlementStatusSettled, reloaded.SettlementStatus)
+	require.EqualValues(t, initQuota-(expectedActualQuota-preConsumed), getUserQuota(t, userID))
+	require.EqualValues(t, tokenRemain-(expectedActualQuota-preConsumed), getTokenRemainQuota(t, tokenID))
 }
 
 func TestSettle_NonPerCallBilling_FloorsPositiveTokenSettlementToOne(t *testing.T) {
@@ -6362,4 +6657,135 @@ func TestRetryTaskSettlementReviewFinalizesAppliedEvidenceWithoutSecondCharge(t 
 	require.NoError(t, err)
 	require.True(t, exists)
 	assert.Equal(t, model.TaskSettlementRecordStatusApplied, record.Status)
+}
+
+func TestRefundTaskQuota_SubscriptionAfterResetKeepsNewUsage(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID, subID = 9801, 9802, 9803, 9804
+	const preConsumed = 1000
+	const newPeriodUsed int64 = 400
+	const tokenRemain = 5000
+	consumedAt := time.Now().Unix() - 3600
+
+	seedUser(t, userID, 0)
+	seedToken(t, tokenID, userID, "sk-sub-reset-refund", tokenRemain)
+	seedChannel(t, channelID)
+	seedSubscription(t, subID, userID, 100000, newPeriodUsed)
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", subID).Update("last_reset_time", consumedAt+10).Error)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceSubscription, subID)
+	task.TaskID = "task_sub_reset_refund"
+	task.SubmitTime = consumedAt
+	task.CreatedAt = consumedAt
+	require.NoError(t, model.DB.Create(task).Error)
+
+	require.NoError(t, RefundTaskQuota(ctx, task, "subscription task failed after reset"))
+
+	assert.EqualValues(t, newPeriodUsed, getSubscriptionUsed(t, subID))
+	assert.EqualValues(t, tokenRemain+preConsumed, getTokenRemainQuota(t, tokenID))
+}
+
+func TestRecalculateTaskQuota_SubscriptionAfterResetChargesActual(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID, subID = 9811, 9812, 9813, 9814
+	const preConsumed, actualQuota = 1000, 1000
+	const newPeriodUsed int64 = 400
+	const tokenRemain = 5000
+	consumedAt := time.Now().Unix() - 3600
+
+	seedUser(t, userID, 0)
+	seedToken(t, tokenID, userID, "sk-sub-reset-equal", tokenRemain)
+	seedChannel(t, channelID)
+	seedSubscription(t, subID, userID, 100000, newPeriodUsed)
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", subID).Update("last_reset_time", consumedAt+10).Error)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceSubscription, subID)
+	task.TaskID = "task_sub_reset_equal"
+	task.Status = model.TaskStatusSuccess
+	task.SubmitTime = consumedAt
+	task.CreatedAt = consumedAt
+	require.NoError(t, model.DB.Create(task).Error)
+
+	require.NoError(t, RecalculateTaskQuota(ctx, task, actualQuota, "subscription settled after reset"))
+	require.NoError(t, RecalculateTaskQuota(ctx, task, actualQuota, "subscription settled after reset"))
+
+	assert.EqualValues(t, newPeriodUsed+int64(actualQuota), getSubscriptionUsed(t, subID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
+}
+
+func TestRecalculateTaskQuota_SubscriptionAfterResetDownwardChargesActual(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID, subID = 9821, 9822, 9823, 9824
+	const preConsumed, actualQuota = 1000, 200
+	const newPeriodUsed int64 = 400
+	const tokenRemain = 5000
+	consumedAt := time.Now().Unix() - 3600
+
+	seedUser(t, userID, 0)
+	seedToken(t, tokenID, userID, "sk-sub-reset-down", tokenRemain)
+	seedChannel(t, channelID)
+	seedSubscription(t, subID, userID, 100000, newPeriodUsed)
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", subID).Update("last_reset_time", consumedAt+10).Error)
+	seedChargedAccounting(t, userID, channelID, tokenID, preConsumed, 1)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceSubscription, subID)
+	task.TaskID = "task_sub_reset_down"
+	task.Status = model.TaskStatusSuccess
+	task.SubmitTime = consumedAt
+	task.CreatedAt = consumedAt
+	require.NoError(t, model.DB.Create(task).Error)
+
+	require.NoError(t, RecalculateTaskQuota(ctx, task, actualQuota, "subscription downward after reset"))
+	require.NoError(t, RecalculateTaskQuota(ctx, task, actualQuota, "subscription downward after reset"))
+
+	assert.EqualValues(t, newPeriodUsed+int64(actualQuota), getSubscriptionUsed(t, subID))
+	assert.EqualValues(t, tokenRemain+(preConsumed-actualQuota), getTokenRemainQuota(t, tokenID))
+}
+
+func TestApplyImageTaskSettlementAtomic_SubscriptionAfterResetChargesActual(t *testing.T) {
+	truncate(t)
+	ctx := context.Background()
+
+	const userID, tokenID, channelID, subID = 9831, 9832, 9833, 9834
+	const preConsumed, actualQuota = 1000, 1000
+	const newPeriodUsed int64 = 400
+	const tokenRemain = 5000
+	consumedAt := time.Now().Unix() - 3600
+
+	seedUser(t, userID, 0)
+	seedToken(t, tokenID, userID, "sk-sub-reset-image", tokenRemain)
+	seedChannel(t, channelID)
+	seedSubscription(t, subID, userID, 100000, newPeriodUsed)
+	require.NoError(t, model.DB.Model(&model.UserSubscription{}).Where("id = ?", subID).Update("last_reset_time", consumedAt+10).Error)
+
+	task := makeTask(userID, channelID, preConsumed, tokenID, BillingSourceSubscription, subID)
+	task.TaskID = "task_sub_reset_image"
+	task.Platform = constant.TaskPlatformImage
+	task.Status = model.TaskStatusSuccess
+	task.SettlementStatus = model.TaskSettlementStatusPending
+	task.SubmitTime = consumedAt
+	task.CreatedAt = consumedAt
+	require.NoError(t, model.DB.Create(task).Error)
+	require.NoError(t, model.DB.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusApplying,
+		Operation:     model.TaskSettlementOperationImageAtomic,
+	}).Error)
+
+	applied, err := ApplyImageTaskSettlementAtomic(ctx, task, ImageTaskAtomicSettlement{
+		ActualQuota: actualQuota,
+		ModelName:   "gpt-image-1",
+		TokenName:   "image-token",
+	})
+	require.NoError(t, err)
+	require.True(t, applied)
+	assert.EqualValues(t, newPeriodUsed+int64(actualQuota), getSubscriptionUsed(t, subID))
+	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 }

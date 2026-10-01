@@ -460,11 +460,24 @@ func TestConvertRequestResponsesToGeminiAppliesResponsesPreprocess(t *testing.T)
 	require.NoError(t, err)
 	geminiReq, ok := result.Value.(*dto.GeminiChatRequest)
 	require.True(t, ok)
-	assert.Empty(t, geminiReq.GetTools())
-	require.Len(t, geminiReq.Contents, 1)
+	require.Len(t, geminiReq.GetTools(), 1)
+	declarations := functionDeclarations(t, geminiReq.GetTools()[0].FunctionDeclarations)
+	require.Len(t, declarations, 1)
+	assert.Equal(t, "apply_patch", declarations[0]["name"])
+	require.Len(t, geminiReq.Contents, 3)
 	assert.Equal(t, "user", geminiReq.Contents[0].Role)
-	require.Len(t, geminiReq.Contents[0].Parts, 1)
 	assert.Equal(t, "next turn", geminiReq.Contents[0].Parts[0].Text)
+	assert.Equal(t, "model", geminiReq.Contents[1].Role)
+	require.NotNil(t, geminiReq.Contents[1].Parts[0].FunctionCall)
+	assert.Equal(t, "apply_patch", geminiReq.Contents[1].Parts[0].FunctionCall.FunctionName)
+	assert.Equal(t, map[string]any{"input": "patch body"}, geminiReq.Contents[1].Parts[0].FunctionCall.Arguments)
+	assert.Equal(t, "user", geminiReq.Contents[2].Role)
+	require.NotNil(t, geminiReq.Contents[2].Parts[0].FunctionResponse)
+	assert.Equal(t, "apply_patch", geminiReq.Contents[2].Parts[0].FunctionResponse.Name)
+	assert.Equal(t, map[string]any{"content": "ok"}, geminiReq.Contents[2].Parts[0].FunctionResponse.Response)
+	require.NotNil(t, geminiReq.Contents[2].Parts[1].FunctionResponse)
+	assert.Equal(t, map[string]any{"content": "legacy custom output"}, geminiReq.Contents[2].Parts[1].FunctionResponse.Response)
+	require.True(t, info.ResponsesTools.IsCustomTool("apply_patch"))
 	assert.Equal(t, ConverterOpenAIResponsesToGemini, result.Converter)
 	assert.Equal(t, RequestConverterQualityFair, result.Quality)
 	assert.Equal(t, []RequestStep{
@@ -915,6 +928,66 @@ func TestConvertRequestRejectsUnregisteredExplicitPath(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "from claude to embedding is not registered")
+}
+
+func TestConvertRequestResponsesToClaudeKeepsCustomToolHistory(t *testing.T) {
+	maxOutputTokens := uint(64)
+	info := &convmeta.Values{}
+	result, err := ConvertRequest(nil, info, types.RelayFormatClaude, &dto.OpenAIResponsesRequest{
+		Model:           "claude-test",
+		MaxOutputTokens: &maxOutputTokens,
+		Input: mustRawMessage(t, []map[string]any{
+			{
+				"type":    "custom_tool_call",
+				"call_id": "call_custom",
+				"name":    "apply_patch",
+				"input":   "patch body",
+			},
+			{
+				"type":    "custom_tool_call_output",
+				"call_id": "call_custom",
+				"output":  "applied",
+			},
+		}),
+		Tools: mustRawMessage(t, []map[string]any{
+			{"type": "custom", "name": "apply_patch", "description": "Apply a patch"},
+		}),
+		ToolChoice: mustRawMessage(t, map[string]any{"type": "custom", "name": "apply_patch"}),
+	})
+	require.NoError(t, err)
+	claudeReq, ok := result.Value.(*dto.ClaudeRequest)
+	require.True(t, ok)
+	tools, ok := claudeReq.Tools.([]any)
+	require.True(t, ok)
+	require.Len(t, tools, 1)
+	tool, ok := tools[0].(*dto.Tool)
+	require.True(t, ok)
+	assert.Equal(t, "apply_patch", tool.Name)
+	assert.Contains(t, tool.Description, "Apply a patch")
+	assert.Equal(t, "string", tool.InputSchema["properties"].(map[string]any)["input"].(map[string]any)["type"])
+	require.GreaterOrEqual(t, len(claudeReq.Messages), 3)
+	parts, ok := claudeReq.Messages[1].Content.([]dto.ClaudeMediaMessage)
+	require.True(t, ok)
+	require.NotEmpty(t, parts)
+	assert.Equal(t, "tool_use", parts[0].Type)
+	assert.Equal(t, "apply_patch", parts[0].Name)
+	assert.Equal(t, map[string]any{"input": "patch body"}, parts[0].Input)
+	resultParts, ok := claudeReq.Messages[2].Content.([]dto.ClaudeMediaMessage)
+	require.True(t, ok)
+	require.NotEmpty(t, resultParts)
+	assert.Equal(t, "tool_result", resultParts[0].Type)
+	assert.Equal(t, "call_custom", resultParts[0].ToolUseId)
+	require.True(t, info.ResponsesTools.IsCustomTool("apply_patch"))
+	assert.False(t, info.ResponsesTools.IsCustomTool("other"))
+}
+
+func functionDeclarations(t *testing.T, value any) []map[string]any {
+	t.Helper()
+	raw, err := kitutil.Marshal(value)
+	require.NoError(t, err)
+	var declarations []map[string]any
+	require.NoError(t, kitutil.Unmarshal(raw, &declarations))
+	return declarations
 }
 
 func mustRawMessage(t *testing.T, value any) []byte {

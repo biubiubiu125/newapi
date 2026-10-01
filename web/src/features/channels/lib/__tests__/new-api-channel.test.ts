@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { describe, test, expect } from 'vitest'
-import { CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_OPTIONS, MODEL_FETCHABLE_TYPES, CHANNEL_TYPE_VLLM, CHANNEL_TYPE_SGLANG } from '../../constants'
+import { CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_OLLAMA, CHANNEL_TYPE_OPTIONS, CHANNEL_TYPE_TASK_PLUGIN, MODEL_FETCHABLE_TYPES, CHANNEL_TYPE_VLLM, CHANNEL_TYPE_SGLANG } from '../../constants'
 import { CHANNEL_FORM_DEFAULT_VALUES, buildSettingJSON, channelFormSchema, transformChannelToFormDefaults, transformFormDataToUpdatePayload, ChannelFormValues, transformFormDataToCreatePayload } from '../channel-form'
 import { getChannelTypeConfig } from '../channel-type-config'
 import { canQueryBalanceChannel, getChannelTypeIcon, getChannelTypeLabel, canTestChannel, getKeyPromptForType } from '../channel-utils'
@@ -140,11 +140,33 @@ describe('New API channel', () => {
 
     assert.equal(result.success, false)
     if (!result.success) {
+      assert.deepEqual(
+        result.error.issues
+          .filter((issue) => issue.path[0] === 'task_plugin_key')
+          .map((issue) => issue.message),
+        ['Task plugin binding is required']
+      )
+    }
+  })
+
+  test('requires a Base URL when a task plugin has no address', () => {
+    const result = channelFormSchema.safeParse({
+      ...CHANNEL_FORM_DEFAULT_VALUES,
+      name: 'Task plugin upstream',
+      type: CHANNEL_TYPE_TASK_PLUGIN,
+      key: 'upstream-secret',
+      models: 'plugin-model',
+      task_plugin_key: 'demo-plugin',
+      base_url: '  ',
+    })
+
+    assert.equal(result.success, false)
+    if (!result.success) {
       assert.equal(
         result.error.issues.some(
           (issue) =>
-            issue.path[0] === 'task_plugin_key' &&
-            issue.message === 'Task plugin binding is required'
+            issue.path[0] === 'base_url' &&
+            issue.message === 'Base URL is required for this channel type'
         ),
         true
       )
@@ -209,6 +231,11 @@ describe('New API channel', () => {
       ) + 1
     ).toBe(CHANNEL_TYPE_OPTIONS.findIndex((item) => item.value === 58))
     expect(MODEL_FETCHABLE_TYPES.has(CHANNEL_TYPE_NEW_API)).toBe(true)
+    const typeValues = CHANNEL_TYPE_OPTIONS.map((item) => item.value)
+    expect(new Set(typeValues).size).toBe(typeValues.length)
+    const ollamaIndex = typeValues.indexOf(CHANNEL_TYPE_OLLAMA)
+    expect(typeValues[ollamaIndex + 1]).toBe(CHANNEL_TYPE_VLLM)
+    expect(typeValues[ollamaIndex + 2]).toBe(CHANNEL_TYPE_SGLANG)
     expect(getChannelTypeIcon(CHANNEL_TYPE_NEW_API)).toBe('NewAPI')
     expect(getKeyPromptForType(CHANNEL_TYPE_NEW_API)).toBe(
       'Enter API key for this channel'
@@ -235,13 +262,13 @@ describe('New API channel', () => {
     ).toBe(true)
   })
 
-  test('keeps Sub2API Base URL validation unchanged', () => {
+  test('requires a Base URL for Sub2API', () => {
     const result = channelFormSchema.safeParse({
       ...newAPIForm(''),
       type: 59,
     })
 
-    expect(result.success).toBe(true)
+    expect(result.success).toBe(false)
   })
 })
 

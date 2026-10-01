@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { Add01Icon } from '@hugeicons/core-free-icons'
 import { HugeiconsIcon } from '@hugeicons/react'
+import { ArrowRightLeft } from 'lucide-react'
 import * as React from 'react'
 import { useTranslation } from 'react-i18next'
 
@@ -293,13 +294,36 @@ export function MultiSelect(props: MultiSelectProps) {
 
             return (
               <>
-                {visibleValues.map((value) => (
-                  <ComboboxChip key={value}>
-                    <span className='max-w-[16rem] truncate'>
-                      {labelMap.get(value) ?? value}
-                    </span>
-                  </ComboboxChip>
-                ))}
+                {visibleValues.map((value) => {
+                  const label = labelMap.get(value) ?? value
+                  const hint = hintMap.get(value)
+                  const icon = iconMap.get(value)
+                  return (
+                    <ComboboxChip
+                      key={value}
+                      removeLabel={t('Remove {{value}}', { value: label })}
+                    >
+                      {icon && (
+                        <span
+                          aria-hidden='true'
+                          className='inline-flex shrink-0'
+                        >
+                          {icon}
+                        </span>
+                      )}
+                      <span className='max-w-[16rem] truncate'>{label}</span>
+                      {hint && (
+                        <span
+                          title={hint}
+                          aria-hidden='true'
+                          className='text-muted-foreground inline-flex shrink-0'
+                        >
+                          <ArrowRightLeft className='size-3' />
+                        </span>
+                      )}
+                    </ComboboxChip>
+                  )
+                })}
                 {hiddenCount > 0 && (
                   <span className='bg-muted text-muted-foreground flex h-[calc(--spacing(5.25))] w-fit items-center justify-center rounded-sm px-1.5 text-xs font-medium whitespace-nowrap'>
                     {t('+{{count}} more', { count: hiddenCount })}

@@ -17,6 +17,7 @@ import (
 	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/alicebob/miniredis/v2"
 	"github.com/go-redis/redis/v8"
@@ -66,7 +67,7 @@ func setupManageUserTestDB(t *testing.T) *gorm.DB {
 			}
 		}
 	})
-	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserLoginIdentifier{}, &model.UserSession{}, &model.CasbinRule{}, &model.AuthzRole{}))
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.UserLoginIdentifier{}, &model.UserSession{}, &model.Token{}, &model.CasbinRule{}, &model.AuthzRole{}))
 	require.NoError(t, logDB.AutoMigrate(&model.Log{}, &model.AuditLog{}))
 	versionQuery := "SELECT version()"
 	if dialect == "sqlite" {
@@ -89,6 +90,15 @@ func performManageUserRequest(t *testing.T, body string) *httptest.ResponseRecor
 	c.Set("role", common.RoleRootUser)
 	c.Set("username", "root-operator")
 	c.Set(common.RequestIdKey, "quota-test-request")
+	var req ManageRequest
+	if err := common.Unmarshal([]byte(body), &req); err == nil {
+		switch req.Action {
+		case "disable", "enable", "promote", "demote":
+			attachAdminStepUpProof(t, c, service.VerificationScopeAdminUserManage, service.AdminUserManageContext{UserID: req.Id, Action: req.Action})
+		case "delete":
+			attachAdminStepUpProof(t, c, service.VerificationScopeAdminUserDelete, service.AdminUserContext{UserID: req.Id})
+		}
+	}
 	ManageUser(c)
 	return recorder
 }
@@ -432,9 +442,16 @@ func TestManageUserQuotaTargetsAndWalletBounds(t *testing.T) {
 
 func TestManageUserQuotaMiddlewareKeepsOneOperationPerRequest(t *testing.T) {
 	db := setupManageUserTestDB(t)
-	pat := "quota-middleware-test-token"
-	operator := model.User{Id: 9999, Username: "root-operator", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1, AccessToken: &pat, Quota: 1000}
+	previousSecret := common.SessionSecret
+	common.SessionSecret = "manage-quota-session-secret"
+	t.Cleanup(func() { common.SessionSecret = previousSecret })
+	operator := model.User{Id: 9999, Username: "root-operator", Role: common.RoleRootUser, Status: common.UserStatusEnabled, AuthVersion: 1, Quota: 1000}
 	require.NoError(t, db.Create(&operator).Error)
+	now := time.Now().Unix()
+	session := &model.UserSession{SID: "manage-quota-session", UserID: operator.Id, Version: 1, UserAuthVersion: operator.AuthVersion, Status: model.UserSessionStatusActive, RefreshHash: "refresh-hash", LoginMethod: "password", LastActiveAt: now, ExpiresAt: now + 3600}
+	require.NoError(t, model.CreateUserSession(session))
+	sessionToken, _, err := service.IssueAccessToken(service.AuthIdentity{UserID: operator.Id, SessionID: session.SID, UserAuthVersion: operator.AuthVersion, SessionVersion: session.Version})
+	require.NoError(t, err)
 	router := gin.New()
 	router.Use(middleware.RequestId(), middleware.AccessTokenAudit())
 	router.POST("/api/user/manage", middleware.AdminAuth(), ManageUser)
@@ -449,7 +466,7 @@ func TestManageUserQuotaMiddlewareKeepsOneOperationPerRequest(t *testing.T) {
 	} {
 		recorder := httptest.NewRecorder()
 		request := httptest.NewRequest(http.MethodPost, "/api/user/manage", strings.NewReader(tc.body))
-		request.Header.Set("Authorization", "Bearer "+pat)
+		request.Header.Set("Authorization", "Bearer "+sessionToken)
 		request.Header.Set("Content-Type", "application/json")
 		router.ServeHTTP(recorder, request)
 		assert.Equal(t, http.StatusOK, recorder.Code)
@@ -458,7 +475,7 @@ func TestManageUserQuotaMiddlewareKeepsOneOperationPerRequest(t *testing.T) {
 		require.NotEmpty(t, requestID)
 		var audits []model.AuditLog
 		require.NoError(t, model.LOG_DB.Where("request_id = ?", requestID).Find(&audits).Error)
-		require.Len(t, audits, 2, "one operation audit and one PAT request audit")
+		require.Len(t, audits, 1, "a signed-in admin request records one operation audit")
 		for _, audit := range audits {
 			assert.Equal(t, tc.success, audit.Success)
 			if audit.Category != model.AuditCategoryOperation {

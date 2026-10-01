@@ -107,26 +107,17 @@ func GetChannelWithExcludeAndFilter(group string, model string, retry int, exclu
 	if len(abilities) == 0 {
 		return nil, nil
 	}
-	channel := Channel{}
-	if len(abilities) > 0 {
-		// Randomly choose one
-		weightSum := uint(0)
-		for _, ability_ := range abilities {
-			weightSum += ability_.Weight + 10
-		}
-		// Randomly choose one
-		weight := common.GetRandomInt(int(weightSum))
-		for _, ability_ := range abilities {
-			weight -= int(ability_.Weight) + 10
-			//log.Printf("weight: %d, ability weight: %d", weight, *ability_.Weight)
-			if weight <= 0 {
-				channel.Id = ability_.ChannelId
-				break
-			}
-		}
-	} else {
+	// Weight 0 gets no traffic while any positive weight exists, matching the
+	// memory-cache picker. An all-zero tier is shared evenly.
+	totalWeight := abilitySelectionWeightTotal(abilities)
+	if totalWeight <= 0 {
 		return nil, nil
 	}
+	chosen, ok := selectAbilityByWeight(abilities, common.GetRandomInt(totalWeight))
+	if !ok {
+		return nil, nil
+	}
+	channel := Channel{Id: chosen.ChannelId}
 	err = DB.First(&channel, "id = ?", channel.Id).Error
 	return &channel, err
 }
@@ -214,6 +205,66 @@ func abilityPriorityValue(ability Ability) int {
 	return int(*ability.Priority)
 }
 
+func abilitySelectionWeights(abilities []Ability) []int {
+	weights := make([]int, len(abilities))
+	hasPositive := false
+	for _, ability := range abilities {
+		if ability.Weight > 0 {
+			hasPositive = true
+			break
+		}
+	}
+	for i, ability := range abilities {
+		weight := int(ability.Weight)
+		if weight < 0 {
+			weight = 0
+		}
+		if hasPositive {
+			weights[i] = weight
+			continue
+		}
+		weights[i] = 1
+	}
+	return weights
+}
+
+func abilitySelectionWeightTotal(abilities []Ability) int {
+	total := 0
+	for _, weight := range abilitySelectionWeights(abilities) {
+		total += weight
+	}
+	return total
+}
+
+func selectAbilityByWeight(abilities []Ability, roll int) (Ability, bool) {
+	weights := abilitySelectionWeights(abilities)
+	total := 0
+	for _, weight := range weights {
+		total += weight
+	}
+	if total <= 0 {
+		return Ability{}, false
+	}
+	if roll < 0 {
+		roll = 0
+	}
+	roll %= total
+	var last Ability
+	found := false
+	for i, ability := range abilities {
+		if weights[i] <= 0 {
+			continue
+		}
+		last = ability
+		found = true
+		roll -= weights[i]
+		if roll < 0 {
+			return ability, true
+		}
+	}
+	return last, found
+}
+
 // filterAbilitiesByRequestPathAndModel restricts candidates by request path and
 // model for the DB (non-memory-cache) selection path. Only Advanced Custom
 // (type 58) channels are path-checked: kept only when one of their routes matches
@@ -277,7 +328,9 @@ func filterAbilitiesByConstraints(abilities []Ability, modelName string, filters
 
 	var channels []*Channel
 	if err := DB.Where("id IN ?", channelIds).Find(&channels).Error; err != nil {
-		if identityFilterRequiresKey(filters) {
+		// A lookup failure cannot prove the constraint. With any filter set,
+		// drop the candidates instead of routing to a channel that may not match.
+		if len(filters) > 0 {
 			return nil
 		}
 		return abilities
@@ -370,8 +423,25 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 		}()
 	}
 
+	// The caller can still hold the status and model list from before a
+	// concurrent disable committed. Rebuild from the locked row.
+	var stored Channel
+	err := lockForUpdate(tx).Select("id", "status", "models", "group", "priority", "weight", "tag").First(&stored, "id = ?", channel.Id).Error
+	if err != nil {
+		if isNewTx {
+			tx.Rollback()
+		}
+		return err
+	}
+	channel.Status = stored.Status
+	channel.Models = stored.Models
+	channel.Group = stored.Group
+	channel.Priority = stored.Priority
+	channel.Weight = stored.Weight
+	channel.Tag = stored.Tag
+
 	// First delete all abilities of this channel
-	err := tx.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error
+	err = tx.Where("channel_id = ?", channel.Id).Delete(&Ability{}).Error
 	if err != nil {
 		if isNewTx {
 			tx.Rollback()
@@ -425,25 +495,62 @@ func (channel *Channel) UpdateAbilities(tx *gorm.DB) error {
 }
 
 func UpdateAbilityStatus(channelId int, status bool) error {
-	return DB.Model(&Ability{}).Where("channel_id = ?", channelId).Select("enabled").Update("enabled", status).Error
+	return updateAbilityEnabled(DB, channelId, status)
+}
+
+func updateAbilityEnabled(tx *gorm.DB, channelId int, enabled bool) error {
+	if tx == nil {
+		tx = DB
+	}
+	return tx.Model(&Ability{}).Where("channel_id = ?", channelId).Update("enabled", enabled).Error
 }
 
 func UpdateAbilityStatusByTag(tag string, status bool) error {
-	return DB.Model(&Ability{}).Where("tag = ?", tag).Select("enabled").Update("enabled", status).Error
+	return updateAbilityStatusByTag(DB, tag, status)
+}
+
+func updateAbilityStatusByTag(tx *gorm.DB, tag string, status bool) error {
+	if tx == nil {
+		tx = DB
+	}
+	return tx.Model(&Ability{}).Where("tag = ?", tag).Update("enabled", status).Error
 }
 
 func UpdateAbilityByTag(tag string, newTag *string, priority *int64, weight *uint) error {
-	ability := Ability{}
+	return updateAbilityByTag(DB, tag, newTag, priority, weight)
+}
+
+func updateAbilityByTag(db *gorm.DB, tag string, newTag *string, priority *int64, weight *uint) error {
+	return updateAbilityByTagIDs(db, nil, tag, newTag, priority, weight)
+}
+
+func updateAbilityByTagIDs(db *gorm.DB, channelIDs []int, tag string, newTag *string, priority *int64, weight *uint) error {
+	if db == nil {
+		db = DB
+	}
+	// A map writes explicit zeros. Struct Updates skips a uint weight of 0, so a
+	// tag edit that turns weight off would leave the old ability weight in place.
+	updates := map[string]any{}
 	if newTag != nil {
-		ability.Tag = newTag
+		updates["tag"] = *newTag
 	}
 	if priority != nil {
-		ability.Priority = priority
+		updates["priority"] = *priority
 	}
 	if weight != nil {
-		ability.Weight = *weight
+		updates["weight"] = *weight
 	}
-	return DB.Model(&Ability{}).Where("tag = ?", tag).Updates(ability).Error
+	if len(updates) == 0 {
+		return nil
+	}
+	if channelIDs != nil && len(channelIDs) == 0 {
+		return nil
+	}
+	query := db.Model(&Ability{}).Where("tag = ?", tag)
+	if channelIDs != nil {
+		query = query.Where("channel_id IN ?", channelIDs)
+	}
+	return query.Updates(updates).Error
 }
 
 var fixLock = sync.Mutex{}
@@ -455,51 +562,28 @@ func FixAbility() (int, int, error) {
 	}
 	defer fixLock.Unlock()
 
-	// truncate abilities table
-	if common.UsingMainDatabase(common.DatabaseTypeSQLite) {
-		err := DB.Exec("DELETE FROM abilities").Error
-		if err != nil {
-			common.SysLog(fmt.Sprintf("Delete abilities failed: %s", err.Error()))
-			return 0, 0, err
-		}
-	} else {
-		err := DB.Exec("TRUNCATE TABLE abilities").Error
-		if err != nil {
-			common.SysLog(fmt.Sprintf("Truncate abilities failed: %s", err.Error()))
-			return 0, 0, err
-		}
-	}
+	// Delete and rebuild in one transaction. A truncate outside the transaction
+	// leaves routing with an empty ability table until every channel is rewritten,
+	// and a crash in between stays empty. Readers see the old rows until commit.
 	var channels []*Channel
-	// Find all channels
-	err := DB.Model(&Channel{}).Find(&channels).Error
-	if err != nil {
-		return 0, 0, err
-	}
-	if len(channels) == 0 {
-		return 0, 0, nil
-	}
-	successCount := 0
-	failCount := 0
-	for _, chunk := range lo.Chunk(channels, 50) {
-		ids := lo.Map(chunk, func(c *Channel, _ int) int { return c.Id })
-		// Delete all abilities of this channel
-		err = DB.Where("channel_id IN ?", ids).Delete(&Ability{}).Error
-		if err != nil {
-			common.SysLog(fmt.Sprintf("Delete abilities failed: %s", err.Error()))
-			failCount += len(chunk)
-			continue
+	err := DB.Transaction(func(tx *gorm.DB) error {
+		if err := tx.Exec("DELETE FROM abilities").Error; err != nil {
+			return err
 		}
-		// Then add new abilities
-		for _, channel := range chunk {
-			err = channel.AddAbilities(nil)
-			if err != nil {
-				common.SysLog(fmt.Sprintf("Add abilities for channel %d failed: %s", channel.Id, err.Error()))
-				failCount++
-			} else {
-				successCount++
+		if err := tx.Find(&channels).Error; err != nil {
+			return err
+		}
+		for _, channel := range channels {
+			if err := channel.AddAbilities(tx); err != nil {
+				return fmt.Errorf("add abilities for channel %d: %w", channel.Id, err)
 			}
 		}
+		return nil
+	})
+	if err != nil {
+		common.SysLog(fmt.Sprintf("Fix abilities failed: %s", err.Error()))
+		return 0, len(channels), err
 	}
 	InitChannelCache()
-	return successCount, failCount, nil
+	return len(channels), 0, nil
 }

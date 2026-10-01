@@ -18,6 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { z } from 'zod'
 
+import { accountPasswordSchema } from '@/lib/password-policy'
 
 // ============================================================================
 // Form Schemas
@@ -40,14 +41,11 @@ export const registerFormSchema = z
       .max(20, 'Username must be at most 20 characters long'),
     email: z
       .string()
+      .max(50, 'Email must be at most 50 characters long')
       .email('Please enter a valid email address')
       .or(z.literal(''))
       .optional(),
-    password: z
-      .string()
-      .min(1, 'Please enter your password')
-      .min(8, 'Password must be between 8 and 20 characters')
-      .max(20, 'Password must be at most 20 characters long'),
+    password: accountPasswordSchema,
     confirmPassword: z.string().min(1, 'Please confirm your password'),
     affiliateCode: z
       .string()

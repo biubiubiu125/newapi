@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"strings"
 	"time"
 
@@ -65,8 +66,16 @@ func PostSetup(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgSetupPasswordMismatch)
 		return
 	}
-	if len(req.Password) < 8 {
-		common.ApiErrorI18n(c, i18n.MsgSetupPasswordTooShort)
+	if err := common.ValidateStorableAccountPassword(req.Password); err != nil {
+		if errors.Is(err, common.ErrAccountPasswordLength) {
+			common.ApiErrorI18n(c, i18n.MsgUserPasswordLength)
+			return
+		}
+		if errors.Is(err, common.ErrPasswordLegacyLimit) {
+			common.ApiError(c, err)
+			return
+		}
+		respondSetupFailure(c, i18n.MsgSetupSystemError, err)
 		return
 	}
 
@@ -78,10 +87,6 @@ func PostSetup(c *gin.Context) {
 		}
 		if err := model.ValidateNewUserUsername(req.Username); err != nil {
 			common.ApiError(c, err)
-			return
-		}
-		if _, err := common.Password2Hash(req.Password); err != nil {
-			respondSetupFailure(c, i18n.MsgSetupSystemError, err)
 			return
 		}
 		rootUser := model.User{

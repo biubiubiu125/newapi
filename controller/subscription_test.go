@@ -397,6 +397,107 @@ func TestAdminUpdateSubscriptionPlanRejectsInvalidGrantGroup(t *testing.T) {
 	require.Equal(t, "default", plan.GrantGroups)
 }
 
+func TestAdminCreateSubscriptionPlanRejectsNonPositiveCustomSeconds(t *testing.T) {
+	setupSubscriptionControllerTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	trueValue := true
+	body, err := json.Marshal(AdminUpsertSubscriptionPlanRequest{
+		Plan: model.SubscriptionPlan{
+			Title:               "Zero Custom Plan",
+			PriceAmount:         9.99,
+			Currency:            "USD",
+			DurationUnit:        model.SubscriptionDurationCustom,
+			DurationValue:       1,
+			CustomSeconds:       0,
+			Enabled:             true,
+			TotalAmount:         1000,
+			QuotaResetPeriod:    model.SubscriptionResetNever,
+			AllowBalancePay:     &trueValue,
+			AllowWalletOverflow: &trueValue,
+		},
+	})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/subscription/admin/plans", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	AdminCreateSubscriptionPlan(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.False(t, response.Success)
+	require.NotEmpty(t, response.Message)
+
+	var count int64
+	require.NoError(t, model.DB.Model(&model.SubscriptionPlan{}).Count(&count).Error)
+	require.Zero(t, count)
+}
+
+func TestAdminUpdateSubscriptionPlanRejectsNonPositiveCustomSeconds(t *testing.T) {
+	setupSubscriptionControllerTestDB(t)
+	gin.SetMode(gin.TestMode)
+
+	trueValue := true
+	require.NoError(t, model.DB.Create(&model.SubscriptionPlan{
+		Id:                  606,
+		Title:               "Original Plan",
+		PriceAmount:         9.99,
+		Currency:            "USD",
+		DurationUnit:        model.SubscriptionDurationCustom,
+		DurationValue:       1,
+		CustomSeconds:       3600,
+		Enabled:             true,
+		TotalAmount:         1000,
+		AllowBalancePay:     &trueValue,
+		AllowWalletOverflow: &trueValue,
+	}).Error)
+
+	body, err := json.Marshal(AdminUpsertSubscriptionPlanRequest{
+		Plan: model.SubscriptionPlan{
+			Title:               "Updated Plan",
+			PriceAmount:         9.99,
+			Currency:            "USD",
+			DurationUnit:        model.SubscriptionDurationCustom,
+			DurationValue:       1,
+			CustomSeconds:       0,
+			Enabled:             true,
+			TotalAmount:         1000,
+			QuotaResetPeriod:    model.SubscriptionResetNever,
+			AllowBalancePay:     &trueValue,
+			AllowWalletOverflow: &trueValue,
+		},
+	})
+	require.NoError(t, err)
+
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Params = gin.Params{{Key: "id", Value: "606"}}
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/subscription/admin/plans/606", bytes.NewReader(body))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	AdminUpdateSubscriptionPlan(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Success bool   `json:"success"`
+		Message string `json:"message"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.False(t, response.Success)
+
+	var plan model.SubscriptionPlan
+	require.NoError(t, model.DB.Where("id = ?", 606).First(&plan).Error)
+	require.Equal(t, int64(3600), plan.CustomSeconds)
+	require.Equal(t, "USD", plan.Currency)
+}
+
 func TestConvertSubscriptionPlanAmountUSDToCNY(t *testing.T) {
 	previousRate := operation_setting.USDExchangeRate
 	operation_setting.USDExchangeRate = 7

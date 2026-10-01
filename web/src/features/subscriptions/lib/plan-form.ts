@@ -23,35 +23,90 @@ import { parseQuotaFromDollars, quotaUnitsToDollars } from '@/lib/format'
 
 import type { SubscriptionPlan, PlanPayload } from '../types'
 
+export type PlanCurrency = 'CNY' | 'USD'
+
+export function normalizePlanCurrency(
+  value: string | undefined | null
+): PlanCurrency {
+  const normalized = String(value || '')
+    .trim()
+    .toUpperCase()
+  return normalized === 'CNY' || normalized === 'USD' ? normalized : 'USD'
+}
+
+function roundPlanPrice(amount: number): number {
+  return Math.round(amount * 100) / 100
+}
+
+export function convertPlanPriceAmount(
+  amount: number,
+  from: PlanCurrency,
+  to: PlanCurrency,
+  usdExchangeRate: number
+): number | null {
+  if (from === to) return roundPlanPrice(amount)
+  if (
+    !Number.isFinite(amount) ||
+    !Number.isFinite(usdExchangeRate) ||
+    usdExchangeRate <= 0
+  ) {
+    return null
+  }
+  const converted =
+    from === 'USD' ? amount * usdExchangeRate : amount / usdExchangeRate
+  return roundPlanPrice(converted)
+}
+
 export function getPlanFormSchema(t: TFunction) {
-  return z.object({
-    title: z.string().min(1, t('Please enter plan title')),
-    subtitle: z.string().optional(),
-    price_amount: z.coerce.number().min(0, t('Please enter amount')),
-    duration_unit: z.enum(['year', 'month', 'day', 'hour', 'custom']),
-    duration_value: z.coerce.number().min(1),
-    custom_seconds: z.coerce.number().min(0).optional(),
-    quota_reset_period: z.enum([
-      'never',
-      'daily',
-      'weekly',
-      'monthly',
-      'custom',
-    ]),
-    quota_reset_custom_seconds: z.coerce.number().min(0).optional(),
-    enabled: z.boolean(),
-    sort_order: z.coerce.number(),
-    allow_balance_pay: z.boolean(),
-    allow_wallet_overflow: z.boolean(),
-    max_purchase_per_user: z.coerce.number().min(0),
-    total_amount: z.coerce.number().min(0),
-    upgrade_group: z.string().optional(),
-    grant_groups: z.string().optional(),
-    downgrade_group: z.string().optional(),
-    stripe_price_id: z.string().optional(),
-    creem_product_id: z.string().optional(),
-    waffo_pancake_product_id: z.string().optional(),
-  })
+  return z
+    .object({
+      title: z.string().min(1, t('Please enter plan title')),
+      subtitle: z.string().optional(),
+      price_amount: z.coerce.number().min(0, t('Please enter amount')),
+      currency: z.enum(['CNY', 'USD']),
+      duration_unit: z.enum(['year', 'month', 'day', 'hour', 'custom']),
+      duration_value: z.coerce.number().min(1),
+      custom_seconds: z.coerce.number().min(0).optional(),
+      quota_reset_period: z.enum([
+        'never',
+        'daily',
+        'weekly',
+        'monthly',
+        'custom',
+      ]),
+      quota_reset_custom_seconds: z.coerce.number().min(0).optional(),
+      enabled: z.boolean(),
+      sort_order: z.coerce.number(),
+      allow_balance_pay: z.boolean(),
+      allow_wallet_overflow: z.boolean(),
+      max_purchase_per_user: z.coerce.number().min(0),
+      total_amount: z.coerce.number().min(0),
+      upgrade_group: z.string().optional(),
+      grant_groups: z.string().optional(),
+      downgrade_group: z.string().optional(),
+      stripe_price_id: z.string().optional(),
+      creem_product_id: z.string().optional(),
+      waffo_pancake_product_id: z.string().optional(),
+    })
+    .superRefine((data, ctx) => {
+      if (data.duration_unit === 'custom' && !(Number(data.custom_seconds) > 0)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['custom_seconds'],
+          message: t('Custom duration must be greater than 0 seconds'),
+        })
+      }
+      if (
+        data.quota_reset_period === 'custom' &&
+        !(Number(data.quota_reset_custom_seconds) > 0)
+      ) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ['quota_reset_custom_seconds'],
+          message: t('Custom reset cycle must be greater than 0 seconds'),
+        })
+      }
+    })
 }
 
 export type PlanFormValues = z.infer<ReturnType<typeof getPlanFormSchema>>
@@ -60,6 +115,7 @@ export const PLAN_FORM_DEFAULTS: PlanFormValues = {
   title: '',
   subtitle: '',
   price_amount: 0,
+  currency: 'CNY',
   duration_unit: 'month',
   duration_value: 1,
   custom_seconds: 0,
@@ -87,6 +143,7 @@ export function planToFormValues(plan: SubscriptionPlan): PlanFormValues {
     title: plan.title || '',
     subtitle: plan.subtitle || '',
     price_amount: Number(plan.price_amount || 0),
+    currency: normalizePlanCurrency(plan.currency),
     duration_unit: plan.duration_unit || 'month',
     duration_value: Number(plan.duration_value || 1),
     custom_seconds: Number(plan.custom_seconds || 0),
@@ -118,7 +175,7 @@ export function formValuesToPlanPayload(values: PlanFormValues): PlanPayload {
       creem_product_id: creemProductId,
       waffo_pancake_product_id: waffoPancakeProductId,
       price_amount: Number(values.price_amount || 0),
-      currency: 'CNY',
+      currency: normalizePlanCurrency(values.currency),
       duration_value: Number(values.duration_value || 0),
       custom_seconds: Number(values.custom_seconds || 0),
       quota_reset_period: values.quota_reset_period || 'never',

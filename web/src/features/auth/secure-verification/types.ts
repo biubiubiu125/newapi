@@ -38,6 +38,13 @@ export type SecurityProofScope =
   | 'account.password.set'
   | 'account.password.change'
   | 'account.delete'
+  | 'admin.user.create'
+  | 'admin.user.update'
+  | 'admin.user.delete'
+  | 'admin.user.manage'
+  | 'admin.user.passkey.reset'
+  | 'admin.user.2fa.disable'
+  | 'admin.user.binding.clear'
 
 export type VerificationOperation =
   | { scope: 'channel.key.read'; context: { channel_id: number } }
@@ -46,10 +53,39 @@ export type VerificationOperation =
       context: { provider: string; email?: string; code?: string }
     }
   | { scope: 'account.binding.unbind'; context: { provider_id: number } }
+  | { scope: 'admin.user.create'; context: { role: number } }
+  | {
+      scope:
+        | 'admin.user.update'
+        | 'admin.user.delete'
+        | 'admin.user.passkey.reset'
+        | 'admin.user.2fa.disable'
+      context: { user_id: number }
+    }
+  | {
+      scope: 'admin.user.manage'
+      context: {
+        user_id: number
+        action: 'disable' | 'enable' | 'promote' | 'demote'
+      }
+    }
+  | {
+      scope: 'admin.user.binding.clear'
+      context: { user_id: number; binding_type?: string; provider_id?: number }
+    }
   | {
       scope: Exclude<
         SecurityProofScope,
-        'channel.key.read' | 'account.binding.bind' | 'account.binding.unbind'
+        | 'channel.key.read'
+        | 'account.binding.bind'
+        | 'account.binding.unbind'
+        | 'admin.user.create'
+        | 'admin.user.update'
+        | 'admin.user.delete'
+        | 'admin.user.manage'
+        | 'admin.user.passkey.reset'
+        | 'admin.user.2fa.disable'
+        | 'admin.user.binding.clear'
       >
       context?: Record<string, never>
     }

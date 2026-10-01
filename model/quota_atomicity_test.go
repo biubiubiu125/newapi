@@ -537,3 +537,29 @@ func TestUpdateUserUsedQuotaAndRequestCountFloorsAtZero(t *testing.T) {
 	require.EqualValues(t, 0, user.UsedQuota)
 	require.Equal(t, 0, user.RequestCount)
 }
+
+func TestIncreaseUserQuotaStopsAtWalletCeiling(t *testing.T) {
+	truncateTables(t)
+	require.NoError(t, DB.Create(&User{
+		Id:       9331,
+		Username: "wallet-ceiling",
+		Password: "password123",
+		Quota:    common.MaxWalletQuota - 5,
+		Status:   common.UserStatusEnabled,
+	}).Error)
+
+	err := IncreaseUserQuota(9331, 20, false)
+
+	require.NoError(t, err)
+	var user User
+	require.NoError(t, DB.Select("quota").First(&user, 9331).Error)
+	require.Equal(t, common.MaxWalletQuota, user.Quota)
+
+	err = IncreaseUserQuota(9331, 10, false)
+	require.NoError(t, err)
+	require.NoError(t, DB.Select("quota").First(&user, 9331).Error)
+	require.Equal(t, common.MaxWalletQuota, user.Quota)
+
+	err = IncreaseUserQuota(9332, 10, false)
+	require.Error(t, err)
+}

@@ -41,6 +41,15 @@ type Meta interface {
 	// nil receiver may return a temporary initialized state.
 	EnsureClaudeConvertInfo() *ClaudeConvertInfo
 
+	// ResponsesToolState returns the Responses tool encoding recorded by the
+	// latest request conversion, or nil when none was recorded. Response
+	// converters read it to restore Responses-only tool call shapes.
+	ResponsesToolState() *ResponsesToolState
+	// SetResponsesToolState replaces that record; nil clears it. Request
+	// conversion calls it on every attempt so retries never inherit a record
+	// from another channel.
+	SetResponsesToolState(state *ResponsesToolState)
+
 	// GetSendResponseCount / IncrSendResponseCount expose the shared
 	// downstream-chunk counter (the host may also increment it).
 	GetSendResponseCount() int
@@ -81,6 +90,28 @@ type ClaudeStreamToolCall struct {
 	Started          bool
 }
 
+// ResponsesToolState records how Responses-only tool definitions were encoded
+// for the upstream protocol, so the matching response can be restored.
+type ResponsesToolState struct {
+	// CustomToolNames lists Responses custom (freeform) tools that were sent
+	// upstream as function tools taking one string "input" argument. Function
+	// calls with these names are custom tool calls.
+	CustomToolNames map[string]struct{}
+}
+
+// CustomToolInputArgument is the single function argument that carries a
+// Responses custom tool input through an upstream function call.
+const CustomToolInputArgument = "input"
+
+// IsCustomTool reports whether name was encoded from a Responses custom tool.
+func (s *ResponsesToolState) IsCustomTool(name string) bool {
+	if s == nil {
+		return false
+	}
+	_, ok := s.CustomToolNames[name]
+	return ok
+}
+
 const (
 	LastMessageTypeNone     = "none"
 	LastMessageTypeText     = "text"
@@ -102,6 +133,7 @@ type Values struct {
 	EstimatePromptTokens int
 
 	ClaudeConvertInfo *ClaudeConvertInfo
+	ResponsesTools    *ResponsesToolState
 	SendResponseCount int
 	ConversionChain   []types.RelayFormat
 
@@ -183,6 +215,19 @@ func (v *Values) EnsureClaudeConvertInfo() *ClaudeConvertInfo {
 	return v.ClaudeConvertInfo
 }
 
+func (v *Values) ResponsesToolState() *ResponsesToolState {
+	if v == nil {
+		return nil
+	}
+	return v.ResponsesTools
+}
+
+func (v *Values) SetResponsesToolState(state *ResponsesToolState) {
+	if v != nil {
+		v.ResponsesTools = state
+	}
+}
+
 func (v *Values) GetSendResponseCount() int {
 	if v == nil {
 		return 0
@@ -231,6 +276,14 @@ func ChannelTypeOf(m Meta) int {
 		return 0
 	}
 	return m.GetChannelType()
+}
+
+// ResponsesToolStateOf is a nil-safe reader for Meta.ResponsesToolState.
+func ResponsesToolStateOf(m Meta) *ResponsesToolState {
+	if m == nil {
+		return nil
+	}
+	return m.ResponsesToolState()
 }
 
 // OptionsOf returns m's conversion options, or empty defaults when m is nil.

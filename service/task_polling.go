@@ -859,6 +859,38 @@ func recoverPendingTaskSettlements(ctx context.Context, batchSize int) {
 	}
 }
 
+func recoverUnresolvedBillingAdjustments(ctx context.Context, batchSize int) {
+	if batchSize <= 0 {
+		batchSize = imageTaskBatchPollMaxSize
+	}
+	if err := model.RecoverUnpersistedBillingAdjustments(batchSize); err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("recover unpersisted billing adjustments failed: %v", err))
+	}
+	if err := model.RecoverPendingBillingAdjustments(batchSize); err != nil {
+		logger.LogWarn(ctx, fmt.Sprintf("recover pending billing adjustments failed: %v", err))
+	}
+	var afterTaskPrimaryID int64
+	for ctx.Err() == nil {
+		tasks, err := model.GetRefundPendingFailureTasksAfter(afterTaskPrimaryID, batchSize)
+		if err != nil {
+			logger.LogWarn(ctx, fmt.Sprintf("load billing adjustment refunds failed: %v", err))
+			return
+		}
+		for _, task := range tasks {
+			if task == nil || (!task.PrivateData.BillingAdjustmentUnresolved && !task.PrivateData.BillingAdjustmentRollback) {
+				continue
+			}
+			if err := RefundTaskQuota(ctx, task, task.FailReason); err != nil {
+				logger.LogError(ctx, fmt.Sprintf("recover billing adjustment failed task %s: %v", task.TaskID, err))
+			}
+		}
+		if len(tasks) < batchSize {
+			return
+		}
+		afterTaskPrimaryID = tasks[len(tasks)-1].ID
+	}
+}
+
 func recoverPendingTaskRefunds(ctx context.Context, batchSize int) {
 	if batchSize <= 0 {
 		batchSize = imageTaskBatchPollMaxSize
@@ -1801,6 +1833,7 @@ func RunTaskPollingOnce(ctx context.Context, report func(processed, total int)) 
 	cleanupExpiredImageTaskResultCache(ctx)
 	recoverPendingTaskRefunds(ctx, imageTaskBatchPollMaxSize)
 	recoverPendingTaskSettlements(ctx, imageTaskBatchPollMaxSize)
+	recoverUnresolvedBillingAdjustments(ctx, imageTaskBatchPollMaxSize)
 	if GetTaskAdaptorFunc == nil && GetTaskPluginAdaptorFunc == nil && RunImageTasksFunc == nil {
 		return summary
 	}
@@ -2160,6 +2193,9 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 			if task.FinishTime == 0 {
 				task.FinishTime = now
 			}
+			if task.Quota != 0 {
+				task.RefundPending = true
+			}
 			won, updateErr := task.UpdateWithStatus(oldStatus)
 			if updateErr != nil || !won || task.Quota == 0 {
 				continue
@@ -2174,6 +2210,73 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 	if ch.GetBaseURL() != "" {
 		baseURL = ch.GetBaseURL()
 	}
+	var firstErr error
+	for _, batch := range groupPollingTasksByKey(ch, tasks) {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		if err := pollBatchTaskGroup(ctx, adaptor, ch, baseURL, batch, taskM); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+	return firstErr
+}
+
+type pollingTaskBatch struct {
+	key   string
+	tasks []*model.Task
+}
+
+// pollingUpstreamKey is the credential a poll may send. A multi-key channel
+// stores every key in channel.Key; that blob is not a credential. A task uses
+// the key it was submitted with, otherwise the first key that is still enabled.
+func pollingUpstreamKey(channel *model.Channel, preferred string) string {
+	preferred = strings.TrimSpace(preferred)
+	if preferred != "" {
+		return preferred
+	}
+	if channel == nil {
+		return ""
+	}
+	if !channel.ChannelInfo.IsMultiKey {
+		return strings.TrimSpace(channel.Key)
+	}
+	for index, key := range channel.GetKeys() {
+		key = strings.TrimSpace(key)
+		if key == "" {
+			continue
+		}
+		if status, disabled := channel.ChannelInfo.MultiKeyStatusList[index]; disabled && status != common.ChannelStatusEnabled {
+			continue
+		}
+		return key
+	}
+	return ""
+}
+
+func groupPollingTasksByKey(channel *model.Channel, tasks []*model.Task) []pollingTaskBatch {
+	indexes := make(map[string]int)
+	batches := make([]pollingTaskBatch, 0)
+	for _, task := range tasks {
+		if task == nil {
+			continue
+		}
+		key := pollingUpstreamKey(channel, task.PrivateData.Key)
+		index, ok := indexes[key]
+		if !ok {
+			index = len(batches)
+			indexes[key] = index
+			batches = append(batches, pollingTaskBatch{key: key})
+		}
+		batches[index].tasks = append(batches[index].tasks, task)
+	}
+	return batches
+}
+
+func pollBatchTaskGroup(ctx context.Context, adaptor BatchTaskPollingAdaptor, ch *model.Channel, baseURL string, batch pollingTaskBatch, taskM map[string]*model.Task) error {
+	if strings.TrimSpace(batch.key) == "" {
+		return recordPollFailureForTasks(ctx, batch.tasks, pollClassAuth, 0, "multi-key task has no stored upstream key")
+	}
 	info := &relaycommon.RelayInfo{}
 	info.ChannelMeta = &relaycommon.ChannelMeta{
 		ChannelType:    ch.Type,
@@ -2181,31 +2284,31 @@ func updateBatchTasks(ctx context.Context, adaptor BatchTaskPollingAdaptor, chan
 		ChannelBaseUrl: baseURL,
 		ChannelSetting: ch.GetSetting(),
 	}
-	info.ApiKey = ch.Key
+	info.ApiKey = batch.key
 	adaptor.Init(info)
-	resp, err := adaptor.FetchBatchTasks(baseURL, ch.Key, tasks, ch.GetSetting().Proxy)
+	resp, err := adaptor.FetchBatchTasks(baseURL, batch.key, batch.tasks, ch.GetSetting().Proxy)
 	if err != nil {
-		return recordPollFailureForTasks(ctx, tasks, pollClassTransport, 0, err.Error())
+		return recordPollFailureForTasks(ctx, batch.tasks, pollClassTransport, 0, err.Error())
 	}
 	if resp == nil || resp.Body == nil {
-		return recordPollFailureForTasks(ctx, tasks, pollClassTransport, 0, "nil batch response")
+		return recordPollFailureForTasks(ctx, batch.tasks, pollClassTransport, 0, "nil batch response")
 	}
 	defer resp.Body.Close()
 	body, err := ReadResponseBodyLimited(resp, MaxResponseBodyBytes)
 	if err != nil {
-		return recordPollFailureForTasks(ctx, tasks, pollClassTransport, resp.StatusCode, err.Error())
+		return recordPollFailureForTasks(ctx, batch.tasks, pollClassTransport, resp.StatusCode, err.Error())
 	}
 	switch classifyPollHTTP(resp.StatusCode) {
 	case pollClassNotFound:
-		return failTasksFromPoll(ctx, tasks, fmt.Sprintf("upstream task not found (HTTP %d)", resp.StatusCode))
+		return failTasksFromPoll(ctx, batch.tasks, fmt.Sprintf("upstream task not found (HTTP %d)", resp.StatusCode))
 	case pollClassAuth:
-		return recordPollFailureForTasks(ctx, tasks, pollClassAuth, resp.StatusCode, "")
+		return recordPollFailureForTasks(ctx, batch.tasks, pollClassAuth, resp.StatusCode, "")
 	case pollClassTransient:
-		return recordPollFailureForTasks(ctx, tasks, pollClassTransient, resp.StatusCode, "")
+		return recordPollFailureForTasks(ctx, batch.tasks, pollClassTransient, resp.StatusCode, "")
 	}
-	results, err := adaptor.ParseBatchResult(tasks, resp, body)
+	results, err := adaptor.ParseBatchResult(batch.tasks, resp, body)
 	if err != nil {
-		return recordPollFailureForTasks(ctx, tasks, pollClassHookError, resp.StatusCode, err.Error())
+		return recordPollFailureForTasks(ctx, batch.tasks, pollClassHookError, resp.StatusCode, err.Error())
 	}
 	for upstreamID, result := range results {
 		if ctx.Err() != nil {
@@ -2967,6 +3070,9 @@ func updateSunoTasks(ctx context.Context, channelId int, taskIds []string, taskM
 			if task.FinishTime == 0 {
 				task.FinishTime = now
 			}
+			if task.Quota != 0 {
+				task.RefundPending = true
+			}
 			won, updateErr := task.UpdateWithStatus(oldStatus)
 			if updateErr != nil {
 				common.SysLog(fmt.Sprintf("UpdateSunoTask error: %v", updateErr))
@@ -3010,7 +3116,6 @@ func groupSunoTaskBatches(channel *model.Channel, tasks []*model.Task) []sunoTas
 	if channel == nil {
 		return nil
 	}
-	fallbackKey := channel.Key
 	batchIndexes := make(map[string]int)
 	batches := make([]sunoTaskBatch, 0, len(tasks))
 	for _, task := range tasks {
@@ -3021,10 +3126,7 @@ func groupSunoTaskBatches(channel *model.Channel, tasks []*model.Task) []sunoTas
 		if upstreamID == "" {
 			continue
 		}
-		key := task.PrivateData.Key
-		if strings.TrimSpace(key) == "" {
-			key = fallbackKey
-		}
+		key := pollingUpstreamKey(channel, task.PrivateData.Key)
 		index, ok := batchIndexes[key]
 		if !ok {
 			index = len(batches)
@@ -3274,6 +3376,9 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 			if task.FinishTime == 0 {
 				task.FinishTime = now
 			}
+			if task.Quota != 0 {
+				task.RefundPending = true
+			}
 			won, updateErr := task.UpdateWithStatus(oldStatus)
 			if updateErr != nil {
 				common.SysLog(fmt.Sprintf("UpdateVideoTask error: %v", updateErr))
@@ -3298,13 +3403,17 @@ func updateVideoTasks(ctx context.Context, platform constant.TaskPlatform, chann
 		ChannelBaseUrl: cacheGetChannel.GetBaseURL(),
 		ChannelSetting: cacheGetChannel.GetSetting(),
 	}
-	info.ApiKey = cacheGetChannel.Key
 	disablePollingSleep := cacheGetChannel.GetOtherSettings().DisableTaskPollingSleep
 	for i, taskId := range taskIds {
 		if ctx.Err() != nil {
 			return ctx.Err()
 		}
 		task := taskForPollingReference(channelId, taskId, taskM)
+		preferredKey := ""
+		if task != nil {
+			preferredKey = task.PrivateData.Key
+		}
+		info.ApiKey = pollingUpstreamKey(cacheGetChannel, preferredKey)
 		adaptor, resolveErr := resolveTaskPollingAdaptor(task, platform)
 		if adaptor == nil {
 			logger.LogError(ctx, fmt.Sprintf("No adaptor found for video task %s", taskId))
@@ -3600,12 +3709,7 @@ func updateVideoSingleTask(ctx context.Context, adaptor TaskPluginPollingAdaptor
 		}
 		return nil
 	}
-	key := ch.Key
-
-	privateData := task.PrivateData
-	if privateData.Key != "" {
-		key = privateData.Key
-	}
+	key := pollingUpstreamKey(ch, task.PrivateData.Key)
 	snap := task.Snapshot()
 	resp, err := fetchTaskWithContext(ctx, adaptor, baseURL, key, task, proxy)
 	if err != nil {

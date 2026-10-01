@@ -9,6 +9,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/QuantumNous/new-api/service/authz"
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
@@ -53,6 +54,7 @@ func TestUpdateUserStoresAdminPermissionOverrides(t *testing.T) {
 		}
 	}`))
 	ctx.Request.Header.Set("Content-Type", "application/json")
+	attachAdminStepUpProof(t, ctx, service.VerificationScopeAdminUserUpdate, service.AdminUserContext{UserID: user.Id})
 
 	UpdateUser(ctx)
 

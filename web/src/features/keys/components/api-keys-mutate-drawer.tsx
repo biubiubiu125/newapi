@@ -39,7 +39,7 @@ import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { cn } from '@/lib/utils'
 import { createApiKey, updateApiKey, getApiKey, getTokenAutoGroups } from '../api'
 import { ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
-import { getApiKeyFormSchema, type ApiKeyFormValues, getApiKeyFormDefaultValues, transformFormDataToPayload, transformApiKeyToFormDefaults } from '../lib'
+import { getApiKeyFormSchema, type ApiKeyFormValues, getApiKeyFormDefaultValues, transformFormDataToPayload, transformApiKeyToFormDefaults, isCompleteApiKeyBatch } from '../lib'
 import type { ApiKey } from '../types'
 import { ApiKeyGroupCombobox, type ApiKeyGroupOption } from './api-key-group-combobox'
 import { useApiKeys } from './api-keys-provider'
@@ -279,13 +279,21 @@ export function ApiKeysMutateDrawer({
           }
         }
 
-        if (successCount > 0) {
+        if (isCompleteApiKeyBatch(successCount, count)) {
           toast.success(
             t('Successfully created {{count}} API Key(s)', {
               count: successCount,
             })
           )
           onOpenChange(false)
+          triggerRefresh()
+        } else if (successCount > 0) {
+          toast.error(
+            t(
+              'Created {{success}} of {{total}} API keys. The remaining keys were not created.',
+              { success: successCount, total: count }
+            )
+          )
           triggerRefresh()
         }
       }

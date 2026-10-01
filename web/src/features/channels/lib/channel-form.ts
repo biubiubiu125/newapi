@@ -295,12 +295,12 @@ export const channelFormSchema = z
   })
   .superRefine((data, ctx) => {
     if (
-      [3, 8, 36, 45, 59, CHANNEL_TYPE_NEW_API].includes(data.type) &&
       [
         3,
         8,
         36,
         45,
+        59,
         CHANNEL_TYPE_NEW_API,
         CHANNEL_TYPE_TASK_PLUGIN,
         CHANNEL_TYPE_VLLM,
@@ -314,13 +314,6 @@ export const channelFormSchema = z
         'Base URL is required for this channel type'
       )
     }
-    if (
-      data.type === CHANNEL_TYPE_TASK_PLUGIN &&
-      !data.task_plugin_key?.trim()
-    ) {
-      addRequiredIssue(ctx, 'task_plugin_key', 'Task plugin is required')
-    }
-
     if (
       data.type === CHANNEL_TYPE_TASK_PLUGIN &&
       !data.task_plugin_key?.trim()
@@ -430,6 +423,7 @@ export const CHANNEL_FORM_DEFAULT_VALUES: ChannelFormValues = {
   param_override: '',
   header_override: '',
   settings: '{}',
+  advanced_custom: '',
   other: '',
   multi_key_mode: 'single',
   multi_key_type: 'random',
@@ -537,6 +531,7 @@ export function transformChannelToFormDefaults(
   let upstreamModelUpdateCheckEnabled = false
   let upstreamModelUpdateAutoSyncEnabled = false
   let upstreamModelUpdateIgnoredModels = ''
+  let advancedCustom = ''
 
   if (channel.settings) {
     try {
@@ -563,6 +558,14 @@ export function transformChannelToFormDefaults(
       )
         ? parsed.upstream_model_update_ignored_models.join(',')
         : ''
+      if (channel.type === CHANNEL_TYPE_ADVANCED_CUSTOM) {
+        const value = parsed.advanced_custom
+        if (typeof value === 'string') {
+          advancedCustom = value
+        } else if (value && typeof value === 'object') {
+          advancedCustom = JSON.stringify(value)
+        }
+      }
     } catch (error) {
       // eslint-disable-next-line no-console
       console.error('Failed to parse channel settings:', error)
@@ -590,6 +593,7 @@ export function transformChannelToFormDefaults(
     param_override: channel.param_override || '',
     header_override: channel.header_override || '',
     settings: channel.settings || '{}',
+    advanced_custom: advancedCustom,
     other: channel.other || '',
     multi_key_mode: 'single',
     multi_key_type: channel.channel_info.multi_key_mode || 'random',
@@ -809,6 +813,22 @@ function buildSettingsJSON(formData: ChannelFormValues): string {
     })
   }
 
+  // Type 58 stores routes in settings.advanced_custom. Named presets are not overwritten.
+  if (formData.type === CHANNEL_TYPE_ADVANCED_CUSTOM) {
+    const raw = formData.advanced_custom?.trim() || ''
+    if (!raw) {
+      delete settingsObj.advanced_custom
+    } else {
+      try {
+        const parsed = JSON.parse(raw)
+        settingsObj.advanced_custom =
+          parsed && typeof parsed === 'object' ? parsed : raw
+      } catch {
+        settingsObj.advanced_custom = raw
+      }
+    }
+  }
+
   return JSON.stringify(settingsObj)
 }
 
@@ -838,7 +858,7 @@ export function transformFormDataToCreatePayload(formData: ChannelFormValues): {
     models: formData.models,
     group: formatGroups(formData.group),
     model_mapping: formData.model_mapping || null,
-    priority: formData.priority || null,
+    priority: formData.priority ?? 0,
     weight: formData.weight || null,
     test_model: formData.test_model || null,
     auto_ban: formData.auto_ban ?? 1,

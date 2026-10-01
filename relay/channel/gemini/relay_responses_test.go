@@ -67,6 +67,60 @@ func TestGeminiResponsesHandlerReturnsOpenAIResponsesJSON(t *testing.T) {
 	assert.NotContains(t, got, `"candidates"`)
 }
 
+func TestGeminiResponsesHandlerEmptyCandidatesWritesErrorAndSettles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := newGeminiResponsesRelayInfo(false)
+	payload := dto.GeminiChatResponse{
+		UsageMetadata: dto.GeminiUsageMetadata{
+			PromptTokenCount: 9,
+			TotalTokenCount:  9,
+		},
+	}
+	body, err := common.Marshal(payload)
+	require.NoError(t, err)
+
+	usage, newAPIError := GeminiResponsesHandler(c, info, &http.Response{
+		Body: io.NopCloser(bytes.NewReader(body)),
+	})
+	require.Nil(t, newAPIError)
+	require.NotNil(t, usage)
+	require.Equal(t, 9, usage.PromptTokens)
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "empty response from Gemini API")
+	require.Contains(t, recorder.Body.String(), `"error"`)
+}
+
+func TestGeminiResponsesHandlerBlockedPromptWritesErrorAndSettles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	reason := "SAFETY"
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	info := newGeminiResponsesRelayInfo(false)
+	payload := dto.GeminiChatResponse{
+		PromptFeedback: &dto.GeminiChatPromptFeedback{BlockReason: &reason},
+		UsageMetadata: dto.GeminiUsageMetadata{
+			PromptTokenCount: 12,
+			TotalTokenCount:  12,
+		},
+	}
+	body, err := common.Marshal(payload)
+	require.NoError(t, err)
+
+	usage, newAPIError := GeminiResponsesHandler(c, info, &http.Response{
+		Body: io.NopCloser(bytes.NewReader(body)),
+	})
+	require.Nil(t, newAPIError)
+	require.NotNil(t, usage)
+	require.Equal(t, 12, usage.PromptTokens)
+	require.True(t, info.PerformanceBusinessRejection)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "request blocked by Gemini API")
+}
+
 func TestGeminiResponsesHandlerClosesBodyOnReadError(t *testing.T) {
 	gin.SetMode(gin.TestMode)
 	recorder := httptest.NewRecorder()
@@ -165,6 +219,42 @@ func TestGeminiResponsesStreamHandlerReturnsOpenAIResponsesSSE(t *testing.T) {
 		`event: response.output_text.done`,
 		`event: response.completed`,
 	)
+}
+
+func TestGeminiResponsesStreamHandlerSettlesAfterPartialDelivery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", nil)
+	oldStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 300
+	t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
+
+	info := newGeminiResponsesRelayInfo(true)
+	chunk, err := common.Marshal(dto.GeminiChatResponse{
+		Candidates: []dto.GeminiChatCandidate{{
+			Content: dto.GeminiChatContent{
+				Role:  "model",
+				Parts: []dto.GeminiPart{{Text: "hello"}},
+			},
+		}},
+		UsageMetadata: dto.GeminiUsageMetadata{
+			PromptTokenCount:     2,
+			CandidatesTokenCount: 3,
+			TotalTokenCount:      5,
+		},
+	})
+	require.NoError(t, err)
+	streamBody := "data: " + string(chunk) + "\n\ndata: {bad\n\n"
+
+	usage, newAPIError := GeminiResponsesStreamHandler(c, info, &http.Response{
+		Body: io.NopCloser(strings.NewReader(streamBody)),
+	})
+	require.Nil(t, newAPIError)
+	require.NotNil(t, usage)
+	require.Equal(t, 5, usage.TotalTokens)
+	require.True(t, info.HasClientStreamWrite())
+	require.Contains(t, recorder.Body.String(), `"delta":"hello"`)
 }
 
 func newGeminiResponsesRelayInfo(isStream bool) *relaycommon.RelayInfo {

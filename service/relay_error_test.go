@@ -125,6 +125,39 @@ func TestProcessChannelErrorMasksDisableReasonAndNotification(t *testing.T) {
 	assert.Equal(t, http.StatusUnauthorized, apiErr.StatusCode)
 }
 
+func TestProcessChannelErrorDisablesBalanceInsufficientWithoutAutoBan(t *testing.T) {
+	previousDB, previousType := model.DB, common.MainDatabaseType()
+	previousCache, previousRedis := common.MemoryCacheEnabled, common.RedisEnabled
+	previousAutoDisable, previousErrorLog := common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.SetMainDatabaseType(previousType)
+		common.MemoryCacheEnabled, common.RedisEnabled = previousCache, previousRedis
+		common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled = previousAutoDisable, previousErrorLog
+	})
+	database, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := database.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	t.Cleanup(func() { require.NoError(t, sqlDB.Close()) })
+	require.NoError(t, database.AutoMigrate(&model.Channel{}, &model.Ability{}))
+	model.DB = database
+	common.SetMainDatabaseType(common.DatabaseTypeSQLite)
+	common.MemoryCacheEnabled, common.RedisEnabled = false, false
+	common.AutomaticDisableChannelEnabled, constant.ErrorLogEnabled = false, false
+
+	channel := &model.Channel{Name: "balance", Key: "sk-balance", Type: 1, Status: common.ChannelStatusEnabled, Group: "default", Models: "test-model"}
+	require.NoError(t, channel.Insert())
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	apiErr := types.NewOpenAIError(errors.New("余额不足"), types.ErrorCodeBadResponseStatusCode, http.StatusForbidden)
+	ProcessChannelError(c, types.ChannelError{ChannelId: channel.Id, ChannelType: channel.Type, ChannelName: channel.Name, UsingKey: channel.Key, AutoBan: false}, apiErr, nil)
+
+	loaded, err := model.GetChannelById(channel.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, common.ChannelStatusAutoDisabled, loaded.Status)
+}
+
 func TestDecideRelayRetryReasons(t *testing.T) {
 	upstream := func(status int) *types.NewAPIError {
 		return types.NewOpenAIError(errors.New("upstream"), types.ErrorCodeBadResponseStatusCode, status)

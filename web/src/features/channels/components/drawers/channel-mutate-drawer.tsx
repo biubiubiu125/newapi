@@ -18,7 +18,7 @@ For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery, useQueryClient } from '@tanstack/react-query'
-import {ArrowRight, Loader2, Sparkles, Trash2, Copy, FileText, Eraser, Eye, RefreshCw, Code, Route, Settings, SlidersHorizontal, Wand2, ArrowRightLeft, PanelLeftOpen, AlertCircle} from 'lucide-react'
+import {ArrowLeft, ArrowRight, ChevronDown, Loader2, Sparkles, Trash2, Copy, FileText, Eraser, Eye, RefreshCw, Code, Route, Settings, SlidersHorizontal, Wand2, ArrowRightLeft, PanelLeftOpen, AlertCircle} from 'lucide-react'
 import { ReactNode, useEffect, useState, useMemo, useCallback, useRef, ComponentProps } from 'react'
 import { useForm, SubmitErrorHandler } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
@@ -46,11 +46,11 @@ import { currentIntlLocale } from '@/i18n/languages'
 import { ADMIN_PERMISSION_ACTIONS, ADMIN_PERMISSION_RESOURCES, hasPermission } from '@/lib/admin-permissions'
 import { useAuthStore } from '@/stores/auth-store'
 import {fetchModels, getAllModels, getChannel, getGroups, getPrefillGroups, refreshCodexCredential, getChannelDefaultBaseURLs, getTaskPluginOptions} from '../../api'
-import {ADD_MODE_OPTIONS, CLAUDE_FIELD_PASSTHROUGH_TYPES, CHANNEL_TYPE_OPTIONS, CHANNEL_TYPE_TASK_PLUGIN, CHANNEL_TYPE_WARNINGS, ERROR_MESSAGES, FIELD_PASSTHROUGH_TYPES, FIELD_DESCRIPTIONS, FIELD_PLACEHOLDERS, OPENAI_FIELD_PASSTHROUGH_TYPES, CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_OLLAMA, CHANNEL_TYPE_VLLM, CHANNEL_TYPE_SGLANG, MODEL_FETCHABLE_TYPES} from '../../constants'
+import {ADD_MODE_OPTIONS, CLAUDE_FIELD_PASSTHROUGH_TYPES, CHANNEL_STATUS_LABELS, CHANNEL_TYPE_OPTIONS, CHANNEL_TYPE_TASK_PLUGIN, CHANNEL_TYPE_WARNINGS, ERROR_MESSAGES, FIELD_PASSTHROUGH_TYPES, FIELD_DESCRIPTIONS, FIELD_PLACEHOLDERS, OPENAI_FIELD_PASSTHROUGH_TYPES, CHANNEL_TYPE_NEW_API, CHANNEL_TYPE_OLLAMA, CHANNEL_TYPE_VLLM, CHANNEL_TYPE_SGLANG, MODEL_FETCHABLE_TYPES} from '../../constants'
 import { useChannelMutateForm } from '../../hooks/use-channel-mutate-form'
 import { CHANNEL_FORM_DEFAULT_VALUES, channelFormSchema, channelsQueryKeys, transformChannelToFormDefaults, transformFormDataToCreatePayload, transformFormDataToUpdatePayload, ChannelFormValues, deduplicateKeys, getKeyPromptForType, parseModelsString, formatModelsArray, extractRedirectModels, extractMappingSourceModels, hasModelConfigChanged, findMissingModelsInMapping, validateModelMappingJson, CHANNEL_TYPE_ADVANCED_CUSTOM, getAdvancedCustomStats, mergeModelMappingPairs, ModelMappingPair } from '../../lib'
 import { collectInvalidStatusCodeEntries, collectNewDisallowedStatusCodeRedirects } from '../../lib/status-code-risk-guard'
-import {assessBaseUrlTrust} from '../../lib/task-plugin-base-url'
+import { assessBaseUrlTrust, nextTaskPluginBaseUrl } from '../../lib/task-plugin-base-url'
 import type { Channel } from '../../types'
 import { ChannelTypeLogo } from '../channel-type-badge'
 import { useChannels } from '../channels-provider'
@@ -80,8 +80,8 @@ import { ModelRedirectPanel } from '../model-redirect-panel'
 import { ResponsesWebSocketSetting } from '../responses-websocket-setting'
 import { UpstreamModelSelection } from '../upstream-model-selection'
 import { ChannelConfiguration, ChannelConfigurationStatusIndicator } from './channel-configuration'
+import { ChannelProviderPicker } from './channel-provider-picker'
 import { AdvancedCustomEditorDialog } from '../dialogs/advanced-custom-editor-dialog'
-import { ChannelConnectionInfo, parseChannelConnectionInfo } from '@/lib/channel-connection-info'
 import { IconBadgeTone } from '@/components/ui/icon-badge'
 import { JsonCodeEditor } from '@/components/json-code-editor'
 import { ROLE } from '@/lib/roles'
@@ -272,9 +272,6 @@ export function ChannelMutateDrawer({
   const [advancedCustomEditorOpen, setAdvancedCustomEditorOpen] =
     useState(false)
   const [, setAdvancedSettingsOpen] = useState(false)
-  const [, setClipboardConnectionInfo] = useState<ChannelConnectionInfo | null>(
-    null
-  )
 
   const isEditing = Boolean(currentRow)
   const requestedSide = isEditing ? 'left' : 'right'
@@ -404,6 +401,7 @@ export function ChannelMutateDrawer({
   const keyMode = formValues.key_mode
   const currentGroups = formValues.group
   const currentType = formValues.type
+  const currentStatus = formValues.status
   const baseUrlPlaceholder = [CHANNEL_TYPE_VLLM, CHANNEL_TYPE_SGLANG].includes(
     currentType
   )
@@ -471,32 +469,6 @@ export function ChannelMutateDrawer({
   }, [open, resetDoubaoApiUnlock])
 
 
-
-  useEffect(() => {
-    if (!open || isEditing || showProviderPicker) {
-      setClipboardConnectionInfo(null)
-      return
-    }
-
-    if (typeof navigator === 'undefined' || !navigator.clipboard?.readText) {
-      return
-    }
-
-    let cancelled = false
-    void navigator.clipboard
-      .readText()
-      .then((text) => {
-        if (cancelled) return
-        setClipboardConnectionInfo(parseChannelConnectionInfo(text))
-      })
-      .catch(() => {
-        /* Clipboard detection is best-effort on drawer open. */
-      })
-
-    return () => {
-      cancelled = true
-    }
-  }, [isEditing, open, showProviderPicker])
 
   // Helper computed values
   const isBatchMode =
@@ -583,6 +555,80 @@ export function ChannelMutateDrawer({
     boundTaskPlugin?.name ||
     (currentType === CHANNEL_TYPE_TASK_PLUGIN && currentTaskPluginKey) ||
     t(currentTypeLabel)
+
+  const selectProvider = useCallback(
+    (target: ChannelProviderTarget) => {
+      if (!canEditSensitive) return
+      if (
+        (target.kind === 'builtin' &&
+          providerTarget?.kind === 'builtin' &&
+          target.type === providerTarget.type) ||
+        (target.kind === 'plugin' &&
+          providerTarget?.kind === 'plugin' &&
+          target.key === providerTarget.key)
+      ) {
+        setChoosingProvider(false)
+        return
+      }
+      if (target.kind === 'plugin') {
+        if (!canBindTaskPlugin) return
+        const plugin = taskPluginOptionsQuery.data?.find(
+          (item) => item.key === target.key
+        )
+        if (!plugin) return
+        const previousPlugin = taskPluginOptionsQuery.data?.find(
+          (item) => item.key === form.getValues('task_plugin_key')
+        )
+        form.setValue('type', CHANNEL_TYPE_TASK_PLUGIN, { shouldDirty: true })
+        form.setValue('task_plugin_key', plugin.key, { shouldDirty: true })
+        if (!isEditing && !providerTarget && !form.getValues('name').trim()) {
+          form.setValue('name', plugin.name)
+        }
+        if (plugin.models.length) {
+          form.setValue('models', formatModelsArray(plugin.models), {
+            shouldDirty: true,
+          })
+        }
+        const baseUrl = nextTaskPluginBaseUrl(
+          form.getValues('base_url'),
+          previousPlugin?.baseUrl,
+          plugin.baseUrl
+        )
+        if (baseUrl !== null) {
+          form.setValue('base_url', baseUrl, {
+            shouldDirty: true,
+            shouldValidate: true,
+          })
+        }
+      } else {
+        if (
+          !Number.isSafeInteger(target.type) ||
+          target.type <= 0 ||
+          target.type === CHANNEL_TYPE_TASK_PLUGIN
+        ) {
+          return
+        }
+        form.setValue('type', target.type, { shouldDirty: true })
+        if (!isEditing && !providerTarget && !form.getValues('name').trim()) {
+          const label = CHANNEL_TYPE_OPTIONS.find(
+            (option) => option.value === target.type
+          )?.label
+          form.setValue('name', label ? t(label) : `#${target.type}`)
+        }
+      }
+      setProviderTarget(target)
+      setChoosingProvider(false)
+    },
+    [
+      canBindTaskPlugin,
+      canEditSensitive,
+      providerTarget,
+      isEditing,
+      form,
+      t,
+      taskPluginOptionsQuery.data,
+    ]
+  )
 
   // The plugin author proposes the destination host once a default is
   // prefilled, so the admin is told when the key would travel over plain HTTP
@@ -1547,7 +1593,6 @@ export function ChannelMutateDrawer({
       onOpenChange(v)
       if (!v) {
         form.reset(CHANNEL_FORM_DEFAULT_VALUES)
-        setClipboardConnectionInfo(null)
       }
     },
     [onOpenChange, form, isSubmitting, showProviderPicker, providerTarget]
@@ -4474,32 +4519,140 @@ export function ChannelMutateDrawer({
   return (
     <>
       <Sheet open={open} onOpenChange={handleOpenChange}>
-        <SheetContent className={sideDrawerContentClassName('sm:max-w-3xl')}>
-          <SheetHeader className={sideDrawerHeaderClassName()}>
-            <SheetTitle className='flex items-center gap-3'>
-              <span className='bg-muted flex size-9 shrink-0 items-center justify-center rounded-md'>
-                <ChannelTypeLogo
-                  type={currentType}
-                  plugin={
-                    currentType === CHANNEL_TYPE_TASK_PLUGIN
-                      ? (selectedTaskPlugin ??
-                        (currentTaskPluginKey
-                          ? { key: currentTaskPluginKey }
-                          : undefined))
-                      : undefined
-                  }
-                  size={22}
-                />
-              </span>
-              <span>
-                {isEditing ? t('Edit Channel') : t('Create Channel')}
-                <span className='text-muted-foreground ml-2 text-sm font-normal'>
-                  {t(currentTypeLabel)}
-                </span>
-              </span>
-            </SheetTitle>
-            <SheetDescription>{description}</SheetDescription>
+        <SheetContent
+          side={drawerSide}
+          className={sideDrawerContentClassName('sm:max-w-7xl')}
+        >
+          <SheetHeader className={sideDrawerHeaderClassName('pr-12 sm:pr-14')}>
+            <div className='flex flex-col gap-2'>
+              <div className='flex min-w-0 items-center gap-2 sm:gap-3'>
+                <SheetTitle className='flex shrink-0 items-center gap-2 sm:gap-3'>
+                  <span
+                    aria-hidden='true'
+                    className='bg-muted flex size-9 shrink-0 items-center justify-center rounded-md'
+                  >
+                    <ChannelTypeLogo
+                      type={currentType}
+                      plugin={
+                        currentType === CHANNEL_TYPE_TASK_PLUGIN
+                          ? (selectedTaskPlugin ??
+                            (currentTaskPluginKey
+                              ? { key: currentTaskPluginKey }
+                              : undefined))
+                          : undefined
+                      }
+                      size={22}
+                    />
+                  </span>
+                  <span>
+                    {isEditing ? t('Edit Channel') : t('Create Channel')}
+                  </span>
+                </SheetTitle>
+                {(!showProviderPicker || providerTarget) && (
+                  <Button
+                    ref={providerControlRef}
+                    type='button'
+                    variant='outline'
+                    aria-label={
+                      showProviderPicker
+                        ? t('Back to configuration')
+                        : t('Change provider')
+                    }
+                    aria-description={providerLabel}
+                    title={providerLabel}
+                    className='min-w-0 shrink gap-2 sm:max-w-md'
+                    disabled={
+                      isSubmitting ||
+                      (!showProviderPicker &&
+                        (!canEditSensitive ||
+                          (isEditing && !channelData?.data)))
+                    }
+                    onClick={() => setChoosingProvider(!showProviderPicker)}
+                  >
+                    {showProviderPicker ? (
+                      <>
+                        <ArrowLeft className='size-4' aria-hidden='true' />
+                        <span className='shrink-0 sm:hidden'>{t('Back')}</span>
+                        <span className='hidden shrink-0 sm:inline'>
+                          {t('Back to configuration')}
+                        </span>
+                      </>
+                    ) : (
+                      <ChannelTypeLogo
+                        type={currentType}
+                        plugin={boundTaskPlugin}
+                        size={18}
+                      />
+                    )}
+                    <span className='min-w-0 truncate'>{providerLabel}</span>
+                    {!showProviderPicker && (
+                      <>
+                        <span className='hidden shrink-0 sm:inline'>
+                          {t('Change provider')}
+                        </span>
+                        <ChevronDown className='size-4' aria-hidden='true' />
+                      </>
+                    )}
+                  </Button>
+                )}
+              </div>
+              <div className='flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between'>
+                <div className='flex min-w-0 flex-wrap items-center gap-2 sm:flex-1'>
+                  {isEditing && channelData?.data && (
+                    <Badge variant='secondary' className='shrink-0'>
+                      {t(
+                        CHANNEL_STATUS_LABELS[
+                          currentStatus as keyof typeof CHANNEL_STATUS_LABELS
+                        ] || 'Unknown'
+                      )}
+                    </Badge>
+                  )}
+                  <SheetDescription
+                    className={cn(
+                      showProviderPicker && providerTarget && 'truncate'
+                    )}
+                    title={
+                      showProviderPicker && providerTarget
+                        ? description
+                        : undefined
+                    }
+                  >
+                    {description}
+                  </SheetDescription>
+                </div>
+                {viewportWide &&
+                  !showProviderPicker &&
+                  !channelError &&
+                  !isChannelDetailLoading && (
+                    <ChannelQuickOptions
+                      form={form}
+                      layout='inline'
+                      channelType={currentType}
+                      sensitiveLocked={sensitiveLocked}
+                      disabled={isSubmitting}
+                      className='sm:justify-end'
+                      confirmEnablePassthrough={confirmEnablePassthrough}
+                    />
+                  )}
+              </div>
+            </div>
           </SheetHeader>
+
+          {showProviderPicker && (
+            <ChannelProviderPicker
+              isCreating={!isEditing}
+              plugins={taskPluginOptionsQuery.data ?? []}
+              currentProvider={providerTarget}
+              canBindPlugin={canBindTaskPlugin}
+              loading={taskPluginOptionsQuery.isLoading}
+              failed={taskPluginOptionsQuery.isError}
+              disabled={isSubmitting || !canEditSensitive}
+              onRetry={() => {
+                void taskPluginOptionsQuery.refetch()
+              }}
+              onSelect={selectProvider}
+            />
+          )}
 
           <Form {...form}>
             <form

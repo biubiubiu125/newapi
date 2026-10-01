@@ -226,10 +226,17 @@ export interface TelegramBindFlow {
   expires_at: number
 }
 
-export async function startTelegramBind(): Promise<
-  ApiResponse<TelegramBindFlow>
-> {
-  const res = await api.post('/api/oauth/telegram/bind/start')
+export async function startTelegramBind(
+  proofToken: string
+): Promise<ApiResponse<TelegramBindFlow>> {
+  const res = await api.post(
+    '/api/oauth/telegram/bind/start',
+    undefined,
+    {
+      headers: { 'X-Security-Proof': proofToken },
+      singleUseAuthorization: true,
+    }
+  )
   return res.data
 }
 

@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -283,7 +284,11 @@ func SendEmailVerification(c *gin.Context) {
 		return
 	}
 	code := common.GenerateVerificationCode(6)
-	common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose)
+	if err := common.RegisterVerificationCodeWithKey(email, code, common.EmailVerificationPurpose); err != nil {
+		logger.LogError(c.Request.Context(), fmt.Sprintf("failed to store verification code for %s: %s", email, err.Error()))
+		common.ApiErrorI18n(c, i18n.MsgEmailSendFailed)
+		return
+	}
 	subject, content := renderVerificationEmail(i18n.GetLangFromContext(c), common.SystemName, code, common.VerificationValidMinutes)
 	err := common.SendEmail(subject, email, content)
 	if err != nil {
@@ -306,7 +311,14 @@ func SendPasswordResetEmail(c *gin.Context) {
 	}
 	if model.IsActiveEmailAlreadyTaken(email) {
 		code := common.GenerateVerificationCode(0)
-		common.RegisterVerificationCodeWithKey(email, code, common.PasswordResetPurpose)
+		if err := common.RegisterVerificationCodeWithKey(email, code, common.PasswordResetPurpose); err != nil {
+			logger.LogError(c.Request.Context(), fmt.Sprintf("failed to store password reset code for %s: %s", email, err.Error()))
+			c.JSON(http.StatusOK, gin.H{
+				"success": true,
+				"message": "",
+			})
+			return
+		}
 		link := fmt.Sprintf("%s/user/reset?email=%s&token=%s", system_setting.ServerAddress, url.QueryEscape(email), url.QueryEscape(code))
 		subject, content := renderPasswordResetEmail(i18n.GetLangFromContext(c), common.SystemName, link, common.VerificationValidMinutes)
 		err := common.SendEmail(subject, email, content)
@@ -343,12 +355,17 @@ func ResetPassword(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgUserPasswordResetLinkInvalid)
 		return
 	}
-	if !common.ConsumeCodeWithKey(email, req.Token, common.PasswordResetPurpose) {
+	password := common.GenerateVerificationCode(12)
+	err = model.ResetUserPasswordByEmailAndConsumeCode(email, password, req.Token)
+	var committed *model.PasswordResetCommittedError
+	if errors.As(err, &committed) {
+		logger.LogError(c, fmt.Sprintf("password reset committed but auth state update failed for %s: %s", email, committed.Error()))
+		err = nil
+	}
+	if errors.Is(err, model.ErrPasswordResetCodeInvalid) {
 		common.ApiErrorI18n(c, i18n.MsgUserPasswordResetLinkInvalid)
 		return
 	}
-	password := common.GenerateVerificationCode(12)
-	err = model.ResetUserPasswordByEmail(email, password)
 	if err != nil {
 		common.ApiError(c, err)
 		return

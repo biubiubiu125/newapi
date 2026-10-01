@@ -285,7 +285,8 @@ func buildLegacyTaskMediaRequest(c *gin.Context, task *model.Task) (*relaychanne
 	default:
 		resultURL := storedRetrievableTaskMediaURL(task)
 		if parsedURL, parseErr := url.Parse(resultURL); parseErr == nil && parsedURL != nil &&
-			isTaskMediaProxyPath(parsedURL.Path) && !isTaskMediaFallbackLoop(resultURL, task.TaskID) {
+			isTaskMediaProxyPath(parsedURL.Path) && !isTaskMediaFallbackLoop(resultURL, task.TaskID) &&
+			taskMediaURLBelongsToChannel(channelModel, resultURL) {
 			request.URL = resultURL
 			request.Headers = map[string]string{"Authorization": "Bearer " + getTaskChannelKey(channelModel, task)}
 			return request, true, nil
@@ -730,6 +731,31 @@ func isSelfTaskMediaURL(c *gin.Context, target *url.URL) bool {
 	return false
 }
 
+func taskMediaURLBelongsToChannel(channel *model.Channel, rawURL string) bool {
+	if channel == nil {
+		return false
+	}
+	parsed, err := url.Parse(strings.TrimSpace(rawURL))
+	if err != nil || parsed == nil || parsed.Host == "" {
+		return false
+	}
+	if !strings.EqualFold(parsed.Scheme, "http") && !strings.EqualFold(parsed.Scheme, "https") {
+		return false
+	}
+	base := channel.GetBaseURL()
+	if base == "" {
+		base = constant.GetChannelBaseURL(channel.Type)
+	}
+	baseParsed, err := url.Parse(strings.TrimSpace(base))
+	if err != nil || baseParsed == nil || baseParsed.Host == "" {
+		return false
+	}
+	if baseParsed.Scheme == "" {
+		baseParsed.Scheme = "https"
+	}
+	return sameTaskMediaOrigin(parsed, baseParsed)
+}
+
 func isTaskMediaProxyPath(path string) bool {
 	if strings.HasPrefix(path, "/v1/videos/") && strings.HasSuffix(path, "/content") {
 		return true
@@ -768,10 +794,12 @@ func resultURLFallbackContentRequest(c *gin.Context, task *model.Task) (*relaych
 				message: "Artifact channel is unavailable", err: err,
 			}
 		}
-		request.Headers = map[string]string{
-			"Authorization": "Bearer " + getTaskChannelKey(channelModel, task),
+		if taskMediaURLBelongsToChannel(channelModel, resultURL) {
+			request.Headers = map[string]string{
+				"Authorization": "Bearer " + getTaskChannelKey(channelModel, task),
+			}
+			return request, nil
 		}
-		return request, nil
 	}
 	request.Credentialless = true
 	return request, nil

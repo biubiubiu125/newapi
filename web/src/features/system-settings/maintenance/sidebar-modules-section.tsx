@@ -16,7 +16,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
-import { useEffect, useMemo } from 'react'
+import { useEffect, useMemo, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 
@@ -38,6 +38,7 @@ import {
 } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { shouldApplyServerDefaults } from '../hooks/settings-form-reset'
 import { useUpdateOption } from '../hooks/use-update-option'
 import {
   SIDEBAR_MODULES_DEFAULT,
@@ -65,16 +66,31 @@ export function SidebarModulesSection({
   const { t } = useTranslation()
   const updateOption = useUpdateOption()
 
-
   const formDefaults = useMemo(() => config, [config])
 
   const form = useForm<SidebarFormValues>({
     defaultValues: formDefaults,
   })
+  const serializedDefaults = JSON.stringify(formDefaults)
+  const baselineRef = useRef(serializedDefaults)
+  const isDirty = form.formState.isDirty
 
   useEffect(() => {
+    const current = JSON.stringify(form.getValues())
+    if (
+      !shouldApplyServerDefaults(
+        serializedDefaults,
+        baselineRef.current,
+        current,
+        isDirty
+      )
+    ) {
+      return
+    }
+    baselineRef.current = serializedDefaults
     form.reset(formDefaults)
-  }, [formDefaults, form])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isDirty is read during render and must not retrigger reset
+  }, [form, formDefaults, serializedDefaults])
 
   const onSubmit = async (values: SidebarFormValues) => {
     const serialized = serializeSidebarModulesAdmin(values)

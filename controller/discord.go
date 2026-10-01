@@ -180,16 +180,13 @@ func DiscordBind(c *gin.Context) {
 		respondOAuthAlreadyBound(c, "Discord")
 		return
 	}
-	session := sessions.Default(c)
-	id := session.Get("id")
-	user.Id = id.(int)
-	err = user.FillUserById()
-	if err != nil {
-		common.ApiError(c, err)
+	userID, ok := sessions.Default(c).Get("id").(int)
+	if !ok || userID <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgAuthNotLoggedIn)
 		return
 	}
-	user.DiscordId = discordUser.UID
-	err = user.Update(false)
+	user.Id = userID
+	err = user.ClaimExternalIdentity(model.ExternalIdentityProviderDiscord, discordUser.UID)
 	if err != nil {
 		common.ApiError(c, err)
 		return

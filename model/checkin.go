@@ -10,6 +10,29 @@ import (
 	"gorm.io/gorm"
 )
 
+// checkinLocation 是所有节点共用的签到日界。用进程本地时区会让跨时区节点在同一天签两次。
+var checkinLocation = func() *time.Location {
+	loc, err := time.LoadLocation("Asia/Shanghai")
+	if err != nil {
+		return time.FixedZone("CST", 8*60*60)
+	}
+	return loc
+}()
+
+func CheckinDateString(now time.Time) string {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return now.In(checkinLocation).Format("2006-01-02")
+}
+
+func CheckinMonthString(now time.Time) string {
+	if now.IsZero() {
+		now = time.Now()
+	}
+	return now.In(checkinLocation).Format("2006-01")
+}
+
 // Checkin 签到记录
 type Checkin struct {
 	Id           int    `json:"id" gorm:"primaryKey;autoIncrement"`
@@ -41,7 +64,7 @@ func GetUserCheckinRecords(userId int, startDate, endDate string) ([]Checkin, er
 
 // HasCheckedInToday 检查用户今天是否已签到
 func HasCheckedInToday(userId int) (bool, error) {
-	today := time.Now().Format("2006-01-02")
+	today := CheckinDateString(time.Now())
 	var count int64
 	err := DB.Model(&Checkin{}).
 		Where("user_id = ? AND checkin_date = ?", userId, today).
@@ -73,7 +96,7 @@ func UserCheckin(userId int) (*Checkin, error) {
 		quotaAwarded = setting.MinQuota + rand.Intn(setting.MaxQuota-setting.MinQuota+1)
 	}
 
-	today := time.Now().Format("2006-01-02")
+	today := CheckinDateString(time.Now())
 	checkin := &Checkin{
 		UserId:       userId,
 		CheckinDate:  today,
@@ -100,10 +123,9 @@ func userCheckinWithTransaction(checkin *Checkin, userId int, quotaAwarded int) 
 			return common.Localized(i18n.MsgCheckinFailed)
 		}
 
-		// 步骤2: 在事务中增加用户额度
-		if err := tx.Model(&User{}).Where("id = ?", userId).
-			Update("quota", gorm.Expr("quota + ?", quotaAwarded)).Error; err != nil {
-			return common.Localized(i18n.MsgCheckinQuotaFailed)
+		// 步骤2: 在事务中增加用户额度，并守住钱包上限。
+		if err := creditCheckinQuota(tx, userId, quotaAwarded); err != nil {
+			return err
 		}
 
 		return nil
@@ -129,15 +151,35 @@ func userCheckinWithoutTransaction(checkin *Checkin, userId int, quotaAwarded in
 		return nil, common.Localized(i18n.MsgCheckinFailed)
 	}
 
-	// 步骤2: 增加用户额度
-	// 使用 db=true 强制直接写入数据库，不使用批量更新
-	if err := IncreaseUserQuota(userId, int64(quotaAwarded), true); err != nil {
-		// 如果增加额度失败，需要回滚签到记录
+	// 步骤2: 增加用户额度，并守住钱包上限。失败时删掉刚写入的签到记录。
+	if err := creditCheckinQuota(DB, userId, quotaAwarded); err != nil {
 		DB.Delete(checkin)
-		return nil, common.Localized(i18n.MsgCheckinQuotaFailed)
+		return nil, err
 	}
+	applyUserQuotaCacheDeltaBestEffort(userId, int64(quotaAwarded))
 
 	return checkin, nil
+}
+
+// creditCheckinQuota adds a check-in award only when the wallet stays within
+// the JavaScript-safe ceiling. The predicate and increment are one UPDATE.
+func creditCheckinQuota(tx *gorm.DB, userId int, quotaAwarded int) error {
+	if tx == nil || userId <= 0 || quotaAwarded <= 0 {
+		return common.Localized(i18n.MsgCheckinQuotaFailed)
+	}
+	awarded := int64(quotaAwarded)
+	if awarded >= common.MaxWalletQuota {
+		return common.Localized(i18n.MsgCheckinQuotaFailed)
+	}
+	result := tx.Model(&User{}).Where("id = ? AND quota <= ?", userId, common.MaxWalletQuota-awarded).
+		Update("quota", gorm.Expr("quota + ?", awarded))
+	if result.Error != nil {
+		return common.Localized(i18n.MsgCheckinQuotaFailed)
+	}
+	if result.RowsAffected == 1 {
+		return nil
+	}
+	return common.Localized(i18n.MsgCheckinQuotaFailed)
 }
 
 // GetUserCheckinStats 获取用户签到统计信息

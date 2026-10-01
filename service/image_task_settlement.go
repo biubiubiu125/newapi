@@ -140,12 +140,25 @@ func appendImageTaskUsageLogDetails(other *model.LogOther, summary textQuotaSumm
 	}
 }
 
+// ErrImageTaskBillingReleased means the shared ledger was rolled back and the
+// task was already failed. Callers must not mark that task successful again.
+var ErrImageTaskBillingReleased = errors.New("image task billing adjustment was released")
+
 func ApplyImageTaskSettlementAtomic(ctx context.Context, task *model.Task, input ImageTaskAtomicSettlement) (bool, error) {
 	if task == nil || task.ID <= 0 {
 		return false, errors.New("image task is required")
 	}
 	if input.ActualQuota < 0 {
 		return false, fmt.Errorf("actual quota cannot be negative: %d", input.ActualQuota)
+	}
+	// A deferred submit charge lives in the shared ledger, not in task.Quota.
+	// Align before calculating actual-task.Quota, or the same delta is charged twice.
+	handled, syncErr := syncTaskBillingAdjustment(ctx, task)
+	if syncErr != nil {
+		return false, syncErr
+	}
+	if handled {
+		return false, ErrImageTaskBillingReleased
 	}
 
 	applied := false
@@ -425,7 +438,7 @@ func applyImageTaskTokenSettlementTx(tx *gorm.DB, task *model.Task, delta int) (
 	var err error
 	switch {
 	case delta > 0:
-		err = model.DecreaseTokenQuotaTx(tx, tokenID, int64(delta))
+		err = model.DecreaseTokenQuotaAllowNegativeTx(tx, tokenID, int64(delta))
 	case delta < 0:
 		err = model.IncreaseTokenQuotaTx(tx, tokenID, int64(-delta))
 	default:
@@ -469,17 +482,24 @@ func applyTaskWalletQuotaCacheDelta(task *model.Task, quotaDelta int) {
 }
 
 func applyImageTaskFundingSettlementTx(tx *gorm.DB, task *model.Task, delta int) error {
-	if task == nil || delta == 0 {
+	if task == nil {
 		return nil
 	}
 	switch task.PrivateData.BillingSource {
 	case BillingSourceWallet, "":
+		if delta == 0 {
+			return nil
+		}
 		if delta > 0 {
-			return model.DecreaseUserQuotaTx(tx, task.UserId, int64(delta))
+			return model.DecreaseUserQuotaAllowNegativeTx(tx, task.UserId, int64(delta))
 		}
 		return model.IncreaseUserQuotaTx(tx, task.UserId, int64(-delta))
 	case BillingSourceSubscription:
-		return model.PostConsumeUserSubscriptionDeltaTx(tx, task.PrivateData.SubscriptionId, int64(delta))
+		target := task.Quota + delta
+		if target < 0 {
+			return fmt.Errorf("subscription task quota cannot be negative")
+		}
+		return model.ApplySubscriptionTaskUsageTx(tx, task, task.Quota, target)
 	default:
 		return fmt.Errorf("unsupported image task billing source: %s", task.PrivateData.BillingSource)
 	}

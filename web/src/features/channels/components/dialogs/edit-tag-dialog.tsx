@@ -42,7 +42,7 @@ import {
   getGroups,
 } from '../../api'
 import { channelsQueryKeys } from '../../lib'
-import type { TagOperationParams } from '../../types'
+import { buildTagEditRequest } from '../../lib/tag-edit'
 import { useChannels } from '../channels-provider'
 
 type EditTagDialogProps = {
@@ -61,6 +61,10 @@ export function EditTagDialog({ open, onOpenChange }: EditTagDialogProps) {
   const [customModel, setCustomModel] = useState('')
   const [modelMapping, setModelMapping] = useState('')
   const [selectedGroups, setSelectedGroups] = useState<string[]>([])
+  const [initialModels, setInitialModels] = useState<string[]>([])
+  const [initialGroups, setInitialGroups] = useState<string[]>([])
+  const [modelsReady, setModelsReady] = useState(false)
+  const [groupsReady, setGroupsReady] = useState(false)
   const [isSubmitting, setIsSubmitting] = useState(false)
 
   // Fetch tag models
@@ -93,21 +97,43 @@ export function EditTagDialog({ open, onOpenChange }: EditTagDialogProps) {
 
   // Initialize form when tag changes
   useEffect(() => {
-    if (open && currentTag) {
-      setNewTag(currentTag)
-      setModelMapping('')
-      setSelectedGroups([])
-      setCustomModel('')
-
-      // Load tag models
-      if (tagModelsData?.data) {
-        const models = tagModelsData.data.split(',').filter(Boolean)
-        setSelectedModels(models)
-      } else {
-        setSelectedModels([])
-      }
+    if (!open || !currentTag) {
+      setModelsReady(false)
+      return
     }
-  }, [open, currentTag, tagModelsData])
+    setNewTag(currentTag)
+    setModelMapping('')
+    setSelectedGroups([])
+    setInitialGroups([])
+    setCustomModel('')
+    setSelectedModels([])
+    setInitialModels([])
+    setModelsReady(false)
+    setGroupsReady(false)
+  }, [open, currentTag])
+
+  useEffect(() => {
+    if (!open || !currentTag || isLoadingTagModels || tagModelsData === undefined) {
+      return
+    }
+    const models = tagModelsData.data
+      ? tagModelsData.data.split(',').filter(Boolean)
+      : []
+    setSelectedModels(models)
+    setInitialModels(models)
+    setModelsReady(true)
+    const groups =
+      typeof tagModelsData.groups === 'string'
+        ? tagModelsData.groups.split(',').map((group) => group.trim()).filter(Boolean)
+        : null
+    if (groups) {
+      setSelectedGroups(groups)
+      setInitialGroups(groups)
+      setGroupsReady(true)
+    } else {
+      setGroupsReady(false)
+    }
+  }, [open, currentTag, isLoadingTagModels, tagModelsData])
 
   const handleAddCustomModel = () => {
     if (!customModel.trim()) return
@@ -156,41 +182,26 @@ export function EditTagDialog({ open, onOpenChange }: EditTagDialogProps) {
     if (!currentTag) return
     if (!validateForm()) return
 
-    // Check if anything changed
-    const hasChanges =
-      newTag !== currentTag ||
-      modelMapping.trim() ||
-      selectedModels.length > 0 ||
-      selectedGroups.length > 0
+    const request = buildTagEditRequest({
+      currentTag,
+      newTag,
+      modelMapping,
+      selectedModels,
+      initialModels,
+      modelsReady,
+      selectedGroups,
+      initialGroups,
+      groupsReady,
+    })
 
-    if (!hasChanges) {
+    if (!request.changed) {
       toast.warning(t('No changes to save'))
       return
     }
 
     setIsSubmitting(true)
     try {
-      const params: Record<string, string | null> = { tag: currentTag }
-
-      if (newTag && newTag !== currentTag) {
-        params.new_tag = newTag || null
-      }
-
-      if (modelMapping.trim()) {
-        params.model_mapping = modelMapping
-      }
-
-      if (selectedModels.length > 0) {
-        params.models = selectedModels.join(',')
-      }
-
-      if (selectedGroups.length > 0) {
-        params.groups = selectedGroups.join(',')
-      }
-
-      const response = await editTagChannels(
-        params as unknown as TagOperationParams
-      )
+      const response = await editTagChannels(request.params)
 
       if (response.success) {
         toast.success(t('Tag updated successfully'))

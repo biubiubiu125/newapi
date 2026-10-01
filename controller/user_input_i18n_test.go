@@ -55,7 +55,7 @@ func TestRegisterValidationFollowsAcceptLanguage(t *testing.T) {
 		`{"username":"valid_name","password":"short"}`,
 		"zh-CN", nil, Register,
 	)
-	require.Equal(t, "密码长度需要在 8 到 20 个字符之间", zhPassword["message"])
+	require.Equal(t, "密码长度需要在 8 到 128 个字符之间", zhPassword["message"])
 	require.NotContains(t, zhPassword["message"], "Key:")
 }
 

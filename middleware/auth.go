@@ -34,6 +34,41 @@ const (
 	dashboardCredentialPAT
 )
 
+// dashboardAccessTokenDenied refuses a session-less system access token on
+// admin writes and on relay-token credential changes. Reads and a normal
+// signed-in session stay allowed. Logout does not clear this token.
+func dashboardAccessTokenDenied(c *gin.Context, minRole int) bool {
+	if c == nil || c.Request == nil {
+		return false
+	}
+	switch c.Request.Method {
+	case http.MethodGet, http.MethodHead, http.MethodOptions:
+		return false
+	}
+	if minRole >= common.RoleAdminUser {
+		return true
+	}
+	return accessTokenChangesRelayCredential(c.Request.Method, c.FullPath())
+}
+
+func accessTokenChangesRelayCredential(method, fullPath string) bool {
+	path := strings.TrimRight(fullPath, "/")
+	switch method {
+	case http.MethodPost:
+		switch path {
+		case "/api/token", "/api/token/batch", "/api/token/batch/keys":
+			return true
+		}
+		return strings.HasPrefix(path, "/api/token/") && strings.HasSuffix(path, "/key")
+	case http.MethodPut:
+		return path == "/api/token"
+	case http.MethodDelete:
+		return strings.HasPrefix(path, "/api/token/")
+	default:
+		return false
+	}
+}
+
 func validUserInfo(username string, role int) bool {
 	// check username is empty
 	if strings.TrimSpace(username) == "" {
@@ -67,6 +102,14 @@ func authHelper(c *gin.Context, minRole int) {
 		return
 	}
 	setDashboardAuthContext(c, user, identity, useAccessToken)
+	if useAccessToken && dashboardAccessTokenDenied(c, minRole) {
+		c.AbortWithStatusJSON(http.StatusForbidden, gin.H{
+			"success": false,
+			"code":    "ACCESS_TOKEN_FORBIDDEN",
+			"message": common.TranslateMessage(c, i18n.MsgAuthAccessTokenForbidden),
+		})
+		return
+	}
 
 	// 管理/root 写操作审计兜底：内聚在鉴权链路里，保证任何经过 AdminAuth/RootAuth
 	// 的写接口都会自动留痕（无需在路由上单独挂审计中间件，避免漏挂）。
@@ -482,11 +525,18 @@ func TokenAuthReadOnly() func(c *gin.Context) {
 
 		userCache, err := model.GetUserCache(token.UserId)
 		if err != nil {
-			common.SysLog(fmt.Sprintf("TokenAuthReadOnly GetUserCache error for user %d: %v", token.UserId, err))
-			c.JSON(http.StatusInternalServerError, gin.H{
-				"success": false,
-				"message": common.TranslateMessage(c, i18n.MsgDatabaseError),
-			})
+			if errors.Is(err, model.ErrUserDeleted) {
+				c.JSON(http.StatusForbidden, gin.H{
+					"success": false,
+					"message": common.TranslateMessage(c, i18n.MsgAuthUserBanned),
+				})
+			} else {
+				common.SysLog(fmt.Sprintf("TokenAuthReadOnly GetUserCache error for user %d: %v", token.UserId, err))
+				c.JSON(http.StatusInternalServerError, gin.H{
+					"success": false,
+					"message": common.TranslateMessage(c, i18n.MsgDatabaseError),
+				})
+			}
 			c.Abort()
 			return
 		}
@@ -631,6 +681,10 @@ func tokenAuth(allowExhausted bool) func(c *gin.Context) {
 
 		userCache, err := model.GetUserCache(token.UserId)
 		if err != nil {
+			if errors.Is(err, model.ErrUserDeleted) {
+				abortWithOpenAiMessage(c, http.StatusForbidden, i18n.ProtocolMessage(i18n.MsgAuthUserBanned))
+				return
+			}
 			common.SysLog(fmt.Sprintf("TokenAuth GetUserCache error for user %d: %v", token.UserId, err))
 			abortWithOpenAiMessage(c, http.StatusInternalServerError,
 				i18n.ProtocolMessage(i18n.MsgDatabaseError))

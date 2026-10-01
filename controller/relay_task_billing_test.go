@@ -3,6 +3,7 @@ package controller
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 type relayTaskTestBilling struct {
@@ -765,7 +767,7 @@ func TestRelayTaskLogFailureAfterSubmitMarksReviewAndRefunds(t *testing.T) {
 	require.Equal(t, model.TaskPublicAccountingFailReason, task.FailReason)
 }
 
-func TestRelayTaskLogFailureAfterSettleRollsBackWalletQuota(t *testing.T) {
+func TestRelayTaskLogFailureAfterSettleKeepsWalletQuota(t *testing.T) {
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Log{}, &model.Token{}))
 	insertRelayTaskTestChannel(t, 312)
@@ -823,24 +825,24 @@ func TestRelayTaskLogFailureAfterSettleRollsBackWalletQuota(t *testing.T) {
 	}
 	settleBillingFunc = service.SettleBilling
 	logTaskConsumptionFunc = func(*gin.Context, *relaycommon.RelayInfo) error {
-		return errors.New("record consume log failed")
+		return fmt.Errorf("record consume log failed: %w", service.ErrDeliveredConsumeLogKept)
 	}
 	ctx, recorder := newRelayTaskTestContext(userID, tokenID, channelID)
 
 	RelayTask(ctx)
 
-	require.Equal(t, http.StatusInternalServerError, recorder.Code)
-	require.Contains(t, recorder.Body.String(), "log_task_consumption_failed")
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.NotContains(t, recorder.Body.String(), "log_task_consumption_failed")
 	userQuota, err := model.GetUserQuota(userID, false)
 	require.NoError(t, err)
-	require.EqualValues(t, initQuota, userQuota)
+	require.EqualValues(t, initQuota-preConsumed, userQuota)
 	var token model.Token
 	require.NoError(t, db.First(&token, tokenID).Error)
-	require.EqualValues(t, initQuota, token.RemainQuota)
+	require.EqualValues(t, initQuota-preConsumed, token.RemainQuota)
 	var task model.Task
 	require.NoError(t, db.First(&task, "task_id = ?", "task-controller-log-rollback-wallet").Error)
-	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
-	require.Equal(t, model.TaskSettlementStatusReview, task.SettlementStatus)
+	require.NotEqual(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
+	require.Equal(t, preConsumed, task.Quota)
 }
 
 func TestRelayTaskLogFailureWhenRollbackFailsKeepsRefundPending(t *testing.T) {
@@ -1415,6 +1417,142 @@ func TestRelayTaskSettleFailureWhenReviewPersistFailsKeepsRefundPending(t *testi
 		}
 	}
 	require.True(t, found, "settle-fail review persist fail must remain refundable at prepaid quota")
+}
+
+func TestRelayTaskDeferredSettleRefundsWhenFailureRowCannotBePersisted(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Log{}))
+	insertRelayTaskTestChannel(t, 331)
+
+	billing := &relayTaskTestBilling{preConsumed: 100}
+	oldPersistReview := persistTaskSubmitSettlementErrorFunc
+	oldUpdate := updateTaskAfterSubmitAccountingFailureFunc
+	oldPersistRefundable := persistRefundableSubmitAccountingFailureFunc
+	installRelayTaskTestHooks(t, billing, "task-controller-deferred-both-persist-fail", 150)
+	t.Cleanup(func() {
+		persistTaskSubmitSettlementErrorFunc = oldPersistReview
+		updateTaskAfterSubmitAccountingFailureFunc = oldUpdate
+		persistRefundableSubmitAccountingFailureFunc = oldPersistRefundable
+	})
+	settleBillingFunc = func(_ *gin.Context, _ *relaycommon.RelayInfo, actualQuota int) error {
+		require.Equal(t, 150, actualQuota)
+		return fmt.Errorf("pending ledger: %w", model.ErrBillingAdjustmentDeferred)
+	}
+	persistTaskSubmitSettlementErrorFunc = func(task *model.Task, _ *relaycommon.RelayInfo, _ int, _ error) error {
+		task.SettlementStatus = model.TaskSettlementStatusReview
+		task.PrivateData.BillingAdjustmentUnresolved = true
+		return errors.New("review persist failed")
+	}
+	persistRefundableSubmitAccountingFailureFunc = func(*model.Task, int, error, error) error {
+		return errors.New("refundable persist failed")
+	}
+	updateTaskAfterSubmitAccountingFailureFunc = func(task *model.Task) error {
+		require.NoError(t, db.Delete(&model.Task{}, task.ID).Error)
+		return errors.New("task row write failed")
+	}
+	ctx, recorder := newRelayTaskTestContext(331, 331, 331)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	require.Equal(t, 1, billing.refundCalls)
+}
+
+func TestRelayTaskDeferredSettleKeepsLiveTaskWhenFailureRowCannotBePersisted(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Log{}))
+	insertRelayTaskTestChannel(t, 332)
+	failTaskUpdates(t, db)
+
+	billing := &relayTaskTestBilling{preConsumed: 100}
+	oldPersistReview := persistTaskSubmitSettlementErrorFunc
+	oldUpdate := updateTaskAfterSubmitAccountingFailureFunc
+	oldPersistRefundable := persistRefundableSubmitAccountingFailureFunc
+	installRelayTaskTestHooks(t, billing, "task-controller-deferred-row-survives", 150)
+	t.Cleanup(func() {
+		persistTaskSubmitSettlementErrorFunc = oldPersistReview
+		updateTaskAfterSubmitAccountingFailureFunc = oldUpdate
+		persistRefundableSubmitAccountingFailureFunc = oldPersistRefundable
+	})
+	settleBillingFunc = func(_ *gin.Context, _ *relaycommon.RelayInfo, actualQuota int) error {
+		require.Equal(t, 150, actualQuota)
+		return fmt.Errorf("pending ledger: %w", model.ErrBillingAdjustmentDeferred)
+	}
+	persistTaskSubmitSettlementErrorFunc = func(task *model.Task, _ *relaycommon.RelayInfo, _ int, _ error) error {
+		task.SettlementStatus = model.TaskSettlementStatusReview
+		task.PrivateData.BillingAdjustmentUnresolved = true
+		return errors.New("review persist failed")
+	}
+	persistRefundableSubmitAccountingFailureFunc = func(*model.Task, int, error, error) error {
+		return errors.New("refundable persist failed")
+	}
+	updateTaskAfterSubmitAccountingFailureFunc = func(*model.Task) error {
+		return errors.New("task row write failed")
+	}
+	ctx, recorder := newRelayTaskTestContext(332, 332, 332)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Zero(t, billing.refundCalls)
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-controller-deferred-row-survives").Error)
+	require.NotEqual(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
+	require.Equal(t, 150, task.Quota)
+}
+
+func TestRelayTaskSettleFailureDoesNotRefundLiveTaskWhenFailureRowCannotBePersisted(t *testing.T) {
+	db := setupModelListControllerTestDB(t)
+	require.NoError(t, db.AutoMigrate(&model.Task{}, &model.Log{}))
+	insertRelayTaskTestChannel(t, 333)
+	failTaskUpdates(t, db)
+
+	billing := &relayTaskTestBilling{preConsumed: 100}
+	oldPersistReview := persistTaskSubmitSettlementErrorFunc
+	oldUpdate := updateTaskAfterSubmitAccountingFailureFunc
+	oldPersistRefundable := persistRefundableSubmitAccountingFailureFunc
+	installRelayTaskTestHooks(t, billing, "task-controller-settle-row-survives", 150)
+	t.Cleanup(func() {
+		persistTaskSubmitSettlementErrorFunc = oldPersistReview
+		updateTaskAfterSubmitAccountingFailureFunc = oldUpdate
+		persistRefundableSubmitAccountingFailureFunc = oldPersistRefundable
+	})
+	settleBillingFunc = func(_ *gin.Context, _ *relaycommon.RelayInfo, actualQuota int) error {
+		require.Equal(t, 150, actualQuota)
+		return errors.New("settlement failed")
+	}
+	persistTaskSubmitSettlementErrorFunc = func(*model.Task, *relaycommon.RelayInfo, int, error) error {
+		return errors.New("review persist failed")
+	}
+	persistRefundableSubmitAccountingFailureFunc = func(*model.Task, int, error, error) error {
+		return errors.New("refundable persist failed")
+	}
+	updateTaskAfterSubmitAccountingFailureFunc = func(*model.Task) error {
+		return errors.New("task row write failed")
+	}
+	ctx, recorder := newRelayTaskTestContext(333, 333, 333)
+
+	RelayTask(ctx)
+
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	require.Zero(t, billing.refundCalls)
+	var task model.Task
+	require.NoError(t, db.First(&task, "task_id = ?", "task-controller-settle-row-survives").Error)
+	require.Equal(t, 150, task.Quota)
+	require.NotEqual(t, model.TaskStatus(model.TaskStatusFailure), task.Status)
+}
+
+func failTaskUpdates(t *testing.T, db *gorm.DB) {
+	t.Helper()
+	const name = "test:fail_task_row_update"
+	require.NoError(t, db.Callback().Update().Before("gorm:update").Register(name, func(tx *gorm.DB) {
+		if tx.Statement != nil && tx.Statement.Table == "tasks" {
+			_ = tx.AddError(errors.New("task row update failed"))
+		}
+	}))
+	t.Cleanup(func() {
+		db.Callback().Update().Remove(name)
+	})
 }
 
 func TestRelayTaskLogFailureWhenBothRefundablePersistsFailStillMarksRefundPending(t *testing.T) {

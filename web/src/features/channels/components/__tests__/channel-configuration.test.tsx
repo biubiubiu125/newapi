@@ -258,6 +258,28 @@ test('changing built-in providers updates server-provided URL placeholders witho
   )
 })
 
+test('selecting a provider does not read the clipboard', async () => {
+  const readText = vi.fn(async () => 'https://clipboard.example sk-secret')
+  const previous = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+  Object.defineProperty(navigator, 'clipboard', {
+    configurable: true,
+    value: { readText },
+  })
+  try {
+    const user = userEvent.setup()
+    render(<ConfigurationHarness />)
+    await user.click(screen.getByRole('option', { name: /^OpenAI / }))
+    expect(screen.getByLabelText('Name *')).toHaveValue('OpenAI')
+    expect(readText).not.toHaveBeenCalled()
+  } finally {
+    if (previous) {
+      Object.defineProperty(navigator, 'clipboard', previous)
+    } else {
+      Reflect.deleteProperty(navigator, 'clipboard')
+    }
+  }
+})
+
 test.each([
   {
     type: 43,
@@ -760,7 +782,7 @@ test.each(['create', 'edit'])(
     expect(extension).toHaveAccessibleName(
       `Sora Selected ${mode === 'edit' ? 2 : 1} / 7`
     )
-    expect(screen.getByRole('button', { name: 'sora-2' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Remove sora-2' })).toBeVisible()
     const selector = screen.getByRole('combobox', {
       name: 'Select models or add custom ones',
     })
@@ -849,7 +871,7 @@ test('plugin model selection shares the field state, preserves other sources, an
   await waitFor(() => expect(sora).toHaveFocus())
   expect(sora).toHaveAccessibleName('Sora Selected 1 / 2')
   expect(
-    screen.queryByRole('button', { name: 'sora-2' })
+    screen.queryByRole('button', { name: 'Remove sora-2' })
   ).not.toBeInTheDocument()
 
   await user.click(sora)
@@ -863,7 +885,7 @@ test('plugin model selection shares the field state, preserves other sources, an
     extensions.getByRole('button', { name: 'Video A Selected 0 / 2' })
   ).toBeVisible()
   expect(
-    screen.queryByRole('button', { name: 'custom-model' })
+    screen.queryByRole('button', { name: 'Remove custom-model' })
   ).not.toBeInTheDocument()
   const selector = screen.getByRole('combobox', {
     name: 'Select models or add custom ones',
@@ -923,9 +945,9 @@ test('retrying extension metadata preserves the editable built-in draft and sele
   ).toBeVisible()
   expect(screen.getByLabelText('Name *')).toHaveValue('Keep this draft')
   expect(screen.getByLabelText(/Base URL/)).toHaveValue('https://saved.example')
-  expect(screen.getByRole('button', { name: 'custom-model' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Remove custom-model' })).toBeVisible()
   expect(
-    screen.queryByRole('button', { name: 'sora-2' })
+    screen.queryByRole('button', { name: 'Remove sora-2' })
   ).not.toBeInTheDocument()
 })
 
@@ -972,7 +994,7 @@ test('loading a replacement plugin preserves an already selected legacy creation
   expect(screen.getByLabelText('Name *')).toHaveValue('Legacy draft')
   expect(screen.getByLabelText('API Key *')).toHaveValue('draft-key')
   expect(screen.getByLabelText(/Base URL/)).toHaveValue('https://draft.example')
-  expect(screen.getByRole('button', { name: 'draft-model' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Remove draft-model' })).toBeVisible()
   await user.click(screen.getByRole('button', { name: 'Create Channel' }))
   await waitFor(() =>
     expect(post).toHaveBeenCalledWith(
@@ -1109,7 +1131,7 @@ test('model discovery discards a response for old credentials and retains manual
     await screen.findByRole('checkbox', { name: 'current-upstream-model' })
   )
   expect(
-    screen.getByRole('button', { name: 'current-upstream-model' })
+    screen.getByRole('button', { name: 'Remove current-upstream-model' })
   ).toBeVisible()
   expect(screen.getByText('custom-model')).toBeVisible()
 })
@@ -1137,7 +1159,7 @@ test('model discovery reports failures inline and allows an empty result to fall
     'custom-model,'
   )
   await user.keyboard('{Escape}')
-  expect(screen.getByRole('button', { name: 'custom-model' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Remove custom-model' })).toBeVisible()
 })
 
 test('quick options and detailed settings share changes across tabs and save the same configuration', async () => {
@@ -1666,8 +1688,8 @@ test('ordinary edits discover models with saved settings and keep removed draft 
     '/api/channel/fetch_models/42',
     expect.anything()
   )
-  expect(screen.getByRole('button', { name: 'custom-model' })).toBeVisible()
-  expect(screen.getByRole('button', { name: 'upstream-model' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Remove custom-model' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Remove upstream-model' })).toBeVisible()
   expect(screen.getByRole('tab', { name: 'New Models (1)' })).toBeVisible()
   expect(screen.getByRole('tab', { name: 'Removed Models (1)' })).toBeVisible()
   await user.type(
@@ -1680,13 +1702,13 @@ test('ordinary edits discover models with saved settings and keep removed draft 
   for (const model of ['custom-model', 'manual-draft']) {
     await user.click(screen.getByRole('checkbox', { name: model }))
     expect(
-      screen.queryByRole('button', { name: model })
+      screen.queryByRole('button', { name: `Remove ${model}` })
     ).not.toBeInTheDocument()
     expect(screen.getByRole('checkbox', { name: model })).not.toBeChecked()
     expect(removedTab).toHaveAttribute('aria-selected', 'true')
   }
   await user.click(screen.getByRole('checkbox', { name: 'manual-draft' }))
-  expect(screen.getByRole('button', { name: 'manual-draft' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Remove manual-draft' })).toBeVisible()
   expect(screen.getByRole('checkbox', { name: 'manual-draft' })).toBeChecked()
   expect(screen.getAllByRole('dialog')).toHaveLength(1)
   expect(post).not.toHaveBeenCalled()
@@ -1737,7 +1759,7 @@ test('model configuration uses only the current form models and persists changes
   await user.keyboard('{Escape}')
   const models = screen.getByRole('group', { name: 'Models' })
   const manualModelChip = within(models).getByRole('button', {
-    name: 'manual-model',
+    name: 'Remove manual-model',
   })
   vi.mocked(api.get).mockClear()
 
@@ -1764,7 +1786,7 @@ test('model configuration uses only the current form models and persists changes
   await user.click(dialog.getByRole('button', { name: 'Apply' }))
 
   expect(
-    within(models).queryByRole('button', { name: 'manual-model' })
+    within(models).queryByRole('button', { name: 'Remove manual-model' })
   ).not.toBeInTheDocument()
   await waitFor(() => expect(trigger).toHaveFocus())
   expect(api.get).not.toHaveBeenCalled()
@@ -1812,8 +1834,8 @@ test.each(['Cancel', 'Close', 'Escape'])(
     }
 
     await waitFor(() => expect(trigger).toHaveFocus())
-    expect(screen.getByRole('button', { name: 'gpt-one' })).toBeVisible()
-    expect(screen.getByRole('button', { name: 'gpt-two' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Remove gpt-one' })).toBeVisible()
+    expect(screen.getByRole('button', { name: 'Remove gpt-two' })).toBeVisible()
     await user.click(trigger)
     expect(
       within(
@@ -1867,7 +1889,7 @@ test('model configuration keeps unchecked candidates searchable and supports cat
   await user.click(dialog.getByRole('button', { name: 'Apply' }))
 
   expect(
-    screen.queryByRole('button', { name: 'manual-model' })
+    screen.queryByRole('button', { name: 'Remove manual-model' })
   ).not.toBeInTheDocument()
   expect(trigger).toBeDisabled()
 })
@@ -2334,9 +2356,9 @@ test('fetched upstream models can be redirected in bulk with the model list sync
   )
 
   expect(screen.getByText('1 model(s) redirected')).toBeVisible()
-  expect(screen.getByRole('button', { name: 'upstream' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Remove upstream' })).toBeVisible()
   expect(
-    screen.queryByRole('button', { name: 'upstream-model' })
+    screen.queryByRole('button', { name: 'Remove upstream-model' })
   ).not.toBeInTheDocument()
   await user.click(screen.getByRole('tab', { name: /Routing & Mapping/ }))
   expect(
@@ -2407,13 +2429,13 @@ test('on wide screens redirecting a fetched model opens the floating panel besid
   await user.type(request, 'upstream')
   const picker = within(screen.getByRole('group', { name: 'Models' }))
   expect(
-    picker.queryByRole('button', { name: 'upstream' })
+    picker.queryByRole('button', { name: 'Remove upstream' })
   ).not.toBeInTheDocument()
   await user.keyboard('{Enter}')
   expect(screen.getByLabelText('Published as upstream')).toBeVisible()
-  expect(picker.getByRole('button', { name: 'upstream' })).toBeVisible()
-  expect(picker.getByRole('button', { name: 'custom-model' })).toBeVisible()
-  expect(picker.queryByRole('button', { name: 'ups' })).not.toBeInTheDocument()
+  expect(picker.getByRole('button', { name: 'Remove upstream' })).toBeVisible()
+  expect(picker.getByRole('button', { name: 'Remove custom-model' })).toBeVisible()
+  expect(picker.queryByRole('button', { name: 'Remove ups' })).not.toBeInTheDocument()
 
   await user.click(screen.getByRole('tab', { name: /Routing & Mapping/ }))
   expect(
@@ -2541,7 +2563,7 @@ test('redirecting a recognized upstream name opens an empty alias draft without 
   expect(screen.queryByLabelText('Published as gpt-4o')).not.toBeInTheDocument()
   expect(
     within(screen.getByRole('group', { name: 'Models' })).getByRole('button', {
-      name: 'custom-model',
+      name: 'Remove custom-model',
     })
   ).toBeVisible()
   expect(screen.queryByText('1 model(s) redirected')).not.toBeInTheDocument()
@@ -2584,9 +2606,9 @@ test('the redirect panel batch action starts empty and only applies explicitly s
   await user.type(dialog.getByRole('textbox', { name: 'Suffix' }), '-all')
   await user.click(dialog.getByRole('button', { name: 'Cancel' }))
   const picker = within(screen.getByRole('group', { name: 'Models' }))
-  expect(picker.getByRole('button', { name: 'gpt-4o-all' })).toBeVisible()
+  expect(picker.getByRole('button', { name: 'Remove gpt-4o-all' })).toBeVisible()
   expect(
-    picker.queryByRole('button', { name: 'gpt-4o' })
+    picker.queryByRole('button', { name: 'Remove gpt-4o' })
   ).not.toBeInTheDocument()
 
   await user.click(panel.getByRole('button', { name: 'Batch Add' }))
@@ -2601,9 +2623,9 @@ test('the redirect panel batch action starts empty and only applies explicitly s
   expect(
     panel.getAllByRole('combobox', { name: 'Request Model Name' })
   ).toHaveLength(1)
-  expect(picker.getByRole('button', { name: 'gpt-4o' })).toBeVisible()
-  expect(picker.getByRole('button', { name: 'o3-all' })).toBeVisible()
-  expect(picker.queryByRole('button', { name: 'o3' })).not.toBeInTheDocument()
+  expect(picker.getByRole('button', { name: 'Remove gpt-4o' })).toBeVisible()
+  expect(picker.getByRole('button', { name: 'Remove o3-all' })).toBeVisible()
+  expect(picker.queryByRole('button', { name: 'Remove o3' })).not.toBeInTheDocument()
   expect(screen.getByText('1 model(s) redirected')).toBeVisible()
 
   await user.click(panel.getByRole('button', { name: 'Collapse panel' }))
@@ -2791,7 +2813,7 @@ test('a New API channel binds upstream task plugins and publishes their models',
   expect(
     extensions.getByRole('button', { name: 'Video B Selected 1 / 1' })
   ).toBeVisible()
-  expect(screen.getByRole('button', { name: 'video-b-1' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Remove video-b-1' })).toBeVisible()
 
   await user.click(selector)
   await user.click(screen.getByRole('option', { name: /^Video A/ }))
@@ -2799,7 +2821,7 @@ test('a New API channel binds upstream task plugins and publishes their models',
   expect(
     extensions.queryByRole('button', { name: /^Video A/ })
   ).not.toBeInTheDocument()
-  expect(screen.getByRole('button', { name: 'gpt-5' })).toBeVisible()
+  expect(screen.getByRole('button', { name: 'Remove gpt-5' })).toBeVisible()
 
   await user.click(screen.getByRole('button', { name: 'Update Channel' }))
   await waitFor(() => expect(put).toHaveBeenCalled())

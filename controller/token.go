@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"fmt"
 	"net/http"
 	"strconv"
@@ -496,7 +497,17 @@ func UpdateToken(c *gin.Context) {
 			}
 		}
 	}
-	err = cleanToken.Update()
+	if statusOnly != "" {
+		err = cleanToken.UpdateStatus()
+	} else if cleanToken.RemainQuota != previous.RemainQuota {
+		err = cleanToken.UpdateWithRemainBaseline(previous.RemainQuota)
+	} else {
+		err = cleanToken.Update()
+	}
+	if errors.Is(err, model.ErrTokenRemainConflict) {
+		common.ApiErrorI18n(c, i18n.MsgTokenRemainChanged)
+		return
+	}
 	if err != nil {
 		common.ApiError(c, err)
 		return

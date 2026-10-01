@@ -228,9 +228,43 @@ func notifySystemTaskCancellation(taskID string) {
 	cancel()
 }
 
+// recoverNodeLocalBillingAdjustments copies this process's spool and memory
+// into pending ledger rows, then applies those rows. Another node cannot see
+// this disk or memory.
+func recoverNodeLocalBillingAdjustments() {
+	if err := model.RecoverUnpersistedBillingAdjustments(100); err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf("unpersisted billing adjustment recovery failed: %v", err))
+	}
+	if err := model.RecoverPendingBillingAdjustments(100); err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf("pending billing adjustment recovery failed: %v", err))
+	}
+	if err := model.RecoverExpiredWalletPreConsumes(100); err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf("expired wallet pre-consume recovery failed: %v", err))
+	}
+	if err := model.RecoverExpiredSubscriptionPreConsumes(100); err != nil {
+		logger.LogWarn(context.Background(), fmt.Sprintf("expired subscription pre-consume recovery failed: %v", err))
+	}
+}
+
+func startNodeLocalBillingRecovery() {
+	gopool.Go(func() {
+		logger.LogInfo(context.Background(), "node-local billing recovery started")
+		ticker := time.NewTicker(systemTaskSchedulerInterval)
+		defer ticker.Stop()
+		recoverNodeLocalBillingAdjustments()
+		for range ticker.C {
+			recoverNodeLocalBillingAdjustments()
+		}
+	})
+}
+
+var startNodeLocalBillingRecoveryFn = startNodeLocalBillingRecovery
+
 func StartSystemTaskRunner() {
 	systemTaskRunnerOnce.Do(func() {
 		if !common.IsMasterNode {
+			// 从节点的补记文件和内存只在本机，主节点读不到。
+			startNodeLocalBillingRecoveryFn()
 			return
 		}
 
@@ -258,6 +292,12 @@ func StartSystemTaskRunner() {
 				if now.Sub(lastScheduler) >= systemTaskSchedulerInterval {
 					lastScheduler = now
 					runSystemTaskScheduler()
+					// 文本请求没有任务行，不能等异步任务轮询才补记。
+					recoverNodeLocalBillingAdjustments()
+					// 文本、语音和实时没有任务行，用量和消费日志失败后也从这里补。
+					if err := model.RecoverPendingConsumptionAudits(100); err != nil {
+						logger.LogWarn(context.Background(), fmt.Sprintf("pending consumption audit recovery failed: %v", err))
+					}
 				}
 				if now.Sub(lastHistoryCleanup) >= systemTaskHistoryCleanupInterval {
 					lastHistoryCleanup = now

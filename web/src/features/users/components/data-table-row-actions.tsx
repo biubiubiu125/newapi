@@ -58,7 +58,7 @@ import {
   isUserDeleted,
 } from '../constants'
 import { getUserActionMessage } from '../lib'
-import type { User, ManageUserAction } from '../types'
+import type { User } from '../types'
 import { UserBindingDialog } from './dialogs/user-binding-dialog'
 import { UserRechargeRecordsDialog } from './dialogs/user-recharge-records-dialog'
 import { useUsers } from './users-provider'
@@ -72,7 +72,7 @@ interface DataTableRowActionsProps {
 export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   const { t } = useTranslation()
   const user = row.original
-  const { setOpen, setCurrentRow, triggerRefresh } = useUsers()
+  const { setOpen, setCurrentRow, triggerRefresh, requestVerification, verificationActive } = useUsers()
   const [resetPasskeyOpen, setResetPasskeyOpen] = useState(false)
   const [resetTwoFAOpen, setResetTwoFAOpen] = useState(false)
   const [bindingDialogOpen, setBindingDialogOpen] = useState(false)
@@ -91,9 +91,18 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
     setOpen('delete')
   }
 
-  const handleManage = async (action: Exclude<ManageUserAction, 'delete'>) => {
+  const handleManage = async (
+    action: 'disable' | 'enable' | 'promote' | 'demote'
+  ) => {
+    if (verificationActive) return
+    const proof = await requestVerification({
+      scope: 'admin.user.manage',
+      context: { user_id: user.id, action },
+      title: t('Verify to manage this user'),
+    })
+    if (!proof) return
     try {
-      const result = await manageUser(user.id, action)
+      const result = await manageUser(user.id, action, proof.proof_token)
       if (result.success) {
         toast.success(t(getUserActionMessage(action)))
         triggerRefresh()
@@ -111,8 +120,15 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   }
 
   const handleResetPasskey = async () => {
+    if (verificationActive) return
+    const proof = await requestVerification({
+      scope: 'admin.user.passkey.reset',
+      context: { user_id: user.id },
+      title: t('Verify to reset this passkey'),
+    })
+    if (!proof) return
     try {
-      const result = await resetUserPasskey(user.id)
+      const result = await resetUserPasskey(user.id, proof.proof_token)
       if (result.success) {
         toast.success(t('Passkey reset successfully'))
         triggerRefresh()
@@ -128,8 +144,15 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
   }
 
   const handleResetTwoFA = async () => {
+    if (verificationActive) return
+    const proof = await requestVerification({
+      scope: 'admin.user.2fa.disable',
+      context: { user_id: user.id },
+      title: t('Verify to reset two-factor authentication'),
+    })
+    if (!proof) return
     try {
-      const result = await resetUserTwoFA(user.id)
+      const result = await resetUserTwoFA(user.id, proof.proof_token)
       if (result.success) {
         toast.success(t('Two-factor authentication reset'))
         triggerRefresh()
@@ -360,6 +383,8 @@ export function DataTableRowActions({ row }: DataTableRowActionsProps) {
         onOpenChange={setBindingDialogOpen}
         userId={user.id}
         onUnbindSuccess={triggerRefresh}
+        requestVerification={requestVerification}
+        verificationActive={verificationActive}
       />
 
       <UserSubscriptionsDialog

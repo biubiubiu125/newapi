@@ -7,10 +7,12 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/middleware"
 	"github.com/QuantumNous/new-api/model"
+	"github.com/QuantumNous/new-api/service"
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
@@ -85,7 +87,7 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 				common.SetDatabaseTypes(previousMain, previousLog)
 				common.RedisEnabled = previousRedis
 			})
-			for _, table := range []any{&model.User{}, &model.Redemption{}} {
+			for _, table := range []any{&model.User{}, &model.UserSession{}, &model.Redemption{}} {
 				require.False(t, db.Migrator().HasTable(table), "use an empty test database")
 				require.NoError(t, db.AutoMigrate(table))
 				t.Cleanup(func() { require.NoError(t, db.Migrator().DropTable(table)) })
@@ -94,8 +96,16 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 			require.NoError(t, logDB.AutoMigrate(&model.AuditLog{}))
 			t.Cleanup(func() { require.NoError(t, logDB.Migrator().DropTable(&model.AuditLog{})) })
 			token := "redemption-audit-test-token"
-			admin := model.User{Username: "redemption-audit-admin", Password: "unused", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AccessToken: &token}
+			previousSecret := common.SessionSecret
+			common.SessionSecret = "redemption-audit-session-secret"
+			t.Cleanup(func() { common.SessionSecret = previousSecret })
+			admin := model.User{Username: "redemption-audit-admin", Password: "unused", Role: common.RoleAdminUser, Status: common.UserStatusEnabled, Group: "default", AccessToken: &token, AuthVersion: 1}
 			require.NoError(t, db.Create(&admin).Error)
+			now := time.Now().Unix()
+			session := &model.UserSession{SID: "redemption-audit-session", UserID: admin.Id, Version: 1, UserAuthVersion: admin.AuthVersion, Status: model.UserSessionStatusActive, RefreshHash: "refresh-hash", LoginMethod: "password", LastActiveAt: now, ExpiresAt: now + 3600}
+			require.NoError(t, model.CreateUserSession(session))
+			sessionToken, _, err := service.IssueAccessToken(service.AuthIdentity{UserID: admin.Id, SessionID: session.SID, UserAuthVersion: admin.AuthVersion, SessionVersion: session.Version})
+			require.NoError(t, err)
 			codes := make([]model.Redemption, 16)
 			for index := range codes {
 				codes[index] = model.Redemption{Name: "selected", Key: fmt.Sprintf("%032d", index+1), Quota: 100, Status: common.RedemptionCodeStatusEnabled}
@@ -118,7 +128,7 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 				t.Run("invalid_"+body[:min(len(body), 30)], func(t *testing.T) {
 					response := httptest.NewRecorder()
 					request := httptest.NewRequest(http.MethodPost, "/api/redemption/batch", bytes.NewBufferString(body))
-					request.Header.Set("Authorization", "Bearer "+token)
+					request.Header.Set("Authorization", "Bearer "+sessionToken)
 					router.ServeHTTP(response, request)
 					var result struct {
 						Success bool `json:"success"`
@@ -147,7 +157,7 @@ func TestDeleteRedemptionBatch(t *testing.T) {
 			for _, expectedCount := range []int64{15, 0} {
 				response := httptest.NewRecorder()
 				request := httptest.NewRequest(http.MethodPost, "/api/redemption/batch", bytes.NewReader(payload))
-				request.Header.Set("Authorization", "Bearer "+token)
+				request.Header.Set("Authorization", "Bearer "+sessionToken)
 				router.ServeHTTP(response, request)
 				assert.Equal(t, http.StatusOK, response.Code)
 				var result struct {

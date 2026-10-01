@@ -664,6 +664,72 @@ func TestSecurityAccountEmailConfirmationAndAudit(t *testing.T) {
 	}
 }
 
+func TestSecurityAccountEmailBindRetiresOldAddressAndOtherSessions(t *testing.T) {
+	user, identity := setupSecurityEnrollmentTest(t)
+	mailbox := newSecurityMailbox(t)
+	previous := "previous@example.com"
+	canonical := previous
+	require.NoError(t, model.DB.Model(user).Updates(map[string]any{
+		"email": previous, "email_canonical": &canonical,
+	}).Error)
+	require.NoError(t, model.SyncUserLoginIdentifiers(user.Id))
+	accessToken := "0123456789abcdef0123456789abcdef"
+	require.NoError(t, model.UpdateUserAccessToken(user.Id, accessToken))
+	other, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "other-browser")
+	require.NoError(t, err)
+	var before model.User
+	require.NoError(t, model.DB.First(&before, user.Id).Error)
+	require.Equal(t, previous, before.Email)
+
+	flow := startSecurityEmailBinding(t, identity, "New@Example.com", service.VerificationMethodPassword)
+	request, err := common.Marshal(map[string]string{
+		"flow_token": flow.FlowToken,
+		"new_code":   mailbox.code(t, flow.Email),
+		"old_code":   mailbox.code(t, previous),
+	})
+	require.NoError(t, err)
+	response := securityEnrollmentRequest("POST", "/api/oauth/email/bind", string(request), "", identity, EmailBind)
+	var result securityEnrollmentResponse
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	require.True(t, result.Success, response.Body.String())
+
+	stored, err := model.GetUserById(user.Id, true)
+	require.NoError(t, err)
+	assert.Equal(t, "new@example.com", stored.Email)
+	require.NotNil(t, stored.EmailCanonical)
+	assert.Equal(t, "new@example.com", *stored.EmailCanonical)
+	assert.Greater(t, stored.AuthVersion, identity.UserAuthVersion)
+	assert.Empty(t, stored.GetAccessToken())
+
+	oldLogin := model.User{Email: previous}
+	assert.ErrorIs(t, oldLogin.FillUserByEmail(), gorm.ErrRecordNotFound)
+	_, err = model.GetUniqueUserByEmail(previous)
+	assert.ErrorIs(t, err, model.ErrEmailNotFound)
+	newLogin := model.User{Email: "NEW@example.com"}
+	require.NoError(t, newLogin.FillUserByEmail())
+	assert.Equal(t, user.Id, newLogin.Id)
+	resetUser, err := model.GetUniqueUserByEmail("new@example.com")
+	require.NoError(t, err)
+	assert.Equal(t, user.Id, resetUser.Id)
+
+	var identifiers []model.UserLoginIdentifier
+	require.NoError(t, model.DB.Where("user_id = ?", user.Id).Find(&identifiers).Error)
+	seen := map[string]bool{}
+	for _, identifier := range identifiers {
+		seen[identifier.Identifier] = true
+	}
+	assert.True(t, seen["new@example.com"])
+	assert.False(t, seen[previous])
+
+	var otherSession model.UserSession
+	require.NoError(t, model.DB.Where("sid = ?", other.Session.SID).First(&otherSession).Error)
+	assert.Equal(t, model.UserSessionStatusRevoked, otherSession.Status)
+	var currentSession model.UserSession
+	require.NoError(t, model.DB.Where("sid = ?", identity.SessionID).First(&currentSession).Error)
+	assert.Equal(t, model.UserSessionStatusActive, currentSession.Status)
+	assert.Equal(t, stored.AuthVersion, currentSession.UserAuthVersion)
+}
+
 func TestSecurityAccountEmailResendAndAttemptLimit(t *testing.T) {
 	_, identity := setupSecurityEnrollmentTest(t)
 	mailbox := newSecurityMailbox(t)

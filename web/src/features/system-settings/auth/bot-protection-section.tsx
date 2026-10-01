@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { zodResolver } from '@hookform/resolvers/zod'
-import { useEffect } from 'react'
+import { useEffect, useRef } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import * as z from 'zod'
@@ -41,6 +41,7 @@ import {
 } from '../components/settings-form-layout'
 import { SettingsPageFormActions } from '../components/settings-page-context'
 import { SettingsSection } from '../components/settings-section'
+import { shouldApplyServerDefaults } from '../hooks/settings-form-reset'
 import { useUpdateOption } from '../hooks/use-update-option'
 
 const botProtectionSchema = z.object({
@@ -65,10 +66,26 @@ export function BotProtectionSection({
     resolver: zodResolver(botProtectionSchema),
     defaultValues,
   })
+  const serializedDefaults = JSON.stringify(defaultValues)
+  const baselineRef = useRef(serializedDefaults)
+  const isDirty = form.formState.isDirty
 
   useEffect(() => {
+    const current = JSON.stringify(form.getValues())
+    if (
+      !shouldApplyServerDefaults(
+        serializedDefaults,
+        baselineRef.current,
+        current,
+        isDirty
+      )
+    ) {
+      return
+    }
+    baselineRef.current = serializedDefaults
     form.reset(defaultValues)
-  }, [defaultValues, form])
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- isDirty is read during render and must not retrigger reset
+  }, [defaultValues, form, serializedDefaults])
 
   const onSubmit = async (data: BotProtectionFormValues) => {
     const updates = Object.entries(data).filter(

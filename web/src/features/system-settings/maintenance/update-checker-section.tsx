@@ -17,7 +17,7 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useTranslation } from 'react-i18next'
-import { SystemUpdateAction } from '@/features/system-update/system-update-action'
+
 import { formatTimestamp } from '@/lib/format'
 import { SettingsSection } from '../components/settings-section'
 type UpdateCheckerSectionProps = {
@@ -51,7 +51,6 @@ export function UpdateCheckerSection(props: UpdateCheckerSectionProps) {
             <div className='text-lg font-semibold'>{uptime}</div>
           </div>
         </div>
-        <SystemUpdateAction compact={false} />
       </div>
     </SettingsSection>
   )

@@ -171,7 +171,7 @@ func TestRedisReserveRejectsWhenDatabaseBalanceIsLowerThanCache(t *testing.T) {
 
 	reserved, err := TryReserveUserQuota(user.Id, 8)
 	assert.False(t, reserved)
-	assert.ErrorIs(t, err, gorm.ErrRecordNotFound)
+	assert.NoError(t, err)
 	assert.EqualValues(t, 2, getUserQuotaFromDB(t, user.Id))
 	cachedUser, cacheErr := cacheGetUserBase(user.Id)
 	require.NoError(t, cacheErr)

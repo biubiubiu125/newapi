@@ -19,6 +19,28 @@ import (
 	"gorm.io/gorm"
 )
 
+func TestSoftDeleteDisablesRelayTokensAndReportsDeletedUser(t *testing.T) {
+	truncateTables(t)
+	user := User{Username: "soft-delete-token-user", Password: "password", Status: common.UserStatusEnabled, AuthVersion: 1}
+	require.NoError(t, DB.Create(&user).Error)
+	require.NoError(t, DB.Create(&Token{
+		UserId: user.Id, Key: "softdeleterelaykey", Status: common.TokenStatusEnabled, Name: "relay", UnlimitedQuota: true,
+	}).Error)
+
+	require.NoError(t, user.Delete())
+
+	var token Token
+	require.NoError(t, DB.Where("user_id = ?", user.Id).First(&token).Error)
+	assert.Equal(t, common.TokenStatusDisabled, token.Status)
+	_, err := GetUserCache(user.Id)
+	assert.ErrorIs(t, err, ErrUserDeleted)
+	loaded, err := ValidateUserToken("softdeleterelaykey")
+	assert.ErrorIs(t, err, ErrTokenInvalid)
+	if loaded != nil {
+		assert.Equal(t, common.TokenStatusDisabled, loaded.Status)
+	}
+}
+
 func TestHardDeleteUserFailsClosedWhenAuthFenceCannotPublish(t *testing.T) {
 	truncateTables(t)
 

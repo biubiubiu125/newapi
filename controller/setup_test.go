@@ -10,6 +10,7 @@ import (
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
+	"github.com/QuantumNous/new-api/i18n"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 	"github.com/gin-gonic/gin"
@@ -19,6 +20,7 @@ import (
 
 func setupSetupControllerTest(t *testing.T) *gorm.DB {
 	t.Helper()
+	require.NoError(t, i18n.Init())
 	db := setupModelListControllerTestDB(t)
 	require.NoError(t, db.AutoMigrate(&model.Option{}, &model.Setup{}))
 	model.InitOptionMap()
@@ -150,4 +152,55 @@ func TestPostSetupDoesNotMarkInitializedWhenSetupRowCreateFails(t *testing.T) {
 	require.False(t, constant.Setup)
 	require.True(t, model.RootUserExists())
 	require.Nil(t, model.GetSetup())
+}
+
+func TestPostSetupAcceptsUnicodePasswordWithinPolicy(t *testing.T) {
+	setupSetupControllerTest(t)
+
+	password := strings.Repeat("\U0001F600", 20)
+	body, err := json.Marshal(map[string]string{
+		"username":        "admin",
+		"password":        password,
+		"confirmPassword": password,
+	})
+	require.NoError(t, err)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPost, "/api/setup", strings.NewReader(string(body)))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+
+	PostSetup(ctx)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var resp map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+	require.Equal(t, true, resp["success"], recorder.Body.String())
+	root := model.GetRootUser()
+	require.NotNil(t, root)
+	require.True(t, common.ValidatePasswordAndHash(password, root.Password))
+}
+
+func TestPostSetupRejectsPasswordOutsideRunePolicy(t *testing.T) {
+	setupSetupControllerTest(t)
+
+	for _, password := range []string{strings.Repeat("\U0001F600", 4), strings.Repeat("a", 129)} {
+		body, err := json.Marshal(map[string]string{
+			"username":        "admin",
+			"password":        password,
+			"confirmPassword": password,
+		})
+		require.NoError(t, err)
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPost, "/api/setup", strings.NewReader(string(body)))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+
+		PostSetup(ctx)
+
+		var resp map[string]any
+		require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &resp))
+		require.Equal(t, false, resp["success"], recorder.Body.String())
+		require.Contains(t, resp["message"], "128")
+		require.False(t, model.RootUserExists())
+	}
 }

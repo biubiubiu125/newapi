@@ -11,6 +11,7 @@ import (
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/model"
 	relaycommon "github.com/QuantumNous/new-api/relay/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/operation_setting"
 
 	"github.com/gin-gonic/gin"
@@ -93,6 +94,152 @@ func TestBillingSessionPreConsumeDoesNotTrustWhenRequiredQuotaExceedsAvailableQu
 
 	require.NotNil(t, err)
 	require.False(t, session.trusted)
+}
+
+func TestNewBillingSessionTrustsWalletWhenBalanceExceedsTrustButNotEstimate(t *testing.T) {
+	truncate(t)
+	previousUnit := common.QuotaPerUnit
+	previous := *operation_setting.GetQuotaSetting()
+	t.Cleanup(func() {
+		common.QuotaPerUnit = previousUnit
+		*operation_setting.GetQuotaSetting() = previous
+	})
+	common.QuotaPerUnit = 1
+	operation_setting.GetQuotaSetting().TrustQuotaUSD = 100
+	const userID, tokenID = 9611, 9612
+	seedUser(t, userID, 150)
+	seedToken(t, tokenID, userID, "sk-trust-estimate", 150)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("token_quota", int64(150))
+	info := &relaycommon.RelayInfo{
+		UserId:    userID,
+		UserQuota: 150,
+		TokenId:   tokenID,
+		TokenKey:  "sk-trust-estimate",
+		UserSetting: dto.UserSetting{
+			BillingPreference: "wallet_only",
+		},
+	}
+
+	session, apiErr := NewBillingSession(ctx, info, 200)
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, session)
+	require.True(t, session.trusted)
+	require.Equal(t, 0, session.GetPreConsumedQuota())
+	require.Equal(t, BillingSourceWallet, session.funding.Source())
+	require.EqualValues(t, 150, getUserQuota(t, userID))
+	require.EqualValues(t, 150, getTokenRemainQuota(t, tokenID))
+}
+
+func TestNewBillingSessionDoesNotTrustForcedPreConsumeOrBalanceBelowThreshold(t *testing.T) {
+	truncate(t)
+	previousUnit := common.QuotaPerUnit
+	previous := *operation_setting.GetQuotaSetting()
+	t.Cleanup(func() {
+		common.QuotaPerUnit = previousUnit
+		*operation_setting.GetQuotaSetting() = previous
+	})
+	common.QuotaPerUnit = 1
+	operation_setting.GetQuotaSetting().TrustQuotaUSD = 100
+	const userID, tokenID = 9613, 9614
+	seedUser(t, userID, 150)
+	seedToken(t, tokenID, userID, "sk-trust-forced", 150)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("token_quota", int64(150))
+	forced := &relaycommon.RelayInfo{
+		UserId:          userID,
+		UserQuota:       150,
+		TokenId:         tokenID,
+		TokenKey:        "sk-trust-forced",
+		ForcePreConsume: true,
+		UserSetting: dto.UserSetting{
+			BillingPreference: "wallet_only",
+		},
+	}
+
+	session, apiErr := NewBillingSession(ctx, forced, 200)
+
+	require.Nil(t, session)
+	require.NotNil(t, apiErr)
+	require.EqualValues(t, 150, getUserQuota(t, userID))
+
+	operation_setting.GetQuotaSetting().TrustQuotaUSD = 1000
+	below := &relaycommon.RelayInfo{
+		UserId:    userID,
+		UserQuota: 150,
+		TokenId:   tokenID,
+		TokenKey:  "sk-trust-forced",
+		UserSetting: dto.UserSetting{
+			BillingPreference: "wallet_first",
+		},
+	}
+	session, apiErr = NewBillingSession(ctx, below, 200)
+	require.Nil(t, session)
+	require.NotNil(t, apiErr)
+	require.EqualValues(t, 150, getUserQuota(t, userID))
+}
+
+func TestTrustedPreConsumeRecordsObligationWithoutDebit(t *testing.T) {
+	truncate(t)
+	previousUnit := common.QuotaPerUnit
+	previous := *operation_setting.GetQuotaSetting()
+	t.Cleanup(func() {
+		common.QuotaPerUnit = previousUnit
+		*operation_setting.GetQuotaSetting() = previous
+	})
+	common.QuotaPerUnit = 1
+	operation_setting.GetQuotaSetting().TrustQuotaUSD = 100
+	const userID, tokenID = 9615, 9616
+	const requestID = "req-trust-obligation"
+	seedUser(t, userID, 150)
+	seedToken(t, tokenID, userID, "sk-trust-obligation", 150)
+
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Set("token_quota", int64(150))
+	info := &relaycommon.RelayInfo{
+		UserId:    userID,
+		UserQuota: 150,
+		TokenId:   tokenID,
+		TokenKey:  "sk-trust-obligation",
+		RequestId: requestID,
+		UserSetting: dto.UserSetting{
+			BillingPreference: "wallet_only",
+		},
+	}
+
+	session, apiErr := NewBillingSession(ctx, info, 200)
+	t.Cleanup(func() {
+		if session == nil {
+			return
+		}
+		if wallet, ok := session.funding.(*WalletFunding); ok {
+			wallet.stopLease()
+		}
+	})
+
+	require.Nil(t, apiErr)
+	require.NotNil(t, session)
+	require.True(t, session.trusted)
+	require.Equal(t, 0, session.GetPreConsumedQuota())
+	require.EqualValues(t, 150, getUserQuota(t, userID))
+	require.EqualValues(t, 150, getTokenRemainQuota(t, tokenID))
+	var row model.WalletPreConsumeRecord
+	require.NoError(t, model.DB.Where("request_id = ?", requestID).First(&row).Error)
+	require.Equal(t, model.WalletPreConsumeTrusted, row.Status)
+	require.EqualValues(t, 200, row.Amount)
+	require.Greater(t, row.LeaseUntil, int64(0))
+
+	require.NoError(t, session.Settle(40))
+	require.EqualValues(t, 110, getUserQuota(t, userID))
+	require.EqualValues(t, 110, getTokenRemainQuota(t, tokenID))
+	require.NoError(t, model.DB.Where("request_id = ?", requestID).First(&row).Error)
+	require.Equal(t, model.WalletPreConsumeSettled, row.Status)
 }
 
 func TestBillingSessionReserveChargesWhenTrustedSessionNeedsHigherQuota(t *testing.T) {
@@ -324,7 +471,7 @@ func TestBillingSessionRefundRefundsWalletWhenTokenDeleted(t *testing.T) {
 	}, 2*time.Second, 10*time.Millisecond)
 }
 
-func TestBillingSessionSettleDoesNotDebitWalletWhenTokenAdjustmentFails(t *testing.T) {
+func TestBillingSessionSettleChargesWalletWhenTokenRemainIsShort(t *testing.T) {
 	truncate(t)
 	require.NoError(t, model.DB.Create(&model.User{
 		Id:       9701,
@@ -353,14 +500,13 @@ func TestBillingSessionSettleDoesNotDebitWalletWhenTokenAdjustmentFails(t *testi
 
 	err := session.Settle(20)
 
-	require.Error(t, err)
-	require.Contains(t, err.Error(), "token quota is not enough")
+	require.NoError(t, err)
 	var user model.User
 	require.NoError(t, model.DB.Select("quota").First(&user, 9701).Error)
-	require.EqualValues(t, 100, user.Quota)
+	require.EqualValues(t, 90, user.Quota)
 	var token model.Token
 	require.NoError(t, model.DB.Select("remain_quota").First(&token, 9702).Error)
-	require.EqualValues(t, 0, token.RemainQuota)
+	require.EqualValues(t, -10, token.RemainQuota)
 }
 
 func TestBillingSessionSettleRefundsWalletWhenTokenDeleted(t *testing.T) {
@@ -459,6 +605,25 @@ func TestBillingSessionRollbackRefundsWalletAfterZeroDeltaSettlement(t *testing.
 	require.NoError(t, model.DB.Select("remain_quota", "used_quota").First(&token, 9762).Error)
 	require.EqualValues(t, 1000, token.RemainQuota)
 	require.EqualValues(t, 0, token.UsedQuota)
+}
+
+func TestPostConsumeUserSubscriptionDeltaRefundsWhileOverdrawn(t *testing.T) {
+	truncate(t)
+	require.NoError(t, model.DB.Create(&model.UserSubscription{
+		Id:          9771,
+		UserId:      9770,
+		PlanId:      1,
+		Status:      "active",
+		AmountTotal: 80,
+		AmountUsed:  100,
+		StartTime:   time.Now().Add(-time.Hour).Unix(),
+		EndTime:     time.Now().Add(time.Hour).Unix(),
+	}).Error)
+
+	err := model.PostConsumeUserSubscriptionDelta(9771, -10)
+
+	require.NoError(t, err)
+	require.EqualValues(t, 90, getSubscriptionUsed(t, 9771))
 }
 
 func TestBillingSessionRollbackRefundsSubscriptionPreConsumeRecord(t *testing.T) {
@@ -561,7 +726,7 @@ func TestBillingSessionRollbackFundingFailureRollsBackTrackedTokenDelta(t *testi
 	require.EqualValues(t, 10, token.UsedQuota)
 }
 
-func TestPostConsumeQuotaDoesNotDebitWalletWhenTokenAdjustmentFails(t *testing.T) {
+func TestPostConsumeQuotaChargesWalletWhenTokenRemainIsShort(t *testing.T) {
 	truncate(t)
 	require.NoError(t, model.DB.Create(&model.User{
 		Id:       9711,
@@ -586,13 +751,13 @@ func TestPostConsumeQuotaDoesNotDebitWalletWhenTokenAdjustmentFails(t *testing.T
 
 	err := PostConsumeQuota(relayInfo, 10, 0, false)
 
-	require.Error(t, err)
+	require.NoError(t, err)
 	var user model.User
 	require.NoError(t, model.DB.Select("quota").First(&user, 9711).Error)
-	require.EqualValues(t, 100, user.Quota)
+	require.EqualValues(t, 90, user.Quota)
 	var token model.Token
 	require.NoError(t, model.DB.Select("remain_quota").First(&token, 9712).Error)
-	require.EqualValues(t, 0, token.RemainQuota)
+	require.EqualValues(t, -10, token.RemainQuota)
 }
 
 func TestPostConsumeQuotaNegativeDeltaFundingFailureRollsBackTrackedTokenDelta(t *testing.T) {

@@ -100,6 +100,10 @@ func applyImageTaskTokenContext(c *gin.Context, token *model.Token, parts ...str
 
 	userCache, err := model.GetUserCache(token.UserId)
 	if err != nil {
+		if errors.Is(err, model.ErrUserDeleted) {
+			abortWithOpenAiMessage(c, http.StatusForbidden, i18n.ProtocolMessage(i18n.MsgAuthUserBanned))
+			return false
+		}
 		if errors.Is(err, gorm.ErrRecordNotFound) {
 			abortWithOpenAiMessage(c, http.StatusUnauthorized, i18n.ProtocolMessage(i18n.MsgTokenInvalid))
 			return false

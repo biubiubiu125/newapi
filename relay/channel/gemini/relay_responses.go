@@ -37,21 +37,31 @@ func GeminiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *h
 	countGeminiBillableFunctionCalls(info, &geminiResponse)
 	if len(geminiResponse.Candidates) == 0 {
 		usage := buildUsageFromGeminiResponse(c, info, &geminiResponse)
+		var newAPIError *types.NewAPIError
 		if geminiResponse.PromptFeedback != nil && geminiResponse.PromptFeedback.BlockReason != nil {
 			info.PerformanceBusinessRejection = true
 			common.SetContextKey(c, constant.ContextKeyAdminRejectReason, fmt.Sprintf("gemini_block_reason=%s", *geminiResponse.PromptFeedback.BlockReason))
-			return &usage, types.NewOpenAIError(
+			newAPIError = types.NewOpenAIError(
 				errors.New("request blocked by Gemini API: "+*geminiResponse.PromptFeedback.BlockReason),
 				types.ErrorCodePromptBlocked,
 				http.StatusBadRequest,
 			)
+		} else {
+			common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "gemini_empty_candidates")
+			newAPIError = types.NewOpenAIError(
+				errors.New("empty response from Gemini API"),
+				types.ErrorCodeEmptyResponse,
+				http.StatusInternalServerError,
+			)
 		}
-		common.SetContextKey(c, constant.ContextKeyAdminRejectReason, "gemini_empty_candidates")
-		return &usage, types.NewOpenAIError(
-			errors.New("empty response from Gemini API"),
-			types.ErrorCodeEmptyResponse,
-			http.StatusInternalServerError,
-		)
+		service.ResetStatusCode(newAPIError, c.GetString("status_code_mapping"))
+		// The client already has the terminal error body. Returning nil lets the
+		// relay settle prompt usage instead of refunding the whole pre-consume.
+		// The envelope matches the non-Claude relay error response.
+		c.JSON(newAPIError.StatusCode, gin.H{
+			"error": newAPIError.ToOpenAIError(),
+		})
+		return &usage, nil
 	}
 
 	usage := buildUsageFromGeminiResponse(c, info, &geminiResponse)
@@ -151,6 +161,10 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 		return sendChunk(geminiResponse)
 	})
 	if streamAPIError != nil {
+		if info.HasClientStreamWrite() {
+			logger.LogError(c, "gemini responses stream failed after response delivery: "+streamAPIError.Error())
+			return usage, nil
+		}
 		if failResponsesStream(streamAPIError) && streamErr == nil {
 			return usage, nil
 		}
@@ -163,6 +177,9 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 		return usage, nil
 	}
 	if streamErr != nil {
+		if info.HasClientStreamWrite() {
+			return usage, nil
+		}
 		return nil, streamErr
 	}
 	hostedEvents, err := hostedBridge.Finalize(state)
@@ -171,7 +188,7 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	}
 	for _, event := range hostedEvents {
 		if !sendEvent(event) {
-			if streamErr != nil {
+			if streamErr != nil && !info.HasClientStreamWrite() {
 				return usage, streamErr
 			}
 			return usage, nil
@@ -183,6 +200,10 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	}
 	finalResults, err := service.FinalizeStreamResponse(c, info, state)
 	if err != nil {
+		if info.HasClientStreamWrite() {
+			_ = failResponsesStream(err)
+			return usage, nil
+		}
 		if failResponsesStream(err) {
 			return usage, streamErr
 		}
@@ -191,10 +212,13 @@ func GeminiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, r
 	for _, result := range finalResults {
 		event, ok := result.Value.(relayconvert.ChatToResponsesStreamEvent)
 		if !ok {
+			if info.HasClientStreamWrite() {
+				return usage, nil
+			}
 			return nil, types.NewOpenAIError(fmt.Errorf("expected OAI responses stream event, got %T", result.Value), types.ErrorCodeBadResponse, http.StatusInternalServerError)
 		}
 		if !sendEvent(event) {
-			if streamErr != nil {
+			if streamErr != nil && !info.HasClientStreamWrite() {
 				return usage, streamErr
 			}
 			return usage, nil

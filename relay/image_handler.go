@@ -28,11 +28,27 @@ const (
 	contextKeyImageStreamAllowed       = "image_stream_allowed"
 	contextKeyImageTaskDeferBilling    = "image_task_defer_billing"
 	contextKeyImageTaskDeferredBilling = "image_task_deferred_billing"
+	contextKeyImageTaskBeforeUpstream  = "image_task_before_upstream"
 )
 
 type imageTaskDeferredBilling struct {
 	Usage        dto.Usage
 	ExtraContent []string
+}
+
+func notifyImageTaskUpstreamSubmission(c *gin.Context) error {
+	if c == nil {
+		return nil
+	}
+	hook, exists := c.Get(contextKeyImageTaskBeforeUpstream)
+	if !exists || hook == nil {
+		return nil
+	}
+	notify, ok := hook.(func() error)
+	if !ok || notify == nil {
+		return nil
+	}
+	return notify()
 }
 
 func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *types.NewAPIError) {
@@ -138,6 +154,9 @@ func ImageHelper(c *gin.Context, info *relaycommon.RelayInfo) (newAPIError *type
 	}
 	if billingErr := service.PrepareImageBillingForRequest(c, info, imageCount); billingErr != nil {
 		return billingErr
+	}
+	if err := notifyImageTaskUpstreamSubmission(c); err != nil {
+		return types.NewError(err, types.ErrorCodeDoRequestFailed, types.ErrOptionWithSkipRetry())
 	}
 
 	statusCodeMappingStr := c.GetString("status_code_mapping")

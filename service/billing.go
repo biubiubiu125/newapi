@@ -2,6 +2,7 @@ package service
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -108,6 +109,25 @@ func attachSettlementLogFields(other *model.LogOther, relayInfo *relaycommon.Rel
 	return logQuota
 }
 
+func isDeferredBillingSettlement(err error) bool {
+	return errors.Is(err, model.ErrBillingAdjustmentDeferred)
+}
+
+// consumeSettlementLog records a deferred charge at the attempted quota.
+// settlementApplied 表示钱已经落账，用量失败时可以回滚。
+// chargeAccepted 表示结果已经交付，日志失败不能把这笔钱退掉。
+func consumeSettlementLog(other *model.LogOther, relayInfo *relaycommon.RelayInfo, attemptedQuota int, settleErr error) (logQuota int, settlementApplied bool, chargeAccepted bool, clientErr error) {
+	if isDeferredBillingSettlement(settleErr) {
+		if other != nil {
+			other.SetAdmin("billing_adjustment_pending", true)
+		}
+		return attemptedQuota, false, true, nil
+	}
+	logQuota = attachSettlementLogFields(other, relayInfo, attemptedQuota, settleErr)
+	applied := settleErr == nil
+	return logQuota, applied, applied, settleErr
+}
+
 func attachSettlementLogFieldsMessage(other *model.LogOther, relayInfo *relaycommon.RelayInfo, attemptedQuota int, errMsg string) int {
 	logQuota := logQuotaAfterSettlement(relayInfo, attemptedQuota, errMsg != "")
 	if errMsg != "" {
@@ -194,4 +214,38 @@ func SettleBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuo
 		return PostConsumeQuota(relayInfo, quotaDelta, relayInfo.FinalPreConsumedQuota, true)
 	}
 	return nil
+}
+
+// settleDeliveredBilling settles a response the client already has.
+// A terminal ledger error is reconciled to the stored or current charge.
+// Returning that error would make the relay refund a delivered response.
+func settleDeliveredBilling(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, actualQuota int) (int, error) {
+	err := SettleBilling(ctx, relayInfo, actualQuota)
+	if err == nil || relayInfo == nil || relayInfo.Billing == nil || isDeferredBillingSettlement(err) {
+		if err == nil {
+			if session, ok := relayInfo.Billing.(*BillingSession); ok {
+				if charged, ok := session.DeliveredQuota(); ok {
+					return charged, nil
+				}
+			}
+		}
+		return actualQuota, err
+	}
+	session, ok := relayInfo.Billing.(*BillingSession)
+	if !ok {
+		return actualQuota, err
+	}
+	charged, applied, acceptErr := session.AcceptDeliveredSettlement(actualQuota)
+	if acceptErr != nil {
+		return actualQuota, err
+	}
+	if applied && charged != 0 {
+		preConsumed := relayInfo.Billing.GetPreConsumedQuota()
+		if relayInfo.BillingSource == BillingSourceSubscription {
+			checkAndSendSubscriptionQuotaNotify(relayInfo)
+		} else {
+			checkAndSendQuotaNotify(relayInfo, charged-preConsumed, preConsumed)
+		}
+	}
+	return charged, nil
 }

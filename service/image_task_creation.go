@@ -63,7 +63,7 @@ func CommitImageTaskCreation(
 				transactionAPIError = apiErr
 				return apiErr
 			}
-			applyImageTaskCreationBilling(task, session)
+			applyImageTaskCreationBilling(tx, task, session)
 			if err := tx.Model(&model.Task{}).Where("id = ?", task.ID).Updates(map[string]any{
 				"quota":        task.Quota,
 				"private_data": task.PrivateData,
@@ -83,6 +83,7 @@ func CommitImageTaskCreation(
 		task.Quota = 0
 		task.PrivateData.BillingSource = ""
 		task.PrivateData.SubscriptionId = 0
+		task.PrivateData.SubscriptionConsumedAt = 0
 		if transactionAPIError != nil {
 			return transactionAPIError
 		}
@@ -234,7 +235,7 @@ func finishImageTaskBillingSessionTx(tx *gorm.DB, relayInfo *relaycommon.RelayIn
 	}, nil
 }
 
-func applyImageTaskCreationBilling(task *model.Task, session *BillingSession) {
+func applyImageTaskCreationBilling(tx *gorm.DB, task *model.Task, session *BillingSession) {
 	if task == nil || session == nil || session.funding == nil {
 		return
 	}
@@ -242,5 +243,10 @@ func applyImageTaskCreationBilling(task *model.Task, session *BillingSession) {
 	task.PrivateData.BillingSource = session.funding.Source()
 	if subscription, ok := session.funding.(*SubscriptionFunding); ok {
 		task.PrivateData.SubscriptionId = subscription.subscriptionId
+		requestID := ""
+		if session.relayInfo != nil {
+			requestID = session.relayInfo.RequestId
+		}
+		task.PrivateData.SubscriptionConsumedAt = model.SubscriptionPreConsumeCreatedAtTx(tx, requestID)
 	}
 }

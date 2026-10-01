@@ -241,6 +241,10 @@ func runMidjourneyTaskUpdateOnce(ctx context.Context, report func(processed, tot
 				if err := service.RefundMidjourneyTaskQuota(ctx, task, "构图失败"); err != nil {
 					logger.LogError(ctx, fmt.Sprintf("midjourney task %s refund failed: %s", task.MjId, err.Error()))
 				}
+			} else if won {
+				if err := service.ChargeMidjourneySubscriptionAfterReset(task); err != nil {
+					logger.LogError(ctx, fmt.Sprintf("midjourney task %s subscription reset charge failed: %s", task.MjId, err.Error()))
+				}
 			}
 		}
 	}

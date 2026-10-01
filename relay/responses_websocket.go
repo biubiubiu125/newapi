@@ -320,7 +320,15 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 				decision := service.DecideRelayRetry(c, apiErr, common.RetryTimes-retry.GetRetry())
 				service.RecordPolicyFailure(c, channel.Id, apiErr, decision)
 				service.ProcessChannelError(c, *types.NewChannelError(channel.Id, channel.Type, channel.Name, channel.ChannelInfo.IsMultiKey, info.ApiKey, channel.GetAutoBan()), apiErr, info)
-				if decision.Action == "retry" {
+				rotatedKey := false
+				if decision.Action == "retry" || service.SameChannelKeyRotationAllowed(c, apiErr) {
+					rotatedKey = noteResponsesWSChannelFailure(c, channel, responsesWSFailedKey(c, info))
+				}
+				continueRetry, resetBudget := responsesWSDialFailureContinuation(c, apiErr, decision, rotatedKey)
+				if resetBudget {
+					retry.ResetRetryNextTry()
+				}
+				if continueRetry {
 					continue
 				}
 				return apiErr
@@ -467,6 +475,8 @@ func (s *responsesWSSession) runCall(c *gin.Context, state *responsesWSCallState
 			}
 			if err := s.writeClient(incoming.kind, incoming.body); err != nil {
 				s.shutdown()
+			} else {
+				info.MarkClientStreamWrite()
 			}
 			if accepted && pendingControl != nil {
 				if err := s.writeTarget(websocket.TextMessage, pendingControl); err != nil {
@@ -911,10 +921,70 @@ func checkResponsesWSModelAccess(c *gin.Context, modelName string) *types.NewAPI
 	return nil
 }
 
+// responsesWSDialFailureContinuation keeps a failed dial on this channel
+// when another key is already held, even if cross-channel retry has stopped.
+// Resetting the retry counter spends no cross-channel attempt on that rotation.
+func responsesWSDialFailureContinuation(c *gin.Context, apiErr *types.NewAPIError, decision service.PolicyDecision, rotatedKey bool) (continueRetry bool, resetBudget bool) {
+	if apiErr == nil {
+		return false, false
+	}
+	sameChannel := decision.Action == "retry" || service.SameChannelKeyRotationAllowed(c, apiErr)
+	if sameChannel && rotatedKey {
+		return true, true
+	}
+	if decision.Action == "retry" {
+		return true, false
+	}
+	return false, false
+}
+
+func noteResponsesWSChannelFailure(c *gin.Context, channel *appmodel.Channel, failedKey string) bool {
+	if channel == nil {
+		return false
+	}
+	if service.RememberFailedMultiKey(c, channel.Id, failedKey) {
+		return true
+	}
+	service.AddFailedChannelID(c, channel.Id)
+	return false
+}
+
+func responsesWSFailedKey(c *gin.Context, info *relaycommon.RelayInfo) string {
+	if info != nil && strings.TrimSpace(info.ApiKey) != "" {
+		return info.ApiKey
+	}
+	return common.GetContextKeyString(c, appconstant.ContextKeyChannelKey)
+}
+
+func applyResponsesWSFailedChannels(retryParam *service.RetryParam) {
+	if retryParam == nil || retryParam.Ctx == nil {
+		return
+	}
+	failed := service.FailedChannelIDs(retryParam.Ctx)
+	if len(failed) == 0 {
+		return
+	}
+	merged := append([]int{}, retryParam.ExcludeChannelIds...)
+	for _, id := range failed {
+		if !slices.Contains(merged, id) {
+			merged = append(merged, id)
+		}
+	}
+	retryParam.ExcludeChannelIds = merged
+}
+
 // selectResponsesWSChannel narrows the shared HTTP selection to channels that
 // speak the Responses WebSocket protocol and renders its outcome as a
 // non-retryable NewAPIError.
 func selectResponsesWSChannel(c *gin.Context, modelName string, retryParam *service.RetryParam) (*appmodel.Channel, *types.NewAPIError) {
+	if channel, key, ok := service.TakeMultiKeyRetryKey(c); ok {
+		if err := middleware.SetupContextForSelectedChannelWithKey(c, channel, modelName, key); err != nil {
+			service.ClearMultiKeyRetryHold(c)
+			return nil, err
+		}
+		return channel, nil
+	}
+	applyResponsesWSFailedChannels(retryParam)
 	constraints := service.GetChannelConstraints(c)
 	if !slices.ContainsFunc(constraints.Filters, func(filter appdto.ChannelFilter) bool {
 		return filter.Kind == appdto.FilterResponsesWebSocket

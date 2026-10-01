@@ -183,17 +183,13 @@ func OidcBind(c *gin.Context) {
 		respondOAuthAlreadyBound(c, "OIDC")
 		return
 	}
-	session := sessions.Default(c)
-	id := session.Get("id")
-	// id := c.GetInt("id")  // critical bug!
-	user.Id = id.(int)
-	err = user.FillUserById()
-	if err != nil {
-		common.ApiError(c, err)
+	userID, ok := sessions.Default(c).Get("id").(int)
+	if !ok || userID <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgAuthNotLoggedIn)
 		return
 	}
-	user.OidcId = oidcUser.OpenID
-	err = user.Update(false)
+	user.Id = userID
+	err = user.ClaimExternalIdentity(model.ExternalIdentityProviderOIDC, oidcUser.OpenID)
 	if err != nil {
 		common.ApiError(c, err)
 		return

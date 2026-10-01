@@ -197,30 +197,7 @@ func convertSubscriptionPlanAmount(plan *model.SubscriptionPlan, targetCurrency 
 	if plan == nil {
 		return 0, fmt.Errorf("subscription plan is required")
 	}
-	source, ok := normalizeSubscriptionPlanCurrency(plan.Currency)
-	if !ok {
-		return 0, fmt.Errorf("unsupported subscription currency")
-	}
-	target, ok := normalizeSubscriptionPlanCurrency(targetCurrency)
-	if !ok {
-		return 0, fmt.Errorf("unsupported payment currency")
-	}
-	amount := plan.PriceAmount
-	if source == target {
-		return amount, nil
-	}
-	rate := operation_setting.USDExchangeRate
-	if rate <= 0 {
-		return 0, fmt.Errorf("usd exchange rate is not configured")
-	}
-	switch {
-	case source == "USD" && target == "CNY":
-		return amount * rate, nil
-	case source == "CNY" && target == "USD":
-		return amount / rate, nil
-	default:
-		return 0, fmt.Errorf("cannot convert %s to %s", source, target)
-	}
+	return model.ConvertSubscriptionAmount(plan.PriceAmount, plan.Currency, targetCurrency)
 }
 
 func normalizeSubscriptionPlanCurrency(raw string) (string, bool) {
@@ -303,6 +280,10 @@ func AdminCreateSubscriptionPlan(c *gin.Context) {
 		return
 	}
 	req.Plan.QuotaResetPeriod = model.NormalizeResetPeriod(req.Plan.QuotaResetPeriod)
+	if req.Plan.DurationUnit == model.SubscriptionDurationCustom && req.Plan.CustomSeconds <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionCustomSecondsGtZero)
+		return
+	}
 	if req.Plan.QuotaResetPeriod == model.SubscriptionResetCustom && req.Plan.QuotaResetCustomSeconds <= 0 {
 		common.ApiErrorI18n(c, i18n.MsgSubscriptionResetCycleGtZero)
 		return
@@ -389,6 +370,10 @@ func AdminUpdateSubscriptionPlan(c *gin.Context) {
 		return
 	}
 	req.Plan.QuotaResetPeriod = model.NormalizeResetPeriod(req.Plan.QuotaResetPeriod)
+	if req.Plan.DurationUnit == model.SubscriptionDurationCustom && req.Plan.CustomSeconds <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgSubscriptionCustomSecondsGtZero)
+		return
+	}
 	if req.Plan.QuotaResetPeriod == model.SubscriptionResetCustom && req.Plan.QuotaResetCustomSeconds <= 0 {
 		common.ApiErrorI18n(c, i18n.MsgSubscriptionResetCycleGtZero)
 		return

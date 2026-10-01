@@ -789,7 +789,7 @@ func TestDoTaskMediaRequestRejectsNilClient(t *testing.T) {
 	require.Nil(t, resp)
 }
 
-func TestTaskContentUsesChannelKeyForNestedVideoContentURL(t *testing.T) {
+func TestTaskContentDoesNotSendChannelKeyForForeignNestedVideoContentURL(t *testing.T) {
 	db := setupTaskVideoContentTestDB(t)
 	gin.SetMode(gin.TestMode)
 
@@ -816,7 +816,7 @@ func TestTaskContentUsesChannelKeyForNestedVideoContentURL(t *testing.T) {
 	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		atomic.AddInt32(&upstreamCalled, 1)
 		require.Equal(t, "/v1/videos/nested-upstream/content", r.URL.Path)
-		require.Equal(t, "Bearer nested-secret", r.Header.Get("Authorization"))
+		require.Empty(t, r.Header.Get("Authorization"))
 		w.Header().Set("Content-Type", "video/mp4")
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("nested-video"))
@@ -1352,4 +1352,84 @@ func TestValidateTaskMediaURLRejectsPrivateIPWhenProxyIsConfigured(t *testing.T)
 	err := validateTaskMediaURL("http://127.0.0.1:8080/video.mp4", "http://proxy.example:8080")
 	require.Error(t, err)
 	require.Contains(t, err.Error(), "private")
+}
+
+func TestLegacyTaskMediaDoesNotSendChannelKeyToForeignHost(t *testing.T) {
+	db := setupTaskVideoContentTestDB(t)
+	gin.SetMode(gin.TestMode)
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	baseURL := "https://api.kling.example"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      94021,
+		Type:    constant.ChannelTypeKling,
+		Key:     "channel-secret",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}).Error)
+	task := &model.Task{
+		TaskID:    "foreign-video-task",
+		UserId:    1,
+		ChannelId: 94021,
+		Status:    model.TaskStatusSuccess,
+		PrivateData: model.TaskPrivateData{
+			ResultURL: "https://evil.example/v1/videos/stolen/content",
+		},
+	}
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/"+task.TaskID+"/content", nil)
+
+	request, ok, err := buildLegacyTaskMediaRequest(ctx, task)
+	require.NoError(t, err)
+	require.False(t, ok)
+	require.Nil(t, request)
+
+	fallback, fallbackErr := resultURLFallbackContentRequest(ctx, task)
+	require.NoError(t, fallbackErr)
+	require.NotNil(t, fallback)
+	require.Equal(t, "https://evil.example/v1/videos/stolen/content", fallback.URL)
+	require.True(t, fallback.Credentialless)
+	require.Empty(t, fallback.Headers["Authorization"])
+}
+
+func TestLegacyTaskMediaSendsChannelKeyOnlyToChannelHost(t *testing.T) {
+	db := setupTaskVideoContentTestDB(t)
+	gin.SetMode(gin.TestMode)
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	common.MemoryCacheEnabled = false
+	t.Cleanup(func() {
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+	})
+
+	baseURL := "https://api.kling.example"
+	require.NoError(t, db.Create(&model.Channel{
+		Id:      94022,
+		Type:    constant.ChannelTypeKling,
+		Key:     "channel-secret",
+		BaseURL: &baseURL,
+		Status:  common.ChannelStatusEnabled,
+	}).Error)
+	task := &model.Task{
+		TaskID:    "same-host-video-task",
+		UserId:    1,
+		ChannelId: 94022,
+		Status:    model.TaskStatusSuccess,
+		PrivateData: model.TaskPrivateData{
+			ResultURL: "https://API.KLING.EXAMPLE:443/v1/videos/real/content",
+		},
+	}
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	ctx.Request = httptest.NewRequest(http.MethodGet, "/v1/videos/"+task.TaskID+"/content", nil)
+
+	request, ok, err := buildLegacyTaskMediaRequest(ctx, task)
+	require.NoError(t, err)
+	require.True(t, ok)
+	require.NotNil(t, request)
+	require.Equal(t, task.PrivateData.ResultURL, request.URL)
+	require.Equal(t, "Bearer channel-secret", request.Headers["Authorization"])
+	require.False(t, request.Credentialless)
 }

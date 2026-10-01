@@ -441,16 +441,22 @@ func executeSyncImageTask(ctx context.Context, task *model.Task, bodyStorage com
 	if err != nil {
 		return nil, err
 	}
-	startedAt := time.Now().Unix()
-	owner := service.ImageTaskLeaseOwnerForTaskFromContext(ctx, task.ID)
-	marked, err := model.MarkImageTaskSyncSubmissionStarted(task.ID, owner, startedAt, startedAt)
-	if err != nil {
-		return nil, err
-	}
-	if !marked {
-		return nil, errors.New("image task sync submission marker lost CAS")
-	}
-	task.SyncSubmissionStartedAt = startedAt
+	fakeCtx.Set(contextKeyImageTaskBeforeUpstream, func() error {
+		if task.SyncSubmissionStartedAt > 0 {
+			return nil
+		}
+		startedAt := time.Now().Unix()
+		owner := service.ImageTaskLeaseOwnerForTaskFromContext(ctx, task.ID)
+		marked, markErr := model.MarkImageTaskSyncSubmissionStarted(task.ID, owner, startedAt, startedAt)
+		if markErr != nil {
+			return markErr
+		}
+		if !marked {
+			return errors.New("image task sync submission marker lost CAS")
+		}
+		task.SyncSubmissionStartedAt = startedAt
+		return nil
+	})
 	if newAPIError := ImageHelper(fakeCtx, relayInfo); newAPIError != nil {
 		return nil, newAPIError
 	}
@@ -959,6 +965,9 @@ func settleImageTaskSuccess(ctx context.Context, task *model.Task, payload image
 	preConsumedQuota := task.Quota
 	actualQuota, err := settleImageTaskConsumption(ctx, task, result, usage, extraContent, billingInput)
 	if err != nil {
+		if errors.Is(err, service.ErrImageTaskBillingReleased) || task.Status == model.TaskStatusFailure {
+			return nil
+		}
 		reason := fmt.Sprintf("image task settlement requires manual review: %s", err.Error())
 		if reviewErr := model.MarkTaskSettlementApplicationReview(task.ID, reason); reviewErr != nil {
 			markImageTaskTransientRetry(task)

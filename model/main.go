@@ -352,6 +352,7 @@ func migrateDB() error {
 		&ReferralAdminAuditLog{},
 		&UserSession{},
 		&AuthFlow{},
+		&VerificationCode{},
 		&ExternalIdentityClaim{},
 		&PasskeyCredential{},
 		&Option{},
@@ -374,6 +375,8 @@ func migrateDB() error {
 		&ImageTaskCreateRateBucket{},
 		&ImageTaskCreateReservation{},
 		&TaskSettlementRecord{},
+		&BillingAdjustment{},
+		&ConsumptionAudit{},
 		&Model{},
 		&Vendor{},
 		&PrefillGroup{},
@@ -385,6 +388,7 @@ func migrateDB() error {
 		&SubscriptionOrder{},
 		&UserSubscription{},
 		&SubscriptionPreConsumeRecord{},
+		&WalletPreConsumeRecord{},
 		&CustomOAuthProvider{},
 		&UserOAuthBinding{},
 		&PerfMetric{},
@@ -461,6 +465,9 @@ func migrateLOGDB() error {
 		return migrateLogUsernames()
 	}
 	if err := LOG_DB.AutoMigrate(&Log{}); err != nil {
+		return err
+	}
+	if _, err := ensureConsumptionAuditLogIndex(LOG_DB); err != nil {
 		return err
 	}
 	if LOG_DB != DB {

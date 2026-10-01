@@ -10,6 +10,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/i18n"
@@ -83,6 +84,64 @@ func TestUpdateSelfCanonicalizesRecognizedLanguageAndRejectsUnknown(t *testing.T
 	require.Equal(t, i18n.LangEn, got.GetSetting().Language)
 }
 
+func TestUpdateSelfLanguageDoesNotRestoreStaleRoleStatusGroupOrBinding(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	require.NoError(t, i18n.Init())
+
+	user := model.User{
+		Username: "self-language-race",
+		Password: "password",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+		GitHubId: "gh-user",
+		Quota:    12345,
+	}
+	require.NoError(t, db.Create(&user).Error)
+
+	fired := false
+	callbackName := "test_update_self_language_snapshot"
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if fired || tx.Statement.Table != "users" {
+			return
+		}
+		fired = true
+		require.NoError(t, tx.Session(&gorm.Session{NewDB: true, SkipHooks: true}).Exec(
+			`UPDATE users SET role = ?, status = ?, "group" = ?, github_id = ? WHERE id = ?`,
+			common.RoleAdminUser,
+			common.UserStatusDisabled,
+			"vip",
+			"",
+			user.Id,
+		).Error)
+	}))
+	t.Cleanup(func() {
+		db.Callback().Query().Remove(callbackName)
+	})
+
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	ctx, _ := gin.CreateTestContext(recorder)
+	ctx.Request = httptest.NewRequest(http.MethodPut, "/api/user/self", strings.NewReader(`{"language":"zhCN"}`))
+	ctx.Request.Header.Set("Content-Type", "application/json")
+	ctx.Set("id", user.Id)
+	UpdateSelf(ctx)
+
+	var payload map[string]any
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &payload))
+	require.Equal(t, true, payload["success"], "body=%v", payload)
+	require.True(t, fired)
+
+	var got model.User
+	require.NoError(t, db.First(&got, user.Id).Error)
+	require.Equal(t, i18n.LangZhCN, got.GetSetting().Language)
+	require.Equal(t, common.RoleAdminUser, got.Role)
+	require.Equal(t, common.UserStatusDisabled, got.Status)
+	require.Equal(t, "vip", got.Group)
+	require.Empty(t, got.GitHubId)
+	require.Equal(t, int64(12345), got.Quota)
+}
+
 func TestApplyStoredInterfaceLanguageToNewUserIgnoresUnknownAndCallbackHeader(t *testing.T) {
 	require.NoError(t, i18n.Init())
 
@@ -151,4 +210,97 @@ func TestUpdateUserSettingPreservesLanguageSidebarAndBilling(t *testing.T) {
 	assert.Equal(t, float64(1000), setting.QuotaWarningThreshold)
 	assert.True(t, setting.AcceptUnsetRatioModel)
 	assert.True(t, setting.RecordIpLog)
+}
+
+func TestUpdateUserSettingKeepsInactiveNotificationChannels(t *testing.T) {
+	db := setupManageUserTestDB(t)
+	require.NoError(t, i18n.Init())
+
+	user := model.User{
+		Username: "setting-notify-user",
+		Password: "password",
+		Role:     common.RoleCommonUser,
+		Status:   common.UserStatusEnabled,
+		Group:    "default",
+	}
+	user.SetSetting(dto.UserSetting{
+		Language:              "zhCN",
+		NotifyType:            dto.NotifyTypeWebhook,
+		QuotaWarningThreshold: 500,
+		WebhookUrl:            "https://example.com/hook",
+		WebhookSecret:         "keep-secret",
+		NotificationEmail:     "notify@example.com",
+		BarkUrl:               "https://api.day.app/token",
+		GotifyUrl:             "https://gotify.example.com",
+		GotifyToken:           "gotify-token",
+		GotifyPriority:        7,
+	})
+	require.NoError(t, db.Create(&user).Error)
+
+	putSetting := func(body string) {
+		t.Helper()
+		recorder := httptest.NewRecorder()
+		ctx, _ := gin.CreateTestContext(recorder)
+		ctx.Request = httptest.NewRequest(http.MethodPut, "/api/user/setting", strings.NewReader(body))
+		ctx.Request.Header.Set("Content-Type", "application/json")
+		ctx.Set("id", user.Id)
+		UpdateUserSetting(ctx)
+		require.Contains(t, recorder.Body.String(), `"success":true`, recorder.Body.String())
+	}
+
+	putSetting(`{
+		"notify_type":"email",
+		"quota_warning_threshold":800,
+		"webhook_url":"https://example.com/hook",
+		"webhook_secret":"keep-secret",
+		"notification_email":"notify@example.com",
+		"bark_url":"https://api.day.app/token",
+		"gotify_url":"https://gotify.example.com",
+		"gotify_token":"gotify-token",
+		"gotify_priority":7,
+		"accept_unset_model_ratio_model":false,
+		"record_ip_log":true
+	}`)
+
+	got, err := model.GetUserById(user.Id, true)
+	require.NoError(t, err)
+	setting := got.GetSetting()
+	assert.Equal(t, dto.NotifyTypeEmail, setting.NotifyType)
+	assert.Equal(t, "https://example.com/hook", setting.WebhookUrl)
+	assert.Equal(t, "keep-secret", setting.WebhookSecret)
+	assert.Equal(t, "notify@example.com", setting.NotificationEmail)
+	assert.Equal(t, "https://api.day.app/token", setting.BarkUrl)
+	assert.Equal(t, "https://gotify.example.com", setting.GotifyUrl)
+	assert.Equal(t, "gotify-token", setting.GotifyToken)
+	assert.Equal(t, 7, setting.GotifyPriority)
+	assert.Equal(t, "zhCN", setting.Language)
+
+	putSetting(`{"notify_type":"email","quota_warning_threshold":900,"accept_unset_model_ratio_model":false,"record_ip_log":false}`)
+	got, err = model.GetUserById(user.Id, true)
+	require.NoError(t, err)
+	setting = got.GetSetting()
+	assert.Equal(t, float64(900), setting.QuotaWarningThreshold)
+	assert.Equal(t, "https://example.com/hook", setting.WebhookUrl)
+	assert.Equal(t, "keep-secret", setting.WebhookSecret)
+	assert.Equal(t, "notify@example.com", setting.NotificationEmail)
+	assert.Equal(t, "https://api.day.app/token", setting.BarkUrl)
+	assert.Equal(t, 7, setting.GotifyPriority)
+	assert.False(t, setting.RecordIpLog)
+
+	putSetting(`{
+		"notify_type":"webhook",
+		"quota_warning_threshold":900,
+		"webhook_url":"https://example.com/hook",
+		"webhook_secret":"",
+		"accept_unset_model_ratio_model":false,
+		"record_ip_log":false
+	}`)
+	got, err = model.GetUserById(user.Id, true)
+	require.NoError(t, err)
+	setting = got.GetSetting()
+	assert.Equal(t, dto.NotifyTypeWebhook, setting.NotifyType)
+	assert.Equal(t, "https://example.com/hook", setting.WebhookUrl)
+	assert.Empty(t, setting.WebhookSecret)
+	assert.Equal(t, "notify@example.com", setting.NotificationEmail)
+	assert.Equal(t, "https://gotify.example.com", setting.GotifyUrl)
 }

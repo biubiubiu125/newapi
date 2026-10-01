@@ -1,13 +1,16 @@
 package model
 
 import (
+	"path/filepath"
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
 	"github.com/QuantumNous/new-api/dto"
+	"github.com/glebarez/sqlite"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"gorm.io/gorm"
 )
 
 func TestTaskPluginChannelSelectionFiltersBothCachePaths(t *testing.T) {
@@ -79,6 +82,28 @@ func TestSharedPluginKeysFilterBothChannelSources(t *testing.T) {
 	channelSyncLock.RUnlock()
 	assert.Equal(t, []int{910001, 910002}, kept)
 	assert.Empty(t, emptied)
+}
+
+func TestFilterAbilitiesByConstraintsFailsClosedWhenLookupFails(t *testing.T) {
+	broken, err := gorm.Open(sqlite.Open(filepath.Join(t.TempDir(), "closed.db")), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := broken.DB()
+	require.NoError(t, err)
+	require.NoError(t, sqlDB.Close())
+
+	abilities := []Ability{{
+		Group:     "default",
+		Model:     "shared",
+		ChannelId: 1,
+		Enabled:   true,
+	}}
+	previous := DB
+	DB = broken
+	t.Cleanup(func() { DB = previous })
+
+	filters := []dto.ChannelFilter{{Kind: dto.FilterRequestPath, RequestPath: "/v1/chat/completions"}}
+	assert.Nil(t, filterAbilitiesByConstraints(abilities, "shared", filters))
+	assert.Equal(t, abilities, filterAbilitiesByConstraints(abilities, "shared", nil))
 }
 
 func TestNewAPIChannelServesExtendedTaskPlugins(t *testing.T) {

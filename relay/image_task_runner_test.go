@@ -1744,6 +1744,162 @@ func TestRunSyncWrapperImageTaskDoesNotReplayMarkedSubmissionAfterLeaseRecovery(
 	require.Contains(t, updated.FailReason, "submission outcome is unknown")
 }
 
+func TestRunSyncWrapperImageTaskRefundsPrechargeWhenUpstreamWasNotSent(t *testing.T) {
+	withTempImageTaskCache(t)
+	db := openImageTaskRunnerDB(t)
+
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		w.WriteHeader(http.StatusOK)
+	}))
+	t.Cleanup(upstream.Close)
+
+	const startingQuota int64 = 99400
+	const reservedQuota = 600
+	mapping := `{"gpt-image-1":"alias","alias":"gpt-image-1"}`
+	baseURL := upstream.URL
+	require.NoError(t, db.Create(&model.User{
+		Id: 41, Username: "local-fail-image-user", Password: "password123",
+		Status: common.UserStatusEnabled, Group: "default", Quota: startingQuota,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 41, Type: constant.ChannelTypeOpenAI, Key: "upstream-key",
+		Status: common.ChannelStatusEnabled, Name: "local-fail", Group: "default",
+		Models: "gpt-image-1", BaseURL: &baseURL, ModelMapping: &mapping,
+	}).Error)
+	task := queuedSyncImageTask(t, db, "task_sync_local_fail", 41, reservedQuota)
+
+	require.NoError(t, runSyncWrapperImageTask(context.Background(), task))
+
+	require.Zero(t, upstreamCalls.Load())
+	var updated model.Task
+	require.NoError(t, db.First(&updated, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), updated.Status)
+	require.NotEqual(t, model.TaskSettlementStatusReview, updated.SettlementStatus)
+	require.Zero(t, updated.Quota)
+	require.Zero(t, updated.SyncSubmissionStartedAt)
+	var user model.User
+	require.NoError(t, db.First(&user, 41).Error)
+	require.EqualValues(t, startingQuota+int64(reservedQuota), user.Quota)
+}
+
+func TestRunSyncWrapperImageTaskKeepsPrechargeWhenUpstreamRequestWasSent(t *testing.T) {
+	withTempImageTaskCache(t)
+	db := openImageTaskRunnerDB(t)
+
+	var upstreamCalls atomic.Int32
+	upstream := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		upstreamCalls.Add(1)
+		w.WriteHeader(http.StatusBadGateway)
+	}))
+	t.Cleanup(upstream.Close)
+
+	const startingQuota int64 = 100000
+	const reservedQuota = 600
+	baseURL := upstream.URL
+	require.NoError(t, db.Create(&model.User{
+		Id: 42, Username: "sent-image-user", Password: "password123",
+		Status: common.UserStatusEnabled, Group: "default", Quota: startingQuota,
+	}).Error)
+	require.NoError(t, db.Create(&model.Channel{
+		Id: 42, Type: constant.ChannelTypeOpenAI, Key: "upstream-key",
+		Status: common.ChannelStatusEnabled, Name: "sent-image", Group: "default",
+		Models: "gpt-image-1", BaseURL: &baseURL,
+	}).Error)
+	task := queuedSyncImageTask(t, db, "task_sync_upstream_sent", 42, reservedQuota)
+
+	require.NoError(t, runSyncWrapperImageTask(context.Background(), task))
+
+	require.EqualValues(t, 1, upstreamCalls.Load())
+	var updated model.Task
+	require.NoError(t, db.First(&updated, task.ID).Error)
+	require.Equal(t, model.TaskStatus(model.TaskStatusFailure), updated.Status)
+	require.Equal(t, model.TaskSettlementStatusReview, updated.SettlementStatus)
+	require.Equal(t, reservedQuota, updated.Quota)
+	require.NotZero(t, updated.SyncSubmissionStartedAt)
+	var user model.User
+	require.NoError(t, db.First(&user, 42).Error)
+	require.EqualValues(t, startingQuota, user.Quota)
+}
+
+func openImageTaskRunnerDB(t *testing.T) *gorm.DB {
+	t.Helper()
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	sqlDB, err := db.DB()
+	require.NoError(t, err)
+	sqlDB.SetMaxOpenConns(1)
+	require.NoError(t, db.AutoMigrate(
+		&model.Task{},
+		&model.TaskSettlementRecord{},
+		&model.User{},
+		&model.Channel{},
+	))
+	oldDB := model.DB
+	oldLogDB := model.LOG_DB
+	oldUsingSQLite := common.UsingSQLite
+	oldRedisEnabled := common.RedisEnabled
+	oldMemoryCacheEnabled := common.MemoryCacheEnabled
+	oldBatchUpdateEnabled := common.BatchUpdateEnabled
+	model.DB = db
+	model.LOG_DB = db
+	common.UsingSQLite = true
+	common.RedisEnabled = false
+	common.MemoryCacheEnabled = false
+	common.BatchUpdateEnabled = false
+	t.Cleanup(func() { _ = sqlDB.Close() })
+	t.Cleanup(func() {
+		model.DB = oldDB
+		model.LOG_DB = oldLogDB
+		common.UsingSQLite = oldUsingSQLite
+		common.RedisEnabled = oldRedisEnabled
+		common.MemoryCacheEnabled = oldMemoryCacheEnabled
+		common.BatchUpdateEnabled = oldBatchUpdateEnabled
+	})
+	return db
+}
+
+func queuedSyncImageTask(t *testing.T, db *gorm.DB, taskID string, ownerID int, quota int) *model.Task {
+	t.Helper()
+	body := []byte(`{"model":"gpt-image-1","prompt":"cat","n":1}`)
+	bodyPath, err := common.WriteImageTaskBodyCacheFile(body)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = os.Remove(bodyPath) })
+	task := &model.Task{
+		TaskID:     taskID,
+		Platform:   constant.TaskPlatformImage,
+		UserId:     ownerID,
+		Group:      "default",
+		ChannelId:  ownerID,
+		Quota:      quota,
+		Action:     constant.TaskActionImageGeneration,
+		Status:     model.TaskStatusQueued,
+		Progress:   "0%",
+		SubmitTime: time.Now().Unix(),
+		Properties: model.Properties{OriginModelName: "gpt-image-1"},
+		PrivateData: model.TaskPrivateData{
+			PublicImageTask:          true,
+			BillingSource:            service.BillingSourceWallet,
+			PreConsumedUsageCaptured: true,
+			ImageTaskMode:            dto.ImageTaskModeSyncWrapper,
+			RequestPath:              "/v1/images/generations",
+			RequestMethod:            http.MethodPost,
+			RequestContentType:       "application/json",
+			RequestBodyPath:          bodyPath,
+			RequestBodySize:          int64(len(body)),
+			Key:                      "upstream-key",
+		},
+	}
+	require.NoError(t, db.Create(task).Error)
+	require.NoError(t, db.Create(&model.TaskSettlementRecord{
+		TaskPrimaryID: task.ID,
+		PublicTaskID:  task.TaskID,
+		Status:        model.TaskSettlementRecordStatusPrepared,
+	}).Error)
+	return task
+}
+
 func TestExecuteSyncImageTaskRejectsStaleLeaseBeforeUpstreamSubmission(t *testing.T) {
 	withTempImageTaskCache(t)
 	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})

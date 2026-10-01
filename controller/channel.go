@@ -1543,6 +1543,26 @@ func applyPatchChannelMultiKeyUpdate(channel *PatchChannel, originChannel *model
 		allKeys := append(existingKeys, dedupedNewKeys...)
 		channel.Key = strings.Join(allKeys, "\n")
 	case "replace":
+		// The submitted list is a new key set. Indexes from the previous list
+		// must not stay disabled, and the old cursor does not point at the same key.
+		if strings.TrimSpace(channel.Key) == "" {
+			return nil
+		}
+		// The request body does not carry status. Seed the locked row so a
+		// manual disable is not treated as the zero value and turned back on.
+		channel.Status = originChannel.Status
+		channel.ChannelInfo.MultiKeyStatusList = map[int]int{}
+		channel.ChannelInfo.MultiKeyDisabledReason = map[int]string{}
+		channel.ChannelInfo.MultiKeyDisabledTime = map[int]int64{}
+		channel.ChannelInfo.MultiKeyPollingIndex = 0
+		previousStatus := channel.Status
+		model.SyncChannelStatusWithEnabledKeys(&channel.Channel, "")
+		if previousStatus != common.ChannelStatusEnabled && channel.Status == common.ChannelStatusEnabled {
+			info := channel.GetOtherInfo()
+			info["status_reason"] = "keys replaced"
+			info["status_time"] = common.GetTimestamp()
+			channel.SetOtherInfo(info)
+		}
 	}
 	return nil
 }
@@ -1608,7 +1628,16 @@ func updateChannelColumnsWithLockedState(
 		if err := applyPatchChannelMultiKeyUpdate(channel, &locked); err != nil {
 			return err
 		}
-		return channel.Channel.UpdateColumnsWithTx(tx, channelUpdateColumns(channel, effectiveRequestData))
+		columns := channelUpdateColumns(channel, effectiveRequestData)
+		// Status is operational, so a key replacement that reopens an auto-disabled
+		// channel has to be written explicitly. A manual disable stays manual.
+		if channel.Status != locked.Status {
+			columns["status"] = channel.Status
+		}
+		if channel.OtherInfo != locked.OtherInfo {
+			columns["other_info"] = channel.OtherInfo
+		}
+		return channel.Channel.UpdateColumnsWithTx(tx, columns)
 	})
 	if err != nil {
 		return nil, err
@@ -2022,8 +2051,12 @@ func GetTagModels(c *gin.Context) {
 
 	var longestModels string
 	maxLength := 0
+	seenGroups := make(map[string]struct{})
+	groups := make([]string, 0)
 
-	// Find the longest models string among all channels with the given tag
+	// Find the longest models string among all channels with the given tag.
+	// Groups are the union, so the tag editor can show the current selection
+	// and submit an empty list when the operator clears every group.
 	for _, channel := range channels {
 		if channel.Models != "" {
 			currentModels := strings.Split(channel.Models, ",")
@@ -2032,12 +2065,20 @@ func GetTagModels(c *gin.Context) {
 				longestModels = channel.Models
 			}
 		}
+		for _, group := range channel.GetGroups() {
+			if _, ok := seenGroups[group]; ok {
+				continue
+			}
+			seenGroups[group] = struct{}{}
+			groups = append(groups, group)
+		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{
 		"success": true,
 		"message": "",
 		"data":    longestModels,
+		"groups":  strings.Join(groups, ","),
 	})
 	return
 }
@@ -2186,6 +2227,14 @@ func ManageMultiKeys(c *gin.Context) {
 	lock := model.GetChannelPollingLock(channel.Id)
 	lock.Lock()
 	defer lock.Unlock()
+	// Reload after the lock. The channel loaded above can be older than an
+	// auto-disable that landed while this request was waiting, and Update()
+	// writes the whole channel_info snapshot.
+	channel, err = model.GetChannelById(channel.Id, true)
+	if err != nil {
+		common.ApiError(c, err)
+		return
+	}
 
 	switch request.Action {
 	case "get_key_status":
@@ -2307,32 +2356,15 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgChannelKeyDisableIndexRequired)
 			return
 		}
-
-		keyIndex := *request.KeyIndex
-		if keyIndex < 0 || keyIndex >= channel.ChannelInfo.MultiKeySize {
+		err = model.DisableMultiKey(channel.Id, *request.KeyIndex)
+		if errors.Is(err, model.ErrMultiKeyIndexOutOfRange) {
 			common.ApiErrorI18n(c, i18n.MsgChannelKeyIndexOutOfRange)
 			return
 		}
-
-		if channel.ChannelInfo.MultiKeyStatusList == nil {
-			channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
-		}
-		if channel.ChannelInfo.MultiKeyDisabledTime == nil {
-			channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
-		}
-		if channel.ChannelInfo.MultiKeyDisabledReason == nil {
-			channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
-		}
-
-		channel.ChannelInfo.MultiKeyStatusList[keyIndex] = 2 // disabled
-		model.SyncChannelStatusWithEnabledKeys(channel, "key disabled")
-
-		err = channel.Update()
 		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
-
 		model.InitChannelCache()
 		common.ApiSuccessI18n(c, i18n.MsgChannelKeyDisabled, nil)
 		return
@@ -2342,95 +2374,39 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgChannelKeyEnableIndexRequired)
 			return
 		}
-
-		keyIndex := *request.KeyIndex
-		if keyIndex < 0 || keyIndex >= channel.ChannelInfo.MultiKeySize {
+		err = model.EnableMultiKey(channel.Id, *request.KeyIndex)
+		if errors.Is(err, model.ErrMultiKeyIndexOutOfRange) {
 			common.ApiErrorI18n(c, i18n.MsgChannelKeyIndexOutOfRange)
 			return
 		}
-
-		// 从状态列表中删除该密钥的记录，使其回到默认启用状态
-		if channel.ChannelInfo.MultiKeyStatusList != nil {
-			delete(channel.ChannelInfo.MultiKeyStatusList, keyIndex)
-		}
-		if channel.ChannelInfo.MultiKeyDisabledTime != nil {
-			delete(channel.ChannelInfo.MultiKeyDisabledTime, keyIndex)
-		}
-		if channel.ChannelInfo.MultiKeyDisabledReason != nil {
-			delete(channel.ChannelInfo.MultiKeyDisabledReason, keyIndex)
-		}
-		model.SyncChannelStatusWithEnabledKeys(channel, "")
-
-		err = channel.Update()
 		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
-
 		model.InitChannelCache()
 		common.ApiSuccessI18n(c, i18n.MsgChannelKeyEnabled, nil)
 		return
 
 	case "enable_all_keys":
-		// 清空所有禁用状态，使所有密钥回到默认启用状态
-		var enabledCount int
-		if channel.ChannelInfo.MultiKeyStatusList != nil {
-			enabledCount = len(channel.ChannelInfo.MultiKeyStatusList)
-		}
-
-		channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
-		channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
-		channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
-		model.SyncChannelStatusWithEnabledKeys(channel, "")
-
-		err = channel.Update()
+		enabledCount, err := model.EnableAllMultiKeys(channel.Id)
 		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
-
 		model.InitChannelCache()
 		common.ApiSuccessI18n(c, i18n.MsgChannelKeysEnabled, nil, map[string]any{"Count": enabledCount})
 		return
 
 	case "disable_all_keys":
-		// 禁用所有启用的密钥
-		if channel.ChannelInfo.MultiKeyStatusList == nil {
-			channel.ChannelInfo.MultiKeyStatusList = make(map[int]int)
-		}
-		if channel.ChannelInfo.MultiKeyDisabledTime == nil {
-			channel.ChannelInfo.MultiKeyDisabledTime = make(map[int]int64)
-		}
-		if channel.ChannelInfo.MultiKeyDisabledReason == nil {
-			channel.ChannelInfo.MultiKeyDisabledReason = make(map[int]string)
-		}
-
-		var disabledCount int
-		for i := 0; i < channel.ChannelInfo.MultiKeySize; i++ {
-			status := 1 // default enabled
-			if s, exists := channel.ChannelInfo.MultiKeyStatusList[i]; exists {
-				status = s
-			}
-
-			// 只禁用当前启用的密钥
-			if status == 1 {
-				channel.ChannelInfo.MultiKeyStatusList[i] = 2 // disabled
-				disabledCount++
-			}
-		}
-
-		if disabledCount == 0 {
+		disabledCount, err := model.DisableAllMultiKeys(channel.Id)
+		if errors.Is(err, model.ErrNoDisableableMultiKey) {
 			common.ApiErrorI18n(c, i18n.MsgChannelNoDisableableKeys)
 			return
 		}
-		model.SyncChannelStatusWithEnabledKeys(channel, "all keys disabled")
-
-		err = channel.Update()
 		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
-
 		model.InitChannelCache()
 		common.ApiSuccessI18n(c, i18n.MsgChannelKeysDisabled, nil, map[string]any{"Count": disabledCount})
 		return
@@ -2440,129 +2416,33 @@ func ManageMultiKeys(c *gin.Context) {
 			common.ApiErrorI18n(c, i18n.MsgChannelKeyDeleteIndexRequired)
 			return
 		}
-
-		keyIndex := *request.KeyIndex
-		if keyIndex < 0 || keyIndex >= channel.ChannelInfo.MultiKeySize {
+		err = model.DeleteMultiKeyAtIndex(channel.Id, *request.KeyIndex)
+		if errors.Is(err, model.ErrMultiKeyIndexOutOfRange) {
 			common.ApiErrorI18n(c, i18n.MsgChannelKeyIndexOutOfRange)
 			return
 		}
-
-		keys := channel.GetKeys()
-		var remainingKeys []string
-		var newStatusList = make(map[int]int)
-		var newDisabledTime = make(map[int]int64)
-		var newDisabledReason = make(map[int]string)
-
-		newIndex := 0
-		for i, key := range keys {
-			// 跳过要删除的密钥
-			if i == keyIndex {
-				continue
-			}
-
-			remainingKeys = append(remainingKeys, key)
-
-			// 保留其他密钥的状态信息，重新索引
-			if channel.ChannelInfo.MultiKeyStatusList != nil {
-				if status, exists := channel.ChannelInfo.MultiKeyStatusList[i]; exists && status != 1 {
-					newStatusList[newIndex] = status
-				}
-			}
-			if channel.ChannelInfo.MultiKeyDisabledTime != nil {
-				if t, exists := channel.ChannelInfo.MultiKeyDisabledTime[i]; exists {
-					newDisabledTime[newIndex] = t
-				}
-			}
-			if channel.ChannelInfo.MultiKeyDisabledReason != nil {
-				if r, exists := channel.ChannelInfo.MultiKeyDisabledReason[i]; exists {
-					newDisabledReason[newIndex] = r
-				}
-			}
-			newIndex++
-		}
-
-		if len(remainingKeys) == 0 {
+		if errors.Is(err, model.ErrCannotDeleteLastMultiKey) {
 			common.ApiErrorI18n(c, i18n.MsgChannelCannotDeleteLastKey)
 			return
 		}
-
-		// Update channel with remaining keys
-		channel.Key = strings.Join(remainingKeys, "\n")
-		channel.ChannelInfo.MultiKeySize = len(remainingKeys)
-		channel.ChannelInfo.MultiKeyStatusList = newStatusList
-		channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
-		channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
-		model.SyncChannelStatusWithEnabledKeys(channel, "key deleted")
-
-		err = channel.Update()
 		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
-
 		model.InitChannelCache()
 		common.ApiSuccessI18n(c, i18n.MsgChannelKeyDeleted, nil)
 		return
 
 	case "delete_disabled_keys":
-		keys := channel.GetKeys()
-		var remainingKeys []string
-		var deletedCount int
-		var newStatusList = make(map[int]int)
-		var newDisabledTime = make(map[int]int64)
-		var newDisabledReason = make(map[int]string)
-
-		newIndex := 0
-		for i, key := range keys {
-			status := 1 // default enabled
-			if channel.ChannelInfo.MultiKeyStatusList != nil {
-				if s, exists := channel.ChannelInfo.MultiKeyStatusList[i]; exists {
-					status = s
-				}
-			}
-
-			// 只删除自动禁用（status == 3）的密钥，保留启用（status == 1）和手动禁用（status == 2）的密钥
-			if status == 3 {
-				deletedCount++
-			} else {
-				remainingKeys = append(remainingKeys, key)
-				// 保留非自动禁用密钥的状态信息，重新索引
-				if status != 1 {
-					newStatusList[newIndex] = status
-					if channel.ChannelInfo.MultiKeyDisabledTime != nil {
-						if t, exists := channel.ChannelInfo.MultiKeyDisabledTime[i]; exists {
-							newDisabledTime[newIndex] = t
-						}
-					}
-					if channel.ChannelInfo.MultiKeyDisabledReason != nil {
-						if r, exists := channel.ChannelInfo.MultiKeyDisabledReason[i]; exists {
-							newDisabledReason[newIndex] = r
-						}
-					}
-				}
-				newIndex++
-			}
-		}
-
-		if deletedCount == 0 {
+		deletedCount, err := model.DeleteAutoDisabledMultiKeys(channel.Id)
+		if errors.Is(err, model.ErrNoAutoDisabledMultiKey) {
 			common.ApiErrorI18n(c, i18n.MsgChannelNoAutoDisabledKeys)
 			return
 		}
-
-		// Update channel with remaining keys
-		channel.Key = strings.Join(remainingKeys, "\n")
-		channel.ChannelInfo.MultiKeySize = len(remainingKeys)
-		channel.ChannelInfo.MultiKeyStatusList = newStatusList
-		channel.ChannelInfo.MultiKeyDisabledTime = newDisabledTime
-		channel.ChannelInfo.MultiKeyDisabledReason = newDisabledReason
-		model.SyncChannelStatusWithEnabledKeys(channel, "disabled keys deleted")
-
-		err = channel.Update()
 		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
-
 		model.InitChannelCache()
 		common.ApiSuccessI18n(c, i18n.MsgChannelAutoDisabledKeysDeleted, deletedCount, map[string]any{"Count": deletedCount})
 		return

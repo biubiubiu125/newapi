@@ -31,6 +31,9 @@ type EmailBindingState struct {
 	OldCodeHash    string                 `json:"old_code_hash,omitempty"`
 	FailedAttempts int                    `json:"failed_attempts"`
 	ResendAt       int64                  `json:"resend_at"`
+	// AuthVersion is the committed user auth version after a successful change.
+	// It is not part of the stored flow payload.
+	AuthVersion int64 `json:"-"`
 }
 
 func CreateEmailBinding(identity AuthSessionIdentity, state EmailBindingState) (string, *AuthFlow, error) {
@@ -138,9 +141,11 @@ func CompleteEmailBinding(identity AuthSessionIdentity, token, email, newCode, o
 		if err := ensureEmailAvailableWithTx(tx, state.Email, identity.UserID); err != nil {
 			return err
 		}
-		if err := tx.Model(&User{}).Where("id = ?", identity.UserID).Update("email", state.Email).Error; err != nil {
+		_, nextAuthVersion, err := applyUserEmailChangeWithTx(tx, identity.UserID, state.Email)
+		if err != nil {
 			return err
 		}
+		state.AuthVersion = nextAuthVersion
 		return tx.Model(flow).Update("consumed_at", time.Now()).Error
 	})
 	if err != nil {

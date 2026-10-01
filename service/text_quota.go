@@ -267,11 +267,9 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 	summary.IsClaudeUsageSemantic = summary.UsageSemantic == "anthropic"
 
 	if usage == nil {
-		usage = &dto.Usage{
-			PromptTokens:     relayInfo.GetEstimatePromptTokens(),
-			CompletionTokens: 0,
-			TotalTokens:      relayInfo.GetEstimatePromptTokens(),
-		}
+		// 没有 usage 不是“按估算 prompt 结算”。响应已经交给客户端时，
+		// 按 token 计价停在预扣，不把补全差额退掉。按次价格和固定价表达式另算。
+		usage = &dto.Usage{}
 	}
 
 	summary.PromptTokens = usage.PromptTokens
@@ -392,15 +390,37 @@ func calculateTextQuotaSummary(ctx *gin.Context, relayInfo *relaycommon.RelayInf
 		noteQuotaClamp(relayInfo, clamp)
 	}
 
-	if summary.TotalTokens == 0 && summary.ToolCallSurchargeQuota.LessThanOrEqual(decimal.Zero) {
-		// 上游没给 usage 时按未交付处理：退预扣，不把预扣当成已消费。
-		// 工具加价仍按已发生的调用计费。
-		summary.Quota = 0
+	if summary.TotalTokens == 0 && summary.ToolCallSurchargeQuota.LessThanOrEqual(decimal.Zero) && !relayInfo.PriceData.UsePrice {
+		// 结算只会在响应已经交给客户端之后跑到。按 token 计价但上游没给 usage 时，
+		// 不能把预扣退掉。停在预扣额；没有预扣且倍率非零时至少收 1。
+		// 按次价格不走这里。工具加价仍按已经发生的调用计费。
+		if pre := deliveredReservationQuota(relayInfo); pre > 0 {
+			summary.Quota = pre
+		} else if !ratio.IsZero() && summary.Quota == 0 {
+			summary.Quota = 1
+		}
 	} else if !ratio.IsZero() && summary.Quota == 0 {
 		summary.Quota = 1
 	}
 
 	return summary
+}
+
+// deliveredReservationQuota 是这次请求已经预扣、还没结算的额度。
+// 上游没给 usage 时用它收口，避免把已经交付的响应退成免费。
+func deliveredReservationQuota(relayInfo *relaycommon.RelayInfo) int {
+	if relayInfo == nil {
+		return 0
+	}
+	if relayInfo.Billing != nil {
+		if pre := relayInfo.Billing.GetPreConsumedQuota(); pre > 0 {
+			return pre
+		}
+	}
+	if relayInfo.FinalPreConsumedQuota > 0 {
+		return relayInfo.FinalPreConsumedQuota
+	}
+	return 0
 }
 
 func usageSemanticFromUsage(relayInfo *relaycommon.RelayInfo, usage *dto.Usage) string {
@@ -449,11 +469,14 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	// Providers normally estimate missing usage before settlement. Preserve the
 	// same prompt estimate when a fixed-price expression reaches us without it;
 	// its conditions must still run and may select a token-priced fallback.
-	if billingUsage == nil && snap != nil && billingexpr.UsesFixedPricing(snap.ExprString) {
+	if originUsage == nil && snap != nil && billingexpr.UsesFixedPricing(snap.ExprString) {
+		estimate := 0
+		if relayInfo != nil {
+			estimate = relayInfo.GetEstimatePromptTokens()
+		}
 		billingUsage = &dto.Usage{
-			PromptTokens:     summary.PromptTokens,
-			CompletionTokens: summary.CompletionTokens,
-			TotalTokens:      summary.TotalTokens,
+			PromptTokens: estimate,
+			TotalTokens:  estimate,
 		}
 	}
 	if billingUsage != nil {
@@ -473,20 +496,26 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 			}
 		}
 	}
-
-	settleBilling := func() error {
-		var lastErr error
-		for attempt := 0; attempt < 3; attempt++ {
-			if err := SettleBilling(ctx, relayInfo, summary.Quota); err != nil {
-				lastErr = err
-				logger.LogError(ctx, "error settling billing: "+err.Error())
-				continue
-			}
-			return nil
-		}
-		return lastErr
+	if !tieredBillingApplied && relayInfo.PriceData.UsePrice {
+		summary.FixedPriceBilling = true
 	}
-	settlementErr := settleBilling()
+	if originUsage == nil && !summary.FixedPriceBilling && !relayInfo.PriceData.UsePrice && summary.ToolCallSurchargeQuota.IsZero() {
+		if pre := deliveredReservationQuota(relayInfo); pre > 0 {
+			summary.Quota = pre
+		}
+	}
+
+	settleBilling := func() (int, error) {
+		// 同一 RequestId 的钱包和订阅走幂等账本。瞬时失败会留下 pending 行，由主节点补记。
+		// 已发给客户端的结果不能因为冲突或已回滚而停在预扣，也不能把错误交回中继再退一次。
+		charged, err := settleDeliveredBilling(ctx, relayInfo, summary.Quota)
+		if err != nil && !isDeferredBillingSettlement(err) {
+			logger.LogError(ctx, "error settling billing: "+err.Error())
+		}
+		return charged, err
+	}
+	chargedQuota, settlementErr := settleBilling()
+	summary.Quota = chargedQuota
 
 	if summary.WebSearchCallCount > 0 {
 		extraContent = append(extraContent, fmt.Sprintf("Web Search 调用 %d 次，调用花费 %s", summary.WebSearchCallCount, decimal.NewFromFloat(summary.WebSearchPrice).Mul(decimal.NewFromInt(int64(summary.WebSearchCallCount))).Div(decimal.NewFromInt(1000)).Mul(decimal.NewFromFloat(summary.GroupRatio)).Mul(decimal.NewFromFloat(common.QuotaPerUnit)).String()))
@@ -505,8 +534,12 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	}
 
 	if summary.TotalTokens == 0 && !summary.FixedPriceBilling {
-		extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
-		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, cannot consume quota, userId %d, channelId %d, tokenId %d, model %s， pre-consumed quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota))
+		if summary.Quota > 0 {
+			extraContent = append(extraContent, "上游没有返回计费信息，已按预扣额度结算")
+		} else {
+			extraContent = append(extraContent, "上游没有返回计费信息，无法扣费（可能是上游超时）")
+		}
+		logger.LogError(ctx, fmt.Sprintf("total tokens is 0, userId %d, channelId %d, tokenId %d, model %s, pre-consumed quota %d, settled quota %d", relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, summary.ModelName, relayInfo.FinalPreConsumedQuota, summary.Quota))
 	}
 
 	logModel := summary.ModelName
@@ -537,11 +570,7 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 	if adminRejectReason != "" {
 		other.SetAdmin("reject_reason", adminRejectReason)
 	}
-	logQuota := attachSettlementLogFields(other, relayInfo, summary.Quota, settlementErr)
-	settlementSucceeded := settlementErr == nil
-	if err := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); err != nil {
-		return summary.Quota, wrapUsageCounterUpdateError(ctx, relayInfo, logQuota, settlementSucceeded, err, "post text consume quota usage counter update failed")
-	}
+	logQuota, settlementApplied, chargeAccepted, clientSettleErr := consumeSettlementLog(other, relayInfo, summary.Quota, settlementErr)
 	if summary.ImageTokens != 0 {
 		other.SetPublic("image", true)
 		other.SetPublic("image_ratio", summary.ImageRatio)
@@ -603,7 +632,7 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 
 	attachQuotaSaturation(ctx, relayInfo, other)
 
-	if err := model.RecordConsumeLog(ctx, relayInfo.UserId, model.RecordConsumeLogParams{
+	logParams := model.RecordConsumeLogParams{
 		ChannelId:        relayInfo.ChannelId,
 		PromptTokens:     summary.PromptTokens,
 		CompletionTokens: summary.CompletionTokens,
@@ -616,15 +645,25 @@ func postTextConsumeQuota(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, us
 		IsStream:         relayInfo.IsStream,
 		Group:            relayInfo.UsingGroup,
 		Other:            other,
-	}); err != nil {
-		return summary.Quota, wrapRecordConsumeLogError(ctx, relayInfo, relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota, settlementSucceeded, err)
+	}
+	if chargeAccepted {
+		if err := recordDeliveredConsumption(ctx, relayInfo, logParams); err != nil {
+			return summary.Quota, err
+		}
+	} else {
+		if err := model.UpdateTaskConsumptionUsageWithTokenSync(relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota); err != nil {
+			return summary.Quota, wrapUsageCounterUpdateError(ctx, relayInfo, logQuota, settlementApplied, err, "post text consume quota usage counter update failed")
+		}
+		if err := model.RecordConsumeLog(ctx, relayInfo.UserId, logParams); err != nil {
+			return summary.Quota, wrapRecordConsumeLogError(ctx, relayInfo, relayInfo.UserId, relayInfo.ChannelId, relayInfo.TokenId, logQuota, settlementApplied, err)
+		}
 	}
 	relayInfo.PerformanceOutputTokens = int64(summary.CompletionTokens)
-	if settlementErr != nil {
-		RecordConsumeAccountingError(ctx, relayInfo, "post text consume quota settlement", settlementErr)
+	if clientSettleErr != nil {
+		RecordConsumeAccountingError(ctx, relayInfo, "post text consume quota settlement", clientSettleErr)
 	}
-	if requireSettlement && settlementErr != nil {
-		return summary.Quota, settlementErr
+	if requireSettlement && clientSettleErr != nil {
+		return summary.Quota, clientSettleErr
 	}
 	return summary.Quota, nil
 }

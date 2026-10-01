@@ -182,12 +182,10 @@ export const CHANNEL_PROVIDER_PRESENTATION: Partial<
 >
 
 const CHANNEL_TYPE_DISPLAY_ORDER: number[] = [
-  1, 14, 33, 24, 43, 3, 41, 48, 60, 58, 42, 34, 20, 4, 40, 27, 25, 17, 26, 15,
-  46, 23, 18, 45, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 59, 22, 21, 44, 2,
-  5, 36, 50, 51, 52, 53, 54, 55, 56, CHANNEL_TYPE_TASK_PLUGIN,
-  1, 14, 24, 33, 43, 3, 41, 17, 45, 25, 26, 23, 48, 60, 58, 59, 61, 42, 34, 20,
-  4, 62, 40, 27, 15, 46, 18, 31, 35, 49, 19, 47, 37, 38, 39, 11, 8, 57, 22, 21,
-  44, 2, 5, 36, 50, 51, 52, 53, 54, 55, 56,
+  1, 14, 33, 24, 43, 3, 41, 48, 60, 58, 42, 34, 20, 4, CHANNEL_TYPE_VLLM,
+  CHANNEL_TYPE_SGLANG, 40, 27, 25, 17, 26, 15, 46, 23, 18, 45, 31, 35, 49, 19,
+  47, 37, 38, 39, 11, 8, 57, 59, 22, 21, 44, 2, 5, 36, 50, 51, 52, 53, 54, 55,
+  56, CHANNEL_TYPE_TASK_PLUGIN,
 ]
 
 export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
@@ -195,7 +193,7 @@ export const CHANNEL_TYPE_OPTIONS: { value: number; label: string }[] = (() => {
   const seen = new Set<number>()
   for (const id of CHANNEL_TYPE_DISPLAY_ORDER) {
     const label = CHANNEL_TYPES[id as keyof typeof CHANNEL_TYPES]
-    if (label) {
+    if (label && !seen.has(id)) {
       ordered.push({ value: id, label })
       seen.add(id)
     }
@@ -501,7 +499,7 @@ export const FIELD_DESCRIPTIONS = {
 
 export const MODEL_FETCHABLE_TYPES = new Set([
   1, 4, 14, 17, 20, 23, 24, 25, 26, 27, 31, 34, 35, 40, 42, 43, 45, 47, 48, 57,
-  58, 59, 60,
+  58, 59, 60, CHANNEL_TYPE_VLLM, CHANNEL_TYPE_SGLANG,
 ])
 
 export const FIELD_PASSTHROUGH_TYPES = new Set([

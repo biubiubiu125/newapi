@@ -470,18 +470,33 @@ func ValidateModelPricing(name string, values PricingValues) error {
 	return nil
 }
 
+func unchangedBillingExpr(name, expression string) bool {
+	previous, ok := billing_setting.GetBillingExpr(name)
+	return ok && previous == expression
+}
+
 func validateSharedModelBillingExpr(name, expression string, values PricingValues) error {
 	generation := jsplugin.DefaultRegistry.Generation()
 	overrides, _ := values[billing_setting.PluginBillingExprOption].(map[string]any)
 	plugins := generation.PluginsByModel(name)
 	if len(plugins) == 0 {
 		if target, resolved := ResolveTaskModelAlias(generation, name); resolved {
+			shared := len(generation.PluginsByModel(target.Declared)) >= 2
+			if !shared && unchangedBillingExpr(name, expression) {
+				return nil
+			}
 			if plugin, ok := generation.Get(target.PluginKey); ok {
 				schema, _ := plugin.Meta.UsageForModel(target.Declared)
 				return billing_setting.SmokeTestTaskExpr(expression, schema)
 			}
 		}
+		if unchangedBillingExpr(name, expression) {
+			return nil
+		}
 		return billing_setting.SmokeTestExpr(expression)
+	}
+	if len(plugins) < 2 && unchangedBillingExpr(name, expression) {
+		return nil
 	}
 	checked := false
 	for _, plugin := range plugins {
@@ -520,6 +535,11 @@ func validatePluginBillingExprs(modelName string, value any) error {
 		expression, ok := raw.(string)
 		if !ok || strings.TrimSpace(expression) == "" {
 			return fmt.Errorf("plugin %s billing expression must be a string", pluginKey)
+		}
+		if len(known) < 2 {
+			if previous, stored := billing_setting.GetPluginBillingExpr(pluginKey, modelName); stored && previous == expression {
+				continue
+			}
 		}
 		schema, _ := plugin.Meta.UsageForModel(modelName)
 		if err := billing_setting.SmokeTestTaskExpr(expression, schema); err != nil {

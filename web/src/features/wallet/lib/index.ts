@@ -20,6 +20,7 @@ For commercial licensing, please contact support@quantumnous.com
 // Wallet Library Exports
 // ============================================================================
 
+export * from './amount'
 export * from './affiliate'
 export * from './billing'
 export * from './format'

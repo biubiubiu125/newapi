@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/relaykit/dto"
+	"github.com/QuantumNous/new-api/relaykit/relayconvert/convmeta"
 	"github.com/samber/lo"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -127,6 +128,73 @@ func TestChatCompletionsResponseToResponsesPreservesTextToolCallsAndUsage(t *tes
 	assert.Equal(t, "call_1", resp.Output[1].CallId)
 	assert.Equal(t, "lookup", resp.Output[1].Name)
 	assert.Equal(t, `"{\"q\":\"x\"}"`, string(resp.Output[1].Arguments))
+}
+
+func TestChatCompletionsResponseRestoresCustomToolCall(t *testing.T) {
+	chat := &dto.OpenAITextResponse{
+		Id:    "chatcmpl_1",
+		Model: "gpt-test",
+		Choices: []dto.OpenAITextResponseChoice{
+			{
+				Message:      assistantMessageWithTool("", "call_1", "apply_patch", `{"input":"{\"file\":\"a.go\"}"}`),
+				FinishReason: "tool_calls",
+			},
+		},
+	}
+	tools := &convmeta.ResponsesToolState{CustomToolNames: map[string]struct{}{"apply_patch": {}}}
+
+	resp, _, err := ChatCompletionsResponseToResponsesResponseWithTools(chat, "resp_1", tools)
+	require.NoError(t, err)
+	require.Len(t, resp.Output, 1)
+	assert.Equal(t, responsesOutputTypeCustomToolCall, resp.Output[0].Type)
+	assert.Equal(t, "apply_patch", resp.Output[0].Name)
+	assert.Equal(t, "call_1", resp.Output[0].CallId)
+	assert.JSONEq(t, `"{\"file\":\"a.go\"}"`, string(resp.Output[0].Input))
+	assert.Empty(t, resp.Output[0].Arguments)
+
+	wire, err := json.Marshal(resp.Output[0])
+	require.NoError(t, err)
+	var item map[string]any
+	require.NoError(t, json.Unmarshal(wire, &item))
+	assert.Equal(t, "custom_tool_call", item["type"])
+	assert.Equal(t, `{"file":"a.go"}`, item["input"])
+	_, hasArguments := item["arguments"]
+	assert.False(t, hasArguments)
+}
+
+func TestChatStreamRestoresCustomToolInput(t *testing.T) {
+	state := NewChatToResponsesStreamState("resp_1", "gpt-test")
+	state.Tools = &convmeta.ResponsesToolState{CustomToolNames: map[string]struct{}{"apply_patch": {}}}
+	toolIndex := 0
+	events := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{
+			{Index: 0, Delta: dto.ChatCompletionsStreamResponseChoiceDelta{ToolCalls: []dto.ToolCallResponse{
+				{Index: &toolIndex, ID: "call_1", Type: "function", Function: dto.FunctionResponse{Name: "apply_patch", Arguments: `{"input":"patch"}`}},
+			}}},
+		},
+	})
+	require.GreaterOrEqual(t, len(events), 2)
+	added := events[len(events)-1]
+	assert.Equal(t, responsesEventOutputItemAdded, added.Type)
+	require.NotNil(t, added.Payload.Item)
+	assert.Equal(t, responsesOutputTypeCustomToolCall, added.Payload.Item.Type)
+	for _, event := range events {
+		assert.NotEqual(t, responsesEventFunctionArgsDelta, event.Type)
+	}
+
+	finish := "tool_calls"
+	done := mustResponsesEventsFromChatChunk(t, state, &dto.ChatCompletionsStreamResponse{
+		Choices: []dto.ChatCompletionsStreamResponseChoice{{Index: 0, FinishReason: &finish}},
+	})
+	require.NotEmpty(t, done)
+	assert.Equal(t, responsesEventCustomToolInputDelta, done[0].Type)
+	assert.Equal(t, "patch", done[0].Payload.Delta)
+	assert.Equal(t, responsesEventCustomToolInputDone, done[1].Type)
+	require.NotNil(t, done[1].Payload.Input)
+	assert.Equal(t, "patch", *done[1].Payload.Input)
+	require.NotNil(t, done[2].Payload.Item)
+	assert.Equal(t, responsesOutputTypeCustomToolCall, done[2].Payload.Item.Type)
+	assert.JSONEq(t, `"patch"`, string(done[2].Payload.Item.Input))
 }
 
 func TestChatCompletionsResponseToResponsesEmitsReasoningSummaryBeforeText(t *testing.T) {

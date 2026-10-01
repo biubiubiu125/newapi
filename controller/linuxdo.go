@@ -48,18 +48,13 @@ func LinuxDoBind(c *gin.Context) {
 		return
 	}
 
-	session := sessions.Default(c)
-	id := session.Get("id")
-	user.Id = id.(int)
-
-	err = user.FillUserById()
-	if err != nil {
-		common.ApiError(c, err)
+	userID, ok := sessions.Default(c).Get("id").(int)
+	if !ok || userID <= 0 {
+		common.ApiErrorI18n(c, i18n.MsgAuthNotLoggedIn)
 		return
 	}
-
-	user.LinuxDOId = fmt.Sprintf("%d", linuxdoUser.Id)
-	err = user.Update(false)
+	user.Id = userID
+	err = user.ClaimExternalIdentity(model.ExternalIdentityProviderLinuxDO, user.LinuxDOId)
 	if err != nil {
 		common.ApiError(c, err)
 		return

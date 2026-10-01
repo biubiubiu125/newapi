@@ -2429,6 +2429,8 @@
     "Must be at least 0.1": "Doit être au moins 0.1",
     "Must be 1 or less": "Doit être inférieur ou égal à 1",
     "Group name is required": "Le nom du groupe est requis",
+    "Group name must be at most 64 characters long": "Le nom du groupe ne peut pas dépasser 64 caractères",
+    "Description must be at most 255 characters long": "La description ne peut pas dépasser 255 caractères",
     "Must be ≥ 0": "Doit être ≥ 0",
     "Must be ≥ 1": "Doit être ≥ 1",
     "Must be ≤ 2,147,483,647": "Doit être ≤ 2,147,483,647",
@@ -7450,6 +7452,9 @@
     "Passkeys with an unknown domain that may be affected: {{amount}}": "Clés d’accès de domaine inconnu pouvant être affectées : {{amount}}",
     "Password authentication is disabled.": "L’authentification par mot de passe est désactivée.",
     "Password must contain between 8 and 128 characters.": "Le mot de passe doit contenir entre 8 et 128 caractères.",
+    "Display name must be at most 20 characters long": "Le nom d'affichage doit contenir au maximum 20 caractères",
+    "Email must be at most 50 characters long": "L'adresse e-mail doit contenir au maximum 50 caractères",
+    "Remark must be at most 255 characters long": "La remarque doit contenir au maximum 255 caractères",
     "Password set successfully": "Mot de passe défini",
     "Password settings have changed. Reload the page and try again.": "Les paramètres du mot de passe ont changé. Rechargez la page et réessayez.",
     "Peak KV cache usage": "Utilisation KV maximale",
@@ -7834,6 +7839,10 @@
     "You can add models manually or try fetching again.": "Ajoutez des modèles manuellement ou réessayez la récupération.",
     "You do not have permission to perform this action.": "Vous n’avez pas l’autorisation d’effectuer cette action.",
     "Your identity has been verified. Continue to the provider to finish linking your account.": "Votre identité a été vérifiée. Poursuivez chez le fournisseur pour terminer la liaison du compte.",
-    "Zhipu GLM": "Zhipu GLM"
+    "Zhipu GLM": "Zhipu GLM",
+    "Created {{success}} of {{total}} API keys. The remaining keys were not created.": "{{success}} clé(s) API créée(s) sur {{total}}. Les autres n'ont pas été créées.",
+    "Custom duration must be greater than 0 seconds": "La durée personnalisée doit être supérieure à 0 seconde",
+    "Custom reset cycle must be greater than 0 seconds": "Le cycle de réinitialisation personnalisé doit être supérieur à 0 seconde",
+    "Token name is too long": "Le nom du jeton est trop long"
   }
 }

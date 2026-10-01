@@ -36,6 +36,7 @@ type Token struct {
 var (
 	ErrTokenQuotaNoRows       = errors.New("token quota update affected no rows")
 	ErrTokenQuotaInsufficient = errors.New("token quota is not enough")
+	ErrTokenRemainConflict    = errors.New("token remain quota changed")
 )
 
 func (token *Token) GetAutoGroups() ([]string, error) {
@@ -352,16 +353,57 @@ func (token *Token) InsertWithTx(tx *gorm.DB) error {
 	return tx.Create(token).Error
 }
 
-// Update Make sure your token's fields is completed, because this will update non-zero values
-func (token *Token) Update() (err error) {
+// Update writes token metadata. It does not write remain_quota, so a concurrent
+// debit cannot be restored by a rename or status change.
+func (token *Token) Update() error {
+	return token.update(0, false)
+}
+
+// UpdateStatus changes only the token status.
+func (token *Token) UpdateStatus() error {
+	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
+		common.SysLog("failed to invalidate token cache before status update: " + cacheErr.Error())
+	}
+	return DB.Model(&Token{}).Where("id = ?", token.Id).Select("status").Updates(token).Error
+}
+
+// UpdateWithRemainBaseline writes metadata and remain_quota only when the stored
+// remain still matches the value loaded for this edit.
+func (token *Token) UpdateWithRemainBaseline(remainBaseline int64) error {
+	return token.update(remainBaseline, true)
+}
+
+func (token *Token) update(remainBaseline int64, writeRemain bool) error {
 	// Invalidate before the write so a concurrent DB read cannot repopulate
 	// Redis with a stale token snapshot while this mutation is in flight.
 	if cacheErr := invalidateTokenCacheForMutation(token.Key); cacheErr != nil {
 		common.SysLog("failed to invalidate token cache before update: " + cacheErr.Error())
 	}
-	err = DB.Model(token).Select("name", "status", "expired_time", "remain_quota", "unlimited_quota",
-		"model_limits_enabled", "model_limits", "allow_ips", "group", "cross_group_retry", "auto_groups").Updates(token).Error
-	return err
+	query := DB.Model(&Token{}).Where("id = ?", token.Id)
+	columns := []string{
+		"name", "status", "expired_time", "unlimited_quota",
+		"model_limits_enabled", "model_limits", "allow_ips", "group",
+		"cross_group_retry", "auto_groups",
+	}
+	if writeRemain {
+		query = query.Where("remain_quota = ?", remainBaseline)
+		columns = append(columns, "remain_quota")
+	}
+	result := query.Select(columns).Updates(token)
+	if result.Error != nil {
+		return result.Error
+	}
+	if !writeRemain || result.RowsAffected > 0 {
+		return nil
+	}
+	var current Token
+	if err := DB.Select("id", "remain_quota").Where("id = ?", token.Id).First(&current).Error; err != nil {
+		return err
+	}
+	if current.RemainQuota != remainBaseline {
+		return ErrTokenRemainConflict
+	}
+	return nil
 }
 
 func (token *Token) SelectUpdate() (err error) {
@@ -573,6 +615,21 @@ func DecreaseTokenQuota(id int, key string, quota int64) (err error) {
 	return nil
 }
 
+// DecreaseTokenQuotaAllowNegative debits a delivered charge even when remain_quota is short.
+func DecreaseTokenQuotaAllowNegative(id int, key string, quota int64) error {
+	if quota < 0 {
+		return common.Localized(i18n.MsgTokenQuotaNegative)
+	}
+	if quota == 0 {
+		return nil
+	}
+	if err := DecreaseTokenQuotaAllowNegativeTx(DB, id, quota); err != nil {
+		return err
+	}
+	applyTokenQuotaCacheDelta(tokenQuotaDeltaAfterDecrease(id, key, quota))
+	return nil
+}
+
 func DecreaseTokenQuotaTx(tx *gorm.DB, id int, quota int64) (err error) {
 	if tx == nil {
 		return errors.New("database transaction is required")
@@ -602,6 +659,34 @@ func DecreaseTokenQuotaTx(tx *gorm.DB, id int, quota int64) (err error) {
 			return err
 		}
 		return fmt.Errorf("%w: tokenId=%d, need quota=%d", ErrTokenQuotaInsufficient, id, quota)
+	}
+	return nil
+}
+
+// DecreaseTokenQuotaAllowNegativeTx debits a token even when remain_quota is short.
+// 只给已经交付、必须落账的幂等结算使用，普通预扣仍然拒绝透支。
+func DecreaseTokenQuotaAllowNegativeTx(tx *gorm.DB, id int, quota int64) error {
+	if tx == nil {
+		return errors.New("database transaction is required")
+	}
+	if quota < 0 {
+		return common.Localized(i18n.MsgTokenQuotaNegative)
+	}
+	if quota == 0 {
+		return nil
+	}
+	result := tx.Model(&Token{}).Where("id = ?", id).Updates(
+		map[string]interface{}{
+			"remain_quota":  gorm.Expr("CASE WHEN unlimited_quota THEN remain_quota ELSE remain_quota - ? END", quota),
+			"used_quota":    gorm.Expr("used_quota + ?", quota),
+			"accessed_time": common.GetTimestamp(),
+		},
+	)
+	if result.Error != nil {
+		return result.Error
+	}
+	if result.RowsAffected == 0 {
+		return fmt.Errorf("%w: token not found, tokenId=%d, need quota=%d", ErrTokenQuotaNoRows, id, quota)
 	}
 	return nil
 }

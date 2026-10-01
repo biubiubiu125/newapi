@@ -223,7 +223,7 @@ func (user *User) EditWithTransactionHook(updatePassword bool, hook func(tx *gor
 			return ErrUserLoginIdentifierTaken
 		}
 		if updatePassword {
-			newUser.Password, err = common.Password2Hash(newUser.Password)
+			newUser.Password, err = common.HashAccountPassword(newUser.Password)
 			if err != nil {
 				return err
 			}

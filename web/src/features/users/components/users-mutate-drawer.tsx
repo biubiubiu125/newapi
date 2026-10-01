@@ -19,34 +19,85 @@ For commercial licensing, please contact support@quantumnous.com
 import { zodResolver } from '@hookform/resolvers/zod'
 import { useQuery } from '@tanstack/react-query'
 import { Pencil } from 'lucide-react'
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
-import { SideDrawerSection, sideDrawerContentClassName, sideDrawerFooterClassName, sideDrawerFormClassName, sideDrawerHeaderClassName } from '@/components/drawer-layout'
+
+import {
+  SideDrawerSection,
+  sideDrawerContentClassName,
+  sideDrawerFooterClassName,
+  sideDrawerFormClassName,
+  sideDrawerHeaderClassName,
+} from '@/components/drawer-layout'
 import { Button } from '@/components/ui/button'
 import { Checkbox } from '@/components/ui/checkbox'
-import { Form, FormControl, FormDescription, FormField, FormItem, FormLabel, FormMessage } from '@/components/ui/form'
+import { Combobox } from '@/components/ui/combobox'
+import {
+  Form,
+  FormControl,
+  FormDescription,
+  FormField,
+  FormItem,
+  FormLabel,
+  FormMessage,
+} from '@/components/ui/form'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Select, SelectContent, SelectGroup, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select'
-import { Sheet, SheetClose, SheetContent, SheetDescription, SheetFooter, SheetHeader, SheetTitle } from '@/components/ui/sheet'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
+import {
+  Sheet,
+  SheetClose,
+  SheetContent,
+  SheetDescription,
+  SheetFooter,
+  SheetHeader,
+  SheetTitle,
+} from '@/components/ui/sheet'
 import { Textarea } from '@/components/ui/textarea'
-import { ADMIN_PERMISSION_ACTIONS, ADMIN_PERMISSION_RESOURCES, EMPTY_PERMISSION_CATALOG, hasPermission, normalizeAdminPermissions } from '@/lib/admin-permissions'
+import {
+  ADMIN_PERMISSION_ACTIONS,
+  ADMIN_PERMISSION_RESOURCES,
+  EMPTY_PERMISSION_CATALOG,
+  hasPermission,
+  normalizeAdminPermissions,
+} from '@/lib/admin-permissions'
 import { getCurrencyDisplay, getCurrencyLabel } from '@/lib/currency'
 import { formatQuota, parseQuotaFromDollars } from '@/lib/format'
-import {requireServerSuccess} from '@/lib/server-error-message'
+import { handleServerError } from '@/lib/handle-server-error'
+import { accountPasswordSchema } from '@/lib/password-policy'
 import { ROLE } from '@/lib/roles'
+import { requireServerSuccess } from '@/lib/server-error-message'
 import { useAuthStore } from '@/stores/auth-store'
-import { createUser, updateUser, getUser, getGroups, getPermissionCatalog } from '../api'
+
+import {
+  createUser,
+  updateUser,
+  getUser,
+  getGroups,
+  getPermissionCatalog,
+} from '../api'
 import { BINDING_FIELDS, ERROR_MESSAGES, SUCCESS_MESSAGES } from '../constants'
-import { newUserFormSchema, REGISTER_USERNAME_MAX_LENGTH, userFormSchema, type UserFormValues, USER_FORM_DEFAULT_VALUES, transformFormDataToPayload, transformUserToFormDefaults } from '../lib'
+import {
+  newUserFormSchema,
+  REGISTER_USERNAME_MAX_LENGTH,
+  userFormSchema,
+  type UserFormValues,
+  USER_FORM_DEFAULT_VALUES,
+  transformFormDataToPayload,
+  transformUserToFormDefaults,
+} from '../lib'
 import type { User } from '../types'
 import { UserQuotaDialog } from './user-quota-dialog'
 import { useUsers } from './users-provider'
-import { Combobox } from '@/components/ui/combobox'
-import { handleServerError } from '@/lib/handle-server-error'
-import { accountPasswordSchema } from '@/lib/password-policy'
 
 type UsersMutateDrawerProps = {
   open: boolean
@@ -61,7 +112,8 @@ export function UsersMutateDrawer({
 }: UsersMutateDrawerProps) {
   const { t } = useTranslation()
   const isUpdate = !!currentRow
-  const { triggerRefresh } = useUsers()
+  const { triggerRefresh, requestVerification, verificationActive } = useUsers()
+  const loadedUserRef = useRef<User | null>(null)
   const currentUser = useAuthStore((s) => s.auth.user)
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [quotaDialogOpen, setQuotaDialogOpen] = useState(false)
@@ -94,6 +146,7 @@ export function UsersMutateDrawer({
       getUser(currentRow.id)
         .then((result) => {
           if (result.success && result.data) {
+            loadedUserRef.current = result.data
             form.reset(transformUserToFormDefaults(result.data))
           } else {
             handleServerError(result, t('Failed to load'))
@@ -101,6 +154,7 @@ export function UsersMutateDrawer({
         })
         .catch((error) => handleServerError(error, t('Failed to load')))
     } else if (open && !isUpdate) {
+      loadedUserRef.current = null
       // For create, reset to defaults
       form.reset(USER_FORM_DEFAULT_VALUES)
     }
@@ -135,9 +189,52 @@ export function UsersMutateDrawer({
         permissionCatalog,
         canEditAdminPermissions && targetIsManagedAdmin
       )
+      let proofToken: string | undefined
+      if (isUpdate && currentRow) {
+        const loaded = loadedUserRef.current
+        const emailChanged =
+          (payload.email ?? '').trim().toLowerCase() !==
+          (loaded?.email ?? '').trim().toLowerCase()
+        const permissionsChanged =
+          payload.admin_permissions !== undefined &&
+          JSON.stringify(
+            normalizeAdminPermissions(
+              payload.admin_permissions,
+              permissionCatalog
+            )
+          ) !==
+            JSON.stringify(
+              normalizeAdminPermissions(
+                loaded?.admin_permissions ?? {},
+                permissionCatalog
+              )
+            )
+        if (Boolean(data.password) || emailChanged || permissionsChanged) {
+          if (verificationActive) return
+          const proof = await requestVerification({
+            scope: 'admin.user.update',
+            context: { user_id: currentRow.id },
+            title: t('Verify to update user credentials'),
+          })
+          if (!proof) return
+          proofToken = proof.proof_token
+        }
+      } else if ((payload.role ?? ROLE.USER) >= ROLE.ADMIN) {
+        if (verificationActive) return
+        const proof = await requestVerification({
+          scope: 'admin.user.create',
+          context: { role: payload.role ?? ROLE.ADMIN },
+          title: t('Verify to create an administrator'),
+        })
+        if (!proof) return
+        proofToken = proof.proof_token
+      }
       const result = isUpdate
-        ? await updateUser(payload as typeof payload & { id: number })
-        : await createUser(payload)
+        ? await updateUser(
+            payload as typeof payload & { id: number },
+            proofToken
+          )
+        : await createUser(payload, proofToken)
 
       if (result.success) {
         toast.success(
@@ -148,7 +245,6 @@ export function UsersMutateDrawer({
         onOpenChange(false)
         triggerRefresh()
       } else {
-
         handleServerError(result, t(ERROR_MESSAGES.CREATE_FAILED))
       }
     } catch (error) {
@@ -285,6 +381,7 @@ export function UsersMutateDrawer({
                       <FormControl>
                         <Input
                           {...field}
+                          maxLength={20}
                           placeholder={t('Enter display name')}
                         />
                       </FormControl>
@@ -306,6 +403,7 @@ export function UsersMutateDrawer({
                         <Input
                           {...field}
                           type='email'
+                          maxLength={50}
                           placeholder={t('name@example.com')}
                         />
                       </FormControl>
@@ -414,6 +512,7 @@ export function UsersMutateDrawer({
                         <FormControl>
                           <Textarea
                             {...field}
+                            maxLength={255}
                             placeholder={t(
                               'Admin notes (only visible to admins)'
                             )}

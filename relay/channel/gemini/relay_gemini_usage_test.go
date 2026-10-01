@@ -318,10 +318,10 @@ func TestGeminiChatHandlerEmptyCandidatesReturnsError(t *testing.T) {
 	resp := &http.Response{Body: io.NopCloser(bytes.NewReader(body))}
 
 	usage, newAPIError := GeminiChatHandler(c, info, resp)
-	require.NotNil(t, newAPIError)
-	require.Equal(t, types.ErrorCodeEmptyResponse, newAPIError.GetErrorCode())
+	require.Nil(t, newAPIError)
 	require.NotNil(t, usage)
-	require.Zero(t, recorder.Body.Len())
+	require.Equal(t, http.StatusInternalServerError, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "empty response from Gemini API")
 }
 
 func TestGeminiChatHandlerUsesEstimatedPromptTokensWhenUsagePromptMissing(t *testing.T) {
@@ -734,4 +734,100 @@ func TestGeminiStreamHandlerAccumulatesPartialUsageMetadata(t *testing.T) {
 	require.NotNil(t, usage.BillingUsage)
 	require.NotNil(t, usage.BillingUsage.GeminiUsageMetadata)
 	assert.Equal(t, 33, usage.BillingUsage.GeminiUsageMetadata.ToolUsePromptTokenCount)
+}
+
+func TestGeminiChatHandlerBlockedPromptWritesErrorAndSettles(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	reason := "SAFETY"
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	info := &relaycommon.RelayInfo{
+		RelayFormat:     types.RelayFormatOpenAI,
+		OriginModelName: "gemini-2.5-flash",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-2.5-flash",
+		},
+	}
+	payload := dto.GeminiChatResponse{
+		PromptFeedback: &dto.GeminiChatPromptFeedback{BlockReason: &reason},
+		UsageMetadata: dto.GeminiUsageMetadata{
+			PromptTokenCount: 12,
+			TotalTokenCount:  12,
+		},
+	}
+	body, err := common.Marshal(payload)
+	require.NoError(t, err)
+
+	usage, newAPIError := GeminiChatHandler(c, info, &http.Response{Body: io.NopCloser(bytes.NewReader(body))})
+	require.Nil(t, newAPIError)
+	require.NotNil(t, usage)
+	require.Equal(t, 12, usage.PromptTokens)
+	require.True(t, info.PerformanceBusinessRejection)
+	require.Equal(t, http.StatusBadRequest, recorder.Code)
+	require.Contains(t, recorder.Body.String(), "request blocked by Gemini API")
+}
+
+func TestGeminiChatStreamHandlerSettlesAfterPartialDelivery(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	oldStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 300
+	t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
+
+	info := &relaycommon.RelayInfo{
+		RelayFormat:     types.RelayFormatOpenAI,
+		OriginModelName: "gemini-2.5-flash",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-2.5-flash",
+		},
+	}
+	chunk, err := common.Marshal(dto.GeminiChatResponse{
+		Candidates: []dto.GeminiChatCandidate{{
+			Content: dto.GeminiChatContent{
+				Role:  "model",
+				Parts: []dto.GeminiPart{{Text: "partial"}},
+			},
+		}},
+		UsageMetadata: dto.GeminiUsageMetadata{
+			PromptTokenCount:     11,
+			CandidatesTokenCount: 4,
+			TotalTokenCount:      15,
+		},
+	})
+	require.NoError(t, err)
+	streamBody := "data: " + string(chunk) + "\n\ndata: {bad\n\n"
+
+	usage, newAPIError := GeminiChatStreamHandler(c, info, &http.Response{Body: io.NopCloser(strings.NewReader(streamBody))})
+	require.Nil(t, newAPIError)
+	require.NotNil(t, usage)
+	require.Equal(t, 15, usage.TotalTokens)
+	require.True(t, info.HasClientStreamWrite())
+	require.NotZero(t, recorder.Body.Len())
+}
+
+func TestGeminiChatStreamHandlerFailsBeforeFirstWrite(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/chat/completions", nil)
+	oldStreamingTimeout := constant.StreamingTimeout
+	constant.StreamingTimeout = 300
+	t.Cleanup(func() { constant.StreamingTimeout = oldStreamingTimeout })
+
+	info := &relaycommon.RelayInfo{
+		RelayFormat:     types.RelayFormatOpenAI,
+		OriginModelName: "gemini-2.5-flash",
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "gemini-2.5-flash",
+		},
+	}
+	usage, newAPIError := GeminiChatStreamHandler(c, info, &http.Response{
+		Body: io.NopCloser(strings.NewReader("data: {bad\n\n")),
+	})
+	require.NotNil(t, newAPIError)
+	require.Nil(t, usage)
+	require.False(t, info.HasClientStreamWrite())
 }

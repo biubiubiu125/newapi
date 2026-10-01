@@ -49,8 +49,8 @@ import { CompleteStep } from './components/complete-step'
 import { DatabaseStep } from './components/database-step'
 import { StepNavigation } from './components/step-navigation'
 import { UsageModeStep } from './components/usage-mode-step'
+import { setupPasswordError } from './password'
 import type { SetupFormValues, SetupStatus } from './types'
-
 
 const STEPS = [
   {
@@ -251,13 +251,13 @@ export function SetupWizard() {
       return false
     }
 
-    if (!password || password.length < 8) {
+    const passwordError = setupPasswordError(password)
+    if (passwordError) {
       form.setError('password', {
         type: 'manual',
-        message: t('Password must be at least 8 characters long'),
+        message: t(passwordError),
       })
-      toast.error(t('Password must be at least 8 characters long'))
-      toast.error(t('Password must contain between 8 and 128 characters.'))
+      toast.error(t(passwordError))
       return false
     }
 

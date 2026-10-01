@@ -551,6 +551,129 @@ func TestUpdateTokenMasksKeyInResponse(t *testing.T) {
 	}
 }
 
+func debitTokenRemainAfterLoad(t *testing.T, db *gorm.DB, tokenID int, remain int64) {
+	t.Helper()
+	const callbackName = "token_remain_race"
+	fired := false
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if fired || tx.Statement == nil || tx.Statement.Schema == nil || tx.Statement.Schema.Table != "tokens" {
+			return
+		}
+		fired = true
+		require.NoError(t, tx.Session(&gorm.Session{NewDB: true, SkipHooks: true}).Exec(
+			"UPDATE tokens SET remain_quota = ? WHERE id = ?",
+			remain, tokenID,
+		).Error)
+	}))
+	t.Cleanup(func() {
+		_ = db.Callback().Query().Remove(callbackName)
+	})
+}
+
+func TestUpdateTokenDoesNotRestoreConsumedRemainQuota(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "quota-token", "quota1234token5678")
+	require.NoError(t, db.Model(token).Updates(map[string]any{
+		"remain_quota":    int64(100),
+		"unlimited_quota": false,
+	}).Error)
+	debitTokenRemainAfterLoad(t, db, token.Id, 60)
+
+	body := map[string]any{
+		"id":              token.Id,
+		"name":            "renamed-token",
+		"status":          common.TokenStatusEnabled,
+		"expired_time":    -1,
+		"remain_quota":    100,
+		"unlimited_quota": false,
+		"group":           "default",
+	}
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 1)
+	UpdateToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected metadata update to succeed, got message: %s", response.Message)
+	}
+	var got model.Token
+	require.NoError(t, db.First(&got, token.Id).Error)
+	require.Equal(t, int64(60), got.RemainQuota)
+	require.Equal(t, "renamed-token", got.Name)
+}
+
+func TestUpdateTokenRejectsStaleExplicitRemainQuota(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "quota-edit-token", "quotaedit12345678")
+	require.NoError(t, db.Model(token).Updates(map[string]any{
+		"remain_quota":    int64(100),
+		"unlimited_quota": false,
+	}).Error)
+	debitTokenRemainAfterLoad(t, db, token.Id, 60)
+
+	body := map[string]any{
+		"id":              token.Id,
+		"name":            "renamed-token",
+		"status":          common.TokenStatusEnabled,
+		"expired_time":    -1,
+		"remain_quota":    80,
+		"unlimited_quota": false,
+		"group":           "default",
+	}
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPut, "/api/token/", body, 1)
+	UpdateToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if response.Success {
+		t.Fatalf("expected stale explicit remain quota update to fail")
+	}
+	var got model.Token
+	require.NoError(t, db.First(&got, token.Id).Error)
+	require.Equal(t, int64(60), got.RemainQuota)
+	require.Equal(t, "quota-edit-token", got.Name)
+}
+
+func TestUpdateTokenStatusOnlyKeepsConsumedRemainQuota(t *testing.T) {
+	db := setupTokenControllerTestDB(t)
+	token := seedToken(t, db, 1, "status-token", "status1234token567")
+	require.NoError(t, db.Model(token).Updates(map[string]any{
+		"remain_quota":    int64(100),
+		"unlimited_quota": false,
+	}).Error)
+
+	const callbackName = "token_status_remain_race"
+	fired := false
+	require.NoError(t, db.Callback().Query().After("gorm:query").Register(callbackName, func(tx *gorm.DB) {
+		if fired || tx.Statement == nil || tx.Statement.Schema == nil || tx.Statement.Schema.Table != "tokens" {
+			return
+		}
+		fired = true
+		require.NoError(t, tx.Session(&gorm.Session{NewDB: true, SkipHooks: true}).Exec(
+			"UPDATE tokens SET remain_quota = ? WHERE id = ?",
+			int64(60), token.Id,
+		).Error)
+	}))
+	t.Cleanup(func() {
+		_ = db.Callback().Query().Remove(callbackName)
+	})
+
+	body := map[string]any{
+		"id":           token.Id,
+		"status":       common.TokenStatusDisabled,
+		"remain_quota": 100,
+	}
+	ctx, recorder := newAuthenticatedContext(t, http.MethodPut, "/api/token/?status_only=true", body, 1)
+	UpdateToken(ctx)
+
+	response := decodeAPIResponse(t, recorder)
+	if !response.Success {
+		t.Fatalf("expected status-only update to succeed, got message: %s", response.Message)
+	}
+	var got model.Token
+	require.NoError(t, db.First(&got, token.Id).Error)
+	require.Equal(t, int64(60), got.RemainQuota)
+	require.Equal(t, common.TokenStatusDisabled, got.Status)
+}
+
 func TestGetTokenKeyRequiresOwnershipAndReturnsFullKey(t *testing.T) {
 	db := setupTokenControllerTestDB(t)
 	token := seedToken(t, db, 1, "owned-token", "owner1234token5678")
@@ -746,6 +869,17 @@ func verifyAPITokenAudit(t *testing.T) {
 			}
 			response := httptest.NewRecorder()
 			router.ServeHTTP(response, request)
+			if tc.usePAT {
+				assert.Equal(t, http.StatusForbidden, response.Code)
+				assert.Contains(t, response.Body.String(), "ACCESS_TOKEN_FORBIDDEN")
+				assert.NotContains(t, response.Body.String(), owned.GetFullKey())
+				var patEvents []model.AuditLog
+				require.NoError(t, model.LOG_DB.Where("request_id = ?", response.Header().Get(common.RequestIdKey)).Find(&patEvents).Error)
+				require.Len(t, patEvents, 1)
+				assert.Equal(t, model.AuditCategoryAccessToken, patEvents[0].Category)
+				assert.False(t, patEvents[0].Success)
+				return
+			}
 			if strings.Contains(tc.name, "exceeds audit buffer") {
 				assert.Greater(t, response.Body.Len(), 64*1024)
 			}
