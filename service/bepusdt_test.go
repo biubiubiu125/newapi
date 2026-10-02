@@ -50,15 +50,15 @@ func TestUSDTGatewayAssetsOnlyExposeBEpusdtUSDT(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, []BEpusdtAsset{{
 		Token:       "usdt",
-		PaymentType: "usdt",
-		DisplayName: "USDT",
+		PaymentType: "usdt.trc20",
+		DisplayName: "USDT-TRC20",
 	}}, assets)
 
 	methods := BEpusdtAssetsForTopupMethods()
 	require.Equal(t, []map[string]string{{
-		"name":      "USDT",
-		"type":      "usdt",
-		"color":     "rgba(var(--semi-teal-5), 1)",
+		"name":      "USDT-TRC20",
+		"type":      "usdt.trc20",
+		"color":     "#FF060A",
 		"min_topup": "1",
 		"provider":  "bepusdt",
 	}}, methods)
@@ -66,27 +66,28 @@ func TestUSDTGatewayAssetsOnlyExposeBEpusdtUSDT(t *testing.T) {
 	require.False(t, IsValidBEpusdtPaymentMethod("bepusdt:usdt:tron"))
 }
 
-func TestBEpusdtTopupMethodUsesConfiguredDisplayName(t *testing.T) {
+func TestBEpusdtTopupMethodsIgnoreDisplayNameOverrides(t *testing.T) {
 	withBEpusdtSettings(t, "https://pay.example.com")
 	setting.BEpusdtAssetDisplayNames = `{"usdt":"USDT (TRC20)"}`
+	setting.BEpusdtDisplayName = "Crypto Pay"
+	setting.BEpusdtTradeType = "usdt.xlayer, USDT.TRC20, usdt.polygon, usdt.bep20"
 
 	assets, err := GetBEpusdtAssets()
 	require.NoError(t, err)
-	require.Equal(t, "USDT (TRC20)", assets[0].DisplayName)
+	require.Equal(t, []BEpusdtAsset{
+		{Token: "usdt", PaymentType: "usdt.trc20", DisplayName: "USDT-TRC20"},
+		{Token: "usdt", PaymentType: "usdt.bep20", DisplayName: "USDT-BEP20"},
+		{Token: "usdt", PaymentType: "usdt.polygon", DisplayName: "USDT-Polygon"},
+		{Token: "usdt", PaymentType: "usdt.xlayer", DisplayName: "USDT-X Layer"},
+	}, assets)
 
 	methods := BEpusdtAssetsForTopupMethods()
-	require.Equal(t, "USDT (TRC20)", methods[0]["name"])
-	require.Equal(t, "usdt", methods[0]["type"])
-}
-
-func TestBEpusdtAssetDisplayNameFallsBackToGatewayDisplayName(t *testing.T) {
-	withBEpusdtSettings(t, "https://pay.example.com")
-	setting.BEpusdtAssetDisplayNames = `{}`
-	setting.BEpusdtDisplayName = "Crypto Pay"
-
-	assets, err := GetBEpusdtAssets()
-	require.NoError(t, err)
-	require.Equal(t, "Crypto Pay", assets[0].DisplayName)
+	require.Equal(t, []string{"USDT-TRC20", "USDT-BEP20", "USDT-Polygon", "USDT-X Layer"}, []string{
+		methods[0]["name"], methods[1]["name"], methods[2]["name"], methods[3]["name"],
+	})
+	require.Equal(t, []string{"usdt.trc20", "usdt.bep20", "usdt.polygon", "usdt.xlayer"}, []string{
+		methods[0]["type"], methods[1]["type"], methods[2]["type"], methods[3]["type"],
+	})
 }
 
 func TestBEpusdtConfigurationDoesNotRequireMerchantID(t *testing.T) {
@@ -193,6 +194,73 @@ func TestCreateUSDTGatewayOrderDefaultsEmptyTradeType(t *testing.T) {
 		PaymentType: "usdt",
 	})
 	require.NoError(t, err)
+}
+
+func TestCreateUSDTGatewayOrderUsesSelectedEnabledChain(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		require.NoError(t, common.DecodeJson(r.Body, &body))
+		assertDirectBEpusdtOrder(t, body, "usdt.polygon")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status_code":200,"message":"success","data":{"trade_id":"BEPAY-1","order_id":"order-bepusdt-1","amount":"12.5","status":1,"payment_url":"https://pay.example.com/pay/checkout-counter/BEPAY-1"}}`))
+	}))
+	defer server.Close()
+	withBEpusdtSettings(t, server.URL)
+	setting.BEpusdtTradeType = "usdt.trc20,usdt.bep20,usdt.polygon,usdt.xlayer"
+
+	_, err := CreateUSDTGatewayOrder(USDTGatewayOrderRequest{
+		OrderID:     "order-bepusdt-1",
+		Amount:      12.5,
+		Currency:    "CNY",
+		NotifyURL:   "https://merchant.example.com/notify",
+		RedirectURL: "https://merchant.example.com/wallet?show_history=true",
+		Name:        "Topup 10",
+		PaymentType: "usdt.polygon",
+	})
+	require.NoError(t, err)
+}
+
+func TestCreateUSDTGatewayOrderRejectsBareUSDTWhenMultipleChainsEnabled(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	}))
+	defer server.Close()
+	withBEpusdtSettings(t, server.URL)
+	setting.BEpusdtTradeType = "usdt.trc20,usdt.bep20,usdt.polygon,usdt.xlayer"
+
+	_, err := CreateUSDTGatewayOrder(USDTGatewayOrderRequest{
+		OrderID:     "order-bepusdt-1",
+		Amount:      12.5,
+		Currency:    "CNY",
+		NotifyURL:   "https://merchant.example.com/notify",
+		RedirectURL: "https://merchant.example.com/wallet?show_history=true",
+		Name:        "Topup 10",
+		PaymentType: "usdt",
+	})
+	require.Error(t, err)
+	require.False(t, called)
+}
+
+func TestCreateUSDTGatewayOrderRejectsDisabledChain(t *testing.T) {
+	called := false
+	server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		called = true
+	}))
+	defer server.Close()
+	withBEpusdtSettings(t, server.URL)
+
+	_, err := CreateUSDTGatewayOrder(USDTGatewayOrderRequest{
+		OrderID:     "order-bepusdt-1",
+		Amount:      12.5,
+		Currency:    "CNY",
+		NotifyURL:   "https://merchant.example.com/notify",
+		RedirectURL: "https://merchant.example.com/wallet?show_history=true",
+		Name:        "Topup 10",
+		PaymentType: "usdt.bep20",
+	})
+	require.Error(t, err)
+	require.False(t, called)
 }
 
 func TestCreateUSDTGatewayOrderRejectsUnsupportedTradeType(t *testing.T) {

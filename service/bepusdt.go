@@ -39,6 +39,7 @@ type BEpusdtCreateOrderRequest struct {
 	RedirectURL string  `json:"redirect_url"`
 	Name        string  `json:"name"`
 	PaymentType string  `json:"payment_type"`
+	TradeType   string  `json:"trade_type"`
 }
 
 type BEpusdtCreateOrderResponse struct {
@@ -61,6 +62,7 @@ type USDTGatewayOrderRequest struct {
 	RedirectURL string
 	Name        string
 	PaymentType string
+	TradeType   string
 }
 
 type USDTGatewayCallbackFacts struct {
@@ -145,7 +147,34 @@ func GetBEpusdtAssets() ([]BEpusdtAsset, error) {
 	if !IsUSDTGatewayConfigured() {
 		return []BEpusdtAsset{}, nil
 	}
-	return defaultBEpusdtAssets(), nil
+	enabled, ok := setting.EnabledBEpusdtTradeTypes()
+	if !ok {
+		return []BEpusdtAsset{}, nil
+	}
+	assets := make([]BEpusdtAsset, 0, len(enabled))
+	for _, tradeType := range enabled {
+		assets = append(assets, BEpusdtAsset{
+			Token:       USDTPaymentMethod,
+			PaymentType: tradeType,
+			DisplayName: BEpusdtChainLabel(tradeType),
+		})
+	}
+	return assets, nil
+}
+
+func BEpusdtChainLabel(tradeType string) string {
+	switch strings.ToLower(strings.TrimSpace(tradeType)) {
+	case "usdt.trc20":
+		return "USDT-TRC20"
+	case "usdt.bep20":
+		return "USDT-BEP20"
+	case "usdt.polygon":
+		return "USDT-Polygon"
+	case "usdt.xlayer":
+		return "USDT-X Layer"
+	default:
+		return ""
+	}
 }
 
 func IsValidBEpusdtPaymentMethod(paymentMethod string) bool {
@@ -156,30 +185,25 @@ func IsValidBEpusdtPaymentMethod(paymentMethod string) bool {
 	return token == USDTPaymentMethod && network == ""
 }
 
-func defaultBEpusdtAssets() []BEpusdtAsset {
-	displayNames := setting.GetBEpusdtAssetDisplayNames()
-	asset := buildBEpusdtAsset(USDTPaymentMethod, "", displayNames)
-	if asset.PaymentType == "" {
-		return []BEpusdtAsset{}
-	}
-	return []BEpusdtAsset{asset}
-}
-
 func CreateUSDTGatewayOrder(req USDTGatewayOrderRequest) (*BEpusdtCreateOrderResponse, error) {
-	token, network, ok := ParseBEpusdtPaymentMethod(req.PaymentType)
-	if !ok {
-		return nil, errors.New("invalid bepusdt payment method")
+	selected := strings.TrimSpace(req.TradeType)
+	if selected == "" {
+		selected = req.PaymentType
+	}
+	tradeType, err := setting.ResolveBEpusdtCheckoutTradeType(selected)
+	if err != nil {
+		return nil, err
 	}
 	bepusdtReq := BEpusdtCreateOrderRequest{
 		OrderID:     req.OrderID,
 		Amount:      req.Amount,
 		Currency:    req.Currency,
-		Token:       token,
-		Network:     network,
+		Token:       USDTPaymentMethod,
 		NotifyURL:   req.NotifyURL,
 		RedirectURL: req.RedirectURL,
 		Name:        req.Name,
-		PaymentType: BuildBEpusdtPaymentMethod(token, network),
+		PaymentType: USDTPaymentMethod,
+		TradeType:   tradeType,
 	}
 	return CreateBEpusdtOrder(bepusdtReq)
 }
@@ -206,9 +230,9 @@ func buildBEpusdtOrderBody(req BEpusdtCreateOrderRequest) (map[string]interface{
 	if currency == "" {
 		currency = "CNY"
 	}
-	tradeType, ok := setting.NormalizeBEpusdtTradeType(setting.BEpusdtTradeType)
-	if !ok {
-		return nil, errors.New("invalid bepusdt trade type")
+	tradeType, err := setting.ResolveBEpusdtCheckoutTradeType(req.TradeType)
+	if err != nil {
+		return nil, err
 	}
 	bodyMap := map[string]interface{}{
 		"order_id":     req.OrderID,
@@ -434,26 +458,6 @@ func firstString(obj map[string]interface{}, keys ...string) string {
 	return ""
 }
 
-func buildBEpusdtAsset(token string, network string, displayNames map[string]string) BEpusdtAsset {
-	method := BuildBEpusdtPaymentMethod(token, network)
-	if method == "" {
-		return BEpusdtAsset{}
-	}
-	displayName := strings.TrimSpace(displayNames[method])
-	if displayName == "" && method == USDTPaymentMethod {
-		displayName = strings.TrimSpace(setting.BEpusdtDisplayName)
-	}
-	if displayName == "" {
-		displayName = strings.ToUpper(token)
-	}
-	return BEpusdtAsset{
-		Token:       strings.ToLower(strings.TrimSpace(token)),
-		Network:     strings.ToLower(strings.TrimSpace(network)),
-		PaymentType: method,
-		DisplayName: displayName,
-	}
-}
-
 func stringify(value interface{}) string {
 	switch v := value.(type) {
 	case nil:
@@ -492,32 +496,28 @@ func BEpusdtAssetsForTopupMethods() []map[string]string {
 		common.SysError("failed to get bepusdt assets: " + err.Error())
 		return []map[string]string{}
 	}
-	hasUSDT := false
-	for _, asset := range assets {
-		if strings.EqualFold(asset.Token, "usdt") {
-			hasUSDT = true
-			break
-		}
-	}
-	if len(assets) == 0 || !hasUSDT {
-		assets = defaultBEpusdtAssets()
-	}
 	minTopup := setting.BEpusdtMinTopUp
 	if minTopup <= 0 {
 		minTopup = 1
 	}
-	displayName := "USDT"
-	for _, asset := range assets {
-		if strings.EqualFold(asset.PaymentType, USDTPaymentMethod) && strings.TrimSpace(asset.DisplayName) != "" {
-			displayName = strings.TrimSpace(asset.DisplayName)
-			break
-		}
+	colors := map[string]string{
+		"usdt.trc20":   "#FF060A",
+		"usdt.bep20":   "#F3BA2F",
+		"usdt.polygon": "#8247E5",
+		"usdt.xlayer":  "#111111",
 	}
-	return []map[string]string{{
-		"name":      displayName,
-		"type":      USDTPaymentMethod,
-		"color":     "rgba(var(--semi-teal-5), 1)",
-		"min_topup": strconv.Itoa(minTopup),
-		"provider":  ActiveUSDTGatewayProvider(),
-	}}
+	methods := make([]map[string]string, 0, len(assets))
+	for _, asset := range assets {
+		if asset.PaymentType == "" || asset.DisplayName == "" {
+			continue
+		}
+		methods = append(methods, map[string]string{
+			"name":      asset.DisplayName,
+			"type":      asset.PaymentType,
+			"color":     colors[asset.PaymentType],
+			"min_topup": strconv.Itoa(minTopup),
+			"provider":  ActiveUSDTGatewayProvider(),
+		})
+	}
+	return methods
 }

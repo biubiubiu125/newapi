@@ -35,8 +35,8 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	token, network, ok := service.ParseBEpusdtPaymentMethod(req.PaymentMethod)
-	if !ok || token != "usdt" || network != "" {
+	tradeType, tradeErr := setting.ResolveBEpusdtCheckoutTradeType(req.PaymentMethod)
+	if tradeErr != nil {
 		common.ApiErrorI18n(c, i18n.MsgPaymentChainNotEnabled)
 		return
 	}
@@ -129,7 +129,8 @@ func SubscriptionRequestBEpusdt(c *gin.Context) {
 		NotifyURL:   notifyURL,
 		RedirectURL: returnURL,
 		Name:        fmt.Sprintf("Subscription %s", plan.Title),
-		PaymentType: req.PaymentMethod,
+		PaymentType: service.USDTPaymentMethod,
+		TradeType:   tradeType,
 	})
 	if err != nil {
 		_ = model.ExpireSubscriptionOrder(tradeNo, provider)

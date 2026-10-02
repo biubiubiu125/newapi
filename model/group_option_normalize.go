@@ -190,7 +190,7 @@ func normalizeOptionValueForStorage(key string, value string) (string, error) {
 		"WaffoPancakeProductID":
 		return strings.TrimSpace(value), nil
 	case "BEpusdtTradeType":
-		normalized, ok := setting.NormalizeBEpusdtTradeType(value)
+		normalized, ok := setting.NormalizeBEpusdtTradeTypes(value)
 		if !ok {
 			return "", errors.New("invalid bepusdt trade type")
 		}

@@ -19,9 +19,22 @@ For commercial licensing, please contact support@quantumnous.com
 import i18next from 'i18next'
 import { CreditCard, Landmark } from 'lucide-react'
 import type { ReactNode } from 'react'
-import { SiAlipay, SiWechat, SiStripe, SiTether } from 'react-icons/si'
+import {
+  SiAlipay,
+  SiBnbchain,
+  SiOkx,
+  SiPolygon,
+  SiStripe,
+  SiTether,
+  SiWechat,
+} from 'react-icons/si'
 
-import { PAYMENT_TYPES, PAYMENT_ICON_COLORS } from '../constants'
+import {
+  BEPUSDT_CHAIN_METHODS,
+  PAYMENT_TYPES,
+  PAYMENT_ICON_COLORS,
+} from '../constants'
+import { TronIcon } from '../components/tron-icon'
 
 // ============================================================================
 // UI Helper Functions
@@ -84,6 +97,26 @@ export function getPaymentIcon(
 
   if (!paymentType) {
     return <CreditCard className={className} />
+  }
+
+  const chain = BEPUSDT_CHAIN_METHODS.find((item) => item.type === paymentType)
+  if (chain) {
+    const iconProps = {
+      className,
+      style: chain.color === 'currentColor' ? undefined : { color: chain.color },
+    }
+    switch (chain.type) {
+      case 'usdt.trc20':
+        return <TronIcon {...iconProps} />
+      case 'usdt.bep20':
+        return <SiBnbchain {...iconProps} />
+      case 'usdt.polygon':
+        return <SiPolygon {...iconProps} />
+      case 'usdt.xlayer':
+        return <SiOkx {...iconProps} />
+      default:
+        return <CreditCard className={className} />
+    }
   }
 
   if (paymentType === PAYMENT_TYPES.USDT) {

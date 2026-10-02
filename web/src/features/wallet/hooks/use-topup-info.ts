@@ -20,7 +20,8 @@ import { useState, useEffect } from 'react'
 
 
 import { getTopupInfo } from '../api'
-import { PAYMENT_TYPES } from '../constants'
+import { isBEpusdtChainType } from '../constants'
+import { isBEpusdtPayment } from '../lib/payment'
 import {
   generatePresetAmounts,
   mergePresetAmounts,
@@ -101,8 +102,8 @@ function mergePaymentMethods(methods: PaymentMethod[]): PaymentMethod[] {
   return result
 }
 
-function hasBEpusdtPaymentMethod(methods: PaymentMethod[]): boolean {
-  return methods.some((method) => method.type === PAYMENT_TYPES.USDT)
+function withoutBEpusdtMethods(methods: PaymentMethod[]): PaymentMethod[] {
+  return methods.filter((method) => !isBEpusdtPayment(method.type))
 }
 
 function parseWaffoPayMethods(data: unknown): WaffoPayMethod[] {
@@ -223,19 +224,14 @@ export function useTopupInfo() {
         response.data.enable_bepusdt_topup &&
         response.data.payment_compliance_confirmed !== false
 
-      if (canUseBEpusdt && !hasBEpusdtPaymentMethod(payMethods)) {
-        const bepusdtMethod = bepusdtPayMethods.find(
-          (method) => method.type === PAYMENT_TYPES.USDT
-        )
-        payMethods.push(
-          bepusdtMethod || {
-            name: 'USDT',
-            type: PAYMENT_TYPES.USDT,
-            color: '#14B8A6',
-            min_topup: response.data.bepusdt_min_topup || 1,
-            provider: 'bepusdt',
+      if (canUseBEpusdt) {
+        const retained = withoutBEpusdtMethods(payMethods)
+        payMethods.splice(0, payMethods.length, ...retained)
+        for (const method of bepusdtPayMethods) {
+          if (isBEpusdtChainType(method.type)) {
+            payMethods.push(method)
           }
-        )
+        }
       }
 
       const processedData: TopupInfo = {

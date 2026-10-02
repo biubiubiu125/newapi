@@ -19,6 +19,7 @@ For commercial licensing, please contact support@quantumnous.com
 import type { StatusBadgeProps } from '@/components/status-badge'
 import { formatTimestampToDate } from '@/lib/format'
 
+import { BEPUSDT_CHAIN_METHODS } from '../constants'
 import type { TopupStatus } from '../types'
 
 // ============================================================================
@@ -77,6 +78,10 @@ export function getPaymentMethodName(
   method: string,
   t?: (key: string) => string
 ): string {
+  const chain = BEPUSDT_CHAIN_METHODS.find((item) => item.type === method)
+  if (chain) {
+    return chain.name
+  }
   const name = PAYMENT_METHOD_NAMES[method] || method
   if (method === 'usdt') {
     return 'USDT'

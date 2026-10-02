@@ -724,7 +724,12 @@ func updateOptionMap(key string, value string) (err error) {
 		}
 		setting.BEpusdtCurrency = currency
 	case "BEpusdtTradeType":
-		setting.BEpusdtTradeType = strings.ToLower(strings.TrimSpace(value))
+		normalized, ok := setting.NormalizeBEpusdtTradeTypes(value)
+		if ok {
+			setting.BEpusdtTradeType = normalized
+		} else {
+			setting.BEpusdtTradeType = strings.TrimSpace(value)
+		}
 	case "BEpusdtDisplayName":
 		setting.BEpusdtDisplayName = value
 	case "BEpusdtAssetDisplayNames":

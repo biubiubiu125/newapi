@@ -21,6 +21,7 @@ import {
   DEFAULT_PRESET_MULTIPLIERS,
   DEFAULT_PAYMENT_TYPE,
   DEFAULT_MIN_TOPUP,
+  isBEpusdtChainType,
 } from '../constants'
 import type { PaymentMethod, PresetAmount, TopupInfo } from '../types'
 import { isSafeHttpCheckoutUrl } from './payment-url'
@@ -114,7 +115,9 @@ export function isWaffoPancakePayment(paymentType: string): boolean {
 }
 
 export function isBEpusdtPayment(paymentType: string): boolean {
-  return paymentType === PAYMENT_TYPES.USDT
+  return (
+    paymentType === PAYMENT_TYPES.USDT || isBEpusdtChainType(paymentType)
+  )
 }
 
 export interface PaymentProcessors {

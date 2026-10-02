@@ -22,16 +22,9 @@ import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
+import { Checkbox } from '@/components/ui/checkbox'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import {
-  Select,
-  SelectContent,
-  SelectGroup,
-  SelectItem,
-  SelectTrigger,
-  SelectValue,
-} from '@/components/ui/select'
 
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
@@ -50,17 +43,23 @@ export interface BEpusdtSettingsValues {
 }
 
 const BEPUSDT_TRADE_TYPES = [
-  { value: 'usdt.trc20', label: 'USDT TRC20' },
-  { value: 'usdt.erc20', label: 'USDT ERC20' },
-  { value: 'usdt.polygon', label: 'USDT Polygon' },
-  { value: 'usdt.bep20', label: 'USDT BEP20' },
-  { value: 'usdt.aptos', label: 'USDT Aptos' },
-  { value: 'usdt.solana', label: 'USDT Solana' },
-  { value: 'usdt.xlayer', label: 'USDT X Layer' },
-  { value: 'usdt.arbitrum', label: 'USDT Arbitrum' },
-  { value: 'usdt.plasma', label: 'USDT Plasma' },
-  { value: 'usdt.ton', label: 'USDT TON' },
-]
+  { value: 'usdt.trc20', label: 'USDT-TRC20' },
+  { value: 'usdt.bep20', label: 'USDT-BEP20' },
+  { value: 'usdt.polygon', label: 'USDT-Polygon' },
+  { value: 'usdt.xlayer', label: 'USDT-X Layer' },
+] as const
+
+function selectedBEpusdtTradeTypes(value: string | undefined): string[] {
+  const selected = new Set(
+    (value || '')
+      .split(',')
+      .map((item) => item.trim().toLowerCase())
+      .filter(Boolean)
+  )
+  return BEPUSDT_TRADE_TYPES.map((item) => item.value).filter((item) =>
+    selected.has(item)
+  )
+}
 
 interface Props {
   defaultValues: BEpusdtSettingsValues
@@ -80,6 +79,11 @@ export function BEpusdtSettingsSection(props: Props) {
 
   const handleSave = async () => {
     const values = form.getValues()
+    const tradeTypes = selectedBEpusdtTradeTypes(values.BEpusdtTradeType)
+    if (tradeTypes.length === 0) {
+      toast.error(t('Select at least one chain'))
+      return
+    }
 
     setLoading(true)
     try {
@@ -91,11 +95,7 @@ export function BEpusdtSettingsSection(props: Props) {
         { key: 'BEpusdtCurrency', value: 'CNY' },
         {
           key: 'BEpusdtTradeType',
-          value: BEPUSDT_TRADE_TYPES.some(
-            (item) => item.value === values.BEpusdtTradeType
-          )
-            ? values.BEpusdtTradeType
-            : 'usdt.trc20',
+          value: tradeTypes.join(','),
         },
         {
           key: 'BEpusdtMinTopUp',
@@ -140,32 +140,51 @@ export function BEpusdtSettingsSection(props: Props) {
             />
           </div>
           <div className='space-y-2'>
-            <Label>{t('Trade type')}</Label>
+            <Label>{t('Enabled chains')}</Label>
             <Controller
               control={form.control}
               name='BEpusdtTradeType'
-              render={({ field }) => (
-                <Select
-                  value={field.value || 'usdt.trc20'}
-                  onValueChange={field.onChange}
-                >
-                  <SelectTrigger>
-                    <SelectValue />
-                  </SelectTrigger>
-                  <SelectContent alignItemWithTrigger={false}>
-                    <SelectGroup>
-                      {BEPUSDT_TRADE_TYPES.map((item) => (
-                        <SelectItem key={item.value} value={item.value}>
+              render={({ field }) => {
+                const selected = selectedBEpusdtTradeTypes(field.value)
+                return (
+                  <div className='grid gap-2 sm:grid-cols-2'>
+                    {BEPUSDT_TRADE_TYPES.map((item) => {
+                      const checked = selected.includes(item.value)
+                      return (
+                        <label
+                          key={item.value}
+                          className='flex items-center gap-2 text-sm'
+                        >
+                          <Checkbox
+                            checked={checked}
+                            onCheckedChange={(next) => {
+                              const current = new Set(selected)
+                              if (next === true) {
+                                current.add(item.value)
+                              } else {
+                                current.delete(item.value)
+                              }
+                              field.onChange(
+                                BEPUSDT_TRADE_TYPES.map(
+                                  (entry) => entry.value
+                                )
+                                  .filter((value) => current.has(value))
+                                  .join(',')
+                              )
+                            }}
+                          />
                           {item.label}
-                        </SelectItem>
-                      ))}
-                    </SelectGroup>
-                  </SelectContent>
-                </Select>
-              )}
+                        </label>
+                      )
+                    })}
+                  </div>
+                )
+              }}
             />
             <p className='text-muted-foreground text-xs'>
-              {t('The payment page is locked to this chain.')}
+              {t(
+                'Checked chains appear separately in the wallet and subscription checkout. The user pays with the chain they select.'
+              )}
             </p>
           </div>
           <div className='space-y-2'>

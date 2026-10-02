@@ -21,6 +21,7 @@ import { describe, test, expect } from 'vitest'
 import { PAYMENT_TYPES } from '../constants'
 import {
   dispatchSelectedPayment,
+  isBEpusdtPayment,
   isStripePayment,
   isWaffoPayment,
   isWaffoPancakePayment,
@@ -33,6 +34,12 @@ describe('payment type classification', () => {
     expect(isWaffoPancakePayment(PAYMENT_TYPES.WAFFO_PANCAKE)).toBe(true)
     expect(isWaffoPancakePayment(PAYMENT_TYPES.WAFFO)).toBe(false)
     expect(isStripePayment(PAYMENT_TYPES.STRIPE)).toBe(true)
+    expect(isBEpusdtPayment(PAYMENT_TYPES.USDT)).toBe(true)
+    expect(isBEpusdtPayment('usdt.trc20')).toBe(true)
+    expect(isBEpusdtPayment('usdt.bep20')).toBe(true)
+    expect(isBEpusdtPayment('usdt.polygon')).toBe(true)
+    expect(isBEpusdtPayment('usdt.xlayer')).toBe(true)
+    expect(isBEpusdtPayment('usdt.erc20')).toBe(false)
   })
 })
 

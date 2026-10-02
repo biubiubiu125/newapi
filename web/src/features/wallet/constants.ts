@@ -39,6 +39,17 @@ export const PAYMENT_TYPES = {
   USDT: 'usdt',
 } as const
 
+export const BEPUSDT_CHAIN_METHODS = [
+  { type: 'usdt.trc20', name: 'USDT-TRC20', color: '#FF060A' },
+  { type: 'usdt.bep20', name: 'USDT-BEP20', color: '#F3BA2F' },
+  { type: 'usdt.polygon', name: 'USDT-Polygon', color: '#8247E5' },
+  { type: 'usdt.xlayer', name: 'USDT-X Layer', color: 'currentColor' },
+] as const
+
+export function isBEpusdtChainType(paymentType: string | undefined): boolean {
+  return BEPUSDT_CHAIN_METHODS.some((item) => item.type === paymentType)
+}
+
 /**
  * Default payment type
  */

@@ -66,7 +66,8 @@ import { handleServerError } from '@/lib/handle-server-error'
 import { requireServerSuccess, localizeConsoleErrorText } from '@/lib/server-error-message'
 import { cn } from '@/lib/utils'
 
-import { formatCnyPrice } from '../lib'
+import { isBEpusdtChainType } from '../constants'
+import { formatCnyPrice, isBEpusdtPayment } from '../lib'
 import type {
   PaymentInitiationResult,
   PaymentMethod,
@@ -86,7 +87,7 @@ function getEpayMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
     const type = m?.type?.trim() || ''
     return (
       type !== '' &&
-      type !== 'usdt' &&
+      !isBEpusdtPayment(type) &&
       type !== 'stripe' &&
       type !== 'creem' &&
       type !== 'waffo' &&
@@ -97,7 +98,7 @@ function getEpayMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
 }
 
 function getBEpusdtMethods(payMethods: PaymentMethod[] = []): PaymentMethod[] {
-  return payMethods.filter((m) => m?.type === 'usdt')
+  return payMethods.filter((method) => isBEpusdtChainType(method?.type))
 }
 
 function getBillingPreferenceLabel(
