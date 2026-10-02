@@ -18,6 +18,7 @@ func withBEpusdtSettings(t *testing.T, baseURL string) {
 	previousPID := setting.BEpusdtPID
 	previousSecretKey := setting.BEpusdtSecretKey
 	previousCurrency := setting.BEpusdtCurrency
+	previousTradeType := setting.BEpusdtTradeType
 	previousDisplayName := setting.BEpusdtDisplayName
 	previousAssetDisplayNames := setting.BEpusdtAssetDisplayNames
 	setting.BEpusdtEnabled = true
@@ -26,6 +27,7 @@ func withBEpusdtSettings(t *testing.T, baseURL string) {
 	setting.BEpusdtPID = ""
 	setting.BEpusdtSecretKey = "secret"
 	setting.BEpusdtCurrency = "cny"
+	setting.BEpusdtTradeType = setting.DefaultBEpusdtTradeType
 	setting.BEpusdtDisplayName = "USDT"
 	setting.BEpusdtAssetDisplayNames = `{"usdt":"USDT"}`
 	t.Cleanup(func() {
@@ -35,6 +37,7 @@ func withBEpusdtSettings(t *testing.T, baseURL string) {
 		setting.BEpusdtPID = previousPID
 		setting.BEpusdtSecretKey = previousSecretKey
 		setting.BEpusdtCurrency = previousCurrency
+		setting.BEpusdtTradeType = previousTradeType
 		setting.BEpusdtDisplayName = previousDisplayName
 		setting.BEpusdtAssetDisplayNames = previousAssetDisplayNames
 	})
@@ -94,30 +97,37 @@ func TestBEpusdtConfigurationDoesNotRequireMerchantID(t *testing.T) {
 	require.Equal(t, "bepusdt", ActiveUSDTGatewayProvider())
 }
 
-func TestCreateUSDTGatewayOrderUsesBEpusdtCreateOrder(t *testing.T) {
+func assertDirectBEpusdtOrder(t *testing.T, body map[string]interface{}, tradeType string) {
+	t.Helper()
+	require.Equal(t, "order-bepusdt-1", body["order_id"])
+	require.Equal(t, 12.5, body["amount"])
+	require.Equal(t, "CNY", body["fiat"])
+	require.Equal(t, tradeType, body["trade_type"])
+	require.Equal(t, "https://merchant.example.com/notify", body["notify_url"])
+	require.Equal(t, "https://merchant.example.com/wallet?show_history=true", body["redirect_url"])
+	require.Equal(t, "Topup 10", body["name"])
+	require.NotContains(t, body, "currencies")
+	require.NotContains(t, body, "pid")
+	require.NotContains(t, body, "merchant_id")
+	require.NotContains(t, body, "network")
+	require.NotContains(t, body, "payment_type")
+	require.NotContains(t, body, "reselect")
+	require.True(t, VerifyBEpusdtSignature(body))
+}
+
+func TestCreateUSDTGatewayOrderUsesDirectTradeType(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		require.Equal(t, "/api/v1/order/create-order", r.URL.Path)
+		require.Equal(t, "/api/v1/order/create-transaction", r.URL.Path)
 		require.Equal(t, "application/json", r.Header.Get("Content-Type"))
 		require.Equal(t, "application/json", r.Header.Get("Accept"))
 		require.NotEmpty(t, r.Header.Get("User-Agent"))
 
 		var body map[string]interface{}
 		require.NoError(t, common.DecodeJson(r.Body, &body))
-		require.Equal(t, "order-bepusdt-1", body["order_id"])
-		require.Equal(t, 12.5, body["amount"])
-		require.Equal(t, "CNY", body["fiat"])
-		require.Equal(t, "USDT", body["currencies"])
-		require.Equal(t, "https://merchant.example.com/notify", body["notify_url"])
-		require.Equal(t, "https://merchant.example.com/wallet?show_history=true", body["redirect_url"])
-		require.NotContains(t, body, "pid")
-		require.NotContains(t, body, "merchant_id")
-		require.NotContains(t, body, "network")
-		require.NotContains(t, body, "trade_type")
-		require.NotContains(t, body, "payment_type")
-		require.True(t, VerifyBEpusdtSignature(body))
+		assertDirectBEpusdtOrder(t, body, setting.DefaultBEpusdtTradeType)
 
 		w.Header().Set("Content-Type", "application/json")
-		_, _ = w.Write([]byte(`{"status_code":200,"message":"success","data":{"trade_id":"BEPAY-1","order_id":"order-bepusdt-1","amount":"12.5","status":1,"payment_url":"https://pay.example.com/pay/cashier/BEPAY-1"}}`))
+		_, _ = w.Write([]byte(`{"status_code":200,"message":"success","data":{"trade_id":"BEPAY-1","order_id":"order-bepusdt-1","amount":"12.5","status":1,"payment_url":"https://pay.example.com/pay/checkout-counter/BEPAY-1"}}`))
 	}))
 	defer server.Close()
 	withBEpusdtSettings(t, server.URL)
@@ -133,7 +143,82 @@ func TestCreateUSDTGatewayOrderUsesBEpusdtCreateOrder(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Equal(t, "BEPAY-1", order.TransactionID)
-	require.Equal(t, "https://pay.example.com/pay/cashier/BEPAY-1", order.PaymentURL)
+	require.Equal(t, "https://pay.example.com/pay/checkout-counter/BEPAY-1", order.PaymentURL)
+}
+
+func TestCreateUSDTGatewayOrderNormalizesConfiguredTradeType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		require.Equal(t, "/api/v1/order/create-transaction", r.URL.Path)
+		var body map[string]interface{}
+		require.NoError(t, common.DecodeJson(r.Body, &body))
+		assertDirectBEpusdtOrder(t, body, "usdt.bep20")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status_code":200,"message":"success","data":{"trade_id":"BEPAY-1","order_id":"order-bepusdt-1","amount":"12.5","status":1,"payment_url":"https://pay.example.com/pay/checkout-counter/BEPAY-1"}}`))
+	}))
+	defer server.Close()
+	withBEpusdtSettings(t, server.URL)
+	setting.BEpusdtTradeType = "USDT.BEP20"
+
+	_, err := CreateUSDTGatewayOrder(USDTGatewayOrderRequest{
+		OrderID:     "order-bepusdt-1",
+		Amount:      12.5,
+		Currency:    "CNY",
+		NotifyURL:   "https://merchant.example.com/notify",
+		RedirectURL: "https://merchant.example.com/wallet?show_history=true",
+		Name:        "Topup 10",
+		PaymentType: "usdt",
+	})
+	require.NoError(t, err)
+}
+
+func TestCreateUSDTGatewayOrderDefaultsEmptyTradeType(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]interface{}
+		require.NoError(t, common.DecodeJson(r.Body, &body))
+		assertDirectBEpusdtOrder(t, body, setting.DefaultBEpusdtTradeType)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"status_code":200,"message":"success","data":{"trade_id":"BEPAY-1","order_id":"order-bepusdt-1","amount":"12.5","status":1,"payment_url":"https://pay.example.com/pay/checkout-counter/BEPAY-1"}}`))
+	}))
+	defer server.Close()
+	withBEpusdtSettings(t, server.URL)
+	setting.BEpusdtTradeType = "   "
+
+	_, err := CreateUSDTGatewayOrder(USDTGatewayOrderRequest{
+		OrderID:     "order-bepusdt-1",
+		Amount:      12.5,
+		Currency:    "CNY",
+		NotifyURL:   "https://merchant.example.com/notify",
+		RedirectURL: "https://merchant.example.com/wallet?show_history=true",
+		Name:        "Topup 10",
+		PaymentType: "usdt",
+	})
+	require.NoError(t, err)
+}
+
+func TestCreateUSDTGatewayOrderRejectsUnsupportedTradeType(t *testing.T) {
+	for _, tradeType := range []string{"usdt", "USDT", "usdc.trc20"} {
+		t.Run(tradeType, func(t *testing.T) {
+			called := false
+			server := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+				called = true
+			}))
+			defer server.Close()
+			withBEpusdtSettings(t, server.URL)
+			setting.BEpusdtTradeType = tradeType
+
+			_, err := CreateUSDTGatewayOrder(USDTGatewayOrderRequest{
+				OrderID:     "order-bepusdt-1",
+				Amount:      12.5,
+				Currency:    "CNY",
+				NotifyURL:   "https://merchant.example.com/notify",
+				RedirectURL: "https://merchant.example.com/wallet?show_history=true",
+				Name:        "Topup 10",
+				PaymentType: "usdt",
+			})
+			require.Error(t, err)
+			require.False(t, called)
+		})
+	}
 }
 
 func TestBEpusdtSignAndNotifyHelpers(t *testing.T) {

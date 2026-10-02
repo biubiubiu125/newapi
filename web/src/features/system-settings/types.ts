@@ -363,6 +363,7 @@ export type BillingSettings = {
   BEpusdtPID: string
   BEpusdtSecretKey: string
   BEpusdtCurrency: string
+  BEpusdtTradeType: string
   BEpusdtDisplayName: string
   BEpusdtAssetDisplayNames: string
   BEpusdtMinTopUp: number

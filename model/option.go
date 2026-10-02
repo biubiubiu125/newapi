@@ -124,6 +124,7 @@ func InitOptionMap() {
 	common.OptionMap["BEpusdtPID"] = setting.BEpusdtPID
 	common.OptionMap["BEpusdtSecretKey"] = setting.BEpusdtSecretKey
 	common.OptionMap["BEpusdtCurrency"] = setting.BEpusdtCurrency
+	common.OptionMap["BEpusdtTradeType"] = setting.BEpusdtTradeType
 	common.OptionMap["BEpusdtDisplayName"] = setting.BEpusdtDisplayName
 	common.OptionMap["BEpusdtAssetDisplayNames"] = setting.BEpusdtAssetDisplayNames
 	common.OptionMap["BEpusdtMinTopUp"] = strconv.Itoa(setting.BEpusdtMinTopUp)
@@ -303,6 +304,9 @@ func validateOptionValue(key string, value string) error {
 	}
 	if key == setting.TaskPluginDisabledFactoryKeysKey {
 		return nil
+	}
+	if key == "BEpusdtTradeType" {
+		return setting.ValidateBEpusdtTradeType(value)
 	}
 	return nil
 }
@@ -719,6 +723,8 @@ func updateOptionMap(key string, value string) (err error) {
 			currency = "CNY"
 		}
 		setting.BEpusdtCurrency = currency
+	case "BEpusdtTradeType":
+		setting.BEpusdtTradeType = strings.ToLower(strings.TrimSpace(value))
 	case "BEpusdtDisplayName":
 		setting.BEpusdtDisplayName = value
 	case "BEpusdtAssetDisplayNames":

@@ -91,6 +91,7 @@ const defaultBillingSettings: BillingSettings = {
   BEpusdtPID: '',
   BEpusdtSecretKey: '',
   BEpusdtCurrency: 'CNY',
+  BEpusdtTradeType: 'usdt.trc20',
   BEpusdtDisplayName: 'USDT',
   BEpusdtAssetDisplayNames: '{"usdt":"USDT"}',
   BEpusdtMinTopUp: 1,

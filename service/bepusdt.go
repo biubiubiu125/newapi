@@ -191,11 +191,14 @@ func CreateBEpusdtOrder(req BEpusdtCreateOrderRequest) (*BEpusdtCreateOrderRespo
 	if req.OrderID == "" || req.Amount <= 0 || req.NotifyURL == "" || req.RedirectURL == "" {
 		return nil, errors.New("invalid bepusdt order")
 	}
-	bodyMap := buildBEpusdtOrderBody(req)
-	return createBEpusdtOrderAtPath("/api/v1/order/create-order", bodyMap, req.OrderID)
+	bodyMap, err := buildBEpusdtOrderBody(req)
+	if err != nil {
+		return nil, err
+	}
+	return createBEpusdtOrderAtPath("/api/v1/order/create-transaction", bodyMap, req.OrderID)
 }
 
-func buildBEpusdtOrderBody(req BEpusdtCreateOrderRequest) map[string]interface{} {
+func buildBEpusdtOrderBody(req BEpusdtCreateOrderRequest) (map[string]interface{}, error) {
 	currency := strings.ToUpper(strings.TrimSpace(req.Currency))
 	if currency == "" {
 		currency = strings.ToUpper(strings.TrimSpace(setting.BEpusdtCurrency))
@@ -203,20 +206,24 @@ func buildBEpusdtOrderBody(req BEpusdtCreateOrderRequest) map[string]interface{}
 	if currency == "" {
 		currency = "CNY"
 	}
+	tradeType, ok := setting.NormalizeBEpusdtTradeType(setting.BEpusdtTradeType)
+	if !ok {
+		return nil, errors.New("invalid bepusdt trade type")
+	}
 	bodyMap := map[string]interface{}{
 		"order_id":     req.OrderID,
 		"amount":       req.Amount,
 		"fiat":         currency,
-		"currencies":   strings.ToUpper(strings.TrimSpace(req.Token)),
+		"trade_type":   tradeType,
 		"notify_url":   req.NotifyURL,
 		"redirect_url": req.RedirectURL,
 		"name":         req.Name,
 	}
-	if stringify(bodyMap["currencies"]) == "" {
-		bodyMap["currencies"] = "USDT"
+	if stringify(bodyMap["name"]) == "" {
+		delete(bodyMap, "name")
 	}
 	bodyMap["signature"] = BEpusdtSign(bodyMap, setting.BEpusdtSecretKey)
-	return bodyMap
+	return bodyMap, nil
 }
 
 func createBEpusdtOrderAtPath(path string, bodyMap map[string]interface{}, fallbackOrderID string) (*BEpusdtCreateOrderResponse, error) {

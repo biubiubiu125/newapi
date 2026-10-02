@@ -17,13 +17,21 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 For commercial licensing, please contact support@quantumnous.com
 */
 import { useEffect, useState } from 'react'
-import { useForm } from 'react-hook-form'
+import { Controller, useForm } from 'react-hook-form'
 import { useTranslation } from 'react-i18next'
 import { toast } from 'sonner'
 
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import {
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from '@/components/ui/select'
 
 import { SettingsSection } from '../components/settings-section'
 import { useUpdateOption } from '../hooks/use-update-option'
@@ -35,10 +43,24 @@ export interface BEpusdtSettingsValues {
   BEpusdtPID: string
   BEpusdtSecretKey: string
   BEpusdtCurrency: string
+  BEpusdtTradeType: string
   BEpusdtDisplayName: string
   BEpusdtAssetDisplayNames: string
   BEpusdtMinTopUp: number
 }
+
+const BEPUSDT_TRADE_TYPES = [
+  { value: 'usdt.trc20', label: 'USDT TRC20' },
+  { value: 'usdt.erc20', label: 'USDT ERC20' },
+  { value: 'usdt.polygon', label: 'USDT Polygon' },
+  { value: 'usdt.bep20', label: 'USDT BEP20' },
+  { value: 'usdt.aptos', label: 'USDT Aptos' },
+  { value: 'usdt.solana', label: 'USDT Solana' },
+  { value: 'usdt.xlayer', label: 'USDT X Layer' },
+  { value: 'usdt.arbitrum', label: 'USDT Arbitrum' },
+  { value: 'usdt.plasma', label: 'USDT Plasma' },
+  { value: 'usdt.ton', label: 'USDT TON' },
+]
 
 interface Props {
   defaultValues: BEpusdtSettingsValues
@@ -67,6 +89,14 @@ export function BEpusdtSettingsSection(props: Props) {
         { key: 'BEpusdtBaseURL', value: values.BEpusdtBaseURL.trim() },
         { key: 'BEpusdtPID', value: '' },
         { key: 'BEpusdtCurrency', value: 'CNY' },
+        {
+          key: 'BEpusdtTradeType',
+          value: BEPUSDT_TRADE_TYPES.some(
+            (item) => item.value === values.BEpusdtTradeType
+          )
+            ? values.BEpusdtTradeType
+            : 'usdt.trc20',
+        },
         {
           key: 'BEpusdtMinTopUp',
           value: String(values.BEpusdtMinTopUp || 1),
@@ -108,6 +138,35 @@ export function BEpusdtSettingsSection(props: Props) {
               {...form.register('BEpusdtBaseURL')}
               placeholder='https://pay.example.com'
             />
+          </div>
+          <div className='space-y-2'>
+            <Label>{t('Trade type')}</Label>
+            <Controller
+              control={form.control}
+              name='BEpusdtTradeType'
+              render={({ field }) => (
+                <Select
+                  value={field.value || 'usdt.trc20'}
+                  onValueChange={field.onChange}
+                >
+                  <SelectTrigger>
+                    <SelectValue />
+                  </SelectTrigger>
+                  <SelectContent alignItemWithTrigger={false}>
+                    <SelectGroup>
+                      {BEPUSDT_TRADE_TYPES.map((item) => (
+                        <SelectItem key={item.value} value={item.value}>
+                          {item.label}
+                        </SelectItem>
+                      ))}
+                    </SelectGroup>
+                  </SelectContent>
+                </Select>
+              )}
+            />
+            <p className='text-muted-foreground text-xs'>
+              {t('The payment page is locked to this chain.')}
+            </p>
           </div>
           <div className='space-y-2'>
             <Label>{t('Callback address')}</Label>

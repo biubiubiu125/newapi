@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/setting"
 )
 
 func normalizeJSONMapFloat(value string) (string, error) {
@@ -188,6 +189,12 @@ func normalizeOptionValueForStorage(key string, value string) (string, error) {
 		"WaffoPancakeStoreID",
 		"WaffoPancakeProductID":
 		return strings.TrimSpace(value), nil
+	case "BEpusdtTradeType":
+		normalized, ok := setting.NormalizeBEpusdtTradeType(value)
+		if !ok {
+			return "", errors.New("invalid bepusdt trade type")
+		}
+		return normalized, nil
 	case "SystemName":
 		return common.NormalizeSystemName(value), nil
 	default:

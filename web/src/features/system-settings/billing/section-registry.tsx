@@ -158,6 +158,7 @@ const BILLING_SECTIONS = [
           BEpusdtPID: settings.BEpusdtPID ?? '',
           BEpusdtSecretKey: settings.BEpusdtSecretKey ?? '',
           BEpusdtCurrency: settings.BEpusdtCurrency ?? 'CNY',
+          BEpusdtTradeType: settings.BEpusdtTradeType || 'usdt.trc20',
           BEpusdtDisplayName: settings.BEpusdtDisplayName ?? 'USDT',
           BEpusdtAssetDisplayNames:
             settings.BEpusdtAssetDisplayNames ?? '{"usdt":"USDT"}',
