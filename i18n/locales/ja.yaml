@@ -39,6 +39,10 @@ auth.login_required: "先にログインしてください"
 auth.flow_invalid: "認証フローが無効です"
 auth.flow_expired: "認証フローの有効期限が切れています"
 auth.flow_consumed: "認証フローは既に使用されています"
+auth.access_token_expired: "未認証です。アクセストークンの有効期限が切れています"
+auth.legacy_access_token_retired: "従来のアクセストークンは廃止されました。セキュリティ設定で新しいアクセストークンを作成してください"
+auth.access_token_scope_denied: "アクセストークンに必要な権限がありません: {{.Scope}}"
+auth.access_token_limit: "作成できるアクセストークンは最大 {{.Count}} 件です"
 
 # Token messages
 token.name_too_long: "トークン名が長すぎます"

@@ -7,6 +7,7 @@ import (
 	"regexp"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -240,6 +241,34 @@ type PinnedEndpoint struct {
 	Candidates  []ProtocolBinding
 }
 
+func FileReference(field string, index int) string {
+	if index <= 0 {
+		return "request_file:" + field
+	}
+	return "request_file:" + field + "#" + strconv.Itoa(index)
+}
+
+// ParseFileReference resolves a ref produced by FileReference back to the
+// multipart field and the zero-based file index within that field.
+func ParseFileReference(ref string) (field string, index int, ok bool) {
+	rest, found := strings.CutPrefix(ref, "request_file:")
+	if !found || rest == "" {
+		return "", 0, false
+	}
+	field, suffix, hasIndex := strings.Cut(rest, "#")
+	if field == "" {
+		return "", 0, false
+	}
+	if !hasIndex {
+		return field, 0, true
+	}
+	parsed, err := strconv.Atoi(suffix)
+	if err != nil || parsed < 0 || strconv.Itoa(parsed) != suffix {
+		return "", 0, false
+	}
+	return field, parsed, true
+}
+
 // RouteRequestContext is the canonical request view exposed to declarative
 // routing hooks. RequestBody contains decoded JSON or multipart text fields;
 // raw binary and multipart file bytes remain host-owned.
@@ -253,6 +282,10 @@ type RouteRequestContext struct {
 	RequestBody any                 `json:"-"`
 }
 
+// JSValue gives each hook its own snapshot of params, query, and body
+// containers. The engine does not write JavaScript changes back into Go, and
+// the copy keeps the original request stable if a hook mutates its argument.
+// Missing params and query still reach hooks as empty objects rather than null.
 func (r RouteRequestContext) JSValue() map[string]any {
 	params := make(map[string]string, len(r.Params))
 	for key, value := range r.Params {
@@ -267,36 +300,39 @@ func (r RouteRequestContext) JSValue() map[string]any {
 		"method": r.Method,
 		"params": params,
 		"query":  query,
-		"body":   clonePluginRequestValue(r.Body),
+		"body":   cloneRouteBody(r.Body),
 	}
 }
 
-func clonePluginRequestValue(value any) any {
+// cloneRouteBody copies the containers a decoder can mutate. Scalars and
+// unrecognized values stay shared because hooks cannot replace them in Go.
+func cloneRouteBody(value any) any {
 	switch typed := value.(type) {
 	case map[string]any:
 		cloned := make(map[string]any, len(typed))
 		for key, item := range typed {
-			cloned[key] = clonePluginRequestValue(item)
+			cloned[key] = cloneRouteBody(item)
+		}
+		return cloned
+	case map[string][]string:
+		cloned := make(map[string][]string, len(typed))
+		for key, item := range typed {
+			cloned[key] = append([]string(nil), item...)
+		}
+		return cloned
+	case []string:
+		return append([]string(nil), typed...)
+	case []map[string]any:
+		cloned := make([]map[string]any, len(typed))
+		for index, item := range typed {
+			copied, _ := cloneRouteBody(item).(map[string]any)
+			cloned[index] = copied
 		}
 		return cloned
 	case []any:
 		cloned := make([]any, len(typed))
 		for index, item := range typed {
-			cloned[index] = clonePluginRequestValue(item)
-		}
-		return cloned
-	case []string:
-		return append([]string(nil), typed...)
-	case map[string][]string:
-		cloned := make(map[string][]string, len(typed))
-		for key, values := range typed {
-			cloned[key] = append([]string(nil), values...)
-		}
-		return cloned
-	case []map[string]any:
-		cloned := make([]map[string]any, len(typed))
-		for index, item := range typed {
-			cloned[index] = clonePluginRequestValue(item).(map[string]any)
+			cloned[index] = cloneRouteBody(item)
 		}
 		return cloned
 	default:

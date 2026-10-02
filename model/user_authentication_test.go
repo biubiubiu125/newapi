@@ -27,12 +27,13 @@ func TestSoftDeleteDisablesRelayTokensAndReportsDeletedUser(t *testing.T) {
 		UserId: user.Id, Key: "softdeleterelaykey", Status: common.TokenStatusEnabled, Name: "relay", UnlimitedQuota: true,
 	}).Error)
 
-	require.NoError(t, user.Delete())
+	_, err := user.Delete()
+	require.NoError(t, err)
 
 	var token Token
 	require.NoError(t, DB.Where("user_id = ?", user.Id).First(&token).Error)
 	assert.Equal(t, common.TokenStatusDisabled, token.Status)
-	_, err := GetUserCache(user.Id)
+	_, err = GetUserCache(user.Id)
 	assert.ErrorIs(t, err, ErrUserDeleted)
 	loaded, err := ValidateUserToken("softdeleterelaykey")
 	assert.ErrorIs(t, err, ErrTokenInvalid)
@@ -50,6 +51,7 @@ func TestHardDeleteUserFailsClosedWhenAuthFenceCannotPublish(t *testing.T) {
 		return ClaimExternalIdentityWithTx(tx, ExternalIdentityProviderTelegram, user.TelegramId, user.Id)
 	}))
 	require.NoError(t, DB.Create(&Token{UserId: user.Id, Key: "hard-delete-token"}).Error)
+	require.NoError(t, DB.Create(&UserAccessToken{UserId: user.Id, TokenHash: AccessTokenFingerprint("nap_hard-delete-token")}).Error)
 	require.NoError(t, DB.Create(&TwoFA{UserId: user.Id, Secret: "secret", IsEnabled: true}).Error)
 	require.NoError(t, DB.Create(&TwoFABackupCode{UserId: user.Id, CodeHash: "hash"}).Error)
 	require.NoError(t, DB.Create(&PasskeyCredential{UserID: user.Id, CredentialID: "credential", PublicKey: "public-key"}).Error)
@@ -77,7 +79,8 @@ func TestHardDeleteUserFailsClosedWhenAuthFenceCannotPublish(t *testing.T) {
 		common.RedisEnabled, common.RDB = oldRedisEnabled, oldRDB
 	})
 
-	require.Error(t, HardDeleteUserById(user.Id))
+	_, err := HardDeleteUserById(user.Id)
+	require.Error(t, err)
 
 	var count int64
 	require.NoError(t, DB.Unscoped().Model(&User{}).Where("id = ?", user.Id).Count(&count).Error)
@@ -91,6 +94,7 @@ func TestHardDeleteUserFailsClosedWhenAuthFenceCannotPublish(t *testing.T) {
 		&UserSession{},
 		&AuthFlow{},
 		&ExternalIdentityClaim{},
+		&UserAccessToken{},
 	} {
 		require.NoError(t, DB.Unscoped().Model(record).Where("user_id = ?", user.Id).Count(&count).Error)
 		assert.EqualValues(t, 1, count)
@@ -110,6 +114,7 @@ func TestHardDeleteUserPublishesTombstoneAndPurgesAuthenticationData(t *testing.
 		return ClaimExternalIdentityWithTx(tx, ExternalIdentityProviderTelegram, user.TelegramId, user.Id)
 	}))
 	require.NoError(t, DB.Create(&Token{UserId: user.Id, Key: "hard-delete-success-token"}).Error)
+	require.NoError(t, DB.Create(&UserAccessToken{UserId: user.Id, TokenHash: AccessTokenFingerprint("nap_hard-delete-success-token")}).Error)
 	require.NoError(t, DB.Create(&TwoFA{UserId: user.Id, Secret: "secret", IsEnabled: true}).Error)
 	require.NoError(t, DB.Create(&TwoFABackupCode{UserId: user.Id, CodeHash: "hash"}).Error)
 	require.NoError(t, DB.Create(&PasskeyCredential{UserID: user.Id, CredentialID: "credential-success", PublicKey: "public-key"}).Error)
@@ -128,7 +133,9 @@ func TestHardDeleteUserPublishesTombstoneAndPurgesAuthenticationData(t *testing.
 	// user; the shared version increment must therefore query unscoped.
 	require.NoError(t, DB.Delete(&user).Error)
 
-	require.NoError(t, HardDeleteUserById(user.Id))
+	revokedAccessTokens, err := HardDeleteUserById(user.Id)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, revokedAccessTokens)
 
 	var count int64
 	require.NoError(t, DB.Unscoped().Model(&User{}).Where("id = ?", user.Id).Count(&count).Error)
@@ -142,6 +149,7 @@ func TestHardDeleteUserPublishesTombstoneAndPurgesAuthenticationData(t *testing.
 		&UserSession{},
 		&AuthFlow{},
 		&ExternalIdentityClaim{},
+		&UserAccessToken{},
 	} {
 		require.NoError(t, DB.Unscoped().Model(record).Where("user_id = ?", user.Id).Count(&count).Error)
 		assert.Zero(t, count)

@@ -171,12 +171,12 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Mess
 			return nil, fmt.Errorf("invalid input array: %w", err)
 		}
 		// Chat Completions requires the tool messages answering one assistant tool_calls
-		// batch to stay contiguous, so media hoisted out of function_call_output items is
+		// batch to stay contiguous, so media hoisted out of tool output items is
 		// held back and emitted as a single user message once the batch ends.
 		var pendingMedia []any
 		for _, item := range items {
 			itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))
-			if len(pendingMedia) > 0 && itemType != responsesInputTypeFunctionCallOutput {
+			if len(pendingMedia) > 0 && itemType != responsesInputTypeFunctionCallOutput && itemType != responsesInputTypeCustomToolOutput {
 				messages = append(messages, dto.Message{Role: "user", Content: pendingMedia})
 				pendingMedia = nil
 			}
@@ -197,7 +197,7 @@ func responsesRequestMessagesToChat(req *dto.OpenAIResponsesRequest) ([]dto.Mess
 }
 
 // responsesInputItemToChatMessages appends the Chat messages for one Responses input item.
-// The second result carries media content parts hoisted out of a function_call_output item,
+// The second result carries media content parts hoisted out of a tool output item,
 // already in Chat shape; the caller decides where that user message lands.
 func responsesInputItemToChatMessages(item map[string]any, messages []dto.Message) ([]dto.Message, []any, error) {
 	itemType := strings.TrimSpace(kitutil.Interface2String(item["type"]))

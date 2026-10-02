@@ -3,13 +3,11 @@ package jsplugin
 import (
 	"context"
 	"fmt"
-	"math"
 	"mime"
 	"net/http"
 	"slices"
 	"strings"
 	"time"
-	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -119,15 +117,17 @@ func (a *TaskAdaptor) readSubmitEvents(parent context.Context, resp *http.Respon
 				return nil, fmt.Errorf("invalid submit stream changes: %w", err)
 			}
 		}
-		// Keep the exact encoded-byte limit above. Plain JSON state can be
-		// isolated without parsing large strings again; codec-specific values
-		// (for example exported typed arrays) retain the old normalization.
-		var plainJSON bool
-		state, plainJSON = cloneJSONValue(nextState, 0)
-		if !plainJSON {
-			if err = common.Unmarshal(encoded, &state); err != nil {
+		// Keep the exact encoded-byte limit above. Plain JSON state goes back
+		// to the next event as is; codec-specific values (for example exported
+		// typed arrays) retain the old normalization.
+		if isPlainJSONValue(nextState, 0) {
+			state = nextState
+		} else {
+			var decoded any
+			if err = common.Unmarshal(encoded, &decoded); err != nil {
 				return nil, err
 			}
+			state = decoded
 		}
 		if done {
 			if accumulated != nil {
@@ -145,53 +145,4 @@ func (a *TaskAdaptor) readSubmitEvents(parent context.Context, resp *http.Respon
 		return nil, fmt.Errorf("read task submit stream: %w", err)
 	}
 	return nil, fmt.Errorf("task submit stream ended before the plugin reported completion")
-}
-
-func cloneJSONValue(value any, depth int) (any, bool) {
-	if depth > 64 {
-		return nil, false
-	}
-	switch typed := value.(type) {
-	case nil, bool:
-		return typed, true
-	case string:
-		return typed, utf8.ValidString(typed)
-	case float64:
-		return typed, !math.IsNaN(typed) && !math.IsInf(typed, 0)
-	case int64:
-		return float64(typed), true
-	case int:
-		return float64(typed), true
-	case map[string]any:
-		if typed == nil {
-			return nil, true
-		}
-		cloned := make(map[string]any, len(typed))
-		for key, item := range typed {
-			if !utf8.ValidString(key) {
-				return nil, false
-			}
-			child, ok := cloneJSONValue(item, depth+1)
-			if !ok {
-				return nil, false
-			}
-			cloned[key] = child
-		}
-		return cloned, true
-	case []any:
-		if typed == nil {
-			return nil, true
-		}
-		cloned := make([]any, len(typed))
-		for index, item := range typed {
-			child, ok := cloneJSONValue(item, depth+1)
-			if !ok {
-				return nil, false
-			}
-			cloned[index] = child
-		}
-		return cloned, true
-	default:
-		return nil, false
-	}
 }

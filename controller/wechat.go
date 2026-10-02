@@ -172,7 +172,7 @@ func WeChatBind(c *gin.Context) {
 		common.ApiError(c, common.Localized(i18n.MsgOAuthWeChatBindUnsupported))
 		return
 	}
-	identity, ok := middleware.GetSessionAuthIdentity(c)
+	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
 		writeSecurityOperationError(c, service.ErrAuthTokenInvalid)
 		return

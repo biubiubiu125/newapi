@@ -39,6 +39,10 @@ auth.login_required: "Veuillez d'abord vous connecter"
 auth.flow_invalid: "Le flux d'authentification est invalide"
 auth.flow_expired: "Le flux d'authentification a expire"
 auth.flow_consumed: "Le flux d'authentification a deja ete utilise"
+auth.access_token_expired: "Non autorisé, le jeton d'accès a expiré"
+auth.legacy_access_token_retired: "Les anciens jetons d'accès ont été retirés. Créez un nouveau jeton d'accès dans les paramètres de sécurité"
+auth.access_token_scope_denied: "Le jeton d'accès n'a pas l'autorisation requise : {{.Scope}}"
+auth.access_token_limit: "Vous pouvez créer au plus {{.Count}} jetons d'accès"
 
 # Token messages
 token.name_too_long: "Le nom du jeton est trop long"

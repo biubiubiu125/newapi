@@ -69,7 +69,7 @@ function renderPermissions(viewerRole: number, allowed?: boolean) {
   useAuthStore
     .getState()
     .auth.setUser({ id: 1, username: 'operator', role: viewerRole })
-  vi.spyOn(api, 'get').mockImplementation(async (url) => {
+  const get = vi.spyOn(api, 'get').mockImplementation(async (url) => {
     if (url === '/api/authz/catalog') {
       return {
         data: {
@@ -96,6 +96,19 @@ function renderPermissions(viewerRole: number, allowed?: boolean) {
     if (url === '/api/group/') {
       return { data: { success: true, data: ['default'] } }
     }
+    if (url === '/api/verify/methods') {
+      return {
+        data: {
+          success: true,
+          data: {
+            scope: 'admin.user.update',
+            methods: [{ method: '2fa', available: true }],
+            oauth_providers: [],
+            password_encryption_enabled: false,
+          },
+        },
+      }
+    }
     return {
       data: {
         success: true,
@@ -110,7 +123,7 @@ function renderPermissions(viewerRole: number, allowed?: boolean) {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   })
-  return render(
+  render(
     <QueryClientProvider client={client}>
       <UsersProvider>
         <UsersMutateDrawer
@@ -121,6 +134,7 @@ function renderPermissions(viewerRole: number, allowed?: boolean) {
       </UsersProvider>
     </QueryClientProvider>
   )
+  return get
 }
 
 afterEach(() => {
@@ -130,21 +144,19 @@ afterEach(() => {
 })
 
 it.each([undefined, true])(
-  'root can save an audit grant or revocation from the existing editor (previous=%s)',
+  'root can save an audit grant or revocation after step-up verification (previous=%s)',
   async (allowed) => {
     const put = vi
       .spyOn(api, 'put')
       .mockResolvedValue({ data: { success: true } })
     renderPermissions(100, allowed)
     await screen.findByDisplayValue('Managed admin')
-    const checkbox = await screen.findByRole('checkbox', {
-      name: new RegExp(label),
-    })
+    const toggle = await screen.findByRole('button', { name: label })
     await waitFor(() =>
-      expect(checkbox).toHaveAttribute('aria-checked', String(!!allowed))
+      expect(toggle).toHaveAttribute('aria-pressed', String(!!allowed))
     )
-    expect(screen.getByText(description)).toBeVisible()
-    await userEvent.click(checkbox)
+    expect(toggle).toHaveAccessibleDescription(description)
+    await userEvent.click(toggle)
     await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
     await waitFor(() =>
       expect(put).toHaveBeenCalledWith(
@@ -162,10 +174,28 @@ it.each([undefined, true])(
   }
 )
 
+it('root saving an administrator without changing permissions or password does not verify', async () => {
+  const put = vi
+    .spyOn(api, 'put')
+    .mockResolvedValue({ data: { success: true } })
+  const get = renderPermissions(100, true)
+  const displayName = await screen.findByDisplayValue('Managed admin')
+  await userEvent.clear(displayName)
+  await userEvent.type(displayName, 'Renamed admin')
+  await userEvent.click(screen.getByRole('button', { name: 'Save changes' }))
+  await waitFor(() =>
+    expect(put).toHaveBeenCalledWith(
+      '/api/user/',
+      expect.objectContaining({ id: 2, display_name: 'Renamed admin' }),
+      undefined
+    )
+  )
+  expect(put.mock.calls[0][1]).not.toHaveProperty('admin_permissions')
+  expect(get).not.toHaveBeenCalledWith('/api/verify/methods', expect.anything())
+})
+
 it('admin cannot edit the audit permission even when the catalog is available', async () => {
   renderPermissions(10)
   await screen.findByDisplayValue('Managed admin')
-  expect(
-    screen.queryByRole('checkbox', { name: new RegExp(label) })
-  ).not.toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: label })).not.toBeInTheDocument()
 })

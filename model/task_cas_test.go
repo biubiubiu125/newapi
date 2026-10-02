@@ -1,6 +1,7 @@
 package model
 
 import (
+	"context"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -90,6 +91,7 @@ func TestMain(m *testing.M) {
 		&SystemInstance{},
 		&SystemTask{},
 		&SystemTaskLock{},
+		&UserAccessToken{},
 	); err != nil {
 		panic("failed to migrate: " + err.Error())
 	}
@@ -120,6 +122,7 @@ func truncateTables(t *testing.T) {
 		DB.Exec("DELETE FROM tokens")
 		DB.Exec("DELETE FROM token_usage_resets")
 		DB.Exec("DELETE FROM token_usage_dailies")
+		DB.Exec("DELETE FROM user_access_tokens")
 		DB.Exec("DELETE FROM logs")
 		DB.Exec("DELETE FROM channels")
 		DB.Exec("DELETE FROM quota_data")
@@ -1858,4 +1861,68 @@ func TestForceTaskRefundableAfterSubmitAccountingFailurePersistsUsageFlags(t *te
 	require.Equal(t, 150, reloaded.Quota)
 	require.True(t, reloaded.PrivateData.PreConsumedUsageCaptured)
 	require.False(t, reloaded.PrivateData.PreConsumedUsageRecorded)
+}
+
+func TestGetTaskForProtocolObservationScopesOwnerAndPlatform(t *testing.T) {
+	truncateTables(t)
+	task := &Task{
+		TaskID:   "task_protocol_scope",
+		UserId:   7,
+		Platform: "plugin-a",
+		Status:   TaskStatusInProgress,
+	}
+	insertTask(t, task)
+
+	got, exists, err := GetTaskForProtocolObservation(context.Background(), 7, "plugin-a", task.TaskID)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, task.ID, got.ID)
+
+	for _, query := range []struct {
+		userID   int
+		platform string
+	}{
+		{userID: 8, platform: "plugin-a"},
+		{userID: 7, platform: "plugin-b"},
+	} {
+		got, exists, err = GetTaskForProtocolObservation(context.Background(), query.userID, constant.TaskPlatform(query.platform), task.TaskID)
+		require.NoError(t, err)
+		assert.False(t, exists)
+		assert.Nil(t, got)
+	}
+
+	cancelled, cancel := context.WithCancel(context.Background())
+	cancel()
+	_, _, err = GetTaskForProtocolObservation(cancelled, 7, "plugin-a", task.TaskID)
+	require.ErrorIs(t, err, context.Canceled)
+}
+
+// ---------------------------------------------------------------------------
+// Snapshot / Equal — pure logic tests (no DB)
+// ---------------------------------------------------------------------------
+func TestUpdateWithStatus_PersistsPluginStateAndPollFailures(t *testing.T) {
+	truncateTables(t)
+
+	task := &Task{
+		TaskID: "task_cas_plugin_state",
+		Status: TaskStatusInProgress,
+		Data:   json.RawMessage(`{}`),
+		PrivateData: TaskPrivateData{
+			PluginState:  json.RawMessage(`{"req_key":"old"}`),
+			PollFailures: 1,
+		},
+	}
+	insertTask(t, task)
+
+	task.PrivateData.PluginState = json.RawMessage(`{"req_key":"new"}`)
+	task.PrivateData.PollFailures = 4
+	won, err := task.UpdateWithStatus(TaskStatusInProgress)
+	require.NoError(t, err)
+	require.True(t, won)
+
+	var reloaded Task
+	require.NoError(t, DB.First(&reloaded, task.ID).Error)
+	assert.EqualValues(t, TaskStatusInProgress, reloaded.Status)
+	assert.JSONEq(t, `{"req_key":"new"}`, string(reloaded.PrivateData.PluginState))
+	assert.Equal(t, 4, reloaded.PrivateData.PollFailures)
 }

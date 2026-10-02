@@ -19,6 +19,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/QuantumNous/new-api/common"
 	"github.com/QuantumNous/new-api/constant"
@@ -236,15 +237,11 @@ func (a *TaskAdaptor) ExtractUsageFactsValidated(c *gin.Context, info *relaycomm
 	if !ok {
 		return nil, fmt.Errorf("plugin usage hook must return an object")
 	}
-	if info == nil {
-		_, err = a.validatedUsageRatios(facts)
-	} else {
-		_, err = a.validatedUsageRatios(facts, info.UpstreamModelName, info.OriginModelName)
-	}
+	validated, _, err := a.validatedUsageRatios(facts, info.UpstreamModelName, info.OriginModelName)
 	if err != nil {
 		return nil, err
 	}
-	return facts, nil
+	return validated, nil
 }
 
 func (a *TaskAdaptor) AdjustBillingOnSubmit(info *relaycommon.RelayInfo, taskData []byte) map[string]float64 {
@@ -621,6 +618,11 @@ func (a *TaskAdaptor) ParseResponse(c *gin.Context, resp *http.Response, info *r
 			return nil, service.TaskErrorWrapper(err, "plugin_submit_response_invalid", http.StatusBadGateway)
 		}
 	}
+	pluginState, _ := encodeReturnedPluginState(value)
+	if len(pluginState) > maxTaskPluginPersistedJSONBytes {
+		logger.LogWarn(c, fmt.Sprintf("task plugin %s rejected oversized submit state (%d bytes)", a.plugin.Meta.Key, len(pluginState)))
+		pluginState = nil
+	}
 	var immediate *relaycommon.TaskInfo
 	if parsed.Immediate != nil {
 		if !isKnownTaskStatus(parsed.Immediate.Status) {
@@ -677,7 +679,7 @@ func (a *TaskAdaptor) ParseResponse(c *gin.Context, resp *http.Response, info *r
 			}
 		}
 		if len(immediate.UsageFacts) == 0 && immediate.Status == string(model.TaskStatusSuccess) {
-			a.fillImmediateCompletionUsage(c, info, immediate, parsed.TaskData)
+			a.fillImmediateCompletionUsage(c, info, immediate, parsed.TaskID, pluginState, parsed.TaskData)
 		}
 	}
 	logger.LogDebug(
@@ -689,11 +691,6 @@ func (a *TaskAdaptor) ParseResponse(c *gin.Context, resp *http.Response, info *r
 		immediate != nil,
 		time.Since(started).Milliseconds(),
 	)
-	pluginState, _ := encodeReturnedPluginState(value)
-	if len(pluginState) > maxTaskPluginPersistedJSONBytes {
-		logger.LogWarn(c, fmt.Sprintf("task plugin %s rejected oversized submit state (%d bytes)", a.plugin.Meta.Key, len(pluginState)))
-		pluginState = nil
-	}
 	return &channel.TaskSubmitResponse{
 		UpstreamTaskID: parsed.TaskID,
 		TaskData:       taskData,
@@ -750,8 +747,8 @@ func (a *TaskAdaptor) FetchTaskContext(ctx context.Context, baseURL, key string,
 
 func (a *TaskAdaptor) doFetchDescriptor(ctx context.Context, baseURL, proxy string, value any) (*http.Response, error) {
 	ctx = pluginContextOrBackground(ctx)
-	var descriptor requestDescriptor
-	if err := convert(value, &descriptor); err != nil {
+	descriptor, err := decodeRequestDescriptor(value)
+	if err != nil {
 		return nil, err
 	}
 	if err := pluginruntime.ValidateRequestURL(descriptor.URL, baseURL, a.plugin.Meta.AllowedHosts); err != nil {
@@ -1050,7 +1047,7 @@ func isKnownTaskStatus(status string) bool {
 	}
 }
 
-func (a *TaskAdaptor) fillImmediateCompletionUsage(c *gin.Context, info *relaycommon.RelayInfo, immediate *relaycommon.TaskInfo, taskData any) {
+func (a *TaskAdaptor) fillImmediateCompletionUsage(c *gin.Context, info *relaycommon.RelayInfo, immediate *relaycommon.TaskInfo, upstreamTaskID string, pluginState []byte, taskData any) {
 	if c == nil || c.Request == nil || info == nil || immediate == nil || !a.hasHook(c.Request.Context(), "extractUsageOnComplete") {
 		return
 	}
@@ -1062,7 +1059,23 @@ func (a *TaskAdaptor) fillImmediateCompletionUsage(c *gin.Context, info *relayco
 			UpstreamModelName: info.UpstreamModelName,
 		},
 	}
-	task.PrivateData.UpstreamTaskID = immediate.TaskID
+	if strings.TrimSpace(upstreamTaskID) == "" {
+		upstreamTaskID = immediate.TaskID
+	}
+	task.PrivateData.UpstreamTaskID = upstreamTaskID
+	if len(immediate.PluginState) > 0 {
+		task.PrivateData.PluginState = immediate.PluginState
+	} else {
+		task.PrivateData.PluginState = pluginState
+	}
+	if taskData != nil {
+		encoded, err := common.Marshal(taskData)
+		if err != nil {
+			logger.LogWarn(c, fmt.Sprintf("task plugin %s completion task data failed; retaining reserved quota: %v", a.plugin.Meta.Key, err))
+			return
+		}
+		task.Data = encoded
+	}
 	queryCtx, err := a.queryContext(task, info.ApiKey, info.ChannelBaseUrl, info.ChannelSetting.Proxy)
 	if err != nil {
 		logger.LogWarn(c, fmt.Sprintf("task plugin %s completion context failed; retaining reserved quota: %v", a.plugin.Meta.Key, err))
@@ -1118,7 +1131,11 @@ func (a *TaskAdaptor) ConvertToOpenAIVideoContext(ctx context.Context, task *mod
 	if err != nil {
 		return nil, err
 	}
-	value, err := a.plugin.Engine.CallPath(ctx, "protocols", []string{"openai_video", "render"}, map[string]any{"protocol": "openai_video", "operation": "retrieve"}, jsonValue(view))
+	encodedView, err := common.Marshal(view)
+	if err != nil {
+		return nil, err
+	}
+	value, err := a.plugin.Engine.CallPath(ctx, "protocols", []string{"openai_video", "render"}, map[string]any{"protocol": "openai_video", "operation": "retrieve"}, pluginruntime.RawJSON(encodedView))
 	if err != nil {
 		return nil, err
 	}
@@ -1130,6 +1147,11 @@ func (a *TaskAdaptor) ConvertToOpenAIVideoContext(ctx context.Context, task *mod
 	if err = common.Unmarshal(encoded, &rendered); err != nil || rendered == nil {
 		return nil, fmt.Errorf("plugin returned an invalid OpenAI video object")
 	}
+	normalizeOpenAIVideoSeconds(rendered)
+	encoded, err = common.Marshal(rendered)
+	if err != nil {
+		return nil, fmt.Errorf("plugin returned an invalid OpenAI video object")
+	}
 	var video kitdto.OpenAIVideo
 	if err = common.Unmarshal(encoded, &video); err != nil {
 		return nil, fmt.Errorf("plugin returned an invalid OpenAI video object")
@@ -1139,6 +1161,7 @@ func (a *TaskAdaptor) ConvertToOpenAIVideoContext(ctx context.Context, task *mod
 	video.Object = host.Object
 	video.Model = host.Model
 	video.CreatedAt = host.CreatedAt
+	video.CompletedAt = host.CompletedAt
 	video.Progress = host.Progress
 	video.TaskID = ""
 	taskcommon.ApplyPublicOpenAIVideoProjection(task, &video)
@@ -1146,6 +1169,28 @@ func (a *TaskAdaptor) ConvertToOpenAIVideoContext(ctx context.Context, task *mod
 		video.Metadata = mergePluginOpenAIVideoMetadata(video.Metadata, rendered)
 	}
 	return common.Marshal(video)
+}
+
+// normalizeOpenAIVideoSeconds turns a numeric seconds field into the string
+// the public OpenAI video object requires. Provider payloads often store it
+// as a number; unknown shapes are left for the struct decode to reject.
+func normalizeOpenAIVideoSeconds(rendered map[string]any) {
+	value, exists := rendered["seconds"]
+	if !exists || value == nil {
+		return
+	}
+	if _, ok := value.(string); ok {
+		return
+	}
+	number, ok := usageNumber(value, true)
+	if !ok || math.IsNaN(number) || math.IsInf(number, 0) {
+		return
+	}
+	if number == math.Trunc(number) && number >= math.MinInt64 && number <= math.MaxInt64 {
+		rendered["seconds"] = strconv.FormatInt(int64(number), 10)
+		return
+	}
+	rendered["seconds"] = strconv.FormatFloat(number, 'f', -1, 64)
 }
 
 func mergePluginOpenAIVideoMetadata(owned map[string]any, rendered map[string]any) map[string]any {
@@ -1240,8 +1285,8 @@ func (a *TaskAdaptor) BuildContentRequestContext(ctx context.Context, task *mode
 	if err != nil {
 		return nil, err
 	}
-	var descriptor requestDescriptor
-	if err = convert(value, &descriptor); err != nil {
+	descriptor, err := decodeRequestDescriptor(value)
+	if err != nil {
 		return nil, err
 	}
 	method := strings.ToUpper(strings.TrimSpace(descriptor.Method))
@@ -1569,8 +1614,8 @@ func (a *TaskAdaptor) buildSubmit(c *gin.Context, info *relaycommon.RelayInfo) (
 		)
 		return nil, err
 	}
-	var descriptor requestDescriptor
-	if err = convert(value, &descriptor); err != nil {
+	descriptor, err := decodeRequestDescriptor(value)
+	if err != nil {
 		logger.LogDebug(
 			c,
 			"task_plugin subsystem=adaptor event=build_submit_failed plugin=%q stage=build_submit_request reason=invalid_descriptor elapsed_ms=%d",
@@ -1658,7 +1703,7 @@ func (a *TaskAdaptor) submitContext(c *gin.Context, info *relaycommon.RelayInfo)
 			}
 		}
 		if taskRequest, exists := c.Get("task_request"); exists {
-			routeRequest.RequestBody = jsonValue(taskRequest)
+			routeRequest.RequestBody = taskRequest
 		}
 		if c.Request != nil {
 			if routeRequest.Path == "" {
@@ -1699,7 +1744,11 @@ func (a *TaskAdaptor) submitContext(c *gin.Context, info *relaycommon.RelayInfo)
 		a.files = append(a.files[:0], files...)
 	}
 	ctx := routeRequest.JSValue()
-	ctx["requestBody"] = jsonValue(routeRequest.RequestBody)
+	requestBody := routeRequest.RequestBody
+	if !isPlainJSONValue(requestBody, 0) {
+		requestBody = jsonValue(requestBody)
+	}
+	ctx["requestBody"] = requestBody
 	ctx["requestHeaders"] = requestHeaders
 	ctx["files"] = files
 	ctx["action"] = info.Action
@@ -1752,7 +1801,7 @@ func (a *TaskAdaptor) usageRatios(ctx context.Context, models []string, hook str
 		logger.LogDebug(ctx, "task_plugin subsystem=adaptor event=usage_hook_failed plugin=%q hook=%q reason=result_not_object elapsed_ms=%d", a.plugin.Meta.Key, hook, time.Since(started).Milliseconds())
 		return nil, fmt.Errorf("plugin usage hook must return an object")
 	}
-	ratios, err := a.validatedUsageRatios(facts, models...)
+	_, ratios, err := a.validatedUsageRatios(facts, models...)
 	if err != nil {
 		logger.LogDebug(ctx, "task_plugin subsystem=adaptor event=usage_hook_failed plugin=%q hook=%q reason=invalid_usage elapsed_ms=%d", a.plugin.Meta.Key, hook, time.Since(started).Milliseconds())
 		return nil, err
@@ -1801,17 +1850,22 @@ func (a *TaskAdaptor) validateResolvedUsageValue(value any, usageSchema map[stri
 	return nil
 }
 
-func (a *TaskAdaptor) validatedUsageRatios(facts map[string]any, models ...string) (map[string]float64, error) {
+// validatedUsageRatios returns the normalized facts in a new map because the
+// hook result may be a host value, such as the request body, that must stay
+// unchanged.
+func (a *TaskAdaptor) validatedUsageRatios(facts map[string]any, models ...string) (map[string]any, map[string]float64, error) {
 	usageSchema, _ := a.plugin.Meta.UsageForModels(models...)
+	validated := make(map[string]any, len(facts))
 	ratios := make(map[string]float64)
 	for key, value := range facts {
+		validated[key] = value
 		if schema, declared := usageSchema[key]; declared {
 			number, err := validateUsageValue(value, schema, false)
 			if err != nil {
-				return nil, err
+				return nil, nil, err
 			}
 			if schema.Type == "number" {
-				facts[key] = number
+				validated[key] = number
 				if number > 0 {
 					ratios[key] = number
 				}
@@ -1830,16 +1884,16 @@ func (a *TaskAdaptor) validatedUsageRatios(facts map[string]any, models ...strin
 			limit = relaycommon.MaxTaskDurationSeconds
 		}
 		if err := validateUsageNumberLimit(number, limit); err != nil {
-			return nil, err
+			return nil, nil, err
 		}
-		// Keep numeric facts usable by expressions when the selected profile
-		// does not declare that field. The expression engine expects float64.
-		facts[key] = number
+		// Keep numeric facts usable by existing expressions even when the
+		// selected profile no longer declares that legacy extension field.
+		validated[key] = number
 		if number > 0 {
 			ratios[key] = number
 		}
 	}
-	return ratios, nil
+	return validated, ratios, nil
 }
 
 func (a *TaskAdaptor) validatedCompletionUsageFacts(facts any, models ...string) (map[string]any, error) {
@@ -1882,6 +1936,10 @@ func (a *TaskAdaptor) validatedCompletionUsageFacts(facts any, models ...string)
 				return nil, fmt.Errorf("plugin usage value must be a finite non-negative number")
 			}
 			validated[key] = float64(common.QuotaFromFloat(number))
+		default:
+			if number, numeric := usageNumber(value, false); numeric {
+				validated[key] = number
+			}
 		}
 	}
 	return validated, nil
@@ -1982,10 +2040,43 @@ func (a *TaskAdaptor) logRejectedUsage(hook string, _ error) {
 	common.SysError(fmt.Sprintf("task plugin %s rejected invalid %s billing facts", a.plugin.Meta.Key, hook))
 }
 
-func (a *TaskAdaptor) hasHook(ctx context.Context, hook string) bool {
-	has, err := a.plugin.Engine.HasExport(ctx, hook)
-	return err == nil && has
+func (a *TaskAdaptor) hasHook(_ context.Context, hook string) bool {
+	return a.plugin.Engine.HasExport(hook)
 }
+
+// decodeRequestDescriptor reads the result of a request-building hook. Fields
+// other than body keep the codec's semantics: case-insensitive names, and type
+// errors reject the descriptor. A plain JSON body is copied instead of encoded
+// and decoded again; anything else takes the codec path unchanged.
+func decodeRequestDescriptor(value any) (requestDescriptor, error) {
+	var descriptor requestDescriptor
+	fields, ok := value.(map[string]any)
+	if !ok {
+		return descriptor, convert(value, &descriptor)
+	}
+	body, plain := fields["body"]
+	for key := range fields {
+		// The codec picks among case variants by its own rule; keep it.
+		if key != "body" && strings.EqualFold(key, "body") {
+			plain = false
+			break
+		}
+	}
+	if plain {
+		body, plain = cloneJSONValue(body, 1)
+	}
+	if !plain {
+		return descriptor, convert(value, &descriptor)
+	}
+	rest := maps.Clone(fields)
+	delete(rest, "body")
+	if err := convert(rest, &descriptor); err != nil {
+		return descriptor, err
+	}
+	descriptor.Body = body
+	return descriptor, nil
+}
+
 func convert(value any, target any) error {
 	data, err := common.Marshal(value)
 	if err != nil {
@@ -2004,6 +2095,95 @@ func jsonValue(value any) any {
 		return value
 	}
 	return normalized
+}
+
+// isPlainJSONValue reports whether hooks can take value as is: it reaches
+// JavaScript exactly as the codec's decoding of it would, and the engine never
+// writes back into it. Integers count, since hooks see the same numbers; a nil
+// slice does not, since it would reach hooks as [] instead of null.
+func isPlainJSONValue(value any, depth int) bool {
+	if depth > 64 {
+		return false
+	}
+	switch typed := value.(type) {
+	case nil, bool, int64, int:
+		return true
+	case string:
+		return utf8.ValidString(typed)
+	case float64:
+		return !math.IsNaN(typed) && !math.IsInf(typed, 0)
+	case map[string]any:
+		for key, item := range typed {
+			if !utf8.ValidString(key) || !isPlainJSONValue(item, depth+1) {
+				return false
+			}
+		}
+		return true
+	case []any:
+		if typed == nil {
+			return false
+		}
+		for _, item := range typed {
+			if !isPlainJSONValue(item, depth+1) {
+				return false
+			}
+		}
+		return true
+	default:
+		return false
+	}
+}
+
+// Already-parsed JSON and the engine's plain exported values do not need another
+// encode/decode pass. Copy containers for host-side edits, preserving the codec's
+// float64 numbers and nulls. Other Go types still use the configured codec.
+func cloneJSONValue(value any, depth int) (any, bool) {
+	if depth > 64 {
+		return nil, false
+	}
+	switch typed := value.(type) {
+	case nil, bool:
+		return typed, true
+	case string:
+		return typed, utf8.ValidString(typed)
+	case float64:
+		return typed, !math.IsNaN(typed) && !math.IsInf(typed, 0)
+	case int64:
+		return float64(typed), true
+	case int:
+		return float64(typed), true
+	case map[string]any:
+		if typed == nil {
+			return nil, true
+		}
+		cloned := make(map[string]any, len(typed))
+		for key, item := range typed {
+			if !utf8.ValidString(key) {
+				return nil, false
+			}
+			child, ok := cloneJSONValue(item, depth+1)
+			if !ok {
+				return nil, false
+			}
+			cloned[key] = child
+		}
+		return cloned, true
+	case []any:
+		if typed == nil {
+			return nil, true
+		}
+		cloned := make([]any, len(typed))
+		for index, item := range typed {
+			child, ok := cloneJSONValue(item, depth+1)
+			if !ok {
+				return nil, false
+			}
+			cloned[index] = child
+		}
+		return cloned, true
+	default:
+		return nil, false
+	}
 }
 func positiveInt(value any) int {
 	switch number := value.(type) {

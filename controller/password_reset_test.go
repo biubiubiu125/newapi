@@ -111,7 +111,8 @@ func TestResetPasswordRejectsSoftDeletedEmail(t *testing.T) {
 		Status:      common.UserStatusEnabled,
 	}
 	require.NoError(t, user.Insert(0))
-	require.NoError(t, user.Delete())
+	_, err := user.Delete()
+	require.NoError(t, err)
 
 	common.DeleteKey("deleted-reset@example.com", common.PasswordResetPurpose)
 	common.RegisterVerificationCodeWithKey("deleted-reset@example.com", "reset-token", common.PasswordResetPurpose)

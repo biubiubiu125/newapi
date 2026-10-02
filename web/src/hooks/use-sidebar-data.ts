@@ -91,7 +91,6 @@ export function useSidebarData(): SidebarData {
   const { status } = useStatus()
   const hasSidebarStatus = Boolean(status)
   const isAdmin = Boolean(userRole && userRole >= ROLE.ADMIN)
-  const isRoot = Boolean(userRole && userRole >= ROLE.SUPER_ADMIN)
   const statusRecord = status as Record<string, unknown> | null
   const userTicketsEnabled = isSidebarModuleEnabledFromStatus(
     statusRecord,
@@ -576,26 +575,25 @@ export function useSidebarData(): SidebarData {
             badgeMode: 'cursor',
             requiredRole: ROLE.SUPER_ADMIN,
           },
-          ...(isRoot
-            ? [
-                {
-                  title: t('System Info'),
-                  url: '/system-info',
-                  icon: ServerCog,
-                },
-                {
-                  title: t('Task Plugins'),
-                  url: '/task-plugins',
-                  icon: PlugZap,
-                },
-                {
-                  title: t('System Settings'),
-                  url: '/system-settings/site',
-                  activeUrls: ['/system-settings'],
-                  icon: Settings,
-                },
-              ]
-            : []),
+          {
+            title: t('System Info'),
+            url: '/system-info',
+            icon: ServerCog,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
+          {
+            title: t('Task Plugins'),
+            url: '/task-plugins',
+            icon: PlugZap,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
+          {
+            title: t('System Settings'),
+            url: '/system-settings/site',
+            activeUrls: ['/system-settings'],
+            icon: Settings,
+            requiredRole: ROLE.SUPER_ADMIN,
+          },
         ],
       },
     ],

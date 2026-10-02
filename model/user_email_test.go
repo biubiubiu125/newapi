@@ -22,7 +22,7 @@ func setupUserEmailTestDB(t *testing.T) *gorm.DB {
 	LOG_DB = db
 	common.UsingSQLite = true
 	common.QuotaForNewUser = 0
-	require.NoError(t, db.AutoMigrate(&User{}, &UserLoginIdentifier{}, &UserSession{}, &Token{}))
+	require.NoError(t, db.AutoMigrate(&User{}, &UserAccessToken{}, &UserLoginIdentifier{}, &UserSession{}, &Token{}))
 	t.Cleanup(func() {
 		DB = previousDB
 		LOG_DB = previousLogDB
@@ -308,7 +308,8 @@ func TestSoftDeletedUserKeepsLoginIdentifiersReserved(t *testing.T) {
 		Status:      common.UserStatusEnabled,
 	}
 	require.NoError(t, deleted.Insert(0))
-	require.NoError(t, deleted.Delete())
+	_, err := deleted.Delete()
+	require.NoError(t, err)
 
 	exists, err := IsLoginIdentifierTakenByOther("", "owner@example.com", 0)
 	require.NoError(t, err)

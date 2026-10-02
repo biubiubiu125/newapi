@@ -45,6 +45,7 @@ func setupReferralControllerTestDB(t *testing.T) *gorm.DB {
 	model.LOG_DB = db
 	require.NoError(t, db.AutoMigrate(
 		&model.User{},
+		&model.UserAccessToken{},
 		&model.UserLoginIdentifier{},
 		&model.UserSession{},
 		&model.AuthFlow{},
@@ -751,7 +752,8 @@ func TestAdminHardDeleteSoftDeletedUserReleasesLoginIdentifiers(t *testing.T) {
 		Status:      common.UserStatusEnabled,
 	}
 	require.NoError(t, user.Insert(0))
-	require.NoError(t, model.DeleteUserById(user.Id))
+	_, err := model.DeleteUserById(user.Id)
+	require.NoError(t, err)
 
 	exists, err := model.IsLoginIdentifierTakenByOther("", "deleted@example.com", 0)
 	require.NoError(t, err)

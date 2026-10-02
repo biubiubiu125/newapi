@@ -140,12 +140,12 @@ func TestConvertOpenAIResponsesRequestToGeminiKeepsCustomToolCalls(t *testing.T)
 		}),
 	})
 
-	tools := got.GetTools()
-	require.Len(t, tools, 1)
-	declarations, err := common.Marshal(tools[0].FunctionDeclarations)
-	require.NoError(t, err)
-	assert.Equal(t, "apply_patch", gjson.GetBytes(declarations, "0.name").String())
-	assert.Equal(t, "STRING", gjson.GetBytes(declarations, "0.parameters.properties.input.type").String())
+	// The cleaned schema has no additionalProperties, and the unknown tool is dropped.
+	assert.JSONEq(t, `[{"functionDeclarations":[{
+		"name":"apply_patch",
+		"description":"This tool takes freeform text. Put the complete raw text in the \"input\" argument.",
+		"parameters":{"type":"OBJECT","properties":{"input":{"type":"STRING","description":"Raw input for the tool."}},"required":["input"]}
+	}]}]`, string(got.Tools))
 
 	require.Len(t, got.Contents, 3)
 	assert.Equal(t, "model", got.Contents[0].Role)
@@ -157,11 +157,13 @@ func TestConvertOpenAIResponsesRequestToGeminiKeepsCustomToolCalls(t *testing.T)
 
 	assert.Equal(t, "user", got.Contents[1].Role)
 	require.Len(t, got.Contents[1].Parts, 2)
-	require.NotNil(t, got.Contents[1].Parts[0].FunctionResponse)
-	assert.Equal(t, "apply_patch", got.Contents[1].Parts[0].FunctionResponse.Name)
-	assert.Equal(t, map[string]any{"content": "ok"}, got.Contents[1].Parts[0].FunctionResponse.Response)
-	require.NotNil(t, got.Contents[1].Parts[1].FunctionResponse)
-	assert.Equal(t, map[string]any{"content": "legacy custom output"}, got.Contents[1].Parts[1].FunctionResponse.Response)
+	for i, output := range []string{"ok", "legacy custom output"} {
+		response := got.Contents[1].Parts[i].FunctionResponse
+		require.NotNil(t, response)
+		assert.Equal(t, "apply_patch", response.Name)
+		assert.Equal(t, map[string]any{"content": output}, response.Response)
+		assert.JSONEq(t, `"call_custom"`, string(response.ID))
+	}
 
 	assert.Equal(t, "user", got.Contents[2].Role)
 	require.Len(t, got.Contents[2].Parts, 1)

@@ -36,9 +36,10 @@ func SecureVerificationRequired() gin.HandlerFunc {
 }
 
 // RequireSecurityProof validates a proof against the authenticated dashboard
-// session and writes the shared proof error contract on failure.
+// session or scoped access token and writes the shared proof error contract on
+// failure.
 func RequireSecurityProof(c *gin.Context, operation service.VerificationOperation) *model.AuthFlowAuthorization {
-	identity, ok := GetSessionAuthIdentity(c)
+	identity, ok := GetStepUpIdentity(c)
 	if !ok {
 		securityProofError(c, "SECURITY_PROOF_INVALID", i18n.T(c, i18n.MsgSecureInvalid))
 		return nil
@@ -55,6 +56,9 @@ func RequireSecurityProof(c *gin.Context, operation service.VerificationOperatio
 			securityProofError(c, "SECURITY_PROOF_EXPIRED", i18n.T(c, i18n.MsgSecureExpired))
 		case errors.Is(err, service.ErrProofScope):
 			securityProofError(c, "SECURITY_PROOF_SCOPE_MISMATCH", i18n.T(c, i18n.MsgSecureScopeMismatch))
+		case errors.Is(err, service.ErrVerificationContextInvalid):
+			c.Set("security_error_code", "SECURITY_CONTEXT_INVALID")
+			c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"success": false, "code": "SECURITY_CONTEXT_INVALID", "message": service.ErrVerificationContextInvalid.Error()})
 		case errors.Is(err, service.ErrProofMethod):
 			securityProofError(c, "SECURITY_PROOF_METHOD_MISMATCH", i18n.T(c, i18n.MsgSecureMethodMismatch))
 		case errors.Is(err, service.ErrVerificationUnavailable):

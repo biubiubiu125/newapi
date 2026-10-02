@@ -105,83 +105,178 @@ func TestSafePolicyRejectsRequestPhaseHostedToolLoss(t *testing.T) {
 func TestResponsesCustomToolReachesEachTargetAsStringInputFunction(t *testing.T) {
 	t.Parallel()
 
-	req := responsesCustomToolRequest(t)
-	_, set, err := ExtractRequest(types.RelayFormatOpenAIResponses, req)
-	require.NoError(t, err)
+	const execDescription = "Run code.\n\nThis tool takes freeform text. Put the complete raw text in the \"input\" argument.\n\nThe input must match this Lark grammar:\nstart: /.+/"
+	inputSchema := map[string]any{
+		"type": "object",
+		"properties": map[string]any{
+			"input": map[string]any{"type": "string", "description": "Raw input for the tool."},
+		},
+		"required":             []any{"input"},
+		"additionalProperties": false,
+	}
+	expected := map[types.RelayFormat]struct {
+		functions []map[string]any
+		choice    any
+	}{
+		types.RelayFormatOpenAI: {
+			functions: []map[string]any{
+				{"name": "exec", "description": execDescription, "parameters": inputSchema},
+				{"name": "wait", "parameters": map[string]any{"type": "object"}},
+			},
+			choice: map[string]any{"type": "function", "function": map[string]any{"name": "exec"}},
+		},
+		types.RelayFormatClaude: {
+			functions: []map[string]any{
+				{"name": "exec", "description": execDescription, "input_schema": inputSchema},
+				{"name": "wait", "input_schema": map[string]any{"type": "object", "properties": map[string]any{}}},
+			},
+			choice: map[string]any{"type": "tool", "name": "exec"},
+		},
+		// Gemini receives the cleaned OpenAPI schema without additionalProperties.
+		types.RelayFormatGemini: {
+			functions: []map[string]any{
+				{"name": "exec", "description": execDescription, "parameters": map[string]any{
+					"type": "OBJECT",
+					"properties": map[string]any{
+						"input": map[string]any{"type": "STRING", "description": "Raw input for the tool."},
+					},
+					"required": []any{"input"},
+				}},
+				{"name": "wait", "parameters": map[string]any{"type": "OBJECT"}},
+			},
+			choice: map[string]any{"functionCallingConfig": map[string]any{"mode": "ANY", "allowedFunctionNames": []any{"exec"}}},
+		},
+	}
 
-	chat, diagnostics, err := AttachRequest(types.RelayFormatOpenAI, &dto.GeneralOpenAIRequest{Model: "gpt-test"}, set, &convmeta.Options{})
+	_, set, err := ExtractRequest(types.RelayFormatOpenAIResponses, codexResponsesToolsRequest(t, map[string]any{"type": "custom", "name": "exec"}))
 	require.NoError(t, err)
-	assert.True(t, hasDiagnosticCode(diagnostics, "custom_tool_as_function"))
-	chatReq := chat.(*dto.GeneralOpenAIRequest)
-	require.Len(t, chatReq.Tools, 1)
-	assert.Equal(t, "apply_patch", chatReq.Tools[0].Function.Name)
-	assert.Contains(t, chatReq.Tools[0].Function.Description, "Lark grammar")
-	assert.Equal(t, "string", chatReq.Tools[0].Function.Parameters.(map[string]any)["properties"].(map[string]any)["input"].(map[string]any)["type"])
-	assert.Equal(t, map[string]any{"type": "function", "function": map[string]any{"name": "apply_patch"}}, chatReq.ToolChoice)
+	assert.Equal(t, map[string]struct{}{"exec": {}}, ResponsesCustomToolNames(set))
 
-	claude, _, err := AttachRequest(types.RelayFormatClaude, &dto.ClaudeRequest{Model: "claude-test"}, set, &convmeta.Options{})
+	for _, target := range responsesCustomToolTargets {
+		t.Run(string(target.format), func(t *testing.T) {
+			out, diagnostics, err := AttachRequest(target.format, target.request(), set, &convmeta.Options{ToolLossPolicy: types.ConversionLossPolicySafe})
+			require.NoError(t, err)
+			functions, choice := attachedFunctions(t, out)
+			assert.Equal(t, expected[target.format].functions, functions)
+			assert.Equal(t, expected[target.format].choice, choice)
+			assert.True(t, hasDiagnosticCode(diagnostics, "custom_tool_as_function"))
+			assert.False(t, hasDiagnosticCode(diagnostics, "unsupported_hosted_tool"))
+			assert.False(t, hasDiagnosticCode(diagnostics, "unsupported_tool_choice"))
+
+			_, _, err = AttachRequest(target.format, target.request(), set, &convmeta.Options{ToolLossPolicy: types.ConversionLossPolicyStrict})
+			var loss *types.ConversionLossError
+			require.ErrorAs(t, err, &loss)
+			assert.True(t, hasDiagnosticCode(loss.Diagnostics, "custom_tool_as_function"))
+		})
+	}
+}
+func codexResponsesToolsRequest(t *testing.T, toolChoice any, extraTools ...map[string]any) *dto.OpenAIResponsesRequest {
+	t.Helper()
+	tools := []map[string]any{
+		{
+			"type":        "custom",
+			"name":        "exec",
+			"description": "Run code.",
+			"format":      map[string]any{"type": "grammar", "syntax": "lark", "definition": "start: /.+/"},
+		},
+		{"type": "function", "name": "wait", "parameters": map[string]any{"type": "object"}},
+	}
+	tools = append(tools, extraTools...)
+	rawTools, err := kitutil.Marshal(tools)
 	require.NoError(t, err)
-	claudeReq := claude.(*dto.ClaudeRequest)
-	tools := claudeReq.Tools.([]any)
-	require.Len(t, tools, 1)
-	assert.Equal(t, "apply_patch", tools[0].(*dto.Tool).Name)
-
-	gemini, _, err := AttachRequest(types.RelayFormatGemini, &dto.GeminiChatRequest{}, set, &convmeta.Options{})
-	require.NoError(t, err)
-	geminiReq := gemini.(*dto.GeminiChatRequest)
-	declarations := geminiFunctionDeclarations(t, geminiReq.GetTools())
-	require.Len(t, declarations, 1)
-	assert.Equal(t, "apply_patch", declarations[0]["name"])
-	assert.Equal(t, "STRING", declarations[0]["parameters"].(map[string]any)["properties"].(map[string]any)["input"].(map[string]any)["type"])
-	require.NotNil(t, geminiReq.ToolConfig)
-	assert.Equal(t, []string{"apply_patch"}, geminiReq.ToolConfig.FunctionCallingConfig.AllowedFunctionNames)
-
-	_, strictDiagnostics, err := AttachRequest(
-		types.RelayFormatOpenAI,
-		&dto.GeneralOpenAIRequest{Model: "gpt-test"},
-		set,
-		&convmeta.Options{ToolLossPolicy: types.ConversionLossPolicyStrict},
-	)
-	require.Error(t, err)
-	var loss *types.ConversionLossError
-	require.ErrorAs(t, err, &loss)
-	assert.True(t, hasDiagnosticCode(strictDiagnostics, "custom_tool_as_function"))
+	request := &dto.OpenAIResponsesRequest{Model: "gpt-test", Tools: rawTools}
+	if toolChoice != nil {
+		request.ToolChoice, err = kitutil.Marshal(toolChoice)
+		require.NoError(t, err)
+	}
+	return request
 }
 
+// responsesCustomToolTargets are the upstream protocols that receive a
+// Responses custom tool as a function taking one string argument.
+var responsesCustomToolTargets = []struct {
+	format  types.RelayFormat
+	request func() any
+}{
+	{types.RelayFormatOpenAI, func() any { return &dto.GeneralOpenAIRequest{Model: "gpt-test"} }},
+	{types.RelayFormatClaude, func() any { return &dto.ClaudeRequest{Model: "claude-test"} }},
+	{types.RelayFormatGemini, func() any { return &dto.GeminiChatRequest{} }},
+}
+
+// attachedFunctions returns the function declarations and the tool choice
+// that AttachRequest wrote into a Chat, Claude, or Gemini request, decoded
+// from their wire JSON.
+func attachedFunctions(t *testing.T, out any) ([]map[string]any, any) {
+	t.Helper()
+	var (
+		functions []map[string]any
+		choice    any
+		err       error
+	)
+	switch target := out.(type) {
+	case *dto.GeneralOpenAIRequest:
+		for _, tool := range target.Tools {
+			function, err := kitutil.Any2Type[map[string]any](tool.Function)
+			require.NoError(t, err)
+			functions = append(functions, function)
+		}
+		choice, err = kitutil.Any2Type[any](target.ToolChoice)
+	case *dto.ClaudeRequest:
+		functions, err = kitutil.Any2Type[[]map[string]any](target.Tools)
+		require.NoError(t, err)
+		choice, err = kitutil.Any2Type[any](target.ToolChoice)
+	case *dto.GeminiChatRequest:
+		var groups []struct {
+			FunctionDeclarations []map[string]any `json:"functionDeclarations"`
+		}
+		require.NoError(t, kitutil.Unmarshal(target.Tools, &groups))
+		require.Len(t, groups, 1)
+		functions = groups[0].FunctionDeclarations
+		choice, err = kitutil.Any2Type[any](target.ToolConfig)
+	default:
+		require.FailNow(t, "unexpected request type", "%T", out)
+	}
+	require.NoError(t, err)
+	return functions, choice
+}
 func TestResponsesCustomToolNameConflictIsDropped(t *testing.T) {
 	t.Parallel()
 
-	req := &dto.OpenAIResponsesRequest{
-		Model: "gpt-test",
-		Tools: mustPolicyRaw(t, []map[string]any{
-			{"type": "custom", "name": "exec"},
-			{"type": "function", "name": "wait", "parameters": map[string]any{"type": "object"}},
-			{"type": "function", "name": "exec", "parameters": map[string]any{"type": "object"}},
-			{"type": "custom", "name": "apply_patch"},
-			{"type": "custom", "name": "apply_patch"},
-		}),
-		ToolChoice: mustPolicyRaw(t, map[string]any{"type": "custom", "name": "exec"}),
+	// The custom exec loses to the function exec, so a choice naming it has no
+	// sent tool to point at and must stay unconverted.
+	request := codexResponsesToolsRequest(t, map[string]any{"type": "custom", "name": "exec"},
+		map[string]any{"type": "function", "name": "exec", "parameters": map[string]any{"type": "object"}},
+		map[string]any{"type": "custom", "name": "apply_patch"},
+		map[string]any{"type": "custom", "name": "apply_patch", "description": "duplicate"},
+	)
+	_, set, err := ExtractRequest(types.RelayFormatOpenAIResponses, request)
+	require.NoError(t, err)
+	assert.Equal(t, map[string]struct{}{"apply_patch": {}}, ResponsesCustomToolNames(set))
+
+	for _, target := range responsesCustomToolTargets {
+		t.Run(string(target.format), func(t *testing.T) {
+			out, diagnostics, err := AttachRequest(target.format, target.request(), set, &convmeta.Options{})
+			require.NoError(t, err)
+			functions, choice := attachedFunctions(t, out)
+			require.Len(t, functions, 3)
+			names := make([]string, 0, len(functions))
+			for _, function := range functions {
+				names = append(names, function["name"].(string))
+			}
+			assert.Equal(t, []string{"wait", "exec", "apply_patch"}, names)
+			// Only the custom definitions carry a description, so the kept exec
+			// is the function one.
+			assert.NotContains(t, functions[1], "description")
+			assert.NotContains(t, functions[2]["description"], "duplicate")
+			assert.Nil(t, choice)
+			assert.True(t, hasDiagnosticCode(diagnostics, "custom_tool_name_conflict"))
+			assert.True(t, hasDiagnosticCode(diagnostics, "unsupported_tool_choice"))
+
+			_, _, err = AttachRequest(target.format, target.request(), set, &convmeta.Options{ToolLossPolicy: types.ConversionLossPolicySafe})
+			require.Error(t, err)
+		})
 	}
-	_, set, err := ExtractRequest(types.RelayFormatOpenAIResponses, req)
-	require.NoError(t, err)
-
-	out, diagnostics, err := AttachRequest(types.RelayFormatOpenAI, &dto.GeneralOpenAIRequest{Model: "gpt-test"}, set, &convmeta.Options{})
-	require.NoError(t, err)
-	tools := out.(*dto.GeneralOpenAIRequest).Tools
-	require.Len(t, tools, 3)
-	assert.Equal(t, "wait", tools[0].Function.Name)
-	assert.Equal(t, "exec", tools[1].Function.Name)
-	assert.Equal(t, "object", tools[1].Function.Parameters.(map[string]any)["type"])
-	assert.Equal(t, "apply_patch", tools[2].Function.Name)
-	assert.Nil(t, out.(*dto.GeneralOpenAIRequest).ToolChoice)
-	assert.True(t, hasDiagnosticCode(diagnostics, "custom_tool_name_conflict"))
-	names := ResponsesCustomToolNames(set)
-	_, hasExec := names["exec"]
-	_, hasPatch := names["apply_patch"]
-	assert.False(t, hasExec)
-	assert.True(t, hasPatch)
 }
-
 func responsesCustomToolRequest(t *testing.T) *dto.OpenAIResponsesRequest {
 	t.Helper()
 	return &dto.OpenAIResponsesRequest{
@@ -201,14 +296,12 @@ func responsesCustomToolRequest(t *testing.T) *dto.OpenAIResponsesRequest {
 		ToolChoice: mustPolicyRaw(t, map[string]any{"type": "custom", "name": "apply_patch"}),
 	}
 }
-
 func mustPolicyRaw(t *testing.T, value any) []byte {
 	t.Helper()
 	raw, err := kitutil.Marshal(value)
 	require.NoError(t, err)
 	return raw
 }
-
 func geminiFunctionDeclarations(t *testing.T, tools []dto.GeminiChatTool) []map[string]any {
 	t.Helper()
 	require.Len(t, tools, 1)

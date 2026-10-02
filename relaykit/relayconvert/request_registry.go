@@ -270,11 +270,6 @@ func executeRequestSteps(c context.Context, info convmeta.Meta, from types.Relay
 	current = extracted
 	tools = extractedTools
 	for _, spec := range specs {
-		current, err = prepareRequestForStep(current, spec, target)
-		if err != nil {
-			return resultWithError(err)
-		}
-
 		var step RequestStep
 		current, step, err = executeRequestStep(c, info, spec, current)
 		if err != nil {
@@ -388,28 +383,6 @@ func executeRequestStep(c context.Context, info convmeta.Meta, spec RequestConve
 		From:      spec.From,
 		To:        spec.To,
 	}, nil
-}
-
-func prepareRequestForStep(request any, spec RequestConverterSpec, finalTarget types.RelayFormat) (any, error) {
-	if spec.From != types.RelayFormatOpenAIResponses || finalTarget != types.RelayFormatGemini {
-		return request, nil
-	}
-
-	responsesRequest, ok := request.(*dto.OpenAIResponsesRequest)
-	if !ok {
-		if value, ok := request.(dto.OpenAIResponsesRequest); ok {
-			responsesRequest = &value
-		}
-	}
-	if responsesRequest == nil {
-		return nil, fmt.Errorf("expected OpenAI responses request, got %T", request)
-	}
-
-	prepared, err := oairesponses.PrepareOpenAIResponsesRequest(*responsesRequest)
-	if err != nil {
-		return nil, err
-	}
-	return &prepared, nil
 }
 
 func lookupRequestRoute(from types.RelayFormat, to types.RelayFormat) (RequestConverterSpec, bool) {
@@ -558,12 +531,7 @@ func convertOpenAIResponsesRequestToGeminiChat(c context.Context, info convmeta.
 	if err != nil {
 		return nil, err
 	}
-
-	prepared, err := oairesponses.PrepareOpenAIResponsesRequest(*responsesRequest)
-	if err != nil {
-		return nil, err
-	}
-	return oairesponses.OpenAIResponsesRequestToGeminiChat(c, &prepared, info)
+	return oairesponses.OpenAIResponsesRequestToGeminiChat(c, responsesRequest, info)
 }
 
 func convertResponsesRequestToChat(c context.Context, _ convmeta.Meta, request any) (any, error) {

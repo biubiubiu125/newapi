@@ -110,6 +110,15 @@ Object.defineProperty(HTMLElement.prototype, 'scrollIntoView', {
   value: () => undefined,
 })
 
+// base-ui ScrollArea calls viewport.getAnimations() after mount. jsdom does not
+// implement the Web Animations API, and the late timer fails the file.
+if (typeof Element.prototype.getAnimations !== 'function') {
+  Object.defineProperty(Element.prototype, 'getAnimations', {
+    configurable: true,
+    value: () => [],
+  })
+}
+
 // Node.js 25+ defines `localStorage`/`sessionStorage` accessors on the global
 // object that resolve to `undefined` unless `--localstorage-file` is set, and
 // vitest's jsdom environment does not replace globals that already exist.

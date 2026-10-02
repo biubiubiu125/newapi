@@ -142,13 +142,6 @@ export function taskMatrixRowLabel(
   return values.length > 0 ? values.join('·') : 'base'
 }
 
-function taskMatrixCombinationKey(
-  combination: Record<string, string>,
-  enumFields: [string, BillingUsageFieldSchema][]
-): string {
-  return JSON.stringify(enumFields.map(([field]) => combination[field]))
-}
-
 export function taskMatrixToTiers(
   config: TaskMatrixConfig,
   schema: BillingUsageSchema
@@ -203,7 +196,6 @@ export function tryParseTaskMatrixConfig(
   const tiers = parseTaskTiersFromExpr(expression, schema)
   if (tiers.length === 0) return null
 
-  const enumFields = getTaskEnumFields(schema)
   const numberFields = getTaskNumberFields(schema)
   const combinations = getTaskEnumCombinations(schema)
 
@@ -222,49 +214,31 @@ export function tryParseTaskMatrixConfig(
     }
   }
 
-  if (tiers.length !== combinations.length) return null
   const fallbackTier = tiers.at(-1)
   if (!fallbackTier || fallbackTier.conditions.length !== 0) return null
 
-  const tiersByCombination = new Map<string, (typeof tiers)[number]>()
   for (const tier of tiers.slice(0, -1)) {
-    if (tier.conditions.length !== enumFields.length) return null
-
-    const valuesByField = new Map<string, string>()
+    const fields = new Set<string>()
     for (const condition of tier.conditions) {
       const definition = schema[condition.field]
       if (
-        valuesByField.has(condition.field) ||
+        fields.has(condition.field) ||
         !definition?.enum?.includes(condition.value)
       ) {
         return null
       }
-      valuesByField.set(condition.field, condition.value)
+      fields.add(condition.field)
     }
-    if (valuesByField.size !== enumFields.length) return null
-
-    const combination = Object.fromEntries(
-      enumFields.map(([field]) => [field, valuesByField.get(field) ?? ''])
-    )
-    const key = taskMatrixCombinationKey(combination, enumFields)
-    if (tiersByCombination.has(key)) return null
-    tiersByCombination.set(key, tier)
   }
 
-  const missingCombinations = combinations.filter(
-    (combination) =>
-      !tiersByCombination.has(taskMatrixCombinationKey(combination, enumFields))
-  )
-  if (missingCombinations.length !== 1) return null
-  tiersByCombination.set(
-    taskMatrixCombinationKey(missingCombinations[0], enumFields),
-    fallbackTier
-  )
-
+  // A condition that omits an enum applies to every value of that enum.
+  // The first matching branch wins; the unconditioned tail covers whatever remains.
   const rows: TaskMatrixRow[] = []
   for (const combination of combinations) {
-    const tier = tiersByCombination.get(
-      taskMatrixCombinationKey(combination, enumFields)
+    const tier = tiers.find((candidate) =>
+      candidate.conditions.every(
+        (condition) => combination[condition.field] === condition.value
+      )
     )
     if (!tier) return null
     rows.push({

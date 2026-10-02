@@ -46,11 +46,12 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import { indexCustomOAuthBindings, type CustomOAuthBinding } from '@/lib/oauth'
-import { handleServerError } from '@/lib/handle-server-error'
 import type {
   RequestVerificationOptions,
   SecurityProof,
 } from '@/features/auth/secure-verification'
+import { handleServerError } from '@/lib/handle-server-error'
+import { AuthOperationError } from '@/lib/secure-verification'
 import { requireServerSuccess } from '@/lib/server-error-message'
 import { statusQueryOptions } from '@/lib/status-query'
 
@@ -61,6 +62,7 @@ import {
   adminUnbindCustomOAuth,
 } from '../../api'
 import type { User } from '../../types'
+import { useUsers } from '../users-provider'
 
 import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
@@ -177,6 +179,11 @@ export function UserBindingDialog(
   }
 ) {
   const { t } = useTranslation()
+  const users = useUsers()
+  const requestVerification =
+    props.requestVerification ?? users.requestVerification
+  const verificationActive =
+    props.verificationActive || users.verificationActive
   const [user, setUser] = useState<User | null>(null)
   const [oauthBindings, setOauthBindings] = useState<CustomOAuthBinding[]>([])
   const [loading, setLoading] = useState(false)
@@ -292,34 +299,36 @@ export function UserBindingDialog(
 
   const handleUnbind = async () => {
     if (!unbindTarget || !props.userId) return
-    if (props.verificationActive) return
-    let proofToken: string | undefined
-    if (props.requestVerification) {
-      const proof = await props.requestVerification({
+    if (verificationActive || props.verificationActive) return
+    if (unbindTarget.type !== 'builtin' && !unbindTarget.providerId) return
+    setUnbinding(true)
+    try {
+      const userId = props.userId
+      const proof = await requestVerification({
         scope: 'admin.user.binding.clear',
         context:
           unbindTarget.type === 'builtin'
-            ? { user_id: props.userId, binding_type: unbindTarget.key }
-            : { user_id: props.userId, provider_id: unbindTarget.providerId },
+            ? { user_id: userId, binding_type: unbindTarget.key }
+            : { user_id: userId, provider_id: unbindTarget.providerId },
         title: t('Verify to clear this binding'),
+        description: t(
+          'Confirm your identity before unbinding {{provider}} from this user.',
+          { provider: unbindTarget.label }
+        ),
       })
       if (!proof) return
-      proofToken = proof.proof_token
-    }
-    setUnbinding(true)
-    try {
       let res
       if (unbindTarget.type === 'builtin') {
         res = await adminClearUserBinding(
-          props.userId,
+          userId,
           unbindTarget.key,
-          proofToken
+          proof.proof_token
         )
       } else if (unbindTarget.providerId) {
         res = await adminUnbindCustomOAuth(
-          props.userId,
+          userId,
           unbindTarget.providerId,
-          proofToken
+          proof.proof_token
         )
       }
       if (res?.success) {
@@ -333,7 +342,7 @@ export function UserBindingDialog(
         handleServerError(res, t('Unbind failed'))
       }
     } catch (error) {
-      handleServerError(error, t('Unbind failed'))
+      handleServerError(AuthOperationError.from(error), t('Unbind failed'))
     } finally {
       setUnbinding(false)
       setUnbindTarget(null)
@@ -463,7 +472,7 @@ export function UserBindingDialog(
       </Dialog>
 
       <ConfirmDialog
-        open={!!unbindTarget}
+        open={!!unbindTarget && !verificationActive}
         onOpenChange={(open) => !open && setUnbindTarget(null)}
         title={t('Confirm Unbind')}
         desc={t(

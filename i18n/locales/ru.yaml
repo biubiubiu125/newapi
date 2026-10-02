@@ -39,6 +39,10 @@ auth.login_required: "Сначала войдите в систему"
 auth.flow_invalid: "Поток аутентификации недействителен"
 auth.flow_expired: "Срок действия потока аутентификации истек"
 auth.flow_consumed: "Поток аутентификации уже использован"
+auth.access_token_expired: "Не авторизовано: срок действия токена доступа истёк"
+auth.legacy_access_token_retired: "Старые токены доступа отключены. Создайте новый токен доступа в настройках безопасности"
+auth.access_token_scope_denied: "У токена доступа нет нужного разрешения: {{.Scope}}"
+auth.access_token_limit: "Можно создать не больше {{.Count}} токенов доступа"
 
 # Token messages
 token.name_too_long: "Слишком длинное имя токена"

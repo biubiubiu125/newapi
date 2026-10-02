@@ -264,7 +264,44 @@ func TestResponsesRequestToChatCompletionsRequestCustomToolCallUsesStringInputFu
 	assert.Equal(t, "call_custom", got.Messages[1].ToolCallId)
 	assert.Equal(t, "ok", got.Messages[1].StringContent())
 }
+func TestResponsesRequestToChatCompletionsRequestEncodesCustomToolHistoryAsFunction(t *testing.T) {
+	got, err := ResponsesRequestToChatCompletionsRequest(context.Background(), &dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, []map[string]any{
+			{
+				"type":    "custom_tool_call",
+				"call_id": "call_custom",
+				"name":    "exec",
+				"input":   "echo \"hi\" && ls",
+			},
+			{
+				"type":    "custom_tool_call_output",
+				"call_id": "call_custom",
+				"output":  "hi",
+			},
+		}),
+	})
+	require.NoError(t, err)
 
+	require.Len(t, got.Messages, 2)
+	toolCalls := got.Messages[0].ParseToolCalls()
+	require.Len(t, toolCalls, 1)
+	assert.Equal(t, "function", toolCalls[0].Type)
+	assert.Equal(t, "call_custom", toolCalls[0].ID)
+	assert.Equal(t, "exec", toolCalls[0].Function.Name)
+	assert.Equal(t, `echo "hi" && ls`, gjson.Get(toolCalls[0].Function.Arguments, "input").String())
+	assert.Empty(t, toolCalls[0].Custom)
+	assert.Equal(t, dto.Message{Role: "tool", ToolCallId: "call_custom", Content: "hi"}, got.Messages[1])
+}
+func TestResponsesRequestToChatCompletionsRequestRejectsNamelessCustomToolCall(t *testing.T) {
+	_, err := ResponsesRequestToChatCompletionsRequest(context.Background(), &dto.OpenAIResponsesRequest{
+		Model: "gpt-test",
+		Input: mustRawMessage(t, []map[string]any{
+			{"type": "custom_tool_call", "call_id": "call_custom", "input": "ls"},
+		}),
+	})
+	require.ErrorContains(t, err, "custom_tool_call item is missing name")
+}
 func TestResponsesRequestToChatCompletionsRequestRejectsStatefulFields(t *testing.T) {
 	tests := []struct {
 		name string
@@ -489,6 +526,25 @@ func TestResponsesRequestToChatCompletionsRequestHoistsToolOutputMediaAfterToolB
 		require.Len(t, parts, 1)
 		assert.Equal(t, dto.ContentTypeImageURL, parts[0].Type)
 		assert.Equal(t, dto.Message{Role: "user", Content: "what do you see?"}, got.Messages[4])
+	})
+
+	t.Run("custom tool outputs stay in the same batch", func(t *testing.T) {
+		got, err := ResponsesRequestToChatCompletionsRequest(context.Background(), &dto.OpenAIResponsesRequest{
+			Model: "gpt-test",
+			Input: mustRawMessage(t, []map[string]any{
+				{"type": "function_call", "call_id": "call_1", "name": "screenshot", "arguments": "{}"},
+				{"type": "custom_tool_call", "call_id": "call_2", "name": "exec", "input": "ls"},
+				{"type": "function_call_output", "call_id": "call_1", "output": imageOutput},
+				{"type": "custom_tool_call_output", "call_id": "call_2", "output": "file.txt"},
+			}),
+		})
+		require.NoError(t, err)
+
+		require.Len(t, got.Messages, 4)
+		assert.Len(t, got.Messages[0].ParseToolCalls(), 2)
+		assert.Equal(t, dto.Message{Role: "tool", ToolCallId: "call_1", Content: "[image]"}, got.Messages[1])
+		assert.Equal(t, dto.Message{Role: "tool", ToolCallId: "call_2", Content: "file.txt"}, got.Messages[2])
+		assert.Equal(t, "user", got.Messages[3].Role)
 	})
 
 	t.Run("trailing output flushes media at end of input", func(t *testing.T) {

@@ -154,6 +154,7 @@ func TestPasskeyDomainsPreserveCredentialsAcrossVerificationFlows(t *testing.T) 
 				beginHandler, finishHandler = LoginPasskeyBegin, LoginPasskeyFinish
 			} else if kind == "sensitive action" {
 				request["scope"] = service.VerificationScopeAccessTokenGenerate
+				request["context"] = map[string]any{"scopes": []string{"profile:read"}, "expires_at": 0}
 				beginPath, finishPath = "/api/user/passkey/verify/begin", "/api/user/passkey/verify/finish"
 				beginHandler, finishHandler = PasskeyVerifyBegin, PasskeyVerifyFinish
 			}
@@ -294,6 +295,9 @@ func TestPasskeyDomainChoicesRespectOriginAndConfiguration(t *testing.T) {
 func setupPasskeyDomainOptions(t *testing.T) {
 	t.Helper()
 	require.NoError(t, model.DB.AutoMigrate(&model.Option{}))
+	// These tests assert on the whole options table. The server-managed legacy
+	// access token deadline written by the enrollment fixture is unrelated.
+	require.NoError(t, model.DB.Delete(&model.Option{Key: "LegacyAccessTokenRetireAt"}).Error)
 	common.OptionMapRWMutex.Lock()
 	if common.OptionMap == nil {
 		common.OptionMap = map[string]string{}
@@ -886,3 +890,31 @@ type passkeyCredentialBeforeRPID struct {
 }
 
 func (passkeyCredentialBeforeRPID) TableName() string { return "passkey_credentials" }
+
+func TestPasskeyRegisterFinishRejectsUnapprovedFlowWithoutConsumingIt(t *testing.T) {
+	_, identity := setupSecurityEnrollmentTest(t)
+	system_setting.GetPasskeySettings().UserVerification = "required"
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	payload, err := common.Marshal(map[string]any{"scope": service.VerificationScopePasskeyRegister})
+	require.NoError(t, err)
+	token, _, err := model.CreateAuthFlow(model.AuthFlowCreate{
+		Purpose: model.AuthFlowPurposePasskeyRegister, UserId: identity.UserID, SessionId: identity.SessionID,
+		Payload: string(payload), ExpiresAt: time.Now().Add(time.Minute),
+	})
+	require.NoError(t, err)
+	body, err := common.Marshal(passkeyFinishRequest{
+		FlowToken: token, Credential: securityPasskeyResponse(t, key, "test-challenge", true, 0),
+	})
+	require.NoError(t, err)
+	response := securityEnrollmentRequest("POST", "/api/user/passkey/register/finish", string(body), "", identity, PasskeyRegisterFinish)
+	var result securityEnrollmentResponse
+	require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
+	assert.False(t, result.Success)
+	assert.Equal(t, "AUTH_FLOW_INVALID", result.Code)
+	_, err = model.GetPasskeyByUserID(identity.UserID)
+	assert.ErrorIs(t, err, model.ErrPasskeyNotFound)
+	flow, err := model.GetAuthFlow(token, model.AuthFlowMatch{Purpose: model.AuthFlowPurposePasskeyRegister})
+	require.NoError(t, err)
+	assert.Nil(t, flow.ConsumedAt)
+}

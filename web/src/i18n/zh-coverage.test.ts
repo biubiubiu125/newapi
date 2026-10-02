@@ -424,8 +424,7 @@ describe('zhCN console copy coverage', () => {
       ),
       'utf8'
     )
-    expect(modelDrawer).toContain("t('Model updated successfully')")
-    expect(modelDrawer).toContain("t('Model created successfully')")
+    expect(modelDrawer).toContain("t('Model metadata saved')")
     expect(modelDrawer).not.toContain("|| 'Operation failed'")
     expect(prefillDrawer).toContain("t('Prefill group updated')")
     expect(prefillDrawer).toContain("t('Prefill group created')")

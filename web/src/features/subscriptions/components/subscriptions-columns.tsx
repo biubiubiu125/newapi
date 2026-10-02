@@ -131,13 +131,13 @@ export function useSubscriptionsColumns(): ColumnDef<PlanRecord>[] {
         cell: ({ row }) =>
           row.original.plan.enabled ? (
             <StatusBadge
-              label={t('Enable')}
+              label={t('Enabled')}
               variant='success'
               copyable={false}
             />
           ) : (
             <StatusBadge
-              label={t('Disable')}
+              label={t('Disabled')}
               variant='neutral'
               copyable={false}
             />

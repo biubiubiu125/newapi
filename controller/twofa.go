@@ -25,7 +25,7 @@ func Setup2FA(c *gin.Context) {
 	if authorization == nil {
 		return
 	}
-	identity, _ := middleware.GetSessionAuthIdentity(c)
+	identity, _ := middleware.GetStepUpIdentity(c)
 	setup, err := service.StartTwoFASetup(identity, authorization)
 	if err != nil {
 		writeSecurityOperationError(c, err)
@@ -41,7 +41,7 @@ func Enable2FA(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
-	identity, ok := middleware.GetSessionAuthIdentity(c)
+	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
 		writeSecurityOperationError(c, service.ErrAuthTokenInvalid)
 		return
@@ -64,7 +64,7 @@ func Disable2FA(c *gin.Context) {
 	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeTwoFADisable}) == nil {
 		return
 	}
-	identity, _ := middleware.GetSessionAuthIdentity(c)
+	identity, _ := middleware.GetStepUpIdentity(c)
 	userId := identity.UserID
 	if err := model.DisableTwoFAForSession(identity); err != nil {
 		writeSecurityOperationError(c, err)
@@ -130,7 +130,7 @@ func RegenerateBackupCodes(c *gin.Context) {
 	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeTwoFABackupCodes}) == nil {
 		return
 	}
-	identity, _ := middleware.GetSessionAuthIdentity(c)
+	identity, _ := middleware.GetStepUpIdentity(c)
 	userId := identity.UserID
 	// 生成新的备用码
 	backupCodes, err := common.GenerateBackupCodes()

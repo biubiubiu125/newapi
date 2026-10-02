@@ -133,7 +133,7 @@ func TestSecurityAccountDeletionAcceptsEitherFactorAndRevokesSessions(t *testing
 			}
 			otherSession, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "second-session")
 			require.NoError(t, err)
-			require.NoError(t, model.UpdateUserAccessToken(user.Id, "account-delete-access-token"))
+			require.NoError(t, model.DB.Model(&model.User{}).Where("id = ?", user.Id).Update("access_token", "account-delete-access-token").Error)
 			response := securityEnrollmentRequest("DELETE", "/api/user/self", "", proof, identity, DeleteSelf)
 			var result securityEnrollmentResponse
 			require.NoError(t, common.Unmarshal(response.Body.Bytes(), &result))
@@ -198,7 +198,8 @@ func TestSecurityAccountDeletionRechecksTransactionAndConsumesFailedProof(t *tes
 				assert.Contains(t, response.Body.String(), "SECURITY_PROOF_CONSUMED")
 			}
 			if scenario != "write failure" {
-				assert.Error(t, model.DeleteUserForSession(identity))
+				_, err := model.DeleteUserForSession(identity)
+				assert.Error(t, err)
 			}
 			_, err := model.GetUserById(user.Id, false)
 			require.NoError(t, err)
@@ -251,7 +252,8 @@ func TestSecurityAccountDeletionRetriesSQLiteLock(t *testing.T) {
 	t.Cleanup(func() {
 		require.NoError(t, model.DB.Callback().Delete().Remove("account-delete-sqlite-lock"))
 	})
-	require.NoError(t, model.DeleteUserForSession(identity))
+	_, err := model.DeleteUserForSession(identity)
+	require.NoError(t, err)
 	var deleted model.User
 	require.NoError(t, model.DB.Unscoped().First(&deleted, user.Id).Error)
 	assert.True(t, deleted.DeletedAt.Valid)
@@ -674,7 +676,7 @@ func TestSecurityAccountEmailBindRetiresOldAddressAndOtherSessions(t *testing.T)
 	}).Error)
 	require.NoError(t, model.SyncUserLoginIdentifiers(user.Id))
 	accessToken := "0123456789abcdef0123456789abcdef"
-	require.NoError(t, model.UpdateUserAccessToken(user.Id, accessToken))
+	require.NoError(t, model.UpdateLegacyUserAccessToken(user.Id, accessToken))
 	other, err := service.CreateLoginSession(user.Id, "password", "127.0.0.1", "other-browser")
 	require.NoError(t, err)
 	var before model.User

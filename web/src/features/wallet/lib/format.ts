@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { TFunction } from 'i18next'
+
 import { currentIntlLocale } from '@/i18n/languages'
 import { formatCurrencyFromUSD } from '@/lib/currency'
 
@@ -91,12 +93,12 @@ export function formatCnyPrice(amount: number | string): string {
 /**
  * Get discount label for display (e.g., "20% OFF")
  */
-export function getDiscountLabel(discount: number): string {
+export function getDiscountLabel(discount: number, t: TFunction): string {
   if (discount >= DEFAULT_DISCOUNT_RATE) {
     return ''
   }
   const off = Math.round((1 - discount) * 100)
-  return `${off}% OFF`
+  return t('{{percent}}% OFF', { percent: off })
 }
 
 /**

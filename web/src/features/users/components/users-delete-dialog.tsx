@@ -22,6 +22,7 @@ import { toast } from 'sonner'
 
 import { ConfirmDialog } from '@/components/confirm-dialog'
 import { handleServerError } from '@/lib/handle-server-error'
+import { AuthOperationError } from '@/lib/secure-verification'
 
 import { deleteUser } from '../api'
 import { ERROR_MESSAGES } from '../constants'
@@ -32,22 +33,31 @@ import { localizeConsoleErrorText } from '@/lib/server-error-message'
 
 export function UsersDeleteDialog() {
   const { t } = useTranslation()
-  const { open, setOpen, currentRow, triggerRefresh, requestVerification, verificationActive } = useUsers()
+  const {
+    open,
+    setOpen,
+    currentRow,
+    triggerRefresh,
+    requestVerification,
+    verificationActive,
+  } = useUsers()
   const [isDeleting, setIsDeleting] = useState(false)
 
   const handleDelete = async () => {
-    if (!currentRow) return
-
-    if (verificationActive) return
-    const proof = await requestVerification({
-      scope: 'admin.user.delete',
-      context: { user_id: currentRow.id },
-      title: t('Verify to delete this user'),
-    })
-    if (!proof) return
+    if (!currentRow || verificationActive) return
 
     setIsDeleting(true)
     try {
+      const proof = await requestVerification({
+        scope: 'admin.user.delete',
+        context: { user_id: currentRow.id },
+        title: t('Verify to delete user'),
+        description: t(
+          'Confirm your identity before permanently deleting the account {{username}}.',
+          { username: currentRow.username }
+        ),
+      })
+      if (!proof) return
       const result = await deleteUser(currentRow.id, proof.proof_token)
       if (result.success) {
         toast.success(t(getUserActionMessage('delete')))
@@ -58,7 +68,10 @@ export function UsersDeleteDialog() {
         handleServerError(result, t(ERROR_MESSAGES.DELETE_FAILED))
       }
     } catch (error) {
-      handleServerError(error, t(ERROR_MESSAGES.UNEXPECTED))
+      handleServerError(
+        AuthOperationError.from(error),
+        t(ERROR_MESSAGES.UNEXPECTED)
+      )
     } finally {
       setIsDeleting(false)
     }

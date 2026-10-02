@@ -15,7 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestCreateUserRejectsNonStandardRole(t *testing.T) {
+func TestCreateUserRejectsRoleSeven(t *testing.T) {
 	require.NoError(t, i18n.Init())
 	setupModelListControllerTestDB(t)
 	body := `{"username":"odd-role","password":"12345678","display_name":"odd-role","role":7}`

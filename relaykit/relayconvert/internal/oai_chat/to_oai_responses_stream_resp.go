@@ -26,11 +26,12 @@ type ChatToResponsesStreamState struct {
 	// EmitSequenceNumber enables the required sequence_number field for current
 	// Responses API SSE consumers while preserving the legacy relaykit default.
 	EmitSequenceNumber bool
+	// Tools marks the Chat function calls that encode Responses custom tools;
+	// they are streamed back as custom_tool_call items.
+	Tools *convmeta.ResponsesToolState
 
-	status            string
-	incompleteDetails *dto.IncompleteDetails
-	// Tools restores function calls that were encoded from Responses custom tools.
-	Tools              *convmeta.ResponsesToolState
+	status             string
+	incompleteDetails  *dto.IncompleteDetails
 	sentCreated        bool
 	textOutputIndex    int
 	textStarted        bool
@@ -64,7 +65,7 @@ type chatToResponsesStreamTool struct {
 	Name        string
 	Arguments   strings.Builder
 	// Announced records that output_item.added was sent. Custom reports that
-	// the name belongs to a Responses custom tool encoded as a function.
+	// the call restores a Responses custom tool; it is fixed at announcement.
 	Announced bool
 	Custom    bool
 	Done      bool

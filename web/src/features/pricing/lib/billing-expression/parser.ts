@@ -442,7 +442,11 @@ function validateFixedPricingTree(
     for (const [factor, pricing] of [
       [node.right, node.left],
       [node.left, node.right],
-    ]) {
+    ] as const) {
+      if (factor.kind === 'variable' && factor.name === 'image_count') {
+        validateFixedPricingTree(pricing, rules)
+        return
+      }
       const rule = rules.find((candidate) => candidate.node === factor)
       if (
         rule &&

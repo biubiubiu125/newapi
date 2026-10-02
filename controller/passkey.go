@@ -127,7 +127,7 @@ func PasskeyRegisterBegin(c *gin.Context) {
 		return
 	}
 
-	identity, ok := middleware.GetSessionAuthIdentity(c)
+	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
 		common.ApiError(c, common.Localized(i18n.MsgPasskeyAuthMethodUnsupported))
 		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
@@ -188,7 +188,7 @@ func PasskeyRegisterFinish(c *gin.Context) {
 		credentialRecord = nil
 	}
 
-	identity, ok := middleware.GetSessionAuthIdentity(c)
+	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
 		common.ApiError(c, common.Localized(i18n.MsgPasskeyAuthMethodUnsupported))
 		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
@@ -262,7 +262,7 @@ func PasskeyDelete(c *gin.Context) {
 		return
 	}
 
-	identity, ok := middleware.GetSessionAuthIdentity(c)
+	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
 		common.ApiError(c, common.Localized(i18n.MsgPasskeyAuthMethodUnsupported))
 		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")
@@ -490,6 +490,10 @@ func AdminResetPasskey(c *gin.Context) {
 		common.ApiErrorI18n(c, i18n.MsgAuthInsufficientPrivilege)
 		return
 	}
+	authorization := requireAdminUserProof(c, service.VerificationScopeAdminUserPasskeyReset, service.AdminUserContext{UserID: user.Id})
+	if authorization == nil {
+		return
+	}
 
 	if _, err := model.GetPasskeyByUserID(user.Id); err != nil {
 		if errors.Is(err, model.ErrPasskeyNotFound) {
@@ -497,10 +501,6 @@ func AdminResetPasskey(c *gin.Context) {
 			return
 		}
 		writeSecurityOperationError(c, err)
-		return
-	}
-	authorization := requireAdminUserProof(c, service.VerificationScopeAdminUserPasskeyReset, service.AdminUserContext{UserID: user.Id})
-	if authorization == nil {
 		return
 	}
 
@@ -544,13 +544,17 @@ func PasskeyVerifyBegin(c *gin.Context) {
 		common.ApiError(c, common.Localized(i18n.MsgPasskeyUnsupportedScope))
 		return
 	}
-	identity, ok := middleware.GetSessionAuthIdentity(c)
-	if !ok {
-		common.ApiError(c, common.Localized(i18n.MsgPasskeyAuthMethodUnsupported))
-		return
-	}
 	binding, err := service.BindVerificationOperation(service.VerificationOperation{Scope: request.Scope, Context: request.Context})
 	if err != nil {
+		writeSecurityOperationError(c, err)
+		return
+	}
+	identity, ok := middleware.GetStepUpIdentity(c)
+	if !ok {
+		writeSecurityOperationError(c, service.ErrAuthTokenInvalid)
+		return
+	}
+	if _, err := service.RequireVerificationMethod(identity, request.Scope, service.VerificationMethodPasskey); err != nil {
 		writeSecurityOperationError(c, err)
 		return
 	}
@@ -629,7 +633,7 @@ func PasskeyVerifyFinish(c *gin.Context) {
 		return
 	}
 
-	identity, ok := middleware.GetSessionAuthIdentity(c)
+	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
 		common.ApiError(c, common.Localized(i18n.MsgPasskeyAuthMethodUnsupported))
 		common.ApiErrorMsg(c, "当前认证方式不支持安全验证")

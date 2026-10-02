@@ -39,6 +39,10 @@ auth.login_required: "Vui lòng đăng nhập trước"
 auth.flow_invalid: "Luong xac thuc khong hop le"
 auth.flow_expired: "Luong xac thuc da het han"
 auth.flow_consumed: "Luong xac thuc da duoc su dung"
+auth.access_token_expired: "Chưa xác thực, mã truy cập đã hết hạn"
+auth.legacy_access_token_retired: "Mã truy cập cũ đã ngừng dùng. Hãy tạo mã truy cập mới trong cài đặt bảo mật"
+auth.access_token_scope_denied: "Mã truy cập thiếu quyền bắt buộc: {{.Scope}}"
+auth.access_token_limit: "Bạn chỉ có thể tạo tối đa {{.Count}} mã truy cập"
 
 # Token messages
 token.name_too_long: "Tên mã thông báo quá dài"

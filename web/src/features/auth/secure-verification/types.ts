@@ -32,6 +32,7 @@ export type SecurityProofScope =
   | '2fa.disable'
   | '2fa.backup_codes.regenerate'
   | 'access_token.generate'
+  | 'access_token.update'
   | 'access_token.revoke'
   | 'account.binding.bind'
   | 'account.binding.unbind'
@@ -45,6 +46,9 @@ export type SecurityProofScope =
   | 'admin.user.passkey.reset'
   | 'admin.user.2fa.disable'
   | 'admin.user.binding.clear'
+
+/** ManageUser actions that change a user's status or role and need step-up. */
+export type AdminUserManageAction = 'disable' | 'enable' | 'promote' | 'demote'
 
 export type VerificationOperation =
   | { scope: 'channel.key.read'; context: { channel_id: number } }
@@ -64,14 +68,23 @@ export type VerificationOperation =
     }
   | {
       scope: 'admin.user.manage'
-      context: {
-        user_id: number
-        action: 'disable' | 'enable' | 'promote' | 'demote'
-      }
+      context: { user_id: number; action: AdminUserManageAction }
     }
   | {
       scope: 'admin.user.binding.clear'
       context: { user_id: number; binding_type?: string; provider_id?: number }
+    }
+  | {
+      scope: 'access_token.generate'
+      context: { scopes: string[]; expires_at: number }
+    }
+  | {
+      scope: 'access_token.update'
+      context: { token_id: number; scopes: string[] }
+    }
+  | {
+      scope: 'access_token.revoke'
+      context: { token_id: number } | { legacy: true }
     }
   | {
       scope: Exclude<
@@ -86,6 +99,9 @@ export type VerificationOperation =
         | 'admin.user.passkey.reset'
         | 'admin.user.2fa.disable'
         | 'admin.user.binding.clear'
+        | 'access_token.generate'
+        | 'access_token.update'
+        | 'access_token.revoke'
       >
       context?: Record<string, never>
     }

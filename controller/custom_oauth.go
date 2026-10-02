@@ -493,7 +493,7 @@ func GetUserOAuthBindingsByAdmin(c *gin.Context) {
 
 // UnbindCustomOAuth unbinds a custom OAuth provider from the current user
 func UnbindCustomOAuth(c *gin.Context) {
-	identity, ok := middleware.GetSessionAuthIdentity(c)
+	identity, ok := middleware.GetStepUpIdentity(c)
 	if !ok {
 		common.ApiError(c, common.Localized(i18n.MsgOAuthUnbindMethodUnsupported))
 		return
@@ -565,7 +565,7 @@ func UnbindCustomOAuthByAdmin(c *gin.Context) {
 
 	providerIdStr := c.Param("provider_id")
 	providerId, err := strconv.Atoi(providerIdStr)
-	if err != nil {
+	if err != nil || providerId <= 0 {
 		common.ApiErrorI18n(c, i18n.MsgCustomOAuthInvalidProviderId)
 		return
 	}
@@ -579,5 +579,11 @@ func UnbindCustomOAuthByAdmin(c *gin.Context) {
 		return
 	}
 
+	recordManageAuditFor(c, userId, "user.binding_clear", map[string]any{
+		"bindingType":         "custom_oauth",
+		"provider_id":         providerId,
+		"username":            targetUser.Username,
+		"verification_method": authorization.Method,
+	})
 	common.ApiSuccessI18n(c, i18n.MsgOAuthUnbindSuccess, nil)
 }

@@ -20,7 +20,7 @@ func TestFillUserByExternalIdsReturnLocalizedEmptyErrors(t *testing.T) {
 		{name: "linuxdo", call: func() error { return (&User{}).FillUserByLinuxDOId() }, key: "user.linux_do_id_empty"},
 		{name: "id", call: func() error { return (&User{}).FillUserById() }, key: "common.id_empty"},
 		{name: "email", call: func() error { return (&User{}).FillUserByEmail() }, key: "user.email_empty"},
-		{name: "access_token", call: func() error { return UpdateUserAccessToken(0, "rotated") }, key: "common.id_empty"},
+		{name: "access_token", call: func() error { return UpdateLegacyUserAccessToken(0, "rotated") }, key: "common.id_empty"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

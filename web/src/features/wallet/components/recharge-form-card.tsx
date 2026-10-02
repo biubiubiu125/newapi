@@ -253,7 +253,7 @@ export function RechargeFormCard({
                             </div>
                             {hasDiscount && (
                               <div className='text-xs font-medium text-green-600'>
-                                {getDiscountLabel(discount)}
+                                {getDiscountLabel(discount, t)}
                               </div>
                             )}
                           </div>

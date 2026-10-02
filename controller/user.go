@@ -1268,6 +1268,7 @@ func UpdateSelf(c *gin.Context) {
 		succeeded = true
 		rotation := authRotationData(bundle)
 		rotation["has_password"] = true
+		rotation["notification_warning"] = notificationFailed
 		c.JSON(http.StatusOK, gin.H{
 			"success": true,
 			"message": "",
@@ -1334,14 +1335,15 @@ func DeleteUser(c *gin.Context) {
 	if deleteAuthorization == nil {
 		return
 	}
-	err = model.HardDeleteUserById(id)
+	revokedAccessTokens, err := model.HardDeleteUserById(id)
 	if err != nil {
 		common.ApiError(c, err)
 		return
 	}
 	deleteAudit := map[string]any{
-		"username": originUser.Username,
-		"id":       originUser.Id,
+		"username":              originUser.Username,
+		"id":                    originUser.Id,
+		"revoked_access_tokens": revokedAccessTokens,
 	}
 	if deleteAuthorization.Method != "" {
 		deleteAudit["verification_method"] = deleteAuthorization.Method
@@ -1357,14 +1359,20 @@ func DeleteUser(c *gin.Context) {
 func DeleteSelf(c *gin.Context) {
 	setAuthNoStore(c)
 	succeeded := false
+	var revokedAccessTokens int64
 	defer func() {
-		recordUserSecurityAudit(c, c.GetInt("id"), "user.account_delete", map[string]any{"success": succeeded})
+		params := map[string]any{"success": succeeded}
+		if succeeded {
+			params["revoked_access_tokens"] = revokedAccessTokens
+		}
+		recordUserSecurityAudit(c, c.GetInt("id"), "user.account_delete", params)
 	}()
 	if middleware.RequireSecurityProof(c, service.VerificationOperation{Scope: service.VerificationScopeAccountDelete}) == nil {
 		return
 	}
-	identity, _ := middleware.GetSessionAuthIdentity(c)
-	if err := model.DeleteUserForSession(identity); err != nil {
+	identity, _ := middleware.GetStepUpIdentity(c)
+	var err error
+	if revokedAccessTokens, err = model.DeleteUserForSession(identity); err != nil {
 		if errors.Is(err, model.ErrCannotDeleteRootUser) {
 			common.ApiErrorI18n(c, i18n.MsgUserCannotDeleteRootUser)
 			return
@@ -1418,6 +1426,10 @@ func CreateUser(c *gin.Context) {
 	}
 	if err := common.Validate.Struct(&user); err != nil {
 		respondUserInputError(c, err)
+		return
+	}
+	if !common.IsValidateRole(user.Role) {
+		common.ApiErrorI18n(c, i18n.MsgInvalidParams)
 		return
 	}
 	if user.DisplayName == "" {
@@ -1559,7 +1571,8 @@ func ManageUser(c *gin.Context) {
 		if deleteStepUp == nil {
 			return
 		}
-		if err := user.Delete(); err != nil {
+		revokedAccessTokens, err := user.Delete()
+		if err != nil {
 			common.ApiError(c, err)
 			return
 		}
@@ -1569,9 +1582,10 @@ func ManageUser(c *gin.Context) {
 			common.SysLog(fmt.Sprintf("failed to invalidate tokens cache for user %d: %s", user.Id, err.Error()))
 		}
 		deleteManageAudit := map[string]any{
-			"action":   req.Action,
-			"username": user.Username,
-			"id":       user.Id,
+			"action":                req.Action,
+			"username":              user.Username,
+			"id":                    user.Id,
+			"revoked_access_tokens": revokedAccessTokens,
 		}
 		if deleteStepUp.Method != "" {
 			deleteManageAudit["verification_method"] = deleteStepUp.Method

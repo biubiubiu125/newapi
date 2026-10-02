@@ -16,6 +16,8 @@ along with this program. If not, see <https://www.gnu.org/licenses/>.
 
 For commercial licensing, please contact support@quantumnous.com
 */
+import type { AxiosRequestConfig } from 'axios'
+
 import type { PermissionCatalog } from '@/lib/admin-permissions'
 import { api } from '@/lib/api'
 import type { CustomOAuthBinding } from '@/lib/oauth'
@@ -34,7 +36,11 @@ import type {
   AdminUsersSummary,
 } from './types'
 
-function securityProofConfig(proofToken?: string) {
+// A step-up proof is single-use, so the request carrying it must never be
+// replayed by the auth-refresh interceptor; it refreshes first instead.
+function securityProofConfig(
+  proofToken?: string
+): AxiosRequestConfig | undefined {
   const proof = proofToken?.trim()
   if (!proof) return undefined
   return {
@@ -113,19 +119,25 @@ export async function getUser(id: number): Promise<ApiResponse<User>> {
 }
 
 /**
- * Create a new user
+ * Create a new user. Creating an administrator requires an
+ * `admin.user.create` proof.
  */
 export async function createUser(
   data: UserFormData,
   proofToken?: string
 ): Promise<ApiResponse<User>> {
   const body = await encryptPasswordFields(data, ['password'])
-  const res = await api.post('/api/user/', body, securityProofConfig(proofToken))
+  const res = await api.post(
+    '/api/user/',
+    body,
+    securityProofConfig(proofToken)
+  )
   return res.data
 }
 
 /**
- * Update an existing user
+ * Update an existing user. Changing the password or the admin permission
+ * matrix requires an `admin.user.update` proof.
  */
 export async function updateUser(
   data: UserFormData & { id: number },
@@ -141,7 +153,7 @@ export async function updateUser(
 }
 
 /**
- * Delete a single user (hard delete)
+ * Delete a single user (hard delete); requires an `admin.user.delete` proof
  */
 export async function deleteUser(
   id: number,
@@ -155,7 +167,8 @@ export async function deleteUser(
 }
 
 /**
- * Manage user (promote, demote, enable, disable, delete)
+ * Manage user (promote, demote, enable, disable, delete); requires an
+ * `admin.user.manage` proof (`admin.user.delete` for deletion)
  */
 export async function manageUser(
   id: number,
@@ -181,7 +194,7 @@ export async function adjustUserQuota(
 }
 
 /**
- * Reset user's Passkey registration
+ * Reset user's Passkey registration; requires an `admin.user.passkey.reset` proof
  */
 export async function resetUserPasskey(
   id: number,
@@ -195,7 +208,8 @@ export async function resetUserPasskey(
 }
 
 /**
- * Reset user's Two-Factor Authentication setup
+ * Reset user's Two-Factor Authentication setup; requires an
+ * `admin.user.2fa.disable` proof
  */
 export async function resetUserTwoFA(
   id: number,
@@ -244,7 +258,8 @@ export async function getUserOAuthBindings(
 }
 
 /**
- * Clear a user's built-in binding (admin)
+ * Clear a user's built-in binding (admin); requires an
+ * `admin.user.binding.clear` proof bound to the binding type
  */
 export async function adminClearUserBinding(
   userId: number,
@@ -259,7 +274,8 @@ export async function adminClearUserBinding(
 }
 
 /**
- * Unbind custom OAuth for a user (admin)
+ * Unbind custom OAuth for a user (admin); requires an
+ * `admin.user.binding.clear` proof bound to the provider ID
  */
 export async function adminUnbindCustomOAuth(
   userId: number,

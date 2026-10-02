@@ -301,7 +301,7 @@ it.each(['proof', 'flow'] as const)(
             : { singleUseAuthorization: true }),
         }
       )
-    ).rejects.toThrow('Unauthorized')
+    ).rejects.toThrow('This login session has been revoked.')
     expect(adapter).toHaveBeenCalledTimes(1)
     expect(refresh).not.toHaveBeenCalled()
   }

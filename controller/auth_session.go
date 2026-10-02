@@ -204,7 +204,12 @@ func setAuthNoStore(c *gin.Context) {
 	c.Header("Cache-Control", "no-store")
 }
 
+// authRotationData is empty when the change came through an access token,
+// which has no browser session to rotate.
 func authRotationData(bundle *service.AuthBundle) gin.H {
+	if bundle == nil {
+		return gin.H{}
+	}
 	return gin.H{
 		"access_token":      bundle.AccessToken,
 		"token_type":        bundle.TokenType,
@@ -214,9 +219,10 @@ func authRotationData(bundle *service.AuthBundle) gin.H {
 }
 
 func persistAuthRotationLegacyLoginSession(c *gin.Context, userID int, bundle *service.AuthBundle) bool {
+	// Access-token step-up has no browser session to rotate. A nil bundle is
+	// that case, not a failed refresh.
 	if bundle == nil {
-		common.ApiErrorI18n(c, i18n.MsgAuthRotationBundleEmpty)
-		return false
+		return true
 	}
 	user, err := model.GetUserById(userID, false)
 	if err != nil {
