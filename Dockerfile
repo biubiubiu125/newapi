@@ -18,7 +18,10 @@ ENV GOEXPERIMENT=greenteagc
 WORKDIR /build
 
 ADD go.mod go.sum ./
+# relaykit and tokenkit are local modules referenced via replace; their
+# go.mod files must be present before go mod download resolves the graph.
 ADD relaykit/go.mod ./relaykit/go.mod
+ADD tokenkit/go.mod ./tokenkit/go.mod
 RUN go mod download
 
 COPY . .
