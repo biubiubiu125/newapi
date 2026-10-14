@@ -213,6 +213,35 @@ function messageText(value: unknown): string | undefined {
   return value
 }
 
+/**
+ * The backend sends web console messages as English source text in
+ * `message_key` (a key of the locale files) plus `message_params`, and keeps
+ * the rendered English text in `message` for other API callers.
+ */
+export function getServerMessage(value: unknown): string | undefined {
+  if (!isRecord(value)) return undefined
+  if (typeof value.message_key === 'string' && value.message_key) {
+    return i18next.t(
+      value.message_key,
+      isRecord(value.message_params) ? value.message_params : undefined
+    )
+  }
+  return messageText(value.message)
+}
+
+/**
+ * Translate text the backend stores or sends as an English source key without
+ * params (task fail reasons, built-in group descriptions). The same fields also
+ * carry upstream errors and administrator text; those have no locale entry and
+ * are shown exactly as written, so interpolation and nesting stay off.
+ */
+export function translateServerText(
+  t: (key: string, options?: Record<string, unknown>) => string,
+  text: string
+): string {
+  return t(text, { skipInterpolation: true })
+}
+
 function rawServerErrorMessage(
   value: unknown,
   fallback?: string
@@ -243,7 +272,7 @@ function rawServerErrorMessage(
       ? messageText(source.error.message)
       : messageText(source.error)
     const message =
-      messageText(source.message) || detail || messageText(source.title)
+      getServerMessage(source) || detail || messageText(source.title)
     if (message) return message
   }
   const status = getServerErrorStatus(value)
