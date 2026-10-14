@@ -831,3 +831,23 @@ func TestGeminiChatStreamHandlerFailsBeforeFirstWrite(t *testing.T) {
 	require.Nil(t, usage)
 	require.False(t, info.HasClientStreamWrite())
 }
+
+func TestMarkGeminiGoogleSearchCallIgnoresBlankQueries(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	markGeminiGoogleSearchCall(c, &dto.GeminiChatResponse{
+		Candidates: []dto.GeminiChatCandidate{{
+			GroundingMetadata: &dto.GeminiGroundingMetadata{WebSearchQueries: []string{"  ", ""}},
+		}},
+	})
+	_, exists := c.Get("gemini_google_search_call")
+	assert.False(t, exists)
+
+	markGeminiGoogleSearchCall(c, &dto.GeminiChatResponse{
+		Candidates: []dto.GeminiChatCandidate{{
+			GroundingMetadata: &dto.GeminiGroundingMetadata{WebSearchQueries: []string{"  ", "weather"}},
+		}},
+	})
+	assert.Equal(t, true, c.GetBool("gemini_google_search_call"))
+}

@@ -52,7 +52,7 @@ export function DateTimePicker({
   const [open, setOpen] = React.useState(false)
   const [date, setDate] = React.useState<Date | undefined>(value)
   const [month, setMonth] = React.useState<Date | undefined>(value)
-  const [time, setTime] = React.useState<string>('00:00')
+  const [time, setTime] = React.useState<string>('00:00:00')
 
   React.useEffect(() => {
     setDate(value)
@@ -60,15 +60,16 @@ export function DateTimePicker({
     if (value) {
       const hours = value.getHours().toString().padStart(2, '0')
       const minutes = value.getMinutes().toString().padStart(2, '0')
-      setTime(`${hours}:${minutes}`)
+      const seconds = value.getSeconds().toString().padStart(2, '0')
+      setTime(`${hours}:${minutes}:${seconds}`)
     }
   }, [value])
 
   const handleDateSelect = (selectedDate: Date | undefined) => {
     if (selectedDate) {
-      const [hours, minutes] = time.split(':').map(Number)
+      const [hours, minutes, seconds] = time.split(':').map(Number)
       const newDate = new Date(selectedDate)
-      newDate.setHours(hours, minutes, 0, 0)
+      newDate.setHours(hours, minutes, seconds || 0, 0)
       setDate(newDate)
       setMonth(newDate)
       onChange?.(newDate)
@@ -84,9 +85,9 @@ export function DateTimePicker({
     setTime(newTime)
 
     if (date) {
-      const [hours, minutes] = newTime.split(':').map(Number)
+      const [hours, minutes, seconds] = newTime.split(':').map(Number)
       const newDate = new Date(date)
-      newDate.setHours(hours, minutes, 0, 0)
+      newDate.setHours(hours, minutes, seconds || 0, 0)
       setDate(newDate)
       onChange?.(newDate)
     }
@@ -95,7 +96,7 @@ export function DateTimePicker({
   const handleClear = () => {
     setDate(undefined)
     setMonth(undefined)
-    setTime('00:00')
+    setTime('00:00:00')
     onChange?.(undefined)
   }
 
@@ -133,7 +134,7 @@ export function DateTimePicker({
       <TimeInput
         value={time}
         onChange={handleTimeChange}
-        className='w-32'
+        className='w-auto shrink-0'
         disabled={!date}
       />
       {date && (

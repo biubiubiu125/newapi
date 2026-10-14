@@ -124,6 +124,41 @@ export function parseSubmitResponse(ctx,r){return {taskId:"1"}} export function 
 	assert.Equal(t, "image-bytes", string(content))
 }
 
+func TestTaskAdaptorKeepsRebuiltMultipartContentType(t *testing.T) {
+	source := `
+export const meta = {apiVersion:1,key:"multipart-type",name:"Multipart Type",version:"1.0.0",author:{name:"Test"},models:["m"],fetchMode:"per_task"};
+export function buildSubmitRequest(ctx) { return {url:ctx.baseUrl+"/submit",bodyType:"multipart",headers:{"Content-Type":"multipart/form-data; boundary=plugin-boundary"},parts:[{name:"model",value:"m"},{name:"input_reference",fileRef:ctx.files[0].ref}]}; }
+export function parseSubmitResponse(ctx,r){return {taskId:"1"}} export function buildQueryRequest(){return {url:"https://example.com"}} export function parseTaskResult(){return {status:"SUCCESS"}}
+`
+	plugin, err := pluginruntime.NewRegistry().Register(source, pluginruntime.Options{})
+	require.NoError(t, err)
+	adaptor := New(plugin)
+	info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://provider.example"}, TaskRelayInfo: &relaycommon.TaskRelayInfo{}}
+	adaptor.Init(info)
+	var input bytes.Buffer
+	writer := multipart.NewWriter(&input)
+	file, err := writer.CreateFormFile("input_reference", "ref.png")
+	require.NoError(t, err)
+	_, err = file.Write([]byte("image-bytes"))
+	require.NoError(t, err)
+	require.NoError(t, writer.Close())
+	c, _ := gin.CreateTestContext(httptest.NewRecorder())
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/videos", bytes.NewReader(input.Bytes()))
+	c.Request.Header.Set("Content-Type", writer.FormDataContentType())
+	c.Set("task_request", relaycommon.TaskSubmitReq{Prompt: "p"})
+	body, err := adaptor.BuildRequestBody(c, info)
+	require.NoError(t, err)
+	requestBytes, err := io.ReadAll(body)
+	require.NoError(t, err)
+	upstream, err := http.NewRequest(http.MethodPost, "https://provider.example/submit", bytes.NewReader(requestBytes))
+	require.NoError(t, err)
+	require.NoError(t, adaptor.BuildRequestHeader(c, upstream, info))
+	rebuilt := c.GetHeader("Content-Type")
+	assert.Equal(t, rebuilt, upstream.Header.Get("Content-Type"))
+	assert.NotContains(t, upstream.Header.Get("Content-Type"), "plugin-boundary")
+	assert.Contains(t, rebuilt, "boundary=")
+}
+
 func TestTaskAdaptorInlinesJSONFilePlaceholders(t *testing.T) {
 	const fileBytes = "image-bytes"
 	encoded := base64.StdEncoding.EncodeToString([]byte(fileBytes))
@@ -2771,4 +2806,63 @@ func TestTaskAdaptorChainsSunoBatchFetchThroughNewAPIUpstream(t *testing.T) {
 	require.Contains(t, results, "task_up_public")
 	assert.Equal(t, "SUCCESS", results["task_up_public"].TaskInfo.Status)
 	assert.Equal(t, []string{"POST /suno/submit/MUSIC", "POST /suno/fetch"}, seen)
+}
+
+const orderedProtocolPlugin = `
+export const meta = {apiVersion:1,key:"ordered",name:"Ordered",version:"1.0.0",author:{name:"Test"},models:["m"],fetchMode:"per_task",requiredCapabilities:["json-order@1"],protocols:[{name:"openai_responses",supports:["sync"]}]};
+export const protocols = {openai_responses:{decodeRequest:function(ctx){const b=ctx.body.value;return {kind:"submit",model:ctx.model,requestBody:{model:b.model,state:b.state,questions:b.questions}};},renderFinal:function(){return {};}}};
+export function buildSubmitRequest(ctx){const b=ctx.requestBody;return {url:ctx.baseUrl+"/submit",body:{model:b.model,state:b.state,questions:b.questions}}} export function parseSubmitResponse(){return {taskId:"one"}} export function buildQueryRequest(){return {}} export function parseTaskResult(){return {status:"SUCCESS"}}
+`
+
+func TestTaskAdaptorJSONOrderCapability(t *testing.T) {
+	client := `{"model":"m","state":{"zeta":"1","alpha":"2","mid":"&<>"},"questions":{"q2":{"type":"noul"},"q1":{"type":"noul"}}}`
+	for _, tc := range []struct {
+		name   string
+		source string
+		body   string
+		want   string
+		status int
+	}{
+		{name: "declared", source: orderedProtocolPlugin, body: client, want: client},
+		{
+			name:   "undeclared",
+			source: strings.Replace(orderedProtocolPlugin, `requiredCapabilities:["json-order@1"],`, "", 1),
+			body:   client,
+			want:   `{"model":"m","questions":{"q1":{"type":"noul"},"q2":{"type":"noul"}},"state":{"alpha":"2","mid":"\u0026\u003c\u003e","zeta":"1"}}`,
+		},
+		{name: "duration over limit in state", source: orderedProtocolPlugin, body: `{"model":"m","state":{"duration":3601},"questions":{}}`, status: http.StatusBadRequest},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			plugin, err := pluginruntime.NewRegistry().Register(tc.source, pluginruntime.Options{})
+			require.NoError(t, err)
+			var decoded any
+			require.NoError(t, json.Unmarshal([]byte(tc.body), &decoded))
+			body := map[string]any{"kind": "json", "value": decoded}
+			protocolContext := pluginruntime.ProtocolRequestContext{
+				RouteRequestContext: pluginruntime.RouteRequestContext{Body: body, BodyText: []byte(tc.body)},
+				Protocol:            "openai_responses", Model: "m",
+			}
+			c, _ := gin.CreateTestContext(httptest.NewRecorder())
+			c.Request = httptest.NewRequest(http.MethodPost, "/v1/responses", strings.NewReader(tc.body))
+			c.Set(pluginruntime.ContextKeyPinnedEndpoint, pluginruntime.PinnedEndpoint{Plugin: plugin, Protocol: "openai_responses", Model: "m"})
+			c.Set(pluginruntime.ContextKeyProtocolRequest, protocolContext)
+			info := &relaycommon.RelayInfo{ChannelMeta: &relaycommon.ChannelMeta{ChannelBaseUrl: "https://provider.example", UpstreamModelName: "m"}, TaskRelayInfo: &relaycommon.TaskRelayInfo{}, OriginModelName: "m"}
+			adaptor := New(plugin)
+			adaptor.Init(info)
+
+			taskErr := adaptor.ValidateRequestAndSetAction(c, info)
+			if tc.status != 0 {
+				require.NotNil(t, taskErr)
+				assert.Equal(t, tc.status, taskErr.StatusCode)
+				assert.Equal(t, "plugin_usage_invalid", taskErr.Code)
+				return
+			}
+			require.Nil(t, taskErr)
+			reader, err := adaptor.BuildRequestBody(c, info)
+			require.NoError(t, err)
+			got, err := io.ReadAll(reader)
+			require.NoError(t, err)
+			assert.Equal(t, tc.want, string(got))
+		})
+	}
 }

@@ -20,21 +20,21 @@ import i18next from 'i18next'
 import { CreditCard, Landmark } from 'lucide-react'
 import type { ReactNode } from 'react'
 import {
-  SiAlipay,
-  SiBnbchain,
-  SiOkx,
-  SiPolygon,
-  SiStripe,
-  SiTether,
-  SiWechat,
-} from 'react-icons/si'
+  IconAlipay,
+  IconBnb,
+  IconOkx,
+  IconPolygon,
+  IconStripe,
+  IconTether,
+  IconWeChat,
+} from '@/assets/brand-icons'
 
+import { TronIcon } from '../components/tron-icon'
 import {
   BEPUSDT_CHAIN_METHODS,
   PAYMENT_TYPES,
   PAYMENT_ICON_COLORS,
 } from '../constants'
-import { TronIcon } from '../components/tron-icon'
 
 // ============================================================================
 // UI Helper Functions
@@ -109,11 +109,11 @@ export function getPaymentIcon(
       case 'usdt.trc20':
         return <TronIcon {...iconProps} />
       case 'usdt.bep20':
-        return <SiBnbchain {...iconProps} />
+        return <IconBnb {...iconProps} />
       case 'usdt.polygon':
-        return <SiPolygon {...iconProps} />
+        return <IconPolygon {...iconProps} />
       case 'usdt.xlayer':
-        return <SiOkx {...iconProps} />
+        return <IconOkx {...iconProps} />
       default:
         return <CreditCard className={className} />
     }
@@ -121,7 +121,7 @@ export function getPaymentIcon(
 
   if (paymentType === PAYMENT_TYPES.USDT) {
     return (
-      <SiTether
+      <IconTether
         className={className}
         style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.USDT] }}
       />
@@ -131,21 +131,21 @@ export function getPaymentIcon(
   switch (paymentType) {
     case PAYMENT_TYPES.ALIPAY:
       return (
-        <SiAlipay
+        <IconAlipay
           className={className}
           style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.ALIPAY] }}
         />
       )
     case PAYMENT_TYPES.WECHAT:
       return (
-        <SiWechat
+        <IconWeChat
           className={className}
           style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.WECHAT] }}
         />
       )
     case PAYMENT_TYPES.STRIPE:
       return (
-        <SiStripe
+        <IconStripe
           className={className}
           style={{ color: PAYMENT_ICON_COLORS[PAYMENT_TYPES.STRIPE] }}
         />

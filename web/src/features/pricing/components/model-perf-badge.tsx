@@ -22,6 +22,7 @@ import { useTranslation } from 'react-i18next'
 import type { SuccessRatePoint } from '@/features/performance-metrics/types'
 import {
   formatLatency,
+  formatThroughput,
   getSuccessRateDotClass,
 } from '@/features/performance-metrics/lib/format'
 import { cn } from '@/lib/utils'
@@ -35,8 +36,6 @@ export type ModelPerfBadgeData = {
   recent_success_series?: SuccessRatePoint[]
 }
 
-const STATUS_SLOTS = Array.from({ length: 24 }, (_, slot) => slot)
-
 export interface ModelPerfBadgeProps extends React.HTMLAttributes<HTMLDivElement> {
   perf: ModelPerfBadgeData | undefined
 }
@@ -45,32 +44,27 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
   props: ModelPerfBadgeProps
 ) {
   const { t } = useTranslation()
-
   const perf = props.perf
-  if (!perf) {
-    return null
-  }
-
-  const { avg_latency_ms, success_rate } = perf
-  const successRate = success_rate
+  const successRate = perf?.success_rate
   const hasSuccessRate =
     successRate != null &&
     Number.isFinite(successRate) &&
     successRate >= 0 &&
     successRate <= 100
-  const latencyText = formatLatency(avg_latency_ms)
-
-  const statusRates = useMemo(() => {
-    const currentHourStart = Math.floor(Date.now() / 1000 / 3600) * 3600
-    const ratesByHour = new Map<number, number>()
-    for (const point of perf.recent_success_series ?? []) {
-      ratesByHour.set(point.ts, point.success_rate)
-    }
-    return STATUS_SLOTS.map((slot) => {
-      const hourStart = currentHourStart - (23 - slot) * 3600
-      return ratesByHour.get(hourStart)
-    })
-  }, [perf.recent_success_series])
+  const latencyText = formatLatency(perf?.avg_latency_ms ?? Number.NaN)
+  const rawThroughput = formatThroughput(perf?.avg_tps ?? Number.NaN)
+  const throughputText =
+    rawThroughput === '—' ? '—t/s' : rawThroughput.replace(' ', '')
+  const samples = useMemo(() => {
+    return (perf?.recent_success_series ?? [])
+      .filter(
+        (point) =>
+          Number.isFinite(point.success_rate) &&
+          point.success_rate >= 0 &&
+          point.success_rate <= 100
+      )
+      .slice(-24)
+  }, [perf?.recent_success_series])
 
   return (
     <div
@@ -96,31 +90,27 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
           <dd
             role='img'
             aria-label={t(
-              'Recent success-rate samples; gray bars indicate missing data.'
+              samples.length > 0
+                ? 'Recent success-rate samples'
+                : 'No performance data available'
             )}
             title={t(
-              'Recent success-rate samples; gray bars indicate missing data.'
+              samples.length > 0
+                ? 'Recent success-rate samples'
+                : 'No performance data available'
             )}
             className='mt-1 flex h-3 w-24 items-center gap-px'
           >
-            {STATUS_SLOTS.map((slot) => {
-              const rate = statusRates[slot]
-              return (
-                <span
-                  key={slot}
-                  aria-hidden
-                  className={cn(
-                    'h-full w-[3px] shrink-0 rounded-xs',
-                    rate != null &&
-                      Number.isFinite(rate) &&
-                      rate >= 0 &&
-                      rate <= 100
-                      ? getSuccessRateDotClass(rate)
-                      : 'bg-muted-foreground/15'
-                  )}
-                />
-              )
-            })}
+            {samples.map((point, index) => (
+              <span
+                key={`${point.ts}-${index}`}
+                aria-hidden
+                className={cn(
+                  'h-full w-[3px] shrink-0 rounded-xs',
+                  getSuccessRateDotClass(point.success_rate)
+                )}
+              />
+            ))}
           </dd>
         </div>
         <div title={t('Average latency')} className='shrink-0'>
@@ -131,24 +121,11 @@ export const ModelPerfBadge = memo(function ModelPerfBadge(
             {latencyText === '—' ? '—s' : latencyText}
           </dd>
         </div>
-        <div className='flex h-4 items-center justify-end gap-px'>
-          {STATUS_SLOTS.map((slot) => {
-            const rate = statusRates[slot]
-            return (
-              <span
-                key={slot}
-                className={cn(
-                  'h-3 w-[2px] rounded-full',
-                  rate != null &&
-                    Number.isFinite(rate) &&
-                    rate >= 0 &&
-                    rate <= 100
-                    ? getSuccessRateDotClass(rate)
-                    : 'bg-muted-foreground/15'
-                )}
-              />
-            )
-          })}
+        <div title={t('Throughput')} className='shrink-0'>
+          <dt className='text-muted-foreground text-[11px] leading-4'>
+            {t('Throughput short')}
+          </dt>
+          <dd className='mt-1 font-mono whitespace-nowrap'>{throughputText}</dd>
         </div>
       </dl>
       {props.children}

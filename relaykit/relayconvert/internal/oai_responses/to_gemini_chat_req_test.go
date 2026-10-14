@@ -44,3 +44,21 @@ func TestOpenAIResponsesRequestToGeminiPreservesFunctionCallIDs(t *testing.T) {
 	require.NotNil(t, got.Contents[1].Parts[0].FunctionResponse)
 	assert.JSONEq(t, `"call_1"`, string(got.Contents[1].Parts[0].FunctionResponse.ID))
 }
+
+func TestOpenAIResponsesRequestToGeminiOmitsTrailingAssistantText(t *testing.T) {
+	got, err := OpenAIResponsesRequestToGeminiChat(nil, &dto.OpenAIResponsesRequest{
+		Model: "gemini-2.5-flash",
+		Input: json.RawMessage(`[{"role":"user","content":"question"},{"role":"assistant","content":"old answer"}]`),
+	}, nil)
+	require.NoError(t, err)
+	require.Len(t, got.Contents, 1)
+	assert.Equal(t, "user", got.Contents[0].Role)
+
+	kept, err := OpenAIResponsesRequestToGeminiChat(nil, &dto.OpenAIResponsesRequest{
+		Model: "gemini-2.5-flash",
+		Input: json.RawMessage(`[{"role":"assistant","content":"prefill"}]`),
+	}, nil)
+	require.NoError(t, err)
+	require.NotEmpty(t, kept.Contents)
+	assert.Equal(t, "model", kept.Contents[len(kept.Contents)-1].Role)
+}

@@ -214,6 +214,16 @@ type RelayInfo struct {
 	*ResponsesUsageInfo
 	*ChannelMeta
 	*TaskRelayInfo
+
+	// VendorToolUsage reads the upstream's own billed tool counts from a raw
+	// response. Nil means this upstream does not report a vendor tool bill.
+	VendorToolUsage func(raw []byte) map[string]int
+	// WebSearchBillingKey overrides the tool-price key the Claude handler uses
+	// when the request itself proves a hosted search.
+	WebSearchBillingKey string
+	// requestInferredToolKey is the tool-price key recorded for the current
+	// channel attempt. InitChannelMeta drops it on the next attempt.
+	requestInferredToolKey string
 }
 
 // UpdateImageCount replaces the billable quantity without changing the frozen
@@ -307,6 +317,12 @@ func (info *RelayInfo) InitChannelMeta(c *gin.Context) {
 	}
 
 	info.ChannelMeta = channelMeta
+	info.VendorToolUsage = nil
+	info.WebSearchBillingKey = ""
+	if info.requestInferredToolKey != "" && info.ResponsesUsageInfo != nil && info.ResponsesUsageInfo.BuiltInTools != nil {
+		delete(info.ResponsesUsageInfo.BuiltInTools, info.requestInferredToolKey)
+	}
+	info.requestInferredToolKey = ""
 	info.ReasoningEffort = ""
 	info.ReasoningConversion = nil
 
@@ -969,6 +985,7 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
 
 	claudeSettings := model_setting.GetClaudeSettings()
 	geminiSettings := model_setting.GetGeminiSettings()
+	channelType := info.GetChannelType()
 	options := &convmeta.Options{
 		Claude: convmeta.ClaudeOptions{
 			ThinkingAdapterEnabled:                claudeSettings.ThinkingAdapterEnabled,
@@ -981,6 +998,10 @@ func (info *RelayInfo) ConvOptions() *convmeta.Options {
 			FunctionCallThoughtSignatureEnabled:   geminiSettings.FunctionCallThoughtSignatureEnabled,
 			SupportsImagine:                       model_setting.IsGeminiModelSupportImagine,
 			SafetySetting:                         model_setting.GetGeminiSafetySetting,
+			// Gemini API v1 has no parametersJsonSchema; v1beta and Vertex AI accept it.
+			SupportsJSONSchema: func(modelName string) bool {
+				return channelType == constant.ChannelTypeVertexAi || model_setting.GetGeminiVersionSetting(modelName) != "v1"
+			},
 		},
 		HostedTools:            hostedToolCapabilitiesForChannel(info.GetChannelType()),
 		OpenRouterDialect:      info != nil && info.GetChannelType() == constant.ChannelTypeOpenRouter,
@@ -1162,17 +1183,17 @@ func (t *TaskSubmitReq) UnmarshalMetadata(v any) error {
 }
 
 type TaskInfo struct {
-	Code             int            `json:"code"`
-	TaskID           string         `json:"task_id"`
-	Status           string         `json:"status"`
-	Reason           string         `json:"reason,omitempty"`
-	Url              string         `json:"url,omitempty"`
-	RemoteUrl        string         `json:"remote_url,omitempty"`
-	Progress         string         `json:"progress,omitempty"`
-	CompletionTokens int            `json:"completion_tokens,omitempty"` // 用于按倍率计费
-	TotalTokens      int            `json:"total_tokens,omitempty"`      // 用于按倍率计费
-	UsageFacts       map[string]any `json:"usage_facts,omitempty"`
-	PluginState      []byte         `json:"-"`
+	Code             int             `json:"code"`
+	TaskID           string          `json:"task_id"`
+	Status           string          `json:"status"`
+	Reason           string          `json:"reason,omitempty"`
+	Url              string          `json:"url,omitempty"`
+	RemoteUrl        string          `json:"remote_url,omitempty"`
+	Progress         string          `json:"progress,omitempty"`
+	CompletionTokens int             `json:"completion_tokens,omitempty"` // 用于按倍率计费
+	TotalTokens      int             `json:"total_tokens,omitempty"`      // 用于按倍率计费
+	UsageFacts       map[string]any  `json:"usage_facts,omitempty"`
+	PluginState      json.RawMessage `json:"plugin_state,omitempty"`
 }
 
 func FailTaskInfo(reason string) *TaskInfo {

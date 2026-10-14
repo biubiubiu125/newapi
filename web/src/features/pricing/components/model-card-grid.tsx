@@ -50,17 +50,25 @@ export const ModelCardGrid = memo(function ModelCardGrid(
   const totalPages = Math.max(1, Math.ceil(props.models.length / pageSize))
   const currentPage = Math.min(page, totalPages)
 
-  const perfQuery = useQuery({
-    queryKey: ['perf-metrics-summary', 24],
-    queryFn: async () => requireServerSuccess(await getPerfMetricsSummary(24)),
-    staleTime: 60 * 1000,
-    retry: false,
-  })
-
   const pagedModels = useMemo(() => {
     const start = (currentPage - 1) * pageSize
     return props.models.slice(start, start + pageSize)
   }, [currentPage, pageSize, props.models])
+  const recentModels = useMemo(
+    () =>
+      pagedModels
+        .map((model) => model.model_name)
+        .filter((name): name is string => Boolean(name)),
+    [pagedModels]
+  )
+
+  const perfQuery = useQuery({
+    queryKey: ['perf-metrics-summary', 24, recentModels],
+    queryFn: async () =>
+      requireServerSuccess(await getPerfMetricsSummary(24, recentModels)),
+    staleTime: 60 * 1000,
+    retry: false,
+  })
 
   const perfMap = useMemo(() => {
     const map = new Map<string, ModelPerfBadgeData>()

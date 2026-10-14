@@ -192,6 +192,9 @@ func OaiStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Re
 	for _, name := range streamFunctionCallNames {
 		info.CountBillableToolCall(dto.BuildInCallFunctionCall, name)
 	}
+	if usageFrame != "" {
+		info.ApplyVendorToolUsage(common.StringToByteSlice(usageFrame))
+	}
 
 	HandleFinalResponse(c, info, lastStreamData, responseId, createAt, model, systemFingerprint, usage, containStreamUsage)
 
@@ -298,6 +301,7 @@ func OpenaiHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http.Respo
 			info.CountBillableToolCall(dto.BuildInCallFunctionCall, tc.Function.Name)
 		}
 	}
+	info.ApplyVendorToolUsage(responseBody)
 
 	forceFormat := false
 	if info.ChannelSetting.ForceFormat {

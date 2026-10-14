@@ -15,6 +15,7 @@ import (
 	constant2 "github.com/QuantumNous/new-api/relay/constant"
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
+	"github.com/QuantumNous/new-api/tokenkit"
 
 	"github.com/gin-gonic/gin"
 )
@@ -89,10 +90,6 @@ func getImageToken(c *gin.Context, fileMeta *types.FileMeta, model string, strea
 
 	if !constant.GetMediaTokenNotStream && !stream {
 		return 3 * baseTokens, nil
-	}
-	// Normalize detail
-	if fileMeta.Detail == "auto" || fileMeta.Detail == "" {
-		fileMeta.Detail = "high"
 	}
 
 	// 使用统一的文件服务获取图片配置
@@ -408,16 +405,12 @@ func CountAudioTokenOutput(audioBase64 string, audioFormat string) (int, error) 
 	return common.QuotaFromFloat(duration / 60 * 200 / 0.24), nil
 }
 
-// CountTextToken 统计文本的token数量，仅OpenAI模型使用tokenizer，其余模型使用估算
+// CountTextToken counts text tokens through tokenkit. OpenAI models use
+// tiktoken; other models use the calibrated estimator. The old service
+// tokenizer stays only for callers that still initialize it.
 func CountTextToken(text string, model string) int {
 	if text == "" {
 		return 0
 	}
-	if common.IsOpenAITextModel(model) {
-		if tokenEncoder := getTokenEncoder(model); tokenEncoder != nil {
-			return getTokenNum(tokenEncoder, text)
-		}
-	}
-	// 非 OpenAI 模型，或 tokenizer 尚未初始化时用估算，避免未交付路径 panic。
-	return EstimateTokenByModel(model, text)
+	return tokenkit.Count(model, text)
 }

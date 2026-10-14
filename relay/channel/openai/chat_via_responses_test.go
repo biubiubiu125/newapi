@@ -388,3 +388,37 @@ func requireOrderedSubstrings(t *testing.T, s string, parts ...string) {
 		offset += idx + len(part)
 	}
 }
+
+func TestOaiResponsesToChatStreamHandlerSettlesFailedUsageAfterDeliveredText(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.output_text.delta","delta":"hello"}`,
+		`data: {"type":"response.failed","response":{"status":"failed","usage":{"input_tokens":11,"output_tokens":7,"total_tokens":18},"error":{"message":"upstream failed","type":"server_error"}}}`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+
+	usage, err := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, err)
+	require.NotNil(t, usage)
+	assert.Equal(t, 11, usage.PromptTokens)
+	assert.Equal(t, 7, usage.CompletionTokens)
+	assert.Equal(t, 18, usage.TotalTokens)
+	got := recorder.Body.String()
+	assert.Contains(t, got, "upstream failed")
+	assert.NotContains(t, got, "data: [DONE]")
+}
+
+func TestOaiResponsesToChatStreamHandlerDoesNotBillEmptyFailure(t *testing.T) {
+	body := strings.Join([]string{
+		`data: {"type":"response.failed","response":{"status":"failed","usage":{"input_tokens":11,"output_tokens":7,"total_tokens":18},"error":{"message":"upstream failed","type":"server_error"}}}`,
+		``,
+	}, "\n")
+	c, recorder, resp, info := newResponsesChatTestContext(t, body, true)
+
+	usage, err := OaiResponsesToChatStreamHandler(c, info, resp)
+
+	require.Nil(t, usage)
+	require.NotNil(t, err)
+	assert.NotContains(t, recorder.Body.String(), "data: [DONE]")
+}

@@ -5,6 +5,8 @@
 package convmeta
 
 import (
+	"strings"
+
 	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/relaykit/types"
 )
@@ -97,6 +99,23 @@ type ResponsesToolState struct {
 	// upstream as function tools taking one string "input" argument. Function
 	// calls with these names are custom tool calls.
 	CustomToolNames map[string]struct{}
+	// Namespaces maps an upstream function name to the Responses tool
+	// namespace it was flattened from.
+	Namespaces map[string]string
+}
+
+// DefaultResponsesToolNamespace is the namespace Codex declares its ordinary
+// tools in. OpenAI returns those calls by bare name, so they keep their names
+// upstream.
+const DefaultResponsesToolNamespace = "functions"
+
+// NamespacedToolName is the upstream function name of a tool declared in a
+// Responses tool namespace.
+func NamespacedToolName(namespace string, name string) string {
+	if namespace == "" || namespace == DefaultResponsesToolNamespace {
+		return name
+	}
+	return namespace + "__" + name
 }
 
 // CustomToolInputArgument is the single function argument that carries a
@@ -110,6 +129,20 @@ func (s *ResponsesToolState) IsCustomTool(name string) bool {
 	}
 	_, ok := s.CustomToolNames[name]
 	return ok
+}
+
+// ResponsesToolName restores the Responses namespace and tool name of an
+// upstream function name. Names that were not flattened return an empty
+// namespace and the original name.
+func (s *ResponsesToolState) ResponsesToolName(upstreamName string) (string, string) {
+	if s == nil {
+		return "", upstreamName
+	}
+	namespace, ok := s.Namespaces[upstreamName]
+	if !ok {
+		return "", upstreamName
+	}
+	return namespace, strings.TrimPrefix(upstreamName, namespace+"__")
 }
 
 const (

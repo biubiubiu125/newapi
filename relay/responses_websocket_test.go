@@ -715,7 +715,7 @@ func TestResponsesWSShutdownInterruptsBusyWriter(t *testing.T) {
 	s.targetWriteMu.Lock()
 	defer s.targetWriteMu.Unlock()
 	done := make(chan struct{})
-	go func() { s.shutdown(); close(done) }()
+	go func() { s.shutdown(websocket.CloseInternalServerErr, "upstream connection closed"); close(done) }()
 	select {
 	case <-done:
 	case <-time.After(5 * time.Second):
@@ -723,10 +723,14 @@ func TestResponsesWSShutdownInterruptsBusyWriter(t *testing.T) {
 	}
 	require.NoError(t, peer.SetReadDeadline(time.Now().Add(time.Second)))
 	_, _, err := peer.ReadMessage()
-	assert.Error(t, err)
+	var closeErr *websocket.CloseError
+	require.ErrorAs(t, err, &closeErr)
+	assert.Equal(t, websocket.CloseInternalServerErr, closeErr.Code)
+	assert.Equal(t, "upstream connection closed", closeErr.Text)
 	require.NoError(t, client.SetReadDeadline(time.Now().Add(time.Second)))
 	_, _, err = client.ReadMessage()
-	assert.Error(t, err)
+	require.ErrorAs(t, err, &closeErr)
+	assert.Equal(t, websocket.CloseInternalServerErr, closeErr.Code)
 	assert.Nil(t, s.getTarget())
 }
 

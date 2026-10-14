@@ -310,6 +310,21 @@ func ApiErrorMsg(c *gin.Context, msg string) {
 	writeAPIError(c, http.StatusOK, msg)
 }
 
+// ApiErrorT responds with a web console message. key is the English source
+// text and the message_key the console translates.
+func ApiErrorT(c *gin.Context, key string, params ...map[string]any) {
+	message := NewMessage(key, params...)
+	body := gin.H{
+		"success":     false,
+		"message":     message.Error(),
+		"message_key": message.Key,
+	}
+	if len(message.Params) > 0 {
+		body["message_params"] = message.Params
+	}
+	c.JSON(http.StatusOK, body)
+}
+
 func ApiErrorWithStatus(c *gin.Context, status int, err error) {
 	if respondLocalizedAPIError(c, status, err) {
 		return

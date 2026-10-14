@@ -3,9 +3,11 @@ package perfmetrics
 import (
 	"cmp"
 	"context"
+	"errors"
 	"fmt"
 	"math"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -23,6 +25,16 @@ var hotBuckets sync.Map
 // seriesSchema is a stable client cache/schema marker. Do not change it when
 // hiding fields or making response-only privacy hardening changes.
 const seriesSchema = "dbcd0a3c01b55203"
+
+const (
+	maxRecentModels         = 50
+	maxRecentSuccessSamples = 24
+	recentHistoryHours      = 24 * 7
+)
+
+// ErrInvalidParameters is returned when a summary request asks for too many
+// recent-sample models. Callers map it to the existing parameter error.
+var ErrInvalidParameters = errors.New("Invalid parameters")
 
 func Init() {
 	go flushLoop()
@@ -215,7 +227,11 @@ func Query(params QueryParams) (QueryResult, error) {
 	return result, nil
 }
 
-func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
+func QuerySummaryAll(hours int, groups []string, recentModels ...string) (SummaryAllResult, error) {
+	requested, err := normalizeRecentModels(recentModels)
+	if err != nil {
+		return SummaryAllResult{}, err
+	}
 	startTs, endTs := queryWindow(time.Now(), hours)
 	allowedGroups := allowedGroupSet(groups)
 
@@ -286,8 +302,99 @@ func QuerySummaryAll(hours int, groups []string) (SummaryAllResult, error) {
 	sort.Slice(models, func(i, j int) bool {
 		return models[i].RequestCount > models[j].RequestCount
 	})
+	if len(requested) > 0 {
+		recentStart, recentEnd := queryWindow(time.Now(), recentHistoryHours)
+		recent, recentErr := recentSeriesByModel(recentStart, recentEnd, groups, requested)
+		if recentErr != nil {
+			return SummaryAllResult{}, recentErr
+		}
+		requestedSet := make(map[string]struct{}, len(requested))
+		for _, name := range requested {
+			requestedSet[name] = struct{}{}
+		}
+		for i := range models {
+			if _, ok := requestedSet[models[i].ModelName]; !ok {
+				continue
+			}
+			models[i].RecentSuccessSeries = recent[models[i].ModelName]
+		}
+	}
 
 	return SummaryAllResult{Summary: summarize(all), WindowStart: startTs, WindowEnd: endTs, Models: models}, nil
+}
+
+func normalizeRecentModels(models []string) ([]string, error) {
+	if len(models) == 0 {
+		return nil, nil
+	}
+	seen := make(map[string]struct{}, len(models))
+	out := make([]string, 0, len(models))
+	for _, name := range models {
+		name = strings.TrimSpace(name)
+		if name == "" {
+			continue
+		}
+		if _, ok := seen[name]; ok {
+			continue
+		}
+		seen[name] = struct{}{}
+		out = append(out, name)
+	}
+	if len(out) > maxRecentModels {
+		return nil, ErrInvalidParameters
+	}
+	return out, nil
+}
+
+func capRecentSeries(series []SuccessRatePoint) []SuccessRatePoint {
+	if len(series) <= maxRecentSuccessSamples {
+		return series
+	}
+	return append([]SuccessRatePoint(nil), series[len(series)-maxRecentSuccessSamples:]...)
+}
+
+func recentSeriesByModel(startTs int64, endTs int64, groups []string, models []string) (map[string][]SuccessRatePoint, error) {
+	rows, err := model.GetPerfMetricsSummaryBucketsForModels(startTs, endTs, groups, models)
+	if err != nil {
+		return nil, err
+	}
+	buckets := map[string]map[int64]counters{}
+	for _, row := range rows {
+		mergeModelBucket(buckets, row.ModelName, row.BucketTs, counters{
+			requestCount: row.RequestCount,
+			successCount: row.SuccessCount,
+		})
+	}
+	wanted := make(map[string]struct{}, len(models))
+	for _, name := range models {
+		wanted[name] = struct{}{}
+	}
+	allowed := allowedGroupSet(groups)
+	hotBuckets.Range(func(key, value any) bool {
+		k := key.(bucketKey)
+		if _, ok := wanted[k.model]; !ok {
+			return true
+		}
+		if k.bucketTs < startTs || k.bucketTs > endTs {
+			return true
+		}
+		if allowed != nil {
+			if _, ok := allowed[k.group]; !ok {
+				return true
+			}
+		}
+		mergeModelBucket(buckets, k.model, k.bucketTs, value.(*atomicBucket).snapshot())
+		return true
+	})
+	out := map[string][]SuccessRatePoint{}
+	for name, seriesBuckets := range buckets {
+		series := capRecentSeries(recentSuccessSeries(seriesBuckets))
+		if len(series) == 0 {
+			continue
+		}
+		out[name] = series
+	}
+	return out, nil
 }
 
 func mergeModelTotals(totals map[string]counters, modelName string, value counters) {

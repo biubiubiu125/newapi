@@ -260,7 +260,31 @@ const (
 // Adaptors that do not need custom billing can embed this struct directly.
 // ---------------------------------------------------------------------------
 
-type BaseBilling struct{}
+type BaseBilling struct {
+	channelSetting dto.ChannelSettings
+}
+
+// RememberChannelSetting keeps the channel transport settings for later polls.
+// Submit already honors them; poll must use the same client or a certificate
+// failure can be counted until the task is failed and refunded.
+func (b *BaseBilling) RememberChannelSetting(info *relaycommon.RelayInfo) {
+	if b == nil {
+		return
+	}
+	if info == nil || info.ChannelMeta == nil {
+		b.channelSetting = dto.ChannelSettings{}
+		return
+	}
+	b.channelSetting = info.ChannelSetting
+}
+
+// PollChannelSetting returns the settings stored by Init.
+func (b *BaseBilling) PollChannelSetting() dto.ChannelSettings {
+	if b == nil {
+		return dto.ChannelSettings{}
+	}
+	return b.channelSetting
+}
 
 // EstimateBilling returns nil (no extra ratios; use base model price).
 func (BaseBilling) EstimateBilling(_ *gin.Context, _ *relaycommon.RelayInfo) map[string]float64 {

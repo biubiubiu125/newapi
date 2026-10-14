@@ -49,6 +49,29 @@ func seedHardcodedToolPrices(prices map[string]float64) {
 	prices["web_search_preview:gpt-4.1*"] = defaultSearchPreviewModelPrice
 	prices["web_search_preview:gpt-4o-mini*"] = defaultSearchPreviewModelPrice
 	prices["web_search_preview:gpt-4.1-mini*"] = defaultSearchPreviewModelPrice
+
+	// Gemini 3 bills each search query at the google_search default. Gemini 2.5
+	// and older bill one grounded prompt, so their query count is free.
+	prices["google_search:gemini-2.5*"] = 0
+	prices["google_search:gemini-2.0*"] = 0
+	prices["google_search:gemini-1.5*"] = 0
+	prices["google_search_grounded_prompt:gemini-2.5*"] = 35
+	prices["google_search_grounded_prompt:gemini-2.0*"] = 35
+	prices["google_search_grounded_prompt:gemini-1.5*"] = 35
+
+	// Vendor search tiers in the vendor's list currency per 1K calls.
+	prices["search_std"] = 10
+	prices["search_pro"] = 30
+	prices["search_pro_sogou"] = 50
+	prices["search_pro_quark"] = 50
+	prices["search_strategy_turbo"] = 3
+	prices["search_strategy_max"] = 4
+	prices["search_strategy_agent"] = 4
+	prices["search_strategy_agent_max"] = 4
+	prices["bing_web_search"] = 14
+	prices["web_search:grok*"] = 5
+	prices["x_search_posts"] = 5
+	prices["x_search_profiles"] = 10
 }
 
 // ToolPriceSetting is managed by config.GlobalConfig.Register.
@@ -61,9 +84,26 @@ var toolPriceSetting = ToolPriceSetting{
 	Prices: make(map[string]float64),
 }
 
+// builtInToolNames are the tool names (the part before ":") that
+// seedHardcodedToolPrices prices. Operator prices never count.
+var builtInToolNames = make(map[string]struct{})
+
 func init() {
 	config.GlobalConfig.Register("tool_price_setting", &toolPriceSetting)
+	seed := make(map[string]float64)
+	seedHardcodedToolPrices(seed)
+	for key := range seed {
+		name, _, _ := strings.Cut(key, ":")
+		builtInToolNames[name] = struct{}{}
+	}
 	RebuildToolPriceIndex()
+}
+
+// IsBuiltInToolPriceKey reports whether the built-in price seed prices the
+// tool name, as a default or for a model prefix.
+func IsBuiltInToolPriceKey(name string) bool {
+	_, ok := builtInToolNames[name]
+	return ok
 }
 
 // ---------------------------------------------------------------------------

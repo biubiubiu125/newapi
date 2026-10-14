@@ -30,5 +30,6 @@ describe('DateTimePicker', () => {
     expect(document.querySelector('input[type="time"]')).toBeNull()
     expect(screen.getByLabelText('Hour')).toBeInTheDocument()
     expect(screen.getByLabelText('Minute')).toBeInTheDocument()
+    expect(screen.getByLabelText('Second')).toBeInTheDocument()
   })
 })

@@ -142,12 +142,12 @@ func ParseOpenAIReasoningEffortFromModelSuffix(modelName string, preserveEffortT
 	return effort, baseModel
 }
 
-func ParseClaudeModelSuffix(modelName string, allowThinkingAlias bool) (string, Intent, bool, error) {
+func ParseClaudeModelSuffix(modelName string, allowSuffixAlias bool) (string, Intent, bool, error) {
 	prefix, bare := splitModelNamespace(modelName)
 	if !strings.HasPrefix(bare, "claude-") {
 		return modelName, Intent{}, false, nil
 	}
-	base, intent, found, err := parseProviderModelSuffix(bare, "claude-", allowThinkingAlias, true)
+	base, intent, found, err := parseProviderModelSuffix(bare, "claude-", allowSuffixAlias, true)
 	if err != nil || !found || !legacyClaudeModelPattern.MatchString(base) {
 		return modelName, Intent{}, false, err
 	}
@@ -163,7 +163,7 @@ func isKnownClaudeModel(modelName string) bool {
 	}
 	knownPrefixes := []string{
 		"claude-fable-5", "claude-mythos-5", "claude-mythos-preview",
-		"claude-opus-5", "claude-sonnet-5", "claude-opus-4-8",
+		"claude-opus-5", "claude-sonnet-5", "claude-haiku-5", "claude-opus-4-8",
 		"claude-opus-4-7", "claude-opus-4-6", "claude-sonnet-4-6",
 		"claude-opus-4-5", "claude-sonnet-4-5", "claude-haiku-4-5",
 		"claude-opus-4-1", "claude-opus-4-", "claude-sonnet-4-",
@@ -177,12 +177,12 @@ func isKnownClaudeModel(modelName string) bool {
 	return false
 }
 
-func ParseGeminiModelSuffix(modelName string, allowThinkingAlias bool) (string, Intent, bool, error) {
+func ParseGeminiModelSuffix(modelName string, allowSuffixAlias bool) (string, Intent, bool, error) {
 	prefix, bare := splitModelNamespace(modelName)
 	if !strings.HasPrefix(bare, "gemini-") {
 		return modelName, Intent{}, false, nil
 	}
-	base, intent, found, err := parseProviderModelSuffix(bare, "gemini-", allowThinkingAlias, true)
+	base, intent, found, err := parseProviderModelSuffix(bare, "gemini-", allowSuffixAlias, true)
 	if err != nil || !found || !legacyGeminiModelPattern.MatchString(base) {
 		return modelName, Intent{}, false, err
 	}
@@ -192,13 +192,13 @@ func ParseGeminiModelSuffix(modelName string, allowThinkingAlias bool) (string, 
 // ParseKnownProviderModelSuffix extracts a canonical intent only when the
 // origin identifies a provider family whose suffix vocabulary is defined by
 // relaykit. Unknown OpenAI-compatible model names are deliberately untouched.
-func ParseKnownProviderModelSuffix(modelName string, allowThinkingAlias bool) (string, Intent, bool, error) {
+func ParseKnownProviderModelSuffix(modelName string, allowSuffixAlias bool) (string, Intent, bool, error) {
 	bare := lastModelPathSegment(modelName)
 	if strings.HasPrefix(bare, "claude-") {
-		return ParseClaudeModelSuffix(modelName, allowThinkingAlias)
+		return ParseClaudeModelSuffix(modelName, allowSuffixAlias)
 	}
 	if strings.HasPrefix(bare, "gemini-") {
-		return ParseGeminiModelSuffix(modelName, allowThinkingAlias)
+		return ParseGeminiModelSuffix(modelName, allowSuffixAlias)
 	}
 	return modelName, Intent{}, false, nil
 }
@@ -220,37 +220,40 @@ func TrimGeminiThinkingSuffix(modelName string) (string, bool) {
 	return baseModel, ok && err == nil
 }
 
-func parseProviderModelSuffix(modelName string, requiredPrefix string, allowThinkingAlias bool, includeThoughts bool) (string, Intent, bool, error) {
-	if allowThinkingAlias {
-		if marker := strings.LastIndex(modelName, "-thinking-"); marker >= 0 {
-			baseModel := modelName[:marker]
-			if !strings.HasPrefix(baseModel, requiredPrefix) {
-				return modelName, Intent{}, false, nil
-			}
-			budget, err := strconv.Atoi(modelName[marker+len("-thinking-"):])
-			if err != nil {
-				return modelName, Intent{}, false, fmt.Errorf("invalid thinking budget suffix on model %q: %w", modelName, err)
-			}
-			intent := Intent{BudgetTokens: &budget, Source: SourceSuffix, BudgetSource: SourceSuffix}
-			if includeThoughts {
-				value := true
-				intent.IncludeThoughts = &value
-			}
-			return baseModel, intent, true, nil
+// allowSuffixAlias gates every provider suffix, including effort tails such as -high.
+// When it is false the model name is returned unchanged and no thinking intent is inferred.
+func parseProviderModelSuffix(modelName string, requiredPrefix string, allowSuffixAlias bool, includeThoughts bool) (string, Intent, bool, error) {
+	if !allowSuffixAlias {
+		return modelName, Intent{}, false, nil
+	}
+	if marker := strings.LastIndex(modelName, "-thinking-"); marker >= 0 {
+		baseModel := modelName[:marker]
+		if !strings.HasPrefix(baseModel, requiredPrefix) {
+			return modelName, Intent{}, false, nil
 		}
-		if strings.HasSuffix(modelName, "-nothinking") {
-			baseModel := strings.TrimSuffix(modelName, "-nothinking")
-			return baseModel, Intent{Mode: ModeDisabled, Effort: EffortNone, Source: SourceSuffix}, true, nil
+		budget, err := strconv.Atoi(modelName[marker+len("-thinking-"):])
+		if err != nil {
+			return modelName, Intent{}, false, fmt.Errorf("invalid thinking budget suffix on model %q: %w", modelName, err)
 		}
-		if strings.HasSuffix(modelName, "-thinking") {
-			baseModel := strings.TrimSuffix(modelName, "-thinking")
-			intent := Intent{Mode: ModeEnabled, Source: SourceSuffix}
-			if includeThoughts {
-				value := true
-				intent.IncludeThoughts = &value
-			}
-			return baseModel, intent, true, nil
+		intent := Intent{BudgetTokens: &budget, Source: SourceSuffix, BudgetSource: SourceSuffix}
+		if includeThoughts {
+			value := true
+			intent.IncludeThoughts = &value
 		}
+		return baseModel, intent, true, nil
+	}
+	if strings.HasSuffix(modelName, "-nothinking") {
+		baseModel := strings.TrimSuffix(modelName, "-nothinking")
+		return baseModel, Intent{Mode: ModeDisabled, Effort: EffortNone, Source: SourceSuffix}, true, nil
+	}
+	if strings.HasSuffix(modelName, "-thinking") {
+		baseModel := strings.TrimSuffix(modelName, "-thinking")
+		intent := Intent{Mode: ModeEnabled, Source: SourceSuffix}
+		if includeThoughts {
+			value := true
+			intent.IncludeThoughts = &value
+		}
+		return baseModel, intent, true, nil
 	}
 
 	suffixes := []string{"-max", "-xhigh", "-high", "-medium", "-low", "-minimal", "-none"}

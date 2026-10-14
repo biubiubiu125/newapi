@@ -3174,7 +3174,17 @@ func updateSunoTaskBatch(
 		logger.LogError(ctx, fmt.Sprintf("渠道 #%d 没有可用的 Suno BaseURL，跳过本轮轮询", channelId))
 		return nil
 	}
-	proxy := ch.GetSetting().Proxy
+	setting := ch.GetSetting()
+	adaptor.Init(&relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:    ch.Type,
+			ChannelId:      ch.Id,
+			ChannelBaseUrl: baseURL,
+			ApiKey:         batch.key,
+			ChannelSetting: setting,
+		},
+	})
+	proxy := setting.Proxy
 	resp, err := adaptor.FetchTask(baseURL, batch.key, map[string]any{
 		"ids": batch.upstreamTaskIDs,
 	}, proxy)

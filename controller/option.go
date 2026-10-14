@@ -390,7 +390,7 @@ func UpdateOption(c *gin.Context) {
 		}
 	case "theme.frontend":
 		if option.Value != "default" {
-			common.ApiErrorI18n(c, i18n.MsgOptionThemeClassicRemoved)
+			common.ApiErrorT(c, "The Classic frontend has been removed. The theme can only be set to default")
 			return
 		}
 	case "claude.default_max_tokens":

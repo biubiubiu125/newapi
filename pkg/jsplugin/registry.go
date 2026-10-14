@@ -124,6 +124,26 @@ func (m Meta) SupportsUpstream(kind string) bool {
 	return kind == UpstreamKindVendor || slices.Contains(m.Upstreams, kind)
 }
 
+// PreservesJSONOrder reports whether the plugin declared json-order@1.
+func (m Meta) PreservesJSONOrder() bool {
+	return slices.Contains(m.RequiredCapabilities, CapabilityJSONOrder)
+}
+
+// AcceptsAutoDuration reports whether the plugin declared duration-auto@1.
+// Those plugins may submit duration -1 and reserve the longest duration.
+func (m Meta) AcceptsAutoDuration() bool {
+	return slices.Contains(m.RequiredCapabilities, CapabilityDurationAuto)
+}
+
+// JSONTextMember names the hook-result member also returned as JSON text
+// when the plugin preserves member order. Other plugins keep the map path.
+func (m Meta) JSONTextMember(member string) string {
+	if !m.PreservesJSONOrder() {
+		return ""
+	}
+	return member
+}
+
 // UsageProfile replaces the plugin's default usage metadata for its models.
 type UsageProfile struct {
 	Models   []string                    `json:"models"`
@@ -199,6 +219,18 @@ type LoadedPlugin struct {
 	Meta   Meta
 	Engine *Engine
 	Source string
+}
+
+// UsesSubmitEventDelta reports whether SSE submissions go through
+// parseSubmitEventDelta: the plugin declares submit-sse-delta@1, or exports
+// parseSubmitEventDelta without parseSubmitEvent. A plugin that exports both
+// and declares nothing keeps the snapshot hook.
+func UsesSubmitEventDelta(meta Meta, engine *Engine) bool {
+	if engine == nil {
+		return false
+	}
+	return slices.Contains(meta.RequiredCapabilities, CapabilitySubmitSSEDelta) ||
+		engine.HasExport("parseSubmitEventDelta") && !engine.HasExport("parseSubmitEvent")
 }
 
 // RegistrySnapshot is a read-only copy of the metadata currently stored in
@@ -326,7 +358,7 @@ func CompilePlugin(source string, options Options) (*LoadedPlugin, error) {
 	engine.version = meta.Version
 	requiredHooks := []string{"buildSubmitRequest", "parseSubmitResponse", "parseTaskResult"}
 	if slices.Contains(meta.SubmitResponseTypes, "sse") {
-		if slices.Contains(meta.RequiredCapabilities, CapabilitySubmitSSEDelta) {
+		if UsesSubmitEventDelta(meta, engine) {
 			requiredHooks = append(requiredHooks, "parseSubmitEventDelta")
 		} else {
 			requiredHooks = append(requiredHooks, "parseSubmitEvent")

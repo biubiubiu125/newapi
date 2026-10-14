@@ -68,12 +68,11 @@ func FetchCodexChannelModelsWithOptions(
 		ctx = context.Background()
 	}
 
-	client, err := newCodexChannelHTTPClient(channel)
+	releaseClient, err := newCodexReleaseHTTPClient(channel)
 	if err != nil {
 		return nil, err
 	}
-
-	clientVersion, err := GetLatestCodexClientVersion(ctx, client)
+	clientVersion, err := GetLatestCodexClientVersion(ctx, releaseClient)
 	if err != nil {
 		return nil, fmt.Errorf("failed to get Codex client version: %w", err)
 	}
@@ -83,6 +82,10 @@ func FetchCodexChannelModelsWithOptions(
 	baseURL := channel.GetBaseURL()
 	if baseURL == "" {
 		baseURL = constant.GetChannelBaseURL(constant.ChannelTypeCodex)
+	}
+	client, err := newCodexChannelHTTPClient(channel)
+	if err != nil {
+		return nil, err
 	}
 	originalKey := channel.Key
 	models, fetchErr := fetchCodexChannelModelsWithHeaders(
@@ -107,6 +110,22 @@ func FetchCodexChannelModelsWithOptions(
 		}
 	}
 	return models, fetchErr
+}
+
+// newCodexReleaseHTTPClient looks up the Codex CLI version on GitHub.
+// That host is not the channel upstream, so the channel TLS skip does not apply.
+func newCodexReleaseHTTPClient(channel *model.Channel) (*http.Client, error) {
+	if channel == nil {
+		return nil, fmt.Errorf("channel is nil")
+	}
+	client, err := GetHttpClientWithProxy(channel.GetSetting().Proxy)
+	if err != nil {
+		return nil, err
+	}
+	if client == nil {
+		return nil, fmt.Errorf("codex release http client is nil")
+	}
+	return CloneHTTPClientWithoutRedirects(client), nil
 }
 
 func newCodexChannelHTTPClient(channel *model.Channel) (*http.Client, error) {

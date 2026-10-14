@@ -29,6 +29,7 @@ type ssrfProtectedRoundTripper struct {
 	dialContext   func(ctx context.Context, network, address string) (net.Conn, error)
 	getProtection func() (*common.SSRFProtection, bool, error)
 	proxy         func(*http.Request) (*url.URL, error)
+	insecureTLS   bool
 
 	mutex      sync.Mutex
 	transports map[string]*http.Transport
@@ -161,7 +162,7 @@ func (t *ssrfProtectedRoundTripper) newTransport(proxyURL *url.URL) *http.Transp
 		Proxy:               proxyFunc,
 		DialContext:         dialContext,
 	}
-	if common.TLSInsecureSkipVerify {
+	if t.insecureTLS || common.TLSInsecureSkipVerify {
 		transport.TLSClientConfig = common.InsecureTLSConfig.Clone()
 	}
 	return transport

@@ -138,6 +138,9 @@ func TestClaudeMessagesRequestToOpenAIChatKeepsParallelToolResultsContiguous(t *
 	}
 	assert.Equal(t, []string{"user", "assistant", "tool", "tool", "user"}, roles)
 	assert.Len(t, got.Messages[1].ParseToolCalls(), 2)
+	assistantParts := got.Messages[1].ParseContent()
+	require.NotEmpty(t, assistantParts)
+	assert.Equal(t, "Let me look.", assistantParts[0].Text)
 	assert.Equal(t, "[image]", got.Messages[2].StringContent())
 	assert.Equal(t, "toolu_shot", got.Messages[2].ToolCallId)
 	assert.Equal(t, "note contents", got.Messages[3].StringContent())
@@ -148,4 +151,35 @@ func TestClaudeMessagesRequestToOpenAIChatKeepsParallelToolResultsContiguous(t *
 	assert.Equal(t, dto.ContentTypeImageURL, parts[0].Type)
 	require.NotNil(t, parts[0].GetImageMedia())
 	assert.Equal(t, dataURL, parts[0].GetImageMedia().Url)
+}
+
+func TestClaudeMessagesRequestToOpenAIChatKeepsAssistantImageWithToolUse(t *testing.T) {
+	const imageData = "iVBORw0KGgo="
+	const dataURL = "data:image/png;base64," + imageData
+	got, err := ClaudeMessagesRequestToOpenAIChat(context.Background(), dto.ClaudeRequest{
+		Model:     "claude-test",
+		MaxTokens: lo.ToPtr(uint(64)),
+		Messages: []dto.ClaudeMessage{
+			{Role: "assistant", Content: []dto.ClaudeMediaMessage{
+				{Type: "text", Text: lo.ToPtr("caption")},
+				{Type: "image", Source: &dto.ClaudeMessageSource{Type: "base64", MediaType: "image/png", Data: imageData}},
+				{Type: "tool_use", Id: "toolu_shot", Name: "screenshot", Input: map[string]any{}},
+			}},
+		},
+	}, &convmeta.Values{})
+	require.NoError(t, err)
+	require.NotEmpty(t, got.Messages)
+
+	assistant := got.Messages[0]
+	require.Len(t, assistant.ParseToolCalls(), 1)
+	parts := assistant.ParseContent()
+	require.NotEmpty(t, parts)
+	assert.Equal(t, "caption", parts[0].Text)
+	var sawImage bool
+	for _, part := range parts {
+		if part.Type == dto.ContentTypeImageURL && part.GetImageMedia() != nil && part.GetImageMedia().Url == dataURL {
+			sawImage = true
+		}
+	}
+	assert.True(t, sawImage)
 }

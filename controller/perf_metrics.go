@@ -1,6 +1,7 @@
 package controller
 
 import (
+	"errors"
 	"net/http"
 	"strconv"
 
@@ -22,8 +23,15 @@ func GetPerfMetricsSummary(c *gin.Context) {
 	}
 
 	activeGroups := append(lo.Keys(ratio_setting.GetGroupRatioCopy()), "auto")
-	result, err := perfmetrics.QuerySummaryAll(hours, activeGroups)
+	result, err := perfmetrics.QuerySummaryAll(hours, activeGroups, c.QueryArray("recent_model")...)
 	if err != nil {
+		if errors.Is(err, perfmetrics.ErrInvalidParameters) {
+			c.JSON(http.StatusBadRequest, gin.H{
+				"success": false,
+				"message": i18n.T(c, i18n.MsgInvalidParams),
+			})
+			return
+		}
 		common.ApiErrorWithStatus(c, http.StatusInternalServerError, err)
 		return
 	}

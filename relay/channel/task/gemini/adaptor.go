@@ -36,6 +36,7 @@ type TaskAdaptor struct {
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
+	a.RememberChannelSetting(info)
 	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
 	a.apiKey = info.ApiKey
@@ -213,7 +214,7 @@ func (a *TaskAdaptor) FetchTaskContext(ctx context.Context, baseUrl, key string,
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("x-goog-api-key", key)
 
-	client, err := service.GetHttpClientWithProxy(proxy)
+	client, err := service.GetHttpClientWithProxySettings(proxy, a.PollChannelSetting())
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}

@@ -24,7 +24,9 @@ import (
 )
 
 // https://platform.minimaxi.com/docs/api-reference/video-generation-intro
-var hailuoHTTPClient = service.GetHttpClientWithProxy
+var hailuoHTTPClient = func(proxy string, settings dto.ChannelSettings) (*http.Client, error) {
+	return service.GetHttpClientWithProxySettings(proxy, settings)
+}
 
 type TaskAdaptor struct {
 	taskcommon.BaseBilling
@@ -35,6 +37,7 @@ type TaskAdaptor struct {
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
+	a.RememberChannelSetting(info)
 	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
 	a.apiKey = info.ApiKey
@@ -135,7 +138,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+key)
 
-	client, err := service.GetHttpClientWithProxy(proxy)
+	client, err := service.GetHttpClientWithProxySettings(proxy, a.PollChannelSetting())
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}
@@ -279,7 +282,7 @@ func (a *TaskAdaptor) buildVideoURL(_, fileID string) string {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Authorization", "Bearer "+a.apiKey)
 
-	client, err := hailuoHTTPClient(a.proxy)
+	client, err := hailuoHTTPClient(a.proxy, a.PollChannelSetting())
 	if err != nil || client == nil {
 		return ""
 	}

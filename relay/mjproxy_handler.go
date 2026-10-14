@@ -27,6 +27,23 @@ import (
 	"github.com/gin-gonic/gin"
 )
 
+func midjourneyImageHTTPClient(channel *model.Channel) (*http.Client, string, error) {
+	if channel == nil {
+		return service.GetSSRFProtectedHTTPClient(), "", nil
+	}
+	setting := channel.GetSetting()
+	proxy := setting.Proxy
+	if strings.TrimSpace(proxy) != "" {
+		client, err := service.GetHttpClientWithProxySettings(proxy, setting)
+		return client, proxy, err
+	}
+	if setting.TLSInsecureSkipVerify {
+		client, err := service.GetSSRFProtectedHTTPClientWithProxySettings("", setting)
+		return client, proxy, err
+	}
+	return nil, proxy, nil
+}
+
 func midjourneyChannelDisabledMessage() string {
 	return "channel_disabled"
 }
@@ -144,14 +161,19 @@ func RelayMidjourneyImage(c *gin.Context) {
 	var httpClient *http.Client
 	var proxy string
 	if channel, err := model.CacheGetChannel(midjourneyTask.ChannelId); err == nil {
-		proxy = channel.GetSetting().Proxy
-		if proxy != "" {
-			if httpClient, err = service.GetHttpClientWithProxy(proxy); err != nil {
+		var clientErr error
+		httpClient, proxy, clientErr = midjourneyImageHTTPClient(channel)
+		if clientErr != nil {
+			if strings.TrimSpace(proxy) != "" {
 				c.JSON(400, gin.H{
 					"error": "proxy_url_invalid",
 				})
 				return
 			}
+			c.JSON(http.StatusBadGateway, gin.H{
+				"error": "http_get_image_failed",
+			})
+			return
 		}
 	}
 	if httpClient == nil {

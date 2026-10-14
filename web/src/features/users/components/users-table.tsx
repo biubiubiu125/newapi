@@ -24,13 +24,13 @@ import { useTranslation } from 'react-i18next'
 import {DISABLED_ROW_DESKTOP, DISABLED_ROW_MOBILE, DataTablePage} from '@/components/data-table'
 import { useMediaQuery } from '@/hooks'
 import { useTableUrlState } from '@/hooks/use-table-url-state'
-import { getUsers, searchUsers } from '../api'
+import { getGroups, getUsers, searchUsers } from '../api'
 import { USER_STATUS, getUserStatusOptions, getUserRoleOptions, isUserDeleted } from '../constants'
 import type {User} from '../types'
 import { DataTableBulkActions } from './data-table-bulk-actions'
 import { useUsersColumns } from './users-columns'
 import { useUsers } from './users-provider'
-import { createServerError } from '@/lib/server-error-message'
+import { createServerError, requireServerSuccess } from '@/lib/server-error-message'
 
 const route = getRouteApi('/_authenticated/users/')
 
@@ -63,7 +63,7 @@ export function UsersTable() {
     columnFilters: [
       { columnId: 'status', searchKey: 'status', type: 'array' },
       { columnId: 'role', searchKey: 'role', type: 'array' },
-      { columnId: 'group', searchKey: 'group', type: 'string' },
+      { columnId: 'group', searchKey: 'group', type: 'array' },
     ],
   })
   const statusFilter =
@@ -74,9 +74,16 @@ export function UsersTable() {
     (columnFilters.find((filter) => filter.id === 'role')?.value as
       | string[]
       | undefined) ?? []
-  const groupFilter =
-    (columnFilters.find((filter) => filter.id === 'group')?.value as string) ??
-    ''
+  const groupFilterValues =
+    (columnFilters.find((filter) => filter.id === 'group')?.value as
+      | string[]
+      | undefined) ?? []
+  const groupFilter = groupFilterValues[0] ?? ''
+  const { data: groupsData } = useQuery({
+    queryKey: ['groups'],
+    queryFn: async () => requireServerSuccess(await getGroups()),
+    staleTime: 5 * 60 * 1000,
+  })
   const statusFilterValue = statusFilter[0] ?? ''
   const roleFilterValue = roleFilter[0] ?? ''
 
@@ -206,6 +213,15 @@ export function UsersTable() {
             columnId: 'role',
             title: t('Role'),
             options: getUserRoleOptions(t),
+            singleSelect: true,
+          },
+          {
+            columnId: 'group',
+            title: t('User Group'),
+            options: (groupsData?.data ?? []).map((group) => ({
+              label: group,
+              value: group,
+            })),
             singleSelect: true,
           },
         ],

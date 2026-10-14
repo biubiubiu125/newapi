@@ -93,6 +93,7 @@ type GeneralOpenAIRequest struct {
 	ThinkingBudget         json.RawMessage `json:"thinking_budget,omitempty"`
 	ChatTemplateKwargs     json.RawMessage `json:"chat_template_kwargs,omitempty"`
 	EnableSearch           json.RawMessage `json:"enable_search,omitempty"`
+	SearchOptions          json.RawMessage `json:"search_options,omitempty"`
 	// ollama Params
 	Think json.RawMessage `json:"think,omitempty"`
 	// baidu v2
@@ -113,11 +114,11 @@ type GeneralOpenAIRequest struct {
 	// Internal conversion state; never serialized to an upstream protocol.
 	ReasoningConversion *ReasoningConversionState `json:"-"`
 	// vLLM
-	IncludeReasoning    json.RawMessage `json:"include_reasoning,omitempty"`
-	MinP                json.RawMessage `json:"min_p,omitempty"`
-	RepetitionPenalty   json.RawMessage `json:"repetition_penalty,omitempty"`
-	StructuredOutputs   json.RawMessage `json:"structured_outputs,omitempty"`
-	ReturnTokenIds      json.RawMessage `json:"return_token_ids,omitempty"`
+	IncludeReasoning  json.RawMessage `json:"include_reasoning,omitempty"`
+	MinP              json.RawMessage `json:"min_p,omitempty"`
+	RepetitionPenalty json.RawMessage `json:"repetition_penalty,omitempty"`
+	StructuredOutputs json.RawMessage `json:"structured_outputs,omitempty"`
+	ReturnTokenIds    json.RawMessage `json:"return_token_ids,omitempty"`
 	// SGLang OpenAI-compatible sampling and reasoning controls (v0.5.19).
 	// Native /generate sampling_params and server routing controls are not chat fields.
 	MinTokens            *uint           `json:"min_tokens,omitempty"`
@@ -252,6 +253,14 @@ func (r *GeneralOpenAIRequest) GetTokenCountMeta() *types.TokenCountMeta {
 				}
 			}
 		}
+		// Assistant tool calls replayed in agent loops are part of the prompt.
+		for _, toolCall := range message.ParseToolCalls() {
+			if len(toolCall.Custom) > 0 {
+				texts = append(texts, string(toolCall.Custom))
+				continue
+			}
+			texts = append(texts, toolCall.Function.Name, toolCall.Function.Arguments)
+		}
 	}
 
 	tools := r.Tools
@@ -260,12 +269,17 @@ func (r *GeneralOpenAIRequest) GetTokenCountMeta() *types.TokenCountMeta {
 	}
 	for _, tool := range tools {
 		tokenCountMeta.ToolsCount++
+		if len(tool.Custom) > 0 {
+			texts = append(texts, string(tool.Custom))
+			continue
+		}
 		texts = append(texts, tool.Function.Name)
 		if tool.Function.Description != "" {
 			texts = append(texts, tool.Function.Description)
 		}
 		if tool.Function.Parameters != nil {
-			texts = append(texts, fmt.Sprintf("%v", tool.Function.Parameters))
+			parameters, _ := kitutil.Marshal(tool.Function.Parameters)
+			texts = append(texts, string(parameters))
 		}
 	}
 	//toolTokens := CountTokenInput(countStr, request.Model)
@@ -395,6 +409,18 @@ type ToolCallRequest struct {
 	Type     string          `json:"type"`
 	Function FunctionRequest `json:"function"`
 	Custom   json.RawMessage `json:"custom,omitempty"`
+	// Native is a complete vendor tool object sent instead of the fields
+	// above. Function has no omitempty, so a non-function tool would
+	// otherwise carry an empty function object. Never read from client JSON.
+	Native json.RawMessage `json:"-"`
+}
+
+func (t ToolCallRequest) MarshalJSON() ([]byte, error) {
+	if len(t.Native) > 0 {
+		return t.Native, nil
+	}
+	type Alias ToolCallRequest
+	return kitutil.Marshal((*Alias)(&t))
 }
 
 type FunctionRequest struct {
@@ -453,9 +479,9 @@ type Message struct {
 	ToolCallId       string          `json:"tool_call_id,omitempty"`
 	// Tools carries Kimi K3 dynamic tool loading declarations on a system message.
 	// Same shape as the top-level tools array; passthrough-only for OpenAI-compatible upstreams.
-	Tools json.RawMessage `json:"tools,omitempty"`
-	Annotations      json.RawMessage `json:"annotations,omitempty"`
-	parsedContent    []MediaContent
+	Tools         json.RawMessage `json:"tools,omitempty"`
+	Annotations   json.RawMessage `json:"annotations,omitempty"`
+	parsedContent []MediaContent
 	// Annotations is an official Chat response field. Keeping it on the shared
 	// message type also preserves annotations when clients replay assistant output.
 	//parsedStringContent *string
@@ -750,9 +776,9 @@ func (m *Message) ParseContent() []MediaContent {
 
 		case ContentTypeImageURL:
 			imageUrl := contentItem["image_url"]
-			temp := &MessageImageUrl{
-				Detail: "high",
-			}
+			// An omitted detail stays empty: upstream defaults it to auto, which
+			// costs more than high on gpt-5.5 and later.
+			temp := &MessageImageUrl{}
 			switch v := imageUrl.(type) {
 			case string:
 				temp.Url = v
@@ -962,7 +988,16 @@ func (r *OpenAIResponsesRequest) GetTokenCountMeta() *types.TokenCountMeta {
 	}
 
 	if len(r.Instructions) > 0 {
-		texts = append(texts, string(r.Instructions))
+		if kitutil.GetJsonType(r.Instructions) == "string" {
+			var instructions string
+			if err := kitutil.Unmarshal(r.Instructions, &instructions); err == nil {
+				texts = append(texts, instructions)
+			} else {
+				texts = append(texts, string(r.Instructions))
+			}
+		} else {
+			texts = append(texts, string(r.Instructions))
+		}
 	}
 
 	if len(r.Metadata) > 0 {
@@ -1021,6 +1056,11 @@ type Input struct {
 	Type    string          `json:"type,omitempty"`
 	Role    string          `json:"role,omitempty"`
 	Content json.RawMessage `json:"content,omitempty"`
+	// Tool-call items replayed in agent loops.
+	Name      string          `json:"name,omitempty"`
+	Arguments json.RawMessage `json:"arguments,omitempty"`
+	ToolInput json.RawMessage `json:"input,omitempty"`
+	Output    json.RawMessage `json:"output,omitempty"`
 }
 
 type MediaInput struct {
@@ -1036,7 +1076,8 @@ type MediaInput struct {
 // Reference implementation mirrors Message.ParseContent:
 //   - input can be a string, treated as an input_text item
 //   - input can be an array of objects with a `type` field
-//     supported types: input_text, input_image, input_file
+//     supported types: input_text, output_text, input_image, input_file
+//   - tool-call items contribute name, arguments or input, and output as input_text
 func (r *OpenAIResponsesRequest) ParseInput() []MediaInput {
 	if r.Input == nil {
 		return nil
@@ -1061,6 +1102,17 @@ func (r *OpenAIResponsesRequest) ParseInput() []MediaInput {
 		var inputs []Input
 		_ = kitutil.Unmarshal(r.Input, &inputs)
 		for _, input := range inputs {
+			switch input.Type {
+			case "function_call":
+				input.Content = input.Arguments
+			case "custom_tool_call":
+				input.Content = input.ToolInput
+			case "function_call_output", "custom_tool_call_output", "local_shell_call_output":
+				input.Content = input.Output
+			}
+			if input.Name != "" {
+				mediaInputs = append(mediaInputs, MediaInput{Type: "input_text", Text: input.Name})
+			}
 			if kitutil.GetJsonType(input.Content) == "string" {
 				var str string
 				_ = kitutil.Unmarshal(input.Content, &str)
@@ -1088,7 +1140,7 @@ func (r *OpenAIResponsesRequest) ParseInput() []MediaInput {
 						continue
 					}
 					switch typeVal {
-					case "input_text":
+					case "input_text", "output_text":
 						text, _ := item["text"].(string)
 						cacheControl, _ := kitutil.Any2Type[json.RawMessage](item["cache_control"])
 						mediaInputs = append(mediaInputs, MediaInput{Type: "input_text", Text: text, CacheControl: cacheControl})

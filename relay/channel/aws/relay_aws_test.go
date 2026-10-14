@@ -456,3 +456,15 @@ func TestAwsStreamHandlerStopsAtClientCancellation(t *testing.T) {
 		t.Fatal("upstream producer did not observe the closed stream")
 	}
 }
+
+func TestFormatRequestJoinsAndTrimsAnthropicBeta(t *testing.T) {
+	body := bytes.NewBufferString(`{"messages":[{"role":"user","content":"hi"}],"max_tokens":16}`)
+	header := http.Header{}
+	header.Add("anthropic-beta", "fast-mode-2026-02-01, thinking-binding-controls-2026-08-01")
+	header.Add("anthropic-beta", " extra-beta ")
+	header.Add("anthropic-beta", " , ")
+
+	got, err := formatRequest(body, header)
+	require.NoError(t, err)
+	require.JSONEq(t, `["fast-mode-2026-02-01","thinking-binding-controls-2026-08-01","extra-beta"]`, string(got.AnthropicBeta))
+}

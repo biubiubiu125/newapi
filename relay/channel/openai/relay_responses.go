@@ -56,13 +56,12 @@ func OaiResponsesHandler(c *gin.Context, info *relaycommon.RelayInfo, resp *http
 			info.CountBillableToolCall(dto.BuildInCallFunctionCall, output.Name)
 		}
 	}
+	info.ApplyVendorToolUsage(responseBody)
 
 	imageCounter := &relaycommon.ImageGenerationCallCounter{}
-	if !relaycommon.IsNonBillableResponsesStatus(responsesResponse.Status) {
-		for i := range responsesResponse.Output {
-			idx := i
-			imageCounter.Observe(&responsesResponse.Output[i], &idx)
-		}
+	for i := range responsesResponse.Output {
+		idx := i
+		imageCounter.Observe(&responsesResponse.Output[i], &idx)
 	}
 	imageCounter.Commit(info)
 
@@ -102,7 +101,7 @@ func OaiResponsesStreamHandler(c *gin.Context, info *relaycommon.RelayInfo, resp
 			data = string(rewriteSGLangResponsesCreatedAt(info, []byte(data), "response.created_at", streamResponse.Response.CreatedAt))
 		}
 		sendResponsesStreamData(c, streamResponse, data)
-		accumulator.Observe(&streamResponse)
+		accumulator.Observe(&streamResponse, []byte(data))
 	})
 
 	if streamErr := helper.ErrorBeforeFirstStreamResponse(info); streamErr != nil {

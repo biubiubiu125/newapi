@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/QuantumNous/new-api/common"
+	"github.com/QuantumNous/new-api/relaykit/dto"
 	"github.com/QuantumNous/new-api/setting/system_setting"
 	"github.com/stretchr/testify/require"
 )
@@ -223,6 +224,44 @@ func TestGetSSRFProtectedHTTPClientWithProxyRejectsPrivateTarget(t *testing.T) {
 	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1/resource", nil)
 	require.NoError(t, err)
 	resp, err := client.Do(req)
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Contains(t, err.Error(), "private IP address not allowed")
+}
+
+func TestChannelTLSSkipVerifyStaysOnFreshSSRFClient(t *testing.T) {
+	configureSSRFTestFetchSetting(t)
+	previousTLS := common.TLSInsecureSkipVerify
+	common.TLSInsecureSkipVerify = false
+	t.Cleanup(func() { common.TLSInsecureSkipVerify = previousTLS })
+
+	shared := ssrfProtectedHTTPClient
+	client, err := GetSSRFProtectedHTTPClientWithProxySettings("", dto.ChannelSettings{TLSInsecureSkipVerify: true})
+	require.NoError(t, err)
+	require.NotNil(t, client)
+	require.Same(t, shared, ssrfProtectedHTTPClient)
+	if shared != nil {
+		require.NotSame(t, shared, client)
+	}
+
+	tripper, ok := client.Transport.(*ssrfProtectedRoundTripper)
+	require.True(t, ok)
+	require.True(t, tripper.insecureTLS)
+	transport := tripper.transportFor(nil)
+	require.NotNil(t, transport.TLSClientConfig)
+	require.True(t, transport.TLSClientConfig.InsecureSkipVerify)
+	require.NotSame(t, common.InsecureTLSConfig, transport.TLSClientConfig)
+
+	req, err := http.NewRequest(http.MethodGet, "http://127.0.0.1/resource", nil)
+	require.NoError(t, err)
+	resp, err := client.Do(req)
+	require.Error(t, err)
+	require.Nil(t, resp)
+	require.Contains(t, err.Error(), "private IP address not allowed")
+
+	proxied, err := GetSSRFProtectedHTTPClientWithProxySettings("http://127.0.0.1:3128", dto.ChannelSettings{TLSInsecureSkipVerify: true})
+	require.NoError(t, err)
+	resp, err = proxied.Do(req)
 	require.Error(t, err)
 	require.Nil(t, resp)
 	require.Contains(t, err.Error(), "private IP address not allowed")

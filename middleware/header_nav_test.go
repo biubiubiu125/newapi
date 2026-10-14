@@ -100,6 +100,72 @@ func TestHeaderNavModuleAuthRejectsDisabledPricing(t *testing.T) {
 	require.Equal(t, http.StatusForbidden, recorder.Code)
 }
 
+func performHeaderNavRequestAs(t *testing.T, handler gin.HandlerFunc, role int, token, authorization, acceptLanguage string) *httptest.ResponseRecorder {
+	t.Helper()
+
+	gin.SetMode(gin.TestMode)
+	router := gin.New()
+	router.GET("/api/test", handler, func(c *gin.Context) {
+		c.JSON(http.StatusOK, gin.H{"success": true})
+	})
+
+	previousDB, previousRedis := model.DB, common.RedisEnabled
+	db, err := gorm.Open(sqlite.Open(":memory:"), &gorm.Config{})
+	require.NoError(t, err)
+	require.NoError(t, db.AutoMigrate(&model.User{}, &model.Option{}))
+	model.DB = db
+	common.RedisEnabled = false
+	require.NoError(t, model.EnsureLegacyAccessTokenRetireAt(time.Now().Unix()))
+	t.Cleanup(func() {
+		model.DB = previousDB
+		common.RedisEnabled = previousRedis
+	})
+	user := model.User{
+		Username:    "tester",
+		Password:    "unused-password-hash",
+		Role:        role,
+		Status:      common.UserStatusEnabled,
+		Group:       "default",
+		AuthVersion: 1,
+	}
+	user.SetAccessToken(token)
+	require.NoError(t, db.Create(&user).Error)
+
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/api/test", nil)
+	if authorization != "" {
+		request.Header.Set("Authorization", authorization)
+	}
+	if acceptLanguage != "" {
+		request.Header.Set("Accept-Language", acceptLanguage)
+	}
+	router.ServeHTTP(recorder, request)
+	return recorder
+}
+
+func TestHeaderNavDisabledPricingAllowsRootOnly(t *testing.T) {
+	require.NoError(t, i18n.Init())
+	withHeaderNavModules(t, `{"pricing":{"enabled":false,"requireAuth":false},"rankings":{"enabled":false,"requireAuth":false}}`)
+
+	root := performHeaderNavRequestAs(t, HeaderNavModuleAuth("pricing"), common.RoleRootUser, "root-pat", "Bearer root-pat", "en-US")
+	require.Equal(t, http.StatusOK, root.Code)
+
+	user := performHeaderNavRequestAs(t, HeaderNavModuleAuth("pricing"), common.RoleCommonUser, "user-pat", "Bearer user-pat", "en-US")
+	require.Equal(t, http.StatusForbidden, user.Code)
+	var body map[string]any
+	require.NoError(t, json.Unmarshal(user.Body.Bytes(), &body), "body=%s", user.Body.String())
+	require.Equal(t, "AUTH_INSUFFICIENT_PRIVILEGE", body["code"])
+	require.NotEqual(t, "pricing is disabled", body["message"])
+
+	bad := performHeaderNavRequestAs(t, HeaderNavModuleAuth("pricing"), common.RoleRootUser, "root-pat", "Bearer wrong-pat", "en-US")
+	require.Equal(t, http.StatusUnauthorized, bad.Code)
+
+	rankings := performHeaderNavRequestAs(t, HeaderNavModuleAuth("rankings"), common.RoleRootUser, "root-pat", "Bearer root-pat", "en-US")
+	require.Equal(t, http.StatusForbidden, rankings.Code)
+	require.Contains(t, rankings.Body.String(), "rankings is disabled")
+	require.NotContains(t, rankings.Body.String(), "AUTH_INSUFFICIENT_PRIVILEGE")
+}
+
 func TestHeaderNavModuleAuthDisabledFollowsAcceptLanguage(t *testing.T) {
 	require.NoError(t, i18n.Init())
 	withHeaderNavModules(t, `{"pricing":{"enabled":false,"requireAuth":false}}`)

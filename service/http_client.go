@@ -219,6 +219,36 @@ func GetSSRFProtectedHTTPClientWithProxy(proxyURL string) (*http.Client, error) 
 	return newProtectedFetchHTTPClientWithProxy(nil, nil, nil, http.ProxyURL(parsedURL)), nil
 }
 
+// GetSSRFProtectedHTTPClientWithProxySettings keeps the SSRF dialer and URL
+// check, and applies a channel TLS skip without mutating the shared client.
+func GetSSRFProtectedHTTPClientWithProxySettings(proxyURL string, settings dto.ChannelSettings) (*http.Client, error) {
+	trimmed := strings.TrimSpace(proxyURL)
+	if !settings.TLSInsecureSkipVerify {
+		if trimmed == "" {
+			return GetSSRFProtectedHTTPClient(), nil
+		}
+		return GetSSRFProtectedHTTPClientWithProxy(trimmed)
+	}
+	if fetchSetting := system_setting.GetFetchSetting(); fetchSetting != nil && !fetchSetting.EnableSSRFProtection {
+		return GetHttpClientWithProxySettings(trimmed, settings)
+	}
+	var proxyFunc func(*http.Request) (*url.URL, error)
+	if trimmed != "" {
+		parsedURL, _, err := common.ParseProxyURLRuntime(trimmed)
+		if err != nil {
+			return nil, err
+		}
+		if parsedURL != nil {
+			proxyFunc = http.ProxyURL(parsedURL)
+		}
+	}
+	client := newProtectedFetchHTTPClientWithProxy(nil, nil, nil, proxyFunc)
+	if tripper, ok := client.Transport.(*ssrfProtectedRoundTripper); ok {
+		tripper.insecureTLS = true
+	}
+	return client, nil
+}
+
 func newProxyURLConfig(parsedURL *url.URL) *proxyURLConfig {
 	return &proxyURLConfig{
 		parsedURL: parsedURL,
@@ -389,6 +419,9 @@ func newTransportFactory(proxyURL *url.URL, tlsConfig *tls.Config) (func() *http
 }
 
 func newHTTPClientFromPolicy(policy HTTPTransportPolicy, proxyURL *url.URL, tlsConfig *tls.Config) (*http.Client, error) {
+	if policy.TLSInsecureSkipVerify {
+		tlsConfig = common.InsecureTLSConfig
+	}
 	factory, err := newTransportFactory(proxyURL, tlsConfig)
 	if err != nil {
 		return nil, err

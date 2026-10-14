@@ -3,6 +3,7 @@ package middleware
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -160,7 +161,10 @@ func PrepareTaskPluginRoute() gin.HandlerFunc {
 		}
 
 		hookStarted := time.Now()
-		resolvedValue, err := pinned.Plugin.Engine.CallMember(c.Request.Context(), "native", pinned.Route.Decode, requestContext.JSValue())
+		resolvedValue, requestBodyText, err := pinned.Plugin.Engine.CallPathWithMemberJSON(
+			c.Request.Context(), 0, pinned.Plugin.Meta.JSONTextMember("requestBody"),
+			"native", []string{pinned.Route.Decode}, requestContext.JSValueFor(pinned.Plugin.Meta),
+		)
 		if err != nil {
 			logger.LogWarn(
 				c,
@@ -264,6 +268,9 @@ func PrepareTaskPluginRoute() gin.HandlerFunc {
 				c.Set(pluginruntime.ContextKeyRouteRequest, requestContext)
 			}
 			c.Set("task_request", requestContext.RequestBody)
+			if requestBodyText != nil {
+				c.Set(pluginruntime.ContextKeyRequestBodyText, requestBodyText)
+			}
 			c.Set("resolved_task_model", modelName)
 			c.Set("expected_task_plugin_key", pinned.Plugin.Meta.Key)
 			c.Set("task_plugin_key", pinned.Plugin.Meta.Key)
@@ -981,6 +988,7 @@ func buildTaskPluginRouteRequest(c *gin.Context) (pluginruntime.RouteRequestCont
 			return requestContext, err
 		}
 		requestContext.Body = map[string]any{"kind": string(pluginruntime.BodyJSON), "value": value}
+		requestContext.BodyText = raw
 	case mediaType == "application/x-www-form-urlencoded":
 		storage, storageErr := common.GetBodyStorage(c)
 		if storageErr != nil {
@@ -1635,6 +1643,18 @@ func PrepareTaskPluginSubmit() gin.HandlerFunc {
 			}
 		}
 		c.Set("task_request", requestBody)
+		if plugin.Meta.PreservesJSONOrder() {
+			storage, storageErr := common.GetBodyStorage(c)
+			var raw []byte
+			if storageErr == nil {
+				raw, storageErr = storage.Bytes()
+			}
+			if storageErr != nil {
+				c.AbortWithStatusJSON(http.StatusBadRequest, gin.H{"error": gin.H{"message": storageErr.Error(), "type": "invalid_request_error"}})
+				return
+			}
+			c.Set(pluginruntime.ContextKeyRequestBodyText, json.RawMessage(raw))
+		}
 		c.Set("resolved_task_model", modelName)
 		c.Set("expected_task_plugin_key", pluginKey)
 		service.AppendTaskPluginIdentityFilter(c, pluginKey)

@@ -36,16 +36,16 @@ interface CompactDateTimeRangePickerProps {
   className?: string
 }
 
-function timeFromDate(date?: Date, fallback = '00:00'): string {
+function timeFromDate(date?: Date, fallback = '00:00:00'): string {
   if (!date) return fallback
-  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`
+  return `${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}:${String(date.getSeconds()).padStart(2, '0')}`
 }
 
 function withTime(date: Date | undefined, time: string): Date | undefined {
   if (!date) return undefined
-  const [hours, minutes] = time.split(':').map(Number)
+  const [hours, minutes, seconds] = time.split(':').map(Number)
   const next = new Date(date)
-  next.setHours(hours || 0, minutes || 0, 0, 0)
+  next.setHours(hours || 0, minutes || 0, seconds || 0, 0)
   return next
 }
 
@@ -61,19 +61,19 @@ export function CompactDateTimeRangePicker({
   const [draftStart, setDraftStart] = useState<Date | undefined>(start)
   const [draftEnd, setDraftEnd] = useState<Date | undefined>(end)
   const [startTime, setStartTime] = useState(timeFromDate(start))
-  const [endTime, setEndTime] = useState(timeFromDate(end, '23:59'))
+  const [endTime, setEndTime] = useState(timeFromDate(end, '23:59:59'))
 
   const label = useMemo(() => {
     if (!start && !end) return t('Date Range')
-    const startText = start ? dayjs(start).format('YYYY-MM-DD HH:mm') : '-'
-    const endText = end ? dayjs(end).format('YYYY-MM-DD HH:mm') : '-'
+    const startText = start ? dayjs(start).format('YYYY-MM-DD HH:mm:ss') : '-'
+    const endText = end ? dayjs(end).format('YYYY-MM-DD HH:mm:ss') : '-'
     return `${startText} ~ ${endText}`
   }, [end, start, t])
 
   const mobileLabel = useMemo(() => {
     if (!start || !end) return label
     if (dayjs(start).isSame(end, 'day')) {
-      return `${dayjs(start).format('MM/DD HH:mm')}–${dayjs(end).format('HH:mm')}`
+      return `${dayjs(start).format('MM/DD HH:mm:ss')}–${dayjs(end).format('HH:mm:ss')}`
     }
     return label
   }, [start, end, label])
@@ -83,7 +83,7 @@ export function CompactDateTimeRangePicker({
       setDraftStart(start)
       setDraftEnd(end)
       setStartTime(timeFromDate(start))
-      setEndTime(timeFromDate(end, '23:59'))
+      setEndTime(timeFromDate(end, '23:59:59'))
     }
     setOpen(nextOpen)
   }

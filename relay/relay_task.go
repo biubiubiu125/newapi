@@ -731,12 +731,22 @@ func tryRealtimeFetch(ctx context.Context, task *model.Task, isOpenAIVideoAPI bo
 	if channelModel.GetBaseURL() != "" {
 		baseURL = channelModel.GetBaseURL()
 	}
-	proxy := channelModel.GetSetting().Proxy
+	setting := channelModel.GetSetting()
+	proxy := setting.Proxy
 	adaptor := GetTaskAdaptor(constant.TaskPlatform(strconv.Itoa(channelModel.Type)))
 	if adaptor == nil {
 		return nil
 	}
 	key := getLegacyRealtimeTaskKey(channelModel, task)
+	adaptor.Init(&relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:    channelModel.Type,
+			ChannelId:      channelModel.Id,
+			ChannelBaseUrl: baseURL,
+			ApiKey:         key,
+			ChannelSetting: setting,
+		},
+	})
 
 	var resp *http.Response
 	if contextAdaptor, ok := adaptor.(interface {

@@ -41,7 +41,7 @@ func TestParseTaskResultUsesProxyWhenResolvingFileURL(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	hailuoHTTPClient = func(proxy string) (*http.Client, error) {
+	hailuoHTTPClient = func(proxy string, _ dto.ChannelSettings) (*http.Client, error) {
 		gotProxy = proxy
 		return server.Client(), nil
 	}
@@ -61,7 +61,7 @@ func TestParseTaskResultUsesProxyWhenResolvingFileURL(t *testing.T) {
 func TestParseTaskResultDoesNotOverrideAPIFailureWithSuccessStatus(t *testing.T) {
 	previous := hailuoHTTPClient
 	t.Cleanup(func() { hailuoHTTPClient = previous })
-	hailuoHTTPClient = func(string) (*http.Client, error) {
+	hailuoHTTPClient = func(string, dto.ChannelSettings) (*http.Client, error) {
 		t.Fatal("api failure must not retrieve file url")
 		return nil, nil
 	}

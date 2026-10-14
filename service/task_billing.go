@@ -241,6 +241,9 @@ func rollbackRefundedTaskTokenQuota(ctx context.Context, task *model.Task, snaps
 // taskBillingOther builds the usage log Other field from task billing context.
 func taskBillingOther(task *model.Task) *model.LogOther {
 	other := model.NewLogOther()
+	// Settlement, adjustment, and refund logs share this builder. Without
+	// is_task the console renders tiered task rows as ordinary relay billing.
+	other.SetPublic("is_task", true)
 	if bc := task.PrivateData.BillingContext; bc != nil {
 		other.SetPublic("model_price", bc.ModelPrice)
 		if bc.ModelRatio > 0 {

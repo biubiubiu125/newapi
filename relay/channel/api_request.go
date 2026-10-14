@@ -441,6 +441,10 @@ func DoWssRequest(a Adaptor, c *gin.Context, info *common.RelayInfo, requestBody
 		}
 		dialer.Proxy = http.ProxyURL(proxyURL)
 	}
+	// HTTP relay applies this on its transport. The copied default dialer does not.
+	if info.ChannelSetting.TLSInsecureSkipVerify {
+		dialer.TLSClientConfig = common2.InsecureTLSConfig
+	}
 	targetConn, resp, err := dialer.DialContext(c.Request.Context(), fullRequestURL, targetHeader)
 	if err != nil {
 		statusCode := http.StatusInternalServerError

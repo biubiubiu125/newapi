@@ -254,7 +254,7 @@ export function ClaudeSettingsCard({ defaultValues }: ClaudeSettingsCardProps) {
                     <FormLabel>{t('Thinking Adapter')}</FormLabel>
                     <FormDescription>
                       {t(
-                        'Translate `-thinking` suffixes into Anthropic native thinking models while keeping pricing predictable.'
+                        'Translate `-thinking`, `-nothinking`, and effort suffixes such as `-high` into Anthropic native thinking models while keeping pricing predictable. When off, model names are sent upstream unchanged.'
                       )}
                     </FormDescription>
                   </SettingsSwitchContent>

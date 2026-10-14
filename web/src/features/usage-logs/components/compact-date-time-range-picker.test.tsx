@@ -67,6 +67,7 @@ describe('CompactDateTimeRangePicker', () => {
     expect(document.querySelector('input[type="time"]')).toBeNull()
     expect(screen.getAllByLabelText('Hour')).toHaveLength(2)
     expect(screen.getAllByLabelText('Minute')).toHaveLength(2)
+    expect(screen.getAllByLabelText('Second')).toHaveLength(2)
   })
 
   it('keeps the month preset separate from check-in quota copy', async () => {

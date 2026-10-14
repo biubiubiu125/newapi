@@ -157,7 +157,7 @@ func memoryRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) 
 
 		// 1. 检查总请求数限制（当totalMaxCount为0时跳过）
 		if totalMaxCount > 0 && !inMemoryRateLimiter.Request(totalKey, totalMaxCount, duration) {
-			abortModelRequestRateLimit(c)
+			abortModelRequestRateLimit(c, true, totalMaxCount)
 			return
 		}
 
@@ -165,7 +165,7 @@ func memoryRateLimitHandler(duration int64, totalMaxCount, successMaxCount int) 
 		if successMaxCount > 0 {
 			reservation = inMemoryRateLimiter.Reserve(successKey, successMaxCount, duration)
 			if reservation == nil {
-				abortModelRequestRateLimit(c)
+				abortModelRequestRateLimit(c, false, successMaxCount)
 				return
 			}
 			defer reservation.Complete(false)
@@ -187,13 +187,19 @@ func modelRequestSucceeded(c *gin.Context) bool {
 	return c.Writer.Status() < 400
 }
 
-func abortModelRequestRateLimit(c *gin.Context) {
+func abortModelRequestRateLimit(c *gin.Context, total bool, maxCount int) {
 	if isPublicImageTaskRequest(c) {
 		abortWithOpenAiMessage(c, http.StatusTooManyRequests, "too many image task requests")
 		return
 	}
-	c.Status(http.StatusTooManyRequests)
-	c.Abort()
+	messageKey := i18n.MsgRateLimitReached
+	if total {
+		messageKey = i18n.MsgRateLimitTotalReached
+	}
+	abortWithOpenAiMessage(c, http.StatusTooManyRequests, i18n.ProtocolMessage(messageKey, map[string]any{
+		"Max":     maxCount,
+		"Minutes": setting.ModelRequestRateLimitDurationMinutes,
+	}))
 }
 
 func modelRequestRateLimitIdentity(c *gin.Context) string {

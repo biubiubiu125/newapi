@@ -21,6 +21,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/glebarez/sqlite"
+	"github.com/shopspring/decimal"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"gorm.io/driver/mysql"
@@ -2293,6 +2294,68 @@ func TestTryTieredSettleNoClampInRange(t *testing.T) {
 	require.True(t, ok)
 	require.NotNil(t, result)
 	require.Nil(t, relayInfo.QuotaClamp, "in-range settlement must not record a clamp")
+}
+
+func TestCalculateTextToolCallSurchargeClampsCallCount(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	ctx, _ := gin.CreateTestContext(httptest.NewRecorder())
+
+	for recorded, billed := range map[int]int{5: 5, 10_000: 10_000, 10_005: 10_000} {
+		relayInfo := &relaycommon.RelayInfo{
+			OriginModelName: "claude-3-7-sonnet",
+			ResponsesUsageInfo: &relaycommon.ResponsesUsageInfo{
+				BuiltInTools: map[string]*relaycommon.BuildInToolInfo{
+					dto.BuildInToolWebSearch: {CallCount: recorded},
+				},
+			},
+		}
+		summary := &textQuotaSummary{ModelName: relayInfo.OriginModelName, GroupRatio: 1}
+
+		surcharge := calculateTextToolCallSurcharge(ctx, relayInfo, summary)
+
+		require.Equal(t, billed, summary.WebSearchCallCount, recorded)
+		price := operation_setting.GetToolPriceForModel(dto.BuildInToolWebSearch, summary.ModelName)
+		expected := decimal.NewFromFloat(price).
+			Mul(decimal.NewFromInt(int64(billed))).
+			Div(decimal.NewFromInt(1000)).
+			Mul(decimal.NewFromFloat(common.QuotaPerUnit))
+		require.True(t, expected.Equal(surcharge), "recorded %d: got %s want %s", recorded, surcharge, expected)
+	}
+
+	relayInfo := &relaycommon.RelayInfo{
+		OriginModelName: "gpt-4o",
+		ResponsesUsageInfo: &relaycommon.ResponsesUsageInfo{
+			BuiltInTools: map[string]*relaycommon.BuildInToolInfo{
+				"bing_web_search":         {CallCount: 10_005},
+				dto.BuildInToolFileSearch: {CallCount: 10_005},
+			},
+		},
+	}
+	summary := &textQuotaSummary{ModelName: relayInfo.OriginModelName, GroupRatio: 1}
+	surcharge := calculateTextToolCallSurcharge(ctx, relayInfo, summary)
+	require.Equal(t, relaycommon.MaxBillableToolCallCount, summary.FileSearchCallCount)
+	billable := relaycommon.MaxBillableToolCallCount
+	expected := decimal.NewFromFloat(operation_setting.GetToolPriceForModel("bing_web_search", summary.ModelName)).
+		Mul(decimal.NewFromInt(int64(billable))).
+		Div(decimal.NewFromInt(1000)).
+		Mul(decimal.NewFromFloat(common.QuotaPerUnit))
+	expected = expected.Add(decimal.NewFromFloat(operation_setting.GetToolPrice("file_search")).
+		Mul(decimal.NewFromInt(int64(billable))).
+		Div(decimal.NewFromInt(1000)).
+		Mul(decimal.NewFromFloat(common.QuotaPerUnit)))
+	require.True(t, expected.Equal(surcharge), "vendor and file search: got %s want %s", surcharge, expected)
+
+	claudeCtx, _ := gin.CreateTestContext(httptest.NewRecorder())
+	claudeCtx.Set("claude_web_search_requests", 10_005)
+	claudeInfo := &relaycommon.RelayInfo{OriginModelName: "claude-3-7-sonnet"}
+	claudeSummary := &textQuotaSummary{ModelName: claudeInfo.OriginModelName, GroupRatio: 1}
+	claudeSurcharge := calculateTextToolCallSurcharge(claudeCtx, claudeInfo, claudeSummary)
+	require.Equal(t, relaycommon.MaxBillableToolCallCount, claudeSummary.ClaudeWebSearchCallCount)
+	claudeExpected := decimal.NewFromFloat(operation_setting.GetToolPrice("web_search")).
+		Div(decimal.NewFromInt(1000)).
+		Mul(decimal.NewFromFloat(common.QuotaPerUnit)).
+		Mul(decimal.NewFromInt(int64(relaycommon.MaxBillableToolCallCount)))
+	require.True(t, claudeExpected.Equal(claudeSurcharge), "claude: got %s want %s", claudeSurcharge, claudeExpected)
 }
 
 func TestCalculateTextQuotaSummaryKeepsToolSurchargeWhenUsageTokensAreZero(t *testing.T) {

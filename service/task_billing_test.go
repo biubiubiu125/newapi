@@ -6789,3 +6789,23 @@ func TestApplyImageTaskSettlementAtomic_SubscriptionAfterResetChargesActual(t *t
 	assert.EqualValues(t, newPeriodUsed+int64(actualQuota), getSubscriptionUsed(t, subID))
 	assert.EqualValues(t, tokenRemain, getTokenRemainQuota(t, tokenID))
 }
+
+func TestTaskBillingOtherMarksRefundLogsAsTasks(t *testing.T) {
+	task := &model.Task{
+		TaskID: "task-refund-display",
+		PrivateData: model.TaskPrivateData{
+			BillingContext: &model.TaskBillingContext{
+				TieredSnapshot: &billingexpr.BillingSnapshot{
+					BillingMode:   "tiered_expr",
+					ExprString:    "tier(\"standard\", p * 1)",
+					EstimatedTier: "standard",
+				},
+			},
+		},
+	}
+
+	snapshot := taskBillingOther(task).Snapshot()
+
+	assert.Equal(t, true, snapshot["is_task"])
+	assert.Equal(t, "tiered_expr", snapshot["billing_mode"])
+}

@@ -91,6 +91,58 @@ func toolCallCount(tools map[string]*relaycommon.BuildInToolInfo, name string) i
 	return tool.CallCount
 }
 
+// clampBillableToolCount bounds every tool count before it becomes a surcharge
+// multiplier. Upstream-reported counts are untrusted; the stored count stays
+// raw so a later reader can still see what the vendor sent.
+func clampBillableToolCount(ctx *gin.Context, name string, count int) int {
+	if count <= relaycommon.MaxBillableToolCallCount {
+		return count
+	}
+	logger.LogWarn(ctx, common.LogText("tool surcharge call count clamped: tool=%s count=%d", name, count))
+	return relaycommon.MaxBillableToolCallCount
+}
+
+// fallbackGeminiSearchCounts covers a Gemini search flag that did not record
+// queries. Older Gemini models pay for one grounded prompt; other models keep
+// the historical one google_search call. Gemini 3's per-query price is not
+// applied here because empty queries are not a billed query.
+func fallbackGeminiSearchCounts(modelName string) (googleCount int, groundedPromptCount int) {
+	if operation_setting.GetToolPriceForModel(relaycommon.GoogleSearchGroundedPromptTool, modelName) > 0 {
+		return 0, 1
+	}
+	if strings.Contains(strings.ToLower(modelName), "gemini") {
+		return 0, 0
+	}
+	return 1, 0
+}
+
+func addToolSurcharge(surcharge decimal.Decimal, summary *textQuotaSummary, toolName string, count int, dGroupRatio decimal.Decimal, dQuotaPerUnit decimal.Decimal) decimal.Decimal {
+	if count <= 0 || summary == nil {
+		return surcharge
+	}
+	price := operation_setting.GetToolPriceForModel(toolName, summary.ModelName)
+	if price <= 0 {
+		return surcharge
+	}
+	return surcharge.Add(decimal.NewFromFloat(price).
+		Mul(decimal.NewFromInt(int64(count))).
+		Div(decimal.NewFromInt(1000)).
+		Mul(dGroupRatio).
+		Mul(dQuotaPerUnit))
+}
+
+func claudeWebSearchAlreadyBilled(relayInfo *relaycommon.RelayInfo) bool {
+	if relayInfo == nil || relayInfo.ResponsesUsageInfo == nil {
+		return false
+	}
+	tools := relayInfo.ResponsesUsageInfo.BuiltInTools
+	if toolCallCount(tools, dto.BuildInToolWebSearch) > 0 {
+		return true
+	}
+	key := relayInfo.WebSearchBillingKey
+	return key != "" && key != dto.BuildInToolWebSearch && toolCallCount(tools, key) > 0
+}
+
 func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.RelayInfo, summary *textQuotaSummary) decimal.Decimal {
 	dGroupRatio := decimal.NewFromFloat(summary.GroupRatio)
 	dQuotaPerUnit := decimal.NewFromFloat(common.QuotaPerUnit)
@@ -99,8 +151,8 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 
 	if relayInfo.ResponsesUsageInfo != nil {
 		tools := relayInfo.ResponsesUsageInfo.BuiltInTools
-		previewCount := toolCallCount(tools, dto.BuildInToolWebSearchPreview)
-		webCount := toolCallCount(tools, dto.BuildInToolWebSearch)
+		previewCount := clampBillableToolCount(ctx, dto.BuildInToolWebSearchPreview, toolCallCount(tools, dto.BuildInToolWebSearchPreview))
+		webCount := clampBillableToolCount(ctx, dto.BuildInToolWebSearch, toolCallCount(tools, dto.BuildInToolWebSearch))
 		if previewCount > 0 {
 			summary.WebSearchCallCount += previewCount
 			summary.WebSearchPrice = operation_setting.GetToolPriceForModel("web_search_preview", summary.ModelName)
@@ -123,8 +175,14 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 				Mul(dQuotaPerUnit))
 		}
 		googleCount := toolCallCount(tools, dto.BuildInToolGoogleSearch)
-		if googleCount == 0 && ctx.GetBool("gemini_google_search_call") {
-			googleCount = 1
+		groundedPromptCount := toolCallCount(tools, relaycommon.GoogleSearchGroundedPromptTool)
+		if googleCount == 0 && groundedPromptCount == 0 && ctx.GetBool("gemini_google_search_call") {
+			googleCount, groundedPromptCount = fallbackGeminiSearchCounts(summary.ModelName)
+		}
+		googleCount = clampBillableToolCount(ctx, dto.BuildInToolGoogleSearch, googleCount)
+		groundedPromptCount = clampBillableToolCount(ctx, relaycommon.GoogleSearchGroundedPromptTool, groundedPromptCount)
+		if groundedPromptCount > toolCallCount(tools, relaycommon.GoogleSearchGroundedPromptTool) {
+			surcharge = addToolSurcharge(surcharge, summary, relaycommon.GoogleSearchGroundedPromptTool, groundedPromptCount, dGroupRatio, dQuotaPerUnit)
 		}
 		if googleCount > 0 {
 			googlePrice := operation_setting.GetToolPriceForModel("google_search", summary.ModelName)
@@ -134,7 +192,7 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 				Mul(dGroupRatio).
 				Mul(dQuotaPerUnit))
 		}
-		imageCount := toolCallCount(tools, dto.BuildInToolImageGeneration)
+		imageCount := clampBillableToolCount(ctx, dto.BuildInToolImageGeneration, toolCallCount(tools, dto.BuildInToolImageGeneration))
 		if imageCount > 0 && !ctx.GetBool("image_generation_call") {
 			imagePrice := operation_setting.GetToolPriceForModel("image_generation", summary.ModelName)
 			surcharge = surcharge.Add(decimal.NewFromFloat(imagePrice).
@@ -155,8 +213,9 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 			if customPrice <= 0 {
 				continue
 			}
+			customCount := clampBillableToolCount(ctx, name, tool.CallCount)
 			surcharge = surcharge.Add(decimal.NewFromFloat(customPrice).
-				Mul(decimal.NewFromInt(int64(tool.CallCount))).
+				Mul(decimal.NewFromInt(int64(customCount))).
 				Div(decimal.NewFromInt(1000)).
 				Mul(dGroupRatio).
 				Mul(dQuotaPerUnit))
@@ -169,29 +228,34 @@ func calculateTextToolCallSurcharge(ctx *gin.Context, relayInfo *relaycommon.Rel
 			Mul(dGroupRatio).
 			Mul(dQuotaPerUnit))
 	} else if ctx.GetBool("gemini_google_search_call") {
-		googlePrice := operation_setting.GetToolPriceForModel("google_search", summary.ModelName)
-		surcharge = surcharge.Add(decimal.NewFromFloat(googlePrice).
-			Div(decimal.NewFromInt(1000)).
-			Mul(dGroupRatio).
-			Mul(dQuotaPerUnit))
+		googleCount, groundedPromptCount := fallbackGeminiSearchCounts(summary.ModelName)
+		if groundedPromptCount > 0 {
+			surcharge = addToolSurcharge(surcharge, summary, relaycommon.GoogleSearchGroundedPromptTool, groundedPromptCount, dGroupRatio, dQuotaPerUnit)
+		}
+		if googleCount > 0 {
+			surcharge = addToolSurcharge(surcharge, summary, dto.BuildInToolGoogleSearch, googleCount, dGroupRatio, dQuotaPerUnit)
+		}
 	}
 
-	summary.ClaudeWebSearchCallCount = ctx.GetInt("claude_web_search_requests")
-	if summary.ClaudeWebSearchCallCount > 0 {
+	summary.ClaudeWebSearchCallCount = clampBillableToolCount(ctx, dto.BuildInToolWebSearch, ctx.GetInt("claude_web_search_requests"))
+	if summary.ClaudeWebSearchCallCount > 0 && !claudeWebSearchAlreadyBilled(relayInfo) {
 		summary.ClaudeWebSearchPrice = operation_setting.GetToolPrice("web_search")
 		surcharge = surcharge.Add(decimal.NewFromFloat(summary.ClaudeWebSearchPrice).
 			Div(decimal.NewFromInt(1000)).
 			Mul(dGroupRatio).
 			Mul(dQuotaPerUnit).
 			Mul(decimal.NewFromInt(int64(summary.ClaudeWebSearchCallCount))))
+	} else if claudeWebSearchAlreadyBilled(relayInfo) {
+		// BuiltInTools already added this search. Do not also count it on the Claude log line.
+		summary.ClaudeWebSearchCallCount = 0
 	}
 
 	if relayInfo.ResponsesUsageInfo != nil {
 		if fileSearchTool, exists := relayInfo.ResponsesUsageInfo.BuiltInTools[dto.BuildInToolFileSearch]; exists && fileSearchTool.CallCount > 0 {
-			summary.FileSearchCallCount = fileSearchTool.CallCount
+			summary.FileSearchCallCount = clampBillableToolCount(ctx, dto.BuildInToolFileSearch, fileSearchTool.CallCount)
 			summary.FileSearchPrice = operation_setting.GetToolPrice("file_search")
 			surcharge = surcharge.Add(decimal.NewFromFloat(summary.FileSearchPrice).
-				Mul(decimal.NewFromInt(int64(fileSearchTool.CallCount))).
+				Mul(decimal.NewFromInt(int64(summary.FileSearchCallCount))).
 				Div(decimal.NewFromInt(1000)).
 				Mul(dGroupRatio).
 				Mul(dQuotaPerUnit))

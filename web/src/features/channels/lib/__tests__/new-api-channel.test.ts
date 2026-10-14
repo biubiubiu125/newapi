@@ -118,6 +118,44 @@ describe('New API channel', () => {
     )
   })
 
+  test('keeps per-channel TLS verification skip in the saved setting', () => {
+    const channel = {
+      id: 19,
+      type: 1,
+      key: 'redacted',
+      name: 'Internal upstream',
+      status: 1,
+      models: 'gpt-5',
+      group: 'default',
+      channel_info: {
+        is_multi_key: false,
+        multi_key_size: 0,
+        multi_key_polling_index: 0,
+        multi_key_mode: 'random',
+      },
+      setting: JSON.stringify({ tls_insecure_skip_verify: true }),
+      settings: '{}',
+    } as Channel
+
+    const defaults = transformChannelToFormDefaults(channel)
+    assert.equal(defaults.tls_insecure_skip_verify, true)
+    assert.equal(
+      JSON.parse(buildSettingJSON(defaults)).tls_insecure_skip_verify,
+      true
+    )
+    assert.equal(
+      JSON.parse(
+        buildSettingJSON({
+          ...CHANNEL_FORM_DEFAULT_VALUES,
+          name: 'Internal upstream',
+          key: 'test-key',
+          models: 'gpt-5',
+        })
+      ).tls_insecure_skip_verify,
+      undefined
+    )
+  })
+
   test('disables direct testing for task plugin channels', () => {
     assert.equal(canTestChannel(61), false)
     assert.equal(canTestChannel(CHANNEL_TYPE_NEW_API), true)

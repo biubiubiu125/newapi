@@ -440,6 +440,19 @@ func TestModelPricingConversionDatabaseMatrix(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, `tier("image", fixed(1)) * image_count`, preview.Expression)
 			assert.Empty(t, preview.UnsupportedReason)
+			require.NoError(t, db.Create(&model.Model{ModelName: "conversion-array-image", Endpoints: `[" image-generation "]`}).Error)
+			arrayPreview, err := model.PreviewModelPricingConversion("conversion-array-image", model.PricingValues{"ModelPrice": float64(1)})
+			require.NoError(t, err)
+			assert.Equal(t, `tier("image", fixed(1)) * image_count`, arrayPreview.Expression)
+			assert.Empty(t, arrayPreview.UnsupportedReason)
+			require.NoError(t, db.Create(&model.Model{ModelName: "conversion-array-video", Endpoints: `["openai-video"]`}).Error)
+			videoArray, err := model.PreviewModelPricingConversion("conversion-array-video", model.PricingValues{"ModelPrice": float64(1)})
+			require.NoError(t, err)
+			assert.Equal(t, "Video pricing must be converted manually.", videoArray.UnsupportedReason)
+			require.NoError(t, db.Create(&model.Model{ModelName: "conversion-bad-endpoints", Endpoints: `"openai"`}).Error)
+			badEndpoints, err := model.PreviewModelPricingConversion("conversion-bad-endpoints", model.PricingValues{"ModelPrice": float64(1)})
+			require.NoError(t, err)
+			assert.Equal(t, "The model routing configuration could not be verified.", badEndpoints.UnsupportedReason)
 			for _, tc := range []struct {
 				name, rule string
 				nameRule   int
@@ -637,7 +650,7 @@ export function parseTaskResult() { return {}; }
 					for _, handler := range []gin.HandlerFunc{GetAllModelsMeta, SearchModelsMeta} {
 						var result filteredResponse
 						recorder := modelManagementRequest(t, handler, "GET", "/api/models/?square_state=unknown", nil, &result)
-											assert.Equal(t, http.StatusBadRequest, recorder.Code)
+						assert.Equal(t, http.StatusBadRequest, recorder.Code)
 						assert.False(t, result.Success)
 					}
 					for _, query := range []string{"p=-1", "page_size=-1"} {
@@ -1681,13 +1694,13 @@ type metadataSyncPreviewSource struct {
 }
 
 type metadataSyncPreviewCandidate struct {
-	ModelName      string                `json:"model_name"`
-	Kind           string                `json:"kind"`
-	Scope          string                `json:"scope"`
-	RecordVersion  string                `json:"record_version"`
+	ModelName      string                     `json:"model_name"`
+	Kind           string                     `json:"kind"`
+	Scope          string                     `json:"scope"`
+	RecordVersion  string                     `json:"record_version"`
 	Fields         []metadataSyncPreviewField `json:"fields"`
-	Upstream       *model.MetadataValues `json:"upstream,omitempty"`
-	VendorToCreate string                `json:"vendor_to_create,omitempty"`
+	Upstream       *model.MetadataValues      `json:"upstream,omitempty"`
+	VendorToCreate string                     `json:"vendor_to_create,omitempty"`
 }
 
 type metadataSyncPreviewField struct {

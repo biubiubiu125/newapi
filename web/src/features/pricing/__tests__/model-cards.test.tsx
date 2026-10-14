@@ -167,20 +167,40 @@ describe('model cards', () => {
     expect(within(metrics).queryByText(/100/)).not.toBeInTheDocument()
     expect(
       within(metrics).getByRole('img', {
-        name: 'Recent success-rate samples; gray bars indicate missing data.',
+        name: 'No performance data available',
       })
     ).toBeVisible()
+    expect(within(metrics).queryByText(/gray bars/)).not.toBeInTheDocument()
     expect(screen.getByText('No description available.')).toBeVisible()
     expect(screen.getByRole('button', { name: 'Details' })).toBeEnabled()
   })
 
-  it('uses fixed spacing between hourly status bars', () => {
-    render(<ModelCard model={pricingModel()} onClick={vi.fn()} />)
+  it('uses fixed spacing between reported status samples', () => {
+    render(
+      <ModelCard
+        model={pricingModel()}
+        onClick={vi.fn()}
+        perf={{
+          avg_latency_ms: 1200,
+          avg_tps: 42,
+          success_rate: 100,
+          recent_success_series: [
+            { ts: 1, success_rate: 100 },
+            { ts: 2, success_rate: 80 },
+          ],
+        }}
+      />
+    )
     const statusStrip = screen.getByRole('img', {
-      name: 'Recent success-rate samples; gray bars indicate missing data.',
+      name: 'Recent success-rate samples',
     })
     expect(statusStrip).toHaveClass('gap-px')
     expect(statusStrip).not.toHaveClass('justify-between')
+    expect(
+      [...statusStrip.children].some((slot) =>
+        slot.classList.contains('bg-muted-foreground/15')
+      )
+    ).toBe(false)
   })
 
   it('keeps group, endpoint and tag overflow counts with their own metadata', () => {
@@ -341,6 +361,22 @@ describe('model cards', () => {
     )
   })
 
+  it('shows expression cache-read prices on the model card', () => {
+    render(
+      <ModelCard
+        model={pricingModel({
+          billing_mode: 'tiered_expr',
+          billing_expr: 'tier("standard", p * 5 + cr * 1.25 + c * 30)',
+        })}
+        onClick={vi.fn()}
+        tokenUnit='M'
+      />
+    )
+    expect(screen.getByText('Cache Read').parentElement).toHaveTextContent(
+      '$1.25'
+    )
+  })
+
   it('keeps task price ranges in their actual usage unit instead of the selected token unit', () => {
     render(
       <ModelCard
@@ -431,11 +467,16 @@ describe('model cards', () => {
     )
     await waitFor(() =>
       expect(
-        queryClient.getQueryState(['perf-metrics-summary', 24])?.status
+        queryClient.getQueryState([
+          'perf-metrics-summary',
+          24,
+          ['example-model'],
+        ])?.status
       ).toBe('error')
     )
     expect(request).toHaveBeenCalledWith('/api/perf-metrics/summary', {
-      params: { hours: 24 },
+      params: { hours: 24, recent_model: ['example-model'] },
+      paramsSerializer: { indexes: null },
     })
     expect(
       within(
@@ -448,12 +489,21 @@ describe('model cards', () => {
   })
 
   it('paginates the model cards and disables navigation at both boundaries', async () => {
-    queryClient.setQueryData(['perf-metrics-summary', 24], {
-      success: true,
-      data: { models: [] },
-    })
     const models = Array.from({ length: 21 }, (_, index) =>
       pricingModel({ id: index + 1, model_name: `model-${index + 1}` })
+    )
+    const summary = { success: true, data: { models: [] } }
+    queryClient.setQueryData(
+      [
+        'perf-metrics-summary',
+        24,
+        models.slice(0, 20).map((model) => model.model_name),
+      ],
+      summary
+    )
+    queryClient.setQueryData(
+      ['perf-metrics-summary', 24, ['model-21']],
+      summary
     )
     const user = userEvent.setup()
     render(
@@ -472,7 +522,7 @@ describe('model cards', () => {
   })
 
   it('switches the card grid to three columns at the xl breakpoint instead of 2xl', () => {
-    queryClient.setQueryData(['perf-metrics-summary', 24], {
+    queryClient.setQueryData(['perf-metrics-summary', 24, ['example-model']], {
       success: true,
       data: { models: [] },
     })
@@ -489,11 +539,8 @@ describe('model cards', () => {
     expect(grid).not.toHaveClass('min-[1440px]:grid-cols-3')
   })
 
-  it('lights slots 23 and 18 when series has the current hour and five hours earlier', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-09-07T12:00:00.000Z'))
+  it('renders only reported samples and keeps older hours instead of gray gaps', () => {
     const currentHourStart = Math.floor(Date.now() / 1000 / 3600) * 3600
-
     render(
       <ModelCard
         model={pricingModel()}
@@ -502,65 +549,25 @@ describe('model cards', () => {
           avg_latency_ms: 1200,
           avg_tps: 42,
           success_rate: 100,
-          window_start: currentHourStart - 23 * 3600,
           recent_success_series: [
+            { ts: currentHourStart - 29 * 3600, success_rate: 80 },
             { ts: currentHourStart, success_rate: 100 },
-            { ts: currentHourStart - 5 * 3600, success_rate: 80 },
           ],
         }}
       />
     )
 
     const spans = [
-      ...screen.getByRole('img', {
-        name: 'Recent success-rate samples; gray bars indicate missing data.',
-      }).children,
+      ...screen.getByRole('img', { name: 'Recent success-rate samples' })
+        .children,
     ]
-    expect(spans).toHaveLength(24)
-    spans.forEach((slot, index) => {
-      if (index === 18 || index === 23) {
-        expect(slot.classList.contains('bg-muted-foreground/15')).toBe(false)
-        return
-      }
-      expect(slot.classList.contains('bg-muted-foreground/15')).toBe(true)
-    })
-    vi.useRealTimers()
-  })
-
-  it('keeps all 24 slots gray when a series point is 24 hours before the current hour', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-09-07T12:00:00.000Z'))
-    const currentHourStart = Math.floor(Date.now() / 1000 / 3600) * 3600
-
-    render(
-      <ModelCard
-        model={pricingModel()}
-        onClick={vi.fn()}
-        perf={{
-          avg_latency_ms: 1200,
-          avg_tps: 42,
-          success_rate: 100,
-          window_start: currentHourStart - 23 * 3600,
-          recent_success_series: [
-            { ts: currentHourStart - 24 * 3600, success_rate: 100 },
-          ],
-        }}
-      />
-    )
-
-    const spans = [
-      ...screen.getByRole('img', {
-        name: 'Recent success-rate samples; gray bars indicate missing data.',
-      }).children,
-    ]
-    expect(spans).toHaveLength(24)
+    expect(spans).toHaveLength(2)
     spans.forEach((slot) => {
-      expect(slot.classList.contains('bg-muted-foreground/15')).toBe(true)
+      expect(slot.classList.contains('bg-muted-foreground/15')).toBe(false)
     })
-    vi.useRealTimers()
   })
 
-  it('keeps all 24 slots gray when recent_success_series is undefined', () => {
+  it('shows no placeholder bars when recent samples are missing', () => {
     render(
       <ModelCard
         model={pricingModel()}
@@ -569,51 +576,14 @@ describe('model cards', () => {
       />
     )
 
-    const spans = [
-      ...screen.getByRole('img', {
-        name: 'Recent success-rate samples; gray bars indicate missing data.',
-      }).children,
-    ]
-    expect(spans).toHaveLength(24)
-    spans.forEach((slot) => {
-      expect(slot.classList.contains('bg-muted-foreground/15')).toBe(true)
+    const statusStrip = screen.getByRole('img', {
+      name: 'No performance data available',
     })
-  })
-
-  it('uses the server window even when the browser clock is a day ahead', () => {
-    vi.useFakeTimers()
-    vi.setSystemTime(new Date('2026-09-07T12:37:00.000Z'))
-    const currentHourStart = Math.floor(Date.now() / 1000 / 3600) * 3600
-
-    render(
-      <ModelCard
-        model={pricingModel()}
-        onClick={vi.fn()}
-        perf={{
-          avg_latency_ms: 1200,
-          avg_tps: 42,
-          success_rate: 80,
-          window_start: currentHourStart - 47 * 3600,
-          recent_success_series: [
-            { ts: currentHourStart - 29 * 3600, success_rate: 80 },
-          ],
-        }}
-      />
-    )
-
-    const spans = [
-      ...screen.getByRole('img', {
-        name: 'Recent success-rate samples; gray bars indicate missing data.',
-      }).children,
-    ]
-    expect(spans).toHaveLength(24)
-    spans.forEach((slot, index) => {
-      if (index === 18) {
-        expect(slot.classList.contains('bg-muted-foreground/15')).toBe(false)
-        return
-      }
-      expect(slot.classList.contains('bg-muted-foreground/15')).toBe(true)
-    })
-    vi.useRealTimers()
+    expect(statusStrip.children).toHaveLength(0)
+    expect(
+      [...statusStrip.children].some((slot) =>
+        slot.classList.contains('bg-muted-foreground/15')
+      )
+    ).toBe(false)
   })
 })

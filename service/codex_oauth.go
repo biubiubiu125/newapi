@@ -232,8 +232,10 @@ func getCodexOAuthHTTPClient(proxyURL string) (*http.Client, error) {
 	return getCodexOAuthHTTPClientWithSettings(proxyURL, dto.ChannelSettings{})
 }
 
-func getCodexOAuthHTTPClientWithSettings(proxyURL string, settings dto.ChannelSettings) (*http.Client, error) {
-	baseClient, err := GetHttpClientWithProxySettings(strings.TrimSpace(proxyURL), settings)
+func getCodexOAuthHTTPClientWithSettings(proxyURL string, _ dto.ChannelSettings) (*http.Client, error) {
+	// OpenAI's token endpoint is not the channel upstream. The channel proxy is
+	// still used, but tls_insecure_skip_verify must not apply to this exchange.
+	baseClient, err := GetHttpClientWithProxy(strings.TrimSpace(proxyURL))
 	if err != nil {
 		return nil, err
 	}

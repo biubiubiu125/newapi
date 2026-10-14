@@ -122,7 +122,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 				data = patchClaudeMessageDeltaUsageData(data, buildMessageDeltaPatchUsage(&claudeResponse, claudeInfo))
 			}
 		}
-		countClaudeStreamBillableTools(c, info, &claudeResponse)
+		countClaudeStreamBillableTools(info, &claudeResponse)
 		helper.ClaudeChunkData(c, claudeResponse, data)
 	} else if info.RelayFormat == types.RelayFormatOpenAI {
 		state, err := claudeToChatStreamState(info)
@@ -138,7 +138,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 			return nil
 		}
 
-		countClaudeStreamBillableTools(c, info, &claudeResponse)
+		countClaudeStreamBillableTools(info, &claudeResponse)
 
 		if response == nil {
 			return nil
@@ -159,7 +159,7 @@ func HandleStreamResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		if !FormatClaudeResponseInfo(&claudeResponse, nil, claudeInfo) {
 			return nil
 		}
-		countClaudeStreamBillableTools(c, info, &claudeResponse)
+		countClaudeStreamBillableTools(info, &claudeResponse)
 		if sendErr := sendGeminiStreamResults(c, results); sendErr != nil {
 			return sendErr
 		}
@@ -221,7 +221,7 @@ func sendGeminiStreamResults(c *gin.Context, results []relayconvert.ResponseResu
 	return nil
 }
 
-func countClaudeStreamBillableTools(c *gin.Context, info *relaycommon.RelayInfo, claudeResponse *dto.ClaudeResponse) {
+func countClaudeStreamBillableTools(info *relaycommon.RelayInfo, claudeResponse *dto.ClaudeResponse) {
 	if claudeResponse == nil {
 		return
 	}
@@ -230,11 +230,33 @@ func countClaudeStreamBillableTools(c *gin.Context, info *relaycommon.RelayInfo,
 		claudeResponse.ContentBlock.Type == "tool_use" {
 		info.CountBillableToolCall(dto.BuildInCallToolUse, claudeResponse.ContentBlock.Name)
 	}
-	if claudeResponse.Type == "message_delta" &&
-		claudeResponse.Usage != nil &&
-		claudeResponse.Usage.ServerToolUse != nil &&
-		claudeResponse.Usage.ServerToolUse.WebSearchRequests > 0 {
-		c.Set("claude_web_search_requests", claudeResponse.Usage.ServerToolUse.WebSearchRequests)
+	if claudeResponse.Type == "message_delta" && claudeResponse.Usage != nil {
+		// message_delta usage is cumulative, so the last report wins.
+		recordClaudeServerToolUse(info, claudeResponse.Usage.ServerToolUse)
+	}
+}
+
+// recordClaudeServerToolUse bills the server tool requests Anthropic reports
+// in usage.server_tool_use. web_fetch, code_execution, and tool_search have no
+// built-in price and bill only once an operator prices them. WebSearchBillingKey
+// re-keys web_search for vendors such as Ali's Anthropic endpoint.
+func recordClaudeServerToolUse(info *relaycommon.RelayInfo, serverToolUse *dto.ClaudeServerToolUse) {
+	if info == nil || serverToolUse == nil {
+		return
+	}
+	webSearchKey := info.WebSearchBillingKey
+	if webSearchKey == "" {
+		webSearchKey = dto.BuildInToolWebSearch
+	}
+	for name, count := range map[string]int{
+		webSearchKey:     serverToolUse.WebSearchRequests,
+		"web_fetch":      serverToolUse.WebFetchRequests,
+		"code_execution": serverToolUse.CodeExecutionRequests,
+		"tool_search":    serverToolUse.ToolSearchRequests,
+	} {
+		if count > 0 {
+			info.SetBillableToolCount(name, count)
+		}
 	}
 }
 
@@ -386,8 +408,13 @@ func HandleClaudeResponseData(c *gin.Context, info *relaycommon.RelayInfo, claud
 		}
 	}
 
-	if claudeResponse.Usage != nil && claudeResponse.Usage.ServerToolUse != nil && claudeResponse.Usage.ServerToolUse.WebSearchRequests > 0 {
-		c.Set("claude_web_search_requests", claudeResponse.Usage.ServerToolUse.WebSearchRequests)
+	if claudeResponse.Usage != nil {
+		recordClaudeServerToolUse(info, claudeResponse.Usage.ServerToolUse)
+		if claudeResponse.Usage.ServerToolUse != nil && claudeResponse.Usage.ServerToolUse.WebSearchRequests > 0 {
+			// Kept for logs and callers that still read the context count.
+			// Settlement skips this when BuiltInTools already billed the same search.
+			c.Set("claude_web_search_requests", claudeResponse.Usage.ServerToolUse.WebSearchRequests)
+		}
 	}
 
 	for _, block := range claudeResponse.Content {

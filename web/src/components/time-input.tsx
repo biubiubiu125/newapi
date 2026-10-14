@@ -26,6 +26,7 @@ const HOURS = Array.from({ length: 24 }, (_, hour) =>
 const MINUTES = Array.from({ length: 60 }, (_, minute) =>
   String(minute).padStart(2, '0')
 )
+const SECONDS = MINUTES
 
 interface TimeInputProps {
   value: string
@@ -35,16 +36,22 @@ interface TimeInputProps {
   'aria-label'?: string
 }
 
-function parseTime(value: string): { hours: string; minutes: string } {
-  const match = /^(\d{1,2}):(\d{2})/.exec(value.trim())
+function parseTime(value: string): {
+  hours: string
+  minutes: string
+  seconds: string
+} {
+  const match = /^(\d{1,2}):(\d{2})(?::(\d{2}))?/.exec(value.trim())
   if (!match) {
-    return { hours: '00', minutes: '00' }
+    return { hours: '00', minutes: '00', seconds: '00' }
   }
   const hours = Math.min(23, Math.max(0, Number(match[1])))
   const minutes = Math.min(59, Math.max(0, Number(match[2])))
+  const seconds = Math.min(59, Math.max(0, Number(match[3] ?? 0)))
   return {
     hours: String(hours).padStart(2, '0'),
     minutes: String(minutes).padStart(2, '0'),
+    seconds: String(seconds).padStart(2, '0'),
   }
 }
 
@@ -59,10 +66,14 @@ export function TimeInput({
   'aria-label': ariaLabel,
 }: TimeInputProps) {
   const { t } = useTranslation()
-  const { hours, minutes } = parseTime(value)
+  const { hours, minutes, seconds } = parseTime(value)
 
-  const emit = (nextHours: string, nextMinutes: string) => {
-    onChange(`${nextHours}:${nextMinutes}`)
+  const emit = (
+    nextHours: string,
+    nextMinutes: string,
+    nextSeconds: string
+  ) => {
+    onChange(`${nextHours}:${nextMinutes}:${nextSeconds}`)
   }
 
   return (
@@ -77,7 +88,7 @@ export function TimeInput({
         className={selectClassName}
         disabled={disabled}
         value={hours}
-        onChange={(event) => emit(event.target.value, minutes)}
+        onChange={(event) => emit(event.target.value, minutes, seconds)}
       >
         {HOURS.map((hour) => (
           <option key={hour} value={hour}>
@@ -91,11 +102,25 @@ export function TimeInput({
         className={selectClassName}
         disabled={disabled}
         value={minutes}
-        onChange={(event) => emit(hours, event.target.value)}
+        onChange={(event) => emit(hours, event.target.value, seconds)}
       >
         {MINUTES.map((minute) => (
           <option key={minute} value={minute}>
             {minute}
+          </option>
+        ))}
+      </select>
+      <span className='text-muted-foreground text-sm'>:</span>
+      <select
+        aria-label={t('Second')}
+        className={selectClassName}
+        disabled={disabled}
+        value={seconds}
+        onChange={(event) => emit(hours, minutes, event.target.value)}
+      >
+        {SECONDS.map((second) => (
+          <option key={second} value={second}>
+            {second}
           </option>
         ))}
       </select>

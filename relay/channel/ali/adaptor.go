@@ -77,6 +77,21 @@ func (a *Adaptor) ConvertClaudeRequest(c *gin.Context, info *relaycommon.RelayIn
 }
 
 func (a *Adaptor) Init(info *relaycommon.RelayInfo) {
+	if info == nil {
+		return
+	}
+	if info.RelayMode == constant.RelayModeResponses {
+		info.VendorToolUsage = aliResponsesToolUsage
+	}
+	if info.RelayFormat == types.RelayFormatClaude {
+		if supportsAliAnthropicMessages(info.UpstreamModelName) {
+			info.WebSearchBillingKey = aliSearchAgentKey
+		} else {
+			// Claude clients on models outside the Anthropic-compatible list are
+			// converted to compatible-mode Chat.
+			info.ConvOptions().WebSearch = encodeWebSearch(info)
+		}
+	}
 }
 
 func (a *Adaptor) GetRequestURL(info *relaycommon.RelayInfo) (string, error) {

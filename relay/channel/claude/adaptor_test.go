@@ -1,6 +1,8 @@
 package claude
 
 import (
+	"encoding/json"
+	"net/http"
 	"net/http/httptest"
 	"testing"
 
@@ -272,4 +274,99 @@ func TestConvertGeminiRequestThinkingConfigUsesReasoningIntent(t *testing.T) {
 func TestConvertGeminiRequestNilRequest(t *testing.T) {
 	_, err := (&Adaptor{}).ConvertGeminiRequest(nil, geminiToClaudeInfo(), nil)
 	require.Error(t, err)
+}
+
+func TestThinkingRoundTripsBlockBindingAndUnknownFields(t *testing.T) {
+	raw := []byte(`{"type":"adaptive","display":"summarized","block_binding":{"prefix_mismatch_behavior":"drop_block"},"future_field":{"keep":true}}`)
+	var thinking dto.Thinking
+	require.NoError(t, json.Unmarshal(raw, &thinking))
+	encoded, err := json.Marshal(thinking)
+	require.NoError(t, err)
+	require.JSONEq(t, string(raw), string(encoded))
+
+	copied, err := common.DeepCopy(&thinking)
+	require.NoError(t, err)
+	encoded, err = json.Marshal(copied)
+	require.NoError(t, err)
+	require.JSONEq(t, string(raw), string(encoded))
+}
+
+func TestConvertClaudeRequestKeepsNativeThinkingControls(t *testing.T) {
+	raw := `{"model":"claude-sonnet-4-5","max_tokens":16,"messages":[{"role":"user","content":"hello"}],"thinking":{"type":"adaptive","block_binding":{"prefix_mismatch_behavior":"drop_block"},"future_field":1}}`
+	var original dto.ClaudeRequest
+	require.NoError(t, common.UnmarshalJsonStr(raw, &original))
+	copied, err := common.DeepCopy(&original)
+	require.NoError(t, err)
+	info := &relaycommon.RelayInfo{
+		Request: &original,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "claude-sonnet-4-5",
+		},
+	}
+
+	out, err := (&Adaptor{}).ConvertClaudeRequest(nil, info, copied)
+	require.NoError(t, err)
+	converted := out.(*dto.ClaudeRequest)
+	encoded, err := json.Marshal(converted.Thinking)
+	require.NoError(t, err)
+	require.JSONEq(t, `{"type":"adaptive","block_binding":{"prefix_mismatch_behavior":"drop_block"},"future_field":1}`, string(encoded))
+}
+
+func TestConvertClaudeRequestRestoresBlockBindingAfterAdaptiveSuffix(t *testing.T) {
+	raw := `{"model":"claude-opus-4-6","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"thinking":{"type":"enabled","budget_tokens":1024,"block_binding":{"prefix_mismatch_behavior":"drop_block"}}}`
+	var original dto.ClaudeRequest
+	require.NoError(t, common.UnmarshalJsonStr(raw, &original))
+	copied, err := common.DeepCopy(&original)
+	require.NoError(t, err)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "claude-opus-4-6@thinking:adaptive",
+		Request:         &original,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "claude-opus-4-6@thinking:adaptive",
+		},
+	}
+	require.NoError(t, helper.ApplyReasoningModelSuffix(nil, info, copied))
+
+	out, err := (&Adaptor{}).ConvertClaudeRequest(nil, info, copied)
+	require.NoError(t, err)
+	converted := out.(*dto.ClaudeRequest)
+	require.NotNil(t, converted.Thinking)
+	assert.Equal(t, "adaptive", converted.Thinking.Type)
+	require.JSONEq(t, `{"prefix_mismatch_behavior":"drop_block"}`, string(converted.Thinking.BlockBinding))
+}
+
+func TestConvertClaudeRequestDoesNotRestoreBindingForBetweenTools(t *testing.T) {
+	raw := `{"model":"claude-sonnet-5-5","max_tokens":32,"messages":[{"role":"user","content":"hello"}],"thinking":{"type":"adaptive","block_binding":{"prefix_mismatch_behavior":"drop_block"}}}`
+	var original dto.ClaudeRequest
+	require.NoError(t, common.UnmarshalJsonStr(raw, &original))
+	copied, err := common.DeepCopy(&original)
+	require.NoError(t, err)
+	info := &relaycommon.RelayInfo{
+		OriginModelName: "claude-sonnet-5-5@thinking:off",
+		Request:         &original,
+		ChannelMeta: &relaycommon.ChannelMeta{
+			UpstreamModelName: "claude-sonnet-5-5@thinking:off",
+		},
+	}
+	require.NoError(t, helper.ApplyReasoningModelSuffix(nil, info, copied))
+
+	out, err := (&Adaptor{}).ConvertClaudeRequest(nil, info, copied)
+	require.NoError(t, err)
+	converted := out.(*dto.ClaudeRequest)
+	require.NotNil(t, converted.Thinking)
+	assert.Equal(t, "between_tools", converted.Thinking.Type)
+	assert.Empty(t, converted.Thinking.BlockBinding)
+}
+
+func TestCommonClaudeHeadersJoinsAnthropicBeta(t *testing.T) {
+	gin.SetMode(gin.TestMode)
+	recorder := httptest.NewRecorder()
+	c, _ := gin.CreateTestContext(recorder)
+	c.Request = httptest.NewRequest(http.MethodPost, "/v1/messages", nil)
+	c.Request.Header.Add("anthropic-beta", "fast-mode-2026-02-01, thinking-binding-controls-2026-08-01")
+	c.Request.Header.Add("anthropic-beta", " extra-beta ")
+	c.Request.Header.Add("anthropic-beta", " , ")
+	req := http.Header{}
+	CommonClaudeHeadersOperation(c, &req, &relaycommon.RelayInfo{OriginModelName: "claude-sonnet-4-5"})
+	assert.Equal(t, "fast-mode-2026-02-01,thinking-binding-controls-2026-08-01,extra-beta", req.Get("anthropic-beta"))
 }

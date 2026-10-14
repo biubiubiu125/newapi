@@ -3,6 +3,7 @@ package perfmetrics
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -15,6 +16,26 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestQuerySummaryAllRejectsMoreThanFiftyRecentModels(t *testing.T) {
+	names := make([]string, 51)
+	for i := range names {
+		names[i] = fmt.Sprintf("model-%d", i)
+	}
+	_, err := QuerySummaryAll(24, nil, names...)
+	require.ErrorIs(t, err, ErrInvalidParameters)
+}
+
+func TestCapRecentSeriesKeepsNewestTwentyFour(t *testing.T) {
+	series := make([]SuccessRatePoint, 30)
+	for i := range series {
+		series[i] = SuccessRatePoint{Ts: int64(i), SuccessRate: 1}
+	}
+	got := capRecentSeries(series)
+	require.Len(t, got, 24)
+	assert.Equal(t, int64(6), got[0].Ts)
+	assert.Equal(t, int64(29), got[len(got)-1].Ts)
+}
 
 func TestClassifyRelayOutcome(t *testing.T) {
 	canceled, cancel := context.WithCancel(context.Background())
@@ -91,6 +112,39 @@ func TestClientCancellationDuringUpstreamRead(t *testing.T) {
 	deadline := relaycommon.NewStreamStatus()
 	deadline.SetEndReason(relaycommon.StreamEndReasonClientGone, context.DeadlineExceeded)
 	assert.Equal(t, OutcomeFailure, ClassifyRelayOutcome(context.Background(), &relaycommon.RelayInfo{StreamStatus: deadline}, nil))
+}
+
+func TestCompletedStreamStaysSampledAfterClientCancel(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	completed := relaycommon.NewStreamStatus()
+	completed.MarkCompleted()
+	completed.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
+	assert.Equal(t, OutcomeSuccess, ClassifyRelayOutcome(ctx, &relaycommon.RelayInfo{IsStream: true, StreamStatus: completed}, nil))
+
+	done := relaycommon.NewStreamStatus()
+	done.MarkCompleted()
+	done.SetEndReason(relaycommon.StreamEndReasonDone, nil)
+	assert.Equal(t, OutcomeSuccess, ClassifyRelayOutcome(ctx, &relaycommon.RelayInfo{IsStream: true, StreamStatus: done}, nil))
+
+	incomplete := relaycommon.NewStreamStatus()
+	incomplete.RequireTerminal()
+	incomplete.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
+	assert.Equal(t, OutcomeIgnored, ClassifyRelayOutcome(ctx, &relaycommon.RelayInfo{IsStream: true, StreamStatus: incomplete}, nil))
+
+	errored := relaycommon.NewStreamStatus()
+	errored.MarkCompleted()
+	errored.RecordError("late write")
+	errored.SetEndReason(relaycommon.StreamEndReasonEOF, nil)
+	assert.Equal(t, OutcomeIgnored, ClassifyRelayOutcome(ctx, &relaycommon.RelayInfo{IsStream: true, StreamStatus: errored}, nil))
+
+	endedWithError := relaycommon.NewStreamStatus()
+	endedWithError.MarkCompleted()
+	endedWithError.SetEndReason(relaycommon.StreamEndReasonEOF, errors.New("closed"))
+	assert.Equal(t, OutcomeIgnored, ClassifyRelayOutcome(ctx, &relaycommon.RelayInfo{IsStream: true, StreamStatus: endedWithError}, nil))
+
+	assert.Equal(t, OutcomeIgnored, ClassifyRelayOutcome(ctx, &relaycommon.RelayInfo{}, nil))
 }
 
 func TestPerformanceWindowIncludesCurrentHour(t *testing.T) {
@@ -220,6 +274,21 @@ func TestPerformanceAggregationAndFlush(t *testing.T) {
 			require.Len(t, summary.Models, 1)
 			assert.Equal(t, 99.01, summary.Models[0].SuccessRate)
 			assert.Equal(t, 99.01, summary.Models[0].RecentSuccessSeries[0].SuccessRate)
+
+			oldHour := start - 3600
+			withRecent, err := QuerySummaryAll(24, groups, "test-model")
+			require.NoError(t, err)
+			assert.Equal(t, summary.Summary, withRecent.Summary)
+			require.Len(t, withRecent.Models, 1)
+			assert.Equal(t, 99.01, withRecent.Models[0].SuccessRate)
+			var sawOld bool
+			for _, point := range withRecent.Models[0].RecentSuccessSeries {
+				if point.Ts == oldHour {
+					sawOld = true
+					assert.Equal(t, 0.0, point.SuccessRate)
+				}
+			}
+			assert.True(t, sawOld, "older non-empty hours stay in recent samples without joining the summary window")
 			encoded, err := common.Marshal(summary)
 			require.NoError(t, err)
 			assert.NotContains(t, string(encoded), "request_count")

@@ -243,6 +243,8 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		return nil, types.NewOpenAIError(err, types.ErrorCodeBadResponse, http.StatusInternalServerError)
 	}
 	streamErr := (*types.NewAPIError)(nil)
+	var failedUsage *dto.Usage
+	upstreamFailed := false
 
 	if info.RelayFormat == types.RelayFormatClaude && info.ClaudeConvertInfo == nil {
 		info.ClaudeConvertInfo = &relaycommon.ClaudeConvertInfo{LastMessagesType: relaycommon.LastMessageTypeNone}
@@ -329,7 +331,9 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 			info.ObserveResponseModel(streamResp.Response.Model)
 		}
 		if streamResp.Type == "response.error" || streamResp.Type == "response.failed" {
+			upstreamFailed = true
 			if streamResp.Response != nil {
+				failedUsage = streamResp.Response.Usage
 				if oaiErr := streamResp.Response.GetOpenAIError(); oaiErr != nil && oaiErr.Type != "" {
 					streamErr = types.WithOpenAIError(*oaiErr, http.StatusInternalServerError)
 					sr.Stop(streamErr)
@@ -355,6 +359,38 @@ func OaiResponsesToChatStreamHandler(c *gin.Context, info *relaycommon.RelayInfo
 		}
 	})
 
+	if streamErr != nil && upstreamFailed {
+		// Delivered text is billable even when the failure arrived before a client
+		// write. Empty failures stay unbilled. Other stream errors keep the
+		// client-write settlement below.
+		if info == nil || strings.TrimSpace(state.UsageText()) == "" {
+			return nil, streamErr
+		}
+		usage := relayconvert.UsageFromResponsesUsage(failedUsage)
+		if usage == nil || (usage.PromptTokens == 0 && usage.CompletionTokens == 0 && usage.TotalTokens == 0) {
+			usage = service.ResponseText2Usage(c, state.UsageText(), info.UpstreamModelName, info.GetEstimatePromptTokens())
+		}
+		if usage.TotalTokens == 0 {
+			usage.TotalTokens = usage.PromptTokens + usage.CompletionTokens
+		}
+		logger.LogError(c, "responses stream failed after delivered output: "+streamErr.Error())
+		streamErr.SetMessage(common.MessageWithRequestId(streamErr.Error(), c.GetString(common.RequestIdKey)))
+		statusCode := streamErr.StatusCode
+		if statusCode == 0 {
+			statusCode = http.StatusInternalServerError
+		}
+		if info.RelayFormat == types.RelayFormatClaude {
+			c.JSON(statusCode, gin.H{
+				"type":  "error",
+				"error": streamErr.ToClaudeError(),
+			})
+		} else {
+			c.JSON(statusCode, gin.H{
+				"error": streamErr.ToOpenAIError(),
+			})
+		}
+		return usage, nil
+	}
 	if streamErr != nil && (info == nil || !info.HasClientStreamWrite()) {
 		return nil, streamErr
 	}

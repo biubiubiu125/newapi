@@ -6,7 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -1105,9 +1104,10 @@ func TestResponsesWebSocketAmbiguousControlErrorClosesAndSettlesOnce(t *testing.
 	require.NoError(t, err)
 	assert.JSONEq(t, terminal, string(body))
 	_, _, err = fixture.client.ReadMessage()
-	require.Error(t, err, "an unattributed error must close the connection instead of remaining busy")
-	var timeout net.Error
-	assert.False(t, errors.As(err, &timeout) && timeout.Timeout(), "the server must close before the read deadline")
+	// A dropped socket would read as a synthetic 1006; 1011 is the gateway's frame.
+	var closeErr *websocket.CloseError
+	require.ErrorAs(t, err, &closeErr, "an unattributed error must close the connection instead of remaining busy")
+	assert.Equal(t, websocket.CloseInternalServerErr, closeErr.Code)
 	fixture.closeAndWait(t)
 	assertResponsesWSAccounting(t, fixture, []int{1000})
 }

@@ -39,10 +39,11 @@ func TestRequestConverterRegistryListsSupportedTextConverters(t *testing.T) {
 			},
 		},
 		{
-			converter: requestConverterClaudeToResponses,
-			from:      types.RelayFormatClaude,
-			to:        types.RelayFormatOpenAIResponses,
-			quality:   RequestConverterQualityFair,
+			converter:      requestConverterClaudeToResponses,
+			from:           types.RelayFormatClaude,
+			to:             types.RelayFormatOpenAIResponses,
+			quality:        RequestConverterQualityFair,
+			advancedCustom: true,
 		},
 		{
 			converter: requestConverterGeminiToClaude,
@@ -55,10 +56,11 @@ func TestRequestConverterRegistryListsSupportedTextConverters(t *testing.T) {
 			},
 		},
 		{
-			converter: requestConverterGeminiToResponses,
-			from:      types.RelayFormatGemini,
-			to:        types.RelayFormatOpenAIResponses,
-			quality:   RequestConverterQualityFair,
+			converter:      requestConverterGeminiToResponses,
+			from:           types.RelayFormatGemini,
+			to:             types.RelayFormatOpenAIResponses,
+			quality:        RequestConverterQualityFair,
+			advancedCustom: true,
 			stepConverters: []string{
 				ConverterGeminiContentToOpenAIChat,
 				ConverterOpenAIChatToOpenAIResponses,

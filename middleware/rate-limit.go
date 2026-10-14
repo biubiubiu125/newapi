@@ -14,6 +14,7 @@ import (
 	"github.com/QuantumNous/new-api/logger"
 	"github.com/QuantumNous/new-api/model"
 	"github.com/gin-contrib/sessions"
+	"github.com/gin-contrib/static"
 	"github.com/gin-gonic/gin"
 )
 
@@ -541,11 +542,22 @@ func telegramRateLimitKey(c *gin.Context, mark string) string {
 	return fallbackRateLimitKey(c, mark)
 }
 
-func GlobalWebRateLimit() func(c *gin.Context) {
+func GlobalWebRateLimit(frontendFS static.ServeFileSystem) func(c *gin.Context) {
+	webLimit := defNext
 	if common.GlobalWebRateLimitEnable {
-		return rateLimitFactoryWithKeyFunc(common.GlobalWebRateLimitNum, common.GlobalWebRateLimitDuration, "GW", fallbackRateLimitKey)
+		webLimit = rateLimitFactoryWithKeyFunc(common.GlobalWebRateLimitNum, common.GlobalWebRateLimitDuration, "GW", fallbackRateLimitKey)
 	}
-	return defNext
+	staticLimit := defNext
+	if common.GlobalStaticRateLimitEnable {
+		staticLimit = rateLimitFactoryWithKeyFunc(common.GlobalStaticRateLimitNum, common.GlobalStaticRateLimitDuration, "GS", fallbackRateLimitKey)
+	}
+	return func(c *gin.Context) {
+		if frontendFS != nil && frontendFS.Exists("/", c.Request.URL.Path) {
+			staticLimit(c)
+			return
+		}
+		webLimit(c)
+	}
 }
 
 func GlobalAPIRateLimit() func(c *gin.Context) {

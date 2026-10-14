@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/base64"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -41,6 +42,24 @@ type requestDescriptor struct {
 	Method         string            `json:"method"`
 	Headers        map[string]string `json:"headers"`
 	Body           any               `json:"body"`
+	BodyText       json.RawMessage   `json:"-"`
+	Credentialless bool              `json:"credentialless"`
+	Action         string            `json:"action"`
+	Model          string            `json:"model"`
+	RewriteModel   string            `json:"rewriteModel"`
+	BodyType       string            `json:"bodyType"`
+	Parts          []requestPart     `json:"parts"`
+}
+
+// orderedRequestDescriptor is the same descriptor as JSON.stringify wrote it.
+// A plugin that declared json-order@1 keeps Body as that text so the upstream
+// receives members in the client's order, without encoding/json HTML escapes.
+type orderedRequestDescriptor struct {
+	ResponseType   string            `json:"responseType"`
+	URL            string            `json:"url"`
+	Method         string            `json:"method"`
+	Headers        map[string]string `json:"headers"`
+	Body           json.RawMessage   `json:"body"`
 	Credentialless bool              `json:"credentialless"`
 	Action         string            `json:"action"`
 	Model          string            `json:"model"`
@@ -86,12 +105,13 @@ var errPluginAuthResolution = errors.New("plugin authentication resolution faile
 const maxTaskPluginPersistedJSONBytes = 1 << 20
 
 type TaskAdaptor struct {
-	plugin         *pluginruntime.LoadedPlugin
-	info           *relaycommon.RelayInfo
-	submit         *requestDescriptor
-	routeRequest   *pluginruntime.RouteRequestContext
-	requestHeaders map[string]string
-	files          []map[string]any
+	plugin          *pluginruntime.LoadedPlugin
+	info            *relaycommon.RelayInfo
+	submit          *requestDescriptor
+	routeRequest    *pluginruntime.RouteRequestContext
+	requestHeaders  map[string]string
+	files           []map[string]any
+	requestBodyText json.RawMessage
 }
 
 func New(plugin *pluginruntime.LoadedPlugin) *TaskAdaptor { return &TaskAdaptor{plugin: plugin} }
@@ -102,7 +122,7 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 		if pinned, ok := pinnedValue.(pluginruntime.PinnedEndpoint); ok && pinned.Plugin == a.plugin {
 			if protocolValue, present := c.Get(pluginruntime.ContextKeyProtocolRequest); present {
 				if protocolContext, valid := protocolValue.(pluginruntime.ProtocolRequestContext); valid {
-					resolvedValue, callErr := a.plugin.Engine.CallPath(context.WithoutCancel(c.Request.Context()), "protocols", []string{pinned.Protocol, "decodeRequest"}, protocolContext.JSValue())
+					resolvedValue, requestBodyText, callErr := a.plugin.Engine.CallPathWithMemberJSON(context.WithoutCancel(c.Request.Context()), 0, a.plugin.Meta.JSONTextMember("requestBody"), "protocols", []string{pinned.Protocol, "decodeRequest"}, protocolContext.JSValueFor(a.plugin.Meta))
 					resolved, resolvedOK := resolvedValue.(map[string]any)
 					resolvedModel, modelOK := resolved["model"].(string)
 					if callErr != nil || !resolvedOK || !modelOK || resolvedModel != pinned.Model {
@@ -115,6 +135,9 @@ func (a *TaskAdaptor) ValidateRequestAndSetAction(c *gin.Context, info *relaycom
 						return service.TaskErrorWrapperLocal(fmt.Errorf("decoder must not return renderer"), "plugin_request_invalid", http.StatusBadRequest)
 					}
 					setFinalTaskPluginRequestBody(c, resolved)
+					if requestBodyText != nil {
+						c.Set(pluginruntime.ContextKeyRequestBodyText, requestBodyText)
+					}
 					if rawAction, present := resolved["action"]; present {
 						action, valid := rawAction.(string)
 						if !valid {
@@ -295,12 +318,19 @@ func (a *TaskAdaptor) BuildRequestURL(info *relaycommon.RelayInfo) (string, erro
 	return a.submit.URL, pluginruntime.ValidateRequestURL(a.submit.URL, info.ChannelBaseUrl, a.plugin.Meta.AllowedHosts)
 }
 
-func (a *TaskAdaptor) BuildRequestHeader(_ *gin.Context, req *http.Request, _ *relaycommon.RelayInfo) error {
+func (a *TaskAdaptor) BuildRequestHeader(c *gin.Context, req *http.Request, _ *relaycommon.RelayInfo) error {
 	if a.submit == nil {
 		return fmt.Errorf("plugin submit request was not built")
 	}
 	for name, value := range a.submit.Headers {
 		req.Header.Set(name, value)
+	}
+	// Plugin headers are copied first. A multipart body is rebuilt locally, so its
+	// boundary must replace a plugin Content-Type that no longer matches the body.
+	if a.submit.BodyType == "multipart" && c != nil && c.Request != nil {
+		if contentType := c.Request.Header.Get("Content-Type"); contentType != "" {
+			req.Header.Set("Content-Type", contentType)
+		}
 	}
 	return nil
 }
@@ -377,7 +407,18 @@ func (a *TaskAdaptor) BuildRequestBody(c *gin.Context, info *relaycommon.RelayIn
 	if text, ok := descriptor.Body.(string); ok {
 		return strings.NewReader(text), nil
 	}
-	inlined, err := inlineJSONFilePlaceholders(c, descriptor.Body)
+	value := descriptor.Body
+	if descriptor.BodyText != nil {
+		if !bytes.Contains(descriptor.BodyText, []byte(`"__fileRef":`)) {
+			return bytes.NewReader(descriptor.BodyText), nil
+		}
+		// File placeholders resolve only after decoding, which sorts members.
+		// Uploads do not carry a client JSON order to preserve.
+		if err := common.Unmarshal(descriptor.BodyText, &value); err != nil {
+			return nil, err
+		}
+	}
+	inlined, err := inlineJSONFilePlaceholders(c, value)
 	if err != nil {
 		return nil, err
 	}
@@ -721,11 +762,11 @@ func (a *TaskAdaptor) FetchBatchTasksContext(ctx context.Context, baseURL, key s
 	if err != nil {
 		return nil, err
 	}
-	value, err := a.plugin.Engine.Call(ctx, "buildBatchQueryRequest", queryCtx, taskContexts)
+	descriptor, err := a.requestDescriptor(pluginruntime.WithFetcher(ctx, a.hookFetcher(baseURL, proxy)), "buildBatchQueryRequest", queryCtx, taskContexts)
 	if err != nil {
 		return nil, err
 	}
-	return a.doFetchDescriptor(ctx, baseURL, proxy, value)
+	return a.doFetchPrepared(ctx, baseURL, proxy, descriptor)
 }
 
 func (a *TaskAdaptor) FetchTask(baseURL, key string, task *model.Task, proxy string) (*http.Response, error) {
@@ -738,19 +779,23 @@ func (a *TaskAdaptor) FetchTaskContext(ctx context.Context, baseURL, key string,
 	if err != nil {
 		return nil, err
 	}
-	value, err := a.plugin.Engine.Call(ctx, "buildQueryRequest", queryCtx)
+	descriptor, err := a.requestDescriptor(pluginruntime.WithFetcher(ctx, a.hookFetcher(baseURL, proxy)), "buildQueryRequest", queryCtx)
 	if err != nil {
 		return nil, err
 	}
-	return a.doFetchDescriptor(ctx, baseURL, proxy, value)
+	return a.doFetchPrepared(ctx, baseURL, proxy, descriptor)
 }
 
 func (a *TaskAdaptor) doFetchDescriptor(ctx context.Context, baseURL, proxy string, value any) (*http.Response, error) {
-	ctx = pluginContextOrBackground(ctx)
 	descriptor, err := decodeRequestDescriptor(value)
 	if err != nil {
 		return nil, err
 	}
+	return a.doFetchPrepared(ctx, baseURL, proxy, descriptor)
+}
+
+func (a *TaskAdaptor) doFetchPrepared(ctx context.Context, baseURL, proxy string, descriptor requestDescriptor) (*http.Response, error) {
+	ctx = pluginContextOrBackground(ctx)
 	if err := pluginruntime.ValidateRequestURL(descriptor.URL, baseURL, a.plugin.Meta.AllowedHosts); err != nil {
 		return nil, err
 	}
@@ -758,6 +803,8 @@ func (a *TaskAdaptor) doFetchDescriptor(ctx context.Context, baseURL, proxy stri
 	if descriptor.Body != nil {
 		if bodyText, ok := descriptor.Body.(string); ok {
 			requestBody = strings.NewReader(bodyText)
+		} else if descriptor.BodyText != nil {
+			requestBody = bytes.NewReader(descriptor.BodyText)
 		} else {
 			encoded, marshalErr := common.Marshal(descriptor.Body)
 			if marshalErr != nil {
@@ -777,7 +824,7 @@ func (a *TaskAdaptor) doFetchDescriptor(ctx context.Context, baseURL, proxy stri
 	for name, value := range descriptor.Headers {
 		req.Header.Set(name, value)
 	}
-	client, err := service.GetHttpClientWithProxy(proxy)
+	client, err := service.GetHttpClientWithProxySettings(proxy, a.channelSetting())
 	if err != nil {
 		return nil, err
 	}
@@ -812,6 +859,58 @@ func (a *TaskAdaptor) doFetchDescriptor(ctx context.Context, baseURL, proxy stri
 		time.Since(started).Milliseconds(),
 	)
 	return resp, nil
+}
+
+// hookFetcher sends a driver hook's utils.fetch requests to the hosts its
+// request descriptors may use, through the channel proxy and transport policy.
+// Redirects are returned as-is; following one is a new checked request.
+func (a *TaskAdaptor) hookFetcher(baseURL, proxy string) pluginruntime.Fetcher {
+	return func(ctx context.Context, request pluginruntime.FetchRequest) (pluginruntime.FetchResponse, error) {
+		if err := pluginruntime.ValidateRequestURL(request.URL, baseURL, a.plugin.Meta.AllowedHosts); err != nil {
+			return pluginruntime.FetchResponse{}, err
+		}
+		client, err := service.GetHttpClientWithProxySettings(proxy, a.channelSetting())
+		if err != nil {
+			return pluginruntime.FetchResponse{}, err
+		}
+		noRedirects := *client
+		noRedirects.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
+		req, err := http.NewRequestWithContext(ctx, request.Method, request.URL, nil)
+		if err != nil {
+			return pluginruntime.FetchResponse{}, err
+		}
+		for name, value := range request.Headers {
+			req.Header.Set(name, value)
+		}
+		started := time.Now()
+		resp, err := noRedirects.Do(req)
+		if err != nil {
+			logger.LogDebug(ctx, "task_plugin subsystem=fetch event=failed plugin=%q hook=%q method=%q host=%q reason=transport_error elapsed_ms=%d",
+				a.plugin.Meta.Key, request.Hook, request.Method, req.URL.Host, time.Since(started).Milliseconds())
+			return pluginruntime.FetchResponse{}, err
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(io.LimitReader(resp.Body, pluginruntime.MaxFetchBodyBytes+1))
+		if err != nil {
+			return pluginruntime.FetchResponse{}, err
+		}
+		headers := make(map[string]string, len(resp.Header))
+		for name, values := range resp.Header {
+			if len(values) > 0 {
+				headers[name] = values[0]
+			}
+		}
+		logger.LogDebug(ctx, "task_plugin subsystem=fetch event=done plugin=%q hook=%q method=%q host=%q status=%d bytes=%d elapsed_ms=%d",
+			a.plugin.Meta.Key, request.Hook, request.Method, req.URL.Host, resp.StatusCode, len(body), time.Since(started).Milliseconds())
+		return pluginruntime.FetchResponse{Status: resp.StatusCode, Headers: headers, Body: body}, nil
+	}
+}
+
+func (a *TaskAdaptor) channelSetting() kitdto.ChannelSettings {
+	if a.info == nil || !a.info.HasChannelMeta() {
+		return kitdto.ChannelSettings{}
+	}
+	return a.info.ChannelSetting
 }
 
 var pluginFetchRedirectCredentialHeaders = []string{
@@ -886,7 +985,7 @@ func (a *TaskAdaptor) ParseBatchResultContext(ctx context.Context, tasks []*mode
 	if err != nil {
 		return nil, err
 	}
-	value, err := a.plugin.Engine.Call(ctx, "parseBatchResult", queryCtx, input, hookHTTPResponse(resp))
+	value, err := a.plugin.Engine.Call(pluginruntime.WithFetcher(ctx, a.hookFetcher(baseURL, proxy)), "parseBatchResult", queryCtx, input, hookHTTPResponse(resp))
 	if err != nil {
 		logger.LogDebug(ctx, "task_plugin subsystem=adaptor event=parse_batch_failed plugin=%q reason=hook_failed body_bytes=%d elapsed_ms=%d", a.plugin.Meta.Key, len(body), time.Since(started).Milliseconds())
 		return nil, err
@@ -935,7 +1034,7 @@ func (a *TaskAdaptor) ParseBatchResultContext(ctx context.Context, tasks []*mode
 					break
 				}
 			}
-			facts, hookErr := a.plugin.Engine.Call(ctx, "extractUsageOnComplete", itemCtx, jsonValue(&info), usageBody)
+			facts, hookErr := a.plugin.Engine.Call(pluginruntime.WithFetcher(ctx, a.hookFetcher(baseURL, proxy)), "extractUsageOnComplete", itemCtx, jsonValue(&info), usageBody)
 			if hookErr == nil {
 				upstreamModel, _ := itemCtx["upstreamModel"].(string)
 				originModel, _ := itemCtx["model"].(string)
@@ -976,7 +1075,7 @@ func (a *TaskAdaptor) ParseTaskResultContext(ctx context.Context, task *model.Ta
 	if err != nil {
 		return nil, err
 	}
-	value, err := a.plugin.Engine.Call(ctx, "parseTaskResult", queryCtx, input, hookHTTPResponse(resp))
+	value, err := a.plugin.Engine.Call(pluginruntime.WithFetcher(ctx, a.hookFetcher(baseURL, proxy)), "parseTaskResult", queryCtx, input, hookHTTPResponse(resp))
 	if err != nil {
 		logger.LogDebug(ctx, "task_plugin subsystem=adaptor event=parse_task_failed plugin=%q reason=hook_failed body_bytes=%d elapsed_ms=%d", a.plugin.Meta.Key, len(body), time.Since(started).Milliseconds())
 		return nil, err
@@ -1007,7 +1106,7 @@ func (a *TaskAdaptor) ParseTaskResultContext(ctx context.Context, task *model.Ta
 	// The raw polling response only exists at this boundary. Capture upstream
 	// units here so the host settlement path can consume them from TaskInfo.
 	if a.hasHook(ctx, "extractUsageOnComplete") {
-		facts, hookErr := a.plugin.Engine.Call(ctx, "extractUsageOnComplete", queryCtx, jsonValue(result), input)
+		facts, hookErr := a.plugin.Engine.Call(pluginruntime.WithFetcher(ctx, a.hookFetcher(baseURL, proxy)), "extractUsageOnComplete", queryCtx, jsonValue(result), input)
 		if hookErr == nil {
 			upstreamModel, _ := queryCtx["upstreamModel"].(string)
 			originModel, _ := queryCtx["model"].(string)
@@ -1281,11 +1380,7 @@ func (a *TaskAdaptor) BuildContentRequestContext(ctx context.Context, task *mode
 	if err = a.applyUpstreamCredentials(artifactCtx, a.info.ChannelType, a.info.ApiKey, proxy); err != nil {
 		return nil, err
 	}
-	value, err := a.plugin.Engine.Call(ctx, "buildContentRequest", artifactCtx)
-	if err != nil {
-		return nil, err
-	}
-	descriptor, err := decodeRequestDescriptor(value)
+	descriptor, err := a.requestDescriptor(pluginruntime.WithFetcher(ctx, a.hookFetcher(a.info.ChannelBaseUrl, proxy)), "buildContentRequest", artifactCtx)
 	if err != nil {
 		return nil, err
 	}
@@ -1331,6 +1426,8 @@ func (a *TaskAdaptor) BuildContentRequestContext(ctx context.Context, task *mode
 	if descriptor.Body != nil {
 		if text, ok := descriptor.Body.(string); ok {
 			body = []byte(text)
+		} else if descriptor.BodyText != nil {
+			body = descriptor.BodyText
 		} else {
 			body, err = common.Marshal(descriptor.Body)
 			if err != nil {
@@ -1604,22 +1701,22 @@ func (a *TaskAdaptor) buildSubmit(c *gin.Context, info *relaycommon.RelayInfo) (
 	if err != nil {
 		return nil, err
 	}
-	value, err := a.plugin.Engine.Call(c.Request.Context(), "buildSubmitRequest", submitContext)
-	if err != nil {
-		logger.LogDebug(
-			c,
-			"task_plugin subsystem=adaptor event=build_submit_failed plugin=%q stage=build_submit_request reason=hook_failed elapsed_ms=%d",
-			a.plugin.Meta.Key,
-			time.Since(started).Milliseconds(),
-		)
-		return nil, err
+	fetchContext := c.Request.Context()
+	if info != nil && info.HasChannelMeta() {
+		fetchContext = pluginruntime.WithFetcher(fetchContext, a.hookFetcher(info.ChannelBaseUrl, info.ChannelSetting.Proxy))
 	}
-	descriptor, err := decodeRequestDescriptor(value)
+	descriptor, err := a.requestDescriptor(fetchContext, "buildSubmitRequest", submitContext)
 	if err != nil {
+		reason := "hook_failed"
+		var invalid *pluginruntime.ResultError
+		if errors.As(err, &invalid) {
+			reason = "invalid_descriptor"
+		}
 		logger.LogDebug(
 			c,
-			"task_plugin subsystem=adaptor event=build_submit_failed plugin=%q stage=build_submit_request reason=invalid_descriptor elapsed_ms=%d",
+			"task_plugin subsystem=adaptor event=build_submit_failed plugin=%q stage=build_submit_request reason=%s elapsed_ms=%d",
 			a.plugin.Meta.Key,
+			reason,
 			time.Since(started).Milliseconds(),
 		)
 		return nil, err
@@ -1705,6 +1802,10 @@ func (a *TaskAdaptor) submitContext(c *gin.Context, info *relaycommon.RelayInfo)
 		if taskRequest, exists := c.Get("task_request"); exists {
 			routeRequest.RequestBody = taskRequest
 		}
+		a.requestBodyText = nil
+		if text, exists := c.Get(pluginruntime.ContextKeyRequestBodyText); exists && a.plugin.Meta.PreservesJSONOrder() {
+			a.requestBodyText, _ = text.(json.RawMessage)
+		}
 		if c.Request != nil {
 			if routeRequest.Path == "" {
 				routeRequest.Path = c.Request.URL.Path
@@ -1745,7 +1846,11 @@ func (a *TaskAdaptor) submitContext(c *gin.Context, info *relaycommon.RelayInfo)
 	}
 	ctx := routeRequest.JSValue()
 	requestBody := routeRequest.RequestBody
-	if !isPlainJSONValue(requestBody, 0) {
+	if a.requestBodyText != nil {
+		// Driver hooks read the request body. Parse the preserved text in
+		// place so each hook sees the client's member order.
+		requestBody = pluginruntime.RawJSON(a.requestBodyText)
+	} else if !isPlainJSONValue(requestBody, 0) {
 		requestBody = jsonValue(requestBody)
 	}
 	ctx["requestBody"] = requestBody
@@ -1832,6 +1937,13 @@ func (a *TaskAdaptor) validateResolvedUsageValue(value any, usageSchema map[stri
 					return err
 				}
 			} else if limit, canonical := canonicalUsageLimit(key); canonical {
+				// duration-auto@1 sends -1 to the vendor and reserves the longest
+				// duration; the vendor's completion usage replaces that reservation.
+				if limit == relaycommon.MaxTaskDurationSeconds && a.plugin != nil && a.plugin.Meta.AcceptsAutoDuration() {
+					if number, ok := usageNumber(item, true); ok && number == -1 {
+						continue
+					}
+				}
 				if err := validateUsageLimit(item, limit, true); err != nil {
 					return err
 				}
@@ -2042,6 +2154,46 @@ func (a *TaskAdaptor) logRejectedUsage(hook string, _ error) {
 
 func (a *TaskAdaptor) hasHook(_ context.Context, hook string) bool {
 	return a.plugin.Engine.HasExport(hook)
+}
+
+// requestDescriptor runs a request-building hook. Plugins that preserve JSON
+// order are decoded from JSON.stringify text, and the body stays that text.
+func (a *TaskAdaptor) requestDescriptor(ctx context.Context, hook string, args ...any) (requestDescriptor, error) {
+	if !a.plugin.Meta.PreservesJSONOrder() {
+		value, err := a.plugin.Engine.Call(ctx, hook, args...)
+		if err != nil {
+			return requestDescriptor{}, err
+		}
+		return decodeRequestDescriptor(value)
+	}
+	var ordered orderedRequestDescriptor
+	if err := a.plugin.Engine.CallJSONInto(ctx, &ordered, hook, args...); err != nil {
+		return requestDescriptor{}, err
+	}
+	descriptor := requestDescriptor{
+		ResponseType:   ordered.ResponseType,
+		URL:            ordered.URL,
+		Method:         ordered.Method,
+		Headers:        ordered.Headers,
+		Credentialless: ordered.Credentialless,
+		Action:         ordered.Action,
+		Model:          ordered.Model,
+		RewriteModel:   ordered.RewriteModel,
+		BodyType:       ordered.BodyType,
+		Parts:          ordered.Parts,
+	}
+	switch {
+	case len(ordered.Body) == 0 || string(ordered.Body) == "null":
+	case ordered.Body[0] == '"':
+		var text string
+		if err := common.Unmarshal(ordered.Body, &text); err != nil {
+			return requestDescriptor{}, err
+		}
+		descriptor.Body = text
+	default:
+		descriptor.Body, descriptor.BodyText = ordered.Body, ordered.Body
+	}
+	return descriptor, nil
 }
 
 // decodeRequestDescriptor reads the result of a request-building hook. Fields

@@ -258,6 +258,12 @@ var (
 	GlobalWebRateLimitNum      int
 	GlobalWebRateLimitDuration int64
 
+	// Static build files use a separate bucket so a page refresh cannot spend the page limit.
+	// Disabled by default: existing files are not counted against the page limit.
+	GlobalStaticRateLimitEnable   bool
+	GlobalStaticRateLimitNum      int
+	GlobalStaticRateLimitDuration int64
+
 	CriticalRateLimitEnable   bool
 	CriticalRateLimitNum            = 50
 	CriticalRateLimitDuration int64 = 20 * 60

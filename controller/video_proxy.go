@@ -392,14 +392,11 @@ func proxyTaskMediaWithArtifact(c *gin.Context, task *model.Task, descriptor *re
 		}
 	}
 
-	client := service.GetSSRFProtectedHTTPClient()
-	if proxy != "" {
-		client, err = service.GetSSRFProtectedHTTPClientWithProxy(proxy)
-		if err != nil {
-			return &taskMediaProxyError{
-				status: http.StatusInternalServerError, code: "artifact_internal_error",
-				message: "Failed to create artifact proxy client", err: err,
-			}
+	client, err := service.GetSSRFProtectedHTTPClientWithProxySettings(proxy, channel.GetSetting())
+	if err != nil {
+		return &taskMediaProxyError{
+			status: http.StatusInternalServerError, code: "artifact_internal_error",
+			message: "Failed to create artifact proxy client", err: err,
 		}
 	}
 	if client == nil {
@@ -407,9 +404,6 @@ func proxyTaskMediaWithArtifact(c *gin.Context, task *model.Task, descriptor *re
 			status: http.StatusInternalServerError, code: "artifact_internal_error",
 			message: "HTTP client is not initialized", err: errTaskMediaClientUnavailable,
 		}
-	}
-	if client == nil {
-		client = http.DefaultClient
 	}
 
 	req, err := http.NewRequestWithContext(c.Request.Context(), method, parsedURL.String(), bytes.NewReader(descriptor.Body))

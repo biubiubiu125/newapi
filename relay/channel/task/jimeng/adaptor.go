@@ -94,6 +94,7 @@ type TaskAdaptor struct {
 }
 
 func (a *TaskAdaptor) Init(info *relaycommon.RelayInfo) {
+	a.RememberChannelSetting(info)
 	a.ChannelType = info.ChannelType
 	a.baseURL = info.ChannelBaseUrl
 
@@ -259,7 +260,7 @@ func (a *TaskAdaptor) FetchTask(baseUrl, key string, body map[string]any, proxy 
 			return nil, errors.Wrap(err, "sign request failed")
 		}
 	}
-	client, err := service.GetHttpClientWithProxy(proxy)
+	client, err := service.GetHttpClientWithProxySettings(proxy, a.PollChannelSetting())
 	if err != nil {
 		return nil, fmt.Errorf("new proxy http client failed: %w", err)
 	}

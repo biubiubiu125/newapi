@@ -12,8 +12,24 @@ import (
 	"github.com/QuantumNous/new-api/relay"
 	taskcommon "github.com/QuantumNous/new-api/relay/channel/task/taskcommon"
 	vertexcore "github.com/QuantumNous/new-api/relay/channel/vertex"
+	relaycommon "github.com/QuantumNous/new-api/relay/common"
 	"github.com/QuantumNous/new-api/service"
 )
+
+func initLegacyTaskFetch(adaptor interface{ Init(*relaycommon.RelayInfo) }, channel *model.Channel, baseURL, apiKey string) {
+	if adaptor == nil || channel == nil {
+		return
+	}
+	adaptor.Init(&relaycommon.RelayInfo{
+		ChannelMeta: &relaycommon.ChannelMeta{
+			ChannelType:    channel.Type,
+			ChannelId:      channel.Id,
+			ChannelBaseUrl: baseURL,
+			ApiKey:         apiKey,
+			ChannelSetting: channel.GetSetting(),
+		},
+	})
+}
 
 var acquireVertexAccessToken = vertexcore.AcquireAccessToken
 
@@ -93,7 +109,9 @@ func getGeminiVideoURL(channel *model.Channel, task *model.Task, apiKey string) 
 		return "", fmt.Errorf("api key not available for task")
 	}
 
-	proxy := channel.GetSetting().Proxy
+	setting := channel.GetSetting()
+	proxy := setting.Proxy
+	initLegacyTaskFetch(adaptor, channel, baseURL, apiKey)
 	resp, err := adaptor.FetchTask(baseURL, apiKey, task, proxy)
 	if err != nil {
 		return "", fmt.Errorf("fetch task failed: %w", err)
@@ -277,6 +295,7 @@ func getVertexVideoURL(channel *model.Channel, task *model.Task) (string, error)
 		return "", fmt.Errorf("vertex key not available for task")
 	}
 
+	initLegacyTaskFetch(adaptor, channel, baseURL, key)
 	resp, err := adaptor.FetchTask(baseURL, key, task, channel.GetSetting().Proxy)
 	if err != nil {
 		return "", fmt.Errorf("fetch task failed: %w", err)

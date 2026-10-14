@@ -1,6 +1,7 @@
 package jsplugin
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
 	"net/http"
@@ -214,6 +215,9 @@ const (
 	ContextKeyPinnedEndpoint  = "task_plugin_pinned_endpoint"
 	ContextKeyRouteRequest    = "task_plugin_route_request"
 	ContextKeyProtocolRequest = "task_plugin_protocol_request"
+	// ContextKeyRequestBodyText holds, for a plugin that preserves JSON
+	// order, the decoded request body as JSON text beside the Go value.
+	ContextKeyRequestBodyText = "task_plugin_request_body_text"
 )
 
 type PinnedPlugin struct {
@@ -278,6 +282,7 @@ type RouteRequestContext struct {
 	Params      map[string]string   `json:"params"`
 	Query       map[string][]string `json:"query"`
 	Body        any                 `json:"body"`
+	BodyText    json.RawMessage     `json:"-"`
 	Files       []map[string]any    `json:"-"`
 	RequestBody any                 `json:"-"`
 }
@@ -302,6 +307,17 @@ func (r RouteRequestContext) JSValue() map[string]any {
 		"query":  query,
 		"body":   cloneRouteBody(r.Body),
 	}
+}
+
+// JSValueFor is JSValue for the decode hooks of the plugin meta describes.
+// A plugin that preserves JSON order receives the body as text so the engine
+// parses members in the client's order.
+func (r RouteRequestContext) JSValueFor(meta Meta) map[string]any {
+	value := r.JSValue()
+	if len(r.BodyText) > 0 && meta.PreservesJSONOrder() {
+		value["body"] = map[string]any{"kind": string(BodyJSON), "value": RawJSON(r.BodyText)}
+	}
+	return value
 }
 
 // cloneRouteBody copies the containers a decoder can mutate. Scalars and
@@ -353,7 +369,14 @@ type ProtocolRequestContext struct {
 }
 
 func (p ProtocolRequestContext) JSValue() map[string]any {
-	value := p.RouteRequestContext.JSValue()
+	return p.withProtocol(p.RouteRequestContext.JSValue())
+}
+
+func (p ProtocolRequestContext) JSValueFor(meta Meta) map[string]any {
+	return p.withProtocol(p.RouteRequestContext.JSValueFor(meta))
+}
+
+func (p ProtocolRequestContext) withProtocol(value map[string]any) map[string]any {
 	value["protocol"] = p.Protocol
 	value["operation"] = p.Operation
 	value["model"] = p.Model
